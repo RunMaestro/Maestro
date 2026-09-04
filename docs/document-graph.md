@@ -14,11 +14,11 @@ There are several ways to access the Document Graph:
 
 ### From File Preview
 
-When viewing a markdown file in File Preview, press `Cmd+Shift+G` / `Ctrl+Shift+G` to open the Document Graph focused on that file. Press `Esc` to return to the File Preview. This is the primary way to open the Document Graph.
+When viewing a markdown file in File Preview, click the graph button in the preview toolbar to open the Document Graph focused on that file. Press `Esc` to return to the File Preview. This is the primary way to open the Document Graph.
 
 ### From Quick Actions
 
-Press `Cmd+K` / `Ctrl+K` and search for "Open Last Document Graph" to re-open the most recently viewed graph.
+Press `Cmd+K` / `Ctrl+K` and search for "View in Document Graph" to focus the graph on the markdown file you are previewing, or "Open Last Document Graph" to re-open the most recently viewed graph.
 
 <Note>
 The "Open Last Document Graph" option only appears after you've opened a Document Graph at least once during your session.
@@ -64,7 +64,7 @@ options.
 
 ### Using Go to File
 
-Press `Cmd+G` / `Ctrl+G` to open the fuzzy file finder, navigate to any markdown file, then use `Cmd+Shift+G` to jump to the Document Graph from there.
+Press `Cmd+G` / `Ctrl+G` to open the fuzzy file finder and navigate to any markdown file, then use the preview toolbar's graph button (or `Cmd+K` and "View in Document Graph") to jump to the Document Graph from there.
 
 ## Navigating the Graph
 
@@ -257,7 +257,7 @@ With the Preview slider at **Off** (or after pressing `P` around to Off), only t
 
 1. Use `Cmd+G` to quickly find a file
 2. Open it in File Preview to read or edit
-3. Press `Cmd+Shift+G` to see its connections in the Document Graph
+3. Click the graph button in the preview toolbar to see its connections in the Document Graph
 4. Press `O` to open a connected document
 5. Press `Esc` to return to File Preview
 
@@ -293,7 +293,7 @@ The Document Graph is especially useful for:
 
 | Action                    | macOS            | Windows/Linux     |
 | ------------------------- | ---------------- | ----------------- |
-| Open from File Preview    | `Cmd+Shift+G`    | `Ctrl+Shift+G`    |
+| Open from File Preview    | Toolbar button   | Toolbar button    |
 | Re-open last graph        | Via `Cmd+K` menu | Via `Ctrl+K` menu |
 | Go to File (fuzzy finder) | `Cmd+G`          | `Ctrl+G`          |
 | Navigate nodes            | `Arrow Keys`     | `Arrow Keys`      |

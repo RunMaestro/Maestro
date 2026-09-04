@@ -26,6 +26,7 @@ import {
 	getNavigableUnifiedTabOrder,
 	insertAfterActiveInUnifiedTabOrder,
 	isAiTabHidden,
+	visibleAiTabs,
 } from '../unifiedTabOrderUtils';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { isWindowsPlatform } from '../platformUtils';
@@ -50,7 +51,7 @@ import {
 // Both live in unifiedTabOrderUtils so terminalTabHelpers can reach them without a
 // circular import; re-exported here because tabHelpers is where callers look for
 // tab visibility rules.
-export { getNavigableUnifiedTabOrder, isAiTabHidden };
+export { getNavigableUnifiedTabOrder, isAiTabHidden, visibleAiTabs };
 export {
 	aiTabFocusFields,
 	fileTabFocusFields,
@@ -741,9 +742,7 @@ export function getNavigableTabs(session: Session, showUnreadOnly = false): AITa
 	// Hidden tabs aren't in the strip, so no shortcut may land on one. The common
 	// case is no hidden tabs at all: keep returning `session.aiTabs` by reference
 	// then, since callers memoize on its identity.
-	const visible = session.aiTabs.some(isAiTabHidden)
-		? session.aiTabs.filter((tab) => !isAiTabHidden(tab))
-		: session.aiTabs;
+	const visible = visibleAiTabs(session.aiTabs);
 
 	if (showUnreadOnly) {
 		const showStarred = useSettingsStore.getState().showStarredInUnreadFilter;

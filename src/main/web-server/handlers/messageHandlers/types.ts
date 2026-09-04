@@ -178,7 +178,7 @@ export interface MessageHandlerCallbacks {
 		sessionId: string,
 		itemId: string
 	) => Promise<{ success: boolean; removed: boolean; error?: string }>;
-	refreshAutoRunDocs: (sessionId: string) => Promise<boolean>;
+	refreshAutoRunDocs: (sessionId: string, background?: boolean) => Promise<boolean>;
 	configureAutoRun: (
 		sessionId: string,
 		config: {

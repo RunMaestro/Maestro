@@ -172,6 +172,15 @@ export const DEFAULT_SHORTCUTS = {
 		// it and the action would arrive unbound. Alt+Meta+ArrowDown is free.
 		keys: ['Alt', 'Meta', 'ArrowDown'],
 	},
+	// Ships unbound. Opt+U and Cmd+U already drive the two filters separately,
+	// so claiming a third chord by default would spend a key for a convenience
+	// most users reach from the palette. Listing it here is what makes it
+	// bindable in Settings -> Shortcuts.
+	toggleUnreadFilters: {
+		id: 'toggleUnreadFilters',
+		label: 'Unread Only (Agents + Tabs)',
+		keys: [],
+	},
 	jumpToTerminal: {
 		id: 'jumpToTerminal',
 		label: 'Jump to Nearest Terminal',

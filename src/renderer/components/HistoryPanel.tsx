@@ -795,10 +795,7 @@ export const HistoryPanel = React.memo(
 								/>
 							</div>
 							{searchFilter && (
-								<div
-									className="text-[10px] mt-1 text-right"
-									style={{ color: theme.colors.textDim }}
-								>
+								<div className="text-2xs mt-1 text-right" style={{ color: theme.colors.textDim }}>
 									{allFilteredEntries.length} result{allFilteredEntries.length !== 1 ? 's' : ''}
 								</div>
 							)}
@@ -971,7 +968,7 @@ export const HistoryPanel = React.memo(
 					{/* Loading-more / jump indicator */}
 					{(isLoadingMore || isJumping) && (
 						<div
-							className="text-center py-3 text-[10px] opacity-60"
+							className="text-center py-3 text-2xs opacity-60"
 							style={{ color: theme.colors.textDim }}
 						>
 							{isJumping ? 'Jumping to selected period...' : 'Loading more...'}

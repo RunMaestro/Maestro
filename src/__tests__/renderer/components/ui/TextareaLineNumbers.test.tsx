@@ -17,17 +17,33 @@ import {
 } from '../../../../renderer/components/ui/TextareaLineNumbers';
 import { createMockTheme } from '../../../helpers/mockTheme';
 
-function Harness({ value }: { value: string }) {
+function Harness({
+	value,
+	fontSize,
+	remeasureKey,
+}: {
+	value: string;
+	fontSize?: string;
+	remeasureKey?: string | number;
+}) {
 	const ref = useRef<HTMLTextAreaElement>(null);
 	return (
 		<div className="relative">
-			<TextareaLineNumbers textareaRef={ref} value={value} theme={createMockTheme()} />
+			<TextareaLineNumbers
+				textareaRef={ref}
+				value={value}
+				theme={createMockTheme()}
+				remeasureKey={remeasureKey}
+			/>
 			<textarea
 				ref={ref}
 				data-testid="editor"
 				value={value}
 				readOnly
-				style={{ paddingLeft: lineNumberGutterMetrics(value).textPaddingLeft }}
+				style={{
+					paddingLeft: lineNumberGutterMetrics(value).textPaddingLeft,
+					...(fontSize ? { fontSize } : {}),
+				}}
 			/>
 		</div>
 	);
@@ -86,5 +102,33 @@ describe('TextareaLineNumbers', () => {
 	it('pushes the textarea text clear of the gutter', () => {
 		render(<Harness value={'a\nb'} />);
 		expect(screen.getByTestId('editor')).toHaveStyle({ paddingLeft: 'calc(2ch + 24px)' });
+	});
+
+	describe('remeasureKey', () => {
+		// The gutter is a sibling rendered BEFORE the textarea, so its layout effect
+		// runs while `textareaRef.current` is still null and the mount pass measures
+		// nothing. The first real measurement therefore lands on the first re-run,
+		// which is what these tests drive with the key.
+		it('re-mirrors the textarea typography when the key changes', () => {
+			const { rerender } = render(<Harness value={'a\nb'} fontSize="14px" remeasureKey={1} />);
+			rerender(<Harness value={'a\nb'} fontSize="14px" remeasureKey={1.1} />);
+			expect(screen.getByTestId('line-numbers')).toHaveStyle({ fontSize: '14px' });
+
+			rerender(<Harness value={'a\nb'} fontSize="21px" remeasureKey={1.5} />);
+			expect(screen.getByTestId('line-numbers')).toHaveStyle({ fontSize: '21px' });
+		});
+
+		it('holds the old typography when the key does not move - the bug the prop exists for', () => {
+			// A font-size change leaves the border box the same size, so the
+			// component's own ResizeObserver never fires. With nothing in the deps to
+			// notice, the gutter keeps the previous font until something else re-runs
+			// the measurement.
+			const { rerender } = render(<Harness value={'a\nb'} fontSize="14px" remeasureKey={1} />);
+			rerender(<Harness value={'a\nb'} fontSize="14px" remeasureKey={1.1} />);
+			expect(screen.getByTestId('line-numbers')).toHaveStyle({ fontSize: '14px' });
+
+			rerender(<Harness value={'a\nb'} fontSize="21px" remeasureKey={1.1} />);
+			expect(screen.getByTestId('line-numbers')).toHaveStyle({ fontSize: '14px' });
+		});
 	});
 });

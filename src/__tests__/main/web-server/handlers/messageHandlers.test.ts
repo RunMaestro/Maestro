@@ -541,6 +541,30 @@ describe('WebSocketMessageHandler', () => {
 			});
 		});
 
+		it('reads a non-boolean background as no preference on send_command', async () => {
+			// 'yes' / 1 / null are not an opt-in. Anything looser than a literal
+			// true would stop an existing caller from focusing.
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'hello',
+				inputMode: 'ai',
+				background: 'yes',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.executeCommand).toHaveBeenCalledWith(
+					'session-1',
+					'hello',
+					'ai',
+					undefined,
+					false,
+					undefined,
+					false
+				);
+			});
+		});
+
 		it('should reject command when session not found', () => {
 			(callbacks.getSessionDetail as any).mockReturnValue(null);
 
@@ -2285,6 +2309,20 @@ describe('WebSocketMessageHandler', () => {
 	});
 
 	describe('Refresh Auto Run Docs (Web → Desktop)', () => {
+		it('forwards background placement on refresh_auto_run_docs', async () => {
+			// The renderer switches to the target agent to get it refreshed;
+			// background callers get the refresh without the switch.
+			handler.handleMessage(client, {
+				type: 'refresh_auto_run_docs',
+				sessionId: 'session-1',
+				background: true,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.refreshAutoRunDocs).toHaveBeenCalledWith('session-1', true);
+			});
+		});
+
 		it('should forward refresh auto run docs to desktop', async () => {
 			handler.handleMessage(client, {
 				type: 'refresh_auto_run_docs',
@@ -2292,7 +2330,7 @@ describe('WebSocketMessageHandler', () => {
 			});
 
 			await vi.waitFor(() => {
-				expect(callbacks.refreshAutoRunDocs).toHaveBeenCalledWith('session-1');
+				expect(callbacks.refreshAutoRunDocs).toHaveBeenCalledWith('session-1', false);
 			});
 
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);

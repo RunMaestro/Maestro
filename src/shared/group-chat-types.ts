@@ -229,6 +229,8 @@ export interface ModeratorConfig {
 	customArgs?: string;
 	/** Custom environment variables */
 	customEnvVars?: Record<string, string>;
+	/** Env vars switched off in the editor: parked, never passed to the moderator. */
+	customEnvVarsDisabled?: Record<string, string>;
 	/** Custom model selection (e.g., 'ollama/qwen3:8b') */
 	customModel?: string;
 	/** SSH remote config for remote execution */
@@ -265,6 +267,26 @@ export interface GroupChat {
 	imagesDir: string;
 	draftMessage?: string;
 	archived?: boolean;
+	/**
+	 * When true (the default), the moderator only hands work to an agent whose
+	 * Maestro agent is idle. Undefined means enabled - read it through
+	 * {@link requiresIdleParticipants} rather than testing the field, so chats
+	 * created before this setting existed keep the safe behavior.
+	 */
+	requireIdleParticipants?: boolean;
+}
+
+/**
+ * Whether a group chat may only engage agents that are currently free.
+ *
+ * The default is ON and lives here rather than at each read site: the router,
+ * the create/edit modal, and the info overlay all have to agree, and a missing
+ * field must never read as "opted out".
+ */
+export function requiresIdleParticipants(
+	chat: { requireIdleParticipants?: boolean } | null | undefined
+): boolean {
+	return chat?.requireIdleParticipants !== false;
 }
 
 /**

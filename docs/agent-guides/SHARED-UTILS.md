@@ -182,9 +182,11 @@ The font picker stores a bare name (`Roboto Mono`) with no generic fallback, whi
 
 ### Search Highlighting (`src/renderer/utils/highlightMatches.tsx` - Renderer)
 
-| Function                                     | Signature                               | Purpose                                                                                                                          |
-| -------------------------------------------- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `highlightMatches(text, query, accentColor)` | `(string, string, string) => ReactNode` | Wrap every case-insensitive occurrence of `query` in an accent-colored `<mark>`. Used by the CSV table and its row detail modal. |
+| Function                                     | Signature                               | Purpose                                                                                                                                                                                        |
+| -------------------------------------------- | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `splitOnMatches(text, query)`                | `(string, string) => MatchSegment[]`    | Split `text` into alternating plain/match segments, each carrying its `start` offset. The one matcher the other two are built from, so escaping and match parity cannot drift.                 |
+| `highlightMatches(text, query, accentColor)` | `(string, string, string) => ReactNode` | Wrap every case-insensitive occurrence of `query` in an accent-colored `<mark>`. Used by the CSV table and its row detail modal.                                                               |
+| `searchMatchRanges(text, query)`             | `(string, string) => { from, to }[]`    | The same hits as byte ranges, for `MarkdownEditorHandle.setSearchMatches`. Use it rather than re-deriving offsets, or a pane's rendered half and its source half disagree about what is a hit. |
 
 ### Main Process (`src/main/utils/stripAnsi.ts`)
 
@@ -978,6 +980,18 @@ Which agents the Left Bar may surface AT ALL - a different question from the unr
 | ------------------------------------------ | ----------------------------------------- | --------------------------------------- |
 | `captureException(error, captureContext?)` | `(Error \| unknown, { extra? }?) => void` | Report error to Sentry from renderer.   |
 | `captureMessage(message, captureContext?)` | `(string, { level?, extra? }?) => void`   | Report message to Sentry from renderer. |
+
+### Tool Activity Labels (`src/renderer/utils/toolActivityLabel.ts`)
+
+`describeToolActivity(toolName, input)` turns one raw agent tool call into ONE short line of plain English (`Read src/App.tsx`, `Ran npm test`, `Edited themes.ts`), returning `{ verb, target }`.
+
+Tool names differ per provider (Claude Code `Read`/`Bash`/`MultiEdit`, OpenCode lowercase `read`/`bash`, Codex `shell`/`apply_patch`/`update_plan`, Copilot `write_to_file`, MCP `mcp__server__tool`), so matching runs on a normalized name. An unrecognized tool still returns a usable `Used <name>` line rather than being dropped, so a provider that ships a new tool degrades to something readable instead of a hole in the feed. It never throws: a raw-string input (Codex `apply_patch` sends a whole diff, not an object) and an argv-array `command` are both handled.
+
+`describeToolActivityStatus(state)` is the other half of the same job: it turns a raw tool-lifecycle payload into `'running' | 'completed' | 'failed'`. **Read the whole payload through it, never `state.status` alone.** Codex reports a shell command that exited non-zero as `status: 'completed'` and puts the failure in `exit_code`, so trusting the word draws a check mark beside a failed build - the exact row an operator is scanning a supervision feed for. Failure signals (non-zero exit code, `isError`/`is_error`) win over the status word. A zero exit code reads as `completed` even when the provider sent no status word at all, since the shell already answered the question. `running` is only what is left when the payload carries neither a recognized terminal word nor a zero exit code - the reading that cannot mislead, because the completion event resolves it. `ToolActivityStatus` is declared here too, and re-exported from `thoughtStreamStore` for consumers of the timeline.
+
+**Do NOT confuse it with `summarizeToolInput()`** (`components/TerminalOutput/utils/toolSummaries.ts`), which builds the VERBOSE in-chat tool cell: every input key as `key=value`, the untruncated command, plus an output preview. Pick by surface - a chat transcript the user reads line by line wants the verbose cell; the Thought Stream's activity feed wants the one-liner, because its whole job is being scannable enough to spot a loop.
+
+---
 
 ### Touch Primitives (`src/renderer/utils/touch.ts`)
 

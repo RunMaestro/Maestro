@@ -550,7 +550,7 @@ function ColorPalette({
 function SelectionBadge({ theme, label }: { theme: Theme; label: string }) {
 	return (
 		<span
-			className="text-[10px] uppercase tracking-wide px-2 py-0.5 rounded"
+			className="text-2xs uppercase tracking-wide px-2 py-0.5 rounded"
 			style={{
 				color: theme.colors.accent,
 				backgroundColor: `${theme.colors.accent}1f`,

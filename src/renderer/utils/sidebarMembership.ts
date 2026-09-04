@@ -20,6 +20,9 @@
 
 import type { Session } from '../types';
 import { sessionOrChildrenNeedAttention, type AttentionContext } from './sessionAttention';
+// Imported from the leaf module rather than `tabHelpers` so a Left Bar predicate
+// doesn't drag the whole tab-management surface (and its import cycle) with it.
+import { visibleAiTabs } from './unifiedTabOrderUtils';
 
 /**
  * Does this agent match the sidebar's filter text?
@@ -36,7 +39,9 @@ export function sessionMatchesFilter(
 	const q = query.trim().toLowerCase();
 	if (!q) return true;
 	if (session.name.toLowerCase().includes(q)) return true;
-	if (session.aiTabs?.some((tab) => tab.name?.toLowerCase().includes(q))) return true;
+	// Hidden consult tabs are invisible to the user, so matching one would keep an
+	// agent in the filtered list for a name nothing on screen carries.
+	if (visibleAiTabs(session.aiTabs).some((tab) => tab.name?.toLowerCase().includes(q))) return true;
 	return worktreeChildren.some(
 		(child) =>
 			child.worktreeBranch?.toLowerCase().includes(q) || child.name.toLowerCase().includes(q)

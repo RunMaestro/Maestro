@@ -227,7 +227,7 @@ export function SnoozeTabModal({
 				{/* Free-form entry */}
 				<div>
 					<label
-						className="block text-[11px] uppercase tracking-wide mb-1"
+						className="block text-xs-plus uppercase tracking-wide mb-1"
 						style={{ color: theme.colors.textDim }}
 					>
 						Or type it
@@ -266,7 +266,7 @@ export function SnoozeTabModal({
 					<div className="flex items-center gap-1.5 mb-2">
 						<CalendarDays className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 						<span
-							className="text-[11px] uppercase tracking-wide"
+							className="text-xs-plus uppercase tracking-wide"
 							style={{ color: theme.colors.textDim }}
 						>
 							Or pick a date
@@ -304,7 +304,7 @@ export function SnoozeTabModal({
 				{/* Optional note-to-self */}
 				<div>
 					<label
-						className="block text-[11px] uppercase tracking-wide mb-1"
+						className="block text-xs-plus uppercase tracking-wide mb-1"
 						style={{ color: theme.colors.textDim }}
 					>
 						Note to self <span className="normal-case tracking-normal">(optional)</span>
@@ -330,7 +330,7 @@ export function SnoozeTabModal({
 				{canRunWakePrompt && (
 					<div>
 						<label
-							className="block text-[11px] uppercase tracking-wide mb-1"
+							className="block text-xs-plus uppercase tracking-wide mb-1"
 							style={{ color: theme.colors.textDim }}
 						>
 							Prompt on return <span className="normal-case tracking-normal">(optional)</span>
@@ -380,7 +380,7 @@ export function SnoozeTabModal({
 
 				{/* What snoozing actually does */}
 				<div
-					className="flex gap-2 text-[11px] leading-relaxed"
+					className="flex gap-2 text-xs-plus leading-relaxed"
 					style={{ color: theme.colors.textDim }}
 				>
 					<BellRing className="w-3.5 h-3.5 shrink-0 mt-0.5" />
@@ -397,7 +397,7 @@ export function SnoozeTabModal({
 				    unattended, which is a bigger promise than a reminder. */}
 				{canRunWakePrompt && wakePrompt.trim() && (
 					<div
-						className="flex gap-2 text-[11px] leading-relaxed"
+						className="flex gap-2 text-xs-plus leading-relaxed"
 						style={{ color: theme.colors.textDim }}
 					>
 						<Play className="w-3.5 h-3.5 shrink-0 mt-0.5" />

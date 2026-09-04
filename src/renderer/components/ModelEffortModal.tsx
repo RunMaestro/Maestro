@@ -471,7 +471,7 @@ export function ModelEffortModal({ theme, tabId, onClose }: ModelEffortModalProp
 
 				{/* What's being retuned */}
 				<div
-					className="relative flex items-center gap-2 text-[10px] uppercase tracking-[0.18em] min-w-0"
+					className="relative flex items-center gap-2 text-2xs uppercase tracking-[0.18em] min-w-0"
 					style={{ color: theme.colors.textDim }}
 				>
 					<span className="truncate">
@@ -499,7 +499,7 @@ export function ModelEffortModal({ theme, tabId, onClose }: ModelEffortModalProp
 						{hasModels && (
 							<div className="relative w-full flex flex-col items-center gap-2">
 								<div
-									className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.18em]"
+									className="flex items-center gap-1.5 text-2xs uppercase tracking-[0.18em]"
 									style={{ color: theme.colors.textDim }}
 								>
 									<Sparkles className="w-3 h-3" style={{ color: theme.colors.accent }} />
@@ -559,7 +559,7 @@ export function ModelEffortModal({ theme, tabId, onClose }: ModelEffortModalProp
 								{/* Fixed height so the composition doesn't shift as the
 								    caption changes length between models. */}
 								<div
-									className="h-4 text-[10px] uppercase tracking-[0.14em] truncate max-w-full"
+									className="h-4 text-2xs uppercase tracking-[0.14em] truncate max-w-full"
 									style={{ color: theme.colors.textDim }}
 								>
 									{wheelCaption}
@@ -571,7 +571,7 @@ export function ModelEffortModal({ theme, tabId, onClose }: ModelEffortModalProp
 						{hasEfforts && (
 							<div className="relative w-full flex flex-col items-center gap-2.5">
 								<div
-									className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.18em]"
+									className="flex items-center gap-1.5 text-2xs uppercase tracking-[0.18em]"
 									style={{ color: theme.colors.textDim }}
 								>
 									<Gauge className="w-3 h-3" style={{ color: theme.colors.warning }} />

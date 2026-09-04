@@ -54,12 +54,14 @@ import { AutoRunHumanStepBanner } from './AutoRunHumanStepBanner';
 import { AutoRunBottomPanel } from './AutoRunBottomPanel';
 import { NoFolderState, EmptyFolderState } from './AutoRunEmptyStates';
 import { useBatchStore } from '../../stores/batchStore';
-import { useThoughtStreamStore, selectThoughtCount } from '../../stores/thoughtStreamStore';
+import { useThoughtStreamStore, selectActivityCount } from '../../stores/thoughtStreamStore';
 import { AutoRunAttachmentsPanel } from './AutoRunAttachmentsPanel';
 import { useTemplateAutocomplete, useAutoRunUndo, useAutoRunImageHandling } from '../../hooks';
 import { TemplateAutocompleteDropdown } from '../TemplateAutocompleteDropdown';
 import type { AutoRunProps, AutoRunHandle } from './types';
 import { TextareaLineNumbers, lineNumberGutterMetrics } from '../ui/TextareaLineNumbers';
+import { FontScaleControl } from '../ui/FontScaleControl';
+import { useFontScale } from '../../hooks/ui/useFontScale';
 import { findHumanOnlyTasks } from '../../hooks/batch/batchUtils';
 import { toggleTaskCheckboxAtLine } from '../../utils/markdownTasks';
 import { useAutoRunContentSync } from '../../hooks/batch/useAutoRunContentSync';
@@ -151,9 +153,11 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 	// point here for as long as there is something buffered to read.
 	const thoughtStreamSessionId = useThoughtStreamStore((s) => s.panelSessionId);
 	const openThoughtStream = useThoughtStreamStore((s) => s.openPanel);
-	const bufferedThoughts = useThoughtStreamStore(selectThoughtCount(sessionId));
+	// Reasoning AND tool calls: a run that only acted and never narrated still
+	// has a feed worth reopening, so this gate must not be thoughts-only.
+	const bufferedActivity = useThoughtStreamStore(selectActivityCount(sessionId));
 	const showOpenThoughtStream =
-		!isAutoRunActive && bufferedThoughts > 0 && thoughtStreamSessionId !== sessionId;
+		!isAutoRunActive && bufferedActivity > 0 && thoughtStreamSessionId !== sessionId;
 	// Error state (Phase 5.10)
 	// Subscribe directly to the Zustand store to bypass the multi-hop prop chain
 	// (store → useBatchProcessor → useBatchHandlers → App → RightPanel → AutoRun)
@@ -621,6 +625,14 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		handleAutocompleteKeyDown,
 	});
 
+	// Font zoom. Reading a rendered document and editing its Markdown source are
+	// different jobs at different comfortable sizes, so each mode keeps its own
+	// scale rather than sharing one. Both hooks stay mounted so switching modes
+	// restores the size that mode was left at.
+	const previewFontScale = useFontScale('autoRun.previewFontScale');
+	const editFontScale = useFontScale('autoRun.editFontScale');
+	const activeFontScale = mode === 'edit' ? editFontScale : previewFontScale;
+
 	// Disable Bionify while search is active so search highlights remain visible
 	const hasActivePreviewSearch = searchOpen && searchQuery.trim().length > 0;
 	const effectivePreviewBionifyReadingMode = bionifyReadingMode && !hasActivePreviewSearch;
@@ -792,7 +804,12 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 					) : mode === 'edit' ? (
 						<div className="relative w-full h-full">
 							{showLineNumbers && (
-								<TextareaLineNumbers textareaRef={textareaRef} value={localContent} theme={theme} />
+								<TextareaLineNumbers
+									textareaRef={textareaRef}
+									value={localContent}
+									theme={theme}
+									remeasureKey={editFontScale.fontScale}
+								/>
 							)}
 							<textarea
 								ref={textareaRef}
@@ -823,8 +840,12 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 									// line-number gutter copies these off the live element, so
 									// the two cannot drift apart.
 									fontFamily: editorTypography.fontFamily,
-									fontSize: `${editorTypography.fontSize}px`,
+									// The surface's own size, then the pane's zoom on top of it.
+									// The line height rides the font size so zooming in doesn't
+									// cram taller glyphs into the old 20px rows.
+									fontSize: `${editorTypography.fontSize * editFontScale.fontScale}px`,
 									backgroundColor: isLocked ? theme.colors.bgActivity + '30' : 'transparent',
+									lineHeight: 1.45,
 									...(showLineNumbers
 										? { paddingLeft: lineNumberGutterMetrics(localContent).textPaddingLeft }
 										: {}),
@@ -871,10 +892,10 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 								// font and size rather than a hard-coded 13px. Tailwind's
 								// `prose-sm` pins an absolute rem size, so the explicit size
 								// here is what actually wins; everything inside is in `em` and
-								// follows. Without this a proportional face rendered at the old
-								// fixed 13px, which reads far smaller than 13px of monospace.
+								// follows, so the pane's zoom carries headings, code, and lists
+								// with it.
 								fontFamily: previewTypography.fontFamily,
-								fontSize: `${previewTypography.fontSize}px`,
+								fontSize: `${previewTypography.fontSize * previewFontScale.fontScale}px`,
 							}}
 						>
 							<style>{proseStyles}</style>
@@ -981,12 +1002,22 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 								border: `1px solid ${theme.colors.accent}40`,
 								backgroundColor: `${theme.colors.accent}15`,
 							}}
-							title={`Read this run's ${bufferedThoughts} buffered thought${bufferedThoughts === 1 ? '' : 's'}`}
+							title={`Read this run's ${bufferedActivity} buffered thought${bufferedActivity === 1 ? '' : 's'} and tool call${bufferedActivity === 1 ? '' : 's'}`}
 						>
 							<Brain className="w-3 h-3" />
 							Thoughts
 						</button>
 					)}
+					{/* Font zoom for whichever mode is on screen. Separate scales, so
+					    the reading size and the editing size don't fight each other. */}
+					<FontScaleControl
+						theme={theme}
+						control={activeFontScale}
+						size="sm"
+						target={mode === 'edit' ? 'editor' : 'preview'}
+						className="shrink-0"
+						testId="autorun-font-scale"
+					/>
 				</div>
 			)}
 

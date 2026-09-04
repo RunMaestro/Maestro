@@ -136,7 +136,7 @@ export function NewAgentChoiceModal({
 						captures application inputs until complete. For a lighter touch, create an agent
 						manually then run{' '}
 						<code
-							className="px-1 py-0.5 rounded text-[11px]"
+							className="px-1 py-0.5 rounded text-xs-plus"
 							style={{ backgroundColor: theme.colors.border }}
 						>
 							/wizard

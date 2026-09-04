@@ -367,11 +367,7 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 							)}
 						{/* Document Graph button - show for markdown files when callback is available */}
 						{toolbarVisibility.documentGraph && isMarkdown && onOpenInGraph && (
-							<HoverTooltip
-								theme={theme}
-								label="View in Document Graph"
-								shortcut={formatShortcutKeys(['Meta', 'Shift', 'g'])}
-							>
+							<HoverTooltip theme={theme} label="View in Document Graph">
 								<button
 									onClick={onOpenInGraph}
 									className={headerBtnClass}
@@ -452,7 +448,7 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 				>
 					<div className="flex items-center gap-4">
 						{fileStats && (
-							<div className="text-[10px]" style={{ color: theme.colors.textDim }}>
+							<div className="text-2xs" style={{ color: theme.colors.textDim }}>
 								<span className="opacity-60">Size:</span>{' '}
 								<span style={{ color: theme.colors.textMain }}>
 									{formatFileSize(fileStats.size)}
@@ -460,26 +456,26 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 							</div>
 						)}
 						{lineCount !== null && (
-							<div className="text-[10px]" style={{ color: theme.colors.textDim }}>
+							<div className="text-2xs" style={{ color: theme.colors.textDim }}>
 								<span className="opacity-60">Lines:</span>{' '}
 								<span style={{ color: theme.colors.textMain }}>{formatNumber(lineCount)}</span>
 							</div>
 						)}
 						{tokenCount !== null && (
-							<div className="text-[10px]" style={{ color: theme.colors.textDim }}>
+							<div className="text-2xs" style={{ color: theme.colors.textDim }}>
 								<span className="opacity-60">Tokens:</span>{' '}
 								<span style={{ color: theme.colors.accent }}>{formatTokenCount(tokenCount)}</span>
 							</div>
 						)}
 						{fileStats && (
 							<>
-								<div className="text-[10px]" style={{ color: theme.colors.textDim }}>
+								<div className="text-2xs" style={{ color: theme.colors.textDim }}>
 									<span className="opacity-60">Modified:</span>{' '}
 									<span style={{ color: theme.colors.textMain }}>
 										{formatDateTime(fileStats.modifiedAt)}
 									</span>
 								</div>
-								<div className="text-[10px]" style={{ color: theme.colors.textDim }}>
+								<div className="text-2xs" style={{ color: theme.colors.textDim }}>
 									<span className="opacity-60">Created:</span>{' '}
 									<span style={{ color: theme.colors.textMain }}>
 										{formatDateTime(fileStats.createdAt)}
@@ -488,7 +484,7 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 							</>
 						)}
 						{taskCounts && (
-							<div className="text-[10px]" style={{ color: theme.colors.textDim }}>
+							<div className="text-2xs" style={{ color: theme.colors.textDim }}>
 								<span className="opacity-60">Tasks:</span>{' '}
 								<span style={{ color: theme.colors.success }}>{taskCounts.closed}</span>
 								<span style={{ color: theme.colors.textMain }}>

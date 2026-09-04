@@ -424,7 +424,7 @@ export const GroupChatMessages = memo(
 								>
 									{/* Timestamp - outside bubble, like AI Terminal */}
 									<div
-										className={`w-20 shrink-0 text-[10px] pt-2 ${isUser ? 'text-right' : 'text-left'}`}
+										className={`w-20 shrink-0 text-2xs pt-2 ${isUser ? 'text-right' : 'text-left'}`}
 										style={{ color: theme.colors.textDim, opacity: 0.6 }}
 									>
 										{formatTimestamp(msg.timestamp)}

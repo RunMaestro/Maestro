@@ -75,6 +75,7 @@ import {
 	filterUnifiedTabOrderForUnread,
 	groupFocusFields,
 	isSessionIdLabel,
+	visibleAiTabs,
 } from '../../../renderer/utils/tabHelpers';
 import { resolveTabPermissionMode } from '../../../shared/agentMetadata';
 import type { LogEntry } from '../../../renderer/types';
@@ -4473,6 +4474,23 @@ describe('tabHelpers', () => {
 	});
 
 	describe('hidden AI tabs', () => {
+		it('visibleAiTabs drops hidden consult tabs', () => {
+			const visible = createMockTab({ id: 'ai-1' });
+			const consult = createMockTab({ id: 'consult', hidden: true });
+
+			expect(visibleAiTabs([visible, consult]).map((t) => t.id)).toEqual(['ai-1']);
+		});
+
+		it('visibleAiTabs returns the input by reference when nothing is hidden', () => {
+			const tabs = [createMockTab({ id: 'ai-1' }), createMockTab({ id: 'ai-2' })];
+
+			expect(visibleAiTabs(tabs)).toBe(tabs);
+		});
+
+		it('visibleAiTabs tolerates a missing tab list', () => {
+			expect(visibleAiTabs(undefined)).toEqual([]);
+		});
+
 		it('keeps a hidden tab out of the strip even though it holds a unifiedTabOrder ref', () => {
 			const visible = createMockTab({ id: 'ai-1' });
 			const consult = createMockTab({ id: 'consult', hidden: true });

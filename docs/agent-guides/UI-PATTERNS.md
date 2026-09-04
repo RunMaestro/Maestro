@@ -604,9 +604,13 @@ Four details that are easy to miss:
 - **Key the editor on the filename.** Undo history belongs to one document. Carried across a file switch, an undo pastes the previous file's text into this one.
 - **Put the border on a wrapper.** CM6 measures its viewport against its own host element, so a border on that host is counted twice once the content scrolls.
 
-**Highlights are pushed, not passed.** CM6 owns its document, so re-rendering the component will not move a decoration and rebuilding the view throws away the undo history and the caret. Push matches through `setSearchMatches(ranges, index)` from an effect. Build those ranges with the same `splitOnMatches()` the rendered preview highlights with (`utils/highlightMatches`) so the two modes cannot disagree about what counts as a hit, and pass `-1` for the active index when the query is a FILTER rather than a find bar - there is no cursor into the results, so every hit gets the same wash.
+**Highlights are pushed, not passed.** CM6 owns its document, so re-rendering the component will not move a decoration and rebuilding the view throws away the undo history and the caret. Push matches through `setSearchMatches(ranges, index)` from an effect, building the ranges with `searchMatchRanges(text, query)` from `utils/highlightMatches` - it runs the same `splitOnMatches()` the rendered preview highlights with, so the two modes cannot disagree about what counts as a hit. Pass `-1` for the active index when the query is a FILTER rather than a find bar: there is no cursor into the results, so every hit gets the same wash.
 
-`MemoryViewer` is the reference implementation.
+**A read-only pane needs both halves of the switch.** `<MarkdownEditor readOnly>` pushes `EditorState.readOnly` (refuses edits) AND `EditorView.editable.of(false)` (drops the caret and the `contenteditable` attribute). Setting only the first leaves a pane that still looks like a text box and silently swallows typing. Reach for it whenever the document is a reference rather than a draft - the Maestro Prompts tab renders the bundled default that way.
+
+**A host-owned popup claims keys by returning `true` from `onKeyDown`.** That handler is installed at `Prec.highest`, so it sees the key before CodeMirror's own keymap; returning anything else leaves the key to the editor. Without the precedence the arrow keys would have already moved the caret by the time a popup was offered them, which is what makes a `{{`-autocomplete over CM6 possible at all (see `useEditorTemplateAutocomplete`). Returning nothing is the safe default and matches the pre-existing behaviour.
+
+`MemoryViewer` is the reference implementation. Settings -> Maestro Prompts (`MaestroPromptsTab`) is the second rider and shows the variations: it opens on `edit` rather than `preview` (a prompt is opened here to be changed), and its Preview resolves `{{TEMPLATE}}` variables against the active agent first, because what matters about a prompt is what the agent finally receives.
 
 ### Keyboard Navigation in a `<DualPaneFileEditor>` List
 
@@ -1551,6 +1555,18 @@ const fontScale = useFontScale('filePreview.fontScale');
 - `variant="inline"` - bordered squares for a toolbar or stats bar (Director's Notes).
 - `variant="floating"` - frosted pill for overlaying a scrolling pane (file preview,
   pinned top-right as the mirror of the Table of Contents button at bottom-right).
+- `size` - `'md'` (default) or `'sm'`, which drops the buttons from `w-7 h-7` to
+  `w-6 h-6` and the icons from `w-4` to `w-3.5`. Use `'sm'` in a dense `text-xs`
+  button row (the Auto Run toolbar), where the default squares stand a couple of
+  pixels taller than the row and read heavier than the buttons beside them.
+- **A pane with a read mode and an edit mode gets two scales, not one.** Auto Run
+  keeps `autoRun.previewFontScale` and `autoRun.editFontScale` and passes whichever
+  matches the current mode; reading rendered prose and editing Markdown source are
+  comfortable at different sizes, and one shared value makes each mode fight the
+  other. Both hooks stay mounted, so switching back restores the size that mode was
+  left at. When the scale drives a `<textarea>`, scale the `lineHeight` with it
+  (Auto Run uses a unitless `1.45`) - a fixed `20px` row crams taller glyphs once
+  zoomed - and pass the scale as `remeasureKey` to `<TextareaLineNumbers>`.
 - `collapsible` (floating only) - rests as a circle the size of that Table of Contents
   button and expands to the full pill on hover or keyboard focus. The buttons are
   CLIPPED, not unmounted, so tabbing into them opens the pill instead of skipping a
@@ -1952,6 +1968,13 @@ which the docked Auto Run panel leaves off because it has no room for a gutter).
 Do NOT hand-roll another `value.split('\n').map((_, i) => <div>{i + 1}</div>)`
 gutter. That is what the YAML editor had, and it drifted out of alignment the
 moment the file was taller than the box or any line wrapped.
+
+**Pass `remeasureKey` when the textarea's typography can change without its box
+changing.** The component re-measures on its own `ResizeObserver`, and a font-size
+change leaves the border box exactly the same size, so nothing fires and the
+numbers keep the row heights of the OLD font until the next keystroke. Auto Run
+passes its edit-mode font scale; any surface with a font zoom over a numbered
+textarea needs the same.
 
 jsdom has no layout engine and no `ResizeObserver`, so under test the gutter
 renders with natural row heights rather than measured ones. That is deliberate,

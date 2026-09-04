@@ -33,6 +33,8 @@ import {
 	getMentionNameForContext,
 	getMentionMatchPriority,
 	stripUnmatchedTrailingClosers,
+	normalizeMentionName,
+	requiresIdleParticipants,
 } from '../../shared/group-chat-types';
 import {
 	IProcessManager,
@@ -102,6 +104,13 @@ export interface GroupChatSessionInfo {
 	};
 	/** Auto Run folder path for this session */
 	autoRunFolderPath?: string;
+	/**
+	 * True when this agent is running a turn right now (any AI tab, or a CLI
+	 * playbook). Computed live by the provider callback - the persisted session
+	 * record always reads idle, so it can never answer this. Group chats with
+	 * "only engage idle agents" on skip delegation to a busy agent.
+	 */
+	isBusy?: boolean;
 }
 
 /**
@@ -1191,6 +1200,54 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 }
 
 /**
+ * Whether a delegation to this agent has to stand down because the agent is
+ * already working somewhere else.
+ *
+ * A group chat participant runs as its own process in the AGENT'S working
+ * directory, so delegating to an agent the user is talking to directly puts two
+ * writers in one repo. `requireIdleParticipants` (on by default) trades a
+ * skipped turn for that collision; turning it off is the deliberate override.
+ *
+ * An agent with no matching Maestro agent can't be probed and is never blocked -
+ * "unknown" must not read as "busy", or a participant whose agent was renamed
+ * would become permanently unreachable.
+ */
+function isDelegationBlockedByBusyAgent(
+	chat: { requireIdleParticipants?: boolean },
+	matchingSession: GroupChatSessionInfo | undefined
+): boolean {
+	if (!requiresIdleParticipants(chat)) return false;
+	return matchingSession?.isBusy === true;
+}
+
+/**
+ * Tells the chat (and, through the log, the moderator's next turn) which agents
+ * were left out of a delegation because they were busy. Emitted once per
+ * moderator turn rather than once per agent, so a fan-out to three busy agents
+ * is one line rather than three.
+ */
+async function reportBusySkips(
+	groupChatId: string,
+	logPath: string,
+	skipped: string[]
+): Promise<void> {
+	if (skipped.length === 0) return;
+	const names = skipped.map((name) => `@${normalizeMentionName(name)}`).join(', ');
+	const content =
+		`⏸️ Skipped ${names} - ${skipped.length === 1 ? 'that agent is' : 'those agents are'} busy with ` +
+		`their own work right now. This chat only engages agents that are free; ` +
+		`turn that off in Edit Group Chat to interrupt them anyway.`;
+	// Appended to the log as well as emitted: the moderator reads recent log lines
+	// as context, so this is how it learns the work never got handed out.
+	await appendToLog(logPath, 'system', content);
+	groupChatEmitters.emitMessage?.(groupChatId, {
+		timestamp: new Date().toISOString(),
+		from: 'system',
+		content,
+	});
+}
+
+/**
  * Routes a moderator response, forwarding to mentioned agents.
  *
  * - Logs the message as coming from 'moderator'
@@ -1380,6 +1437,10 @@ export async function routeModeratorResponse(
 	const participantsToRespond = new Set<string>();
 	const autoRunParticipantNames = new Set<string>();
 
+	// Agents this turn declined to engage because they were mid-turn elsewhere.
+	// Reported once after the delegation loops below.
+	const busySkippedParticipants: string[] = [];
+
 	// Use the !autorun directives already extracted above (same `message` input)
 	if (autoRunDirectives.length > 0) {
 		logger.debug(
@@ -1423,6 +1484,16 @@ export async function routeModeratorResponse(
 			autoRunParticipantNames.add(participant.name);
 
 			const matchingSession = findSessionForParticipantName(participant.name, sessions);
+
+			// An Auto Run batch runs INSIDE the user's agent, so a busy agent is an
+			// even harder conflict here than a participant spawn is.
+			if (isDelegationBlockedByBusyAgent(updatedChat, matchingSession)) {
+				logger.info(`Skipping !autorun for busy agent @${participant.name}`, LOG_CONTEXT, {
+					groupChatId,
+				});
+				busySkippedParticipants.push(participant.name);
+				continue;
+			}
 
 			if (!matchingSession?.autoRunFolderPath) {
 				console.warn(
@@ -1506,6 +1577,16 @@ export async function routeModeratorResponse(
 			const matchingSession = findSessionForParticipantName(participantName, sessions);
 			const cwd = matchingSession?.cwd || os.homedir();
 			logger.debug(`[GroupChat:Debug] CWD for participant: ${cwd}`);
+
+			// Stand down rather than run a second process in a working directory the
+			// user's own conversation is already writing to.
+			if (isDelegationBlockedByBusyAgent(updatedChat, matchingSession)) {
+				logger.info(`Skipping delegation to busy agent @${participantName}`, LOG_CONTEXT, {
+					groupChatId,
+				});
+				busySkippedParticipants.push(participantName);
+				continue;
+			}
 
 			// Resolve agent configuration
 			const agent = await agentDetector.getAgent(participant.agentId);
@@ -1672,6 +1753,11 @@ export async function routeModeratorResponse(
 		logger.debug(`[GroupChat:Debug] =================================================`);
 	}
 
+	// Tell the chat about anything that was held back because its agent was busy.
+	// Done before the lifecycle cleanup below so the note lands in the log ahead of
+	// the turn settling, whether or not any other participant was engaged.
+	await reportBusySkips(groupChatId, updatedChat.logPath, busySkippedParticipants);
+
 	// If no actionable participant work was started (all directives invalid/skipped, no mentions),
 	// clean up lifecycle state so power blocks don't leak.
 	if (participantsToRespond.size === 0) {
@@ -1682,7 +1768,13 @@ export async function routeModeratorResponse(
 		// Unknown @tokens should be treated as plain text, not as a system error.
 		// Only emit a system warning here when explicit !autorun directives were present
 		// but none could be activated.
-		if (autoRunDirectives.length > 0 && mentions.length === 0) {
+		// A busy-agent skip already explained itself above; adding this vague retry
+		// notice on top of it reads as a second, unrelated failure.
+		if (
+			autoRunDirectives.length > 0 &&
+			mentions.length === 0 &&
+			busySkippedParticipants.length === 0
+		) {
 			groupChatEmitters.emitMessage?.(groupChatId, {
 				timestamp: new Date().toISOString(),
 				from: 'system',

@@ -97,7 +97,7 @@ export function ShortcutsHelpModal({
 	// Shared "Window" badge styling, reused by the per-shortcut tag and the
 	// footer note so the two stay visually identical.
 	const windowBadgeClass =
-		'flex-shrink-0 inline-flex items-center text-[10px] leading-none px-1.5 py-0.5 rounded uppercase tracking-wide font-semibold';
+		'flex-shrink-0 inline-flex items-center text-2xs leading-none px-1.5 py-0.5 rounded uppercase tracking-wide font-semibold';
 	const windowBadgeStyle = {
 		backgroundColor: theme.colors.bgActivity,
 		color: theme.colors.textDim,

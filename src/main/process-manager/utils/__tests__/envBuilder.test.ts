@@ -338,6 +338,55 @@ describe('envBuilder - Global Environment Variables', () => {
 		});
 	});
 
+	describe('Test 2.5b2: MAESTRO_QUERY_SOURCE Marker', () => {
+		it('defaults to user when no caller claims the turn', () => {
+			expect(buildChildProcessEnv().MAESTRO_QUERY_SOURCE).toBe('user');
+		});
+
+		it('carries the claimed origin for Auto Run and Cue turns', () => {
+			expect(
+				buildChildProcessEnv(undefined, false, undefined, undefined, undefined, 'auto')
+					.MAESTRO_QUERY_SOURCE
+			).toBe('auto');
+			expect(
+				buildChildProcessEnv(undefined, false, undefined, undefined, undefined, 'cue')
+					.MAESTRO_QUERY_SOURCE
+			).toBe('cue');
+		});
+
+		it('is not overridable by global or session env vars', () => {
+			// A stray var of the same name in Settings would otherwise relabel every
+			// turn on the machine, which is worse than the var not existing at all.
+			const env = buildChildProcessEnv(
+				{ MAESTRO_QUERY_SOURCE: 'user' },
+				false,
+				{ MAESTRO_QUERY_SOURCE: 'user' },
+				undefined,
+				undefined,
+				'cue'
+			);
+
+			expect(env.MAESTRO_QUERY_SOURCE).toBe('cue');
+		});
+
+		it('can still be removed by unsetEnvKeys', () => {
+			const env = buildChildProcessEnv(
+				undefined,
+				false,
+				undefined,
+				undefined,
+				['MAESTRO_QUERY_SOURCE'],
+				'cue'
+			);
+
+			expect(env.MAESTRO_QUERY_SOURCE).toBeUndefined();
+		});
+
+		it('is absent from terminal PTY env - a shell is not an agent turn', () => {
+			expect(buildPtyTerminalEnv().MAESTRO_QUERY_SOURCE).toBeUndefined();
+		});
+	});
+
 	describe('Test 2.5c: PATH Handling', () => {
 		it('should set PATH to expanded path', () => {
 			const env = buildChildProcessEnv();
@@ -704,6 +753,17 @@ describe('envBuilder - Global Environment Variables', () => {
 			const result = collectMaestroEnvVars({ WORKSPACE: '~/work' }, { CACHE_DIR: '~/cache' });
 			expect(result.WORKSPACE).toBe(path.join(os.homedir(), 'work'));
 			expect(result.CACHE_DIR).toBe(path.join(os.homedir(), 'cache'));
+		});
+
+		it('reports MAESTRO_QUERY_SOURCE only when the caller resolved one', () => {
+			// The list mirrors what the process actually received, so terminal PTYs
+			// (which never get the marker) must not advertise it.
+			expect(collectMaestroEnvVars(undefined, undefined, false).MAESTRO_QUERY_SOURCE).toBe(
+				undefined
+			);
+			expect(collectMaestroEnvVars(undefined, undefined, false, 'cue').MAESTRO_QUERY_SOURCE).toBe(
+				'cue'
+			);
 		});
 
 		it('includes MAESTRO_SESSION_RESUMED only when isResuming is true', () => {

@@ -322,7 +322,7 @@ export function FeedbackModal({ theme, sessions, onClose, onSwitchToSession }: F
 										<PencilLine className="w-4 h-4" />
 										{drafts.length > 0 && (
 											<span
-												className="absolute -top-2 -right-2 text-[9px] font-bold rounded-full px-1 leading-tight"
+												className="absolute -top-2 -right-2 text-3xs font-bold rounded-full px-1 leading-tight"
 												style={{
 													backgroundColor: theme.colors.accent,
 													color: theme.colors.accentForeground,
@@ -343,7 +343,7 @@ export function FeedbackModal({ theme, sessions, onClose, onSwitchToSession }: F
 										<History className="w-4 h-4" />
 										{openIssueCount > 0 && (
 											<span
-												className="absolute -top-2 -right-2 text-[9px] font-bold rounded-full px-1 leading-tight"
+												className="absolute -top-2 -right-2 text-3xs font-bold rounded-full px-1 leading-tight"
 												style={{
 													backgroundColor: theme.colors.success,
 													color: theme.colors.accentForeground,

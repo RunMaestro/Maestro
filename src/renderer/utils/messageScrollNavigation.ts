@@ -73,3 +73,39 @@ export function isTextInputTarget(target: EventTarget | null): boolean {
 	if (target.isContentEditable) return true;
 	return false;
 }
+
+/** `<input>` types that swallow typed characters. Everything else (range,
+ *  color, checkbox, radio, button) reacts to keys but never accepts text. */
+const TEXT_ENTRY_INPUT_TYPES = new Set([
+	'text',
+	'search',
+	'url',
+	'email',
+	'password',
+	'number',
+	'tel',
+	'date',
+	'datetime-local',
+	'month',
+	'time',
+	'week',
+]);
+
+/**
+ * True when the target accepts free-form typed text, so a keystroke belongs to
+ * it rather than to a surface-level shortcut.
+ *
+ * Narrower than {@link isTextInputTarget}, which counts every `<input>`. Use
+ * that one for arrow keys, where a range slider legitimately owns Left/Right.
+ * Use this one for shortcuts a slider has no claim on (Cmd+Z, single-letter
+ * tool keys): a focused slider must not silently disable them.
+ */
+export function isTextEntryTarget(target: EventTarget | null): boolean {
+	if (!(target instanceof HTMLElement)) return false;
+	if (target.isContentEditable) return true;
+	if (target.tagName === 'TEXTAREA') return true;
+	if (target.tagName !== 'INPUT') return false;
+	// A bare <input> with no type attribute is a text field.
+	const type = (target as HTMLInputElement).type?.toLowerCase() || 'text';
+	return TEXT_ENTRY_INPUT_TYPES.has(type);
+}

@@ -8,6 +8,7 @@ import {
 	createSshRemoteStoreAdapter,
 } from '../../../utils/ssh-remote-resolver';
 import { buildSshCommandWithStdin } from '../../../utils/ssh-command-builder';
+import { DEFAULT_QUERY_SOURCE, QUERY_SOURCE_ENV_VAR } from '../../../../shared/querySource';
 import { buildStreamJsonMessage } from '../../../process-manager/utils/streamJsonBuilder';
 import type { SshRemoteConfig } from '../../../../shared/types';
 import { MaestroSettings } from '../persistence';
@@ -201,6 +202,10 @@ export async function wrapSpawnForSsh(input: SshSpawnWrapInput): Promise<SshSpaw
 				...globalShellEnvVars,
 				...(effectiveCustomEnvVars || {}),
 				...(remoteInteractive?.env || {}),
+				// Only this map crosses to the remote host, so the turn-origin
+				// marker that buildChildProcessEnv() stamps locally has to be
+				// re-stated here or every SSH turn looks hand-typed.
+				[QUERY_SOURCE_ENV_VAR]: config.querySource ?? DEFAULT_QUERY_SOURCE,
 			};
 
 			const sshCommand = await buildSshCommandWithStdin(sshResult.config, {

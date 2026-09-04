@@ -19,7 +19,7 @@ export function ToolExecutionEntry({
 			style={{ color: theme.colors.textDim }}
 		>
 			<span
-				className="px-1.5 py-0.5 rounded text-[10px] shrink-0"
+				className="px-1.5 py-0.5 rounded text-2xs shrink-0"
 				style={{
 					backgroundColor:
 						status === 'complete' ? `${theme.colors.success}30` : `${theme.colors.accent}30`,

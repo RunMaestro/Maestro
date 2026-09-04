@@ -4,6 +4,7 @@ import { formatMetaKey } from '../../../utils/shortcutFormatter';
 import { resolveSnoozeTarget } from '../../../utils/snoozeHelpers';
 import { useModalStore } from '../../../stores/modalStore';
 import { resolveActiveTabRef } from '../../../utils/panelLayout';
+import { visibleAiTabs } from '../../../utils/tabHelpers';
 
 interface BuildNewTabCommandsArgs {
 	activeSession: Session | undefined;
@@ -260,15 +261,15 @@ export function buildTabCommands({
 		});
 	}
 
-	if (isAiMode && activeSession?.aiTabs && activeSession.aiTabs.length > 0 && onCloseAllTabs) {
+	// Count only what the strip draws: hidden consult tabs survive a close-all, so
+	// including them would name a number the user can neither see nor close.
+	const closableTabCount = visibleAiTabs(activeSession?.aiTabs).length;
+	if (isAiMode && closableTabCount > 0 && onCloseAllTabs) {
 		commands.push({
 			id: 'closeAllTabs',
 			label: 'Close All Tabs',
 			shortcut: tabShortcuts?.closeAllTabs,
-			subtext:
-				activeSession.aiTabs.length === 1
-					? 'Close 1 tab'
-					: `Close all ${activeSession.aiTabs.length} tabs`,
+			subtext: closableTabCount === 1 ? 'Close 1 tab' : `Close all ${closableTabCount} tabs`,
 			action: () => {
 				onCloseAllTabs();
 				setQuickActionOpen(false);

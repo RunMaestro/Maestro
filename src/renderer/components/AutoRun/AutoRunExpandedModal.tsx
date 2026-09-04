@@ -412,7 +412,7 @@ export function AutoRunExpandedModal({
 									Save
 									{/* Keyboard shortcut overlay on hover */}
 									<span
-										className="absolute -bottom-6 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded text-[10px] whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
+										className="absolute -bottom-6 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded text-2xs whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
 										style={{
 											backgroundColor: theme.colors.bgMain,
 											color: theme.colors.textDim,

@@ -6,6 +6,7 @@ import reactHooksPlugin from 'eslint-plugin-react-hooks';
 import prettierConfig from 'eslint-config-prettier';
 import globals from 'globals';
 import maestroPlugin from './eslint-rules/no-em-dash-in-comments.mjs';
+import fontSizesPlugin from './eslint-rules/no-arbitrary-font-sizes.mjs';
 
 export default tseslint.config(
 	// Ignore patterns
@@ -66,6 +67,7 @@ export default tseslint.config(
 			react: reactPlugin,
 			'react-hooks': reactHooksPlugin,
 			maestro: maestroPlugin,
+			'font-sizes': fontSizesPlugin,
 		},
 		rules: {
 			// TypeScript-specific rules
@@ -107,6 +109,11 @@ export default tseslint.config(
 			// identical. Autofixable via `eslint --fix`. See the rule for why this
 			// covers comments only and not string literals.
 			'maestro/no-em-dash-in-comments': 'error',
+
+			// Font-size sweep: prevent regression of hard-pixel font classes that freeze
+			// when users change root font-size. Named classes (text-3xs, text-2xs,
+			// text-xs-plus, text-xs) and .row-hover are the correct replacements.
+			'font-sizes/no-arbitrary-font-sizes': 'error',
 		},
 		settings: {
 			react: {

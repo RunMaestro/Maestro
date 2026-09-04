@@ -958,7 +958,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					    drop target: pointer-events-none keeps it out of the way of the
 					    receptacle above it and of anything the drag passes over. */}
 					<div
-						className="px-2.5 py-1.5 rounded text-[11px] flex items-center justify-center gap-1.5 transition-colors pointer-events-none"
+						className="px-2.5 py-1.5 rounded text-xs-plus flex items-center justify-center gap-1.5 transition-colors pointer-events-none"
 						style={{
 							// Borderless and faintly tinted so it doesn't read as another
 							// bordered bar next to the stats strip right below it. The
@@ -987,7 +987,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 								<span className="flex items-center gap-1.5">
 									{altKeySymbol !== altKeyName && (
 										<kbd
-											className="px-1 py-px rounded text-[10px] font-semibold leading-none"
+											className="px-1 py-px rounded text-2xs font-semibold leading-none"
 											style={{
 												border: `1px solid ${theme.colors.border}`,
 												color: theme.colors.textMain,

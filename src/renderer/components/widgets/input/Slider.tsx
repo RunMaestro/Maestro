@@ -71,7 +71,7 @@ export const Slider = memo(function Slider({
 				<div className="flex items-center justify-between gap-2">
 					<label
 						htmlFor={inputId}
-						className="text-[11px] font-medium uppercase tracking-wide"
+						className="text-xs-plus font-medium uppercase tracking-wide"
 						style={{ color: theme.colors.textDim }}
 					>
 						{label}
@@ -103,7 +103,7 @@ export const Slider = memo(function Slider({
 				/* Presentational only. The stops are already reachable through the
 				   input itself, so these carry aria-hidden rather than becoming a
 				   second, silent set of controls in the tab order. */
-				<div className="flex justify-between text-[10px]" aria-hidden="true">
+				<div className="flex justify-between text-2xs" aria-hidden="true">
 					{tickLabels.map((tick, index) => (
 						<span
 							key={tick}

@@ -120,7 +120,7 @@ export function CrossAgentResponseHeader({
 			</button>
 
 			{/* Provider label - muted, non-interactive. */}
-			<span className="shrink-0 text-[10px] leading-none" style={{ color: theme.colors.textDim }}>
+			<span className="shrink-0 text-2xs leading-none" style={{ color: theme.colors.textDim }}>
 				{providerName}
 			</span>
 
@@ -128,7 +128,7 @@ export function CrossAgentResponseHeader({
 			<button
 				type="button"
 				onClick={copySessionId}
-				className="shrink-0 text-[10px] font-mono opacity-70 hover:opacity-100 outline-none focus-visible:ring-2 rounded px-0.5"
+				className="shrink-0 text-2xs font-mono opacity-70 hover:opacity-100 outline-none focus-visible:ring-2 rounded px-0.5"
 				style={{ color: theme.colors.textDim, ...ringStyle }}
 				title={`Session ID: ${crossAgent.fromSessionId} (click to copy)`}
 			>

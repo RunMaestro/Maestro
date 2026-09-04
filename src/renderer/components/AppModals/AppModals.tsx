@@ -400,7 +400,8 @@ export interface AppModalsProps {
 	onCreateGroupChat: (
 		name: string,
 		moderatorAgentId: string,
-		moderatorConfig?: ModeratorConfig
+		moderatorConfig?: ModeratorConfig,
+		requireIdleParticipants?: boolean
 	) => void;
 	showDeleteGroupChatModal: string | null;
 	onCloseDeleteGroupChatModal: () => void;
@@ -414,7 +415,8 @@ export interface AppModalsProps {
 		id: string,
 		name: string,
 		moderatorAgentId: string,
-		moderatorConfig?: ModeratorConfig
+		moderatorConfig?: ModeratorConfig,
+		requireIdleParticipants?: boolean
 	) => void;
 	groupChatMessages: GroupChatMessage[];
 	onCloseGroupChatInfo: () => void;

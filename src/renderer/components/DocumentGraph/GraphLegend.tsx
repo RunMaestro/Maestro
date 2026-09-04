@@ -263,7 +263,7 @@ const EdgePreview = memo(function EdgePreview({
 const KeyboardBadge = memo(function KeyboardBadge({ keys, theme }: { keys: string; theme: Theme }) {
 	return (
 		<span
-			className="inline-flex items-center justify-center px-1.5 py-0.5 rounded text-[10px] font-mono"
+			className="inline-flex items-center justify-center px-1.5 py-0.5 rounded text-2xs font-mono"
 			style={{
 				backgroundColor: `${theme.colors.textDim}15`,
 				color: theme.colors.textMain,

@@ -998,7 +998,7 @@ export function FeedbackChatView({
 										</p>
 										<div className="flex items-center gap-2 mt-0.5">
 											<span
-												className="text-[10px] px-1.5 py-0.5 rounded-full"
+												className="text-2xs px-1.5 py-0.5 rounded-full"
 												style={{
 													backgroundColor:
 														issue.state === 'OPEN'
@@ -1010,7 +1010,7 @@ export function FeedbackChatView({
 											>
 												{issue.state === 'OPEN' ? 'Open' : 'Closed'}
 											</span>
-											<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
+											<span className="text-2xs" style={{ color: theme.colors.textDim }}>
 												by {issue.author}
 											</span>
 										</div>
@@ -1029,7 +1029,7 @@ export function FeedbackChatView({
 											type="button"
 											onClick={() => subscribeToIssue(issue)}
 											disabled={subscribingTo !== null}
-											className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-bold transition-colors hover:opacity-90 disabled:opacity-40"
+											className="flex items-center gap-1 px-2 py-1 rounded text-2xs font-bold transition-colors hover:opacity-90 disabled:opacity-40"
 											style={{
 												backgroundColor: theme.colors.accent,
 												color: theme.colors.accentForeground,
@@ -1109,7 +1109,7 @@ export function FeedbackChatView({
 					{/* Search status indicator */}
 					{searchingIssues && (
 						<span
-							className="flex items-center gap-1 text-[10px]"
+							className="flex items-center gap-1 text-2xs"
 							style={{ color: theme.colors.textDim }}
 						>
 							<Spinner size={12} />
@@ -1117,7 +1117,7 @@ export function FeedbackChatView({
 						</span>
 					)}
 					{!searchingIssues && matchingIssues.length > 0 && (
-						<span className="text-[10px]" style={{ color: theme.colors.warning }}>
+						<span className="text-2xs" style={{ color: theme.colors.warning }}>
 							{matchingIssues.length} similar issue{matchingIssues.length !== 1 ? 's' : ''} found
 						</span>
 					)}
@@ -1152,7 +1152,7 @@ export function FeedbackChatView({
 				</div>
 				{saveError && (
 					<div
-						className="mt-1.5 text-[10px] font-medium"
+						className="mt-1.5 text-2xs font-medium"
 						style={{ color: theme.colors.error }}
 						role="alert"
 					>
@@ -1212,7 +1212,7 @@ export function FeedbackChatView({
 							<div className="flex items-center gap-2">
 								<Spinner size={16} color={theme.colors.accent} />
 								{diagnostics.length > 0 && (
-									<span className="text-[11px]" style={{ color: theme.colors.textDim }}>
+									<span className="text-xs-plus" style={{ color: theme.colors.textDim }}>
 										Checking your system...
 									</span>
 								)}
@@ -1224,7 +1224,7 @@ export function FeedbackChatView({
 									{diagnostics.map((diagnostic, i) => (
 										<li
 											key={`${diagnostic.timestamp}-${i}`}
-											className="flex items-start gap-1.5 text-[11px] font-mono"
+											className="flex items-start gap-1.5 text-xs-plus font-mono"
 											style={{ color: theme.colors.textDim }}
 										>
 											<Terminal className="w-3 h-3 mt-0.5 shrink-0" />
@@ -1259,7 +1259,7 @@ export function FeedbackChatView({
 									style={{ border: `1px solid ${theme.colors.border}` }}
 								>
 									<span
-										className="text-[10px] px-1 py-0.5 rounded-full shrink-0"
+										className="text-2xs px-1 py-0.5 rounded-full shrink-0"
 										style={{
 											backgroundColor:
 												issue.state === 'OPEN'
@@ -1290,7 +1290,7 @@ export function FeedbackChatView({
 										type="button"
 										onClick={() => subscribeToIssue(issue)}
 										disabled={subscribingTo !== null}
-										className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold transition-colors hover:opacity-90 disabled:opacity-40 shrink-0"
+										className="flex items-center gap-1 px-2 py-0.5 rounded text-2xs font-bold transition-colors hover:opacity-90 disabled:opacity-40 shrink-0"
 										style={{
 											backgroundColor: theme.colors.accent,
 											color: theme.colors.accentForeground,
@@ -1310,7 +1310,7 @@ export function FeedbackChatView({
 						<button
 							type="button"
 							onClick={() => setMatchingIssues([])}
-							className="mt-2 text-[10px] transition-colors hover:underline"
+							className="mt-2 text-2xs transition-colors hover:underline"
 							style={{ color: theme.colors.textDim }}
 						>
 							None of these match - I have a new issue
@@ -1383,7 +1383,7 @@ export function FeedbackChatView({
 								<p className="text-xs font-semibold" style={{ color: theme.colors.textDim }}>
 									Drag screenshots here or click to browse
 								</p>
-								<p className="text-[10px]" style={{ color: theme.colors.textDim, opacity: 0.7 }}>
+								<p className="text-2xs" style={{ color: theme.colors.textDim, opacity: 0.7 }}>
 									PNG, JPG, GIF, or WebP. Up to {MAX_ATTACHMENTS} images, 10 MB each.
 								</p>
 							</div>
@@ -1417,7 +1417,7 @@ export function FeedbackChatView({
 							style={{ accentColor: theme.colors.accent }}
 						/>
 						<Package className="w-3 h-3" style={{ color: theme.colors.textDim }} />
-						<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
+						<span className="text-2xs" style={{ color: theme.colors.textDim }}>
 							Include support package
 						</span>
 					</label>
@@ -1433,7 +1433,7 @@ export function FeedbackChatView({
 							title="A performance trace is attached to this report"
 						>
 							<Gauge className="w-3 h-3" style={{ color: theme.colors.success }} />
-							<span className="text-[10px]">Performance trace ({formatSize(traceSizeBytes)})</span>
+							<span className="text-2xs">Performance trace ({formatSize(traceSizeBytes)})</span>
 							<button
 								type="button"
 								onClick={removeTrace}
@@ -1461,7 +1461,7 @@ export function FeedbackChatView({
 									style={{ backgroundColor: theme.colors.error }}
 								/>
 							)}
-							<span className="text-[10px] font-semibold">
+							<span className="text-2xs font-semibold">
 								{traceBusy ? 'Saving trace...' : 'Stop recording'}
 							</span>
 						</button>
@@ -1475,13 +1475,13 @@ export function FeedbackChatView({
 							title="Record a performance trace, then reproduce the slow behavior"
 						>
 							<Gauge className="w-3 h-3" />
-							<span className="text-[10px]">Record performance trace</span>
+							<span className="text-2xs">Record performance trace</span>
 						</button>
 					)}
 
 					{(traceError || submitError) && (
 						<p
-							className="text-[10px] truncate"
+							className="text-2xs truncate"
 							style={{ color: theme.colors.error }}
 							title={traceError || submitError}
 						>
@@ -1490,7 +1490,7 @@ export function FeedbackChatView({
 					)}
 				</div>
 				{isTracing && !traceBusy && (
-					<p className="pb-2 text-[10px]" style={{ color: theme.colors.textDim, opacity: 0.8 }}>
+					<p className="pb-2 text-2xs" style={{ color: theme.colors.textDim, opacity: 0.8 }}>
 						Recording... reproduce the issue, then reopen this window and click Stop recording.
 					</p>
 				)}

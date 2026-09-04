@@ -24,6 +24,7 @@ import type { StatsAggregation } from '../../hooks/stats/useStats';
 import { stripLeadingEmojis } from '../../../shared/emojiUtils';
 import { formatAgeShort } from '../../../shared/formatters';
 import { fuzzyMatchWithScore } from '../../utils/search';
+import { visibleAiTabs } from '../../utils/tabHelpers';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { EscCloseButton } from '../ui/EscCloseButton';
@@ -96,7 +97,9 @@ const AgentCard = memo(function AgentCard({
 		};
 	}, [data, session, visibleSessions]);
 
-	const tabCount = session.aiTabs?.length ?? 0;
+	// Hidden consult tabs have no chip, so counting them would show a tab total the
+	// agent's own strip contradicts.
+	const tabCount = visibleAiTabs(session.aiTabs).length;
 	const statusColor = getStatusColor(session.state, theme);
 
 	const autoPctLabel = autoPercent === null ? 'no recorded queries' : `${autoPercent}% auto`;

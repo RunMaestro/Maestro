@@ -41,6 +41,37 @@ export interface ItemCountInfo {
 }
 
 /**
+ * Options for a single-round-trip local tree walk.
+ */
+export interface LocalTreeScanOptions {
+	/** Hard recursion depth cap. */
+	maxDepth: number;
+	/** Soft cap on file entries. Folders are exempt. Omit for unlimited. */
+	maxEntries?: number;
+	/** Ignore patterns. Omit to use the local defaults. */
+	ignorePatterns?: string[];
+	/** Whether to merge the root `.gitignore` into the ignore patterns. */
+	honorGitignore?: boolean;
+}
+
+/**
+ * Result of a single-round-trip local tree walk.
+ */
+export interface LocalTreeScanResult {
+	tree: LocalTreeScanNode[];
+	truncated: boolean;
+	filesFound: number;
+	directoriesScanned: number;
+}
+
+/** A node in a {@link LocalTreeScanResult}. */
+export interface LocalTreeScanNode {
+	name: string;
+	type: 'file' | 'folder';
+	children?: LocalTreeScanNode[];
+}
+
+/**
  * Options for batched remote tree enumeration.
  */
 export interface ListTreeRemoteOptions {
@@ -79,7 +110,7 @@ export function createFsApi() {
 		/**
 		 * Enumerate a remote directory tree in a single SSH round-trip.
 		 * Returns flat lists of directory and file paths relative to `rootPath`.
-		 * SSH-only - local trees should use the renderer's recursive `loadFileTree`.
+		 * SSH-only - local trees go through `readDirTree`.
 		 */
 		listTreeRemote: (
 			rootPath: string,
@@ -154,6 +185,17 @@ export function createFsApi() {
 		 */
 		stat: (filePath: string, sshRemoteId?: string): Promise<FileStat | null> =>
 			ipcRenderer.invoke('fs:stat', filePath, sshRemoteId),
+
+		/**
+		 * Walk a local directory tree in a single round-trip.
+		 *
+		 * Prefer this over recursing with {@link readDir} from the renderer: a
+		 * per-directory walk costs one IPC round-trip per folder, and on a large
+		 * tree those round-trips - not the disk - are the entire load time.
+		 * SSH trees use `listTreeRemote` instead.
+		 */
+		readDirTree: (dirPath: string, options: LocalTreeScanOptions): Promise<LocalTreeScanResult> =>
+			ipcRenderer.invoke('fs:readDirTree', dirPath, options),
 
 		/**
 		 * Get directory size information

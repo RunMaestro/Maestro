@@ -76,7 +76,7 @@ export function GroupContextMenu({
 			}}
 		>
 			<div
-				className="px-3 py-1 text-[10px] uppercase tracking-wider opacity-60 flex items-center gap-2"
+				className="px-3 py-1 text-2xs uppercase tracking-wider opacity-60 flex items-center gap-2"
 				style={{ color: theme.colors.textDim }}
 			>
 				<span>{group.emoji}</span>

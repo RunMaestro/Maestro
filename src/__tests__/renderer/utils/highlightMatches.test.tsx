@@ -1,7 +1,7 @@
 import React from 'react';
 import { describe, it, expect } from 'vitest';
 import { render } from '@testing-library/react';
-import { highlightMatches } from '../../../renderer/utils/highlightMatches';
+import { highlightMatches, searchMatchRanges } from '../../../renderer/utils/highlightMatches';
 
 const ACCENT = '#ff0000';
 
@@ -81,5 +81,69 @@ describe('highlightMatches', () => {
 
 		expect(container.querySelectorAll('mark')).toHaveLength(2);
 		expect(container.textContent).toBe('xxmiddlexx');
+	});
+});
+
+/**
+ * The byte-range form the CodeMirror editor paints its decorations from.
+ *
+ * A pane that offers both a rendered preview and a source editor highlights the
+ * same query twice through two different mechanisms, so these assert the ranges
+ * against the SAME text `highlightMatches` marks up. Anything that made the two
+ * disagree would show a hit in one mode and not the other.
+ */
+describe('searchMatchRanges', () => {
+	/** The substrings the ranges actually point at - the thing that must be right. */
+	const sliced = (text: string, query: string) =>
+		searchMatchRanges(text, query).map((r) => text.slice(r.from, r.to));
+
+	it('returns nothing for an empty query', () => {
+		expect(searchMatchRanges('hello', '')).toEqual([]);
+	});
+
+	it('returns nothing when the query does not appear', () => {
+		expect(searchMatchRanges('hello', 'zzz')).toEqual([]);
+	});
+
+	it('points at the match, not at an offset one place off', () => {
+		expect(searchMatchRanges('New York City', 'York')).toEqual([{ from: 4, to: 8 }]);
+		expect(sliced('New York City', 'York')).toEqual(['York']);
+	});
+
+	it('finds every occurrence, including adjacent ones', () => {
+		expect(searchMatchRanges('ab ab ab', 'ab')).toEqual([
+			{ from: 0, to: 2 },
+			{ from: 3, to: 5 },
+			{ from: 6, to: 8 },
+		]);
+		expect(searchMatchRanges('aaaa', 'aa')).toEqual([
+			{ from: 0, to: 2 },
+			{ from: 2, to: 4 },
+		]);
+	});
+
+	it('matches case-insensitively and spans the source casing', () => {
+		expect(sliced('New York City', 'york')).toEqual(['York']);
+	});
+
+	it('treats regex metacharacters as literal text', () => {
+		expect(sliced('cost is $5.00 (net)', '$5.00')).toEqual(['$5.00']);
+		// '.' must not behave as "any character"
+		expect(searchMatchRanges('abc', '.')).toEqual([]);
+	});
+
+	it('counts offsets across newlines, not per line', () => {
+		// The editor addresses one flat document, so a hit on line three has to
+		// carry the offsets of the lines above it.
+		const doc = 'one\ntwo\nthree';
+		expect(sliced(doc, 'three')).toEqual(['three']);
+		expect(searchMatchRanges(doc, 'three')).toEqual([{ from: 8, to: 13 }]);
+	});
+
+	it('agrees with the rendered highlights about what is a hit', () => {
+		const text = 'ab ab ab ab';
+		const marks = renderHighlight(text, 'ab').querySelectorAll('mark');
+
+		expect(searchMatchRanges(text, 'ab')).toHaveLength(marks.length);
 	});
 });

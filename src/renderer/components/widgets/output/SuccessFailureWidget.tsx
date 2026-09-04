@@ -54,7 +54,7 @@ export const SuccessFailureWidget = memo(function SuccessFailureWidget({
 					{successPct}%
 				</span>
 				<span
-					className="text-[11px] uppercase tracking-wide"
+					className="text-xs-plus uppercase tracking-wide"
 					style={{ color: theme.colors.textDim }}
 				>
 					success rate
