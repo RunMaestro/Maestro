@@ -44,6 +44,7 @@
 		"postinstall": "patch-package && electron-rebuild -f -w node-pty,better-sqlite3",
 		"lint": "tsc -p tsconfig.lint.json && tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.cli.json --noEmit",
 		"lint:eslint": "eslint src/ && eslint -c eslint.dashes.config.mjs src/__tests__ scripts",
+		"docs:verify": "node scripts/verify-docs-paths.mjs",
 		"format": "prettier --write \"src/**/*.{ts,tsx}\"",
 		"format:all": "prettier --write .",
 		"format:check": "prettier --check \"src/**/*.{ts,tsx}\"",
