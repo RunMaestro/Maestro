@@ -1,0 +1,333 @@
+{
+	"schemaVersion": 1,
+	"startedAt": "2026-09-04T01:57:05.415Z",
+	"finishedAt": "2026-09-04T01:58:51.000Z",
+	"executable": "<explicit-omp-executable>",
+	"workspace": "<isolated-workspace>",
+	"harnessSha256": "244e633cad7485595118b6109c1c97d813b25a61a495458390d41c69126129ba",
+	"sourceRevision": "8893b9a97bac6dc84754b50ccf9735465fe6ce5c",
+	"fixtureRevision": 1,
+	"maestro": {
+		"version": "0.18.5-RC",
+		"hostContract": "run-fleet/v1-placeholder"
+	},
+	"adapter": {
+		"id": "official.omp",
+		"version": "unreleased-placeholder"
+	},
+	"host": {
+		"platform": "win32",
+		"architecture": "x64",
+		"release": "10.0.26200"
+	},
+	"omp": {
+		"version": "18.1.6",
+		"sha256": "99a824d60aa93f28a4d3e863acc7d47ffb5be51a1653f0d12aec1af4806b4b76",
+		"identityStatus": "pass",
+		"identityReasons": []
+	},
+	"protocol": {
+		"name": "rpc",
+		"requestedVersion": 2,
+		"ready": {
+			"protocolVersion": 1,
+			"supportedProtocolVersions": [1, 2],
+			"maxFrameBytes": 1048576,
+			"maxReassembledFrameBytes": 67108864
+		},
+		"documentationSha256": "42b1744f652601efd6bc8c8f0ea4c14bda49499fca2c9782882389447d09b230"
+	},
+	"sourcePolicy": {
+		"allowed": ["OMP --help", "OMP --version", "omp://rpc.md", "RPC stdio", "ACP stdio"],
+		"forbidden": ["private OMP session files", "private OMP settings", "OMP implementation modules"]
+	},
+	"options": {
+		"live": true
+	},
+	"cases": [
+		{
+			"id": "A01",
+			"title": "RPC identity, negotiation, framing, and limits",
+			"required": true,
+			"status": "pass",
+			"durationMs": 1560,
+			"evidence": {
+				"version": "18.1.6",
+				"sha256": "99a824d60aa93f28a4d3e863acc7d47ffb5be51a1653f0d12aec1af4806b4b76",
+				"protocolVersions": [1, 2],
+				"serverLimits": {
+					"maxFrameBytes": 1048576,
+					"maxReassembledFrameBytes": 67108864
+				},
+				"maestroLogicalLimit": 8388608,
+				"documentedCommandCount": 42,
+				"documentedEventCount": 18,
+				"helpAdvertisesNoSession": true,
+				"transportComparison": {
+					"selected": "rpc",
+					"rpc": {
+						"advertised": true,
+						"liveStateRead": true
+					},
+					"rpcUi": {
+						"advertised": true,
+						"liveStateRead": true,
+						"protocolVersions": [1, 2]
+					},
+					"acp": {
+						"advertised": true,
+						"selected": false,
+						"reason": "Standard client compatibility surface; RPC exposes the OMP-specific host-control contract."
+					}
+				}
+			}
+		},
+		{
+			"id": "A02",
+			"title": "Session identity and public reattachment",
+			"required": true,
+			"status": "pass",
+			"durationMs": 6158,
+			"evidence": {
+				"stableSessionId": true,
+				"stableSessionFile": true,
+				"createAndResumeUsedPublicRpcStateOnly": true
+			}
+		},
+		{
+			"id": "A03",
+			"title": "Root stream, snapshot, paging, and replay",
+			"required": true,
+			"status": "pass",
+			"durationMs": 18167,
+			"evidence": {
+				"frameCounts": {
+					"agent_end": 1,
+					"agent_start": 1,
+					"extension_ui_request": 1,
+					"message_end": 2,
+					"message_start": 2,
+					"message_update": 481,
+					"response": 2,
+					"turn_end": 1,
+					"turn_start": 1
+				},
+				"messageCount": 2,
+				"snapshotSha256": "a4e59621d68577f18d85082f6e4c8a45b2eb0699b787324e927771de559f2a4a",
+				"terminalAgentEnd": true,
+				"busyErrorCode": "session_busy",
+				"staleCursorCode": "stale_cursor"
+			}
+		},
+		{
+			"id": "A04",
+			"title": "Worker registry, hierarchy, and transcript surface",
+			"required": true,
+			"status": "fail",
+			"durationMs": 45463,
+			"error": "public Worker transcript did not expose the completed worker message"
+		},
+		{
+			"id": "A05",
+			"title": "Steering, cancellation, and abort-and-prompt",
+			"required": true,
+			"status": "fail",
+			"durationMs": 2442,
+			"error": "abort_and_prompt was accepted without a correlated completion signal; responseKeys=id,type,command,success; dataKeys=; promptResultCount=0; promptResultIds="
+		},
+		{
+			"id": "A06",
+			"title": "Approval callback and restrictive launch policy",
+			"required": true,
+			"status": "pass",
+			"durationMs": 12892,
+			"evidence": {
+				"requestCount": 1,
+				"methods": ["select"],
+				"rejectedByHost": true,
+				"restrictiveLaunch": true,
+				"acpPermissionSurface": "documented-standard; RPC is the selected adapter transport"
+			}
+		},
+		{
+			"id": "A07",
+			"title": "Dynamic models, providers, thinking, and effective state",
+			"required": true,
+			"status": "pass",
+			"durationMs": 248,
+			"evidence": {
+				"modelCount": 766,
+				"providerCount": 14,
+				"modelChangeRoundTrip": true,
+				"thinkingChangeRoundTrip": true,
+				"fastModeReadbackFields": ["active", "enabled"],
+				"loginProviderCount": 70
+			}
+		},
+		{
+			"id": "A08",
+			"title": "Todos, commands, host tools, stats, and compaction surface",
+			"required": true,
+			"status": "pass",
+			"durationMs": 15224,
+			"evidence": {
+				"todoRoundTrip": true,
+				"hostToolNames": ["maestro_probe"],
+				"hostToolCallbackCount": 1,
+				"hostToolCallFields": ["arguments", "id", "toolCallId", "toolName", "type"],
+				"hostUriSchemes": ["maestroprobe"],
+				"commandCount": 43,
+				"statsFields": [
+					"assistantMessages",
+					"contextUsage",
+					"cost",
+					"premiumRequests",
+					"sessionId",
+					"tokens",
+					"toolCalls",
+					"toolResults",
+					"totalMessages",
+					"userMessages"
+				],
+				"contextUsageFields": ["contextWindow", "percent", "tokens"]
+			}
+		},
+		{
+			"id": "A09",
+			"title": "Evidence, artifact, process, worktree, and export surface",
+			"required": true,
+			"status": "pass",
+			"durationMs": 163,
+			"evidence": {
+				"bashResponseFields": [
+					"cancelled",
+					"exitCode",
+					"output",
+					"outputBytes",
+					"outputLines",
+					"totalBytes",
+					"totalLines",
+					"truncated",
+					"workingDir"
+				],
+				"bashEffectObserved": true,
+				"exportStatus": "unavailable: export_html failed: Cannot export in-memory session to HTML",
+				"discoveredToolSurfaces": {
+					"file": false,
+					"browser": false,
+					"worktree": false,
+					"process": false,
+					"pty": false,
+					"artifact": false
+				},
+				"providerOwnedToolEvents": true
+			}
+		},
+		{
+			"id": "A10",
+			"title": "Typed errors and fail-closed capability changes",
+			"required": true,
+			"status": "pass",
+			"durationMs": 133,
+			"evidence": {
+				"parseFailure": {
+					"type": "response",
+					"idPresent": false,
+					"command": "parse",
+					"success": false,
+					"keys": ["command", "error", "success", "type"]
+				},
+				"unknownCommand": {
+					"type": "response",
+					"idPresent": false,
+					"command": "maestro_unknown_command",
+					"success": false,
+					"keys": ["command", "error", "success", "type"]
+				},
+				"staleCursorCode": "stale_cursor",
+				"busyCodeObservedDuringLiveRun": "session_busy",
+				"providerFailure": {
+					"type": "response",
+					"idPresent": true,
+					"command": "set_model",
+					"success": false,
+					"keys": ["command", "error", "id", "success", "type"]
+				},
+				"stateUnchangedAfterRejectedMutation": true
+			}
+		},
+		{
+			"id": "A11",
+			"title": "Stable power-user protocol gaps",
+			"required": false,
+			"status": "fail",
+			"durationMs": 0,
+			"evidence": {
+				"requirements": [
+					{
+						"id": "G1",
+						"name": "host-created workers",
+						"status": "unsupported",
+						"reason": "RPC has observation APIs but no create_worker command."
+					},
+					{
+						"id": "G2",
+						"name": "direct worker steering and messaging",
+						"status": "unsupported",
+						"reason": "RPC steering targets the root session and exposes no command_worker command."
+					},
+					{
+						"id": "G3",
+						"name": "completed worker transcript visibility",
+						"status": "unsupported",
+						"reason": "get_subagent_messages returned no completed worker message after terminal root completion."
+					},
+					{
+						"id": "G5",
+						"name": "deterministic abort-and-prompt completion",
+						"status": "ambiguous",
+						"reason": "Command acceptance alone does not prove terminal abort-and-prompt completion."
+					}
+				]
+			}
+		}
+	],
+	"capabilities": [
+		{
+			"id": "G1",
+			"name": "host-created workers",
+			"status": "unsupported",
+			"reason": "RPC has observation APIs but no create_worker command."
+		},
+		{
+			"id": "G2",
+			"name": "direct worker steering and messaging",
+			"status": "unsupported",
+			"reason": "RPC steering targets the root session and exposes no command_worker command."
+		},
+		{
+			"id": "G3",
+			"name": "completed worker transcript visibility",
+			"status": "unsupported",
+			"reason": "get_subagent_messages returned no completed worker message after terminal root completion."
+		},
+		{
+			"id": "G5",
+			"name": "deterministic abort-and-prompt completion",
+			"status": "ambiguous",
+			"reason": "Command acceptance alone does not prove terminal abort-and-prompt completion."
+		}
+	],
+	"deviations": [
+		{
+			"id": "A09_RESOURCE_SURFACE",
+			"detail": "Dedicated artifact, browser, worktree, background-process, and PTY lifecycle APIs are not part of RPC v2; available agent tools remain provider-owned structured events."
+		}
+	],
+	"verdict": {
+		"adapterProtocol": "fail",
+		"workloadParity": "blocked",
+		"blockingCaseIds": ["A04", "A05"],
+		"blockingCapabilityIds": ["G1", "G2", "G3", "G5"]
+	}
+}

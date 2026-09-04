@@ -1,0 +1,111 @@
+{
+	"schemaVersion": 1,
+	"omp": {
+		"version": "18.1.6",
+		"sha256": "99a824d60aa93f28a4d3e863acc7d47ffb5be51a1653f0d12aec1af4806b4b76",
+		"protocol": "rpc",
+		"startupProtocolVersion": 1,
+		"supportedProtocolVersions": [1, 2]
+	},
+	"transport": {
+		"serverMaxFrameBytes": 1048576,
+		"serverMaxReassembledFrameBytes": 67108864,
+		"maestroMaxFrameBytes": 1048576,
+		"maestroMaxReassembledFrameBytes": 8388608
+	},
+	"requiredCommandTypes": [
+		"prompt",
+		"steer",
+		"follow_up",
+		"abort",
+		"abort_and_prompt",
+		"new_session",
+		"negotiate_protocol",
+		"get_state",
+		"set_fast_mode",
+		"get_available_commands",
+		"set_todos",
+		"set_host_tools",
+		"set_host_uri_schemes",
+		"set_subagent_subscription",
+		"get_subagents",
+		"get_subagent_messages",
+		"set_model",
+		"cycle_model",
+		"get_available_models",
+		"set_thinking_level",
+		"cycle_thinking_level",
+		"set_steering_mode",
+		"set_follow_up_mode",
+		"set_interrupt_mode",
+		"compact",
+		"set_auto_compaction",
+		"set_auto_retry",
+		"abort_retry",
+		"bash",
+		"abort_bash",
+		"get_session_stats",
+		"export_html",
+		"switch_session",
+		"branch",
+		"get_branch_messages",
+		"get_last_assistant_text",
+		"set_session_name",
+		"handoff",
+		"get_messages",
+		"get_messages_page",
+		"get_login_providers",
+		"login"
+	],
+	"requiredEventTypes": [
+		"agent_start",
+		"agent_end",
+		"turn_start",
+		"turn_end",
+		"message_start",
+		"message_update",
+		"message_end",
+		"tool_execution_start",
+		"tool_execution_update",
+		"tool_execution_end",
+		"model_changed",
+		"thinking_level_changed",
+		"goal_updated",
+		"available_commands_update",
+		"prompt_result",
+		"extension_ui_request",
+		"host_tool_call",
+		"host_tool_cancel"
+	],
+	"requiredCases": ["A01", "A02", "A03", "A04", "A05", "A06", "A07", "A08", "A09", "A10", "A11"],
+	"powerUserCapabilities": [
+		{
+			"id": "G1",
+			"name": "host-created workers",
+			"required": true,
+			"expected": "unsupported",
+			"missingProtocolPrimitive": "create_worker"
+		},
+		{
+			"id": "G2",
+			"name": "direct worker steering and messaging",
+			"required": true,
+			"expected": "unsupported",
+			"missingProtocolPrimitive": "command_worker"
+		},
+		{
+			"id": "G3",
+			"name": "completed worker transcript visibility",
+			"required": true,
+			"expected": "supported",
+			"requiredSignal": "get_subagent_messages contains completed worker message after terminal root completion"
+		},
+		{
+			"id": "G5",
+			"name": "deterministic abort-and-prompt completion",
+			"required": true,
+			"expected": "supported",
+			"requiredSignal": "response.data.agentInvoked or prompt_result"
+		}
+	]
+}
