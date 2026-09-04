@@ -39,6 +39,7 @@ import {
 
 import { getCustomSyncPath } from './utils';
 import { trackStoreWrites } from './write-tracker';
+import { deferStoreWrites, type DeferredWriteStore } from './deferred-writes';
 
 function deserializeStoreJson<T = Record<string, unknown>>(value: string): T {
 	return parseJsonWithBom<T>(value);
@@ -51,6 +52,7 @@ function deserializeStoreJson<T = Record<string, unknown>>(value: string): T {
 let _bootstrapStore: Store<BootstrapSettings> | null = null;
 let _settingsStore: Store<MaestroSettings> | null = null;
 let _sessionsStore: Store<SessionsData> | null = null;
+let _sessionsWriter: DeferredWriteStore<SessionsData> | null = null;
 let _groupsStore: Store<GroupsData> | null = null;
 let _agentConfigsStore: Store<AgentConfigsData> | null = null;
 let _agentCapabilitiesStore: Store<AgentCapabilitiesData> | null = null;
@@ -113,12 +115,23 @@ export function initializeStores(options: StoreInitOptions): {
 		'maestro-settings.json'
 	);
 
-	_sessionsStore = new Store<SessionsData>({
-		name: 'maestro-sessions',
-		cwd: _syncPath,
-		defaults: SESSIONS_DEFAULTS,
-		deserialize: deserializeStoreJson,
-	});
+	// The sessions store is read and written far more than any other, and is the
+	// only one that grows with agent count into the multi-megabyte range. Served
+	// from an in-memory cache and flushed asynchronously so a streaming turn
+	// can't block the UI thread that dispatches keyboard input (issue #1501).
+	// Safe to cache: single-instance lock, no file watcher, and maestro-cli only
+	// reads this file. See stores/deferred-writes.ts.
+	const sessionsWriter = deferStoreWrites(
+		new Store<SessionsData>({
+			name: 'maestro-sessions',
+			cwd: _syncPath,
+			defaults: SESSIONS_DEFAULTS,
+			deserialize: deserializeStoreJson,
+		}),
+		'sessions'
+	);
+	_sessionsWriter = sessionsWriter;
+	_sessionsStore = sessionsWriter.store;
 
 	_groupsStore = new Store<GroupsData>({
 		name: 'maestro-groups',
@@ -208,4 +221,16 @@ export function getCachedPaths() {
 		syncPath: _syncPath,
 		productionDataPath: _productionDataPath,
 	};
+}
+
+/**
+ * Write any pending sessions document to disk synchronously.
+ *
+ * Sessions are normally flushed asynchronously behind a short coalescing timer
+ * (see stores/deferred-writes.ts). On the quit path there is no later tick to
+ * rely on - the process is force-exited shortly after cleanup - so the last
+ * write has to land before we return. No-op when nothing is pending.
+ */
+export function flushPendingSessionWritesSync(): void {
+	_sessionsWriter?.flushSync();
 }

@@ -19,6 +19,7 @@ import { captureException } from '../utils/sentry';
 import { powerManager as powerManagerInstance } from '../power-manager';
 import { isMacOS } from '../../shared/platformDetection';
 import { flushTranscriptMirrorsSync } from '../storage/starred-transcript-mirror';
+import { flushPendingSessionWritesSync } from '../stores';
 
 /**
  * Safety timeout for quit confirmation from the renderer.
@@ -330,6 +331,17 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 	 */
 	function performCleanup(): void {
 		logger.info('Application shutting down', 'Shutdown');
+
+		// Land the last sessions write before anything else. Session persistence is
+		// normally deferred behind a short coalescing timer so it can't block the
+		// UI thread (see stores/deferred-writes.ts), but this path force-exits the
+		// process a moment from now, so that timer will never fire. Runs first so a
+		// throw further down cleanup can't cost the user their agent list.
+		try {
+			flushPendingSessionWritesSync();
+		} catch (err) {
+			logger.error(`Error flushing sessions on quit: ${err}`, 'Shutdown');
+		}
 
 		// Stop history manager watcher
 		getHistoryManager().stopWatching();
