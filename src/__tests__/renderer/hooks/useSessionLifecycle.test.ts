@@ -197,6 +197,43 @@ describe('useSessionLifecycle', () => {
 			});
 		});
 
+		it('persists parked env vars alongside the live ones', () => {
+			// The editor keeps switched-off vars OUT of customEnvVars so no spawn
+			// path has to filter. If this argument were dropped here, the parked
+			// rows would vanish the moment the user saved.
+			const session = createMockSession({ id: 'session-1' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			act(() => {
+				result.current.handleSaveEditAgent(
+					'session-1',
+					'Agent',
+					undefined, // toolType unchanged
+					undefined, // nudgeMessage
+					undefined, // newSessionMessage
+					undefined, // customPath
+					undefined, // customArgs
+					{ LIVE: 'a' },
+					undefined, // customModel
+					undefined, // customContextWindow
+					undefined, // sessionSshRemoteConfig
+					undefined, // enableMaestroP
+					undefined, // maestroPPath
+					undefined, // maestroPMode
+					undefined, // retryOnAvailabilityErrors
+					undefined, // retryOnTokenExhaustion
+					undefined, // failoverConfig
+					{ PARKED: 'b' }
+				);
+			});
+
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.customEnvVars).toEqual({ LIVE: 'a' });
+			expect(updated.customEnvVarsDisabled).toEqual({ PARKED: 'b' });
+		});
+
 		it('only modifies the targeted session', () => {
 			const session1 = createMockSession({ id: 'session-1', name: 'Session 1' });
 			const session2 = createMockSession({ id: 'session-2', name: 'Session 2' });
@@ -254,6 +291,7 @@ describe('useSessionLifecycle', () => {
 				customPath: '/old/claude/path',
 				customArgs: '--old-args',
 				customEnvVars: { OLD_KEY: 'old' },
+				customEnvVarsDisabled: { OLD_PARKED: 'old' },
 				customModel: 'sonnet',
 				customContextWindow: 200000,
 			});
@@ -295,6 +333,7 @@ describe('useSessionLifecycle', () => {
 			expect(updated.customPath).toBeUndefined();
 			expect(updated.customArgs).toBeUndefined();
 			expect(updated.customEnvVars).toBeUndefined();
+			expect(updated.customEnvVarsDisabled).toBeUndefined();
 			expect(updated.customModel).toBeUndefined();
 			expect(updated.customContextWindow).toBeUndefined();
 

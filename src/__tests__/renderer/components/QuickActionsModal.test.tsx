@@ -203,6 +203,8 @@ describe('QuickActionsModal', () => {
 			historySearchFilterOpen: false,
 			outputSearchOpen: false,
 			activeFocus: 'main',
+			showUnreadOnly: false,
+			showUnreadAgentsOnly: false,
 		});
 		// Reset fileExplorerStore state
 		useFileExplorerStore.setState({
@@ -318,6 +320,29 @@ describe('QuickActionsModal', () => {
 			expect(
 				screen.getByText(formatShortcutKeys(mockShortcuts.nextUnreadTab.keys))
 			).toBeInTheDocument();
+		});
+
+		it('names the state the Unread Only entry puts you in, not the one you are in', () => {
+			const props = createDefaultProps();
+			const { unmount } = render(<QuickActionsModal {...props} />);
+			expect(screen.getByText('Unread Only: On')).toBeInTheDocument();
+			unmount();
+
+			// Both filters on - the entry now offers the way back out.
+			useUIStore.setState({ showUnreadOnly: true, showUnreadAgentsOnly: true });
+			render(<QuickActionsModal {...props} />);
+			expect(screen.getByText('Unread Only: Off')).toBeInTheDocument();
+		});
+
+		it('drives both unread filters from the Unread Only entry', () => {
+			const props = createDefaultProps();
+			render(<QuickActionsModal {...props} />);
+
+			fireEvent.click(screen.getByText('Unread Only: On'));
+
+			const { showUnreadOnly, showUnreadAgentsOnly } = useUIStore.getState();
+			expect(showUnreadOnly).toBe(true);
+			expect(showUnreadAgentsOnly).toBe(true);
 		});
 
 		it('renders Navigate Back / Forward actions with shortcuts when handlers provided', () => {

@@ -1096,6 +1096,8 @@ export interface Session {
 	customPath?: string; // Custom path to agent binary (overrides agent-level)
 	customArgs?: string; // Custom CLI arguments (overrides agent-level)
 	customEnvVars?: Record<string, string>; // Custom environment variables (overrides agent-level)
+	// Env vars switched off in the editor: parked, never spawned with. See shared/types.ts.
+	customEnvVarsDisabled?: Record<string, string>;
 	customModel?: string; // Custom model ID (overrides agent-level)
 	customEffort?: string; // Custom effort/reasoning level (overrides agent-level)
 	customProviderPath?: string; // Custom provider path (overrides agent-level)

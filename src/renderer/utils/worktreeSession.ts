@@ -119,6 +119,9 @@ export function buildWorktreeSession(params: BuildWorktreeSessionParams): Sessio
 		customPath: params.parentSession.customPath,
 		customArgs: params.parentSession.customArgs,
 		customEnvVars: params.parentSession.customEnvVars,
+		// Parked vars come along too, or the worktree agent silently loses the
+		// switched-off entries the user is keeping for later.
+		customEnvVarsDisabled: params.parentSession.customEnvVarsDisabled,
 		customModel: params.parentSession.customModel,
 		// New model inherits these; legacy does not
 		customContextWindow: isLegacy ? undefined : params.parentSession.customContextWindow,

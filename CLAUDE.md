@@ -79,6 +79,8 @@ Grep-verified 2026-09-04 (`npm run docs:verify` re-checks every path). This is t
 - **Toast notifications:** `notifyToast({ color, title, message, dismissible? })`, `theme` in `src/renderer/stores/notificationStore.ts`
 - **Center flash (rapid acks):** `notifyCenterFlash({ message, color, detail?, duration? })`, `flashCopiedToClipboard()` in `src/renderer/stores/centerFlashStore.ts`
 - **Opening a modal / dashboard by name:** `UI_SURFACES`, `resolveUiSurface()` in `src/shared/uiSurfaces.ts`
+- **Whether a modal takes the window over:** `DESTINATION_MODALS`, `registerExternalDestination()` in `src/renderer/stores/modalStore.ts`
+- **Toggling the unread filters:** `toggleAllUnreadFilters()`, `toggleTabUnreadFilter()` in `src/renderer/services/unreadFilters.ts`
 - **Scheduled Tasks (clock-driven Cue subs):** `src/shared/cue/scheduled-tasks.ts`
 - **How much work happened in a group chat:** `computeGroupChatActivity(entries)`, `elapsedTimeMs` in `src/shared/groupChatActivity.ts`
 - **Whether an agent is drawn in the Left Bar:** `sessionMatchesFilter()`, `passesUnreadFilter()` in `src/renderer/utils/sidebarMembership.ts`

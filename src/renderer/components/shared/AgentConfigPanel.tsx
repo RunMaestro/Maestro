@@ -14,7 +14,7 @@
  */
 
 import { useState, useRef, useMemo, useEffect } from 'react';
-import { RefreshCw, Plus, Trash2, HelpCircle, ChevronDown } from 'lucide-react';
+import { RefreshCw, Plus, Trash2, HelpCircle, ChevronDown, Eye, EyeOff } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { ToggleButtonGroup } from '../ToggleButtonGroup';
 import type { Theme, AgentConfig, AgentConfigOption } from '../../types';
@@ -310,9 +310,26 @@ export interface AgentConfigPanelProps {
 	onCustomArgsBlur: () => void;
 	// Environment variables
 	customEnvVars: Record<string, string>;
-	onEnvVarKeyChange: (oldKey: string, newKey: string, value: string) => void;
-	onEnvVarValueChange: (key: string, value: string) => void;
-	onEnvVarRemove: (key: string) => void;
+	/**
+	 * Parked env vars: same shape as `customEnvVars`, but switched off. Pass this
+	 * together with `onEnvVarToggle` to get the per-row eye button; omit both and
+	 * the panel behaves exactly as before (every row is active, no eye).
+	 *
+	 * A parked var is kept OUT of `customEnvVars` on purpose - that is what lets
+	 * every spawn path keep reading one record with no filter.
+	 */
+	customEnvVarsDisabled?: Record<string, string>;
+	/** Move a var between the active and parked records. `nextEnabled` is the state being switched TO. */
+	onEnvVarToggle?: (key: string, nextEnabled: boolean) => void;
+	/**
+	 * The trailing `enabled` argument on these four says WHICH record the row
+	 * being edited lives in, so the parent knows where to write. It is always
+	 * `true` when the toggle props are omitted, which is why the existing
+	 * two-argument handlers in non-toggling consumers keep working untouched.
+	 */
+	onEnvVarKeyChange: (oldKey: string, newKey: string, value: string, enabled?: boolean) => void;
+	onEnvVarValueChange: (key: string, value: string, enabled?: boolean) => void;
+	onEnvVarRemove: (key: string, enabled?: boolean) => void;
 	onEnvVarAdd: () => void;
 	onEnvVarsBlur: () => void;
 	// Agent-specific config options
@@ -374,6 +391,8 @@ export function AgentConfigPanel({
 	onCustomArgsChange,
 	onCustomArgsBlur,
 	customEnvVars,
+	customEnvVarsDisabled,
+	onEnvVarToggle,
 	onEnvVarKeyChange,
 	onEnvVarValueChange,
 	onEnvVarRemove,
@@ -472,16 +491,21 @@ export function AgentConfigPanel({
 		return envVarIdsRef.current.get(key)!;
 	};
 
-	// Clean up stale IDs when env vars change (only if not currently being edited)
+	// Clean up stale IDs when env vars change (only if not currently being edited).
+	// Parked keys count as current: a toggle only moves a var between the two
+	// records, and dropping its ID there would remount the row mid-click.
 	useMemo(() => {
-		const currentKeys = new Set(Object.keys(customEnvVars));
+		const currentKeys = new Set([
+			...Object.keys(customEnvVars),
+			...Object.keys(customEnvVarsDisabled ?? {}),
+		]);
 		for (const key of envVarIdsRef.current.keys()) {
 			if (!currentKeys.has(key) && !pendingKeyEditsRef.current.has(key)) {
 				envVarIdsRef.current.delete(key);
 				pendingKeyEditsRef.current.delete(key);
 			}
 		}
-	}, [customEnvVars]);
+	}, [customEnvVars, customEnvVarsDisabled]);
 
 	// Get current display value for env var key (pending edit or actual)
 	const getKeyDisplayValue = (originalKey: string): string => {
@@ -495,7 +519,7 @@ export function AgentConfigPanel({
 	};
 
 	// Commit pending key edit on blur
-	const handleKeyBlur = (originalKey: string, currentValue: string) => {
+	const handleKeyBlur = (originalKey: string, currentValue: string, enabled: boolean) => {
 		const pendingKey = pendingKeyEditsRef.current.get(originalKey);
 		pendingKeyEditsRef.current.delete(originalKey);
 
@@ -506,10 +530,31 @@ export function AgentConfigPanel({
 				envVarIdsRef.current.delete(originalKey);
 				envVarIdsRef.current.set(pendingKey, id);
 			}
-			onEnvVarKeyChange(originalKey, pendingKey, currentValue);
+			onEnvVarKeyChange(originalKey, pendingKey, currentValue, enabled);
 		}
 		onEnvVarsBlur();
 	};
+
+	// The toggle needs both halves to round-trip a parked var; with only one,
+	// switching a row off would drop its value on the floor.
+	const canToggleEnvVars = Boolean(customEnvVarsDisabled && onEnvVarToggle);
+
+	// One list over both records. Sorting by the stable ID (assigned in first-seen
+	// order and preserved across a toggle) is what keeps a row where it is when
+	// the user switches it off, instead of letting it jump to the parked group.
+	const envVarRows = [
+		...Object.entries(customEnvVars).map(([key, value]) => ({ key, value, enabled: true })),
+		...Object.entries(customEnvVarsDisabled ?? {}).map(([key, value]) => ({
+			key,
+			value,
+			enabled: false,
+		})),
+	]
+		// Resolve every ID up front: `sort` visits pairs in an engine-defined order,
+		// so minting IDs inside the comparator would number the rows by comparison
+		// order rather than by list order.
+		.map((row) => ({ ...row, id: getEnvVarId(row.key) }))
+		.sort((a, b) => a.id - b.id);
 
 	// Multi-install chooser state. `activePath` is whatever the Path field
 	// currently resolves to; it may be a hand-typed wrapper (or a tilde path
@@ -867,44 +912,74 @@ export function AgentConfigPanel({
 							</div>
 						))}
 					{/* User-defined env vars */}
-					{Object.entries(customEnvVars).map(([key, value]) => (
-						<div key={`env-var-${getEnvVarId(key)}`} className="flex gap-2">
-							<input
-								type="text"
-								value={getKeyDisplayValue(key)}
-								onChange={(e) => handleKeyInputChange(key, e.target.value)}
-								onBlur={() => handleKeyBlur(key, value)}
-								onClick={(e) => e.stopPropagation()}
-								placeholder="VARIABLE_NAME"
-								className="flex-1 p-2 rounded border bg-transparent outline-none text-xs font-mono"
-								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
-							/>
-							<span className="flex items-center text-xs" style={{ color: theme.colors.textDim }}>
-								=
-							</span>
-							<input
-								type="text"
-								value={value}
-								onChange={(e) => onEnvVarValueChange(key, e.target.value)}
-								onBlur={onEnvVarsBlur}
-								onClick={(e) => e.stopPropagation()}
-								placeholder="value"
-								className="flex-[2] p-2 rounded border bg-transparent outline-none text-xs font-mono"
-								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
-							/>
-							<GhostIconButton
-								onClick={(e) => {
-									e.stopPropagation();
-									onEnvVarRemove(key);
-								}}
-								padding="p-2"
-								title="Remove variable"
-								color={theme.colors.textDim}
-							>
-								<Trash2 className="w-3 h-3" />
-							</GhostIconButton>
-						</div>
-					))}
+					{envVarRows.map(({ key, value, enabled, id }) => {
+						const off = !enabled;
+						return (
+							<div key={`env-var-${id}`} className="flex gap-2">
+								{canToggleEnvVars && (
+									<GhostIconButton
+										onClick={(e) => {
+											e.stopPropagation();
+											onEnvVarToggle?.(key, off);
+										}}
+										padding="p-2"
+										title={
+											off
+												? `Enable ${key || 'variable'} (currently not passed to this agent)`
+												: `Disable ${key || 'variable'} (keeps the value, stops passing it to this agent)`
+										}
+										color={off ? theme.colors.textDim : theme.colors.accent}
+									>
+										{off ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+									</GhostIconButton>
+								)}
+								<input
+									type="text"
+									value={getKeyDisplayValue(key)}
+									onChange={(e) => handleKeyInputChange(key, e.target.value)}
+									onBlur={() => handleKeyBlur(key, value, enabled)}
+									onClick={(e) => e.stopPropagation()}
+									placeholder="VARIABLE_NAME"
+									className="flex-1 p-2 rounded border bg-transparent outline-none text-xs font-mono"
+									style={{
+										borderColor: theme.colors.border,
+										color: theme.colors.textMain,
+										opacity: off ? 0.45 : 1,
+										textDecoration: off ? 'line-through' : undefined,
+									}}
+								/>
+								<span className="flex items-center text-xs" style={{ color: theme.colors.textDim }}>
+									=
+								</span>
+								<input
+									type="text"
+									value={value}
+									onChange={(e) => onEnvVarValueChange(key, e.target.value, enabled)}
+									onBlur={onEnvVarsBlur}
+									onClick={(e) => e.stopPropagation()}
+									placeholder="value"
+									className="flex-[2] p-2 rounded border bg-transparent outline-none text-xs font-mono"
+									style={{
+										borderColor: theme.colors.border,
+										color: theme.colors.textMain,
+										opacity: off ? 0.45 : 1,
+										textDecoration: off ? 'line-through' : undefined,
+									}}
+								/>
+								<GhostIconButton
+									onClick={(e) => {
+										e.stopPropagation();
+										onEnvVarRemove(key, enabled);
+									}}
+									padding="p-2"
+									title="Remove variable"
+									color={theme.colors.textDim}
+								>
+									<Trash2 className="w-3 h-3" />
+								</GhostIconButton>
+							</div>
+						);
+					})}
 					{/* Add new env var button */}
 					<button
 						onClick={(e) => {

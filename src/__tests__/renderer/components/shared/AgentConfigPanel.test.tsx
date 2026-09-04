@@ -40,6 +40,16 @@ vi.mock('lucide-react', () => ({
 			▼
 		</span>
 	),
+	Eye: ({ className }: { className?: string }) => (
+		<span data-testid="eye-icon" className={className}>
+			👁
+		</span>
+	),
+	EyeOff: ({ className }: { className?: string }) => (
+		<span data-testid="eye-off-icon" className={className}>
+			🚫
+		</span>
+	),
 }));
 
 // Mock the URL opener so we can assert the install link routes through it
@@ -704,5 +714,102 @@ describe('AgentConfigPanel - detected installation chooser', () => {
 		fireEvent.change(select, { target: { value: CODEX_PATHS[1] } });
 
 		expect(persisted).toEqual([CODEX_PATHS[1]]);
+	});
+
+	describe('env var disable toggle', () => {
+		it('renders no eye button when the parked record is not supplied', () => {
+			render(<AgentConfigPanel {...createDefaultProps({ customEnvVars: { MY_VAR: 'x' } })} />);
+
+			expect(screen.queryByTitle(/^Disable /)).not.toBeInTheDocument();
+			expect(screen.queryByTitle(/^Enable /)).not.toBeInTheDocument();
+		});
+
+		it('reports the switched-to state when a live var is disabled', () => {
+			const onEnvVarToggle = vi.fn();
+			render(
+				<AgentConfigPanel
+					{...createDefaultProps({
+						customEnvVars: { MY_VAR: 'x' },
+						customEnvVarsDisabled: {},
+						onEnvVarToggle,
+					})}
+				/>
+			);
+
+			fireEvent.click(screen.getByTitle(/^Disable MY_VAR/));
+
+			expect(onEnvVarToggle).toHaveBeenCalledWith('MY_VAR', false);
+		});
+
+		it('lists parked vars alongside live ones and can switch one back on', () => {
+			const onEnvVarToggle = vi.fn();
+			render(
+				<AgentConfigPanel
+					{...createDefaultProps({
+						customEnvVars: { LIVE: 'a' },
+						customEnvVarsDisabled: { PARKED: 'b' },
+						onEnvVarToggle,
+					})}
+				/>
+			);
+
+			expect(screen.getByDisplayValue('PARKED')).toBeInTheDocument();
+			expect(screen.getByDisplayValue('b')).toBeInTheDocument();
+
+			fireEvent.click(screen.getByTitle(/^Enable PARKED/));
+
+			expect(onEnvVarToggle).toHaveBeenCalledWith('PARKED', true);
+		});
+
+		it('routes edits on a parked row to the parked record', () => {
+			const onEnvVarValueChange = vi.fn();
+			const onEnvVarRemove = vi.fn();
+			render(
+				<AgentConfigPanel
+					{...createDefaultProps({
+						customEnvVars: {},
+						customEnvVarsDisabled: { PARKED: 'b' },
+						onEnvVarToggle: vi.fn(),
+						onEnvVarValueChange,
+						onEnvVarRemove,
+					})}
+				/>
+			);
+
+			fireEvent.change(screen.getByDisplayValue('b'), { target: { value: 'c' } });
+			expect(onEnvVarValueChange).toHaveBeenCalledWith('PARKED', 'c', false);
+
+			fireEvent.click(screen.getByTitle('Remove variable'));
+			expect(onEnvVarRemove).toHaveBeenCalledWith('PARKED', false);
+		});
+
+		it('keeps a row in place after it is toggled off', () => {
+			// The parked record renders after the live one, so without the stable-ID
+			// sort a switched-off row would jump below its still-live neighbour.
+			const { rerender } = render(
+				<AgentConfigPanel
+					{...createDefaultProps({
+						customEnvVars: { FIRST: 'a', SECOND: 'b' },
+						customEnvVarsDisabled: {},
+						onEnvVarToggle: vi.fn(),
+					})}
+				/>
+			);
+
+			rerender(
+				<AgentConfigPanel
+					{...createDefaultProps({
+						customEnvVars: { SECOND: 'b' },
+						customEnvVarsDisabled: { FIRST: 'a' },
+						onEnvVarToggle: vi.fn(),
+					})}
+				/>
+			);
+
+			const keyInputs = screen.getAllByPlaceholderText('VARIABLE_NAME');
+			expect(keyInputs[0]).toHaveValue('FIRST');
+			expect(keyInputs[1]).toHaveValue('SECOND');
+			expect(screen.getByTitle(/^Enable FIRST/)).toBeInTheDocument();
+		});
 	});
 });

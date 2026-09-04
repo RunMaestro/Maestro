@@ -73,6 +73,8 @@ export interface ModeratorConfig {
 	customArgs?: string;
 	/** Custom environment variables */
 	customEnvVars?: Record<string, string>;
+	/** Env vars switched off in the editor: parked, never passed to the moderator. */
+	customEnvVarsDisabled?: Record<string, string>;
 	/** Custom model selection (e.g., 'ollama/qwen3:8b') */
 	customModel?: string;
 	/** SSH remote config for remote execution */

@@ -12,7 +12,7 @@
  *   - Groups persistence (sync groups to electron-store)
  *   - Navigation history tracking (push on session/tab change)
  *
- * Reads from: sessionStore, modalStore, uiStore
+ * Reads from: sessionStore, modalStore
  */
 
 import { useCallback, useEffect } from 'react';
@@ -23,9 +23,8 @@ import { useSessionStore, selectActiveSession } from '../../stores/sessionStore'
 import { switchTabProvider } from '../../utils/providerTabSessions';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useModalStore } from '../../stores/modalStore';
-import { useUIStore } from '../../stores/uiStore';
 import { notifyToast } from '../../stores/notificationStore';
-import { aiTabFocusFields, getActiveTab, extractQuickTabName } from '../../utils/tabHelpers';
+import { getActiveTab, extractQuickTabName } from '../../utils/tabHelpers';
 import {
 	renameTerminalTab as renameTerminalTabHelper,
 	getTerminalSessionId,
@@ -35,6 +34,7 @@ import type { NavHistoryEntry } from './useNavigationHistory';
 import { captureException } from '../../utils/sentry';
 import { persistTabStarred } from '../../utils/starredSessions';
 import { clearFailover, getActiveEndpoint } from '../../stores/failoverStore';
+import { toggleTabUnreadFilter } from '../../services/unreadFilters';
 import { failoverArmed, findEndpoint } from '../../../shared/providerFailover';
 
 // ============================================================================
@@ -79,7 +79,8 @@ export interface SessionLifecycleReturn {
 		maestroPMode?: 'interactive' | 'dynamic',
 		retryOnAvailabilityErrors?: boolean,
 		retryOnTokenExhaustion?: boolean,
-		failoverConfig?: FailoverConfig
+		failoverConfig?: FailoverConfig,
+		customEnvVarsDisabled?: Record<string, string>
 	) => void;
 	/** Rename the currently-selected tab (persists to agent session storage + history) */
 	handleRenameTab: (newName: string) => void;
@@ -150,7 +151,8 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			maestroPMode?: 'interactive' | 'dynamic',
 			retryOnAvailabilityErrors?: boolean,
 			retryOnTokenExhaustion?: boolean,
-			failoverConfig?: FailoverConfig
+			failoverConfig?: FailoverConfig,
+			customEnvVarsDisabled?: Record<string, string>
 		) => {
 			// Provider Failover: snapshot whether this agent is currently pinned to a
 			// backup endpoint BEFORE the update below, so we can tell after the fact
@@ -168,6 +170,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 						customPath,
 						customArgs,
 						customEnvVars,
+						customEnvVarsDisabled,
 						customModel,
 						customContextWindow,
 						sessionSshRemoteConfig,
@@ -196,6 +199,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 							customPath: undefined,
 							customArgs: undefined,
 							customEnvVars: undefined,
+							customEnvVarsDisabled: undefined,
 							customModel: undefined,
 							customContextWindow: undefined,
 							enableMaestroP: undefined,
@@ -614,34 +618,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 	}, []);
 
 	const toggleUnreadFilter = useCallback(() => {
-		const session = selectActiveSession(useSessionStore.getState());
-		const { showUnreadOnly } = useUIStore.getState();
-
-		if (!showUnreadOnly) {
-			// Entering filter mode: save current active tab (only if in AI mode -
-			// if the user is on a terminal/file tab we shouldn't force an AI restore on exit)
-			const wasAiMode =
-				session?.inputMode === 'ai' && !session?.activeTerminalTabId && !session?.activeFileTabId;
-			useUIStore
-				.getState()
-				.setPreFilterActiveTabId(wasAiMode ? session?.activeTabId || null : null);
-		} else {
-			// Exiting filter mode: restore previous active AI tab if one was saved and still exists
-			const preFilterActiveTabId = useUIStore.getState().preFilterActiveTabId;
-			if (preFilterActiveTabId && session) {
-				const tabStillExists = session.aiTabs.some((t) => t.id === preFilterActiveTabId);
-				if (tabStillExists) {
-					useSessionStore.getState().setSessions((prev) =>
-						prev.map((s) => {
-							if (s.id !== session.id) return s;
-							return { ...s, ...aiTabFocusFields(preFilterActiveTabId) };
-						})
-					);
-				}
-			}
-			useUIStore.getState().setPreFilterActiveTabId(null);
-		}
-		useUIStore.getState().setShowUnreadOnly(!showUnreadOnly);
+		toggleTabUnreadFilter();
 	}, []);
 
 	// ====================================================================
