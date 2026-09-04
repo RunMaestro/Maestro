@@ -20,6 +20,7 @@ import type { GitStreamingOperation } from '../../shared/gitUtils';
 import type { SerializableWizardState } from '../components/Wizard';
 import type { ConductorBadge } from '../constants/conductorBadges';
 import { logger } from '../utils/logger';
+import { safeLocalStorage } from '../utils/safeLocalStorage';
 
 // ============================================================================
 // Prompt Composer full-screen preference (persisted)
@@ -32,21 +33,11 @@ import { logger } from '../utils/logger';
 const PROMPT_COMPOSER_FULLSCREEN_KEY = 'maestro.promptComposer.fullscreen';
 
 function readStoredPromptComposerFullscreen(): boolean {
-	if (typeof window === 'undefined') return false;
-	try {
-		return window.localStorage.getItem(PROMPT_COMPOSER_FULLSCREEN_KEY) === 'true';
-	} catch {
-		return false;
-	}
+	return safeLocalStorage()?.getItem(PROMPT_COMPOSER_FULLSCREEN_KEY) === 'true';
 }
 
 function writeStoredPromptComposerFullscreen(value: boolean): void {
-	if (typeof window === 'undefined') return;
-	try {
-		window.localStorage.setItem(PROMPT_COMPOSER_FULLSCREEN_KEY, String(value));
-	} catch {
-		// Ignore quota / privacy-mode errors - preference just won't persist.
-	}
+	safeLocalStorage()?.setItem(PROMPT_COMPOSER_FULLSCREEN_KEY, String(value));
 }
 
 // ============================================================================

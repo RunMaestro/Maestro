@@ -11,6 +11,7 @@ import { ImageDiffViewer } from './ImageDiffViewer';
 import { GitFilePathHeader } from './GitFilePathHeader';
 import { generateDiffViewStyles } from '../utils/markdownConfig';
 import { useSettingsStore } from '../stores/settingsStore';
+import { safeLocalStorage } from '../utils/safeLocalStorage';
 import { ResizeHandles } from './ui/ResizeHandles';
 import { ModalSubtitle } from './ui/Modal';
 import { useSessionStore } from '../stores/sessionStore';
@@ -21,22 +22,12 @@ export type GitDiffViewType = 'unified' | 'split';
 const VIEW_TYPE_STORAGE_KEY = 'maestro.gitDiffViewer.viewType';
 
 function readStoredViewType(): GitDiffViewType | null {
-	if (typeof window === 'undefined') return null;
-	try {
-		const raw = window.localStorage.getItem(VIEW_TYPE_STORAGE_KEY);
-		return raw === 'unified' || raw === 'split' ? raw : null;
-	} catch {
-		return null;
-	}
+	const raw = safeLocalStorage()?.getItem(VIEW_TYPE_STORAGE_KEY) ?? null;
+	return raw === 'unified' || raw === 'split' ? raw : null;
 }
 
 function writeStoredViewType(value: GitDiffViewType): void {
-	if (typeof window === 'undefined') return;
-	try {
-		window.localStorage.setItem(VIEW_TYPE_STORAGE_KEY, value);
-	} catch {
-		// Ignore quota / privacy-mode errors - preference just won't persist.
-	}
+	safeLocalStorage()?.setItem(VIEW_TYPE_STORAGE_KEY, value);
 }
 
 function isFormControl(target: EventTarget | null): boolean {

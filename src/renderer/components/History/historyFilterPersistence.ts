@@ -1,5 +1,6 @@
 import type { HistoryEntryType } from '../../types';
 import { ALL_HISTORY_ENTRY_TYPES, isHistoryEntryType } from '../../../shared/history';
+import { safeLocalStorage } from '../../utils/safeLocalStorage';
 
 /**
  * Source-type filter selection (USER / AUTO / CUE) is persisted to
@@ -57,7 +58,7 @@ interface PersistedFilterPayload {
  */
 export function loadPersistedHistoryFilters(key: string): Set<HistoryEntryType> | null {
 	try {
-		const raw = localStorage.getItem(key);
+		const raw = safeLocalStorage()?.getItem(key) ?? null;
 		if (raw === null) return null;
 		const parsed: unknown = JSON.parse(raw);
 
@@ -88,7 +89,7 @@ export function savePersistedHistoryFilters(key: string, filters: Set<HistoryEnt
 			v: FILTER_PAYLOAD_VERSION,
 			filters: [...filters],
 		};
-		localStorage.setItem(key, JSON.stringify(payload));
+		safeLocalStorage()?.setItem(key, JSON.stringify(payload));
 	} catch {
 		// Ignore write failures (quota, private mode) - persistence is best-effort.
 	}
