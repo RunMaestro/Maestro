@@ -10,6 +10,7 @@ import { getBasename } from '../../shared/formatters';
 import { GitFilePathHeader } from './GitFilePathHeader';
 import { useListNavigation } from '../hooks';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
+import { safeLocalStorage } from '../utils/safeLocalStorage';
 import { generateDiffViewStyles } from '../utils/markdownConfig';
 import { useSettingsStore } from '../stores/settingsStore';
 import { ResizeHandles } from './ui/ResizeHandles';
@@ -99,13 +100,8 @@ export const GitLogViewer = memo(function GitLogViewer({
 	const [selectedCommitDiff, setSelectedCommitDiff] = useState<string | null>(null);
 	const [loadingDiff, setLoadingDiff] = useState(false);
 	const [viewMode, setViewMode] = useState<ViewMode>(() => {
-		try {
-			const stored =
-				typeof window !== 'undefined' ? localStorage.getItem(VIEW_MODE_STORAGE_KEY) : null;
-			return stored === 'graph' ? 'graph' : 'list';
-		} catch {
-			return 'list';
-		}
+		const stored = safeLocalStorage()?.getItem(VIEW_MODE_STORAGE_KEY) ?? null;
+		return stored === 'graph' ? 'graph' : 'list';
 	});
 	const [graphNodes, setGraphNodes] = useState<GitGraphNode[]>([]);
 	// Initialised to true so the first frame after toggling to graph view shows
@@ -118,11 +114,7 @@ export const GitLogViewer = memo(function GitLogViewer({
 	const [graphSelected, setGraphSelected] = useState<GitGraphNode | null>(null);
 
 	useEffect(() => {
-		try {
-			localStorage.setItem(VIEW_MODE_STORAGE_KEY, viewMode);
-		} catch {
-			// localStorage may be unavailable; ignore.
-		}
+		safeLocalStorage()?.setItem(VIEW_MODE_STORAGE_KEY, viewMode);
 		// When leaving graph mode, clear graph-only selection so list selection drives the right panel.
 		if (viewMode !== 'graph') setGraphSelected(null);
 	}, [viewMode]);

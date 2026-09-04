@@ -6,6 +6,7 @@ import { createSafeSend } from '../../../utils/safe-send';
 import { createIpcHandler } from '../../../utils/ipcHandler';
 import { execFileNoThrow } from '../../../utils/execFile';
 import { captureException } from '../../../utils/sentry';
+import { fetchWithTimeout } from '../../../utils/fetchWithTimeout';
 import type { CompletedContribution } from '../../../../shared/symphony-types';
 import {
 	LOG_CONTEXT,
@@ -19,6 +20,7 @@ import {
 	createDraftPR,
 	validateContributionId,
 	SymphonyHandlerDependencies,
+	SYMPHONY_DOCUMENT_FETCH_TIMEOUT_MS,
 } from './shared';
 
 /**
@@ -254,7 +256,7 @@ This PR will be updated automatically when the Auto Run completes.`;
 
 				try {
 					logger.info('Fetching document content', LOG_CONTEXT, { url });
-					const response = await fetch(url);
+					const response = await fetchWithTimeout(url, {}, SYMPHONY_DOCUMENT_FETCH_TIMEOUT_MS);
 					if (!response.ok) {
 						return { success: false, error: `HTTP ${response.status}: ${response.statusText}` };
 					}

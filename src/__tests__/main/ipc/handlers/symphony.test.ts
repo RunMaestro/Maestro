@@ -4654,7 +4654,10 @@ describe('Symphony IPC handlers', () => {
 				});
 
 				// Verify fetch was called for the external URL
-				expect(mockFetch).toHaveBeenCalledWith('https://github.com/attachments/external.md');
+				expect(mockFetch).toHaveBeenCalledWith(
+					'https://github.com/attachments/external.md',
+					expect.objectContaining({ signal: expect.anything() })
+				);
 
 				// Verify file was written
 				expect(fs.writeFile).toHaveBeenCalledWith(
@@ -5778,7 +5781,8 @@ This is a Symphony task document.
 				expect(result.success).toBe(true);
 				expect(result.content).toBe(documentContent);
 				expect(mockFetch).toHaveBeenCalledWith(
-					'https://raw.githubusercontent.com/owner/repo/main/task.md'
+					'https://raw.githubusercontent.com/owner/repo/main/task.md',
+					expect.objectContaining({ signal: expect.anything() })
 				);
 			});
 
