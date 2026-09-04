@@ -52,6 +52,7 @@
 					"context-management",
 					"document-graph",
 					"git-worktrees",
+					"agent-collaboration",
 					"group-chat",
 					"cross-agent-mentions",
 					"image-annotator",

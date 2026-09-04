@@ -6,7 +6,7 @@ icon: comments
 
 Group Chat lets you coordinate multiple AI agents in a single conversation. You appoint one agent as the **moderator** and hand it your question; it orchestrates the discussion from there, routing to the right agents, following up when an answer is thin, and synthesizing what comes back.
 
-The point of a Group Chat is that you are **delegating the moderating**. In an ordinary chat you can [`@mention`](./cross-agent-mentions) other agents too, but each mention is a single-turn consult and you are the one who keeps the conversation going. A moderator acts as your fiduciary in that job, wrangling the agents to work together across as many turns as the question needs.
+The point of a Group Chat is that you are **delegating the moderating**. In an ordinary chat you can [`@mention`](./cross-agent-mentions) other agents too, but each mention is a single-turn consult and you are the one who keeps the conversation going. A moderator acts as your fiduciary in that job, wrangling the agents to work together across as many turns as the question needs. For a side-by-side overview of both approaches, see [Agent Collaboration](./agent-collaboration).
 
 ![Group chat](./screenshots/group-chat.png)
 

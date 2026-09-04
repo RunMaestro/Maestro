@@ -6,7 +6,7 @@ icon: at
 
 Cross-Agent Mentions let you pull another agent into your current conversation without leaving it. Type `@` in any AI input, pick an agent, and Maestro forwards the relevant slice of your chat to that agent, runs it in the background, and streams its answer back inline - stamped with who replied.
 
-It is the lightweight cousin of [Group Chat](./group-chat): no moderator, no shared room, no ceremony. Just a quick "what does the backend agent think about this?" from wherever you already are. Each mention buys you exactly one answer, and you stay the moderator: if the reply needs a follow-up, you write it. When you want an agent to run that back and forth for you instead, open a [Group Chat](./group-chat).
+It is the lightweight cousin of [Group Chat](./group-chat): no moderator, no shared room, no ceremony. Just a quick "what does the backend agent think about this?" from wherever you already are. Each mention buys you exactly one answer, and you stay the moderator: if the reply needs a follow-up, you write it. When you want an agent to run that back and forth for you instead, open a [Group Chat](./group-chat). For a side-by-side overview of both approaches, see [Agent Collaboration](./agent-collaboration).
 
 ## When to Use It
 
