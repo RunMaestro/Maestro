@@ -30,32 +30,12 @@ import {
 	renameTerminalTab as renameTerminalTabHelper,
 	getTerminalSessionId,
 } from '../../utils/terminalTabHelpers';
-import type { NavHistoryEntry, NavTabKind } from './useNavigationHistory';
+import { resolveActiveNavTab } from './useNavigationHistory';
+import type { NavHistoryEntry } from './useNavigationHistory';
 import { captureException } from '../../utils/sentry';
 import { persistTabStarred } from '../../utils/starredSessions';
 import { clearFailover, getActiveEndpoint } from '../../stores/failoverStore';
 import { failoverArmed, findEndpoint } from '../../../shared/providerFailover';
-
-/**
- * Resolve the active tab of a session into a breadcrumb descriptor (id + kind).
- * Priority mirrors findActiveUnifiedTabIndex (terminal > file > browser > ai)
- * so the breadcrumb tracks whichever tab the user actually sees.
- */
-function resolveActiveNavTab(session: Session): { tabId?: string; tabKind?: NavTabKind } {
-	if (session.activeTerminalTabId) {
-		return { tabId: session.activeTerminalTabId, tabKind: 'terminal' };
-	}
-	if (session.activeFileTabId) {
-		return { tabId: session.activeFileTabId, tabKind: 'file' };
-	}
-	if (session.activeBrowserTabId) {
-		return { tabId: session.activeBrowserTabId, tabKind: 'browser' };
-	}
-	if (session.aiTabs?.length > 0) {
-		return { tabId: session.activeTabId, tabKind: 'ai' };
-	}
-	return {};
-}
 
 // ============================================================================
 // Dependencies interface

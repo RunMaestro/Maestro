@@ -1,16 +1,19 @@
 import { useCallback, MutableRefObject } from 'react';
 import type { Session } from '../../types';
 import { navigateToUnifiedTabById } from '../../utils/tabHelpers';
-import type { NavHistoryEntry } from './useNavigationHistory';
+import { useSessionStore } from '../../stores/sessionStore';
+import { useGroupChatStore } from '../../stores/groupChatStore';
+import { resolveActiveNavTab } from './useNavigationHistory';
+import type { NavEntryUsable, NavHistoryEntry } from './useNavigationHistory';
 
 /**
  * Dependencies required by the useSessionNavigation hook
  */
 export interface UseSessionNavigationDeps {
 	/** Function from useNavigationHistory to navigate back */
-	navigateBack: () => NavHistoryEntry | null;
+	navigateBack: (canUse?: NavEntryUsable) => NavHistoryEntry | null;
 	/** Function from useNavigationHistory to navigate forward */
-	navigateForward: () => NavHistoryEntry | null;
+	navigateForward: (canUse?: NavEntryUsable) => NavHistoryEntry | null;
 	/** Session state setter (setActiveSessionIdInternal in App.tsx) */
 	setActiveSessionId: (id: string) => void;
 	/** Session list state setter */
@@ -99,17 +102,62 @@ export function useSessionNavigation(
 		[sessions, setActiveSessionId, cyclePositionRef, setSessions, onNavigateToGroupChat]
 	);
 
+	// Would visiting this entry actually take the user somewhere?
+	//
+	// Two kinds of entry answer no, and both used to be visited anyway - the
+	// keypress consumed the entry and moved nothing, which is what made
+	// breadcrumb navigation feel dead after a few tabs were closed:
+	//   - STALE: the agent was deleted, or the tab was closed (Cmd+W, unread
+	//     filtering, a worktree teardown). navigateToUnifiedTabById is the same
+	//     resolver the restore path uses, so "can't resolve" here means exactly
+	//     "restore would no-op".
+	//   - REDUNDANT: the entry names the tab already on screen. Recording pushes
+	//     one entry per active-tab change, but a close or a filter change can
+	//     land the user back on a tab that is already the newest entry.
+	// Read live state rather than the render-time `sessions` prop so a rapid
+	// sequence of presses judges each hop against the state the previous hop
+	// produced.
+	const canUseEntry = useCallback<NavEntryUsable>((entry: NavHistoryEntry): boolean => {
+		const activeGroupChatId = useGroupChatStore.getState().activeGroupChatId;
+
+		if (entry.groupChatId) {
+			const exists = useGroupChatStore
+				.getState()
+				.groupChats.some((chat) => chat.id === entry.groupChatId);
+			return exists && entry.groupChatId !== activeGroupChatId;
+		}
+
+		if (!entry.sessionId) return false;
+		const { sessions: liveSessions, activeSessionId } = useSessionStore.getState();
+		const session = liveSessions.find((s) => s.id === entry.sessionId);
+		if (!session) return false;
+
+		// Legacy entries predate tabKind and only ever pointed at AI tabs.
+		const targetKind = entry.tabKind ?? 'ai';
+		if (entry.tabId && !navigateToUnifiedTabById(session, targetKind, entry.tabId)) {
+			return false;
+		}
+
+		// A group chat is covering the panel, so any agent entry is a real move.
+		if (activeGroupChatId) return true;
+		if (entry.sessionId !== activeSessionId) return true;
+
+		// Same agent: only a move when it targets a different tab than the visible one.
+		const current = resolveActiveNavTab(session);
+		return !(current.tabId === entry.tabId && (current.tabKind ?? 'ai') === targetKind);
+	}, []);
+
 	// Navigate back in history (through sessions, tabs, and group chats)
 	const handleNavBack = useCallback(() => {
-		const entry = navigateBack();
+		const entry = navigateBack(canUseEntry);
 		if (entry) navigateToEntry(entry);
-	}, [navigateBack, navigateToEntry]);
+	}, [navigateBack, navigateToEntry, canUseEntry]);
 
 	// Navigate forward in history (through sessions, tabs, and group chats)
 	const handleNavForward = useCallback(() => {
-		const entry = navigateForward();
+		const entry = navigateForward(canUseEntry);
 		if (entry) navigateToEntry(entry);
-	}, [navigateForward, navigateToEntry]);
+	}, [navigateForward, navigateToEntry, canUseEntry]);
 
 	return {
 		handleNavBack,
