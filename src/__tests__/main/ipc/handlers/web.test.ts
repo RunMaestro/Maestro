@@ -57,6 +57,7 @@ import {
 	deleteCliServerInfo,
 	readCliServerInfo,
 } from '../../../../shared/cli-server-discovery';
+import { resetAutoRunStateTracker } from '../../../../main/autorun/autorun-state-tracker';
 
 describe('web handlers', () => {
 	let mockWebServer: any;
@@ -68,6 +69,7 @@ describe('web handlers', () => {
 		vi.clearAllMocks();
 		registeredHandlers.clear();
 		lastWrittenInfo = null;
+		resetAutoRunStateTracker();
 		// Re-wire the writeCliServerInfo / readCliServerInfo mocks after
 		// clearAllMocks blew away their implementations.
 		vi.mocked(writeCliServerInfo).mockImplementation((info: any) => {
@@ -127,6 +129,7 @@ describe('web handlers', () => {
 
 	describe('handler registration', () => {
 		it('should register all web/live handlers', () => {
+			expect(ipcMain.handle).toHaveBeenCalledWith('web:claimAutoRunStart', expect.any(Function));
 			expect(ipcMain.handle).toHaveBeenCalledWith('web:broadcastUserInput', expect.any(Function));
 			expect(ipcMain.handle).toHaveBeenCalledWith(
 				'web:broadcastAutoRunState',
@@ -159,6 +162,16 @@ describe('web handlers', () => {
 				'webserver:getConnectedClients',
 				expect.any(Function)
 			);
+		});
+	});
+
+	describe('web:claimAutoRunStart', () => {
+		it('serializes competing starts for the same agent', async () => {
+			const handler = registeredHandlers.get('web:claimAutoRunStart');
+
+			expect(await handler!({}, 'session-123')).toBe(true);
+			expect(await handler!({}, 'session-123')).toBe(false);
+			expect(await handler!({}, 'session-456')).toBe(true);
 		});
 	});
 

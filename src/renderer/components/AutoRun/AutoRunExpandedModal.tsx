@@ -26,6 +26,10 @@ import type { FileNode } from '../../types/fileTree';
 import { ConfirmModal } from '../ConfirmModal';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { ResizeHandles } from '../ui/ResizeHandles';
+import {
+	MIRRORED_RUN_CONTROL_TITLE,
+	useIsMirroredBatchRun,
+} from '../../hooks/batch/useAutoRunStateMirror';
 
 interface AutoRunExpandedModalProps {
 	theme: Theme;
@@ -143,6 +147,10 @@ export function AutoRunExpandedModal({
 	const isLocked = batchRunState?.isRunning || false;
 	const isAgentBusy = sessionState === 'busy' || sessionState === 'connecting';
 	const isStopping = batchRunState?.isStopping || false;
+	// Mirrored from another Maestro window: the document is still locked (that
+	// window really is writing to it) but Stop cannot reach the loop from here.
+	const isMirroredRun = useIsMirroredBatchRun(sessionId);
+	const stopDisabled = isStopping || isMirroredRun;
 
 	// Track dirty state from AutoRun component
 	const [isDirty, setIsDirty] = useState(false);
@@ -427,16 +435,22 @@ export function AutoRunExpandedModal({
 						{/* Run / Stop button */}
 						{isLocked ? (
 							<button
-								onClick={() => !isStopping && onStopBatchRun?.(sessionId)}
-								disabled={isStopping}
-								className={`flex items-center gap-2 px-3 py-1.5 rounded text-xs transition-colors font-semibold ${isStopping ? 'cursor-not-allowed' : ''}`}
+								onClick={() => !stopDisabled && onStopBatchRun?.(sessionId)}
+								disabled={stopDisabled}
+								className={`flex items-center gap-2 px-3 py-1.5 rounded text-xs transition-colors font-semibold ${stopDisabled ? 'cursor-not-allowed' : ''}`}
 								style={{
 									backgroundColor: isStopping ? theme.colors.warning : theme.colors.error,
 									color: isStopping ? theme.colors.bgMain : 'white',
 									border: `1px solid ${isStopping ? theme.colors.warning : theme.colors.error}`,
-									pointerEvents: isStopping ? 'none' : 'auto',
+									opacity: isMirroredRun ? 0.6 : 1,
 								}}
-								title={isStopping ? 'Stopping after current task...' : 'Stop auto-run'}
+								title={
+									isMirroredRun
+										? MIRRORED_RUN_CONTROL_TITLE
+										: isStopping
+											? 'Stopping after current task...'
+											: 'Stop auto-run'
+								}
 							>
 								{isStopping ? <Spinner size={14} /> : <Square className="w-3.5 h-3.5" />}
 								{isStopping ? 'Stopping' : 'Stop'}

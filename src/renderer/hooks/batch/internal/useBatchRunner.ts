@@ -12,7 +12,7 @@ import type {
 import { gitService } from '../../../services/git';
 import { logger } from '../../../utils/logger';
 import { notifyToast } from '../../../stores/notificationStore';
-import { useBatchStore } from '../../../stores/batchStore';
+import { useBatchStore, isMirroredBatchRun } from '../../../stores/batchStore';
 import { useSessionStore, selectSessionById } from '../../../stores/sessionStore';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { countUnfinishedTasks, findPendingHitlGate, uncheckAllTasks } from '../batchUtils';
@@ -128,6 +128,21 @@ export function useBatchRunner({
 	 */
 	const startBatchRun = useCallback(
 		async (sessionId: string, config: BatchRunConfig, folderPath: string) => {
+			// This agent already has an Auto Run going in ANOTHER Maestro client
+			// (see useAutoRunStateMirror). Launching a second loop here would put two
+			// clients spawning tasks into the same working tree. The launch controls
+			// are already disabled while a mirror is on screen; this is the backstop
+			// for the CLI/remote entry points that reach this without a button.
+			if (isMirroredBatchRun(sessionId)) {
+				window.maestro.logger.log(
+					'warn',
+					'Auto Run is already running for this agent in another Maestro window',
+					'BatchProcessor',
+					{ sessionId }
+				);
+				return;
+			}
+
 			// Check global Auto Run kill switch
 			if (useSettingsStore.getState().autoRunDisabled) {
 				window.maestro.logger.log(
@@ -293,6 +308,30 @@ export function useBatchRunner({
 				// Stop the tracker we initialised above so it doesn't leak into the
 				// next run's elapsed time.
 				timeTracking.stopTracking(sessionId);
+				return;
+			}
+
+			// Renderer stores cannot serialize starts across desktop and browser
+			// clients. Reserve the agent in main immediately before publishing local
+			// run state; only one near-simultaneous caller can win this claim.
+			let claimedStart = false;
+			try {
+				claimedStart = await window.maestro.web.claimAutoRunStart(sessionId);
+			} catch (error) {
+				window.maestro.logger.log('error', 'Failed to claim Auto Run start', 'BatchProcessor', {
+					sessionId,
+					error: String(error),
+				});
+			}
+			if (!claimedStart) {
+				timeTracking.stopTracking(sessionId);
+				notifyToast({
+					type: 'warning',
+					title: 'Auto Run Already Active',
+					message: 'Another Maestro window already started Auto Run for this agent.',
+					project: session.name,
+					sessionId,
+				});
 				return;
 			}
 

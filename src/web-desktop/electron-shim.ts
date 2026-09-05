@@ -61,6 +61,10 @@ class BridgeClient {
 	private resolveReady!: () => void;
 	private pending = new Map<string | number, PendingInvoke>();
 	private listeners = new Map<string, Set<Listener>>();
+	// The server replays live Auto Runs as soon as the socket connects, before
+	// React effects have necessarily subscribed. Retain only frames that have no
+	// listener yet; the first subscriber drains the latest frame per session.
+	private pendingAutoRunFrames = new Map<string, unknown>();
 	private nextRequestId = 1;
 	private queue: string[] = [];
 	// True once any connection has been established. A LATER successful open is
@@ -143,24 +147,28 @@ class BridgeClient {
 			) {
 				channel = 'remote:selectTab';
 				args = [msg.sessionId, msg.activeTabId, Array.isArray(msg.aiTabs) ? msg.aiTabs : undefined];
+			} else if (msg.type === 'autorun_state' && typeof msg.sessionId === 'string') {
+				// Auto Run is renderer-owned in-memory state, so it never crosses the
+				// bridge as a `bridge.event` the way `process:*` does - the owning
+				// client hands it to main, which fans it out as this packet. Route it
+				// into a channel so `useAutoRunStateMirror` can render the run. The
+				// server also replays the current state for every active run when a
+				// client connects (wsRoute), so a browser tab opened mid-run catches
+				// up rather than waiting for the next progress tick.
+				channel = 'remote:autoRunStateMirror';
+				args = [msg.sessionId, msg.state ?? null];
 			}
 			if (channel) {
 				const set = this.listeners.get(channel);
-				if (!set) return;
+				if (!set || set.size === 0) {
+					if (channel === 'remote:autoRunStateMirror') {
+						this.pendingAutoRunFrames.set(args[0] as string, args[1]);
+					}
+					return;
+				}
 				const fakeEvent = { senderFrame: null };
 				for (const cb of set) {
-					try {
-						cb(fakeEvent, ...args);
-					} catch (err) {
-						console.error(`[bridge] listener for ${channel} threw`, err);
-						captureException(err, {
-							extra: {
-								component: 'BridgeClient',
-								action: 'listener',
-								channel,
-							},
-						});
-					}
+					this.notifyListener(channel, cb, fakeEvent, args);
 				}
 			}
 		});
@@ -181,6 +189,26 @@ class BridgeClient {
 		this.ws.addEventListener('error', (err: Event) => {
 			console.error('[bridge] WebSocket error', err);
 		});
+	}
+
+	private notifyListener(
+		channel: string,
+		listener: Listener,
+		event: { senderFrame: null },
+		args: unknown[]
+	): void {
+		try {
+			listener(event, ...args);
+		} catch (err) {
+			console.error(`[bridge] listener for ${channel} threw`, err);
+			captureException(err, {
+				extra: {
+					component: 'BridgeClient',
+					action: 'listener',
+					channel,
+				},
+			});
+		}
 	}
 
 	private sendFrame(frame: object): void {
@@ -205,6 +233,13 @@ class BridgeClient {
 			this.listeners.set(channel, set);
 		}
 		set.add(listener);
+		if (channel === 'remote:autoRunStateMirror' && this.pendingAutoRunFrames.size > 0) {
+			const fakeEvent = { senderFrame: null };
+			for (const [sessionId, state] of this.pendingAutoRunFrames) {
+				this.notifyListener(channel, listener, fakeEvent, [sessionId, state]);
+			}
+			this.pendingAutoRunFrames.clear();
+		}
 	}
 
 	off(channel: string, listener: Listener): void {

@@ -27,6 +27,7 @@ import { logger } from '../../utils/logger';
 import { WebServer } from '../../web-server';
 import type { AITabData } from '../../web-server/services/broadcastService';
 import { getAutoRunStateTracker } from '../../autorun/autorun-state-tracker';
+import type { AutoRunBroadcastState } from '../../../shared/autoRunBroadcast';
 import type { SettingsStoreInterface } from '../../stores/types';
 import {
 	writeCliServerInfo,
@@ -259,29 +260,13 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 
 	// Broadcast AutoRun state to web clients (called when batch processing state changes)
 	// Always store state even if no clients are connected, so new clients get initial state
+	ipcMain.handle('web:claimAutoRunStart', async (_, sessionId: string) => {
+		return getAutoRunStateTracker().tryClaimStart(sessionId);
+	});
+
 	ipcMain.handle(
 		'web:broadcastAutoRunState',
-		async (
-			_,
-			sessionId: string,
-			state: {
-				isRunning: boolean;
-				totalTasks: number;
-				completedTasks: number;
-				currentTaskIndex: number;
-				isStopping?: boolean;
-				// Multi-document progress fields
-				totalDocuments?: number;
-				currentDocumentIndex?: number;
-				totalTasksAcrossAllDocs?: number;
-				completedTasksAcrossAllDocs?: number;
-				// Goal-Driven mode fields
-				goalMode?: boolean;
-				goalProgress?: number;
-				goalRationale?: string;
-				goalIteration?: number;
-			} | null
-		) => {
+		async (_, sessionId: string, state: AutoRunBroadcastState | null) => {
 			// Feed the first-party main-process tracker FIRST, unconditionally.
 			// The web-server branch below returns early when Live Mode is off, so
 			// anything downstream of it (dispatch callbacks, and later Cue's

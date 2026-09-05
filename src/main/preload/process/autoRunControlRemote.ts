@@ -1,7 +1,26 @@
 import { ipcRenderer } from 'electron';
+import type { AutoRunBroadcastState } from '../../../shared/autoRunBroadcast';
 
 export function createAutoRunControlRemoteApi() {
 	return {
+		/**
+		 * Subscribe to Auto Run state belonging to a DIFFERENT Maestro client.
+		 *
+		 * Only ever fires in the web-desktop (browser) build, where the WebSocket
+		 * shim maps the server's `autorun_state` packet onto this channel. In the
+		 * Electron desktop app nothing sends it - the desktop renderer is the
+		 * owner of its own runs, so there is nothing to mirror - and the
+		 * subscription simply sits idle.
+		 */
+		onRemoteAutoRunStateMirror: (
+			callback: (sessionId: string, state: AutoRunBroadcastState | null) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, state: AutoRunBroadcastState | null) =>
+				callback(sessionId, state);
+			ipcRenderer.on('remote:autoRunStateMirror', handler);
+			return () => ipcRenderer.removeListener('remote:autoRunStateMirror', handler);
+		},
+
 		/**
 		 * Subscribe to remote stop auto-run from web interface (fire-and-forget)
 		 */

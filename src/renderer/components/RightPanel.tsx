@@ -47,6 +47,10 @@ import {
 } from '../constants/rightPanel';
 import { PluginUiItemsSlot } from './plugins/PluginUiItemsSlot';
 import { sleepAwareElapsedSince } from '../services/systemSleep';
+import {
+	MIRRORED_RUN_CONTROL_TITLE,
+	useIsMirroredBatchRun,
+} from '../hooks/batch/useAutoRunStateMirror';
 
 export interface RightPanelHandle {
 	refreshHistoryPanel: () => void;
@@ -184,6 +188,10 @@ export const RightPanel = memo(
 		const batchError = useBatchStore(
 			useCallback((s) => s.batchRunStates[sessionId ?? '']?.error, [sessionId])
 		);
+		// A run mirrored from another Maestro window renders in full but is not
+		// steerable from here - its loop and the refs these controls poke live in
+		// the window that started it.
+		const isMirroredRun = useIsMirroredBatchRun(sessionId);
 
 		// Thought Stream: brain button on the Auto Run card opens a persistent,
 		// searchable view of the agent's thinking stream for this session.
@@ -670,7 +678,7 @@ export const RightPanel = memo(
 										<GitBranch className="w-4 h-4" style={{ color: theme.colors.warning }} />
 									</span>
 								)}
-								{currentSessionBatchState.isStopping && (
+								{currentSessionBatchState.isStopping && !isMirroredRun && (
 									<button
 										onClick={() => setShowKillConfirm(true)}
 										className="flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-bold uppercase transition-colors hover:opacity-90"
@@ -974,12 +982,18 @@ export const RightPanel = memo(
 										{batchError?.recoverable && onResumeAfterError && (
 											<button
 												onClick={onResumeAfterError}
-												className="flex items-center gap-1 px-2 py-0.5 rounded text-2xs font-medium transition-colors hover:opacity-80"
+												disabled={isMirroredRun}
+												className={`flex items-center gap-1 px-2 py-0.5 rounded text-2xs font-medium transition-colors ${isMirroredRun ? 'cursor-not-allowed' : 'hover:opacity-80'}`}
 												style={{
 													backgroundColor: theme.colors.accent,
 													color: theme.colors.accentForeground,
+													opacity: isMirroredRun ? 0.6 : 1,
 												}}
-												title="Resume Auto Run after re-authenticating"
+												title={
+													isMirroredRun
+														? MIRRORED_RUN_CONTROL_TITLE
+														: 'Resume Auto Run after re-authenticating'
+												}
 											>
 												<Play className="w-3 h-3" />
 												Resume
@@ -988,12 +1002,16 @@ export const RightPanel = memo(
 										{onAbortBatchOnError && (
 											<button
 												onClick={onAbortBatchOnError}
-												className="flex items-center gap-1 px-2 py-0.5 rounded text-2xs font-medium transition-colors hover:opacity-80"
+												disabled={isMirroredRun}
+												className={`flex items-center gap-1 px-2 py-0.5 rounded text-2xs font-medium transition-colors ${isMirroredRun ? 'cursor-not-allowed' : 'hover:opacity-80'}`}
 												style={{
 													backgroundColor: theme.colors.error,
 													color: 'white',
+													opacity: isMirroredRun ? 0.6 : 1,
 												}}
-												title="Stop Auto Run completely"
+												title={
+													isMirroredRun ? MIRRORED_RUN_CONTROL_TITLE : 'Stop Auto Run completely'
+												}
 											>
 												<XCircle className="w-3 h-3" />
 												Abort
@@ -1005,13 +1023,19 @@ export const RightPanel = memo(
 									onStopBatchRun && (
 										<button
 											onClick={() => onStopBatchRun(session.id)}
-											className="flex items-center gap-1 px-2 py-0.5 rounded text-2xs font-medium transition-colors hover:opacity-80"
+											disabled={isMirroredRun}
+											className={`flex items-center gap-1 px-2 py-0.5 rounded text-2xs font-medium transition-colors ${isMirroredRun ? 'cursor-not-allowed' : 'hover:opacity-80'}`}
 											style={{
 												backgroundColor: theme.colors.error,
 												color: 'white',
 												border: `1px solid ${theme.colors.error}`,
+												opacity: isMirroredRun ? 0.6 : 1,
 											}}
-											title="Stop auto-run after the current task finishes"
+											title={
+												isMirroredRun
+													? MIRRORED_RUN_CONTROL_TITLE
+													: 'Stop auto-run after the current task finishes'
+											}
 										>
 											<Square className="w-3 h-3" />
 											Stop
