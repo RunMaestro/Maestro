@@ -1460,10 +1460,17 @@ describe('group-chat-router', () => {
 				// Past the 15 minute wait budget.
 				await runPollsUntil(() => false, 200);
 
-				const messages = await readLog(chat.logPath);
-				expect(messages.some((m) => m.from === 'system' && m.content.includes('Gave up'))).toBe(
-					true
-				);
+				// The give-up announcement reaches the log through real file I/O, which
+				// fake timers do not drive: the passes above only flush microtasks, so
+				// on a slow CI disk the append can still be in flight when the log is
+				// read. Wait for it on the real clock.
+				vi.useRealTimers();
+				await vi.waitFor(async () => {
+					const messages = await readLog(chat.logPath);
+					expect(messages.some((m) => m.from === 'system' && m.content.includes('Gave up'))).toBe(
+						true
+					);
+				});
 				expect(participantSpawnsFor(chat.id)).toHaveLength(0);
 
 				clearPendingParticipants(chat.id);
