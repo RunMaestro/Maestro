@@ -10,6 +10,7 @@ import { EscCloseButton } from './ui/EscCloseButton';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { formatRelativeTime } from '../utils/formatters';
 import { visibleAiTabs } from '../utils/tabHelpers';
+import { usePhoneLayout } from '../hooks/ui/useViewportBreakpoint';
 import {
 	searchTabsMessages,
 	flattenCrossTabMatches,
@@ -118,6 +119,10 @@ export function CrossTabSearchModal({
 	const selectedRowRef = useRef<HTMLButtonElement>(null);
 
 	useModalLayer(MODAL_PRIORITIES.CROSS_TAB_SEARCH, 'Search Messages (All Agent Tabs)', onClose);
+	// Phone: full-screen, and the header sheds its chord hint and chip label so
+	// the close button stays on screen (it used to be pushed off the right edge,
+	// leaving no way out of the modal short of reloading the page).
+	const phone = usePhoneLayout();
 
 	// Land the caret in the search box however the modal was opened: keyboard
 	// shortcut, tab-bar popover, or command palette. Deferred, because the
@@ -183,13 +188,23 @@ export function CrossTabSearchModal({
 	// box height, so both search entry points in the popover open at the same
 	// top Y instead of one hugging the top of the window.
 	return (
-		<div className="fixed inset-0 modal-overlay flex items-center justify-center p-8 z-[9999] animate-in fade-in duration-100">
+		<div
+			className={
+				phone
+					? 'fixed inset-0 z-[9999] animate-in fade-in duration-100'
+					: 'fixed inset-0 modal-overlay flex items-center justify-center p-8 z-[9999] animate-in fade-in duration-100'
+			}
+		>
 			<div
 				role="dialog"
 				aria-modal="true"
 				aria-label="Search Messages (All Agent Tabs)"
 				tabIndex={-1}
-				className="modal-w-lg rounded-xl shadow-2xl border overflow-hidden flex flex-col h-[700px] max-h-full outline-none select-none"
+				className={
+					phone
+						? 'h-full w-full flex flex-col outline-none select-none'
+						: 'modal-w-lg rounded-xl shadow-2xl border overflow-hidden flex flex-col h-[700px] max-h-full outline-none select-none'
+				}
 				style={{ backgroundColor: theme.colors.bgActivity, borderColor: theme.colors.border }}
 			>
 				{/* Search header */}
@@ -200,7 +215,7 @@ export function CrossTabSearchModal({
 					<Search className="w-5 h-5 shrink-0" style={{ color: theme.colors.textDim }} />
 					<input
 						ref={inputRef}
-						className="flex-1 bg-transparent outline-none text-lg placeholder-opacity-50 select-text"
+						className="flex-1 min-w-0 bg-transparent outline-none text-lg placeholder-opacity-50 select-text"
 						placeholder={
 							regexMode ? 'Regex across all open tabs…' : 'Search messages across all open tabs…'
 						}
@@ -230,9 +245,9 @@ export function CrossTabSearchModal({
 						>
 							{regexMode ? '.*' : 'Aa'}
 						</span>
-						<span>{regexMode ? 'Regex' : 'Plain Text'}</span>
+						{!phone && <span>{regexMode ? 'Regex' : 'Plain Text'}</span>}
 					</button>
-					{shortcut && (
+					{shortcut && !phone && (
 						<span className="text-xs font-mono opacity-60" style={{ color: theme.colors.textDim }}>
 							{formatShortcutKeys(shortcut.keys)}
 						</span>

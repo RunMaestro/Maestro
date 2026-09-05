@@ -28,7 +28,18 @@ vi.mock('lucide-react', () => ({
 	Terminal: () => <svg data-testid="terminal-icon" />,
 	Globe: () => <svg data-testid="globe-icon" />,
 	Wand2: () => <svg data-testid="wand-icon" />,
+	MessageSquare: () => <svg data-testid="message-square-icon" />,
+	X: () => <svg data-testid="x-icon" />,
 }));
+
+// Phone layout is opt-in per test; the default (desktop) keeps every existing
+// assertion about pills, gauges, and keyboard legends valid.
+vi.mock('../../../renderer/hooks/ui/useViewportBreakpoint', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../renderer/hooks/ui/useViewportBreakpoint')>()),
+	usePhoneLayout: vi.fn(() => false),
+}));
+import { usePhoneLayout } from '../../../renderer/hooks/ui/useViewportBreakpoint';
+const mockedUsePhoneLayout = vi.mocked(usePhoneLayout);
 
 // Live wizard activity comes from InlineWizardProvider, which wraps this modal in the app
 // but not in a standalone render. Mock the accessor so a test can declare which tabs are
@@ -2947,5 +2958,126 @@ describe('TabSwitcherModal', () => {
 				expect(screen.getByTestId('globe-icon')).toBeInTheDocument();
 			});
 		});
+	});
+});
+
+describe('TabSwitcherModal on a phone', () => {
+	let theme: Theme;
+
+	beforeEach(() => {
+		theme = createTestTheme();
+		Element.prototype.scrollIntoView = vi.fn();
+		mockedUsePhoneLayout.mockReturnValue(true);
+		vi.mocked(window.maestro.agentSessions.getAllNamedSessions).mockResolvedValue([]);
+	});
+
+	afterEach(() => {
+		mockedUsePhoneLayout.mockReturnValue(false);
+		vi.restoreAllMocks();
+	});
+
+	// A phone has no keyboard for the hotkeys the badges advertise, and at 390px
+	// the per-tab metadata crowded out the name. The phone list is the name, a
+	// kind glyph, and a star. Nothing else.
+	it('lists open tabs by name only - no mode pills, metadata, or keyboard legend', () => {
+		const tab = createTestTab({ name: 'Cue Doctor', starred: true });
+		renderWithLayerStack(
+			<TabSwitcherModal
+				theme={theme}
+				tabs={[tab]}
+				activeTabId={tab.id}
+				projectRoot="/test"
+				onTabSelect={vi.fn()}
+				onNamedSessionSelect={vi.fn()}
+				onClose={vi.fn()}
+			/>
+		);
+
+		expect(screen.getByTestId('tab-switcher-phone')).toBeInTheDocument();
+		expect(screen.getByText('Cue Doctor')).toBeInTheDocument();
+		expect(screen.getByTestId('star-icon')).toBeInTheDocument();
+		expect(screen.queryByText(/All Named/)).not.toBeInTheDocument();
+		expect(screen.queryByText(/Starred \(/)).not.toBeInTheDocument();
+		expect(screen.queryByText(/Open Tabs \(/)).not.toBeInTheDocument();
+		expect(screen.queryByText(/tokens/)).not.toBeInTheDocument();
+		expect(screen.queryByText(/navigate/)).not.toBeInTheDocument();
+		expect(screen.queryByText(/Tab \/ /)).not.toBeInTheDocument();
+	});
+
+	it('still offers a close control', () => {
+		const onClose = vi.fn();
+		renderWithLayerStack(
+			<TabSwitcherModal
+				theme={theme}
+				tabs={[createTestTab({ name: 'One' })]}
+				activeTabId=""
+				projectRoot="/test"
+				onTabSelect={vi.fn()}
+				onNamedSessionSelect={vi.fn()}
+				onClose={onClose}
+			/>
+		);
+		fireEvent.click(screen.getByLabelText('Close (Esc)'));
+		expect(onClose).toHaveBeenCalledTimes(1);
+	});
+
+	it('selects a tab on tap and closes', () => {
+		const onTabSelect = vi.fn();
+		const onClose = vi.fn();
+		const tab = createTestTab({ name: 'Interplay' });
+		renderWithLayerStack(
+			<TabSwitcherModal
+				theme={theme}
+				tabs={[tab]}
+				activeTabId=""
+				projectRoot="/test"
+				onTabSelect={onTabSelect}
+				onNamedSessionSelect={vi.fn()}
+				onClose={onClose}
+			/>
+		);
+
+		fireEvent.click(screen.getByText('Interplay'));
+		expect(onTabSelect).toHaveBeenCalledWith(tab.id);
+		expect(onClose).toHaveBeenCalledTimes(1);
+	});
+
+	it('marks the active tab and shows a busy dot instead of the glyph for a working tab', () => {
+		const active = createTestTab({ name: 'Active', state: 'idle' });
+		const busy = createTestTab({ name: 'Busy', state: 'busy' });
+		renderWithLayerStack(
+			<TabSwitcherModal
+				theme={theme}
+				tabs={[active, busy]}
+				activeTabId={active.id}
+				projectRoot="/test"
+				onTabSelect={vi.fn()}
+				onNamedSessionSelect={vi.fn()}
+				onClose={vi.fn()}
+			/>
+		);
+
+		const activeRow = screen.getByText('Active').closest('button');
+		const busyRow = screen.getByText('Busy').closest('button');
+		expect(activeRow).toHaveAttribute('aria-current', 'true');
+		expect(busyRow).not.toHaveAttribute('aria-current');
+		// One chat glyph (the idle row); the busy row swaps it for a dot.
+		expect(screen.getAllByTestId('message-square-icon')).toHaveLength(1);
+	});
+
+	it('does not fetch the named-session catalog it never shows', async () => {
+		renderWithLayerStack(
+			<TabSwitcherModal
+				theme={theme}
+				tabs={[createTestTab({ name: 'One', agentSessionId: 'abc-def' })]}
+				activeTabId=""
+				projectRoot="/test"
+				onTabSelect={vi.fn()}
+				onNamedSessionSelect={vi.fn()}
+				onClose={vi.fn()}
+			/>
+		);
+		await act(async () => {});
+		expect(window.maestro.agentSessions.getAllNamedSessions).not.toHaveBeenCalled();
 	});
 });
