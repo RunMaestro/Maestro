@@ -69,7 +69,8 @@ describe('useRemoteIntegration', () => {
 					state: 'idle' | 'busy';
 					thinkingStartTime?: number | null;
 					hasUnread?: boolean;
-				}>
+				}>,
+				activeTabChanged?: boolean
 		  ) => void)
 		| undefined;
 	let onRemoteNewTabHandler: ((sessionId: string, responseChannel: string) => void) | undefined;
@@ -963,6 +964,26 @@ describe('useRemoteIntegration', () => {
 			expect(deps.setActiveSessionId).toHaveBeenCalledWith('session-1');
 		});
 
+		it('reconciles a background tab snapshot without switching sessions', () => {
+			const tab = createMockTab({ id: 'tab-1', hasUnread: false });
+			const session = createMockSession({ id: 'session-1', aiTabs: [tab], activeTabId: tab.id });
+			const deps = createDeps({ sessions: [session], activeSessionId: 'session-2' });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteSelectTabHandler?.('session-1', 'tab-1', [
+					{
+						...tab,
+						hasUnread: true,
+					},
+				]);
+			});
+
+			expect(deps.setActiveSessionId).not.toHaveBeenCalled();
+			expect(useSessionStore.getState().sessions[0].aiTabs[0].hasUnread).toBe(true);
+		});
+
 		it('reconciles the complete desktop tab inventory without discarding local transcripts', () => {
 			const existingLogs: AITab['logs'] = [
 				{ id: 'kept-1', timestamp: 1, source: 'stdout', text: 'kept transcript' },
@@ -1024,11 +1045,31 @@ describe('useRemoteIntegration', () => {
 				saveToHistory: true,
 				showThinking: 'off',
 			});
-			expect(updated?.activeTabId).toBe('tab-2');
+			expect(updated?.activeTabId).toBe('tab-1');
 			expect(updated?.unifiedTabOrder).toEqual([
 				{ type: 'ai', id: 'tab-1' },
 				{ type: 'ai', id: 'tab-2' },
 			]);
+		});
+
+		it('applies a genuine desktop tab selection only in the session already being viewed', () => {
+			const tab1 = createMockTab({ id: 'tab-1' });
+			const tab2 = createMockTab({ id: 'tab-2' });
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [tab1, tab2],
+				activeTabId: tab1.id,
+			});
+			const deps = createDeps({ sessions: [session], activeSessionId: 'session-1' });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteSelectTabHandler?.('session-1', 'tab-2', [tab1, tab2], true);
+			});
+
+			expect(deps.setActiveSessionId).not.toHaveBeenCalled();
+			expect(useSessionStore.getState().sessions[0].activeTabId).toBe('tab-2');
 		});
 	});
 
@@ -2237,7 +2278,32 @@ describe('useRemoteIntegration', () => {
 			expect(mockWeb.broadcastTabsChange).toHaveBeenCalledWith(
 				'session-1',
 				expect.arrayContaining([expect.objectContaining({ id: 'tab-1' })]),
-				'tab-1'
+				'tab-1',
+				false
+			);
+		});
+
+		it('marks only a later active-tab transition as focus-changing', () => {
+			const tab1 = createMockTab({ id: 'tab-1' });
+			const tab2 = createMockTab({ id: 'tab-2' });
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [tab1, tab2],
+				activeTabId: 'tab-1',
+			});
+			const deps = createDeps({ sessions: [session], isLiveMode: true });
+
+			renderHook(() => useRemoteIntegration(deps));
+			vi.advanceTimersByTime(500);
+
+			useSessionStore.getState().updateSession('session-1', { activeTabId: 'tab-2' });
+			vi.advanceTimersByTime(500);
+
+			expect(mockWeb.broadcastTabsChange).toHaveBeenLastCalledWith(
+				'session-1',
+				expect.arrayContaining([expect.objectContaining({ id: 'tab-2' })]),
+				'tab-2',
+				true
 			);
 		});
 

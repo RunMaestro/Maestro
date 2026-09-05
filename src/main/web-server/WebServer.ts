@@ -1266,8 +1266,13 @@ export class WebServer {
 		this.broadcastService.broadcastActiveSessionChange(sessionId);
 	}
 
-	broadcastTabsChange(sessionId: string, aiTabs: AITabData[], activeTabId: string): void {
-		this.broadcastService.broadcastTabsChange(sessionId, aiTabs, activeTabId);
+	broadcastTabsChange(
+		sessionId: string,
+		aiTabs: AITabData[],
+		activeTabId: string,
+		activeTabChanged = false
+	): void {
+		this.broadcastService.broadcastTabsChange(sessionId, aiTabs, activeTabId, activeTabChanged);
 	}
 
 	requestNewTab(sessionId: string, background?: boolean): Promise<{ tabId: string } | null> {
