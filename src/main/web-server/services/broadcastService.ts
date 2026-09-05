@@ -20,6 +20,7 @@
  * - session_output: Session output data
  */
 
+import { randomUUID } from 'crypto';
 import { WebSocket } from 'ws';
 import { logger } from '../../utils/logger';
 import type {
@@ -52,6 +53,45 @@ export type {
 // Logger context for broadcast service logs
 const LOG_CONTEXT = 'BroadcastService';
 
+// Replay buffer bounds for resuming a dropped web-desktop socket.
+// ponytail: fixed-size ring. A gap that outruns it (a long sleep, a very busy
+// agent) falls back to the page reload it replaced; raise both if that bites.
+const REPLAY_MAX_FRAMES = 2000;
+const REPLAY_MAX_BYTES = 8 * 1024 * 1024;
+
+/**
+ * Who a broadcast frame is for. Recorded beside each buffered frame so a
+ * resume delivers exactly what the client would have received live: the one
+ * predicate, {@link frameReaches}, decides both the live send and the replay,
+ * so the two cannot drift. Without it a client subscribed to session A was
+ * handed session B's frames on reconnect, tool events included.
+ */
+type BridgeScope =
+	| { kind: 'all' }
+	/** Subscribers of the session, plus unsubscribed (dashboard) clients. */
+	| { kind: 'session'; sessionId: string }
+	/** Subscribers of the session only: tool events are high-volume. */
+	| { kind: 'subscribers'; sessionId: string };
+
+interface ReplayFrame {
+	seq: number;
+	data: string;
+	/** UTF-8 size on the wire. `data.length` counts UTF-16 code units. */
+	bytes: number;
+	scope: BridgeScope;
+}
+
+function frameReaches(scope: BridgeScope, subscribedSessionId: string | undefined): boolean {
+	switch (scope.kind) {
+		case 'all':
+			return true;
+		case 'session':
+			return !subscribedSessionId || subscribedSessionId === scope.sessionId;
+		case 'subscribers':
+			return subscribedSessionId === scope.sessionId;
+	}
+}
+
 /**
  * Web client connection info (alias for backwards compatibility)
  */
@@ -73,6 +113,19 @@ export class BroadcastService {
 	private previousAutoRunStates: Map<string, { running: boolean; completedTasks: number }> =
 		new Map();
 
+	// Bridge resume. Every frame that reaches a web-desktop client carries a
+	// monotonically increasing `seq`, and the most recent frames are kept so a
+	// client whose socket dropped can pick up exactly where it left off instead
+	// of reloading the page. Mobile browsers suspend the socket on every app
+	// switch and screen lock, so without this every return to the tab was a
+	// full reload, even when nothing had happened in between. `bridgeEpoch` is
+	// minted per server instance: a client that last spoke to a different run
+	// cannot be resumed, because that run's counter means nothing here.
+	readonly bridgeEpoch = randomUUID();
+	private bridgeSeq = 0;
+	private replayFrames: ReplayFrame[] = [];
+	private replayBytes = 0;
+
 	/**
 	 * Set the callback for getting web clients
 	 */
@@ -81,17 +134,81 @@ export class BroadcastService {
 	}
 
 	/**
+	 * Serialize a frame for the wire, stamping it with the next `seq` and
+	 * recording it for {@link resumeBridgeClient}.
+	 */
+	private stampForBridge(message: object, scope: BridgeScope): ReplayFrame {
+		const seq = ++this.bridgeSeq;
+		const data = JSON.stringify({ ...message, seq });
+		const frame: ReplayFrame = { seq, data, bytes: Buffer.byteLength(data), scope };
+		this.replayFrames.push(frame);
+		this.replayBytes += frame.bytes;
+		while (this.replayFrames.length > REPLAY_MAX_FRAMES || this.replayBytes > REPLAY_MAX_BYTES) {
+			const dropped = this.replayFrames.shift();
+			if (!dropped) break;
+			this.replayBytes -= dropped.bytes;
+		}
+		return frame;
+	}
+
+	/** Send a stamped frame to every open client its scope reaches. */
+	private deliver(frame: ReplayFrame): void {
+		if (!this.getWebClients) return;
+		for (const client of this.getWebClients().values()) {
+			if (
+				client.socket.readyState === WebSocket.OPEN &&
+				frameReaches(frame.scope, client.subscribedSessionId)
+			) {
+				client.socket.send(frame.data);
+			}
+		}
+	}
+
+	/**
+	 * Frames a reconnecting web-desktop client has not seen yet, oldest first,
+	 * narrowed to the ones its subscription would have received live. `null`
+	 * means it cannot be resumed - it last spoke to a different server run, or
+	 * the gap outran the replay buffer - and must reload to resync.
+	 */
+	resumeBridgeClient(
+		epoch: string,
+		lastSeq: number,
+		subscribedSessionId?: string
+	): string[] | null {
+		if (
+			epoch !== this.bridgeEpoch ||
+			!Number.isInteger(lastSeq) ||
+			lastSeq < 0 ||
+			lastSeq > this.bridgeSeq
+		) {
+			return null;
+		}
+		if (lastSeq === this.bridgeSeq) return [];
+		const oldest = this.replayFrames[0]?.seq;
+		if (oldest === undefined || oldest > lastSeq + 1) return null;
+		return this.replayFrames
+			.filter((frame) => frame.seq > lastSeq && frameReaches(frame.scope, subscribedSessionId))
+			.map((frame) => frame.data);
+	}
+
+	/**
+	 * The counter as it stands right now. Sent in the `connected` frame so a
+	 * fresh client starts its `lastSeq` here: nothing broadcast before it
+	 * connected is a frame it missed, and without this baseline a socket that
+	 * dropped before the first broadcast reconnected with `since=0`, which
+	 * either replayed history from before the tab opened or forced a reload
+	 * once seq 1 had been evicted.
+	 */
+	getBridgeSeq(): number {
+		return this.bridgeSeq;
+	}
+
+	/**
 	 * Broadcast a message to all connected web clients
 	 */
 	broadcastToAll(message: object): void {
 		if (!this.getWebClients) return;
-
-		const data = JSON.stringify(message);
-		for (const client of this.getWebClients().values()) {
-			if (client.socket.readyState === WebSocket.OPEN) {
-				client.socket.send(data);
-			}
-		}
+		this.deliver(this.stampForBridge(message, { kind: 'all' }));
 	}
 
 	/**
@@ -99,16 +216,7 @@ export class BroadcastService {
 	 */
 	broadcastToSession(sessionId: string, message: object): void {
 		if (!this.getWebClients) return;
-
-		const data = JSON.stringify(message);
-		for (const client of this.getWebClients().values()) {
-			if (
-				client.socket.readyState === WebSocket.OPEN &&
-				(client.subscribedSessionId === sessionId || !client.subscribedSessionId)
-			) {
-				client.socket.send(data);
-			}
-		}
+		this.deliver(this.stampForBridge(message, { kind: 'session', sessionId }));
 	}
 
 	/**
@@ -474,20 +582,15 @@ export class BroadcastService {
 		// Only send tool events to clients explicitly subscribed to this session.
 		// Unlike broadcastToSession, this excludes unsubscribed clients (e.g., dashboard/overview)
 		// to avoid unnecessary fan-out of high-volume, potentially sensitive tool data.
+		// Stamped like every other frame, so a tool event lost to a dropped socket
+		// is replayed on resume instead of silently vanishing from the stream.
 		if (!this.getWebClients) return;
-
-		const data = JSON.stringify({
-			type: 'tool_event',
-			sessionId,
-			tabId,
-			toolLog,
-			timestamp: Date.now(),
-		});
-		for (const client of this.getWebClients().values()) {
-			if (client.socket.readyState === WebSocket.OPEN && client.subscribedSessionId === sessionId) {
-				client.socket.send(data);
-			}
-		}
+		this.deliver(
+			this.stampForBridge(
+				{ type: 'tool_event', sessionId, tabId, toolLog, timestamp: Date.now() },
+				{ kind: 'subscribers', sessionId }
+			)
+		);
 	}
 
 	/**

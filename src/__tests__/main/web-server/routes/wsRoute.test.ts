@@ -495,3 +495,78 @@ describe('WsRoute', () => {
 		});
 	});
 });
+
+describe('WsRoute bridge resume', () => {
+	const securityToken = 'test-token-123';
+
+	function setup(extra: Partial<WsRouteCallbacks>) {
+		const route = new WsRoute(securityToken);
+		const callbacks = { ...createMockCallbacks(), ...extra };
+		route.setCallbacks(callbacks);
+		const fastify = createMockFastify();
+		route.registerRoute(fastify as any);
+		return fastify.getRoute('GET', `/${securityToken}/ws`)!;
+	}
+
+	function sentFrames(connection: ReturnType<typeof createMockConnection>) {
+		return (connection.socket.send as any).mock.calls.map((call: any[]) => JSON.parse(call[0]));
+	}
+
+	function resumeRequest(query: string) {
+		return { url: `/test-token/ws?${query}`, headers: { host: 'localhost:3000' } };
+	}
+
+	it('replays the missed frames right after `connected` when the client can be resumed', () => {
+		const resumeBridgeClient = vi
+			.fn()
+			.mockReturnValue([
+				JSON.stringify({ type: 'bridge.event', seq: 4 }),
+				JSON.stringify({ type: 'bridge.event', seq: 5 }),
+			]);
+		const route = setup({ resumeBridgeClient, getBridgeEpoch: () => 'run-1' });
+
+		const connection = createMockConnection();
+		route.handler(connection, resumeRequest('since=3&epoch=run-1'));
+
+		expect(resumeBridgeClient).toHaveBeenCalledWith('run-1', 3, undefined);
+		const frames = sentFrames(connection);
+		expect(frames[0]).toMatchObject({ type: 'connected', bridgeEpoch: 'run-1', resumed: true });
+		expect(frames[1]).toMatchObject({ type: 'bridge.event', seq: 4 });
+		expect(frames[2]).toMatchObject({ type: 'bridge.event', seq: 5 });
+	});
+
+	it('hands the client subscription to the replay so it is narrowed like a live send', () => {
+		const resumeBridgeClient = vi.fn().mockReturnValue([]);
+		const route = setup({ resumeBridgeClient, getBridgeEpoch: () => 'run-1' });
+
+		const connection = createMockConnection();
+		route.handler(connection, resumeRequest('since=3&epoch=run-1&sessionId=session-a'));
+
+		expect(resumeBridgeClient).toHaveBeenCalledWith('run-1', 3, 'session-a');
+	});
+
+	it('reports resumed=false when the gap cannot be replayed, and never asks without a since', () => {
+		const resumeBridgeClient = vi.fn().mockReturnValue(null);
+		const route = setup({
+			resumeBridgeClient,
+			getBridgeEpoch: () => 'run-1',
+			getBridgeSeq: () => 42,
+		});
+
+		const stale = createMockConnection();
+		route.handler(stale, resumeRequest('since=3&epoch=run-0'));
+		expect(resumeBridgeClient).toHaveBeenCalledWith('run-0', 3, undefined);
+		expect(sentFrames(stale)[0]).toMatchObject({ type: 'connected', resumed: false });
+
+		const fresh = createMockConnection();
+		route.handler(fresh, createMockRequest());
+		expect(resumeBridgeClient).toHaveBeenCalledTimes(1);
+		// A fresh client is told where the counter stands so its first resume
+		// asks for frames after THIS point, not after 0.
+		expect(sentFrames(fresh)[0]).toMatchObject({
+			type: 'connected',
+			resumed: false,
+			bridgeSeq: 42,
+		});
+	});
+});

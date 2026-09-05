@@ -495,3 +495,109 @@ describe('BroadcastService', () => {
 		});
 	});
 });
+
+describe('BroadcastService bridge resume (seq stamping + replay)', () => {
+	let service: BroadcastService;
+	let clients: Map<string, WebClientInfo>;
+
+	beforeEach(() => {
+		service = new BroadcastService();
+		clients = new Map();
+		service.setGetWebClientsCallback(() => clients);
+	});
+
+	it('stamps every broadcast frame with an increasing seq', () => {
+		const client = createMockClient('client-1');
+		clients.set('client-1', client);
+		expect(service.getBridgeSeq()).toBe(0);
+
+		service.broadcastToAll({ type: 'a' });
+		service.broadcastToSession('session-1', { type: 'b' });
+
+		const seqs = (client.socket.send as any).mock.calls.map(
+			(call: any[]) => JSON.parse(call[0]).seq
+		);
+		expect(seqs).toEqual([1, 2]);
+		// What a client connecting now is told to resume from.
+		expect(service.getBridgeSeq()).toBe(2);
+	});
+
+	it('replays exactly the frames after lastSeq for the same server run', () => {
+		service.broadcastToAll({ type: 'a' });
+		service.broadcastToAll({ type: 'b' });
+		service.broadcastToAll({ type: 'c' });
+
+		const replay = service.resumeBridgeClient(service.bridgeEpoch, 1);
+		expect(replay?.map((f) => JSON.parse(f).type)).toEqual(['b', 'c']);
+		// Nothing missed is still a resume, just an empty one.
+		expect(service.resumeBridgeClient(service.bridgeEpoch, 3)).toEqual([]);
+	});
+
+	it('replays only what the reconnecting client would have received live', () => {
+		service.broadcastToAll({ type: 'everyone' });
+		service.broadcastToSession('session-a', { type: 'for-a' });
+		service.broadcastToSession('session-b', { type: 'for-b' });
+		service.broadcastToolEvent('session-a', 'tab-1', {
+			id: 'tool-1',
+			timestamp: 1,
+			source: 'tool',
+			text: 'Read',
+		});
+
+		const types = (frames: string[] | null) => frames?.map((f) => JSON.parse(f).type);
+		// Subscribed to A: A's frames and A's tool events, nothing of B's.
+		expect(types(service.resumeBridgeClient(service.bridgeEpoch, 0, 'session-a'))).toEqual([
+			'everyone',
+			'for-a',
+			'tool_event',
+		]);
+		// Unsubscribed (dashboard): every session frame, but tool events are
+		// subscriber-only live, so they are subscriber-only on replay too.
+		expect(types(service.resumeBridgeClient(service.bridgeEpoch, 0))).toEqual([
+			'everyone',
+			'for-a',
+			'for-b',
+		]);
+	});
+
+	it('stamps tool events too, so one lost to a dropped socket is replayed rather than gone', () => {
+		const subscriber = createMockClient('sub', { subscribedSessionId: 'session-a' });
+		clients.set('sub', subscriber);
+		service.broadcastToolEvent('session-a', 'tab-1', {
+			id: 'tool-1',
+			timestamp: 1,
+			source: 'tool',
+			text: 'Read',
+		});
+		expect(JSON.parse((subscriber.socket.send as any).mock.calls[0][0]).seq).toBe(1);
+	});
+
+	it('budgets the replay buffer in UTF-8 bytes, not UTF-16 code units', () => {
+		// 1.5M copies of a 3-byte character: 4.5 MiB on the wire but 1.5M code
+		// units. Two of them exceed the 8 MiB cap in bytes while counting units
+		// would have kept both (and the eviction they should trigger never fires).
+		const wide = '\u20ac'.repeat(1.5 * 1024 * 1024);
+		service.broadcastToAll({ type: 'wide', wide });
+		service.broadcastToAll({ type: 'wide', wide });
+		service.broadcastToAll({ type: 'tiny' });
+
+		// seq 1 was evicted to make room, so a client that last saw 0 must reload,
+		// while one that saw 1 gets exactly the two frames still held.
+		expect(service.resumeBridgeClient(service.bridgeEpoch, 0)).toBeNull();
+		expect(service.resumeBridgeClient(service.bridgeEpoch, 1)).toHaveLength(2);
+	});
+
+	it('refuses to resume across server runs, ahead of the counter, or past the buffer', () => {
+		service.broadcastToAll({ type: 'a' });
+		expect(service.resumeBridgeClient('some-other-run', 1)).toBeNull();
+		expect(service.resumeBridgeClient(service.bridgeEpoch, 5)).toBeNull();
+		expect(service.resumeBridgeClient(service.bridgeEpoch, Number.NaN)).toBeNull();
+
+		// Fill past the frame cap so seq 1 is evicted. A client that last saw
+		// seq 0 now has a hole it can never fill; one that saw seq 1 does not.
+		for (let i = 0; i < 2000; i++) service.broadcastToAll({ type: 'fill' });
+		expect(service.resumeBridgeClient(service.bridgeEpoch, 0)).toBeNull();
+		expect(service.resumeBridgeClient(service.bridgeEpoch, 1)).toHaveLength(2000);
+		expect(service.resumeBridgeClient(service.bridgeEpoch, 2000)).toHaveLength(1);
+	});
+});
