@@ -58,6 +58,11 @@ import { useMessageGistStore } from '../stores/messageGistStore';
 import { useSessionStore } from '../stores/sessionStore';
 import { useUIStore } from '../stores/uiStore';
 import { jumpToElement } from '../utils/jumpHighlight';
+import { useEventListener } from '../hooks/utils/useEventListener';
+import {
+	TRANSCRIPT_SCROLL_TO_BOTTOM_EVENT,
+	type TranscriptScrollToBottomDetail,
+} from '../services/transcriptScroll';
 import { SessionRecoveryCard } from './SessionRecoveryCard';
 import { AgentTaskListCard } from './AgentTaskListCard';
 import { extractAgentTaskList } from '../utils/agentTaskList';
@@ -307,9 +312,11 @@ interface LogItemProps {
 	bionifyAlgorithm: string;
 	// Message alignment
 	userMessageAlignment: 'left' | 'right';
-	// Claude mode pill - both passed as primitives so LogItem memo equality stays cheap.
+	// Claude mode pill - all passed as primitives so LogItem memo equality stays cheap.
 	isClaudeCode: boolean;
 	isAdaptiveMode: boolean;
+	/** Display setting: when false the provider mode pill is suppressed entirely. */
+	showProviderModePill: boolean;
 	// Session recovery (session_not_found inline card). Only consumed when
 	// log.recoveryAction is set; otherwise these props are ignored.
 	sessionId: string;
@@ -369,6 +376,7 @@ const LogItemComponent = memo(
 		userMessageAlignment,
 		isClaudeCode,
 		isAdaptiveMode,
+		showProviderModePill,
 		sessionId,
 		onSessionRecover,
 		isRecoveringSession,
@@ -1140,31 +1148,33 @@ const LogItemComponent = memo(
 					    auto-switches between the two). The model and effort pills name the
 					    configuration the turn was SENT with, so a conversation that changed
 					    model or effort partway through still says who answered what. */}
-					{log.source !== 'user' && (isClaudeCode || log.turnModel || log.turnEffort) && (
-						<div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1 max-w-[60%] pointer-events-none select-none">
-							{isClaudeCode &&
-								(() => {
-									const { label, title } = getTokenSourcePill({
-										mode: log.renderStyle === 'text-stream' ? 'interactive' : 'api',
-										adaptive: isAdaptiveMode,
-									});
-									return (
-										<span
-											className="text-2xs px-1.5 py-0.5 rounded shrink-0 whitespace-nowrap"
-											style={{
-												backgroundColor: `${theme.colors.accent}20`,
-												color: theme.colors.accent,
-												opacity: 0.7,
-											}}
-											title={title}
-										>
-											{label}
-										</span>
-									);
-								})()}
-							<TurnSettingPills theme={theme} model={log.turnModel} effort={log.turnEffort} />
-						</div>
-					)}
+					{log.source !== 'user' &&
+						((isClaudeCode && showProviderModePill) || log.turnModel || log.turnEffort) && (
+							<div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1 max-w-[60%] pointer-events-none select-none">
+								{isClaudeCode &&
+									showProviderModePill &&
+									(() => {
+										const { label, title } = getTokenSourcePill({
+											mode: log.renderStyle === 'text-stream' ? 'interactive' : 'api',
+											adaptive: isAdaptiveMode,
+										});
+										return (
+											<span
+												className="text-2xs px-1.5 py-0.5 rounded shrink-0 whitespace-nowrap"
+												style={{
+													backgroundColor: `${theme.colors.accent}20`,
+													color: theme.colors.accent,
+													opacity: 0.7,
+												}}
+												title={title}
+											>
+												{label}
+											</span>
+										);
+									})()}
+								<TurnSettingPills theme={theme} model={log.turnModel} effort={log.turnEffort} />
+							</div>
+						)}
 					{/* Jump to top of this message - bottom left corner */}
 					<JumpToMessageTopButton
 						scrollContainerRef={scrollContainerRef}
@@ -1379,6 +1389,7 @@ const LogItemComponent = memo(
 			prevProps.bionifyAlgorithm === nextProps.bionifyAlgorithm &&
 			prevProps.fontFamily === nextProps.fontFamily &&
 			prevProps.userMessageAlignment === nextProps.userMessageAlignment &&
+			prevProps.showProviderModePill === nextProps.showProviderModePill &&
 			prevProps.ghCliAvailable === nextProps.ghCliAvailable &&
 			prevProps.onForkConversation === nextProps.onForkConversation &&
 			prevProps.publishedGistUrl === nextProps.publishedGistUrl
@@ -1421,6 +1432,15 @@ interface TerminalOutputProps {
 	onScrollPositionChange?: (scrollTop: number) => void; // Callback to save scroll position
 	onAtBottomChange?: (isAtBottom: boolean) => void; // Callback when user scrolls to/away from bottom
 	initialScrollTop?: number; // Initial scroll position to restore
+	/**
+	 * Whether this tab was left FOLLOWING THE TAIL rather than parked at a
+	 * pixel offset. `initialScrollTop` is an absolute offset, and the transcript
+	 * grows while the tab is off screen, so restoring it verbatim strands a tab
+	 * that was at the bottom however far the agent wrote in the meantime.
+	 * `undefined` counts as at-bottom - the same default the unread gate in
+	 * `useAgentDataListener` uses, so the two cannot disagree.
+	 */
+	initialIsAtBottom?: boolean;
 	markdownEditMode: boolean; // Whether to show raw markdown or rendered markdown for AI responses
 	setMarkdownEditMode: (value: boolean) => void; // Toggle markdown mode
 	onReplayMessage?: (text: string, images?: string[]) => void; // Replay a user message
@@ -1486,6 +1506,7 @@ export const TerminalOutput = memo(
 			onScrollPositionChange,
 			onAtBottomChange,
 			initialScrollTop,
+			initialIsAtBottom,
 			markdownEditMode,
 			setMarkdownEditMode,
 			onReplayMessage,
@@ -1504,6 +1525,7 @@ export const TerminalOutput = memo(
 			isRecoveringSession,
 			sessionRecoveryError,
 		} = props;
+		const showProviderModePill = useSettingsStore((s) => s.showProviderModePill);
 		const globalBionifyReadingMode = useSettingsStore((s) => s.bionifyReadingMode);
 		const globalBionifyIntensity = useSettingsStore((s) => s.bionifyIntensity);
 		const publishedGists = useMessageGistStore((s) => s.published);
@@ -2274,6 +2296,34 @@ export const TerminalOutput = memo(
 			lastLogCountRef.current = currentCount;
 		}, [filteredLogs.length, isAtBottom, activeTabId]);
 
+		// Slam the transcript to the bottom on the next frame. Shared by the
+		// follow-the-tail MutationObserver below and by an explicit scroll request
+		// from the composer, so both hand the scroll handler the same guard flag
+		// and cannot disagree about what counts as a user scroll.
+		const scrollToBottom = useCallback(() => {
+			if (!scrollContainerRef.current) return;
+			requestAnimationFrame(() => {
+				if (scrollContainerRef.current) {
+					// Set guard flag BEFORE scrollTo - the throttled scroll handler
+					// checks this flag and consumes it (clears it) when it fires,
+					// preventing the programmatic scroll from being misinterpreted
+					// as a user scroll-up that should pause auto-scroll.
+					isProgrammaticScrollRef.current = true;
+					scrollContainerRef.current.scrollTo({
+						top: scrollContainerRef.current.scrollHeight,
+						behavior: 'auto',
+					});
+					// Fallback: if scrollTo is a no-op (already at bottom), the browser
+					// won't fire a scroll event, so the handler never consumes the guard.
+					// Clear it after 32ms (2x the 16ms throttle window) to prevent a
+					// stale true from eating the next genuine user scroll-up.
+					setTimeout(() => {
+						isProgrammaticScrollRef.current = false;
+					}, 32);
+				}
+			});
+		}, []);
+
 		// Auto-scroll to bottom when DOM content changes in the scroll container.
 		// Uses MutationObserver to detect ALL content mutations - new nodes (log entries),
 		// text changes (thinking stream growth), and attribute changes (tool status updates).
@@ -2285,30 +2335,6 @@ export const TerminalOutput = memo(
 
 			const shouldAutoScroll = () =>
 				!jumpInFlightRef.current && (!autoScrollPausedRef.current || isAtBottomRef.current);
-
-			const scrollToBottom = () => {
-				if (!scrollContainerRef.current) return;
-				requestAnimationFrame(() => {
-					if (scrollContainerRef.current) {
-						// Set guard flag BEFORE scrollTo - the throttled scroll handler
-						// checks this flag and consumes it (clears it) when it fires,
-						// preventing the programmatic scroll from being misinterpreted
-						// as a user scroll-up that should pause auto-scroll.
-						isProgrammaticScrollRef.current = true;
-						scrollContainerRef.current.scrollTo({
-							top: scrollContainerRef.current.scrollHeight,
-							behavior: 'auto',
-						});
-						// Fallback: if scrollTo is a no-op (already at bottom), the browser
-						// won't fire a scroll event, so the handler never consumes the guard.
-						// Clear it after 32ms (2x the 16ms throttle window) to prevent a
-						// stale true from eating the next genuine user scroll-up.
-						setTimeout(() => {
-							isProgrammaticScrollRef.current = false;
-						}, 32);
-					}
-				});
-			};
 
 			// Initial scroll on mount/dep change
 			if (shouldAutoScroll()) {
@@ -2328,26 +2354,61 @@ export const TerminalOutput = memo(
 			});
 
 			return () => observer.disconnect();
-		}, [autoScrollPaused]);
+		}, [autoScrollPaused, scrollToBottom]);
 
-		// Restore the scroll position this tab was left at.
+		// A bang command's output card is a reply the user asked for by pressing
+		// Enter, so it has to be visible the moment it starts streaming. If they
+		// were reading history at the time, auto-scroll is paused and the card
+		// would land offscreen behind the unread badge - the one case where the
+		// pause is wrong, because the new content is theirs, not the agent's.
+		useEventListener(TRANSCRIPT_SCROLL_TO_BOTTOM_EVENT, (event) => {
+			const detail = (event as CustomEvent<TranscriptScrollToBottomDetail>).detail;
+			if (!detail || detail.sessionId !== session.id || detail.tabId !== activeTabId) return;
+
+			// Flip the refs first so the MutationObserver's live shouldAutoScroll()
+			// follows the output this frame, before the state-driven re-render.
+			autoScrollPausedRef.current = false;
+			isAtBottomRef.current = true;
+			setAutoScrollPaused(false);
+			setIsAtBottom(true);
+			setHasNewMessages(false);
+			setNewMessageCount(0);
+			scrollToBottom();
+		});
+
+		// Restore the position this tab was left at.
 		//
-		// A single frame is not enough. One `requestAnimationFrame` only proves the
+		// A tab is left in one of two states, and they restore differently.
+		//
+		// FOLLOWING THE TAIL (`isAtBottom`): the saved `scrollTop` is a snapshot of
+		// where the bottom happened to be at save time, and the transcript keeps
+		// growing while the tab is off screen. Restoring that number verbatim drops
+		// the user however far the agent wrote while they were away - and because
+		// the offset is then far above the new bottom, the restore also PAUSES
+		// auto-scroll, so the transcript will not even follow the output that
+		// stranded them. Clicking a toast to read a finished reply landed thousands
+		// of pixels above it. Such a tab restores to the bottom, whatever the saved
+		// number says.
+		//
+		// PARKED MID-HISTORY: the offset is exactly right and must be honored - new
+		// entries are appended BELOW, so what the user was reading has not moved.
+		//
+		// Either way one `requestAnimationFrame` is not enough. It only proves the
 		// DOM is MOUNTED, not that its height has settled: images are still
 		// decoding, web fonts still swapping, code blocks still re-highlighting and
 		// markdown still reflowing. `scrollHeight` is therefore short on that first
-		// frame, `maxScroll` with it, and `Math.min(initialScrollTop, maxScroll)`
-		// silently clamps the restore to LESS than the saved offset. The tab opens
-		// above where the user left it - the further down they were and the heavier
-		// the content, the bigger the jump. That is the whole bug.
-		//
-		// So the guard is latched only once a restore actually LANDS on the offset
-		// that was asked for, and until then we re-attempt as the content grows.
+		// frame and `maxScroll` with it, so the restore clamps to LESS than it was
+		// asked for and the tab opens above where the user left it. So the guard is
+		// latched only once a restore actually LANDS, and until then we re-attempt
+		// as the content grows.
 		useEffect(() => {
+			// A tab that was following the tail has a target regardless of whether a
+			// position was ever saved, so this is checked before the offset guard.
+			const wantsBottom = initialIsAtBottom !== false;
 			// `>= 0`, not `> 0`: a transcript deliberately scrolled to the absolute
 			// top persists `scrollTop: 0`, and requiring a positive offset made that
 			// one position unrestorable.
-			if (initialScrollTop === undefined || initialScrollTop < 0) return;
+			if (!wantsBottom && (initialScrollTop === undefined || initialScrollTop < 0)) return;
 			if (hasRestoredScrollRef.current) return;
 
 			let cancelled = false;
@@ -2385,7 +2446,10 @@ export const TerminalOutput = memo(
 
 				const { scrollHeight, clientHeight } = container;
 				const maxScroll = Math.max(0, scrollHeight - clientHeight);
-				const targetScroll = Math.min(initialScrollTop, maxScroll);
+				// A tail-following tab chases the bottom as it moves, not the stale
+				// snapshot of where the bottom used to be.
+				const desiredScroll = wantsBottom ? maxScroll : (initialScrollTop as number);
+				const targetScroll = Math.min(desiredScroll, maxScroll);
 
 				// If the saved position is not at the bottom, pause auto-scroll so the
 				// MutationObserver doesn't immediately yank the view back down (uses the
@@ -2404,18 +2468,24 @@ export const TerminalOutput = memo(
 				isProgrammaticScrollRef.current = true;
 				container.scrollTop = targetScroll;
 
-				if (targetScroll >= initialScrollTop) {
-					// Landed on the offset that was asked for. Done.
+				// A fixed offset is reached the moment the content is tall enough to
+				// hold it. The bottom is not: `maxScroll` moves with every image that
+				// decodes and every block that re-highlights, so "landed on the bottom"
+				// is true on the first frame and wrong a frame later. A tail-following
+				// tab therefore keeps chasing until the HEIGHT stops changing.
+				if (!wantsBottom && targetScroll >= (initialScrollTop as number)) {
 					hasRestoredScrollRef.current = true;
 					return;
 				}
 
-				// Short of target because the content has not finished growing.
+				// Still settling: either the content has not grown tall enough to hold
+				// the saved offset, or the bottom is still moving under us.
 				framesWithoutGrowth = scrollHeight > lastScrollHeight ? 0 : framesWithoutGrowth + 1;
 				lastScrollHeight = scrollHeight;
 				if (framesWithoutGrowth >= MAX_QUIET_FRAMES) {
-					// Height has stopped changing and we still cannot reach the offset -
-					// the transcript is simply shorter now. Accept where we are.
+					// Height has stopped changing. Either we are on the settled bottom,
+					// or the transcript is simply shorter than the saved offset now.
+					// Accept where we are.
 					hasRestoredScrollRef.current = true;
 					return;
 				}
@@ -2426,7 +2496,7 @@ export const TerminalOutput = memo(
 			return () => {
 				cancelled = true;
 			};
-		}, [initialScrollTop]);
+		}, [initialScrollTop, initialIsAtBottom]);
 
 		// Reset restore flag when session/tab changes (handled by key prop on TerminalOutput)
 		useEffect(() => {
@@ -2807,6 +2877,7 @@ export const TerminalOutput = memo(
 								userMessageAlignment={userMessageAlignment}
 								isClaudeCode={session.toolType === 'claude-code'}
 								isAdaptiveMode={getClaudeTokenMode(session) === 'dynamic'}
+								showProviderModePill={showProviderModePill}
 							/>
 						);
 					})}

@@ -14,6 +14,7 @@
 import { create } from 'zustand';
 import type { FlatTreeNode } from '../utils/fileExplorer';
 import type { FileNode } from '../types/fileTree';
+import { closeOtherDestinations, registerExternalDestination } from './modalStore';
 
 // ============================================================================
 // Types
@@ -172,7 +173,10 @@ export const useFileExplorerStore = create<FileExplorerStore>()((set, get) => ({
 	setFilteredFileTree: (tree) => set({ filteredFileTree: tree }),
 	setFlatFileList: (list) => set({ flatFileList: list }),
 
-	focusFileInGraph: (relativePath) =>
+	focusFileInGraph: (relativePath) => {
+		// The graph is a destination surface: it fills the window, so it takes the
+		// window over from whatever destination was there. See DESTINATION_MODALS.
+		closeOtherDestinations();
 		set({
 			graphFocusFilePath: relativePath,
 			lastGraphFocusFilePath: relativePath,
@@ -183,9 +187,11 @@ export const useFileExplorerStore = create<FileExplorerStore>()((set, get) => ({
 			graphScopeDirectory: undefined,
 			graphRootPath: undefined,
 			graphReturnTo: undefined,
-		}),
+		});
+	},
 
-	openGraphScope: ({ files, directory, focusPath, rootPath, returnTo }) =>
+	openGraphScope: ({ files, directory, focusPath, rootPath, returnTo }) => {
+		closeOtherDestinations();
 		set({
 			// The builder auto-centers when this is empty. `lastGraphFocusFilePath`
 			// is deliberately not written here - "re-open the last graph" means the
@@ -196,11 +202,13 @@ export const useFileExplorerStore = create<FileExplorerStore>()((set, get) => ({
 			graphRootPath: rootPath,
 			graphReturnTo: returnTo,
 			isGraphViewOpen: true,
-		}),
+		});
+	},
 
 	openLastDocumentGraph: () => {
 		const { lastGraphFocusFilePath } = get();
 		if (lastGraphFocusFilePath) {
+			closeOtherDestinations();
 			set({
 				graphFocusFilePath: lastGraphFocusFilePath,
 				isGraphViewOpen: true,
@@ -218,5 +226,18 @@ export const useFileExplorerStore = create<FileExplorerStore>()((set, get) => ({
 			graphReturnTo: undefined,
 		}),
 
-	setIsGraphViewOpen: (open) => set({ isGraphViewOpen: open }),
+	setIsGraphViewOpen: (open) => {
+		if (open) closeOtherDestinations();
+		set({ isGraphViewOpen: open });
+	},
 }));
+
+// The other half of the one-destination-at-a-time rule: opening a modal-store
+// destination (Settings, Usage Dashboard, Director's Notes, ...) closes the
+// graph. Registered here rather than imported there so the dependency stays
+// one-way - modalStore must not know about this store.
+registerExternalDestination(() => {
+	if (useFileExplorerStore.getState().isGraphViewOpen) {
+		useFileExplorerStore.getState().closeGraphView();
+	}
+});

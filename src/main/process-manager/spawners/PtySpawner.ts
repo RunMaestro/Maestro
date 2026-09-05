@@ -10,6 +10,7 @@ import {
 	buildChildProcessEnv,
 	collectMaestroEnvVars,
 } from '../utils/envBuilder';
+import { DEFAULT_QUERY_SOURCE } from '../../../shared/querySource';
 import { resolveShellPath } from '../utils/pathResolver';
 import { escapeArgsForShell } from '../utils/shellEscape';
 import { isWindows } from '../../../shared/platformDetection';
@@ -122,7 +123,8 @@ export class PtySpawner {
 					false,
 					shellEnvVars,
 					config.extraPathDirs,
-					config.unsetEnvKeys
+					config.unsetEnvKeys,
+					config.querySource
 				);
 			}
 
@@ -148,7 +150,8 @@ export class PtySpawner {
 				maestroEnvVars: collectMaestroEnvVars(
 					shellEnvVars,
 					isTerminal ? undefined : customEnvVars,
-					false
+					false,
+					isTerminal ? undefined : (config.querySource ?? DEFAULT_QUERY_SOURCE)
 				),
 			};
 

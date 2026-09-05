@@ -58,6 +58,7 @@ import { buildMoveToGroupCommands } from './commands/moveToGroupCommands';
 import { buildNavigationCommands } from './commands/navigationCommands';
 import { buildNotificationCommands } from './commands/notificationCommands';
 import { buildRightPanelCommands } from './commands/rightPanelCommands';
+import { buildFilePreviewCommands } from './commands/filePreviewCommands';
 import { buildSearchCommands } from './commands/searchCommands';
 import {
 	buildSessionJumpCommands,
@@ -471,6 +472,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				toggleSidebar: shortcuts.toggleSidebar,
 				toggleRightPanel: shortcuts.toggleRightPanel,
 				nextUnreadTab: shortcuts.nextUnreadTab,
+				toggleUnreadFilters: shortcuts.toggleUnreadFilters,
 				killInstance: shortcuts.killInstance,
 				navBack: shortcuts.navBack,
 				navForward: shortcuts.navForward,
@@ -700,6 +702,10 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				goToAutoRun: shortcuts.goToAutoRun,
 				toggleAutoRunExpanded: shortcuts.toggleAutoRunExpanded,
 			},
+		}),
+		...buildFilePreviewCommands({
+			activeSession,
+			setQuickActionOpen,
 		}),
 		...buildSearchCommands({
 			setQuickActionOpen,

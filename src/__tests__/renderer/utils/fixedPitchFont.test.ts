@@ -1,9 +1,12 @@
 /**
- * Tests for the terminal's font resolution.
+ * Tests for the font resolution every surface that shows shell text shares -
+ * the terminal, the command-mode composer, and the shell command card.
  *
  * A terminal in a proportional font renders a broken grid: xterm sizes its cell
  * from the advance of `W` and then puts every character on that pitch, so narrow
- * letters trail a gap (`Cl aude`, `Mi crosoft`) while wide ones sit flush.
+ * letters trail a gap (`Cl aude`, `Mi crosoft`) while wide ones sit flush. The
+ * DOM surfaces fail differently but for the same reason: columns of `ls -l`
+ * stop lining up and box drawing stops joining.
  *
  * The advance numbers below are REAL, read out of the `hmtx` table of the font
  * files on the machine where this bug was found:
@@ -22,8 +25,9 @@ import {
 	isFixedPitchStack,
 	resolveTerminalFontFamily,
 	FIXED_PITCH_FALLBACK_STACK,
+	resolveFixedPitchFontFamily,
 	type MeasureAdvance,
-} from '../../../renderer/components/XTerminal';
+} from '../../../renderer/utils/fixedPitchFont';
 
 /** Advances in font units, keyed by the first family in the stack. */
 const REAL_FONT_METRICS: Record<string, { unitsPerEm: number; advances: Record<string, number> }> =
@@ -154,5 +158,21 @@ describe('resolveTerminalFontFamily', () => {
 	// the user's configured font is kept rather than silently replaced.
 	it('keeps the configured stack when it cannot measure', () => {
 		expect(resolveTerminalFontFamily('Avenir Next', 13, null)).toBe('Avenir Next, monospace');
+	});
+});
+
+/**
+ * The DOM surfaces call the no-canvas-of-their-own wrapper. Under jsdom there
+ * is no 2d context, so it takes the same evidence-free path a locked-down
+ * renderer would: keep the configured stack, guaranteed by an appended generic.
+ * The measured override itself is covered above, where a measurer exists.
+ */
+describe('resolveFixedPitchFontFamily', () => {
+	it('guarantees a fixed-pitch tail even where it cannot measure', () => {
+		expect(resolveFixedPitchFontFamily('Avenir Next')).toMatch(/monospace$/);
+	});
+
+	it('does not append a second generic to a stack that already ends in one', () => {
+		expect(resolveFixedPitchFontFamily('Menlo, monospace')).toBe('Menlo, monospace');
 	});
 });

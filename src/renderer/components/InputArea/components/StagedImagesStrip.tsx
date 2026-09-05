@@ -72,10 +72,12 @@ export const StagedImagesStrip = memo(function StagedImagesStrip({
 							index={idx}
 							theme={theme}
 							size="strip"
-							// Numbers appear only while a drag is in flight: they answer
-							// "which slot am I aiming at", and a permanent badge on every
-							// thumbnail is noise the rest of the time.
-							showSlotNumber={dnd.isDragging}
+							// The number is how you name an image in the message
+							// ("annotate screenshot 3"), so it stays visible whenever
+							// there is more than one to pick from. A lone thumbnail
+							// needs no label, but it still gets one mid-drag to answer
+							// "which slot am I aiming at".
+							showSlotNumber={stagedImages.length > 1 || dnd.isDragging}
 							isDragging={dnd.dragIndex === idx}
 							isDimmed={dnd.isDragging && dnd.dragIndex !== idx}
 							dropBefore={dnd.dropGap === idx}

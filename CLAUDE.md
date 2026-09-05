@@ -80,6 +80,8 @@ Grep-verified 2026-09-04 (`npm run docs:verify` re-checks every path). This is t
 - **Toast notifications:** `notifyToast({ color, title, message, dismissible? })`, `theme` in `src/renderer/stores/notificationStore.ts`
 - **Center flash (rapid acks):** `notifyCenterFlash({ message, color, detail?, duration? })`, `flashCopiedToClipboard()` in `src/renderer/stores/centerFlashStore.ts`
 - **Opening a modal / dashboard by name:** `UI_SURFACES`, `resolveUiSurface()` in `src/shared/uiSurfaces.ts`
+- **Whether a modal takes the window over:** `DESTINATION_MODALS`, `registerExternalDestination()` in `src/renderer/stores/modalStore.ts`
+- **Toggling the unread filters:** `toggleAllUnreadFilters()`, `toggleTabUnreadFilter()` in `src/renderer/services/unreadFilters.ts`
 - **Scheduled Tasks (clock-driven Cue subs):** `src/shared/cue/scheduled-tasks.ts`
 - **How much work happened in a group chat:** `computeGroupChatActivity(entries)`, `elapsedTimeMs` in `src/shared/groupChatActivity.ts`
 - **Whether an agent is drawn in the Left Bar:** `sessionMatchesFilter()`, `passesUnreadFilter()` in `src/renderer/utils/sidebarMembership.ts`
@@ -90,6 +92,7 @@ Grep-verified 2026-09-04 (`npm run docs:verify` re-checks every path). This is t
 - **Focus a file tab:** `fileTabFocusFields(tabId)` in `src/renderer/utils/tabHelpers.ts`
 - **Audio/video playback:** `handleOpenFileTab()`, `enqueueMedia()` in `src/renderer/hooks/tabs/internal/useFilePreviewTabHandlers.ts`
 - **Run a shell command from the chat:** `dispatchShellCommand()`, `runShellCommand()` in `src/renderer/services/shellCommand.ts`
+- **Revealing output the user asked for, past a paused auto-scroll:** `requestTranscriptScrollToBottom(sessionId, tabId)`, `TRANSCRIPT_SCROLL_TO_BOTTOM_EVENT` in `src/renderer/services/transcriptScroll.ts`
 - **Delete the file the user is previewing:** `requestFileDeletion({ path, sshRemoteId?, sessionId? })`, `confirm` in `src/renderer/services/fileDeletion.ts`
 - **Telling the Files panel a file appeared or vanished:** `requestFileTreeRefresh(sessionId)`, `nudgeFileTreeForPaths(paths)` in `src/renderer/utils/fileTreeRefresh.ts`
 - **Loading a LOCAL file tree:** `walkLocalFileTree()`, `loadFileTree()` in `src/main/utils/file-tree-walk.ts`
@@ -101,13 +104,18 @@ Grep-verified 2026-09-04 (`npm run docs:verify` re-checks every path). This is t
 - **Font zoom on a reading pane:** `useFontScale(storageKey)`, `AArrowUp` in `src/renderer/hooks/ui/useFontScale.ts`
 - **Bare `+` / `-` / `0` zoom on a surface:** `useScaleShortcuts(control, { enabled })`, `useScalePreference` in `src/renderer/hooks/ui/useScaleShortcuts.ts`
 - **Whether a surface is the topmost layer:** `useIsTopLayer(priority)`, `MODAL_PRIORITIES` in `src/renderer/hooks/ui/useIsTopLayer.ts`
+- **Who asked for this turn (interactive vs automation):** `QUERY_SOURCE_ENV_VAR`, `QuerySource` in `src/shared/querySource.ts`
 - **An agent's effective environment:** `resolveAgentEnvironment()`, `isSecretEnvKey()` in `src/shared/agentEnvironment.ts`
 - **Whether a login flow can fix an auth failure:** `classifyCredentialKind()`, `credentialKindBlocksLogin()` in `src/shared/providerAuthIdentity.ts`
+- **Typing a login command into a shell:** `formatAgentLoginCommand(login, syntax?)`, `loginShellSyntaxFor(shellId, isWindows)` in `src/shared/agentMetadata.ts`
 - **Bucketing Director's Notes bullets:** `bucketNarrativeItems()`, `shouldRenderBuckets()` in `src/shared/directorNotesGrouping.ts`
 - **Sortable table header:** `useTableSort()`, `role` in `src/renderer/components/ui/SortableTh.tsx`
 - **Graphing a set of documents rather than one:** `scopeDirectory`, `openGraphScope()` in `src/renderer/components/DocumentGraph/graphDataBuilder.ts`
 - **A labeled action button in a panel header:** `src/renderer/components/ui/HeaderActionButton.tsx`
 - **Highlighting a search hit:** `highlightMatches(text, query, accentColor)`, `searchMatchRanges(text, query)` in `src/renderer/utils/highlightMatches.tsx`
+- **Highlighting a FUZZY hit:** `renderFuzzyHighlight(text, indices, styles?)`, `fuzzyMatchWithIndices(text, query)` in `src/renderer/utils/search.ts`
+- **Jumping a markdown preview to a heading:** `scrollToHeadingSlug()`, `headingLevelColor()` in `src/renderer/components/FilePreview/shared/headings.ts`
+- **Reaching the open file preview from a modal:** `requestHeadingPalette()`, `HEADING_PALETTE_EVENT` in `src/renderer/services/headingPalette.ts`
 - **A text box that narrows a list:** `resultLabel`, `AutoRunSearchBar` in `src/renderer/components/ui/FilterInput.tsx`
 - **A pane that reads and edits a markdown document:** `generateProseStyles({ theme, scopeSelector })`, `focus` in `src/renderer/components/FilePreview/markdownEditor`
 - **`{{template}}` variable autocomplete:** `useTemplateAutocompleteEngine()`, `useTemplateAutocomplete()` in `src/renderer/hooks/input/useTemplateAutocompleteEngine.ts`
@@ -115,10 +123,12 @@ Grep-verified 2026-09-04 (`npm run docs:verify` re-checks every path). This is t
 - **Segmented toolbar (sort/filter pill bar):** `borderLeft`, `variant` in `src/renderer/components/ui/SegmentedControl.tsx`
 - **Paginating a list already in memory:** `usePagination(items, pageSize, resetKey)`, `useHistoryPagination` in `src/renderer/hooks/ui/usePagination.ts`
 - **Following streaming output in a capped box:** `useStickToBottom(contentKey)`, `useScrollIntoView` in `src/renderer/hooks/ui/useStickToBottom.ts`
+- **Restoring an AI tab's scroll position:** `initialScrollTop` + `initialIsAtBottom` props on `src/renderer/components/TerminalOutput.tsx` (a tail-following tab restores to the BOTTOM, not its stale saved offset)
 - **Keeping a virtualized list on its selection:** `scrollToIndex`, `ref` in `src/renderer/hooks/ui/useScrollIntoView.ts`
 - **Adding a control to the Left Bar header:** three-zone row in `src/renderer/components/SessionList/SessionList.tsx`; see guide before touching
 - **Element width for JS-computed layout:** `useElementWidth(ref, enabled?)`, `ResizeObserver` in `src/renderer/hooks/ui/useElementWidth.ts`
 - **Usage Dashboard card tile:** `StatCard` in `src/renderer/components/UsageDashboard/EntityTile.tsx`
+- **Fixed-pitch font for shell text:** `resolveFixedPitchFontFamily()`, `resolveTerminalFontFamily()` in `src/renderer/utils/fixedPitchFont.ts`
 - **Rendering raw terminal output (ANSI):** `useAnsiConverter(theme)`, `getCachedAnsiHtml(text, theme.id, converter)` in `src/renderer/hooks/ui/useAnsiConverter.ts`
 - **Any CLI verb that can move the Maestro view:** `resolveBackgroundFlag()`, `readBackgroundField()` in `src/shared/focusPlacement.ts`
 - **Making a tab the visible one:** `aiTabFocusFields`, `fileTabFocusFields` in `src/renderer/utils/tabFocusFields.ts`

@@ -18,6 +18,7 @@ import type {
 	AutoRunSession,
 	AutoRunTask,
 	SessionLifecycleEvent,
+	ResilienceEvent,
 	StatsTimeRange,
 	StatsFilters,
 	StatsAggregation,
@@ -53,6 +54,7 @@ import {
 	getSessionLifecycleEvents,
 	clearSessionLifecycleCache,
 } from './session-lifecycle';
+import { recordResilienceEvent, getResilienceEvents, clearResilienceCache } from './resilience';
 import { getAggregatedStats } from './aggregations';
 import { clearOldData, exportToCsv } from './data-management';
 import {
@@ -179,6 +181,7 @@ export class StatsDB {
 			clearQueryEventCache();
 			clearAutoRunCache();
 			clearSessionLifecycleCache();
+			clearResilienceCache();
 			clearImageAnnotationCache();
 			clearShortcutUsageCache();
 
@@ -778,6 +781,18 @@ export class StatsDB {
 
 	getAutoRunTasks(autoRunSessionId: string): AutoRunTask[] {
 		return getAutoRunTasks(this.database, autoRunSessionId);
+	}
+
+	// ============================================================================
+	// Resilience Events (delegated)
+	// ============================================================================
+
+	recordResilienceEvent(event: ResilienceEvent): string {
+		return recordResilienceEvent(this.database, event);
+	}
+
+	getResilienceEvents(range: StatsTimeRange): ResilienceEvent[] {
+		return getResilienceEvents(this.database, range);
 	}
 
 	// ============================================================================

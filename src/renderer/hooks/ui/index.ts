@@ -36,6 +36,9 @@ export { useStickToBottom } from './useStickToBottom';
 // Hover tooltip management
 export { useHoverTooltip } from './useHoverTooltip';
 
+// Fixed-pitch font for surfaces that render shell text
+export { useFixedPitchFont } from './useFixedPitchFont';
+
 // Theme-aware ANSI -> HTML converter for raw terminal output
 export { useAnsiConverter, createAnsiConverter } from './useAnsiConverter';
 

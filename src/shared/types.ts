@@ -227,6 +227,14 @@ export interface SessionInfo {
 	customArgs?: string;
 	/** Per-session env vars merged over agent-level customEnvVars and agent defaults. */
 	customEnvVars?: Record<string, string>;
+	/**
+	 * Env vars the user switched OFF in the agent editor. Same shape as
+	 * `customEnvVars`, but deliberately kept OUT of it so no spawn path has to
+	 * filter: a parked var is invisible to every consumer of the effective
+	 * environment. The editor is the only reader - it lists these so a variable
+	 * can be turned back on without retyping its value.
+	 */
+	customEnvVarsDisabled?: Record<string, string>;
 	/** Prefixed to the first message of every new session (not shown in chat). */
 	newSessionMessage?: string;
 	/** Appended to every message sent to the agent (not shown in chat). */

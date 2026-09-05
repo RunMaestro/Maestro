@@ -36,7 +36,11 @@ vi.mock('../../../renderer/components/NewAgentChoiceModal', () => ({
 vi.mock('../../../renderer/utils/terminalTabHelpers', () => ({
 	getTerminalTabDisplayName: vi.fn(() => 'Terminal 1'),
 }));
-vi.mock('../../../renderer/stores/modalStore', () => {
+// Spread the real module so a new modalStore export cannot break this mock at
+// import time. `fileExplorerStore` calls `registerExternalDestination` at module
+// scope, and a factory mock that omits it throws before any test runs.
+vi.mock('../../../renderer/stores/modalStore', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../../renderer/stores/modalStore')>();
 	const store = {
 		getState: () => ({
 			modals: new Map(),
@@ -48,6 +52,7 @@ vi.mock('../../../renderer/stores/modalStore', () => {
 		destroy: vi.fn(),
 	};
 	return {
+		...actual,
 		useModalStore: Object.assign((selector: any) => selector(store.getState()), store),
 		selectModalOpen: (id: string) => (state: any) => state.modals.get(id)?.open ?? false,
 		selectModalData: (id: string) => (state: any) => state.modals.get(id)?.data,

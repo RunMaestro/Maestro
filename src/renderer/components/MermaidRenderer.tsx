@@ -3,6 +3,7 @@ import mermaid from 'mermaid';
 import DOMPurify from 'dompurify';
 import type { Theme } from '../types';
 import { logger } from '../utils/logger';
+import { normalizeMermaidSource } from '../../shared/mermaidSource';
 import {
 	adjustBrightness,
 	blendColors,
@@ -411,7 +412,10 @@ export function MermaidRenderer({ chart, theme }: MermaidRendererProps) {
 
 			try {
 				// Pre-validate chart syntax before render to prevent DOM pollution.
-				const trimmed = chart.trim();
+				// `normalizeMermaidSource` first repairs the `@`-in-a-label case
+				// mermaid's edge-id lexer rule rejects (see that module); the
+				// error branch below still shows the author's original source.
+				const trimmed = normalizeMermaidSource(chart.trim());
 				try {
 					await mermaid.parse(trimmed);
 				} catch (parseErr) {

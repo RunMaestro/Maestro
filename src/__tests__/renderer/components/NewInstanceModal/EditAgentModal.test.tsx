@@ -303,7 +303,8 @@ describe('EditAgentModal', () => {
 			undefined, // maestroPMode
 			true, // retryOnAvailabilityErrors
 			true, // retryOnTokenExhaustion
-			undefined // failoverConfig (not configured on this agent)
+			undefined, // failoverConfig (not configured on this agent)
+			undefined // customEnvVarsDisabled (nothing switched off)
 		);
 		expect(onClose).toHaveBeenCalled();
 	});
@@ -570,7 +571,8 @@ describe('EditAgentModal', () => {
 			undefined, // maestroPMode
 			true, // retryOnAvailabilityErrors
 			true, // retryOnTokenExhaustion
-			undefined // failoverConfig (not configured on this agent)
+			undefined, // failoverConfig (not configured on this agent)
+			undefined // customEnvVarsDisabled (nothing switched off)
 		);
 	});
 
@@ -641,7 +643,8 @@ describe('EditAgentModal', () => {
 			undefined, // maestroPMode
 			true, // retryOnAvailabilityErrors
 			true, // retryOnTokenExhaustion
-			undefined // failoverConfig (not configured on this agent)
+			undefined, // failoverConfig (not configured on this agent)
+			undefined // customEnvVarsDisabled (nothing switched off)
 		);
 	});
 
@@ -718,7 +721,8 @@ describe('EditAgentModal', () => {
 			undefined, // maestroPMode
 			true, // retryOnAvailabilityErrors
 			true, // retryOnTokenExhaustion
-			undefined // failoverConfig (not configured on this agent)
+			undefined, // failoverConfig (not configured on this agent)
+			undefined // customEnvVarsDisabled (nothing switched off)
 		);
 	});
 

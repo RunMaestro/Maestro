@@ -83,6 +83,10 @@ interface ProcessConfig {
 	// Windows command line length workaround
 	sendPromptViaStdin?: boolean; // If true, send the prompt via stdin as JSON instead of command line
 	sendPromptViaStdinRaw?: boolean; // If true, send the prompt via stdin as raw text instead of command line
+	/** Who asked for this turn: a human ('user') or Auto Run ('auto'). Stamped into
+	 *  the spawned process env as MAESTRO_QUERY_SOURCE. Cue runs never come through
+	 *  this IPC path - they spawn in the main process and mark themselves 'cue'. */
+	querySource?: 'user' | 'auto';
 	// Claude token-source selection. Normally resolved server-side from the
 	// persisted session by sessionId, but spawns using a synthetic sessionId
 	// (e.g. background synopsis) forward these inline so the handler can resolve.
@@ -3093,6 +3097,28 @@ interface MaestroAPI {
 			range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'
 		) => Promise<number>;
 		// Record session creation (launched)
+		recordResilience: (event: {
+			id: string;
+			sessionId: string;
+			agentType: string;
+			strategy: 'availability' | 'token-exhaustion';
+			outcome: 'recovered' | 'stopped';
+			startedAt: number;
+			resolvedAt: number;
+			retries: number;
+		}) => Promise<string | null>;
+		getResilience: (range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all') => Promise<
+			Array<{
+				id: string;
+				sessionId: string;
+				agentType: string;
+				strategy: 'availability' | 'token-exhaustion';
+				outcome: 'recovered' | 'stopped';
+				startedAt: number;
+				resolvedAt: number;
+				retries: number;
+			}>
+		>;
 		recordSessionCreated: (event: {
 			sessionId: string;
 			agentType: string;

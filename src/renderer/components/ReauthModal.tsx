@@ -43,6 +43,7 @@ import {
 } from '../../shared/providerAuthIdentity';
 import { generateId } from '../utils/ids';
 import { findLoginUrl } from '../utils/loginUrl';
+import { isWindowsPlatform } from '../utils/platformUtils';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
 import { notifyToast } from '../stores/notificationStore';
@@ -51,6 +52,7 @@ import {
 	formatAgentLoginCommand,
 	getAgentDisplayName,
 	getAgentLoginCommand,
+	loginShellSyntaxFor,
 } from '../../shared/agentMetadata';
 import { resolveAgentEnvironment, type ResolvedEnvVar } from '../../shared/agentEnvironment';
 import type { Session, Theme } from '../types';
@@ -186,11 +188,6 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 		return credentialKindBlocksLogin(classifyCredentialKind(session.toolType, env), agentName);
 	}, [providerEnv, effectiveEnv, session.toolType, agentName]);
 
-	// Null until the environment has been read, so the spawn effect below waits
-	// rather than starting a login the classification is about to rule out.
-	const commandLine =
-		providerEnv !== null && !loginBlockedReason && login ? formatAgentLoginCommand(login) : null;
-
 	// Same SSH resolution as a terminal tab: an agent that runs on a remote host
 	// must re-authenticate on that host, not on this laptop.
 	const sshConfig = useMemo(() => {
@@ -217,6 +214,33 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 		return undefined;
 	}, [session.sessionSshRemoteConfig, session.sshRemoteId, session.remoteCwd]);
 
+	/**
+	 * Shell the login runs in.
+	 *
+	 * On Windows the configured default may be WSL, and that is the one shell
+	 * this dialog must NOT use: agents are always spawned as native Windows
+	 * processes (nothing in the spawn path goes through `wsl.exe`), so a login
+	 * inside WSL writes credentials to the WSL home directory that the native
+	 * agent never reads. The login would appear to succeed and fix nothing.
+	 * A remote agent is unaffected - its shell is the SSH remote's own.
+	 */
+	const loginShell = useMemo(() => {
+		if (sshConfig?.enabled) return defaultShell;
+		if (isWindowsPlatform() && defaultShell?.trim().toLowerCase() === 'wsl') return 'powershell';
+		return defaultShell;
+	}, [defaultShell, sshConfig?.enabled]);
+
+	// Null until the environment has been read, so the spawn effect below waits
+	// rather than starting a login the classification is about to rule out.
+	const commandLine =
+		providerEnv !== null && !loginBlockedReason && login
+			? formatAgentLoginCommand(
+					login,
+					// An SSH remote runs a posix shell regardless of this machine.
+					sshConfig?.enabled ? 'posix' : loginShellSyntaxFor(loginShell ?? '', isWindowsPlatform())
+				)
+			: null;
+
 	// Type the login command in, once the shell is actually there to receive it.
 	//
 	// Not sent straight after the spawn resolves: over SSH the spawn resolves as
@@ -233,7 +257,12 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 			clearTimeout(commandTimerRef.current);
 			commandTimerRef.current = null;
 		}
-		void window.maestro.process.write(pending.ptySessionId, `${pending.command}\n`).catch(() => {
+		// CR, not LF: this is what a real Enter key sends (see the terminal
+		// keyboard handler), and it is the only one that submits reliably on
+		// Windows - ConPTY passes LF through as Ctrl+J, which PSReadLine does not
+		// treat as "run this line", so a PowerShell login would sit there untyped.
+		// A Unix PTY maps CR to NL for us, so this is correct on every platform.
+		void window.maestro.process.write(pending.ptySessionId, `${pending.command}\r`).catch(() => {
 			// A failed write surfaces as the process exiting; nothing to add here.
 		});
 	}, []);
@@ -274,7 +303,7 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 				// over SSH). It needs no project directory, and guessing one risks a
 				// `cd` that fails and kills the session before the login can run.
 				cwd: sshConfig?.enabled ? '' : session.cwd || session.projectRoot || '',
-				shell: defaultShell || undefined,
+				shell: loginShell || undefined,
 				shellArgs,
 				shellEnvVars,
 				toolType: session.toolType,
@@ -321,7 +350,7 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 	}, [
 		commandLine,
 		ptySessionId,
-		defaultShell,
+		loginShell,
 		shellArgs,
 		shellEnvVars,
 		sshConfig,

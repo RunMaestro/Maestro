@@ -43,6 +43,7 @@ import { ensureRemoteMaestroPProbed } from '../../agents/probeRemoteMaestroP';
 import { getPrompt } from '../../prompt-manager';
 import { shellEscape } from '../../utils/shell-escape';
 import { buildSshCommandWithStdin } from '../../utils/ssh-command-builder';
+import { DEFAULT_QUERY_SOURCE, QUERY_SOURCE_ENV_VAR } from '../../../shared/querySource';
 import { buildStreamJsonMessage } from '../../process-manager/utils/streamJsonBuilder';
 import { getWindowsShellForAgentExecution } from '../../process-manager/utils/shellEscape';
 import { buildExpandedEnv, encodeClaudeProjectPath } from '../../../shared/pathUtils';
@@ -1065,6 +1066,10 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 							...globalShellEnvVars,
 							...(effectiveCustomEnvVars || {}),
 							...(remoteInteractive?.env || {}),
+							// Only this map crosses to the remote host, so the turn-origin
+							// marker that buildChildProcessEnv() stamps locally has to be
+							// re-stated here or every SSH turn looks hand-typed.
+							[QUERY_SOURCE_ENV_VAR]: config.querySource ?? DEFAULT_QUERY_SOURCE,
 						};
 
 						const sshCommand = await buildSshCommandWithStdin(sshResult.config, {

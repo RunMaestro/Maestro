@@ -220,10 +220,14 @@ export function RichOverview({
 			{/* Activity timeline */}
 			<SectionCard theme={theme} title="Activity Timeline" icon={Activity}>
 				<ChartErrorBoundary theme={theme} chartName="Activity Timeline">
+					{/* Cue starts hidden: on a Cue-heavy install its bars dwarf every
+					    other source and flatten them into invisible slivers. The
+					    legend toggles it back on. */}
 					<ActivityTimeline
 						theme={theme}
 						buckets={timelineBuckets}
 						colors={{ auto: autoColor, user: userColor, cue: CUE_COLOR }}
+						defaultHiddenSeries={['cue']}
 					/>
 				</ChartErrorBoundary>
 			</SectionCard>

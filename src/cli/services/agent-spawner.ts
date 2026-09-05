@@ -12,6 +12,11 @@ import { getAgentDefinition } from '../../main/agents/definitions';
 import { hasCapability } from '../../main/agents/capabilities';
 import { getAgentCustomPath, readAgentConfig, readSshRemotes } from './storage';
 import { generateUUID } from '../../shared/uuid';
+import {
+	DEFAULT_QUERY_SOURCE,
+	QUERY_SOURCE_ENV_VAR,
+	type QuerySource,
+} from '../../shared/querySource';
 import { sanitizeSessionId } from '../../shared/history';
 import { buildExpandedPath, buildExpandedEnv } from '../../shared/pathUtils';
 import { isWindows, getWhichCommand } from '../../shared/platformDetection';
@@ -113,7 +118,12 @@ function finalizeAgentStdin(child: ChildProcess, sshStdinScript?: string): void 
 
 type SpawnOverrides = Pick<
 	SpawnAgentOptions,
-	'customModel' | 'customEffort' | 'customArgs' | 'customEnvVars' | 'appendSystemPrompt'
+	| 'customModel'
+	| 'customEffort'
+	| 'customArgs'
+	| 'customEnvVars'
+	| 'appendSystemPrompt'
+	| 'querySource'
 >;
 
 /**
@@ -469,6 +479,7 @@ async function spawnClaudeAgent(
 		userCustomEnvVars,
 		readOnlyMode ? def?.readOnlyEnvOverrides : undefined
 	);
+	env[QUERY_SOURCE_ENV_VAR] = overrides.querySource ?? DEFAULT_QUERY_SOURCE;
 
 	const claudeCommand = getAgentCommand('claude-code');
 	const sshEnabled = !!sshRemoteConfig?.enabled;
@@ -547,6 +558,7 @@ async function spawnClaudeAgent(
 				prompt,
 				customEnvVars: remoteInteractive ? { ...remoteEnv, ...remoteInteractive.env } : remoteEnv,
 				agentBinaryName: remoteInteractive ? remoteInteractive.command : def?.binaryName,
+				querySource: overrides.querySource,
 			},
 			sshRemoteConfig
 		);
@@ -859,6 +871,7 @@ async function spawnJsonLineAgent(
 		userCustomEnvVars,
 		readOnlyMode ? def?.readOnlyEnvOverrides : undefined
 	);
+	env[QUERY_SOURCE_ENV_VAR] = overrides.querySource ?? DEFAULT_QUERY_SOURCE;
 
 	// System prompt delivery for JSON-line agents:
 	//  - Agents declaring `supportsAppendSystemPrompt: true` get the dedicated
@@ -929,6 +942,7 @@ async function spawnJsonLineAgent(
 				agentBinaryName: def?.binaryName,
 				noPromptSeparator,
 				promptArgs: def?.promptArgs,
+				querySource: overrides.querySource,
 			},
 			sshRemoteConfig
 		);
@@ -1087,6 +1101,13 @@ export interface SpawnAgentOptions {
 	enableMaestroP?: boolean;
 	maestroPMode?: 'interactive' | 'dynamic';
 	maestroPPath?: string;
+	/**
+	 * Who asked for this turn. Stamped into the agent's env as
+	 * MAESTRO_QUERY_SOURCE so tooling downstream of the spawn can tell a
+	 * playbook or Auto Run task apart from a `maestro send` the user typed -
+	 * the processes are otherwise identical. Defaults to 'user'.
+	 */
+	querySource?: QuerySource;
 }
 
 /**
@@ -1107,6 +1128,7 @@ export async function spawnAgent(
 		customArgs: options?.customArgs,
 		customEnvVars: options?.customEnvVars,
 		appendSystemPrompt: options?.appendSystemPrompt,
+		querySource: options?.querySource,
 	};
 	// Single source of truth for the token-source triple (never a partial forward).
 	const tokenSource = getClaudeTokenSourceFields(options);

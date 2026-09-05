@@ -31,6 +31,7 @@ import { YearInPixelsStrip } from './YearInPixelsStrip';
 import { DurationTrendsChart } from './DurationTrendsChart';
 import { AgentUsageChart } from './AgentUsageChart';
 import { AutoRunStats } from './AutoRunStats';
+import { ResilienceStats } from './ResilienceStats';
 import { SessionStats } from './SessionStats';
 import { ClaudePlanUsage } from './ClaudePlanUsage';
 import { CodexPlanUsage } from './CodexPlanUsage';
@@ -1556,6 +1557,16 @@ export function UsageDashboardModal({
 												theme={theme}
 												colorBlindMode={colorBlindMode}
 											/>
+										</ChartErrorBoundary>
+									</div>
+
+									{/* Agent Resilience: outages hit vs. carried through.
+									    MERGE NOTE (main -> rc): rc split this modal; there, mount
+									    <ResilienceStats> in the split Tokens tab (TokenStats.tsx
+									    sibling) instead - this call site does not exist on rc. */}
+									<div className="dashboard-section-enter" style={{ animationDelay: '150ms' }}>
+										<ChartErrorBoundary theme={theme} chartName="Resilience">
+											<ResilienceStats timeRange={timeRange} theme={theme} />
 										</ChartErrorBoundary>
 									</div>
 								</>

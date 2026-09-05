@@ -84,7 +84,8 @@ export interface EditAgentModalProps {
 		maestroPMode?: 'interactive' | 'dynamic',
 		retryOnAvailabilityErrors?: boolean,
 		retryOnTokenExhaustion?: boolean,
-		failoverConfig?: FailoverConfig
+		failoverConfig?: FailoverConfig,
+		customEnvVarsDisabled?: Record<string, string>
 	) => void;
 	theme: Theme;
 	session: Session | null;

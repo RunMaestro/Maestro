@@ -11,7 +11,13 @@ import { ArrowDownUp, Ban, Brush, Palette, RotateCcw, SlidersHorizontal, Type } 
 import type { Theme } from '../../../shared/theme-types';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { SettingsSectionHeading } from '../Settings/SettingsSectionHeading';
-import { ANNOTATOR_PALETTE } from './annotatorConstants';
+import {
+	ANNOTATOR_PALETTE,
+	PEN_SIZE_MAX,
+	PEN_SIZE_MIN,
+	TEXT_SIZE_MAX,
+	TEXT_SIZE_MIN,
+} from './annotatorConstants';
 import type {
 	Shape,
 	ShapeStyle,
@@ -254,15 +260,18 @@ export function AnnotatorSettingsDrawer({
 					<div className="flex items-center gap-3">
 						<input
 							type="range"
-							min={1}
-							max={64}
+							min={PEN_SIZE_MIN}
+							max={PEN_SIZE_MAX}
 							step={1}
 							value={penSize}
 							onChange={(e) => setPenSize(Number(e.target.value))}
 							className="flex-1 h-2 rounded-lg appearance-none cursor-pointer"
-							style={{ background: sliderBackground(penSize, 1, 64) }}
+							style={{ background: sliderBackground(penSize, PEN_SIZE_MIN, PEN_SIZE_MAX) }}
 							aria-label="Pen size"
 						/>
+						<span className="text-2xs font-mono" style={{ color: theme.colors.textDim }}>
+							+/-
+						</span>
 						<span
 							className="text-sm font-mono w-10 text-right"
 							style={{ color: theme.colors.textMain }}
@@ -364,19 +373,24 @@ export function AnnotatorSettingsDrawer({
 							<span className="text-xs" style={{ color: theme.colors.textDim }}>
 								Size
 							</span>
-							<span className="text-xs font-mono" style={{ color: theme.colors.textMain }}>
-								{textSize}
-							</span>
+							<div className="flex items-center gap-2">
+								<span className="text-2xs font-mono" style={{ color: theme.colors.textDim }}>
+									+/-
+								</span>
+								<span className="text-xs font-mono" style={{ color: theme.colors.textMain }}>
+									{textSize}
+								</span>
+							</div>
 						</div>
 						<input
 							type="range"
-							min={10}
-							max={120}
+							min={TEXT_SIZE_MIN}
+							max={TEXT_SIZE_MAX}
 							step={1}
 							value={textSize}
 							onChange={(e) => setTextSize(Number(e.target.value))}
 							className="w-full h-2 rounded-lg appearance-none cursor-pointer"
-							style={{ background: sliderBackground(textSize, 10, 120) }}
+							style={{ background: sliderBackground(textSize, TEXT_SIZE_MIN, TEXT_SIZE_MAX) }}
 							aria-label="Text size"
 						/>
 					</div>
