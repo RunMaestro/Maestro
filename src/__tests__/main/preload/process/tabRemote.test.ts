@@ -42,9 +42,9 @@ describe('Process TabRemote Preload API', () => {
 
 		api.onRemoteSelectTab(callback);
 		const handler = mockOn.mock.calls.find(([channel]) => channel === 'remote:selectTab')?.[1];
-		handler({}, 'session-1', 'tab-1', tabs);
+		handler({}, 'session-1', 'tab-1', tabs, true);
 
-		expect(callback).toHaveBeenCalledWith('session-1', 'tab-1', tabs);
+		expect(callback).toHaveBeenCalledWith('session-1', 'tab-1', tabs, true);
 	});
 
 	describe('sendRemoteNewTabResponse', () => {

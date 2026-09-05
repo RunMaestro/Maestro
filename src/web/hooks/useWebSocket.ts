@@ -410,6 +410,7 @@ export interface TabsChangedMessage extends ServerMessage {
 	sessionId: string;
 	aiTabs: AITabData[];
 	activeTabId: string;
+	activeTabChanged?: boolean;
 }
 
 /**

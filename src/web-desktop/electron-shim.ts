@@ -142,7 +142,12 @@ class BridgeClient {
 				typeof msg.activeTabId === 'string'
 			) {
 				channel = 'remote:selectTab';
-				args = [msg.sessionId, msg.activeTabId, Array.isArray(msg.aiTabs) ? msg.aiTabs : undefined];
+				args = [
+					msg.sessionId,
+					msg.activeTabId,
+					Array.isArray(msg.aiTabs) ? msg.aiTabs : undefined,
+					msg.activeTabChanged === true,
+				];
 			}
 			if (channel) {
 				const set = this.listeners.get(channel);

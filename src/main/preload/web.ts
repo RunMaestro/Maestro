@@ -70,8 +70,19 @@ export function createWebApi() {
 			ipcRenderer.invoke('web:broadcastAutoRunState', sessionId, state),
 
 		// Broadcast tab changes to web clients (for tab sync)
-		broadcastTabsChange: (sessionId: string, aiTabs: AiTabState[], activeTabId: string) =>
-			ipcRenderer.invoke('web:broadcastTabsChange', sessionId, aiTabs, activeTabId),
+		broadcastTabsChange: (
+			sessionId: string,
+			aiTabs: AiTabState[],
+			activeTabId: string,
+			activeTabChanged = false
+		) =>
+			ipcRenderer.invoke(
+				'web:broadcastTabsChange',
+				sessionId,
+				aiTabs,
+				activeTabId,
+				activeTabChanged
+			),
 
 		// Broadcast session state change to web clients (for real-time busy/idle updates)
 		broadcastSessionState: (

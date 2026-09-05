@@ -140,11 +140,18 @@ describe('web-desktop electron-shim desktop navigation sync', () => {
 				type: 'tabs_changed',
 				sessionId: 'session-2',
 				activeTabId: 'tab-3',
+				activeTabChanged: true,
 				aiTabs,
 			}),
 		});
 
-		expect(listener).toHaveBeenCalledWith({ senderFrame: null }, 'session-2', 'tab-3', aiTabs);
+		expect(listener).toHaveBeenCalledWith(
+			{ senderFrame: null },
+			'session-2',
+			'tab-3',
+			aiTabs,
+			true
+		);
 		ipcRenderer.removeListener('remote:selectTab', listener);
 	});
 });

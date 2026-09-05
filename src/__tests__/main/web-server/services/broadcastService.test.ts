@@ -276,13 +276,14 @@ describe('BroadcastService', () => {
 			clients.set('client-1', client);
 
 			const tabs = [createMockTab('tab-1'), createMockTab('tab-2')];
-			service.broadcastTabsChange('session-1', tabs, 'tab-2');
+			service.broadcastTabsChange('session-1', tabs, 'tab-2', true);
 
 			const sentData = JSON.parse((client.socket.send as any).mock.calls[0][0]);
 			expect(sentData.type).toBe('tabs_changed');
 			expect(sentData.sessionId).toBe('session-1');
 			expect(sentData.aiTabs).toHaveLength(2);
 			expect(sentData.activeTabId).toBe('tab-2');
+			expect(sentData.activeTabChanged).toBe(true);
 		});
 	});
 

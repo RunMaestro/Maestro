@@ -215,12 +215,18 @@ export class BroadcastService {
 	 * Broadcast tab change to all connected web clients
 	 * Called when the tabs array or active tab changes in a session
 	 */
-	broadcastTabsChange(sessionId: string, aiTabs: AITabData[], activeTabId: string): void {
+	broadcastTabsChange(
+		sessionId: string,
+		aiTabs: AITabData[],
+		activeTabId: string,
+		activeTabChanged = false
+	): void {
 		this.broadcastToAll({
 			type: 'tabs_changed',
 			sessionId,
 			aiTabs,
 			activeTabId,
+			activeTabChanged,
 			timestamp: Date.now(),
 		});
 	}
