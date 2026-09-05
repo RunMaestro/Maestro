@@ -598,6 +598,9 @@ export async function* runPlaybook(
 								customEnvVars: session.customEnvVars,
 								sshRemoteConfig: session.sessionSshRemoteConfig,
 								appendSystemPrompt: playbookSystemPrompt,
+								// This is Auto Run, not someone typing. Marks the turn so delegation
+								// reporting downstream of the spawn does not count it as hands-on work.
+								querySource: 'auto',
 								// Honor the agent's Claude token source for Auto Run task turns.
 								enableMaestroP: session.enableMaestroP,
 								maestroPMode: session.maestroPMode,
@@ -668,6 +671,7 @@ export async function* runPlaybook(
 										additionalDirectories: session.additionalDirectories,
 										customEnvVars: session.customEnvVars,
 										sshRemoteConfig: session.sessionSshRemoteConfig,
+										querySource: 'auto',
 										// Honor the token source for the Auto Run synopsis turn too.
 										enableMaestroP: session.enableMaestroP,
 										maestroPMode: session.maestroPMode,

@@ -463,6 +463,9 @@ export async function runAutoResumeTick(
 			try {
 				const available = await probeAvailability(session);
 				if (!available) return; // stay paused; retried next interval
+				// Ownership can change while the async probe is pending. A mirror is
+				// read-only, so re-check before mutating its pause state or queue.
+				if (useBatchStore.getState().batchRunStates[session.id]?.mirrored === true) return;
 				resume(session, resumeAutoRunAfterError);
 				fireResumedToast(session);
 			} catch (err) {

@@ -9,6 +9,7 @@ import { resolveActiveTabRef, resolveTabRefRenameValue } from '../../utils/panel
 import { getModalActions, useModalStore } from '../../stores/modalStore';
 import { toggleAllCadenzas } from '../../stores/cadenzaStore';
 import { requestEditLastQueuedMessage } from '../../services/editQueuedMessage';
+import { toggleAllUnreadFilters } from '../../services/unreadFilters';
 import { useNotificationStore } from '../../stores/notificationStore';
 import { useMediaPlaybackStore } from '../../stores/mediaPlaybackStore';
 import { stepMediaItem } from '../../utils/mediaItems';
@@ -960,6 +961,10 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				ctx.toggleShowUnreadAgentsOnly();
 				trackShortcut('filterUnreadAgents');
+			} else if (ctx.isShortcut(e, 'toggleUnreadFilters')) {
+				e.preventDefault();
+				toggleAllUnreadFilters();
+				trackShortcut('toggleUnreadFilters');
 			} else if (ctx.isShortcut(e, 'forcedParallelSend')) {
 				// The composer owns this chord while the caret is inside it - only it
 				// can read the live draft it may need to send. Everywhere else the

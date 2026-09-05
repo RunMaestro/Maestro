@@ -196,6 +196,27 @@ export const DISPLAY_SETTINGS: SearchableSetting[] = [
 		keywords: ['icon', 'theme', 'files', 'material', 'rich', 'explorer'],
 	},
 	{
+		id: 'display-provider-mode-pill',
+		tab: 'display',
+		tabLabel: 'Display',
+		label: 'Provider Mode Pill',
+		description:
+			'Show which Claude interface produced a turn ("claude -p" or "TUI Wrapper") as a pill under chat responses and on History entries',
+		keywords: [
+			'provider',
+			'mode',
+			'pill',
+			'claude -p',
+			'tui',
+			'tui wrapper',
+			'maestro-p',
+			'token source',
+			'attribution',
+			'badge',
+			'history',
+		],
+	},
+	{
 		id: 'display-window-chrome',
 		tab: 'display',
 		tabLabel: 'Display',

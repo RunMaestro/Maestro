@@ -311,6 +311,30 @@ export function useBatchRunner({
 				return;
 			}
 
+			// Renderer stores cannot serialize starts across desktop and browser
+			// clients. Reserve the agent in main immediately before publishing local
+			// run state; only one near-simultaneous caller can win this claim.
+			let claimedStart = false;
+			try {
+				claimedStart = await window.maestro.web.claimAutoRunStart(sessionId);
+			} catch (error) {
+				window.maestro.logger.log('error', 'Failed to claim Auto Run start', 'BatchProcessor', {
+					sessionId,
+					error: String(error),
+				});
+			}
+			if (!claimedStart) {
+				timeTracking.stopTracking(sessionId);
+				notifyToast({
+					type: 'warning',
+					title: 'Auto Run Already Active',
+					message: 'Another Maestro window already started Auto Run for this agent.',
+					project: session.name,
+					sessionId,
+				});
+				return;
+			}
+
 			// Initialize batch run state using START_BATCH action directly
 			// (not updateBatchStateAndBroadcast which only supports UPDATE_PROGRESS)
 			const lockedDocuments = documents.map((d) => d.filename);

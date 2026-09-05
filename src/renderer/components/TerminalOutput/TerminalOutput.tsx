@@ -143,6 +143,7 @@ export const TerminalOutput = memo(
 		// can show thinking with a clean, tool-free transcript, or show tools with
 		// no reasoning at all. One switch, one meaning.
 		const toolsVisible = useSettingsStore((s) => s.showToolCalls);
+		const showProviderModePill = useSettingsStore((s) => s.showProviderModePill);
 		const collapsedLogs = useMemo(
 			() => (toolsVisible ? collapsedAll : collapsedAll.filter((l) => l.source !== 'tool')),
 			[collapsedAll, toolsVisible]
@@ -640,6 +641,7 @@ export const TerminalOutput = memo(
 									userMessageAlignment={userMessageAlignment}
 									isClaudeCode={session.toolType === 'claude-code'}
 									isAdaptiveMode={getClaudeTokenMode(session) === 'dynamic'}
+									showProviderModePill={showProviderModePill}
 								/>
 							);
 						})}

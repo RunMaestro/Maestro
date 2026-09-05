@@ -26,6 +26,18 @@ describe('AutoRunStateTracker', () => {
 		expect(tracker.isRunning('b')).toBe(false);
 	});
 
+	it('allows only one caller to claim a simultaneous start', () => {
+		expect(tracker.tryClaimStart('a')).toBe(true);
+		expect(tracker.tryClaimStart('a')).toBe(false);
+		expect(tracker.tryClaimStart('b')).toBe(true);
+	});
+
+	it('allows a new claim after the previous run clears', () => {
+		expect(tracker.tryClaimStart('a')).toBe(true);
+		tracker.update('a', null);
+		expect(tracker.tryClaimStart('a')).toBe(true);
+	});
+
 	it('emits the running -> not-running edge exactly once', () => {
 		const listener = vi.fn();
 		tracker.onFinal(listener);

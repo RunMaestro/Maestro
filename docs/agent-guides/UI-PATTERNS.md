@@ -727,10 +727,12 @@ The values come from `LogEntry.turnModel` / `turnEffort`, copied in `useBatchedS
 
 The presence of the `turnSettings` OBJECT is the capture flag, not the presence of its fields. `undefined` model/effort inside a present object means "the agent's default was in force when I queued", which is a real choice - never write `item.turnSettings?.model ?? liveModel`, or an item queued on the default silently inherits whatever the user selected afterwards. The object is absent only on items restored from a build that predates the capture, which is the one case that falls back to live values.
 
+**The token-source half is opt-in.** The `showProviderModePill` display setting (Settings -> Display -> Provider Mode Pill, default OFF) suppresses the `claude -p` / `TUI Wrapper` pill everywhere it appears: the chat footer (`TerminalOutput`), the History list row (`HistoryEntryItem`), and the history detail view (`HistoryDetailModal`). The model and effort pills are NOT gated by it - they are separate facts about the turn. All three surfaces read the store field directly rather than threading a prop, so a new surface that renders `getTokenSourcePill()` has to remember the gate itself.
+
 Two traps when touching this row:
 
 - `collapsedLogs` in `TerminalOutput` merges consecutive non-user entries into one rendered entry built from `[0]`. A group can lead with a system banner that carries no stamp, so the merge lifts `turnModel` / `turnEffort` from the first grouped entry that has them - the same fix `renderStyle` needed.
-- `LogItem`'s memo comparator lists every field that affects rendering. A new pill field that is not in that list will not repaint when it changes.
+- `LogItem`'s memo comparator lists every field that affects rendering. A new pill field that is not in that list will not repaint when it changes. `showProviderModePill` is passed down as a primitive prop (not read from the store inside `LogItem`) for exactly this reason, and it is listed in the comparator.
 
 ### Keycaps (`<Keycap>` / `<KeycapHint>`)
 
@@ -780,6 +782,25 @@ Reach for it whenever a box has BOTH a capped height and content that arrives ov
 It uses `useLayoutEffect`, not `useEffect`: the scroll has to land in the same frame as the new content, or the box paints once at the old position and the output visibly jumps afterwards. The 50px bottom threshold matches the transcript's own in `TerminalOutput`, so a card follows its output on the same terms the conversation around it does.
 
 Distinct from `useScrollIntoView` (brings ONE element into view inside a list, for keyboard navigation) and from `TerminalOutput`'s MutationObserver auto-scroll (owns the whole conversation pane). Pick by scope: one self-contained box, one element in a list, or the whole pane.
+
+### Restoring a Transcript's Scroll Position
+
+An AI tab is left in one of TWO states, and they restore differently. `TerminalOutput` takes both `initialScrollTop` (the tab's saved `scrollTop`) and `initialIsAtBottom` (the tab's saved `isAtBottom`) and hands them to `useTerminalOutputScroll()`, and it needs both.
+
+**Following the tail** (`isAtBottom` true, or unset). The saved `scrollTop` is only a snapshot of where the bottom HAPPENED TO BE at save time, and the transcript keeps growing while the tab is off screen. Restoring that number verbatim drops the user however far the agent wrote while they were away, and because the stale offset is then far above the new bottom, the restore ALSO pauses auto-scroll - so the transcript will not even follow the output that stranded them. Clicking a toast to read a finished reply landed thousands of pixels above it, with the tail switched off. Such a tab restores to the BOTTOM and ignores the saved number.
+
+**Parked mid-history** (`isAtBottom` false). The offset is exactly right and must be honored: new entries are appended BELOW, so what the user was reading has not moved. This restore pauses auto-scroll on purpose, or the MutationObserver yanks the view straight back down.
+
+`undefined` counts as at-bottom, which is the same default the unread gate in `useAgentDataListener` uses (`targetTab.isAtBottom !== false`). Keep the two spellings identical - a tab that is "at the bottom" for unread purposes and "parked" for scroll purposes is the bug above wearing a different hat.
+
+**Neither target is reached in one frame.** A single `requestAnimationFrame` proves the DOM is MOUNTED, not that its height has settled: images are still decoding, fonts still swapping, code blocks still re-highlighting. `scrollHeight` is short on that first frame and `maxScroll` with it, so the restore clamps to less than it was asked for and the tab opens above where the user left it. The restore therefore re-attempts across frames, and the two states latch differently:
+
+- A fixed offset latches as soon as the content is tall enough to hold it, so the restore re-applies under a `ResizeObserver` on the container until it lands, with `SCROLL_RESTORE_SETTLE_MS` as a hard stop.
+- The bottom cannot be latched that way at all, because `maxScroll` MOVES with every late image. "Landed on the bottom" is true on the first frame and wrong on the next, so a tail-following tab does not run the offset restore: the mount-time bottom jump plus the follow-the-tail `MutationObserver`/`ResizeObserver` keep it pinned to the live bottom as the content grows.
+
+A genuine user scroll during the settle abandons the restore (`wheel` / `touchstart` on the container tear the retry down); their input wins, because a restore that keeps yanking the view is worse than landing slightly high. An in-flight cross-tab search jump wins for the same reason (`jumpInFlightRef`).
+
+Do not "simplify" this back to a single saved offset. A pixel offset cannot express "wherever the newest message is", and that is the state most tabs are actually left in.
 
 ### Scrolling a Virtualized List to the Selection
 

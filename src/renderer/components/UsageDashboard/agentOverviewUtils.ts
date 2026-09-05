@@ -1,6 +1,7 @@
 import type { StatsAggregation } from '../../hooks/stats/useStats';
 import type { Session, SessionState, Theme } from '../../types';
 import { compareNamesIgnoringEmojis } from '../../../shared/emojiUtils';
+import { visibleAiTabs } from '../../utils/tabHelpers';
 
 export type SortMode = 'name' | 'created' | 'recent' | 'queries' | 'tabs' | 'auto';
 
@@ -118,7 +119,9 @@ export function sortAgentOverviewSessions(
 	}
 
 	if (sortMode === 'tabs') {
-		return alphabetical.slice().sort((a, b) => (b.aiTabs?.length ?? 0) - (a.aiTabs?.length ?? 0));
+		return alphabetical
+			.slice()
+			.sort((a, b) => visibleAiTabs(b.aiTabs).length - visibleAiTabs(a.aiTabs).length);
 	}
 
 	if (sortMode === 'recent') {

@@ -4,6 +4,8 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { HistoryEntryItem } from '../../../../renderer/components/History';
 import type { HistoryEntry, HistoryEntryType } from '../../../../renderer/types';
 
+import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
+
 import { mockTheme } from '../../../helpers/mockTheme';
 // Create mock theme
 
@@ -25,6 +27,40 @@ describe('HistoryEntryItem', () => {
 
 	afterEach(() => {
 		vi.useRealTimers();
+	});
+
+	describe('provider mode pill', () => {
+		afterEach(() => {
+			useSettingsStore.setState({ showProviderModePill: false });
+		});
+
+		it('renders the token source pill when the display setting is on', () => {
+			useSettingsStore.setState({ showProviderModePill: true });
+			render(
+				<HistoryEntryItem
+					entry={createMockEntry({ tokenSource: 'api' })}
+					index={0}
+					isSelected={false}
+					theme={mockTheme}
+					onOpenDetailModal={vi.fn()}
+				/>
+			);
+			expect(screen.getByText('claude -p')).toBeInTheDocument();
+		});
+
+		it('suppresses the pill when the display setting is off', () => {
+			useSettingsStore.setState({ showProviderModePill: false });
+			render(
+				<HistoryEntryItem
+					entry={createMockEntry({ tokenSource: 'api' })}
+					index={0}
+					isSelected={false}
+					theme={mockTheme}
+					onOpenDetailModal={vi.fn()}
+				/>
+			);
+			expect(screen.queryByText('claude -p')).not.toBeInTheDocument();
+		});
 	});
 
 	it('renders entry with summary text', () => {

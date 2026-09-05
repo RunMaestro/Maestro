@@ -4,6 +4,7 @@ import { getStatusColor } from '../../utils/theme';
 import { hasNoClaudeProviderSession } from '../SessionItem';
 import { SessionTooltipContent } from './SessionTooltipContent';
 import { CornerDot } from '../ui/CornerDot';
+import { hasUnreadVisibleTab } from '../../utils/tabHelpers';
 
 interface CollapsedSessionPillProps {
 	session: Session;
@@ -95,7 +96,7 @@ export const CollapsedSessionPill = memo(function CollapsedSessionPill({
 			style={{ gap: hasWorktrees ? '1px' : 0 }}
 		>
 			{allSessions.map((s, idx) => {
-				const hasUnreadTabs = s.aiTabs?.some((tab) => tab.hasUnread);
+				const hasUnreadTabs = hasUnreadVisibleTab(s.aiTabs);
 				const isFirst = idx === 0;
 				const isLast = idx === allSessions.length - 1;
 				const isInBatch = activeBatchSessionIds.includes(s.id);

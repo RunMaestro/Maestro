@@ -323,6 +323,19 @@ describe('reapStaleMirrors', () => {
 		expect(useBatchStore.getState().batchRunStates['agent-1']?.mirrored).toBe(true);
 	});
 
+	it('keeps a valid error or HITL pause even though no batch process is active', async () => {
+		setActiveProcesses([]);
+		applyAutoRunMirrorFrame(
+			'agent-1',
+			mkFrame({ errorPaused: true, errorMessage: 'Waiting for approval' })
+		);
+
+		await reapStaleMirrors(Date.now() + STALE);
+
+		expect(useBatchStore.getState().batchRunStates['agent-1']?.mirrored).toBe(true);
+		expect(window.maestro.process.getActiveProcesses).not.toHaveBeenCalled();
+	});
+
 	it('keeps a mirror that is still receiving frames', async () => {
 		setActiveProcesses([]);
 		applyAutoRunMirrorFrame('agent-1', mkFrame());
@@ -360,5 +373,29 @@ describe('reapStaleMirrors', () => {
 		await reapStaleMirrors(Date.now() + STALE);
 
 		expect(useBatchStore.getState().batchRunStates['agent-11']).toBeUndefined();
+	});
+
+	it('keeps a mirror refreshed while the process probe is pending', async () => {
+		let finishProbe!: (processes: Array<{ sessionId: string }>) => void;
+		const getActiveProcesses = vi.fn(
+			() =>
+				new Promise<Array<{ sessionId: string }>>((resolve) => {
+					finishProbe = resolve;
+				})
+		);
+		(window as unknown as { maestro: unknown }).maestro = {
+			process: { getActiveProcesses },
+		};
+		const clock = vi.spyOn(Date, 'now').mockReturnValue(1_000);
+		applyAutoRunMirrorFrame('agent-1', mkFrame({ completedTasks: 1 }));
+
+		const reaping = reapStaleMirrors(1_000 + STALE);
+		await vi.waitFor(() => expect(getActiveProcesses).toHaveBeenCalledTimes(1));
+		clock.mockReturnValue(2_000);
+		applyAutoRunMirrorFrame('agent-1', mkFrame({ completedTasks: 2 }));
+		finishProbe([]);
+		await reaping;
+
+		expect(useBatchStore.getState().batchRunStates['agent-1']?.completedTasks).toBe(2);
 	});
 });

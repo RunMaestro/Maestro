@@ -50,13 +50,13 @@ Pen strokes are immutable once committed - they can be erased or undone, but not
 Click the sliders icon in the toolbar to slide out the **Drawing settings** drawer.
 
 - **Color** - Eight preset swatches plus a custom hex picker. The active swatch persists across sessions.
-- **Size** - Pen width in pixels (1-64).
+- **Size** - Pen width in pixels (1-64). Press `+` / `-` anywhere in the annotator to change it without opening the drawer.
 - **Thinning** - How much pointer pressure affects stroke width (0-1).
 - **Smoothing** - Curve smoothing applied to the raw input (0-1).
 - **Streamline** - Pointer-jitter dampening; higher values produce steadier lines for shaky hands or trackpad use (0-1).
 - **Taper Start** / **Taper End** - Pixel distance over which strokes fade in / out at each end. Useful for arrow-tip aesthetics.
 
-The drawer also has **Text** settings - color, size (10-120px), and font - that drive new text labels. As with strokes and shapes, each label captures the style in effect when it was created.
+The drawer also has **Text** settings - color, size (10-120px), and font - that drive new text labels. `+` / `-` adjust the text size instead of the pen size whenever the Text tool is active or a label is selected, and with any item selected they resize that item rather than the default. As with strokes and shapes, each label captures the style in effect when it was created.
 
 Settings apply immediately and are remembered across the app - including a **Reset to defaults** button at the bottom of the drawer.
 
@@ -88,6 +88,7 @@ When you open the annotator from the **File Preview** pane, saving opens a desti
 | `D` `E` `P` `S` `C` `A` `T`       | Select tool: Draw / Eraser / Pan / Square / Circle / Arrow / Text       |
 | `0`                               | Reset zoom and pan                                                      |
 | `f`                               | Fit image to viewport                                                   |
+| `+` / `-`                         | Grow / shrink the size of the current tool (text size for Text)         |
 | `Space` (hold)                    | Temporarily switch to pan, regardless of active tool                    |
 | `Shift` (hold)                    | Constrain the Pen to a straight line; temporary pan with any other tool |
 | Mouse wheel / trackpad scroll     | Zoom at cursor (5%-2000%)                                               |

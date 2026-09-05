@@ -98,7 +98,9 @@ export interface EditAgentModalProps {
 		additionalDirectories?: AdditionalDirectory[],
 		/** Provenance of `customContextWindow` (finding AD1). */
 		contextWindowSource?: 'user-edited',
-		failoverConfig?: FailoverConfig
+		failoverConfig?: FailoverConfig,
+		/** Env vars parked with the eye button: kept, but never handed to a spawn. */
+		customEnvVarsDisabled?: Record<string, string>
 	) => void;
 	theme: Theme;
 	session: Session | null;

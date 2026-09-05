@@ -1031,6 +1031,38 @@ describe('useBatchProcessor hook', () => {
 			expect(mockOnSpawnAgent).not.toHaveBeenCalled();
 		});
 
+		it('should not start when another client wins the main-process claim', async () => {
+			const sessions = [createMockSession()];
+			useSessionStore.setState({ sessions, activeSessionId: sessions[0]?.id ?? '' });
+			vi.mocked(window.maestro.web.claimAutoRunStart).mockResolvedValueOnce(false);
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					groups: [createMockGroup()],
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+				})
+			);
+
+			await act(async () => {
+				await result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: false }],
+						prompt: 'Test prompt',
+						loopEnabled: false,
+					},
+					'/test/folder'
+				);
+			});
+
+			expect(mockOnSpawnAgent).not.toHaveBeenCalled();
+			expect(mockBroadcastAutoRunState).not.toHaveBeenCalled();
+			expect(mockNotifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({ title: 'Auto Run Already Active' })
+			);
+		});
+
 		it('should start batch run and process tasks', async () => {
 			const sessions = [createMockSession()];
 			const groups = [createMockGroup()];

@@ -271,6 +271,14 @@ export interface SessionInfo {
 	customArgs?: string;
 	/** Per-session env vars merged over agent-level customEnvVars and agent defaults. */
 	customEnvVars?: Record<string, string>;
+	/**
+	 * Env vars the user switched OFF in the agent editor. Same shape as
+	 * `customEnvVars`, but deliberately kept OUT of it so no spawn path has to
+	 * filter: a parked var is invisible to every consumer of the effective
+	 * environment. The editor is the only reader - it lists these so a variable
+	 * can be turned back on without retyping its value.
+	 */
+	customEnvVarsDisabled?: Record<string, string>;
 	/** Prefixed to the first message of every new session (not shown in chat). */
 	newSessionMessage?: string;
 	/** Appended to every message sent to the agent (not shown in chat). */
@@ -820,6 +828,23 @@ export interface SshRemoteConfig {
 
 	/** Environment variables to set on remote */
 	remoteEnv?: Record<string, string>;
+
+	/**
+	 * Extra `ssh -o KEY=VALUE` options for this remote, merged over Maestro's
+	 * defaults by `resolveSshOptions()` in `src/shared/sshOptions.ts`.
+	 *
+	 * This is how an exotic transport is expressed without a field per
+	 * transport: a `ProxyCommand` through tailcat / cloudflared / Teleport, a
+	 * `ProxyJump` bastion, or simply a `ConnectTimeout` longer than the default
+	 * 10s that a tunnel needs to finish its handshake. It is also the only way
+	 * to change one of Maestro's defaults, since a command-line `-o` outranks
+	 * anything in `~/.ssh/config`.
+	 *
+	 * `RequestTTY` is reserved: it is derived per command from whether the
+	 * remote agent speaks stream-json, so pinning it per host corrupts the
+	 * stream. Overrides for it are rejected on write and ignored on read.
+	 */
+	sshOptions?: Record<string, string>;
 
 	/** Enable this remote configuration */
 	enabled: boolean;

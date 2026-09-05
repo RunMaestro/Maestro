@@ -16,7 +16,7 @@ import { getTerminalSessionId } from '../../../utils/terminalTabHelpers';
 import type { CloseCurrentTabResult, UnifiedTabHandlersReturn } from './types';
 import {
 	applyUnifiedTabClosures,
-	excludeDraftRefs,
+	excludePreservedRefs,
 	getRefsExceptActive,
 	getRefsLeftOfActive,
 	getRefsRightOfActive,
@@ -106,13 +106,13 @@ export function useUnifiedTabHandlers({
 		[endInlineWizard]
 	);
 
-	// Bulk close operations never destroy a tab with an unsent draft - such tabs
-	// are filtered out of the close set so they survive. The rest close silently
-	// (no confirmation prompt).
+	// Bulk close operations never destroy a tab with an unsent draft, nor a hidden
+	// consult tab the strip never drew - both are filtered out of the close set so
+	// they survive. The rest close silently (no confirmation prompt).
 	const handleCloseOtherTabs = useCallback(
 		(pivotTabId?: string) => {
 			closeRefs(
-				(session) => excludeDraftRefs(session, getRefsExceptActive(session, pivotTabId)),
+				(session) => excludePreservedRefs(session, getRefsExceptActive(session, pivotTabId)),
 				'close-others'
 			);
 		},
@@ -122,7 +122,7 @@ export function useUnifiedTabHandlers({
 	const handleCloseTabsLeft = useCallback(
 		(pivotTabId?: string) => {
 			closeRefs(
-				(session) => excludeDraftRefs(session, getRefsLeftOfActive(session, pivotTabId)),
+				(session) => excludePreservedRefs(session, getRefsLeftOfActive(session, pivotTabId)),
 				'close-left'
 			);
 		},
@@ -132,7 +132,7 @@ export function useUnifiedTabHandlers({
 	const handleCloseTabsRight = useCallback(
 		(pivotTabId?: string) => {
 			closeRefs(
-				(session) => excludeDraftRefs(session, getRefsRightOfActive(session, pivotTabId)),
+				(session) => excludePreservedRefs(session, getRefsRightOfActive(session, pivotTabId)),
 				'close-right'
 			);
 		},

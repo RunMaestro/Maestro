@@ -48,6 +48,7 @@ import {
 	formatTokensCompact,
 } from '../../../shared/formatters';
 import { aggregateUsage } from '../../../shared/usageStats';
+import { visibleAiTabs } from '../../utils/tabHelpers';
 import { resolveModelPricing, TOKENS_PER_MILLION } from '../../../shared/modelPricing';
 import { countActiveAgents } from '../../../shared/statsActiveAgents';
 import { Sparkline } from './Sparkline';
@@ -813,7 +814,7 @@ export const SummaryCards = memo(function SummaryCards({
 	const openTabCount = useMemo(() => {
 		if (!sessions) return 0;
 		return sessions.reduce((total, s) => {
-			const aiCount = s.aiTabs?.length ?? 0;
+			const aiCount = visibleAiTabs(s.aiTabs).length;
 			const fileCount = s.filePreviewTabs?.length ?? 0;
 			return total + aiCount + fileCount;
 		}, 0);

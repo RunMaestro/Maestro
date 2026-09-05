@@ -317,6 +317,29 @@ export function useGoalRunner({
 			const sessionGroup = session.groupId ? groups.find((g) => g.id === session.groupId) : null;
 			const groupName = sessionGroup?.name;
 
+			// Claim in main immediately before publishing run state so a document
+			// run and a goal run racing in different clients cannot both start.
+			let claimedStart = false;
+			try {
+				claimedStart = await window.maestro.web.claimAutoRunStart(sessionId);
+			} catch (error) {
+				window.maestro.logger.log('error', 'Failed to claim Auto Run start', 'GoalRunner', {
+					sessionId,
+					error: String(error),
+				});
+			}
+			if (!claimedStart) {
+				timeTracking.stopTracking(sessionId);
+				notifyToast({
+					type: 'warning',
+					title: 'Auto Run Already Active',
+					message: 'Another Maestro window already started Auto Run for this agent.',
+					project: session.name,
+					sessionId,
+				});
+				return;
+			}
+
 			// Goal mode expresses progress as a percent, so we model it as 100 "tasks".
 			// Empty documents/lockedDocuments arrays mark this as a document-less run.
 			dispatch({

@@ -260,6 +260,10 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 
 	// Broadcast AutoRun state to web clients (called when batch processing state changes)
 	// Always store state even if no clients are connected, so new clients get initial state
+	ipcMain.handle('web:claimAutoRunStart', async (_, sessionId: string) => {
+		return getAutoRunStateTracker().tryClaimStart(sessionId);
+	});
+
 	ipcMain.handle(
 		'web:broadcastAutoRunState',
 		async (_, sessionId: string, state: AutoRunBroadcastState | null) => {

@@ -201,11 +201,13 @@ function noteMirrorFrame(sessionId: string): void {
  * stay up permanently, and `useInputProcessing` would keep queueing the user's
  * messages behind a run that is never going to finish.
  *
- * Silence alone is not proof: an Auto Run task can be slow. So the reaper asks
- * main whether ANY `-batch-` process still exists for that agent, and only
- * drops the mirror when both signals agree. A probe that fails outright returns
- * `null`, which is "I could not find out" rather than "nothing is running", and
- * nothing is dropped. Exported for tests.
+ * Silence alone is not proof: an Auto Run task can be slow, and an error/HITL
+ * pause is deliberately silent with no live process while its owner waits for
+ * user input. Paused mirrors are therefore never candidates. For other quiet
+ * runs, the reaper asks main whether ANY `-batch-` process still exists for that
+ * agent, and only drops the mirror when both signals agree. A failed probe is
+ * "I could not find out" rather than "nothing is running", and drops nothing.
+ * Exported for tests.
  *
  * This is deliberately a containment, not a liveness protocol. Deciding which
  * client may CLAIM an orphaned run needs a renderer-ownership primitive that
@@ -217,9 +219,11 @@ export async function reapStaleMirrors(now: number = Date.now()): Promise<void> 
 	const quiet = Object.entries(batchRunStates)
 		.filter(
 			([sessionId, state]) =>
-				state.mirrored === true && now - (lastFrameAt.get(sessionId) ?? 0) >= MIRROR_STALE_AFTER_MS
+				state.mirrored === true &&
+				state.errorPaused !== true &&
+				now - (lastFrameAt.get(sessionId) ?? 0) >= MIRROR_STALE_AFTER_MS
 		)
-		.map(([sessionId]) => sessionId);
+		.map(([sessionId]) => ({ sessionId, lastSeen: lastFrameAt.get(sessionId) ?? 0 }));
 	if (quiet.length === 0) return;
 
 	let active: Array<{ sessionId?: unknown }>;
@@ -237,15 +241,22 @@ export async function reapStaleMirrors(now: number = Date.now()): Promise<void> 
 		if (batchAt > 0) agentsWithLiveBatch.add(id.slice(0, batchAt));
 	}
 
-	const dead = quiet.filter((sessionId) => !agentsWithLiveBatch.has(sessionId));
+	const dead = quiet.filter(({ sessionId }) => !agentsWithLiveBatch.has(sessionId));
 	if (dead.length === 0) return;
 
 	useBatchStore.getState().setBatchRunStates((prev) => {
 		const next = { ...prev };
-		for (const sessionId of dead) {
+		for (const { sessionId, lastSeen } of dead) {
 			// Re-check under the current state: a frame may have landed while the
 			// probe was in flight, which would have made this entry live again.
-			if (next[sessionId]?.mirrored !== true) continue;
+			if (
+				next[sessionId]?.mirrored !== true ||
+				next[sessionId]?.errorPaused === true ||
+				lastFrameAt.get(sessionId) !== lastSeen ||
+				now - lastSeen < MIRROR_STALE_AFTER_MS
+			) {
+				continue;
+			}
 			delete next[sessionId];
 			lastFrameAt.delete(sessionId);
 		}

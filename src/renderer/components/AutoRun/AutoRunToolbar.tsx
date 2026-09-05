@@ -73,7 +73,6 @@ export const AutoRunToolbar = memo(function AutoRunToolbar({
 						color: isStopping ? theme.colors.bgMain : 'white',
 						border: `1px solid ${isStopping ? theme.colors.warning : theme.colors.error}`,
 						opacity: isMirroredRun ? 0.6 : 1,
-						pointerEvents: stopDisabled ? 'none' : 'auto',
 					}}
 					title={
 						isMirroredRun

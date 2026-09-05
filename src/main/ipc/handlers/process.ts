@@ -22,6 +22,7 @@ import { getSshRemoteConfig, createSshRemoteStoreAdapter } from '../../utils/ssh
 import { shellEscape } from '../../utils/shell-escape';
 import { resolveSshPath } from '../../utils/cliDetection';
 import type { SshRemoteConfig } from '../../../shared/types';
+import { buildSshOptionArgs } from '../../../shared/sshOptions';
 import { MaestroSettings } from './persistence';
 import { getDefaultShell, resolveConfiguredShell } from '../../stores/defaults';
 import { handleProcessSpawn } from './process/handle-spawn';
@@ -422,10 +423,14 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 						// For SSH terminal tabs we spawn ssh interactively so xterm.js can interact
 						const sshArgs: string[] = [];
 
-						// SSH options for reliable connection (consistent with SshRemoteManager)
-						sshArgs.push('-o', 'StrictHostKeyChecking=accept-new');
-						sshArgs.push('-o', 'ConnectTimeout=10');
-						sshArgs.push('-o', 'ClearAllForwardings=yes');
+						// SSH options for reliable connection, plus this remote's overrides.
+						// The 'interactive' context deliberately drops BatchMode (the user is
+						// at the keyboard and may need to answer a passphrase prompt),
+						// RequestTTY (the -t below does that job), and LogLevel (someone is
+						// watching this terminal, so SSH's own warnings are the diagnostics).
+						sshArgs.push(
+							...buildSshOptionArgs(sshResult.config.sshOptions, { context: 'interactive' })
+						);
 
 						if (sshResult.config.privateKeyPath) {
 							sshArgs.push('-i', sshResult.config.privateKeyPath);

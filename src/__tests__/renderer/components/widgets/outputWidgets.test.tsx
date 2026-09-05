@@ -150,6 +150,38 @@ describe('ActivityTimeline', () => {
 		render(<ActivityTimeline theme={mockTheme} buckets={[{ auto: 0, user: 0, cue: 0 }]} />);
 		expect(screen.getByText('No activity in this window')).toBeInTheDocument();
 	});
+
+	it('starts with defaultHiddenSeries excluded from the stack and the tooltip', () => {
+		render(<ActivityTimeline theme={mockTheme} buckets={buckets} defaultHiddenSeries={['cue']} />);
+		expect(screen.getByTitle('Auto 0 · User 3 · Agent 2')).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Cue' })).toHaveAttribute('aria-pressed', 'false');
+	});
+
+	it('toggles a series back on when its legend entry is clicked', () => {
+		render(<ActivityTimeline theme={mockTheme} buckets={buckets} defaultHiddenSeries={['cue']} />);
+		fireEvent.click(screen.getByRole('button', { name: 'Cue' }));
+		expect(screen.getByTitle('Auto 0 · User 3 · Cue 1 · Agent 2')).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Cue' })).toHaveAttribute('aria-pressed', 'true');
+	});
+
+	it('hides a visible series when its legend entry is clicked', () => {
+		render(<ActivityTimeline theme={mockTheme} buckets={buckets} />);
+		fireEvent.click(screen.getByRole('button', { name: 'Auto' }));
+		expect(screen.getByTitle('User 1 · Cue 0 · Agent 0')).toBeInTheDocument();
+	});
+
+	it('explains the empty chart when every series is toggled off', () => {
+		render(
+			<ActivityTimeline
+				theme={mockTheme}
+				buckets={buckets}
+				defaultHiddenSeries={['user', 'auto', 'cue', 'agent']}
+			/>
+		);
+		expect(
+			screen.getByText('All sources hidden - click a legend entry to show one')
+		).toBeInTheDocument();
+	});
 });
 
 describe('TypeBreakdown', () => {
@@ -306,12 +338,12 @@ describe('theme color application', () => {
 	it('ActivityTimeline maps the legend dots to theme accent (user) and warning (auto)', () => {
 		const theme = createMockTheme({ colors: { accent: '#aa00ff', warning: '#ffaa00' } });
 		render(<ActivityTimeline theme={theme} buckets={[{ auto: 1, user: 1, cue: 0 }]} />);
-		expect(screen.getByText('User').querySelector('span') as HTMLElement).toHaveStyle({
-			backgroundColor: '#aa00ff',
-		});
-		expect(screen.getByText('Auto').querySelector('span') as HTMLElement).toHaveStyle({
-			backgroundColor: '#ffaa00',
-		});
+		expect(
+			screen.getByRole('button', { name: 'User' }).querySelector('span') as HTMLElement
+		).toHaveStyle({ backgroundColor: '#aa00ff' });
+		expect(
+			screen.getByRole('button', { name: 'Auto' }).querySelector('span') as HTMLElement
+		).toHaveStyle({ backgroundColor: '#ffaa00' });
 	});
 
 	it('TypeBreakdown draws the track ring and center total from the theme', () => {

@@ -73,6 +73,20 @@ export class AutoRunStateTracker {
 	}
 
 	/**
+	 * Atomically reserve an agent for a new Auto Run.
+	 *
+	 * Every renderer shares this main-process tracker, so unlike a renderer-local
+	 * store check this serializes near-simultaneous starts from desktop and browser
+	 * clients. The first real state broadcast replaces the provisional state.
+	 */
+	tryClaimStart(agentId: string): boolean {
+		if (this.isRunning(agentId)) return false;
+		this.states.set(agentId, { isRunning: true });
+		this.runningSince.set(agentId, Date.now());
+		return true;
+	}
+
+	/**
 	 * When the current batch started, or `undefined` when none is running.
 	 * Consumers that correlate against a specific turn (dispatch callbacks) need
 	 * this to tell "the batch my dispatch just started" from "a batch that was

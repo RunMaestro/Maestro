@@ -1422,6 +1422,8 @@ export interface Session {
 	customPath?: string; // Custom path to agent binary (overrides agent-level)
 	customArgs?: string; // Custom CLI arguments (overrides agent-level)
 	customEnvVars?: Record<string, string>; // Custom environment variables (overrides agent-level)
+	// Env vars switched off in the editor: parked, never spawned with. See shared/types.ts.
+	customEnvVarsDisabled?: Record<string, string>;
 	customModel?: string; // Custom model ID (overrides agent-level)
 	customEffort?: string; // Custom effort/reasoning level (overrides agent-level)
 	customProviderPath?: string; // Custom provider path (overrides agent-level)
@@ -1541,6 +1543,10 @@ export interface ProcessConfig {
 	// NOTE: prompt delivery (argv vs stdin) is decided by the main process in
 	// handleProcessSpawn - it depends on the HOST platform and the agent's CLI,
 	// neither of which a renderer (possibly a browser on another OS) can know.
+	/** Who asked for this turn: a human ('user') or Auto Run ('auto'). Stamped into
+	 *  the spawned process env as MAESTRO_QUERY_SOURCE. Cue runs never come through
+	 *  this IPC path - they spawn in the main process and mark themselves 'cue'. */
+	querySource?: 'user' | 'auto';
 }
 
 // DirectoryEntry and ShellInfo re-exported from shared/types above

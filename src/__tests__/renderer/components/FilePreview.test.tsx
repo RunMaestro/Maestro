@@ -9,6 +9,7 @@ import { isWebDesktop } from '../../../renderer/utils/runtimeContext';
 
 import { installLocalStorageMock } from '../../helpers/mockLocalStorage';
 import { mockTheme } from '../../helpers/mockTheme';
+import { requestHeadingPalette } from '../../../renderer/services/headingPalette';
 // Mock lucide-react icons
 vi.mock('lucide-react', () => ({
 	FileCode: () => <span data-testid="file-code-icon">FileCode</span>,
@@ -250,6 +251,41 @@ describe('FilePreview', () => {
 	});
 
 	describe('Document Graph button', () => {
+		it('leaves Cmd+Shift+G alone so View Git Log still gets it', () => {
+			// The graph used to claim Cmd+Shift+G here, in a hardcoded branch that
+			// called stopPropagation(). That chord belongs to View Git Log, so the
+			// graph silently won it whenever a markdown preview had focus - and
+			// because it was in no shortcut registry, it could not be seen in
+			// Settings or rebound out of the way. The button is the way in now.
+			const onOpenInGraph = vi.fn();
+			const onOpenFuzzySearch = vi.fn();
+			const { container } = render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'readme.md', content: '# Readme', path: '/test/readme.md' }}
+					onOpenInGraph={onOpenInGraph}
+					onOpenFuzzySearch={onOpenFuzzySearch}
+					shortcuts={{
+						fuzzyFileSearch: {
+							id: 'fuzzyFileSearch',
+							label: 'Fuzzy File Search',
+							keys: ['Meta', 'g'],
+						},
+					}}
+				/>
+			);
+
+			const previewContainer = container.querySelector('[tabindex="0"]');
+			expect(previewContainer).not.toBeNull();
+
+			fireEvent.keyDown(previewContainer!, { key: 'g', metaKey: true, shiftKey: true });
+
+			expect(onOpenInGraph).not.toHaveBeenCalled();
+			// Cmd+G's own handler must not catch the shifted chord on the way past.
+			// Modifier matching is exact, so this is the guard on that staying true.
+			expect(onOpenFuzzySearch).not.toHaveBeenCalled();
+		});
+
 		it('shows Document Graph button for markdown files when onOpenInGraph is provided', () => {
 			const onOpenInGraph = vi.fn();
 			render(
@@ -1346,6 +1382,131 @@ print("world")
 			fireEvent.keyDown(previewContainer!, { key: '\\', metaKey: true });
 			expect(screen.queryByText('Contents')).not.toBeInTheDocument();
 			expect(onShortcutUsed).not.toHaveBeenCalled();
+		});
+
+		it('opens the heading palette on a bare # and lists every heading', () => {
+			const { container } = render(
+				<FilePreview
+					{...defaultProps}
+					file={{
+						name: 'doc.md',
+						content: '# Heading 1\n## Heading 2\n### Heading 3',
+						path: '/test/doc.md',
+					}}
+					markdownEditMode={false}
+					isTabMode={true}
+				/>
+			);
+
+			const previewContainer = container.querySelector('[tabindex="0"]');
+			fireEvent.keyDown(previewContainer!, { key: '#' });
+
+			expect(screen.getByTestId('heading-palette-input')).toBeInTheDocument();
+			const rows = container.querySelectorAll('[data-testid="heading-palette-row"]');
+			expect(Array.from(rows).map((el) => (el as HTMLElement).title)).toEqual([
+				'Heading 1',
+				'Heading 2',
+				'Heading 3',
+			]);
+		});
+
+		it('Escape closes the heading palette before the TOC overlay', () => {
+			const { container } = render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'doc.md', content: '# Heading 1\n## Heading 2', path: '/test/doc.md' }}
+					markdownEditMode={false}
+					isTabMode={true}
+				/>
+			);
+
+			const previewContainer = container.querySelector('[tabindex="0"]');
+			fireEvent.click(screen.getByTitle('Table of Contents'));
+			fireEvent.keyDown(previewContainer!, { key: '#' });
+
+			// The palette supersedes the overlay rather than stacking on it.
+			expect(screen.getByTestId('heading-palette-input')).toBeInTheDocument();
+			expect(screen.queryByText('Contents')).not.toBeInTheDocument();
+
+			fireEvent.keyDown(previewContainer!, { key: 'Escape' });
+			expect(screen.queryByTestId('heading-palette-input')).not.toBeInTheDocument();
+		});
+
+		it('ignores # in markdown edit mode, where it is just a character', () => {
+			const { container } = render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'doc.md', content: '# Heading 1', path: '/test/doc.md' }}
+					markdownEditMode={true}
+					isTabMode={true}
+				/>
+			);
+
+			const previewContainer = container.querySelector('[tabindex="0"]');
+			fireEvent.keyDown(previewContainer!, { key: '#' });
+			expect(screen.queryByTestId('heading-palette-input')).not.toBeInTheDocument();
+		});
+
+		it('ignores # on a file with no headings', () => {
+			const { container } = render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'doc.md', content: 'Just prose, no headings.', path: '/test/doc.md' }}
+					markdownEditMode={false}
+					isTabMode={true}
+				/>
+			);
+
+			const previewContainer = container.querySelector('[tabindex="0"]');
+			fireEvent.keyDown(previewContainer!, { key: '#' });
+			expect(screen.queryByTestId('heading-palette-input')).not.toBeInTheDocument();
+		});
+
+		it('opens the heading palette when the command palette asks over the event', () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'doc.md', content: '# Heading 1\n## Heading 2', path: '/test/doc.md' }}
+					markdownEditMode={false}
+					isTabMode={true}
+				/>
+			);
+
+			act(() => {
+				requestHeadingPalette();
+			});
+			expect(screen.getByTestId('heading-palette-input')).toBeInTheDocument();
+		});
+
+		it('drops a heading-palette request on a file with no headings', () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'doc.md', content: 'Just prose.', path: '/test/doc.md' }}
+					markdownEditMode={false}
+					isTabMode={true}
+				/>
+			);
+
+			act(() => {
+				requestHeadingPalette();
+			});
+			expect(screen.queryByTestId('heading-palette-input')).not.toBeInTheDocument();
+		});
+
+		it('ignores Cmd+# so a modified chord still reaches the global handler', () => {
+			const { container } = render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'doc.md', content: '# Heading 1', path: '/test/doc.md' }}
+					markdownEditMode={false}
+					isTabMode={true}
+				/>
+			);
+
+			const previewContainer = container.querySelector('[tabindex="0"]');
+			fireEvent.keyDown(previewContainer!, { key: '#', metaKey: true });
+			expect(screen.queryByTestId('heading-palette-input')).not.toBeInTheDocument();
 		});
 
 		it('keeps TOC overlay open when clicking a heading entry', () => {

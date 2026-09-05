@@ -4,6 +4,7 @@ import * as crypto from 'crypto';
 import { readSshRemotes, writeSshRemotes, writeSettingValue } from '../services/storage';
 import { formatError, formatSuccess } from '../output/formatter';
 import type { SshRemoteConfig } from '../../shared/types';
+import { parseSshOptionAssignments } from '../../shared/sshOptions';
 
 interface CreateSshRemoteOptions {
 	host: string;
@@ -11,6 +12,7 @@ interface CreateSshRemoteOptions {
 	username?: string;
 	key?: string;
 	env?: string[];
+	sshOption?: string[];
 	sshConfig?: boolean;
 	disabled?: boolean;
 	setDefault?: boolean;
@@ -63,6 +65,18 @@ export function createSshRemote(name: string, options: CreateSshRemoteOptions): 
 		}
 	}
 
+	// Parse extra `ssh -o` options (ProxyCommand for a tunnelled host, a longer
+	// ConnectTimeout, a ProxyJump bastion, ...)
+	const parsedSshOptions = parseSshOptionAssignments(options.sshOption);
+	if (parsedSshOptions.error) {
+		if (options.json) {
+			console.log(JSON.stringify({ success: false, error: parsedSshOptions.error }));
+		} else {
+			console.error(formatError(parsedSshOptions.error));
+		}
+		process.exit(1);
+	}
+
 	const config: SshRemoteConfig = {
 		id: crypto.randomUUID(),
 		name,
@@ -71,6 +85,7 @@ export function createSshRemote(name: string, options: CreateSshRemoteOptions): 
 		username: options.username || '',
 		privateKeyPath: options.key || '',
 		remoteEnv,
+		sshOptions: parsedSshOptions.options,
 		enabled: !options.disabled,
 		useSshConfig: options.sshConfig || undefined,
 		sshConfigHost: options.sshConfig ? options.host : undefined,
@@ -119,6 +134,9 @@ export function createSshRemote(name: string, options: CreateSshRemoteOptions): 
 		);
 		if (config.useSshConfig) {
 			console.log(`  Mode: ssh-config`);
+		}
+		for (const [key, value] of Object.entries(config.sshOptions ?? {})) {
+			console.log(`  -o    ${key}=${value}`);
 		}
 		if (options.setDefault) {
 			console.log(`  Set as default`);

@@ -175,6 +175,25 @@ describe('web-desktop electron-shim autorun_state routing', () => {
 		ipcRenderer.removeListener('remote:autoRunStateMirror', listener);
 	});
 
+	it('replays the latest frame when the renderer subscribes after socket setup', () => {
+		const first = { isRunning: true, totalTasks: 4, completedTasks: 1, currentTaskIndex: 1 };
+		const latest = { ...first, completedTasks: 2, currentTaskIndex: 2 };
+
+		InertWebSocket.instances[0].emit('message', {
+			data: JSON.stringify({ type: 'autorun_state', sessionId: 'late-session', state: first }),
+		});
+		InertWebSocket.instances[0].emit('message', {
+			data: JSON.stringify({ type: 'autorun_state', sessionId: 'late-session', state: latest }),
+		});
+
+		const listener = vi.fn();
+		ipcRenderer.on('remote:autoRunStateMirror', listener);
+
+		expect(listener).toHaveBeenCalledTimes(1);
+		expect(listener).toHaveBeenCalledWith({ senderFrame: null }, 'late-session', latest);
+		ipcRenderer.removeListener('remote:autoRunStateMirror', listener);
+	});
+
 	it('forwards a null state (run cleared) rather than dropping the frame', () => {
 		const listener = vi.fn();
 		ipcRenderer.on('remote:autoRunStateMirror', listener);

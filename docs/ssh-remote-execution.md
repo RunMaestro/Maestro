@@ -103,6 +103,53 @@ To switch back to manual configuration:
 1. Click the **×** button next to "Using SSH Config" indicator
 2. Fill in all required fields manually
 
+### SSH Options (Advanced)
+
+The **SSH Options** section in the remote's dialog holds extra `ssh -o KEY=VALUE`
+pairs. Each one is passed straight to the `ssh` command Maestro runs, on top of
+its own defaults.
+
+Reach for it when the host is not reachable by a plain `ssh user@host`:
+
+| Option           | Use                                                                     |
+| ---------------- | ----------------------------------------------------------------------- |
+| `ProxyCommand`   | Route the connection through a tunnel (tailcat, cloudflared, Teleport)  |
+| `ProxyJump`      | Reach the host through a bastion                                        |
+| `ConnectTimeout` | Give a slow tunnel longer than the default 10 seconds to finish dialing |
+| `IdentityAgent`  | Point at a specific `ssh-agent` socket                                  |
+
+A command-line `-o` outranks `~/.ssh/config`, so this section is also the only
+place Maestro's own defaults can be changed. If a remote works from your
+terminal but fails in Maestro, a default is usually why - `ConnectTimeout=10`
+in particular is short for a tunnel that has to bootstrap a relay before it can
+connect.
+
+`RequestTTY` is reserved and cannot be set here. Maestro derives it per command
+from whether the agent speaks stream-json, and a forced TTY injects terminal
+control sequences that corrupt that stream.
+
+<Warning>
+A `ProxyCommand` is an arbitrary program run on your machine, with your
+credentials, every time an agent connects. Treat one the same way you would
+treat a line in your own `~/.ssh/config`.
+</Warning>
+
+The same options are reachable from the CLI, which is how an agent can set up a
+remote for you:
+
+```bash
+maestro-cli create-ssh-remote "Tunnelled box" \
+  --host tailcat-devbox \
+  --ssh-option "ProxyCommand=/opt/homebrew/bin/tailcat tcXXXX 22" \
+  --ssh-option ConnectTimeout=45
+
+# Adjust one option later without disturbing the rest
+maestro-cli update-ssh-remote tunnelled --ssh-option ConnectTimeout=60
+
+# See the full option set ssh will actually receive
+maestro-cli list-ssh-remotes --json
+```
+
 ### Connection Testing
 
 Before saving, you can test your SSH configuration:

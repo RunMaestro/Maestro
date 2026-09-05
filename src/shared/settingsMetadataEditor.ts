@@ -43,7 +43,7 @@ export const EDITOR_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	},
 	crossAgentMentionsWritable: {
 		description:
-			'When true, agents consulted via @-mention may modify files. When false (default), consults run read-only.',
+			'When true, an @-mention is a delegation: the mentioned agent may modify files. When false (default), it is a consult and runs read-only.',
 		type: 'boolean',
 		default: false,
 		category: 'editor',

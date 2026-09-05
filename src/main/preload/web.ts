@@ -55,6 +55,11 @@ export interface AiTabState {
  */
 export function createWebApi() {
 	return {
+		// Atomically reserve one agent before a renderer starts an Auto Run. Main
+		// owns the claim so simultaneous desktop/browser starts cannot both win.
+		claimAutoRunStart: (sessionId: string) =>
+			ipcRenderer.invoke('web:claimAutoRunStart', sessionId) as Promise<boolean>,
+
 		// Create a tab in the Electron renderer, which owns canonical tab state.
 		requestNewTab: (sessionId: string, background = false) =>
 			ipcRenderer.invoke('web:requestNewTab', sessionId, background) as Promise<{

@@ -43,11 +43,24 @@ interface TocOverlayProps {
 	/**
 	 * Custom scroll handler. Return true when handled; false falls back to
 	 * `containerRef.querySelector('#slug')`. Used where the target isn't a
-	 * plain heading in the DOM (the virtualized Fast tier, Rich Mode's cards).
+	 * plain heading in the DOM (the virtualized Fast tier, Rich Mode's cards),
+	 * or where the host owns one jump path shared with another surface.
+	 *
+	 * It receives the BEHAVIOR too, because that is decided here rather than by
+	 * the host: a click scrolls smoothly, but keyboard navigation scrolls
+	 * instantly, since key repeat outruns a smooth animation and every repeat
+	 * cancels the one still in flight.
 	 */
-	onSelectEntry?: (entry: TocEntry) => boolean;
+	onSelectEntry?: (entry: TocEntry, behavior: ScrollBehavior) => boolean;
 	/** Accessible label / tooltip for the toggle button. */
 	buttonTitle?: string;
+	/**
+	 * Key that opens a searchable palette over these same headings, rendered as
+	 * a keycap beside the heading count. Opt-in because the palette belongs to
+	 * the SURFACE, not to this overlay: File Preview binds `#`, and advertising
+	 * it from a surface that binds nothing sends the user to press a dead key.
+	 */
+	searchShortcutKey?: string;
 }
 
 export const TocOverlay = React.memo(function TocOverlay({
@@ -62,6 +75,7 @@ export const TocOverlay = React.memo(function TocOverlay({
 	overlayRef,
 	onSelectEntry,
 	buttonTitle = 'Table of Contents',
+	searchShortcutKey,
 }: TocOverlayProps) {
 	const entryButtonRefs = useRef<Array<HTMLButtonElement | null>>([]);
 	const [activeIndex, setActiveIndex] = useState(0);
@@ -80,7 +94,7 @@ export const TocOverlay = React.memo(function TocOverlay({
 
 	const scrollToEntry = useCallback(
 		(entry: TocEntry, behavior: ScrollBehavior) => {
-			if (onSelectEntry?.(entry)) {
+			if (onSelectEntry?.(entry, behavior)) {
 				return;
 			}
 			const targetElement = containerRef?.current?.querySelector(`#${CSS.escape(entry.slug)}`);
@@ -157,8 +171,20 @@ export const TocOverlay = React.memo(function TocOverlay({
 						>
 							Contents
 						</span>
-						<span className="text-2xs" style={{ color: theme.colors.textDim }}>
-							{entries.length} headings
+						<span
+							className="text-2xs flex items-center gap-1.5"
+							style={{ color: theme.colors.textDim }}
+						>
+							<span>{entries.length} headings</span>
+							{searchShortcutKey && (
+								<kbd
+									className="px-1 rounded font-mono"
+									style={{ backgroundColor: theme.colors.bgMain, color: theme.colors.accent }}
+									title={`Press ${searchShortcutKey} to search these headings`}
+								>
+									{searchShortcutKey}
+								</kbd>
+							)}
 						</span>
 					</div>
 
