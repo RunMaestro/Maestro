@@ -8,6 +8,7 @@ export { FontsSection } from './FontsSection';
 export { CustomFontsRow } from './CustomFontsRow';
 export { FontZoomSection } from './FontZoomSection';
 export { IconThemeSection } from './IconThemeSection';
+export { ProviderModePillSection } from './ProviderModePillSection';
 export { GroupChatSection } from './GroupChatSection';
 export { LeftSidePanelSection } from './LeftSidePanelSection';
 export { MainHeaderPanelSection } from './MainHeaderPanelSection';

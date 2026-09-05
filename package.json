@@ -336,7 +336,7 @@
 		"@xterm/addon-web-links": "^0.12.0",
 		"@xterm/addon-webgl": "^0.19.0",
 		"@xterm/xterm": "^6.0.0",
-		"adm-zip": "^0.5.16",
+		"adm-zip": "^0.6.0",
 		"ansi-to-html": "^0.7.2",
 		"archiver": "^7.0.1",
 		"better-sqlite3": "^12.11.1",
@@ -442,6 +442,7 @@
 		"vitest": "^4.1.5"
 	},
 	"overrides": {
+		"brace-expansion": "^5.0.9",
 		"tar": "^7.5.17"
 	},
 	"engines": {

@@ -3520,6 +3520,68 @@ describe('TerminalOutput', () => {
 	});
 
 	describe('mode pill rendering', () => {
+		// The pill is opt-in (Display -> Provider Mode Pill, default off), so every
+		// assertion about its label has to turn the display setting on first.
+		beforeEach(() => {
+			useSettingsStore.setState({ showProviderModePill: true });
+		});
+
+		afterEach(() => {
+			useSettingsStore.setState({ showProviderModePill: false });
+		});
+
+		it('is suppressed entirely when the display setting is off', () => {
+			useSettingsStore.setState({ showProviderModePill: false });
+
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'prompt', source: 'user' }),
+				createLogEntry({
+					id: 'resp-1',
+					text: 'response from API stream',
+					source: 'stdout',
+					renderStyle: 'structured',
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('response from API stream')).toBeInTheDocument();
+			expect(screen.queryByText('claude -p')).not.toBeInTheDocument();
+			expect(screen.queryByText('TUI Wrapper')).not.toBeInTheDocument();
+		});
+
+		it('still renders the model and effort pills when the mode pill is off', () => {
+			useSettingsStore.setState({ showProviderModePill: false });
+
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'prompt', source: 'user' }),
+				createLogEntry({
+					id: 'resp-1',
+					text: 'response',
+					source: 'stdout',
+					renderStyle: 'structured',
+					turnModel: 'opus',
+					turnEffort: 'high',
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('opus')).toBeInTheDocument();
+			expect(screen.getByText('high')).toBeInTheDocument();
+			expect(screen.queryByText('claude -p')).not.toBeInTheDocument();
+		});
+
 		it('labels TUI and API turns separately when both render styles coexist', () => {
 			const logs: LogEntry[] = [
 				createLogEntry({ id: 'user-1', text: 'first prompt', source: 'user' }),

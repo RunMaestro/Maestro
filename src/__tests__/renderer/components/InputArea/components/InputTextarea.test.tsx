@@ -1,8 +1,9 @@
 import { fireEvent, render } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ComponentProps, RefObject } from 'react';
 import { InputTextarea } from '../../../../../renderer/components/InputArea/components/InputTextarea';
 import { KEYSTROKE_TEXTAREA_MAX_HEIGHT } from '../../../../../renderer/utils/textareaSizing';
+import { useSettingsStore } from '../../../../../renderer/stores/settingsStore';
 import { createInputAreaSession, inputAreaTheme } from '../_fixtures';
 
 /**
@@ -169,5 +170,66 @@ describe('InputTextarea', () => {
 
 		expect(overlay.scrollTop).toBe(90);
 		expect(overlay.scrollLeft).toBe(7);
+	});
+});
+
+/**
+ * The composer's font is what tells you at a glance whether what you are typing
+ * is a shell line or a sentence.
+ *
+ * Command mode and the terminal composer take a fixed-pitch face - a command
+ * line is shell text, and the card it ends up in renders it the same way. AI
+ * command mode does not: that draft is prose, and the command the model
+ * proposes gets monospace when it appears in the proposal card.
+ *
+ * "No override" reads as the empty string. The composer does set
+ * `fontFamily: 'inherit'` in SHARED_TYPOGRAPHY (so the decorative overlay is
+ * measured on the same face as the textarea), but jsdom's cssstyle drops the
+ * `inherit` keyword, so both "unset" and "inherit" surface as `''` here. Either
+ * way the assertion says what matters: no fixed-pitch stack was substituted.
+ */
+describe('InputTextarea font', () => {
+	beforeEach(() => {
+		// A real proportional face, and the one this was found with: it resolves
+		// perfectly well, so no amount of fallback appending fixes it on its own.
+		useSettingsStore.setState({ fontFamily: 'Avenir Next' });
+	});
+
+	it('types a command-mode draft in a fixed-pitch stack', () => {
+		const { textarea } = renderTextarea({ isCommandModeDraft: true });
+
+		expect(textarea.style.fontFamily).toMatch(/monospace/);
+	});
+
+	it('types a terminal-mode command in a fixed-pitch stack', () => {
+		const { textarea } = renderTextarea({ isTerminalMode: true });
+
+		expect(textarea.style.fontFamily).toMatch(/monospace/);
+	});
+
+	it('leaves an AI command request in the app font', () => {
+		const { textarea } = renderTextarea({ isAiCommandDraft: true });
+
+		expect(textarea.style.fontFamily).toBe('');
+	});
+
+	it('leaves an ordinary agent message in the app font', () => {
+		const { textarea } = renderTextarea();
+
+		expect(textarea.style.fontFamily).toBe('');
+	});
+
+	// The overlay is enabled for everything but terminal mode, so a command-mode
+	// draft carrying an `@mention` paints chips under monospace glyphs. Measured
+	// on a different face, every chip lands off the word it belongs to.
+	it('gives the mention overlay the same fixed-pitch font as the textarea', () => {
+		const { textarea, overlay } = renderTextarea({
+			isCommandModeDraft: true,
+			inputValue: 'grep @src/app.ts',
+		});
+
+		expect(overlay).not.toBeNull();
+		expect(overlay.style.fontFamily).toBe(textarea.style.fontFamily);
+		expect(overlay.style.fontFamily).toMatch(/monospace/);
 	});
 });

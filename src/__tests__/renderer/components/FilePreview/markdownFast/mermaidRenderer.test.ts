@@ -118,6 +118,26 @@ describe('createMermaidRenderer', () => {
 		expect(source).toContain('X-->Y');
 	});
 
+	it('escapes @ in a label before handing the source to mermaid', async () => {
+		// Mermaid's edge-id lexer rule swallows `-->|@`, so the label arrives
+		// escaped as `#64;` (which mermaid decodes back to `@` when it draws).
+		const mermaid = (await import('mermaid')).default;
+		const renderSpy = vi.mocked(mermaid.render);
+		renderSpy.mockClear();
+
+		const root = makeRoot(
+			'<pre><code class="language-mermaid">flowchart LR\n  A --&gt;|@bob| B</code></pre>'
+		);
+		const handle = createMermaidRenderer({ theme: mockTheme });
+		handle.observe(root);
+		FakeIntersectionObserver.instances[0].trigger([root.querySelector('code')!]);
+		await new Promise((r) => setTimeout(r, 0));
+		await new Promise((r) => setTimeout(r, 0));
+
+		const [, source] = renderSpy.mock.calls[0];
+		expect(source).toContain('|#64;bob|');
+	});
+
 	it('does not re-render an already-rendered diagram', () => {
 		const root = makeRoot(
 			'<pre><code class="language-mermaid" data-mermaid-rendered="true">graph TD;A</code></pre>'

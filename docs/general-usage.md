@@ -62,6 +62,7 @@ The **File Explorer** (Right Panel → Files tab) lets you browse project files.
 
 - **Syntax highlighting** for code files
 - **Markdown rendering** with toggle between raw/preview (`Cmd+E` / `Ctrl+E`)
+- **Heading navigation** in markdown: a Table of Contents overlay (`Cmd+\` / `Ctrl+\`) and a searchable jump list (`#`) - see below
 - **Clickable task checkboxes** in rendered markdown - tick a `- [ ]` in the preview and the file is rewritten on disk
 - **Image viewing** for common image formats
 - **Audio and video playback** with a speed control that sticks (see below)
@@ -74,6 +75,34 @@ The **File Explorer** (Right Panel → Files tab) lets you browse project files.
 Several formats come with a filtering language built for that format rather than
 a plain search box. **[File Formats](./file-formats)** is the full map: what
 opens as what, and what you can type at each one.
+
+### Jumping Between Sections in Markdown
+
+A long markdown file is faster to move around by section than by scrolling.
+There are two doors onto the same list of headings, and which one you want
+depends on whether you are browsing or aiming:
+
+- **Table of Contents** (`Cmd+\` / `Ctrl+\`, or the list button in the
+  bottom-right of the preview) opens an outline of the document, indented by
+  heading level. Click any heading to jump there; the overlay stays open so you
+  can keep moving. `Top` and `Bottom` sit at either end for the whole document.
+  Use it to see the shape of a file you do not know yet.
+- **Jump to Heading** (`#`) opens a search box over the same list. Type a few
+  characters of a section name, move with `Up`/`Down` (`PgUp`/`PgDn` to skip
+  further), and press `Enter` to land there. The matched characters are
+  highlighted as you type, and matching is fuzzy - `oec` finds
+  "**O**PSWAT **E**quity **C**ase". Use it when you already know the section you
+  want and do not want to hunt for it.
+
+Results stay in the order they appear in the document rather than being
+re-ranked by how well they matched, so the list keeps reading as a map of the
+file no matter what you type.
+
+`#` is a bare keypress, so it works while you are reading and stays out of your
+way while you are typing: it does nothing in the find bar, in the markdown
+editor, or on a file with no headings. The same command is in the command
+palette (`Cmd+K` / `Ctrl+K`) as **Jump to Heading**, which appears only while a
+markdown file is open in preview.
 
 ### CSV and TSV Tables
 
@@ -297,7 +326,7 @@ The `!` is a gesture, not part of the command - it disappears the moment it swit
 $ git status
 ```
 
-You will know you are in command mode: a `$` appears at the left of the input, and a **COMMAND MODE** strip above it names the directory the command will run in.
+You will know you are in command mode: a `$` appears at the left of the input, the text switches to the fixed-width font your terminals use, and a **COMMAND MODE** strip above it names the directory the command will run in. The font follows the command all the way through - what you type, what the AI proposes, and the output on the card are all set the way a terminal sets them, so paths and columns line up.
 
 **Getting back to the agent:** press `Esc` on an empty command line (or `Backspace`, same thing). The composer keeps focus, so you can carry straight on typing your message. Command mode sticks around between commands, so you can run several in a row without retyping `!`, and you leave deliberately when you are done.
 
@@ -350,7 +379,7 @@ Command mode is AI-chat only. In a terminal tab or the legacy terminal mode you 
 
 ### AI Command Mode
 
-Press `!` a second time, on an empty command line, and the composer climbs one more rung. The strip above it now reads **AI Command**, and what you type is no longer a command - it is a plain-English description of what you want done:
+Press `!` a second time, on an empty command line, and the composer climbs one more rung. The strip above it now reads **AI Command**, the `$` and the fixed-width font go away (you are writing a sentence again, not a command line), and what you type is a plain-English description of what you want done:
 
 ```
 delete every node_modules folder under this project

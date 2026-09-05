@@ -269,7 +269,8 @@ export interface GroupChat {
 	archived?: boolean;
 	/**
 	 * When true (the default), the moderator only hands work to an agent whose
-	 * Maestro agent is idle. Undefined means enabled - read it through
+	 * Maestro agent is idle, holding the handoff until it is rather than
+	 * starting a second process there. Undefined means enabled - read it through
 	 * {@link requiresIdleParticipants} rather than testing the field, so chats
 	 * created before this setting existed keep the safe behavior.
 	 */
