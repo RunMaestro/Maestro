@@ -20,6 +20,8 @@ export {
 
 export { ConcertoRoutes } from './concertoRoutes';
 
+export { MediaRoutes } from './mediaRoutes';
+
 export { StaticRoutes } from './staticRoutes';
 
 export {

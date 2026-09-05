@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
 	MEDIA_PLAYBACK_RATES,
 	MEDIA_SCHEME,
+	buildMediaStreamHttpPath,
 	buildMediaStreamUrl,
 	getMediaKind,
 	getMediaMimeType,
@@ -132,6 +133,22 @@ describe('media stream URLs', () => {
 		expect(isMediaStreamUrl('# Some markdown')).toBe(false);
 		expect(isMediaStreamUrl(null)).toBe(false);
 		expect(isMediaStreamUrl(undefined)).toBe(false);
+	});
+});
+
+describe('buildMediaStreamHttpPath', () => {
+	it('maps a stream URL onto the web server media route, keeping the media token', () => {
+		const streamUrl = buildMediaStreamUrl(TOKEN, '/tmp/clip.mp4');
+		const hex = streamUrl.split('/').pop();
+		expect(buildMediaStreamHttpPath('master', streamUrl)).toBe(
+			`/master/media/stream/${TOKEN}/${hex}`
+		);
+	});
+
+	it('returns null for anything that is not a stream URL', () => {
+		expect(buildMediaStreamHttpPath('master', 'raw file contents')).toBeNull();
+		expect(buildMediaStreamHttpPath('master', `${MEDIA_SCHEME}://stream/only-a-token`)).toBeNull();
+		expect(buildMediaStreamHttpPath('', buildMediaStreamUrl(TOKEN, '/tmp/clip.mp4'))).toBeNull();
 	});
 });
 
