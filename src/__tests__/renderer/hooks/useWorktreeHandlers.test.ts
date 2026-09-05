@@ -1664,7 +1664,7 @@ describe('Effects', () => {
 		});
 	});
 
-	// Issue #1506: the same App runs in the Electron renderer AND in every
+	// Issue #1506: the same App runs in every Electron window AND in every
 	// connected web-desktop browser client, and `worktree:discovered` is broadcast
 	// to all of them. Discovery is not an idempotent read - each renderer answers
 	// it by minting a child agent with a fresh id - so exactly one renderer may
@@ -1677,6 +1677,20 @@ describe('Effects', () => {
 		});
 
 		it('does not start worktree watchers or subscribe to discovery', () => {
+			useSessionStore.setState({
+				sessions: [parentWithWatch()],
+				activeSessionId: 'parent-1',
+				sessionsLoaded: true,
+			} as any);
+
+			renderHook(() => useWorktreeHandlers({ isLifecycleOwner: false }));
+
+			expect(mockGit.watchWorktreeDirectory).not.toHaveBeenCalled();
+			expect(mockGit.onWorktreeDiscovered).not.toHaveBeenCalled();
+			expect(mockGit.onWorktreeRemoved).not.toHaveBeenCalled();
+		});
+
+		it('keeps a secondary Electron window out of the discovery lifecycle', () => {
 			useSessionStore.setState({
 				sessions: [parentWithWatch()],
 				activeSessionId: 'parent-1',

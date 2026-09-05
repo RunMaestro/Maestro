@@ -20,7 +20,7 @@
  * produced for the creating renderer.
  */
 
-import path from 'path';
+import { normalizeWorktreePath } from '../../../../shared/worktreePaths';
 
 /** Normalized path -> expiry timestamp (ms since epoch). */
 const marks = new Map<string, number>();
@@ -31,20 +31,6 @@ const marks = new Map<string, number>();
  * disk, SSH remote), matching WORKTREE_SETUP_MARK_TTL_MS on the renderer side.
  */
 export const WORKTREE_CREATION_MARK_TTL_MS = 60000;
-
-/**
- * Normalize for comparison: absolute where possible, forward slashes, no
- * trailing separator. Mirrors `normalizePath` in the renderer's worktreeDedup
- * so a path marked from one side matches the other. Case is preserved - the
- * watcher and the setup handler both see paths from the same source.
- */
-function normalize(p: string): string {
-	const resolved = path.isAbsolute(p) ? path.resolve(p) : p;
-	return resolved
-		.replace(/\\/g, '/')
-		.replace(/\/+/g, '/')
-		.replace(/(.)\/$/, '$1');
-}
 
 /** Drop expired entries so the map can't grow without bound. */
 function sweep(now: number): void {
@@ -64,13 +50,19 @@ export function markWorktreeCreatedByMaestro(
 	if (!p) return;
 	const now = Date.now();
 	sweep(now);
-	marks.set(normalize(p), now + ttlMs);
+	marks.set(normalizeWorktreePath(p), now + ttlMs);
+}
+
+/** Release a creation mark when setup exits without producing a usable worktree. */
+export function clearWorktreeCreatedByMaestro(p: string): void {
+	if (!p) return;
+	marks.delete(normalizeWorktreePath(p));
 }
 
 /** Whether `p` was marked by {@link markWorktreeCreatedByMaestro} and is still live. */
 export function isWorktreeCreatedByMaestro(p: string): boolean {
 	if (!p) return false;
-	const key = normalize(p);
+	const key = normalizeWorktreePath(p);
 	const expiry = marks.get(key);
 	if (expiry === undefined) return false;
 	if (expiry <= Date.now()) {

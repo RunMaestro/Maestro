@@ -10,6 +10,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
 	markWorktreeCreatedByMaestro,
+	clearWorktreeCreatedByMaestro,
 	isWorktreeCreatedByMaestro,
 	clearWorktreeCreationMarks,
 	WORKTREE_CREATION_MARK_TTL_MS,
@@ -37,6 +38,12 @@ describe('worktreeCreationMarks', () => {
 	it('does not match a different path', () => {
 		markWorktreeCreatedByMaestro('/worktrees/feature');
 		expect(isWorktreeCreatedByMaestro('/worktrees/other')).toBe(false);
+	});
+
+	it('can release a mark after setup fails', () => {
+		markWorktreeCreatedByMaestro('/worktrees/feature');
+		clearWorktreeCreatedByMaestro('/worktrees/feature/');
+		expect(isWorktreeCreatedByMaestro('/worktrees/feature')).toBe(false);
 	});
 
 	it('matches across separator and trailing-slash spellings', () => {

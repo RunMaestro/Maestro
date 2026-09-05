@@ -48,9 +48,11 @@ export interface UseWorktreeHandlersDeps {
 	 * chokidar watcher, and the legacy scanner). Defaults to true so isolation
 	 * tests and single-renderer callers keep today's behaviour.
 	 *
-	 * The same App runs in the Electron renderer AND in every connected
+	 * The same App runs in every Electron window AND in every connected
 	 * web-desktop browser client, and `worktree:discovered` is BROADCAST to all
-	 * of them (see the MULTI-WINDOW INVARIANT in `main/utils/safe-send.ts`).
+	 * of them (see the MULTI-WINDOW INVARIANT in `main/utils/safe-send.ts`). Only
+	 * the primary desktop window may own discovery; secondary Electron windows
+	 * and web clients pass false here.
 	 * Discovery is not an idempotent read: each renderer answers it by building
 	 * a child session with a freshly generated id, and persistence ships
 	 * incremental `sessions:setMany` diffs, so every non-owning renderer adds one
@@ -63,7 +65,7 @@ export interface UseWorktreeHandlersDeps {
 	 * User-initiated worktree handlers are deliberately NOT gated - a web-desktop
 	 * user must still be able to create and delete worktrees.
 	 *
-	 * Mirrors `useCueAutoDiscovery(encoreFeatures, !isWebDesktop())` in App.tsx.
+	 * App derives this from both runtime type and `WindowContext.isMainWindow`.
 	 */
 	isLifecycleOwner?: boolean;
 }

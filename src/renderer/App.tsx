@@ -1280,7 +1280,10 @@ function MaestroConsoleInner() {
 		handleConfirmAndDeleteWorktreeOnDisk,
 		refreshWorktreeState,
 		handlePRCreated,
-	} = useWorktreeHandlers({ rightPanelRef, isLifecycleOwner: !isWebDesktop() });
+	} = useWorktreeHandlers({
+		rightPanelRef,
+		isLifecycleOwner: !isWebDesktop() && (windowCtx?.isMainWindow ?? true),
+	});
 
 	// --- APP HANDLERS (drag, file, folder operations) ---
 	// NOTE: file-drop attach is now scoped per-region (useChatFileDropZone for the
