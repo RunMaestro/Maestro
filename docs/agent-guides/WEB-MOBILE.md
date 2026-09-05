@@ -164,6 +164,8 @@ It is viewport-driven on purpose, not pointer-driven: space is the constraint, a
 - A tab chip's menu renders through `TabOverlayPortal`; do not `createPortal` a `fixed z-[100]` shell by hand.
 - A control that hides its label on a phone keeps its `title` (or `aria-label`), so it keeps an accessible name and a long-press tooltip.
 - A surface that pans on drag (a canvas, a graph) opts out of the swipe-to-dismiss safety net with `data-no-swipe-dismiss` on its root.
+- Never host a gesture in an invisible `position: fixed` strip. The drawer-opening edge swipes used to live in two such strips, and the left one sat above the tab bar and swallowed every tap on the magnifier and the first chip. Gate the gesture on WHERE the touch starts instead (`useEdgeSwipeHandlers`, spread on the app shell).
+- A sheet that covers the element that opened it must ignore the synthesized mouse and click events that trail a long-press release (`TAB_SHEET_SCRIM_ARM_MS` in `TabOverlayPortal`), or it closes the instant the finger lifts.
 
 ---
 
@@ -220,6 +222,7 @@ Wiring the factory into the bridge therefore requires an echo-suppression design
 | Phone layout gate     | `src/renderer/hooks/ui/useViewportBreakpoint.ts` (`usePhoneLayout`), `src/renderer/index.css` ("Phone layout")         |
 | Phone tab sheet       | `src/renderer/components/TabBar/TabOverlayPortal.tsx`, `src/renderer/components/shared/LongPressable.tsx`              |
 | Phone composer fold   | `src/renderer/components/InputArea/components/PhoneComposerHandle.tsx`                                                 |
+| Edge-swipe openers    | `src/renderer/hooks/utils/useEdgeSwipeHandlers.ts` (spread on the shell root in `AppShell.tsx`)                        |
 | Swipe-to-dismiss      | `src/renderer/hooks/ui/useLayerSwipeDismiss.ts` (mounted in `LayerStackContext.tsx`)                                   |
 | Web image route       | `src/main/web-server/routes/imageRoutes.ts`, `src/renderer/utils/sessionImageSrc.ts`, `src/shared/sessionImageRefs.ts` |
 | Terminal touch        | `src/renderer/components/TerminalTouchBar.tsx`, `src/renderer/utils/terminalKeys.ts`                                   |

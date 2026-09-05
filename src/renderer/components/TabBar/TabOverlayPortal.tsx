@@ -21,13 +21,23 @@
  * shortcut badges), so a menu never has to know which shell it is in.
  */
 
-import React from 'react';
+import React, { useCallback, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import type { Theme } from '../../types';
 import type { OverlayPosition } from '../../hooks/tabs/useTabHoverOverlay';
 import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 import { useSwipeGestures } from '../../hooks/utils/useSwipeGestures';
 import { EscCloseButton } from '../ui/EscCloseButton';
+
+/**
+ * How long after the sheet opens a tap on its scrim is ignored. The long-press
+ * that opens the sheet ends with the finger lifting off the chip, and the
+ * browser can follow that release with synthesized mouse and click events at
+ * the finger's position - which is now the scrim, since the sheet covers the
+ * chip. Without this the sheet closed the instant the user let go. A real tap
+ * on the scrim comes well after the user has read the menu.
+ */
+export const TAB_SHEET_SCRIM_ARM_MS = 500;
 
 export interface TabOverlayPortalProps {
 	/** Whether the menu is open at all. Nothing renders while false. */
@@ -63,17 +73,31 @@ export function TabOverlayPortal({
 	// starts inside a scrolled list must scroll it, not dismiss the sheet.
 	const gripSwipe = useSwipeGestures({ onSwipeDown: onClose, enabled: phone && open });
 
+	const openedAtRef = useRef(0);
+	useEffect(() => {
+		if (open) openedAtRef.current = Date.now();
+	}, [open]);
+	const closeFromScrim = useCallback(() => {
+		if (Date.now() - openedAtRef.current < TAB_SHEET_SCRIM_ARM_MS) return;
+		onClose();
+	}, [onClose]);
+
 	if (!open) return null;
 
 	if (phone) {
+		// The overlay ref goes on the SCRIM, not the panel: useTabHoverOverlay's
+		// click-outside treats anything inside the ref as inside the menu, and the
+		// scrim spans the screen, so the sheet owns its own dismissal (scrim tap
+		// once armed, the close button, the grip swipe) instead of being closed by
+		// the synthesized events that trail the opening long-press.
 		return createPortal(
 			<div
+				ref={setOverlayRef}
 				className="maestro-tab-sheet fixed inset-0 z-[100] flex flex-col justify-end"
-				onClick={onClose}
+				onClick={closeFromScrim}
 				data-testid="tab-overlay-sheet"
 			>
 				<div
-					ref={setOverlayRef}
 					role="dialog"
 					aria-modal="true"
 					aria-label="Tab actions"

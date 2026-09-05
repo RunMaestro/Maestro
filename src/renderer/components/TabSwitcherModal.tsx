@@ -762,7 +762,11 @@ export function TabSwitcherModal({
 			onClick={onClose}
 		>
 			<div
-				ref={resizableModal.modalRef}
+				// The resizable-modal hook sizes its element imperatively through this
+				// ref (clamped to the viewport minus a margin), which on a phone shrank
+				// the sheet to a floating box with the app showing around it. The phone
+				// layout is full screen and never resizable, so it gets no ref.
+				ref={phone ? undefined : resizableModal.modalRef}
 				onClick={(e) => e.stopPropagation()}
 				role="dialog"
 				aria-modal="true"

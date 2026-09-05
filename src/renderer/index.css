@@ -1644,34 +1644,11 @@ html[data-runtime='web-desktop'][data-bp='xs']
 }
 
 /*
- * Edge-swipe opener zones. Thin (24px) invisible strips pinned to the left and
- * right screen edges that host the drawer-opening swipe handlers (App.tsx). They
- * only exist while no drawer is open. `touch-action: pan-y` lets vertical page
- * scrolling that starts in the strip still happen natively while horizontal
- * swipes are handled (and preventDefault'd) by useSwipeGestures. Sitting only at
- * the edges is what keeps center-content horizontal scrolling (terminal, tab
- * bar, tables) free of drawer gestures.
- *
- * They start below the 4rem header (`top: 4rem`) rather than the very top so the
- * strip never overlaps the header hamburger / panel toggle - at xs/sm the header
- * padding shrinks to 0.5rem, so those controls sit inside the outer 24px, and a
- * full-height strip (which paints above the z-20 header) would swallow their
- * taps. Edge swipes start in the body, which is the whole point.
+ * Edge-swipe drawer openers have no element. They used to be two invisible
+ * fixed strips here, which sat in the hit-test order above the tab bar and
+ * swallowed taps on its magnifier and first chip. The gesture now rides the
+ * app shell, gated on where the touch starts - see useEdgeSwipeHandlers.
  */
-.maestro-edge-swipe-zone {
-	position: fixed;
-	top: 4rem;
-	bottom: 0;
-	width: 24px;
-	z-index: 35;
-	touch-action: pan-y;
-}
-.maestro-edge-swipe-zone--left {
-	left: 0;
-}
-.maestro-edge-swipe-zone--right {
-	right: 0;
-}
 
 @keyframes maestro-fade-in {
 	from {

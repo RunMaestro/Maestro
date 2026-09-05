@@ -67,9 +67,12 @@ export interface AppShellProps {
 	rightPanelOpen: boolean;
 	onCloseDrawers: () => void;
 	drawerCloseSwipeHandlers: React.HTMLAttributes<HTMLDivElement>;
-	drawerSwipeEnabled: boolean;
-	leftEdgeSwipeHandlers: React.HTMLAttributes<HTMLDivElement>;
-	rightEdgeSwipeHandlers: React.HTMLAttributes<HTMLDivElement>;
+	/**
+	 * Drawer-OPENING swipes, spread on the shell root. Already gated on where a
+	 * touch starts (useEdgeSwipeHandlers) and empty when disabled, so the shell
+	 * never has to know about edges.
+	 */
+	edgeSwipeHandlers: React.HTMLAttributes<HTMLDivElement>;
 
 	onToastSessionClick: (sessionId: string, tabId?: string) => void;
 }
@@ -102,9 +105,7 @@ export function AppShell({
 	rightPanelOpen,
 	onCloseDrawers,
 	drawerCloseSwipeHandlers,
-	drawerSwipeEnabled,
-	leftEdgeSwipeHandlers,
-	rightEdgeSwipeHandlers,
+	edgeSwipeHandlers,
 	onToastSessionClick,
 }: AppShellProps) {
 	// PERF: Title chrome self-sources a narrow slice so App does not pass
@@ -155,6 +156,8 @@ export function AppShell({
 					'--keyboard-offset': `${keyboardShellOffset}px`,
 				} as React.CSSProperties
 			}
+			// Drawer-opening edge swipes (phones). Empty unless a drawer may open.
+			{...edgeSwipeHandlers}
 		>
 			{showTitleBar && (
 				<div
@@ -242,21 +245,6 @@ export function AppShell({
 					{...drawerCloseSwipeHandlers}
 					aria-hidden
 				/>
-			)}
-
-			{drawerSwipeEnabled && !leftSidebarOpen && !rightPanelOpen && (
-				<>
-					<div
-						className="maestro-edge-swipe-zone maestro-edge-swipe-zone--left"
-						{...leftEdgeSwipeHandlers}
-						aria-hidden
-					/>
-					<div
-						className="maestro-edge-swipe-zone maestro-edge-swipe-zone--right"
-						{...rightEdgeSwipeHandlers}
-						aria-hidden
-					/>
-				</>
 			)}
 
 			{logViewer}

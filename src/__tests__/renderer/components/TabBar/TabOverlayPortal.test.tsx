@@ -7,7 +7,10 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import { TabOverlayPortal } from '../../../../renderer/components/TabBar/TabOverlayPortal';
+import {
+	TabOverlayPortal,
+	TAB_SHEET_SCRIM_ARM_MS,
+} from '../../../../renderer/components/TabBar/TabOverlayPortal';
 import { usePhoneLayout } from '../../../../renderer/hooks/ui/useViewportBreakpoint';
 import { mockTheme } from '../../../helpers/mockTheme';
 
@@ -80,8 +83,11 @@ describe('TabOverlayPortal', () => {
 			expect(screen.getByTestId('tab-overlay-sheet')).toBeInTheDocument();
 			const panel = screen.getByRole('dialog', { name: 'Tab actions' });
 			expect(panel).toContainElement(screen.getByTestId('menu-content'));
-			// Click-outside and viewport clamping read this ref; it must be the panel.
-			expect(setOverlayRef).toHaveBeenCalledWith(panel);
+			// useTabHoverOverlay's click-outside reads this ref. It is the SCRIM, which
+			// spans the screen, so nothing counts as "outside" and the sheet owns its
+			// own dismissal - the synthesized events that trail the opening long-press
+			// land on the scrim and must not close it.
+			expect(setOverlayRef).toHaveBeenCalledWith(screen.getByTestId('tab-overlay-sheet'));
 		});
 
 		it('closes from its own close button', () => {
@@ -91,13 +97,23 @@ describe('TabOverlayPortal', () => {
 			expect(onClose).toHaveBeenCalledTimes(1);
 		});
 
-		it('closes on a tap on the scrim but not on a tap inside the panel', () => {
-			mockedUsePhoneLayout.mockReturnValue(true);
-			const { onClose } = renderPortal();
-			fireEvent.click(screen.getByTestId('menu-content'));
-			expect(onClose).not.toHaveBeenCalled();
-			fireEvent.click(screen.getByTestId('tab-overlay-sheet'));
-			expect(onClose).toHaveBeenCalledTimes(1);
+		it('closes on a tap on the scrim once armed, but not on a tap inside the panel', () => {
+			vi.useFakeTimers();
+			try {
+				mockedUsePhoneLayout.mockReturnValue(true);
+				const { onClose } = renderPortal();
+				fireEvent.click(screen.getByTestId('menu-content'));
+				expect(onClose).not.toHaveBeenCalled();
+				// The click the browser synthesizes when the opening long-press ends
+				// lands on the scrim within a few ms; it must not close the sheet.
+				fireEvent.click(screen.getByTestId('tab-overlay-sheet'));
+				expect(onClose).not.toHaveBeenCalled();
+				vi.advanceTimersByTime(TAB_SHEET_SCRIM_ARM_MS + 50);
+				fireEvent.click(screen.getByTestId('tab-overlay-sheet'));
+				expect(onClose).toHaveBeenCalledTimes(1);
+			} finally {
+				vi.useRealTimers();
+			}
 		});
 
 		it('closes on a swipe down from the grip', () => {

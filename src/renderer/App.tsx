@@ -11,6 +11,7 @@ import React, {
 import { useFocusAfterRender, useFocusOnClose } from './hooks/utils/useFocusAfterRender';
 import { isWebDesktop } from './utils/runtimeContext';
 import { isCoarsePointer } from './utils/touch';
+import { useEdgeSwipeHandlers } from './hooks/utils/useEdgeSwipeHandlers';
 import { slashCommands } from './slashCommands';
 import { AppModals } from './components/AppModals';
 import { AppStandaloneModals } from './components/AppStandaloneModals';
@@ -687,21 +688,29 @@ function MaestroConsoleInner() {
 	} = useUIStore.getState();
 
 	// --- EDGE-SWIPE DRAWERS (phones on the web-desktop bundle) ---
-	// Gated on coarse pointer so a narrow *desktop* browser window (mouse) never
-	// gets invisible edge zones that would swallow clicks in the outer 24px. The
-	// opener zones are thin fixed strips at the screen edges (see JSX), so drawer
-	// gestures can only START at the edge - horizontal scrolling inside the
-	// terminal, tab bar, or tables is untouched. Closing swipes ride the mobile
-	// backdrop, which only exists while a drawer is open.
+	// Gated on coarse pointer: a mouse never produces touch events, and a narrow
+	// *desktop* browser window has no drawer gesture to offer. The opener
+	// handlers ride the app shell, gated on WHERE the touch starts
+	// (useEdgeSwipeHandlers), so a drawer gesture can only START in the outer
+	// 24px and every tap or scroll elsewhere is untouched. This replaced two
+	// invisible fixed strips, which sat above the tab bar and swallowed taps on
+	// its magnifier and first chip. Closing swipes ride the mobile backdrop and
+	// the drawers themselves, which only exist while a drawer is open.
 	const drawerSwipeEnabled = isNarrowViewport && isWebDesktop() && isCoarsePointer();
+	const edgeSwipeArmed = drawerSwipeEnabled && !leftSidebarOpen && !rightPanelOpen;
 	const leftEdgeSwipe = useSwipeGestures({
 		onSwipeRight: () => setLeftSidebarOpen(true),
-		enabled: drawerSwipeEnabled && !leftSidebarOpen && !rightPanelOpen,
+		enabled: edgeSwipeArmed,
 	});
 	const rightEdgeSwipe = useSwipeGestures({
 		onSwipeLeft: () => setRightPanelOpen(true),
-		enabled: drawerSwipeEnabled && !rightPanelOpen && !leftSidebarOpen,
+		enabled: edgeSwipeArmed,
 	});
+	const edgeSwipeHandlers = useEdgeSwipeHandlers(
+		leftEdgeSwipe.handlers,
+		rightEdgeSwipe.handlers,
+		edgeSwipeArmed
+	);
 	// Backdrop closer: the left drawer closes by pushing it back left, the right
 	// drawer by pushing it back right. Only one drawer is open at a time (mutual
 	// exclusion above), and the setters are idempotent, so unconditional calls
@@ -3082,9 +3091,7 @@ function MaestroConsoleInner() {
 				rightPanelOpen={rightPanelOpen}
 				onCloseDrawers={handleCloseDrawers}
 				drawerCloseSwipeHandlers={drawerCloseSwipe.handlers}
-				drawerSwipeEnabled={drawerSwipeEnabled}
-				leftEdgeSwipeHandlers={leftEdgeSwipe.handlers}
-				rightEdgeSwipeHandlers={rightEdgeSwipe.handlers}
+				edgeSwipeHandlers={edgeSwipeHandlers}
 				logViewerOpen={logViewerOpen}
 				onToastSessionClick={handleToastSessionClick}
 				logViewer={
