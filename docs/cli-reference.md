@@ -1010,30 +1010,44 @@ maestro-cli create-ssh-remote "Tunnelled box" \
 
 Update an existing SSH remote configuration
 
-| Option                     | Description                                                    | Default |
-| -------------------------- | -------------------------------------------------------------- | ------- |
-| `-n, --name <name>`        | Display name                                                   | -       |
-| `-H, --host <host>`        | SSH hostname, IP, or SSH config Host pattern                   | -       |
-| `-p, --port <port>`        | SSH port                                                       | -       |
-| `-u, --username <user>`    | SSH username (empty string clears it)                          | -       |
-| `-k, --key <path>`         | Path to private key file (empty string clears it)              | -       |
-| `--env <KEY=VALUE>`        | Remote environment variable, merged with existing (repeatable) | `[]`    |
-| `--clear-env`              | Remove all remote environment variables before applying --env  | -       |
-| `--ssh-option <KEY=VALUE>` | Extra ssh -o option, merged with existing (repeatable)         | `[]`    |
-| `--clear-ssh-options`      | Remove all extra ssh -o options before applying --ssh-option   | -       |
-| `--ssh-config <bool>`      | Use ~/.ssh/config for connection settings (true/false)         | -       |
-| `--enabled <bool>`         | Enable or disable this remote (true/false)                     | -       |
-| `--set-default`            | Set as the global default SSH remote                           | -       |
-| `--json`                   | Output as JSON (for scripting)                                 | -       |
+| Option                       | Description                                                    | Default |
+| ---------------------------- | -------------------------------------------------------------- | ------- |
+| `-n, --name <name>`          | Display name                                                   | -       |
+| `-H, --host <host>`          | SSH hostname, IP, or SSH config Host pattern                   | -       |
+| `-p, --port <port>`          | SSH port                                                       | -       |
+| `-u, --username <user>`      | SSH username (empty string clears it)                          | -       |
+| `-k, --key <path>`           | Path to private key file (empty string clears it)              | -       |
+| `--env <KEY=VALUE>`          | Remote environment variable, merged with existing (repeatable) | `[]`    |
+| `--clear-env`                | Remove all remote environment variables before applying --env  | -       |
+| `--disable-env <KEY>`        | Switch an env var off, keeping its value (repeatable)          | `[]`    |
+| `--enable-env <KEY>`         | Switch a previously disabled env var back on (repeatable)      | `[]`    |
+| `--ssh-option <KEY=VALUE>`   | Extra ssh -o option, merged with existing (repeatable)         | `[]`    |
+| `--clear-ssh-options`        | Remove all extra ssh -o options before applying --ssh-option   | -       |
+| `--disable-ssh-option <KEY>` | Switch an ssh -o option off, keeping its value (repeatable)    | `[]`    |
+| `--enable-ssh-option <KEY>`  | Switch a disabled ssh -o option back on (repeatable)           | `[]`    |
+| `--ssh-config <bool>`        | Use ~/.ssh/config for connection settings (true/false)         | -       |
+| `--enabled <bool>`           | Enable or disable this remote (true/false)                     | -       |
+| `--set-default`              | Set as the global default SSH remote                           | -       |
+| `--json`                     | Output as JSON (for scripting)                                 | -       |
 
 Only the fields you pass are changed. `--env` and `--ssh-option` MERGE into what
 is already there, so editing one option does not silently drop the rest; pair
 them with `--clear-env` / `--clear-ssh-options` to start from empty.
 
-With `--json`, the output carries both `sshOptions` (this remote's overrides) and
-`resolvedSshOptions` (the full set `ssh` will actually receive, defaults
-included) - the second is the one that answers "did my `ConnectTimeout` take
-effect?". `list-ssh-remotes --json` reports both as well.
+`--disable-*` and `--enable-*` are the CLI's spelling of the eye button in the
+SSH remote dialog: the entry keeps its value but stops being passed to `ssh`.
+Disable is applied before enable, so one command can swap which of two keys is
+live. A key that is in neither list is ignored rather than created. Both
+`--clear-*` flags wipe the disabled entries too, since "remove all" that left
+switched-off values behind would leave state a later `--enable-*` could bring
+back.
+
+With `--json`, the output carries `sshOptions` (this remote's overrides),
+`sshOptionsDisabled` / `remoteEnvDisabled` (what is switched off and available
+to turn back on), and `resolvedSshOptions` (the full set `ssh` will actually
+receive, defaults included) - the last is the one that answers "did my
+`ConnectTimeout` take effect?", and disabled entries are deliberately absent
+from it. `list-ssh-remotes --json` reports the same fields.
 
 ## `maestro-cli remove-ssh-remote <remote-id>`
 

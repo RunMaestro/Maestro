@@ -110,10 +110,15 @@ export function registerSshRemoteHandlers(deps: SshRemoteHandlerDependencies): v
 					username: config.username || '',
 					privateKeyPath: config.privateKeyPath || '',
 					remoteEnv: config.remoteEnv,
+					remoteEnvDisabled: config.remoteEnvDisabled,
 					// Normalized rather than passed through: this record can arrive from
 					// an older build or a hand-edited settings file, and a reserved key
 					// that reached disk would be filtered on every read forever.
 					sshOptions: normalizeSshOptions(config.sshOptions),
+					// The parked record is normalized on the same terms. It is never
+					// resolved into an option set, but a reserved key sitting in it could
+					// only ever be switched on into a rejection, so it does not reach disk.
+					sshOptionsDisabled: normalizeSshOptions(config.sshOptionsDisabled),
 					enabled: config.enabled ?? true,
 					useSshConfig: config.useSshConfig,
 					sshConfigHost: config.sshConfigHost,

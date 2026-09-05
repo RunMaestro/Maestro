@@ -63,6 +63,17 @@ describe('SshRemoteManager', () => {
 			expect(result.valid).toBe(true);
 		});
 
+		it('does not validate the parked record, since parking is the escape hatch', () => {
+			// A value that cannot work right now is exactly what the user parks. If
+			// a parked entry blocked validation the eye would be useless.
+			const result = manager.validateConfig({
+				...validConfig,
+				sshOptionsDisabled: { 'Proxy Command': 'tailcat tcABC 22' },
+			});
+
+			expect(result.valid).toBe(true);
+		});
+
 		it('rejects a malformed ssh option keyword', () => {
 			// ssh exits before it dials on a bad keyword, so naming the offending
 			// option here beats a bare "Bad configuration option" at spawn time.
@@ -228,6 +239,17 @@ describe('SshRemoteManager', () => {
 			expect(argsString).toContain('ProxyCommand=tailcat tcABC 22');
 			expect(argsString).toContain('ConnectTimeout=45');
 			expect(argsString).not.toContain('ConnectTimeout=10');
+		});
+
+		it('ignores the parked record, so Test Connection matches the real spawn', () => {
+			const argsString = manager
+				.buildSshArgs({
+					...validConfig,
+					sshOptionsDisabled: { ProxyCommand: 'tailcat tcABC 22' },
+				})
+				.join(' ');
+
+			expect(argsString).not.toContain('ProxyCommand');
 		});
 
 		it('expands tilde in private key path', () => {
