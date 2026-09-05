@@ -447,7 +447,10 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 
 	return (
 		<div
-			className="relative p-4 border-t"
+			// `maestro-composer` is the anchor for the edge-swipe gesture inset in
+			// index.css: on a phone the Send button would otherwise end up partly
+			// under the invisible screen-edge strip and stop answering taps.
+			className="maestro-composer relative p-4 border-t"
 			style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
 		>
 			{/* QuitWhenIdleIndicator - sits above the thinking pill while a deferred quit is armed */}
