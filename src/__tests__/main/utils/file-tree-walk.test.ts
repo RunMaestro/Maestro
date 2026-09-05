@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import path from 'path';
 import { walkLocalFileTree } from '../../../main/utils/file-tree-walk';
 
 vi.mock('fs/promises', () => ({
@@ -30,8 +31,11 @@ const dirent = (entry: FakeEntry) => ({
  * Any path missing from the map reads as an unreadable directory.
  */
 const mockTree = (dirs: Record<string, FakeEntry[]>) => {
+	const normalizedDirs = new Map(
+		Object.entries(dirs).map(([dirPath, entries]) => [path.normalize(dirPath), entries])
+	);
 	vi.mocked(fs.readdir).mockImplementation((async (dirPath: string) => {
-		const entries = dirs[dirPath];
+		const entries = normalizedDirs.get(path.normalize(dirPath));
 		if (!entries) throw new Error(`ENOENT: ${dirPath}`);
 		return entries.map(dirent);
 	}) as never);
@@ -269,7 +273,10 @@ describe('walkLocalFileTree', () => {
 			const result = await walkLocalFileTree('/project', { maxDepth: 5, maxEntries: 2 });
 
 			expect(result.truncated).toBe(true);
-			expect(fs.readdir).not.toHaveBeenCalledWith('/project/skipped', expect.anything());
+			expect(fs.readdir).not.toHaveBeenCalledWith(
+				path.join('/project', 'skipped'),
+				expect.anything()
+			);
 			expect(result.tree.find((n) => n.name === 'skipped')?.children).toEqual([]);
 		});
 
@@ -302,7 +309,11 @@ describe('walkLocalFileTree', () => {
 			await walkLocalFileTree('/project', { maxDepth: 5 });
 
 			const paths = vi.mocked(fs.readdir).mock.calls.map((c) => c[0]);
-			expect(paths).toEqual(['/project', '/project/.maestro', '/project/src']);
+			expect(paths).toEqual([
+				'/project',
+				path.join('/project', '.maestro'),
+				path.join('/project', 'src'),
+			]);
 		});
 
 		it('loads .maestro in full even past the entry cap', async () => {
