@@ -181,6 +181,57 @@ describe('useSessionLifecycleSync', () => {
 		});
 	});
 
+	it('applies deltas in arrival order, so a close cannot overtake its add', async () => {
+		// Without the queue, the close for 'short-lived' arrives while the add is
+		// still restoring, reads the agent as one this client never had, and drops
+		// itself - then the add commits the agent the user just closed.
+		let releaseRestore: (() => void) | null = null;
+		restoreSession.mockImplementationOnce(async (session: Session) => {
+			await new Promise<void>((resolve) => {
+				releaseRestore = resolve;
+			});
+			return session;
+		});
+		useSessionStore.setState({
+			sessions: [createMockSession({ id: 'a' })],
+			activeSessionId: 'a',
+		});
+
+		renderHook(() => useSessionLifecycleSync(restoreSession));
+		handler!({ added: [createMockSession({ id: 'short-lived' })] });
+		await waitFor(() => expect(releaseRestore).not.toBeNull());
+		handler!({ removedIds: ['short-lived'] });
+
+		releaseRestore!();
+
+		// Let BOTH deltas settle before asserting: the interesting state is the one
+		// after the add has committed, since an unordered pair leaves the closed
+		// agent behind exactly then.
+		await waitFor(() => {
+			expect(useSessionStore.getState().sessions.map((s) => s.id)).toContain('a');
+			expect(restoreSession).toHaveBeenCalledTimes(1);
+		});
+		await new Promise((resolve) => setTimeout(resolve, 20));
+
+		expect(useSessionStore.getState().sessions.map((s) => s.id)).toEqual(['a']);
+	});
+
+	it('keeps following its peers after one delta fails', async () => {
+		restoreSession.mockRejectedValueOnce(new Error('restore blew up'));
+		useSessionStore.setState({
+			sessions: [createMockSession({ id: 'a' })],
+			activeSessionId: 'a',
+		});
+
+		renderHook(() => useSessionLifecycleSync(restoreSession));
+		handler!({ added: [createMockSession({ id: 'doomed' })] });
+		handler!({ added: [createMockSession({ id: 'later' })] });
+
+		await waitFor(() => {
+			expect(useSessionStore.getState().sessions.map((s) => s.id)).toEqual(['a', 'later']);
+		});
+	});
+
 	it('unsubscribes on unmount', () => {
 		const { unmount } = renderHook(() => useSessionLifecycleSync(restoreSession));
 		unmount();

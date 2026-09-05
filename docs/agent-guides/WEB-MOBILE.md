@@ -81,9 +81,12 @@ Two rules follow, and both are load-bearing:
   (`src/main/ipc/handlers/persistence.ts`) report what entered and left the store
   on the `sessions:lifecycleSync` channel, and every other client applies the
   delta through `useSessionLifecycleSync`
-  (`src/renderer/hooks/session/useSessionLifecycleSync.ts`). Main also tombstones
-  a just-closed id for a minute so a peer flush already in flight cannot re-add
-  it. Only ADDITIONS travel from `setAll`: that path is a client's opening
+  (`src/renderer/hooks/session/useSessionLifecycleSync.ts`), strictly in arrival
+  order - an add still restoring when the close for the same agent lands makes
+  that close look like it names an agent this client never had. Main also
+  tombstones a closed id so a peer flush already in flight cannot re-add it,
+  bounded by COUNT rather than age: a suspended browser tab can be away for
+  hours, and no agent id is ever reused. Only ADDITIONS travel from `setAll`: that path is a client's opening
   snapshot of its own tree, taken before it could have heard about anything a
   peer created, so treating an absent id there as a close would delete live
   agents. The delta is deliberately lifecycle-only - tab contents, read-state and
@@ -92,10 +95,14 @@ Two rules follow, and both are load-bearing:
   `src/renderer/utils/activeSessionPersistence.ts`, never
   `window.maestro.sessions.getActiveSessionId()` directly. A browser tab reloads
   on every refocus, and reading the shared pointer landed the user on whatever
-  the DESKTOP had focused instead of the agent they were working in. Web-desktop
-  keeps its own choice in `localStorage` (falling back to the shared value on a
-  first visit) while still reporting it to the shared store, which is what plugin
-  `session.activated` events and the CLI's current-agent answer are built on.
+  the DESKTOP had focused instead of the agent they were working in. The read is
+  a ladder: `sessionStorage` (this TAB's own choice - two web-desktop tabs share
+  an origin, so a localStorage-only answer would have each tab overwriting the
+  other's), then `localStorage` (the last choice made in this browser, for a
+  freshly opened tab), then the shared value (a first visit should land where the
+  desktop is). Writing still reports to the shared store as well, which is what
+  plugin `session.activated` events and the CLI's current-agent answer are built
+  on.
 
 ### Server-Injected Config
 

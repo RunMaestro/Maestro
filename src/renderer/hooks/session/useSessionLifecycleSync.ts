@@ -27,6 +27,7 @@ import { useEffect } from 'react';
 import type { Session } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
 import { logger } from '../../utils/logger';
+import { captureException } from '../../utils/sentry';
 
 export interface SessionLifecycleSyncPayload {
 	added?: Session[];
@@ -73,51 +74,69 @@ export function useSessionLifecycleSync(
 		if (!api?.onLifecycleSync) return;
 
 		let disposed = false;
+		// Deltas apply strictly in arrival order. Each one suspends twice (waiting
+		// for the startup load, then restoring the incoming agents), and letting
+		// them overlap loses the ordering that gives them their meaning: an add
+		// for X still restoring when a close for X arrives makes the close look
+		// like it names an agent this client never had, and the add then commits
+		// the agent the user just closed.
+		let queue: Promise<void> = Promise.resolve();
+
+		const applyDelta = async (payload: SessionLifecycleSyncPayload): Promise<void> => {
+			await whenSessionsLoaded();
+			if (disposed) return;
+
+			const known = new Set(useSessionStore.getState().sessions.map((s) => s.id));
+			// Both directions are filtered against what this client actually has:
+			// the push reaches the client that wrote it too (the web bridge has no
+			// per-client identity), and re-adding or re-removing would be churn.
+			const removedIds = (payload.removedIds ?? []).filter((id) => known.has(id));
+			const incoming = (payload.added ?? []).filter((s) => s?.id && !known.has(s.id));
+			if (removedIds.length === 0 && incoming.length === 0) return;
+
+			const restored = await Promise.all(incoming.map((s) => restoreSession(s)));
+			if (disposed) return;
+
+			const removeSet = new Set(removedIds);
+			useSessionStore.getState().setSessions((prev) => {
+				const kept = prev.filter((s) => !removeSet.has(s.id));
+				// Re-check against the live list: the await above gives the local UI
+				// room to have created or closed something in the meantime.
+				const present = new Set(kept.map((s) => s.id));
+				const additions = restored.filter((s) => !present.has(s.id));
+				if (kept.length === prev.length && additions.length === 0) return prev;
+				return [...kept, ...additions];
+			});
+
+			// The agent this client was looking at may be the one that closed.
+			// Re-point at whatever is left, exactly as the local delete path does.
+			const { activeSessionId, sessions } = useSessionStore.getState();
+			if (removeSet.has(activeSessionId)) {
+				useSessionStore.getState().setActiveSessionId(sessions[0]?.id ?? '');
+			}
+
+			// Put the busy indicators on anything that arrived mid-turn. Not
+			// awaited: an agent painted idle for one frame before correcting
+			// itself beats holding the list update on an IPC round trip.
+			if (restored.length > 0) void reattachLiveTurns?.();
+
+			logger.debug(
+				`Applied peer session lifecycle delta: +${restored.length} / -${removedIds.length}`,
+				'Sessions'
+			);
+		};
 
 		const unsubscribe = api.onLifecycleSync((payload: SessionLifecycleSyncPayload) => {
-			void (async () => {
-				await whenSessionsLoaded();
-				if (disposed) return;
-
-				const known = new Set(useSessionStore.getState().sessions.map((s) => s.id));
-				// Both directions are filtered against what this client actually has:
-				// the push reaches the client that wrote it too (the web bridge has no
-				// per-client identity), and re-adding or re-removing would be churn.
-				const removedIds = (payload.removedIds ?? []).filter((id) => known.has(id));
-				const incoming = (payload.added ?? []).filter((s) => s?.id && !known.has(s.id));
-				if (removedIds.length === 0 && incoming.length === 0) return;
-
-				const restored = await Promise.all(incoming.map((s) => restoreSession(s)));
-				if (disposed) return;
-
-				const removeSet = new Set(removedIds);
-				useSessionStore.getState().setSessions((prev) => {
-					const kept = prev.filter((s) => !removeSet.has(s.id));
-					// Re-check against the live list: the await above gives the local UI
-					// room to have created or closed something in the meantime.
-					const present = new Set(kept.map((s) => s.id));
-					const additions = restored.filter((s) => !present.has(s.id));
-					if (kept.length === prev.length && additions.length === 0) return prev;
-					return [...kept, ...additions];
+			// Report a failed delta but keep the chain alive: it is what preserves
+			// arrival order for every delta behind it, and a rejected link would
+			// silently stop this client following its peers for the rest of the run.
+			queue = queue
+				.then(() => applyDelta(payload))
+				.catch((err) => {
+					captureException(err instanceof Error ? err : new Error(String(err)), {
+						extra: { operation: 'useSessionLifecycleSync.applyDelta' },
+					});
 				});
-
-				// The agent this client was looking at may be the one that closed.
-				// Re-point at whatever is left, exactly as the local delete path does.
-				const { activeSessionId, sessions } = useSessionStore.getState();
-				if (removeSet.has(activeSessionId)) {
-					useSessionStore.getState().setActiveSessionId(sessions[0]?.id ?? '');
-				}
-
-				// Put the busy indicators on anything that arrived mid-turn. Not
-				// awaited: an agent painted idle for one frame before correcting
-				// itself beats holding the list update on an IPC round trip.
-				if (restored.length > 0) void reattachLiveTurns?.();
-
-				logger.debug(
-					`Applied peer session lifecycle delta: +${restored.length} / -${removedIds.length}`,
-					'Sessions'
-				);
-			})();
 		});
 
 		return () => {

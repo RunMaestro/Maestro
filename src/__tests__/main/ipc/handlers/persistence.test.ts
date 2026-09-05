@@ -1423,6 +1423,28 @@ describe('persistence IPC handlers', () => {
 			expect(merged).toEqual([]);
 		});
 
+		it('keeps refusing a resurrection long after the close', async () => {
+			// The client that missed the close can be away for hours - a suspended
+			// mobile browser, a laptop lid - so the guard is bounded by how many
+			// closes it remembers, never by how long ago they were.
+			vi.useFakeTimers();
+			try {
+				mockSessionsStore.get.mockReturnValue([{ ...baseSession }]);
+				const handler = handlers.get('sessions:setMany');
+				await handler!({} as any, [], ['s1']);
+
+				vi.advanceTimersByTime(6 * 60 * 60 * 1000);
+
+				mockSessionsStore.get.mockReturnValue([]);
+				await handler!({} as any, [{ ...baseSession }], []);
+
+				const merged = mockSessionsStore.set.mock.calls.at(-1)![1];
+				expect(merged).toEqual([]);
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
 		it('blocks a resurrection arriving through the bootstrap setAll path too', async () => {
 			mockSessionsStore.get.mockReturnValue([{ ...baseSession }]);
 			await handlers.get('sessions:setMany')!({} as any, [], ['s1']);

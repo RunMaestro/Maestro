@@ -28,6 +28,7 @@ describe('activeSessionPersistence', () => {
 
 	beforeEach(() => {
 		localStorage.clear();
+		sessionStorage.clear();
 		asWebDesktop(false);
 		setActiveSessionId = vi.fn().mockResolvedValue(undefined);
 		getActiveSessionId = vi.fn().mockResolvedValue('desktop-agent');
@@ -45,6 +46,7 @@ describe('activeSessionPersistence', () => {
 
 		it('reads the shared pointer, ignoring any web-desktop leftover', async () => {
 			localStorage.setItem(WEB_ACTIVE_SESSION_STORAGE_KEY, 'browser-agent');
+			sessionStorage.setItem(WEB_ACTIVE_SESSION_STORAGE_KEY, 'browser-tab-agent');
 			await expect(readPersistedActiveSessionId()).resolves.toBe('desktop-agent');
 		});
 	});
@@ -54,13 +56,23 @@ describe('activeSessionPersistence', () => {
 
 		it('records its own pointer while still reporting to the shared one', () => {
 			persistActiveSessionId('agent-2');
+			expect(sessionStorage.getItem(WEB_ACTIVE_SESSION_STORAGE_KEY)).toBe('agent-2');
 			expect(localStorage.getItem(WEB_ACTIVE_SESSION_STORAGE_KEY)).toBe('agent-2');
 			// Still reported: plugin `session.activated` and the CLI's current-agent
 			// answer are built on the shared value. Only the READ is per-client.
 			expect(setActiveSessionId).toHaveBeenCalledWith('agent-2');
 		});
 
-		it('restores the agent this browser was last on', async () => {
+		it('restores what THIS tab was on, not what another tab moved to', async () => {
+			// Two tabs share an origin and therefore share localStorage, so a
+			// tab-scoped answer has to win or the bleed just moves one level down.
+			sessionStorage.setItem(WEB_ACTIVE_SESSION_STORAGE_KEY, 'this-tab-agent');
+			localStorage.setItem(WEB_ACTIVE_SESSION_STORAGE_KEY, 'other-tab-agent');
+			await expect(readPersistedActiveSessionId()).resolves.toBe('this-tab-agent');
+			expect(getActiveSessionId).not.toHaveBeenCalled();
+		});
+
+		it('opens a fresh tab on the last agent used in this browser', async () => {
 			localStorage.setItem(WEB_ACTIVE_SESSION_STORAGE_KEY, 'browser-agent');
 			await expect(readPersistedActiveSessionId()).resolves.toBe('browser-agent');
 			expect(getActiveSessionId).not.toHaveBeenCalled();
@@ -68,6 +80,21 @@ describe('activeSessionPersistence', () => {
 
 		it('falls back to the desktop pointer on a first visit', async () => {
 			await expect(readPersistedActiveSessionId()).resolves.toBe('desktop-agent');
+		});
+
+		it('survives a Storage that refuses the write', () => {
+			// Safari private mode throws on every setItem, and a full quota throws
+			// anywhere. Losing the pointer is acceptable; throwing out of the store
+			// action that set the active agent is not.
+			const blocked = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+				throw new DOMException('QuotaExceededError');
+			});
+			try {
+				expect(() => persistActiveSessionId('agent-3')).not.toThrow();
+				expect(setActiveSessionId).toHaveBeenCalledWith('agent-3');
+			} finally {
+				blocked.mockRestore();
+			}
 		});
 	});
 

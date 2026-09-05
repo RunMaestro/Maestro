@@ -97,15 +97,21 @@ export interface SessionLifecycleSyncPayload {
 export const SESSION_LIFECYCLE_SYNC_CHANNEL = 'sessions:lifecycleSync';
 
 /**
- * How long a removed agent id is refused re-entry through a write.
+ * How many closed agent ids are remembered as tombstones.
  *
- * A peer's flush can already be in flight when the close lands, and that flush
- * carries the agent as a plain update - `setMany` appends an unknown id, so the
- * agent the user just closed comes straight back. The tombstone closes that
- * window; anything longer is unnecessary because the peer drops the agent from
- * its own tree as soon as the removal push above reaches it.
+ * A peer's flush can already be in flight when a close lands, and that flush
+ * carries the agent as a plain update - `setMany` appends an id it does not
+ * recognise, so the agent the user just closed comes straight back. Refusing a
+ * tombstoned id is what stops that.
+ *
+ * The bound is a COUNT rather than an age: "this agent was deliberately closed"
+ * does not stop being true after a minute, and a client can be away far longer
+ * than any window worth picking (a suspended mobile browser, a laptop lid). Ids
+ * are never reused - every agent is created with a fresh one - so a tombstone
+ * has nothing to block but a stale write, and the cap is only here to keep the
+ * map from growing without end across a long-running process.
  */
-const REMOVED_SESSION_TOMBSTONE_MS = 60_000;
+const REMOVED_SESSION_TOMBSTONE_LIMIT = 1000;
 
 /**
  * Send an agent lifecycle delta to every client except the one that wrote it.
@@ -188,42 +194,43 @@ export function registerPersistenceHandlers(
 ): PersistenceHandlers {
 	const { settingsStore, sessionsStore, groupsStore, getWebServer, emitPluginEvent } = deps;
 
-	// Ids removed by a client, with the time they went. Read by every write path
-	// to refuse a stale peer flush that would resurrect a just-closed agent (see
-	// REMOVED_SESSION_TOMBSTONE_MS).
-	const removedSessionTombstones = new Map<string, number>();
+	// Ids closed by a client, newest last. Read by every write path to refuse a
+	// stale peer flush that would resurrect a closed agent (see
+	// REMOVED_SESSION_TOMBSTONE_LIMIT). A Set preserves insertion order, which is
+	// what makes eviction oldest-first.
+	const removedSessionTombstones = new Set<string>();
 
 	const rememberRemovedSessions = (ids: Iterable<string>): void => {
-		const now = Date.now();
-		for (const id of ids) removedSessionTombstones.set(id, now);
-		for (const [id, at] of removedSessionTombstones) {
-			if (now - at > REMOVED_SESSION_TOMBSTONE_MS) removedSessionTombstones.delete(id);
+		for (const id of ids) {
+			// Re-adding moves the id to the end, so a repeatedly closed agent stays
+			// young rather than ageing out on its first close.
+			removedSessionTombstones.delete(id);
+			removedSessionTombstones.add(id);
+		}
+		while (removedSessionTombstones.size > REMOVED_SESSION_TOMBSTONE_LIMIT) {
+			const oldest = removedSessionTombstones.values().next().value;
+			if (oldest === undefined) break;
+			removedSessionTombstones.delete(oldest);
 		}
 	};
 
 	/**
 	 * The sessions of a write, minus any it would resurrect.
 	 *
-	 * An id counts as a resurrection when it was closed moments ago and is NOT
-	 * currently stored - the write is re-adding it rather than updating a live
-	 * agent. A tombstoned id that IS in the store means a client legitimately owns
-	 * it again, so updates to it pass through untouched.
+	 * An id counts as a resurrection when it was closed and is NOT currently
+	 * stored - the write is re-adding it rather than updating a live agent. A
+	 * tombstoned id that IS in the store means a client legitimately owns it
+	 * again, so updates to it pass through untouched.
 	 */
 	const dropResurrections = (
 		sessions: StoredSession[],
 		storedIds: Set<string>
 	): StoredSession[] => {
 		if (removedSessionTombstones.size === 0) return sessions;
-		const now = Date.now();
 		return sessions.filter((session) => {
 			if (storedIds.has(session.id)) return true;
-			const at = removedSessionTombstones.get(session.id);
-			if (at === undefined) return true;
-			if (now - at > REMOVED_SESSION_TOMBSTONE_MS) {
-				removedSessionTombstones.delete(session.id);
-				return true;
-			}
-			logger.debug('Ignored resurrection of a recently closed session', 'Sessions', {
+			if (!removedSessionTombstones.has(session.id)) return true;
+			logger.debug('Ignored resurrection of a closed session', 'Sessions', {
 				sessionId: session.id,
 			});
 			return false;
