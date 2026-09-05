@@ -303,7 +303,8 @@ describe('walkLocalFileTree', () => {
 
 			await walkLocalFileTree('/project', { maxDepth: 5 });
 
-			const paths = vi.mocked(fs.readdir).mock.calls.map((c) => c[0]);
+			// Recorded as the walker built them: `\\`-joined on Windows.
+			const paths = vi.mocked(fs.readdir).mock.calls.map((c) => String(c[0]).replace(/\\/g, '/'));
 			expect(paths).toEqual(['/project', '/project/.maestro', '/project/src']);
 		});
 
