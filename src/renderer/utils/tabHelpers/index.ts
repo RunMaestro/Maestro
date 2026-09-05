@@ -24,6 +24,7 @@ import { createTerminalTab, nextTerminalCoworkingId } from '../terminalTabHelper
 import {
 	findActiveUnifiedTabIndex,
 	getNavigableUnifiedTabOrder,
+	hasUnreadVisibleTab,
 	insertAfterActiveInUnifiedTabOrder,
 	isAiTabHidden,
 	visibleAiTabs,
@@ -51,7 +52,7 @@ import {
 // Both live in unifiedTabOrderUtils so terminalTabHelpers can reach them without a
 // circular import; re-exported here because tabHelpers is where callers look for
 // tab visibility rules.
-export { getNavigableUnifiedTabOrder, isAiTabHidden, visibleAiTabs };
+export { getNavigableUnifiedTabOrder, hasUnreadVisibleTab, isAiTabHidden, visibleAiTabs };
 export {
 	aiTabFocusFields,
 	fileTabFocusFields,
@@ -3221,8 +3222,12 @@ export function findNextUnreadSession(
 ): GoToNextUnreadResult {
 	const currentIndex = orderedSessions.findIndex((s) => s.id === activeSessionId);
 	const currentSession = orderedSessions.find((s) => s.id === activeSessionId);
+	// A hidden consult tab has no chip, so it can never be an actionable stop:
+	// jumping to one reveals a conversation the user never opened (the jump path
+	// un-hides what it lands on), and it was answered in the background precisely
+	// so it would not ask for attention.
 	const isActionable = (tab: AITab) =>
-		tab.hasUnread || hasDraft(tab) || (isWizardActive?.(tab.id) ?? false);
+		!isAiTabHidden(tab) && (tab.hasUnread || hasDraft(tab) || (isWizardActive?.(tab.id) ?? false));
 
 	// 1) Tab-level jump within the current session: if there's an unread/draft
 	//    tab here that isn't already active, switch to it without changing

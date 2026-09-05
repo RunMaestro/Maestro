@@ -22,6 +22,7 @@ import { useSettingsStore } from '../stores/settingsStore';
 import { useSessionHasActiveOutage } from '../stores/retryStore';
 import { COLORBLIND_STATUS_COLORS } from '../constants/colorblindPalettes';
 import { getConnectingColor } from '../utils/theme';
+import { hasUnreadVisibleTab } from '../utils/tabHelpers';
 import { abbreviateGroupName } from '../../shared/formatters';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
 import type { Session, Group, Theme } from '../types';
@@ -639,7 +640,7 @@ export const SessionItem = memo(function SessionItem({
 						}
 					/>
 					{/* Unread Notification Badge */}
-					{!isActive && session.aiTabs?.some((tab) => tab.hasUnread) && (
+					{!isActive && hasUnreadVisibleTab(session.aiTabs) && (
 						<div
 							className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full"
 							style={{ backgroundColor: theme.colors.error }}

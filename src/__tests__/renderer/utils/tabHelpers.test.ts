@@ -76,6 +76,7 @@ import {
 	groupFocusFields,
 	isSessionIdLabel,
 	visibleAiTabs,
+	hasUnreadVisibleTab,
 } from '../../../renderer/utils/tabHelpers';
 import { resolveTabPermissionMode } from '../../../shared/agentMetadata';
 import type { LogEntry } from '../../../renderer/types';
@@ -4491,6 +4492,17 @@ describe('tabHelpers', () => {
 			expect(visibleAiTabs(undefined)).toEqual([]);
 		});
 
+		it('hasUnreadVisibleTab ignores an unread hidden consult tab', () => {
+			const consult = createMockTab({ id: 'consult', hidden: true, hasUnread: true });
+
+			expect(hasUnreadVisibleTab([consult])).toBe(false);
+			expect(hasUnreadVisibleTab([consult, createMockTab({ id: 'ai-1', hasUnread: true })])).toBe(
+				true
+			);
+			expect(hasUnreadVisibleTab([])).toBe(false);
+			expect(hasUnreadVisibleTab(undefined)).toBe(false);
+		});
+
 		it('keeps a hidden tab out of the strip even though it holds a unifiedTabOrder ref', () => {
 			const visible = createMockTab({ id: 'ai-1' });
 			const consult = createMockTab({ id: 'consult', hidden: true });
@@ -5362,6 +5374,30 @@ describe('tabHelpers', () => {
 			const result = findNextUnreadSession(sessions, 'a');
 			expect(result.jumped).toBe(true);
 			expect(result.targetSessionId).toBe('b');
+		});
+
+		it('never jumps to a hidden consult tab, in this session or another', () => {
+			// The jump path reveals whatever it lands on, so stopping on a hidden
+			// cross-agent consult tab would open a conversation the user never asked
+			// for - the background consult would become a foreground tab.
+			const sessions = [
+				createMockSession({
+					id: 'a',
+					aiTabs: [
+						createMockTab({ id: 'tab-a', hasUnread: false }),
+						createMockTab({ id: 'consult-a', hasUnread: true, hidden: true }),
+					],
+					activeTabId: 'tab-a',
+				}),
+				createMockSession({
+					id: 'b',
+					aiTabs: [createMockTab({ id: 'consult-b', hasUnread: true, hidden: true })],
+					activeTabId: 'consult-b',
+				}),
+			];
+			const result = findNextUnreadSession(sessions, 'a');
+			expect(result.jumped).toBe(false);
+			expect(result.targetTabId).toBeUndefined();
 		});
 
 		it('returns the first unread tab that differs from activeTabId', () => {
