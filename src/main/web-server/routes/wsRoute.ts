@@ -111,7 +111,12 @@ export class WsRoute {
 			// A web-desktop client reconnecting after a dropped socket says where it
 			// left off. If every frame since then is still buffered it is replayed
 			// right after `connected` and the page carries on; otherwise `resumed`
-			// is false and the client reloads to resync from scratch.
+			// is false and the client reloads to resync from scratch. The replay is
+			// narrowed by the subscription in THIS URL: a resuming client's
+			// subscription is whatever it reconnects with, so a client that changes
+			// it mid-session (`subscribe` / `select_session`) must carry the current
+			// one in its reconnect URL. The web-desktop bundle never sends either
+			// and reconnects as the dashboard client it connected as.
 			const sinceParam = url.searchParams.get('since');
 			const epochParam = url.searchParams.get('epoch');
 			const replay =
