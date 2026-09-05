@@ -239,6 +239,9 @@ export function deferStoreWrites<T extends Record<string, any>>(
 	let document: Record<string, unknown> = { ...(store.store as Record<string, unknown>) };
 
 	let writeTimer: NodeJS.Timeout | null = null;
+	let writeTimerDelayMs = 0;
+	let writeTimerReady: Promise<void> | null = null;
+	let resolveWriteTimer: (() => void) | null = null;
 	let documentRevision = 0;
 	let durableRevision = 0;
 	let writeInFlight: Promise<void> | null = null;
@@ -246,14 +249,36 @@ export function deferStoreWrites<T extends Record<string, any>>(
 	/** Mark the current revision dirty and arrange a future ordered drain. */
 	function scheduleWrite(delayMs: number = WRITE_COALESCE_MS): void {
 		if (writeTimer) return;
+		writeTimerDelayMs = delayMs;
+		writeTimerReady = new Promise<void>((resolve) => {
+			resolveWriteTimer = resolve;
+		});
 		writeTimer = setTimeout(() => {
 			writeTimer = null;
+			writeTimerDelayMs = 0;
+			const resolveTimer = resolveWriteTimer;
+			resolveWriteTimer = null;
+			writeTimerReady = null;
 			// Errors are logged inside the drain. A detached timer has nobody to
 			// report them to; explicit flushAsync callers receive the rejection.
-			void runWrite().catch(() => {});
+			const write = runWrite();
+			resolveTimer?.();
+			void write.catch(() => {});
 		}, delayMs);
 		// Never hold the event loop open just to flush a store.
 		writeTimer.unref?.();
+	}
+
+	/** Cancel a scheduled timer and release callers waiting for its turn. */
+	function cancelWriteTimer(): void {
+		if (!writeTimer) return;
+		clearTimeout(writeTimer);
+		writeTimer = null;
+		writeTimerDelayMs = 0;
+		const resolveTimer = resolveWriteTimer;
+		resolveWriteTimer = null;
+		writeTimerReady = null;
+		resolveTimer?.();
 	}
 
 	/** Serialize the current document. Throws only on a genuinely broken value. */
@@ -327,10 +352,7 @@ export function deferStoreWrites<T extends Record<string, any>>(
 
 	/** Persist the newest document synchronously, including during an async write. */
 	function flushSync(): void {
-		if (writeTimer) {
-			clearTimeout(writeTimer);
-			writeTimer = null;
-		}
+		cancelWriteTimer();
 		if (durableRevision >= documentRevision && !writeInFlight) return;
 		const snapshotRevision = documentRevision;
 		try {
@@ -348,11 +370,18 @@ export function deferStoreWrites<T extends Record<string, any>>(
 		}
 	}
 
-	/** Cancel the coalescing delay and resolve only after the latest revision lands. */
+	/**
+	 * Resolve only after the latest revision lands. The ordinary coalescing
+	 * delay is deliberately preserved so an IPC acknowledgement does not move
+	 * serialization back into the caller's event-loop turn. A long retry delay
+	 * is skipped when a caller explicitly asks for another durability attempt.
+	 */
 	async function flushAsync(): Promise<void> {
-		if (writeTimer) {
-			clearTimeout(writeTimer);
-			writeTimer = null;
+		const timerReady = writeTimerReady;
+		if (timerReady && writeTimerDelayMs <= WRITE_COALESCE_MS) {
+			await timerReady;
+		} else {
+			cancelWriteTimer();
 		}
 		await runWrite();
 	}

@@ -185,6 +185,24 @@ describe('deferStoreWrites', () => {
 		expect(readFile()).toEqual({ sessions: [{ id: 'a' }, { id: 'b' }], activeSessionId: 'a' });
 	});
 
+	it('preserves the coalescing window while an async flush waits for durability', async () => {
+		const store = makeStore({ sessions: [] });
+		const writer = deferStoreWrites(store, 'sessions');
+		const writeFile = vi.spyOn(fsp, 'writeFile');
+
+		writer.store.set('sessions', [{ id: 'a' }]);
+		const flush = writer.flushAsync();
+		await new Promise<void>((resolve) => setImmediate(resolve));
+
+		// Awaiting durable persistence must not synchronously cancel the bounded
+		// coalescing window and serialize/write in the IPC caller's event-loop turn.
+		expect(writeFile).not.toHaveBeenCalled();
+
+		await flush;
+		expect(writeFile).toHaveBeenCalledOnce();
+		expect(readFile()).toEqual({ sessions: [{ id: 'a' }] });
+	});
+
 	it('serializes overlapping flushes so the newest snapshot lands last', async () => {
 		const store = makeStore({ sessions: [] });
 		const writer = deferStoreWrites(store, 'sessions');

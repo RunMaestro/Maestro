@@ -236,7 +236,8 @@ export function flushPendingSessionWritesSync(): void {
 }
 
 /**
- * Write pending session changes now and resolve only after they are durable.
+ * Resolve after pending session changes pass through their bounded coalescing
+ * window and become durable.
  *
  * Session persistence IPC handlers await this so their boolean acknowledgement
  * retains its original meaning: `true` means the update reached disk, while a
