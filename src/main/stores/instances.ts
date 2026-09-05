@@ -234,3 +234,14 @@ export function getCachedPaths() {
 export function flushPendingSessionWritesSync(): void {
 	_sessionsWriter?.flushSync();
 }
+
+/**
+ * Write pending session changes now and resolve only after they are durable.
+ *
+ * Session persistence IPC handlers await this so their boolean acknowledgement
+ * retains its original meaning: `true` means the update reached disk, while a
+ * rejected write leaves the renderer's diff baseline dirty for a later retry.
+ */
+export async function flushPendingSessionWrites(): Promise<void> {
+	await _sessionsWriter?.flushAsync();
+}

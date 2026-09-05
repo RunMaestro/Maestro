@@ -51,6 +51,7 @@ import {
 	getClaudeSessionOriginsStore,
 	getAgentSessionOriginsStore,
 	getSshRemoteById,
+	flushPendingSessionWrites,
 } from './stores';
 import { runSettingsMigrations } from './stores/migrations';
 import {
@@ -1522,6 +1523,7 @@ function setupIpcHandlers() {
 		sessionsStore,
 		groupsStore,
 		getWebServer: () => webServer,
+		flushSessionWrites: flushPendingSessionWrites,
 	});
 
 	// System operations - extracted to src/main/ipc/handlers/system.ts

@@ -81,13 +81,15 @@ export interface PersistenceHandlerDependencies {
 	sessionsStore: Store<SessionsData>;
 	groupsStore: Store<GroupsData>;
 	getWebServer: () => WebServer | null;
+	/** Resolve only after the deferred sessions document reaches disk. */
+	flushSessionWrites: () => Promise<void>;
 }
 
 /**
  * Register all persistence-related IPC handlers.
  */
 export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies): void {
-	const { settingsStore, sessionsStore, groupsStore, getWebServer } = deps;
+	const { settingsStore, sessionsStore, groupsStore, getWebServer, flushSessionWrites } = deps;
 
 	// PERF: coalesce activeSessionId disk writes.
 	//
@@ -372,6 +374,9 @@ export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies
 
 			try {
 				sessionsStore.set('sessions', merged);
+				// Preserve the renderer acknowledgement contract: true means this
+				// revision reached disk, not merely the in-memory cache.
+				await flushSessionWrites();
 			} catch (err) {
 				const code = (err as NodeJS.ErrnoException).code;
 				// Recoverable filesystem errors - the next debounced flush will
@@ -482,6 +487,7 @@ export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies
 
 		try {
 			sessionsStore.set('sessions', sessions);
+			await flushSessionWrites();
 		} catch (err) {
 			// ENOSPC, ENFILE, or JSON serialization failures are recoverable -
 			// the next debounced write will succeed when conditions improve.

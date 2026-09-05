@@ -76,6 +76,7 @@ Grep-verified 2026-09-04 (`npm run docs:verify` re-checks every path). This is t
 - **Agent display name:** `getAgentDisplayName()` in `src/shared/agentMetadata.ts`
 - **Whether an agent is working right now (main process):** `isAgentBusy(session, processManager)`, `isAiTabProcessActive(...)` in `src/main/utils/agent-busy.ts`
 - **SSH remote lookup:** `getSshRemoteById()` in `src/main/stores/getters.ts`
+- **Deferred main-process store persistence:** `deferStoreWrites()`, `flushPendingSessionWrites()` in `src/main/stores/deferred-writes.ts` / `src/main/stores/instances.ts`
 - **Toast notifications:** `notifyToast({ color, title, message, dismissible? })`, `theme` in `src/renderer/stores/notificationStore.ts`
 - **Center flash (rapid acks):** `notifyCenterFlash({ message, color, detail?, duration? })`, `flashCopiedToClipboard()` in `src/renderer/stores/centerFlashStore.ts`
 - **Opening a modal / dashboard by name:** `UI_SURFACES`, `resolveUiSurface()` in `src/shared/uiSurfaces.ts`

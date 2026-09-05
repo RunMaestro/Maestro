@@ -52,9 +52,10 @@ import type Store from 'electron-store';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 
-/** Distinguishes concurrent temp files. Sync and async flushes can overlap. */
+/** Distinguishes temp files created by successive writes. */
 let writeSequence = 0;
 
+/** Return a unique sibling temp path for one atomic write. */
 function tempPathFor(filePath: string): string {
 	return `${filePath}.${process.pid}.${++writeSequence}.tmp`;
 }
@@ -66,11 +67,27 @@ function tempPathFor(filePath: string): string {
  * `writeCueYamlAtomicSync`; kept local so this module owns no dependency conf
  * happens to pull in.
  */
-async function writeFileAtomic(filePath: string, content: string): Promise<void> {
+async function writeFileAtomic(
+	filePath: string,
+	content: string,
+	shouldCommit: () => boolean
+): Promise<boolean> {
 	const tmpPath = tempPathFor(filePath);
 	try {
 		await fsp.writeFile(tmpPath, content, 'utf-8');
-		await fsp.rename(tmpPath, filePath);
+		if (!shouldCommit()) {
+			await fsp.unlink(tmpPath).catch(() => {
+				// Stale temp cleanup must not turn a newer durable write into failure.
+			});
+			return false;
+		}
+		// Keep the commit itself synchronous and on the main thread. rename is a
+		// tiny metadata operation, and this makes the revision check + commit one
+		// indivisible step with respect to flushSync(): shutdown can either run
+		// before this block (and invalidate it) or after it (and overwrite it), but
+		// an older async snapshot can never rename over the shutdown snapshot.
+		fs.renameSync(tmpPath, filePath);
+		return true;
 	} catch (err) {
 		await fsp.unlink(tmpPath).catch(() => {
 			// ignore - the original file is still intact
@@ -125,11 +142,11 @@ const serializedByValue = new WeakMap<object, string>();
 export interface DeferredWriteStore<T extends Record<string, any>> {
 	/** The wrapped store. Same instance - `get`/`set` are patched in place. */
 	store: Store<T>;
-	/** True while a write is scheduled but not yet on disk. */
+	/** True while any revision is scheduled, in flight, or not yet durable. */
 	hasPendingWrite(): boolean;
 	/** Write any pending document synchronously. For the quit path. */
 	flushSync(): void;
-	/** Write any pending document now and resolve when it lands. For tests. */
+	/** Write pending revisions now and resolve when durable. For IPC and tests. */
 	flushAsync(): Promise<void>;
 }
 
@@ -222,15 +239,18 @@ export function deferStoreWrites<T extends Record<string, any>>(
 	let document: Record<string, unknown> = { ...(store.store as Record<string, unknown>) };
 
 	let writeTimer: NodeJS.Timeout | null = null;
-	let pending = false;
+	let documentRevision = 0;
+	let durableRevision = 0;
 	let writeInFlight: Promise<void> | null = null;
 
+	/** Mark the current revision dirty and arrange a future ordered drain. */
 	function scheduleWrite(delayMs: number = WRITE_COALESCE_MS): void {
-		pending = true;
 		if (writeTimer) return;
 		writeTimer = setTimeout(() => {
 			writeTimer = null;
-			void runWrite();
+			// Errors are logged inside the drain. A detached timer has nobody to
+			// report them to; explicit flushAsync callers receive the rejection.
+			void runWrite().catch(() => {});
 		}, delayMs);
 		// Never hold the event loop open just to flush a store.
 		writeTimer.unref?.();
@@ -241,6 +261,7 @@ export function deferStoreWrites<T extends Record<string, any>>(
 		return serializeWithMemoizedArray(document, memoKey);
 	}
 
+	/** Log a failed write and schedule a retry when the errno may recover. */
 	function handleWriteError(err: unknown): void {
 		const code = (err as NodeJS.ErrnoException)?.code;
 		if (code && RECOVERABLE_WRITE_CODES.has(code)) {
@@ -257,42 +278,68 @@ export function deferStoreWrites<T extends Record<string, any>>(
 		void captureException(err, { store: store.path });
 	}
 
-	async function runWrite(): Promise<void> {
-		if (!pending) return;
-		// Serialize first so a concurrent `set` during the await lands in the NEXT
-		// write rather than tearing this one.
-		pending = false;
-		let data: string;
-		try {
-			data = serialize();
-		} catch (err) {
-			handleWriteError(err);
-			return;
-		}
-		const write = writeFileAtomic(store.path, data)
-			.catch((err: unknown) => {
-				pending = true;
-				handleWriteError(err);
-			})
-			.finally(() => {
-				if (writeInFlight === write) writeInFlight = null;
-			});
-		writeInFlight = write;
-		await write;
+	/**
+	 * Drain dirty revisions through one promise, in snapshot order. Mutations
+	 * arriving during an await are picked up by the next loop iteration instead
+	 * of starting a concurrent atomic write.
+	 */
+	function runWrite(): Promise<void> {
+		if (writeInFlight) return writeInFlight;
+
+		const drain = (async () => {
+			while (durableRevision < documentRevision) {
+				const snapshotRevision = documentRevision;
+				let data: string;
+				try {
+					data = serialize();
+				} catch (err) {
+					handleWriteError(err);
+					throw err;
+				}
+
+				try {
+					const committed = await writeFileAtomic(
+						store.path,
+						data,
+						() => snapshotRevision > durableRevision
+					);
+					if (committed) durableRevision = snapshotRevision;
+				} catch (err) {
+					handleWriteError(err);
+					throw err;
+				}
+			}
+		})();
+
+		writeInFlight = drain;
+		// Clear the shared pointer on either outcome without creating an unhandled
+		// rejected promise (which `.finally()` would do when its return is ignored).
+		void drain.then(
+			() => {
+				if (writeInFlight === drain) writeInFlight = null;
+			},
+			() => {
+				if (writeInFlight === drain) writeInFlight = null;
+			}
+		);
+		return drain;
 	}
 
+	/** Persist the newest document synchronously, including during an async write. */
 	function flushSync(): void {
 		if (writeTimer) {
 			clearTimeout(writeTimer);
 			writeTimer = null;
 		}
-		if (!pending) return;
-		pending = false;
+		if (durableRevision >= documentRevision && !writeInFlight) return;
+		const snapshotRevision = documentRevision;
 		try {
 			writeFileAtomicSync(store.path, serialize());
+			// This also invalidates any older async snapshot whose temp-file write
+			// is still in flight; its guarded commit will discard that temp file.
+			durableRevision = snapshotRevision;
 		} catch (err) {
 			// Nothing left to retry with - the process is on its way out.
-			pending = true;
 			logger.error(
 				`Failed to flush ${store.path} on shutdown: ${(err as Error)?.message}`,
 				'Sessions',
@@ -301,15 +348,16 @@ export function deferStoreWrites<T extends Record<string, any>>(
 		}
 	}
 
+	/** Cancel the coalescing delay and resolve only after the latest revision lands. */
 	async function flushAsync(): Promise<void> {
 		if (writeTimer) {
 			clearTimeout(writeTimer);
 			writeTimer = null;
 		}
 		await runWrite();
-		if (writeInFlight) await writeInFlight;
 	}
 
+	/** Replace one electron-store method on this instance only. */
 	function patch(name: string, value: (...args: never[]) => unknown): void {
 		Object.defineProperty(target, name, { value, writable: true, configurable: true });
 	}
@@ -334,6 +382,7 @@ export function deferStoreWrites<T extends Record<string, any>>(
 				`Expected \`key\` to be of type \`string\` or \`object\`, got ${typeof keyOrObject}`
 			);
 		}
+		documentRevision += 1;
 		scheduleWrite();
 	});
 
@@ -342,11 +391,13 @@ export function deferStoreWrites<T extends Record<string, any>>(
 		const next = { ...document };
 		delete next[key];
 		document = next;
+		documentRevision += 1;
 		scheduleWrite();
 	});
 
 	patch('clear', () => {
 		document = {};
+		documentRevision += 1;
 		scheduleWrite();
 	});
 
@@ -354,7 +405,8 @@ export function deferStoreWrites<T extends Record<string, any>>(
 
 	return {
 		store,
-		hasPendingWrite: () => pending || writeTimer !== null,
+		hasPendingWrite: () =>
+			durableRevision < documentRevision || writeTimer !== null || writeInFlight !== null,
 		flushSync,
 		flushAsync,
 	};

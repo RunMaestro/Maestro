@@ -76,6 +76,7 @@ import { WebServer } from '../../web-server';
 import { tunnelManager as tunnelManagerInstance } from '../../tunnel-manager';
 import { createSafeSend } from '../../utils/safe-send';
 import { getSshRemoteById } from '../../stores/getters';
+import { flushPendingSessionWrites } from '../../stores/instances';
 
 // Type for tunnel manager instance
 type TunnelManagerType = typeof tunnelManagerInstance;
@@ -221,6 +222,7 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		sessionsStore: deps.sessionsStore,
 		groupsStore: deps.groupsStore,
 		getWebServer: deps.getWebServer,
+		flushSessionWrites: flushPendingSessionWrites,
 	});
 	registerSystemHandlers({
 		getMainWindow: deps.getMainWindow,

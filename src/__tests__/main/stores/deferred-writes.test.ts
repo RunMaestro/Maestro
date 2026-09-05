@@ -18,6 +18,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
+import fsp from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import type Store from 'electron-store';
@@ -137,6 +138,7 @@ describe('deferStoreWrites', () => {
 	});
 
 	afterEach(() => {
+		vi.restoreAllMocks();
 		fs.rmSync(dir, { recursive: true, force: true });
 	});
 
@@ -181,6 +183,31 @@ describe('deferStoreWrites', () => {
 		await writer.flushAsync();
 
 		expect(readFile()).toEqual({ sessions: [{ id: 'a' }, { id: 'b' }], activeSessionId: 'a' });
+	});
+
+	it('serializes overlapping flushes so the newest snapshot lands last', async () => {
+		const store = makeStore({ sessions: [] });
+		const writer = deferStoreWrites(store, 'sessions');
+		const firstWriteStarted = Promise.withResolvers<void>();
+		const releaseFirstWrite = Promise.withResolvers<void>();
+		const originalWriteFile = fsp.writeFile.bind(fsp);
+		vi.spyOn(fsp, 'writeFile').mockImplementationOnce(async (...args) => {
+			firstWriteStarted.resolve();
+			await releaseFirstWrite.promise;
+			return originalWriteFile(...args);
+		});
+
+		writer.store.set('sessions', [{ id: 'old' }]);
+		const firstFlush = writer.flushAsync();
+		await firstWriteStarted.promise;
+
+		writer.store.set('sessions', [{ id: 'new' }]);
+		const secondFlush = writer.flushAsync();
+		releaseFirstWrite.resolve();
+		await Promise.all([firstFlush, secondFlush]);
+
+		expect(readFile()).toEqual({ sessions: [{ id: 'new' }] });
+		expect(writer.hasPendingWrite()).toBe(false);
 	});
 
 	it('reflects writes in subsequent reads before they reach disk', () => {
@@ -243,6 +270,32 @@ describe('deferStoreWrites', () => {
 		expect(writer.hasPendingWrite()).toBe(false);
 	});
 
+	it('flushSync supersedes an in-flight async snapshot during shutdown', async () => {
+		const store = makeStore({ sessions: [] });
+		const writer = deferStoreWrites(store, 'sessions');
+		const asyncWriteStarted = Promise.withResolvers<void>();
+		const releaseAsyncWrite = Promise.withResolvers<void>();
+		const originalWriteFile = fsp.writeFile.bind(fsp);
+		vi.spyOn(fsp, 'writeFile').mockImplementationOnce(async (...args) => {
+			asyncWriteStarted.resolve();
+			await releaseAsyncWrite.promise;
+			return originalWriteFile(...args);
+		});
+
+		writer.store.set('sessions', [{ id: 'old' }]);
+		const asyncFlush = writer.flushAsync();
+		await asyncWriteStarted.promise;
+
+		writer.store.set('sessions', [{ id: 'new' }]);
+		writer.flushSync();
+		expect(readFile()).toEqual({ sessions: [{ id: 'new' }] });
+
+		releaseAsyncWrite.resolve();
+		await asyncFlush;
+		expect(readFile()).toEqual({ sessions: [{ id: 'new' }] });
+		expect(writer.hasPendingWrite()).toBe(false);
+	});
+
 	it('flushSync is a no-op when nothing is pending', () => {
 		const store = makeStore({ sessions: [{ id: 'a' }] });
 		const writer = deferStoreWrites(store, 'sessions');
@@ -274,7 +327,7 @@ describe('deferStoreWrites', () => {
 		(writer.store as unknown as { path: string }).path = path.join(dir, 'missing-dir', 's.json');
 
 		writer.store.set('sessions', [{ id: 'new' }]);
-		await writer.flushAsync();
+		await expect(writer.flushAsync()).rejects.toMatchObject({ code: 'ENOENT' });
 
 		expect(readFile()).toEqual({ sessions: [{ id: 'original' }] });
 		// A failed write stays dirty so a later flush retries it.
