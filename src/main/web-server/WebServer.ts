@@ -960,8 +960,8 @@ export class WebServer {
 			},
 			getBridgeEpoch: () => this.broadcastService.bridgeEpoch,
 			getBridgeSeq: () => this.broadcastService.getBridgeSeq(),
-			resumeBridgeClient: (epoch, lastSeq) =>
-				this.broadcastService.resumeBridgeClient(epoch, lastSeq),
+			resumeBridgeClient: (epoch, lastSeq, subscribedSessionId) =>
+				this.broadcastService.resumeBridgeClient(epoch, lastSeq, subscribedSessionId),
 		});
 		this.wsRoute.registerRoute(this.server);
 	}

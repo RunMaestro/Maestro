@@ -60,6 +60,39 @@ const REPLAY_MAX_FRAMES = 2000;
 const REPLAY_MAX_BYTES = 8 * 1024 * 1024;
 
 /**
+ * Who a broadcast frame is for. Recorded beside each buffered frame so a
+ * resume delivers exactly what the client would have received live: the one
+ * predicate, {@link frameReaches}, decides both the live send and the replay,
+ * so the two cannot drift. Without it a client subscribed to session A was
+ * handed session B's frames on reconnect, tool events included.
+ */
+type BridgeScope =
+	| { kind: 'all' }
+	/** Subscribers of the session, plus unsubscribed (dashboard) clients. */
+	| { kind: 'session'; sessionId: string }
+	/** Subscribers of the session only: tool events are high-volume. */
+	| { kind: 'subscribers'; sessionId: string };
+
+interface ReplayFrame {
+	seq: number;
+	data: string;
+	/** UTF-8 size on the wire. `data.length` counts UTF-16 code units. */
+	bytes: number;
+	scope: BridgeScope;
+}
+
+function frameReaches(scope: BridgeScope, subscribedSessionId: string | undefined): boolean {
+	switch (scope.kind) {
+		case 'all':
+			return true;
+		case 'session':
+			return !subscribedSessionId || subscribedSessionId === scope.sessionId;
+		case 'subscribers':
+			return subscribedSessionId === scope.sessionId;
+	}
+}
+
+/**
  * Web client connection info (alias for backwards compatibility)
  */
 export type WebClientInfo = WebClient;
@@ -90,7 +123,7 @@ export class BroadcastService {
 	// cannot be resumed, because that run's counter means nothing here.
 	readonly bridgeEpoch = randomUUID();
 	private bridgeSeq = 0;
-	private replayFrames: Array<{ seq: number; data: string }> = [];
+	private replayFrames: ReplayFrame[] = [];
 	private replayBytes = 0;
 
 	/**
@@ -104,25 +137,44 @@ export class BroadcastService {
 	 * Serialize a frame for the wire, stamping it with the next `seq` and
 	 * recording it for {@link resumeBridgeClient}.
 	 */
-	private stampForBridge(message: object): string {
+	private stampForBridge(message: object, scope: BridgeScope): ReplayFrame {
 		const seq = ++this.bridgeSeq;
 		const data = JSON.stringify({ ...message, seq });
-		this.replayFrames.push({ seq, data });
-		this.replayBytes += data.length;
+		const frame: ReplayFrame = { seq, data, bytes: Buffer.byteLength(data), scope };
+		this.replayFrames.push(frame);
+		this.replayBytes += frame.bytes;
 		while (this.replayFrames.length > REPLAY_MAX_FRAMES || this.replayBytes > REPLAY_MAX_BYTES) {
 			const dropped = this.replayFrames.shift();
 			if (!dropped) break;
-			this.replayBytes -= dropped.data.length;
+			this.replayBytes -= dropped.bytes;
 		}
-		return data;
+		return frame;
+	}
+
+	/** Send a stamped frame to every open client its scope reaches. */
+	private deliver(frame: ReplayFrame): void {
+		if (!this.getWebClients) return;
+		for (const client of this.getWebClients().values()) {
+			if (
+				client.socket.readyState === WebSocket.OPEN &&
+				frameReaches(frame.scope, client.subscribedSessionId)
+			) {
+				client.socket.send(frame.data);
+			}
+		}
 	}
 
 	/**
-	 * Frames a reconnecting web-desktop client has not seen yet, oldest first.
-	 * `null` means it cannot be resumed - it last spoke to a different server
-	 * run, or the gap outran the replay buffer - and must reload to resync.
+	 * Frames a reconnecting web-desktop client has not seen yet, oldest first,
+	 * narrowed to the ones its subscription would have received live. `null`
+	 * means it cannot be resumed - it last spoke to a different server run, or
+	 * the gap outran the replay buffer - and must reload to resync.
 	 */
-	resumeBridgeClient(epoch: string, lastSeq: number): string[] | null {
+	resumeBridgeClient(
+		epoch: string,
+		lastSeq: number,
+		subscribedSessionId?: string
+	): string[] | null {
 		if (
 			epoch !== this.bridgeEpoch ||
 			!Number.isInteger(lastSeq) ||
@@ -134,7 +186,9 @@ export class BroadcastService {
 		if (lastSeq === this.bridgeSeq) return [];
 		const oldest = this.replayFrames[0]?.seq;
 		if (oldest === undefined || oldest > lastSeq + 1) return null;
-		return this.replayFrames.filter((frame) => frame.seq > lastSeq).map((frame) => frame.data);
+		return this.replayFrames
+			.filter((frame) => frame.seq > lastSeq && frameReaches(frame.scope, subscribedSessionId))
+			.map((frame) => frame.data);
 	}
 
 	/**
@@ -154,13 +208,7 @@ export class BroadcastService {
 	 */
 	broadcastToAll(message: object): void {
 		if (!this.getWebClients) return;
-
-		const data = this.stampForBridge(message);
-		for (const client of this.getWebClients().values()) {
-			if (client.socket.readyState === WebSocket.OPEN) {
-				client.socket.send(data);
-			}
-		}
+		this.deliver(this.stampForBridge(message, { kind: 'all' }));
 	}
 
 	/**
@@ -168,16 +216,7 @@ export class BroadcastService {
 	 */
 	broadcastToSession(sessionId: string, message: object): void {
 		if (!this.getWebClients) return;
-
-		const data = this.stampForBridge(message);
-		for (const client of this.getWebClients().values()) {
-			if (
-				client.socket.readyState === WebSocket.OPEN &&
-				(client.subscribedSessionId === sessionId || !client.subscribedSessionId)
-			) {
-				client.socket.send(data);
-			}
-		}
+		this.deliver(this.stampForBridge(message, { kind: 'session', sessionId }));
 	}
 
 	/**
@@ -543,20 +582,15 @@ export class BroadcastService {
 		// Only send tool events to clients explicitly subscribed to this session.
 		// Unlike broadcastToSession, this excludes unsubscribed clients (e.g., dashboard/overview)
 		// to avoid unnecessary fan-out of high-volume, potentially sensitive tool data.
+		// Stamped like every other frame, so a tool event lost to a dropped socket
+		// is replayed on resume instead of silently vanishing from the stream.
 		if (!this.getWebClients) return;
-
-		const data = JSON.stringify({
-			type: 'tool_event',
-			sessionId,
-			tabId,
-			toolLog,
-			timestamp: Date.now(),
-		});
-		for (const client of this.getWebClients().values()) {
-			if (client.socket.readyState === WebSocket.OPEN && client.subscribedSessionId === sessionId) {
-				client.socket.send(data);
-			}
-		}
+		this.deliver(
+			this.stampForBridge(
+				{ type: 'tool_event', sessionId, tabId, toolLog, timestamp: Date.now() },
+				{ kind: 'subscribers', sessionId }
+			)
+		);
 	}
 
 	/**

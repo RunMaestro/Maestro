@@ -533,6 +533,60 @@ describe('BroadcastService bridge resume (seq stamping + replay)', () => {
 		expect(service.resumeBridgeClient(service.bridgeEpoch, 3)).toEqual([]);
 	});
 
+	it('replays only what the reconnecting client would have received live', () => {
+		service.broadcastToAll({ type: 'everyone' });
+		service.broadcastToSession('session-a', { type: 'for-a' });
+		service.broadcastToSession('session-b', { type: 'for-b' });
+		service.broadcastToolEvent('session-a', 'tab-1', {
+			id: 'tool-1',
+			timestamp: 1,
+			source: 'tool',
+			text: 'Read',
+		});
+
+		const types = (frames: string[] | null) => frames?.map((f) => JSON.parse(f).type);
+		// Subscribed to A: A's frames and A's tool events, nothing of B's.
+		expect(types(service.resumeBridgeClient(service.bridgeEpoch, 0, 'session-a'))).toEqual([
+			'everyone',
+			'for-a',
+			'tool_event',
+		]);
+		// Unsubscribed (dashboard): every session frame, but tool events are
+		// subscriber-only live, so they are subscriber-only on replay too.
+		expect(types(service.resumeBridgeClient(service.bridgeEpoch, 0))).toEqual([
+			'everyone',
+			'for-a',
+			'for-b',
+		]);
+	});
+
+	it('stamps tool events too, so one lost to a dropped socket is replayed rather than gone', () => {
+		const subscriber = createMockClient('sub', { subscribedSessionId: 'session-a' });
+		clients.set('sub', subscriber);
+		service.broadcastToolEvent('session-a', 'tab-1', {
+			id: 'tool-1',
+			timestamp: 1,
+			source: 'tool',
+			text: 'Read',
+		});
+		expect(JSON.parse((subscriber.socket.send as any).mock.calls[0][0]).seq).toBe(1);
+	});
+
+	it('budgets the replay buffer in UTF-8 bytes, not UTF-16 code units', () => {
+		// 1.5M copies of a 3-byte character: 4.5 MiB on the wire but 1.5M code
+		// units. Two of them exceed the 8 MiB cap in bytes while counting units
+		// would have kept both (and the eviction they should trigger never fires).
+		const wide = '\u20ac'.repeat(1.5 * 1024 * 1024);
+		service.broadcastToAll({ type: 'wide', wide });
+		service.broadcastToAll({ type: 'wide', wide });
+		service.broadcastToAll({ type: 'tiny' });
+
+		// seq 1 was evicted to make room, so a client that last saw 0 must reload,
+		// while one that saw 1 gets exactly the two frames still held.
+		expect(service.resumeBridgeClient(service.bridgeEpoch, 0)).toBeNull();
+		expect(service.resumeBridgeClient(service.bridgeEpoch, 1)).toHaveLength(2);
+	});
+
 	it('refuses to resume across server runs, ahead of the counter, or past the buffer', () => {
 		service.broadcastToAll({ type: 'a' });
 		expect(service.resumeBridgeClient('some-other-run', 1)).toBeNull();

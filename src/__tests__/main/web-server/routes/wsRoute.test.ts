@@ -528,11 +528,21 @@ describe('WsRoute bridge resume', () => {
 		const connection = createMockConnection();
 		route.handler(connection, resumeRequest('since=3&epoch=run-1'));
 
-		expect(resumeBridgeClient).toHaveBeenCalledWith('run-1', 3);
+		expect(resumeBridgeClient).toHaveBeenCalledWith('run-1', 3, undefined);
 		const frames = sentFrames(connection);
 		expect(frames[0]).toMatchObject({ type: 'connected', bridgeEpoch: 'run-1', resumed: true });
 		expect(frames[1]).toMatchObject({ type: 'bridge.event', seq: 4 });
 		expect(frames[2]).toMatchObject({ type: 'bridge.event', seq: 5 });
+	});
+
+	it('hands the client subscription to the replay so it is narrowed like a live send', () => {
+		const resumeBridgeClient = vi.fn().mockReturnValue([]);
+		const route = setup({ resumeBridgeClient, getBridgeEpoch: () => 'run-1' });
+
+		const connection = createMockConnection();
+		route.handler(connection, resumeRequest('since=3&epoch=run-1&sessionId=session-a'));
+
+		expect(resumeBridgeClient).toHaveBeenCalledWith('run-1', 3, 'session-a');
 	});
 
 	it('reports resumed=false when the gap cannot be replayed, and never asks without a since', () => {
@@ -545,7 +555,7 @@ describe('WsRoute bridge resume', () => {
 
 		const stale = createMockConnection();
 		route.handler(stale, resumeRequest('since=3&epoch=run-0'));
-		expect(resumeBridgeClient).toHaveBeenCalledWith('run-0', 3);
+		expect(resumeBridgeClient).toHaveBeenCalledWith('run-0', 3, undefined);
 		expect(sentFrames(stale)[0]).toMatchObject({ type: 'connected', resumed: false });
 
 		const fresh = createMockConnection();

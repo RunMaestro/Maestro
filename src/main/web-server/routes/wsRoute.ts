@@ -62,10 +62,15 @@ export interface WsRouteCallbacks {
 	 */
 	getBridgeSeq?: () => number;
 	/**
-	 * Frames a reconnecting web-desktop client missed, or `null` when it must
-	 * reload instead. See `BroadcastService.resumeBridgeClient`.
+	 * Frames a reconnecting web-desktop client missed, narrowed to what its
+	 * subscription would have received live, or `null` when it must reload
+	 * instead. See `BroadcastService.resumeBridgeClient`.
 	 */
-	resumeBridgeClient?: (epoch: string, lastSeq: number) => string[] | null;
+	resumeBridgeClient?: (
+		epoch: string,
+		lastSeq: number,
+		subscribedSessionId?: string
+	) => string[] | null;
 }
 
 /**
@@ -111,7 +116,7 @@ export class WsRoute {
 			const epochParam = url.searchParams.get('epoch');
 			const replay =
 				sinceParam !== null && epochParam !== null
-					? (this.callbacks.resumeBridgeClient?.(epochParam, Number(sinceParam)) ?? null)
+					? (this.callbacks.resumeBridgeClient?.(epochParam, Number(sinceParam), sessionId) ?? null)
 					: null;
 
 			const client: WebClient = {
