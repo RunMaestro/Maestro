@@ -324,7 +324,7 @@ The `!` is a gesture, not part of the command - it disappears the moment it swit
 $ git status
 ```
 
-You will know you are in command mode: a `$` appears at the left of the input, and a **COMMAND MODE** strip above it names the directory the command will run in.
+You will know you are in command mode: a `$` appears at the left of the input, the text switches to the fixed-width font your terminals use, and a **COMMAND MODE** strip above it names the directory the command will run in. The font follows the command all the way through - what you type, what the AI proposes, and the output on the card are all set the way a terminal sets them, so paths and columns line up.
 
 **Getting back to the agent:** press `Esc` on an empty command line (or `Backspace`, same thing). The composer keeps focus, so you can carry straight on typing your message. Command mode sticks around between commands, so you can run several in a row without retyping `!`, and you leave deliberately when you are done.
 
@@ -377,7 +377,7 @@ Command mode is AI-chat only. In a terminal tab or the legacy terminal mode you 
 
 ### AI Command Mode
 
-Press `!` a second time, on an empty command line, and the composer climbs one more rung. The strip above it now reads **AI Command**, and what you type is no longer a command - it is a plain-English description of what you want done:
+Press `!` a second time, on an empty command line, and the composer climbs one more rung. The strip above it now reads **AI Command**, the `$` and the fixed-width font go away (you are writing a sentence again, not a command line), and what you type is a plain-English description of what you want done:
 
 ```
 delete every node_modules folder under this project

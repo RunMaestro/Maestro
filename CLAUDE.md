@@ -124,6 +124,7 @@ Grep-verified 2026-09-04 (`npm run docs:verify` re-checks every path). This is t
 - **Adding a control to the Left Bar header:** three-zone row in `src/renderer/components/SessionList/SessionList.tsx`; see guide before touching
 - **Element width for JS-computed layout:** `useElementWidth(ref, enabled?)`, `ResizeObserver` in `src/renderer/hooks/ui/useElementWidth.ts`
 - **Usage Dashboard card tile:** `StatCard` in `src/renderer/components/UsageDashboard/EntityTile.tsx`
+- **Fixed-pitch font for shell text:** `resolveFixedPitchFontFamily()`, `resolveTerminalFontFamily()` in `src/renderer/utils/fixedPitchFont.ts`
 - **Rendering raw terminal output (ANSI):** `useAnsiConverter(theme)`, `getCachedAnsiHtml(text, theme.id, converter)` in `src/renderer/hooks/ui/useAnsiConverter.ts`
 - **Any CLI verb that can move the Maestro view:** `resolveBackgroundFlag()`, `readBackgroundField()` in `src/shared/focusPlacement.ts`
 - **Making a tab the visible one:** `aiTabFocusFields`, `fileTabFocusFields` in `src/renderer/utils/tabFocusFields.ts`

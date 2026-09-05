@@ -1,6 +1,8 @@
 import React, { memo } from 'react';
 import type { Session, Theme } from '../../../types';
 import { getProviderDisplayName } from '../../../utils/sessionValidation';
+import { useSettingsStore } from '../../../stores/settingsStore';
+import { useFixedPitchFont } from '../../../hooks/ui/useFixedPitchFont';
 
 interface InputTextareaProps {
 	session: Session;
@@ -54,12 +56,20 @@ export const InputTextarea = memo(function InputTextarea({
 	// draft is a sentence, and a `$` in front of one promises a shell line.
 	const showShellPrefix = isTerminalMode || isCommandModeDraft;
 
+	// A command line is shell text, so it is typed in the same fixed-pitch face
+	// the terminal and the output card use: paths and flags line up, and the
+	// switch out of chat is legible before the `$` is even read. AI command mode
+	// keeps the proportional font on purpose - that draft is a sentence, and the
+	// command it produces gets monospace when it appears in the proposal card.
+	const fontFamily = useSettingsStore((state) => state.fontFamily);
+	const shellFontFamily = useFixedPitchFont(fontFamily);
+
 	return (
 		<div className="flex items-start">
 			{showShellPrefix && (
 				<span
-					className="text-sm font-mono font-bold select-none pl-3 pt-3"
-					style={{ color: theme.colors.accent }}
+					className="text-sm font-bold select-none pl-3 pt-3"
+					style={{ color: theme.colors.accent, fontFamily: shellFontFamily }}
 					title={isCommandModeDraft ? 'Command mode: runs in the shell, not the agent' : undefined}
 				>
 					$
@@ -68,7 +78,11 @@ export const InputTextarea = memo(function InputTextarea({
 			<textarea
 				ref={inputRef}
 				className={`flex-1 bg-transparent text-sm outline-none ${showShellPrefix ? 'pl-1.5' : 'pl-3'} pt-3 pr-3 resize-none min-h-[3.5rem] scrollbar-thin`}
-				style={{ color: theme.colors.textMain, maxHeight: '11rem' }}
+				style={{
+					color: theme.colors.textMain,
+					maxHeight: '11rem',
+					fontFamily: showShellPrefix ? shellFontFamily : undefined,
+				}}
 				placeholder={
 					isTerminalMode
 						? 'Run shell command...'
