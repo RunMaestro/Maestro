@@ -405,12 +405,16 @@ argument order decides which tree wins a shared basename. Resolving against only
 one root is what left every cross-project link in an Auto Run document as inert
 text while the same link worked in a file-preview tab.
 
+<!-- doc-refs-ignore:start -->
+
 `resolve.ts` is the other half: what a click handler does with the path the
 plugin hands back. That path is project-RELATIVE for anything matched in the
 tree and absolute for everything else, and agents quote `src/foo.ts:42`
 constantly, so every consumer needs the same strip-then-join. Do NOT hand-roll
 it - a surface that skips the join hands a bare `Notes/Thing.md` to a reader
 expecting an absolute path and silently opens nothing.
+
+<!-- doc-refs-ignore:end -->
 
 | Function                                       | Signature                                             | Purpose                                                                        |
 | ---------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------ |

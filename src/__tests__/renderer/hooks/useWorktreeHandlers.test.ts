@@ -1664,6 +1664,126 @@ describe('Effects', () => {
 		});
 	});
 
+	// Issue #1506: the same App runs in every Electron window AND in every
+	// connected web-desktop browser client, and `worktree:discovered` is broadcast
+	// to all of them. Discovery is not an idempotent read - each renderer answers
+	// it by minting a child agent with a fresh id - so exactly one renderer may
+	// own it. The others got their own duplicate agent per worktree: same parent,
+	// same path, same provider, different id.
+	describe('Non-owning renderer (isLifecycleOwner: false)', () => {
+		const parentWithWatch = () => ({
+			...mockParentSession,
+			worktreeConfig: { basePath: '/projects/worktrees', watchEnabled: true },
+		});
+
+		it('does not start worktree watchers or subscribe to discovery', () => {
+			useSessionStore.setState({
+				sessions: [parentWithWatch()],
+				activeSessionId: 'parent-1',
+				sessionsLoaded: true,
+			} as any);
+
+			renderHook(() => useWorktreeHandlers({ isLifecycleOwner: false }));
+
+			expect(mockGit.watchWorktreeDirectory).not.toHaveBeenCalled();
+			expect(mockGit.onWorktreeDiscovered).not.toHaveBeenCalled();
+			expect(mockGit.onWorktreeRemoved).not.toHaveBeenCalled();
+		});
+
+		it('keeps a secondary Electron window out of the discovery lifecycle', () => {
+			useSessionStore.setState({
+				sessions: [parentWithWatch()],
+				activeSessionId: 'parent-1',
+				sessionsLoaded: true,
+			} as any);
+
+			renderHook(() => useWorktreeHandlers({ isLifecycleOwner: false }));
+
+			expect(mockGit.watchWorktreeDirectory).not.toHaveBeenCalled();
+			expect(mockGit.onWorktreeDiscovered).not.toHaveBeenCalled();
+			expect(mockGit.onWorktreeRemoved).not.toHaveBeenCalled();
+		});
+
+		it('does not unwatch on unmount, so a closing browser tab cannot stop the desktop watcher', () => {
+			useSessionStore.setState({
+				sessions: [parentWithWatch()],
+				activeSessionId: 'parent-1',
+				sessionsLoaded: true,
+			} as any);
+
+			const { unmount } = renderHook(() => useWorktreeHandlers({ isLifecycleOwner: false }));
+			unmount();
+
+			expect(mockGit.unwatchWorktreeDirectory).not.toHaveBeenCalled();
+		});
+
+		it('does not run the startup scan', async () => {
+			vi.useFakeTimers();
+
+			mockGit.scanWorktreeDirectory.mockResolvedValue({
+				gitSubdirs: [
+					{
+						path: '/projects/worktrees/feat-startup',
+						branch: 'feat-startup',
+						name: 'feat-startup',
+					},
+				],
+			});
+
+			useSessionStore.setState({
+				sessions: [parentWithWatch()],
+				activeSessionId: 'parent-1',
+				sessionsLoaded: true,
+			} as any);
+
+			renderHook(() => useWorktreeHandlers({ isLifecycleOwner: false }));
+
+			await act(async () => {
+				vi.advanceTimersByTime(501);
+				await vi.runAllTimersAsync();
+			});
+
+			expect(mockGit.scanWorktreeDirectory).not.toHaveBeenCalled();
+			// No rival child agent was minted for the discovered worktree.
+			expect(useSessionStore.getState().sessions).toHaveLength(1);
+		});
+
+		it('does not run the legacy worktreeParentPath scanner', async () => {
+			mockGit.scanWorktreeDirectory.mockResolvedValue({
+				gitSubdirs: [{ path: '/projects/worktrees/legacy', branch: 'legacy', name: 'legacy' }],
+			});
+
+			useSessionStore.setState({
+				sessions: [{ ...mockParentSession, worktreeParentPath: '/projects/worktrees' }],
+				activeSessionId: 'parent-1',
+				sessionsLoaded: true,
+			} as any);
+
+			renderHook(() => useWorktreeHandlers({ isLifecycleOwner: false }));
+
+			await act(async () => {
+				await Promise.resolve();
+			});
+
+			expect(mockGit.scanWorktreeDirectory).not.toHaveBeenCalled();
+			expect(useSessionStore.getState().sessions).toHaveLength(1);
+		});
+
+		it('still exposes the user-initiated handlers', () => {
+			useSessionStore.setState({
+				sessions: [parentWithWatch()],
+				activeSessionId: 'parent-1',
+				sessionsLoaded: true,
+			} as any);
+
+			const { result } = renderHook(() => useWorktreeHandlers({ isLifecycleOwner: false }));
+
+			// A web-desktop user must still be able to create and remove worktrees.
+			expect(typeof result.current.handleCreateWorktree).toBe('function');
+			expect(typeof result.current.handleConfirmDeleteWorktree).toBe('function');
+		});
+	});
+
 	describe('File watcher effect', () => {
 		it('starts watchers for sessions with watchEnabled', () => {
 			const parentWithWatch = {

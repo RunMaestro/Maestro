@@ -10,7 +10,8 @@
  *   - Create/delete worktree sessions
  *   - Toggle worktree expansion in the left bar
  *
- * Effects:
+ * Effects (auto-discovery - only in the lifecycle-owning renderer, see
+ * `UseWorktreeHandlersDeps.isLifecycleOwner`):
  *   - Startup scan: restores worktree sub-agents from worktreeConfig on app load
  *   - File watcher: real-time detection of new worktrees via filesystem events
  *   - Legacy scanner: polls for worktrees using old worktreeParentPath model
@@ -42,6 +43,31 @@ import { generateId } from '../../utils/ids';
 
 export interface UseWorktreeHandlersDeps {
 	rightPanelRef?: React.RefObject<RightPanelHandle | null>;
+	/**
+	 * Whether THIS renderer owns worktree auto-discovery (the startup scan, the
+	 * chokidar watcher, and the legacy scanner). Defaults to true so isolation
+	 * tests and single-renderer callers keep today's behaviour.
+	 *
+	 * The same App runs in every Electron window AND in every connected
+	 * web-desktop browser client, and `worktree:discovered` is BROADCAST to all
+	 * of them (see the MULTI-WINDOW INVARIANT in `main/utils/safe-send.ts`). Only
+	 * the primary desktop window may own discovery; secondary Electron windows
+	 * and web clients pass false here.
+	 * Discovery is not an idempotent read: each renderer answers it by building
+	 * a child session with a freshly generated id, and persistence ships
+	 * incremental `sessions:setMany` diffs, so every non-owning renderer adds one
+	 * permanent duplicate agent per worktree - same parent, same path, same
+	 * provider (issue #1506). It also owns the watcher LIFECYCLE, and the main
+	 * process keys watchers by session id: a second renderer registering one
+	 * closes the first, and that renderer unmounting (a closed browser tab) stops
+	 * the watch for everybody.
+	 *
+	 * User-initiated worktree handlers are deliberately NOT gated - a web-desktop
+	 * user must still be able to create and delete worktrees.
+	 *
+	 * App derives this from both runtime type and `WindowContext.isMainWindow`.
+	 */
+	isLifecycleOwner?: boolean;
 }
 
 // ============================================================================
@@ -143,7 +169,7 @@ const EMPTY_RIGHT_PANEL_REF: React.RefObject<RightPanelHandle | null> = { curren
 // ============================================================================
 
 export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): WorktreeHandlersReturn {
-	const { rightPanelRef = EMPTY_RIGHT_PANEL_REF } = deps;
+	const { rightPanelRef = EMPTY_RIGHT_PANEL_REF, isLifecycleOwner = true } = deps;
 	// ---------------------------------------------------------------------------
 	// Reactive subscriptions
 	// ---------------------------------------------------------------------------
@@ -929,16 +955,18 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 	// Effect 1: Startup worktree config scan
 	// Restores worktree sub-agents after app restart by scanning configured directories
 	useEffect(() => {
-		if (!sessionsLoaded) return;
+		if (!isLifecycleOwner || !sessionsLoaded) return;
 
 		const timer = setTimeout(scanWorktreeConfigs, 500);
 		return () => clearTimeout(timer);
-	}, [sessionsLoaded, scanWorktreeConfigs]);
+	}, [isLifecycleOwner, sessionsLoaded, scanWorktreeConfigs]);
 
 	// Effect 2: File watcher + visibility-change rescan for worktree directories
 	// Chokidar provides immediate detection; visibility-change rescan is a fallback
 	// for worktrees created while the watcher was down or via external tools.
 	useEffect(() => {
+		if (!isLifecycleOwner) return;
+
 		const currentSessions = useSessionStore.getState().sessions;
 		const watchableSessions = currentSessions.filter(
 			(s) => s.worktreeConfig?.basePath && s.worktreeConfig?.watchEnabled
@@ -1128,14 +1156,14 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 				window.maestro.git.unwatchWorktreeDirectory(session.id);
 			}
 		};
-	}, [worktreeConfigKey, defaultSaveToHistory, scanWorktreeConfigs]);
+	}, [isLifecycleOwner, worktreeConfigKey, defaultSaveToHistory, scanWorktreeConfigs]);
 
 	// Effect 3: Legacy scanner for sessions using old worktreeParentPath
 	// TODO: Remove after migration to new parent/child model (use worktreeConfig with file watchers instead)
 	// PERFORMANCE: Only scan on app focus (visibility change) instead of continuous polling
 	// This avoids blocking the main thread every 30 seconds during active use
 	useEffect(() => {
-		if (!hasLegacyWorktreeSessions) return;
+		if (!isLifecycleOwner || !hasLegacyWorktreeSessions) return;
 
 		// Track if we're currently scanning to avoid overlapping scans
 		let isScanning = false;
@@ -1262,7 +1290,7 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 		return () => {
 			document.removeEventListener('visibilitychange', handleVisibilityChange);
 		};
-	}, [hasLegacyWorktreeSessions, defaultSaveToHistory]);
+	}, [isLifecycleOwner, hasLegacyWorktreeSessions, defaultSaveToHistory]);
 
 	// ---------------------------------------------------------------------------
 	// Return
