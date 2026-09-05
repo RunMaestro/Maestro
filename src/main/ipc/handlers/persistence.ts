@@ -16,6 +16,7 @@ import * as path from 'path';
 import * as fs from 'fs/promises';
 import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
+import { broadcastBridgeEvent } from '../../web-server/handlers/bridgeHandlers';
 import { getThemeById } from '../../themes';
 import { WebServer } from '../../web-server';
 import {
@@ -76,6 +77,83 @@ function notifyPeerWindows(senderWebContentsId: number | undefined): void {
 }
 
 /**
+ * Agent lifecycle deltas pushed to every OTHER client after a sessions write.
+ *
+ * Desktop windows and web-desktop clients each run their own renderer with its
+ * own session tree, and every one of them flushes that tree back to the same
+ * store file. Without a push, a client only ever learns what the others did by
+ * reloading: an agent created in the browser never appeared on the desktop, and
+ * an agent closed in the browser was resurrected the moment the desktop's stale
+ * copy went dirty and was merged back in (issues #1398 / #1492).
+ */
+export interface SessionLifecycleSyncPayload {
+	/** Agents that entered the store, as stored. Restored verbatim by the peer. */
+	added: StoredSession[];
+	/** Agents that left the store. Peers drop them from their own list. */
+	removedIds: string[];
+}
+
+/** Channel name for {@link SessionLifecycleSyncPayload} pushes. */
+export const SESSION_LIFECYCLE_SYNC_CHANNEL = 'sessions:lifecycleSync';
+
+/**
+ * How many closed agent ids are remembered as tombstones.
+ *
+ * A peer's flush can already be in flight when a close lands, and that flush
+ * carries the agent as a plain update - `setMany` appends an id it does not
+ * recognise, so the agent the user just closed comes straight back. Refusing a
+ * tombstoned id is what stops that.
+ *
+ * The bound is a COUNT rather than an age: "this agent was deliberately closed"
+ * does not stop being true after a minute, and a client can be away far longer
+ * than any window worth picking (a suspended mobile browser, a laptop lid). Ids
+ * are never reused - every agent is created with a fresh one - so a tombstone
+ * has nothing to block but a stale write, and the cap is only here to keep the
+ * map from growing without end across a long-running process.
+ */
+const REMOVED_SESSION_TOMBSTONE_LIMIT = 1000;
+
+/**
+ * Send an agent lifecycle delta to every client except the one that wrote it.
+ *
+ * Electron windows are addressed individually so the sender can be skipped by
+ * webContents id. Web-desktop clients go out through the bridge, which has no
+ * per-client identity - a web sender therefore hears its own delta back, which
+ * is harmless: applying it is a no-op (the added agent is already in its tree,
+ * the removed one already gone).
+ */
+function broadcastSessionLifecycle(
+	senderWebContentsId: number | undefined,
+	payload: SessionLifecycleSyncPayload
+): void {
+	if (payload.added.length === 0 && payload.removedIds.length === 0) return;
+	for (const win of BrowserWindow.getAllWindows()) {
+		if (!isWebContentsAvailable(win)) continue;
+		if (win.webContents.id === senderWebContentsId) continue;
+		win.webContents.send(SESSION_LIFECYCLE_SYNC_CHANNEL, payload);
+	}
+	broadcastBridgeEvent(SESSION_LIFECYCLE_SYNC_CHANNEL, [payload]);
+}
+
+/**
+ * The webContents id behind an IPC call, or undefined when there isn't one.
+ *
+ * A web-desktop call arrives through the bridge's synthetic event, which
+ * carries no `sender` at all, so this must never dereference it blindly.
+ */
+function senderWebContentsIdOf(event: unknown): number | undefined {
+	const sender = (event as { sender?: { id?: number; isDestroyed?: () => boolean } } | undefined)
+		?.sender;
+	if (!sender || typeof sender.id !== 'number') return undefined;
+	try {
+		if (sender.isDestroyed?.()) return undefined;
+	} catch {
+		return undefined;
+	}
+	return sender.id;
+}
+
+/**
  * Dependencies required for persistence handlers
  */
 export interface PersistenceHandlerDependencies {
@@ -115,6 +193,49 @@ export function registerPersistenceHandlers(
 	deps: PersistenceHandlerDependencies
 ): PersistenceHandlers {
 	const { settingsStore, sessionsStore, groupsStore, getWebServer, emitPluginEvent } = deps;
+
+	// Ids closed by a client, newest last. Read by every write path to refuse a
+	// stale peer flush that would resurrect a closed agent (see
+	// REMOVED_SESSION_TOMBSTONE_LIMIT). A Set preserves insertion order, which is
+	// what makes eviction oldest-first.
+	const removedSessionTombstones = new Set<string>();
+
+	const rememberRemovedSessions = (ids: Iterable<string>): void => {
+		for (const id of ids) {
+			// Re-adding moves the id to the end, so a repeatedly closed agent stays
+			// young rather than ageing out on its first close.
+			removedSessionTombstones.delete(id);
+			removedSessionTombstones.add(id);
+		}
+		while (removedSessionTombstones.size > REMOVED_SESSION_TOMBSTONE_LIMIT) {
+			const oldest = removedSessionTombstones.values().next().value;
+			if (oldest === undefined) break;
+			removedSessionTombstones.delete(oldest);
+		}
+	};
+
+	/**
+	 * The sessions of a write, minus any it would resurrect.
+	 *
+	 * An id counts as a resurrection when it was closed and is NOT currently
+	 * stored - the write is re-adding it rather than updating a live agent. A
+	 * tombstoned id that IS in the store means a client legitimately owns it
+	 * again, so updates to it pass through untouched.
+	 */
+	const dropResurrections = (
+		sessions: StoredSession[],
+		storedIds: Set<string>
+	): StoredSession[] => {
+		if (removedSessionTombstones.size === 0) return sessions;
+		return sessions.filter((session) => {
+			if (storedIds.has(session.id)) return true;
+			if (!removedSessionTombstones.has(session.id)) return true;
+			logger.debug('Ignored resurrection of a closed session', 'Sessions', {
+				sessionId: session.id,
+			});
+			return false;
+		});
+	};
 
 	// PERF: coalesce activeSessionId disk writes.
 	//
@@ -364,13 +485,16 @@ export function registerPersistenceHandlers(
 	 */
 	ipcMain.handle(
 		'sessions:setMany',
-		async (_, rawUpdates: StoredSession[] = [], removeIds: string[] = []) => {
+		async (ipcEvent, rawUpdates: StoredSession[] = [], removeIds: string[] = []) => {
 			// Relocate any freshly-pasted inline images (data URLs) in the dirty
 			// sessions to the image store before they hit disk, so the sessions
 			// JSON only ever grows by lightweight refs.
-			const { sessions: updates } = await relocateSessionImages(rawUpdates);
+			const { sessions: relocatedUpdates } = await relocateSessionImages(rawUpdates);
 			const previousSessions = sessionsStore.get('sessions', []);
 			const previousMap = new Map(previousSessions.map((s) => [s.id, s]));
+			// Drop any agent this write would resurrect: another client closed it
+			// moments ago and this flush was already in flight with a stale copy.
+			const updates = dropResurrections(relocatedUpdates, new Set(previousMap.keys()));
 			const removeSet = new Set(removeIds);
 			const updateMap = new Map(updates.map((s) => [s.id, s]));
 
@@ -481,6 +605,16 @@ export function registerPersistenceHandlers(
 				throw err;
 			}
 
+			// Tell the other clients (desktop windows + web-desktop) what entered and
+			// left, so an agent created or closed in one of them stops being
+			// invisible to - and resurrectable by - the rest.
+			const removedIds = removeIds.filter((id) => previousMap.has(id));
+			rememberRemovedSessions(removedIds);
+			broadcastSessionLifecycle(senderWebContentsIdOf(ipcEvent), {
+				added: updates.filter((s) => !previousMap.has(s.id) && !removeSet.has(s.id)),
+				removedIds,
+			});
+
 			// Surface metadata-only lifecycle events to subscribed plugins
 			// (events:subscribe). Re-authorized per delivery against live grants.
 			if (emitPluginEvent) {
@@ -494,14 +628,17 @@ export function registerPersistenceHandlers(
 		}
 	);
 
-	ipcMain.handle('sessions:setAll', async (_, rawSessions: StoredSession[]) => {
+	ipcMain.handle('sessions:setAll', async (ipcEvent, rawSessions: StoredSession[]) => {
 		// Relocate inline images (data URLs) out of the sessions before they hit
 		// disk. setAll is the bootstrap/first-flush path, so this also migrates a
 		// legacy in-memory sessions tree the first time it is persisted.
-		const { sessions } = await relocateSessionImages(rawSessions);
+		const { sessions: relocatedSessions } = await relocateSessionImages(rawSessions);
 		// Get previous sessions to detect changes
 		const previousSessions = sessionsStore.get('sessions', []);
 		const previousSessionMap = new Map(previousSessions.map((s) => [s.id, s]));
+		// Same resurrection guard as setMany: a client that loaded before another
+		// closed an agent still carries it, and this path would write it back.
+		const sessions = dropResurrections(relocatedSessions, new Set(previousSessionMap.keys()));
 		const currentSessionMap = new Map(sessions.map((s) => [s.id, s]));
 
 		// Log session lifecycle events at DEBUG level
@@ -587,6 +724,17 @@ export function registerPersistenceHandlers(
 			logger.warn(`Failed to persist sessions: ${code || (err as Error).message}`, 'Sessions');
 			return false;
 		}
+
+		// Tell the other clients about agents this bootstrap flush introduced.
+		// Only ADDITIONS travel from here: setAll is a client's opening statement
+		// of its own tree, made before it can have heard about anything a peer
+		// created since it loaded, so treating an absent id as a close would let
+		// one client's stale snapshot delete another's live agents. Real closes
+		// arrive as explicit `removeIds` through setMany.
+		broadcastSessionLifecycle(senderWebContentsIdOf(ipcEvent), {
+			added: sessions.filter((s) => !previousSessionMap.has(s.id)),
+			removedIds: [],
+		});
 
 		// Surface metadata-only lifecycle events to subscribed plugins
 		// (events:subscribe). Re-authorized per delivery against live grants.
