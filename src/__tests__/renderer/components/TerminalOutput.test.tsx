@@ -3008,8 +3008,14 @@ describe('TerminalOutput', () => {
 
 			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
 
-			// Simulate scroll
-			Object.defineProperty(scrollContainer, 'scrollTop', { value: 100 });
+			// Simulate scroll. `writable` matters: real `scrollTop` is settable, and
+			// the mount-time restore writes to it, so a read-only stub throws where
+			// the browser would not.
+			Object.defineProperty(scrollContainer, 'scrollTop', {
+				value: 100,
+				writable: true,
+				configurable: true,
+			});
 			fireEvent.scroll(scrollContainer);
 
 			// Wait for throttle
@@ -3020,12 +3026,120 @@ describe('TerminalOutput', () => {
 			expect(onScrollPositionChange).toHaveBeenCalledWith(100);
 		});
 
-		it('restores scroll position from initialScrollTop', () => {
-			const props = createDefaultProps({ initialScrollTop: 500 });
-			const { container } = render(<TerminalOutput {...props} />);
+		/**
+		 * Mount a transcript and hand back a handle on the scroll box, with
+		 * `scrollTop` backed by a real variable so we can see where the restore
+		 * actually put the view. `scrollHeight` is settable because the whole
+		 * point of these tests is content whose height changes underneath the
+		 * restore - while the tab was off screen, or as it settles on mount.
+		 */
+		function mountWithScrollBox(
+			extraProps: Record<string, unknown>,
+			{ scrollHeight = 15000, clientHeight = 800 } = {}
+		) {
+			const { container } = render(<TerminalOutput {...createDefaultProps(extraProps)} />);
+			const el = container.querySelector('.overflow-y-auto') as HTMLElement;
+			let top = 0;
+			let height = scrollHeight;
+			Object.defineProperty(el, 'scrollTop', {
+				configurable: true,
+				get: () => top,
+				set: (v: number) => {
+					top = v;
+				},
+			});
+			Object.defineProperty(el, 'scrollHeight', { configurable: true, get: () => height });
+			Object.defineProperty(el, 'clientHeight', { configurable: true, value: clientHeight });
+			el.scrollTo = ((opts: { top: number }) => {
+				top = opts.top;
+			}) as unknown as typeof el.scrollTo;
 
-			// The scroll restoration happens via requestAnimationFrame
-			// In tests this is mocked, so we just verify the prop is used
+			return {
+				el,
+				scrollTop: () => top,
+				bottom: () => height - clientHeight,
+				grow: (to: number) => {
+					height = to;
+				},
+				settle: async (ms = 800) => {
+					await act(async () => {
+						vi.advanceTimersByTime(ms);
+					});
+				},
+			};
+		}
+
+		it('restores a tab parked mid-history to its saved offset', async () => {
+			// isAtBottom false means the user deliberately scrolled up to read.
+			// New entries are appended BELOW them, so the offset still points at
+			// what they were reading and must be honored exactly.
+			const box = mountWithScrollBox({ initialScrollTop: 4200, initialIsAtBottom: false });
+			await box.settle();
+
+			expect(box.scrollTop()).toBe(4200);
+		});
+
+		it('pauses auto-scroll when it restores mid-history', async () => {
+			// Otherwise the MutationObserver yanks the view straight back down and
+			// the restore is pointless.
+			const onAtBottomChange = vi.fn();
+			const box = mountWithScrollBox({
+				initialScrollTop: 4200,
+				initialIsAtBottom: false,
+				onAtBottomChange,
+			});
+			await box.settle();
+
+			expect(box.scrollTop()).toBeLessThan(box.bottom() - 50);
+		});
+
+		it('restores a tail-following tab to the BOTTOM, not its saved offset', async () => {
+			// The regression: `scrollTop` is a snapshot of where the bottom was at
+			// save time. This tab was AT the bottom when it was 5000px tall (offset
+			// 4200), then the agent wrote another 10000px while it was off screen.
+			// Restoring 4200 verbatim strands the user 10000px above the reply they
+			// clicked a toast to go and read.
+			const box = mountWithScrollBox({ initialScrollTop: 4200, initialIsAtBottom: true });
+			await box.settle();
+
+			expect(box.scrollTop()).toBe(box.bottom());
+		});
+
+		it('treats an unset isAtBottom as following the tail', async () => {
+			// `undefined` is what a tab that has never been scrolled carries. It has
+			// to mean bottom, and it has to mean the SAME thing here as it does to
+			// the unread gate in useAgentDataListener, which reads `!== false`.
+			const box = mountWithScrollBox({ initialScrollTop: 4200 });
+			await box.settle();
+
+			expect(box.scrollTop()).toBe(box.bottom());
+		});
+
+		it('keeps chasing the bottom while the content is still settling', async () => {
+			// Images decoding and code blocks re-highlighting grow the transcript
+			// for several frames after mount, so "landed on the bottom" is true on
+			// the first frame and wrong on the next. Latching there would leave the
+			// tab short by however much arrived late.
+			const box = mountWithScrollBox({ initialIsAtBottom: true }, { scrollHeight: 6000 });
+			await box.settle(50);
+
+			box.grow(21000);
+			await box.settle();
+
+			expect(box.scrollTop()).toBe(box.bottom());
+		});
+
+		it('does not fight a user who scrolls while the restore is still settling', async () => {
+			// Their input wins - a restore that keeps yanking the view is worse
+			// than landing high.
+			const box = mountWithScrollBox({ initialIsAtBottom: true }, { scrollHeight: 6000 });
+			fireEvent.scroll(box.el);
+			await box.settle();
+
+			box.grow(21000);
+			await box.settle();
+
+			expect(box.scrollTop()).toBeLessThan(box.bottom());
 		});
 	});
 

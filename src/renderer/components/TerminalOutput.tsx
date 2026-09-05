@@ -1432,6 +1432,15 @@ interface TerminalOutputProps {
 	onScrollPositionChange?: (scrollTop: number) => void; // Callback to save scroll position
 	onAtBottomChange?: (isAtBottom: boolean) => void; // Callback when user scrolls to/away from bottom
 	initialScrollTop?: number; // Initial scroll position to restore
+	/**
+	 * Whether this tab was left FOLLOWING THE TAIL rather than parked at a
+	 * pixel offset. `initialScrollTop` is an absolute offset, and the transcript
+	 * grows while the tab is off screen, so restoring it verbatim strands a tab
+	 * that was at the bottom however far the agent wrote in the meantime.
+	 * `undefined` counts as at-bottom - the same default the unread gate in
+	 * `useAgentDataListener` uses, so the two cannot disagree.
+	 */
+	initialIsAtBottom?: boolean;
 	markdownEditMode: boolean; // Whether to show raw markdown or rendered markdown for AI responses
 	setMarkdownEditMode: (value: boolean) => void; // Toggle markdown mode
 	onReplayMessage?: (text: string, images?: string[]) => void; // Replay a user message
@@ -1497,6 +1506,7 @@ export const TerminalOutput = memo(
 			onScrollPositionChange,
 			onAtBottomChange,
 			initialScrollTop,
+			initialIsAtBottom,
 			markdownEditMode,
 			setMarkdownEditMode,
 			onReplayMessage,
@@ -2366,24 +2376,39 @@ export const TerminalOutput = memo(
 			scrollToBottom();
 		});
 
-		// Restore the scroll position this tab was left at.
+		// Restore the position this tab was left at.
 		//
-		// A single frame is not enough. One `requestAnimationFrame` only proves the
+		// A tab is left in one of two states, and they restore differently.
+		//
+		// FOLLOWING THE TAIL (`isAtBottom`): the saved `scrollTop` is a snapshot of
+		// where the bottom happened to be at save time, and the transcript keeps
+		// growing while the tab is off screen. Restoring that number verbatim drops
+		// the user however far the agent wrote while they were away - and because
+		// the offset is then far above the new bottom, the restore also PAUSES
+		// auto-scroll, so the transcript will not even follow the output that
+		// stranded them. Clicking a toast to read a finished reply landed thousands
+		// of pixels above it. Such a tab restores to the bottom, whatever the saved
+		// number says.
+		//
+		// PARKED MID-HISTORY: the offset is exactly right and must be honored - new
+		// entries are appended BELOW, so what the user was reading has not moved.
+		//
+		// Either way one `requestAnimationFrame` is not enough. It only proves the
 		// DOM is MOUNTED, not that its height has settled: images are still
 		// decoding, web fonts still swapping, code blocks still re-highlighting and
 		// markdown still reflowing. `scrollHeight` is therefore short on that first
-		// frame, `maxScroll` with it, and `Math.min(initialScrollTop, maxScroll)`
-		// silently clamps the restore to LESS than the saved offset. The tab opens
-		// above where the user left it - the further down they were and the heavier
-		// the content, the bigger the jump. That is the whole bug.
-		//
-		// So the guard is latched only once a restore actually LANDS on the offset
-		// that was asked for, and until then we re-attempt as the content grows.
+		// frame and `maxScroll` with it, so the restore clamps to LESS than it was
+		// asked for and the tab opens above where the user left it. So the guard is
+		// latched only once a restore actually LANDS, and until then we re-attempt
+		// as the content grows.
 		useEffect(() => {
+			// A tab that was following the tail has a target regardless of whether a
+			// position was ever saved, so this is checked before the offset guard.
+			const wantsBottom = initialIsAtBottom !== false;
 			// `>= 0`, not `> 0`: a transcript deliberately scrolled to the absolute
 			// top persists `scrollTop: 0`, and requiring a positive offset made that
 			// one position unrestorable.
-			if (initialScrollTop === undefined || initialScrollTop < 0) return;
+			if (!wantsBottom && (initialScrollTop === undefined || initialScrollTop < 0)) return;
 			if (hasRestoredScrollRef.current) return;
 
 			let cancelled = false;
@@ -2421,7 +2446,10 @@ export const TerminalOutput = memo(
 
 				const { scrollHeight, clientHeight } = container;
 				const maxScroll = Math.max(0, scrollHeight - clientHeight);
-				const targetScroll = Math.min(initialScrollTop, maxScroll);
+				// A tail-following tab chases the bottom as it moves, not the stale
+				// snapshot of where the bottom used to be.
+				const desiredScroll = wantsBottom ? maxScroll : (initialScrollTop as number);
+				const targetScroll = Math.min(desiredScroll, maxScroll);
 
 				// If the saved position is not at the bottom, pause auto-scroll so the
 				// MutationObserver doesn't immediately yank the view back down (uses the
@@ -2440,18 +2468,24 @@ export const TerminalOutput = memo(
 				isProgrammaticScrollRef.current = true;
 				container.scrollTop = targetScroll;
 
-				if (targetScroll >= initialScrollTop) {
-					// Landed on the offset that was asked for. Done.
+				// A fixed offset is reached the moment the content is tall enough to
+				// hold it. The bottom is not: `maxScroll` moves with every image that
+				// decodes and every block that re-highlights, so "landed on the bottom"
+				// is true on the first frame and wrong a frame later. A tail-following
+				// tab therefore keeps chasing until the HEIGHT stops changing.
+				if (!wantsBottom && targetScroll >= (initialScrollTop as number)) {
 					hasRestoredScrollRef.current = true;
 					return;
 				}
 
-				// Short of target because the content has not finished growing.
+				// Still settling: either the content has not grown tall enough to hold
+				// the saved offset, or the bottom is still moving under us.
 				framesWithoutGrowth = scrollHeight > lastScrollHeight ? 0 : framesWithoutGrowth + 1;
 				lastScrollHeight = scrollHeight;
 				if (framesWithoutGrowth >= MAX_QUIET_FRAMES) {
-					// Height has stopped changing and we still cannot reach the offset -
-					// the transcript is simply shorter now. Accept where we are.
+					// Height has stopped changing. Either we are on the settled bottom,
+					// or the transcript is simply shorter than the saved offset now.
+					// Accept where we are.
 					hasRestoredScrollRef.current = true;
 					return;
 				}
@@ -2462,7 +2496,7 @@ export const TerminalOutput = memo(
 			return () => {
 				cancelled = true;
 			};
-		}, [initialScrollTop]);
+		}, [initialScrollTop, initialIsAtBottom]);
 
 		// Reset restore flag when session/tab changes (handled by key prop on TerminalOutput)
 		useEffect(() => {

@@ -121,6 +121,7 @@ Grep-verified 2026-09-04 (`npm run docs:verify` re-checks every path). This is t
 - **Segmented toolbar (sort/filter pill bar):** `borderLeft`, `variant` in `src/renderer/components/ui/SegmentedControl.tsx`
 - **Paginating a list already in memory:** `usePagination(items, pageSize, resetKey)`, `useHistoryPagination` in `src/renderer/hooks/ui/usePagination.ts`
 - **Following streaming output in a capped box:** `useStickToBottom(contentKey)`, `useScrollIntoView` in `src/renderer/hooks/ui/useStickToBottom.ts`
+- **Restoring an AI tab's scroll position:** `initialScrollTop` + `initialIsAtBottom` props on `src/renderer/components/TerminalOutput.tsx` (a tail-following tab restores to the BOTTOM, not its stale saved offset)
 - **Keeping a virtualized list on its selection:** `scrollToIndex`, `ref` in `src/renderer/hooks/ui/useScrollIntoView.ts`
 - **Adding a control to the Left Bar header:** three-zone row in `src/renderer/components/SessionList/SessionList.tsx`; see guide before touching
 - **Element width for JS-computed layout:** `useElementWidth(ref, enabled?)`, `ResizeObserver` in `src/renderer/hooks/ui/useElementWidth.ts`
