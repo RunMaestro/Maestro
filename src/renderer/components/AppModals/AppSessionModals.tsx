@@ -84,7 +84,9 @@ export interface AppSessionModalsProps {
 		additionalDirectories?: AdditionalDirectory[],
 		/** Provenance of `customContextWindow` (finding AD1). */
 		contextWindowSource?: 'user-edited',
-		failoverConfig?: FailoverConfig
+		failoverConfig?: FailoverConfig,
+		/** Env vars parked with the eye button: kept, but never handed to a spawn. */
+		customEnvVarsDisabled?: Record<string, string>
 	) => void;
 	editAgentSession: Session | null;
 

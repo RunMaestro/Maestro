@@ -14,40 +14,28 @@ const SAMPLE_ENTRIES: TocEntry[] = [
 function renderToc(
 	opts: {
 		tocEntries?: TocEntry[];
-		onSelectHeading?: (slug: string) => boolean;
+		onJumpToHeading?: (entry: TocEntry, behavior: ScrollBehavior) => void;
 		isMarkdown?: boolean;
 		markdownEditMode?: boolean;
 	} = {}
 ) {
 	const Wrapper: React.FC = () => {
-		const markdownContainerRef = useRef<HTMLDivElement>(null);
 		const tocButtonRef = useRef<HTMLButtonElement>(null);
 		const tocOverlayRef = useRef<HTMLDivElement>(null);
 		return (
-			<div>
-				{/* Empty heading containers - text intentionally omitted so screen
-				    queries against the TOC entry labels match only the TOC button,
-				    not the fixture document. */}
-				<div ref={markdownContainerRef} data-testid="markdown-container">
-					<h1 id="section-a" />
-					<h2 id="sub-of-a" />
-					<h1 id="section-b" />
-				</div>
-				<FilePreviewToc
-					theme={mockTheme}
-					tocEntries={opts.tocEntries ?? SAMPLE_ENTRIES}
-					tocWidth={250}
-					showTocOverlay={true}
-					setShowTocOverlay={() => {}}
-					scrollMarkdownToBoundary={() => {}}
-					markdownContainerRef={markdownContainerRef}
-					tocButtonRef={tocButtonRef}
-					tocOverlayRef={tocOverlayRef}
-					isMarkdown={opts.isMarkdown ?? true}
-					markdownEditMode={opts.markdownEditMode ?? false}
-					onSelectHeading={opts.onSelectHeading}
-				/>
-			</div>
+			<FilePreviewToc
+				theme={mockTheme}
+				tocEntries={opts.tocEntries ?? SAMPLE_ENTRIES}
+				tocWidth={250}
+				showTocOverlay={true}
+				setShowTocOverlay={() => {}}
+				scrollMarkdownToBoundary={() => {}}
+				tocButtonRef={tocButtonRef}
+				tocOverlayRef={tocOverlayRef}
+				isMarkdown={opts.isMarkdown ?? true}
+				markdownEditMode={opts.markdownEditMode ?? false}
+				onJumpToHeading={opts.onJumpToHeading ?? (() => {})}
+			/>
 		);
 	};
 	return render(<Wrapper />);
@@ -78,66 +66,35 @@ describe('FilePreviewToc', () => {
 		});
 	});
 
-	describe('default (Rich-path) scroll', () => {
-		it('uses querySelector + scrollIntoView when onSelectHeading is not provided', () => {
-			renderToc({});
-			const target = screen
-				.getByTestId('markdown-container')
-				.querySelector('#section-b') as HTMLElement;
-			const spy = vi.spyOn(target, 'scrollIntoView');
+	describe('jump delegation', () => {
+		it('asks the owner to jump to the clicked entry, smoothly', () => {
+			const onJumpToHeading = vi.fn();
+			renderToc({ onJumpToHeading });
 			fireEvent.click(screen.getByText('Section B'));
-			expect(spy).toHaveBeenCalled();
+			expect(onJumpToHeading).toHaveBeenCalledWith(SAMPLE_ENTRIES[2], 'smooth');
 		});
 
-		it('does nothing when querySelector fails to find the heading', () => {
-			renderToc({
-				tocEntries: [{ level: 1, text: 'Missing', slug: 'does-not-exist' }],
-			});
-			// Should not throw - silently no-op.
-			expect(() => fireEvent.click(screen.getByText('Missing'))).not.toThrow();
+		it('passes the sub-heading entry, not just its slug', () => {
+			const onJumpToHeading = vi.fn();
+			renderToc({ onJumpToHeading });
+			fireEvent.click(screen.getByText('Sub of A'));
+			expect(onJumpToHeading).toHaveBeenCalledWith(SAMPLE_ENTRIES[1], 'smooth');
+		});
+
+		it('jumps instantly on arrow-key navigation so key repeat stays responsive', () => {
+			const onJumpToHeading = vi.fn();
+			const { container } = renderToc({ onJumpToHeading });
+			const list = container.querySelector('[data-testid="toc-top-button"]')
+				?.nextElementSibling as HTMLElement;
+			fireEvent.keyDown(list, { key: 'ArrowDown' });
+			expect(onJumpToHeading).toHaveBeenCalledWith(SAMPLE_ENTRIES[1], 'auto');
 		});
 	});
 
-	describe('Fast-tier callback override', () => {
-		it('calls onSelectHeading with the entry slug', () => {
-			const onSelectHeading = vi.fn().mockReturnValue(true);
-			renderToc({ onSelectHeading });
-			fireEvent.click(screen.getByText('Section B'));
-			expect(onSelectHeading).toHaveBeenCalledWith('section-b');
-		});
-
-		it('does not throw if callback returns true and DOM element does not exist', () => {
-			// When the Fast-tier callback claims the scroll, the DOM-fallback code
-			// path is skipped entirely. This guards against accidental fall-through
-			// when the DOM ref hasn't yet attached.
-			const onSelectHeading = vi.fn().mockReturnValue(true);
-			renderToc({
-				onSelectHeading,
-				// Slug that does not exist anywhere in the fixture; the DOM path
-				// would silently no-op, but the Fast path should win first.
-				tocEntries: [{ level: 1, text: 'Phantom', slug: 'phantom-section' }],
-			});
-			expect(() => fireEvent.click(screen.getByText('Phantom'))).not.toThrow();
-			expect(onSelectHeading).toHaveBeenCalledWith('phantom-section');
-		});
-
-		it('falls back to DOM scroll when callback returns false', () => {
-			const onSelectHeading = vi.fn().mockReturnValue(false);
-			renderToc({ onSelectHeading });
-			const target = screen
-				.getByTestId('markdown-container')
-				.querySelector('#section-b') as HTMLElement;
-			const spy = vi.spyOn(target, 'scrollIntoView');
-			fireEvent.click(screen.getByText('Section B'));
-			expect(onSelectHeading).toHaveBeenCalledWith('section-b');
-			expect(spy).toHaveBeenCalled();
-		});
-
-		it('passes the sub-heading slug correctly', () => {
-			const onSelectHeading = vi.fn().mockReturnValue(true);
-			renderToc({ onSelectHeading });
-			fireEvent.click(screen.getByText('Sub of A'));
-			expect(onSelectHeading).toHaveBeenCalledWith('sub-of-a');
+	describe('discoverability', () => {
+		it('advertises the # heading palette in the header', () => {
+			renderToc({});
+			expect(screen.getByTitle('Press # to search these headings')).toBeTruthy();
 		});
 	});
 });

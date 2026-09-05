@@ -26,6 +26,7 @@ import {
 	restoreOrphanedTab,
 	setActiveTab,
 	toggleReadOnlyModeFields,
+	visibleAiTabs,
 } from '../../../utils/tabHelpers';
 import type { AITabHandlersReturn } from './types';
 
@@ -159,18 +160,21 @@ export function useAITabHandlers(): AITabHandlersReturn {
 
 	const handleNewTab = createNewAITab;
 
+	// "Close all" means every tab the user can see. Hidden consult tabs (unopened
+	// cross-agent @mentions) have no chip, so closing one here would silently
+	// destroy a transcript and its resume id the user was never shown.
 	const performCloseAllTabs = useCallback(() => {
 		const { activeSessionId, sessions } = useSessionStore.getState();
 		const activeSession = sessions.find((s) => s.id === activeSessionId);
-		activeSession?.aiTabs.forEach((t) => clearLiveDraft(t.id));
+		visibleAiTabs(activeSession?.aiTabs).forEach((t) => clearLiveDraft(t.id));
 
-		const wizardTabIds = (activeSession?.aiTabs ?? [])
+		const wizardTabIds = visibleAiTabs(activeSession?.aiTabs)
 			.filter((t) => hasActiveWizard(t))
 			.map((t) => t.id);
 
 		updateSessionWith(activeSessionId, (s) => {
 			let updatedSession = s;
-			const tabIds = s.aiTabs.map((t) => t.id);
+			const tabIds = visibleAiTabs(s.aiTabs).map((t) => t.id);
 			for (const tabId of tabIds) {
 				const tab = updatedSession.aiTabs.find((t) => t.id === tabId);
 				const result = closeTab(updatedSession, tabId, false, {
@@ -194,7 +198,7 @@ export function useAITabHandlers(): AITabHandlersReturn {
 		const session = selectActiveSession(useSessionStore.getState());
 		if (!session) return;
 
-		const hasAnyDraft = session.aiTabs.some((tab) => hasDraft(tab));
+		const hasAnyDraft = visibleAiTabs(session.aiTabs).some((tab) => hasDraft(tab));
 		if (hasAnyDraft) {
 			useModalStore.getState().openModal('confirm', {
 				message: 'Some tabs have unsent drafts. Are you sure you want to close all tabs?',

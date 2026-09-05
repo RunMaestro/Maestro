@@ -78,6 +78,7 @@ import {
 	routeAgentResponse,
 	spawnModeratorSynthesis,
 	getGroupChatReadOnlyState,
+	clearPendingParticipants,
 	setGetSessionsCallback,
 	setSshStore,
 	setModeratorResponseTimeout,
@@ -1373,8 +1374,20 @@ describe('group-chat-router', () => {
 			);
 		}
 
-		it('skips delegation to a busy agent and says so in the chat', async () => {
-			const chat = await createTestChatWithModerator('Busy Skip Test');
+		/**
+		 * Drives the queued-delegation poll loop forward under fake timers until
+		 * `done()` reports the handoff landed. Each pass advances one poll interval
+		 * and then flushes the microtasks the delivery chain resolves on.
+		 */
+		async function runPollsUntil(done: () => boolean, passes = 10): Promise<void> {
+			for (let i = 0; i < passes && !done(); i++) {
+				await vi.advanceTimersByTimeAsync(5000);
+				await vi.advanceTimersByTimeAsync(0);
+			}
+		}
+
+		it('holds delegation for a busy agent and says who it is waiting on', async () => {
+			const chat = await createTestChatWithModerator('Busy Wait Test');
 			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
 			setGetSessionsCallback(() => [busyClientSession]);
 			mockProcessManager.spawn.mockClear();
@@ -1388,12 +1401,102 @@ describe('group-chat-router', () => {
 
 			expect(participantSpawnsFor(chat.id)).toHaveLength(0);
 
-			// The skip is logged, not just emitted: the moderator reads recent log
-			// lines as context, so this is how it learns the work never went out.
+			// The wait is logged, not just emitted: the moderator reads recent log
+			// lines as context, so this is how it learns the work is still pending.
 			const messages = await readLog(chat.logPath);
 			const systemMessage = messages.find((m) => m.from === 'system');
 			expect(systemMessage?.content).toContain('@Client');
-			expect(systemMessage?.content).toContain('busy');
+			expect(systemMessage?.content).toContain('Waiting');
+
+			clearPendingParticipants(chat.id);
+		});
+
+		it('delivers the held delegation once the agent frees up', async () => {
+			vi.useFakeTimers();
+			try {
+				const chat = await createTestChatWithModerator('Busy Then Free Test');
+				await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+				let busy = true;
+				setGetSessionsCallback(() => [{ ...busyClientSession, isBusy: busy }]);
+				mockProcessManager.spawn.mockClear();
+
+				await routeModeratorResponse(
+					chat.id,
+					'@Client: Please implement this feature',
+					mockProcessManager,
+					mockAgentDetector
+				);
+				expect(participantSpawnsFor(chat.id)).toHaveLength(0);
+
+				// Still busy: the poll must not hand the work over early.
+				await runPollsUntil(() => false, 2);
+				expect(participantSpawnsFor(chat.id)).toHaveLength(0);
+
+				busy = false;
+				await runPollsUntil(() => participantSpawnsFor(chat.id).length > 0);
+				expect(participantSpawnsFor(chat.id)).toHaveLength(1);
+
+				clearPendingParticipants(chat.id);
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		it('gives up on an agent that never frees up and says so', async () => {
+			vi.useFakeTimers();
+			try {
+				const chat = await createTestChatWithModerator('Busy Forever Test');
+				await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+				setGetSessionsCallback(() => [busyClientSession]);
+				mockProcessManager.spawn.mockClear();
+
+				await routeModeratorResponse(
+					chat.id,
+					'@Client: Please implement this feature',
+					mockProcessManager,
+					mockAgentDetector
+				);
+
+				// Past the 15 minute wait budget.
+				await runPollsUntil(() => false, 200);
+
+				const messages = await readLog(chat.logPath);
+				expect(messages.some((m) => m.from === 'system' && m.content.includes('Gave up'))).toBe(
+					true
+				);
+				expect(participantSpawnsFor(chat.id)).toHaveLength(0);
+
+				clearPendingParticipants(chat.id);
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		it('stops waiting when the chat is stopped', async () => {
+			vi.useFakeTimers();
+			try {
+				const chat = await createTestChatWithModerator('Busy Cancel Test');
+				await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+				let busy = true;
+				setGetSessionsCallback(() => [{ ...busyClientSession, isBusy: busy }]);
+				mockProcessManager.spawn.mockClear();
+
+				await routeModeratorResponse(
+					chat.id,
+					'@Client: Please implement this feature',
+					mockProcessManager,
+					mockAgentDetector
+				);
+
+				clearPendingParticipants(chat.id);
+				busy = false;
+				await runPollsUntil(() => false, 3);
+
+				// The agent freed up, but the chat is no longer waiting on it.
+				expect(participantSpawnsFor(chat.id)).toHaveLength(0);
+			} finally {
+				vi.useRealTimers();
+			}
 		});
 
 		it('delegates to a busy agent when the chat opted out', async () => {
@@ -1449,24 +1552,40 @@ describe('group-chat-router', () => {
 			expect(participantSpawnsFor(chat.id)).toHaveLength(1);
 		});
 
-		it('does not trigger Auto Run on a busy agent', async () => {
-			const chat = await createTestChatWithModerator('Busy Auto Run Test');
-			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
-			setGetSessionsCallback(() => [
-				{ ...busyClientSession, autoRunFolderPath: '/tmp/project/.maestro/playbooks' },
-			]);
+		it('holds Auto Run for a busy agent and triggers it once free', async () => {
+			vi.useFakeTimers();
 			const emitAutoRunTriggered = vi.fn();
-			groupChatEmitters.emitAutoRunTriggered = emitAutoRunTriggered;
+			try {
+				const chat = await createTestChatWithModerator('Busy Auto Run Test');
+				await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+				let busy = true;
+				setGetSessionsCallback(() => [
+					{
+						...busyClientSession,
+						isBusy: busy,
+						autoRunFolderPath: '/tmp/project/.maestro/playbooks',
+					},
+				]);
+				groupChatEmitters.emitAutoRunTriggered = emitAutoRunTriggered;
 
-			await routeModeratorResponse(
-				chat.id,
-				'!autorun @Client',
-				mockProcessManager,
-				mockAgentDetector
-			);
+				await routeModeratorResponse(
+					chat.id,
+					'!autorun @Client',
+					mockProcessManager,
+					mockAgentDetector
+				);
 
-			expect(emitAutoRunTriggered).not.toHaveBeenCalled();
-			groupChatEmitters.emitAutoRunTriggered = undefined;
+				expect(emitAutoRunTriggered).not.toHaveBeenCalled();
+
+				busy = false;
+				await runPollsUntil(() => emitAutoRunTriggered.mock.calls.length > 0);
+				expect(emitAutoRunTriggered).toHaveBeenCalledTimes(1);
+
+				clearPendingParticipants(chat.id);
+			} finally {
+				groupChatEmitters.emitAutoRunTriggered = undefined;
+				vi.useRealTimers();
+			}
 		});
 	});
 

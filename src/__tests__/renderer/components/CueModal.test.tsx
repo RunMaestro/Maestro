@@ -79,7 +79,11 @@ const mockCueModalData = vi.hoisted(() => ({
 }));
 const mockOpenCueYamlEditor = vi.fn();
 const mockShowConfirmation = vi.fn();
-vi.mock('../../../renderer/stores/modalStore', () => ({
+// Spread the real module so a new modalStore export cannot break this mock at
+// import time. `fileExplorerStore` calls `registerExternalDestination` at module
+// scope, and a factory mock that omits it throws before any test runs.
+vi.mock('../../../renderer/stores/modalStore', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../renderer/stores/modalStore')>()),
 	getModalActions: () => ({
 		openCueYamlEditor: mockOpenCueYamlEditor,
 		showConfirmation: mockShowConfirmation,

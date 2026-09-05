@@ -1871,6 +1871,62 @@ describe('TabSwitcherModal', () => {
 		});
 	});
 
+	describe('hidden consult tabs', () => {
+		it('leaves a hidden cross-agent consult tab out of the Open Tabs list and count', () => {
+			const visible = createTestTab({ name: 'My Tab' });
+			const consult = createTestTab({ name: '\u21a9 Other Agent', hidden: true });
+
+			renderWithLayerStack(
+				<TabSwitcherModal
+					theme={theme}
+					tabs={[visible, consult]}
+					activeTabId={visible.id}
+					projectRoot="/test"
+					onTabSelect={vi.fn()}
+					onNamedSessionSelect={vi.fn()}
+					onClose={vi.fn()}
+				/>
+			);
+
+			expect(screen.getByText('Open Tabs (1)')).toBeInTheDocument();
+			expect(screen.getByText('My Tab')).toBeInTheDocument();
+			expect(screen.queryByText('\u21a9 Other Agent')).not.toBeInTheDocument();
+		});
+
+		it('does not sync a hidden consult tab name to the named-session store', async () => {
+			const tabs = [
+				createTestTab({ name: 'Named Tab', agentSessionId: 'session-123' }),
+				createTestTab({
+					name: '\u21a9 Other Agent',
+					agentSessionId: 'consult-session',
+					hidden: true,
+				}),
+			];
+
+			renderWithLayerStack(
+				<TabSwitcherModal
+					theme={theme}
+					tabs={tabs}
+					activeTabId={tabs[0].id}
+					projectRoot="/test/project"
+					onTabSelect={vi.fn()}
+					onNamedSessionSelect={vi.fn()}
+					onClose={vi.fn()}
+				/>
+			);
+
+			await waitFor(() => {
+				expect(window.maestro.claude.updateSessionName).toHaveBeenCalledWith(
+					'/test/project',
+					'session-123',
+					'Named Tab'
+				);
+			});
+
+			expect(window.maestro.claude.updateSessionName).toHaveBeenCalledTimes(1);
+		});
+	});
+
 	describe('focus management', () => {
 		it('focuses input on mount after delay', async () => {
 			const tabs = [createTestTab()];

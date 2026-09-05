@@ -138,6 +138,15 @@ SSH wrapper, `resolveAgentEnvironment()`) keeps reading a single record and need
 if a variable is in `shellEnvVars`, it is live. **Never merge `shellEnvVarsDisabled` into a
 spawn environment.**
 
+The same eye button, and the same split, exist per agent. A variable switched off in the
+agent editor (Edit Agent → Environment Variables) or on a Group Chat moderator moves from
+`customEnvVars` into `customEnvVarsDisabled` on the session record. The rule is identical:
+`customEnvVars` is the live record every spawn path reads, `customEnvVarsDisabled` is
+editor-only storage so a key and value survive without being passed to the agent. Both
+records ride along when an agent is duplicated into a git worktree, so a parked variable is
+not silently lost there either. **Never merge `customEnvVarsDisabled` into a spawn
+environment.**
+
 ---
 
 ## Precedence Rules

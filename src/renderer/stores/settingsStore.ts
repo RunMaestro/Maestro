@@ -2798,6 +2798,7 @@ export function getSettingsActions() {
 		setShowAgentName: state.setShowAgentName,
 		setShowSessionIdPill: state.setShowSessionIdPill,
 		setShowSessionCostPill: state.setShowSessionCostPill,
+		setShowProviderModePill: state.setShowProviderModePill,
 		setShowWorktreePill: state.setShowWorktreePill,
 		setShowWorktreeBranchName: state.setShowWorktreeBranchName,
 		setShowLeftPanelGroupMemberCount: state.setShowLeftPanelGroupMemberCount,

@@ -187,23 +187,26 @@ const CONSULT_HEADER =
  * directory. The consult runs in the TARGET agent's own cwd, so this is the only
  * pointer it has to the user's project.
  *
- * Two modes, gated by the `crossAgentMentionsWritable` setting (default off):
- * - Read-only (default): grant read but not write. This is advisory text ONLY;
- *   the real enforcement is `readOnlyMode: true` on the spawn below
+ * Two modes, gated by the `crossAgentMentionsWritable` setting (default off).
+ * The user-facing names for them are CONSULT and DELEGATION, so the grant text
+ * uses those words rather than only "read-only" / "read/write":
+ * - Consult (read-only, default): grant read but not write. This is advisory text
+ *   ONLY; the real enforcement is `readOnlyMode: true` on the spawn below
  *   (`--permission-mode plan` for Claude Code, `--sandbox read-only` for Codex,
  *   ...). Both must stay in agreement: consults used to spawn read-write while
  *   saying this, and targets took the write path anyway. We also tell the target
  *   how the user can lift the restriction, so a "make this change" request gets a
  *   useful answer instead of a silent no-op.
- * - Read/write: the user opted in, so we drop the write prohibition and let the
- *   consult edit files (enforcement below spawns with `readOnlyMode: false`).
+ * - Delegation (read/write): the user opted in, so we drop the write prohibition
+ *   and let the target edit files (spawns with `readOnlyMode: false`).
  */
 function cwdGrant(sourceCwd: string, writable: boolean): string {
 	if (writable) {
 		return (
 			`The user is working in the directory \`${sourceCwd}\`. ` +
 			'You have permission to READ and MODIFY files under that directory to answer. ' +
-			'The user has enabled read/write cross-agent mentions, so you may apply changes directly.'
+			'The user has enabled read/write cross-agent mentions, so this is a DELEGATION rather ' +
+			'than a consult: you may apply changes directly.'
 		);
 	}
 	return (
@@ -211,9 +214,9 @@ function cwdGrant(sourceCwd: string, writable: boolean): string {
 		'You have permission to READ files under that directory to inform your answer. ' +
 		'Do NOT modify or create files: this is a one-shot READ-ONLY consultation, so if changes ' +
 		'are needed, describe them in your reply and let the user apply them. If the user is asking ' +
-		'you to make changes directly, tell them cross-agent mentions are read-only by default and ' +
-		'they can allow writes in Settings > General > Cross-Agent Mentions (set Consult Permission ' +
-		'to Read/Write).'
+		'you to make changes directly, tell them cross-agent mentions are consults (read-only) by ' +
+		'default and they can turn them into delegations in Settings > General > Cross-Agent ' +
+		'Mentions (set Consult or Delegate to Read/Write).'
 	);
 }
 

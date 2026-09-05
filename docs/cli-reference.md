@@ -977,17 +977,63 @@ Move a tab to a position in its agent's tab bar (0-based, or "first"/"last")
 
 Create a new SSH remote configuration
 
-| Option                  | Description                                                           | Default |
-| ----------------------- | --------------------------------------------------------------------- | ------- |
-| `-H, --host <host>`     | SSH hostname or IP (or SSH config Host pattern with --ssh-config)     | -       |
-| `-p, --port <port>`     | SSH port (default: 22)                                                | -       |
-| `-u, --username <user>` | SSH username                                                          | -       |
-| `-k, --key <path>`      | Path to private key file                                              | -       |
-| `--env <KEY=VALUE>`     | Remote environment variable (repeatable)                              | `[]`    |
-| `--ssh-config`          | Use ~/.ssh/config for connection settings (host becomes Host pattern) | -       |
-| `--disabled`            | Create in disabled state                                              | -       |
-| `--set-default`         | Set as the global default SSH remote                                  | -       |
-| `--json`                | Output as JSON (for scripting)                                        | -       |
+| Option                     | Description                                                                  | Default |
+| -------------------------- | ---------------------------------------------------------------------------- | ------- |
+| `-H, --host <host>`        | SSH hostname or IP (or SSH config Host pattern with --ssh-config)            | -       |
+| `-p, --port <port>`        | SSH port (default: 22)                                                       | -       |
+| `-u, --username <user>`    | SSH username                                                                 | -       |
+| `-k, --key <path>`         | Path to private key file                                                     | -       |
+| `--env <KEY=VALUE>`        | Remote environment variable (repeatable)                                     | `[]`    |
+| `--ssh-option <KEY=VALUE>` | Extra ssh -o option, e.g. ProxyCommand=... or ConnectTimeout=45 (repeatable) | `[]`    |
+| `--ssh-config`             | Use ~/.ssh/config for connection settings (host becomes Host pattern)        | -       |
+| `--disabled`               | Create in disabled state                                                     | -       |
+| `--set-default`            | Set as the global default SSH remote                                         | -       |
+| `--json`                   | Output as JSON (for scripting)                                               | -       |
+
+`--ssh-option` passes an option straight to `ssh -o`, overriding Maestro's own
+defaults. It is how a host behind a tunnel is reached without a setting per
+transport - a `ProxyCommand` through tailcat, cloudflared or Teleport, a
+`ProxyJump` bastion, or simply a `ConnectTimeout` longer than the default 10
+seconds. Because a command-line `-o` outranks `~/.ssh/config`, this is also the
+only way to change one of those defaults. `RequestTTY` is reserved: Maestro
+derives it per command from whether the agent speaks stream-json, and a forced
+TTY corrupts that stream.
+
+```bash
+maestro-cli create-ssh-remote "Tunnelled box" \
+  --host tailcat-devbox \
+  --ssh-option "ProxyCommand=/opt/homebrew/bin/tailcat tcXXXX 22" \
+  --ssh-option ConnectTimeout=45
+```
+
+## `maestro-cli update-ssh-remote <remote-id>`
+
+Update an existing SSH remote configuration
+
+| Option                     | Description                                                    | Default |
+| -------------------------- | -------------------------------------------------------------- | ------- |
+| `-n, --name <name>`        | Display name                                                   | -       |
+| `-H, --host <host>`        | SSH hostname, IP, or SSH config Host pattern                   | -       |
+| `-p, --port <port>`        | SSH port                                                       | -       |
+| `-u, --username <user>`    | SSH username (empty string clears it)                          | -       |
+| `-k, --key <path>`         | Path to private key file (empty string clears it)              | -       |
+| `--env <KEY=VALUE>`        | Remote environment variable, merged with existing (repeatable) | `[]`    |
+| `--clear-env`              | Remove all remote environment variables before applying --env  | -       |
+| `--ssh-option <KEY=VALUE>` | Extra ssh -o option, merged with existing (repeatable)         | `[]`    |
+| `--clear-ssh-options`      | Remove all extra ssh -o options before applying --ssh-option   | -       |
+| `--ssh-config <bool>`      | Use ~/.ssh/config for connection settings (true/false)         | -       |
+| `--enabled <bool>`         | Enable or disable this remote (true/false)                     | -       |
+| `--set-default`            | Set as the global default SSH remote                           | -       |
+| `--json`                   | Output as JSON (for scripting)                                 | -       |
+
+Only the fields you pass are changed. `--env` and `--ssh-option` MERGE into what
+is already there, so editing one option does not silently drop the rest; pair
+them with `--clear-env` / `--clear-ssh-options` to start from empty.
+
+With `--json`, the output carries both `sshOptions` (this remote's overrides) and
+`resolvedSshOptions` (the full set `ssh` will actually receive, defaults
+included) - the second is the one that answers "did my `ConnectTimeout` take
+effect?". `list-ssh-remotes --json` reports both as well.
 
 ## `maestro-cli remove-ssh-remote <remote-id>`
 

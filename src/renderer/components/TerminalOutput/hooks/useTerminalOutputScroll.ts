@@ -1,5 +1,10 @@
 import { useRef, useState, useEffect, useCallback } from 'react';
 import { useThrottledCallback } from '../../../hooks';
+import { useEventListener } from '../../../hooks/utils/useEventListener';
+import {
+	TRANSCRIPT_SCROLL_TO_BOTTOM_EVENT,
+	type TranscriptScrollToBottomDetail,
+} from '../../../services/transcriptScroll';
 
 /** How long a programmatic bottom-jump keeps its scroll-event guard armed. */
 const PROGRAMMATIC_SCROLL_GUARD_MS = 100;
@@ -526,6 +531,19 @@ export function useTerminalOutputScroll({
 		// user scroll-up.
 		jumpToBottom();
 	}, [jumpToBottom, activeTabId, filteredLogsLength, onAtBottomChange]);
+
+	// A bang command's output card is a reply the user asked for by pressing
+	// Enter, so it has to be visible the moment it starts streaming. If they were
+	// reading history at the time, auto-scroll is paused and the card would land
+	// offscreen behind the unread badge - the one case where the pause is wrong,
+	// because the new content is theirs, not the agent's. The request names its
+	// session and tab, so a command dispatched into a background conversation
+	// cannot yank the view off what the user is reading.
+	useEventListener(TRANSCRIPT_SCROLL_TO_BOTTOM_EVENT, (event) => {
+		const detail = (event as CustomEvent<TranscriptScrollToBottomDetail>).detail;
+		if (!detail || detail.sessionId !== sessionId || detail.tabId !== activeTabId) return;
+		scrollToBottomAndResume();
+	});
 
 	return {
 		isAtBottom,

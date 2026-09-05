@@ -34,7 +34,7 @@ import { useUIStore } from '../stores/uiStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { useBatchStore } from '../stores/batchStore';
-import { useThoughtStreamStore, selectThoughtCount } from '../stores/thoughtStreamStore';
+import { useThoughtStreamStore, selectActivityCount } from '../stores/thoughtStreamStore';
 import { useSessionStore, selectActiveSession } from '../stores/sessionStore';
 import { useWindowOwnsSession } from '../contexts/WindowContext';
 import type { FileNode } from '../types/fileTree';
@@ -191,7 +191,9 @@ export const RightPanel = memo(
 		// buffered and waiting to be read - clicking opens (or re-expands) the
 		// panel on that history. There is no separate floating pill.
 		const openThoughtStream = useThoughtStreamStore((s) => s.openPanel);
-		const bufferedThoughts = useThoughtStreamStore(selectThoughtCount(sessionId));
+		// Reasoning AND tool calls - a run that only acted and never narrated still
+		// has a feed worth opening, so the label must not promise thoughts alone.
+		const bufferedActivity = useThoughtStreamStore(selectActivityCount(sessionId));
 
 		// === Props (domain-hook handlers + theme + batch state + refs) ===
 		const {
@@ -937,14 +939,14 @@ export const RightPanel = memo(
 									<button
 										className="flex items-center gap-1 text-2xs whitespace-nowrap bg-transparent border-none p-0 cursor-pointer hover:opacity-80"
 										style={{
-											color: bufferedThoughts > 0 ? theme.colors.accent : theme.colors.textDim,
+											color: bufferedActivity > 0 ? theme.colors.accent : theme.colors.textDim,
 											textDecoration: 'underline',
 										}}
 										onClick={() => openThoughtStream(sessionId)}
 										title={
-											bufferedThoughts > 0
-												? `${bufferedThoughts} buffered thought${bufferedThoughts === 1 ? '' : 's'} - click to read`
-												: "Peer into the agent's thought stream"
+											bufferedActivity > 0
+												? `${bufferedActivity} buffered thought${bufferedActivity === 1 ? '' : 's'} and tool call${bufferedActivity === 1 ? '' : 's'} - click to read`
+												: "Peer into the agent's reasoning and tool calls"
 										}
 									>
 										<Brain className="w-3 h-3" />

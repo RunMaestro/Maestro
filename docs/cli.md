@@ -1144,7 +1144,7 @@ Settings and agent config changes made via the CLI are automatically detected by
 
 ### Managing SSH Remotes
 
-Create, list, and remove SSH remote configurations. These commands read and write directly to the Maestro settings file - no running desktop app required.
+Create, list, update, and remove SSH remote configurations. These commands read and write directly to the Maestro settings file - no running desktop app required.
 
 ```bash
 # List all configured SSH remotes
@@ -1165,9 +1165,23 @@ maestro-cli create-ssh-remote "Build Server" \
 	--env PATH=/usr/local/bin --env NODE_ENV=production \
 	--set-default
 
+# Reach a host through a tunnel with extra ssh -o options
+maestro-cli create-ssh-remote "Tunnelled box" \
+	-H internal.example.com \
+	-u deploy \
+	--ssh-option 'ProxyCommand=cloudflared access ssh --hostname %h' \
+	--ssh-option ConnectTimeout=45
+
+# Update an existing remote (merges by default)
+maestro-cli update-ssh-remote <remote-id> --ssh-option ConnectTimeout=60
+maestro-cli update-ssh-remote <remote-id> --clear-ssh-options
+maestro-cli update-ssh-remote <remote-id> --enabled false
+
 # Remove an SSH remote
 maestro-cli remove-ssh-remote <remote-id>
 ```
+
+`create-ssh-remote` flags:
 
 | Flag                    | Description                                                     | Default |
 | ----------------------- | --------------------------------------------------------------- | ------- |
@@ -1176,10 +1190,34 @@ maestro-cli remove-ssh-remote <remote-id>
 | `-u, --username <user>` | SSH username                                                    | -       |
 | `-k, --key <path>`      | Path to private key file                                        | -       |
 | `--env <KEY=VALUE>`     | Remote environment variable (repeatable)                        | -       |
+| `--ssh-option <K=V>`    | Extra `ssh -o` option, e.g. `ProxyCommand=...` (repeatable)     | -       |
 | `--ssh-config`          | Use `~/.ssh/config` for connection settings                     | -       |
 | `--disabled`            | Create in disabled state                                        | -       |
 | `--set-default`         | Set as the global default SSH remote                            | -       |
 | `--json`                | Machine-readable JSON output                                    | -       |
+
+`update-ssh-remote` takes the same connection flags plus the ones below. `--env`
+and `--ssh-option` MERGE into what the remote already has, so a single flag does
+not silently drop the rest; pair them with the matching `--clear-*` flag to
+replace the set outright. Passing an empty string to `-u` or `-k` clears it.
+
+| Flag                  | Description                                                    | Default |
+| --------------------- | -------------------------------------------------------------- | ------- |
+| `-n, --name <name>`   | Display name                                                   | -       |
+| `--clear-env`         | Drop all remote environment variables before applying `--env`  | -       |
+| `--clear-ssh-options` | Drop all extra `ssh -o` options before applying `--ssh-option` | -       |
+| `--ssh-config <bool>` | Turn `~/.ssh/config` mode on or off                            | -       |
+| `--enabled <bool>`    | Enable or disable this remote                                  | -       |
+| `--set-default`       | Set as the global default SSH remote                           | -       |
+| `--json`              | Machine-readable JSON output, including `resolvedSshOptions`   | -       |
+
+A command-line `-o` outranks `~/.ssh/config`, so `--ssh-option` is the only way
+to change one of Maestro's connection defaults (`ConnectTimeout`, `BatchMode`,
+and friends). `list-ssh-remotes --json` and `update-ssh-remote --json` both
+report `resolvedSshOptions`, the full merged set `ssh` actually receives, which
+is what answers "did my `ConnectTimeout` take effect?". See
+[SSH Remote Execution](/ssh-remote-execution) for the reserved keys and the
+merge rules.
 
 <Info>
 SSH remote changes made via the CLI are detected by the running Maestro desktop app through file watching, just like settings changes.

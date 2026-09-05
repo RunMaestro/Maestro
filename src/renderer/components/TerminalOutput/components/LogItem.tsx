@@ -101,6 +101,7 @@ export const LogItem = memo(
 		userMessageAlignment,
 		isClaudeCode,
 		isAdaptiveMode,
+		showProviderModePill,
 		sessionId,
 		onSessionRecover,
 		isRecoveringSession,
@@ -862,9 +863,10 @@ export const LogItem = memo(
 					    replaces it. */}
 					{!crossAgent &&
 						log.source !== 'user' &&
-						(isClaudeCode || log.turnModel || log.turnEffort) && (
+						((isClaudeCode && showProviderModePill) || log.turnModel || log.turnEffort) && (
 							<div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1 max-w-[60%] pointer-events-none select-none">
 								{isClaudeCode &&
+									showProviderModePill &&
 									(() => {
 										const { label, title } = getTokenSourcePill({
 											mode: log.renderStyle === 'text-stream' ? 'interactive' : 'api',
@@ -1112,7 +1114,12 @@ export const LogItem = memo(
 			prevProps.userMessageAlignment === nextProps.userMessageAlignment &&
 			prevProps.ghCliAvailable === nextProps.ghCliAvailable &&
 			prevProps.onForkConversation === nextProps.onForkConversation &&
-			prevProps.publishedGistUrl === nextProps.publishedGistUrl
+			prevProps.publishedGistUrl === nextProps.publishedGistUrl &&
+			// Unlike isClaudeCode/isAdaptiveMode, which are fixed for the life of an
+			// agent, this one is a toggle the user flips while looking at the
+			// transcript - leave it out and every message already on screen keeps its
+			// pill until something unrelated re-renders it.
+			prevProps.showProviderModePill === nextProps.showProviderModePill
 		);
 	}
 );

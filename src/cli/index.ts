@@ -53,6 +53,7 @@ import { sendTerminal } from './commands/send-terminal';
 import { readTerminal, DEFAULT_TAIL_LINES } from './commands/read-terminal';
 import { createSshRemote } from './commands/create-ssh-remote';
 import { removeSshRemote } from './commands/remove-ssh-remote';
+import { updateSshRemote } from './commands/update-ssh-remote';
 import { directorNotesHistory } from './commands/director-notes-history';
 import { directorNotesSynopsis } from './commands/director-notes-synopsis';
 import { settingsList } from './commands/settings-list';
@@ -1229,11 +1230,46 @@ program
 		(val: string, prev: string[]) => [...prev, val],
 		[] as string[]
 	)
+	.option(
+		'--ssh-option <KEY=VALUE>',
+		'Extra ssh -o option, e.g. ProxyCommand=... or ConnectTimeout=45 (repeatable)',
+		(val: string, prev: string[]) => [...prev, val],
+		[] as string[]
+	)
 	.option('--ssh-config', 'Use ~/.ssh/config for connection settings (host becomes Host pattern)')
 	.option('--disabled', 'Create in disabled state')
 	.option('--set-default', 'Set as the global default SSH remote')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(createSshRemote);
+
+// Update SSH remote command - edit an existing SSH remote configuration
+program
+	.command('update-ssh-remote <remote-id>')
+	.description('Update an existing SSH remote configuration')
+	.option('-n, --name <name>', 'Display name')
+	.option('-H, --host <host>', 'SSH hostname, IP, or SSH config Host pattern')
+	.option('-p, --port <port>', 'SSH port')
+	.option('-u, --username <user>', 'SSH username (empty string clears it)')
+	.option('-k, --key <path>', 'Path to private key file (empty string clears it)')
+	.option(
+		'--env <KEY=VALUE>',
+		'Remote environment variable, merged with existing (repeatable)',
+		(val: string, prev: string[]) => [...prev, val],
+		[] as string[]
+	)
+	.option('--clear-env', 'Remove all remote environment variables before applying --env')
+	.option(
+		'--ssh-option <KEY=VALUE>',
+		'Extra ssh -o option, merged with existing (repeatable)',
+		(val: string, prev: string[]) => [...prev, val],
+		[] as string[]
+	)
+	.option('--clear-ssh-options', 'Remove all extra ssh -o options before applying --ssh-option')
+	.option('--ssh-config <bool>', 'Use ~/.ssh/config for connection settings (true/false)')
+	.option('--enabled <bool>', 'Enable or disable this remote (true/false)')
+	.option('--set-default', 'Set as the global default SSH remote')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(updateSshRemote);
 
 // Remove SSH remote command - delete an SSH remote configuration
 program

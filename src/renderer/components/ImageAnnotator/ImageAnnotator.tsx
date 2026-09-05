@@ -29,6 +29,16 @@ import {
 import { safeClipboardWriteImage } from '../../utils/clipboard';
 import { notifyToast } from '../../stores/notificationStore';
 import { logger } from '../../utils/logger';
+import { useSettingsStore } from '../../stores/settingsStore';
+import {
+	PEN_SIZE_MAX,
+	PEN_SIZE_MIN,
+	PEN_SIZE_STEP,
+	TEXT_SIZE_MAX,
+	TEXT_SIZE_MIN,
+	TEXT_SIZE_STEP,
+} from './annotatorConstants';
+import { nudgeSize, sizeHotkeyDirection } from './annotatorSizeHotkey';
 import { useImageAnnotatorStore } from './imageAnnotatorStore';
 import { useAnnotatorState } from './useAnnotatorState';
 import type { AnnotatorTool } from './useAnnotatorState';
@@ -198,6 +208,73 @@ function ImageAnnotatorContent({
 			if (!tool) return;
 			e.preventDefault();
 			setTool(tool);
+		},
+		{ target: typeof document !== 'undefined' ? document : null }
+	);
+
+	// `+` / `-` nudge the size of whatever the user is working on, so the common
+	// adjustment never requires opening the drawer. Text wins when a label is
+	// selected or the text tool is active; otherwise this is the pen / shape
+	// size. Like the drawer's sliders, a selected item is edited in place and
+	// the stored default is left alone.
+	// Read the stored sizes with `getState()` rather than a selector: subscribing
+	// would re-render this whole subtree (canvas included) on every keypress,
+	// and the canvas already watches those settings itself.
+	useEventListener(
+		'keydown',
+		(event) => {
+			const e = event as KeyboardEvent;
+			if (e.metaKey || e.ctrlKey || e.altKey) return;
+			if (isAnnotatorTextEntry(e.target)) return;
+			const direction = sizeHotkeyDirection(e.key);
+			if (!direction) return;
+			e.preventDefault();
+
+			const settings = useSettingsStore.getState();
+			const selectedText = state.selectedTextId
+				? (state.texts.find((t) => t.id === state.selectedTextId) ?? null)
+				: null;
+			if (selectedText || state.tool === 'text') {
+				if (selectedText) {
+					const size = nudgeSize(
+						selectedText.style.size,
+						direction,
+						TEXT_SIZE_STEP,
+						TEXT_SIZE_MIN,
+						TEXT_SIZE_MAX
+					);
+					state.updateText(selectedText.id, { style: { ...selectedText.style, size } });
+				} else {
+					settings.setAnnotatorTextSize(
+						nudgeSize(
+							settings.annotatorTextSize,
+							direction,
+							TEXT_SIZE_STEP,
+							TEXT_SIZE_MIN,
+							TEXT_SIZE_MAX
+						)
+					);
+				}
+				return;
+			}
+
+			const selectedShape = state.selectedShapeId
+				? (state.shapes.find((s) => s.id === state.selectedShapeId) ?? null)
+				: null;
+			if (selectedShape) {
+				const size = nudgeSize(
+					selectedShape.style.size,
+					direction,
+					PEN_SIZE_STEP,
+					PEN_SIZE_MIN,
+					PEN_SIZE_MAX
+				);
+				state.updateShape(selectedShape.id, { style: { ...selectedShape.style, size } });
+			} else {
+				settings.setAnnotatorPenSize(
+					nudgeSize(settings.annotatorPenSize, direction, PEN_SIZE_STEP, PEN_SIZE_MIN, PEN_SIZE_MAX)
+				);
+			}
 		},
 		{ target: typeof document !== 'undefined' ? document : null }
 	);

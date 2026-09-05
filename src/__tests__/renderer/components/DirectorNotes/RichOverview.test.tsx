@@ -156,6 +156,15 @@ describe('RichOverview', () => {
 		expect(screen.queryByText('Generation Time')).not.toBeInTheDocument();
 	});
 
+	it('starts the timeline with the Cue series toggled off', async () => {
+		render(<RichOverview theme={mockTheme} stats={STATS} synopsis={SYNOPSIS} lookbackDays={7} />);
+		await waitFor(() => {
+			expect(screen.getByRole('button', { name: 'Cue' })).toHaveAttribute('aria-pressed', 'false');
+		});
+		// Cue drops out of the stacked columns until the user clicks it back on.
+		expect(screen.getByTitle('Auto 0 · User 3 · Agent 0')).toBeInTheDocument();
+	});
+
 	it('refetches when the lookback window changes', async () => {
 		const { rerender } = render(
 			<RichOverview theme={mockTheme} stats={STATS} synopsis={SYNOPSIS} lookbackDays={7} />

@@ -207,6 +207,7 @@ of taking a second round trip or trusting a value the caller guessed.
 | Move an agent to a group                     | `update-agent --group`                                            |
 | Change working directory                     | `update-agent --cwd`                                              |
 | SSH remote execution config                  | `update-agent --ssh-remote / --ssh-cwd`, `create-ssh-remote`      |
+| Edit an SSH remote, incl. its `ssh -o` list  | `update-ssh-remote --ssh-option / --clear-ssh-options`            |
 | Focus an agent, switch AI/Shell mode         | `focus-agent`, `switch-mode`                                      |
 | Create / rename / remove a group             | `create-group`, `rename-group`, `remove-group`                    |
 | Create a worktree agent                      | `create-worktree`                                                 |

@@ -118,18 +118,19 @@ right away and the list scrolls to keep the selected entry on screen.
 
 These shortcuts work in AI Terminal mode and affect the current tab:
 
-| Action                 | macOS          | Windows/Linux   |
-| ---------------------- | -------------- | --------------- |
-| Toggle Save to History | `Cmd+S`        | `Ctrl+S`        |
-| Toggle Read-Only Mode  | `Cmd+R`        | `Ctrl+R`        |
-| Toggle Show Thinking   | `Cmd+Shift+K`  | `Ctrl+Shift+K`  |
-| Toggle Tab Star        | `Cmd+Shift+S`  | `Ctrl+Shift+S`  |
-| Toggle Tab Unread      | `Cmd+Shift+U`  | `Ctrl+Shift+U`  |
-| Filter Unread Agents   | `Opt+U`        | `Alt+U`         |
-| Filter Unread Tabs     | `Cmd+U`        | `Ctrl+U`        |
-| Next Unread/Draft Tab  | `Opt+Cmd+Down` | `Alt+Ctrl+Down` |
-| Open Image Carousel    | `Cmd+Y`        | `Ctrl+Y`        |
-| Open Prompt Composer   | `Cmd+Shift+P`  | `Ctrl+Shift+P`  |
+| Action                      | macOS                 | Windows/Linux         |
+| --------------------------- | --------------------- | --------------------- |
+| Toggle Save to History      | `Cmd+S`               | `Ctrl+S`              |
+| Toggle Read-Only Mode       | `Cmd+R`               | `Ctrl+R`              |
+| Toggle Show Thinking        | `Cmd+Shift+K`         | `Ctrl+Shift+K`        |
+| Toggle Tab Star             | `Cmd+Shift+S`         | `Ctrl+Shift+S`        |
+| Toggle Tab Unread           | `Cmd+Shift+U`         | `Ctrl+Shift+U`        |
+| Filter Unread Agents        | `Opt+U`               | `Alt+U`               |
+| Filter Unread Tabs          | `Cmd+U`               | `Ctrl+U`              |
+| Unread Only (Agents + Tabs) | unassigned by default | unassigned by default |
+| Next Unread/Draft Tab       | `Opt+Cmd+Down`        | `Alt+Ctrl+Down`       |
+| Open Image Carousel         | `Cmd+Y`               | `Ctrl+Y`              |
+| Open Prompt Composer        | `Cmd+Shift+P`         | `Ctrl+Shift+P`        |
 
 Toggle states are saved per-tab. See [Input Toggles](./general-usage#input-toggles) for details on configuring defaults.
 
@@ -361,6 +362,7 @@ the full walkthrough.
 | Copy File Path                      | `Cmd+P`         | `Ctrl+P`        |
 | Open Search                         | `Cmd+F`         | `Ctrl+F`        |
 | Toggle Table of Contents (Markdown) | `Cmd+\`         | `Ctrl+\`        |
+| Jump to Heading (Markdown)          | `#`             | `#`             |
 | Go Back                             | `Cmd+Left`      | `Ctrl+Left`     |
 | Go Forward                          | `Cmd+Right`     | `Ctrl+Right`    |
 | Scroll                              | `Up/Down Arrow` | `Up/Down Arrow` |
@@ -368,6 +370,15 @@ the full walkthrough.
 | Zoom Preview Text Out               | `-` or `_`      | `-` or `_`      |
 | Reset Preview Zoom                  | `0`             | `0`             |
 | Close                               | `Esc`           | `Esc`           |
+
+`#` opens the heading palette: every heading in the document, in the order it
+appears, with a fuzzy filter on top. Type a few characters of a section name,
+move with `Up`/`Down` (`PgUp`/`PgDn` to skip further), and press `Enter` to jump
+there. It reads the same list as the Table of Contents, so use whichever suits
+the moment - the ToC to browse, the palette to go straight to a section by name.
+Like the zoom keys below it is bare, so it never fires while you are typing in
+the find bar or editing the document. The same list is in the command palette as
+**Jump to Heading**, offered only while a markdown file is open in preview.
 
 The three zoom keys are bare - no modifier - and are distinct from the app-wide
 `Cmd+=` / `Cmd+-` in [Font Zoom](#font-zoom), which scales the whole interface.

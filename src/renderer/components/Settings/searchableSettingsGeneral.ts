@@ -145,7 +145,7 @@ export const GENERAL_SETTINGS: SearchableSetting[] = [
 		tabLabel: 'General',
 		label: 'Cross-Agent Mentions',
 		description:
-			'Control whether agents consulted via @-mention run read-only (default) or may write to files',
+			'Control whether an @-mention is a consult (read-only, default) or a delegation (the agent may write files)',
 		keywords: [
 			'cross-agent',
 			'cross agent',
@@ -153,6 +153,8 @@ export const GENERAL_SETTINGS: SearchableSetting[] = [
 			'@mention',
 			'@-mention',
 			'consult',
+			'delegate',
+			'delegation',
 			'read-only',
 			'readonly',
 			'read only',

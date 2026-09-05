@@ -9,6 +9,7 @@ import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { EscCloseButton } from './ui/EscCloseButton';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { formatRelativeTime } from '../utils/formatters';
+import { visibleAiTabs } from '../utils/tabHelpers';
 import {
 	searchTabsMessages,
 	flattenCrossTabMatches,
@@ -100,12 +101,17 @@ const Snippet = memo(function Snippet({
  */
 export function CrossTabSearchModal({
 	theme,
-	tabs,
+	tabs: allTabs,
 	activeTabId,
 	shortcut,
 	onJump,
 	onClose,
 }: CrossTabSearchModalProps) {
+	// The corpus is the tabs the strip draws. A hidden consult tab holds a
+	// conversation the user never opened, so a hit inside one would jump them to a
+	// chipless transcript they can't get back from.
+	const tabs = useMemo(() => visibleAiTabs(allTabs), [allTabs]);
+
 	const [query, setQuery] = useState('');
 	const [regexMode, setRegexMode] = useState(false);
 	const inputRef = useRef<HTMLInputElement>(null);

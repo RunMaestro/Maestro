@@ -400,11 +400,11 @@ export function buildFeatureCommands({
 			id: 'viewInDocumentGraph',
 			label: 'View in Document Graph',
 			subtext: `Focus the graph on ${currentGraphFile}`,
-			shortcut: {
-				id: 'viewInDocumentGraph',
-				label: 'View in Document Graph',
-				keys: ['Meta', 'Shift', 'g'],
-			},
+			// No chord. This used to advertise Cmd+Shift+G, which belongs to View
+			// Git Log - the File Preview handled the key itself, so the graph
+			// silently won whenever a markdown preview had focus. The key was in no
+			// registry, so it could not be seen in Settings or rebound out of the
+			// way. The graph keeps its toolbar button and this entry.
 			action: () => {
 				onOpenCurrentFileInGraph();
 				setQuickActionOpen(false);

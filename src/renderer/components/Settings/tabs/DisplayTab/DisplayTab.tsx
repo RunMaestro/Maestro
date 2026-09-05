@@ -11,6 +11,7 @@ import {
 	FontZoomSection,
 	GroupChatSection,
 	IconThemeSection,
+	ProviderModePillSection,
 	LeftSidePanelSection,
 	MainHeaderPanelSection,
 	MaxLogBufferSection,
@@ -88,6 +89,11 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 				theme={theme}
 				groupChatAutoScroll={settings.groupChatAutoScroll}
 				setGroupChatAutoScroll={settings.setGroupChatAutoScroll}
+			/>
+			<ProviderModePillSection
+				theme={theme}
+				showProviderModePill={settings.showProviderModePill}
+				setShowProviderModePill={settings.setShowProviderModePill}
 			/>
 			<IconThemeSection
 				theme={theme}

@@ -32,6 +32,7 @@ import { GhostIconButton } from '../ui/GhostIconButton';
 import { captureException } from '../../utils/sentry';
 import { safeClipboardWrite, safeClipboardWriteImage } from '../../utils/clipboard';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
+import { eventMatchesShortcutKeys } from '../../utils/shortcutMatch';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { notifyToast } from '../../stores/notificationStore';
 import { requestFileDeletion } from '../../services/fileDeletion';
@@ -63,7 +64,7 @@ import { isImageFile } from '../../../shared/gitUtils';
 import { isParquetPreviewMarker } from '../../../shared/parquet/preview';
 import { ParquetViewer, type ParquetViewerHandle } from '../ParquetViewer';
 import { getOpenedMediaKind } from '../../utils/mediaItems';
-import type { FilePreviewProps, FilePreviewHandle, FileStats } from './types';
+import type { FilePreviewProps, FilePreviewHandle, FileStats, TocEntry } from './types';
 import {
 	getLanguageFromFilename,
 	isBinaryContent,
@@ -92,6 +93,8 @@ import { useImageAnnotatorStore } from '../ImageAnnotator/imageAnnotatorStore';
 import { getParentDir, getBasename } from '../../../shared/formatters';
 import { FilePreviewToc } from './FilePreviewToc';
 import { computeTocWidth } from '../Toc';
+import { HeadingPalette } from './HeadingPalette';
+import { scrollToHeadingSlug } from './shared/headings';
 import { FontScaleControl } from '../ui/FontScaleControl';
 import { useFontScale } from '../../hooks/ui/useFontScale';
 import { isTextInputTarget } from '../../utils/messageScrollNavigation';
@@ -107,6 +110,8 @@ import { rehypeSourceLine } from '../Markdown/rehypeSourceLine';
 import { useStableCallback } from '../../hooks/utils/useStableCallback';
 import { toggleTaskCheckboxAtLine } from '../../utils/markdownTasks';
 import { logger } from '../../utils/logger';
+import { useEventListener } from '../../hooks/utils/useEventListener';
+import { HEADING_PALETTE_EVENT } from '../../services/headingPalette';
 
 /**
  * How long to keep re-applying a restored scroll offset while the document
@@ -187,6 +192,8 @@ export const FilePreview = React.memo(
 		ref
 	) {
 		const [showTocOverlay, setShowTocOverlay] = useState(false);
+		// The `#` heading palette - a filtered, keyboard-driven twin of the ToC.
+		const [showHeadingPalette, setShowHeadingPalette] = useState(false);
 		// Reader font zoom for the preview / edit pane. One shared preference
 		// across file tabs (persisted by useFontScale), applied to whichever tier
 		// is currently mounted.
@@ -689,6 +696,39 @@ export const FilePreview = React.memo(
 			const top = direction === 'top' ? 0 : container.scrollHeight;
 			container.scrollTo({ top, behavior: 'smooth' });
 		}, []);
+
+		// The Fast tier virtualizes its blocks, so a slug lookup in the DOM misses
+		// every heading that isn't currently mounted; it scrolls by block index
+		// instead. The ref is null under the Rich and Giant tiers, which render
+		// every heading, so this reports "not handled" and the DOM path runs.
+		const headingScrollOverride = useCallback(
+			(slug: string) => markdownFastRef.current?.scrollToHeading(slug) ?? false,
+			[]
+		);
+
+		/** Jump the preview to a heading. Shared by the ToC and the `#` palette. */
+		const jumpToHeading = useCallback(
+			(entry: TocEntry, behavior: ScrollBehavior) => {
+				scrollToHeadingSlug(
+					entry.slug,
+					markdownContainerRef.current,
+					behavior,
+					headingScrollOverride
+				);
+			},
+			[headingScrollOverride]
+		);
+
+		// The Cmd+K command palette is a modal, so it cannot reach into this
+		// component's state directly - it asks over an app-level event instead.
+		// The guards mirror the `#` key's: a request that arrives for a file with
+		// no headings, or one being edited, is dropped rather than opening an
+		// empty palette over a textarea.
+		useEventListener(HEADING_PALETTE_EVENT, () => {
+			if (!isMarkdown || markdownEditMode || tocEntries.length === 0) return;
+			setShowTocOverlay(false);
+			setShowHeadingPalette(true);
+		});
 
 		// Memoize file tree indices to avoid O(n) traversal on every render
 		const fileTreeIndices = useMemo(() => {
@@ -1584,37 +1624,33 @@ export const FilePreview = React.memo(
 			}
 		};
 
-		// Helper to check if a shortcut matches
-		const isShortcut = (e: React.KeyboardEvent, shortcutId: string) => {
-			const shortcut = shortcuts[shortcutId];
-			if (!shortcut) return false;
-
-			const hasModifier = (key: string) => {
-				if (key === 'Meta') return e.metaKey;
-				if (key === 'Ctrl') return e.ctrlKey;
-				if (key === 'Alt') return e.altKey;
-				if (key === 'Shift') return e.shiftKey;
-				return false;
-			};
-
-			const modifiers = shortcut.keys.filter((k: string) =>
-				['Meta', 'Ctrl', 'Alt', 'Shift'].includes(k)
-			);
-			const mainKey = shortcut.keys.find(
-				(k: string) => !['Meta', 'Ctrl', 'Alt', 'Shift'].includes(k)
-			);
-
-			const modifiersMatch = modifiers.every((m: string) => hasModifier(m));
-			const keyMatches = mainKey?.toLowerCase() === e.key.toLowerCase();
-
-			return modifiersMatch && keyMatches;
-		};
+		/**
+		 * Does this event match a configured shortcut?
+		 *
+		 * Routes to the shared matcher rather than the local copy this used to
+		 * carry. That copy asked whether the binding's modifiers were PRESENT
+		 * instead of whether they were the ones held, so every chord here also
+		 * fired for itself plus Shift: Cmd+Shift+G ran Cmd+G's fuzzy search,
+		 * Cmd+Shift+P ran Copy File Path, and each one called stopPropagation()
+		 * on the way out, so the global chord that really owned those keys never
+		 * saw them. It also missed Shift-rewritten punctuation and treated
+		 * Meta and Ctrl as different modifiers, which broke rebinding on Windows.
+		 */
+		const isShortcut = (e: React.KeyboardEvent, shortcutId: string) =>
+			eventMatchesShortcutKeys(e, shortcuts[shortcutId]?.keys);
 
 		// Handle keyboard events
 		const handleKeyDown = (e: React.KeyboardEvent) => {
 			// Handle Escape key - dismiss overlays in priority order
 			// In tab mode, layer system isn't registered, so we handle Escape directly here
 			if (e.key === 'Escape') {
+				if (showHeadingPalette) {
+					e.preventDefault();
+					e.stopPropagation();
+					setShowHeadingPalette(false);
+					containerRef.current?.focus();
+					return;
+				}
 				if (showTocOverlay) {
 					e.preventDefault();
 					e.stopPropagation();
@@ -1681,6 +1717,28 @@ export const FilePreview = React.memo(
 				e.preventDefault();
 				e.stopPropagation();
 				handleEditImage();
+			} else if (
+				e.key === '#' &&
+				!e.metaKey &&
+				!e.ctrlKey &&
+				!e.altKey &&
+				isMarkdown &&
+				!markdownEditMode &&
+				tocEntries.length > 0 &&
+				!isTextInputTarget(e.target)
+			) {
+				// Bare `#` (Shift+3 on a US layout) opens the heading palette: the
+				// table of contents as a Cmd+K-style jump list. Matching on the
+				// produced character rather than the physical key keeps it working
+				// on layouts that put `#` somewhere else. Guarded on the event
+				// target so the find bar and the palette's own box keep the key.
+				if (useUIStore.getState().activeFocus !== 'main') return;
+				e.preventDefault();
+				e.stopPropagation();
+				// The palette supersedes the ToC overlay - two heading lists stacked
+				// on top of each other is just clutter.
+				setShowTocOverlay(false);
+				setShowHeadingPalette(true);
 			} else if (
 				isShortcut(e, 'toggleFilePreviewToc') &&
 				isMarkdown &&
@@ -1791,18 +1849,6 @@ export const FilePreview = React.memo(
 					onNavigateForward();
 					onShortcutUsed?.('filePreviewForward');
 				}
-			} else if (
-				e.key === 'g' &&
-				(e.metaKey || e.ctrlKey) &&
-				e.shiftKey &&
-				isMarkdown &&
-				onOpenInGraph
-			) {
-				// Cmd+Shift+G: Open Document Graph focused on this file (markdown files only)
-				// Must come before fuzzyFileSearch check since isShortcut doesn't check for extra modifiers
-				e.preventDefault();
-				e.stopPropagation();
-				onOpenInGraph();
 			} else if (isShortcut(e, 'fuzzyFileSearch') && onOpenFuzzySearch) {
 				// Cmd+G: Open fuzzy file search (only in preview mode, not edit mode)
 				if (isEditableText && markdownEditMode) return;
@@ -2711,17 +2757,25 @@ export const FilePreview = React.memo(
 						showTocOverlay={showTocOverlay}
 						setShowTocOverlay={setShowTocOverlay}
 						scrollMarkdownToBoundary={scrollMarkdownToBoundary}
-						markdownContainerRef={markdownContainerRef}
 						tocButtonRef={tocButtonRef}
 						tocOverlayRef={tocOverlayRef}
 						isMarkdown={isMarkdown}
 						markdownEditMode={markdownEditMode}
-						onSelectHeading={
-							previewTier === 'fast'
-								? (slug) => markdownFastRef.current?.scrollToHeading(slug) ?? false
-								: undefined
-						}
+						onJumpToHeading={jumpToHeading}
 					/>
+
+					{/* Heading palette - `#` opens the same list with a fuzzy filter */}
+					{showHeadingPalette && isMarkdown && !markdownEditMode && tocEntries.length > 0 && (
+						<HeadingPalette
+							theme={theme}
+							entries={tocEntries}
+							onJump={jumpToHeading}
+							onClose={() => {
+								setShowHeadingPalette(false);
+								containerRef.current?.focus();
+							}}
+						/>
+					)}
 				</div>
 
 				{/* Copy / save flashes are now rendered globally by <CenterFlash /> */}
