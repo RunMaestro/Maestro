@@ -1,6 +1,7 @@
-import React, { RefObject, useCallback, useEffect, useRef, useState } from 'react';
+import React, { RefObject, useEffect, useRef, useState } from 'react';
 import { List, ChevronUp, ChevronDown } from 'lucide-react';
 import type { TocEntry } from './types';
+import { headingLevelColor } from './shared/headings';
 
 interface FilePreviewTocProps {
 	theme: any;
@@ -9,18 +10,15 @@ interface FilePreviewTocProps {
 	showTocOverlay: boolean;
 	setShowTocOverlay: (v: boolean) => void;
 	scrollMarkdownToBoundary: (direction: 'top' | 'bottom') => void;
-	markdownContainerRef: RefObject<HTMLDivElement>;
 	tocButtonRef: RefObject<HTMLButtonElement>;
 	tocOverlayRef: RefObject<HTMLDivElement>;
 	isMarkdown: boolean;
 	markdownEditMode: boolean;
 	/**
-	 * Optional scroll-by-slug callback. Used by the Fast tier where headings
-	 * are virtualized and most aren't in the DOM (so a plain querySelector
-	 * fails). Should return true when the scroll was handled; false falls
-	 * back to the default querySelector + scrollIntoView path.
+	 * Jump the preview to a heading. Owned by FilePreview so the ToC and the
+	 * `#` heading palette cannot drift on how a jump works per preview tier.
 	 */
-	onSelectHeading?: (slug: string) => boolean;
+	onJumpToHeading: (entry: TocEntry, behavior: ScrollBehavior) => void;
 }
 
 export const FilePreviewToc = React.memo(function FilePreviewToc({
@@ -30,12 +28,11 @@ export const FilePreviewToc = React.memo(function FilePreviewToc({
 	showTocOverlay,
 	setShowTocOverlay,
 	scrollMarkdownToBoundary,
-	markdownContainerRef,
 	tocButtonRef,
 	tocOverlayRef,
 	isMarkdown,
 	markdownEditMode,
-	onSelectHeading,
+	onJumpToHeading,
 }: FilePreviewTocProps) {
 	const headingButtonRefs = useRef<Array<HTMLButtonElement | null>>([]);
 	const [activeIndex, setActiveIndex] = useState(0);
@@ -51,21 +48,6 @@ export const FilePreviewToc = React.memo(function FilePreviewToc({
 		}
 		prevShowRef.current = showTocOverlay;
 	}, [showTocOverlay, tocEntries.length]);
-
-	const scrollToHeading = useCallback(
-		(entry: TocEntry, behavior: ScrollBehavior) => {
-			if (onSelectHeading?.(entry.slug)) {
-				return;
-			}
-			const targetElement = markdownContainerRef.current?.querySelector(
-				`#${CSS.escape(entry.slug)}`
-			);
-			if (targetElement) {
-				targetElement.scrollIntoView({ behavior, block: 'start' });
-			}
-		},
-		[markdownContainerRef, onSelectHeading]
-	);
 
 	const handleEntriesKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
 		if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'Home' && e.key !== 'End') {
@@ -85,7 +67,7 @@ export const FilePreviewToc = React.memo(function FilePreviewToc({
 		setActiveIndex(next);
 		headingButtonRefs.current[next]?.focus();
 		// Instant scroll on keyboard nav so rapid arrow presses stay responsive.
-		scrollToHeading(tocEntries[next], 'auto');
+		onJumpToHeading(tocEntries[next], 'auto');
 	};
 
 	if (!isMarkdown || markdownEditMode || tocEntries.length === 0) {
@@ -133,8 +115,18 @@ export const FilePreviewToc = React.memo(function FilePreviewToc({
 						>
 							Contents
 						</span>
-						<span className="text-2xs" style={{ color: theme.colors.textDim }}>
-							{tocEntries.length} headings
+						<span
+							className="text-2xs flex items-center gap-1.5"
+							style={{ color: theme.colors.textDim }}
+						>
+							<span>{tocEntries.length} headings</span>
+							<kbd
+								className="px-1 rounded font-mono"
+								style={{ backgroundColor: theme.colors.bgMain, color: theme.colors.accent }}
+								title="Press # to search these headings"
+							>
+								#
+							</kbd>
 						</span>
 					</div>
 					{/* Top Navigation Sash */}
@@ -163,17 +155,7 @@ export const FilePreviewToc = React.memo(function FilePreviewToc({
 						onKeyDown={handleEntriesKeyDown}
 					>
 						{tocEntries.map((entry, index) => {
-							// Get color based on heading level (match the prose styles)
-							const levelColors: Record<number, string> = {
-								1: theme.colors.accent,
-								2: theme.colors.success,
-								3: theme.colors.warning,
-								4: theme.colors.textMain,
-								5: theme.colors.textMain,
-								6: theme.colors.textDim,
-							};
-							const headingColor = levelColors[entry.level] || theme.colors.textMain;
-
+							const headingColor = headingLevelColor(theme, entry.level);
 							const isActive = index === activeIndex;
 							return (
 								<button
@@ -184,7 +166,7 @@ export const FilePreviewToc = React.memo(function FilePreviewToc({
 									onClick={() => {
 										setActiveIndex(index);
 										// Click is deliberate - keep smooth scroll for visual continuity.
-										scrollToHeading(entry, 'smooth');
+										onJumpToHeading(entry, 'smooth');
 										// ToC stays open so user can click multiple items
 										// Dismiss with click outside or Escape key
 									}}

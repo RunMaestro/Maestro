@@ -110,6 +110,8 @@ Grep-verified 2026-09-04 (`npm run docs:verify` re-checks every path). This is t
 - **Graphing a set of documents rather than one:** `scopeDirectory`, `openGraphScope()` in `src/renderer/components/DocumentGraph/graphDataBuilder.ts`
 - **A labeled action button in a panel header:** `src/renderer/components/ui/HeaderActionButton.tsx`
 - **Highlighting a search hit:** `highlightMatches(text, query, accentColor)`, `searchMatchRanges(text, query)` in `src/renderer/utils/highlightMatches.tsx`
+- **Highlighting a FUZZY hit:** `renderFuzzyHighlight(text, indices, styles?)`, `fuzzyMatchWithIndices(text, query)` in `src/renderer/utils/search.ts`
+- **Jumping a markdown preview to a heading:** `scrollToHeadingSlug()`, `headingLevelColor()` in `src/renderer/components/FilePreview/shared/headings.ts`
 - **A text box that narrows a list:** `resultLabel`, `AutoRunSearchBar` in `src/renderer/components/ui/FilterInput.tsx`
 - **A pane that reads and edits a markdown document:** `generateProseStyles({ theme, scopeSelector })`, `focus` in `src/renderer/components/FilePreview/markdownEditor`
 - **`{{template}}` variable autocomplete:** `useTemplateAutocompleteEngine()`, `useTemplateAutocomplete()` in `src/renderer/hooks/input/useTemplateAutocompleteEngine.ts`

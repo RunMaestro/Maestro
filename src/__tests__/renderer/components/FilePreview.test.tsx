@@ -1328,6 +1328,99 @@ print("world")
 			expect(onShortcutUsed).not.toHaveBeenCalled();
 		});
 
+		it('opens the heading palette on a bare # and lists every heading', () => {
+			const { container } = render(
+				<FilePreview
+					{...defaultProps}
+					file={{
+						name: 'doc.md',
+						content: '# Heading 1\n## Heading 2\n### Heading 3',
+						path: '/test/doc.md',
+					}}
+					markdownEditMode={false}
+					isTabMode={true}
+				/>
+			);
+
+			const previewContainer = container.querySelector('[tabindex="0"]');
+			fireEvent.keyDown(previewContainer!, { key: '#' });
+
+			expect(screen.getByTestId('heading-palette-input')).toBeInTheDocument();
+			const rows = container.querySelectorAll('[data-testid="heading-palette-row"]');
+			expect(Array.from(rows).map((el) => (el as HTMLElement).title)).toEqual([
+				'Heading 1',
+				'Heading 2',
+				'Heading 3',
+			]);
+		});
+
+		it('Escape closes the heading palette before the TOC overlay', () => {
+			const { container } = render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'doc.md', content: '# Heading 1\n## Heading 2', path: '/test/doc.md' }}
+					markdownEditMode={false}
+					isTabMode={true}
+				/>
+			);
+
+			const previewContainer = container.querySelector('[tabindex="0"]');
+			fireEvent.click(screen.getByTitle('Table of Contents'));
+			fireEvent.keyDown(previewContainer!, { key: '#' });
+
+			// The palette supersedes the overlay rather than stacking on it.
+			expect(screen.getByTestId('heading-palette-input')).toBeInTheDocument();
+			expect(screen.queryByText('Contents')).not.toBeInTheDocument();
+
+			fireEvent.keyDown(previewContainer!, { key: 'Escape' });
+			expect(screen.queryByTestId('heading-palette-input')).not.toBeInTheDocument();
+		});
+
+		it('ignores # in markdown edit mode, where it is just a character', () => {
+			const { container } = render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'doc.md', content: '# Heading 1', path: '/test/doc.md' }}
+					markdownEditMode={true}
+					isTabMode={true}
+				/>
+			);
+
+			const previewContainer = container.querySelector('[tabindex="0"]');
+			fireEvent.keyDown(previewContainer!, { key: '#' });
+			expect(screen.queryByTestId('heading-palette-input')).not.toBeInTheDocument();
+		});
+
+		it('ignores # on a file with no headings', () => {
+			const { container } = render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'doc.md', content: 'Just prose, no headings.', path: '/test/doc.md' }}
+					markdownEditMode={false}
+					isTabMode={true}
+				/>
+			);
+
+			const previewContainer = container.querySelector('[tabindex="0"]');
+			fireEvent.keyDown(previewContainer!, { key: '#' });
+			expect(screen.queryByTestId('heading-palette-input')).not.toBeInTheDocument();
+		});
+
+		it('ignores Cmd+# so a modified chord still reaches the global handler', () => {
+			const { container } = render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'doc.md', content: '# Heading 1', path: '/test/doc.md' }}
+					markdownEditMode={false}
+					isTabMode={true}
+				/>
+			);
+
+			const previewContainer = container.querySelector('[tabindex="0"]');
+			fireEvent.keyDown(previewContainer!, { key: '#', metaKey: true });
+			expect(screen.queryByTestId('heading-palette-input')).not.toBeInTheDocument();
+		});
+
 		it('keeps TOC overlay open when clicking a heading entry', () => {
 			const markdownWithHeadings = '# Heading 1\n## Heading 2';
 			render(

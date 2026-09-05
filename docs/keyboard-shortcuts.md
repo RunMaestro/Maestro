@@ -312,6 +312,7 @@ the full walkthrough.
 | Copy File Path                      | `Cmd+P`         | `Ctrl+P`        |
 | Open Search                         | `Cmd+F`         | `Ctrl+F`        |
 | Toggle Table of Contents (Markdown) | `Cmd+\`         | `Ctrl+\`        |
+| Jump to Heading (Markdown)          | `#`             | `#`             |
 | Go Back                             | `Cmd+Left`      | `Ctrl+Left`     |
 | Go Forward                          | `Cmd+Right`     | `Ctrl+Right`    |
 | Scroll                              | `Up/Down Arrow` | `Up/Down Arrow` |
@@ -319,6 +320,14 @@ the full walkthrough.
 | Zoom Preview Text Out               | `-` or `_`      | `-` or `_`      |
 | Reset Preview Zoom                  | `0`             | `0`             |
 | Close                               | `Esc`           | `Esc`           |
+
+`#` opens the heading palette: every heading in the document, in the order it
+appears, with a fuzzy filter on top. Type a few characters of a section name,
+move with `Up`/`Down` (`PgUp`/`PgDn` to skip further), and press `Enter` to jump
+there. It reads the same list as the Table of Contents, so use whichever suits
+the moment - the ToC to browse, the palette to go straight to a section by name.
+Like the zoom keys below it is bare, so it never fires while you are typing in
+the find bar or editing the document.
 
 The three zoom keys are bare - no modifier - and are distinct from the app-wide
 `Cmd+=` / `Cmd+-` in [Font Size](#font-size), which resizes the whole interface.
