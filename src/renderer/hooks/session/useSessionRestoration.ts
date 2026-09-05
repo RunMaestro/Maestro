@@ -31,6 +31,8 @@ import { migrateLegacySnoozedTabs } from '../../utils/snoozeHelpers';
 import { isMediaStreamUrl } from '../../../shared/mediaTypes';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import { logger } from '../../utils/logger';
+import { readPersistedActiveSessionId } from '../../utils/activeSessionPersistence';
+import { useSessionLifecycleSync } from './useSessionLifecycleSync';
 
 /** Ids of the terminal tabs that are tiled into one of the session's tab groups. */
 function collectGroupedTerminalIds(session: { tabGroups?: Session['tabGroups'] }): Set<string> {
@@ -652,7 +654,10 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					setSessions(restoredSessions);
 
 					// Restore persisted active session ID, falling back to first session.
-					const savedActiveSessionId = await window.maestro.sessions.getActiveSessionId();
+					// Read through the helper: a web-desktop client remembers its OWN
+					// focused agent, so a browser refresh returns to what the user was
+					// working in rather than to whatever the desktop has focused.
+					const savedActiveSessionId = await readPersistedActiveSessionId();
 					if (savedActiveSessionId && restoredSessions.find((s) => s.id === savedActiveSessionId)) {
 						// Saved ID is valid - hydrate locally without writing back to disk
 						hydrateActiveSessionId(savedActiveSessionId);
@@ -723,6 +728,12 @@ export function useSessionRestoration(): SessionRestorationReturn {
 		};
 		loadSessionsAndGroups();
 	}, []);
+
+	// --- Peer client sync ---
+	// Agents another client (a second window, a web-desktop browser tab) creates
+	// or closes land here, restored through the same pass as a disk load. Wired
+	// from this hook because `restoreSession` is what prepares them.
+	useSessionLifecycleSync(restoreSession, reattachLiveAiTurns);
 
 	return {
 		initialLoadComplete,
