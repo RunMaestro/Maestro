@@ -8,6 +8,7 @@ import { useImageAnnotatorStore } from '../../../renderer/components/ImageAnnota
 
 import { installLocalStorageMock } from '../../helpers/mockLocalStorage';
 import { mockTheme } from '../../helpers/mockTheme';
+import { requestHeadingPalette } from '../../../renderer/services/headingPalette';
 // Mock lucide-react icons
 vi.mock('lucide-react', () => ({
 	FileCode: () => <span data-testid="file-code-icon">FileCode</span>,
@@ -1403,6 +1404,38 @@ print("world")
 
 			const previewContainer = container.querySelector('[tabindex="0"]');
 			fireEvent.keyDown(previewContainer!, { key: '#' });
+			expect(screen.queryByTestId('heading-palette-input')).not.toBeInTheDocument();
+		});
+
+		it('opens the heading palette when the command palette asks over the event', () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'doc.md', content: '# Heading 1\n## Heading 2', path: '/test/doc.md' }}
+					markdownEditMode={false}
+					isTabMode={true}
+				/>
+			);
+
+			act(() => {
+				requestHeadingPalette();
+			});
+			expect(screen.getByTestId('heading-palette-input')).toBeInTheDocument();
+		});
+
+		it('drops a heading-palette request on a file with no headings', () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'doc.md', content: 'Just prose.', path: '/test/doc.md' }}
+					markdownEditMode={false}
+					isTabMode={true}
+				/>
+			);
+
+			act(() => {
+				requestHeadingPalette();
+			});
 			expect(screen.queryByTestId('heading-palette-input')).not.toBeInTheDocument();
 		});
 

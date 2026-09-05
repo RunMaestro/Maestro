@@ -327,7 +327,8 @@ move with `Up`/`Down` (`PgUp`/`PgDn` to skip further), and press `Enter` to jump
 there. It reads the same list as the Table of Contents, so use whichever suits
 the moment - the ToC to browse, the palette to go straight to a section by name.
 Like the zoom keys below it is bare, so it never fires while you are typing in
-the find bar or editing the document.
+the find bar or editing the document. The same list is in the command palette as
+**Jump to Heading**, offered only while a markdown file is open in preview.
 
 The three zoom keys are bare - no modifier - and are distinct from the app-wide
 `Cmd+=` / `Cmd+-` in [Font Size](#font-size), which resizes the whole interface.

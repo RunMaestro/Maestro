@@ -107,6 +107,8 @@ import { rehypeSourceLine } from '../Markdown/rehypeSourceLine';
 import { useStableCallback } from '../../hooks/utils/useStableCallback';
 import { toggleTaskCheckboxAtLine } from '../../utils/markdownTasks';
 import { logger } from '../../utils/logger';
+import { useEventListener } from '../../hooks/utils/useEventListener';
+import { HEADING_PALETTE_EVENT } from '../../services/headingPalette';
 
 // Lazy-loaded large-file markdown renderer. Keeping it out of the main bundle
 // means small-file previews don't pay the ~135 KB cost of markdown-it +
@@ -697,6 +699,17 @@ export const FilePreview = React.memo(
 			},
 			[headingScrollOverride]
 		);
+
+		// The Cmd+K command palette is a modal, so it cannot reach into this
+		// component's state directly - it asks over an app-level event instead.
+		// The guards mirror the `#` key's: a request that arrives for a file with
+		// no headings, or one being edited, is dropped rather than opening an
+		// empty palette over a textarea.
+		useEventListener(HEADING_PALETTE_EVENT, () => {
+			if (!isMarkdown || markdownEditMode || tocEntries.length === 0) return;
+			setShowTocOverlay(false);
+			setShowHeadingPalette(true);
+		});
 
 		// Memoize file tree indices to avoid O(n) traversal on every render
 		const fileTreeIndices = useMemo(() => {
