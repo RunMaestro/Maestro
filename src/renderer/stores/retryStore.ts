@@ -38,7 +38,7 @@ import { failoverArmed, selectNextEndpoint } from '../../shared/providerFailover
 import { switchToNextEndpoint, useFailoverStore } from './failoverStore';
 import { generateId } from '../utils/ids';
 import { logger } from '../utils/logger';
-import { useSessionStore, selectSessionById } from './sessionStore';
+import { useSessionStore, selectSessionById, updateSessionWith } from './sessionStore';
 import { notifyToast } from './notificationStore';
 import { useAgentStore, type ProcessQueuedItemDeps } from './agentStore';
 import type { AgentError, QueuedItem } from '../types';
@@ -702,7 +702,44 @@ export function clearRetryIfSettled(sessionId: string, tabId: string): void {
 		logger.info('[retry] Resend settled; clearing retry', undefined, { key });
 		resolveOutage(entry.outageId, 'recovered');
 		removeEntry(key);
+		clearTabAgentError(sessionId, tabId, entry.lastMessage);
 	}
+}
+
+/**
+ * Drop the tab's `agentError` after a retry succeeds.
+ *
+ * The error listener deliberately KEEPS `tab.agentError` set while a retry is
+ * counting down, so that pressing Stop still leaves the user with the original
+ * failure to act on (see `cancelRetry`). Nothing cleared it on the way back out,
+ * so a recovered outage left the red error banner and the tab's ERR badge on
+ * screen indefinitely - directly contradicting the green "Connection recovered"
+ * card sitting right below them.
+ *
+ * Only the retryable error is cleared: if the resend came back with a DIFFERENT
+ * failure (a non-retryable one the modal now owns), that error is the current
+ * truth and must survive.
+ */
+function clearTabAgentError(sessionId: string, tabId: string, retriedMessage: string): void {
+	const session = selectSessionById(sessionId)(useSessionStore.getState());
+	const tab = session?.aiTabs?.find((t) => t.id === tabId);
+	if (!tab?.agentError) return;
+
+	// agent-error fires BEFORE process-exit, so if the resend failed with a
+	// non-retryable error the tab already carries that NEW error by the time we
+	// get here. Clearing it would swallow the failure the user still has to deal
+	// with. A repeat of the same retryable error reschedules instead of settling,
+	// so a mismatch here means a genuinely different failure - leave it alone.
+	if (tab.agentError.message !== retriedMessage) return;
+
+	updateSessionWith(sessionId, (s) => ({
+		...s,
+		// The blocking session-level error state belongs to the modal path; a
+		// recovered outage never entered it, but clear it defensively so a stale
+		// banner can't outlive the outage that raised it.
+		...(s.state === 'error' ? { state: 'idle' as const, agentError: undefined } : {}),
+		aiTabs: s.aiTabs.map((t) => (t.id === tabId ? { ...t, agentError: undefined } : t)),
+	}));
 }
 
 /** Read the active retry for a session+tab (for the countdown UI). */
