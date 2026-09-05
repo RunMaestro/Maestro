@@ -84,9 +84,12 @@ Two rules follow, and both are load-bearing:
   (`src/renderer/hooks/session/useSessionLifecycleSync.ts`), strictly in arrival
   order - an add still restoring when the close for the same agent lands makes
   that close look like it names an agent this client never had. Main also
-  tombstones a closed id so a peer flush already in flight cannot re-add it,
-  bounded by COUNT rather than age: a suspended browser tab can be away for
-  hours, and no agent id is ever reused. Only ADDITIONS travel from `setAll`: that path is a client's opening
+  tombstones a closed id so a peer flush already in flight cannot re-add it -
+  the newest 1000, bounded by COUNT rather than age, because a suspended browser
+  tab can be away for hours and no agent id is ever reused, so an old tombstone
+  has nothing left to block but a stale write. A client away long enough to
+  outlive its tombstone reloads on reconnect regardless: `BridgeClient` has no
+  replay, so it re-reads the store rather than flushing what it still held. Only ADDITIONS travel from `setAll`: that path is a client's opening
   snapshot of its own tree, taken before it could have heard about anything a
   peer created, so treating an absent id there as a close would delete live
   agents. The delta is deliberately lifecycle-only - tab contents, read-state and
