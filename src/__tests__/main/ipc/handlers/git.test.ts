@@ -3023,6 +3023,7 @@ export function Component() {
 		it('releases the requested path mark when setup fails', async () => {
 			const fsPromises = await import('fs/promises');
 			vi.mocked(fsPromises.default.access).mockRejectedValue(new Error('ENOENT'));
+			vi.mocked(fsPromises.default.realpath).mockResolvedValueOnce('/physical/worktrees');
 			vi.mocked(execFile.execFileNoThrow)
 				.mockResolvedValueOnce({ stdout: '', stderr: 'missing branch', exitCode: 128 })
 				.mockResolvedValueOnce({ stdout: '', stderr: 'fatal: permission denied', exitCode: 128 });
@@ -3037,6 +3038,7 @@ export function Component() {
 
 			expect(result.success).toBe(false);
 			expect(isWorktreeCreatedByMaestro('/worktrees/feature')).toBe(false);
+			expect(isWorktreeCreatedByMaestro('/physical/worktrees/feature')).toBe(false);
 		});
 
 		it('marks the recovered existing path when the branch is already checked out', async () => {
@@ -3047,6 +3049,9 @@ export function Component() {
 				if (String(target) === '/elsewhere/feature') return undefined as any;
 				throw new Error('ENOENT');
 			});
+			vi.mocked(fsPromises.default.realpath)
+				.mockResolvedValueOnce('/worktrees')
+				.mockResolvedValueOnce('/physical/elsewhere');
 
 			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (_cmd, args) => {
 				if (args?.includes('--verify')) {
@@ -3081,6 +3086,7 @@ export function Component() {
 			// must stay quiet about.
 			expect(result.existingPath).toBe('/elsewhere/feature');
 			expect(isWorktreeCreatedByMaestro('/elsewhere/feature')).toBe(true);
+			expect(isWorktreeCreatedByMaestro('/physical/elsewhere/feature')).toBe(true);
 		});
 	});
 
@@ -5155,6 +5161,74 @@ branch refs/heads/bugfix-123
 			await addDirCallback!('/parent/worktrees/new-worktree');
 			await vi.advanceTimersByTimeAsync(600);
 
+			expect(mockWindow.webContents.send).not.toHaveBeenCalledWith(
+				'worktree:discovered',
+				expect.anything()
+			);
+			expect(mockBroadcastBridgeEvent).not.toHaveBeenCalledWith(
+				'worktree:discovered',
+				expect.anything()
+			);
+
+			vi.useRealTimers();
+		});
+
+		it('suppresses a physical watcher path when setup used a symlinked base path', async () => {
+			vi.useFakeTimers();
+
+			const mainRepo = path.resolve('/main/repo');
+			const linkedBase = path.resolve('/linked/worktrees');
+			const physicalBase = path.resolve('/physical/worktrees');
+			const requestedPath = path.join(linkedBase, 'new-worktree');
+			const physicalPath = path.join(physicalBase, 'new-worktree');
+
+			vi.mocked(mockFs.access).mockRejectedValue(new Error('ENOENT'));
+			vi.mocked(mockFs.realpath).mockResolvedValueOnce(physicalBase);
+			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (_cmd, args) => {
+				if (args?.includes('--verify')) {
+					return { stdout: '', stderr: 'missing branch', exitCode: 128 };
+				}
+				if (args?.[0] === 'worktree' && args?.[1] === 'add') {
+					// The physical spelling must be claimed before Git creates the
+					// directory and gives chokidar a chance to report it.
+					expect(isWorktreeCreatedByMaestro(physicalPath)).toBe(true);
+					return { stdout: 'Preparing worktree', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: '', exitCode: 0 };
+			});
+
+			const setupHandler = handlers.get('git:worktreeSetup');
+			const setupResult = await setupHandler!({} as any, mainRepo, requestedPath, 'feature-branch');
+			expect(setupResult.success).toBe(true);
+			expect(isWorktreeCreatedByMaestro(physicalPath)).toBe(true);
+
+			let addDirCallback: Function | undefined;
+			const mockWatcher = {
+				on: vi.fn((event: string, cb: Function) => {
+					if (event === 'addDir') addDirCallback = cb;
+					return mockWatcher;
+				}),
+				close: vi.fn().mockResolvedValue(undefined),
+			};
+			vi.mocked(mockChokidar.watch).mockReturnValue(mockWatcher as any);
+			vi.mocked(mockFs.access).mockResolvedValue(undefined);
+			vi.mocked(execFile.execFileNoThrow).mockClear();
+
+			const mockWindow = {
+				isDestroyed: vi.fn().mockReturnValue(false),
+				webContents: {
+					send: vi.fn(),
+					isDestroyed: vi.fn().mockReturnValue(false),
+				},
+			};
+			currentMockWindow = mockWindow;
+
+			const watchHandler = handlers.get('git:watchWorktreeDirectory');
+			await watchHandler!({} as any, 'session-symlink', physicalBase);
+			await addDirCallback!(physicalPath);
+			await vi.advanceTimersByTimeAsync(600);
+
+			expect(execFile.execFileNoThrow).not.toHaveBeenCalled();
 			expect(mockWindow.webContents.send).not.toHaveBeenCalledWith(
 				'worktree:discovered',
 				expect.anything()

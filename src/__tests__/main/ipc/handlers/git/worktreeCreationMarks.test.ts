@@ -55,6 +55,13 @@ describe('worktreeCreationMarks', () => {
 		expect(isWorktreeCreatedByMaestro('/worktrees//feature')).toBe(true);
 	});
 
+	it('keeps a UNC path distinct from a root-relative path', () => {
+		markWorktreeCreatedByMaestro('\\\\server\\share\\repo');
+
+		expect(isWorktreeCreatedByMaestro('\\\\server\\share\\repo')).toBe(true);
+		expect(isWorktreeCreatedByMaestro('\\server\\share\\repo')).toBe(false);
+	});
+
 	it('does not collapse the filesystem root to an empty key', () => {
 		markWorktreeCreatedByMaestro('/');
 		expect(isWorktreeCreatedByMaestro('/')).toBe(true);

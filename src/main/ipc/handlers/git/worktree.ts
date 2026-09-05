@@ -9,6 +9,7 @@ import {
 	isWorktreeAlreadyUsedError,
 	parseWorktreePathForBranch,
 } from '../../../../shared/gitUtils';
+import { normalizeWorktreePath } from '../../../../shared/worktreePaths';
 import {
 	worktreeInfoRemote,
 	worktreeSetupRemote,
@@ -52,6 +53,30 @@ async function findLocalWorktreeForBranch(
 	} catch {
 		return null;
 	}
+}
+
+/**
+ * Mark both the caller-facing path and the spelling a filesystem watcher may
+ * report when the parent traverses a symlink or Windows junction. The target
+ * itself may not exist yet, so canonicalize its existing parent and append the
+ * unchanged basename rather than calling realpath on the full target.
+ *
+ * @returns Every spelling marked, for callers that must release them on failure.
+ */
+async function markWorktreeCreationAliases(worktreePath: string): Promise<string[]> {
+	const markedPaths = [worktreePath];
+	markWorktreeCreatedByMaestro(worktreePath);
+
+	try {
+		const physicalParent = await fs.realpath(path.dirname(worktreePath));
+		const physicalAlias = path.join(physicalParent, path.basename(worktreePath));
+		markedPaths.push(physicalAlias);
+		markWorktreeCreatedByMaestro(physicalAlias);
+	} catch {
+		// The lexical mark is still useful when the parent cannot be resolved.
+	}
+
+	return markedPaths;
 }
 
 /**
@@ -206,7 +231,8 @@ export function registerWorktreeHandlers(): void {
 				// already creating the child session directly. Keep the mark only when
 				// setup returns a usable worktree; otherwise an external retry during the
 				// TTL must still be discoverable.
-				markWorktreeCreatedByMaestro(resolvedWorktree);
+				const requestedMarks = await markWorktreeCreationAliases(resolvedWorktree);
+				const retainedMarks = new Set<string>();
 				let keepRequestedMark = false;
 				try {
 					// Check if worktree path is inside the main repo (nested worktree)
@@ -348,7 +374,10 @@ export function registerWorktreeHandlers(): void {
 							if (existingPath) {
 								// The caller opens this path instead of the one it requested, so
 								// it needs the same suppression the requested path already got.
-								markWorktreeCreatedByMaestro(existingPath);
+								const existingMarks = await markWorktreeCreationAliases(existingPath);
+								for (const existingMark of existingMarks) {
+									retainedMarks.add(normalizeWorktreePath(existingMark));
+								}
 								return {
 									success: true,
 									created: false,
@@ -372,7 +401,13 @@ export function registerWorktreeHandlers(): void {
 						branchMismatch: false,
 					};
 				} finally {
-					if (!keepRequestedMark) clearWorktreeCreatedByMaestro(resolvedWorktree);
+					if (!keepRequestedMark) {
+						for (const markedPath of requestedMarks) {
+							if (!retainedMarks.has(normalizeWorktreePath(markedPath))) {
+								clearWorktreeCreatedByMaestro(markedPath);
+							}
+						}
+					}
 				}
 			}
 		)
