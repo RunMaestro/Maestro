@@ -1065,6 +1065,8 @@ describe('group-chat-router', () => {
 				await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
 				setGetSessionsCallback(() => [busyClientSession]);
 				mockProcessManager.spawn.mockClear();
+				const emitMessage = vi.fn();
+				groupChatEmitters.emitMessage = emitMessage;
 
 				await routeModeratorResponse(
 					chat.id,
@@ -1075,6 +1077,15 @@ describe('group-chat-router', () => {
 
 				// Past the 15 minute wait budget.
 				await runPollsUntil(() => false, 200);
+				// The queued handoff is deliberately fire-and-forget. Return to real
+				// timers and wait for its async log append instead of racing the file.
+				vi.useRealTimers();
+				await vi.waitFor(() =>
+					expect(emitMessage).toHaveBeenCalledWith(
+						chat.id,
+						expect.objectContaining({ content: expect.stringContaining('Gave up') })
+					)
+				);
 
 				const messages = await readLog(chat.logPath);
 				expect(messages.some((m) => m.from === 'system' && m.content.includes('Gave up'))).toBe(
