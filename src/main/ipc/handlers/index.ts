@@ -169,6 +169,8 @@ export interface HandlerDependencies {
 	settingsStore: Store<MaestroSettings>;
 	// Persistence-specific dependencies
 	sessionsStore: Store<SessionsData>;
+	/** Flush the writer that owns `sessionsStore` before acknowledging persistence. */
+	flushSessionWrites: () => Promise<void>;
 	groupsStore: Store<GroupsData>;
 	getWebServer: () => WebServer | null;
 	// System-specific dependencies
@@ -221,6 +223,7 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		sessionsStore: deps.sessionsStore,
 		groupsStore: deps.groupsStore,
 		getWebServer: deps.getWebServer,
+		flushSessionWrites: deps.flushSessionWrites,
 	});
 	registerSystemHandlers({
 		getMainWindow: deps.getMainWindow,
