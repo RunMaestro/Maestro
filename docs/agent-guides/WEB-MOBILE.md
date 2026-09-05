@@ -132,6 +132,41 @@ Added in Phase 06 for the xterm terminal:
 
 ---
 
+## Phone Layout
+
+Phones get the desktop renderer with a **phone layout**: fewer controls, icon-only toolbars, full-screen drawers, and sheets instead of anchored popovers. One predicate decides when that applies, and everything below keys off it.
+
+### The predicate - `usePhoneLayout()` / `isPhoneLayout()`
+
+`src/renderer/hooks/ui/useViewportBreakpoint.ts`. True for the web-desktop bundle at the `xs` breakpoint (below 640px, a phone held upright). Its CSS twin is `html[data-runtime='web-desktop'][data-bp='xs']` (the "Phone layout" section of `src/renderer/index.css`), so a surface simplified in JS and one simplified in CSS agree about when a phone is a phone.
+
+It is viewport-driven on purpose, not pointer-driven: space is the constraint, and a desktop browser squeezed to phone width gets the same layout, which is also what makes it testable without touch emulation. Touch GESTURES (long-press, swipe) gate on `isCoarsePointer()` separately, because a tablet has a finger without being short on room. The native Electron app never reports phone layout, however narrow its window.
+
+### What changes on a phone
+
+| Surface                                        | Desktop                                                                          | Phone                                                                                                                                   |
+| ---------------------------------------------- | -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Tab bar magnifier (`SearchPopover`)            | Menu: search tabs / messages / all tabs / snoozed                                | Opens the tab switcher directly                                                                                                         |
+| Tab switcher (`TabSwitcherModal`)              | Resizable modal, mode pills, id / tokens / cost / gauge per row, keyboard legend | Full screen, open tabs only, name + kind glyph + star per row (`PhoneTabRow`)                                                           |
+| Tab chip actions (all five chip types)         | Hover opens an anchored popover; on touch, tapping the active tab opened it      | Tap always selects; LONG-PRESS opens a bottom sheet (`TabOverlayPortal`); native drag off                                               |
+| Left / Right drawers                           | 320px overlays over a backdrop                                                   | Full screen; close by swipe (the handlers ride the drawer itself, see `AppShell`), the panel's own close button, or by picking an agent |
+| Left Bar rows (`SessionItem`)                  | Name, provider line, location pills, bookmark, git count, Cue / startup glyphs   | Name and status dot; AUTO / ERR / unread / wizard state stays                                                                           |
+| Auto Run toolbar and editor bar, Files toolbar | Icon + label                                                                     | Icon only; the label lives on as the tooltip / accessible name                                                                          |
+| Auto Run document row                          | Dropdown + new / refresh / folder buttons                                        | Dropdown only ("Change Folder..." stays in its footer)                                                                                  |
+| Composer (`InputArea`)                         | Always shown                                                                     | Folds behind `PhoneComposerHandle` (default folded, remembered in `phone.composer.collapsed`); tap or swipe reveals it                  |
+| Modals                                         | Escape / close pill                                                              | Same, plus a swipe down from the top band closes the top layer (`useLayerSwipeDismiss`)                                                 |
+| Transcript images                              | `maestro-image://` protocol                                                      | Rewritten to `/<token>/api/images/<name>` by `displayImageSrc()`; a browser cannot load the custom scheme                               |
+
+### Rules for a new surface
+
+- Gate a simplification on `usePhoneLayout()` (or the CSS twin), never on `isCoarsePointer()` alone.
+- A touch gesture gates on `isCoarsePointer()`; use `LongPressable` for long-press and `useSwipeGestures` for swipes rather than hand-rolling timers.
+- A tab chip's menu renders through `TabOverlayPortal`; do not `createPortal` a `fixed z-[100]` shell by hand.
+- A control that hides its label on a phone keeps its `title` (or `aria-label`), so it keeps an accessible name and a long-press tooltip.
+- A surface that pans on drag (a canvas, a graph) opts out of the swipe-to-dismiss safety net with `data-no-swipe-dismiss` on its root.
+
+---
+
 ## PWA (Progressive Web App)
 
 The install prompt, offline shell, and app icons come from a small set of static assets that are the only load-bearing part of `src/web/` at runtime.
@@ -173,18 +208,23 @@ Wiring the factory into the bridge therefore requires an echo-suppression design
 
 ## Key Files Reference
 
-| Concern               | Primary Files                                                                                     |
-| --------------------- | ------------------------------------------------------------------------------------------------- |
-| Browser entry / boot  | `src/web-desktop/bootstrap.ts`, `src/web-desktop/index.html`                                      |
-| Electron/Sentry shims | `src/web-desktop/electron-shim.ts`, `src/web-desktop/sentry-shim.ts`                              |
-| Bundle build          | `vite.config.web-desktop.mts` (`npm run dev:web-desktop` / `build:web-desktop`)                   |
-| Web server + bridge   | `src/main/web-server/WebServer.ts`, `src/main/web-server/routes/staticRoutes.ts`                  |
-| Push-event fan-out    | `src/main/utils/safe-send.ts` (`broadcastBridgeEvent`)                                            |
-| Touch primitives      | `src/renderer/utils/touch.ts`                                                                     |
-| Touch/keyboard/voice  | `src/renderer/hooks/utils/{useKeyboardVisibility,useLongPress,useSwipeGestures,useVoiceInput}.ts` |
-| Terminal touch        | `src/renderer/components/TerminalTouchBar.tsx`, `src/renderer/utils/terminalKeys.ts`              |
-| PWA assets            | `src/web/public/` (manifest.json, sw.js, icons/)                                                  |
-| PWA registration      | `src/web/utils/serviceWorker.ts`                                                                  |
+| Concern               | Primary Files                                                                                                          |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Browser entry / boot  | `src/web-desktop/bootstrap.ts`, `src/web-desktop/index.html`                                                           |
+| Electron/Sentry shims | `src/web-desktop/electron-shim.ts`, `src/web-desktop/sentry-shim.ts`                                                   |
+| Bundle build          | `vite.config.web-desktop.mts` (`npm run dev:web-desktop` / `build:web-desktop`)                                        |
+| Web server + bridge   | `src/main/web-server/WebServer.ts`, `src/main/web-server/routes/staticRoutes.ts`                                       |
+| Push-event fan-out    | `src/main/utils/safe-send.ts` (`broadcastBridgeEvent`)                                                                 |
+| Touch primitives      | `src/renderer/utils/touch.ts`                                                                                          |
+| Touch/keyboard/voice  | `src/renderer/hooks/utils/{useKeyboardVisibility,useLongPress,useSwipeGestures,useVoiceInput}.ts`                      |
+| Phone layout gate     | `src/renderer/hooks/ui/useViewportBreakpoint.ts` (`usePhoneLayout`), `src/renderer/index.css` ("Phone layout")         |
+| Phone tab sheet       | `src/renderer/components/TabBar/TabOverlayPortal.tsx`, `src/renderer/components/shared/LongPressable.tsx`              |
+| Phone composer fold   | `src/renderer/components/InputArea/components/PhoneComposerHandle.tsx`                                                 |
+| Swipe-to-dismiss      | `src/renderer/hooks/ui/useLayerSwipeDismiss.ts` (mounted in `LayerStackContext.tsx`)                                   |
+| Web image route       | `src/main/web-server/routes/imageRoutes.ts`, `src/renderer/utils/sessionImageSrc.ts`, `src/shared/sessionImageRefs.ts` |
+| Terminal touch        | `src/renderer/components/TerminalTouchBar.tsx`, `src/renderer/utils/terminalKeys.ts`                                   |
+| PWA assets            | `src/web/public/` (manifest.json, sw.js, icons/)                                                                       |
+| PWA registration      | `src/web/utils/serviceWorker.ts`                                                                                       |
 
 ---
 
