@@ -91,6 +91,7 @@ Grep-verified 2026-09-04 (`npm run docs:verify` re-checks every path). This is t
 - **Focus a file tab:** `fileTabFocusFields(tabId)` in `src/renderer/utils/tabHelpers.ts`
 - **Audio/video playback:** `handleOpenFileTab()`, `enqueueMedia()` in `src/renderer/hooks/tabs/internal/useFilePreviewTabHandlers.ts`
 - **Run a shell command from the chat:** `dispatchShellCommand()`, `runShellCommand()` in `src/renderer/services/shellCommand.ts`
+- **Revealing output the user asked for, past a paused auto-scroll:** `requestTranscriptScrollToBottom(sessionId, tabId)`, `TRANSCRIPT_SCROLL_TO_BOTTOM_EVENT` in `src/renderer/services/transcriptScroll.ts`
 - **Delete the file the user is previewing:** `requestFileDeletion({ path, sshRemoteId?, sessionId? })`, `confirm` in `src/renderer/services/fileDeletion.ts`
 - **Telling the Files panel a file appeared or vanished:** `requestFileTreeRefresh(sessionId)`, `nudgeFileTreeForPaths(paths)` in `src/renderer/utils/fileTreeRefresh.ts`
 - **Loading a LOCAL file tree:** `walkLocalFileTree()`, `loadFileTree()` in `src/main/utils/file-tree-walk.ts`

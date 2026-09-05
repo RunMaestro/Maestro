@@ -18,6 +18,7 @@ import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import type { Session, Theme, LogEntry } from '../../../renderer/types';
+import { TRANSCRIPT_SCROLL_TO_BOTTOM_EVENT } from '../../../renderer/services/transcriptScroll';
 
 // Mock dependencies
 vi.mock('react-syntax-highlighter', () => ({
@@ -2880,6 +2881,121 @@ describe('TerminalOutput', () => {
 			});
 
 			// Terminal mode always auto-scrolls
+			expect(scrollToSpy).toHaveBeenCalled();
+		});
+	});
+
+	describe('explicit scroll-to-bottom request', () => {
+		/**
+		 * A bang command's output card is content the user asked for, so it has
+		 * to be revealed even when they had scrolled up to read history - the one
+		 * case where the auto-scroll pause is the wrong answer.
+		 */
+		function renderScrolledUp() {
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'Hello', source: 'user' }),
+				createLogEntry({ id: 'resp-1', text: 'Response', source: 'stdout' }),
+			];
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const { container } = render(<TerminalOutput {...createDefaultProps({ session })} />);
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+			const scrollToSpy = vi.fn();
+			scrollContainer.scrollTo = scrollToSpy;
+
+			// Park the view away from the bottom, which pauses auto-scroll.
+			Object.defineProperty(scrollContainer, 'scrollHeight', { value: 1000, configurable: true });
+			Object.defineProperty(scrollContainer, 'scrollTop', { value: 0, configurable: true });
+			Object.defineProperty(scrollContainer, 'clientHeight', { value: 400, configurable: true });
+			fireEvent.scroll(scrollContainer);
+
+			return { session, scrollToSpy };
+		}
+
+		async function dispatchScrollRequest(sessionId: string, tabId: string) {
+			await act(async () => {
+				window.dispatchEvent(
+					new CustomEvent(TRANSCRIPT_SCROLL_TO_BOTTOM_EVENT, {
+						detail: { sessionId, tabId },
+					})
+				);
+				vi.advanceTimersByTime(50);
+			});
+		}
+
+		it('jumps to the bottom even while auto-scroll is paused', async () => {
+			const { session, scrollToSpy } = renderScrolledUp();
+			await act(async () => {
+				vi.advanceTimersByTime(50);
+			});
+			scrollToSpy.mockClear();
+
+			await dispatchScrollRequest(session.id, 'tab-1');
+
+			expect(scrollToSpy).toHaveBeenCalledWith({ top: 1000, behavior: 'auto' });
+		});
+
+		it('ignores a request aimed at another tab or another agent', async () => {
+			const { session, scrollToSpy } = renderScrolledUp();
+			await act(async () => {
+				vi.advanceTimersByTime(50);
+			});
+			scrollToSpy.mockClear();
+
+			await dispatchScrollRequest(session.id, 'tab-2');
+			await dispatchScrollRequest('session-other', 'tab-1');
+
+			expect(scrollToSpy).not.toHaveBeenCalled();
+		});
+
+		it('resumes following the tail, so later output stays visible', async () => {
+			const logs: LogEntry[] = [createLogEntry({ id: 'user-1', text: 'Hello', source: 'user' })];
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const { container, rerender } = render(
+				<TerminalOutput {...createDefaultProps({ session })} />
+			);
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+			const scrollToSpy = vi.fn();
+			scrollContainer.scrollTo = scrollToSpy;
+
+			Object.defineProperty(scrollContainer, 'scrollHeight', { value: 1000, configurable: true });
+			Object.defineProperty(scrollContainer, 'scrollTop', { value: 0, configurable: true });
+			Object.defineProperty(scrollContainer, 'clientHeight', { value: 400, configurable: true });
+			fireEvent.scroll(scrollContainer);
+			await act(async () => {
+				vi.advanceTimersByTime(50);
+			});
+
+			await dispatchScrollRequest(session.id, 'tab-1');
+			scrollToSpy.mockClear();
+
+			// Streaming output lands after the request - it must follow, not stall.
+			const newSession = {
+				...session,
+				tabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'claude-123',
+						logs: [
+							...logs,
+							createLogEntry({ id: 'out-1', text: 'command output', source: 'stdout' }),
+						],
+						isUnread: false,
+					},
+				],
+			};
+			rerender(<TerminalOutput {...createDefaultProps({ session: newSession })} />);
+			await act(async () => {
+				vi.advanceTimersByTime(50);
+			});
+
 			expect(scrollToSpy).toHaveBeenCalled();
 		});
 	});

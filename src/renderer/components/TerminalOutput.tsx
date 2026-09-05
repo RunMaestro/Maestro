@@ -58,6 +58,11 @@ import { useMessageGistStore } from '../stores/messageGistStore';
 import { useSessionStore } from '../stores/sessionStore';
 import { useUIStore } from '../stores/uiStore';
 import { jumpToElement } from '../utils/jumpHighlight';
+import { useEventListener } from '../hooks/utils/useEventListener';
+import {
+	TRANSCRIPT_SCROLL_TO_BOTTOM_EVENT,
+	type TranscriptScrollToBottomDetail,
+} from '../services/transcriptScroll';
 import { SessionRecoveryCard } from './SessionRecoveryCard';
 import { AgentTaskListCard } from './AgentTaskListCard';
 import { extractAgentTaskList } from '../utils/agentTaskList';
@@ -2281,6 +2286,34 @@ export const TerminalOutput = memo(
 			lastLogCountRef.current = currentCount;
 		}, [filteredLogs.length, isAtBottom, activeTabId]);
 
+		// Slam the transcript to the bottom on the next frame. Shared by the
+		// follow-the-tail MutationObserver below and by an explicit scroll request
+		// from the composer, so both hand the scroll handler the same guard flag
+		// and cannot disagree about what counts as a user scroll.
+		const scrollToBottom = useCallback(() => {
+			if (!scrollContainerRef.current) return;
+			requestAnimationFrame(() => {
+				if (scrollContainerRef.current) {
+					// Set guard flag BEFORE scrollTo - the throttled scroll handler
+					// checks this flag and consumes it (clears it) when it fires,
+					// preventing the programmatic scroll from being misinterpreted
+					// as a user scroll-up that should pause auto-scroll.
+					isProgrammaticScrollRef.current = true;
+					scrollContainerRef.current.scrollTo({
+						top: scrollContainerRef.current.scrollHeight,
+						behavior: 'auto',
+					});
+					// Fallback: if scrollTo is a no-op (already at bottom), the browser
+					// won't fire a scroll event, so the handler never consumes the guard.
+					// Clear it after 32ms (2x the 16ms throttle window) to prevent a
+					// stale true from eating the next genuine user scroll-up.
+					setTimeout(() => {
+						isProgrammaticScrollRef.current = false;
+					}, 32);
+				}
+			});
+		}, []);
+
 		// Auto-scroll to bottom when DOM content changes in the scroll container.
 		// Uses MutationObserver to detect ALL content mutations - new nodes (log entries),
 		// text changes (thinking stream growth), and attribute changes (tool status updates).
@@ -2292,30 +2325,6 @@ export const TerminalOutput = memo(
 
 			const shouldAutoScroll = () =>
 				!jumpInFlightRef.current && (!autoScrollPausedRef.current || isAtBottomRef.current);
-
-			const scrollToBottom = () => {
-				if (!scrollContainerRef.current) return;
-				requestAnimationFrame(() => {
-					if (scrollContainerRef.current) {
-						// Set guard flag BEFORE scrollTo - the throttled scroll handler
-						// checks this flag and consumes it (clears it) when it fires,
-						// preventing the programmatic scroll from being misinterpreted
-						// as a user scroll-up that should pause auto-scroll.
-						isProgrammaticScrollRef.current = true;
-						scrollContainerRef.current.scrollTo({
-							top: scrollContainerRef.current.scrollHeight,
-							behavior: 'auto',
-						});
-						// Fallback: if scrollTo is a no-op (already at bottom), the browser
-						// won't fire a scroll event, so the handler never consumes the guard.
-						// Clear it after 32ms (2x the 16ms throttle window) to prevent a
-						// stale true from eating the next genuine user scroll-up.
-						setTimeout(() => {
-							isProgrammaticScrollRef.current = false;
-						}, 32);
-					}
-				});
-			};
 
 			// Initial scroll on mount/dep change
 			if (shouldAutoScroll()) {
@@ -2335,7 +2344,27 @@ export const TerminalOutput = memo(
 			});
 
 			return () => observer.disconnect();
-		}, [autoScrollPaused]);
+		}, [autoScrollPaused, scrollToBottom]);
+
+		// A bang command's output card is a reply the user asked for by pressing
+		// Enter, so it has to be visible the moment it starts streaming. If they
+		// were reading history at the time, auto-scroll is paused and the card
+		// would land offscreen behind the unread badge - the one case where the
+		// pause is wrong, because the new content is theirs, not the agent's.
+		useEventListener(TRANSCRIPT_SCROLL_TO_BOTTOM_EVENT, (event) => {
+			const detail = (event as CustomEvent<TranscriptScrollToBottomDetail>).detail;
+			if (!detail || detail.sessionId !== session.id || detail.tabId !== activeTabId) return;
+
+			// Flip the refs first so the MutationObserver's live shouldAutoScroll()
+			// follows the output this frame, before the state-driven re-render.
+			autoScrollPausedRef.current = false;
+			isAtBottomRef.current = true;
+			setAutoScrollPaused(false);
+			setIsAtBottom(true);
+			setHasNewMessages(false);
+			setNewMessageCount(0);
+			scrollToBottom();
+		});
 
 		// Restore the scroll position this tab was left at.
 		//
