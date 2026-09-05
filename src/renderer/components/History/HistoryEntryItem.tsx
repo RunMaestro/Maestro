@@ -7,6 +7,7 @@ import { DoubleCheck, getPillColor, getEntryIcon } from './historyConstants';
 import { formatTimestamp } from '../../../shared/formatters';
 import { humanizeCueEventType } from '../../../shared/cue/cue-summary';
 import { getTokenSourcePill } from '../../../shared/claudeTokenModeLabel';
+import { useSettingsStore } from '../../stores/settingsStore';
 
 const formatTime = (timestamp: number) => formatTimestamp(timestamp, 'smart');
 
@@ -34,13 +35,16 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 }: HistoryEntryItemProps) {
 	const colors = getPillColor(entry.type, theme);
 	const Icon = getEntryIcon(entry.type);
+	const showProviderModePill = useSettingsStore((s) => s.showProviderModePill);
 
 	// Claude-only per-turn token source pill (TUI = maestro-p / Max plan, API =
-	// claude --print). Absent on non-Claude and older entries. Shares its label and
+	// claude --print). Absent on non-Claude and older entries, and hidden entirely
+	// when the "Provider Mode Pill" display setting is off. Shares its label and
 	// tooltip with the live chat pill so the two can never drift.
-	const tokenPill = entry.tokenSource
-		? getTokenSourcePill({ mode: entry.tokenSource, reason: entry.tokenSourceReason })
-		: null;
+	const tokenPill =
+		showProviderModePill && entry.tokenSource
+			? getTokenSourcePill({ mode: entry.tokenSource, reason: entry.tokenSourceReason })
+			: null;
 	const tokenPillColor = tokenPill
 		? tokenPill.isTui
 			? theme.colors.accent

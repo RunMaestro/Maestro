@@ -501,6 +501,27 @@ export const DISPLAY_SETTINGS: SearchableSetting[] = [
 		],
 	},
 	{
+		id: 'display-provider-mode-pill',
+		tab: 'display',
+		tabLabel: 'Display',
+		label: 'Provider Mode Pill',
+		description:
+			'Show which Claude interface produced a turn ("claude -p" or "TUI Wrapper") as a pill under chat responses and on History entries',
+		keywords: [
+			'provider',
+			'mode',
+			'pill',
+			'claude -p',
+			'tui',
+			'tui wrapper',
+			'maestro-p',
+			'token source',
+			'attribution',
+			'badge',
+			'history',
+		],
+	},
+	{
 		id: 'display-colorblind-mode',
 		tab: 'display',
 		tabLabel: 'Display',

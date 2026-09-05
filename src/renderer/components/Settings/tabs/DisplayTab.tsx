@@ -24,6 +24,7 @@ import {
 	PanelLeft,
 	Palette,
 	Sparkles,
+	Tags,
 } from 'lucide-react';
 import {
 	FILE_PREVIEW_TOOLBAR_BUTTON_KEYS,
@@ -121,6 +122,8 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 		setShowSessionIdPill,
 		showSessionCostPill,
 		setShowSessionCostPill,
+		showProviderModePill,
+		setShowProviderModePill,
 		showWorktreePill,
 		setShowWorktreePill,
 		showWorktreeBranchName,
@@ -349,6 +352,31 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 					Position your messages on the left or right side of the chat. AI responses appear on the
 					opposite side.
 				</p>
+			</div>
+
+			{/* Provider mode pill (Claude turn attribution) */}
+			<div data-setting-id="display-provider-mode-pill">
+				<SettingsSectionHeading icon={Tags}>Provider Mode Pill</SettingsSectionHeading>
+				<div
+					className="flex items-center justify-between p-3 rounded border"
+					style={{ borderColor: theme.colors.border }}
+				>
+					<div>
+						<p className="text-sm" style={{ color: theme.colors.textMain }}>
+							Show provider mode
+						</p>
+						<p className="text-xs opacity-50 mt-0.5">
+							Display which Claude interface produced a turn (&quot;claude -p&quot; or &quot;TUI
+							Wrapper&quot;) as a pill under chat responses and on History entries.
+						</p>
+					</div>
+					<ToggleSwitch
+						checked={showProviderModePill}
+						onChange={setShowProviderModePill}
+						theme={theme}
+						ariaLabel="Show provider mode pill"
+					/>
+				</div>
 			</div>
 
 			<div data-setting-id="display-icon-theme">

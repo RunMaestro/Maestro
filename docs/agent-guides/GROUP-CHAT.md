@@ -168,25 +168,27 @@ All located in `src/main/group-chat/`:
 
 The central message routing engine. Key exports:
 
-| Function                           | Purpose                                                                                                                                                                                       |
-| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `routeUserMessage()`               | Routes user message to moderator batch process. Auto-adds `@mentioned` sessions as participants. Builds the full prompt with system prompt, participant list, chat history, and user request. |
-| `routeModeratorResponse()`         | Parses moderator output for `@mentions`, dispatches to participants, tracks pending responses                                                                                                 |
-| `routeAgentResponse()`             | Handles participant response, logs it, emits to renderer                                                                                                                                      |
-| `spawnModeratorSynthesis()`        | Spawns synthesis round after all participants respond                                                                                                                                         |
-| `respawnParticipantWithRecovery()` | Re-spawns a participant with recovery context after session loss                                                                                                                              |
-| `extractMentions()`                | Extracts `@Name` patterns from text, matches against participants                                                                                                                             |
-| `markParticipantResponded()`       | Removes participant from pending set, returns true if last                                                                                                                                    |
+| Function                            | Purpose                                                                                                                                                                                       |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `routeUserMessage()`                | Routes user message to moderator batch process. Auto-adds `@mentioned` sessions as participants. Builds the full prompt with system prompt, participant list, chat history, and user request. |
+| `routeModeratorResponse()`          | Parses moderator output for `@mentions`, dispatches to participants, tracks pending responses                                                                                                 |
+| `routeAgentResponse()`              | Handles participant response, logs it, emits to renderer                                                                                                                                      |
+| `spawnModeratorSynthesis()`         | Spawns synthesis round after all participants respond                                                                                                                                         |
+| `respawnParticipantWithRecovery()`  | Re-spawns a participant with recovery context after session loss                                                                                                                              |
+| `extractMentions()`                 | Extracts `@Name` patterns from text, matches against participants                                                                                                                             |
+| `markParticipantResponded()`        | Removes participant from pending set, returns true if last                                                                                                                                    |
+| `queueDelegationUntilAgentIsFree()` | Parks a delegation until the target agent goes idle, then replays it (see the availability gate below)                                                                                        |
 
 **Agent availability gate.** Before delegating (an `@mention` or an `!autorun`
 directive), the router asks whether the target agent is already working. A
 participant runs as its own process in the AGENT'S working directory, so handing
 work to an agent the user is talking to directly puts two writers in one repo.
-When `requiresIdleParticipants(chat)` is true, the busy agent is skipped and
-`reportBusySkips()` posts one system line naming everyone held back - appended to
-the log as well as emitted, because the moderator reads recent log lines as
-context and would otherwise never learn the work was not handed out. Three rules
-the implementation depends on:
+When `requiresIdleParticipants(chat)` is true, the delegation is **held rather
+than dropped**: `queueDelegationUntilAgentIsFree()` parks it,
+`reportQueuedForBusyAgents()` posts one system line naming everyone the turn is
+waiting on (appended to the log as well as emitted, because the moderator reads
+recent log lines as context), and the request is delivered the moment that agent
+goes idle. Rules the implementation depends on:
 
 - **Liveness comes from `isBusy` on `GroupChatSessionInfo`, computed by the
   session-lookup callback in `src/main/index.ts` via `isAgentBusy()`
@@ -195,11 +197,30 @@ the implementation depends on:
   on the way to disk, so a stored record always reads idle.
 - **Unknown is not busy.** A participant with no matching Maestro agent cannot be
   probed and is never blocked, or a participant whose agent was renamed becomes
-  permanently unreachable.
+  permanently unreachable. `waitForAgentToFree()` applies the same rule: a session
+  that vanishes mid-wait counts as free.
+- **The wait is a poll, not an event.** "Busy" is a property of the whole agent
+  (any AI tab, an Auto Run, a CLI run), so there is no single process exit that
+  means "free now". The loop re-reads the session callback every
+  `QUEUED_DELEGATION_POLL_MS` (5s) and gives up after
+  `QUEUED_DELEGATION_MAX_WAIT_MS` (15 min) so a wedged agent cannot pin a room on
+  `'agent-working'` forever.
+- **The participant is registered as pending BEFORE the wait starts.** The room
+  stays on `'agent-working'` and synthesis waits for a reply that has not been
+  handed out yet. `trackPendingParticipant()` writes to whichever pending set is
+  live, not just the one the originating turn created - a delegation held for
+  minutes can land after a newer turn has taken over the room's set.
+- **Waiters are cancelled, not cleared.** A poll loop has no timer handle, so
+  `clearPendingParticipants()` calls `cancelQueuedDelegations()` to flip
+  cancellation tokens; the loop returns `'cancelled'` on its next tick and
+  delivers nothing into a stopped chat.
 - **One report per turn, and it suppresses the generic retry notice.** A fan-out to
   three busy agents is one line, and the "no participants engaged" fallback stays
-  quiet when a busy skip already explained itself - two notices read as two
+  quiet when a queued handoff already explained itself - two notices read as two
   unrelated failures.
+- **Every dead-end path closes the turn out through `finishParticipantTurn()`**
+  (response timeout, gave-up wait, failed delivery). Both callers have to answer
+  "is the room still working?" the same way or the chat hangs.
 
 Module-level callbacks set during initialization:
 

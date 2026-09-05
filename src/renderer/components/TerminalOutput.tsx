@@ -307,9 +307,11 @@ interface LogItemProps {
 	bionifyAlgorithm: string;
 	// Message alignment
 	userMessageAlignment: 'left' | 'right';
-	// Claude mode pill - both passed as primitives so LogItem memo equality stays cheap.
+	// Claude mode pill - all passed as primitives so LogItem memo equality stays cheap.
 	isClaudeCode: boolean;
 	isAdaptiveMode: boolean;
+	/** Display setting: when false the provider mode pill is suppressed entirely. */
+	showProviderModePill: boolean;
 	// Session recovery (session_not_found inline card). Only consumed when
 	// log.recoveryAction is set; otherwise these props are ignored.
 	sessionId: string;
@@ -369,6 +371,7 @@ const LogItemComponent = memo(
 		userMessageAlignment,
 		isClaudeCode,
 		isAdaptiveMode,
+		showProviderModePill,
 		sessionId,
 		onSessionRecover,
 		isRecoveringSession,
@@ -1140,31 +1143,33 @@ const LogItemComponent = memo(
 					    auto-switches between the two). The model and effort pills name the
 					    configuration the turn was SENT with, so a conversation that changed
 					    model or effort partway through still says who answered what. */}
-					{log.source !== 'user' && (isClaudeCode || log.turnModel || log.turnEffort) && (
-						<div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1 max-w-[60%] pointer-events-none select-none">
-							{isClaudeCode &&
-								(() => {
-									const { label, title } = getTokenSourcePill({
-										mode: log.renderStyle === 'text-stream' ? 'interactive' : 'api',
-										adaptive: isAdaptiveMode,
-									});
-									return (
-										<span
-											className="text-2xs px-1.5 py-0.5 rounded shrink-0 whitespace-nowrap"
-											style={{
-												backgroundColor: `${theme.colors.accent}20`,
-												color: theme.colors.accent,
-												opacity: 0.7,
-											}}
-											title={title}
-										>
-											{label}
-										</span>
-									);
-								})()}
-							<TurnSettingPills theme={theme} model={log.turnModel} effort={log.turnEffort} />
-						</div>
-					)}
+					{log.source !== 'user' &&
+						((isClaudeCode && showProviderModePill) || log.turnModel || log.turnEffort) && (
+							<div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1 max-w-[60%] pointer-events-none select-none">
+								{isClaudeCode &&
+									showProviderModePill &&
+									(() => {
+										const { label, title } = getTokenSourcePill({
+											mode: log.renderStyle === 'text-stream' ? 'interactive' : 'api',
+											adaptive: isAdaptiveMode,
+										});
+										return (
+											<span
+												className="text-2xs px-1.5 py-0.5 rounded shrink-0 whitespace-nowrap"
+												style={{
+													backgroundColor: `${theme.colors.accent}20`,
+													color: theme.colors.accent,
+													opacity: 0.7,
+												}}
+												title={title}
+											>
+												{label}
+											</span>
+										);
+									})()}
+								<TurnSettingPills theme={theme} model={log.turnModel} effort={log.turnEffort} />
+							</div>
+						)}
 					{/* Jump to top of this message - bottom left corner */}
 					<JumpToMessageTopButton
 						scrollContainerRef={scrollContainerRef}
@@ -1379,6 +1384,7 @@ const LogItemComponent = memo(
 			prevProps.bionifyAlgorithm === nextProps.bionifyAlgorithm &&
 			prevProps.fontFamily === nextProps.fontFamily &&
 			prevProps.userMessageAlignment === nextProps.userMessageAlignment &&
+			prevProps.showProviderModePill === nextProps.showProviderModePill &&
 			prevProps.ghCliAvailable === nextProps.ghCliAvailable &&
 			prevProps.onForkConversation === nextProps.onForkConversation &&
 			prevProps.publishedGistUrl === nextProps.publishedGistUrl
@@ -1504,6 +1510,7 @@ export const TerminalOutput = memo(
 			isRecoveringSession,
 			sessionRecoveryError,
 		} = props;
+		const showProviderModePill = useSettingsStore((s) => s.showProviderModePill);
 		const globalBionifyReadingMode = useSettingsStore((s) => s.bionifyReadingMode);
 		const globalBionifyIntensity = useSettingsStore((s) => s.bionifyIntensity);
 		const publishedGists = useMessageGistStore((s) => s.published);
@@ -2807,6 +2814,7 @@ export const TerminalOutput = memo(
 								userMessageAlignment={userMessageAlignment}
 								isClaudeCode={session.toolType === 'claude-code'}
 								isAdaptiveMode={getClaudeTokenMode(session) === 'dynamic'}
+								showProviderModePill={showProviderModePill}
 							/>
 						);
 					})}

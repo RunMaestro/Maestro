@@ -82,6 +82,7 @@ export function HistoryDetailModal({
 	agentId,
 }: HistoryDetailModalProps) {
 	const bionifyReadingMode = useSettingsStore((s) => s.bionifyReadingMode);
+	const showProviderModePill = useSettingsStore((s) => s.showProviderModePill);
 	const onCloseRef = useRef(onClose);
 	onCloseRef.current = onClose;
 	const [copiedSessionId, setCopiedSessionId] = useState(false);
@@ -181,11 +182,13 @@ export function HistoryDetailModal({
 	const Icon = entry.type === 'AUTO' ? Bot : entry.type === 'CUE' ? Zap : User;
 
 	// Claude-only per-turn token source pill (TUI = maestro-p / Max plan, API =
-	// claude --print). Absent on non-Claude and older entries. Shares its label and
+	// claude --print). Absent on non-Claude and older entries, and hidden entirely
+	// when the "Provider Mode Pill" display setting is off. Shares its label and
 	// tooltip with the live chat pill so the two can never drift.
-	const tokenPill = entry.tokenSource
-		? getTokenSourcePill({ mode: entry.tokenSource, reason: entry.tokenSourceReason })
-		: null;
+	const tokenPill =
+		showProviderModePill && entry.tokenSource
+			? getTokenSourcePill({ mode: entry.tokenSource, reason: entry.tokenSourceReason })
+			: null;
 	const tokenPillColor = tokenPill
 		? tokenPill.isTui
 			? theme.colors.accent

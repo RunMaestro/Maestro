@@ -456,6 +456,7 @@ export interface SettingsStoreState {
 	showAgentName: boolean;
 	showSessionIdPill: boolean;
 	showSessionCostPill: boolean;
+	showProviderModePill: boolean;
 	showWorktreePill: boolean;
 	showWorktreeBranchName: boolean;
 	showStarredSessionsSection: boolean;
@@ -610,6 +611,7 @@ export interface SettingsStoreActions {
 	setShowAgentName: (value: boolean) => void;
 	setShowSessionIdPill: (value: boolean) => void;
 	setShowSessionCostPill: (value: boolean) => void;
+	setShowProviderModePill: (value: boolean) => void;
 	setShowWorktreePill: (value: boolean) => void;
 	setShowWorktreeBranchName: (value: boolean) => void;
 	setShowStarredSessionsSection: (value: boolean) => void;
@@ -849,6 +851,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		showAgentName: true,
 		showSessionIdPill: false,
 		showSessionCostPill: true,
+		showProviderModePill: false,
 		showWorktreePill: false,
 		showWorktreeBranchName: false,
 		showStarredSessionsSection: true,
@@ -1576,6 +1579,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setShowSessionCostPill: (value) => {
 			set({ showSessionCostPill: value });
 			window.maestro.settings.set('showSessionCostPill', value);
+		},
+
+		setShowProviderModePill: (value) => {
+			set({ showProviderModePill: value });
+			window.maestro.settings.set('showProviderModePill', value);
 		},
 
 		setShowWorktreePill: (value) => {
@@ -3073,6 +3081,9 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['showSessionCostPill'] !== undefined)
 			patch.showSessionCostPill = allSettings['showSessionCostPill'] as boolean;
 
+		if (allSettings['showProviderModePill'] !== undefined)
+			patch.showProviderModePill = allSettings['showProviderModePill'] as boolean;
+
 		if (allSettings['showWorktreePill'] !== undefined)
 			patch.showWorktreePill = allSettings['showWorktreePill'] as boolean;
 
@@ -3393,6 +3404,7 @@ export function getSettingsActions() {
 		setShowAgentName: state.setShowAgentName,
 		setShowSessionIdPill: state.setShowSessionIdPill,
 		setShowSessionCostPill: state.setShowSessionCostPill,
+		setShowProviderModePill: state.setShowProviderModePill,
 		setShowWorktreePill: state.setShowWorktreePill,
 		setShowWorktreeBranchName: state.setShowWorktreeBranchName,
 		setShowLeftPanelGroupMemberCount: state.setShowLeftPanelGroupMemberCount,
