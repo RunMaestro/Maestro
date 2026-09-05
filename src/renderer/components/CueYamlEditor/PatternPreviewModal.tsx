@@ -8,6 +8,7 @@ import type { CuePattern } from '../../constants/cuePatterns';
 import { Modal } from '../ui/Modal';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { CUE_COLOR } from '../../../shared/cue-pipeline-types';
+import { safeClipboardWrite } from '../../utils/clipboard';
 import type { Theme } from '../../types';
 
 interface PatternPreviewModalProps {
@@ -27,13 +28,10 @@ export function PatternPreviewModal({ pattern, theme, onClose }: PatternPreviewM
 	}, []);
 
 	const handleCopy = useCallback(async () => {
-		try {
-			await navigator.clipboard.writeText(pattern.yaml);
-			setCopied(true);
-			copyTimeoutRef.current = setTimeout(() => setCopied(false), 2000);
-		} catch {
-			// Clipboard API may fail in some contexts - non-fatal
-		}
+		// Non-fatal when the clipboard is unavailable: the button simply stays "Copy".
+		if (!(await safeClipboardWrite(pattern.yaml))) return;
+		setCopied(true);
+		copyTimeoutRef.current = setTimeout(() => setCopied(false), 2000);
 	}, [pattern.yaml]);
 
 	return (

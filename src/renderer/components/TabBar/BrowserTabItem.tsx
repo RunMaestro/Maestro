@@ -16,6 +16,7 @@ import {
 import type { BrowserTab, Theme } from '../../types';
 import { useTabHoverOverlay } from '../../hooks/tabs/useTabHoverOverlay';
 import { isCoarsePointer } from '../../utils/touch';
+import { safeClipboardWrite } from '../../utils/clipboard';
 import { getBrowserTabLabel } from '../../utils/browserTabPersistence';
 import { getTabKindColor } from './tabBarUtils';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -283,15 +284,14 @@ export const BrowserTabItem = memo(function BrowserTabItem({
 		(e: React.MouseEvent) => {
 			e.stopPropagation();
 			const url = tab.url || 'about:blank';
-			navigator.clipboard
-				.writeText(url)
-				.then(() => {
-					setUrlCopied(true);
-					setTimeout(() => setUrlCopied(false), 1500);
-				})
-				.catch((err) => {
-					console.error('Failed to copy URL:', err);
-				});
+			void safeClipboardWrite(url).then((copied) => {
+				if (!copied) {
+					console.error('Failed to copy URL: clipboard unavailable');
+					return;
+				}
+				setUrlCopied(true);
+				setTimeout(() => setUrlCopied(false), 1500);
+			});
 		},
 		[tab.url]
 	);
