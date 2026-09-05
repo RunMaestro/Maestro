@@ -53,6 +53,42 @@ describe('isSelfContainedCard', () => {
 	])('is true for a %s', (_label, overrides) => {
 		expect(isSelfContainedCard(entry(overrides as Partial<LogEntry>))).toBe(true);
 	});
+
+	describe("Claude's plan-limit banner", () => {
+		// The banner reaches the transcript as a plain `stdout` entry with no
+		// marker (Claude forwards it on the `result` envelope after the failure
+		// was already raised), so text is the only thing that can identify it.
+		it('is a card, so the retried answer is not glued to its front', () => {
+			const banner = entry({
+				source: 'stdout',
+				text: "You've hit your session limit · resets 12:50am (America/Chicago)",
+			});
+
+			expect(isSelfContainedCard(banner)).toBe(true);
+			expect(canAppendToLogEntry(banner, 'stdout')).toBe(false);
+		});
+
+		it('is a card for the weekly and legacy wordings too', () => {
+			expect(
+				isSelfContainedCard(entry({ text: "You've hit your weekly limit · resets Monday at 9am" }))
+			).toBe(true);
+			expect(isSelfContainedCard(entry({ text: 'Claude AI usage limit reached|1755500000' }))).toBe(
+				true
+			);
+		});
+
+		it('is NOT a card when an agent merely discusses limits', () => {
+			// Maestro's own agents write about quota constantly. A reply that
+			// quotes the banner carries surrounding prose, so it stays a stream and
+			// keeps coalescing normally.
+			const reply = entry({
+				text: 'Fixed. "You\'ve hit your session limit · resets 11:40am (America/Chicago)" now classifies as rate_limited, so resilience picks it up instead of letting the turn look successful.',
+			});
+
+			expect(isSelfContainedCard(reply)).toBe(false);
+			expect(canAppendToLogEntry(reply, 'stdout')).toBe(true);
+		});
+	});
 });
 
 describe('canAppendToLogEntry', () => {

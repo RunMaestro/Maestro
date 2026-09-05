@@ -106,6 +106,7 @@ Grep-verified 2026-09-04 (`npm run docs:verify` re-checks every path). This is t
 - **Who asked for this turn (interactive vs automation):** `QUERY_SOURCE_ENV_VAR`, `QuerySource` in `src/shared/querySource.ts`
 - **An agent's effective environment:** `resolveAgentEnvironment()`, `isSecretEnvKey()` in `src/shared/agentEnvironment.ts`
 - **Whether a login flow can fix an auth failure:** `classifyCredentialKind()`, `credentialKindBlocksLogin()` in `src/shared/providerAuthIdentity.ts`
+- **Typing a login command into a shell:** `formatAgentLoginCommand(login, syntax?)`, `loginShellSyntaxFor(shellId, isWindows)` in `src/shared/agentMetadata.ts`
 - **Bucketing Director's Notes bullets:** `bucketNarrativeItems()`, `shouldRenderBuckets()` in `src/shared/directorNotesGrouping.ts`
 - **Sortable table header:** `useTableSort()`, `role` in `src/renderer/components/ui/SortableTh.tsx`
 - **Graphing a set of documents rather than one:** `scopeDirectory`, `openGraphScope()` in `src/renderer/components/DocumentGraph/graphDataBuilder.ts`

@@ -520,11 +520,11 @@ Images can be attached via drag-and-drop, paste, or the attachment button. The c
 
 ## Staged Images
 
-Attached images wait in a thumbnail strip directly above the input box until you send. Their **order in that strip is the order the agent receives them**, so the first thumbnail is Screenshot 1, the second is Screenshot 2, and so on. That is what lets you write "compare Screenshot 1 and Screenshot 3" and have the agent look at the right pictures.
+Attached images wait in a thumbnail strip directly above the input box until you send. Their **order in that strip is the order the agent receives them**, so the first thumbnail is Screenshot 1, the second is Screenshot 2, and so on. That is what lets you write "compare Screenshot 1 and Screenshot 3" and have the agent look at the right pictures. With more than one image staged, each thumbnail carries its number so you can read it off the strip instead of counting. A single image needs no label and does not get one.
 
 ### Reordering
 
-Drag a thumbnail sideways to move it. While a drag is in flight, every thumbnail shows the slot number it currently occupies, so with six or seven screenshots staged you can aim at a number instead of counting positions.
+Drag a thumbnail sideways to move it. The slot numbers follow the drag, so with six or seven screenshots staged you can aim at a number instead of counting positions. A lone thumbnail picks up a number for the length of the drag too.
 
 ### The Staged Images organizer
 

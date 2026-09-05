@@ -362,6 +362,40 @@ describe('TerminalOutput', () => {
 			expect(combinedText).not.toContain('response.Unknown command');
 			expect(combinedText).not.toContain('/nonexistentStart of a later response.');
 		});
+
+		it("keeps Claude's plan-limit banner off the front of the retried answer", () => {
+			// After a plan-quota outage, Claude forwards its banner as a plain
+			// `stdout` entry with no marker. The answer the auto-retry produces
+			// arrives half an hour later but is still the next `stdout` entry in the
+			// same response group, so grouping used to render the reply as
+			// "You've hit your session limit · resets 12:50am (America/Chicago)Yes,
+			// on the first part. ...".
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'Question', source: 'user' }),
+				createLogEntry({
+					id: 'limit-1',
+					text: "You've hit your session limit · resets 12:50am (America/Chicago)",
+					source: 'stdout',
+				}),
+				createLogEntry({ id: 'resp-1', text: 'Yes on the first part.', source: 'stdout' }),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const { container } = render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			// user + banner + answer, not user + one stitched bubble.
+			expect(container.querySelectorAll('[data-log-index]').length).toBe(3);
+
+			const combinedText = screen
+				.getAllByTestId('react-markdown')
+				.map((el) => el.textContent)
+				.join('|');
+			expect(combinedText).not.toContain('(America/Chicago)Yes on the first part.');
+		});
 	});
 
 	describe('command-mode cards are never merged into a response group', () => {
