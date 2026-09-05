@@ -59,6 +59,8 @@ export function createWebApi() {
 		// owns the claim so simultaneous desktop/browser starts cannot both win.
 		claimAutoRunStart: (sessionId: string) =>
 			ipcRenderer.invoke('web:claimAutoRunStart', sessionId) as Promise<boolean>,
+		releaseAutoRunStartClaim: (sessionId: string) =>
+			ipcRenderer.invoke('web:releaseAutoRunStartClaim', sessionId) as Promise<boolean>,
 
 		// Create a tab in the Electron renderer, which owns canonical tab state.
 		requestNewTab: (sessionId: string, background = false) =>

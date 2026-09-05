@@ -263,6 +263,9 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 	ipcMain.handle('web:claimAutoRunStart', async (_, sessionId: string) => {
 		return getAutoRunStateTracker().tryClaimStart(sessionId);
 	});
+	ipcMain.handle('web:releaseAutoRunStartClaim', async (_, sessionId: string) => {
+		return getAutoRunStateTracker().releaseStartClaim(sessionId);
+	});
 
 	ipcMain.handle(
 		'web:broadcastAutoRunState',

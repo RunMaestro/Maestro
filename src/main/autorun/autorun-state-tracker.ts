@@ -40,6 +40,8 @@ export class AutoRunStateTracker {
 	private states = new Map<string, AutoRunTrackedState>();
 	/** agentId -> when the current running batch began. */
 	private runningSince = new Map<string, number>();
+	/** Claims that have not yet been promoted by a renderer state broadcast. */
+	private provisionalStarts = new Set<string>();
 	private listeners = new Set<FinalListener>();
 
 	/**
@@ -50,11 +52,12 @@ export class AutoRunStateTracker {
 	update(agentId: string, state: AutoRunTrackedState | null): void {
 		const previous = this.states.get(agentId);
 		const wasRunning = previous?.isRunning === true;
+		const wasProvisional = this.provisionalStarts.delete(agentId);
 
 		if (!state) {
 			this.states.delete(agentId);
 			this.runningSince.delete(agentId);
-			if (wasRunning) this.emitFinal(agentId, previous);
+			if (wasRunning && !wasProvisional) this.emitFinal(agentId, previous);
 			return;
 		}
 
@@ -64,7 +67,7 @@ export class AutoRunStateTracker {
 		} else {
 			this.runningSince.delete(agentId);
 		}
-		if (wasRunning && !state.isRunning) this.emitFinal(agentId, state);
+		if (wasRunning && !state.isRunning && !wasProvisional) this.emitFinal(agentId, state);
 	}
 
 	/** True while a batch is running for this agent. */
@@ -83,6 +86,19 @@ export class AutoRunStateTracker {
 		if (this.isRunning(agentId)) return false;
 		this.states.set(agentId, { isRunning: true });
 		this.runningSince.set(agentId, Date.now());
+		this.provisionalStarts.add(agentId);
+		return true;
+	}
+
+	/**
+	 * Release a claim when preparation fails before the renderer publishes its
+	 * first real running state. Once promoted, a stale rollback cannot clear the
+	 * active batch.
+	 */
+	releaseStartClaim(agentId: string): boolean {
+		if (!this.provisionalStarts.delete(agentId)) return false;
+		this.states.delete(agentId);
+		this.runningSince.delete(agentId);
 		return true;
 	}
 
@@ -110,6 +126,7 @@ export class AutoRunStateTracker {
 	clear(agentId: string): void {
 		this.states.delete(agentId);
 		this.runningSince.delete(agentId);
+		this.provisionalStarts.delete(agentId);
 	}
 
 	private emitFinal(agentId: string, state: AutoRunTrackedState | undefined): void {

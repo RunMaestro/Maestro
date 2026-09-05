@@ -194,6 +194,34 @@ describe('web-desktop electron-shim autorun_state routing', () => {
 		ipcRenderer.removeListener('remote:autoRunStateMirror', listener);
 	});
 
+	it('replays only one buffered frame to a once listener and preserves the rest', () => {
+		for (const sessionId of ['first-session', 'second-session']) {
+			InertWebSocket.instances[0].emit('message', {
+				data: JSON.stringify({
+					type: 'autorun_state',
+					sessionId,
+					state: { isRunning: true },
+				}),
+			});
+		}
+
+		const onceListener = vi.fn();
+		ipcRenderer.once('remote:autoRunStateMirror', onceListener);
+
+		expect(onceListener).toHaveBeenCalledTimes(1);
+		expect(onceListener).toHaveBeenCalledWith({ senderFrame: null }, 'first-session', {
+			isRunning: true,
+		});
+
+		const remainingListener = vi.fn();
+		ipcRenderer.on('remote:autoRunStateMirror', remainingListener);
+		expect(remainingListener).toHaveBeenCalledTimes(1);
+		expect(remainingListener).toHaveBeenCalledWith({ senderFrame: null }, 'second-session', {
+			isRunning: true,
+		});
+		ipcRenderer.removeListener('remote:autoRunStateMirror', remainingListener);
+	});
+
 	it('forwards a null state (run cleared) rather than dropping the frame', () => {
 		const listener = vi.fn();
 		ipcRenderer.on('remote:autoRunStateMirror', listener);

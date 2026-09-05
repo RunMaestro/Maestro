@@ -236,9 +236,13 @@ class BridgeClient {
 		if (channel === 'remote:autoRunStateMirror' && this.pendingAutoRunFrames.size > 0) {
 			const fakeEvent = { senderFrame: null };
 			for (const [sessionId, state] of this.pendingAutoRunFrames) {
+				// `once()` unregisters its wrapper during the first callback. Honor
+				// that removal instead of invoking the stale wrapper for every
+				// buffered session, and preserve frames it did not consume.
+				if (!set.has(listener)) break;
+				this.pendingAutoRunFrames.delete(sessionId);
 				this.notifyListener(channel, listener, fakeEvent, [sessionId, state]);
 			}
-			this.pendingAutoRunFrames.clear();
 		}
 	}
 

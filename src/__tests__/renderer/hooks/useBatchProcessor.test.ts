@@ -1029,6 +1029,7 @@ describe('useBatchProcessor hook', () => {
 			});
 
 			expect(mockOnSpawnAgent).not.toHaveBeenCalled();
+			expect(window.maestro.web.releaseAutoRunStartClaim).toHaveBeenCalledWith('test-session-id');
 		});
 
 		it('should not start when another client wins the main-process claim', async () => {
@@ -1051,12 +1052,18 @@ describe('useBatchProcessor hook', () => {
 						documents: [{ filename: 'tasks', resetOnCompletion: false }],
 						prompt: 'Test prompt',
 						loopEnabled: false,
+						worktree: {
+							enabled: true,
+							path: '/test/worktree',
+							branchName: 'feature/test',
+						},
 					},
 					'/test/folder'
 				);
 			});
 
 			expect(mockOnSpawnAgent).not.toHaveBeenCalled();
+			expect(mockWorktreeSetup).not.toHaveBeenCalled();
 			expect(mockBroadcastAutoRunState).not.toHaveBeenCalled();
 			expect(mockNotifyToast).toHaveBeenCalledWith(
 				expect.objectContaining({ title: 'Auto Run Already Active' })
@@ -1579,6 +1586,8 @@ describe('useBatchProcessor hook', () => {
 
 			// Should not have spawned agent due to worktree failure
 			expect(mockOnSpawnAgent).not.toHaveBeenCalled();
+			expect(window.maestro.web.claimAutoRunStart).toHaveBeenCalledWith('test-session-id');
+			expect(window.maestro.web.releaseAutoRunStartClaim).toHaveBeenCalledWith('test-session-id');
 		});
 
 		it('should checkout different branch when worktree exists with branch mismatch', async () => {

@@ -42,6 +42,15 @@ describe('Web Preload API', () => {
 			});
 		});
 
+		describe('releaseAutoRunStartClaim', () => {
+			it('should invoke the main-process Auto Run claim rollback', async () => {
+				mockInvoke.mockResolvedValue(true);
+
+				await expect(api.releaseAutoRunStartClaim('session-123')).resolves.toBe(true);
+				expect(mockInvoke).toHaveBeenCalledWith('web:releaseAutoRunStartClaim', 'session-123');
+			});
+		});
+
 		describe('requestNewTab', () => {
 			it('should invoke web:requestNewTab against the desktop source of truth', async () => {
 				mockInvoke.mockResolvedValue({ tabId: 'tab-2' });

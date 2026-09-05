@@ -130,6 +130,10 @@ describe('web handlers', () => {
 	describe('handler registration', () => {
 		it('should register all web/live handlers', () => {
 			expect(ipcMain.handle).toHaveBeenCalledWith('web:claimAutoRunStart', expect.any(Function));
+			expect(ipcMain.handle).toHaveBeenCalledWith(
+				'web:releaseAutoRunStartClaim',
+				expect.any(Function)
+			);
 			expect(ipcMain.handle).toHaveBeenCalledWith('web:broadcastUserInput', expect.any(Function));
 			expect(ipcMain.handle).toHaveBeenCalledWith(
 				'web:broadcastAutoRunState',
@@ -172,6 +176,18 @@ describe('web handlers', () => {
 			expect(await handler!({}, 'session-123')).toBe(true);
 			expect(await handler!({}, 'session-123')).toBe(false);
 			expect(await handler!({}, 'session-456')).toBe(true);
+		});
+	});
+
+	describe('web:releaseAutoRunStartClaim', () => {
+		it('releases only a start that is still provisional', async () => {
+			const claim = registeredHandlers.get('web:claimAutoRunStart');
+			const release = registeredHandlers.get('web:releaseAutoRunStartClaim');
+
+			expect(await claim!({}, 'session-123')).toBe(true);
+			expect(await release!({}, 'session-123')).toBe(true);
+			expect(await release!({}, 'session-123')).toBe(false);
+			expect(await claim!({}, 'session-123')).toBe(true);
 		});
 	});
 

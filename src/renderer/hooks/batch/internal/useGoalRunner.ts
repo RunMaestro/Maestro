@@ -340,47 +340,65 @@ export function useGoalRunner({
 				return;
 			}
 
-			// Goal mode expresses progress as a percent, so we model it as 100 "tasks".
-			// Empty documents/lockedDocuments arrays mark this as a document-less run.
-			dispatch({
-				type: 'START_BATCH',
-				sessionId,
-				payload: {
-					documents: [],
-					lockedDocuments: [],
-					totalTasksAcrossAllDocs: 100,
-					completedTasksAcrossAllDocs: 0,
-					loopEnabled: false,
-					maxLoops: goalConfig.maxIterations,
-					folderPath,
-					worktreeActive: false,
-					worktreePath: undefined,
-					worktreeBranch: undefined,
-					customPrompt: undefined,
-					startTime: goalStartTime,
-					cumulativeTaskTimeMs: 0,
-					accumulatedElapsedMs: 0,
-					lastActiveTimestamp: goalStartTime,
-				},
-			});
-
-			// Flag goal mode + seed progress. immediate=true so the desktop store and
-			// web clients reflect the running goal state without waiting on the debounce.
-			updateBatchStateAndBroadcastRef.current!(
-				sessionId,
-				(prev) => ({
-					...prev,
-					[sessionId]: {
-						...prev[sessionId],
-						goalMode: true,
-						goalProgress: 0,
-						goalIteration: 0,
-						goalRationale: undefined,
-						goalExitReason: undefined,
+			let startPublished = false;
+			try {
+				// Goal mode expresses progress as a percent, so we model it as 100 "tasks".
+				// Empty documents/lockedDocuments arrays mark this as a document-less run.
+				dispatch({
+					type: 'START_BATCH',
+					sessionId,
+					payload: {
+						documents: [],
+						lockedDocuments: [],
+						totalTasksAcrossAllDocs: 100,
+						completedTasksAcrossAllDocs: 0,
+						loopEnabled: false,
+						maxLoops: goalConfig.maxIterations,
+						folderPath,
+						worktreeActive: false,
+						worktreePath: undefined,
+						worktreeBranch: undefined,
+						customPrompt: undefined,
+						startTime: goalStartTime,
+						cumulativeTaskTimeMs: 0,
+						accumulatedElapsedMs: 0,
+						lastActiveTimestamp: goalStartTime,
 					},
-				}),
-				true
-			);
+				});
+
+				// Flag goal mode + seed progress. immediate=true so the desktop store and
+				// web clients reflect the running goal state without waiting on the debounce.
+				updateBatchStateAndBroadcastRef.current!(
+					sessionId,
+					(prev) => ({
+						...prev,
+						[sessionId]: {
+							...prev[sessionId],
+							goalMode: true,
+							goalProgress: 0,
+							goalIteration: 0,
+							goalRationale: undefined,
+							goalExitReason: undefined,
+						},
+					}),
+					true
+				);
+				startPublished = true;
+			} finally {
+				if (!startPublished) {
+					try {
+						await window.maestro.web.releaseAutoRunStartClaim(sessionId);
+					} catch (error) {
+						window.maestro.logger.log(
+							'error',
+							'Failed to release Auto Run start claim',
+							'GoalRunner',
+							{ sessionId, error: String(error) }
+						);
+					}
+					timeTracking.stopTracking(sessionId);
+				}
+			}
 
 			window.maestro.logger.autorun('Goal-Driven Auto Run started', session.name, {
 				goal: goalConfig.goal,
