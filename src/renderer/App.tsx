@@ -642,6 +642,20 @@ function MaestroConsoleInner() {
 		prevLeftSidebarOpenRef.current = leftSidebarOpen;
 		prevRightPanelOpenRef.current = rightPanelOpen;
 	}, [isNarrowViewport, leftSidebarOpen, rightPanelOpen]);
+
+	// Narrow viewports: picking an agent from the left drawer is a request to
+	// LOOK at that agent, so the drawer gets out of the way - on a phone it
+	// covers the whole screen, and a drawer that stayed put read as the tap
+	// having done nothing. Keyed on the TRANSITION of activeSessionId, not its
+	// steady state, so a drawer opened after a switch stays open.
+	const prevActiveSessionIdRef = useRef(activeSessionId);
+	useEffect(() => {
+		const changed = prevActiveSessionIdRef.current !== activeSessionId;
+		prevActiveSessionIdRef.current = activeSessionId;
+		if (changed && isNarrowViewport && leftSidebarOpen) {
+			useUIStore.getState().setLeftSidebarOpen(false);
+		}
+	}, [activeSessionId, isNarrowViewport, leftSidebarOpen]);
 	const activeRightTab = useUIStore((s) => s.activeRightTab);
 	const activeFocus = useUIStore((s) => s.activeFocus);
 	const bookmarksCollapsed = useUIStore((s) => s.bookmarksCollapsed);

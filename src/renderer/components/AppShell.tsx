@@ -210,9 +210,22 @@ export function AppShell({
 				<EmptyStateView theme={theme} {...emptyStateProps} />
 			) : null}
 
+			{/* On a narrow viewport the panels are drawers, and on a phone they cover
+			    the whole screen - including the backdrop that carries the close-swipe
+			    handlers below. So the drawers carry them too: a `display: contents`
+			    wrapper adds no box, but React events from inside the panel still
+			    bubble through it. useSwipeGestures only preventDefaults once a
+			    gesture locks HORIZONTAL, so vertical scrolling inside the drawer is
+			    untouched, and neither drawer scrolls sideways. */}
 			{!isMobileLandscape && hasSessions && (
 				<ErrorBoundary>
-					<SessionList {...sessionListProps} />
+					<div
+						className="contents"
+						data-testid="left-drawer-swipe-host"
+						{...(isNarrowViewport ? drawerCloseSwipeHandlers : {})}
+					>
+						<SessionList {...sessionListProps} />
+					</div>
 				</ErrorBoundary>
 			)}
 
@@ -262,7 +275,13 @@ export function AppShell({
 
 			{!isMobileLandscape && hasSessions && !activeGroupChatId && !logViewerOpen && (
 				<ErrorBoundary>
-					<RightPanel ref={rightPanelRef} {...rightPanelProps} />
+					<div
+						className="contents"
+						data-testid="right-drawer-swipe-host"
+						{...(isNarrowViewport ? drawerCloseSwipeHandlers : {})}
+					>
+						<RightPanel ref={rightPanelRef} {...rightPanelProps} />
+					</div>
 				</ErrorBoundary>
 			)}
 

@@ -74,6 +74,7 @@ import { Maximize2, Edit as EditIcon, Eye, Search, Brain } from 'lucide-react';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { logger } from '../../utils/logger';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 import { notifyToast } from '../../stores/notificationStore';
 import { useImageAnnotatorStore } from '../ImageAnnotator/imageAnnotatorStore';
 
@@ -253,6 +254,10 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 	const bionifyReadingMode = useSettingsStore((s) => s.bionifyReadingMode);
 	const bionifyIntensity = useSettingsStore((s) => s.bionifyIntensity);
 	const bionifyAlgorithm = useSettingsStore((s) => s.bionifyAlgorithm);
+
+	// Phone: the editor mode bar goes icon-only (each button keeps its title as
+	// the accessible name) so its four or five buttons fit a 390px drawer.
+	const phone = usePhoneLayout();
 
 	// Search state and effects
 	const {
@@ -939,7 +944,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 							title={`Expand to full screen${shortcuts?.toggleAutoRunExpanded ? ` (${formatShortcutKeys(shortcuts.toggleAutoRunExpanded.keys)})` : ''}`}
 						>
 							<Maximize2 className="w-3 h-3" />
-							Expand
+							{!phone && 'Expand'}
 						</button>
 					)}
 					{/* Search button */}
@@ -954,7 +959,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 						title={`Search (${formatShortcutKeys(['Meta', 'f'])})`}
 					>
 						<Search className="w-3 h-3" />
-						Search
+						{!phone && 'Search'}
 					</button>
 					{/* Edit / Preview toggle */}
 					<button
@@ -983,12 +988,12 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 						{mode === 'edit' ? (
 							<>
 								<Eye className="w-3 h-3" />
-								Preview
+								{!phone && 'Preview'}
 							</>
 						) : (
 							<>
 								<EditIcon className="w-3 h-3" />
-								Edit
+								{!phone && 'Edit'}
 							</>
 						)}
 					</button>
@@ -1005,7 +1010,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 							title={`Read this run's ${bufferedActivity} buffered thought${bufferedActivity === 1 ? '' : 's'} and tool call${bufferedActivity === 1 ? '' : 's'}`}
 						>
 							<Brain className="w-3 h-3" />
-							Thoughts
+							{!phone && 'Thoughts'}
 						</button>
 					)}
 					{/* Font zoom for whichever mode is on screen. Separate scales, so
