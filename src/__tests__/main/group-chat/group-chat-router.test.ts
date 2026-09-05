@@ -1445,6 +1445,8 @@ describe('group-chat-router', () => {
 		it('gives up on an agent that never frees up and says so', async () => {
 			vi.useFakeTimers();
 			try {
+				const emitMessage = vi.fn();
+				groupChatEmitters.emitMessage = emitMessage;
 				const chat = await createTestChatWithModerator('Busy Forever Test');
 				await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
 				setGetSessionsCallback(() => [busyClientSession]);
@@ -1459,6 +1461,17 @@ describe('group-chat-router', () => {
 
 				// Past the 15 minute wait budget.
 				await runPollsUntil(() => false, 200);
+				// The queued handoff is intentionally fire-and-forget. Wait for its
+				// emitted message, which occurs only after the log append has finished,
+				// before reading the log below.
+				vi.useRealTimers();
+				await expect
+					.poll(() =>
+						emitMessage.mock.calls.some(
+							([, message]) => message.from === 'system' && message.content.includes('Gave up')
+						)
+					)
+					.toBe(true);
 
 				const messages = await readLog(chat.logPath);
 				expect(messages.some((m) => m.from === 'system' && m.content.includes('Gave up'))).toBe(

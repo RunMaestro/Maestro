@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import path from 'path';
 import { walkLocalFileTree } from '../../../main/utils/file-tree-walk';
 
 vi.mock('fs/promises', () => ({
@@ -51,8 +52,8 @@ describe('walkLocalFileTree', () => {
 				{ name: 'apple.js', kind: 'file' },
 				{ name: 'beta', kind: 'dir' },
 			],
-			'/project/alpha': [],
-			'/project/beta': [],
+			[path.join('/project', 'alpha')]: [],
+			[path.join('/project', 'beta')]: [],
 		});
 
 		const result = await walkLocalFileTree('/project', { maxDepth: 5 });
@@ -66,11 +67,11 @@ describe('walkLocalFileTree', () => {
 	it('recurses into subdirectories', async () => {
 		mockTree({
 			'/project': [{ name: 'src', kind: 'dir' }],
-			'/project/src': [
+			[path.join('/project', 'src')]: [
 				{ name: 'index.ts', kind: 'file' },
 				{ name: 'components', kind: 'dir' },
 			],
-			'/project/src/components': [{ name: 'App.tsx', kind: 'file' }],
+			[path.join('/project', 'src', 'components')]: [{ name: 'App.tsx', kind: 'file' }],
 		});
 
 		const result = await walkLocalFileTree('/project', { maxDepth: 5 });
@@ -95,8 +96,8 @@ describe('walkLocalFileTree', () => {
 				{ name: '__pycache__', kind: 'dir' },
 				{ name: 'src', kind: 'dir' },
 			],
-			'/project/.git': [],
-			'/project/src': [],
+			[path.join('/project', '.git')]: [],
+			[path.join('/project', 'src')]: [],
 		});
 
 		const result = await walkLocalFileTree('/project', { maxDepth: 5 });
@@ -112,7 +113,7 @@ describe('walkLocalFileTree', () => {
 				{ name: 'node_modules', kind: 'dir' },
 				{ name: 'src', kind: 'dir' },
 			],
-			'/project/src': [],
+			[path.join('/project', 'src')]: [],
 		});
 
 		const result = await walkLocalFileTree('/project', {
@@ -129,7 +130,7 @@ describe('walkLocalFileTree', () => {
 				{ name: 'dist', kind: 'dir' },
 				{ name: 'src', kind: 'dir' },
 			],
-			'/project/src': [],
+			[path.join('/project', 'src')]: [],
 		});
 		vi.mocked(fs.readFile).mockResolvedValue('dist\n# comment\n' as never);
 
@@ -145,8 +146,8 @@ describe('walkLocalFileTree', () => {
 				{ name: '.env', kind: 'file' },
 				{ name: 'src', kind: 'dir' },
 			],
-			'/project/.maestro': [],
-			'/project/src': [],
+			[path.join('/project', '.maestro')]: [],
+			[path.join('/project', 'src')]: [],
 		});
 
 		const result = await walkLocalFileTree('/project', {
@@ -160,7 +161,7 @@ describe('walkLocalFileTree', () => {
 	it('classifies a symlink by its target', async () => {
 		mockTree({
 			'/project': [{ name: 'linked', kind: 'symlink' }],
-			'/project/linked': [{ name: 'inner.md', kind: 'file' }],
+			[path.join('/project', 'linked')]: [{ name: 'inner.md', kind: 'file' }],
 		});
 		vi.mocked(fs.stat).mockResolvedValue({
 			isDirectory: () => true,
@@ -259,17 +260,20 @@ describe('walkLocalFileTree', () => {
 					{ name: 'full', kind: 'dir' },
 					{ name: 'skipped', kind: 'dir' },
 				],
-				'/project/full': [
+				[path.join('/project', 'full')]: [
 					{ name: 'a.txt', kind: 'file' },
 					{ name: 'b.txt', kind: 'file' },
 				],
-				'/project/skipped': [{ name: 'never.txt', kind: 'file' }],
+				[path.join('/project', 'skipped')]: [{ name: 'never.txt', kind: 'file' }],
 			});
 
 			const result = await walkLocalFileTree('/project', { maxDepth: 5, maxEntries: 2 });
 
 			expect(result.truncated).toBe(true);
-			expect(fs.readdir).not.toHaveBeenCalledWith('/project/skipped', expect.anything());
+			expect(fs.readdir).not.toHaveBeenCalledWith(
+				path.join('/project', 'skipped'),
+				expect.anything()
+			);
 			expect(result.tree.find((n) => n.name === 'skipped')?.children).toEqual([]);
 		});
 
@@ -295,14 +299,18 @@ describe('walkLocalFileTree', () => {
 					{ name: 'src', kind: 'dir' },
 					{ name: '.maestro', kind: 'dir' },
 				],
-				'/project/.maestro': [],
-				'/project/src': [],
+				[path.join('/project', '.maestro')]: [],
+				[path.join('/project', 'src')]: [],
 			});
 
 			await walkLocalFileTree('/project', { maxDepth: 5 });
 
 			const paths = vi.mocked(fs.readdir).mock.calls.map((c) => c[0]);
-			expect(paths).toEqual(['/project', '/project/.maestro', '/project/src']);
+			expect(paths).toEqual([
+				'/project',
+				path.join('/project', '.maestro'),
+				path.join('/project', 'src'),
+			]);
 		});
 
 		it('loads .maestro in full even past the entry cap', async () => {
@@ -313,7 +321,7 @@ describe('walkLocalFileTree', () => {
 					{ name: 'b.txt', kind: 'file' },
 					{ name: 'c.txt', kind: 'file' },
 				],
-				'/project/.maestro': [
+				[path.join('/project', '.maestro')]: [
 					{ name: 'cue.yaml', kind: 'file' },
 					{ name: 'p1.md', kind: 'file' },
 					{ name: 'p2.md', kind: 'file' },
@@ -334,14 +342,14 @@ describe('walkLocalFileTree', () => {
 					{ name: '.maestro', kind: 'dir' },
 					{ name: 'src', kind: 'dir' },
 				],
-				'/project/.maestro': [
+				[path.join('/project', '.maestro')]: [
 					{ name: 'a.md', kind: 'file' },
 					{ name: 'b.md', kind: 'file' },
 					{ name: 'c.md', kind: 'file' },
 					{ name: 'd.md', kind: 'file' },
 					{ name: 'e.md', kind: 'file' },
 				],
-				'/project/src': [
+				[path.join('/project', 'src')]: [
 					{ name: 'index.ts', kind: 'file' },
 					{ name: 'app.ts', kind: 'file' },
 				],
@@ -356,8 +364,8 @@ describe('walkLocalFileTree', () => {
 		it('propagates the unlimited budget through nested .maestro descendants', async () => {
 			mockTree({
 				'/project': [{ name: '.maestro', kind: 'dir' }],
-				'/project/.maestro': [{ name: 'playbooks', kind: 'dir' }],
-				'/project/.maestro/playbooks': [
+				[path.join('/project', '.maestro')]: [{ name: 'playbooks', kind: 'dir' }],
+				[path.join('/project', '.maestro', 'playbooks')]: [
 					{ name: 'one.md', kind: 'file' },
 					{ name: 'two.md', kind: 'file' },
 					{ name: 'three.md', kind: 'file' },
