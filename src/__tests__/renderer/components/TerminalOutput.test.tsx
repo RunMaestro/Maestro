@@ -21,6 +21,7 @@ import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import type { Session, Theme, LogEntry } from '../../../renderer/types';
+import { TRANSCRIPT_SCROLL_TO_BOTTOM_EVENT } from '../../../renderer/services/transcriptScroll';
 
 // Mock dependencies
 vi.mock('react-syntax-highlighter', () => ({
@@ -3434,6 +3435,121 @@ describe('TerminalOutput', () => {
 		});
 	});
 
+	describe('explicit scroll-to-bottom request', () => {
+		/**
+		 * A bang command's output card is content the user asked for, so it has
+		 * to be revealed even when they had scrolled up to read history - the one
+		 * case where the auto-scroll pause is the wrong answer.
+		 */
+		function renderScrolledUp() {
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'Hello', source: 'user' }),
+				createLogEntry({ id: 'resp-1', text: 'Response', source: 'stdout' }),
+			];
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const { container } = render(<TerminalOutput {...createDefaultProps({ session })} />);
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+			const scrollToSpy = vi.fn();
+			scrollContainer.scrollTo = scrollToSpy;
+
+			// Park the view away from the bottom, which pauses auto-scroll.
+			Object.defineProperty(scrollContainer, 'scrollHeight', { value: 1000, configurable: true });
+			Object.defineProperty(scrollContainer, 'scrollTop', { value: 0, configurable: true });
+			Object.defineProperty(scrollContainer, 'clientHeight', { value: 400, configurable: true });
+			fireEvent.scroll(scrollContainer);
+
+			return { session, scrollToSpy };
+		}
+
+		async function dispatchScrollRequest(sessionId: string, tabId: string) {
+			await act(async () => {
+				window.dispatchEvent(
+					new CustomEvent(TRANSCRIPT_SCROLL_TO_BOTTOM_EVENT, {
+						detail: { sessionId, tabId },
+					})
+				);
+				vi.advanceTimersByTime(50);
+			});
+		}
+
+		it('jumps to the bottom even while auto-scroll is paused', async () => {
+			const { session, scrollToSpy } = renderScrolledUp();
+			await act(async () => {
+				vi.advanceTimersByTime(50);
+			});
+			scrollToSpy.mockClear();
+
+			await dispatchScrollRequest(session.id, 'tab-1');
+
+			expect(scrollToSpy).toHaveBeenCalledWith({ top: 1000, behavior: 'auto' });
+		});
+
+		it('ignores a request aimed at another tab or another agent', async () => {
+			const { session, scrollToSpy } = renderScrolledUp();
+			await act(async () => {
+				vi.advanceTimersByTime(50);
+			});
+			scrollToSpy.mockClear();
+
+			await dispatchScrollRequest(session.id, 'tab-2');
+			await dispatchScrollRequest('session-other', 'tab-1');
+
+			expect(scrollToSpy).not.toHaveBeenCalled();
+		});
+
+		it('resumes following the tail, so later output stays visible', async () => {
+			const logs: LogEntry[] = [createLogEntry({ id: 'user-1', text: 'Hello', source: 'user' })];
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const { container, rerender } = render(
+				<TerminalOutput {...createDefaultProps({ session })} />
+			);
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+			const scrollToSpy = vi.fn();
+			scrollContainer.scrollTo = scrollToSpy;
+
+			Object.defineProperty(scrollContainer, 'scrollHeight', { value: 1000, configurable: true });
+			Object.defineProperty(scrollContainer, 'scrollTop', { value: 0, configurable: true });
+			Object.defineProperty(scrollContainer, 'clientHeight', { value: 400, configurable: true });
+			fireEvent.scroll(scrollContainer);
+			await act(async () => {
+				vi.advanceTimersByTime(50);
+			});
+
+			await dispatchScrollRequest(session.id, 'tab-1');
+			scrollToSpy.mockClear();
+
+			// Streaming output lands after the request - it must follow, not stall.
+			const newSession = {
+				...session,
+				tabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'claude-123',
+						logs: [
+							...logs,
+							createLogEntry({ id: 'out-1', text: 'command output', source: 'stdout' }),
+						],
+						isUnread: false,
+					},
+				],
+			};
+			rerender(<TerminalOutput {...createDefaultProps({ session: newSession })} />);
+			await act(async () => {
+				vi.advanceTimersByTime(50);
+			});
+
+			expect(scrollToSpy).toHaveBeenCalled();
+		});
+	});
+
 	describe('scroll position persistence', () => {
 		it('calls onScrollPositionChange when scrolling (throttled)', async () => {
 			const onScrollPositionChange = vi.fn();
@@ -3442,8 +3558,14 @@ describe('TerminalOutput', () => {
 
 			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
 
-			// Simulate scroll
-			Object.defineProperty(scrollContainer, 'scrollTop', { value: 100 });
+			// Simulate scroll. `writable` matters: real `scrollTop` is settable, and
+			// the mount-time restore writes to it, so a read-only stub throws where
+			// the browser would not.
+			Object.defineProperty(scrollContainer, 'scrollTop', {
+				value: 100,
+				writable: true,
+				configurable: true,
+			});
 			fireEvent.scroll(scrollContainer);
 
 			// Wait for throttle
@@ -3454,12 +3576,138 @@ describe('TerminalOutput', () => {
 			expect(onScrollPositionChange).toHaveBeenCalledWith(100);
 		});
 
-		it('restores scroll position from initialScrollTop', () => {
-			const props = createDefaultProps({ initialScrollTop: 500 });
-			const { container } = render(<TerminalOutput {...props} />);
+		/**
+		 * Mount a transcript and hand back a handle on the scroll box, with
+		 * `scrollTop` backed by a real variable so we can see where the restore
+		 * actually put the view. `scrollHeight` is settable because the whole
+		 * point of these tests is content whose height changes underneath the
+		 * restore - while the tab was off screen, or as it settles on mount.
+		 *
+		 * Writes to `scrollTop` are CLAMPED to `scrollHeight - clientHeight`, the
+		 * way a real browser clamps them. Without that, "scroll to the bottom"
+		 * (which asks for `scrollHeight`, the honest way to say "as far as this
+		 * goes") reads back as a number no element could ever hold, and the test
+		 * measures the stub rather than the restore.
+		 */
+		function mountWithScrollBox(
+			extraProps: Record<string, unknown>,
+			{ scrollHeight = 15000, clientHeight = 800 } = {}
+		) {
+			const { container } = render(<TerminalOutput {...createDefaultProps(extraProps)} />);
+			const el = container.querySelector('.overflow-y-auto') as HTMLElement;
+			let top = 0;
+			let height = scrollHeight;
+			const clamp = (v: number) => Math.max(0, Math.min(v, height - clientHeight));
+			Object.defineProperty(el, 'scrollTop', {
+				configurable: true,
+				get: () => top,
+				set: (v: number) => {
+					top = clamp(v);
+				},
+			});
+			Object.defineProperty(el, 'scrollHeight', { configurable: true, get: () => height });
+			Object.defineProperty(el, 'clientHeight', { configurable: true, value: clientHeight });
+			el.scrollTo = ((opts: { top: number }) => {
+				top = clamp(opts.top);
+			}) as unknown as typeof el.scrollTo;
 
-			// The scroll restoration happens via requestAnimationFrame
-			// In tests this is mocked, so we just verify the prop is used
+			return {
+				el,
+				scrollTop: () => top,
+				bottom: () => height - clientHeight,
+				grow: (to: number) => {
+					height = to;
+					// Growth the transcript can SEE. `scrollHeight` is a getter here,
+					// and moving a getter notifies nothing: the follow-the-tail
+					// re-pin hangs off a MutationObserver on the scroll container, so
+					// content has to actually arrive in the DOM for it to fire, the
+					// same as it does in the app.
+					el.appendChild(document.createElement('div'));
+				},
+				settle: async (ms = 800) => {
+					await act(async () => {
+						// Let any pending MutationObserver callback land FIRST. It is
+						// delivered as a microtask and it is what schedules the re-pin
+						// frame, so advancing timers before it runs drains an empty
+						// frame queue and the re-pin is never seen.
+						await Promise.resolve();
+						vi.advanceTimersByTime(ms);
+					});
+				},
+			};
+		}
+
+		it('restores a tab parked mid-history to its saved offset', async () => {
+			// isAtBottom false means the user deliberately scrolled up to read.
+			// New entries are appended BELOW them, so the offset still points at
+			// what they were reading and must be honored exactly.
+			const box = mountWithScrollBox({ initialScrollTop: 4200, initialIsAtBottom: false });
+			await box.settle();
+
+			expect(box.scrollTop()).toBe(4200);
+		});
+
+		it('pauses auto-scroll when it restores mid-history', async () => {
+			// Otherwise the MutationObserver yanks the view straight back down and
+			// the restore is pointless.
+			const onAtBottomChange = vi.fn();
+			const box = mountWithScrollBox({
+				initialScrollTop: 4200,
+				initialIsAtBottom: false,
+				onAtBottomChange,
+			});
+			await box.settle();
+
+			expect(box.scrollTop()).toBeLessThan(box.bottom() - 50);
+		});
+
+		it('restores a tail-following tab to the BOTTOM, not its saved offset', async () => {
+			// The regression: `scrollTop` is a snapshot of where the bottom was at
+			// save time. This tab was AT the bottom when it was 5000px tall (offset
+			// 4200), then the agent wrote another 10000px while it was off screen.
+			// Restoring 4200 verbatim strands the user 10000px above the reply they
+			// clicked a toast to go and read.
+			const box = mountWithScrollBox({ initialScrollTop: 4200, initialIsAtBottom: true });
+			await box.settle();
+
+			expect(box.scrollTop()).toBe(box.bottom());
+		});
+
+		it('treats an unset isAtBottom as following the tail', async () => {
+			// `undefined` is what a tab that has never been scrolled carries. It has
+			// to mean bottom, and it has to mean the SAME thing here as it does to
+			// the unread gate in useAgentDataListener, which reads `!== false`.
+			const box = mountWithScrollBox({ initialScrollTop: 4200 });
+			await box.settle();
+
+			expect(box.scrollTop()).toBe(box.bottom());
+		});
+
+		it('keeps chasing the bottom while the content is still settling', async () => {
+			// Images decoding and code blocks re-highlighting grow the transcript
+			// for several frames after mount, so "landed on the bottom" is true on
+			// the first frame and wrong on the next. Latching there would leave the
+			// tab short by however much arrived late.
+			const box = mountWithScrollBox({ initialIsAtBottom: true }, { scrollHeight: 6000 });
+			await box.settle(50);
+
+			box.grow(21000);
+			await box.settle();
+
+			expect(box.scrollTop()).toBe(box.bottom());
+		});
+
+		it('does not fight a user who scrolls while the restore is still settling', async () => {
+			// Their input wins - a restore that keeps yanking the view is worse
+			// than landing high.
+			const box = mountWithScrollBox({ initialIsAtBottom: true }, { scrollHeight: 6000 });
+			fireEvent.scroll(box.el);
+			await box.settle();
+
+			box.grow(21000);
+			await box.settle();
+
+			expect(box.scrollTop()).toBeLessThan(box.bottom());
 		});
 	});
 

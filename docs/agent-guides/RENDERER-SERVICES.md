@@ -117,6 +117,8 @@ Output is buffered and flushed on an animation frame (one store write per frame,
 
 The output box caps at 480px and follows its own tail via `useStickToBottom`, so a chatty command cannot push the conversation off the screen AND the newest lines stay visible. That pairing is the whole reason the hook exists: the cap is what stops the outer transcript auto-scroll from being able to follow the output, because the card stops growing once it is reached.
 
+`runShellCommand` calls `requestTranscriptScrollToBottom(session.id, tabId)` immediately after appending the card, so the output is visible even when the user had scrolled up and paused auto-scroll. Once, at the top of the run - not per chunk - so a scroll up mid-run still pauses following as usual. See `transcriptScroll.ts` below.
+
 Rendered by `components/ShellCommandCard.tsx`, anchored by `LogEntry.shellCommand`. Routing happens at the top of `useInputProcessing.processInput`.
 
 **The card has TWO copy buttons, and they copy different things.** The one in the header copies the OUTPUT (ANSI-stripped - the stored text keeps its escape codes so the card can render colour, but pasting `\x1b[36m` anywhere is never wanted). The one beside the command copies the COMMAND, and appears only while the command is expanded, so it cannot be mistaken for the output copy a few pixels to its right. Both are `<CopyIconButton>`; the hand-rolled copy-then-swap-to-a-checkmark this file used to carry is gone.
@@ -279,6 +281,20 @@ It fires on BOTH ways a tab returns - the scheduler's wake (`useSnoozeScheduler`
 The target comes from `resolveWakePromptTabId()` in `utils/snoozeHelpers.ts`, which is not the same as `entry.tab.id`: when an equivalent tab was already open the wake focuses THAT one and the prompt has to follow the tab the user actually lands on. A group resolves to its first surviving AI pane in leaf order - the layout's focused pane is stored as a pane id rather than a tab id, and a group focused on a file pane would otherwise have nowhere to send a prompt the user did ask for. A file, terminal, or browser snooze resolves to `null` and is logged rather than rerouted; the dialog hides the field for those kinds (`canSnoozeRunWakePrompt`), so an entry carrying one at all came from an older build or the CLI.
 
 Everything goes through `queuedPrompt.ts` rather than a spawn, for the tick-safety reason above: the tab is restored in the same `setSessions` call the wake runs in.
+
+### transcriptScroll.ts - reveal output the user asked for
+
+Asks the mounted AI transcript to jump to the bottom and resume following new output, past a paused auto-scroll.
+
+**Key exports:** `requestTranscriptScrollToBottom(sessionId, tabId)` and `TRANSCRIPT_SCROLL_TO_BOTTOM_EVENT` / `TranscriptScrollToBottomDetail` for the listener side.
+
+The transcript pauses auto-scroll when the user scrolls up to read history, and from then on new entries land offscreen behind the unread badge. That is right for output the agent produced on its own schedule, and wrong for output the user asked for by pressing Enter. The pause lives in `useTerminalOutputScroll`'s local state, several levels below the composer that dispatches the command, so the request rides one app-level `CustomEvent` rather than a callback drilled up through `MainPanel` and `App` - the same shape as `requestHeadingPalette` and `requestFileTreeRefresh`.
+
+The detail names both the session and the tab, and the listener ignores anything that is not the conversation on screen, so a command dispatched into a background tab cannot yank the view. On a match it calls the hook's own `scrollToBottomAndResume()`, which is the same path the scroll-to-bottom button takes: it flips `userScrolledAwayRef` and `isAtBottomRef` BEFORE the `setState` calls (the follow-the-tail `MutationObserver` reads the live refs in the same frame), clears the unread badge, and jumps through the shared `jumpToBottom()` helper, guard flag and all, so the two cannot disagree about what counts as a user scroll.
+
+Fire it AFTER the content is in the store, or the transcript scrolls to a bottom that does not include it yet. Do NOT use it to force ordinary agent output into view - the pause exists to stop exactly that.
+
+---
 
 ### fileDeletion.ts - delete the previewed file
 
