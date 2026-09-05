@@ -136,6 +136,13 @@ class BridgeClient {
 			if (typeof msg.seq === 'number') this.lastSeq = msg.seq;
 			if (msg.type === 'connected') {
 				if (typeof msg.bridgeEpoch === 'string') this.epoch = msg.bridgeEpoch;
+				// A fresh connection's baseline is the server's counter at the moment
+				// it accepted us: nothing broadcast before that is ours to replay.
+				// On a resumed connection the replayed frames carry their own seq,
+				// so lastSeq stays where the gap actually starts.
+				if (msg.resumed !== true && typeof msg.bridgeSeq === 'number') {
+					this.lastSeq = msg.bridgeSeq;
+				}
 				if (!this.resumePending) return;
 				this.resumePending = false;
 				if (msg.resumed === true) {

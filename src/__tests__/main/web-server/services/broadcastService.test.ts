@@ -509,6 +509,7 @@ describe('BroadcastService bridge resume (seq stamping + replay)', () => {
 	it('stamps every broadcast frame with an increasing seq', () => {
 		const client = createMockClient('client-1');
 		clients.set('client-1', client);
+		expect(service.getBridgeSeq()).toBe(0);
 
 		service.broadcastToAll({ type: 'a' });
 		service.broadcastToSession('session-1', { type: 'b' });
@@ -517,6 +518,8 @@ describe('BroadcastService bridge resume (seq stamping + replay)', () => {
 			(call: any[]) => JSON.parse(call[0]).seq
 		);
 		expect(seqs).toEqual([1, 2]);
+		// What a client connecting now is told to resume from.
+		expect(service.getBridgeSeq()).toBe(2);
 	});
 
 	it('replays exactly the frames after lastSeq for the same server run', () => {

@@ -138,6 +138,18 @@ export class BroadcastService {
 	}
 
 	/**
+	 * The counter as it stands right now. Sent in the `connected` frame so a
+	 * fresh client starts its `lastSeq` here: nothing broadcast before it
+	 * connected is a frame it missed, and without this baseline a socket that
+	 * dropped before the first broadcast reconnected with `since=0`, which
+	 * either replayed history from before the tab opened or forced a reload
+	 * once seq 1 had been evicted.
+	 */
+	getBridgeSeq(): number {
+		return this.bridgeSeq;
+	}
+
+	/**
 	 * Broadcast a message to all connected web clients
 	 */
 	broadcastToAll(message: object): void {

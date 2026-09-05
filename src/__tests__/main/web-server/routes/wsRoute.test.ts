@@ -537,7 +537,11 @@ describe('WsRoute bridge resume', () => {
 
 	it('reports resumed=false when the gap cannot be replayed, and never asks without a since', () => {
 		const resumeBridgeClient = vi.fn().mockReturnValue(null);
-		const route = setup({ resumeBridgeClient, getBridgeEpoch: () => 'run-1' });
+		const route = setup({
+			resumeBridgeClient,
+			getBridgeEpoch: () => 'run-1',
+			getBridgeSeq: () => 42,
+		});
 
 		const stale = createMockConnection();
 		route.handler(stale, resumeRequest('since=3&epoch=run-0'));
@@ -547,6 +551,12 @@ describe('WsRoute bridge resume', () => {
 		const fresh = createMockConnection();
 		route.handler(fresh, createMockRequest());
 		expect(resumeBridgeClient).toHaveBeenCalledTimes(1);
-		expect(sentFrames(fresh)[0]).toMatchObject({ type: 'connected', resumed: false });
+		// A fresh client is told where the counter stands so its first resume
+		// asks for frames after THIS point, not after 0.
+		expect(sentFrames(fresh)[0]).toMatchObject({
+			type: 'connected',
+			resumed: false,
+			bridgeSeq: 42,
+		});
 	});
 });

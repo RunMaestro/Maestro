@@ -959,6 +959,7 @@ export class WebServer {
 				this.handleWebClientMessage(clientId, message);
 			},
 			getBridgeEpoch: () => this.broadcastService.bridgeEpoch,
+			getBridgeSeq: () => this.broadcastService.getBridgeSeq(),
 			resumeBridgeClient: (epoch, lastSeq) =>
 				this.broadcastService.resumeBridgeClient(epoch, lastSeq),
 		});

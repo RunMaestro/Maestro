@@ -178,16 +178,17 @@ describe('web-desktop electron-shim bridge reconnect', () => {
 		expect(first).toBeDefined();
 
 		// First successful open: a normal boot, no reload. The server names its
-		// run and every broadcast frame carries a seq.
+		// run and reports where its counter stands at connect time.
 		first.emit('open');
-		first.emit('message', frame({ type: 'connected', bridgeEpoch: 'run-1' }));
-		first.emit('message', frame({ type: 'bridge.event', channel: 'noop', args: [], seq: 7 }));
+		first.emit('message', frame({ type: 'connected', bridgeEpoch: 'run-1', bridgeSeq: 5 }));
 		expect(window.location.reload).not.toHaveBeenCalled();
 
-		// Reconnect: the client tells the server where it left off.
+		// Drop before a single broadcast arrived. The baseline is the counter the
+		// server reported at connect time, not 0: since=0 would replay history
+		// from before the tab opened, or force a reload once seq 1 was evicted.
 		const second = reconnect(first);
 		const url = new URL(second.url);
-		expect(url.searchParams.get('since')).toBe('7');
+		expect(url.searchParams.get('since')).toBe('5');
 		expect(url.searchParams.get('epoch')).toBe('run-1');
 
 		// An invoke issued during the gap waits for the resume decision rather
@@ -198,8 +199,13 @@ describe('web-desktop electron-shim bridge reconnect', () => {
 		expect(second.sent).toHaveLength(0);
 
 		// The server replayed everything missed: no reload, and the queued invoke
-		// goes out on the new socket.
-		second.emit('message', frame({ type: 'connected', bridgeEpoch: 'run-1', resumed: true }));
+		// goes out on the new socket. The counter on a RESUMED `connected` must
+		// not move lastSeq: the replayed frames that follow carry their own seq,
+		// and jumping ahead would skip any of them lost to a second drop.
+		second.emit(
+			'message',
+			frame({ type: 'connected', bridgeEpoch: 'run-1', bridgeSeq: 99, resumed: true })
+		);
 		await new Promise((r) => setTimeout(r, 0));
 		expect(window.location.reload).not.toHaveBeenCalled();
 		const sentInvoke = second.sent
@@ -211,10 +217,12 @@ describe('web-desktop electron-shim bridge reconnect', () => {
 			frame({ type: 'bridge.response', requestId: sentInvoke.requestId, ok: true, result: 'ok' })
 		);
 		await expect(invoke).resolves.toBe('ok');
+		second.emit('message', frame({ type: 'bridge.event', channel: 'noop', args: [], seq: 6 }));
 
 		// Drop again; this time the server cannot replay the gap (it restarted).
 		// The only source of truth left is the desktop's live store, so reload.
 		const third = reconnect(second);
+		expect(new URL(third.url).searchParams.get('since')).toBe('6');
 		third.emit('open');
 		third.emit('message', frame({ type: 'connected', bridgeEpoch: 'run-2', resumed: false }));
 		expect(window.location.reload).toHaveBeenCalledTimes(1);

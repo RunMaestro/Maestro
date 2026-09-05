@@ -57,6 +57,11 @@ export interface WsRouteCallbacks {
 	/** Per-server-run id a web-desktop client echoes back when it reconnects. */
 	getBridgeEpoch?: () => string;
 	/**
+	 * The broadcast counter at connect time, the baseline a fresh client resumes
+	 * from. See `BroadcastService.getBridgeSeq`.
+	 */
+	getBridgeSeq?: () => number;
+	/**
 	 * Frames a reconnecting web-desktop client missed, or `null` when it must
 	 * reload instead. See `BroadcastService.resumeBridgeClient`.
 	 */
@@ -131,6 +136,7 @@ export class WsRoute {
 					message: 'Connected to Maestro Web Interface',
 					subscribedSessionId: sessionId,
 					bridgeEpoch: this.callbacks.getBridgeEpoch?.(),
+					bridgeSeq: this.callbacks.getBridgeSeq?.(),
 					resumed: replay !== null,
 					timestamp: Date.now(),
 				})
