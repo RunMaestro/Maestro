@@ -495,3 +495,52 @@ describe('BroadcastService', () => {
 		});
 	});
 });
+
+describe('BroadcastService bridge resume (seq stamping + replay)', () => {
+	let service: BroadcastService;
+	let clients: Map<string, WebClientInfo>;
+
+	beforeEach(() => {
+		service = new BroadcastService();
+		clients = new Map();
+		service.setGetWebClientsCallback(() => clients);
+	});
+
+	it('stamps every broadcast frame with an increasing seq', () => {
+		const client = createMockClient('client-1');
+		clients.set('client-1', client);
+
+		service.broadcastToAll({ type: 'a' });
+		service.broadcastToSession('session-1', { type: 'b' });
+
+		const seqs = (client.socket.send as any).mock.calls.map(
+			(call: any[]) => JSON.parse(call[0]).seq
+		);
+		expect(seqs).toEqual([1, 2]);
+	});
+
+	it('replays exactly the frames after lastSeq for the same server run', () => {
+		service.broadcastToAll({ type: 'a' });
+		service.broadcastToAll({ type: 'b' });
+		service.broadcastToAll({ type: 'c' });
+
+		const replay = service.resumeBridgeClient(service.bridgeEpoch, 1);
+		expect(replay?.map((f) => JSON.parse(f).type)).toEqual(['b', 'c']);
+		// Nothing missed is still a resume, just an empty one.
+		expect(service.resumeBridgeClient(service.bridgeEpoch, 3)).toEqual([]);
+	});
+
+	it('refuses to resume across server runs, ahead of the counter, or past the buffer', () => {
+		service.broadcastToAll({ type: 'a' });
+		expect(service.resumeBridgeClient('some-other-run', 1)).toBeNull();
+		expect(service.resumeBridgeClient(service.bridgeEpoch, 5)).toBeNull();
+		expect(service.resumeBridgeClient(service.bridgeEpoch, Number.NaN)).toBeNull();
+
+		// Fill past the frame cap so seq 1 is evicted. A client that last saw
+		// seq 0 now has a hole it can never fill; one that saw seq 1 does not.
+		for (let i = 0; i < 2000; i++) service.broadcastToAll({ type: 'fill' });
+		expect(service.resumeBridgeClient(service.bridgeEpoch, 0)).toBeNull();
+		expect(service.resumeBridgeClient(service.bridgeEpoch, 1)).toHaveLength(2000);
+		expect(service.resumeBridgeClient(service.bridgeEpoch, 2000)).toHaveLength(1);
+	});
+});

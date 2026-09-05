@@ -64,6 +64,7 @@ The web-desktop build aliases `electron` to `src/web-desktop/electron-shim.ts` i
 - `contextBridge.exposeInMainWorld('maestro', ...)` writes to `window.maestro` in the browser.
 - `ipcRenderer.invoke(channel, ...args)` becomes a `bridge.invoke` WebSocket frame to `/$TOKEN/ws`, resolved by the main process and returned over the same socket.
 - Main -> renderer push events reach browser clients through `safeSend` (`src/main/utils/safe-send.ts`), which fans each event out to the desktop `webContents` AND to the bridge via `broadcastBridgeEvent`. (One deliberate exception is documented in [Deferred: web-server/callbacks/\*.ts](#deferred-web-servercallbacksts).)
+- Every broadcast frame carries a `seq`, and `BroadcastService` keeps the most recent ones. When the socket drops (mobile browsers suspend it on every app switch and screen lock), the shim reconnects with `?since=<lastSeq>&epoch=<serverRun>`; the server replays the missed frames right after `connected` and the page carries on in place. Only when the gap cannot be replayed (the server restarted, or the gap outran the buffer) does the shim fall back to `window.location.reload()`.
 
 This is why the renderer's own Zustand stores, IPC service wrappers, and components all work in the browser with no web-specific fork.
 

@@ -20,6 +20,7 @@
  * - session_output: Session output data
  */
 
+import { randomUUID } from 'crypto';
 import { WebSocket } from 'ws';
 import { logger } from '../../utils/logger';
 import type {
@@ -52,6 +53,12 @@ export type {
 // Logger context for broadcast service logs
 const LOG_CONTEXT = 'BroadcastService';
 
+// Replay buffer bounds for resuming a dropped web-desktop socket.
+// ponytail: fixed-size ring. A gap that outruns it (a long sleep, a very busy
+// agent) falls back to the page reload it replaced; raise both if that bites.
+const REPLAY_MAX_FRAMES = 2000;
+const REPLAY_MAX_BYTES = 8 * 1024 * 1024;
+
 /**
  * Web client connection info (alias for backwards compatibility)
  */
@@ -73,6 +80,19 @@ export class BroadcastService {
 	private previousAutoRunStates: Map<string, { running: boolean; completedTasks: number }> =
 		new Map();
 
+	// Bridge resume. Every frame that reaches a web-desktop client carries a
+	// monotonically increasing `seq`, and the most recent frames are kept so a
+	// client whose socket dropped can pick up exactly where it left off instead
+	// of reloading the page. Mobile browsers suspend the socket on every app
+	// switch and screen lock, so without this every return to the tab was a
+	// full reload, even when nothing had happened in between. `bridgeEpoch` is
+	// minted per server instance: a client that last spoke to a different run
+	// cannot be resumed, because that run's counter means nothing here.
+	readonly bridgeEpoch = randomUUID();
+	private bridgeSeq = 0;
+	private replayFrames: Array<{ seq: number; data: string }> = [];
+	private replayBytes = 0;
+
 	/**
 	 * Set the callback for getting web clients
 	 */
@@ -81,12 +101,49 @@ export class BroadcastService {
 	}
 
 	/**
+	 * Serialize a frame for the wire, stamping it with the next `seq` and
+	 * recording it for {@link resumeBridgeClient}.
+	 */
+	private stampForBridge(message: object): string {
+		const seq = ++this.bridgeSeq;
+		const data = JSON.stringify({ ...message, seq });
+		this.replayFrames.push({ seq, data });
+		this.replayBytes += data.length;
+		while (this.replayFrames.length > REPLAY_MAX_FRAMES || this.replayBytes > REPLAY_MAX_BYTES) {
+			const dropped = this.replayFrames.shift();
+			if (!dropped) break;
+			this.replayBytes -= dropped.data.length;
+		}
+		return data;
+	}
+
+	/**
+	 * Frames a reconnecting web-desktop client has not seen yet, oldest first.
+	 * `null` means it cannot be resumed - it last spoke to a different server
+	 * run, or the gap outran the replay buffer - and must reload to resync.
+	 */
+	resumeBridgeClient(epoch: string, lastSeq: number): string[] | null {
+		if (
+			epoch !== this.bridgeEpoch ||
+			!Number.isInteger(lastSeq) ||
+			lastSeq < 0 ||
+			lastSeq > this.bridgeSeq
+		) {
+			return null;
+		}
+		if (lastSeq === this.bridgeSeq) return [];
+		const oldest = this.replayFrames[0]?.seq;
+		if (oldest === undefined || oldest > lastSeq + 1) return null;
+		return this.replayFrames.filter((frame) => frame.seq > lastSeq).map((frame) => frame.data);
+	}
+
+	/**
 	 * Broadcast a message to all connected web clients
 	 */
 	broadcastToAll(message: object): void {
 		if (!this.getWebClients) return;
 
-		const data = JSON.stringify(message);
+		const data = this.stampForBridge(message);
 		for (const client of this.getWebClients().values()) {
 			if (client.socket.readyState === WebSocket.OPEN) {
 				client.socket.send(data);
@@ -100,7 +157,7 @@ export class BroadcastService {
 	broadcastToSession(sessionId: string, message: object): void {
 		if (!this.getWebClients) return;
 
-		const data = JSON.stringify(message);
+		const data = this.stampForBridge(message);
 		for (const client of this.getWebClients().values()) {
 			if (
 				client.socket.readyState === WebSocket.OPEN &&

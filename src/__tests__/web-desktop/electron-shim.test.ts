@@ -18,13 +18,19 @@ import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest';
 // lifecycle (open -> close -> reopen) by hand.
 class InertWebSocket {
 	static readonly CONNECTING = 0;
+	static readonly OPEN = 1;
 	static instances: InertWebSocket[] = [];
 	readyState = 0;
+	readonly url: string;
+	sent: string[] = [];
 	private listeners = new Map<string, Set<(ev?: unknown) => void>>();
-	constructor() {
+	constructor(url: string) {
+		this.url = url;
 		InertWebSocket.instances.push(this);
 	}
-	send(): void {}
+	send(frame: string): void {
+		this.sent.push(frame);
+	}
 	close(): void {}
 	addEventListener(type: string, cb: (ev?: unknown) => void): void {
 		let set = this.listeners.get(type);
@@ -150,29 +156,73 @@ describe('web-desktop electron-shim desktop navigation sync', () => {
 });
 
 describe('web-desktop electron-shim bridge reconnect', () => {
-	it('reloads the page on a RE-connect (drop + reopen), not on the first open', () => {
-		const first = InertWebSocket.instances[0];
-		expect(first).toBeDefined();
+	const frame = (msg: object) => ({ data: JSON.stringify(msg) });
 
-		// First successful open: a normal boot, no reload.
-		first.emit('open');
-		expect(window.location.reload).not.toHaveBeenCalled();
-
-		// Drop the socket. The shim schedules a reconnect in 1s; every push
-		// event during the gap is lost (no replay), so the renderer's state is
-		// stale beyond repair - the reopened connection must trigger a reload
-		// to re-bootstrap from the desktop's live store.
+	// Drop the socket and let the shim's 1s reconnect timer fire. Returns the
+	// socket it opened for the retry.
+	function reconnect(current: InertWebSocket): InertWebSocket {
 		vi.useFakeTimers();
 		try {
-			first.emit('close');
+			current.emit('close');
 			vi.advanceTimersByTime(1000);
 		} finally {
 			vi.useRealTimers();
 		}
+		const next = InertWebSocket.instances[InertWebSocket.instances.length - 1];
+		expect(next).not.toBe(current);
+		return next;
+	}
 
-		const second = InertWebSocket.instances[1];
-		expect(second).toBeDefined();
+	it('resumes in place when the server can replay the gap, and reloads only when it cannot', async () => {
+		const first = InertWebSocket.instances[0];
+		expect(first).toBeDefined();
+
+		// First successful open: a normal boot, no reload. The server names its
+		// run and every broadcast frame carries a seq.
+		first.emit('open');
+		first.emit('message', frame({ type: 'connected', bridgeEpoch: 'run-1' }));
+		first.emit('message', frame({ type: 'bridge.event', channel: 'noop', args: [], seq: 7 }));
+		expect(window.location.reload).not.toHaveBeenCalled();
+
+		// Reconnect: the client tells the server where it left off.
+		const second = reconnect(first);
+		const url = new URL(second.url);
+		expect(url.searchParams.get('since')).toBe('7');
+		expect(url.searchParams.get('epoch')).toBe('run-1');
+
+		// An invoke issued during the gap waits for the resume decision rather
+		// than hanging or being dropped.
+		second.readyState = InertWebSocket.OPEN;
+		const invoke = ipcRenderer.invoke('some:channel');
 		second.emit('open');
+		expect(second.sent).toHaveLength(0);
+
+		// The server replayed everything missed: no reload, and the queued invoke
+		// goes out on the new socket.
+		second.emit('message', frame({ type: 'connected', bridgeEpoch: 'run-1', resumed: true }));
+		await new Promise((r) => setTimeout(r, 0));
+		expect(window.location.reload).not.toHaveBeenCalled();
+		const sentInvoke = second.sent
+			.map((f) => JSON.parse(f))
+			.find((f) => f.channel === 'some:channel');
+		expect(sentInvoke).toBeDefined();
+		second.emit(
+			'message',
+			frame({ type: 'bridge.response', requestId: sentInvoke.requestId, ok: true, result: 'ok' })
+		);
+		await expect(invoke).resolves.toBe('ok');
+
+		// Drop again; this time the server cannot replay the gap (it restarted).
+		// The only source of truth left is the desktop's live store, so reload.
+		const third = reconnect(second);
+		third.emit('open');
+		third.emit('message', frame({ type: 'connected', bridgeEpoch: 'run-2', resumed: false }));
 		expect(window.location.reload).toHaveBeenCalledTimes(1);
+
+		// An older server that knows nothing about resume behaves the same way.
+		const fourth = reconnect(third);
+		fourth.emit('open');
+		fourth.emit('message', frame({ type: 'connected' }));
+		expect(window.location.reload).toHaveBeenCalledTimes(2);
 	});
 });
