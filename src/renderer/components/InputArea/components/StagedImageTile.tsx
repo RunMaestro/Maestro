@@ -8,6 +8,7 @@ import { memo } from 'react';
 import { PenLine, X } from 'lucide-react';
 import type { Theme } from '../../../types';
 import { StagedImageDropLine, type StagedImageTileDragHandlers } from './stagedImageDrag';
+import { displayImageSrc } from '../../../utils/sessionImageSrc';
 
 const TILE_SIZES = {
 	strip: { height: '4rem', maxWidth: '200px', badge: 'text-2xs px-1.5' },
@@ -85,7 +86,7 @@ export const StagedImageTile = memo(function StagedImageTile({
 			    `draggable={false}` computes `-webkit-user-drag: none`, which would
 			    stop the drag if it were ever the hit-test target. */}
 			<img
-				src={image}
+				src={displayImageSrc(image)}
 				alt=""
 				draggable={false}
 				className="rounded border group-hover:opacity-80 transition-opacity block pointer-events-none"

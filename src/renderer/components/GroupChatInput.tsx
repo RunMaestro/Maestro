@@ -40,6 +40,7 @@ import {
 	formatGroupMentionExpansion,
 } from '../utils/participantColors';
 import { logger } from '../utils/logger';
+import { displayImageSrc } from '../utils/sessionImageSrc';
 import { useDebouncedCallback } from '../hooks/utils/useThrottle';
 import { useUIStore } from '../stores/uiStore';
 import { groupChatOutputSearchKey } from '../utils/outputSearch';
@@ -613,7 +614,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 					{stagedImages.map((img) => (
 						<div key={img} className="relative group">
 							<img
-								src={img}
+								src={displayImageSrc(img)}
 								alt="Staged image"
 								className="w-16 h-16 object-cover rounded border cursor-pointer hover:opacity-80 transition-opacity"
 								style={{ borderColor: theme.colors.border }}

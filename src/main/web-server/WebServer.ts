@@ -34,7 +34,7 @@ import { getLocalIpAddress } from '../utils/networkUtils';
 import { captureException } from '../utils/sentry';
 import { WebSocketMessageHandler } from './handlers';
 import { BroadcastService } from './services';
-import { ApiRoutes, ConcertoRoutes, StaticRoutes, WsRoute } from './routes';
+import { ApiRoutes, ConcertoRoutes, ImageRoutes, StaticRoutes, WsRoute } from './routes';
 import { LiveSessionManager, CallbackRegistry } from './managers';
 
 // Import shared types from canonical location
@@ -213,6 +213,7 @@ export class WebServer {
 	// Route instances
 	private apiRoutes: ApiRoutes;
 	private concertoRoutes: ConcertoRoutes;
+	private imageRoutes: ImageRoutes;
 	private staticRoutes: StaticRoutes;
 	private wsRoute: WsRoute;
 
@@ -265,6 +266,7 @@ export class WebServer {
 		// Initialize route handlers
 		this.apiRoutes = new ApiRoutes(this.securityToken, this.rateLimitConfig);
 		this.concertoRoutes = new ConcertoRoutes(this.concertoToken);
+		this.imageRoutes = new ImageRoutes(this.securityToken);
 		this.staticRoutes = new StaticRoutes(
 			this.securityToken,
 			this.webAssetsPath,
@@ -911,6 +913,10 @@ export class WebServer {
 
 		// Concerto HTML documents for browser clients (no custom-scheme handler).
 		this.concertoRoutes.registerRoutes(this.server);
+
+		// Session image store files for browser clients: the desktop loads them
+		// through the maestro-image:// protocol, which a browser cannot resolve.
+		this.imageRoutes.registerRoutes(this.server);
 
 		// Setup WebSocket route callbacks and register route
 		this.wsRoute.setCallbacks({
