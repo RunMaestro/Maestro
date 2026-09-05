@@ -16,7 +16,12 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import path from 'path';
 
-const css = readFileSync(path.join(__dirname, '../..', 'renderer', 'index.css'), 'utf-8');
+// A Windows checkout with autocrlf hands back `\r\n` line endings, and the
+// selector lookups below are written with `\n`, so normalize first.
+const css = readFileSync(path.join(__dirname, '../..', 'renderer', 'index.css'), 'utf-8').replace(
+	/\r\n/g,
+	'\n'
+);
 
 /** Every selector line that mentions a focus ring class. */
 const focusRingSelectors = css

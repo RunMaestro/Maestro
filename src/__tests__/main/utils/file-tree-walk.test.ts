@@ -31,7 +31,9 @@ const dirent = (entry: FakeEntry) => ({
  */
 const mockTree = (dirs: Record<string, FakeEntry[]>) => {
 	vi.mocked(fs.readdir).mockImplementation((async (dirPath: string) => {
-		const entries = dirs[dirPath];
+		// The walker joins child paths with path.join, which is `\\` on Windows;
+		// the maps in these tests are written with `/`.
+		const entries = dirs[dirPath.replace(/\\/g, '/')];
 		if (!entries) throw new Error(`ENOENT: ${dirPath}`);
 		return entries.map(dirent);
 	}) as never);
