@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
-import { mkdtempSync, writeFileSync, rmSync } from 'fs';
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import Fastify, { type FastifyInstance } from 'fastify';
@@ -28,7 +28,13 @@ vi.mock('../../../../main/utils/logger', () => ({
 
 const SECURITY_TOKEN = 'master-token';
 const dir = mkdtempSync(join(tmpdir(), 'maestro-media-route-'));
-const filePath = join(dir, 'clip.mp4');
+// A real absolute path is well over 50 bytes, so its hex form is over Fastify's
+// default 100-character param cap. The OS temp dir alone is not on every
+// platform (Linux: /tmp), so nest a long directory name to make the case hold
+// on every CI leg rather than only where the temp dir happens to be deep.
+const longDir = join(dir, 'a-directory-name-long-enough-to-push-the-hex-param-past-one-hundred');
+mkdirSync(longDir);
+const filePath = join(longDir, 'clip.mp4');
 writeFileSync(filePath, Buffer.from('0123456789'));
 const httpPath = buildMediaStreamHttpPath(SECURITY_TOKEN, buildLocalMediaStreamUrl(filePath))!;
 
