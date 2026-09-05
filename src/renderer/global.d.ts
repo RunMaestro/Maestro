@@ -3097,6 +3097,28 @@ interface MaestroAPI {
 			range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'
 		) => Promise<number>;
 		// Record session creation (launched)
+		recordResilience: (event: {
+			id: string;
+			sessionId: string;
+			agentType: string;
+			strategy: 'availability' | 'token-exhaustion';
+			outcome: 'recovered' | 'stopped';
+			startedAt: number;
+			resolvedAt: number;
+			retries: number;
+		}) => Promise<string | null>;
+		getResilience: (range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all') => Promise<
+			Array<{
+				id: string;
+				sessionId: string;
+				agentType: string;
+				strategy: 'availability' | 'token-exhaustion';
+				outcome: 'recovered' | 'stopped';
+				startedAt: number;
+				resolvedAt: number;
+				retries: number;
+			}>
+		>;
 		recordSessionCreated: (event: {
 			sessionId: string;
 			agentType: string;

@@ -29,6 +29,8 @@ import {
 	CREATE_IMAGE_ANNOTATIONS_INDEXES_SQL,
 	CREATE_SHORTCUT_USAGE_DAILY_SQL,
 	ADD_QUERY_EVENT_TOKEN_COLUMNS,
+	CREATE_RESILIENCE_EVENTS_SQL,
+	CREATE_RESILIENCE_EVENTS_INDEXES_SQL,
 	runStatements,
 } from './schema';
 import { LOG_CONTEXT } from './utils';
@@ -84,6 +86,15 @@ function getMigrations(): Migration[] {
 			version: 8,
 			description: 'Add per-turn token and cost columns to query_events for cost attribution',
 			up: (db) => migrateV8(db),
+		},
+		{
+			// MERGE NOTE (main -> rc): rc numbers its token-columns migration 9, so
+			// this entry must become version 10 there or the two branches' installs
+			// diverge on what "9" means. The migration body is idempotent
+			// (CREATE IF NOT EXISTS) precisely so renumbering it is safe.
+			version: 9,
+			description: 'Add resilience_events table for Agent Resilience outage tracking',
+			up: (db) => migrateV9(db),
 		},
 	];
 }
@@ -337,6 +348,16 @@ function migrateV8(db: Database.Database): void {
 	}
 
 	logger.debug('Added token and cost columns to query_events table', LOG_CONTEXT);
+}
+
+/**
+ * Migration v9: resilience_events - one row per resolved Agent Resilience
+ * outage, powering the Usage Dashboard's "outages survived" view.
+ */
+function migrateV9(db: Database.Database): void {
+	runStatements(db, CREATE_RESILIENCE_EVENTS_SQL);
+	runStatements(db, CREATE_RESILIENCE_EVENTS_INDEXES_SQL);
+	logger.debug('Created resilience_events table', LOG_CONTEXT);
 }
 
 /**

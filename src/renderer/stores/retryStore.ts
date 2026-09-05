@@ -686,7 +686,33 @@ export function cancelRetry(sessionId: string, tabId: string): void {
 function resolveOutage(outageId: string, status: Exclude<OutageStatus, 'active'>): void {
 	const record = useRetryStore.getState().outages[outageId];
 	if (!record || record.status !== 'active') return;
-	useRetryStore.getState().patchOutage(outageId, { status, resolvedAt: Date.now() });
+	const resolvedAt = Date.now();
+	useRetryStore.getState().patchOutage(outageId, { status, resolvedAt });
+
+	// Usage Dashboard: persist the resolved outage (one row per outage, keyed on
+	// outageId so a double-resolve upserts instead of double-counting). This is
+	// the single funnel every resolution passes through - recovered, stopped,
+	// and superseded-by-a-new-prompt alike - and it deliberately fires only when
+	// the outage LEAVES 'active', so live countdowns are never recorded and a
+	// quit mid-outage records nothing. Fire-and-forget: analytics must never
+	// block or fail the resolution itself; optional-chained because unit tests
+	// (and headless spawns) run this store without the preload bridge.
+	const session = selectSessionById(record.sessionId)(useSessionStore.getState());
+	void window.maestro?.stats
+		?.recordResilience({
+			id: record.outageId,
+			sessionId: record.sessionId,
+			agentType: session?.toolType ?? 'unknown',
+			strategy: record.strategy,
+			outcome: status,
+			startedAt: record.startedAt,
+			resolvedAt,
+			// `attempts` counts RESCHEDULES (0 while the first resend is pending), so
+			// a recovered outage's successful resend is not in it - add it back. A
+			// stopped outage's pending resend never fired, so it stays uncounted.
+			retries: record.attempts + (status === 'recovered' ? 1 : 0),
+		})
+		.catch(() => {});
 }
 
 /**

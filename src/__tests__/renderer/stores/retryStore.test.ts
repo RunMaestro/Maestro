@@ -354,6 +354,75 @@ describe('clearing the error banner on recovery', () => {
 	});
 });
 
+// Every outage resolution - recovered, stopped, or superseded - must persist
+// exactly one resilience_events row for the Usage Dashboard. The funnel is
+// resolveOutage, so all three paths are asserted through the public API.
+describe('resilience event recording', () => {
+	const recordMock = () =>
+		(window as any).maestro.stats.recordResilience as ReturnType<typeof vi.fn>;
+
+	beforeEach(() => recordMock().mockClear());
+
+	it('records a recovered outage when the resend settles', () => {
+		setupSession('s20', 't1');
+		seedSnapshot('s20', 't1');
+		scheduleRetryForError('s20', 't1', quota());
+		const outageId = getRetryEntry('s20', 't1')!.outageId;
+		retryNow('s20', 't1');
+		expect(recordMock()).not.toHaveBeenCalled(); // never while live
+
+		clearRetryIfSettled('s20', 't1');
+
+		expect(recordMock()).toHaveBeenCalledTimes(1);
+		expect(recordMock()).toHaveBeenCalledWith(
+			expect.objectContaining({
+				id: outageId,
+				sessionId: 's20',
+				strategy: 'token-exhaustion',
+				outcome: 'recovered',
+				retries: 1,
+			})
+		);
+	});
+
+	it('records a stopped outage when the user cancels', () => {
+		setupSession('s21', 't1');
+		seedSnapshot('s21', 't1');
+		scheduleRetryForError('s21', 't1', overload());
+
+		cancelRetry('s21', 't1');
+
+		expect(recordMock()).toHaveBeenCalledTimes(1);
+		expect(recordMock()).toHaveBeenCalledWith(
+			expect.objectContaining({ outcome: 'stopped', strategy: 'availability', retries: 0 })
+		);
+	});
+
+	it('records a stopped outage when a new prompt supersedes the retry', () => {
+		setupSession('s22', 't1');
+		seedSnapshot('s22', 't1');
+		scheduleRetryForError('s22', 't1', quota());
+
+		noteDispatch(
+			's22',
+			{ id: 'item-2', timestamp: 2, tabId: 't1', type: 'message', text: 'moved on' },
+			deps
+		);
+
+		expect(recordMock()).toHaveBeenCalledTimes(1);
+		expect(recordMock()).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'stopped' }));
+	});
+
+	it('does not record on a reschedule (outage continues)', () => {
+		setupSession('s23', 't1');
+		seedSnapshot('s23', 't1');
+		scheduleRetryForError('s23', 't1', overload());
+		scheduleRetryForError('s23', 't1', overload()); // resend failed again
+
+		expect(recordMock()).not.toHaveBeenCalled();
+	});
+});
+
 describe('hasPendingRetry', () => {
 	it('is true only while a retry is counting down', () => {
 		setupSession('s16', 't1');
