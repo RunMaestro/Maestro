@@ -310,6 +310,22 @@ export class CodexOutputParser implements AgentOutputParser {
 	// (Codex emits tool_call and tool_result as separate item.completed events,
 	// but tool_result doesn't include the tool name)
 	private lastToolName: string | null = null;
+	/**
+	 * Tool name per open `call_id`.
+	 *
+	 * `function_call_output` carries the `call_id` but not the tool name, so the
+	 * name has to be carried forward from the matching `function_call`. The
+	 * single `lastToolName` slot below used to do that job for every call at
+	 * once, which is why two tools running in parallel mis-attributed their
+	 * completion: the second `function_call` overwrote the slot, so the first
+	 * output to arrive was labeled with the second tool's name and merged onto
+	 * its badge (issue #1485).
+	 *
+	 * `lastToolName` is kept as the fallback for legacy `tool_call`/`tool_result`
+	 * items, which carry no id at all and therefore cannot be correlated any
+	 * better than "the most recent one".
+	 */
+	private readonly toolNamesByCallId = new Map<string, string>();
 
 	constructor() {
 		// Read config once at initialization
@@ -651,7 +667,11 @@ export class CodexOutputParser implements AgentOutputParser {
 		// function_call: tool invocation starting
 		if (payload.type === 'function_call' || payload.type === 'custom_tool_call') {
 			const toolName = payload.name || 'unknown';
+			const callId = payload.call_id;
 			this.lastToolName = toolName;
+			if (callId) {
+				this.toolNamesByCallId.set(callId, toolName);
+			}
 			let parsedArgs: unknown;
 			try {
 				parsedArgs = JSON.parse(payload.arguments || '{}');
@@ -661,6 +681,10 @@ export class CodexOutputParser implements AgentOutputParser {
 			return {
 				type: 'tool_use',
 				toolName,
+				// Forwarding call_id is what lets the renderer merge this badge
+				// with its own output rather than with whichever same-named badge
+				// happens to still be running.
+				...(callId ? { toolCallId: callId } : {}),
 				toolState: {
 					status: 'running',
 					input: parsedArgs,
@@ -671,11 +695,22 @@ export class CodexOutputParser implements AgentOutputParser {
 
 		// function_call_output: tool execution completed
 		if (payload.type === 'function_call_output' || payload.type === 'custom_tool_call_output') {
-			const toolName = this.lastToolName || undefined;
+			const callId = payload.call_id;
+			// An output that names its call id is answered from the map ALONE. It
+			// must not fall back to lastToolName: an id the map does not know is an
+			// output with no call to correlate to, and borrowing the most recent
+			// name there labels an orphan with an unrelated tool. The fallback is
+			// only for a payload that omits call_id entirely, which carries no
+			// correlation information at all.
+			const toolName = callId ? this.toolNamesByCallId.get(callId) : this.lastToolName || undefined;
+			if (callId) {
+				this.toolNamesByCallId.delete(callId);
+			}
 			this.lastToolName = null;
 			return {
 				type: 'tool_use',
 				toolName,
+				...(callId ? { toolCallId: callId } : {}),
 				toolState: {
 					status: 'completed',
 					output: this.decodeToolOutput(payload.output),
@@ -719,6 +754,11 @@ export class CodexOutputParser implements AgentOutputParser {
 			return {
 				type: 'tool_use',
 				toolName: 'shell',
+				// item.started and item.completed describe the SAME item, so its id
+				// correlates them. Every command_execution badge is named 'shell',
+				// so without an id two parallel commands are indistinguishable to
+				// the renderer's name-matching fallback (issue #1485).
+				...(item.id ? { toolCallId: item.id } : {}),
 				toolState: {
 					status: 'running',
 					input: { command: item.command },
@@ -778,6 +818,8 @@ export class CodexOutputParser implements AgentOutputParser {
 				return {
 					type: 'tool_use',
 					toolName: 'shell',
+					// Same id as the item.started above - see transformItemStarted.
+					...(item.id ? { toolCallId: item.id } : {}),
 					toolState: {
 						status: item.status === 'in_progress' ? 'running' : 'completed',
 						input: { command: item.command },

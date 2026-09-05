@@ -1,10 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { GrokOutputParser } from '../../../main/parsers/grok-output-parser';
 
-// All event lines below are copied verbatim from real captured fixtures
-// (grok v0.2.93, `--output-format streaming-json`). Grok's stream has exactly
-// four event types (thought, text, end, error); there is no init event, no
-// tool_use event, and no usage/cost data in the stream.
+// The thought/text/end/error lines below are copied verbatim from real captured
+// fixtures (grok v0.2.93, `--output-format streaming-json`): there is no init
+// event and no usage/cost data in the stream. grok 1.x adds tool_call and
+// tool_call_update; those lines are synthesized from the field names in the
+// grok-build 1.0.16 sources, so they pin Maestro's MAPPING rather than grok's
+// schema - see the tolerant-reading note in the parser header.
 
 const SIMPLE_TURN_END_LINE =
 	'{"type":"end","stopReason":"EndTurn","sessionId":"019f47fa-e297-7993-a1f6-adfaf940ba8c","requestId":"b860c3ae-0e8c-4cc4-b478-01d4ba187c9a"}';
@@ -162,10 +164,11 @@ describe('GrokOutputParser', () => {
 		expect(event && parser.extractSessionId(event)).toBe('019f47fb-2316-7f21-98db-55907d4ddb60');
 	});
 
-	it('emits no tool_use events - tool turns stream only thought/text/end lines', () => {
-		// Verified on a tool-use turn: the turn created and read a
-		// file, yet zero tool events appeared on stdout. Tool telemetry lives
-		// only in the on-disk session files.
+	it('emits no tool_use events on a 0.2.93 turn - those stream only thought/text/end', () => {
+		// grok 0.2.93 emitted no tool events at all: the turn created and read a
+		// file, yet stdout carried only thought/text/end. 1.x adds tool_call /
+		// tool_call_update (covered below); this asserts the older shape is still
+		// read the same way and does not sprout phantom badges.
 		const parser = new GrokOutputParser();
 
 		// Representative lines from a tool-use turn
@@ -180,6 +183,122 @@ describe('GrokOutputParser', () => {
 
 		const events = toolTurnLines.map((line) => parser.parseJsonLine(line));
 		expect(events.every((e) => e !== null && e.type !== 'tool_use')).toBe(true);
+	});
+
+	describe('grok 1.x tool events', () => {
+		it('parses a tool_call into a running tool_use keyed by toolCallId', () => {
+			const parser = new GrokOutputParser();
+
+			const event = parser.parseJsonLine(
+				'{"type":"tool_call","toolCallId":"call_01","toolName":"run_terminal_command","kind":"execute","rawInput":{"command":"ls -la"}}'
+			);
+
+			expect(event).toMatchObject({
+				type: 'tool_use',
+				toolName: 'run_terminal_command',
+				toolCallId: 'call_01',
+				toolState: { status: 'running', input: { command: 'ls -la' } },
+			});
+		});
+
+		it('settles a tool_call_update and carries the name forward from the opening call', () => {
+			// The update line carries the id but NOT the name. StdoutHandler drops a
+			// tool_use event with no toolName, so a badge whose name is not carried
+			// forward would stay 'running' forever.
+			const parser = new GrokOutputParser();
+
+			parser.parseJsonLine(
+				'{"type":"tool_call","toolCallId":"call_01","toolName":"run_terminal_command","rawInput":{"command":"ls"}}'
+			);
+			const update = parser.parseJsonLine(
+				'{"type":"tool_call_update","toolCallId":"call_01","status":"completed","rawOutput":"a.txt\\nb.txt"}'
+			);
+
+			expect(update).toMatchObject({
+				type: 'tool_use',
+				toolName: 'run_terminal_command',
+				toolCallId: 'call_01',
+				toolState: { status: 'completed', output: 'a.txt\nb.txt' },
+			});
+			// The opening line's input is not restated on the update; the renderer
+			// merges by id and keeps the recorded input.
+			expect((update?.toolState as { input?: unknown }).input).toBeUndefined();
+		});
+
+		it('keeps two parallel calls to the same tool on their own ids', () => {
+			// This is the mis-attribution the name-matching fallback produces when
+			// no id is emitted: the first output to land settles the wrong badge.
+			const parser = new GrokOutputParser();
+
+			parser.parseJsonLine(
+				'{"type":"tool_call","toolCallId":"a","toolName":"read_file","rawInput":{"path":"one.ts"}}'
+			);
+			parser.parseJsonLine(
+				'{"type":"tool_call","toolCallId":"b","toolName":"read_file","rawInput":{"path":"two.ts"}}'
+			);
+
+			const settleB = parser.parseJsonLine(
+				'{"type":"tool_call_update","toolCallId":"b","status":"completed","rawOutput":"two"}'
+			);
+			const settleA = parser.parseJsonLine(
+				'{"type":"tool_call_update","toolCallId":"a","status":"completed","rawOutput":"one"}'
+			);
+
+			expect(settleB).toMatchObject({ toolCallId: 'b', toolName: 'read_file' });
+			expect(settleA).toMatchObject({ toolCallId: 'a', toolName: 'read_file' });
+			expect((settleB?.toolState as { output?: string }).output).toBe('two');
+			expect((settleA?.toolState as { output?: string }).output).toBe('one');
+		});
+
+		it('maps a failing update to the failed status and keeps the error text', () => {
+			const parser = new GrokOutputParser();
+
+			parser.parseJsonLine('{"type":"tool_call","toolCallId":"c","toolName":"edit_file"}');
+			const failed = parser.parseJsonLine(
+				'{"type":"tool_call_update","toolCallId":"c","status":"failed","error":"no such file"}'
+			);
+
+			// The detail lands in `output`: toolState is {status,input,output}, so an
+			// `error` key would render nowhere.
+			expect(failed?.toolState).toMatchObject({ status: 'failed', output: 'no such file' });
+		});
+
+		it('treats an unrecognized update status as still running', () => {
+			// A badge wrongly settled can never be corrected by a later update, so
+			// schema drift must not settle one.
+			const parser = new GrokOutputParser();
+
+			const event = parser.parseJsonLine(
+				'{"type":"tool_call_update","toolCallId":"d","toolName":"read_file","status":"streaming"}'
+			);
+
+			expect((event?.toolState as { status?: string }).status).toBe('running');
+		});
+
+		it('reads snake_case field spellings too', () => {
+			const parser = new GrokOutputParser();
+
+			const event = parser.parseJsonLine(
+				'{"type":"tool_call","tool_call_id":"e","tool_name":"list_dir","input":{"path":"."}}'
+			);
+
+			expect(event).toMatchObject({
+				type: 'tool_use',
+				toolName: 'list_dir',
+				toolCallId: 'e',
+				toolState: { status: 'running', input: { path: '.' } },
+			});
+		});
+
+		it('absorbs a tool line carrying neither an id nor a name as a system event', () => {
+			// Degrade to the old drop-it behaviour rather than render a nameless,
+			// uncorrelatable badge.
+			const parser = new GrokOutputParser();
+
+			const event = parser.parseJsonLine('{"type":"tool_call","kind":"execute"}');
+
+			expect(event?.type).toBe('system');
+		});
 	});
 
 	it('reports no usage - the grok stream carries no token or cost data', () => {

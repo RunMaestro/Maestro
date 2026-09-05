@@ -538,6 +538,97 @@ describe('CodexOutputParser', () => {
 		});
 	});
 
+	describe('call_id correlation', () => {
+		const functionCall = (name: string, callId: string, args: string) =>
+			JSON.stringify({
+				type: 'response_item',
+				payload: { type: 'function_call', name, arguments: args, call_id: callId },
+			});
+		const functionCallOutput = (callId: string, output: string) =>
+			JSON.stringify({
+				type: 'response_item',
+				payload: { type: 'function_call_output', call_id: callId, output },
+			});
+
+		it('forwards call_id as toolCallId on both halves of a call', () => {
+			// Without an id the renderer merges a completion onto whichever
+			// same-named badge is still running (issue #1485).
+			const p = new CodexOutputParser();
+
+			const call = p.parseJsonLine(functionCall('shell', 'call_a', '{"command":"ls"}'));
+			const output = p.parseJsonLine(functionCallOutput('call_a', 'a.txt'));
+
+			expect(call?.toolCallId).toBe('call_a');
+			expect(output?.toolCallId).toBe('call_a');
+			expect(output?.toolName).toBe('shell');
+		});
+
+		it('attributes parallel calls to their own tools regardless of settle order', () => {
+			// The single lastToolName slot labeled the FIRST output to arrive with
+			// the SECOND call's tool name.
+			const p = new CodexOutputParser();
+
+			p.parseJsonLine(functionCall('read_file', 'call_a', '{"path":"one.ts"}'));
+			p.parseJsonLine(functionCall('run_tests', 'call_b', '{}'));
+
+			const settleB = p.parseJsonLine(functionCallOutput('call_b', 'ok'));
+			const settleA = p.parseJsonLine(functionCallOutput('call_a', 'contents'));
+
+			expect(settleB).toMatchObject({ toolCallId: 'call_b', toolName: 'run_tests' });
+			expect(settleA).toMatchObject({ toolCallId: 'call_a', toolName: 'read_file' });
+		});
+
+		it('still carries the name over for a payload with no call_id', () => {
+			// Legacy/id-less payloads keep the lastToolName fallback.
+			const p = new CodexOutputParser();
+
+			p.parseJsonLine(
+				JSON.stringify({
+					type: 'response_item',
+					payload: { type: 'function_call', name: 'shell', arguments: '{}' },
+				})
+			);
+			const output = p.parseJsonLine(
+				JSON.stringify({
+					type: 'response_item',
+					payload: { type: 'function_call_output', output: 'done' },
+				})
+			);
+
+			expect(output?.toolName).toBe('shell');
+			expect(output?.toolCallId).toBeUndefined();
+		});
+
+		it('correlates a command_execution across item.started and item.completed by item id', () => {
+			// Every command_execution badge is named 'shell', so the id is the only
+			// thing telling two parallel commands apart.
+			const p = new CodexOutputParser();
+
+			const started = p.parseJsonLine(
+				JSON.stringify({
+					type: 'item.started',
+					item: { id: 'item_1', type: 'command_execution', command: 'npm test' },
+				})
+			);
+			const completed = p.parseJsonLine(
+				JSON.stringify({
+					type: 'item.completed',
+					item: {
+						id: 'item_1',
+						type: 'command_execution',
+						command: 'npm test',
+						status: 'completed',
+						aggregated_output: 'ok',
+						exit_code: 0,
+					},
+				})
+			);
+
+			expect(started?.toolCallId).toBe('item_1');
+			expect(completed?.toolCallId).toBe('item_1');
+		});
+	});
+
 	describe('tool output truncation', () => {
 		it('should truncate tool output exceeding 10000 chars', () => {
 			const p = new CodexOutputParser();
