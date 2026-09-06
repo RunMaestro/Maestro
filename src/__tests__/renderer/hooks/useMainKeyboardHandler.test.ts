@@ -8,6 +8,10 @@ import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { groupChatOutputSearchKey } from '../../../renderer/utils/outputSearch';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
+import {
+	clearDesktopAiTabSelections,
+	consumeDesktopAiTabSelection,
+} from '../../../renderer/utils/desktopTabSelectionSync';
 
 // Cmd+Shift+J delegates to the shared tile action. Mocked so the test asserts the
 // wiring rather than re-running the layout transform (covered in tileNewTab.test).
@@ -117,6 +121,7 @@ describe('useMainKeyboardHandler', () => {
 
 	beforeEach(() => {
 		addedListeners = [];
+		clearDesktopAiTabSelections();
 		// Hoisted module mocks survive across tests in this file, so a "did NOT
 		// fire" assertion would otherwise read calls left by an earlier case.
 		mockTileNewTabInSession.mockClear();
@@ -1405,6 +1410,52 @@ describe('useMainKeyboardHandler', () => {
 		});
 
 		describe('Cmd+Shift+[ and Cmd+Shift+] (tab cycling)', () => {
+			it('records desktop selection intent when cycling onto an AI tab', () => {
+				const { result } = renderHook(() => useMainKeyboardHandler());
+				const mockSession = {
+					id: 'session-1',
+					aiTabs: [
+						{ id: 'ai-tab-1', name: 'AI Tab 1', logs: [] },
+						{ id: 'ai-tab-2', name: 'AI Tab 2', logs: [] },
+					],
+					activeTabId: 'ai-tab-1',
+					filePreviewTabs: [],
+					activeFileTabId: null,
+					unifiedTabOrder: ['ai-tab-1', 'ai-tab-2'],
+					inputMode: 'ai',
+				};
+				const mockNavigateToNextUnifiedTab = vi.fn().mockReturnValue({
+					type: 'ai',
+					id: 'ai-tab-2',
+					session: { ...mockSession, activeTabId: 'ai-tab-2' },
+				});
+				const mockSetSessions = vi.fn((updater: unknown) => {
+					if (typeof updater === 'function') {
+						(updater as (prev: unknown[]) => unknown[])([mockSession]);
+					}
+				});
+
+				result.current.keyboardHandlerRef.current = createUnifiedTabContext({
+					isTabShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'nextTab',
+					navigateToNextUnifiedTab: mockNavigateToNextUnifiedTab,
+					setSessions: mockSetSessions,
+					activeSession: mockSession,
+				});
+
+				act(() => {
+					window.dispatchEvent(
+						new KeyboardEvent('keydown', {
+							key: ']',
+							metaKey: true,
+							shiftKey: true,
+							bubbles: true,
+						})
+					);
+				});
+
+				expect(consumeDesktopAiTabSelection('session-1', 'ai-tab-2')).toBe(true);
+			});
+
 			it('should navigate to next tab in unified order (Cmd+Shift+])', () => {
 				const { result } = renderHook(() => useMainKeyboardHandler());
 

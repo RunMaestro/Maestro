@@ -28,6 +28,8 @@ import type { TileableTabKind } from '../tabs/tileNewTab';
 import { isMacOSPlatform } from '../../utils/platformUtils';
 import { editClipboardImage } from '../../components/ImageAnnotator/editClipboardImage';
 import { FORCED_PARALLEL_SEND_EVENT } from '../input/useInputKeyDown';
+import { isWebDesktop } from '../../utils/runtimeContext';
+import { noteDesktopAiTabSelection } from '../../utils/desktopTabSelectionSync';
 
 /**
  * Open the floating media player on whatever it should be showing.
@@ -1441,6 +1443,9 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						if (!current) return prev;
 						const result = ctx.navigateToNextUnifiedTab(current, ctx.showUnreadOnly);
 						if (!result) return prev;
+						if (result.type === 'ai' && !isWebDesktop()) {
+							noteDesktopAiTabSelection(current.id, result.id);
+						}
 						return prev.map((s: Session) => (s.id === current.id ? result.session : s));
 					});
 					trackShortcut('nextTab');
@@ -1452,6 +1457,9 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						if (!current) return prev;
 						const result = ctx.navigateToPrevUnifiedTab(current, ctx.showUnreadOnly);
 						if (!result) return prev;
+						if (result.type === 'ai' && !isWebDesktop()) {
+							noteDesktopAiTabSelection(current.id, result.id);
+						}
 						return prev.map((s: Session) => (s.id === current.id ? result.session : s));
 					});
 					trackShortcut('prevTab');
@@ -1496,6 +1504,9 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 							if (!current) return prev;
 							const result = ctx.navigateToUnifiedTabByIndex(current, i - 1, ctx.showUnreadOnly);
 							if (!result) return prev;
+							if (result.type === 'ai' && !isWebDesktop()) {
+								noteDesktopAiTabSelection(current.id, result.id);
+							}
 							return prev.map((s: Session) => (s.id === current.id ? result.session : s));
 						});
 						trackShortcut(`goToTab${i}`);
@@ -1510,6 +1521,9 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						if (!current) return prev;
 						const result = ctx.navigateToLastUnifiedTab(current, ctx.showUnreadOnly);
 						if (!result) return prev;
+						if (result.type === 'ai' && !isWebDesktop()) {
+							noteDesktopAiTabSelection(current.id, result.id);
+						}
 						return prev.map((s: Session) => (s.id === current.id ? result.session : s));
 					});
 					trackShortcut('goToLastTab');

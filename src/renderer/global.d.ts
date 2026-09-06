@@ -465,7 +465,8 @@ interface MaestroAPI {
 			callback: (
 				sessionId: string,
 				tabId: string,
-				aiTabs?: import('../main/web-server/types').AITabData[]
+				aiTabs?: import('../main/web-server/types').AITabData[],
+				activeTabChanged?: boolean
 			) => void
 		) => () => void;
 		onRemoteNewTab: (
@@ -1206,7 +1207,8 @@ interface MaestroAPI {
 		broadcastTabsChange: (
 			sessionId: string,
 			aiTabs: import('../main/web-server/types').AITabData[],
-			activeTabId: string
+			activeTabId: string,
+			activeTabChanged?: boolean
 		) => Promise<void>;
 		broadcastSessionState: (
 			sessionId: string,

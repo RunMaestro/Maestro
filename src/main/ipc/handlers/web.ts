@@ -309,10 +309,16 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 
 	ipcMain.handle(
 		'web:broadcastTabsChange',
-		async (_, sessionId: string, aiTabs: AITabData[], activeTabId: string) => {
+		async (
+			_,
+			sessionId: string,
+			aiTabs: AITabData[],
+			activeTabId: string,
+			activeTabChanged = false
+		) => {
 			const webServer = getWebServer();
 			if (webServer && webServer.getWebClientCount() > 0) {
-				webServer.broadcastTabsChange(sessionId, aiTabs, activeTabId);
+				webServer.broadcastTabsChange(sessionId, aiTabs, activeTabId, activeTabChanged);
 				return true;
 			}
 			return false;
