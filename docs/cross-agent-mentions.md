@@ -127,6 +127,18 @@ both because the caller is an agent rather than you:
 whatever conversation you have open with that agent. Asking a question that way interrupts
 you and sends the answer to the screen rather than to the agent that needed it.
 
+### You do not have to type `@`
+
+The `@` picker is how you address an agent **precisely**, not the only phrasing your agent
+acts on. "What does the reviewer think of this?" or "let the docs agent know we shipped it"
+is a routable instruction on its own: your agent resolves the name against its roster and
+picks the verb from what you asked for, consulting with `ask` when you want an answer back
+and handing work over with `dispatch` when you do not.
+
+Reach for the picker when the name is ambiguous. Where a plain-language reference fits
+several agents or none, your agent names its best guess and asks rather than fanning your
+message out, so an `@name` chip is the faster way to say exactly who you meant.
+
 ## Cross-Agent Mentions vs Group Chat
 
 Both let you reach other agents, but the difference is not the syntax. It is **who moderates**.
