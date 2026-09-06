@@ -65,6 +65,7 @@ describe('MediaRoutes', () => {
 		expect(res.headers['content-type']).toBe('video/mp4');
 		expect(res.headers['accept-ranges']).toBe('bytes');
 		expect(res.headers['content-length']).toBe('10');
+		expect(res.headers['cache-control']).toBe('no-store');
 		expect(res.body).toBe('0123456789');
 	});
 
