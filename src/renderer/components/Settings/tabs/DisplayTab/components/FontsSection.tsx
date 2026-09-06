@@ -130,7 +130,7 @@ export function FontsSection({
 	return (
 		<>
 			<div data-setting-id="display-custom-fonts">
-				<SettingsSectionHeading icon={Type}>Custom Fonts</SettingsSectionHeading>
+				<SettingsSectionHeading icon={Type}>Manage Custom Fonts</SettingsSectionHeading>
 				<p className="text-xs opacity-60 mb-2 -mt-1">
 					Names of fonts installed on this machine that aren&apos;t in the lists below. Added once
 					here, then offered in every picker.

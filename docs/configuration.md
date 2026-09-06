@@ -55,9 +55,15 @@ Each surface has its own size, which can also inherit. Press **Up** / **Down** o
 
 Maestro tells you which preset is active, or that you have customized away from both.
 
+### Save and restore your own setup
+
+A preset overwrites every font and size, so **Save & Restore Customizations** keeps yours. Click **Save Customizations** once you like what you have, then try a preset or keep tinkering, and **Restore Customizations** puts your fonts back in one click.
+
+There is one slot, and saving again replaces it (Maestro asks first). Zoom is not part of a saved setup, so restoring one never changes how big everything is.
+
 ### Custom fonts
 
-The pickers list fonts Maestro knows about. If you have a font installed that is not in the list, add its name once under **Custom Fonts** and it becomes available in every picker.
+The pickers list fonts Maestro knows about. If you have a font installed that is not in the list, add its name once under **Manage Custom Fonts** and it becomes available in every picker.
 
 <Warning>
 Type the family name exactly as the system reports it. A name that is not installed cannot be resolved, and the surface falls back to the browser default rather than telling you it failed.

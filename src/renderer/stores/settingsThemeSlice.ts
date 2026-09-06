@@ -25,6 +25,12 @@ import {
 	clampSurfaceFontSize,
 	type TypographySurface,
 } from '../../shared/typography';
+import {
+	captureTypographySnapshot,
+	parseTypographySnapshot,
+	typographySnapshotPatch,
+	type TypographySnapshot,
+} from '../../shared/typographySnapshot';
 import type { SettingsStore } from './settingsStore';
 
 export interface ThemeState {
@@ -49,6 +55,13 @@ export interface ThemeState {
 	 * preserves whatever proportions the user set between them.
 	 */
 	fontZoom: number;
+	/**
+	 * The user's own saved fonts and sizes, or null when they have never saved
+	 * one. Exists so the Factory Reset presets are safe to try: without it,
+	 * clicking Hacker to see what it looks like destroyed a dozen deliberate
+	 * picker changes with no way back.
+	 */
+	typographySnapshot: TypographySnapshot | null;
 	activeThemeId: ThemeId;
 	customThemeColors: ThemeColors;
 	customThemeBaseId: ThemeId;
@@ -78,6 +91,10 @@ export interface ThemeActions {
 	setFontZoom: (value: number) => void;
 	/** Restore both fonts and sizes to a preset. The Factory Reset control. */
 	resetTypography: (id: TypographyPresetId) => void;
+	/** Copy the current fonts and sizes into the single snapshot slot. */
+	saveTypographySnapshot: () => void;
+	/** Put the saved fonts and sizes back. A no-op when nothing is saved. */
+	restoreTypographySnapshot: () => void;
 	setActiveThemeId: (value: ThemeId) => void;
 	setCustomThemeColors: (value: ThemeColors) => void;
 	setCustomThemeBaseId: (value: ThemeId) => void;
@@ -92,7 +109,7 @@ export interface ThemeActions {
 
 export type ThemeSlice = ThemeState & ThemeActions;
 
-export const createThemeSlice: StateCreator<SettingsStore, [], [], ThemeSlice> = (set) => ({
+export const createThemeSlice: StateCreator<SettingsStore, [], [], ThemeSlice> = (set, get) => ({
 	fontFamily: MAESTRO_FONT_STACK,
 	terminalFontFamily: '',
 	chatFontFamily: '',
@@ -106,6 +123,7 @@ export const createThemeSlice: StateCreator<SettingsStore, [], [], ThemeSlice> =
 	fileEditorFontSize: 0,
 	documentGraphFontSize: 0,
 	fontZoom: FONT_ZOOM_DEFAULT,
+	typographySnapshot: null,
 	activeThemeId: 'dracula',
 	customThemeColors: DEFAULT_CUSTOM_THEME_COLORS,
 	customThemeBaseId: 'dracula',
@@ -189,6 +207,26 @@ export const createThemeSlice: StateCreator<SettingsStore, [], [], ThemeSlice> =
 		// One `set` so the app repaints once instead of flashing through nine
 		// intermediate states.
 		set(patch);
+		for (const [key, value] of Object.entries(patch)) {
+			window.maestro.settings.set(key, value);
+		}
+	},
+
+	saveTypographySnapshot: () => {
+		// Captured from the store rather than from a caller-supplied object so
+		// the save can never disagree with what the app is currently rendering.
+		const snapshot = captureTypographySnapshot(get() as unknown as Record<string, unknown>);
+		set({ typographySnapshot: snapshot });
+		window.maestro.settings.set('typographySnapshot', snapshot);
+	},
+
+	restoreTypographySnapshot: () => {
+		const snapshot = get().typographySnapshot;
+		if (!snapshot) return;
+		const patch = typographySnapshotPatch(snapshot);
+		// One `set` so the app repaints once instead of flashing through a
+		// dozen intermediate mixes of the preset and the saved setup.
+		set(patch as Partial<ThemeState>);
 		for (const [key, value] of Object.entries(patch)) {
 			window.maestro.settings.set(key, value);
 		}
@@ -294,6 +332,12 @@ export function hydrateThemeSettings(
 
 	if (allSettings['fontZoom'] !== undefined)
 		patch.fontZoom = clampFontZoom(Number(allSettings['fontZoom']));
+
+	// Narrowed rather than cast: this one persisted object can predate a
+	// surface, or arrive from a hand-edited settings file, and a malformed
+	// value would offer a Restore button that blanks the fonts it touches.
+	if (allSettings['typographySnapshot'] !== undefined)
+		patch.typographySnapshot = parseTypographySnapshot(allSettings['typographySnapshot']);
 
 	if (allSettings['typographyPromptSeen'] !== undefined)
 		patch.typographyPromptSeen = Boolean(allSettings['typographyPromptSeen']);
