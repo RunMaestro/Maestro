@@ -391,6 +391,7 @@ export interface AppModalsProps {
 	onQuickActionsNewTerminalTab?: () => void;
 	// Next unread / draft tab navigation (shared with Alt+Cmd+Down)
 	onGoToNextUnread?: () => void;
+	onGoToPreviousUnread?: () => void;
 	// Session/tab history navigation (shared with Cmd+Shift+, / Cmd+Shift+.)
 	onNavBack?: () => void;
 	onNavForward?: () => void;
@@ -872,6 +873,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		onQuickActionsNewBrowserTab,
 		onQuickActionsNewTerminalTab,
 		onGoToNextUnread,
+		onGoToPreviousUnread,
 		onNavBack,
 		onNavForward,
 		// Group Chat modals
@@ -1241,6 +1243,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				onQuickActionsNewBrowserTab={onQuickActionsNewBrowserTab}
 				onQuickActionsNewTerminalTab={onQuickActionsNewTerminalTab}
 				onGoToNextUnread={onGoToNextUnread}
+				onGoToPreviousUnread={onGoToPreviousUnread}
 				onNavBack={onNavBack}
 				onNavForward={onNavForward}
 				onRemoveQueueItem={onRemoveQueueItem}

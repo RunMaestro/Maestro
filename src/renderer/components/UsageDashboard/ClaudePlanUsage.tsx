@@ -61,6 +61,12 @@ interface ClaudePlanUsageProps {
 	showRefreshButton?: boolean;
 	/** Claim Cmd/Ctrl+R for Refresh while this panel is the visible surface. */
 	refreshHotkey?: boolean;
+	/**
+	 * Show the agents backed by one account. Given, each row's "N agents" chip
+	 * becomes a button that hands the account's config dir back so the dashboard
+	 * can open the Agents tab filtered to it. Omitted, the chip stays a label.
+	 */
+	onShowAccountAgents?: (configDirKey: string) => void;
 }
 
 interface AccountRowProps {
@@ -74,6 +80,8 @@ interface AccountRowProps {
 	 */
 	sharedWith: string[];
 	theme: Theme;
+	/** Show this account's agents in the Agents tab. Omit to keep the chip inert. */
+	onShowAgents?: () => void;
 }
 
 const AccountRow = memo(function AccountRow({
@@ -82,6 +90,7 @@ const AccountRow = memo(function AccountRow({
 	agentCount,
 	sharedWith,
 	theme,
+	onShowAgents,
 }: AccountRowProps) {
 	const shortName = deriveShortName(configDirKey);
 	const isUnauthenticated = snapshot.authState === 'unauthenticated';
@@ -99,6 +108,7 @@ const AccountRow = memo(function AccountRow({
 					providerLabel={PROVIDER_LABEL}
 					testId={`${TEST_ID_PREFIX}-agents-${shortName}`}
 					theme={theme}
+					onClick={agentCount > 0 ? onShowAgents : undefined}
 				/>
 				{/* The pill above is the config dir the user named; this is who
 				    that dir is actually logged in as. They drift apart whenever
@@ -175,6 +185,7 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 	autoRefresh = true,
 	showRefreshButton = true,
 	refreshHotkey = false,
+	onShowAccountAgents,
 }: ClaudePlanUsageProps) {
 	const snapshots = useClaudeUsageStore((s) => s.snapshots);
 	const refreshing = useClaudeUsageStore((s) => s.refreshing);
@@ -182,8 +193,6 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 	const { configuredAccountKeys, agentCountsByAccount, setSelectedKey, effectiveSelectedKey } =
 		useQuotaAccounts({
 			toolType: 'claude-code',
-			envVarName: 'CLAUDE_CONFIG_DIR',
-			defaultSubdir: '.claude',
 			accountKeys,
 			snapshots,
 			normalizeKey,
@@ -297,6 +306,7 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 					agentCount={agentCount}
 					sharedWith={sharedAccountNames[configDirKey] ?? EMPTY_SIBLINGS}
 					theme={theme}
+					onShowAgents={onShowAccountAgents ? () => onShowAccountAgents(configDirKey) : undefined}
 				/>
 			) : (
 				<QuotaPendingRow
@@ -307,6 +317,7 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 					agentCount={agentCount}
 					providerLabel={PROVIDER_LABEL}
 					theme={theme}
+					onShowAgents={onShowAccountAgents ? () => onShowAccountAgents(configDirKey) : undefined}
 				/>
 			);
 			// Toggle sits inline to the left of the account pill (items-start keeps
@@ -334,7 +345,15 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 				</div>
 			);
 		},
-		[snapshots, theme, hiddenSet, toggleHidden, agentCountsByAccount, sharedAccountNames]
+		[
+			snapshots,
+			theme,
+			hiddenSet,
+			toggleHidden,
+			agentCountsByAccount,
+			sharedAccountNames,
+			onShowAccountAgents,
+		]
 	);
 
 	return (

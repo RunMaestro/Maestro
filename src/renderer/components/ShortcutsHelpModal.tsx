@@ -5,7 +5,7 @@ import { ShortcutFilterButton } from './ui/ShortcutFilterButton';
 import type { Theme, Shortcut, KeyboardMasteryStats } from '../types';
 import { fuzzyMatch } from '../utils/search';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
-import { FIXED_SHORTCUTS } from '../constants/shortcuts';
+import { DOUBLE_PRESS_ACCESS, FIXED_SHORTCUTS } from '../constants/shortcuts';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { shortcutKeysEqual } from '../../shared/shortcutKeys';
 import { Modal } from './ui/Modal';
@@ -70,6 +70,21 @@ export function ShortcutsHelpModal({
 	);
 
 	const totalShortcuts = Object.values(allShortcuts).length;
+
+	// An action that ships unbound but is reachable by double-pressing another
+	// chord is NOT "Unassigned" - saying so would hide a way in the user
+	// already has. Resolved against the live binding so a rebound host chord
+	// keeps the hint truthful.
+	const doublePressHint = useCallback(
+		(id: string): string | null => {
+			const hostId = DOUBLE_PRESS_ACCESS[id];
+			if (!hostId) return null;
+			const hostKeys = allShortcuts[hostId]?.keys;
+			if (!hostKeys?.length) return null;
+			return formatShortcutKeys(hostKeys);
+		},
+		[allShortcuts]
+	);
 
 	// Mastery runs over the BOUND shortcuts only. Unbound ones stay in the list
 	// above (the user should still know the action exists and can give it a
@@ -288,7 +303,24 @@ export function ShortcutsHelpModal({
 									</span>
 								)}
 							</div>
-							{sc.keys.length > 0 ? (
+							{sc.keys.length === 0 && doublePressHint(sc.id) ? (
+								<span
+									className="text-xs flex-shrink-0 flex items-center gap-1"
+									style={{ color: theme.colors.textDim }}
+								>
+									<kbd
+										className="px-2 py-1 rounded border font-mono text-xs font-bold"
+										style={{
+											backgroundColor: theme.colors.bgActivity,
+											borderColor: theme.colors.border,
+											color: theme.colors.textMain,
+										}}
+									>
+										{doublePressHint(sc.id)}
+									</kbd>
+									<span className="italic">twice</span>
+								</span>
+							) : sc.keys.length > 0 ? (
 								<kbd
 									className="px-2 py-1 rounded border font-mono text-xs font-bold flex-shrink-0"
 									style={{

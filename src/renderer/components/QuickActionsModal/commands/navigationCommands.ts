@@ -17,6 +17,9 @@ interface BuildNavigationCommandsArgs {
 	// Shared with the Alt+Cmd+Down keyboard shortcut so both invocation paths
 	// use the same sidebar-visible ordering and current-session clear semantics.
 	onGoToNextUnread?: () => void;
+	// Same callback the second press of Opt+Cmd+Up runs, so the palette entry
+	// and the chord walk the same ordering.
+	onGoToPreviousUnread?: () => void;
 	// Shared with the Cmd+Shift+, / Cmd+Shift+. keyboard shortcuts so both paths
 	// walk the same session/tab navigation history.
 	onNavBack?: () => void;
@@ -27,6 +30,8 @@ interface BuildNavigationCommandsArgs {
 		toggleSidebar?: QuickAction['shortcut'];
 		toggleRightPanel?: QuickAction['shortcut'];
 		nextUnreadTab?: QuickAction['shortcut'];
+		previousUnreadTab?: QuickAction['shortcut'];
+		focusActiveTab?: QuickAction['shortcut'];
 		toggleUnreadFilters?: QuickAction['shortcut'];
 		killInstance?: QuickAction['shortcut'];
 		navBack?: QuickAction['shortcut'];
@@ -47,6 +52,7 @@ export function buildNavigationCommands({
 	platform,
 	openPath,
 	onGoToNextUnread,
+	onGoToPreviousUnread,
 	onNavBack,
 	onNavForward,
 	shortcuts,
@@ -94,6 +100,20 @@ export function buildNavigationCommands({
 				// Alt+Cmd+Down keyboard shortcut exactly (uses sortedSessions -
 				// the sidebar's visible order - and the same clear semantics).
 				onGoToNextUnread?.();
+				setQuickActionOpen(false);
+			},
+		},
+		{
+			id: 'previousUnreadTab',
+			label: 'Previous Unread / Draft Tab',
+			// previousUnreadTab ships unbound, so name the chord that actually
+			// reaches it today: Focus Active Tab pressed a second time.
+			subtext: 'Walk backwards; also the second press of Focus Active Tab',
+			shortcut: shortcuts.previousUnreadTab?.keys?.length
+				? shortcuts.previousUnreadTab
+				: shortcuts.focusActiveTab,
+			action: () => {
+				onGoToPreviousUnread?.();
 				setQuickActionOpen(false);
 			},
 		},

@@ -198,6 +198,7 @@ describe('AppAgentModals', () => {
 					startedAt: 1,
 					blocked: [{ sessionId: 'auth-session', tabIds: ['tab-1'] }],
 					fromPipeline: true,
+					initiatedBy: 'failure',
 				},
 			},
 		});

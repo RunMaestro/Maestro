@@ -126,7 +126,9 @@ const mockShortcuts: Record<string, Shortcut> = {
 	viewGitLog: { id: 'viewGitLog', keys: ['Cmd', 'G'], enabled: true },
 	toggleMarkdownMode: { id: 'toggleMarkdownMode', keys: ['Cmd', 'M'], enabled: true },
 	createDebugPackage: { id: 'createDebugPackage', keys: ['Alt', 'Cmd', 'D'], enabled: true },
-	nextUnreadTab: { id: 'nextUnreadTab', keys: ['Meta', 'Shift', 'ArrowDown'], enabled: true },
+	nextUnreadTab: { id: 'nextUnreadTab', keys: ['Alt', 'Meta', 'ArrowDown'], enabled: true },
+	previousUnreadTab: { id: 'previousUnreadTab', keys: [], enabled: true },
+	focusActiveTab: { id: 'focusActiveTab', keys: ['Alt', 'Meta', 'ArrowUp'], enabled: true },
 	navBack: { id: 'navBack', keys: ['Meta', 'Shift', ','], enabled: true },
 	navForward: { id: 'navForward', keys: ['Meta', 'Shift', '.'], enabled: true },
 };
@@ -321,6 +323,18 @@ describe('QuickActionsModal', () => {
 			expect(screen.getByText('Next Unread / Draft Tab')).toBeInTheDocument();
 			expect(
 				screen.getByText(formatShortcutKeys(mockShortcuts.nextUnreadTab.keys))
+			).toBeInTheDocument();
+		});
+
+		it('renders Previous Unread Tab with the chord that actually reaches it', () => {
+			// previousUnreadTab ships unbound, so the entry borrows the Focus
+			// Active Tab chord - a second press of it is what fires this action.
+			const props = createDefaultProps();
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.getByText('Previous Unread / Draft Tab')).toBeInTheDocument();
+			expect(
+				screen.getByText(formatShortcutKeys(mockShortcuts.focusActiveTab.keys))
 			).toBeInTheDocument();
 		});
 

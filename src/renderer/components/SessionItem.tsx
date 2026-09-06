@@ -87,7 +87,15 @@ export function getEnhancedStatusColor(
 		case 'idle':
 			return { color: success, animate: false, label: 'Ready' };
 		case 'busy':
-			return { color: warning, animate: true, label: 'Thinking' };
+			// `busySource` separates an agent turn from a shell command run in the
+			// same row. Both are legitimately busy, but only the AI one is counted
+			// by the thinking pill, so labelling a shell run "Thinking" makes the
+			// Left Bar look like it is lying when the pill lists no such agent.
+			return {
+				color: warning,
+				animate: true,
+				label: session.busySource === 'terminal' ? 'Running command' : 'Thinking',
+			};
 		case 'error':
 			return { color: error, animate: false, label: 'Error' };
 		case 'connecting':

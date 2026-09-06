@@ -136,11 +136,22 @@ These shortcuts work in AI Terminal mode and affect the current tab:
 | Filter Unread Tabs          | `Cmd+U`               | `Ctrl+U`              |
 | Unread Only (Agents + Tabs) | unassigned by default | unassigned by default |
 | Next Unread/Draft Tab       | `Opt+Cmd+Down`        | `Alt+Ctrl+Down`       |
+| Previous Unread/Draft Tab   | `Opt+Cmd+Up` (twice)  | `Alt+Ctrl+Up` (twice) |
 | Open Image Carousel         | `Cmd+Y`               | `Ctrl+Y`              |
 | Open Image Organizer        | `Cmd+Shift+Y`         | `Ctrl+Shift+Y`        |
 | Open Prompt Composer        | `Cmd+Shift+P`         | `Ctrl+Shift+P`        |
 
 Toggle states are saved per-tab. See [Input Toggles](./general-usage#input-toggles) for details on configuring defaults.
+
+### Walking Unread and Draft Tabs
+
+`Opt+Cmd+Down` walks forward through every tab that is unread, holds an unsent draft, or has an unfinished inline wizard. It prefers a tab in the agent you are already on, then moves to the next agent in the sidebar's visible order, wrapping around at the end.
+
+Walking backward is on the second press of `Opt+Cmd+Up`. The first press brings the current tab into focus in the tab bar and centers it. Once it is centered and focused, that press has nothing left to do, so pressing it again walks backward instead: the tab nearest the left of the strip, then the previous agent, wrapping around at the start. It is the exact mirror of `Opt+Cmd+Down`, so pressing one and then the other returns you to where you started.
+
+If you scroll the tab strip away while the tab header still holds focus, the next press re-centers it rather than jumping, so you never lose the "show me where I am" behavior.
+
+**Previous Unread/Draft Tab** is also its own entry in the command palette (`Cmd+K`) and in **Settings** → **Shortcuts**, where you can give it a dedicated chord if you would rather not press `Opt+Cmd+Up` twice. It ships unbound because the second press already reaches it.
 
 ## Tab Management Shortcuts
 
@@ -174,6 +185,8 @@ Toggle states are saved per-tab. See [Input Toggles](./general-usage#input-toggl
 In a group chat there are no AI tabs, so `Cmd+Shift+[` / `Cmd+Shift+]` walk the
 Right Bar instead, switching between the Participants and History panels. The Right
 Bar opens if it was closed.
+
+**Focus Active Tab** presses twice: the first press centers and focuses the current tab header, the second walks backward through unread and draft tabs. See [Walking Unread and Draft Tabs](#walking-unread-and-draft-tabs).
 
 ### Tab Switcher
 

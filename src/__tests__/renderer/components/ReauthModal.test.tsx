@@ -46,6 +46,7 @@ function createOutage(overrides: Partial<AuthOutage> = {}): AuthOutage {
 		startedAt: 0,
 		blocked: [{ sessionId: 'sess-1', tabIds: [] }],
 		fromPipeline: false,
+		initiatedBy: 'failure',
 		...overrides,
 	};
 }
@@ -395,6 +396,71 @@ describe('ReauthModal', () => {
 		expect(screen.getByText('Nightly Triage, Doc Sweep')).toBeInTheDocument();
 		expect(screen.getByText(/All 2 agents on this provider are stopped/)).toBeInTheDocument();
 		expect(screen.getByTestId('reauth-resume').textContent).toBe('Resume 2 Agents');
+	});
+});
+
+/**
+ * The same dialog opened from the command palette, with nothing broken.
+ *
+ * The login itself is identical - that is the point of reusing this - but the
+ * recovery copy would be a lie: no agent is stopped, no queue is held, and
+ * there is nothing to resume. A user who reads "this agent is stopped" here has
+ * to go and disprove it.
+ */
+describe('ReauthModal for a user-initiated login', () => {
+	function createManualOutage(): AuthOutage {
+		return createOutage({ initiatedBy: 'user', message: '' });
+	}
+
+	it('does not claim the agent is stopped', async () => {
+		const session = createMockSession({ id: 'sess-1', name: 'Nightly Triage' });
+		useSessionStore.setState({ sessions: [session] });
+		render(
+			<ReauthModal
+				theme={mockTheme}
+				outage={createManualOutage()}
+				session={session}
+				onClose={vi.fn()}
+			/>
+		);
+		await flushSpawn();
+
+		expect(screen.queryByText(/is stopped until you log in again/)).not.toBeInTheDocument();
+		expect(screen.getByText(/Nothing is stopped and no turn is interrupted/)).toBeInTheDocument();
+	});
+
+	// "Resume Agent" promises a turn will be re-sent. Nothing failed here, so
+	// nothing will be.
+	it('offers Done rather than a resume', async () => {
+		const session = createMockSession({ id: 'sess-1' });
+		render(
+			<ReauthModal
+				theme={mockTheme}
+				outage={createManualOutage()}
+				session={session}
+				onClose={vi.fn()}
+			/>
+		);
+		await flushSpawn();
+
+		expect(screen.getByTestId('reauth-resume').textContent).toBe('Done');
+	});
+
+	// Still the real login shell: the whole reason to reuse this dialog.
+	it('runs the same provider login command', async () => {
+		const session = createMockSession({ id: 'sess-1', toolType: 'claude-code' });
+		render(
+			<ReauthModal
+				theme={mockTheme}
+				outage={createManualOutage()}
+				session={session}
+				onClose={vi.fn()}
+			/>
+		);
+		await flushSpawn();
+		await emitShellOutput(mockSpawnTerminalTab.mock.calls[0][0].sessionId);
+
+		expect(mockWrite).toHaveBeenCalledWith(expect.any(String), 'claude /login\r');
 	});
 });
 

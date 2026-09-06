@@ -29,7 +29,7 @@ import { useClickOutside, useContextMenuPosition } from '../../hooks';
 import { compareNamesIgnoringEmojis } from '../../../shared/emojiUtils';
 import { useGitAgentActions } from '../../hooks/git/useGitAgentActions';
 import { GitChangeCounts } from '../ui/GitChangeCounts';
-import { GitRunningBadge } from '../ui/GitRunningBadge';
+import { GitRunningBadge, PR_RUNNING_TITLE } from '../ui/GitRunningBadge';
 import { formatGitChangeSummary } from '../../../shared/gitUtils';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
@@ -714,12 +714,23 @@ export function SessionContextMenu({
 								createPR();
 								onDismiss();
 							}}
-							className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+							className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center justify-between gap-2"
 							style={{ color: theme.colors.accent }}
 							data-testid="session-context-create-pr"
 						>
-							<GitPullRequest className="w-3.5 h-3.5" />
-							Create Pull Request
+							<span className="flex items-center gap-2">
+								<GitPullRequest className="w-3.5 h-3.5" />
+								Create Pull Request
+							</span>
+							{gitActions.prRunning && (
+								<GitRunningBadge
+									theme={theme}
+									label="Creating"
+									className="flex items-center gap-1 text-2xs"
+									testId="session-context-create-pr-running"
+									title={PR_RUNNING_TITLE}
+								/>
+							)}
 						</button>
 					)}
 				</>

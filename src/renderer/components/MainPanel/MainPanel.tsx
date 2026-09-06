@@ -582,19 +582,19 @@ export const MainPanel = React.memo(
 					// deps change, so the captured `activeSession` prop is stale if the
 					// user switches tabs within the same session.
 					const session = selectActiveSession(useSessionStore.getState());
-					if (!session) return;
+					if (!session) return false;
 					// Mirrors TabBar's targetTabId resolution so AI/terminal/file/browser
 					// tabs all map to the right header element.
 					const targetTabId =
 						session.inputMode === 'terminal'
 							? session.activeTerminalTabId || session.activeTabId
 							: session.activeFileTabId || session.activeBrowserTabId || session.activeTabId;
-					if (!targetTabId) return;
+					if (!targetTabId) return false;
 					const container = document.querySelector(`[data-tour="tab-bar"]`) as HTMLElement | null;
 					const tabElement = container?.querySelector(
 						`[data-tab-id="${targetTabId}"]`
 					) as HTMLElement | null;
-					if (!container || !tabElement) return;
+					if (!container || !tabElement) return false;
 					// Center the tab in the scrollable strip. We compute scrollLeft
 					// directly because scrollIntoView({ inline: 'center' }) ignores the
 					// sticky-left search/filter button and the sticky-right "+" button,
@@ -606,10 +606,22 @@ export const MainPanel = React.memo(
 					const tabRect = tabElement.getBoundingClientRect();
 					const tabLeftInContent = tabRect.left - containerRect.left + container.scrollLeft;
 					const visibleWidth = container.clientWidth - stickyLeftWidth - STICKY_RIGHT_WIDTH;
+					// "Already there" means the header holds focus AND is fully in view.
+					// Focus alone is not enough: the user can scroll the strip away
+					// with the tab still focused, and in that case the press should
+					// bring it back rather than escalate to unread navigation.
+					const visibleLeft = container.scrollLeft + stickyLeftWidth;
+					const visibleRight = container.scrollLeft + container.clientWidth - STICKY_RIGHT_WIDTH;
+					const alreadyParked =
+						document.activeElement === tabElement &&
+						tabLeftInContent >= visibleLeft &&
+						tabLeftInContent + tabRect.width <= visibleRight;
+					if (alreadyParked) return true;
 					const target =
 						tabLeftInContent - stickyLeftWidth - Math.max(0, (visibleWidth - tabRect.width) / 2);
 					container.scrollTo({ left: Math.max(0, target), behavior: 'smooth' });
 					tabElement.focus({ preventScroll: true });
+					return false;
 				},
 				reloadBrowserTab: () => {
 					// Same stale-closure caveat as `focusBrowserAddressBar` - read fresh.

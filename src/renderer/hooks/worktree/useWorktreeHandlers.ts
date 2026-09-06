@@ -22,7 +22,12 @@ import type { Session, SessionWorktreeConfig } from '../../types';
 import type { PRDetails } from '../../components/CreatePRModal';
 import type { RightPanelHandle } from '../../components/RightPanel';
 import { getModalActions, useModalStore } from '../../stores/modalStore';
-import { useSessionStore, updateSessionWith, selectActiveSession } from '../../stores/sessionStore';
+import {
+	useSessionStore,
+	updateSessionWith,
+	selectActiveSession,
+	selectSessionById,
+} from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { gitService } from '../../services/git';
 import { notifyToast } from '../../stores/notificationStore';
@@ -676,7 +681,15 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 		async (prDetails: PRDetails) => {
 			const createPRSession = useModalStore.getState().getData('createPR')?.session ?? null;
 			const activeSession = selectActiveSession(useSessionStore.getState());
-			const session = createPRSession || activeSession;
+			// The creation can land long after its form closed, by which point
+			// `createPRSession` is null and the active agent may be someone else -
+			// so the run's own agent id wins when it has one.
+			const session =
+				(prDetails.sessionId
+					? selectSessionById(prDetails.sessionId)(useSessionStore.getState())
+					: null) ||
+				createPRSession ||
+				activeSession;
 			notifyToast({
 				type: 'success',
 				title: 'Pull Request Created',

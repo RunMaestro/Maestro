@@ -214,6 +214,47 @@ describe('cancel and settle transitions', () => {
 		expect(processQueuedItem).not.toHaveBeenCalled();
 	});
 
+	// Stopping a countdown ends the turn: nothing is running, so the tab must not
+	// keep pulsing (and the Thinking pill must stop counting elapsed time).
+	it('cancelRetry settles the tab that was left marked busy', () => {
+		setupSession('s10b', 't1', {
+			state: 'busy',
+			busySource: 'ai',
+			thinkingStartTime: NOW - 60_000,
+			aiTabs: [createMockAITab({ id: 't1', state: 'busy', thinkingStartTime: NOW - 60_000 })],
+		});
+		seedSnapshot('s10b', 't1');
+		scheduleRetryForError('s10b', 't1', overload());
+
+		cancelRetry('s10b', 't1');
+
+		const session = useSessionStore.getState().sessions[0];
+		expect(session.aiTabs[0].state).toBe('idle');
+		expect(session.aiTabs[0].thinkingStartTime).toBeUndefined();
+		expect(session.state).toBe('idle');
+		expect(session.busySource).toBeUndefined();
+		expect(session.thinkingStartTime).toBeUndefined();
+	});
+
+	// An in-flight resend is a REAL running process - the exit listener owns its
+	// busy state, so cancelling must not idle a tab that is still working.
+	it('cancelRetry leaves an in-flight resend busy', () => {
+		setupSession('s10c', 't1', {
+			state: 'busy',
+			busySource: 'ai',
+			aiTabs: [createMockAITab({ id: 't1', state: 'busy' })],
+		});
+		seedSnapshot('s10c', 't1');
+		scheduleRetryForError('s10c', 't1', overload());
+		retryNow('s10c', 't1'); // → in-flight
+
+		cancelRetry('s10c', 't1');
+
+		const session = useSessionStore.getState().sessions[0];
+		expect(session.aiTabs[0].state).toBe('busy');
+		expect(session.state).toBe('busy');
+	});
+
 	it('clearRetryIfSettled clears an in-flight entry (clean completion)', () => {
 		setupSession('s11', 't1');
 		seedSnapshot('s11', 't1');

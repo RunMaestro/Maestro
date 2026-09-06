@@ -178,9 +178,11 @@ export function buildGitWorktreeCommands({
 			label: gitActions.branch
 				? `Create Pull Request: ${gitActions.branch}`
 				: 'Create Pull Request',
-			subtext: isWorktreeChild
-				? 'Open PR from this worktree branch'
-				: 'Open PR from the current branch',
+			subtext: gitActions.prRunning
+				? 'Creating - open to see how it went'
+				: isWorktreeChild
+					? 'Open PR from this worktree branch'
+					: 'Open PR from the current branch',
 			action: () => {
 				if (isWorktreeChild && onOpenCreatePR) {
 					onOpenCreatePR(activeSession);

@@ -177,6 +177,17 @@ export const DEFAULT_SHORTCUTS = {
 		// it and the action would arrive unbound. Alt+Meta+ArrowDown is free.
 		keys: ['Alt', 'Meta', 'ArrowDown'],
 	},
+	// Ships unbound because it already has a chord: Focus Active Tab
+	// (Opt+Cmd+Up) escalates to it on the second press, once the tab is
+	// centered and focused and the first press has nothing left to do. Listing
+	// it here is what puts it in the Shortcuts settings, the shortcuts help
+	// sheet, and Cmd+K next to its Opt+Cmd+Down twin, and lets anyone who wants
+	// a dedicated chord give it one.
+	previousUnreadTab: {
+		id: 'previousUnreadTab',
+		label: 'Previous Unread / Draft Tab',
+		keys: [],
+	},
 	// Ships unbound. Opt+U and Cmd+U already drive the two filters separately,
 	// so claiming a third chord by default would spend a key for a convenience
 	// most users reach from the palette. Listing it here is what makes it
@@ -513,3 +524,20 @@ export const TAB_SHORTCUTS = {
  */
 export type ShortcutId = keyof typeof DEFAULT_SHORTCUTS;
 export type TabShortcutId = keyof typeof TAB_SHORTCUTS;
+
+/**
+ * Actions that ship UNBOUND but are still reachable, by pressing another
+ * action's chord twice. Maps the unbound action's id to the id of the chord
+ * that reaches it.
+ *
+ * The shortcuts help sheet reads this so it renders the real way in instead of
+ * "Unassigned", which would tell the user an action they can already fire is
+ * out of reach. Resolved through the OTHER action's live binding, so rebinding
+ * the host chord keeps the hint honest.
+ */
+export const DOUBLE_PRESS_ACCESS: Record<string, string> = {
+	// Focus Active Tab centers and focuses the current tab header; a second
+	// press has nothing left to do, so it walks backward through unread/draft
+	// tabs (the mirror of Next Unread / Draft Tab).
+	previousUnreadTab: 'focusActiveTab',
+};

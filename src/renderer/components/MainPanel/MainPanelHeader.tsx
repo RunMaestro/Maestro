@@ -227,6 +227,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 			changes={gitActions.changes}
 			pullRunning={gitActions.pullRunning}
 			pushRunning={gitActions.pushRunning}
+			prRunning={gitActions.prRunning}
 			onViewLog={runAction(() => {
 				// The header always targets the active agent, which is what the
 				// prop-driven viewer already shows.

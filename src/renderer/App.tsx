@@ -207,8 +207,9 @@ import {
 	navigateToPrevUnifiedTab,
 	navigateToClosestTerminalTab,
 	hasActiveWizard,
-	findNextUnreadSession,
 	isSoleAiTabReplacement,
+	findUnreadSessionInDirection,
+	type UnreadNavDirection,
 } from './utils/tabHelpers';
 import { getForceSendEligibility, type ForceSendEligibility } from './utils/executionQueue';
 // validateNewSession moved to useSymphonyContribution, useSessionCrud hooks
@@ -2197,43 +2198,60 @@ function MaestroConsoleInner() {
 		setUngroupedCollapsed,
 	});
 
-	// goToNextUnreadTab - jump to the next agent with unread tabs, clearing current agent's unreads
-	const goToNextUnreadTab = useCallback(() => {
-		const currentActiveId = useSessionStore.getState().activeSessionId;
-		const sortedSessions = useSidebarNavStore.getState().sortedSessions;
-		// Treat a tab with an active inline wizard as a draft target: an unfinished
-		// wizard is meant to be completed into an Auto Run doc, so the navigation
-		// should stop on it just like any other draft.
-		const result = findNextUnreadSession(sortedSessions, currentActiveId, isWizardActiveForTab);
-
-		// Clear current agent's unread tabs
-		if (result.clearedCurrent) {
-			setSessions((prev) =>
-				prev.map((s) => {
-					if (s.id !== currentActiveId) return s;
-					return {
-						...s,
-						aiTabs: s.aiTabs.map((t) => (t.hasUnread ? { ...t, hasUnread: false } : t)),
-					};
-				})
+	// goToUnreadTab - jump to the next/previous agent with unread tabs, clearing
+	// current agent's unreads. Both directions share this body so the forward
+	// chord (Opt+Cmd+Down) and the backward one (second press of Opt+Cmd+Up)
+	// cannot drift on ordering or clear semantics.
+	const goToUnreadTab = useCallback(
+		(direction: UnreadNavDirection) => {
+			const currentActiveId = useSessionStore.getState().activeSessionId;
+			// Read the order at EVENT time rather than closing over it: the Left Bar
+			// re-sorts as agents go busy, and a captured list walks to whatever was
+			// on screen when this callback was last built.
+			const sortedSessions = useSidebarNavStore.getState().sortedSessions;
+			// Treat a tab with an active inline wizard as a draft target: an unfinished
+			// wizard is meant to be completed into an Auto Run doc, so the navigation
+			// should stop on it just like any other draft.
+			const result = findUnreadSessionInDirection(
+				sortedSessions,
+				currentActiveId,
+				direction,
+				isWizardActiveForTab
 			);
-		}
 
-		if (result.jumped && result.targetSessionId) {
-			setActiveSessionId(result.targetSessionId);
-			const targetTabId = result.targetTabId;
-			if (targetTabId) {
+			// Clear current agent's unread tabs
+			if (result.clearedCurrent) {
 				setSessions((prev) =>
 					prev.map((s) => {
-						if (s.id !== result.targetSessionId) return s;
-						return { ...s, activeTabId: targetTabId };
+						if (s.id !== currentActiveId) return s;
+						return {
+							...s,
+							aiTabs: s.aiTabs.map((t) => (t.hasUnread ? { ...t, hasUnread: false } : t)),
+						};
 					})
 				);
 			}
-		} else {
-			showSuccessFlash('No unread or draft tabs');
-		}
-	}, [setSessions, setActiveSessionId, showSuccessFlash, isWizardActiveForTab]);
+
+			if (result.jumped && result.targetSessionId) {
+				setActiveSessionId(result.targetSessionId);
+				const targetTabId = result.targetTabId;
+				if (targetTabId) {
+					setSessions((prev) =>
+						prev.map((s) => {
+							if (s.id !== result.targetSessionId) return s;
+							return { ...s, activeTabId: targetTabId };
+						})
+					);
+				}
+			} else {
+				showSuccessFlash('No unread or draft tabs');
+			}
+		},
+		[setSessions, setActiveSessionId, showSuccessFlash, isWizardActiveForTab]
+	);
+
+	const goToNextUnreadTab = useCallback(() => goToUnreadTab('next'), [goToUnreadTab]);
+	const goToPreviousUnreadTab = useCallback(() => goToUnreadTab('previous'), [goToUnreadTab]);
 
 	// showConfirmation, performDeleteSession - provided by useSessionLifecycle hook (Phase 2H)
 	// deleteSession, deleteWorktreeGroup - provided by useSessionCrud hook
@@ -2674,6 +2692,7 @@ function MaestroConsoleInner() {
 
 		// Next unread tab navigation
 		goToNextUnreadTab,
+		goToPreviousUnreadTab,
 	};
 
 	// NOTE: File explorer effects (flat file list, pending jump path, scroll, keyboard nav) are
@@ -3506,6 +3525,7 @@ function MaestroConsoleInner() {
 						onQuickActionsNewBrowserTab={handleNewBrowserTab}
 						onQuickActionsNewTerminalTab={handleOpenTerminalTab}
 						onGoToNextUnread={goToNextUnreadTab}
+						onGoToPreviousUnread={goToPreviousUnreadTab}
 						onNavBack={handleNavBack}
 						onNavForward={handleNavForward}
 						onRemoveQueueItem={handleRemoveQueueItem}

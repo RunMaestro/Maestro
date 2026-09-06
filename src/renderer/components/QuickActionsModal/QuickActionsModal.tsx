@@ -182,6 +182,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		onNewBrowserTab,
 		onNewTerminalTab,
 		onGoToNextUnread,
+		onGoToPreviousUnread,
 		onNavBack,
 		onNavForward,
 	} = props;
@@ -524,6 +525,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			platform: window.maestro?.platform || 'darwin',
 			openPath: window.maestro?.shell?.openPath,
 			onGoToNextUnread,
+			onGoToPreviousUnread,
 			onNavBack,
 			onNavForward,
 			shortcuts: {
@@ -532,6 +534,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				toggleSidebar: shortcuts.toggleSidebar,
 				toggleRightPanel: shortcuts.toggleRightPanel,
 				nextUnreadTab: shortcuts.nextUnreadTab,
+				previousUnreadTab: shortcuts.previousUnreadTab,
+				focusActiveTab: shortcuts.focusActiveTab,
 				toggleUnreadFilters: shortcuts.toggleUnreadFilters,
 				killInstance: shortcuts.killInstance,
 				navBack: shortcuts.navBack,

@@ -37,6 +37,7 @@ import { resilienceEnabled } from '../../shared/agentConstants';
 import { failoverArmed, selectNextEndpoint } from '../../shared/providerFailover';
 import { switchToNextEndpoint, useFailoverStore } from './failoverStore';
 import { generateId } from '../utils/ids';
+import { settleTabThinkingState } from '../utils/tabHelpers';
 import { logger } from '../utils/logger';
 import { useSessionStore, selectSessionById, updateSessionWith } from './sessionStore';
 import { notifyToast } from './notificationStore';
@@ -675,6 +676,17 @@ export function cancelRetry(sessionId: string, tabId: string): void {
 	const entry = useRetryStore.getState().retries[key];
 	if (!entry) return;
 	logger.info('[retry] User cancelled auto-retry', undefined, { key });
+
+	// A 'scheduled' entry has nothing running behind it: the failed turn is over
+	// (or its resend never spawned), and the tab is only still marked busy because
+	// the countdown was standing in for the turn. Stopping the retry ends that, so
+	// settle the tab - otherwise its dot keeps pulsing and the Thinking pill keeps
+	// counting elapsed time for work nobody is doing. An 'in-flight' entry IS a
+	// live resend; its busy state belongs to the exit listener, so leave it alone.
+	if (entry.status === 'scheduled') {
+		updateSessionWith(sessionId, (s) => settleTabThinkingState(s, tabId));
+	}
+
 	resolveOutage(entry.outageId, 'stopped');
 	removeEntry(key);
 }

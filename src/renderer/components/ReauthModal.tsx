@@ -137,6 +137,13 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 			.filter((name): name is string => !!name);
 	}, [sessions, outage.blocked]);
 	const blockedCount = outage.blocked.length;
+	/**
+	 * True when the user opened this from the command palette and nothing has
+	 * failed. Only the copy changes - a login the user asked for is not a
+	 * recovery, so claiming agents are stopped would be a lie they would have to
+	 * go and disprove.
+	 */
+	const userInitiated = outage.initiatedBy === 'user';
 
 	// The environment decides WHICH credentials the login writes and the agent
 	// reads - a base URL override, an API-key var, a profile selector - so an
@@ -409,13 +416,15 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 	}, [outage.providerKey, onClose]);
 
 	const statusLine = loginBlockedReason
-		? 'Fix the credential this agent presents, then resume.'
+		? `Fix the credential this agent presents, then ${userInitiated ? 'close' : 'resume'}.`
 		: status === 'failed'
 			? spawnError
 			: status === 'exited'
-				? 'The login session ended. Resume to re-run everything that failed.'
+				? userInitiated
+					? 'The login session ended.'
+					: 'The login session ended. Resume to re-run everything that failed.'
 				: status === 'running'
-					? 'Complete the provider login above, then resume.'
+					? `Complete the provider login above, then ${userInitiated ? 'close this dialog' : 'resume'}.`
 					: 'Starting the login shell...';
 
 	const statusColor = loginBlockedReason
@@ -429,7 +438,9 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 	return (
 		<Modal
 			theme={theme}
-			title="Please reauthenticate the provider."
+			title={
+				userInitiated ? `Sign in to ${agentName} again.` : 'Please reauthenticate the provider.'
+			}
 			priority={MODAL_PRIORITIES.REAUTH}
 			onClose={handleDismiss}
 			width={1100}
@@ -460,7 +471,7 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 						className="px-4 py-1.5 rounded border hover:bg-white/5 transition-colors text-sm"
 						style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 					>
-						Not Now
+						{userInitiated ? 'Cancel' : 'Not Now'}
 					</button>
 					<button
 						type="button"
@@ -472,23 +483,35 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 						}}
 						data-testid="reauth-resume"
 					>
-						{blockedCount > 1 ? `Resume ${blockedCount} Agents` : 'Resume Agent'}
+						{userInitiated
+							? 'Done'
+							: blockedCount > 1
+								? `Resume ${blockedCount} Agents`
+								: 'Resume Agent'}
 					</button>
 				</div>
 			}
 		>
 			<div className="flex flex-col gap-3 flex-1 min-h-0 p-4">
-				<p className="text-sm leading-relaxed" style={{ color: theme.colors.textMain }}>
-					<span style={{ color: theme.colors.textDim }}>{agentName}</span> rejected its stored
-					credentials
-					{outage.fromPipeline ? ', taking Cue pipelines down with it' : ''}.{' '}
-					{blockedCount > 1
-						? `All ${blockedCount} agents on this provider are stopped until you log in again.`
-						: 'This agent is stopped until you log in again.'}{' '}
-					Their queued messages are held, not lost.
-				</p>
+				{userInitiated ? (
+					<p className="text-sm leading-relaxed" style={{ color: theme.colors.textMain }}>
+						Run the <span style={{ color: theme.colors.textDim }}>{agentName}</span> login below.
+						Every agent on this provider shares the credential store, so signing in once covers all
+						of them. Nothing is stopped and no turn is interrupted.
+					</p>
+				) : (
+					<p className="text-sm leading-relaxed" style={{ color: theme.colors.textMain }}>
+						<span style={{ color: theme.colors.textDim }}>{agentName}</span> rejected its stored
+						credentials
+						{outage.fromPipeline ? ', taking Cue pipelines down with it' : ''}.{' '}
+						{blockedCount > 1
+							? `All ${blockedCount} agents on this provider are stopped until you log in again.`
+							: 'This agent is stopped until you log in again.'}{' '}
+						Their queued messages are held, not lost.
+					</p>
+				)}
 
-				{blockedNames.length > 0 && (
+				{!userInitiated && blockedNames.length > 0 && (
 					<div
 						className="flex items-start gap-2 text-xs select-text"
 						style={{ color: theme.colors.textDim }}
