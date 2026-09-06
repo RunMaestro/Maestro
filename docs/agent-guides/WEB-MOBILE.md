@@ -272,7 +272,7 @@ Wiring the factory into the bridge therefore requires an echo-suppression design
 | Bundle build          | `vite.config.web-desktop.mts` (`npm run dev:web-desktop` / `build:web-desktop`)                                        |
 | Web server + bridge   | `src/main/web-server/WebServer.ts`, `src/main/web-server/routes/staticRoutes.ts`                                       |
 | Push-event fan-out    | `src/main/utils/safe-send.ts` (`broadcastBridgeEvent`)                                                                 |
-| Cross-client sessions | `src/renderer/hooks/session/useSessionLifecycleSync.ts`, `src/renderer/utils/activeSessionPersistence.ts` |
+| Cross-client sessions | `src/renderer/hooks/session/useSessionLifecycleSync.ts`, `src/renderer/utils/activeSessionPersistence.ts`              |
 | Touch primitives      | `src/renderer/utils/touch.ts`                                                                                          |
 | Touch/keyboard/voice  | `src/renderer/hooks/utils/{useKeyboardVisibility,useLongPress,useSwipeGestures,useVoiceInput}.ts`                      |
 | Phone layout gate     | `src/renderer/hooks/ui/useViewportBreakpoint.ts` (`usePhoneLayout`), `src/renderer/index.css` ("Phone layout")         |
