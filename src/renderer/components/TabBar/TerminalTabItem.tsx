@@ -130,9 +130,11 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 				flashCopiedToClipboard();
 				return;
 			}
-			// Clipboard can be unavailable (insecure context, focus issues, denied by
-			// the user). Capture so we know which mode is failing in production
-			// rather than silently dropping.
+			// safeClipboardWrite has already tried every path it has (browser API,
+			// host bridge, execCommand) and swallowed their errors, so the cause is
+			// gone by the time we get here. All that is left to report is that the
+			// copy never landed; capture that so a clipboard broken for this pill
+			// still shows up in production instead of failing silently.
 			void captureException(new Error('clipboard write refused'), {
 				extra: { context: 'TerminalTabItem.copyCoworkingId', coworkingPillId },
 			});
