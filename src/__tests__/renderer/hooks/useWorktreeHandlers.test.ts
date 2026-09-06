@@ -1676,21 +1676,10 @@ describe('Effects', () => {
 			worktreeConfig: { basePath: '/projects/worktrees', watchEnabled: true },
 		});
 
+		// Covers both non-owners: a secondary Electron window and a web-desktop
+		// browser client. App derives the flag from `isMainWindow` as well as the
+		// runtime, so a second window is as much a non-owner as a browser tab.
 		it('does not start worktree watchers or subscribe to discovery', () => {
-			useSessionStore.setState({
-				sessions: [parentWithWatch()],
-				activeSessionId: 'parent-1',
-				sessionsLoaded: true,
-			} as any);
-
-			renderHook(() => useWorktreeHandlers({ isLifecycleOwner: false }));
-
-			expect(mockGit.watchWorktreeDirectory).not.toHaveBeenCalled();
-			expect(mockGit.onWorktreeDiscovered).not.toHaveBeenCalled();
-			expect(mockGit.onWorktreeRemoved).not.toHaveBeenCalled();
-		});
-
-		it('keeps a secondary Electron window out of the discovery lifecycle', () => {
 			useSessionStore.setState({
 				sessions: [parentWithWatch()],
 				activeSessionId: 'parent-1',
