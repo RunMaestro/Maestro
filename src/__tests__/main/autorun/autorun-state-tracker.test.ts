@@ -26,6 +26,39 @@ describe('AutoRunStateTracker', () => {
 		expect(tracker.isRunning('b')).toBe(false);
 	});
 
+	it('allows only one caller to claim a simultaneous start', () => {
+		expect(tracker.tryClaimStart('a')).toBe(true);
+		expect(tracker.tryClaimStart('a')).toBe(false);
+		expect(tracker.tryClaimStart('b')).toBe(true);
+	});
+
+	it('allows a new claim after the previous run clears', () => {
+		expect(tracker.tryClaimStart('a')).toBe(true);
+		tracker.update('a', null);
+		expect(tracker.tryClaimStart('a')).toBe(true);
+	});
+
+	it('releases a provisional claim without emitting a completion edge', () => {
+		const listener = vi.fn();
+		tracker.onFinal(listener);
+
+		expect(tracker.tryClaimStart('a')).toBe(true);
+		expect(tracker.releaseStartClaim('a')).toBe(true);
+		expect(tracker.isRunning('a')).toBe(false);
+		expect(tracker.getRunningSince('a')).toBeUndefined();
+		expect(listener).not.toHaveBeenCalled();
+		expect(tracker.tryClaimStart('a')).toBe(true);
+	});
+
+	it('does not let a stale rollback clear a promoted running state', () => {
+		expect(tracker.tryClaimStart('a')).toBe(true);
+		tracker.update('a', { isRunning: true, totalTasks: 3 });
+
+		expect(tracker.releaseStartClaim('a')).toBe(false);
+		expect(tracker.isRunning('a')).toBe(true);
+		expect(tracker.getState('a')).toEqual({ isRunning: true, totalTasks: 3 });
+	});
+
 	it('emits the running -> not-running edge exactly once', () => {
 		const listener = vi.fn();
 		tracker.onFinal(listener);
