@@ -32,6 +32,7 @@
 		"build:preload": "node scripts/build-preload.mjs",
 		"build:cli": "node scripts/build-cli.mjs",
 		"gen:cli-reference": "node scripts/gen-cli-reference.mjs",
+		"gen:og-image": "node scripts/generate-og-image.mjs",
 		"build:maestro-p": "node scripts/build-maestro-p.mjs",
 		"build:permission-relay-bridge": "node scripts/build-permission-relay-bridge.mjs",
 		"build:renderer": "vite build",
