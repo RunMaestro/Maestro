@@ -178,9 +178,18 @@ export interface StartCrossAgentRequestOptions {
 	onChunk: (chunk: CrossAgentResponseChunk) => void;
 }
 
-/** Header prepended to every forwarded transcript. */
+/** Header prepended to a consult that forwards the source agent's transcript. */
 const CONSULT_HEADER =
 	'You are being consulted by another agent in Maestro. Below is the conversation transcript so far, followed by a question.';
+
+/**
+ * Header for a consult with no transcript behind it - `maestro-cli ask`, whose
+ * whole point is a FRESH context: the calling agent writes a self-contained
+ * question rather than relaying a conversation. Announcing a transcript that
+ * isn't there sends the target hunting for context it will never find.
+ */
+const CONSULT_HEADER_NO_TRANSCRIPT =
+	'You are being consulted by another agent in Maestro. There is no prior conversation to read - the question below is self-contained.';
 
 /**
  * Access grant appended to the header when the source agent forwards its working
@@ -260,9 +269,8 @@ export function serializeTranscript(transcript: CrossAgentTranscriptEntry[]): st
  */
 export function buildCrossAgentPrompt(request: CrossAgentRequest, writable = false): string {
 	const transcriptBlock = serializeTranscript(request.transcript);
-	const header = request.sourceCwd
-		? `${CONSULT_HEADER}\n\n${cwdGrant(request.sourceCwd, writable)}`
-		: CONSULT_HEADER;
+	const intro = transcriptBlock ? CONSULT_HEADER : CONSULT_HEADER_NO_TRANSCRIPT;
+	const header = request.sourceCwd ? `${intro}\n\n${cwdGrant(request.sourceCwd, writable)}` : intro;
 	const sections = [header];
 	if (transcriptBlock) {
 		sections.push(transcriptBlock);

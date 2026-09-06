@@ -256,6 +256,26 @@ Module-level functions, not a hook: the queue drain runs outside React. The send
 
 **Stop cancels consults - it is an agent-level action, not a tab one.** A mention fans one turn out across several processes: the agent's own tab plus one ephemeral `cross-agent-*` process per target, none of which carry the agent's process id. `useInterruptHandler` therefore calls `window.maestro.crossAgent.cancel(sessionId)` before it signals anything else (non-critical - a failure there must not block the interrupt). Cancellation is addressed by SOURCE AGENT, never by request id: the renderer only learns a request id once `crossAgent.send` resolves, so a Stop pressed inside that window would miss a consult main is already spawning. Main holds the authoritative registry (`cancelCrossAgentRequestsForSource` in `main/cross-agent/cross-agent-router.ts`), which is registered BEFORE the target's binary is resolved and re-checked around the spawn, so a Stop landing in either race still lands. A cancelled consult settles exactly like a timeout - process killed, partial flushed - but stamped `canceled` rather than `error`, because the user stopping a consult is not the target failing to answer. `crossAgentTerminationNote()` is the one place that wording is chosen, so the bubble and the history entry cannot disagree.
 
+### crossAgentAsk.ts - an agent asking another agent
+
+The CLI's face of the same consult (`maestro-cli ask`). One export:
+
+- `runCrossAgentAsk({ targetSessionId, question, fromSessionId?, withContext? })` - consult the target and resolve with its answer.
+
+**`dispatch` is not the verb for a question.** It writes into the target's ACTIVE tab, so the question appears mid-conversation in whatever the human has open with that agent, and the answer goes to the screen rather than to the agent that asked. `--background` does not fix it: that flag decides where the VIEW lands, not which conversation the prompt joins, so a backgrounded dispatch interrupts QUIETLY - which is worse, because the user finds it later with no idea where it came from.
+
+A thin resolver over `sendCrossAgentRequest`, deliberately not a second dispatch path: continuity, History attribution, cancellation, and the SSH / token-mode spawn rules all live there. The only thing `ask` adds is `SendCrossAgentRequestOptions.onComplete`, which hands the finished text to a caller blocked on it.
+
+Three rules it encodes:
+
+- **Keyed on the CALLING AGENT, not on the caller's active tab.** `sourceTabId` is the constant `CROSS_AGENT_ASK_TAB_ID`, so there is one consult tab per (caller -> target) pairing and a follow-up `ask` resumes the earlier exchange. Keying it on whichever tab the agent happened to have selected would start over every time it switched. The constant matches no real tab on purpose: the answer belongs to the caller's tool result, not its transcript, so the attribution-bubble write finds no tab and no-ops.
+- **Fresh context by default.** No transcript is forwarded unless the caller passes `--with-context`; `buildCrossAgentPrompt` swaps to a header that does not announce a transcript that is not there, or the target goes hunting for context that was never sent.
+- **It resolves on every outcome, including a missing target.** The caller is a CLI process reporting to an agent, and a rejection there reads as a broken command rather than "that agent could not answer". A partial answer is kept alongside the failure reason for the same reason: a consult that said something before it died still said something.
+
+`onComplete` fires exactly once, which is why `completedRequests` in `useCrossAgentDispatch` remembers the COMPLETION rather than just the request id. `crossAgent.send` resolves on a round trip to main, and "target agent not found" is emitted before it does - with a bare id set the late `.then()` returned having never delivered, and `maestro-cli ask` sat there until its own timeout for a consult that failed instantly.
+
+The wire path is `cross_agent_ask` (WS) -> `handleCrossAgentAsk` -> the `consultAgent` callback -> `remote:crossAgentAsk` -> here. The main-side wait is the CALLER's timeout, not the dispatch path's 3s delivery receipt: here we are waiting for an answer, not for the renderer to accept a prompt.
+
 ### queuedPrompt.ts - send a prompt without a composer
 
 Everything that asks an agent a question without a user typing it - the CLI's `dispatch --queue`, a snooze's wake prompt - builds its queue item here.

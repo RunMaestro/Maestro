@@ -108,6 +108,23 @@ describe('buildCrossAgentPrompt', () => {
 		expect(prompt).not.toContain('**User:**');
 	});
 
+	it('does not announce a transcript when none was forwarded', () => {
+		// `maestro-cli ask` sends a self-contained question with no transcript.
+		// Telling the target to read "the conversation transcript so far" sends it
+		// hunting for context that is not in the prompt.
+		const prompt = buildCrossAgentPrompt(request({ transcript: [], userPrompt: 'Just this' }));
+		expect(prompt).toContain('no prior conversation to read');
+		expect(prompt).not.toContain('conversation transcript so far');
+	});
+
+	it('still announces the transcript when one was forwarded', () => {
+		const prompt = buildCrossAgentPrompt(
+			request({ transcript: [entry('user', 'Hi')], userPrompt: 'Thoughts?' })
+		);
+		expect(prompt).toContain('conversation transcript so far');
+		expect(prompt).not.toContain('no prior conversation to read');
+	});
+
 	it('grants read access to the source cwd when forwarded, before the question', () => {
 		const prompt = buildCrossAgentPrompt(
 			request({ sourceCwd: '/Users/me/proj', userPrompt: 'Look at the config' })

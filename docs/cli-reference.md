@@ -231,6 +231,35 @@ Send a message to an agent and get a JSON response
 | `-t, --tab`          | Open/focus the session tab in Maestro desktop                                                                                                           | -       |
 | `--no-system-prompt` | Skip the Maestro system prompt (agent identity, git branch, history path, conductor profile). Default is to include it for parity with the desktop app. | -       |
 
+## `maestro-cli ask <agent-id> <question>`
+
+Ask another agent a question and print its answer (background consult - never touches the target's open conversation)
+
+`ask` and `dispatch` are not interchangeable. `ask` asks a QUESTION: it runs the same
+consult a typed `@mention` runs - a hidden tab on the target, a fresh context, no focus,
+no unread - and prints the answer on stdout. `dispatch` hands over WORK: the prompt lands
+in a real tab, so it appears mid-conversation in whatever the user has open with that
+agent, and you get a tab id back instead of an answer.
+
+| Option                | Description                                                                                                                                                                            | Default |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `--from <agent-id>`   | Your own agent id. Names the consult on the target, keeps continuity across repeat asks, forwards your working directory so it can read your project, and lets Stop cancel the consult | -       |
+| `--with-context`      | Forward your current transcript as context. Off by default: ask sends a self-contained question in a fresh context                                                                     | -       |
+| `--timeout <seconds>` | How long to wait for the answer (min 10, max 3600)                                                                                                                                     | 600     |
+| `--json`              | Output the answer as JSON                                                                                                                                                              | -       |
+
+```bash
+# Ask another agent how it solved something, from inside your own turn
+maestro-cli ask "Substrate PedTome" "How does your /GUID + password gate work? Is the
+password compared as a hash, and is the cookie the credential or a signed token?" \
+  --from $MY_AGENT_ID
+```
+
+The question must stand on its own - the target sees no transcript unless you pass
+`--with-context`. The exchange is persisted to a hidden consult tab on the target and
+recorded in its History, attributed to `--from`, so the user can read what was asked
+without it ever interrupting them.
+
 ## `maestro-cli dispatch <agent-id> <message>`
 
 Dispatch a prompt to an agent in the Maestro desktop app and return its tab/session ID

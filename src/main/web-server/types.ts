@@ -413,6 +413,33 @@ export type OpenModalCallback = (params: OpenModalParams) => Promise<boolean>;
  * --new-tab`) can address the same tab on later calls without owning a persistent
  * channel.
  */
+/**
+ * Consult another agent and return its answer (`maestro-cli ask`).
+ *
+ * Rides the same cross-agent consult path a typed `@mention` does - a hidden
+ * tab on the target, no focus, no unread - but resolves with the answer instead
+ * of streaming it into a chat bubble, because the caller here is an agent
+ * waiting on a tool result rather than a human reading a transcript.
+ */
+export type ConsultAgentParams = {
+	targetSessionId: string;
+	question: string;
+	/** The calling agent, when it named itself. Attribution + continuity. */
+	fromSessionId?: string;
+	/** Forward the caller's transcript as context (off by default). */
+	withContext?: boolean;
+	/** How long the caller is willing to wait, already clamped by the CLI. */
+	timeoutMs: number;
+};
+export type ConsultAgentResult = {
+	success: boolean;
+	answer?: string;
+	error?: string;
+	canceled?: boolean;
+	targetAgentName?: string;
+	targetTabId?: string;
+};
+export type ConsultAgentCallback = (params: ConsultAgentParams) => Promise<ConsultAgentResult>;
 export type NewAITabWithPromptResult = { success: boolean; tabId?: string };
 export type NewAITabWithPromptCallback = (
 	sessionId: string,

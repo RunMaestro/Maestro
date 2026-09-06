@@ -103,6 +103,30 @@ Groups sort above individual agents in the picker, so a name that matches both s
 This is deliberate. When an agent and a group share a name, a hand-typed token cannot tell you which one it resolved to, and the group used to win - so picking the single agent you could see quietly fanned your message out to five.
 </Warning>
 
+## When an agent asks on its own
+
+The consult above is something you type. An agent that decides mid-task it needs another
+agent's knowledge reaches the same machinery through the CLI:
+
+```bash
+maestro-cli ask "Substrate PedTome" "How does your /GUID + password gate work?" \
+  --from <its own agent id>
+```
+
+Everything on this page still applies: a hidden consult tab on the target, read-only by
+default, continuity across repeat asks, a History entry naming who asked. Two differences,
+both because the caller is an agent rather than you:
+
+- **The answer goes back to the agent**, printed on stdout as its tool result, instead of
+  into a chat bubble. Your agent then tells you what it learned in its own words.
+- **The question stands alone.** No transcript is forwarded unless the agent passes
+  `--with-context`, so the target starts from a genuinely fresh context.
+
+`maestro-cli dispatch` is the other verb, and it is not a substitute. Dispatch hands over
+**work**, and the prompt lands in a real tab - which means it appears in the middle of
+whatever conversation you have open with that agent. Asking a question that way interrupts
+you and sends the answer to the screen rather than to the agent that needed it.
+
 ## Cross-Agent Mentions vs Group Chat
 
 Both let you reach other agents, but the difference is not the syntax. It is **who moderates**.

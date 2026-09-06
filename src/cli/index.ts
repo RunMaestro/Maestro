@@ -13,6 +13,7 @@ import { showAgent } from './commands/show-agent';
 import { cleanPlaybooks } from './commands/clean-playbooks';
 import { send } from './commands/send';
 import { dispatch } from './commands/dispatch';
+import { ask } from './commands/ask';
 import { queueList, queueRemove } from './commands/queue';
 import { sessionList, sessionShow } from './commands/session';
 import { listSessions } from './commands/list-sessions';
@@ -452,6 +453,28 @@ program
 		'Give up and fire a timeout callback after this long (default 3600, max 86400)'
 	)
 	.action(dispatch);
+
+// Ask command - the agent-to-agent question. `dispatch` hands WORK to an agent
+// and lands in a real tab; `ask` asks a QUESTION and rides the cross-agent
+// consult path (hidden tab on the target, fresh context, no focus, no unread),
+// returning the answer here instead of interrupting whatever conversation the
+// human has open with that agent.
+program
+	.command('ask <agent-id> <question>')
+	.description(
+		"Ask another agent a question and print its answer (background consult - never touches the target's open conversation)"
+	)
+	.option(
+		'--from <agent-id>',
+		'Your own agent id. Names the consult on the target, keeps continuity across repeat asks, forwards your working directory so it can read your project, and lets Stop cancel the consult'
+	)
+	.option(
+		'--with-context',
+		'Forward your current transcript as context. Off by default: ask sends a self-contained question in a fresh context'
+	)
+	.option('--timeout <seconds>', 'How long to wait for the answer (default 600, min 10, max 3600)')
+	.option('--json', 'Output the answer as JSON')
+	.action(ask);
 
 // Queue commands - inspect and manage the desktop execution queue populated by
 // `dispatch --queue`. Read-only `list` plus a `remove` verb for scriptable

@@ -88,6 +88,77 @@ export function createCommandRemoteApi() {
 		},
 
 		/**
+		 * Subscribe to cross-agent consults asked for over the CLI
+		 * (`maestro-cli ask`). Unlike `remote:executeCommand`, the reply is the
+		 * ANSWER, not a delivery receipt - the caller is an agent blocked on a tool
+		 * result - so the renderer answers `responseChannel` when the consulted
+		 * agent finishes, which can be minutes later.
+		 */
+		onRemoteCrossAgentAsk: (
+			callback: (
+				request: {
+					targetSessionId: string;
+					question: string;
+					fromSessionId?: string;
+					withContext?: boolean;
+				},
+				responseChannel: string
+			) => void
+		): (() => void) => {
+			log('Registering onRemoteCrossAgentAsk listener');
+			const handler = (
+				_: unknown,
+				request: {
+					targetSessionId: string;
+					question: string;
+					fromSessionId?: string;
+					withContext?: boolean;
+				},
+				responseChannel: string
+			) => {
+				log('Received remote:crossAgentAsk IPC', {
+					targetSessionId: request?.targetSessionId,
+					fromSessionId: request?.fromSessionId,
+					withContext: request?.withContext,
+					responseChannel,
+				});
+				try {
+					callback(request, responseChannel);
+				} catch (error) {
+					ipcRenderer.invoke(
+						'logger:log',
+						'error',
+						'Error invoking remote cross-agent ask callback',
+						'Preload',
+						{ error: String(error) }
+					);
+				}
+			};
+			ipcRenderer.on('remote:crossAgentAsk', handler);
+			return () => ipcRenderer.removeListener('remote:crossAgentAsk', handler);
+		},
+
+		/** Answer a `remote:crossAgentAsk` channel with the consult's outcome. */
+		sendRemoteCrossAgentAskResponse: (
+			responseChannel: string,
+			result: {
+				success: boolean;
+				answer?: string;
+				error?: string;
+				canceled?: boolean;
+				targetAgentName?: string;
+				targetTabId?: string;
+			}
+		): void => {
+			log('Sending cross-agent ask response', {
+				responseChannel,
+				success: result?.success,
+				answerLength: result?.answer?.length ?? 0,
+			});
+			ipcRenderer.send(responseChannel, result);
+		},
+
+		/**
 		 * Subscribe to remote mode switch from web interface
 		 * Forwards to desktop's toggleInputMode logic
 		 */

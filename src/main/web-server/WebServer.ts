@@ -79,6 +79,9 @@ import type {
 	ReadTerminalTabCallback,
 	ReadTerminalTabPayload,
 	NewAITabWithPromptCallback,
+	ConsultAgentCallback,
+	ConsultAgentParams,
+	ConsultAgentResult,
 	EnqueueCommandCallback,
 	ListQueueCallback,
 	RemoveQueueItemCallback,
@@ -507,6 +510,10 @@ export class WebServer {
 
 	setNewAITabWithPromptCallback(callback: NewAITabWithPromptCallback): void {
 		this.callbackRegistry.setNewAITabWithPromptCallback(callback);
+	}
+
+	setConsultAgentCallback(callback: ConsultAgentCallback): void {
+		this.callbackRegistry.setConsultAgentCallback(callback);
 	}
 
 	setEnqueueCommandCallback(callback: EnqueueCommandCallback): void {
@@ -1028,6 +1035,8 @@ export class WebServer {
 				this.callbackRegistry.readTerminalTab(sessionId, payload),
 			newAITabWithPrompt: async (sessionId: string, prompt: string, background?: boolean) =>
 				this.callbackRegistry.newAITabWithPrompt(sessionId, prompt, background),
+			consultAgent: async (params: ConsultAgentParams): Promise<ConsultAgentResult> =>
+				this.callbackRegistry.consultAgent(params),
 			enqueueCommand: async (
 				sessionId: string,
 				command: string,

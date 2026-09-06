@@ -681,6 +681,30 @@ interface MaestroAPI {
 			success: boolean,
 			tabId?: string
 		) => void;
+		/** Cross-agent consult asked for over the CLI (`maestro-cli ask`). The
+		 *  reply is the consulted agent's ANSWER, so it can arrive minutes later. */
+		onRemoteCrossAgentAsk: (
+			callback: (
+				request: {
+					targetSessionId: string;
+					question: string;
+					fromSessionId?: string;
+					withContext?: boolean;
+				},
+				responseChannel: string
+			) => void
+		) => () => void;
+		sendRemoteCrossAgentAskResponse: (
+			responseChannel: string,
+			result: {
+				success: boolean;
+				answer?: string;
+				error?: string;
+				canceled?: boolean;
+				targetAgentName?: string;
+				targetTabId?: string;
+			}
+		) => void;
 		onRemoteEnqueueCommand: (
 			callback: (
 				sessionId: string,

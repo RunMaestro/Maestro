@@ -19,11 +19,18 @@ import {
 	registerConcertoDesignerFrame,
 } from '../../../renderer/components/Concerto/concertoDesignerBridge';
 import { planCrossAgentMentions } from '../../../renderer/services/crossAgentMentions';
+import { runCrossAgentAsk } from '../../../renderer/services/crossAgentAsk';
 
 // The planner's verdict is the seam under test: a queued CLI prompt must carry
 // it as the same flags a composer-queued message does.
 vi.mock('../../../renderer/services/crossAgentMentions', () => ({
 	planCrossAgentMentions: vi.fn(() => null),
+}));
+
+// The CLI's `ask` verb rides the shared consult service; the hook's job is to
+// forward the request and answer the response channel with whatever it returns.
+vi.mock('../../../renderer/services/crossAgentAsk', () => ({
+	runCrossAgentAsk: vi.fn(),
 }));
 
 const createMockTab = (overrides: Partial<AITab> = {}): AITab =>
@@ -86,6 +93,17 @@ describe('useRemoteIntegration', () => {
 	let onRemoteToggleBookmarkHandler: ((sessionId: string) => void) | undefined;
 	let onRequestMovementDesignerInspectionHandler:
 		| ((id: string, expectedRevision: number, responseChannel: string) => void)
+		| undefined;
+	let onRemoteCrossAgentAskHandler:
+		| ((
+				request: {
+					targetSessionId: string;
+					question: string;
+					fromSessionId?: string;
+					withContext?: boolean;
+				},
+				responseChannel: string
+		  ) => void)
 		| undefined;
 	let onRemoteNewAITabWithPromptHandler:
 		| ((sessionId: string, prompt: string, responseChannel: string, background?: boolean) => void)
@@ -175,6 +193,11 @@ describe('useRemoteIntegration', () => {
 			return () => {};
 		}),
 		sendRemoteNewAITabWithPromptResponse: vi.fn(),
+		onRemoteCrossAgentAsk: vi.fn().mockImplementation((handler) => {
+			onRemoteCrossAgentAskHandler = handler;
+			return () => {};
+		}),
+		sendRemoteCrossAgentAskResponse: vi.fn(),
 		onRemoteEnqueueCommand: vi.fn().mockImplementation((handler) => {
 			onRemoteEnqueueCommandHandler = handler;
 			return () => {};
@@ -411,6 +434,7 @@ describe('useRemoteIntegration', () => {
 		onRemoteReorderTabHandler = undefined;
 		onRemoteToggleBookmarkHandler = undefined;
 		onRemoteNewAITabWithPromptHandler = undefined;
+		onRemoteCrossAgentAskHandler = undefined;
 		onRemoteEnqueueCommandHandler = undefined;
 		onRemoteListQueueHandler = undefined;
 		onRemoteRemoveQueueItemHandler = undefined;
@@ -1050,6 +1074,62 @@ describe('useRemoteIntegration', () => {
 			expect(createdTab).toBeDefined();
 			expect(mockProcess.sendRemoteNewTabResponse).toHaveBeenCalledWith('response-channel-1', {
 				tabId: createdTab?.id,
+			});
+		});
+	});
+
+	describe('remote cross-agent ask', () => {
+		it('forwards the consult and answers the response channel with the result', async () => {
+			const deps = createDeps({ sessions: [createMockSession({ id: 'session-1' })] });
+			vi.mocked(runCrossAgentAsk).mockResolvedValue({
+				success: true,
+				answer: 'Signed cookie, no session table.',
+				targetAgentName: 'PedTome',
+				targetTabId: 'consult-1',
+			});
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			await act(async () => {
+				onRemoteCrossAgentAskHandler?.(
+					{
+						targetSessionId: 'session-1',
+						question: 'How does the gate work?',
+						fromSessionId: 'caller',
+					},
+					'ask-chan'
+				);
+			});
+
+			expect(runCrossAgentAsk).toHaveBeenCalledWith({
+				targetSessionId: 'session-1',
+				question: 'How does the gate work?',
+				fromSessionId: 'caller',
+			});
+			expect(mockProcess.sendRemoteCrossAgentAskResponse).toHaveBeenCalledWith('ask-chan', {
+				success: true,
+				answer: 'Signed cookie, no session table.',
+				targetAgentName: 'PedTome',
+				targetTabId: 'consult-1',
+			});
+		});
+
+		it('answers the channel on a thrown consult so the caller is never left hanging', async () => {
+			const deps = createDeps({ sessions: [createMockSession({ id: 'session-1' })] });
+			vi.mocked(runCrossAgentAsk).mockRejectedValue(new Error('store exploded'));
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			await act(async () => {
+				onRemoteCrossAgentAskHandler?.(
+					{ targetSessionId: 'session-1', question: 'q' },
+					'ask-chan-2'
+				);
+			});
+
+			expect(mockProcess.sendRemoteCrossAgentAskResponse).toHaveBeenCalledWith('ask-chan-2', {
+				success: false,
+				error: 'store exploded',
 			});
 		});
 	});
