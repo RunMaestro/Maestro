@@ -377,6 +377,39 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 					status: 'success',
 					message: 'Successfully connected to OpenRouter!',
 				});
+			} else if (llmProvider === 'orcarouter') {
+				if (!apiKey) {
+					throw new Error('API key is required for OrcaRouter');
+				}
+
+				response = await fetch('https://api.orcarouter.ai/v1/chat/completions', {
+					method: 'POST',
+					headers: {
+						Authorization: `Bearer ${apiKey}`,
+						'Content-Type': 'application/json',
+						'HTTP-Referer': 'https://maestro.local',
+					},
+					body: JSON.stringify({
+						model: modelSlug || 'anthropic/claude-sonnet-5',
+						messages: [{ role: 'user', content: testPrompt }],
+						max_tokens: 50,
+					}),
+				});
+
+				if (!response.ok) {
+					const error = await response.json();
+					throw new Error(error.error?.message || `OrcaRouter API error: ${response.status}`);
+				}
+
+				const data = await response.json();
+				if (!data.choices?.[0]?.message?.content) {
+					throw new Error('Invalid response from OrcaRouter');
+				}
+
+				setTestResult({
+					status: 'success',
+					message: 'Successfully connected to OrcaRouter!',
+				});
 			} else if (llmProvider === 'anthropic') {
 				if (!apiKey) {
 					throw new Error('API key is required for Anthropic');
@@ -560,6 +593,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 										style={{ borderColor: theme.colors.border }}
 									>
 										<option value="openrouter">OpenRouter</option>
+										<option value="orcarouter">OrcaRouter</option>
 										<option value="anthropic">Anthropic</option>
 										<option value="ollama">Ollama (Local)</option>
 									</select>
