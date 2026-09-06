@@ -17,6 +17,26 @@ const PROGRAMMATIC_SCROLL_GUARD_MS = 100;
  */
 const SCROLL_RESTORE_SETTLE_MS = 2000;
 
+/**
+ * How long after a wheel, touch, scroll key, or scrollbar drag a `scroll` event
+ * still counts as the user's. Long enough to cover trackpad momentum between
+ * two wheel events, short enough that the next auto-scroll is not mistaken for
+ * them.
+ */
+const USER_SCROLL_WINDOW_MS = 500;
+
+/** Keys that move a scroll box, so pressing one counts as the user scrolling. */
+const SCROLL_KEYS = new Set([
+	'ArrowUp',
+	'ArrowDown',
+	'PageUp',
+	'PageDown',
+	'Home',
+	'End',
+	' ',
+	'Spacebar',
+]);
+
 /** Slack (px) for treating scrollTop as still parked at the recorded bottom. */
 const PROGRAMMATIC_TARGET_EPSILON_PX = 4;
 /** Slack (px) within which the transcript counts as scrolled to the bottom. */
@@ -38,7 +58,8 @@ const TRANSCRIPT_BACKFILL_TOP_THRESHOLD = 200;
 function measureScrollState(
 	container: HTMLElement,
 	isProgrammatic: boolean,
-	programmaticTargetTop: number
+	programmaticTargetTop: number,
+	userScrolledRecently: boolean
 ): { scrollTop: number; atBottom: boolean; parkedAtProgrammaticTarget: boolean } {
 	const { scrollTop, scrollHeight, clientHeight } = container;
 	return {
@@ -48,8 +69,21 @@ function measureScrollState(
 		// own scroll event. Streaming content only grows scrollHeight, so our
 		// scrollTop stays parked at the recorded bottom target; a genuine user
 		// scroll-up drops scrollTop below it.
+		//
+		// The guard flag alone cannot cover every one of those events: it is a
+		// single boolean consumed by ONE throttled handler call, while the restore
+		// loop writes every frame and `jumpToBottom` clears it on a timer. An echo
+		// the flag missed reported an offset that was no longer the bottom (the
+		// content grew underneath it) and read as a scroll-up - auto-scroll paused
+		// and the tab was persisted as parked mid-history, so every later visit
+		// opened it higher. So an event still parked at our recorded target counts
+		// as ours whenever the user has not touched the scroll recently, armed or
+		// not. `programmaticTargetTop < 0` means we have not written one yet, or
+		// the user's own input superseded it.
 		parkedAtProgrammaticTarget:
-			isProgrammatic && scrollTop >= programmaticTargetTop - PROGRAMMATIC_TARGET_EPSILON_PX,
+			programmaticTargetTop >= 0 &&
+			(isProgrammatic || !userScrolledRecently) &&
+			scrollTop >= programmaticTargetTop - PROGRAMMATIC_TARGET_EPSILON_PX,
 	};
 }
 
@@ -122,6 +156,11 @@ export function useTerminalOutputScroll({
 	// scrolls; comparing against it tells our own scroll events apart from a
 	// real user scroll-up. -1 = no programmatic jump yet.
 	const programmaticTargetTopRef = useRef(-1);
+	// When the user last actually touched the scroll: wheel, trackpad, touch, a
+	// scroll key, or a scrollbar drag. This is the only proof a scroll came from
+	// them - this component moves the offset constantly on its own, and each of
+	// those writes fires an indistinguishable `scroll` event.
+	const lastUserInputAtRef = useRef(0);
 	// ONE shared guard timer so overlapping jumps can't clear each other's guard.
 	const programmaticGuardTimerRef = useRef<number | undefined>(undefined);
 	const tabReadStateRef = useRef<Map<string, number>>(new Map());
@@ -139,7 +178,8 @@ export function useTerminalOutputScroll({
 		const { scrollTop, atBottom, parkedAtProgrammaticTarget } = measureScrollState(
 			scrollContainerRef.current,
 			isProgrammaticScrollRef.current,
-			programmaticTargetTopRef.current
+			programmaticTargetTopRef.current,
+			Date.now() - lastUserInputAtRef.current < USER_SCROLL_WINDOW_MS
 		);
 		if (atBottom || !parkedAtProgrammaticTarget) {
 			userScrolledAwayRef.current = !atBottom;
@@ -183,7 +223,13 @@ export function useTerminalOutputScroll({
 			onNearTopRef.current?.();
 		}
 
-		if (onScrollPositionChange) {
+		// Nothing our OWN write produced is a position the user chose. The branch
+		// above already refused to act on such an event; the debounced save has to
+		// refuse too, or the tab is persisted at whatever offset the echo reported
+		// - which is how a tail-following tab was stored as parked mid-history and
+		// opened higher on every later visit.
+		const isOwnEcho = !atBottom && parkedAtProgrammaticTarget;
+		if (onScrollPositionChange && !isOwnEcho) {
 			if (scrollSaveTimerRef.current) {
 				clearTimeout(scrollSaveTimerRef.current);
 			}
@@ -208,7 +254,8 @@ export function useTerminalOutputScroll({
 			const { atBottom, parkedAtProgrammaticTarget } = measureScrollState(
 				container,
 				isProgrammaticScrollRef.current,
-				programmaticTargetTopRef.current
+				programmaticTargetTopRef.current,
+				Date.now() - lastUserInputAtRef.current < USER_SCROLL_WINDOW_MS
 			);
 
 			// The throttled handler persists position and updates UI state, but the
@@ -545,6 +592,21 @@ export function useTerminalOutputScroll({
 		scrollToBottomAndResume();
 	});
 
+	// Timestamp the user's own scroll input. Pointer events are included for the
+	// scrollbar itself, which drags without ever sending a wheel. Keys are
+	// filtered to the ones that actually move a scroll box - typing in an inline
+	// editor inside the transcript is not a scroll.
+	const noteUserScrollInput = useCallback((event: React.SyntheticEvent) => {
+		if (event.type === 'keydown') {
+			const key = (event as React.KeyboardEvent).key;
+			if (!SCROLL_KEYS.has(key)) return;
+		}
+		lastUserInputAtRef.current = Date.now();
+		// Their input supersedes wherever we last put the view, so stop treating
+		// that offset as ours.
+		programmaticTargetTopRef.current = -1;
+	}, []);
+
 	return {
 		isAtBottom,
 		hasNewMessages,
@@ -552,6 +614,7 @@ export function useTerminalOutputScroll({
 		autoScrollPaused,
 		isAutoScrollActive: !autoScrollPaused,
 		handleScroll,
+		noteUserScrollInput,
 		scrollToBottomAndResume,
 		/** True while a cross-tab jump is landing; suppresses follow-the-tail. */
 		jumpInFlightRef,

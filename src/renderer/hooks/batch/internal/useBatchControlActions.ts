@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
 import type { MutableRefObject } from 'react';
 import type { AgentError, BatchRunState } from '../../../types';
-import { useBatchStore } from '../../../stores/batchStore';
+import { isMirroredBatchRun, useBatchStore } from '../../../stores/batchStore';
 import type { BatchAction } from '../batchReducer';
 
 export type ErrorResolutionAction = 'resume' | 'skip-document' | 'abort';
@@ -55,6 +55,14 @@ export function useBatchControlActions({
 	 */
 	const stopBatchRun = useCallback(
 		(sessionId: string) => {
+			// A mirrored run belongs to another Maestro client: the loop that polls
+			// `stopRequestedRefs` and the promise `errorResolutionRefs` unblocks both
+			// live over there. Acting here would dispatch a local state change and
+			// re-broadcast it - overwriting the owner's state in main's tracker with
+			// a stop that never happens - so refuse. The controls are disabled too;
+			// this is the backstop for the CLI/remote entry points that reach these
+			// functions without passing through a button.
+			if (isMirroredBatchRun(sessionId)) return;
 			stopRequestedRefs.current[sessionId] = true;
 			const errorResolution = errorResolutionRefs.current[sessionId];
 			if (errorResolution) {
@@ -77,6 +85,10 @@ export function useBatchControlActions({
 	const pauseBatchOnError = useCallback(
 		(sessionId: string, error: AgentError, documentIndex: number, taskDescription?: string) => {
 			if (!isMountedRef.current) return;
+			// The owning client pauses its own run and broadcasts the pause; a
+			// mirroring client pausing locally would just be overwritten by the next
+			// frame, and would create an errorResolution promise nothing resolves.
+			if (isMirroredBatchRun(sessionId)) return;
 
 			window.maestro.logger.autorun(
 				`Auto Run paused due to ${error.type}: ${error.message}`,
@@ -126,6 +138,7 @@ export function useBatchControlActions({
 	 */
 	const skipCurrentDocument = useCallback(
 		(sessionId: string) => {
+			if (isMirroredBatchRun(sessionId)) return;
 			if (!isMountedRef.current) return;
 
 			window.maestro.logger.autorun(`Skipping document after error`, sessionId, {});
@@ -165,6 +178,7 @@ export function useBatchControlActions({
 	 */
 	const resumeAfterError = useCallback(
 		(sessionId: string) => {
+			if (isMirroredBatchRun(sessionId)) return;
 			if (!isMountedRef.current) return;
 
 			window.maestro.logger.autorun(`Resuming Auto Run after error resolution`, sessionId, {});
@@ -196,6 +210,7 @@ export function useBatchControlActions({
 	 */
 	const abortBatchOnError = useCallback(
 		(sessionId: string) => {
+			if (isMirroredBatchRun(sessionId)) return;
 			if (!isMountedRef.current) return;
 
 			window.maestro.logger.autorun(`Auto Run aborted due to error`, sessionId, {});

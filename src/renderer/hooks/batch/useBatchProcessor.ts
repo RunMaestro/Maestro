@@ -21,6 +21,7 @@ import type { BatchAction } from './batchReducer';
 import { type AutoRunFlushState } from './internal/batchFlushState';
 import { useBatchSelectors } from './internal/useBatchSelectors';
 import { useBatchBroadcast } from './internal/useBatchBroadcast';
+import { useAutoRunStateMirror } from './useAutoRunStateMirror';
 import {
 	useBatchControlActions,
 	type ErrorResolutionEntry,
@@ -210,6 +211,10 @@ export function useBatchProcessor({
 	// Web/mobile bridge: synchronous broadcast + debounced state-update wrapper
 	const { broadcastAutoRunState, updateBatchStateAndBroadcast, flushDebouncedUpdate } =
 		useBatchBroadcast({ dispatch });
+
+	// The inbound half of that same bridge: render runs OWNED by another Maestro
+	// client (web-desktop watching the desktop app). No-op in the Electron build.
+	useAutoRunStateMirror();
 
 	// External lifecycle controls (stop + pause/skip/resume/abort)
 	const {

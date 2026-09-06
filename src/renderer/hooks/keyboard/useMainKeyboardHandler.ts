@@ -6,9 +6,10 @@ import {
 	toggleReadOnlyModeFields,
 } from '../../utils/tabHelpers';
 import { resolveActiveTabRef, resolveTabRefRenameValue } from '../../utils/panelLayout';
-import { getModalActions, useModalStore } from '../../stores/modalStore';
+import { DESTINATION_SHORTCUT_IDS, getModalActions, useModalStore } from '../../stores/modalStore';
 import { toggleAllCadenzas } from '../../stores/cadenzaStore';
 import { requestEditLastQueuedMessage } from '../../services/editQueuedMessage';
+import { requestOpenStagedImagesOrganizer } from '../../services/stagedImagesOrganizer';
 import { toggleAllUnreadFilters } from '../../services/unreadFilters';
 import { useNotificationStore } from '../../stores/notificationStore';
 import { useMediaPlaybackStore } from '../../stores/mediaPlaybackStore';
@@ -27,6 +28,8 @@ import type { TileableTabKind } from '../tabs/tileNewTab';
 import { isMacOSPlatform } from '../../utils/platformUtils';
 import { editClipboardImage } from '../../components/ImageAnnotator/editClipboardImage';
 import { FORCED_PARALLEL_SEND_EVENT } from '../input/useInputKeyDown';
+import { isWebDesktop } from '../../utils/runtimeContext';
+import { noteDesktopAiTabSelection } from '../../utils/desktopTabSelectionSync';
 
 /**
  * Open the floating media player on whatever it should be showing.
@@ -299,16 +302,27 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				// (e.g., when output search is open, user should still be able to toggle markdown mode)
 				const isMarkdownToggleShortcut =
 					(e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && keyLower === 'e';
-				// Allow system utility shortcuts (Alt+Cmd+L for logs, Alt+Cmd+P for processes, Alt+Cmd+S for auto-scroll toggle) even when modals are open
+				// Alt+Cmd+S stays live over an open modal. The l/p/u chords that used to
+				// be listed here are now matched by binding through
+				// isDestinationSurfaceShortcut below; `s` is Snooze Tab (the
+				// auto-scroll toggle this comment used to name is long gone).
 				// NOTE: Must use e.code for Alt key combos on macOS because e.key produces special characters (e.g., Alt+P = π)
 				const codeKeyLower = e.code?.replace('Key', '').toLowerCase() || '';
-				const isSystemUtilShortcut =
-					e.altKey &&
-					(e.metaKey || e.ctrlKey) &&
-					(codeKeyLower === 'l' ||
-						codeKeyLower === 'p' ||
-						codeKeyLower === 'u' ||
-						codeKeyLower === 's');
+				const isSystemUtilShortcut = e.altKey && (e.metaKey || e.ctrlKey) && codeKeyLower === 's';
+				// A destination surface replaces whatever destination is showing (see
+				// DESTINATION_MODALS), so its hotkey has to survive the modal guard -
+				// otherwise you can switch between two full-window surfaces in one
+				// direction and not the other. Resolved through the BINDINGS, so a
+				// rebound surface keeps working; the old hardcoded Alt+Cmd+{l,p,u}
+				// test is what made the direction depend on which chord it happened
+				// to spell.
+				let isDestinationSurfaceShortcut = false;
+				for (const id of DESTINATION_SHORTCUT_IDS) {
+					if (ctx.isShortcut(e, id)) {
+						isDestinationSurfaceShortcut = true;
+						break;
+					}
+				}
 				// Allow session jump shortcuts (Alt+Cmd+NUMBER) even when modals are open
 				// NOTE: Must use e.code for Alt key combos on macOS because e.key produces special characters
 				const isSessionJumpShortcut =
@@ -424,6 +438,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						!isLayoutShortcut &&
 						!isNextUnreadTabShortcut &&
 						!isSystemUtilShortcut &&
+						!isDestinationSurfaceShortcut &&
 						!isSessionJumpShortcut &&
 						!isJumpToBottomShortcut &&
 						!isJumpToTerminalShortcut &&
@@ -447,6 +462,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						!isNextUnreadTabShortcut &&
 						!isRightPanelShortcut &&
 						!isSystemUtilShortcut &&
+						!isDestinationSurfaceShortcut &&
 						!isSessionJumpShortcut &&
 						!isJumpToBottomShortcut &&
 						!isJumpToTerminalShortcut &&
@@ -796,6 +812,16 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				if (images && images.length > 0) {
 					ctx.handleSetLightboxImage(images[0], images, 'staged');
 					trackShortcut('openImageCarousel');
+				}
+			} else if (ctx.isShortcut(e, 'openImageOrganizer')) {
+				e.preventDefault();
+				// The expanded organizer is InputArea-only, and only has a job with
+				// more than one image. The strip guards both conditions itself; we
+				// mirror the count check here so the shortcut is a clean no-op (not a
+				// tracked event) when there is nothing to organize.
+				if (ctx.stagedImages && ctx.stagedImages.length > 1) {
+					requestOpenStagedImagesOrganizer();
+					trackShortcut('openImageOrganizer');
 				}
 			} else if (ctx.isShortcut(e, 'editClipboardImage')) {
 				e.preventDefault();
@@ -1417,6 +1443,9 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						if (!current) return prev;
 						const result = ctx.navigateToNextUnifiedTab(current, ctx.showUnreadOnly);
 						if (!result) return prev;
+						if (result.type === 'ai' && !isWebDesktop()) {
+							noteDesktopAiTabSelection(current.id, result.id);
+						}
 						return prev.map((s: Session) => (s.id === current.id ? result.session : s));
 					});
 					trackShortcut('nextTab');
@@ -1428,6 +1457,9 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						if (!current) return prev;
 						const result = ctx.navigateToPrevUnifiedTab(current, ctx.showUnreadOnly);
 						if (!result) return prev;
+						if (result.type === 'ai' && !isWebDesktop()) {
+							noteDesktopAiTabSelection(current.id, result.id);
+						}
 						return prev.map((s: Session) => (s.id === current.id ? result.session : s));
 					});
 					trackShortcut('prevTab');
@@ -1472,6 +1504,9 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 							if (!current) return prev;
 							const result = ctx.navigateToUnifiedTabByIndex(current, i - 1, ctx.showUnreadOnly);
 							if (!result) return prev;
+							if (result.type === 'ai' && !isWebDesktop()) {
+								noteDesktopAiTabSelection(current.id, result.id);
+							}
 							return prev.map((s: Session) => (s.id === current.id ? result.session : s));
 						});
 						trackShortcut(`goToTab${i}`);
@@ -1486,6 +1521,9 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						if (!current) return prev;
 						const result = ctx.navigateToLastUnifiedTab(current, ctx.showUnreadOnly);
 						if (!result) return prev;
+						if (result.type === 'ai' && !isWebDesktop()) {
+							noteDesktopAiTabSelection(current.id, result.id);
+						}
 						return prev.map((s: Session) => (s.id === current.id ? result.session : s));
 					});
 					trackShortcut('goToLastTab');

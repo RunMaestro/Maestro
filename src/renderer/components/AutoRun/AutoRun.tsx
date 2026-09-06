@@ -76,6 +76,10 @@ import { logger } from '../../utils/logger';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { notifyToast } from '../../stores/notificationStore';
 import { useImageAnnotatorStore } from '../ImageAnnotator/imageAnnotatorStore';
+import {
+	MIRRORED_RUN_CONTROL_TITLE,
+	useIsMirroredBatchRun,
+} from '../../hooks/batch/useAutoRunStateMirror';
 
 // Inner implementation component
 const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInner(
@@ -139,6 +143,8 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		false;
 	const isAgentBusy = sessionState === 'busy' || sessionState === 'connecting';
 	const isAutoRunActive = batchRunState?.isRunning || false;
+	// Mirrored from another Maestro window - visible, but not steerable here.
+	const isMirroredRun = useIsMirroredBatchRun(sessionId);
 	const isRunningRef = useRef(isAutoRunActive);
 	useEffect(() => {
 		isRunningRef.current = isAutoRunActive;
@@ -755,6 +761,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 					isRecoverable={batchError.recoverable || false}
 					onResumeAfterError={onResumeAfterError}
 					onAbortBatchOnError={onAbortBatchOnError}
+					disabledReason={isMirroredRun ? MIRRORED_RUN_CONTROL_TITLE : undefined}
 				/>
 			)}
 
@@ -793,6 +800,25 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 								: '2px solid transparent',
 					}}
 				>
+					{/* Floating font zoom - the same collapsible "Aa" circle the file
+					    preview uses, so zooming a document reads identically whether it
+					    is open in a file tab or in this panel. Sticky (not absolute) so
+					    it stays pinned while the document scrolls without needing a
+					    positioned ancestor, and h-0 so it never displaces the content. */}
+					{documentList.length > 0 && (
+						<div className="sticky top-2 z-20 h-0 flex items-start justify-end pr-2 pointer-events-none">
+							<FontScaleControl
+								theme={theme}
+								control={activeFontScale}
+								variant="floating"
+								collapsible
+								size="sm"
+								target={mode === 'edit' ? 'editor' : 'preview'}
+								className="pointer-events-auto"
+								testId="autorun-font-scale"
+							/>
+						</div>
+					)}
 					{/* Empty folder state - show when folder is configured but has no documents */}
 					{documentList.length === 0 && !isLoadingDocuments ? (
 						<EmptyFolderState
@@ -1008,16 +1034,6 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 							Thoughts
 						</button>
 					)}
-					{/* Font zoom for whichever mode is on screen. Separate scales, so
-					    the reading size and the editing size don't fight each other. */}
-					<FontScaleControl
-						theme={theme}
-						control={activeFontScale}
-						size="sm"
-						target={mode === 'edit' ? 'editor' : 'preview'}
-						className="shrink-0"
-						testId="autorun-font-scale"
-					/>
 				</div>
 			)}
 

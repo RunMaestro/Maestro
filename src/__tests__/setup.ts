@@ -582,6 +582,8 @@ const mockMaestro = {
 		disableAll: vi.fn().mockResolvedValue({ success: true, count: 0 }),
 	},
 	web: {
+		claimAutoRunStart: vi.fn().mockResolvedValue(true),
+		releaseAutoRunStartClaim: vi.fn().mockResolvedValue(true),
 		broadcastAutoRunState: vi.fn(),
 		broadcastSessionState: vi.fn(),
 		start: vi.fn().mockResolvedValue(undefined),
@@ -678,6 +680,8 @@ const mockMaestro = {
 		getAutoRunTasks: vi.fn().mockResolvedValue([]),
 		exportCsv: vi.fn().mockResolvedValue(''),
 		onStatsUpdate: vi.fn().mockReturnValue(() => {}),
+		recordResilience: vi.fn().mockResolvedValue('outage-id'),
+		getResilience: vi.fn().mockResolvedValue([]),
 		getDatabaseSize: vi.fn().mockResolvedValue(1024 * 1024), // 1MB mock
 		getEarliestTimestamp: vi.fn().mockResolvedValue(null),
 		clearOldData: vi.fn().mockResolvedValue({

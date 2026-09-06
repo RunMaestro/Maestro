@@ -17,6 +17,7 @@ import {
 	type LightboxData,
 	type CueYamlEditorData,
 	DESTINATION_MODALS,
+	DESTINATION_SHORTCUT_IDS,
 	closeOtherDestinations,
 	registerExternalDestination,
 } from '../../../renderer/stores/modalStore';
@@ -1330,6 +1331,42 @@ describe('modalStore', () => {
 			for (const id of ['confirm', 'renameTab', 'cueYamlEditor', 'shortcutsHelp'] as ModalId[]) {
 				expect(DESTINATION_MODALS.has(id)).toBe(false);
 			}
+		});
+	});
+	describe('destination shortcut ids', () => {
+		it('covers every destination that has a hotkey', () => {
+			// The window keyboard handler blocks shortcuts while a modal is up and
+			// consults this set to decide what still gets through. A destination
+			// missing here can be opened FROM but never switched TO.
+			expect([...DESTINATION_SHORTCUT_IDS].sort()).toEqual(
+				[
+					'agentSessions',
+					'directorNotes',
+					'openCue',
+					'openMemoryViewer',
+					'openSymphony',
+					'processMonitor',
+					'settings',
+					'systemLogs',
+					'usageDashboard',
+				].sort()
+			);
+		});
+
+		it('includes the two directions of the reported bug', () => {
+			// Director's Notes -> Usage Dashboard worked; the way back did not,
+			// because only the Alt+Cmd+U chord was allowlisted.
+			expect(DESTINATION_SHORTCUT_IDS.has('usageDashboard')).toBe(true);
+			expect(DESTINATION_SHORTCUT_IDS.has('directorNotes')).toBe(true);
+		});
+
+		it('omits dialogs and surfaces with no hotkey', () => {
+			// Marketplace is a destination but has no binding, so there is nothing
+			// for the guard to match.
+			expect(DESTINATION_SHORTCUT_IDS.has('marketplace')).toBe(false);
+			// Shortcuts Help and the Prompt Composer are dialogs, not destinations.
+			expect(DESTINATION_SHORTCUT_IDS.has('help')).toBe(false);
+			expect(DESTINATION_SHORTCUT_IDS.has('openPromptComposer')).toBe(false);
 		});
 	});
 });

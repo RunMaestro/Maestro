@@ -379,6 +379,45 @@ Located in `src/renderer/components/UsageDashboard/`:
 | `ChartErrorBoundary.tsx`        | Error boundary for individual charts                        |
 | `ChartSkeletons.tsx`            | Loading skeletons for chart placeholders                    |
 | `EmptyState.tsx`                | Empty state when no data exists                             |
+| `UsageDashboardFooter.tsx`      | Status bar: range label, per-tab summary, Esc hint          |
+| `footerSummary.ts`              | All footer summary copy, as pure builders (see below)       |
+| `useFooterSummary.ts`           | Store letting a panel publish its own footer line           |
+
+### Footer Summaries (per-tab status line)
+
+The footer's center slot states what the current tab is actually showing:
+`24 of 84 agents`, `126 runs · 12 pipelines · 8 failed`, `3 accounts · peak
+window 87%`. Every string is built by a pure function in `footerSummary.ts` -
+do NOT inline a new one at a call site, or the separator, pluralization, and
+tone drift across tabs within a release.
+
+The rule is **whoever owns the data writes the summary**:
+
+| Owner                                         | Tabs                                                               | How                                                        |
+| --------------------------------------------- | ------------------------------------------------------------------ | ---------------------------------------------------------- |
+| `UsageDashboardModal` (holds the aggregation) | `overview`, `agent-overview`, `activity`, `tokens`                 | `buildModalOwnedFooterSummary()` -> `fallbackSummary` prop |
+| The panel (fetches or filters for itself)     | `agents`, `groups`, `autorun`, `cue`, `shortcuts`, both quota tabs | `usePublishFooterSummary(tab, buildXSummary(...))`         |
+
+A published summary always beats the modal's fallback, because the panel knows
+about filter state and fetches the modal cannot see.
+
+Two traps the implementation already handles - do not "simplify" them away:
+
+- **Summaries are keyed by tab, not stored as one current value.** React mounts
+  the incoming panel before unmounting the outgoing one, so a single-slot store
+  would let the outgoing panel's cleanup erase the line the new tab just wrote.
+- **It is a Zustand store, not a React context, on purpose.** A provider has to
+  wrap the modal's whole body, and re-indenting that file is what turns a
+  main -> rc merge into hand-resolution work (`rc` has split
+  `UsageDashboardModal` into a directory).
+- **`usePublishFooterSummary` must be called above any early return.** Panels
+  with loading/error/empty branches (`CueStats`, `AutoRunStats`) bail early, and
+  a hook cannot sit behind a return - the bailing panel is exactly the one that
+  needs to clear its stale line. Pass `null` while loading.
+
+`FooterSummaryTab` includes `'tokens'`, which this branch has no tab for; the
+split dashboard on `rc` does, so the case is carried here to make that port a
+copy rather than a rewrite.
 
 ## Module Organization
 

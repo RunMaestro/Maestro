@@ -17,6 +17,7 @@ import { createMermaidRenderer } from './mermaidRenderer';
 import { findHits } from './searchHits';
 import { buildRangeAtOffset, scrollRangeIntoView } from '../search/scrollToOffset';
 import { FAST_BLOCK_CLASS, generateProseCss } from './proseStyles';
+import { ACTIVE_HEADING_FOLD_PX } from '../shared/headings';
 import type { MarkdownBlock, MarkdownPreviewFastHandle, MarkdownPreviewFastProps } from './types';
 
 /**
@@ -71,6 +72,30 @@ export const MarkdownPreviewFast = forwardRef<MarkdownPreviewFastHandle, Markdow
 					if (idx === -1) return false;
 					virtuosoRef.current?.scrollToIndex({ index: idx, align: 'start', behavior: 'auto' });
 					return true;
+				},
+				getActiveHeadingSlug: () => {
+					const root = containerRef.current;
+					if (!root) return null;
+					// Only the blocks around the viewport are mounted, and the
+					// overscan mounts some above it, so the block at the top of the
+					// view is the HIGHEST-indexed mounted block still above the fold.
+					const fold = root.getBoundingClientRect().top + ACTIVE_HEADING_FOLD_PX;
+					let topIndex = -1;
+					const mounted = root.querySelectorAll<HTMLElement>(
+						`.${FAST_BLOCK_CLASS}[data-block-index]`
+					);
+					mounted.forEach((el) => {
+						if (el.getBoundingClientRect().top > fold) return;
+						const index = Number(el.getAttribute('data-block-index'));
+						if (Number.isFinite(index) && index > topIndex) topIndex = index;
+					});
+					if (topIndex < 0) return null;
+					// Walk back to the heading that opened this block.
+					for (let i = topIndex; i >= 0; i--) {
+						const slug = blocksRef.current[i]?.headingSlug;
+						if (slug) return slug;
+					}
+					return null;
 				},
 				findInContent: (query: string) => {
 					const blockRanges = blocksRef.current
