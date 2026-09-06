@@ -22,6 +22,9 @@ export const ShortcutHint = memo(function ShortcutHint({ keys, theme }: Shortcut
 		<span
 			className="ml-auto text-2xs font-mono px-1.5 py-0.5 rounded"
 			style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
+			// Lets the phone action sheet (TabOverlayPortal) hide every chord badge at
+			// once: a phone has no keyboard, so a badge there advertises a dead key.
+			data-shortcut-hint=""
 		>
 			{formatShortcutKeys(keys)}
 		</span>

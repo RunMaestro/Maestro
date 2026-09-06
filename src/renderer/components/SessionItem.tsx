@@ -20,6 +20,7 @@ import { WindowBadge } from './SessionList/WindowBadge';
 import { PluginUiItemsSlot } from './plugins/PluginUiItemsSlot';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useSessionHasActiveOutage } from '../stores/retryStore';
+import { usePhoneLayout } from '../hooks/ui/useViewportBreakpoint';
 import { COLORBLIND_STATUS_COLORS } from '../constants/colorblindPalettes';
 import { getConnectingColor } from '../utils/theme';
 import { hasUnreadVisibleTab } from '../utils/tabHelpers';
@@ -217,14 +218,20 @@ export const SessionItem = memo(function SessionItem({
 	const showFullGroupLabelInBookmarks = useSettingsStore((s) => s.showFullGroupLabelInBookmarks);
 	const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures.maestroCue);
 	const colorBlindMode = useSettingsStore((s) => s.colorBlindMode);
-	const cueIndicatorVisible = maestroCueEnabled && showLeftPanelCueIndicator;
+	// Phone: the row is the name and the status dot. The provider line, location
+	// pills, git count, bookmark toggle, and the Cue / startup-command glyphs all
+	// come off - on a 390px drawer they crowded the name down to a few characters,
+	// and a user on a handheld already knows which agent is which. State that
+	// needs attention (AUTO, ERR, unread, wizard) stays.
+	const phone = usePhoneLayout();
+	const cueIndicatorVisible = maestroCueEnabled && showLeftPanelCueIndicator && !phone;
 	const startupCommandTabCount =
 		session.terminalTabs?.reduce(
 			(acc, tab) => (tab.startupCommand && tab.startupCommand.trim().length > 0 ? acc + 1 : acc),
 			0
 		) ?? 0;
 	const startupCommandIndicatorActive =
-		showLeftPanelStartupCommandIndicator && startupCommandTabCount > 0;
+		showLeftPanelStartupCommandIndicator && startupCommandTabCount > 0 && !phone;
 
 	// Parent agents get an inline chevron toggle. Keyed off worktreeConfig OR an
 	// actual child count: several spawn paths (Auto Run worktree dispatch in
@@ -243,7 +250,10 @@ export const SessionItem = memo(function SessionItem({
 	// signals where prompts will run. GIT/LOCAL are suppressed in the bookmark
 	// variant to keep the row compact.
 	const showLocationPills =
-		showLeftPanelLocationPills && variant !== 'worktree' && session.toolType !== 'terminal';
+		showLeftPanelLocationPills &&
+		variant !== 'worktree' &&
+		session.toolType !== 'terminal' &&
+		!phone;
 	const showGitLocalBadge = showLocationPills && variant !== 'bookmark';
 
 	// Status indicator: enhanced color/animation/label, plus hollow signal for
@@ -267,8 +277,9 @@ export const SessionItem = memo(function SessionItem({
 		// on line one at full width, meta and actions on line two. The worktree
 		// variant is deliberately excluded because it renders no meta row at all,
 		// so the grid would put its actions on an otherwise empty second line and
-		// turn a compact child row into a two-line one.
-		const layoutClass = variant === 'worktree' ? '' : 'session-row ';
+		// turn a compact child row into a two-line one. The phone row drops its
+		// meta line for the same reason, so it is a single flex line too.
+		const layoutClass = variant === 'worktree' || phone ? '' : 'session-row ';
 		const base = `${layoutClass}cursor-move flex items-center justify-between group ${borderClass} transition-all row-hover ${isDragging ? 'opacity-50' : ''}`;
 
 		if (variant === 'flat') {
@@ -428,8 +439,8 @@ export const SessionItem = memo(function SessionItem({
 						</div>
 					)}
 
-				{/* Session metadata row (hidden for compact worktree variant) */}
-				{variant !== 'worktree' && (
+				{/* Session metadata row (hidden for compact worktree variant, and on a phone) */}
+				{variant !== 'worktree' && !phone && (
 					<div className="row-meta flex items-center gap-2 text-2xs mt-0.5 opacity-70">
 						{/* Session Jump Number Badge (Opt+Cmd+NUMBER) */}
 						{jumpNumber && (
@@ -458,12 +469,12 @@ export const SessionItem = memo(function SessionItem({
 			<div className="row-actions flex items-center gap-2 ml-2">
 				{/* Multi-window badge: this agent is open in a different window. Clicking
 				    the row focuses that window rather than stealing the agent. */}
-				<WindowBadge windowNumber={otherWindowNumber} />
+				{!phone && <WindowBadge windowNumber={otherWindowNumber} />}
 				{/* Group badge (only in bookmark variant when session belongs to a group).
 				    Hidden entirely when showGroupLabelInBookmarks is off. Abbreviated by
 				    default; the showFullGroupLabelInBookmarks setting swaps in the full group
 				    name, truncated with the complete value available on hover. */}
-				{variant === 'bookmark' && group && showGroupLabelInBookmarks && (
+				{variant === 'bookmark' && group && showGroupLabelInBookmarks && !phone && (
 					<span
 						className={`row-group-chip text-3xs px-1 py-0.5 rounded${
 							showFullGroupLabelInBookmarks ? ' max-w-[140px] truncate' : ''
@@ -477,6 +488,7 @@ export const SessionItem = memo(function SessionItem({
 				{/* Git Dirty Indicator (only in wide mode) - placed before GIT/LOCAL for vertical alignment */}
 				{showLeftPanelGitIndicator &&
 					leftSidebarOpen &&
+					!phone &&
 					session.isGitRepo &&
 					gitFileCount !== undefined &&
 					gitFileCount > 0 && (
@@ -574,8 +586,10 @@ export const SessionItem = memo(function SessionItem({
 					</div>
 				)}
 
-				{/* Bookmark toggle - hidden for worktree children (they inherit from parent) */}
+				{/* Bookmark toggle - hidden for worktree children (they inherit from parent)
+				    and on a phone, where the row keeps only the name and the status dot. */}
 				{!session.parentSessionId &&
+					!phone &&
 					(variant !== 'bookmark' ? (
 						<button
 							onClick={(e) => {

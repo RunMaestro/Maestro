@@ -8,6 +8,7 @@ import { useImageAnnotatorStore } from './ImageAnnotator/imageAnnotatorStore';
 import { addStagedImageIfUnique } from './InputArea/utils/stagedImages';
 import { notifyCenterFlash } from '../stores/centerFlashStore';
 import { captureException } from '../utils/sentry';
+import { displayImageSrc } from '../utils/sessionImageSrc';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useKeyboardShortcutHelpers } from '../hooks/keyboard';
 import { useResizableTextarea } from '../hooks/ui/useResizableTextarea';
@@ -199,7 +200,7 @@ export function QueuedItemEditModal({ item, theme, onClose, onSave }: QueuedItem
 										title="Click to view full size"
 									>
 										<img
-											src={img}
+											src={displayImageSrc(img)}
 											alt={`Attachment ${idx + 1}`}
 											className="h-16 rounded border cursor-pointer hover:opacity-80 transition-opacity block"
 											style={{

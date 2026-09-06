@@ -475,4 +475,36 @@ describe('sendCrossAgentRequest in-flight registration', () => {
 		expect(registered.targetTabId).toBe(send.mock.calls[0][0].targetTabId);
 		expect(registered.targetTabId).toBeTruthy();
 	});
+
+	it('delivers onComplete when the send itself rejects', async () => {
+		useSessionStore.setState({
+			sessions: [
+				createMockSession({ id: 'target', name: 'Pedsidian', toolType: 'claude-code' }),
+				createMockSession({ id: 'src', name: 'Scratch' }),
+			],
+		} as never);
+
+		const send = vi.fn().mockRejectedValue(new Error('bridge down'));
+		(globalThis as unknown as { window: Record<string, unknown> }).window.maestro = {
+			crossAgent: { send },
+		} as never;
+
+		const onComplete = vi.fn();
+		sendCrossAgentRequest({
+			sourceSessionId: 'src',
+			sourceAgentName: 'Scratch',
+			sourceTabId: 'src-tab',
+			sourceLogs: [],
+			targetSessionId: 'target',
+			userPrompt: 'How does the gate work?',
+			onComplete,
+		});
+
+		// A rejected send produces no chunk, so nothing else would ever settle a
+		// caller blocked on the answer (`maestro-cli ask`).
+		await vi.waitFor(() => {
+			expect(onComplete).toHaveBeenCalledTimes(1);
+		});
+		expect(onComplete.mock.calls[0][0]).toMatchObject({ text: '', error: 'bridge down' });
+	});
 });

@@ -82,7 +82,11 @@ export const UsageDashboardFooter = memo(function UsageDashboardFooter({
 			</div>
 
 			<div className="min-w-0 text-right">
-				<span className="truncate inline-block max-w-full" style={{ opacity: 0.7 }}>
+				<span
+					className="truncate inline-block max-w-full"
+					style={{ opacity: 0.7 }}
+					data-shortcut-hint=""
+				>
 					Press Esc to close
 				</span>
 			</div>

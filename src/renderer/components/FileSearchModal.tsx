@@ -628,7 +628,7 @@ export function FileSearchModal({
 					) : (
 						<>
 							<span>{filteredFiles.length} files</span>
-							<span>{`↑↓ navigate • Enter select • ${formatShortcutKeys(['Meta'])}1-9 quick select`}</span>
+							<span data-shortcut-hint="">{`↑↓ navigate • Enter select • ${formatShortcutKeys(['Meta'])}1-9 quick select`}</span>
 						</>
 					)}
 				</div>

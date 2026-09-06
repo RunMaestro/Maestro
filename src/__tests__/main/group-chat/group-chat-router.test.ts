@@ -1443,12 +1443,15 @@ describe('group-chat-router', () => {
 		});
 
 		it('gives up on an agent that never frees up and says so', async () => {
+			const previousEmitMessage = groupChatEmitters.emitMessage;
 			vi.useFakeTimers();
 			try {
 				const chat = await createTestChatWithModerator('Busy Forever Test');
 				await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
 				setGetSessionsCallback(() => [busyClientSession]);
 				mockProcessManager.spawn.mockClear();
+				const emitMessage = vi.fn();
+				groupChatEmitters.emitMessage = emitMessage;
 
 				await routeModeratorResponse(
 					chat.id,
@@ -1475,6 +1478,7 @@ describe('group-chat-router', () => {
 
 				clearPendingParticipants(chat.id);
 			} finally {
+				groupChatEmitters.emitMessage = previousEmitMessage;
 				vi.useRealTimers();
 			}
 		});

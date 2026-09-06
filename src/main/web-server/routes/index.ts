@@ -22,6 +22,8 @@ export { ConcertoRoutes } from './concertoRoutes';
 
 export { MediaRoutes } from './mediaRoutes';
 
+export { ImageRoutes } from './imageRoutes';
+
 export { StaticRoutes } from './staticRoutes';
 
 export {

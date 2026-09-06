@@ -34,7 +34,14 @@ import { getLocalIpAddress } from '../utils/networkUtils';
 import { captureException } from '../utils/sentry';
 import { WebSocketMessageHandler } from './handlers';
 import { BroadcastService } from './services';
-import { ApiRoutes, ConcertoRoutes, MediaRoutes, StaticRoutes, WsRoute } from './routes';
+import {
+	ApiRoutes,
+	ConcertoRoutes,
+	ImageRoutes,
+	MediaRoutes,
+	StaticRoutes,
+	WsRoute,
+} from './routes';
 import { MEDIA_PATH_PARAM_MAX_LENGTH } from './routes/mediaRoutes';
 import { LiveSessionManager, CallbackRegistry } from './managers';
 
@@ -80,6 +87,9 @@ import type {
 	ReadTerminalTabCallback,
 	ReadTerminalTabPayload,
 	NewAITabWithPromptCallback,
+	ConsultAgentCallback,
+	ConsultAgentParams,
+	ConsultAgentResult,
 	EnqueueCommandCallback,
 	ListQueueCallback,
 	RemoveQueueItemCallback,
@@ -215,6 +225,7 @@ export class WebServer {
 	private apiRoutes: ApiRoutes;
 	private concertoRoutes: ConcertoRoutes;
 	private mediaRoutes: MediaRoutes;
+	private imageRoutes: ImageRoutes;
 	private staticRoutes: StaticRoutes;
 	private wsRoute: WsRoute;
 
@@ -271,6 +282,7 @@ export class WebServer {
 		this.apiRoutes = new ApiRoutes(this.securityToken, this.rateLimitConfig);
 		this.concertoRoutes = new ConcertoRoutes(this.concertoToken);
 		this.mediaRoutes = new MediaRoutes(this.securityToken);
+		this.imageRoutes = new ImageRoutes(this.securityToken);
 		this.staticRoutes = new StaticRoutes(
 			this.securityToken,
 			this.webAssetsPath,
@@ -511,6 +523,10 @@ export class WebServer {
 
 	setNewAITabWithPromptCallback(callback: NewAITabWithPromptCallback): void {
 		this.callbackRegistry.setNewAITabWithPromptCallback(callback);
+	}
+
+	setConsultAgentCallback(callback: ConsultAgentCallback): void {
+		this.callbackRegistry.setConsultAgentCallback(callback);
 	}
 
 	setEnqueueCommandCallback(callback: EnqueueCommandCallback): void {
@@ -921,6 +937,10 @@ export class WebServer {
 		// Local audio/video for browser clients, same reason: no maestro-media://.
 		this.mediaRoutes.registerRoutes(this.server);
 
+		// Session image store files for browser clients: the desktop loads them
+		// through the maestro-image:// protocol, which a browser cannot resolve.
+		this.imageRoutes.registerRoutes(this.server);
+
 		// Setup WebSocket route callbacks and register route
 		this.wsRoute.setCallbacks({
 			getSessions: () => this.callbackRegistry.getSessions(),
@@ -1035,6 +1055,8 @@ export class WebServer {
 				this.callbackRegistry.readTerminalTab(sessionId, payload),
 			newAITabWithPrompt: async (sessionId: string, prompt: string, background?: boolean) =>
 				this.callbackRegistry.newAITabWithPrompt(sessionId, prompt, background),
+			consultAgent: async (params: ConsultAgentParams): Promise<ConsultAgentResult> =>
+				this.callbackRegistry.consultAgent(params),
 			enqueueCommand: async (
 				sessionId: string,
 				command: string,

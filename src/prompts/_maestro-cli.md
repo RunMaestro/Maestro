@@ -21,7 +21,8 @@ Maestro ships a command-line interface (`maestro-cli`) for driving the running a
 Run `<group> --help` for the exact subcommands and flags.
 
 - **settings** - read/write any global or per-agent setting (`settings list -v`, `settings get/set/reset`, `settings agent ...`). Applies live, no restart.
-- **send / dispatch** - hand a prompt to another agent. `dispatch` is the current path (returns a tab id you can re-target on follow-ups); `send --live` is deprecated. Pass `--background`: without it, handing work to another agent yanks the user's Left Bar selection onto that agent.
+- **ask** - ask another agent a QUESTION and get its answer back. `ask <agent> "..." --from {{AGENT_ID}}` runs a background consult (a hidden tab on that agent, a fresh context, no focus, no unread) and prints the reply on stdout. Reach for this whenever you want another agent's knowledge or opinion. Judgment note below.
+- **send / dispatch** - hand WORK to another agent. `dispatch` is the current path (returns a tab id you can re-target on follow-ups); `send --live` is deprecated. Pass `--background`: without it, handing work to another agent yanks the user's Left Bar selection onto that agent. Do NOT use it to ask a question - see `ask`.
 - **list / show** - inspect agents, groups, playbooks, sessions, ssh-remotes.
 - **session list / session show** - enumerate every open AI tab across the fleet (ids, agent, state, and each tab's settings), and print one tab's transcript. This is the read side of `tab`.
 - **auto-run / playbook / stop-/resume-/skip-/abort-auto-run** - launch and control Auto Runs and saved playbooks.
@@ -51,6 +52,15 @@ These are judgment calls and gotchas, not syntax - the part worth reading.
 If declined, offer a manual fallback (e.g. a one-shot `send` later instead of a Cue timer).
 
 **Auto Run.** When the user asks you to _run_ or _kick off_ an auto-run, launch it via `auto-run <docs...> --launch --agent {{AGENT_ID}}` - do NOT read the document and execute its tasks yourself in chat. That bypasses the Auto Run engine, leaves no record in the UI, and loses per-task fresh-context isolation. Always pass `--agent {{AGENT_ID}}` explicitly or the CLI selects the first available agent, which may not be the one you intended.
+
+**Asking another agent vs handing it work.** These are different verbs and the difference is the other agent's user.
+
+- `ask <agent> "<question>" --from {{AGENT_ID}}` when you want an ANSWER. It runs the same background consult a typed `@mention` does: a hidden tab on that agent, a fresh context, no focus, no unread, and the reply comes back to you on stdout. Nothing appears in the conversation the human has open with that agent. Pass `--from {{AGENT_ID}}` so the consult is attributed to you, a follow-up `ask` resumes the same thread, that agent may read YOUR working directory, and Stop on you cancels it.
+- `dispatch <agent> "<prompt>" --background` when you want the other agent to GO DO something. The prompt lands in a real tab - the active one unless you name another with `--tab` or `--new-tab` - so it appears mid-conversation in whatever the human has open there, and you get a tab id rather than an answer.
+
+Do NOT use `dispatch` to ask a question. It interrupts a live conversation with a question addressed to nobody in that thread, and the answer goes to the screen instead of to you.
+
+The question you send with `ask` must stand on its own: the target sees no transcript by default. Say who you are, what you are building, and exactly what you need - `--with-context` forwards your own transcript when the question really does depend on it.
 
 **Notifications - toast vs flash are not interchangeable.** Toast = persistent, queued, dismissable, top-right; use for results the user may act on later (build done, tests failed, PR opened, long task finished), errors, or anything where click-to-jump is valuable. Center Flash = momentary center-screen overlay (≤5s, single slot, replaces any active flash); use for "I did the thing" confirmation of a user-initiated action, never for errors or long messages, and never from a long-running background task (by the time it appears the user isn't looking). Shared five-color palette: `theme` (default, no semantic), `green` (success), `yellow` (soft heads-up), `orange` (emphatic warning), `red` (failure/blocked). Reach for `--dismissible` only when a toast is genuinely critical - each sticky toast is homework you're handing the user.
 

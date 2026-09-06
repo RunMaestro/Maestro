@@ -184,6 +184,99 @@ describe('update-ssh-remote command', () => {
 		});
 	});
 
+	describe('parking entries (the CLI spelling of the eye button)', () => {
+		it('switches an ssh option off, keeping its value', () => {
+			vi.mocked(readSshRemotes).mockReturnValue([
+				mockRemote({ sshOptions: { ProxyCommand: 'tailcat tcABC 22', ConnectTimeout: '45' } }),
+			]);
+
+			updateSshRemote('remote-1', { disableSshOption: ['ProxyCommand'] });
+
+			expect(written().sshOptions).toEqual({ ConnectTimeout: '45' });
+			expect(written().sshOptionsDisabled).toEqual({ ProxyCommand: 'tailcat tcABC 22' });
+		});
+
+		it('switches a parked ssh option back on', () => {
+			vi.mocked(readSshRemotes).mockReturnValue([
+				mockRemote({ sshOptionsDisabled: { ProxyCommand: 'tailcat tcABC 22' } }),
+			]);
+
+			updateSshRemote('remote-1', { enableSshOption: ['ProxyCommand'] });
+
+			expect(written().sshOptions).toEqual({ ProxyCommand: 'tailcat tcABC 22' });
+			expect(written().sshOptionsDisabled).toBeUndefined();
+		});
+
+		it('parks and unparks env vars the same way', () => {
+			vi.mocked(readSshRemotes).mockReturnValue([
+				mockRemote({ remoteEnv: { FOO: '1' }, remoteEnvDisabled: { BAR: '2' } }),
+			]);
+
+			updateSshRemote('remote-1', { disableEnv: ['FOO'], enableEnv: ['BAR'] });
+
+			expect(written().remoteEnv).toEqual({ BAR: '2' });
+			expect(written().remoteEnvDisabled).toEqual({ FOO: '1' });
+		});
+
+		it('runs disable before enable so one command can swap which key is live', () => {
+			vi.mocked(readSshRemotes).mockReturnValue([
+				mockRemote({
+					sshOptions: { ConnectTimeout: '45' },
+					sshOptionsDisabled: { ProxyJump: 'bastion' },
+				}),
+			]);
+
+			updateSshRemote('remote-1', {
+				disableSshOption: ['ConnectTimeout'],
+				enableSshOption: ['ProxyJump'],
+			});
+
+			expect(written().sshOptions).toEqual({ ProxyJump: 'bastion' });
+			expect(written().sshOptionsDisabled).toEqual({ ConnectTimeout: '45' });
+		});
+
+		it('ignores a key that exists in neither record', () => {
+			vi.mocked(readSshRemotes).mockReturnValue([
+				mockRemote({ sshOptions: { ConnectTimeout: '45' } }),
+			]);
+
+			updateSshRemote('remote-1', { disableSshOption: ['NoSuchOption'] });
+
+			expect(written().sshOptions).toEqual({ ConnectTimeout: '45' });
+			expect(written().sshOptionsDisabled).toBeUndefined();
+		});
+
+		it('clears the parked record too, so --clear leaves nothing resurrectable', () => {
+			vi.mocked(readSshRemotes).mockReturnValue([
+				mockRemote({
+					sshOptions: { ConnectTimeout: '45' },
+					sshOptionsDisabled: { ProxyCommand: 'tailcat tcABC 22' },
+					remoteEnv: { FOO: '1' },
+					remoteEnvDisabled: { BAR: '2' },
+				}),
+			]);
+
+			updateSshRemote('remote-1', { clearSshOptions: true, clearEnv: true });
+
+			expect(written().sshOptions).toBeUndefined();
+			expect(written().sshOptionsDisabled).toBeUndefined();
+			expect(written().remoteEnv).toBeUndefined();
+			expect(written().remoteEnvDisabled).toBeUndefined();
+		});
+
+		it('reports parked entries in JSON but keeps them out of the resolved set', () => {
+			vi.mocked(readSshRemotes).mockReturnValue([
+				mockRemote({ sshOptionsDisabled: { ProxyCommand: 'tailcat tcABC 22' } }),
+			]);
+
+			updateSshRemote('remote-1', { json: true });
+
+			const parsed = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(parsed.sshOptionsDisabled).toEqual({ ProxyCommand: 'tailcat tcABC 22' });
+			expect(parsed.resolvedSshOptions).not.toHaveProperty('ProxyCommand');
+		});
+	});
+
 	describe('environment variables', () => {
 		it('merges with existing env vars', () => {
 			vi.mocked(readSshRemotes).mockReturnValue([mockRemote({ remoteEnv: { FOO: '1' } })]);

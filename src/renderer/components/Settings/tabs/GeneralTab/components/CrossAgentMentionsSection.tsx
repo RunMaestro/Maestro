@@ -18,7 +18,7 @@ export function CrossAgentMentionsSection({
 		<div data-setting-id="general-cross-agent-mentions">
 			<SettingsSectionHeading icon={AtSign}>Cross-Agent Mentions</SettingsSectionHeading>
 			<p className="text-xs opacity-70 mb-3">
-				When you @-mention another agent, it answers in its own workspace. Read-Only makes that a{' '}
+				When you @-mention another agent, it answers from its own workspace. Read-Only makes that a{' '}
 				<span className="font-medium">consult</span>: it reads and replies. Read/Write makes it a{' '}
 				<span className="font-medium">delegation</span>: it can also change files.
 			</p>

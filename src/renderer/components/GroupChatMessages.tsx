@@ -20,6 +20,7 @@ import type { GroupChatMessage, GroupChatParticipant, GroupChatState, Theme } fr
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { useSurfaceTypography } from '../hooks/ui/useSurfaceTypography';
 import { stripMarkdown } from '../utils/textProcessing';
+import { displayImageSrc } from '../utils/sessionImageSrc';
 import { generateParticipantColor, buildParticipantColorMap } from '../utils/participantColors';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
@@ -468,7 +469,7 @@ export const GroupChatMessages = memo(
 														onClick={() => onOpenLightbox?.(img, msg.images, 'history')}
 													>
 														<img
-															src={img}
+															src={displayImageSrc(img)}
 															alt={`Attached image ${imgIdx + 1}`}
 															className="h-20 rounded border cursor-zoom-in block"
 															style={{

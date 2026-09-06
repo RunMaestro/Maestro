@@ -100,7 +100,7 @@ export function QuickActionRow({
 				)}
 			</div>
 			{action.shortcut && (
-				<span className="text-xs font-mono opacity-60">
+				<span className="text-xs font-mono opacity-60" data-shortcut-hint="">
 					{formatShortcutKeys(action.shortcut.keys)}
 				</span>
 			)}

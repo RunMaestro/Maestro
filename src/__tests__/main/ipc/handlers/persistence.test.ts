@@ -97,6 +97,7 @@ describe('persistence IPC handlers', () => {
 		broadcastSessionRemoved: ReturnType<typeof vi.fn>;
 	};
 	let getWebServerFn: () => WebServer | null;
+	let mockFlushSessionWrites: ReturnType<typeof vi.fn>;
 
 	beforeEach(() => {
 		// Clear mocks
@@ -131,6 +132,7 @@ describe('persistence IPC handlers', () => {
 		};
 
 		getWebServerFn = () => mockWebServer as unknown as WebServer;
+		mockFlushSessionWrites = vi.fn().mockResolvedValue(undefined);
 
 		// Capture all registered handlers
 		handlers = new Map();
@@ -144,6 +146,7 @@ describe('persistence IPC handlers', () => {
 			sessionsStore: mockSessionsStore as unknown as Store<SessionsData>,
 			groupsStore: mockGroupsStore as unknown as Store<GroupsData>,
 			getWebServer: getWebServerFn,
+			flushSessionWrites: mockFlushSessionWrites,
 		};
 		registerPersistenceHandlers(deps);
 	});
@@ -601,6 +604,7 @@ describe('persistence IPC handlers', () => {
 				sessionsStore: mockSessionsStore as unknown as Store<SessionsData>,
 				groupsStore: mockGroupsStore as unknown as Store<GroupsData>,
 				getWebServer: () => null,
+				flushSessionWrites: mockFlushSessionWrites,
 			};
 			registerPersistenceHandlers(deps);
 
@@ -686,6 +690,7 @@ describe('persistence IPC handlers', () => {
 			const result = await handler!({} as any, sessions);
 
 			expect(mockSessionsStore.set).toHaveBeenCalledWith('sessions', sessions);
+			expect(mockFlushSessionWrites).toHaveBeenCalledOnce();
 			expect(result).toBe(true);
 		});
 
@@ -1301,6 +1306,33 @@ describe('persistence IPC handlers', () => {
 			const result = await handler!({} as any, [{ ...baseSession }], []);
 
 			expect(result).toBe(false);
+		});
+
+		it('returns false when a deferred write reports a recoverable disk error', async () => {
+			const error = new Error('ENOSPC: no space left on device') as NodeJS.ErrnoException;
+			error.code = 'ENOSPC';
+			mockFlushSessionWrites.mockRejectedValueOnce(error);
+			mockSessionsStore.get.mockReturnValue([]);
+
+			const handler = handlers.get('sessions:setMany');
+			const result = await handler!({} as any, [{ ...baseSession }], []);
+
+			expect(result).toBe(false);
+			expect(mockSessionsStore.set).toHaveBeenCalledOnce();
+			expect(mockFlushSessionWrites).toHaveBeenCalledOnce();
+		});
+
+		it('does not acknowledge an unexpected deferred write failure', async () => {
+			const error = new Error('EIO: input/output error') as NodeJS.ErrnoException;
+			error.code = 'EIO';
+			mockFlushSessionWrites.mockRejectedValueOnce(error);
+			mockSessionsStore.get.mockReturnValue([]);
+
+			const handler = handlers.get('sessions:setMany');
+
+			await expect(handler!({} as any, [{ ...baseSession }], [])).rejects.toBe(error);
+			expect(mockSessionsStore.set).toHaveBeenCalledOnce();
+			expect(mockFlushSessionWrites).toHaveBeenCalledOnce();
 		});
 
 		it('rethrows unexpected errors so withIpcErrorLogging can surface them to Sentry', async () => {

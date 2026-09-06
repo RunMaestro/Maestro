@@ -43,6 +43,9 @@ import type {
 	ReadTerminalTabPayload,
 	ReadTerminalTabResult,
 	NewAITabWithPromptCallback,
+	ConsultAgentCallback,
+	ConsultAgentParams,
+	ConsultAgentResult,
 	EnqueueCommandCallback,
 	EnqueueCommandResult,
 	ListQueueCallback,
@@ -177,6 +180,7 @@ export interface WebServerCallbacks {
 	listTerminalTabs: ListTerminalTabsCallback | null;
 	readTerminalTab: ReadTerminalTabCallback | null;
 	newAITabWithPrompt: NewAITabWithPromptCallback | null;
+	consultAgent: ConsultAgentCallback | null;
 	enqueueCommand: EnqueueCommandCallback | null;
 	listQueue: ListQueueCallback | null;
 	removeQueueItem: RemoveQueueItemCallback | null;
@@ -276,6 +280,7 @@ export class CallbackRegistry {
 		listTerminalTabs: null,
 		readTerminalTab: null,
 		newAITabWithPrompt: null,
+		consultAgent: null,
 		enqueueCommand: null,
 		listQueue: null,
 		removeQueueItem: null,
@@ -524,6 +529,13 @@ export class CallbackRegistry {
 	): Promise<{ success: boolean; tabId?: string }> {
 		if (!this.callbacks.newAITabWithPrompt) return { success: false };
 		return this.callbacks.newAITabWithPrompt(sessionId, prompt, background);
+	}
+
+	async consultAgent(params: ConsultAgentParams): Promise<ConsultAgentResult> {
+		if (!this.callbacks.consultAgent) {
+			return { success: false, error: 'Cross-agent consults are not configured' };
+		}
+		return this.callbacks.consultAgent(params);
 	}
 
 	async enqueueCommand(
@@ -1131,6 +1143,10 @@ export class CallbackRegistry {
 
 	setNewAITabWithPromptCallback(callback: NewAITabWithPromptCallback): void {
 		this.callbacks.newAITabWithPrompt = callback;
+	}
+
+	setConsultAgentCallback(callback: ConsultAgentCallback): void {
+		this.callbacks.consultAgent = callback;
 	}
 
 	setEnqueueCommandCallback(callback: EnqueueCommandCallback): void {

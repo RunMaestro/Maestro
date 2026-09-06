@@ -26,6 +26,7 @@ import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
 import { MarkdownRenderer } from '../../MarkdownRenderer';
 import { LogFilterControls } from '../../LogFilterControls';
 import { linkifyNode } from '../../../utils/linkify';
+import { displayImageSrc } from '../../../utils/sessionImageSrc';
 import { RetryStatusCard } from '../../RetryStatusCard';
 import { SnoozeReturnCard } from '../../SnoozeReturnCard';
 import { ShellCommandCard } from '../../ShellCommandCard';
@@ -443,7 +444,7 @@ export const LogItem = memo(
 									onClick={() => setLightboxImage(img, log.images, 'history')}
 								>
 									<img
-										src={img}
+										src={displayImageSrc(img)}
 										alt={`Terminal output image ${imgIdx + 1}`}
 										className="h-20 rounded border cursor-zoom-in block"
 										style={{ objectFit: 'contain', maxWidth: '200px' }}

@@ -13,6 +13,7 @@ import {
 } from '../../utils/tabHelpers';
 import { logger } from '../../utils/logger';
 import { buildQueuedMessageItem } from '../../services/queuedPrompt';
+import { runCrossAgentAsk } from '../../services/crossAgentAsk';
 import { requestFileTreeRefresh } from '../../utils/fileTreeRefresh';
 import { persistTabStarred } from '../../utils/starredSessions';
 import { formatLogsForClipboard } from '../../utils/contextExtractor';
@@ -665,6 +666,27 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			}
 		);
 
+		// Cross-agent consult from the CLI (`maestro-cli ask`). Rides the same
+		// consult path a typed `@mention` uses - hidden tab on the target, no
+		// focus, no unread - and answers the response channel when the consulted
+		// agent finishes, so the calling agent gets the reply as its tool result
+		// instead of the question landing in whatever tab the human had open.
+		const unsubscribeCrossAgentAsk = window.maestro.process.onRemoteCrossAgentAsk(
+			(request, responseChannel) => {
+				void runCrossAgentAsk(request)
+					.then((result) => {
+						window.maestro.process.sendRemoteCrossAgentAskResponse(responseChannel, result);
+					})
+					.catch((error) => {
+						logger.error('[useRemoteIntegration] Cross-agent ask failed', undefined, error);
+						window.maestro.process.sendRemoteCrossAgentAskResponse(responseChannel, {
+							success: false,
+							error: error instanceof Error ? error.message : String(error),
+						});
+					});
+			}
+		);
+
 		// Handle remote close tab from web interface
 		const unsubscribeCloseTab = window.maestro.process.onRemoteCloseTab(
 			(sessionId: string, tabId: string) => {
@@ -933,6 +955,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			unsubscribeSelectTab();
 			unsubscribeNewTab();
 			unsubscribeNewTabWithPrompt();
+			unsubscribeCrossAgentAsk();
 			unsubscribeCloseTab();
 			unsubscribeRenameTab();
 			unsubscribeStarTab();

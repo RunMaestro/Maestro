@@ -111,6 +111,7 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 			agentSessionId: 'claude-123',
 		}),
 		executeCommand: vi.fn().mockResolvedValue(true),
+		consultAgent: vi.fn().mockResolvedValue({ success: true, answer: 'Because HMAC.' }),
 		switchMode: vi.fn().mockResolvedValue(true),
 		selectSession: vi.fn().mockResolvedValue(true),
 		selectTab: vi.fn().mockResolvedValue(true),
@@ -304,6 +305,93 @@ describe('WebSocketMessageHandler', () => {
 			expect(client.subscribedSessionId).toBeUndefined();
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
 			expect(response.type).toBe('subscribed');
+		});
+	});
+
+	describe('Cross-Agent Ask (maestro-cli ask)', () => {
+		it('consults the target and returns the answer without touching its open tab', async () => {
+			handler.handleMessage(client, {
+				type: 'cross_agent_ask',
+				sessionId: 'session-1',
+				question: 'How does the gate work?',
+				fromSessionId: 'caller-1',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.consultAgent).toHaveBeenCalled();
+			});
+			expect(callbacks.consultAgent).toHaveBeenCalledWith(
+				expect.objectContaining({
+					targetSessionId: 'session-1',
+					question: 'How does the gate work?',
+					fromSessionId: 'caller-1',
+					withContext: false,
+				})
+			);
+			// A consult must never reach the dispatch path, which writes into the
+			// target's ACTIVE tab and interrupts whatever the human has open there.
+			expect(callbacks.executeCommand).not.toHaveBeenCalled();
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('cross_agent_ask_result');
+			expect(response.success).toBe(true);
+			expect(response.answer).toBe('Because HMAC.');
+		});
+
+		it('does not apply the busy guard - a consult spawns its own process', async () => {
+			(callbacks.getSessionDetail as any).mockReturnValue({ state: 'busy', inputMode: 'ai' });
+
+			handler.handleMessage(client, {
+				type: 'cross_agent_ask',
+				sessionId: 'session-1',
+				question: 'q',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.consultAgent).toHaveBeenCalled();
+			});
+		});
+
+		it('rejects a missing question without spawning anything', () => {
+			handler.handleMessage(client, {
+				type: 'cross_agent_ask',
+				sessionId: 'session-1',
+				question: '   ',
+			});
+
+			expect(callbacks.consultAgent).not.toHaveBeenCalled();
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('cross_agent_ask_result');
+			expect(response.success).toBe(false);
+		});
+
+		it('reports an unknown target rather than consulting nothing', () => {
+			(callbacks.getSessionDetail as any).mockReturnValue(null);
+
+			handler.handleMessage(client, {
+				type: 'cross_agent_ask',
+				sessionId: 'ghost',
+				question: 'q',
+			});
+
+			expect(callbacks.consultAgent).not.toHaveBeenCalled();
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('not found');
+		});
+
+		it('clamps an absurd timeout instead of holding a process for a day', async () => {
+			handler.handleMessage(client, {
+				type: 'cross_agent_ask',
+				sessionId: 'session-1',
+				question: 'q',
+				timeoutMs: 24 * 60 * 60 * 1000,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.consultAgent).toHaveBeenCalled();
+			});
+			expect((callbacks.consultAgent as any).mock.calls[0][0].timeoutMs).toBe(60 * 60 * 1000);
 		});
 	});
 

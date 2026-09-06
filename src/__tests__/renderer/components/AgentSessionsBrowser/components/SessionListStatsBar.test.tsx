@@ -173,3 +173,28 @@ describe('SessionListStatsBar', () => {
 		expect(container.innerHTML).toContain('animate-pulse');
 	});
 });
+
+describe('SessionListStatsBar layout', () => {
+	// The bar is one line that scrolls sideways; on a 390px phone the stats
+	// used to wrap mid-stat ("1" above "session").
+	it('keeps every stat on one sideways-scrolling line', () => {
+		const { container } = render(
+			<SessionListStatsBar
+				theme={theme}
+				loading={false}
+				sessionsCount={3}
+				stats={{
+					totalSessions: 3,
+					totalMessages: 30,
+					totalSize: 221000,
+					totalCost: 2.06,
+					totalTokens: 1200,
+					isComplete: true,
+				}}
+				sessionSinceDate={null}
+			/>
+		);
+		expect(container.firstChild).toHaveClass('overflow-x-auto');
+		expect(screen.getByText('30 messages').parentElement).toHaveClass('whitespace-nowrap');
+	});
+});

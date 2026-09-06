@@ -556,3 +556,42 @@ describe('DirectorNotesModal', () => {
 		});
 	});
 });
+
+// Phone: the title drops its "Since <date>" tail (it wrapped to two lines) and
+// the tab strip shows short labels so three tabs fit one row.
+vi.mock('../../../../renderer/hooks/ui/useViewportBreakpoint', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../renderer/hooks/ui/useViewportBreakpoint')>()),
+	usePhoneLayout: vi.fn(() => false),
+}));
+import { usePhoneLayout } from '../../../../renderer/hooks/ui/useViewportBreakpoint';
+
+describe('DirectorNotesModal on a phone', () => {
+	afterEach(() => {
+		vi.mocked(usePhoneLayout).mockReturnValue(false);
+	});
+
+	it('shows a bare title and short tab labels', async () => {
+		vi.mocked(usePhoneLayout).mockReturnValue(true);
+		render(<DirectorNotesModal theme={mockTheme} onClose={vi.fn()} />);
+		await waitFor(() => {
+			expect(screen.getByText("Director's Notes")).toBeInTheDocument();
+		});
+		expect(screen.queryByText(/Director's Notes Since/)).not.toBeInTheDocument();
+		expect(screen.getByRole('button', { name: /^History$/ })).toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: /Unified History/ })).not.toBeInTheDocument();
+		// The full label survives as the tooltip.
+		expect(screen.getByRole('button', { name: /^History$/ })).toHaveAttribute(
+			'title',
+			'Unified History'
+		);
+	});
+
+	it('keeps the dated title and full labels on desktop', async () => {
+		vi.mocked(usePhoneLayout).mockReturnValue(false);
+		render(<DirectorNotesModal theme={mockTheme} onClose={vi.fn()} />);
+		await waitFor(() => {
+			expect(screen.getByText(/Director's Notes Since/)).toBeInTheDocument();
+		});
+		expect(screen.getByRole('button', { name: /Unified History/ })).toBeInTheDocument();
+	});
+});

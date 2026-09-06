@@ -22,7 +22,7 @@
  * ```
  */
 
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { Server, CheckCircle, XCircle, FileCode, ChevronDown } from 'lucide-react';
 import { Spinner } from '../ui/Spinner';
 import type { Theme } from '../../types';
@@ -32,7 +32,7 @@ import { Modal, ModalFooter } from '../ui/Modal';
 import { FormInput } from '../ui/FormInput';
 import {
 	KeyValueRows,
-	keyValueRowsToRecord,
+	keyValueRowsToRecords,
 	recordToKeyValueRows,
 	type KeyValueRow,
 } from '../ui/KeyValueRows';
@@ -235,10 +235,16 @@ export function SshRemoteModal({
 				setPort(String(initialConfig.port));
 				setUsername(initialConfig.username);
 				setPrivateKeyPath(initialConfig.privateKeyPath);
-				const entries = recordToKeyValueRows(initialConfig.remoteEnv);
+				const entries = recordToKeyValueRows(
+					initialConfig.remoteEnv,
+					initialConfig.remoteEnvDisabled
+				);
 				setEnvVars(entries);
 				setNextEnvVarId(entries.length);
-				const optionRows = recordToKeyValueRows(initialConfig.sshOptions);
+				const optionRows = recordToKeyValueRows(
+					initialConfig.sshOptions,
+					initialConfig.sshOptionsDisabled
+				);
 				setSshOptions(optionRows);
 				setNextSshOptionId(optionRows.length);
 				setEnabled(initialConfig.enabled);
@@ -280,7 +286,11 @@ export function SshRemoteModal({
 
 		// A malformed keyword makes ssh exit before it dials, so reject it here
 		// rather than surfacing a bare "Bad configuration option" at spawn time.
+		// Only LIVE rows are checked: parking exists so a value that cannot work
+		// right now can be set aside, and a parked row that blocked Save would
+		// defeat the one thing the eye is for. Switching it back on re-checks it.
 		for (const row of sshOptions) {
+			if (!row.enabled) continue;
 			if (!row.key.trim() && !row.value.trim()) continue;
 			const invalid = validateSshOption(row.key, row.value);
 			if (invalid) return invalid;
@@ -289,6 +299,12 @@ export function SshRemoteModal({
 	}, [name, host, port, sshOptions]);
 
 	const isValid = validateForm() === null;
+
+	// Both halves of each section are derived together: writing one record
+	// without the other is how a parked value gets dropped on save, which is
+	// exactly what the eye exists to prevent.
+	const envVarRecords = useMemo(() => keyValueRowsToRecords(envVars), [envVars]);
+	const sshOptionRecords = useMemo(() => keyValueRowsToRecords(sshOptions), [sshOptions]);
 
 	// Build config object from form state
 	const buildConfig = useCallback((): SshRemoteConfig => {
@@ -299,8 +315,10 @@ export function SshRemoteModal({
 			port: parseInt(port, 10),
 			username: username.trim(),
 			privateKeyPath: privateKeyPath.trim(),
-			remoteEnv: keyValueRowsToRecord(envVars),
-			sshOptions: keyValueRowsToRecord(sshOptions),
+			remoteEnv: envVarRecords.active,
+			remoteEnvDisabled: envVarRecords.parked,
+			sshOptions: sshOptionRecords.active,
+			sshOptionsDisabled: sshOptionRecords.parked,
 			enabled,
 			useSshConfig,
 			sshConfigHost,
@@ -312,8 +330,8 @@ export function SshRemoteModal({
 		port,
 		username,
 		privateKeyPath,
-		envVars,
-		sshOptions,
+		envVarRecords,
+		sshOptionRecords,
 		enabled,
 		useSshConfig,
 		sshConfigHost,
@@ -404,7 +422,7 @@ export function SshRemoteModal({
 
 	// Environment variable handlers
 	const addEnvVar = () => {
-		setEnvVars((prev) => [...prev, { id: nextEnvVarId, key: '', value: '' }]);
+		setEnvVars((prev) => [...prev, { id: nextEnvVarId, key: '', value: '', enabled: true }]);
 		setNextEnvVarId((prev) => prev + 1);
 		setShowEnvVars(true);
 	};
@@ -419,9 +437,15 @@ export function SshRemoteModal({
 		setEnvVars((prev) => prev.filter((entry) => entry.id !== id));
 	};
 
+	const toggleEnvVar = (id: number) => {
+		setEnvVars((prev) =>
+			prev.map((entry) => (entry.id === id ? { ...entry, enabled: !entry.enabled } : entry))
+		);
+	};
+
 	// Extra `ssh -o` option handlers
 	const addSshOption = () => {
-		setSshOptions((prev) => [...prev, { id: nextSshOptionId, key: '', value: '' }]);
+		setSshOptions((prev) => [...prev, { id: nextSshOptionId, key: '', value: '', enabled: true }]);
 		setNextSshOptionId((prev) => prev + 1);
 		setShowSshOptions(true);
 	};
@@ -434,6 +458,12 @@ export function SshRemoteModal({
 
 	const removeSshOption = (id: number) => {
 		setSshOptions((prev) => prev.filter((entry) => entry.id !== id));
+	};
+
+	const toggleSshOption = (id: number) => {
+		setSshOptions((prev) =>
+			prev.map((entry) => (entry.id === id ? { ...entry, enabled: !entry.enabled } : entry))
+		);
 	};
 
 	useSaveShortcut(handleSave, isOpen && !saving);
@@ -731,10 +761,12 @@ export function SshRemoteModal({
 					onChangeRow={updateEnvVar}
 					onRemoveRow={removeEnvVar}
 					onAddRow={addEnvVar}
+					onToggleRow={toggleEnvVar}
 					addLabel="Add Variable"
 					keyPlaceholder="VARIABLE"
 					collapsed={!showEnvVars}
 					removeLabel="Remove variable"
+					entryNoun="variable"
 					testId="ssh-remote-env-vars"
 					helperText="Environment variables passed to agents running on this remote host"
 				/>
@@ -747,11 +779,13 @@ export function SshRemoteModal({
 					onChangeRow={updateSshOption}
 					onRemoveRow={removeSshOption}
 					onAddRow={addSshOption}
+					onToggleRow={toggleSshOption}
 					addLabel="Add Option"
 					keyPlaceholder="ProxyCommand"
 					valuePlaceholder="/opt/homebrew/bin/tailcat tcXXXX 22"
 					collapsed={!showSshOptions}
 					removeLabel="Remove option"
+					entryNoun="option"
 					testId="ssh-remote-ssh-options"
 					helperText={
 						<>
