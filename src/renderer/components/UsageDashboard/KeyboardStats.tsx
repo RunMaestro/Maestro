@@ -32,6 +32,8 @@ import { formatNumber } from '../../../shared/formatters';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { logger } from '../../utils/logger';
 import { MetricCard } from './SummaryCards';
+import { buildShortcutsSummary } from './footerSummary';
+import { usePublishFooterSummary } from './useFooterSummary';
 
 interface KeyboardStatsProps {
 	timeRange: StatsTimeRange;
@@ -353,6 +355,18 @@ export const KeyboardStats = memo(function KeyboardStats({ timeRange, theme }: K
 		const needed = Math.ceil((nextLevel.threshold / 100) * totalShortcuts);
 		return Math.max(0, needed - usedCount);
 	}, [nextLevel, usedCount, totalShortcuts]);
+
+	usePublishFooterSummary(
+		'shortcuts',
+		loading
+			? null
+			: buildShortcutsSummary({
+					presses: total,
+					used: usedCount,
+					bound: totalShortcuts,
+					levelName: currentLevel.name,
+				})
+	);
 
 	const unusedShortcuts = useMemo(() => {
 		return boundShortcuts.filter((s) => !usedSet.has(s.id));

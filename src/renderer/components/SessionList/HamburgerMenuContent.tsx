@@ -318,7 +318,7 @@ export function HamburgerMenuContent({
 						className="text-xs font-mono px-1.5 py-0.5 rounded"
 						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
 					>
-						{shortcuts.openSymphony ? formatShortcutKeys(shortcuts.openSymphony.keys) : '⇧⌘Y'}
+						{shortcuts.openSymphony ? formatShortcutKeys(shortcuts.openSymphony.keys) : '⌥⌘Y'}
 					</span>
 				</button>
 			)}

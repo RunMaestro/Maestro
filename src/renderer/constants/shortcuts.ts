@@ -116,6 +116,11 @@ export const DEFAULT_SHORTCUTS = {
 	prevTab: { id: 'prevTab', label: 'Previous Tab', keys: ['Meta', 'Shift', '['] },
 	nextTab: { id: 'nextTab', label: 'Next Tab', keys: ['Meta', 'Shift', ']'] },
 	openImageCarousel: { id: 'openImageCarousel', label: 'Open Image Carousel', keys: ['Meta', 'y'] },
+	openImageOrganizer: {
+		id: 'openImageOrganizer',
+		label: 'Open Image Organizer',
+		keys: ['Meta', 'Shift', 'y'],
+	},
 	toggleTabStar: { id: 'toggleTabStar', label: 'Toggle Tab Star', keys: ['Meta', 'Shift', 's'] },
 	openPromptComposer: {
 		id: 'openPromptComposer',
@@ -130,7 +135,7 @@ export const DEFAULT_SHORTCUTS = {
 	},
 	fuzzyFileSearch: { id: 'fuzzyFileSearch', label: 'Fuzzy File Search', keys: ['Meta', 'g'] },
 	toggleBookmark: { id: 'toggleBookmark', label: 'Toggle Bookmark', keys: ['Meta', 'Shift', 'b'] },
-	openSymphony: { id: 'openSymphony', label: 'Maestro Symphony', keys: ['Meta', 'Shift', 'y'] },
+	openSymphony: { id: 'openSymphony', label: 'Maestro Symphony', keys: ['Meta', 'Alt', 'y'] },
 	directorNotes: {
 		id: 'directorNotes',
 		label: "Director's Notes",

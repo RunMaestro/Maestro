@@ -9,6 +9,7 @@ import {
 	closeTab,
 	getActiveTab,
 	getRepairedUnifiedTabOrder,
+	visibleAiTabs,
 } from '../../utils/tabHelpers';
 import { logger } from '../../utils/logger';
 import { buildQueuedMessageItem } from '../../services/queuedPrompt';
@@ -36,6 +37,10 @@ import {
 	interactWithConcertoDesignerFrame,
 } from '../../components/Concerto/concertoDesignerBridge';
 import { useFileExplorerStore } from '../../stores/fileExplorerStore';
+import {
+	clearDesktopAiTabSelections,
+	consumeDesktopAiTabSelection,
+} from '../../utils/desktopTabSelectionSync';
 
 /**
  * Dependencies for the useRemoteIntegration hook.
@@ -467,13 +472,17 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			}
 		);
 
-		// Handle remote tab selection from web interface
-		// This also switches to the session if not already active
+		// Handle explicit Web -> Desktop tab selection and Web-Desktop inventory sync.
 		const unsubscribeSelectTab = window.maestro.process.onRemoteSelectTab(
-			(sessionId, tabId, remoteTabs) => {
-				// First, switch to the session if not already active
+			(sessionId, tabId, remoteTabs, activeTabChanged) => {
 				const currentActiveId = activeSessionIdRef.current;
-				if (currentActiveId !== sessionId) {
+				const isInventorySync = remoteTabs !== undefined;
+
+				// A bare remote:selectTab event is an explicit Web -> Desktop navigation
+				// request. A tabs_changed packet also arrives on this channel in
+				// Web-Desktop, but it is primarily an inventory snapshot and must not
+				// pull the browser into whichever background agent happened to change.
+				if (!isInventorySync && currentActiveId !== sessionId) {
 					setActiveSessionId(sessionId);
 				}
 
@@ -483,7 +492,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				// have. Existing tabs retain renderer-only data such as logs and drafts.
 				updateSessionWith(sessionId, (s) => {
 					let updatedSession = s;
-					if (remoteTabs) {
+					if (isInventorySync) {
 						const existingById = new Map(s.aiTabs.map((tab) => [tab.id, tab]));
 						const aiTabs = remoteTabs.map((remoteTab) => {
 							const existing = existingById.get(remoteTab.id);
@@ -519,10 +528,31 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						};
 					}
 
-					if (!updatedSession.aiTabs.some((tab) => tab.id === tabId)) {
-						return updatedSession;
+					const targetExists = updatedSession.aiTabs.some((tab) => tab.id === tabId);
+					if (!isInventorySync) {
+						return targetExists
+							? { ...updatedSession, ...aiTabFocusFields(tabId) }
+							: updatedSession;
 					}
-					return { ...updatedSession, ...aiTabFocusFields(tabId) };
+
+					// Only a real desktop tab-selection change may move the browser's visible
+					// tab, and only when the browser is already viewing that session. Metadata
+					// changes (busy/unread/name/starred) retain the browser's local focus.
+					if (activeTabChanged && currentActiveId === sessionId && targetExists) {
+						return { ...updatedSession, ...aiTabFocusFields(tabId) };
+					}
+
+					// If the browser's remembered AI tab was removed, repair the dormant id
+					// without clearing a currently focused file/terminal/browser surface.
+					if (!updatedSession.aiTabs.some((tab) => tab.id === updatedSession.activeTabId)) {
+						const visibleTabs = visibleAiTabs(updatedSession.aiTabs);
+						const fallbackTabId = visibleTabs.some((tab) => tab.id === tabId)
+							? tabId
+							: visibleTabs[0]?.id || '';
+						return { ...updatedSession, activeTabId: fallbackTabId };
+					}
+
+					return updatedSession;
 				});
 			}
 		);
@@ -1858,6 +1888,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 	useEffect(() => {
 		// Skip entirely if not in live mode - no web clients to broadcast to
 		if (!isLiveMode) return;
+		clearDesktopAiTabSelections();
 
 		// Use an interval to periodically check for changes instead of running on every render
 		// This dramatically reduces CPU usage during normal typing
@@ -1878,6 +1909,11 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					prevSessionStatesRef.current.set(session.id, session.state);
 				}
 
+				const activeTabChanged = consumeDesktopAiTabSelection(
+					session.id,
+					session.activeTabId || session.aiTabs?.[0]?.id || ''
+				);
+
 				// An empty aiTabs array is a valid state and still has to be broadcast,
 				// otherwise remote clients keep rendering tabs the user already closed.
 				if (!session.aiTabs) return;
@@ -1893,13 +1929,13 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					activeTabId: session.activeTabId || session.aiTabs[0]?.id || '',
 					tabsHash,
 				};
-
 				// Check if anything changed
 				if (
 					!prev ||
 					prev.tabCount !== current.tabCount ||
 					prev.activeTabId !== current.activeTabId ||
-					prev.tabsHash !== current.tabsHash
+					prev.tabsHash !== current.tabsHash ||
+					activeTabChanged
 				) {
 					const tabsForBroadcast = session.aiTabs.map((tab) => ({
 						id: tab.id,
@@ -1914,7 +1950,12 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						hasUnread: tab.hasUnread,
 					}));
 
-					window.maestro.web.broadcastTabsChange(session.id, tabsForBroadcast, current.activeTabId);
+					window.maestro.web.broadcastTabsChange(
+						session.id,
+						tabsForBroadcast,
+						current.activeTabId,
+						activeTabChanged
+					);
 
 					prevTabsRef.current.set(session.id, current);
 				}

@@ -497,8 +497,12 @@ export const MetricCard = memo(function MetricCard({
 /**
  * Format hour number (0-23) to human-readable time
  * Examples: 0 → "12 AM", 13 → "1 PM", 9 → "9 AM"
+ *
+ * Exported for the footer summary, which reports the same peak hour this file
+ * puts on the Peak Hour card. (`PeakHoursChart` keeps its own lowercase "8pm"
+ * variant for axis labels - a different style, not a duplicate of this one.)
  */
-function formatHour(hour: number): string {
+export function formatHour(hour: number): string {
 	const suffix = hour >= 12 ? 'PM' : 'AM';
 	const displayHour = hour % 12 || 12;
 	return `${displayHour} ${suffix}`;

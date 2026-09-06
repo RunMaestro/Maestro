@@ -412,6 +412,30 @@ describe('AutoRun', () => {
 			expect(screen.queryByLabelText('Reset preview font size')).toBeNull();
 			expect(screen.getByLabelText('Increase preview font size')).toBeInTheDocument();
 		});
+
+		// Same collapsible "Aa" circle the file preview floats over its document,
+		// so zooming reads identically in a file tab and in this panel. It rests
+		// over the content rather than taking a slot in the button row.
+		it('floats the zoom as the collapsible handle instead of a button-row control', () => {
+			const props = createDefaultProps({ mode: 'preview' });
+			renderWithProvider(<AutoRun {...props} />);
+
+			expect(screen.getByTestId('autorun-font-scale-handle')).toBeInTheDocument();
+			expect(screen.getByTestId('autorun-font-scale').className).toContain('rounded-full');
+		});
+
+		// A zoom that moves nothing reads as broken, and the pill would otherwise
+		// float over the "pick a folder" empty state with no type to scale.
+		it('hides the zoom when the folder has no documents', () => {
+			const props = createDefaultProps({
+				mode: 'preview',
+				documentList: [],
+				selectedFile: null,
+			});
+			renderWithProvider(<AutoRun {...props} />);
+
+			expect(screen.queryByTestId('autorun-font-scale')).toBeNull();
+		});
 	});
 
 	describe('Content Editing', () => {

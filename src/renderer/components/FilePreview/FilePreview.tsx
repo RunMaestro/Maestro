@@ -94,7 +94,7 @@ import { getParentDir, getBasename } from '../../../shared/formatters';
 import { FilePreviewToc } from './FilePreviewToc';
 import { computeTocWidth } from '../Toc';
 import { HeadingPalette } from './HeadingPalette';
-import { scrollToHeadingSlug } from './shared/headings';
+import { findActiveHeadingSlug, scrollToHeadingSlug } from './shared/headings';
 import { FontScaleControl } from '../ui/FontScaleControl';
 import { useFontScale } from '../../hooks/ui/useFontScale';
 import { isTextInputTarget } from '../../utils/messageScrollNavigation';
@@ -706,6 +706,38 @@ export const FilePreview = React.memo(
 			[]
 		);
 
+		// Index of the heading the reader is currently under, so the open Table of
+		// Contents can follow the document instead of sitting on a stale row.
+		// `-1` means the view is above the first heading (the "Top" sash).
+		const [activeTocIndex, setActiveTocIndex] = useState(-1);
+		const readActiveHeadingSlug = useCallback(
+			() => markdownFastRef.current?.getActiveHeadingSlug(),
+			[]
+		);
+		// Reassigned every render so the scroll listener (attached once) always
+		// measures against the current entries and tier.
+		const syncActiveTocRef = useRef<() => void>(() => {});
+		syncActiveTocRef.current = () => {
+			// Nothing is watching the readout while the overlay is closed, so don't
+			// pay for the measurement (or the re-render) on every scroll frame.
+			if (!showTocOverlay || tocEntries.length === 0) return;
+			const slug = findActiveHeadingSlug(
+				contentRef.current,
+				markdownContainerRef.current,
+				readActiveHeadingSlug
+			);
+			const next = slug ? tocEntries.findIndex((entry) => entry.slug === slug) : -1;
+			// Bail out when the section hasn't changed: a scroll fires ~60x a
+			// second and this component is expensive to re-render.
+			setActiveTocIndex((prev) => (prev === next ? prev : next));
+		};
+
+		// Opening the overlay is not a scroll, so seed the readout once on open.
+		useEffect(() => {
+			if (!showTocOverlay) return;
+			syncActiveTocRef.current();
+		}, [showTocOverlay, tocEntries]);
+
 		/** Jump the preview to a heading. Shared by the ToC and the `#` palette. */
 		const jumpToHeading = useCallback(
 			(entry: TocEntry, behavior: ScrollBehavior) => {
@@ -1121,6 +1153,7 @@ export const FilePreview = React.memo(
 				raf = requestAnimationFrame(() => {
 					raf = null;
 					captureTopLineRef.current();
+					syncActiveTocRef.current();
 				});
 			};
 			// Capture phase so scrolls from the nested tier scrollers (CodeMirror,
@@ -2762,6 +2795,7 @@ export const FilePreview = React.memo(
 						isMarkdown={isMarkdown}
 						markdownEditMode={markdownEditMode}
 						onJumpToHeading={jumpToHeading}
+						activeIndex={activeTocIndex}
 					/>
 
 					{/* Heading palette - `#` opens the same list with a fuzzy filter */}

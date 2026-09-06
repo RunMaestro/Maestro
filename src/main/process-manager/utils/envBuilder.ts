@@ -98,6 +98,15 @@ export function buildPtyTerminalEnv(shellEnvVars?: Record<string, string>): Node
 		}
 	}
 
+	// A Command Terminal is a shell the USER drives, not an agent turn, so it
+	// must never carry the query-source marker. It can arrive two ways: Maestro
+	// itself launched from an agent shell that had it set (the normal case in
+	// development), or the Windows branch above, which inherits process.env
+	// wholesale and strips nothing. Deleted unconditionally rather than added to
+	// STRIPPED_ENV_VARS, because buildChildProcessEnv() sets this variable on
+	// purpose and must keep doing so.
+	delete env[QUERY_SOURCE_ENV_VAR];
+
 	// Vim arrow-key ergonomics: when users launch `vi`/`vim` with distro defaults
 	// that force compatible mode, insert-mode arrows can degrade to literal ABCD.
 	// Provide a safe default for terminal sessions, but never override explicit user config.

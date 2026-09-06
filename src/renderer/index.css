@@ -2081,14 +2081,28 @@ html[data-theme-mode='light'] .chrome-raised-active {
 	min-width: 0;
 }
 
-/* Single line, full row width. The ellipsis is now a genuine last resort
-   rather than the normal case it was at fourteen characters. */
+/* Single line. The ellipsis is a genuine last resort rather than the normal
+   case it was at fourteen characters - `min-width: 0` plus `flex-shrink: 1`
+   is what buys that, and both are still here.
+
+   `flex-grow` is 0 on purpose. It used to be 1, which made the name box
+   stretch across the whole title row even when the name was short, shoving
+   every indicator after it (Cue's bolt, the startup-command terminal, the
+   wizard dot) out to the far right edge. They read as a right-hand status
+   column that way, which they are not: they belong to the NAME, and the meta
+   row below already owns the real right-hand column (`.row-actions`, grid
+   row 2). A long name hid the effect, so it looked like only some indicators
+   were misplaced - in fact every row had it.
+
+   Growing changes nothing about truncation: leftover space only exists when
+   the name already fits, and when it does not, shrink and `min-width: 0` do
+   the ellipsis exactly as before. */
 .session-row .row-name {
 	white-space: nowrap;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	min-width: 0;
-	flex: 1 1 auto;
+	flex: 0 1 auto;
 }
 
 .session-row .row-meta {

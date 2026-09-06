@@ -385,6 +385,16 @@ describe('envBuilder - Global Environment Variables', () => {
 		it('is absent from terminal PTY env - a shell is not an agent turn', () => {
 			expect(buildPtyTerminalEnv().MAESTRO_QUERY_SOURCE).toBeUndefined();
 		});
+
+		it('is dropped even when the marker is already in the parent env', () => {
+			// Maestro launched from an agent shell inherits the marker, which is the
+			// normal case in development. The PTY env spreads process.env, so
+			// without an explicit delete every Command Terminal would announce
+			// itself as an agent turn. The Windows branch is the sharper edge: it
+			// inherits process.env wholesale and strips nothing else.
+			process.env.MAESTRO_QUERY_SOURCE = 'user';
+			expect(buildPtyTerminalEnv().MAESTRO_QUERY_SOURCE).toBeUndefined();
+		});
 	});
 
 	describe('Test 2.5c: PATH Handling', () => {

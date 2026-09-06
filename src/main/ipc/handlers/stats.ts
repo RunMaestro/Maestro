@@ -27,6 +27,7 @@ import {
 	AutoRunSession,
 	AutoRunTask,
 	SessionLifecycleEvent,
+	ResilienceEvent,
 	StatsTimeRange,
 	StatsFilters,
 } from '../../../shared/stats-types';
@@ -414,6 +415,29 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 	);
 
 	// Get session lifecycle events within a time range
+	// Agent Resilience: record a RESOLVED outage (recovered or user-stopped).
+	// Called fire-and-forget from the renderer's retryStore at resolution time;
+	// live countdowns are never recorded.
+	ipcMain.handle(
+		'stats:record-resilience',
+		withIpcErrorLogging(handlerOpts('recordResilience'), async (event: ResilienceEvent) => {
+			if (!isStatsCollectionEnabled(settingsStore)) {
+				logger.debug('Stats collection disabled, skipping resilience event', LOG_CONTEXT);
+				return null;
+			}
+			const db = getStatsDB();
+			return db.recordResilienceEvent(event);
+		})
+	);
+
+	ipcMain.handle(
+		'stats:get-resilience',
+		withIpcErrorLogging(handlerOpts('getResilience'), async (range: StatsTimeRange) => {
+			const db = getStatsDB();
+			return db.getResilienceEvents(range);
+		})
+	);
+
 	ipcMain.handle(
 		'stats:get-session-lifecycle',
 		withIpcErrorLogging(handlerOpts('getSessionLifecycle'), async (range: StatsTimeRange) => {

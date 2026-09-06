@@ -62,7 +62,7 @@ Tips and gotchas:
 | Jump to Nearest Terminal      | `Opt+Cmd+J`             | `Alt+Ctrl+J`              |
 | Jump to Bottom                | `Cmd+Shift+J`           | `Ctrl+Shift+J`            |
 | Toggle Bookmark               | `Cmd+Shift+B`           | `Ctrl+Shift+B`            |
-| Maestro Symphony              | `Cmd+Shift+Y`           | `Ctrl+Shift+Y`            |
+| Maestro Symphony              | `Opt+Cmd+Y`             | `Alt+Ctrl+Y`              |
 | Director's Notes              | `Cmd+Shift+O`           | `Ctrl+Shift+O`            |
 | Maestro Cue                   | `Opt+Q`                 | `Alt+Q`                   |
 | Show/Hide Concerto Stage      | `Opt+Cmd+C`             | `Alt+Ctrl+C`              |
@@ -71,6 +71,13 @@ Tips and gotchas:
 | Forced Parallel Send          | `Cmd+Shift+Enter`       | `Ctrl+Shift+Enter`        |
 | Cycle Focus Areas             | `Tab`                   | `Tab`                     |
 | Cycle Focus Backwards         | `Shift+Tab`             | `Shift+Tab`               |
+
+The full-window surfaces in that table (Settings, Usage Dashboard, Director's
+Notes, Symphony, Cue, Process Monitor, System Logs, Agent Sessions, Memory)
+replace each other rather than stacking, and their hotkeys stay live while one
+of them is up. Press `Opt+Cmd+U` from Director's Notes to land on the Usage
+Dashboard, then `Cmd+Shift+O` to go straight back. This holds for a rebound
+surface too, so a chord you chose yourself behaves the same as the default.
 
 ## Panel Shortcuts
 
@@ -130,6 +137,7 @@ These shortcuts work in AI Terminal mode and affect the current tab:
 | Unread Only (Agents + Tabs) | unassigned by default | unassigned by default |
 | Next Unread/Draft Tab       | `Opt+Cmd+Down`        | `Alt+Ctrl+Down`       |
 | Open Image Carousel         | `Cmd+Y`               | `Ctrl+Y`              |
+| Open Image Organizer        | `Cmd+Shift+Y`         | `Ctrl+Shift+Y`        |
 | Open Prompt Composer        | `Cmd+Shift+P`         | `Ctrl+Shift+P`        |
 
 Toggle states are saved per-tab. See [Input Toggles](./general-usage#input-toggles) for details on configuring defaults.

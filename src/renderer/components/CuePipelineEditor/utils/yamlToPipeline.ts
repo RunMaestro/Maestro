@@ -96,7 +96,7 @@ function getBasePipelineName(subscriptionName: string): string {
  * `pipeline_name` field when present, otherwise the legacy base-name
  * derived from the subscription-name suffix convention.
  */
-function getPipelineKey(sub: CueSubscription): string {
+export function getPipelineKey(sub: CueSubscription): string {
 	if (typeof sub.pipeline_name === 'string' && sub.pipeline_name.length > 0) {
 		return sub.pipeline_name;
 	}

@@ -30,6 +30,8 @@ import { formatDurationHuman } from '../../../shared/duration';
 import { getAgentDisplayName } from '../../../shared/agentMetadata';
 import { FilterInput } from '../ui/FilterInput';
 import { SegmentedControl, type SegmentedOption } from '../ui/SegmentedControl';
+import { buildGroupsSummary } from './footerSummary';
+import { usePublishFooterSummary } from './useFooterSummary';
 import { EntityTile, type EntityTileStat } from './EntityTile';
 
 const SPARKLINE_DAYS = 14;
@@ -250,6 +252,20 @@ export const GroupOverviewCards = memo(function GroupOverviewCards({
 				rollup.sessions.some((s) => s.name.toLowerCase().includes(query))
 		);
 	}, [sorted, filterQuery]);
+
+	// Ungrouped is a leftovers bucket, not a group, so it is excluded from both
+	// counts and reported separately - "23 agents unfiled" is the actionable
+	// half of this tab, and folding it into the group total would hide it.
+	const footerCounts = useMemo(() => {
+		const real = rollups.filter((r) => !r.isUngrouped).length;
+		const visible = filtered.filter((r) => !r.isUngrouped).length;
+		const unfiled = rollups.find((r) => r.isUngrouped)?.memberCount ?? 0;
+		return { real, visible, unfiled };
+	}, [rollups, filtered]);
+	usePublishFooterSummary(
+		'groups',
+		buildGroupsSummary(footerCounts.visible, footerCounts.real, footerCounts.unfiled)
+	);
 
 	if (rollups.length === 0) {
 		return (

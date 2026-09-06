@@ -126,13 +126,17 @@ export const StagedImageTile = memo(function StagedImageTile({
 			</button>
 
 			{/* Slot badge. Overlaid on the thumbnail rather than placed under it so
-			    revealing it mid-drag cannot reflow the row the user is dragging in. */}
+			    revealing it mid-drag cannot reflow the row the user is dragging in.
+			    Anchored bottom-left (clear of the top-corner controls) with a solid
+			    accent fill and accent-foreground text plus a shadow, so the number
+			    stays legible over any thumbnail rather than washing out against a
+			    dark screenshot. */}
 			<div
-				className={`absolute bottom-1 left-1/2 -translate-x-1/2 rounded font-semibold pointer-events-none transition-opacity duration-150 ${dims.badge}`}
+				className={`absolute bottom-1 left-1 rounded font-semibold pointer-events-none transition-opacity duration-150 shadow-md ${dims.badge}`}
 				style={{
 					opacity: showSlotNumber ? 1 : 0,
 					backgroundColor: theme.colors.accent,
-					color: theme.colors.bgMain,
+					color: theme.colors.accentForeground,
 				}}
 			>
 				{slot}

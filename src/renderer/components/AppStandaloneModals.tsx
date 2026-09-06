@@ -577,6 +577,9 @@ function AppStandaloneModalsInner({
 						// A graph that knows where it came from is one Escape from being
 						// back there, so the "are you sure?" prompt is pure friction.
 						confirmOnClose={documentGraphConfirmClose && !graphReturnTo}
+						// Same component, different subject: a graph opened from the
+						// Memory viewer is graphing memories, not project documents.
+						title={graphReturnTo === 'memoryViewer' ? 'Memory Graph' : undefined}
 						theme={theme}
 						rootPath={graphRootPath || activeSession?.projectRoot || activeSession?.cwd || ''}
 						onDocumentOpen={async (filePath) => {

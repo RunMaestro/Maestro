@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { useEventListener } from '../../hooks/utils/useEventListener';
+import { useFocusAfterRender } from '../../hooks/utils/useFocusAfterRender';
 import { useCommandKeyShortcut } from '../../hooks/keyboard/useCommandKeyShortcut';
 import {
 	useSessionViewer,
@@ -129,6 +130,7 @@ export function AgentSessionsBrowser({
 		startRename,
 		submitRename,
 		cancelRename,
+		consumeFocusRestore,
 	} = useAgentSessionsRename({
 		activeSession,
 		agentId,
@@ -138,6 +140,27 @@ export function AgentSessionsBrowser({
 		onUpdateTab,
 		renameInputRef,
 	});
+
+	// The rename input takes the keyboard as soon as it mounts, whichever way the
+	// rename started (edit button, detail header, or the shortcut).
+	useFocusAfterRender(renameInputRef, !!renamingSessionId);
+
+	/**
+	 * ...and hands it back on the way out, to whichever element hosts the keys
+	 * on the surface we return to: the search input in the list view (Up/Down
+	 * and Enter live on it), the message pane in the detail view (Enter to
+	 * resume). Without this the caret lands on <body> and the browser stops
+	 * answering the keyboard entirely.
+	 *
+	 * A layout effect, not a timer: this must run in the commit that unmounts
+	 * the rename input, so focusing the new target cannot fire the old input's
+	 * onBlur and submit a name the user just escaped out of.
+	 */
+	useLayoutEffect(() => {
+		if (renamingSessionId || !consumeFocusRestore()) return;
+		const target = viewingSessionRef.current ? messagesContainerRef.current : inputRef.current;
+		target?.focus();
+	}, [renamingSessionId, consumeFocusRestore, messagesContainerRef, inputRef]);
 
 	// useFilteredAndSortedSessions MUST run before useAgentSessionsActivityEntries
 	// because activityEntries reads filteredSessions
@@ -352,7 +375,6 @@ export function AgentSessionsBrowser({
 							e.stopPropagation();
 							setRenamingSessionId(viewingSession.sessionId);
 							setRenameValue('');
-							setTimeout(() => renameInputRef.current?.focus(), 50);
 						}}
 					/>
 				) : (

@@ -45,15 +45,22 @@ vi.mock('../../../renderer/components/CueYamlEditor', () => ({
 }));
 
 // `vi.hoisted` so the captured ref exists before vi.mock evaluates the factory.
-// Tests assert against `capturedEditorProps.initialPipelineId` to verify that
+// Tests assert against `capturedEditorProps.initialGraphTarget` to verify that
 // the parent (CueModal) propagates / clears the "View in Graph" token.
+type CapturedGraphTarget = {
+	id: string | null;
+	nonce: string;
+	scope?: { sessionId: string; sessionName: string; pipelineIds: string[] };
+};
 const capturedEditorProps = vi.hoisted(() => ({
-	initialPipelineId: undefined as { id: string | null; nonce: string } | undefined,
+	initialGraphTarget: undefined as
+		| { id: string | null; nonce: string; scope?: Record<string, unknown> }
+		| undefined,
 	renderCount: 0,
 }));
 vi.mock('../../../renderer/components/CuePipelineEditor', () => ({
-	CuePipelineEditor: (props: { initialPipelineId?: { id: string | null; nonce: string } }) => {
-		capturedEditorProps.initialPipelineId = props.initialPipelineId;
+	CuePipelineEditor: (props: { initialGraphTarget?: CapturedGraphTarget }) => {
+		capturedEditorProps.initialGraphTarget = props.initialGraphTarget;
 		capturedEditorProps.renderCount += 1;
 		return <div data-testid="cue-pipeline-editor">Pipeline Graph Mock</div>;
 	},
@@ -200,7 +207,7 @@ describe('CueModal', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		mockUseCueReturn = { ...defaultUseCueReturn };
-		capturedEditorProps.initialPipelineId = undefined;
+		capturedEditorProps.initialGraphTarget = undefined;
 		capturedEditorProps.renderCount = 0;
 		// The remembered tab is module state, so it leaks between tests unless
 		// cleared - every test below assumes a fresh open lands on Dashboard.
@@ -494,7 +501,7 @@ describe('CueModal', () => {
 	// instance) would re-snap the user back to the "View in Graph" target
 	// they just navigated away from.
 	describe('pending pipeline token (regression: tab switch must clear it)', () => {
-		it('clears initialPipelineId when navigating away from the pipeline tab', () => {
+		it('clears initialGraphTarget when navigating away from the pipeline tab', () => {
 			mockUseCueReturn = {
 				...defaultUseCueReturn,
 				sessions: [mockSession],
@@ -503,16 +510,16 @@ describe('CueModal', () => {
 			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
 
 			// Default tab is 'pipeline' - editor renders with no pending token.
-			expect(capturedEditorProps.initialPipelineId).toBeUndefined();
+			expect(capturedEditorProps.initialGraphTarget).toBeUndefined();
 
 			// Navigate to Dashboard and click "View in Graph" - handler sets
 			// pendingPipelineId AND switches activeTab to 'pipeline', so the
-			// editor remounts and now sees the token in its initialPipelineId prop.
+			// editor remounts and now sees the token in its initialGraphTarget prop.
 			fireEvent.click(screen.getByText('Dashboard'));
 			fireEvent.click(screen.getByText('View in Graph'));
 
-			expect(capturedEditorProps.initialPipelineId).toBeDefined();
-			const tokenAfterView = capturedEditorProps.initialPipelineId!;
+			expect(capturedEditorProps.initialGraphTarget).toBeDefined();
+			const tokenAfterView = capturedEditorProps.initialGraphTarget!;
 			expect(typeof tokenAfterView.nonce).toBe('string');
 			expect(tokenAfterView.nonce.length).toBeGreaterThan(0);
 
@@ -523,11 +530,11 @@ describe('CueModal', () => {
 			fireEvent.click(screen.getByText('Dashboard'));
 
 			// Return to the pipeline tab. The freshly-mounted editor's
-			// initialPipelineId must be undefined (no stale token survives).
+			// initialGraphTarget must be undefined (no stale token survives).
 			// Before the fix, the same `tokenAfterView` would still be present
 			// here and snap the user back to the prior pipeline.
 			fireEvent.click(screen.getByText('Pipeline Graph'));
-			expect(capturedEditorProps.initialPipelineId).toBeUndefined();
+			expect(capturedEditorProps.initialGraphTarget).toBeUndefined();
 		});
 
 		it('preserves the token when navigating within the pipeline tab', () => {
@@ -544,12 +551,75 @@ describe('CueModal', () => {
 
 			fireEvent.click(screen.getByText('Dashboard'));
 			fireEvent.click(screen.getByText('View in Graph'));
-			expect(capturedEditorProps.initialPipelineId).toBeDefined();
-			const tokenAfterView = capturedEditorProps.initialPipelineId!;
+			expect(capturedEditorProps.initialGraphTarget).toBeDefined();
+			const tokenAfterView = capturedEditorProps.initialGraphTarget!;
 
 			// Clicking the already-active Pipeline Graph tab must not clear it.
 			fireEvent.click(screen.getByText('Pipeline Graph'));
-			expect(capturedEditorProps.initialPipelineId?.nonce).toBe(tokenAfterView.nonce);
+			expect(capturedEditorProps.initialGraphTarget?.nonce).toBe(tokenAfterView.nonce);
+		});
+	});
+
+	// "View in Graph" used to resolve the target by looking for an AGENT node
+	// bound to the clicked session. A pipeline built from `action: command`
+	// subscriptions has no agent node, so its owner resolved to nothing and the
+	// user landed in the unfiltered All Pipelines view.
+	describe('View in Graph target resolution', () => {
+		const commandSub = (name: string, pipelineName: string) => ({
+			name,
+			event: 'time.heartbeat' as const,
+			enabled: true,
+			prompt: '',
+			agent_id: 'sess-1',
+			pipeline_name: pipelineName,
+			interval_minutes: 5,
+			action: 'command' as const,
+			command: { mode: 'shell' as const, shell: 'echo hi' },
+		});
+
+		const renderWithGraph = async (subs: ReturnType<typeof commandSub>[]) => {
+			mockGetGraphData.mockResolvedValue([
+				{
+					sessionId: 'sess-1',
+					sessionName: 'Test Session',
+					toolType: 'claude-code',
+					subscriptions: subs,
+				},
+			]);
+			mockUseCueReturn = { ...defaultUseCueReturn, sessions: [mockSession] };
+			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
+			fireEvent.click(screen.getByText('Dashboard'));
+			await waitFor(() => expect(mockGetGraphData).toHaveBeenCalled());
+		};
+
+		afterEach(() => {
+			mockGetGraphData.mockResolvedValue([]);
+		});
+
+		it('selects a command-only pipeline that the agent owns', async () => {
+			await renderWithGraph([commandSub('discord-bus', 'Maestro')]);
+
+			await waitFor(() => {
+				fireEvent.click(screen.getByText('View in Graph'));
+				expect(capturedEditorProps.initialGraphTarget?.id).toBe('pipeline-Maestro');
+			});
+			expect(capturedEditorProps.initialGraphTarget?.scope).toBeUndefined();
+		});
+
+		it('scopes the All Pipelines view when the agent owns several', async () => {
+			await renderWithGraph([commandSub('bus', 'Maestro'), commandSub('sweeper', 'Maestro Sweep')]);
+
+			await waitFor(() => {
+				fireEvent.click(screen.getByText('View in Graph'));
+				expect(capturedEditorProps.initialGraphTarget?.scope).toBeDefined();
+			});
+			const target = capturedEditorProps.initialGraphTarget!;
+			expect(target.id).toBeNull();
+			expect(target.scope).toEqual({
+				sessionId: 'sess-1',
+				sessionName: 'Test Session',
+				pipelineIds: ['pipeline-Maestro', 'pipeline-Maestro Sweep'],
+			});
 		});
 	});
 

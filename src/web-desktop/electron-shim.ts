@@ -146,7 +146,12 @@ class BridgeClient {
 				typeof msg.activeTabId === 'string'
 			) {
 				channel = 'remote:selectTab';
-				args = [msg.sessionId, msg.activeTabId, Array.isArray(msg.aiTabs) ? msg.aiTabs : undefined];
+				args = [
+					msg.sessionId,
+					msg.activeTabId,
+					Array.isArray(msg.aiTabs) ? msg.aiTabs : undefined,
+					msg.activeTabChanged === true,
+				];
 			} else if (msg.type === 'autorun_state' && typeof msg.sessionId === 'string') {
 				// Auto Run is renderer-owned in-memory state, so it never crosses the
 				// bridge as a `bridge.event` the way `process:*` does - the owning

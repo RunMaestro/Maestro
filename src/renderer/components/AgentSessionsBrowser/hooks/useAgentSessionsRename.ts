@@ -1,4 +1,4 @@
-import { useState, useCallback, RefObject } from 'react';
+import { useState, useCallback, useRef, RefObject } from 'react';
 import { logger } from '../../../utils/logger';
 import { captureException } from '../../../utils/sentry';
 import type { Session } from '../../../types';
@@ -34,20 +34,21 @@ export function useAgentSessionsRename({
 	startRename: (session: AgentSession, e: React.MouseEvent) => void;
 	submitRename: (sessionId: string) => Promise<void>;
 	cancelRename: () => void;
+	consumeFocusRestore: () => boolean;
 } {
 	const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
 	const [renameValue, setRenameValue] = useState('');
+	const focusRestorePendingRef = useRef(false);
 
 	// The rename itself, with no event to consume: the edit button, the detail
 	// header, and the keyboard shortcut all enter rename mode the same way.
-	const beginRename = useCallback(
-		(session: AgentSession) => {
-			setRenamingSessionId(session.sessionId);
-			setRenameValue(session.sessionName || '');
-			setTimeout(() => renameInputRef.current?.focus(), 50);
-		},
-		[renameInputRef]
-	);
+	const beginRename = useCallback((session: AgentSession) => {
+		setRenamingSessionId(session.sessionId);
+		setRenameValue(session.sessionName || '');
+		// Focus is claimed by useFocusAfterRender in the host component, which
+		// runs after the commit that mounts the input. A setTimeout here would
+		// race that mount.
+	}, []);
 
 	const startRename = useCallback(
 		(session: AgentSession, e: React.MouseEvent) => {
@@ -58,8 +59,29 @@ export function useAgentSessionsRename({
 	);
 
 	const cancelRename = useCallback(() => {
+		// The rename input is about to unmount. If it still owns the keyboard the
+		// user is leaving by keyboard (Escape, or Enter through submitRename) and
+		// nothing else will claim focus, so the caller has to hand it somewhere -
+		// otherwise focus lands on <body> and the arrow keys go dead.
+		//
+		// A blur-submit lands here too, but by then the user has already clicked
+		// somewhere else, so activeElement is not the input and we leave their
+		// focus alone.
+		//
+		// Recorded rather than acted on: the new target can only be focused after
+		// the commit that unmounts this input, or focusing it fires the input's
+		// own onBlur and submits the name the user just escaped out of.
+		focusRestorePendingRef.current =
+			!!renameInputRef.current && document.activeElement === renameInputRef.current;
+
 		setRenamingSessionId(null);
 		setRenameValue('');
+	}, [renameInputRef]);
+
+	const consumeFocusRestore = useCallback(() => {
+		const pending = focusRestorePendingRef.current;
+		focusRestorePendingRef.current = false;
+		return pending;
 	}, []);
 
 	const submitRename = useCallback(
@@ -122,5 +144,6 @@ export function useAgentSessionsRename({
 		startRename,
 		submitRename,
 		cancelRename,
+		consumeFocusRestore,
 	};
 }

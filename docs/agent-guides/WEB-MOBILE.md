@@ -67,6 +67,46 @@ The web-desktop build aliases `electron` to `src/web-desktop/electron-shim.ts` i
 
 This is why the renderer's own Zustand stores, IPC service wrappers, and components all work in the browser with no web-specific fork.
 
+### Two Clients, One Sessions Store
+
+The browser runs the same renderer as the desktop, which means every client
+holds its **own** session tree and flushes it back into the one shared sessions
+store. Nothing reconciled those trees, so an agent created in the browser never
+appeared on the desktop, and one closed in the browser was resurrected the moment
+the desktop's stale copy was written again (issues #1398 / #1492).
+
+Two rules follow, and both are load-bearing:
+
+- **Agent lifecycle is pushed, not polled.** `sessions:setMany` / `sessions:setAll`
+  (`src/main/ipc/handlers/persistence.ts`) report what entered and left the store
+  on the `sessions:lifecycleSync` channel, and every other client applies the
+  delta through `useSessionLifecycleSync`
+  (`src/renderer/hooks/session/useSessionLifecycleSync.ts`), strictly in arrival
+  order - an add still restoring when the close for the same agent lands makes
+  that close look like it names an agent this client never had. Main also
+  tombstones a closed id so a peer flush already in flight cannot re-add it -
+  the newest 1000, bounded by COUNT rather than age, because a suspended browser
+  tab can be away for hours and no agent id is ever reused, so an old tombstone
+  has nothing left to block but a stale write. A client away long enough to
+  outlive its tombstone reloads on reconnect regardless: `BridgeClient` has no
+  replay, so it re-reads the store rather than flushing what it still held. Only ADDITIONS travel from `setAll`: that path is a client's opening
+  snapshot of its own tree, taken before it could have heard about anything a
+  peer created, so treating an absent id there as a close would delete live
+  agents. The delta is deliberately lifecycle-only - tab contents, read-state and
+  queued messages are still last-writer-wins.
+- **Which agent a client is looking at is per-client.** Write and read it through
+  `src/renderer/utils/activeSessionPersistence.ts`, never
+  `window.maestro.sessions.getActiveSessionId()` directly. A browser tab reloads
+  on every refocus, and reading the shared pointer landed the user on whatever
+  the DESKTOP had focused instead of the agent they were working in. The read is
+  a ladder: `sessionStorage` (this TAB's own choice - two web-desktop tabs share
+  an origin, so a localStorage-only answer would have each tab overwriting the
+  other's), then `localStorage` (the last choice made in this browser, for a
+  freshly opened tab), then the shared value (a first visit should land where the
+  desktop is). Writing still reports to the shared store as well, which is what
+  plugin `session.activated` events and the CLI's current-agent answer are built
+  on.
+
 ### Server-Injected Config
 
 The main process injects configuration into `window.__MAESTRO_CONFIG__` inline in `index.html`, before any module runs:
@@ -173,18 +213,19 @@ Wiring the factory into the bridge therefore requires an echo-suppression design
 
 ## Key Files Reference
 
-| Concern               | Primary Files                                                                                     |
-| --------------------- | ------------------------------------------------------------------------------------------------- |
-| Browser entry / boot  | `src/web-desktop/bootstrap.ts`, `src/web-desktop/index.html`                                      |
-| Electron/Sentry shims | `src/web-desktop/electron-shim.ts`, `src/web-desktop/sentry-shim.ts`                              |
-| Bundle build          | `vite.config.web-desktop.mts` (`npm run dev:web-desktop` / `build:web-desktop`)                   |
-| Web server + bridge   | `src/main/web-server/WebServer.ts`, `src/main/web-server/routes/staticRoutes.ts`                  |
-| Push-event fan-out    | `src/main/utils/safe-send.ts` (`broadcastBridgeEvent`)                                            |
-| Touch primitives      | `src/renderer/utils/touch.ts`                                                                     |
-| Touch/keyboard/voice  | `src/renderer/hooks/utils/{useKeyboardVisibility,useLongPress,useSwipeGestures,useVoiceInput}.ts` |
-| Terminal touch        | `src/renderer/components/TerminalTouchBar.tsx`, `src/renderer/utils/terminalKeys.ts`              |
-| PWA assets            | `src/web/public/` (manifest.json, sw.js, icons/)                                                  |
-| PWA registration      | `src/web/utils/serviceWorker.ts`                                                                  |
+| Concern               | Primary Files                                                                                             |
+| --------------------- | --------------------------------------------------------------------------------------------------------- |
+| Browser entry / boot  | `src/web-desktop/bootstrap.ts`, `src/web-desktop/index.html`                                              |
+| Electron/Sentry shims | `src/web-desktop/electron-shim.ts`, `src/web-desktop/sentry-shim.ts`                                      |
+| Bundle build          | `vite.config.web-desktop.mts` (`npm run dev:web-desktop` / `build:web-desktop`)                           |
+| Web server + bridge   | `src/main/web-server/WebServer.ts`, `src/main/web-server/routes/staticRoutes.ts`                          |
+| Push-event fan-out    | `src/main/utils/safe-send.ts` (`broadcastBridgeEvent`)                                                    |
+| Cross-client sessions | `src/renderer/hooks/session/useSessionLifecycleSync.ts`, `src/renderer/utils/activeSessionPersistence.ts` |
+| Touch primitives      | `src/renderer/utils/touch.ts`                                                                             |
+| Touch/keyboard/voice  | `src/renderer/hooks/utils/{useKeyboardVisibility,useLongPress,useSwipeGestures,useVoiceInput}.ts`         |
+| Terminal touch        | `src/renderer/components/TerminalTouchBar.tsx`, `src/renderer/utils/terminalKeys.ts`                      |
+| PWA assets            | `src/web/public/` (manifest.json, sw.js, icons/)                                                          |
+| PWA registration      | `src/web/utils/serviceWorker.ts`                                                                          |
 
 ---
 
