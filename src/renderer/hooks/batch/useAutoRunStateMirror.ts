@@ -23,6 +23,18 @@
  * parsed and dropped. This hook is the consumer for the channel the shim now
  * maps it onto.
  *
+ * The mirror runs in BOTH directions, and the second one needed its own
+ * plumbing (issue #1519). `autorun_state` only ever reaches WebSocket clients,
+ * so a run started in a BROWSER tab had no path back to the Electron app and
+ * the desktop drew the agent as idle for the entire run. Main closes that half
+ * by forwarding a bridge-originated broadcast straight to the desktop windows
+ * on this same channel (`forwardAutoRunStateToDesktopWindows` in
+ * `main/ipc/handlers/web.ts`). One consumer, two producers.
+ *
+ * Note this fixes only VISIBILITY, in both directions. A run still dies with
+ * the client that owns it, because the loop and its cursors live there; that is
+ * issue #1470 and it needs the ownership primitive described below.
+ *
  * What it deliberately does NOT do: take over. The entry it writes is stamped
  * `mirrored: true`, every Auto Run mutator refuses to act on a mirrored entry,
  * and the controls that call them render disabled. Resuming or steering a run
@@ -38,7 +50,6 @@ import type { AgentErrorType } from '../../../shared/types';
 import type { BatchRunState } from '../../types';
 import { useBatchStore } from '../../stores/batchStore';
 import { DEFAULT_BATCH_STATE } from './batchReducer';
-import { isWebDesktop } from '../../utils/runtimeContext';
 
 /**
  * Tooltip for an Auto Run control disabled because the run belongs to another
@@ -272,10 +283,18 @@ export function resetMirrorFrameClock(): void {
 /**
  * Subscribe to Auto Run state broadcast by other Maestro clients.
  *
- * Mount once, alongside the batch processor. No-ops outside the web-desktop
- * build: the Electron desktop renderer is not a WebSocket client, so the
- * channel never fires there, and the guard keeps that intent explicit rather
- * than relying on it.
+ * Mount once, alongside the batch processor. Runs in BOTH builds, and that is
+ * the point: mirroring used to be gated to the web-desktop build, on the
+ * reasoning that the Electron renderer is not a WebSocket client so the channel
+ * could never fire there. True of the channel, wrong about the need - it left a
+ * run STARTED in a browser tab invisible in the desktop app for its whole
+ * duration (issue #1519). Main now forwards a bridge-originated frame to the
+ * desktop windows (`forwardAutoRunStateToDesktopWindows`), so the desktop has a
+ * producer and needs its consumer.
+ *
+ * A desktop window is never handed its own run back - main forwards only
+ * bridge-originated frames - and `applyAutoRunMirrorFrame` refuses to overwrite
+ * a live local run regardless, so the owner keeps its controls.
  */
 export function useAutoRunStateMirror(): void {
 	const handleFrame = useCallback((sessionId: string, state: AutoRunBroadcastState | null) => {
@@ -283,14 +302,12 @@ export function useAutoRunStateMirror(): void {
 	}, []);
 
 	useEffect(() => {
-		if (!isWebDesktop()) return;
 		const subscribe = window.maestro?.process?.onRemoteAutoRunStateMirror;
 		if (!subscribe) return;
 		return subscribe(handleFrame);
 	}, [handleFrame]);
 
 	useEffect(() => {
-		if (!isWebDesktop()) return;
 		const timer = setInterval(() => {
 			void reapStaleMirrors();
 		}, MIRROR_REAP_INTERVAL_MS);
