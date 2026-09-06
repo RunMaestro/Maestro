@@ -20,7 +20,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { Gauge, Minus, X, Trash2, BarChart3, LineChart } from 'lucide-react';
+import { Gauge, Trash2, BarChart3, LineChart } from 'lucide-react';
 import type { Theme } from '../types';
 import {
 	useContextTimelineStore,
@@ -41,24 +41,43 @@ import {
 	forgetContextTimelineCaptures,
 } from '../services/contextTimelineHydration';
 import { ContextTimelineGraph } from './ContextTimelineGraph';
+import { useResizableModal } from '../hooks/ui/useResizableModal';
+import { ResizeHandles } from './ui/ResizeHandles';
 
 interface ContextTimelinePanelProps {
 	theme: Theme;
 }
 
-const PANEL_WIDTH = 360;
-const PANEL_MAX_HEIGHT = 600;
+/**
+ * Default panel size. The width is set by the WIDEST single line the body draws,
+ * not by taste: the per-turn breakdown is `in / cache r / cache w / out` plus a
+ * cost, each chip `whitespace-nowrap`, and the subtitle names the window and the
+ * provider-reported caveat. At the old 360px both wrapped on every row, which
+ * doubled the height of a row whose whole job is to be scanned quickly.
+ */
+const PANEL_WIDTH = 560;
+const PANEL_HEIGHT = 620;
+/** Narrower than this and the breakdown line starts wrapping again. */
+const PANEL_MIN_WIDTH = 380;
+const PANEL_MIN_HEIGHT = 260;
 const VIEWPORT_MARGIN = 8;
 const ANCHOR_GAP = 8;
+/** Key under which the user's dragged size is remembered (settingsStore.modalSizes). */
+const PANEL_RESIZE_KEY = 'context-timeline';
 /** The header context gauge that opens this panel; re-queried for its live rect. */
 const HEADER_CONTEXT_WIDGET_SELECTOR = '[data-testid="header-context-widget"]';
 
-/** Position the panel near the element that opened it, clamped to the viewport. */
-function anchoredStyle(anchor: TimelineAnchorRect): CSSProperties {
+/**
+ * Position the panel near the element that opened it, clamped to the viewport.
+ * The size is passed in rather than read from a constant so the user's dragged
+ * size drives the anchoring too: a panel widened past its default still has to
+ * stay pinned to the gauge and inside the window.
+ */
+function anchoredStyle(anchor: TimelineAnchorRect, size: { width: number; height: number }) {
 	const vw = window.innerWidth;
 	const vh = window.innerHeight;
-	const width = Math.min(PANEL_WIDTH, vw - VIEWPORT_MARGIN * 2);
-	const height = Math.min(PANEL_MAX_HEIGHT, Math.round(vh * 0.7));
+	const width = Math.min(size.width, vw - VIEWPORT_MARGIN * 2);
+	const height = Math.min(size.height, vh - VIEWPORT_MARGIN * 2);
 	// Right-align the panel under the trigger and open downward by default.
 	let left = anchor.right - width;
 	let top = anchor.bottom + ANCHOR_GAP;
@@ -72,14 +91,16 @@ function anchoredStyle(anchor: TimelineAnchorRect): CSSProperties {
 }
 
 /** Default dock (bottom-left) used when the panel was opened without an anchor. */
-const FALLBACK_STYLE: CSSProperties = {
-	bottom: 16,
-	left: 16,
-	width: PANEL_WIDTH,
-	maxWidth: 'calc(100vw - 2rem)',
-	height: '70vh',
-	maxHeight: PANEL_MAX_HEIGHT,
-};
+function fallbackStyle(size: { width: number; height: number }): CSSProperties {
+	return {
+		bottom: 16,
+		left: 16,
+		width: size.width,
+		maxWidth: 'calc(100vw - 2rem)',
+		height: size.height,
+		maxHeight: 'calc(100vh - 2rem)',
+	};
+}
 
 /** Time-of-day stamp for a turn (e.g. "3:42:07 PM"). */
 function formatPointTime(ts: number): string {
@@ -104,16 +125,25 @@ function TokenChip({ label, value, color }: { label: string; value: number; colo
 export function ContextTimelinePanel({ theme }: ContextTimelinePanelProps) {
 	const panelSessionId = useContextTimelineStore((s) => s.panelSessionId);
 	const anchorRect = useContextTimelineStore((s) => s.anchorRect);
-	const minimized = useContextTimelineStore((s) => s.minimized);
 	const view = useContextTimelineStore((s) => s.view);
 	const setView = useContextTimelineStore((s) => s.setView);
 	const points = useContextTimelineStore(selectPoints(panelSessionId));
 	const buffer = useContextTimelineStore((s) =>
 		panelSessionId ? s.buffers[panelSessionId] : undefined
 	);
-	const minimizePanel = useContextTimelineStore((s) => s.minimizePanel);
 	const closePanel = useContextTimelineStore((s) => s.closePanel);
 	const clearSession = useContextTimelineStore((s) => s.clearSession);
+
+	// Drag-to-resize, remembered per user in settingsStore.modalSizes. `topLeft`
+	// rather than the default `center`: this panel is pinned to the gauge and
+	// grows from one edge, so a centered scale factor would move it twice as fast
+	// as the cursor.
+	const resizable = useResizableModal({
+		resizeKey: PANEL_RESIZE_KEY,
+		defaultSize: { width: PANEL_WIDTH, height: PANEL_HEIGHT },
+		minSize: { width: PANEL_MIN_WIDTH, height: PANEL_MIN_HEIGHT },
+		anchor: 'topLeft',
+	});
 
 	// Reclamp the anchored position on viewport resize so an open panel never ends
 	// up partly offscreen after the Electron window changes size (anchoredStyle
@@ -175,27 +205,34 @@ export function ContextTimelinePanel({ theme }: ContextTimelinePanelProps) {
 		[points]
 	);
 
-	// This is a PASSIVE inspector that does NOT register a layer, so it is closed
-	// with its own X / minimize buttons rather than Escape. Historically it had no
-	// choice: any registered layer tripped hasOpenLayers()/hasOpenModal() and
-	// suppressed global shortcuts + file-tree keys while the panel was open.
-	// `blocksAppShortcuts: false` (see ThoughtStreamPanel) now covers exactly this
-	// case, so registering here would buy Escape-to-close without the keyboard
-	// cost - worth doing next time this file is touched. It does read the shared
-	// stack to hide itself while a real modal is open, so its high z-index can't
-	// float above lower-z dialogs (Create PR, expanded Auto Run) that own the
-	// foreground.
+	// This is a PASSIVE inspector that does NOT register a layer: any registered
+	// layer trips hasOpenLayers()/hasOpenModal() and suppresses global shortcuts +
+	// file-tree keys while the panel is open. It does READ the shared stack to
+	// hide itself while a real modal is open, so its high z-index can't float
+	// above lower-z dialogs (Create PR, expanded Auto Run) that own the foreground.
 	const { hasOpenModal } = useLayerStack();
+
+	// The context gauge is now the only open/close control, so Escape is the
+	// keyboard's way out. Handled locally rather than through the layer stack for
+	// the reason above, and gated on the panel actually being on screen: while a
+	// modal is open this component renders nothing, and swallowing that modal's
+	// Escape from behind it would be indistinguishable from the modal hanging.
+	useEventListener('keydown', (event: Event) => {
+		const e = event as KeyboardEvent;
+		if (e.key !== 'Escape') return;
+		if (!panelSessionId || hasOpenModal()) return;
+		e.stopPropagation();
+		closePanel();
+	});
 
 	// Auto-tail: when pinned to the top, follow new turns (newest is at the top).
 	useEffect(() => {
-		if (minimized) return;
 		if (!stickToTopRef.current) return;
 		const el = scrollRef.current;
 		if (el) el.scrollTop = 0;
-	}, [ordered, minimized]);
+	}, [ordered]);
 
-	if (!panelSessionId || minimized) return null;
+	if (!panelSessionId) return null;
 	if (hasOpenModal()) return null;
 
 	const label = sessionName || panelSessionId.slice(0, 8);
@@ -210,13 +247,22 @@ export function ContextTimelinePanel({ theme }: ContextTimelinePanelProps) {
 
 	return (
 		<div
+			ref={resizable.modalRef}
 			className="fixed z-[9997] flex flex-col rounded-lg border shadow-2xl select-none"
 			style={{
-				...(liveAnchor ? anchoredStyle(liveAnchor) : FALLBACK_STYLE),
+				...(liveAnchor ? anchoredStyle(liveAnchor, resizable.size) : fallbackStyle(resizable.size)),
 				backgroundColor: theme.colors.bgSidebar,
 				borderColor: theme.colors.border,
 			}}
+			data-modal-resize-key={PANEL_RESIZE_KEY}
 		>
+			<ResizeHandles
+				onResizeStart={resizable.onResizeStart}
+				accentColor={theme.colors.accent}
+				onResetSize={resizable.onResetSize}
+				canReset={resizable.canReset}
+			/>
+
 			{/* Header */}
 			<div
 				className="flex items-center gap-2 px-3 py-2.5 border-b shrink-0"
@@ -295,20 +341,6 @@ export function ContextTimelinePanel({ theme }: ContextTimelinePanelProps) {
 					className="p-1 rounded hover:bg-white/10 transition-colors shrink-0"
 				>
 					<Trash2 className="w-4 h-4" style={{ color: theme.colors.textDim }} />
-				</button>
-				<button
-					onClick={minimizePanel}
-					title="Minimize"
-					className="p-1 rounded hover:bg-white/10 transition-colors shrink-0"
-				>
-					<Minus className="w-4 h-4" style={{ color: theme.colors.textDim }} />
-				</button>
-				<button
-					onClick={closePanel}
-					title="Close (keeps history)"
-					className="p-1 rounded hover:bg-white/10 transition-colors shrink-0"
-				>
-					<X className="w-4 h-4" style={{ color: theme.colors.textDim }} />
 				</button>
 			</div>
 

@@ -471,19 +471,19 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 							data-testid="header-context-widget"
 							role="button"
 							tabIndex={0}
-							aria-label="Open context timeline"
+							aria-label="Toggle context timeline"
 							{...contextTooltip.triggerHandlers}
 							onClick={(e) =>
 								useContextTimelineStore
 									.getState()
-									.openPanel(activeSession.id, rectOf(e.currentTarget))
+									.togglePanel(activeSession.id, rectOf(e.currentTarget))
 							}
 							onKeyDown={(e) => {
 								if (e.key === 'Enter' || e.key === ' ') {
 									e.preventDefault();
 									useContextTimelineStore
 										.getState()
-										.openPanel(activeSession.id, rectOf(e.currentTarget));
+										.togglePanel(activeSession.id, rectOf(e.currentTarget));
 								}
 							}}
 						>
