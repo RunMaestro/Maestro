@@ -265,4 +265,32 @@ describe('codifyQueuedTurnSettings', () => {
 			'codex'
 		);
 	});
+
+	it('honors an override the user set while EDITING the queued message', () => {
+		// The queued item was captured on haiku/low, then the user opened the
+		// edit modal and switched it to opus/xhigh. The edit rewrites
+		// turnSettings, so dispatch must spawn on the edited values - not the
+		// original capture, and not the tab's live selection either.
+		const edited = { turnSettings: { model: 'opus', effort: 'xhigh' } };
+		const tab = makeTab({ customModel: 'sonnet', customEffort: 'medium' });
+
+		expect(codifyQueuedTurnSettings(edited, tab, makeSession('claude-code'))).toEqual({
+			turnProvider: 'claude-code',
+			turnModel: 'opus',
+			turnEffort: 'xhigh',
+		});
+	});
+
+	it('sends an edited-back-to-default message on the agent default', () => {
+		// Clearing a picker in the edit modal drops the field. That must mean
+		// "use the agent default", not "fall back to the tab's current model".
+		const cleared = { turnSettings: { effort: 'xhigh' } };
+		const tab = makeTab({ customModel: 'sonnet', customEffort: 'medium' });
+
+		expect(codifyQueuedTurnSettings(cleared, tab, makeSession('claude-code'))).toEqual({
+			turnProvider: 'claude-code',
+			turnModel: undefined,
+			turnEffort: 'xhigh',
+		});
+	});
 });

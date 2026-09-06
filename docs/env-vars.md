@@ -207,6 +207,26 @@ Result: WORKSPACE_PATH=/Users/john/my-workspace (expanded)
          (Same behavior on Windows with home directory)
 ```
 
+**Example 5: A Blank Value Unsets the Variable**
+
+```env
+Global:  CLAUDE_CONFIG_DIR=/global/config
+Session: CLAUDE_CONFIG_DIR=      (left blank)
+
+Result: CLAUDE_CONFIG_DIR is not set at all
+```
+
+Leaving a value blank means **"do not set this variable"**, not "set it to an
+empty string". The blank still wins over the layer below it, and it also removes
+any value inherited from the process environment, so the agent falls back to its
+own default exactly as if you had never added the variable.
+
+This matters because a set-but-empty variable is worse than an absent one: an
+agent that reads the value as a path gets `''` rather than its default, which is
+how a blank `CLAUDE_CONFIG_DIR` used to kill Claude Code before it made a single
+API call. To keep a genuinely empty string, you cannot - use the eye button to
+park the variable instead, or delete the row.
+
 ### Inspecting the Effective Environment
 
 Because each layer is edited in a different pane, no single settings screen shows
@@ -221,8 +241,9 @@ per variable, badged with the layer whose value won:
 It is collapsed by default so the login stays the focus. Values whose names look
 like credentials (`*_KEY`, `*_TOKEN`, `*_SECRET`, and similar) are masked until
 you click the eye on that row, since this panel tends to be opened while
-screen-sharing for help. A variable set to an empty string is shown as `(empty)`
-rather than omitted - `FOO=` is a real override of a lower layer.
+screen-sharing for help. A variable left blank is shown as `(empty)` rather than
+omitted, because the blank row is what cancels the layer below it. The agent is
+not given an empty `FOO`; it is given no `FOO` at all (see Example 5 above).
 
 This is the fastest way to catch the case where a login succeeds but the agent
 still fails: an `ANTHROPIC_BASE_URL` or API-key override from a layer you forgot
@@ -270,8 +291,16 @@ export function buildChildProcessEnv(
 1. Starts with full parent process environment
 2. Strips problematic variables (see Variable Stripping section below)
 3. Sets PATH to expanded path (includes Node managers)
-4. Applies global shell env vars from Settings
-5. Applies session-level custom env vars (highest priority)
+4. Merges the two user-editable layers - global shell env vars from Settings,
+   then session-level custom env vars on top
+5. Applies the merged result, deleting any key whose value is blank
+
+Steps 4 and 5 are deliberately separate. Blanks are stripped **after** the merge,
+never before: a blank at the session layer has to be able to cancel a value set
+globally, and a blank has to `delete` the key rather than skip it, since the
+child inherited the parent's copy in step 1. `isBlankEnvValue()` and
+`stripBlankEnvVars()` in `src/shared/agentEnvironment.ts` own that rule for every
+spawn path, including the SSH one.
 
 **Variable Stripping**: Removes Electron/IDE-specific variables that interfere with agent authentication
 
@@ -373,13 +402,19 @@ electron-store
 
 ## Breaking Changes
 
-**None**. This is fully backward compatible:
+The global/session merge itself is fully backward compatible:
 
 - Existing code without global env vars continues to work
 - New `globalShellEnvVars` parameter is optional in `buildChildProcessEnv()`
 - Default value is `undefined`, which skips the merging step
 - Session-level overrides still work as before
 - Terminal behavior unchanged (already had global support)
+
+**One behavior change: blank values are no longer exported.** A variable
+configured with an empty value used to reach the agent as `FOO=`. It is now
+unset instead, and also removes any inherited value (see Example 5 under
+Precedence Rules). Anyone who was relying on a set-but-empty variable has to set
+a real value; there is no longer a way to export one from the env editor.
 
 ---
 

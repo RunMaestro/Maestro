@@ -1,6 +1,14 @@
 import type React from 'react';
 import type { ForceSendEligibility } from '../../utils/executionQueue';
-import type { Session, Theme, LogEntry, FocusArea, AgentError, QueuedItem } from '../../types';
+import type {
+	Session,
+	Theme,
+	LogEntry,
+	FocusArea,
+	AgentError,
+	QueuedItem,
+	QueuedItemEditPatch,
+} from '../../types';
 import type { FileNode } from '../../types/fileTree';
 import type Convert from 'ansi-to-html';
 
@@ -128,7 +136,7 @@ export interface TerminalOutputProps {
 	onDeleteLog?: (logId: string) => number | null; // Returns the index to scroll to after deletion
 	onRemoveQueuedItem?: (itemId: string) => void; // Callback to remove a queued item from execution queue
 	onTogglePauseQueuedItem?: (itemId: string) => void; // Callback to toggle held/paused state of a queued item
-	onEditQueuedItem?: (itemId: string, patch: { text: string; images: string[] }) => void; // Edit a queued message's text + images
+	onEditQueuedItem?: (itemId: string, patch: QueuedItemEditPatch) => void; // Edit a queued message's text, images and turn settings
 	onReorderQueuedItem?: (fromIndex: number, toIndex: number, tabId?: string) => void; // Reorder a queued item within the active tab's queue
 	onForceSendQueuedItem?: (itemId: string) => void; // Callback to Force Send a queued item (parallel execution)
 	forcedParallelEnabled?: boolean; // Whether forcedParallelExecution setting is on (gates Force Send button)

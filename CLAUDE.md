@@ -205,6 +205,10 @@ Grep-verified 2026-09-04 (`npm run docs:verify` re-checks every path). This is t
 - **A keyboard-only hint (chord badge, keycap, arrow-key legend):** put `data-shortcut-hint` on it. One rule in the "Phone layout" block of `src/renderer/index.css` hides every element carrying it on a phone, where there is no keyboard to press and where those badges were the first things to push a close button off a 390px screen. `<ShortcutHint>` sets it already; the hamburger badges, the palette row chords, the Settings search keycap, and the `↑↓ navigate` footers all carry it. Do NOT gate a hint on `usePhoneLayout()` in JSX - a hint that forgets the attribute is the only way this drifts.
 - **A modal that fills a phone:** nothing to write. Every modal that passes a `resizeKey` stamps `data-modal-resize-key`, and the phone stylesheet makes those full-screen, hides their `[data-resize-handle]` grips, and zeroes the overlay padding. A small dialog (confirm, rename) passes no key and stays a dialog. Do NOT add a per-modal phone branch for sizing; the phone branches in `TabSwitcherModal` and `CrossTabSearchModal` predate the rule and also drop content, which is why they remain.
 - **Swipe down to close a modal on a phone:** `useLayerSwipeDismiss()` in `src/renderer/hooks/ui/useLayerSwipeDismiss.ts`, mounted once in `LayerStackProvider`. It rides `closeTopLayer()`, the same path Escape takes, so dirty-state confirmation and nesting behave identically. Deliberately conservative: web-desktop with a coarse pointer only, only while a layer is open, the gesture must start in the top quarter of the viewport, not from a form control, not inside a region that is already scrolled down, and travel at least 80px mostly vertically within half a second. A surface that pans on drag (a canvas, a graph) opts out with `data-no-swipe-dismiss` on its root. Do NOT add per-modal swipe handlers.
+- **Whether a configured env value means "unset":** `isBlankEnvValue()`, `stripBlankEnvVars()` in `src/shared/agentEnvironment.ts`
+- **Reaching the open file preview from a modal:** `requestHeadingPalette()`, `HEADING_PALETTE_EVENT` in `src/renderer/services/headingPalette.ts`
+- **Sizing a virtualized row the user's font decides:** `virtualizer.measureElement` + `data-index` and NO inline `height`; `HistoryPanel`, `FileSearchModal`
+- **Diagram content clipped at the SVG edge:** `expandSvgViewBoxToContent(svg, padding?)` in `src/renderer/utils/svgViewBox.ts`
 
 If your use case does NOT match an existing utility, prefer extending the canonical file over creating a new one. If you genuinely need something new, add the full entry to [CANONICAL-UTILITIES.md](docs/agent-guides/CANONICAL-UTILITIES.md) and a one-line index entry above so the next person can find it.
 
@@ -551,9 +555,15 @@ if (sshStore && session.sshRemoteConfig?.enabled) {
 - Agent's `binaryName` is used for remote execution (not local paths)
 - When the user enabled SSH but the configured remote can't be resolved, **fail
   loudly** instead of silently running locally - the user explicitly opted into
-  SSH and their prompt shouldn't leak to the local machine (see
+  SSH and their prompt shouldn't leak to the local machine. `wrapSpawnWithSsh()`
+  does NOT throw in that case: it hands back the unmodified local config with
+  `sshRemoteUsed: null`, which still carries the REMOTE's `cwd`, so taking it
+  runs the agent on the user's machine against a path that is either missing or
+  (worse) the wrong files. Every caller must check `sshRemoteUsed` and throw
+  `sshUnresolvedRemoteMessage(sshConfig)` from `ssh-spawn-wrapper.ts`. See
+  `groomContext()` and `spawnGroupChatAgent()` for the pattern, and
   `sshUnresolvedFailure()` in `src/cli/services/agent-spawner.ts` for the CLI's
-  version of this).
+  version of this.
 
 **CLI parity:** The CLI (`src/cli/services/agent-spawner.ts`) spawns agent
 processes for batch/playbook automation and honors the same SSH wrapping and

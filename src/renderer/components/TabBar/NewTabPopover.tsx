@@ -124,8 +124,11 @@ export const NewTabPopover = memo(function NewTabPopover({
 
 	return (
 		<>
+			{/* Opaque so tabs scroll under it, so it carries the tab bar's sheen and
+			    reaches the bar's top edge (-mt-2 cancels the container's pt-2, pt-2
+			    keeps the button on the same baseline). */}
 			<div
-				className={`flex items-center shrink-0 pl-2 pr-2 self-stretch ${isOverflowing ? 'sticky right-0' : ''}`}
+				className={`chrome-sheen flex items-center shrink-0 -mt-2 pt-2 pl-2 pr-2 self-stretch ${isOverflowing ? 'sticky right-0' : ''}`}
 				style={{ backgroundColor: theme.colors.bgSidebar, zIndex: 5 }}
 			>
 				<button

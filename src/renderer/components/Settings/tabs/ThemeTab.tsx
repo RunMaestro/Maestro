@@ -57,9 +57,12 @@ export function ThemeTab({
 	// undefined is a state that really occurs rather than a theoretical one.
 	const glossLevel = asGlossLevel(themeGloss);
 
-	// Auto-focus theme picker on mount
+	// Auto-focus theme picker on mount so Tab cycles themes immediately.
+	// `preventScroll` is required: this container is taller than the scroll port
+	// (three theme groups plus the custom builder), so a focus scroll lands the
+	// panel somewhere in its middle, past the theme grid the user came to see.
 	useEffect(() => {
-		const timer = setTimeout(() => themePickerRef.current?.focus(), 50);
+		const timer = setTimeout(() => themePickerRef.current?.focus({ preventScroll: true }), 50);
 		return () => clearTimeout(timer);
 	}, []);
 

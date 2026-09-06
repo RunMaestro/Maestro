@@ -367,10 +367,11 @@ Shared history files respect the **Maximum Log Buffer** setting (Settings → Di
 
 ### Agent Errors
 
-| Error                    | Solution                                 |
-| ------------------------ | ---------------------------------------- |
-| "Command not found"      | Install the AI agent on the remote host  |
-| "Agent binary not found" | Ensure the agent is in the remote's PATH |
+| Error                                         | Solution                                                                                                                                                                                             |
+| --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| "Command not found"                           | Install the AI agent on the remote host                                                                                                                                                              |
+| "Agent binary not found"                      | Ensure the agent is in the remote's PATH                                                                                                                                                             |
+| "the configured remote could not be resolved" | The agent has SSH switched on but points at a remote that no longer exists or is disabled. Re-pick the remote in Edit Agent. Maestro stops rather than quietly running the turn on your own machine. |
 
 ### Tips
 

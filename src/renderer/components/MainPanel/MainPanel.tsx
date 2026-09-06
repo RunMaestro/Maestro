@@ -391,8 +391,9 @@ export const MainPanel = React.memo(
 		// Get agent capabilities for conditional feature rendering
 		const { hasCapability } = useAgentCapabilities(activeSession?.toolType);
 
-		// Model/Effort pills: available options and agent-level defaults. Shared with
-		// the keyboard-only Model & Effort modal so both show the same truth.
+		// Model/Effort pills: available options, current values, and agent-level
+		// defaults. Shared with the keyboard-only Model & Effort modal and with the
+		// queued-message edit modal, so all three show the same truth.
 		const {
 			models: pillModels,
 			efforts: pillEfforts,

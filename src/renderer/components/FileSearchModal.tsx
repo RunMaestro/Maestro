@@ -114,7 +114,11 @@ type AbsPathState =
 	| { status: 'folder' }
 	| { status: 'missing' };
 
-const ROW_HEIGHT = 44; // Height of each file row in pixels
+// Starting guess only. Rows measure themselves (see `measureElement` below), so
+// a proportional UI font - whose two stacked lines need more than 44px - gets
+// the room it needs instead of being crammed, and a fixed-pitch font keeps its
+// tighter box instead of being padded out to match.
+const ROW_HEIGHT = 44;
 
 /**
  * Fuzzy File Search Modal - Quick navigation to any file in the file tree.
@@ -266,6 +270,7 @@ export function FileSearchModal({
 		estimateSize: () => ROW_HEIGHT,
 		overscan: 10,
 	});
+	const measureRow = virtualizer.measureElement;
 
 	// Tab walks the pills forward, Shift+Tab back, both wrapping. Keeps the
 	// caret in the search box, so the filter is reachable without a mouse.
@@ -541,10 +546,11 @@ export function FileSearchModal({
 								return (
 									<button
 										key={file.fullPath}
+										data-index={virtualRow.index}
+										ref={measureRow}
 										onClick={() => handleItemSelect(file)}
-										className="absolute top-0 left-0 w-full text-left px-4 py-2 flex items-center gap-3 row-hover"
+										className="absolute top-0 left-0 w-full text-left px-4 py-2.5 flex items-center gap-3 row-hover"
 										style={{
-											height: `${virtualRow.size}px`,
 											transform: `translateY(${virtualRow.start}px)`,
 											backgroundColor: isSelected ? theme.colors.accent : 'transparent',
 											color: isSelected ? theme.colors.accentForeground : theme.colors.textMain,
@@ -581,7 +587,7 @@ export function FileSearchModal({
 										})()}
 
 										{/* File Info */}
-										<div className="flex flex-col flex-1 min-w-0">
+										<div className="flex flex-col flex-1 min-w-0 gap-0.5">
 											<span className="font-medium truncate">{file.name}</span>
 											{directory && (
 												<span

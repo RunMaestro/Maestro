@@ -397,6 +397,21 @@ export interface QueuedTurnSettings {
 	effort?: string;
 }
 
+/**
+ * What an edit to a queued message writes back.
+ *
+ * `turnSettings` is always present and is assigned wholesale rather than
+ * merged: clearing a picker back to "Default" must drop the stored field, and
+ * an absent field inside a present `turnSettings` means "the agent's default
+ * applies" - a different thing from the whole object being missing, which marks
+ * an item queued by a build that predates the capture.
+ */
+export interface QueuedItemEditPatch {
+	text: string;
+	images: string[];
+	turnSettings: QueuedTurnSettings;
+}
+
 export interface QueuedItem {
 	id: string; // Unique item ID
 	timestamp: number; // When it was queued (for ordering)

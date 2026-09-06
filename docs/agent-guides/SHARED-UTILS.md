@@ -739,9 +739,10 @@ Renderer performance integration in `src/renderer/utils/logger.ts`:
 
 ### SSH Spawn Wrapper (`src/main/utils/ssh-spawn-wrapper.ts`)
 
-| Function                                        | Signature                                                                                            | Purpose                                                                                                                                     |
-| ----------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `wrapSpawnWithSsh(config, sshConfig, sshStore)` | `(SshSpawnWrapConfig, AgentSshRemoteConfig?, SshRemoteSettingsStore) => Promise<SshSpawnWrapResult>` | Wrap spawn config with SSH remote execution. Handles prompt embedding (small in CLI, large via stdin). Returns local or SSH-wrapped config. |
+| Function                                        | Signature                                                                                            | Purpose                                                                                                                                                                                      |
+| ----------------------------------------------- | ---------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `wrapSpawnWithSsh(config, sshConfig, sshStore)` | `(SshSpawnWrapConfig, AgentSshRemoteConfig?, SshRemoteSettingsStore) => Promise<SshSpawnWrapResult>` | Wrap spawn config with SSH remote execution. Handles prompt embedding (small in CLI, large via stdin). Returns local or SSH-wrapped config.                                                  |
+| `sshUnresolvedRemoteMessage(sshConfig)`         | `(AgentSshRemoteConfig) => string`                                                                   | The error every caller throws when SSH was enabled but the wrapper handed back `sshRemoteUsed: null` (it degrades to a LOCAL spawn carrying the remote's cwd, so taking it is always wrong). |
 
 ---
 

@@ -22,6 +22,8 @@ import {
 	resolveQueuedItemTarget,
 	toggleReadOnlyModeFields,
 } from '../../utils/tabHelpers';
+import { applyQueuedItemRelease } from '../../utils/executionQueue';
+import { logger } from '../../utils/logger';
 import type { Session } from '../../types';
 import { useSessionStore, selectActiveSession, updateAiTab } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -214,9 +216,24 @@ export function useQuickActionsHandlers(
 				return { ...s, executionQueue: remainingQueue, aiTabs: updatedAiTabs };
 			})
 		);
-		// Process the item
-		processQueuedItem(activeSessionId, nextItem);
-	}, [processQueuedItem]);
+		// Process the item. `processQueuedItem` rejects on a dispatch failure (see
+		// agentStore), so the rejection needs an owner - unhandled, it would surface
+		// as a crash report rather than a logged failure. The item was already
+		// removed from the queue above, so put it back and release the tab.
+		processQueuedItem(activeSessionId, nextItem).catch((err) => {
+			logger.error('[QuickActions] Dispatch failed, re-queueing item', undefined, err);
+			setSessions((prev) =>
+				prev.map((s) =>
+					s.id === activeSessionId
+						? {
+								...applyQueuedItemRelease(s, nextItem.tabId),
+								executionQueue: [nextItem, ...s.executionQueue],
+							}
+						: s
+				)
+			);
+		});
+	}, [processQueuedItem, setSessions]);
 
 	const handleQuickActionsToggleMarkdownEditMode = useCallback(() => {
 		// Toggle the appropriate mode based on context:

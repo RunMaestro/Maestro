@@ -47,6 +47,7 @@ import type {
 	QueuedItem,
 	UnifiedTabRef,
 	PaneRects,
+	QueuedItemEditPatch,
 } from '../../types';
 import type { SlashCommand } from './types';
 import type { TabCompletionSuggestion, TabCompletionFilter } from '../../hooks';
@@ -196,7 +197,7 @@ export interface MainPanelContentProps {
 	onStopBatchRun?: (sessionId?: string) => void;
 	onRemoveQueuedItem?: (itemId: string) => void;
 	onTogglePauseQueuedItem?: (itemId: string) => void;
-	onEditQueuedItem?: (itemId: string, patch: { text: string; images: string[] }) => void;
+	onEditQueuedItem?: (itemId: string, patch: QueuedItemEditPatch) => void;
 	onReorderQueuedItem?: (fromIndex: number, toIndex: number, tabId?: string) => void;
 	onForceSendQueuedItem?: (itemId: string) => void;
 	forcedParallelEnabled?: boolean;

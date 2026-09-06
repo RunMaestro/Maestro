@@ -4,6 +4,7 @@ import DOMPurify from 'dompurify';
 import type { Theme } from '../types';
 import { logger } from '../utils/logger';
 import { normalizeMermaidSource } from '../../shared/mermaidSource';
+import { expandSvgViewBoxToContent } from '../utils/svgViewBox';
 import {
 	adjustBrightness,
 	blendColors,
@@ -481,9 +482,15 @@ export function MermaidRenderer({ chart, theme }: MermaidRendererProps) {
 				containerRef.current.removeChild(containerRef.current.firstChild);
 			}
 
-			// Append new SVG
+			// Append new SVG, then rescue any content painted outside the viewBox
+			// mermaid declared (quadrantChart hard-codes 500x500 and lets long
+			// titles and point labels spill past it, where the browser clips
+			// them). Must happen after the append: getBBox needs a layout.
 			if (svgElement) {
-				containerRef.current.appendChild(document.importNode(svgElement, true));
+				const appended = containerRef.current.appendChild(
+					document.importNode(svgElement, true)
+				) as SVGSVGElement;
+				expandSvgViewBoxToContent(appended);
 			}
 		}
 	}, [svgContent, isLoading]);

@@ -184,10 +184,16 @@ import { PluginModalPanelMount } from './components/plugins/PluginModalPanelMoun
 
 // Import types and constants
 // Note: GroupChat, GroupChatState are imported from types (re-exported from shared)
-import type { RightPanelTab, Session, QueuedItem, CustomAICommand } from './types';
+import type {
+	RightPanelTab,
+	Session,
+	QueuedItem,
+	CustomAICommand,
+	QueuedItemEditPatch,
+} from './types';
 import { useResolvedTheme } from './hooks/ui/useResolvedTheme';
 import { getActiveOutputSearchKey } from './utils/outputSearch';
-import { reorderQueueItem } from './utils/executionQueue';
+import { reorderQueueItem, applyQueuedItemEdit } from './utils/executionQueue';
 import { getContextColor } from './utils/theme';
 // safeClipboardWrite moved to AppStandaloneModals (GistPublishModal handler)
 // Tiling-aware Cmd+Shift+T: restores a pane back into its tiled group when the
@@ -1749,17 +1755,12 @@ function MaestroConsoleInner() {
 	}, []);
 
 	// Edit a queued message's prompt text and attached images in place.
-	const handleEditQueuedItem = useCallback(
-		(itemId: string, patch: { text: string; images: string[] }) => {
-			updateSessionWith(activeSessionIdRef.current, (s) => ({
-				...s,
-				executionQueue: s.executionQueue.map((item) =>
-					item.id === itemId ? { ...item, text: patch.text, images: patch.images } : item
-				),
-			}));
-		},
-		[]
-	);
+	const handleEditQueuedItem = useCallback((itemId: string, patch: QueuedItemEditPatch) => {
+		updateSessionWith(activeSessionIdRef.current, (s) => ({
+			...s,
+			executionQueue: applyQueuedItemEdit(s.executionQueue, itemId, patch),
+		}));
+	}, []);
 
 	// Reorder a queued item within the active session's inline chat list. The
 	// inline list is filtered to a single tab, so fromIndex/toIndex address that
