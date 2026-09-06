@@ -326,3 +326,19 @@ describe('GroupChatMessages auto-scroll setting', () => {
 		expect(scroll.scrollTop).toBe(0);
 	});
 });
+
+describe('GroupChatMessages empty state', () => {
+	beforeEach(() => {
+		useSettingsStore.setState({ groupChatAutoScroll: true });
+	});
+
+	it('explains the moderator without labelling Group Chat as Beta', () => {
+		// Group Chat is no longer Beta, and the empty state was the last surface
+		// still carrying the badge. The explanatory copy has to stay: it is the
+		// only place a new chat says messages go to the moderator first.
+		const { getByText, queryByText } = renderChat([]);
+
+		expect(getByText(/messages you send go directly to the/i)).toBeTruthy();
+		expect(queryByText(/^Beta$/)).toBeNull();
+	});
+});

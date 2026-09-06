@@ -13,10 +13,12 @@ import { showAgent } from './commands/show-agent';
 import { cleanPlaybooks } from './commands/clean-playbooks';
 import { send } from './commands/send';
 import { dispatch } from './commands/dispatch';
+import { ask } from './commands/ask';
 import { queueList, queueRemove } from './commands/queue';
 import { sessionList, sessionShow } from './commands/session';
 import { listSessions } from './commands/list-sessions';
 import { openFile } from './commands/open-file';
+import { imageList, imageSave } from './commands/image';
 import { openGraph } from './commands/open-graph';
 import { openBrowser, closeBrowser } from './commands/open-browser';
 import { openModal } from './commands/open-modal';
@@ -52,6 +54,7 @@ import { sendTerminal } from './commands/send-terminal';
 import { readTerminal, DEFAULT_TAIL_LINES } from './commands/read-terminal';
 import { createSshRemote } from './commands/create-ssh-remote';
 import { removeSshRemote } from './commands/remove-ssh-remote';
+import { updateSshRemote } from './commands/update-ssh-remote';
 import { directorNotesHistory } from './commands/director-notes-history';
 import { directorNotesSynopsis } from './commands/director-notes-synopsis';
 import { settingsList } from './commands/settings-list';
@@ -412,7 +415,10 @@ program
 		'Dispatch a prompt to an agent in the Maestro desktop app and return its tab/session ID'
 	)
 	.option('--new-tab', 'Create a fresh AI tab and dispatch the prompt into it')
-	.option('--background', 'Leave the new tab in the background (default; with --new-tab)')
+	.option(
+		'--background',
+		'Leave the view where it is (default with --new-tab; suppresses the agent switch otherwise)'
+	)
 	.option(
 		'-t, --tab <id>',
 		'Target an existing tab by its tab id (mutually exclusive with --new-tab)'
@@ -447,6 +453,28 @@ program
 		'Give up and fire a timeout callback after this long (default 3600, max 86400)'
 	)
 	.action(dispatch);
+
+// Ask command - the agent-to-agent question. `dispatch` hands WORK to an agent
+// and lands in a real tab; `ask` asks a QUESTION and rides the cross-agent
+// consult path (hidden tab on the target, fresh context, no focus, no unread),
+// returning the answer here instead of interrupting whatever conversation the
+// human has open with that agent.
+program
+	.command('ask <agent-id> <question>')
+	.description(
+		"Ask another agent a question and print its answer (background consult - never touches the target's open conversation)"
+	)
+	.option(
+		'--from <agent-id>',
+		'Your own agent id. Names the consult on the target, keeps continuity across repeat asks, forwards your working directory so it can read your project, and lets Stop cancel the consult'
+	)
+	.option(
+		'--with-context',
+		'Forward your current transcript as context. Off by default: ask sends a self-contained question in a fresh context'
+	)
+	.option('--timeout <seconds>', 'How long to wait for the answer (default 600, min 10, max 3600)')
+	.option('--json', 'Output the answer as JSON')
+	.action(ask);
 
 // Queue commands - inspect and manage the desktop execution queue populated by
 // `dispatch --queue`. Read-only `list` plus a `remove` verb for scriptable
@@ -495,10 +523,17 @@ session
 	.option('--json', 'Output as JSON (for scripting); default is a formatted transcript')
 	.action(sessionShow);
 
-// Open file command - open a file in the Maestro desktop app
+// Open file command - open a file in the Maestro desktop app.
+//
+// Also the verb that PLAYS media: the renderer's open path recognizes a
+// playable local audio or video file and hands it to the floating player
+// instead of making a tab, so there is no separate `play` command and nothing
+// should be shelling out to the OS player.
 program
 	.command('open-file <file-path>')
-	.description('Open a file as a preview tab in the Maestro desktop app')
+	.description(
+		'Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead)'
+	)
 	.option('-a, --agent <id>', "Target agent (defaults to auto-detect by file path's owning agent)")
 	.option(
 		'--background',
@@ -545,6 +580,38 @@ program
 	.option('--list', 'List every openable surface, its tabs, and its shortcut')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(openModal);
+
+// Image commands - reach the screenshots a user pasted into the chat.
+//
+// The agent can see a pasted image but has no path to it, so saving one used to
+// be a right-click only the human could perform. `image list` names them and
+// `image save` writes the bytes to disk.
+const image = program
+	.command('image')
+	.description('List and save images pasted into a Maestro chat');
+
+image
+	.command('list')
+	.description("List images pasted into an agent's conversation, newest first")
+	.option('-a, --agent <id>', 'Only this agent (defaults to every agent)')
+	.option('-t, --tab <tab-id>', 'Only this AI tab')
+	.option('--limit <n>', 'Maximum images to show (default: 20)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(imageList);
+
+image
+	.command('save [target]')
+	.description('Save a pasted image to disk (target: index, handle, or "latest")')
+	.option('-a, --agent <id>', 'Only this agent (defaults to every agent)')
+	.option('-t, --tab <tab-id>', 'Only this AI tab')
+	.option(
+		'-o, --output <path>',
+		'File or directory to write (default: a generated name in the cwd)'
+	)
+	.option('--all', 'Save every image in scope instead of just the newest')
+	.option('--force', 'Overwrite an existing file named by --output')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(imageSave);
 
 // Close browser command - close a browser tab opened via open-browser
 program
@@ -600,8 +667,12 @@ program
 // Refresh files command - refresh the file tree in the Maestro desktop app
 program
 	.command('refresh-files')
-	.description('Refresh the file tree in the Maestro desktop app')
+	.description('Refresh the file tree in the Maestro desktop app (never moves the view)')
 	.option('-a, --agent <id>', 'Target agent by ID (defaults to active)')
+	.option(
+		'--background',
+		'Accepted and ignored: this refresh never moves the view or shows a notice'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(refreshFiles);
 
@@ -610,6 +681,8 @@ program
 	.command('refresh-auto-run')
 	.description('Refresh Auto Run documents in the Maestro desktop app')
 	.option('-a, --agent <id>', 'Target agent by ID (defaults to active)')
+	.option('--background', 'Refresh without switching to the target agent')
+	.option('--focus', 'Switch to the target agent while refreshing (default)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(refreshAutoRun);
 
@@ -1180,11 +1253,70 @@ program
 		(val: string, prev: string[]) => [...prev, val],
 		[] as string[]
 	)
+	.option(
+		'--ssh-option <KEY=VALUE>',
+		'Extra ssh -o option, e.g. ProxyCommand=... or ConnectTimeout=45 (repeatable)',
+		(val: string, prev: string[]) => [...prev, val],
+		[] as string[]
+	)
 	.option('--ssh-config', 'Use ~/.ssh/config for connection settings (host becomes Host pattern)')
 	.option('--disabled', 'Create in disabled state')
 	.option('--set-default', 'Set as the global default SSH remote')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(createSshRemote);
+
+// Update SSH remote command - edit an existing SSH remote configuration
+program
+	.command('update-ssh-remote <remote-id>')
+	.description('Update an existing SSH remote configuration')
+	.option('-n, --name <name>', 'Display name')
+	.option('-H, --host <host>', 'SSH hostname, IP, or SSH config Host pattern')
+	.option('-p, --port <port>', 'SSH port')
+	.option('-u, --username <user>', 'SSH username (empty string clears it)')
+	.option('-k, --key <path>', 'Path to private key file (empty string clears it)')
+	.option(
+		'--env <KEY=VALUE>',
+		'Remote environment variable, merged with existing (repeatable)',
+		(val: string, prev: string[]) => [...prev, val],
+		[] as string[]
+	)
+	.option('--clear-env', 'Remove all remote environment variables before applying --env')
+	.option(
+		'--disable-env <KEY>',
+		'Switch an env var off, keeping its value (repeatable)',
+		(val: string, prev: string[]) => [...prev, val],
+		[] as string[]
+	)
+	.option(
+		'--enable-env <KEY>',
+		'Switch a previously disabled env var back on (repeatable)',
+		(val: string, prev: string[]) => [...prev, val],
+		[] as string[]
+	)
+	.option(
+		'--ssh-option <KEY=VALUE>',
+		'Extra ssh -o option, merged with existing (repeatable)',
+		(val: string, prev: string[]) => [...prev, val],
+		[] as string[]
+	)
+	.option('--clear-ssh-options', 'Remove all extra ssh -o options before applying --ssh-option')
+	.option(
+		'--disable-ssh-option <KEY>',
+		'Switch an ssh -o option off, keeping its value (repeatable)',
+		(val: string, prev: string[]) => [...prev, val],
+		[] as string[]
+	)
+	.option(
+		'--enable-ssh-option <KEY>',
+		'Switch a previously disabled ssh -o option back on (repeatable)',
+		(val: string, prev: string[]) => [...prev, val],
+		[] as string[]
+	)
+	.option('--ssh-config <bool>', 'Use ~/.ssh/config for connection settings (true/false)')
+	.option('--enabled <bool>', 'Enable or disable this remote (true/false)')
+	.option('--set-default', 'Set as the global default SSH remote')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(updateSshRemote);
 
 // Remove SSH remote command - delete an SSH remote configuration
 program

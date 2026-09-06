@@ -23,6 +23,8 @@ import { useFileExplorerStore } from '../../stores/fileExplorerStore';
 import { shouldOpenExternally, flattenTree, type FlatTreeNode } from '../../utils/fileExplorer';
 import { useLayerStack } from '../../contexts/LayerStackContext';
 import { captureException } from '../../utils/sentry';
+import { resolveFileReference } from '../../utils/fileLinks/resolve';
+import { getBasename } from '../../../shared/formatters';
 
 // ============================================================================
 // Dependencies interface
@@ -70,34 +72,6 @@ export interface UseFileExplorerEffectsReturn {
 		relativePath: string,
 		options?: { openInNewTab?: boolean }
 	) => Promise<void>;
-}
-
-function stripLineColumnSuffix(filePath: string): string {
-	return filePath.replace(/:(\d+)(?::\d+)?$/, '');
-}
-
-function isAbsoluteFilePath(filePath: string): boolean {
-	return (
-		filePath.startsWith('/') || /^[A-Za-z]:[\\/]/.test(filePath) || filePath.startsWith('\\\\')
-	);
-}
-
-function joinFilePath(rootPath: string, relativePath: string): string {
-	const root = rootPath.replace(/[\\/]+$/, '');
-	const child = relativePath.replace(/^[\\/]+/, '');
-	return `${root}/${child}`;
-}
-
-function resolveClickedFilePath(projectRoot: string, fileReference: string): string {
-	const normalizedReference = stripLineColumnSuffix(fileReference.trim());
-	if (isAbsoluteFilePath(normalizedReference)) {
-		return normalizedReference;
-	}
-	return joinFilePath(projectRoot, normalizedReference);
-}
-
-function getFilename(filePath: string): string {
-	return filePath.split(/[\\/]/).pop() || filePath;
 }
 
 // ============================================================================
@@ -169,8 +143,8 @@ export function useFileExplorerEffects(
 		async (relativePath: string, options?: { openInNewTab?: boolean }) => {
 			const currentSession = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
 			if (!currentSession) return;
-			const fullPath = resolveClickedFilePath(currentSession.fullPath, relativePath);
-			const filename = getFilename(fullPath);
+			const fullPath = resolveFileReference(currentSession.fullPath, relativePath);
+			const filename = getBasename(fullPath);
 
 			// Get SSH remote ID
 			const sshRemoteId =

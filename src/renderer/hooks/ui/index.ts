@@ -43,6 +43,9 @@ export { useStickToBottom } from './useStickToBottom';
 // Hover tooltip management
 export { useHoverTooltip } from './useHoverTooltip';
 
+// Fixed-pitch font for surfaces that render shell text
+export { useFixedPitchFont } from './useFixedPitchFont';
+
 // Theme-aware ANSI -> HTML converter for raw terminal output
 export { useAnsiConverter, createAnsiConverter } from './useAnsiConverter';
 
@@ -92,6 +95,9 @@ export {
 export type { UseFontScaleReturn } from './useFontScale';
 export { useScalePreference, clampScale } from './useScalePreference';
 export type { ScaleRange, UseScalePreferenceReturn } from './useScalePreference';
+export { useScaleShortcuts } from './useScaleShortcuts';
+export type { UseScaleShortcutsOptions } from './useScaleShortcuts';
+export { useIsTopLayer } from './useIsTopLayer';
 
 // Persisted view toggle (collapsed banners, folded sections)
 export { usePersistedToggle } from './usePersistedToggle';

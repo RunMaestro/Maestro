@@ -272,6 +272,15 @@ The dashboard automatically refreshes when new queries are recorded. An "Updated
 **Database Size:**
 The footer displays the current size of the stats database, helping you monitor storage usage over time.
 
+**Footer Summary:**
+The middle of the footer states what the tab in front of you is actually
+showing, and it changes with the tab: `24 of 84 agents` once you narrow the
+Agents grid, `126 runs · 12 pipelines · 8 failed` on Cue, `3 accounts · peak
+window 87%` on a plan quota tab. It reflects the filters you set, not just the
+time range, so it is the fastest way to confirm a filter is on when the grid
+looks emptier than you expected. A tab with nothing to say yet (still loading,
+or an empty range) leaves the slot blank rather than showing a row of zeroes.
+
 ## Tips
 
 - **Check the Activity Heatmap** to understand your most productive hours

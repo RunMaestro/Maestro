@@ -367,11 +367,7 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 							)}
 						{/* Document Graph button - show for markdown files when callback is available */}
 						{toolbarVisibility.documentGraph && isMarkdown && onOpenInGraph && (
-							<HoverTooltip
-								theme={theme}
-								label="View in Document Graph"
-								shortcut={formatShortcutKeys(['Meta', 'Shift', 'g'])}
-							>
+							<HoverTooltip theme={theme} label="View in Document Graph">
 								<button
 									onClick={onOpenInGraph}
 									className={headerBtnClass}
@@ -442,7 +438,9 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 					</div>
 				)}
 			</div>
-			{/* File Stats subbar - hidden on scroll when overflow allows (see FilePreview) */}
+			{/* File Stats subbar - hidden on scroll when overflow allows (see FilePreview).
+			    One line that scrolls sideways when it must: on a phone the five stats
+			    used to wrap into three-line columns. */}
 			{((fileStats || lineCount !== null || tokenCount !== null || taskCounts) && showStatsBar) ||
 			canGoBack ||
 			canGoForward ? (
@@ -450,9 +448,12 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 					className="flex items-center justify-between px-6 py-1.5 border-b transition-all duration-200"
 					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgActivity }}
 				>
-					<div className="flex items-center gap-4">
+					<div className="flex items-center gap-4 min-w-0 overflow-x-auto no-scrollbar">
 						{fileStats && (
-							<div className="text-[10px]" style={{ color: theme.colors.textDim }}>
+							<div
+								className="text-2xs whitespace-nowrap shrink-0"
+								style={{ color: theme.colors.textDim }}
+							>
 								<span className="opacity-60">Size:</span>{' '}
 								<span style={{ color: theme.colors.textMain }}>
 									{formatFileSize(fileStats.size)}
@@ -460,26 +461,38 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 							</div>
 						)}
 						{lineCount !== null && (
-							<div className="text-[10px]" style={{ color: theme.colors.textDim }}>
+							<div
+								className="text-2xs whitespace-nowrap shrink-0"
+								style={{ color: theme.colors.textDim }}
+							>
 								<span className="opacity-60">Lines:</span>{' '}
 								<span style={{ color: theme.colors.textMain }}>{formatNumber(lineCount)}</span>
 							</div>
 						)}
 						{tokenCount !== null && (
-							<div className="text-[10px]" style={{ color: theme.colors.textDim }}>
+							<div
+								className="text-2xs whitespace-nowrap shrink-0"
+								style={{ color: theme.colors.textDim }}
+							>
 								<span className="opacity-60">Tokens:</span>{' '}
 								<span style={{ color: theme.colors.accent }}>{formatTokenCount(tokenCount)}</span>
 							</div>
 						)}
 						{fileStats && (
 							<>
-								<div className="text-[10px]" style={{ color: theme.colors.textDim }}>
+								<div
+									className="text-2xs whitespace-nowrap shrink-0"
+									style={{ color: theme.colors.textDim }}
+								>
 									<span className="opacity-60">Modified:</span>{' '}
 									<span style={{ color: theme.colors.textMain }}>
 										{formatDateTime(fileStats.modifiedAt)}
 									</span>
 								</div>
-								<div className="text-[10px]" style={{ color: theme.colors.textDim }}>
+								<div
+									className="text-2xs whitespace-nowrap shrink-0"
+									style={{ color: theme.colors.textDim }}
+								>
 									<span className="opacity-60">Created:</span>{' '}
 									<span style={{ color: theme.colors.textMain }}>
 										{formatDateTime(fileStats.createdAt)}
@@ -488,7 +501,10 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 							</>
 						)}
 						{taskCounts && (
-							<div className="text-[10px]" style={{ color: theme.colors.textDim }}>
+							<div
+								className="text-2xs whitespace-nowrap shrink-0"
+								style={{ color: theme.colors.textDim }}
+							>
 								<span className="opacity-60">Tasks:</span>{' '}
 								<span style={{ color: theme.colors.success }}>{taskCounts.closed}</span>
 								<span style={{ color: theme.colors.textMain }}>

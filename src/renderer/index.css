@@ -256,15 +256,21 @@ textarea::placeholder {
 	}
 }
 
+/* --pulse-color is the LIT colour only. The ring has to fade as it expands, and
+   one custom property cannot hold two alphas, so the later frames say
+   `transparent` outright rather than reading the same var through a
+   zero-alpha fallback that only applied while the var was unset. It was unset
+   app-wide until the theme bridge started publishing it, which is why the two
+   surfaces that set it inline pulsed a ring that never faded. */
 @keyframes highlight-pulse {
 	0% {
 		box-shadow: 0 0 0 0 var(--pulse-color, rgba(99, 102, 241, 0.4));
 	}
 	70% {
-		box-shadow: 0 0 0 6px var(--pulse-color, rgba(99, 102, 241, 0));
+		box-shadow: 0 0 0 6px transparent;
 	}
 	100% {
-		box-shadow: 0 0 0 0 var(--pulse-color, rgba(99, 102, 241, 0));
+		box-shadow: 0 0 0 0 transparent;
 	}
 }
 
@@ -1638,47 +1644,11 @@ html[data-runtime='web-desktop'][data-bp='xs']
 }
 
 /*
- * Edge-swipe opener zones. Thin (24px) invisible strips pinned to the left and
- * right screen edges that host the drawer-opening swipe handlers (App.tsx). They
- * only exist while no drawer is open. `touch-action: pan-y` lets vertical page
- * scrolling that starts in the strip still happen natively while horizontal
- * swipes are handled (and preventDefault'd) by useSwipeGestures. Sitting only at
- * the edges is what keeps center-content horizontal scrolling (terminal, tab
- * bar, tables) free of drawer gestures.
- *
- * They start below the 4rem header (`top: 4rem`) rather than the very top so the
- * strip never overlaps the header hamburger / panel toggle - at xs/sm the header
- * padding shrinks to 0.5rem, so those controls sit inside the outer 24px, and a
- * full-height strip (which paints above the z-20 header) would swallow their
- * taps. Edge swipes start in the body, which is the whole point.
- *
- * The header is not the only row that reaches the screen edge, so treat the
- * strip width as a GESTURE INSET (`--maestro-edge-swipe-width`) that app chrome
- * below the header must stay clear of, the same way a native app keeps its
- * controls out of the OS back-gesture area. Anything that lands inside it is
- * simply dead: the strip paints above the main panel's `isolate` stacking
- * context, so a control underneath cannot win the touch back with a z-index,
- * and the strip answers a tap with nothing at all - no press state, no click.
- * See `.maestro-composer` below for the first consumer.
+ * Edge-swipe drawer openers have no element. They used to be two invisible
+ * fixed strips here, which sat in the hit-test order above the tab bar and
+ * swallowed taps on its magnifier and first chip. The gesture now rides the
+ * app shell, gated on where the touch starts - see useEdgeSwipeHandlers.
  */
-:root {
-	--maestro-edge-swipe-width: 24px;
-}
-
-.maestro-edge-swipe-zone {
-	position: fixed;
-	top: 4rem;
-	bottom: 0;
-	width: var(--maestro-edge-swipe-width);
-	z-index: 35;
-	touch-action: pan-y;
-}
-.maestro-edge-swipe-zone--left {
-	left: 0;
-}
-.maestro-edge-swipe-zone--right {
-	right: 0;
-}
 
 @keyframes maestro-fade-in {
 	from {
@@ -1722,20 +1692,10 @@ html[data-runtime='web-desktop'] .maestro-app-shell {
 }
 
 /*
- * Never let the page itself be wider than the screen.
- *
- * At xs/sm the Right Bar becomes an off-canvas drawer parked OUTSIDE the
- * viewport (`position: fixed; right: 0` plus `transform: translateX(100%)`, so
- * a 320px box sits from the right edge to right + 320). Desktop Chromium
- * ignores that when sizing the document, but mobile Chromium counts off-screen
- * chrome toward the page width, which is the classic off-canvas-menu bug: the
- * layout ends up wider than the screen, the right side reads as cut off, and
- * the whole page can slide sideways under a touch - so a tap aimed at a control
- * near the right edge (the Send button) lands somewhere else entirely.
- *
- * iOS never showed this because the rubber-band fix further down already pins
- * `body` with `overflow: hidden`. Android had no equivalent. Clamping the root
- * is the standard remedy and is inert wherever the page already fits.
+ * Never let the page itself be wider than the screen. At xs/sm the Right Bar
+ * is parked just outside the viewport while closed; mobile Chromium can count
+ * that off-screen drawer toward the document width and make the page slide
+ * sideways. iOS already receives the stronger body overflow rule below.
  */
 html[data-runtime='web-desktop'],
 html[data-runtime='web-desktop'] body {
@@ -1821,31 +1781,6 @@ html[data-runtime='web-desktop'][data-bp='sm'] .maestro-input-text-overlay {
 }
 
 /*
- * Keep the composer clear of the edge-swipe gesture inset.
- *
- * The composer's own padding is 1rem, so on a phone its outermost controls -
- * the Send button and the notification bell, both 34px wide - end 16px from the
- * screen edge and spend their right 8px underneath the 24px edge-swipe strip.
- * The strip is invisible, sits above the main panel's `isolate` stacking
- * context, and answers a touch with nothing, so a tap that lands there reads as
- * the Send button being dead rather than as a mis-aim: no press state, no
- * message sent, nothing to retry differently. The textarea loses its left 7px
- * the same way.
- *
- * Widen the composer's horizontal padding past the inset so every control it
- * owns is reachable. Only the two drawer breakpoints need it - the strips do
- * not exist on a wider viewport or in the native app - and the 4px beyond the
- * inset keeps a control's rounded corner off the boundary rather than exactly
- * on it. Derived from `--maestro-edge-swipe-width` so widening the strip cannot
- * silently re-bury the button.
- */
-html[data-runtime='web-desktop'][data-bp='xs'] .maestro-composer,
-html[data-runtime='web-desktop'][data-bp='sm'] .maestro-composer {
-	padding-left: calc(var(--maestro-edge-swipe-width) + 4px);
-	padding-right: calc(var(--maestro-edge-swipe-width) + 4px);
-}
-
-/*
  * Reveal hover-only row actions on coarse (touch) pointers.
  *
  * ~17 components hide their row / header controls behind Tailwind's
@@ -1866,6 +1801,124 @@ html[data-runtime='web-desktop'][data-bp='sm'] .maestro-composer {
 	[class*='group-hover:opacity-100'] {
 		opacity: 1 !important;
 	}
+}
+
+/*
+ * ============================================================================
+ * Phone layout (web-desktop bundle at the xs breakpoint)
+ * ============================================================================
+ * JS twin: usePhoneLayout() / isPhoneLayout() in hooks/ui/useViewportBreakpoint.ts.
+ * Every rule here matches `html[data-runtime='web-desktop'][data-bp='xs']`, so
+ * a surface that simplifies itself in JS and one that does it in CSS agree
+ * about when a phone is a phone. The native Electron app never sets
+ * data-runtime and is untouched.
+ */
+
+/*
+ * Drawers take the whole screen. A 320px drawer on a 390px phone left a 70px
+ * sliver of main panel showing through that could not be read or used, while
+ * the drawer itself was starved for the width its rows need. The backdrop
+ * behind it is fully covered, so the close-swipe handlers ride the drawer
+ * itself (AppShell wraps each panel) rather than the backdrop.
+ */
+html[data-runtime='web-desktop'][data-bp='xs']
+	[data-panel='left'][data-collapsed='false'][data-hidden='false'],
+html[data-runtime='web-desktop'][data-bp='xs'] [data-panel='right'] {
+	width: 100vw !important;
+	width: 100dvw !important;
+	max-width: none;
+	box-shadow: none;
+}
+
+/* A full-width drawer has no edge to drag; the resize grip would only steal taps. */
+html[data-runtime='web-desktop'][data-bp='xs'] [data-panel='left'] .resize-handle,
+html[data-runtime='web-desktop'][data-bp='xs'] [data-panel='right'] .resize-handle {
+	display: none;
+}
+
+/*
+ * Long-press is a gesture on tab chips and agent rows (it opens their action
+ * menu), so iOS must not answer the same press with its own callout.
+ */
+html[data-runtime='web-desktop'] [data-tab-id],
+html[data-runtime='web-desktop'] .session-row {
+	-webkit-touch-callout: none;
+}
+
+/*
+ * Tab action sheet (TabOverlayPortal on a phone). The menu CONTENT inside is
+ * the very same element the desktop hover popover shows; these rules restyle
+ * it for a finger without the five menu components knowing which shell they
+ * are in. `!important` because the menus set their width, borders, and radius
+ * as inline styles for the anchored shape.
+ */
+.maestro-tab-sheet {
+	background: rgba(0, 0, 0, 0.45);
+	animation: maestro-fade-in 150ms ease;
+}
+.maestro-tab-sheet__panel {
+	animation: maestro-sheet-up 180ms ease-out;
+}
+@keyframes maestro-sheet-up {
+	from {
+		transform: translateY(24px);
+		opacity: 0.6;
+	}
+	to {
+		transform: none;
+		opacity: 1;
+	}
+}
+.maestro-tab-sheet__body > * {
+	min-width: 0 !important;
+	max-width: none !important;
+	width: 100%;
+	border: 0 !important;
+	border-radius: 0 !important;
+	box-shadow: none !important;
+	white-space: normal !important;
+}
+/* Finger-sized action rows; the desktop menu is text-xs / py-1.5 for a mouse. */
+.maestro-tab-sheet__body .p-1 > button {
+	min-height: 44px;
+	font-size: 0.9375rem;
+}
+
+/*
+ * No keyboard on a phone. Every chord badge (⌘K beside a menu row), keycap hint
+ * (the ⌘F in a search box) and arrow-key legend (↑↓ navigate • Enter select)
+ * advertises a key the user does not have, and on a 390px screen they were
+ * also the first things to push a close button off the edge. They all carry
+ * `data-shortcut-hint`, so one rule retires them together. Add the attribute
+ * to any new keyboard-only hint rather than gating it in JSX.
+ */
+html[data-runtime='web-desktop'][data-bp='xs'] [data-shortcut-hint] {
+	display: none !important;
+}
+
+/*
+ * Modals take the whole screen. Every resizable modal stamps
+ * `data-modal-resize-key` (the palette, Settings, the Usage Dashboard,
+ * Director's Notes, Process Monitor, file search, ...) and sizes itself to a
+ * remembered width and height clamped inside a padded overlay. On a phone that
+ * left a 326px box floating in a 390px viewport with the app peeking around
+ * it, headers wrapping to two lines, and nothing gained by the margin. The
+ * resize grips are hidden too: there is no edge to drag. Small dialogs (confirm,
+ * rename) pass no resize key and keep their natural size.
+ */
+html[data-runtime='web-desktop'][data-bp='xs'] .modal-overlay {
+	padding: 0 !important;
+}
+html[data-runtime='web-desktop'][data-bp='xs'] [data-modal-resize-key] {
+	width: 100vw !important;
+	width: 100dvw !important;
+	height: 100dvh !important;
+	max-width: none !important;
+	max-height: none !important;
+	border-radius: 0 !important;
+}
+html[data-runtime='web-desktop'][data-bp='xs'] [data-resize-handle] {
+	display: none !important;
 }
 
 /*
@@ -1977,6 +2030,105 @@ html[data-gloss='max'] .chrome-raised-active {
 		0 0 18px color-mix(in srgb, var(--accent-color) 22%, transparent);
 }
 
+/* ============================================================================
+   VIBE MODE
+
+   The five vibe themes (Pedurple, Dre Synth, InQuest, Winamp, Maestro's
+   Choice) declare `mode: 'vibe'` in `src/shared/themes.ts`, which
+   `useThemeStyles` publishes as `<html data-theme-mode='vibe'>`. Until now the
+   only mode-keyed CSS was the light-theme opt-out below, so a vibe theme
+   rendered exactly like a plain dark one and the mode was a label with no
+   pixels behind it.
+
+   These rules give it pixels: the same gloss vocabulary, mixed a step brighter
+   and carrying an accent-tinted wash off `--accent-color`, so each vibe theme
+   glosses in its OWN hue rather than in the neutral white every dark theme
+   shares. The active surface gets its accent ring at every level instead of
+   only at `max`, because on a vibe theme the accent IS the identity.
+
+   TWO CHOICES HERE ARE DELIBERATE.
+
+   1. EVERY RULE IS SCOPED TO A GLOSS LEVEL. `off` promises flat surfaces,
+      "exactly as Maestro has always rendered" (`GLOSS_LEVEL_META` in
+      `src/shared/themeGloss.ts`), and a theme mode is not a licence to break
+      that: a user who turned gloss off asked for no highlights, not for no
+      highlights unless they happen to like purple. Vibe amplifies gloss, it
+      does not switch it on.
+
+   2. NO `filter` ON CHROME SURFACES. A saturation filter was the obvious way
+      to make these themes read richer, and it is wrong here: `filter` makes
+      the element a containing block for `position: fixed` descendants, and
+      `.chrome-sheen` is the Left Bar root, whose `SessionContextMenu`,
+      `GroupContextMenu`, `LiveOverlayPanel`, and collapsed-pill tooltips are
+      all fixed and NOT portaled. Every one of them would start measuring from
+      the sidebar instead of the viewport, which reads as right-click menus
+      landing in the wrong place. The accent wash below buys the same warmth
+      through `background-image`, which composes with the chrome's own
+      `background-color` and captures nothing.
+   ============================================================================ */
+
+html[data-theme-mode='vibe'][data-gloss='sheen'] .chrome-sheen {
+	background-image:
+		linear-gradient(180deg, rgb(var(--sheen-rgb, 255 255 255) / 9%) 0 1px, transparent 1px),
+		linear-gradient(
+			180deg,
+			color-mix(in srgb, var(--accent-color) 9%, transparent),
+			transparent 96px
+		),
+		linear-gradient(180deg, rgb(var(--sheen-rgb, 255 255 255) / 6%), transparent 110px);
+}
+
+html[data-theme-mode='vibe'][data-gloss='strong'] .chrome-sheen,
+html[data-theme-mode='vibe'][data-gloss='max'] .chrome-sheen {
+	background-image:
+		linear-gradient(180deg, rgb(var(--sheen-rgb, 255 255 255) / 14%) 0 1px, transparent 1px),
+		linear-gradient(0deg, rgb(0 0 0 / 45%) 0 1px, transparent 1px),
+		linear-gradient(
+			180deg,
+			color-mix(in srgb, var(--accent-color) 14%, transparent),
+			transparent 116px
+		),
+		linear-gradient(
+			180deg,
+			rgb(var(--sheen-rgb, 255 255 255) / 10%),
+			rgb(var(--sheen-rgb, 255 255 255) / 3%) 34px,
+			transparent 130px
+		);
+}
+
+/* Raised surfaces pick up a hairline accent ring rather than a wash, for the
+   same reason the neutral rules skip the wash on them: a gradient inside a
+   small rounded box reads as a bad texture. */
+html[data-theme-mode='vibe'][data-gloss='sheen'] .chrome-raised {
+	box-shadow:
+		inset 0 1px 0 rgb(var(--sheen-rgb, 255 255 255) / 8%),
+		0 0 0 1px color-mix(in srgb, var(--accent-color) 12%, transparent),
+		0 2px 12px rgb(0 0 0 / 34%);
+}
+
+html[data-theme-mode='vibe'][data-gloss='strong'] .chrome-raised,
+html[data-theme-mode='vibe'][data-gloss='max'] .chrome-raised {
+	box-shadow:
+		inset 0 1px 0 rgb(var(--sheen-rgb, 255 255 255) / 12%),
+		0 0 0 1px color-mix(in srgb, var(--accent-color) 18%, transparent),
+		0 3px 16px rgb(0 0 0 / 46%);
+}
+
+html[data-theme-mode='vibe'][data-gloss='sheen'] .chrome-raised-active,
+html[data-theme-mode='vibe'][data-gloss='strong'] .chrome-raised-active {
+	box-shadow:
+		inset 0 1px 0 rgb(var(--sheen-rgb, 255 255 255) / 12%),
+		0 0 0 1px color-mix(in srgb, var(--accent-color) 30%, transparent),
+		0 0 14px color-mix(in srgb, var(--accent-color) 18%, transparent);
+}
+
+html[data-theme-mode='vibe'][data-gloss='max'] .chrome-raised-active {
+	box-shadow:
+		inset 0 1px 0 rgb(var(--sheen-rgb, 255 255 255) / 18%),
+		0 0 0 1px color-mix(in srgb, var(--accent-color) 46%, transparent),
+		0 0 24px color-mix(in srgb, var(--accent-color) 30%, transparent);
+}
+
 /* Never on light themes. Placed last so it wins over every level above without
    needing a level-by-level opt-out. */
 html[data-theme-mode='light'] .chrome-sheen,
@@ -2035,14 +2187,28 @@ html[data-theme-mode='light'] .chrome-raised-active {
 	min-width: 0;
 }
 
-/* Single line, full row width. The ellipsis is now a genuine last resort
-   rather than the normal case it was at fourteen characters. */
+/* Single line. The ellipsis is a genuine last resort rather than the normal
+   case it was at fourteen characters - `min-width: 0` plus `flex-shrink: 1`
+   is what buys that, and both are still here.
+
+   `flex-grow` is 0 on purpose. It used to be 1, which made the name box
+   stretch across the whole title row even when the name was short, shoving
+   every indicator after it (Cue's bolt, the startup-command terminal, the
+   wizard dot) out to the far right edge. They read as a right-hand status
+   column that way, which they are not: they belong to the NAME, and the meta
+   row below already owns the real right-hand column (`.row-actions`, grid
+   row 2). A long name hid the effect, so it looked like only some indicators
+   were misplaced - in fact every row had it.
+
+   Growing changes nothing about truncation: leftover space only exists when
+   the name already fits, and when it does not, shrink and `min-width: 0` do
+   the ellipsis exactly as before. */
 .session-row .row-name {
 	white-space: nowrap;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	min-width: 0;
-	flex: 1 1 auto;
+	flex: 0 1 auto;
 }
 
 .session-row .row-meta {
@@ -2065,6 +2231,48 @@ html[data-theme-mode='light'] .chrome-raised-active {
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+}
+
+/* ============================================================================
+   ROW HOVER WASH
+
+   Replaces the dead `hover:bg-opacity-*` classes that were scattered across the
+   renderer. Tailwind's opacity utility only edits the alpha channel of a
+   `bg-{color}` utility, so an element whose background comes from an INLINE
+   style (every Left Bar agent row, every group header, most icon buttons in the
+   Process Monitor and the Log Viewer) had a hover class that resolved to
+   nothing at all. Those controls had no hover feedback whatsoever.
+
+   The wash is painted with `background-image` rather than `background-color`
+   ON PURPOSE. The rows that need it most are exactly the ones that already
+   carry an inline `backgroundColor` for their active / keyboard-selected /
+   drag-over state, and a hover `background-color` rule loses to that inline
+   declaration (or, with `!important`, erases the selection while the pointer is
+   over it). A gradient is a separate layer: it composites ON TOP of whatever
+   background-color the element sets inline, so a selected row still reads as
+   selected and simply brightens under the cursor.
+
+   Dark and vibe themes lighten, light themes darken. The neutral wash is
+   deliberate: these are ambient surfaces, and tinting every hover with the
+   accent turns the sidebar into a highlight reel.
+
+   `--bg-hover-wash` comes from `useThemeStyles` and is the theme's own
+   `textMain` at a low alpha, which lightens a dark theme and darkens a light
+   one without either rule below having to know which mode is active. The two
+   literals stay as FALLBACKS: they are what paints before the theme effect has
+   run, and what paints for a custom theme whose `textMain` is not a hex colour.
+   ============================================================================ */
+
+.row-hover {
+	--row-hover-wash: var(--bg-hover-wash, rgb(255 255 255 / 0.06));
+}
+
+html[data-theme-mode='light'] .row-hover {
+	--row-hover-wash: var(--bg-hover-wash, rgb(0 0 0 / 0.05));
+}
+
+.row-hover:hover {
+	background-image: linear-gradient(var(--row-hover-wash), var(--row-hover-wash));
 }
 
 /* ============================================================================

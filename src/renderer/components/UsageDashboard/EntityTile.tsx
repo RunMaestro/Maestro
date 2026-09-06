@@ -46,8 +46,8 @@ const SIZE_TOKENS = {
 	default: {
 		container: 'p-3 gap-1.5',
 		title: 'text-sm',
-		subtitle: 'text-[11px]',
-		statLabel: 'text-[9px]',
+		subtitle: 'text-xs-plus',
+		statLabel: 'text-3xs',
 		statValue: 'text-base',
 		statLayout: 'flex items-end gap-3',
 		sparkline: { width: 70, height: 22 },
@@ -56,7 +56,7 @@ const SIZE_TOKENS = {
 		container: 'p-4 gap-2',
 		title: 'text-base',
 		subtitle: 'text-xs',
-		statLabel: 'text-[10px]',
+		statLabel: 'text-2xs',
 		statValue: 'text-xl',
 		// auto-fit rather than a fixed column count: three stats stay on one
 		// row, four wrap to 2x2, and neither has to be special-cased here.
@@ -248,7 +248,7 @@ export const EntityTile = memo(function EntityTile({
 				))}
 				{age && (
 					<span
-						className="flex-shrink-0 text-[10px] tabular-nums"
+						className="flex-shrink-0 text-2xs tabular-nums"
 						style={{
 							color: ageHighlighted ? theme.colors.accent : theme.colors.textDim,
 							fontWeight: ageHighlighted ? 600 : undefined,

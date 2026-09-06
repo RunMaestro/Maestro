@@ -181,6 +181,77 @@ describe('SSH Remote IPC Handlers', () => {
 			expect(mockSettingsStore.set).toHaveBeenCalled();
 		});
 
+		it('persists sshOptions rather than dropping them', async () => {
+			// The handler rebuilds the config field by field, so a field missing from
+			// that literal is silently discarded on every save from the UI.
+			const result = (await invokeHandler('ssh-remote:saveConfig', {
+				name: 'Tunnelled',
+				host: 'tailcat-devbox',
+				port: 22,
+				sshOptions: { ProxyCommand: 'tailcat tcABC 22', ConnectTimeout: '45' },
+			})) as { success: boolean; config?: SshRemoteConfig };
+
+			expect(result.config?.sshOptions).toEqual({
+				ProxyCommand: 'tailcat tcABC 22',
+				ConnectTimeout: '45',
+			});
+		});
+
+		it('strips a reserved ssh option before it reaches disk', async () => {
+			const result = (await invokeHandler('ssh-remote:saveConfig', {
+				name: 'Tunnelled',
+				host: 'tailcat-devbox',
+				port: 22,
+				sshOptions: { RequestTTY: 'force', ProxyJump: 'bastion' },
+			})) as { success: boolean; config?: SshRemoteConfig };
+
+			expect(result.config?.sshOptions).toEqual({ ProxyJump: 'bastion' });
+		});
+
+		it('persists the parked records, which the field-by-field rebuild can drop', async () => {
+			// The handler names every field it copies, so a field it does not name is
+			// discarded on every save from the UI - the feature would work from the
+			// CLI and be dead in Settings.
+			const result = (await invokeHandler('ssh-remote:saveConfig', {
+				name: 'Tunnelled',
+				host: 'tailcat-devbox',
+				port: 22,
+				sshOptions: { ConnectTimeout: '45' },
+				sshOptionsDisabled: { ProxyCommand: 'tailcat tcABC 22' },
+				remoteEnv: { FOO: '1' },
+				remoteEnvDisabled: { BAR: '2' },
+			})) as { success: boolean; config?: SshRemoteConfig };
+
+			expect(result.config?.sshOptionsDisabled).toEqual({ ProxyCommand: 'tailcat tcABC 22' });
+			expect(result.config?.remoteEnvDisabled).toEqual({ BAR: '2' });
+			// The live records are untouched by the parked ones.
+			expect(result.config?.sshOptions).toEqual({ ConnectTimeout: '45' });
+			expect(result.config?.remoteEnv).toEqual({ FOO: '1' });
+		});
+
+		it('strips a reserved key from the parked record too', async () => {
+			// A parked RequestTTY could only ever be switched on into a rejection,
+			// so it does not reach disk in the first place.
+			const result = (await invokeHandler('ssh-remote:saveConfig', {
+				name: 'Tunnelled',
+				host: 'tailcat-devbox',
+				port: 22,
+				sshOptionsDisabled: { RequestTTY: 'force', ProxyJump: 'bastion' },
+			})) as { success: boolean; config?: SshRemoteConfig };
+
+			expect(result.config?.sshOptionsDisabled).toEqual({ ProxyJump: 'bastion' });
+		});
+
+		it('leaves sshOptions unset when none are supplied', async () => {
+			const result = (await invokeHandler('ssh-remote:saveConfig', {
+				name: 'Plain',
+				host: 'example.com',
+				port: 22,
+			})) as { success: boolean; config?: SshRemoteConfig };
+
+			expect(result.config?.sshOptions).toBeUndefined();
+		});
+
 		it('returns error when validation fails', async () => {
 			vi.spyOn(sshRemoteManagerModule.sshRemoteManager, 'validateConfig').mockReturnValue({
 				valid: false,

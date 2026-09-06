@@ -27,6 +27,8 @@ import { outputSearchKeyFor } from '../../utils/outputSearch';
 import type { CrossTabSearchJumpTarget } from '../../components/CrossTabSearchModal';
 import { subscribeToInAppDeepLinks } from '../../utils/openMaestroLink';
 import type { ParsedDeepLink } from '../../../shared/types';
+import { isWebDesktop } from '../../utils/runtimeContext';
+import { noteDesktopAiTabSelection } from '../../utils/desktopTabSelectionSync';
 
 // ============================================================================
 // Dependencies interface
@@ -278,6 +280,9 @@ export function useSessionSwitchCallbacks(
 		// Land on the AI tab, clearing any active file/terminal/browser view that
 		// would otherwise outrank it in the render precedence.
 		updateSessionWith(activeSession.id, (s) => ({ ...s, ...aiTabFocusFields(tabId) }));
+		if (!isWebDesktop()) {
+			noteDesktopAiTabSelection(activeSession.id, tabId);
+		}
 	}, []);
 
 	// Jump to a specific message from cross-tab search: land on the tab, seed that
@@ -289,6 +294,9 @@ export function useSessionSwitchCallbacks(
 			const activeSession = selectActiveSession(useSessionStore.getState());
 			if (!activeSession) return;
 			updateSessionWith(activeSession.id, (s) => ({ ...s, ...aiTabFocusFields(tabId) }));
+			if (!isWebDesktop()) {
+				noteDesktopAiTabSelection(activeSession.id, tabId);
+			}
 
 			const ui = useUIStore.getState();
 			const searchKey = outputSearchKeyFor(activeSession.id, tabId);

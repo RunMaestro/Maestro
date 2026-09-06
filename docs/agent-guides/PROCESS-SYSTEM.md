@@ -202,6 +202,13 @@ All listeners receive a `ProcessListenerDependencies` object containing:
 - Web broadcast: extracts base session ID, generates message ID, broadcasts `session_output` to subscribed clients
 - Skips PTY terminal output and batch/synopsis output for web broadcast
 
+**group-chat-liveness-listener.ts** - Proof that a group chat turn is still working:
+
+- Subscribes to `AGENT_LIVENESS_EVENTS` (`src/main/utils/agent-liveness.ts`) plus `raw-stdout`
+- Filters on the `group-chat-` session prefix, then calls `noteGroupChatActivity(sessionId)`, which re-arms the router's per-turn silence budget (`createIdleWatchdog`)
+- Exists so `IProcessManager` stays a spawn/write/kill interface: the router never observes output directly, and widening it would put a second output path beside the buffering one in `data-listener.ts`
+- Miss an event here and the budget silently degrades into a wall-clock deadline that kills working agents
+
 **usage-listener.ts** - Token/cost statistics:
 
 - Group chat participants: calculates context usage percentage, updates participant storage

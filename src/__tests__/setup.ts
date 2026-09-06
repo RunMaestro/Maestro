@@ -344,6 +344,9 @@ const mockMaestro = {
 	},
 	fs: {
 		readDir: vi.fn().mockResolvedValue([]),
+		readDirTree: vi
+			.fn()
+			.mockResolvedValue({ tree: [], truncated: false, filesFound: 0, directoriesScanned: 0 }),
 		readFile: vi.fn().mockResolvedValue(''),
 		// Mirrors the preload webUtils bridge: returns the dropped file's absolute
 		// path. Test fixtures set `.path` on their fake File objects.
@@ -579,6 +582,8 @@ const mockMaestro = {
 		disableAll: vi.fn().mockResolvedValue({ success: true, count: 0 }),
 	},
 	web: {
+		claimAutoRunStart: vi.fn().mockResolvedValue(true),
+		releaseAutoRunStartClaim: vi.fn().mockResolvedValue(true),
 		broadcastAutoRunState: vi.fn(),
 		broadcastSessionState: vi.fn(),
 		start: vi.fn().mockResolvedValue(undefined),
@@ -675,6 +680,8 @@ const mockMaestro = {
 		getAutoRunTasks: vi.fn().mockResolvedValue([]),
 		exportCsv: vi.fn().mockResolvedValue(''),
 		onStatsUpdate: vi.fn().mockReturnValue(() => {}),
+		recordResilience: vi.fn().mockResolvedValue('outage-id'),
+		getResilience: vi.fn().mockResolvedValue([]),
 		getDatabaseSize: vi.fn().mockResolvedValue(1024 * 1024), // 1MB mock
 		getEarliestTimestamp: vi.fn().mockResolvedValue(null),
 		clearOldData: vi.fn().mockResolvedValue({

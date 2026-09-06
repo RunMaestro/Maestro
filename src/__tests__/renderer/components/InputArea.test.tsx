@@ -385,20 +385,6 @@ describe('InputArea', () => {
 			expect(screen.getByTitle('Send message')).toBeInTheDocument();
 		});
 
-		// index.css keys the phone edge-swipe gesture inset off `.maestro-composer`.
-		// Without it the Send button ends 16px from the screen edge and spends its
-		// right 8px under the invisible 24px swipe strip, which answers a tap with
-		// nothing at all. jsdom has no layout engine, so the anchor class is the
-		// part that can be asserted; losing it silently re-buries the button.
-		it('anchors the edge-swipe gesture inset on the composer root', () => {
-			const props = createDefaultProps();
-			const { container } = render(<InputArea {...props} />);
-
-			const composer = container.querySelector('.maestro-composer');
-			expect(composer).not.toBeNull();
-			expect(composer).toContainElement(screen.getByTitle('Send message'));
-		});
-
 		it('renders Enter to send toggle', () => {
 			const props = createDefaultProps();
 			render(<InputArea {...props} />);
@@ -2680,5 +2666,66 @@ describe('InputArea cross-agent Stop placement', () => {
 		render(<InputArea {...props} />);
 
 		expect(screen.queryByTestId('cross-agent-indicator')).not.toBeInTheDocument();
+	});
+});
+
+// Phone layout: the whole composer folds away behind a slim handle so the
+// transcript gets the screen. Default is folded; a tap on the handle reveals it.
+vi.mock('../../../renderer/hooks/ui/useViewportBreakpoint', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../renderer/hooks/ui/useViewportBreakpoint')>()),
+	usePhoneLayout: vi.fn(() => false),
+}));
+import { usePhoneLayout } from '../../../renderer/hooks/ui/useViewportBreakpoint';
+import { PHONE_COMPOSER_COLLAPSED_KEY } from '../../../renderer/components/InputArea/InputArea';
+
+describe('InputArea on a phone', () => {
+	const mockedUsePhoneLayout = vi.mocked(usePhoneLayout);
+
+	beforeEach(() => {
+		mockedUsePhoneLayout.mockReturnValue(true);
+		useSessionStore.setState({ sessions: [], groups: [] });
+		try {
+			window.localStorage?.removeItem(PHONE_COMPOSER_COLLAPSED_KEY);
+		} catch {
+			/* storage may be absent */
+		}
+	});
+
+	afterEach(() => {
+		mockedUsePhoneLayout.mockReturnValue(false);
+		try {
+			window.localStorage?.removeItem(PHONE_COMPOSER_COLLAPSED_KEY);
+		} catch {
+			/* storage may be absent */
+		}
+	});
+
+	it('starts folded: only the handle, no textarea', () => {
+		render(<InputArea {...createDefaultProps()} />);
+		const handle = screen.getByTestId('phone-composer-handle');
+		expect(handle).toHaveAttribute('aria-expanded', 'false');
+		expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+	});
+
+	it('unfolds on a tap and keeps the handle on top for folding back', () => {
+		render(<InputArea {...createDefaultProps()} />);
+		fireEvent.click(screen.getByTestId('phone-composer-handle'));
+		expect(screen.getByRole('textbox')).toBeInTheDocument();
+		expect(screen.getByTestId('phone-composer-handle')).toHaveAttribute('aria-expanded', 'true');
+
+		fireEvent.click(screen.getByTestId('phone-composer-handle'));
+		expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+	});
+
+	it('marks a folded handle when an unsent draft is waiting behind it', () => {
+		render(<InputArea {...createDefaultProps({ inputValue: 'half a thought' })} />);
+		expect(screen.getByTestId('phone-composer-handle-draft')).toBeInTheDocument();
+	});
+
+	it('draws no handle at all on desktop', () => {
+		mockedUsePhoneLayout.mockReturnValue(false);
+		render(<InputArea {...createDefaultProps()} />);
+		expect(screen.queryByTestId('phone-composer-handle')).not.toBeInTheDocument();
+		expect(screen.getByRole('textbox')).toBeInTheDocument();
 	});
 });

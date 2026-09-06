@@ -300,7 +300,7 @@ export function CreateWorktreeModal({
 							autoFocus
 						/>
 						{hasWorktreeConfig && (
-							<p className="text-[10px] mt-1" style={{ color: theme.colors.textDim }}>
+							<p className="text-2xs mt-1" style={{ color: theme.colors.textDim }}>
 								Will be created at: {session.worktreeConfig?.basePath}/{branchName || '...'}
 							</p>
 						)}

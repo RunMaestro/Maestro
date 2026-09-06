@@ -1112,10 +1112,11 @@ describe('useWebSocket', () => {
 					sessionId: 'session-1',
 					aiTabs,
 					activeTabId: 'tab-2',
+					activeTabChanged: true,
 				} as TabsChangedMessage);
 			});
 
-			expect(onTabsChanged).toHaveBeenCalledWith('session-1', aiTabs, 'tab-2');
+			expect(onTabsChanged).toHaveBeenCalledWith('session-1', aiTabs, 'tab-2', true);
 		});
 
 		it('handles error message', () => {

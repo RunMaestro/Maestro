@@ -44,6 +44,7 @@ import {
 } from '../../utils/shortcutFormatter';
 import { useSessionStore } from '../../stores/sessionStore';
 import { closeTab } from '../../utils/tabHelpers';
+import { displayImageSrc } from '../../utils/sessionImageSrc';
 import { useAutosizeTextarea } from '../../hooks/ui/useAutosizeTextarea';
 
 /** Height cap for the wizard composer; past it the textarea scrolls. */
@@ -242,10 +243,7 @@ export const WizardInputPanel = React.memo(function WizardInputPanel({
 
 	return (
 		<div
-			// Share the standard composer's web-mobile gesture inset. InputArea
-			// returns this panel in its place, while the same edge-swipe zones remain
-			// mounted, so the wizard's Send/Stop and mode controls need the same clearance.
-			className="maestro-composer relative p-4 border-t"
+			className="relative p-4 border-t"
 			style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
 		>
 			{/* Staged images display */}
@@ -259,7 +257,7 @@ export const WizardInputPanel = React.memo(function WizardInputPanel({
 								onClick={() => setLightboxImage?.(img, stagedImages, 'staged')}
 							>
 								<img
-									src={img}
+									src={displayImageSrc(img)}
 									alt={`Staged wizard image ${idx + 1}`}
 									className="h-16 rounded border cursor-pointer hover:opacity-80 transition-opacity block"
 									style={{
@@ -387,7 +385,7 @@ export const WizardInputPanel = React.memo(function WizardInputPanel({
 								{!isTerminalMode && onToggleShowThinking && (
 									<button
 										onClick={onToggleShowThinking}
-										className={`flex items-center gap-1 text-[10px] px-2 py-1 rounded hover:bg-white/5 transition-opacity ${
+										className={`flex items-center gap-1 text-2xs px-2 py-1 rounded hover:bg-white/5 transition-opacity ${
 											showThinking ? 'opacity-100' : 'opacity-50 hover:opacity-100'
 										}`}
 										title={
@@ -401,7 +399,7 @@ export const WizardInputPanel = React.memo(function WizardInputPanel({
 								)}
 								<button
 									onClick={() => setEnterToSend(!enterToSend)}
-									className="flex items-center gap-1 text-[10px] opacity-50 hover:opacity-100 px-2 py-1 rounded hover:bg-white/5"
+									className="flex items-center gap-1 text-2xs opacity-50 hover:opacity-100 px-2 py-1 rounded hover:bg-white/5"
 									title={formatEnterToSendTooltip(enterToSend)}
 								>
 									<Keyboard className="w-3 h-3" />

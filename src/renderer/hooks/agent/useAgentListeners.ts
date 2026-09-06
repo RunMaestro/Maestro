@@ -24,6 +24,7 @@ import { useAgentUsageListener } from './internal/useAgentUsageListener';
 import { useAgentSessionIdListener } from './internal/useAgentSessionIdListener';
 import { useAgentThinkingListener } from './internal/useAgentThinkingListener';
 import { useThoughtStreamCaptureListener } from './internal/useThoughtStreamCaptureListener';
+import { useThoughtStreamToolListener } from './internal/useThoughtStreamToolListener';
 import { useAgentSshRemoteListener } from './internal/useAgentSshRemoteListener';
 import { useAgentClaudeModeResolvedListener } from './internal/useAgentClaudeModeResolvedListener';
 import { useAgentToolExecutionListener } from './internal/useAgentToolExecutionListener';
@@ -98,6 +99,10 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 	useAgentSshRemoteListener();
 	useAgentClaudeModeResolvedListener();
 	useAgentToolExecutionListener();
+	// Second subscriber to the same tool stream. The transcript listener above
+	// writes into a tab's logs and so can only serve tab-shaped spawns; this one
+	// feeds the Thought Stream's action feed for Auto Run batch spawns too.
+	useThoughtStreamToolListener();
 
 	// Coordinator-level cleanup: clear the shared ref Map on unmount so any
 	// orphan tool entries are released for GC.

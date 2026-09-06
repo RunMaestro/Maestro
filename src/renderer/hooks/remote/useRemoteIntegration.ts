@@ -9,10 +9,12 @@ import {
 	closeTab,
 	getActiveTab,
 	getRepairedUnifiedTabOrder,
+	visibleAiTabs,
 } from '../../utils/tabHelpers';
 import { logger } from '../../utils/logger';
-import { generateId } from '../../utils/ids';
-import { planCrossAgentMentions } from '../../services/crossAgentMentions';
+import { buildQueuedMessageItem } from '../../services/queuedPrompt';
+import { runCrossAgentAsk } from '../../services/crossAgentAsk';
+import { requestFileTreeRefresh } from '../../utils/fileTreeRefresh';
 import { persistTabStarred } from '../../utils/starredSessions';
 import { formatLogsForClipboard } from '../../utils/contextExtractor';
 import { messagesToLogEntries } from '../../components/AgentSessionsBrowser/utils/messagesToLogEntries';
@@ -36,6 +38,10 @@ import {
 	interactWithConcertoDesignerFrame,
 } from '../../components/Concerto/concertoDesignerBridge';
 import { useFileExplorerStore } from '../../stores/fileExplorerStore';
+import {
+	clearDesktopAiTabSelections,
+	consumeDesktopAiTabSelection,
+} from '../../utils/desktopTabSelectionSync';
 
 /**
  * Dependencies for the useRemoteIntegration hook.
@@ -272,6 +278,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					tabId,
 					force,
 					imageCount: images?.length ?? 0,
+					background,
 				});
 				logger.debug('[useRemoteIntegration] onRemoteCommand preview:', undefined, {
 					sessionId,
@@ -320,10 +327,18 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					}));
 				}
 
-				// Switch to the target session (for visual feedback) unless this is a
-				// background dispatch. Background is the default for `dispatch`; passing
-				// `--focus` re-enables switching to the target agent/tab.
-				if (!background) {
+				// Switch to the target session (for visual feedback). A phone tapping
+				// send wants exactly this; an agent handing work to another agent
+				// does not, and until `background` existed it had no way to say so -
+				// which is also what defeated `create-worktree --background` the
+				// moment it was given a message to deliver.
+				if (background === true) {
+					logger.info(
+						'[useRemoteIntegration] Background dispatch - leaving the view where it is:',
+						undefined,
+						sessionId
+					);
+				} else {
 					setActiveSessionId(sessionId);
 					logger.info('[useRemoteIntegration] Switched active session to:', undefined, sessionId);
 				}
@@ -458,13 +473,17 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			}
 		);
 
-		// Handle remote tab selection from web interface
-		// This also switches to the session if not already active
+		// Handle explicit Web -> Desktop tab selection and Web-Desktop inventory sync.
 		const unsubscribeSelectTab = window.maestro.process.onRemoteSelectTab(
-			(sessionId, tabId, remoteTabs) => {
-				// First, switch to the session if not already active
+			(sessionId, tabId, remoteTabs, activeTabChanged) => {
 				const currentActiveId = activeSessionIdRef.current;
-				if (currentActiveId !== sessionId) {
+				const isInventorySync = remoteTabs !== undefined;
+
+				// A bare remote:selectTab event is an explicit Web -> Desktop navigation
+				// request. A tabs_changed packet also arrives on this channel in
+				// Web-Desktop, but it is primarily an inventory snapshot and must not
+				// pull the browser into whichever background agent happened to change.
+				if (!isInventorySync && currentActiveId !== sessionId) {
 					setActiveSessionId(sessionId);
 				}
 
@@ -474,7 +493,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				// have. Existing tabs retain renderer-only data such as logs and drafts.
 				updateSessionWith(sessionId, (s) => {
 					let updatedSession = s;
-					if (remoteTabs) {
+					if (isInventorySync) {
 						const existingById = new Map(s.aiTabs.map((tab) => [tab.id, tab]));
 						const aiTabs = remoteTabs.map((remoteTab) => {
 							const existing = existingById.get(remoteTab.id);
@@ -510,10 +529,31 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						};
 					}
 
-					if (!updatedSession.aiTabs.some((tab) => tab.id === tabId)) {
-						return updatedSession;
+					const targetExists = updatedSession.aiTabs.some((tab) => tab.id === tabId);
+					if (!isInventorySync) {
+						return targetExists
+							? { ...updatedSession, ...aiTabFocusFields(tabId) }
+							: updatedSession;
 					}
-					return { ...updatedSession, ...aiTabFocusFields(tabId) };
+
+					// Only a real desktop tab-selection change may move the browser's visible
+					// tab, and only when the browser is already viewing that session. Metadata
+					// changes (busy/unread/name/starred) retain the browser's local focus.
+					if (activeTabChanged && currentActiveId === sessionId && targetExists) {
+						return { ...updatedSession, ...aiTabFocusFields(tabId) };
+					}
+
+					// If the browser's remembered AI tab was removed, repair the dormant id
+					// without clearing a currently focused file/terminal/browser surface.
+					if (!updatedSession.aiTabs.some((tab) => tab.id === updatedSession.activeTabId)) {
+						const visibleTabs = visibleAiTabs(updatedSession.aiTabs);
+						const fallbackTabId = visibleTabs.some((tab) => tab.id === tabId)
+							? tabId
+							: visibleTabs[0]?.id || '';
+						return { ...updatedSession, activeTabId: fallbackTabId };
+					}
+
+					return updatedSession;
 				});
 			}
 		);
@@ -623,6 +663,27 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					true,
 					createdTabId
 				);
+			}
+		);
+
+		// Cross-agent consult from the CLI (`maestro-cli ask`). Rides the same
+		// consult path a typed `@mention` uses - hidden tab on the target, no
+		// focus, no unread - and answers the response channel when the consulted
+		// agent finishes, so the calling agent gets the reply as its tool result
+		// instead of the question landing in whatever tab the human had open.
+		const unsubscribeCrossAgentAsk = window.maestro.process.onRemoteCrossAgentAsk(
+			(request, responseChannel) => {
+				void runCrossAgentAsk(request)
+					.then((result) => {
+						window.maestro.process.sendRemoteCrossAgentAskResponse(responseChannel, result);
+					})
+					.catch((error) => {
+						logger.error('[useRemoteIntegration] Cross-agent ask failed', undefined, error);
+						window.maestro.process.sendRemoteCrossAgentAskResponse(responseChannel, {
+							success: false,
+							error: error instanceof Error ? error.message : String(error),
+						});
+					});
 			}
 		);
 
@@ -776,34 +837,17 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						return;
 					}
 
-					// Busy target: get in line. Append a message item to the authoritative
-					// execution queue (FIFO by insertion/timestamp), matching the shape the
-					// UI creates in useInputProcessing so it is a first-class queue citizen.
-					const isReadOnly =
-						targetTab.readOnlyMode === true || targetTab.permissionMode === 'readonly';
-					// Cross-agent @mentions: stamp the intent so processQueuedItem fires the
-					// consult when this item becomes the agent's turn - the same contract a
-					// composer-queued message carries (useInputProcessing). Without the flag
-					// the mention is inert and the target agent is never consulted.
-					const mentionPlan = planCrossAgentMentions(command, sessionId);
-					const queuedItem: QueuedItem = {
-						id: generateId(),
-						timestamp: Date.now(),
-						tabId: resolvedTabId,
-						type: 'message',
+					// Busy target: get in line. The item is built by the shared builder,
+					// so it is byte-identical to one the composer would have queued -
+					// including the `@mention` intent flags (fired at drain time, not
+					// here) and the model/effort capture that keeps a queued turn running
+					// under the settings it was queued with.
+					const queuedItem: QueuedItem = buildQueuedMessageItem({
+						session,
+						tab: targetTab,
 						text: command,
-						...(images && images.length > 0 ? { images: [...images] } : {}),
-						tabName:
-							targetTab.name ||
-							(targetTab.agentSessionId
-								? targetTab.agentSessionId.split('-')[0].toUpperCase()
-								: 'New'),
-						readOnlyMode: isReadOnly,
-						...(mentionPlan && {
-							crossAgentMention: true,
-							crossAgentOnly: mentionPlan.suppressLocal,
-						}),
-					};
+						images,
+					});
 
 					// Position is deterministic from the snapshot we already read: the item
 					// is appended to the tail, so it lands at length+1 (1-based). Computing
@@ -911,6 +955,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			unsubscribeSelectTab();
 			unsubscribeNewTab();
 			unsubscribeNewTabWithPrompt();
+			unsubscribeCrossAgentAsk();
 			unsubscribeCloseTab();
 			unsubscribeRenameTab();
 			unsubscribeStarTab();
@@ -1002,11 +1047,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 	// Handle remote refresh file tree from web/CLI interface
 	useEffect(() => {
 		const unsubscribe = window.maestro.process.onRemoteRefreshFileTree((sessionId: string) => {
-			window.dispatchEvent(
-				new CustomEvent('maestro:refreshFileTree', {
-					detail: { sessionId },
-				})
-			);
+			requestFileTreeRefresh(sessionId);
 		});
 		return () => {
 			unsubscribe();
@@ -1333,13 +1374,15 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 
 	// Handle remote refresh auto-run docs from web/CLI interface
 	useEffect(() => {
-		const unsubscribe = window.maestro.process.onRemoteRefreshAutoRunDocs((sessionId: string) => {
-			window.dispatchEvent(
-				new CustomEvent('maestro:refreshAutoRunDocs', {
-					detail: { sessionId },
-				})
-			);
-		});
+		const unsubscribe = window.maestro.process.onRemoteRefreshAutoRunDocs(
+			(sessionId: string, background?: boolean) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:refreshAutoRunDocs', {
+						detail: { sessionId, background },
+					})
+				);
+			}
+		);
 		return () => {
 			unsubscribe();
 		};
@@ -1868,6 +1911,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 	useEffect(() => {
 		// Skip entirely if not in live mode - no web clients to broadcast to
 		if (!isLiveMode) return;
+		clearDesktopAiTabSelections();
 
 		// Use an interval to periodically check for changes instead of running on every render
 		// This dramatically reduces CPU usage during normal typing
@@ -1888,6 +1932,11 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					prevSessionStatesRef.current.set(session.id, session.state);
 				}
 
+				const activeTabChanged = consumeDesktopAiTabSelection(
+					session.id,
+					session.activeTabId || session.aiTabs?.[0]?.id || ''
+				);
+
 				// An empty aiTabs array is a valid state and still has to be broadcast,
 				// otherwise remote clients keep rendering tabs the user already closed.
 				if (!session.aiTabs) return;
@@ -1903,13 +1952,13 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					activeTabId: session.activeTabId || session.aiTabs[0]?.id || '',
 					tabsHash,
 				};
-
 				// Check if anything changed
 				if (
 					!prev ||
 					prev.tabCount !== current.tabCount ||
 					prev.activeTabId !== current.activeTabId ||
-					prev.tabsHash !== current.tabsHash
+					prev.tabsHash !== current.tabsHash ||
+					activeTabChanged
 				) {
 					const tabsForBroadcast = session.aiTabs.map((tab) => ({
 						id: tab.id,
@@ -1924,7 +1973,12 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						hasUnread: tab.hasUnread,
 					}));
 
-					window.maestro.web.broadcastTabsChange(session.id, tabsForBroadcast, current.activeTabId);
+					window.maestro.web.broadcastTabsChange(
+						session.id,
+						tabsForBroadcast,
+						current.activeTabId,
+						activeTabChanged
+					);
 
 					prevTabsRef.current.set(session.id, current);
 				}

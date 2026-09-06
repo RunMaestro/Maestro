@@ -132,7 +132,7 @@ export function AgentFailoverSection({
 						<span className="text-xs font-medium" style={{ color: theme.colors.textMain }}>
 							Fail over to backup endpoints
 						</span>
-						<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
+						<span className="text-2xs" style={{ color: theme.colors.textDim }}>
 							Off by default. Your prompts go to a different provider while a backup is live.
 						</span>
 					</div>
@@ -150,7 +150,7 @@ export function AgentFailoverSection({
 						>
 							<div className="flex items-center gap-2">
 								<span
-									className="text-[10px] font-mono px-1.5 py-0.5 rounded shrink-0"
+									className="text-2xs font-mono px-1.5 py-0.5 rounded shrink-0"
 									style={{ backgroundColor: theme.colors.bgMain, color: theme.colors.textDim }}
 									title="Failover order"
 								>
@@ -221,7 +221,7 @@ export function AgentFailoverSection({
 
 							{problem && (
 								<div
-									className="flex items-start gap-1.5 text-[10px]"
+									className="flex items-start gap-1.5 text-2xs"
 									style={{ color: theme.colors.warning ?? theme.colors.textDim }}
 								>
 									<AlertTriangle size={12} className="mt-px shrink-0" />

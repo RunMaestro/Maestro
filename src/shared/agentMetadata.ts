@@ -295,10 +295,49 @@ export function getAgentLoginCommand(
 }
 
 /**
- * Render an {@link AgentLoginCommand} as the single line typed into a shell.
- * Quotes a custom binary path so a directory with spaces still runs.
+ * Command-line dialect of the shell the login is typed into.
+ *
+ * Only quoting differs, but the difference is not cosmetic: PowerShell parses a
+ * line that STARTS with a quoted string as an expression and simply echoes it,
+ * so a quoted path runs nothing at all.
  */
-export function formatAgentLoginCommand(login: AgentLoginCommand): string {
-	const binary = /[\s"']/.test(login.binary) ? `"${login.binary}"` : login.binary;
-	return login.args ? `${binary} ${login.args}` : binary;
+export type LoginShellSyntax = 'posix' | 'powershell' | 'cmd';
+
+/**
+ * Render an {@link AgentLoginCommand} as the single line typed into a shell.
+ *
+ * Quotes a binary path containing spaces - the common case on Windows, where
+ * agents install under `C:\Program Files\...` - and, for PowerShell, prefixes
+ * the call operator `&`. Without it PowerShell treats `"C:\...\claude.exe"` as
+ * a string literal, prints it, and the user watches a login that never starts.
+ *
+ * @param syntax - Dialect of the target shell. Defaults to `posix`, which is
+ *   correct for macOS, Linux, Git Bash, and WSL.
+ */
+export function formatAgentLoginCommand(
+	login: AgentLoginCommand,
+	syntax: LoginShellSyntax = 'posix'
+): string {
+	const needsQuoting = /[\s"']/.test(login.binary);
+	const binary = needsQuoting ? `"${login.binary}"` : login.binary;
+	// cmd.exe executes a quoted path directly, so only PowerShell needs help.
+	const prefix = syntax === 'powershell' && needsQuoting ? '& ' : '';
+	return login.args ? `${prefix}${binary} ${login.args}` : `${prefix}${binary}`;
+}
+
+/**
+ * Map a Maestro shell id to the dialect its command line is written in.
+ *
+ * Shell ids come from `shellDetector`: on Windows `powershell`, `pwsh`, `cmd`,
+ * `bash` (Git Bash), and `wsl`; elsewhere the usual Unix shells. Off Windows
+ * every shell is posix, so the platform is checked first.
+ */
+export function loginShellSyntaxFor(shellId: string, isWindows: boolean): LoginShellSyntax {
+	if (!isWindows) return 'posix';
+	const shell = shellId.trim().toLowerCase();
+	// Git Bash and WSL run a posix shell even though the host is Windows.
+	if (shell === 'bash' || shell === 'sh' || shell === 'wsl') return 'posix';
+	if (shell === 'cmd') return 'cmd';
+	// Windows defaults to PowerShell, so an unset or unknown shell lands here.
+	return 'powershell';
 }

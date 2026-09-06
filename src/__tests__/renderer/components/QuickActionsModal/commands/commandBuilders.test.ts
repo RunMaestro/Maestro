@@ -778,6 +778,68 @@ describe('agent-switch window scoping', () => {
 		});
 	});
 
+	// The count in "Close all N tabs" has to match what a close-all actually takes
+	// out, and hidden consult tabs survive it.
+	it('counts only visible tabs in the Close All Tabs subtext', () => {
+		const session = createMockSession({
+			id: 's1',
+			aiTabs: [
+				createMockAITab({ id: 'tab-1' }),
+				createMockAITab({ id: 'tab-2' }),
+				createMockAITab({ id: 'consult', hidden: true }),
+			],
+			activeTabId: 'tab-1',
+		});
+
+		const command = buildTabCommands({
+			activeSession: session,
+			isAiMode: true,
+			activeTabInfo: {
+				isTerminalMode: false,
+				hasActiveTab: true,
+				activeUnifiedIndex: 0,
+				unifiedTabCount: 2,
+				activeTabType: 'ai',
+			},
+			enterToSendAI: true,
+			onCloseAllTabs: vi.fn(),
+			setQuickActionOpen: vi.fn(),
+			shortcuts: {},
+			toggleInputMode: vi.fn(),
+		}).find((a) => a.id === 'closeAllTabs');
+
+		expect(command?.subtext).toBe('Close all 2 tabs');
+	});
+
+	// An agent whose only other tabs are hidden consults has one closable tab, so
+	// the entry must not offer to close a plural it cannot reach.
+	it('omits Close All Tabs when every tab is a hidden consult', () => {
+		const session = createMockSession({
+			id: 's1',
+			aiTabs: [createMockAITab({ id: 'consult', hidden: true })],
+			activeTabId: 'consult',
+		});
+
+		const ids = buildTabCommands({
+			activeSession: session,
+			isAiMode: true,
+			activeTabInfo: {
+				isTerminalMode: false,
+				hasActiveTab: true,
+				activeUnifiedIndex: 0,
+				unifiedTabCount: 0,
+				activeTabType: 'ai',
+			},
+			enterToSendAI: true,
+			onCloseAllTabs: vi.fn(),
+			setQuickActionOpen: vi.fn(),
+			shortcuts: {},
+			toggleInputMode: vi.fn(),
+		}).map((a) => a.id);
+
+		expect(ids).not.toContain('closeAllTabs');
+	});
+
 	it('hides the model/effort picker when the active tab is not an AI tab', () => {
 		const session = createMockSession({
 			id: 's1',

@@ -1092,7 +1092,7 @@ export function NewInstanceModal({
 						<button
 							onClick={isSshEnabled ? undefined : handleSelectFolder}
 							disabled={isSshEnabled}
-							className={`p-2 rounded border transition-colors ${isSshEnabled ? 'opacity-40 cursor-not-allowed' : 'hover:bg-opacity-10'}`}
+							className={`p-2 rounded border transition-colors ${isSshEnabled ? 'opacity-40 cursor-not-allowed' : 'row-hover'}`}
 							style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 							title={
 								isSshEnabled

@@ -140,3 +140,62 @@ describe('SessionStats - agent type display names', () => {
 		expect(screen.getByText('Factory Droid')).toBeInTheDocument();
 	});
 });
+
+describe('SessionStats - active agents in range', () => {
+	const buildData = (
+		bySessionByDay: Record<string, Array<{ date: string; count: number; duration: number }>>
+	) =>
+		({
+			totalQueries: 0,
+			totalDuration: 0,
+			avgDuration: 0,
+			byAgent: {},
+			bySource: { user: 0, auto: 0 },
+			byLocation: { local: 0, remote: 0 },
+			byDay: [],
+			byHour: [],
+			totalSessions: 0,
+			sessionsByAgent: {},
+			sessionsByDay: [],
+			avgSessionDuration: 0,
+			byAgentByDay: {},
+			bySessionByDay,
+			bySessionSource: {},
+		}) as never;
+
+	it('reports how many agents ran a query in the range', () => {
+		const active = makeSession();
+		const idle = makeSession();
+
+		render(
+			<SessionStats
+				sessions={[active, idle]}
+				theme={theme}
+				data={buildData({ [active.id]: [{ date: '2026-09-01', count: 3, duration: 500 }] })}
+			/>
+		);
+
+		expect(screen.getByText('1 active')).toBeInTheDocument();
+	});
+
+	it('shares the footnote line with the bookmarked count', () => {
+		const active = makeSession({ bookmarked: true });
+		const idle = makeSession();
+
+		render(
+			<SessionStats
+				sessions={[active, idle]}
+				theme={theme}
+				data={buildData({ [active.id]: [{ date: '2026-09-01', count: 3, duration: 500 }] })}
+			/>
+		);
+
+		expect(screen.getByText('1 active \u00b7 1 bookmarked')).toBeInTheDocument();
+	});
+
+	it('omits the active line entirely when no stats are supplied', () => {
+		render(<SessionStats sessions={[makeSession()]} theme={theme} />);
+
+		expect(screen.queryByText(/active/)).not.toBeInTheDocument();
+	});
+});

@@ -400,7 +400,7 @@ export const FloatingMediaPlayer = memo(function FloatingMediaPlayer({
 					>
 						{title}
 					</span>
-					<span className="text-[10px] truncate max-w-full" style={{ color: theme.colors.textDim }}>
+					<span className="text-2xs truncate max-w-full" style={{ color: theme.colors.textDim }}>
 						{subtitle}
 					</span>
 				</div>

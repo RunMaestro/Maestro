@@ -9,7 +9,7 @@ tags:
   - audit
 related:
   - '[[CUE-DASHBOARD-02]]'
-  - '[[AGENT_SUPPORT]]'
+  - '[[PROVIDER-SUPPORT]]'
 ---
 
 # Agent Token Storage Audit

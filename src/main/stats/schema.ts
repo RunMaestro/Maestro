@@ -176,13 +176,42 @@ export const CREATE_SHORTCUT_USAGE_DAILY_SQL = `
 // ============================================================================
 // Multi-Window Usage Daily (Migration v8)
 // ============================================================================
-
 export const CREATE_MULTI_WINDOW_USAGE_DAILY_SQL = `
   CREATE TABLE IF NOT EXISTS multi_window_usage_daily (
     date TEXT PRIMARY KEY,
     windows_opened INTEGER NOT NULL DEFAULT 0,
     peak_concurrent INTEGER NOT NULL DEFAULT 0
   )
+`;
+
+// ============================================================================
+// Resilience Events (Migration v10)
+// ============================================================================
+
+/**
+ * One row per RESOLVED Agent Resilience outage (recovered or stopped by the
+ * user) - never per retry attempt, and never while a countdown is live, so an
+ * app quit mid-outage simply records nothing rather than a phantom row.
+ *
+ * `waited_ms` is derivable (resolved_at - started_at) but the split columns
+ * keep range queries index-friendly.
+ */
+export const CREATE_RESILIENCE_EVENTS_SQL = `
+  CREATE TABLE IF NOT EXISTS resilience_events (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    agent_type TEXT NOT NULL,
+    strategy TEXT NOT NULL CHECK(strategy IN ('availability', 'token-exhaustion')),
+    outcome TEXT NOT NULL CHECK(outcome IN ('recovered', 'stopped')),
+    started_at INTEGER NOT NULL,
+    resolved_at INTEGER NOT NULL,
+    retries INTEGER NOT NULL
+  )
+`;
+
+export const CREATE_RESILIENCE_EVENTS_INDEXES_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_resilience_started ON resilience_events(started_at);
+  CREATE INDEX IF NOT EXISTS idx_resilience_strategy ON resilience_events(strategy, started_at)
 `;
 
 // ============================================================================

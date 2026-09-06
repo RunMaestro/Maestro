@@ -34,6 +34,8 @@ import type {
 	EnqueueCommandResult,
 	ReadTerminalTabPayload,
 	ReadTerminalTabResult,
+	ConsultAgentParams,
+	ConsultAgentResult,
 } from '../../types';
 import type { CadenzaPayload } from '../../../../shared/cadenza-types';
 import type { MovementPayload, MovementStateSnapshot } from '../../../../shared/movement-types';
@@ -161,6 +163,8 @@ export interface MessageHandlerCallbacks {
 		prompt: string,
 		background?: boolean
 	) => Promise<{ success: boolean; tabId?: string }>;
+	/** Consult another agent and return its answer (`maestro-cli ask`). */
+	consultAgent: (params: ConsultAgentParams) => Promise<ConsultAgentResult>;
 	enqueueCommand: (
 		sessionId: string,
 		command: string,
@@ -178,7 +182,7 @@ export interface MessageHandlerCallbacks {
 		sessionId: string,
 		itemId: string
 	) => Promise<{ success: boolean; removed: boolean; error?: string }>;
-	refreshAutoRunDocs: (sessionId: string) => Promise<boolean>;
+	refreshAutoRunDocs: (sessionId: string, background?: boolean) => Promise<boolean>;
 	configureAutoRun: (
 		sessionId: string,
 		config: {

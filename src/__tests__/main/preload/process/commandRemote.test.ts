@@ -110,6 +110,53 @@ describe('Process CommandRemote Preload API', () => {
 				undefined
 			);
 		});
+
+		it('passes background through without coercing it', () => {
+			// `background` arrives as sent: the renderer opts in on a literal
+			// `true` only, so `false` and an absent field must stay distinct all
+			// the way through instead of being defaulted here into a decision.
+			const callback = vi.fn();
+			let registeredHandler: (
+				event: unknown,
+				sessionId: string,
+				command: string,
+				inputMode?: 'ai' | 'terminal',
+				tabId?: string,
+				force?: boolean,
+				images?: string[],
+				background?: boolean,
+				receiptChannel?: string
+			) => void;
+
+			mockOn.mockImplementation((channel: string, handler: typeof registeredHandler) => {
+				if (channel === 'remote:executeCommand') {
+					registeredHandler = handler;
+				}
+			});
+
+			api.onRemoteCommand(callback);
+			registeredHandler!(
+				{},
+				'session-123',
+				'test command',
+				'ai',
+				undefined,
+				undefined,
+				undefined,
+				false
+			);
+
+			expect(callback).toHaveBeenCalledWith(
+				'session-123',
+				'test command',
+				'ai',
+				undefined,
+				undefined,
+				undefined,
+				false,
+				undefined
+			);
+		});
 	});
 
 	describe('sendRemoteCommandReceipt', () => {

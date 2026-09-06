@@ -67,7 +67,7 @@ export function ProcessListView(props: ProcessListViewProps) {
 							onSelectNode(node.id);
 							onToggleNode(node.id);
 						}}
-						className="w-full text-left px-4 py-2 flex items-center gap-2 hover:bg-opacity-5"
+						className="w-full text-left px-4 py-2 flex items-center gap-2 row-hover"
 						style={{
 							paddingLeft: `${paddingLeft}px`,
 							backgroundColor: isSelected ? `${theme.colors.accent}25` : 'transparent',
@@ -135,7 +135,7 @@ export function ProcessListView(props: ProcessListViewProps) {
 								onToggleNode(node.id);
 							}
 						}}
-						className="w-full text-left px-4 py-2 flex items-center gap-2 hover:bg-opacity-5 group"
+						className="w-full text-left px-4 py-2 flex items-center gap-2 row-hover group"
 						style={{
 							paddingLeft: `${paddingLeft}px`,
 							backgroundColor: isSelected ? `${theme.colors.accent}25` : 'transparent',
@@ -199,7 +199,7 @@ export function ProcessListView(props: ProcessListViewProps) {
 						</span>
 						{node.sessionId && onNavigateToSession && (
 							<button
-								className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-opacity-20 transition-opacity flex-shrink-0"
+								className="p-1 rounded opacity-0 group-hover:opacity-100 row-hover transition-opacity flex-shrink-0"
 								style={{ color: theme.colors.accent }}
 								onClick={(e) => {
 									e.stopPropagation();
@@ -398,7 +398,7 @@ export function ProcessListView(props: ProcessListViewProps) {
 									!isWizardProcess &&
 									!isCueProcess && (
 										<button
-											className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-opacity-20 transition-opacity"
+											className="p-1 rounded opacity-0 group-hover:opacity-100 row-hover transition-opacity"
 											style={{ color: theme.colors.accent }}
 											onClick={(e) => {
 												e.stopPropagation();
@@ -416,7 +416,7 @@ export function ProcessListView(props: ProcessListViewProps) {
 									)}
 								{isGroupChatProcess && node.groupChatId && onNavigateToGroupChat && (
 									<button
-										className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-opacity-20 transition-opacity"
+										className="p-1 rounded opacity-0 group-hover:opacity-100 row-hover transition-opacity"
 										style={{ color: theme.colors.accent }}
 										onClick={(e) => {
 											e.stopPropagation();
@@ -434,7 +434,7 @@ export function ProcessListView(props: ProcessListViewProps) {
 								)}
 								{node.processSessionId && (
 									<button
-										className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-opacity-20 transition-opacity"
+										className="p-1 rounded opacity-0 group-hover:opacity-100 row-hover transition-opacity"
 										style={{ color: theme.colors.error }}
 										onClick={(e) => {
 											e.stopPropagation();
@@ -470,7 +470,7 @@ export function ProcessListView(props: ProcessListViewProps) {
 							onSelectNode(node.id);
 							onToggleNode(node.id);
 						}}
-						className="w-full text-left px-4 py-2 flex items-center gap-2 hover:bg-opacity-5"
+						className="w-full text-left px-4 py-2 flex items-center gap-2 row-hover"
 						style={{
 							paddingLeft: `${paddingLeft}px`,
 							backgroundColor: isSelected ? `${theme.colors.accent}25` : 'transparent',

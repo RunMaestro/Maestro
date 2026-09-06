@@ -14,11 +14,11 @@ There are several ways to access the Document Graph:
 
 ### From File Preview
 
-When viewing a markdown file in File Preview, press `Cmd+Shift+G` / `Ctrl+Shift+G` to open the Document Graph focused on that file. Press `Esc` to return to the File Preview. This is the primary way to open the Document Graph.
+When viewing a markdown file in File Preview, click the graph button in the preview toolbar to open the Document Graph focused on that file. Press `Esc` to return to the File Preview. This is the primary way to open the Document Graph.
 
 ### From Quick Actions
 
-Press `Cmd+K` / `Ctrl+K` and search for "Open Last Document Graph" to re-open the most recently viewed graph.
+Press `Cmd+K` / `Ctrl+K` and search for "View in Document Graph" to focus the graph on the markdown file you are previewing, or "Open Last Document Graph" to re-open the most recently viewed graph.
 
 <Note>
 The "Open Last Document Graph" option only appears after you've opened a Document Graph at least once during your session.
@@ -64,7 +64,7 @@ options.
 
 ### Using Go to File
 
-Press `Cmd+G` / `Ctrl+G` to open the fuzzy file finder, navigate to any markdown file, then use `Cmd+Shift+G` to jump to the Document Graph from there.
+Press `Cmd+G` / `Ctrl+G` to open the fuzzy file finder and navigate to any markdown file, then use the preview toolbar's graph button (or `Cmd+K` and "View in Document Graph") to jump to the Document Graph from there.
 
 ## Navigating the Graph
 
@@ -84,9 +84,11 @@ The Document Graph is designed for keyboard-first navigation:
 | Switch scroll to zoom or pan  | `S`                               |
 | Adjust node spacing           | `+` / `-`                         |
 | Focus search                  | `Cmd/Ctrl+F`                      |
-| Close graph or help panel     | `Esc`                             |
+| Step back / close graph       | `Esc`                             |
 
 `L` steps through Mind Map, Radial, Hierarchical, Force, Lobes, and Timeline, in the same order as the layout dropdown. `D` widens the depth one level per press (1 through 5, then All, then back to 1). `P` steps the preview length through Off, 50, 100, 200, 350, and 500 characters. `F` re-frames the whole graph, and `S` switches what the scroll wheel does.
+
+`Esc` steps back out one level at a time rather than closing outright. It closes the help panel first if that is open, then it takes you out of the search box **with your query intact**, which is the point: search, `Esc`, then arrow to a hit while the matches are still highlighted. Press it again to clear the search, and once more to close the graph.
 
 Closing asks for confirmation first, since `Esc` would otherwise discard the layout, depth, and node positions you set up. Turn that prompt off in **Settings → Display → Document Graph**. A graph opened from the [Memories](./memories) viewer never asks either way: `Esc` hands you straight back to that viewer, so there is nothing to lose.
 
@@ -255,7 +257,7 @@ With the Preview slider at **Off** (or after pressing `P` around to Off), only t
 
 1. Use `Cmd+G` to quickly find a file
 2. Open it in File Preview to read or edit
-3. Press `Cmd+Shift+G` to see its connections in the Document Graph
+3. Click the graph button in the preview toolbar to see its connections in the Document Graph
 4. Press `O` to open a connected document
 5. Press `Esc` to return to File Preview
 
@@ -291,7 +293,7 @@ The Document Graph is especially useful for:
 
 | Action                    | macOS            | Windows/Linux     |
 | ------------------------- | ---------------- | ----------------- |
-| Open from File Preview    | `Cmd+Shift+G`    | `Ctrl+Shift+G`    |
+| Open from File Preview    | Toolbar button   | Toolbar button    |
 | Re-open last graph        | Via `Cmd+K` menu | Via `Ctrl+K` menu |
 | Go to File (fuzzy finder) | `Cmd+G`          | `Ctrl+G`          |
 | Navigate nodes            | `Arrow Keys`     | `Arrow Keys`      |

@@ -325,7 +325,7 @@ export function ImagePreview({
 				<X className="w-3 h-3" />
 			</button>
 			<div
-				className="absolute bottom-0 left-0 right-0 px-1 py-0.5 text-[9px] truncate rounded-b"
+				className="absolute bottom-0 left-0 right-0 px-1 py-0.5 text-3xs truncate rounded-b"
 				style={{
 					backgroundColor: 'rgba(0,0,0,0.6)',
 					color: 'white',

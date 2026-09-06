@@ -130,7 +130,7 @@ export function ThemeTab({
 					tickLabels={GLOSS_TICK_LABELS}
 					disabled={isLightTheme}
 				/>
-				<p className="text-[11px] opacity-55 mt-2">
+				<p className="text-xs-plus opacity-55 mt-2">
 					{isLightTheme
 						? 'Gloss is off on light themes: a white highlight on a light surface is invisible at best and muddy at worst.'
 						: GLOSS_LEVEL_META[glossLevel].description}

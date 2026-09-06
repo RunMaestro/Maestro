@@ -29,6 +29,7 @@ import { HistoryDetailModal } from '../HistoryDetailModal';
 import { useListNavigation, useThrottledCallback } from '../../hooks';
 import { useHistoryPagination } from '../../hooks/history/useHistoryPagination';
 import type { PaginatedPage } from '../../hooks/history/useHistoryPagination';
+import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
@@ -55,6 +56,8 @@ interface UnifiedHistoryTabProps {
 	/** Navigate to a session tab - receives (sourceSessionId, agentSessionId) */
 	onResumeSession?: (sourceSessionId: string, agentSessionId: string, sessionName?: string) => void;
 	fileTree?: FileNode[];
+	cwd?: string;
+	projectRoot?: string;
 	onFileClick?: (path: string) => void;
 	/** Lookback window in hours, lifted to the parent so the modal title can reflect it. null = All time. */
 	lookbackHours: number | null;
@@ -63,7 +66,16 @@ interface UnifiedHistoryTabProps {
 
 export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabProps>(
 	function UnifiedHistoryTab(
-		{ theme, onResumeSession, fileTree, onFileClick, lookbackHours, onLookbackChange },
+		{
+			theme,
+			onResumeSession,
+			fileTree,
+			cwd,
+			projectRoot,
+			onFileClick,
+			lookbackHours,
+			onLookbackChange,
+		},
 		ref
 	) {
 		const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures.maestroCue);
@@ -90,6 +102,10 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 		const [detailModalEntry, setDetailModalEntry] = useState<HistoryEntry | null>(null);
 		const [historyStats, setHistoryStats] = useState<HistoryStats | null>(null);
 		const [searchExpanded, setSearchExpanded] = useState(false);
+		// Phone: the activity graph gets its own row. Beside the search button and
+		// three filter pills it was squeezed to ~50px, and its two axis labels
+		// ("Sep 5", "Now") printed on top of each other.
+		const phone = usePhoneLayout();
 		const [searchQuery, setSearchQuery] = useState('');
 
 		// Pre-computed graph buckets from backend (covers all entries in
@@ -679,7 +695,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 						/>
 						{searchQuery && (
 							<span
-								className="text-[10px] font-mono whitespace-nowrap flex-shrink-0"
+								className="text-2xs font-mono whitespace-nowrap flex-shrink-0"
 								style={{ color: theme.colors.textDim }}
 							>
 								{filteredEntries.length}
@@ -696,7 +712,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 				)}
 
 				{/* Header: Search icon + Filters + Activity Graph */}
-				<div className="flex items-start gap-3 mb-4">
+				<div className={`flex items-start gap-3 mb-4 ${phone ? 'flex-wrap' : ''}`}>
 					<button
 						onClick={openSearch}
 						className="flex-shrink-0 p-1.5 rounded-full transition-colors hover:bg-white/10"
@@ -711,26 +727,29 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 						theme={theme}
 						visibleTypes={visibleTypes}
 					/>
-					<ActivityGraph
-						entries={[]}
-						theme={theme}
-						lookbackHours={lookbackHours}
-						onLookbackChange={handleLookbackChange}
-						precomputedBuckets={graphBuckets}
-						precomputedRange={graphRange}
-						viewportRange={graphViewportRange}
-						alwaysShowViewportLabel
-						onBarClick={handleGraphBarClick}
-						activeFilters={activeFilters}
-					/>
+					{/* On a phone the graph wraps onto its own full-width line. */}
+					<div className={phone ? 'basis-full flex min-w-0' : 'contents'}>
+						<ActivityGraph
+							entries={[]}
+							theme={theme}
+							lookbackHours={lookbackHours}
+							onLookbackChange={handleLookbackChange}
+							precomputedBuckets={graphBuckets}
+							precomputedRange={graphRange}
+							viewportRange={graphViewportRange}
+							alwaysShowViewportLabel
+							onBarClick={handleGraphBarClick}
+							activeFilters={activeFilters}
+						/>
+					</div>
 					{/* Entry count badge - shows window position when jumped, total otherwise */}
 					{!isLoading && totalEntries > 0 && (
 						<span
-							className="text-[10px] font-mono whitespace-nowrap flex-shrink-0 mt-1"
+							className="text-2xs font-mono whitespace-nowrap flex-shrink-0 mt-1"
 							style={{ color: theme.colors.textDim }}
 						>
 							{!isAtTop
-								? `${startOffset + 1}–${startOffset + entries.length}/${totalEntries}`
+								? `${startOffset + 1}-${startOffset + entries.length}/${totalEntries}`
 								: entries.length < totalEntries
 									? `${entries.length}/${totalEntries}`
 									: `${totalEntries}`}
@@ -845,6 +864,8 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 							virtualizer.scrollToIndex(index, { align: 'center', behavior: 'smooth' });
 						}}
 						fileTree={fileTree}
+						cwd={cwd}
+						projectRoot={projectRoot}
 						onFileClick={onFileClick}
 					/>
 				)}

@@ -420,7 +420,7 @@ export const ParquetViewer = forwardRef<ParquetViewerHandle, ParquetViewerProps>
 						<div className="text-xs" style={{ color: theme.colors.textDim }}>
 							{formatSize(fetchProgress.receivedBytes)} of {formatSize(fetchProgress.totalBytes)}
 						</div>
-						<div className="text-[11px] text-center" style={{ color: theme.colors.textDim }}>
+						<div className="text-xs-plus text-center" style={{ color: theme.colors.textDim }}>
 							There is no byte-range channel over SSH, so the whole file has to come across before
 							any of it can be read.
 						</div>
@@ -456,7 +456,7 @@ export const ParquetViewer = forwardRef<ParquetViewerHandle, ParquetViewerProps>
 					<span className="text-xs" style={{ color: theme.colors.textMain }}>
 						{formatCount(info.totalRows)} rows, {info.columns.length} columns
 					</span>
-					<span className="text-[11px]" style={{ color: theme.colors.textDim }}>
+					<span className="text-xs-plus" style={{ color: theme.colors.textDim }}>
 						{formatSize(info.fileBytes)} - {info.rowGroups.length} row group
 						{info.rowGroups.length === 1 ? '' : 's'}
 						{info.createdBy ? ` - ${info.createdBy}` : ''}
@@ -466,7 +466,7 @@ export const ParquetViewer = forwardRef<ParquetViewerHandle, ParquetViewerProps>
 					<button
 						type="button"
 						onClick={schemaPanel.toggle}
-						className="flex items-center gap-1 text-[11px] px-2 py-1 rounded"
+						className="flex items-center gap-1 text-xs-plus px-2 py-1 rounded"
 						style={{
 							color: schemaPanel.value ? theme.colors.accentText : theme.colors.textDim,
 							backgroundColor: schemaPanel.value ? `${theme.colors.accent}22` : 'transparent',
@@ -480,7 +480,7 @@ export const ParquetViewer = forwardRef<ParquetViewerHandle, ParquetViewerProps>
 					<button
 						type="button"
 						onClick={handleExport}
-						className="flex items-center gap-1 text-[11px] px-2 py-1 rounded"
+						className="flex items-center gap-1 text-xs-plus px-2 py-1 rounded"
 						style={{ color: theme.colors.textDim }}
 						title="Export the matching rows as CSV or JSON Lines"
 						data-testid="parquet-export"
@@ -529,7 +529,7 @@ export const ParquetViewer = forwardRef<ParquetViewerHandle, ParquetViewerProps>
 
 				{/* Footer: what the match set actually is right now. */}
 				<div
-					className="shrink-0 flex items-center gap-3 px-3 py-1.5 text-[11px] flex-wrap"
+					className="shrink-0 flex items-center gap-3 px-3 py-1.5 text-xs-plus flex-wrap"
 					style={{ borderTop: `1px solid ${theme.colors.border}`, color: theme.colors.textDim }}
 					data-testid="parquet-footer"
 				>

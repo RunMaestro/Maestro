@@ -62,7 +62,7 @@ Tips and gotchas:
 | Jump to Nearest Terminal      | `Opt+Cmd+J`             | `Alt+Ctrl+J`              |
 | Jump to Bottom                | `Cmd+Shift+J`           | `Ctrl+Shift+J`            |
 | Toggle Bookmark               | `Cmd+Shift+B`           | `Ctrl+Shift+B`            |
-| Maestro Symphony              | `Cmd+Shift+Y`           | `Ctrl+Shift+Y`            |
+| Maestro Symphony              | `Opt+Cmd+Y`             | `Alt+Ctrl+Y`              |
 | Director's Notes              | `Cmd+Shift+O`           | `Ctrl+Shift+O`            |
 | Maestro Cue                   | `Opt+Q`                 | `Alt+Q`                   |
 | Show/Hide Concerto Stage      | `Opt+Cmd+C`             | `Alt+Ctrl+C`              |
@@ -71,6 +71,13 @@ Tips and gotchas:
 | Forced Parallel Send          | `Cmd+Shift+Enter`       | `Ctrl+Shift+Enter`        |
 | Cycle Focus Areas             | `Tab`                   | `Tab`                     |
 | Cycle Focus Backwards         | `Shift+Tab`             | `Shift+Tab`               |
+
+The full-window surfaces in that table (Settings, Usage Dashboard, Director's
+Notes, Symphony, Cue, Process Monitor, System Logs, Agent Sessions, Memory)
+replace each other rather than stacking, and their hotkeys stay live while one
+of them is up. Press `Opt+Cmd+U` from Director's Notes to land on the Usage
+Dashboard, then `Cmd+Shift+O` to go straight back. This holds for a rebound
+surface too, so a chord you chose yourself behaves the same as the default.
 
 ## Panel Shortcuts
 
@@ -85,12 +92,18 @@ Tips and gotchas:
 | Insert Checkbox (Auto Run)     | `Cmd+L`       | `Ctrl+L`       |
 | View Git Diff                  | `Cmd+Shift+D` | `Ctrl+Shift+D` |
 | View Git Log                   | `Cmd+Shift+G` | `Ctrl+Shift+G` |
+| Refresh Files, Git, History    | `Opt+Cmd+R`   | `Alt+Ctrl+R`   |
 | Fuzzy File Search              | `Cmd+G`       | `Ctrl+G`       |
 
-`Cmd+E` toggles edit and preview on a markdown File Preview and in the Memories
-viewer (`Cmd+Shift+M`), where the pane opens on the rendered document. Inside
-that viewer, `Cmd+G` graphs the memories and `Cmd+U` toggles the unlinked
+`Cmd+E` toggles edit and preview on a markdown File Preview, in the Memories
+viewer (`Cmd+Shift+M`), where the pane opens on the rendered document, and on
+the Maestro Prompts tab in Settings, where it opens on the source. Inside the
+Memories viewer, `Cmd+G` graphs the memories and `Cmd+U` toggles the unlinked
 filter, in place of their usual meanings.
+
+`Opt+Cmd+R` reloads the file tree, git status, worktree list, and history for
+the active agent in one press. Plain `Cmd+R` is reserved: Maestro blocks it so
+the window can never reload out from under a running agent.
 
 ## Group Chat
 
@@ -112,18 +125,20 @@ right away and the list scrolls to keep the selected entry on screen.
 
 These shortcuts work in AI Terminal mode and affect the current tab:
 
-| Action                 | macOS          | Windows/Linux   |
-| ---------------------- | -------------- | --------------- |
-| Toggle Save to History | `Cmd+S`        | `Ctrl+S`        |
-| Toggle Read-Only Mode  | `Cmd+R`        | `Ctrl+R`        |
-| Toggle Show Thinking   | `Cmd+Shift+K`  | `Ctrl+Shift+K`  |
-| Toggle Tab Star        | `Cmd+Shift+S`  | `Ctrl+Shift+S`  |
-| Toggle Tab Unread      | `Cmd+Shift+U`  | `Ctrl+Shift+U`  |
-| Filter Unread Agents   | `Opt+U`        | `Alt+U`         |
-| Filter Unread Tabs     | `Cmd+U`        | `Ctrl+U`        |
-| Next Unread/Draft Tab  | `Opt+Cmd+Down` | `Alt+Ctrl+Down` |
-| Open Image Carousel    | `Cmd+Y`        | `Ctrl+Y`        |
-| Open Prompt Composer   | `Cmd+Shift+P`  | `Ctrl+Shift+P`  |
+| Action                      | macOS                 | Windows/Linux         |
+| --------------------------- | --------------------- | --------------------- |
+| Toggle Save to History      | `Cmd+S`               | `Ctrl+S`              |
+| Toggle Read-Only Mode       | `Cmd+R`               | `Ctrl+R`              |
+| Toggle Show Thinking        | `Cmd+Shift+K`         | `Ctrl+Shift+K`        |
+| Toggle Tab Star             | `Cmd+Shift+S`         | `Ctrl+Shift+S`        |
+| Toggle Tab Unread           | `Cmd+Shift+U`         | `Ctrl+Shift+U`        |
+| Filter Unread Agents        | `Opt+U`               | `Alt+U`               |
+| Filter Unread Tabs          | `Cmd+U`               | `Ctrl+U`              |
+| Unread Only (Agents + Tabs) | unassigned by default | unassigned by default |
+| Next Unread/Draft Tab       | `Opt+Cmd+Down`        | `Alt+Ctrl+Down`       |
+| Open Image Carousel         | `Cmd+Y`               | `Ctrl+Y`              |
+| Open Image Organizer        | `Cmd+Shift+Y`         | `Ctrl+Shift+Y`        |
+| Open Prompt Composer        | `Cmd+Shift+P`         | `Ctrl+Shift+P`        |
 
 Toggle states are saved per-tab. See [Input Toggles](./general-usage#input-toggles) for details on configuring defaults.
 
@@ -174,7 +189,7 @@ The Tab Switcher provides fuzzy search across all open tabs with quick navigatio
 
 The bulk close operations (Close All, Close Others, Close Left, Close Right) are also available via the [Tab Menu](./context-management#tab-close-operations) hover overlay and Quick Actions (`Cmd+K`).
 
-In the **Snooze Tab** dialog, `Cmd+Enter` (`Ctrl+Enter` on Windows/Linux) sets the snooze from anywhere in the dialog - including the note field, where plain `Enter` stays a newline.
+In the **Snooze Tab** dialog, `Cmd+Enter` (`Ctrl+Enter` on Windows/Linux) sets the snooze from anywhere in the dialog - including the note and prompt fields, where plain `Enter` stays a newline.
 
 ### Pane Shortcuts (Tiled Tabs)
 
@@ -355,6 +370,7 @@ the full walkthrough.
 | Copy File Path                      | `Cmd+P`         | `Ctrl+P`        |
 | Open Search                         | `Cmd+F`         | `Ctrl+F`        |
 | Toggle Table of Contents (Markdown) | `Cmd+\`         | `Ctrl+\`        |
+| Jump to Heading (Markdown)          | `#`             | `#`             |
 | Go Back                             | `Cmd+Left`      | `Ctrl+Left`     |
 | Go Forward                          | `Cmd+Right`     | `Ctrl+Right`    |
 | Scroll                              | `Up/Down Arrow` | `Up/Down Arrow` |
@@ -362,6 +378,15 @@ the full walkthrough.
 | Zoom Preview Text Out               | `-` or `_`      | `-` or `_`      |
 | Reset Preview Zoom                  | `0`             | `0`             |
 | Close                               | `Esc`           | `Esc`           |
+
+`#` opens the heading palette: every heading in the document, in the order it
+appears, with a fuzzy filter on top. Type a few characters of a section name,
+move with `Up`/`Down` (`PgUp`/`PgDn` to skip further), and press `Enter` to jump
+there. It reads the same list as the Table of Contents, so use whichever suits
+the moment - the ToC to browse, the palette to go straight to a section by name.
+Like the zoom keys below it is bare, so it never fires while you are typing in
+the find bar or editing the document. The same list is in the command palette as
+**Jump to Heading**, offered only while a markdown file is open in preview.
 
 The three zoom keys are bare - no modifier - and are distinct from the app-wide
 `Cmd+=` / `Cmd+-` in [Font Zoom](#font-zoom), which scales the whole interface.
@@ -388,6 +413,24 @@ The field list is focused on open, so these work without clicking first.
 | Focus the filter     | `/`                   | `/`                   |
 | Leave the filter     | `Enter`               | `Enter`               |
 | Close row detail     | `Esc`                 | `Esc`                 |
+
+## Staged Images Organizer
+
+Opened with the expand button (⤢) beside the staged-image strip, with two or
+more images attached. See
+[Staged Images](./general-usage#the-staged-images-organizer).
+
+| Action              | macOS      | Windows/Linux |
+| ------------------- | ---------- | ------------- |
+| Zoom thumbnails in  | `+` or `=` | `+` or `=`    |
+| Zoom thumbnails out | `-` or `_` | `-` or `_`    |
+| Reset zoom to 100%  | `0`        | `0`           |
+| Close               | `Esc`      | `Esc`         |
+
+The zoom keys are bare, like the ones in [File Preview](#file-preview), so the
+app-wide `Cmd+=` / `Cmd+-` in [Font Size](#font-size) keeps working while the
+organizer is open. They stop firing while the lightbox or the annotator is open
+on top of it.
 
 ## Memories Viewer
 
@@ -434,6 +477,31 @@ so the selection slides sideways instead of jumping to another branch's tip.
 message selects it, the same as clicking its dot. The graph is built from every
 branch, so all of this reaches commits the List view does not hold.
 
+## Maestro Prompts (Settings)
+
+Settings -> Maestro Prompts edits the system prompts Maestro sends to agents.
+The prompt list is focused when the tab opens, so these work right away.
+
+| Action                 | macOS           | Windows/Linux   |
+| ---------------------- | --------------- | --------------- |
+| Previous / next prompt | `Up/Down Arrow` | `Up/Down Arrow` |
+| Jump to the filter box | `/`             | `/`             |
+| Toggle Preview / Edit  | `Cmd+E`         | `Ctrl+E`        |
+| Step back out          | `Esc`           | `Esc`           |
+
+The filter searches each prompt's name, description, and body, so you can find
+a prompt by a phrase you remember from inside it. `/` only jumps to the filter
+when you are not already typing, so a slash typed into a prompt stays a slash.
+`Cmd+F` is not rebound here: it stays on the Settings search box.
+
+Preview renders the prompt as markdown **with its template variables resolved**
+against the active agent, so it shows what the agent actually receives.
+
+`Esc` climbs back out one rung at a time: it dismisses the template-variable
+popup, then returns you from the filter box to the list **keeping your query**,
+then clears the filter, then closes the help panel or the expanded editor, and
+only then closes Settings.
+
 ## Agent Sessions Browser
 
 Opened with `Cmd+Shift+L`. The list view walks sessions; the detail view adds a
@@ -444,8 +512,13 @@ one-key resume.
 | Previous / next session (list)   | `Up/Down`         | `Up/Down`          |
 | Open the selected session (list) | `Enter`           | `Enter`            |
 | Search sessions (list)           | `Cmd+F`           | `Ctrl+F`           |
+| Rename the session in focus      | `Cmd+E`           | `Ctrl+E`           |
 | Resume the open session (detail) | `Cmd+R` / `Enter` | `Ctrl+R` / `Enter` |
 | Back to the list / close         | `Esc`             | `Esc`              |
+
+`Cmd+E` renames the highlighted row in the list, or the session you are viewing
+in the detail pane. `Esc` while renaming exits the name field and leaves the
+browser where it was; press it again to go back or close.
 
 `Cmd+R` is off while you are renaming a session, so it cannot discard a name
 you are half-way through typing.

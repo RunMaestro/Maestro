@@ -509,7 +509,7 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 					<span style={{ color: theme.colors.textDim }}>
 						Press{' '}
 						<kbd
-							className="px-1.5 py-0.5 rounded font-mono text-[10px] mx-0.5"
+							className="px-1.5 py-0.5 rounded font-mono text-2xs mx-0.5"
 							style={{
 								backgroundColor: theme.colors.bgActivity,
 								color: theme.colors.textMain,

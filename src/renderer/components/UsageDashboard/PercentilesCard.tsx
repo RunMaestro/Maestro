@@ -77,7 +77,7 @@ export const PercentilesCard = memo(function PercentilesCard({
 				<h3 className="text-sm font-semibold" style={{ color: theme.colors.textMain }}>
 					{title}
 				</h3>
-				<span className="text-[11px]" style={{ color: theme.colors.textDim }}>
+				<span className="text-xs-plus" style={{ color: theme.colors.textDim }}>
 					{hasData
 						? `across ${distribution.count.toLocaleString()} ${unitLabel}`
 						: `no ${unitLabel} in range`}
@@ -101,7 +101,7 @@ export const PercentilesCard = memo(function PercentilesCard({
 					{visibleBreakdown.length > 0 && (
 						<div className="mt-4">
 							<div
-								className="text-[10px] uppercase tracking-wide mb-1.5"
+								className="text-2xs uppercase tracking-wide mb-1.5"
 								style={{ color: theme.colors.textDim }}
 							>
 								By Agent
@@ -112,7 +112,7 @@ export const PercentilesCard = memo(function PercentilesCard({
 							>
 								{/* header */}
 								<div
-									className="grid items-center px-2 py-1 text-[10px] uppercase tracking-wide"
+									className="grid items-center px-2 py-1 text-2xs uppercase tracking-wide"
 									style={{
 										gridTemplateColumns: `minmax(0,1.4fr) repeat(${PCT_COLUMNS.length}, minmax(0,1fr))`,
 										color: theme.colors.textDim,
@@ -185,7 +185,7 @@ const PercentileCell = memo(function PercentileCell({
 			}}
 		>
 			<div
-				className="text-[10px] uppercase tracking-wide mb-0.5"
+				className="text-2xs uppercase tracking-wide mb-0.5"
 				style={{ color: emphasize ? theme.colors.accent : theme.colors.textDim }}
 			>
 				{label}

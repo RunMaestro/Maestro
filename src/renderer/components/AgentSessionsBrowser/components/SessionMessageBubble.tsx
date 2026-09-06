@@ -39,7 +39,7 @@ export const SessionMessageBubble = React.memo(function SessionMessageBubble({
 				>
 					<div className="whitespace-pre-wrap break-words">{message.content || '[No content]'}</div>
 					<div
-						className="text-[10px] mt-2 opacity-60"
+						className="text-2xs mt-2 opacity-60"
 						style={{
 							color: isUser ? (theme.mode === 'light' ? '#fff' : '#000') : theme.colors.textDim,
 						}}

@@ -53,7 +53,7 @@ export function ShellSettingsSection({
 								onFocus={handleShellInteraction}
 								className={`w-full text-left p-3 rounded border transition-all ${
 									defaultShell === shell.id ? 'ring-2' : ''
-								} hover:bg-opacity-10`}
+								} row-hover`}
 								style={
 									{
 										borderColor: theme.colors.border,

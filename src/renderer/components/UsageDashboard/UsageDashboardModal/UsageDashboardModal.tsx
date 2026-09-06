@@ -21,6 +21,7 @@ import { EmptyState } from '../EmptyState';
 import { DashboardSkeleton } from '../ChartSkeletons';
 import { CueStats } from '../CueStats';
 import { TokenSeriesProvider } from '../TokenSeriesContext';
+import { buildModalOwnedFooterSummary } from '../footerSummary';
 import type { GroupStatRollup } from '../../../../shared/statsGroupRollup';
 import type { Session } from '../../../types';
 import { useModalLayer } from '../../../hooks/ui/useModalLayer';
@@ -33,6 +34,8 @@ import { useCodexUsageStore } from '../../../stores/codexUsageStore';
 import { useGlobalAgentStats } from '../../../hooks/stats/useGlobalAgentStats';
 import type { UsageDashboardModalProps } from './types';
 import { getSectionsForViewMode, type SectionId } from './sections';
+import { TIME_RANGE_OPTIONS } from './constants';
+import { formatDatabaseSize } from './formatters';
 import {
 	hasUsefulAnthropicQuotaDetails,
 	hasUsefulCodexQuotaDetails,
@@ -45,7 +48,8 @@ import {
 	useUsageDashboardLayout,
 	useUsageDashboardTabs,
 } from './hooks';
-import { UsageDashboardFooter, UsageDashboardHeader, UsageDashboardTabs } from './components';
+import { UsageDashboardHeader, UsageDashboardTabs } from './components';
+import { UsageDashboardFooter } from '../UsageDashboardFooter';
 import {
 	ActivityView,
 	AgentOverviewView,
@@ -186,6 +190,22 @@ export function UsageDashboardModal({
 	const hasWorktreeAnalytics = useMemo(
 		() => sessions.some((session) => !!session.parentSessionId),
 		[sessions]
+	);
+	// Footer line for the tabs this modal can describe from `data` alone. Tabs
+	// backed by a panel that fetches for itself (Cue, Auto Run, Shortcuts, the
+	// quota panels) and the two card grids that own their own filter state
+	// publish their own line instead, which wins over this one.
+	// The footer is presentational: it takes finished strings rather than the
+	// range enum and a byte count, so it stays the one component both the split
+	// modal and its own test can drive.
+	const footerRangeLabel =
+		data && data.totalQueries > 0
+			? `Showing ${TIME_RANGE_OPTIONS.find((option) => option.value === timeRange)?.label.toLowerCase()} data`
+			: 'No data for selected time range';
+	const footerDatabaseSizeLabel = databaseSize !== null ? formatDatabaseSize(databaseSize) : null;
+	const footerSummary = useMemo(
+		() => buildModalOwnedFooterSummary(viewMode, { data, sessions }),
+		[viewMode, data, sessions]
 	);
 	const currentSections = useMemo(
 		() => getSectionsForViewMode(viewMode, { hasWorktreeAnalytics }),
@@ -473,9 +493,10 @@ export function UsageDashboardModal({
 
 				<UsageDashboardFooter
 					theme={theme}
-					data={data}
-					timeRange={timeRange}
-					databaseSize={databaseSize}
+					viewMode={viewMode}
+					rangeLabel={footerRangeLabel}
+					fallbackSummary={footerSummary}
+					databaseSizeLabel={footerDatabaseSizeLabel}
 				/>
 			</div>
 

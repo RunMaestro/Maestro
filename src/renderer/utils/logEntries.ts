@@ -25,6 +25,7 @@
  * correct by construction - rather than each site growing its own exclusion.
  */
 
+import { isClaudeLimitNotice } from '../../shared/agentErrorPatterns';
 import type { LogEntry } from '../types';
 
 /**
@@ -48,7 +49,26 @@ export function isSelfContainedCard(entry: LogEntry): boolean {
 		entry.snoozeReturn ||
 		// Tool call card / hidden-progress placeholder
 		entry.metadata?.hiddenProgress ||
-		entry.metadata?.toolState
+		entry.metadata?.toolState ||
+		// Claude's plan-limit banner. Unlike every other kind above, this one has
+		// no marker field to key off: Claude forwards the banner as ordinary
+		// assistant output on the `result` envelope, AFTER the synthetic
+		// `assistant` message before it already raised the failure that started
+		// the retry. So the transcript holds a plain `stdout` entry whose entire
+		// body is the notice, sitting right under the outage card that says the
+		// same thing.
+		//
+		// It is a standalone notice, never the head of a reply, and the answer the
+		// retry eventually produces lands as the NEXT `stdout` entry - half an
+		// hour later, but still the next one in the same response group. Without
+		// this the transcript renders that answer with "You've hit your session
+		// limit - resets ..." glued to its front. Recognizing the text rather than
+		// a marker also fixes transcripts already on disk.
+		//
+		// Anchored and length-capped by isClaudeLimitNotice, so an agent
+		// *discussing* limits (which Maestro's own agents do constantly) carries
+		// surrounding prose and does not match.
+		isClaudeLimitNotice(entry.text)
 	);
 }
 

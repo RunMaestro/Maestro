@@ -82,21 +82,21 @@ export const TemplateAutocompleteDropdown = forwardRef<
 				}}
 			>
 				<kbd
-					className="px-1 py-0.5 rounded text-[10px]"
+					className="px-1 py-0.5 rounded text-2xs"
 					style={{ backgroundColor: theme.colors.bgActivity }}
 				>
 					↑↓
 				</kbd>{' '}
 				navigate{' '}
 				<kbd
-					className="px-1 py-0.5 rounded text-[10px]"
+					className="px-1 py-0.5 rounded text-2xs"
 					style={{ backgroundColor: theme.colors.bgActivity }}
 				>
 					Tab
 				</kbd>{' '}
 				select{' '}
 				<kbd
-					className="px-1 py-0.5 rounded text-[10px]"
+					className="px-1 py-0.5 rounded text-2xs"
 					style={{ backgroundColor: theme.colors.bgActivity }}
 				>
 					Esc

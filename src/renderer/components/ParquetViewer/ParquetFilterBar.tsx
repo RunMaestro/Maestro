@@ -197,7 +197,7 @@ export const ParquetFilterBar = forwardRef<ParquetFilterBarHandle, ParquetFilter
 					</div>
 					{busy && (
 						<span
-							className="text-[11px] shrink-0 animate-pulse"
+							className="text-xs-plus shrink-0 animate-pulse"
 							style={{ color: theme.colors.textDim }}
 						>
 							scanning…
@@ -231,7 +231,7 @@ export const ParquetFilterBar = forwardRef<ParquetFilterBarHandle, ParquetFilter
 				{/* Parse / bind error, anchored to the span it came from. */}
 				{problem && (
 					<div
-						className="px-3 pb-2 flex items-start gap-2 text-[11px]"
+						className="px-3 pb-2 flex items-start gap-2 text-xs-plus"
 						style={{ color: theme.colors.error }}
 						data-testid="parquet-filter-error"
 					>
@@ -259,7 +259,7 @@ export const ParquetFilterBar = forwardRef<ParquetFilterBarHandle, ParquetFilter
 			    multi-GB file came back instantly. */}
 				{!problem && stats && value.trim().length > 0 && (
 					<div
-						className="px-3 pb-2 flex items-center gap-3 text-[11px] flex-wrap"
+						className="px-3 pb-2 flex items-center gap-3 text-xs-plus flex-wrap"
 						style={{ color: theme.colors.textDim }}
 						data-testid="parquet-pushdown-stats"
 					>
@@ -303,7 +303,7 @@ export const ParquetFilterBar = forwardRef<ParquetFilterBarHandle, ParquetFilter
 								}}
 							>
 								<span className="truncate font-mono">{column.name}</span>
-								<span className="shrink-0 text-[10px]" style={{ color: theme.colors.textDim }}>
+								<span className="shrink-0 text-2xs" style={{ color: theme.colors.textDim }}>
 									{column.logicalType ?? column.physicalType ?? column.kind}
 								</span>
 							</button>
@@ -335,18 +335,18 @@ export const ParquetFilterBar = forwardRef<ParquetFilterBarHandle, ParquetFilter
 									className="flex items-baseline gap-3 text-left rounded px-1 py-0.5 hover:brightness-125"
 								>
 									<code
-										className="text-[11px] shrink-0 font-mono"
+										className="text-xs-plus shrink-0 font-mono"
 										style={{ color: theme.colors.accent, minWidth: 190 }}
 									>
 										{expression}
 									</code>
-									<span className="text-[11px] truncate" style={{ color: theme.colors.textDim }}>
+									<span className="text-xs-plus truncate" style={{ color: theme.colors.textDim }}>
 										{description}
 									</span>
 								</button>
 							))}
 						</div>
-						<div className="mt-2 text-[10px] leading-snug" style={{ color: theme.colors.textDim }}>
+						<div className="mt-2 text-2xs leading-snug" style={{ color: theme.colors.textDim }}>
 							Terms sitting next to each other are combined with <code>and</code>. Comparisons use
 							the column's real type, so <code>ts &gt; now-1h</code> compares instants and{' '}
 							<code>price &gt; 9.99</code> compares numbers.

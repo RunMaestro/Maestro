@@ -20,6 +20,7 @@ import { useWindowContextOptional } from '../../contexts/WindowContext';
 import { useGitAgentActions } from '../../hooks/git/useGitAgentActions';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { getOpenInLabel } from '../../utils/platformUtils';
+import { visibleAiTabs } from '../../utils/tabHelpers';
 import { useListNavigation } from '../../hooks';
 import { useUIStore } from '../../stores/uiStore';
 import { useSettingsStore, selectIsLeaderboardRegistered } from '../../stores/settingsStore';
@@ -59,6 +60,7 @@ import { buildPluginCommandPaletteCommands } from './commands/pluginCommandPalet
 import { mergePluginContributions } from '../../utils/pluginContributionMerge';
 import { buildNotificationCommands } from './commands/notificationCommands';
 import { buildRightPanelCommands } from './commands/rightPanelCommands';
+import { buildFilePreviewCommands } from './commands/filePreviewCommands';
 import { buildSearchCommands } from './commands/searchCommands';
 import {
 	buildSessionJumpCommands,
@@ -375,8 +377,9 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 
 	const activeTabInfo = getActiveTabInfo(activeSession, isAiMode);
 
-	// Cross-tab search needs AI tabs to search; group chats have none.
-	const canSearchAllTabs = !activeGroupChatId && (activeSession?.aiTabs?.length ?? 0) > 0;
+	// Cross-tab search needs AI tabs to search; group chats have none, and hidden
+	// consult tabs are outside the corpus.
+	const canSearchAllTabs = !activeGroupChatId && visibleAiTabs(activeSession?.aiTabs).length > 0;
 	const activeTabType = activeTabInfo.activeTabType;
 
 	// Dismissal shared by the Escape layer handler and the ESC pill in the
@@ -485,6 +488,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		...buildMediaPlayerCommands({
 			canOpenMediaPlayer,
 			openMediaPlayer,
+			openMediaPlayerShortcut: shortcuts.openMediaPlayer,
 			setQuickActionOpen,
 		}),
 		...buildConcertoCommands({
@@ -504,6 +508,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		...buildNotificationCommands({
 			visibleToastCount,
 			clearToasts,
+			clearAllNotificationsShortcut: shortcuts.clearAllNotifications,
 			setQuickActionOpen,
 		}),
 		...buildNavigationCommands({
@@ -527,6 +532,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				toggleSidebar: shortcuts.toggleSidebar,
 				toggleRightPanel: shortcuts.toggleRightPanel,
 				nextUnreadTab: shortcuts.nextUnreadTab,
+				toggleUnreadFilters: shortcuts.toggleUnreadFilters,
 				killInstance: shortcuts.killInstance,
 				navBack: shortcuts.navBack,
 				navForward: shortcuts.navForward,
@@ -542,6 +548,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			newTabShortcut: tabShortcuts?.newTab,
 			newFileTabShortcut: tabShortcuts?.newFileTab,
 			newBrowserTabShortcut: tabShortcuts?.newBrowserTab,
+			newTerminalTabShortcut: shortcuts.toggleMode,
 		}),
 		...buildSessionManagementCommands({
 			activeSession,
@@ -634,8 +641,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			onClearActiveTerminal,
 			setQuickActionOpen,
 			shortcuts: {
-				toggleMode: shortcuts.toggleMode,
 				toggleMarkdownMode: shortcuts.toggleMarkdownMode,
+				showSnoozeList: shortcuts.showSnoozeList,
 				focusActiveTab: shortcuts.focusActiveTab,
 				clearTerminal: shortcuts.clearTerminal,
 				openModelEffort: shortcuts.openModelEffort,
@@ -701,6 +708,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				agentSessions: shortcuts.agentSessions,
 				openMemoryViewer: shortcuts.openMemoryViewer,
 				executionQueue: shortcuts.executionQueue,
+				editLastQueuedMessage: shortcuts.editLastQueuedMessage,
 				openSymphony: shortcuts.openSymphony,
 				directorNotes: shortcuts.directorNotes,
 				openCue: shortcuts.openCue,
@@ -748,6 +756,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				help: shortcuts.help,
 				systemLogs: shortcuts.systemLogs,
 				processMonitor: shortcuts.processMonitor,
+				openThemeSettings: shortcuts.openThemeSettings,
+				openLeaderboard: shortcuts.openLeaderboard,
 			},
 		}),
 		...buildGitWorktreeCommands({
@@ -761,6 +771,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			shortcuts: {
 				viewGitDiff: shortcuts.viewGitDiff,
 				viewGitLog: shortcuts.viewGitLog,
+				refreshGitFileState: shortcuts.refreshGitFileState,
 			},
 			gitService,
 			notifyToast,
@@ -782,6 +793,10 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				goToAutoRun: shortcuts.goToAutoRun,
 				toggleAutoRunExpanded: shortcuts.toggleAutoRunExpanded,
 			},
+		}),
+		...buildFilePreviewCommands({
+			activeSession,
+			setQuickActionOpen,
 		}),
 		...buildSearchCommands({
 			setQuickActionOpen,
@@ -920,6 +935,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	} = useListNavigation({
 		listLength: filtered.length,
 		onSelect: handleSelectByIndex,
+		wrap: true,
 		enableNumberHotkeys: true,
 		firstVisibleIndex,
 		enabled: !renamingSession && !renamingWindow, // Disable navigation while renaming

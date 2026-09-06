@@ -224,10 +224,14 @@
 	min-height: 0;
 }
 
-/* Shared textarea styling used by consumers (Memory Viewer, Maestro Prompts).
- * Lives here so the shared editor chrome owns its own look - consumers that drop
- * a textarea into renderEditorBody don't have to depend on unrelated stylesheets
- * being loaded. */
+/* Shared textarea styling for any consumer that drops a plain textarea into
+ * renderEditorBody. Lives here so the shared editor chrome owns its own look
+ * rather than depending on an unrelated stylesheet being loaded.
+ *
+ * Both current consumers (Memory Viewer, Maestro Prompts) edit through the
+ * CodeMirror `MarkdownEditor` instead - reach for that first, and use these
+ * only for a surface where syntax colouring would be noise. The highlight
+ * backdrop below is still live: `TextareaHighlightOverlay` paints into it. */
 .dual-pane-textarea {
 	flex: 1;
 	width: 100%;

@@ -12,6 +12,7 @@ import { clearLiveDraft } from '../../../utils/liveDraftStore';
 import { logger } from '../../../utils/logger';
 import { persistTabStarred } from '../../../utils/starredSessions';
 import { isWebDesktop } from '../../../utils/runtimeContext';
+import { noteDesktopAiTabSelection } from '../../../utils/desktopTabSelectionSync';
 import {
 	addAiTabToUnifiedHistory,
 	closeTab,
@@ -26,6 +27,7 @@ import {
 	restoreOrphanedTab,
 	setActiveTab,
 	toggleReadOnlyModeFields,
+	visibleAiTabs,
 } from '../../../utils/tabHelpers';
 import type { AITabHandlersReturn } from './types';
 
@@ -64,14 +66,26 @@ export function useAITabHandlers(): AITabHandlersReturn {
 
 	const handleTabSelect = useCallback((tabId: string) => {
 		const { activeSessionId } = useSessionStore.getState();
+		let didSelectTab = false;
 		updateSessionWith(activeSessionId, (s) => {
 			if (s.orphanedThinkingTabs?.some((t) => t.id === tabId)) {
 				const restored = restoreOrphanedTab(s, tabId);
-				if (restored) return restored.session;
+				if (restored) {
+					didSelectTab = true;
+					return restored.session;
+				}
 			}
 			const result = setActiveTab(s, tabId);
+			didSelectTab = result !== null;
 			return result ? result.session : s;
 		});
+
+		// Web -> Desktop requests already travel over remote:selectTab. Only a
+		// selection originating in the desktop renderer should be reflected back
+		// to Web-Desktop as desktop focus intent.
+		if (didSelectTab && !isWebDesktop()) {
+			noteDesktopAiTabSelection(activeSessionId, tabId);
+		}
 	}, []);
 
 	const performTabClose = useCallback(
@@ -159,18 +173,21 @@ export function useAITabHandlers(): AITabHandlersReturn {
 
 	const handleNewTab = createNewAITab;
 
+	// "Close all" means every tab the user can see. Hidden consult tabs (unopened
+	// cross-agent @mentions) have no chip, so closing one here would silently
+	// destroy a transcript and its resume id the user was never shown.
 	const performCloseAllTabs = useCallback(() => {
 		const { activeSessionId, sessions } = useSessionStore.getState();
 		const activeSession = sessions.find((s) => s.id === activeSessionId);
-		activeSession?.aiTabs.forEach((t) => clearLiveDraft(t.id));
+		visibleAiTabs(activeSession?.aiTabs).forEach((t) => clearLiveDraft(t.id));
 
-		const wizardTabIds = (activeSession?.aiTabs ?? [])
+		const wizardTabIds = visibleAiTabs(activeSession?.aiTabs)
 			.filter((t) => hasActiveWizard(t))
 			.map((t) => t.id);
 
 		updateSessionWith(activeSessionId, (s) => {
 			let updatedSession = s;
-			const tabIds = s.aiTabs.map((t) => t.id);
+			const tabIds = visibleAiTabs(s.aiTabs).map((t) => t.id);
 			for (const tabId of tabIds) {
 				const tab = updatedSession.aiTabs.find((t) => t.id === tabId);
 				const result = closeTab(updatedSession, tabId, false, {
@@ -194,7 +211,7 @@ export function useAITabHandlers(): AITabHandlersReturn {
 		const session = selectActiveSession(useSessionStore.getState());
 		if (!session) return;
 
-		const hasAnyDraft = session.aiTabs.some((tab) => hasDraft(tab));
+		const hasAnyDraft = visibleAiTabs(session.aiTabs).some((tab) => hasDraft(tab));
 		if (hasAnyDraft) {
 			useModalStore.getState().openModal('confirm', {
 				message: 'Some tabs have unsent drafts. Are you sure you want to close all tabs?',

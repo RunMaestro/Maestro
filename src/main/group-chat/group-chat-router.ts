@@ -20,6 +20,12 @@ import {
 } from './group-chat-storage';
 import { appendToLog, readLog, saveImage } from './group-chat-log';
 import {
+	finishGroupChatTurn,
+	resolveGroupChatTurnKey,
+	GROUP_CHAT_MODERATOR_NAME,
+} from './group-chat-turn-metrics';
+import { createIdleWatchdog, type IdleWatchdog } from '../utils/idle-watchdog';
+import {
 	type GroupChatMessage,
 	type GroupChatHistoryEntry,
 	cleanMentionName,
@@ -27,6 +33,8 @@ import {
 	getMentionNameForContext,
 	getMentionMatchPriority,
 	stripUnmatchedTrailingClosers,
+	normalizeMentionName,
+	requiresIdleParticipants,
 } from '../../shared/group-chat-types';
 import {
 	IProcessManager,
@@ -39,6 +47,7 @@ import {
 	addParticipant,
 	setActiveParticipantSession,
 	clearActiveParticipantSession,
+	getParticipantSessionId,
 	wasParticipantRecentlyRemoved,
 } from './group-chat-agent';
 import { AgentDetector } from '../agents';
@@ -95,6 +104,13 @@ export interface GroupChatSessionInfo {
 	};
 	/** Auto Run folder path for this session */
 	autoRunFolderPath?: string;
+	/**
+	 * True when this agent is running a turn right now (any AI tab, or a CLI
+	 * playbook). Computed live by the provider callback - the persisted session
+	 * record always reads idle, so it can never answer this. Group chats with
+	 * "only engage idle agents" on hold the delegation until this reads false.
+	 */
+	isBusy?: boolean;
 }
 
 /**
@@ -145,13 +161,23 @@ const pendingSynthesisRounds = new Set<string>();
  * add + emit + failure-handling pattern shared by the moderator, participant, and
  * error history-record sites. History logging is best-effort: a failure here is
  * reported but never thrown, so it can't break the message flow.
+ *
+ * The entry also closes out the turn's measurement here rather than at each
+ * call site: this is the one place every finished turn passes through, and the
+ * duration and token totals a chat reports are only as complete as the entries
+ * that carry them. Values already on the entry win, so a caller that measured
+ * something itself is never overwritten.
  */
 async function recordGroupChatHistory(
 	groupChatId: string,
 	entry: Omit<GroupChatHistoryEntry, 'id'>
 ): Promise<void> {
 	try {
-		const historyEntry = await addGroupChatHistoryEntry(groupChatId, entry);
+		const measured = finishGroupChatTurn(groupChatId, entry.participantName);
+		const historyEntry = await addGroupChatHistoryEntry(groupChatId, {
+			...measured,
+			...entry,
+		});
 		groupChatEmitters.emitHistoryEntry?.(groupChatId, historyEntry);
 		logger.debug(
 			`[GroupChatRouter] Added ${entry.type} history entry for ${entry.participantName}: ${entry.summary.substring(0, 50)}...`
@@ -179,24 +205,74 @@ async function recordGroupChatHistory(
 const autoRunParticipantTracker = new Map<string, Set<string>>();
 
 /**
- * Tracks per-participant response timeout handles.
- * Maps `${groupChatId}:${participantName}` -> NodeJS.Timeout
- * Timeouts fire if a participant never responds (hung process, lost IPC, etc.)
+ * Tracks per-participant silence budgets.
+ * Maps `${groupChatId}:${participantName}` -> IdleWatchdog
+ * Fires if a participant goes quiet for too long (hung process, lost IPC, etc.)
  */
-const participantTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
-
-/** How long to wait for a participant before treating them as timed-out (10 minutes). */
-const PARTICIPANT_RESPONSE_TIMEOUT_MS = 10 * 60 * 1000;
-
-/** How long to wait for the moderator process before treating it as timed-out (10 minutes). */
-const MODERATOR_RESPONSE_TIMEOUT_MS = 10 * 60 * 1000;
+const participantTimeouts = new Map<string, IdleWatchdog>();
 
 /**
- * Tracks per-group-chat moderator timeout handles.
- * Maps groupChatId -> NodeJS.Timeout
- * Timeouts fire if the moderator process never exits (hung process, API hang, etc.)
+ * How long a participant may stay SILENT before it is treated as timed out
+ * (10 minutes).
+ *
+ * This is a silence budget, not a duration cap: it is restarted by every chunk
+ * the participant emits (see `noteGroupChatActivity`). It used to be a plain
+ * wall-clock timer armed at dispatch, which cannot tell a working agent from a
+ * wedged one - a participant was declared dead at the ten-minute mark while its
+ * transcript showed 19-41 events per minute straight through the cutoff, and the
+ * room was told nothing had been implemented while the process went on to commit
+ * four changes and start a push.
+ *
+ * It is also the value forwarded to maestro-p as `--max-wait`, which is itself an
+ * idle budget - so the router's supervision and the wrapper's now agree in KIND
+ * as well as in number. They did not before.
  */
-const moderatorTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
+const PARTICIPANT_RESPONSE_TIMEOUT_MS = 10 * 60 * 1000;
+
+/**
+ * Absolute ceiling on one participant turn, regardless of how chatty it is
+ * (30 minutes). A participant stuck in a tool loop emits output forever and can
+ * never satisfy the idle budget, so silence alone cannot bound the run. Same
+ * split, and the same value, as a cross-agent consult.
+ */
+const PARTICIPANT_MAX_DURATION_MS = 30 * 60 * 1000;
+
+/** How long the moderator may stay SILENT before it is treated as timed out (10 minutes). */
+const MODERATOR_RESPONSE_TIMEOUT_MS = 10 * 60 * 1000;
+
+/** Absolute ceiling on one moderator turn (30 minutes). See PARTICIPANT_MAX_DURATION_MS. */
+const MODERATOR_MAX_DURATION_MS = 30 * 60 * 1000;
+
+/**
+ * Tracks per-group-chat moderator silence budgets.
+ * Maps groupChatId -> IdleWatchdog
+ * Fires if the moderator process goes quiet and never exits (hang, API stall, etc.)
+ */
+const moderatorTimeouts = new Map<string, IdleWatchdog>();
+
+/**
+ * Records proof of life for whichever moderator or participant owns `sessionId`,
+ * restarting its silence budget.
+ *
+ * Called from the shared process data listener, which is the one place that
+ * already sees every chunk a group chat process emits and can resolve a session
+ * id back to a room. Routing liveness through it rather than attaching listeners
+ * here keeps `IProcessManager` a spawn/write/kill interface: the router never
+ * needed to observe output before, and widening it to an EventEmitter for this
+ * would put a second output path beside the buffering one.
+ *
+ * Unknown or non-group-chat session ids are ignored, so the caller can hand over
+ * every chunk it sees without pre-filtering.
+ */
+export function noteGroupChatActivity(sessionId: string): void {
+	const key = resolveGroupChatTurnKey(sessionId);
+	if (!key) return;
+	if (key.participantName === GROUP_CHAT_MODERATOR_NAME) {
+		moderatorTimeouts.get(key.groupChatId)?.touch();
+		return;
+	}
+	participantTimeouts.get(getParticipantTimeoutKey(key.groupChatId, key.participantName))?.touch();
+}
 
 /**
  * Puts a room back to rest: clears the running state and releases its power
@@ -215,44 +291,94 @@ export function settleGroupChatToIdle(groupChatId: string): void {
 }
 
 /**
- * Registers a response timeout for the moderator.
- * If the moderator doesn't exit in MODERATOR_RESPONSE_TIMEOUT_MS, the state is
- * force-reset to idle so the chat doesn't hang forever.
+ * Registers a silence budget for the moderator.
+ * If the moderator goes quiet for MODERATOR_RESPONSE_TIMEOUT_MS (or runs past
+ * MODERATOR_MAX_DURATION_MS while still talking), its process is killed and the
+ * state is force-reset to idle so the chat doesn't hang forever.
  */
-export function setModeratorResponseTimeout(groupChatId: string): void {
+export function setModeratorResponseTimeout(
+	groupChatId: string,
+	processManager?: IProcessManager,
+	sessionId?: string
+): void {
 	clearModeratorResponseTimeout(groupChatId);
 
-	const handle = setTimeout(() => {
+	const giveUp = (reason: string, budgetMs: number): void => {
 		moderatorTimeouts.delete(groupChatId);
 		console.warn(
-			`[GroupChat:Debug] Moderator timed out after ${MODERATOR_RESPONSE_TIMEOUT_MS / 1000}s for ${groupChatId} - force-resetting to idle`
+			`[GroupChat:Debug] Moderator ${reason} after ${budgetMs / 1000}s for ${groupChatId} - killing and resetting to idle`
 		);
 		logger.warn('[GroupChat] Moderator timed out - resetting to idle', LOG_CONTEXT, {
 			groupChatId,
-			timeoutMs: MODERATOR_RESPONSE_TIMEOUT_MS,
+			reason,
+			timeoutMs: budgetMs,
 		});
+
+		// Kill before reporting. A timeout that only changes Maestro's state
+		// leaves the process running with write access: the room is told the turn
+		// failed while the agent it gave up on keeps editing files, committing,
+		// and pushing. Reporting a failure and leaving the cause running is worse
+		// than either outcome alone.
+		// The FULL spawned session id, not `getModeratorSessionId`, which returns the
+		// per-chat PREFIX (`group-chat-<id>-moderator`) that every turn appends a
+		// timestamp to. ProcessManager.kill looks its map up by exact key, so the
+		// prefix silently kills nothing and the timeout goes back to being a report
+		// with no teeth.
+		killTimedOutSession(sessionId, processManager, 'moderator');
 
 		groupChatEmitters.emitMessage?.(groupChatId, {
 			timestamp: new Date().toISOString(),
 			from: 'system',
-			content: `⚠️ Moderator did not respond within ${MODERATOR_RESPONSE_TIMEOUT_MS / 60000} minutes. Resetting to idle. You can send another message to retry.`,
+			content: `⚠️ Moderator ${reason} after ${budgetMs / 60000} minutes and was stopped. Resetting to idle. You can send another message to retry.`,
 		});
 
 		groupChatEmitters.emitStateChange?.(groupChatId, 'idle');
 		powerManager.removeBlockReason(`groupchat:${groupChatId}`);
-	}, MODERATOR_RESPONSE_TIMEOUT_MS);
+	};
 
-	moderatorTimeouts.set(groupChatId, handle);
+	moderatorTimeouts.set(
+		groupChatId,
+		createIdleWatchdog({
+			idleMs: MODERATOR_RESPONSE_TIMEOUT_MS,
+			maxMs: MODERATOR_MAX_DURATION_MS,
+			onIdle: () => giveUp('went silent', MODERATOR_RESPONSE_TIMEOUT_MS),
+			onMax: () => giveUp('exceeded the single-turn limit', MODERATOR_MAX_DURATION_MS),
+		})
+	);
 }
 
 /**
  * Cancels the moderator response timeout (called when the moderator process exits).
  */
 export function clearModeratorResponseTimeout(groupChatId: string): void {
-	const handle = moderatorTimeouts.get(groupChatId);
-	if (handle) {
-		clearTimeout(handle);
+	const watchdog = moderatorTimeouts.get(groupChatId);
+	if (watchdog) {
+		watchdog.disarm();
 		moderatorTimeouts.delete(groupChatId);
+	}
+}
+
+/**
+ * Kills the process behind a turn we have just given up on.
+ *
+ * Best-effort by design: the session may already be gone (that is the ordinary
+ * case for a genuinely dead process), and a kill that throws must not stop the
+ * room from settling back to idle - a timeout whose cleanup half-ran is how a
+ * chat ends up permanently stuck on 'agent-working'.
+ */
+function killTimedOutSession(
+	sessionId: string | undefined,
+	processManager: IProcessManager | undefined,
+	label: string
+): void {
+	if (!sessionId || !processManager) return;
+	try {
+		processManager.kill(sessionId);
+	} catch (err) {
+		logger.warn(`[GroupChat] Failed to kill timed-out ${label} process`, LOG_CONTEXT, {
+			sessionId,
+			error: err,
+		});
 	}
 }
 
@@ -261,8 +387,9 @@ function getParticipantTimeoutKey(groupChatId: string, participantName: string):
 }
 
 /**
- * Registers a response timeout for a participant.
- * If the participant doesn't respond in PARTICIPANT_RESPONSE_TIMEOUT_MS, they are
+ * Registers a silence budget for a participant.
+ * If the participant goes quiet for PARTICIPANT_RESPONSE_TIMEOUT_MS (or runs past
+ * PARTICIPANT_MAX_DURATION_MS while still talking), its process is killed and it is
  * force-marked as responded so synthesis can proceed and the chat doesn't hang forever.
  */
 function setParticipantResponseTimeout(
@@ -272,22 +399,32 @@ function setParticipantResponseTimeout(
 	agentDetector: AgentDetector | undefined
 ): void {
 	const key = getParticipantTimeoutKey(groupChatId, participantName);
-	// Clear any existing timeout for this participant
-	const existing = participantTimeouts.get(key);
-	if (existing) clearTimeout(existing);
+	// Clear any existing budget for this participant
+	participantTimeouts.get(key)?.disarm();
 
-	const handle = setTimeout(async () => {
+	const giveUp = async (reason: string, budgetMs: number): Promise<void> => {
 		participantTimeouts.delete(key);
 		const pending = pendingParticipantResponses.get(groupChatId);
 		if (!pending?.has(participantName)) return; // Already responded
 
 		console.warn(
-			`[GroupChat:Debug] Participant ${participantName} timed out after ${PARTICIPANT_RESPONSE_TIMEOUT_MS / 1000}s - force-completing`
+			`[GroupChat:Debug] Participant ${participantName} ${reason} after ${budgetMs / 1000}s - killing and force-completing`
 		);
+
+		// Kill before reporting - see killTimedOutSession. An Auto Run participant
+		// has no group-chat process of its own (the renderer drives the batch under
+		// the agent's own session), so there is nothing to kill and nothing is: we
+		// must never take down the user's actual agent to settle a room.
+		killTimedOutSession(
+			getParticipantSessionId(groupChatId, participantName),
+			processManager,
+			`participant ${participantName}`
+		);
+
 		groupChatEmitters.emitMessage?.(groupChatId, {
 			timestamp: new Date().toISOString(),
 			from: 'system',
-			content: `⚠️ @${participantName} did not respond within ${PARTICIPANT_RESPONSE_TIMEOUT_MS / 60000} minutes and has been marked as timed out.`,
+			content: `⚠️ @${participantName} ${reason} after ${budgetMs / 60000} minutes and was stopped.`,
 		});
 
 		// Log a timeout response so the moderator knows what happened
@@ -299,7 +436,7 @@ function setParticipantResponseTimeout(
 				await appendToLog(
 					chat.logPath,
 					participantName,
-					`[Timed out - no response after ${PARTICIPANT_RESPONSE_TIMEOUT_MS / 60000} minutes]`
+					`[Stopped - ${reason} after ${budgetMs / 60000} minutes]`
 				);
 			}
 		} catch (err) {
@@ -328,38 +465,46 @@ function setParticipantResponseTimeout(
 			if (autoRunSet.size === 0) autoRunParticipantTracker.delete(groupChatId);
 		}
 
-		const isLast = markParticipantResponded(groupChatId, participantName);
-		if (isLast) {
-			// The room is done either way. Whether synthesis can run is a separate
-			// question from whether the room is still working, and folding the two
-			// into one condition is what left a timed-out room stuck on
-			// 'agent-working' forever: `processManager`/`agentDetector` are optional
-			// here, so an undefined one skipped the clear along with the spawn.
-			if (processManager && agentDetector) {
-				spawnModeratorSynthesis(groupChatId, processManager, agentDetector).catch((err) => {
-					logger.error(
-						'Failed to spawn moderator synthesis after participant timeout',
-						LOG_CONTEXT,
-						{
-							error: err,
-							groupChatId,
-							participantName,
-						}
-					);
-					captureException(err, {
-						operation: 'groupChat:spawnSynthesisAfterTimeout',
-						groupChatId,
-						participantName,
-					});
-					settleGroupChatToIdle(groupChatId);
-				});
-			} else {
-				settleGroupChatToIdle(groupChatId);
-			}
-		}
-	}, PARTICIPANT_RESPONSE_TIMEOUT_MS);
+		// Same close-out as a normal reply, via the shared helper: a timed-out
+		// participant still has to leave the pending set, or the room waits forever
+		// on a turn that is already over.
+		finishParticipantTurn(
+			groupChatId,
+			participantName,
+			processManager,
+			agentDetector,
+			'groupChat:spawnSynthesisAfterTimeout'
+		);
+	};
 
-	participantTimeouts.set(key, handle);
+	// The watchdog's callbacks are sync; `giveUp` is async because it appends to
+	// the chat log. A rejection here can only come from the settle path itself, so
+	// it is reported rather than left as an unhandled rejection.
+	const fire = (reason: string, budgetMs: number): void => {
+		giveUp(reason, budgetMs).catch((err) => {
+			logger.error('Participant timeout handler failed', LOG_CONTEXT, {
+				groupChatId,
+				participantName,
+				error: err,
+			});
+			captureException(err, {
+				operation: 'groupChat:participantTimeout',
+				groupChatId,
+				participantName,
+			});
+			settleGroupChatToIdle(groupChatId);
+		});
+	};
+
+	participantTimeouts.set(
+		key,
+		createIdleWatchdog({
+			idleMs: PARTICIPANT_RESPONSE_TIMEOUT_MS,
+			maxMs: PARTICIPANT_MAX_DURATION_MS,
+			onIdle: () => fire('went silent', PARTICIPANT_RESPONSE_TIMEOUT_MS),
+			onMax: () => fire('exceeded the single-turn limit', PARTICIPANT_MAX_DURATION_MS),
+		})
+	);
 }
 
 /**
@@ -367,9 +512,9 @@ function setParticipantResponseTimeout(
  */
 function clearParticipantResponseTimeout(groupChatId: string, participantName: string): void {
 	const key = getParticipantTimeoutKey(groupChatId, participantName);
-	const handle = participantTimeouts.get(key);
-	if (handle) {
-		clearTimeout(handle);
+	const watchdog = participantTimeouts.get(key);
+	if (watchdog) {
+		watchdog.disarm();
 		participantTimeouts.delete(key);
 	}
 }
@@ -399,6 +544,9 @@ function setGroupChatReadOnlyState(groupChatId: string, readOnly: boolean): void
  * Clears all pending participants for a group chat (and their timeouts).
  */
 export function clearPendingParticipants(groupChatId: string): void {
+	// Stop anything still waiting for a busy agent first: a waiter that wakes up
+	// after the pending set is gone would deliver work into a stopped chat.
+	cancelQueuedDelegations(groupChatId);
 	// Cancel all timeouts for this chat before clearing
 	const pending = pendingParticipantResponses.get(groupChatId);
 	if (pending) {
@@ -977,7 +1125,7 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 				logger.debug(`[GroupChat:Debug] Emitted state change: moderator-thinking`);
 
 				// Start moderator timeout to prevent indefinite hanging
-				setModeratorResponseTimeout(groupChatId);
+				setModeratorResponseTimeout(groupChatId, processManager, sessionId);
 
 				// Add power block reason to prevent sleep during group chat activity
 				powerManager.addBlockReason(`groupchat:${groupChatId}`);
@@ -1033,6 +1181,272 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 	} else {
 		logger.debug(`[GroupChat:Debug] WARNING: No processManager provided, skipping spawn`);
 	}
+}
+
+/**
+ * Whether a delegation to this agent has to wait because the agent is already
+ * working somewhere else.
+ *
+ * A group chat participant runs as its own process in the AGENT'S working
+ * directory, so delegating to an agent the user is talking to directly puts two
+ * writers in one repo. `requireIdleParticipants` (on by default) trades a
+ * delayed turn for that collision; turning it off is the deliberate override.
+ *
+ * An agent with no matching Maestro agent can't be probed and is never blocked -
+ * "unknown" must not read as "busy", or a participant whose agent was renamed
+ * would become permanently unreachable.
+ */
+function isDelegationBlockedByBusyAgent(
+	chat: { requireIdleParticipants?: boolean },
+	matchingSession: GroupChatSessionInfo | undefined
+): boolean {
+	if (!requiresIdleParticipants(chat)) return false;
+	return matchingSession?.isBusy === true;
+}
+
+/**
+ * Registers a participant the room is waiting on.
+ *
+ * A turn builds its own set and hands it to the room, which was safe while
+ * every registration happened inside the turn that created it. A delegation
+ * held for a busy agent can register minutes later, by which time the user may
+ * have sent another message and a newer turn may own the room's set - so write
+ * to whichever set is live, not just the one this turn started with. Storing
+ * the stale set instead would drop everyone the newer turn is waiting on.
+ */
+function trackPendingParticipant(
+	groupChatId: string,
+	turnParticipants: Set<string>,
+	participantName: string
+): void {
+	turnParticipants.add(participantName);
+	const live = pendingParticipantResponses.get(groupChatId);
+	if (live && live !== turnParticipants) {
+		live.add(participantName);
+		return;
+	}
+	pendingParticipantResponses.set(groupChatId, turnParticipants);
+}
+
+/** How often a queued delegation re-checks whether its agent has gone idle. */
+const QUEUED_DELEGATION_POLL_MS = 5 * 1000;
+
+/**
+ * How long a queued delegation waits for its agent before giving up. Long
+ * enough to outlast an ordinary turn the user is having with that agent, short
+ * enough that a room can't sit on 'agent-working' forever behind an agent that
+ * is wedged.
+ */
+const QUEUED_DELEGATION_MAX_WAIT_MS = 15 * 60 * 1000;
+
+/**
+ * Cancellation tokens for delegations currently waiting on a busy agent, keyed
+ * by group chat. A waiter is not a timer we can clear by handle - it is a poll
+ * loop - so stopping a chat (see {@link clearPendingParticipants}) flips these
+ * instead, and the loop returns 'cancelled' on its next tick.
+ */
+const queuedDelegationTokens = new Map<string, Set<{ cancelled: boolean }>>();
+
+/** Stops every delegation still waiting on a busy agent in this chat. */
+function cancelQueuedDelegations(groupChatId: string): void {
+	const tokens = queuedDelegationTokens.get(groupChatId);
+	if (!tokens) return;
+	for (const token of tokens) token.cancelled = true;
+	queuedDelegationTokens.delete(groupChatId);
+}
+
+/**
+ * Blocks until the agent behind a participant stops working, so the request can
+ * be handed over the moment it frees up rather than being dropped.
+ *
+ * Polls the live session callback rather than listening for an exit: "busy" is
+ * a property of the whole agent (any AI tab, an Auto Run, a CLI run), not of one
+ * process, so there is no single event that means "free now".
+ *
+ * Prefers the agent's id over its name - a rename mid-wait must not silently
+ * re-point the wait at a different agent.
+ */
+async function waitForAgentToFree(
+	groupChatId: string,
+	participantName: string,
+	sessionId: string | undefined
+): Promise<{ outcome: 'free' | 'timeout' | 'cancelled'; session?: GroupChatSessionInfo }> {
+	const token = { cancelled: false };
+	let tokens = queuedDelegationTokens.get(groupChatId);
+	if (!tokens) {
+		tokens = new Set();
+		queuedDelegationTokens.set(groupChatId, tokens);
+	}
+	tokens.add(token);
+	const deadline = Date.now() + QUEUED_DELEGATION_MAX_WAIT_MS;
+
+	try {
+		for (;;) {
+			if (token.cancelled) return { outcome: 'cancelled' };
+			const sessions = getSessionsCallback?.() || [];
+			// By id when we have one; otherwise rc's conservative name lookup, never a
+			// loose mention match. The session found here is handed to `deliver()`,
+			// which spawns in its cwd with its SSH config - a fuzzy hit would run the
+			// delegation against a different agent's working directory.
+			const session = sessionId
+				? sessions.find((s) => s.id === sessionId)
+				: findSessionForParticipantName(participantName, sessions);
+			// A vanished agent counts as free, matching the delegation rule: an
+			// agent we cannot probe is never treated as busy.
+			if (session?.isBusy !== true) return { outcome: 'free', session };
+			if (Date.now() >= deadline) return { outcome: 'timeout', session };
+			await new Promise((resolve) => setTimeout(resolve, QUEUED_DELEGATION_POLL_MS));
+		}
+	} finally {
+		tokens.delete(token);
+		if (tokens.size === 0) queuedDelegationTokens.delete(groupChatId);
+	}
+}
+
+/**
+ * Closes out a participant that will never report back (timed out, gave up
+ * waiting, failed to start) and, when it was the last one the room was waiting
+ * on, moves the turn along. Shared by the response timeout and the queued
+ * delegation paths: both have to answer "is the room still working?" the same
+ * way or a chat hangs on 'agent-working'.
+ */
+function finishParticipantTurn(
+	groupChatId: string,
+	participantName: string,
+	processManager: IProcessManager | undefined,
+	agentDetector: AgentDetector | undefined,
+	operation: string
+): void {
+	const isLast = markParticipantResponded(groupChatId, participantName);
+	if (!isLast) return;
+	// The room is done either way. Whether synthesis can run is a separate
+	// question from whether the room is still working - folding the two into one
+	// condition is what left a timed-out room stuck on 'agent-working' forever.
+	if (processManager && agentDetector) {
+		spawnModeratorSynthesis(groupChatId, processManager, agentDetector).catch((err) => {
+			logger.error('Failed to spawn moderator synthesis', LOG_CONTEXT, {
+				error: err,
+				groupChatId,
+				participantName,
+				operation,
+			});
+			captureException(err, { operation, groupChatId, participantName });
+			settleGroupChatToIdle(groupChatId);
+		});
+	} else {
+		settleGroupChatToIdle(groupChatId);
+	}
+}
+
+/** Posts a system line to the chat and to the log the moderator reads back. */
+async function announceToChat(
+	groupChatId: string,
+	logPath: string,
+	content: string
+): Promise<void> {
+	// Appended to the log as well as emitted: the moderator reads recent log
+	// lines as context, so this is how it learns what happened to the handoff.
+	await appendToLog(logPath, 'system', content);
+	groupChatEmitters.emitMessage?.(groupChatId, {
+		timestamp: new Date().toISOString(),
+		from: 'system',
+		content,
+	});
+}
+
+/**
+ * Tells the chat (and, through the log, the moderator's next turn) which agents
+ * the turn is holding for. Emitted once per moderator turn rather than once per
+ * agent, so a fan-out to three busy agents is one line rather than three.
+ */
+async function reportQueuedForBusyAgents(
+	groupChatId: string,
+	logPath: string,
+	queued: string[]
+): Promise<void> {
+	if (queued.length === 0) return;
+	const names = queued.map((name) => `@${normalizeMentionName(name)}`).join(', ');
+	const content =
+		`⏳ Waiting for ${names} - ${queued.length === 1 ? 'that agent is' : 'those agents are'} busy with ` +
+		`their own work right now. This chat only engages agents that are free, so the request goes in ` +
+		`as soon as they finish. Turn that off in Edit Group Chat to interrupt them instead.`;
+	await announceToChat(groupChatId, logPath, content);
+}
+
+/**
+ * Parks a delegation until the participant's agent goes idle, then delivers it.
+ *
+ * The participant is registered as pending BEFORE the wait starts, so the room
+ * stays on 'agent-working' and the synthesis round waits for a reply that has
+ * not been handed out yet. The wait itself is deliberately not awaited by the
+ * caller: a moderator turn that fans out to a busy agent and a free one must
+ * not hold the free one hostage.
+ */
+function queueDelegationUntilAgentIsFree(opts: {
+	groupChatId: string;
+	logPath: string;
+	participantName: string;
+	sessionId: string | undefined;
+	participantsToRespond: Set<string>;
+	processManager: IProcessManager | undefined;
+	agentDetector: AgentDetector | undefined;
+	deliver: (session: GroupChatSessionInfo | undefined) => Promise<boolean>;
+}): void {
+	const { groupChatId, logPath, participantName, participantsToRespond } = opts;
+
+	trackPendingParticipant(groupChatId, participantsToRespond, participantName);
+	groupChatEmitters.emitParticipantState?.(groupChatId, participantName, 'working');
+	if (participantsToRespond.size === 1) {
+		groupChatEmitters.emitStateChange?.(groupChatId, 'agent-working');
+	}
+
+	void (async () => {
+		const { outcome, session } = await waitForAgentToFree(
+			groupChatId,
+			participantName,
+			opts.sessionId
+		);
+		// The chat was stopped or deleted while we waited - the pending set is
+		// already gone, so there is nothing to close out and nobody to tell.
+		if (outcome === 'cancelled') return;
+
+		if (outcome === 'free') {
+			try {
+				if (await opts.deliver(session)) return;
+			} catch (error) {
+				logger.error(`Failed to deliver queued delegation to ${participantName}`, LOG_CONTEXT, {
+					error,
+					groupChatId,
+				});
+				captureException(error, {
+					operation: 'groupChat:deliverQueuedDelegation',
+					groupChatId,
+					participantName,
+				});
+			}
+			await announceToChat(
+				groupChatId,
+				logPath,
+				`⚠️ @${normalizeMentionName(participantName)} freed up but could not be started.`
+			);
+		} else {
+			await announceToChat(
+				groupChatId,
+				logPath,
+				`⏳ Gave up waiting for @${normalizeMentionName(participantName)} after ` +
+					`${QUEUED_DELEGATION_MAX_WAIT_MS / 60000} minutes - that agent is still busy with its own work.`
+			);
+		}
+
+		groupChatEmitters.emitParticipantState?.(groupChatId, participantName, 'idle');
+		finishParticipantTurn(
+			groupChatId,
+			participantName,
+			opts.processManager,
+			opts.agentDetector,
+			'groupChat:spawnSynthesisAfterQueuedDelegation'
+		);
+	})();
 }
 
 /**
@@ -1225,6 +1639,10 @@ export async function routeModeratorResponse(
 	const participantsToRespond = new Set<string>();
 	const autoRunParticipantNames = new Set<string>();
 
+	// Agents whose handoff is parked until they finish what they are doing.
+	// Reported once after the delegation loops below.
+	const busyQueuedParticipants: string[] = [];
+
 	// Use the !autorun directives already extracted above (same `message` input)
 	if (autoRunDirectives.length > 0) {
 		logger.debug(
@@ -1238,6 +1656,58 @@ export async function routeModeratorResponse(
 	if (autoRunDirectives.length > 0) {
 		logger.debug(`[GroupChat:Debug] ========== TRIGGERING AUTORUN VIA RENDERER ==========`);
 		const sessions = getSessionsCallback?.() || [];
+
+		// Hands one Auto Run to the renderer's batch processor. Returns whether it
+		// actually started, so a delegation parked behind a busy agent can replay
+		// it later and still be closed out if it turns out to be unrunnable.
+		const startAutoRunFor = (
+			participant: GroupChatParticipant,
+			matchingSession: GroupChatSessionInfo | undefined,
+			targetFilename: string | undefined
+		): boolean => {
+			if (!matchingSession?.autoRunFolderPath) {
+				console.warn(
+					`[GroupChat:Debug] No autoRunFolderPath configured for ${participant.name} - skipping`
+				);
+				groupChatEmitters.emitMessage?.(groupChatId, {
+					timestamp: new Date().toISOString(),
+					from: 'system',
+					content: `⚠️ No Auto Run folder configured for @${participant.name}. Open the agent in Maestro, go to the Auto Run tab, and configure a folder first.`,
+				});
+				return false;
+			}
+
+			// Emit event to renderer - the renderer will call startBatchRun via useBatchProcessor.
+			// When the batch completes, the renderer calls groupChat:reportAutoRunComplete which
+			// invokes routeAgentResponse to trigger the synthesis round.
+			groupChatEmitters.emitParticipantState?.(groupChatId, participant.name, 'working');
+			// Register in the global pending map BEFORE emitting the trigger event to the renderer.
+			// The renderer's batch processor could complete and call reportAutoRunComplete
+			// before the post-loop registration - this prevents that race.
+			trackPendingParticipant(groupChatId, participantsToRespond, participant.name);
+			setParticipantResponseTimeout(
+				groupChatId,
+				participant.name,
+				processManager ?? undefined,
+				agentDetector ?? undefined
+			);
+			// Track as autorun so timeout path only emits batch-complete for autorun participants
+			if (!autoRunParticipantTracker.has(groupChatId)) {
+				autoRunParticipantTracker.set(groupChatId, new Set());
+			}
+			autoRunParticipantTracker.get(groupChatId)!.add(participant.name);
+			// Emit 'agent-working' on first participant so UI indicators activate immediately
+			if (participantsToRespond.size === 1) {
+				groupChatEmitters.emitStateChange?.(groupChatId, 'agent-working');
+				logger.debug(`[GroupChat:Debug] Emitted state change: agent-working`);
+			}
+			// Now emit the trigger - renderer will start the batch run
+			groupChatEmitters.emitAutoRunTriggered?.(groupChatId, participant.name, targetFilename);
+			logger.debug(
+				`[GroupChat:Debug] Emitted autoRunTriggered for @${participant.name}${targetFilename ? `:${targetFilename}` : ''} in chat ${groupChatId}`
+			);
+			return true;
+		};
 
 		for (const directive of autoRunDirectives) {
 			const { participantName: autoRunName, filename: targetFilename } = directive;
@@ -1261,7 +1731,9 @@ export async function routeModeratorResponse(
 			// Multiple aliases can resolve to the same canonical participant
 			// (e.g. "@CIA-Agent-Super-Cool" and "@CIA-Agent-(Super-Cool)").
 			// extractAutoRunDirectives only dedupes raw aliases, so guard here to
-			// avoid emitting duplicate autoRunTriggered events for one agent.
+			// avoid emitting duplicate autoRunTriggered events for one agent. The set
+			// is also what keeps an !autorun target from being spawned a second time
+			// as an ordinary @mention below.
 			if (autoRunParticipantNames.has(participant.name)) {
 				continue;
 			}
@@ -1269,48 +1741,29 @@ export async function routeModeratorResponse(
 
 			const matchingSession = findSessionForParticipantName(participant.name, sessions);
 
-			if (!matchingSession?.autoRunFolderPath) {
-				console.warn(
-					`[GroupChat:Debug] No autoRunFolderPath configured for ${participant.name} - skipping`
-				);
-				groupChatEmitters.emitMessage?.(groupChatId, {
-					timestamp: new Date().toISOString(),
-					from: 'system',
-					content: `⚠️ No Auto Run folder configured for @${participant.name}. Open the agent in Maestro, go to the Auto Run tab, and configure a folder first.`,
+			// An Auto Run batch runs INSIDE the user's agent, so a busy agent is an
+			// even harder conflict here than a participant spawn is. Hold the batch
+			// until that agent is done rather than dropping it.
+			if (isDelegationBlockedByBusyAgent(updatedChat, matchingSession)) {
+				logger.info(`Queuing !autorun for busy agent @${participant.name}`, LOG_CONTEXT, {
+					groupChatId,
+				});
+				busyQueuedParticipants.push(participant.name);
+				queueDelegationUntilAgentIsFree({
+					groupChatId,
+					logPath: updatedChat.logPath,
+					participantName: participant.name,
+					sessionId: matchingSession?.id,
+					participantsToRespond,
+					processManager,
+					agentDetector,
+					deliver: async (freedSession) =>
+						startAutoRunFor(participant, freedSession ?? matchingSession, targetFilename),
 				});
 				continue;
 			}
 
-			// Emit event to renderer - the renderer will call startBatchRun via useBatchProcessor.
-			// When the batch completes, the renderer calls groupChat:reportAutoRunComplete which
-			// invokes routeAgentResponse to trigger the synthesis round.
-			groupChatEmitters.emitParticipantState?.(groupChatId, participant.name, 'working');
-			// Register in the global pending map BEFORE emitting the trigger event to the renderer.
-			// The renderer's batch processor could complete and call reportAutoRunComplete
-			// before the post-loop registration - this prevents that race.
-			participantsToRespond.add(participant.name);
-			pendingParticipantResponses.set(groupChatId, participantsToRespond);
-			setParticipantResponseTimeout(
-				groupChatId,
-				participant.name,
-				processManager ?? undefined,
-				agentDetector ?? undefined
-			);
-			// Track as autorun so timeout path only emits batch-complete for autorun participants
-			if (!autoRunParticipantTracker.has(groupChatId)) {
-				autoRunParticipantTracker.set(groupChatId, new Set());
-			}
-			autoRunParticipantTracker.get(groupChatId)!.add(participant.name);
-			// Emit 'agent-working' on first participant so UI indicators activate immediately
-			if (participantsToRespond.size === 1) {
-				groupChatEmitters.emitStateChange?.(groupChatId, 'agent-working');
-				logger.debug(`[GroupChat:Debug] Emitted state change: agent-working`);
-			}
-			// Now emit the trigger - renderer will start the batch run
-			groupChatEmitters.emitAutoRunTriggered?.(groupChatId, participant.name, targetFilename);
-			logger.debug(
-				`[GroupChat:Debug] Emitted autoRunTriggered for @${participant.name}${targetFilename ? `:${targetFilename}` : ''} in chat ${groupChatId}`
-			);
+			startAutoRunFor(participant, matchingSession, targetFilename);
 		}
 		logger.debug(`[GroupChat:Debug] =================================================`);
 	}
@@ -1318,6 +1771,11 @@ export async function routeModeratorResponse(
 	// Spawn batch processes for each mentioned participant (exclude autorun participants)
 	const mentionsToSpawn = mentions.filter((name) => !autoRunParticipantNames.has(name));
 	if (processManager && agentDetector && mentionsToSpawn.length > 0) {
+		// Captured once: TypeScript does not carry the narrowing above into the
+		// delivery closure below, and that closure may also run long after this
+		// turn returns, when a queued delegation's agent finally frees up.
+		const activeProcessManager: IProcessManager = processManager;
+		const activeAgentDetector: AgentDetector = agentDetector;
 		logger.debug(`[GroupChat:Debug] ========== SPAWNING PARTICIPANT AGENTS ==========`);
 		logger.debug(`[GroupChat:Debug] Will spawn ${mentionsToSpawn.length} participant agent(s)`);
 
@@ -1333,27 +1791,18 @@ export async function routeModeratorResponse(
 			)
 			.join('\n');
 
-		for (const participantName of mentionsToSpawn) {
-			logger.debug(`[GroupChat:Debug] --- Spawning participant: @${participantName} ---`);
-
-			// Find the participant info
-			const participant = updatedChat.participants.find((p) => p.name === participantName);
-			if (!participant) {
-				console.warn(
-					`[GroupChat:Debug] Participant ${participantName} not found in chat - skipping`
-				);
-				continue;
-			}
-
-			logger.debug(`[GroupChat:Debug] Participant agent ID: ${participant.agentId}`);
-
-			// Find matching session to get cwd
-			const matchingSession = findSessionForParticipantName(participantName, sessions);
-			const cwd = matchingSession?.cwd || os.homedir();
-			logger.debug(`[GroupChat:Debug] CWD for participant: ${cwd}`);
-
+		// One participant's delegation, from agent resolution through spawn. Lives
+		// as a closure so a delegation held back by a busy agent can be replayed
+		// verbatim later, once that agent frees up, without re-deriving the whole
+		// turn's context. Returns whether the participant was actually started.
+		const deliverToParticipant = async (
+			participant: GroupChatParticipant,
+			matchingSession: GroupChatSessionInfo | undefined,
+			cwd: string
+		): Promise<boolean> => {
+			const participantName = participant.name;
 			// Resolve agent configuration
-			const agent = await agentDetector.getAgent(participant.agentId);
+			const agent = await activeAgentDetector.getAgent(participant.agentId);
 			logger.debug(
 				`[GroupChat:Debug] Agent resolved: ${agent?.command || 'null'}, available: ${agent?.available ?? false}`
 			);
@@ -1362,7 +1811,7 @@ export async function routeModeratorResponse(
 				logger.error(
 					`[GroupChat:Debug] ERROR: Agent '${participant.agentId}' not available for ${participantName}`
 				);
-				continue;
+				return false;
 			}
 
 			// Build the prompt with context for this participant
@@ -1459,7 +1908,7 @@ export async function routeModeratorResponse(
 					}),
 					maestroPPath: matchingSession?.maestroPPath,
 					sshStore,
-					processManager,
+					processManager: activeProcessManager,
 					readOnlyMode: readOnly ?? false, // Propagate read-only mode from caller
 					debugLabel: `participant: ${participantName}`,
 					// Match maestro-p's idle budget to the participant supervising timeout
@@ -1478,13 +1927,12 @@ export async function routeModeratorResponse(
 				// This prevents a race condition where the process exits before the post-loop
 				// registration (the exit listener would call markParticipantResponded which checks
 				// this map - if the participant isn't registered yet, synthesis never triggers).
-				participantsToRespond.add(participantName);
-				pendingParticipantResponses.set(groupChatId, participantsToRespond);
+				trackPendingParticipant(groupChatId, participantsToRespond, participantName);
 				setParticipantResponseTimeout(
 					groupChatId,
 					participantName,
-					processManager ?? undefined,
-					agentDetector ?? undefined
+					activeProcessManager,
+					activeAgentDetector
 				);
 				// Emit 'agent-working' on first spawn so sidebar and chat indicators update immediately
 				if (participantsToRespond.size === 1) {
@@ -1494,6 +1942,7 @@ export async function routeModeratorResponse(
 				logger.debug(
 					`[GroupChat:Debug] Spawned batch process for participant @${participantName} (session ${sessionId}, readOnly=${readOnly ?? false})`
 				);
+				return true;
 			} catch (error) {
 				logger.error(`Failed to spawn participant ${participantName}`, LOG_CONTEXT, {
 					error,
@@ -1512,10 +1961,64 @@ export async function routeModeratorResponse(
 					type: 'error',
 				});
 				// Continue with other participants even if one fails
+				return false;
 			}
+		};
+
+		for (const participantName of mentionsToSpawn) {
+			logger.debug(`[GroupChat:Debug] --- Spawning participant: @${participantName} ---`);
+
+			// Find the participant info
+			const participant = updatedChat.participants.find((p) => p.name === participantName);
+			if (!participant) {
+				console.warn(
+					`[GroupChat:Debug] Participant ${participantName} not found in chat - skipping`
+				);
+				continue;
+			}
+
+			logger.debug(`[GroupChat:Debug] Participant agent ID: ${participant.agentId}`);
+
+			// Find matching session to get cwd
+			const matchingSession = findSessionForParticipantName(participantName, sessions);
+			const cwd = matchingSession?.cwd || os.homedir();
+			logger.debug(`[GroupChat:Debug] CWD for participant: ${cwd}`);
+
+			// Rather than run a second process in a working directory the user's own
+			// conversation is already writing to, hold the handoff and deliver it
+			// when that agent finishes.
+			if (isDelegationBlockedByBusyAgent(updatedChat, matchingSession)) {
+				logger.info(`Queuing delegation to busy agent @${participantName}`, LOG_CONTEXT, {
+					groupChatId,
+				});
+				busyQueuedParticipants.push(participantName);
+				queueDelegationUntilAgentIsFree({
+					groupChatId,
+					logPath: updatedChat.logPath,
+					participantName,
+					sessionId: matchingSession?.id,
+					participantsToRespond,
+					processManager,
+					agentDetector,
+					deliver: (freedSession) =>
+						deliverToParticipant(
+							participant,
+							freedSession ?? matchingSession,
+							freedSession?.cwd || cwd
+						),
+				});
+				continue;
+			}
+
+			await deliverToParticipant(participant, matchingSession, cwd);
 		}
 		logger.debug(`[GroupChat:Debug] =================================================`);
 	}
+
+	// Tell the chat about anything that is waiting on a busy agent. Done before
+	// the lifecycle cleanup below so the note lands in the log ahead of the turn
+	// settling, whether or not any other participant was engaged.
+	await reportQueuedForBusyAgents(groupChatId, updatedChat.logPath, busyQueuedParticipants);
 
 	// If no actionable participant work was started (all directives invalid/skipped, no mentions),
 	// clean up lifecycle state so power blocks don't leak.
@@ -1527,7 +2030,13 @@ export async function routeModeratorResponse(
 		// Unknown @tokens should be treated as plain text, not as a system error.
 		// Only emit a system warning here when explicit !autorun directives were present
 		// but none could be activated.
-		if (autoRunDirectives.length > 0 && mentions.length === 0) {
+		// A busy-agent skip already explained itself above; adding this vague retry
+		// notice on top of it reads as a second, unrelated failure.
+		if (
+			autoRunDirectives.length > 0 &&
+			mentions.length === 0 &&
+			busyQueuedParticipants.length === 0
+		) {
 			groupChatEmitters.emitMessage?.(groupChatId, {
 				timestamp: new Date().toISOString(),
 				from: 'system',
@@ -1830,7 +2339,7 @@ Review the agent responses above. Either:
 		logger.debug(`[GroupChat:Debug] Emitted state change: moderator-thinking`);
 
 		// Start moderator timeout to prevent indefinite hanging
-		setModeratorResponseTimeout(groupChatId);
+		setModeratorResponseTimeout(groupChatId, processManager, sessionId);
 
 		// Mark this turn so routeModeratorResponse classifies its history entry as
 		// 'synthesis'. Cleared in the catch below if the spawn never gets off the ground.

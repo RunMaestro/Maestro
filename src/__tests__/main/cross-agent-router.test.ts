@@ -108,6 +108,23 @@ describe('buildCrossAgentPrompt', () => {
 		expect(prompt).not.toContain('**User:**');
 	});
 
+	it('does not announce a transcript when none was forwarded', () => {
+		// `maestro-cli ask` sends a self-contained question with no transcript.
+		// Telling the target to read "the conversation transcript so far" sends it
+		// hunting for context that is not in the prompt.
+		const prompt = buildCrossAgentPrompt(request({ transcript: [], userPrompt: 'Just this' }));
+		expect(prompt).toContain('no prior conversation to read');
+		expect(prompt).not.toContain('conversation transcript so far');
+	});
+
+	it('still announces the transcript when one was forwarded', () => {
+		const prompt = buildCrossAgentPrompt(
+			request({ transcript: [entry('user', 'Hi')], userPrompt: 'Thoughts?' })
+		);
+		expect(prompt).toContain('conversation transcript so far');
+		expect(prompt).not.toContain('no prior conversation to read');
+	});
+
 	it('grants read access to the source cwd when forwarded, before the question', () => {
 		const prompt = buildCrossAgentPrompt(
 			request({ sourceCwd: '/Users/me/proj', userPrompt: 'Look at the config' })
@@ -129,6 +146,17 @@ describe('buildCrossAgentPrompt', () => {
 			request({ sourceCwd: '/Users/me/proj', userPrompt: 'Fix the bug' })
 		);
 		expect(prompt).toContain('Settings > General > Cross-Agent Mentions');
+		// The remedy has to name the setting as the user sees it in Settings, or
+		// the target sends them hunting for a control that is labeled otherwise.
+		expect(prompt).toContain('Consult or Delegate');
+	});
+
+	it('names the read-only mode a consult so the target can say which mode it is in', () => {
+		const prompt = buildCrossAgentPrompt(
+			request({ sourceCwd: '/Users/me/proj', userPrompt: 'Fix the bug' })
+		);
+		expect(prompt).toContain('consults (read-only)');
+		expect(prompt).not.toContain('DELEGATION');
 	});
 
 	it('grants write access and drops the prohibition when writable is opted into', () => {
@@ -139,6 +167,14 @@ describe('buildCrossAgentPrompt', () => {
 		expect(prompt).toContain('permission to READ and MODIFY');
 		expect(prompt).not.toContain('Do NOT modify or create files');
 		expect(prompt).not.toContain('Settings > General > Cross-Agent Mentions');
+	});
+
+	it('names the writable mode a delegation so the target knows it may apply changes', () => {
+		const prompt = buildCrossAgentPrompt(
+			request({ sourceCwd: '/Users/me/proj', userPrompt: 'Fix the bug' }),
+			true
+		);
+		expect(prompt).toContain('DELEGATION');
 	});
 });
 

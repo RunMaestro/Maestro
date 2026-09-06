@@ -430,7 +430,7 @@ Manages file tree refresh/filter state and git-related file metadata.
 
 - `refreshFileTree(sessionId)` - Reload directory tree and return change stats
 - `refreshGitFileState(sessionId)` - Refresh tree + git repo metadata
-- `cancelFileTreeLoad(sessionId)` - Abort the in-flight tree load (halts further readDir calls; useful over SSH)
+- `cancelFileTreeLoad(sessionId)` - Abort the in-flight tree load (halts further readDir round-trips on an SSH tree; a local tree is walked in one main-process call, so cancelling only discards the result)
 - `filteredFileTree` - Derived tree based on filter string
 
 #### useBatchProcessor (`src/renderer/hooks/batch/useBatchProcessor.ts`)
@@ -469,9 +469,16 @@ Handles @-mention autocomplete for file references in prompts.
 
 Tab completion utilities for terminal-style input.
 
-#### useTemplateAutocomplete (`src/renderer/hooks/input/useTemplateAutocomplete.ts`)
+#### useTemplateAutocompleteEngine (`src/renderer/hooks/input/useTemplateAutocompleteEngine.ts`)
 
-Template variable autocomplete (e.g., `{{date}}`, `{{time}}`).
+Template variable autocomplete (e.g., `{{date}}`, `{{time}}`), minus the text surface. Owns when the popup opens, what the query is, which key does what, and what text replaces what.
+
+Two editors offer this popup and share nothing at the DOM level, so each supplies a small `TemplateAutocompleteTarget` binding over the one state machine:
+
+- `useTemplateAutocomplete` (`hooks/input/useTemplateAutocomplete.ts`) - plain `<textarea>` (Auto Run, the command panels, the prompt composers). Locates the caret with a mirror div, since a textarea exposes no per-character boxes.
+- `useEditorTemplateAutocomplete` (`hooks/input/useEditorTemplateAutocomplete.ts`) - the CodeMirror `MarkdownEditor` (Maestro Prompts). Reads the caret from the view and claims Up/Down/Enter/Escape by returning `true` from the editor's `onKeyDown`.
+
+Do not hand-roll a second `{{` detector for a new editor; write a target for it (three methods, all about caret positions).
 
 ### Feature Hooks
 
@@ -1215,6 +1222,7 @@ interface QueuedItem {
 - Users can cancel pending items via queue browser
 - A queued message that `@mentions` another agent (`crossAgentMention: true`) consults that agent when the item is DISPATCHED, not when it was queued (`src/renderer/services/crossAgentMentions.ts`)
 - Tab labels in the indicator and browser are resolved from the LIVE tab via `resolveQueuedItemTabName()`; `QueuedItem.tabName` is only a fallback for a tab that no longer exists
+- Producers other than the composer (the CLI's `dispatch --queue`, a snooze's prompt-on-return) build their item with `buildQueuedMessageItem()` / `enqueuePromptForTab()` (`src/renderer/services/queuedPrompt.ts`) so it is byte-identical to a UI-queued one. Queueing rather than spawning is also what makes a prompt safe to send in the same tick a tab was created in: the target is re-resolved at drain time
 
 ### Session Fields
 

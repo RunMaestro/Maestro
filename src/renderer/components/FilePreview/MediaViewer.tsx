@@ -674,7 +674,7 @@ export const MediaViewer = memo(function MediaViewer({
 				{/* Scrubber */}
 				<div className="flex items-center gap-2">
 					<span
-						className="text-[11px] font-mono tabular-nums shrink-0"
+						className="text-xs-plus font-mono tabular-nums shrink-0"
 						style={{ color: theme.colors.textDim }}
 					>
 						{formatMediaTime(currentTime)}
@@ -692,7 +692,7 @@ export const MediaViewer = memo(function MediaViewer({
 						style={{ accentColor: theme.colors.accent }}
 					/>
 					<span
-						className="text-[11px] font-mono tabular-nums shrink-0"
+						className="text-xs-plus font-mono tabular-nums shrink-0"
 						style={{ color: theme.colors.textDim }}
 					>
 						{formatMediaTime(duration)}

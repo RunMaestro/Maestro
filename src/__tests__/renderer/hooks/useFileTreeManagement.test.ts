@@ -380,7 +380,7 @@ describe('useFileTreeManagement', () => {
 				5,
 				0,
 				undefined,
-				undefined,
+				expect.any(Function),
 				undefined,
 				100_000,
 				expect.any(AbortSignal)
@@ -536,11 +536,49 @@ describe('useFileTreeManagement', () => {
 			5,
 			0,
 			undefined,
-			undefined,
+			expect.any(Function), // onProgress
 			undefined,
 			100_000,
 			expect.any(AbortSignal)
 		);
+	});
+
+	it('clears the spinner when a refresh overtakes an in-flight initial load', async () => {
+		// The initial load owns the spinner. A refresh bumps the load sequence and
+		// orphans it, so the refresh has to put the spinner down itself.
+		let resolveInitial: (value: ReturnType<typeof asResult>) => void = () => {};
+		const pendingInitial = new Promise<ReturnType<typeof asResult>>((resolve) => {
+			resolveInitial = resolve;
+		});
+		const refreshedTree: FileNode[] = [{ name: 'fresh.txt', type: 'file' }];
+		vi.mocked(loadFileTree)
+			.mockReturnValueOnce(pendingInitial)
+			.mockResolvedValue(asResult(refreshedTree));
+		vi.mocked(compareFileTrees).mockReturnValue({ added: [], removed: [], modified: [] });
+
+		const state = createSessionsState([createMockSession({ fileTree: [] })]);
+		const deps = createDeps(state);
+		const { result } = renderHook(() => useFileTreeManagement(deps));
+
+		await waitFor(() => {
+			expect(state.getSessions()[0].fileTreeLoading).toBe(true);
+		});
+
+		await act(async () => {
+			await result.current.refreshFileTree(state.getSessions()[0].id);
+		});
+
+		expect(state.getSessions()[0].fileTree).toEqual(refreshedTree);
+		expect(state.getSessions()[0].fileTreeLoading).toBe(false);
+		expect(state.getSessions()[0].fileTreeLoadingProgress).toBeUndefined();
+
+		// The orphaned initial load settling afterwards must not resurrect the spinner.
+		await act(async () => {
+			resolveInitial(asResult([{ name: 'stale.txt', type: 'file' }]));
+			await Promise.resolve();
+		});
+		expect(state.getSessions()[0].fileTree).toEqual(refreshedTree);
+		expect(state.getSessions()[0].fileTreeLoading).toBe(false);
 	});
 
 	it('cancelFileTreeLoad aborts the in-flight load signal and clears loading state', async () => {

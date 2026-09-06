@@ -3,7 +3,7 @@
  * @description Tests for the AutoRunToolbar component
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import React from 'react';
 import {
@@ -267,5 +267,52 @@ describe('AutoRunToolbar', () => {
 			fireEvent.click(screen.getByTitle('Learn about Auto Runner'));
 			expect(onOpenHelp).toHaveBeenCalledTimes(1);
 		});
+	});
+});
+
+// Phone layout: the drawer is ~390px wide and the four buttons overflowed it by
+// a full button. On a phone the bar goes icon-only, each button keeping its
+// label as the accessible name.
+vi.mock('../../../../renderer/hooks/ui/useViewportBreakpoint', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../renderer/hooks/ui/useViewportBreakpoint')>()),
+	usePhoneLayout: vi.fn(() => false),
+}));
+import { usePhoneLayout } from '../../../../renderer/hooks/ui/useViewportBreakpoint';
+
+describe('AutoRunToolbar on a phone', () => {
+	const mockedUsePhoneLayout = vi.mocked(usePhoneLayout);
+
+	beforeEach(() => {
+		mockedUsePhoneLayout.mockReturnValue(true);
+	});
+
+	afterEach(() => {
+		mockedUsePhoneLayout.mockReturnValue(false);
+	});
+
+	it('drops the labels but keeps every button reachable by name', () => {
+		render(
+			<AutoRunToolbar
+				{...createDefaultProps({
+					onOpenBatchRunner: vi.fn(),
+					onOpenMarketplace: vi.fn(),
+					onLaunchWizard: vi.fn(),
+				})}
+			/>
+		);
+		for (const name of ['Run', 'PlayBooks', 'Wizard', 'Help']) {
+			const btn = screen.getByRole('button', { name });
+			expect(btn).toBeDefined();
+			expect(btn.textContent).toBe('');
+		}
+	});
+
+	it('keeps Stop reachable by name while a run is active', () => {
+		const onStopBatchRun = vi.fn();
+		render(<AutoRunToolbar {...createDefaultProps({ isAutoRunActive: true, onStopBatchRun })} />);
+		const stop = screen.getByRole('button', { name: 'Stop' });
+		expect(stop.textContent).toBe('');
+		fireEvent.click(stop);
+		expect(onStopBatchRun).toHaveBeenCalledWith('test-session-1');
 	});
 });

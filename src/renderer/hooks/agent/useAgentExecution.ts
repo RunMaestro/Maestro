@@ -14,7 +14,7 @@ import {
 	takeNextRunnableQueueItem,
 } from '../../utils/executionQueue';
 import { estimateContextUsage } from '../../utils/contextUsage';
-import { usageStatsToTurnFields } from '../../services/turnUsageLedger';
+import { usageStatsToTurnFields } from '../../../shared/turnUsageLedger';
 import { cheapTurnSettings } from '../../../shared/modelTiers';
 import {
 	FALLBACK_CONTEXT_WINDOW,
@@ -643,6 +643,10 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							sessionCustomContextWindow: session.customContextWindow,
 							// Per-session SSH remote config (takes precedence over agent-level SSH config)
 							sessionSshRemoteConfig: session.sessionSshRemoteConfig,
+							// Origin of the turn. Auto Run is the one dispatcher that reaches
+							// this path without a human in the loop; everything else here is a
+							// slash command or another user action, so it stays 'user'.
+							querySource: isBatchProcess ? 'auto' : 'user',
 						})
 						.catch((err: unknown) => {
 							resolveOnce({

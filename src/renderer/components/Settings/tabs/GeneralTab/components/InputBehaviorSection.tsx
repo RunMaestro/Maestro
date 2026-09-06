@@ -75,7 +75,7 @@ export function InputBehaviorSection({
 						? 'Press Enter to send. Use Shift+Enter for new line.'
 						: `Press ${formatMetaKey()}+Enter to send. Enter creates new line.`}
 				</p>
-				<p className="text-[11px] opacity-55 mt-1">
+				<p className="text-xs-plus opacity-55 mt-1">
 					Default for new tabs. Toggling the chip in an AI tab (or running &quot;Toggle Enter to
 					Send&quot; from the command palette) overrides this for that tab only.
 				</p>

@@ -488,6 +488,54 @@ describe('storage service', () => {
 			expect(() => resolveAgentId('nonexistent')).toThrow('Agent not found: nonexistent');
 		});
 
+		it('matches the readable name when the stored name carries an emoji prefix', () => {
+			// Agent names are routinely prefixed with a glyph. Both a human and an
+			// agent type the name they READ, so an exact-name match alone reports a
+			// visible agent as missing.
+			vi.mocked(fs.readFileSync).mockReturnValue(
+				JSON.stringify({
+					sessions: [mockSession({ id: 'ped-1', name: '\u{1F4DC} Substrate PedTome' })],
+				})
+			);
+
+			expect(resolveAgentId('Substrate PedTome')).toBe('ped-1');
+			expect(resolveAgentId('substrate pedtome')).toBe('ped-1');
+		});
+
+		it('still prefers an exact name match over a decoration-stripped one', () => {
+			vi.mocked(fs.readFileSync).mockReturnValue(
+				JSON.stringify({
+					sessions: [
+						mockSession({ id: 'plain-1', name: 'Kensho' }),
+						mockSession({ id: 'fancy-1', name: '\u{1F94B} Kensho' }),
+					],
+				})
+			);
+
+			expect(resolveAgentId('Kensho')).toBe('plain-1');
+		});
+
+		it('reports ambiguity rather than guessing between two decorated names', () => {
+			vi.mocked(fs.readFileSync).mockReturnValue(
+				JSON.stringify({
+					sessions: [
+						mockSession({ id: 'a-1', name: '\u{1F94B} Kensho' }),
+						mockSession({ id: 'b-1', name: '\u{1F4DC} Kensho' }),
+					],
+				})
+			);
+
+			expect(() => resolveAgentId('Kensho')).toThrow('Ambiguous agent name');
+		});
+
+		it('does not match two decoration-only names to each other', () => {
+			vi.mocked(fs.readFileSync).mockReturnValue(
+				JSON.stringify({ sessions: [mockSession({ id: 'glyph-1', name: '\u{1F4DC}' })] })
+			);
+
+			expect(() => resolveAgentId('\u{1F94B}')).toThrow('Agent not found');
+		});
+
 		it('should throw with match list when ambiguous', () => {
 			vi.mocked(fs.readFileSync).mockReturnValue(
 				JSON.stringify({

@@ -326,7 +326,7 @@ export function WorktreeConfigModal({
 								Browse
 							</button>
 						</div>
-						<p className="text-[10px] mt-1" style={{ color: theme.colors.textDim }}>
+						<p className="text-2xs mt-1" style={{ color: theme.colors.textDim }}>
 							{isRemoteSession
 								? 'Path on the remote server where worktrees will be created'
 								: 'Base directory where worktrees will be created'}
@@ -339,7 +339,7 @@ export function WorktreeConfigModal({
 							<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
 								Watch for new worktrees
 							</div>
-							<p className="text-[10px]" style={{ color: theme.colors.textDim }}>
+							<p className="text-2xs" style={{ color: theme.colors.textDim }}>
 								Auto-detect worktrees created outside Maestro
 							</p>
 						</div>
@@ -379,7 +379,7 @@ export function WorktreeConfigModal({
 								color: theme.colors.textMain,
 							}}
 						/>
-						<p className="text-[10px] mt-1" style={{ color: theme.colors.textDim }}>
+						<p className="text-2xs mt-1" style={{ color: theme.colors.textDim }}>
 							Runs in each newly created worktree{isRemoteSession ? ' on the remote host' : ''}.
 							Available variables: <code>$MAESTRO_WORKTREE_PATH</code>,{' '}
 							<code>$MAESTRO_WORKTREE_BRANCH</code>, <code>$MAESTRO_MAIN_REPO_PATH</code>,{' '}

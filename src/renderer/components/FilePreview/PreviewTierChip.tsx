@@ -157,7 +157,7 @@ export const PreviewTierChip: React.FC<PreviewTierChipProps> = ({
 					    rendering right now (override if set, otherwise auto). */}
 					<div
 						data-testid="preview-tier-chip-status"
-						className="px-3 py-2 text-[10px] uppercase tracking-wider border-b"
+						className="px-3 py-2 text-2xs uppercase tracking-wider border-b"
 						style={{
 							color: theme.colors.textDim,
 							backgroundColor: theme.colors.bgMain,
@@ -226,7 +226,7 @@ const MenuRow: React.FC<MenuRowProps> = ({ theme, active, label, description, ic
 		{icon}
 		<div className="flex-1 min-w-0">
 			<div className="text-xs font-medium">{label}</div>
-			<div className="text-[10px]" style={{ color: theme.colors.textDim }}>
+			<div className="text-2xs" style={{ color: theme.colors.textDim }}>
 				{description}
 			</div>
 		</div>

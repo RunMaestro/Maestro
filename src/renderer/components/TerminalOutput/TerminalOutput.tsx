@@ -143,6 +143,7 @@ export const TerminalOutput = memo(
 		// can show thinking with a clean, tool-free transcript, or show tools with
 		// no reasoning at all. One switch, one meaning.
 		const toolsVisible = useSettingsStore((s) => s.showToolCalls);
+		const showProviderModePill = useSettingsStore((s) => s.showProviderModePill);
 		const collapsedLogs = useMemo(
 			() => (toolsVisible ? collapsedAll : collapsedAll.filter((l) => l.source !== 'tool')),
 			[collapsedAll, toolsVisible]
@@ -282,6 +283,7 @@ export const TerminalOutput = memo(
 			autoScrollPaused,
 			isAutoScrollActive,
 			handleScroll,
+			noteUserScrollInput,
 			scrollToBottomAndResume,
 			jumpInFlightRef,
 			pauseForJump,
@@ -529,6 +531,14 @@ export const TerminalOutput = memo(
 						fontSize: 'var(--maestro-size-chat, inherit)',
 					}}
 					onScroll={handleScroll}
+					// The input events that prove a scroll is the user's. `scroll` itself
+					// cannot: this component writes `scrollTop` on every frame of a restore
+					// and on every mutation while following the tail, and each of those
+					// writes fires an indistinguishable `scroll` event.
+					onWheel={noteUserScrollInput}
+					onTouchMove={noteUserScrollInput}
+					onPointerDown={noteUserScrollInput}
+					onKeyDown={noteUserScrollInput}
 				>
 					{/* Content wrapper: unstyled block so its height tracks the scrollable
 					    content exactly, giving the scroll hook's ResizeObserver something
@@ -640,6 +650,7 @@ export const TerminalOutput = memo(
 									userMessageAlignment={userMessageAlignment}
 									isClaudeCode={session.toolType === 'claude-code'}
 									isAdaptiveMode={getClaudeTokenMode(session) === 'dynamic'}
+									showProviderModePill={showProviderModePill}
 								/>
 							);
 						})}

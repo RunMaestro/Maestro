@@ -217,7 +217,7 @@ export function ParquetGrid({
 					}}
 				>
 					<div
-						className="shrink-0 flex items-center justify-end px-2 text-[11px]"
+						className="shrink-0 flex items-center justify-end px-2 text-xs-plus"
 						style={{
 							width: GUTTER_WIDTH,
 							color: theme.colors.textDim,
@@ -270,7 +270,7 @@ export function ParquetGrid({
 											))}
 									</span>
 									<span
-										className="text-[10px] truncate w-full"
+										className="text-2xs truncate w-full"
 										style={{ color: theme.colors.textDim }}
 									>
 										{columnTypeBadge(column)}
@@ -324,7 +324,7 @@ export function ParquetGrid({
 								data-testid={`parquet-row-${virtualRow.index}`}
 							>
 								<div
-									className="shrink-0 flex items-center justify-end px-2 text-[11px] tabular-nums"
+									className="shrink-0 flex items-center justify-end px-2 text-xs-plus tabular-nums"
 									style={{
 										width: GUTTER_WIDTH,
 										color: theme.colors.textDim,

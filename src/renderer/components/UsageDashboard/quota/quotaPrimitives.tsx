@@ -148,7 +148,7 @@ export const QuotaAgentCountBadge = memo(function QuotaAgentCountBadge({
 	const label = `${count} ${count === 1 ? 'agent' : 'agents'}`;
 	return (
 		<span
-			className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium flex-shrink-0"
+			className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs-plus font-medium flex-shrink-0"
 			style={{
 				color: theme.colors.textDim,
 				backgroundColor: `${theme.colors.border}55`,
@@ -220,7 +220,7 @@ export const QuotaSharedAccountBadge = memo(function QuotaSharedAccountBadge({
 
 	return (
 		<span
-			className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium flex-shrink-0"
+			className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs-plus font-medium flex-shrink-0"
 			style={{
 				color,
 				backgroundColor: `${color}15`,
@@ -556,7 +556,7 @@ export const QuotaAccountTabs = memo(function QuotaAccountTabs({
 							    - none    = snapshot present + healthy */}
 							{status === 'warning' ? (
 								<span
-									className="text-[10px]"
+									className="text-2xs"
 									style={{ color: theme.colors.warning ?? theme.colors.accent }}
 									title={warningTitle}
 								>
@@ -564,7 +564,7 @@ export const QuotaAccountTabs = memo(function QuotaAccountTabs({
 								</span>
 							) : status === 'pending' ? (
 								<span
-									className="text-[10px]"
+									className="text-2xs"
 									style={{ color: theme.colors.textDim, opacity: 0.6 }}
 									title="No snapshot yet - hit Refresh"
 								>

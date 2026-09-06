@@ -521,6 +521,18 @@ export interface BatchRunState {
 	isRunning: boolean;
 	isStopping: boolean; // Waiting for current task to finish before stopping
 
+	/**
+	 * True when this entry is a read-only MIRROR of a run owned by a different
+	 * Maestro client (see `useAutoRunStateMirror`). The run loop, its cursors,
+	 * and the refs the control actions poke all live in the owning client, so a
+	 * mirroring client can render the run but cannot steer it. Every mutator in
+	 * `useBatchControlActions` / `useBatchKillAction` bails on a mirrored entry,
+	 * and the controls that call them are disabled - a Stop button that quietly
+	 * did nothing would be worse than no Stop button. Absent (not `false`) on a
+	 * run this client actually owns.
+	 */
+	mirrored?: boolean;
+
 	// State machine integration (Phase 11)
 	// Tracks explicit processing state for invariant checking and debugging
 	processingState?: BatchProcessingState;
@@ -1093,6 +1105,25 @@ interface SnoozedTabEntryBase {
 	snoozedAt: number; // When the user snoozed it
 	wakeAt: number; // When it should come back (ms epoch)
 	note?: string; // Optional note-to-self surfaced in the wake notification
+	// Optional prompt sent to the agent the moment the tab is restored. Only an
+	// AI tab (or a group with an AI pane) can carry one - see
+	// `resolveWakePromptTabId` in utils/snoozeHelpers.ts.
+	wakePrompt?: string;
+}
+
+/**
+ * The free-text a snooze carries. Both fields are optional and both are edited
+ * together in the snooze dialog, so they travel as one object rather than as a
+ * growing tail of positional arguments.
+ *
+ * On a reschedule the two are read per field: an absent field keeps whatever
+ * the snooze already had, and an empty string clears it.
+ */
+export interface SnoozeContent {
+	/** Note-to-self, surfaced in the wake notification and the return card. */
+	note?: string;
+	/** Prompt dispatched to the agent the instant the tab comes back. */
+	wakePrompt?: string;
 }
 
 /**
@@ -1391,6 +1422,8 @@ export interface Session {
 	customPath?: string; // Custom path to agent binary (overrides agent-level)
 	customArgs?: string; // Custom CLI arguments (overrides agent-level)
 	customEnvVars?: Record<string, string>; // Custom environment variables (overrides agent-level)
+	// Env vars switched off in the editor: parked, never spawned with. See shared/types.ts.
+	customEnvVarsDisabled?: Record<string, string>;
 	customModel?: string; // Custom model ID (overrides agent-level)
 	customEffort?: string; // Custom effort/reasoning level (overrides agent-level)
 	customProviderPath?: string; // Custom provider path (overrides agent-level)
@@ -1510,6 +1543,10 @@ export interface ProcessConfig {
 	// NOTE: prompt delivery (argv vs stdin) is decided by the main process in
 	// handleProcessSpawn - it depends on the HOST platform and the agent's CLI,
 	// neither of which a renderer (possibly a browser on another OS) can know.
+	/** Who asked for this turn: a human ('user') or Auto Run ('auto'). Stamped into
+	 *  the spawned process env as MAESTRO_QUERY_SOURCE. Cue runs never come through
+	 *  this IPC path - they spawn in the main process and mark themselves 'cue'. */
+	querySource?: 'user' | 'auto';
 }
 
 // DirectoryEntry and ShellInfo re-exported from shared/types above

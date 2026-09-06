@@ -24,8 +24,10 @@ import { createTerminalTab, nextTerminalCoworkingId } from '../terminalTabHelper
 import {
 	findActiveUnifiedTabIndex,
 	getNavigableUnifiedTabOrder,
+	hasUnreadVisibleTab,
 	insertAfterActiveInUnifiedTabOrder,
 	isAiTabHidden,
+	visibleAiTabs,
 } from '../unifiedTabOrderUtils';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { isWindowsPlatform } from '../platformUtils';
@@ -50,7 +52,7 @@ import {
 // Both live in unifiedTabOrderUtils so terminalTabHelpers can reach them without a
 // circular import; re-exported here because tabHelpers is where callers look for
 // tab visibility rules.
-export { getNavigableUnifiedTabOrder, isAiTabHidden };
+export { getNavigableUnifiedTabOrder, hasUnreadVisibleTab, isAiTabHidden, visibleAiTabs };
 export {
 	aiTabFocusFields,
 	fileTabFocusFields,
@@ -741,9 +743,7 @@ export function getNavigableTabs(session: Session, showUnreadOnly = false): AITa
 	// Hidden tabs aren't in the strip, so no shortcut may land on one. The common
 	// case is no hidden tabs at all: keep returning `session.aiTabs` by reference
 	// then, since callers memoize on its identity.
-	const visible = session.aiTabs.some(isAiTabHidden)
-		? session.aiTabs.filter((tab) => !isAiTabHidden(tab))
-		: session.aiTabs;
+	const visible = visibleAiTabs(session.aiTabs);
 
 	if (showUnreadOnly) {
 		const showStarred = useSettingsStore.getState().showStarredInUnreadFilter;
@@ -3222,8 +3222,12 @@ export function findNextUnreadSession(
 ): GoToNextUnreadResult {
 	const currentIndex = orderedSessions.findIndex((s) => s.id === activeSessionId);
 	const currentSession = orderedSessions.find((s) => s.id === activeSessionId);
+	// A hidden consult tab has no chip, so it can never be an actionable stop:
+	// jumping to one reveals a conversation the user never opened (the jump path
+	// un-hides what it lands on), and it was answered in the background precisely
+	// so it would not ask for attention.
 	const isActionable = (tab: AITab) =>
-		tab.hasUnread || hasDraft(tab) || (isWizardActive?.(tab.id) ?? false);
+		!isAiTabHidden(tab) && (tab.hasUnread || hasDraft(tab) || (isWizardActive?.(tab.id) ?? false));
 
 	// 1) Tab-level jump within the current session: if there's an unread/draft
 	//    tab here that isn't already active, switch to it without changing

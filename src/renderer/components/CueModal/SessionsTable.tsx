@@ -11,7 +11,7 @@ import {
 	type CuePipeline,
 	type CueGraphSession,
 } from '../../../shared/cue-pipeline-types';
-import { getPipelineColorForAgent } from '../CuePipelineEditor/pipelineColors';
+import { pipelinesForSession } from '../CuePipelineEditor/utils/pipelineMembership';
 import { StatusDot, PipelineDot } from './StatusDot';
 import { formatRelativeTime } from './cueModalUtils';
 import type { CueSubscription } from '../../../shared/cue';
@@ -152,21 +152,21 @@ export function SessionsTable({
 							</td>
 							<td className="py-2">
 								{(() => {
-									const colors = getPipelineColorForAgent(s.sessionId, pipelines);
-									if (colors.length === 0) {
+									// Dots are per PIPELINE, not per color: two pipelines can share a
+									// color, and pairing names to colors dropped one of them and
+									// mislabeled the other.
+									const owned = pipelinesForSession(s.sessionId, pipelines, graphSessions);
+									if (owned.length === 0) {
 										return <span style={{ color: theme.colors.textDim }}>—</span>;
 									}
-									const pipelineNames = pipelines
-										.filter((p) => colors.includes(p.color))
-										.map((p) => p.name);
 									return (
 										<span className="flex items-center gap-1">
-											{colors.map((color, i) => (
-												<PipelineDot key={color} color={color} name={pipelineNames[i] ?? ''} />
+											{owned.map((p) => (
+												<PipelineDot key={p.id} color={p.color} name={p.name} />
 											))}
-											{colors.length > 1 && (
+											{owned.length > 1 && (
 												<span style={{ color: theme.colors.textDim, fontSize: '0.7rem' }}>
-													×{colors.length}
+													×{owned.length}
 												</span>
 											)}
 										</span>

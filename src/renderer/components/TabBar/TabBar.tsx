@@ -1,7 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect, memo, useMemo } from 'react';
 import { Bell } from 'lucide-react';
 import type { AITab, UnifiedTabRef } from '../../types';
-import { hasDraft } from '../../utils/tabHelpers';
+import { hasDraft, hasUnreadVisibleTab, visibleAiTabs } from '../../utils/tabHelpers';
 import { updateSessionWith } from '../../stores/sessionStore';
 import { promotePaneToStandalone } from '../../utils/panelLayout';
 import {
@@ -244,8 +244,11 @@ function TabBarInner({
 	const displayedTabs = useMemo(() => {
 		// Window doesn't own this agent: render an empty tab strip (scoped window).
 		if (!ownsActiveAgent) return [];
+		// Hidden consult tabs never get a chip, in either filter state. The unified
+		// path drops them in buildUnifiedTabs; this legacy path has to drop them itself.
+		const visible = visibleAiTabs(tabs);
 		return showUnreadOnly
-			? tabs.filter(
+			? visible.filter(
 					(t) =>
 						t.hasUnread ||
 						t.state === 'busy' ||
@@ -255,7 +258,7 @@ function TabBarInner({
 						(showStarredInUnreadFilter && t.starred) ||
 						(queuedTabIds?.has(t.id) ?? false)
 				)
-			: tabs;
+			: visible;
 	}, [
 		tabs,
 		showUnreadOnly,
@@ -706,7 +709,7 @@ function TabBarInner({
 					}
 				>
 					<Bell className="w-4 h-4" />
-					{tabs.some((t) => t.hasUnread) && (
+					{hasUnreadVisibleTab(tabs) && (
 						<div
 							className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full"
 							style={{ backgroundColor: theme.colors.error }}

@@ -30,7 +30,7 @@ export const RunningAgentSubtext = memo(function RunningAgentSubtext({
 	}
 	return (
 		<span
-			className="text-[10px] truncate"
+			className="text-2xs truncate"
 			style={{
 				color: isSelected ? theme.colors.accentForeground : getStatusColor(info.state, theme),
 			}}

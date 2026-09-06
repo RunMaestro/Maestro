@@ -26,6 +26,17 @@
 		     deliberately no Google Fonts link here any more: a CDN font is a
 		     network round trip on every launch, it fails offline, and it told
 		     Google each time someone opened the app. -->
+		<!-- Preload the latin subset as a FONT, not as a stylesheet: the woff2 is
+		     then in flight immediately rather than waiting for generated-fonts.css
+		     to parse and reveal its URL. `crossorigin` is required even same-origin,
+		     because font fetches are always CORS-mode. -->
+		<link
+			rel="preload"
+			href="./fonts/jetbrains-mono-latin-400_700-1.woff2"
+			as="font"
+			type="font/woff2"
+			crossorigin
+		/>
 
 		<!-- Critical CSS for splash screen - inline to prevent FOUC -->
 		<style>
@@ -92,6 +103,9 @@
 				object-fit: cover;
 			}
 
+			/* WORDMARK_FONT_STACK (src/shared/fontStack.ts). The wordmark is
+			   a logo, so it is pinned here and in SessionList's <h1> and never
+			   follows the user's fontFamily setting. */
 			.splash-title {
 				/* Fixed on purpose: the brand mark never follows the interface font.
 				   Kept in sync by hand with WORDMARK_FONT_STACK in

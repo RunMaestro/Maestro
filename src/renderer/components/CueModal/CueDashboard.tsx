@@ -226,7 +226,7 @@ export function CueDashboard({
 					Active Runs
 					{activeRuns.length > 0 && (
 						<span
-							className="px-1.5 py-0.5 rounded-full text-[10px] font-bold"
+							className="px-1.5 py-0.5 rounded-full text-2xs font-bold"
 							style={{ backgroundColor: CUE_COLOR, color: '#fff' }}
 						>
 							{activeRuns.length}
@@ -234,7 +234,7 @@ export function CueDashboard({
 					)}
 					{activeRuns.length > 0 && sessions.some((s) => s.activeRuns > 0) && (
 						<span
-							className="text-[10px] font-normal normal-case tracking-normal"
+							className="text-2xs font-normal normal-case tracking-normal"
 							style={{ color: theme.colors.textDim }}
 						>
 							{sessions

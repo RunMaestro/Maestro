@@ -55,8 +55,39 @@ export const SANS_FALLBACK_STACK =
  * Kept in sync by hand with `.splash-title` in src/renderer/index.html and
  * `.md-splash__wordmark` in src/web-desktop/index.html, which paint before any
  * JavaScript runs and so cannot import this.
+ *
+ * Deliberately a separate NAME from {@link MAESTRO_FONT_STACK} even though it
+ * currently holds the same value: that one follows the user's `fontFamily`
+ * setting as its default and may be changed, this one must never follow it. If
+ * the two ever need to diverge, change this one and leave the body text alone.
  */
-export const WORDMARK_FONT_STACK = "'JetBrains Mono', 'Fira Code', 'Courier New', monospace";
+/**
+ * The font stack Maestro itself ships with, and the default the `fontFamily`
+ * SETTING carries.
+ *
+ * It has to be identical in the places that render at different moments during
+ * startup, because any disagreement between them shows up as the app visibly
+ * changing font while it boots:
+ *
+ *   1. the splash screen's inline CSS in `src/renderer/index.html`
+ *   2. `body` in `src/renderer/index.css`
+ *   3. the `font-mono` utility in `tailwind.config.mjs`
+ *   4. the `fontFamily` setting default, in BOTH `src/main/stores/defaults.ts`
+ *      and `src/renderer/stores/settingsStore.ts`
+ *
+ * The splash paints before React mounts and the setting arrives from disk after
+ * it, so a default naming a different family than the splash repaints the whole
+ * window the instant React takes over. That is exactly what shipped: the splash
+ * asked for JetBrains Mono while the setting default asked for Roboto Mono, so
+ * a cold start went Courier New -> JetBrains Mono -> Menlo.
+ *
+ * JetBrains Mono leads because it is bundled (see bundledFonts.ts), so it is
+ * the one family here guaranteed to resolve; the rest are fallbacks for a
+ * renderer that somehow fails to load it.
+ */
+export const MAESTRO_FONT_STACK = "'JetBrains Mono', 'Fira Code', 'Courier New', monospace";
+
+export const WORDMARK_FONT_STACK = MAESTRO_FONT_STACK;
 
 /**
  * Ensure a CSS font-family value degrades to monospace rather than the browser's

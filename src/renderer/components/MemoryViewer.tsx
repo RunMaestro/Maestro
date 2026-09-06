@@ -30,7 +30,7 @@ import { SegmentedControl } from './ui/SegmentedControl';
 import { Markdown } from './Markdown';
 import { MarkdownEditor, type MarkdownEditorHandle } from './FilePreview/markdownEditor';
 import { generateProseStyles } from '../utils/markdownConfig';
-import { splitOnMatches } from '../utils/highlightMatches';
+import { searchMatchRanges } from '../utils/highlightMatches';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useDebouncedValue } from '../hooks/utils/useThrottle';
@@ -48,22 +48,6 @@ const VIEW_MODE_OPTIONS = [
 	{ value: 'preview' as const, label: 'Preview', title: 'Rendered markdown' },
 	{ value: 'edit' as const, label: 'Edit', title: 'Syntax-highlighted source' },
 ];
-
-/**
- * Byte offsets of every filter hit in the document, for the editor's painted
- * search decorations.
- *
- * Built from the SAME `splitOnMatches` the rendered preview highlights with, so
- * the two modes cannot disagree about what counts as a hit - the segment list
- * already carries each part's start offset, so the matches are just the ones
- * flagged `isMatch`.
- */
-function searchMatchRanges(text: string, query: string): { from: number; to: number }[] {
-	if (!query) return [];
-	return splitOnMatches(text, query)
-		.filter((segment) => segment.isMatch)
-		.map((segment) => ({ from: segment.start, to: segment.start + segment.text.length }));
-}
 
 interface MemoryViewerProps {
 	theme: Theme;

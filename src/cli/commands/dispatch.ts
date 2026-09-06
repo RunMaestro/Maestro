@@ -12,7 +12,11 @@ export interface DispatchOptions {
 	/** Tab id within the target agent. Mutually exclusive with --new-tab. */
 	tab?: string;
 	force?: boolean;
-	/** Explicitly ask for background placement of a `--new-tab` tab (the default). */
+	/**
+	 * Ask for background placement: the active agent and the active tab both stay
+	 * where the user left them. Already the default with `--new-tab`; on the plain
+	 * `send_command` path it suppresses the agent switch the desktop does today.
+	 */
 	background?: boolean;
 	/** Commander sets this to `true` when `--focus` is passed. Unset/false is the
 	 *  default and dispatches in the background: the desktop delivers the prompt
@@ -354,6 +358,12 @@ export async function runDispatch(
 					inputMode: 'ai',
 					...(options.tab ? { tabId: options.tab } : {}),
 					...(options.force ? { force: true } : {}),
+					// Dispatch is background-by-default on BOTH paths (see the
+					// resolve above); `--focus` is the opt-out. Do not re-resolve
+					// under the `dispatch` key here - that key describes the
+					// foreground default this verb deliberately does not take, and a
+					// second `background` field in this object silently shadows the
+					// spread below it.
 					...(background ? { background: true } : {}),
 					...callback.fields,
 				},

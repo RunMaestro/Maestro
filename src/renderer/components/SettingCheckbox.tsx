@@ -41,7 +41,7 @@ export function SettingCheckbox({
 				{sectionLabel}
 			</label>
 			<div
-				className="flex items-center justify-between p-3 rounded border cursor-pointer hover:bg-opacity-10"
+				className="flex items-center justify-between p-3 rounded border cursor-pointer row-hover"
 				style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
 				onClick={() => onChange(!checked)}
 				role="button"

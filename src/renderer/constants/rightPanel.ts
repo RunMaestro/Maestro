@@ -26,7 +26,7 @@ export const RIGHT_PANEL_COMPACT_THRESHOLD = 420;
  * These are CONTROLS that label the rows beneath them, so they sit below their
  * own content. They are rem-based and grow with the interface font and the
  * Cmd+= zoom, while the History entries are pinned at an absolute
- * `text-[10px]` and never grow - at a 16px interface font with a 1.2 zoom the
+ * `text-2xs` and never grow - at a 16px interface font with a 1.2 zoom the
  * pills were rendering near 13px against 10px content, reading as the chrome
  * shouting over its own list.
  *

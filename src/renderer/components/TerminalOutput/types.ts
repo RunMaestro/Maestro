@@ -87,9 +87,11 @@ export interface LogItemProps {
 	bionifyAlgorithm: string;
 	// Message alignment
 	userMessageAlignment: 'left' | 'right';
-	// Claude mode pill - both passed as primitives so LogItem memo equality stays cheap.
+	// Claude mode pill - all passed as primitives so LogItem memo equality stays cheap.
 	isClaudeCode: boolean;
 	isAdaptiveMode: boolean;
+	/** Display setting: when false the provider mode pill is suppressed entirely. */
+	showProviderModePill: boolean;
 	// Session recovery (session_not_found inline card). Only consumed when
 	// log.recoveryAction is set; otherwise these props are ignored.
 	sessionId: string;

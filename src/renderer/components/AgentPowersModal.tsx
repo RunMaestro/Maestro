@@ -184,7 +184,7 @@ export function AgentPowersModal({
 										{label}
 									</span>
 								</span>
-								<span className="text-[11px] leading-snug" style={{ color: theme.colors.textDim }}>
+								<span className="text-xs-plus leading-snug" style={{ color: theme.colors.textDim }}>
 									&ldquo;{prompt}&rdquo;
 								</span>
 							</button>

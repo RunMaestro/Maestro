@@ -271,13 +271,20 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 					enableMaestroP?: boolean;
 					maestroPMode?: 'interactive' | 'dynamic';
 					maestroPPath?: string;
-				}
+				},
+				requireIdleParticipants?: boolean
 			): Promise<GroupChat> => {
 				logger.info(`Creating group chat: ${name}`, LOG_CONTEXT, {
 					moderatorAgentId,
 					hasConfig: !!moderatorConfig,
+					requireIdleParticipants: requireIdleParticipants !== false,
 				});
-				const chat = await createGroupChat(name, moderatorAgentId, moderatorConfig);
+				const chat = await createGroupChat(
+					name,
+					moderatorAgentId,
+					moderatorConfig,
+					requireIdleParticipants
+				);
 
 				// Initialize the moderator immediately so it's "hot and ready"
 				// This spawns the session ID prefix so the UI doesn't show "pending"
@@ -390,6 +397,7 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 						maestroPMode?: 'interactive' | 'dynamic';
 						maestroPPath?: string;
 					};
+					requireIdleParticipants?: boolean;
 				}
 			): Promise<GroupChat> => {
 				logger.info(`Updating group chat ${id}`, LOG_CONTEXT, updates);
@@ -414,6 +422,12 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 					name: updates.name,
 					moderatorAgentId: updates.moderatorAgentId,
 					moderatorConfig: updates.moderatorConfig,
+					// Only written when the caller actually stated it: `updateGroupChat`
+					// spreads its updates, so an explicit `undefined` would erase the
+					// stored choice and silently fall back to the default.
+					...(updates.requireIdleParticipants !== undefined
+						? { requireIdleParticipants: updates.requireIdleParticipants }
+						: {}),
 				});
 
 				// Restart moderator if agent changed

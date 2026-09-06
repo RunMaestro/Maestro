@@ -5,8 +5,11 @@ export function createAutoRunConfigRemoteApi() {
 		/**
 		 * Subscribe to remote refresh auto-run docs from web interface
 		 */
-		onRemoteRefreshAutoRunDocs: (callback: (sessionId: string) => void): (() => void) => {
-			const handler = (_: unknown, sessionId: string) => callback(sessionId);
+		onRemoteRefreshAutoRunDocs: (
+			callback: (sessionId: string, background?: boolean) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, background?: boolean) =>
+				callback(sessionId, background);
 			ipcRenderer.on('remote:refreshAutoRunDocs', handler);
 			return () => ipcRenderer.removeListener('remote:refreshAutoRunDocs', handler);
 		},

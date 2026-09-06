@@ -246,6 +246,20 @@ export function EnvVarsEditor({
 					return (
 						<div key={entry.id}>
 							<div className="flex gap-2 items-center">
+								{canToggle && (
+									<GhostIconButton
+										onClick={() => toggleEntry(entry.id)}
+										padding="p-2"
+										title={
+											off
+												? `Enable ${entry.key || 'variable'} (currently not passed to any process)`
+												: `Disable ${entry.key || 'variable'} (keeps the value, stops passing it to processes)`
+										}
+										color={off ? theme.colors.textDim : theme.colors.accent}
+									>
+										{off ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+									</GhostIconButton>
+								)}
 								<input
 									type="text"
 									value={entry.key}
@@ -262,20 +276,6 @@ export function EnvVarsEditor({
 								<span className="flex items-center text-xs" style={{ color: theme.colors.textDim }}>
 									=
 								</span>
-								{canToggle && (
-									<GhostIconButton
-										onClick={() => toggleEntry(entry.id)}
-										padding="p-2"
-										title={
-											off
-												? `Enable ${entry.key || 'variable'} (currently not passed to any process)`
-												: `Disable ${entry.key || 'variable'} (keeps the value, stops passing it to processes)`
-										}
-										color={off ? theme.colors.textDim : theme.colors.accent}
-									>
-										{off ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-									</GhostIconButton>
-								)}
 								<AuthPathValueInput
 									envVarKey={entry.key}
 									value={entry.value}

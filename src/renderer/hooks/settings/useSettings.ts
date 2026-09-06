@@ -484,6 +484,8 @@ export interface UseSettingsReturn {
 	setShowSessionIdPill: (value: boolean) => void;
 	showSessionCostPill: boolean;
 	setShowSessionCostPill: (value: boolean) => void;
+	showProviderModePill: boolean;
+	setShowProviderModePill: (value: boolean) => void;
 
 	// Worktree display in left panel agent list
 	showWorktreePill: boolean;

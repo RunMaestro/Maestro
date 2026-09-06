@@ -29,6 +29,7 @@ export { StatCard } from './output/StatCard';
 export { StatCardGrid } from './output/StatCardGrid';
 export { SectionCard } from './output/SectionCard';
 export { ActivityTimeline } from './output/ActivityTimeline';
+export type { TimelineSeries } from './output/ActivityTimeline';
 export { TypeBreakdown } from './output/TypeBreakdown';
 export { AgentActivityBars } from './output/AgentActivityBars';
 export { SuccessFailureWidget } from './output/SuccessFailureWidget';

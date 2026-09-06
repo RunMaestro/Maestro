@@ -780,3 +780,42 @@ describe('RealtimeMetricsCard', () => {
 		expect(card.className).toContain('card-enter');
 	});
 });
+
+describe('SummaryCards - active agents in range', () => {
+	it('reports how many agents ran a query in the range beside the status dots', () => {
+		render(
+			<SummaryCards
+				data={{
+					...mockData,
+					bySessionByDay: { s1: [{ date: '2024-12-21', count: 4, duration: 1000 }] },
+				}}
+				theme={theme}
+				sessions={mockSessions}
+			/>
+		);
+
+		expect(screen.getByTestId('agent-active-count')).toHaveTextContent('1 active');
+	});
+
+	it('excludes terminal sessions from the active count', () => {
+		render(
+			<SummaryCards
+				data={{
+					...mockData,
+					// s3 is a terminal session - it is not an agent, active or otherwise.
+					bySessionByDay: { s3: [{ date: '2024-12-21', count: 9, duration: 1000 }] },
+				}}
+				theme={theme}
+				sessions={mockSessions}
+			/>
+		);
+
+		expect(screen.getByTestId('agent-active-count')).toHaveTextContent('0 active');
+	});
+
+	it('omits the active count when no sessions are supplied', () => {
+		render(<SummaryCards data={mockData} theme={theme} />);
+
+		expect(screen.queryByTestId('agent-active-count')).not.toBeInTheDocument();
+	});
+});

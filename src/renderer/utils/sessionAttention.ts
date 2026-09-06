@@ -1,4 +1,5 @@
 import type { Session } from '../types';
+import { hasUnreadVisibleTab } from './unifiedTabOrderUtils';
 
 /**
  * Inputs the "needs attention" predicate can't read off the Session itself:
@@ -41,7 +42,9 @@ export function outageIdsFromSignature(signature: string): Set<string> {
  * an active idle agent does not "need attention".
  */
 export function sessionNeedsAttention(session: Session, ctx: AttentionContext): boolean {
-	if (session.aiTabs?.some((tab) => tab.hasUnread)) return true;
+	// Visible tabs only: a hidden cross-agent consult tab draws no chip, so an
+	// unread on one is a badge the user has no way to clear.
+	if (hasUnreadVisibleTab(session.aiTabs)) return true;
 	if (session.state === 'busy' || session.state === 'error') return true;
 	if (ctx.batchSessionIds.has(session.id)) return true;
 	if (ctx.stuckOutageIds.has(session.id)) return true;

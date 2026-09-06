@@ -101,7 +101,10 @@ describe('useAgentSessionsRename', () => {
 		expect(e.stopPropagation).toHaveBeenCalled();
 	});
 
-	it('startRename focuses renameInputRef after timer', () => {
+	// Focusing the rename input is the host component's job (useFocusAfterRender),
+	// because only it renders the input and knows when the mount commits. The hook
+	// must not race that with a timer of its own.
+	it('startRename does not focus renameInputRef itself', () => {
 		const renameInputRef = { current: { focus: vi.fn() } } as any;
 		const { result } = renderHook(() => useAgentSessionsRename(defaultArgs({ renameInputRef })));
 		act(() => {
@@ -110,7 +113,43 @@ describe('useAgentSessionsRename', () => {
 		act(() => {
 			vi.runAllTimers();
 		});
-		expect(renameInputRef.current.focus).toHaveBeenCalled();
+		expect(renameInputRef.current.focus).not.toHaveBeenCalled();
+	});
+
+	it('cancelRename flags a focus restore when the rename input still has focus', () => {
+		const input = document.createElement('input');
+		document.body.appendChild(input);
+		input.focus();
+
+		const { result } = renderHook(() =>
+			useAgentSessionsRename(defaultArgs({ renameInputRef: { current: input } as any }))
+		);
+		act(() => {
+			result.current.cancelRename();
+		});
+
+		expect(result.current.consumeFocusRestore()).toBe(true);
+		// The flag is one-shot: a second exit must not re-steal focus.
+		expect(result.current.consumeFocusRestore()).toBe(false);
+		input.remove();
+	});
+
+	it('cancelRename leaves focus alone when the user clicked elsewhere', () => {
+		const input = document.createElement('input');
+		const other = document.createElement('input');
+		document.body.append(input, other);
+		other.focus();
+
+		const { result } = renderHook(() =>
+			useAgentSessionsRename(defaultArgs({ renameInputRef: { current: input } as any }))
+		);
+		act(() => {
+			result.current.cancelRename();
+		});
+
+		expect(result.current.consumeFocusRestore()).toBe(false);
+		input.remove();
+		other.remove();
 	});
 
 	it('cancelRename clears renamingSessionId and renameValue', () => {

@@ -35,7 +35,7 @@ export const WindowBadge = memo(function WindowBadge({ windowNumber }: WindowBad
 
 	return (
 		<span
-			className="shrink-0 inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[9px] font-bold leading-none"
+			className="shrink-0 inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-3xs font-bold leading-none"
 			style={BADGE_STYLE}
 			title={label}
 			aria-label={label}

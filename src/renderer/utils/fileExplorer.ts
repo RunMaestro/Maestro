@@ -235,6 +235,28 @@ export async function loadFileTree(
 ): Promise<FileTreeLoadResult> {
 	const isRemote = Boolean(sshContext?.sshRemoteId);
 
+	// Local trees are walked in the main process in one round-trip. Recursing
+	// from here costs an IPC round-trip per directory, and on a large tree those
+	// round-trips are the whole load time - each one has to be scheduled on a
+	// renderer main thread that may be busy rendering a streaming transcript, so
+	// a walk worth ~100ms of disk work stretched into minutes of spinner.
+	if (!isRemote) {
+		if (signal?.aborted) throw new FileTreeAbortError();
+		const result = await window.maestro.fs.readDirTree(dirPath, {
+			maxDepth,
+			maxEntries: Number.isFinite(maxEntries) ? maxEntries : undefined,
+			ignorePatterns: localOptions?.ignorePatterns,
+			honorGitignore: localOptions?.honorGitignore,
+		});
+		if (signal?.aborted) throw new FileTreeAbortError();
+		onProgress?.({
+			directoriesScanned: result.directoriesScanned,
+			filesFound: result.filesFound,
+			currentDirectory: dirPath,
+		});
+		return { tree: result.tree, truncated: result.truncated, filesFound: result.filesFound };
+	}
+
 	// Build effective ignore patterns
 	let ignorePatterns: string[] = [];
 

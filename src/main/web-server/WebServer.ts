@@ -34,7 +34,7 @@ import { getLocalIpAddress } from '../utils/networkUtils';
 import { captureException } from '../utils/sentry';
 import { WebSocketMessageHandler } from './handlers';
 import { BroadcastService } from './services';
-import { ApiRoutes, ConcertoRoutes, StaticRoutes, WsRoute } from './routes';
+import { ApiRoutes, ConcertoRoutes, ImageRoutes, StaticRoutes, WsRoute } from './routes';
 import { LiveSessionManager, CallbackRegistry } from './managers';
 
 // Import shared types from canonical location
@@ -79,6 +79,9 @@ import type {
 	ReadTerminalTabCallback,
 	ReadTerminalTabPayload,
 	NewAITabWithPromptCallback,
+	ConsultAgentCallback,
+	ConsultAgentParams,
+	ConsultAgentResult,
 	EnqueueCommandCallback,
 	ListQueueCallback,
 	RemoveQueueItemCallback,
@@ -213,6 +216,7 @@ export class WebServer {
 	// Route instances
 	private apiRoutes: ApiRoutes;
 	private concertoRoutes: ConcertoRoutes;
+	private imageRoutes: ImageRoutes;
 	private staticRoutes: StaticRoutes;
 	private wsRoute: WsRoute;
 
@@ -265,6 +269,7 @@ export class WebServer {
 		// Initialize route handlers
 		this.apiRoutes = new ApiRoutes(this.securityToken, this.rateLimitConfig);
 		this.concertoRoutes = new ConcertoRoutes(this.concertoToken);
+		this.imageRoutes = new ImageRoutes(this.securityToken);
 		this.staticRoutes = new StaticRoutes(
 			this.securityToken,
 			this.webAssetsPath,
@@ -505,6 +510,10 @@ export class WebServer {
 
 	setNewAITabWithPromptCallback(callback: NewAITabWithPromptCallback): void {
 		this.callbackRegistry.setNewAITabWithPromptCallback(callback);
+	}
+
+	setConsultAgentCallback(callback: ConsultAgentCallback): void {
+		this.callbackRegistry.setConsultAgentCallback(callback);
 	}
 
 	setEnqueueCommandCallback(callback: EnqueueCommandCallback): void {
@@ -912,6 +921,10 @@ export class WebServer {
 		// Concerto HTML documents for browser clients (no custom-scheme handler).
 		this.concertoRoutes.registerRoutes(this.server);
 
+		// Session image store files for browser clients: the desktop loads them
+		// through the maestro-image:// protocol, which a browser cannot resolve.
+		this.imageRoutes.registerRoutes(this.server);
+
 		// Setup WebSocket route callbacks and register route
 		this.wsRoute.setCallbacks({
 			getSessions: () => this.callbackRegistry.getSessions(),
@@ -1022,6 +1035,8 @@ export class WebServer {
 				this.callbackRegistry.readTerminalTab(sessionId, payload),
 			newAITabWithPrompt: async (sessionId: string, prompt: string, background?: boolean) =>
 				this.callbackRegistry.newAITabWithPrompt(sessionId, prompt, background),
+			consultAgent: async (params: ConsultAgentParams): Promise<ConsultAgentResult> =>
+				this.callbackRegistry.consultAgent(params),
 			enqueueCommand: async (
 				sessionId: string,
 				command: string,
@@ -1041,8 +1056,8 @@ export class WebServer {
 			listQueue: async (sessionId?: string) => this.callbackRegistry.listQueue(sessionId),
 			removeQueueItem: async (sessionId: string, itemId: string) =>
 				this.callbackRegistry.removeQueueItem(sessionId, itemId),
-			refreshAutoRunDocs: async (sessionId: string) =>
-				this.callbackRegistry.refreshAutoRunDocs(sessionId),
+			refreshAutoRunDocs: async (sessionId: string, background?: boolean) =>
+				this.callbackRegistry.refreshAutoRunDocs(sessionId, background),
 			configureAutoRun: async (
 				sessionId: string,
 				config: Parameters<CallbackRegistry['configureAutoRun']>[1]
@@ -1266,8 +1281,17 @@ export class WebServer {
 		this.broadcastService.broadcastActiveSessionChange(sessionId);
 	}
 
-	broadcastTabsChange(sessionId: string, aiTabs: AITabData[], activeTabId: string): void {
-		this.broadcastService.broadcastTabsChange(sessionId, aiTabs, activeTabId);
+	/**
+	 * Broadcast the canonical tab inventory and whether its active tab came from
+	 * an explicit desktop selection.
+	 */
+	broadcastTabsChange(
+		sessionId: string,
+		aiTabs: AITabData[],
+		activeTabId: string,
+		activeTabChanged = false
+	): void {
+		this.broadcastService.broadcastTabsChange(sessionId, aiTabs, activeTabId, activeTabChanged);
 	}
 
 	requestNewTab(sessionId: string, background?: boolean): Promise<{ tabId: string } | null> {

@@ -47,6 +47,8 @@ import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
+import { createIdleWatchdog, type IdleWatchdog } from '../utils/idle-watchdog';
+import { AGENT_LIVENESS_EVENTS } from '../utils/agent-liveness';
 
 const LOG_CONTEXT = '[CrossAgentRouter]';
 
@@ -68,24 +70,10 @@ const CROSS_AGENT_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
 
 /**
  * The ProcessManager events that prove a consulted agent is still working.
- *
- * This list is the whole point, and getting it wrong silently reintroduces the
- * wall-clock bug the idle/hard split was meant to kill. For a `--print`
- * stream-json run, `StdoutHandler` routes a turn's intermediate activity to
- * `thinking-chunk` / `tool-execution` / `usage`, and only emits `data` when
- * `isResultMessage(event)` is true - i.e. the terminal result, at the very end
- * (see `handleParsedEvent`, plus the exit-time flush in `ExitHandler`). A
- * healthy Claude consult therefore emits ZERO `data` events until it is
- * completely finished.
- *
- * Arming the budget on `data` alone made it a hard N-minute deadline for every
- * claude-code consult: an agent doing real work for longer than the budget was
- * killed at exactly the budget, having never once re-armed the timer. That is
- * precisely the "agent is working fine but the consult dies anyway" failure.
- *
- * Every event here is emitted as `(sessionId, payload)`, so one filter fits all.
+ * Shared with Group Chat's supervision - see `AGENT_LIVENESS_EVENTS` for why
+ * `data` alone is not enough.
  */
-const LIVENESS_EVENTS = ['data', 'thinking-chunk', 'tool-execution', 'usage'] as const;
+const LIVENESS_EVENTS = AGENT_LIVENESS_EVENTS;
 
 /**
  * Absolute ceiling on a single consult, regardless of how chatty it is. A target
@@ -190,32 +178,44 @@ export interface StartCrossAgentRequestOptions {
 	onChunk: (chunk: CrossAgentResponseChunk) => void;
 }
 
-/** Header prepended to every forwarded transcript. */
+/** Header prepended to a consult that forwards the source agent's transcript. */
 const CONSULT_HEADER =
 	'You are being consulted by another agent in Maestro. Below is the conversation transcript so far, followed by a question.';
+
+/**
+ * Header for a consult with no transcript behind it - `maestro-cli ask`, whose
+ * whole point is a FRESH context: the calling agent writes a self-contained
+ * question rather than relaying a conversation. Announcing a transcript that
+ * isn't there sends the target hunting for context it will never find.
+ */
+const CONSULT_HEADER_NO_TRANSCRIPT =
+	'You are being consulted by another agent in Maestro. There is no prior conversation to read - the question below is self-contained.';
 
 /**
  * Access grant appended to the header when the source agent forwards its working
  * directory. The consult runs in the TARGET agent's own cwd, so this is the only
  * pointer it has to the user's project.
  *
- * Two modes, gated by the `crossAgentMentionsWritable` setting (default off):
- * - Read-only (default): grant read but not write. This is advisory text ONLY;
- *   the real enforcement is `readOnlyMode: true` on the spawn below
+ * Two modes, gated by the `crossAgentMentionsWritable` setting (default off).
+ * The user-facing names for them are CONSULT and DELEGATION, so the grant text
+ * uses those words rather than only "read-only" / "read/write":
+ * - Consult (read-only, default): grant read but not write. This is advisory text
+ *   ONLY; the real enforcement is `readOnlyMode: true` on the spawn below
  *   (`--permission-mode plan` for Claude Code, `--sandbox read-only` for Codex,
  *   ...). Both must stay in agreement: consults used to spawn read-write while
  *   saying this, and targets took the write path anyway. We also tell the target
  *   how the user can lift the restriction, so a "make this change" request gets a
  *   useful answer instead of a silent no-op.
- * - Read/write: the user opted in, so we drop the write prohibition and let the
- *   consult edit files (enforcement below spawns with `readOnlyMode: false`).
+ * - Delegation (read/write): the user opted in, so we drop the write prohibition
+ *   and let the target edit files (spawns with `readOnlyMode: false`).
  */
 function cwdGrant(sourceCwd: string, writable: boolean): string {
 	if (writable) {
 		return (
 			`The user is working in the directory \`${sourceCwd}\`. ` +
 			'You have permission to READ and MODIFY files under that directory to answer. ' +
-			'The user has enabled read/write cross-agent mentions, so you may apply changes directly.'
+			'The user has enabled read/write cross-agent mentions, so this is a DELEGATION rather ' +
+			'than a consult: you may apply changes directly.'
 		);
 	}
 	return (
@@ -223,9 +223,9 @@ function cwdGrant(sourceCwd: string, writable: boolean): string {
 		'You have permission to READ files under that directory to inform your answer. ' +
 		'Do NOT modify or create files: this is a one-shot READ-ONLY consultation, so if changes ' +
 		'are needed, describe them in your reply and let the user apply them. If the user is asking ' +
-		'you to make changes directly, tell them cross-agent mentions are read-only by default and ' +
-		'they can allow writes in Settings > General > Cross-Agent Mentions (set Consult Permission ' +
-		'to Read/Write).'
+		'you to make changes directly, tell them cross-agent mentions are consults (read-only) by ' +
+		'default and they can turn them into delegations in Settings > General > Cross-Agent ' +
+		'Mentions (set Consult or Delegate to Read/Write).'
 	);
 }
 
@@ -269,9 +269,8 @@ export function serializeTranscript(transcript: CrossAgentTranscriptEntry[]): st
  */
 export function buildCrossAgentPrompt(request: CrossAgentRequest, writable = false): string {
 	const transcriptBlock = serializeTranscript(request.transcript);
-	const header = request.sourceCwd
-		? `${CONSULT_HEADER}\n\n${cwdGrant(request.sourceCwd, writable)}`
-		: CONSULT_HEADER;
+	const intro = transcriptBlock ? CONSULT_HEADER : CONSULT_HEADER_NO_TRANSCRIPT;
+	const header = request.sourceCwd ? `${intro}\n\n${cwdGrant(request.sourceCwd, writable)}` : intro;
 	const sections = [header];
 	if (transcriptBlock) {
 		sections.push(transcriptBlock);
@@ -412,13 +411,9 @@ export async function startCrossAgentRequest(
 	// on the terminal chunk so the renderer stores it on the consult tab and
 	// resumes it on the next mention from this source tab.
 	let capturedAgentSessionId: string | undefined = request.resumeAgentSessionId;
-	// Held on a const object so `cleanup` can close over the (later-assigned)
-	// handles without `let`s that trip prefer-const. `idle` is rearmed on every
-	// data event; `hard` is armed once and never reset.
-	const timer: {
-		idle?: ReturnType<typeof setTimeout>;
-		hard?: ReturnType<typeof setTimeout>;
-	} = {};
+	// Assigned once the consult is actually under way (see below). Held on a const
+	// object so `cleanup` can close over it without a `let` that trips prefer-const.
+	const watch: { dog?: IdleWatchdog } = {};
 
 	const onData = (sid: string, data: string): void => {
 		if (sid !== sessionId) return;
@@ -432,7 +427,7 @@ export async function startCrossAgentRequest(
 	 */
 	const onLiveness = (sid: string): void => {
 		if (sid !== sessionId) return;
-		armIdleTimer();
+		watch.dog?.touch();
 	};
 
 	const onSessionId = (sid: string, agentSessionId: string): void => {
@@ -445,8 +440,7 @@ export async function startCrossAgentRequest(
 		for (const evt of LIVENESS_EVENTS) processManager.off(evt, onLiveness);
 		processManager.off('exit', onExit);
 		processManager.off('session-id', onSessionId);
-		if (timer.idle) clearTimeout(timer.idle);
-		if (timer.hard) clearTimeout(timer.hard);
+		watch.dog?.disarm();
 	};
 
 	const onExit = (sid: string, code: number): void => {
@@ -543,17 +537,6 @@ export async function startCrossAgentRequest(
 		);
 	};
 
-	/** (Re)start the silence budget. Called on spawn and on every data event. */
-	const armIdleTimer = (): void => {
-		if (settled) return;
-		if (timer.idle) clearTimeout(timer.idle);
-		timer.idle = setTimeout(() => {
-			settleTerminated(
-				`${target.name} went silent for ${CROSS_AGENT_IDLE_TIMEOUT_MS / 60000} minutes and was stopped.`
-			);
-		}, CROSS_AGENT_IDLE_TIMEOUT_MS);
-	};
-
 	processManager.on('data', onData);
 	// Re-arm the silence budget on every proof-of-life, not just `data` - a
 	// claude-code consult emits `data` only once, at the very end.
@@ -561,14 +544,20 @@ export async function startCrossAgentRequest(
 	processManager.on('exit', onExit);
 	processManager.on('session-id', onSessionId);
 
-	// Safety net: never leave the listeners attached forever. The idle timer covers
+	// Safety net: never leave the listeners attached forever. The idle budget covers
 	// a wedged target; the hard ceiling covers one that chatters without finishing.
-	timer.hard = setTimeout(() => {
-		settleTerminated(
-			`${target.name} exceeded the ${CROSS_AGENT_MAX_DURATION_MS / 60000}-minute limit for a single consult and was stopped.`
-		);
-	}, CROSS_AGENT_MAX_DURATION_MS);
-	armIdleTimer();
+	watch.dog = createIdleWatchdog({
+		idleMs: CROSS_AGENT_IDLE_TIMEOUT_MS,
+		maxMs: CROSS_AGENT_MAX_DURATION_MS,
+		onIdle: () =>
+			settleTerminated(
+				`${target.name} went silent for ${CROSS_AGENT_IDLE_TIMEOUT_MS / 60000} minutes and was stopped.`
+			),
+		onMax: () =>
+			settleTerminated(
+				`${target.name} exceeded the ${CROSS_AGENT_MAX_DURATION_MS / 60000}-minute limit for a single consult and was stopped.`
+			),
+	});
 
 	// The real Stop path, now that there is something to tear down. A cancel that
 	// arrived while the target's binary was being resolved is settled here instead

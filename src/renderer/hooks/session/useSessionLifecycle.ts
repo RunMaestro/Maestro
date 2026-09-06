@@ -12,7 +12,7 @@
  *   - Groups persistence (sync groups to electron-store)
  *   - Navigation history tracking (push on session/tab change)
  *
- * Reads from: sessionStore, modalStore, uiStore
+ * Reads from: sessionStore, modalStore
  */
 
 import { useCallback, useEffect } from 'react';
@@ -28,41 +28,21 @@ import {
 import { switchTabProvider } from '../../utils/providerTabSessions';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useModalStore } from '../../stores/modalStore';
-import { useUIStore } from '../../stores/uiStore';
 import { notifyToast } from '../../stores/notificationStore';
-import { aiTabFocusFields, getActiveTab, extractQuickTabName } from '../../utils/tabHelpers';
+import { getActiveTab, extractQuickTabName } from '../../utils/tabHelpers';
 import {
 	renameTerminalTab as renameTerminalTabHelper,
 	getTerminalSessionId,
 } from '../../utils/terminalTabHelpers';
 import { useTabStore } from '../../stores/tabStore';
 import { collectLeafTabRefs, generateGroupName, resolveTabRefTitle } from '../../utils/panelLayout';
-import type { NavHistoryEntry, NavTabKind } from './useNavigationHistory';
+import { resolveActiveNavTab } from './useNavigationHistory';
+import type { NavHistoryEntry } from './useNavigationHistory';
 import { captureException } from '../../utils/sentry';
 import { persistTabStarred } from '../../utils/starredSessions';
 import { clearFailover, getActiveEndpoint } from '../../stores/failoverStore';
+import { toggleTabUnreadFilter } from '../../services/unreadFilters';
 import { failoverArmed, findEndpoint } from '../../../shared/providerFailover';
-
-/**
- * Resolve the active tab of a session into a breadcrumb descriptor (id + kind).
- * Priority mirrors findActiveUnifiedTabIndex (terminal > file > browser > ai)
- * so the breadcrumb tracks whichever tab the user actually sees.
- */
-function resolveActiveNavTab(session: Session): { tabId?: string; tabKind?: NavTabKind } {
-	if (session.activeTerminalTabId) {
-		return { tabId: session.activeTerminalTabId, tabKind: 'terminal' };
-	}
-	if (session.activeFileTabId) {
-		return { tabId: session.activeFileTabId, tabKind: 'file' };
-	}
-	if (session.activeBrowserTabId) {
-		return { tabId: session.activeBrowserTabId, tabKind: 'browser' };
-	}
-	if (session.aiTabs?.length > 0) {
-		return { tabId: session.activeTabId, tabKind: 'ai' };
-	}
-	return {};
-}
 
 // ============================================================================
 // Dependencies interface
@@ -110,7 +90,9 @@ export interface SessionLifecycleReturn {
 		additionalDirectories?: AdditionalDirectory[],
 		/** Provenance of `customContextWindow` (finding AD1). */
 		contextWindowSource?: 'user-edited',
-		failoverConfig?: FailoverConfig
+		failoverConfig?: FailoverConfig,
+		/** Env vars parked with the eye button: kept, but never handed to a spawn. */
+		customEnvVarsDisabled?: Record<string, string>
 	) => void;
 	/** Rename the currently-selected tab (persists to agent session storage + history) */
 	handleRenameTab: (newName: string) => void;
@@ -194,7 +176,9 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			additionalDirectories?: AdditionalDirectory[],
 			/** Provenance of `customContextWindow` (finding AD1). */
 			contextWindowSource?: 'user-edited',
-			failoverConfig?: FailoverConfig
+			failoverConfig?: FailoverConfig,
+			/** Env vars parked with the eye button: kept, but never handed to a spawn. */
+			customEnvVarsDisabled?: Record<string, string>
 		) => {
 			// Provider Failover: snapshot whether this agent is currently pinned to a
 			// backup endpoint BEFORE the update below, so we can tell after the fact
@@ -212,6 +196,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 					customPath,
 					customArgs,
 					customEnvVars,
+					customEnvVarsDisabled,
 					customModel,
 					customEffort,
 					customContextWindow,
@@ -242,6 +227,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 						customPath: undefined,
 						customArgs: undefined,
 						customEnvVars: undefined,
+						customEnvVarsDisabled: undefined,
 						customModel: undefined,
 						customEffort: undefined,
 						customContextWindow: undefined,
@@ -639,32 +625,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 	}, []);
 
 	const toggleUnreadFilter = useCallback(() => {
-		const session = selectActiveSession(useSessionStore.getState());
-		const { showUnreadOnly } = useUIStore.getState();
-
-		if (!showUnreadOnly) {
-			// Entering filter mode: save current active tab (only if in AI mode -
-			// if the user is on a terminal/file tab we shouldn't force an AI restore on exit)
-			const wasAiMode =
-				session?.inputMode === 'ai' && !session?.activeTerminalTabId && !session?.activeFileTabId;
-			useUIStore
-				.getState()
-				.setPreFilterActiveTabId(wasAiMode ? session?.activeTabId || null : null);
-		} else {
-			// Exiting filter mode: restore previous active AI tab if one was saved and still exists
-			const preFilterActiveTabId = useUIStore.getState().preFilterActiveTabId;
-			if (preFilterActiveTabId && session) {
-				const tabStillExists = session.aiTabs.some((t) => t.id === preFilterActiveTabId);
-				if (tabStillExists) {
-					updateSessionWith(session.id, (s) => ({
-						...s,
-						...aiTabFocusFields(preFilterActiveTabId),
-					}));
-				}
-			}
-			useUIStore.getState().setPreFilterActiveTabId(null);
-		}
-		useUIStore.getState().setShowUnreadOnly(!showUnreadOnly);
+		toggleTabUnreadFilter();
 	}, []);
 
 	// ====================================================================

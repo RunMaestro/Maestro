@@ -139,6 +139,10 @@ Auth is all-or-nothing per endpoint. If a backup sets `ANTHROPIC_BASE_URL` but d
 
 A URL-only backup row is the most natural way to configure this, and inheriting the key would present your primary Anthropic credential to a third party. The endpoint fails to authenticate instead, which is loud, recoverable, and much better than the alternative.
 
+## Tracking it over time
+
+The [Usage Dashboard](/usage-dashboard) (`Cmd+Alt+U` / `Ctrl+Alt+U`) keeps score under **Activity → Resilience**: how many outages Maestro carried your work through, how much downtime it bridged while you were away, the recovery rate, and a per-day timeline split into recovered vs. stopped. Only resolved outages are counted - a countdown still in progress shows on its transcript card, not here.
+
 ## See also
 
 - [Provider Notes](/provider-notes) - Claude Code token sources, and how Dynamic mode switches from Max plan quota to API when a window runs dry

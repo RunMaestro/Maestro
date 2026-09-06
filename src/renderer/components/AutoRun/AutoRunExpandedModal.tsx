@@ -15,16 +15,21 @@ import {
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { Spinner } from '../ui/Spinner';
 import type { Theme, BatchRunState, SessionState, Shortcut } from '../../types';
+import { useIsTopLayer } from '../../hooks/ui/useIsTopLayer';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
-import { useLayerStack } from '../../contexts/LayerStackContext';
 import { useResizableModal } from '../../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { AutoRun } from './AutoRun';
 import type { AutoRunHandle } from './types';
 import type { DocumentTaskCount } from './AutoRunDocumentSelector';
+import type { FileNode } from '../../types/fileTree';
 import { ConfirmModal } from '../ConfirmModal';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { ResizeHandles } from '../ui/ResizeHandles';
+import {
+	MIRRORED_RUN_CONTROL_TITLE,
+	useIsMirroredBatchRun,
+} from '../../hooks/batch/useAutoRunStateMirror';
 
 interface AutoRunExpandedModalProps {
 	theme: Theme;
@@ -41,6 +46,10 @@ interface AutoRunExpandedModalProps {
 		path: string;
 		children?: unknown[];
 	}>;
+	// Project context for markdown file links (see AutoRunProps).
+	projectFileTree?: FileNode[];
+	projectRoot?: string;
+	onOpenProjectFile?: (path: string, options?: { openInNewTab?: boolean }) => void;
 	content: string;
 	onContentChange: (content: string) => void;
 	contentVersion?: number;
@@ -138,6 +147,10 @@ export function AutoRunExpandedModal({
 	const isLocked = batchRunState?.isRunning || false;
 	const isAgentBusy = sessionState === 'busy' || sessionState === 'connecting';
 	const isStopping = batchRunState?.isStopping || false;
+	// Mirrored from another Maestro window: the document is still locked (that
+	// window really is writing to it) but Stop cannot reach the loop from here.
+	const isMirroredRun = useIsMirroredBatchRun(sessionId);
+	const stopDisabled = isStopping || isMirroredRun;
 
 	// Track dirty state from AutoRun component
 	const [isDirty, setIsDirty] = useState(false);
@@ -204,10 +217,7 @@ export function AutoRunExpandedModal({
 	// after the user opens PlayBook Exchange (or the doc selector) and dismisses
 	// it. Without this, focus falls back to the body and Cmd+E starts targeting
 	// the right-panel AutoRun behind us instead of the expanded view.
-	const layerStack = useLayerStack();
-	const layers = layerStack.getLayers();
-	const topLayer = layers[layers.length - 1];
-	const isTopLayer = topLayer?.priority === MODAL_PRIORITIES.AUTORUN_EXPANDED;
+	const isTopLayer = useIsTopLayer(MODAL_PRIORITIES.AUTORUN_EXPANDED);
 	useEffect(() => {
 		if (!isTopLayer) return;
 		// Wait a tick so the closing modal has finished tearing down its focus trap.
@@ -410,7 +420,7 @@ export function AutoRunExpandedModal({
 									Save
 									{/* Keyboard shortcut overlay on hover */}
 									<span
-										className="absolute -bottom-6 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded text-[10px] whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
+										className="absolute -bottom-6 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded text-2xs whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
 										style={{
 											backgroundColor: theme.colors.bgMain,
 											color: theme.colors.textDim,
@@ -425,16 +435,22 @@ export function AutoRunExpandedModal({
 						{/* Run / Stop button */}
 						{isLocked ? (
 							<button
-								onClick={() => !isStopping && onStopBatchRun?.(sessionId)}
-								disabled={isStopping}
-								className={`flex items-center gap-2 px-3 py-1.5 rounded text-xs transition-colors font-semibold ${isStopping ? 'cursor-not-allowed' : ''}`}
+								onClick={() => !stopDisabled && onStopBatchRun?.(sessionId)}
+								disabled={stopDisabled}
+								className={`flex items-center gap-2 px-3 py-1.5 rounded text-xs transition-colors font-semibold ${stopDisabled ? 'cursor-not-allowed' : ''}`}
 								style={{
 									backgroundColor: isStopping ? theme.colors.warning : theme.colors.error,
 									color: isStopping ? theme.colors.bgMain : 'white',
 									border: `1px solid ${isStopping ? theme.colors.warning : theme.colors.error}`,
-									pointerEvents: isStopping ? 'none' : 'auto',
+									opacity: isMirroredRun ? 0.6 : 1,
 								}}
-								title={isStopping ? 'Stopping after current task...' : 'Stop auto-run'}
+								title={
+									isMirroredRun
+										? MIRRORED_RUN_CONTROL_TITLE
+										: isStopping
+											? 'Stopping after current task...'
+											: 'Stop auto-run'
+								}
 							>
 								{isStopping ? <Spinner size={14} /> : <Square className="w-3.5 h-3.5" />}
 								{isStopping ? 'Stopping' : 'Stop'}

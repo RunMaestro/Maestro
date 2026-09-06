@@ -43,6 +43,13 @@ type AutoRunTreeNode = {
 	children?: AutoRunTreeNode[];
 };
 
+/** A node returned by `window.maestro.fs.readDirTree`. Matches `FileTreeNode`. */
+type LocalFileScanNode = {
+	name: string;
+	type: 'file' | 'folder';
+	children?: LocalFileScanNode[];
+};
+
 interface ProcessConfig {
 	sessionId: string;
 	toolType: string;
@@ -80,6 +87,10 @@ interface ProcessConfig {
 	// NOTE: prompt delivery (argv vs stdin) is decided by the main process in
 	// handleProcessSpawn - it depends on the HOST platform and the agent's CLI,
 	// neither of which a renderer (possibly a browser on another OS) can know.
+	/** Who asked for this turn: a human ('user') or Auto Run ('auto'). Stamped into
+	 *  the spawned process env as MAESTRO_QUERY_SOURCE. Cue runs never come through
+	 *  this IPC path - they spawn in the main process and mark themselves 'cue'. */
+	querySource?: 'user' | 'auto';
 	// Claude token-source selection. Normally resolved server-side from the
 	// persisted session by sessionId, but spawns using a synthetic sessionId
 	// (e.g. background synopsis) forward these inline so the handler can resolve.
@@ -159,6 +170,7 @@ type GroupChatData = {
 	imagesDir: string;
 	draftMessage?: string;
 	archived?: boolean;
+	requireIdleParticipants?: boolean;
 };
 
 import type { CueGraphSession, CueRunResult, CueSessionStatus, CueSettings } from '../shared/cue';
@@ -264,6 +276,14 @@ interface MaestroAPI {
 		 */
 		onFocusRequest: (
 			handler: (payload: { sessionId: string; tabId?: string }) => void
+		) => () => void;
+		/**
+		 * Listen for agents another client (a second desktop window, or a
+		 * web-desktop browser tab) added or closed, so this renderer's session list
+		 * follows along instead of only finding out on reload.
+		 */
+		onLifecycleSync: (
+			handler: (payload: { added: any[]; removedIds: string[] }) => void
 		) => () => void;
 	};
 	groups: {
@@ -445,7 +465,8 @@ interface MaestroAPI {
 			callback: (
 				sessionId: string,
 				tabId: string,
-				aiTabs?: import('../main/web-server/types').AITabData[]
+				aiTabs?: import('../main/web-server/types').AITabData[],
+				activeTabChanged?: boolean
 			) => void
 		) => () => void;
 		onRemoteNewTab: (
@@ -669,6 +690,30 @@ interface MaestroAPI {
 			success: boolean,
 			tabId?: string
 		) => void;
+		/** Cross-agent consult asked for over the CLI (`maestro-cli ask`). The
+		 *  reply is the consulted agent's ANSWER, so it can arrive minutes later. */
+		onRemoteCrossAgentAsk: (
+			callback: (
+				request: {
+					targetSessionId: string;
+					question: string;
+					fromSessionId?: string;
+					withContext?: boolean;
+				},
+				responseChannel: string
+			) => void
+		) => () => void;
+		sendRemoteCrossAgentAskResponse: (
+			responseChannel: string,
+			result: {
+				success: boolean;
+				answer?: string;
+				error?: string;
+				canceled?: boolean;
+				targetAgentName?: string;
+				targetTabId?: string;
+			}
+		) => void;
 		onRemoteEnqueueCommand: (
 			callback: (
 				sessionId: string,
@@ -709,7 +754,9 @@ interface MaestroAPI {
 			responseChannel: string,
 			result: { success: boolean; removed: boolean; error?: string }
 		) => void;
-		onRemoteRefreshAutoRunDocs: (callback: (sessionId: string) => void) => () => void;
+		onRemoteRefreshAutoRunDocs: (
+			callback: (sessionId: string, background?: boolean) => void
+		) => () => void;
 		onRemoteConfigureAutoRun: (
 			callback: (
 				sessionId: string,
@@ -784,6 +831,12 @@ interface MaestroAPI {
 			) => void
 		) => () => void;
 		sendRemoteSaveAutoRunDocResponse: (responseChannel: string, success: boolean) => void;
+		onRemoteAutoRunStateMirror: (
+			callback: (
+				sessionId: string,
+				state: import('../shared/autoRunBroadcast').AutoRunBroadcastState | null
+			) => void
+		) => () => void;
 		onRemoteStopAutoRun: (callback: (sessionId: string) => void) => () => void;
 		onRemoteResetAutoRunDocTasks: (
 			callback: (sessionId: string, filename: string, responseChannel: string) => void
@@ -1148,6 +1201,8 @@ interface MaestroAPI {
 		) => Promise<{ success: boolean }>;
 	};
 	web: {
+		claimAutoRunStart: (sessionId: string) => Promise<boolean>;
+		releaseAutoRunStartClaim: (sessionId: string) => Promise<boolean>;
 		requestNewTab: (sessionId: string, background?: boolean) => Promise<{ tabId: string } | null>;
 		broadcastUserInput: (
 			sessionId: string,
@@ -1156,35 +1211,13 @@ interface MaestroAPI {
 		) => Promise<void>;
 		broadcastAutoRunState: (
 			sessionId: string,
-			state: {
-				isRunning: boolean;
-				totalTasks: number;
-				completedTasks: number;
-				currentTaskIndex: number;
-				isStopping?: boolean;
-				// Multi-document progress fields
-				totalDocuments?: number;
-				currentDocumentIndex?: number;
-				totalTasksAcrossAllDocs?: number;
-				completedTasksAcrossAllDocs?: number;
-				// Error pause fields - surfaced to web/mobile so they can show recovery UI
-				errorPaused?: boolean;
-				errorMessage?: string;
-				errorType?: string;
-				errorRecoverable?: boolean;
-				errorDocumentIndex?: number;
-				errorTaskDescription?: string;
-				// Goal-Driven mode fields - surfaced so web/mobile show goal percent + iteration
-				goalMode?: boolean;
-				goalProgress?: number;
-				goalRationale?: string;
-				goalIteration?: number;
-			} | null
+			state: import('../shared/autoRunBroadcast').AutoRunBroadcastState | null
 		) => Promise<void>;
 		broadcastTabsChange: (
 			sessionId: string,
 			aiTabs: import('../main/web-server/types').AITabData[],
-			activeTabId: string
+			activeTabId: string,
+			activeTabChanged?: boolean
 		) => Promise<void>;
 		broadcastSessionState: (
 			sessionId: string,
@@ -1509,6 +1542,25 @@ interface MaestroAPI {
 				maxFiles?: number;
 			}
 		) => Promise<{ directories: string[]; files: string[]; truncated: boolean }>;
+		/**
+		 * Walk a LOCAL directory tree in one round-trip. Recursing with `readDir`
+		 * from the renderer costs a round-trip per folder, which is what a large
+		 * tree's load time is actually made of. SSH uses `listTreeRemote`.
+		 */
+		readDirTree: (
+			dirPath: string,
+			options: {
+				maxDepth: number;
+				maxEntries?: number;
+				ignorePatterns?: string[];
+				honorGitignore?: boolean;
+			}
+		) => Promise<{
+			tree: LocalFileScanNode[];
+			truncated: boolean;
+			filesFound: number;
+			directoriesScanned: number;
+		}>;
 		readFile: (
 			filePath: string,
 			sshRemoteId?: string,
@@ -2922,7 +2974,8 @@ interface MaestroAPI {
 				enableMaestroP?: boolean;
 				maestroPMode?: 'interactive' | 'dynamic';
 				maestroPPath?: string;
-			}
+			},
+			requireIdleParticipants?: boolean
 		) => Promise<GroupChatData>;
 		list: () => Promise<Array<GroupChatData>>;
 		load: (id: string) => Promise<GroupChatData | null>;
@@ -2941,6 +2994,7 @@ interface MaestroAPI {
 					maestroPMode?: 'interactive' | 'dynamic';
 					maestroPPath?: string;
 				};
+				requireIdleParticipants?: boolean;
 			}
 		) => Promise<GroupChatData>;
 		archive: (id: string, archived: boolean) => Promise<GroupChatData>;
@@ -3537,6 +3591,28 @@ interface MaestroAPI {
 			range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'
 		) => Promise<number>;
 		// Record session creation (launched)
+		recordResilience: (event: {
+			id: string;
+			sessionId: string;
+			agentType: string;
+			strategy: 'availability' | 'token-exhaustion';
+			outcome: 'recovered' | 'stopped';
+			startedAt: number;
+			resolvedAt: number;
+			retries: number;
+		}) => Promise<string | null>;
+		getResilience: (range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all') => Promise<
+			Array<{
+				id: string;
+				sessionId: string;
+				agentType: string;
+				strategy: 'availability' | 'token-exhaustion';
+				outcome: 'recovered' | 'stopped';
+				startedAt: number;
+				resolvedAt: number;
+				retries: number;
+			}>
+		>;
 		recordSessionCreated: (event: {
 			sessionId: string;
 			agentType: string;

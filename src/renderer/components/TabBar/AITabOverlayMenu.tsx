@@ -143,7 +143,7 @@ export const AITabOverlayMenu = memo(function AITabOverlayMenu({
 					)}
 
 					{/* Session ID display */}
-					<div className="px-3 py-2 text-[10px] font-mono" style={{ color: theme.colors.textDim }}>
+					<div className="px-3 py-2 text-2xs font-mono" style={{ color: theme.colors.textDim }}>
 						{tab.agentSessionId}
 					</div>
 				</div>

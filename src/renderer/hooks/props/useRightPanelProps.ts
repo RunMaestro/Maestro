@@ -103,7 +103,7 @@ export interface UseRightPanelPropsDeps {
 	handleLaunchWizardTab: () => void;
 
 	// File linking
-	handleMainPanelFileClick: (path: string) => void;
+	handleMainPanelFileClick: (path: string, options?: { openInNewTab?: boolean }) => void;
 
 	// Document Graph handlers
 	handleFocusFileInGraph: (relativePath: string) => void;

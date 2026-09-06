@@ -7,6 +7,7 @@
 
 import path from 'path';
 import { isWindows } from '../../shared/platformDetection';
+import { MAESTRO_FONT_STACK } from '../../shared/fontStack';
 
 import type {
 	MaestroSettings,
@@ -79,7 +80,7 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	apiKey: '',
 	shortcuts: {},
 	fontSize: 14,
-	fontFamily: 'Roboto Mono, Menlo, "Courier New", monospace',
+	fontFamily: MAESTRO_FONT_STACK,
 	terminalFontFamily: '',
 	chatFontFamily: '',
 	filePreviewFontFamily: '',

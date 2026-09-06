@@ -41,6 +41,7 @@ import type { LogEntry, Theme } from '../types';
 import { getCachedAnsiHtml } from '../utils/textProcessing';
 import { cancelShellCommand } from '../services/shellCommand';
 import { useStickToBottom } from '../hooks/ui/useStickToBottom';
+import { useFixedPitchFont } from '../hooks/ui/useFixedPitchFont';
 import { CopyIconButton } from './ui/CopyIconButton';
 import { formatDuration } from '../../shared/performance-metrics';
 import { truncatePath } from '../../shared/formatters';
@@ -49,8 +50,13 @@ import { stripAnsiCodes } from '../../shared/stringUtils';
 interface ShellCommandCardProps {
 	log: LogEntry;
 	theme: Theme;
-	fontFamily: string;
 	ansiConverter: Convert;
+	/**
+	 * Configured font stack. Overridden to a fixed-pitch face when it is not one:
+	 * this card is a terminal, and shell output only reads as a table while every
+	 * glyph is one cell wide.
+	 */
+	fontFamily: string;
 	/**
 	 * Remove this card from the transcript. Omitted where a transcript is not
 	 * the user's to edit (exports, read-only views), which hides the affordance.
@@ -72,6 +78,10 @@ export function ShellCommandCard({
 	onSetDeleteConfirmLogId,
 }: ShellCommandCardProps): React.ReactElement | null {
 	const shell = log.shellCommand;
+
+	// The command line and its output are shell text, not prose: same treatment
+	// the terminal gives them, so a proportional UI font cannot break the grid.
+	const monoFontFamily = useFixedPitchFont(fontFamily);
 
 	const html = React.useMemo(
 		() => (log.text ? getCachedAnsiHtml(log.text, theme.id, ansiConverter) : ''),
@@ -132,7 +142,7 @@ export function ShellCommandCard({
 			    intent. */}
 			{shell.request && (
 				<div
-					className="flex items-start gap-1.5 px-3 pt-2 text-[11px] select-text"
+					className="flex items-start gap-1.5 px-3 pt-2 text-xs-plus select-text"
 					style={{ color: theme.colors.textDim }}
 					data-testid="shell-command-request"
 				>
@@ -175,7 +185,7 @@ export function ShellCommandCard({
 						className={`text-sm font-medium min-w-0 ${
 							commandExpanded ? 'whitespace-pre-wrap break-all select-text' : 'truncate'
 						}`}
-						style={{ fontFamily, color: theme.colors.textMain }}
+						style={{ fontFamily: monoFontFamily, color: theme.colors.textMain }}
 						// Only useful while truncated; expanded, the text is all there.
 						title={commandExpanded ? undefined : shell.command}
 						data-testid="shell-command-text"
@@ -202,7 +212,7 @@ export function ShellCommandCard({
 
 				<div className="ml-auto flex items-center gap-2 shrink-0">
 					<span
-						className="text-[10px] hidden sm:inline"
+						className="text-2xs hidden sm:inline"
 						style={{ color: theme.colors.textDim }}
 						title={shell.remoteName ? `${shell.remoteName}:${shell.cwd}` : shell.cwd}
 					>
@@ -217,7 +227,7 @@ export function ShellCommandCard({
 								type="button"
 								onClick={handleStop}
 								disabled={stopping}
-								className="flex items-center gap-1 px-2 py-0.5 rounded border text-[10px] hover:opacity-80 transition-opacity disabled:opacity-50"
+								className="flex items-center gap-1 px-2 py-0.5 rounded border text-2xs hover:opacity-80 transition-opacity disabled:opacity-50"
 								style={{
 									borderColor: theme.colors.border,
 									color: theme.colors.textMain,
@@ -230,7 +240,7 @@ export function ShellCommandCard({
 						</>
 					) : (
 						<span
-							className="flex items-center gap-1 text-[10px] tabular-nums"
+							className="flex items-center gap-1 text-2xs tabular-nums"
 							style={{ color: statusColor }}
 						>
 							{shell.status === 'cancelled' ? (
@@ -282,7 +292,7 @@ export function ShellCommandCard({
 								}}
 								data-testid="shell-command-delete-confirm"
 							>
-								<span className="text-[10px] px-0.5" style={{ color: theme.colors.error }}>
+								<span className="text-2xs px-0.5" style={{ color: theme.colors.error }}>
 									Delete?
 								</span>
 								<button
@@ -291,7 +301,7 @@ export function ShellCommandCard({
 										onSetDeleteConfirmLogId?.(null);
 										onDelete?.(log.id);
 									}}
-									className="px-1.5 py-0.5 rounded text-[10px] font-medium hover:opacity-80"
+									className="px-1.5 py-0.5 rounded text-2xs font-medium hover:opacity-80"
 									style={{ backgroundColor: theme.colors.error, color: '#fff' }}
 									data-testid="shell-command-delete-yes"
 								>
@@ -300,7 +310,7 @@ export function ShellCommandCard({
 								<button
 									type="button"
 									onClick={() => onSetDeleteConfirmLogId?.(null)}
-									className="px-1.5 py-0.5 rounded text-[10px] hover:opacity-80"
+									className="px-1.5 py-0.5 rounded text-2xs hover:opacity-80"
 									style={{ color: theme.colors.textDim }}
 									data-testid="shell-command-delete-no"
 								>
@@ -330,7 +340,7 @@ export function ShellCommandCard({
 					ref={outputRef}
 					className="px-3 py-2 text-sm whitespace-pre overflow-auto scrollbar-thin select-text"
 					style={{
-						fontFamily,
+						fontFamily: monoFontFamily,
 						color: theme.colors.textMain,
 						maxHeight: '480px',
 						overscrollBehavior: 'contain',
@@ -347,7 +357,7 @@ export function ShellCommandCard({
 
 			{shell.truncated && (
 				<div
-					className="px-3 py-1 text-[10px] border-t"
+					className="px-3 py-1 text-2xs border-t"
 					style={{ color: theme.colors.textDim, borderColor: theme.colors.border }}
 				>
 					Output truncated - the command produced more than Maestro keeps in the transcript.

@@ -15,6 +15,7 @@ import type { Theme, QueuedItem } from '../types';
 import type { BusyTabSummary, ForceSendEligibility } from '../utils/executionQueue';
 import { getForceSendTitle, shouldOfferForceSend } from '../utils/executionQueue';
 import { safeClipboardWrite } from '../utils/clipboard';
+import { displayImageSrc } from '../utils/sessionImageSrc';
 import { Modal, ModalFooter } from './ui/Modal';
 import { QueuedItemEditModal } from './QueuedItemEditModal';
 import { TurnSettingPills } from './ui/TurnSettingPills';
@@ -526,7 +527,7 @@ function QueuedItemRow({
 				{isPaused && (
 					<div className={canDrag ? 'pl-4 mb-1.5' : 'mb-1.5'}>
 						<span
-							className="px-1.5 py-0.5 rounded text-[10px] font-bold tracking-wider"
+							className="px-1.5 py-0.5 rounded text-2xs font-bold tracking-wider"
 							style={{
 								backgroundColor: theme.colors.warning + '33',
 								color: theme.colors.warning,
@@ -626,7 +627,7 @@ function QueuedItemRow({
 										title="Click to view full size"
 									>
 										<img
-											src={img}
+											src={displayImageSrc(img)}
 											alt={`Queued attachment ${imgIdx + 1}`}
 											className="h-16 rounded border block"
 											style={{

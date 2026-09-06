@@ -20,7 +20,10 @@ import { WindowBadge } from './SessionList/WindowBadge';
 import { PluginUiItemsSlot } from './plugins/PluginUiItemsSlot';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useSessionHasActiveOutage } from '../stores/retryStore';
+import { usePhoneLayout } from '../hooks/ui/useViewportBreakpoint';
 import { COLORBLIND_STATUS_COLORS } from '../constants/colorblindPalettes';
+import { getConnectingColor } from '../utils/theme';
+import { hasUnreadVisibleTab } from '../utils/tabHelpers';
 import { abbreviateGroupName } from '../../shared/formatters';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
 import type { Session, Group, Theme } from '../types';
@@ -61,7 +64,9 @@ export function getEnhancedStatusColor(
 	const success = colorBlindMode ? COLORBLIND_STATUS_COLORS.success : theme.colors.success;
 	const warning = colorBlindMode ? COLORBLIND_STATUS_COLORS.warning : theme.colors.warning;
 	const error = colorBlindMode ? COLORBLIND_STATUS_COLORS.error : theme.colors.error;
-	const connecting = colorBlindMode ? COLORBLIND_STATUS_COLORS.connecting : '#ff8800';
+	const connecting = colorBlindMode
+		? COLORBLIND_STATUS_COLORS.connecting
+		: getConnectingColor(theme);
 
 	// Agent Resilience: an active outage (auto-retry backing off) is a "stuck,
 	// needs attention" state. Pulsing orange, ranked above batch/agent state so a
@@ -213,14 +218,20 @@ export const SessionItem = memo(function SessionItem({
 	const showFullGroupLabelInBookmarks = useSettingsStore((s) => s.showFullGroupLabelInBookmarks);
 	const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures.maestroCue);
 	const colorBlindMode = useSettingsStore((s) => s.colorBlindMode);
-	const cueIndicatorVisible = maestroCueEnabled && showLeftPanelCueIndicator;
+	// Phone: the row is the name and the status dot. The provider line, location
+	// pills, git count, bookmark toggle, and the Cue / startup-command glyphs all
+	// come off - on a 390px drawer they crowded the name down to a few characters,
+	// and a user on a handheld already knows which agent is which. State that
+	// needs attention (AUTO, ERR, unread, wizard) stays.
+	const phone = usePhoneLayout();
+	const cueIndicatorVisible = maestroCueEnabled && showLeftPanelCueIndicator && !phone;
 	const startupCommandTabCount =
 		session.terminalTabs?.reduce(
 			(acc, tab) => (tab.startupCommand && tab.startupCommand.trim().length > 0 ? acc + 1 : acc),
 			0
 		) ?? 0;
 	const startupCommandIndicatorActive =
-		showLeftPanelStartupCommandIndicator && startupCommandTabCount > 0;
+		showLeftPanelStartupCommandIndicator && startupCommandTabCount > 0 && !phone;
 
 	// Parent agents get an inline chevron toggle. Keyed off worktreeConfig OR an
 	// actual child count: several spawn paths (Auto Run worktree dispatch in
@@ -239,7 +250,10 @@ export const SessionItem = memo(function SessionItem({
 	// signals where prompts will run. GIT/LOCAL are suppressed in the bookmark
 	// variant to keep the row compact.
 	const showLocationPills =
-		showLeftPanelLocationPills && variant !== 'worktree' && session.toolType !== 'terminal';
+		showLeftPanelLocationPills &&
+		variant !== 'worktree' &&
+		session.toolType !== 'terminal' &&
+		!phone;
 	const showGitLocalBadge = showLocationPills && variant !== 'bookmark';
 
 	// Status indicator: enhanced color/animation/label, plus hollow signal for
@@ -263,9 +277,10 @@ export const SessionItem = memo(function SessionItem({
 		// on line one at full width, meta and actions on line two. The worktree
 		// variant is deliberately excluded because it renders no meta row at all,
 		// so the grid would put its actions on an otherwise empty second line and
-		// turn a compact child row into a two-line one.
-		const layoutClass = variant === 'worktree' ? '' : 'session-row ';
-		const base = `${layoutClass}cursor-move flex items-center justify-between group ${borderClass} transition-all hover:bg-opacity-50 ${isDragging ? 'opacity-50' : ''}`;
+		// turn a compact child row into a two-line one. The phone row drops its
+		// meta line for the same reason, so it is a single flex line too.
+		const layoutClass = variant === 'worktree' || phone ? '' : 'session-row ';
+		const base = `${layoutClass}cursor-move flex items-center justify-between group ${borderClass} transition-all row-hover ${isDragging ? 'opacity-50' : ''}`;
 
 		if (variant === 'flat') {
 			return `mx-3 px-3 py-2 rounded mb-1 ${base}`;
@@ -348,7 +363,7 @@ export const SessionItem = memo(function SessionItem({
 						{/* Collapsed worktree child count badge */}
 						{showCollapsedCountBadge && (
 							<span
-								className="text-[9px] px-1.5 py-0.5 rounded-full shrink-0 font-medium"
+								className="text-3xs px-1.5 py-0.5 rounded-full shrink-0 font-medium"
 								style={{
 									backgroundColor: theme.colors.accent + '33',
 									color: theme.colors.accent,
@@ -416,7 +431,7 @@ export const SessionItem = memo(function SessionItem({
 					session.worktreeBranch &&
 					!isEditing && (
 						<div
-							className="text-[10px] mt-0.5 truncate"
+							className="text-2xs mt-0.5 truncate"
 							style={{ color: theme.colors.textDim }}
 							title={session.worktreeBranch}
 						>
@@ -424,13 +439,13 @@ export const SessionItem = memo(function SessionItem({
 						</div>
 					)}
 
-				{/* Session metadata row (hidden for compact worktree variant) */}
-				{variant !== 'worktree' && (
-					<div className="row-meta flex items-center gap-2 text-[10px] mt-0.5 opacity-70">
+				{/* Session metadata row (hidden for compact worktree variant, and on a phone) */}
+				{variant !== 'worktree' && !phone && (
+					<div className="row-meta flex items-center gap-2 text-2xs mt-0.5 opacity-70">
 						{/* Session Jump Number Badge (Opt+Cmd+NUMBER) */}
 						{jumpNumber && (
 							<div
-								className="w-4 h-4 rounded flex items-center justify-center text-[10px] font-bold shrink-0"
+								className="w-4 h-4 rounded flex items-center justify-center text-2xs font-bold shrink-0"
 								style={{
 									backgroundColor: theme.colors.accent,
 									color: theme.colors.bgMain,
@@ -454,14 +469,14 @@ export const SessionItem = memo(function SessionItem({
 			<div className="row-actions flex items-center gap-2 ml-2">
 				{/* Multi-window badge: this agent is open in a different window. Clicking
 				    the row focuses that window rather than stealing the agent. */}
-				<WindowBadge windowNumber={otherWindowNumber} />
+				{!phone && <WindowBadge windowNumber={otherWindowNumber} />}
 				{/* Group badge (only in bookmark variant when session belongs to a group).
 				    Hidden entirely when showGroupLabelInBookmarks is off. Abbreviated by
 				    default; the showFullGroupLabelInBookmarks setting swaps in the full group
 				    name, truncated with the complete value available on hover. */}
-				{variant === 'bookmark' && group && showGroupLabelInBookmarks && (
+				{variant === 'bookmark' && group && showGroupLabelInBookmarks && !phone && (
 					<span
-						className={`row-group-chip text-[9px] px-1 py-0.5 rounded${
+						className={`row-group-chip text-3xs px-1 py-0.5 rounded${
 							showFullGroupLabelInBookmarks ? ' max-w-[140px] truncate' : ''
 						}`}
 						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
@@ -473,11 +488,12 @@ export const SessionItem = memo(function SessionItem({
 				{/* Git Dirty Indicator (only in wide mode) - placed before GIT/LOCAL for vertical alignment */}
 				{showLeftPanelGitIndicator &&
 					leftSidebarOpen &&
+					!phone &&
 					session.isGitRepo &&
 					gitFileCount !== undefined &&
 					gitFileCount > 0 && (
 						<div
-							className="flex items-center gap-0.5 text-[10px]"
+							className="flex items-center gap-0.5 text-2xs"
 							style={{ color: theme.colors.warning }}
 						>
 							<GitBranch className="w-2.5 h-2.5" />
@@ -492,7 +508,7 @@ export const SessionItem = memo(function SessionItem({
 						<>
 							{session.sessionSshRemoteConfig?.enabled && (
 								<div
-									className="px-1.5 py-0.5 rounded text-[9px] font-bold flex items-center"
+									className="px-1.5 py-0.5 rounded text-3xs font-bold flex items-center"
 									style={{
 										backgroundColor: theme.colors.warning + '30',
 										color: theme.colors.warning,
@@ -504,7 +520,7 @@ export const SessionItem = memo(function SessionItem({
 							)}
 							{showGitLocalBadge && (
 								<div
-									className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
+									className="px-1.5 py-0.5 rounded text-3xs font-bold uppercase"
 									style={{
 										backgroundColor: theme.colors.accent + '30',
 										color: theme.colors.accent,
@@ -518,7 +534,7 @@ export const SessionItem = memo(function SessionItem({
 					) : session.sessionSshRemoteConfig?.enabled ? (
 						/* Plain directory on remote: always show REMOTE */
 						<div
-							className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
+							className="px-1.5 py-0.5 rounded text-3xs font-bold uppercase"
 							style={{
 								backgroundColor: theme.colors.warning + '30',
 								color: theme.colors.warning,
@@ -531,7 +547,7 @@ export const SessionItem = memo(function SessionItem({
 						/* Plain local directory: LOCAL pill suppressed in bookmark variant */
 						showGitLocalBadge && (
 							<div
-								className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
+								className="px-1.5 py-0.5 rounded text-3xs font-bold uppercase"
 								style={{
 									backgroundColor: theme.colors.textDim + '20',
 									color: theme.colors.textDim,
@@ -546,7 +562,7 @@ export const SessionItem = memo(function SessionItem({
 				{/* AUTO Mode Indicator */}
 				{isInBatch && (
 					<div
-						className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
+						className="flex items-center gap-1 px-1.5 py-0.5 rounded text-3xs font-bold uppercase"
 						style={{
 							backgroundColor: theme.colors.warning + '30',
 							color: theme.colors.warning,
@@ -561,7 +577,7 @@ export const SessionItem = memo(function SessionItem({
 				{/* Agent Error Indicator */}
 				{session.agentError && (
 					<div
-						className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
+						className="flex items-center gap-1 px-1.5 py-0.5 rounded text-3xs font-bold uppercase"
 						style={{ backgroundColor: theme.colors.error + '30', color: theme.colors.error }}
 						title={`Error: ${session.agentError.message}`}
 					>
@@ -570,8 +586,10 @@ export const SessionItem = memo(function SessionItem({
 					</div>
 				)}
 
-				{/* Bookmark toggle - hidden for worktree children (they inherit from parent) */}
+				{/* Bookmark toggle - hidden for worktree children (they inherit from parent)
+				    and on a phone, where the row keeps only the name and the status dot. */}
 				{!session.parentSessionId &&
+					!phone &&
 					(variant !== 'bookmark' ? (
 						<button
 							onClick={(e) => {
@@ -636,7 +654,7 @@ export const SessionItem = memo(function SessionItem({
 						}
 					/>
 					{/* Unread Notification Badge */}
-					{!isActive && session.aiTabs?.some((tab) => tab.hasUnread) && (
+					{!isActive && hasUnreadVisibleTab(session.aiTabs) && (
 						<div
 							className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full"
 							style={{ backgroundColor: theme.colors.error }}

@@ -117,6 +117,8 @@ Output is buffered and flushed on an animation frame (one store write per frame,
 
 The output box caps at 480px and follows its own tail via `useStickToBottom`, so a chatty command cannot push the conversation off the screen AND the newest lines stay visible. That pairing is the whole reason the hook exists: the cap is what stops the outer transcript auto-scroll from being able to follow the output, because the card stops growing once it is reached.
 
+`runShellCommand` calls `requestTranscriptScrollToBottom(session.id, tabId)` immediately after appending the card, so the output is visible even when the user had scrolled up and paused auto-scroll. Once, at the top of the run - not per chunk - so a scroll up mid-run still pauses following as usual. See `transcriptScroll.ts` below.
+
 Rendered by `components/ShellCommandCard.tsx`, anchored by `LogEntry.shellCommand`. Routing happens at the top of `useInputProcessing.processInput`.
 
 **The card has TWO copy buttons, and they copy different things.** The one in the header copies the OUTPUT (ANSI-stripped - the stored text keeps its escape codes so the card can render colour, but pasting `\x1b[36m` anywhere is never wanted). The one beside the command copies the COMMAND, and appears only while the command is expanded, so it cannot be mistaken for the output copy a few pixels to its right. Both are `<CopyIconButton>`; the hand-rolled copy-then-swap-to-a-checkmark this file used to carry is gone.
@@ -254,15 +256,111 @@ Module-level functions, not a hook: the queue drain runs outside React. The send
 
 **Stop cancels consults - it is an agent-level action, not a tab one.** A mention fans one turn out across several processes: the agent's own tab plus one ephemeral `cross-agent-*` process per target, none of which carry the agent's process id. `useInterruptHandler` therefore calls `window.maestro.crossAgent.cancel(sessionId)` before it signals anything else (non-critical - a failure there must not block the interrupt). Cancellation is addressed by SOURCE AGENT, never by request id: the renderer only learns a request id once `crossAgent.send` resolves, so a Stop pressed inside that window would miss a consult main is already spawning. Main holds the authoritative registry (`cancelCrossAgentRequestsForSource` in `main/cross-agent/cross-agent-router.ts`), which is registered BEFORE the target's binary is resolved and re-checked around the spawn, so a Stop landing in either race still lands. A cancelled consult settles exactly like a timeout - process killed, partial flushed - but stamped `canceled` rather than `error`, because the user stopping a consult is not the target failing to answer. `crossAgentTerminationNote()` is the one place that wording is chosen, so the bubble and the history entry cannot disagree.
 
+### crossAgentAsk.ts - an agent asking another agent
+
+The CLI's face of the same consult (`maestro-cli ask`). One export:
+
+- `runCrossAgentAsk({ targetSessionId, question, fromSessionId?, withContext? })` - consult the target and resolve with its answer.
+
+**`dispatch` is not the verb for a question.** It writes into the target's ACTIVE tab, so the question appears mid-conversation in whatever the human has open with that agent, and the answer goes to the screen rather than to the agent that asked. `--background` does not fix it: that flag decides where the VIEW lands, not which conversation the prompt joins, so a backgrounded dispatch interrupts QUIETLY - which is worse, because the user finds it later with no idea where it came from.
+
+A thin resolver over `sendCrossAgentRequest`, deliberately not a second dispatch path: continuity, History attribution, cancellation, and the SSH / token-mode spawn rules all live there. The only thing `ask` adds is `SendCrossAgentRequestOptions.onComplete`, which hands the finished text to a caller blocked on it.
+
+Three rules it encodes:
+
+- **Keyed on the CALLING AGENT, not on the caller's active tab.** `sourceTabId` is the constant `CROSS_AGENT_ASK_TAB_ID`, so there is one consult tab per (caller -> target) pairing and a follow-up `ask` resumes the earlier exchange. Keying it on whichever tab the agent happened to have selected would start over every time it switched. The constant matches no real tab on purpose: the answer belongs to the caller's tool result, not its transcript, so the attribution-bubble write finds no tab and no-ops.
+- **Fresh context by default.** No transcript is forwarded unless the caller passes `--with-context`; `buildCrossAgentPrompt` swaps to a header that does not announce a transcript that is not there, or the target goes hunting for context that was never sent.
+- **It resolves on every outcome, including a missing target.** The caller is a CLI process reporting to an agent, and a rejection there reads as a broken command rather than "that agent could not answer". A partial answer is kept alongside the failure reason for the same reason: a consult that said something before it died still said something.
+
+`onComplete` fires exactly once, which is why `completedRequests` in `useCrossAgentDispatch` remembers the COMPLETION rather than just the request id. `crossAgent.send` resolves on a round trip to main, and "target agent not found" is emitted before it does - with a bare id set the late `.then()` returned having never delivered, and `maestro-cli ask` sat there until its own timeout for a consult that failed instantly.
+
+The wire path is `cross_agent_ask` (WS) -> `handleCrossAgentAsk` -> the `consultAgent` callback -> `remote:crossAgentAsk` -> here. The main-side wait is the CALLER's timeout, not the dispatch path's 3s delivery receipt: here we are waiting for an answer, not for the renderer to accept a prompt.
+
+### queuedPrompt.ts - send a prompt without a composer
+
+Everything that asks an agent a question without a user typing it - the CLI's `dispatch --queue`, a snooze's wake prompt - builds its queue item here.
+
+- `buildQueuedMessageItem({ session, tab, text, images? })` - the `QueuedItem` a message becomes, exactly as the composer builds it.
+- `enqueuePromptForTab({ sessionId, tabId, text, images? })` - resolve both from the store and append to the tail of `session.executionQueue`. Returns the item, or `null` when the agent is gone or has no AI tab.
+
+**Queue it, do not spawn it.** The queue solves the timing problem for free: `useQueueProcessing` drains an idle agent on its next render and a busy one when its turn finishes, so no caller re-implements "is the agent free?", and nothing has to reach for the spawn config. It also re-resolves the target at DRAIN time through `resolveQueuedItemTarget`, which is what makes this safe to call in the same tick as the store write that created the tab. The alternative - dispatching the `maestro:remoteCommand` event - reads a render-time `sessionsRef`, so a prompt fired before React re-rendered finds a stale session and is dropped.
+
+Three fields are easy to omit and each has a visible cost. `tabName` is the label a queued item falls back to once its tab is closed. `readOnlyMode` is what lets the item bypass the parallel-execution guard. `turnSettings` (from `captureQueuedTurnSettings`) freezes the model and effort at queue time, so a queue that drains after the user switches models still runs - and is labeled - with what was selected when it was queued. The `@mention` flags are STAMPED here and fired by `agentStore.processQueuedItem` at drain time, per the contract above; this module plans, it never consults.
+
+Module-level functions, not a hook: the callers are a 15s sweep timer and an IPC listener, both outside React. `useRemoteIntegration`'s `dispatch --queue` path hand-rolled this item and had already drifted - a `agentSessionId.split('-')[0]` tab label instead of `getTabDisplayName`, and no `turnSettings` capture at all.
+
+### snoozeWakePrompt.ts - run a snooze's prompt when its tab returns
+
+A snooze carries a note AND, optionally, a prompt. They address different readers: the note becomes the wake notification (for the user), the prompt is sent to the agent the instant the tab is back. Either, both, or neither.
+
+- `runSnoozeWakePrompt(sessionId, entry, restoredTabId, isMemberRestored?)` - queue `entry.wakePrompt` into the tab that came back. Returns whether anything was queued.
+- `runSnoozeWakePromptAfterGroupWake(sessionId, entry, restoredTabId, droppedMembers)` - the same, for a group wake that already knows which panes it had to drop.
+
+It fires on BOTH ways a tab returns - the scheduler's wake (`useSnoozeScheduler`) and an early "Unsnooze now" (`tabStore.unsnoozeTab`) - because the user wrote the prompt against the tab COMING BACK, not against the clock. A dismissed snooze restores nothing, so nothing is dispatched there.
+
+The target comes from `resolveWakePromptTabId()` in `utils/snoozeHelpers.ts`, which is not the same as `entry.tab.id`: when an equivalent tab was already open the wake focuses THAT one and the prompt has to follow the tab the user actually lands on. A group resolves to its first surviving AI pane in leaf order - the layout's focused pane is stored as a pane id rather than a tab id, and a group focused on a file pane would otherwise have nowhere to send a prompt the user did ask for. A file, terminal, or browser snooze resolves to `null` and is logged rather than rerouted; the dialog hides the field for those kinds (`canSnoozeRunWakePrompt`), so an entry carrying one at all came from an older build or the CLI.
+
+Everything goes through `queuedPrompt.ts` rather than a spawn, for the tick-safety reason above: the tab is restored in the same `setSessions` call the wake runs in.
+
+### transcriptScroll.ts - reveal output the user asked for
+
+Asks the mounted AI transcript to jump to the bottom and resume following new output, past a paused auto-scroll.
+
+**Key exports:** `requestTranscriptScrollToBottom(sessionId, tabId)` and `TRANSCRIPT_SCROLL_TO_BOTTOM_EVENT` / `TranscriptScrollToBottomDetail` for the listener side.
+
+The transcript pauses auto-scroll when the user scrolls up to read history, and from then on new entries land offscreen behind the unread badge. That is right for output the agent produced on its own schedule, and wrong for output the user asked for by pressing Enter. The pause lives in `useTerminalOutputScroll`'s local state, several levels below the composer that dispatches the command, so the request rides one app-level `CustomEvent` rather than a callback drilled up through `MainPanel` and `App` - the same shape as `requestHeadingPalette` and `requestFileTreeRefresh`.
+
+The detail names both the session and the tab, and the listener ignores anything that is not the conversation on screen, so a command dispatched into a background tab cannot yank the view. On a match it calls the hook's own `scrollToBottomAndResume()`, which is the same path the scroll-to-bottom button takes: it flips `userScrolledAwayRef` and `isAtBottomRef` BEFORE the `setState` calls (the follow-the-tail `MutationObserver` reads the live refs in the same frame), clears the unread badge, and jumps through the shared `jumpToBottom()` helper, guard flag and all, so the two cannot disagree about what counts as a user scroll.
+
+Fire it AFTER the content is in the store, or the transcript scrolls to a bottom that does not include it yet. Do NOT use it to force ordinary agent output into view - the pause exists to stop exactly that.
+
+---
+
 ### fileDeletion.ts - delete the previewed file
 
 One confirmation, one delete, behind every surface that offers to remove the file you are looking at: the File Preview toolbar's trash button and the command palette's `File: Delete` entry.
 
 **Key export:** `requestFileDeletion({ path, sshRemoteId?, sessionId? })` - opens the shared `confirm` modal (destructive, titled "Delete File") and, only on confirm, runs `window.maestro.fs.delete` - the same IPC the Files panel context menu uses, so SSH remotes are honored. `sessionId` defaults to the active session, which is what both surfaces are scoped to.
 
-After a successful delete it force-closes every file preview tab in that session pointing at the path, then dispatches the `maestro:refreshFileTree` CustomEvent so the Files panel drops the entry without waiting for its next auto-refresh. The close deliberately skips the unsaved-changes prompt `handleCloseFileTab` puts up: the file is gone, so keeping the tab would leave the user editing a buffer that can no longer be saved back. A failed delete leaves the tab alone and reports through a red toast.
+After a successful delete it force-closes every file preview tab in that session pointing at the path, then calls `requestFileTreeRefresh(sessionId)` (`src/renderer/utils/fileTreeRefresh.ts`) so the Files panel drops the entry without waiting for its next auto-refresh. The close deliberately skips the unsaved-changes prompt `handleCloseFileTab` puts up: the file is gone, so keeping the tab would leave the user editing a buffer that can no longer be saved back. A failed delete leaves the tab alone and reports through a red toast.
 
 Do NOT add a second delete path. A new surface should call `requestFileDeletion` so the confirmation copy and the tab cleanup cannot drift.
+
+---
+
+### editQueuedMessage.ts - edit the newest queued message
+
+One picker, one landing, one "nothing to edit" message, behind both surfaces that offer it: the `editLastQueuedMessage` shortcut and the command palette's `Edit Last Queued Message` entry.
+
+**Key export:** `requestEditLastQueuedMessage(): boolean` - returns whether a modal was opened, which is what the keyboard path uses to decide if the shortcut counts as used.
+
+Four rules the two surfaces must not disagree on:
+
+- **Everything is read from the stores at call time**, never from a render snapshot. The pencil on a queued row reads live props, so a stale snapshot is the one way this can claim nothing is queued while a card sits on screen.
+- **Only `type === 'command'` items are skipped** (they carry no editable prompt text). Nothing else is filtered out: the queue the user sees is not filtered by tab membership, so a filter here could only reject an item Maestro is actively displaying.
+- **A missing tab RANKS, it does not filter.** Items whose tab still exists are preferred, but falling back to the full list keeps a closed tab from turning into "nothing is queued".
+- **Say WHICH empty it is.** `Nothing queued to edit` and `Only commands are queued` are different states, and the second one renders on a screen that is visibly showing queued cards.
+
+The modal renders inside its own tab's transcript, so the service lands there first with `setActiveTab` + `aiTabFocusFields` before setting `uiStore.editingQueuedItemId`. It writes through `updateSessionWith` against fresh state, so the snapshot it read cannot clobber a concurrent update.
+
+---
+
+### unreadFilters.ts - the two "show unread only" filters
+
+Maestro has two independent unread filters: `uiStore.showUnreadAgentsOnly` narrows the Left Bar to agents with unread activity, `uiStore.showUnreadOnly` narrows the tab bar to unread/draft tabs. Each is useful alone, but sweeping a busy fleet means turning both on.
+
+**Key exports:**
+
+- `toggleTabUnreadFilter()` - the tab filter. NOT a plain setter: entering the filter saves the active AI tab in `uiStore.preFilterActiveTabId`, leaving it restores that tab if it still exists. The save is skipped when the user is on a terminal or file tab, so exiting the filter cannot yank them into an AI tab they never asked for.
+- `areUnreadFiltersActive()` - true only when BOTH are on.
+- `toggleAllUnreadFilters()` - drives both to the same state. Bound to the `toggleUnreadFilters` shortcut (ships unbound) and the palette's `Unread Only` entry.
+
+Two behaviors are easy to "simplify" into bugs, and both are pinned by tests:
+
+- **A half-filtered view completes, it does not clear.** Treating "either one on" as active would make one press turn everything off, which is the opposite of what a half-filtered view asks for - and the palette entry would read "On" while switching things off.
+- **The tab side routes through `toggleTabUnreadFilter()`,** never `setShowUnreadOnly()` directly, or the pre-filter tab save/restore is skipped and the user is stranded on whatever tab the filtered view left them on.
+
+Everything reads the stores at call time rather than a render snapshot: the palette, the shortcut, and the tab bar button fire from different render trees, and a stale snapshot is the one way they could disagree about which direction the toggle goes.
 
 ---
 
@@ -502,6 +600,8 @@ Defines all keyboard shortcuts in three tiers:
 - Tab actions: rename, toggle read-only, toggle save to history, toggle show thinking, toggle unread, toggle star
 
 Each shortcut has `id`, `label`, and `keys` array.
+
+An entry with an empty `keys` array ships **unbound**: it costs no chord, still appears in Settings → Shortcuts so a user can assign one, and is what makes a convenience reachable from the command palette without claiming a key. `toggleUnreadFilters` is the current example - `Opt+U` and `Cmd+U` already drive the two unread filters separately. Prefer this over taking a third chord for a shortcut most users will reach from the palette.
 
 ---
 

@@ -195,3 +195,79 @@ describe('Auto Run preview stability across a toggle', () => {
 		);
 	});
 });
+
+describe('Auto Run preview file links', () => {
+	// The Auto Run folder is a small corner of the project, but a playbook links
+	// to notes all over it. Resolving only against the playbooks tree left every
+	// such `[[link]]` as inert text here while the same link worked in a
+	// file-preview tab.
+	const AUTORUN_TREE = [{ name: 'Sibling.md', type: 'file' as const, path: 'Sibling.md' }];
+	const PROJECT_TREE = [
+		{
+			name: 'Claude',
+			type: 'folder' as const,
+			children: [{ name: 'Reminders Archive.md', type: 'file' as const }],
+		},
+	];
+
+	const linkProps = (overrides: Record<string, unknown> = {}) => ({
+		documentTree: AUTORUN_TREE,
+		projectFileTree: PROJECT_TREE,
+		projectRoot: '/Users/p/Vault',
+		...overrides,
+	});
+
+	it('links a wiki reference that lives in the project but not in the Auto Run folder', () => {
+		const onOpenProjectFile = vi.fn();
+		const onSelectDocument = vi.fn();
+		const { container } = renderPreview(
+			'See [[Claude/Reminders Archive]] for the full record.',
+			linkProps({ onOpenProjectFile, onSelectDocument })
+		);
+
+		const link = container.querySelector('a');
+		expect(link).not.toBeNull();
+		expect(link?.textContent).toBe('Claude/Reminders Archive');
+
+		fireEvent.click(link!);
+		expect(onOpenProjectFile).toHaveBeenCalledWith('Claude/Reminders Archive.md', {
+			openInNewTab: false,
+		});
+		expect(onSelectDocument).not.toHaveBeenCalled();
+	});
+
+	it('still switches documents for a link the Auto Run folder owns', () => {
+		const onOpenProjectFile = vi.fn();
+		const onSelectDocument = vi.fn();
+		const { container } = renderPreview(
+			'See [[Sibling]].',
+			linkProps({ onOpenProjectFile, onSelectDocument })
+		);
+
+		fireEvent.click(container.querySelector('a')!);
+		expect(onSelectDocument).toHaveBeenCalledWith('Sibling');
+		expect(onOpenProjectFile).not.toHaveBeenCalled();
+	});
+
+	it('links an absolute path inside the project root', () => {
+		const onOpenProjectFile = vi.fn();
+		const { container } = renderPreview(
+			'Killed asks live in /Users/p/Vault/Claude/Reminders Archive.md today.',
+			linkProps({ onOpenProjectFile })
+		);
+
+		const link = container.querySelector('a');
+		expect(link).not.toBeNull();
+		fireEvent.click(link!);
+		expect(onOpenProjectFile).toHaveBeenCalledWith('Claude/Reminders Archive.md', {
+			openInNewTab: false,
+		});
+	});
+
+	it('leaves an unresolvable reference as plain text', () => {
+		const { container } = renderPreview('See [[Nothing/Here]].', linkProps());
+
+		expect(container.querySelector('a')).toBeNull();
+		expect(container.textContent).toContain('[[Nothing/Here]]');
+	});
+});

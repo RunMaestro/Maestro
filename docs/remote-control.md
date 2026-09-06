@@ -13,27 +13,15 @@ Maestro includes a built-in web server for mobile remote control:
 
 ## Mobile Web Interface
 
-The mobile web interface provides a comprehensive remote control experience:
+The web interface is the full Maestro app, served by the desktop app to any browser on your network. On a laptop it is the desktop layout you already know. On a phone it switches to a **phone layout** built for one hand and a small screen:
 
-### Core Features
+- **Tabs**: the magnifier in the tab bar opens the tab list directly. Tap a tab to switch to it. Press and hold a tab for its actions, which open in a sheet you can scroll, swipe down, or close.
+- **Panels**: the agent list and the Files / History / Auto Run panel open full screen. Swipe them back, use the panel's own close button, or pick an agent and the list gets out of the way.
+- **Composer**: the message box folds away behind a slim handle at the bottom so the conversation gets the screen. Tap the handle, or swipe it up, to type. A dot on the handle means the agent is still working; a pencil means you left an unsent draft.
+- **Modals**: swipe down from the top of the screen to close whatever is open, in addition to its close button.
+- **Toolbars**: buttons show icons only. Press and hold a button for its label.
 
-- Real-time session monitoring and command input
-- Device color scheme preference support (light/dark mode)
-- Connection status indicator with automatic reconnection (30-second countdown timer)
-- Offline queue for commands typed while disconnected (persisted to localStorage, up to 50 commands)
-- Multi-tab support with tab bar and tab search modal
-
-### Gestures and Navigation
-
-- Swipe gestures (left/right/up/down) for common actions
-- Pull-to-refresh functionality
-- Long-press menu for mode switching (AI ↔ Terminal)
-
-### Input Features
-
-- Recent command chips for quick access
-- Slash command autocomplete
-- Command history drawer
+Everything else is the desktop app: the same agents, tabs, transcripts (including pasted screenshots), Auto Run, and settings, live-synced with the desktop window.
 
 ## Local Access (Same Network)
 
@@ -90,26 +78,7 @@ However, if you need a **fixed port** (e.g., for firewall rules, reverse proxies
 
 ## Connection Handling
 
-The mobile interface includes robust connection management:
-
-### Automatic Reconnection
-
-- When disconnected, a 30-second countdown timer displays before automatic reconnection
-- Manual **Retry** button available for immediate reconnection
-- Reconnection attempts counter shows progress (e.g., "Attempt 3 of 10")
-
-### Offline Mode
-
-- Commands typed while offline are queued (up to 50 commands)
-- Queued commands are persisted to localStorage and survive page reloads
-- Commands automatically send when connection is restored
-- An **Offline Queue Banner** shows the number of pending commands
-
-### Connection Status Indicator
-
-- Displays as a dismissible banner when connection is lost
-- Shows different states: **Connecting**, **Authenticating**, **Disconnected**, **No internet**
-- Expandable error details for troubleshooting
+The browser talks to the desktop app over a WebSocket. If the connection drops (the phone sleeps, you switch apps, the network changes), the page reconnects and then reloads itself so it picks up everything that happened while it was away; the desktop app is the single source of truth. Anything you typed during the gap but had not yet sent needs to be sent again.
 
 ## Screenshots
 

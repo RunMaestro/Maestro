@@ -6,7 +6,7 @@ icon: at
 
 Cross-Agent Mentions let you pull another agent into your current conversation without leaving it. Type `@` in any AI input, pick an agent, and Maestro forwards the relevant slice of your chat to that agent, runs it in the background, and streams its answer back inline - stamped with who replied.
 
-It is the lightweight cousin of [Group Chat](./group-chat): no moderator, no shared room, no ceremony. Just a quick "what does the backend agent think about this?" from wherever you already are.
+It is the lightweight cousin of [Group Chat](./group-chat): no moderator, no shared room, no ceremony. Just a quick "what does the backend agent think about this?" from wherever you already are. Each mention buys you exactly one answer, and you stay the moderator: if the reply needs a follow-up, you write it. When you want an agent to run that back and forth for you instead, open a [Group Chat](./group-chat). For a side-by-side overview of both approaches, see [Agent Collaboration](./agent-collaboration).
 
 ## When to Use It
 
@@ -70,7 +70,7 @@ A leading `@file` reference (`@src/app.ts what does this do?`) is a question for
 </Note>
 
 <Note>
-  A consulted agent is told your **working directory** and may **read** files there to answer with real context. By default a consultation is **read-only**: the agent will not write or modify files, and if changes are needed it describes them in its reply so you can apply them yourself. If you want mentioned agents to apply changes directly, switch **Consult Permission** to **Read/Write** under **Settings > General > Cross-Agent Mentions**. Leave it on Read-Only (the default and safest choice) unless you trust the mentioned agent to edit its workspace unattended.
+  A mentioned agent is told your **working directory** and may **read** files there to answer with real context. By default a mention is a **consult**: read-only, so the agent will not write or modify files, and if changes are needed it describes them in its reply so you can apply them yourself. To turn mentions into **delegations**, where the agent applies changes directly, switch **Consult or Delegate** to **Read/Write** under **Settings > General > Cross-Agent Mentions**. Leave it on Read-Only (the default and safest choice) unless you trust the mentioned agent to edit its workspace unattended.
 </Note>
 
 ## Controlling How Much Context You Share
@@ -103,15 +103,56 @@ Groups sort above individual agents in the picker, so a name that matches both s
 This is deliberate. When an agent and a group share a name, a hand-typed token cannot tell you which one it resolved to, and the group used to win - so picking the single agent you could see quietly fanned your message out to five.
 </Warning>
 
+## When an agent asks on its own
+
+The consult above is something you type. An agent that decides mid-task it needs another
+agent's knowledge reaches the same machinery through the CLI:
+
+```bash
+maestro-cli ask "Substrate PedTome" "How does your /GUID + password gate work?" \
+  --from <its own agent id>
+```
+
+Everything on this page still applies: a hidden consult tab on the target, read-only by
+default, continuity across repeat asks, a History entry naming who asked. Two differences,
+both because the caller is an agent rather than you:
+
+- **The answer goes back to the agent**, printed on stdout as its tool result, instead of
+  into a chat bubble. Your agent then tells you what it learned in its own words.
+- **The question stands alone.** No transcript is forwarded unless the agent passes
+  `--with-context`, so the target starts from a genuinely fresh context.
+
+`maestro-cli dispatch` is the other verb, and it is not a substitute. Dispatch hands over
+**work**, and the prompt lands in a real tab - which means it appears in the middle of
+whatever conversation you have open with that agent. Asking a question that way interrupts
+you and sends the answer to the screen rather than to the agent that needed it.
+
+### You do not have to type `@`
+
+The `@` picker is how you address an agent **precisely**, not the only phrasing your agent
+acts on. "What does the reviewer think of this?" or "let the docs agent know we shipped it"
+is a routable instruction on its own: your agent resolves the name against its roster and
+picks the verb from what you asked for, consulting with `ask` when you want an answer back
+and handing work over with `dispatch` when you do not.
+
+Reach for the picker when the name is ambiguous. Where a plain-language reference fits
+several agents or none, your agent names its best guess and asks rather than fanning your
+message out, so an `@name` chip is the faster way to say exactly who you meant.
+
 ## Cross-Agent Mentions vs Group Chat
 
-Both let agents talk to each other, but they solve different problems:
+Both let you reach other agents, but the difference is not the syntax. It is **who moderates**.
 
-|                      | Cross-Agent Mentions                               | [Group Chat](./group-chat)            |
-| -------------------- | -------------------------------------------------- | ------------------------------------- |
-| **Where it happens** | Inline, in your existing chat                      | A dedicated group conversation        |
-| **Coordination**     | None - a direct one-off consult                    | A moderator AI routes and synthesizes |
-| **Best for**         | Quick questions and fan-out                        | Multi-round discussions and synthesis |
-| **The other agent**  | Answers in its own consult tab, resumed per thread | Is a persistent participant           |
+A mention is a **single-turn consult**. The agent you mention answers your question once and stops. It does not reply to another agent, ask a follow-up, or carry the thread forward on its own. If the answer opens a new question, you write the next message. You are the moderator, and every round of the discussion costs you a turn at the keyboard. Mentions will never produce a multi-turn collaboration between agents, by design.
 
-Reach for a mention when you just need an answer; open Group Chat when you need agents to deliberate together over several rounds.
+A [Group Chat](./group-chat) **delegates the moderating to an agent**. You appoint a moderator, hand it the question, and it keeps working without you: routing to the right agents, reading what comes back, pushing again when an answer is thin, and going around as many rounds as the question needs before it returns to you with a synthesis. That is the whole reason to open one.
+
+|                        | Cross-Agent Mentions                                | [Group Chat](./group-chat)                           |
+| ---------------------- | --------------------------------------------------- | ---------------------------------------------------- |
+| **Who moderates**      | You                                                 | An agent you appoint                                 |
+| **Rounds per message** | Exactly one                                         | As many as the moderator decides it needs            |
+| **Where it happens**   | Inline, in your existing chat                       | A dedicated group conversation                       |
+| **The other agents**   | Answer in their own consult tab, resumed per thread | Persistent participants the moderator can re-consult |
+| **Best for**           | A quick answer or a parallel fan-out                | Work that takes several rounds of back and forth     |
+
+Reach for a mention when you just need an answer. Open a Group Chat when you want someone other than you to keep the agents working together.

@@ -918,7 +918,7 @@ describe('HistoryPanel', () => {
 			// Check that the result count is shown
 			await waitFor(() => {
 				// The component shows "{count} result" or "{count} results"
-				const resultCountDiv = container.querySelector('.text-right.text-\\[10px\\]');
+				const resultCountDiv = container.querySelector('.text-right.text-2xs');
 				expect(resultCountDiv).toBeInTheDocument();
 				expect(resultCountDiv?.textContent).toMatch(/2 results?/);
 			});

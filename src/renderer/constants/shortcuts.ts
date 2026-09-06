@@ -78,6 +78,11 @@ export const DEFAULT_SHORTCUTS = {
 	focusSidebar: { id: 'focusSidebar', label: 'Focus Left Panel', keys: ['Meta', 'Shift', 'a'] },
 	viewGitDiff: { id: 'viewGitDiff', label: 'View Git Diff', keys: ['Meta', 'Shift', 'd'] },
 	viewGitLog: { id: 'viewGitLog', label: 'View Git Log', keys: ['Meta', 'Shift', 'g'] },
+	refreshGitFileState: {
+		id: 'refreshGitFileState',
+		label: 'Refresh Files, Git, History',
+		keys: ['Alt', 'Meta', 'r'],
+	},
 	agentSessions: {
 		id: 'agentSessions',
 		label: 'View Agent Sessions',
@@ -111,6 +116,11 @@ export const DEFAULT_SHORTCUTS = {
 	prevTab: { id: 'prevTab', label: 'Previous Tab', keys: ['Meta', 'Shift', '['] },
 	nextTab: { id: 'nextTab', label: 'Next Tab', keys: ['Meta', 'Shift', ']'] },
 	openImageCarousel: { id: 'openImageCarousel', label: 'Open Image Carousel', keys: ['Meta', 'y'] },
+	openImageOrganizer: {
+		id: 'openImageOrganizer',
+		label: 'Open Image Organizer',
+		keys: ['Meta', 'Shift', 'y'],
+	},
 	toggleTabStar: { id: 'toggleTabStar', label: 'Toggle Tab Star', keys: ['Meta', 'Shift', 's'] },
 	openPromptComposer: {
 		id: 'openPromptComposer',
@@ -125,7 +135,7 @@ export const DEFAULT_SHORTCUTS = {
 	},
 	fuzzyFileSearch: { id: 'fuzzyFileSearch', label: 'Fuzzy File Search', keys: ['Meta', 'g'] },
 	toggleBookmark: { id: 'toggleBookmark', label: 'Toggle Bookmark', keys: ['Meta', 'Shift', 'b'] },
-	openSymphony: { id: 'openSymphony', label: 'Maestro Symphony', keys: ['Meta', 'Shift', 'y'] },
+	openSymphony: { id: 'openSymphony', label: 'Maestro Symphony', keys: ['Meta', 'Alt', 'y'] },
 	directorNotes: {
 		id: 'directorNotes',
 		label: "Director's Notes",
@@ -166,6 +176,15 @@ export const DEFAULT_SHORTCUTS = {
 		// select-to-bottom inside a text field), so the new load-time guard strips
 		// it and the action would arrive unbound. Alt+Meta+ArrowDown is free.
 		keys: ['Alt', 'Meta', 'ArrowDown'],
+	},
+	// Ships unbound. Opt+U and Cmd+U already drive the two filters separately,
+	// so claiming a third chord by default would spend a key for a convenience
+	// most users reach from the palette. Listing it here is what makes it
+	// bindable in Settings -> Shortcuts.
+	toggleUnreadFilters: {
+		id: 'toggleUnreadFilters',
+		label: 'Unread Only (Agents + Tabs)',
+		keys: [],
 	},
 	jumpToTerminal: {
 		id: 'jumpToTerminal',
@@ -395,6 +414,11 @@ export const FIXED_SHORTCUTS: Record<string, Shortcut> = {
 		id: 'filePreviewForward',
 		label: 'File Preview: Go Forward',
 		keys: ['Meta', 'ArrowRight'],
+	},
+	renameAgentSession: {
+		id: 'renameAgentSession',
+		label: 'Rename Session (in Sessions Browser)',
+		keys: ['Meta', 'e'],
 	},
 	fontSizeIncrease: {
 		id: 'fontSizeIncrease',

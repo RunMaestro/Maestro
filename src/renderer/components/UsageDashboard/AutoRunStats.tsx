@@ -27,6 +27,8 @@ import {
 	groupSessionsByDate,
 	type AutoRunDayData,
 } from './autoRunStatsUtils';
+import { buildAutoRunSummary } from './footerSummary';
+import { usePublishFooterSummary } from './useFooterSummary';
 
 interface AutoRunStatsProps {
 	/** Current time range for filtering */
@@ -133,6 +135,17 @@ export const AutoRunStats = memo(function AutoRunStats({
 	const metrics = useMemo(() => {
 		return computeAutoRunMetrics(sessions);
 	}, [sessions]);
+
+	usePublishFooterSummary(
+		'autorun',
+		loading
+			? null
+			: buildAutoRunSummary({
+					runs: metrics.totalSessions,
+					tasksCompleted: metrics.totalTasksCompleted,
+					tasksAttempted: metrics.totalTasksAttempted,
+				})
+	);
 
 	// Group sessions by date for chart (uses session-level tasksCompleted)
 	const tasksByDate = useMemo(() => {

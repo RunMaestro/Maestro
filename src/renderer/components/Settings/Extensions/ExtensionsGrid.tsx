@@ -187,7 +187,7 @@ export function ExtensionsGrid({
 									<span className="truncate">{ext.name}</span>
 									{ext.beta && (
 										<span
-											className="px-1 py-0.5 rounded text-[8px] font-bold uppercase flex-shrink-0"
+											className="px-1 py-0.5 rounded text-[0.571rem] font-bold uppercase flex-shrink-0"
 											style={{
 												backgroundColor: theme.colors.warning + '30',
 												color: theme.colors.warning,
@@ -209,21 +209,21 @@ export function ExtensionsGrid({
 						<div className="flex items-center gap-1.5 flex-wrap mt-auto pt-1">
 							<span
 								data-testid="extension-category"
-								className="px-1.5 py-0.5 rounded text-[10px] font-medium"
+								className="px-1.5 py-0.5 rounded text-2xs font-medium"
 								style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
 							>
 								{CATEGORY_LABELS[ext.category]}
 							</span>
 							<span
 								data-testid="extension-state"
-								className="px-1.5 py-0.5 rounded text-[10px] font-bold"
+								className="px-1.5 py-0.5 rounded text-2xs font-bold"
 								style={{ backgroundColor: stateTone(ext) + '22', color: stateTone(ext) }}
 							>
 								{STATE_LABELS[ext.state]}
 							</span>
 							{ext.kind === 'plugin' && ext.tier !== undefined && (
 								<span
-									className="px-1.5 py-0.5 rounded text-[10px] font-medium"
+									className="px-1.5 py-0.5 rounded text-2xs font-medium"
 									style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
 								>
 									Tier {ext.tier}
@@ -232,7 +232,7 @@ export function ExtensionsGrid({
 							{trust && TrustIcon && (
 								<span
 									data-testid="extension-trust"
-									className="px-1.5 py-0.5 rounded text-[10px] font-medium inline-flex items-center gap-1"
+									className="px-1.5 py-0.5 rounded text-2xs font-medium inline-flex items-center gap-1"
 									style={{
 										backgroundColor: theme.colors.bgActivity,
 										color: theme.colors[trust.color],
@@ -246,7 +246,7 @@ export function ExtensionsGrid({
 								<span
 									data-testid="extension-release-date"
 									data-release-date={ext.releaseDate}
-									className="px-1.5 py-0.5 rounded text-[10px] font-medium ml-auto"
+									className="px-1.5 py-0.5 rounded text-2xs font-medium ml-auto"
 									style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
 									title={`Released ${formatCalendarDay(ext.releaseDate)}`}
 								>

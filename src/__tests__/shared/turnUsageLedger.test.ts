@@ -16,8 +16,8 @@ import {
 	usageStatsToTurnFields,
 	getTurnUsageLedgerSize,
 	resetTurnUsageLedgerForTests,
-} from '../../../renderer/services/turnUsageLedger';
-import type { UsageStats } from '../../../shared/types';
+} from '../../shared/turnUsageLedger';
+import type { UsageStats } from '../../shared/types';
 
 function usage(overrides: Partial<UsageStats> = {}): UsageStats {
 	return {

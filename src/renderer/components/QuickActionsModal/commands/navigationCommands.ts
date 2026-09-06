@@ -1,5 +1,6 @@
 import type { Session } from '../../../types';
 import type { QuickAction } from '../types';
+import { areUnreadFiltersActive, toggleAllUnreadFilters } from '../../../services/unreadFilters';
 
 interface BuildNavigationCommandsArgs {
 	activeSession: Session | undefined;
@@ -26,6 +27,7 @@ interface BuildNavigationCommandsArgs {
 		toggleSidebar?: QuickAction['shortcut'];
 		toggleRightPanel?: QuickAction['shortcut'];
 		nextUnreadTab?: QuickAction['shortcut'];
+		toggleUnreadFilters?: QuickAction['shortcut'];
 		killInstance?: QuickAction['shortcut'];
 		navBack?: QuickAction['shortcut'];
 		navForward?: QuickAction['shortcut'];
@@ -92,6 +94,19 @@ export function buildNavigationCommands({
 				// Alt+Cmd+Down keyboard shortcut exactly (uses sortedSessions -
 				// the sidebar's visible order - and the same clear semantics).
 				onGoToNextUnread?.();
+				setQuickActionOpen(false);
+			},
+		},
+		{
+			id: 'toggleUnreadFilters',
+			// The label names the state this entry PUTS you in, not the state you
+			// are in, so hitting it twice reads as a switch flipping back and
+			// forth rather than a status line that argues with itself.
+			label: areUnreadFiltersActive() ? 'Unread Only: Off' : 'Unread Only: On',
+			subtext: 'Filter both the agent list and the tab bar to unread',
+			shortcut: shortcuts.toggleUnreadFilters,
+			action: () => {
+				toggleAllUnreadFilters();
 				setQuickActionOpen(false);
 			},
 		}

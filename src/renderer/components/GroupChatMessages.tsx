@@ -20,6 +20,7 @@ import type { GroupChatMessage, GroupChatParticipant, GroupChatState, Theme } fr
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { useSurfaceTypography } from '../hooks/ui/useSurfaceTypography';
 import { stripMarkdown } from '../utils/textProcessing';
+import { displayImageSrc } from '../utils/sessionImageSrc';
 import { generateParticipantColor, buildParticipantColorMap } from '../utils/participantColors';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
@@ -341,18 +342,6 @@ export const GroupChatMessages = memo(
 				{messages.length === 0 ? (
 					<div className="flex items-center justify-center h-full px-6">
 						<div className="text-center max-w-md space-y-3">
-							<div className="flex justify-center mb-4">
-								<span
-									className="text-[10px] font-semibold tracking-wide uppercase px-2 py-0.5 rounded"
-									style={{
-										backgroundColor: `${theme.colors.accent}20`,
-										color: theme.colors.accent,
-										border: `1px solid ${theme.colors.accent}40`,
-									}}
-								>
-									Beta
-								</span>
-							</div>
 							<p className="text-sm" style={{ color: theme.colors.textDim }}>
 								Messages you send go directly to the{' '}
 								<span style={{ color: theme.colors.warning }}>moderator</span>, who orchestrates the
@@ -436,7 +425,7 @@ export const GroupChatMessages = memo(
 								>
 									{/* Timestamp - outside bubble, like AI Terminal */}
 									<div
-										className={`w-20 shrink-0 text-[10px] pt-2 ${isUser ? 'text-right' : 'text-left'}`}
+										className={`w-20 shrink-0 text-2xs pt-2 ${isUser ? 'text-right' : 'text-left'}`}
 										style={{ color: theme.colors.textDim, opacity: 0.6 }}
 									>
 										{formatTimestamp(msg.timestamp)}
@@ -480,7 +469,7 @@ export const GroupChatMessages = memo(
 														onClick={() => onOpenLightbox?.(img, msg.images, 'history')}
 													>
 														<img
-															src={img}
+															src={displayImageSrc(img)}
 															alt={`Attached image ${imgIdx + 1}`}
 															className="h-20 rounded border cursor-zoom-in block"
 															style={{

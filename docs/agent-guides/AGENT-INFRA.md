@@ -59,7 +59,8 @@ getAgentDisplayName(agentId): string               // Get name with fallback
 isBetaAgent(agentId): boolean                      // Check beta status
 getAgentPickerMeta(agentId): Meta | null           // Description + brand color, or null
 getAgentLoginCommand(agentId, customPath?)         // Re-auth command, or null
-formatAgentLoginCommand(login): string             // Render it as a shell line
+formatAgentLoginCommand(login, syntax?)            // Render it as a shell line
+loginShellSyntaxFor(shellId, isWindows)            // 'posix' | 'powershell' | 'cmd'
 ```
 
 **Provider pickers** all read `AGENT_PICKER_META`. The New Agent modal's
@@ -87,13 +88,15 @@ the logo case the tile renders a blank fallback ring, and a test in
 
 **Re-authentication commands** are keyed by `AgentId`, so adding an agent forces a decision about how it logs in. An entry carries `binary` + `args` (the line Maestro types into the re-authentication terminal) and an optional `followUp` for providers whose login only exists as a slash command inside their TUI (`gemini-cli`, `qwen3-coder`, `factory-droid`). `null` means the agent has no login flow of its own. `getAgentLoginCommand` returns `null` for unknown ids rather than guessing, because the result is executed in a shell. The consumer is `ReauthModal` (`src/renderer/components/ReauthModal.tsx`); do not hand-roll a second login-command table.
 
-**Three things about the login shell `ReauthModal` spawns are not optional, and all three were bugs first.**
+**Five things about the login shell `ReauthModal` spawns are not optional, and every one of them was a bug first.**
 
 1. **The command is typed on the shell's FIRST BYTE, not when the spawn resolves.** Over SSH the spawn resolves as soon as the local `ssh` client is running, seconds before the remote shell exists, and anything written into that gap is dropped - which is how a remote re-authentication came up as an empty box. The command is held in a ref until `process.onData` fires for that PTY, with an 8 second fallback for a shell that prints no prompt at all.
 2. **Spawn and kill live in ONE effect.** Split across two, StrictMode's remount (cleanup, then re-run) killed the shell the first pass had just started while a `spawnStarted` boolean blocked the second pass from starting another, leaving a dead PTY nobody typed into. The guard is therefore a generation counter the cleanup resets, and every async continuation re-checks it, so a remount ends with exactly one live shell.
 3. **Over SSH, no working directory is passed.** The shell exists only to run a login; it gains nothing from the project directory, and main turns `workingDirOverride` into a `cd` the remote runs first, so a stale or local-looking path kills the session before the login can start. Landing in the remote home directory is always safe. Never fall back to `session.cwd` on a remote.
 
-A login shell that dies without printing anything also writes `[the login session ended]` into the terminal, because an empty box with no explanation is indistinguishable from a hang.
+4. **The command is submitted with CR, not LF.** That is what a real Enter key sends, and on Windows it is the only one that works: ConPTY passes LF through as Ctrl+J, which PSReadLine does not read as "run this line", so the login command sits on the prompt untyped forever. A Unix PTY maps CR to NL itself, so CR is correct everywhere.
+5. **On Windows the login never runs in WSL, even when WSL is the default shell.** Agents are always spawned as native Windows processes - nothing in the spawn path goes through `wsl.exe` - so a login inside WSL writes credentials into the WSL home directory that the native agent never reads. The flow looks like it succeeded and fixes nothing. `ReauthModal` substitutes `powershell` for a `wsl` default; an SSH remote is exempt, since its shell belongs to the remote host. The same split decides quoting: `loginShellSyntaxFor()` maps the shell id to a dialect, and `formatAgentLoginCommand()` prefixes the call operator `&` for a quoted path in PowerShell, which otherwise parses a line starting with a quoted string as an expression and just echoes it. Agents install under `C:\Program Files\...`, so that is the common Windows case, not an edge case.
+   A login shell that dies without printing anything also writes `[the login session ended]` into the terminal, because an empty box with no explanation is indistinguishable from a hang.
 
 **The sign-in URL needs a Copy button, because it cannot be read off the screen.** `findLoginUrl()` (`src/renderer/utils/loginUrl.ts`) scans a rolling tail of the login PTY's output and `ReauthModal` surfaces the match as `Copy Login URL`. Every part of that is load-bearing for the same reason: the URL is hundreds of characters of query string, the TUI soft-wraps it across several rows so it is not one selectable run of text, and a provider TUI with mouse tracking on eats the drag that would select it anyway - so without the button the user has no way to reach it and the login is abandoned. Three details in the scanner are decisions, not accidents. It strips ANSI first and REJOINS rows the terminal wrapped, since a newline inside a URL is formatting rather than content (a blank line is a real break and is kept, so following prose is never glued onto the link). It matches against an ALLOWLIST of sign-in hosts rather than taking any URL, because the same screen prints docs and status links and a Copy button that silently grabs the wrong one sends the user somewhere that cannot log them in. And it returns the LAST match, because a retried login prints a fresh URL and the earlier one is spent. Do not hand-roll a second URL scraper for a new provider - add its host to `LOGIN_URL_HINTS`.
 
@@ -464,7 +467,9 @@ was near-certain rather than a rare race).
 
 The rule lives in one place, `renderer/utils/logEntries.ts`:
 
-- `isSelfContainedCard(entry)` - enumerates the card markers
+- `isSelfContainedCard(entry)` - enumerates the card markers, plus the one
+  card that has no marker: Claude's plan-limit banner, which arrives as plain
+  `stdout` text and is recognized by `isClaudeLimitNotice()`
 - `canAppendToLogEntry(entry, source)` - same source **and** not a card
 
 Used by all three coalescing sites (`useBatchedSessionUpdates` AI-tab path,

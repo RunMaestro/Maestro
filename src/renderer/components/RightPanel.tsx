@@ -34,7 +34,7 @@ import { useUIStore } from '../stores/uiStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { useBatchStore } from '../stores/batchStore';
-import { useThoughtStreamStore, selectThoughtCount } from '../stores/thoughtStreamStore';
+import { useThoughtStreamStore, selectActivityCount } from '../stores/thoughtStreamStore';
 import { useSessionStore, selectActiveSession } from '../stores/sessionStore';
 import { useWindowOwnsSession } from '../contexts/WindowContext';
 import type { FileNode } from '../types/fileTree';
@@ -47,6 +47,10 @@ import {
 } from '../constants/rightPanel';
 import { PluginUiItemsSlot } from './plugins/PluginUiItemsSlot';
 import { sleepAwareElapsedSince } from '../services/systemSleep';
+import {
+	MIRRORED_RUN_CONTROL_TITLE,
+	useIsMirroredBatchRun,
+} from '../hooks/batch/useAutoRunStateMirror';
 
 export interface RightPanelHandle {
 	refreshHistoryPanel: () => void;
@@ -125,7 +129,7 @@ interface RightPanelProps {
 
 	// Modal handlers
 	onOpenAboutModal?: () => void;
-	onFileClick?: (path: string) => void;
+	onFileClick?: (path: string, options?: { openInNewTab?: boolean }) => void;
 	onOpenMarketplace?: () => void;
 	onLaunchWizard?: () => void;
 
@@ -184,6 +188,10 @@ export const RightPanel = memo(
 		const batchError = useBatchStore(
 			useCallback((s) => s.batchRunStates[sessionId ?? '']?.error, [sessionId])
 		);
+		// A run mirrored from another Maestro window renders in full but is not
+		// steerable from here - its loop and the refs these controls poke live in
+		// the window that started it.
+		const isMirroredRun = useIsMirroredBatchRun(sessionId);
 
 		// Thought Stream: brain button on the Auto Run card opens a persistent,
 		// searchable view of the agent's thinking stream for this session.
@@ -191,7 +199,9 @@ export const RightPanel = memo(
 		// buffered and waiting to be read - clicking opens (or re-expands) the
 		// panel on that history. There is no separate floating pill.
 		const openThoughtStream = useThoughtStreamStore((s) => s.openPanel);
-		const bufferedThoughts = useThoughtStreamStore(selectThoughtCount(sessionId));
+		// Reasoning AND tool calls - a run that only acted and never narrated still
+		// has a feed worth opening, so the label must not promise thoughts alone.
+		const bufferedActivity = useThoughtStreamStore(selectActivityCount(sessionId));
 
 		// === Props (domain-hook handlers + theme + batch state + refs) ===
 		const {
@@ -409,6 +419,14 @@ export const RightPanel = memo(
 			selectedFile: session.autoRunSelectedFile || null,
 			documentList: autoRunDocumentList,
 			documentTree: autoRunDocumentTree,
+			// A playbook links to notes all over the project, not just to its
+			// sibling playbooks - resolve both, and hand project hits to the same
+			// handler the Files panel uses so they open as preview tabs.
+			projectFileTree: session.fileTree as FileNode[] | undefined,
+			// Same root the Files panel tree is loaded from, so the indices and the
+			// absolute-path conversion agree.
+			projectRoot: session.projectRoot || session.cwd,
+			onOpenProjectFile: onFileClick,
 			content: autoRunContent,
 			contentVersion: autoRunContentVersion,
 			onContentChange: onAutoRunContentChange,
@@ -660,10 +678,10 @@ export const RightPanel = memo(
 										<GitBranch className="w-4 h-4" style={{ color: theme.colors.warning }} />
 									</span>
 								)}
-								{currentSessionBatchState.isStopping && (
+								{currentSessionBatchState.isStopping && !isMirroredRun && (
 									<button
 										onClick={() => setShowKillConfirm(true)}
-										className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase transition-colors hover:opacity-90"
+										className="flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-bold uppercase transition-colors hover:opacity-90"
 										style={{
 											backgroundColor: theme.colors.error,
 											color: 'white',
@@ -690,7 +708,7 @@ export const RightPanel = memo(
 						{/* Live playbook status from .maestro/STATUS.json */}
 						{currentSessionBatchState.playbookStatus && (
 							<div
-								className="mb-2 px-2 py-1.5 rounded text-[11px] leading-relaxed"
+								className="mb-2 px-2 py-1.5 rounded text-xs-plus leading-relaxed"
 								style={{
 									backgroundColor: theme.colors.accent + '10',
 									borderLeft: `2px solid ${theme.colors.accent}`,
@@ -704,7 +722,7 @@ export const RightPanel = memo(
 									)}
 									{currentSessionBatchState.playbookStatus.phase && (
 										<span
-											className="px-1 py-0.5 rounded text-[10px] font-medium uppercase"
+											className="px-1 py-0.5 rounded text-2xs font-medium uppercase"
 											style={{
 												backgroundColor: theme.colors.accent + '20',
 												color: theme.colors.accent,
@@ -715,7 +733,7 @@ export const RightPanel = memo(
 									)}
 									{currentSessionBatchState.playbookStatus.tests && (
 										<span
-											className="text-[10px] font-mono"
+											className="text-2xs font-mono"
 											style={{
 												color:
 													currentSessionBatchState.playbookStatus.tests.fail > 0
@@ -844,7 +862,7 @@ export const RightPanel = memo(
 						    (which must always show "View History" / "View Thoughts" intact). */}
 						<div className="mt-2">
 							<span
-								className="block text-[10px] truncate"
+								className="block text-2xs truncate"
 								style={{
 									color: errorPaused ? theme.colors.error : theme.colors.textDim,
 								}}
@@ -902,7 +920,7 @@ export const RightPanel = memo(
 										className="w-3 h-3 rounded cursor-pointer accent-current"
 										style={{ accentColor: theme.colors.accent }}
 									/>
-									<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
+									<span className="text-2xs" style={{ color: theme.colors.textDim }}>
 										Follow active task
 									</span>
 								</label>
@@ -913,7 +931,7 @@ export const RightPanel = memo(
 								{/* Loop iteration indicator */}
 								{currentSessionBatchState.loopEnabled && (
 									<span
-										className="text-[10px] px-1.5 py-0.5 rounded whitespace-nowrap"
+										className="text-2xs px-1.5 py-0.5 rounded whitespace-nowrap"
 										style={{
 											backgroundColor: theme.colors.accent + '20',
 											color: theme.colors.accent,
@@ -927,16 +945,16 @@ export const RightPanel = memo(
 								    persistent, searchable panel; works for goal and task runs. */}
 								{sessionId && (
 									<button
-										className="flex items-center gap-1 text-[10px] whitespace-nowrap bg-transparent border-none p-0 cursor-pointer hover:opacity-80"
+										className="flex items-center gap-1 text-2xs whitespace-nowrap bg-transparent border-none p-0 cursor-pointer hover:opacity-80"
 										style={{
-											color: bufferedThoughts > 0 ? theme.colors.accent : theme.colors.textDim,
+											color: bufferedActivity > 0 ? theme.colors.accent : theme.colors.textDim,
 											textDecoration: 'underline',
 										}}
 										onClick={() => openThoughtStream(sessionId)}
 										title={
-											bufferedThoughts > 0
-												? `${bufferedThoughts} buffered thought${bufferedThoughts === 1 ? '' : 's'} - click to read`
-												: "Peer into the agent's thought stream"
+											bufferedActivity > 0
+												? `${bufferedActivity} buffered thought${bufferedActivity === 1 ? '' : 's'} and tool call${bufferedActivity === 1 ? '' : 's'} - click to read`
+												: "Peer into the agent's reasoning and tool calls"
 										}
 									>
 										<Brain className="w-3 h-3" />
@@ -946,7 +964,7 @@ export const RightPanel = memo(
 								{/* View history link - shown on all tabs except history */}
 								{activeRightTab !== 'history' && (
 									<button
-										className="flex items-center gap-1 text-[10px] whitespace-nowrap bg-transparent border-none p-0 cursor-pointer hover:opacity-80"
+										className="flex items-center gap-1 text-2xs whitespace-nowrap bg-transparent border-none p-0 cursor-pointer hover:opacity-80"
 										style={{
 											color: theme.colors.textDim,
 											textDecoration: 'underline',
@@ -964,12 +982,18 @@ export const RightPanel = memo(
 										{batchError?.recoverable && onResumeAfterError && (
 											<button
 												onClick={onResumeAfterError}
-												className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-colors hover:opacity-80"
+												disabled={isMirroredRun}
+												className={`flex items-center gap-1 px-2 py-0.5 rounded text-2xs font-medium transition-colors ${isMirroredRun ? 'cursor-not-allowed' : 'hover:opacity-80'}`}
 												style={{
 													backgroundColor: theme.colors.accent,
 													color: theme.colors.accentForeground,
+													opacity: isMirroredRun ? 0.6 : 1,
 												}}
-												title="Resume Auto Run after re-authenticating"
+												title={
+													isMirroredRun
+														? MIRRORED_RUN_CONTROL_TITLE
+														: 'Resume Auto Run after re-authenticating'
+												}
 											>
 												<Play className="w-3 h-3" />
 												Resume
@@ -978,12 +1002,16 @@ export const RightPanel = memo(
 										{onAbortBatchOnError && (
 											<button
 												onClick={onAbortBatchOnError}
-												className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-colors hover:opacity-80"
+												disabled={isMirroredRun}
+												className={`flex items-center gap-1 px-2 py-0.5 rounded text-2xs font-medium transition-colors ${isMirroredRun ? 'cursor-not-allowed' : 'hover:opacity-80'}`}
 												style={{
 													backgroundColor: theme.colors.error,
 													color: 'white',
+													opacity: isMirroredRun ? 0.6 : 1,
 												}}
-												title="Stop Auto Run completely"
+												title={
+													isMirroredRun ? MIRRORED_RUN_CONTROL_TITLE : 'Stop Auto Run completely'
+												}
 											>
 												<XCircle className="w-3 h-3" />
 												Abort
@@ -995,13 +1023,19 @@ export const RightPanel = memo(
 									onStopBatchRun && (
 										<button
 											onClick={() => onStopBatchRun(session.id)}
-											className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-colors hover:opacity-80"
+											disabled={isMirroredRun}
+											className={`flex items-center gap-1 px-2 py-0.5 rounded text-2xs font-medium transition-colors ${isMirroredRun ? 'cursor-not-allowed' : 'hover:opacity-80'}`}
 											style={{
 												backgroundColor: theme.colors.error,
 												color: 'white',
 												border: `1px solid ${theme.colors.error}`,
+												opacity: isMirroredRun ? 0.6 : 1,
 											}}
-											title="Stop auto-run after the current task finishes"
+											title={
+												isMirroredRun
+													? MIRRORED_RUN_CONTROL_TITLE
+													: 'Stop auto-run after the current task finishes'
+											}
 										>
 											<Square className="w-3 h-3" />
 											Stop

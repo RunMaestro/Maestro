@@ -392,6 +392,19 @@ Run it on the committed `value`, not inside `onChange`. An `onChange`/`onInput` 
 3. `closeTopLayer` checks `onBeforeClose` for dirty modals, then calls the top layer's `onEscape` handler from the handler ref map.
 4. The handler ref map (`handlerRefs`) is updated via `updateLayerHandler` without re-sorting the stack - this is a performance optimization.
 
+### Escape as a Ladder, Not a Close Button
+
+A surface with its own transient state - a focused search box, a query, a selected row - should climb OUT of that state one rung per Escape rather than closing on the first press. `DocumentGraphView` is the reference: caret in the search box hands focus back to the graph **with the query intact**, the next press clears the query, and only then does it close. Rung one is what makes "search, then arrow to a hit" work - the highlighted nodes have to survive the key that gets you out of the text box.
+
+**The ladder MUST live in the layer's `onEscape`, never in the input's `onKeyDown`.** `LayerStackProvider` listens at CAPTURE on `window` (step 1 above), so a handler on the input runs after the stack has already closed the surface, and its `stopPropagation` cannot un-run a listener that has already fired. An `onKeyDown` ladder is dead code that looks correct in review: every Escape goes straight to close. Same rule the `<FilterInput>` and `MemoryViewer` notes below state from the consumer's side.
+
+Two mechanical points when the ladder needs render-scope values (the live query, the node list, a `handleNodeSelect`):
+
+- Register a STABLE wrapper with the layer and assign the body to a ref during render (`escapeLadderRef.current = () => {...}`). A `useCallback` that closes over the search query re-registers the layer on every keystroke.
+- Read focus from `document.activeElement === searchInputRef.current` rather than tracking a `isSearchFocused` boolean. The key never reaches the input, so nothing is guaranteed to have updated that flag.
+
+A higher-priority overlay registered by the same surface (the graph's legend drawer) is an implicit rung above all of this - the stack closes the top layer first, so it needs no branch in the ladder.
+
 ### Every Modal Needs a Graphical Exit (`<EscCloseButton>`)
 
 **Rule:** a modal, palette, or find bar must always be dismissable with the pointer alone. Escape is not enough: remote desktop sessions swallow it, tablets driving the web interface have no key to send, and a keyboard-only exit reads as "stuck" to the user.
@@ -591,9 +604,13 @@ Four details that are easy to miss:
 - **Key the editor on the filename.** Undo history belongs to one document. Carried across a file switch, an undo pastes the previous file's text into this one.
 - **Put the border on a wrapper.** CM6 measures its viewport against its own host element, so a border on that host is counted twice once the content scrolls.
 
-**Highlights are pushed, not passed.** CM6 owns its document, so re-rendering the component will not move a decoration and rebuilding the view throws away the undo history and the caret. Push matches through `setSearchMatches(ranges, index)` from an effect. Build those ranges with the same `splitOnMatches()` the rendered preview highlights with (`utils/highlightMatches`) so the two modes cannot disagree about what counts as a hit, and pass `-1` for the active index when the query is a FILTER rather than a find bar - there is no cursor into the results, so every hit gets the same wash.
+**Highlights are pushed, not passed.** CM6 owns its document, so re-rendering the component will not move a decoration and rebuilding the view throws away the undo history and the caret. Push matches through `setSearchMatches(ranges, index)` from an effect, building the ranges with `searchMatchRanges(text, query)` from `utils/highlightMatches` - it runs the same `splitOnMatches()` the rendered preview highlights with, so the two modes cannot disagree about what counts as a hit. Pass `-1` for the active index when the query is a FILTER rather than a find bar: there is no cursor into the results, so every hit gets the same wash.
 
-`MemoryViewer` is the reference implementation.
+**A read-only pane needs both halves of the switch.** `<MarkdownEditor readOnly>` pushes `EditorState.readOnly` (refuses edits) AND `EditorView.editable.of(false)` (drops the caret and the `contenteditable` attribute). Setting only the first leaves a pane that still looks like a text box and silently swallows typing. Reach for it whenever the document is a reference rather than a draft - the Maestro Prompts tab renders the bundled default that way.
+
+**A host-owned popup claims keys by returning `true` from `onKeyDown`.** That handler is installed at `Prec.highest`, so it sees the key before CodeMirror's own keymap; returning anything else leaves the key to the editor. Without the precedence the arrow keys would have already moved the caret by the time a popup was offered them, which is what makes a `{{`-autocomplete over CM6 possible at all (see `useEditorTemplateAutocomplete`). Returning nothing is the safe default and matches the pre-existing behaviour.
+
+`MemoryViewer` is the reference implementation. Settings -> Maestro Prompts (`MaestroPromptsTab`) is the second rider and shows the variations: it opens on `edit` rather than `preview` (a prompt is opened here to be changed), and its Preview resolves `{{TEMPLATE}}` variables against the active agent first, because what matters about a prompt is what the agent finally receives.
 
 ### Keyboard Navigation in a `<DualPaneFileEditor>` List
 
@@ -710,10 +727,12 @@ The values come from `LogEntry.turnModel` / `turnEffort`, copied in `useBatchedS
 
 The presence of the `turnSettings` OBJECT is the capture flag, not the presence of its fields. `undefined` model/effort inside a present object means "the agent's default was in force when I queued", which is a real choice - never write `item.turnSettings?.model ?? liveModel`, or an item queued on the default silently inherits whatever the user selected afterwards. The object is absent only on items restored from a build that predates the capture, which is the one case that falls back to live values.
 
+**The token-source half is opt-in.** The `showProviderModePill` display setting (Settings -> Display -> Provider Mode Pill, default OFF) suppresses the `claude -p` / `TUI Wrapper` pill everywhere it appears: the chat footer (`TerminalOutput`), the History list row (`HistoryEntryItem`), and the history detail view (`HistoryDetailModal`). The model and effort pills are NOT gated by it - they are separate facts about the turn. All three surfaces read the store field directly rather than threading a prop, so a new surface that renders `getTokenSourcePill()` has to remember the gate itself.
+
 Two traps when touching this row:
 
 - `collapsedLogs` in `TerminalOutput` merges consecutive non-user entries into one rendered entry built from `[0]`. A group can lead with a system banner that carries no stamp, so the merge lifts `turnModel` / `turnEffort` from the first grouped entry that has them - the same fix `renderStyle` needed.
-- `LogItem`'s memo comparator lists every field that affects rendering. A new pill field that is not in that list will not repaint when it changes.
+- `LogItem`'s memo comparator lists every field that affects rendering. A new pill field that is not in that list will not repaint when it changes. `showProviderModePill` is passed down as a primitive prop (not read from the store inside `LogItem`) for exactly this reason, and it is listed in the comparator.
 
 ### Keycaps (`<Keycap>` / `<KeycapHint>`)
 
@@ -735,6 +754,7 @@ Ideas worth reusing:
 - **A wheel, not a list.** Rows are absolutely positioned by `transform` and keyed by model id, so a row that survives a step animates to its new slot instead of being repainted in place. The wrap radius is capped at `floor((count - 1) / 2)`, which is what lets a short catalog wrap without the same model appearing in two slots at once.
 - **The end-fade and the depth falloff are one decision.** A `maskImage` fades the wheel's ends; the outermost `WHEEL_DEPTH` entry has to survive that fade with something still legible. Deepening the wheel past what the mask lets through buys dead air, not rows - that is why the radius is 2.
 - **Ordered scales get a level meter; unordered sets do not.** Effort bars ramp with the level and fill up to the selection, so the scale reads without reading a word. Model has no order, so it gets none. The `(default)` stop sits off the scale behind a hairline and carries no bar - which is also why the row aligns `items-start` with a fixed-height bar slot, rather than `items-end` on a baseline the default stop does not have.
+- **A scale only reads as a scale on one line.** A provider with seven stops is wider than the wheel's column, so the effort row sizes to its content (`w-max`) and breaks out of that column rather than folding `max` and `ultra` onto a second row; `max-w-[92vw]` is what brings wrapping back on a window too narrow to hold the line at all. Sizing to content is also why the space either side of the pills is still scrim - a `w-full` row swallows the mousedown across the whole column, so clicking beside the pills stopped closing the modal.
 - **Type-to-jump beats a scrollbar.** A printable key jumps the wheel to the matching model; repeating a letter walks every model starting with it. Gate it on `isTypeaheadKey` (no `metaKey` / `ctrlKey` / `altKey`) - swallowing modified keys would stop `Cmd+W` reaching the window and trap the user inside the surface.
 
 **No legend, but still a graphical exit.** The surface shows no shortcut caption: the axes are self-describing, and the caption was the only thing on screen that had to be read rather than seen. [Every Modal Needs a Graphical Exit](#every-modal-needs-a-graphical-exit-escclosebutton) is still satisfied without a button row - clicking the scrim cancels and double-clicking a row applies, both routed through the same handlers Escape and Enter use, so pointer and keyboard cannot drift.
@@ -762,6 +782,25 @@ Reach for it whenever a box has BOTH a capped height and content that arrives ov
 It uses `useLayoutEffect`, not `useEffect`: the scroll has to land in the same frame as the new content, or the box paints once at the old position and the output visibly jumps afterwards. The 50px bottom threshold matches the transcript's own in `TerminalOutput`, so a card follows its output on the same terms the conversation around it does.
 
 Distinct from `useScrollIntoView` (brings ONE element into view inside a list, for keyboard navigation) and from `TerminalOutput`'s MutationObserver auto-scroll (owns the whole conversation pane). Pick by scope: one self-contained box, one element in a list, or the whole pane.
+
+### Restoring a Transcript's Scroll Position
+
+An AI tab is left in one of TWO states, and they restore differently. `TerminalOutput` takes both `initialScrollTop` (the tab's saved `scrollTop`) and `initialIsAtBottom` (the tab's saved `isAtBottom`) and hands them to `useTerminalOutputScroll()`, and it needs both.
+
+**Following the tail** (`isAtBottom` true, or unset). The saved `scrollTop` is only a snapshot of where the bottom HAPPENED TO BE at save time, and the transcript keeps growing while the tab is off screen. Restoring that number verbatim drops the user however far the agent wrote while they were away, and because the stale offset is then far above the new bottom, the restore ALSO pauses auto-scroll - so the transcript will not even follow the output that stranded them. Clicking a toast to read a finished reply landed thousands of pixels above it, with the tail switched off. Such a tab restores to the BOTTOM and ignores the saved number.
+
+**Parked mid-history** (`isAtBottom` false). The offset is exactly right and must be honored: new entries are appended BELOW, so what the user was reading has not moved. This restore pauses auto-scroll on purpose, or the MutationObserver yanks the view straight back down.
+
+`undefined` counts as at-bottom, which is the same default the unread gate in `useAgentDataListener` uses (`targetTab.isAtBottom !== false`). Keep the two spellings identical - a tab that is "at the bottom" for unread purposes and "parked" for scroll purposes is the bug above wearing a different hat.
+
+**Neither target is reached in one frame.** A single `requestAnimationFrame` proves the DOM is MOUNTED, not that its height has settled: images are still decoding, fonts still swapping, code blocks still re-highlighting. `scrollHeight` is short on that first frame and `maxScroll` with it, so the restore clamps to less than it was asked for and the tab opens above where the user left it. The restore therefore re-attempts across frames, and the two states latch differently:
+
+- A fixed offset latches as soon as the content is tall enough to hold it, so the restore re-applies under a `ResizeObserver` on the container until it lands, with `SCROLL_RESTORE_SETTLE_MS` as a hard stop.
+- The bottom cannot be latched that way at all, because `maxScroll` MOVES with every late image. "Landed on the bottom" is true on the first frame and wrong on the next, so a tail-following tab does not run the offset restore: the mount-time bottom jump plus the follow-the-tail `MutationObserver`/`ResizeObserver` keep it pinned to the live bottom as the content grows.
+
+A genuine user scroll during the settle abandons the restore (`wheel` / `touchstart` on the container tear the retry down); their input wins, because a restore that keeps yanking the view is worse than landing slightly high. An in-flight cross-tab search jump wins for the same reason (`jumpInFlightRef`).
+
+Do not "simplify" this back to a single saved offset. A pixel offset cannot express "wherever the newest message is", and that is the state most tabs are actually left in.
 
 ### Scrolling a Virtualized List to the Selection
 
@@ -1060,6 +1099,17 @@ grid should copy:
 `useCommandKeyShortcut(key, handler, enabled)` in `src/renderer/hooks/keyboard/useCommandKeyShortcut.ts` is the primitive for a bare Cmd/Ctrl+`<key>` chord that ONE visible surface claims for as long as it is up: Cmd+S in an editor pane (`useSaveShortcut` is a preset over it), Cmd+R on the Usage Dashboard's Anthropic Usage / OpenAI Usage panels (`useQuotaRefresh`'s `refreshHotkey` option). It listens in the capture phase with `preventDefault`, so it wins against a focused textarea and against the browser's own default for the chord, and it requires the modifier ALONE - a Shift- or Alt-qualified chord falls through to whatever else owns it.
 
 Do NOT reach for it to add a global shortcut. Those belong in `constants/shortcuts.ts` and must be matched through `eventMatchesShortcutKeys` so the user can rebind them. And do NOT let a component claim a chord just because it is mounted: `refreshHotkey` defaults to false and the dashboard opts in only on the tab that renders the panel, because two mounted panels both answering Cmd+R would refresh whichever one registered last. When a surface advertises its chord in a tooltip, gate the hint on the same flag that claims it, and build the label with `formatShortcutKeys()` so it does not read `⌘R` on Windows.
+
+### A Shortcut and Its Palette Entry Must Name Each Other
+
+Every user-reachable action wants both a chord and a command-palette entry, and the palette entry is where a user LEARNS the chord. Two silent failures live at that seam, and `src/__tests__/renderer/components/QuickActionsModal/paletteShortcutCoverage.test.ts` locks both down:
+
+- **A dead lookup.** `shortcuts` and `tabShortcuts` are `Record<string, Shortcut>`, so `shortcuts.maestroCue` type-checks perfectly, evaluates to `undefined`, and renders an entry with no chord beside it. The real id was `openCue`; three more (`mergeSession`, `sendToAgent`, `summarizeAndContinue`) named shortcuts that never existed. Nothing in `tsc` or a render test catches this - the entry looks fine, it is simply missing the one thing that teaches the keyboard.
+- **A missing entry.** A shortcut with no palette command is reachable only by someone who already knows the chord, which is the opposite of what the palette is for.
+
+The test greps the whole `QuickActionsModal/` tree for `shortcuts.<id>`, `tabShortcuts?.<id>`, and `FIXED_SHORTCUTS.<id>`, checks each id against the real maps, and then asserts the reverse: every id in `DEFAULT_SHORTCUTS` / `TAB_SHORTCUTS` is either wired to an entry or listed in `NO_PALETTE_ENTRY_BY_DESIGN` (the palette takes focus, so `quickAction` and `agentSwitcher` cannot be invoked from inside it) or `MISSING_PALETTE_ENTRY` (a real gap, each one waiting on a callback threaded to the palette). It is an exact ledger, not an allow-anything set: **adding a shortcut fails this test until you either wire its entry or record it as a gap with a reason.** Remove an id from `MISSING_PALETTE_ENTRY` in the same change that adds its entry.
+
+A palette entry may also name a chord it does not own: `FIXED_SHORTCUTS.filterSessions` and friends are all Cmd+F scoped by focus, and naming the chord on the `Filter...` entries is how a user learns the palette is not the only way in.
 
 ### Keyboard Mastery Gamification
 
@@ -1526,6 +1576,23 @@ const fontScale = useFontScale('filePreview.fontScale');
 - `variant="inline"` - bordered squares for a toolbar or stats bar (Director's Notes).
 - `variant="floating"` - frosted pill for overlaying a scrolling pane (file preview,
   pinned top-right as the mirror of the Table of Contents button at bottom-right).
+  The Auto Run panel uses the same treatment over its document, so zooming reads
+  identically whether a document is open in a file tab or in the Right Bar. Pin it
+  with a `sticky top-* z-20 h-0` row rather than `absolute`: sticky needs no
+  positioned ancestor and the zero height keeps the pill from displacing content.
+- `size` - `'md'` (default) or `'sm'`, which drops the buttons from `w-7 h-7` to
+  `w-6 h-6` and the icons from `w-4` to `w-3.5`. Use `'sm'` where the surface is
+  narrow (the Auto Run panel in the Right Bar) or in a dense `text-xs` button row,
+  where the default squares stand a couple of pixels taller than the row and read
+  heavier than the buttons beside them.
+- **A pane with a read mode and an edit mode gets two scales, not one.** Auto Run
+  keeps `autoRun.previewFontScale` and `autoRun.editFontScale` and passes whichever
+  matches the current mode; reading rendered prose and editing Markdown source are
+  comfortable at different sizes, and one shared value makes each mode fight the
+  other. Both hooks stay mounted, so switching back restores the size that mode was
+  left at. When the scale drives a `<textarea>`, scale the `lineHeight` with it
+  (Auto Run uses a unitless `1.45`) - a fixed `20px` row crams taller glyphs once
+  zoomed - and pass the scale as `remeasureKey` to `<TextareaLineNumbers>`.
 - `collapsible` (floating only) - rests as a circle the size of that Table of Contents
   button and expands to the full pill on hover or keyboard focus. The buttons are
   CLIPPED, not unmounted, so tabbing into them opens the pill instead of skipping a
@@ -1534,7 +1601,37 @@ const fontScale = useFontScale('filePreview.fontScale');
 - The percentage in the middle appears only once zoomed and doubles as the reset.
 - The file preview also binds bare `-` / `+` (and `=` / `_`) to the two steps and `0`
   to the reset, guarded on `canScaleFontForView()` and on `isTextInputTarget(e.target)`
-  so the find bar and the CM6 editor keep their keys.
+  so the find bar and the CM6 editor keep their keys. Any OTHER surface wanting those
+  keys uses `useScaleShortcuts()` (below) rather than a second copy of the branch; the
+  file preview keeps its inline version because it sits inside one guarded key chain
+  whose ordering decides which branch answers a key.
+
+### `useScaleShortcuts()` (`src/renderer/hooks/ui/useScaleShortcuts.ts`)
+
+Bare `+` / `-` / `0` zoom for any surface driven by `useScalePreference`. Pass the
+control and an `enabled` flag:
+
+```tsx
+const thumbnailScale = useScalePreference('stagedImages.thumbnailScale', RANGE);
+const isTopLayer = useIsTopLayer(MODAL_PRIORITIES.STAGED_IMAGES_ORGANIZER);
+useScaleShortcuts(thumbnailScale, { enabled: isTopLayer });
+```
+
+- **Modifier-free on purpose.** An event carrying Cmd / Ctrl / Alt is left alone,
+  because `Cmd+=` / `Cmd+-` is the application's own font zoom and must keep working
+  while a zoomable surface is open.
+- `=` and `_` are the unshifted and shifted twins of `+` and `-`, so the user never
+  has to think about Shift; `0` is the reset.
+- It listens on `window` in the capture phase, not on the surface's node: focus falls
+  to the body when a nested overlay closes, and `stopPropagation` keeps a bare `0` or
+  `-` out of the global shortcut handler. `isTextInputTarget(e.target)` keeps a filter
+  box typing normally.
+- **Gate it with `useIsTopLayer(priority)`** (`src/renderer/hooks/ui/useIsTopLayer.ts`),
+  or a surface underneath an open overlay answers the same keypress. That hook is also
+  the shared answer to "am I the top layer?" - `AutoRunExpandedModal` uses it to reclaim
+  focus.
+- Name the keys in the `ScaleControl` tooltips with `shortcutHint`. A shortcut the
+  button never mentions is one nobody finds.
 
 **Only render it where the zoom moves type.** A control that changes nothing reads
 as broken: Director's Notes hides it in Rich Mode (fixed-size widget chrome), and
@@ -1898,6 +1995,13 @@ Do NOT hand-roll another `value.split('\n').map((_, i) => <div>{i + 1}</div>)`
 gutter. That is what the YAML editor had, and it drifted out of alignment the
 moment the file was taller than the box or any line wrapped.
 
+**Pass `remeasureKey` when the textarea's typography can change without its box
+changing.** The component re-measures on its own `ResizeObserver`, and a font-size
+change leaves the border box exactly the same size, so nothing fires and the
+numbers keep the row heights of the OLD font until the next keystroke. Auto Run
+passes its edit-mode font scale; any surface with a font zoom over a numbered
+textarea needs the same.
+
 jsdom has no layout engine and no `ResizeObserver`, so under test the gutter
 renders with natural row heights rather than measured ones. That is deliberate,
 not a polyfill gap - assert on the numbers and the transform, not on pixel
@@ -1945,7 +2049,7 @@ Every image anywhere in the app - raster `<img>`, agent-authored inline `<svg>`,
 
 - `resolveImageFromEvent(e)` (exported from `ImageContextMenuHost.tsx`) decides what counts. It skips three things: anything inside a `[data-no-image-menu]` subtree, lucide icons (which are `<svg>` but carry the `lucide` class), and anything under 32px rendered (favicons, inline badges).
 - **Opting a surface out:** put `data-no-image-menu` on its container. Use this only when the surface owns its own right-click behavior (e.g. `AnnotatorCanvas`). A menu that already handled the click and called `preventDefault()` is skipped automatically via `defaultPrevented` - that is how `LinkContextMenu` / `FileContextMenu` coexist with this one.
-- `utils/imageExport.ts` does the work: `copyImageElementToClipboard()` returns `'image' | 'text' | 'failed'` so the UI can admit when only markup or a URL reached the clipboard rather than claiming a paste-able image. `saveImageToProject()` writes into the project's `DIAGRAMS_DIR` (`.maestro/diagrams/`) and works over SSH; `saveImageElementToDisk()` is the native-dialog path. Binary writes go through `fs.writeImageFile` (`fs.writeFile` is UTF-8 and would corrupt the bytes).
+- `utils/imageExport.ts` does the work: `copyImageElementToClipboard()` returns `'image' | 'text' | 'failed'` so the UI can admit when only markup or a URL reached the clipboard rather than claiming a paste-able image. `saveImageToProject()` writes into the project's `DIAGRAMS_DIR` (`.maestro/diagrams/`), works over SSH, and calls `requestFileTreeRefresh(target.sessionId)` after a successful write so the new file shows up in the Files panel instead of waiting for its timed refresh (the toast offers to open it, so a stale tree reads as the save having failed). That refresh lives inside `saveImageToProject` rather than in the menu host for the same reason the menu itself is delegated: a future save surface gets it with no wiring. `saveImageElementToDisk()` is the native-dialog path and writes wherever the user points it, which is usually outside any workspace, so it does not refresh. Binary writes go through `fs.writeImageFile` (`fs.writeFile` is UTF-8 and would corrupt the bytes).
 - `ImageDestinationModal` is the "Save to Project..." destination picker (folder, file name, SVG/PNG format, live path preview). Not to be confused with `FilePreview/ImageSaveModal`, which is the annotator's overwrite-vs-save-as prompt.
 
 `serializeSvg()` stamps the measured size onto the clone when the source has none. Mermaid sizes charts with CSS (`width="100%"`), and without this the rasterized copy comes out cropped at the browser's 300x150 default.

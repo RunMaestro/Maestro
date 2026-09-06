@@ -259,7 +259,7 @@ export function SessionContextMenu({
 			    Left Bar pops the menu away from that row, so without it the
 			    destructive items at the bottom are unattributed. */}
 			<div
-				className="px-3 py-1 text-[10px] uppercase tracking-wider opacity-60"
+				className="px-3 py-1 text-2xs uppercase tracking-wider opacity-60"
 				style={{ color: theme.colors.textDim }}
 				title={session.name}
 			>
@@ -381,7 +381,7 @@ export function SessionContextMenu({
 							>
 								<Folder className="w-3.5 h-3.5" />
 								Ungrouped
-								{!session.groupId && <span className="text-[10px] opacity-50">(current)</span>}
+								{!session.groupId && <span className="text-2xs opacity-50">(current)</span>}
 							</button>
 
 							{groups.length > 0 && (
@@ -403,7 +403,7 @@ export function SessionContextMenu({
 									<span>{group.emoji}</span>
 									<span className="truncate">{group.name}</span>
 									{session.groupId === group.id && (
-										<span className="text-[10px] opacity-50">(current)</span>
+										<span className="text-2xs opacity-50">(current)</span>
 									)}
 								</button>
 							))}
@@ -564,7 +564,7 @@ export function SessionContextMenu({
 											<AppWindow className="w-3.5 h-3.5 shrink-0" />
 											<span className="truncate">{target.label}</span>
 											{target.isCurrentOwner && (
-												<span className="text-[10px] opacity-50 shrink-0">(current)</span>
+												<span className="text-2xs opacity-50 shrink-0">(current)</span>
 											)}
 										</button>
 										{/* Rename affordance - secondary windows only; the primary keeps
@@ -631,7 +631,7 @@ export function SessionContextMenu({
 						<GitChangeCounts
 							theme={theme}
 							totals={gitActions.changes}
-							className="flex items-center gap-1.5 text-[10px]"
+							className="flex items-center gap-1.5 text-2xs"
 						/>
 					</button>
 					<button
@@ -653,12 +653,12 @@ export function SessionContextMenu({
 						{gitActions.pullRunning ? (
 							<GitRunningBadge
 								theme={theme}
-								className="flex items-center gap-1 text-[10px]"
+								className="flex items-center gap-1 text-2xs"
 								testId="session-context-git-pull-running"
 							/>
 						) : (
 							gitActions.behind > 0 && (
-								<span className="flex items-center gap-0.5 text-[10px] text-red-500">
+								<span className="flex items-center gap-0.5 text-2xs text-red-500">
 									<ArrowDown className="w-3 h-3" />
 									{gitActions.behind}
 								</span>
@@ -682,12 +682,12 @@ export function SessionContextMenu({
 						{gitActions.pushRunning ? (
 							<GitRunningBadge
 								theme={theme}
-								className="flex items-center gap-1 text-[10px]"
+								className="flex items-center gap-1 text-2xs"
 								testId="session-context-git-push-running"
 							/>
 						) : (
 							gitActions.ahead > 0 && (
-								<span className="flex items-center gap-0.5 text-[10px] text-green-500">
+								<span className="flex items-center gap-0.5 text-2xs text-green-500">
 									<ArrowUp className="w-3 h-3" />
 									{gitActions.ahead}
 								</span>

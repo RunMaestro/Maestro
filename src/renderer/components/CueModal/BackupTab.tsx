@@ -487,7 +487,7 @@ export function BackupTab({ theme }: BackupTabProps) {
 																{workspaceLabel(ws.cwd)}
 															</span>
 															<span
-																className="text-[11px] font-mono truncate"
+																className="text-xs-plus font-mono truncate"
 																style={{ color: theme.colors.textDim }}
 																title={ws.cwd}
 															>
@@ -495,7 +495,7 @@ export function BackupTab({ theme }: BackupTabProps) {
 															</span>
 															{ws.agents.length > 0 && (
 																<span
-																	className="text-[11px]"
+																	className="text-xs-plus"
 																	style={{ color: theme.colors.textDim }}
 																>
 																	· {ws.agents.length} agent
@@ -535,14 +535,14 @@ export function BackupTab({ theme }: BackupTabProps) {
 																			{f.relativePath}
 																		</span>
 																		<span
-																			className="text-[11px]"
+																			className="text-xs-plus"
 																			style={{ color: theme.colors.textDim }}
 																		>
 																			{formatSize(f.size)}
 																		</span>
 																		{isMissingLive && (
 																			<span
-																				className="text-[11px] px-1.5 py-0.5 rounded"
+																				className="text-xs-plus px-1.5 py-0.5 rounded"
 																				style={{
 																					backgroundColor: `${theme.colors.accent}22`,
 																					color: theme.colors.accent,
@@ -555,14 +555,14 @@ export function BackupTab({ theme }: BackupTabProps) {
 																		<div className="flex-1" />
 																		{statusLoading ? (
 																			<span
-																				className="text-[11px] italic"
+																				className="text-xs-plus italic"
 																				style={{ color: theme.colors.textDim }}
 																			>
 																				Checking…
 																			</span>
 																		) : isUnchanged ? (
 																			<span
-																				className="text-[11px]"
+																				className="text-xs-plus"
 																				style={{ color: theme.colors.textDim }}
 																				title="Live file matches backup byte-for-byte"
 																			>

@@ -287,6 +287,142 @@ describe('noteDispatch supersession', () => {
 	});
 });
 
+// The green "Connection recovered" card and the red error banner were both on
+// screen at once: the error listener deliberately keeps `tab.agentError` set
+// during a retry so Stop can surface it, and nothing cleared it on success.
+describe('clearing the error banner on recovery', () => {
+	/** Put an error on the tab the way the agent-error listener does. */
+	function setTabError(id: string, tabId: string, message: string) {
+		useSessionStore.setState({
+			sessions: useSessionStore.getState().sessions.map((s: any) =>
+				s.id !== id
+					? s
+					: {
+							...s,
+							aiTabs: s.aiTabs.map((t: any) =>
+								t.id === tabId ? { ...t, agentError: err({ message }) } : t
+							),
+						}
+			),
+		} as any);
+	}
+
+	const tabError = (id: string, tabId: string) =>
+		useSessionStore
+			.getState()
+			.sessions.find((s: any) => s.id === id)
+			?.aiTabs.find((t: any) => t.id === tabId)?.agentError;
+
+	it('clears the tab error when the resend settles', () => {
+		setupSession('s17', 't1');
+		seedSnapshot('s17', 't1');
+		scheduleRetryForError('s17', 't1', quota());
+		setTabError('s17', 't1', quota().message);
+		retryNow('s17', 't1');
+
+		clearRetryIfSettled('s17', 't1');
+
+		expect(getRetryEntry('s17', 't1')).toBeUndefined();
+		expect(tabError('s17', 't1')).toBeUndefined();
+	});
+
+	it('keeps a DIFFERENT error that arrived on the resend', () => {
+		setupSession('s18', 't1');
+		seedSnapshot('s18', 't1');
+		scheduleRetryForError('s18', 't1', quota());
+		retryNow('s18', 't1');
+		// agent-error fires before process-exit, so a non-retryable failure on the
+		// resend is already on the tab when the exit lands. It must survive.
+		setTabError('s18', 't1', 'Permission denied');
+
+		clearRetryIfSettled('s18', 't1');
+
+		expect(tabError('s18', 't1')?.message).toBe('Permission denied');
+	});
+
+	it('leaves the tab alone when a retry is still scheduled', () => {
+		setupSession('s19', 't1');
+		seedSnapshot('s19', 't1');
+		scheduleRetryForError('s19', 't1', quota());
+		setTabError('s19', 't1', quota().message);
+
+		// Still counting down - not settled, so nothing is cleared.
+		clearRetryIfSettled('s19', 't1');
+
+		expect(getRetryEntry('s19', 't1')?.status).toBe('scheduled');
+		expect(tabError('s19', 't1')).toBeDefined();
+	});
+});
+
+// Every outage resolution - recovered, stopped, or superseded - must persist
+// exactly one resilience_events row for the Usage Dashboard. The funnel is
+// resolveOutage, so all three paths are asserted through the public API.
+describe('resilience event recording', () => {
+	const recordMock = () =>
+		(window as any).maestro.stats.recordResilience as ReturnType<typeof vi.fn>;
+
+	beforeEach(() => recordMock().mockClear());
+
+	it('records a recovered outage when the resend settles', () => {
+		setupSession('s20', 't1');
+		seedSnapshot('s20', 't1');
+		scheduleRetryForError('s20', 't1', quota());
+		const outageId = getRetryEntry('s20', 't1')!.outageId;
+		retryNow('s20', 't1');
+		expect(recordMock()).not.toHaveBeenCalled(); // never while live
+
+		clearRetryIfSettled('s20', 't1');
+
+		expect(recordMock()).toHaveBeenCalledTimes(1);
+		expect(recordMock()).toHaveBeenCalledWith(
+			expect.objectContaining({
+				id: outageId,
+				sessionId: 's20',
+				strategy: 'token-exhaustion',
+				outcome: 'recovered',
+				retries: 1,
+			})
+		);
+	});
+
+	it('records a stopped outage when the user cancels', () => {
+		setupSession('s21', 't1');
+		seedSnapshot('s21', 't1');
+		scheduleRetryForError('s21', 't1', overload());
+
+		cancelRetry('s21', 't1');
+
+		expect(recordMock()).toHaveBeenCalledTimes(1);
+		expect(recordMock()).toHaveBeenCalledWith(
+			expect.objectContaining({ outcome: 'stopped', strategy: 'availability', retries: 0 })
+		);
+	});
+
+	it('records a stopped outage when a new prompt supersedes the retry', () => {
+		setupSession('s22', 't1');
+		seedSnapshot('s22', 't1');
+		scheduleRetryForError('s22', 't1', quota());
+
+		noteDispatch(
+			's22',
+			{ id: 'item-2', timestamp: 2, tabId: 't1', type: 'message', text: 'moved on' },
+			deps
+		);
+
+		expect(recordMock()).toHaveBeenCalledTimes(1);
+		expect(recordMock()).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'stopped' }));
+	});
+
+	it('does not record on a reschedule (outage continues)', () => {
+		setupSession('s23', 't1');
+		seedSnapshot('s23', 't1');
+		scheduleRetryForError('s23', 't1', overload());
+		scheduleRetryForError('s23', 't1', overload()); // resend failed again
+
+		expect(recordMock()).not.toHaveBeenCalled();
+	});
+});
+
 describe('hasPendingRetry', () => {
 	it('is true only while a retry is counting down', () => {
 		setupSession('s16', 't1');

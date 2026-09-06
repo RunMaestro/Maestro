@@ -10,6 +10,7 @@ import type { StateCreator } from 'zustand';
 import type { ThemeId, ThemeColors } from '../types';
 import { DEFAULT_CUSTOM_THEME_COLORS } from '../constants/themes';
 import { TYPOGRAPHY_PRESETS, type TypographyPresetId } from '../../shared/typographyPresets';
+import { MAESTRO_FONT_STACK } from '../../shared/fontStack';
 import type { GlossLevel } from '../../shared/themeGloss';
 import { DEFAULT_GLOSS_LEVEL, asGlossLevel } from '../../shared/themeGloss';
 import {
@@ -92,7 +93,7 @@ export interface ThemeActions {
 export type ThemeSlice = ThemeState & ThemeActions;
 
 export const createThemeSlice: StateCreator<SettingsStore, [], [], ThemeSlice> = (set) => ({
-	fontFamily: 'Roboto Mono, Menlo, "Courier New", monospace',
+	fontFamily: MAESTRO_FONT_STACK,
 	terminalFontFamily: '',
 	chatFontFamily: '',
 	filePreviewFontFamily: '',

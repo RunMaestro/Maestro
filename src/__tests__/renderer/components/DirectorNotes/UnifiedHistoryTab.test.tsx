@@ -958,3 +958,32 @@ describe('UnifiedHistoryTab', () => {
 		});
 	});
 });
+
+// Phone: the activity graph wraps onto its own full-width line. Beside the
+// search button and three filter pills it was squeezed to ~50px and its two
+// axis labels printed on top of each other.
+vi.mock('../../../../renderer/hooks/ui/useViewportBreakpoint', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../renderer/hooks/ui/useViewportBreakpoint')>()),
+	usePhoneLayout: vi.fn(() => false),
+}));
+import { usePhoneLayout } from '../../../../renderer/hooks/ui/useViewportBreakpoint';
+
+describe('UnifiedHistoryTab on a phone', () => {
+	afterEach(() => {
+		vi.mocked(usePhoneLayout).mockReturnValue(false);
+	});
+
+	it('gives the activity graph its own full-width row', async () => {
+		vi.mocked(usePhoneLayout).mockReturnValue(true);
+		render(<UnifiedHistoryTab theme={mockTheme} />);
+		const graph = await screen.findByTestId('activity-graph');
+		expect(graph.parentElement).toHaveClass('basis-full');
+	});
+
+	it('keeps the graph inline on desktop', async () => {
+		vi.mocked(usePhoneLayout).mockReturnValue(false);
+		render(<UnifiedHistoryTab theme={mockTheme} />);
+		const graph = await screen.findByTestId('activity-graph');
+		expect(graph.parentElement).toHaveClass('contents');
+	});
+});

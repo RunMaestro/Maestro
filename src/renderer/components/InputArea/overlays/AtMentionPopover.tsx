@@ -162,7 +162,7 @@ export const AtMentionPopover = memo(function AtMentionPopover({
 						>
 							<span>{CATEGORY_LABELS[cat]}</span>
 							<span
-								className="text-[10px] px-1 rounded"
+								className="text-2xs px-1 rounded"
 								style={{
 									backgroundColor: isActive ? `${theme.colors.accent}30` : 'transparent',
 									color: isActive ? theme.colors.accent : theme.colors.textDim,
@@ -230,20 +230,20 @@ export const AtMentionPopover = memo(function AtMentionPopover({
 										/>
 									)}
 									{!isGroup && item.toolType && (
-										<span className="text-[10px] opacity-50 flex-shrink-0">
+										<span className="text-2xs opacity-50 flex-shrink-0">
 											{getAgentDisplayName(item.toolType)}
 										</span>
 									)}
 									{/* Groups expand into their members on accept, so say how many
 									    agents the row is about to insert. */}
 									{isGroup && (
-										<span className="text-[10px] opacity-50 flex-shrink-0">
+										<span className="text-2xs opacity-50 flex-shrink-0">
 											{item.memberSessionIds?.length ?? 0}{' '}
 											{item.memberSessionIds?.length === 1 ? 'agent' : 'agents'}
 										</span>
 									)}
 									<span
-										className="text-[9px] px-1 py-0.5 rounded flex-shrink-0 uppercase tracking-wide"
+										className="text-3xs px-1 py-0.5 rounded flex-shrink-0 uppercase tracking-wide"
 										style={{
 											backgroundColor: isGroup
 												? `${theme.colors.accent}30`
@@ -281,7 +281,7 @@ export const AtMentionPopover = memo(function AtMentionPopover({
 									<span className="flex-1 truncate">{item.fullPath}</span>
 									{item.source === 'autorun' && (
 										<span
-											className="text-[9px] px-1 py-0.5 rounded flex-shrink-0"
+											className="text-3xs px-1 py-0.5 rounded flex-shrink-0"
 											style={{
 												backgroundColor: `${theme.colors.accent}30`,
 												color: theme.colors.accent,
@@ -290,7 +290,7 @@ export const AtMentionPopover = memo(function AtMentionPopover({
 											Auto Run
 										</span>
 									)}
-									<span className="text-[10px] opacity-40 flex-shrink-0">
+									<span className="text-2xs opacity-40 flex-shrink-0">
 										{item.kind === 'directory' ? 'folder' : 'file'}
 									</span>
 								</button>

@@ -45,7 +45,7 @@ export const Kpi = memo(function Kpi({
 			data-testid={testId}
 		>
 			<div
-				className="text-[10px] uppercase tracking-wide mb-1"
+				className="text-2xs uppercase tracking-wide mb-1"
 				style={{ color: theme.colors.textDim }}
 			>
 				{label}

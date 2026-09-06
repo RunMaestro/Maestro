@@ -36,15 +36,16 @@ import {
 	computeQueuedTabIds,
 	computeUnreadGroupIds,
 	focusAiTabInSession,
-	getTabDisplayName,
 	groupFocusFields,
 } from '../../utils/tabHelpers';
+import { resolveSnoozeTarget } from '../../utils/snoozeHelpers';
 import { useModalStore } from '../../stores/modalStore';
 import { useSshRemoteName } from '../../hooks/mainPanel/useSshRemoteName';
 import { useContextWindow } from '../../hooks/mainPanel/useContextWindow';
 import { useFilePreviewHandlers } from '../../hooks/mainPanel/useFilePreviewHandlers';
 import { useGitInfo } from '../../hooks/mainPanel/useGitInfo';
 import { useChatFileDropZone } from '../../hooks/ui/useChatFileDropZone';
+import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 import { MainPanelHeader } from './MainPanelHeader';
 import { MainPanelContent } from './MainPanelContent';
 import { AgentErrorBanner } from './AgentErrorBanner';
@@ -180,6 +181,12 @@ export const MainPanel = React.memo(
 			// Inline wizard exit handler
 			onExitWizard,
 		} = props;
+
+		// The panel's 400px floor keeps the header usable when the desktop layout
+		// squeezes it between two sidebars. A phone is 390px wide with no sidebars
+		// beside it, so the floor made the panel 10px wider than the screen and
+		// pushed the header's last button past the edge.
+		const phone = usePhoneLayout();
 
 		// Phase 3C: Direct store subscriptions (migrated from props)
 		const logLevel = useSettingsStore((s) => s.logLevel);
@@ -494,14 +501,17 @@ export const MainPanel = React.memo(
 		// Opening the snooze picker needs nothing from App.tsx, so it talks to the
 		// modal store directly instead of adding another link to the
 		// App -> useMainPanelProps -> MainPanel -> TabBar prop chain.
+		//
+		// Every chip in the strip routes here - AI, file, terminal, browser, and a
+		// tiled group - so the id is resolved by `resolveSnoozeTarget` rather than
+		// looked up in one array. It used to search `aiTabs` only and return early
+		// for everything else, which made "Snooze Tab" on the other three chips and
+		// "Snooze group" on a group chip silently do nothing.
 		const handleOpenSnooze = useCallback((tabId: string) => {
 			const session = selectActiveSession(useSessionStore.getState());
-			const tab = session?.aiTabs.find((t) => t.id === tabId);
-			if (!tab) return;
-			useModalStore.getState().openModal('snoozeTab', {
-				tabId,
-				tabLabel: getTabDisplayName(tab, session?.agentSessionId),
-			});
+			const target = resolveSnoozeTarget(session, tabId);
+			if (!target) return;
+			useModalStore.getState().openModal('snoozeTab', target);
 		}, []);
 
 		// Expose methods to parent via ref
@@ -1079,7 +1089,7 @@ export const MainPanel = React.memo(
 					<div
 						className="flex-1 h-full min-h-0 max-h-full flex flex-col relative isolate overflow-hidden"
 						style={{
-							minWidth: '400px',
+							minWidth: phone ? undefined : '400px',
 							backgroundColor: theme.colors.bgMain,
 						}}
 						onClick={() => useUIStore.getState().setActiveFocus('main')}

@@ -18,7 +18,7 @@ import {
 import { buildContextTimelinePoint } from './contextTimelinePoint';
 import { useOwnedSessionGate } from './useOwnedSessionGate';
 import { useContextTimelineStore } from '../../../stores/contextTimelineStore';
-import { recordTurnUsage } from '../../../services/turnUsageLedger';
+import { recordTurnUsage } from '../../../../shared/turnUsageLedger';
 import type { BatchedUpdater } from './types';
 
 /**

@@ -453,6 +453,57 @@ describe('useAutoRunHandlers', () => {
 			expect(mockDeps.setSuccessFlashNotification).toHaveBeenCalledWith('Found 1 new document');
 		});
 
+		it('still reloads but stays silent when the caller asked for silence', async () => {
+			// `refresh-auto-run --background`. The documents must be re-read; what
+			// the flag suppresses is the flash, which reads as a confirmation of
+			// something the user did and is a lie when an agent did it.
+			const mockSession = createMockSession();
+			const mockDeps = createMockDeps();
+			mockDeps.autoRunDocumentList = ['Phase 1'];
+
+			vi.mocked(window.maestro.autorun.listDocs).mockResolvedValue({
+				success: true,
+				files: ['Phase 1', 'Phase 2'],
+				tree: [],
+			});
+
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
+
+			await act(async () => {
+				await result.current.handleAutoRunRefresh({ silent: true });
+			});
+
+			expect(mockDeps.setAutoRunDocumentList).toHaveBeenCalledWith(['Phase 1', 'Phase 2']);
+			expect(mockDeps.setAutoRunIsLoadingDocuments).toHaveBeenCalledWith(false);
+			expect(mockDeps.setSuccessFlashNotification).not.toHaveBeenCalled();
+		});
+
+		it('treats anything but a literal true as not silent', async () => {
+			// This function is handed straight to `onAutoRunRefresh`, so a click
+			// handler calls it with a MouseEvent in the options slot. Reading that
+			// as an opt-in would swallow the confirmation the user clicked for.
+			const mockSession = createMockSession();
+			const mockDeps = createMockDeps();
+
+			vi.mocked(window.maestro.autorun.listDocs).mockResolvedValue({
+				success: true,
+				files: ['Phase 1'],
+				tree: [],
+			});
+
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
+
+			await act(async () => {
+				await result.current.handleAutoRunRefresh({
+					silent: 'yes',
+				} as unknown as { silent?: boolean });
+			});
+
+			expect(mockDeps.setSuccessFlashNotification).toHaveBeenCalled();
+		});
+
 		it('should show plural message when multiple new documents found', async () => {
 			const mockSession = createMockSession();
 			const mockDeps = createMockDeps();

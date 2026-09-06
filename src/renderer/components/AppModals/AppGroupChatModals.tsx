@@ -20,7 +20,8 @@ export interface AppGroupChatModalsProps {
 	onCreateGroupChat: (
 		name: string,
 		moderatorAgentId: string,
-		moderatorConfig?: ModeratorConfig
+		moderatorConfig?: ModeratorConfig,
+		requireIdleParticipants?: boolean
 	) => void;
 
 	// DeleteGroupChatModal
@@ -40,7 +41,8 @@ export interface AppGroupChatModalsProps {
 		id: string,
 		name: string,
 		moderatorAgentId: string,
-		moderatorConfig?: ModeratorConfig
+		moderatorConfig?: ModeratorConfig,
+		requireIdleParticipants?: boolean
 	) => void;
 
 	// GroupChatInfoOverlay

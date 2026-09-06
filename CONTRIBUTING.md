@@ -536,7 +536,7 @@ Nine features ship this way. `FIRST_PARTY_PLUGIN_DEFINITIONS` in `src/shared/plu
 
 ## Adding a New AI Agent
 
-Maestro supports multiple AI coding agents. Each agent has different capabilities that determine which UI features are available. For detailed architecture, see [AGENT_SUPPORT.md](AGENT_SUPPORT.md).
+Maestro supports multiple AI coding agents. Each agent has different capabilities that determine which UI features are available. For detailed architecture, see [PROVIDER-SUPPORT.md](PROVIDER-SUPPORT.md).
 
 ### Agent Capability Checklist
 
@@ -683,7 +683,7 @@ Based on capabilities, these UI features are automatically enabled/disabled:
 | Copilot-CLI   | ✅ `--resume` / `--continue` | ✅ permission rules         | ✅   | ✅     | ✅ `~/.copilot/session-state/` | ❌ (not exposed by CLI) | 🧪 Beta     |
 | Gemini CLI    | TBD                          | TBD                         | TBD  | TBD    | TBD                            | ✅                      | 📋 Planned  |
 
-For detailed implementation guide, see [AGENT_SUPPORT.md](AGENT_SUPPORT.md).
+For detailed implementation guide, see [PROVIDER-SUPPORT.md](PROVIDER-SUPPORT.md).
 
 ## Code Style
 

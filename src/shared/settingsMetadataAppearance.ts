@@ -220,6 +220,13 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: true,
 		category: 'appearance',
 	},
+	showProviderModePill: {
+		description:
+			'Show the provider mode pill (e.g. "claude -p" / "TUI Wrapper") on Claude turns in the chat footer, History entries, and the history detail view.',
+		type: 'boolean',
+		default: false,
+		category: 'appearance',
+	},
 	showWorktreePill: {
 		description: 'Show the WORKTREE badge next to worktree child agents in the left panel.',
 		type: 'boolean',
