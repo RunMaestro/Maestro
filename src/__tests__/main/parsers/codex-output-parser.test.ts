@@ -1373,6 +1373,48 @@ describe('CodexOutputParser', () => {
 				expect(orphan?.toolName).toBeUndefined();
 			});
 
+			it('keeps an id-less call named when an id-correlated one finishes first', () => {
+				// Interleaving: a legacy id-less call is still open when a correlated
+				// call starts and completes. The id-less output must still know its own
+				// name. Two things used to break it - every function_call overwrote
+				// `lastToolName`, and every completion cleared it - so this output
+				// arrived either mislabeled with the other tool or with no name at all.
+				const p = new CodexOutputParser();
+
+				p.parseJsonLine(
+					JSON.stringify({
+						type: 'response_item',
+						payload: { type: 'function_call', name: 'legacy_tool', arguments: '{}' },
+					})
+				);
+				p.parseJsonLine(
+					JSON.stringify({
+						type: 'response_item',
+						payload: {
+							type: 'function_call',
+							name: 'correlated_tool',
+							arguments: '{}',
+							call_id: 'c9',
+						},
+					})
+				);
+				p.parseJsonLine(
+					JSON.stringify({
+						type: 'response_item',
+						payload: { type: 'function_call_output', call_id: 'c9', output: 'done' },
+					})
+				);
+
+				const idless = p.parseJsonLine(
+					JSON.stringify({
+						type: 'response_item',
+						payload: { type: 'function_call_output', output: 'legacy output' },
+					})
+				);
+
+				expect(idless?.toolName).toBe('legacy_tool');
+			});
+
 			it('should handle function_call_output with undefined output', () => {
 				const p = new CodexOutputParser();
 				const event = p.parseJsonLine(

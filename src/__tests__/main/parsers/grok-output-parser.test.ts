@@ -225,6 +225,35 @@ describe('GrokOutputParser', () => {
 			expect((update?.toolState as { input?: unknown }).input).toBeUndefined();
 		});
 
+		it('drops an update for an id it never saw open', () => {
+			// An update carrying an id absent from the name map is an ORPHAN: there is
+			// no running badge for it to settle. Emitting one named 'tool' would
+			// render a completed call the user never watched start, so the line is
+			// absorbed as a system event instead.
+			const parser = new GrokOutputParser();
+
+			const orphan = parser.parseJsonLine(
+				'{"type":"tool_call_update","toolCallId":"never_opened","status":"completed","rawOutput":"x"}'
+			);
+
+			expect(orphan?.type).not.toBe('tool_use');
+		});
+
+		it('still opens a badge for a tool_call with an unknown name', () => {
+			// The opposite case, and why the guard checks `isUpdate`: a tool_call
+			// OPENS a badge, so a generic name beats no badge at all.
+			const parser = new GrokOutputParser();
+
+			const opened = parser.parseJsonLine('{"type":"tool_call","toolCallId":"call_09"}');
+
+			expect(opened).toMatchObject({
+				type: 'tool_use',
+				toolName: 'tool',
+				toolCallId: 'call_09',
+				toolState: { status: 'running' },
+			});
+		});
+
 		it('keeps two parallel calls to the same tool on their own ids', () => {
 			// This is the mis-attribution the name-matching fallback produces when
 			// no id is emitted: the first output to land settles the wrong badge.

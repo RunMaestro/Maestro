@@ -301,8 +301,16 @@ export class GrokOutputParser implements AgentOutputParser {
 			return null;
 		}
 
-		const toolName =
-			reportedName || (toolCallId ? this.toolNamesById.get(toolCallId) : undefined) || 'tool';
+		const rememberedName = toolCallId ? this.toolNamesById.get(toolCallId) : undefined;
+		// An UPDATE whose id we never saw opened is an orphan: there is no running
+		// badge for it to settle, so emitting one named `tool` invents a completed
+		// or failed call the user never watched start. A `tool_call` still falls
+		// back, because that line OPENS a badge and a generic name beats no badge.
+		if (isUpdate && !reportedName && !rememberedName) {
+			return null;
+		}
+
+		const toolName = reportedName || rememberedName || 'tool';
 		if (toolCallId && reportedName) {
 			this.toolNamesById.set(toolCallId, reportedName);
 		}

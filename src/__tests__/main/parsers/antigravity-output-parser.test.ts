@@ -86,7 +86,10 @@ describe('AntigravityOutputParser', () => {
 			expect.objectContaining({
 				type: 'tool_use',
 				toolName: 'run_command',
-				toolCallId: '3',
+				// Qualified with conversation_id: step_index restarts at 0 per
+				// conversation, and the renderer keys tool entries on this id across
+				// the whole tab, so a bare index merges two runs into one badge.
+				toolCallId: 'conv-1:3',
 				// toolState is an OBJECT the badge reads `status` off, never the raw
 				// lifecycle word: handing over 'DONE' left every badge status-less,
 				// input-less and output-less (issue #1485).

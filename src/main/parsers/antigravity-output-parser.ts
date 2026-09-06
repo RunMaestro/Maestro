@@ -217,8 +217,18 @@ export class AntigravityOutputParser implements AgentOutputParser {
 				type: 'tool_use',
 				sessionId,
 				toolName: toolInfo?.name || step.tool_name || 'tool',
-				// step_index is stable for the life of a step, so it doubles as the call id.
-				toolCallId: typeof step.step_index === 'number' ? String(step.step_index) : undefined,
+				// `step_index` is stable for the life of a step, but it is scoped to the
+				// CONVERSATION and restarts at 0 in the next one. The renderer keys tool
+				// entries `tool-${toolCallId}` across the whole tab and sticky tool logs
+				// outlive an exit, so a bare index lets a fresh conversation's step 0
+				// merge into the previous conversation's step 0 - one badge, two runs.
+				// Qualifying with `conversation_id` makes the id unique where it is used.
+				toolCallId:
+					typeof step.step_index === 'number'
+						? sessionId
+							? `${sessionId}:${step.step_index}`
+							: String(step.step_index)
+						: undefined,
 				toolState: {
 					status: toolStatusFromStepState(step.state, errorMessage),
 					// The parameters and output were being dropped on the floor: the

@@ -668,9 +668,15 @@ export class CodexOutputParser implements AgentOutputParser {
 		if (payload.type === 'function_call' || payload.type === 'custom_tool_call') {
 			const toolName = payload.name || 'unknown';
 			const callId = payload.call_id;
-			this.lastToolName = toolName;
 			if (callId) {
 				this.toolNamesByCallId.set(callId, toolName);
+			} else {
+				// `lastToolName` is the fallback for calls that carry NO correlation
+				// id, so only an id-less call may write it. Setting it here for every
+				// call let an id-correlated one overwrite an id-less call that was
+				// still open, and its output then arrived labeled with the other
+				// tool's name - the same mis-attribution the id map exists to end.
+				this.lastToolName = toolName;
 			}
 			let parsedArgs: unknown;
 			try {
@@ -705,8 +711,14 @@ export class CodexOutputParser implements AgentOutputParser {
 			const toolName = callId ? this.toolNamesByCallId.get(callId) : this.lastToolName || undefined;
 			if (callId) {
 				this.toolNamesByCallId.delete(callId);
+			} else {
+				// Only an id-less output consumes `lastToolName`. Clearing it on EVERY
+				// completion was wrong the moment an id-correlated call finished while
+				// an id-less one was still open: the id-correlated branch never reads
+				// the slot, so wiping it there strands the still-open legacy call, and
+				// its own output arrives with no name at all.
+				this.lastToolName = null;
 			}
-			this.lastToolName = null;
 			return {
 				type: 'tool_use',
 				toolName,
