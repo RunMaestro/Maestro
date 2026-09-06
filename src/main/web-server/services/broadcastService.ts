@@ -53,9 +53,9 @@ export type {
 // Logger context for broadcast service logs
 const LOG_CONTEXT = 'BroadcastService';
 
-// Replay buffer bounds for resuming a dropped web-desktop socket.
-// ponytail: fixed-size ring. A gap that outruns it (a long sleep, a very busy
-// agent) falls back to the page reload it replaced; raise both if that bites.
+// Replay buffer bounds for resuming a dropped web-desktop socket. A gap that
+// outruns the ring (a long sleep, a very busy agent) falls back to the page
+// reload it replaced; raise both if that bites.
 const REPLAY_MAX_FRAMES = 2000;
 const REPLAY_MAX_BYTES = 8 * 1024 * 1024;
 
