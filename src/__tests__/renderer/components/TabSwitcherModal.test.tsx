@@ -2965,6 +2965,11 @@ describe('TabSwitcherModal on a phone', () => {
 	let theme: Theme;
 
 	beforeEach(() => {
+		// This describe has its own setup, so the `clearAllMocks` in the desktop
+		// describe above never runs for it and call history from earlier tests
+		// carries in. That matters here because one of these tests asserts the
+		// named-session catalog was NEVER fetched.
+		vi.clearAllMocks();
 		theme = createTestTheme();
 		Element.prototype.scrollIntoView = vi.fn();
 		mockedUsePhoneLayout.mockReturnValue(true);

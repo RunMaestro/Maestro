@@ -61,7 +61,7 @@ export const TerminalTouchBar = memo(function TerminalTouchBar({
 		display: 'flex',
 		alignItems: 'center',
 		justifyContent: 'center',
-		minWidth: phone ? 0 : MIN_TOUCH_TARGET,
+		minWidth: phone ? '0px' : MIN_TOUCH_TARGET,
 		height: MIN_TOUCH_TARGET - 8,
 		padding: phone ? '0 4px' : '0 10px',
 		borderRadius: 6,
@@ -75,7 +75,10 @@ export const TerminalTouchBar = memo(function TerminalTouchBar({
 		touchAction: 'manipulation',
 		userSelect: 'none',
 		WebkitUserSelect: 'none',
-		flex: phone ? '1 1 0' : '0 0 auto',
+		// `1 1 0px`, not `1 1 0`: the unitless basis is legal CSS that a browser
+		// normalizes anyway, but jsdom's parser rejects the shorthand outright and
+		// drops the whole declaration, so the keys lose their flex in tests only.
+		flex: phone ? '1 1 0px' : '0 0 auto',
 	};
 
 	const ctrlStyle: React.CSSProperties = ctrlArmed

@@ -14,6 +14,10 @@ import {
 	WEB_ACTIVE_SESSION_STORAGE_KEY,
 } from '../../../renderer/utils/activeSessionPersistence';
 import { isWebDesktop } from '../../../renderer/utils/runtimeContext';
+import {
+	installLocalStorageMock,
+	installSessionStorageMock,
+} from '../../helpers/mockLocalStorage';
 
 vi.mock('../../../renderer/utils/runtimeContext', () => ({
 	isWebDesktop: vi.fn(() => false),
@@ -27,8 +31,11 @@ describe('activeSessionPersistence', () => {
 	let getActiveSessionId: ReturnType<typeof vi.fn>;
 
 	beforeEach(() => {
-		localStorage.clear();
-		sessionStorage.clear();
+		// Both tiers are mocked rather than cleared: this environment ships no
+		// working Storage, so a bare `localStorage.clear()` throws and takes the
+		// whole suite with it. Installing fresh mocks doubles as the per-test reset.
+		installLocalStorageMock();
+		installSessionStorageMock();
 		asWebDesktop(false);
 		setActiveSessionId = vi.fn().mockResolvedValue(undefined);
 		getActiveSessionId = vi.fn().mockResolvedValue('desktop-agent');
