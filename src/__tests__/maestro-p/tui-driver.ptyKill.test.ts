@@ -13,6 +13,8 @@
  * the desktop process manager (Sentry MAESTRO-XZ); this is the maestro-p half.
  */
 
+import * as os from 'os';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // ── Mocks ──────────────────────────────────────────────────────────────────
@@ -92,7 +94,9 @@ async function makeDriver(): Promise<TuiDriver> {
 	const driver = new TuiDriver({
 		binPath: 'claude',
 		args: [],
-		cwd: '/tmp',
+		// Inert here - node-pty is mocked, so this never reaches path logic - but
+		// this is a Windows test and should not read as a POSIX-only fixture.
+		cwd: os.tmpdir(),
 		env: {},
 	});
 	await driver.start();
