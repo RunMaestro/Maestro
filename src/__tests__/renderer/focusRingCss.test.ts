@@ -16,8 +16,10 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import path from 'path';
 
-// A Windows checkout with autocrlf hands back `\r\n` line endings, and the
-// selector lookups below are written with `\n`, so normalize first.
+// Line endings are normalized on the way in: with no `.gitattributes` pinning
+// `eol`, a Windows checkout carries CRLF, and the multi-line selector lookup
+// below searches for a literal `\n`. Without this the block reads as empty and
+// the test asserts against '' rather than against the rule.
 const css = readFileSync(path.join(__dirname, '../..', 'renderer', 'index.css'), 'utf-8').replace(
 	/\r\n/g,
 	'\n'

@@ -199,6 +199,13 @@ export interface DocumentGraphViewProps {
 	onLayoutTypeChange?: (type: MindMapLayoutType) => void;
 	/** Optional SSH remote ID - if provided, shows unavailable message (can't scan remote filesystem) */
 	sshRemoteId?: string;
+	/**
+	 * What to call this graph in the header, the dialog label, and the close
+	 * prompt. Same component either way - a graph over the agent's memory
+	 * directory is a "Memory Graph" to the user, and reading "Document Graph"
+	 * there makes it look like the wrong surface opened.
+	 */
+	title?: string;
 }
 
 /**
@@ -226,6 +233,7 @@ export function DocumentGraphView({
 	defaultLayoutType = 'hierarchical',
 	onLayoutTypeChange,
 	sshRemoteId,
+	title = 'Document Graph',
 }: DocumentGraphViewProps) {
 	const bionifyReadingMode = useSettingsStore((s) => s.bionifyReadingMode);
 	// Graph data state
@@ -1597,7 +1605,7 @@ export function DocumentGraphView({
 				tabIndex={-1}
 				role="dialog"
 				aria-modal="true"
-				aria-label="Document Graph"
+				aria-label={title}
 				className="relative rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none"
 				style={{
 					...resizableModal.style,
@@ -1627,7 +1635,7 @@ export function DocumentGraphView({
 					<div className="flex items-center gap-3 min-w-0 shrink">
 						<Network className="w-5 h-5 shrink-0" style={{ color: theme.colors.accent }} />
 						<h2 className="text-lg font-semibold truncate" style={{ color: theme.colors.textMain }}>
-							Document Graph
+							{title}
 						</h2>
 						<span
 							className="text-xs px-2 py-0.5 rounded truncate"
@@ -2528,7 +2536,7 @@ export function DocumentGraphView({
 			{showCloseConfirmation && (
 				<Modal
 					theme={theme}
-					title="Close Document Graph?"
+					title={`Close ${title}?`}
 					priority={MODAL_PRIORITIES.DOCUMENT_GRAPH + 1}
 					onClose={() => setShowCloseConfirmation(false)}
 					width={400}
@@ -2547,9 +2555,7 @@ export function DocumentGraphView({
 					}
 					initialFocusRef={confirmCloseButtonRef}
 				>
-					<p style={{ color: theme.colors.textDim }}>
-						Are you sure you want to close the Document Graph?
-					</p>
+					<p style={{ color: theme.colors.textDim }}>Are you sure you want to close the {title}?</p>
 				</Modal>
 			)}
 

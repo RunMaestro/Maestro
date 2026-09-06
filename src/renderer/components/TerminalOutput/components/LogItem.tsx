@@ -224,6 +224,30 @@ export const LogItem = memo(
 			? userMessageAlignment === 'left'
 			: userMessageAlignment === 'right';
 
+		// An AI-command entry is a header pill plus an ordinary prompt body. The
+		// body is authored markdown like any other chat message, so it goes through
+		// the markdown stack too - raw source only in edit mode or a shell tab.
+		const renderAiCommandBody = (text: string) =>
+			isAIMode && !markdownEditMode ? (
+				<MarkdownRenderer
+					content={text}
+					theme={theme}
+					onCopy={copyToClipboard}
+					enableBionifyReadingMode={bionifyReadingMode}
+					bionifyIntensity={bionifyIntensity}
+					bionifyAlgorithm={bionifyAlgorithm}
+					fileTree={fileTree}
+					cwd={cwd}
+					projectRoot={projectRoot}
+					onFileClick={onFileClick}
+					sshRemoteId={sshRemoteId}
+					chatLineBreaks
+					chatMath
+				/>
+			) : (
+				<div className="whitespace-pre-wrap text-sm break-words">{linkifyNode(text, theme)}</div>
+			);
+
 		// Command mode: a `!command` run renders as its own terminal-output card
 		// (monospace, ANSI preserved) rather than a markdown chat bubble.
 		if (log.shellCommand) {
@@ -726,7 +750,9 @@ export const LogItem = memo(
 													{log.aiCommand.description}
 												</span>
 											</div>
-											<div>{linkifyNode(filteredText, theme)}</div>
+											<div style={{ color: theme.colors.textMain }}>
+												{renderAiCommandBody(filteredText)}
+											</div>
 										</div>
 									) : isAIMode && !markdownEditMode ? (
 										// Expanded markdown rendering
@@ -802,11 +828,8 @@ export const LogItem = memo(
 												{log.aiCommand.description}
 											</span>
 										</div>
-										<div
-											className="whitespace-pre-wrap text-sm break-words"
-											style={{ color: theme.colors.textMain }}
-										>
-											{linkifyNode(filteredText, theme)}
+										<div style={{ color: theme.colors.textMain }}>
+											{renderAiCommandBody(filteredText)}
 										</div>
 									</div>
 								) : isAIMode && !markdownEditMode ? (

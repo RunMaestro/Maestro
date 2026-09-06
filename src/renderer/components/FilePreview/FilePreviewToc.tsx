@@ -32,6 +32,13 @@ interface FilePreviewTocProps {
 	 * `#` heading palette cannot drift on how a jump works per preview tier.
 	 */
 	onJumpToHeading: (entry: TocEntry, behavior: ScrollBehavior) => void;
+	/**
+	 * Index of the heading the preview is currently scrolled under, or `-1` when
+	 * the reader is above the first heading. Owned by FilePreview because only it
+	 * can measure the document; the list follows it so the highlight is where the
+	 * reader is standing rather than where they last clicked.
+	 */
+	activeIndex: number;
 }
 
 export const FilePreviewToc = React.memo(function FilePreviewToc({
@@ -46,6 +53,7 @@ export const FilePreviewToc = React.memo(function FilePreviewToc({
 	isMarkdown,
 	markdownEditMode,
 	onJumpToHeading,
+	activeIndex,
 }: FilePreviewTocProps) {
 	if (!isMarkdown || markdownEditMode) {
 		return null;
@@ -61,6 +69,10 @@ export const FilePreviewToc = React.memo(function FilePreviewToc({
 			onScrollToBoundary={scrollMarkdownToBoundary}
 			buttonRef={tocButtonRef}
 			overlayRef={tocOverlayRef}
+			// Where the document is scrolled. The overlay keeps its own selection
+			// on top of this - see TocOverlay - so a click or arrow press lights a
+			// row immediately instead of waiting for the jump's scroll to land.
+			activeIndex={activeIndex}
 			// Always handled here: `onJumpToHeading` already covers every preview
 			// tier, so the overlay's own `containerRef` fallback would be a second
 			// jump path that only ever ran when this one was wrong.

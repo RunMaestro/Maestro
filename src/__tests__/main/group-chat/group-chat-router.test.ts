@@ -1457,20 +1457,20 @@ describe('group-chat-router', () => {
 					mockAgentDetector
 				);
 
-				// Past the 15 minute wait budget.
-				await runPollsUntil(() => false, 200);
-
-				// The give-up announcement reaches the log through real file I/O, which
-				// fake timers do not drive: the passes above only flush microtasks, so
-				// on a slow CI disk the append can still be in flight when the log is
-				// read. Wait for it on the real clock.
-				vi.useRealTimers();
-				await vi.waitFor(async () => {
-					const messages = await readLog(chat.logPath);
-					expect(messages.some((m) => m.from === 'system' && m.content.includes('Gave up'))).toBe(
-						true
-					);
-				});
+				// Past the 15 minute wait budget, then keep pumping until the give-up
+				// announcement is actually on disk. Reaching the deadline only starts
+				// it: the announce runs in a floating async chain and writes the log
+				// file, so a fixed number of timer passes followed by a single read
+				// can land between the last poll and that write - which is what made
+				// this test fail on every run rather than only under load.
+				let gaveUp = false;
+				for (let i = 0; i < 400 && !gaveUp; i++) {
+					await vi.advanceTimersByTimeAsync(5000);
+					await vi.advanceTimersByTimeAsync(0);
+					const written = await readLog(chat.logPath);
+					gaveUp = written.some((m) => m.from === 'system' && m.content.includes('Gave up'));
+				}
+				expect(gaveUp).toBe(true);
 				expect(participantSpawnsFor(chat.id)).toHaveLength(0);
 
 				clearPendingParticipants(chat.id);

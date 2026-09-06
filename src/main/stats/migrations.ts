@@ -30,6 +30,8 @@ import {
 	CREATE_SHORTCUT_USAGE_DAILY_SQL,
 	CREATE_MULTI_WINDOW_USAGE_DAILY_SQL,
 	ADD_QUERY_EVENT_TOKEN_COLUMNS,
+	CREATE_RESILIENCE_EVENTS_SQL,
+	CREATE_RESILIENCE_EVENTS_INDEXES_SQL,
 	runStatements,
 } from './schema';
 import { LOG_CONTEXT } from './utils';
@@ -91,6 +93,11 @@ function getMigrations(): Migration[] {
 			version: 9,
 			description: 'Add per-turn token and cost columns to query_events for cost attribution',
 			up: (db) => migrateV9(db),
+		},
+		{
+			version: 10,
+			description: 'Add resilience_events table for Agent Resilience outage tracking',
+			up: (db) => migrateV10(db),
 		},
 	];
 }
@@ -358,6 +365,21 @@ function migrateV9(db: Database.Database): void {
 	}
 
 	logger.debug('Added token and cost columns to query_events table', LOG_CONTEXT);
+}
+
+/**
+ * Migration v10: resilience_events - one row per resolved Agent Resilience
+ * outage, powering the Usage Dashboard's "outages survived" view.
+ *
+ * This lands on rc as v10 rather than main's v9: rc already numbers its
+ * query_events token-columns migration 9, and the two installs must not
+ * disagree about what a version means. The body is idempotent, so renumbering
+ * is safe.
+ */
+function migrateV10(db: Database.Database): void {
+	runStatements(db, CREATE_RESILIENCE_EVENTS_SQL);
+	runStatements(db, CREATE_RESILIENCE_EVENTS_INDEXES_SQL);
+	logger.debug('Created resilience_events table', LOG_CONTEXT);
 }
 
 /**

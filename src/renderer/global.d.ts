@@ -277,6 +277,14 @@ interface MaestroAPI {
 		onFocusRequest: (
 			handler: (payload: { sessionId: string; tabId?: string }) => void
 		) => () => void;
+		/**
+		 * Listen for agents another client (a second desktop window, or a
+		 * web-desktop browser tab) added or closed, so this renderer's session list
+		 * follows along instead of only finding out on reload.
+		 */
+		onLifecycleSync: (
+			handler: (payload: { added: any[]; removedIds: string[] }) => void
+		) => () => void;
 	};
 	groups: {
 		getAll: () => Promise<any[]>;
@@ -457,7 +465,8 @@ interface MaestroAPI {
 			callback: (
 				sessionId: string,
 				tabId: string,
-				aiTabs?: import('../main/web-server/types').AITabData[]
+				aiTabs?: import('../main/web-server/types').AITabData[],
+				activeTabChanged?: boolean
 			) => void
 		) => () => void;
 		onRemoteNewTab: (
@@ -798,6 +807,12 @@ interface MaestroAPI {
 			) => void
 		) => () => void;
 		sendRemoteSaveAutoRunDocResponse: (responseChannel: string, success: boolean) => void;
+		onRemoteAutoRunStateMirror: (
+			callback: (
+				sessionId: string,
+				state: import('../shared/autoRunBroadcast').AutoRunBroadcastState | null
+			) => void
+		) => () => void;
 		onRemoteStopAutoRun: (callback: (sessionId: string) => void) => () => void;
 		onRemoteResetAutoRunDocTasks: (
 			callback: (sessionId: string, filename: string, responseChannel: string) => void
@@ -1162,6 +1177,8 @@ interface MaestroAPI {
 		) => Promise<{ success: boolean }>;
 	};
 	web: {
+		claimAutoRunStart: (sessionId: string) => Promise<boolean>;
+		releaseAutoRunStartClaim: (sessionId: string) => Promise<boolean>;
 		requestNewTab: (sessionId: string, background?: boolean) => Promise<{ tabId: string } | null>;
 		broadcastUserInput: (
 			sessionId: string,
@@ -1170,35 +1187,13 @@ interface MaestroAPI {
 		) => Promise<void>;
 		broadcastAutoRunState: (
 			sessionId: string,
-			state: {
-				isRunning: boolean;
-				totalTasks: number;
-				completedTasks: number;
-				currentTaskIndex: number;
-				isStopping?: boolean;
-				// Multi-document progress fields
-				totalDocuments?: number;
-				currentDocumentIndex?: number;
-				totalTasksAcrossAllDocs?: number;
-				completedTasksAcrossAllDocs?: number;
-				// Error pause fields - surfaced to web/mobile so they can show recovery UI
-				errorPaused?: boolean;
-				errorMessage?: string;
-				errorType?: string;
-				errorRecoverable?: boolean;
-				errorDocumentIndex?: number;
-				errorTaskDescription?: string;
-				// Goal-Driven mode fields - surfaced so web/mobile show goal percent + iteration
-				goalMode?: boolean;
-				goalProgress?: number;
-				goalRationale?: string;
-				goalIteration?: number;
-			} | null
+			state: import('../shared/autoRunBroadcast').AutoRunBroadcastState | null
 		) => Promise<void>;
 		broadcastTabsChange: (
 			sessionId: string,
 			aiTabs: import('../main/web-server/types').AITabData[],
-			activeTabId: string
+			activeTabId: string,
+			activeTabChanged?: boolean
 		) => Promise<void>;
 		broadcastSessionState: (
 			sessionId: string,
@@ -3572,6 +3567,28 @@ interface MaestroAPI {
 			range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'
 		) => Promise<number>;
 		// Record session creation (launched)
+		recordResilience: (event: {
+			id: string;
+			sessionId: string;
+			agentType: string;
+			strategy: 'availability' | 'token-exhaustion';
+			outcome: 'recovered' | 'stopped';
+			startedAt: number;
+			resolvedAt: number;
+			retries: number;
+		}) => Promise<string | null>;
+		getResilience: (range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all') => Promise<
+			Array<{
+				id: string;
+				sessionId: string;
+				agentType: string;
+				strategy: 'availability' | 'token-exhaustion';
+				outcome: 'recovered' | 'stopped';
+				startedAt: number;
+				resolvedAt: number;
+				retries: number;
+			}>
+		>;
 		recordSessionCreated: (event: {
 			sessionId: string;
 			agentType: string;

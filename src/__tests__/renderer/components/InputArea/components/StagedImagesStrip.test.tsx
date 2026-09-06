@@ -228,6 +228,38 @@ describe('StagedImagesStrip', () => {
 		expect(screen.getByLabelText('Open image organizer')).toBeInTheDocument();
 	});
 
+	// The number is how you name an image in the message ("annotate screenshot
+	// 3"), so it has to be readable before a drag starts, not only during one.
+	describe('slot numbers', () => {
+		/** The badge is faded rather than unmounted, so read its opacity. */
+		function badgeOf(index: number): HTMLElement {
+			return within(tileOf(index)).getByText(String(index + 1));
+		}
+
+		it('labels every thumbnail once there is more than one to pick from', () => {
+			renderStrip();
+
+			expect(badgeOf(0)).toHaveStyle({ opacity: '1' });
+			expect(badgeOf(1)).toHaveStyle({ opacity: '1' });
+		});
+
+		it('leaves a lone thumbnail unlabelled, since there is nothing to pick', () => {
+			renderStrip({ stagedImages: ['data:image/png;base64,a'] });
+
+			expect(badgeOf(0)).toHaveStyle({ opacity: '0' });
+		});
+
+		// Mid-drag the number answers a different question - "which slot am I
+		// aiming at" - so it appears even when there is only one image.
+		it('labels a lone thumbnail while a drag is in flight', () => {
+			renderStrip({ stagedImages: ['data:image/png;base64,a'] });
+
+			fireEvent.dragStart(thumbOf(0), { dataTransfer: makeDataTransfer() });
+
+			expect(badgeOf(0)).toHaveStyle({ opacity: '1' });
+		});
+	});
+
 	it('carries the slot reference as plain text so a drop on the composer reads it', () => {
 		renderStrip();
 		const dataTransfer = makeDataTransfer();

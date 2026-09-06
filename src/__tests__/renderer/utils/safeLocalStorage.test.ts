@@ -11,9 +11,13 @@
  * rather than a lost preference.
  */
 
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { installLocalStorageMock } from '../../helpers/mockLocalStorage';
-import { safeLocalStorage } from '../../../renderer/utils/safeLocalStorage';
+import {
+	safeLocalStorage,
+	safeSessionStorage,
+	writeStorageValue,
+} from '../../../renderer/utils/safeLocalStorage';
 
 /** Restore a working Storage so a hostile define cannot leak into later tests. */
 afterEach(() => {
@@ -67,5 +71,59 @@ describe('safeLocalStorage', () => {
 		expect(() => safeLocalStorage()?.getItem('anything')).not.toThrow();
 		expect(safeLocalStorage()?.getItem('anything')).toBeUndefined();
 		expect(() => safeLocalStorage()?.setItem('anything', 'value')).not.toThrow();
+	});
+});
+
+describe('safeSessionStorage', () => {
+	it('returns the tab-scoped Storage when there is one', () => {
+		const storage = safeSessionStorage();
+
+		expect(storage).not.toBeNull();
+		storage?.setItem('probe', 'value');
+		expect(storage?.getItem('probe')).toBe('value');
+	});
+
+	it('returns null instead of throwing when reading the global throws', () => {
+		const original = Object.getOwnPropertyDescriptor(window, 'sessionStorage');
+		Object.defineProperty(window, 'sessionStorage', {
+			configurable: true,
+			get() {
+				throw new Error('storage blocked');
+			},
+		});
+
+		try {
+			expect(() => safeSessionStorage()).not.toThrow();
+			expect(safeSessionStorage()).toBeNull();
+		} finally {
+			if (original) Object.defineProperty(window, 'sessionStorage', original);
+		}
+	});
+});
+
+describe('writeStorageValue', () => {
+	it('writes through a working Storage', () => {
+		const store = installLocalStorageMock();
+		writeStorageValue(safeLocalStorage(), 'key', 'value');
+		expect(store.get('key')).toBe('value');
+	});
+
+	it('swallows a Storage that refuses the write', () => {
+		// The guarded accessor only covers REACHING the object; setItem itself
+		// still throws on a full quota or in Safari private mode, and the contract
+		// is that a failed write costs the user their persistence, not their pane.
+		const blocked = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+			throw new DOMException('QuotaExceededError');
+		});
+
+		try {
+			expect(() => writeStorageValue(safeLocalStorage(), 'key', 'value')).not.toThrow();
+		} finally {
+			blocked.mockRestore();
+		}
+	});
+
+	it('is a no-op when there is no Storage', () => {
+		expect(() => writeStorageValue(null, 'key', 'value')).not.toThrow();
 	});
 });

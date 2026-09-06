@@ -320,15 +320,22 @@ export class BroadcastService {
 	}
 
 	/**
-	 * Broadcast tab change to all connected web clients
-	 * Called when the tabs array or active tab changes in a session
+	 * Broadcast tab inventory to all connected web clients.
+	 * `activeTabChanged` is true only for an explicit desktop selection, not for
+	 * lifecycle replacements such as closing the active tab.
 	 */
-	broadcastTabsChange(sessionId: string, aiTabs: AITabData[], activeTabId: string): void {
+	broadcastTabsChange(
+		sessionId: string,
+		aiTabs: AITabData[],
+		activeTabId: string,
+		activeTabChanged = false
+	): void {
 		this.broadcastToAll({
 			type: 'tabs_changed',
 			sessionId,
 			aiTabs,
 			activeTabId,
+			activeTabChanged,
 			timestamp: Date.now(),
 		});
 	}

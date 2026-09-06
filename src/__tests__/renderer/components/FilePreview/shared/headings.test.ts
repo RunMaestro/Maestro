@@ -8,6 +8,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
+	findActiveHeadingSlug,
 	headingLevelColor,
 	scrollToHeadingSlug,
 } from '../../../../../renderer/components/FilePreview/shared/headings';
@@ -99,5 +100,70 @@ describe('headingLevelColor', () => {
 	it('falls back to body text for a level outside 1-6', () => {
 		expect(headingLevelColor(mockTheme, 0)).toBe(mockTheme.colors.textMain);
 		expect(headingLevelColor(mockTheme, 9)).toBe(mockTheme.colors.textMain);
+	});
+});
+
+describe('findActiveHeadingSlug', () => {
+	/**
+	 * jsdom lays nothing out, so every rect is zero. Stub the tops so the
+	 * binary-search walk has a real document shape to reason about: the scroller
+	 * fold sits at y=0 and each heading is placed relative to it.
+	 */
+	function layout(container: HTMLElement, tops: Record<string, number>) {
+		const scroller = document.createElement('div');
+		scroller.getBoundingClientRect = () => ({ top: 0 }) as DOMRect;
+		for (const [slug, top] of Object.entries(tops)) {
+			const el = container.querySelector(`#${slug}`) as HTMLElement;
+			el.getBoundingClientRect = () => ({ top }) as DOMRect;
+		}
+		return scroller;
+	}
+
+	it('returns the last heading at or above the fold', () => {
+		const container = buildDocument();
+		const scroller = layout(container, { 'section-a': -400, 'sub-of-a': -120, 'section-b': 300 });
+		expect(findActiveHeadingSlug(scroller, container)).toBe('sub-of-a');
+	});
+
+	it('counts a heading a hair off the top as the section you are in', () => {
+		const container = buildDocument();
+		const scroller = layout(container, { 'section-a': -400, 'sub-of-a': 4, 'section-b': 900 });
+		expect(findActiveHeadingSlug(scroller, container)).toBe('sub-of-a');
+	});
+
+	it('returns null when the view sits above the first heading', () => {
+		const container = buildDocument();
+		const scroller = layout(container, { 'section-a': 50, 'sub-of-a': 200, 'section-b': 600 });
+		expect(findActiveHeadingSlug(scroller, container)).toBeNull();
+	});
+
+	it('returns null for a document with no headings', () => {
+		const container = document.createElement('div');
+		container.innerHTML = '<p>no headings here</p>';
+		const scroller = document.createElement('div');
+		expect(findActiveHeadingSlug(scroller, container)).toBeNull();
+	});
+
+	it('returns null when either element is missing', () => {
+		expect(findActiveHeadingSlug(null, buildDocument())).toBeNull();
+		expect(findActiveHeadingSlug(document.createElement('div'), null)).toBeNull();
+	});
+
+	it('prefers a tier override over the DOM walk', () => {
+		const container = buildDocument();
+		const scroller = layout(container, { 'section-a': -400, 'sub-of-a': -120, 'section-b': 300 });
+		expect(findActiveHeadingSlug(scroller, container, () => 'section-b')).toBe('section-b');
+	});
+
+	it('lets an override report "above the first heading" without falling back', () => {
+		const container = buildDocument();
+		const scroller = layout(container, { 'section-a': -400, 'sub-of-a': -120, 'section-b': 300 });
+		expect(findActiveHeadingSlug(scroller, container, () => null)).toBeNull();
+	});
+
+	it('falls back to the DOM walk when the override has no opinion', () => {
+		const container = buildDocument();
+		const scroller = layout(container, { 'section-a': -400, 'sub-of-a': -120, 'section-b': 300 });
+		expect(findActiveHeadingSlug(scroller, container, () => undefined)).toBe('sub-of-a');
 	});
 });

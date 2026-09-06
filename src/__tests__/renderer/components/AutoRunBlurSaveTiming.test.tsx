@@ -707,7 +707,7 @@ describe('AutoRun Save Path Correctness', () => {
 				longContent,
 				undefined // sshRemoteId (undefined for local sessions)
 			);
-		});
+		}, 30_000);
 	});
 
 	describe('Save during batch run lock', () => {

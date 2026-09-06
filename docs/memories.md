@@ -49,8 +49,9 @@ Press `/` or `Cmd+F` (`Ctrl+F` on Windows/Linux) to jump straight to the box fro
 
 The **Graph** button in the toolbar - or `Cmd+G` (`Ctrl+G` on Windows/Linux) -
 opens the Document Graph over the memory directory, showing how the entries link
-to each other. `MEMORY.md` sits in the middle, since it is the index every other
-entry hangs off.
+to each other. It is titled **Memory Graph** when opened this way, so it is
+obvious which set of files you are looking at. `MEMORY.md` sits in the middle,
+since it is the index every other entry hangs off.
 
 Memories that link to nothing appear in the **Unlinked** band at the bottom -
 the same set the toolbar's chip narrows to, seen as a picture instead of a
@@ -64,7 +65,7 @@ oldest on the left, which is the quickest way to spot advice that has gone
 stale.
 
 **`Esc` brings you back here.** A graph opened this way skips the usual "close
-the Document Graph?" prompt, because there is nothing to lose: you land back in
+the Memory Graph?" prompt, because there is nothing to lose: you land back in
 the viewer, and `Cmd+G` puts you straight back in the graph. (You can turn that
 prompt off everywhere in **Settings → Display → Document Graph**.)
 

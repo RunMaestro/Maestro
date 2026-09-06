@@ -17,6 +17,7 @@
  */
 
 import React, { RefObject, useCallback, useEffect, useRef, useState } from 'react';
+import { useScrollIntoView } from '../../hooks/ui/useScrollIntoView';
 import { List, ChevronUp, ChevronDown } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { TocEntry } from './types';
@@ -52,6 +53,19 @@ interface TocOverlayProps {
 	 * cancels the one still in flight.
 	 */
 	onSelectEntry?: (entry: TocEntry, behavior: ScrollBehavior) => boolean;
+	/**
+	 * Index of the entry the HOST document is currently scrolled under, or `-1`
+	 * when the reader is above the first heading. Optional: a surface that cannot
+	 * measure its own scroll simply never passes it, and the list then follows
+	 * only what the user clicks.
+	 *
+	 * Deliberately separate from the row this overlay LIGHTS. A click or arrow
+	 * press must light its row immediately rather than waiting for the jump's
+	 * scroll to land, and near the bottom of a document the scroll clamps so
+	 * `activeIndex` stops changing - a list driven only by the document would
+	 * freeze there and the last few headings would be unreachable by keyboard.
+	 */
+	activeIndex?: number;
 	/** Accessible label / tooltip for the toggle button. */
 	buttonTitle?: string;
 	/**
@@ -74,19 +88,44 @@ export const TocOverlay = React.memo(function TocOverlay({
 	buttonRef,
 	overlayRef,
 	onSelectEntry,
+	activeIndex,
 	buttonTitle = 'Table of Contents',
 	searchShortcutKey,
 }: TocOverlayProps) {
-	const entryButtonRefs = useRef<Array<HTMLButtonElement | null>>([]);
-	const [activeIndex, setActiveIndex] = useState(0);
+	// The row this list LIGHTS, which is not the same question as where the
+	// document is scrolled - see the `activeIndex` prop. `-1` is a real value:
+	// the reader is above the first heading, so no row is lit and the Top sash
+	// takes the accent rail instead.
+	const [selectedIndex, setSelectedIndex] = useState(activeIndex ?? 0);
+	// Keeps the lit row visible. Needed because the selection now MOVES ON ITS
+	// OWN as the reader scrolls the document - without this the highlight walks
+	// off the bottom of the list and the panel looks like it stopped tracking.
+	// Instant, not smooth: the reader may be scrolling continuously, and a
+	// per-section animation would never finish.
+	const entryButtonRefs = useScrollIntoView<HTMLButtonElement>(
+		open,
+		selectedIndex,
+		entries.length,
+		'auto'
+	);
 	const prevOpenRef = useRef(false);
 
-	// Focus the first entry whenever the overlay opens - supports keyboard-only nav.
+	// Follow the document. Only fires when the reader crosses into a new section.
+	useEffect(() => {
+		if (activeIndex === undefined) return;
+		setSelectedIndex(activeIndex);
+	}, [activeIndex]);
+
+	// Focus the current entry whenever the overlay opens - supports keyboard-only nav.
 	useEffect(() => {
 		if (open && !prevOpenRef.current && entries.length > 0) {
-			setActiveIndex(0);
+			const landing = activeIndex ?? 0;
+			setSelectedIndex(landing);
+			// A `-1` landing lights no row, so focus the first one rather than
+			// indexing off the end of the ref array.
+			const focusIndex = Math.max(landing, 0);
 			requestAnimationFrame(() => {
-				entryButtonRefs.current[0]?.focus();
+				entryButtonRefs.current[focusIndex]?.focus();
 			});
 		}
 		prevOpenRef.current = open;
@@ -114,13 +153,13 @@ export const TocOverlay = React.memo(function TocOverlay({
 		e.preventDefault();
 		e.stopPropagation();
 		const last = entries.length - 1;
-		let next = activeIndex;
-		if (e.key === 'ArrowDown') next = Math.min(activeIndex + 1, last);
-		else if (e.key === 'ArrowUp') next = Math.max(activeIndex - 1, 0);
+		let next = selectedIndex;
+		if (e.key === 'ArrowDown') next = Math.min(selectedIndex + 1, last);
+		else if (e.key === 'ArrowUp') next = Math.max(selectedIndex - 1, 0);
 		else if (e.key === 'Home') next = 0;
 		else if (e.key === 'End') next = last;
-		if (next === activeIndex) return;
-		setActiveIndex(next);
+		if (next === selectedIndex) return;
+		setSelectedIndex(next);
 		entryButtonRefs.current[next]?.focus();
 		// Instant scroll on keyboard nav so rapid arrow presses stay responsive.
 		scrollToEntry(entries[next], 'auto');
@@ -196,9 +235,13 @@ export const TocOverlay = React.memo(function TocOverlay({
 						}}
 						className="w-full px-3 py-2 text-left text-xs border-b transition-colors flex items-center gap-2 hover:brightness-110 flex-shrink-0"
 						style={{
-							backgroundColor: `${theme.colors.accent}15`,
+							// Lit when the reader is above the first heading: the row that
+							// says where they are standing.
+							backgroundColor:
+								selectedIndex < 0 ? `${theme.colors.accent}25` : `${theme.colors.accent}15`,
 							borderColor: theme.colors.border,
 							color: theme.colors.textMain,
+							boxShadow: selectedIndex < 0 ? `inset 2px 0 0 ${theme.colors.accent}` : undefined,
 						}}
 						title="Jump to top"
 					>
@@ -225,7 +268,7 @@ export const TocOverlay = React.memo(function TocOverlay({
 							};
 							const entryColor = levelColors[entry.level] || theme.colors.textMain;
 
-							const isActive = index === activeIndex;
+							const isActive = index === selectedIndex;
 							return (
 								<button
 									key={`${entry.slug}-${index}`}
@@ -233,7 +276,7 @@ export const TocOverlay = React.memo(function TocOverlay({
 										entryButtonRefs.current[index] = el;
 									}}
 									onClick={() => {
-										setActiveIndex(index);
+										setSelectedIndex(index);
 										// Click is deliberate - keep smooth scroll for visual continuity.
 										scrollToEntry(entry, 'smooth');
 										// Panel stays open so the user can click several entries.

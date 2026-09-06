@@ -1576,10 +1576,15 @@ const fontScale = useFontScale('filePreview.fontScale');
 - `variant="inline"` - bordered squares for a toolbar or stats bar (Director's Notes).
 - `variant="floating"` - frosted pill for overlaying a scrolling pane (file preview,
   pinned top-right as the mirror of the Table of Contents button at bottom-right).
+  The Auto Run panel uses the same treatment over its document, so zooming reads
+  identically whether a document is open in a file tab or in the Right Bar. Pin it
+  with a `sticky top-* z-20 h-0` row rather than `absolute`: sticky needs no
+  positioned ancestor and the zero height keeps the pill from displacing content.
 - `size` - `'md'` (default) or `'sm'`, which drops the buttons from `w-7 h-7` to
-  `w-6 h-6` and the icons from `w-4` to `w-3.5`. Use `'sm'` in a dense `text-xs`
-  button row (the Auto Run toolbar), where the default squares stand a couple of
-  pixels taller than the row and read heavier than the buttons beside them.
+  `w-6 h-6` and the icons from `w-4` to `w-3.5`. Use `'sm'` where the surface is
+  narrow (the Auto Run panel in the Right Bar) or in a dense `text-xs` button row,
+  where the default squares stand a couple of pixels taller than the row and read
+  heavier than the buttons beside them.
 - **A pane with a read mode and an edit mode gets two scales, not one.** Auto Run
   keeps `autoRun.previewFontScale` and `autoRun.editFontScale` and passes whichever
   matches the current mode; reading rendered prose and editing Markdown source are

@@ -19,6 +19,7 @@ import type { Session, SettingsTab, AgentError } from '../types';
 import type { GitStreamingOperation } from '../../shared/gitUtils';
 import type { SerializableWizardState } from '../components/Wizard';
 import type { ConductorBadge } from '../constants/conductorBadges';
+import { UI_SURFACES } from '../../shared/uiSurfaces';
 import { logger } from '../utils/logger';
 
 // ============================================================================
@@ -476,6 +477,28 @@ export const DESTINATION_MODALS: ReadonlySet<ModalId> = new Set<ModalId>([
 	'agentSessions',
 	'memoryViewer',
 ]);
+
+/**
+ * Shortcut ids that open a destination surface.
+ *
+ * The window-level keyboard handler blocks most shortcuts while a modal is up,
+ * so a destination hotkey only reaches its branch if it is on that guard's
+ * allowlist. The allowlist used to be a hardcoded chord test (Alt+Cmd plus
+ * l/p/u/s), which let exactly three destinations through and killed the rest:
+ * Director's Notes to Usage Dashboard worked, Usage Dashboard back to
+ * Director's Notes did nothing, because `Opt+Cmd+U` matched the chord and
+ * `Cmd+Shift+O` did not. Switching between two surfaces worked in one
+ * direction only, which reads as a dead key.
+ *
+ * Derived from `UI_SURFACES` rather than hand-listed, so adding a destination
+ * (or rebinding one) cannot silently drop it back out of the guard. A user who
+ * rebinds a surface keeps a working hotkey, which a chord test cannot promise.
+ */
+export const DESTINATION_SHORTCUT_IDS: ReadonlySet<string> = new Set(
+	UI_SURFACES.filter(
+		(surface) => DESTINATION_MODALS.has(surface.modal as ModalId) && surface.shortcutId
+	).map((surface) => surface.shortcutId as string)
+);
 
 /**
  * Destinations that are not modal-store entries (currently just the Document

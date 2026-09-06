@@ -41,6 +41,8 @@ import {
 import { groupAccountKeysByIdentity } from '../../../shared/claudeAccountIdentity';
 import { useQuotaAccounts } from './quota/useQuotaAccounts';
 import { useQuotaRefresh } from './quota/useQuotaRefresh';
+import { buildQuotaSummary } from './footerSummary';
+import { usePublishFooterSummary } from './useFooterSummary';
 
 const TEST_ID_PREFIX = 'claude-plan';
 /** Provider id used to key this panel's hidden-account set in uiStore. */
@@ -216,6 +218,37 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 		}
 		return named;
 	}, [snapshots]);
+
+	// Footer readout. The peak is the highest of the three windows across every
+	// configured account: one account pinned at 96% is the fact worth surfacing,
+	// and any average would bury it under three idle ones.
+	const quotaFooter = useMemo(() => {
+		let peak: number | null = null;
+		let needsLogin = 0;
+		for (const key of configuredAccountKeys) {
+			const snap = snapshots[key];
+			if (!snap) continue;
+			if (snap.authState === 'unauthenticated') {
+				needsLogin++;
+				continue;
+			}
+			for (const window of [snap.session, snap.weekAllModels, snap.weekSonnetOnly]) {
+				if (typeof window?.percent === 'number' && (peak === null || window.percent > peak)) {
+					peak = window.percent;
+				}
+			}
+		}
+		return { peak, needsLogin };
+	}, [configuredAccountKeys, snapshots]);
+	usePublishFooterSummary(
+		'anthropic-usage',
+		buildQuotaSummary({
+			accounts: configuredAccountKeys.length,
+			needsLogin: quotaFooter.needsLogin,
+			peakPercent: quotaFooter.peak,
+			sampledAtMs: lastSampledAtMs,
+		})
+	);
 
 	// Hidden-account state (only meaningful in the showAllAccounts list view).
 	const hiddenKeys = useUIStore((s) => s.hiddenQuotaAccounts[PROVIDER_ID]);
