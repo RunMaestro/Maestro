@@ -167,6 +167,8 @@ export interface PersistenceHandlerDependencies {
 	 * plugin subsystem is absent (emits are then simply skipped).
 	 */
 	emitPluginEvent?: (event: PluginEvent) => void;
+	/** Resolve only after the deferred sessions document reaches disk. */
+	flushSessionWrites: () => Promise<void>;
 }
 
 /**
@@ -192,7 +194,14 @@ export interface PersistenceHandlers {
 export function registerPersistenceHandlers(
 	deps: PersistenceHandlerDependencies
 ): PersistenceHandlers {
-	const { settingsStore, sessionsStore, groupsStore, getWebServer, emitPluginEvent } = deps;
+	const {
+		settingsStore,
+		sessionsStore,
+		groupsStore,
+		getWebServer,
+		emitPluginEvent,
+		flushSessionWrites,
+	} = deps;
 
 	// Ids closed by a client, newest last. Read by every write path to refuse a
 	// stale peer flush that would resurrect a closed agent (see
@@ -584,6 +593,9 @@ export function registerPersistenceHandlers(
 
 			try {
 				sessionsStore.set('sessions', merged);
+				// Preserve the renderer acknowledgement contract: true means this
+				// revision reached disk, not merely the in-memory cache.
+				await flushSessionWrites();
 			} catch (err) {
 				const code = (err as NodeJS.ErrnoException).code;
 				// Recoverable filesystem errors - the next debounced flush will
@@ -716,6 +728,7 @@ export function registerPersistenceHandlers(
 
 		try {
 			sessionsStore.set('sessions', sessions);
+			await flushSessionWrites();
 		} catch (err) {
 			// ENOSPC, ENFILE, or JSON serialization failures are recoverable -
 			// the next debounced write will succeed when conditions improve.
