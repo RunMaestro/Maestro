@@ -3604,10 +3604,16 @@ describe('TerminalOutput', () => {
 						isUnread: false,
 					},
 				],
+				// New reference so the activeTab memo (keyed on aiTabs) recomputes
+				// the test's mocked legacy `tabs` value after rerender.
+				aiTabs: [{}] as any,
 			};
 			rerender(<TerminalOutput {...createDefaultProps({ session: newSession })} />);
 			await act(async () => {
-				vi.advanceTimersByTime(50);
+				// The MutationObserver callback is a microtask that schedules the
+				// follow-scroll rAF. Drain microtasks between timer steps so the test
+				// cannot advance an empty frame queue on a loaded CI runner.
+				await vi.advanceTimersByTimeAsync(50);
 			});
 
 			expect(scrollToSpy).toHaveBeenCalled();

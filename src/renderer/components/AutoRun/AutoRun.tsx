@@ -77,6 +77,10 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 import { notifyToast } from '../../stores/notificationStore';
 import { useImageAnnotatorStore } from '../ImageAnnotator/imageAnnotatorStore';
+import {
+	MIRRORED_RUN_CONTROL_TITLE,
+	useIsMirroredBatchRun,
+} from '../../hooks/batch/useAutoRunStateMirror';
 
 // Inner implementation component
 const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInner(
@@ -140,6 +144,8 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		false;
 	const isAgentBusy = sessionState === 'busy' || sessionState === 'connecting';
 	const isAutoRunActive = batchRunState?.isRunning || false;
+	// Mirrored from another Maestro window - visible, but not steerable here.
+	const isMirroredRun = useIsMirroredBatchRun(sessionId);
 	const isRunningRef = useRef(isAutoRunActive);
 	useEffect(() => {
 		isRunningRef.current = isAutoRunActive;
@@ -760,6 +766,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 					isRecoverable={batchError.recoverable || false}
 					onResumeAfterError={onResumeAfterError}
 					onAbortBatchOnError={onAbortBatchOnError}
+					disabledReason={isMirroredRun ? MIRRORED_RUN_CONTROL_TITLE : undefined}
 				/>
 			)}
 
