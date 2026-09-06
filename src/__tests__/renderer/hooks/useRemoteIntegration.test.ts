@@ -87,7 +87,12 @@ describe('useRemoteIntegration', () => {
 	let onRemoteNewTabHandler: ((sessionId: string, responseChannel: string) => void) | undefined;
 	let onRemoteCloseTabHandler: ((sessionId: string, tabId: string) => void) | undefined;
 	let onRemoteRenameTabHandler:
-		| ((sessionId: string, tabId: string, newName: string) => void)
+		| ((
+				sessionId: string,
+				tabId: string,
+				newName: string,
+				responseChannel: string
+		  ) => void | Promise<void>)
 		| undefined;
 	let onRemoteStarTabHandler:
 		| ((sessionId: string, tabId: string, starred: boolean) => void)
@@ -181,6 +186,7 @@ describe('useRemoteIntegration', () => {
 			onRemoteRenameTabHandler = handler;
 			return () => {};
 		}),
+		sendRemoteRenameTabResponse: vi.fn(),
 		onRemoteStarTab: vi.fn().mockImplementation((handler) => {
 			onRemoteStarTabHandler = handler;
 			return () => {};
@@ -455,6 +461,9 @@ describe('useRemoteIntegration', () => {
 		useConcertoCreationActivityStore.setState({ tracks: [] });
 		clearConcertoDesignerFramesForTests();
 		clearDesktopAiTabSelections();
+		mockClaude.updateSessionName.mockResolvedValue(undefined);
+		mockAgentSessions.setSessionName.mockResolvedValue(undefined);
+		mockHistory.updateSessionName.mockResolvedValue(true);
 
 		window.maestro = {
 			...originalMaestro,
@@ -1673,7 +1682,7 @@ describe('useRemoteIntegration', () => {
 	});
 
 	describe('remote rename tab', () => {
-		it('renames tab and persists to agent session (claude-code)', () => {
+		it('renames tab and persists to agent session before reporting success', async () => {
 			const tab = createMockTab({ id: 'tab-1', agentSessionId: 'agent-session-1' });
 			const session = createMockSession({
 				id: 'session-1',
@@ -1685,8 +1694,8 @@ describe('useRemoteIntegration', () => {
 
 			renderHook(() => useRemoteIntegration(deps));
 
-			act(() => {
-				onRemoteRenameTabHandler?.('session-1', 'tab-1', 'New Tab Name');
+			await act(async () => {
+				await onRemoteRenameTabHandler?.('session-1', 'tab-1', 'New Tab Name', 'rename-response');
 			});
 
 			const updatedSession = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
@@ -1699,20 +1708,68 @@ describe('useRemoteIntegration', () => {
 				'New Tab Name'
 			);
 			expect(mockHistory.updateSessionName).toHaveBeenCalledWith('agent-session-1', 'New Tab Name');
+			expect(mockProcess.sendRemoteRenameTabResponse).toHaveBeenCalledWith('rename-response', {
+				success: true,
+			});
 		});
 
-		it('ignores rename when tab not found', () => {
+		it('reports failure when session is not found', async () => {
+			const deps = createDeps({ sessions: [createMockSession({ id: 'session-1' })] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			await act(async () => {
+				await onRemoteRenameTabHandler?.('missing-session', 'tab-1', 'New Name', 'rename-response');
+			});
+
+			expect(mockProcess.sendRemoteRenameTabResponse).toHaveBeenCalledWith('rename-response', {
+				success: false,
+				error: 'Session not found: missing-session',
+			});
+			expect(mockClaude.updateSessionName).not.toHaveBeenCalled();
+		});
+
+		it('reports failure when tab is not found', async () => {
 			const session = createMockSession({ id: 'session-1' });
 			const deps = createDeps({ sessions: [session] });
 
 			renderHook(() => useRemoteIntegration(deps));
 
-			act(() => {
-				onRemoteRenameTabHandler?.('session-1', 'nonexistent', 'New Name');
+			await act(async () => {
+				await onRemoteRenameTabHandler?.('session-1', 'nonexistent', 'New Name', 'rename-response');
 			});
 
 			expect(mockClaude.updateSessionName).not.toHaveBeenCalled();
 			expect(mockAgentSessions.setSessionName).not.toHaveBeenCalled();
+			expect(mockProcess.sendRemoteRenameTabResponse).toHaveBeenCalledWith('rename-response', {
+				success: false,
+				error: 'Tab not found: nonexistent',
+			});
+		});
+
+		it('does not report success when persistence fails', async () => {
+			mockClaude.updateSessionName.mockRejectedValueOnce(new Error('disk full'));
+			const tab = createMockTab({ id: 'tab-1', agentSessionId: 'agent-session-1', name: 'Old' });
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [tab],
+				projectRoot: '/test/project',
+				toolType: 'claude-code',
+			});
+			const deps = createDeps({ sessions: [session] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			await act(async () => {
+				await onRemoteRenameTabHandler?.('session-1', 'tab-1', 'New Name', 'rename-response');
+			});
+
+			const updatedSession = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
+			expect(updatedSession?.aiTabs.find((t) => t.id === 'tab-1')?.name).toBe('Old');
+			expect(mockProcess.sendRemoteRenameTabResponse).toHaveBeenCalledWith('rename-response', {
+				success: false,
+				error: 'disk full',
+			});
 		});
 	});
 

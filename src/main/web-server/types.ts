@@ -326,11 +326,28 @@ export type NewTabCallback = (
 	background?: boolean
 ) => Promise<{ tabId: string } | null>;
 export type CloseTabCallback = (sessionId: string, tabId: string) => Promise<boolean>;
+export interface RenameTabResult {
+	success: boolean;
+	error?: string;
+}
+
+export function normalizeRenameTabResult(result: unknown): RenameTabResult {
+	if (typeof result === 'boolean') return { success: result };
+	if (result && typeof result === 'object' && 'success' in result) {
+		const candidate = result as { success?: unknown; error?: unknown };
+		return {
+			success: candidate.success === true,
+			...(typeof candidate.error === 'string' ? { error: candidate.error } : {}),
+		};
+	}
+	return { success: false, error: 'Invalid rename tab response' };
+}
+
 export type RenameTabCallback = (
 	sessionId: string,
 	tabId: string,
 	newName: string
-) => Promise<boolean>;
+) => Promise<boolean | RenameTabResult>;
 export type StarTabCallback = (
 	sessionId: string,
 	tabId: string,

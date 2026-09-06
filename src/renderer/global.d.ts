@@ -475,8 +475,12 @@ interface MaestroAPI {
 		sendRemoteNewTabResponse: (responseChannel: string, result: { tabId: string } | null) => void;
 		onRemoteCloseTab: (callback: (sessionId: string, tabId: string) => void) => () => void;
 		onRemoteRenameTab: (
-			callback: (sessionId: string, tabId: string, newName: string) => void
+			callback: (sessionId: string, tabId: string, newName: string, responseChannel: string) => void
 		) => () => void;
+		sendRemoteRenameTabResponse: (
+			responseChannel: string,
+			result: { success: boolean; error?: string }
+		) => void;
 		onRemoteStarTab: (
 			callback: (sessionId: string, tabId: string, starred: boolean) => void
 		) => () => void;

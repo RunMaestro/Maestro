@@ -4,6 +4,7 @@ import type { WebServer } from '../WebServer';
 import type { WebServerFactoryDependencies } from '../web-server-factory';
 import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
+import { normalizeRenameTabResult } from '../types';
 
 export function registerTabCallbacks(
 	server: WebServer,
@@ -102,15 +103,36 @@ export function registerTabCallbacks(
 		const targetWindow = resolveSessionWindow(sessionId);
 		if (!targetWindow) {
 			logger.warn('No owning window is available for renameTab', 'WebServer');
-			return false;
+			return { success: false, error: 'No owning window is available for renameTab' };
 		}
 
 		if (!isWebContentsAvailable(targetWindow)) {
 			logger.warn('webContents is not available for renameTab', 'WebServer');
-			return false;
+			return { success: false, error: 'webContents is not available for renameTab' };
 		}
-		targetWindow.webContents.send('remote:renameTab', sessionId, tabId, newName);
-		return true;
+
+		return new Promise((resolve) => {
+			const responseChannel = `remote:renameTab:response:${randomUUID()}`;
+			let resolved = false;
+
+			const handleResponse = (_event: Electron.IpcMainEvent, result: unknown) => {
+				if (resolved) return;
+				resolved = true;
+				clearTimeout(timeoutId);
+				resolve(normalizeRenameTabResult(result));
+			};
+
+			ipcMain.once(responseChannel, handleResponse);
+			targetWindow.webContents.send('remote:renameTab', sessionId, tabId, newName, responseChannel);
+
+			const timeoutId = setTimeout(() => {
+				if (resolved) return;
+				resolved = true;
+				ipcMain.removeListener(responseChannel, handleResponse);
+				logger.warn(`renameTab callback timed out for session ${sessionId}`, 'WebServer');
+				resolve({ success: false, error: 'Timed out waiting for renameTab response' });
+			}, 5000);
+		});
 	});
 
 	server.setStarTabCallback(async (sessionId: string, tabId: string, starred: boolean) => {

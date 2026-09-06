@@ -20,6 +20,7 @@ import {
 	resolveUiSurfaceTab,
 	surfaceTabIds,
 } from '../../../../shared/uiSurfaces';
+import { normalizeRenameTabResult } from '../../types';
 
 /**
  * Handle select_tab message - select a tab within a session
@@ -168,18 +169,28 @@ export function handleRenameTab(
 	// newName can be empty string to clear the name
 	ctx.callbacks
 		.renameTab(sessionId, tabId, newName || '')
-		.then((success) => {
+		.then((result) => {
+			const renameResult = normalizeRenameTabResult(result);
 			ctx.send(client, {
 				type: 'rename_tab_result',
-				success,
+				success: renameResult.success,
 				sessionId,
 				tabId,
 				newName: newName || '',
+				...(renameResult.error ? { error: renameResult.error } : {}),
 				requestId: message.requestId,
 			});
 		})
 		.catch((error) => {
-			ctx.sendError(client, `Failed to rename tab: ${error.message}`);
+			ctx.send(client, {
+				type: 'rename_tab_result',
+				success: false,
+				sessionId,
+				tabId,
+				newName: newName || '',
+				error: `Failed to rename tab: ${error.message}`,
+				requestId: message.requestId,
+			});
 		});
 }
 
