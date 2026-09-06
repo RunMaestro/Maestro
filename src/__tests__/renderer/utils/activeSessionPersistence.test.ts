@@ -14,10 +14,7 @@ import {
 	WEB_ACTIVE_SESSION_STORAGE_KEY,
 } from '../../../renderer/utils/activeSessionPersistence';
 import { isWebDesktop } from '../../../renderer/utils/runtimeContext';
-import {
-	installLocalStorageMock,
-	installSessionStorageMock,
-} from '../../helpers/mockLocalStorage';
+import { installLocalStorageMock, installSessionStorageMock } from '../../helpers/mockLocalStorage';
 
 vi.mock('../../../renderer/utils/runtimeContext', () => ({
 	isWebDesktop: vi.fn(() => false),

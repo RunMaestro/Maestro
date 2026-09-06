@@ -3778,4 +3778,3 @@ vi.mock('../../../renderer/hooks/ui/useViewportBreakpoint', async (importOrigina
 	usePhoneLayout: vi.fn(() => false),
 }));
 import { usePhoneLayout } from '../../../renderer/hooks/ui/useViewportBreakpoint';
-
