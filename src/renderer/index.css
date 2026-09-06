@@ -399,12 +399,17 @@ textarea::placeholder {
 	}
 }
 
+/* Scrolling stripes for an active progress bar. The stripes live on an
+   oversized ::after that slides by one tile with `transform`, rather than on
+   the bar itself with an animated `background-position`. background-position is
+   not compositable, so the old version repainted the bar every frame for as
+   long as any progress bar was on screen. */
 @keyframes progress-stripe {
 	0% {
-		background-position: 0 0;
+		transform: translateX(0);
 	}
 	100% {
-		background-position: 40px 0;
+		transform: translateX(40px);
 	}
 }
 
@@ -628,6 +633,20 @@ textarea::placeholder {
 
 /* Animated progress bar with stripes for indeterminate state */
 .progress-bar-animated {
+	position: relative;
+	overflow: hidden;
+}
+
+.progress-bar-animated::after {
+	content: '';
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	right: 0;
+	/* One tile wider than the bar, extended in the direction the stripes travel
+	   FROM, so translating by exactly one tile never exposes a gap. */
+	left: -40px;
+	pointer-events: none;
 	background-image: linear-gradient(
 		45deg,
 		rgba(255, 255, 255, 0.15) 25%,
@@ -640,6 +659,7 @@ textarea::placeholder {
 	);
 	background-size: 40px 40px;
 	animation: progress-stripe 1s linear infinite;
+	will-change: transform;
 }
 
 /* Shimmer effect for drag-and-drop */
@@ -666,15 +686,23 @@ textarea::placeholder {
 	}
 }
 
-/* Status indicator glow - subtle box-shadow expansion paired with a colored dot.
-   Set --status-glow-color on the element to control the hue. */
+/* Status indicator glow - a soft breathing halo.
+   Set --status-glow-color on the element to control the hue.
+
+   Implemented as an overlay whose OPACITY animates, not as an animated
+   box-shadow. Chrome cannot composite a box-shadow animation: every frame
+   repaints the element, and this class lands on a full-width transcript card
+   that streams for the length of a turn. The halo now lives on a ::after at a
+   fixed blur, so the whole animation runs on the compositor. The ring is inset
+   because the elements this decorates are `overflow-hidden`, which would clip
+   an outer shadow drawn by a child. */
 @keyframes status-glow {
 	0%,
 	100% {
-		box-shadow: 0 0 4px var(--status-glow-color, currentColor);
+		opacity: 0.45;
 	}
 	50% {
-		box-shadow: 0 0 8px var(--status-glow-color, currentColor);
+		opacity: 1;
 	}
 }
 
@@ -683,7 +711,18 @@ textarea::placeholder {
 }
 
 .animate-status-glow {
+	position: relative;
+}
+
+.animate-status-glow::after {
+	content: '';
+	position: absolute;
+	inset: 0;
+	border-radius: inherit;
+	pointer-events: none;
+	box-shadow: inset 0 0 8px var(--status-glow-color, currentColor);
 	animation: status-glow 2s ease-in-out infinite;
+	will-change: opacity;
 }
 
 /* Restore list styling for markdown preview prose containers */
@@ -826,27 +865,39 @@ textarea::placeholder {
 	width: min(calc(1200px * var(--font-scale, 1)), 95vw);
 }
 
-/* Document Graph - Search highlight animation for matching nodes */
+/* Document Graph - Search highlight animation for matching nodes.
+
+   The ring is drawn once on a ::after overlay and only its opacity and scale
+   animate, both of which the compositor owns. Animating the box-shadow itself
+   repainted every matching node every frame, and a broad query can light up a
+   large share of the graph at once. */
 @keyframes search-highlight-glow {
-	0% {
-		box-shadow:
-			0 0 0 3px var(--search-highlight-color, rgba(99, 102, 241, 0.4)),
-			0 4px 12px var(--search-shadow-color, rgba(99, 102, 241, 0.2));
+	0%,
+	100% {
+		opacity: 1;
+		transform: scale(1);
 	}
 	50% {
-		box-shadow:
-			0 0 0 5px var(--search-highlight-color, rgba(99, 102, 241, 0.25)),
-			0 4px 16px var(--search-shadow-color, rgba(99, 102, 241, 0.3));
-	}
-	100% {
-		box-shadow:
-			0 0 0 3px var(--search-highlight-color, rgba(99, 102, 241, 0.4)),
-			0 4px 12px var(--search-shadow-color, rgba(99, 102, 241, 0.2));
+		opacity: 0.6;
+		transform: scale(1.02);
 	}
 }
 
 .search-highlight {
+	position: relative;
+}
+
+.search-highlight::after {
+	content: '';
+	position: absolute;
+	inset: 0;
+	border-radius: inherit;
+	pointer-events: none;
+	box-shadow:
+		0 0 0 4px var(--search-highlight-color, rgba(99, 102, 241, 0.4)),
+		0 4px 14px var(--search-shadow-color, rgba(99, 102, 241, 0.25));
 	animation: search-highlight-glow 2s ease-in-out infinite;
+	will-change: opacity, transform;
 }
 
 /* Wand sparkle animation - opacity-only. Earlier versions translated the SVG
@@ -1480,14 +1531,18 @@ svg.wand-profiling-active path:nth-child(8) {
 		animation: none !important;
 	}
 
-	/* Disable Document Graph search highlight animations */
-	.search-highlight {
+	/* Disable Document Graph search highlight animations. The ring now lives on
+	   a ::after, so the pseudo-element has to be named or it keeps animating. */
+	.search-highlight,
+	.search-highlight::after {
 		animation: none !important;
 	}
 
-	/* Disable status indicator animations */
+	/* Disable status indicator animations. The glow now lives on a ::after, so
+	   the pseudo-element has to be named or its animation keeps running. */
 	.animate-status-pulse,
-	.animate-status-glow {
+	.animate-status-glow,
+	.animate-status-glow::after {
 		animation: none !important;
 	}
 
