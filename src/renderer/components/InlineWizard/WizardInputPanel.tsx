@@ -242,7 +242,10 @@ export const WizardInputPanel = React.memo(function WizardInputPanel({
 
 	return (
 		<div
-			className="relative p-4 border-t"
+			// Share the standard composer's web-mobile gesture inset. InputArea
+			// returns this panel in its place, while the same edge-swipe zones remain
+			// mounted, so the wizard's Send/Stop and mode controls need the same clearance.
+			className="maestro-composer relative p-4 border-t"
 			style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
 		>
 			{/* Staged images display */}

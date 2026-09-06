@@ -102,6 +102,21 @@ describe('WizardInputPanel', () => {
 	});
 
 	describe('layout', () => {
+		it('keeps idle and busy edge controls inside the composer gesture inset', () => {
+			const { container, rerender } = render(<WizardInputPanel {...defaultProps} />);
+			const composer = container.querySelector('.maestro-composer');
+
+			expect(composer).not.toBeNull();
+			expect(composer).toContainElement(screen.getByTitle('Send message'));
+			expect(composer).toContainElement(
+				screen.getByTitle(`Toggle Mode (${formatShortcutKeys(['Meta', 'j'])})`)
+			);
+
+			rerender(<WizardInputPanel {...defaultProps} isBusy={true} onStopTurn={vi.fn()} />);
+
+			expect(composer).toContainElement(screen.getByTestId('wizard-stop-turn-button'));
+		});
+
 		it('renders the WizardPill component', () => {
 			render(<WizardInputPanel {...defaultProps} />);
 			expect(screen.getByText('Wizard')).toBeInTheDocument();
