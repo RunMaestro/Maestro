@@ -24,10 +24,11 @@ interface TypographyResetSectionProps {
  * Factory Reset Fonts - restore all five font families AND all five sizes to a
  * preset in one click.
  *
- * Sits at the top of the Display tab because it is the coarse control the fine
- * ones below it are exceptions to: a user who has taken ten pickers apart and
- * wants out needs one button, not ten. It is also the only way back to the
- * first-run chooser's presets once that modal has been dismissed.
+ * Sits BELOW the pickers it overwrites. It used to lead the Display tab, which
+ * put the one destructive control on the tab first and offered a way out before
+ * the user had seen anything to get out of. It reads as an escape hatch where it
+ * is now: the fine controls, then the one button back. It is also the only way
+ * back to the first-run chooser's presets once that modal has been dismissed.
  *
  * Reset is destructive to deliberate work (ten settings at once), so it asks
  * for a second click rather than firing on the first. The confirmation is
@@ -57,14 +58,20 @@ export function TypographyResetSection({
 
 	return (
 		<div data-setting-id="display-typography-reset">
-			<SettingsSectionHeading icon={RotateCcw}>Factory Reset Fonts</SettingsSectionHeading>
-			<p className="text-xs opacity-60 mb-2 -mt-1">
-				Set every font and size below at once. Default is proportional to read and monospace to
-				work; Hacker is monospace everywhere.
-				{activePreset
-					? ` You're on ${TYPOGRAPHY_PRESETS[activePreset].label}.`
-					: " You've customized these, so neither preset is active."}
-			</p>
+			<SettingsSectionHeading
+				icon={RotateCcw}
+				description={
+					<>
+						Set every font and size above at once. Default is proportional to read and monospace to
+						work; Hacker is monospace everywhere.
+						{activePreset
+							? ` You're on ${TYPOGRAPHY_PRESETS[activePreset].label}.`
+							: " You've customized these, so neither preset is active."}
+					</>
+				}
+			>
+				Factory Reset Fonts
+			</SettingsSectionHeading>
 			<div className="flex gap-2">
 				{TYPOGRAPHY_PRESET_IDS.map((id) => {
 					const preset = TYPOGRAPHY_PRESETS[id];

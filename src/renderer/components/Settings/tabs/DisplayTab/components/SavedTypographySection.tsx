@@ -64,21 +64,25 @@ export function SavedTypographySection({
 
 	return (
 		<div data-setting-id="display-typography-snapshot">
-			<SettingsSectionHeading icon={BookmarkCheck}>
+			<SettingsSectionHeading
+				icon={BookmarkCheck}
+				description={
+					<>
+						Keep the fonts and sizes you like as your own setup, then try a preset above or keep
+						tinkering below and put yours back in one click. One slot, overwritten each time you
+						save. Your zoom level is not part of it.
+					</>
+				}
+			>
 				Save &amp; Restore Customizations
 			</SettingsSectionHeading>
-			<p className="text-xs opacity-60 mb-2 -mt-1">
-				Keep the fonts and sizes you like as your own setup, then try a preset above or keep
-				tinkering below and put yours back in one click. One slot, overwritten each time you save.
-				Your zoom level is not part of it.
-			</p>
 			<SectionCard theme={theme}>
 				<div className="space-y-2">
 					<div className="flex items-baseline justify-between gap-3">
 						<span className="text-xs font-medium" style={{ color: theme.colors.textMain }}>
 							Your saved fonts
 						</span>
-						<span className="text-xs-plus opacity-60">{status}</span>
+						<span className="text-xs-plus opacity-55">{status}</span>
 					</div>
 					<div className="flex gap-2">
 						<button

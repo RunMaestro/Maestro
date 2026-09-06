@@ -47,6 +47,13 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 
 	return (
 		<div className="space-y-5">
+			<FontsSection
+				theme={theme}
+				settings={settingsRecord}
+				fontConfiguration={fontConfiguration}
+				setSurfaceFontFamily={settings.setSurfaceFontFamily}
+				setSurfaceFontSize={settings.setSurfaceFontSize}
+			/>
 			<TypographyResetSection
 				theme={theme}
 				fonts={{
@@ -71,13 +78,6 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 				isCurrent={typographySnapshotMatches(settings.typographySnapshot ?? null, settingsRecord)}
 				onSave={settings.saveTypographySnapshot}
 				onRestore={settings.restoreTypographySnapshot}
-			/>
-			<FontsSection
-				theme={theme}
-				settings={settingsRecord}
-				fontConfiguration={fontConfiguration}
-				setSurfaceFontFamily={settings.setSurfaceFontFamily}
-				setSurfaceFontSize={settings.setSurfaceFontSize}
 			/>
 			<FontZoomSection
 				theme={theme}
