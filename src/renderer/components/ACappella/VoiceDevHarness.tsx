@@ -93,7 +93,7 @@ export function VoiceDevHarness({ theme, actions }: VoiceDevHarnessProps) {
 						if (e.key === 'Enter') handleSend();
 					}}
 					placeholder="Type an utterance..."
-					className="flex-1 min-w-0 px-2 py-1 text-[11px] rounded outline-none border"
+					className="flex-1 min-w-0 px-2 py-1 text-xs-plus rounded outline-none border"
 					style={{
 						backgroundColor: theme.colors.bgMain,
 						borderColor: theme.colors.border,
@@ -174,7 +174,7 @@ function HarnessButton({
 			title={title}
 			disabled={disabled}
 			onClick={onClick}
-			className="flex items-center gap-1 px-2 py-1 text-[10px] rounded border shrink-0 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+			className="flex items-center gap-1 px-2 py-1 text-2xs rounded border shrink-0 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
 			style={{
 				backgroundColor: fill ?? theme.colors.bgMain,
 				borderColor: fill ?? theme.colors.border,

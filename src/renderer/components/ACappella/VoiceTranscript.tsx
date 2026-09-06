@@ -114,7 +114,7 @@ export function VoiceTranscript({ theme, maxHeight = 220 }: VoiceTranscriptProps
 				style={{ maxHeight }}
 			>
 				{feed.length === 0 && !partial && (
-					<div className="text-[11px] italic" style={{ color: theme.colors.textDim }}>
+					<div className="text-xs-plus italic" style={{ color: theme.colors.textDim }}>
 						Nothing said yet.
 					</div>
 				)}
@@ -156,7 +156,7 @@ export function VoiceTranscript({ theme, maxHeight = 220 }: VoiceTranscriptProps
 				{partial && (
 					<div
 						data-testid="voice-transcript-partial"
-						className="text-[11px] leading-snug italic pt-0.5"
+						className="text-xs-plus leading-snug italic pt-0.5"
 						style={{ color: theme.colors.textDim }}
 					>
 						{partial}
@@ -181,7 +181,7 @@ function TranscriptLine({
 	accentText: string;
 }) {
 	return (
-		<div className="text-[11px] leading-snug">
+		<div className="text-xs-plus leading-snug">
 			<span
 				className="font-bold mr-1"
 				style={{ color: entry.kind === 'you' ? accentText : theme.colors.textDim }}
@@ -227,7 +227,7 @@ function RouteChip({ theme, route }: { theme: Theme; route: VoiceFeedRoute }) {
 			onClick={onClick}
 			aria-label={`Go to ${description}`}
 			title={`Go to ${description}`}
-			className="ml-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] align-middle focus:outline-none focus-visible:ring-2 hover:opacity-80"
+			className="ml-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-2xs align-middle focus:outline-none focus-visible:ring-2 hover:opacity-80"
 			style={{
 				backgroundColor: theme.colors.bgActivity,
 				color: readableTextOn(theme.colors.accent, [theme.colors.bgActivity]),
@@ -262,7 +262,7 @@ function SpokenRun({
 	const speakingIndex = speech.endedReason === null ? speech.sentences.length - 1 : -1;
 
 	return (
-		<div data-testid="voice-transcript-spoken" className="text-[11px] leading-snug pt-0.5">
+		<div data-testid="voice-transcript-spoken" className="text-xs-plus leading-snug pt-0.5">
 			{speech.sentences.map((sentence, index) => {
 				const current = index === speakingIndex;
 				return (

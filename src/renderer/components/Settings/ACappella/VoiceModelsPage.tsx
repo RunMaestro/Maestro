@@ -77,7 +77,7 @@ export function VoiceModelsPage({ theme, enabled }: VoiceModelsPageProps) {
 					<StatCardGrid theme={theme} cards={cards} />
 
 					{models.footprint && models.footprint.models.length > 0 && (
-						<p className="text-[11px] opacity-55 select-text">
+						<p className="text-xs-plus opacity-55 select-text">
 							{models.footprint.models
 								.map((model) => `${model.id} ${formatSize(model.bytes)}`)
 								.join(' - ')}
@@ -147,7 +147,7 @@ export function VoiceModelsPage({ theme, enabled }: VoiceModelsPageProps) {
 			{installed.map((listing) => (
 				<div key={listing.entry.id}>
 					<SectionCard theme={theme}>
-						<div className="text-[11px] opacity-55">
+						<div className="text-xs-plus opacity-55">
 							{listing.status.manifest
 								? `Installed ${formatRelativeTime(listing.status.manifest.installedAt)} - last verified ${formatRelativeTime(listing.status.manifest.verifiedAt)} - ${formatSize(listing.status.bytesOnDisk)} on disk`
 								: `${formatSize(listing.status.bytesOnDisk)} on disk with no manifest`}

@@ -495,7 +495,7 @@ export function VoiceControlsPanel({ theme, enabled }: VoiceControlsPanelProps) 
 								className="w-full rounded border bg-transparent px-2 py-1 text-xs outline-none"
 								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 							/>
-							<p className="text-[11px] opacity-55">
+							<p className="text-xs-plus opacity-55">
 								Comma separated, and only heard at the END of a sentence - so &quot;that&apos;s it
 								exactly, now fix the tests&quot; keeps listening. The phrase is removed before the
 								request is sent. Leave this empty to send only on the pause.
@@ -525,7 +525,7 @@ export function VoiceControlsPanel({ theme, enabled }: VoiceControlsPanelProps) 
 						</span>
 					</div>
 
-					<p className="text-[11px] opacity-55">
+					<p className="text-xs-plus opacity-55">
 						Extra silence to wait before sending, so a pause in the middle of a request does not
 						become two. It is added to the recogniser&apos;s own endpointing, so the default sends
 						about 1.6 seconds after you stop talking. Set it to off to send each sentence the moment

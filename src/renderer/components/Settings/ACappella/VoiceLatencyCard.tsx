@@ -83,13 +83,13 @@ export function VoiceLatencyCard({ theme }: VoiceLatencyCardProps) {
 
 				{breakdown && (
 					<div className="space-y-1 select-text">
-						<div className="text-[11px] opacity-70">
+						<div className="text-xs-plus opacity-70">
 							{breakdown.configuration.pipeline}: {breakdown.configuration.providerIds.stt} /{' '}
 							{breakdown.configuration.providerIds.brain} /{' '}
 							{breakdown.configuration.providerIds.tts}
 						</div>
 						{breakdown.deltas.map((delta) => (
-							<div key={delta.span} className="text-[11px] flex justify-between gap-3">
+							<div key={delta.span} className="text-xs-plus flex justify-between gap-3">
 								<span>{delta.label}</span>
 								<span className="tabular-nums opacity-70">{delta.formatted}</span>
 							</div>

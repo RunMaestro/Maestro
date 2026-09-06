@@ -76,7 +76,7 @@ function MenuRow({
 			<span className="truncate">{label}</span>
 			{hint && (
 				<span
-					className="ml-auto text-[10px] opacity-60 truncate max-w-[120px]"
+					className="ml-auto text-2xs opacity-60 truncate max-w-[120px]"
 					style={{ color: theme.colors.textDim }}
 				>
 					{hint}

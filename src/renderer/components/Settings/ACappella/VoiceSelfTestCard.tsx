@@ -125,7 +125,7 @@ export function VoiceSelfTestCard({ theme }: VoiceSelfTestCardProps) {
 							{report.platform}-{report.arch}
 						</div>
 						{report.entries.map((entry) => (
-							<div key={entry.runtimeId} className="text-[11px] flex flex-wrap gap-1">
+							<div key={entry.runtimeId} className="text-xs-plus flex flex-wrap gap-1">
 								<span style={{ color: statusColor(entry.status) }}>
 									{entry.status.toUpperCase()}
 								</span>
@@ -136,7 +136,7 @@ export function VoiceSelfTestCard({ theme }: VoiceSelfTestCardProps) {
 								{entry.detail && <span className="opacity-70">{entry.detail}</span>}
 							</div>
 						))}
-						<div className="text-[11px] opacity-70">
+						<div className="text-xs-plus opacity-70">
 							Microphone: {MIC_LABELS[report.microphone.permission] ?? report.microphone.permission}
 						</div>
 					</div>

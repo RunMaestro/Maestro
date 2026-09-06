@@ -140,7 +140,7 @@ export function VoiceDiagnosticsCard({ theme }: VoiceDiagnosticsCardProps) {
 				{entries.length > 0 && (
 					<pre
 						data-testid="voice-diagnostics-log"
-						className="text-[10px] leading-relaxed overflow-auto max-h-64 rounded border p-2 select-text"
+						className="text-2xs leading-relaxed overflow-auto max-h-64 rounded border p-2 select-text"
 						style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
 					>
 						{visible.map(line).join('\n')}

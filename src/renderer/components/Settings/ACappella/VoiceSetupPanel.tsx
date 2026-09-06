@@ -116,7 +116,7 @@ export function VoiceSetupPanel({ theme, enabled }: VoiceSetupPanelProps) {
 							theme={theme}
 						/>
 						{modes[role] === 'cloud' && (
-							<p className="text-[11px] opacity-55 mt-2">
+							<p className="text-xs-plus opacity-55 mt-2">
 								A cloud provider needs its own API key and sends audio or text off this machine.
 								Voice mode will refuse to start until the key is set; it never falls back to a
 								provider you did not pick.
@@ -138,7 +138,7 @@ export function VoiceSetupPanel({ theme, enabled }: VoiceSetupPanelProps) {
 						/>
 					)}
 					{modes[role] === 'local' && !slot.modelId && slot.localNote && (
-						<p className="text-[11px] opacity-55">{slot.localNote}</p>
+						<p className="text-xs-plus opacity-55">{slot.localNote}</p>
 					)}
 				</SectionCard>
 			</>
@@ -195,7 +195,7 @@ export function VoiceSetupPanel({ theme, enabled }: VoiceSetupPanelProps) {
 								? `${MODEL_SETS[setId].displayName} is installed`
 								: `Download (${formatSize(missingBytes)})`}
 						</button>
-						<span className="text-[11px] opacity-55">{MODEL_SETS[setId].description}</span>
+						<span className="text-xs-plus opacity-55">{MODEL_SETS[setId].description}</span>
 					</div>
 				</SectionCard>
 			</div>

@@ -202,7 +202,7 @@ export function VoiceSetupModal({ theme, onClose, enabled, onOpenSettings }: Voi
 						className="shrink-0 mt-0.5"
 						style={{ color: theme.colors.success }}
 					/>
-					<p className="text-[11px] opacity-80" style={{ color: theme.colors.textMain }}>
+					<p className="text-xs-plus opacity-80" style={{ color: theme.colors.textMain }}>
 						{MODEL_SETS[FIRST_RUN_MODEL_SET].description} You can switch any slot to a hosted
 						provider later, and voice will tell you before it sends anything anywhere.
 					</p>
@@ -253,7 +253,7 @@ export function VoiceSetupModal({ theme, onClose, enabled, onOpenSettings }: Voi
 									>
 										{runtime.label}
 									</div>
-									<p className="text-[11px] opacity-70">
+									<p className="text-xs-plus opacity-70">
 										The engine that runs the models above. Downloaded once, from a pinned release,
 										and checked against a hash recorded in the app.
 									</p>

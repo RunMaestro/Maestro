@@ -40,7 +40,7 @@ export function VoiceInputPicker({ theme, devices, compact = false }: VoiceInput
 			onChange={(event) => void devices.select(event.target.value)}
 			aria-label="Microphone"
 			className={`rounded border bg-transparent outline-none ${
-				compact ? 'text-[10px] px-1 py-0.5 w-full' : 'text-xs px-2 py-1 w-full'
+				compact ? 'text-2xs px-1 py-0.5 w-full' : 'text-xs px-2 py-1 w-full'
 			}`}
 			style={{
 				borderColor: theme.colors.border,
@@ -73,7 +73,7 @@ export function VoiceInputPicker({ theme, devices, compact = false }: VoiceInput
 				Microphone
 			</span>
 			{select}
-			<span className="text-[11px]" style={{ color: theme.colors.textDim }}>
+			<span className="text-xs-plus" style={{ color: theme.colors.textDim }}>
 				Takes effect the next time it listens.
 			</span>
 		</label>

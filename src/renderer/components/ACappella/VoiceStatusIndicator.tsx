@@ -73,7 +73,7 @@ export const VoiceStatusIndicator = memo(function VoiceStatusIndicator({
 			type="button"
 			data-testid="voice-status-indicator"
 			onClick={() => setMinimized(false)}
-			className={`flex items-center gap-1 shrink-0 rounded border text-[10px] font-bold transition-colors hover:bg-white/10 ${
+			className={`flex items-center gap-1 shrink-0 rounded border text-2xs font-bold transition-colors hover:bg-white/10 ${
 				compact ? 'px-1 py-1' : 'pl-1.5 pr-1.5 py-0.5'
 			}`}
 			style={{ borderColor: theme.colors.accent, color: scope.color }}

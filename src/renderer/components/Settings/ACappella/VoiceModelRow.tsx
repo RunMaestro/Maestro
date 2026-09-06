@@ -92,7 +92,7 @@ function VoiceModelRowInner({
 			</div>
 
 			{!compact && (
-				<div className="text-[11px] opacity-55 select-text space-y-0.5">
+				<div className="text-xs-plus opacity-55 select-text space-y-0.5">
 					<div>
 						{formatSize(entry.bytes)} &middot; {entry.repo}@{entry.revision.slice(0, 7)} &middot;{' '}
 						<a
@@ -123,7 +123,7 @@ function VoiceModelRowInner({
 							style={{ width: `${percent}%`, backgroundColor: theme.colors.accent }}
 						/>
 					</div>
-					<div className="text-[11px] opacity-55">
+					<div className="text-xs-plus opacity-55">
 						{formatSize(progress.bytesReceived)} of {formatSize(progress.bytesTotal)}
 						{progress.bytesPerSecond > 0 && ` at ${formatSize(progress.bytesPerSecond)}/s`}
 						{progress.etaSeconds !== null &&
@@ -146,7 +146,7 @@ function VoiceModelRowInner({
 			)}
 
 			{verifyResult?.mismatch && (
-				<div className="text-[11px] opacity-55 select-text break-all">
+				<div className="text-xs-plus opacity-55 select-text break-all">
 					{verifyResult.mismatch.path}: expected {verifyResult.mismatch.expected}, got{' '}
 					{verifyResult.mismatch.actual}
 				</div>
@@ -174,7 +174,7 @@ function VoiceModelRowInner({
 				{!active && !paused && status.status === 'not-installed' && entry.pending && (
 					// A model nothing in this build can read is not offered: the row says
 					// why instead of inviting a download that would only ever be removed.
-					<p className="text-[11px] opacity-70" style={{ color: theme.colors.warning }}>
+					<p className="text-xs-plus opacity-70" style={{ color: theme.colors.warning }}>
 						{entry.pending}
 					</p>
 				)}
@@ -218,18 +218,18 @@ function StatusBadge({
 }) {
 	if (progress && isActive(progress)) {
 		return (
-			<span className="text-[11px] opacity-55 flex-shrink-0">
+			<span className="text-xs-plus opacity-55 flex-shrink-0">
 				{progress.phase === 'verifying' ? 'Verifying' : 'Downloading'}
 			</span>
 		);
 	}
 	if (progress?.phase === 'paused') {
-		return <span className="text-[11px] opacity-55 flex-shrink-0">Paused</span>;
+		return <span className="text-xs-plus opacity-55 flex-shrink-0">Paused</span>;
 	}
 	if (listing.status.status === 'installed') {
 		return (
 			<span
-				className="text-[11px] flex items-center gap-1 flex-shrink-0"
+				className="text-xs-plus flex items-center gap-1 flex-shrink-0"
 				style={{ color: theme.colors.success }}
 			>
 				<CheckCircle2 className="w-3 h-3" />
@@ -239,12 +239,12 @@ function StatusBadge({
 	}
 	if (listing.status.status === 'corrupt') {
 		return (
-			<span className="text-[11px] flex-shrink-0" style={{ color: theme.colors.warning }}>
+			<span className="text-xs-plus flex-shrink-0" style={{ color: theme.colors.warning }}>
 				Corrupt
 			</span>
 		);
 	}
-	return <span className="text-[11px] opacity-55 flex-shrink-0">Not installed</span>;
+	return <span className="text-xs-plus opacity-55 flex-shrink-0">Not installed</span>;
 }
 
 function RowButton({

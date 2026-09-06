@@ -616,7 +616,7 @@ export function SessionContextMenu({
 						<Mic className="w-3.5 h-3.5" />
 						{voiceActions.hasVoiceFloor ? 'End voice session' : 'Talk to this agent'}
 						{voiceActions.wakePhrase && (
-							<span className="ml-auto text-[10px] opacity-60 truncate max-w-[120px]">
+							<span className="ml-auto text-2xs opacity-60 truncate max-w-[120px]">
 								&ldquo;{voiceActions.wakePhrase}&rdquo;
 							</span>
 						)}

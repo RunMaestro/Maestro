@@ -437,14 +437,14 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 								<span className="font-normal opacity-80"> / {scope.tabLabel}</span>
 							)}
 						</div>
-						<div className="text-[10px] truncate" style={{ color: theme.colors.textDim }}>
+						<div className="text-2xs truncate" style={{ color: theme.colors.textDim }}>
 							{stateLabel}
 						</div>
 					</div>
 					{visualState === 'speaking' && speech && (
 						<span
 							data-testid="voice-hud-speech-progress"
-							className="text-[10px] px-1.5 py-0.5 rounded shrink-0"
+							className="text-2xs px-1.5 py-0.5 rounded shrink-0"
 							style={{ backgroundColor: theme.colors.accent, color: onAccent }}
 						>
 							{speechProgress}
@@ -473,7 +473,7 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 				{substitutions.length > 0 && (
 					<div
 						data-testid="voice-hud-substitutions"
-						className="px-3 py-1.5 text-[10px] border-b"
+						className="px-3 py-1.5 text-2xs border-b"
 						style={{ borderColor: theme.colors.border, color: warningText }}
 					>
 						{substitutions.map((sub) => (
@@ -487,7 +487,7 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 				{lostEvents && (
 					<div
 						data-testid="voice-hud-gap"
-						className="px-3 py-1.5 text-[10px] border-b"
+						className="px-3 py-1.5 text-2xs border-b"
 						style={{ borderColor: theme.colors.border, color: warningText }}
 					>
 						Some voice events were lost; this transcript may be incomplete.
@@ -499,7 +499,7 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 				{showError && error && (
 					<div
 						data-testid="voice-hud-error"
-						className="px-3 py-1.5 text-[10px] border-b select-text"
+						className="px-3 py-1.5 text-2xs border-b select-text"
 						style={{ borderColor: theme.colors.border, color: errorText }}
 					>
 						{error.message}
@@ -512,7 +512,7 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 				{!transcriptVisible && (partial || spoken > 0) && (
 					<div
 						data-testid="voice-hud-latest"
-						className="px-3 py-1.5 text-[11px] leading-snug truncate select-text"
+						className="px-3 py-1.5 text-xs-plus leading-snug truncate select-text"
 						style={{ color: partial ? theme.colors.textDim : theme.colors.textMain }}
 					>
 						{partial || speech?.sentences[speech.sentences.length - 1]}
@@ -528,7 +528,7 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 				{active && sttHearsAudio === false && (
 					<div
 						data-testid="voice-hud-deaf"
-						className="px-3 py-1.5 text-[10px] border-b select-text"
+						className="px-3 py-1.5 text-2xs border-b select-text"
 						style={{ borderColor: theme.colors.border, color: warningText }}
 					>
 						This recogniser does not listen to the microphone - it takes typed input only, so
@@ -587,7 +587,7 @@ function MicIssueNotice({ theme, issue, color }: { theme: Theme; issue: MicIssue
 	return (
 		<div
 			data-testid="voice-hud-mic"
-			className="flex items-center gap-2 px-3 py-1.5 text-[10px] border-b"
+			className="flex items-center gap-2 px-3 py-1.5 text-2xs border-b"
 			style={{ borderColor: theme.colors.border, color }}
 		>
 			<MicOff className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
@@ -602,7 +602,7 @@ function MicIssueNotice({ theme, issue, color }: { theme: Theme; issue: MicIssue
 					type="button"
 					data-testid="voice-hud-mic-settings"
 					onClick={openSettings}
-					className="shrink-0 px-1.5 py-0.5 rounded border text-[10px] hover:opacity-80 focus:outline-none focus-visible:ring-2"
+					className="shrink-0 px-1.5 py-0.5 rounded border text-2xs hover:opacity-80 focus:outline-none focus-visible:ring-2"
 					style={{ borderColor: theme.colors.border, color }}
 				>
 					{micSettingsLabel(platform)}
