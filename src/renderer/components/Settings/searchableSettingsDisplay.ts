@@ -43,6 +43,7 @@ export const DISPLAY_SETTINGS: SearchableSetting[] = [
 			'save',
 			'restore',
 			'snapshot',
+			'saved fonts',
 			'backup',
 			'customization',
 			'my fonts',

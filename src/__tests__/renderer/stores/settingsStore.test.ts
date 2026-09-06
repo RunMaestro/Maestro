@@ -1797,6 +1797,38 @@ describe('settingsStore', () => {
 			expect(state.enterToSendAI).toBe(true);
 		});
 
+		it('restores a saved typography snapshot across a restart', async () => {
+			// The snapshot is the only way back to a hand-tuned setup after a
+			// Factory Reset, so a save that did not survive a restart would be
+			// worse than no save at all.
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				typographySnapshot: {
+					savedAt: 1234,
+					fonts: { fontFamily: 'Verdana' },
+					sizes: { fontSize: 17 },
+				},
+			});
+
+			await loadAllSettings();
+
+			const snapshot = useSettingsStore.getState().typographySnapshot;
+			expect(snapshot?.savedAt).toBe(1234);
+			expect(snapshot?.fonts.fontFamily).toBe('Verdana');
+			expect(snapshot?.sizes.fontSize).toBe(17);
+		});
+
+		it('drops a malformed typographySnapshot rather than arming a destructive Restore', async () => {
+			// Restore overwrites live fonts, so a hand-edited settings file must
+			// not be able to produce a button that blanks them.
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				typographySnapshot: 'hacker' as any,
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().typographySnapshot).toBeNull();
+		});
+
 		it('restores both halves of the environment editor', async () => {
 			// A parked variable that did not survive a restart would come back
 			// live, which is the opposite of what switching it off asked for.
