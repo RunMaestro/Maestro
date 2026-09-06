@@ -29,6 +29,16 @@ interface BuildVoiceCommandsArgs {
 	setQuickActionOpen: (open: boolean) => void;
 	/** Opens the first-run model walkthrough. */
 	openVoiceSetup: () => void;
+	/**
+	 * The two voice chords, so the entries can show them.
+	 *
+	 * They are GLOBAL hotkeys: the main process registers them system-wide and
+	 * nothing in the renderer's keyboard handler matches their ids. That is
+	 * exactly why they belong on the palette entry - someone who found the
+	 * capability here would otherwise never learn it answers from any app, and
+	 * the palette is the one place they are already looking.
+	 */
+	tabShortcuts?: Record<string, QuickAction['shortcut']>;
 }
 
 /**
@@ -49,6 +59,7 @@ export function buildVoiceCommands({
 	toggleTranscript,
 	setQuickActionOpen,
 	openVoiceSetup,
+	tabShortcuts,
 }: BuildVoiceCommandsArgs): QuickAction[] {
 	if (!voiceActions.enabled) return [];
 
@@ -65,6 +76,7 @@ export function buildVoiceCommands({
 			subtext: voiceActions.wakePhrase
 				? `Or say "${voiceActions.wakePhrase}"`
 				: 'Open a voice session bound to this agent',
+			shortcut: tabShortcuts?.voiceCurrentAgent,
 			action: () => {
 				void voiceActions.talkToAgent();
 				setQuickActionOpen(false);
@@ -77,6 +89,7 @@ export function buildVoiceCommands({
 		keywords: VOICE_KEYWORDS,
 		label: 'Talk to the Conductor',
 		subtext: 'Open a voice session that can route to any agent',
+		shortcut: tabShortcuts?.voiceConductor,
 		action: () => {
 			void voiceActions.talkToConductor();
 			setQuickActionOpen(false);

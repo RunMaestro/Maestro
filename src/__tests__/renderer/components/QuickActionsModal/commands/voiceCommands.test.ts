@@ -32,7 +32,10 @@ function harness(
 	overrides: Partial<VoiceAgentActions> = {},
 	// `noActiveSession` rather than an optional session: an `activeSession?` field
 	// cannot express "deliberately none" once the harness supplies a default.
-	options: { noActiveSession?: boolean } = {}
+	options: {
+		noActiveSession?: boolean;
+		tabShortcuts?: Record<string, { id: string; label: string; keys: string[] }>;
+	} = {}
 ) {
 	const actions = voiceActions(overrides);
 	const setQuickActionOpen = vi.fn();
@@ -43,6 +46,7 @@ function harness(
 		transcriptVisible: false,
 		toggleTranscript,
 		setQuickActionOpen,
+		tabShortcuts: options.tabShortcuts,
 	});
 	return { commands, actions, setQuickActionOpen, toggleTranscript };
 }
@@ -105,6 +109,31 @@ describe('buildVoiceCommands', () => {
 	// LABELS, so "Talk to Backend" was invisible to someone typing "voice" - the
 	// palette's only voice hit was the transcript toggle, which cannot start
 	// anything. These pin the entries to the words a user actually types.
+	// The two voice chords are GLOBAL hotkeys - the main process registers them
+	// system-wide and the renderer's keyboard handler never matches their ids. So
+	// the palette entry is the only place a user meets the chord at all, and an
+	// entry without it teaches them voice needs the palette every time.
+	it('shows the global chord beside the entry that starts a session', () => {
+		const conductor = {
+			id: 'voiceConductor',
+			label: 'Talk to Maestro',
+			keys: ['Meta', 'Alt', 'v'],
+		};
+		const agent = { id: 'voiceCurrentAgent', label: 'Talk to Agent', keys: ['Meta', 'Alt', 'a'] };
+		const { commands } = harness(
+			{},
+			{ tabShortcuts: { voiceConductor: conductor, voiceCurrentAgent: agent } }
+		);
+
+		expect(commands.find((c) => c.id === 'voiceTalkToConductor')?.shortcut).toBe(conductor);
+		expect(commands.find((c) => c.id === 'voiceTalkToAgent')?.shortcut).toBe(agent);
+	});
+
+	it('renders the entries with no chord rather than breaking when none is bound', () => {
+		const { commands } = harness();
+		expect(commands.find((c) => c.id === 'voiceTalkToConductor')?.shortcut).toBeUndefined();
+	});
+
 	describe('discoverability', () => {
 		const everyCommand = () => harness({ hudHidden: true, hasVoiceFloor: true }).commands;
 		const search = (term: string) =>

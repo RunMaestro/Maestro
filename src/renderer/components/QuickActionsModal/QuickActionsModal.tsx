@@ -793,6 +793,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			transcriptVisible: voiceTranscriptVisible,
 			toggleTranscript: toggleVoiceTranscript,
 			setQuickActionOpen,
+			tabShortcuts,
 		}),
 		...buildRightPanelCommands({
 			autoRunDisabled: useSettingsStore.getState().autoRunDisabled,
