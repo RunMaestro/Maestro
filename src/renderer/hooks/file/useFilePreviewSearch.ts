@@ -107,6 +107,25 @@ function clearTextHighlights(): void {
 	(CSS as any).highlights.delete('search-current');
 }
 
+/**
+ * Centre `range` inside `scrollParent`. A Range has no `scrollIntoView`, so the
+ * offset is computed from its rect the same way the navigate effect does it for
+ * the markdown tier.
+ *
+ * jsdom's Range has no `getBoundingClientRect`; the guard keeps tests from
+ * crashing and costs nothing in a real browser.
+ */
+function scrollRangeIntoView(range: Range | null, scrollParent: HTMLElement | null): void {
+	if (!range || !scrollParent) return;
+	if (typeof range.getBoundingClientRect !== 'function') return;
+	const rect = range.getBoundingClientRect();
+	if (!rect) return;
+	const parentRect = scrollParent.getBoundingClientRect();
+	const offsetInParent = rect.top - parentRect.top + scrollParent.scrollTop;
+	const scrollTop = offsetInParent - scrollParent.clientHeight / 2 + rect.height / 2;
+	scrollParent.scrollTo({ top: Math.max(0, scrollTop), behavior: 'smooth' });
+}
+
 export interface UseFilePreviewSearchParams {
 	codeContainerRef: RefObject<HTMLDivElement | null>;
 	markdownContainerRef: RefObject<HTMLDivElement | null>;
@@ -124,7 +143,6 @@ export interface UseFilePreviewSearchParams {
 	markdownEditMode: boolean;
 	editContent: string;
 	fileContent: string | undefined;
-	accentColor: string;
 	/** When in 'jq' mode, skip DOM-based highlighting (jq filtering is handled externally) */
 	searchMode: 'text' | 'jq';
 	/**
@@ -178,7 +196,6 @@ export function useFilePreviewSearch({
 	markdownEditMode,
 	editContent,
 	fileContent,
-	accentColor,
 	searchMode,
 	supportsLineSearch = false,
 	displayedContentLength,
@@ -253,7 +270,11 @@ export function useFilePreviewSearch({
 		return compileSearchRegex(searchQuery, { regex: true }).error;
 	}, [useRegex, searchQuery]);
 
-	const matchElementsRef = useRef<HTMLElement[]>([]);
+	// Ranges for the syntax-highlighted code tier, painted via the CSS Custom
+	// Highlight API. Kept separate from `rangesRef` (markdown / readable-text /
+	// adapter tier) because the two effects own different containers and the
+	// navigation callbacks below must know which tier produced the matches.
+	const codeRangesRef = useRef<Range[]>([]);
 	const searchInputRef = useRef<HTMLInputElement>(null);
 	const prevSearchQueryRef = useRef<string>('');
 	const prevMatchIndexRef = useRef<number>(0);
@@ -288,84 +309,36 @@ export function useFilePreviewSearch({
 		) {
 			setTotalMatches(0);
 			setCurrentMatchIndex(-1);
-			matchElementsRef.current = [];
+			codeRangesRef.current = [];
 			return;
 		}
 
 		const container = codeContainerRef.current;
-		const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
-		const textNodes: Text[] = [];
 
-		// Collect all text nodes
-		let node;
-		while ((node = walker.nextNode())) {
-			textNodes.push(node as Text);
+		// Ranges, not `<mark>` wrappers. This container is React-rendered (the
+		// syntax highlighter's token tree), so splicing elements into it means
+		// mutating nodes React still believes it owns. The next render that
+		// unmounts one of those tokens asks React to remove a child that now
+		// sits under an injected wrapper, and Chromium throws
+		// `NotFoundError: Failed to execute 'removeChild' on 'Node'`, taking the
+		// whole app down through the error boundary. The CSS Custom Highlight
+		// API paints the same result from the side: no DOM is touched, so React
+		// and the browser never disagree about the tree.
+		const ranges = walkContainerForRanges(container, searchPattern);
+
+		codeRangesRef.current = ranges;
+		setTotalMatches(ranges.length);
+		setCurrentMatchIndex(ranges.length > 0 ? 0 : -1);
+
+		applyAllHighlight(ranges);
+		if (ranges.length > 0) {
+			applyCurrentHighlight(ranges[0]);
+			scrollRangeIntoView(ranges[0], contentRef.current);
 		}
 
-		const regex = new RegExp(searchPattern, 'gi');
-		const matchElements: HTMLElement[] = [];
-
-		// Highlight matches using safe DOM methods
-		textNodes.forEach((textNode) => {
-			const text = textNode.textContent || '';
-			const matches = text.match(regex);
-
-			if (matches) {
-				const fragment = document.createDocumentFragment();
-				let lastIndex = 0;
-
-				text.replace(regex, (match, offset) => {
-					// Add text before match
-					if (offset > lastIndex) {
-						fragment.appendChild(document.createTextNode(text.substring(lastIndex, offset)));
-					}
-
-					// Add highlighted match
-					const mark = document.createElement('mark');
-					mark.style.backgroundColor = '#ffd700';
-					mark.style.color = '#000';
-					mark.style.padding = '0 2px';
-					mark.style.borderRadius = '2px';
-					mark.className = 'search-match';
-					mark.textContent = match;
-					fragment.appendChild(mark);
-					matchElements.push(mark);
-
-					lastIndex = offset + match.length;
-					return match;
-				});
-
-				// Add remaining text
-				if (lastIndex < text.length) {
-					fragment.appendChild(document.createTextNode(text.substring(lastIndex)));
-				}
-
-				textNode.parentNode?.replaceChild(fragment, textNode);
-			}
-		});
-
-		// Store match elements and update count
-		matchElementsRef.current = matchElements;
-		setTotalMatches(matchElements.length);
-		setCurrentMatchIndex(matchElements.length > 0 ? 0 : -1);
-
-		// Highlight first match with different color and scroll to it
-		if (matchElements.length > 0) {
-			matchElements[0].style.backgroundColor = accentColor;
-			matchElements[0].style.color = '#fff';
-			matchElements[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
-		}
-
-		// Cleanup function to remove highlights
 		return () => {
-			container.querySelectorAll('mark.search-match').forEach((mark) => {
-				const parent = mark.parentNode;
-				if (parent) {
-					parent.replaceChild(document.createTextNode(mark.textContent || ''), mark);
-					parent.normalize();
-				}
-			});
-			matchElementsRef.current = [];
+			clearTextHighlights();
+			codeRangesRef.current = [];
 		};
 	}, [
 		searchQuery,
@@ -380,7 +353,7 @@ export function useFilePreviewSearch({
 		isJsonl,
 		isJson,
 		isJqMode,
-		accentColor,
+		contentRef,
 		// The early-return guard reads `searchAdapter` to defer to the Fast/Giant
 		// tier's own search; include it in deps so flipping the tier chip
 		// re-runs the effect with the fresh adapter state.
@@ -422,7 +395,7 @@ export function useFilePreviewSearch({
 				setCurrentMatchIndex(-1);
 				hitsRef.current = null;
 				rangesRef.current = [];
-				matchElementsRef.current = [];
+				codeRangesRef.current = [];
 				clearTextHighlights();
 			}
 			return;
@@ -719,23 +692,17 @@ export function useFilePreviewSearch({
 		const nextIndex = (currentMatchIndex + 1) % totalMatches;
 		setCurrentMatchIndex(nextIndex);
 
-		// For code files, handle DOM-based highlighting
-		const matches = matchElementsRef.current;
-		if (matches.length > 0) {
-			// Reset previous highlight
-			if (matches[currentMatchIndex]) {
-				matches[currentMatchIndex].style.backgroundColor = '#ffd700';
-				matches[currentMatchIndex].style.color = '#000';
-			}
-			// Highlight new current match and scroll to it
-			if (matches[nextIndex]) {
-				matches[nextIndex].style.backgroundColor = accentColor;
-				matches[nextIndex].style.color = '#fff';
-				matches[nextIndex].scrollIntoView({ behavior: 'smooth', block: 'center' });
-			}
+		// Code tier: move the current-match highlight. No "reset the previous one"
+		// step is needed - `search-results` still covers every match underneath,
+		// so replacing `search-current` is the whole swap.
+		const ranges = codeRangesRef.current;
+		if (ranges.length > 0) {
+			const target = ranges[nextIndex] ?? null;
+			applyCurrentHighlight(target);
+			scrollRangeIntoView(target, contentRef.current);
 		}
 		// For markdown edit mode, the effect will handle selecting text
-	}, [totalMatches, currentMatchIndex, accentColor]);
+	}, [totalMatches, currentMatchIndex, contentRef]);
 
 	// Navigate to previous search match
 	const goToPrevMatch = useCallback(() => {
@@ -746,23 +713,15 @@ export function useFilePreviewSearch({
 		const prevIndex = (base - 1 + totalMatches) % totalMatches;
 		setCurrentMatchIndex(prevIndex);
 
-		// For code files, handle DOM-based highlighting
-		const matches = matchElementsRef.current;
-		if (matches.length > 0) {
-			// Reset previous highlight
-			if (matches[currentMatchIndex]) {
-				matches[currentMatchIndex].style.backgroundColor = '#ffd700';
-				matches[currentMatchIndex].style.color = '#000';
-			}
-			// Highlight new current match and scroll to it
-			if (matches[prevIndex]) {
-				matches[prevIndex].style.backgroundColor = accentColor;
-				matches[prevIndex].style.color = '#fff';
-				matches[prevIndex].scrollIntoView({ behavior: 'smooth', block: 'center' });
-			}
+		// Code tier: see the note in `goToNextMatch`.
+		const ranges = codeRangesRef.current;
+		if (ranges.length > 0) {
+			const target = ranges[prevIndex] ?? null;
+			applyCurrentHighlight(target);
+			scrollRangeIntoView(target, contentRef.current);
 		}
 		// For markdown edit mode, the effect will handle selecting text
-	}, [totalMatches, currentMatchIndex, accentColor]);
+	}, [totalMatches, currentMatchIndex, contentRef]);
 
 	const setMatchCount = useCallback((count: number) => {
 		setTotalMatches(count);

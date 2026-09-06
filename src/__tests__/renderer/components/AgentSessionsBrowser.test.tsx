@@ -1557,6 +1557,118 @@ describe('AgentSessionsBrowser', () => {
 			expect(screen.getByPlaceholderText('Enter session name...')).toBeInTheDocument();
 		});
 
+		it('hands focus back to the list after Escape so arrow keys still work', async () => {
+			const sessions = [
+				createMockClaudeSession({ sessionId: 'session-1', sessionName: 'First' }),
+				createMockClaudeSession({ sessionId: 'session-2', sessionName: 'Second' }),
+			];
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions,
+				hasMore: false,
+				totalCount: 2,
+				nextCursor: null,
+			});
+
+			await act(async () => {
+				renderWithProvider(<AgentSessionsBrowser {...createDefaultProps()} />);
+				await vi.runAllTimersAsync();
+			});
+
+			const searchInput = screen.getByPlaceholderText(/Search all content/i);
+
+			await act(async () => {
+				document.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'e',
+						metaKey: true,
+						bubbles: true,
+						cancelable: true,
+					})
+				);
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			// Rename input owns the keyboard while renaming
+			const renameInput = screen.getByPlaceholderText('Enter session name...');
+			expect(document.activeElement).toBe(renameInput);
+
+			await act(async () => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+				);
+				await vi.runAllTimersAsync();
+			});
+
+			// Focus is back where Up/Down are handled, not stranded on <body>
+			expect(document.activeElement).toBe(searchInput);
+
+			// ...and the arrows really do move the selection again: renaming now
+			// targets the second session, so Down was received.
+			await act(async () => {
+				fireEvent.keyDown(searchInput, { key: 'ArrowDown' });
+				await vi.runAllTimersAsync();
+			});
+			await act(async () => {
+				document.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'e',
+						metaKey: true,
+						bubbles: true,
+						cancelable: true,
+					})
+				);
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect((screen.getByPlaceholderText('Enter session name...') as HTMLInputElement).value).toBe(
+				'Second'
+			);
+		});
+
+		it('does not save the escaped name when focus returns to the list', async () => {
+			const sessions = [createMockClaudeSession({ sessionId: 'session-1' })];
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions,
+				hasMore: false,
+				totalCount: 1,
+				nextCursor: null,
+			});
+
+			await act(async () => {
+				renderWithProvider(<AgentSessionsBrowser {...createDefaultProps()} />);
+				await vi.runAllTimersAsync();
+			});
+
+			await act(async () => {
+				document.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'e',
+						metaKey: true,
+						bubbles: true,
+						cancelable: true,
+					})
+				);
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			const renameInput = screen.getByPlaceholderText('Enter session name...');
+			await act(async () => {
+				fireEvent.change(renameInput, { target: { value: 'Discarded Name' } });
+				await vi.runAllTimersAsync();
+			});
+
+			await act(async () => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+				);
+				await vi.runAllTimersAsync();
+			});
+
+			// Restoring focus must not trip the rename input's blur-to-submit
+			const calls = vi.mocked(window.maestro.claude.updateSessionName).mock.calls;
+			expect(calls.some((call) => call[2] === 'Discarded Name')).toBe(false);
+		});
+
 		it('exits rename on Escape without closing the modal', async () => {
 			const onClose = vi.fn();
 			const sessions = [createMockClaudeSession({ sessionId: 'session-1' })];

@@ -19,6 +19,7 @@ import { generateId } from '../utils/ids';
 import { getActiveTab } from '../utils/tabHelpers';
 import { hasRunnableQueueItem } from '../utils/executionQueue';
 import { logger } from '../utils/logger';
+import { persistActiveSessionId } from '../utils/activeSessionPersistence';
 import { useUIStore } from './uiStore';
 import {
 	normalizeGroupHierarchy,
@@ -241,11 +242,12 @@ export const useSessionStore = create<SessionStore>()((set) => ({
 		// highlight never lingers. The cycle re-sets it afterward when it lands on
 		// a starred row (see useCycleSession.activateVisualItem).
 		useUIStore.getState().setSidebarExtraSelection(null);
-		// Fire-and-forget: persist to disk for restore on next launch.
-		// Not awaited - UI state must update synchronously; if the write
-		// fails the only consequence is the session won't be pre-selected
-		// on next launch (falls back to first session).
-		window.maestro?.sessions?.setActiveSessionId(id);
+		// Fire-and-forget: persist for restore on next launch. Not awaited - UI
+		// state must update synchronously; if the write fails the only consequence
+		// is the session won't be pre-selected on next launch (falls back to first
+		// session). Routed through the helper because a web-desktop client keeps
+		// its own focused agent rather than sharing the desktop's.
+		persistActiveSessionId(id);
 	},
 
 	hydrateActiveSessionId: (id) => set({ activeSessionId: id, cyclePosition: -1 }),

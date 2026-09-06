@@ -29,6 +29,8 @@ import {
 } from './quota/quotaPrimitives';
 import { useQuotaAccounts } from './quota/useQuotaAccounts';
 import { useQuotaRefresh } from './quota/useQuotaRefresh';
+import { buildQuotaSummary } from './footerSummary';
+import { usePublishFooterSummary } from './useFooterSummary';
 
 const TEST_ID_PREFIX = 'codex-plan';
 /** Provider id used to key this panel's hidden-account set in uiStore. */
@@ -189,6 +191,39 @@ export const CodexPlanUsage = memo(function CodexPlanUsage({
 		: null;
 	const snapshotCount = Object.keys(snapshots).length;
 	const lastSampledAtMs = useMemo(() => resolveLatestSampledAt(snapshots), [snapshots]);
+
+	// Footer readout, mirroring the Anthropic panel: account count, how many are
+	// locked out, and the tightest window across every account. Codex reports
+	// extra named limits alongside session/weekly, so those count toward the
+	// peak too - a wall is a wall whatever the sampler calls it.
+	const quotaFooter = useMemo(() => {
+		let peak: number | null = null;
+		let needsLogin = 0;
+		for (const key of configuredAccountKeys) {
+			const snap = snapshots[key];
+			if (!snap) continue;
+			if (snap.authState === 'unauthenticated' || snap.authState === 'missing_auth') {
+				needsLogin++;
+				continue;
+			}
+			const windows = [snap.session, snap.weekly, ...(snap.additionalLimits ?? [])];
+			for (const window of windows) {
+				if (typeof window?.percent === 'number' && (peak === null || window.percent > peak)) {
+					peak = window.percent;
+				}
+			}
+		}
+		return { peak, needsLogin };
+	}, [configuredAccountKeys, snapshots]);
+	usePublishFooterSummary(
+		'codex-usage',
+		buildQuotaSummary({
+			accounts: configuredAccountKeys.length,
+			needsLogin: quotaFooter.needsLogin,
+			peakPercent: quotaFooter.peak,
+			sampledAtMs: lastSampledAtMs,
+		})
+	);
 
 	// Hidden-account state (only meaningful in the showAllAccounts list view).
 	const hiddenKeys = useUIStore((s) => s.hiddenQuotaAccounts[PROVIDER_ID]);

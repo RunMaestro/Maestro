@@ -383,6 +383,40 @@ describe('TerminalOutput', () => {
 			expect(combinedText).not.toContain('response.Unknown command');
 			expect(combinedText).not.toContain('/nonexistentStart of a later response.');
 		});
+
+		it("keeps Claude's plan-limit banner off the front of the retried answer", () => {
+			// After a plan-quota outage, Claude forwards its banner as a plain
+			// `stdout` entry with no marker. The answer the auto-retry produces
+			// arrives half an hour later but is still the next `stdout` entry in the
+			// same response group, so grouping used to render the reply as
+			// "You've hit your session limit · resets 12:50am (America/Chicago)Yes,
+			// on the first part. ...".
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'Question', source: 'user' }),
+				createLogEntry({
+					id: 'limit-1',
+					text: "You've hit your session limit · resets 12:50am (America/Chicago)",
+					source: 'stdout',
+				}),
+				createLogEntry({ id: 'resp-1', text: 'Yes on the first part.', source: 'stdout' }),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const { container } = render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			// user + banner + answer, not user + one stitched bubble.
+			expect(container.querySelectorAll('[data-log-index]').length).toBe(3);
+
+			const combinedText = screen
+				.getAllByTestId('react-markdown')
+				.map((el) => el.textContent)
+				.join('|');
+			expect(combinedText).not.toContain('(America/Chicago)Yes on the first part.');
+		});
 	});
 
 	describe('command-mode cards are never merged into a response group', () => {
@@ -3039,7 +3073,34 @@ describe('TerminalOutput', () => {
 			expect(screen.getByText('Generate a history synopsis')).toBeInTheDocument();
 		});
 
-		it('renders URLs in the AI command body as clickable links', () => {
+		it('renders the AI command body as markdown, keeping the command header', () => {
+			const body = '## Step 1\n\nRun `the script` and report **what moved**.';
+			const logs: LogEntry[] = [
+				createLogEntry({
+					text: body,
+					source: 'user',
+					aiCommand: {
+						command: '/archive-playbooks',
+						description: 'Archive finished playbooks',
+					},
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const props = createDefaultProps({ session });
+			render(<TerminalOutput {...props} />);
+
+			// Header pill still renders, body goes through the markdown stack
+			// (react-markdown is mocked to a div with this testid).
+			expect(screen.getByText('/archive-playbooks:')).toBeInTheDocument();
+			expect(screen.getByTestId('react-markdown')).toHaveTextContent('Step 1');
+		});
+
+		it('shows the AI command body as raw source in markdown edit mode', () => {
 			const url = 'https://github.com/RunMaestro/Maestro/pull/738';
 			const logs: LogEntry[] = [
 				createLogEntry({
@@ -3059,9 +3120,12 @@ describe('TerminalOutput', () => {
 				activeTabId: 'tab-1',
 			});
 
-			const props = createDefaultProps({ session });
+			const props = createDefaultProps({ session, markdownEditMode: true });
 			render(<TerminalOutput {...props} />);
 
+			expect(screen.queryByTestId('react-markdown')).not.toBeInTheDocument();
+
+			// Raw source still linkifies bare URLs.
 			const link = screen.getByText(url);
 			expect(link.tagName).toBe('A');
 			expect(link).toHaveAttribute('href', url);
@@ -3699,8 +3763,10 @@ describe('TerminalOutput', () => {
 
 		it('does not fight a user who scrolls while the restore is still settling', async () => {
 			// Their input wins - a restore that keeps yanking the view is worse
-			// than landing high.
+			// than landing high. The wheel is what makes this the user: a bare
+			// `scroll` event is also what our own writes produce.
 			const box = mountWithScrollBox({ initialIsAtBottom: true }, { scrollHeight: 6000 });
+			fireEvent.wheel(box.el);
 			fireEvent.scroll(box.el);
 			await box.settle();
 
@@ -3708,6 +3774,57 @@ describe('TerminalOutput', () => {
 			await box.settle();
 
 			expect(box.scrollTop()).toBeLessThan(box.bottom());
+		});
+
+		it('does not mistake a late echo of its own write for the user scrolling up', async () => {
+			// THE regression behind "I come back and I am way up the transcript".
+			// Every scroll this component performs fires a `scroll` event that is
+			// indistinguishable from the user's, and the one-shot guard covers at
+			// most one of them: the restore writes each frame, the handler is
+			// throttled to 16ms, and `scrollToBottom` drops the guard on a 32ms
+			// timer. An event the guard missed reported an offset that was no longer
+			// the bottom (the content grew underneath it), which read as a scroll-up:
+			// auto-scroll paused and the tab was persisted as parked mid-history, so
+			// every later visit opened it high with the tail no longer followed.
+			const onAtBottomChange = vi.fn();
+			const box = mountWithScrollBox(
+				{ initialIsAtBottom: true, onAtBottomChange },
+				{ scrollHeight: 6000 }
+			);
+			await box.settle();
+			const landed = box.scrollTop();
+
+			// The agent writes more while the user sits at the bottom, then the
+			// event for OUR last write is delivered against the taller content.
+			box.grow(21000);
+			fireEvent.scroll(box.el);
+			await box.settle(250);
+
+			expect(landed).toBe(5200);
+			expect(onAtBottomChange).not.toHaveBeenCalledWith(false);
+		});
+
+		it('does not persist a position while the restore is still settling', async () => {
+			// Saving a way-point of our own restore overwrote the tab's real
+			// position with wherever the climb had got to, and wrote
+			// `isAtBottom: false` for a tab that was following the tail. The tab
+			// then opened there next time, higher every visit.
+			const onScrollPositionChange = vi.fn();
+			const onAtBottomChange = vi.fn();
+			const box = mountWithScrollBox(
+				{ initialIsAtBottom: true, onScrollPositionChange, onAtBottomChange },
+				{ scrollHeight: 6000 }
+			);
+			await box.settle(50);
+
+			box.grow(21000);
+			fireEvent.scroll(box.el);
+			await act(async () => {
+				vi.advanceTimersByTime(250);
+			});
+
+			expect(onAtBottomChange).not.toHaveBeenCalledWith(false);
+			expect(onScrollPositionChange).not.toHaveBeenCalledWith(5200);
 		});
 	});
 

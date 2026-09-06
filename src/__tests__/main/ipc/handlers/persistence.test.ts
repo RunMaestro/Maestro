@@ -6,11 +6,12 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { ipcMain, app } from 'electron';
+import { ipcMain, app, BrowserWindow } from 'electron';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import {
 	registerPersistenceHandlers,
+	SESSION_LIFECYCLE_SYNC_CHANNEL,
 	PersistenceHandlerDependencies,
 	MaestroSettings,
 	SessionsData,
@@ -18,6 +19,7 @@ import {
 } from '../../../../main/ipc/handlers/persistence';
 import type Store from 'electron-store';
 import type { WebServer } from '../../../../main/web-server';
+import { broadcastBridgeEvent } from '../../../../main/web-server/handlers/bridgeHandlers';
 
 // Mock electron's ipcMain and app
 vi.mock('electron', () => ({
@@ -52,6 +54,12 @@ vi.mock('../../../../main/utils/logger', () => ({
 		error: vi.fn(),
 		debug: vi.fn(),
 	},
+}));
+
+// The lifecycle push fans out to web-desktop clients through the bridge; mock it
+// so the tests can assert what peers were told without a live WebSocket server.
+vi.mock('../../../../main/web-server/handlers/bridgeHandlers', () => ({
+	broadcastBridgeEvent: vi.fn(),
 }));
 
 // Mock the themes module
@@ -1306,6 +1314,183 @@ describe('persistence IPC handlers', () => {
 			await expect(handler!({} as any, [{ ...baseSession }], [])).rejects.toThrow(
 				'Converting circular structure to JSON'
 			);
+		});
+	});
+
+	// One store, several renderers: each desktop window and every web-desktop
+	// browser tab keeps its own session tree and flushes it back here. These
+	// tests cover the delta that tells the others what entered and left, plus the
+	// guard that stops a stale peer flush from resurrecting a closed agent
+	// (issues #1398 / #1492).
+	describe('cross-client agent lifecycle sync', () => {
+		const baseSession = {
+			id: 's1',
+			name: 'Session 1',
+			cwd: '/test',
+			projectRoot: '/test',
+			state: 'idle' as const,
+			inputMode: 'ai' as const,
+			toolType: 'claude-code',
+		};
+
+		/** The payload of the last `sessions:lifecycleSync` bridge push, if any. */
+		const lastBridgePayload = () => {
+			const calls = vi
+				.mocked(broadcastBridgeEvent)
+				.mock.calls.filter(([channel]) => channel === SESSION_LIFECYCLE_SYNC_CHANNEL);
+			if (calls.length === 0) return null;
+			return (calls[calls.length - 1][1] as [{ added: any[]; removedIds: string[] }])[0];
+		};
+
+		it('tells peers about an agent another client just created', async () => {
+			mockSessionsStore.get.mockReturnValue([]);
+
+			const handler = handlers.get('sessions:setMany');
+			await handler!({} as any, [{ ...baseSession, id: 'from-web' }], []);
+
+			expect(lastBridgePayload()).toEqual({
+				added: [expect.objectContaining({ id: 'from-web' })],
+				removedIds: [],
+			});
+		});
+
+		it('tells peers about an agent another client just closed', async () => {
+			mockSessionsStore.get.mockReturnValue([{ ...baseSession }]);
+
+			const handler = handlers.get('sessions:setMany');
+			await handler!({} as any, [], ['s1']);
+
+			expect(lastBridgePayload()).toEqual({ added: [], removedIds: ['s1'] });
+		});
+
+		it('says nothing when a flush only updates agents everyone already has', async () => {
+			mockSessionsStore.get.mockReturnValue([{ ...baseSession, state: 'idle' }]);
+
+			const handler = handlers.get('sessions:setMany');
+			await handler!({} as any, [{ ...baseSession, state: 'busy' }], []);
+
+			expect(lastBridgePayload()).toBeNull();
+		});
+
+		it('reaches every window except the one that wrote', async () => {
+			const makeWindow = (id: number) => ({
+				isDestroyed: () => false,
+				webContents: { id, isDestroyed: () => false, send: vi.fn() },
+			});
+			const sender = makeWindow(1);
+			const peer = makeWindow(2);
+			vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([sender, peer] as any);
+			mockSessionsStore.get.mockReturnValue([{ ...baseSession }]);
+
+			const handler = handlers.get('sessions:setMany');
+			await handler!({ sender: sender.webContents } as any, [], ['s1']);
+
+			expect(sender.webContents.send).not.toHaveBeenCalled();
+			expect(peer.webContents.send).toHaveBeenCalledWith(SESSION_LIFECYCLE_SYNC_CHANNEL, {
+				added: [],
+				removedIds: ['s1'],
+			});
+		});
+
+		it('survives a bridge call that carries no sender', async () => {
+			const peer = {
+				isDestroyed: () => false,
+				webContents: { id: 7, isDestroyed: () => false, send: vi.fn() },
+			};
+			vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([peer] as any);
+			mockSessionsStore.get.mockReturnValue([{ ...baseSession }]);
+
+			const handler = handlers.get('sessions:setMany');
+			// The web bridge dispatches with a synthetic event that has no `sender`.
+			await handler!({ senderFrame: null } as any, [], ['s1']);
+
+			expect(peer.webContents.send).toHaveBeenCalledWith(
+				SESSION_LIFECYCLE_SYNC_CHANNEL,
+				expect.objectContaining({ removedIds: ['s1'] })
+			);
+		});
+
+		it('refuses to re-add an agent a peer closed moments ago', async () => {
+			mockSessionsStore.get.mockReturnValue([{ ...baseSession }]);
+			const handler = handlers.get('sessions:setMany');
+			await handler!({} as any, [], ['s1']);
+
+			// The peer's flush was already in flight, still carrying the agent.
+			mockSessionsStore.get.mockReturnValue([]);
+			await handler!({} as any, [{ ...baseSession }], []);
+
+			const merged = mockSessionsStore.set.mock.calls.at(-1)![1];
+			expect(merged).toEqual([]);
+		});
+
+		it('keeps refusing a resurrection long after the close', async () => {
+			// The client that missed the close can be away for hours - a suspended
+			// mobile browser, a laptop lid - so the guard is bounded by how many
+			// closes it remembers, never by how long ago they were.
+			vi.useFakeTimers();
+			try {
+				mockSessionsStore.get.mockReturnValue([{ ...baseSession }]);
+				const handler = handlers.get('sessions:setMany');
+				await handler!({} as any, [], ['s1']);
+
+				vi.advanceTimersByTime(6 * 60 * 60 * 1000);
+
+				mockSessionsStore.get.mockReturnValue([]);
+				await handler!({} as any, [{ ...baseSession }], []);
+
+				const merged = mockSessionsStore.set.mock.calls.at(-1)![1];
+				expect(merged).toEqual([]);
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		it('blocks a resurrection arriving through the bootstrap setAll path too', async () => {
+			mockSessionsStore.get.mockReturnValue([{ ...baseSession }]);
+			await handlers.get('sessions:setMany')!({} as any, [], ['s1']);
+
+			mockSessionsStore.get.mockReturnValue([]);
+			await handlers.get('sessions:setAll')!({} as any, [{ ...baseSession }]);
+
+			const merged = mockSessionsStore.set.mock.calls.at(-1)![1];
+			expect(merged).toEqual([]);
+		});
+
+		it('still accepts updates for an agent that is legitimately live', async () => {
+			mockSessionsStore.get.mockReturnValue([{ ...baseSession, id: 'other' }]);
+			await handlers.get('sessions:setMany')!({} as any, [], ['s1']);
+
+			// 's1' was never stored, so nothing was tombstoned and a later write
+			// naming it is an ordinary add, not a resurrection.
+			mockSessionsStore.get.mockReturnValue([{ ...baseSession, id: 'other' }]);
+			await handlers.get('sessions:setMany')!({} as any, [{ ...baseSession }], []);
+
+			const merged = mockSessionsStore.set.mock.calls.at(-1)![1];
+			expect(merged.map((sess: any) => sess.id)).toEqual(['other', 's1']);
+		});
+
+		it("never reports a removal from setAll, which is one client's opening snapshot", async () => {
+			// A client that loaded before a peer created an agent has no idea it
+			// exists; treating its absence as a close would delete a live agent.
+			mockSessionsStore.get.mockReturnValue([
+				{ ...baseSession, id: 's1' },
+				{ ...baseSession, id: 'created-elsewhere' },
+			]);
+
+			await handlers.get('sessions:setAll')!({} as any, [{ ...baseSession, id: 's1' }]);
+
+			expect(lastBridgePayload()).toBeNull();
+		});
+
+		it('reports agents a bootstrap snapshot introduces', async () => {
+			mockSessionsStore.get.mockReturnValue([]);
+
+			await handlers.get('sessions:setAll')!({} as any, [{ ...baseSession, id: 'fresh' }]);
+
+			expect(lastBridgePayload()).toEqual({
+				added: [expect.objectContaining({ id: 'fresh' })],
+				removedIds: [],
+			});
 		});
 	});
 

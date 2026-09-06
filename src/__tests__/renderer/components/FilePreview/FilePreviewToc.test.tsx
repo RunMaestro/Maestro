@@ -1,6 +1,6 @@
 import React, { useRef } from 'react';
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { FilePreviewToc } from '../../../../renderer/components/FilePreview/FilePreviewToc';
 import { mockTheme } from '../../../helpers/mockTheme';
 import type { TocEntry } from '../../../../renderer/components/FilePreview/types';
@@ -11,34 +11,44 @@ const SAMPLE_ENTRIES: TocEntry[] = [
 	{ level: 1, text: 'Section B', slug: 'section-b' },
 ];
 
-function renderToc(
-	opts: {
-		tocEntries?: TocEntry[];
-		onJumpToHeading?: (entry: TocEntry, behavior: ScrollBehavior) => void;
-		isMarkdown?: boolean;
-		markdownEditMode?: boolean;
-	} = {}
-) {
-	const Wrapper: React.FC = () => {
-		const tocButtonRef = useRef<HTMLButtonElement>(null);
-		const tocOverlayRef = useRef<HTMLDivElement>(null);
-		return (
-			<FilePreviewToc
-				theme={mockTheme}
-				tocEntries={opts.tocEntries ?? SAMPLE_ENTRIES}
-				tocWidth={250}
-				showTocOverlay={true}
-				setShowTocOverlay={() => {}}
-				scrollMarkdownToBoundary={() => {}}
-				tocButtonRef={tocButtonRef}
-				tocOverlayRef={tocOverlayRef}
-				isMarkdown={opts.isMarkdown ?? true}
-				markdownEditMode={opts.markdownEditMode ?? false}
-				onJumpToHeading={opts.onJumpToHeading ?? (() => {})}
-			/>
-		);
-	};
-	return render(<Wrapper />);
+interface TocOpts {
+	tocEntries?: TocEntry[];
+	onJumpToHeading?: (entry: TocEntry, behavior: ScrollBehavior) => void;
+	isMarkdown?: boolean;
+	markdownEditMode?: boolean;
+	activeIndex?: number;
+	showTocOverlay?: boolean;
+}
+
+const Wrapper: React.FC<TocOpts> = (opts) => {
+	const tocButtonRef = useRef<HTMLButtonElement>(null);
+	const tocOverlayRef = useRef<HTMLDivElement>(null);
+	return (
+		<FilePreviewToc
+			theme={mockTheme}
+			tocEntries={opts.tocEntries ?? SAMPLE_ENTRIES}
+			tocWidth={250}
+			showTocOverlay={opts.showTocOverlay ?? true}
+			setShowTocOverlay={() => {}}
+			scrollMarkdownToBoundary={() => {}}
+			tocButtonRef={tocButtonRef}
+			tocOverlayRef={tocOverlayRef}
+			isMarkdown={opts.isMarkdown ?? true}
+			markdownEditMode={opts.markdownEditMode ?? false}
+			onJumpToHeading={opts.onJumpToHeading ?? (() => {})}
+			activeIndex={opts.activeIndex ?? 0}
+		/>
+	);
+};
+
+function renderToc(opts: TocOpts = {}) {
+	return render(<Wrapper {...opts} />);
+}
+
+/** An entry is "current" when it carries the inset accent rail. */
+function isHighlighted(label: string): boolean {
+	const button = screen.getByText(label).closest('button') as HTMLButtonElement;
+	return button.style.boxShadow.includes('inset');
 }
 
 describe('FilePreviewToc', () => {
@@ -88,6 +98,57 @@ describe('FilePreviewToc', () => {
 				?.nextElementSibling as HTMLElement;
 			fireEvent.keyDown(list, { key: 'ArrowDown' });
 			expect(onJumpToHeading).toHaveBeenCalledWith(SAMPLE_ENTRIES[1], 'auto');
+		});
+	});
+
+	describe('following the scroll', () => {
+		it('highlights the section the reader is standing in', () => {
+			renderToc({ activeIndex: 2 });
+			expect(isHighlighted('Section B')).toBe(true);
+			expect(isHighlighted('Section A')).toBe(false);
+		});
+
+		it('moves the highlight when the reader scrolls into another section', () => {
+			const { rerender } = renderToc({ activeIndex: 0 });
+			expect(isHighlighted('Section A')).toBe(true);
+			rerender(<Wrapper activeIndex={1} />);
+			expect(isHighlighted('Sub of A')).toBe(true);
+			expect(isHighlighted('Section A')).toBe(false);
+		});
+
+		it('lights the Top sash, and no entry, above the first heading', () => {
+			const { container } = renderToc({ activeIndex: -1 });
+			const top = container.querySelector('[data-testid="toc-top-button"]') as HTMLButtonElement;
+			expect(top.style.boxShadow).toContain('inset');
+			expect(isHighlighted('Section A')).toBe(false);
+		});
+
+		it('keeps arrow nav moving when the document can no longer scroll', () => {
+			// At the bottom of a document the scroll clamps, so activeIndex stops
+			// changing. The list must still step, or the last headings become
+			// unreachable by keyboard.
+			const onJumpToHeading = vi.fn();
+			const { container } = renderToc({ activeIndex: 0, onJumpToHeading });
+			const list = container.querySelector('[data-testid="toc-top-button"]')
+				?.nextElementSibling as HTMLElement;
+			fireEvent.keyDown(list, { key: 'ArrowDown' });
+			fireEvent.keyDown(list, { key: 'ArrowDown' });
+			expect(onJumpToHeading).toHaveBeenLastCalledWith(SAMPLE_ENTRIES[2], 'auto');
+		});
+
+		it('lights a clicked row at once, without waiting for the scroll to land', () => {
+			renderToc({ activeIndex: 0 });
+			fireEvent.click(screen.getByText('Section B'));
+			expect(isHighlighted('Section B')).toBe(true);
+			expect(isHighlighted('Section A')).toBe(false);
+		});
+
+		it('focuses the section the reader is in when the overlay opens', async () => {
+			const { rerender } = renderToc({ showTocOverlay: false, activeIndex: 2 });
+			rerender(<Wrapper showTocOverlay={true} activeIndex={2} />);
+			await waitFor(() => {
+				expect(document.activeElement).toBe(screen.getByText('Section B').closest('button'));
+			});
 		});
 	});
 

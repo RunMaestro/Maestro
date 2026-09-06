@@ -12,6 +12,7 @@ import { clearLiveDraft } from '../../../utils/liveDraftStore';
 import { logger } from '../../../utils/logger';
 import { persistTabStarred } from '../../../utils/starredSessions';
 import { isWebDesktop } from '../../../utils/runtimeContext';
+import { noteDesktopAiTabSelection } from '../../../utils/desktopTabSelectionSync';
 import {
 	addAiTabToUnifiedHistory,
 	closeTab,
@@ -65,14 +66,26 @@ export function useAITabHandlers(): AITabHandlersReturn {
 
 	const handleTabSelect = useCallback((tabId: string) => {
 		const { activeSessionId } = useSessionStore.getState();
+		let didSelectTab = false;
 		updateSessionWith(activeSessionId, (s) => {
 			if (s.orphanedThinkingTabs?.some((t) => t.id === tabId)) {
 				const restored = restoreOrphanedTab(s, tabId);
-				if (restored) return restored.session;
+				if (restored) {
+					didSelectTab = true;
+					return restored.session;
+				}
 			}
 			const result = setActiveTab(s, tabId);
+			didSelectTab = result !== null;
 			return result ? result.session : s;
 		});
+
+		// Web -> Desktop requests already travel over remote:selectTab. Only a
+		// selection originating in the desktop renderer should be reflected back
+		// to Web-Desktop as desktop focus intent.
+		if (didSelectTab && !isWebDesktop()) {
+			noteDesktopAiTabSelection(activeSessionId, tabId);
+		}
 	}, []);
 
 	const performTabClose = useCallback(

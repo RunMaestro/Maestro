@@ -16,6 +16,7 @@ import type {
 	ShortcutUsageDay,
 	StatsAggregation,
 	StatsTimeRange,
+	ResilienceEvent,
 } from '../../shared/stats-types';
 export type {
 	QueryEvent,
@@ -185,6 +186,12 @@ export function createStatsApi() {
 			ipcRenderer.invoke('stats:record-image-annotation', createdAt),
 
 		// Record session creation (for lifecycle tracking)
+		recordResilience: (event: ResilienceEvent): Promise<string | null> =>
+			ipcRenderer.invoke('stats:record-resilience', event),
+
+		getResilience: (range: StatsTimeRange): Promise<ResilienceEvent[]> =>
+			ipcRenderer.invoke('stats:get-resilience', range),
+
 		recordSessionCreated: (event: SessionCreatedEvent): Promise<string | null> =>
 			ipcRenderer.invoke('stats:record-session-created', event),
 

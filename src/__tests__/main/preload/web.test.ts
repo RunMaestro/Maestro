@@ -111,13 +111,14 @@ describe('Web Preload API', () => {
 					},
 				];
 
-				await api.broadcastTabsChange('session-123', tabs, 'tab-1');
+				await api.broadcastTabsChange('session-123', tabs, 'tab-1', true);
 
 				expect(mockInvoke).toHaveBeenCalledWith(
 					'web:broadcastTabsChange',
 					'session-123',
 					tabs,
-					'tab-1'
+					'tab-1',
+					true
 				);
 			});
 		});

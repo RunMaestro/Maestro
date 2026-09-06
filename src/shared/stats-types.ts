@@ -203,6 +203,30 @@ export interface MultiWindowUsage {
 }
 
 /**
+ * An Agent Resilience outage, recorded once when it RESOLVES (never while
+ * counting down). One row per outage, not per retry attempt - the question the
+ * dashboard answers is "how often did Maestro carry my work across a wall",
+ * and an outage that took 3 retries is still one carried outage.
+ */
+export interface ResilienceEvent {
+	id: string;
+	/** Maestro agent (Session.id) the outage happened on. */
+	sessionId: string;
+	/** Provider id ('claude-code', 'codex', ...). */
+	agentType: string;
+	/** What we were waiting out. */
+	strategy: 'availability' | 'token-exhaustion';
+	/** 'recovered' = the auto-resend went through; 'stopped' = the user gave up or moved on. */
+	outcome: 'recovered' | 'stopped';
+	/** Epoch ms of the first failure. */
+	startedAt: number;
+	/** Epoch ms the outage resolved. */
+	resolvedAt: number;
+	/** Auto-retries dispatched during the outage. */
+	retries: number;
+}
+
+/**
  * Database schema version for migrations
  */
-export const STATS_DB_VERSION = 8;
+export const STATS_DB_VERSION = 9;

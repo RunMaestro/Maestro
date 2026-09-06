@@ -336,7 +336,7 @@ export function HamburgerMenuContent({
 						data-shortcut-hint=""
 						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
 					>
-						{shortcuts.openSymphony ? formatShortcutKeys(shortcuts.openSymphony.keys) : '⇧⌘Y'}
+						{shortcuts.openSymphony ? formatShortcutKeys(shortcuts.openSymphony.keys) : '⌥⌘Y'}
 					</span>
 				</button>
 			)}

@@ -410,6 +410,7 @@ export interface TabsChangedMessage extends ServerMessage {
 	sessionId: string;
 	aiTabs: AITabData[];
 	activeTabId: string;
+	activeTabChanged?: boolean;
 }
 
 /**
@@ -570,7 +571,12 @@ export interface WebSocketEventHandlers {
 	/** Called when groups are changed (created, renamed, deleted, membership) */
 	onGroupsChanged?: (groups: GroupData[]) => void;
 	/** Called when tabs change in a session */
-	onTabsChanged?: (sessionId: string, aiTabs: AITabData[], activeTabId: string) => void;
+	onTabsChanged?: (
+		sessionId: string,
+		aiTabs: AITabData[],
+		activeTabId: string,
+		activeTabChanged?: boolean
+	) => void;
 	/** Called when a group chat message is broadcast */
 	onGroupChatMessage?: (chatId: string, message: GroupChatMessage) => void;
 	/** Called when group chat state changes */
@@ -995,7 +1001,8 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
 						handlersRef.current?.onTabsChanged?.(
 							tabsMsg.sessionId,
 							tabsMsg.aiTabs,
-							tabsMsg.activeTabId
+							tabsMsg.activeTabId,
+							tabsMsg.activeTabChanged
 						);
 						break;
 					}

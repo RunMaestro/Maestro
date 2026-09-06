@@ -13,6 +13,7 @@ import {
 	getPermissionModeTooltip,
 	resolveTabPermissionMode,
 	formatAgentLoginCommand,
+	loginShellSyntaxFor,
 	AGENT_DISPLAY_NAMES,
 	BETA_AGENTS,
 } from '../../shared/agentMetadata';
@@ -283,6 +284,69 @@ describe('agentMetadata', () => {
 			expect(formatAgentLoginCommand({ binary: '/Apps/My Tools/claude', args: '/login' })).toBe(
 				'"/Apps/My Tools/claude" /login'
 			);
+		});
+	});
+	describe('Windows shell dialects', () => {
+		// PowerShell parses a line STARTING with a quoted string as an expression
+		// and echoes it, so a quoted path runs nothing. `&` is what makes it a
+		// command. Agents installing under C:\Program Files makes this the
+		// common Windows case, not an edge case.
+		it('prefixes the call operator for a quoted path in PowerShell', () => {
+			expect(
+				formatAgentLoginCommand(
+					{ binary: 'C:\\Program Files\\Claude\\claude.exe', args: '/login' },
+					'powershell'
+				)
+			).toBe('& "C:\\Program Files\\Claude\\claude.exe" /login');
+		});
+
+		it('does not add the call operator when no quoting was needed', () => {
+			expect(formatAgentLoginCommand({ binary: 'claude', args: '/login' }, 'powershell')).toBe(
+				'claude /login'
+			);
+		});
+
+		// cmd.exe runs a quoted path directly, so adding `&` there would break it.
+		it('leaves cmd.exe quoting alone', () => {
+			expect(
+				formatAgentLoginCommand({ binary: 'C:\\Program Files\\c.exe', args: 'login' }, 'cmd')
+			).toBe('"C:\\Program Files\\c.exe" login');
+		});
+
+		it('defaults to posix so macOS and Linux are unchanged', () => {
+			const login = { binary: '/Apps/My Tools/claude', args: '/login' };
+			expect(formatAgentLoginCommand(login)).toBe(formatAgentLoginCommand(login, 'posix'));
+			expect(formatAgentLoginCommand(login)).toBe('"/Apps/My Tools/claude" /login');
+		});
+	});
+
+	describe('loginShellSyntaxFor', () => {
+		it('treats every shell as posix off Windows', () => {
+			for (const shell of ['zsh', 'bash', 'fish', 'powershell']) {
+				expect(loginShellSyntaxFor(shell, false)).toBe('posix');
+			}
+		});
+
+		it('maps the Windows shell ids to their dialects', () => {
+			expect(loginShellSyntaxFor('powershell', true)).toBe('powershell');
+			expect(loginShellSyntaxFor('pwsh', true)).toBe('powershell');
+			expect(loginShellSyntaxFor('cmd', true)).toBe('cmd');
+		});
+
+		// Git Bash and WSL run a posix shell even though the host is Windows.
+		it('treats Git Bash and WSL as posix', () => {
+			expect(loginShellSyntaxFor('bash', true)).toBe('posix');
+			expect(loginShellSyntaxFor('wsl', true)).toBe('posix');
+		});
+
+		it('falls back to PowerShell for an unset or unknown Windows shell', () => {
+			expect(loginShellSyntaxFor('', true)).toBe('powershell');
+			expect(loginShellSyntaxFor('nushell', true)).toBe('powershell');
+		});
+
+		it('is not case or whitespace sensitive', () => {
+			expect(loginShellSyntaxFor('  WSL  ', true)).toBe('posix');
+			expect(loginShellSyntaxFor('CMD', true)).toBe('cmd');
 		});
 	});
 });

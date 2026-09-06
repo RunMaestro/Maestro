@@ -5,10 +5,10 @@ import { THEMES } from '../../../../shared/themes';
 import type { Session } from '../../../../renderer/types';
 import {
 	DashboardSection,
-	UsageDashboardFooter,
 	UsageDashboardHeader,
 	UsageDashboardTabs,
 } from '../../../../renderer/components/UsageDashboard/UsageDashboardModal/components';
+import { UsageDashboardFooter } from '../../../../renderer/components/UsageDashboard/UsageDashboardFooter';
 import {
 	ActivityView,
 	AgentOverviewView,
@@ -256,14 +256,26 @@ describe('UsageDashboardModal shell components', () => {
 
 	it('renders footer range text and exact database size formatting', () => {
 		render(
-			<UsageDashboardFooter theme={theme} data={data} timeRange="month" databaseSize={2048} />
+			<UsageDashboardFooter
+				theme={theme}
+				viewMode="overview"
+				rangeLabel="Showing this month data"
+				fallbackSummary={null}
+				databaseSizeLabel="2.0 KB"
+			/>
 		);
 		expect(screen.getByText('Showing this month data')).toBeInTheDocument();
 		expect(screen.getByTestId('database-size-indicator')).toHaveTextContent('2.0 KB');
 		expect(screen.getByText('Press Esc to close')).toBeInTheDocument();
 
 		render(
-			<UsageDashboardFooter theme={theme} data={null} timeRange="month" databaseSize={null} />
+			<UsageDashboardFooter
+				theme={theme}
+				viewMode="overview"
+				rangeLabel="No data for selected time range"
+				fallbackSummary={null}
+				databaseSizeLabel={null}
+			/>
 		);
 		expect(screen.getByText('No data for selected time range')).toBeInTheDocument();
 		expect(emptyCell).toBe(String.fromCharCode(8212));
