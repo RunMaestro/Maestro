@@ -26,6 +26,7 @@ import * as pty from 'node-pty';
 import type { IDisposable, IPty } from 'node-pty';
 
 import { stripAnsiCodes } from '../shared/stringUtils';
+import { killPty } from '../shared/ptyKill';
 
 export interface TuiDriverOptions {
 	binPath: string;
@@ -393,7 +394,10 @@ export class TuiDriver extends EventEmitter {
 				settled = true;
 				this.off('exit', onExit);
 				try {
-					this.ptyProcess?.kill('SIGTERM');
+					// killPty, not ptyProcess.kill('SIGTERM'): node-pty's Windows
+					// backend throws for ANY signal, and it throws from a deferred
+					// flushed on a socket event, so this catch would not contain it.
+					if (this.ptyProcess) killPty(this.ptyProcess, 'SIGTERM');
 				} catch {
 					// PTY may already be gone; nothing to escalate against.
 				}
@@ -406,7 +410,7 @@ export class TuiDriver extends EventEmitter {
 	kill(): void {
 		if (!this.ptyProcess || this.exited) return;
 		try {
-			this.ptyProcess.kill('SIGKILL');
+			killPty(this.ptyProcess, 'SIGKILL');
 		} catch {
 			// Already gone - nothing to do.
 		}
