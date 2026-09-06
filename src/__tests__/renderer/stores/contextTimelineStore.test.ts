@@ -3,7 +3,7 @@
  *
  * Covers the in-memory Context Timeline capture lifecycle:
  * - always-on append (no capture gate) keyed by session
- * - open / minimize / restore / close semantics (close KEEPS history)
+ * - open / toggle / close semantics (close KEEPS history)
  * - clearSession wipes points but keeps the key
  * - per-session buffer cap / trimmed flag
  * - the selectPoints selector
@@ -39,7 +39,6 @@ function pt(overrides: Partial<ContextTimelinePointInput> = {}): ContextTimeline
 function reset() {
 	useContextTimelineStore.setState({
 		panelSessionId: null,
-		minimized: false,
 		anchorRect: null,
 		buffers: {},
 	});
@@ -51,7 +50,6 @@ describe('contextTimelineStore', () => {
 	it('starts hidden with no buffers', () => {
 		const s = useContextTimelineStore.getState();
 		expect(s.panelSessionId).toBeNull();
-		expect(s.minimized).toBe(false);
 		expect(s.buffers).toEqual({});
 	});
 
@@ -85,7 +83,6 @@ describe('contextTimelineStore', () => {
 		useContextTimelineStore.getState().openPanel(SID);
 		const s = useContextTimelineStore.getState();
 		expect(s.panelSessionId).toBe(SID);
-		expect(s.minimized).toBe(false);
 		expect(s.buffers[SID]).toEqual({ points: [], trimmed: false });
 	});
 
@@ -116,15 +113,34 @@ describe('contextTimelineStore', () => {
 		expect(useContextTimelineStore.getState().anchorRect).toBeNull();
 	});
 
-	it('minimize then restore toggles the minimized flag without touching history', () => {
+	it('togglePanel opens when hidden and closes on a second call for the same session', () => {
+		const rect = { top: 10, left: 20, bottom: 30, right: 120, width: 100, height: 20 };
 		const store = useContextTimelineStore.getState();
 		store.appendPoint(SID, pt());
-		store.openPanel(SID);
-		store.minimizePanel();
-		expect(useContextTimelineStore.getState().minimized).toBe(true);
-		store.restorePanel();
-		expect(useContextTimelineStore.getState().minimized).toBe(false);
+
+		store.togglePanel(SID, rect);
+		expect(useContextTimelineStore.getState().panelSessionId).toBe(SID);
+		expect(useContextTimelineStore.getState().anchorRect).toEqual(rect);
+
+		// The gauge is the only open/close control, so the second press must put
+		// the panel away rather than re-opening it in place.
+		store.togglePanel(SID, rect);
+		expect(useContextTimelineStore.getState().panelSessionId).toBeNull();
+		expect(useContextTimelineStore.getState().anchorRect).toBeNull();
+
+		// Closing is not clearing: the recorded history survives the round trip.
 		expect(selectPoints(SID)(useContextTimelineStore.getState())).toHaveLength(1);
+	});
+
+	it('togglePanel re-targets rather than closing when a DIFFERENT session is showing', () => {
+		const rect = { top: 10, left: 20, bottom: 30, right: 120, width: 100, height: 20 };
+		const store = useContextTimelineStore.getState();
+		store.togglePanel(SID, rect);
+		// Clicking another agent's gauge asks to see THAT agent, not to dismiss.
+		store.togglePanel('other', rect);
+		const s = useContextTimelineStore.getState();
+		expect(s.panelSessionId).toBe('other');
+		expect(s.buffers.other).toEqual({ points: [], trimmed: false });
 	});
 
 	it('closePanel hides the panel but KEEPS the history', () => {
@@ -134,7 +150,6 @@ describe('contextTimelineStore', () => {
 		store.closePanel();
 		const s = useContextTimelineStore.getState();
 		expect(s.panelSessionId).toBeNull();
-		expect(s.minimized).toBe(false);
 		expect(selectPoints(SID)(s)).toHaveLength(1);
 	});
 
