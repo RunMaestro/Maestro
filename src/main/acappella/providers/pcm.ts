@@ -121,6 +121,65 @@ export function encodeWav(pcm: Int16Array, sampleRate = ACAPPELLA_AUDIO_SAMPLE_R
 	return new Uint8Array(buffer);
 }
 
+/**
+ * Read 16-bit PCM out of a WAV file.
+ *
+ * The inverse of {@link encodeWav}, for the system voice: every OS speech engine
+ * hands its audio back as a WAV, and the chunk walk matters because they do not
+ * all put `fmt ` first (macOS `say` writes a `JUNK` chunk ahead of it). Only
+ * 16-bit integer PCM is accepted; anything else is a bug in the caller's engine
+ * arguments, not something to guess a decode for. A stereo file keeps its first
+ * channel, since speech engines are mono and the odd stereo one carries the same
+ * signal twice.
+ */
+export function decodeWavPcm16(bytes: Uint8Array): { sampleRate: number; pcm: Int16Array } {
+	const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+	const ascii = (offset: number, length: number): string => {
+		let out = '';
+		for (let i = 0; i < length; i++) out += String.fromCharCode(view.getUint8(offset + i));
+		return out;
+	};
+	if (bytes.byteLength < 12 || ascii(0, 4) !== 'RIFF' || ascii(8, 4) !== 'WAVE') {
+		throw new Error('Not a WAV file');
+	}
+
+	let format = 0;
+	let channels = 0;
+	let sampleRate = 0;
+	let bits = 0;
+	let offset = 12;
+	while (offset + 8 <= bytes.byteLength) {
+		const id = ascii(offset, 4);
+		const size = view.getUint32(offset + 4, true);
+		const body = offset + 8;
+		if (id === 'fmt ' && body + 16 <= bytes.byteLength) {
+			format = view.getUint16(body, true);
+			channels = view.getUint16(body + 2, true);
+			sampleRate = view.getUint32(body + 4, true);
+			bits = view.getUint16(body + 14, true);
+		} else if (id === 'data') {
+			if (format !== 1 || bits !== 16 || channels < 1 || sampleRate <= 0) {
+				throw new Error(
+					`Unsupported WAV: format ${format}, ${bits}-bit, ${channels} channel(s), ${sampleRate} Hz`
+				);
+			}
+			// A streaming writer may leave the data size as 0 or 0xFFFFFFFF; the
+			// file's real end is the honest bound either way.
+			const available = bytes.byteLength - body;
+			const dataBytes = size === 0 || size > available ? available : size;
+			const frames = Math.floor(dataBytes / (2 * channels));
+			const pcm = new Int16Array(frames);
+			for (let i = 0; i < frames; i++) {
+				pcm[i] = view.getInt16(body + i * channels * 2, true);
+			}
+			return { sampleRate, pcm };
+		}
+		// Chunks are word-aligned: an odd size is followed by one pad byte.
+		offset = body + size + (size % 2);
+	}
+	throw new Error('WAV file has no data chunk');
+}
+
 /** 16-bit samples to the -1..1 floats every inference runtime expects. */
 export function int16ToFloat32(pcm: Int16Array): Float32Array {
 	const out = new Float32Array(pcm.length);

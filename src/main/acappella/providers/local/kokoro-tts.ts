@@ -26,7 +26,7 @@
  */
 
 import { KOKORO_82M_ID } from '../../../../shared/acappella/model-catalog';
-import { LOCAL_TTS_PROVIDER_ID } from '../../../../shared/acappella/provider-catalog';
+import { KOKORO_TTS_PROVIDER_ID } from '../../../../shared/acappella/provider-catalog';
 import { VoiceProviderError } from '../../../../shared/acappella/provider-errors';
 import type {
 	TtsChunk,
@@ -101,7 +101,7 @@ export interface KokoroTtsOptions {
 }
 
 export class KokoroTtsProvider implements TtsProvider {
-	readonly id = LOCAL_TTS_PROVIDER_ID;
+	readonly id = KOKORO_TTS_PROVIDER_ID;
 	readonly label = 'Kokoro (local)';
 	readonly tier = 'local' as const;
 

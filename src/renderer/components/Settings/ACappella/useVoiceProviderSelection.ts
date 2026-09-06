@@ -18,11 +18,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Brain, MessageSquare, Volume2, type LucideIcon } from 'lucide-react';
 
-import {
-	KOKORO_82M_ID,
-	QWEN3_1_7B_ID,
-	WHISPER_BASE_EN_ID,
-} from '../../../../shared/acappella/model-catalog';
+import { WHISPER_BASE_EN_ID } from '../../../../shared/acappella/model-catalog';
 import {
 	HOSTED_PROVIDER_IDS,
 	LOCAL_PROVIDER_IDS,
@@ -49,15 +45,16 @@ const ACAPPELLA_SETTINGS_KEY = 'acappella';
 /**
  * What an unconfigured slot runs.
  *
- * The mock tier, matching `DEFAULT_PROVIDER_IDS` in the registry, because that is
- * the truth: A Cappella ships on the mock until the user picks something. Showing
- * "Local" for a slot that is actually running the mock would be the panel telling
- * a comfortable lie about a privacy-relevant fact.
+ * The LOCAL tier, mirroring `DEFAULT_PROVIDER_IDS` in the registry. The two must
+ * agree exactly: this decides which pill the panel highlights, that decides what
+ * a session actually spawns, and a panel showing "Local" over a session running
+ * something else would be a comfortable lie about a privacy-relevant fact. Read
+ * from the shared catalog rather than spelled out, so the ids cannot drift.
  */
 export const DEFAULT_SLOT_PROVIDER_IDS: Record<VoiceProviderRole, string> = {
-	stt: 'mock-stt',
-	tts: 'mock-tts',
-	brain: 'mock-brain',
+	stt: LOCAL_PROVIDER_IDS.stt,
+	tts: LOCAL_PROVIDER_IDS.tts,
+	brain: LOCAL_PROVIDER_IDS.brain,
 };
 
 export interface VoiceSlotDefinition {
@@ -65,7 +62,14 @@ export interface VoiceSlotDefinition {
 	label: string;
 	title: string;
 	description: string;
-	modelId: string;
+	/**
+	 * The catalog model the LOCAL choice downloads, when it downloads one.
+	 * Absent for a slot whose local engine needs nothing (the system voice, the
+	 * built-in router), in which case `localNote` says so where the row would be.
+	 */
+	modelId?: string;
+	/** What the local choice runs on when there is no model row to show. */
+	localNote?: string;
 	icon: LucideIcon;
 }
 
@@ -85,8 +89,8 @@ export const SLOT_DEFINITIONS: readonly VoiceSlotDefinition[] = [
 		label: 'Text-to-Speech',
 		title: 'Where replies are spoken from',
 		description:
-			'Local synthesises on this machine. Hosted streams audio back from a service you configure.',
-		modelId: KOKORO_82M_ID,
+			"Local speaks with your computer's own voice. Hosted streams audio back from a service you configure.",
+		localNote: 'Uses the voice built into this computer. Nothing to download.',
 		icon: Volume2,
 	},
 	{
@@ -94,8 +98,9 @@ export const SLOT_DEFINITIONS: readonly VoiceSlotDefinition[] = [
 		label: 'Conductor Brain',
 		title: 'What decides which agent you meant',
 		description:
-			'Local runs a small model here. Hosted uses an API model, which is faster to set up and costs per request.',
-		modelId: QWEN3_1_7B_ID,
+			'Local routes by agent name with no model. Hosted uses an API model, which understands more and costs per request.',
+		localNote:
+			'Picks the agent you named, or the one you are talking to, and reads replies back as written. Nothing to download.',
 		icon: Brain,
 	},
 ];

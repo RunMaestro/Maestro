@@ -62,6 +62,29 @@ vi.mock('../../../../main/acappella/providers/local/llama-brain', () => ({
 		}
 	},
 }));
+vi.mock('../../../../main/acappella/providers/local/system-tts', () => ({
+	SystemVoiceTtsProvider: class {
+		readonly id = 'system-tts';
+		readonly label = 'System voice (built in)';
+		readonly tier = 'local';
+		speak() {
+			return (async function* () {})();
+		}
+		cancel() {}
+	},
+	systemVoiceUnavailability: async () => null,
+}));
+vi.mock('../../../../main/acappella/providers/hosted/openai-tts', () => ({
+	OpenAiTtsProvider: class {
+		readonly id = 'openai-tts';
+		readonly label = 'OpenAI (hosted)';
+		readonly tier = 'cloud';
+		speak() {
+			return (async function* () {})();
+		}
+		cancel() {}
+	},
+}));
 vi.mock('../../../../main/acappella/providers/hosted/openai-stt', () => ({
 	OpenAiSttProvider: class {
 		readonly id = 'openai-stt';
@@ -138,6 +161,7 @@ import {
 	MockTtsProvider,
 } from '../../../../main/acappella/providers/mock';
 import { ECHO_STT_PROVIDER_ID } from '../../../../main/acappella/providers/echo-stt';
+import { LOCAL_PROVIDER_IDS } from '../../../../shared/acappella/provider-catalog';
 import {
 	DEFAULT_PROVIDER_IDS,
 	MOCK_PROVIDER_IDS,
@@ -190,17 +214,24 @@ describe('provider registry', () => {
 
 	// -- Resolution ----------------------------------------------------------
 
-	it('defaults to a trio that can hear, and says nothing about it', () => {
+	it('defaults to the local trio, and says nothing about it', () => {
 		const { providers, substitutions, resolvedIds } = resolveVoiceProviders();
 
-		// STT is the exception to the mock default, and the important one: an
-		// unconfigured install has to be able to establish that its microphone
-		// reaches the app at all.
-		expect(resolvedIds.stt).toBe(ECHO_STT_PROVIDER_ID);
+		// The whole point of the default: an unconfigured install resolves to
+		// providers that actually transcribe, speak, and route. It used to resolve
+		// to the mock tier, which opened the microphone, drew a HUD, showed a level
+		// meter, and transcribed nothing - every part healthy, the whole inert.
+		expect(resolvedIds.stt).toBe(LOCAL_PROVIDER_IDS.stt);
 		expect(providers.stt.acceptsAudio).toBe(true);
-		expect(resolvedIds.tts).toBe(MOCK_PROVIDER_IDS.tts);
-		expect(resolvedIds.brain).toBe(MOCK_PROVIDER_IDS.brain);
+		// The voice is the operating system's own and the router is built in, so
+		// after the recogniser's download nothing else stands between a fresh
+		// install and a spoken reply.
+		expect(resolvedIds.tts).toBe('system-tts');
+		expect(resolvedIds.brain).toBe('mock-brain');
+		expect(providers.brain.label).toBe('Built-in (keyword routing)');
 		// The default path is documented behaviour, not something to warn about.
+		// A missing MODEL is reported by the capability gate, by name, with the
+		// download that fixes it - not by a silent substitution here.
 		expect(substitutions).toEqual([]);
 	});
 
@@ -211,7 +242,7 @@ describe('provider registry', () => {
 	it('resolves every slot combination to exactly what was asked for', () => {
 		const choices: Record<VoiceProviderRole, string[]> = {
 			stt: ['mock-stt', 'whisper-local', 'openai-stt'],
-			tts: ['mock-tts', 'kokoro-local', 'elevenlabs-tts'],
+			tts: ['mock-tts', 'system-tts', 'kokoro-local', 'openai-tts', 'elevenlabs-tts'],
 			brain: ['mock-brain', 'qwen3-local', 'openai-brain', 'anthropic-brain'],
 		};
 
@@ -277,27 +308,28 @@ describe('provider registry', () => {
 
 		expect(resolvedIds.stt).toBe(unresolvedProviderId('stt'));
 		expect(resolvedIds.tts).toBe('test-local-tts');
-		expect(resolvedIds.brain).toBe(MOCK_PROVIDER_IDS.brain);
+		// Untouched, so it takes the default - which is the local tier.
+		expect(resolvedIds.brain).toBe(LOCAL_PROVIDER_IDS.brain);
 		expect(substitutions).toHaveLength(1);
 	});
 
 	it.each(['development', 'production'])(
 		'defaults STT to a provider that consumes audio in a %s build',
 		(env) => {
-			// The microphone check used to be development-only, which left a packaged
-			// app with NO provider that opens a capture device: the session reported
-			// "Listening" and the microphone was never touched. The build must not
-			// decide whether the user can hear themselves.
+			// The build must not decide whether the user can hear themselves. This
+			// used to guard the microphone check being development-only, which left a
+			// packaged app with NO provider that opens a capture device; it now guards
+			// the same property for the local default.
 			const previous = process.env.NODE_ENV;
 			process.env.NODE_ENV = env;
 			try {
 				const { resolvedIds, providers, substitutions } = resolveVoicePipeline();
 
-				expect(resolvedIds.stt).toBe(ECHO_STT_PROVIDER_ID);
+				expect(resolvedIds.stt).toBe(LOCAL_PROVIDER_IDS.stt);
 				expect(providers.stt.acceptsAudio).toBe(true);
 				// Nobody asked for it, so it is a default rather than a substitution.
 				expect(substitutions).toEqual([]);
-				expect(DEFAULT_PROVIDER_IDS.stt).toBe(ECHO_STT_PROVIDER_ID);
+				expect(DEFAULT_PROVIDER_IDS.stt).toBe(LOCAL_PROVIDER_IDS.stt);
 			} finally {
 				process.env.NODE_ENV = previous;
 			}

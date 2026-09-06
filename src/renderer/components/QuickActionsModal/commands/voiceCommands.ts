@@ -27,6 +27,8 @@ interface BuildVoiceCommandsArgs {
 	transcriptVisible: boolean;
 	toggleTranscript: () => Promise<void>;
 	setQuickActionOpen: (open: boolean) => void;
+	/** Opens the first-run model walkthrough. */
+	openVoiceSetup: () => void;
 }
 
 /**
@@ -46,6 +48,7 @@ export function buildVoiceCommands({
 	transcriptVisible,
 	toggleTranscript,
 	setQuickActionOpen,
+	openVoiceSetup,
 }: BuildVoiceCommandsArgs): QuickAction[] {
 	if (!voiceActions.enabled) return [];
 
@@ -95,6 +98,23 @@ export function buildVoiceCommands({
 			},
 		});
 	}
+
+	// The way back to the first-run walkthrough. It opens automatically the first
+	// time voice is switched on, and "Later" is a legitimate answer - so there has
+	// to be a route back that is not "find the Extensions pane, scroll to A
+	// Cappella, and read the Settings sub-tab". This is also where someone lands
+	// when the capability gate refuses a session for a model that is not
+	// installed, which is the moment they most need it.
+	commands.push({
+		id: 'voiceSetupModels',
+		keywords: [...VOICE_KEYWORDS, 'setup', 'models', 'download', 'whisper', 'install'],
+		label: 'Set Up Voice Models',
+		subtext: 'Download the speech recognition and speech synthesis models',
+		action: () => {
+			openVoiceSetup();
+			setQuickActionOpen(false);
+		},
+	});
 
 	commands.push({
 		id: 'voiceToggleTranscript',

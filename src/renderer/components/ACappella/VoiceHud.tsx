@@ -312,10 +312,18 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 	// Non-blocking: the HUD floats over the workspace while the user keeps typing,
 	// so it takes neither focus nor the lower layers' clicks, and it never traps
 	// focus. It still registers, so Escape reaches it before the surfaces beneath.
+	//
+	// `blocksAppShortcuts: false` is the one that is easy to miss, and omitting it
+	// undoes all three above: the default is `true`, so merely SHOWING the HUD put
+	// a shortcut-blocking layer on the stack and Cmd+K, agent switching, and the
+	// file-tree keys went dead for as long as a voice session was open. A surface
+	// that exists to be talked at must never take the keyboard away from the app
+	// it is floating over.
 	useModalLayer(MODAL_PRIORITIES.VOICE_HUD, 'Voice HUD', handleClose, {
 		enabled: visible,
 		blocksLowerLayers: false,
 		capturesFocus: false,
+		blocksAppShortcuts: false,
 		focusTrap: 'none',
 	});
 
@@ -533,9 +541,10 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 				    "nothing is being heard" is discovered HERE, mid-session, and sending
 				    someone to Settings to find out which device is open is the gap that
 				    made a silent session indistinguishable from a wrong input. Writes
-				    the same persisted setting Voice Setup does. */}
+				    the same persisted setting Voice Setup does, and stays usable while
+				    listening: the swap lands on the next capture, never mid-utterance. */}
 				<div className="px-3 pb-1.5">
-					<VoiceInputPicker theme={theme} devices={inputDevices} compact disabled={active} />
+					<VoiceInputPicker theme={theme} devices={inputDevices} compact />
 				</div>
 
 				<VoiceHudControls

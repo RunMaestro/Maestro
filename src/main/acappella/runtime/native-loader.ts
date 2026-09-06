@@ -97,6 +97,42 @@ const dynamicImport: (specifier: string) => Promise<unknown> = new Function(
 /** Injected in tests. Production always uses the real import. */
 let importer: (specifier: string) => Promise<unknown> = dynamicImport;
 
+/**
+ * Carries a pre-load refusal out of the reserved cache slot.
+ *
+ * The refusal has to travel as a rejection because the slot is filled with a
+ * promise before it is known whether the runtime can load at all, and it is a
+ * distinct type so the catch can tell "we declined, here is why" from "the
+ * import blew up".
+ */
+class DeclinedRuntime extends Error {
+	constructor(readonly reason: NativeRuntimeUnavailable) {
+		super(reason.message);
+		this.name = 'DeclinedRuntime';
+	}
+}
+
+/**
+ * The entry point of a runtime the user downloaded, or null.
+ *
+ * Wrapped rather than called inline because the store touches the filesystem and
+ * reaches for `app.getPath`, and neither must be allowed to turn a missing
+ * runtime into a thrown error on the load path: the answer to "is it installed"
+ * is no, not a crash.
+ */
+async function resolveDownloadedEntry(id: NativeRuntimeId): Promise<string | null> {
+	try {
+		// Imported lazily, and that is not incidental. `runtime-store` reaches for
+		// `app.getPath`, so a static import would drag Electron into every module
+		// that merely imports this loader - including the ones that exist precisely
+		// so nothing heavy is pulled in until a runtime is actually asked for.
+		const { installedRuntimeEntry } = await import('./runtime-store');
+		return await installedRuntimeEntry(id);
+	} catch {
+		return null;
+	}
+}
+
 /** In-flight and settled loads, so a second caller does not dlopen twice. */
 const loaded = new Map<NativeRuntimeId, Promise<unknown>>();
 
@@ -227,13 +263,25 @@ export async function tryLoadNativeRuntime<T = unknown>(
 		}
 	}
 
-	const declined = declineBeforeLoading(descriptor);
-	if (declined) {
-		failures.set(id, declined);
-		return { ok: false, error: declined };
-	}
-
-	const attempt = importer(descriptor.moduleId);
+	// The cache slot is reserved SYNCHRONOUSLY, before the first await. Resolving
+	// the download location is async, and awaiting it out here would let a second
+	// concurrent caller past the cache check above and dlopen the same runtime a
+	// second time - which is the one thing this cache exists to prevent, and it
+	// costs hundreds of megabytes of resident inference engine when it happens.
+	const attempt = (async () => {
+		// A DOWNLOADED runtime wins over a bundled one, and it is checked BEFORE
+		// `declineBeforeLoading`: that function refuses anything whose descriptor is
+		// not `declared`, which is exactly the state a runtime fetched at run time is
+		// in. Checking it afterwards would refuse the bytes the user just waited for.
+		// The store returns an absolute entry path, so the import bypasses node
+		// resolution entirely and cannot pick up a same-named package elsewhere.
+		const downloaded = await resolveDownloadedEntry(id);
+		if (!downloaded) {
+			const declined = declineBeforeLoading(descriptor);
+			if (declined) throw new DeclinedRuntime(declined);
+		}
+		return importer(downloaded ?? descriptor.moduleId);
+	})();
 	loaded.set(id, attempt);
 
 	try {
@@ -244,7 +292,11 @@ export async function tryLoadNativeRuntime<T = unknown>(
 		// Drop the cache entry so a later attempt (after the user installs the
 		// missing piece) is a real retry rather than a replayed rejection.
 		loaded.delete(id);
-		const classified = classify(descriptor, error);
+		// A pre-load refusal is already classified and already says the useful
+		// thing; running it through `classify` would relabel "not part of this
+		// build" as a load failure and send the user hunting a broken install.
+		const classified =
+			error instanceof DeclinedRuntime ? error.reason : classify(descriptor, error);
 		failures.set(id, classified);
 		return { ok: false, error: classified };
 	}

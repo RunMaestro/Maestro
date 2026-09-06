@@ -47,7 +47,7 @@ describe('VoiceProvidersPanel', () => {
 
 	it('says audio stays on this machine for a local configuration', async () => {
 		vi.mocked(window.maestro.settings.get).mockResolvedValue(
-			storedBlob({ stt: 'whisper-local', tts: 'kokoro-local', brain: 'qwen3-local' })
+			storedBlob({ stt: 'whisper-local', tts: 'system-tts', brain: 'mock-brain' })
 		);
 
 		render(<VoiceProvidersPanel theme={mockTheme} enabled />);
@@ -57,7 +57,7 @@ describe('VoiceProvidersPanel', () => {
 
 	it('names the service the moment the recogniser is hosted', async () => {
 		vi.mocked(window.maestro.settings.get).mockResolvedValue(
-			storedBlob({ stt: 'openai-stt', tts: 'kokoro-local', brain: 'qwen3-local' })
+			storedBlob({ stt: 'openai-stt', tts: 'system-tts', brain: 'mock-brain' })
 		);
 
 		render(<VoiceProvidersPanel theme={mockTheme} enabled />);
@@ -83,7 +83,7 @@ describe('VoiceProvidersPanel', () => {
 
 	it('updates the statement when a slot changes', async () => {
 		vi.mocked(window.maestro.settings.get).mockResolvedValue(
-			storedBlob({ stt: 'whisper-local', tts: 'kokoro-local', brain: 'qwen3-local' })
+			storedBlob({ stt: 'whisper-local', tts: 'system-tts', brain: 'mock-brain' })
 		);
 
 		render(<VoiceProvidersPanel theme={mockTheme} enabled />);

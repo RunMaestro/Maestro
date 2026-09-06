@@ -680,6 +680,18 @@ const mockMaestro = {
 			}),
 			onProgress: vi.fn().mockReturnValue(() => {}),
 		},
+		// The native engines the local tier runs on. Present here for the same
+		// reason `models` is: any surface offering to make voice work has to fetch
+		// BOTH, so a component that lists models and omits the runtime mock throws
+		// on mount rather than rendering. Empty by default - a test that cares
+		// about a runtime says which one.
+		runtimes: {
+			list: vi.fn().mockResolvedValue([]),
+			install: vi.fn().mockResolvedValue(true),
+			footprint: vi.fn().mockResolvedValue(0),
+			removeAll: vi.fn().mockResolvedValue(undefined),
+			onProgress: vi.fn().mockReturnValue(() => {}),
+		},
 	},
 	dialog: {
 		selectFolder: vi.fn().mockResolvedValue(null),

@@ -305,11 +305,17 @@ let audioBridge: VoiceAudioBridge | null = null;
 /**
  * The microphones the audio host last reported.
  *
- * Cached because only the host can enumerate them - `enumerateDevices` is a DOM
- * API - and a settings panel that had to open a hidden window and wait for a
+ * Cached because main cannot enumerate them itself: `enumerateDevices` is a DOM
+ * API, and a settings panel that had to open a hidden window and wait for a
  * round trip just to draw a list would either block or render empty. The host
  * republishes on boot, on device change, and after each capture starts (which is
  * when Chromium stops redacting the labels).
+ *
+ * This is a CACHE, not the source of truth, and it is empty until the audio host
+ * first opens - which nothing does before a session starts. A picker must
+ * therefore enumerate in its own renderer (see `useVoiceInputDevices`) rather
+ * than wait on this; serving it as the list is what left Voice Setup offering
+ * the system default and nothing else.
  */
 let inputDevices: AudioDeviceInfo[] = [];
 

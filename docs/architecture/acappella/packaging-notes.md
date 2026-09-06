@@ -32,29 +32,44 @@ The load-bearing fact: every failure in this area is invisible in development. A
 
 `src/__tests__/shared/acappella-native-runtimes.test.ts` asserts the registry against `package.json`: version pins are exact, every `asarUnpack` glob is present in the electron-builder config, and `declared` matches the actual dependency list.
 
-## The three runtimes
+## The two runtimes
 
-| Runtime      | Package            | Version | Slots           | Prebuilds                                             | Electron rebuild |
-| ------------ | ------------------ | ------- | --------------- | ----------------------------------------------------- | ---------------- |
-| llama.cpp    | `node-llama-cpp`   | 3.20.0  | Conductor Brain | Prebuilt for all four targets via `@node-llama-cpp/*` | No               |
-| whisper.cpp  | `smart-whisper`    | 0.8.1   | Speech-to-Text  | **None. Compiles from source at install**             | No               |
-| ONNX Runtime | `onnxruntime-node` | 1.27.0  | TTS + wake word | Prebuilt, `bin/napi-v6/<platform>/<arch>/`            | No               |
+| Runtime      | Package            | Version | Slots                 | Prebuilds                                             | Electron rebuild |
+| ------------ | ------------------ | ------- | --------------------- | ----------------------------------------------------- | ---------------- |
+| llama.cpp    | `node-llama-cpp`   | 3.20.0  | Conductor Brain       | Prebuilt for all four targets via `@node-llama-cpp/*` | No               |
+| ONNX Runtime | `onnxruntime-node` | 1.27.0  | STT + TTS + wake word | Prebuilt, `bin/napi-v6/<platform>/<arch>/`            | No               |
 
-None of the three needs `electron-rebuild`. All three are Node-API addons, and Node-API is ABI-stable across Node and Electron by design, which is why they are absent from the `postinstall` rebuild list that carries `node-pty` and `better-sqlite3`. Adding a non-Node-API addon later means setting `requiresElectronRebuild: true` AND adding it to that list; the registry test fails if the two disagree.
+Neither needs `electron-rebuild`. Both are Node-API addons, and Node-API is ABI-stable across Node and Electron by design, which is why they are absent from the `postinstall` rebuild list that carries `node-pty` and `better-sqlite3`. Adding a non-Node-API addon later means setting `requiresElectronRebuild: true` AND adding it to that list; the registry test fails if the two disagree.
 
-### Open question: whisper has no prebuilds
+### Open: the llama.cpp payload is only half a runtime
 
-`smart-whisper` runs `node-gyp rebuild` in its install script on every platform. That makes a C++ toolchain and CMake a build requirement for every contributor and both CI legs, not just for release machines. It is recorded here rather than worked around because the decision belongs with the phase that first executes the runtime:
+The `llama` artifact in `runtime-artifacts.ts` fetches the `@node-llama-cpp/<platform>` package, and that package is the native binary alone: its `dist/index.js` exports `getBinsDir()` and nothing else. `LlamaBrainProvider` needs `getLlama()` and `LlamaChatSession` from the main `node-llama-cpp` package, which is 38 MB of ESM JavaScript with 28 runtime dependencies of its own. Pinning and hashing that tree by hand is not a serious option, so until the JavaScript half is either bundled into the app (esbuild, with the platform package left external and resolved from the runtime store) or fetched as a whole `npm` install, the local Brain cannot open its model on any machine. That is why `qwen3-local` is absent from the provider catalog and `Qwen3 1.7B` carries a `pending` note in the model catalog rather than a Download button. Routing defaults to the built-in keyword router, which needs no runtime.
 
-- Accept the source build and add the toolchain to CI, or
-- Produce prebuilds ourselves and consume them, or
-- Choose a different whisper.cpp binding, or run STT through ONNX instead and change the model catalog entry (the catalog currently pins `ggml-base.en.bin`, which is a whisper.cpp format).
+### Open: Kokoro needs a phoneme front end
+
+Kokoro takes phoneme ids, and the grapheme-to-phoneme step (espeak-ng or the `misaki` lexicon) is not part of this build. `KokoroTtsProvider` refuses by name rather than approximate, so `kokoro-local` is absent from the provider catalog and the model carries a `pending` note. Text-to-Speech defaults to the operating system's own engine (`providers/local/system-tts.ts`), which needs no download and no native module: `say` on macOS, System.Speech through PowerShell on Windows, `espeak-ng` on Linux, each writing one WAV per sentence that is decoded with `decodeWavPcm16()` and played through the ordinary `pcm16` path.
+
+### Resolved: whisper had no prebuilds, so it is gone
+
+There used to be a third runtime, `smart-whisper`, carrying Speech-to-Text. It ran `node-gyp rebuild` in its install script on **every** platform, which made a C++ toolchain and CMake a build requirement for every contributor and both CI legs. Worse, it made Speech-to-Text the one slot that could never ship: `runtime-artifacts.ts` distributes runtimes as pinned npm tarballs, and there was no binary to fetch.
+
+Of the options recorded here when the problem was first written down, the last one was taken: **Speech-to-Text now runs through ONNX Runtime**, using the official `onnx-community/whisper-base.en` export instead of `ggml-base.en.bin`. That is strictly better than the alternatives, because ONNX Runtime was already being downloaded for Text-to-Speech and the wake word - the hardest slot now rides a runtime that is already fetched, already hash-verified, and already signed, and the build lost a whole native dependency rather than gaining a toolchain.
+
+The inference lives in `src/main/acappella/providers/local/whisper/`: `mel.ts` (log-mel features), `tokenizer.ts` (byte-level BPE decode), and `engine.ts` (encoder plus the greedy KV-cached decode loop). All three are plain TypeScript over ONNX Runtime tensors, so there is nothing further to compile.
+
+### A downloaded tarball is not an install
+
+npm publishes a package's own files and resolves its dependency tree separately, so a payload that declares a runtime dependency arrives incomplete. `onnxruntime-node` requires `onnxruntime-common` on the first line of `dist/index.js`; installing the tarball alone produces a runtime that extracts cleanly, passes its hash check, reports itself installed, and then throws `MODULE_NOT_FOUND` the first time anything transcribes - after the user has waited through a 101 MB download.
+
+`NativeRuntimeArtifact.dependencies` is what closes that. Each dependency is pinned to the same version as the runtime it serves, hashed like the payload, and extracted into `node_modules/<name>` under the install root, so ordinary node resolution finds it and the loader stays a plain dynamic import. They install INSIDE the same transaction, so a dependency that will not download leaves no promoted install behind rather than a runtime that claims to be ready.
+
+`adm-zip` and `global-agent` are also in `onnxruntime-node`'s `dependencies` and are deliberately absent: both are used only by its install script, which never runs on this path because the binary arrives pre-extracted.
 
 ### Deliberately not yet dependencies
 
-All three descriptors carry `declared: false`, and none of the packages is in `package.json` dependencies yet. They land in the phase that first executes them (Phase 05, the real providers), and `declared` flips in that same commit.
+Both descriptors carry `declared: false`, and neither package is in `package.json` dependencies yet. They land in the phase that first executes them (Phase 05, the real providers), and `declared` flips in that same commit.
 
-The reason is cost with no benefit: these packages are large, one of them compiles from source, and until a provider calls them, adding them would slow every `npm ci` and both CI legs to install code nothing runs. The loader reports `not-a-dependency`, which is a distinct and truthful answer from "your install is broken", the self-test reports `skipped` rather than `fail`, and the packaging script skips them unless run with `--require-all`. The packaging configuration (asarUnpack globs, entitlements, Info.plist, the assertion script) is already in place, so the phase that adds the dependencies changes one boolean per runtime and one dependency line, not the build.
+The reason is cost with no benefit: these packages are large, and until a provider calls them, adding them would slow every `npm ci` and both CI legs to install code nothing runs. (The runtime that compiled from source was the third one, and it is gone - see above.) The loader reports `not-a-dependency`, which is a distinct and truthful answer from "your install is broken", the self-test reports `skipped` rather than `fail`, and the packaging script skips them unless run with `--require-all`. The packaging configuration (asarUnpack globs, entitlements, Info.plist, the assertion script) is already in place, so the phase that adds the dependencies changes one boolean per runtime and one dependency line, not the build.
 
 ## macOS: entitlements, Info.plist, notarization
 
@@ -81,7 +96,7 @@ node scripts/verify-native-packaging.mjs --require-all   # release builds, once 
 
 - The prebuilt binaries load from the installed location once they are unpacked from the asar, which is what the `asarUnpack` entries and the packaging assertion enforce.
 - Paths with spaces and non-ASCII characters: the loader never builds a path. It hands a bare package specifier to the module system, so resolution is Node's, which handles both. Model files are a separate matter and are already handled by the model store.
-- No Visual C++ redistributable is expected: Electron ships the CRT the renderer needs, and all three runtimes are Node-API addons built against it. If one is missing anyway, the loader detects the OS's "The specified module could not be found" (Windows error 126) and reports it as a distinct load failure that names the redistributable, which reaches the user through the capability gate instead of reading like a corrupt install.
+- No Visual C++ redistributable is expected: Electron ships the CRT the renderer needs, and both runtimes are Node-API addons built against it. If one is missing anyway, the loader detects the OS's "The specified module could not be found" (Windows error 126) and reports it as a distinct load failure that names the redistributable, which reaches the user through the capability gate instead of reading like a corrupt install.
 
 ## Linux
 

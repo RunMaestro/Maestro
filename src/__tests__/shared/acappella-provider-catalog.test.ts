@@ -62,7 +62,27 @@ describe('the provider catalog', () => {
 	it('says every local provider keeps its data here', () => {
 		for (const id of Object.values(LOCAL_PROVIDER_IDS)) {
 			expect(getVoiceProvider(id)?.egress).toBe('none');
-			expect(getVoiceProvider(id)?.requires.kind).toBe('model');
+			expect(getVoiceProvider(id)?.requires.kind).not.toBe('api-key');
+		}
+		// Only speech-to-text downloads anything: the voice is the system's own and
+		// the router is built in, which is what makes the default trio runnable
+		// after one download rather than three.
+		expect(getVoiceProvider(LOCAL_PROVIDER_IDS.stt)?.requires.kind).toBe('model');
+		expect(getVoiceProvider(LOCAL_PROVIDER_IDS.tts)?.requires.kind).toBe('system-voice');
+		expect(getVoiceProvider(LOCAL_PROVIDER_IDS.brain)?.requires.kind).toBe('none');
+	});
+
+	it('does not list the engines this build cannot run', () => {
+		// Registered in the provider registry, absent from the dropdown: a choice
+		// that refuses every session reads as "voice is broken".
+		expect(getVoiceProvider('kokoro-local')).toBeUndefined();
+		expect(getVoiceProvider('qwen3-local')).toBeUndefined();
+		expect(getVoiceProvider('conductor-agent')).toBeUndefined();
+	});
+
+	it('offers a hosted trio that one OpenAI key can run', () => {
+		for (const id of Object.values(HOSTED_PROVIDER_IDS)) {
+			expect(voiceProviderCredential(id)).toBe('openai');
 		}
 	});
 
@@ -94,7 +114,7 @@ describe('summariseVoiceEgress', () => {
 	});
 
 	it('names the service when audio leaves', () => {
-		const summary = summariseVoiceEgress(['openai-stt', 'kokoro-local', 'qwen3-local']);
+		const summary = summariseVoiceEgress(['openai-stt', 'system-tts', 'mock-brain']);
 
 		expect(summary.audioLeaves).toBe(true);
 		expect(summary.statement).toBe('Audio is sent to OpenAI.');

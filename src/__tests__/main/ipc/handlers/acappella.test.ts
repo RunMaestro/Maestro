@@ -198,7 +198,17 @@ beforeEach(async () => {
 	await disposeVoiceSessionService();
 	resetACappellaHandlerState();
 
-	settings = { encoreFeatures: { aCappella: true } };
+	// The mock trio is pinned EXPLICITLY rather than inherited from the default.
+	// These tests are about IPC plumbing - handler registration, event fan-out,
+	// window scoping, the audio bridge - and the default is the local tier, which
+	// needs model files on disk. Leaning on the default would make every test in
+	// this file fail the day the default changed, for reasons having nothing to do
+	// with what any of them assert. Which trio the default resolves to is
+	// `provider-registry.test.ts`'s question, and it is asked there.
+	settings = {
+		encoreFeatures: { aCappella: true },
+		acappella: { providers: { stt: 'echo-stt', tts: 'mock-tts', brain: 'mock-brain' } },
+	};
 	broadcasts = [];
 	sessions = [
 		createMockSession({
@@ -453,19 +463,19 @@ describe('A Cappella IPC handlers - open-mic-settings', () => {
 // ---------------------------------------------------------------------------
 
 describe('A Cappella IPC handlers - session lifecycle', () => {
-	it('starts a conductor session on the default trio with no substitutions', async () => {
+	it('starts a conductor session on the configured trio with no substitutions', async () => {
 		const result = (await handlerFor('acappella:start-session')({})) as VoiceStartSessionResult;
 
 		expect(result.snapshot.state).toBe('listening');
 		expect(result.snapshot.scope).toEqual({ kind: 'conductor' });
-		// STT defaults to the microphone check rather than the text-in mock, in
-		// every build: an unconfigured install must still be able to open a device.
+		// Exactly what was asked for, in the order the slots were named.
 		expect(result.snapshot.providerIds).toEqual({
 			stt: 'echo-stt',
 			tts: 'mock-tts',
 			brain: 'mock-brain',
 		});
-		// Not configuring a provider is the documented default, not a downgrade.
+		// Choosing a provider explicitly is honoured, never quietly upgraded or
+		// downgraded to something else.
 		expect(result.substitutions).toEqual([]);
 	});
 
@@ -737,11 +747,17 @@ describe('A Cappella IPC handlers - audio host transport', () => {
 	}
 
 	beforeEach(async () => {
-		// The echo provider is the development default and the only registered STT
-		// that consumes audio, so the whole capture path hangs off this flag.
+		// The echo provider consumes real PCM without needing a model on disk, which
+		// is exactly what the capture path needs to be exercised against. The other
+		// two slots are pinned to the mock tier for the same reason: this assignment
+		// REPLACES the shared one, so naming only `stt` would leave text-to-speech
+		// and the brain on the local default and error the session before a single
+		// frame was captured.
 		nodeEnv = process.env.NODE_ENV;
 		process.env.NODE_ENV = 'development';
-		settings.acappella = { providers: { stt: ECHO_STT_PROVIDER_ID } };
+		settings.acappella = {
+			providers: { stt: ECHO_STT_PROVIDER_ID, tts: 'mock-tts', brain: 'mock-brain' },
+		};
 
 		vi.clearAllMocks();
 		await disposeVoiceSessionService();

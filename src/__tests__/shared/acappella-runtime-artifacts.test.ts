@@ -122,13 +122,58 @@ describe('native runtime artifacts', () => {
 		}
 	});
 
-	it('offers no payload for whisper, which publishes no prebuilt binary', () => {
-		// Deliberate and load-bearing: `smart-whisper` runs node-gyp at install
-		// time, so there is nothing to download. If this ever starts passing as
-		// downloadable, someone has added a binary distribution we now maintain.
-		for (const platform of NATIVE_PLATFORM_KEYS) {
-			expect(isNativeRuntimeDownloadable('whisper', platform)).toBe(false);
-			expect(nativeRuntimeArtifact('whisper', platform)).toBeNull();
+	it('offers a payload for every runtime in the registry, on every supported platform', () => {
+		// There used to be a runtime with no payload at all - `smart-whisper`, which
+		// ran node-gyp at install time and so had nothing to download, which made
+		// speech-to-text the one slot that could never ship. Speech-to-text now runs
+		// on ONNX Runtime and that runtime is gone. If this ever fails again, some
+		// slot has quietly become uninstallable.
+		for (const runtime of NATIVE_RUNTIMES) {
+			for (const platform of NATIVE_PLATFORM_KEYS) {
+				expect(
+					isNativeRuntimeDownloadable(runtime.id, platform),
+					`${runtime.id} has no payload for ${platform}`
+				).toBe(true);
+			}
+		}
+	});
+
+	it('carries every dependency a payload needs to import', () => {
+		// An npm tarball ships a package's own files and NOT its dependency tree, so
+		// a payload that declares a runtime dependency arrives incomplete. Without
+		// this, `onnxruntime-node` installed perfectly and then threw
+		// MODULE_NOT_FOUND on the first transcription - after a 101 MB download.
+		const onnx = nativeRuntimeArtifact('onnx', 'darwin-arm64');
+		expect(onnx?.dependencies.map((dependency) => dependency.name)).toEqual(['onnxruntime-common']);
+
+		// The llama platform packages genuinely stand alone.
+		const llama = nativeRuntimeArtifact('llama', 'darwin-arm64');
+		expect(llama?.dependencies).toEqual([]);
+	});
+
+	it('pins and hashes every dependency exactly as it does a payload', () => {
+		// A dependency is code that gets imported into the main process. It earns
+		// the same treatment as the payload: a pinned version, a real hash, a real
+		// size, and no tags or ranges anywhere.
+		for (const artifact of NATIVE_RUNTIME_ARTIFACTS) {
+			for (const dependency of artifact.dependencies) {
+				expect(dependency.sha256).toMatch(/^[0-9a-f]{64}$/);
+				expect(dependency.bytes).toBeGreaterThan(0);
+				expect(dependency.url).toMatch(/^https:\/\/registry\.npmjs\.org\//);
+				expect(dependency.url).toMatch(/-\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\.tgz$/);
+			}
+		}
+	});
+
+	it('pins a dependency to the same version as the runtime it serves', () => {
+		// `onnxruntime-common` carries the backend registry the addon registers
+		// into. A mismatched pair resolves, loads, and then disagrees about what
+		// backends exist - which surfaces as a session that refuses for no
+		// visible reason.
+		const onnx = NATIVE_RUNTIMES.find((runtime) => runtime.id === 'onnx');
+		const artifact = nativeRuntimeArtifact('onnx', 'darwin-arm64');
+		for (const dependency of artifact?.dependencies ?? []) {
+			expect(dependency.url).toContain(`-${onnx?.versionPin}.tgz`);
 		}
 	});
 

@@ -79,18 +79,22 @@ function frame(): Int16Array {
 // ---------------------------------------------------------------------------
 
 describe('WhisperSttProvider', () => {
-	function whisperRuntime(segments: string[] = ['open the auth tab']) {
-		const free = vi.fn();
-		const transcribe = vi.fn(async () => ({
-			result: Promise.resolve(segments.map((text) => ({ text }))),
-		}));
-		const module = {
-			Whisper: class {
-				transcribe = transcribe;
-				free = free;
-			},
+	/**
+	 * A stand-in for the ONNX engine.
+	 *
+	 * The provider owns STREAMING policy - cadence, stability, endpointing, and
+	 * what is published when - while `whisper/engine.ts` owns inference. These
+	 * tests are about the policy, so the engine is injected: a real one would open
+	 * two ONNX graphs and a 200 MB model to prove something about timing.
+	 */
+	function whisperEngine(text = 'open the auth tab') {
+		const transcribe = vi.fn(async () => text);
+		const unload = vi.fn(async () => {});
+		return {
+			transcribe,
+			unload,
+			engine: { load: vi.fn(async () => {}), unload, transcribe },
 		};
-		return { module, transcribe, free, loadRuntime: async () => module as never };
 	}
 
 	it('reports a runtime that will not load as its own failure, never another provider', async () => {
@@ -102,11 +106,29 @@ describe('WhisperSttProvider', () => {
 		});
 	});
 
-	it('emits a partial once enough audio has accumulated', async () => {
-		const runtime = whisperRuntime(['open the']);
+	it('loads the ONNX runtime rather than a whisper-specific one', async () => {
+		// The whole reason local speech-to-text can ship: it rides the runtime
+		// text-to-speech and the wake word already download, instead of a
+		// whisper.cpp binding that compiles from source and so has nothing to fetch.
+		const seen: string[] = [];
+		const harness = whisperEngine();
 		const provider = new WhisperSttProvider({
-			loadRuntime: runtime.loadRuntime,
-			modelPath: '/tmp/model.bin',
+			engine: harness.engine,
+			loadRuntime: (async (id: string) => {
+				seen.push(id);
+				return {} as never;
+			}) as never,
+		});
+
+		await provider.start(recorder().callbacks);
+		expect(seen).toEqual(['onnx']);
+	});
+
+	it('emits a partial once enough audio has accumulated', async () => {
+		const harness = whisperEngine('open the');
+		const provider = new WhisperSttProvider({
+			engine: harness.engine,
+			loadRuntime: async () => ({}) as never,
 			partialIntervalMs: 40,
 		});
 		const { callbacks, partials } = recorder();
@@ -119,10 +141,10 @@ describe('WhisperSttProvider', () => {
 	});
 
 	it('publishes the final on endpointing and clears the buffer', async () => {
-		const runtime = whisperRuntime(['open the auth tab']);
+		const harness = whisperEngine('open the auth tab');
 		const provider = new WhisperSttProvider({
-			loadRuntime: runtime.loadRuntime,
-			modelPath: '/tmp/model.bin',
+			engine: harness.engine,
+			loadRuntime: async () => ({}) as never,
 			// No partials, so exactly one decode happens and it is the final.
 			partialIntervalMs: 0,
 		});
@@ -133,18 +155,18 @@ describe('WhisperSttProvider', () => {
 		await provider.flush();
 
 		expect(finals).toEqual(['open the auth tab']);
-		expect(runtime.transcribe).toHaveBeenCalledTimes(1);
+		expect(harness.transcribe).toHaveBeenCalledTimes(1);
 
 		// A second flush with nothing buffered must not decode silence.
 		await provider.flush();
-		expect(runtime.transcribe).toHaveBeenCalledTimes(1);
+		expect(harness.transcribe).toHaveBeenCalledTimes(1);
 	});
 
 	it('drops a decode that lands after the session ended', async () => {
-		const runtime = whisperRuntime(['too late']);
+		const harness = whisperEngine('too late');
 		const provider = new WhisperSttProvider({
-			loadRuntime: runtime.loadRuntime,
-			modelPath: '/tmp/model.bin',
+			engine: harness.engine,
+			loadRuntime: async () => ({}) as never,
 			partialIntervalMs: 0,
 		});
 		const { callbacks, finals } = recorder();
@@ -161,30 +183,28 @@ describe('WhisperSttProvider', () => {
 	});
 
 	it('frees the model on stop', async () => {
-		const runtime = whisperRuntime();
+		const harness = whisperEngine();
 		const provider = new WhisperSttProvider({
-			loadRuntime: runtime.loadRuntime,
-			modelPath: '/tmp/model.bin',
+			engine: harness.engine,
+			loadRuntime: async () => ({}) as never,
 		});
 
 		await provider.start(recorder().callbacks);
 		await provider.stop();
 
-		expect(runtime.free).toHaveBeenCalled();
+		expect(harness.unload).toHaveBeenCalled();
 	});
 
 	it('reports a decode failure through onError rather than throwing at the frame path', async () => {
-		const module = {
-			Whisper: class {
-				transcribe = async () => {
-					throw new Error('ggml assert');
-				};
-				free = vi.fn();
-			},
-		};
 		const provider = new WhisperSttProvider({
-			loadRuntime: async () => module as never,
-			modelPath: '/tmp/model.bin',
+			engine: {
+				load: vi.fn(async () => {}),
+				unload: vi.fn(async () => {}),
+				transcribe: async () => {
+					throw new Error('ggml assert');
+				},
+			},
+			loadRuntime: async () => ({}) as never,
 			partialIntervalMs: 0,
 		});
 		const { callbacks, errors } = recorder();
@@ -197,10 +217,10 @@ describe('WhisperSttProvider', () => {
 	});
 
 	it('takes typed text without decoding anything', async () => {
-		const runtime = whisperRuntime();
+		const harness = whisperEngine();
 		const provider = new WhisperSttProvider({
-			loadRuntime: runtime.loadRuntime,
-			modelPath: '/tmp/model.bin',
+			engine: harness.engine,
+			loadRuntime: async () => ({}) as never,
 		});
 		const { callbacks, finals } = recorder();
 
@@ -208,7 +228,7 @@ describe('WhisperSttProvider', () => {
 		provider.injectUtterance('typed instead of spoken');
 
 		expect(finals).toEqual(['typed instead of spoken']);
-		expect(runtime.transcribe).not.toHaveBeenCalled();
+		expect(harness.transcribe).not.toHaveBeenCalled();
 	});
 });
 

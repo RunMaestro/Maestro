@@ -25,7 +25,7 @@ import { describe, it, expect, vi } from 'vitest';
 // `vi.hoisted` because the mock factory runs during the import phase, before a
 // plain `const` at this scope has been initialised.
 const { declared } = vi.hoisted(() => ({
-	declared: { llama: true, whisper: true, onnx: true } as Record<string, boolean>,
+	declared: { llama: true, onnx: true } as Record<string, boolean>,
 }));
 
 vi.mock('../../../../shared/acappella/native-runtimes', () => {
@@ -58,7 +58,6 @@ vi.mock('../../../../shared/acappella/native-runtimes', () => {
 
 	const runtimes = [
 		descriptor('llama', 'fake-llama', 'Fake llama'),
-		descriptor('whisper', 'fake-whisper', 'Fake whisper'),
 		descriptor('onnx', 'fake-onnx', 'Fake onnx'),
 	];
 
@@ -71,6 +70,14 @@ vi.mock('../../../../shared/acappella/native-runtimes', () => {
 		},
 	};
 });
+
+// The system voice is present on macOS and Windows and needs `espeak-ng` on
+// Linux. Mocked as present so the CI runner's package list does not decide
+// whether "every local model is installed" counts as ready; the missing-engine
+// verdict has its own test through `readSystemVoiceFailure`.
+vi.mock('../../../../main/acappella/providers/local/system-tts', () => ({
+	systemVoiceUnavailability: async () => null,
+}));
 
 vi.mock('electron', () => ({
 	app: { getPath: () => '/tmp/acappella-capability-gate-test' },
@@ -184,14 +191,33 @@ describe('capability-gate', () => {
 		it('reports model-corrupt with a re-verify action', async () => {
 			const readiness = await resolveVoiceReadiness({
 				settings: ALL_LOCAL,
-				readModelStatus: statusReader({ [KOKORO_82M_ID]: 'corrupt' }),
+				readModelStatus: statusReader({ [WHISPER_BASE_EN_ID]: 'corrupt' }),
+			});
+
+			const stt = readiness.slots.find((slot) => slot.slot === 'stt')!;
+			expect(stt.reason).toBe('model-corrupt');
+			expect(stt.detail).toContain('failed verification');
+			expect(stt.detail).toContain('hash mismatch');
+			expect(stt.suggestedAction).toContain('Re-verify');
+		});
+
+		it('reports the system voice as unavailable when the machine has no speech engine', async () => {
+			const readiness = await resolveVoiceReadiness({
+				settings: ALL_LOCAL,
+				readModelStatus: statusReader(),
+				readSystemVoiceFailure: async () => ({
+					message: 'No system speech engine is installed (espeak-ng).',
+					suggestedAction: 'Install espeak-ng, or switch Text-to-Speech to a hosted voice.',
+				}),
 			});
 
 			const tts = readiness.slots.find((slot) => slot.slot === 'tts')!;
-			expect(tts.reason).toBe('model-corrupt');
-			expect(tts.detail).toContain('failed verification');
-			expect(tts.detail).toContain('hash mismatch');
-			expect(tts.suggestedAction).toContain('Re-verify');
+			expect(tts.satisfied).toBe(false);
+			expect(tts.reason).toBe('runtime-unavailable');
+			expect(tts.detail).toContain('Text-to-Speech');
+			expect(tts.detail).toContain('espeak-ng');
+			expect(tts.suggestedAction).toContain('hosted voice');
+			expect(readiness.canStartSession).toBe(false);
 		});
 
 		it('reports api-key-missing for a cloud provider with no key', async () => {
@@ -235,27 +261,27 @@ describe('capability-gate', () => {
 			const readiness = await resolveVoiceReadiness({
 				settings: ALL_LOCAL,
 				// Model missing AND runtime broken: the runtime wins, because
-				// downloading 1.1 GB does not fix a binary that will not load.
-				readModelStatus: statusReader({ [QWEN3_1_7B_ID]: 'not-installed' }),
+				// downloading 200 MB does not fix a binary that will not load.
+				readModelStatus: statusReader({ [WHISPER_BASE_EN_ID]: 'not-installed' }),
 				readRuntimeFailure: (runtimeId) =>
-					runtimeId === 'llama'
+					runtimeId === 'onnx'
 						? {
 								kind: 'runtime-unavailable',
-								runtimeId: 'llama',
-								moduleId: 'node-llama-cpp',
+								runtimeId: 'onnx',
+								moduleId: 'onnxruntime-node',
 								platform: 'linux',
 								arch: 'x64',
 								failure: 'load-failed',
-								message: 'llama.cpp failed to load on linux-x64.',
+								message: 'ONNX Runtime failed to load on linux-x64.',
 								suggestedAction: 'Run the voice self-test and include the result.',
 							}
 						: null,
 			});
 
-			const brain = readiness.slots.find((slot) => slot.slot === 'brain')!;
-			expect(brain.reason).toBe('runtime-unavailable');
-			expect(brain.detail).toContain('failed to load');
-			expect(brain.suggestedAction).toContain('self-test');
+			const stt = readiness.slots.find((slot) => slot.slot === 'stt')!;
+			expect(stt.reason).toBe('runtime-unavailable');
+			expect(stt.detail).toContain('failed to load');
+			expect(stt.suggestedAction).toContain('self-test');
 			expect(readiness.canStartSession).toBe(false);
 		});
 
@@ -274,7 +300,7 @@ describe('capability-gate', () => {
 			// that have already been attempted says "ready" on a fresh boot for a
 			// runtime the build does not contain, and the user finds out when the
 			// session dies. Every model is on disk here; the runtime still decides.
-			declared.whisper = false;
+			declared.onnx = false;
 			try {
 				const readiness = await resolveVoiceReadiness({
 					settings: ALL_LOCAL,
@@ -287,7 +313,7 @@ describe('capability-gate', () => {
 				expect(stt.detail).toContain('not part of this build');
 				expect(readiness.canStartSession).toBe(false);
 			} finally {
-				declared.whisper = true;
+				declared.onnx = true;
 			}
 		});
 
@@ -440,14 +466,14 @@ describe('capability-gate', () => {
 
 	describe('no unsatisfied slot is a dead end', () => {
 		/** A runtime that has already failed to load in this process. */
-		const whisperRuntimeFailure: NativeRuntimeUnavailable = {
+		const onnxRuntimeFailure: NativeRuntimeUnavailable = {
 			kind: 'runtime-unavailable',
-			runtimeId: 'whisper',
-			moduleId: 'whisper-node',
+			runtimeId: 'onnx',
+			moduleId: 'onnxruntime-node',
 			platform: 'darwin',
 			arch: 'arm64',
 			failure: 'load-failed',
-			message: 'whisper.cpp could not be loaded on this machine.',
+			message: 'ONNX Runtime could not be loaded on this machine.',
 			suggestedAction: 'Reinstall Maestro, or switch Speech-to-Text to a hosted provider.',
 			detail: 'dlopen failed',
 		};
@@ -475,7 +501,7 @@ describe('capability-gate', () => {
 				() =>
 					resolveVoiceReadiness({
 						settings: ALL_LOCAL,
-						readModelStatus: statusReader({ [KOKORO_82M_ID]: 'corrupt' }),
+						readModelStatus: statusReader({ [WHISPER_BASE_EN_ID]: 'corrupt' }),
 					}),
 			],
 			[
@@ -503,8 +529,7 @@ describe('capability-gate', () => {
 					resolveVoiceReadiness({
 						settings: ALL_LOCAL,
 						readModelStatus: statusReader(),
-						readRuntimeFailure: (runtimeId) =>
-							runtimeId === 'whisper' ? whisperRuntimeFailure : null,
+						readRuntimeFailure: (runtimeId) => (runtimeId === 'onnx' ? onnxRuntimeFailure : null),
 					}),
 			],
 			[
@@ -555,15 +580,20 @@ describe('capability-gate', () => {
 				settings: ALL_LOCAL,
 				readModelStatus: statusReader({
 					[WHISPER_BASE_EN_ID]: 'not-installed',
-					[QWEN3_1_7B_ID]: 'corrupt',
+					[OPENWAKEWORD_BASE_ID]: 'corrupt',
+				}),
+				handsFreeEnabled: true,
+				readSystemVoiceFailure: async () => ({
+					message: 'No system speech engine is installed (espeak-ng).',
+					suggestedAction: 'Install espeak-ng, or switch Text-to-Speech to a hosted voice.',
 				}),
 			});
 
 			const message = readinessErrorMessage(readiness);
 			expect(message).toContain('Speech-to-Text');
-			expect(message).toContain('Conductor Brain');
+			expect(message).toContain('Text-to-Speech');
 			expect(message).toContain('Download it in Settings');
-			expect(message).toContain('Re-verify');
+			expect(message).toContain('espeak-ng');
 		});
 
 		it('is empty when nothing is blocking', async () => {

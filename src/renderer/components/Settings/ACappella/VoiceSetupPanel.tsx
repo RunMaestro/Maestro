@@ -58,9 +58,9 @@ export function VoiceSetupPanel({ theme, enabled }: VoiceSetupPanelProps) {
 	const { modes, setMode, loaded } = useVoiceProviderSelection(enabled);
 	const [pendingSet, setPendingSet] = useState(false);
 
-	// Everything local means the fully-local set; a cloud Brain drops it to the
-	// hands-free set. Derived rather than stored: the set IS the slot choices.
-	const setId: VoiceModelSetId = modes.brain === 'local' ? 'fully-local' : 'hands-free-local';
+	// One bundle: the recogniser and the wake word. The voice and the router
+	// download nothing, so the slot choices no longer change what is fetched.
+	const setId: VoiceModelSetId = 'hands-free-local';
 
 	const listingsById = useMemo(
 		() => new Map(models.listings.map((listing) => [listing.entry.id, listing])),
@@ -98,7 +98,7 @@ export function VoiceSetupPanel({ theme, enabled }: VoiceSetupPanelProps) {
 	/** One provider slot: the Local/Cloud choice plus its model row. */
 	const renderSlot = (role: VoiceProviderRole) => {
 		const slot = SLOT_DEFINITIONS.find((candidate) => candidate.slot === role)!;
-		const listing = listingsById.get(slot.modelId);
+		const listing = slot.modelId ? listingsById.get(slot.modelId) : undefined;
 		const Icon = slot.icon;
 		return (
 			<>
@@ -128,14 +128,17 @@ export function VoiceSetupPanel({ theme, enabled }: VoiceSetupPanelProps) {
 						<VoiceModelRow
 							theme={theme}
 							listing={listing}
-							progress={models.progress[slot.modelId]}
-							verifyResult={models.verifyResults[slot.modelId]}
+							progress={models.progress[listing.entry.id]}
+							verifyResult={models.verifyResults[listing.entry.id]}
 							onDownload={(id) => void models.download(id)}
 							onPause={(id) => void models.pause(id)}
 							onResume={(id) => void models.resume(id)}
 							onCancel={(id) => void models.cancel(id)}
 							onVerify={(id) => void models.verify(id)}
 						/>
+					)}
+					{modes[role] === 'local' && !slot.modelId && slot.localNote && (
+						<p className="text-[11px] opacity-55">{slot.localNote}</p>
 					)}
 				</SectionCard>
 			</>

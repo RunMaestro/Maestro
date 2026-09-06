@@ -103,10 +103,12 @@ than the streamed one.
 
 ## What each hop tells you
 
-- **First partial is slow, local STT.** The decode is CPU-bound. Check whether the machine has an
-  accelerator whisper.cpp can use, and check the partial interval: re-transcribing the whole
-  utterance every 900 ms is the design, and on a slow machine each pass takes longer than the
-  interval, so passes are skipped rather than queued.
+- **First partial is slow, local STT.** The decode is CPU-bound. Check which execution providers
+  ONNX Runtime has available on the machine, and check the partial interval: re-transcribing the
+  whole utterance every 900 ms is the design, and on a slow machine each pass takes longer than the
+  interval, so passes are skipped rather than queued. One pass is a full encoder run over the fixed
+  30 s window plus a greedy token loop, so cost scales with how much was SAID, not with how long the
+  buffer is.
 - **First partial is slow, hosted STT.** Network, or the utterance was long. The upload happens on
   endpointing, so a long utterance costs upload time no partial can hide.
 - **Route decision is slow, local Brain.** Almost always a model load: the Qwen3 context unloads

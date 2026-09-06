@@ -1,14 +1,13 @@
 /**
- * Local speech-to-text on whisper.cpp.
+ * Local speech-to-text on Whisper, running on ONNX Runtime.
  *
- * **Chunked, not truly streaming.** whisper.cpp transcribes a buffer, not a
- * stream: there is no incremental decoder to feed. The standard way to get live
- * text out of it, and the one used here, is to re-transcribe the utterance so far
- * on a cadence and publish the result as a partial. Words near the start stop
- * changing between passes (that is what "stabilise" means here) while the tail
- * keeps being revised, which is exactly what a partial transcript is supposed to
- * look like. The final pass runs on endpointing and is the only one whose text is
- * dispatched.
+ * **Chunked, not truly streaming.** Whisper transcribes a buffer, not a stream:
+ * there is no incremental decoder to feed. The standard way to get live text out
+ * of it, and the one used here, is to re-transcribe the utterance so far on a
+ * cadence and publish the result as a partial. Words near the start stop changing
+ * between passes (that is what "stabilise" means here) while the tail keeps being
+ * revised, which is exactly what a partial transcript is supposed to look like.
+ * The final pass runs on endpointing and is the only one whose text is dispatched.
  *
  * **One decode at a time.** A pass takes longer than the interval on a slow
  * machine, so a second pass starting while the first is running would queue
@@ -16,12 +15,20 @@
  * than queued: a partial that arrives late is worthless, and the next pass will
  * cover the same audio anyway.
  *
- * **Nothing loads until a session starts.** The model is opened on `start()`
- * through `native-loader.ts` and freed on `stop()`. A 148 MB model resident for
- * the life of an app whose voice feature is off is exactly the cost the lazy
- * loader exists to avoid, and the failure to load reaches the user through the
- * capability gate rather than as a dlopen string.
+ * **Nothing loads until a session starts.** The graphs are opened on `start()`
+ * through `native-loader.ts` and freed on `stop()`. Two hundred megabytes of
+ * model resident for the life of an app whose voice feature is off is exactly
+ * the cost the lazy loader exists to avoid, and the failure to load reaches the
+ * user through the capability gate rather than as a dlopen string.
+ *
+ * The inference itself lives in `whisper/engine.ts`. This file owns the STREAMING
+ * policy - cadence, stability, endpointing, what is published and when - and that
+ * split is deliberate: the engine is a pure function of audio, so it can be tested
+ * against reference transcripts without a session, a clock, or a microphone.
  */
+
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
 import { ACAPPELLA_AUDIO_SAMPLE_RATE } from '../../../../shared/acappella/audio-host';
 import { WHISPER_BASE_EN_ID } from '../../../../shared/acappella/model-catalog';
@@ -32,9 +39,17 @@ import { estimateSpokenDurationMs } from '../../../../shared/acappella/sentences
 import { modelFilePath } from '../../models/model-store';
 import { loadLocalRuntime } from './runtime';
 import { PcmBuffer } from '../pcm';
+import { WhisperEngine, WHISPER_MAX_SAMPLES, type OnnxModule } from './whisper/engine';
 
-/** The catalog file this provider loads. */
-const MODEL_FILE = 'ggml-base.en.bin';
+/**
+ * The catalog files this provider loads, by their path inside the model dir.
+ *
+ * Named here rather than inlined so the set a decode needs and the set the
+ * catalog downloads can be compared at a glance when either changes.
+ */
+const ENCODER_FILE = 'onnx/encoder_model.onnx';
+const DECODER_FILE = 'onnx/decoder_model_merged_q4.onnx';
+const TOKENIZER_FILE = 'tokenizer.json';
 
 /**
  * Audio accumulated between partial passes. Under half a second the re-decode
@@ -49,41 +64,26 @@ const PARTIAL_STABILITY_STEP = 0.15;
 const MAX_PARTIAL_STABILITY = 0.9;
 
 /**
- * whisper.cpp is a local decode with no confidence to report. 0.95 rather than 1
- * says "a recogniser produced this" without claiming certainty the model never
- * expressed.
+ * A greedy local decode reports no confidence. 0.95 rather than 1 says "a
+ * recogniser produced this" without claiming certainty the model never expressed.
  */
 const LOCAL_FINAL_CONFIDENCE = 0.95;
 
-/** The `smart-whisper` surface this provider uses, structurally. */
-interface WhisperSegment {
-	text: string;
-}
-
-interface WhisperTask {
-	result: Promise<WhisperSegment[]>;
-}
-
-interface WhisperInstance {
-	transcribe(
-		pcm: Float32Array,
-		params?: Record<string, unknown>
-	): Promise<WhisperTask> | WhisperTask;
-	free(): Promise<void> | void;
-}
-
-interface WhisperModule {
-	Whisper: new (modelPath: string, options?: Record<string, unknown>) => WhisperInstance;
-}
-
 export interface WhisperSttOptions {
 	partialIntervalMs?: number;
-	/** Absolute path override. Defaults to the installed catalog model. */
-	modelPath?: string;
-	/** Whether to ask whisper.cpp for GPU offload. */
-	gpu?: boolean;
+	/** Directory override for the model files. Defaults to the installed catalog model. */
+	modelDir?: string;
 	/** Injected in tests; production goes through `native-loader.ts`. */
 	loadRuntime?: typeof loadLocalRuntime;
+	/** Injected in tests, so the streaming policy can be exercised without ONNX. */
+	engine?: WhisperEngineLike;
+}
+
+/** What this provider needs of {@link WhisperEngine}, so a test can stand in for it. */
+export interface WhisperEngineLike {
+	load(module: OnnxModule): Promise<void>;
+	unload(): Promise<void>;
+	transcribe(audio: Float32Array): Promise<string>;
 }
 
 export class WhisperSttProvider implements SttProvider {
@@ -94,12 +94,12 @@ export class WhisperSttProvider implements SttProvider {
 	readonly acceptsAudio = true;
 
 	private readonly partialIntervalMs: number;
-	private readonly modelPathOverride?: string;
-	private readonly gpu: boolean;
+	private readonly modelDirOverride?: string;
 	private readonly loadRuntime: typeof loadLocalRuntime;
+	private readonly injectedEngine?: WhisperEngineLike;
 
 	private callbacks: SttCallbacks | null = null;
-	private whisper: WhisperInstance | null = null;
+	private engine: WhisperEngineLike | null = null;
 	private buffer = new PcmBuffer();
 
 	/** Audio duration at the last partial pass, so the cadence is in AUDIO time. */
@@ -109,28 +109,36 @@ export class WhisperSttProvider implements SttProvider {
 
 	constructor(options: WhisperSttOptions = {}) {
 		this.partialIntervalMs = Math.max(0, options.partialIntervalMs ?? DEFAULT_PARTIAL_INTERVAL_MS);
-		this.modelPathOverride = options.modelPath;
-		this.gpu = options.gpu ?? true;
+		this.modelDirOverride = options.modelDir;
 		this.loadRuntime = options.loadRuntime ?? loadLocalRuntime;
+		this.injectedEngine = options.engine;
 	}
 
 	async start(callbacks: SttCallbacks): Promise<void> {
-		const module = await this.loadRuntime<WhisperModule>('whisper', this.id);
-		const modelPath = this.modelPathOverride ?? modelFilePath(WHISPER_BASE_EN_ID, MODEL_FILE);
+		// ONNX Runtime, not a whisper-specific runtime: text-to-speech and the wake
+		// word already fetch it, so local speech-to-text costs no extra download.
+		const module = await this.loadRuntime<OnnxModule>('onnx', this.id);
 
-		try {
-			this.whisper = new module.Whisper(modelPath, { gpu: this.gpu });
-		} catch (error) {
-			// The runtime loaded and the model did not. Distinct from a runtime
-			// failure, and its recovery is the model page rather than a bug report.
-			throw new VoiceProviderError(
-				'The Whisper model could not be opened. Re-verify it in Settings > Plugins > A Cappella > Models.',
-				{ kind: 'unavailable', providerId: this.id, cause: error }
-			);
-		}
+		const engine =
+			this.injectedEngine ??
+			new WhisperEngine({
+				encoderPath: this.modelFile(ENCODER_FILE),
+				decoderPath: this.modelFile(DECODER_FILE),
+				tokenizerJson: await readFile(this.modelFile(TOKENIZER_FILE), 'utf8'),
+				providerId: this.id,
+			});
 
+		await engine.load(module);
+		this.engine = engine;
 		this.callbacks = callbacks;
 		this.resetUtterance();
+	}
+
+	/** Absolute path of one catalog file, honouring a test's directory override. */
+	private modelFile(relative: string): string {
+		return this.modelDirOverride
+			? join(this.modelDirOverride, relative)
+			: modelFilePath(WHISPER_BASE_EN_ID, relative);
 	}
 
 	feed(pcm: Int16Array): void {
@@ -157,14 +165,9 @@ export class WhisperSttProvider implements SttProvider {
 		this.callbacks = null;
 		this.buffer.clear();
 
-		const whisper = this.whisper;
-		this.whisper = null;
-		try {
-			await whisper?.free();
-		} catch {
-			// A model that will not close cleanly must not wedge session teardown.
-			// The process is about to drop the handle either way.
-		}
+		const engine = this.engine;
+		this.engine = null;
+		await engine?.unload();
 	}
 
 	/**
@@ -181,9 +184,9 @@ export class WhisperSttProvider implements SttProvider {
 	// -- Internals -----------------------------------------------------------
 
 	private async decode(kind: 'partial' | 'final'): Promise<void> {
-		const whisper = this.whisper;
+		const engine = this.engine;
 		const callbacks = this.callbacks;
-		if (!whisper || !callbacks) return;
+		if (!engine || !callbacks) return;
 
 		const samples = this.buffer.toFloat32();
 		const durationMs = this.buffer.durationMs;
@@ -191,22 +194,19 @@ export class WhisperSttProvider implements SttProvider {
 
 		this.decoding = true;
 		try {
-			const task = await whisper.transcribe(samples, {
-				language: 'en',
-				// Suppresses whisper.cpp's "[BLANK_AUDIO]" style annotations, which are
-				// not words and would be routed as if they were.
-				suppress_non_speech_tokens: true,
-			});
-			const segments = await task.result;
+			// One encoder pass covers a fixed 30 s window, so a longer utterance is
+			// transcribed from its TAIL rather than silently truncated at the front.
+			// Someone who has been speaking for a minute cares about what they just
+			// said, and the alternative - chunking and stitching - would publish a
+			// partial that disagrees with the one before it on words already spoken.
+			const windowed =
+				samples.length > WHISPER_MAX_SAMPLES
+					? samples.subarray(samples.length - WHISPER_MAX_SAMPLES)
+					: samples;
+			const text = await engine.transcribe(windowed);
 			// The session may have ended, or the utterance been superseded, while the
 			// decode ran. Publishing now would put an old transcript on a new turn.
 			if (this.callbacks !== callbacks) return;
-
-			const text = segments
-				.map((segment) => segment.text)
-				.join(' ')
-				.replace(/\s+/g, ' ')
-				.trim();
 
 			if (kind === 'final') {
 				this.buffer.clear();
@@ -223,10 +223,12 @@ export class WhisperSttProvider implements SttProvider {
 			// frame callback with no caller, and the session has a path for a named
 			// provider failure but not for a rejected promise from nowhere.
 			callbacks.onError(
-				new VoiceProviderError(
-					`Whisper could not transcribe this utterance: ${(error as Error).message}`,
-					{ kind: 'unavailable', providerId: this.id, cause: error }
-				)
+				error instanceof VoiceProviderError
+					? error
+					: new VoiceProviderError(
+							`Whisper could not transcribe this utterance: ${(error as Error).message}`,
+							{ kind: 'unavailable', providerId: this.id, cause: error }
+						)
 			);
 		} finally {
 			this.decoding = false;

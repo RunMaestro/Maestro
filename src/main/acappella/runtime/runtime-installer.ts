@@ -177,6 +177,11 @@ export async function installNativeRuntime(
 		await downloadPayload(artifact, payload, options);
 		await extractPayload(artifact, payload, staging);
 		await fs.rm(payload, { force: true });
+		// Inside the transaction, so a dependency that will not download leaves no
+		// promoted install behind. A runtime without its dependencies extracts
+		// cleanly, verifies cleanly, reports itself installed, and then throws
+		// MODULE_NOT_FOUND on the first import - after the whole download.
+		await installDependencies(artifact, staging, options);
 
 		const binary = path.join(staging, artifact.binary);
 		if (!(await pathExists(binary))) {
@@ -225,44 +230,94 @@ async function downloadPayload(
 	destination: string,
 	options: RuntimeInstallOptions
 ): Promise<void> {
+	await downloadVerified(
+		{ url: artifact.url, sha256: artifact.sha256, bytes: artifact.bytes },
+		artifact.runtimeId,
+		destination,
+		options
+	);
+}
+
+/**
+ * Stream one tarball to disk, hashing as it goes, and refuse it if the bytes are
+ * not what the catalog promised.
+ *
+ * Shared by the runtime payload and its dependency payloads: both are code that
+ * will later be imported into the main process, so both get the same treatment.
+ * Hashing DURING the stream rather than re-reading afterwards means a mismatched
+ * payload is never on disk in a readable state for longer than the write itself.
+ */
+async function downloadVerified(
+	source: { url: string; sha256: string; bytes: number },
+	runtimeId: NativeRuntimeId,
+	destination: string,
+	options: RuntimeInstallOptions
+): Promise<void> {
 	const fetchImpl = options.fetchImpl ?? (globalThis.fetch as FetchLike);
-	const response = await fetchImpl(artifact.url, { signal: options.signal });
+	const response = await fetchImpl(source.url, { signal: options.signal });
 	if (!response.ok || !response.body) {
-		throw new Error(`Downloading ${artifact.url} failed with HTTP ${response.status}.`);
+		throw new Error(`Downloading ${source.url} failed with HTTP ${response.status}.`);
 	}
 
 	const hash = createHash('sha256');
 	let received = 0;
 	let lastEmit = 0;
 
-	const source = Readable.fromWeb(response.body as never);
-	source.on('data', (chunk: Buffer) => {
+	const stream = Readable.fromWeb(response.body as never);
+	stream.on('data', (chunk: Buffer) => {
 		hash.update(chunk);
 		received += chunk.length;
 		const now = Date.now();
 		if (now - lastEmit < RUNTIME_PROGRESS_INTERVAL_MS) return;
 		lastEmit = now;
 		options.onProgress?.({
-			runtimeId: artifact.runtimeId,
+			runtimeId,
 			phase: 'downloading',
 			bytes: received,
-			totalBytes: artifact.bytes,
+			totalBytes: source.bytes,
 		});
 	});
 
-	await pipeline(source, createWriteStream(destination));
+	await pipeline(stream, createWriteStream(destination));
 
 	options.onProgress?.({
-		runtimeId: artifact.runtimeId,
+		runtimeId,
 		phase: 'verifying',
 		bytes: received,
-		totalBytes: artifact.bytes,
+		totalBytes: source.bytes,
 	});
 
 	const actual = hash.digest('hex');
-	if (actual !== artifact.sha256) {
+	if (actual !== source.sha256) {
 		await fs.rm(destination, { force: true });
-		throw new RuntimeHashMismatchError(artifact.runtimeId, artifact.sha256, actual);
+		throw new RuntimeHashMismatchError(runtimeId, source.sha256, actual);
+	}
+}
+
+/**
+ * Fetch each declared dependency into `node_modules/<name>` under the staging
+ * root.
+ *
+ * Placed there rather than rewritten into the entry point so ordinary node
+ * resolution finds them, which means the loader stays a plain dynamic import and
+ * the installed tree looks exactly like an `npm install` would have produced.
+ * Nothing is filtered out of a dependency archive: these are small pure-JS
+ * packages, and guessing which of their files matter is how a lazily-required
+ * module goes missing months later.
+ */
+async function installDependencies(
+	artifact: NativeRuntimeArtifact,
+	staging: string,
+	options: RuntimeInstallOptions
+): Promise<void> {
+	for (const dependency of artifact.dependencies) {
+		const target = path.join(staging, 'node_modules', dependency.name);
+		await fs.mkdir(target, { recursive: true });
+
+		const payload = path.join(staging, `${dependency.name.replace(/[^\w.-]/g, '_')}.tgz`);
+		await downloadVerified(dependency, artifact.runtimeId, payload, options);
+		await tar.x({ file: payload, cwd: target, strip: 1 });
+		await fs.rm(payload, { force: true });
 	}
 }
 

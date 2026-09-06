@@ -90,12 +90,27 @@ export type UsageDashboardViewMode =
 	| 'codex-usage'
 	| 'cue'
 	| 'shortcuts';
+/**
+ * Every tab the Settings modal can open on.
+ *
+ * Kept in step with `SettingsTabId` in `SettingsModal.tsx`, which renders them.
+ * This list used to be a stale subset that could not name half the tabs that
+ * existed, so a caller asking to deep-link into Plugins, SSH, or Display simply
+ * would not compile - and the workaround was to open Settings with no tab and
+ * let the user go hunting.
+ */
 export type SettingsTab =
+	| 'about'
 	| 'general'
+	| 'display'
+	| 'llm'
 	| 'shortcuts'
 	| 'theme'
 	| 'notifications'
 	| 'aicommands'
+	| 'ssh'
+	| 'environment'
+	| 'encore'
 	| 'prompts';
 // Note: ScratchPadMode was removed as part of the Scratchpad → Auto Run migration
 export type FocusArea = 'sidebar' | 'main' | 'right';

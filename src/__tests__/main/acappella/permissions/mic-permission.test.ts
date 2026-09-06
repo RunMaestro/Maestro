@@ -271,7 +271,13 @@ describe('mic-permission', () => {
 				});
 
 				expect(readiness.slots.find((slot) => slot.slot === 'microphone')?.satisfied).toBe(true);
-				expect(readiness.canStartSession).toBe(true);
+				// Asserted against the MICROPHONE rather than `canStartSession`: the
+				// default pipeline is the local tier now, so a machine with no models
+				// downloaded blocks on the model - correctly, and with a reason that
+				// names the download. This test is about permission never being the
+				// thing that blocks, which a global "can start" would silently stop
+				// checking the moment any other slot had an opinion.
+				expect(readiness.blocking.some((slot) => slot.slot === 'microphone')).toBe(false);
 			}
 		);
 

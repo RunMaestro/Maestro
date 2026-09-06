@@ -43,6 +43,10 @@ import {
 	knownNativeRuntimeUnavailability,
 	type NativeRuntimeUnavailable,
 } from '../runtime/native-loader';
+import {
+	systemVoiceUnavailability,
+	type SystemVoiceUnavailable,
+} from '../providers/local/system-tts';
 import { DEFAULT_PROVIDER_IDS, type VoiceProviderSettings } from '../providers/provider-registry';
 import { getStatus, type ModelStatus } from './model-store';
 
@@ -145,6 +149,12 @@ export interface ResolveVoiceReadinessOptions {
 	 * startup cost the lazy loader exists to avoid.
 	 */
 	readRuntimeFailure?: (runtimeId: NativeRuntimeId) => NativeRuntimeUnavailable | null;
+	/**
+	 * Why the operating system's speech engine cannot run, or null when it can.
+	 * Defaults to the real PATH check. Injected so a test on a Linux runner
+	 * without `espeak-ng` can still describe a machine that has one.
+	 */
+	readSystemVoiceFailure?: () => Promise<SystemVoiceUnavailable | null>;
 }
 
 /**
@@ -274,6 +284,24 @@ async function resolveSlot(
 
 	if (requirement.kind === 'none') {
 		return { slot, providerId, satisfied: true };
+	}
+
+	if (requirement.kind === 'system-voice') {
+		// Present by construction on macOS and Windows; on Linux only with
+		// `espeak-ng` installed. Checked here so a machine without one refuses
+		// before the microphone opens rather than on the first reply, when the user
+		// has no screen in front of them.
+		const readFailure = options.readSystemVoiceFailure ?? systemVoiceUnavailability;
+		const failure = await readFailure();
+		if (!failure) return { slot, providerId, satisfied: true };
+		return {
+			slot,
+			providerId,
+			satisfied: false,
+			reason: 'runtime-unavailable',
+			detail: `${label}: ${failure.message}`,
+			suggestedAction: failure.suggestedAction,
+		};
 	}
 
 	if (requirement.kind === 'model') {

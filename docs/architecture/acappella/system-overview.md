@@ -185,12 +185,27 @@ tell the tiers apart, which is the point.
 `src/main/acappella/providers/provider-registry.ts` resolves the active trio from settings, and is
 the only module allowed to import a concrete provider. Two rules are non-negotiable:
 
-1. When nothing is configured, resolve the **mock** trio. The pipeline must always be runnable.
-   The one per-build exception is STT in a development build, which defaults to `echo-stt`: it
-   consumes real PCM and reports the speech segments it heard, so `npm run dev` exercises the whole
-   audio path without a settings edit. A default is not a substitution and is not reported as one.
-   Whether a microphone is opened at all follows from `SttProvider.acceptsAudio` rather than from a
-   list of provider ids, so a text-in provider never costs the user a permission prompt.
+1. When nothing is configured, resolve the **local** trio, so a fresh install can actually
+   transcribe, speak, and route. It used to resolve to the mock trio, and the result was a feature
+   that opened the microphone, drew a HUD, showed a level meter, and did nothing: `echo-stt` reports
+   how long you spoke rather than what you said, so no utterance ever routed. Every part looked
+   healthy and the whole was inert, which is the worst thing a default can be. The local trio is
+   Whisper (`whisper-local`), the operating system's own voice (`system-tts`: `say`, System.Speech,
+   or `espeak-ng`), and the built-in keyword router (`mock-brain`, labelled "Built-in"). Only the
+   first needs a download - Whisper and the ONNX runtime are fetched on consent through Voice Setup,
+   and until they are on disk the capability gate refuses BY NAME and points at the download, which
+   is a far more useful state than a mock that silently substitutes. A default is not a substitution
+   and is not reported as one. Whether a microphone is opened at all follows from
+   `SttProvider.acceptsAudio` rather than from a list of provider ids, so a text-in provider never
+   costs the user a permission prompt. `echo-stt` is still selectable and is still the right answer
+   to "is my microphone reaching Maestro?" - it is a diagnostic, not a default.
+
+   Two local engines are registered but deliberately absent from the shared catalog, and so from
+   every dropdown: Kokoro (`kokoro-local`) needs a grapheme-to-phoneme front end this build does not
+   have, and Qwen3 (`qwen3-local`) needs the JavaScript half of `node-llama-cpp`, which the
+   downloadable runtime payload does not carry. Listing a provider that refuses every session reads
+   as "voice is broken"; each returns to the catalog in the commit that makes it runnable.
+
 2. **Never substitute anything for a provider that cannot be built.** Not a cloud provider, which
    would spend the user's money and send their microphone somewhere they did not choose; and not
    the mock either, because a session that transcribes nothing while looking healthy hides the
@@ -204,8 +219,9 @@ structural rather than a promise. The mock tier is selected, never substituted i
 unconfigured install runs on purpose, and it is what the tests and the dev harness drive.
 
 Phase 05 added the concrete backends behind these rules: `providers/local/` (Whisper, Kokoro,
-Qwen3 through `runtime/native-loader.ts`), `providers/hosted/` (OpenAI STT and Brain, Anthropic
-Brain, ElevenLabs TTS, all through one retrying and classifying transport), and
+Qwen3 through `runtime/native-loader.ts`, plus the system voice through the OS speech engine),
+`providers/hosted/` (OpenAI STT, TTS, and Brain, Anthropic Brain, ElevenLabs TTS, all through one
+retrying and classifying transport), and
 `providers/realtime/` for the speech-to-speech tier. Which engine fills which slot, and what each
 one needs and sends, is declared once in `src/shared/acappella/provider-catalog.ts`, so the
 capability gate, the registry, the credential layer, and the settings panel cannot drift apart.

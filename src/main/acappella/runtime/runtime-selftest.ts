@@ -90,9 +90,6 @@ export interface RuntimeSelfTestReport {
 interface LlamaModule {
 	getLlama?: unknown;
 }
-interface WhisperModule {
-	Whisper?: unknown;
-}
 interface OnnxModule {
 	InferenceSession?: unknown;
 	env?: { versions?: Record<string, string> };
@@ -116,13 +113,6 @@ const PROBES: Record<NativeRuntimeId, (module: unknown) => Promise<string>> = {
 			throw new Error('node-llama-cpp loaded but exposes no getLlama()');
 		}
 		return 'getLlama() present';
-	},
-	whisper: async (module) => {
-		const whisper = module as WhisperModule;
-		if (typeof whisper.Whisper !== 'function') {
-			throw new Error('smart-whisper loaded but exposes no Whisper constructor');
-		}
-		return 'Whisper constructor present';
 	},
 	onnx: async (module) => {
 		const onnx = module as OnnxModule;

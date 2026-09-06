@@ -50,6 +50,19 @@ import {
 	type VerifyResult,
 } from '../../acappella/models/model-store';
 import { readVoiceProviderSettings } from '../../acappella/providers/provider-registry';
+import {
+	installNativeRuntime,
+	type RuntimeInstallProgress,
+} from '../../acappella/runtime/runtime-installer';
+import {
+	artifactForThisPlatform,
+	isRuntimeInstalled,
+	isRuntimeStale,
+	removeAllRuntimes,
+	runtimesFootprint,
+} from '../../acappella/runtime/runtime-store';
+import { resetNativeRuntimes } from '../../acappella/runtime/native-loader';
+import { NATIVE_RUNTIMES, type NativeRuntimeId } from '../../../shared/acappella/native-runtimes';
 import { withIpcErrorLogging, type CreateHandlerOptions } from '../../utils/ipcHandler';
 import type { SafeSendFn } from '../../utils/safe-send';
 
@@ -57,6 +70,9 @@ const LOG_CONTEXT = '[ACappellaModels]';
 
 /** The push channel download progress goes out on. */
 export const ACAPPELLA_MODEL_PROGRESS_CHANNEL = 'models:progress';
+
+/** The push channel native-runtime install progress goes out on. */
+export const ACAPPELLA_RUNTIME_PROGRESS_CHANNEL = 'runtimes:progress';
 
 /**
  * One catalog entry joined to what is on disk. This is the row Voice Setup
@@ -110,6 +126,46 @@ export async function readVoiceReadiness(
 		handsFreeEnabled: stored.handsFree === true,
 	});
 }
+
+/**
+ * One native runtime joined to what is on disk.
+ *
+ * The runtime counterpart of {@link VoiceModelListing}, and the same idea: the
+ * bill of materials and its install state in one object, so Voice Setup never
+ * correlates two lists. `downloadable` is false on a platform with no published
+ * payload, which is a different answer from "not installed yet" and needs
+ * different words in front of the user.
+ */
+export interface VoiceRuntimeListing {
+	id: NativeRuntimeId;
+	label: string;
+	/** Slots that stop working without it. */
+	slots: string[];
+	installed: boolean;
+	/** Installed, but not the payload this build expects. */
+	stale: boolean;
+	downloadable: boolean;
+	/** Compressed download size for this platform. Zero when not downloadable. */
+	bytes: number;
+}
+
+/** Reject anything that is not a known runtime id before it reaches a path join. */
+function requireRuntimeId(raw: unknown): NativeRuntimeId {
+	const known = NATIVE_RUNTIMES.some((runtime) => runtime.id === raw);
+	if (typeof raw !== 'string' || !known) throw new Error('UnknownVoiceRuntime');
+	return raw as NativeRuntimeId;
+}
+
+/**
+ * Installs in flight, keyed by runtime.
+ *
+ * `installNativeRuntime` clears its staging directory on entry, so two
+ * concurrent installs of the same runtime would delete each other's partial
+ * download and race to rename onto the same target. Sharing the promise makes a
+ * second request join the first instead - which is also what the user means when
+ * an impatient second click lands on a download that is already running.
+ */
+const runtimeInstalls = new Map<NativeRuntimeId, Promise<void>>();
 
 /**
  * Register the A Cappella model handlers.
@@ -237,4 +293,98 @@ export function registerACappellaModelsHandlers(deps: ACappellaModelsHandlerDepe
 		requireEnabled(settingsStore);
 		return wrappedReadiness(event);
 	});
+
+	// -- Native runtimes ------------------------------------------------------
+	//
+	// Same shape as the model channels above, and for the same reason: the local
+	// tier needs a runtime as well as a model, and shipping ~250 MB of inference
+	// binaries in every installer for a feature that is off by default is exactly
+	// the cost `runtime-artifacts.ts` exists to avoid. So the runtime is fetched on
+	// consent too, from a pinned npm tarball whose SHA-256 is in the build.
+
+	const wrappedRuntimeList = withIpcErrorLogging(
+		handlerOpts('runtimes:list'),
+		// A disk read against a frozen table, exactly like `models:list`. No HEAD,
+		// no registry lookup: the artifact table already knows every size and hash.
+		async (): Promise<VoiceRuntimeListing[]> =>
+			Promise.all(
+				NATIVE_RUNTIMES.map(async (runtime) => {
+					// `artifactForThisPlatform` resolves the platform key itself, so this
+					// cannot disagree with what the installer will actually fetch.
+					const artifact = artifactForThisPlatform(runtime.id);
+					return {
+						id: runtime.id,
+						label: runtime.label,
+						slots: [...runtime.slots],
+						installed: await isRuntimeInstalled(runtime.id),
+						stale: await isRuntimeStale(runtime.id),
+						downloadable: artifact !== null,
+						bytes: artifact?.bytes ?? 0,
+					};
+				})
+			)
+	);
+
+	const wrappedRuntimeInstall = withIpcErrorLogging(
+		handlerOpts('runtimes:install'),
+		async (rawId: unknown): Promise<boolean> => {
+			const id = requireRuntimeId(rawId);
+
+			const existing = runtimeInstalls.get(id);
+			if (existing) {
+				await existing;
+				return true;
+			}
+
+			const install = installNativeRuntime(id, {
+				onProgress: (progress: RuntimeInstallProgress) => {
+					safeSend(ACAPPELLA_RUNTIME_PROGRESS_CHANNEL, progress);
+				},
+			})
+				.then(() => {
+					// The loader remembers failures so it does not retry a dlopen on every
+					// utterance. That memory is now stale in the good direction: the thing
+					// it could not find is on disk. Without this the user downloads a
+					// runtime and voice keeps refusing until the app restarts.
+					resetNativeRuntimes();
+				})
+				.finally(() => {
+					runtimeInstalls.delete(id);
+				});
+
+			runtimeInstalls.set(id, install);
+			await install;
+			return true;
+		}
+	);
+
+	const wrappedRuntimeFootprint = withIpcErrorLogging(
+		handlerOpts('runtimes:footprint'),
+		async (): Promise<number> => runtimesFootprint()
+	);
+
+	const wrappedRuntimeRemoveAll = withIpcErrorLogging(
+		handlerOpts('runtimes:remove-all'),
+		async (): Promise<void> => {
+			await removeAllRuntimes();
+			// Whatever is currently dlopened points at files that no longer exist.
+			resetNativeRuntimes();
+		}
+	);
+
+	ipcMain.handle('runtimes:list', async (event): Promise<VoiceRuntimeListing[]> => {
+		requireEnabled(settingsStore);
+		return wrappedRuntimeList(event);
+	});
+
+	ipcMain.handle('runtimes:install', async (event, id: unknown): Promise<boolean> => {
+		requireEnabled(settingsStore);
+		return wrappedRuntimeInstall(event, id);
+	});
+
+	// Ungated, alongside `models:footprint` and `models:remove-all`: the
+	// reclaim-disk offer exists precisely for the moment after the feature has
+	// been switched off, and a runtime is the larger half of what it frees.
+	ipcMain.handle('runtimes:footprint', wrappedRuntimeFootprint);
+	ipcMain.handle('runtimes:remove-all', wrappedRuntimeRemoveAll);
 }

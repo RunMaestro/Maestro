@@ -22,7 +22,7 @@
  */
 
 import { QWEN3_1_7B_ID } from '../../../../shared/acappella/model-catalog';
-import { LOCAL_BRAIN_PROVIDER_ID } from '../../../../shared/acappella/provider-catalog';
+import { QWEN3_BRAIN_PROVIDER_ID } from '../../../../shared/acappella/provider-catalog';
 import { VoiceProviderError } from '../../../../shared/acappella/provider-errors';
 import type {
 	BrainProvider,
@@ -107,7 +107,7 @@ export interface LlamaBrainOptions {
 }
 
 export class LlamaBrainProvider implements BrainProvider {
-	readonly id = LOCAL_BRAIN_PROVIDER_ID;
+	readonly id = QWEN3_BRAIN_PROVIDER_ID;
 	readonly label = 'Qwen3 1.7B (local)';
 	readonly tier = 'local' as const;
 

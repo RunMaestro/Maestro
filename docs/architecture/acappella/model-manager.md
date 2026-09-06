@@ -52,7 +52,7 @@ Four models, all fetched from Hugging Face at a pinned commit:
 
 | Model                      | Role      | Source                                         | License    | Size     |
 | -------------------------- | --------- | ---------------------------------------------- | ---------- | -------- |
-| `whisper-base-en`          | STT       | `ggerganov/whisper.cpp@5359861`                | MIT        | 141.1 MB |
+| `whisper-base-en`          | STT       | `onnx-community/whisper-base.en@51eefc0`       | Apache-2.0 | 199.1 MB |
 | `openwakeword-base`        | Wake word | `littlebearlabs/openwakeword-features@5e032d9` | Apache-2.0 | 2.3 MB   |
 | `kokoro-82m`               | TTS       | `onnx-community/Kokoro-82M-v1.0-ONNX@1939ad2`  | Apache-2.0 | 311.0 MB |
 | `qwen3-1.7b-instruct-q4km` | Brain     | `unsloth/Qwen3-1.7B-GGUF@d7f544e`              | Apache-2.0 | 1.0 GB   |
@@ -60,14 +60,25 @@ Four models, all fetched from Hugging Face at a pinned commit:
 Every hash is the Hugging Face LFS object id, which IS the SHA-256 of the file contents, read from
 `/api/models/<repo>/paths-info/<revision>` at the pinned commit. Do not hand-edit one.
 
+`whisper-base-en` is the ONNX export, not the ggml one, and it is three files rather than one:
+`onnx/encoder_model.onnx`, `onnx/decoder_model_merged_q4.onnx`, and `tokenizer.json`. Speech-to-Text
+moved off whisper.cpp because its Node binding published no prebuilt binary on any platform and
+compiled at install time, so there was nothing for the runtime installer to fetch - see
+[[packaging-notes]]. The merged decoder carries both the with-cache and without-cache branches in one
+graph, which is why a single file serves the first pass and every step after it.
+
 **A model is one or more FILES.** Two of the four genuinely need more than one: the wake word needs
 its mel front end and its embedding head, and Kokoro needs a voice pack alongside the graph.
 `sourceUrl` / `sha256` / `bytes` therefore live per file; the entry carries the computed total, and
 `MODEL_SETS` totals are computed from those. No size string is written by hand anywhere, so a
 revision bump cannot leave the UI quoting a stale number.
 
-`MODEL_SETS` names two bundles: `hands-free-local` (STT + wake word + TTS) and `fully-local` (that
-plus the Brain).
+`MODEL_SETS` names one bundle, `hands-free-local` (STT + wake word), which is exactly what the
+default local trio downloads: the voice is the operating system's own and the router is built in.
+`kokoro-82m` and `qwen3-1.7b-instruct-q4km` stay in the catalog with a `pending` note and appear in
+no bundle and behind no Download button, because nothing in this build can read them yet (Kokoro
+needs a phoneme front end, Qwen3 needs the JavaScript half of `node-llama-cpp`; see
+[[packaging-notes]]). They remain listed so an earlier download can be seen, verified, and removed.
 
 ## Install layout
 

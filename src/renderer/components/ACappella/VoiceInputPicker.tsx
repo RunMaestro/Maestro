@@ -8,6 +8,12 @@
  * changing the default. Two selectors that disagreed about which microphone is
  * chosen would be worse than having only one.
  *
+ * Live during a session, deliberately. `setInputDevice` applies to the NEXT
+ * capture rather than mid-utterance, so changing it while listening is already
+ * safe, and a session is the moment the wrong microphone is discovered. Greying
+ * it out here put the control in front of the user at exactly the moment it
+ * refused to work, which reads as the picker being broken.
+ *
  * A native `<select>` on purpose. This list can be long (every input the OS
  * exposes, virtual devices included), it needs keyboard search, and the platform
  * control already scrolls and searches. A hand-rolled dropdown here would be a
@@ -23,21 +29,14 @@ export interface VoiceInputPickerProps {
 	devices: VoiceInputDevicesState;
 	/** HUD placement: no visible label, smaller type, fills its row. */
 	compact?: boolean;
-	/** Disabled while a session holds the floor, since a swap waits for the next capture. */
-	disabled?: boolean;
 }
 
-export function VoiceInputPicker({
-	theme,
-	devices,
-	compact = false,
-	disabled = false,
-}: VoiceInputPickerProps) {
+export function VoiceInputPicker({ theme, devices, compact = false }: VoiceInputPickerProps) {
 	const select = (
 		<select
 			data-testid="voice-input-picker"
 			value={devices.selectedId}
-			disabled={disabled || devices.loading}
+			disabled={devices.loading}
 			onChange={(event) => void devices.select(event.target.value)}
 			aria-label="Microphone"
 			className={`rounded border bg-transparent outline-none ${
@@ -75,9 +74,7 @@ export function VoiceInputPicker({
 			</span>
 			{select}
 			<span className="text-[11px]" style={{ color: theme.colors.textDim }}>
-				{disabled
-					? 'End the session to change the microphone.'
-					: 'Applies to the next voice session.'}
+				Takes effect the next time it listens.
 			</span>
 		</label>
 	);

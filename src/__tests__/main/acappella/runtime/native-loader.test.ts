@@ -112,6 +112,12 @@ vi.mock('../../../../shared/acappella/native-runtimes', () => {
 	};
 });
 
+vi.mock('../../../../main/acappella/runtime/runtime-store', () => ({
+	// Steered per test. The real one reaches for `app.getPath` and the filesystem.
+	installedRuntimeEntry: vi.fn(async () => null),
+}));
+
+import { installedRuntimeEntry } from '../../../../main/acappella/runtime/runtime-store';
 import {
 	NativeRuntimeUnavailableError,
 	__setNativeImporter,
@@ -144,6 +150,8 @@ describe('native-loader', () => {
 	beforeEach(() => {
 		resetNativeRuntimes();
 		setPlatform('darwin', 'arm64');
+		// Nothing downloaded unless a test says so.
+		vi.mocked(installedRuntimeEntry).mockResolvedValue(null);
 	});
 
 	afterEach(() => {
@@ -166,6 +174,53 @@ describe('native-loader', () => {
 			expect(importer).toHaveBeenCalledWith('fake-llama');
 		});
 
+		it('prefers a downloaded runtime over the bundled module id', async () => {
+			// The absolute entry path, not the package name: node resolution is
+			// bypassed entirely so a same-named package elsewhere cannot win.
+			vi.mocked(installedRuntimeEntry).mockResolvedValue('/runtimes/llama/dist/index.js');
+			const importer = vi.fn().mockResolvedValue({});
+			__setNativeImporter(importer);
+
+			await loadNativeRuntime('llama');
+
+			expect(importer).toHaveBeenCalledWith('/runtimes/llama/dist/index.js');
+		});
+
+		it('loads an undeclared runtime when the user has downloaded it', async () => {
+			// The whole point of downloading one. `fake-whisper` is `declared: false`,
+			// so the pre-load refusal would reject it - but refusing bytes the user
+			// just waited for is the bug this ordering exists to prevent.
+			vi.mocked(installedRuntimeEntry).mockResolvedValue('/runtimes/whisper/dist/index.js');
+			const importer = vi.fn().mockResolvedValue({ marker: 'downloaded' });
+			__setNativeImporter(importer);
+
+			await expect(loadNativeRuntime('whisper')).resolves.toEqual({ marker: 'downloaded' });
+			expect(importer).toHaveBeenCalledWith('/runtimes/whisper/dist/index.js');
+		});
+
+		it('still refuses an undeclared runtime that was never downloaded', async () => {
+			const importer = vi.fn().mockResolvedValue({});
+			__setNativeImporter(importer);
+
+			const result = await tryLoadNativeRuntime('whisper');
+
+			expect(result.ok).toBe(false);
+			expect(result.ok === false && result.error.failure).toBe('not-a-dependency');
+			// The refusal must not be relabelled as a load failure on the way out.
+			expect(importer).not.toHaveBeenCalled();
+		});
+
+		it('treats an unreadable runtime store as "not downloaded", never as a crash', async () => {
+			// The store touches the filesystem. The answer to "is it installed" is
+			// no, not an exception thrown at whoever asked for a voice session.
+			vi.mocked(installedRuntimeEntry).mockRejectedValue(new Error('EACCES'));
+			const importer = vi.fn().mockResolvedValue({ marker: 'bundled' });
+			__setNativeImporter(importer);
+
+			await expect(loadNativeRuntime('llama')).resolves.toEqual({ marker: 'bundled' });
+			expect(importer).toHaveBeenCalledWith('fake-llama');
+		});
+
 		it('loads a runtime once, however many callers ask', async () => {
 			const importer = vi.fn().mockResolvedValue({ marker: 1 });
 			__setNativeImporter(importer);
@@ -174,6 +229,28 @@ describe('native-loader', () => {
 				loadNativeRuntime<{ marker: number }>('llama'),
 				loadNativeRuntime<{ marker: number }>('llama'),
 			]);
+
+			expect(first).toBe(second);
+			expect(importer).toHaveBeenCalledTimes(1);
+		});
+
+		it('dlopens once even when the download lookup is slow', async () => {
+			// Resolving the download location is async, so the cache slot has to be
+			// reserved BEFORE the first await. Awaiting it outside lets a second
+			// concurrent caller past the cache check and dlopens a second copy of a
+			// multi-hundred-megabyte inference engine.
+			let release: (value: string | null) => void = () => {};
+			vi.mocked(installedRuntimeEntry).mockReturnValue(
+				new Promise<string | null>((resolve) => {
+					release = resolve;
+				})
+			);
+			const importer = vi.fn().mockResolvedValue({ marker: 1 });
+			__setNativeImporter(importer);
+
+			const both = Promise.all([loadNativeRuntime('llama'), loadNativeRuntime('llama')]);
+			release(null);
+			const [first, second] = await both;
 
 			expect(first).toBe(second);
 			expect(importer).toHaveBeenCalledTimes(1);

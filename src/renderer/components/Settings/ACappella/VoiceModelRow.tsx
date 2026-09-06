@@ -162,7 +162,7 @@ function VoiceModelRowInner({
 				{(active || paused) && (
 					<RowButton theme={theme} icon={X} label="Cancel" onClick={() => onCancel(entry.id)} />
 				)}
-				{!active && !paused && status.status === 'not-installed' && (
+				{!active && !paused && status.status === 'not-installed' && !entry.pending && (
 					<RowButton
 						theme={theme}
 						icon={Download}
@@ -170,6 +170,13 @@ function VoiceModelRowInner({
 						primary
 						onClick={() => onDownload(entry.id)}
 					/>
+				)}
+				{!active && !paused && status.status === 'not-installed' && entry.pending && (
+					// A model nothing in this build can read is not offered: the row says
+					// why instead of inviting a download that would only ever be removed.
+					<p className="text-[11px] opacity-70" style={{ color: theme.colors.warning }}>
+						{entry.pending}
+					</p>
 				)}
 				{!active && !paused && status.status === 'corrupt' && (
 					<RowButton

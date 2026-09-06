@@ -20,7 +20,7 @@
  * than written into copy that can drift.** See {@link summariseVoiceEgress}.
  */
 
-import { KOKORO_82M_ID, QWEN3_1_7B_ID, WHISPER_BASE_EN_ID } from './model-catalog';
+import { WHISPER_BASE_EN_ID } from './model-catalog';
 import type { NativeRuntimeId } from './native-runtimes';
 import type { VoiceProviderRole, VoiceProviderTier } from './providers';
 
@@ -85,9 +85,17 @@ export function credentialLabel(service: VoiceCredentialService): string {
 // Providers
 // ---------------------------------------------------------------------------
 
-/** What a provider needs before it can run at all. */
+/**
+ * What a provider needs before it can run at all.
+ *
+ * `system-voice` is the operating system's speech engine: present on macOS and
+ * Windows by construction, and on Linux only when `espeak-ng` is installed. The
+ * gate checks it so a machine without one refuses before the microphone opens
+ * rather than on the first reply.
+ */
 export type VoiceProviderRequirement =
 	| { readonly kind: 'none' }
+	| { readonly kind: 'system-voice' }
 	| { readonly kind: 'model'; readonly modelId: string; readonly runtimeId: NativeRuntimeId }
 	| { readonly kind: 'api-key'; readonly service: VoiceCredentialService };
 
@@ -121,8 +129,46 @@ export interface VoiceProviderDescriptor {
 // -- Ids, exported so nothing has to spell one twice ------------------------
 
 export const LOCAL_STT_PROVIDER_ID = 'whisper-local';
-export const LOCAL_TTS_PROVIDER_ID = 'kokoro-local';
-export const LOCAL_BRAIN_PROVIDER_ID = 'qwen3-local';
+
+/**
+ * The operating system's own voice: `say`, System.Speech, or `espeak-ng`.
+ *
+ * The local Text-to-Speech DEFAULT, and the reason it is the default rather
+ * than the downloaded neural voice is that the neural voice cannot speak yet
+ * (see {@link KOKORO_TTS_PROVIDER_ID}). This one needs no download and no key,
+ * and nothing leaves the machine, so "enable the feature and talk" is true on
+ * every desktop Maestro ships on.
+ */
+export const SYSTEM_TTS_PROVIDER_ID = 'system-tts';
+
+/**
+ * Kokoro, the downloadable neural voice. Registered and runnable in code, but
+ * NOT listed in the catalog below: it takes phoneme ids, and the
+ * grapheme-to-phoneme front end it needs is not part of this build, so choosing
+ * it refused every reply. It returns to the list in the commit that ships the
+ * front end. The id stays exported for the provider class and its tests.
+ */
+export const KOKORO_TTS_PROVIDER_ID = 'kokoro-local';
+
+/**
+ * The built-in keyword router: no model, no network, deterministic.
+ *
+ * The Conductor Brain DEFAULT. It picks the agent by name, falls back to the
+ * agent the session is bound to, and reads the first sentences of a reply back
+ * unchanged. The id is the one the mock tier has always used, kept so an
+ * existing settings file resolves to the same engine it did before; the LABEL
+ * says what it does rather than what test it was written for.
+ */
+export const BUILTIN_BRAIN_PROVIDER_ID = 'mock-brain';
+
+/**
+ * Qwen3 through llama.cpp. Registered and runnable in code, but NOT listed in
+ * the catalog below: the runtime payload it downloads carries only the native
+ * binary, and the JavaScript half of `node-llama-cpp` (28 packages) is neither
+ * bundled nor fetched, so the model could not be opened on any machine. It
+ * returns to the list with the commit that ships that runtime properly.
+ */
+export const QWEN3_BRAIN_PROVIDER_ID = 'qwen3-local';
 
 /**
  * The Conductor run as a real Maestro agent rather than as a classifier.
@@ -134,27 +180,39 @@ export const LOCAL_BRAIN_PROVIDER_ID = 'qwen3-local';
 export const CONDUCTOR_AGENT_BRAIN_PROVIDER_ID = 'conductor-agent';
 
 export const OPENAI_STT_PROVIDER_ID = 'openai-stt';
+export const OPENAI_TTS_PROVIDER_ID = 'openai-tts';
 export const OPENAI_BRAIN_PROVIDER_ID = 'openai-brain';
 export const ANTHROPIC_BRAIN_PROVIDER_ID = 'anthropic-brain';
 export const ELEVENLABS_TTS_PROVIDER_ID = 'elevenlabs-tts';
 
 export const OPENAI_REALTIME_PROVIDER_ID = 'openai-realtime';
 
-/** The local trio, by role. Read by the capability gate and by Voice Setup. */
+/**
+ * The local trio, by role. Read by the capability gate and by Voice Setup.
+ *
+ * Also the DEFAULT trio: what an unconfigured install runs. Speech-to-text is
+ * the one slot that needs a download (Whisper plus the ONNX runtime, fetched on
+ * consent through Voice Setup); the voice and the router need nothing, so a
+ * fresh install can speak and route the moment the recogniser is on disk.
+ */
 export const LOCAL_PROVIDER_IDS: Readonly<Record<VoiceProviderRole, string>> = Object.freeze({
 	stt: LOCAL_STT_PROVIDER_ID,
-	tts: LOCAL_TTS_PROVIDER_ID,
-	brain: LOCAL_BRAIN_PROVIDER_ID,
+	tts: SYSTEM_TTS_PROVIDER_ID,
+	brain: BUILTIN_BRAIN_PROVIDER_ID,
 });
 
 /**
  * The hosted provider each role defaults to when a user switches a slot to
  * "hosted" without naming one. A default, never a fallback: nothing resolves to
  * these because something else was missing.
+ *
+ * All three are OpenAI on purpose: one key, one account, a whole hosted trio.
+ * ElevenLabs stays a pick in the Text-to-Speech dropdown for anyone who wants
+ * its voices.
  */
 export const HOSTED_PROVIDER_IDS: Readonly<Record<VoiceProviderRole, string>> = Object.freeze({
 	stt: OPENAI_STT_PROVIDER_ID,
-	tts: ELEVENLABS_TTS_PROVIDER_ID,
+	tts: OPENAI_TTS_PROVIDER_ID,
 	brain: OPENAI_BRAIN_PROVIDER_ID,
 });
 
@@ -163,8 +221,13 @@ function defineProvider(descriptor: VoiceProviderDescriptor): VoiceProviderDescr
 }
 
 /**
- * Every provider, in the order a slot selector lists them: mock tier first (it is
- * what an unconfigured install runs), then local, then hosted.
+ * Every provider a user can pick, in the order a slot selector lists them: the
+ * text-in and diagnostic providers first, then local, then hosted.
+ *
+ * A provider that exists in code but cannot run in this build is left OUT of
+ * this list rather than listed and refused: this table is what the dropdown
+ * renders, and a choice that refuses every session reads as "voice is broken"
+ * rather than "not wired yet". Each omission is noted where it would sit.
  */
 export const VOICE_PROVIDER_CATALOG: readonly VoiceProviderDescriptor[] = Object.freeze([
 	// -- Speech to text ------------------------------------------------------
@@ -193,7 +256,7 @@ export const VOICE_PROVIDER_CATALOG: readonly VoiceProviderDescriptor[] = Object
 		role: 'stt',
 		label: 'Whisper (local)',
 		tier: 'local',
-		requires: { kind: 'model', modelId: WHISPER_BASE_EN_ID, runtimeId: 'whisper' },
+		requires: { kind: 'model', modelId: WHISPER_BASE_EN_ID, runtimeId: 'onnx' },
 		egress: 'none',
 		egressService: null,
 		description: 'Transcribes on this machine. No audio leaves it.',
@@ -221,14 +284,29 @@ export const VOICE_PROVIDER_CATALOG: readonly VoiceProviderDescriptor[] = Object
 		description: 'Emits the sentences it would speak, with no audio behind them.',
 	}),
 	defineProvider({
-		id: LOCAL_TTS_PROVIDER_ID,
+		id: SYSTEM_TTS_PROVIDER_ID,
 		role: 'tts',
-		label: 'Kokoro (local)',
+		label: 'System voice (built in)',
 		tier: 'local',
-		requires: { kind: 'model', modelId: KOKORO_82M_ID, runtimeId: 'onnx' },
+		requires: { kind: 'system-voice' },
 		egress: 'none',
 		egressService: null,
-		description: 'Synthesises replies on this machine.',
+		description:
+			"Speaks with your computer's own voice. Nothing to download, and nothing leaves this machine.",
+	}),
+	// Kokoro (`kokoro-local`) is NOT listed on purpose. See KOKORO_TTS_PROVIDER_ID:
+	// it needs a phoneme front end this build does not have, so listing it put a
+	// choice in the dropdown that refused every reply. The model stays in the
+	// model catalog so an existing download can be seen and removed.
+	defineProvider({
+		id: OPENAI_TTS_PROVIDER_ID,
+		role: 'tts',
+		label: 'OpenAI (hosted)',
+		tier: 'cloud',
+		requires: { kind: 'api-key', service: 'openai' },
+		egress: 'text',
+		egressService: 'openai',
+		description: 'Speaks replies in an OpenAI voice. The reply text is sent to OpenAI.',
 	}),
 	defineProvider({
 		id: ELEVENLABS_TTS_PROVIDER_ID,
@@ -243,25 +321,19 @@ export const VOICE_PROVIDER_CATALOG: readonly VoiceProviderDescriptor[] = Object
 
 	// -- Brain ---------------------------------------------------------------
 	defineProvider({
-		id: 'mock-brain',
+		id: BUILTIN_BRAIN_PROVIDER_ID,
 		role: 'brain',
-		label: 'Mock (keyword routing)',
+		label: 'Built-in (keyword routing)',
 		tier: 'mock',
 		requires: { kind: 'none' },
 		egress: 'none',
 		egressService: null,
-		description: 'Deterministic keyword routing. No model, no network.',
+		description:
+			'Picks the agent by name, or the one you are talking to, and reads replies back as written. No model, no network.',
 	}),
-	defineProvider({
-		id: LOCAL_BRAIN_PROVIDER_ID,
-		role: 'brain',
-		label: 'Qwen3 1.7B (local)',
-		tier: 'local',
-		requires: { kind: 'model', modelId: QWEN3_1_7B_ID, runtimeId: 'llama' },
-		egress: 'none',
-		egressService: null,
-		description: 'Routes and rewrites on this machine.',
-	}),
+	// Qwen3 (`qwen3-local`) is NOT listed on purpose. See QWEN3_BRAIN_PROVIDER_ID:
+	// its runtime payload cannot be imported on any machine yet, so listing it
+	// put a choice in the dropdown that could never route.
 	defineProvider({
 		id: OPENAI_BRAIN_PROVIDER_ID,
 		role: 'brain',

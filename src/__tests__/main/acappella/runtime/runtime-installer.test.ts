@@ -59,6 +59,8 @@ const { artifact } = vi.hoisted(() => ({
 		keep: ['dist', 'package.json', 'bin/napi-v6/darwin/arm64'],
 		entry: 'dist/index.js',
 		binary: 'bin/napi-v6/darwin/arm64/onnxruntime_binding.node',
+		// Overwritten per test by the dependency cases below.
+		dependencies: [] as Array<{ name: string; url: string; sha256: string; bytes: number }>,
 	},
 }));
 
@@ -142,6 +144,7 @@ beforeEach(async () => {
 	await buildTarball();
 	artifact.sha256 = tarballSha256;
 	artifact.bytes = tarballBytes.length;
+	artifact.dependencies = [];
 });
 
 afterEach(async () => {
@@ -319,5 +322,151 @@ describe('runtime store, after an install', () => {
 	it('refuses an unknown runtime id rather than turning it into a path', async () => {
 		// `runtimeDir` feeds a recursive delete, and ids arrive from IPC.
 		expect(() => runtimeDir('../../etc' as never)).toThrow(/UnknownVoiceRuntime/);
+	});
+});
+
+/**
+ * A payload's own runtime dependencies.
+ *
+ * An npm tarball carries a package's files and NOT its dependency tree, so a
+ * payload that declares one arrives incomplete. `onnxruntime-node` requires
+ * `onnxruntime-common` on the first line of its entry point, and installing
+ * without it produces a runtime that extracts cleanly, verifies cleanly, reports
+ * itself installed, and then throws MODULE_NOT_FOUND the first time voice tries
+ * to transcribe - after the user has waited through a 101 MB download. That is
+ * the exact failure these tests exist to prevent.
+ */
+describe('dependency payloads', () => {
+	/** A small pure-JS package, shaped like a real npm tarball. */
+	async function buildDependency(
+		name: string,
+		files: Record<string, string>
+	): Promise<{ bytes: Buffer; sha256: string }> {
+		const source = await fs.mkdtemp(path.join(os.tmpdir(), 'acappella-dep-'));
+		for (const [entryName, contents] of Object.entries(files)) {
+			const target = path.join(source, entryName);
+			await fs.mkdir(path.dirname(target), { recursive: true });
+			await fs.writeFile(target, contents, 'utf8');
+		}
+		const tarballPath = path.join(source, `${name}.tgz`);
+		await tar.c({ file: tarballPath, cwd: source, gzip: true }, Object.keys(files));
+		const bytes = await fs.readFile(tarballPath);
+		await fs.rm(source, { recursive: true, force: true });
+		return { bytes, sha256: createHash('sha256').update(bytes).digest('hex') };
+	}
+
+	/** Serves the runtime archive first, then each dependency in order. */
+	function serveSequence(bodies: Buffer[]): typeof globalThis.fetch {
+		let index = 0;
+		return (async () => {
+			const body = bodies[Math.min(index, bodies.length - 1)];
+			index += 1;
+			return {
+				ok: true,
+				status: 200,
+				body: new ReadableStream({
+					start(controller) {
+						controller.enqueue(new Uint8Array(body));
+						controller.close();
+					},
+				}),
+			} as unknown as Response;
+		}) as unknown as typeof globalThis.fetch;
+	}
+
+	it('installs a dependency where node resolution will find it', async () => {
+		// `node_modules/<name>` under the install root, so the loader stays a plain
+		// dynamic import with no path rewriting and the tree looks exactly like an
+		// `npm install` would have produced.
+		const dep = await buildDependency('onnxruntime-common', {
+			'package/package.json': '{"name":"onnxruntime-common","main":"dist/index.js"}',
+			'package/dist/index.js': 'module.exports = { marker: 1 };',
+		});
+		artifact.dependencies = [
+			{
+				name: 'onnxruntime-common',
+				url: 'https://registry.npmjs.org/onnxruntime-common/-/onnxruntime-common-1.27.0.tgz',
+				sha256: dep.sha256,
+				bytes: dep.bytes.length,
+			},
+		];
+
+		await installNativeRuntime('onnx', { fetchImpl: serveSequence([tarballBytes, dep.bytes]) });
+
+		const installed = path.join(runtimeDir('onnx'), 'node_modules', 'onnxruntime-common');
+		expect(await exists(path.join(installed, 'package.json'))).toBe(true);
+		expect(await exists(path.join(installed, 'dist', 'index.js'))).toBe(true);
+	});
+
+	it('refuses a dependency whose bytes are not what the catalog promised', async () => {
+		// A dependency is code that will be imported into the main process, so it
+		// gets exactly the same treatment as the payload itself.
+		const dep = await buildDependency('onnxruntime-common', {
+			'package/package.json': '{"name":"onnxruntime-common"}',
+		});
+		artifact.dependencies = [
+			{
+				name: 'onnxruntime-common',
+				url: 'https://registry.npmjs.org/onnxruntime-common/-/onnxruntime-common-1.27.0.tgz',
+				sha256: 'f'.repeat(64),
+				bytes: dep.bytes.length,
+			},
+		];
+
+		await expect(
+			installNativeRuntime('onnx', { fetchImpl: serveSequence([tarballBytes, dep.bytes]) })
+		).rejects.toBeInstanceOf(RuntimeHashMismatchError);
+	});
+
+	it('promotes nothing when a dependency fails, rather than a runtime that cannot import', async () => {
+		// The whole reason dependencies install INSIDE the transaction. A promoted
+		// install missing its dependency is the worst of both worlds: it reports
+		// itself ready and fails at the first utterance.
+		artifact.dependencies = [
+			{
+				name: 'onnxruntime-common',
+				url: 'https://registry.npmjs.org/onnxruntime-common/-/onnxruntime-common-1.27.0.tgz',
+				sha256: 'f'.repeat(64),
+				bytes: 10,
+			},
+		];
+
+		await expect(
+			installNativeRuntime('onnx', {
+				fetchImpl: serveSequence([tarballBytes, Buffer.from('nope')]),
+			})
+		).rejects.toBeInstanceOf(RuntimeHashMismatchError);
+
+		expect(await isRuntimeInstalled('onnx')).toBe(false);
+		expect(await exists(runtimeDir('onnx'))).toBe(false);
+		expect(await exists(runtimeStagingDir('onnx'))).toBe(false);
+	});
+
+	it('leaves no dependency tarball behind', async () => {
+		const dep = await buildDependency('onnxruntime-common', {
+			'package/package.json': '{"name":"onnxruntime-common"}',
+		});
+		artifact.dependencies = [
+			{
+				name: 'onnxruntime-common',
+				url: 'https://registry.npmjs.org/onnxruntime-common/-/onnxruntime-common-1.27.0.tgz',
+				sha256: dep.sha256,
+				bytes: dep.bytes.length,
+			},
+		];
+
+		await installNativeRuntime('onnx', { fetchImpl: serveSequence([tarballBytes, dep.bytes]) });
+
+		const stray = path.join(runtimeDir('onnx'), 'onnxruntime-common.tgz');
+		expect(await exists(stray)).toBe(false);
+	});
+
+	it('installs nothing extra when a payload declares no dependencies', async () => {
+		// The `@node-llama-cpp/*` platform packages genuinely stand alone.
+		artifact.dependencies = [];
+
+		await installNativeRuntime('onnx', { fetchImpl: serve(tarballBytes) });
+
+		expect(await exists(path.join(runtimeDir('onnx'), 'node_modules'))).toBe(false);
 	});
 });

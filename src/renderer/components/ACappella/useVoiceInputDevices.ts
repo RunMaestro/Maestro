@@ -16,10 +16,20 @@
  *   - **The list changes without anyone asking.** A headset is unplugged, or a
  *     first capture reveals the labels. The audio host pushes on
  *     `onInputDevices`, so this subscribes rather than reading once.
+ *
+ * The list itself is read HERE, in whichever renderer is asking, not taken from
+ * main. Main caches what the audio host reported, and nothing opens the audio
+ * host until a session starts, so that cache is empty exactly when the user is
+ * in Voice Setup trying to choose a microphone before their first session. The
+ * result was a picker offering "System default" and nothing else. Enumeration
+ * is a DOM API rather than a host privilege, and microphone permission is
+ * per-origin, so any renderer gets the same devices and the same labels.
  */
 
 import { useCallback, useEffect, useState } from 'react';
 import { ACAPPELLA_SYSTEM_DEFAULT_INPUT } from '../../../shared/acappella/audio-host';
+import { listInputDevices } from '../../acappella-audio/capture';
+import { useEventListener } from '../../hooks/utils/useEventListener';
 
 export interface VoiceInputDevice {
 	deviceId: string;
@@ -54,6 +64,23 @@ export function useVoiceInputDevices(enabled: boolean): VoiceInputDevicesState {
 	const [selectedId, setSelectedId] = useState<string>(ACAPPELLA_SYSTEM_DEFAULT_INPUT);
 	const [loading, setLoading] = useState(true);
 
+	/**
+	 * Re-read the microphones this renderer can see.
+	 *
+	 * An absent `mediaDevices` (a non-DOM test environment) leaves the current
+	 * list untouched rather than reporting "no microphones", so a seed from main
+	 * is not blanked by an environment that simply cannot answer.
+	 */
+	const refresh = useCallback(async () => {
+		if (!navigator.mediaDevices?.enumerateDevices) return;
+		try {
+			setDevices(await listInputDevices());
+		} catch {
+			// Enumeration failing is not a session failure: the system-default
+			// sentinel still resolves to a working microphone.
+		}
+	}, []);
+
 	useEffect(() => {
 		if (!enabled) {
 			setLoading(false);
@@ -65,8 +92,11 @@ export function useVoiceInputDevices(enabled: boolean): VoiceInputDevicesState {
 			.inputDevices()
 			.then((result) => {
 				if (cancelled) return;
-				setDevices(result.devices);
+				// Main owns the persisted CHOICE. Its device list is only a seed for
+				// a renderer that cannot enumerate for itself; `refresh` below is
+				// what normally fills the picker.
 				setSelectedId(result.selectedId);
+				if (result.devices.length > 0) setDevices(result.devices);
 			})
 			// A failed read leaves the system default selected, which is the same
 			// thing the session would open anyway.
@@ -75,17 +105,28 @@ export function useVoiceInputDevices(enabled: boolean): VoiceInputDevicesState {
 				if (!cancelled) setLoading(false);
 			});
 
+		void refresh();
+
 		// Pushed, not polled: the list changes when hardware does, and when a first
-		// capture finally un-redacts the labels.
-		const unsubscribe = window.maestro.voice.onInputDevices((next) => {
-			if (!cancelled) setDevices(next);
+		// capture finally un-redacts the labels. The payload is treated as "one of
+		// those just happened" rather than as the list, so a single local re-read
+		// covers both and the host's copy can never disagree with ours.
+		const unsubscribe = window.maestro.voice.onInputDevices(() => {
+			if (!cancelled) void refresh();
 		});
 
 		return () => {
 			cancelled = true;
 			unsubscribe();
 		};
-	}, [enabled]);
+	}, [enabled, refresh]);
+
+	// Hot-plugging a headset has to move the list even with no session running,
+	// and main only hears about that through the audio host it has not opened.
+	useEventListener('devicechange', () => void refresh(), {
+		target: typeof navigator === 'undefined' ? null : (navigator.mediaDevices ?? null),
+		enabled,
+	});
 
 	const select = useCallback(async (deviceId: string) => {
 		// Optimistic, with the rollback target read from a ref rather than captured:

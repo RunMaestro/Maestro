@@ -34,7 +34,7 @@
 import type { VoiceSlot } from './readiness';
 
 /** A runtime is one npm package, however many slots it serves. */
-export type NativeRuntimeId = 'llama' | 'whisper' | 'onnx';
+export type NativeRuntimeId = 'llama' | 'onnx';
 
 /** The four platform/arch pairs Maestro ships installers for. */
 export type NativePlatformKey = 'darwin-arm64' | 'darwin-x64' | 'win32-x64' | 'linux-x64';
@@ -145,37 +145,14 @@ export const NATIVE_RUNTIMES: readonly NativeRuntimeDescriptor[] = Object.freeze
 			'ESM-only. The loader must reach it through a real dynamic import, not a transpiled require(). The prebuilt binary sits beside several ggml dylibs that macOS signing has to cover.',
 	}),
 	Object.freeze({
-		id: 'whisper',
-		moduleId: 'smart-whisper',
-		versionPin: '0.8.1',
-		label: 'whisper.cpp (Speech-to-Text)',
-		slots: Object.freeze(['stt'] as VoiceSlot[]),
-		declared: false,
-		requiresElectronRebuild: false,
-		prebuilds: Object.freeze({
-			'darwin-arm64': 'source-build',
-			'darwin-x64': 'source-build',
-			'win32-x64': 'source-build',
-			'linux-x64': 'source-build',
-		} as Record<NativePlatformKey, NativePrebuildAvailability>),
-		asarUnpack: Object.freeze(['node_modules/smart-whisper/build/**/*']),
-		packagedBinaries: Object.freeze({
-			'darwin-arm64': Object.freeze(['node_modules/smart-whisper/build/Release/whisper.node']),
-			'darwin-x64': Object.freeze(['node_modules/smart-whisper/build/Release/whisper.node']),
-			'win32-x64': Object.freeze(['node_modules/smart-whisper/build/Release/whisper.node']),
-			'linux-x64': Object.freeze(['node_modules/smart-whisper/build/Release/whisper.node']),
-		}),
-		rationale:
-			'Node-API binding to whisper.cpp, which is the runtime the pinned ggml-base.en.bin in the model catalog is built for.',
-		notes:
-			'The one runtime with NO prebuilds on any platform: its install script runs node-gyp, so every build machine needs a C++ toolchain and CMake. That is a release-engineering cost, and it is the open question this phase deliberately leaves for Phase 05 rather than hiding.',
-	}),
-	Object.freeze({
 		id: 'onnx',
 		moduleId: 'onnxruntime-node',
 		versionPin: '1.27.0',
-		label: 'ONNX Runtime (Text-to-Speech and wake word)',
-		slots: Object.freeze(['tts', 'wake-word'] as VoiceSlot[]),
+		label: 'ONNX Runtime (Speech-to-Text, Text-to-Speech, and wake word)',
+		// Three slots on one runtime, which is the point: speech-to-text moved here
+		// from a whisper.cpp binding that compiled from source on every platform and
+		// therefore had nothing to download. See `runtime-artifacts.ts`.
+		slots: Object.freeze(['stt', 'tts', 'wake-word'] as VoiceSlot[]),
 		declared: false,
 		requiresElectronRebuild: false,
 		prebuilds: Object.freeze({

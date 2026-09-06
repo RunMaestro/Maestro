@@ -27,7 +27,8 @@ export type UiSurfaceEncoreFlag =
 	| 'usageStats'
 	| 'symphony'
 	| 'maestroCue'
-	| 'concerto';
+	| 'concerto'
+	| 'aCappella';
 
 export interface UiSurface {
 	/** CLI name (kebab-case), and the wire value on the `open_modal` message. */
@@ -84,6 +85,17 @@ export const UI_SURFACES: UiSurface[] = [
 		commandPalette: 'Maestro Cue',
 		click: 'the lightning-bolt icon in the Left Bar footer',
 		encore: 'maestroCue',
+	},
+	{
+		id: 'voice-setup',
+		label: 'Voice Setup',
+		aliases: ['voice-models', 'acappella-setup', 'a-cappella-setup'],
+		modal: 'voiceSetup',
+		description:
+			'Download the speech recognition and speech synthesis models voice runs on, with every size and licence listed before anything is fetched.',
+		commandPalette: 'Set Up Voice Models',
+		click: 'Settings -> Plugins -> A Cappella',
+		encore: 'aCappella',
 	},
 	{
 		id: 'settings',

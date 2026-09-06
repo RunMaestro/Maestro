@@ -29,7 +29,6 @@ import type { NativeRuntimeId } from '../../../../shared/acappella/native-runtim
 /** Module surfaces the real probes accept. */
 const WORKING_MODULES: Record<NativeRuntimeId, unknown> = {
 	llama: { getLlama: () => undefined },
-	whisper: { Whisper: function Whisper() {} },
 	onnx: { InferenceSession: {}, env: { versions: { common: '1.27.0' } } },
 };
 
@@ -64,23 +63,23 @@ describe('runtime-selftest', () => {
 	it('reports every registered runtime, in registry order', async () => {
 		const report = await runSelfTest({ loadRuntime: loader({}), readMicPermission: mic });
 
-		expect(report.entries.map((entry) => entry.runtimeId)).toEqual(['llama', 'whisper', 'onnx']);
+		expect(report.entries.map((entry) => entry.runtimeId)).toEqual(['llama', 'onnx']);
 		expect(report.entries.every((entry) => entry.status === 'pass')).toBe(true);
 		expect(report.passed).toBe(true);
 	});
 
 	it('reports a per-runtime failure without failing the others', async () => {
 		const report = await runSelfTest({
-			loadRuntime: loader({ whisper: 'fail' }),
+			loadRuntime: loader({ onnx: 'fail' }),
 			readMicPermission: mic,
 		});
 
-		const whisper = report.entries.find((entry) => entry.runtimeId === 'whisper')!;
-		expect(whisper.status).toBe('fail');
-		expect(whisper.failure).toBe('load-failed');
+		const onnx = report.entries.find((entry) => entry.runtimeId === 'onnx')!;
+		expect(onnx.status).toBe('fail');
+		expect(onnx.failure).toBe('load-failed');
 		// The underlying cause travels: a support report with "it failed" in it is
 		// the same as no support report.
-		expect(whisper.detail).toContain('symbol not found');
+		expect(onnx.detail).toContain('symbol not found');
 
 		expect(report.entries.find((entry) => entry.runtimeId === 'llama')?.status).toBe('pass');
 		expect(report.passed).toBe(false);
@@ -88,11 +87,11 @@ describe('runtime-selftest', () => {
 
 	it('skips a runtime that is not part of the build rather than calling it broken', async () => {
 		const report = await runSelfTest({
-			loadRuntime: loader({ whisper: 'skip' }),
+			loadRuntime: loader({ onnx: 'skip' }),
 			readMicPermission: mic,
 		});
 
-		expect(report.entries.find((entry) => entry.runtimeId === 'whisper')?.status).toBe('skipped');
+		expect(report.entries.find((entry) => entry.runtimeId === 'onnx')?.status).toBe('skipped');
 		// A skip is not a failure. Reporting it as one would send someone hunting a
 		// bug that does not exist.
 		expect(report.passed).toBe(true);
@@ -153,7 +152,7 @@ describe('runtime-selftest', () => {
 
 	it('formats a report that names each runtime and its verdict', async () => {
 		const report = await runSelfTest({
-			loadRuntime: loader({ whisper: 'fail' }),
+			loadRuntime: loader({ onnx: 'fail' }),
 			readMicPermission: mic,
 		});
 

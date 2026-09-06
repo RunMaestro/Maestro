@@ -80,6 +80,15 @@ export interface VoiceModelEntry {
 	readonly files: readonly VoiceModelFile[];
 	/** Sum of every file's `bytes`. Computed, never typed by hand. */
 	readonly bytes: number;
+	/**
+	 * Why nothing in this build can run the model yet, or undefined when it runs.
+	 *
+	 * A pending model stays in the catalog so a download that already happened
+	 * can be seen, verified, and removed, but it is offered for download nowhere:
+	 * not in a bundle and not on its own row. Fetching weights nothing can read
+	 * is the one download this table must never invite.
+	 */
+	readonly pending?: string;
 }
 
 /** Build the pinned resolve URL for a repo file. */
@@ -98,6 +107,7 @@ interface ModelDraft {
 	requiredFor: VoiceModelCapability;
 	description: string;
 	files: Array<{ path: string; sha256: string; bytes: number }>;
+	pending?: string;
 }
 
 /**
@@ -128,6 +138,7 @@ function defineModel(draft: ModelDraft): VoiceModelEntry {
 		description: draft.description,
 		files: Object.freeze(files),
 		bytes: files.reduce((total, file) => total + file.bytes, 0),
+		...(draft.pending ? { pending: draft.pending } : {}),
 	});
 }
 
@@ -151,18 +162,37 @@ export const VOICE_MODEL_CATALOG: readonly VoiceModelEntry[] = Object.freeze([
 		id: WHISPER_BASE_EN_ID,
 		displayName: 'Whisper Base (English)',
 		role: 'stt',
-		repo: 'ggerganov/whisper.cpp',
-		revision: '5359861c739e955e79d9a303bcbc70fb988958b1',
-		license: 'MIT',
-		licenseUrl: 'https://huggingface.co/ggerganov/whisper.cpp',
+		// The ONNX export, not the ggml one. Local speech-to-text runs on ONNX
+		// Runtime - the same runtime text-to-speech and the wake word already need -
+		// because the whisper.cpp binding publishes no prebuilt binary on any
+		// platform and compiles at install time. That made it the one slot that
+		// could never ship. See `providers/local/whisper/engine.ts`.
+		repo: 'onnx-community/whisper-base.en',
+		revision: '51eefc0af78b103839eda9e7e4f4186acc6517fe',
+		license: 'Apache-2.0',
+		licenseUrl: 'https://huggingface.co/onnx-community/whisper-base.en',
 		requiredFor: 'local-speech-to-text',
 		description:
 			'English-only speech recognition that runs on the CPU. Transcribes on this machine, so no audio leaves it.',
+		// Encoder plus the MERGED q4 decoder. The merged graph carries both the
+		// with-cache and without-cache branches, so one file serves the first pass
+		// and every step after it; the q4 weights cost about a third of the fp32
+		// download for no measurable accuracy loss on dictated commands.
 		files: [
 			{
-				path: 'ggml-base.en.bin',
-				sha256: 'a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002',
-				bytes: 147964211,
+				path: 'onnx/encoder_model.onnx',
+				sha256: '1cc86302d480b061452d348638064383ab41b6f3333ddd0e423532d14edaf535',
+				bytes: 82468078,
+			},
+			{
+				path: 'onnx/decoder_model_merged_q4.onnx',
+				sha256: '7770ac574b71a704191ec52becac42b4a4126af26f54ed653f31c8f16af31f99',
+				bytes: 123600371,
+			},
+			{
+				path: 'tokenizer.json',
+				sha256: '5eb60cec1e77aeeb6869a2bb5a8e01a84c3fe5d072d75369343021fe6f5310d0',
+				bytes: 2405679,
 			},
 		],
 	}),
@@ -201,6 +231,10 @@ export const VOICE_MODEL_CATALOG: readonly VoiceModelEntry[] = Object.freeze([
 		requiredFor: 'local-text-to-speech',
 		description:
 			'Speech synthesis with one bundled voice. Replies are spoken from this machine rather than streamed from a service.',
+		// The model takes phoneme ids and the grapheme-to-phoneme front end it
+		// needs is not in this build. Until it is, the system voice speaks instead.
+		pending:
+			"Not usable yet: the phoneme front end this voice needs is not part of this build. Replies use your computer's own voice instead.",
 		files: [
 			{
 				path: 'onnx/model.onnx',
@@ -225,6 +259,10 @@ export const VOICE_MODEL_CATALOG: readonly VoiceModelEntry[] = Object.freeze([
 		requiredFor: 'local-conductor-brain',
 		description:
 			'The Conductor Brain: decides which agent and tab an utterance is for, and reshapes replies for the ear. The largest download, and the one you can skip if you would rather route with an API model.',
+		// The downloadable llama.cpp payload carries the binary and not the
+		// JavaScript half of node-llama-cpp, so nothing can open this file yet.
+		pending:
+			'Not usable yet: the llama.cpp runtime that reads this model is not part of this build. Routing uses the built-in keyword router, or a hosted model, instead.',
 		files: [
 			{
 				path: 'Qwen3-1.7B-Q4_K_M.gguf',
@@ -251,7 +289,7 @@ export function isVoiceModelId(id: string): boolean {
 // Sets
 // ---------------------------------------------------------------------------
 
-export type VoiceModelSetId = 'hands-free-local' | 'fully-local';
+export type VoiceModelSetId = 'hands-free-local';
 
 export interface VoiceModelSet {
 	readonly id: VoiceModelSetId;
@@ -278,22 +316,22 @@ function defineSet(
 }
 
 /**
- * The two bundles Voice Setup offers. `hands-free-local` is everything needed to
- * speak and be spoken to with no network at all; `fully-local` adds the Brain, so
- * routing stops needing an API model too.
+ * The bundle Voice Setup offers.
+ *
+ * One set, and it is exactly the downloads the local trio needs: the recogniser
+ * and the wake word. The voice is the operating system's own and the router is
+ * built in, so neither costs a download. Kokoro and Qwen3 are deliberately NOT
+ * in it - they are in the catalog above so an existing download can be seen and
+ * removed, but neither can run in this build (see their `pending` notes), and a
+ * bundle that fetched a gigabyte of weights nothing can read would be a lie on
+ * the Download button.
  */
 export const MODEL_SETS: Readonly<Record<VoiceModelSetId, VoiceModelSet>> = Object.freeze({
 	'hands-free-local': defineSet(
 		'hands-free-local',
-		'Hands-free (local)',
-		'Speech recognition, speech synthesis, and the wake word. Everything the microphone touches stays on this machine.',
-		[WHISPER_BASE_EN_ID, OPENWAKEWORD_BASE_ID, KOKORO_82M_ID]
-	),
-	'fully-local': defineSet(
-		'fully-local',
-		'Fully local',
-		'The hands-free set plus the Conductor Brain, so routing and spoken replies never call an API either.',
-		[WHISPER_BASE_EN_ID, OPENWAKEWORD_BASE_ID, KOKORO_82M_ID, QWEN3_1_7B_ID]
+		'Local speech',
+		"Speech recognition and the wake word run on this machine. Replies use your computer's own voice and routing is built in, so nothing else is needed and nothing leaves this machine.",
+		[WHISPER_BASE_EN_ID, OPENWAKEWORD_BASE_ID]
 	),
 });
 

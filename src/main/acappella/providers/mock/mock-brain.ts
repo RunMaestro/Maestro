@@ -90,7 +90,7 @@ const DEFAULT_SPOKEN_SENTENCES = 2;
 
 export class MockBrainProvider implements BrainProvider {
 	readonly id = 'mock-brain';
-	readonly label = 'Mock (keyword routing)';
+	readonly label = 'Built-in (keyword routing)';
 	readonly tier = 'mock' as const;
 
 	async route(input: string, context: VoiceRouteContext): Promise<RouteDecision> {

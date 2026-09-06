@@ -1584,6 +1584,122 @@ describe('settingsStore', () => {
 	// ========================================================================
 
 	describe('loadAllSettings', () => {
+		describe('shortcut migration write-back', () => {
+			// Regression: a default remap whose target chord the reserved guard
+			// strips back on the same pass reported needsMigration on every load
+			// while the value never moved. Each write woke the settings file
+			// watcher and every peer window into another identical load, which
+			// spun the file at ~166 writes/sec and starved the renderer.
+			it('does not persist shortcuts when migration is a no-op', async () => {
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					shortcuts: structuredClone(DEFAULT_SHORTCUTS),
+				});
+
+				await loadAllSettings();
+
+				expect(window.maestro.settings.set).not.toHaveBeenCalledWith(
+					'shortcuts',
+					expect.anything()
+				);
+			});
+
+			it('leaves every bundled default on a chord no migration rule moves', async () => {
+				// The loop above was invisible from the outside because the value
+				// round-tripped unchanged. Assert the fixed point directly: feeding
+				// the defaults back in must return them untouched.
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					shortcuts: structuredClone(DEFAULT_SHORTCUTS),
+				});
+
+				await loadAllSettings();
+
+				expect(useSettingsStore.getState().shortcuts).toEqual(DEFAULT_SHORTCUTS);
+			});
+
+			it('still writes back when a migration really moves a binding', async () => {
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					shortcuts: {
+						...structuredClone(DEFAULT_SHORTCUTS),
+						moveToGroup: {
+							id: 'moveToGroup',
+							label: 'Move to Group',
+							keys: ['Meta', 'Shift', 'm'],
+						},
+					},
+				});
+
+				await loadAllSettings();
+
+				expect(useSettingsStore.getState().shortcuts.moveToGroup.keys).toEqual([
+					'Alt',
+					'Meta',
+					'm',
+				]);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith(
+					'shortcuts',
+					expect.objectContaining({
+						moveToGroup: expect.objectContaining({ keys: ['Alt', 'Meta', 'm'] }),
+					})
+				);
+			});
+
+			it('moves a reserved chord left on disk onto the bundled default', async () => {
+				// Cmd+Shift+Down is the OS select-to-bottom inside a text field.
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					shortcuts: {
+						...structuredClone(DEFAULT_SHORTCUTS),
+						nextUnreadTab: {
+							id: 'nextUnreadTab',
+							label: 'Next Unread / Draft Tab',
+							keys: ['Meta', 'Shift', 'ArrowDown'],
+						},
+					},
+				});
+
+				await loadAllSettings();
+
+				expect(useSettingsStore.getState().shortcuts.nextUnreadTab.keys).toEqual(
+					DEFAULT_SHORTCUTS.nextUnreadTab.keys
+				);
+			});
+
+			it('settles after one write-back rather than looping', async () => {
+				// Feed the FIRST load's write-back into a SECOND load. A converging
+				// migration must go quiet; a self-cancelling pair of rules would ask
+				// to persist again here, forever.
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					shortcuts: {
+						...structuredClone(DEFAULT_SHORTCUTS),
+						nextUnreadTab: {
+							id: 'nextUnreadTab',
+							label: 'Next Unread / Draft Tab',
+							keys: ['Meta', 'Shift', 'ArrowDown'],
+						},
+					},
+				});
+
+				await loadAllSettings();
+
+				const written = vi
+					.mocked(window.maestro.settings.set)
+					.mock.calls.filter(([key]) => key === 'shortcuts')
+					.at(-1)?.[1];
+				expect(written).toBeDefined();
+
+				vi.mocked(window.maestro.settings.set).mockClear();
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					shortcuts: written as Record<string, unknown>,
+				});
+
+				await loadAllSettings();
+
+				expect(window.maestro.settings.set).not.toHaveBeenCalledWith(
+					'shortcuts',
+					expect.anything()
+				);
+			});
+		});
+
 		it('loads all settings from getAll() on success', async () => {
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
 				fontFamily: 'JetBrains Mono',

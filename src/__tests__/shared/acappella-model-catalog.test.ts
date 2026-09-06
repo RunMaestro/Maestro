@@ -77,23 +77,41 @@ describe('voice model catalog', () => {
 			expect(set.bytes).toBe(sumModelBytes(set.modelIds));
 			expect(set.bytes).toBeGreaterThan(0);
 		}
-		// The fully-local set is the hands-free set plus the Brain, so it must be
-		// strictly larger. A copy-paste that left both lists the same fails here.
-		expect(MODEL_SETS['fully-local'].bytes).toBeGreaterThan(MODEL_SETS['hands-free-local'].bytes);
 	});
 
 	it('formats set sizes through the shared formatter', () => {
-		expect(formatModelSetSize('fully-local')).toBe(formatSize(MODEL_SETS['fully-local'].bytes));
+		expect(formatModelSetSize('hands-free-local')).toBe(
+			formatSize(MODEL_SETS['hands-free-local'].bytes)
+		);
 	});
 
 	it('returns set entries in catalog order', () => {
-		const ids = getModelSetEntries('fully-local').map((entry) => entry.id);
-		expect(ids).toEqual(VOICE_MODEL_CATALOG.map((entry) => entry.id));
+		const ids = getModelSetEntries('hands-free-local').map((entry) => entry.id);
+		const catalogOrder = VOICE_MODEL_CATALOG.map((entry) => entry.id).filter((id) =>
+			ids.includes(id)
+		);
+		expect(ids).toEqual(catalogOrder);
 	});
 
-	it('excludes the Brain from the hands-free set', () => {
-		expect(MODEL_SETS['hands-free-local'].modelIds).not.toContain(QWEN3_1_7B_ID);
-		expect(MODEL_SETS['hands-free-local'].modelIds).toContain(OPENWAKEWORD_BASE_ID);
+	it('bundles exactly the models the local trio can run', () => {
+		// The recogniser and the wake word. The voice is the system's own and the
+		// router is built in, so neither downloads anything.
+		expect([...MODEL_SETS['hands-free-local'].modelIds].sort()).toEqual(
+			[WHISPER_BASE_EN_ID, OPENWAKEWORD_BASE_ID].sort()
+		);
+	});
+
+	it('never bundles a model nothing in this build can read', () => {
+		// Kokoro and Qwen3 stay in the catalog so an existing download can be seen
+		// and removed, but a bundle that fetched them would fetch weights that no
+		// provider can open.
+		for (const id of [KOKORO_82M_ID, QWEN3_1_7B_ID]) {
+			expect(getVoiceModel(id)?.pending).toEqual(expect.any(String));
+			for (const set of Object.values(MODEL_SETS)) expect(set.modelIds).not.toContain(id);
+		}
+		for (const id of [WHISPER_BASE_EN_ID, OPENWAKEWORD_BASE_ID]) {
+			expect(getVoiceModel(id)?.pending).toBeUndefined();
+		}
 	});
 
 	it('is frozen all the way down', () => {

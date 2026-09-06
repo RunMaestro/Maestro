@@ -26,11 +26,12 @@
  *      by Whisper, routed by a model that never heard it, spoken in a different
  *      voice. The swap waits for the floor.
  *
- * The STT slot defaults to the microphone check in EVERY build. It consumes real
- * PCM and reports the speech it heard without transcribing it. That default used
- * to be the mock in a packaged app, which opened no device at all, so a user with
- * no configuration had a session that said "Listening" and could not possibly
- * hear them - and no way to tell that apart from a broken microphone.
+ * The defaults are the LOCAL trio (`DEFAULT_PROVIDER_IDS` below): Whisper for
+ * speech in, the operating system's own voice for speech out, and the built-in
+ * keyword router. Only the first needs a download. The two neural local engines
+ * that cannot run in this build yet (Kokoro, Qwen3) stay registered here so the
+ * code has a home, but they are absent from the shared catalog and so from every
+ * dropdown; see the notes beside their ids in `provider-catalog.ts`.
  */
 
 import type { BackgroundAnnouncementSetting } from '../../../shared/acappella/announcements';
@@ -43,7 +44,13 @@ import {
 } from '../../../shared/acappella/voice-controls';
 import {
 	summariseVoiceEgress,
+	BUILTIN_BRAIN_PROVIDER_ID,
+	KOKORO_TTS_PROVIDER_ID,
+	LOCAL_PROVIDER_IDS,
 	OPENAI_REALTIME_PROVIDER_ID,
+	OPENAI_TTS_PROVIDER_ID,
+	QWEN3_BRAIN_PROVIDER_ID,
+	SYSTEM_TTS_PROVIDER_ID,
 } from '../../../shared/acappella/provider-catalog';
 import type {
 	BrainProvider,
@@ -64,8 +71,10 @@ import { AnthropicBrainProvider } from './hosted/anthropic-brain';
 import { ElevenLabsTtsProvider } from './hosted/elevenlabs-tts';
 import { OpenAiBrainProvider } from './hosted/openai-brain';
 import { OpenAiSttProvider } from './hosted/openai-stt';
+import { OpenAiTtsProvider } from './hosted/openai-tts';
 import { KokoroTtsProvider } from './local/kokoro-tts';
 import { LlamaBrainProvider } from './local/llama-brain';
+import { SystemVoiceTtsProvider } from './local/system-tts';
 import { WhisperSttProvider } from './local/whisper-stt';
 import { MockBrainProvider, MockSttProvider, MockTtsProvider } from './mock';
 import type { MockProviderOptions } from './mock';
@@ -181,25 +190,43 @@ export interface VoiceProviderResolution {
 	resolvedIds: Record<VoiceProviderRole, string>;
 }
 
-/** The mock tier's ids. Selected explicitly; never a fallback. */
+/**
+ * The mock tier's ids. Selected explicitly; never a fallback.
+ *
+ * The Brain entry doubles as the built-in keyword router
+ * (`BUILTIN_BRAIN_PROVIDER_ID` in the shared catalog): the same deterministic
+ * engine the tests drive is the one a fresh install routes with, because it
+ * needs no model and no key and picks an agent by name.
+ */
 export const MOCK_PROVIDER_IDS: Record<VoiceProviderRole, string> = {
 	stt: 'mock-stt',
 	tts: 'mock-tts',
-	brain: 'mock-brain',
+	brain: BUILTIN_BRAIN_PROVIDER_ID,
 };
 
 /**
  * What a role resolves to when the user has picked nothing.
  *
- * Identical to {@link MOCK_PROVIDER_IDS} except for STT, which defaults to the
- * microphone check. That default is deliberate: out of the box the one thing a
- * user needs to establish is that their microphone reaches the app, and a
- * default that cannot hear makes that impossible to tell from a broken device.
+ * **The local tier, so the feature WORKS out of the box.** This used to be the
+ * mock tier, and the result was a voice mode that opened the microphone, drew a
+ * HUD, showed a level meter, and transcribed nothing: `echo-stt` reports how long
+ * you spoke ("Echo utterance 3: 2.2s of speech") rather than what you said, so no
+ * utterance ever routed and no agent ever answered. Every part looked healthy and
+ * the feature did nothing, which is the worst failure a default can produce.
+ *
+ * Only speech-to-text needs a download. Whisper and its runtime are fetched on
+ * consent through Voice Setup, and until they are on disk the capability gate
+ * refuses BY NAME and points at the download. The voice is the operating
+ * system's own and the router is built in, so the moment the recogniser lands
+ * the whole loop runs with nothing leaving the machine.
+ *
+ * `echo-stt` remains selectable, and remains the right answer to "is my
+ * microphone reaching Maestro?". It is a diagnostic, not a default.
  */
 export const DEFAULT_PROVIDER_IDS: Record<VoiceProviderRole, string> = {
-	stt: ECHO_STT_PROVIDER_ID,
-	tts: MOCK_PROVIDER_IDS.tts,
-	brain: MOCK_PROVIDER_IDS.brain,
+	stt: LOCAL_PROVIDER_IDS.stt,
+	tts: LOCAL_PROVIDER_IDS.tts,
+	brain: LOCAL_PROVIDER_IDS.brain,
 };
 
 // ---------------------------------------------------------------------------
@@ -272,7 +299,7 @@ registerVoiceProvider({
 registerVoiceProvider({
 	role: 'brain',
 	id: MOCK_PROVIDER_IDS.brain,
-	label: 'Mock (keyword routing)',
+	label: 'Built-in (keyword routing)',
 	tier: 'mock',
 	create: () => new MockBrainProvider(),
 });
@@ -289,7 +316,21 @@ registerVoiceProvider({
 
 registerVoiceProvider({
 	role: 'tts',
-	id: 'kokoro-local',
+	id: SYSTEM_TTS_PROVIDER_ID,
+	label: 'System voice (built in)',
+	tier: 'local',
+	// The voice id is read per sentence through `getSpeechOptions`, not fixed at
+	// construction, so the picker's choice lands on the next sentence. The
+	// provider validates it against the installed voices itself.
+	create: () => new SystemVoiceTtsProvider(),
+});
+
+// Registered but UNLISTED: absent from the shared catalog, so no dropdown offers
+// it and nothing resolves to it unless a settings file names it outright. See
+// KOKORO_TTS_PROVIDER_ID for why it cannot speak in this build.
+registerVoiceProvider({
+	role: 'tts',
+	id: KOKORO_TTS_PROVIDER_ID,
 	label: 'Kokoro (local)',
 	tier: 'local',
 	// No voice id is threaded through: Kokoro ships exactly one voice pack in the
@@ -298,9 +339,10 @@ registerVoiceProvider({
 	create: () => new KokoroTtsProvider(),
 });
 
+// Registered but UNLISTED, for the same reason. See QWEN3_BRAIN_PROVIDER_ID.
 registerVoiceProvider({
 	role: 'brain',
-	id: 'qwen3-local',
+	id: QWEN3_BRAIN_PROVIDER_ID,
 	label: 'Qwen3 1.7B (local)',
 	tier: 'local',
 	create: () => new LlamaBrainProvider(),
@@ -314,6 +356,14 @@ registerVoiceProvider({
 	label: 'OpenAI (hosted)',
 	tier: 'cloud',
 	create: () => new OpenAiSttProvider(),
+});
+
+registerVoiceProvider({
+	role: 'tts',
+	id: OPENAI_TTS_PROVIDER_ID,
+	label: 'OpenAI (hosted)',
+	tier: 'cloud',
+	create: () => new OpenAiTtsProvider(),
 });
 
 registerVoiceProvider({

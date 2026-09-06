@@ -141,9 +141,10 @@ export type AudioHostStatus =
 	/**
 	 * Every microphone this machine can offer.
 	 *
-	 * Only the audio host can answer this: `enumerateDevices` is a DOM API, and
-	 * labels stay redacted until a capture has been granted at least once, so the
-	 * list is re-published whenever devices change or capture starts.
+	 * How the host answers for MAIN, which has no `enumerateDevices` of its own.
+	 * Any renderer can enumerate for itself, and should. Labels stay redacted
+	 * until a capture has been granted at least once, so the list is re-published
+	 * whenever devices change or capture starts.
 	 */
 	| { kind: 'input-devices'; devices: AudioDeviceInfo[] }
 	| {

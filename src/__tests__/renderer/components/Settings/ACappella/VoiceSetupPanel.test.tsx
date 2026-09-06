@@ -96,9 +96,14 @@ describe('VoiceSetupPanel', () => {
 		expect(
 			screen.getByText(`/tmp/models/acappella/${whisper.id}/${whisper.files[0].path}`)
 		).toBeInTheDocument();
-		expect(screen.getByText(getVoiceModel(KOKORO_82M_ID)!.displayName)).toBeInTheDocument();
-		expect(screen.getByText(getVoiceModel(QWEN3_1_7B_ID)!.displayName)).toBeInTheDocument();
 		expect(screen.getByText(getVoiceModel(OPENWAKEWORD_BASE_ID)!.displayName)).toBeInTheDocument();
+		// The voice and the router download nothing, so their slots say so instead
+		// of showing a model row - and the two models nothing can read are not
+		// offered here at all.
+		expect(screen.getByText(/voice built into this computer/)).toBeInTheDocument();
+		expect(screen.getByText(/reads replies back as written/)).toBeInTheDocument();
+		expect(screen.queryByText(getVoiceModel(KOKORO_82M_ID)!.displayName)).not.toBeInTheDocument();
+		expect(screen.queryByText(getVoiceModel(QWEN3_1_7B_ID)!.displayName)).not.toBeInTheDocument();
 	});
 
 	it('states why voice mode is not ready', async () => {
@@ -126,13 +131,12 @@ describe('VoiceSetupPanel', () => {
 		await waitFor(() => {
 			expect(voiceModels().download).toHaveBeenCalled();
 		});
-		// The fully-local set: everything is missing, so everything is requested.
+		// The whole bundle is missing, so the whole bundle is requested - and
+		// nothing outside it, however much of the catalog is on offer elsewhere.
 		const requested = vi
 			.mocked(voiceModels().download)
 			.mock.calls.map((call: unknown[]) => call[0]);
-		expect(requested).toEqual(
-			expect.arrayContaining([WHISPER_BASE_EN_ID, OPENWAKEWORD_BASE_ID, KOKORO_82M_ID])
-		);
+		expect([...requested].sort()).toEqual([WHISPER_BASE_EN_ID, OPENWAKEWORD_BASE_ID].sort());
 	});
 
 	it('offers Re-verify and Re-download for a corrupt model', async () => {

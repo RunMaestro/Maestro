@@ -26,6 +26,16 @@
  * machine, and `bytes` is the COMPRESSED download size, because that is the
  * number a progress bar counts and a user waits through.
  *
+ * **A tarball is not an install.** npm ships a package's own files and resolves
+ * its dependency tree separately, so a payload that declares a runtime dependency
+ * arrives incomplete. `onnxruntime-node` requires `onnxruntime-common` on the
+ * first line of its entry point, and installing without it produces a runtime
+ * that extracts cleanly, verifies cleanly, reports itself installed, and then
+ * throws `MODULE_NOT_FOUND` the first time voice tries to transcribe - after the
+ * user has waited through the whole download. {@link NativeRuntimeDependency} is
+ * why that cannot happen: dependencies are pinned, hashed, and installed inside
+ * the same transaction as the payload.
+ *
  * The one wart, recorded rather than hidden: `onnxruntime-node` publishes a
  * single tarball containing all five platform payloads, so a user downloads
  * ~101 MB to keep ~37 MB. {@link NativeRuntimeArtifact.keep} is why disk does not
@@ -81,6 +91,38 @@ export interface NativeRuntimeArtifact {
 	 * a dlopen, where the error names nothing a user can act on.
 	 */
 	readonly binary: string;
+	/**
+	 * Runtime dependencies the payload `require()`s but does not contain.
+	 *
+	 * An npm tarball ships a package's own files and NOT its dependency tree, so a
+	 * payload that declares a runtime dependency arrives incomplete. Installing it
+	 * anyway produces a runtime that extracts cleanly, verifies cleanly, reports
+	 * itself installed, and then throws `MODULE_NOT_FOUND` the first time anything
+	 * imports it - after the user has waited through the whole download.
+	 *
+	 * `onnxruntime-node` requires `onnxruntime-common` (its shared type and backend
+	 * registry) at import time. Empty for a payload that genuinely stands alone,
+	 * which is the case for the `@node-llama-cpp/*` platform packages.
+	 */
+	readonly dependencies: readonly NativeRuntimeDependency[];
+}
+
+/**
+ * A second tarball that has to land inside the runtime for it to import.
+ *
+ * Extracted to `node_modules/<name>` under the install root, so ordinary node
+ * resolution finds it from the entry point with no loader involvement and no
+ * path rewriting.
+ */
+export interface NativeRuntimeDependency {
+	/** Package name, and the directory it is installed as. */
+	readonly name: string;
+	/** Fully pinned tarball URL. A version, never a tag or a range. */
+	readonly url: string;
+	/** Lowercase hex SHA-256 of the tarball as downloaded. */
+	readonly sha256: string;
+	/** COMPRESSED size in bytes. */
+	readonly bytes: number;
 }
 
 /** `3.20.0`, matching `versionPin` for the `llama` runtime. */
@@ -120,6 +162,9 @@ function llamaArtifact(
 		keep: Object.freeze(['dist', 'bins', 'package.json']),
 		entry: 'dist/index.js',
 		binary: `bins/${pkg}/llama-addon.node`,
+		// Genuinely standalone: the platform packages carry the binary and nothing
+		// else, with no dependencies of their own to resolve.
+		dependencies: [],
 	});
 }
 
@@ -142,6 +187,27 @@ const ONNX_TARBALL_URL = `https://registry.npmjs.org/onnxruntime-node/-/onnxrunt
 const ONNX_TARBALL_SHA256 = 'c3779c01c59832f8c03e2c392ac3af10bf08579f1822e8b1c63cc451edb302a2';
 const ONNX_TARBALL_BYTES = 100_893_124;
 
+/**
+ * `onnxruntime-node`'s own runtime dependency.
+ *
+ * `dist/index.js` requires it on the first line, so without it the runtime
+ * installs perfectly and then fails to import. 66 KB of JavaScript, pinned to the
+ * same version as the runtime it serves - a mismatched pair would resolve, load,
+ * and then disagree about the backend registry.
+ *
+ * `adm-zip` and `global-agent` are also in its `dependencies` and are deliberately
+ * NOT here: both are used only by the package's install script, which never runs
+ * on this path because the binary arrives pre-extracted.
+ */
+const ONNX_DEPENDENCIES: readonly NativeRuntimeDependency[] = Object.freeze([
+	Object.freeze({
+		name: 'onnxruntime-common',
+		url: `https://registry.npmjs.org/onnxruntime-common/-/onnxruntime-common-${ONNX_VERSION}.tgz`,
+		sha256: '37faaa5883b7f317b0f357ae8b2f4f8c8d97d177638be12cbcdf8239d75bbd7b',
+		bytes: 66_082,
+	}),
+]);
+
 function onnxArtifact(platform: NativePlatformKey, binary: string): NativeRuntimeArtifact {
 	const binDir = ONNX_BIN_DIR[platform];
 	return Object.freeze({
@@ -156,19 +222,21 @@ function onnxArtifact(platform: NativePlatformKey, binary: string): NativeRuntim
 		keep: Object.freeze(['dist', 'package.json', binDir]),
 		entry: 'dist/index.js',
 		binary: `${binDir}/${binary}`,
+		dependencies: ONNX_DEPENDENCIES,
 	});
 }
 
 /**
  * Every downloadable runtime payload.
  *
- * `whisper` is deliberately absent, and its absence is the honest state rather
- * than an oversight: `smart-whisper` publishes no prebuilt binary for any
- * platform and runs `node-gyp rebuild` at install time, so there is nothing to
- * download. Giving it a row here would mean either shipping a compiler to users
- * or inventing a binary distribution we would then have to build, sign, and host.
- * Until speech-to-text moves to a runtime that publishes prebuilds, the local STT
- * slot stays unavailable and says so.
+ * There are exactly two, and there used to be a third that could not exist.
+ * Speech-to-text was bound to `smart-whisper`, which publishes no prebuilt binary
+ * for any platform and runs `node-gyp rebuild` at install time - so there was
+ * nothing to download, and shipping it meant either putting a compiler in front
+ * of every user or inventing a binary distribution we would then have to build,
+ * sign, and host. Since Whisper has official ONNX exports, speech-to-text now
+ * runs on the ONNX Runtime payload below, which text-to-speech and the wake word
+ * already required. The slot that was impossible to ship became free.
  */
 export const NATIVE_RUNTIME_ARTIFACTS: readonly NativeRuntimeArtifact[] = Object.freeze([
 	llamaArtifact(

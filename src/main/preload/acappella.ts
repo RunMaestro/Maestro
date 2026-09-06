@@ -19,7 +19,8 @@ import type { VoiceSessionSnapshot } from '../acappella';
 import type { VoiceStartSessionResult, WakeTestEvent } from '../ipc/handlers/acappella';
 import type { GlobalHotkeyStatus } from '../../shared/global-hotkeys';
 import type { VoiceHotkeyRefusalInfo } from '../acappella/hotkeys/voice-hotkeys';
-import type { VoiceModelListing } from '../ipc/handlers/acappella-models';
+import type { VoiceModelListing, VoiceRuntimeListing } from '../ipc/handlers/acappella-models';
+import type { RuntimeInstallProgress } from '../acappella/runtime/runtime-installer';
 import type { DownloadProgress, DownloadResult } from '../acappella/models/model-downloader';
 import type { ModelFootprint, VerifyResult } from '../acappella/models/model-store';
 import type { MicPermissionInfo } from '../acappella/permissions/mic-permission';
@@ -103,6 +104,56 @@ function createVoiceModelsApi() {
 				handler(progress);
 			ipcRenderer.on('models:progress', wrappedHandler);
 			return () => ipcRenderer.removeListener('models:progress', wrappedHandler);
+		},
+	};
+}
+
+/**
+ * `window.maestro.voice.runtimes.*` - the native engines the local tier runs on.
+ *
+ * Same shape and same rules as {@link createVoiceModelsApi}, because it is the
+ * same bargain: a model is useless without an engine to read it, and shipping
+ * ~250 MB of inference binaries in every installer for a feature that is off by
+ * default is the cost `runtime-artifacts.ts` exists to avoid. `list()` is a disk
+ * read against a frozen table; `install()` is the only call here that opens a
+ * connection.
+ *
+ * `footprint` and `removeAll` keep working with the Encore Feature off, for the
+ * same reason the model ones do: a runtime is the larger half of what someone
+ * reclaims when they switch voice back off.
+ */
+function createVoiceRuntimesApi() {
+	return {
+		/** Every native runtime joined to its on-disk state and download size. */
+		list: (): Promise<VoiceRuntimeListing[]> => ipcRenderer.invoke('runtimes:list'),
+
+		/**
+		 * Download, verify, and install one runtime. Resolves when it is usable.
+		 *
+		 * A second call for a runtime already installing JOINS the first rather than
+		 * starting a competing download, so an impatient second click is harmless.
+		 */
+		install: (runtimeId: string): Promise<boolean> =>
+			ipcRenderer.invoke('runtimes:install', runtimeId),
+
+		/** Disk used by downloaded runtimes. */
+		footprint: (): Promise<number> => ipcRenderer.invoke('runtimes:footprint'),
+
+		/** Delete every downloaded runtime. */
+		removeAll: (): Promise<void> => ipcRenderer.invoke('runtimes:remove-all'),
+
+		/**
+		 * Install progress. Broadcast, so every window sees the same transfer.
+		 *
+		 * @returns Cleanup function to unsubscribe.
+		 */
+		onProgress: (handler: (progress: RuntimeInstallProgress) => void): (() => void) => {
+			const wrappedHandler = (
+				_event: Electron.IpcRendererEvent,
+				progress: RuntimeInstallProgress
+			) => handler(progress);
+			ipcRenderer.on('runtimes:progress', wrappedHandler);
+			return () => ipcRenderer.removeListener('runtimes:progress', wrappedHandler);
 		},
 	};
 }
@@ -250,6 +301,7 @@ export function createVoiceApi() {
 	return {
 		/** The model manager: catalog, downloads, verification, and disk. */
 		models: createVoiceModelsApi(),
+		runtimes: createVoiceRuntimesApi(),
 
 		/** API keys for the hosted tier, stored in the OS keychain. */
 		credentials: createVoiceCredentialsApi(),

@@ -18,7 +18,8 @@ import {
 import { useVoiceSessionStore } from '../../../../renderer/stores/voiceSessionStore';
 import { useVoiceUiStore } from '../../../../renderer/stores/voiceUiStore';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
-import { LayerStackProvider } from '../../../../renderer/contexts/LayerStackContext';
+import { LayerStackProvider, useLayerStack } from '../../../../renderer/contexts/LayerStackContext';
+import type { LayerStackAPI } from '../../../../renderer/hooks';
 import type { VoiceEvent } from '../../../../shared/acappella/protocol';
 import { mockTheme } from '../../../helpers/mockTheme';
 
@@ -873,5 +874,37 @@ describe('VoiceDevHarness', () => {
 		expect(window.maestro.voice.submitAgentReply).toHaveBeenCalledWith(
 			expect.objectContaining({ agentSessionId: 'agent-1', tabId: 'tab-7' })
 		);
+	});
+});
+
+describe('VoiceHud keyboard passivity', () => {
+	// The HUD floats over a workspace the user is still driving. Every other
+	// passivity flag was already set, but `blocksAppShortcuts` defaults to TRUE,
+	// so leaving it out put a shortcut-blocking layer on the stack and killed
+	// Cmd+K, agent switching, and the file-tree keys for as long as a voice
+	// session was open. Nothing about that is visible on screen, which is why it
+	// survived: the HUD looked correct and the rest of the app just stopped
+	// answering the keyboard.
+	it('does not suppress app shortcuts while a session is on screen', () => {
+		let stack: LayerStackAPI | null = null;
+		const Probe = () => {
+			stack = useLayerStack();
+			return null;
+		};
+
+		render(
+			<LayerStackProvider>
+				<Probe />
+				<VoiceHud theme={mockTheme} enabled showDevHarness={false} />
+			</LayerStackProvider>
+		);
+
+		act(() => startSession());
+
+		// The HUD is really registered, so this is passivity rather than absence.
+		expect(screen.getByTestId('voice-hud')).toBeTruthy();
+		expect(stack!.getLayers().some((l) => l.ariaLabel === 'Voice HUD')).toBe(true);
+		expect(stack!.hasOpenLayers()).toBe(false);
+		expect(stack!.hasOpenModal()).toBe(false);
 	});
 });

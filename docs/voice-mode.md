@@ -42,18 +42,22 @@ Each slot is configured and validated on its own. A missing Whisper model does n
 
 ### The providers, and what leaves your machine
 
-| Provider                               | Slot            | Leaves this machine                       |
-| -------------------------------------- | --------------- | ----------------------------------------- |
-| Whisper (local)                        | Speech-to-Text  | Nothing                                   |
-| OpenAI (hosted)                        | Speech-to-Text  | **Your audio**, to OpenAI                 |
-| Kokoro (local)                         | Text-to-Speech  | Nothing                                   |
-| ElevenLabs (hosted)                    | Text-to-Speech  | The reply text, to ElevenLabs             |
-| Qwen3 1.7B (local)                     | Conductor Brain | Nothing                                   |
-| OpenAI (hosted)                        | Conductor Brain | Your transcripts, to OpenAI               |
-| Anthropic (hosted)                     | Conductor Brain | Your transcripts, to Anthropic            |
-| Conductor agent                        | Conductor Brain | Nothing new (it runs an agent you set up) |
-| Mock providers                         | Any             | Nothing (no microphone, no model)         |
-| **OpenAI Realtime** (speech-to-speech) | All three       | **Your audio**, to OpenAI                 |
+| Provider                               | Slot            | Leaves this machine               |
+| -------------------------------------- | --------------- | --------------------------------- |
+| Whisper (local)                        | Speech-to-Text  | Nothing                           |
+| OpenAI (hosted)                        | Speech-to-Text  | **Your audio**, to OpenAI         |
+| System voice (built in)                | Text-to-Speech  | Nothing                           |
+| OpenAI (hosted)                        | Text-to-Speech  | The reply text, to OpenAI         |
+| ElevenLabs (hosted)                    | Text-to-Speech  | The reply text, to ElevenLabs     |
+| Built-in (keyword routing)             | Conductor Brain | Nothing                           |
+| OpenAI (hosted)                        | Conductor Brain | Your transcripts, to OpenAI       |
+| Anthropic (hosted)                     | Conductor Brain | Your transcripts, to Anthropic    |
+| Mock providers                         | Any             | Nothing (no microphone, no model) |
+| **OpenAI Realtime** (speech-to-speech) | All three       | **Your audio**, to OpenAI         |
+
+**The defaults need one download and no key.** Speech recognition is Whisper on this machine. Replies are spoken by the voice already built into your computer (`say` on macOS, the Windows speech API, `espeak-ng` on Linux). Routing is the built-in keyword router: it sends an utterance to the agent you named, or to the agent you are talking to, and reads the first sentences of the reply back as written. Switch the Brain to a hosted model when you want it to understand a request rather than match a name.
+
+**One OpenAI key runs a whole hosted trio.** Switching every slot to hosted picks OpenAI for all three, so you do not need a second account to hear replies. ElevenLabs stays in the Text-to-Speech list for anyone who prefers its voices.
 
 **Realtime is a pipeline shape, not a fourth slot.** Choosing it replaces all three slots with one speech-to-speech API: the lowest latency available, in exchange for your audio going to OpenAI and the assistant speaking in that provider's voice.
 
@@ -65,33 +69,41 @@ Hosted providers need an API key, entered in **Voice Providers**. Keys are store
 	in the type system and re-checked at runtime, not left to discipline.
 </Note>
 
-### The Conductor agent option
-
-The Conductor Brain can also be a real Maestro agent instead of a model. It is slower than the other options, and in exchange it can reason about your actual projects when deciding where an utterance belongs. Nothing new leaves your machine: it runs an agent you already configured, wherever you already configured it to run.
+<Note>
+	Two more local engines exist in the code but are not offered yet, and the settings do not list
+	them: the **Kokoro** neural voice needs a phoneme front end that is not part of this build, and the
+	**Qwen3** local Brain needs a llama.cpp runtime that is not packaged yet. If you downloaded either
+	on an earlier build, the Models page still shows it so you can remove it.
+</Note>
 
 ## Downloading the models
 
-Local providers need model files. **Voice Setup** lists every one with its exact size, license, source repository, and install path before it downloads anything, and mounting the panel makes zero network calls.
+The first time you switch A Cappella on, Maestro offers to set it up: one dialog listing what voice
+needs, what each piece costs, and a single **Download** button. That one button fetches both the
+models and the engine that reads them, because a model without its engine does nothing. Nothing is
+fetched until you press it, and **Later** is a real answer - voice stays enabled and unconfigured,
+and every refusal afterwards names the missing piece rather than saying "voice unavailable". To
+reopen the walkthrough at any point, run **Set Up Voice Models** from the command palette.
+
+Local speech recognition needs model files. **Voice Setup** (Settings -> Plugins -> A Cappella) lists
+every one with its exact size, license, source repository, and install path before it downloads
+anything, and mounting the panel makes zero network calls. The system voice and the built-in router
+download nothing.
 
 <Warning>
-	**The local speech engines are not in this build yet.** The models below install and verify fine,
-	but the runtimes that read them (whisper.cpp, ONNX Runtime, and llama.cpp) ship in a later
-	release. Until then Voice Setup says so against each affected slot and a session refuses to start
-	rather than half-opening, so you can see it before spending the download. Use a hosted provider,
-	or wait for the runtimes.
+	**The engine is downloaded, not bundled.** Speech recognition and the wake word run on ONNX
+	Runtime, which does not ship inside the installer: it is about 100 MB that nobody who leaves voice
+	switched off should have to carry. Voice Setup fetches it from a pinned release checked against a
+	hash recorded in the app, and it is listed alongside the models so the size on the button is the
+	size you actually download.
 </Warning>
 
-| Model                        | Role            | Size     | License    |
-| ---------------------------- | --------------- | -------- | ---------- |
-| Whisper Base (English)       | Speech-to-Text  | 141.1 MB | MIT        |
-| openWakeWord Base            | Wake word       | 2.3 MB   | Apache-2.0 |
-| Kokoro 82M                   | Text-to-Speech  | 310.9 MB | Apache-2.0 |
-| Qwen3 1.7B Instruct (Q4_K_M) | Conductor Brain | 1.0 GB   | Apache-2.0 |
+| Model                  | Role           | Size     | License    |
+| ---------------------- | -------------- | -------- | ---------- |
+| Whisper Base (English) | Speech-to-Text | 208.5 MB | Apache-2.0 |
+| openWakeWord Base      | Wake word      | 2.4 MB   | Apache-2.0 |
 
-Voice Setup offers them as two bundles, and the button always shows the total of what is still **missing** rather than the size of the whole set:
-
-- **Hands-free (local)** - Whisper, openWakeWord, and Kokoro. **454.4 MB.** Everything the microphone touches stays on this machine.
-- **Fully local** - the above plus the Conductor Brain. **1.5 GB.** Routing and spoken replies never call an API either.
+Voice Setup offers them as one bundle, **Local speech**, and the button always shows the total of what is still **missing** rather than the size of the whole set. With the ONNX Runtime engine the first download is roughly 310 MB.
 
 Every file is downloaded from a pinned revision and checked against a SHA-256 recorded in the app, so a model that was tampered with in transit fails to install rather than quietly running.
 

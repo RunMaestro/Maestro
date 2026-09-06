@@ -113,8 +113,10 @@ describe('native runtime registry', () => {
 
 	it('maps every voice slot that has a local tier to a runtime', () => {
 		expect(runtimesForSlot('brain').map((runtime) => runtime.id)).toEqual(['llama']);
-		expect(runtimesForSlot('stt').map((runtime) => runtime.id)).toEqual(['whisper']);
-		// One ONNX Runtime serves both, which is the point of picking it.
+		// One ONNX Runtime serves all three, which is the point of picking it.
+		// Speech-to-text moved here from a whisper.cpp binding that compiled from
+		// source on every platform and so had nothing to download.
+		expect(runtimesForSlot('stt').map((runtime) => runtime.id)).toEqual(['onnx']);
 		expect(runtimesForSlot('tts').map((runtime) => runtime.id)).toEqual(['onnx']);
 		expect(runtimesForSlot('wake-word').map((runtime) => runtime.id)).toEqual(['onnx']);
 		expect(runtimesForSlot('microphone')).toEqual([]);
