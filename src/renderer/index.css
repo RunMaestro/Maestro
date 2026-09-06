@@ -1872,9 +1872,42 @@ html[data-runtime='web-desktop'] .session-row {
 	min-height: 44px;
 	font-size: 0.9375rem;
 }
-/* No keyboard on a phone: a chord badge there advertises a dead key. */
-.maestro-tab-sheet__body [data-shortcut-hint] {
-	display: none;
+
+/*
+ * No keyboard on a phone. Every chord badge (⌘K beside a menu row), keycap hint
+ * (the ⌘F in a search box) and arrow-key legend (↑↓ navigate • Enter select)
+ * advertises a key the user does not have, and on a 390px screen they were
+ * also the first things to push a close button off the edge. They all carry
+ * `data-shortcut-hint`, so one rule retires them together. Add the attribute
+ * to any new keyboard-only hint rather than gating it in JSX.
+ */
+html[data-runtime='web-desktop'][data-bp='xs'] [data-shortcut-hint] {
+	display: none !important;
+}
+
+/*
+ * Modals take the whole screen. Every resizable modal stamps
+ * `data-modal-resize-key` (the palette, Settings, the Usage Dashboard,
+ * Director's Notes, Process Monitor, file search, ...) and sizes itself to a
+ * remembered width and height clamped inside a padded overlay. On a phone that
+ * left a 326px box floating in a 390px viewport with the app peeking around
+ * it, headers wrapping to two lines, and nothing gained by the margin. The
+ * resize grips are hidden too: there is no edge to drag. Small dialogs (confirm,
+ * rename) pass no resize key and keep their natural size.
+ */
+html[data-runtime='web-desktop'][data-bp='xs'] .modal-overlay {
+	padding: 0 !important;
+}
+html[data-runtime='web-desktop'][data-bp='xs'] [data-modal-resize-key] {
+	width: 100vw !important;
+	width: 100dvw !important;
+	height: 100dvh !important;
+	max-width: none !important;
+	max-height: none !important;
+	border-radius: 0 !important;
+}
+html[data-runtime='web-desktop'][data-bp='xs'] [data-resize-handle] {
+	display: none !important;
 }
 
 /*

@@ -657,6 +657,27 @@ function MaestroConsoleInner() {
 			useUIStore.getState().setLeftSidebarOpen(false);
 		}
 	}, [activeSessionId, isNarrowViewport, leftSidebarOpen]);
+
+	// The right drawer follows the same rule. Opening a file from the Files panel,
+	// resuming a conversation from History, or anything else that activates a
+	// tab is a request to look at that tab, and on a phone the drawer covers it -
+	// a file tapped in the tree opened behind the panel and nothing on screen
+	// changed. Keyed on the transition of the active tab (of any kind), so a
+	// drawer opened after the switch stays open.
+	const activeTabKey = [
+		activeSession?.activeTabId,
+		activeSession?.activeFileTabId,
+		activeSession?.activeTerminalTabId,
+		activeSession?.activeBrowserTabId,
+	].join('|');
+	const prevActiveTabKeyRef = useRef(activeTabKey);
+	useEffect(() => {
+		const changed = prevActiveTabKeyRef.current !== activeTabKey;
+		prevActiveTabKeyRef.current = activeTabKey;
+		if (changed && isNarrowViewport && rightPanelOpen) {
+			useUIStore.getState().setRightPanelOpen(false);
+		}
+	}, [activeTabKey, isNarrowViewport, rightPanelOpen]);
 	const activeRightTab = useUIStore((s) => s.activeRightTab);
 	const activeFocus = useUIStore((s) => s.activeFocus);
 	const bookmarksCollapsed = useUIStore((s) => s.bookmarksCollapsed);

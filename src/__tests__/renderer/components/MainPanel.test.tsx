@@ -3751,3 +3751,30 @@ describe('MainPanel', () => {
 		});
 	});
 });
+
+// The panel's 400px floor keeps the header usable between two desktop
+// sidebars. A phone is 390px wide with no sidebars, so the floor made the panel
+// wider than the screen and pushed the header's last button off the edge.
+vi.mock('../../../renderer/hooks/ui/useViewportBreakpoint', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../renderer/hooks/ui/useViewportBreakpoint')>()),
+	usePhoneLayout: vi.fn(() => false),
+}));
+import { usePhoneLayout } from '../../../renderer/hooks/ui/useViewportBreakpoint';
+
+describe('MainPanel width floor', () => {
+	const hasFloor = (container: HTMLElement) =>
+		Array.from(container.querySelectorAll('div')).some((el) => el.style.minWidth === '400px');
+
+	it('holds a 400px floor on desktop', () => {
+		vi.mocked(usePhoneLayout).mockReturnValue(false);
+		const { container } = renderMainPanel();
+		expect(hasFloor(container)).toBe(true);
+	});
+
+	it('drops the floor on a phone', () => {
+		vi.mocked(usePhoneLayout).mockReturnValue(true);
+		const { container } = renderMainPanel();
+		expect(hasFloor(container)).toBe(false);
+		vi.mocked(usePhoneLayout).mockReturnValue(false);
+	});
+});

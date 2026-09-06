@@ -377,6 +377,7 @@ export function CrossTabSearchModal({
 				<div
 					className="px-4 py-2 border-t flex items-center gap-4 text-xs-plus"
 					style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
+					data-shortcut-hint=""
 				>
 					<span>↑↓ navigate</span>
 					<span>↵ jump to message</span>

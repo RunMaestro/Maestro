@@ -43,7 +43,9 @@ export function UsageDashboardFooter({
 					</span>
 				)}
 			</div>
-			<span style={{ opacity: 0.7 }}>Press Esc to close</span>
+			<span style={{ opacity: 0.7 }} data-shortcut-hint="">
+				Press Esc to close
+			</span>
 		</div>
 	);
 }

@@ -21,6 +21,7 @@ import { ArrowUp, ArrowDown, ArrowLeft, ArrowRight, CornerDownLeft } from 'lucid
 import type { Theme } from '../../shared/theme-types';
 import { TERMINAL_KEY_SEQUENCES } from '../utils/terminalKeys';
 import { triggerHaptic, HAPTIC_PATTERNS, MIN_TOUCH_TARGET } from '../utils/touch';
+import { usePhoneLayout } from '../hooks/ui/useViewportBreakpoint';
 
 interface TerminalTouchBarProps {
 	theme: Theme;
@@ -41,6 +42,10 @@ export const TerminalTouchBar = memo(function TerminalTouchBar({
 	onKey,
 }: TerminalTouchBarProps) {
 	const { colors } = theme;
+	// Phone: eight keys share the row width instead of each claiming 44px plus
+	// padding, which ran the Enter key off the right edge and left the bar
+	// scrolling for a key the user could not see.
+	const phone = usePhoneLayout();
 
 	// Fire the action on pointer-down (instant feedback) and prevent the default
 	// so focus stays on the terminal's helper textarea and the soft keyboard does
@@ -56,9 +61,9 @@ export const TerminalTouchBar = memo(function TerminalTouchBar({
 		display: 'flex',
 		alignItems: 'center',
 		justifyContent: 'center',
-		minWidth: MIN_TOUCH_TARGET,
+		minWidth: phone ? 0 : MIN_TOUCH_TARGET,
 		height: MIN_TOUCH_TARGET - 8,
-		padding: '0 10px',
+		padding: phone ? '0 4px' : '0 10px',
 		borderRadius: 6,
 		border: `1px solid ${colors.border}`,
 		background: colors.bgMain,
@@ -70,7 +75,7 @@ export const TerminalTouchBar = memo(function TerminalTouchBar({
 		touchAction: 'manipulation',
 		userSelect: 'none',
 		WebkitUserSelect: 'none',
-		flex: '0 0 auto',
+		flex: phone ? '1 1 0' : '0 0 auto',
 	};
 
 	const ctrlStyle: React.CSSProperties = ctrlArmed

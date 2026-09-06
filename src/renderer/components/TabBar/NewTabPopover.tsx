@@ -170,7 +170,11 @@ export const NewTabPopover = memo(function NewTabPopover({
 								style={{ color: getTabKindColor('ai', theme) }}
 							/>
 							New AI Chat
-							<span className="ml-auto text-xs" style={{ color: theme.colors.textDim }}>
+							<span
+								className="ml-auto text-xs"
+								data-shortcut-hint=""
+								style={{ color: theme.colors.textDim }}
+							>
 								{formatShortcutKeys(newTabKeys)}
 							</span>
 						</button>
@@ -185,7 +189,11 @@ export const NewTabPopover = memo(function NewTabPopover({
 									style={{ color: getTabKindColor('file', theme) }}
 								/>
 								New File
-								<span className="ml-auto text-xs" style={{ color: theme.colors.textDim }}>
+								<span
+									className="ml-auto text-xs"
+									data-shortcut-hint=""
+									style={{ color: theme.colors.textDim }}
+								>
 									{formatShortcutKeys(fileTabKeys)}
 								</span>
 							</button>
@@ -203,7 +211,11 @@ export const NewTabPopover = memo(function NewTabPopover({
 									style={{ color: getTabKindColor('browser', theme) }}
 								/>
 								New Browser
-								<span className="ml-auto text-xs" style={{ color: theme.colors.textDim }}>
+								<span
+									className="ml-auto text-xs"
+									data-shortcut-hint=""
+									style={{ color: theme.colors.textDim }}
+								>
 									{formatShortcutKeys(browserTabKeys)}
 								</span>
 							</button>
@@ -232,7 +244,11 @@ export const NewTabPopover = memo(function NewTabPopover({
 								style={{ color: getTabKindColor('terminal', theme) }}
 							/>
 							New Terminal
-							<span className="ml-auto text-xs" style={{ color: theme.colors.textDim }}>
+							<span
+								className="ml-auto text-xs"
+								data-shortcut-hint=""
+								style={{ color: theme.colors.textDim }}
+							>
 								{formatShortcutKeys(terminalKeys)}
 							</span>
 						</button>

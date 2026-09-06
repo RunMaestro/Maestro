@@ -279,7 +279,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 								{sessions.length} {sessions.length === 1 ? 'session' : 'sessions'} • {groups.length}{' '}
 								{groups.length === 1 ? 'group' : 'groups'}
 							</span>
-							<span className="whitespace-nowrap" style={{ opacity: 0.7 }}>
+							<span className="whitespace-nowrap" style={{ opacity: 0.7 }} data-shortcut-hint="">
 								↑↓ navigate • Enter view details • R refresh
 							</span>
 						</div>
