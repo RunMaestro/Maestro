@@ -1692,6 +1692,17 @@ html[data-runtime='web-desktop'] .maestro-app-shell {
 }
 
 /*
+ * Never let the page itself be wider than the screen. At xs/sm the Right Bar
+ * is parked just outside the viewport while closed; mobile Chromium can count
+ * that off-screen drawer toward the document width and make the page slide
+ * sideways. iOS already receives the stronger body overflow rule below.
+ */
+html[data-runtime='web-desktop'],
+html[data-runtime='web-desktop'] body {
+	overflow-x: hidden;
+}
+
+/*
  * Lift the app shell above the on-screen keyboard. App.tsx sets
  * `--keyboard-offset` (from useKeyboardVisibility, Visual Viewport API) to the
  * pixel height the virtual keyboard eats. Because the shell is box-sizing:
