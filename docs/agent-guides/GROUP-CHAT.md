@@ -209,7 +209,8 @@ recent log lines as context), and the request is delivered the moment that agent
 goes idle. Rules the implementation depends on:
 
 - **Liveness comes from `isBusy` on `GroupChatSessionInfo`, computed by the
-  session-lookup callback in `src/main/index.ts` via `isAgentBusy()`
+  session-lookup callback in `src/main/ipc/bootstrap/session-mention-mapper.ts`
+  via `isAgentBusy()`
   (`src/main/utils/agent-busy.ts`).** The persisted session record cannot answer
   this: `useDebouncedPersistence` rewrites every session and tab to `state: 'idle'`
   on the way to disk, so a stored record always reads idle.
