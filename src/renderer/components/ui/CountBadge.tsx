@@ -4,7 +4,7 @@
  * The generic counterpart to the domain badges beside it: `WorktreePill` says
  * one fixed word, `GitChangeCounts` says added/removed with git's own colors.
  * This one says a number and nothing else, so any surface that needs "3" on a
- * chip can use it instead of hand-rolling another `text-[9px] px-1 rounded`
+ * chip can use it instead of hand-rolling another `text-3xs px-1 rounded`
  * span. First consumer is the tab-group chip's panel count.
  *
  * Two deliberate choices:
@@ -60,7 +60,7 @@ export function CountBadge({
 
 	return (
 		<span
-			className={`text-[9px] font-medium tabular-nums px-1 py-0.5 rounded shrink-0 ${
+			className={`text-3xs font-medium tabular-nums px-1 py-0.5 rounded shrink-0 ${
 				className ?? ''
 			}`}
 			style={{

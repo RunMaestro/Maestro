@@ -24,22 +24,37 @@ import { logger } from '../utils/logger';
  * sessions array) so streaming log/token updates do not re-render App.
  * Session objects are read via getState() inside effects at event time.
  */
-export function useCueAutoDiscovery(encoreFeatures: EncoreFeatureFlags) {
+export function useCueAutoDiscovery(encoreFeatures: EncoreFeatureFlags, isLifecycleOwner = true) {
 	const sessionsLoaded = useSessionStore((s) => s.sessionsLoaded);
 	const cueDiscoverySignature = useSessionStore(selectCueDiscoverySignature);
 	// id → projectRoot so root moves (same id, new cwd) are detected.
 	const prevSessionRootsRef = useRef<Map<string, string>>(new Map());
 	const prevMaestroCueEnabledRef = useRef<boolean>(encoreFeatures.maestroCue);
 	const initialScanDoneRef = useRef(false);
+	const lifecycleOwnerRef = useRef(isLifecycleOwner);
+	const lifecycleGenerationRef = useRef(0);
 	// Serializes in-flight enable/disable IPC calls so rapid toggles
 	// (ON → OFF → ON) can't interleave and leave the engine in a state
 	// that disagrees with the observed flag value.
 	const toggleChainRef = useRef<Promise<void>>(Promise.resolve());
 
+	// Invalidate queued toggle work whenever lifecycle ownership changes or the
+	// hook unmounts. A queued callback must re-check this token before IPC work.
+	useEffect(() => {
+		lifecycleOwnerRef.current = isLifecycleOwner;
+		const generation = ++lifecycleGenerationRef.current;
+		return () => {
+			if (lifecycleGenerationRef.current === generation) {
+				lifecycleGenerationRef.current += 1;
+				lifecycleOwnerRef.current = false;
+			}
+		};
+	}, [isLifecycleOwner]);
+
 	// Track session additions, removals, and projectRoot moves - always runs
 	// regardless of encore flag
 	useEffect(() => {
-		if (!sessionsLoaded) return;
+		if (!isLifecycleOwner || !sessionsLoaded) return;
 
 		const sessions = useSessionStore.getState().sessions;
 		const currentRoots = new Map(sessions.map((s) => [s.id, s.projectRoot ?? '']));
@@ -104,13 +119,13 @@ export function useCueAutoDiscovery(encoreFeatures: EncoreFeatureFlags) {
 		}
 
 		prevSessionRootsRef.current = currentRoots;
-	}, [cueDiscoverySignature, sessionsLoaded]);
+	}, [cueDiscoverySignature, isLifecycleOwner, sessionsLoaded]);
 
 	// Track encore feature toggle. Queues enable/disable calls on a single
 	// chain so rapid ON/OFF/ON toggles always apply in the order the user
 	// triggered them - not in IPC-response order.
 	useEffect(() => {
-		if (!sessionsLoaded) return;
+		if (!isLifecycleOwner || !sessionsLoaded) return;
 
 		const wasEnabled = prevMaestroCueEnabledRef.current;
 		const isEnabled = encoreFeatures.maestroCue;
@@ -121,21 +136,30 @@ export function useCueAutoDiscovery(encoreFeatures: EncoreFeatureFlags) {
 		const sessionsSnapshot = useSessionStore
 			.getState()
 			.sessions.filter((session) => !!session.projectRoot);
+		const lifecycleGeneration = lifecycleGenerationRef.current;
+		const canRun = () =>
+			lifecycleOwnerRef.current && lifecycleGenerationRef.current === lifecycleGeneration;
 
 		toggleChainRef.current = toggleChainRef.current.then(async () => {
+			if (!canRun()) return;
 			if (isEnabled) {
 				try {
+					if (!canRun()) return;
 					await window.maestro.cue.enable();
+					if (!canRun()) return;
 					await Promise.all(
 						sessionsSnapshot.map((session) =>
-							window.maestro.cue
-								.refreshSession(session.id, session.projectRoot)
-								.catch((err) =>
-									logger.error('[CueAutoDiscovery] Failed to refresh session:', undefined, err)
-								)
+							canRun()
+								? window.maestro.cue
+										.refreshSession(session.id, session.projectRoot)
+										.catch((err) =>
+											logger.error('[CueAutoDiscovery] Failed to refresh session:', undefined, err)
+										)
+								: Promise.resolve()
 						)
 					);
 				} catch (err) {
+					if (!canRun()) return;
 					logger.error('[CueAutoDiscovery] Failed to enable Cue:', undefined, err);
 					captureException(err, { extra: { action: 'maestro.cue.enable' } });
 					notifyToast({
@@ -149,8 +173,10 @@ export function useCueAutoDiscovery(encoreFeatures: EncoreFeatureFlags) {
 				}
 			} else {
 				try {
+					if (!canRun()) return;
 					await window.maestro.cue.disable();
 				} catch (err) {
+					if (!canRun()) return;
 					logger.error('[CueAutoDiscovery] Failed to disable Cue:', undefined, err);
 					captureException(err, { extra: { action: 'maestro.cue.disable' } });
 					notifyToast({
@@ -164,5 +190,5 @@ export function useCueAutoDiscovery(encoreFeatures: EncoreFeatureFlags) {
 				}
 			}
 		});
-	}, [encoreFeatures.maestroCue, sessionsLoaded]);
+	}, [encoreFeatures.maestroCue, isLifecycleOwner, sessionsLoaded]);
 }

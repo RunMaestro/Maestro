@@ -3,6 +3,11 @@ import * as path from 'path';
 import { STANDARD_UNIX_PATHS } from '../constants';
 import { detectNodeVersionManagerBinPaths } from '../../../shared/pathUtils';
 import { isWindows } from '../../../shared/platformDetection';
+import {
+	DEFAULT_QUERY_SOURCE,
+	QUERY_SOURCE_ENV_VAR,
+	type QuerySource,
+} from '../../../shared/querySource';
 import { buildSpawnPath } from '../../utils/spawnPath';
 
 /**
@@ -92,6 +97,15 @@ export function buildPtyTerminalEnv(shellEnvVars?: Record<string, string>): Node
 			delete env[key];
 		}
 	}
+
+	// A Command Terminal is a shell the USER drives, not an agent turn, so it
+	// must never carry the query-source marker. It can arrive two ways: Maestro
+	// itself launched from an agent shell that had it set (the normal case in
+	// development), or the Windows branch above, which inherits process.env
+	// wholesale and strips nothing. Deleted unconditionally rather than added to
+	// STRIPPED_ENV_VARS, because buildChildProcessEnv() sets this variable on
+	// purpose and must keep doing so.
+	delete env[QUERY_SOURCE_ENV_VAR];
 
 	// Vim arrow-key ergonomics: when users launch `vi`/`vim` with distro defaults
 	// that force compatible mode, insert-mode arrows can degrade to literal ABCD.
@@ -238,7 +252,8 @@ const STRIPPED_ENV_VARS = [
 export function collectMaestroEnvVars(
 	globalShellEnvVars?: Record<string, string>,
 	customEnvVars?: Record<string, string>,
-	isResuming?: boolean
+	isResuming?: boolean,
+	querySource?: QuerySource
 ): Record<string, string> {
 	const home = os.homedir();
 	const expand = (value: string): string =>
@@ -257,6 +272,13 @@ export function collectMaestroEnvVars(
 	if (isResuming) {
 		result.MAESTRO_SESSION_RESUMED = '1';
 	}
+	// Only present when the caller resolved one. Terminal PTYs build their env
+	// through buildPtyTerminalEnv(), which does not stamp the marker, and this
+	// list is meant to mirror what the process actually got - not to advertise a
+	// variable the user would then fail to find.
+	if (querySource) {
+		result[QUERY_SOURCE_ENV_VAR] = querySource;
+	}
 	return result;
 }
 
@@ -265,7 +287,8 @@ export function buildChildProcessEnv(
 	isResuming?: boolean,
 	globalShellEnvVars?: Record<string, string>,
 	extraPathDirs?: string[],
-	unsetEnvKeys?: string[]
+	unsetEnvKeys?: string[],
+	querySource?: QuerySource
 ): NodeJS.ProcessEnv {
 	const env = { ...process.env };
 
@@ -314,6 +337,12 @@ export function buildChildProcessEnv(
 			env[key] = value.startsWith('~/') ? path.join(home, value.slice(2)) : value;
 		}
 	}
+
+	// Who asked for this turn. Stamped after the user-editable layers rather than
+	// before them: this is Maestro stating a fact about the spawn, not a default
+	// the user is offering an opinion on, and a stray global var of the same name
+	// would otherwise silently mislabel every turn on the machine.
+	env[QUERY_SOURCE_ENV_VAR] = querySource ?? DEFAULT_QUERY_SOURCE;
 
 	// Removal runs LAST, after every layer above has had its say, because a merge
 	// cannot express "this must not be present". Provider Failover uses it to make

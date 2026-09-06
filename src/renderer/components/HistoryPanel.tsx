@@ -47,7 +47,7 @@ interface HistoryPanelProps {
 	theme: Theme;
 	onJumpToAgentSession?: (agentSessionId: string) => void;
 	onResumeSession?: (agentSessionId: string) => void;
-	onOpenSessionAsTab?: (agentSessionId: string, projectPath?: string) => void;
+	onOpenSessionAsTab?: (agentSessionId: string, projectPath?: string, sessionName?: string) => void;
 	onOpenAboutModal?: () => void; // For opening About/achievements panel from history entries
 	// File linking props for history detail modal
 	fileTree?: FileNode[];
@@ -504,7 +504,7 @@ export const HistoryPanel = React.memo(
 					return;
 				}
 				trackShortcutUsage('historyJumpToSession');
-				onOpenSessionAsTab?.(entry.agentSessionId, entry.projectPath);
+				onOpenSessionAsTab?.(entry.agentSessionId, entry.projectPath, entry.sessionName);
 			},
 			[allFilteredEntries, onOpenSessionAsTab]
 		);
@@ -795,10 +795,7 @@ export const HistoryPanel = React.memo(
 								/>
 							</div>
 							{searchFilter && (
-								<div
-									className="text-[10px] mt-1 text-right"
-									style={{ color: theme.colors.textDim }}
-								>
+								<div className="text-2xs mt-1 text-right" style={{ color: theme.colors.textDim }}>
 									{allFilteredEntries.length} result{allFilteredEntries.length !== 1 ? 's' : ''}
 								</div>
 							)}
@@ -835,6 +832,7 @@ export const HistoryPanel = React.memo(
 							theme={theme}
 							visibleTypes={visibleTypes}
 							compact={compact}
+							fillWidth
 						/>
 
 						{/* Activity graph inline when only 2 types (no CUE).
@@ -970,7 +968,7 @@ export const HistoryPanel = React.memo(
 					{/* Loading-more / jump indicator */}
 					{(isLoadingMore || isJumping) && (
 						<div
-							className="text-center py-3 text-[10px] opacity-60"
+							className="text-center py-3 text-2xs opacity-60"
 							style={{ color: theme.colors.textDim }}
 						>
 							{isJumping ? 'Jumping to selected period...' : 'Loading more...'}
@@ -1000,7 +998,10 @@ export const HistoryPanel = React.memo(
 						agentId={session.toolType}
 						onClose={closeDetailModal}
 						onJumpToAgentSession={onJumpToAgentSession}
-						onResumeSession={onResumeSession}
+						// Prefer the open-as-tab path: it carries the entry's projectPath and
+						// sessionName, so a resume from the modal names the tab exactly like a
+						// resume from the row behind it.
+						onResumeSession={onOpenSessionAsTab ?? onResumeSession}
 						onDelete={handleDeleteEntry}
 						onUpdate={async (entryId, updates) => {
 							// Pass sessionId for efficient lookup in per-session storage

@@ -679,6 +679,74 @@ export async function readBinaryFileRemoteAsBase64(
 }
 
 /**
+ * Read one fixed-size block of a remote binary file as base64.
+ *
+ * The block-oriented shape is deliberate. `dd bs=<size> skip=<index>` seeks
+ * directly to `index * size` rather than reading and discarding the leading
+ * bytes, so fetching block 7 of a file costs the same as fetching block 0.
+ * (Verified: a 6 MB block-aligned read off a 655 MB file returns in under a
+ * millisecond.) Byte-exact ranges would need `bs=1`, which reads one byte per
+ * syscall and is thousands of times slower, so callers align to blocks and
+ * slice locally if they need something finer.
+ *
+ * Why this exists: the whole-file {@link readBinaryFileRemoteAsBase64} holds
+ * the entire base64 payload AND the decoded buffer in memory at once, which
+ * for a large file is several times the file size in the main process with no
+ * way to report progress. Fetching block by block bounds that to one block and
+ * gives the caller a natural place to report how far along it is.
+ *
+ * `count=1` keeps each call to exactly one block; a short final block is
+ * returned as-is, and reading past EOF yields empty data rather than an error.
+ * `2>/dev/null` suppresses dd's progress summary, which it writes to stderr
+ * and which would otherwise be mistaken for a failure.
+ *
+ * @param filePath Path to the file on the remote host
+ * @param sshRemote SSH remote configuration
+ * @param blockIndex 0-based block number
+ * @param blockSize Block size in bytes (the caller's chunk size)
+ * @param deps Optional dependencies for testing
+ * @returns The block's bytes as a whitespace-free base64 string
+ */
+export async function readBinaryFileBlockRemoteAsBase64(
+	filePath: string,
+	sshRemote: SshRemoteConfig,
+	blockIndex: number,
+	blockSize: number,
+	deps: RemoteFsDeps = defaultDeps
+): Promise<RemoteFsResult<string>> {
+	if (!Number.isInteger(blockIndex) || blockIndex < 0) {
+		return { success: false, error: `Invalid block index: ${blockIndex}` };
+	}
+	if (!Number.isInteger(blockSize) || blockSize <= 0) {
+		return { success: false, error: `Invalid block size: ${blockSize}` };
+	}
+
+	const escapedPath = shellEscapeRemotePath(filePath);
+	const remoteCommand = `dd if=${escapedPath} bs=${blockSize} skip=${blockIndex} count=1 2>/dev/null | base64`;
+
+	const result = await execRemoteCommand(sshRemote, remoteCommand, deps);
+
+	if (result.exitCode !== 0) {
+		const error = result.stderr || `Failed to read file: ${filePath}`;
+		return {
+			success: false,
+			error: error.includes('No such file')
+				? `File not found: ${filePath}`
+				: error.includes('Is a directory')
+					? `Path is a directory: ${filePath}`
+					: error.includes('Permission denied')
+						? `Permission denied: ${filePath}`
+						: error,
+		};
+	}
+
+	return {
+		success: true,
+		data: result.stdout.replace(/\s+/g, ''),
+	};
+}
+
+/**
  * Read a remote file from a byte offset to EOF via `tail -c +N`.
  *
  * Built for incremental polling of an append-only log (e.g. Copilot's

@@ -33,6 +33,17 @@ describe('Web Preload API', () => {
 			api = createWebApi();
 		});
 
+		describe('requestNewTab', () => {
+			it('should invoke web:requestNewTab against the desktop source of truth', async () => {
+				mockInvoke.mockResolvedValue({ tabId: 'tab-2' });
+
+				const result = await api.requestNewTab('session-123');
+
+				expect(mockInvoke).toHaveBeenCalledWith('web:requestNewTab', 'session-123', false);
+				expect(result).toEqual({ tabId: 'tab-2' });
+			});
+		});
+
 		describe('broadcastUserInput', () => {
 			it('should invoke web:broadcastUserInput with correct parameters', async () => {
 				mockInvoke.mockResolvedValue(undefined);
@@ -100,13 +111,14 @@ describe('Web Preload API', () => {
 					},
 				];
 
-				await api.broadcastTabsChange('session-123', tabs, 'tab-1');
+				await api.broadcastTabsChange('session-123', tabs, 'tab-1', true);
 
 				expect(mockInvoke).toHaveBeenCalledWith(
 					'web:broadcastTabsChange',
 					'session-123',
 					tabs,
-					'tab-1'
+					'tab-1',
+					true
 				);
 			});
 		});

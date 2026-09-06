@@ -6,7 +6,7 @@
  * an "Open in Finder" button for the chat directory.
  */
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { safeClipboardWrite } from '../utils/clipboard';
 import {
 	Copy,
@@ -15,6 +15,8 @@ import {
 	MessageSquare,
 	Bot,
 	Clock,
+	Coins,
+	DollarSign,
 	ExternalLink,
 	Download,
 } from 'lucide-react';
@@ -25,6 +27,8 @@ import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal } from './ui/Modal';
 import { downloadGroupChatExport } from '../utils/groupChatExport';
 import { logger } from '../utils/logger';
+import { computeGroupChatActivity } from '../../shared/groupChatActivity';
+import { formatCost, formatDurationCompact, formatTokens } from '../../shared/formatters';
 
 interface GroupChatInfoOverlayProps {
 	theme: Theme;
@@ -82,13 +86,16 @@ interface StatCardProps {
 	icon: React.ReactNode;
 	label: string;
 	value: string | number;
+	/** Hover text. Use it whenever the headline number needs a caveat. */
+	title?: string;
 }
 
-function StatCard({ theme, icon, label, value }: StatCardProps) {
+function StatCard({ theme, icon, label, value, title }: StatCardProps) {
 	return (
 		<div
 			className="flex flex-col items-center justify-center p-3 rounded-lg"
 			style={{ backgroundColor: `${theme.colors.accent}10` }}
+			title={title}
 		>
 			<div style={{ color: theme.colors.accent }}>{icon}</div>
 			<span className="text-xl font-bold mt-1" style={{ color: theme.colors.textMain }}>
@@ -110,6 +117,25 @@ export function GroupChatInfoOverlay({
 	onOpenModeratorSession,
 }: GroupChatInfoOverlayProps): JSX.Element | null {
 	const [isExporting, setIsExporting] = useState(false);
+	const [history, setHistory] = useState<GroupChatHistoryEntry[]>([]);
+
+	// Working time, tokens, and cost all come from the history log rather than
+	// the chat log: a message carries no duration or usage, a turn does.
+	useEffect(() => {
+		if (!isOpen) return;
+		let cancelled = false;
+		window.maestro.groupChat
+			.getHistory(groupChat.id)
+			.then((entries) => {
+				if (!cancelled) setHistory(entries);
+			})
+			.catch((error) => {
+				logger.warn('Failed to load group chat history for stats:', undefined, error);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [isOpen, groupChat.id]);
 
 	const copyToClipboard = useCallback(async (text: string) => {
 		await safeClipboardWrite(text);
@@ -150,17 +176,14 @@ export function GroupChatInfoOverlay({
 		).length;
 		const moderatorMessages = messages.filter((m) => m.from === 'moderator').length;
 
-		// Calculate chat duration (time between first and last message)
-		let durationStr = '0m';
+		// Wall clock between the first and last message. Kept only as a caveat on
+		// the working-time card: a chat is a room, not a task, so the span counts
+		// every night it sat idle and must never be presented as effort.
+		let spanMs = 0;
 		if (messages.length >= 2) {
-			const firstTimestamp = new Date(messages[0].timestamp).getTime();
-			const lastTimestamp = new Date(messages[messages.length - 1].timestamp).getTime();
-			const durationMs = lastTimestamp - firstTimestamp;
-			const durationHours = Math.floor(durationMs / (1000 * 60 * 60));
-			const durationMins = Math.floor((durationMs % (1000 * 60 * 60)) / (1000 * 60));
-			durationStr = durationHours > 0 ? `${durationHours}h ${durationMins}m` : `${durationMins}m`;
-		} else if (messages.length === 1) {
-			durationStr = '0m';
+			spanMs =
+				new Date(messages[messages.length - 1].timestamp).getTime() -
+				new Date(messages[0].timestamp).getTime();
 		}
 
 		return {
@@ -169,9 +192,19 @@ export function GroupChatInfoOverlay({
 			agentMessages,
 			moderatorMessages,
 			participantCount: groupChat.participants.length,
-			duration: durationStr,
+			spanMs,
 		};
 	}, [messages, groupChat.participants.length]);
+
+	const activity = useMemo(() => computeGroupChatActivity(history), [history]);
+
+	const workingTitle = useMemo(() => {
+		const span = `Chat spans ${formatDurationCompact(stats.spanMs)} since the first message.`;
+		if (!activity.totalTurns) return `No turns recorded yet. ${span}`;
+		return activity.measuredTurns === activity.totalTurns
+			? `Time agents spent working, idle gaps excluded. ${span}`
+			: `Time agents spent working, idle gaps excluded. ${activity.totalTurns - activity.measuredTurns} of ${activity.totalTurns} turns predate per-turn timing, so their work is estimated from how close together they ran. ${span}`;
+	}, [activity, stats.spanMs]);
 
 	if (!isOpen) return null;
 
@@ -186,7 +219,7 @@ export function GroupChatInfoOverlay({
 		>
 			<div className="space-y-4">
 				{/* Statistics Cards */}
-				<div className="grid grid-cols-4 gap-3">
+				<div className="grid grid-cols-3 gap-3">
 					<StatCard
 						theme={theme}
 						icon={<Users className="w-5 h-5" />}
@@ -208,8 +241,34 @@ export function GroupChatInfoOverlay({
 					<StatCard
 						theme={theme}
 						icon={<Clock className="w-5 h-5" />}
-						label="Duration"
-						value={stats.duration}
+						label="Working"
+						value={formatDurationCompact(activity.workingTimeMs)}
+						title={workingTitle}
+					/>
+					{/* Tokens and cost are omitted rather than zeroed when no turn
+					    reported usage: a chat that predates per-turn accounting is
+					    UNKNOWN, and a zero would read as free. */}
+					<StatCard
+						theme={theme}
+						icon={<Coins className="w-5 h-5" />}
+						label="Tokens"
+						value={activity.turnsWithTokens > 0 ? formatTokens(activity.tokenCount) : '-'}
+						title={
+							activity.turnsWithTokens > 0
+								? `${activity.tokenCount.toLocaleString()} tokens across ${activity.turnsWithTokens} of ${activity.totalTurns} turns (input, output, and cache).`
+								: 'No turn in this chat reported token usage yet.'
+						}
+					/>
+					<StatCard
+						theme={theme}
+						icon={<DollarSign className="w-5 h-5" />}
+						label="Cost"
+						value={activity.turnsWithCost > 0 ? formatCost(activity.costUsd) : '-'}
+						title={
+							activity.turnsWithCost > 0
+								? `Reported by ${activity.turnsWithCost} of ${activity.totalTurns} turns. Subscription-billed agents report nothing.`
+								: 'No turn in this chat reported a cost.'
+						}
 					/>
 				</div>
 

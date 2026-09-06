@@ -143,7 +143,7 @@ export const ImageViewer = memo(function ImageViewer({ src, alt, theme }: ImageV
 					<Maximize2 className="w-4 h-4" />
 				</GhostIconButton>
 				{naturalSize && (
-					<span className="text-[10px] ml-2" style={{ color: theme.colors.textDim }}>
+					<span className="text-2xs ml-2" style={{ color: theme.colors.textDim }}>
 						{naturalSize.w} × {naturalSize.h}
 					</span>
 				)}

@@ -10,6 +10,7 @@ import { expandTilde } from '../../../shared/pathUtils';
 import { killProcessTreeNow } from '../utils/commandKill';
 import type { CommandResult } from '../types';
 import type { SshRemoteConfig } from '../../../shared/types';
+import { buildSshOptionArgs } from '../../../shared/sshOptions';
 
 /** Exit code for a command we SIGKILLed. 128+9, the shell convention. */
 const SIGKILL_EXIT_CODE = 137;
@@ -60,17 +61,9 @@ export class SshCommandRunner {
 			sshArgs.push('-i', expandTilde(sshConfig.privateKeyPath));
 		}
 
-		// Default SSH options for non-interactive operation
-		const sshOptions: Record<string, string> = {
-			BatchMode: 'yes',
-			StrictHostKeyChecking: 'accept-new',
-			ConnectTimeout: '10',
-			ClearAllForwardings: 'yes',
-			RequestTTY: 'no',
-		};
-		for (const [key, value] of Object.entries(sshOptions)) {
-			sshArgs.push('-o', `${key}=${value}`);
-		}
+		// Default SSH options for non-interactive operation, plus this remote's
+		// overrides (ProxyCommand, a longer ConnectTimeout for a tunnelled host).
+		sshArgs.push(...buildSshOptionArgs(sshConfig.sshOptions));
 
 		// Port specification
 		if (!sshConfig.useSshConfig || sshConfig.port !== 22) {

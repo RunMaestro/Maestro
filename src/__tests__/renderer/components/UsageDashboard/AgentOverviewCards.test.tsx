@@ -10,6 +10,7 @@
  * - Empty / terminal-only session arrays render nothing
  * - Staggered card-enter animation delays are applied
  * - The fuzzy agent filter narrows cards live and clears from the ESC pill
+ * - The group dropdown narrows the grid, and only offers groups that hold agents
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -763,5 +764,189 @@ describe('AgentOverviewCards', () => {
 		expect(cards[1].style.animationDelay).toBe('60ms');
 		expect(cards[2].style.animationDelay).toBe('120ms');
 		cards.forEach((c) => expect(c.className).toContain('card-enter'));
+	});
+
+	describe('group filter dropdown', () => {
+		const GROUPS = [
+			{ id: 'g-acme', name: 'Acme Corp', emoji: '\u{1F3E2}' },
+			{ id: 'g-internal', name: 'Internal' },
+		];
+		const GROUPED_SESSIONS: Session[] = [
+			buildSession({ id: 's1', name: 'Alpha', groupId: 'g-acme' }),
+			buildSession({ id: 's2', name: 'Beta', groupId: 'g-acme' }),
+			buildSession({ id: 's3', name: 'Gamma', groupId: 'g-internal' }),
+			buildSession({ id: 's4', name: 'Delta' }),
+		];
+
+		const renderWithGroups = (
+			sessions: Session[] = GROUPED_SESSIONS,
+			groups: Array<{ id: string; name: string; emoji?: string }> = GROUPS
+		) =>
+			render(
+				<AgentOverviewCards sessions={sessions} data={buildData()} theme={theme} groups={groups} />
+			);
+
+		/** Open the dropdown and pick an option by its visible label. */
+		const pickGroup = (label: string) => {
+			fireEvent.click(screen.getByLabelText('Filter agents by group'));
+			fireEvent.click(screen.getByRole('option', { name: label }));
+		};
+
+		it('renders the dropdown ahead of the keyword filter', () => {
+			renderWithGroups();
+
+			const trigger = screen.getByLabelText('Filter agents by group');
+			const search = screen.getByTestId('agent-overview-filter-input');
+			// Node.compareDocumentPosition: 4 = trigger precedes search.
+			expect(trigger.compareDocumentPosition(search) & 4).toBeTruthy();
+		});
+
+		it('shows every agent until a group is picked', () => {
+			renderWithGroups();
+
+			expect(screen.getAllByTestId('agent-card')).toHaveLength(4);
+		});
+
+		it('narrows the grid to the picked group', () => {
+			renderWithGroups();
+
+			pickGroup('\u{1F3E2} Acme Corp');
+
+			expect(screen.getAllByTestId('agent-card')).toHaveLength(2);
+			expect(screen.getByText('Alpha')).toBeInTheDocument();
+			expect(screen.queryByText('Gamma')).not.toBeInTheDocument();
+		});
+
+		it('offers an Ungrouped option that shows only unfiled agents', () => {
+			renderWithGroups();
+
+			pickGroup('Ungrouped');
+
+			expect(screen.getAllByTestId('agent-card')).toHaveLength(1);
+			expect(screen.getByText('Delta')).toBeInTheDocument();
+		});
+
+		it('omits groups that hold no agents', () => {
+			// An option whose every selection yields an empty grid is a dead end.
+			renderWithGroups([buildSession({ id: 's1', name: 'Alpha', groupId: 'g-acme' })]);
+
+			fireEvent.click(screen.getByLabelText('Filter agents by group'));
+
+			expect(screen.queryByRole('option', { name: 'Internal' })).not.toBeInTheDocument();
+			expect(screen.getByRole('option', { name: '\u{1F3E2} Acme Corp' })).toBeInTheDocument();
+		});
+
+		it('treats an agent whose group was deleted as ungrouped', () => {
+			// A dangling groupId must not make an agent unreachable from every
+			// option - the Left Bar and the group rollup both do the same.
+			renderWithGroups(
+				[
+					// A populated real group so the dropdown has something to offer.
+					buildSession({ id: 's1', name: 'Alpha', groupId: 'g-acme' }),
+					buildSession({ id: 's9', name: 'Orphan', groupId: 'g-gone' }),
+				],
+				GROUPS
+			);
+
+			pickGroup('Ungrouped');
+
+			expect(screen.getByText('Orphan')).toBeInTheDocument();
+			expect(screen.queryByText('Alpha')).not.toBeInTheDocument();
+		});
+
+		it('does not render the dropdown when no groups are configured', () => {
+			// With nothing to pick between, the control could only ever no-op.
+			renderWithGroups([buildSession({ id: 's1', name: 'Alpha' })], []);
+
+			expect(screen.queryByLabelText('Filter agents by group')).not.toBeInTheDocument();
+		});
+
+		it('composes with the keyword filter', () => {
+			renderWithGroups();
+
+			pickGroup('\u{1F3E2} Acme Corp');
+			fireEvent.change(screen.getByTestId('agent-overview-filter-input'), {
+				target: { value: 'Alpha' },
+			});
+
+			expect(screen.getAllByTestId('agent-card')).toHaveLength(1);
+			expect(screen.getByText('Alpha')).toBeInTheDocument();
+		});
+	});
+	describe('active-only toggle', () => {
+		const SESSIONS: Session[] = [
+			buildSession({ id: 's1', name: 'Alpha' }),
+			buildSession({ id: 's2', name: 'Beta', toolType: 'codex' }),
+		];
+		// Only Alpha recorded a query in the range.
+		const DATA = buildData({
+			byAgent: { 'claude-code': { count: 9, duration: 0 }, codex: { count: 4, duration: 0 } },
+			bySessionByDay: { s1: [{ date: '2026-09-01', count: 9, duration: 1000 }] },
+		});
+
+		const toggle = () => screen.getByTestId('agent-overview-active-only');
+
+		it('is off by default and shows every agent', () => {
+			render(<AgentOverviewCards sessions={SESSIONS} data={DATA} theme={theme} />);
+
+			expect(toggle()).toHaveAttribute('aria-checked', 'false');
+			expect(screen.getAllByTestId('agent-card')).toHaveLength(2);
+		});
+
+		it('drops agents with no queries in the range when switched on', () => {
+			render(<AgentOverviewCards sessions={SESSIONS} data={DATA} theme={theme} />);
+
+			fireEvent.click(toggle());
+
+			expect(toggle()).toHaveAttribute('aria-checked', 'true');
+			expect(screen.getAllByTestId('agent-card')).toHaveLength(1);
+			expect(screen.getByText('Alpha')).toBeInTheDocument();
+			expect(screen.queryByText('Beta')).not.toBeInTheDocument();
+		});
+
+		it('does not count the provider-total fallback as activity', () => {
+			// Beta is the only codex agent, so its CARD borrows the provider total.
+			// That must not promote it to "active" - it ran nothing itself.
+			render(<AgentOverviewCards sessions={SESSIONS} data={DATA} theme={theme} />);
+			fireEvent.click(toggle());
+
+			expect(screen.queryByText('Beta')).not.toBeInTheDocument();
+		});
+
+		it('keeps the toolbar and explains itself when it empties the grid', () => {
+			// Emptying the grid must never hide the control that emptied it.
+			render(<AgentOverviewCards sessions={SESSIONS} data={buildData()} theme={theme} />);
+
+			fireEvent.click(toggle());
+
+			expect(toggle()).toBeInTheDocument();
+			expect(screen.getByTestId('agent-overview-group-empty')).toHaveTextContent(
+				'No agents ran a query in this time range.'
+			);
+		});
+
+		it('composes with the keyword filter', () => {
+			render(
+				<AgentOverviewCards
+					sessions={[...SESSIONS, buildSession({ id: 's3', name: 'Alpine' })]}
+					data={{
+						...DATA,
+						bySessionByDay: {
+							...DATA.bySessionByDay,
+							s3: [{ date: '2026-09-01', count: 2, duration: 100 }],
+						},
+					}}
+					theme={theme}
+				/>
+			);
+
+			fireEvent.click(toggle());
+			fireEvent.change(screen.getByTestId('agent-overview-filter-input'), {
+				target: { value: 'Alph' },
+			});
+
+			expect(screen.getAllByTestId('agent-card')).toHaveLength(1);
+			expect(screen.getByText('Alpha')).toBeInTheDocument();
+		});
 	});
 });

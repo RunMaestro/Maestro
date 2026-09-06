@@ -20,6 +20,11 @@ import { mockTheme } from '../../../../helpers/mockTheme';
 const mockSetActiveThemeId = vi.fn();
 const mockSetCustomThemeColors = vi.fn();
 const mockSetCustomThemeBaseId = vi.fn();
+const mockSetThemeGloss = vi.fn();
+
+// Mutable so a test can model a store that has not hydrated `themeGloss` yet,
+// or a settings blob written by a build that predates the setting.
+let mockThemeGloss: string | undefined = 'off';
 
 // Mock useSettings hook
 vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
@@ -44,6 +49,8 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		setCustomThemeColors: mockSetCustomThemeColors,
 		customThemeBaseId: 'dracula',
 		setCustomThemeBaseId: mockSetCustomThemeBaseId,
+		themeGloss: mockThemeGloss,
+		setThemeGloss: mockSetThemeGloss,
 	}),
 }));
 
@@ -114,6 +121,7 @@ describe('ThemeTab', () => {
 	afterEach(() => {
 		vi.useRealTimers();
 		vi.clearAllMocks();
+		mockThemeGloss = 'off';
 	});
 
 	it('should display theme mode sections', async () => {
@@ -317,5 +325,72 @@ describe('ThemeTab', () => {
 		});
 
 		expect(screen.getByTestId('custom-theme-builder')).toBeInTheDocument();
+	});
+
+	describe('Surface Gloss', () => {
+		it('renders the gloss slider with every level named, starting at Off', async () => {
+			render(<ThemeTab theme={mockTheme} themes={mockThemes} />);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			const slider = screen.getByRole('slider', { name: 'Intensity' });
+			expect(slider).toHaveValue('0');
+			// The stop names are what make a 0-3 range legible. Losing them would
+			// leave the user sliding between unlabelled notches.
+			for (const label of ['Off', 'Sheen', 'Strong', 'Max']) {
+				expect(screen.getAllByText(label).length).toBeGreaterThan(0);
+			}
+		});
+
+		it('maps the slider position onto the level name, not the raw index', async () => {
+			render(<ThemeTab theme={mockTheme} themes={mockThemes} />);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			fireEvent.change(screen.getByRole('slider', { name: 'Intensity' }), {
+				target: { value: '2' },
+			});
+
+			expect(mockSetThemeGloss).toHaveBeenCalledWith('strong');
+		});
+
+		it('survives an undefined level instead of taking the whole modal down', async () => {
+			// `GLOSS_LEVEL_META[level]` is a lookup, so an undefined level threw and
+			// unmounted the ENTIRE Settings modal, not just this section. The store
+			// hydrates asynchronously and an older settings blob has no `themeGloss`
+			// at all, so this is a state that really occurs.
+			mockThemeGloss = undefined;
+
+			render(<ThemeTab theme={mockTheme} themes={mockThemes} />);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect(screen.getByRole('slider', { name: 'Intensity' })).toHaveValue('0');
+		});
+
+		it('falls back to Off for an unrecognized stored level', async () => {
+			mockThemeGloss = 'shiny';
+
+			render(<ThemeTab theme={mockTheme} themes={mockThemes} />);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect(screen.getByRole('slider', { name: 'Intensity' })).toHaveValue('0');
+		});
+
+		it('disables the slider on a light theme, where gloss has no effect', async () => {
+			render(<ThemeTab theme={mockLightTheme} themes={mockThemes} />);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			// The CSS opts out on light themes, so an enabled control here would
+			// let the user move a slider that changes nothing on screen.
+			expect(screen.getByRole('slider', { name: 'Intensity' })).toBeDisabled();
+		});
 	});
 });

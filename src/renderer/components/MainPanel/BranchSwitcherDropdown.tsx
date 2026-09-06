@@ -245,7 +245,7 @@ export function BranchSwitcherDropdown({
 
 			{/* Footer */}
 			<div
-				className="px-3 py-1.5 border-t text-[10px] flex items-center justify-between"
+				className="px-3 py-1.5 border-t text-2xs flex items-center justify-between"
 				style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
 			>
 				<span>↑↓ navigate · Enter switch · Esc close</span>

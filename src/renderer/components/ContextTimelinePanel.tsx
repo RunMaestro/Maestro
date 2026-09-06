@@ -231,7 +231,7 @@ export function ContextTimelinePanel({ theme }: ContextTimelinePanelProps) {
 						Context Timeline
 					</span>
 					<span
-						className="text-[10px] truncate leading-tight"
+						className="text-2xs truncate leading-tight"
 						style={{ color: theme.colors.textDim }}
 						title={label}
 					>
@@ -315,7 +315,7 @@ export function ContextTimelinePanel({ theme }: ContextTimelinePanelProps) {
 			{/* Window readout */}
 			{latestWindow > 0 && (
 				<div
-					className="px-3 py-1.5 border-b shrink-0 text-[10px]"
+					className="px-3 py-1.5 border-b shrink-0 text-2xs"
 					style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
 				>
 					Window: {formatTokensCompact(latestWindow)} tokens · denominator is provider-reported when
@@ -367,14 +367,14 @@ export function ContextTimelinePanel({ theme }: ContextTimelinePanelProps) {
 								<div key={p.id} className="flex flex-col gap-1">
 									<div className="flex items-center justify-between gap-2">
 										<span
-											className="text-[10px] font-mono select-none"
+											className="text-2xs font-mono select-none"
 											style={{ color: theme.colors.textDim }}
 											title={new Date(p.timestamp).toLocaleString()}
 										>
 											{formatPointTime(p.timestamp)}
 										</span>
 										<span
-											className="text-[10px] font-mono tabular-nums"
+											className="text-2xs font-mono tabular-nums"
 											data-testid="timeline-row-label"
 											style={{ color: barColor }}
 											title={
@@ -414,7 +414,7 @@ export function ContextTimelinePanel({ theme }: ContextTimelinePanelProps) {
 										)}
 									</div>
 									{/* Per-turn token breakdown */}
-									<div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[10px]">
+									<div className="flex flex-wrap gap-x-3 gap-y-0.5 text-2xs">
 										<TokenChip label="in" value={p.inputTokens} color={theme.colors.textMain} />
 										<TokenChip
 											label="cache r"

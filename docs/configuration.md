@@ -13,7 +13,7 @@ Settings are organized into tabs:
 | Tab                             | Contents                                                                                                                                                                                                                                                                                             |
 | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **General**                     | About Me (conductor profile), [system-wide hotkey to summon Maestro](./keyboard-shortcuts#system-wide-hotkey-summon-maestro), shell configuration, input send behavior, default toggles (history, thinking), automatic tab naming, power management, updates, privacy, usage stats, storage location |
-| **Display**                     | Font family and size, terminal width, log level and buffer, max output lines per response, document graph settings, context window warnings, [Accessibility](#accessibility) (Color Blind Mode, Bionify reading emphasis)                                                                            |
+| **Display**                     | [Typography](#typography) (a font and size per surface, presets, custom fonts, zoom), terminal width, log level and buffer, max output lines per response, document graph settings, context window warnings, [Accessibility](#accessibility) (Color Blind Mode, Bionify reading emphasis)            |
 | **Shortcuts**                   | Customize keyboard shortcuts (see [Keyboard Shortcuts](./keyboard-shortcuts))                                                                                                                                                                                                                        |
 | **Themes**                      | Dark, light, and vibe mode themes, custom theme builder with import/export                                                                                                                                                                                                                           |
 | **Notifications**               | OS notifications, custom command notifications, toast notification duration and width                                                                                                                                                                                                                |
@@ -21,7 +21,55 @@ Settings are organized into tabs:
 | **Maestro Prompts**             | Browse and edit the 23 core system prompts (wizard, Auto Run, group chat, context, etc.). Changes take effect immediately; reset to bundled defaults at any time                                                                                                                                     |
 | **SSH Hosts**                   | Configure remote hosts for [SSH agent execution](./ssh-remote-execution)                                                                                                                                                                                                                             |
 | **Environment**                 | Global environment variables that cascade to all agents and terminal sessions                                                                                                                                                                                                                        |
-| **WakaTime** _(in General tab)_ | WakaTime integration toggle, API key, detailed file tracking                                                                                                                                                                                                                                         |
+| **Plugins**                     | Enable or disable built-in [Encore Features](./encore-features) and community plugins, with per-plugin settings and permissions                                                                                                                                                                      |
+| **WakaTime** _(in Plugins tab)_ | WakaTime integration toggle, API key, detailed file tracking - under the **Usage & Stats** plugin's settings                                                                                                                                                                                         |
+
+## Typography
+
+**Settings → Display → Fonts.** Maestro does not have one font: it has a font per surface, so the places you read and the places you work can use different faces.
+
+![The Display tab's font controls, with a picker per surface](./screenshots/settings-fonts.png)
+
+Two surfaces are the roots that everything else can follow:
+
+- **Interface** - the whole app, and the proportional face other surfaces inherit.
+- **Terminal** - the command terminal, and the fixed-width face other surfaces inherit. A Nerd Font here gets you shell prompt glyphs.
+
+Four more surfaces each pick their own face, or inherit:
+
+| Surface            | What it covers                                                     |
+| ------------------ | ------------------------------------------------------------------ |
+| **AI Chat**        | The AI transcript, in the main panel and in tiled panes            |
+| **File Preview**   | A file being read                                                  |
+| **File Editor**    | A file being edited                                                |
+| **Document Graph** | Node titles and previews in the [Document Graph](./document-graph) |
+
+Each surface has its own size, which can also inherit. Press **Up** / **Down** on any picker to step through the installed faces and preview them live.
+
+### Presets
+
+**Factory Reset Fonts** sets every font and size at once:
+
+- **Default** - proportional to read, monospace to work. The interface, AI chat, and file preview are proportional; the terminal and file editor are monospace.
+- **Hacker** - monospace everywhere. The original Maestro look.
+
+Maestro tells you which preset is active, or that you have customized away from both.
+
+### Custom fonts
+
+The pickers list fonts Maestro knows about. If you have a font installed that is not in the list, add its name once under **Custom Fonts** and it becomes available in every picker.
+
+<Warning>
+Type the family name exactly as the system reports it. A name that is not installed cannot be resolved, and the surface falls back to the browser default rather than telling you it failed.
+</Warning>
+
+### Zoom
+
+**Zoom** scales every surface by the same amount, so the sizes you set relative to each other are preserved. `Cmd+=` / `Cmd+-` adjusts it and `Cmd+Shift+0` resets it.
+
+<Tip>
+You are offered the Default and Hacker presets once, on first run, so you do not have to find this screen to make Maestro readable. Nothing there is permanent - every choice is a setting you can change here later. See [First run](./getting-started#first-run).
+</Tip>
 
 ## Maestro Prompts
 
@@ -70,6 +118,16 @@ Surfaces that aren't recolored: theme accent itself, file extension labels in pl
 ### Bionify Emphasis (Reading Mode)
 
 Bionify-style emphasis bolds the leading fixation portion of each word to make long-form reading easier. It is opt-in and applies **only** to dedicated readers - File Preview and Auto Run document panes. Terminals, logs, chat input, and AI output stay unchanged so they remain easy to copy/paste.
+
+Off, and on, on the same document:
+
+![File preview without Bionify emphasis](./screenshots/bionify-file-preview-before.png)
+
+![The same file preview with Bionify emphasis on](./screenshots/bionify-file-preview-after.png)
+
+The toggle sits in the reader's own toolbar, so you can turn it on for the document in front of you without opening Settings:
+
+![The Bionify toggle in the file preview toolbar](./screenshots/bionify-file-preview-highlighted.png)
 
 - **Intensity** - Soft / Default / Strong. Controls how aggressive the fixation emphasis is.
 - **Algorithm** - Advanced override of the fixation formula. Format: `[+|-] N1 N2 N3 N4 frac` where `-` skips common English words (`a`, `and`, `the`) and `+` highlights every word. The four integers set how many characters are emphasized for words of length 1-4, and `frac` is the fraction of characters emphasized for longer words (e.g. `0.4` = first 40%). Default: `- 0 1 1 2 0.4`. Click the **info** icon next to the toggle for the in-app reference.
@@ -122,6 +180,7 @@ Configure environment variables once in Settings and they automatically apply to
 1. Open **Settings** (`Cmd+,` / `Ctrl+,`) → **Environment** tab
 2. Add your variables in `KEY=VALUE` format using the **Add Variable** button
 3. Variables apply immediately to new agent sessions and terminals
+4. Click the eye button on a row to switch that variable off without deleting it
 
 ![Environment Variables](./screenshots/env-vars.png)
 
@@ -137,6 +196,7 @@ MY_TOOL_PATH=~/tools/custom
 
 ### Important Features
 
+- **Switch a variable off**: The eye button parks a variable - the row stays in the list with its key and value intact and still editable, but the variable is no longer passed to anything Maestro runs. Use it to test without a proxy or an API key instead of deleting the value and retyping it later. Parked variables are stored separately and are never merged into an agent or terminal environment.
 - **Path expansion**: Use `~/` for home directory (e.g., `~/workspace` expands to `/Users/username/workspace`)
 - **Quotes for special characters**: Variables with spaces or special characters should be quoted
 - **Applied to both agents and terminals**: Global vars are available to all agent processes (Claude, OpenCode, etc.) and all terminal sessions
@@ -344,6 +404,16 @@ Sleep prevention automatically activates when:
 - **Group Chat** is in progress (moderator or agents responding)
 
 When all activity stops, sleep prevention deactivates automatically.
+
+### Keep the Display Awake
+
+By default Maestro keeps the machine running but lets the screen go dark, so the screen saver, the screen lock, and your normal power settings all behave as usual.
+
+Turn on **Keep the display awake** (in the same **Power** section, off by default) when you want to watch a long run instead: the display stays lit, the screen saver and lock screen never arrive, and you are not logged out for being idle. It only takes effect while sleep prevention is holding the machine awake, so an idle Maestro still lets everything sleep.
+
+<Warning>
+On macOS, a lit display is how the OS decides someone is at the machine, and it parks discretionary background maintenance while that is true. Spotlight indexing, Photos analysis, XProtect scans, Time Machine thinning, and background updates all wait until the run finishes. That is the trade: an uninterrupted, still-signed-in session in exchange for deferred housekeeping.
+</Warning>
 
 ### Platform Support
 

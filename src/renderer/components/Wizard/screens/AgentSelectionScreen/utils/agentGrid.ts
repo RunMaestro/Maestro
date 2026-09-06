@@ -1,29 +1,45 @@
 /**
- * Keyboard movement across the provider strip.
+ * Keyboard movement across the provider tiles.
  *
- * The strip is a single horizontally scrolling row, so left/right step one tile
- * and up/down are no-ops. It used to be a wrapping 4-column grid, but the tile
- * count now grows with every provider we add and a grid pushed the Continue
- * button below the fold once it reached a third row.
+ * The tiles are either one horizontally scrolling row (every supported
+ * provider, which no longer fits above the Continue button) or a centered block
+ * that wraps into at most two rows (the shorter filtered list). `columns` is
+ * what tells the two apart: left/right always step one tile, and up/down jump a
+ * whole row, which is a no-op when the row holds everything.
  *
  * Movement is clamped rather than wrapped: running off the end should stop, not
- * teleport the focus ring back to the far side of a row the user can't see.
+ * teleport the focus ring back to the far side of a row the user can't see. A
+ * downward step out of a full row into a shorter last row lands on the last
+ * tile rather than refusing to move, since refusing reads as a dead key.
  *
  * `tileCount` is the count of tiles CURRENTLY RENDERED, not the provider total.
- * The strip hides unavailable providers by default, so an index into the full
- * registry names a different tile than the one under the focus ring.
+ * The list can be filtered to the installed providers, so an index into the
+ * full registry names a different tile than the one under the focus ring.
  */
 export function getNextAgentTileIndex(
 	currentIndex: number,
 	key: string,
-	tileCount: number
+	tileCount: number,
+	columns: number = tileCount
 ): number {
+	if (tileCount <= 0) return currentIndex;
+	const perRow = columns > 0 ? columns : tileCount;
+
 	switch (key) {
 		case 'ArrowLeft':
 			return currentIndex > 0 ? currentIndex - 1 : currentIndex;
 
 		case 'ArrowRight':
 			return currentIndex + 1 < tileCount ? currentIndex + 1 : currentIndex;
+
+		case 'ArrowUp':
+			return currentIndex - perRow >= 0 ? currentIndex - perRow : currentIndex;
+
+		case 'ArrowDown': {
+			if (currentIndex + perRow < tileCount) return currentIndex + perRow;
+			const lastRowStart = (Math.ceil(tileCount / perRow) - 1) * perRow;
+			return currentIndex < lastRowStart ? tileCount - 1 : currentIndex;
+		}
 
 		default:
 			return currentIndex;

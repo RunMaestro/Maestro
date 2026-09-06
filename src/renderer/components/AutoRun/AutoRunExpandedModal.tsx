@@ -15,13 +15,14 @@ import {
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { Spinner } from '../ui/Spinner';
 import type { Theme, BatchRunState, SessionState, Shortcut } from '../../types';
+import { useIsTopLayer } from '../../hooks/ui/useIsTopLayer';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
-import { useLayerStack } from '../../contexts/LayerStackContext';
 import { useResizableModal } from '../../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { AutoRun } from './AutoRun';
 import type { AutoRunHandle } from './types';
 import type { DocumentTaskCount } from './AutoRunDocumentSelector';
+import type { FileNode } from '../../types/fileTree';
 import { ConfirmModal } from '../ConfirmModal';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { ResizeHandles } from '../ui/ResizeHandles';
@@ -41,6 +42,10 @@ interface AutoRunExpandedModalProps {
 		path: string;
 		children?: unknown[];
 	}>;
+	// Project context for markdown file links (see AutoRunProps).
+	projectFileTree?: FileNode[];
+	projectRoot?: string;
+	onOpenProjectFile?: (path: string, options?: { openInNewTab?: boolean }) => void;
 	content: string;
 	onContentChange: (content: string) => void;
 	contentVersion?: number;
@@ -105,6 +110,15 @@ export function AutoRunExpandedModal({
 
 	// Local mode state - independent from the right panel behind the modal
 	const [localMode, setLocalMode] = useState<'edit' | 'preview'>(initialMode);
+
+	// The cmd+e capture listener reads the mode and the setter through refs so it
+	// registers once instead of re-subscribing on every mode flip - a listener
+	// that tears down and re-adds mid-keystroke can miss the very event it exists
+	// to catch. Assigned during render, so they are current by the time any event
+	// fires.
+	const localModeRef = useRef(localMode);
+	localModeRef.current = localMode;
+	const setModeRef = useRef<(mode: 'edit' | 'preview') => void>(() => {});
 
 	// Wrap onStateChange to prevent mode from propagating to parent
 	// This keeps the expanded modal's mode independent from the right panel
@@ -195,10 +209,7 @@ export function AutoRunExpandedModal({
 	// after the user opens PlayBook Exchange (or the doc selector) and dismisses
 	// it. Without this, focus falls back to the body and Cmd+E starts targeting
 	// the right-panel AutoRun behind us instead of the expanded view.
-	const layerStack = useLayerStack();
-	const layers = layerStack.getLayers();
-	const topLayer = layers[layers.length - 1];
-	const isTopLayer = topLayer?.priority === MODAL_PRIORITIES.AUTORUN_EXPANDED;
+	const isTopLayer = useIsTopLayer(MODAL_PRIORITIES.AUTORUN_EXPANDED);
 	useEffect(() => {
 		if (!isTopLayer) return;
 		// Wait a tick so the closing modal has finished tearing down its focus trap.
@@ -214,9 +225,23 @@ export function AutoRunExpandedModal({
 	}, [isTopLayer]);
 
 	// Modal-scoped shortcuts: cmd+s saves (when dirty); cmd+o opens the
-	// document selector dropdown. Registered in the capture phase so we run
-	// before the global keyboard handler in useMainKeyboardHandler (which
-	// would otherwise treat cmd+o as `agentSwitcher`).
+	// document selector dropdown; cmd+e toggles edit/preview. Registered in the
+	// capture phase so we run before the global keyboard handler in
+	// useMainKeyboardHandler (which would otherwise treat cmd+o as
+	// `agentSwitcher`, and cmd+e as the chat's raw-markdown toggle).
+	//
+	// cmd+e in particular MUST be claimed here rather than left to the AutoRun
+	// component's own React onKeyDown. That handler only fires when focus is
+	// inside its subtree, and this modal shares the app with a second, fully
+	// mounted AutoRun in the right panel behind it. Whenever focus was anywhere
+	// else - the body after dismissing a nested dialog, a toolbar button - the
+	// keystroke sailed past both and landed on the global handler, which toggled
+	// the main panel's markdown mode. The user saw a modal that ignored its own
+	// shortcut while something changed behind it.
+	//
+	// A window-capture listener runs before any React handler, and only while
+	// this modal is mounted, so the topmost surface wins by construction rather
+	// than by whoever happens to hold focus.
 	useEffect(() => {
 		const handleKeyDown = (e: KeyboardEvent) => {
 			const metaPressed = e.metaKey || e.ctrlKey;
@@ -232,6 +257,16 @@ export function AutoRunExpandedModal({
 				e.preventDefault();
 				e.stopPropagation();
 				autoRunRef.current?.openDocumentSelector();
+			} else if (key === 'e' && !e.shiftKey) {
+				// Swallowed even while locked: editing is disabled during a run,
+				// but letting it through would toggle the main panel behind us,
+				// which is the exact leak this closes. Cmd+Shift+E is a different
+				// shortcut ("Edit Last Queued Message") and is left alone.
+				e.preventDefault();
+				e.stopPropagation();
+				if (!isLocked) {
+					setModeRef.current(localModeRef.current === 'edit' ? 'preview' : 'edit');
+				}
 			}
 		};
 		window.addEventListener('keydown', handleKeyDown, { capture: true });
@@ -250,6 +285,8 @@ export function AutoRunExpandedModal({
 		},
 		[onModeChange]
 	);
+	setModeRef.current = setMode;
+
 	const resizableModal = useResizableModal({
 		resizeKey: 'auto-run-expanded',
 		defaultSize: { width: 960, height: 720 },
@@ -375,7 +412,7 @@ export function AutoRunExpandedModal({
 									Save
 									{/* Keyboard shortcut overlay on hover */}
 									<span
-										className="absolute -bottom-6 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded text-[10px] whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
+										className="absolute -bottom-6 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded text-2xs whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
 										style={{
 											backgroundColor: theme.colors.bgMain,
 											color: theme.colors.textDim,

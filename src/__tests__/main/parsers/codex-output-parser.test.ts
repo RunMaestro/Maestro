@@ -61,6 +61,43 @@ describe('CodexOutputParser', () => {
 				expect(event?.text).toBe('\n\n**Thinking about the task**\n\nI need to analyze...');
 				expect(event?.isPartial).toBe(true);
 			});
+
+			// StdoutHandler gates Codex thinking-chunk events on isReasoning, and
+			// untagged partial text is appended to streamedText (the buffer
+			// ExitHandler emits as the final answer). An item.completed reasoning
+			// item that forgets the flag is therefore both invisible in the
+			// thinking panel and liable to be shown as the agent's response.
+			it('tags reasoning items with isReasoning', () => {
+				const line = JSON.stringify({
+					type: 'item.completed',
+					item: { id: 'item_0', type: 'reasoning', text: 'weighing the options' },
+				});
+
+				const event = parser.parseJsonLine(line);
+				expect(event?.isReasoning).toBe(true);
+			});
+
+			it('tags reasoning items with isReasoning regardless of section markers', () => {
+				const line = JSON.stringify({
+					type: 'item.completed',
+					item: { type: 'reasoning', text: 'Plain thinking text' },
+				});
+
+				const event = parser.parseJsonLine(line);
+				expect(event?.text).toBe('Plain thinking text');
+				expect(event?.isReasoning).toBe(true);
+			});
+
+			it('does not tag agent_message as reasoning', () => {
+				const line = JSON.stringify({
+					type: 'item.completed',
+					item: { type: 'agent_message', text: 'Here is the answer.' },
+				});
+
+				const event = parser.parseJsonLine(line);
+				expect(event?.type).toBe('result');
+				expect(event?.isReasoning).toBeUndefined();
+			});
 		});
 
 		describe('item.completed events - agent_message', () => {

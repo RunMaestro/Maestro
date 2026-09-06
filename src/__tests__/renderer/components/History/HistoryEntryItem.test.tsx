@@ -4,6 +4,8 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { HistoryEntryItem } from '../../../../renderer/components/History';
 import type { HistoryEntry, HistoryEntryType } from '../../../../renderer/types';
 
+import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
+
 import { mockTheme } from '../../../helpers/mockTheme';
 // Create mock theme
 
@@ -25,6 +27,40 @@ describe('HistoryEntryItem', () => {
 
 	afterEach(() => {
 		vi.useRealTimers();
+	});
+
+	describe('provider mode pill', () => {
+		afterEach(() => {
+			useSettingsStore.setState({ showProviderModePill: false });
+		});
+
+		it('renders the token source pill when the display setting is on', () => {
+			useSettingsStore.setState({ showProviderModePill: true });
+			render(
+				<HistoryEntryItem
+					entry={createMockEntry({ tokenSource: 'api' })}
+					index={0}
+					isSelected={false}
+					theme={mockTheme}
+					onOpenDetailModal={vi.fn()}
+				/>
+			);
+			expect(screen.getByText('claude -p')).toBeInTheDocument();
+		});
+
+		it('suppresses the pill when the display setting is off', () => {
+			useSettingsStore.setState({ showProviderModePill: false });
+			render(
+				<HistoryEntryItem
+					entry={createMockEntry({ tokenSource: 'api' })}
+					index={0}
+					isSelected={false}
+					theme={mockTheme}
+					onOpenDetailModal={vi.fn()}
+				/>
+			);
+			expect(screen.queryByText('claude -p')).not.toBeInTheDocument();
+		});
 	});
 
 	it('renders entry with summary text', () => {
@@ -366,7 +402,37 @@ describe('HistoryEntryItem', () => {
 		const sessionButton = screen.getByTitle('session-abc-123');
 		fireEvent.click(sessionButton);
 
-		expect(onOpenSessionAsTab).toHaveBeenCalledWith('session-abc-123', '/test/project');
+		expect(onOpenSessionAsTab).toHaveBeenCalledWith('session-abc-123', '/test/project', undefined);
+	});
+
+	// The pill is the only place the closed session's name still exists: the tab
+	// that carried it is gone, and the origins fallback resume falls back to is
+	// Claude-only and only ever written by a synopsis. Dropping it here is what
+	// made a restore come back as the bare id octet.
+	it('hands the entry name to onOpenSessionAsTab so the restored tab keeps it', () => {
+		const onOpenSessionAsTab = vi.fn();
+		const entry = createMockEntry({
+			agentSessionId: 'session-abc-123',
+			sessionName: 'PP Farm Meta Data',
+		});
+		render(
+			<HistoryEntryItem
+				entry={entry}
+				index={0}
+				isSelected={false}
+				theme={mockTheme}
+				onOpenDetailModal={vi.fn()}
+				onOpenSessionAsTab={onOpenSessionAsTab}
+			/>
+		);
+
+		fireEvent.click(screen.getByTitle('PP Farm Meta Data'));
+
+		expect(onOpenSessionAsTab).toHaveBeenCalledWith(
+			'session-abc-123',
+			'/test/project',
+			'PP Farm Meta Data'
+		);
 	});
 
 	it('shows elapsed time when present', () => {

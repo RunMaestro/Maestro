@@ -190,6 +190,20 @@ export interface ParquetQueryResult {
 	filterError?: ParquetFilterProblem;
 }
 
+/**
+ * Progress of copying a remote file into the local cache.
+ *
+ * Only SSH-backed opens emit this. A local file is opened in place, so there
+ * is nothing to copy and nothing to report.
+ */
+export interface ParquetFetchProgress {
+	/** Remote path being copied, so a listener can ignore other files' events. */
+	remotePath: string;
+	receivedBytes: number;
+	totalBytes: number;
+	done: boolean;
+}
+
 /** A filter expression that failed to parse or bind. */
 export interface ParquetFilterProblem {
 	message: string;

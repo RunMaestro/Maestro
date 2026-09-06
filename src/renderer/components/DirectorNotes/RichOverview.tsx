@@ -39,6 +39,7 @@ import { logger } from '../../utils/logger';
 import { daysToLookbackHours, bucketCountForLookback } from './lookback';
 import { NarrativeSections } from './NarrativeSections';
 import { richSectionId } from './directorNotesToc';
+import { useNarrativeGroupLookup } from './useNarrativeGroupLookup';
 import { NarrativeParseError } from './NarrativeParseError';
 import {
 	looksLikeStructuredOutput,
@@ -96,6 +97,9 @@ export function RichOverview({
 	chatMath = false,
 }: RichOverviewProps) {
 	const colorBlindMode = useSettingsStore((s) => s.colorBlindMode);
+	// Agent -> group mapping for narrative bucketing. Derived from live session
+	// state, never from the model.
+	const groupLookup = useNarrativeGroupLookup();
 	const [richStats, setRichStats] = useState<RichStats | null>(null);
 	const [isLoading, setIsLoading] = useState(true);
 	const requestIdRef = useRef(0);
@@ -222,10 +226,14 @@ export function RichOverview({
 				icon={Activity}
 			>
 				<ChartErrorBoundary theme={theme} chartName="Activity Timeline">
+					{/* Cue starts hidden: on a Cue-heavy install its bars dwarf every
+					    other source and flatten them into invisible slivers. The
+					    legend toggles it back on. */}
 					<ActivityTimeline
 						theme={theme}
 						buckets={timelineBuckets}
 						colors={{ auto: autoColor, user: userColor, cue: CUE_COLOR }}
+						defaultHiddenSeries={['cue']}
 					/>
 				</ChartErrorBoundary>
 			</SectionCard>
@@ -297,7 +305,7 @@ export function RichOverview({
 							recovery={narrativeRecovery}
 						/>
 					)}
-					<NarrativeSections theme={theme} narrative={narrative} />
+					<NarrativeSections theme={theme} narrative={narrative} groupLookup={groupLookup} />
 				</>
 			) : narrativeError || looksLikeStructuredOutput(synopsis) ? (
 				// Same invariant as Plain Mode: JSON-shaped output with no narrative

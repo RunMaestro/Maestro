@@ -23,6 +23,7 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { compareNamesIgnoringEmojis } from './useSortedSessions';
 import { sessionMatchesFilter } from '../../utils/sidebarMembership';
 import { orderGroupChatsForDisplay } from '../../utils/groupChatOrdering';
+import { requestSidebarReveal } from '../../utils/sidebarReveal';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import type { StarredItem } from './useStarredItems';
 import { useSidebarNavStore } from '../../stores/sidebarNavStore';
@@ -418,6 +419,12 @@ export function cycleSession(dir: 'next' | 'prev', deps: CycleSessionDeps): void
 	// focuses its tab or resumes its closed session (activateStarredItem sets
 	// the active session itself).
 	const activateVisualItem = (item: VisualOrderItem) => {
+		// Cmd+[ / Cmd+] moves the cursor without the user touching the list, so the
+		// destination has to be brought into view - a selection the user cannot see
+		// reads as the shortcut doing nothing. Requested BEFORE the cursor is set:
+		// the consumer defers a frame and re-reads it, so the reveal lands on the
+		// destination rather than the row being left.
+		requestSidebarReveal();
 		if (item.type === 'session') {
 			setActiveGroupChatId(null);
 			// Landing on a plain agent clears the non-agent cursor so the agent's

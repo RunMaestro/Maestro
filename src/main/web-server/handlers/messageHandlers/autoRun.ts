@@ -14,6 +14,7 @@ import { captureException } from '../../../utils/sentry';
 import type { AutoRunState } from '../../types';
 import { LOG_CONTEXT } from './shared';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
+import { readBackgroundField } from '../../../../shared/focusPlacement';
 
 /**
  * Validate that a filename is safe for Auto Run read/save operations.
@@ -58,7 +59,7 @@ export function handleRefreshAutoRunDocs(
 	}
 
 	ctx.callbacks
-		.refreshAutoRunDocs(sessionId)
+		.refreshAutoRunDocs(sessionId, readBackgroundField(message))
 		.then((success) => {
 			ctx.send(client, {
 				type: 'refresh_auto_run_docs_result',

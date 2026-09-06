@@ -137,6 +137,10 @@ const emptyAggregation: StatsAggregation = {
 
 const mockStats = {
 	getAggregation: vi.fn(),
+	// The delegation surfaces read their own merged split; without these the
+	// data hook throws a TypeError and every tab renders the error state.
+	getDelegationTotals: vi.fn(),
+	getDelegationByDay: vi.fn(),
 	getDatabaseSize: vi.fn(),
 	onStatsUpdate: vi.fn(() => () => {}),
 	exportCsv: vi.fn(),
@@ -229,6 +233,12 @@ beforeEach(() => {
 		},
 	};
 	mockStats.getAggregation.mockResolvedValue(populatedAggregation);
+	mockStats.getDelegationTotals.mockResolvedValue({
+		interactive: { count: 0, durationMs: 0 },
+		autoRun: { count: 0, durationMs: 0 },
+		cue: { count: 0, durationMs: 0 },
+	});
+	mockStats.getDelegationByDay.mockResolvedValue([]);
 	mockStats.getDatabaseSize.mockResolvedValue(1024 * 1024);
 });
 

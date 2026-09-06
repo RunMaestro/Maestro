@@ -384,7 +384,7 @@ export const WizardInputPanel = React.memo(function WizardInputPanel({
 								{!isTerminalMode && onToggleShowThinking && (
 									<button
 										onClick={onToggleShowThinking}
-										className={`flex items-center gap-1 text-[10px] px-2 py-1 rounded hover:bg-white/5 transition-opacity ${
+										className={`flex items-center gap-1 text-2xs px-2 py-1 rounded hover:bg-white/5 transition-opacity ${
 											showThinking ? 'opacity-100' : 'opacity-50 hover:opacity-100'
 										}`}
 										title={
@@ -398,7 +398,7 @@ export const WizardInputPanel = React.memo(function WizardInputPanel({
 								)}
 								<button
 									onClick={() => setEnterToSend(!enterToSend)}
-									className="flex items-center gap-1 text-[10px] opacity-50 hover:opacity-100 px-2 py-1 rounded hover:bg-white/5"
+									className="flex items-center gap-1 text-2xs opacity-50 hover:opacity-100 px-2 py-1 rounded hover:bg-white/5"
 									title={formatEnterToSendTooltip(enterToSend)}
 								>
 									<Keyboard className="w-3 h-3" />

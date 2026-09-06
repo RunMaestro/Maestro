@@ -25,6 +25,7 @@ import type {
 } from './types';
 import { providerLocationLabel } from '../../../../utils/providerAvailability';
 import { AGENT_TILES } from './utils/agentTiles';
+import { AGENT_GRID_FALLBACK_COLUMNS } from './utils/agentGridLayout';
 import {
 	buildConfiguringAgent,
 	countSelectableAgentTiles,
@@ -51,7 +52,15 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 
 	const [focusedTileIndex, setFocusedTileIndex] = useState(0);
 	const [isNameFieldFocused, setIsNameFieldFocused] = useState(false);
-	const [showAllProviders, setShowAllProviders] = useState(false);
+	// Starts on ALL supported providers. The filtered view is the smaller, more
+	// surprising list - a user whose provider is installed but undetected (a custom
+	// path, a machine detection could not probe) would otherwise open the wizard,
+	// not see it, and conclude Maestro does not support it.
+	const [showAllProviders, setShowAllProviders] = useState(true);
+	// Tiles per row as DRAWN, reported by the grid. Up/down arrow movement steps by
+	// this, so an assumed value would jump the focus ring to a tile that is not
+	// above or below the one the user is on.
+	const [tileColumns, setTileColumns] = useState(AGENT_GRID_FALLBACK_COLUMNS);
 	const [viewMode, setViewMode] = useState<AgentSelectionViewMode>('grid');
 	const [configuringAgentId, setConfiguringAgentId] = useState<string | null>(null);
 	const [isTransitioning, setIsTransitioning] = useState(false);
@@ -196,6 +205,7 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 
 	const handleKeyDown = useAgentSelectionKeyboard({
 		tiles: visibleTiles,
+		tileColumns,
 		isNameFieldFocused,
 		focusedTileIndex,
 		detectedAgents,
@@ -362,6 +372,7 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 					onTileClick={handleTileClick}
 					onOpenConfig={configPanel.handleOpenConfig}
 					onShowAllProvidersChange={handleShowAllProvidersChange}
+					onColumnsChange={setTileColumns}
 					setFocusedTileIndex={setFocusedTileIndex}
 					setIsNameFieldFocused={setIsNameFieldFocused}
 				/>

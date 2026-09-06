@@ -19,6 +19,7 @@ import { createIpcHandler, CreateHandlerOptions } from '../../utils/ipcHandler';
 import { logger } from '../../utils/logger';
 import { MaestroSettings } from './persistence';
 import { parseSshConfig, SshConfigParseResult } from '../../utils/ssh-config-parser';
+import { normalizeSshOptions } from '../../../shared/sshOptions';
 
 const LOG_CONTEXT = '[SshRemote]';
 
@@ -109,6 +110,10 @@ export function registerSshRemoteHandlers(deps: SshRemoteHandlerDependencies): v
 					username: config.username || '',
 					privateKeyPath: config.privateKeyPath || '',
 					remoteEnv: config.remoteEnv,
+					// Normalized rather than passed through: this record can arrive from
+					// an older build or a hand-edited settings file, and a reserved key
+					// that reached disk would be filtered on every read forever.
+					sshOptions: normalizeSshOptions(config.sshOptions),
 					enabled: config.enabled ?? true,
 					useSshConfig: config.useSshConfig,
 					sshConfigHost: config.sshConfigHost,

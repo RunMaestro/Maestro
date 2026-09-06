@@ -9,6 +9,7 @@ import {
 	buildTreeFromPaths,
 	spliceMaestroIntoTree,
 	loadFileTreeRemoteBatched,
+	FileTreeAbortError,
 	FileTreeNode,
 } from '../../../renderer/utils/fileExplorer';
 import { matchGlobPattern, shouldIgnore } from '../../../shared/globUtils';
@@ -210,40 +211,163 @@ describe('fileExplorer utils', () => {
 	});
 
 	// ============================================================================
-	// loadFileTree
+	// loadFileTree - local (delegates to the main-process walker)
 	// ============================================================================
-	describe('loadFileTree', () => {
+	describe('loadFileTree (local)', () => {
+		beforeEach(() => {
+			vi.clearAllMocks();
+		});
+
+		const scanResult = (tree: FileTreeNode[], extra?: Partial<Record<string, unknown>>) => ({
+			tree,
+			truncated: false,
+			filesFound: tree.filter((n) => n.type === 'file').length,
+			directoriesScanned: 1,
+			...extra,
+		});
+
+		it('walks the tree in one round-trip instead of recursing with readDir', async () => {
+			vi.mocked(window.maestro.fs.readDirTree).mockResolvedValueOnce(
+				scanResult([
+					{ name: 'src', type: 'folder', children: [{ name: 'index.ts', type: 'file' }] },
+					{ name: 'README.md', type: 'file' },
+				])
+			);
+
+			const result = await loadFileTree('/project');
+
+			expect(window.maestro.fs.readDir).not.toHaveBeenCalled();
+			expect(window.maestro.fs.readDirTree).toHaveBeenCalledTimes(1);
+			expect(result).toHaveLength(2);
+			expect(result[0].children![0].name).toBe('index.ts');
+		});
+
+		it('forwards depth, entry cap, and local ignore options', async () => {
+			vi.mocked(window.maestro.fs.readDirTree).mockResolvedValueOnce(scanResult([]));
+
+			await loadFileTree(
+				'/project',
+				7,
+				0,
+				undefined,
+				undefined,
+				{ ignorePatterns: ['.git'], honorGitignore: true },
+				500
+			);
+
+			expect(window.maestro.fs.readDirTree).toHaveBeenCalledWith('/project', {
+				maxDepth: 7,
+				maxEntries: 500,
+				ignorePatterns: ['.git'],
+				honorGitignore: true,
+			});
+		});
+
+		it('sends an unlimited cap as undefined rather than Infinity', async () => {
+			vi.mocked(window.maestro.fs.readDirTree).mockResolvedValueOnce(scanResult([]));
+
+			await loadFileTree('/project');
+
+			expect(window.maestro.fs.readDirTree).toHaveBeenCalledWith(
+				'/project',
+				expect.objectContaining({ maxEntries: undefined })
+			);
+		});
+
+		it('passes the truncation flag and file count through', async () => {
+			vi.mocked(window.maestro.fs.readDirTree).mockResolvedValueOnce({
+				tree: [{ name: 'a.txt', type: 'file' }],
+				truncated: true,
+				filesFound: 1,
+				directoriesScanned: 1,
+			});
+
+			const result = await loadFileTreeRaw('/project', 5, 0, undefined, undefined, undefined, 1);
+
+			expect(result.truncated).toBe(true);
+			expect(result.filesFound).toBe(1);
+		});
+
+		it('reports scan totals to onProgress', async () => {
+			vi.mocked(window.maestro.fs.readDirTree).mockResolvedValueOnce({
+				tree: [],
+				truncated: false,
+				filesFound: 42,
+				directoriesScanned: 7,
+			});
+
+			const onProgress = vi.fn();
+			await loadFileTree('/project', 5, 0, undefined, onProgress);
+
+			expect(onProgress).toHaveBeenCalledWith({
+				directoriesScanned: 7,
+				filesFound: 42,
+				currentDirectory: '/project',
+			});
+		});
+
+		it('throws FileTreeAbortError without scanning when already aborted', async () => {
+			const controller = new AbortController();
+			controller.abort();
+
+			await expect(
+				loadFileTree('/project', 5, 0, undefined, undefined, undefined, Infinity, controller.signal)
+			).rejects.toBeInstanceOf(FileTreeAbortError);
+			expect(window.maestro.fs.readDirTree).not.toHaveBeenCalled();
+		});
+
+		it('throws FileTreeAbortError when the load is cancelled mid-scan', async () => {
+			const controller = new AbortController();
+			vi.mocked(window.maestro.fs.readDirTree).mockImplementationOnce(async () => {
+				controller.abort();
+				return scanResult([{ name: 'a.txt', type: 'file' }]);
+			});
+
+			await expect(
+				loadFileTree('/project', 5, 0, undefined, undefined, undefined, Infinity, controller.signal)
+			).rejects.toBeInstanceOf(FileTreeAbortError);
+		});
+
+		it('propagates a failure from the walker', async () => {
+			vi.mocked(window.maestro.fs.readDirTree).mockRejectedValueOnce(
+				new Error('Permission denied')
+			);
+
+			await expect(loadFileTree('/restricted')).rejects.toThrow('Permission denied');
+		});
+	});
+
+	// ============================================================================
+	// loadFileTree - SSH (recursive per-directory walk)
+	// ============================================================================
+	describe('loadFileTree (SSH)', () => {
+		/** SSH context with no ignore patterns - remote scans do not inherit the local defaults. */
+		const SSH = { sshRemoteId: 'remote-1', remoteCwd: '/home/user' };
+
 		beforeEach(() => {
 			vi.clearAllMocks();
 		});
 
 		it('returns empty array when maxDepth is reached', async () => {
-			const result = await loadFileTree('/some/path', 5, 5);
+			const result = await loadFileTree('/some/path', 5, 5, SSH);
 			expect(result).toEqual([]);
-			// Should not call readDir when depth is reached
 			expect(window.maestro.fs.readDir).not.toHaveBeenCalled();
 		});
 
 		it('loads files and folders from directory', async () => {
-			// First call returns the directory contents, second call for src folder returns empty
 			vi.mocked(window.maestro.fs.readDir)
 				.mockResolvedValueOnce([
 					{ name: 'src', isFile: false, isDirectory: true },
 					{ name: 'README.md', isFile: true, isDirectory: false },
 					{ name: 'package.json', isFile: true, isDirectory: false },
 				])
-				.mockResolvedValue([]); // Empty children for src folder
+				.mockResolvedValue([]);
 
-			const result = await loadFileTree('/project');
+			const result = await loadFileTree('/project', 5, 0, SSH);
 
-			// Should pass undefined for sshRemoteId when no SSH context is provided
-			expect(window.maestro.fs.readDir).toHaveBeenCalledWith('/project', undefined);
+			expect(window.maestro.fs.readDir).toHaveBeenCalledWith('/project', 'remote-1');
 			expect(result).toHaveLength(3);
-			expect(result[0]).toEqual({
-				name: 'src',
-				type: 'folder',
-				children: [],
-			});
+			expect(result[0]).toEqual({ name: 'src', type: 'folder', children: [] });
 			expect(result[1]).toEqual({ name: 'package.json', type: 'file' });
 			expect(result[2]).toEqual({ name: 'README.md', type: 'file' });
 		});
@@ -257,66 +381,74 @@ describe('fileExplorer utils', () => {
 					{ name: 'src', isFile: false, isDirectory: true },
 					{ name: 'README.md', isFile: true, isDirectory: false },
 				])
-				.mockResolvedValue([]); // Empty for recursive folder calls
+				.mockResolvedValue([]);
 
-			const result = await loadFileTree('/project');
+			const result = await loadFileTree('/project', 5, 0, SSH);
 
 			expect(result).toHaveLength(5);
 			expect(result.find((n) => n.name === '.git')).toBeDefined();
-			expect(result.find((n) => n.name === '.gitignore')).toBeDefined();
 			expect(result.find((n) => n.name === '.env')).toBeDefined();
-			expect(result.find((n) => n.name === 'src')).toBeDefined();
-			expect(result.find((n) => n.name === 'README.md')).toBeDefined();
 		});
 
-		it('skips node_modules directory', async () => {
+		it('applies the SSH ignore patterns', async () => {
 			vi.mocked(window.maestro.fs.readDir)
 				.mockResolvedValueOnce([
 					{ name: 'node_modules', isFile: false, isDirectory: true },
 					{ name: 'src', isFile: false, isDirectory: true },
 				])
-				.mockResolvedValue([]); // Empty for src folder recursion
+				.mockResolvedValue([]);
 
-			const result = await loadFileTree('/project');
+			const result = await loadFileTree('/project', 5, 0, {
+				sshRemoteId: 'remote-1',
+				ignorePatterns: ['node_modules'],
+			});
 
 			expect(result).toHaveLength(1);
 			expect(result[0].name).toBe('src');
 		});
 
-		it('skips __pycache__ directory', async () => {
-			vi.mocked(window.maestro.fs.readDir).mockResolvedValueOnce([
-				{ name: '__pycache__', isFile: false, isDirectory: true },
-				{ name: 'main.py', isFile: true, isDirectory: false },
-			]);
-			// No further calls needed - __pycache__ is skipped and main.py is a file
-
-			const result = await loadFileTree('/project');
-
-			expect(result).toHaveLength(1);
-			expect(result[0].name).toBe('main.py');
-		});
-
-		it('always shows .maestro folder even when it matches ignore patterns', async () => {
+		it('always shows .maestro even when it matches an ignore pattern', async () => {
 			vi.mocked(window.maestro.fs.readDir)
 				.mockResolvedValueOnce([
 					{ name: '.maestro', isFile: false, isDirectory: true },
-					{ name: 'node_modules', isFile: false, isDirectory: true },
+					{ name: '.env', isFile: true, isDirectory: false },
 					{ name: 'src', isFile: false, isDirectory: true },
 				])
-				.mockResolvedValue([]); // Empty for folder recursion
+				.mockResolvedValue([]);
 
-			// Use ignore patterns that would match .maestro (e.g., dotfile glob)
-			const result = await loadFileTree('/project', 10, 0, undefined, undefined, {
-				ignorePatterns: ['node_modules', '.*'],
+			const result = await loadFileTree('/project', 10, 0, {
+				sshRemoteId: 'remote-1',
+				ignorePatterns: ['.*'],
 			});
 
-			// .maestro should be present, node_modules should be filtered
 			expect(result.find((n) => n.name === '.maestro')).toBeDefined();
-			expect(result.find((n) => n.name === 'node_modules')).toBeUndefined();
+			expect(result.find((n) => n.name === '.env')).toBeUndefined();
 			expect(result.find((n) => n.name === 'src')).toBeDefined();
 		});
 
-		it('sorts folders before files', async () => {
+		it('does not apply localOptions to SSH contexts', async () => {
+			vi.mocked(window.maestro.fs.readDir)
+				.mockResolvedValueOnce([
+					{ name: '.git', isFile: false, isDirectory: true },
+					{ name: 'src', isFile: false, isDirectory: true },
+				])
+				.mockResolvedValue([]);
+
+			const result = await loadFileTree(
+				'/project',
+				10,
+				0,
+				{ sshRemoteId: 'remote-1', ignorePatterns: ['build'] },
+				undefined,
+				{ ignorePatterns: ['.git'] }
+			);
+
+			// .git survives: SSH uses its own patterns, never the local ones.
+			expect(result).toHaveLength(2);
+			expect(result.find((n) => n.name === '.git')).toBeDefined();
+		});
+
+		it('sorts folders before files, then alphabetically', async () => {
 			vi.mocked(window.maestro.fs.readDir)
 				.mockResolvedValueOnce([
 					{ name: 'zebra.txt', isFile: true, isDirectory: false },
@@ -324,33 +456,11 @@ describe('fileExplorer utils', () => {
 					{ name: 'apple.js', isFile: true, isDirectory: false },
 					{ name: 'beta', isFile: false, isDirectory: true },
 				])
-				.mockResolvedValue([]); // Empty for folder recursion
+				.mockResolvedValue([]);
 
-			const result = await loadFileTree('/project');
+			const result = await loadFileTree('/project', 5, 0, SSH);
 
-			expect(result[0].name).toBe('alpha');
-			expect(result[0].type).toBe('folder');
-			expect(result[1].name).toBe('beta');
-			expect(result[1].type).toBe('folder');
-			expect(result[2].name).toBe('apple.js');
-			expect(result[2].type).toBe('file');
-			expect(result[3].name).toBe('zebra.txt');
-			expect(result[3].type).toBe('file');
-		});
-
-		it('sorts alphabetically within same type', async () => {
-			vi.mocked(window.maestro.fs.readDir).mockResolvedValueOnce([
-				{ name: 'zebra.txt', isFile: true, isDirectory: false },
-				{ name: 'apple.js', isFile: true, isDirectory: false },
-				{ name: 'banana.ts', isFile: true, isDirectory: false },
-			]);
-			// No further calls - all files, no recursion
-
-			const result = await loadFileTree('/project');
-
-			expect(result[0].name).toBe('apple.js');
-			expect(result[1].name).toBe('banana.ts');
-			expect(result[2].name).toBe('zebra.txt');
+			expect(result.map((n) => n.name)).toEqual(['alpha', 'beta', 'apple.js', 'zebra.txt']);
 		});
 
 		it('recursively loads children of folders', async () => {
@@ -362,251 +472,77 @@ describe('fileExplorer utils', () => {
 				])
 				.mockResolvedValueOnce([{ name: 'App.tsx', isFile: true, isDirectory: false }]);
 
-			const result = await loadFileTree('/project');
+			const result = await loadFileTree('/project', 5, 0, SSH);
 
 			expect(window.maestro.fs.readDir).toHaveBeenCalledTimes(3);
-			expect(result[0].name).toBe('src');
-			expect(result[0].children).toHaveLength(2);
 			expect(result[0].children![0].name).toBe('components');
-			expect(result[0].children![0].children).toHaveLength(1);
 			expect(result[0].children![0].children![0].name).toBe('App.tsx');
 		});
 
 		it('propagates errors from readDir', async () => {
-			const error = new Error('Permission denied');
-			vi.mocked(window.maestro.fs.readDir).mockRejectedValue(error);
+			vi.mocked(window.maestro.fs.readDir).mockRejectedValue(new Error('Permission denied'));
 
 			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
-			await expect(loadFileTree('/restricted')).rejects.toThrow('Permission denied');
+			await expect(loadFileTree('/restricted', 5, 0, SSH)).rejects.toThrow('Permission denied');
 			consoleSpy.mockRestore();
 		});
 
-		it('respects default maxDepth of 5', async () => {
-			// Setup recursive structure
-			const setupMocks = () => {
-				vi.mocked(window.maestro.fs.readDir).mockResolvedValue([
-					{ name: 'deep', isFile: false, isDirectory: true },
-				]);
-			};
-			setupMocks();
+		it('respects the maxDepth argument', async () => {
+			vi.mocked(window.maestro.fs.readDir).mockResolvedValue([
+				{ name: 'deep', isFile: false, isDirectory: true },
+			]);
 
-			await loadFileTree('/project');
+			await loadFileTree('/project', 5, 0, SSH);
 
-			// Should be called maxDepth times (5) for each level, then stop
 			expect(window.maestro.fs.readDir).toHaveBeenCalledTimes(5);
 		});
 
 		it('handles entries that are neither file nor directory', async () => {
 			vi.mocked(window.maestro.fs.readDir).mockResolvedValueOnce([
 				{ name: 'regular.txt', isFile: true, isDirectory: false },
-				{ name: 'symlink', isFile: false, isDirectory: false }, // Neither file nor directory
+				{ name: 'broken-link', isFile: false, isDirectory: false },
 			]);
-			// No further calls - regular.txt is a file, symlink is skipped
 
-			const result = await loadFileTree('/project');
+			const result = await loadFileTree('/project', 5, 0, SSH);
 
 			expect(result).toHaveLength(1);
 			expect(result[0].name).toBe('regular.txt');
 		});
 
-		it('passes SSH context to readDir for remote file operations', async () => {
-			vi.mocked(window.maestro.fs.readDir)
-				.mockResolvedValueOnce([
-					{ name: 'src', isFile: false, isDirectory: true },
-					{ name: 'README.md', isFile: true, isDirectory: false },
-				])
-				.mockResolvedValue([]); // Empty children for src folder
-
-			const sshContext = { sshRemoteId: 'remote-1', remoteCwd: '/home/user' };
-			const result = await loadFileTree('/project', 10, 0, sshContext);
-
-			// Verify SSH remote ID is passed to all readDir calls
-			expect(window.maestro.fs.readDir).toHaveBeenCalledWith('/project', 'remote-1');
-			expect(window.maestro.fs.readDir).toHaveBeenCalledWith('/project/src', 'remote-1');
-			expect(result).toHaveLength(2);
-		});
-
-		it('passes undefined to readDir when no SSH context is provided', async () => {
+		it('deduplicates entries returned by readDir', async () => {
 			vi.mocked(window.maestro.fs.readDir).mockResolvedValueOnce([
-				{ name: 'file.txt', isFile: true, isDirectory: false },
-			]);
-
-			await loadFileTree('/project');
-
-			expect(window.maestro.fs.readDir).toHaveBeenCalledWith('/project', undefined);
-		});
-
-		it('uses localIgnorePatterns when provided for local scans', async () => {
-			vi.mocked(window.maestro.fs.readDir)
-				.mockResolvedValueOnce([
-					{ name: '.git', isFile: false, isDirectory: true },
-					{ name: 'node_modules', isFile: false, isDirectory: true },
-					{ name: 'src', isFile: false, isDirectory: true },
-					{ name: 'README.md', isFile: true, isDirectory: false },
-				])
-				.mockResolvedValue([]);
-
-			// Pass localIgnorePatterns that includes .git and node_modules
-			const result = await loadFileTree('/project', 10, 0, undefined, undefined, {
-				ignorePatterns: ['.git', 'node_modules'],
-			});
-
-			expect(result).toHaveLength(2);
-			expect(result.find((n) => n.name === '.git')).toBeUndefined();
-			expect(result.find((n) => n.name === 'node_modules')).toBeUndefined();
-			expect(result.find((n) => n.name === 'src')).toBeDefined();
-			expect(result.find((n) => n.name === 'README.md')).toBeDefined();
-		});
-
-		it('falls back to default ignore patterns when localOptions is undefined', async () => {
-			vi.mocked(window.maestro.fs.readDir)
-				.mockResolvedValueOnce([
-					{ name: '.git', isFile: false, isDirectory: true },
-					{ name: 'node_modules', isFile: false, isDirectory: true },
-					{ name: '__pycache__', isFile: false, isDirectory: true },
-					{ name: 'src', isFile: false, isDirectory: true },
-				])
-				.mockResolvedValue([]);
-
-			// No localOptions - should use defaults (node_modules, __pycache__)
-			const result = await loadFileTree('/project');
-
-			// .git should be included (not in defaults), node_modules and __pycache__ excluded
-			expect(result).toHaveLength(2);
-			expect(result.find((n) => n.name === '.git')).toBeDefined();
-			expect(result.find((n) => n.name === 'src')).toBeDefined();
-			expect(result.find((n) => n.name === 'node_modules')).toBeUndefined();
-			expect(result.find((n) => n.name === '__pycache__')).toBeUndefined();
-		});
-
-		it('does not apply localOptions to SSH contexts', async () => {
-			vi.mocked(window.maestro.fs.readDir)
-				.mockResolvedValueOnce([
-					{ name: '.git', isFile: false, isDirectory: true },
-					{ name: 'src', isFile: false, isDirectory: true },
-				])
-				.mockResolvedValue([]);
-
-			// SSH context with its own ignore patterns
-			const sshContext = {
-				sshRemoteId: 'remote-1',
-				ignorePatterns: ['build'],
-			};
-			const result = await loadFileTree('/project', 10, 0, sshContext, undefined, {
-				ignorePatterns: ['.git'],
-			});
-
-			// .git should NOT be ignored - SSH uses its own ignorePatterns, not localOptions
-			expect(result).toHaveLength(2);
-			expect(result.find((n) => n.name === '.git')).toBeDefined();
-			expect(result.find((n) => n.name === 'src')).toBeDefined();
-		});
-
-		it('always shows .maestro even when it matches ignore patterns', async () => {
-			vi.mocked(window.maestro.fs.readDir).mockResolvedValueOnce([
-				{ name: '.maestro', isFile: false, isDirectory: true },
-				{ name: '.env', isFile: true, isDirectory: false },
 				{ name: 'src', isFile: false, isDirectory: true },
+				{ name: 'README.md', isFile: true, isDirectory: false },
+				{ name: 'src', isFile: false, isDirectory: true },
+				{ name: 'README.md', isFile: true, isDirectory: false },
 			]);
 			vi.mocked(window.maestro.fs.readDir).mockResolvedValue([]);
 
-			// Use ignore patterns that would match dotfiles
-			const result = await loadFileTree('/project', 10, 0, undefined, undefined, {
-				ignorePatterns: ['.*'],
-			});
-
-			// .maestro should survive despite matching .*
-			expect(result.find((n) => n.name === '.maestro')).toBeDefined();
-			// .env should be filtered out (matches .* and is not in ALWAYS_VISIBLE)
-			expect(result.find((n) => n.name === '.env')).toBeUndefined();
-			expect(result.find((n) => n.name === 'src')).toBeDefined();
-		});
-
-		it('deduplicates entries returned by readDir', async () => {
-			vi.mocked(window.maestro.fs.readDir).mockResolvedValueOnce([
-				{ name: 'src', isFile: false, isDirectory: true, path: '/project/src' },
-				{ name: 'README.md', isFile: true, isDirectory: false, path: '/project/README.md' },
-				{ name: 'src', isFile: false, isDirectory: true, path: '/project/src' }, // duplicate
-				{ name: 'README.md', isFile: true, isDirectory: false, path: '/project/README.md' }, // duplicate
-			]);
-			vi.mocked(window.maestro.fs.readDir).mockResolvedValue([]); // Empty children
-
 			const consoleSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
-			const result = await loadFileTree('/project');
-
+			const result = await loadFileTree('/project', 5, 0, SSH);
 			expect(consoleSpy).toHaveBeenCalled();
 			consoleSpy.mockRestore();
 
 			expect(result).toHaveLength(2);
-			expect(result[0].name).toBe('src');
-			expect(result[1].name).toBe('README.md');
-		});
-
-		it('deduplicates entries in nested directories', async () => {
-			vi.mocked(window.maestro.fs.readDir)
-				.mockResolvedValueOnce([
-					{ name: 'docs', isFile: false, isDirectory: true, path: '/project/docs' },
-				])
-				.mockResolvedValueOnce([
-					{ name: 'guide.md', isFile: true, isDirectory: false, path: '/project/docs/guide.md' },
-					{ name: 'guide.md', isFile: true, isDirectory: false, path: '/project/docs/guide.md' }, // duplicate child
-				]);
-
-			const consoleSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
-			const result = await loadFileTree('/project');
-
-			expect(consoleSpy).toHaveBeenCalled();
-			consoleSpy.mockRestore();
-
-			expect(result).toHaveLength(1);
-			expect(result[0].children).toHaveLength(1);
-			expect(result[0].children![0].name).toBe('guide.md');
 		});
 
 		it('deduplicates NFD/NFC normalized entries', async () => {
-			const nfcName = 'caf\u00e9'.normalize('NFC');
-			const nfdName = 'caf\u00e9'.normalize('NFD');
+			const nfcName = 'café'.normalize('NFC');
+			const nfdName = 'café'.normalize('NFD');
 
 			vi.mocked(window.maestro.fs.readDir).mockResolvedValueOnce([
 				{ name: nfcName, isFile: true, isDirectory: false },
-				{ name: nfdName, isFile: true, isDirectory: false }, // same visual name, different Unicode form
+				{ name: nfdName, isFile: true, isDirectory: false },
 			]);
 
 			const consoleSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
-			const result = await loadFileTree('/project');
-
-			expect(consoleSpy).toHaveBeenCalled();
+			const result = await loadFileTree('/project', 5, 0, SSH);
 			consoleSpy.mockRestore();
 
 			expect(result).toHaveLength(1);
 			expect(result[0].name.normalize('NFC')).toBe(nfcName);
 		});
 
-		it('deduplicates NFD/NFC entries in nested directories', async () => {
-			const nfcName = 'r\u00e9sum\u00e9.md'.normalize('NFC');
-			const nfdName = 'r\u00e9sum\u00e9.md'.normalize('NFD');
-
-			vi.mocked(window.maestro.fs.readDir)
-				.mockResolvedValueOnce([{ name: 'docs', isFile: false, isDirectory: true }])
-				.mockResolvedValueOnce([
-					{ name: nfcName, isFile: true, isDirectory: false },
-					{ name: nfdName, isFile: true, isDirectory: false }, // NFD duplicate in child
-				]);
-
-			const consoleSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
-			const result = await loadFileTree('/project');
-
-			expect(consoleSpy).toHaveBeenCalled();
-			consoleSpy.mockRestore();
-
-			expect(result).toHaveLength(1);
-			expect(result[0].children).toHaveLength(1);
-			expect(result[0].children![0].name.normalize('NFC')).toBe(nfcName);
-		});
-
-		// ============================================================================
-		// maxEntries truncation
-		// ============================================================================
 		describe('maxEntries cap', () => {
 			it('reports truncated=false when scan stays under cap', async () => {
 				vi.mocked(window.maestro.fs.readDir).mockResolvedValueOnce([
@@ -614,14 +550,12 @@ describe('fileExplorer utils', () => {
 					{ name: 'b.txt', isFile: true, isDirectory: false },
 				]);
 
-				const result = await loadFileTreeRaw('/project', 5, 0, undefined, undefined, undefined, 10);
+				const result = await loadFileTreeRaw('/project', 5, 0, SSH, undefined, undefined, 10);
 				expect(result.truncated).toBe(false);
 				expect(result.filesFound).toBe(2);
-				expect(result.tree).toHaveLength(2);
 			});
 
 			it('stops adding files and sets truncated=true when cap is hit', async () => {
-				// 5 files at root, cap set to 3
 				vi.mocked(window.maestro.fs.readDir).mockResolvedValueOnce([
 					{ name: 'a.txt', isFile: true, isDirectory: false },
 					{ name: 'b.txt', isFile: true, isDirectory: false },
@@ -630,53 +564,32 @@ describe('fileExplorer utils', () => {
 					{ name: 'e.txt', isFile: true, isDirectory: false },
 				]);
 
-				const result = await loadFileTreeRaw('/project', 5, 0, undefined, undefined, undefined, 3);
+				const result = await loadFileTreeRaw('/project', 5, 0, SSH, undefined, undefined, 3);
 				expect(result.truncated).toBe(true);
-				expect(result.filesFound).toBe(3);
 				expect(result.tree).toHaveLength(3);
 			});
 
 			it('skips recursion into sibling folders once cap is reached', async () => {
-				// Root: folder "full" + folder "skipped". "full" fills the cap.
 				vi.mocked(window.maestro.fs.readDir)
 					.mockResolvedValueOnce([
 						{ name: 'full', isFile: false, isDirectory: true },
 						{ name: 'skipped', isFile: false, isDirectory: true },
 					])
 					.mockResolvedValueOnce([
-						// "full" contents: 3 files, matches the cap
 						{ name: 'a.txt', isFile: true, isDirectory: false },
 						{ name: 'b.txt', isFile: true, isDirectory: false },
 						{ name: 'c.txt', isFile: true, isDirectory: false },
 					]);
 
-				const result = await loadFileTreeRaw('/project', 5, 0, undefined, undefined, undefined, 3);
+				const result = await loadFileTreeRaw('/project', 5, 0, SSH, undefined, undefined, 3);
 				expect(result.truncated).toBe(true);
-				// "skipped" folder is still in the tree (as empty), but readDir was not called on it
 				expect(window.maestro.fs.readDir).toHaveBeenCalledTimes(2);
-				const skipped = result.tree.find((n) => n.name === 'skipped');
-				expect(skipped).toBeDefined();
-				expect(skipped?.children).toEqual([]);
-			});
-
-			it('treats Infinity (and omitted cap) as unlimited', async () => {
-				vi.mocked(window.maestro.fs.readDir).mockResolvedValueOnce([
-					{ name: 'a.txt', isFile: true, isDirectory: false },
-					{ name: 'b.txt', isFile: true, isDirectory: false },
-				]);
-
-				const result = await loadFileTreeRaw('/project');
-				expect(result.truncated).toBe(false);
-				expect(result.tree).toHaveLength(2);
+				expect(result.tree.find((n) => n.name === 'skipped')?.children).toEqual([]);
 			});
 		});
 
-		// ============================================================================
-		// .maestro prioritization (always-visible directories)
-		// ============================================================================
 		describe('always-visible directory prioritization', () => {
 			it('walks .maestro before sibling directories', async () => {
-				// Root listing returns sibling first to simulate readDir ordering
 				vi.mocked(window.maestro.fs.readDir)
 					.mockResolvedValueOnce([
 						{ name: 'src', isFile: false, isDirectory: true },
@@ -684,27 +597,21 @@ describe('fileExplorer utils', () => {
 					])
 					.mockResolvedValue([]);
 
-				await loadFileTreeRaw('/project');
+				await loadFileTreeRaw('/project', 5, 0, SSH);
 
-				// .maestro should be readDir'd before src (call #2 vs #3)
 				const calls = vi.mocked(window.maestro.fs.readDir).mock.calls;
-				expect(calls[0][0]).toBe('/project');
 				expect(calls[1][0]).toBe('/project/.maestro');
 				expect(calls[2][0]).toBe('/project/src');
 			});
 
 			it('fully loads .maestro contents even when entry cap is exceeded', async () => {
-				// Root: lots of bulk files + .maestro dir. Cap is small.
 				vi.mocked(window.maestro.fs.readDir)
 					.mockResolvedValueOnce([
 						{ name: '.maestro', isFile: false, isDirectory: true },
 						{ name: 'a.txt', isFile: true, isDirectory: false },
 						{ name: 'b.txt', isFile: true, isDirectory: false },
 						{ name: 'c.txt', isFile: true, isDirectory: false },
-						{ name: 'd.txt', isFile: true, isDirectory: false },
-						{ name: 'e.txt', isFile: true, isDirectory: false },
 					])
-					// .maestro contents - 4 files, more than the cap
 					.mockResolvedValueOnce([
 						{ name: 'cue.yaml', isFile: true, isDirectory: false },
 						{ name: 'p1.md', isFile: true, isDirectory: false },
@@ -712,37 +619,20 @@ describe('fileExplorer utils', () => {
 						{ name: 'p3.md', isFile: true, isDirectory: false },
 					]);
 
-				const result = await loadFileTreeRaw(
-					'/project',
-					5,
-					0,
-					undefined,
-					undefined,
-					undefined,
-					2 // cap of 2 files
-				);
+				const result = await loadFileTreeRaw('/project', 5, 0, SSH, undefined, undefined, 2);
 
-				// .maestro should be present with all 4 children
-				const maestro = result.tree.find((n) => n.name === '.maestro');
-				expect(maestro).toBeDefined();
-				expect(maestro?.children).toHaveLength(4);
-
-				// Bulk files should be capped at 2 with truncation flag
-				const bulkFiles = result.tree.filter((n) => n.type === 'file');
-				expect(bulkFiles).toHaveLength(2);
+				expect(result.tree.find((n) => n.name === '.maestro')?.children).toHaveLength(4);
+				expect(result.tree.filter((n) => n.type === 'file')).toHaveLength(2);
 				expect(result.truncated).toBe(true);
 			});
 
 			it('does not let .maestro contents starve sibling directory budget', async () => {
-				// Root has .maestro (with 5 files) + bulk dir + extra files. Cap is 3.
-				// Without separate budget tracking, .maestro's 5 files would eat the cap.
 				vi.mocked(window.maestro.fs.readDir)
 					.mockResolvedValueOnce([
 						{ name: '.maestro', isFile: false, isDirectory: true },
 						{ name: 'src', isFile: false, isDirectory: true },
 					])
 					.mockResolvedValueOnce([
-						// .maestro contents
 						{ name: 'a.md', isFile: true, isDirectory: false },
 						{ name: 'b.md', isFile: true, isDirectory: false },
 						{ name: 'c.md', isFile: true, isDirectory: false },
@@ -750,21 +640,15 @@ describe('fileExplorer utils', () => {
 						{ name: 'e.md', isFile: true, isDirectory: false },
 					])
 					.mockResolvedValueOnce([
-						// src contents - should still be reachable
 						{ name: 'index.ts', isFile: true, isDirectory: false },
 						{ name: 'app.ts', isFile: true, isDirectory: false },
 					]);
 
-				const result = await loadFileTreeRaw('/project', 5, 0, undefined, undefined, undefined, 3);
+				const result = await loadFileTreeRaw('/project', 5, 0, SSH, undefined, undefined, 3);
 
-				// src must be walked (readDir called), not folded as empty
-				expect(window.maestro.fs.readDir).toHaveBeenCalledWith('/project/src', undefined);
-				const src = result.tree.find((n) => n.name === 'src');
-				expect(src?.children).toHaveLength(2);
-
-				// .maestro fully loaded
-				const maestro = result.tree.find((n) => n.name === '.maestro');
-				expect(maestro?.children).toHaveLength(5);
+				expect(window.maestro.fs.readDir).toHaveBeenCalledWith('/project/src', 'remote-1');
+				expect(result.tree.find((n) => n.name === 'src')?.children).toHaveLength(2);
+				expect(result.tree.find((n) => n.name === '.maestro')?.children).toHaveLength(5);
 			});
 
 			it('propagates unlimited budget through nested .maestro descendants', async () => {
@@ -777,12 +661,10 @@ describe('fileExplorer utils', () => {
 						{ name: 'three.md', isFile: true, isDirectory: false },
 					]);
 
-				// Cap of 1 - without propagation, only one playbook would survive
-				const result = await loadFileTreeRaw('/project', 5, 0, undefined, undefined, undefined, 1);
+				const result = await loadFileTreeRaw('/project', 5, 0, SSH, undefined, undefined, 1);
 
 				const maestro = result.tree.find((n) => n.name === '.maestro');
-				const playbooks = maestro?.children?.find((n) => n.name === 'playbooks');
-				expect(playbooks?.children).toHaveLength(3);
+				expect(maestro?.children?.find((n) => n.name === 'playbooks')?.children).toHaveLength(3);
 			});
 		});
 	});

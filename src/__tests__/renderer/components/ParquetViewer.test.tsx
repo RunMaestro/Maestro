@@ -5,6 +5,7 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { ParquetViewer } from '../../../renderer/components/ParquetViewer';
 import type {
 	ParquetColumnInfo,
+	ParquetFetchProgress,
 	ParquetFileInfo,
 	ParquetQueryRequest,
 	ParquetQueryResult,
@@ -74,6 +75,7 @@ function queryResult(overrides: Partial<ParquetQueryResult> = {}): ParquetQueryR
 	};
 }
 
+let fetchProgressListeners: ((p: ParquetFetchProgress) => void)[] = [];
 let open: ReturnType<typeof vi.fn>;
 let query: ReturnType<typeof vi.fn>;
 let close: ReturnType<typeof vi.fn>;
@@ -89,8 +91,20 @@ beforeEach(() => {
 	open = vi.fn().mockResolvedValue(INFO);
 	query = vi.fn().mockResolvedValue(queryResult());
 	close = vi.fn().mockResolvedValue(undefined);
+	fetchProgressListeners = [];
 	(window as unknown as { maestro: unknown }).maestro = {
-		parquet: { open, query, close, export: vi.fn() },
+		parquet: {
+			open,
+			query,
+			close,
+			export: vi.fn(),
+			onFetchProgress: (cb: (p: ParquetFetchProgress) => void) => {
+				fetchProgressListeners.push(cb);
+				return () => {
+					fetchProgressListeners = fetchProgressListeners.filter((l) => l !== cb);
+				};
+			},
+		},
 		dialog: { saveFile: vi.fn().mockResolvedValue(null) },
 	};
 });
@@ -279,6 +293,90 @@ describe('ParquetViewer', () => {
 		await waitFor(() => expect(screen.getByTestId('parquet-filter-input')).toBeInTheDocument());
 		act(() => ref.current?.focusFilter());
 		expect(document.activeElement).toBe(screen.getByTestId('parquet-filter-input'));
+	});
+
+	it('shows a determinate progress bar while a remote file is copying', async () => {
+		// The copy is the only slow part of opening anything, and it is the
+		// reason remote opens felt broken: a multi-second transfer rendered as
+		// an idle spinner with no indication anything was happening.
+		open.mockReturnValue(new Promise(() => {}));
+		renderViewer({ sshRemoteId: 'remote-7' });
+
+		act(() => {
+			fetchProgressListeners.forEach((l) =>
+				l({
+					remotePath: '/data/events.parquet',
+					receivedBytes: 4 * 1024 * 1024,
+					totalBytes: 16 * 1024 * 1024,
+					done: false,
+				})
+			);
+		});
+
+		const bar = await screen.findByTestId('parquet-fetch-progress-bar');
+		expect(bar).toBeInTheDocument();
+		// Determinate, not a spinner: the percentage has to be real and exposed.
+		expect(bar).toHaveAttribute('aria-valuenow', '25');
+		expect(screen.getByText(/4\.0 MB of 16\.0 MB/)).toBeInTheDocument();
+		expect(screen.queryByText(/Reading parquet footer/)).not.toBeInTheDocument();
+	});
+
+	it('ignores progress for a file this tab is not opening', async () => {
+		// Every viewer in the window hears every event. Without the path check,
+		// a second tab's copy would drive this tab's bar.
+		open.mockReturnValue(new Promise(() => {}));
+		renderViewer({ sshRemoteId: 'remote-7' });
+
+		act(() => {
+			fetchProgressListeners.forEach((l) =>
+				l({
+					remotePath: '/somewhere/else.parquet',
+					receivedBytes: 1024,
+					totalBytes: 2048,
+					done: false,
+				})
+			);
+		});
+
+		expect(screen.queryByTestId('parquet-fetch-progress-bar')).not.toBeInTheDocument();
+		expect(screen.getByText(/Reading parquet footer/)).toBeInTheDocument();
+	});
+
+	it('takes the progress bar down when the copy finishes', async () => {
+		open.mockReturnValue(new Promise(() => {}));
+		renderViewer({ sshRemoteId: 'remote-7' });
+
+		act(() => {
+			fetchProgressListeners.forEach((l) =>
+				l({ remotePath: '/data/events.parquet', receivedBytes: 512, totalBytes: 1024, done: false })
+			);
+		});
+		expect(await screen.findByTestId('parquet-fetch-progress-bar')).toBeInTheDocument();
+
+		act(() => {
+			fetchProgressListeners.forEach((l) =>
+				l({ remotePath: '/data/events.parquet', receivedBytes: 1024, totalBytes: 1024, done: true })
+			);
+		});
+
+		// A bar stuck at 100% reads as a hang, so `done` must clear it.
+		expect(screen.queryByTestId('parquet-fetch-progress-bar')).not.toBeInTheDocument();
+	});
+
+	it('does not leave a progress bar up when the open fails', async () => {
+		open.mockRejectedValue(new Error('Copy of /data/events.parquet ended early'));
+		renderViewer({ sshRemoteId: 'remote-7' });
+
+		act(() => {
+			fetchProgressListeners.forEach((l) =>
+				l({ remotePath: '/data/events.parquet', receivedBytes: 512, totalBytes: 1024, done: false })
+			);
+		});
+
+		await waitFor(() =>
+			expect(screen.getByText(/Could not open this parquet file/)).toBeInTheDocument()
+		);
+		expect(screen.queryByTestId('parquet-fetch-progress-bar')).not.toBeInTheDocument();
 	});
 
 	it('releases the main-process handle when the tab goes away', async () => {

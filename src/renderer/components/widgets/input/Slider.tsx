@@ -1,27 +1,45 @@
 /**
  * Slider
  *
- * Starter input primitive for the shared widget library: a themed, controlled
- * wrapper around a native `<input type="range">`. Minimal but real - it is the
- * proof that the `InputWidgetProps<T>` contract works end to end and the seed
- * for the upcoming dynamic-interface input family.
+ * Themed, controlled wrapper around a native `<input type="range">`, and the
+ * proof that the `InputWidgetProps<T>` contract works end to end.
  *
- * Theme-aware (accent-colored track via the `accent-*` utility plus an inline
- * accent color), accessible (label wired to the input, live value read out), and
- * fully controlled (the parent owns the value and re-renders on change).
+ * Two shapes, one component:
+ *
+ * - **Continuous.** Pass `min` / `max` / `step` and optionally `formatValue`.
+ *   The read-out shows the formatted number.
+ * - **Discrete, with named stops.** Pass `tickLabels`. The track then runs from
+ *   0 to `tickLabels.length - 1` in whole steps, the read-out shows the current
+ *   stop's name, and the names are drawn beneath the track so the user can see
+ *   what they are sliding between before they slide. Reach for this whenever
+ *   the underlying value is an ordered vocabulary rather than a quantity; the
+ *   ladder is the reason it is a slider and not a row of buttons, and the
+ *   labels are what stop it reading as a meaningless 0-3.
+ *
+ * Theme-aware (accent-colored track), accessible (label wired to the input, the
+ * value announced via `aria-valuetext`), and fully controlled.
  */
 
 import { memo, useId } from 'react';
 import type { InputWidgetProps, SliderValue } from './types';
 
 interface SliderProps extends InputWidgetProps<SliderValue> {
-	/** Minimum value (default 0). */
+	/** Minimum value. Defaults to 0. */
 	min?: number;
-	/** Maximum value (default 100). */
+	/**
+	 * Maximum value. Defaults to `tickLabels.length - 1` when `tickLabels` is
+	 * given, otherwise 100, so a labelled slider cannot end up with more stops
+	 * than names.
+	 */
 	max?: number;
 	/** Step increment (default 1). */
 	step?: number;
-	/** Optional formatter for the value read-out (defaults to the raw number). */
+	/**
+	 * Names for each stop, in ladder order. Turns the slider discrete: it also
+	 * supplies the default `max` and the default read-out.
+	 */
+	tickLabels?: string[];
+	/** Formatter for the value read-out. Defaults to the stop's name when `tickLabels` is set, otherwise the raw number. */
 	formatValue?: (value: SliderValue) => string;
 }
 
@@ -32,12 +50,20 @@ export const Slider = memo(function Slider({
 	disabled = false,
 	label,
 	min = 0,
-	max = 100,
+	max,
 	step = 1,
+	tickLabels,
 	formatValue,
 }: SliderProps) {
 	const inputId = useId();
-	const display = formatValue ? formatValue(value) : String(value);
+	const hasTicks = Array.isArray(tickLabels) && tickLabels.length > 1;
+	const resolvedMax = max ?? (hasTicks ? tickLabels.length - 1 : 100);
+
+	const display = formatValue
+		? formatValue(value)
+		: hasTicks
+			? (tickLabels[value] ?? String(value))
+			: String(value);
 
 	return (
 		<div className="flex flex-col gap-1.5" style={{ opacity: disabled ? 0.5 : 1 }}>
@@ -45,7 +71,7 @@ export const Slider = memo(function Slider({
 				<div className="flex items-center justify-between gap-2">
 					<label
 						htmlFor={inputId}
-						className="text-[11px] font-medium uppercase tracking-wide"
+						className="text-xs-plus font-medium uppercase tracking-wide"
 						style={{ color: theme.colors.textDim }}
 					>
 						{label}
@@ -63,7 +89,7 @@ export const Slider = memo(function Slider({
 				id={inputId}
 				type="range"
 				min={min}
-				max={max}
+				max={resolvedMax}
 				step={step}
 				value={value}
 				disabled={disabled}
@@ -73,6 +99,22 @@ export const Slider = memo(function Slider({
 				aria-label={label}
 				aria-valuetext={display}
 			/>
+			{hasTicks && (
+				/* Presentational only. The stops are already reachable through the
+				   input itself, so these carry aria-hidden rather than becoming a
+				   second, silent set of controls in the tab order. */
+				<div className="flex justify-between text-2xs" aria-hidden="true">
+					{tickLabels.map((tick, index) => (
+						<span
+							key={tick}
+							className={index === value ? 'font-semibold' : 'opacity-55'}
+							style={index === value ? { color: theme.colors.accent } : undefined}
+						>
+							{tick}
+						</span>
+					))}
+				</div>
+			)}
 		</div>
 	);
 });

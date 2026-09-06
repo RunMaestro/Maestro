@@ -1,12 +1,26 @@
 import { ipcRenderer } from 'electron';
+import type { AITabData } from '../../web-server/types';
 
 export function createTabRemoteApi() {
 	return {
 		/**
 		 * Subscribe to remote tab selection from web interface
 		 */
-		onRemoteSelectTab: (callback: (sessionId: string, tabId: string) => void): (() => void) => {
-			const handler = (_: unknown, sessionId: string, tabId: string) => callback(sessionId, tabId);
+		onRemoteSelectTab: (
+			callback: (
+				sessionId: string,
+				tabId: string,
+				aiTabs?: AITabData[],
+				activeTabChanged?: boolean
+			) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				tabId: string,
+				aiTabs?: AITabData[],
+				activeTabChanged?: boolean
+			) => callback(sessionId, tabId, aiTabs, activeTabChanged === true);
 			ipcRenderer.on('remote:selectTab', handler);
 			return () => ipcRenderer.removeListener('remote:selectTab', handler);
 		},
@@ -147,6 +161,28 @@ export function createTabRemoteApi() {
 				});
 			ipcRenderer.on('remote:openFileTab', handler);
 			return () => ipcRenderer.removeListener('remote:openFileTab', handler);
+		},
+
+		/**
+		 * Subscribe to a remote request to render the Document Graph over an
+		 * explicit set of documents (from `maestro-cli open-graph`). Paths are
+		 * ABSOLUTE - the renderer relativizes them against the graph's own root,
+		 * which is not always the cwd the caller resolved against.
+		 */
+		onRemoteOpenDocumentGraph: (
+			callback: (params: {
+				sessionId: string;
+				files?: string[];
+				directory?: string;
+				focusPath?: string;
+			}) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				params: { sessionId: string; files?: string[]; directory?: string; focusPath?: string }
+			) => callback(params);
+			ipcRenderer.on('remote:openDocumentGraph', handler);
+			return () => ipcRenderer.removeListener('remote:openDocumentGraph', handler);
 		},
 
 		/**

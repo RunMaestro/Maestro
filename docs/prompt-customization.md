@@ -21,6 +21,15 @@ You can also jump to the four most commonly edited prompts from **Quick Actions*
 Click the expand button (top-right of the editor) to give the editor the full width of the settings panel. Click the help button for an inline reference of all categories and template variables.
 </Tip>
 
+### Finding, reading, and editing
+
+The toolbar above the list carries everything the pane offers:
+
+- **Filter** - narrows the list by prompt name, description, **and body**, so you can find a prompt by a phrase you remember from inside it. Press `/` to jump into the box from anywhere outside a text field. Matches are marked in the list and in the editor.
+- **Preview / Edit** - `Preview` renders the prompt as Markdown with its `{{TEMPLATE}}` variables resolved against the active agent, so you see what the agent actually receives. `Edit` is the syntax-highlighted source, the same editor Maestro uses for file previews and memories. `Cmd+E` / `Ctrl+E` flips between them.
+
+The keyboard works the way it does in the Memories viewer: `Up`/`Down` walk the prompt list, and `Esc` steps back out one rung at a time (autocomplete popup, then the filter box, then the filter text, then the help panel or the expanded editor) before it closes Settings. See [Keyboard Shortcuts](./keyboard-shortcuts#maestro-prompts-settings) for the full table.
+
 ## Prompt Categories
 
 Prompts are organized by the feature they control:

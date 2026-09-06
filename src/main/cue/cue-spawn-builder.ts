@@ -20,6 +20,7 @@ import {
 	buildRemoteInteractiveSpawn,
 } from '../agents/resolveClaudeSpawnMode';
 import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
+import { QUERY_SOURCE_ENV_VAR } from '../../shared/querySource';
 
 // ─── Types ──────���────────────────────────────────────────────────────────────
 
@@ -221,6 +222,7 @@ export async function buildSpawnSpec(
 			agentBinaryName: remoteInteractive ? remoteInteractive.command : agentDef.binaryName,
 			promptArgs: agentDef.promptArgs,
 			noPromptSeparator: agentDef.noPromptSeparator,
+			querySource: 'cue',
 		};
 
 		const sshResult = await wrapSpawnWithSsh(sshWrapConfig, sshRemoteConfig, sshStore);
@@ -287,6 +289,12 @@ export async function buildSpawnSpec(
 			env: {
 				...process.env,
 				...(spawnEnvVars || {}),
+				// Stamped after the user's own vars: a Cue run is a Cue run no matter
+				// what the agent's env overrides say. Without this every downstream
+				// consumer of the spawned process (Claude Code hooks, telemetry
+				// sidecars) sees a turn indistinguishable from one the user typed,
+				// because Cue prompts ARE the user's words from cue.yaml.
+				[QUERY_SOURCE_ENV_VAR]: 'cue',
 			} as Record<string, string>,
 			sshStdinScript,
 			sshRemoteCommand,

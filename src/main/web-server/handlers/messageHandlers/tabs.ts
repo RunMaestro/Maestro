@@ -3,7 +3,8 @@
  *
  * Extracted from WebSocketMessageHandler.ts. Handles: select_tab, new_tab,
  * close_tab, rename_tab, star_tab, reorder_tab, toggle_bookmark,
- * open_file_tab, open_browser_tab, open_terminal_tab, new_ai_tab_with_prompt.
+ * open_file_tab, open_browser_tab, open_terminal_tab, new_ai_tab_with_prompt,
+ * open_document_graph.
  */
 
 import path from 'path';
@@ -811,6 +812,85 @@ export async function handleWriteTerminalTab(
 }
 
 /**
+ * Handle read_terminal_tab message - read a terminal tab's scrollback. The
+ * counterpart to write_terminal_tab: that one types into a shell, this reads
+ * back what it printed, so an agent can observe a command it started.
+ *
+ * Like the write path, the tab is resolved in the renderer, since terminal
+ * tabs (and their xterm buffers) live only in renderer state.
+ */
+export async function handleReadTerminalTab(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	const sessionId = typeof message.sessionId === 'string' ? message.sessionId : '';
+	const rawTabRef = message.tabRef;
+	const rawTail = message.tail;
+
+	const sendErrorResult = (error: string) => {
+		ctx.send(client, {
+			type: 'read_terminal_tab_result',
+			success: false,
+			error,
+			sessionId,
+			requestId: message.requestId,
+		});
+	};
+
+	if (!sessionId) {
+		sendErrorResult('Missing sessionId');
+		return;
+	}
+	if (rawTabRef !== undefined && typeof rawTabRef !== 'string') {
+		sendErrorResult('Invalid tabRef: must be a string');
+		return;
+	}
+	if (
+		rawTail !== undefined &&
+		(typeof rawTail !== 'number' || !Number.isFinite(rawTail) || rawTail < 1)
+	) {
+		sendErrorResult('Invalid tail: must be a positive number');
+		return;
+	}
+
+	const session = ctx.callbacks.getSessions?.().find((s) => s.id === sessionId);
+	if (!session) {
+		sendErrorResult('Session not found');
+		return;
+	}
+
+	if (!ctx.callbacks.readTerminalTab) {
+		sendErrorResult('Terminal reads not configured');
+		return;
+	}
+
+	try {
+		const result = await ctx.callbacks.readTerminalTab(sessionId, {
+			tabRef: typeof rawTabRef === 'string' ? rawTabRef : undefined,
+			tail: typeof rawTail === 'number' ? Math.floor(rawTail) : undefined,
+		});
+		ctx.send(client, {
+			type: 'read_terminal_tab_result',
+			success: result.success,
+			error: result.error,
+			tabId: result.tabId,
+			tabName: result.tabName,
+			cwd: result.cwd,
+			state: result.state,
+			content: result.content,
+			totalLines: result.totalLines,
+			sessionId,
+			requestId: message.requestId,
+		});
+	} catch (error) {
+		sendErrorResult(
+			`Failed to read terminal tab: ${error instanceof Error ? error.message : String(error)}`
+		);
+	}
+}
+
+/**
  * Handle list_terminal_tabs message - enumerate open desktop terminal tabs,
  * optionally scoped to one agent.
  */
@@ -859,6 +939,85 @@ export async function handleListTerminalTabs(
 			requestId: message.requestId,
 		});
 	}
+}
+
+/**
+ * Handle open_document_graph - render the Document Graph over a named set of
+ * documents rather than the usual one-focus-file graph.
+ *
+ * Paths are resolved against the agent's cwd only so a relative path from a
+ * script still works. They are deliberately NOT confined to the worktree,
+ * matching `open_file_tab`: a paired client already has shell-level access, so
+ * confining a read-only visualization gates nothing the connection token does
+ * not already gate.
+ */
+export function handleOpenDocumentGraph(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const sessionId = message.sessionId as string;
+	const rawFiles = Array.isArray(message.files) ? (message.files as string[]) : [];
+	const rawDirectory = typeof message.directory === 'string' ? message.directory : undefined;
+	const rawFocus = typeof message.focusPath === 'string' ? message.focusPath : undefined;
+
+	const sendErrorResult = (error: string) => {
+		ctx.send(client, {
+			type: 'open_document_graph_result',
+			success: false,
+			error,
+			sessionId,
+			requestId: message.requestId,
+		});
+	};
+
+	if (!sessionId) {
+		sendErrorResult('Missing sessionId');
+		return;
+	}
+	if (rawFiles.length === 0 && rawDirectory === undefined) {
+		sendErrorResult('Give either files or a directory to graph');
+		return;
+	}
+
+	const sessions = ctx.callbacks.getSessions?.();
+	const session = sessions?.find((s) => s.id === sessionId);
+	if (!session?.cwd) {
+		sendErrorResult('Session not found or has no working directory');
+		return;
+	}
+
+	const sessionRoot = path.resolve(session.cwd);
+	const files = rawFiles
+		.filter((f) => typeof f === 'string' && f.length > 0)
+		.map((f) => path.resolve(sessionRoot, f));
+	const directory =
+		rawDirectory !== undefined ? path.resolve(sessionRoot, rawDirectory) : undefined;
+	const focusPath = rawFocus ? path.resolve(sessionRoot, rawFocus) : undefined;
+
+	logger.info(
+		`[Web] Received open_document_graph: session=${sessionId}, files=${files.length}, directory=${directory ?? 'none'}`,
+		LOG_CONTEXT
+	);
+
+	if (!ctx.callbacks.openDocumentGraph) {
+		sendErrorResult('Document graph opening not configured');
+		return;
+	}
+
+	ctx.callbacks
+		.openDocumentGraph({ sessionId, files, directory, focusPath })
+		.then((success) => {
+			ctx.send(client, {
+				type: 'open_document_graph_result',
+				success,
+				sessionId,
+				requestId: message.requestId,
+			});
+		})
+		.catch((error) => {
+			sendErrorResult(`Failed to open document graph: ${error.message}`);
+		});
 }
 
 /**

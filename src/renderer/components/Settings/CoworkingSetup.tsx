@@ -322,7 +322,7 @@ export function CoworkingSetup({ theme }: CoworkingSetupProps) {
 										>
 											{getAgentDisplayName(s.agentId as AgentId)}
 										</div>
-										<div className="text-[10px] font-mono truncate opacity-55" title={s.configPath}>
+										<div className="text-2xs font-mono truncate opacity-55" title={s.configPath}>
 											{s.configPath}
 										</div>
 									</div>

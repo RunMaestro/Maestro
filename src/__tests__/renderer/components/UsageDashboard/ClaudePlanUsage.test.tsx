@@ -9,6 +9,7 @@
  *   - refresh button calls the IPC and triggers a store refresh
  *   - Cmd+R re-samples only when the panel owns the hotkey
  *   - in-flight `refreshing` flag disables the refresh button
+ *   - the centered "last refreshed" footer reports the newest sample's age
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -721,5 +722,66 @@ describe('ClaudePlanUsage — account identity', () => {
 		expect(title).toContain('/Users/me/.claude-gmail');
 		expect(title).toContain('Logged in as p@smashlabs.com');
 		expect(title).toContain('Shares one quota with smash');
+	});
+});
+
+describe('ClaudePlanUsage - last refreshed footer', () => {
+	it('reports the age of the newest sample, not the oldest', () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date('2026-05-15T12:00:00.000Z'));
+		try {
+			seedSnapshots({
+				'/Users/me/.claude': {
+					sampledAt: '2026-05-15T06:35:00.000Z',
+					configDirKey: '/Users/me/.claude',
+					session: { percent: 50, resetsAt: '2026-05-15T05:00:00.000Z' },
+					weekAllModels: { percent: 30, resetsAt: '2026-05-22T00:00:00.000Z' },
+					weekSonnetOnly: { percent: 10, resetsAt: '2026-05-22T00:00:00.000Z' },
+				},
+				'/Users/me/.claude-gmail': {
+					sampledAt: '2026-05-15T01:00:00.000Z',
+					configDirKey: '/Users/me/.claude-gmail',
+					session: { percent: 20, resetsAt: '2026-05-15T05:00:00.000Z' },
+					weekAllModels: { percent: 10, resetsAt: '2026-05-22T00:00:00.000Z' },
+					weekSonnetOnly: { percent: 0, resetsAt: '2026-05-22T00:00:00.000Z' },
+				},
+			});
+
+			render(<ClaudePlanUsage theme={theme} />);
+			expect(screen.getByTestId('claude-plan-last-refreshed')).toHaveTextContent(
+				'Last refreshed 5 hours and 25 minutes ago'
+			);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('reads "just now" for a fresh sample', () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date('2026-05-15T12:00:00.000Z'));
+		try {
+			seedSnapshots({
+				'/Users/me/.claude': {
+					sampledAt: '2026-05-15T11:59:50.000Z',
+					configDirKey: '/Users/me/.claude',
+					session: { percent: 50, resetsAt: '2026-05-15T05:00:00.000Z' },
+					weekAllModels: { percent: 30, resetsAt: '2026-05-22T00:00:00.000Z' },
+					weekSonnetOnly: { percent: 10, resetsAt: '2026-05-22T00:00:00.000Z' },
+				},
+			});
+
+			render(<ClaudePlanUsage theme={theme} />);
+			expect(screen.getByTestId('claude-plan-last-refreshed')).toHaveTextContent(
+				'Last refreshed just now'
+			);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('renders nothing when no account has been sampled yet', () => {
+		seedSessions(['/Users/me/.claude-pending']);
+		render(<ClaudePlanUsage theme={theme} autoRefresh={false} />);
+		expect(screen.queryByTestId('claude-plan-last-refreshed')).toBeNull();
 	});
 });

@@ -12,6 +12,7 @@ import {
 	normalizeModalSize,
 	resolveModalSize,
 	sanitizeModalSizes,
+	viewportModalSize,
 } from '../../../renderer/utils/modalSizing';
 
 describe('modalSizing', () => {
@@ -167,6 +168,34 @@ describe('modalSizing', () => {
 			width: 800,
 			height: 600,
 		});
+	});
+
+	it('scales a default size to a fraction of the viewport', () => {
+		expect(viewportModalSize({ width: 0.5, height: 0.25 }, { width: 1000, height: 800 })).toEqual({
+			width: 500,
+			height: 200,
+		});
+	});
+
+	it('treats a missing or invalid viewport ratio as the full viewport', () => {
+		expect(viewportModalSize({}, { width: 1000, height: 800 })).toEqual({
+			width: 1000,
+			height: 800,
+		});
+		expect(viewportModalSize({ width: NaN, height: 0 }, { width: 1000, height: 800 })).toEqual({
+			width: 1000,
+			height: 800,
+		});
+	});
+
+	it('still caps a viewport-proportional default at the shared max ratio', () => {
+		// A 0.95 ratio asks for more than a modal may take; the clamp wins.
+		expect(
+			resolveModalSize({
+				defaultSize: viewportModalSize({ width: 0.95, height: 0.95 }, { width: 1000, height: 800 }),
+				viewport: { width: 1000, height: 800 },
+			})
+		).toEqual({ width: 900, height: 720 });
 	});
 });
 

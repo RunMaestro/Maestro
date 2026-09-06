@@ -62,6 +62,7 @@ The **File Explorer** (Right Panel → Files tab) lets you browse project files.
 
 - **Syntax highlighting** for code files
 - **Markdown rendering** with toggle between raw/preview (`Cmd+E` / `Ctrl+E`)
+- **Heading navigation** in markdown: a Table of Contents overlay (`Cmd+\` / `Ctrl+\`) and a searchable jump list (`#`) - see below
 - **Clickable task checkboxes** in rendered markdown - tick a `- [ ]` in the preview and the file is rewritten on disk
 - **Image viewing** for common image formats
 - **Audio and video playback** with a speed control that sticks (see below)
@@ -74,6 +75,36 @@ The **File Explorer** (Right Panel → Files tab) lets you browse project files.
 Several formats come with a filtering language built for that format rather than
 a plain search box. **[File Formats](./file-formats)** is the full map: what
 opens as what, and what you can type at each one.
+
+### Jumping Between Sections in Markdown
+
+A long markdown file is faster to move around by section than by scrolling.
+There are two doors onto the same list of headings, and which one you want
+depends on whether you are browsing or aiming:
+
+- **Table of Contents** (`Cmd+\` / `Ctrl+\`, or the list button in the
+  bottom-right of the preview) opens an outline of the document, indented by
+  heading level. Click any heading to jump there; the overlay stays open so you
+  can keep moving. `Top` and `Bottom` sit at either end for the whole document.
+  The section you are currently reading is highlighted, and the highlight
+  follows the document as you scroll, so an open outline always shows where you
+  are standing. Use it to see the shape of a file you do not know yet.
+- **Jump to Heading** (`#`) opens a search box over the same list. Type a few
+  characters of a section name, move with `Up`/`Down` (`PgUp`/`PgDn` to skip
+  further), and press `Enter` to land there. The matched characters are
+  highlighted as you type, and matching is fuzzy - `oec` finds
+  "**O**PSWAT **E**quity **C**ase". Use it when you already know the section you
+  want and do not want to hunt for it.
+
+Results stay in the order they appear in the document rather than being
+re-ranked by how well they matched, so the list keeps reading as a map of the
+file no matter what you type.
+
+`#` is a bare keypress, so it works while you are reading and stays out of your
+way while you are typing: it does nothing in the find bar, in the markdown
+editor, or on a file with no headings. The same command is in the command
+palette (`Cmd+K` / `Ctrl+K`) as **Jump to Heading**, which appears only while a
+markdown file is open in preview.
 
 ### CSV and TSV Tables
 
@@ -129,7 +160,7 @@ widget that stays on top of whatever you are doing:
   file's tab, which re-docks the player into it.
 - **Close** it to get it out of the way. This hides the controls only - the audio
   keeps playing. Bring it back by opening a media file again, or with
-  **Show Floating Media Player** in the command palette (`Cmd+K` / `Ctrl+K`).
+  **Open Media Player** in the command palette (`Cmd+K` / `Ctrl+K`).
 
 Audio-only files get just the controls, since there is no picture to show.
 
@@ -297,7 +328,7 @@ The `!` is a gesture, not part of the command - it disappears the moment it swit
 $ git status
 ```
 
-You will know you are in command mode: a `$` appears at the left of the input, and a **COMMAND MODE** strip above it names the directory the command will run in.
+You will know you are in command mode: a `$` appears at the left of the input, the text switches to the fixed-width font your terminals use, and a **COMMAND MODE** strip above it names the directory the command will run in. The font follows the command all the way through - what you type, what the AI proposes, and the output on the card are all set the way a terminal sets them, so paths and columns line up.
 
 **Getting back to the agent:** press `Esc` on an empty command line (or `Backspace`, same thing). The composer keeps focus, so you can carry straight on typing your message. Command mode sticks around between commands, so you can run several in a row without retyping `!`, and you leave deliberately when you are done.
 
@@ -309,6 +340,7 @@ You will know you are in command mode: a `$` appears at the left of the input, a
 - **It runs immediately, even while the agent is working.** Command mode does not queue and does not interrupt the turn in progress, so you can check `git log` while the agent is mid-edit.
 - **It runs in the agent's working directory** (on the agent's SSH remote, if it has one). Each command is independent - there is no persistent shell, so `cd src` on its own does nothing. Chain instead: `cd src && ls`.
 - **Every command gets its own card**, never merged into the surrounding conversation. The card shows the command, where it ran, and a live spinner while it works; when it finishes, the exit code and how long it took.
+- **The transcript jumps to the card**, even if you had scrolled up to read history. You pressed Enter to see this output, so it is not left offscreen behind the unread badge. Scroll up while it is still running and it stops following, the same as anywhere else.
 - **A finished card can be deleted.** Its header has a trash icon with the same inline **Delete?** confirmation your own messages use. Only the card goes; the agent never saw the command, so there is nothing on its side to remove. The icon is hidden while the command is still running - press **Stop** first, otherwise the output would keep streaming into a card that no longer exists.
 - **Colour is preserved.** Output keeps the colours the command produced (`git status`, `eza`, `rg`), rendered properly rather than shown as raw escape codes. The copy button gives you clean, uncoloured text.
 - **The draft survives a tab switch**, mode and all. Leave a half-typed command, go read another tab, come back, and it is still a command.
@@ -350,7 +382,7 @@ Command mode is AI-chat only. In a terminal tab or the legacy terminal mode you 
 
 ### AI Command Mode
 
-Press `!` a second time, on an empty command line, and the composer climbs one more rung. The strip above it now reads **AI Command**, and what you type is no longer a command - it is a plain-English description of what you want done:
+Press `!` a second time, on an empty command line, and the composer climbs one more rung. The strip above it now reads **AI Command**, the `$` and the fixed-width font go away (you are writing a sentence again, not a command line), and what you type is a plain-English description of what you want done:
 
 ```
 delete every node_modules folder under this project
@@ -429,6 +461,8 @@ A queued item carries a **Force Send** button that dispatches that message immed
 
 Press `Cmd+Shift+X` / `Ctrl+Shift+X` (or click the queue indicator) to open the **Execution Queue** - a single view of everything queued across all of your agents. It offers the same per-item controls (edit, copy, hold/resume, reorder, remove) plus a jump-to-agent shortcut, so you can manage a busy fleet from one place. Items are processed sequentially per agent to keep concurrent file edits from colliding.
 
+The view is fully keyboard-driven. `Up` / `Down` move a highlight through the queued messages, walking across agent boundaries in the All Agents view, and `Enter` opens an action menu for the highlighted message with everything that card offers - Send Now, Edit, Delete, Hold/Resume, Copy. `Up` / `Down` pick an action in that menu, `Enter` runs it, and `Esc` closes it. Clicking a card also moves the highlight to it. The menu only lists actions the message actually supports, so a queued slash command has no Edit entry.
+
 Every card here also carries a **Send Now** button, which runs that one item immediately instead of waiting for its turn. Use it to jump an item ahead of the rest of the queue or to release a held message on the spot. The button dims with an explanation when the item cannot run yet because another tab in that agent is working and Forced Parallel Execution is off - a state you can fix from Settings. It is hidden entirely when there is nothing to force: the item's own tab is already mid-turn, so the item is next in line anyway, or the tab it was queued for is gone. When another tab is working, Send Now confirms first and lists which tabs are busy.
 
 ## Input Toggles
@@ -492,17 +526,17 @@ Images can be attached via drag-and-drop, paste, or the attachment button. The c
 
 ## Staged Images
 
-Attached images wait in a thumbnail strip directly above the input box until you send. Their **order in that strip is the order the agent receives them**, so the first thumbnail is Screenshot 1, the second is Screenshot 2, and so on. That is what lets you write "compare Screenshot 1 and Screenshot 3" and have the agent look at the right pictures.
+Attached images wait in a thumbnail strip directly above the input box until you send. Their **order in that strip is the order the agent receives them**, so the first thumbnail is Screenshot 1, the second is Screenshot 2, and so on. That is what lets you write "compare Screenshot 1 and Screenshot 3" and have the agent look at the right pictures. With more than one image staged, each thumbnail carries its number so you can read it off the strip instead of counting. A single image needs no label and does not get one.
 
 ### Reordering
 
-Drag a thumbnail sideways to move it. While a drag is in flight, every thumbnail shows the slot number it currently occupies, so with six or seven screenshots staged you can aim at a number instead of counting positions.
+Drag a thumbnail sideways to move it. The slot numbers follow the drag, so with six or seven screenshots staged you can aim at a number instead of counting positions. A lone thumbnail picks up a number for the length of the drag too.
 
 ### The Staged Images organizer
 
-With two or more images staged, an expand button (⤢) appears to the left of the strip. It opens the **Staged Images** organizer: the same set of images at a size you can actually tell apart, always numbered, with the same drag-to-reorder.
+With two or more images staged, an expand button (⤢) appears to the left of the strip, or press `Cmd+Shift+Y` / `Ctrl+Shift+Y`. Either opens the **Staged Images** organizer: the same set of images at a size you can actually tell apart, always numbered, with the same drag-to-reorder.
 
-- **Zoom** with the magnifier buttons in the header to grow or shrink the thumbnails. The size you pick is remembered across sessions; click the percentage to snap back to 100%.
+- **Zoom** with the magnifier buttons in the header, or with the bare `+` and `-` keys (`=` and `_` work too, so you never have to think about Shift). `0` snaps back to 100%, as does clicking the percentage. The size you pick is remembered across sessions.
 - **Annotate** or **remove** any image from its thumbnail, exactly as in the strip.
 - **Esc** or the ESC pill closes it.
 
@@ -917,9 +951,19 @@ See [Pane Shortcuts](./keyboard-shortcuts#pane-shortcuts-tiled-tabs) for moving 
 
 ### Snoozing Tabs
 
-Snooze hides an AI tab until a moment you choose, then brings it back with a notification you have to dismiss. It's the email-snooze idea applied to conversations: park work you can't act on yet without closing it or letting it clutter the tab bar.
+Snooze hides a tab until a moment you choose, then brings it back with a notification you have to dismiss. It's the email-snooze idea applied to your workspace: park work you can't act on yet without closing it or letting it clutter the tab bar.
 
-Hover a tab and choose **Snooze Tab**, press `Opt+Cmd+S` / `Alt+Ctrl+S`, or run **Snooze Tab** from Quick Actions (`Cmd+K` / `Ctrl+K`). Snoozing is available on AI tabs only.
+Hover a tab and choose **Snooze Tab**, press `Opt+Cmd+S` / `Alt+Ctrl+S`, or run **Snooze Tab** from Quick Actions (`Cmd+K` / `Ctrl+K`). The shortcut and Quick Actions act on the active AI tab; the hover menu works on every kind of tab, and a tiled group's chip menu offers **Snooze group** to park the whole layout at once.
+
+What comes back differs by what you parked, and the difference is the point:
+
+| What you snooze | What comes back                                                                                                   |
+| --------------- | ----------------------------------------------------------------------------------------------------------------- |
+| **AI tab**      | The conversation verbatim, transcript and provider session intact                                                 |
+| **File tab**    | The file reopened at its path. If the file has since been deleted or moved, you're told instead                   |
+| **Browser tab** | The page reloaded at its URL                                                                                      |
+| **Terminal**    | The tab and its position, at the same working directory. A shell can't be parked, so it comes back as a fresh one |
+| **Tiled group** | The whole layout - split direction, sizes, focused pane - with every pane that still exists                       |
 
 **Choosing when it comes back**
 
@@ -942,9 +986,23 @@ The snooze dialog gives you three ways to pick a time, and always previews the e
 
 - **Calendar** - pick a date from the month grid and set a time of day.
 
+![Snooze Tab dialog](./screenshots/snooze-tab.png)
+
 **Note to self**
 
 Every snooze takes an optional note, and that note becomes the body of the notification when the tab returns. This is what turns snooze into a reminder system: leave yourself the reason you're coming back ("check if the migration finished", "review this before standup") instead of rediscovering it later.
+
+**Prompt on return**
+
+Only a conversation can be given work to do, so this box appears when you snooze an **AI tab**, or a **tiled group** that holds at least one AI pane. It is hidden for a file, browser, or terminal tab, which have no agent to send it to.
+
+The second optional box is addressed to the agent rather than to you. Whatever you type there is sent as a message the instant the tab comes back, so the work is already underway by the time you read the notification: "re-run the failing tests", "check whether the PR merged and summarize what changed", "pick up the refactor from where we stopped".
+
+The note and the prompt are independent. Use either, both, or neither.
+
+<Note>
+The prompt joins the agent's [execution queue](#execution-queue-view) rather than interrupting whatever it is doing. On an idle agent it runs immediately; on a busy one it waits its turn. It also runs if you **Unsnooze** early, because it is written against the tab coming back rather than against the clock.
+</Note>
 
 **What happens while a tab is snoozed**
 
@@ -962,11 +1020,11 @@ Wakes are delivered by the running app. If Maestro is closed when a snooze comes
 
 **Managing snoozed tabs**
 
-Open the list from the search icon in the tab bar → **See All Snoozed Tabs**, or run **See All Snoozed Tabs** from Quick Actions. It shows every snoozed tab across all agents, soonest first, with its note and a countdown. Each row offers:
+Open the list from the search icon in the tab bar → **See All Snoozed Tabs**, or run **See All Snoozed Tabs** from Quick Actions. It shows every snoozed tab across all agents, soonest first, with its note, its prompt on return, and a countdown. Each row offers:
 
-- **Unsnooze** - bring the tab back right now
-- **Reschedule** - pick a new time or edit the note
-- **Dismiss** - drop the snooze and the tab, for when you no longer care
+- **Unsnooze** - bring the tab back right now, which also runs its prompt on return if it has one
+- **Reschedule** - pick a new time, or edit the note and the prompt (clearing a box removes it)
+- **Dismiss** - drop the snooze and the tab, for when you no longer care. Nothing is restored, so a prompt on return never runs.
 
 **Snooze history**
 

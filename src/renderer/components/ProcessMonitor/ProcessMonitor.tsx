@@ -194,7 +194,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 							<div className="flex items-center gap-1">
 								<button
 									onClick={() => data.refresh()}
-									className="p-1.5 rounded hover:bg-opacity-10 flex items-center gap-1"
+									className="p-1.5 rounded row-hover flex items-center gap-1"
 									style={{ color: theme.colors.textDim }}
 									onMouseEnter={(e) =>
 										(e.currentTarget.style.backgroundColor = `${theme.colors.accent}20`)
@@ -206,7 +206,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 								</button>
 								<button
 									onClick={expansion.expandStep}
-									className="p-1.5 rounded hover:bg-opacity-10"
+									className="p-1.5 rounded row-hover"
 									style={{ color: theme.colors.textDim }}
 									onMouseEnter={(e) =>
 										(e.currentTarget.style.backgroundColor = `${theme.colors.accent}20`)
@@ -221,7 +221,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 								</button>
 								<button
 									onClick={expansion.collapseStep}
-									className="p-1.5 rounded hover:bg-opacity-10"
+									className="p-1.5 rounded row-hover"
 									style={{ color: theme.colors.textDim }}
 									onMouseEnter={(e) =>
 										(e.currentTarget.style.backgroundColor = `${theme.colors.accent}20`)
@@ -236,7 +236,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 								</button>
 								<button
 									onClick={onClose}
-									className="p-1.5 rounded hover:bg-opacity-10"
+									className="p-1.5 rounded row-hover"
 									style={{ color: theme.colors.textDim }}
 									onMouseEnter={(e) =>
 										(e.currentTarget.style.backgroundColor = `${theme.colors.accent}20`)

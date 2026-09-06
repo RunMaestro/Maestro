@@ -6,6 +6,7 @@ import { useSettingsStore } from '../stores/settingsStore';
 import { openUrl } from '../utils/openUrl';
 import { formatDurationParts as formatDuration, formatTimestamp } from '../../shared/formatters';
 import { getToastWidthDimensions } from '../../shared/toastWidth';
+import { withMonoFallback } from '../../shared/fontStack';
 import { Z_LAYERS } from '../constants/zLayers';
 import { CopyIconButton } from './ui';
 
@@ -405,12 +406,19 @@ export const ToastContainer = memo(function ToastContainer({
 	const rightPanelWidth = useSettingsStore((s) => s.rightPanelWidth);
 	const widthDimensions = getToastWidthDimensions(toastWidth, rightPanelWidth);
 
+	// Toasts portal to document.body, which puts them OUTSIDE the app shell -
+	// the element that carries the interface font. Without restating it here
+	// they inherit the body's default face, so a user who switched the UI font
+	// kept getting toasts in the old one. Same monospace safety net the shell
+	// applies, so a bare picker name can't fall through to serif.
+	const fontFamily = useSettingsStore((s) => withMonoFallback(s.fontFamily));
+
 	if (toasts.length === 0) return null;
 
 	return createPortal(
 		<div
 			className="fixed bottom-0 right-4 flex flex-col-reverse"
-			style={{ pointerEvents: 'none', zIndex: Z_LAYERS.TOAST }}
+			style={{ pointerEvents: 'none', zIndex: Z_LAYERS.TOAST, fontFamily }}
 		>
 			<div style={{ pointerEvents: 'auto' }}>
 				{toasts.map((toast) => (

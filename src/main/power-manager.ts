@@ -17,6 +17,40 @@ import { captureException } from './utils/sentry';
 const CONTEXT = 'PowerManager';
 
 /**
+ * The kind of sleep a caller needs to prevent.
+ *
+ * Per Electron's documentation:
+ * - `prevent-app-suspension` - "Prevent the application from being suspended.
+ *   Keeps system active but allows screen to be turned off."
+ * - `prevent-display-sleep` - "Prevent the display from going to sleep."
+ *
+ * Nearly every caller wants the former. Background work needs the machine awake;
+ * it does not need the panel lit. Ask for `prevent-display-sleep` only when a
+ * human is meant to be looking at the screen.
+ *
+ * Why this distinction is load-bearing on macOS: a held display-sleep assertion
+ * is how the OS decides a user is present. The Duet Activity Scheduler (dasd)
+ * gates the whole discretionary maintenance tier on that signal, so an app that
+ * holds one indefinitely stops Spotlight indexing, Photos analysis, XProtect
+ * scans, database cleanups and software updates for as long as it runs. An
+ * app-suspension blocker keeps timers firing without making that claim.
+ */
+export type PowerBlockerType = 'prevent-app-suspension' | 'prevent-display-sleep';
+
+/**
+ * Electron resolves competing blockers by precedence, not by recency:
+ * "prevent-display-sleep has higher precedence over prevent-app-suspension.
+ * Only the highest precedence type takes effect."
+ *
+ * A single process therefore gets one effective blocker, so we track a type per
+ * reason and hold a blocker at the strongest type currently requested.
+ */
+const BLOCKER_PRECEDENCE: Record<PowerBlockerType, number> = {
+	'prevent-app-suspension': 0,
+	'prevent-display-sleep': 1,
+};
+
+/**
  * Status information returned by getStatus()
  */
 export interface PowerStatus {
@@ -26,6 +60,10 @@ export interface PowerStatus {
 	blocking: boolean;
 	/** List of active reasons for blocking (e.g., "session:abc123", "autorun:batch1") */
 	reasons: string[];
+	/** The blocker type currently in effect, or null when not blocking */
+	blockerType: PowerBlockerType | null;
+	/** Whether the user opted every blocker up to `prevent-display-sleep` */
+	keepDisplayAwake: boolean;
 	/** Current platform */
 	platform: 'darwin' | 'win32' | 'linux';
 }
@@ -40,18 +78,32 @@ export interface PowerStatus {
  * Reasons follow a naming convention:
  * - "session:{sessionId}" - AI session is busy
  * - "autorun:{identifier}" - Auto Run is active
- * - "cue:schedule:{sessionId}" - Cue session has active heartbeat/scheduled subscriptions
  * - "cue:run:{runId}" - Cue run is executing
+ * - "groupchat:{groupChatId}" - Group chat round is in flight
+ *
+ * All of the above are background work and default to `prevent-app-suspension`.
+ * Pass `prevent-display-sleep` explicitly, and only when the display itself is
+ * the point.
  */
 class PowerManager {
 	/** ID of the active powerSaveBlocker, or null if not blocking */
 	private blockerId: number | null = null;
 
-	/** Set of active reasons for blocking sleep */
-	private activeReasons: Set<string> = new Set();
+	/** Active reasons for blocking sleep, each with the type it asked for */
+	private activeReasons: Map<string, PowerBlockerType> = new Map();
+
+	/** The type the active blocker was started with, or null when not blocking */
+	private activeType: PowerBlockerType | null = null;
 
 	/** User preference - whether sleep prevention feature is enabled */
 	private enabled: boolean = false;
+
+	/**
+	 * User preference - lift every reason to `prevent-display-sleep` instead of
+	 * the `prevent-app-suspension` default. Off by default: it is the setting
+	 * that stops the screen saver, the screen lock, and macOS maintenance.
+	 */
+	private keepDisplayAwake: boolean = false;
 
 	constructor() {
 		// Log platform support information on init
@@ -77,13 +129,7 @@ class PowerManager {
 		logger.info(`Sleep prevention ${enabled ? 'enabled' : 'disabled'}`, CONTEXT);
 
 		if (wasEnabled !== enabled) {
-			if (enabled && this.activeReasons.size > 0) {
-				// Re-enable: start blocking if we have active reasons
-				this.startBlocking();
-			} else if (!enabled && this.blockerId !== null) {
-				// Disable: stop any active blocking
-				this.stopBlocking();
-			}
+			this.syncBlocker();
 		}
 	}
 
@@ -95,24 +141,52 @@ class PowerManager {
 	}
 
 	/**
+	 * Opt every block reason up to `prevent-display-sleep`, so the screen stays
+	 * lit (and on macOS the screen saver, the screen lock, and idle logout never
+	 * arrive) for as long as work is in flight.
+	 *
+	 * This is a deliberate override of the per-reason type. Background work asks
+	 * for `prevent-app-suspension` because it does not need the panel lit, and
+	 * that is the right default; a user who wants to watch an agent run says so
+	 * here once rather than at every call site.
+	 */
+	setKeepDisplayAwake(keepAwake: boolean): void {
+		if (this.keepDisplayAwake === keepAwake) return;
+		this.keepDisplayAwake = keepAwake;
+
+		logger.info(`Keep display awake ${keepAwake ? 'enabled' : 'disabled'}`, CONTEXT);
+
+		this.syncBlocker();
+	}
+
+	/**
+	 * Check whether block reasons are lifted to `prevent-display-sleep`.
+	 */
+	isKeepingDisplayAwake(): boolean {
+		return this.keepDisplayAwake;
+	}
+
+	/**
 	 * Add a reason to prevent sleep.
-	 * If this is the first reason and feature is enabled, starts blocking.
 	 *
 	 * @param reason - Identifier for why we're blocking (e.g., "session:abc123")
+	 * @param type - What to prevent. Defaults to `prevent-app-suspension`, which
+	 *   keeps the system awake while still letting the display sleep. Only pass
+	 *   `prevent-display-sleep` when a human is meant to be watching the screen.
 	 */
-	addBlockReason(reason: string): void {
-		if (this.activeReasons.has(reason)) {
-			logger.debug(`Block reason already active: ${reason}`, CONTEXT);
+	addBlockReason(reason: string, type: PowerBlockerType = 'prevent-app-suspension'): void {
+		if (this.activeReasons.get(reason) === type) {
+			logger.debug(`Block reason already active: ${reason} (${type})`, CONTEXT);
 			return;
 		}
 
-		this.activeReasons.add(reason);
-		logger.debug(`Added block reason: ${reason} (total: ${this.activeReasons.size})`, CONTEXT);
+		this.activeReasons.set(reason, type);
+		logger.debug(
+			`Added block reason: ${reason} (${type}, total: ${this.activeReasons.size})`,
+			CONTEXT
+		);
 
-		// Start blocking if this is the first reason and feature is enabled
-		if (this.activeReasons.size === 1 && this.enabled && this.blockerId === null) {
-			this.startBlocking();
-		}
+		this.syncBlocker();
 	}
 
 	/**
@@ -133,10 +207,7 @@ class PowerManager {
 			CONTEXT
 		);
 
-		// Stop blocking if no more reasons
-		if (this.activeReasons.size === 0 && this.blockerId !== null) {
-			this.stopBlocking();
-		}
+		this.syncBlocker();
 	}
 
 	/**
@@ -148,9 +219,7 @@ class PowerManager {
 		this.activeReasons.clear();
 		logger.info(`Cleared all ${count} block reasons`, CONTEXT);
 
-		if (this.blockerId !== null) {
-			this.stopBlocking();
-		}
+		this.syncBlocker();
 	}
 
 	/**
@@ -160,33 +229,75 @@ class PowerManager {
 		return {
 			enabled: this.enabled,
 			blocking: this.blockerId !== null,
-			reasons: Array.from(this.activeReasons),
+			reasons: Array.from(this.activeReasons.keys()),
+			blockerType: this.activeType,
+			keepDisplayAwake: this.keepDisplayAwake,
 			platform: process.platform as 'darwin' | 'win32' | 'linux',
 		};
 	}
 
 	/**
-	 * Start the power save blocker.
-	 * Uses 'prevent-display-sleep' which also prevents system sleep.
+	 * The strongest blocker type any active reason is asking for, or null when
+	 * there are no reasons. Electron only honours the highest-precedence type, so
+	 * this is the one type the process can actually hold.
+	 *
+	 * `keepDisplayAwake` raises the floor rather than adding a reason of its own,
+	 * so it can never hold a blocker on an idle app: with nothing to block for,
+	 * the answer stays null and the machine sleeps normally.
 	 */
-	private startBlocking(): void {
+	private requiredType(): PowerBlockerType | null {
+		let required: PowerBlockerType | null = null;
+		for (const type of this.activeReasons.values()) {
+			if (required === null || BLOCKER_PRECEDENCE[type] > BLOCKER_PRECEDENCE[required]) {
+				required = type;
+			}
+		}
+		if (required !== null && this.keepDisplayAwake) return 'prevent-display-sleep';
+		return required;
+	}
+
+	/**
+	 * Reconcile the live blocker with what the current reasons require.
+	 *
+	 * Single entry point for every state change, so adding a reason, removing one,
+	 * or toggling the feature all converge on the same logic. A change of required
+	 * type restarts the blocker, because Electron blockers are immutable once
+	 * started.
+	 */
+	private syncBlocker(): void {
+		const required = this.enabled ? this.requiredType() : null;
+
+		if (required === this.activeType) return;
+
+		if (this.blockerId !== null) {
+			this.stopBlocking();
+		}
+		if (required !== null) {
+			this.startBlocking(required);
+		}
+	}
+
+	/**
+	 * Start the power save blocker at the given type.
+	 */
+	private startBlocking(type: PowerBlockerType): void {
 		if (this.blockerId !== null) {
 			logger.debug('Already blocking, skipping start', CONTEXT);
 			return;
 		}
 
 		try {
-			// 'prevent-display-sleep' prevents both display and system sleep
-			// This is the more aggressive option, appropriate for long-running AI tasks
-			this.blockerId = powerSaveBlocker.start('prevent-display-sleep');
-			logger.info(`Started power save blocker (id: ${this.blockerId})`, CONTEXT, {
-				reasons: Array.from(this.activeReasons),
+			this.blockerId = powerSaveBlocker.start(type);
+			this.activeType = type;
+			logger.info(`Started power save blocker (id: ${this.blockerId}, type: ${type})`, CONTEXT, {
+				reasons: Array.from(this.activeReasons.keys()),
 				platform: process.platform,
 			});
 		} catch (error) {
 			void captureException(error);
 			logger.error('Failed to start power save blocker', CONTEXT, error);
 			this.blockerId = null;
+			this.activeType = null;
 		}
 	}
 
@@ -212,6 +323,7 @@ class PowerManager {
 			logger.error('Error stopping power save blocker', CONTEXT, error);
 		} finally {
 			this.blockerId = null;
+			this.activeType = null;
 		}
 	}
 }

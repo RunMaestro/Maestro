@@ -5,10 +5,10 @@ import { THEMES } from '../../../../shared/themes';
 import type { Session } from '../../../../renderer/types';
 import {
 	DashboardSection,
-	UsageDashboardFooter,
 	UsageDashboardHeader,
 	UsageDashboardTabs,
 } from '../../../../renderer/components/UsageDashboard/UsageDashboardModal/components';
+import { UsageDashboardFooter } from '../../../../renderer/components/UsageDashboard/UsageDashboardFooter';
 import {
 	ActivityView,
 	AgentOverviewView,
@@ -92,11 +92,23 @@ vi.mock('../../../../renderer/components/UsageDashboard/LongestAutoRunsTable', (
 vi.mock('../../../../renderer/components/UsageDashboard/KeyboardStats', () => ({
 	KeyboardStats: () => <div>KeyboardStats mock</div>,
 }));
+// Record the props the quota panels are rendered WITH. `refreshHotkey` is what
+// makes Cmd+R refresh the visible panel, and it is opt-in - a prop-less mock
+// cannot tell a wired call site from an unwired one, which is exactly how the
+// prop went missing from this view while the panels themselves supported it.
+const claudePlanUsageProps = vi.fn();
+const codexPlanUsageProps = vi.fn();
 vi.mock('../../../../renderer/components/UsageDashboard/ClaudePlanUsage', () => ({
-	ClaudePlanUsage: () => <div>ClaudePlanUsage mock</div>,
+	ClaudePlanUsage: (props: Record<string, unknown>) => {
+		claudePlanUsageProps(props);
+		return <div>ClaudePlanUsage mock</div>;
+	},
 }));
 vi.mock('../../../../renderer/components/UsageDashboard/CodexPlanUsage', () => ({
-	CodexPlanUsage: () => <div>CodexPlanUsage mock</div>,
+	CodexPlanUsage: (props: Record<string, unknown>) => {
+		codexPlanUsageProps(props);
+		return <div>CodexPlanUsage mock</div>;
+	},
 }));
 
 const theme = THEMES.dracula;
@@ -244,14 +256,26 @@ describe('UsageDashboardModal shell components', () => {
 
 	it('renders footer range text and exact database size formatting', () => {
 		render(
-			<UsageDashboardFooter theme={theme} data={data} timeRange="month" databaseSize={2048} />
+			<UsageDashboardFooter
+				theme={theme}
+				viewMode="overview"
+				rangeLabel="Showing this month data"
+				fallbackSummary={null}
+				databaseSizeLabel="2.0 KB"
+			/>
 		);
 		expect(screen.getByText('Showing this month data')).toBeInTheDocument();
 		expect(screen.getByTestId('database-size-indicator')).toHaveTextContent('2.0 KB');
 		expect(screen.getByText('Press Esc to close')).toBeInTheDocument();
 
 		render(
-			<UsageDashboardFooter theme={theme} data={null} timeRange="month" databaseSize={null} />
+			<UsageDashboardFooter
+				theme={theme}
+				viewMode="overview"
+				rangeLabel="No data for selected time range"
+				fallbackSummary={null}
+				databaseSizeLabel={null}
+			/>
 		);
 		expect(screen.getByText('No data for selected time range')).toBeInTheDocument();
 		expect(emptyCell).toBe(String.fromCharCode(8212));
@@ -371,5 +395,22 @@ describe('UsageDashboardModal view modules', () => {
 
 		rerender(<ProviderQuotaUsageView provider="codex" theme={theme} {...navigation} />);
 		expect(screen.getByText('CodexPlanUsage mock')).toBeInTheDocument();
+	});
+
+	it('hands the Cmd+R claim to whichever quota panel it renders', () => {
+		claudePlanUsageProps.mockClear();
+		codexPlanUsageProps.mockClear();
+
+		const { rerender } = render(
+			<ProviderQuotaUsageView provider="anthropic" theme={theme} {...navigation} />
+		);
+		expect(claudePlanUsageProps).toHaveBeenCalledWith(
+			expect.objectContaining({ refreshHotkey: true })
+		);
+
+		rerender(<ProviderQuotaUsageView provider="codex" theme={theme} {...navigation} />);
+		expect(codexPlanUsageProps).toHaveBeenCalledWith(
+			expect.objectContaining({ refreshHotkey: true })
+		);
 	});
 });

@@ -2,6 +2,7 @@
 
 import { readSshRemotes, readSettingValue } from '../services/storage';
 import { formatSshRemotes } from '../output/formatter';
+import { resolveSshOptions } from '../../shared/sshOptions';
 
 interface ListSshRemotesOptions {
 	json?: boolean;
@@ -22,6 +23,11 @@ export function listSshRemotes(options: ListSshRemotesOptions): void {
 					username: remote.username,
 					enabled: remote.enabled,
 					useSshConfig: remote.useSshConfig || false,
+					sshOptions: remote.sshOptions ?? {},
+					// The full option set ssh will receive, defaults included. An agent
+					// debugging a connection needs what is actually passed, not just the
+					// overrides layered on top of it.
+					resolvedSshOptions: resolveSshOptions(remote.sshOptions),
 					isDefault: remote.id === defaultId,
 				})
 			);

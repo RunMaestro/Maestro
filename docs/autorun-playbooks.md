@@ -203,18 +203,35 @@ The runner will:
 
 ## Thought Stream
 
-While a run is active, you can watch the agent's live reasoning without changing any settings. In the **Auto Run** card, click **View Thoughts** (the brain icon) to open the **Thought Stream** - a floating, searchable panel that streams the agent's thinking as it works.
+While a run is active, you can watch what the agent is doing without changing any settings. In the **Auto Run** card, click **View Thoughts** (the brain icon) to open the **Thought Stream** - a floating, searchable panel that streams the agent's reasoning _and_ its tool calls as it works.
 
-Thoughts are buffered from the moment the agent starts thinking, whether or not the panel is open. That is deliberate: you usually go looking at the thought stream _because_ a run has been sitting still for a while, and a stream that only started recording when you opened it would hand you an empty log at exactly the wrong moment. Open it after twenty quiet minutes and you get those twenty minutes.
+Every tool call is reduced to one short line in plain language, interleaved with the reasoning that produced it:
 
-It works the same for **Spec-Driven** and **Goal-Driven** runs, because both flow through the same agent. The panel captures the raw reasoning stream directly, so it shows thoughts even when an AI tab's "show thinking" display is turned off.
+```text
+3:42:07 PM  ⟳ Ran npm test
+3:42:04 PM  ✓ Read src/renderer/components/ThoughtStreamPanel.tsx
+3:42:01 PM  ✓ Searched for THOUGHT_BLOCK_GAP_MS
+3:41:58 PM  ! Edited src/renderer/constants/themes.ts
+```
+
+A spinner marks a call still in flight; a check or a warning marks how it ended. A shell command that exits non-zero gets the warning even when the provider calls it "completed". The full inputs and outputs stay in the chat transcript - this feed is built to be _scanned_, so that an agent stuck in a loop or grinding on an unproductive task is obvious at a glance and you can stop it before it burns more tokens.
+
+Tool names are normalized across providers (Claude Code, Codex, OpenCode, Copilot, and MCP servers), so the lines read the same no matter which agent is running.
+
+The **wrench** button in the panel header turns the tool-call lines off and on, and the panel remembers your choice. It is a display filter, not a capture switch: actions keep buffering while they are hidden, the header keeps counting them (`14 actions hidden`), and turning them back on shows everything that happened in the meantime. Turn them off when you only want to follow the agent's reasoning; leave them on when you are watching for a loop.
+
+Thoughts and tool calls are buffered from the moment the agent starts working, whether or not the panel is open. That is deliberate: you usually go looking at the thought stream _because_ a run has been sitting still for a while, and a stream that only started recording when you opened it would hand you an empty log at exactly the wrong moment. Open it after twenty quiet minutes and you get those twenty minutes.
+
+It works the same for **Spec-Driven** and **Goal-Driven** runs, because both flow through the same agent. The panel captures the raw streams directly, so it shows thinking and tool calls even when an AI tab's "show thinking" and tool-call display are turned off. For an Auto Run this is the only place the tool calls appear at all: a run has no chat tab of its own for a transcript to live in.
 
 - **Newest on top** - the live thought sits at the top and grows; scroll down to read the history of the run.
 - **Timestamped blocks** - a continuous burst of thinking is grouped into one block with a time stamp; a pause (or a switch between parallel tabs) starts a new block.
 - **Formatted** - thoughts render as formatted markdown (headings, lists, bold, inline code, code fences), so structured reasoning stays readable.
-- **Search** - filter the captured thoughts with the search box; matches are highlighted.
+- **In order** - a tool call renders between the reasoning that led to it and the reasoning that followed, so the feed reads as the sequence the agent actually performed.
+- **Search** - filter the feed with the search box; matches are highlighted. Searching a tool name ("Bash") finds calls the feed renders under a plain-language verb ("Ran ...").
+- **Counts** - the header tracks thoughts and actions separately. A climbing action count against flat reasoning is what a loop looks like.
 
-The button highlights once there are buffered thoughts waiting to be read, and its tooltip gives the count.
+The button highlights once there is anything buffered to read, and its tooltip gives the count.
 
 **Open, close, clear:**
 
@@ -226,7 +243,7 @@ There is no minimize. It used to mean "hide the panel but keep capturing," which
 
 Once a run finishes, the Right Panel's run card goes away and takes its **View Thoughts** button with it. The buffer outlives the run, so a **Thoughts** button appears at the bottom of the Auto Run panel for as long as there is something buffered to read.
 
-Capture is in-memory only - it does not survive an app restart, and it is bounded on three axes so a fleet of agents running all day can't grow memory without limit: thoughts per agent, characters per agent, and how many agents keep a buffer at all (the least recently active is dropped first, and the agent you have open is never dropped). Trimming within an agent is noted as "trimmed" in the panel header. Running several Auto Runs at once? Each agent buffers independently; opening the panel for one agent never mixes in another's thoughts.
+Capture is in-memory only - it does not survive an app restart, and it is bounded on three axes so a fleet of agents running all day can't grow memory without limit: timeline entries per agent, characters per agent, and how many agents keep a buffer at all (the least recently active is dropped first, and the agent you have open is never dropped). Trimming within an agent is noted as "trimmed" in the panel header. Running several Auto Runs at once? Each agent buffers independently; opening the panel for one agent never mixes in another's thoughts.
 
 ## Session Isolation
 

@@ -1,10 +1,11 @@
-import { useEffect, useRef, type RefObject } from 'react';
+import { useEffect, useMemo, useRef, type RefObject } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { useHorizontalScroll } from '../../../../../hooks/ui';
+import { useElementWidth, useHorizontalScroll } from '../../../../../hooks/ui';
 import { ProviderAvailabilityBar } from '../../../../ui/ProviderAvailabilityBar';
 import type { AgentConfig, Theme } from '../../../../../types';
 import type { AgentTile } from '../types';
 import { isAgentAvailable } from '../utils/agentAvailability';
+import { resolveAgentGridLayout } from '../utils/agentGridLayout';
 import { AgentTileButton } from './AgentTileButton';
 
 /**
@@ -32,18 +33,25 @@ interface AgentGridProps {
 	onTileClick: (tile: AgentTile, index: number) => void;
 	onOpenConfig: (agentId: string) => void;
 	onShowAllProvidersChange: (showAll: boolean) => void;
+	/**
+	 * Reports how many tiles ended up in a row, so the screen's arrow-key handler
+	 * moves by the layout that was actually drawn rather than by an assumed one.
+	 */
+	onColumnsChange?: (columns: number) => void;
 	setFocusedTileIndex: (index: number) => void;
 	setIsNameFieldFocused: (focused: boolean) => void;
 }
 
 /**
- * The provider strip: one horizontally scrolling row of tiles.
+ * The provider tiles, in whichever of the two shapes the count calls for.
  *
- * A wrapping grid stopped working once the provider count passed eight - a
- * third row pushed the Continue button below the fold. A single row keeps the
- * screen's shape fixed no matter how many providers ship, at the cost of
- * needing to say out loud that there is more past the right edge, which is what
- * the edge fades, the arrow buttons, and the provider count are for.
+ * Every supported provider no longer fits above the Continue button, so the
+ * full list is a single horizontally scrolling row - which needs to say out
+ * loud that there is more past the right edge, hence the edge fades, the arrow
+ * buttons, and the provider count. A list short enough for two rows (the usual
+ * case once the user filters to what is installed) drops the strip and draws a
+ * centered wrapping block instead: a few tiles pinned to the left edge of a
+ * wide scrolling row reads as a layout that forgot to reflow.
  */
 export function AgentGrid({
 	theme,
@@ -60,14 +68,32 @@ export function AgentGrid({
 	onTileClick,
 	onOpenConfig,
 	onShowAllProvidersChange,
+	onColumnsChange,
 	setFocusedTileIndex,
 	setIsNameFieldFocused,
 }: AgentGridProps): JSX.Element {
+	// Measured on the OUTER wrapper, which spans the full available width. The
+	// wrapping block caps its own width to force the row break, so measuring that
+	// element instead would feed its own cap back in and shrink it every pass.
+	const measureRef = useRef<HTMLDivElement>(null);
+	const containerWidth = useElementWidth(measureRef);
+	const layout = useMemo(
+		() => resolveAgentGridLayout(tiles.length, containerWidth),
+		[tiles.length, containerWidth]
+	);
+
+	// The mode is part of the reset key, not just the tile count: a resize can
+	// swap the strip in without the count moving, and the scroll hook only picks
+	// up a freshly mounted element when this changes.
 	const stripRef = useRef<HTMLDivElement>(null);
 	const { canScrollLeft, canScrollRight, scrollByPage, scrollIntoView } = useHorizontalScroll(
 		stripRef,
-		tiles.length
+		`${layout.mode}:${tiles.length}`
 	);
+
+	useEffect(() => {
+		onColumnsChange?.(layout.columns);
+	}, [layout.columns, onColumnsChange]);
 
 	// Keep the focus ring on screen. This tracks `focusedTileIndex` rather than
 	// DOM focus because a disabled tile (an uninstalled provider, visible when the
@@ -80,6 +106,29 @@ export function AgentGrid({
 		// and a render-time read would capture null with no re-render to correct it.
 		scrollIntoView(tileRefs.current?.[focusedTileIndex], STRIP_EDGE_PADDING_PX);
 	}, [focusedTileIndex, isNameFieldFocused, scrollIntoView, tileRefs, tiles]);
+
+	const renderTile = (tile: AgentTile, index: number): JSX.Element => (
+		<AgentTileButton
+			key={tile.id}
+			tile={tile}
+			index={index}
+			theme={theme}
+			isDetected={isAgentAvailable(detectedAgents, tile.id)}
+			isSelected={selectedAgent === tile.id}
+			isFocused={focusedTileIndex === index && !isNameFieldFocused}
+			onTileClick={onTileClick}
+			onOpenConfig={onOpenConfig}
+			onFocusTile={(tileIndex) => {
+				setFocusedTileIndex(tileIndex);
+				setIsNameFieldFocused(false);
+			}}
+			setTileRef={(tileIndex, element) => {
+				if (tileRefs.current) {
+					tileRefs.current[tileIndex] = element;
+				}
+			}}
+		/>
+	);
 
 	return (
 		<div className="flex flex-col items-center gap-3 w-full min-w-0">
@@ -96,59 +145,49 @@ export function AgentGrid({
 				onShowAllChange={onShowAllProvidersChange}
 			/>
 
-			{/*
-				The strip deliberately carries no `scroll-smooth`: that class applies to
-				EVERY programmatic scroll, including the browser's own scroll-into-view
-				when arrow-key focus lands on an off-screen tile and the per-tick writes
-				a wheel gesture makes, turning each one into a fresh eased animation that
-				trails the input. The arrow buttons ask for smooth explicitly instead.
-			*/}
-			<div className="relative w-full max-w-5xl min-w-0">
-				<div
-					ref={stripRef}
-					className="flex gap-4 overflow-x-auto no-scrollbar px-1 py-1"
-					role="group"
-					aria-label="Available providers"
-				>
-					{tiles.map((tile, index) => {
-						const isDetected = isAgentAvailable(detectedAgents, tile.id);
-						return (
-							<AgentTileButton
-								key={tile.id}
-								tile={tile}
-								index={index}
-								theme={theme}
-								isDetected={isDetected}
-								isSelected={selectedAgent === tile.id}
-								isFocused={focusedTileIndex === index && !isNameFieldFocused}
-								onTileClick={onTileClick}
-								onOpenConfig={onOpenConfig}
-								onFocusTile={(tileIndex) => {
-									setFocusedTileIndex(tileIndex);
-									setIsNameFieldFocused(false);
-								}}
-								setTileRef={(tileIndex, element) => {
-									if (tileRefs.current) {
-										tileRefs.current[tileIndex] = element;
-									}
-								}}
-							/>
-						);
-					})}
-				</div>
+			<div ref={measureRef} className="w-full min-w-0 flex justify-center">
+				{layout.mode === 'wrap' ? (
+					<div
+						className="flex flex-wrap justify-center gap-4 px-1 py-1"
+						style={{ maxWidth: layout.maxWidthPx }}
+						role="group"
+						aria-label="Available providers"
+					>
+						{tiles.map(renderTile)}
+					</div>
+				) : (
+					/*
+						The strip deliberately carries no `scroll-smooth`: that class applies
+						to EVERY programmatic scroll, including the browser's own
+						scroll-into-view when arrow-key focus lands on an off-screen tile and
+						the per-tick writes a wheel gesture makes, turning each one into a
+						fresh eased animation that trails the input. The arrow buttons ask for
+						smooth explicitly instead.
+					*/
+					<div className="relative w-full max-w-5xl min-w-0">
+						<div
+							ref={stripRef}
+							className="flex gap-4 overflow-x-auto no-scrollbar px-1 py-1"
+							role="group"
+							aria-label="Available providers"
+						>
+							{tiles.map(renderTile)}
+						</div>
 
-				<StripEdge
-					theme={theme}
-					side="left"
-					visible={canScrollLeft}
-					onScroll={() => scrollByPage('left')}
-				/>
-				<StripEdge
-					theme={theme}
-					side="right"
-					visible={canScrollRight}
-					onScroll={() => scrollByPage('right')}
-				/>
+						<StripEdge
+							theme={theme}
+							side="left"
+							visible={canScrollLeft}
+							onScroll={() => scrollByPage('left')}
+						/>
+						<StripEdge
+							theme={theme}
+							side="right"
+							visible={canScrollRight}
+							onScroll={() => scrollByPage('right')}
+						/>
+					</div>
+				)}
 			</div>
 		</div>
 	);

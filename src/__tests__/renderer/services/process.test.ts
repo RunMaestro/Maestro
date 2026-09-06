@@ -8,6 +8,7 @@ import { logger } from '../../../renderer/utils/logger';
 import {
 	processService,
 	probeSessionAiProcesses,
+	fetchLiveAiTurns,
 	ProcessConfig,
 	ProcessDataHandler,
 	ProcessExitHandler,
@@ -589,5 +590,45 @@ describe('probeSessionAiProcesses', () => {
 		const state = await probeSessionAiProcesses(SESSION, 'tab-1');
 
 		expect(state).toEqual({ anyActive: true, targetTabActive: true, probeFailed: true });
+	});
+});
+
+describe('fetchLiveAiTurns', () => {
+	function proc(sessionId: string, overrides: Record<string, unknown> = {}) {
+		return {
+			sessionId,
+			toolType: 'claude-code',
+			pid: 7,
+			cwd: '/x',
+			isTerminal: false,
+			startTime: 1000,
+			...overrides,
+		};
+	}
+
+	test('resolves every live AI turn across all agents in one round trip', async () => {
+		mockProcess.getActiveProcesses.mockResolvedValue([
+			proc('agent-a-ai-tab-1'),
+			proc('agent-b-ai-tab-9', { pid: 8 }),
+			proc('agent-a-terminal', { isTerminal: true }),
+		]);
+
+		await expect(fetchLiveAiTurns()).resolves.toEqual([
+			{ sessionId: 'agent-a', tabId: 'tab-1', pid: 7, startTime: 1000 },
+			{ sessionId: 'agent-b', tabId: 'tab-9', pid: 8, startTime: 1000 },
+		]);
+		expect(mockProcess.getActiveProcesses).toHaveBeenCalledWith({ includeChildProcesses: false });
+	});
+
+	test('returns null when the probe fails, so callers can tell it apart from "nothing running"', async () => {
+		mockProcess.getActiveProcesses.mockRejectedValue(new Error('bridge down'));
+
+		await expect(fetchLiveAiTurns()).resolves.toBeNull();
+	});
+
+	test('returns an empty array when main owns no AI turns', async () => {
+		mockProcess.getActiveProcesses.mockResolvedValue([]);
+
+		await expect(fetchLiveAiTurns()).resolves.toEqual([]);
 	});
 });

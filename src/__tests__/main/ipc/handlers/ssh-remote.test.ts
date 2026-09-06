@@ -181,6 +181,43 @@ describe('SSH Remote IPC Handlers', () => {
 			expect(mockSettingsStore.set).toHaveBeenCalled();
 		});
 
+		it('persists sshOptions rather than dropping them', async () => {
+			// The handler rebuilds the config field by field, so a field missing from
+			// that literal is silently discarded on every save from the UI.
+			const result = (await invokeHandler('ssh-remote:saveConfig', {
+				name: 'Tunnelled',
+				host: 'tailcat-devbox',
+				port: 22,
+				sshOptions: { ProxyCommand: 'tailcat tcABC 22', ConnectTimeout: '45' },
+			})) as { success: boolean; config?: SshRemoteConfig };
+
+			expect(result.config?.sshOptions).toEqual({
+				ProxyCommand: 'tailcat tcABC 22',
+				ConnectTimeout: '45',
+			});
+		});
+
+		it('strips a reserved ssh option before it reaches disk', async () => {
+			const result = (await invokeHandler('ssh-remote:saveConfig', {
+				name: 'Tunnelled',
+				host: 'tailcat-devbox',
+				port: 22,
+				sshOptions: { RequestTTY: 'force', ProxyJump: 'bastion' },
+			})) as { success: boolean; config?: SshRemoteConfig };
+
+			expect(result.config?.sshOptions).toEqual({ ProxyJump: 'bastion' });
+		});
+
+		it('leaves sshOptions unset when none are supplied', async () => {
+			const result = (await invokeHandler('ssh-remote:saveConfig', {
+				name: 'Plain',
+				host: 'example.com',
+				port: 22,
+			})) as { success: boolean; config?: SshRemoteConfig };
+
+			expect(result.config?.sshOptions).toBeUndefined();
+		});
+
 		it('returns error when validation fails', async () => {
 			vi.spyOn(sshRemoteManagerModule.sshRemoteManager, 'validateConfig').mockReturnValue({
 				valid: false,

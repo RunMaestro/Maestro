@@ -80,11 +80,21 @@ export class StaticRoutes {
 	// Web-desktop bundle root - the default browser interface, served at the
 	// token root and at /<token>/desktop. Null when the bundle hasn't been built.
 	private webDesktopPath: string | null;
+	// Read-only token for the Concerto HTML document route, handed to the page so
+	// the renderer can point a Movement's iframe at an HTTP URL the browser can
+	// actually load (the desktop app uses the maestro-concerto:// scheme instead).
+	private concertoToken: string;
 
-	constructor(securityToken: string, webAssetsPath: string | null, webDesktopPath: string | null) {
+	constructor(
+		securityToken: string,
+		webAssetsPath: string | null,
+		webDesktopPath: string | null,
+		concertoToken: string
+	) {
 		this.securityToken = securityToken;
 		this.webAssetsPath = webAssetsPath;
 		this.webDesktopPath = webDesktopPath;
+		this.concertoToken = concertoToken;
 	}
 
 	/**
@@ -139,7 +149,8 @@ export class StaticRoutes {
           sessionId: null,
           tabId: null,
           apiBase: "/${token}/api",
-          wsUrl: "/${token}/ws"
+          wsUrl: "/${token}/ws",
+          concertoToken: ${JSON.stringify(this.concertoToken)}
         };
       </script>`;
 
@@ -150,6 +161,7 @@ export class StaticRoutes {
 			// works under the token prefix unchanged.
 			const pwaLinks =
 				`<link rel="manifest" href="/${token}/manifest.json" />` +
+				`<link rel="icon" href="/${token}/icons/icon-192x192.png" />` +
 				`<link rel="apple-touch-icon" href="/${token}/icons/icon-192x192.png" />`;
 
 			html = html.replace('</head>', `${configScript}${pwaLinks}</head>`);

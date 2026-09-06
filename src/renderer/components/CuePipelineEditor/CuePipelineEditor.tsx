@@ -41,6 +41,27 @@ import type { TriggerNodeData } from '../../../shared/cue-pipeline-types';
 export { validatePipelines, DEFAULT_TRIGGER_LABELS } from '../../hooks/cue/usePipelineState';
 export type { SessionInfo, ActiveRunInfo } from '../../hooks/cue/usePipelineState';
 
+/**
+ * Restricts the All Pipelines view to one agent's pipelines. Set when the user
+ * clicks "View in Graph" on an agent that owns several - selecting just one of
+ * them would be arbitrary, and showing every pipeline on the machine answers a
+ * question nobody asked.
+ */
+export interface CueGraphScope {
+	sessionId: string;
+	sessionName: string;
+	pipelineIds: string[];
+}
+
+/** Navigation token produced by "View in Graph". */
+export interface CueGraphTarget {
+	/** Pipeline to select, or null for the All Pipelines view. */
+	id: string | null;
+	nonce: string;
+	/** Only meaningful when `id` is null. */
+	scope?: CueGraphScope;
+}
+
 export interface CuePipelineEditorProps {
 	sessions: SessionInfo[];
 	groups?: { id: string; name: string; emoji: string }[];
@@ -54,9 +75,9 @@ export interface CuePipelineEditorProps {
 	/** Callback fired after a successful save. Used by CueModal to refresh
 	 *  dashboard graph data so saved state is visible immediately (Fix #3). */
 	onSaveSuccess?: () => void;
-	/** Pre-select a specific pipeline when navigating from "View in Graph".
-	 *  Nonce ensures repeated clicks on the same pipeline re-trigger selection. */
-	initialPipelineId?: { id: string | null; nonce: string };
+	/** Where "View in Graph" wants the editor to land. Nonce ensures repeated
+	 *  clicks on the same target re-trigger the navigation. */
+	initialGraphTarget?: CueGraphTarget;
 	/** True while the initial graph-data fetch is in flight. Combined with the
 	 *  hook's own pipeline-restore state to render a loading spinner instead of
 	 *  flashing the "Create your first pipeline" CTA before pipelines arrive. */
@@ -72,7 +93,7 @@ function CuePipelineEditorInner({
 	activeRuns: activeRunsProp,
 	onTriggerPipeline,
 	onSaveSuccess,
-	initialPipelineId,
+	initialGraphTarget,
 	graphLoading = false,
 }: CuePipelineEditorProps) {
 	const reactFlowInstance = useReactFlow();
@@ -151,17 +172,22 @@ function CuePipelineEditorInner({
 		pipelineState: stateHook.pipelineState,
 	});
 
-	// When opened via "View in Graph", pre-select the resolved pipeline once
-	// the pipeline list has loaded. appliedNonce prevents pipelines.length changes
+	// Agent scope for the All Pipelines view (see CueGraphScope). Cleared by any
+	// manual pipeline selection - the user has navigated somewhere else.
+	const [graphScope, setGraphScope] = useState<CueGraphScope | null>(null);
+
+	// When opened via "View in Graph", apply the resolved target once the
+	// pipeline list has loaded. appliedNonce prevents pipelines.length changes
 	// (e.g. a pipeline being added) from overriding a subsequent user selection.
 	const appliedNonce = useRef<string | null>(null);
 	useEffect(() => {
-		const nonce = initialPipelineId?.nonce;
+		const nonce = initialGraphTarget?.nonce;
 		if (!nonce || stateHook.pipelineState.pipelines.length === 0) return;
 		if (nonce === appliedNonce.current) return;
 		appliedNonce.current = nonce;
-		stateHook.selectPipeline(initialPipelineId!.id);
-	}, [initialPipelineId?.nonce, stateHook.pipelineState.pipelines.length]);
+		setGraphScope(initialGraphTarget!.scope ?? null);
+		stateHook.selectPipeline(initialGraphTarget!.id);
+	}, [initialGraphTarget?.nonce, stateHook.pipelineState.pipelines.length]);
 
 	// Update ref in render body so next render (and any post-render callback
 	// invocation) reads the latest selection values.
@@ -226,6 +252,42 @@ function CuePipelineEditorInner({
 		handleConfigureNode,
 	} = selectionHook;
 
+	// ─── Agent scope (All Pipelines view only) ─────────────────────────────
+	// The scope narrows what the CANVAS renders; it never touches canonical
+	// state. Selecting a single pipeline supersedes it, and every mutation is
+	// already blocked in the All Pipelines view, so a scoped canvas cannot
+	// write a partial layout back to disk.
+	const scopedPipelineIds = useMemo(() => {
+		if (!graphScope || pipelineState.selectedPipelineId !== null) return null;
+		const live = new Set(
+			graphScope.pipelineIds.filter((id) => pipelineState.pipelines.some((p) => p.id === id))
+		);
+		// A scope that resolves to nothing (pipelines renamed or deleted since the
+		// click) falls back to the unfiltered view rather than an empty canvas.
+		return live.size > 0 ? live : null;
+	}, [graphScope, pipelineState.pipelines, pipelineState.selectedPipelineId]);
+
+	const visiblePipelines = useMemo(
+		() =>
+			scopedPipelineIds
+				? pipelineState.pipelines.filter((p) => scopedPipelineIds.has(p.id))
+				: pipelineState.pipelines,
+		[pipelineState.pipelines, scopedPipelineIds]
+	);
+
+	const activeScope = scopedPipelineIds ? graphScope : null;
+
+	// Any manual navigation drops the scope - the user asked for somewhere else.
+	const handleSelectPipeline = useCallback(
+		(id: string | null) => {
+			setGraphScope(null);
+			selectPipeline(id);
+		},
+		[selectPipeline]
+	);
+
+	const handleClearScope = useCallback(() => setGraphScope(null), []);
+
 	// Wrap the manual-trigger handler so the click produces immediate UI feedback:
 	// mark the owning pipeline as optimistically triggered so the trigger
 	// spinner flips synchronously and every edge in the pipeline animates for
@@ -276,17 +338,26 @@ function CuePipelineEditorInner({
 	// pipelineState alone (sum of nodes across visible pipelines).
 	const totalNodeCount = useMemo(() => {
 		if (pipelineState.selectedPipelineId === null) {
-			return pipelineState.pipelines.reduce((acc, p) => acc + p.nodes.length, 0);
+			return visiblePipelines.reduce((acc, p) => acc + p.nodes.length, 0);
 		}
-		const pipeline = pipelineState.pipelines.find((p) => p.id === pipelineState.selectedPipelineId);
+		const pipeline = visiblePipelines.find((p) => p.id === pipelineState.selectedPipelineId);
 		return pipeline?.nodes.length ?? 0;
-	}, [pipelineState.pipelines, pipelineState.selectedPipelineId]);
+	}, [visiblePipelines, pipelineState.selectedPipelineId]);
+
+	// The viewport hook stacks pipelines vertically and fits the result, so it
+	// must see the same set the canvas draws - otherwise a scoped view is fitted
+	// around the empty bands of the pipelines it filtered out.
+	const viewportPipelineState = useMemo(
+		() => ({ pipelines: visiblePipelines, selectedPipelineId: pipelineState.selectedPipelineId }),
+		[visiblePipelines, pipelineState.selectedPipelineId]
+	);
 
 	const { stableYOffsets, stableYOffsetsRef } = usePipelineViewport({
-		pipelineState,
+		pipelineState: viewportPipelineState,
 		computedNodeCount: totalNodeCount,
 		pendingSavedViewportRef,
 		reactFlowInstance,
+		scopeKey: activeScope?.sessionId ?? null,
 	});
 
 	// ─── ReactFlow nodes/edges ──────────────────────────────────────────────
@@ -295,7 +366,7 @@ function CuePipelineEditorInner({
 	const computedNodes = useMemo(
 		() =>
 			convertToReactFlowNodes(
-				pipelineState.pipelines,
+				visiblePipelines,
 				pipelineState.selectedPipelineId,
 				handleConfigureNodeGuarded,
 				{
@@ -310,7 +381,7 @@ function CuePipelineEditorInner({
 				interactionMode === 'hand'
 			),
 		[
-			pipelineState.pipelines,
+			visiblePipelines,
 			pipelineState.selectedPipelineId,
 			handleConfigureNodeGuarded,
 			handleTriggerPipeline,
@@ -334,7 +405,7 @@ function CuePipelineEditorInner({
 	// This is load-bearing for discard specifically: discard reverts canonical
 	// positions to values that may equal an EARLIER snapshot, which the per-node
 	// position comparison below cannot distinguish from a no-op poll refire.
-	const lastSyncedPipelinesRef = useRef(pipelineState.pipelines);
+	const lastSyncedPipelinesRef = useRef(visiblePipelines);
 	// Tracks the selected pipeline the resync last observed. A selection change
 	// (single ↔ All Pipelines, or between pipelines) is USER navigation: it asks
 	// for a different set of visible nodes and a different view geometry, so the
@@ -359,9 +430,9 @@ function CuePipelineEditorInner({
 	// and clears this on the next resync.
 	const forceAdoptComputedRef = useRef(false);
 	useEffect(() => {
-		const pipelinesChanged = lastSyncedPipelinesRef.current !== pipelineState.pipelines;
+		const pipelinesChanged = lastSyncedPipelinesRef.current !== visiblePipelines;
 		const selectionChanged = lastSyncedSelectedIdRef.current !== pipelineState.selectedPipelineId;
-		lastSyncedPipelinesRef.current = pipelineState.pipelines;
+		lastSyncedPipelinesRef.current = visiblePipelines;
 		lastSyncedSelectedIdRef.current = pipelineState.selectedPipelineId;
 		// Capture the PREVIOUS computed positions before overwriting the ref, so
 		// the state updater (which runs during reconciliation, after this effect
@@ -419,14 +490,14 @@ function CuePipelineEditorInner({
 			});
 		});
 		lastComputedPosRef.current = new Map(computedNodes.map((n) => [n.id, n.position]));
-	}, [computedNodes, pipelineState.pipelines, pipelineState.selectedPipelineId, isDirty]);
+	}, [computedNodes, visiblePipelines, pipelineState.selectedPipelineId, isDirty]);
 
 	const nodes = displayNodes;
 
 	const edges = useMemo(
 		() =>
 			convertToReactFlowEdges(
-				pipelineState.pipelines,
+				visiblePipelines,
 				pipelineState.selectedPipelineId,
 				selectedEdgeId,
 				theme,
@@ -434,7 +505,7 @@ function CuePipelineEditorInner({
 				optimisticTriggeredPipelineIds
 			),
 		[
-			pipelineState.pipelines,
+			visiblePipelines,
 			pipelineState.selectedPipelineId,
 			runningAgentsByPipeline,
 			optimisticTriggeredPipelineIds,
@@ -718,7 +789,10 @@ function CuePipelineEditorInner({
 				setAgentDrawerOpen={setAgentDrawerOpen}
 				pipelines={pipelineState.pipelines}
 				selectedPipelineId={pipelineState.selectedPipelineId}
-				selectPipeline={selectPipeline}
+				selectPipeline={handleSelectPipeline}
+				scopeLabel={activeScope?.sessionName ?? null}
+				scopePipelineCount={visiblePipelines.length}
+				onClearScope={handleClearScope}
 				createPipeline={createPipeline}
 				deletePipeline={deletePipeline}
 				renamePipeline={renamePipeline}

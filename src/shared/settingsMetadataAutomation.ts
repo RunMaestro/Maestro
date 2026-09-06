@@ -101,6 +101,13 @@ export const AUTOMATION_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: 0,
 		category: 'internal',
 	},
+	delegationMilestone: {
+		description:
+			'Highest delegation milestone ever unlocked on the Usage Dashboard (0, 25, 50, 75, 100).',
+		type: 'number',
+		default: 0,
+		category: 'internal',
+	},
 	autoRunStats: {
 		description: 'Auto Run gamification stats: cumulative time, longest run, badge levels.',
 		type: 'object',

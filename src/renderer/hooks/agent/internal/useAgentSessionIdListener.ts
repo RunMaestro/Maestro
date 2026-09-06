@@ -12,7 +12,7 @@
  */
 
 import { useEffect } from 'react';
-import { useSessionStore } from '../../../stores/sessionStore';
+import { updateSessionWith, useSessionStore } from '../../../stores/sessionStore';
 import { notifyToast } from '../../../stores/notificationStore';
 import { parseSessionId, isBatchSession } from '../../../utils/sessionIdParser';
 import { getActiveTab } from '../../../utils/tabHelpers';
@@ -30,8 +30,6 @@ export interface UseAgentSessionIdListenerDeps {
 export function useAgentSessionIdListener(deps: UseAgentSessionIdListenerDeps): void {
 	const ownedGate = useOwnedSessionGate();
 	useEffect(() => {
-		const setSessions = useSessionStore.getState().setSessions;
-
 		const unsubscribe = window.maestro.process.onSessionId(
 			async (sessionId: string, agentSessionId: string) => {
 				// Window scoping: ignore agents this window doesn't own (broadcast events).
@@ -44,19 +42,15 @@ export function useAgentSessionIdListener(deps: UseAgentSessionIdListenerDeps): 
 
 				let resumeFailureDetected = false;
 
-				setSessions((prev) => {
-					const session = prev.find((s) => s.id === actualSessionId);
-					if (!session) return prev;
-
+				const session = useSessionStore.getState().sessions.find((s) => s.id === actualSessionId);
+				if (session) {
 					window.maestro.agentSessions
 						.registerSessionOrigin(session.projectRoot, agentSessionId, 'user')
 						.catch((err) =>
 							logger.error('[onSessionId] Failed to register session origin:', undefined, err)
 						);
 
-					return prev.map((s) => {
-						if (s.id !== actualSessionId) return s;
-
+					updateSessionWith(actualSessionId, (s) => {
 						// Claude Code 2.1.x in batch mode emits a fresh `session_id` on every spawn -
 						// but never writes a JSONL file under that fresh ID; the conversation
 						// continues to be appended to the original JSONL. Storing the fork ID and
@@ -181,7 +175,7 @@ export function useAgentSessionIdListener(deps: UseAgentSessionIdListenerDeps): 
 							? { ...s, aiTabs: updatedAiTabs }
 							: { ...s, aiTabs: updatedAiTabs, agentSessionId };
 					});
-				});
+				}
 
 				if (resumeFailureDetected) {
 					deps.batchedUpdater.updateContextUsage(actualSessionId, 0);

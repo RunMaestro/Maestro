@@ -63,7 +63,7 @@ export interface UseAutoRunHandlersReturn {
 	/** Handle document selection */
 	handleAutoRunSelectDocument: (filename: string) => Promise<void>;
 	/** Refresh the document list */
-	handleAutoRunRefresh: () => Promise<void>;
+	handleAutoRunRefresh: (options?: { silent?: boolean }) => Promise<void>;
 	/** Open the Auto Run setup modal */
 	handleAutoRunOpenSetup: () => void;
 	/** Create a new document */
@@ -410,46 +410,57 @@ export function useAutoRunHandlers(deps: UseAutoRunHandlersDeps): UseAutoRunHand
 	);
 
 	// Auto Run refresh handler - reload document list and show flash notification
-	const handleAutoRunRefresh = useCallback(async () => {
-		const activeSession = selectActiveSession(useSessionStore.getState());
-		if (!activeSession?.autoRunFolderPath) return;
-		const sshRemoteId = getSshRemoteId(activeSession);
-		const previousCount = autoRunDocumentList.length;
-		setAutoRunIsLoadingDocuments(true);
-		try {
-			const result = await window.maestro.autorun.listDocs(
-				activeSession.autoRunFolderPath,
-				sshRemoteId
-			);
-			if (result.success) {
-				const newFiles = result.files || [];
-				setAutoRunDocumentList(newFiles);
-				setAutoRunDocumentTree(result.tree || []);
+	// `options.silent` suppresses the flash. It is checked with `=== true` on
+	// purpose: this function is handed straight to `onAutoRunRefresh`, so a click
+	// handler can call it with a MouseEvent in the options slot, and anything
+	// looser would read that event as an opt-in and swallow the confirmation the
+	// user clicked for.
+	const handleAutoRunRefresh = useCallback(
+		async (options?: { silent?: boolean }) => {
+			const activeSession = selectActiveSession(useSessionStore.getState());
+			if (!activeSession?.autoRunFolderPath) return;
+			const silent = options?.silent === true;
+			const sshRemoteId = getSshRemoteId(activeSession);
+			const previousCount = autoRunDocumentList.length;
+			setAutoRunIsLoadingDocuments(true);
+			try {
+				const result = await window.maestro.autorun.listDocs(
+					activeSession.autoRunFolderPath,
+					sshRemoteId
+				);
+				if (result.success) {
+					const newFiles = result.files || [];
+					setAutoRunDocumentList(newFiles);
+					setAutoRunDocumentTree(result.tree || []);
 
-				// Show flash notification with result
-				const diff = newFiles.length - previousCount;
-				let message: string;
-				if (diff > 0) {
-					message = `Found ${diff} new document${diff === 1 ? '' : 's'}`;
-				} else if (diff < 0) {
-					message = `${Math.abs(diff)} document${Math.abs(diff) === 1 ? '' : 's'} removed`;
-				} else {
-					message = 'Refresh complete, no new documents';
+					// Show flash notification with result
+					const diff = newFiles.length - previousCount;
+					let message: string;
+					if (diff > 0) {
+						message = `Found ${diff} new document${diff === 1 ? '' : 's'}`;
+					} else if (diff < 0) {
+						message = `${Math.abs(diff)} document${Math.abs(diff) === 1 ? '' : 's'} removed`;
+					} else {
+						message = 'Refresh complete, no new documents';
+					}
+					if (!silent) {
+						setSuccessFlashNotification(message);
+						setTimeout(() => setSuccessFlashNotification(null), 2000);
+					}
+					return;
 				}
-				setSuccessFlashNotification(message);
-				setTimeout(() => setSuccessFlashNotification(null), 2000);
-				return;
+			} finally {
+				setAutoRunIsLoadingDocuments(false);
 			}
-		} finally {
-			setAutoRunIsLoadingDocuments(false);
-		}
-	}, [
-		autoRunDocumentList.length,
-		setAutoRunDocumentList,
-		setAutoRunDocumentTree,
-		setAutoRunIsLoadingDocuments,
-		setSuccessFlashNotification,
-	]);
+		},
+		[
+			autoRunDocumentList.length,
+			setAutoRunDocumentList,
+			setAutoRunDocumentTree,
+			setAutoRunIsLoadingDocuments,
+			setSuccessFlashNotification,
+		]
+	);
 
 	// Auto Run open setup handler
 	// If no folder is configured, directly open folder picker

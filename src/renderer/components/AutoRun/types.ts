@@ -1,5 +1,6 @@
 import type { BatchRunState, SessionState, Theme, Shortcut } from '../../types';
 import type { DocumentTaskCount } from './AutoRunDocumentSelector';
+import type { FileNode } from '../../types/fileTree';
 
 export interface AutoRunProps {
 	theme: Theme;
@@ -18,6 +19,14 @@ export interface AutoRunProps {
 		path: string;
 		children?: unknown[];
 	}>; // Tree structure for subfolders
+
+	// Project context for markdown file links. An Auto Run document routinely
+	// references notes elsewhere in the project; without these a `[[Note]]`
+	// outside the playbooks folder renders as inert text here while the same
+	// link works in a file-preview tab.
+	projectFileTree?: FileNode[];
+	projectRoot?: string;
+	onOpenProjectFile?: (path: string, options?: { openInNewTab?: boolean }) => void;
 
 	// Content state
 	content: string;

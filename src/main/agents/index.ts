@@ -62,6 +62,15 @@ export {
 	discoverModelsFromLocalConfigs,
 } from './opencode-config';
 
+// ============ Codex Config ============
+export {
+	type CodexMarkdownDoc,
+	getCodexHome,
+	getCodexSkillDirs,
+	getCodexPromptDirs,
+	parseCodexMarkdownDoc,
+} from './codex-config';
+
 // ============ Session Storage ============
 export {
 	type AgentSessionOrigin,

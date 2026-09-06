@@ -223,10 +223,7 @@ export const TasksByHourChart = memo(function TasksByHourChart({
 				</div>
 
 				{/* X-axis labels */}
-				<div
-					className="flex justify-between mt-2 text-[10px]"
-					style={{ color: theme.colors.textDim }}
-				>
+				<div className="flex justify-between mt-2 text-2xs" style={{ color: theme.colors.textDim }}>
 					<span>{formatHourShort(0)}</span>
 					<span>{formatHourShort(6)}</span>
 					<span>{formatHourShort(12)}</span>

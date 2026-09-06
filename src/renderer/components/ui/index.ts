@@ -21,8 +21,8 @@ export type {
 	GroupAppearancePickerProps,
 } from './EmojiPickerField';
 
-export { ToggleSwitch } from './ToggleSwitch';
-export type { ToggleSwitchProps } from './ToggleSwitch';
+export { ToggleSwitch, ToggleSwitchTrack } from './ToggleSwitch';
+export type { ToggleSwitchProps, ToggleSwitchTrackProps, ToggleSwitchSize } from './ToggleSwitch';
 
 export { ProviderAvailabilityBar, PROVIDER_BAR_NAV_EXEMPT_ATTR } from './ProviderAvailabilityBar';
 export type { ProviderAvailabilityBarProps } from './ProviderAvailabilityBar';
@@ -43,6 +43,9 @@ export type { SpinnerProps } from './Spinner';
 
 export { Pager } from './Pager';
 export type { PagerProps } from './Pager';
+
+export { HeaderActionButton } from './HeaderActionButton';
+export type { HeaderActionButtonProps } from './HeaderActionButton';
 
 export { GhostIconButton } from './GhostIconButton';
 export type { GhostIconButtonProps } from './GhostIconButton';

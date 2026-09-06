@@ -31,7 +31,12 @@ import type { CrossAgentMentionPlan } from '../../services/crossAgentMentions';
 import { hasWorkAheadOfNewMessage } from '../../utils/executionQueue';
 import { probeSessionAiProcesses } from '../../services/process';
 import { resolveForceParallel } from '../../stores/settingsStore';
-import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
+import {
+	useSessionStore,
+	selectActiveSession,
+	updateSessionWith,
+	updateAiTab,
+} from '../../stores/sessionStore';
 import { logger } from '../../utils/logger';
 
 let cachedImageOnlyPrompt: string = '';
@@ -74,7 +79,11 @@ export interface UseInputProcessingDeps {
 	activeSession?: Session | null;
 	/** Active session ID (may be different from activeSession.id during transitions) */
 	activeSessionId: string;
-	/** Session state setter */
+	/**
+	 * Session state setter. Callers still pass this (App wiring, tests). Send-path
+	 * writes go through updateSessionWith / updateAiTab so a mock setter is not
+	 * the source of truth.
+	 */
 	setSessions: React.Dispatch<React.SetStateAction<Session[]>>;
 	/** Read the current input value at call time (non-reactive; reads the store) */
 	getInputValue: () => string;
@@ -209,7 +218,6 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 	const {
 		activeSession: activeSessionProp,
 		activeSessionId,
-		setSessions,
 		getInputValue,
 		isCommandMode = () => 'off' as ComposerCommandMode,
 		setInputValue,
@@ -528,37 +536,33 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 								// Set up session and tab state for immediate processing
 								// NOTE: Don't add to executionQueue when processing immediately - it's not actually queued,
 								// and adding it would cause duplicate display (once as sent message, once in queue section)
-								setSessions((prev) =>
-									prev.map((s) => {
-										if (s.id !== resolvedSessionId) return s;
+								updateSessionWith(resolvedSessionId, (s) => {
+									// Set the target tab to busy
+									const updatedAiTabs = s.aiTabs.map((tab) =>
+										tab.id === queuedItem.tabId
+											? {
+													...tab,
+													state: 'busy' as const,
+													thinkingStartTime: Date.now(),
+													...codifyTurnSettings(tab, s),
+												}
+											: tab
+									);
 
-										// Set the target tab to busy
-										const updatedAiTabs = s.aiTabs.map((tab) =>
-											tab.id === queuedItem.tabId
-												? {
-														...tab,
-														state: 'busy' as const,
-														thinkingStartTime: Date.now(),
-														...codifyTurnSettings(tab, s),
-													}
-												: tab
-										);
-
-										return {
-											...s,
-											state: 'busy' as SessionState,
-											busySource: 'ai',
-											thinkingStartTime: Date.now(),
-											currentCycleTokens: 0,
-											currentCycleBytes: 0,
-											aiTabs: updatedAiTabs,
-											// Don't add to queue - we're processing immediately, not queuing
-											aiCommandHistory: Array.from(
-												new Set([...(s.aiCommandHistory || []), commandText])
-											).slice(-50),
-										};
-									})
-								);
+									return {
+										...s,
+										state: 'busy' as SessionState,
+										busySource: 'ai',
+										thinkingStartTime: Date.now(),
+										currentCycleTokens: 0,
+										currentCycleBytes: 0,
+										aiTabs: updatedAiTabs,
+										// Don't add to queue - we're processing immediately, not queuing
+										aiCommandHistory: Array.from(
+											new Set([...(s.aiCommandHistory || []), commandText])
+										).slice(-50),
+									};
+								});
 
 								// Process immediately after state is set up
 								// 50ms delay allows React to flush the setState above, ensuring the session
@@ -568,18 +572,13 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 								}, 50);
 							} else {
 								// Session is busy - just add to queue
-								setSessions((prev) =>
-									prev.map((s) => {
-										if (s.id !== resolvedSessionId) return s;
-										return {
-											...s,
-											executionQueue: [...s.executionQueue, queuedItem],
-											aiCommandHistory: Array.from(
-												new Set([...(s.aiCommandHistory || []), commandText])
-											).slice(-50),
-										};
-									})
-								);
+								updateSessionWith(resolvedSessionId, (s) => ({
+									...s,
+									executionQueue: [...s.executionQueue, queuedItem],
+									aiCommandHistory: Array.from(
+										new Set([...(s.aiCommandHistory || []), commandText])
+									).slice(-50),
+								}));
 							}
 							// Note: Input already cleared synchronously before this async block
 						})();
@@ -682,30 +681,16 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						sessionId: activeSessionId,
 						quickName,
 					});
-					setSessions((prev) =>
-						prev.map((s) => {
-							if (s.id !== resolvedSessionId) return s;
-							return {
-								...s,
-								aiTabs: s.aiTabs.map((t) =>
-									t.id === activeTabForNaming.id ? { ...t, name: quickName } : t
-								),
-							};
-						})
-					);
+					updateAiTab(resolvedSessionId, activeTabForNaming.id, (t) => ({
+						...t,
+						name: quickName,
+					}));
 				} else {
 					// Set isGeneratingName to show spinner in tab
-					setSessions((prev) =>
-						prev.map((s) => {
-							if (s.id !== resolvedSessionId) return s;
-							return {
-								...s,
-								aiTabs: s.aiTabs.map((t) =>
-									t.id === activeTabForNaming.id ? { ...t, isGeneratingName: true } : t
-								),
-							};
-						})
-					);
+					updateAiTab(resolvedSessionId, activeTabForNaming.id, (t) => ({
+						...t,
+						isGeneratingName: true,
+					}));
 
 					window.maestro.logger.log('info', 'Auto tab naming started', 'TabNaming', {
 						tabId: activeTabForNaming.id,
@@ -731,17 +716,10 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						})
 						.then((generatedName) => {
 							// Clear the generating indicator
-							setSessions((prev) =>
-								prev.map((s) => {
-									if (s.id !== resolvedSessionId) return s;
-									return {
-										...s,
-										aiTabs: s.aiTabs.map((t) =>
-											t.id === activeTabForNaming.id ? { ...t, isGeneratingName: false } : t
-										),
-									};
-								})
-							);
+							updateAiTab(resolvedSessionId, activeTabForNaming.id, (t) => ({
+								...t,
+								isGeneratingName: false,
+							}));
 
 							if (!generatedName) {
 								window.maestro.logger.log('warn', 'Auto tab naming returned null', 'TabNaming', {
@@ -752,41 +730,38 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							}
 
 							// Update the tab name only if it's still null (user hasn't manually renamed it)
-							setSessions((prev) =>
-								prev.map((s) => {
-									if (s.id !== resolvedSessionId) return s;
-									const tab = s.aiTabs.find((t) => t.id === activeTabForNaming.id);
-									if (!tab || tab.name !== null) {
-										window.maestro.logger.log(
-											'info',
-											'Auto tab naming skipped (tab already named)',
-											'TabNaming',
-											{
-												tabId: activeTabForNaming.id,
-												generatedName,
-												existingName: tab?.name,
-											}
-										);
-										return s;
-									}
+							updateSessionWith(resolvedSessionId, (s) => {
+								const tab = s.aiTabs.find((t) => t.id === activeTabForNaming.id);
+								if (!tab || tab.name !== null) {
 									window.maestro.logger.log(
 										'info',
-										`Auto tab named: "${generatedName}"`,
+										'Auto tab naming skipped (tab already named)',
 										'TabNaming',
 										{
 											tabId: activeTabForNaming.id,
-											sessionId: activeSessionId,
 											generatedName,
+											existingName: tab?.name,
 										}
 									);
-									return {
-										...s,
-										aiTabs: s.aiTabs.map((t) =>
-											t.id === activeTabForNaming.id ? { ...t, name: generatedName } : t
-										),
-									};
-								})
-							);
+									return s;
+								}
+								window.maestro.logger.log(
+									'info',
+									`Auto tab named: "${generatedName}"`,
+									'TabNaming',
+									{
+										tabId: activeTabForNaming.id,
+										sessionId: activeSessionId,
+										generatedName,
+									}
+								);
+								return {
+									...s,
+									aiTabs: s.aiTabs.map((t) =>
+										t.id === activeTabForNaming.id ? { ...t, name: generatedName } : t
+									),
+								};
+							});
 						})
 						.catch((error) => {
 							window.maestro.logger.log('error', 'Auto tab naming failed', 'TabNaming', {
@@ -795,17 +770,10 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 								error: String(error),
 							});
 							// Clear the generating indicator on error
-							setSessions((prev) =>
-								prev.map((s) => {
-									if (s.id !== resolvedSessionId) return s;
-									return {
-										...s,
-										aiTabs: s.aiTabs.map((t) =>
-											t.id === activeTabForNaming.id ? { ...t, isGeneratingName: false } : t
-										),
-									};
-								})
-							);
+							updateAiTab(resolvedSessionId, activeTabForNaming.id, (t) => ({
+								...t,
+								isGeneratingName: false,
+							}));
 						});
 				}
 			}
@@ -870,21 +838,18 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							crossAgentOnly: true,
 						};
 
-						setSessions((prev) =>
-							prev.map((s) => {
-								if (s.id !== resolvedSessionId) return s;
-								const trimmed = effectiveInputValue.trim();
-								const priorHistory = s.aiCommandHistory || [];
-								return {
-									...s,
-									aiCommandHistory:
-										trimmed && priorHistory[priorHistory.length - 1] !== trimmed
-											? [...priorHistory, trimmed].slice(-50)
-											: priorHistory,
-									executionQueue: [...s.executionQueue, mentionQueuedItem],
-								};
-							})
-						);
+						updateSessionWith(resolvedSessionId, (s) => {
+							const trimmed = effectiveInputValue.trim();
+							const priorHistory = s.aiCommandHistory || [];
+							return {
+								...s,
+								aiCommandHistory:
+									trimmed && priorHistory[priorHistory.length - 1] !== trimmed
+										? [...priorHistory, trimmed].slice(-50)
+										: priorHistory,
+								executionQueue: [...s.executionQueue, mentionQueuedItem],
+							};
+						});
 
 						setInputValue('');
 						if (!usingOverrideImages) setStagedImages([]);
@@ -911,26 +876,23 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						images: [...effectiveImages],
 					} satisfies LogEntry;
 
-					setSessions((prev) =>
-						prev.map((s) => {
-							if (s.id !== resolvedSessionId) return s;
-							const tab = resolveTargetTab(s);
-							if (!tab) return s;
-							const trimmed = effectiveInputValue.trim();
-							const priorHistory = s.aiCommandHistory || [];
-							const aiCommandHistory =
-								trimmed && priorHistory[priorHistory.length - 1] !== trimmed
-									? [...priorHistory, trimmed].slice(-50)
-									: priorHistory;
-							return {
-								...s,
-								aiCommandHistory,
-								aiTabs: s.aiTabs.map((t) =>
-									t.id === tab.id ? { ...t, logs: [...t.logs, mentionOnlyEntry] } : t
-								),
-							};
-						})
-					);
+					updateSessionWith(resolvedSessionId, (s) => {
+						const tab = resolveTargetTab(s);
+						if (!tab) return s;
+						const trimmed = effectiveInputValue.trim();
+						const priorHistory = s.aiCommandHistory || [];
+						const aiCommandHistory =
+							trimmed && priorHistory[priorHistory.length - 1] !== trimmed
+								? [...priorHistory, trimmed].slice(-50)
+								: priorHistory;
+						return {
+							...s,
+							aiCommandHistory,
+							aiTabs: s.aiTabs.map((t) =>
+								t.id === tab.id ? { ...t, logs: [...t.logs, mentionOnlyEntry] } : t
+							),
+						};
+					});
 
 					// Mirror the bubble to other windows, matching the normal user-entry
 					// broadcast below (best-effort; a failed mirror must not block send).
@@ -1077,33 +1039,30 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					// Note: We intentionally do NOT process immediately even if session is idle,
 					// because when Auto Run is active, write-mode messages should wait for Auto Run
 					// to complete to prevent file conflicts.
-					setSessions((prev) =>
-						prev.map((s) => {
-							if (s.id !== resolvedSessionId) return s;
-							const reconciledAiTabs = sameTabProcessActive
-								? s.aiTabs.map((tab) =>
-										tab.id === queuedItem.tabId
-											? {
-													...tab,
-													state: 'busy' as const,
-													thinkingStartTime:
-														tab.thinkingStartTime || activeProcessStartTime || Date.now(),
-												}
-											: tab
-									)
-								: s.aiTabs;
-							return {
-								...s,
-								...(processStateRequiresQueue && {
-									state: 'busy' as SessionState,
-									busySource: 'ai' as const,
-									thinkingStartTime: s.thinkingStartTime || activeProcessStartTime || Date.now(),
-									aiTabs: reconciledAiTabs,
-								}),
-								executionQueue: [...s.executionQueue, queuedItem],
-							};
-						})
-					);
+					updateSessionWith(resolvedSessionId, (s) => {
+						const reconciledAiTabs = sameTabProcessActive
+							? s.aiTabs.map((tab) =>
+									tab.id === queuedItem.tabId
+										? {
+												...tab,
+												state: 'busy' as const,
+												thinkingStartTime:
+													tab.thinkingStartTime || activeProcessStartTime || Date.now(),
+											}
+										: tab
+								)
+							: s.aiTabs;
+						return {
+							...s,
+							...(processStateRequiresQueue && {
+								state: 'busy' as SessionState,
+								busySource: 'ai' as const,
+								thinkingStartTime: s.thinkingStartTime || activeProcessStartTime || Date.now(),
+								aiTabs: reconciledAiTabs,
+							}),
+							executionQueue: [...s.executionQueue, queuedItem],
+						};
+					});
 
 					// Clear input
 					setInputValue('');
@@ -1256,99 +1215,95 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				}
 			}
 
-			setSessions((prev) =>
-				prev.map((s) => {
-					if (s.id !== resolvedSessionId) return s;
+			updateSessionWith(resolvedSessionId, (s) => {
+				// Add command to history (separate histories for AI and terminal modes)
+				const historyKey = currentMode === 'ai' ? 'aiCommandHistory' : 'shellCommandHistory';
+				const currentHistory =
+					currentMode === 'ai' ? s.aiCommandHistory || [] : s.shellCommandHistory || [];
+				const newHistory = [...currentHistory];
+				if (
+					effectiveInputValue.trim() &&
+					(newHistory.length === 0 ||
+						newHistory[newHistory.length - 1] !== effectiveInputValue.trim())
+				) {
+					newHistory.push(effectiveInputValue.trim());
+				}
 
-					// Add command to history (separate histories for AI and terminal modes)
-					const historyKey = currentMode === 'ai' ? 'aiCommandHistory' : 'shellCommandHistory';
-					const currentHistory =
-						currentMode === 'ai' ? s.aiCommandHistory || [] : s.shellCommandHistory || [];
-					const newHistory = [...currentHistory];
-					if (
-						effectiveInputValue.trim() &&
-						(newHistory.length === 0 ||
-							newHistory[newHistory.length - 1] !== effectiveInputValue.trim())
-					) {
-						newHistory.push(effectiveInputValue.trim());
-					}
-
-					// For terminal mode (legacy), add to shellLogs
-					if (currentMode !== 'ai') {
-						return {
-							...s,
-							// TODO: Remove shellLogs once terminal tabs migration is complete
-							...(!s.terminalTabs?.length && { shellLogs: [...s.shellLogs, newEntry] }),
-							state: 'busy',
-							busySource: currentMode,
-							shellCwd: newShellCwd,
-							// Update remoteCwd for SSH sessions when cd command changes directory
-							...(remoteCwdChanged && newRemoteCwd && { remoteCwd: newRemoteCwd }),
-							[historyKey]: newHistory,
-						};
-					}
-
-					// For AI mode, add to the target tab's logs (pinned tabId or active)
-					const activeTab = resolveTargetTab(s);
-					if (!activeTab) {
-						// No tabs exist - this is a bug, sessions must have aiTabs
-						logger.error(
-							'[processInput] No active tab found - session has no aiTabs, this should not happen'
-						);
-						return s;
-					}
-
-					// Update the active tab's logs and state to 'busy' for write-mode tracking
-					// Also mark as awaitingSessionId if this is a new session (no agentSessionId yet)
-					// Set thinkingStartTime on the tab for accurate elapsed time tracking (especially for parallel tabs)
-					const isNewSession = !activeTab.agentSessionId;
-					const updatedAiTabs = s.aiTabs.map((tab) =>
-						tab.id === activeTab.id
-							? {
-									...tab,
-									logs: [...tab.logs, newEntry],
-									state: 'busy' as const,
-									thinkingStartTime: Date.now(),
-									// Codify the provider for this turn. The spawn below reads the
-									// session's provider as it stands right now, and changing the
-									// provider while this turn runs must not retarget it - so record
-									// who owns the turn and let late events resolve back to this
-									// provider instead of whatever the agent is configured with by
-									// the time they land. The model and effort are frozen here for
-									// the same reason - the transcript attributes each response to
-									// the configuration it actually ran under.
-									...codifyTurnSettings(tab, s),
-									// Mark this tab as awaiting session ID so we can assign it correctly
-									// when the session ID comes back (prevents cross-tab assignment)
-									awaitingSessionId: isNewSession ? true : tab.awaitingSessionId,
-									// Clear any prior tab-level agent error so a late onAgentError
-									// event for the dead PID can't keep the session pinned to 'error'
-									// and hide the thinking pill on retry
-									agentError: undefined,
-								}
-							: tab
-					);
-
+				// For terminal mode (legacy), add to shellLogs
+				if (currentMode !== 'ai') {
 					return {
 						...s,
+						// TODO: Remove shellLogs once terminal tabs migration is complete
+						...(!s.terminalTabs?.length && { shellLogs: [...s.shellLogs, newEntry] }),
 						state: 'busy',
 						busySource: currentMode,
-						thinkingStartTime: Date.now(),
-						currentCycleTokens: 0,
-						// Context usage is now exclusively updated from agent-reported usage stats
-						// Remove artificial +5 increment that was causing erroneous 100% detection
 						shellCwd: newShellCwd,
+						// Update remoteCwd for SSH sessions when cd command changes directory
+						...(remoteCwdChanged && newRemoteCwd && { remoteCwd: newRemoteCwd }),
 						[historyKey]: newHistory,
-						aiTabs: updatedAiTabs,
-						// Clear session-level error fields so `state === 'error' && agentError`
-						// branches (useAgentListeners onExit/onAgentError) can't override the
-						// fresh busy transition and suppress the thinking pill on retry
-						agentError: undefined,
-						agentErrorTabId: undefined,
-						agentErrorPaused: false,
 					};
-				})
-			);
+				}
+
+				// For AI mode, add to the target tab's logs (pinned tabId or active)
+				const activeTab = resolveTargetTab(s);
+				if (!activeTab) {
+					// No tabs exist - this is a bug, sessions must have aiTabs
+					logger.error(
+						'[processInput] No active tab found - session has no aiTabs, this should not happen'
+					);
+					return s;
+				}
+
+				// Update the active tab's logs and state to 'busy' for write-mode tracking
+				// Also mark as awaitingSessionId if this is a new session (no agentSessionId yet)
+				// Set thinkingStartTime on the tab for accurate elapsed time tracking (especially for parallel tabs)
+				const isNewSession = !activeTab.agentSessionId;
+				const updatedAiTabs = s.aiTabs.map((tab) =>
+					tab.id === activeTab.id
+						? {
+								...tab,
+								logs: [...tab.logs, newEntry],
+								state: 'busy' as const,
+								thinkingStartTime: Date.now(),
+								// Codify the provider for this turn. The spawn below reads the
+								// session's provider as it stands right now, and changing the
+								// provider while this turn runs must not retarget it - so record
+								// who owns the turn and let late events resolve back to this
+								// provider instead of whatever the agent is configured with by
+								// the time they land. The model and effort are frozen here for
+								// the same reason - the transcript attributes each response to
+								// the configuration it actually ran under.
+								...codifyTurnSettings(tab, s),
+								// Mark this tab as awaiting session ID so we can assign it correctly
+								// when the session ID comes back (prevents cross-tab assignment)
+								awaitingSessionId: isNewSession ? true : tab.awaitingSessionId,
+								// Clear any prior tab-level agent error so a late onAgentError
+								// event for the dead PID can't keep the session pinned to 'error'
+								// and hide the thinking pill on retry
+								agentError: undefined,
+							}
+						: tab
+				);
+
+				return {
+					...s,
+					state: 'busy',
+					busySource: currentMode,
+					thinkingStartTime: Date.now(),
+					currentCycleTokens: 0,
+					// Context usage is now exclusively updated from agent-reported usage stats
+					// Remove artificial +5 increment that was causing erroneous 100% detection
+					shellCwd: newShellCwd,
+					[historyKey]: newHistory,
+					aiTabs: updatedAiTabs,
+					// Clear session-level error fields so `state === 'error' && agentError`
+					// branches (useAgentListeners onExit/onAgentError) can't override the
+					// fresh busy transition and suppress the thinking pill on retry
+					agentError: undefined,
+					agentErrorTabId: undefined,
+					agentErrorPaused: false,
+				};
+			});
 
 			// If directory changed, check if new directory is a Git repository
 			// For remote sessions, check remoteCwd; for local sessions, check shellCwd
@@ -1361,9 +1316,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						activeSession.sessionSshRemoteConfig?.remoteId ||
 						undefined;
 					const isGitRepo = await gitService.isRepo(cwdToCheck, sshIdForGit);
-					setSessions((prev) =>
-						prev.map((s) => (s.id === resolvedSessionId ? { ...s, isGitRepo } : s))
-					);
+					updateSessionWith(resolvedSessionId, (s) => ({ ...s, isGitRepo }));
 				})();
 			}
 
@@ -1508,19 +1461,10 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							effectivePrompt = `${pendingMergedContext}\n\n---\n\n${effectivePrompt}`;
 
 							// Clear the pending merged context from the tab
-							setSessions((prev) =>
-								prev.map((s) => {
-									if (s.id !== resolvedSessionId) return s;
-									return {
-										...s,
-										aiTabs: s.aiTabs.map((tab) =>
-											tab.id === freshActiveTab.id
-												? { ...tab, pendingMergedContext: undefined }
-												: tab
-										),
-									};
-								})
-							);
+							updateAiTab(resolvedSessionId, freshActiveTab.id, (tab) => ({
+								...tab,
+								pendingMergedContext: undefined,
+							}));
 
 							logger.info('[InputProcessing] Injected merged context into message:', undefined, {
 								contextLength: pendingMergedContext.length,
@@ -1573,51 +1517,43 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							source: 'system',
 							text: `Error: Failed to spawn agent process - ${(error as Error).message}`,
 						};
-						setSessions((prev) =>
-							prev.map((s) => {
-								if (s.id !== resolvedSessionId) return s;
-								const errorTabId = targetTabId ?? s.activeTabId;
-								// Reset target tab's state to 'idle' and add error log
-								const updatedAiTabs =
-									s.aiTabs?.length > 0
-										? s.aiTabs.map((tab) =>
-												tab.id === errorTabId
-													? {
-															...tab,
-															state: 'idle' as const,
-															thinkingStartTime: undefined,
-															logs: [...tab.logs, errorLog],
-														}
-													: tab
-											)
-										: s.aiTabs;
-								return {
-									...s,
-									state: 'idle',
-									busySource: undefined,
-									thinkingStartTime: undefined,
-									aiTabs: updatedAiTabs,
-								};
-							})
-						);
+						updateSessionWith(resolvedSessionId, (s) => {
+							const errorTabId = targetTabId ?? s.activeTabId;
+							// Reset target tab's state to 'idle' and add error log
+							const updatedAiTabs =
+								s.aiTabs?.length > 0
+									? s.aiTabs.map((tab) =>
+											tab.id === errorTabId
+												? {
+														...tab,
+														state: 'idle' as const,
+														thinkingStartTime: undefined,
+														logs: [...tab.logs, errorLog],
+													}
+												: tab
+										)
+									: s.aiTabs;
+							return {
+								...s,
+								state: 'idle',
+								busySource: undefined,
+								thinkingStartTime: undefined,
+								aiTabs: updatedAiTabs,
+							};
+						});
 					}
 				})();
 			} else if (currentMode === 'terminal') {
 				// Intercept "clear" command to clear shell logs instead of sending to shell
 				const trimmedCommand = capturedInputValue.trim();
 				if (trimmedCommand === 'clear') {
-					setSessions((prev) =>
-						prev.map((s) => {
-							if (s.id !== resolvedSessionId) return s;
-							return {
-								...s,
-								state: 'idle',
-								busySource: undefined,
-								thinkingStartTime: undefined,
-								shellLogs: [],
-							};
-						})
-					);
+					updateSessionWith(resolvedSessionId, (s) => ({
+						...s,
+						state: 'idle',
+						busySource: undefined,
+						thinkingStartTime: undefined,
+						shellLogs: [],
+					}));
 					return;
 				}
 
@@ -1642,29 +1578,24 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					})
 					.catch((error) => {
 						logger.error('Failed to run command:', undefined, error);
-						setSessions((prev) =>
-							prev.map((s) => {
-								if (s.id !== resolvedSessionId) return s;
-								return {
-									...s,
-									state: 'idle',
-									busySource: undefined,
-									thinkingStartTime: undefined,
-									// TODO: Remove shellLogs once terminal tabs migration is complete
-									...(!s.terminalTabs?.length && {
-										shellLogs: [
-											...s.shellLogs,
-											{
-												id: generateId(),
-												timestamp: Date.now(),
-												source: 'system',
-												text: `Error: Failed to run command - ${(error as Error).message}`,
-											},
-										],
-									}),
-								};
-							})
-						);
+						updateSessionWith(resolvedSessionId, (s) => ({
+							...s,
+							state: 'idle',
+							busySource: undefined,
+							thinkingStartTime: undefined,
+							// TODO: Remove shellLogs once terminal tabs migration is complete
+							...(!s.terminalTabs?.length && {
+								shellLogs: [
+									...s.shellLogs,
+									{
+										id: generateId(),
+										timestamp: Date.now(),
+										source: 'system',
+										text: `Error: Failed to run command - ${(error as Error).message}`,
+									},
+								],
+							}),
+						}));
 					});
 			} else if (targetPid > 0) {
 				// AI mode: Write to stdin
@@ -1676,32 +1607,29 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						source: 'system',
 						text: `Error: Failed to write to process - ${(error as Error).message}`,
 					};
-					setSessions((prev) =>
-						prev.map((s) => {
-							if (s.id !== resolvedSessionId) return s;
-							// Reset active tab's state to 'idle' and add error log
-							const updatedAiTabs =
-								s.aiTabs?.length > 0
-									? s.aiTabs.map((tab) =>
-											tab.id === s.activeTabId
-												? {
-														...tab,
-														state: 'idle' as const,
-														thinkingStartTime: undefined,
-														logs: [...tab.logs, errorLog],
-													}
-												: tab
-										)
-									: s.aiTabs;
-							return {
-								...s,
-								state: 'idle',
-								busySource: undefined,
-								thinkingStartTime: undefined,
-								aiTabs: updatedAiTabs,
-							};
-						})
-					);
+					updateSessionWith(resolvedSessionId, (s) => {
+						// Reset active tab's state to 'idle' and add error log
+						const updatedAiTabs =
+							s.aiTabs?.length > 0
+								? s.aiTabs.map((tab) =>
+										tab.id === s.activeTabId
+											? {
+													...tab,
+													state: 'idle' as const,
+													thinkingStartTime: undefined,
+													logs: [...tab.logs, errorLog],
+												}
+											: tab
+									)
+								: s.aiTabs;
+						return {
+							...s,
+							state: 'idle',
+							busySource: undefined,
+							thinkingStartTime: undefined,
+							aiTabs: updatedAiTabs,
+						};
+					});
 				});
 			}
 		},
@@ -1722,7 +1650,6 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			sessionsRef,
 			getBatchState,
 			processQueuedItemRef,
-			setSessions,
 			flushBatchedUpdates,
 			onHistoryCommand,
 			onWizardCommand,

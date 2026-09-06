@@ -21,7 +21,12 @@
 
 import { useCallback, useEffect, useRef, useMemo } from 'react';
 import type { Session, Group, BatchRunState, QueuedItem, CustomAICommand } from '../../types';
-import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
+import {
+	useSessionStore,
+	selectActiveSession,
+	updateSessionWith,
+	updateAiTab,
+} from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -368,25 +373,24 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		(imagesOrUpdater: string[] | ((prev: string[]) => string[])) => {
 			const activeSession = selectActiveSession(useSessionStore.getState());
 			if (!activeSession) return;
-			setSessions((prev) =>
-				prev.map((s) => {
-					if (s.id !== activeSession.id) return s;
-					return {
-						...s,
-						aiTabs: s.aiTabs.map((tab) => {
-							if (tab.id !== s.activeTabId) return tab;
-							const currentImages = tab.stagedImages || [];
-							const newImages =
-								typeof imagesOrUpdater === 'function'
-									? imagesOrUpdater(currentImages)
-									: imagesOrUpdater;
-							return { ...tab, stagedImages: newImages };
-						}),
-					};
-				})
-			);
+			updateSessionWith(activeSession.id, (s) => {
+				const tabId = s.activeTabId;
+				if (!tabId) return s;
+				return {
+					...s,
+					aiTabs: s.aiTabs.map((tab) => {
+						if (tab.id !== tabId) return tab;
+						const currentImages = tab.stagedImages || [];
+						const newImages =
+							typeof imagesOrUpdater === 'function'
+								? imagesOrUpdater(currentImages)
+								: imagesOrUpdater;
+						return { ...tab, stagedImages: newImages };
+					}),
+				};
+			});
 		},
-		[setSessions]
+		[]
 	);
 
 	// ====================================================================
@@ -526,15 +530,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 
 		// Clear hasUnread indicator on newly active tab
 		if (nextTab.hasUnread && session) {
-			setSessions((prev) =>
-				prev.map((s) => {
-					if (s.id !== session.id) return s;
-					return {
-						...s,
-						aiTabs: s.aiTabs.map((t) => (t.id === nextTabId ? { ...t, hasUnread: false } : t)),
-					};
-				})
-			);
+			updateAiTab(session.id, nextTabId, (t) => ({ ...t, hasUnread: false }));
 		}
 		// Intentionally only depend on the drafted-for tab id, NOT inputValue
 	}, [activeTabIdForInput]);
@@ -547,11 +543,10 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			// Save terminal input to the previous session (including empty string to persist cleared input)
 			if (prevSessionId) {
 				const currentTerminalValue = useComposerInputStore.getState().terminalValue;
-				setSessions((prev) =>
-					prev.map((s) =>
-						s.id === prevSessionId ? { ...s, terminalDraftInput: currentTerminalValue } : s
-					)
-				);
+				updateSessionWith(prevSessionId, (s) => ({
+					...s,
+					terminalDraftInput: currentTerminalValue,
+				}));
 			}
 
 			// Load terminal input from the new session
@@ -945,34 +940,29 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			const pinIsOnScreen =
 				!pinnedTabId || (isAiModeRef.current && pinnedTabId === activeTabIdRef.current);
 			if (!pinIsOnScreen) {
-				let found = false;
-				setSessions((prev) =>
-					prev.map((s) => {
-						if (!s.aiTabs?.some((t) => t.id === pinnedTabId)) return s;
-						found = true;
-						return {
-							...s,
-							aiTabs: s.aiTabs.map((t) =>
-								t.id === pinnedTabId ? { ...t, inputValue: append(t.inputValue ?? '') } : t
-							),
-						};
-					})
-				);
-				// `found` stays false when the tab was closed mid-upload; the file is
-				// still on the host, there is just no draft left to mention it in.
-				if (!found) {
+				// Tab was closed mid-upload: the file is still on the host, there is
+				// just no draft left to mention it in.
+				const owner = useSessionStore
+					.getState()
+					.sessions.find((s) => s.aiTabs?.some((t) => t.id === pinnedTabId));
+				if (!owner || !pinnedTabId) {
 					notifyToast({
 						color: 'yellow',
 						title: 'Attachment has nowhere to go',
 						message: 'The tab it was dropped into was closed before the upload finished',
 					});
+					return false;
 				}
+				updateAiTab(owner.id, pinnedTabId, (t) => ({
+					...t,
+					inputValue: append(t.inputValue ?? ''),
+				}));
 				return false;
 			}
 			setInputValue(append);
 			return true;
 		},
-		[setInputValue, setSessions]
+		[setInputValue]
 	);
 
 	const appendMentionsToGroupChatDraft = useCallback((paths: string[], pinnedChatId?: string) => {

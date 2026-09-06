@@ -496,6 +496,31 @@ export interface ModalFooterProps {
 	cancelButtonRef?: React.RefObject<HTMLButtonElement>;
 }
 
+/**
+ * The footer button classes, exported so a modal that needs a THIRD button
+ * (Reset, Don't Save, Retry) can hand-roll its row without re-deriving the
+ * type scale.
+ *
+ * Five modals had already done exactly that and every one of them omitted a
+ * size class, so their buttons took the interface font directly - the same
+ * defect ModalFooter itself carried until it was given `text-sm`. A hand-rolled
+ * footer is legitimate; silently inventing its own scale is not.
+ */
+export const MODAL_BUTTON_BASE_CLASS =
+	'px-4 py-1.5 rounded text-sm transition-colors outline-none focus:ring-2 focus:ring-offset-1';
+export const MODAL_BUTTON_SECONDARY_CLASS = `${MODAL_BUTTON_BASE_CLASS} border hover:bg-white/5`;
+
+/**
+ * The standard Cancel / Confirm pair, shared by ~36 modals.
+ *
+ * `text-sm` is explicit rather than inherited. These buttons carried no size
+ * class at all, so they took the interface font size directly - at a 16px
+ * setting with a 1.2 zoom that is over 19px, which made a two-word button
+ * larger than the modal's own title and gave a routine confirmation the weight
+ * of a warning. A button label is a control, not prose, so it sits below body
+ * text. The vertical padding drops a step with it to keep the button in
+ * proportion rather than leaving a tall box around small text.
+ */
 export function ModalFooter({
 	theme,
 	onCancel,
@@ -525,7 +550,7 @@ export function ModalFooter({
 					type="button"
 					onClick={onCancel}
 					onKeyDown={(e) => handleKeyDown(e, onCancel)}
-					className="px-4 py-2 rounded border hover:bg-white/5 transition-colors outline-none focus:ring-2 focus:ring-offset-1"
+					className="px-4 py-1.5 rounded border text-sm hover:bg-white/5 transition-colors outline-none focus:ring-2 focus:ring-offset-1"
 					style={{
 						borderColor: theme.colors.border,
 						color: theme.colors.textMain,
@@ -540,7 +565,7 @@ export function ModalFooter({
 				onClick={onConfirm}
 				onKeyDown={(e) => !confirmDisabled && handleKeyDown(e, onConfirm)}
 				disabled={confirmDisabled}
-				className={`px-4 py-2 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed outline-none focus:ring-2 focus:ring-offset-1 ${confirmClassName}`}
+				className={`px-4 py-1.5 rounded text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed outline-none focus:ring-2 focus:ring-offset-1 ${confirmClassName}`}
 				style={{
 					backgroundColor: destructive ? theme.colors.error : theme.colors.accent,
 					color: destructive ? '#ffffff' : theme.colors.accentForeground,

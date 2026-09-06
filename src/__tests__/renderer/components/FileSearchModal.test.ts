@@ -2,11 +2,12 @@
  * @file FileSearchModal.test.ts
  * @description Tests for FileSearchModal's flattenPreviewableFiles helper
  *
- * Covers the visible-files-vs-all-files filtering logic:
- * - Full flattening (no expandedSet) returns all previewable files
- * - Expanded set filtering only returns files in expanded folders
- * - Non-previewable files are excluded in both modes
- * - Nested folder expansion requires all ancestor folders to be expanded
+ * The search spans the whole tree - there is no expanded-folder scope any
+ * more, so these cover:
+ * - Every previewable file in the tree is returned, at any depth
+ * - Non-previewable files are excluded
+ * - Playable media is included (it opens in the floating player, not a tab)
+ * - Depth is stamped from the tree, not the path
  */
 
 import { describe, it, expect } from 'vitest';
@@ -58,7 +59,7 @@ const testTree: FileNode[] = [
 ];
 
 describe('flattenPreviewableFiles', () => {
-	it('returns all previewable files when no expandedSet is provided', () => {
+	it('returns every previewable file in the tree regardless of depth', () => {
 		const result = flattenPreviewableFiles(testTree);
 		const paths = result.map((f) => f.fullPath);
 
@@ -86,55 +87,15 @@ describe('flattenPreviewableFiles', () => {
 		expect(result[0].fullPath).toBe('readme.md');
 	});
 
-	it('returns only files in expanded folders when expandedSet is provided', () => {
-		// Only src is expanded (not its subfolders)
-		const expandedSet = new Set(['src']);
-		const result = flattenPreviewableFiles(testTree, '', 0, expandedSet);
-		const paths = result.map((f) => f.fullPath);
-
-		// src/index.ts is directly in src (expanded)
-		expect(paths).toContain('src/index.ts');
-		// src/components/ and src/utils/ are not expanded, so their children are excluded
-		expect(paths).not.toContain('src/components/App.tsx');
-		expect(paths).not.toContain('src/utils/helpers.ts');
-		// docs/ is not expanded
-		expect(paths).not.toContain('docs/README.md');
-		// Root-level files are always included (not inside any folder)
-		expect(paths).toContain('package.json');
-		expect(paths).toContain('image.png');
-	});
-
-	it('includes nested files when all ancestor folders are expanded', () => {
-		const expandedSet = new Set(['src', 'src/components']);
-		const result = flattenPreviewableFiles(testTree, '', 0, expandedSet);
-		const paths = result.map((f) => f.fullPath);
-
-		expect(paths).toContain('src/index.ts');
-		expect(paths).toContain('src/components/App.tsx');
-		expect(paths).toContain('src/components/Modal.tsx');
-		// src/utils is not expanded
-		expect(paths).not.toContain('src/utils/helpers.ts');
-		// docs/ is not expanded
-		expect(paths).not.toContain('docs/README.md');
-	});
-
-	it('returns only root-level files when expandedSet is empty', () => {
-		const expandedSet = new Set<string>();
-		const result = flattenPreviewableFiles(testTree, '', 0, expandedSet);
-		const paths = result.map((f) => f.fullPath);
-
-		// Only root-level previewable files
-		expect(paths).toEqual(['package.json', 'image.png']);
-	});
-
-	it('returns all files when every folder is expanded', () => {
-		const expandedSet = new Set(['src', 'src/components', 'src/utils', 'docs']);
-		const result = flattenPreviewableFiles(testTree, '', 0, expandedSet);
-		const noExpand = flattenPreviewableFiles(testTree);
-
-		// Should match the no-expandedSet result
-		expect(result.length).toBe(noExpand.length);
-		expect(result.map((f) => f.fullPath).sort()).toEqual(noExpand.map((f) => f.fullPath).sort());
+	it('includes playable audio and video', () => {
+		const tree: FileNode[] = [
+			{ name: 'theme.mp3', type: 'file' },
+			{ name: 'demo.mp4', type: 'file' },
+			// Chromium cannot demux mkv, so it is deliberately not listed
+			{ name: 'raw.mkv', type: 'file' },
+		];
+		const paths = flattenPreviewableFiles(tree).map((f) => f.fullPath);
+		expect(paths).toEqual(['theme.mp3', 'demo.mp4']);
 	});
 
 	it('sets correct depth values', () => {

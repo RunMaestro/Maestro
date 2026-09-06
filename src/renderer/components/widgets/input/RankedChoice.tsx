@@ -68,7 +68,7 @@ export const RankedChoice = memo(function RankedChoice({
 		<div className="flex flex-col gap-1.5" style={{ opacity: disabled ? 0.5 : 1 }}>
 			{label && (
 				<span
-					className="text-[11px] font-medium uppercase tracking-wide"
+					className="text-xs-plus font-medium uppercase tracking-wide"
 					style={{ color: theme.colors.textDim }}
 				>
 					{label}

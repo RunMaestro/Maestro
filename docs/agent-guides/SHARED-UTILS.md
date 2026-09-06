@@ -17,22 +17,23 @@ All utilities in Maestro organized by category. Each entry lists the file path, 
 
 ## Agent IDs & Metadata
 
-| Function / Constant       | File                                | Signature                                                                 | Process  | Purpose                                                                                                                                                                                              |
-| ------------------------- | ----------------------------------- | ------------------------------------------------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AGENT_IDS`               | `src/shared/agentIds.ts`            | `readonly string[]`                                                       | Both     | Single source of truth: `['terminal', 'claude-code', 'codex', 'gemini-cli', 'qwen3-coder', 'opencode', 'factory-droid', 'copilot-cli']`                                                              |
-| `AgentId`                 | `src/shared/agentIds.ts`            | Type derived from `AGENT_IDS`                                             | Both     | Union type of all valid agent IDs.                                                                                                                                                                   |
-| `isValidAgentId`          | `src/shared/agentIds.ts`            | `(id: string) => id is AgentId`                                           | Both     | Type guard for agent ID validation.                                                                                                                                                                  |
-| `AGENT_DISPLAY_NAMES`     | `src/shared/agentMetadata.ts`       | `Record<AgentId, string>`                                                 | Both     | Internal constant backing `getAgentDisplayName`. **Prefer `getAgentDisplayName()`** for external use - it falls back to the raw id for unknown agents.                                               |
-| `getAgentDisplayName`     | `src/shared/agentMetadata.ts`       | `(agentId: AgentId \| string) => string`                                  | Both     | Get display name, falls back to raw id.                                                                                                                                                              |
-| `BETA_AGENTS`             | `src/shared/agentMetadata.ts`       | `ReadonlySet<AgentId>`                                                    | Both     | Internal constant backing `isBetaAgent`. Currently contains `opencode`, `factory-droid`, and `copilot-cli`. **Prefer `isBetaAgent()`** for external use.                                             |
-| `isBetaAgent`             | `src/shared/agentMetadata.ts`       | `(agentId: AgentId \| string) => boolean`                                 | Both     | Check if an agent is in beta.                                                                                                                                                                        |
-| `getAgentLoginCommand`    | `src/shared/agentMetadata.ts`       | `(agentId, customPath?) => AgentLoginCommand \| null`                     | Both     | Re-authentication command for an agent. Returns `null` for `terminal` and for unknown ids: never guess a command to run in a shell. Pass the agent's `customPath` so a non-PATH install still works. |
-| `formatAgentLoginCommand` | `src/shared/agentMetadata.ts`       | `(login: AgentLoginCommand) => string`                                    | Both     | Render a login command as the single line typed into a shell. Quotes a custom binary path containing spaces.                                                                                         |
-| `DEFAULT_CONTEXT_WINDOWS` | `src/shared/agentConstants.ts`      | `Partial<Record<AgentId, number>>`                                        | Both     | Default context window sizes per agent (e.g., claude-code: 200000).                                                                                                                                  |
-| `FALLBACK_CONTEXT_WINDOW` | `src/shared/agentConstants.ts`      | `number` (200000)                                                         | Both     | Fallback when agent has no entry in DEFAULT_CONTEXT_WINDOWS.                                                                                                                                         |
-| `COMBINED_CONTEXT_AGENTS` | `src/shared/agentConstants.ts`      | `ReadonlySet<AgentId>`                                                    | Both     | Agents with combined input+output context windows (currently: codex).                                                                                                                                |
-| `getModelFamily`          | `src/renderer/utils/modelFamily.ts` | `(modelId: string) => string`                                             | Renderer | Vendor label for a model id ('Claude', 'OpenAI', 'Gemini', ... else 'Other'). Reads the last segment of a provider-qualified id. Display aid only.                                                   |
-| `groupModelsByFamily`     | `src/renderer/utils/modelFamily.ts` | `(models: string[]) => Array<{family: string \| null; models: string[]}>` | Renderer | Group a model catalog by vendor for a picker. Returns one unlabelled group when everything shares a family, so no lone header appears.                                                               |
+| Function / Constant       | File                                | Signature                                                                 | Process  | Purpose                                                                                                                                                                                                                                                    |
+| ------------------------- | ----------------------------------- | ------------------------------------------------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AGENT_IDS`               | `src/shared/agentIds.ts`            | `readonly string[]`                                                       | Both     | Single source of truth: `['terminal', 'claude-code', 'codex', 'gemini-cli', 'qwen3-coder', 'opencode', 'factory-droid', 'copilot-cli']`                                                                                                                    |
+| `AgentId`                 | `src/shared/agentIds.ts`            | Type derived from `AGENT_IDS`                                             | Both     | Union type of all valid agent IDs.                                                                                                                                                                                                                         |
+| `isValidAgentId`          | `src/shared/agentIds.ts`            | `(id: string) => id is AgentId`                                           | Both     | Type guard for agent ID validation.                                                                                                                                                                                                                        |
+| `AGENT_DISPLAY_NAMES`     | `src/shared/agentMetadata.ts`       | `Record<AgentId, string>`                                                 | Both     | Internal constant backing `getAgentDisplayName`. **Prefer `getAgentDisplayName()`** for external use - it falls back to the raw id for unknown agents.                                                                                                     |
+| `getAgentDisplayName`     | `src/shared/agentMetadata.ts`       | `(agentId: AgentId \| string) => string`                                  | Both     | Get display name, falls back to raw id.                                                                                                                                                                                                                    |
+| `BETA_AGENTS`             | `src/shared/agentMetadata.ts`       | `ReadonlySet<AgentId>`                                                    | Both     | Internal constant backing `isBetaAgent`. Currently contains `opencode`, `factory-droid`, and `copilot-cli`. **Prefer `isBetaAgent()`** for external use.                                                                                                   |
+| `isBetaAgent`             | `src/shared/agentMetadata.ts`       | `(agentId: AgentId \| string) => boolean`                                 | Both     | Check if an agent is in beta.                                                                                                                                                                                                                              |
+| `getAgentLoginCommand`    | `src/shared/agentMetadata.ts`       | `(agentId, customPath?) => AgentLoginCommand \| null`                     | Both     | Re-authentication command for an agent. Returns `null` for `terminal` and for unknown ids: never guess a command to run in a shell. Pass the agent's `customPath` so a non-PATH install still works.                                                       |
+| `formatAgentLoginCommand` | `src/shared/agentMetadata.ts`       | `(login, syntax?: LoginShellSyntax) => string`                            | Both     | Render a login command as the single line typed into a shell. Quotes a binary path containing spaces, and in PowerShell prefixes the call operator `&` - without it PowerShell echoes the quoted path instead of running it. `syntax` defaults to `posix`. |
+| `loginShellSyntaxFor`     | `src/shared/agentMetadata.ts`       | `(shellId: string, isWindows: boolean) => LoginShellSyntax`               | Both     | Map a Maestro shell id to its command-line dialect (`posix` \| `powershell` \| `cmd`). Everything is `posix` off Windows; Git Bash and WSL stay `posix` on it. Feed the result to `formatAgentLoginCommand`.                                               |
+| `DEFAULT_CONTEXT_WINDOWS` | `src/shared/agentConstants.ts`      | `Partial<Record<AgentId, number>>`                                        | Both     | Default context window sizes per agent (e.g., claude-code: 200000).                                                                                                                                                                                        |
+| `FALLBACK_CONTEXT_WINDOW` | `src/shared/agentConstants.ts`      | `number` (200000)                                                         | Both     | Fallback when agent has no entry in DEFAULT_CONTEXT_WINDOWS.                                                                                                                                                                                               |
+| `COMBINED_CONTEXT_AGENTS` | `src/shared/agentConstants.ts`      | `ReadonlySet<AgentId>`                                                    | Both     | Agents with combined input+output context windows (currently: codex).                                                                                                                                                                                      |
+| `getModelFamily`          | `src/renderer/utils/modelFamily.ts` | `(modelId: string) => string`                                             | Renderer | Vendor label for a model id ('Claude', 'OpenAI', 'Gemini', ... else 'Other'). Reads the last segment of a provider-qualified id. Display aid only.                                                                                                         |
+| `groupModelsByFamily`     | `src/renderer/utils/modelFamily.ts` | `(models: string[]) => Array<{family: string \| null; models: string[]}>` | Renderer | Group a model catalog by vendor for a picker. Returns one unlabelled group when everything shares a family, so no lone header appears.                                                                                                                     |
 
 ---
 
@@ -159,12 +160,19 @@ helpers below.
 
 ## Font Utilities (`src/shared/fontStack.ts` - Both)
 
-| Export                     | Signature                                 | Purpose                                                                                                                                                                                                                                                              |
-| -------------------------- | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `withMonoFallback(family)` | `(string \| undefined \| null) => string` | Guarantee a CSS font-family degrades to monospace, not the browser's serif default. Apply where the `fontFamily` setting becomes a CSS value, not at the source (the picker `<select>` needs the raw name). No-ops when the value already carries a generic keyword. |
-| `MONO_FALLBACK_STACK`      | `string`                                  | The safe monospace chain appended by `withMonoFallback` (`ui-monospace` -> ... -> `monospace`). Matches the file-preview surfaces so the whole app degrades to the same faces.                                                                                       |
+| Export                                           | Signature                                                              | Purpose                                                                                                                                                                                                                                                              |
+| ------------------------------------------------ | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `withMonoFallback(family)`                       | `(string \| undefined \| null) => string`                              | Guarantee a CSS font-family degrades to monospace, not the browser's serif default. Apply where the `fontFamily` setting becomes a CSS value, not at the source (the picker `<select>` needs the raw name). No-ops when the value already carries a generic keyword. |
+| `resolveSurfaceFont(surfaceFont, interfaceFont)` | `(string \| undefined \| null, string \| undefined \| null) => string` | Resolve a per-surface font setting against the interface font, then apply the fallback. The empty string means "inherit", so this is what that empty string MEANS - see the note below.                                                                              |
+| `MONO_FALLBACK_STACK`                            | `string`                                                               | The safe monospace chain appended by `withMonoFallback` (`ui-monospace` -> ... -> `monospace`). Matches the file-preview surfaces so the whole app degrades to the same faces.                                                                                       |
+| `SANS_FALLBACK_STACK`                            | `string`                                                               | The proportional counterpart, for the sans typography preset. Leads with each platform's own UI face so it looks native, and ends in `sans-serif`.                                                                                                                   |
+| `WORDMARK_FONT_STACK`                            | `string`                                                               | The MAESTRO wordmark's font. Fixed, and deliberately NOT derived from any setting - a brand mark that changes identity with the reading font is a bug. Kept in sync by hand with the two `index.html` splash rules, which paint before any JavaScript runs.          |
 
 The font picker stores a bare name (`Roboto Mono`) with no generic fallback, which resolves to serif on iOS / the web-desktop bundle. Do NOT re-derive a fallback chain inline; call `withMonoFallback(s.fontFamily)` at the render site.
+
+**Every surface font stores the empty string to mean "inherit the interface font"** (terminal, chat, file preview, file editor), so a surface the user never touches keeps following the UI. `resolveSurfaceFont` is the one place that chain is resolved, which is what keeps the pickers, the rendered surfaces, and any future surface from disagreeing about what empty means: a surface that re-derives it and forgets the `.trim()` renders a whitespace-only family, which resolves to nothing and drops the pane to the browser default. In the renderer, read it through `useSurfaceFontFamily()` / `useSurfaceTypography()` (`src/renderer/hooks/ui/useSurfaceTypography.ts`) rather than calling the resolver against the store by hand - those also apply the one hop of surface-to-surface inheritance (a surface may follow the TERMINAL, not just the interface font).
+
+**A fallback chain is not sufficient on its own for the terminal.** It only covers a font that fails to RESOLVE. A configured font can resolve perfectly and simply not be fixed-pitch, and xterm sizes its grid from the advance of `W` and then puts every glyph on that pitch, so narrow letters trail a gap (`Cl aude`) while wide ones sit flush - the appended generic is never reached because nothing ever fell through to it. CSS cannot be asked whether a family is fixed-pitch, so `isFixedPitchStack()` / `resolveTerminalFontFamily()` in `src/renderer/utils/fixedPitchFont.ts` MEASURE it on a canvas and override to `MONO_FALLBACK_STACK` only on evidence (unmeasurable input keeps the user's font). The two mechanisms cover different failures and compose; the terminal calls the shared helper for the chain rather than carrying its own. That module serves every surface showing shell text, not just the terminal (the command-mode composer and the shell command card ride it too). A local duplicate of the chain (`ensureMonospaceFallback`) has shipped twice now - once in `XTerminal.tsx` and once in `fixedPitchFont.ts` - and was folded back in both times; do not reintroduce one.
 
 ## JSON Utilities (`src/shared/jsonUtils.ts` - Both)
 
@@ -175,9 +183,11 @@ The font picker stores a bare name (`Roboto Mono`) with no generic fallback, whi
 
 ### Search Highlighting (`src/renderer/utils/highlightMatches.tsx` - Renderer)
 
-| Function                                     | Signature                               | Purpose                                                                                                                          |
-| -------------------------------------------- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `highlightMatches(text, query, accentColor)` | `(string, string, string) => ReactNode` | Wrap every case-insensitive occurrence of `query` in an accent-colored `<mark>`. Used by the CSV table and its row detail modal. |
+| Function                                     | Signature                               | Purpose                                                                                                                                                                                        |
+| -------------------------------------------- | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `splitOnMatches(text, query)`                | `(string, string) => MatchSegment[]`    | Split `text` into alternating plain/match segments, each carrying its `start` offset. The one matcher the other two are built from, so escaping and match parity cannot drift.                 |
+| `highlightMatches(text, query, accentColor)` | `(string, string, string) => ReactNode` | Wrap every case-insensitive occurrence of `query` in an accent-colored `<mark>`. Used by the CSV table and its row detail modal.                                                               |
+| `searchMatchRanges(text, query)`             | `(string, string) => { from, to }[]`    | The same hits as byte ranges, for `MarkdownEditorHandle.setSearchMatches`. Use it rather than re-deriving offsets, or a pane's rendered half and its source half disagree about what is a hit. |
 
 ### Main Process (`src/main/utils/stripAnsi.ts`)
 
@@ -199,6 +209,7 @@ The font picker stores a bare name (`Roboto Mono`) with no generic fallback, whi
 | `formatCacheAge(cacheAgeMs)`           | `(number \| null) => string`           | Cache age labels from elapsed milliseconds: `"just now"`, `"5m ago"`, `"2h ago"`. |
 | `formatCalendarDay(isoDay)`            | `(string) => string`                   | A `YYYY-MM-DD` day for display: `"Jul 10, 2026"`. Parsed as LOCAL, not UTC.       |
 | `formatElapsedTimeColon(seconds)`      | `(number) => string`                   | Timer style: `"5:12"`, `"1:30:45"`.                                               |
+| `fileTimestampSlug(dateOrTimestamp?)`  | `(Date \| number?) => string`          | `"20260713-142530"` for a generated file name. Local time, sorts chronologically. |
 | `formatCost(cost)`                     | `(number) => string`                   | USD: `"$1.23"`, `"<$0.01"`, `"$0.00"`.                                            |
 | `estimateTokenCount(text)`             | `(string) => number`                   | Estimate at ~4 chars/token.                                                       |
 | `truncatePath(path, maxLength?)`       | `(string, number?) => string`          | `".../parent/current"` format. Default max 35 chars.                              |
@@ -221,19 +232,20 @@ product decisions, so they are options on `humanizeDuration`, not separate funct
 All of these are re-exported from `src/shared/formatters.ts`, so either import path
 works. `duration.ts` is canonical and is where new duration work belongs.
 
-| Function                             | Signature                     | Purpose                                                                                                                                                         |
-| ------------------------------------ | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `humanizeDuration(ms, options?)`     | `(number, opts?) => string`   | The engine. Reach for it when no preset fits.                                                                                                                   |
-| `formatDurationHuman(ms)`            | `(number) => string`          | Hour-capped, zero-padded: `"45s"`, `"5m 30s"`, `"2h 15m"`, `"30h 0m"`. The default.                                                                             |
-| `formatDurationCompact(ms)`          | `(number) => string`          | Drops seconds past a minute: `"45s"`, `"5m"`, `"2h 15m"`.                                                                                                       |
-| `formatDurationVerbose(ms)`          | `(number) => string`          | Words: `"5 minutes 30 seconds"`, `"1 hour 15 minutes"`.                                                                                                         |
-| `formatDurationParts(ms)`            | `(number) => string`          | Up to four segments: `"500ms"`, `"2m 30s"`, `"1h 15m 20s"`, `"3d 2h 15m"`.                                                                                      |
-| `formatDurationDecimal(ms)`          | `(number) => string`          | One decimal, one unit, for CLI columns: `"5.2s"`, `"1.5h"`.                                                                                                     |
-| `formatDurationLong(ms)`             | `(number) => string`          | Abbreviated, ladders to years: `"6d 7h"`, `"3w 2d"`, `"1y 7w"`.                                                                                                 |
-| `formatDurationWords(ms, maxUnits?)` | `(number, number?) => string` | Prose with months: `"1 day, 12 hours"`, `"2 months, 1 week"`.                                                                                                   |
-| `formatActiveTime(ms)`               | `(number) => string`          | Uppercase stat pills: `"<1M"`, `"5M"`, `"2H 30M"`, `"1D"`.                                                                                                      |
-| `formatElapsedTime(ms)`              | `(number) => string`          | `formatDurationHuman` plus sub-second precision: `"500ms"`, `"5m 12s"`.                                                                                         |
-| `formatElapsedTicker(ms)`            | `(number) => string`          | Live ticker with a leading `0m` below an hour: `"0m 3s"`, `"1h 0m 5s"`. ThinkingStatusPill and Auto Run elapsed on that pill use this, not `formatElapsedTime`. |
+| Function                             | Signature                     | Purpose                                                                                                                                                                                            |
+| ------------------------------------ | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `humanizeDuration(ms, options?)`     | `(number, opts?) => string`   | The engine. Reach for it when no preset fits.                                                                                                                                                      |
+| `formatDurationHuman(ms)`            | `(number) => string`          | Hour-capped, zero-padded: `"45s"`, `"5m 30s"`, `"2h 15m"`, `"30h 0m"`. The default.                                                                                                                |
+| `formatDurationCompact(ms)`          | `(number) => string`          | Drops seconds past a minute: `"45s"`, `"5m"`, `"2h 15m"`.                                                                                                                                          |
+| `formatDurationVerbose(ms)`          | `(number) => string`          | Words: `"5 minutes 30 seconds"`, `"1 hour 15 minutes"`.                                                                                                                                            |
+| `formatDurationParts(ms)`            | `(number) => string`          | Up to four segments: `"500ms"`, `"2m 30s"`, `"1h 15m 20s"`, `"3d 2h 15m"`.                                                                                                                         |
+| `formatDurationDecimal(ms)`          | `(number) => string`          | One decimal, one unit, for CLI columns: `"5.2s"`, `"1.5h"`.                                                                                                                                        |
+| `formatDurationLong(ms)`             | `(number) => string`          | Abbreviated, ladders to years: `"6d 7h"`, `"3w 2d"`, `"1y 7w"`.                                                                                                                                    |
+| `formatDurationWords(ms, maxUnits?)` | `(number, number?) => string` | Prose with months: `"1 day, 12 hours"`, `"2 months, 1 week"`.                                                                                                                                      |
+| `formatActiveTime(ms)`               | `(number) => string`          | Uppercase stat pills: `"<1M"`, `"5M"`, `"2H 30M"`, `"1D"`.                                                                                                                                         |
+| `formatElapsedTime(ms)`              | `(number) => string`          | `formatDurationHuman` plus sub-second precision: `"500ms"`, `"5m 12s"`.                                                                                                                            |
+| `formatElapsedTicker(ms)`            | `(number) => string`          | Live ticker with a leading `0m` below an hour: `"0m 3s"`, `"1h 0m 5s"`. ThinkingStatusPill and Auto Run elapsed on that pill use this, not `formatElapsedTime`.                                    |
+| `formatElapsedTickerCompact(ms)`     | `(number) => string`          | Same ladder without the padded lead: `"3s"`, `"20m 4s"`, `"1h 2m 5s"`. For a counter inside a chip or sentence, where a bare seconds count reads fine below a minute but `1203s` does not past it. |
 
 `DURATION_MS` gives each unit's size in ms - use it instead of redeclaring
 `const DAY = 86400000`. `DURATION_LADDER_FULL` / `_DAYS` / `_HOURS` are the prebuilt
@@ -295,6 +307,34 @@ span so a platform that DID fire a hide/show pair can't subtract the same sleep 
 
 ---
 
+## Group Chat Activity (`src/shared/groupChatActivity.ts` - Both)
+
+`computeGroupChatActivity(entries)` rolls a group chat's history log up into working time,
+tokens, and cost. Both the Group Chat Info overlay and the HTML export call it, so an
+export can't disagree with the app about how much work a chat did.
+
+**Never present the span between the first and last message as effort.** A group chat is a
+room, not a task: a chat used twice a week reports hundreds of hours without anyone doing
+anything. Working time is the UNION of the busy intervals, so participants running in
+PARALLEL collapse into one interval rather than summing - three agents working the same ten
+minutes is ten minutes of chat time, not thirty.
+
+Each entry covers `[timestamp - elapsedTimeMs, timestamp]` because a history entry is
+stamped when a turn ENDS. Entries recorded before per-turn timing existed carry no
+`elapsedTimeMs` and degenerate to points, which is what `GROUP_CHAT_ACTIVITY_STITCH_MS`
+(5 minutes) is for: turns closer together than the stitch are one block of work, an
+overnight gap ends it. Without it an older chat reports `0m`, which is a worse lie than the
+elapsed span it replaced.
+
+`turnsWithTokens` / `turnsWithCost` are the coverage counts. Render a dash rather than a
+zero when they are 0 - a chat whose turns reported no usage is UNKNOWN, not free.
+
+The producing half lives in `src/main/group-chat/group-chat-turn-metrics.ts`: group chat
+turns are batch processes spawned and reaped in the MAIN process, so they never reach the
+renderer's per-turn stats row and nothing else can measure them.
+
+---
+
 ## Emoji Utilities (`src/shared/emojiUtils.ts` - Both)
 
 | Function                           | Signature                    | Purpose                                         |
@@ -323,6 +363,69 @@ span so a platform that DID fire a hide/show pair can't subtract the same sleep 
 | `getImageMimeType(ext)`            | `(string) => string`           | Get MIME type for image extension.                                                                                         |
 
 ---
+
+## File Categories (`src/shared/fileCategories.ts` - Both)
+
+One extension table that answers two questions at once: "can Maestro open this
+file?" and "which bucket is it in?". `isPreviewableFile` is DERIVED from
+`getFileCategory`, so the two cannot disagree - a file that classifies into a
+bucket but refuses to open, or one that opens but is invisible under every
+filter pill, are both impossible by construction. Audio and video are not
+listed here; they resolve through `getMediaKind()` in `mediaTypes.ts`, which is
+the single source of truth for what Chromium can decode.
+
+Powers the Fuzzy File Search category pills (All / Code / Docs / Data / Media).
+Do NOT hand-roll another `TEXT_EXTENSIONS` set - the private copies inside
+`FileSearchModal` are what this replaced. Distinct from the sets in
+`src/renderer/utils/fileExplorerIcons/shared.ts`, which exist to pick an ICON
+and are split much more finely (lockfiles, test folders, config folders); pick
+by question, and do not merge them.
+
+| Function / Constant                 | Signature                                         | Purpose                                                                                    |
+| ----------------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `getFileCategory(path)`             | `(string) => FileCategory \| null`                | Bucket a file, or `null` when Maestro cannot open it. `null` != `'other'`.                 |
+| `isPreviewableFile(path)`           | `(string) => boolean`                             | Whether the file is listable/openable. Derived from `getFileCategory`.                     |
+| `matchesFileCategory(path, filter)` | `(string, FileCategoryFilter) => boolean`         | Filter predicate. `'all'` passes everything, including unclassified files.                 |
+| `getFileExtension(path)`            | `(string) => string`                              | Lowercase extension of the basename. `.gitignore` has none; parent-directory dots ignored. |
+| `FILE_CATEGORIES`                   | `readonly ['code','docs','data','media','other']` | Bucket vocabulary, in pill order.                                                          |
+| `FILE_CATEGORY_LABELS`              | `Record<FileCategoryFilter, string>`              | Human labels for the pills.                                                                |
+
+## Markdown File Links (`src/renderer/utils/fileLinks/` - Renderer)
+
+Everything behind a clickable `[[wiki]]`, `path/to/file.md`, `~/note.md`, or
+absolute-path reference in rendered markdown. `matcher.ts` is the pure
+resolution core shared by the Rich tier (`remarkFileLinks`) and the Fast tier
+(`markdownItAdapter`), so the two preview tiers cannot disagree about what a
+reference points at.
+
+A surface can sit over more than ONE root. The Auto Run panel resolves
+`[[Playbook]]` against its playbooks folder and `[[Notes/Thing]]` against the
+agent's project, and those trees have different roots so they cannot be
+concatenated as nodes - union their INDICES with `mergeFileTreeIndices`, whose
+argument order decides which tree wins a shared basename. Resolving against only
+one root is what left every cross-project link in an Auto Run document as inert
+text while the same link worked in a file-preview tab.
+
+<!-- doc-refs-ignore:start -->
+
+`resolve.ts` is the other half: what a click handler does with the path the
+plugin hands back. That path is project-RELATIVE for anything matched in the
+tree and absolute for everything else, and agents quote `src/foo.ts:42`
+constantly, so every consumer needs the same strip-then-join. Do NOT hand-roll
+it - a surface that skips the join hands a bare `Notes/Thing.md` to a reader
+expecting an absolute path and silently opens nothing.
+
+<!-- doc-refs-ignore:end -->
+
+| Function                                       | Signature                                             | Purpose                                                                        |
+| ---------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `buildFileTreeIndices(fileTree)`               | `(FileNode[]) => FileTreeIndices`                     | Index one tree. Memoize per tree; both plugins take prebuilt indices.          |
+| `mergeFileTreeIndices(...sets)`                | `(...(FileTreeIndices \| null)[]) => FileTreeIndices` | Union several roots. Earlier sets win a shared basename; nullish sets skipped. |
+| `findClosestMatch(ref, indices, cwd)`          | `(string, FileTreeIndices, string) => string \| null` | Resolve a `[[wiki]]` reference. Exact path, then basename, then cwd proximity. |
+| `validatePathReference(ref, indices)`          | `(string, FileTreeIndices) => string \| null`         | Stricter: exact path only (with or without `.md`). Used for bare path text.    |
+| `toRelativePath(absPath, projectRoot)`         | `(string, string \| undefined) => string \| null`     | Absolute -> project-relative. `null` when outside the root.                    |
+| `resolveFileReference(projectRoot, reference)` | `(string, string) => string`                          | Path a reader can open. Absolute verbatim, else joined onto the root.          |
+| `stripLineColumnSuffix(path)`                  | `(string) => string`                                  | Drop a trailing `:42` / `:42:7`.                                               |
 
 ## Media Types (`src/shared/mediaTypes.ts` - Both)
 
@@ -422,7 +525,7 @@ Providers translate grants to their own CLI vocabulary in `additionalDirArgs` (`
 | `dirsWithWriteAccess(dirs)` | `(AdditionalDirectory[] \| undefined) => AdditionalDirectory[]` | Grants the agent may write. For writable-root flags (Codex).                                      |
 | `repeatDirFlag(flag, dirs)` | `(string, AdditionalDirectory[]) => string[]`                   | Emit `<flag> <path>` once per dir. Never use a variadic list - it swallows the prompt positional. |
 
-Adding a provider? See [AGENT_SUPPORT.md → Step 3.5](../../AGENT_SUPPORT.md#step-35-additional-directories). `agent-completeness.test.ts` fails CI if `supportsAdditionalDirectories` and `additionalDirArgs` disagree.
+Adding a provider? See [PROVIDER-SUPPORT.md → Step 3.5](../../PROVIDER-SUPPORT.md#step-35-additional-directories). `agent-completeness.test.ts` fails CI if `supportsAdditionalDirectories` and `additionalDirArgs` disagree.
 
 UI: use `<AdditionalDirectoriesSection>` (`src/renderer/components/shared/`) - do NOT hand-roll a row editor. It is already wired into NewInstanceModal, EditAgentModal, and the Wizard's DirectorySelectionScreen. Pass `nativelyEnforced` from the selected agent's capability so the copy doesn't promise enforcement the provider can't deliver.
 
@@ -755,6 +858,27 @@ Per-model token pricing is the single source of truth in `src/shared/modelPricin
 
 `MODEL_PRICING` (exact per-model table) and `DEFAULT_MODEL_PRICING` (unknown-model Sonnet-tier fallback) are also exported. `CLAUDE_PRICING` in `src/main/constants.ts` is now a deprecated re-export of `DEFAULT_MODEL_PRICING`.
 
+**Not Claude-only.** `resolveModelPricing` checks the OpenAI families FIRST (`gpt-5*` and any slug containing `codex`, split by size class into nano / mini / frontier), because a Codex slug contains no Anthropic family word and used to fall straight through to the Sonnet-tier default - pricing GPT tokens at Claude rates. Only the GPT-5 line Codex actually ships is claimed; older OpenAI models still take the default rather than being priced off a family they do not belong to. Codex model slugs are discovered at runtime and version faster than a table can track, so the entries in `MODEL_PRICING` are anchors and the family fallback covers the point releases.
+
+**The two providers disagree about what `input_tokens` means, and that is a pricing input.** Anthropic reports cache reads BESIDE `input_tokens`; OpenAI reports them INSIDE it. `PricingConfig.CACHE_READ_SUBSET_OF_INPUT` carries that on the tier, and `calculateWithPricing` bills only `input - cacheRead` at the input rate when it is set. Without it the cached half of a Codex turn is charged at the full input rate AND again as a cache read, which inverts the whole point of a cache hit. Set it on any provider tier that counts cached tokens inside the input total; leave it off for Anthropic.
+
+---
+
+## Codex Token Accounting (`src/shared/codexTokenUsage.ts` - Shared)
+
+`CodexTokenCounts` is the ONE accumulator for token totals scanned out of a Codex CLI rollout transcript. Feed it events; read `inputTokens` / `outputTokens` / `cachedTokens` / `isEmpty`.
+
+| Method                     | Purpose                                                                |
+| -------------------------- | ---------------------------------------------------------------------- |
+| `addTurn(usage)`           | A per-turn record: `turn.completed.usage`, or `info.last_token_usage`. |
+| `addTokenCountEvent(info)` | A `token_count` event payload's `info`. Picks the right field for you. |
+
+**Codex reports usage in two shapes and only one of them is incremental.** `turn.completed.usage` and `info.last_token_usage` are per-turn; `info.total_token_usage` is the running SESSION TOTAL. Summing the latter across events makes a session with N turns report 1+2+...+N times its real tokens, so cost grows with the SQUARE of the conversation length - on a real corpus that turned 1.3B input tokens into 75B and a ~$350 estimate into ~$250,000, which is how Codex came to outrank Claude on a dashboard driven almost entirely by Claude agents. `addTokenCountEvent` prefers `last_token_usage` and, when only the cumulative total is present, adds the DELTA since the previous event; a total that moves backwards is read as a restarted counter (a resume or a fork) and taken whole rather than clamped to zero.
+
+Reasoning output is folded into `outputTokens` (it bills as output), and `cachedTokens` stays a SUBSET of `inputTokens`, matching how Codex reports it - see `CACHE_READ_SUBSET_OF_INPUT` above. Do NOT hand-roll another sum: the three call sites that did (`main/storage/codex-session-storage.ts` x2, `main/ipc/handlers/agentSessions.ts`) all carried this bug independently.
+
+**A derivation fix needs a cache-version bump.** Both stats caches fingerprint a transcript on its mtime and size, neither of which a parser fix touches, so old numbers would be served forever. `TOKEN_USAGE_CACHE_VERSION` (`main/stats/token-usage/token-usage-cache.ts`) and `GLOBAL_STATS_CACHE_VERSION` (`main/utils/statsCache.ts`) both went to 4 for this.
+
 ---
 
 ## Stats Cache (`src/main/utils/statsCache.ts` - Main)
@@ -767,6 +891,24 @@ Per-model token pricing is the single source of truth in `src/shared/modelPricin
 | `getGlobalStatsCachePath()`          | `() => string`                                   | Global stats cache file path.              |
 | `loadGlobalStatsCache()`             | `() => Promise<GlobalStatsCache \| null>`        | Load global cache with version validation. |
 | `saveGlobalStatsCache(cache)`        | `(GlobalStatsCache) => Promise<void>`            | Save global cache.                         |
+
+## Active Agents in Range (`src/shared/statsActiveAgents.ts` - Both)
+
+| Function                                          | Signature                                      | Purpose                                  |
+| ------------------------------------------------- | ---------------------------------------------- | ---------------------------------------- |
+| `isAgentActiveInRange(sessionId, bySessionByDay)` | `(string, BySessionByDay?) => boolean`         | Did this agent record work in the range? |
+| `countActiveAgents(agents, bySessionByDay)`       | `(readonly {id}[], BySessionByDay?) => number` | How many of these agents did.            |
+
+"Active" is a RANGE question, not a live-status one: an agent counts when it recorded at least one
+`query_events` row inside the dashboard's selected range, which covers interactive turns, Auto Run
+tasks, execution-queue drains, and Cue runs alike. The Usage Dashboard's Overview card, the Agent
+Overview `Total Agents` card, and the Agents tab's "Active only" toggle all read it, so they cannot
+disagree about who counts.
+
+Do NOT answer this with `getSessionQueryCount()` from `AgentOverviewCards`: that one falls back to
+the PROVIDER total when a session has no rows of its own and is the only visible session for that
+provider, which would mark an agent that ran nothing as active because a sibling on the same
+provider did.
 
 ---
 
@@ -872,6 +1014,18 @@ Which agents the Left Bar may surface AT ALL - a different question from the unr
 | ------------------------------------------ | ----------------------------------------- | --------------------------------------- |
 | `captureException(error, captureContext?)` | `(Error \| unknown, { extra? }?) => void` | Report error to Sentry from renderer.   |
 | `captureMessage(message, captureContext?)` | `(string, { level?, extra? }?) => void`   | Report message to Sentry from renderer. |
+
+### Tool Activity Labels (`src/renderer/utils/toolActivityLabel.ts`)
+
+`describeToolActivity(toolName, input)` turns one raw agent tool call into ONE short line of plain English (`Read src/App.tsx`, `Ran npm test`, `Edited themes.ts`), returning `{ verb, target }`.
+
+Tool names differ per provider (Claude Code `Read`/`Bash`/`MultiEdit`, OpenCode lowercase `read`/`bash`, Codex `shell`/`apply_patch`/`update_plan`, Copilot `write_to_file`, MCP `mcp__server__tool`), so matching runs on a normalized name. An unrecognized tool still returns a usable `Used <name>` line rather than being dropped, so a provider that ships a new tool degrades to something readable instead of a hole in the feed. It never throws: a raw-string input (Codex `apply_patch` sends a whole diff, not an object) and an argv-array `command` are both handled.
+
+`describeToolActivityStatus(state)` is the other half of the same job: it turns a raw tool-lifecycle payload into `'running' | 'completed' | 'failed'`. **Read the whole payload through it, never `state.status` alone.** Codex reports a shell command that exited non-zero as `status: 'completed'` and puts the failure in `exit_code`, so trusting the word draws a check mark beside a failed build - the exact row an operator is scanning a supervision feed for. Failure signals (non-zero exit code, `isError`/`is_error`) win over the status word. A zero exit code reads as `completed` even when the provider sent no status word at all, since the shell already answered the question. `running` is only what is left when the payload carries neither a recognized terminal word nor a zero exit code - the reading that cannot mislead, because the completion event resolves it. `ToolActivityStatus` is declared here too, and re-exported from `thoughtStreamStore` for consumers of the timeline.
+
+**Do NOT confuse it with `summarizeToolInput()`** (`components/TerminalOutput/utils/toolSummaries.ts`), which builds the VERBOSE in-chat tool cell: every input key as `key=value`, the untruncated command, plus an output preview. Pick by surface - a chat transcript the user reads line by line wants the verbose cell; the Thought Stream's activity feed wants the one-liner, because its whole job is being scannable enough to spot a loop.
+
+---
 
 ### Touch Primitives (`src/renderer/utils/touch.ts`)
 

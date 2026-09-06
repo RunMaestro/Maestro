@@ -122,6 +122,24 @@ describe('group-chat-storage', () => {
 			await deleteGroupChat(chat.id);
 		});
 
+		it('defaults to only engaging agents that are free', async () => {
+			const chat = await createGroupChat('Default Idle Chat', 'claude-code');
+
+			expect(chat.requireIdleParticipants).toBe(true);
+			expect((await loadGroupChat(chat.id))?.requireIdleParticipants).toBe(true);
+
+			await deleteGroupChat(chat.id);
+		});
+
+		it('persists an explicit opt-out of the idle requirement', async () => {
+			const chat = await createGroupChat('Opted Out Chat', 'claude-code', undefined, false);
+
+			expect(chat.requireIdleParticipants).toBe(false);
+			expect((await loadGroupChat(chat.id))?.requireIdleParticipants).toBe(false);
+
+			await deleteGroupChat(chat.id);
+		});
+
 		it('preserves special characters in the name (e.g. slashes)', async () => {
 			// The on-disk directory is keyed by UUID, not the name, so names may
 			// contain filesystem-invalid characters just like regular agent names.

@@ -82,17 +82,21 @@ export function createBrowserTabRemoteApi() {
 			callback: (
 				sessionId: string,
 				config: { cwd?: string; shell?: string; name?: string | null; command?: string },
-				responseChannel: string
+				responseChannel: string,
+				options: { background?: boolean }
 			) => void
 		): (() => void) => {
 			const handler = (
 				_: unknown,
 				sessionId: string,
 				config: { cwd?: string; shell?: string; name?: string | null; command?: string },
-				responseChannel: string
+				responseChannel: string,
+				options?: { background?: boolean }
 			) => {
 				try {
-					callback(sessionId, config, responseChannel);
+					callback(sessionId, config, responseChannel, {
+						background: options?.background === true,
+					});
 				} catch (error) {
 					ipcRenderer.send(responseChannel, false);
 					throw error;
@@ -176,6 +180,54 @@ export function createBrowserTabRemoteApi() {
 		 */
 		sendRemoteListTerminalTabsResponse: (responseChannel: string, tabs: unknown[]): void => {
 			ipcRenderer.send(responseChannel, tabs);
+		},
+
+		/**
+		 * Subscribe to remote terminal scrollback reads from CLI/web interface.
+		 * Renderer must ack via sendRemoteReadTerminalTabResponse.
+		 */
+		onRemoteReadTerminalTab: (
+			callback: (
+				sessionId: string,
+				payload: { tabRef?: string; tail?: number },
+				responseChannel: string
+			) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				payload: { tabRef?: string; tail?: number },
+				responseChannel: string
+			) => {
+				try {
+					callback(sessionId, payload, responseChannel);
+				} catch (error) {
+					ipcRenderer.send(responseChannel, { success: false, error: 'Renderer error' });
+					throw error;
+				}
+			};
+			ipcRenderer.on('remote:readTerminalTab', handler);
+			return () => ipcRenderer.removeListener('remote:readTerminalTab', handler);
+		},
+
+		/**
+		 * Send response for a remote terminal scrollback read. The resolved tab is
+		 * echoed back so the CLI can report which terminal it actually read.
+		 */
+		sendRemoteReadTerminalTabResponse: (
+			responseChannel: string,
+			success: boolean,
+			result?: {
+				error?: string;
+				tabId?: string;
+				tabName?: string;
+				cwd?: string;
+				state?: string;
+				content?: string;
+				totalLines?: number;
+			}
+		): void => {
+			ipcRenderer.send(responseChannel, { success, ...result });
 		},
 
 		/**

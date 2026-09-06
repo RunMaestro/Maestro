@@ -51,11 +51,15 @@ export function QueuedItemEditModal({ item, theme, onClose, onSave }: QueuedItem
 		externalRef: textareaRef,
 	});
 
-	// Focus the textarea on open, cursor at end.
+	// Put the caret at the end on open. The FOCUS itself is Modal's job via
+	// initialFocusRef below: Modal auto-focuses on mount inside a
+	// requestAnimationFrame, and with no initialFocusRef it focuses its own
+	// overlay container. That frame lands after this effect, so focusing here
+	// as well would be silently undone one frame later and the user would be
+	// typing into a div - the whole point of this modal is the text box.
 	useEffect(() => {
 		const el = textareaRef.current;
 		if (el) {
-			el.focus();
 			el.selectionStart = el.value.length;
 			el.selectionEnd = el.value.length;
 		}
@@ -151,6 +155,7 @@ export function QueuedItemEditModal({ item, theme, onClose, onSave }: QueuedItem
 				priority={MODAL_PRIORITIES.QUEUED_ITEM_EDIT}
 				zIndex={95}
 				width={560}
+				initialFocusRef={textareaRef}
 				onClose={onClose}
 				footer={
 					<ModalFooter

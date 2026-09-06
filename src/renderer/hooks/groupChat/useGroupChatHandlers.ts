@@ -19,6 +19,7 @@ import { useUIStore } from '../../stores/uiStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import type { GroupChat } from '../../../shared/group-chat-types';
 import { pickNextGroupChatIdAfterDelete } from '../../utils/groupChatOrdering';
+import { applyGroupChatRightTab } from '../../utils/groupChatRightTab';
 import { useAgentErrorRecovery } from '../agent/useAgentErrorRecovery';
 import type { ToolType } from '../../../shared/types';
 import { notifyToast } from '../../stores/notificationStore';
@@ -531,11 +532,7 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 	);
 
 	const handleGroupChatRightTabChange = useCallback((tab: GroupChatRightTab) => {
-		const { setGroupChatRightTab, activeGroupChatId } = useGroupChatStore.getState();
-		setGroupChatRightTab(tab);
-		if (activeGroupChatId) {
-			window.maestro.settings.set(`groupChatRightTab:${activeGroupChatId}`, tab);
-		}
+		applyGroupChatRightTab(tab);
 	}, []);
 
 	const handleJumpToGroupChatMessage = useCallback((timestamp: number) => {
@@ -577,12 +574,18 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 				enableMaestroP?: boolean;
 				maestroPMode?: 'interactive' | 'dynamic';
 				maestroPPath?: string;
-			}
+			},
+			requireIdleParticipants?: boolean
 		) => {
 			const { setGroupChats } = useGroupChatStore.getState();
 			const { closeModal } = useModalStore.getState();
 			try {
-				const chat = await window.maestro.groupChat.create(name, moderatorAgentId, moderatorConfig);
+				const chat = await window.maestro.groupChat.create(
+					name,
+					moderatorAgentId,
+					moderatorConfig,
+					requireIdleParticipants
+				);
 				setGroupChats((prev) => [chat, ...prev]);
 				closeModal('newGroupChat');
 				handleOpenGroupChat(chat.id);
@@ -652,7 +655,8 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 				enableMaestroP?: boolean;
 				maestroPMode?: 'interactive' | 'dynamic';
 				maestroPPath?: string;
-			}
+			},
+			requireIdleParticipants?: boolean
 		) => {
 			const { setGroupChats } = useGroupChatStore.getState();
 			const { closeModal } = useModalStore.getState();
@@ -660,6 +664,7 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 				name,
 				moderatorAgentId,
 				moderatorConfig,
+				requireIdleParticipants,
 			});
 			setGroupChats((prev) => prev.map((c) => (c.id === id ? updated : c)));
 			closeModal('editGroupChat');

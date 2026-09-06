@@ -15,7 +15,7 @@
  * each row jumps there with that pipeline pre-selected.
  */
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import {
 	AlertTriangle,
 	Bot,
@@ -44,6 +44,8 @@ import { validatePipelines } from '../CuePipelineEditor/utils/pipelineValidation
 import { compareNamesIgnoringEmojis } from '../../../shared/emojiUtils';
 import { SegmentedControl } from '../ui/SegmentedControl';
 import { HoverTooltip } from '../ui/HoverTooltip';
+import { useModalLayer } from '../../hooks/ui/useModalLayer';
+import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { cueService } from '../../services/cue';
 import { notifyToast } from '../../stores/notificationStore';
 import { PipelineDot } from './StatusDot';
@@ -141,6 +143,20 @@ export function PipelineListTab({
 	}, []);
 
 	const cancelRename = useCallback(() => setRenamingId(null), []);
+
+	// While a rename is open it owns Escape: the key cancels the rename rather
+	// than closing the whole Cue modal. The layer stack handles Escape on a
+	// capture-phase window listener, so a keydown handler on the input could
+	// never win - this has to be a real layer that outranks CUE_MODAL. Same
+	// mechanism the Scheduled Tasks filter box uses.
+	useModalLayer(MODAL_PRIORITIES.CUE_PIPELINE_RENAME, undefined, cancelRename, {
+		enabled: renamingId !== null,
+		// An inline field, not an overlay: it must not dim the modal, trap focus,
+		// or block the rest of the list from being clicked.
+		focusTrap: 'none',
+		blocksLowerLayers: false,
+		capturesFocus: false,
+	});
 
 	const commitRename = useCallback(
 		async (oldName: string, newName: string) => {
@@ -469,11 +485,29 @@ function PipelineNameEditor({
 				? 'Another pipeline already has that name'
 				: null;
 
+	// Set the instant this editor is being torn down, so a blur fired on the way
+	// out cannot commit. Escape cancels from the LAYER STACK, which unmounts this
+	// component while its input still holds focus, and a blur-commit racing that
+	// teardown would save the very rename Escape was pressed to abandon.
+	//
+	// Defensive: React does not fire `onBlur` for an element removed while
+	// focused, so no test drives this branch (one that tried passed with the
+	// guard deleted, which is worse than no test). Kept because it is one
+	// comparison and the failure it prevents is silent and destructive.
+	const closingRef = useRef(false);
+
+	const cancel = () => {
+		closingRef.current = true;
+		onCancel();
+	};
+
 	const commit = () => {
+		if (closingRef.current) return;
 		// An unchanged name is a no-op, not an error - it is what pressing Enter
 		// without typing should do.
-		if (trimmed === initialName) return onCancel();
+		if (trimmed === initialName) return cancel();
 		if (error) return;
+		closingRef.current = true;
 		onCommit(trimmed);
 	};
 
@@ -484,16 +518,19 @@ function PipelineNameEditor({
 				value={draft}
 				onChange={(e) => setDraft(e.target.value)}
 				onKeyDown={(e) => {
-					// Stop every key here: the row is a button (Space/Enter toggle
-					// it) and the modal's layer stack claims Escape. Without this,
-					// typing a space collapses the row under the caret.
+					// Stop every key here: the row is a button, so Space and Enter
+					// would otherwise toggle it while the user is typing.
+					//
+					// Escape is NOT handled here on purpose. The layer stack claims it
+					// on a capture-phase window listener, so this handler never sees
+					// it; the cancel comes from the CUE_PIPELINE_RENAME layer that
+					// PipelineListTab registers while a rename is open. A local
+					// Escape branch here would be dead code that reads as the source
+					// of the behavior.
 					e.stopPropagation();
 					if (e.key === 'Enter') {
 						e.preventDefault();
 						commit();
-					} else if (e.key === 'Escape') {
-						e.preventDefault();
-						onCancel();
 					}
 				}}
 				// Blur-commits rather than blur-cancels: clicking away from a field
@@ -510,7 +547,7 @@ function PipelineNameEditor({
 				data-testid="pipeline-rename-input"
 			/>
 			{error && (
-				<span className="text-[10px] flex-shrink-0" style={{ color: theme.colors.error }}>
+				<span className="text-2xs flex-shrink-0" style={{ color: theme.colors.error }}>
 					{error}
 				</span>
 			)}
@@ -623,7 +660,7 @@ function PipelineListRow({
 						</>
 					)}
 					<span
-						className="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide flex-shrink-0"
+						className="px-1.5 py-0.5 rounded text-2xs font-bold uppercase tracking-wide flex-shrink-0"
 						style={{ backgroundColor: `${badgeColor}20`, color: badgeColor }}
 					>
 						{health.label}
@@ -667,7 +704,7 @@ function PipelineListRow({
 
 				{/* How it is doing */}
 				<div
-					className="text-[11px] mt-1 flex items-center gap-1.5 flex-wrap"
+					className="text-xs-plus mt-1 flex items-center gap-1.5 flex-wrap"
 					style={{ color: theme.colors.textDim }}
 				>
 					<span style={{ color: badgeColor }}>{health.detail}</span>
@@ -702,7 +739,7 @@ function PipelineListRow({
 						{health.issues.map((issue, i) => (
 							<li
 								key={i}
-								className="text-[11px] flex items-start gap-1.5"
+								className="text-xs-plus flex items-start gap-1.5"
 								style={{ color: theme.colors.warning }}
 							>
 								<AlertTriangle className="w-3 h-3 flex-shrink-0 mt-[1px]" />
@@ -741,7 +778,7 @@ function PipelineListRow({
 									{t.summary && <span style={{ color: theme.colors.textDim }}> · {t.summary}</span>}
 									{t.subscriptionName && (
 										<span
-											className="block text-[10px] font-mono break-all"
+											className="block text-2xs font-mono break-all"
 											style={{ color: theme.colors.textDim, opacity: 0.7 }}
 										>
 											{t.subscriptionName}
@@ -761,7 +798,7 @@ function PipelineListRow({
 								{!singleRunSub && t.subscriptionName && (
 									<button
 										onClick={() => onTriggerSubscription(t.subscriptionName!)}
-										className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] hover:opacity-80 transition-opacity flex-shrink-0"
+										className="flex items-center gap-1 px-1.5 py-0.5 rounded text-2xs hover:opacity-80 transition-opacity flex-shrink-0"
 										style={{ color: theme.colors.textDim }}
 										title={`Run "${t.subscriptionName}" now`}
 									>
@@ -793,7 +830,7 @@ function PipelineListRow({
 										{s.label}
 										{s.detail && (
 											<span
-												className="block text-[10px] font-mono break-all"
+												className="block text-2xs font-mono break-all"
 												style={{ color, opacity: 0.7 }}
 											>
 												{s.detail}
@@ -856,7 +893,7 @@ function PromptLine({ prompts, theme }: { prompts: CueNodePrompts; theme: Theme 
 				}
 			>
 				<span
-					className="block truncate text-[10px] italic"
+					className="block truncate text-2xs italic"
 					style={{ color: theme.colors.textDim, opacity: 0.85 }}
 				>
 					{prompts.preview}
@@ -864,7 +901,7 @@ function PromptLine({ prompts, theme }: { prompts: CueNodePrompts; theme: Theme 
 			</HoverTooltip>
 			{prompts.count > 1 && (
 				<span
-					className="text-[9px] font-bold flex-shrink-0 px-1 rounded"
+					className="text-3xs font-bold flex-shrink-0 px-1 rounded"
 					style={{ backgroundColor: `${theme.colors.textDim}25`, color: theme.colors.textDim }}
 					title={`${prompts.count} different prompts feed this`}
 				>
@@ -890,17 +927,17 @@ function DetailColumn({
 	return (
 		<div>
 			<div
-				className="text-[10px] font-bold uppercase tracking-wider mb-1"
+				className="text-2xs font-bold uppercase tracking-wider mb-1"
 				style={{ color: theme.colors.textDim }}
 			>
 				{title}
 			</div>
 			{children.length === 0 ? (
-				<div className="text-[11px]" style={{ color: theme.colors.textDim, opacity: 0.7 }}>
+				<div className="text-xs-plus" style={{ color: theme.colors.textDim, opacity: 0.7 }}>
 					{empty}
 				</div>
 			) : (
-				<ul className="space-y-1 text-[11px]">{children}</ul>
+				<ul className="space-y-1 text-xs-plus">{children}</ul>
 			)}
 		</div>
 	);

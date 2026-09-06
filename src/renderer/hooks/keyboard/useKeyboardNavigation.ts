@@ -3,6 +3,7 @@ import type { Session, Group, FocusArea } from '../../types';
 import type { SidebarExtraSelection } from '../../stores/uiStore';
 import type { StarredItem } from '../session/useStarredItems';
 import { orderGroupChatsForDisplay } from '../../utils/groupChatOrdering';
+import { requestSidebarReveal } from '../../utils/sidebarReveal';
 import { useSidebarNavStore } from '../../stores/sidebarNavStore';
 
 /**
@@ -361,6 +362,10 @@ export function useKeyboardNavigation(
 	/** Move the keyboard cursor onto a virtual entry (highlight only - no activation). */
 	const selectEntry = useCallback(
 		(entry: VirtualEntry): void => {
+			// Arrow navigation is the case the reveal exists for: the user moved the
+			// cursor and may have moved it off screen. A click never comes through
+			// here, which is what keeps a click from re-aiming the list.
+			requestSidebarReveal();
 			if (entry.type === 'session') {
 				setSidebarExtraSelection(null);
 				setSelectedSidebarIndex(entry.navIndex);

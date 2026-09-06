@@ -390,7 +390,7 @@ export const QueuedItemsList = memo(
 												className="inline-block w-2 h-2 rounded-full"
 												style={{ backgroundColor: theme.colors.warning }}
 											/>
-											<span className="font-mono">{tab.displayName}</span>
+											<span>{tab.displayName}</span>
 										</li>
 									))}
 								</ul>
@@ -526,7 +526,7 @@ function QueuedItemRow({
 				{isPaused && (
 					<div className={canDrag ? 'pl-4 mb-1.5' : 'mb-1.5'}>
 						<span
-							className="px-1.5 py-0.5 rounded text-[10px] font-bold tracking-wider"
+							className="px-1.5 py-0.5 rounded text-2xs font-bold tracking-wider"
 							style={{
 								backgroundColor: theme.colors.warning + '33',
 								color: theme.colors.warning,

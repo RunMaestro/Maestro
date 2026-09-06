@@ -295,4 +295,69 @@ describe('Modal', () => {
 			expect(screen.getByTestId('modal-resize-handle-nw')).toBeInTheDocument();
 		});
 	});
+	describe('ModalFooter type scale', () => {
+		/**
+		 * These buttons carried no size class, so they took the interface font
+		 * size directly - at a 16px setting with a 1.2 zoom that is over 19px,
+		 * which made a two-word button larger than the modal's own `text-sm`
+		 * title and gave a routine confirmation the weight of a warning.
+		 */
+		function renderFooter(overrides: Partial<React.ComponentProps<typeof ModalFooter>> = {}) {
+			render(
+				<ModalFooter
+					theme={mockTheme}
+					onCancel={vi.fn()}
+					onConfirm={vi.fn()}
+					cancelLabel="Cancel"
+					confirmLabel="Remove"
+					{...overrides}
+				/>
+			);
+		}
+
+		it('sizes both buttons explicitly rather than inheriting', () => {
+			renderFooter();
+
+			for (const name of ['Cancel', 'Remove']) {
+				expect(screen.getByRole('button', { name }).className).toContain('text-sm');
+			}
+		});
+
+		it('does not render a button larger than the modal title', () => {
+			// The title is `text-sm`; a control should not outweigh the heading
+			// that names what it acts on.
+			renderModal({
+				title: 'Remove Queued Message?',
+				footer: (
+					<ModalFooter
+						theme={mockTheme}
+						onCancel={vi.fn()}
+						onConfirm={vi.fn()}
+						confirmLabel="Remove"
+					/>
+				),
+			});
+
+			const title = screen.getByText('Remove Queued Message?');
+			const button = screen.getByRole('button', { name: 'Remove' });
+			expect(title.className).toContain('text-sm');
+			expect(button.className).toContain('text-sm');
+		});
+
+		it('keeps the destructive styling independent of the size', () => {
+			// Shrinking the label must not quietly change what the button means.
+			renderFooter({ destructive: true, confirmLabel: 'Remove' });
+			const button = screen.getByRole('button', { name: 'Remove' });
+
+			expect(button.className).toContain('text-sm');
+			expect(button).toHaveStyle({ backgroundColor: mockTheme.colors.error });
+		});
+
+		it('tightens the vertical padding to match', () => {
+			// Otherwise the box stays tall around smaller text and the button
+			// looks loose rather than smaller.
+			renderFooter();
+			expect(screen.getByRole('button', { name: 'Remove' }).className).toContain('py-1.5');
+		});
+	});
 });

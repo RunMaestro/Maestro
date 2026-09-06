@@ -49,7 +49,7 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 							setModelMenuOpen(!modelMenuOpen);
 							setEffortMenuOpen(false);
 						}}
-						className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-full cursor-pointer transition-all opacity-60 hover:opacity-100"
+						className="flex items-center gap-1 text-2xs px-2 py-1 rounded-full cursor-pointer transition-all opacity-60 hover:opacity-100"
 						style={{
 							backgroundColor: `${theme.colors.accent}10`,
 							color: theme.colors.accent,
@@ -98,7 +98,7 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 							setEffortMenuOpen(!effortMenuOpen);
 							setModelMenuOpen(false);
 						}}
-						className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-full cursor-pointer transition-all opacity-60 hover:opacity-100"
+						className="flex items-center gap-1 text-2xs px-2 py-1 rounded-full cursor-pointer transition-all opacity-60 hover:opacity-100"
 						style={{
 							backgroundColor: `${theme.colors.warning}10`,
 							color: theme.colors.warning,

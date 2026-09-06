@@ -22,6 +22,7 @@ import { useVoiceAgentActions } from '../../hooks/voice/useVoiceAgentActions';
 import { useVoiceUiStore } from '../../stores/voiceUiStore';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { getOpenInLabel } from '../../utils/platformUtils';
+import { visibleAiTabs } from '../../utils/tabHelpers';
 import { useListNavigation } from '../../hooks';
 import { useUIStore } from '../../stores/uiStore';
 import { useSettingsStore, selectIsLeaderboardRegistered } from '../../stores/settingsStore';
@@ -45,12 +46,7 @@ import { ResizeHandles } from '../ui/ResizeHandles';
 import { buildAgentPanelCommands } from './commands/agentPanelCommands';
 import { buildAgentSwitcherCommands } from './commands/agentSwitcherCommands';
 import { buildMediaPlayerCommands } from './commands/mediaPlayerCommands';
-import {
-	selectCanRestoreFloatingPlayer,
-	selectCanOpenMediaPlayer,
-	selectMediaPlayerTargetId,
-	useMediaPlaybackStore,
-} from '../../stores/mediaPlaybackStore';
+import { selectCanOpenMediaPlayer, useMediaPlaybackStore } from '../../stores/mediaPlaybackStore';
 import { buildActiveTabContextCommands } from './commands/contextCommands';
 import { buildDebugCommands } from './commands/debugCommands';
 import { buildFeatureCommands } from './commands/featureCommands';
@@ -67,6 +63,7 @@ import { buildPluginCommandPaletteCommands } from './commands/pluginCommandPalet
 import { mergePluginContributions } from '../../utils/pluginContributionMerge';
 import { buildNotificationCommands } from './commands/notificationCommands';
 import { buildRightPanelCommands } from './commands/rightPanelCommands';
+import { buildFilePreviewCommands } from './commands/filePreviewCommands';
 import { buildSearchCommands } from './commands/searchCommands';
 import {
 	buildSessionJumpCommands,
@@ -236,8 +233,6 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const setGroupChatsExpanded = useSettingsStore((s) => s.setGroupChatsExpanded);
 	const isLeaderboardRegistered = useSettingsStore(selectIsLeaderboardRegistered);
 	const activeBatchSessionIds = useBatchStore(useShallow(selectActiveBatchSessionIds));
-	const canRestoreFloatingPlayer = useMediaPlaybackStore(selectCanRestoreFloatingPlayer);
-	const restoreFloatingPlayer = useMediaPlaybackStore((s) => s.restore);
 	// Concerto's two surfaces are store-owned toggles, so read their live state
 	// here: the palette entries name what the keypress will actually do.
 	const concertoEnabled = useSettingsStore((s) => s.encoreFeatures.concerto === true);
@@ -251,17 +246,10 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		[concertoStageFloating, setConcertoStageFloating]
 	);
 	const canOpenMediaPlayer = useMediaPlaybackStore(selectCanOpenMediaPlayer);
-	// Read the target at INVOKE time, not render time: the palette can sit open
-	// while a queued file advances, and landing on a stale id would open the
-	// player on something the user already finished.
-	const openMediaPlayer = useCallback(() => {
-		const state = useMediaPlaybackStore.getState();
-		const targetId = selectMediaPlayerTargetId(state);
-		state.restore();
-		if (targetId && targetId !== state.activeItemId) {
-			state.setActiveItem(targetId, { autoplay: false });
-		}
-	}, []);
+	// Resolved at INVOKE time inside the store, not render time: the palette can
+	// sit open while a queued file advances, and landing on a stale id would open
+	// the player on something the user already finished.
+	const openMediaPlayer = useCallback(() => useMediaPlaybackStore.getState().openPlayer(), []);
 	const visibleToastCount = useNotificationStore((s) => s.toasts.length);
 	const clearToasts = useNotificationStore((s) => s.clearToasts);
 	// Which group chat rooms are running. Only the chat list and the active id
@@ -396,8 +384,9 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 
 	const activeTabInfo = getActiveTabInfo(activeSession, isAiMode);
 
-	// Cross-tab search needs AI tabs to search; group chats have none.
-	const canSearchAllTabs = !activeGroupChatId && (activeSession?.aiTabs?.length ?? 0) > 0;
+	// Cross-tab search needs AI tabs to search; group chats have none, and hidden
+	// consult tabs are outside the corpus.
+	const canSearchAllTabs = !activeGroupChatId && visibleAiTabs(activeSession?.aiTabs).length > 0;
 	const activeTabType = activeTabInfo.activeTabType;
 
 	// Dismissal shared by the Escape layer handler and the ESC pill in the
@@ -504,10 +493,9 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		...sessionActions,
 		...groupChatActions,
 		...buildMediaPlayerCommands({
-			canRestoreFloatingPlayer,
-			restoreFloatingPlayer,
 			canOpenMediaPlayer,
 			openMediaPlayer,
+			openMediaPlayerShortcut: shortcuts.openMediaPlayer,
 			setQuickActionOpen,
 		}),
 		...buildConcertoCommands({
@@ -527,6 +515,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		...buildNotificationCommands({
 			visibleToastCount,
 			clearToasts,
+			clearAllNotificationsShortcut: shortcuts.clearAllNotifications,
 			setQuickActionOpen,
 		}),
 		...buildNavigationCommands({
@@ -550,6 +539,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				toggleSidebar: shortcuts.toggleSidebar,
 				toggleRightPanel: shortcuts.toggleRightPanel,
 				nextUnreadTab: shortcuts.nextUnreadTab,
+				toggleUnreadFilters: shortcuts.toggleUnreadFilters,
 				killInstance: shortcuts.killInstance,
 				navBack: shortcuts.navBack,
 				navForward: shortcuts.navForward,
@@ -565,6 +555,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			newTabShortcut: tabShortcuts?.newTab,
 			newFileTabShortcut: tabShortcuts?.newFileTab,
 			newBrowserTabShortcut: tabShortcuts?.newBrowserTab,
+			newTerminalTabShortcut: shortcuts.toggleMode,
 		}),
 		...buildSessionManagementCommands({
 			activeSession,
@@ -657,8 +648,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			onClearActiveTerminal,
 			setQuickActionOpen,
 			shortcuts: {
-				toggleMode: shortcuts.toggleMode,
 				toggleMarkdownMode: shortcuts.toggleMarkdownMode,
+				showSnoozeList: shortcuts.showSnoozeList,
 				focusActiveTab: shortcuts.focusActiveTab,
 				clearTerminal: shortcuts.clearTerminal,
 				openModelEffort: shortcuts.openModelEffort,
@@ -724,6 +715,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				agentSessions: shortcuts.agentSessions,
 				openMemoryViewer: shortcuts.openMemoryViewer,
 				executionQueue: shortcuts.executionQueue,
+				editLastQueuedMessage: shortcuts.editLastQueuedMessage,
 				openSymphony: shortcuts.openSymphony,
 				directorNotes: shortcuts.directorNotes,
 				openCue: shortcuts.openCue,
@@ -772,6 +764,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				help: shortcuts.help,
 				systemLogs: shortcuts.systemLogs,
 				processMonitor: shortcuts.processMonitor,
+				openThemeSettings: shortcuts.openThemeSettings,
+				openLeaderboard: shortcuts.openLeaderboard,
 			},
 		}),
 		...buildGitWorktreeCommands({
@@ -785,6 +779,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			shortcuts: {
 				viewGitDiff: shortcuts.viewGitDiff,
 				viewGitLog: shortcuts.viewGitLog,
+				refreshGitFileState: shortcuts.refreshGitFileState,
 			},
 			gitService,
 			notifyToast,
@@ -814,6 +809,10 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				goToAutoRun: shortcuts.goToAutoRun,
 				toggleAutoRunExpanded: shortcuts.toggleAutoRunExpanded,
 			},
+		}),
+		...buildFilePreviewCommands({
+			activeSession,
+			setQuickActionOpen,
 		}),
 		...buildSearchCommands({
 			setQuickActionOpen,
@@ -952,6 +951,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	} = useListNavigation({
 		listLength: filtered.length,
 		onSelect: handleSelectByIndex,
+		wrap: true,
 		enableNumberHotkeys: true,
 		firstVisibleIndex,
 		enabled: !renamingSession && !renamingWindow, // Disable navigation while renaming

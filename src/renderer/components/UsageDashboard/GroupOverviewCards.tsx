@@ -30,6 +30,8 @@ import { formatDurationHuman } from '../../../shared/duration';
 import { getAgentDisplayName } from '../../../shared/agentMetadata';
 import { FilterInput } from '../ui/FilterInput';
 import { SegmentedControl, type SegmentedOption } from '../ui/SegmentedControl';
+import { buildGroupsSummary } from './footerSummary';
+import { usePublishFooterSummary } from './useFooterSummary';
 import { EntityTile, type EntityTileStat } from './EntityTile';
 
 const SPARKLINE_DAYS = 14;
@@ -175,6 +177,7 @@ const GroupCard = memo(function GroupCard({
 			stats={stats}
 			sparkline={sparkline}
 			animationIndex={animationIndex}
+			size="lg"
 			isSelected={isSelected}
 			// The Ungrouped bucket is not a real group the user created, so it
 			// carries the same dashed treatment worktree agents get.
@@ -250,6 +253,20 @@ export const GroupOverviewCards = memo(function GroupOverviewCards({
 		);
 	}, [sorted, filterQuery]);
 
+	// Ungrouped is a leftovers bucket, not a group, so it is excluded from both
+	// counts and reported separately - "23 agents unfiled" is the actionable
+	// half of this tab, and folding it into the group total would hide it.
+	const footerCounts = useMemo(() => {
+		const real = rollups.filter((r) => !r.isUngrouped).length;
+		const visible = filtered.filter((r) => !r.isUngrouped).length;
+		const unfiled = rollups.find((r) => r.isUngrouped)?.memberCount ?? 0;
+		return { real, visible, unfiled };
+	}, [rollups, filtered]);
+	usePublishFooterSummary(
+		'groups',
+		buildGroupsSummary(footerCounts.visible, footerCounts.real, footerCounts.unfiled)
+	);
+
 	if (rollups.length === 0) {
 		return (
 			<div
@@ -300,7 +317,13 @@ export const GroupOverviewCards = memo(function GroupOverviewCards({
 			) : (
 				<div
 					className="grid gap-3"
-					style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))' }}
+					// Twice the agent grid's 220px. A group tile is larger than the
+					// agents it contains, and it carries four stats whose values are
+					// the long ones - "142h 5m", "220.7M", "$187.18" - so the width
+					// buys legible numbers rather than whitespace. Trading a column
+					// for extra rows is the right way round here: the grid scrolls
+					// vertically, so a row costs nothing a clipped value does not.
+					style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(440px, 1fr))' }}
 					data-testid="group-overview-cards"
 					role="region"
 					aria-label="Group usage overview"

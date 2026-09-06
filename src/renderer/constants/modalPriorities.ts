@@ -20,6 +20,21 @@ export const MODAL_PRIORITIES = {
 	/** Keyboard mastery level-up celebration - high priority celebration */
 	KEYBOARD_MASTERY: 1095,
 
+	/**
+	 * First-run typography chooser. Above the tour because it decides what every
+	 * later surface is drawn in - touring an app whose look is about to change
+	 * shows the user the wrong app.
+	 */
+	TYPOGRAPHY_CHOICE: 1060,
+
+	/**
+	 * First-run theme chooser and the "your agents can drive Maestro" step.
+	 * They run in sequence after the typography chooser, one at a time, so they
+	 * share its band - only one of the three is ever mounted.
+	 */
+	THEME_CHOICE: 1059,
+	AGENT_POWERS: 1058,
+
 	/** Onboarding tour overlay - above wizard, guides new users */
 	TOUR: 1050,
 
@@ -260,15 +275,21 @@ export const MODAL_PRIORITIES = {
 	USAGE_DASHBOARD: 540,
 
 	/** AgentRun ledger dashboard modal - above the Usage Dashboard and its sub-modals */
-	AGENT_RUN_DASHBOARD: 543,
+	AGENT_RUN_DASHBOARD: 544,
 	/** Agent card fuzzy filter in the Usage Dashboard's Agents tab. Registered
 	 *  only while the box holds text, so Escape clears the filter before it
 	 *  closes the dashboard. Sits below the detail sub-modal: with both open,
 	 *  Escape dismisses the sub-modal first. */
 	USAGE_DASHBOARD_AGENT_FILTER: 541,
 
-	/** Per-agent detail sub-modal opened from the Usage Dashboard's Agents tab */
-	USAGE_DASHBOARD_AGENT_DETAIL: 542,
+	/** Per-group detail sub-modal opened from the Usage Dashboard's Groups tab.
+	 *  Sits BELOW the per-agent detail: an agent row inside this modal opens the
+	 *  agent detail on top of it, and Escape has to unwind agent-then-group. */
+	USAGE_DASHBOARD_GROUP_DETAIL: 542,
+
+	/** Per-agent detail sub-modal opened from the Usage Dashboard's Agents tab,
+	 *  or from an agent row inside the group detail modal. */
+	USAGE_DASHBOARD_AGENT_DETAIL: 543,
 
 	/** System log viewer overlay */
 	LOG_VIEWER: 500,
@@ -277,13 +298,20 @@ export const MODAL_PRIORITIES = {
 	CUE_BACKUP_DIFF: 470,
 
 	/** Maestro Cue help modal (above Cue modal) */
-	CUE_HELP: 465,
+	CUE_HELP: 466,
 
 	/** Maestro Cue pattern preview modal (above YAML editor) */
-	CUE_PATTERN_PREVIEW: 464,
+	CUE_PATTERN_PREVIEW: 465,
 
 	/** Maestro Cue YAML editor modal (above Cue modal, below help) */
-	CUE_YAML_EDITOR: 463,
+	CUE_YAML_EDITOR: 464,
+
+	/** Inline pipeline-rename field in the Cue modal's Pipeline List tab.
+	 *  Registered only while a rename is open, so Escape cancels the rename
+	 *  instead of closing the Cue modal. Same reasoning as
+	 *  CUE_SCHEDULED_TASK_FILTER below - an inline control inside the Cue modal
+	 *  can only claim Escape by outranking it in the layer stack. */
+	CUE_PIPELINE_RENAME: 463,
 
 	/** Fuzzy filter box in the Cue modal's Scheduled Tasks tab. Registered only
 	 *  while the box holds text, so Escape clears the filter before it closes

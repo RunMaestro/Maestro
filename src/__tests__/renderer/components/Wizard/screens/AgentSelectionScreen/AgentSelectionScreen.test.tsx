@@ -1,12 +1,12 @@
 /**
  * Screen-level cover for the one piece of provider-filter logic that lives in
  * the screen rather than in a hook or a util: what happens to the focus ring
- * when the strip renumbers.
+ * when the tile list renumbers.
  *
- * The strip hides uninstalled providers by default, so flipping "Show All
- * Supported" changes what every tile index means. Carrying the raw index across
- * that flip slides the ring onto whichever unrelated provider inherited the
- * slot, which is invisible until the user presses Enter and gets the wrong
+ * The screen opens on every supported provider, so flipping "Show All
+ * Supported" off changes what every tile index means. Carrying the raw index
+ * across that flip slides the ring onto whichever unrelated provider inherited
+ * the slot, which is invisible until the user presses Enter and gets the wrong
  * agent. These tests press Enter.
  */
 
@@ -121,28 +121,31 @@ describe('AgentSelectionScreen provider filter', () => {
 		vi.clearAllMocks();
 	});
 
-	it('renders only the installed providers until asked for the rest', () => {
+	it('opens on every supported provider and filters down on request', () => {
 		renderScreen();
+
+		// A provider that is installed but undetected has to be reachable without
+		// the user first guessing that a filter is hiding it.
+		expect(screen.getByRole('button', { name: /Claude Code \(not installed\)/ })).toBeTruthy();
+
+		fireEvent.click(screen.getByRole('switch', { name: 'Show all supported providers' }));
 
 		expect(screen.getAllByRole('button', { name: /Codex|OpenCode/ })).toHaveLength(2);
 		expect(screen.queryByRole('button', { name: /Claude Code/ })).toBeNull();
-
-		fireEvent.click(screen.getByRole('switch', { name: 'Show all supported providers' }));
-
-		expect(screen.getByRole('button', { name: /Claude Code \(not installed\)/ })).toBeTruthy();
 	});
 
-	it('carries the focus ring by provider when the strip renumbers', () => {
+	it('carries the focus ring by provider when the tile list renumbers', () => {
 		const surface = renderScreen();
+		const toggle = screen.getByRole('switch', { name: 'Show all supported providers' });
 
-		// Focus starts on the first installed provider; step onto the second.
+		// Filter down, then step from the first installed provider to the second.
+		fireEvent.click(toggle);
 		fireEvent.keyDown(surface, { key: 'ArrowRight' });
 
-		fireEvent.click(screen.getByRole('switch', { name: 'Show all supported providers' }));
-
-		// Index 1 of the unfiltered strip is a DIFFERENT provider. Selecting by the
+		// Index 1 of the unfiltered list is a DIFFERENT provider. Selecting by the
 		// carried index would either pick that one or (being uninstalled) pick
 		// nothing at all.
+		fireEvent.click(toggle);
 		fireEvent.keyDown(surface, { key: 'Enter' });
 
 		expect(setSelectedAgent).toHaveBeenCalledWith(SECOND_AVAILABLE);
@@ -153,11 +156,11 @@ describe('AgentSelectionScreen provider filter', () => {
 		const toggle = screen.getByRole('switch', { name: 'Show all supported providers' });
 
 		fireEvent.click(toggle);
-		expect(announce).toHaveBeenCalledWith(`Showing all ${AGENT_TILES.length} supported providers`);
+		expect(announce).toHaveBeenCalledWith(`Showing ${detectedAgents.length} available providers`);
 
 		announce.mockClear();
 		fireEvent.click(toggle);
-		expect(announce).toHaveBeenCalledWith(`Showing ${detectedAgents.length} available providers`);
+		expect(announce).toHaveBeenCalledWith(`Showing all ${AGENT_TILES.length} supported providers`);
 
 		// And the ring survived the round trip.
 		fireEvent.keyDown(surface, { key: 'Enter' });

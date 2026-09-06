@@ -11,9 +11,38 @@
  * the shared list renders each item with a data-item-id for scroll-into-view.
  */
 
+import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import type { Theme } from '../../../../../renderer/types';
+
+/**
+ * The real edit surface is CodeMirror 6, which needs a layout engine jsdom does
+ * not have. Standing in a plain textarea keeps these tests about the wiring the
+ * tab owns - which prompt is selected, which mode is showing, what the filter
+ * narrows to - and matches how the FilePreview and Memory Viewer suites stub
+ * the same module.
+ */
+vi.mock('../../../../../renderer/components/FilePreview/markdownEditor', () => ({
+	MarkdownEditor: React.forwardRef<
+		{ focus(): void; setSearchMatches(m: unknown[], i: number): void },
+		{ value: string; onChange: (v: string) => void; readOnly?: boolean }
+	>(({ value, onChange, readOnly }, ref) => {
+		const areaRef = React.useRef<HTMLTextAreaElement>(null);
+		React.useImperativeHandle(ref, () => ({
+			focus: () => areaRef.current?.focus(),
+			setSearchMatches: () => {},
+		}));
+		return (
+			<textarea
+				ref={areaRef}
+				value={value}
+				readOnly={readOnly}
+				onChange={(e) => onChange(e.target.value)}
+			/>
+		);
+	}),
+}));
 
 const mockSetLastSelectedPromptId = vi.fn();
 let mockLastSelectedPromptId: string | null = null;
@@ -24,6 +53,7 @@ vi.mock('../../../../../renderer/stores/settingsStore', () => ({
 			conductorProfile: '',
 			lastSelectedPromptId: mockLastSelectedPromptId,
 			setLastSelectedPromptId: mockSetLastSelectedPromptId,
+			shortcuts: { toggleMarkdownMode: { keys: ['Meta', 'e'] } },
 		})
 	),
 }));
@@ -53,13 +83,14 @@ vi.mock('../../../../../renderer/services/git', () => ({
 	gitService: { getStatus: vi.fn(async () => ({ branch: 'main' })) },
 }));
 
-vi.mock('../../../../../renderer/hooks/input/useTemplateAutocomplete', () => ({
-	useTemplateAutocomplete: () => ({
-		handleChange: vi.fn(),
-		handleKeyDown: vi.fn(),
+vi.mock('../../../../../renderer/hooks/input/useEditorTemplateAutocomplete', () => ({
+	useEditorTemplateAutocomplete: ({ onChange }: { onChange: (value: string) => void }) => ({
+		handleChange: onChange,
+		handleKeyDown: vi.fn(() => false),
 		autocompleteRef: { current: null },
 		autocompleteState: { isOpen: false },
 		selectVariable: vi.fn(),
+		closeAutocomplete: vi.fn(),
 	}),
 }));
 
@@ -213,6 +244,90 @@ describe('MaestroPromptsTab selection precedence', () => {
 			container.querySelectorAll<HTMLElement>('.dual-pane-list-item[data-item-id]')
 		).map((el) => el.dataset.itemId);
 		expect(ids).toEqual(expect.arrayContaining(PROMPTS.map((p) => p.id)));
+	});
+
+	it('narrows the list by prompt body, not just by name', async () => {
+		render(<MaestroPromptsTab theme={mockTheme} />);
+		await waitFor(() => screen.getByRole('heading', { name: /^maestro-system-prompt/ }));
+
+		// "# wizard" appears only in the wizard prompt's CONTENT - its id and
+		// description would not match a body-only query.
+		fireEvent.change(screen.getByRole('textbox', { name: /filter prompts/i }), {
+			target: { value: '# wizard' },
+		});
+
+		await waitFor(() => {
+			expect(screen.queryByRole('button', { name: /autorun-default/ })).not.toBeInTheDocument();
+		});
+		expect(screen.getByRole('button', { name: /wizard-system/ })).toBeInTheDocument();
+	});
+
+	it('keeps a prompt with unsaved edits in the list even when the filter excludes it', async () => {
+		render(<MaestroPromptsTab theme={mockTheme} />);
+		await waitFor(() => screen.getByRole('heading', { name: /^maestro-system-prompt/ }));
+
+		// Edit the selected prompt, then filter to something it cannot match.
+		const editor = screen.getByRole('textbox', { name: '' });
+		fireEvent.change(editor, { target: { value: '# system edited' } });
+		fireEvent.change(screen.getByRole('textbox', { name: /filter prompts/i }), {
+			target: { value: 'wizard' },
+		});
+
+		await waitFor(() => {
+			expect(screen.getByRole('button', { name: /wizard-system/ })).toBeInTheDocument();
+		});
+		// Still listed, and still the open document - an unsaved draft must not
+		// be filtered off the screen.
+		expect(screen.getByRole('button', { name: /maestro-system-prompt/ })).toBeInTheDocument();
+		expect(screen.getByRole('heading', { name: /^maestro-system-prompt/ })).toBeInTheDocument();
+	});
+
+	it('opens on the source editor and flips to the rendered prompt on Cmd+E', async () => {
+		render(<MaestroPromptsTab theme={mockTheme} />);
+		await waitFor(() => screen.getByRole('heading', { name: /^maestro-system-prompt/ }));
+		expect(screen.queryByTestId('prompt-preview')).not.toBeInTheDocument();
+
+		act(() => {
+			window.dispatchEvent(new KeyboardEvent('keydown', { key: 'e', metaKey: true }));
+		});
+
+		await waitFor(() => expect(screen.getByTestId('prompt-preview')).toBeInTheDocument());
+	});
+
+	it('reports Escape as handled while the filter has text, and clears it', async () => {
+		let escapeHandler: (() => boolean) | null = null;
+		render(
+			<MaestroPromptsTab
+				theme={mockTheme}
+				onEscapeHandled={(handler) => {
+					escapeHandler = handler;
+				}}
+			/>
+		);
+		await waitFor(() => screen.getByRole('heading', { name: /^maestro-system-prompt/ }));
+
+		const filter = screen.getByRole('textbox', { name: /filter prompts/i });
+		fireEvent.change(filter, { target: { value: 'wizard' } });
+
+		// Rung 2 of the ladder: focus is in the filter box, so the first Escape
+		// hands focus back to the list and keeps the query.
+		filter.focus();
+		expect(escapeHandler).toBeTruthy();
+		act(() => {
+			expect(escapeHandler!()).toBe(true);
+		});
+		expect((filter as HTMLInputElement).value).toBe('wizard');
+
+		// Rung 3: the query itself.
+		act(() => {
+			expect(escapeHandler!()).toBe(true);
+		});
+		await waitFor(() => expect((filter as HTMLInputElement).value).toBe(''));
+
+		// Nothing left to back out of - Settings gets to close.
+		act(() => {
+			expect(escapeHandler!()).toBe(false);
+		});
 	});
 
 	it('renders a live token count next to the editor title', async () => {

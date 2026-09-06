@@ -102,6 +102,8 @@ import { executeCueShell, stopCueShellRun } from './cue/cue-shell-executor';
 import { executeCueCli, stopCueCliRun } from './cue/cue-cli-executor';
 import { executeCueNotify } from './cue/cue-notify-executor';
 import { reportCueAuthFailure } from './cue/cue-auth-detector';
+import { setSusFactorNotifier } from './cue/cue-susfactor';
+import { emitCueNotifyToast } from './cue/cue-notify-bridge';
 import { getAgentDisplayName } from '../shared/agentMetadata';
 import { logger } from './utils/logger';
 import { tunnelManager } from './tunnel-manager';
@@ -475,6 +477,20 @@ const settingsWatcher = createSettingsWatcher({
 	getBroadcastWindows: () => BrowserWindow.getAllWindows(),
 	getSettingsPath: () => syncPath,
 	getAgentConfigsPath: () => productionDataPath,
+	onSettingsChangedExternally: () => {
+		// Re-apply settings the MAIN process acts on. Without this, a CLI write
+		// updates the file and the renderer while the main process keeps running
+		// on the value it read at startup - for sleep prevention that means the
+		// OS power assertion stays held after the user has turned the feature off.
+		const enabled = store.get('preventSleepEnabled') === true;
+		if (enabled !== powerManager.isEnabled()) {
+			powerManager.setEnabled(enabled);
+		}
+		const keepDisplayAwake = store.get('preventDisplaySleepEnabled') === true;
+		if (keepDisplayAwake !== powerManager.isKeepingDisplayAwake()) {
+			powerManager.setKeepDisplayAwake(keepDisplayAwake);
+		}
+	},
 });
 
 // Fallback must match DEFAULT_START_PORT in scripts/dev-port.mjs. Never 5173
@@ -591,6 +607,11 @@ const createWebServer = createWebServerFactory({
 	sessionsStore,
 	groupsStore,
 	getMainWindow: () => mainWindow,
+	getWindowForSession: (sessionId: string) => {
+		const ownerId = windowRegistry.getWindowForSession(sessionId);
+		const owner = ownerId ? windowRegistry.get(ownerId) : windowRegistry.getPrimary();
+		return owner?.browserWindow ?? mainWindow;
+	},
 	deliverCadenza,
 	getProcessManager: () => processManager,
 	triggerCueSubscription: (subscriptionName, prompt, sourceAgentId) => {
@@ -1106,6 +1127,25 @@ app
 					error: err instanceof Error ? err.message : String(err),
 				});
 			});
+
+		// SusFactor blocks are raised deep in the GitHub poll path, which has no
+		// BrowserWindow in scope. Register the emitter here (the one place that
+		// holds `mainWindow`) so the block notice reuses the existing Cue toast
+		// channel instead of inventing a second notification surface.
+		setSusFactorNotifier((notice) => {
+			emitCueNotifyToast(mainWindow, {
+				agentId: notice.sessionId,
+				title: 'Cue blocked a suspicious item',
+				message: `${notice.itemRef} scored ${notice.score.toFixed(2)} on the 0DIN SusFactor check and was NOT sent to the agent. Subscription "${notice.subscriptionName}". Review it before overriding.`,
+				// Sticky: this is a security decision the user has to acknowledge,
+				// not a status ping they can miss while looking elsewhere.
+				sticky: true,
+				color: 'red',
+				clickAction: notice.url
+					? { kind: 'open-url', url: notice.url }
+					: { kind: 'jump-session', sessionId: notice.sessionId },
+			});
+		});
 
 		// Initialize Cue Engine for event-driven automation
 		cueEngine = new CueEngine({

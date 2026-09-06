@@ -29,15 +29,16 @@ import { useTerminalMounting } from '../../hooks/terminal/useTerminalMounting';
 import { useCoworkingBufferResponder } from '../../hooks/coworking/useCoworkingBufferResponder';
 import { useCoworkingRegistrySync } from '../../hooks/coworking/useCoworkingRegistrySync';
 import { useCoworkingBrowserResponder } from '../../hooks/coworking/useCoworkingBrowserResponder';
+import { useRemoteTerminalBufferResponder } from '../../hooks/terminal/useRemoteTerminalBufferResponder';
 import { getTerminalTabDisplayName } from '../../utils/terminalTabHelpers';
 import {
 	aiTabFocusFields,
 	computeQueuedTabIds,
 	computeUnreadGroupIds,
 	focusAiTabInSession,
-	getTabDisplayName,
 	groupFocusFields,
 } from '../../utils/tabHelpers';
+import { resolveSnoozeTarget } from '../../utils/snoozeHelpers';
 import { useModalStore } from '../../stores/modalStore';
 import { useSshRemoteName } from '../../hooks/mainPanel/useSshRemoteName';
 import { useContextWindow } from '../../hooks/mainPanel/useContextWindow';
@@ -277,6 +278,10 @@ export const MainPanel = React.memo(
 		useCoworkingRegistrySync();
 		useCoworkingBufferResponder(terminalViewRefs);
 
+		// Serve CLI/web `read-terminal` requests. Lives here because the xterm
+		// scrollback exists only in the mounted TerminalView, not in the store.
+		useRemoteTerminalBufferResponder(terminalViewRefs);
+
 		// Extract tab handlers from props
 		const {
 			onTabSelect,
@@ -489,14 +494,17 @@ export const MainPanel = React.memo(
 		// Opening the snooze picker needs nothing from App.tsx, so it talks to the
 		// modal store directly instead of adding another link to the
 		// App -> useMainPanelProps -> MainPanel -> TabBar prop chain.
+		//
+		// Every chip in the strip routes here - AI, file, terminal, browser, and a
+		// tiled group - so the id is resolved by `resolveSnoozeTarget` rather than
+		// looked up in one array. It used to search `aiTabs` only and return early
+		// for everything else, which made "Snooze Tab" on the other three chips and
+		// "Snooze group" on a group chip silently do nothing.
 		const handleOpenSnooze = useCallback((tabId: string) => {
 			const session = selectActiveSession(useSessionStore.getState());
-			const tab = session?.aiTabs.find((t) => t.id === tabId);
-			if (!tab) return;
-			useModalStore.getState().openModal('snoozeTab', {
-				tabId,
-				tabLabel: getTabDisplayName(tab, session?.agentSessionId),
-			});
+			const target = resolveSnoozeTarget(session, tabId);
+			if (!target) return;
+			useModalStore.getState().openModal('snoozeTab', target);
 		}, []);
 
 		// Expose methods to parent via ref
@@ -682,6 +690,22 @@ export const MainPanel = React.memo(
 				props.onPublishTextAsGist?.(resolved.content, resolved.displayName);
 			},
 			[resolveBuffer, props.onPublishTextAsGist]
+		);
+
+		// A file preview tab publishes under its own filename so the gist keeps the
+		// extension GitHub highlights by, and reports its path so the published URL
+		// is remembered against the file rather than the tab.
+		const handlePublishFileTabGist = useCallback(
+			(tabId: string) => {
+				const fileTab = activeSession?.filePreviewTabs?.find((t) => t.id === tabId);
+				if (!fileTab) return;
+				const filename = fileTab.name + fileTab.extension;
+				props.onPublishTextAsGist?.(fileTab.content, fileTab.name, {
+					filename,
+					filePath: fileTab.path,
+				});
+			},
+			[activeSession?.filePreviewTabs, props.onPublishTextAsGist]
 		);
 
 		const handleSendTerminalBufferToAgent = useCallback(
@@ -1136,6 +1160,9 @@ export const MainPanel = React.memo(
 									onFileTabSelect={pianolaTabHandlers.onFileTabSelect}
 									onFileTabClose={onFileTabClose}
 									onFileTabRename={onFileTabRename}
+									onPublishFileGist={
+										props.onPublishTextAsGist ? handlePublishFileTabGist : undefined
+									}
 									onNewFileTab={pianolaTabHandlers.onNewFileTab}
 									onNewBrowserTab={pianolaTabHandlers.onNewBrowserTab}
 									onBrowserTabSelect={pianolaTabHandlers.onBrowserTabSelect}
@@ -1222,6 +1249,9 @@ export const MainPanel = React.memo(
 									onFileTabSelect={onFileTabSelect}
 									onFileTabClose={onFileTabClose}
 									onFileTabRename={onFileTabRename}
+									onPublishFileGist={
+										props.onPublishTextAsGist ? handlePublishFileTabGist : undefined
+									}
 									onNewFileTab={onNewFileTab}
 									onNewBrowserTab={onNewBrowserTab}
 									onBrowserTabSelect={onBrowserTabSelect}

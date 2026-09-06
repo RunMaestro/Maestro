@@ -74,7 +74,7 @@ export const AutoRunHumanStepBanner = memo(function AutoRunHumanStepBanner({
 									{label}
 								</span>
 							)}
-							<span className="flex-shrink-0 text-[10px]" style={{ color: theme.colors.textDim }}>
+							<span className="flex-shrink-0 text-2xs" style={{ color: theme.colors.textDim }}>
 								{task.reason}
 							</span>
 						</li>

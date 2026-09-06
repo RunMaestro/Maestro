@@ -9,8 +9,9 @@
  * Output: dist/web-desktop/
  */
 
-import { defineConfig } from 'vite';
+import { defineConfig, type PluginOption } from 'vite';
 import react from '@vitejs/plugin-react';
+import fs from 'node:fs';
 import path from 'path';
 import { readFileSync } from 'fs';
 import { execSync } from 'child_process';
@@ -33,8 +34,59 @@ function getCommitHash(): string {
 	}
 }
 
+/**
+ * Serve and emit the bundled webfonts.
+ *
+ * The renderer's stylesheet (shared with this build) references `/fonts/*.woff2`,
+ * but those live in the RENDERER's public dir and Vite allows only one
+ * `publicDir` per config - this one is already pointed at `src/web/public` for
+ * the PWA assets. Without this the web client silently falls back to whatever
+ * the OS has, which is the exact divergence between desktop and web that
+ * bundling the fonts was meant to remove.
+ */
+function bundledFontsPlugin(): PluginOption {
+	const fontsDir = path.join(__dirname, 'src/renderer/public/fonts');
+	return {
+		name: 'maestro-bundled-fonts',
+		enforce: 'post',
+		// Dev: map the request path onto the renderer's public dir.
+		configureServer(server) {
+			server.middlewares.use('/fonts', (req, res, next) => {
+				const name = path.basename(req.url ?? '');
+				const file = path.join(fontsDir, name);
+				if (!name.endsWith('.woff2') || !fs.existsSync(file)) return next();
+				res.setHeader('Content-Type', 'font/woff2');
+				res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+				fs.createReadStream(file).pipe(res);
+			});
+		},
+		// Build: emit each file so the Fastify server ships them alongside the app.
+		generateBundle(_options, bundle) {
+			if (!fs.existsSync(fontsDir)) return;
+			for (const name of fs.readdirSync(fontsDir)) {
+				if (!name.endsWith('.woff2')) continue;
+				this.emitFile({
+					type: 'asset',
+					fileName: `assets/fonts/${name}`,
+					source: fs.readFileSync(path.join(fontsDir, name)),
+				});
+			}
+
+			// The shared renderer stylesheet uses /fonts/* so Electron can serve the
+			// files from its app root. A leading slash escapes the web server's
+			// security-token prefix, however. Keep the shared source unchanged and
+			// make only this bundle's CSS resolve fonts beside the emitted assets.
+			for (const asset of Object.values(bundle)) {
+				if (asset.type !== 'asset' || !asset.fileName.endsWith('.css')) continue;
+				if (typeof asset.source !== 'string') continue;
+				asset.source = asset.source.replace(/url\((['"]?)\/fonts\//g, 'url($1./fonts/');
+			}
+		},
+	};
+}
+
 export default defineConfig(({ mode }) => ({
-	plugins: [react()],
+	plugins: [react(), bundledFontsPlugin()],
 
 	root: path.join(__dirname, 'src/web-desktop'),
 	// Copy the PWA assets (manifest.json, service worker, icons/) from the shared

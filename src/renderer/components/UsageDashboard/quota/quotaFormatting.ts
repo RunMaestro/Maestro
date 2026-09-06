@@ -6,6 +6,7 @@
  */
 
 import type { Theme } from '../../../types';
+import { humanizeDuration, type DurationUnit } from '../../../../shared/duration';
 
 // Mirrors `LIMIT_THRESHOLD_PERCENT` in `src/main/agents/claude-mode-selector.ts`.
 // Kept renderer-local (no main-process import) and shared across every provider
@@ -80,4 +81,59 @@ export function makeAccountKeyHelpers(prefix: string): QuotaAccountKeyHelpers {
 	}
 
 	return { deriveShortName, deriveDisplayName, normalizeKey };
+}
+
+/**
+ * Ladder for the "last refreshed" footer. Stops at minutes on purpose: the
+ * seconds rung would turn the line into a live clock that never settles, and
+ * the age of a quota sample is not interesting at that resolution.
+ */
+const LAST_REFRESHED_UNITS: readonly DurationUnit[] = [
+	'year',
+	'month',
+	'week',
+	'day',
+	'hour',
+	'minute',
+];
+
+/**
+ * Newest `sampledAt` across a provider's snapshot map, in epoch ms.
+ *
+ * The panel refreshes every configured account in one pass, so the newest
+ * sample is when the panel last got fresh data. Returns `null` when nothing has
+ * been sampled yet (or every stamp is unparseable), which the footer renders as
+ * nothing rather than as a bogus age.
+ */
+export function resolveLatestSampledAt(
+	snapshots: Record<string, { sampledAt?: string } | undefined>
+): number | null {
+	let latest: number | null = null;
+	for (const snapshot of Object.values(snapshots)) {
+		if (!snapshot?.sampledAt) continue;
+		const ms = new Date(snapshot.sampledAt).getTime();
+		if (!Number.isFinite(ms)) continue;
+		if (latest === null || ms > latest) latest = ms;
+	}
+	return latest;
+}
+
+/**
+ * Render the age of the newest sample as prose: `"just now"`, `"12 minutes
+ * ago"`, `"5 hours and 25 minutes ago"`.
+ *
+ * Anything under a minute - including a stamp from the future, which a clock
+ * adjustment can produce - reads as "just now", so hitting Refresh always
+ * lands on that string instead of on a negative or flickering count.
+ */
+export function formatLastRefreshed(sampledAtMs: number, nowMs: number): string {
+	const elapsed = nowMs - sampledAtMs;
+	if (!Number.isFinite(elapsed) || elapsed < 60_000) return 'just now';
+	const spoken = humanizeDuration(elapsed, {
+		units: LAST_REFRESHED_UNITS,
+		maxUnits: 2,
+		style: 'long',
+		separator: ' and ',
+	});
+	return `${spoken} ago`;
 }

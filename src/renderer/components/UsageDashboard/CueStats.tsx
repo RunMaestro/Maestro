@@ -48,6 +48,8 @@ import {
 import { MetricCard } from './SummaryCards';
 import { PercentilesCard } from './PercentilesCard';
 import { computeAxisLabelIndices } from './chartUtils';
+import { buildCueSummary } from './footerSummary';
+import { usePublishFooterSummary } from './useFooterSummary';
 
 interface CueStatsProps {
 	timeRange: StatsTimeRange;
@@ -116,7 +118,7 @@ const SummaryCardsRow = memo(function SummaryCardsRow({
 	);
 
 	const sublabelStyle: React.CSSProperties = {
-		fontSize: '10px',
+		fontSize: '0.625rem',
 		color: theme.colors.textDim,
 		marginTop: 2,
 	};
@@ -1227,6 +1229,20 @@ export const CueStats = memo(function CueStats({
 	useEffect(() => {
 		fetchAggregation();
 	}, [fetchAggregation]);
+
+	// Published above the loading / error / empty returns below: a hook cannot
+	// sit behind an early return, and a tab that just went empty is exactly the
+	// one that must clear its stale footer line.
+	usePublishFooterSummary(
+		'cue',
+		aggregation
+			? buildCueSummary({
+					runs: aggregation.totals.occurrences,
+					failures: aggregation.totals.failureCount,
+					pipelines: aggregation.byPipeline.length,
+				})
+			: null
+	);
 
 	if (loading && !aggregation) {
 		return <CueStatsSkeleton theme={theme} />;

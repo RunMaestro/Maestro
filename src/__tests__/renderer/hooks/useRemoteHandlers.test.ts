@@ -38,6 +38,15 @@ vi.mock('../../../renderer/utils/ids', () => ({
 	generateId: vi.fn(() => 'mock-id-' + Math.random().toString(36).slice(2, 8)),
 }));
 
+// Agent Resilience records its retry snapshot through `noteDispatch`. Only that
+// one export is replaced - the rest of the store is real, because other modules
+// this file pulls in read the live store.
+const noteDispatchMock = vi.hoisted(() => vi.fn());
+vi.mock('../../../renderer/stores/retryStore', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../renderer/stores/retryStore')>()),
+	noteDispatch: noteDispatchMock,
+}));
+
 vi.mock('../../../renderer/utils/templateVariables', () => ({
 	substituteTemplateVariables: vi.fn((prompt: string) => prompt),
 }));
@@ -138,6 +147,14 @@ function createMockDeps(overrides: Partial<UseRemoteHandlersDeps> = {}): UseRemo
 		sshRemoteConfigs: [],
 		...overrides,
 	};
+}
+
+/** Extract the maestro:remoteCommand event handler from the addEventListener mock */
+function getRemoteCommandHandler() {
+	const call = (window.addEventListener as any).mock.calls.find(
+		(c: any[]) => c[0] === 'maestro:remoteCommand'
+	);
+	return call[1] as (event: Event) => Promise<void>;
 }
 
 // ============================================================================
@@ -928,14 +945,6 @@ describe('useRemoteHandlers', () => {
 	// ========================================================================
 
 	describe('handleRemoteCommand - terminal mode edge cases', () => {
-		/** Helper: extract the maestro:remoteCommand event handler from addEventListener mock */
-		function getRemoteCommandHandler() {
-			const call = (window.addEventListener as any).mock.calls.find(
-				(c: any[]) => c[0] === 'maestro:remoteCommand'
-			);
-			return call[1] as (event: Event) => Promise<void>;
-		}
-
 		it('appends user command text to shellLogs', async () => {
 			const session = createMockSession({ inputMode: 'terminal', shellLogs: [] });
 			const deps = createMockDeps({ sessionsRef: { current: [session] } });
@@ -1068,13 +1077,6 @@ describe('useRemoteHandlers', () => {
 	// ========================================================================
 
 	describe('handleRemoteCommand - AI mode edge cases', () => {
-		function getRemoteCommandHandler() {
-			const call = (window.addEventListener as any).mock.calls.find(
-				(c: any[]) => c[0] === 'maestro:remoteCommand'
-			);
-			return call[1] as (event: Event) => Promise<void>;
-		}
-
 		it('supports codex agent type for AI mode', async () => {
 			const session = createMockSession({ inputMode: 'ai', toolType: 'codex' as any });
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' } as any);
@@ -2106,6 +2108,44 @@ describe('useRemoteHandlers', () => {
 			const removedFn = removeCall[1];
 
 			expect(addedFn).toBe(removedFn);
+		});
+	});
+
+	// ========================================================================
+	// Agent Resilience prompt snapshot
+	// ========================================================================
+
+	// Prompts that arrive from `maestro-cli dispatch`, a Cue pipeline, or the
+	// web/mobile composer come through THIS handler, which spawns directly
+	// instead of going through `agentStore.processQueuedItem` (where the desktop
+	// composer records its retry snapshot). Without a snapshot here,
+	// `scheduleRetryForError` logs "No prompt snapshot to resend" and falls back
+	// to the error modal - so every unattended prompt lost auto-retry, which is
+	// the case that needs it most.
+	describe('Agent Resilience prompt snapshot', () => {
+		it('records a retry snapshot so a remote prompt can be auto-resent', async () => {
+			const session = createMockSession();
+			const deps = createMockDeps({ sessionsRef: { current: [session] } });
+
+			renderHook(() => useRemoteHandlers(deps));
+			const handler = getRemoteCommandHandler();
+
+			await act(async () => {
+				await handler(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: { sessionId: 'session-1', command: 'explain this code', inputMode: 'ai' },
+					})
+				);
+			});
+
+			expect(noteDispatchMock).toHaveBeenCalled();
+			const [snapSessionId, item] = noteDispatchMock.mock.calls[0];
+			expect(snapSessionId).toBe('session-1');
+			// Pinned to the resolved target tab, so a replay lands on the tab this
+			// spawn actually wrote to rather than the agent's current active tab.
+			expect(item.tabId).toBe('tab-1');
+			expect(item.type).toBe('message');
+			expect(item.text).toBe('explain this code');
 		});
 	});
 });

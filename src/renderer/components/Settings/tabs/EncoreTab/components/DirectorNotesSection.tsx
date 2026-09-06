@@ -188,10 +188,7 @@ export function DirectorNotesSection({
 					}
 					className="w-full"
 				/>
-				<div
-					className="flex justify-between text-[10px] mt-1"
-					style={{ color: theme.colors.textDim }}
-				>
+				<div className="flex justify-between text-2xs mt-1" style={{ color: theme.colors.textDim }}>
 					<span>1 day</span>
 					<span>7</span>
 					<span>14</span>

@@ -20,7 +20,7 @@ export interface ShortcutHintProps {
 export const ShortcutHint = memo(function ShortcutHint({ keys, theme }: ShortcutHintProps) {
 	return (
 		<span
-			className="ml-auto text-[10px] font-mono px-1.5 py-0.5 rounded"
+			className="ml-auto text-2xs font-mono px-1.5 py-0.5 rounded"
 			style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
 		>
 			{formatShortcutKeys(keys)}

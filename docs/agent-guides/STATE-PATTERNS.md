@@ -91,13 +91,24 @@ selectIsAnySessionBusy; // (state) => boolean
 ### Non-React Access
 
 ```typescript
-import { getSessionState, getSessionActions } from './stores/sessionStore';
+import {
+	useSessionStore,
+	updateSessionWith,
+	updateAiTab,
+	updateFileTab,
+	updateBrowserTab,
+} from './stores/sessionStore';
 
-// Read current state (snapshot)
-const { sessions, activeSessionId } = getSessionState();
+// Read current state (snapshot) or call an action - both live on getState()
+const { sessions, activeSessionId, setSessions, setActiveSessionId } = useSessionStore.getState();
 
-// Get stable action references
-const { setSessions, setActiveSessionId } = getSessionActions();
+// Patch one agent without walking the sessions array yourself
+updateSessionWith(sessionId, (s) => ({ ...s, batchRunnerPrompt: prompt }));
+
+// One single-tab updater per tab type - all three take (sessionId, tabId, updater)
+updateAiTab(sessionId, tabId, (tab) => ({ ...tab, hasUnread: false }));
+updateFileTab(sessionId, tabId, (tab) => ({ ...tab, scrollTop }));
+updateBrowserTab(sessionId, tabId, (tab) => ({ ...tab, isLoading: false }));
 ```
 
 ---
@@ -275,6 +286,32 @@ isOpen(id: ModalId): boolean
 getData<T extends ModalId>(id: T): ModalDataFor<T> | undefined
 closeAll(): void
 ```
+
+### Destination Surfaces (one at a time)
+
+`DESTINATION_MODALS` in `modalStore.ts` is the set of full-window views that are a place you
+go rather than a dialog you answer: `settings`, `usageDashboard`, `directorNotes`,
+`symphony`, `cueModal`, `marketplace`, `processMonitor`, plus the main-panel destinations
+`logViewer`, `agentSessions`, and `memoryViewer`. `openModal` (and `toggleModal`, which
+routes through it) closes whichever other destination was up, so only one is ever open.
+
+Without the rule, what you saw after a hotkey depended on the fixed rank each surface holds
+in `MODAL_PRIORITIES` rather than on what you just asked for: opening the Usage Dashboard
+(540) while Director's Notes (848) was up rendered it behind the notes, and opening a
+main-panel destination while any overlay was up changed nothing on screen. Both read as a
+dead keystroke.
+
+**When you add a modal, decide which kind it is.** Membership test: does it fill the window,
+own its own header/tabs, and is it reachable on its own from a hotkey, the command palette,
+the Left Bar footer, or `maestro-cli open`? Dialogs that answer a question _about_ the
+surface beneath them are not members and are meant to layer - confirmations, rename prompts,
+`cueYamlEditor`, the Usage Dashboard's per-agent detail, the Symphony agent picker.
+
+The Document Graph is a destination that lives in `fileExplorerStore`, not here. It joins the
+rule through `registerExternalDestination(close)`, which `modalStore` invokes when a
+destination opens; the graph store calls `closeOtherDestinations()` on its own way in. The
+dependency is one-way on purpose - `modalStore` must never import `fileExplorerStore`. Any
+future destination owned by another store registers the same way.
 
 ### Typed Data Map
 

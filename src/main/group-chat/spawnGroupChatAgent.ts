@@ -15,6 +15,7 @@ import { wrapSpawnWithSsh } from '../utils/ssh-spawn-wrapper';
 import { getSshRemoteConfig, type SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
 import { ensureRemoteMaestroPProbed } from '../agents/probeRemoteMaestroP';
 import { getWindowsSpawnConfig } from './group-chat-config';
+import { beginGroupChatTurn } from './group-chat-turn-metrics';
 import type { AgentConfig } from '../agents/definitions';
 import type { AgentSshRemoteConfig } from '../../shared/types';
 import {
@@ -227,6 +228,11 @@ export async function spawnGroupChatAgent(
 	if (winConfig.shell && debugLabel) {
 		console.log(`[GroupChat:Debug] Windows shell config for ${debugLabel}: ${winConfig.shell}`);
 	}
+
+	// Start the clock at the single choke point every turn shape goes through
+	// (moderator, participant, synthesis, recovery), so a new spawn site is
+	// measured without having to remember to opt in.
+	beginGroupChatTurn(sessionId);
 
 	const spawnResult = processManager.spawn({
 		sessionId,

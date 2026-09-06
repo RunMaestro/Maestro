@@ -154,6 +154,28 @@ export function resolveModalSize({
 	});
 }
 
+/**
+ * A default size expressed as a fraction of the viewport, for surfaces whose
+ * useful size is "as much room as the screen has" rather than a fixed pixel box
+ * - a graph canvas, a dashboard, anything the user pans around inside. A fixed
+ * default that reads as generous on a laptop is a postage stamp on a 5K
+ * display, and the user has to resize it by hand on every machine.
+ *
+ * The result still goes through `clampModalSize`, so the 90% viewport cap and
+ * any declared minSize apply on top of it.
+ */
+export function viewportModalSize(
+	ratio: Partial<ModalSize>,
+	viewport: ModalViewport = getViewportSize()
+): ModalSize {
+	const widthRatio = sanitizeBound(ratio.width) ?? 1;
+	const heightRatio = sanitizeBound(ratio.height) ?? 1;
+	return {
+		width: Math.round(viewport.width * widthRatio),
+		height: Math.round(viewport.height * heightRatio),
+	};
+}
+
 export function normalizeModalPosition(value: unknown): ModalPosition | null {
 	if (!value || typeof value !== 'object') return null;
 	const candidate = value as Partial<ModalPosition>;

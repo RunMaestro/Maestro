@@ -11,6 +11,7 @@
 import { describe, it, expect } from 'vitest';
 import { render } from '@testing-library/react';
 import {
+	getConnectingColor,
 	getContextColor,
 	getStatusColor,
 	formatActiveTime,
@@ -19,6 +20,7 @@ import {
 	getExplorerFolderIcon,
 } from '../../../renderer/utils/theme';
 import type { Theme, SessionState, FileChangeType } from '../../../renderer/types';
+import { blendColors } from '../../../shared/colorContrast';
 
 import { mockTheme } from '../../helpers/mockTheme';
 // Mock theme with known colors for testing
@@ -177,8 +179,14 @@ describe('theme utilities', () => {
 				expect(getStatusColor('error', mockTheme)).toBe(mockTheme.colors.error);
 			});
 
-			it('returns hardcoded orange (#ff8800) for connecting state', () => {
-				expect(getStatusColor('connecting', mockTheme)).toBe('#ff8800');
+			it('returns the theme-derived connecting orange for connecting state', () => {
+				expect(getStatusColor('connecting', mockTheme)).toBe(getConnectingColor(mockTheme));
+			});
+
+			it('keeps connecting distinct from the busy and error colors', () => {
+				const connecting = getStatusColor('connecting', mockTheme);
+				expect(connecting).not.toBe(mockTheme.colors.warning);
+				expect(connecting).not.toBe(mockTheme.colors.error);
 			});
 		});
 
@@ -203,9 +211,30 @@ describe('theme utilities', () => {
 				expect(getStatusColor('error', alternativeTheme)).toBe(alternativeTheme.colors.error);
 			});
 
-			it('connecting state uses hardcoded orange regardless of theme', () => {
-				expect(getStatusColor('connecting', alternativeTheme)).toBe('#ff8800');
+			it('derives the connecting color from the alternative theme, not a literal', () => {
+				expect(getStatusColor('connecting', alternativeTheme)).toBe(
+					getConnectingColor(alternativeTheme)
+				);
+				expect(getStatusColor('connecting', alternativeTheme)).not.toBe(
+					getStatusColor('connecting', mockTheme)
+				);
 			});
+		});
+	});
+
+	// ============================================================================
+	// getConnectingColor tests
+	// ============================================================================
+	describe('getConnectingColor', () => {
+		it('mixes the theme warning and error slots into an orange', () => {
+			// 35% of the theme's error color mixed into its warning color.
+			expect(getConnectingColor(mockTheme)).toBe(
+				blendColors(mockTheme.colors.warning, mockTheme.colors.error, 0.35)
+			);
+		});
+
+		it('changes when the theme repaints its semantic palette', () => {
+			expect(getConnectingColor(alternativeTheme)).not.toBe(getConnectingColor(mockTheme));
 		});
 	});
 

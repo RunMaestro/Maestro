@@ -322,7 +322,7 @@ export function FeedbackModal({ theme, sessions, onClose, onSwitchToSession }: F
 										<PencilLine className="w-4 h-4" />
 										{drafts.length > 0 && (
 											<span
-												className="absolute -top-2 -right-2 text-[9px] font-bold rounded-full px-1 leading-tight"
+												className="absolute -top-2 -right-2 text-3xs font-bold rounded-full px-1 leading-tight"
 												style={{
 													backgroundColor: theme.colors.accent,
 													color: theme.colors.accentForeground,
@@ -343,7 +343,7 @@ export function FeedbackModal({ theme, sessions, onClose, onSwitchToSession }: F
 										<History className="w-4 h-4" />
 										{openIssueCount > 0 && (
 											<span
-												className="absolute -top-2 -right-2 text-[9px] font-bold rounded-full px-1 leading-tight"
+												className="absolute -top-2 -right-2 text-3xs font-bold rounded-full px-1 leading-tight"
 												style={{
 													backgroundColor: theme.colors.success,
 													color: theme.colors.accentForeground,
@@ -465,7 +465,7 @@ export function FeedbackModal({ theme, sessions, onClose, onSwitchToSession }: F
 							<button
 								type="button"
 								onClick={handleDiscard}
-								className="px-4 py-2 rounded border transition-colors hover:bg-white/5"
+								className="px-4 py-1.5 rounded border transition-colors hover:bg-white/5 text-sm"
 								style={{ borderColor: theme.colors.border, color: theme.colors.error }}
 							>
 								Discard
@@ -474,7 +474,7 @@ export function FeedbackModal({ theme, sessions, onClose, onSwitchToSession }: F
 							<button
 								type="button"
 								onClick={() => setConfirmCloseOpen(false)}
-								className="px-4 py-2 rounded border transition-colors hover:bg-white/5"
+								className="px-4 py-1.5 rounded border transition-colors hover:bg-white/5 text-sm"
 								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 							>
 								Keep editing
@@ -482,7 +482,7 @@ export function FeedbackModal({ theme, sessions, onClose, onSwitchToSession }: F
 							<button
 								type="button"
 								onClick={handleSaveAndClose}
-								className="px-4 py-2 rounded transition-colors hover:opacity-90"
+								className="px-4 py-1.5 rounded transition-colors hover:opacity-90 text-sm"
 								style={{
 									backgroundColor: theme.colors.accent,
 									color: theme.colors.accentForeground,

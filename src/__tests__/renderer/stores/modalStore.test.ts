@@ -16,6 +16,10 @@ import {
 	type RenameInstanceModalData,
 	type LightboxData,
 	type CueYamlEditorData,
+	DESTINATION_MODALS,
+	DESTINATION_SHORTCUT_IDS,
+	closeOtherDestinations,
+	registerExternalDestination,
 } from '../../../renderer/stores/modalStore';
 import type { Session } from '../../../renderer/types';
 
@@ -1212,6 +1216,157 @@ describe('modalStore', () => {
 			useModalStore.getState().cyclePromptComposer();
 			expect(useModalStore.getState().isOpen('promptComposer')).toBe(true);
 			expect(useModalStore.getState().promptComposerFullscreen).toBe(false);
+		});
+	});
+	describe('destination surfaces (one at a time)', () => {
+		it('opening a destination closes the destination already up', () => {
+			const store = useModalStore.getState();
+			store.openModal('directorNotes');
+			store.openModal('usageDashboard');
+
+			expect(useModalStore.getState().isOpen('usageDashboard')).toBe(true);
+			// The reported bug: the dashboard opened BEHIND Director's Notes because
+			// the notes outrank it in MODAL_PRIORITIES.
+			expect(useModalStore.getState().isOpen('directorNotes')).toBe(false);
+		});
+
+		it('evicts a destination regardless of which one opened first', () => {
+			const store = useModalStore.getState();
+			store.openModal('usageDashboard');
+			store.openModal('symphony');
+			store.openModal('cueModal');
+
+			const open = [...useModalStore.getState().modals.entries()].filter(([, e]) => e.open);
+			expect(open.map(([id]) => id)).toEqual(['cueModal']);
+		});
+
+		it('replaces an overlay destination with a main-panel destination', () => {
+			const store = useModalStore.getState();
+			store.openModal('usageDashboard');
+			// System Logs takes over the center workspace, so an overlay left open
+			// on top of it would hide it completely and the hotkey would look dead.
+			store.openModal('logViewer');
+
+			expect(useModalStore.getState().isOpen('logViewer')).toBe(true);
+			expect(useModalStore.getState().isOpen('usageDashboard')).toBe(false);
+		});
+
+		it('keeps deep-link data when a destination replaces another', () => {
+			const store = useModalStore.getState();
+			store.openModal('directorNotes');
+			store.openModal('cueModal', { initialTab: 'scheduled' });
+
+			expect(useModalStore.getState().getData('cueModal')).toEqual({ initialTab: 'scheduled' });
+			expect(useModalStore.getState().isOpen('directorNotes')).toBe(false);
+		});
+
+		it('leaves dialogs that are meant to layer alone', () => {
+			const store = useModalStore.getState();
+			store.openModal('cueModal');
+			// The YAML editor answers a question about the Cue modal beneath it.
+			store.openModal('cueYamlEditor', { sessionId: 's1', projectRoot: '/p' });
+			store.openModal('confirm', { message: 'Sure?', onConfirm: () => {} });
+
+			expect(useModalStore.getState().isOpen('cueModal')).toBe(true);
+			expect(useModalStore.getState().isOpen('cueYamlEditor')).toBe(true);
+			expect(useModalStore.getState().isOpen('confirm')).toBe(true);
+		});
+
+		it('a non-destination modal never evicts a destination', () => {
+			const store = useModalStore.getState();
+			store.openModal('usageDashboard');
+			store.openModal('renameTab', { tabId: 't1', initialName: 'Tab' });
+
+			expect(useModalStore.getState().isOpen('usageDashboard')).toBe(true);
+		});
+
+		it('toggleModal into a destination evicts the other destination', () => {
+			const store = useModalStore.getState();
+			store.openModal('settings');
+			store.toggleModal('processMonitor');
+
+			expect(useModalStore.getState().isOpen('processMonitor')).toBe(true);
+			expect(useModalStore.getState().isOpen('settings')).toBe(false);
+		});
+
+		it('re-opening the destination already showing is a no-op', () => {
+			const store = useModalStore.getState();
+			store.openModal('usageDashboard');
+			store.openModal('usageDashboard');
+
+			expect(useModalStore.getState().isOpen('usageDashboard')).toBe(true);
+		});
+
+		it('closes registered external destinations (Document Graph)', () => {
+			const close = vi.fn();
+			const unregister = registerExternalDestination(close);
+			try {
+				useModalStore.getState().openModal('settings');
+				expect(close).toHaveBeenCalledTimes(1);
+
+				// A dialog is not a destination and must not evict the graph.
+				useModalStore.getState().openModal('confirm', {
+					message: 'Sure?',
+					onConfirm: () => {},
+				});
+				expect(close).toHaveBeenCalledTimes(1);
+			} finally {
+				unregister();
+			}
+		});
+
+		it('closeOtherDestinations clears everything but the surface being kept', () => {
+			const store = useModalStore.getState();
+			store.openModal('usageDashboard');
+			store.openModal('confirm', { message: 'Sure?', onConfirm: () => {} });
+
+			closeOtherDestinations('memoryViewer');
+
+			expect(useModalStore.getState().isOpen('usageDashboard')).toBe(false);
+			// Layered dialogs are untouched - this only unwinds destinations.
+			expect(useModalStore.getState().isOpen('confirm')).toBe(true);
+		});
+
+		it('does not list dialogs as destinations', () => {
+			for (const id of ['confirm', 'renameTab', 'cueYamlEditor', 'shortcutsHelp'] as ModalId[]) {
+				expect(DESTINATION_MODALS.has(id)).toBe(false);
+			}
+		});
+	});
+	describe('destination shortcut ids', () => {
+		it('covers every destination that has a hotkey', () => {
+			// The window keyboard handler blocks shortcuts while a modal is up and
+			// consults this set to decide what still gets through. A destination
+			// missing here can be opened FROM but never switched TO.
+			expect([...DESTINATION_SHORTCUT_IDS].sort()).toEqual(
+				[
+					'agentSessions',
+					'directorNotes',
+					'openCue',
+					'openMemoryViewer',
+					'openSymphony',
+					'processMonitor',
+					'settings',
+					'systemLogs',
+					'usageDashboard',
+				].sort()
+			);
+		});
+
+		it('includes the two directions of the reported bug', () => {
+			// Director's Notes -> Usage Dashboard worked; the way back did not,
+			// because only the Alt+Cmd+U chord was allowlisted.
+			expect(DESTINATION_SHORTCUT_IDS.has('usageDashboard')).toBe(true);
+			expect(DESTINATION_SHORTCUT_IDS.has('directorNotes')).toBe(true);
+		});
+
+		it('omits dialogs and surfaces with no hotkey', () => {
+			// Marketplace is a destination but has no binding, so there is nothing
+			// for the guard to match.
+			expect(DESTINATION_SHORTCUT_IDS.has('marketplace')).toBe(false);
+			// Shortcuts Help and the Prompt Composer are dialogs, not destinations.
+			expect(DESTINATION_SHORTCUT_IDS.has('help')).toBe(false);
+			expect(DESTINATION_SHORTCUT_IDS.has('openPromptComposer')).toBe(false);
 		});
 	});
 });

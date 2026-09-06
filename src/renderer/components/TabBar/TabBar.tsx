@@ -1,7 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect, memo, useMemo } from 'react';
 import { Bell } from 'lucide-react';
 import type { AITab, UnifiedTabRef } from '../../types';
-import { hasDraft } from '../../utils/tabHelpers';
+import { hasDraft, hasUnreadVisibleTab, visibleAiTabs } from '../../utils/tabHelpers';
 import { updateSessionWith } from '../../stores/sessionStore';
 import { promotePaneToStandalone } from '../../utils/panelLayout';
 import {
@@ -87,6 +87,7 @@ function TabBarInner({
 	onTerminalTabRename,
 	onCopyTerminalBuffer,
 	onPublishTerminalBufferGist,
+	onPublishFileGist,
 	onSendTerminalBufferToAgent,
 	onTerminalTabConfigureStartupCommand,
 	onCopyBrowserContent,
@@ -243,8 +244,11 @@ function TabBarInner({
 	const displayedTabs = useMemo(() => {
 		// Window doesn't own this agent: render an empty tab strip (scoped window).
 		if (!ownsActiveAgent) return [];
+		// Hidden consult tabs never get a chip, in either filter state. The unified
+		// path drops them in buildUnifiedTabs; this legacy path has to drop them itself.
+		const visible = visibleAiTabs(tabs);
 		return showUnreadOnly
-			? tabs.filter(
+			? visible.filter(
 					(t) =>
 						t.hasUnread ||
 						t.state === 'busy' ||
@@ -254,7 +258,7 @@ function TabBarInner({
 						(showStarredInUnreadFilter && t.starred) ||
 						(queuedTabIds?.has(t.id) ?? false)
 				)
-			: tabs;
+			: visible;
 	}, [
 		tabs,
 		showUnreadOnly,
@@ -659,7 +663,7 @@ function TabBarInner({
 	return (
 		<div
 			ref={tabBarRef}
-			className="flex items-end gap-0.5 pt-2 border-b overflow-x-auto overflow-y-hidden no-scrollbar transition-shadow duration-150"
+			className="chrome-sheen flex items-end gap-0.5 pt-2 border-b overflow-x-auto overflow-y-hidden no-scrollbar transition-shadow duration-150"
 			data-tour="tab-bar"
 			// Accept a tiled pane's title-bar drag dropped onto the bar background to
 			// promote it back to a standalone tab. Chip reorder is unaffected (it
@@ -705,7 +709,7 @@ function TabBarInner({
 					}
 				>
 					<Bell className="w-4 h-4" />
-					{tabs.some((t) => t.hasUnread) && (
+					{hasUnreadVisibleTab(tabs) && (
 						<div
 							className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full"
 							style={{ backgroundColor: theme.colors.error }}
@@ -810,6 +814,7 @@ function TabBarInner({
 										registerRef={(el) => registerTabRef(fileTab.id, el)}
 										onRename={onFileTabRename}
 										onSnooze={onSnooze || undefined}
+										onPublishGist={ghCliAvailable ? onPublishFileGist : undefined}
 										onMoveToFirst={
 											!isFirstTab && onUnifiedTabReorder ? handleMoveToFirst : undefined
 										}

@@ -12,6 +12,7 @@
  */
 
 import { Wand2 } from 'lucide-react';
+import { Wordmark } from './ui/Wordmark';
 import type { Theme } from '../types';
 import { Spinner } from './ui/Spinner';
 
@@ -29,12 +30,7 @@ export function AgentsLoadingView({ theme }: AgentsLoadingViewProps) {
 			>
 				<div className="flex items-center gap-2">
 					<Wand2 className="w-5 h-5" style={{ color: theme.colors.accent }} />
-					<h1
-						className="font-bold tracking-widest text-lg"
-						style={{ color: theme.colors.textMain }}
-					>
-						MAESTRO
-					</h1>
+					<Wordmark as="h1" className="text-lg" style={{ color: theme.colors.textMain }} />
 				</div>
 			</div>
 

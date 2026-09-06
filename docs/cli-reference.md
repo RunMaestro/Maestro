@@ -238,7 +238,7 @@ Dispatch a prompt to an agent in the Maestro desktop app and return its tab/sess
 | Option                            | Description                                                                                                                                                                                                                                                                | Default |
 | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
 | `--new-tab`                       | Create a fresh AI tab and dispatch the prompt into it                                                                                                                                                                                                                      | -       |
-| `--background`                    | Leave the new tab in the background (default; with --new-tab)                                                                                                                                                                                                              | -       |
+| `--background`                    | Leave the view where it is (default with --new-tab; suppresses the agent switch otherwise)                                                                                                                                                                                 | -       |
 | `-t, --tab <id>`                  | Target an existing tab by its tab id (mutually exclusive with --new-tab)                                                                                                                                                                                                   | -       |
 | `-f, --force`                     | Bypass the busy-state guard when writing to a busy tab; requires allowConcurrentSend (cannot be combined with --new-tab - a fresh tab is never busy)                                                                                                                       | -       |
 | `--focus`                         | Switch to and focus the target agent/tab when dispatching (by default dispatch runs in the background without stealing focus)                                                                                                                                              | -       |
@@ -293,7 +293,7 @@ Print conversation history for a desktop tab
 
 ## `maestro-cli open-file <file-path>`
 
-Open a file as a preview tab in the Maestro desktop app
+Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead)
 
 | Option             | Description                                                                     | Default |
 | ------------------ | ------------------------------------------------------------------------------- | ------- |
@@ -302,6 +302,33 @@ Open a file as a preview tab in the Maestro desktop app
 | `--focus`          | Switch to the file after opening it (default)                                   | -       |
 | `--no-switch`      | Don't switch to the target agent, but still activate the tab there              | -       |
 | `--json`           | Output as JSON (for scripting)                                                  | -       |
+
+## `maestro-cli open-graph [paths...]`
+
+Open the Document Graph over specific markdown files or a directory.
+
+This is a separate verb rather than an `open <surface>` entry: `open` carries a
+surface name and a tab, and a graph needs a file set.
+
+A single directory stays a directory scope, so the app scans it when it renders
+and picks up documents written since you typed the command. Any other
+combination - several paths, or any explicit file - is flattened to that exact
+list of documents. Documents in the scope that link to nothing else in it are
+drawn in an "Unlinked" band you can toggle off.
+
+| Option             | Description                                                   | Default     |
+| ------------------ | ------------------------------------------------------------- | ----------- |
+| `-a, --agent <id>` | Target agent (defaults to auto-detect by path's owning agent) | -           |
+| `--focus <path>`   | Center the graph on this document                             | most-linked |
+| `--json`           | Output as JSON (for scripting)                                | -           |
+
+```bash
+# Everything under a folder
+maestro-cli open-graph docs/
+
+# An exact set, centered on the one you want to talk about
+maestro-cli open-graph docs/a.md docs/b.md docs/c.md --focus docs/a.md
+```
 
 ## `maestro-cli open-browser <url>`
 
@@ -323,6 +350,34 @@ Open a Maestro modal or dashboard (use --list to see every surface)
 | `-t, --tab <tab>` | Deep-link to a tab within the surface                   | -       |
 | `--list`          | List every openable surface, its tabs, and its shortcut | -       |
 | `--json`          | Output as JSON (for scripting)                          | -       |
+
+## `maestro-cli image`
+
+List and save images pasted into a Maestro chat
+
+## `maestro-cli image list`
+
+List images pasted into an agent's conversation, newest first
+
+| Option               | Description                               | Default |
+| -------------------- | ----------------------------------------- | ------- |
+| `-a, --agent <id>`   | Only this agent (defaults to every agent) | -       |
+| `-t, --tab <tab-id>` | Only this AI tab                          | -       |
+| `--limit <n>`        | Maximum images to show (default: 20)      | -       |
+| `--json`             | Output as JSON (for scripting)            | -       |
+
+## `maestro-cli image save [target]`
+
+Save a pasted image to disk (target: index, handle, or "latest")
+
+| Option                | Description                                                       | Default |
+| --------------------- | ----------------------------------------------------------------- | ------- |
+| `-a, --agent <id>`    | Only this agent (defaults to every agent)                         | -       |
+| `-t, --tab <tab-id>`  | Only this AI tab                                                  | -       |
+| `-o, --output <path>` | File or directory to write (default: a generated name in the cwd) | -       |
+| `--all`               | Save every image in scope instead of just the newest              | -       |
+| `--force`             | Overwrite an existing file named by --output                      | -       |
+| `--json`              | Output as JSON (for scripting)                                    | -       |
 
 ## `maestro-cli close-browser <tab-id>`
 
@@ -359,23 +414,37 @@ Run a command in an existing Maestro terminal tab
 | `--no-enter`         | Type the command without pressing Enter                                   | -       |
 | `--json`             | Output as JSON (for scripting)                                            | -       |
 
+## `maestro-cli read-terminal`
+
+Read a Maestro terminal tab's output
+
+| Option               | Description                                                               | Default |
+| -------------------- | ------------------------------------------------------------------------- | ------- |
+| `-a, --agent <id>`   | Target agent by ID (defaults to active)                                   | -       |
+| `--tab <id-or-name>` | Terminal tab ID or display name (defaults to the agent's active terminal) | -       |
+| `--tail <n>`         | Return only the last N lines (default: 200)                               | -       |
+| `--json`             | Output as JSON (for scripting)                                            | -       |
+
 ## `maestro-cli refresh-files`
 
-Refresh the file tree in the Maestro desktop app
+Refresh the file tree in the Maestro desktop app (never moves the view)
 
-| Option             | Description                             | Default |
-| ------------------ | --------------------------------------- | ------- |
-| `-a, --agent <id>` | Target agent by ID (defaults to active) | -       |
-| `--json`           | Output as JSON (for scripting)          | -       |
+| Option             | Description                                                               | Default |
+| ------------------ | ------------------------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Target agent by ID (defaults to active)                                   | -       |
+| `--background`     | Accepted and ignored: this refresh never moves the view or shows a notice | -       |
+| `--json`           | Output as JSON (for scripting)                                            | -       |
 
 ## `maestro-cli refresh-auto-run`
 
 Refresh Auto Run documents in the Maestro desktop app
 
-| Option             | Description                             | Default |
-| ------------------ | --------------------------------------- | ------- |
-| `-a, --agent <id>` | Target agent by ID (defaults to active) | -       |
-| `--json`           | Output as JSON (for scripting)          | -       |
+| Option             | Description                                           | Default |
+| ------------------ | ----------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Target agent by ID (defaults to active)               | -       |
+| `--background`     | Refresh without switching to the target agent         | -       |
+| `--focus`          | Switch to the target agent while refreshing (default) | -       |
+| `--json`           | Output as JSON (for scripting)                        | -       |
 
 ## `maestro-cli auto-run <docs>`
 
@@ -908,17 +977,63 @@ Move a tab to a position in its agent's tab bar (0-based, or "first"/"last")
 
 Create a new SSH remote configuration
 
-| Option                  | Description                                                           | Default |
-| ----------------------- | --------------------------------------------------------------------- | ------- |
-| `-H, --host <host>`     | SSH hostname or IP (or SSH config Host pattern with --ssh-config)     | -       |
-| `-p, --port <port>`     | SSH port (default: 22)                                                | -       |
-| `-u, --username <user>` | SSH username                                                          | -       |
-| `-k, --key <path>`      | Path to private key file                                              | -       |
-| `--env <KEY=VALUE>`     | Remote environment variable (repeatable)                              | `[]`    |
-| `--ssh-config`          | Use ~/.ssh/config for connection settings (host becomes Host pattern) | -       |
-| `--disabled`            | Create in disabled state                                              | -       |
-| `--set-default`         | Set as the global default SSH remote                                  | -       |
-| `--json`                | Output as JSON (for scripting)                                        | -       |
+| Option                     | Description                                                                  | Default |
+| -------------------------- | ---------------------------------------------------------------------------- | ------- |
+| `-H, --host <host>`        | SSH hostname or IP (or SSH config Host pattern with --ssh-config)            | -       |
+| `-p, --port <port>`        | SSH port (default: 22)                                                       | -       |
+| `-u, --username <user>`    | SSH username                                                                 | -       |
+| `-k, --key <path>`         | Path to private key file                                                     | -       |
+| `--env <KEY=VALUE>`        | Remote environment variable (repeatable)                                     | `[]`    |
+| `--ssh-option <KEY=VALUE>` | Extra ssh -o option, e.g. ProxyCommand=... or ConnectTimeout=45 (repeatable) | `[]`    |
+| `--ssh-config`             | Use ~/.ssh/config for connection settings (host becomes Host pattern)        | -       |
+| `--disabled`               | Create in disabled state                                                     | -       |
+| `--set-default`            | Set as the global default SSH remote                                         | -       |
+| `--json`                   | Output as JSON (for scripting)                                               | -       |
+
+`--ssh-option` passes an option straight to `ssh -o`, overriding Maestro's own
+defaults. It is how a host behind a tunnel is reached without a setting per
+transport - a `ProxyCommand` through tailcat, cloudflared or Teleport, a
+`ProxyJump` bastion, or simply a `ConnectTimeout` longer than the default 10
+seconds. Because a command-line `-o` outranks `~/.ssh/config`, this is also the
+only way to change one of those defaults. `RequestTTY` is reserved: Maestro
+derives it per command from whether the agent speaks stream-json, and a forced
+TTY corrupts that stream.
+
+```bash
+maestro-cli create-ssh-remote "Tunnelled box" \
+  --host tailcat-devbox \
+  --ssh-option "ProxyCommand=/opt/homebrew/bin/tailcat tcXXXX 22" \
+  --ssh-option ConnectTimeout=45
+```
+
+## `maestro-cli update-ssh-remote <remote-id>`
+
+Update an existing SSH remote configuration
+
+| Option                     | Description                                                    | Default |
+| -------------------------- | -------------------------------------------------------------- | ------- |
+| `-n, --name <name>`        | Display name                                                   | -       |
+| `-H, --host <host>`        | SSH hostname, IP, or SSH config Host pattern                   | -       |
+| `-p, --port <port>`        | SSH port                                                       | -       |
+| `-u, --username <user>`    | SSH username (empty string clears it)                          | -       |
+| `-k, --key <path>`         | Path to private key file (empty string clears it)              | -       |
+| `--env <KEY=VALUE>`        | Remote environment variable, merged with existing (repeatable) | `[]`    |
+| `--clear-env`              | Remove all remote environment variables before applying --env  | -       |
+| `--ssh-option <KEY=VALUE>` | Extra ssh -o option, merged with existing (repeatable)         | `[]`    |
+| `--clear-ssh-options`      | Remove all extra ssh -o options before applying --ssh-option   | -       |
+| `--ssh-config <bool>`      | Use ~/.ssh/config for connection settings (true/false)         | -       |
+| `--enabled <bool>`         | Enable or disable this remote (true/false)                     | -       |
+| `--set-default`            | Set as the global default SSH remote                           | -       |
+| `--json`                   | Output as JSON (for scripting)                                 | -       |
+
+Only the fields you pass are changed. `--env` and `--ssh-option` MERGE into what
+is already there, so editing one option does not silently drop the rest; pair
+them with `--clear-env` / `--clear-ssh-options` to start from empty.
+
+With `--json`, the output carries both `sshOptions` (this remote's overrides) and
+`resolvedSshOptions` (the full set `ssh` will actually receive, defaults
+included) - the second is the one that answers "did my `ConnectTimeout` take
+effect?". `list-ssh-remotes --json` reports both as well.
 
 ## `maestro-cli remove-ssh-remote <remote-id>`
 
@@ -1018,6 +1133,15 @@ Switch the active Maestro theme (applies live). Use --list to see options.
 | ------------ | ------------------------------ | ------- |
 | `-l, --list` | List available themes          | -       |
 | `--json`     | Output as JSON (for scripting) | -       |
+
+## `maestro-cli gloss [level]`
+
+Set the surface gloss level: off, sheen, strong or max (applies live). Omit the level to see the current one.
+
+| Option       | Description                                  | Default |
+| ------------ | -------------------------------------------- | ------- |
+| `-l, --list` | List the gloss levels and what each one does | -       |
+| `--json`     | Output as JSON (for scripting)               | -       |
 
 ## `maestro-cli theme`
 
@@ -1297,10 +1421,11 @@ Publish session context to GitHub gists
 
 Publish an agent's session transcript as a GitHub gist (requires running Maestro app)
 
-| Option                     | Description                             | Default |
-| -------------------------- | --------------------------------------- | ------- |
-| `-d, --description <text>` | Gist description                        | -       |
-| `-p, --public`             | Create a public gist (default: private) | -       |
+| Option                     | Description                                                                                              | Default |
+| -------------------------- | -------------------------------------------------------------------------------------------------------- | ------- |
+| `-d, --description <text>` | Gist description                                                                                         | -       |
+| `-p, --public`             | Create a public gist (default: private)                                                                  | -       |
+| `-s, --session <id>`       | Publish one provider session's transcript (from `send -s <id>`) instead of the agent's open desktop tabs | -       |
 
 ## `maestro-cli notify`
 

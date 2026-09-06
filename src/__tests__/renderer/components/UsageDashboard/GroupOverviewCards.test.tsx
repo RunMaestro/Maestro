@@ -296,4 +296,25 @@ describe('GroupOverviewCards', () => {
 
 		expect(screen.getByTestId('group-overview-empty')).toBeInTheDocument();
 	});
+
+	it('lays the grid out in wide columns so long values are not clipped', () => {
+		// Group values are the long ones ("142h 5m", "220.7M", "$187.18"), so the
+		// grid trades a column for rows. The grid scrolls vertically; a row costs
+		// nothing that a clipped number does not.
+		renderCards();
+
+		expect(screen.getByTestId('group-overview-cards')).toHaveStyle({
+			gridTemplateColumns: 'repeat(auto-fill, minmax(440px, 1fr))',
+		});
+	});
+
+	it('renders group tiles larger than agent tiles', () => {
+		// A group contains agents, so its tile is deliberately the bigger of the
+		// two - the size difference is what signals the containment relationship.
+		renderCards();
+
+		for (const card of screen.getAllByTestId('group-card')) {
+			expect(card).toHaveAttribute('data-size', 'lg');
+		}
+	});
 });

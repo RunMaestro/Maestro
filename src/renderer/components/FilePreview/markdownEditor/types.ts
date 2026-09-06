@@ -25,6 +25,19 @@ export interface MarkdownEditorHandle {
 	setScrollPercent(percent: number): void;
 	/** Set the editor selection to [from, to) and optionally reveal it. */
 	setSelection(from: number, to: number, scrollIntoView?: boolean): void;
+	/** Character offset of the cursor (the selection head). */
+	getCaret(): number;
+	/**
+	 * Where `pos` sits on screen, in the coordinate space of the editor's own
+	 * host element. `top` is the BOTTOM of that line plus a small gap, so a
+	 * popup placed there hangs under the caret instead of over it.
+	 *
+	 * Null before mount, or when the position is scrolled out of view and CM6
+	 * therefore has no coordinates for it.
+	 */
+	coordsAtPos(pos: number): { top: number; left: number } | null;
+	/** Replace [from, to) with `text` and leave the cursor after the insert. */
+	replaceRange(from: number, to: number, text: string): void;
 	/**
 	 * Replace the painted search-match decorations. `currentIndex` paints the
 	 * one "active" match in a stronger color. Pass an empty array to clear.
@@ -43,15 +56,28 @@ export interface MarkdownEditorProps {
 	theme: Theme;
 	/** Native browser spellcheck (red squiggles on prose). */
 	spellCheck?: boolean;
+	/** Show the document without allowing edits (comparison / reference views). */
+	readOnly?: boolean;
 	/** When true, lines soft-wrap at whitespace; when false, scrolls horizontally. */
 	wrap?: boolean;
 	/** Render a line-number gutter on the left. */
 	showLineNumbers?: boolean;
 	/** Right-click on a gutter line number - receives 1-based line and event. */
 	onLineNumberContextMenu?: (lineNumber: number, event: MouseEvent) => void;
-	/** Forwarded to the editor's content element so Cmd+S etc. still fire. */
-	onKeyDown?: (event: KeyboardEvent) => void;
+	/**
+	 * Forwarded to the editor's content element so Cmd+S etc. still fire. Runs
+	 * before CodeMirror's own keymap; return `true` to swallow the key (used by
+	 * a host-owned autocomplete popup that needs the arrow keys).
+	 */
+	onKeyDown?: (event: KeyboardEvent) => boolean | void;
 	/** Reader font zoom (1 = unzoomed), applied to the CM6 theme. */
 	fontScale?: number;
+	/**
+	 * Resolved File Editor font. CM6 owns `.cm-scroller`'s font, so it cannot
+	 * inherit the pane's. Undefined keeps the built-in monospace stack.
+	 */
+	fontFamily?: string;
+	/** File Editor size setting in px, before the pane's own zoom. */
+	baseFontPx?: number;
 	className?: string;
 }

@@ -72,6 +72,27 @@ export function buildConcertoHtmlUrl(
 	return `${CONCERTO_HTML_SCHEME}://render/?${params.toString()}`;
 }
 
+/**
+ * Path the embedded web server serves the same document from, for clients that
+ * have no custom-scheme handler (the web-desktop browser bundle).
+ *
+ * `concertoToken` is a per-server secret that is deliberately NOT the web
+ * server's master security token: the document is sandboxed but a sandboxed
+ * frame may still navigate ITSELF, so an agent-authored mockup can read its own
+ * URL and carry whatever is in it off the machine. Leaking a read-only key to
+ * Concerto documents is survivable; leaking the token that grants full remote
+ * control of Maestro is not.
+ */
+export function buildConcertoHtmlHttpPath(
+	concertoToken: string,
+	surface: ConcertoHtmlSurface,
+	id: string,
+	revision: number
+): string {
+	const params = new URLSearchParams({ surface, id, revision: String(revision) });
+	return `/${concertoToken}/concerto/render?${params.toString()}`;
+}
+
 export function parseConcertoHtmlUrl(value: string): ConcertoHtmlTarget | null {
 	try {
 		const url = new URL(value);

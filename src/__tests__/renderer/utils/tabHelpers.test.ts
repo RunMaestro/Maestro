@@ -64,6 +64,7 @@ import {
 	moveActiveUnifiedTabToEdge,
 	moveUnifiedTabToTarget,
 	toggleReadOnlyModeFields,
+	cycleShowThinkingFields,
 	findNextUnreadSession,
 	resolveQueuedItemTarget,
 	markTabRunningQueuedItem,
@@ -73,6 +74,9 @@ import {
 	computeQueuedTabIds,
 	filterUnifiedTabOrderForUnread,
 	groupFocusFields,
+	isSessionIdLabel,
+	visibleAiTabs,
+	hasUnreadVisibleTab,
 } from '../../../renderer/utils/tabHelpers';
 import { resolveTabPermissionMode } from '../../../shared/agentMetadata';
 import type { LogEntry } from '../../../renderer/types';
@@ -4471,6 +4475,34 @@ describe('tabHelpers', () => {
 	});
 
 	describe('hidden AI tabs', () => {
+		it('visibleAiTabs drops hidden consult tabs', () => {
+			const visible = createMockTab({ id: 'ai-1' });
+			const consult = createMockTab({ id: 'consult', hidden: true });
+
+			expect(visibleAiTabs([visible, consult]).map((t) => t.id)).toEqual(['ai-1']);
+		});
+
+		it('visibleAiTabs returns the input by reference when nothing is hidden', () => {
+			const tabs = [createMockTab({ id: 'ai-1' }), createMockTab({ id: 'ai-2' })];
+
+			expect(visibleAiTabs(tabs)).toBe(tabs);
+		});
+
+		it('visibleAiTabs tolerates a missing tab list', () => {
+			expect(visibleAiTabs(undefined)).toEqual([]);
+		});
+
+		it('hasUnreadVisibleTab ignores an unread hidden consult tab', () => {
+			const consult = createMockTab({ id: 'consult', hidden: true, hasUnread: true });
+
+			expect(hasUnreadVisibleTab([consult])).toBe(false);
+			expect(hasUnreadVisibleTab([consult, createMockTab({ id: 'ai-1', hasUnread: true })])).toBe(
+				true
+			);
+			expect(hasUnreadVisibleTab([])).toBe(false);
+			expect(hasUnreadVisibleTab(undefined)).toBe(false);
+		});
+
 		it('keeps a hidden tab out of the strip even though it holds a unifiedTabOrder ref', () => {
 			const visible = createMockTab({ id: 'ai-1' });
 			const consult = createMockTab({ id: 'consult', hidden: true });
@@ -4579,6 +4611,72 @@ describe('tabHelpers', () => {
 			const result = closeTab(hiddenConsultSession(), 'ai-2');
 
 			expect(result?.session.activeTabId).toBe('ai-1');
+		});
+
+		// Closing the ONLY chip in the strip while hidden consult tabs sit in the
+		// session used to leave an empty strip with one of those consults painted
+		// under it - a conversation the user never opened, and no chip to click back
+		// from. Hidden tabs are data containers, not company.
+		const soleVisibleTabSession = () =>
+			createMockSession({
+				aiTabs: [
+					createMockTab({ id: 'consult-1', hidden: true }),
+					createMockTab({ id: 'consult-2', hidden: true }),
+					createMockTab({ id: 'ai-1' }),
+				],
+				activeTabId: 'ai-1',
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'consult-1' },
+					{ type: 'ai', id: 'consult-2' },
+					{ type: 'ai', id: 'ai-1' },
+				],
+			});
+
+		it('replaces the only visible tab rather than falling onto a hidden consult', () => {
+			const session = soleVisibleTabSession();
+
+			const result = closeTab(session, 'ai-1')!;
+
+			const strip = buildUnifiedTabs(result.session);
+			expect(strip).toHaveLength(1);
+			expect(result.session.activeTabId).toBe(strip[0].id);
+			expect(result.session.activeTabId).not.toBe('consult-1');
+			expect(result.session.activeTabId).not.toBe('consult-2');
+			// The fresh tab is a new empty chat, not one of the consults.
+			expect(getActiveTab(result.session)?.logs).toEqual([]);
+		});
+
+		it('keeps the hidden consult tabs when it creates the replacement', () => {
+			const result = closeTab(soleVisibleTabSession(), 'ai-1')!;
+
+			expect(result.session.aiTabs.map((t) => t.id)).toContain('consult-1');
+			expect(result.session.aiTabs.map((t) => t.id)).toContain('consult-2');
+			expect(result.session.unifiedTabOrder).toContainEqual({ type: 'ai', id: 'consult-1' });
+		});
+
+		it('blanks activeTabId instead of landing on a hidden tab when a terminal survives', () => {
+			const base = soleVisibleTabSession();
+			const session = createMockSession({
+				...base,
+				terminalTabs: [{ id: 'term-1' }] as never,
+				unifiedTabOrder: [...base.unifiedTabOrder, { type: 'terminal', id: 'term-1' }],
+			});
+
+			const result = closeTab(session, 'ai-1')!;
+
+			// No replacement chat: the terminal is still there to land on.
+			expect(result.session.aiTabs.map((t) => t.id)).toEqual(['consult-1', 'consult-2']);
+			expect(result.session.activeTabId).toBe('');
+			expect(result.session.activeTerminalTabId).toBe('term-1');
+		});
+
+		it('getActiveTab prefers a visible tab when activeTabId points nowhere', () => {
+			const session = createMockSession({
+				aiTabs: [createMockTab({ id: 'consult-1', hidden: true }), createMockTab({ id: 'ai-1' })],
+				activeTabId: '',
+			});
+
+			expect(getActiveTab(session)?.id).toBe('ai-1');
 		});
 
 		it('hands focus to a visible neighbor when the active file tab is closed', () => {
@@ -5276,6 +5374,30 @@ describe('tabHelpers', () => {
 			const result = findNextUnreadSession(sessions, 'a');
 			expect(result.jumped).toBe(true);
 			expect(result.targetSessionId).toBe('b');
+		});
+
+		it('never jumps to a hidden consult tab, in this session or another', () => {
+			// The jump path reveals whatever it lands on, so stopping on a hidden
+			// cross-agent consult tab would open a conversation the user never asked
+			// for - the background consult would become a foreground tab.
+			const sessions = [
+				createMockSession({
+					id: 'a',
+					aiTabs: [
+						createMockTab({ id: 'tab-a', hasUnread: false }),
+						createMockTab({ id: 'consult-a', hasUnread: true, hidden: true }),
+					],
+					activeTabId: 'tab-a',
+				}),
+				createMockSession({
+					id: 'b',
+					aiTabs: [createMockTab({ id: 'consult-b', hasUnread: true, hidden: true })],
+					activeTabId: 'consult-b',
+				}),
+			];
+			const result = findNextUnreadSession(sessions, 'a');
+			expect(result.jumped).toBe(false);
+			expect(result.targetTabId).toBeUndefined();
 		});
 
 		it('returns the first unread tab that differs from activeTabId', () => {
@@ -6087,6 +6209,72 @@ describe('tabHelpers', () => {
 			expect(resolveTabPermissionMode(afterOn)).toBe('readonly');
 			const afterOff = toggleReadOnlyModeFields(afterOn);
 			expect(resolveTabPermissionMode(afterOff)).toBe('full');
+		});
+	});
+
+	describe('cycleShowThinkingFields', () => {
+		const thinkingLog: LogEntry = {
+			id: 'think-1',
+			timestamp: 1,
+			source: 'thinking',
+			text: 'reasoning',
+		};
+		const toolLog: LogEntry = { id: 'tool-1', timestamp: 2, source: 'tool', text: 'edit' };
+		const stdoutLog: LogEntry = { id: 'out-1', timestamp: 3, source: 'stdout', text: 'ok' };
+		const mixedLogs = [thinkingLog, toolLog, stdoutLog];
+
+		it('cycles off to on and leaves logs unchanged', () => {
+			expect(cycleShowThinkingFields({ showThinking: 'off', logs: mixedLogs })).toEqual({
+				showThinking: 'on',
+				logs: mixedLogs,
+			});
+		});
+
+		it('treats an unset mode as off, same as nextThinkingMode', () => {
+			expect(cycleShowThinkingFields({ showThinking: undefined, logs: mixedLogs })).toEqual({
+				showThinking: 'on',
+				logs: mixedLogs,
+			});
+		});
+
+		it('cycles on to sticky and leaves logs unchanged', () => {
+			expect(cycleShowThinkingFields({ showThinking: 'on', logs: mixedLogs })).toEqual({
+				showThinking: 'sticky',
+				logs: mixedLogs,
+			});
+		});
+
+		it('cycles sticky to off and drops only thinking logs', () => {
+			expect(cycleShowThinkingFields({ showThinking: 'sticky', logs: mixedLogs })).toEqual({
+				showThinking: 'off',
+				logs: [toolLog, stdoutLog],
+			});
+		});
+	});
+
+	// A recorded display name is not proof of a name: an unnamed tab records the
+	// very label the strip drew for it. Restoring that as `tab.name` looks
+	// identical and silently opts the tab out of ever being auto-named.
+	describe('isSessionIdLabel', () => {
+		it('recognizes every shape getTabDisplayName falls back to', () => {
+			expect(isSessionIdLabel('8535E0E3', '8535e0e3-90ca-43c7-98ae-c42a09cf23ad')).toBe(true);
+			expect(isSessionIdLabel('SES_4BCD', 'ses_4bcd1234')).toBe(true);
+			expect(isSessionIdLabel('THR_ABC1', 'thread_abc12345')).toBe(true);
+			expect(isSessionIdLabel('ABCDEFGH', 'abcdefghijkl')).toBe(true);
+		});
+
+		it('leaves a real name alone', () => {
+			expect(isSessionIdLabel('PP Farm Meta Data', '8535e0e3-90ca-43c7-98ae-c42a09cf23ad')).toBe(
+				false
+			);
+			// The octet of a DIFFERENT session is just a name that looks like one.
+			expect(isSessionIdLabel('8535E0E3', 'deadbeef-90ca-43c7-98ae-c42a09cf23ad')).toBe(false);
+		});
+
+		it('is false when either side is missing', () => {
+			expect(isSessionIdLabel(null, 'ses_4bcd1234')).toBe(false);
+			expect(isSessionIdLabel('', 'ses_4bcd1234')).toBe(false);
+			expect(isSessionIdLabel('SES_4BCD', undefined)).toBe(false);
 		});
 	});
 });

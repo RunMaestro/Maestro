@@ -36,17 +36,38 @@ describe('DisplayTab hooks', () => {
 			expect(window.maestro.fonts.detect).toHaveBeenCalledTimes(1);
 		});
 
-		it('loads saved custom fonts after font detection succeeds', async () => {
+		it('loads saved custom fonts on mount without waiting for a dropdown click', async () => {
 			vi.mocked(window.maestro.settings.get).mockResolvedValue(['Iosevka', 'Recursive Mono']);
 			const { result } = renderHook(() => useFontConfigurationState());
 
+			await waitFor(() =>
+				expect(result.current.customFonts).toEqual(['Iosevka', 'Recursive Mono'])
+			);
+			expect(window.maestro.settings.get).toHaveBeenCalledWith('customFonts');
+			// The expensive system sweep stays lazy; only the saved list is eager.
+			expect(window.maestro.fonts.detect).not.toHaveBeenCalled();
+		});
+
+		it('keeps a font added before the saved list resolves', async () => {
+			let resolveSaved: (value: string[]) => void = () => {};
+			vi.mocked(window.maestro.settings.get).mockReturnValue(
+				new Promise<string[]>((resolve) => {
+					resolveSaved = resolve;
+				})
+			);
+			const { result } = renderHook(() => useFontConfigurationState());
+
 			act(() => {
-				result.current.handleFontInteraction();
+				result.current.addCustomFont('Berkeley Mono');
+			});
+			act(() => {
+				resolveSaved(['Iosevka']);
 			});
 
-			await waitFor(() => expect(result.current.fontsLoaded).toBe(true));
-			expect(window.maestro.settings.get).toHaveBeenCalledWith('customFonts');
-			expect(result.current.customFonts).toEqual(['Iosevka', 'Recursive Mono']);
+			await waitFor(() =>
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('customFonts', ['Berkeley Mono'])
+			);
+			expect(result.current.customFonts).toEqual(['Berkeley Mono']);
 		});
 
 		it('adds and removes custom fonts while persisting the customFonts setting', () => {
@@ -82,9 +103,12 @@ describe('DisplayTab hooks', () => {
 			expect(window.maestro.settings.set).toHaveBeenCalledTimes(1);
 		});
 
-		it('logs font detection failures and keeps the selector retryable', async () => {
-			const error = new Error('font scan failed');
-			vi.mocked(window.maestro.fonts.detect).mockRejectedValue(error);
+		it('degrades to an unreliable list rather than an error when detection fails', async () => {
+			// On stock macOS and Windows there is no fontconfig, so a failed
+			// enumeration is the EXPECTED path. Reporting it as an error would
+			// cry wolf on the majority platform; instead the result is flagged
+			// unreliable and the picker suppresses availability annotations.
+			vi.mocked(window.maestro.fonts.detect).mockRejectedValue(new Error('font scan failed'));
 			const loggerSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 			const { result } = renderHook(() => useFontConfigurationState());
 
@@ -93,11 +117,23 @@ describe('DisplayTab hooks', () => {
 			});
 
 			await waitFor(() => expect(result.current.fontLoading).toBe(false));
-			expect(result.current.fontsLoaded).toBe(false);
-			expect(result.current.systemFonts).toEqual([]);
-			expect(loggerSpy).toHaveBeenCalledWith('Failed to load fonts:', undefined, error);
+			expect(result.current.fontsLoaded).toBe(true);
+			expect(result.current.fontsReliable).toBe(false);
+			expect(result.current.systemFonts.length).toBeGreaterThan(0);
+			expect(loggerSpy).not.toHaveBeenCalled();
 
 			loggerSpy.mockRestore();
+		});
+
+		it('reports a successful enumeration as reliable', async () => {
+			const { result } = renderHook(() => useFontConfigurationState());
+
+			act(() => {
+				result.current.handleFontInteraction();
+			});
+
+			await waitFor(() => expect(result.current.fontsLoaded).toBe(true));
+			expect(result.current.fontsReliable).toBe(true);
 		});
 	});
 

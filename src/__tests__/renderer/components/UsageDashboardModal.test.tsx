@@ -70,6 +70,10 @@ vi.mock('lucide-react', () => {
 		Sparkles: createIcon('sparkles', '✨'),
 		// AgentOverviewCards agent filter icon
 		Search: createIcon('search', '🔎'),
+		// Delegation score card + summary ratio card icons
+		Rocket: createIcon('rocket', '🚀'),
+		Info: createIcon('info', 'ℹ️'),
+		Split: createIcon('split', '🔀'),
 	};
 });
 
@@ -103,6 +107,12 @@ const mockGetShortcutUsageTotal = vi.fn(() => Promise.resolve(0));
 const mockMaestro = {
 	stats: {
 		getAggregation: mockGetAggregation,
+		getDelegationTotals: vi.fn().mockResolvedValue({
+			interactive: { count: 0, durationMs: 0 },
+			autoRun: { count: 0, durationMs: 0 },
+			cue: { count: 0, durationMs: 0 },
+		}),
+		getDelegationByDay: vi.fn().mockResolvedValue([]),
 		exportCsv: mockExportCsv,
 		onStatsUpdate: mockOnStatsUpdate,
 		getAutoRunSessions: mockGetAutoRunSessions,
@@ -1813,10 +1823,10 @@ describe('UsageDashboardModal', () => {
 			summarySection.focus();
 			fireEvent.keyDown(summarySection, { key: 'ArrowDown' });
 
-			// Should focus Query Duration Percentiles (next section, inserted
-			// between summary cards and provider comparison).
+			// Should focus the Delegation Score card, which sits directly under
+			// the summary cards on Overview.
 			await waitFor(() => {
-				expect(document.activeElement).toBe(screen.getByTestId('section-query-percentiles'));
+				expect(document.activeElement).toBe(screen.getByTestId('section-delegation-score'));
 			});
 		});
 
@@ -1833,9 +1843,9 @@ describe('UsageDashboardModal', () => {
 			percentilesSection.focus();
 			fireEvent.keyDown(percentilesSection, { key: 'ArrowUp' });
 
-			// Should focus summary cards (previous section)
+			// Should focus the Delegation Score card (previous section)
 			await waitFor(() => {
-				expect(document.activeElement).toBe(screen.getByTestId('section-summary-cards'));
+				expect(document.activeElement).toBe(screen.getByTestId('section-delegation-score'));
 			});
 		});
 
@@ -2032,7 +2042,7 @@ describe('UsageDashboardModal', () => {
 			fireEvent.keyDown(summarySection, { key: 'ArrowDown' });
 
 			await waitFor(() => {
-				expect(document.activeElement).toBe(screen.getByTestId('section-query-percentiles'));
+				expect(document.activeElement).toBe(screen.getByTestId('section-delegation-score'));
 			});
 
 			// Switch to Agents view by name (its index drifted when "Agent

@@ -211,7 +211,7 @@ export function AICommandsPanel({
 				</button>
 				{variablesExpanded && (
 					<div className="px-3 pb-3 pt-1 border-t" style={{ borderColor: theme.colors.border }}>
-						<p className="text-[10px] mb-2" style={{ color: theme.colors.textDim }}>
+						<p className="text-2xs mb-2" style={{ color: theme.colors.textDim }}>
 							Use these variables in your command prompts. They will be replaced with actual values
 							at runtime.
 						</p>
@@ -219,12 +219,12 @@ export function AICommandsPanel({
 							{TEMPLATE_VARIABLES_GENERAL.map(({ variable, description }) => (
 								<div key={variable} className="flex items-center gap-2 py-0.5">
 									<code
-										className="text-[10px] font-mono px-1 py-0.5 rounded shrink-0"
+										className="text-2xs font-mono px-1 py-0.5 rounded shrink-0"
 										style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.accent }}
 									>
 										{variable}
 									</code>
-									<span className="text-[10px] truncate" style={{ color: theme.colors.textDim }}>
+									<span className="text-2xs truncate" style={{ color: theme.colors.textDim }}>
 										{description}
 									</span>
 								</div>
@@ -498,7 +498,7 @@ export function AICommandsPanel({
 											</span>
 											{cmd.isBuiltIn && (
 												<span
-													className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium"
+													className="flex items-center gap-1 px-1.5 py-0.5 rounded text-2xs font-medium"
 													style={{
 														backgroundColor: theme.colors.bgActivity,
 														color: theme.colors.textDim,

@@ -9,13 +9,18 @@ import {
 	closeTab,
 	focusAiTabInSession,
 	getActiveTab,
+	getRepairedUnifiedTabOrder,
+	visibleAiTabs,
 } from '../../utils/tabHelpers';
 import { focusAiTabWithSnooze, type FocusAiTabOutcome } from '../../utils/snoozeHelpers';
 import { logger } from '../../utils/logger';
-import { generateId } from '../../utils/ids';
-import { planCrossAgentMentions } from '../../services/crossAgentMentions';
+import { buildQueuedMessageItem } from '../../services/queuedPrompt';
+import { requestFileTreeRefresh } from '../../utils/fileTreeRefresh';
 import { persistTabStarred } from '../../utils/starredSessions';
 import { formatLogsForClipboard } from '../../utils/contextExtractor';
+import { messagesToLogEntries } from '../../components/AgentSessionsBrowser/utils/messagesToLogEntries';
+import type { SessionMessage } from '../agent/useSessionViewer';
+import { resolveSessionProjectPath } from '../../components/AgentSessionsBrowser/utils/sessionProjectPath';
 import { notifyToast } from '../../stores/notificationStore';
 import { applyCadenzaPayload, useCadenzaStore } from '../../stores/cadenzaStore';
 import {
@@ -25,7 +30,7 @@ import {
 } from '../../stores/movementStore';
 import { openUiSurface } from '../../utils/openUiSurface';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
-import { useSessionStore } from '../../stores/sessionStore';
+import { updateAiTab, updateSessionWith, useSessionStore } from '../../stores/sessionStore';
 import { useConcertoCreationActivityStore } from '../../stores/concertoCreationActivityStore';
 import { buildThinkingItems } from '../../utils/thinkingItems';
 import type { ConcertoCreationPhase, ConcertoProgressNote } from '../../../shared/movement-types';
@@ -33,6 +38,11 @@ import {
 	getConcertoDesignerFrameSnapshot,
 	interactWithConcertoDesignerFrame,
 } from '../../components/Concerto/concertoDesignerBridge';
+import { useFileExplorerStore } from '../../stores/fileExplorerStore';
+import {
+	clearDesktopAiTabSelections,
+	consumeDesktopAiTabSelection,
+} from '../../utils/desktopTabSelectionSync';
 
 /**
  * Dependencies for the useRemoteIntegration hook.
@@ -47,8 +57,6 @@ export interface UseRemoteIntegrationDeps {
 	sessionsRef: React.MutableRefObject<Session[]>;
 	/** Ref to current active session ID (avoids stale closures) */
 	activeSessionIdRef: React.MutableRefObject<string>;
-	/** Session state setter */
-	setSessions: React.Dispatch<React.SetStateAction<Session[]>>;
 	/** Active session ID setter */
 	setActiveSessionId: (id: string) => void;
 	/** Default value for saveToHistory on new tabs */
@@ -140,6 +148,67 @@ function waitForMovementInspectionPaint(): Promise<void> {
 }
 
 /**
+ * Upper bound on messages pulled from a provider transcript for a gist. The
+ * read is tail-anchored, so this keeps the newest N and reports the cut.
+ */
+const GIST_SESSION_MESSAGE_LIMIT = 10000;
+
+type GistBody = { body: string } | { error: string };
+
+/**
+ * Transcript body for `gist create <agent-id> --session <id>` - ONE provider
+ * session, not the agent's open AI tabs.
+ *
+ * Headless callers (Maestro Relay, playbooks, Cue, CI) address a conversation
+ * by its provider session id and have no desktop tab, so publishing the
+ * agent's tabs for them puts an unrelated conversation in a URL-readable gist.
+ *
+ * Prefers a live tab holding that session (its logs are already in memory and
+ * every provider has them) and falls back to the provider's on-disk transcript,
+ * which is where a purely headless session lives.
+ */
+async function buildSessionGistBody(session: Session, agentSessionId: string): Promise<GistBody> {
+	const liveTab = session.aiTabs.find((tab) => tab.agentSessionId === agentSessionId);
+	if (liveTab) {
+		const body = formatLogsForClipboard(liveTab.logs);
+		return body ? { body } : { error: `Session has no conversation history: ${agentSessionId}` };
+	}
+
+	const { projectPathForSessions, sshRemoteId } = resolveSessionProjectPath(session);
+	if (!projectPathForSessions) {
+		return { error: `Cannot resolve a project path for agent ${session.id}` };
+	}
+
+	let result: { messages: SessionMessage[]; hasMore: boolean };
+	try {
+		result = await window.maestro.agentSessions.read(
+			session.toolType,
+			projectPathForSessions,
+			agentSessionId,
+			{ offset: 0, limit: GIST_SESSION_MESSAGE_LIMIT },
+			sshRemoteId
+		);
+	} catch {
+		// A missing transcript throws out of the provider storage read. That is
+		// an ordinary miss (wrong id, wrong agent, provider without on-disk
+		// sessions), so answer the caller instead of reporting a crash.
+		return { error: `No transcript found for session ${agentSessionId}` };
+	}
+
+	const body = formatLogsForClipboard(messagesToLogEntries(result.messages, agentSessionId));
+	if (!body) {
+		return { error: `No transcript found for session ${agentSessionId}` };
+	}
+	// Say so when the tail was cut - a silently truncated transcript reads as a
+	// complete one to whoever opens the gist.
+	return {
+		body: result.hasMore
+			? `_Older messages truncated - showing the most recent ${GIST_SESSION_MESSAGE_LIMIT}._\n\n${body}`
+			: body,
+	};
+}
+
+/**
  * Hook for handling web interface communication.
  *
  * Sets up listeners for remote commands from the web interface:
@@ -162,7 +231,6 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		isLiveMode,
 		sessionsRef,
 		activeSessionIdRef,
-		setSessions,
 		setActiveSessionId,
 		defaultSaveToHistory,
 		defaultShowThinking,
@@ -211,6 +279,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					tabId,
 					force,
 					imageCount: images?.length ?? 0,
+					background,
 				});
 				logger.debug('[useRemoteIntegration] onRemoteCommand preview:', undefined, {
 					sessionId,
@@ -252,23 +321,25 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				// If web provided an inputMode, sync the session state before executing
 				// This ensures the renderer uses the same mode the web intended
 				if (inputMode && targetSession.inputMode !== inputMode) {
-					setSessions((prev) =>
-						prev.map((s) =>
-							s.id === sessionId
-								? {
-										...s,
-										inputMode,
-										...(inputMode === 'terminal' && { activeFileTabId: null }),
-									}
-								: s
-						)
-					);
+					updateSessionWith(sessionId, (s) => ({
+						...s,
+						inputMode,
+						...(inputMode === 'terminal' && { activeFileTabId: null }),
+					}));
 				}
 
-				// Switch to the target session (for visual feedback) unless this is a
-				// background dispatch. Background is the default for `dispatch`; passing
-				// `--focus` re-enables switching to the target agent/tab.
-				if (!background) {
+				// Switch to the target session (for visual feedback). A phone tapping
+				// send wants exactly this; an agent handing work to another agent
+				// does not, and until `background` existed it had no way to say so -
+				// which is also what defeated `create-worktree --background` the
+				// moment it was given a message to deliver.
+				if (background === true) {
+					logger.info(
+						'[useRemoteIntegration] Background dispatch - leaving the view where it is:',
+						undefined,
+						sessionId
+					);
+				} else {
 					setActiveSessionId(sessionId);
 					logger.info('[useRemoteIntegration] Switched active session to:', undefined, sessionId);
 				}
@@ -301,7 +372,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		return () => {
 			unsubscribeRemote();
 		};
-	}, [sessionsRef, setSessions, setActiveSessionId]);
+	}, [sessionsRef, setActiveSessionId]);
 
 	// Handle remote mode switches from web interface
 	// This allows web mode switches to go through the same code path as desktop
@@ -309,44 +380,33 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		const unsubscribeSwitchMode = window.maestro.process.onRemoteSwitchMode(
 			(sessionId: string, mode: 'ai' | 'terminal', background?: boolean) => {
 				// Find the session and update its mode
-				setSessions((prev) => {
-					const session = prev.find((s) => s.id === sessionId);
-					if (!session) {
-						return prev;
-					}
+				const session = sessionsRef.current.find((s) => s.id === sessionId);
+				if (!session) return;
 
-					// Only switch if mode is different
-					if (session.inputMode === mode) {
-						return prev;
-					}
+				// Only switch if mode is different
+				if (session.inputMode === mode) return;
 
-					// Background placement: mode IS the rendered surface, so switching
-					// the agent the human is looking at would move their view. Nothing
-					// is created here that could sit in a tab bar instead, so the only
-					// honest background behaviour is to decline. Agents that are not on
-					// screen switch normally - that changes no pixels.
-					if (background && useSessionStore.getState().activeSessionId === sessionId) {
-						return prev;
-					}
+				// Background placement: mode IS the rendered surface, so switching
+				// the agent the human is looking at would move their view. Nothing
+				// is created here that could sit in a tab bar instead, so the only
+				// honest background behaviour is to decline. Agents that are not on
+				// screen switch normally - that changes no pixels.
+				if (background && useSessionStore.getState().activeSessionId === sessionId) return;
 
-					return prev.map((s) => {
-						if (s.id !== sessionId) return s;
-						// Clear activeFileTabId when switching to terminal mode to prevent
-						// orphaned file preview without tab bar
-						return {
-							...s,
-							inputMode: mode,
-							...(mode === 'terminal' && { activeFileTabId: null }),
-						};
-					});
-				});
+				// Clear activeFileTabId when switching to terminal mode to prevent
+				// orphaned file preview without tab bar
+				updateSessionWith(sessionId, (s) => ({
+					...s,
+					inputMode: mode,
+					...(mode === 'terminal' && { activeFileTabId: null }),
+				}));
 			}
 		);
 
 		return () => {
 			unsubscribeSwitchMode();
 		};
-	}, [setSessions]);
+	}, [sessionsRef]);
 
 	// Handle remote interrupts from web interface
 	// This allows web interrupts to go through the same code path as desktop (handleInterrupt)
@@ -369,17 +429,12 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					await window.maestro.process.interrupt(targetSessionId);
 
 					// Set state to idle (same as handleInterrupt)
-					setSessions((prev) =>
-						prev.map((s) => {
-							if (s.id !== session.id) return s;
-							return {
-								...s,
-								state: 'idle' as SessionState,
-								busySource: undefined,
-								thinkingStartTime: undefined,
-							};
-						})
-					);
+					updateSessionWith(session.id, (s) => ({
+						...s,
+						state: 'idle' as SessionState,
+						busySource: undefined,
+						thinkingStartTime: undefined,
+					}));
 				} catch (error) {
 					logger.error('[Remote] Failed to interrupt session:', undefined, error);
 				}
@@ -389,7 +444,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		return () => {
 			unsubscribeInterrupt();
 		};
-	}, [sessionsRef, setSessions]);
+	}, [sessionsRef]);
 
 	// Handle remote session selection from web interface
 	// This allows web clients to switch the active session in the desktop app
@@ -408,15 +463,10 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 
 				// If tabId provided, also switch to that tab
 				if (tabId) {
-					setSessions((prev) =>
-						prev.map((s) => {
-							if (s.id !== sessionId) return s;
-							// The shared jump, not a hand-rolled focus: it reveals a hidden
-							// consult tab, reopens one from the closed-tab history, and
-							// activates a tab that lives inside a tiled group as a pane.
-							return focusAiTabInSession(s, tabId);
-						})
-					);
+					// The shared jump, not a hand-rolled focus: it reveals a hidden
+					// consult tab, reopens one from the closed-tab history, and
+					// activates a tab that lives inside a tiled group as a pane.
+					updateSessionWith(sessionId, (s) => focusAiTabInSession(s, tabId));
 				}
 			}
 		);
@@ -429,13 +479,10 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			(sessionId: string, tabId: string, responseChannel: string) => {
 				let outcome: FocusAiTabOutcome | null = null;
 
-				setSessions((prev) =>
-					prev.map((s) => {
-						if (s.id !== sessionId) return s;
-						outcome = focusAiTabWithSnooze(s, tabId);
-						return outcome.session;
-					})
-				);
+				updateSessionWith(sessionId, (s) => {
+					outcome = focusAiTabWithSnooze(s, tabId);
+					return outcome.session;
+				});
 
 				const result = outcome as FocusAiTabOutcome | null;
 				if (result && result.action !== 'missing' && result.tabId) {
@@ -454,27 +501,88 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			}
 		);
 
-		// Handle remote tab selection from web interface
-		// This also switches to the session if not already active
+		// Handle explicit Web -> Desktop tab selection and Web-Desktop inventory sync.
 		const unsubscribeSelectTab = window.maestro.process.onRemoteSelectTab(
-			(sessionId: string, tabId: string) => {
-				// First, switch to the session if not already active
+			(sessionId, tabId, remoteTabs, activeTabChanged) => {
 				const currentActiveId = activeSessionIdRef.current;
-				if (currentActiveId !== sessionId) {
+				const isInventorySync = remoteTabs !== undefined;
+
+				// A bare remote:selectTab event is an explicit Web -> Desktop navigation
+				// request. A tabs_changed packet also arrives on this channel in
+				// Web-Desktop, but it is primarily an inventory snapshot and must not
+				// pull the browser into whichever background agent happened to change.
+				if (!isInventorySync && currentActiveId !== sessionId) {
 					setActiveSessionId(sessionId);
 				}
 
-				// Then update the active tab within the session
-				setSessions((prev) =>
-					prev.map((s) => {
-						if (s.id !== sessionId) return s;
-						// Check if tab exists
-						if (!s.aiTabs.some((t) => t.id === tabId)) {
-							return s;
-						}
-						return { ...s, ...aiTabFocusFields(tabId) };
-					})
-				);
+				// The legacy `tabs_changed` web packet carries the complete desktop tab
+				// inventory as its third argument. Reconcile that snapshot here so the
+				// browser adds and removes tabs instead of only following an ID it may not
+				// have. Existing tabs retain renderer-only data such as logs and drafts.
+				updateSessionWith(sessionId, (s) => {
+					let updatedSession = s;
+					if (isInventorySync) {
+						const existingById = new Map(s.aiTabs.map((tab) => [tab.id, tab]));
+						const aiTabs = remoteTabs.map((remoteTab) => {
+							const existing = existingById.get(remoteTab.id);
+							const syncedFields = {
+								id: remoteTab.id,
+								agentSessionId: remoteTab.agentSessionId,
+								name: remoteTab.name,
+								starred: remoteTab.starred,
+								usageStats: remoteTab.usageStats ?? undefined,
+								createdAt: remoteTab.createdAt,
+								state: remoteTab.state,
+								thinkingStartTime: remoteTab.thinkingStartTime ?? undefined,
+								hasUnread: remoteTab.hasUnread,
+							};
+
+							// Desktop snapshots intentionally exclude draft changes from their
+							// change signature. Preserve the browser's current draft for tabs it
+							// already knows so unrelated updates cannot replace newer input.
+							if (existing) return { ...existing, ...syncedFields };
+							return {
+								...syncedFields,
+								inputValue: remoteTab.inputValue,
+								logs: [],
+								stagedImages: [],
+								saveToHistory: defaultSaveToHistory,
+								showThinking: defaultShowThinking,
+							};
+						});
+						updatedSession = { ...s, aiTabs };
+						updatedSession = {
+							...updatedSession,
+							unifiedTabOrder: getRepairedUnifiedTabOrder(updatedSession),
+						};
+					}
+
+					const targetExists = updatedSession.aiTabs.some((tab) => tab.id === tabId);
+					if (!isInventorySync) {
+						return targetExists
+							? { ...updatedSession, ...aiTabFocusFields(tabId) }
+							: updatedSession;
+					}
+
+					// Only a real desktop tab-selection change may move the browser's visible
+					// tab, and only when the browser is already viewing that session. Metadata
+					// changes (busy/unread/name/starred) retain the browser's local focus.
+					if (activeTabChanged && currentActiveId === sessionId && targetExists) {
+						return { ...updatedSession, ...aiTabFocusFields(tabId) };
+					}
+
+					// If the browser's remembered AI tab was removed, repair the dormant id
+					// without clearing a currently focused file/terminal/browser surface.
+					if (!updatedSession.aiTabs.some((tab) => tab.id === updatedSession.activeTabId)) {
+						const visibleTabs = visibleAiTabs(updatedSession.aiTabs);
+						const fallbackTabId = visibleTabs.some((tab) => tab.id === tabId)
+							? tabId
+							: visibleTabs[0]?.id || '';
+						return { ...updatedSession, activeTabId: fallbackTabId };
+					}
+
+					return updatedSession;
+				});
 			}
 		);
 
@@ -483,10 +591,8 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			(sessionId: string, responseChannel: string, background?: boolean) => {
 				let newTabId: string | null = null;
 
-				setSessions((prev) =>
-					prev.map((s) => {
-						if (s.id !== sessionId) return s;
-
+				flushSync(() => {
+					updateSessionWith(sessionId, (s) => {
 						// Use createTab helper. `activate: false` appends the tab without
 						// touching any active-* id, so it shows up in the tab bar the way
 						// a browser opens a background tab.
@@ -498,8 +604,8 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						if (!result) return s;
 						newTabId = result.tab.id;
 						return result.session;
-					})
-				);
+					});
+				});
 				// A background create must not pull the Left Bar over either.
 				if (newTabId && !background) {
 					setActiveSessionId(sessionId);
@@ -547,22 +653,19 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				}
 				let createdTabId: string | undefined;
 				flushSync(() => {
-					setSessions((prev) =>
-						prev.map((s) => {
-							if (s.id !== sessionId) return s;
-							const result = createTab(s, {
-								saveToHistory: defaultSaveToHistory,
-								showThinking: defaultShowThinking,
-								// Background dispatch is the default (`--focus` opts into the
-								// foreground): create the tab without making it active so the
-								// user's current view is preserved.
-								activate: !background,
-							});
-							if (!result) return s;
-							createdTabId = result.tab.id;
-							return result.session;
-						})
-					);
+					updateSessionWith(sessionId, (s) => {
+						const result = createTab(s, {
+							saveToHistory: defaultSaveToHistory,
+							showThinking: defaultShowThinking,
+							// Background dispatch is the default (`--focus` opts into the
+							// foreground): create the tab without making it active so the
+							// user's current view is preserved.
+							activate: !background,
+						});
+						if (!result) return s;
+						createdTabId = result.tab.id;
+						return result.session;
+					});
 					if (createdTabId && !background) {
 						setActiveSessionId(sessionId);
 					}
@@ -594,108 +697,79 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		// Handle remote close tab from web interface
 		const unsubscribeCloseTab = window.maestro.process.onRemoteCloseTab(
 			(sessionId: string, tabId: string) => {
-				setSessions((prev) =>
-					prev.map((s) => {
-						if (s.id !== sessionId) return s;
-
-						// Use closeTab helper (handles last tab by creating a fresh one)
-						const result = closeTab(s, tabId);
-						return result?.session ?? s;
-					})
-				);
+				updateSessionWith(sessionId, (s) => {
+					// Use closeTab helper (handles last tab by creating a fresh one)
+					const result = closeTab(s, tabId);
+					return result?.session ?? s;
+				});
 			}
 		);
 
 		// Handle remote rename tab from web interface
 		const unsubscribeRenameTab = window.maestro.process.onRemoteRenameTab(
 			(sessionId: string, tabId: string, newName: string) => {
-				setSessions((prev) =>
-					prev.map((s) => {
-						if (s.id !== sessionId) return s;
+				const session = sessionsRef.current.find((s) => s.id === sessionId);
+				// Find the tab to get its agentSessionId for persistence
+				const tab = session?.aiTabs.find((t) => t.id === tabId);
+				if (!session || !tab) return;
 
-						// Find the tab to get its agentSessionId for persistence
-						const tab = s.aiTabs.find((t) => t.id === tabId);
-						if (!tab) {
-							return s;
-						}
+				// Persist name to agent session metadata (async, fire and forget)
+				// Use projectRoot (not cwd) for consistent session storage access
+				if (tab.agentSessionId) {
+					const agentId = session.toolType || 'claude-code';
+					if (agentId === 'claude-code') {
+						window.maestro.claude
+							.updateSessionName(session.projectRoot, tab.agentSessionId, newName || '')
+							.catch((err) => logger.error('Failed to persist tab name:', undefined, err));
+					} else {
+						window.maestro.agentSessions
+							.setSessionName(agentId, session.projectRoot, tab.agentSessionId, newName || null)
+							.catch((err) => logger.error('Failed to persist tab name:', undefined, err));
+					}
+					// Also update past history entries with this agentSessionId
+					window.maestro.history
+						.updateSessionName(tab.agentSessionId, newName || '')
+						.catch((err) =>
+							logger.error('Failed to update history session names:', undefined, err)
+						);
+				}
 
-						// Persist name to agent session metadata (async, fire and forget)
-						// Use projectRoot (not cwd) for consistent session storage access
-						if (tab.agentSessionId) {
-							const agentId = s.toolType || 'claude-code';
-							if (agentId === 'claude-code') {
-								window.maestro.claude
-									.updateSessionName(s.projectRoot, tab.agentSessionId, newName || '')
-									.catch((err) => logger.error('Failed to persist tab name:', undefined, err));
-							} else {
-								window.maestro.agentSessions
-									.setSessionName(agentId, s.projectRoot, tab.agentSessionId, newName || null)
-									.catch((err) => logger.error('Failed to persist tab name:', undefined, err));
-							}
-							// Also update past history entries with this agentSessionId
-							window.maestro.history
-								.updateSessionName(tab.agentSessionId, newName || '')
-								.catch((err) =>
-									logger.error('Failed to update history session names:', undefined, err)
-								);
-						}
-
-						return {
-							...s,
-							aiTabs: s.aiTabs.map((t) => (t.id === tabId ? { ...t, name: newName || null } : t)),
-						};
-					})
-				);
+				updateAiTab(sessionId, tabId, (t) => ({ ...t, name: newName || null }));
 			}
 		);
 
 		// Handle remote star tab from web interface
 		const unsubscribeStarTab = window.maestro.process.onRemoteStarTab(
 			(sessionId: string, tabId: string, starred: boolean) => {
-				setSessions((prev) =>
-					prev.map((s) => {
-						if (s.id !== sessionId) return s;
+				const session = sessionsRef.current.find((s) => s.id === sessionId);
+				const tab = session?.aiTabs.find((t) => t.id === tabId);
+				if (!session || !tab?.agentSessionId) return;
 
-						const tab = s.aiTabs.find((t) => t.id === tabId);
-						if (!tab?.agentSessionId) return s;
+				// Persist starred state and broadcast the change (same logic as
+				// desktop handleTabStar) so the Left Bar's starred cache refreshes.
+				persistTabStarred(session, tab, starred);
 
-						// Persist starred state and broadcast the change (same logic as
-						// desktop handleTabStar) so the Left Bar's starred cache refreshes.
-						persistTabStarred(s, tab, starred);
-
-						return {
-							...s,
-							aiTabs: s.aiTabs.map((t) => (t.id === tabId ? { ...t, starred } : t)),
-						};
-					})
-				);
+				updateAiTab(sessionId, tabId, (t) => ({ ...t, starred }));
 			}
 		);
 
 		// Handle remote reorder tab from web interface
 		const unsubscribeReorderTab = window.maestro.process.onRemoteReorderTab(
 			(sessionId: string, fromIndex: number, toIndex: number) => {
-				setSessions((prev) =>
-					prev.map((s) => {
-						if (s.id !== sessionId || !s.aiTabs) return s;
-						const tabs = [...s.aiTabs];
-						const [movedTab] = tabs.splice(fromIndex, 1);
-						tabs.splice(toIndex, 0, movedTab);
-						return { ...s, aiTabs: tabs };
-					})
-				);
+				updateSessionWith(sessionId, (s) => {
+					if (!s.aiTabs) return s;
+					const tabs = [...s.aiTabs];
+					const [movedTab] = tabs.splice(fromIndex, 1);
+					tabs.splice(toIndex, 0, movedTab);
+					return { ...s, aiTabs: tabs };
+				});
 			}
 		);
 
 		// Handle remote bookmark toggle from web interface
 		const unsubscribeToggleBookmark = window.maestro.process.onRemoteToggleBookmark(
 			(sessionId: string) => {
-				setSessions((prev) =>
-					prev.map((s) => {
-						if (s.id !== sessionId) return s;
-						return { ...s, bookmarked: !s.bookmarked };
-					})
-				);
+				updateSessionWith(sessionId, (s) => ({ ...s, bookmarked: !s.bookmarked }));
 			}
 		);
 
@@ -770,45 +844,27 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						return;
 					}
 
-					// Busy target: get in line. Append a message item to the authoritative
-					// execution queue (FIFO by insertion/timestamp), matching the shape the
-					// UI creates in useInputProcessing so it is a first-class queue citizen.
-					const isReadOnly =
-						targetTab.readOnlyMode === true || targetTab.permissionMode === 'readonly';
-					// Cross-agent @mentions: stamp the intent so processQueuedItem fires the
-					// consult when this item becomes the agent's turn - the same contract a
-					// composer-queued message carries (useInputProcessing). Without the flag
-					// the mention is inert and the target agent is never consulted.
-					const mentionPlan = planCrossAgentMentions(command, sessionId);
-					const queuedItem: QueuedItem = {
-						id: generateId(),
-						timestamp: Date.now(),
-						tabId: resolvedTabId,
-						type: 'message',
+					// Busy target: get in line. The item is built by the shared builder,
+					// so it is byte-identical to one the composer would have queued -
+					// including the `@mention` intent flags (fired at drain time, not
+					// here) and the model/effort capture that keeps a queued turn running
+					// under the settings it was queued with.
+					const queuedItem: QueuedItem = buildQueuedMessageItem({
+						session,
+						tab: targetTab,
 						text: command,
-						...(images && images.length > 0 ? { images: [...images] } : {}),
-						tabName:
-							targetTab.name ||
-							(targetTab.agentSessionId
-								? targetTab.agentSessionId.split('-')[0].toUpperCase()
-								: 'New'),
-						readOnlyMode: isReadOnly,
-						...(mentionPlan && {
-							crossAgentMention: true,
-							crossAgentOnly: mentionPlan.suppressLocal,
-						}),
-					};
+						images,
+					});
 
 					// Position is deterministic from the snapshot we already read: the item
 					// is appended to the tail, so it lands at length+1 (1-based). Computing
 					// it here (not inside the state updater) keeps the returned position
 					// independent of when the store applies the update.
 					const queueLength = (session.executionQueue?.length ?? 0) + 1;
-					setSessions((prev) =>
-						prev.map((s) =>
-							s.id === sessionId ? { ...s, executionQueue: [...s.executionQueue, queuedItem] } : s
-						)
-					);
+					updateSessionWith(sessionId, (s) => ({
+						...s,
+						executionQueue: [...s.executionQueue, queuedItem],
+					}));
 
 					reply({
 						success: true,
@@ -881,13 +937,10 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
 					const removed = !!session?.executionQueue?.some((i) => i.id === itemId);
 					if (removed) {
-						setSessions((prev) =>
-							prev.map((s) =>
-								s.id === sessionId
-									? { ...s, executionQueue: s.executionQueue.filter((i) => i.id !== itemId) }
-									: s
-							)
-						);
+						updateSessionWith(sessionId, (s) => ({
+							...s,
+							executionQueue: s.executionQueue.filter((i) => i.id !== itemId),
+						}));
 					}
 					window.maestro.process.sendRemoteRemoveQueueItemResponse(responseChannel, {
 						success: true,
@@ -922,7 +975,6 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 	}, [
 		sessionsRef,
 		activeSessionIdRef,
-		setSessions,
 		setActiveSessionId,
 		defaultSaveToHistory,
 		defaultShowThinking,
@@ -966,14 +1018,43 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		};
 	}, []);
 
+	// Handle a remote request to graph a set of documents (`maestro-cli
+	// open-graph`). Paths arrive absolute; the graph addresses files relative to
+	// its own root, so they are relativized against the target agent here rather
+	// than in the main process, which does not know which root the view uses.
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteOpenDocumentGraph((params) => {
+			const session = useSessionStore
+				.getState()
+				.sessions.find((s: Session) => s.id === params.sessionId);
+			const root = session?.projectRoot || session?.cwd || '';
+			const relative = (absolutePath: string): string => {
+				if (!root) return absolutePath;
+				if (absolutePath === root) return '';
+				const prefix = root.endsWith('/') ? root : `${root}/`;
+				return absolutePath.startsWith(prefix) ? absolutePath.slice(prefix.length) : absolutePath;
+			};
+
+			// Focusing the agent first: the graph is a full-window view on ONE
+			// agent, so rendering it under a different agent than the one the user
+			// is looking at would put it somewhere they cannot see.
+			if (session) setActiveSessionId(params.sessionId);
+
+			useFileExplorerStore.getState().openGraphScope({
+				files: params.files?.length ? params.files.map(relative) : undefined,
+				directory: params.directory !== undefined ? relative(params.directory) : undefined,
+				focusPath: params.focusPath ? relative(params.focusPath) : undefined,
+			});
+		});
+		return () => {
+			unsubscribe();
+		};
+	}, [setActiveSessionId]);
+
 	// Handle remote refresh file tree from web/CLI interface
 	useEffect(() => {
 		const unsubscribe = window.maestro.process.onRemoteRefreshFileTree((sessionId: string) => {
-			window.dispatchEvent(
-				new CustomEvent('maestro:refreshFileTree', {
-					detail: { sessionId },
-				})
-			);
+			requestFileTreeRefresh(sessionId);
 		});
 		return () => {
 			unsubscribe();
@@ -1300,13 +1381,15 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 
 	// Handle remote refresh auto-run docs from web/CLI interface
 	useEffect(() => {
-		const unsubscribe = window.maestro.process.onRemoteRefreshAutoRunDocs((sessionId: string) => {
-			window.dispatchEvent(
-				new CustomEvent('maestro:refreshAutoRunDocs', {
-					detail: { sessionId },
-				})
-			);
-		});
+		const unsubscribe = window.maestro.process.onRemoteRefreshAutoRunDocs(
+			(sessionId: string, background?: boolean) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:refreshAutoRunDocs', {
+						detail: { sessionId, background },
+					})
+				);
+			}
+		);
 		return () => {
 			unsubscribe();
 		};
@@ -1835,6 +1918,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 	useEffect(() => {
 		// Skip entirely if not in live mode - no web clients to broadcast to
 		if (!isLiveMode) return;
+		clearDesktopAiTabSelections();
 
 		// Use an interval to periodically check for changes instead of running on every render
 		// This dramatically reduces CPU usage during normal typing
@@ -1855,6 +1939,11 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					prevSessionStatesRef.current.set(session.id, session.state);
 				}
 
+				const activeTabChanged = consumeDesktopAiTabSelection(
+					session.id,
+					session.activeTabId || session.aiTabs?.[0]?.id || ''
+				);
+
 				// An empty aiTabs array is a valid state and still has to be broadcast,
 				// otherwise remote clients keep rendering tabs the user already closed.
 				if (!session.aiTabs) return;
@@ -1870,13 +1959,13 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					activeTabId: session.activeTabId || session.aiTabs[0]?.id || '',
 					tabsHash,
 				};
-
 				// Check if anything changed
 				if (
 					!prev ||
 					prev.tabCount !== current.tabCount ||
 					prev.activeTabId !== current.activeTabId ||
-					prev.tabsHash !== current.tabsHash
+					prev.tabsHash !== current.tabsHash ||
+					activeTabChanged
 				) {
 					const tabsForBroadcast = session.aiTabs.map((tab) => ({
 						id: tab.id,
@@ -1891,7 +1980,12 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						hasUnread: tab.hasUnread,
 					}));
 
-					window.maestro.web.broadcastTabsChange(session.id, tabsForBroadcast, current.activeTabId);
+					window.maestro.web.broadcastTabsChange(
+						session.id,
+						tabsForBroadcast,
+						current.activeTabId,
+						activeTabChanged
+					);
 
 					prevTabsRef.current.set(session.id, current);
 				}
@@ -1950,6 +2044,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				sessionId: string,
 				description: string,
 				isPublic: boolean,
+				agentSessionId: string | undefined,
 				responseChannel: string
 			) => {
 				try {
@@ -1962,26 +2057,49 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						return;
 					}
 
-					const sections: string[] = [];
-					for (const tab of session.aiTabs) {
-						const body = formatLogsForClipboard(tab.logs);
-						if (!body) continue;
-						const header = tab.name || tab.id.slice(0, 8);
-						sections.push(`## Tab: ${header}\n\n${body}`);
+					let content: string;
+					if (agentSessionId) {
+						// Narrowed to one provider session: publish exactly that
+						// conversation, never a fallback to the agent's tabs. A caller
+						// that named a session and got a different one published has
+						// leaked it - gists are readable by anyone with the URL.
+						const result = await buildSessionGistBody(session, agentSessionId);
+						if ('error' in result) {
+							window.maestro.process.sendRemoteCreateGistResponse(responseChannel, {
+								success: false,
+								error: result.error,
+							});
+							return;
+						}
+						content = `# ${session.name}\n\n_Session \`${agentSessionId}\`_\n\n${result.body}\n`;
+					} else {
+						const sections: string[] = [];
+						for (const tab of session.aiTabs) {
+							const body = formatLogsForClipboard(tab.logs);
+							if (!body) continue;
+							const header = tab.name || tab.id.slice(0, 8);
+							sections.push(`## Tab: ${header}\n\n${body}`);
+						}
+
+						if (sections.length === 0) {
+							window.maestro.process.sendRemoteCreateGistResponse(responseChannel, {
+								success: false,
+								error: 'Session has no conversation history to publish',
+							});
+							return;
+						}
+
+						content = `# ${session.name}\n\n${sections.join('\n\n---\n\n')}\n`;
 					}
 
-					if (sections.length === 0) {
-						window.maestro.process.sendRemoteCreateGistResponse(responseChannel, {
-							success: false,
-							error: 'Session has no conversation history to publish',
-						});
-						return;
-					}
-
-					const content = `# ${session.name}\n\n${sections.join('\n\n---\n\n')}\n`;
 					const safeName =
 						(session.name || 'session').replace(/[^a-zA-Z0-9]/g, '_').slice(0, 60) || 'session';
-					const filename = `${safeName}_context.md`;
+					// Session ids are provider-issued, so scrub them the same way as the
+					// agent name before they become a gist filename.
+					const safeSessionId = agentSessionId?.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 8);
+					const filename = safeSessionId
+						? `${safeName}_${safeSessionId}_context.md`
+						: `${safeName}_context.md`;
 
 					const result = await window.maestro.git.createGist(
 						filename,
@@ -2003,6 +2121,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 							sessionId,
 							isPublic,
 							descriptionProvided: Boolean(description),
+							agentSessionTargeted: Boolean(agentSessionId),
 						},
 					});
 					window.maestro.process.sendRemoteCreateGistResponse(responseChannel, {

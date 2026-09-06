@@ -16,6 +16,7 @@ import type {
 	ShortcutUsageDay,
 	StatsAggregation,
 	StatsTimeRange,
+	ResilienceEvent,
 } from '../../shared/stats-types';
 export type {
 	QueryEvent,
@@ -26,6 +27,8 @@ export type {
 } from '../../shared/stats-types';
 import type { TokenUsageQuery, TokenUsageAggregate } from '../../shared/tokenUsage';
 export type { TokenUsageQuery, TokenUsageAggregate } from '../../shared/tokenUsage';
+import type { DelegationDay, DelegationTotals } from '../../shared/delegation';
+export type { DelegationDay, DelegationTotals } from '../../shared/delegation';
 
 /**
  * Session lifecycle event for recording session creation.
@@ -118,6 +121,17 @@ export function createStatsApi() {
 			range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'
 		): Promise<StatsAggregation> => ipcRenderer.invoke('stats:get-aggregation', range),
 
+		// Interactive vs autonomous (Auto Run + Cue) totals. Merges the stats DB
+		// and the Cue DB in the main process; defaults to all retained history,
+		// which is what the lifetime delegation score reads.
+		getDelegationTotals: (range: StatsTimeRange = 'all'): Promise<DelegationTotals> =>
+			ipcRenderer.invoke('stats:get-delegation-totals', range),
+
+		// The same split bucketed by local-time day. Days with no activity are
+		// omitted; the caller zero-fills.
+		getDelegationByDay: (range: StatsTimeRange = 'all'): Promise<DelegationDay[]> =>
+			ipcRenderer.invoke('stats:get-delegation-by-day', range),
+
 		// Token & cost usage aggregate (Cost & Tokens tab). Reads agent session
 		// storage; `force` bypasses the accessor's in-memory memo for a refresh.
 		getTokenUsage: (query: TokenUsageQuery = {}, force = false): Promise<TokenUsageAggregate> =>
@@ -172,6 +186,12 @@ export function createStatsApi() {
 			ipcRenderer.invoke('stats:record-image-annotation', createdAt),
 
 		// Record session creation (for lifecycle tracking)
+		recordResilience: (event: ResilienceEvent): Promise<string | null> =>
+			ipcRenderer.invoke('stats:record-resilience', event),
+
+		getResilience: (range: StatsTimeRange): Promise<ResilienceEvent[]> =>
+			ipcRenderer.invoke('stats:get-resilience', range),
+
 		recordSessionCreated: (event: SessionCreatedEvent): Promise<string | null> =>
 			ipcRenderer.invoke('stats:record-session-created', event),
 

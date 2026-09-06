@@ -296,6 +296,11 @@ describe('DEFAULT_SHORTCUTS / TAB_SHORTCUTS / FIXED_SHORTCUTS duplicate bindings
 			why: "Each is scoped to the surface that has focus (Files tab, Left Panel, History tab, System Log viewer, Main Window, Director's Notes). Only one of those surfaces is focused at a time.",
 		},
 		{
+			chord: 'Meta+e',
+			ids: ['toggleMarkdownMode', 'renameAgentSession'],
+			why: 'The Sessions Browser is a modal layer that blocks lower layers, and its own handler consumes the key before the app-level one runs. With the browser closed there is no session row to rename; with it open there is no markdown pane to flip.',
+		},
+		{
 			chord: 'Meta+Shift+k',
 			ids: ['clearTerminal', 'toggleShowThinking'],
 			why: 'Mutually exclusive by input mode: clearTerminal is gated on inputMode === "terminal" (useMainKeyboardHandler), toggleShowThinking is a tab shortcut reached only in AI mode.',
@@ -379,5 +384,28 @@ describe('every registered action has a handler', () => {
 		);
 		const unhandled = UNBOUND_IDS.filter((id) => !handler.includes(`'${id}'`));
 		expect(unhandled, 'registered but never dispatched').toEqual([]);
+	});
+});
+
+describe('App keyboard context wiring', () => {
+	it('supplies every ctx method invoked by useMainKeyboardHandler', () => {
+		const handler = readFileSync(
+			join(RENDERER_ROOT, 'hooks/keyboard/useMainKeyboardHandler.ts'),
+			'utf-8'
+		);
+		const app = readFileSync(join(RENDERER_ROOT, 'App.tsx'), 'utf-8');
+		const start = app.indexOf('keyboardHandlerRef.current = {');
+		const end = app.indexOf('\n\t};', start);
+
+		expect(start, 'keyboardHandlerRef.current assignment missing').toBeGreaterThanOrEqual(0);
+		expect(end, 'keyboardHandlerRef.current assignment is not closed').toBeGreaterThan(start);
+
+		const context = app.slice(start, end);
+		const invoked = new Set(
+			[...handler.matchAll(/\bctx\.([A-Za-z_$][\w$]*)\s*\??\.?\s*\(/g)].map((match) => match[1])
+		);
+		const missing = [...invoked].filter((method) => !new RegExp(`\\b${method}\\b`).test(context));
+
+		expect(missing, 'keyboard handler methods missing from the App context').toEqual([]);
 	});
 });

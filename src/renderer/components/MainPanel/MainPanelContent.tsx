@@ -33,7 +33,7 @@ import { updateSessionWith } from '../../stores/sessionStore';
 import { useBrowserTabMounting } from '../../hooks/browser/useBrowserTabMounting';
 import { useUIStore } from '../../stores/uiStore';
 import { useSettingsStore } from '../../stores/settingsStore';
-import { withMonoFallback } from '../../../shared/fontStack';
+import { useSurfaceTypography } from '../../hooks/ui/useSurfaceTypography';
 import { useTabStore } from '../../stores/tabStore';
 import { useLayerStack } from '../../contexts/LayerStackContext';
 import { outputSearchKeyFor } from '../../utils/outputSearch';
@@ -470,17 +470,15 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		onEffortChange,
 	} = props;
 
-	// Self-sourced from settingsStore. withMonoFallback guarantees the AI-output
-	// and terminal surfaces degrade to monospace instead of the browser's serif
-	// default when the stored font (a bare name from the picker) isn't installed.
-	const fontFamily = useSettingsStore((s) => withMonoFallback(s.fontFamily));
-	// The command terminal can use its own font (issue #1228). An empty setting
-	// means "inherit the UI font", so fall back to fontFamily before applying the
-	// monospace safety net.
-	const terminalFontFamily = useSettingsStore((s) =>
-		withMonoFallback(s.terminalFontFamily?.trim() || s.fontFamily)
-	);
-	const defaultShell = useSettingsStore((s) => s.defaultShell);
+	// Chat and terminal each carry their own font and size; an unset value means
+	// "inherit the interface setting". Resolved through useSurfaceTypography so
+	// these agree with the CSS custom properties the rest of the app reads -
+	// xterm paints to a canvas and cannot use a CSS variable.
+	const chat = useSurfaceTypography('chat');
+	const chatFontFamily = chat.fontFamily;
+	// The command terminal can use its own font (issue #1228).
+	const terminal = useSurfaceTypography('terminal');
+	const terminalFontFamily = terminal.fontFamily;
 	const fontSize = useSettingsStore((s) => s.fontSize);
 	const enterToSendAI = useSettingsStore((s) => s.enterToSendAI);
 	const chatRawTextMode = useSettingsStore((s) => s.chatRawTextMode);
@@ -988,7 +986,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 								ref={terminalOutputRef}
 								session={activeSession}
 								theme={theme}
-								fontFamily={fontFamily}
+								fontFamily={chatFontFamily}
 								activeFocus={activeFocus}
 								outputSearchOpen={outputSearchOpen}
 								outputSearchQuery={outputSearchQuery}
@@ -1206,8 +1204,11 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 							session={session}
 							theme={theme}
 							fontFamily={terminalFontFamily}
-							fontSize={Math.round(fontSize * 0.85)}
-							defaultShell={defaultShell}
+							// The terminal's own resolved size. This used to be a
+							// hard-coded 0.85 of the interface size, which is exactly
+							// the per-surface ratio the terminal size setting now
+							// expresses explicitly and lets the user change.
+							fontSize={terminal.fontSize}
 							onTabStateChange={createTabStateChangeHandler(sessionId)}
 							onTabPidChange={createTabPidChangeHandler(sessionId)}
 							searchOpen={isCurrentSession ? terminalSearchOpen : false}

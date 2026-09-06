@@ -101,6 +101,7 @@ export const LogItem = memo(
 		userMessageAlignment,
 		isClaudeCode,
 		isAdaptiveMode,
+		showProviderModePill,
 		sessionId,
 		onSessionRecover,
 		isRecoveringSession,
@@ -223,6 +224,30 @@ export const LogItem = memo(
 			? userMessageAlignment === 'left'
 			: userMessageAlignment === 'right';
 
+		// An AI-command entry is a header pill plus an ordinary prompt body. The
+		// body is authored markdown like any other chat message, so it goes through
+		// the markdown stack too - raw source only in edit mode or a shell tab.
+		const renderAiCommandBody = (text: string) =>
+			isAIMode && !markdownEditMode ? (
+				<MarkdownRenderer
+					content={text}
+					theme={theme}
+					onCopy={copyToClipboard}
+					enableBionifyReadingMode={bionifyReadingMode}
+					bionifyIntensity={bionifyIntensity}
+					bionifyAlgorithm={bionifyAlgorithm}
+					fileTree={fileTree}
+					cwd={cwd}
+					projectRoot={projectRoot}
+					onFileClick={onFileClick}
+					sshRemoteId={sshRemoteId}
+					chatLineBreaks
+					chatMath
+				/>
+			) : (
+				<div className="whitespace-pre-wrap text-sm break-words">{linkifyNode(text, theme)}</div>
+			);
+
 		// Command mode: a `!command` run renders as its own terminal-output card
 		// (monospace, ANSI preserved) rather than a markdown chat bubble.
 		if (log.shellCommand) {
@@ -329,7 +354,7 @@ export const LogItem = memo(
 				style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 120px' }}
 			>
 				<div
-					className={`shrink-0 text-[10px] sm:w-20 sm:pt-2 flex gap-1 sm:block ${isReversed ? 'text-right justify-end' : 'text-left'}`}
+					className={`shrink-0 text-2xs sm:w-20 sm:pt-2 flex gap-1 sm:block ${isReversed ? 'text-right justify-end' : 'text-left'}`}
 					style={{ fontFamily, color: theme.colors.textDim, opacity: 0.6 }}
 				>
 					{(() => {
@@ -490,7 +515,7 @@ export const LogItem = memo(
 						>
 							<div className="flex items-center gap-2 mb-1">
 								<span
-									className="text-[10px] px-1.5 py-0.5 rounded"
+									className="text-2xs px-1.5 py-0.5 rounded"
 									style={{
 										backgroundColor: `${theme.colors.accent}30`,
 										color: theme.colors.accent,
@@ -725,7 +750,9 @@ export const LogItem = memo(
 													{log.aiCommand.description}
 												</span>
 											</div>
-											<div>{linkifyNode(filteredText, theme)}</div>
+											<div style={{ color: theme.colors.textMain }}>
+												{renderAiCommandBody(filteredText)}
+											</div>
 										</div>
 									) : isAIMode && !markdownEditMode ? (
 										// Expanded markdown rendering
@@ -801,11 +828,8 @@ export const LogItem = memo(
 												{log.aiCommand.description}
 											</span>
 										</div>
-										<div
-											className="whitespace-pre-wrap text-sm break-words"
-											style={{ color: theme.colors.textMain }}
-										>
-											{linkifyNode(filteredText, theme)}
+										<div style={{ color: theme.colors.textMain }}>
+											{renderAiCommandBody(filteredText)}
 										</div>
 									</div>
 								) : isAIMode && !markdownEditMode ? (
@@ -862,9 +886,10 @@ export const LogItem = memo(
 					    replaces it. */}
 					{!crossAgent &&
 						log.source !== 'user' &&
-						(isClaudeCode || log.turnModel || log.turnEffort) && (
+						((isClaudeCode && showProviderModePill) || log.turnModel || log.turnEffort) && (
 							<div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1 max-w-[60%] pointer-events-none select-none">
 								{isClaudeCode &&
+									showProviderModePill &&
 									(() => {
 										const { label, title } = getTokenSourcePill({
 											mode: log.renderStyle === 'text-stream' ? 'interactive' : 'api',
@@ -872,7 +897,7 @@ export const LogItem = memo(
 										});
 										return (
 											<span
-												className="text-[10px] px-1.5 py-0.5 rounded shrink-0 whitespace-nowrap"
+												className="text-2xs px-1.5 py-0.5 rounded shrink-0 whitespace-nowrap"
 												style={{
 													backgroundColor: `${theme.colors.accent}20`,
 													color: theme.colors.accent,
@@ -1112,7 +1137,12 @@ export const LogItem = memo(
 			prevProps.userMessageAlignment === nextProps.userMessageAlignment &&
 			prevProps.ghCliAvailable === nextProps.ghCliAvailable &&
 			prevProps.onForkConversation === nextProps.onForkConversation &&
-			prevProps.publishedGistUrl === nextProps.publishedGistUrl
+			prevProps.publishedGistUrl === nextProps.publishedGistUrl &&
+			// Unlike isClaudeCode/isAdaptiveMode, which are fixed for the life of an
+			// agent, this one is a toggle the user flips while looking at the
+			// transcript - leave it out and every message already on screen keeps its
+			// pill until something unrelated re-renders it.
+			prevProps.showProviderModePill === nextProps.showProviderModePill
 		);
 	}
 );

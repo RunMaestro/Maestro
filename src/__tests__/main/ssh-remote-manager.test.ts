@@ -54,6 +54,37 @@ describe('SshRemoteManager', () => {
 			expect(result.errors).toHaveLength(0);
 		});
 
+		it('accepts a well-formed sshOptions record', () => {
+			const result = manager.validateConfig({
+				...validConfig,
+				sshOptions: { ProxyCommand: 'tailcat tcABC 22' },
+			});
+
+			expect(result.valid).toBe(true);
+		});
+
+		it('rejects a malformed ssh option keyword', () => {
+			// ssh exits before it dials on a bad keyword, so naming the offending
+			// option here beats a bare "Bad configuration option" at spawn time.
+			const result = manager.validateConfig({
+				...validConfig,
+				sshOptions: { 'Proxy Command': 'tailcat tcABC 22' },
+			});
+
+			expect(result.valid).toBe(false);
+			expect(result.errors.join(' ')).toMatch(/Invalid SSH option name/);
+		});
+
+		it('rejects an attempt to override the reserved RequestTTY option', () => {
+			const result = manager.validateConfig({
+				...validConfig,
+				sshOptions: { RequestTTY: 'force' },
+			});
+
+			expect(result.valid).toBe(false);
+			expect(result.errors.join(' ')).toMatch(/cannot be overridden/);
+		});
+
 		it('allows empty id (assigned by save handler; enables test-before-save)', () => {
 			const config = { ...validConfig, id: '' };
 			const result = manager.validateConfig(config);
@@ -173,6 +204,30 @@ describe('SshRemoteManager', () => {
 			expect(argsString).toContain('BatchMode=yes');
 			expect(argsString).toContain('StrictHostKeyChecking=accept-new');
 			expect(argsString).toContain('ConnectTimeout=10');
+		});
+
+		it('includes LogLevel, matching the agent spawn builder', () => {
+			// Test Connection and the actual spawn used to build separate option
+			// lists, so a remote could verify green here and then connect with a
+			// different option set when an agent ran on it.
+			const argsString = manager.buildSshArgs(validConfig).join(' ');
+
+			expect(argsString).toContain('LogLevel=ERROR');
+			expect(argsString).toContain('ClearAllForwardings=yes');
+			expect(argsString).toContain('RequestTTY=no');
+		});
+
+		it('applies per-remote sshOptions overrides', () => {
+			const argsString = manager
+				.buildSshArgs({
+					...validConfig,
+					sshOptions: { ProxyCommand: 'tailcat tcABC 22', ConnectTimeout: '45' },
+				})
+				.join(' ');
+
+			expect(argsString).toContain('ProxyCommand=tailcat tcABC 22');
+			expect(argsString).toContain('ConnectTimeout=45');
+			expect(argsString).not.toContain('ConnectTimeout=10');
 		});
 
 		it('expands tilde in private key path', () => {

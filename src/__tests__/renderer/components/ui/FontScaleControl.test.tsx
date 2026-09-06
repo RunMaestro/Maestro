@@ -82,6 +82,18 @@ describe('FontScaleControl', () => {
 		expect(screen.queryByTestId('font-scale-handle')).toBeNull();
 	});
 
+	// A dense `text-xs` button row (the Auto Run mode bar) would be pushed taller
+	// by the default squares, so the small size has to actually shrink them.
+	it('draws smaller buttons at size="sm"', () => {
+		const { rerender } = render(<FontScaleControl theme={mockTheme} control={makeControl()} />);
+		expect(screen.getByLabelText('Increase font size').className).toContain('w-7');
+
+		rerender(<FontScaleControl theme={mockTheme} control={makeControl()} size="sm" />);
+		const small = screen.getByLabelText('Increase font size');
+		expect(small.className).toContain('w-6');
+		expect(small.className).not.toContain('w-7');
+	});
+
 	it('names the pane it zooms in its labels', () => {
 		render(<FontScaleControl theme={mockTheme} control={makeControl()} target="preview" />);
 

@@ -76,7 +76,7 @@ export function QuestionPrompt({ theme, questions, onSubmit }: QuestionPromptPro
 						<div key={qi} className="flex flex-col gap-2">
 							{q.header && (
 								<span
-									className="text-[10px] font-semibold uppercase tracking-wide select-text"
+									className="text-2xs font-semibold uppercase tracking-wide select-text"
 									style={{ color: theme.colors.textDim }}
 								>
 									{q.header}

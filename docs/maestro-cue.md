@@ -73,7 +73,7 @@ The Dashboard tab summarizes engine state at the top (Pipelines, Total Execution
 | ------------------ | ------------------------------------------------------------ |
 | **Session**        | Agent name                                                   |
 | **Agent**          | Provider type (Claude Code, Codex, OpenCode, etc.)           |
-| **Pipelines**      | Color-coded dots for each pipeline configured on this agent  |
+| **Pipelines**      | One color-coded dot per pipeline the agent owns (see below)  |
 | **Status**         | Green = active, yellow = paused, "No Config" = no YAML found |
 | **Last Triggered** | How long ago the most recent event fired                     |
 | **Subs**           | Number of subscriptions in the YAML                          |
@@ -83,7 +83,29 @@ Each row has three action buttons:
 
 - **Run Now** - Manually trigger a subscription on demand, bypassing its normal event conditions. Useful for testing new subscriptions or re-running a failed automation without waiting for the next event.
 - **Edit YAML** - Open the inline YAML editor for that agent.
-- **View in Graph** - Jump to the Pipeline Graph tab with that agent's pipeline selected.
+- **View in Graph** - Jump to the Pipeline Graph tab, scoped to that agent.
+
+An agent "owns" a pipeline in either of two senses, and both count for the
+**Pipelines** dots and for **View in Graph**:
+
+- It appears in the pipeline, as an agent node bound to it or as a command node
+  that runs in its project root.
+- The pipeline is declared in that agent's own `cue.yaml`, even when nothing in
+  the pipeline points back at the agent. A fan-out that only dispatches to other
+  agents is the usual case, as is an `action: command` pipeline that is nothing
+  but a trigger and a shell step.
+
+**View in Graph** then does one of three things:
+
+| The agent owns... | What you get                                                                                                    |
+| ----------------- | --------------------------------------------------------------------------------------------------------------- |
+| One pipeline      | That pipeline, selected and fitted                                                                              |
+| Several           | The All Pipelines view narrowed to just that agent's, with a chip in the toolbar naming the agent and the count |
+| None              | The unfiltered All Pipelines view                                                                               |
+
+Click the `x` on the chip, or pick any pipeline from the selector, to widen back
+out to every pipeline. The scope only changes what the canvas draws - it never
+edits a pipeline, and the All Pipelines view stays read-only either way.
 
 Below the sessions table, the **Active Runs** section lists subscriptions that are currently executing, with a **Stop** button for each.
 
@@ -215,7 +237,7 @@ Health is the default so anything needing a human sits at the top rather than be
 
 **Graph** jumps to the Pipeline Graph tab with that pipeline selected.
 
-**Rename** is the pencil beside the pipeline name. Click it (or the name's pencil on hover), type, and press `Enter` to commit or `Escape` to cancel; clicking away also commits, since clicking away from text you just typed reads as "keep it". A blank name, or one another pipeline already uses, is refused in the field rather than after a round-trip, so your text stays put and you can fix it. Changing only the capitalization of the current name is allowed.
+**Rename** is the pencil beside the pipeline name. Click it (or the name's pencil on hover), type, and press `Enter` to commit or `Escape` to cancel; clicking away also commits, since clicking away from text you just typed reads as "keep it". While a rename is open, `Escape` cancels it rather than closing the Cue modal - a second `Escape` closes the modal as usual. A blank name, or one another pipeline already uses, is refused in the field rather than after a round-trip, so your text stays put and you can fix it. Changing only the capitalization of the current name is allowed.
 
 A rename rewrites `pipeline_name` on every subscription in the pipeline, across every `cue.yaml` it spans - a cross-agent pipeline is physically several files and all of them are updated together. What it deliberately does not touch:
 

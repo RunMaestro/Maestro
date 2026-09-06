@@ -7,6 +7,17 @@ import type { JqExpr } from '../utils/jqFilter';
 import { useDebouncedValue } from '../hooks/utils/useThrottle';
 import { safeClipboardWrite } from '../utils/clipboard';
 
+/**
+ * Typography note: this viewer sets no font-family and sizes everything in
+ * `em`, on purpose.
+ *
+ * It renders INSIDE the File Preview pane, which already applies the File
+ * Preview font and size to its content box - so inheriting is what makes that
+ * setting reach a JSONL/JSON file. It previously hard-coded a monospace stack and
+ * px sizes, which meant the setting silently did nothing here and Cmd+= did
+ * not resize it. Every size below is relative to the pane, so both follow
+ * automatically.
+ */
 interface JsonlViewerProps {
 	content: string;
 	theme: Theme;
@@ -231,9 +242,8 @@ const JsonlRow = memo(({ filteredLine, theme, isExpanded, onToggle }: JsonlRowPr
 					className="flex-shrink-0 text-right select-none"
 					style={{
 						color: theme.colors.textDim,
-						fontSize: '11px',
+						fontSize: '0.85em',
 						minWidth: '36px',
-						fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
 					}}
 				>
 					{line.index}
@@ -251,8 +261,7 @@ const JsonlRow = memo(({ filteredLine, theme, isExpanded, onToggle }: JsonlRowPr
 				<span
 					className="flex-1 truncate"
 					style={{
-						fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
-						fontSize: '12px',
+						fontSize: '0.92em',
 						color: isError ? theme.colors.error : theme.colors.textMain,
 					}}
 				>
@@ -348,8 +357,7 @@ const JsonlTable = memo(({ lines, columns, theme, onRowClick, expandedLine }: Js
 					className="w-full"
 					style={{
 						borderCollapse: 'collapse',
-						fontSize: '13px',
-						fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+						fontSize: '1em',
 					}}
 				>
 					<thead>
@@ -363,7 +371,7 @@ const JsonlTable = memo(({ lines, columns, theme, onRowClick, expandedLine }: Js
 									borderRight: `1px solid ${theme.colors.border}`,
 									color: theme.colors.textDim,
 									fontWeight: 'normal',
-									fontSize: '11px',
+									fontSize: '0.85em',
 									position: 'sticky',
 									top: 0,
 									userSelect: 'none',
@@ -443,7 +451,7 @@ const JsonlTable = memo(({ lines, columns, theme, onRowClick, expandedLine }: Js
 												textAlign: 'right',
 												borderRight: `1px solid ${theme.colors.border}`,
 												color: theme.colors.textDim,
-												fontSize: '11px',
+												fontSize: '0.85em',
 												userSelect: 'none',
 											}}
 										>

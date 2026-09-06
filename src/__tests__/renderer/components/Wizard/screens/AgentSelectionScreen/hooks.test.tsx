@@ -341,6 +341,7 @@ describe('AgentSelectionScreen hooks', () => {
 			({ isNameFieldFocused, focusedTileIndex }) =>
 				useAgentSelectionKeyboard({
 					tiles: AGENT_TILES,
+					tileColumns: AGENT_TILES.length,
 					isNameFieldFocused,
 					focusedTileIndex,
 					detectedAgents: [
@@ -389,6 +390,7 @@ describe('AgentSelectionScreen hooks', () => {
 			({ focusedTileIndex }) =>
 				useAgentSelectionKeyboard({
 					tiles: visibleTiles,
+					tileColumns: visibleTiles.length,
 					isNameFieldFocused: false,
 					focusedTileIndex,
 					detectedAgents: [
@@ -417,6 +419,42 @@ describe('AgentSelectionScreen hooks', () => {
 		expect(secondTile.focus).not.toHaveBeenCalled();
 	});
 
+	it('steps a whole row on up/down once the tiles wrap', () => {
+		// A filtered list short enough to wrap is drawn as rows, so up/down have
+		// somewhere to go. The row width comes from the grid's own measurement -
+		// assuming one here would jump the ring to a tile that is not below the
+		// current one.
+		const { refs } = createRefs();
+		const setFocusedTileIndex = vi.fn();
+		const preventDefault = vi.fn();
+		const visibleTiles = AGENT_TILES.slice(0, 5);
+
+		const { result } = renderHook(
+			({ focusedTileIndex }) =>
+				useAgentSelectionKeyboard({
+					tiles: visibleTiles,
+					tileColumns: 3,
+					isNameFieldFocused: false,
+					focusedTileIndex,
+					detectedAgents: visibleTiles.map((tile) => agent({ id: tile.id, available: true })),
+					nameInputRef: refs.nameInputRef,
+					tileRefs: refs.tileRefs,
+					setIsNameFieldFocused: vi.fn(),
+					setFocusedTileIndex,
+					setSelectedAgent: vi.fn(),
+					canProceedToNext: () => true,
+					nextStep: vi.fn(),
+				}),
+			{ initialProps: { focusedTileIndex: 0 } }
+		);
+
+		act(() => result.current({ key: 'ArrowDown', preventDefault } as any));
+		expect(setFocusedTileIndex).toHaveBeenLastCalledWith(3);
+
+		act(() => result.current({ key: 'ArrowUp', preventDefault } as any));
+		expect(setFocusedTileIndex).toHaveBeenCalledTimes(1);
+	});
+
 	it('suppresses the browser scroll when moving focus onto a tile', () => {
 		const { refs, secondTile } = createRefs();
 		const preventDefault = vi.fn();
@@ -424,6 +462,7 @@ describe('AgentSelectionScreen hooks', () => {
 		const { result } = renderHook(() =>
 			useAgentSelectionKeyboard({
 				tiles: AGENT_TILES,
+				tileColumns: AGENT_TILES.length,
 				isNameFieldFocused: false,
 				focusedTileIndex: 0,
 				detectedAgents: [
@@ -460,6 +499,7 @@ describe('AgentSelectionScreen hooks', () => {
 		const { result } = renderHook(() =>
 			useAgentSelectionKeyboard({
 				tiles: AGENT_TILES,
+				tileColumns: AGENT_TILES.length,
 				isNameFieldFocused: false,
 				focusedTileIndex: 0,
 				detectedAgents: [agent({ id: FIRST_TILE_ID, available: true })],

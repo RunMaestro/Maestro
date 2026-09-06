@@ -54,18 +54,21 @@ import { AutoRunHumanStepBanner } from './AutoRunHumanStepBanner';
 import { AutoRunBottomPanel } from './AutoRunBottomPanel';
 import { NoFolderState, EmptyFolderState } from './AutoRunEmptyStates';
 import { useBatchStore } from '../../stores/batchStore';
-import { useThoughtStreamStore, selectThoughtCount } from '../../stores/thoughtStreamStore';
+import { useThoughtStreamStore, selectActivityCount } from '../../stores/thoughtStreamStore';
 import { AutoRunAttachmentsPanel } from './AutoRunAttachmentsPanel';
 import { useTemplateAutocomplete, useAutoRunUndo, useAutoRunImageHandling } from '../../hooks';
 import { TemplateAutocompleteDropdown } from '../TemplateAutocompleteDropdown';
 import type { AutoRunProps, AutoRunHandle } from './types';
 import { TextareaLineNumbers, lineNumberGutterMetrics } from '../ui/TextareaLineNumbers';
+import { FontScaleControl } from '../ui/FontScaleControl';
+import { useFontScale } from '../../hooks/ui/useFontScale';
 import { findHumanOnlyTasks } from '../../hooks/batch/batchUtils';
 import { toggleTaskCheckboxAtLine } from '../../utils/markdownTasks';
 import { useAutoRunContentSync } from '../../hooks/batch/useAutoRunContentSync';
 import { useAutoRunSearch } from '../../hooks/batch/useAutoRunSearch';
 import { useAutoRunKeyboard } from '../../hooks/batch/useAutoRunKeyboard';
 import { useAutoRunMarkdown } from '../../hooks/batch/useAutoRunMarkdown';
+import { useSurfaceTypography } from '../../hooks/ui/useSurfaceTypography';
 import { useAutoRunScrollSync } from '../../hooks/batch/useAutoRunScrollSync';
 import { Maximize2, Edit as EditIcon, Eye, Search, Brain } from 'lucide-react';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
@@ -84,6 +87,9 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		selectedFile,
 		documentList,
 		documentTree,
+		projectFileTree,
+		projectRoot,
+		onOpenProjectFile,
 		content,
 		onContentChange,
 		contentVersion = 0, // Used to force-sync on external file changes
@@ -147,9 +153,11 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 	// point here for as long as there is something buffered to read.
 	const thoughtStreamSessionId = useThoughtStreamStore((s) => s.panelSessionId);
 	const openThoughtStream = useThoughtStreamStore((s) => s.openPanel);
-	const bufferedThoughts = useThoughtStreamStore(selectThoughtCount(sessionId));
+	// Reasoning AND tool calls: a run that only acted and never narrated still
+	// has a feed worth reopening, so this gate must not be thoughts-only.
+	const bufferedActivity = useThoughtStreamStore(selectActivityCount(sessionId));
 	const showOpenThoughtStream =
-		!isAutoRunActive && bufferedThoughts > 0 && thoughtStreamSessionId !== sessionId;
+		!isAutoRunActive && bufferedActivity > 0 && thoughtStreamSessionId !== sessionId;
 	// Error state (Phase 5.10)
 	// Subscribe directly to the Zustand store to bypass the multi-hop prop chain
 	// (store → useBatchProcessor → useBatchHandlers → App → RightPanel → AutoRun)
@@ -617,9 +625,22 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		handleAutocompleteKeyDown,
 	});
 
+	// Font zoom. Reading a rendered document and editing its Markdown source are
+	// different jobs at different comfortable sizes, so each mode keeps its own
+	// scale rather than sharing one. Both hooks stay mounted so switching modes
+	// restores the size that mode was left at.
+	const previewFontScale = useFontScale('autoRun.previewFontScale');
+	const editFontScale = useFontScale('autoRun.editFontScale');
+	const activeFontScale = mode === 'edit' ? editFontScale : previewFontScale;
+
 	// Disable Bionify while search is active so search highlights remain visible
 	const hasActivePreviewSearch = searchOpen && searchQuery.trim().length > 0;
 	const effectivePreviewBionifyReadingMode = bionifyReadingMode && !hasActivePreviewSearch;
+
+	// Auto Run is a markdown document viewer/editor, so it rides the same two
+	// surfaces the File Preview tab does rather than carrying fonts of its own.
+	const previewTypography = useSurfaceTypography('filePreview');
+	const editorTypography = useSurfaceTypography('fileEditor');
 
 	// Markdown rendering: prose styles, task counts, token count, remark plugins, components
 	const { proseStyles, taskCounts, tokenCount, remarkPlugins, markdownComponents } =
@@ -630,6 +651,9 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 			sshRemoteId,
 			documentTree,
 			onSelectDocument,
+			projectFileTree,
+			projectRoot,
+			onOpenProjectFile,
 			searchOpen,
 			searchQuery,
 			totalMatches,
@@ -769,6 +793,25 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 								: '2px solid transparent',
 					}}
 				>
+					{/* Floating font zoom - the same collapsible "Aa" circle the file
+					    preview uses, so zooming a document reads identically whether it
+					    is open in a file tab or in this panel. Sticky (not absolute) so
+					    it stays pinned while the document scrolls without needing a
+					    positioned ancestor, and h-0 so it never displaces the content. */}
+					{documentList.length > 0 && (
+						<div className="sticky top-2 z-20 h-0 flex items-start justify-end pr-2 pointer-events-none">
+							<FontScaleControl
+								theme={theme}
+								control={activeFontScale}
+								variant="floating"
+								collapsible
+								size="sm"
+								target={mode === 'edit' ? 'editor' : 'preview'}
+								className="pointer-events-auto"
+								testId="autorun-font-scale"
+							/>
+						</div>
+					)}
 					{/* Empty folder state - show when folder is configured but has no documents */}
 					{documentList.length === 0 && !isLoadingDocuments ? (
 						<EmptyFolderState
@@ -780,7 +823,12 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 					) : mode === 'edit' ? (
 						<div className="relative w-full h-full">
 							{showLineNumbers && (
-								<TextareaLineNumbers textareaRef={textareaRef} value={localContent} theme={theme} />
+								<TextareaLineNumbers
+									textareaRef={textareaRef}
+									value={localContent}
+									theme={theme}
+									remeasureKey={editFontScale.fontScale}
+								/>
 							)}
 							<textarea
 								ref={textareaRef}
@@ -802,11 +850,21 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 								onPaste={handlePaste}
 								placeholder="Capture notes, images, and tasks in Markdown. (type {{ for variables)"
 								readOnly={isLocked}
-								className={`w-full h-full border rounded p-4 bg-transparent outline-none resize-none font-mono text-sm ${isLocked ? 'cursor-not-allowed opacity-70' : ''}`}
+								className={`w-full h-full border rounded p-4 bg-transparent outline-none resize-none ${isLocked ? 'cursor-not-allowed opacity-70' : ''}`}
 								style={{
 									borderColor: isLocked ? theme.colors.warning : theme.colors.border,
 									color: theme.colors.textMain,
+									// Editing a markdown document, so it follows the File Editor
+									// surface - the same setting the file-tab editor uses. The
+									// line-number gutter copies these off the live element, so
+									// the two cannot drift apart.
+									fontFamily: editorTypography.fontFamily,
+									// The surface's own size, then the pane's zoom on top of it.
+									// The line height rides the font size so zooming in doesn't
+									// cram taller glyphs into the old 20px rows.
+									fontSize: `${editorTypography.fontSize * editFontScale.fontScale}px`,
 									backgroundColor: isLocked ? theme.colors.bgActivity + '30' : 'transparent',
+									lineHeight: 1.45,
 									...(showLineNumbers
 										? { paddingLeft: lineNumberGutterMetrics(localContent).textPaddingLeft }
 										: {}),
@@ -848,7 +906,15 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 							style={{
 								borderColor: theme.colors.border,
 								color: theme.colors.textMain,
-								fontSize: '13px',
+								// This IS a file preview - the same markdown the File Preview tab
+								// renders, in a different frame - so it follows that surface's
+								// font and size rather than a hard-coded 13px. Tailwind's
+								// `prose-sm` pins an absolute rem size, so the explicit size
+								// here is what actually wins; everything inside is in `em` and
+								// follows, so the pane's zoom carries headings, code, and lists
+								// with it.
+								fontFamily: previewTypography.fontFamily,
+								fontSize: `${previewTypography.fontSize * previewFontScale.fontScale}px`,
 							}}
 						>
 							<style>{proseStyles}</style>
@@ -955,7 +1021,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 								border: `1px solid ${theme.colors.accent}40`,
 								backgroundColor: `${theme.colors.accent}15`,
 							}}
-							title={`Read this run's ${bufferedThoughts} buffered thought${bufferedThoughts === 1 ? '' : 's'}`}
+							title={`Read this run's ${bufferedActivity} buffered thought${bufferedActivity === 1 ? '' : 's'} and tool call${bufferedActivity === 1 ? '' : 's'}`}
 						>
 							<Brain className="w-3 h-3" />
 							Thoughts

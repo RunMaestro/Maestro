@@ -35,7 +35,7 @@ import { captureException } from '../utils/sentry';
 import { WebSocketMessageHandler } from './handlers';
 import { handleACappellaSignalDisconnect } from './handlers/messageHandlers/acappellaSignal';
 import { BroadcastService } from './services';
-import { ApiRoutes, StaticRoutes, WsRoute } from './routes';
+import { ApiRoutes, ConcertoRoutes, StaticRoutes, WsRoute } from './routes';
 import { LiveSessionManager, CallbackRegistry } from './managers';
 
 // Import shared types from canonical location
@@ -68,6 +68,7 @@ import type {
 	ReorderTabCallback,
 	ToggleBookmarkCallback,
 	OpenFileTabCallback,
+	OpenDocumentGraphCallback,
 	OpenModalCallback,
 	RefreshFileTreeCallback,
 	OpenBrowserTabCallback,
@@ -76,6 +77,8 @@ import type {
 	WriteTerminalTabCallback,
 	WriteTerminalTabPayload,
 	ListTerminalTabsCallback,
+	ReadTerminalTabCallback,
+	ReadTerminalTabPayload,
 	NewAITabWithPromptCallback,
 	EnqueueCommandCallback,
 	ListQueueCallback,
@@ -189,6 +192,12 @@ export class WebServer {
 	// Security token - persistent or regenerated per startup
 	private securityToken: string;
 
+	// Read-only token for the Concerto HTML document route. Deliberately NOT the
+	// security token above: a Concerto document is sandboxed but can still
+	// navigate its own frame, so anything in its URL can leave the machine.
+	// Regenerated every startup - documents are in-memory and never outlive it.
+	private concertoToken: string = randomUUID().replace(/-/g, '');
+
 	// Local IP address for generating URLs (detected at startup)
 	private localIpAddress: string = 'localhost';
 
@@ -204,6 +213,7 @@ export class WebServer {
 
 	// Route instances
 	private apiRoutes: ApiRoutes;
+	private concertoRoutes: ConcertoRoutes;
 	private staticRoutes: StaticRoutes;
 	private wsRoute: WsRoute;
 
@@ -255,10 +265,12 @@ export class WebServer {
 
 		// Initialize route handlers
 		this.apiRoutes = new ApiRoutes(this.securityToken, this.rateLimitConfig);
+		this.concertoRoutes = new ConcertoRoutes(this.concertoToken);
 		this.staticRoutes = new StaticRoutes(
 			this.securityToken,
 			this.webAssetsPath,
-			this.webDesktopPath
+			this.webDesktopPath,
+			this.concertoToken
 		);
 		this.wsRoute = new WsRoute(this.securityToken);
 
@@ -456,6 +468,10 @@ export class WebServer {
 		this.callbackRegistry.setOpenFileTabCallback(callback);
 	}
 
+	setOpenDocumentGraphCallback(callback: OpenDocumentGraphCallback): void {
+		this.callbackRegistry.setOpenDocumentGraphCallback(callback);
+	}
+
 	setOpenModalCallback(callback: OpenModalCallback): void {
 		this.callbackRegistry.setOpenModalCallback(callback);
 	}
@@ -482,6 +498,10 @@ export class WebServer {
 
 	setListTerminalTabsCallback(callback: ListTerminalTabsCallback): void {
 		this.callbackRegistry.setListTerminalTabsCallback(callback);
+	}
+
+	setReadTerminalTabCallback(callback: ReadTerminalTabCallback): void {
+		this.callbackRegistry.setReadTerminalTabCallback(callback);
 	}
 
 	setNewAITabWithPromptCallback(callback: NewAITabWithPromptCallback): void {
@@ -890,6 +910,9 @@ export class WebServer {
 		});
 		this.apiRoutes.registerRoutes(this.server);
 
+		// Concerto HTML documents for browser clients (no custom-scheme handler).
+		this.concertoRoutes.registerRoutes(this.server);
+
 		// Setup WebSocket route callbacks and register route
 		this.wsRoute.setCallbacks({
 			getSessions: () => this.callbackRegistry.getSessions(),
@@ -985,6 +1008,7 @@ export class WebServer {
 				filePath: string,
 				options: { background: boolean; switchToAgent: boolean }
 			) => this.callbackRegistry.openFileTab(sessionId, filePath, options),
+			openDocumentGraph: async (params) => this.callbackRegistry.openDocumentGraph(params),
 			openModal: async (params) => this.callbackRegistry.openModal(params),
 			refreshFileTree: async (sessionId: string) =>
 				this.callbackRegistry.refreshFileTree(sessionId),
@@ -1000,6 +1024,8 @@ export class WebServer {
 				this.callbackRegistry.writeTerminalTab(sessionId, payload),
 			listTerminalTabs: async (sessionId?: string) =>
 				this.callbackRegistry.listTerminalTabs(sessionId),
+			readTerminalTab: async (sessionId: string, payload: ReadTerminalTabPayload) =>
+				this.callbackRegistry.readTerminalTab(sessionId, payload),
 			newAITabWithPrompt: async (sessionId: string, prompt: string, background?: boolean) =>
 				this.callbackRegistry.newAITabWithPrompt(sessionId, prompt, background),
 			enqueueCommand: async (
@@ -1021,8 +1047,8 @@ export class WebServer {
 			listQueue: async (sessionId?: string) => this.callbackRegistry.listQueue(sessionId),
 			removeQueueItem: async (sessionId: string, itemId: string) =>
 				this.callbackRegistry.removeQueueItem(sessionId, itemId),
-			refreshAutoRunDocs: async (sessionId: string) =>
-				this.callbackRegistry.refreshAutoRunDocs(sessionId),
+			refreshAutoRunDocs: async (sessionId: string, background?: boolean) =>
+				this.callbackRegistry.refreshAutoRunDocs(sessionId, background),
 			configureAutoRun: async (
 				sessionId: string,
 				config: Parameters<CallbackRegistry['configureAutoRun']>[1]
@@ -1115,8 +1141,12 @@ export class WebServer {
 				this.callbackRegistry.transferContext(sourceSessionId, targetSessionId),
 			summarizeContext: async (sessionId: string) =>
 				this.callbackRegistry.summarizeContext(sessionId),
-			createGist: async (sessionId: string, description: string, isPublic: boolean) =>
-				this.callbackRegistry.createGist(sessionId, description, isPublic),
+			createGist: async (
+				sessionId: string,
+				description: string,
+				isPublic: boolean,
+				agentSessionId?: string
+			) => this.callbackRegistry.createGist(sessionId, description, isPublic, agentSessionId),
 			getCueSubscriptions: async (sessionId?: string) =>
 				this.callbackRegistry.getCueSubscriptions(sessionId),
 			toggleCueSubscription: async (subscriptionId: string, enabled: boolean) =>
@@ -1242,8 +1272,21 @@ export class WebServer {
 		this.broadcastService.broadcastActiveSessionChange(sessionId);
 	}
 
-	broadcastTabsChange(sessionId: string, aiTabs: AITabData[], activeTabId: string): void {
-		this.broadcastService.broadcastTabsChange(sessionId, aiTabs, activeTabId);
+	/**
+	 * Broadcast the canonical tab inventory and whether its active tab came from
+	 * an explicit desktop selection.
+	 */
+	broadcastTabsChange(
+		sessionId: string,
+		aiTabs: AITabData[],
+		activeTabId: string,
+		activeTabChanged = false
+	): void {
+		this.broadcastService.broadcastTabsChange(sessionId, aiTabs, activeTabId, activeTabChanged);
+	}
+
+	requestNewTab(sessionId: string, background?: boolean): Promise<{ tabId: string } | null> {
+		return this.callbackRegistry.newTab(sessionId, background);
 	}
 
 	broadcastThemeChange(theme: Theme): void {

@@ -918,7 +918,7 @@ describe('HistoryPanel', () => {
 			// Check that the result count is shown
 			await waitFor(() => {
 				// The component shows "{count} result" or "{count} results"
-				const resultCountDiv = container.querySelector('.text-right.text-\\[10px\\]');
+				const resultCountDiv = container.querySelector('.text-right.text-2xs');
 				expect(resultCountDiv).toBeInTheDocument();
 				expect(resultCountDiv?.textContent).toMatch(/2 results?/);
 			});
@@ -1041,6 +1041,7 @@ describe('HistoryPanel', () => {
 			const entry = createMockEntry({
 				summary: 'Jump entry',
 				agentSessionId: 'abc12345-def-789',
+				sessionName: 'Jump Session',
 			});
 			mockHistoryGetAll.mockResolvedValue([entry]);
 
@@ -1060,7 +1061,13 @@ describe('HistoryPanel', () => {
 			fireEvent.keyDown(listContainer!, { key: 'ArrowDown' });
 			fireEvent.keyDown(listContainer!, { key: 'Enter', metaKey: true });
 
-			expect(onOpenSessionAsTab).toHaveBeenCalledWith('abc12345-def-789', '/test/project');
+			// Keyboard jump and pill click are the same restore, so both hand over
+			// the recorded name the tab would otherwise come back without.
+			expect(onOpenSessionAsTab).toHaveBeenCalledWith(
+				'abc12345-def-789',
+				'/test/project',
+				'Jump Session'
+			);
 			expect(screen.queryByTestId('history-detail-modal')).not.toBeInTheDocument();
 		});
 
@@ -1387,7 +1394,11 @@ describe('HistoryPanel', () => {
 
 			fireEvent.click(screen.getByText('ABC12345'));
 
-			expect(onOpenSessionAsTab).toHaveBeenCalledWith('abc12345-def-789', '/test/project');
+			expect(onOpenSessionAsTab).toHaveBeenCalledWith(
+				'abc12345-def-789',
+				'/test/project',
+				undefined
+			);
 		});
 
 		it('should render summary with truncation', async () => {

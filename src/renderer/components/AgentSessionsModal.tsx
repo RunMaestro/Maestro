@@ -10,6 +10,7 @@ import {
 	Star,
 } from 'lucide-react';
 import { GhostIconButton } from './ui/GhostIconButton';
+import { HeaderActionButton } from './ui/HeaderActionButton';
 import { Spinner } from './ui/Spinner';
 import { EmptyStatePlaceholder } from './ui/EmptyStatePlaceholder';
 import { EscCloseButton } from './ui/EscCloseButton';
@@ -503,17 +504,9 @@ export function AgentSessionsModal({
 									{totalMessages} messages • {formatRelativeTime(viewingSession.modifiedAt)}
 								</div>
 							</div>
-							<button
-								onClick={handleResume}
-								className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
-								style={{
-									backgroundColor: theme.colors.accent,
-									color: theme.colors.accentForeground,
-								}}
-							>
-								<Play className="w-4 h-4" />
+							<HeaderActionButton theme={theme} onClick={handleResume} icon={<Play />}>
 								Resume
-							</button>
+							</HeaderActionButton>
 						</>
 					) : (
 						<>
@@ -594,7 +587,7 @@ export function AgentSessionsModal({
 											{msg.content || '[No content]'}
 										</div>
 										<div
-											className="text-[10px] mt-1 opacity-60"
+											className="text-2xs mt-1 opacity-60"
 											style={{
 												color:
 													msg.type === 'user'
@@ -646,7 +639,7 @@ export function AgentSessionsModal({
 											key={session.sessionId}
 											ref={i === selectedIndex ? selectedItemRef : null}
 											onClick={() => handleViewSession(session)}
-											className="w-full text-left px-4 py-3 flex items-start gap-3 hover:bg-opacity-10 transition-colors group"
+											className="w-full text-left px-4 py-3 flex items-start gap-3 row-hover transition-colors group"
 											style={{
 												backgroundColor: i === selectedIndex ? theme.colors.accent : 'transparent',
 												color: theme.colors.textMain,
@@ -704,7 +697,7 @@ export function AgentSessionsModal({
 												</span>
 											</div>
 										) : (
-											<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
+											<span className="text-2xs" style={{ color: theme.colors.textDim }}>
 												{sessions.length} of {totalSessionCount} sessions loaded
 											</span>
 										)}

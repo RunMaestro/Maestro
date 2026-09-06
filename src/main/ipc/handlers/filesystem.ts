@@ -57,6 +57,7 @@ import {
 } from '../../utils/remote-fs';
 import type { SshRemoteConfig } from '../../../shared/types';
 import { resolveDirentType } from '../../utils/dirent-utils';
+import { walkLocalFileTree } from '../../utils/file-tree-walk';
 import { getDragOutIcon } from '../../utils/drag-out-icon';
 import { getSshRemoteById } from '../../stores';
 import { captureException } from '../../utils/sentry';
@@ -318,6 +319,27 @@ export function registerFilesystemHandlers(): void {
 			})
 		);
 	});
+
+	// Walk a local directory tree in one round-trip.
+	//
+	// The renderer's own recursive walk needs an `fs:readDir` round-trip per
+	// directory, so a large tree costs hundreds of them and each one waits its
+	// turn on a renderer main thread that may be busy rendering a streaming
+	// transcript. Doing the walk here keeps it at the ~100ms of real filesystem
+	// work it always was. SSH trees have their own batched loader.
+	ipcMain.handle(
+		'fs:readDirTree',
+		async (
+			_,
+			dirPath: string,
+			options: {
+				maxDepth: number;
+				maxEntries?: number;
+				ignorePatterns?: string[];
+				honorGitignore?: boolean;
+			}
+		) => walkLocalFileTree(dirPath, options)
+	);
 
 	// In-flight cancellable remote reads keyed by renderer-supplied requestId.
 	// Lets the renderer SIGTERM the underlying ssh+cat when the user closes

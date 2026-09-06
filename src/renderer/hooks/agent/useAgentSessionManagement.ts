@@ -1,7 +1,12 @@
 import { useCallback, useRef } from 'react';
 import type { Session, LogEntry, UsageStats, ThinkingMode, HistoryEntryType } from '../../types';
 import { useSessionStore, selectSessionById, selectActiveSession } from '../../stores/sessionStore';
-import { aiTabFocusFields, createTab, getActiveTab } from '../../utils/tabHelpers';
+import {
+	aiTabFocusFields,
+	createTab,
+	getActiveTab,
+	isSessionIdLabel,
+} from '../../utils/tabHelpers';
 import { generateId } from '../../utils/ids';
 import { buildSharedHistoryContext } from '../../utils/sessionHelpers';
 import type { RightPanelHandle } from '../../components/RightPanel';
@@ -351,7 +356,13 @@ export function useAgentSessionManagement(
 
 				// Look up starred status, session name, and context usage from stores if not provided
 				let isStarred = starred ?? false;
-				let name = sessionName ?? null;
+				// A caller's `sessionName` is a RECORDED display name (a history entry's
+				// pill, a starred session's label), so an unnamed tab recorded its own id
+				// fallback. Writing that back as `tab.name` would look identical while
+				// permanently opting the tab out of auto-naming, so drop it and let the
+				// tab stay genuinely unnamed.
+				let name =
+					sessionName && !isSessionIdLabel(sessionName, agentSessionId) ? sessionName : null;
 				let storedContextUsage: number | undefined;
 				let finalUsageStats = usageStats;
 

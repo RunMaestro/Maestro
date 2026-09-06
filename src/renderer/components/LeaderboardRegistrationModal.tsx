@@ -35,19 +35,17 @@ import {
 	LEADERBOARD_DRIFT_TOLERANCE_MS,
 } from '../services/leaderboard';
 import { formatDurationCompact } from '../../shared/duration';
-import { KEYBOARD_MASTERY_LEVELS } from '../constants/keyboardMastery';
+import {
+	KEYBOARD_MASTERY_LEVELS,
+	collectBoundShortcuts,
+	countUsedBoundShortcuts,
+} from '../constants/keyboardMastery';
 import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS, FIXED_SHORTCUTS } from '../constants/shortcuts';
 import { generateId } from '../utils/ids';
 import { buildMaestroUrl } from '../utils/buildMaestroUrl';
 import { openUrl } from '../utils/openUrl';
 import { logger } from '../utils/logger';
 import { ResizeHandles } from './ui/ResizeHandles';
-
-// Total shortcuts for calculating mastery percentage
-const TOTAL_SHORTCUTS_COUNT =
-	Object.keys(DEFAULT_SHORTCUTS).length +
-	Object.keys(TAB_SHORTCUTS).length +
-	Object.keys(FIXED_SHORTCUTS).length;
 
 // Social media icons as SVG components
 const GithubIcon = ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
@@ -205,8 +203,15 @@ export function LeaderboardRegistrationModal({
 	const keyboardMasteryLevel = keyboardMasteryStats.currentLevel + 1;
 	const keyboardMasteryTitle =
 		KEYBOARD_MASTERY_LEVELS[keyboardMasteryStats.currentLevel]?.name || 'Beginner';
-	const keyboardKeysUnlocked = keyboardMasteryStats.usedShortcuts.length;
-	const keyboardTotalKeys = TOTAL_SHORTCUTS_COUNT;
+	// Same denominator the mastery ring and the help modal use: shortcuts with no
+	// chord bound are excluded, so the figure reported to the leaderboard can
+	// actually reach 100%.
+	const boundShortcuts = collectBoundShortcuts(DEFAULT_SHORTCUTS, TAB_SHORTCUTS, FIXED_SHORTCUTS);
+	const keyboardKeysUnlocked = countUsedBoundShortcuts(
+		boundShortcuts,
+		keyboardMasteryStats.usedShortcuts
+	);
+	const keyboardTotalKeys = boundShortcuts.length;
 	const keyboardCoveragePercent = Math.round((keyboardKeysUnlocked / keyboardTotalKeys) * 100);
 
 	// Check if we need to recover auth token (email confirmed but no token)

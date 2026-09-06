@@ -33,17 +33,39 @@ import type {
 } from '../../shared/parquet/types';
 import { isParquetFile } from '../../shared/parquet/preview';
 import { getSshRemoteById } from '../stores/getters';
-import { readBinaryFileRemoteAsBase64, statRemote } from '../utils/remote-fs';
+import { readBinaryFileBlockRemoteAsBase64, statRemote } from '../utils/remote-fs';
 
 /**
  * Largest remote file the SSH path will pull down.
  *
- * Remote reads go through `base64` over the SSH text channel, which means the
- * whole file materializes in main-process memory twice on the way to disk.
- * Refusing loudly above this beats an opaque out-of-memory crash, and the
- * message tells the user the one thing that actually helps: copy it locally.
+ * There is no byte-range channel over an SSH shell, so a remote parquet file
+ * has to become a local one before any of the format's random access applies.
+ * That is the whole cost of remote support, and it does not shrink: the file
+ * crosses the wire base64-encoded, which is 33% larger than the bytes.
+ *
+ * 32 MB is chosen to keep that honest rather than to be generous. It costs
+ * ~43 MB over the wire, which is a few seconds on a normal link - long enough
+ * to need a progress bar, short enough that waiting for it is reasonable. The
+ * previous 512 MB meant 683 MB on the wire and a multi-minute freeze with no
+ * feedback, to open a file the viewer then reads a few megabytes of. Above
+ * this we refuse and say so, because the useful answer is "copy it locally",
+ * not a longer spinner.
  */
-const MAX_REMOTE_BYTES = 512 * 1024 * 1024;
+const MAX_REMOTE_BYTES = 32 * 1024 * 1024;
+
+/**
+ * Bytes fetched per SSH round trip when materializing a remote file.
+ *
+ * Trades round trips against transient memory and progress granularity. At
+ * 4 MB a file at the cap takes 8 round trips, reports progress 8 times, and
+ * never holds more than one block plus its base64 (~9.5 MB) - versus the
+ * whole-file fetch, which held the entire payload and its decoded buffer at
+ * once and could report nothing at all.
+ *
+ * Blocks are what `dd bs=<size> skip=<index>` seeks by, so this is also the
+ * remote read's alignment.
+ */
+const REMOTE_CHUNK_BYTES = 4 * 1024 * 1024;
 
 /** Handles idle longer than this are closed to release their file descriptor. */
 const HANDLE_IDLE_MS = 15 * 60 * 1000;
@@ -429,14 +451,44 @@ function compareRaw(a: unknown, b: unknown): number {
 // ─── Opening ──────────────────────────────────────────────────────────────────
 
 /**
- * Pull a remote parquet file into a local cache directory.
+ * How far along a remote fetch is. Reported once per chunk.
+ *
+ * `receivedBytes` is what has been written to the local cache, so it only ever
+ * moves forward and reaches `totalBytes` exactly when the file is complete.
+ */
+export interface RemoteFetchProgress {
+	remotePath: string;
+	receivedBytes: number;
+	totalBytes: number;
+	/** True once the file is fully on disk. */
+	done: boolean;
+}
+
+export type RemoteFetchProgressListener = (progress: RemoteFetchProgress) => void;
+
+/**
+ * Pull a remote parquet file into a local cache directory, one block at a time.
  *
  * The cache key is the remote path plus its size and mtime, so re-opening the
  * same unchanged file is free and an updated one is re-fetched. There is no
  * SSH byte-range server, so a remote parquet file has to become a local one
  * before any of the format's random access applies.
+ *
+ * Fetching block by block rather than whole buys two things. Memory is bounded
+ * to one block plus its base64 instead of the entire payload and its decoded
+ * buffer, and there is somewhere to report progress from - a whole-file read
+ * resolves once, at the end, so the UI can only spin.
+ *
+ * Blocks are appended in order to a `.part` file which is renamed into place
+ * on completion. A fetch interrupted by a crash therefore leaves a partial
+ * file that is never mistaken for a complete one, since only the final rename
+ * publishes the cache entry.
  */
-async function materializeRemoteFile(remotePath: string, sshRemoteId: string): Promise<string> {
+async function materializeRemoteFile(
+	remotePath: string,
+	sshRemoteId: string,
+	onProgress?: RemoteFetchProgressListener
+): Promise<string> {
 	const sshConfig = getSshRemoteById(sshRemoteId);
 	if (!sshConfig) throw new Error(`SSH remote not found: ${sshRemoteId}`);
 
@@ -444,9 +496,10 @@ async function materializeRemoteFile(remotePath: string, sshRemoteId: string): P
 	const remoteSize = remoteStat.success ? (remoteStat.data?.size ?? 0) : 0;
 	if (remoteSize > MAX_REMOTE_BYTES) {
 		throw new Error(
-			`Remote parquet file is ${Math.round(remoteSize / (1024 * 1024))} MB. ` +
-				`Maestro fetches remote files whole (there is no byte-range channel over SSH), ` +
-				`so open files above ${MAX_REMOTE_BYTES / (1024 * 1024)} MB by copying them locally first.`
+			`Remote parquet file is ${Math.round(remoteSize / (1024 * 1024))} MB, over the ` +
+				`${MAX_REMOTE_BYTES / (1024 * 1024)} MB limit for remote files. There is no ` +
+				`byte-range channel over SSH, so Maestro has to copy the whole file across ` +
+				`before it can read any of it. Copy it locally and open it from there.`
 		);
 	}
 
@@ -459,13 +512,157 @@ async function materializeRemoteFile(remotePath: string, sshRemoteId: string): P
 	const localPath = path.join(cacheDir, `${key}.parquet`);
 
 	const existing = await fs.stat(localPath).catch(() => null);
-	if (existing?.isFile() && (remoteSize === 0 || existing.size === remoteSize)) return localPath;
+	if (existing?.isFile() && (remoteSize === 0 || existing.size === remoteSize)) {
+		// Already cached. Report completion anyway so a listener that armed
+		// itself before the call still sees a terminal event.
+		onProgress?.({
+			remotePath,
+			receivedBytes: existing.size,
+			totalBytes: existing.size,
+			done: true,
+		});
+		return localPath;
+	}
 
-	const result = await readBinaryFileRemoteAsBase64(remotePath, sshConfig);
-	if (!result.success)
-		throw new Error(result.error || `Failed to fetch remote parquet file: ${remotePath}`);
-	await fs.writeFile(localPath, Buffer.from(result.data ?? '', 'base64'));
+	const partPath = `${localPath}.part`;
+	await fs.rm(partPath, { force: true });
+	const blocks = Math.max(1, Math.ceil(remoteSize / REMOTE_CHUNK_BYTES));
+	let received = 0;
+
+	onProgress?.({ remotePath, receivedBytes: 0, totalBytes: remoteSize, done: false });
+
+	const handle = await fs.open(partPath, 'w');
+	try {
+		for (let block = 0; block < blocks; block++) {
+			const result = await readBinaryFileBlockRemoteAsBase64(
+				remotePath,
+				sshConfig,
+				block,
+				REMOTE_CHUNK_BYTES
+			);
+			if (!result.success) {
+				throw new Error(result.error || `Failed to fetch remote parquet file: ${remotePath}`);
+			}
+			const bytes = Buffer.from(result.data ?? '', 'base64');
+			await handle.write(bytes);
+			received += bytes.length;
+			onProgress?.({ remotePath, receivedBytes: received, totalBytes: remoteSize, done: false });
+		}
+	} finally {
+		await handle.close();
+	}
+
+	// Verify the whole file arrived before publishing it.
+	//
+	// Checking the total rather than each block is what makes this sound: a
+	// file that shrank mid-transfer can come up short in the FIRST block, or in
+	// the only block, and a per-block guard misses both. The failure this
+	// prevents is nasty because it is silent - a truncated parquet file caches
+	// happily and then reports "footer != PAR1", which blames the file format
+	// for what was actually a transfer that ended early.
+	if (received !== remoteSize) {
+		await fs.rm(partPath, { force: true });
+		throw new Error(
+			`Copy of ${remotePath} ended early: got ${received} of ${remoteSize} bytes. ` +
+				`The file may have changed on the remote host during the transfer.`
+		);
+	}
+
+	// Publish atomically: a reader either sees no cache entry or a whole one.
+	await fs.rename(partPath, localPath);
+	onProgress?.({ remotePath, receivedBytes: received, totalBytes: remoteSize, done: true });
 	return localPath;
+}
+
+/**
+ * Turn a reader-internal failure into something a person can act on.
+ *
+ * hyparquet reports structural damage in terms of its own parsing state -
+ * "thrift unhandled type: 11", "Offset is outside the bounds of the DataView",
+ * "Cannot read properties of undefined (reading 'map')". Those are precise for
+ * a maintainer and useless in a UI: they describe where the parser gave up, not
+ * what is wrong with the file. Every one of them means the same thing to a
+ * user, so say that, and keep the original as the cause for a bug report.
+ */
+function describeOpenFailure(error: unknown): Error {
+	const message = error instanceof Error ? error.message : String(error);
+	const corrupt =
+		/thrift|DataView|bounds|undefined \(reading|invalid \(footer|metadata length|Cannot read propert/i.test(
+			message
+		);
+	if (!corrupt) return error instanceof Error ? error : new Error(message);
+
+	const friendly = new Error(
+		`This file is not a readable parquet file. It may be truncated, corrupt, ` +
+			`or a different format that happens to be named .parquet. (${message})`
+	);
+	(friendly as Error & { cause?: unknown }).cause = error;
+	return friendly;
+}
+
+/**
+ * Confirm the file's compression codecs can actually be decoded, at OPEN time.
+ *
+ * Reading the footer proves nothing about the data pages: a file compressed
+ * with a codec the reader cannot handle opens perfectly, reports a full schema,
+ * and then fails on every single page read. The user gets a table header, a
+ * spinner, and an error - repeatedly - for a file that was never going to work.
+ * pyarrow-written LZ4 does exactly this today.
+ *
+ * So one row is decoded per distinct (codec, physical type) pair before the
+ * handle is published. Per CODEC alone is not enough, and that is not a
+ * hypothetical: in a pyarrow LZ4 file the INT64 column decodes cleanly while
+ * the BYTE_ARRAY column in the same file fails, so a codec-only probe picks the
+ * integer column, passes, and publishes a handle that cannot read half its own
+ * data.
+ *
+ * This is a probe rather than an allowlist on purpose: a hard-coded list of
+ * "bad" codecs goes stale the moment the reader improves, whereas a probe
+ * simply starts passing. It is a smoke test, not a proof - a failure that only
+ * appears in a later page still gets through - but it converts the common,
+ * whole-column case from "opens then fails forever" into one clear refusal.
+ */
+async function verifyCodecsDecodable(
+	hyparquet: HyparquetModule,
+	buffer: CountingAsyncBuffer,
+	metadata: FileMetaData,
+	compressors: Compressors
+): Promise<void> {
+	if (Number(metadata.num_rows) === 0) return;
+
+	// One representative column per (codec, physical type). Decoding every
+	// column would make opening a 500-column file needlessly slow, while
+	// decoding one per codec misses the type-dependent failures above.
+	const probes = new Map<string, { codec: string; column: string }>();
+	for (const rowGroup of metadata.row_groups) {
+		for (const chunk of rowGroup.columns) {
+			const meta = chunk.meta_data;
+			if (!meta || meta.codec === 'UNCOMPRESSED') continue;
+			// Leaf path only: a nested column cannot be read on its own.
+			if (meta.path_in_schema.length !== 1) continue;
+			const key = `${meta.codec}:${meta.type}`;
+			if (!probes.has(key)) probes.set(key, { codec: meta.codec, column: meta.path_in_schema[0] });
+		}
+	}
+
+	for (const { codec, column } of probes.values()) {
+		try {
+			await hyparquet.parquetReadObjects({
+				file: buffer,
+				metadata,
+				compressors,
+				columns: [column],
+				rowStart: 0,
+				rowEnd: 1,
+			});
+		} catch (error) {
+			const detail = error instanceof Error ? error.message : String(error);
+			throw new Error(
+				`This parquet file uses ${codec} compression, which Maestro cannot decode. ` +
+					`Re-write it with SNAPPY, ZSTD, GZIP, or no compression to view it here. (${detail})`
+			);
+		}
+	}
 }
 
 /**
@@ -477,11 +674,14 @@ async function materializeRemoteFile(remotePath: string, sshRemoteId: string): P
  */
 export async function openParquetFile(
 	filePath: string,
-	sshRemoteId?: string
+	sshRemoteId?: string,
+	onProgress?: RemoteFetchProgressListener
 ): Promise<ParquetFileInfo> {
 	if (!isParquetFile(filePath)) throw new Error(`Not a parquet file: ${filePath}`);
 
-	const localPath = sshRemoteId ? await materializeRemoteFile(filePath, sshRemoteId) : filePath;
+	const localPath = sshRemoteId
+		? await materializeRemoteFile(filePath, sshRemoteId, onProgress)
+		: filePath;
 	const stat = await fs.stat(localPath);
 	if (!stat.isFile()) throw new Error(`Not a file: ${filePath}`);
 
@@ -501,8 +701,17 @@ export async function openParquetFile(
 
 	try {
 		const buffer = createCountingAsyncBuffer(fileHandle, stat.size);
-		const metadata = await hyparquet.parquetMetadataAsync(buffer);
-		const schema = hyparquet.parquetSchema(metadata);
+		let metadata: FileMetaData;
+		let schema: SchemaTree;
+		try {
+			metadata = await hyparquet.parquetMetadataAsync(buffer);
+			schema = hyparquet.parquetSchema(metadata);
+		} catch (error) {
+			throw describeOpenFailure(error);
+		}
+
+		// Fail here rather than on every page read. See verifyCodecsDecodable.
+		await verifyCodecsDecodable(hyparquet, buffer, metadata, compressors);
 
 		const id = randomUUID();
 		const info: ParquetFileInfo = {

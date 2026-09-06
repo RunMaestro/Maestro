@@ -17,6 +17,7 @@ import { render, screen, fireEvent, act } from '@testing-library/react';
 import { ToastContainer, buildToastClipboardText } from '../../../renderer/components/Toast';
 import { useNotificationStore } from '../../../renderer/stores/notificationStore';
 import type { Toast } from '../../../renderer/stores/notificationStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { mockTheme } from '../../helpers/mockTheme';
 
 const createMockToast = (overrides = {}): Toast => ({
@@ -58,6 +59,32 @@ describe('Toast', () => {
 			render(<ToastContainer theme={mockTheme} />);
 			// Portal renders to document.body, so no toast elements should exist
 			expect(document.body.querySelector('.fixed.bottom-4')).toBeNull();
+		});
+	});
+
+	describe('interface font', () => {
+		it('restates the interface font on the portal root', () => {
+			// Toasts portal to document.body, OUTSIDE the app shell that carries
+			// the interface font, so without this they inherit the body default
+			// and a user who changed the UI font kept getting the old one.
+			useSettingsStore.setState({ fontFamily: 'Verdana' });
+			setStoreToasts([createMockToast()]);
+
+			render(<ToastContainer theme={mockTheme} />);
+
+			const root = screen.getByText('Test Toast').closest('[style*="font-family"]');
+			expect(root).not.toBeNull();
+			expect((root as HTMLElement).style.fontFamily).toContain('Verdana');
+		});
+
+		it('keeps a monospace fallback so a missing face cannot land on serif', () => {
+			useSettingsStore.setState({ fontFamily: 'Verdana' });
+			setStoreToasts([createMockToast()]);
+
+			render(<ToastContainer theme={mockTheme} />);
+
+			const root = screen.getByText('Test Toast').closest('[style*="font-family"]');
+			expect((root as HTMLElement).style.fontFamily).toContain('monospace');
 		});
 	});
 

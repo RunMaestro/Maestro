@@ -58,6 +58,25 @@ function seedSessions(sessions: Session[], sessionsLoaded = false) {
 }
 
 describe('useCueAutoDiscovery', () => {
+	describe('lifecycle ownership', () => {
+		it('does not run main-process Cue lifecycle work in a browser mirror', async () => {
+			const sessions = [makeSession('s1', '/project/a')];
+			seedSessions(sessions, true);
+
+			const { rerender } = renderHook(({ encore }) => useCueAutoDiscovery(encore, false), {
+				initialProps: { encore: makeEncoreFeatures(false) },
+			});
+
+			rerender({ encore: makeEncoreFeatures(true) });
+			await act(async () => {});
+
+			expect(mockRefreshSession).not.toHaveBeenCalled();
+			expect(mockRemoveSession).not.toHaveBeenCalled();
+			expect(mockEnable).not.toHaveBeenCalled();
+			expect(mockDisable).not.toHaveBeenCalled();
+		});
+	});
+
 	describe('initial scan on app startup', () => {
 		it('should not call refreshSession before sessions are loaded', () => {
 			const sessions = [makeSession('s1', '/project/a')];
@@ -352,6 +371,35 @@ describe('useCueAutoDiscovery', () => {
 			// reordered. Final call is enable to match the final flag value.
 			expect(mockEnable).toHaveBeenCalledTimes(2);
 			expect(mockDisable).toHaveBeenCalledTimes(1);
+		});
+
+		it('drops queued lifecycle work after the hook unmounts', async () => {
+			seedSessions([makeSession('s1', '/project/a')], true);
+			let resolveEnable: (() => void) | undefined;
+			mockEnable.mockReturnValueOnce(
+				new Promise<void>((resolve) => {
+					resolveEnable = resolve;
+				})
+			);
+
+			const { rerender, unmount } = renderHook(({ encore }) => useCueAutoDiscovery(encore), {
+				initialProps: { encore: makeEncoreFeatures(false) },
+			});
+			mockRefreshSession.mockClear();
+
+			rerender({ encore: makeEncoreFeatures(true) });
+			await act(async () => {});
+			expect(mockEnable).toHaveBeenCalledOnce();
+
+			rerender({ encore: makeEncoreFeatures(false) });
+			unmount();
+			await act(async () => {
+				resolveEnable?.();
+			});
+			await act(async () => {});
+
+			expect(mockRefreshSession).not.toHaveBeenCalled();
+			expect(mockDisable).not.toHaveBeenCalled();
 		});
 	});
 });

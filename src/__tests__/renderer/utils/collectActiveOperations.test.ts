@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { BatchRunState } from '../../../renderer/types';
+import type { BatchRunState, GroupChat } from '../../../renderer/types';
 
 // Stub the IPC surface before importing the module under test. Per-test bodies
 // reassign these mocks to shape process / Cue activity.
@@ -39,7 +39,14 @@ beforeEach(() => {
 	mockGetActiveCueRuns.mockResolvedValue([]);
 	useSessionStore.setState({ sessions: [], activeSessionId: '' });
 	useBatchStore.setState({ batchRunStates: {} });
-	useGroupChatStore.setState({ groupChatStates: new Map(), groupChatState: 'idle' });
+	useGroupChatStore.setState({
+		groupChats: [],
+		activeGroupChatId: null,
+		groupChatStates: new Map(),
+		groupChatState: 'idle',
+		participantStates: new Map(),
+		allGroupChatParticipantStates: new Map(),
+	});
 	useFeedbackDraftStore.setState({ hasDraft: false });
 });
 
@@ -108,8 +115,9 @@ describe('collectActiveOperations', () => {
 		expect(ops.hasActiveOperations).toBe(true);
 	});
 
-	it('counts every non-idle room in the group-chat state map', async () => {
+	it('counts every non-idle room the user still has', async () => {
 		useGroupChatStore.setState({
+			groupChats: [{ id: 'room-a' }, { id: 'room-b' }, { id: 'room-c' }] as GroupChat[],
 			groupChatStates: new Map([
 				['room-a', 'moderator-thinking'],
 				['room-b', 'agent-working'],
@@ -122,10 +130,45 @@ describe('collectActiveOperations', () => {
 		expect(ops.hasActiveOperations).toBe(true);
 	});
 
-	it('falls back to the live active-room state when the map is empty', async () => {
+	it('uses the live active-room state rather than the mirrored map', async () => {
+		// The active room's truth is `groupChatState`; every other room is
+		// mirrored into `groupChatStates`. Reading the wrong one of the pair gets
+		// the answer wrong for half the list.
 		useGroupChatStore.setState({
+			groupChats: [{ id: 'room-a' }] as GroupChat[],
+			activeGroupChatId: 'room-a',
 			groupChatStates: new Map(),
 			groupChatState: 'agent-working',
+		});
+		const ops = await collectActiveOperations();
+		expect(ops.activeGroupChatCount).toBe(1);
+		expect(ops.hasActiveOperations).toBe(true);
+	});
+
+	// The state maps are keyed by every room ever seen and outlive a deleted
+	// one. Counting their values reported chats that no longer exist as running,
+	// so quitting warned about work that could not possibly be in flight.
+	it('ignores a stale state entry for a room the user no longer has', async () => {
+		useGroupChatStore.setState({
+			groupChats: [],
+			groupChatStates: new Map([['deleted-room', 'agent-working']]),
+			groupChatState: 'idle',
+		});
+		const ops = await collectActiveOperations();
+		expect(ops.activeGroupChatCount).toBe(0);
+		expect(ops.hasActiveOperations).toBe(false);
+	});
+
+	// The mirror-image bug: the old loop read only the moderator state, so a
+	// room whose moderator had finished while its agents were still working
+	// counted as idle - and Quit When Idle would quit mid-turn.
+	it('counts a room whose moderator is idle but whose participant is working', async () => {
+		useGroupChatStore.setState({
+			groupChats: [{ id: 'room-a' }] as GroupChat[],
+			activeGroupChatId: null,
+			groupChatStates: new Map([['room-a', 'idle']]),
+			allGroupChatParticipantStates: new Map([['room-a', new Map([['Atlas', 'working']])]]),
+			groupChatState: 'idle',
 		});
 		const ops = await collectActiveOperations();
 		expect(ops.activeGroupChatCount).toBe(1);

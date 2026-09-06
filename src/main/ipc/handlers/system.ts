@@ -19,6 +19,8 @@ import * as path from 'path';
 import * as fsSync from 'fs';
 import Store from 'electron-store';
 import { execFileNoThrow } from '../../utils/execFile';
+import { peekShellPath } from '../../runtime/getShellPath';
+import { fallbackFontResult, type FontDetectionResult } from '../../../shared/fontDetection';
 import { logger } from '../../utils/logger';
 import { detectShells } from '../../utils/shellDetector';
 import { isCloudflaredInstalled } from '../../utils/cliDetection';
@@ -141,48 +143,54 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 	// ============ Font Detection Handlers ============
 
 	// Font detection
-	ipcMain.handle('fonts:detect', async () => {
+	ipcMain.handle('fonts:detect', async (): Promise<FontDetectionResult> => {
+		// fc-list is fontconfig, which ships with essentially no macOS or Windows
+		// install - it is present on a dev Mac only because Homebrew pulled it in
+		// as a dependency. It was also being executed with the GUI process PATH,
+		// which does not include /opt/homebrew/bin, so even a machine that HAS it
+		// failed once the app was packaged. Both failures returned the hard-coded
+		// list silently, and the picker then annotated genuinely-installed fonts
+		// "(Not Found)".
+		//
+		// The renderer now tries Chromium's Local Font Access API first (native,
+		// cross-platform, no external binary) and only falls back to here. This
+		// handler keeps fc-list for Linux, where fontconfig IS the system font
+		// database, and now runs it with the login-shell PATH.
 		try {
-			// Use fc-list on all platforms (faster than system_profiler on macOS)
-			// macOS: 0.74s (was 8.77s with system_profiler) - 11.9x faster
-			// Linux/Windows: 0.5-0.6s
-			const result = await execFileNoThrow('fc-list', [':', 'family']);
+			const shellPath = peekShellPath();
+			const env = shellPath ? { ...process.env, PATH: shellPath } : undefined;
+			const result = await execFileNoThrow('fc-list', [':', 'family'], undefined, { env });
 
 			if (result.exitCode === 0 && result.stdout) {
-				// Parse font list and deduplicate
-				const fonts = result.stdout
-					.split('\n')
-					.filter(Boolean)
-					.map((line: string) => line.trim())
-					.filter((font) => font.length > 0);
-
-				// Deduplicate fonts (fc-list can return duplicates)
-				return [...new Set(fonts)];
+				// fc-list prints comma-separated aliases per family ("DejaVu Sans,
+				// DejaVu Sans Book"). Splitting on the comma recovers each real name;
+				// the previous parse kept the whole line, so a family with aliases
+				// never matched a picker entry by name.
+				const fonts = new Set<string>();
+				for (const line of result.stdout.split('\n')) {
+					for (const alias of line.split(',')) {
+						const name = alias.trim();
+						if (name) fonts.add(name);
+					}
+				}
+				if (fonts.size > 0) {
+					return { fonts: [...fonts], source: 'fc-list', reliable: true };
+				}
 			}
 
-			// Fallback if fc-list not available (rare on modern systems)
-			return [
-				'Monaco',
-				'Menlo',
-				'Courier New',
-				'Consolas',
-				'Roboto Mono',
-				'Fira Code',
-				'JetBrains Mono',
-			];
+			logger.info('Font detection: fc-list unavailable, availability unknown', 'Fonts', {
+				exitCode: result.exitCode,
+				hadShellPath: Boolean(shellPath),
+			});
+			return fallbackFontResult('fontconfig (fc-list) is not installed on this system');
 		} catch (error) {
-			void captureException(error);
-			logger.error('Font detection error:', undefined, error);
-			// Return common monospace fonts as fallback
-			return [
-				'Monaco',
-				'Menlo',
-				'Courier New',
-				'Consolas',
-				'Roboto Mono',
-				'Fira Code',
-				'JetBrains Mono',
-			];
+			// Not reported to Sentry: on macOS and Windows a missing fc-list is the
+			// EXPECTED path, not an anomaly, and the renderer has already tried the
+			// native API by the time it asks us.
+			logger.info('Font detection: fc-list threw, availability unknown', 'Fonts', {
+				reason: error instanceof Error ? error.message : String(error),
+			});
+			return fallbackFontResult('the system font list could not be read');
 		}
 	});
 
@@ -738,6 +746,14 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 		logger.info('Sleep prevention restored from settings', 'PowerManager');
 	}
 
+	const savedKeepDisplayAwake = settingsStore.get(
+		'preventDisplaySleepEnabled' as keyof MaestroSettings
+	);
+	if (savedKeepDisplayAwake === true) {
+		powerManager.setKeepDisplayAwake(true);
+		logger.info('Display sleep prevention restored from settings', 'PowerManager');
+	}
+
 	// Set whether sleep prevention is enabled
 	ipcMain.handle('power:setEnabled', async (_event, enabled: boolean) => {
 		powerManager.setEnabled(enabled);
@@ -747,6 +763,12 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 	// Check if sleep prevention is enabled
 	ipcMain.handle('power:isEnabled', async () => {
 		return powerManager.isEnabled();
+	});
+
+	// Lift blockers to prevent-display-sleep (screen saver / lock / idle logout)
+	ipcMain.handle('power:setKeepDisplayAwake', async (_event, keepAwake: boolean) => {
+		powerManager.setKeepDisplayAwake(keepAwake);
+		settingsStore.set('preventDisplaySleepEnabled' as keyof MaestroSettings, keepAwake);
 	});
 
 	// Get current power management status

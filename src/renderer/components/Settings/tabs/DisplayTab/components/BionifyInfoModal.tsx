@@ -14,8 +14,9 @@ export function BionifyInfoModal({ theme, onClose }: BionifyInfoModalProps) {
 			title="Bionify Algorithm Reference"
 			priority={MODAL_PRIORITIES.GROUP_CHAT_INFO}
 			onClose={onClose}
-			width={520}
-			maxHeight="70vh"
+			resizeKey="bionify-reference"
+			defaultSize={{ width: 520, height: 560 }}
+			minSize={{ width: 380, height: 320 }}
 			closeOnBackdropClick
 		>
 			<div className="space-y-4 text-sm" style={{ color: theme.colors.textMain }}>

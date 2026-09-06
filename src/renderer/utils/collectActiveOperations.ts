@@ -17,6 +17,7 @@ import { useSessionStore } from '../stores/sessionStore';
 import { useBatchStore, selectActiveBatchSessionIds } from '../stores/batchStore';
 import { useGroupChatStore } from '../stores/groupChatStore';
 import { useFeedbackDraftStore } from '../stores/feedbackDraftStore';
+import { getBusyGroupChatIds } from './groupChatStatus';
 
 export interface ActiveOperationsSnapshot {
 	/** Number of AI agents currently thinking (busySource 'ai', non-terminal). */
@@ -82,19 +83,15 @@ export async function collectActiveOperations(): Promise<ActiveOperationsSnapsho
 		// Cue may be disabled or the engine not started; treat as none.
 	}
 
-	// Active group chats: any room whose state isn't idle. groupChatStates tracks
-	// every known room; fall back to the live active-room state if the map is
-	// empty but the active chat is busy.
+	// Active group chats, via the shared predicate rather than a local reading of
+	// `groupChatStates`. That map is keyed by every room ever seen and can outlive
+	// a deleted one, so counting its values reported chats that no longer exist as
+	// running - and it ignores `participantStates` entirely, so a room whose
+	// moderator is idle while its agents are still working counted as finished.
+	// `getBusyGroupChatIds` intersects with the live list and picks the right
+	// state pair for the active room versus the rest.
 	const gcStore = useGroupChatStore.getState();
-	let activeGroupChatCount = 0;
-	for (const roomState of gcStore.groupChatStates.values()) {
-		if (roomState !== 'idle') {
-			activeGroupChatCount++;
-		}
-	}
-	if (activeGroupChatCount === 0 && gcStore.groupChatState !== 'idle') {
-		activeGroupChatCount = 1;
-	}
+	const activeGroupChatCount = getBusyGroupChatIds(gcStore.groupChats, gcStore).length;
 
 	const hasFeedbackDraft = useFeedbackDraftStore.getState().hasDraft;
 

@@ -18,7 +18,15 @@ import { logger } from '../../../renderer/utils/logger';
 import { LogViewer } from '../../../renderer/components/LogViewer';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 
-import { mockTheme } from '../../helpers/mockTheme';
+import { createMockTheme, mockTheme } from '../../helpers/mockTheme';
+import {
+	AA_CONTRAST,
+	blendColors,
+	contrastRatio,
+	readableTextOn,
+	transparentize,
+} from '../../../shared/colorContrast';
+import type { Theme } from '../../../shared/theme-types';
 // Mock theme
 
 // Mock log entries
@@ -36,6 +44,11 @@ const createMockLog = (
 	message: 'Test log message',
 	...overrides,
 });
+
+// The cue level and its agent pill are both mixed out of the theme, so the
+// expectations below are derived the same way instead of naming a teal.
+const cueFill = mockTheme.colors.success;
+const agentPillBg = (fill: string) => transparentize(fill, mockTheme.colors.bgActivity, 0.2);
 
 // Mock layer stack context
 const mockRegisterLayer = vi.fn().mockReturnValue('mock-layer-id');
@@ -1008,59 +1021,96 @@ describe('LogViewer', () => {
 	});
 
 	describe('Log level colors', () => {
-		it('should use correct color for debug level', async () => {
-			getMockGetLogs().mockResolvedValue([createMockLog({ level: 'debug', message: 'Debug' })]);
+		// The component has no palette of its own: every level color is mixed out of
+		// the active theme's slots, so the expectations are computed the same way
+		// rather than pinned to the literals that used to live in the component.
+		const expectedPill = (theme: Theme, fill: string) => {
+			const bg = transparentize(fill, theme.colors.bgActivity, 0.15);
+			return { backgroundColor: bg, color: readableTextOn(fill, [bg]) };
+		};
 
-			render(<LogViewer theme={mockTheme} onClose={vi.fn()} logLevel="debug" />);
+		const levelFills = (theme: Theme) => ({
+			debug: theme.colors.textDim,
+			info: theme.colors.accent,
+			warn: theme.colors.warning,
+			error: theme.colors.error,
+			toast: blendColors(theme.colors.accent, theme.colors.textMain, 0.35),
+			autorun: blendColors(theme.colors.warning, theme.colors.error, 0.35),
+			cue: theme.colors.success,
+		});
+
+		it.each([
+			['debug', 'debug'],
+			['info', 'info'],
+			['warn', 'info'],
+			['error', 'info'],
+			['toast', 'info'],
+			['autorun', 'info'],
+			['cue', 'info'],
+		] as const)('should derive the %s level pill from the theme', async (level, logLevel) => {
+			getMockGetLogs().mockResolvedValue([createMockLog({ level, message: 'Entry' })]);
+
+			render(<LogViewer theme={mockTheme} onClose={vi.fn()} logLevel={logLevel} />);
 
 			await waitFor(() => {
-				const levelPill = screen.getByText('debug');
-				expect(levelPill).toHaveStyle({ color: '#6366f1' });
+				const levelPill = screen.getByText(level);
+				expect(levelPill).toHaveStyle(expectedPill(mockTheme, levelFills(mockTheme)[level]));
 			});
 		});
 
-		it('should use correct color for info level', async () => {
-			getMockGetLogs().mockResolvedValue([createMockLog({ level: 'info', message: 'Info' })]);
-
-			render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
-
-			await waitFor(() => {
-				const levelPill = screen.getByText('info');
-				expect(levelPill).toHaveStyle({ color: '#3b82f6' });
-			});
-		});
-
-		it('should use correct color for warn level', async () => {
-			getMockGetLogs().mockResolvedValue([createMockLog({ level: 'warn', message: 'Warn' })]);
-
-			render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
-
-			await waitFor(() => {
-				const levelPill = screen.getByText('warn');
-				expect(levelPill).toHaveStyle({ color: '#f59e0b' });
-			});
-		});
-
-		it('should use correct color for error level', async () => {
+		it('should recolor level pills when the theme changes', async () => {
+			const theme = createMockTheme({ colors: { error: '#00ff00' } });
 			getMockGetLogs().mockResolvedValue([createMockLog({ level: 'error', message: 'Error' })]);
 
-			render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+			render(<LogViewer theme={theme} onClose={vi.fn()} />);
 
 			await waitFor(() => {
 				const levelPill = screen.getByText('error');
-				expect(levelPill).toHaveStyle({ color: '#ef4444' });
+				expect(levelPill).toHaveStyle(expectedPill(theme, '#00ff00'));
+				expect(levelPill).not.toHaveStyle({ color: '#ef4444' });
 			});
 		});
 
-		it('should use correct color for toast level', async () => {
-			getMockGetLogs().mockResolvedValue([createMockLog({ level: 'toast', message: 'Toast' })]);
+		it.each([
+			['dark', mockTheme],
+			[
+				'light',
+				createMockTheme({
+					mode: 'light',
+					colors: {
+						bgMain: '#ffffff',
+						bgActivity: '#f4f4f5',
+						textMain: '#18181b',
+						textDim: '#71717a',
+						accent: '#7c3aed',
+						accentForeground: '#ffffff',
+						success: '#15803d',
+						warning: '#eab308',
+						error: '#dc2626',
+					},
+				}),
+			],
+		] as const)('should keep the %s theme level pill readable', async (_mode, theme) => {
+			getMockGetLogs().mockResolvedValue([
+				createMockLog({ level: 'warn', message: 'Warn' }),
+				createMockLog({ level: 'error', message: 'Error' }),
+			]);
 
-			render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+			render(<LogViewer theme={theme} onClose={vi.fn()} />);
 
 			await waitFor(() => {
-				const levelPill = screen.getByText('toast');
-				expect(levelPill).toHaveStyle({ color: '#a855f7' });
+				expect(screen.getByText('warn')).toBeInTheDocument();
 			});
+
+			for (const level of ['warn', 'error'] as const) {
+				const fill = levelFills(theme)[level];
+				const bg = transparentize(fill, theme.colors.bgActivity, 0.15);
+				const text = readableTextOn(fill, [bg]);
+				// The pill paints the contrast-checked color, and that color clears AA
+				// against the wash it sits on - in a light theme as well as a dark one.
+				expect(screen.getByText(level)).toHaveStyle({ backgroundColor: bg, color: text });
+				expect(contrastRatio(text, bg)).toBeGreaterThanOrEqual(AA_CONTRAST);
+			}
 		});
 	});
 
@@ -1170,7 +1220,7 @@ describe('LogViewer', () => {
 			});
 		});
 
-		it('should render cue agent pill with teal color', async () => {
+		it('should render the cue agent pill in the theme success color', async () => {
 			getMockGetLogs().mockResolvedValue([
 				createMockLog({
 					level: 'cue',
@@ -1184,9 +1234,10 @@ describe('LogViewer', () => {
 			await waitFor(() => {
 				const agentPill = screen.getByText('Cue Session');
 				expect(agentPill).toBeInTheDocument();
+				const bg = agentPillBg(cueFill);
 				expect(agentPill.closest('span')).toHaveStyle({
-					backgroundColor: 'rgba(6, 182, 212, 0.2)',
-					color: '#06b6d4',
+					backgroundColor: bg,
+					color: readableTextOn(cueFill, [bg]),
 				});
 			});
 		});
@@ -1206,8 +1257,10 @@ describe('LogViewer', () => {
 				// The context should appear as an agent pill, not as a context badge
 				const contextElement = screen.getByText('CueContext');
 				expect(contextElement).toBeInTheDocument();
-				// Verify it's styled as an agent pill (teal), not a context badge (accent color)
-				expect(contextElement.closest('span')).toHaveStyle({ color: '#06b6d4' });
+				// Verify it's styled as an agent pill, not a context badge (accent color)
+				expect(contextElement.closest('span')).toHaveStyle({
+					color: readableTextOn(cueFill, [agentPillBg(cueFill)]),
+				});
 			});
 		});
 
@@ -1295,7 +1348,7 @@ describe('LogViewer', () => {
 			expect(onSessionClick).toHaveBeenCalledWith('session-2');
 		});
 
-		it('should render cue level pill with teal color', async () => {
+		it('should render the cue level pill in the theme success color', async () => {
 			getMockGetLogs().mockResolvedValue([
 				createMockLog({
 					level: 'cue',
@@ -1308,9 +1361,10 @@ describe('LogViewer', () => {
 			await waitFor(() => {
 				const levelPill = screen.getByText('cue');
 				expect(levelPill).toBeInTheDocument();
+				const bg = transparentize(cueFill, mockTheme.colors.bgActivity, 0.15);
 				expect(levelPill).toHaveStyle({
-					color: '#06b6d4',
-					backgroundColor: 'rgba(6, 182, 212, 0.15)',
+					color: readableTextOn(cueFill, [bg]),
+					backgroundColor: bg,
 				});
 			});
 		});

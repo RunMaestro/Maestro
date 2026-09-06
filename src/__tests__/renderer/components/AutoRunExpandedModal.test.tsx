@@ -914,4 +914,116 @@ describe('AutoRunExpandedModal', () => {
 			expect(shortcutHint).toHaveTextContent(formatShortcutKeys(['Meta', 's']));
 		});
 	});
+	describe('Cmd+E is claimed by the modal', () => {
+		/**
+		 * The bug: a second, fully mounted AutoRun lives in the right panel behind
+		 * this modal. The component's own React onKeyDown only fires when focus is
+		 * inside its subtree, so whenever focus was elsewhere (the body after a
+		 * nested dialog closed, a toolbar button) Cmd+E sailed past both AutoRuns
+		 * and reached the global handler, which toggled the main panel's markdown
+		 * mode. The modal looked like it ignored its own shortcut while something
+		 * changed behind it.
+		 */
+		function pressCmdE(target: EventTarget = document.body, init: KeyboardEventInit = {}) {
+			const event = new KeyboardEvent('keydown', {
+				key: 'e',
+				metaKey: true,
+				bubbles: true,
+				cancelable: true,
+				...init,
+			});
+			const preventDefault = vi.spyOn(event, 'preventDefault');
+			const stopPropagation = vi.spyOn(event, 'stopPropagation');
+			act(() => {
+				target.dispatchEvent(event);
+			});
+			return { event, preventDefault, stopPropagation };
+		}
+
+		it('toggles the modal from edit to preview', () => {
+			const props = createDefaultProps({ mode: 'edit' });
+			renderWithProvider(<AutoRunExpandedModal {...props} />);
+
+			pressCmdE();
+
+			expect(autoRunRefMethods.switchMode).toHaveBeenCalledWith('preview');
+		});
+
+		it('toggles back from preview to edit', () => {
+			const props = createDefaultProps({ mode: 'preview' });
+			renderWithProvider(<AutoRunExpandedModal {...props} />);
+
+			pressCmdE();
+
+			expect(autoRunRefMethods.switchMode).toHaveBeenCalledWith('edit');
+		});
+
+		it('handles the key even when focus is on the body', () => {
+			// This is the exact condition the old focus-scoped handler missed.
+			const props = createDefaultProps();
+			renderWithProvider(<AutoRunExpandedModal {...props} />);
+			(document.activeElement as HTMLElement | null)?.blur();
+
+			pressCmdE(document.body);
+
+			expect(autoRunRefMethods.switchMode).toHaveBeenCalled();
+		});
+
+		it('stops the event so nothing behind the modal sees it', () => {
+			const props = createDefaultProps();
+			renderWithProvider(<AutoRunExpandedModal {...props} />);
+
+			const { preventDefault, stopPropagation } = pressCmdE();
+
+			expect(preventDefault).toHaveBeenCalled();
+			expect(stopPropagation).toHaveBeenCalled();
+		});
+
+		it('still swallows the key while locked, without toggling', () => {
+			// Editing is disabled during a run, but letting the key through would
+			// toggle the panel behind us - which is the leak being closed.
+			const props = createDefaultProps({
+				batchRunState: { isRunning: true } as BatchRunState,
+			});
+			renderWithProvider(<AutoRunExpandedModal {...props} />);
+
+			const { preventDefault, stopPropagation } = pressCmdE();
+
+			expect(autoRunRefMethods.switchMode).not.toHaveBeenCalled();
+			expect(preventDefault).toHaveBeenCalled();
+			expect(stopPropagation).toHaveBeenCalled();
+		});
+
+		it('leaves Cmd+Shift+E alone - that is a different shortcut', () => {
+			const props = createDefaultProps();
+			renderWithProvider(<AutoRunExpandedModal {...props} />);
+
+			const { stopPropagation } = pressCmdE(document.body, { shiftKey: true });
+
+			expect(autoRunRefMethods.switchMode).not.toHaveBeenCalled();
+			expect(stopPropagation).not.toHaveBeenCalled();
+		});
+
+		it('leaves Alt+Cmd+E alone - that is the image annotator', () => {
+			const props = createDefaultProps();
+			renderWithProvider(<AutoRunExpandedModal {...props} />);
+
+			const { stopPropagation } = pressCmdE(document.body, { altKey: true });
+
+			expect(autoRunRefMethods.switchMode).not.toHaveBeenCalled();
+			expect(stopPropagation).not.toHaveBeenCalled();
+		});
+
+		it('releases the key once the modal unmounts', () => {
+			// A listener that outlived the modal would break Cmd+E everywhere else.
+			const props = createDefaultProps();
+			const { unmount } = renderWithProvider(<AutoRunExpandedModal {...props} />);
+			unmount();
+
+			const { stopPropagation } = pressCmdE();
+
+			expect(autoRunRefMethods.switchMode).not.toHaveBeenCalled();
+			expect(stopPropagation).not.toHaveBeenCalled();
+		});
+	});
 });

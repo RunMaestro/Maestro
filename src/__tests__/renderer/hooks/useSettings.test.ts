@@ -59,7 +59,7 @@ describe('useSettings', () => {
 			markdownEditMode: false,
 			chatRawTextMode: false,
 			showHiddenFiles: true,
-			fileExplorerIconTheme: 'default',
+			fileExplorerIconTheme: 'rich',
 			terminalWidth: 100,
 			logLevel: 'info',
 			maxLogBuffer: 5000,
@@ -96,6 +96,7 @@ describe('useSettings', () => {
 			statsCollectionEnabled: true,
 			defaultStatsTimeRange: 'week',
 			preventSleepEnabled: false,
+			preventDisplaySleepEnabled: false,
 			disableGpuAcceleration: false,
 			disableConfetti: false,
 			sshRemoteIgnorePatterns: ['.git', '*cache*'],
@@ -166,7 +167,7 @@ describe('useSettings', () => {
 			expect(result.current.leftSidebarWidth).toBe(256);
 			expect(result.current.rightPanelWidth).toBe(384);
 			expect(result.current.markdownEditMode).toBe(false);
-			expect(result.current.fileExplorerIconTheme).toBe('default');
+			expect(result.current.fileExplorerIconTheme).toBe('rich');
 		});
 
 		it('should have correct default values for logging settings', async () => {

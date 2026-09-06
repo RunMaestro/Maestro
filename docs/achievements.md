@@ -74,6 +74,8 @@ Separate from Conductor ranks, Maestro tracks your **keyboard mastery** based on
 |   3   | Virtuoso         | 75-99%         |
 |   4   | Keyboard Maestro | 100%           |
 
+Mastery counts only the shortcuts that have a chord bound, so unassigned actions never hold you below 100%.
+
 Your current keyboard mastery level and progress are shown in the **Keyboard Shortcuts panel** (press `?` or `Cmd/Ctrl+/` to open). The panel displays which shortcuts you've used (marked with a checkmark) and which remain to be discovered. See [Keyboard Shortcuts](./keyboard-shortcuts) for the full shortcut reference.
 
 ## Leaderboard

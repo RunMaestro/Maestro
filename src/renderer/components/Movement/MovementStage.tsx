@@ -180,7 +180,7 @@ const MovementPanel = memo(function MovementPanel({
 				</div>
 				{item.sourcePlugin && (
 					<span
-						className="flex-shrink-0 truncate rounded-full px-1.5 py-0.5 text-[10px] font-medium"
+						className="flex-shrink-0 truncate rounded-full px-1.5 py-0.5 text-2xs font-medium"
 						style={{
 							maxWidth: 120,
 							backgroundColor: `${theme.colors.accent}1f`,
@@ -277,7 +277,7 @@ const MovementPanel = memo(function MovementPanel({
 						{item.preparing && hasHtml && (
 							<div
 								data-testid="movement-revising-badge"
-								className="pointer-events-none absolute right-3 top-3 flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide shadow-lg"
+								className="pointer-events-none absolute right-3 top-3 flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-2xs font-semibold uppercase tracking-wide shadow-lg"
 								style={{
 									backgroundColor: theme.colors.bgSidebar,
 									borderColor: theme.colors.border,
@@ -412,7 +412,7 @@ export const MovementStage = memo(function MovementStage({ theme }: MovementStag
 						>
 							<LayoutGrid className="w-3.5 h-3.5" strokeWidth={2.5} />
 							<span
-								className="absolute -right-0.5 -top-0.5 min-w-3.5 h-3.5 px-0.5 rounded-full text-[9px] leading-[14px] text-center font-semibold"
+								className="absolute -right-0.5 -top-0.5 min-w-3.5 h-3.5 px-0.5 rounded-full text-3xs leading-[14px] text-center font-semibold"
 								style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textMain }}
 							>
 								{items.length}
@@ -432,7 +432,7 @@ export const MovementStage = memo(function MovementStage({ theme }: MovementStag
 								style={{ backgroundColor: theme.colors.border }}
 							/>
 							<span
-								className="flex-shrink-0 px-1 text-[10px] font-semibold uppercase tracking-wide"
+								className="flex-shrink-0 px-1 text-2xs font-semibold uppercase tracking-wide"
 								style={{ color: theme.colors.textDim }}
 							>
 								Concertos
@@ -449,7 +449,7 @@ export const MovementStage = memo(function MovementStage({ theme }: MovementStag
 											else setItemMinimized(item.id, true);
 										}}
 										tabIndex={taskbarExpanded ? 0 : -1}
-										className="min-w-0 max-w-36 flex-shrink flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-[11px] font-medium transition-colors"
+										className="min-w-0 max-w-36 flex-shrink flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-xs-plus font-medium transition-colors"
 										style={{
 											backgroundColor: isFront
 												? `${theme.colors.accent}24`

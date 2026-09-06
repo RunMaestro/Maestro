@@ -10,6 +10,7 @@
  *
  * Effects:
  *   - Session & group loading on mount (with React Strict Mode guard)
+ *   - Re-derives busy state from the main process's live turns after load
  *   - Sets initialLoadComplete + sessionsLoaded flags for splash coordination
  */
 
@@ -21,12 +22,17 @@ import { useGroupChatStore } from '../../stores/groupChatStore';
 import { gitService } from '../../services/git';
 import { generateId } from '../../utils/ids';
 import { isEphemeralBrowserTab, rehydrateBrowserTab } from '../../utils/browserTabPersistence';
+import { applyLiveAiTurns } from '../../utils/liveTurnReattach';
+import { fetchLiveAiTurns } from '../../services/process';
+import { useOwnedSessionGate } from '../agent/internal/useOwnedSessionGate';
 import { getRepairedUnifiedTabOrder } from '../../utils/tabHelpers';
 import { collectLeafTabRefs, normalizeTabGroups } from '../../utils/panelLayout';
 import { migrateLegacySnoozedTabs } from '../../utils/snoozeHelpers';
 import { isMediaStreamUrl } from '../../../shared/mediaTypes';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import { logger } from '../../utils/logger';
+import { readPersistedActiveSessionId } from '../../utils/activeSessionPersistence';
+import { useSessionLifecycleSync } from './useSessionLifecycleSync';
 
 /** Ids of the terminal tabs that are tiled into one of the session's tab groups. */
 function collectGroupedTerminalIds(session: { tabGroups?: Session['tabGroups'] }): Set<string> {
@@ -111,6 +117,12 @@ export function useSessionRestoration(): SessionRestorationReturn {
 		});
 	}, []) as React.MutableRefObject<boolean>;
 
+	// Window scoping for the live-turn reconcile below. A secondary window must
+	// not light up an agent the primary owns, and the gate is the one place that
+	// answers that (web-desktop's is a permit-all, which is what makes the
+	// reconcile work there at all).
+	const ownedGate = useOwnedSessionGate();
+
 	// --- validateAgentInBackground ---
 	// Checks agent availability without blocking session restoration.
 	// If the agent is unavailable, marks the session with error state.
@@ -146,6 +158,27 @@ export function useSessionRestoration(): SessionRestorationReturn {
 		},
 		[]
 	);
+
+	// --- reattachLiveAiTurns ---
+	// restoreSession resets every agent to idle because in the Electron app no
+	// spawned process survives a restart. The web-desktop bundle breaks that
+	// assumption: the page is a client of a main process that keeps running, so a
+	// browser reload (or a reconnect after the tab was suspended) drops the
+	// renderer's busy bookkeeping while the agent keeps working - the Left Bar
+	// draws the idle dot and the thinking pill never appears, even as the
+	// transcript fills in, because the output listeners route by process id and
+	// never needed that bookkeeping. Ask main what it is actually running and put
+	// the indicators back. On a cold Electron start the process table is empty, so
+	// this costs one round trip and changes nothing.
+	const reattachLiveAiTurns = useCallback(async () => {
+		const turns = await fetchLiveAiTurns();
+		// null means the probe failed, which is not the same answer as "nothing is
+		// running" - leave the restored state alone rather than guessing.
+		if (!turns || turns.length === 0) return;
+		const owned = turns.filter((turn) => ownedGate.current?.(`${turn.sessionId}-ai-${turn.tabId}`));
+		if (owned.length === 0) return;
+		setSessions((prev) => applyLiveAiTurns(prev, owned));
+	}, [ownedGate]);
 
 	// --- fetchGitInfoInBackground ---
 	const fetchGitInfoInBackground = useCallback(
@@ -621,7 +654,10 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					setSessions(restoredSessions);
 
 					// Restore persisted active session ID, falling back to first session.
-					const savedActiveSessionId = await window.maestro.sessions.getActiveSessionId();
+					// Read through the helper: a web-desktop client remembers its OWN
+					// focused agent, so a browser refresh returns to what the user was
+					// working in rather than to whatever the desktop has focused.
+					const savedActiveSessionId = await readPersistedActiveSessionId();
 					if (savedActiveSessionId && restoredSessions.find((s) => s.id === savedActiveSessionId)) {
 						// Saved ID is valid - hydrate locally without writing back to disk
 						hydrateActiveSessionId(savedActiveSessionId);
@@ -630,6 +666,12 @@ export function useSessionRestoration(): SessionRestorationReturn {
 						// doesn't retry the invalid ID on next launch
 						setActiveSessionId(restoredSessions[0].id);
 					}
+
+					// Put back the busy indicators for agents main is still running.
+					// Deliberately not awaited: it must not hold the splash, and a page
+					// that paints an agent idle for one frame before correcting itself is
+					// far better than one that waits on an IPC round trip to paint at all.
+					void reattachLiveAiTurns();
 
 					// Background tasks: agent validation + SSH git info.
 					// These run after splash hides so they never block startup.
@@ -686,6 +728,12 @@ export function useSessionRestoration(): SessionRestorationReturn {
 		};
 		loadSessionsAndGroups();
 	}, []);
+
+	// --- Peer client sync ---
+	// Agents another client (a second window, a web-desktop browser tab) creates
+	// or closes land here, restored through the same pass as a disk load. Wired
+	// from this hook because `restoreSession` is what prepares them.
+	useSessionLifecycleSync(restoreSession, reattachLiveAiTurns);
 
 	return {
 		initialLoadComplete,

@@ -102,24 +102,38 @@ export interface SendCrossAgentRequestOptions {
 }
 
 /**
+ * Pure: the note explaining why a consult ended, or null when it simply
+ * finished. The attribution header only carries `error` in an `sr-only` span, so
+ * the reason has to reach the bubble body or the user never sees it.
+ *
+ * Stop and failure are deliberately worded apart: the user pressing Stop is not
+ * the target agent failing to answer, and reporting it as one blames the wrong
+ * party for something the user chose.
+ */
+export function crossAgentTerminationNote(chunk: CrossAgentResponseChunk): string | null {
+	if (chunk.canceled) return `⏹ ${chunk.targetAgentName} was stopped.`;
+	if (chunk.error) return `⚠️ ${chunk.targetAgentName} could not respond: ${chunk.error}`;
+	return null;
+}
+
+/**
  * Pure: fold a chunk's text into the prior accumulation and resolve what should
  * be displayed. Exported for unit testing.
  *
- * Three cases, all of which must show the user WHY a consult failed - the
- * attribution header only carries `error` in an `sr-only` span, so the reason has
- * to reach the bubble body:
- * - success: the accumulated text, verbatim.
- * - error, nothing accumulated: a standalone failure note.
- * - error WITH partial text (a timed-out consult that had already said something):
- *   the partial, followed by the reason. Dropping either one loses information.
+ * Three cases:
+ * - finished cleanly: the accumulated text, verbatim.
+ * - ended early, nothing accumulated: the termination note on its own.
+ * - ended early WITH partial text (a stopped or timed-out consult that had
+ *   already said something): the partial, followed by the note. Dropping either
+ *   one loses information.
  */
 export function accumulateCrossAgentChunk(
 	prior: string,
 	chunk: CrossAgentResponseChunk
 ): { accumulated: string; displayText: string } {
 	const accumulated = prior + (chunk.chunk ?? '');
-	if (!chunk.error) return { accumulated, displayText: accumulated };
-	const note = `⚠️ ${chunk.targetAgentName} could not respond: ${chunk.error}`;
+	const note = crossAgentTerminationNote(chunk);
+	if (!note) return { accumulated, displayText: accumulated };
 	return {
 		accumulated,
 		displayText: accumulated ? `${accumulated}\n\n${note}` : note,
@@ -314,6 +328,8 @@ export function buildConsultHistoryEntry(opts: {
 	accumulated: string;
 	/** Failure reason, when the consult errored. */
 	error?: string;
+	/** The user stopped the consult; not a failure of the target agent. */
+	canceled?: boolean;
 	/** The target agent's provider session id, when one was captured. */
 	agentSessionId?: string;
 	/** Fallback label when there is no subject. */
@@ -333,12 +349,17 @@ export function buildConsultHistoryEntry(opts: {
 		? `↩ ${opts.subject}`
 		: (opts.consultTabName ?? opts.targetName ?? undefined) || undefined;
 
-	// A failed consult accumulates nothing, so the raw text alone would leave the
-	// detail view blank behind a red X. `error` is the only record of WHY, and it
-	// lives on the chunk - not in `accumulated` - so fold it in here the same way
-	// the inline bubble does (partial text first, then the reason).
-	const failureNote = opts.error ? `⚠️ Consult failed: ${opts.error}` : '';
-	const detailFallback = [opts.accumulated, failureNote].filter(Boolean).join('\n\n');
+	// A failed or stopped consult may accumulate nothing, so the raw text alone
+	// would leave the detail view blank. The reason lives on the chunk - not in
+	// `accumulated` - so fold it in here the same way the inline bubble does
+	// (partial text first, then the reason). A cancel is recorded as a SUCCESS
+	// with a note: the user stopping a consult is not the target failing.
+	const endNote = opts.canceled
+		? '⏹ Consult stopped by the user.'
+		: opts.error
+			? `⚠️ Consult failed: ${opts.error}`
+			: '';
+	const detailFallback = [opts.accumulated, endNote].filter(Boolean).join('\n\n');
 
 	return {
 		id: opts.entryId,
@@ -401,6 +422,7 @@ function recordConsultHistory(
 				subject: tracked.subject?.trim() || '',
 				accumulated: tracked.accumulated,
 				error: chunk.error,
+				canceled: chunk.canceled,
 				agentSessionId: chunk.targetAgentSessionId ?? consultTab?.agentSessionId ?? undefined,
 				consultTabName: consultTab?.name,
 				targetName: target.name,

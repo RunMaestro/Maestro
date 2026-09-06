@@ -749,7 +749,11 @@ describe('UnifiedHistoryTab', () => {
 		// must match what clicking the entry's session pill does.
 		it('jumps to the entry session via onSelectAlternate (Cmd+Enter)', async () => {
 			const entries = createMockEntries();
-			entries[0] = { ...entries[0], agentSessionId: 'agent-sess-abc' };
+			entries[0] = {
+				...entries[0],
+				agentSessionId: 'agent-sess-abc',
+				sessionName: 'Named Session',
+			};
 			mockGetUnifiedHistory.mockResolvedValue(createPaginatedResponse(entries));
 
 			const onResumeSession = vi.fn();
@@ -764,8 +768,10 @@ describe('UnifiedHistoryTab', () => {
 				mockOnSelectAlternate!(0);
 			});
 
-			// Both ids travel: the agent to switch to, and the session to open there.
-			expect(onResumeSession).toHaveBeenCalledWith('session-1', 'agent-sess-abc');
+			// Both ids travel: the agent to switch to, and the session to open there -
+			// plus the recorded name, which is the only surviving copy once the tab
+			// that carried it is closed.
+			expect(onResumeSession).toHaveBeenCalledWith('session-1', 'agent-sess-abc', 'Named Session');
 			// The jump replaces the detail modal rather than stacking on top of it.
 			expect(screen.queryByTestId('history-detail-modal')).not.toBeInTheDocument();
 		});

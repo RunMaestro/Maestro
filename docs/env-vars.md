@@ -126,6 +126,27 @@ This feature solves all of these issues by providing a single, unified source of
 10. Agent inherits all global env vars
 ```
 
+#### Parked (Disabled) Variables
+
+A variable switched off with the eye button in Settings → Environment is moved out of
+`shellEnvVars` and into a second record, `shellEnvVarsDisabled`. Both have the same shape,
+but nothing except the editor ever reads the disabled one - it exists so the key and value
+survive for later without appearing in any spawn.
+
+That split is deliberate. Every consumer of the effective environment (both spawners, the
+SSH wrapper, `resolveAgentEnvironment()`) keeps reading a single record and needs no filter:
+if a variable is in `shellEnvVars`, it is live. **Never merge `shellEnvVarsDisabled` into a
+spawn environment.**
+
+The same eye button, and the same split, exist per agent. A variable switched off in the
+agent editor (Edit Agent → Environment Variables) or on a Group Chat moderator moves from
+`customEnvVars` into `customEnvVarsDisabled` on the session record. The rule is identical:
+`customEnvVars` is the live record every spawn path reads, `customEnvVarsDisabled` is
+editor-only storage so a key and value survive without being passed to the agent. Both
+records ride along when an agent is duplicated into a git worktree, so a parked variable is
+not silently lost there either. **Never merge `customEnvVarsDisabled` into a spawn
+environment.**
+
 ---
 
 ## Precedence Rules

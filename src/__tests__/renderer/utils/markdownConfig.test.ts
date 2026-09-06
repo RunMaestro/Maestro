@@ -1082,3 +1082,49 @@ describe('createMarkdownComponents task checkboxes', () => {
 		expect(onTaskToggle).toHaveBeenCalledWith(3);
 	});
 });
+
+// ---------------------------------------------------------------------------
+// data-source-line passthrough
+//
+// `rehypeSourceLine` stamps `data-source-line` on every block, and
+// `lineSync.domGetTopLineByAttr` reads those tags to keep the preview and the
+// editor on the same source line across the toggle. A component override that
+// renders `React.createElement('p', null, ...)` silently eats the attribute, so
+// only HEADINGS stayed anchored - a document scrolled to the very top reported
+// the first heading's line, and hitting Edit jumped there.
+// ---------------------------------------------------------------------------
+
+describe('createMarkdownComponents source-line passthrough', () => {
+	const render1 = (tag: 'p' | 'li' | 'blockquote', extra: Record<string, unknown> = {}) => {
+		const components = createMarkdownComponents({ theme: mockTheme });
+		const Comp = components[tag] as any;
+		return Comp({ node: null, children: 'text', 'data-source-line': 7, ...extra });
+	};
+
+	it('forwards data-source-line on a paragraph', () => {
+		expect(render1('p').props['data-source-line']).toBe(7);
+	});
+
+	it('forwards data-source-line on a list item', () => {
+		expect(render1('li').props['data-source-line']).toBe(7);
+	});
+
+	it('forwards data-source-line on a plain blockquote, keeping its className', () => {
+		const el = render1('blockquote', { className: 'quote' });
+		expect(el.props['data-source-line']).toBe(7);
+		expect(el.props.className).toBe('quote');
+	});
+
+	// An alert callout renders a component rather than a <blockquote>, and its
+	// own wrapper owns the styling - the tag is not forwarded there on purpose.
+	it('still renders an alert callout for a tagged alert blockquote', () => {
+		const el = render1('blockquote', { className: 'markdown-alert markdown-alert-note' });
+		expect(typeof el.type).not.toBe('string');
+	});
+
+	it('does not leak the react-markdown node prop into the DOM', () => {
+		expect(render1('p').props.node).toBeUndefined();
+		expect(render1('li').props.node).toBeUndefined();
+		expect(render1('blockquote').props.node).toBeUndefined();
+	});
+});

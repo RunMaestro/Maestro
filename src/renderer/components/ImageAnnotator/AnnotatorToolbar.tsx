@@ -37,6 +37,7 @@ import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import type { AnnotatorTool, UseAnnotatorStateReturn } from './useAnnotatorState';
 import { ANNOTATOR_PALETTE } from './annotatorConstants';
+import { isAnnotatorTextEntry } from './annotatorKeyboard';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 
 interface AnnotatorToolbarProps {
@@ -116,13 +117,10 @@ export const AnnotatorToolbar = memo(function AnnotatorToolbar({
 	const handleCopyRef = useRef<() => Promise<void>>(() => Promise.resolve());
 	useEffect(() => {
 		const onKeyDown = (event: KeyboardEvent) => {
-			if (
-				event.target instanceof HTMLInputElement ||
-				event.target instanceof HTMLTextAreaElement ||
-				(event.target instanceof HTMLElement && event.target.isContentEditable)
-			) {
-				return;
-			}
+			// Only the annotator's OWN text fields get to keep these chords. A text
+			// field underneath the overlay is stale focus, not an editing session -
+			// deferring to it made Cmd+Z undo the user's chat message.
+			if (isAnnotatorTextEntry(event.target)) return;
 			const cmd = event.metaKey || event.ctrlKey;
 			if (!cmd || event.shiftKey || event.altKey) return;
 			const key = event.key.toLowerCase();

@@ -143,3 +143,35 @@ export function toRelativePath(absPath: string, projectRoot: string | undefined)
 	}
 	return null;
 }
+
+/**
+ * Union two or more index sets into one, preserving argument order so that
+ * `findClosestMatch`'s proximity tiebreak still prefers the earlier set when
+ * two trees happen to contain the same basename.
+ *
+ * Needed because a surface can sit over more than one root: the Auto Run panel
+ * resolves `[[Playbook]]` against its playbooks folder AND `[[Notes/Thing]]`
+ * against the agent's project, and those two trees have different roots so they
+ * cannot be concatenated as nodes.
+ */
+export function mergeFileTreeIndices(
+	...sets: (FileTreeIndices | null | undefined)[]
+): FileTreeIndices {
+	const allPaths = new Set<string>();
+	const filenameIndex = new Map<string, string[]>();
+	for (const set of sets) {
+		if (!set) continue;
+		for (const path of set.allPaths) allPaths.add(path);
+		for (const [filename, paths] of set.filenameIndex) {
+			const existing = filenameIndex.get(filename);
+			if (existing) {
+				for (const path of paths) {
+					if (!existing.includes(path)) existing.push(path);
+				}
+			} else {
+				filenameIndex.set(filename, [...paths]);
+			}
+		}
+	}
+	return { allPaths, filenameIndex };
+}

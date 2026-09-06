@@ -101,6 +101,25 @@ describe('useScrollIntoView', () => {
 			});
 		});
 
+		it('scrolls instantly when the caller asks for auto behavior', () => {
+			// A list the user HOLDS an arrow key on needs an instant scroll: the key
+			// repeats faster than a smooth scroll animates, so each repeat would
+			// cancel the animation in flight.
+			const { result, rerender } = renderHook(
+				({ isOpen, selectedIndex }) => useScrollIntoView(isOpen, selectedIndex, 3, 'auto'),
+				{ initialProps: { isOpen: false, selectedIndex: 0 } }
+			);
+
+			result.current.current[0] = document.createElement('div');
+
+			rerender({ isOpen: true, selectedIndex: 0 });
+
+			expect(mockScrollIntoView).toHaveBeenCalledWith({
+				behavior: 'auto',
+				block: 'nearest',
+			});
+		});
+
 		it('scrolls when selected index changes', () => {
 			const { result, rerender } = renderHook(
 				({ isOpen, selectedIndex }) => useScrollIntoView(isOpen, selectedIndex, 3),

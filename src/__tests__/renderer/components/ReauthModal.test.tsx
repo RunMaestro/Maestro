@@ -67,6 +67,15 @@ vi.mock('../../../renderer/components/XTerminal', () => {
 	return { XTerminal };
 });
 
+// `vi.mock` is hoisted above ordinary declarations, so the flag it reads has
+// to be hoisted too.
+const platformState = vi.hoisted(() => ({ current: 'darwin' }));
+vi.mock('../../../renderer/utils/platformUtils', () => ({
+	isWindowsPlatform: () => platformState.current === 'win32',
+	isMacOSPlatform: () => platformState.current === 'darwin',
+	isLinuxPlatform: () => platformState.current === 'linux',
+}));
+
 const mockSpawnTerminalTab = vi.fn();
 const mockWrite = vi.fn();
 const mockKill = vi.fn();
@@ -93,6 +102,7 @@ beforeEach(() => {
 	mockWrite.mockResolvedValue(true);
 	mockKill.mockResolvedValue(true);
 	mockGetCustomEnvVars.mockResolvedValue({});
+	platformState.current = 'darwin';
 	// Each test owns its own global layer; the store persists between them.
 	useSettingsStore.setState({ shellEnvVars: {} } as never);
 
@@ -137,7 +147,7 @@ describe('ReauthModal', () => {
 		// how a remote login came up as an empty box.
 		expect(mockWrite).not.toHaveBeenCalled();
 		await emitShellOutput(mockSpawnTerminalTab.mock.calls[0][0].sessionId);
-		expect(mockWrite).toHaveBeenCalledWith(expect.any(String), 'claude /login\n');
+		expect(mockWrite).toHaveBeenCalledWith(expect.any(String), 'claude /login\r');
 	});
 
 	// The routing key is load-bearing twice over: `-terminal-` makes PtySpawner
@@ -184,7 +194,7 @@ describe('ReauthModal', () => {
 
 		// ...and that shell is the one that gets the login typed into it.
 		await emitShellOutput(liveSessionId);
-		expect(mockWrite).toHaveBeenCalledWith(liveSessionId, 'claude /login\n');
+		expect(mockWrite).toHaveBeenCalledWith(liveSessionId, 'claude /login\r');
 	});
 
 	// The abandoned attempt's promise resolves after the remount. It must not
@@ -226,7 +236,7 @@ describe('ReauthModal', () => {
 				vi.advanceTimersByTime(8000);
 			});
 
-			expect(mockWrite).toHaveBeenCalledWith(expect.any(String), 'claude /login\n');
+			expect(mockWrite).toHaveBeenCalledWith(expect.any(String), 'claude /login\r');
 		} finally {
 			vi.useRealTimers();
 		}
@@ -292,7 +302,7 @@ describe('ReauthModal', () => {
 
 		expect(screen.getByText(/then type \/login/)).toBeInTheDocument();
 		await emitShellOutput(mockSpawnTerminalTab.mock.calls[0][0].sessionId);
-		expect(mockWrite).toHaveBeenCalledWith(expect.any(String), 'droid\n');
+		expect(mockWrite).toHaveBeenCalledWith(expect.any(String), 'droid\r');
 	});
 
 	// The Terminal agent is a plain shell: there is no credential to refresh, so
@@ -538,5 +548,177 @@ describe('ReauthModal credential kinds', () => {
 	it('still offers to resume the blocked agents', async () => {
 		await renderWithEnv({ ANTHROPIC_API_KEY: 'sk-live-xxx' });
 		expect(screen.getByTestId('reauth-resume')).toBeInTheDocument();
+	});
+});
+
+/**
+ * The sign-in URL is the one thing on this screen the user cannot get at by
+ * hand: it is hundreds of characters, the provider TUI soft-wraps it across
+ * rows, and mouse tracking eats the drag that would select it. These cover the
+ * wiring rather than the matching (see `loginUrl.test.ts` for that) - the part
+ * that can silently break is the accumulation across PTY chunks, since a
+ * wrapped URL never arrives in one.
+ */
+describe('ReauthModal login URL', () => {
+	let writeText: ReturnType<typeof vi.fn>;
+
+	beforeEach(() => {
+		writeText = vi.fn().mockResolvedValue(undefined);
+		Object.defineProperty(window.navigator, 'clipboard', {
+			value: { writeText },
+			configurable: true,
+		});
+	});
+
+	/** Mount the dialog and return the PTY id its login shell was spawned on. */
+	async function renderAndSpawn(): Promise<string> {
+		const session = createMockSession({ id: 'sess-1', toolType: 'claude-code' });
+		render(
+			<ReauthModal
+				theme={mockTheme}
+				outage={createOutage({ toolType: 'claude-code' })}
+				session={session}
+				onClose={vi.fn()}
+			/>
+		);
+		await flushSpawn();
+		return mockSpawnTerminalTab.mock.calls[0][0].sessionId;
+	}
+
+	it('offers nothing until the provider prints a URL', async () => {
+		const ptyId = await renderAndSpawn();
+		await emitShellOutput(ptyId, 'Starting login...\n');
+
+		expect(screen.queryByTestId('reauth-copy-url')).not.toBeInTheDocument();
+	});
+
+	it('copies a URL that arrived split across PTY chunks', async () => {
+		const ptyId = await renderAndSpawn();
+
+		// A real login URL is longer than the terminal is wide, so it reaches the
+		// renderer as several writes with the wrap in the middle of the query.
+		await emitShellOutput(ptyId, 'Open this URL:\n\n  https://claude.ai/oauth/authorize?client_id');
+		await emitShellOutput(
+			ptyId,
+			'=9d1c&redirect_uri=http%3A%2F%2Flocal\nhost%3A45289%2Fcallback\n'
+		);
+
+		fireEvent.click(await screen.findByTestId('reauth-copy-url'));
+
+		await waitFor(() =>
+			expect(writeText).toHaveBeenCalledWith(
+				'https://claude.ai/oauth/authorize?client_id=9d1c&redirect_uri=http%3A%2F%2Flocalhost%3A45289%2Fcallback'
+			)
+		);
+	});
+
+	// A retried login prints a fresh URL; copying the spent one fails with no
+	// sign anything is wrong.
+	it('follows the flow to a reissued URL', async () => {
+		const ptyId = await renderAndSpawn();
+		await emitShellOutput(ptyId, 'https://claude.ai/oauth/authorize?attempt=1\n');
+		await emitShellOutput(
+			ptyId,
+			'That code expired.\nhttps://claude.ai/oauth/authorize?attempt=2\n'
+		);
+
+		fireEvent.click(screen.getByTestId('reauth-copy-url'));
+
+		await waitFor(() =>
+			expect(writeText).toHaveBeenCalledWith('https://claude.ai/oauth/authorize?attempt=2')
+		);
+	});
+
+	// The login shell prints plenty of URLs that are not the sign-in link.
+	it('stays hidden for output that carries no sign-in link', async () => {
+		const ptyId = await renderAndSpawn();
+		await emitShellOutput(ptyId, 'Docs: https://example.com/help\n');
+
+		expect(screen.queryByTestId('reauth-copy-url')).not.toBeInTheDocument();
+	});
+});
+describe('ReauthModal on Windows', () => {
+	/** Windows agents are ALWAYS spawned as native processes - never via wsl.exe. */
+	function windowsSession(overrides: Record<string, unknown> = {}) {
+		platformState.current = 'win32';
+		return createMockSession({ id: 'sess-1', toolType: 'claude-code', ...overrides } as never);
+	}
+
+	// A login inside WSL writes credentials to the WSL home directory, which the
+	// native agent never reads: the flow would appear to succeed and fix nothing.
+	it('never runs the login in WSL, because the agent is a native process', async () => {
+		useSettingsStore.setState({ defaultShell: 'wsl' } as never);
+		const session = windowsSession();
+		render(
+			<ReauthModal theme={mockTheme} outage={createOutage()} session={session} onClose={vi.fn()} />
+		);
+		await flushSpawn();
+
+		expect(mockSpawnTerminalTab.mock.calls[0][0].shell).toBe('powershell');
+	});
+
+	it('honours a native Windows shell the user chose', async () => {
+		useSettingsStore.setState({ defaultShell: 'pwsh' } as never);
+		render(
+			<ReauthModal
+				theme={mockTheme}
+				outage={createOutage()}
+				session={windowsSession()}
+				onClose={vi.fn()}
+			/>
+		);
+		await flushSpawn();
+
+		expect(mockSpawnTerminalTab.mock.calls[0][0].shell).toBe('pwsh');
+	});
+
+	// An SSH remote has its own shell and its own credential store, so the
+	// Windows-only override must not reach across the connection.
+	it('leaves the shell alone for an SSH remote agent', async () => {
+		useSettingsStore.setState({ defaultShell: 'wsl' } as never);
+		const session = windowsSession({
+			sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+		});
+		render(
+			<ReauthModal theme={mockTheme} outage={createOutage()} session={session} onClose={vi.fn()} />
+		);
+		await flushSpawn();
+
+		expect(mockSpawnTerminalTab.mock.calls[0][0].shell).toBe('wsl');
+	});
+
+	// PowerShell echoes a line that starts with a quoted string instead of
+	// running it, so the call operator is what makes the login actually start.
+	it('types a PowerShell-safe command for a path with spaces', async () => {
+		useSettingsStore.setState({ defaultShell: 'powershell' } as never);
+		const session = windowsSession({ customPath: 'C:\\Program Files\\Claude\\claude.exe' });
+		render(
+			<ReauthModal theme={mockTheme} outage={createOutage()} session={session} onClose={vi.fn()} />
+		);
+		await flushSpawn();
+		await emitShellOutput(mockSpawnTerminalTab.mock.calls[0][0].sessionId);
+
+		expect(mockWrite).toHaveBeenCalledWith(
+			expect.any(String),
+			'& "C:\\Program Files\\Claude\\claude.exe" /login\r'
+		);
+	});
+
+	// ConPTY passes LF through as Ctrl+J, which PSReadLine does not treat as
+	// "run this line". CR is what a real Enter key sends on every platform.
+	it('submits with CR rather than LF', async () => {
+		useSettingsStore.setState({ defaultShell: 'powershell' } as never);
+		render(
+			<ReauthModal
+				theme={mockTheme}
+				outage={createOutage()}
+				session={windowsSession()}
+				onClose={vi.fn()}
+			/>
+		);
+		await flushSpawn();
+		await emitShellOutput(mockSpawnTerminalTab.mock.calls[0][0].sessionId);
+
+		expect(mockWrite).toHaveBeenCalledWith(expect.any(String), 'claude /login\r');
 	});
 });

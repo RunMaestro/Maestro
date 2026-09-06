@@ -11,6 +11,7 @@ import type { Session, Theme, AITab, BatchRunState, ThinkingItem } from '../type
 import { formatTokensCompact } from '../utils/formatters';
 import { sleepAwareElapsedSince } from '../services/systemSleep';
 import { formatElapsedTicker } from '../../shared/duration';
+import { StopTurnButton } from './ui/StopTurnButton';
 
 interface ThinkingStatusPillProps {
 	/** Pre-filtered flat list of (session, tab) pairs - one entry per busy tab across all agents.
@@ -48,6 +49,9 @@ const ElapsedTimeDisplay = memo(
 		}, [startTime]);
 
 		return (
+			// Monospace on purpose, unlike the name slots around it: this counts up
+			// once a second, and proportional digits change width as they tick, so
+			// the pill would twitch on every frame.
 			<span className="font-mono text-xs" style={{ color: textColor }}>
 				{formatElapsedTicker(elapsedSeconds * 1000)}
 			</span>
@@ -124,9 +128,7 @@ const ThinkingItemRow = memo(
 					<span className="text-xs truncate">
 						<span className="font-medium">{maestroName}</span>
 						<span style={{ color: theme.colors.textDim }}> / </span>
-						<span className="font-mono" style={{ color: theme.colors.textDim }}>
-							{tabDisplayName}
-						</span>
+						<span style={{ color: theme.colors.textDim }}>{tabDisplayName}</span>
 					</span>
 				</div>
 				<div
@@ -194,7 +196,7 @@ const AutoRunRow = memo(
 					<button
 						onClick={() => !isStopping && onStop()}
 						disabled={isStopping}
-						className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors ${
+						className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-2xs font-medium transition-colors ${
 							isStopping ? 'cursor-not-allowed' : 'hover:opacity-80'
 						}`}
 						style={{
@@ -403,7 +405,7 @@ const AutoRunPill = memo(
 								}}
 								title={`+${concurrentCount} more running`}
 							>
-								<span className="text-[10px] font-bold" style={{ color: theme.colors.warning }}>
+								<span className="text-2xs font-bold" style={{ color: theme.colors.warning }}>
 									+{concurrentCount}
 								</span>
 							</div>
@@ -425,7 +427,7 @@ const AutoRunPill = memo(
 								}}
 							>
 								<div
-									className="px-3 py-1.5 text-[10px] uppercase tracking-wide font-semibold"
+									className="px-3 py-1.5 text-2xs uppercase tracking-wide font-semibold"
 									style={{
 										color: theme.colors.textDim,
 										backgroundColor: theme.colors.bgActivity,
@@ -579,6 +581,10 @@ function ThinkingStatusPillInner({
 	// prefer namedSessions, then tab name, then UUID octet (NOT session name - that's already shown)
 	const displayClaudeId =
 		customName || tabName || (agentSessionId ? agentSessionId.substring(0, 8).toUpperCase() : null);
+	// True only when the two name sources were empty and this fell through to the
+	// raw session id. A name is prose and belongs in the interface font; a hex
+	// octet is an identifier and reads better in the code face.
+	const displayIsSessionId = !customName && !tabName && Boolean(agentSessionId);
 
 	// For tooltip, show all available info
 	const tooltipParts = [maestroSessionName];
@@ -665,7 +671,9 @@ function ThinkingStatusPillInner({
 						<div className="w-px h-4 shrink-0" style={{ backgroundColor: theme.colors.border }} />
 						<button
 							onClick={() => onSessionClick?.(primarySession.id, primaryTab?.id)}
-							className="text-xs font-mono hover:underline cursor-pointer truncate min-w-0"
+							className={`text-xs hover:underline cursor-pointer truncate min-w-0${
+								displayIsSessionId ? ' font-mono' : ''
+							}`}
 							style={{ color: theme.colors.accent }}
 							title={
 								agentSessionId
@@ -690,7 +698,7 @@ function ThinkingStatusPillInner({
 						}}
 						title={`+${extraCount} more running`}
 					>
-						<span className="text-[10px] font-bold" style={{ color: theme.colors.warning }}>
+						<span className="text-2xs font-bold" style={{ color: theme.colors.warning }}>
 							+{extraCount}
 						</span>
 					</div>
@@ -700,21 +708,7 @@ function ThinkingStatusPillInner({
 				{onInterrupt && (
 					<>
 						<div className="w-px h-4 shrink-0" style={{ backgroundColor: theme.colors.border }} />
-						<button
-							type="button"
-							onClick={onInterrupt}
-							className="flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium transition-colors hover:opacity-80"
-							style={{
-								backgroundColor: theme.colors.error,
-								color: 'white',
-							}}
-							title="Interrupt Claude (Ctrl+C)"
-						>
-							<svg className="w-3 h-3" viewBox="0 0 24 24" fill="currentColor">
-								<rect x="6" y="6" width="12" height="12" rx="1" />
-							</svg>
-							Stop
-						</button>
+						<StopTurnButton theme={theme} onClick={onInterrupt} />
 					</>
 				)}
 
@@ -733,7 +727,7 @@ function ThinkingStatusPillInner({
 							}}
 						>
 							<div
-								className="px-3 py-1.5 text-[10px] uppercase tracking-wide font-semibold"
+								className="px-3 py-1.5 text-2xs uppercase tracking-wide font-semibold"
 								style={{
 									color: theme.colors.textDim,
 									backgroundColor: theme.colors.bgActivity,

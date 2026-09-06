@@ -106,7 +106,7 @@ export function UsageDashboardHeader({
 
 				<button
 					onClick={onExport}
-					className="flex items-center gap-1.5 px-3 py-1.5 rounded text-sm hover:bg-opacity-10 transition-colors"
+					className="flex items-center gap-1.5 px-3 py-1.5 rounded text-sm row-hover transition-colors"
 					style={{
 						color: theme.colors.textMain,
 						backgroundColor: `${theme.colors.accent}15`,
@@ -138,7 +138,7 @@ export function UsageDashboardHeader({
 
 				<button
 					onClick={onClose}
-					className="p-1.5 rounded hover:bg-opacity-10 transition-colors"
+					className="p-1.5 rounded row-hover transition-colors"
 					style={{ color: theme.colors.textDim }}
 					onMouseEnter={(event) =>
 						(event.currentTarget.style.backgroundColor = `${theme.colors.accent}20`)

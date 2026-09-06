@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { nthLineStartOffset } from '../../../../renderer/components/FilePreview/lineSync';
+import {
+	nthLineStartOffset,
+	domGetTopLineByAttr,
+	domScrollToLineByAttr,
+} from '../../../../renderer/components/FilePreview/lineSync';
 
 describe('nthLineStartOffset', () => {
 	const text = 'alpha\nbravo\ncharlie\ndelta';
@@ -46,5 +50,100 @@ describe('nthLineStartOffset', () => {
 		expect(nthLineStartOffset(blanks, 2)).toBe(2); // first blank
 		expect(nthLineStartOffset(blanks, 3)).toBe(3); // second blank
 		expect(nthLineStartOffset(blanks, 4)).toBe(4); // 'b'
+	});
+});
+
+// ---------------------------------------------------------------------------
+// domGetTopLineByAttr / domScrollToLineByAttr
+//
+// jsdom has no layout engine, so every rect is stubbed. That is fine here: the
+// only thing under test is which tagged block the walk picks for a given set of
+// tops, which is pure arithmetic over those rects.
+// ---------------------------------------------------------------------------
+
+/** A container whose `[data-source-line]` blocks report the given tops. */
+function stubContainer(blocks: Array<{ line: number; top: number }>): HTMLElement {
+	const container = document.createElement('div');
+	for (const b of blocks) {
+		const el = document.createElement('p');
+		el.setAttribute('data-source-line', String(b.line));
+		el.getBoundingClientRect = () => ({ top: b.top, height: 10 }) as DOMRect;
+		container.appendChild(el);
+	}
+	return container;
+}
+
+/** A scroller whose viewport top edge is at y=100. */
+function stubScroller(): HTMLElement {
+	const el = document.createElement('div');
+	el.getBoundingClientRect = () => ({ top: 100, height: 500 }) as DOMRect;
+	return el;
+}
+
+describe('domGetTopLineByAttr', () => {
+	it('returns null when nothing is tagged', () => {
+		expect(domGetTopLineByAttr(stubScroller(), stubContainer([]))).toBeNull();
+	});
+
+	// The bug: a container's own padding puts even the first block below the
+	// fold at scrollTop 0, so the old `blocks[0]` fallback answered "the first
+	// heading" for a document sitting at the very top - and the editor jumped
+	// there on Edit.
+	it('reports line 1 when no block has reached the fold yet', () => {
+		const container = stubContainer([
+			{ line: 8, top: 124 },
+			{ line: 20, top: 400 },
+		]);
+		expect(domGetTopLineByAttr(stubScroller(), container)).toBe(1);
+	});
+
+	it('reports the last block at or above the fold', () => {
+		const container = stubContainer([
+			{ line: 1, top: -300 },
+			{ line: 8, top: 60 },
+			{ line: 20, top: 400 },
+		]);
+		expect(domGetTopLineByAttr(stubScroller(), container)).toBe(8);
+	});
+
+	it('reports block one once it is exactly at the fold', () => {
+		const container = stubContainer([
+			{ line: 1, top: 100 },
+			{ line: 8, top: 380 },
+		]);
+		expect(domGetTopLineByAttr(stubScroller(), container)).toBe(1);
+	});
+});
+
+describe('domScrollToLineByAttr', () => {
+	it('returns false when nothing is tagged', () => {
+		expect(domScrollToLineByAttr(stubScroller(), stubContainer([]), 5)).toBe(false);
+	});
+
+	// Aligning block one with the scroller edge would scroll the container's
+	// leading padding away, landing a few pixels short of the actual top.
+	it('scrolls to a hard 0 for a line at or above the first block', () => {
+		const scroller = stubScroller();
+		scroller.scrollTop = 900;
+		const container = stubContainer([
+			{ line: 4, top: 124 },
+			{ line: 20, top: 400 },
+		]);
+		expect(domScrollToLineByAttr(scroller, container, 1)).toBe(true);
+		expect(scroller.scrollTop).toBe(0);
+	});
+
+	it('aligns the block that contains the requested line', () => {
+		const scroller = stubScroller();
+		scroller.scrollTop = 50;
+		const container = stubContainer([
+			{ line: 1, top: 100 },
+			{ line: 8, top: 380 },
+			{ line: 20, top: 900 },
+		]);
+		// Line 12 falls inside the block that starts at line 8 (top 380), which
+		// is 280px below the fold, so the scroller advances by exactly that.
+		expect(domScrollToLineByAttr(scroller, container, 12)).toBe(true);
+		expect(scroller.scrollTop).toBe(330);
 	});
 });

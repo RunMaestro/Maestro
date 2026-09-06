@@ -190,7 +190,12 @@ export function ExecutionQueueIndicator({
 							type="button"
 							onClick={canJump ? () => onSwitchTab?.(session.id, tab.tabId) : undefined}
 							disabled={!canJump}
-							className={`px-1.5 py-0.5 rounded text-xs font-mono overflow-hidden text-ellipsis transition-all ${
+							// A tab name is prose the user typed (or that was auto-named
+							// from their prompt), not code, so it follows the interface
+							// font. `font-mono` now resolves to the CODE face, which put
+							// these labels in a different font from every other label
+							// around them once the interface went proportional.
+							className={`px-1.5 py-0.5 rounded text-xs overflow-hidden text-ellipsis transition-all ${
 								canJump ? 'hover:opacity-80 cursor-pointer' : 'cursor-default'
 							}`}
 							style={{

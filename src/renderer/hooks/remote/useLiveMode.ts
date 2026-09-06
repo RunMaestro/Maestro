@@ -10,7 +10,7 @@
  * Calls IPC: window.maestro.tunnel, window.maestro.live
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { logger } from '../../utils/logger';
 
 // ============================================================================
@@ -32,9 +32,55 @@ export interface UseLiveModeReturn {
 // Hook implementation
 // ============================================================================
 
-export function useLiveMode(): UseLiveModeReturn {
+export function useLiveMode(autoStart = false): UseLiveModeReturn {
 	const [isLiveMode, setIsLiveMode] = useState(false);
 	const [webInterfaceUrl, setWebInterfaceUrl] = useState<string | null>(null);
+
+	useEffect(() => {
+		if (!autoStart) return;
+
+		let cancelled = false;
+		const enableLiveMode = async () => {
+			try {
+				const existingUrl = await window.maestro.live.getDashboardUrl();
+				if (cancelled) return;
+				if (existingUrl) {
+					setIsLiveMode(true);
+					setWebInterfaceUrl(existingUrl);
+					return;
+				}
+
+				const result = await window.maestro.live.startServer();
+				if (cancelled) {
+					// This effect initiated the server, so disabling auto-start or
+					// unmounting before it finishes must not leave an ownerless process.
+					if (result.success) {
+						try {
+							await window.maestro.live.stopServer();
+						} catch (error) {
+							logger.error('[useLiveMode] Failed to stop cancelled auto-start:', undefined, error);
+						}
+					}
+					return;
+				}
+				if (result.success && result.url) {
+					setIsLiveMode(true);
+					setWebInterfaceUrl(result.url);
+				} else {
+					logger.error('[useLiveMode] Failed to auto-start server:', undefined, result.error);
+				}
+			} catch (error) {
+				if (!cancelled) {
+					logger.error('[useLiveMode] Auto-start failed:', undefined, error);
+				}
+			}
+		};
+
+		void enableLiveMode();
+		return () => {
+			cancelled = true;
+		};
+	}, [autoStart]);
 
 	const toggleGlobalLive = useCallback(async () => {
 		try {

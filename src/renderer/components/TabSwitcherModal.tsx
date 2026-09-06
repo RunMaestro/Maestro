@@ -20,7 +20,7 @@ import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { formatTokensCompact, formatRelativeTime, formatCost } from '../utils/formatters';
 import { calculateContextDisplay, calculateDisplayInputTokens } from '../utils/contextUsage';
 import { getExtensionColor } from '../utils/extensionColors';
-import { getTabDisplayName } from '../utils/tabHelpers';
+import { getTabDisplayName, visibleAiTabs } from '../utils/tabHelpers';
 import { useWizardActiveTabs } from '../contexts/InlineWizardContext';
 import { isWizardTab } from '../utils/wizardActivity';
 import { WizardIndicator } from './SessionList/WizardIndicator';
@@ -192,7 +192,7 @@ function ContextGauge({
 				/>
 			</svg>
 			{/* Percentage text in center */}
-			<span className="absolute text-[9px] font-bold" style={{ color }}>
+			<span className="absolute text-3xs font-bold" style={{ color }}>
 				{percentage}%
 			</span>
 		</div>
@@ -213,7 +213,7 @@ const EMPTY_BROWSER_TABS: BrowserTab[] = [];
  */
 export function TabSwitcherModal({
 	theme,
-	tabs,
+	tabs: allTabs,
 	fileTabs = EMPTY_FILE_TABS,
 	terminalTabs = EMPTY_TERMINAL_TABS,
 	browserTabs = EMPTY_BROWSER_TABS,
@@ -232,6 +232,13 @@ export function TabSwitcherModal({
 	onClose,
 	colorBlindMode,
 }: TabSwitcherModalProps) {
+	// Hidden cross-agent consult tabs are not open tabs. They hold the transcript of
+	// a question another agent's user asked, have no chip in the strip, and surface
+	// only when the user opens one from a response bubble. Listing one here offers a
+	// row with nothing to click back from, and syncing its generated `↩ Name` to the
+	// named-session store would invent a session name the user never chose.
+	const tabs = useMemo(() => visibleAiTabs(allTabs), [allTabs]);
+
 	// A tab running `/wizard` looks like any other row here, and its wizard is the one
 	// thing about it the user can't see from the tab strip once the strip overflows.
 	// Read the live map rather than `tab.wizardState`, which is only mirrored onto the
@@ -742,7 +749,7 @@ export function TabSwitcherModal({
 							).length}
 						)
 					</button>
-					<span className="text-[10px] opacity-50 ml-auto" style={{ color: theme.colors.textDim }}>
+					<span className="text-2xs opacity-50 ml-auto" style={{ color: theme.colors.textDim }}>
 						Tab / ⇧Tab to switch
 					</span>
 				</div>
@@ -777,7 +784,7 @@ export function TabSwitcherModal({
 									key={tab.id}
 									ref={isSelected ? selectedItemRef : null}
 									onClick={() => handleSelectByIndex(i)}
-									className="w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-opacity-10"
+									className="w-full text-left px-4 py-3 flex items-center gap-3 row-hover"
 									style={{
 										backgroundColor: isSelected ? theme.colors.accent : 'transparent',
 										color: isSelected ? theme.colors.accentForeground : theme.colors.textMain,
@@ -820,7 +827,7 @@ export function TabSwitcherModal({
 											/>
 											{tab.name && uuidPill && (
 												<span
-													className="text-[10px] px-1.5 py-0.5 rounded font-mono flex-shrink-0"
+													className="text-2xs px-1.5 py-0.5 rounded font-mono flex-shrink-0"
 													style={{
 														backgroundColor: isSelected
 															? 'rgba(255,255,255,0.2)'
@@ -835,7 +842,7 @@ export function TabSwitcherModal({
 											)}
 											{tab.starred && <span style={{ color: theme.colors.warning }}>★</span>}
 										</div>
-										<div className="flex items-center gap-3 text-[10px] opacity-60">
+										<div className="flex items-center gap-3 text-2xs opacity-60">
 											{tab.usageStats && (
 												<>
 													<span>
@@ -879,7 +886,7 @@ export function TabSwitcherModal({
 									key={tab.id}
 									ref={isSelected ? selectedItemRef : null}
 									onClick={() => handleSelectByIndex(i)}
-									className="w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-opacity-10"
+									className="w-full text-left px-4 py-3 flex items-center gap-3 row-hover"
 									style={{
 										backgroundColor: isSelected ? theme.colors.accent : 'transparent',
 										color: isSelected ? theme.colors.accentForeground : theme.colors.textMain,
@@ -915,7 +922,7 @@ export function TabSwitcherModal({
 											<span className="font-medium truncate">{tab.name}</span>
 											{/* Extension badge - uppercase without leading dot */}
 											<span
-												className="text-[9px] px-1 py-0.5 rounded font-semibold uppercase flex-shrink-0"
+												className="text-3xs px-1 py-0.5 rounded font-semibold uppercase flex-shrink-0"
 												style={{
 													backgroundColor: isSelected ? 'rgba(255,255,255,0.2)' : extColors.bg,
 													color: isSelected ? theme.colors.accentForeground : extColors.text,
@@ -926,7 +933,7 @@ export function TabSwitcherModal({
 											{/* Unsaved indicator */}
 											{hasUnsavedEdits && (
 												<span
-													className="text-[10px] opacity-80"
+													className="text-2xs opacity-80"
 													style={{ color: theme.colors.warning }}
 												>
 													●
@@ -934,14 +941,14 @@ export function TabSwitcherModal({
 											)}
 										</div>
 										{/* File path (truncated) */}
-										<div className="flex items-center gap-3 text-[10px] opacity-60 truncate">
+										<div className="flex items-center gap-3 text-2xs opacity-60 truncate">
 											<span className="truncate">{tab.path}</span>
 										</div>
 									</div>
 
 									{/* File indicator instead of gauge */}
 									<div
-										className="flex-shrink-0 text-[10px] px-2 py-1 rounded"
+										className="flex-shrink-0 text-2xs px-2 py-1 rounded"
 										style={{
 											backgroundColor: isSelected ? 'rgba(255,255,255,0.2)' : theme.colors.bgMain,
 											color: isSelected ? theme.colors.accentForeground : theme.colors.textDim,
@@ -962,7 +969,7 @@ export function TabSwitcherModal({
 									key={tab.id}
 									ref={isSelected ? selectedItemRef : null}
 									onClick={() => handleSelectByIndex(i)}
-									className="w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-opacity-10"
+									className="w-full text-left px-4 py-3 flex items-center gap-3 row-hover"
 									style={{
 										backgroundColor: isSelected ? theme.colors.accent : 'transparent',
 										color: isSelected ? theme.colors.accentForeground : theme.colors.textMain,
@@ -997,7 +1004,7 @@ export function TabSwitcherModal({
 										<div className="flex items-center gap-2">
 											<span className="font-medium truncate">{displayName}</span>
 											<span
-												className="text-[9px] px-1 py-0.5 rounded font-semibold uppercase flex-shrink-0"
+												className="text-3xs px-1 py-0.5 rounded font-semibold uppercase flex-shrink-0"
 												style={{
 													backgroundColor: isSelected
 														? 'rgba(255,255,255,0.2)'
@@ -1008,14 +1015,14 @@ export function TabSwitcherModal({
 												{tab.shellType}
 											</span>
 										</div>
-										<div className="flex items-center gap-3 text-[10px] opacity-60 truncate">
+										<div className="flex items-center gap-3 text-2xs opacity-60 truncate">
 											<span className="truncate">{tab.cwd}</span>
 										</div>
 									</div>
 
 									{/* Terminal indicator */}
 									<div
-										className="flex-shrink-0 text-[10px] px-2 py-1 rounded"
+										className="flex-shrink-0 text-2xs px-2 py-1 rounded"
 										style={{
 											backgroundColor: isSelected ? 'rgba(255,255,255,0.2)' : theme.colors.bgMain,
 											color: isSelected ? theme.colors.accentForeground : theme.colors.textDim,
@@ -1036,7 +1043,7 @@ export function TabSwitcherModal({
 									key={tab.id}
 									ref={isSelected ? selectedItemRef : null}
 									onClick={() => handleSelectByIndex(i)}
-									className="w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-opacity-10"
+									className="w-full text-left px-4 py-3 flex items-center gap-3 row-hover"
 									style={{
 										backgroundColor: isSelected ? theme.colors.accent : 'transparent',
 										color: isSelected ? theme.colors.accentForeground : theme.colors.textMain,
@@ -1072,14 +1079,14 @@ export function TabSwitcherModal({
 											<span className="font-medium truncate">{displayName}</span>
 										</div>
 										{/* URL (truncated) */}
-										<div className="flex items-center gap-3 text-[10px] opacity-60 truncate">
+										<div className="flex items-center gap-3 text-2xs opacity-60 truncate">
 											<span className="truncate">{tab.url}</span>
 										</div>
 									</div>
 
 									{/* Browser indicator */}
 									<div
-										className="flex-shrink-0 text-[10px] px-2 py-1 rounded"
+										className="flex-shrink-0 text-2xs px-2 py-1 rounded"
 										style={{
 											backgroundColor: isSelected ? 'rgba(255,255,255,0.2)' : theme.colors.bgMain,
 											color: isSelected ? theme.colors.accentForeground : theme.colors.textDim,
@@ -1099,7 +1106,7 @@ export function TabSwitcherModal({
 									key={session.agentSessionId}
 									ref={isSelected ? selectedItemRef : null}
 									onClick={() => handleSelectByIndex(i)}
-									className="w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-opacity-10"
+									className="w-full text-left px-4 py-3 flex items-center gap-3 row-hover"
 									style={{
 										backgroundColor: isSelected ? theme.colors.accent : 'transparent',
 										color: isSelected ? theme.colors.accentForeground : theme.colors.textMain,
@@ -1126,7 +1133,7 @@ export function TabSwitcherModal({
 											<span className="font-medium truncate">{session.sessionName}</span>
 											{uuidPill && (
 												<span
-													className="text-[10px] px-1.5 py-0.5 rounded font-mono flex-shrink-0"
+													className="text-2xs px-1.5 py-0.5 rounded font-mono flex-shrink-0"
 													style={{
 														backgroundColor: isSelected
 															? 'rgba(255,255,255,0.2)'
@@ -1141,7 +1148,7 @@ export function TabSwitcherModal({
 											)}
 											{session.starred && <span style={{ color: theme.colors.warning }}>★</span>}
 										</div>
-										<div className="flex items-center gap-3 text-[10px] opacity-60">
+										<div className="flex items-center gap-3 text-2xs opacity-60">
 											{session.lastActivityAt && (
 												<span>{formatRelativeTime(session.lastActivityAt)}</span>
 											)}
@@ -1150,7 +1157,7 @@ export function TabSwitcherModal({
 
 									{/* Closed indicator instead of gauge */}
 									<div
-										className="flex-shrink-0 text-[10px] px-2 py-1 rounded"
+										className="flex-shrink-0 text-2xs px-2 py-1 rounded"
 										style={{
 											backgroundColor: isSelected ? 'rgba(255,255,255,0.2)' : theme.colors.bgMain,
 											color: isSelected ? theme.colors.accentForeground : theme.colors.textDim,

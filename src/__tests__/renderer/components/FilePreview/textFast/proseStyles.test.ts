@@ -52,9 +52,13 @@ describe('generateTextProseCss', () => {
 		expect(css).toContain('#abcdef');
 	});
 
-	it('uses a monospace font stack', () => {
+	it('inherits the pane font rather than pinning its own stack', () => {
+		// The File Preview font setting reaches this tier by inheritance from the
+		// scroll container. A second hard-coded stack here would win over it and
+		// silently exempt plain-text files from the setting.
 		const css = generateTextProseCss(makeTheme());
-		expect(css.toLowerCase()).toContain('monospace');
+		expect(css).toContain('font-family: inherit;');
+		expect(css.toLowerCase()).not.toContain('ui-monospace');
 	});
 
 	it('disables user-select on the gutter so line numbers do not copy', () => {

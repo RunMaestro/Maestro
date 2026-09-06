@@ -10,6 +10,7 @@ import {
 	type AttentionContext,
 } from '../../utils/sessionAttention';
 import { CornerDot } from '../ui/CornerDot';
+import { hasUnreadVisibleTab } from '../../utils/tabHelpers';
 
 interface SkinnySidebarProps {
 	theme: Theme;
@@ -56,7 +57,7 @@ export const SkinnySidebar = memo(function SkinnySidebar({
 			<PluginUiItemsSlot surface="activity-bar" />
 			{visibleSessions.map((session) => {
 				const isInBatch = activeBatchSessionIds.includes(session.id);
-				const hasUnreadTabs = session.aiTabs?.some((tab) => tab.hasUnread);
+				const hasUnreadTabs = hasUnreadVisibleTab(session.aiTabs);
 				const isUnboundClaude = hasNoClaudeProviderSession(session);
 				const effectiveStatusColor = isInBatch
 					? theme.colors.warning

@@ -22,7 +22,14 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, ChevronRight, KeyRound, Terminal as TerminalIcon, Users } from 'lucide-react';
+import {
+	ChevronDown,
+	ChevronRight,
+	Copy,
+	KeyRound,
+	Terminal as TerminalIcon,
+	Users,
+} from 'lucide-react';
 import { Modal } from './ui/Modal';
 import { XTerminal, type XTerminalHandle } from './XTerminal';
 import { EnvVarList } from './ui/EnvVarList';
@@ -35,11 +42,17 @@ import {
 	credentialKindBlocksLogin,
 } from '../../shared/providerAuthIdentity';
 import { generateId } from '../utils/ids';
+import { findLoginUrl } from '../utils/loginUrl';
+import { isWindowsPlatform } from '../utils/platformUtils';
+import { safeClipboardWrite } from '../utils/clipboard';
+import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
+import { notifyToast } from '../stores/notificationStore';
 import { logger } from '../utils/logger';
 import {
 	formatAgentLoginCommand,
 	getAgentDisplayName,
 	getAgentLoginCommand,
+	loginShellSyntaxFor,
 } from '../../shared/agentMetadata';
 import { resolveAgentEnvironment, type ResolvedEnvVar } from '../../shared/agentEnvironment';
 import type { Session, Theme } from '../types';
@@ -65,6 +78,13 @@ type ReauthStatus = 'starting' | 'running' | 'failed' | 'exited';
  * the normal path fires on the prompt long before this.
  */
 const SILENT_SHELL_FALLBACK_MS = 8000;
+
+/**
+ * How much login output to keep for URL scanning. A login screen is a few KB;
+ * this is generous enough to survive a redraw while keeping the buffer from
+ * growing for as long as the dialog stays open.
+ */
+const OUTPUT_SCAN_LIMIT = 64_000;
 
 export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProps) {
 	const fontFamily = useSettingsStore((s) => s.fontFamily);
@@ -93,6 +113,10 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 	const [status, setStatus] = useState<ReauthStatus>('starting');
 	const [spawnError, setSpawnError] = useState<string | null>(null);
 	const [envExpanded, setEnvExpanded] = useState(false);
+	/** Sign-in URL scraped from the login output, once the provider prints one. */
+	const [loginUrl, setLoginUrl] = useState<string | null>(null);
+	/** Rolling tail of login output, scanned for that URL. */
+	const outputRef = useRef('');
 	// Provider-level vars come from the agent config store rather than the
 	// session, so they need a fetch. Null until it resolves.
 	const [providerEnv, setProviderEnv] = useState<Record<string, string> | null>(null);
@@ -164,11 +188,6 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 		return credentialKindBlocksLogin(classifyCredentialKind(session.toolType, env), agentName);
 	}, [providerEnv, effectiveEnv, session.toolType, agentName]);
 
-	// Null until the environment has been read, so the spawn effect below waits
-	// rather than starting a login the classification is about to rule out.
-	const commandLine =
-		providerEnv !== null && !loginBlockedReason && login ? formatAgentLoginCommand(login) : null;
-
 	// Same SSH resolution as a terminal tab: an agent that runs on a remote host
 	// must re-authenticate on that host, not on this laptop.
 	const sshConfig = useMemo(() => {
@@ -195,6 +214,33 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 		return undefined;
 	}, [session.sessionSshRemoteConfig, session.sshRemoteId, session.remoteCwd]);
 
+	/**
+	 * Shell the login runs in.
+	 *
+	 * On Windows the configured default may be WSL, and that is the one shell
+	 * this dialog must NOT use: agents are always spawned as native Windows
+	 * processes (nothing in the spawn path goes through `wsl.exe`), so a login
+	 * inside WSL writes credentials to the WSL home directory that the native
+	 * agent never reads. The login would appear to succeed and fix nothing.
+	 * A remote agent is unaffected - its shell is the SSH remote's own.
+	 */
+	const loginShell = useMemo(() => {
+		if (sshConfig?.enabled) return defaultShell;
+		if (isWindowsPlatform() && defaultShell?.trim().toLowerCase() === 'wsl') return 'powershell';
+		return defaultShell;
+	}, [defaultShell, sshConfig?.enabled]);
+
+	// Null until the environment has been read, so the spawn effect below waits
+	// rather than starting a login the classification is about to rule out.
+	const commandLine =
+		providerEnv !== null && !loginBlockedReason && login
+			? formatAgentLoginCommand(
+					login,
+					// An SSH remote runs a posix shell regardless of this machine.
+					sshConfig?.enabled ? 'posix' : loginShellSyntaxFor(loginShell ?? '', isWindowsPlatform())
+				)
+			: null;
+
 	// Type the login command in, once the shell is actually there to receive it.
 	//
 	// Not sent straight after the spawn resolves: over SSH the spawn resolves as
@@ -211,15 +257,28 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 			clearTimeout(commandTimerRef.current);
 			commandTimerRef.current = null;
 		}
-		void window.maestro.process.write(pending.ptySessionId, `${pending.command}\n`).catch(() => {
+		// CR, not LF: this is what a real Enter key sends (see the terminal
+		// keyboard handler), and it is the only one that submits reliably on
+		// Windows - ConPTY passes LF through as Ctrl+J, which PSReadLine does not
+		// treat as "run this line", so a PowerShell login would sit there untyped.
+		// A Unix PTY maps CR to NL for us, so this is correct on every platform.
+		void window.maestro.process.write(pending.ptySessionId, `${pending.command}\r`).catch(() => {
 			// A failed write surfaces as the process exiting; nothing to add here.
 		});
 	}, []);
 
 	useEffect(() => {
-		return window.maestro.process.onData((dataSessionId: string) => {
+		return window.maestro.process.onData((dataSessionId: string, data: string) => {
 			if (dataSessionId !== ptySessionId) return;
 			flushPendingCommand();
+
+			// Watch the stream for the sign-in URL. A login URL is hundreds of
+			// characters, the TUI soft-wraps it across rows, and mouse-tracking
+			// TUIs swallow the drag that would select it - so reading it off the
+			// screen is not a realistic option for the user.
+			outputRef.current = `${outputRef.current}${data}`.slice(-OUTPUT_SCAN_LIMIT);
+			const found = findLoginUrl(outputRef.current);
+			if (found) setLoginUrl((prev) => (prev === found ? prev : found));
 		});
 	}, [ptySessionId, flushPendingCommand]);
 
@@ -244,7 +303,7 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 				// over SSH). It needs no project directory, and guessing one risks a
 				// `cd` that fails and kills the session before the login can run.
 				cwd: sshConfig?.enabled ? '' : session.cwd || session.projectRoot || '',
-				shell: defaultShell || undefined,
+				shell: loginShell || undefined,
 				shellArgs,
 				shellEnvVars,
 				toolType: session.toolType,
@@ -291,7 +350,7 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 	}, [
 		commandLine,
 		ptySessionId,
-		defaultShell,
+		loginShell,
 		shellArgs,
 		shellEnvVars,
 		sshConfig,
@@ -318,6 +377,20 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 	const handleFocusTerminal = useCallback(() => {
 		terminalRef.current?.focus();
 	}, []);
+
+	const handleCopyLoginUrl = useCallback(async () => {
+		if (!loginUrl) return;
+		const copied = await safeClipboardWrite(loginUrl);
+		if (copied) {
+			flashCopiedToClipboard(loginUrl, 'Login URL Copied');
+		} else {
+			notifyToast({
+				color: 'red',
+				title: 'Could not copy',
+				message: 'The login URL could not be written to the clipboard.',
+			});
+		}
+	}, [loginUrl]);
 
 	/** Login done: close the outage and replay what every blocked agent lost. */
 	const handleResume = useCallback(() => {
@@ -384,7 +457,7 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 					<button
 						type="button"
 						onClick={handleDismiss}
-						className="px-4 py-2 rounded border hover:bg-white/5 transition-colors"
+						className="px-4 py-1.5 rounded border hover:bg-white/5 transition-colors text-sm"
 						style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 					>
 						Not Now
@@ -392,7 +465,7 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 					<button
 						type="button"
 						onClick={handleResume}
-						className="px-4 py-2 rounded transition-colors"
+						className="px-4 py-1.5 rounded transition-colors text-sm"
 						style={{
 							backgroundColor: theme.colors.accent,
 							color: theme.colors.accentForeground,
@@ -509,6 +582,32 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 						{agentName} has no login command Maestro can run. Re-authenticate it from a terminal,
 						then resume.
 					</p>
+				)}
+
+				{/* The provider printed a sign-in URL. Surfacing it as a button is the
+				    only practical way to get at it: it is far too long to retype, it
+				    is soft-wrapped across terminal rows, and a mouse-tracking TUI
+				    swallows the drag that would select it. */}
+				{loginUrl && (
+					<div className="flex items-center gap-2 shrink-0">
+						<button
+							type="button"
+							onClick={handleCopyLoginUrl}
+							className="inline-flex items-center gap-1.5 px-2 py-1 rounded border hover:bg-white/5 transition-colors text-xs shrink-0"
+							style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+							data-testid="reauth-copy-url"
+						>
+							<Copy className="w-3.5 h-3.5" />
+							<span>Copy Login URL</span>
+						</button>
+						<span
+							className="text-xs min-w-0 truncate select-text"
+							style={{ color: theme.colors.textDim }}
+							title={loginUrl}
+						>
+							{loginUrl}
+						</span>
+					</div>
 				)}
 
 				{commandLine && (

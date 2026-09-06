@@ -19,10 +19,26 @@ import type { Dispatch, SetStateAction } from 'react';
 import type { Theme } from '../../types';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { useEventListener } from '../../hooks/utils/useEventListener';
+import { useFocusOnMount } from '../../hooks/utils/useFocusAfterRender';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
+import {
+	ANNOTATOR_ROOT_ATTR,
+	isAnnotatorFormControl,
+	isAnnotatorTextEntry,
+} from './annotatorKeyboard';
 import { safeClipboardWriteImage } from '../../utils/clipboard';
 import { notifyToast } from '../../stores/notificationStore';
 import { logger } from '../../utils/logger';
+import { useSettingsStore } from '../../stores/settingsStore';
+import {
+	PEN_SIZE_MAX,
+	PEN_SIZE_MIN,
+	PEN_SIZE_STEP,
+	TEXT_SIZE_MAX,
+	TEXT_SIZE_MIN,
+	TEXT_SIZE_STEP,
+} from './annotatorConstants';
+import { nudgeSize, sizeHotkeyDirection } from './annotatorSizeHotkey';
 import { useImageAnnotatorStore } from './imageAnnotatorStore';
 import { useAnnotatorState } from './useAnnotatorState';
 import type { AnnotatorTool } from './useAnnotatorState';
@@ -59,8 +75,8 @@ export function ImageAnnotator({ theme }: ImageAnnotatorProps) {
 	const sessionKey = useMemo(() => (isOpen ? imageDataUrl : null), [isOpen, imageDataUrl]);
 
 	// Left arrow opens the settings drawer, Right arrow closes it - but only
-	// when focus isn't on a form control (range sliders inside the drawer use
-	// Left/Right natively to adjust their value).
+	// when focus isn't on one of the annotator's own form controls (range
+	// sliders inside the drawer use Left/Right natively to adjust their value).
 	const drawerOpenRef = useRef(drawerOpen);
 	drawerOpenRef.current = drawerOpen;
 	useEventListener(
@@ -69,11 +85,7 @@ export function ImageAnnotator({ theme }: ImageAnnotatorProps) {
 			const e = event as KeyboardEvent;
 			if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
 			if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
-			const target = e.target as HTMLElement | null;
-			const tag = target?.tagName;
-			if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target?.isContentEditable) {
-				return;
-			}
+			if (isAnnotatorFormControl(e.target)) return;
 			if (e.key === 'ArrowLeft' && !drawerOpenRef.current) {
 				e.preventDefault();
 				setDrawerOpen(true);
@@ -182,24 +194,87 @@ function ImageAnnotatorContent({
 	const handleKeepEditing = useCallback(() => setConfirmingDiscard(false), []);
 
 	// Single-key tool hotkeys. Mnemonic where the tool value diverges from the
-	// key: S -> rect (Square), C -> ellipse (Circle). Skipped while a text label
-	// is being edited (the textarea must receive the letters) and whenever a
-	// modifier is held so app-level shortcuts still work.
+	// key: S -> rect (Square), C -> ellipse (Circle). Skipped while one of the
+	// annotator's own text fields is being edited (the textarea must receive the
+	// letters) and whenever a modifier is held so app-level shortcuts still work.
 	const setTool = state.setTool;
 	useEventListener(
 		'keydown',
 		(event) => {
 			const e = event as KeyboardEvent;
 			if (e.metaKey || e.ctrlKey || e.altKey) return;
-			const target = e.target as HTMLElement | null;
-			const tag = target?.tagName;
-			if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target?.isContentEditable) {
-				return;
-			}
+			if (isAnnotatorTextEntry(e.target)) return;
 			const tool = TOOL_HOTKEYS[e.key.toLowerCase()];
 			if (!tool) return;
 			e.preventDefault();
 			setTool(tool);
+		},
+		{ target: typeof document !== 'undefined' ? document : null }
+	);
+
+	// `+` / `-` nudge the size of whatever the user is working on, so the common
+	// adjustment never requires opening the drawer. Text wins when a label is
+	// selected or the text tool is active; otherwise this is the pen / shape
+	// size. Like the drawer's sliders, a selected item is edited in place and
+	// the stored default is left alone.
+	// Read the stored sizes with `getState()` rather than a selector: subscribing
+	// would re-render this whole subtree (canvas included) on every keypress,
+	// and the canvas already watches those settings itself.
+	useEventListener(
+		'keydown',
+		(event) => {
+			const e = event as KeyboardEvent;
+			if (e.metaKey || e.ctrlKey || e.altKey) return;
+			if (isAnnotatorTextEntry(e.target)) return;
+			const direction = sizeHotkeyDirection(e.key);
+			if (!direction) return;
+			e.preventDefault();
+
+			const settings = useSettingsStore.getState();
+			const selectedText = state.selectedTextId
+				? (state.texts.find((t) => t.id === state.selectedTextId) ?? null)
+				: null;
+			if (selectedText || state.tool === 'text') {
+				if (selectedText) {
+					const size = nudgeSize(
+						selectedText.style.size,
+						direction,
+						TEXT_SIZE_STEP,
+						TEXT_SIZE_MIN,
+						TEXT_SIZE_MAX
+					);
+					state.updateText(selectedText.id, { style: { ...selectedText.style, size } });
+				} else {
+					settings.setAnnotatorTextSize(
+						nudgeSize(
+							settings.annotatorTextSize,
+							direction,
+							TEXT_SIZE_STEP,
+							TEXT_SIZE_MIN,
+							TEXT_SIZE_MAX
+						)
+					);
+				}
+				return;
+			}
+
+			const selectedShape = state.selectedShapeId
+				? (state.shapes.find((s) => s.id === state.selectedShapeId) ?? null)
+				: null;
+			if (selectedShape) {
+				const size = nudgeSize(
+					selectedShape.style.size,
+					direction,
+					PEN_SIZE_STEP,
+					PEN_SIZE_MIN,
+					PEN_SIZE_MAX
+				);
+				state.updateShape(selectedShape.id, { style: { ...selectedShape.style, size } });
+			} else {
+				settings.setAnnotatorPenSize(
+					nudgeSize(settings.annotatorPenSize, direction, PEN_SIZE_STEP, PEN_SIZE_MIN, PEN_SIZE_MAX)
+				);
+			}
 		},
 		{ target: typeof document !== 'undefined' ? document : null }
 	);
@@ -247,12 +322,24 @@ function ImageAnnotatorContent({
 
 	const toggleDrawer = useCallback(() => setDrawerOpen((v) => !v), []);
 
+	// Take focus on open. Every entry point (Alt+Cmd+E from the composer, the
+	// staged-image pencil, the lightbox) leaves the caret wherever it was, and
+	// the canvas calls preventDefault() on pointerdown so drawing never blurs it
+	// either. Without this, keystrokes keep landing in a text field underneath
+	// the overlay: Cmd+Z undoes the user's chat message instead of a stroke, and
+	// tool hotkeys type letters into it.
+	const rootRef = useRef<HTMLDivElement>(null);
+	useFocusOnMount(rootRef);
+
 	return (
 		<div
+			ref={rootRef}
+			tabIndex={-1}
 			role="dialog"
 			aria-modal="true"
 			aria-label="Image Annotator"
-			className="fixed inset-0 z-[160]"
+			{...{ [ANNOTATOR_ROOT_ATTR]: '' }}
+			className="fixed inset-0 z-[160] outline-none"
 			style={{
 				backgroundColor: `${theme.colors.bgMain}f2`,
 				color: theme.colors.textMain,

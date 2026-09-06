@@ -25,6 +25,8 @@ export interface FontScaleControlProps {
 	control: UseFontScaleReturn;
 	/** Visual treatment. Defaults to `inline`. */
 	variant?: 'inline' | 'floating';
+	/** Button size - `sm` for a dense `text-xs` button row. Defaults to `md`. */
+	size?: 'sm' | 'md';
 	/**
 	 * Rest as a circle and expand on hover/focus, so the control stays out of
 	 * the way of the text it zooms. `floating` only.
@@ -44,6 +46,7 @@ export const FontScaleControl = React.memo(function FontScaleControl({
 	theme,
 	control,
 	variant = 'inline',
+	size = 'md',
 	collapsible = false,
 	target,
 	className = '',
@@ -72,6 +75,7 @@ export const FontScaleControl = React.memo(function FontScaleControl({
 			collapsedIcon={ALargeSmall}
 			subject={target ? `${target} font size` : 'font size'}
 			variant={variant}
+			size={size}
 			className={className}
 			testId={testId}
 		/>

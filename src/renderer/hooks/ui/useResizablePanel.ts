@@ -21,8 +21,12 @@ export interface UseResizablePanelOptions {
 	minWidth: number;
 	/** Max allowed width in px */
 	maxWidth: number;
-	/** Settings key to persist width to */
-	settingsKey: string;
+	/**
+	 * Settings key to persist width to. Omit when the caller's `setWidth`
+	 * already owns persistence (see `usePersistedPanelWidth`) - a second write
+	 * here would store the same number under a key nothing reads back.
+	 */
+	settingsKey?: string;
 	/** React state setter for width */
 	setWidth: (w: number) => void;
 	/** 'left' = left sidebar (drag right to widen), 'right' = right panel (drag left to widen) */
@@ -106,7 +110,9 @@ export function useResizablePanel({
 			const handlePointerUp = () => {
 				setIsResizing(false);
 				setWidth(currentWidth);
-				window.maestro.settings.set(settingsKey, currentWidth);
+				// Only top-level chrome persists through settings; a pane inside another
+				// surface omits settingsKey and persists via usePersistedPanelWidth.
+				if (settingsKey) window.maestro.settings.set(settingsKey, currentWidth);
 				cleanup();
 			};
 

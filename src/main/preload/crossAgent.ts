@@ -3,6 +3,8 @@
  *
  * Exposes `window.maestro.crossAgent`:
  * - `send(request)`  -> invoke `cross-agent:send`, returns `{ requestId }`.
+ * - `cancel(sourceSessionId)` -> invoke `cross-agent:cancel`, stopping every
+ *   consult that agent still has in flight (Stop).
  * - `onChunk(handler)` -> subscribe to streamed `cross-agent:chunk` events,
  *   returns a cleanup function.
  */
@@ -21,6 +23,14 @@ export function createCrossAgentApi() {
 		 */
 		send: (request: CrossAgentSendRequest): Promise<{ requestId: string }> =>
 			ipcRenderer.invoke('cross-agent:send', request),
+
+		/**
+		 * Stop every consult a source agent still has in flight (the Stop button).
+		 * Each one settles with a terminal `canceled` chunk, so the response bubbles
+		 * and the "N agents responding" indicator both close out.
+		 */
+		cancel: (sourceSessionId: string): Promise<{ canceled: number }> =>
+			ipcRenderer.invoke('cross-agent:cancel', { sourceSessionId }),
 
 		/**
 		 * Subscribe to streamed cross-agent response chunks.

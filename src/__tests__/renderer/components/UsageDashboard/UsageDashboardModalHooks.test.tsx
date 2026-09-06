@@ -50,6 +50,12 @@ const sampleAggregation: StatsAggregation = {
 };
 
 const mockGetAggregation = vi.fn();
+const mockGetDelegationTotals = vi.fn().mockResolvedValue({
+	interactive: { count: 0, durationMs: 0 },
+	autoRun: { count: 0, durationMs: 0 },
+	cue: { count: 0, durationMs: 0 },
+});
+const mockGetDelegationByDay = vi.fn().mockResolvedValue([]);
 const mockGetDatabaseSize = vi.fn();
 const mockOnStatsUpdate = vi.fn();
 const mockCueAggregation = vi.fn();
@@ -77,6 +83,8 @@ function installMaestroMock() {
 		value: {
 			stats: {
 				getAggregation: mockGetAggregation,
+				getDelegationTotals: mockGetDelegationTotals,
+				getDelegationByDay: mockGetDelegationByDay,
 				getDatabaseSize: mockGetDatabaseSize,
 				onStatsUpdate: mockOnStatsUpdate,
 				exportCsv: mockExportCsv,
@@ -111,6 +119,12 @@ describe('UsageDashboardModal hooks', () => {
 		useClaudeUsageStore.getState().__resetForTests();
 		useCodexUsageStore.getState().__resetForTests();
 		mockGetAggregation.mockResolvedValue(sampleAggregation);
+		mockGetDelegationTotals.mockResolvedValue({
+			interactive: { count: 4, durationMs: 40000 },
+			autoRun: { count: 2, durationMs: 30000 },
+			cue: { count: 1, durationMs: 30000 },
+		});
+		mockGetDelegationByDay.mockResolvedValue([]);
 		mockGetDatabaseSize.mockResolvedValue(4096);
 		mockCueAggregation.mockResolvedValue({
 			totals: { occurrences: 3, totalDurationMs: 1200 },

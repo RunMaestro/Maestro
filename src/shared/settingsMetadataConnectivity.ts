@@ -111,6 +111,12 @@ export const CONNECTIVITY_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: false,
 		category: 'web',
 	},
+	webInterfaceAutoStart: {
+		description: 'Turn on the full web interface automatically when Maestro starts.',
+		type: 'boolean',
+		default: false,
+		category: 'web',
+	},
 	webInterfaceUseCustomPort: {
 		description: 'Use a custom port for the web interface instead of auto-assigned.',
 		type: 'boolean',

@@ -78,6 +78,16 @@ export function createMemoryApi() {
 		): Promise<{ success: boolean; matches?: MemorySearchMatch[]; error?: string }> =>
 			ipcRenderer.invoke('memory:search', projectPath, query, agentId),
 
+		orphans: (
+			projectPath: string,
+			agentId: string = 'claude-code'
+		): Promise<{
+			success: boolean;
+			orphans?: string[];
+			brokenLinks?: { source: string; target: string }[];
+			error?: string;
+		}> => ipcRenderer.invoke('memory:orphans', projectPath, agentId),
+
 		getPath: (
 			projectPath: string,
 			agentId: string = 'claude-code'

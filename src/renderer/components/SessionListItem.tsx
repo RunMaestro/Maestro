@@ -251,7 +251,7 @@ export const SessionListItem = React.memo(function SessionListItem({
 					{/* Session origin pill */}
 					{session.origin === 'user' && (
 						<span
-							className="text-[10px] font-bold px-1.5 py-0.5 rounded"
+							className="text-2xs font-bold px-1.5 py-0.5 rounded"
 							style={{
 								backgroundColor: theme.colors.accent + '40',
 								color: theme.colors.accentText,
@@ -263,7 +263,7 @@ export const SessionListItem = React.memo(function SessionListItem({
 					)}
 					{session.origin === 'auto' && (
 						<span
-							className="text-[10px] font-bold px-1.5 py-0.5 rounded"
+							className="text-2xs font-bold px-1.5 py-0.5 rounded"
 							style={{ backgroundColor: theme.colors.warning + '40', color: theme.colors.warning }}
 							title="Auto-run session"
 						>
@@ -272,7 +272,7 @@ export const SessionListItem = React.memo(function SessionListItem({
 					)}
 					{!session.origin && (
 						<span
-							className="text-[10px] font-bold px-1.5 py-0.5 rounded"
+							className="text-2xs font-bold px-1.5 py-0.5 rounded"
 							style={{ backgroundColor: theme.colors.border, color: theme.colors.textMain }}
 							title="Claude Code CLI session"
 						>
@@ -282,7 +282,7 @@ export const SessionListItem = React.memo(function SessionListItem({
 
 					{/* Session ID pill */}
 					<span
-						className="text-[10px] font-mono px-1.5 py-0.5 rounded"
+						className="text-2xs font-mono px-1.5 py-0.5 rounded"
 						style={{ backgroundColor: theme.colors.border, color: theme.colors.textMain }}
 					>
 						{session.sessionId.startsWith('agent-')
@@ -354,7 +354,7 @@ export const SessionListItem = React.memo(function SessionListItem({
 			{/* Active indicator */}
 			{isActive && (
 				<span
-					className="text-[10px] px-2 py-0.5 rounded-full shrink-0"
+					className="text-2xs px-2 py-0.5 rounded-full shrink-0"
 					style={{ backgroundColor: theme.colors.success + '20', color: theme.colors.success }}
 				>
 					ACTIVE

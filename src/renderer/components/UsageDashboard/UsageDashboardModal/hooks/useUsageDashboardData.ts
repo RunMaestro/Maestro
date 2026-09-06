@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { StatsAggregation, StatsTimeRange } from '../../../../../shared/stats-types';
 import { PERFORMANCE_THRESHOLDS } from '../../../../../shared/performance-metrics';
 import type { CueSourceTotals } from '../../SourceDistributionChart';
+import type { DelegationDay, DelegationTotals } from '../../../../../shared/delegation';
 import { getRendererPerfMetrics, logger } from '../../../../utils/logger';
 
 const perfMetrics = getRendererPerfMetrics('UsageDashboard');
@@ -19,6 +20,13 @@ export function useUsageDashboardData({
 }: UseUsageDashboardDataOptions) {
 	const [data, setData] = useState<StatsAggregation | null>(null);
 	const [cueSourceTotals, setCueSourceTotals] = useState<CueSourceTotals | null>(null);
+	// Interactive vs autonomous split. Two shapes, because the surfaces ask two
+	// different questions: the Overview ratio card and the Activity chart follow
+	// the selected time range, while the delegation score is a lifetime figure
+	// and must NOT move when the range dropdown changes.
+	const [delegationTotals, setDelegationTotals] = useState<DelegationTotals | null>(null);
+	const [lifetimeDelegation, setLifetimeDelegation] = useState<DelegationTotals | null>(null);
+	const [delegationByDay, setDelegationByDay] = useState<DelegationDay[]>([]);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 	const [showNewDataIndicator, setShowNewDataIndicator] = useState(false);
@@ -35,7 +43,10 @@ export function useUsageDashboardData({
 			setError(null);
 
 			try {
-				const [stats, dbSize, cueAgg] = await Promise.all([
+				// The delegation calls each resolve to a fallback rather than
+				// rejecting: they are additions to a dashboard that already works
+				// without them, and one failing query must not blank every chart.
+				const [stats, dbSize, cueAgg, delegation, lifetime, byDay] = await Promise.all([
 					window.maestro.stats.getAggregation(timeRange),
 					window.maestro.stats.getDatabaseSize(),
 					cueTabEnabled
@@ -44,9 +55,24 @@ export function useUsageDashboardData({
 								return null;
 							})
 						: Promise.resolve(null),
+					window.maestro.stats.getDelegationTotals(timeRange).catch((err) => {
+						logger.warn('Failed to fetch delegation totals:', undefined, err);
+						return null;
+					}),
+					window.maestro.stats.getDelegationTotals('all').catch((err) => {
+						logger.warn('Failed to fetch lifetime delegation totals:', undefined, err);
+						return null;
+					}),
+					window.maestro.stats.getDelegationByDay(timeRange).catch((err) => {
+						logger.warn('Failed to fetch delegation day series:', undefined, err);
+						return [] as DelegationDay[];
+					}),
 				]);
 				setData(stats);
 				setDatabaseSize(dbSize);
+				setDelegationTotals(delegation);
+				setLifetimeDelegation(lifetime);
+				setDelegationByDay(byDay);
 				setCueSourceTotals(
 					cueAgg
 						? {
@@ -119,6 +145,9 @@ export function useUsageDashboardData({
 	return {
 		data,
 		cueSourceTotals,
+		delegationTotals,
+		lifetimeDelegation,
+		delegationByDay,
 		loading,
 		error,
 		showNewDataIndicator,

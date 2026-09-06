@@ -6,7 +6,7 @@
  * to the domain pills beside it (`WorktreePill`, `GitRunningBadge`) that say
  * one fixed word with their own colors.
  *
- * It exists because the same `text-[9px] px-1 rounded uppercase` span was being
+ * It exists because the same `text-3xs px-1 rounded uppercase` span was being
  * written per surface: the Usage Dashboard's tiles carried one copy and the
  * per-tab list needed the identical chip, which is exactly the point where the
  * two start drifting on padding and weight.
@@ -46,7 +46,7 @@ export function MiniBadge({
 	const tint = color ?? theme.colors.accent;
 	return (
 		<span
-			className={`flex-shrink-0 px-1 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide ${className}`}
+			className={`flex-shrink-0 px-1 py-0.5 rounded text-3xs font-bold uppercase tracking-wide ${className}`}
 			style={{ backgroundColor: `${tint}20`, color: tint, ...style }}
 			title={title}
 			data-testid={testId}

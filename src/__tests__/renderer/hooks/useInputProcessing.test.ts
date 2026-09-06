@@ -36,6 +36,7 @@ import { dispatchShellCommand } from '../../../renderer/services/shellCommand';
 import { requestAiCommand } from '../../../renderer/services/aiCommand';
 import { useAiCommandStore } from '../../../renderer/stores/aiCommandStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import type {
 	Session,
 	AITab,
@@ -96,6 +97,7 @@ describe('useInputProcessing', () => {
 	const mockFlushBatchedUpdates = vi.fn();
 	const mockOnHistoryCommand = vi.fn().mockResolvedValue(undefined);
 	const mockInputRef = { current: null } as React.RefObject<HTMLTextAreaElement | null>;
+	const realSetSessions = useSessionStore.getState().setSessions;
 
 	// Store original window.maestro
 	const originalMaestro = { ...window.maestro };
@@ -103,6 +105,7 @@ describe('useInputProcessing', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		mockGetBatchState.mockReturnValue(defaultBatchState);
+		useSessionStore.setState({ sessions: [], activeSessionId: '' });
 
 		// Mock window.maestro.process.spawn
 		window.maestro = {
@@ -134,6 +137,7 @@ describe('useInputProcessing', () => {
 
 	afterEach(() => {
 		Object.assign(window.maestro, originalMaestro);
+		useSessionStore.setState({ setSessions: realSetSessions });
 	});
 
 	// Helper to create hook dependencies.
@@ -147,7 +151,7 @@ describe('useInputProcessing', () => {
 		const session = createMockSession();
 		const sessionsRef = { current: [session] };
 
-		return {
+		const deps = {
 			activeSession: session,
 			activeSessionId: session.id,
 			setSessions: mockSetSessions,
@@ -169,6 +173,16 @@ describe('useInputProcessing', () => {
 			onHistoryCommand: mockOnHistoryCommand,
 			...rest,
 		};
+		const seed = deps.activeSession ?? undefined;
+		mockSetSessions.mockImplementation((updater) => {
+			realSetSessions(updater);
+		});
+		useSessionStore.setState({
+			sessions: seed ? [seed] : [],
+			activeSessionId: seed?.id ?? '',
+			setSessions: mockSetSessions as typeof realSetSessions,
+		});
+		return deps;
 	};
 
 	describe('hook initialization', () => {

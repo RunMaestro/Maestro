@@ -424,6 +424,20 @@ function normalizeSettings(rawSettings: Record<string, unknown> | undefined): Cu
 			typeof rawSettings?.owner_agent_id === 'string' && rawSettings.owner_agent_id.trim() !== ''
 				? rawSettings.owner_agent_id.trim()
 				: undefined,
+		susfactor_enabled:
+			typeof rawSettings?.susfactor_enabled === 'boolean'
+				? rawSettings.susfactor_enabled
+				: DEFAULT_CUE_SETTINGS.susfactor_enabled,
+		// Clamp defensively: `loadCueConfig` skips validation, and a threshold of
+		// 0 would block every item while 2 would block none. Out-of-range falls
+		// back to the default rather than to a silently useless check.
+		susfactor_threshold:
+			typeof rawSettings?.susfactor_threshold === 'number' &&
+			Number.isFinite(rawSettings.susfactor_threshold) &&
+			rawSettings.susfactor_threshold > 0 &&
+			rawSettings.susfactor_threshold <= 1
+				? rawSettings.susfactor_threshold
+				: DEFAULT_CUE_SETTINGS.susfactor_threshold,
 	};
 }
 

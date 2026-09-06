@@ -335,7 +335,8 @@ describe('EditAgentModal', () => {
 				undefined, // additionalDirectories
 				undefined, // contextWindowSource: the window was not touched, so no
 				// provenance is recorded and P1 precedence stands (finding AD1)
-				undefined // failoverConfig (not configured on this agent)
+				undefined, // failoverConfig (not configured on this agent)
+				undefined // customEnvVarsDisabled (nothing switched off)
 			);
 		});
 
@@ -433,7 +434,8 @@ describe('EditAgentModal', () => {
 			undefined, // additionalDirectories
 			undefined, // contextWindowSource: the window was not touched, so no
 			// provenance is recorded and P1 precedence stands (finding AD1)
-			undefined // failoverConfig (not configured on this agent)
+			undefined, // failoverConfig (not configured on this agent)
+			undefined // customEnvVarsDisabled (nothing switched off)
 		);
 		expect(onClose).toHaveBeenCalled();
 	});
@@ -704,7 +706,8 @@ describe('EditAgentModal', () => {
 			undefined, // additionalDirectories
 			undefined, // contextWindowSource: the window was not touched, so no
 			// provenance is recorded and P1 precedence stands (finding AD1)
-			undefined // failoverConfig (not configured on this agent)
+			undefined, // failoverConfig (not configured on this agent)
+			undefined // customEnvVarsDisabled (nothing switched off)
 		);
 	});
 
@@ -779,7 +782,8 @@ describe('EditAgentModal', () => {
 			undefined, // additionalDirectories
 			undefined, // contextWindowSource: the window was not touched, so no
 			// provenance is recorded and P1 precedence stands (finding AD1)
-			undefined // failoverConfig (not configured on this agent)
+			undefined, // failoverConfig (not configured on this agent)
+			undefined // customEnvVarsDisabled (nothing switched off)
 		);
 	});
 
@@ -860,7 +864,8 @@ describe('EditAgentModal', () => {
 			undefined, // additionalDirectories
 			undefined, // contextWindowSource: the window was not touched, so no
 			// provenance is recorded and P1 precedence stands (finding AD1)
-			undefined // failoverConfig (not configured on this agent)
+			undefined, // failoverConfig (not configured on this agent)
+			undefined // customEnvVarsDisabled (nothing switched off)
 		);
 	});
 

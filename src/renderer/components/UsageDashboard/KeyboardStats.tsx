@@ -18,15 +18,22 @@
 
 import { memo, useEffect, useMemo, useState } from 'react';
 import { Keyboard, Trophy, Sparkles } from 'lucide-react';
-import type { Theme, Shortcut } from '../../types';
+import type { Theme } from '../../types';
 import type { ShortcutUsageDay, StatsTimeRange } from '../../../shared/stats-types';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { FIXED_SHORTCUTS } from '../../constants/shortcuts';
-import { KEYBOARD_MASTERY_LEVELS, getLevelForPercentage } from '../../constants/keyboardMastery';
+import {
+	KEYBOARD_MASTERY_LEVELS,
+	collectBoundShortcuts,
+	countUsedBoundShortcuts,
+	getLevelForPercentage,
+} from '../../constants/keyboardMastery';
 import { formatNumber } from '../../../shared/formatters';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { logger } from '../../utils/logger';
 import { MetricCard } from './SummaryCards';
+import { buildShortcutsSummary } from './footerSummary';
+import { usePublishFooterSummary } from './useFooterSummary';
 
 interface KeyboardStatsProps {
 	timeRange: StatsTimeRange;
@@ -253,7 +260,7 @@ function DailyBarChart({ series, theme }: DailyBarChartProps) {
 			</div>
 			{/* X-axis labels */}
 			<div
-				className="flex gap-px mt-2 text-[10px]"
+				className="flex gap-px mt-2 text-2xs"
 				style={{ color: theme.colors.textDim }}
 				aria-hidden="true"
 			>
@@ -321,20 +328,19 @@ export const KeyboardStats = memo(function KeyboardStats({ timeRange, theme }: K
 		};
 	}, [timeRange]);
 
-	const allShortcuts = useMemo<Record<string, Shortcut>>(
-		() => ({
-			...shortcuts,
-			...tabShortcuts,
-			...FIXED_SHORTCUTS,
-		}),
+	// Unbound shortcuts are excluded outright: the user cannot fire a chord that
+	// does not exist, so listing one as "unused" is busywork and counting one in
+	// the denominator holds the mastery ring below 100% forever.
+	const boundShortcuts = useMemo(
+		() => collectBoundShortcuts(shortcuts, tabShortcuts, FIXED_SHORTCUTS),
 		[shortcuts, tabShortcuts]
 	);
 
-	const totalShortcuts = Object.keys(allShortcuts).length;
+	const totalShortcuts = boundShortcuts.length;
 	const usedSet = useMemo(() => new Set(masteryStats.usedShortcuts), [masteryStats.usedShortcuts]);
 	const usedCount = useMemo(
-		() => Object.keys(allShortcuts).filter((id) => usedSet.has(id)).length,
-		[allShortcuts, usedSet]
+		() => countUsedBoundShortcuts(boundShortcuts, usedSet),
+		[boundShortcuts, usedSet]
 	);
 	const percentage = totalShortcuts > 0 ? (usedCount / totalShortcuts) * 100 : 0;
 	const currentLevel = getLevelForPercentage(percentage);
@@ -350,9 +356,21 @@ export const KeyboardStats = memo(function KeyboardStats({ timeRange, theme }: K
 		return Math.max(0, needed - usedCount);
 	}, [nextLevel, usedCount, totalShortcuts]);
 
+	usePublishFooterSummary(
+		'shortcuts',
+		loading
+			? null
+			: buildShortcutsSummary({
+					presses: total,
+					used: usedCount,
+					bound: totalShortcuts,
+					levelName: currentLevel.name,
+				})
+	);
+
 	const unusedShortcuts = useMemo(() => {
-		return Object.values(allShortcuts).filter((s) => !usedSet.has(s.id));
-	}, [allShortcuts, usedSet]);
+		return boundShortcuts.filter((s) => !usedSet.has(s.id));
+	}, [boundShortcuts, usedSet]);
 
 	const continuousSeries = useMemo(() => {
 		if (!series) return [];
@@ -497,18 +515,16 @@ export const KeyboardStats = memo(function KeyboardStats({ timeRange, theme }: K
 								<span className="truncate" title={s.label}>
 									{s.label}
 								</span>
-								{s.keys.length > 0 && (
-									<kbd
-										className="px-1.5 py-0.5 rounded border font-mono text-[10px] font-bold flex-shrink-0 ml-auto"
-										style={{
-											backgroundColor: theme.colors.bgActivity,
-											borderColor: theme.colors.border,
-											color: theme.colors.textMain,
-										}}
-									>
-										{formatShortcutKeys(s.keys)}
-									</kbd>
-								)}
+								<kbd
+									className="px-1.5 py-0.5 rounded border font-mono text-2xs font-bold flex-shrink-0 ml-auto"
+									style={{
+										backgroundColor: theme.colors.bgActivity,
+										borderColor: theme.colors.border,
+										color: theme.colors.textMain,
+									}}
+								>
+									{formatShortcutKeys(s.keys)}
+								</kbd>
 							</li>
 						))}
 					</ul>

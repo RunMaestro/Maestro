@@ -16,6 +16,12 @@
  * imported from both the main process and the renderer.
  */
 
+import {
+	bucketNarrativeItems,
+	shouldRenderBuckets,
+	type NarrativeGroupLookup,
+} from './directorNotesGrouping';
+
 /**
  * The narrative section kinds, matching the prompt contract.
  *
@@ -623,12 +629,13 @@ export function recoverDirectorNotesNarrative(raw: string): RecoverNarrativeResu
 }
 
 /** Render one bullet as Markdown, mirroring Rich Mode's emphasis without colors. */
-function narrativeItemToMarkdown(item: NarrativeItem): string {
+function narrativeItemToMarkdown(item: NarrativeItem, showAgent = true): string {
 	// `critical` reads as bold (Rich Mode shows it red + bold); `warn`/`info`
 	// stay plain. An item's `agent` is appended as a light italic attribution -
-	// the prose analogue of Rich Mode's agent pill.
+	// the prose analogue of Rich Mode's agent pill. It is dropped under an agent
+	// subheading, where it would only repeat the heading.
 	const text = item.severity === 'critical' ? `**${item.text}**` : item.text;
-	const attribution = item.agent ? ` _(${item.agent})_` : '';
+	const attribution = showAgent && item.agent ? ` _(${item.agent})_` : '';
 	return `- ${text}${attribution}`;
 }
 
@@ -642,18 +649,42 @@ function narrativeItemToMarkdown(item: NarrativeItem): string {
  * Each section becomes a `##` heading followed by a bullet list. Empty sections
  * still render their heading plus a "Nothing to report." note so the report's
  * section structure is always recognizable.
+ *
+ * A section's bullets bucket the same way Rich Mode's do, under `###`
+ * subheadings: by GROUP when `groupLookup` maps the agent into one, by agent
+ * otherwise. A caller with no session state (the CLI) simply omits the lookup
+ * and gets the by-agent fallback. A section whose bullets all share one owner
+ * stays a flat list, since a lone subheading only repeats the section title.
  */
-export function narrativeToMarkdown(narrative: DirectorNotesNarrative): string {
+export function narrativeToMarkdown(
+	narrative: DirectorNotesNarrative,
+	options?: { groupLookup?: NarrativeGroupLookup | null }
+): string {
+	const groupLookup = options?.groupLookup ?? null;
+
 	const blocks = narrative.sections.map((section) => {
 		const lines = [`## ${section.title}`, ''];
 		if (section.items.length === 0) {
 			lines.push('_Nothing to report._');
-		} else {
+			return lines.join('\n');
+		}
+
+		const buckets = bucketNarrativeItems(section.items, groupLookup);
+		if (!shouldRenderBuckets(buckets)) {
 			for (const item of section.items) {
 				lines.push(narrativeItemToMarkdown(item));
 			}
+			return lines.join('\n');
 		}
-		return lines.join('\n');
+
+		for (const bucket of buckets) {
+			lines.push(`### ${bucket.emoji ? `${bucket.emoji} ` : ''}${bucket.label}`, '');
+			for (const item of bucket.items) {
+				lines.push(narrativeItemToMarkdown(item, bucket.isGroup));
+			}
+			lines.push('');
+		}
+		return lines.join('\n').trimEnd();
 	});
 	return blocks.join('\n\n').trim() + '\n';
 }

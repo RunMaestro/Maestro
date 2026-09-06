@@ -8,9 +8,9 @@ import type { AgentsBaseViewProps } from './types';
 interface GroupsViewProps extends AgentsBaseViewProps {
 	/** Left Bar groups, in their stored order. */
 	groups: GroupLike[];
-	/** Group currently drilled into, so its tile renders selected. */
+	/** Group whose detail modal is open, so its tile renders selected. */
 	activeGroupId: string | null;
-	/** Drill into a group - the modal switches to the Agents grid. */
+	/** Open a group's per-agent breakdown modal. */
 	onSelectGroup: (rollup: GroupStatRollup) => void;
 }
 

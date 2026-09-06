@@ -94,7 +94,7 @@ export const COLORBLIND_LINE_COLORS = {
  * - success → teal (replaces green)
  * - warning → orange (replaces yellow; yellow is ambiguous in tritanopia)
  * - error   → vermillion (replaces red)
- * - connecting → strong blue (replaces hardcoded #ff8800)
+ * - connecting → strong blue (replaces the theme-derived orange from getConnectingColor)
  */
 export const COLORBLIND_STATUS_COLORS = {
 	success: '#009988', // Teal

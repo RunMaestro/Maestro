@@ -11,7 +11,9 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+	ALREADY_QUIET_VERBS,
 	CLI_BACKGROUND_DEFAULTS,
+	isAlreadyQuietVerb,
 	resolveBackgroundFlag,
 	readBackgroundField,
 	readSwitchToAgentField,
@@ -26,9 +28,11 @@ const FOCUSING_TODAY: BackgroundCapableVerb[] = [
 	'open-terminal',
 	'open-browser',
 	'tab-new',
+	'dispatch',
 	'create-agent',
 	'create-worktree',
 	'switch-mode',
+	'refresh-auto-run',
 ];
 
 describe('no verb changes its default', () => {
@@ -55,6 +59,45 @@ describe('no verb changes its default', () => {
 		// change behaviour.
 		expect(resolveBackgroundFlag({}, 'tab-new')).toBe(false);
 		expect(resolveBackgroundFlag({}, 'dispatch-new-tab')).toBe(true);
+	});
+
+	it('splits dispatch in two, because one command name holds two defaults', () => {
+		// Creating a tab the caller will address by id is background; writing into
+		// an existing conversation selects the agent, as it does today. Collapsing
+		// these onto one key would change one of them.
+		expect(resolveBackgroundFlag({}, 'dispatch-new-tab')).toBe(true);
+		expect(resolveBackgroundFlag({}, 'dispatch')).toBe(false);
+	});
+});
+
+describe('verbs that accept the flag and ignore it', () => {
+	it('recognises refresh-files as already quiet', () => {
+		expect(isAlreadyQuietVerb('refresh-files')).toBe(true);
+	});
+
+	it('does not claim a verb that really can move the view', () => {
+		// The list is "nothing to suppress", not "we have not wired it yet". A verb
+		// that focuses must live in CLI_BACKGROUND_DEFAULTS so the flag DOES
+		// something, or `--background` is accepted and silently ignored on a verb
+		// that steals the viewport - worse than rejecting it.
+		for (const verb of Object.keys(CLI_BACKGROUND_DEFAULTS)) {
+			expect(isAlreadyQuietVerb(verb), verb).toBe(false);
+		}
+	});
+
+	it('rejects anything not on the list', () => {
+		expect(isAlreadyQuietVerb('open-file')).toBe(false);
+		expect(isAlreadyQuietVerb('')).toBe(false);
+		expect(isAlreadyQuietVerb('refresh')).toBe(false);
+	});
+
+	it('keeps the two lists disjoint', () => {
+		// A verb in both would have a resolved default AND be documented as a
+		// no-op, which is a contradiction the CLI help would inherit.
+		const negotiable = new Set<string>(Object.keys(CLI_BACKGROUND_DEFAULTS));
+		for (const verb of ALREADY_QUIET_VERBS) {
+			expect(negotiable.has(verb), verb).toBe(false);
+		}
 	});
 });
 

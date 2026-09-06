@@ -10,6 +10,10 @@ import React from 'react';
 import type { Theme, Shortcut } from '../../../types';
 import type { TourStepConfig, SpotlightInfo } from './useTour';
 import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
+import { measureTextWidth } from '../../../utils/measureTextWidth';
+import { useSettingsStore } from '../../../stores/settingsStore';
+import { resolveSurfaceFontSize } from '../../../../shared/typography';
+import { withMonoFallback } from '../../../../shared/fontStack';
 
 /**
  * Render description text with shortcut placeholders replaced by styled kbd badges.
@@ -98,23 +102,75 @@ interface TourStepProps {
  * Calculate the optimal tooltip position based on spotlight location
  * and available viewport space
  */
+/**
+ * Navigation-row metrics, in root font units (rem). Kept as constants rather
+ * than inlined so the width reserve and the markup cannot drift: each one
+ * names the Tailwind class it is measuring.
+ */
+const DOT_WIDTH_REM = 0.5; // w-2
+const DOT_GAP_REM = 0.375; // gap-1.5
+const CONTAINER_PADDING_X_REM = 1.25; // p-5
+const BUTTON_PADDING_X_REM = 1; // px-4
+const BUTTON_FONT_SIZE_REM = 0.875; // text-sm
+const NAV_ROW_GAP_REM = 1; // gap-4 between the dot row and the button
+const MIN_TOOLTIP_WIDTH_REM = 360 / 16;
+const WIDE_TOOLTIP_WIDTH_REM = 520 / 16;
+/** The root size the original pixel figures were tuned against. */
+const BASE_ROOT_FONT_PX = 16;
+/**
+ * The longest label the button can hold. Reserving for the widest possible
+ * text means the layout does not change on the final step, when "Continue"
+ * becomes "Finish Tour".
+ */
+const WIDEST_BUTTON_LABEL = 'Finish Tour';
+
 function calculateTooltipPosition(
 	spotlight: SpotlightInfo | null,
 	preferredPosition: TourStepConfig['position'],
 	hasExtraContent?: boolean,
-	totalSteps: number = 0
+	totalSteps: number = 0,
+	/** Rendered root font size in px, zoom included. Scales every reserve below. */
+	rootFontPx: number = BASE_ROOT_FONT_PX,
+	/** Interface font, so the button label is measured in the face it renders in. */
+	buttonFontFamily: string = 'sans-serif'
 ): {
 	position: 'top' | 'bottom' | 'left' | 'right' | 'center' | 'center-overlay';
 	style: React.CSSProperties;
 } {
 	// Base tooltip width; widen if extra content OR if there are enough progress
-	// dots that the row would crowd the Continue button. Each dot is 8px wide
-	// with a 6px gap, the dot row sits opposite a ~110px Continue button, and
-	// the container has 20px padding on each side, so reserve roughly
-	// totalSteps * 14 + 170px for the navigation row.
-	const minWidthForDots = totalSteps > 0 ? totalSteps * 14 + 170 : 0;
-	const baseWidth = Math.max(360, minWidthForDots);
-	const tooltipWidth = hasExtraContent ? Math.max(520, minWidthForDots) : baseWidth;
+	// dots that the row would crowd the Continue button.
+	//
+	// Every figure below is expressed in ROOT FONT UNITS and multiplied out at
+	// the end, because everything it is measuring is rem-based and therefore
+	// scales with the interface font size and the Cmd+= zoom: the dots are
+	// `w-2`, their gap is `gap-1.5`, the container padding is `p-5`, and the
+	// button is `text-sm px-4`. The reserve used to be raw pixels
+	// (`totalSteps * 14 + 170`), tuned at a 14px root - so at a larger root the
+	// contents outgrew the width they were given and the `justify-between` row
+	// collapsed, putting the Continue button on top of the last few dots.
+	const rootPx = rootFontPx > 0 ? rootFontPx : BASE_ROOT_FONT_PX;
+	const dotsWidth =
+		totalSteps > 0 ? totalSteps * DOT_WIDTH_REM + Math.max(0, totalSteps - 1) * DOT_GAP_REM : 0;
+	// The widest label the button can hold. Measured rather than guessed at,
+	// since its width depends on the interface font: the old fixed ~110px
+	// estimate was taken against monospace.
+	const buttonWidth =
+		measureTextWidth(
+			WIDEST_BUTTON_LABEL,
+			`500 ${BUTTON_FONT_SIZE_REM * rootPx}px ${buttonFontFamily}`
+		) /
+			rootPx +
+		BUTTON_PADDING_X_REM * 2;
+	const minWidthForDots =
+		totalSteps > 0
+			? Math.ceil(
+					(dotsWidth + buttonWidth + CONTAINER_PADDING_X_REM * 2 + NAV_ROW_GAP_REM) * rootPx
+				)
+			: 0;
+	const baseWidth = Math.max(MIN_TOOLTIP_WIDTH_REM * rootPx, minWidthForDots);
+	const tooltipWidth = hasExtraContent
+		? Math.max(WIDE_TOOLTIP_WIDTH_REM * rootPx, minWidthForDots)
+		: baseWidth;
 	const tooltipHeight = hasExtraContent ? 360 : 240; // Estimated max height
 	const margin = 16;
 
@@ -331,11 +387,20 @@ export function TourStep({
 	// Determine if we have extra content or explicit wide flag (for wider tooltip)
 	const hasExtraContent = !!descriptionContent || !!step.wide;
 
+	// The rendered root size and interface font, so the width reserve is
+	// computed against the type the tooltip will actually be drawn in.
+	const rootFontPx = useSettingsStore((state) =>
+		resolveSurfaceFontSize(state.fontSize, state.fontSize, state.fontZoom)
+	);
+	const interfaceFontFamily = useSettingsStore((state) => withMonoFallback(state.fontFamily));
+
 	const { position, style } = calculateTooltipPosition(
 		spotlight,
 		step.position,
 		hasExtraContent,
-		totalSteps
+		totalSteps,
+		rootFontPx,
+		interfaceFontFamily
 	);
 
 	// Description stays as raw text; shortcut badges are rendered inline as JSX
@@ -419,10 +484,15 @@ export function TourStep({
 					{descriptionContent && <div className="mt-3">{descriptionContent}</div>}
 				</div>
 
-				{/* Navigation buttons */}
-				<div className="flex items-center justify-between">
+				{/* Navigation buttons.
+				    `gap-4` and the button's `shrink-0` are the structural half of
+				    the width reserve above: even if the estimate is wrong for some
+				    font, the two can no longer occupy the same pixels. The dot row
+				    wraps rather than overflowing, so a very long tour grows the
+				    modal downward instead of pushing the button off the edge. */}
+				<div className="flex items-center justify-between gap-4">
 					{/* Progress dots - past steps are clickable */}
-					<div className="flex items-center gap-1.5">
+					<div className="flex items-center flex-wrap gap-1.5 min-w-0">
 						{Array.from({ length: totalSteps }, (_, i) => {
 							const isPast = i < stepNumber - 1;
 							const isCurrent = i === stepNumber - 1;
@@ -431,7 +501,9 @@ export function TourStep({
 									key={i}
 									onClick={() => isPast && onGoToStep(i)}
 									disabled={!isPast}
-									className={`w-2 h-2 rounded-full transition-all duration-200 ${
+									// shrink-0 keeps a dot round: a flex item with a width but no
+									// shrink guard is squashed into an ellipse under pressure.
+									className={`w-2 h-2 shrink-0 rounded-full transition-all duration-200 ${
 										isPast ? 'cursor-pointer hover:scale-150' : ''
 									}`}
 									style={{
@@ -448,7 +520,7 @@ export function TourStep({
 					{/* Continue button */}
 					<button
 						onClick={onNext}
-						className="px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 hover:scale-105"
+						className="px-4 py-2 rounded-lg text-sm font-medium shrink-0 whitespace-nowrap transition-all duration-200 hover:scale-105"
 						style={{
 							backgroundColor: theme.colors.accent,
 							color: theme.colors.accentForeground,

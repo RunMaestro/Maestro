@@ -91,6 +91,7 @@ describe('web handlers', () => {
 			broadcastUserInput: vi.fn(),
 			broadcastAutoRunState: vi.fn(),
 			broadcastTabsChange: vi.fn(),
+			requestNewTab: vi.fn().mockResolvedValue({ tabId: 'tab-2' }),
 			broadcastSessionStateChange: vi.fn(),
 			getWebClientCount: vi.fn().mockReturnValue(1),
 			getSecurityToken: vi.fn().mockReturnValue('mock-security-token'),
@@ -132,6 +133,7 @@ describe('web handlers', () => {
 				expect.any(Function)
 			);
 			expect(ipcMain.handle).toHaveBeenCalledWith('web:broadcastTabsChange', expect.any(Function));
+			expect(ipcMain.handle).toHaveBeenCalledWith('web:requestNewTab', expect.any(Function));
 			expect(ipcMain.handle).toHaveBeenCalledWith(
 				'web:broadcastSessionState',
 				expect.any(Function)
@@ -157,6 +159,23 @@ describe('web handlers', () => {
 				'webserver:getConnectedClients',
 				expect.any(Function)
 			);
+		});
+	});
+
+	describe('web:requestNewTab', () => {
+		it('creates the tab through the desktop callback registry', async () => {
+			const handler = registeredHandlers.get('web:requestNewTab');
+			const result = await handler!({}, 'session-123', false);
+
+			expect(mockWebServer.requestNewTab).toHaveBeenCalledWith('session-123', false);
+			expect(result).toEqual({ tabId: 'tab-2' });
+		});
+
+		it('returns null when the web server is unavailable', async () => {
+			webServerRef.current = null;
+			const handler = registeredHandlers.get('web:requestNewTab');
+
+			expect(await handler!({}, 'session-123', false)).toBeNull();
 		});
 	});
 

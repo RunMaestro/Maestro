@@ -19,6 +19,11 @@ import { toControlChar } from '../utils/terminalKeys';
 import { isTapGesture, type TouchPoint } from '../utils/touch';
 import { readLogicalLine } from '../utils/terminalBuffer';
 import { logger } from '../utils/logger';
+import {
+	createCanvasMeasureAdvance,
+	resolveTerminalFontFamily,
+	type MeasureAdvance,
+} from '../utils/fixedPitchFont';
 
 // ============================================================================
 // Custom key event handler logic
@@ -265,6 +270,13 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 	const fitAddonRef = useRef<FitAddon | null>(null);
 	const searchAddonRef = useRef<SearchAddon | null>(null);
 	const resizeObserverRef = useRef<ResizeObserver | null>(null);
+	// Canvas used to check the configured font is fixed-pitch. Created once and
+	// reused: a terminal in a proportional font renders a broken grid, and the
+	// only way to detect that is to measure two glyphs.
+	const measureAdvanceRef = useRef<MeasureAdvance | null>(null);
+	if (measureAdvanceRef.current === null) {
+		measureAdvanceRef.current = createCanvasMeasureAdvance();
+	}
 	const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const selectionCopyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const lastAutoCopiedSelectionRef = useRef<string>('');
@@ -474,7 +486,7 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 			// (macOS) / Shift+drag (win/linux) force a local selection so copy works
 			// regardless of what's running. Matches iTerm2 / Terminal.app muscle memory.
 			macOptionClickForcesSelection: true,
-			fontFamily,
+			fontFamily: resolveTerminalFontFamily(fontFamily, fontSize, measureAdvanceRef.current),
 			fontSize,
 			theme: mapThemeToXterm(theme),
 			// Route OSC 8 hyperlinks (escape-code terminal links) through openUrl so they
@@ -808,7 +820,11 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 	// Update font settings when props change
 	useEffect(() => {
 		if (terminalRef.current) {
-			terminalRef.current.options.fontFamily = fontFamily;
+			terminalRef.current.options.fontFamily = resolveTerminalFontFamily(
+				fontFamily,
+				fontSize,
+				measureAdvanceRef.current
+			);
 			terminalRef.current.options.fontSize = fontSize;
 			// Guard: skip fit() when the container is hidden (display:none → offsetWidth/Height = 0).
 			// Calling fit() on a zero-size container resizes the terminal to the minimum (2×2),
