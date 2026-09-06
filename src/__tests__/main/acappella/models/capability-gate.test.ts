@@ -75,6 +75,14 @@ vi.mock('../../../../shared/acappella/native-runtimes', () => {
 // Linux. Mocked as present so the CI runner's package list does not decide
 // whether "every local model is installed" counts as ready; the missing-engine
 // verdict has its own test through `readSystemVoiceFailure`.
+// The runtime store reads the REAL user data dir (through MAESTRO_USER_DATA when
+// an agent shell sets it), and the gate now consults it for a downloaded
+// runtime before it trusts the registry. Nothing is downloaded in these tests;
+// a machine that happens to have the runtime installed must not decide them.
+vi.mock('../../../../main/acappella/runtime/runtime-store', () => ({
+	installedRuntimeEntry: vi.fn(async () => null),
+}));
+
 vi.mock('../../../../main/acappella/providers/local/system-tts', () => ({
 	systemVoiceUnavailability: async () => null,
 }));
