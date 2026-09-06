@@ -28,24 +28,7 @@
  */
 
 import * as fs from 'fs/promises';
-
-/**
- * Guard a serialized JSON payload before it can replace an on-disk file.
- * `JSON.stringify` returns `undefined` for `undefined`/functions/symbols, which
- * `writeFile` would persist as the literal string "undefined" - unparseable,
- * and a silent way to clobber good data. We also reject the empty string. The
- * round-trip `JSON.parse` is a cheap final integrity check.
- */
-function assertSerializedJsonIsSafe(serialized: string | undefined, filePath: string): void {
-	if (serialized === undefined || serialized.length === 0) {
-		throw new Error(`Refusing to write empty/undefined JSON to ${filePath}`);
-	}
-	try {
-		JSON.parse(serialized);
-	} catch (err) {
-		throw new Error(`Refusing to write unparseable JSON to ${filePath}: ${err}`);
-	}
-}
+import { assertSerializedJsonIsSafe } from '../../shared/jsonUtils';
 
 /**
  * Atomically write JSON to `filePath` via a temp file + rename. Prevents
@@ -53,11 +36,10 @@ function assertSerializedJsonIsSafe(serialized: string | undefined, filePath: st
  * mid-write. Retries the rename on EPERM/EBUSY (transient Windows file locks
  * from OneDrive/antivirus).
  *
- * Safety gate: the serialized payload is validated (non-empty, parses back)
- * BEFORE the temp file is created, so a `JSON.stringify` that produces
- * `undefined` (e.g. passing `undefined`) or otherwise unparseable output can
- * never be renamed over an existing good file. We refuse the write instead of
- * destroying data.
+ * Safety gate: `assertSerializedJsonIsSafe` validates the payload BEFORE the
+ * temp file is created, so a `JSON.stringify` that produces `undefined` (e.g.
+ * passing `undefined`) can never be renamed over an existing good file. We
+ * refuse the write instead of destroying data.
  */
 export async function atomicWriteJson(filePath: string, data: unknown): Promise<void> {
 	const serialized = JSON.stringify(data, null, 2);
