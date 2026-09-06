@@ -20,7 +20,7 @@ import {
 	cueCommandToCommandNodeFields,
 	getNextPipelineColor,
 } from '../../../../shared/cue-pipeline-types';
-import type { CueCommand, CueSubscription } from '../../../../shared/cue';
+import type { CueAction, CueCommand, CueSubscription } from '../../../../shared/cue';
 
 /** Minimal graph session input - compatible with both local and cue-types CueGraphSession */
 interface GraphSessionInput {
@@ -51,7 +51,9 @@ interface GraphSessionInput {
 		include_output_from?: string[];
 		forward_output_from?: string[];
 		cli_output?: { target: string };
-		action?: 'prompt' | 'command' | 'notify';
+		// Mirrors CueAction rather than re-listing it: a re-declared union here
+		// silently rejects every CueSubscription the moment a new action lands.
+		action?: CueAction;
 		command?: CueCommand;
 		target_node_key?: string;
 		fan_out_node_keys?: string[];

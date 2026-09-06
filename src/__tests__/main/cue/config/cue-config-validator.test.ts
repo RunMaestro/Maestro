@@ -242,7 +242,78 @@ describe('validateSubscription - action: notify', () => {
 	it('rejects unknown action values', () => {
 		const found = errs({ ...base, action: 'explode' });
 		expect(
-			found.some((e) => /"action" must be "prompt", "command", or "notify" when provided/.test(e))
+			found.some((e) =>
+				/"action" must be "prompt", "command", "notify", or "autorun" when provided/.test(e)
+			)
+		).toBe(true);
+	});
+});
+
+describe('validateSubscription - action: autorun', () => {
+	const base = {
+		name: 'autorun-1',
+		event: 'time.once',
+		action: 'autorun' as const,
+		agent_id: 'agent-xyz',
+		fire_at: '2026-05-22T14:30:00-05:00',
+		auto_run: { documents: ['/proj/Auto Run Docs/ship.md'] },
+	};
+
+	it('accepts action: autorun without a prompt field', () => {
+		// An autorun subscription's work is its document list; `prompt` is
+		// deliberately absent.
+		expect(errs(base)).toEqual([]);
+	});
+
+	it('requires auto_run', () => {
+		const { auto_run: _omitted, ...withoutAutoRun } = base;
+		expect(
+			errs(withoutAutoRun).some((e) =>
+				/"auto_run" is required and must be an object when action is "autorun"/.test(e)
+			)
+		).toBe(true);
+	});
+
+	it('rejects an empty document list', () => {
+		expect(
+			errs({ ...base, auto_run: { documents: [] } }).some((e) =>
+				/"auto_run\.documents" is required and must be a non-empty array/.test(e)
+			)
+		).toBe(true);
+	});
+
+	it('rejects a reset_on_completion array that does not align with documents', () => {
+		// Misaligned flags would reset the wrong document.
+		expect(
+			errs({
+				...base,
+				auto_run: { documents: ['/a.md', '/b.md'], reset_on_completion: [true] },
+			}).some((e) => /must have one entry per "auto_run\.documents" entry/.test(e))
+		).toBe(true);
+	});
+
+	it('requires agent_id', () => {
+		const { agent_id: _omitted, ...withoutAgent } = base;
+		expect(
+			errs(withoutAgent).some((e) =>
+				/"agent_id" is required and must be a non-empty string when action is "autorun"/.test(e)
+			)
+		).toBe(true);
+	});
+
+	it('rejects fan_out - one Auto Run belongs to one agent', () => {
+		expect(
+			errs({ ...base, fan_out: ['other-agent'] }).some((e) =>
+				/"fan_out" is not supported when action is "autorun"/.test(e)
+			)
+		).toBe(true);
+	});
+
+	it('rejects a non-positive max_loops', () => {
+		expect(
+			errs({ ...base, auto_run: { documents: ['/a.md'], max_loops: 0 } }).some((e) =>
+				/"auto_run\.max_loops" must be a positive integer when provided/.test(e)
+			)
 		).toBe(true);
 	});
 });

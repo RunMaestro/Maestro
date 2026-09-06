@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as yaml from 'js-yaml';
 import {
 	type CueAction,
+	type CueAutoRunConfig,
 	type CueCommand,
 	type CueConfig,
 	type CueGitHubState,
@@ -181,6 +182,41 @@ function normalizeNotify(rawNotify: unknown): CueNotifyConfig | undefined {
 	return result;
 }
 
+function normalizeAutoRun(rawAutoRun: unknown): CueAutoRunConfig | undefined {
+	if (!rawAutoRun || typeof rawAutoRun !== 'object' || Array.isArray(rawAutoRun)) {
+		return undefined;
+	}
+	const raw = rawAutoRun as Record<string, unknown>;
+	const documents =
+		Array.isArray(raw.documents) &&
+		raw.documents.every((value: unknown) => typeof value === 'string')
+			? (raw.documents as string[])
+			: undefined;
+	if (!documents || documents.length === 0) {
+		// A document-less autorun has nothing to launch. Returning undefined lets
+		// the validator report it as a config error rather than the engine firing
+		// a no-op run that looks successful in the activity log.
+		return undefined;
+	}
+
+	const result: CueAutoRunConfig = { documents };
+	if (
+		Array.isArray(raw.reset_on_completion) &&
+		raw.reset_on_completion.every((value: unknown) => typeof value === 'boolean') &&
+		raw.reset_on_completion.length === documents.length
+	) {
+		result.reset_on_completion = raw.reset_on_completion as boolean[];
+	}
+	if (typeof raw.prompt === 'string') result.prompt = raw.prompt;
+	if (typeof raw.loop_enabled === 'boolean') result.loop_enabled = raw.loop_enabled;
+	if (typeof raw.max_loops === 'number' && Number.isInteger(raw.max_loops) && raw.max_loops >= 1) {
+		result.max_loops = raw.max_loops;
+	}
+	if (typeof raw.model === 'string') result.model = raw.model;
+	if (typeof raw.effort === 'string') result.effort = raw.effort;
+	return result;
+}
+
 function normalizeSubscription(
 	sub: Record<string, unknown>,
 	projectRoot: string
@@ -199,11 +235,15 @@ function normalizeSubscription(
 			: undefined;
 
 	const action: CueAction | undefined =
-		sub.action === 'command' || sub.action === 'prompt' || sub.action === 'notify'
+		sub.action === 'command' ||
+		sub.action === 'prompt' ||
+		sub.action === 'notify' ||
+		sub.action === 'autorun'
 			? (sub.action as CueAction)
 			: undefined;
 	const command = normalizeCommand(sub.command);
 	const notify = normalizeNotify(sub.notify);
+	const autoRun = normalizeAutoRun(sub.auto_run);
 
 	const resolvedPrompt =
 		promptSpec.inline ??
@@ -216,7 +256,17 @@ function normalizeSubscription(
 			? command.shell
 			: command.cli.target
 		: '';
-	const prompt = action === 'command' && !resolvedPrompt ? commandSentinel : resolvedPrompt;
+	// Autorun carries its work in `auto_run`, not in `prompt`. Back-fill the
+	// same way `command` does so the dispatcher's "no prompt -> skip" gate
+	// can't silently drop a scheduled run, and so the activity log shows what
+	// was launched instead of a blank row.
+	const autoRunSentinel = autoRun ? autoRun.documents.join(', ') : '';
+	const prompt =
+		action === 'command' && !resolvedPrompt
+			? commandSentinel
+			: action === 'autorun' && !resolvedPrompt
+				? autoRunSentinel
+				: resolvedPrompt;
 	const outputPrompt =
 		outputPromptSpec?.inline ??
 		(outputPromptSpec?.file ? readPromptFile(projectRoot, outputPromptSpec.file) : undefined);
@@ -259,6 +309,7 @@ function normalizeSubscription(
 		output_prompt: outputPrompt,
 		action,
 		command,
+		auto_run: autoRun,
 		interval_minutes: typeof sub.interval_minutes === 'number' ? sub.interval_minutes : undefined,
 		schedule_times:
 			Array.isArray(sub.schedule_times) &&

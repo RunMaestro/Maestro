@@ -87,8 +87,40 @@ describe('createCueDispatchService', () => {
 				undefined,
 				undefined, // chainRootId
 				undefined, // parentEventId
-				undefined // notify
+				undefined, // notify
+				undefined // autoRun
 			);
+		});
+	});
+
+	describe('action: autorun', () => {
+		it('threads the captured auto_run payload to executeRun', () => {
+			const { deps, executeRun } = makeDeps();
+			const svc = createCueDispatchService(deps);
+			const autoRun = { documents: ['/proj/a.md'] };
+			const sub = makeSub({ prompt: '', action: 'autorun', auto_run: autoRun });
+			const event = createCueEvent('time.once', 'my-sub');
+
+			expect(svc.dispatchSubscription('owner', sub, event, 'src')).toBe(1);
+			// autoRun rides in the trailing positional slot, after notify.
+			const call = executeRun.mock.calls[0];
+			expect(call[13]).toEqual(autoRun);
+			// The prompt slot is back-filled so the "no prompt -> skip" gate
+			// cannot silently drop a scheduled run.
+			expect(call[1]).toBe('/proj/a.md');
+		});
+
+		it('refuses to dispatch an autorun subscription with no documents', () => {
+			const { deps, executeRun, logs } = makeDeps();
+			const svc = createCueDispatchService(deps);
+			const sub = makeSub({ prompt: '', action: 'autorun', auto_run: { documents: [] } });
+			const event = createCueEvent('time.once', 'my-sub');
+
+			expect(svc.dispatchSubscription('owner', sub, event, 'src')).toBe(0);
+			expect(executeRun).not.toHaveBeenCalled();
+			// A scheduled run fires unattended, so a silent no-op is
+			// indistinguishable from never having fired at all.
+			expect(logs.some(([level, msg]) => level === 'error' && /no documents/.test(msg))).toBe(true);
 		});
 	});
 

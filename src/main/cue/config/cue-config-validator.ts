@@ -90,6 +90,64 @@ function validateCommandField(value: unknown, prefix: string, errors: string[]):
 }
 
 /**
+ * Validate an `auto_run` field, required when `action === 'autorun'`.
+ *
+ * `documents` carries the absolute paths captured when the run was scheduled.
+ * It is validated as non-empty because an autorun subscription with nothing to
+ * run is indistinguishable at fire time from a run that silently did nothing,
+ * and the whole point of a scheduled Auto Run is that nobody is watching when
+ * it fires.
+ */
+function validateAutoRunField(value: unknown, prefix: string, errors: string[]): void {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) {
+		errors.push(`${prefix}: "auto_run" is required and must be an object when action is "autorun"`);
+		return;
+	}
+	const cfg = value as Record<string, unknown>;
+
+	const docs = cfg.documents;
+	if (!Array.isArray(docs) || docs.length === 0) {
+		errors.push(`${prefix}: "auto_run.documents" is required and must be a non-empty array`);
+	} else if (!docs.every((d: unknown) => typeof d === 'string' && d.trim().length > 0)) {
+		errors.push(`${prefix}: "auto_run.documents" must contain only non-empty strings`);
+	}
+
+	const resets = cfg.reset_on_completion;
+	if (resets !== undefined) {
+		if (!Array.isArray(resets) || !resets.every((r: unknown) => typeof r === 'boolean')) {
+			errors.push(
+				`${prefix}: "auto_run.reset_on_completion" must be an array of booleans when provided`
+			);
+		} else if (Array.isArray(docs) && resets.length !== docs.length) {
+			// Misaligned flags would silently reset the wrong document.
+			errors.push(
+				`${prefix}: "auto_run.reset_on_completion" must have one entry per "auto_run.documents" entry`
+			);
+		}
+	}
+
+	for (const key of ['prompt', 'model', 'effort'] as const) {
+		if (cfg[key] !== undefined && typeof cfg[key] !== 'string') {
+			errors.push(`${prefix}: "auto_run.${key}" must be a string when provided`);
+		}
+	}
+
+	if (cfg.loop_enabled !== undefined && typeof cfg.loop_enabled !== 'boolean') {
+		errors.push(`${prefix}: "auto_run.loop_enabled" must be a boolean when provided`);
+	}
+
+	if (cfg.max_loops !== undefined) {
+		if (
+			typeof cfg.max_loops !== 'number' ||
+			!Number.isInteger(cfg.max_loops) ||
+			cfg.max_loops < 1
+		) {
+			errors.push(`${prefix}: "auto_run.max_loops" must be a positive integer when provided`);
+		}
+	}
+}
+
+/**
  * Validate a single subscription. Returns errors specific to this subscription
  * (with the supplied `prefix` prepended). Used both by the strict whole-config
  * validator and the lenient per-subscription partitioner used by the loader.
@@ -124,12 +182,21 @@ export function validateSubscription(sub: unknown, prefix: string): string[] {
 	}
 
 	const action = subRecord.action;
-	if (action !== undefined && action !== 'prompt' && action !== 'command' && action !== 'notify') {
-		errors.push(`${prefix}: "action" must be "prompt", "command", or "notify" when provided`);
+	if (
+		action !== undefined &&
+		action !== 'prompt' &&
+		action !== 'command' &&
+		action !== 'notify' &&
+		action !== 'autorun'
+	) {
+		errors.push(
+			`${prefix}: "action" must be "prompt", "command", "notify", or "autorun" when provided`
+		);
 	}
 
 	const isCommand = action === 'command';
 	const isNotify = action === 'notify';
+	const isAutoRun = action === 'autorun';
 
 	if (isCommand) {
 		validateCommandField(subRecord.command, prefix, errors);
@@ -169,6 +236,25 @@ export function validateSubscription(sub: unknown, prefix: string): string[] {
 		}
 		if (Array.isArray(subRecord.fan_out) && subRecord.fan_out.length > 0) {
 			errors.push(`${prefix}: "fan_out" is not supported when action is "notify"`);
+		}
+	} else if (isAutoRun) {
+		// Autorun launches an Auto Run in the owning agent - no prompt, no
+		// command, no fan-out. The document set travels with the subscription
+		// so the run is pinned to what the user picked when they scheduled it.
+		validateAutoRunField(subRecord.auto_run, prefix, errors);
+		if (typeof subRecord.agent_id !== 'string' || subRecord.agent_id.trim().length === 0) {
+			errors.push(
+				`${prefix}: "agent_id" is required and must be a non-empty string when action is "autorun"`
+			);
+		}
+		if (subRecord.command !== undefined) {
+			errors.push(`${prefix}: "command" is not supported when action is "autorun"`);
+		}
+		// One Auto Run belongs to one agent: fanning it out would launch the
+		// same document set concurrently in several agents against the same
+		// working tree.
+		if (Array.isArray(subRecord.fan_out) && subRecord.fan_out.length > 0) {
+			errors.push(`${prefix}: "fan_out" is not supported when action is "autorun"`);
 		}
 	} else {
 		// `fan_out_ids` is the rename-stable id mirror of `fan_out`. When

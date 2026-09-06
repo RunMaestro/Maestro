@@ -59,9 +59,10 @@ subscriptions:
     poll_minutes: number # Optional for github.*, task.pending
 
     # Action-specific fields
-    action: string # Optional. One of "prompt" (default), "notify", "command"
+    action: string # Optional. One of "prompt" (default), "notify", "command", "autorun"
     notify: object # Optional. Notify payload when action is "notify" (message, sticky, etc.)
     command: object # Optional. Command spec when action is "command" (mode, shell, cli, etc.)
+    auto_run: object # Optional. Auto Run payload when action is "autorun" (documents, prompt, etc.)
 
 # Global settings (all optional - sensible defaults applied)
 settings:
@@ -149,9 +150,10 @@ Either `prompt` or `prompt_file` must be provided. If both are present, `prompt_
 | `output_prompt`            | string            | -        | Follow-up prompt sent after the main run completes successfully                                                                                                                                                                           |
 | `output_prompt_file`       | string            | -        | Path to a `.md` file for the output prompt (alternative to inline)                                                                                                                                                                        |
 | `label`                    | string            | -        | Human-readable label displayed in the Cue dashboard and pipeline editor                                                                                                                                                                   |
-| `action`                   | string            | `prompt` | Action to dispatch when the event fires: `prompt` (run the agent), `notify` (surface a toast through the owning agent - clicking it jumps there), or `command` (shell/cli call)                                                           |
+| `action`                   | string            | `prompt` | Action to dispatch when the event fires: `prompt` (run the agent), `notify` (surface a toast through the owning agent - clicking it jumps there), `command` (shell/cli call), or `autorun` (launch an Auto Run in the owning agent)       |
 | `notify`                   | object            | -        | Notify payload when `action: notify`. Fields: `message` (string, required), `sticky` (boolean), `level` (`info` \| `success` \| `warning` \| `error`). The toast renders through the owning agent; clicking it jumps there                |
 | `command`                  | object            | -        | Command spec when `action: command`. Fields include `mode` (`shell` \| `cli`), `shell`/`cli` invocation, and related options (see [Command Nodes](./maestro-cue-advanced))                                                                |
+| `auto_run`                 | object            | -        | Auto Run payload when `action: autorun`. Fields: `documents` (list of absolute `.md` paths, required), `reset_on_completion` (list of booleans, one per document), `prompt`, `loop_enabled`, `max_loops`, `model`, `effort`               |
 
 ### Prompt Field
 
