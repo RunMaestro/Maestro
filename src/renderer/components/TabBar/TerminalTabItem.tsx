@@ -16,6 +16,7 @@ import type { TerminalTab, Theme } from '../../types';
 import { getTerminalTabDisplayName } from '../../utils/terminalTabHelpers';
 import { useTabHoverOverlay } from '../../hooks/tabs/useTabHoverOverlay';
 import { isCoarsePointer } from '../../utils/touch';
+import { safeClipboardWrite } from '../../utils/clipboard';
 import { LongPressable } from '../shared/LongPressable';
 import { TabOverlayPortal } from './TabOverlayPortal';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -126,16 +127,18 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 		async (e: React.MouseEvent) => {
 			if (!coworkingPillId) return;
 			e.stopPropagation();
-			try {
-				await navigator.clipboard.writeText(coworkingPillId);
+			if (await safeClipboardWrite(coworkingPillId)) {
 				flashCopiedToClipboard();
-			} catch (err) {
-				// Clipboard API can be unavailable (insecure context, focus issues, deny by user).
-				// Capture so we know which mode is failing in production rather than silently dropping.
-				void captureException(err instanceof Error ? err : new Error(String(err)), {
-					extra: { context: 'TerminalTabItem.copyCoworkingId', coworkingPillId },
-				});
+				return;
 			}
+			// safeClipboardWrite has already tried every path it has (browser API,
+			// host bridge, execCommand) and swallowed their errors, so the cause is
+			// gone by the time we get here. All that is left to report is that the
+			// copy never landed; capture that so a clipboard broken for this pill
+			// still shows up in production instead of failing silently.
+			void captureException(new Error('clipboard write refused'), {
+				extra: { context: 'TerminalTabItem.copyCoworkingId', coworkingPillId },
+			});
 		},
 		[coworkingPillId]
 	);

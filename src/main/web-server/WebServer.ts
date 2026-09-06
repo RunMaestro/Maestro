@@ -34,7 +34,15 @@ import { getLocalIpAddress } from '../utils/networkUtils';
 import { captureException } from '../utils/sentry';
 import { WebSocketMessageHandler } from './handlers';
 import { BroadcastService } from './services';
-import { ApiRoutes, ConcertoRoutes, ImageRoutes, StaticRoutes, WsRoute } from './routes';
+import {
+	ApiRoutes,
+	ConcertoRoutes,
+	ImageRoutes,
+	MediaRoutes,
+	StaticRoutes,
+	WsRoute,
+} from './routes';
+import { MEDIA_PATH_PARAM_MAX_LENGTH } from './routes/mediaRoutes';
 import { LiveSessionManager, CallbackRegistry } from './managers';
 
 // Import shared types from canonical location
@@ -216,6 +224,7 @@ export class WebServer {
 	// Route instances
 	private apiRoutes: ApiRoutes;
 	private concertoRoutes: ConcertoRoutes;
+	private mediaRoutes: MediaRoutes;
 	private imageRoutes: ImageRoutes;
 	private staticRoutes: StaticRoutes;
 	private wsRoute: WsRoute;
@@ -227,6 +236,9 @@ export class WebServer {
 			logger: {
 				level: 'info',
 			},
+			// The media route carries a hex-encoded absolute path as a param; the
+			// default 100-character cap 404s any real file (see mediaRoutes.ts).
+			maxParamLength: MEDIA_PATH_PARAM_MAX_LENGTH,
 		});
 
 		// Use provided token (persistent mode) or generate a new one (ephemeral mode)
@@ -269,6 +281,7 @@ export class WebServer {
 		// Initialize route handlers
 		this.apiRoutes = new ApiRoutes(this.securityToken, this.rateLimitConfig);
 		this.concertoRoutes = new ConcertoRoutes(this.concertoToken);
+		this.mediaRoutes = new MediaRoutes(this.securityToken);
 		this.imageRoutes = new ImageRoutes(this.securityToken);
 		this.staticRoutes = new StaticRoutes(
 			this.securityToken,
@@ -921,6 +934,9 @@ export class WebServer {
 		// Concerto HTML documents for browser clients (no custom-scheme handler).
 		this.concertoRoutes.registerRoutes(this.server);
 
+		// Local audio/video for browser clients, same reason: no maestro-media://.
+		this.mediaRoutes.registerRoutes(this.server);
+
 		// Session image store files for browser clients: the desktop loads them
 		// through the maestro-image:// protocol, which a browser cannot resolve.
 		this.imageRoutes.registerRoutes(this.server);
@@ -962,6 +978,10 @@ export class WebServer {
 			handleMessage: (clientId, message) => {
 				this.handleWebClientMessage(clientId, message);
 			},
+			getBridgeEpoch: () => this.broadcastService.bridgeEpoch,
+			getBridgeSeq: () => this.broadcastService.getBridgeSeq(),
+			resumeBridgeClient: (epoch, lastSeq, subscribedSessionId) =>
+				this.broadcastService.resumeBridgeClient(epoch, lastSeq, subscribedSessionId),
 		});
 		this.wsRoute.registerRoute(this.server);
 	}
