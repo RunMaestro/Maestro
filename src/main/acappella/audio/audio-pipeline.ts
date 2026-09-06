@@ -437,7 +437,9 @@ export class AudioPipeline {
 			this.drainPreRoll(stt);
 		}
 
-		this.feed(stt, samples);
+		// The detector's verdict travels with the frame. A local recogniser uses
+		// it to leave a quiet room undecoded; everything else ignores it.
+		this.feed(stt, samples, result.active);
 
 		// The recogniser decides what a final transcript is, but it cannot know the
 		// room went quiet if it is being fed a continuous stream, so the VAD's
@@ -448,7 +450,8 @@ export class AudioPipeline {
 
 	private drainPreRoll(stt: SttProvider): void {
 		const buffered = this.preRoll.drain();
-		for (const samples of buffered) this.feed(stt, samples);
+		// Context ahead of the floor opening, not speech the detector confirmed.
+		for (const samples of buffered) this.feed(stt, samples, false);
 		this.stats.preRollFramesDelivered += buffered.length;
 	}
 
@@ -460,9 +463,9 @@ export class AudioPipeline {
 	 * reports a second and would take the whole capture run down with it. One
 	 * report per run, then the frames are counted as errors and dropped.
 	 */
-	private feed(stt: SttProvider, samples: Int16Array): void {
+	private feed(stt: SttProvider, samples: Int16Array, speech: boolean): void {
 		try {
-			stt.feed(samples);
+			stt.feed(samples, { speech });
 			this.stats.framesDelivered += 1;
 		} catch (error) {
 			this.stats.feedErrors += 1;

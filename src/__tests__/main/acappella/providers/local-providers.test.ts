@@ -20,7 +20,10 @@ vi.mock('../../../../main/utils/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
-import { WhisperSttProvider } from '../../../../main/acappella/providers/local/whisper-stt';
+import {
+	WhisperSttProvider,
+	sanitizeTranscript,
+} from '../../../../main/acappella/providers/local/whisper-stt';
 import {
 	KokoroTtsProvider,
 	styleVectorFor,
@@ -515,4 +518,176 @@ describe('LlamaBrainProvider', () => {
 
 beforeEach(() => {
 	vi.clearAllMocks();
+});
+
+// ---------------------------------------------------------------------------
+// Whisper: silence, loops, and the endpoint race
+// ---------------------------------------------------------------------------
+
+describe('WhisperSttProvider with voice-activity hints', () => {
+	function whisperEngine(text = 'open the auth tab') {
+		const transcribe = vi.fn(async () => text);
+		return {
+			transcribe,
+			engine: { load: vi.fn(async () => {}), unload: vi.fn(async () => {}), transcribe },
+		};
+	}
+
+	function recorder() {
+		const partials: string[] = [];
+		const finals: string[] = [];
+		const errors: Error[] = [];
+		const callbacks: SttCallbacks = {
+			onPartial: (text) => partials.push(text),
+			onFinal: (text) => finals.push(text),
+			onError: (error) => errors.push(error),
+		};
+		return { callbacks, partials, finals, errors };
+	}
+
+	const speech = { speech: true };
+	const quiet = { speech: false };
+
+	it('decodes nothing while the detector has heard no speech', async () => {
+		const harness = whisperEngine('(keyboard clacking)');
+		const provider = new WhisperSttProvider({
+			engine: harness.engine,
+			loadRuntime: async () => ({}) as never,
+			partialIntervalMs: 40,
+		});
+		const { callbacks, partials, finals } = recorder();
+		await provider.start(callbacks);
+
+		// A quiet minute: not one pass, and nothing published on the endpoint.
+		for (let i = 0; i < 3000; i++) provider.feed(new Int16Array(320), quiet);
+		await provider.flush();
+
+		expect(harness.transcribe).not.toHaveBeenCalled();
+		expect(partials).toEqual([]);
+		expect(finals).toEqual([]);
+	});
+
+	it('decodes once the detector has confirmed speech, with a second of context ahead of it', async () => {
+		const harness = whisperEngine('open the auth tab');
+		const provider = new WhisperSttProvider({
+			engine: harness.engine,
+			loadRuntime: async () => ({}) as never,
+			partialIntervalMs: 0,
+		});
+		const { callbacks, finals } = recorder();
+		await provider.start(callbacks);
+
+		for (let i = 0; i < 500; i++) provider.feed(new Int16Array(320), quiet);
+		for (let i = 0; i < 20; i++) provider.feed(new Int16Array(320), speech);
+		await provider.flush();
+
+		expect(finals).toEqual(['open the auth tab']);
+		// 1 s of context (50 frames) plus the 20 speech frames, give or take a frame,
+		// not the ten quiet seconds that came before.
+		const decoded = harness.transcribe.mock.calls[0][0] as Float32Array;
+		expect(decoded.length).toBeLessThanOrEqual(320 * 71);
+		expect(decoded.length).toBeGreaterThanOrEqual(320 * 69);
+	});
+
+	it('drops what the model invents for a quiet room', async () => {
+		const harness = whisperEngine('[ Silence ] (keyboard clacking)');
+		const provider = new WhisperSttProvider({
+			engine: harness.engine,
+			loadRuntime: async () => ({}) as never,
+			partialIntervalMs: 0,
+		});
+		const { callbacks, finals } = recorder();
+		await provider.start(callbacks);
+
+		for (let i = 0; i < 20; i++) provider.feed(new Int16Array(320), speech);
+		await provider.flush();
+
+		expect(harness.transcribe).toHaveBeenCalledTimes(1);
+		expect(finals).toEqual([]);
+	});
+
+	it('lets a final wait for the partial in flight instead of racing it', async () => {
+		let release: (() => void) | null = null;
+		const transcribe = vi
+			.fn<() => Promise<string>>()
+			.mockImplementationOnce(
+				() =>
+					new Promise<string>((resolve) => {
+						release = () => resolve('open the');
+					})
+			)
+			.mockImplementation(async () => 'open the auth tab');
+		const provider = new WhisperSttProvider({
+			engine: { load: vi.fn(async () => {}), unload: vi.fn(async () => {}), transcribe },
+			loadRuntime: async () => ({}) as never,
+			partialIntervalMs: 40,
+		});
+		const { callbacks, partials, finals } = recorder();
+		await provider.start(callbacks);
+
+		// Two frames cross the partial interval: the first pass starts and stalls.
+		provider.feed(new Int16Array(320));
+		provider.feed(new Int16Array(320));
+		await vi.waitFor(() => expect(transcribe).toHaveBeenCalledTimes(1));
+
+		const flushed = provider.flush();
+		await new Promise((resolve) => setTimeout(resolve, 10));
+		// The final has not started a second decode over the same session.
+		expect(transcribe).toHaveBeenCalledTimes(1);
+
+		release!();
+		await flushed;
+		expect(partials).toEqual(['open the']);
+		expect(finals).toEqual(['open the auth tab']);
+		expect(transcribe).toHaveBeenCalledTimes(2);
+	});
+
+	it('drops a failed partial quietly and reports only a failed final', async () => {
+		const transcribe = vi
+			.fn<() => Promise<string>>()
+			.mockRejectedValueOnce(new Error('Reshape node'))
+			.mockRejectedValueOnce(new Error('Reshape node'));
+		const provider = new WhisperSttProvider({
+			engine: { load: vi.fn(async () => {}), unload: vi.fn(async () => {}), transcribe },
+			loadRuntime: async () => ({}) as never,
+			partialIntervalMs: 40,
+		});
+		const { callbacks, errors } = recorder();
+		await provider.start(callbacks);
+
+		provider.feed(new Int16Array(320));
+		provider.feed(new Int16Array(320));
+		await vi.waitFor(() => expect(transcribe).toHaveBeenCalledTimes(1));
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(errors).toEqual([]);
+
+		await provider.flush();
+		expect(errors).toHaveLength(1);
+		expect(errors[0]).toMatchObject({ kind: 'unavailable', providerId: 'whisper-local' });
+	});
+});
+
+describe('sanitizeTranscript', () => {
+	it('strips sound-effect tags and keeps the words around them', () => {
+		expect(sanitizeTranscript('(sighs) run the tests')).toBe('run the tests');
+		expect(sanitizeTranscript('[ Silence ]')).toBe('');
+		expect(sanitizeTranscript('(keyboard clacking) (muffled speaking)')).toBe('');
+		expect(sanitizeTranscript('[BLANK_AUDIO]')).toBe('');
+	});
+
+	it("drops the model's stock words for silence", () => {
+		expect(sanitizeTranscript('you')).toBe('');
+		expect(sanitizeTranscript('Thank you.')).toBe('');
+		expect(sanitizeTranscript('...')).toBe('');
+		expect(sanitizeTranscript('♪')).toBe('');
+	});
+
+	it('leaves real speech alone', () => {
+		expect(sanitizeTranscript('  Ask the backend agent to run the test suite.  ')).toBe(
+			'Ask the backend agent to run the test suite.'
+		);
+		expect(sanitizeTranscript('thank you for the update, now deploy it')).toBe(
+			'thank you for the update, now deploy it'
+		);
+	});
 });

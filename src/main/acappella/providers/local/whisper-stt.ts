@@ -9,11 +9,24 @@
  * revised, which is exactly what a partial transcript is supposed to look like.
  * The final pass runs on endpointing and is the only one whose text is dispatched.
  *
- * **One decode at a time.** A pass takes longer than the interval on a slow
- * machine, so a second pass starting while the first is running would queue
+ * **One decode at a time, always.** A pass takes longer than the interval on a
+ * slow machine, so a second pass starting while the first is running would queue
  * decodes until the process fell over. Partials are SKIPPED while busy rather
  * than queued: a partial that arrives late is worthless, and the next pass will
- * cover the same audio anyway.
+ * cover the same audio anyway. The final WAITS for a partial in flight instead of
+ * racing it: two greedy loops on the same decoder session hand each other's
+ * key/value caches back, and ONNX Runtime reports that as a reshape failure deep
+ * inside the graph - which is how a live session died on its first endpoint.
+ *
+ * **Silence is not decoded.** The capture path feeds every frame while the floor
+ * is open and marks each one with its voice-activity verdict. Until the detector
+ * has heard speech, this provider keeps only a second of context and runs no
+ * pass at all: Whisper fed a quiet room every 900 ms burns a core and invents
+ * "(keyboard clacking)" and "[ Silence ]" with total confidence. Anything that
+ * still comes back looking like one of those is dropped rather than published,
+ * because a bracketed sound effect dispatched to an agent is a prompt nobody
+ * said. A caller that gives no verdict (the harness, the tests) is trusted, and
+ * every frame counts as speech.
  *
  * **Nothing loads until a session starts.** The graphs are opened on `start()`
  * through `native-loader.ts` and freed on `stop()`. Two hundred megabytes of
@@ -34,12 +47,19 @@ import { ACAPPELLA_AUDIO_SAMPLE_RATE } from '../../../../shared/acappella/audio-
 import { WHISPER_BASE_EN_ID } from '../../../../shared/acappella/model-catalog';
 import { LOCAL_STT_PROVIDER_ID } from '../../../../shared/acappella/provider-catalog';
 import { VoiceProviderError } from '../../../../shared/acappella/provider-errors';
-import type { SttCallbacks, SttProvider } from '../../../../shared/acappella/providers';
+import type {
+	SttCallbacks,
+	SttFeedHint,
+	SttProvider,
+} from '../../../../shared/acappella/providers';
 import { estimateSpokenDurationMs } from '../../../../shared/acappella/sentences';
+import { logger } from '../../../utils/logger';
 import { modelFilePath } from '../../models/model-store';
 import { loadLocalRuntime } from './runtime';
 import { PcmBuffer } from '../pcm';
 import { WhisperEngine, WHISPER_MAX_SAMPLES, type OnnxModule } from './whisper/engine';
+
+const LOG_CONTEXT = 'ACappella';
 
 /**
  * The catalog files this provider loads, by their path inside the model dir.
@@ -68,6 +88,20 @@ const MAX_PARTIAL_STABILITY = 0.9;
  * recogniser produced this" without claiming certainty the model never expressed.
  */
 const LOCAL_FINAL_CONFIDENCE = 0.95;
+
+/**
+ * Audio kept ahead of the first speech frame. Enough for the detector's
+ * enter-hysteresis and the onset of the first word, not enough to carry a quiet
+ * minute into the decode.
+ */
+const PRE_SPEECH_KEEP_MS = 1000;
+
+/**
+ * Speech the detector must have confirmed before a pass is worth running.
+ * Below this the utterance is a cough, and Whisper's answer to a cough is a
+ * confident sentence nobody said.
+ */
+const MIN_SPEECH_MS_FOR_DECODE = 200;
 
 export interface WhisperSttOptions {
 	partialIntervalMs?: number;
@@ -105,7 +139,15 @@ export class WhisperSttProvider implements SttProvider {
 	/** Audio duration at the last partial pass, so the cadence is in AUDIO time. */
 	private lastPartialAtMs = 0;
 	private partialsInUtterance = 0;
-	private decoding = false;
+	/** The pass in flight, so a final can wait for a partial rather than race it. */
+	private inFlight: Promise<void> | null = null;
+	/**
+	 * Whether any caller has ever passed a voice-activity verdict. Once one has,
+	 * silence is left undecoded; until then every frame is trusted as speech.
+	 */
+	private hinted = false;
+	/** Detector-confirmed speech in the current utterance. */
+	private speechMs = 0;
 
 	constructor(options: WhisperSttOptions = {}) {
 		this.partialIntervalMs = Math.max(0, options.partialIntervalMs ?? DEFAULT_PARTIAL_INTERVAL_MS);
@@ -141,11 +183,23 @@ export class WhisperSttProvider implements SttProvider {
 			: modelFilePath(WHISPER_BASE_EN_ID, relative);
 	}
 
-	feed(pcm: Int16Array): void {
+	feed(pcm: Int16Array, hint?: SttFeedHint): void {
 		if (!this.callbacks) return;
 		this.buffer.push(pcm);
 
-		if (this.partialIntervalMs <= 0 || this.decoding) return;
+		if (hint) {
+			this.hinted = true;
+			if (hint.speech) this.speechMs += (pcm.length / this.sampleRate) * 1000;
+		}
+
+		// Nothing said yet: hold a little context for the first word and do no work.
+		if (this.hinted && this.speechMs === 0) {
+			this.buffer.keepLast((PRE_SPEECH_KEEP_MS / 1000) * this.sampleRate);
+			return;
+		}
+
+		if (this.partialIntervalMs <= 0 || this.inFlight) return;
+		if (this.hinted && this.speechMs < MIN_SPEECH_MS_FOR_DECODE) return;
 		if (this.buffer.durationMs - this.lastPartialAtMs < this.partialIntervalMs) return;
 
 		this.lastPartialAtMs = this.buffer.durationMs;
@@ -157,16 +211,32 @@ export class WhisperSttProvider implements SttProvider {
 	/** Endpoint: decode everything buffered and publish it as the transcript. */
 	async flush(): Promise<void> {
 		if (!this.callbacks) return;
+		// A partial still running holds the decoder's caches. Wait for it rather
+		// than starting a second loop over the same session.
+		await this.inFlight?.catch(() => undefined);
+		if (!this.callbacks) return;
 		if (this.buffer.length === 0) return;
+
+		if (this.hinted && this.speechMs < MIN_SPEECH_MS_FOR_DECODE) {
+			// The detector endpointed on something it never called speech for long
+			// enough to matter. Decoding it would publish a hallucination as a final.
+			this.buffer.clear();
+			this.resetUtterance();
+			return;
+		}
 		await this.decode('final');
 	}
 
 	async stop(): Promise<void> {
 		this.callbacks = null;
 		this.buffer.clear();
+		this.resetUtterance();
 
 		const engine = this.engine;
 		this.engine = null;
+		// The session may still be inside a pass. Let it finish before the graphs
+		// go away underneath it; its result is dropped because `callbacks` is gone.
+		await this.inFlight?.catch(() => undefined);
 		await engine?.unload();
 	}
 
@@ -183,7 +253,15 @@ export class WhisperSttProvider implements SttProvider {
 
 	// -- Internals -----------------------------------------------------------
 
-	private async decode(kind: 'partial' | 'final'): Promise<void> {
+	private decode(kind: 'partial' | 'final'): Promise<void> {
+		const pass = this.runDecode(kind).finally(() => {
+			if (this.inFlight === pass) this.inFlight = null;
+		});
+		this.inFlight = pass;
+		return pass;
+	}
+
+	private async runDecode(kind: 'partial' | 'final'): Promise<void> {
 		const engine = this.engine;
 		const callbacks = this.callbacks;
 		if (!engine || !callbacks) return;
@@ -192,7 +270,6 @@ export class WhisperSttProvider implements SttProvider {
 		const durationMs = this.buffer.durationMs;
 		if (samples.length === 0) return;
 
-		this.decoding = true;
 		try {
 			// One encoder pass covers a fixed 30 s window, so a longer utterance is
 			// transcribed from its TAIL rather than silently truncated at the front.
@@ -203,7 +280,7 @@ export class WhisperSttProvider implements SttProvider {
 				samples.length > WHISPER_MAX_SAMPLES
 					? samples.subarray(samples.length - WHISPER_MAX_SAMPLES)
 					: samples;
-			const text = await engine.transcribe(windowed);
+			const text = sanitizeTranscript(await engine.transcribe(windowed));
 			// The session may have ended, or the utterance been superseded, while the
 			// decode ran. Publishing now would put an old transcript on a new turn.
 			if (this.callbacks !== callbacks) return;
@@ -219,7 +296,14 @@ export class WhisperSttProvider implements SttProvider {
 			this.partialsInUtterance += 1;
 			callbacks.onPartial(text, this.partialStability());
 		} catch (error) {
-			// A decode failure is classified rather than thrown: it arrives from a
+			if (kind === 'partial') {
+				// A partial is a preview. Losing one costs nothing the next pass will not
+				// cover, whereas announcing it would park the session in `error` over
+				// text nobody was waiting for.
+				logger.warn(`Whisper dropped a partial pass: ${(error as Error).message}`, LOG_CONTEXT);
+				return;
+			}
+			// A final failure is classified rather than thrown: it arrives from a
 			// frame callback with no caller, and the session has a path for a named
 			// provider failure but not for a rejected promise from nowhere.
 			callbacks.onError(
@@ -230,8 +314,6 @@ export class WhisperSttProvider implements SttProvider {
 							{ kind: 'unavailable', providerId: this.id, cause: error }
 						)
 			);
-		} finally {
-			this.decoding = false;
 		}
 	}
 
@@ -245,5 +327,39 @@ export class WhisperSttProvider implements SttProvider {
 	private resetUtterance(): void {
 		this.lastPartialAtMs = 0;
 		this.partialsInUtterance = 0;
+		this.speechMs = 0;
 	}
+}
+
+// ---------------------------------------------------------------------------
+
+/**
+ * Phrases Whisper produces for audio with no speech in it. Matched whole, after
+ * the bracketed tags are stripped: "you" alone is the model's favourite word for
+ * silence, and nobody dictates it to an agent as a complete request.
+ */
+const NON_SPEECH_PHRASES =
+	/^(?:you|thank you\.?|thanks for watching\.?|thank you for watching\.?|bye\.?|\.+)$/i;
+
+/**
+ * Drop what a recogniser invents for a quiet room.
+ *
+ * Whisper narrates silence as sound effects - "[ Silence ]", "(keyboard
+ * clacking)", "[BLANK_AUDIO]", "♪" - and a partial that shows them is a
+ * transcript of nothing, while a final that dispatches them is a prompt nobody
+ * said. Tags are removed wherever they sit, so "(sighs) run the tests" keeps its
+ * request; a transcript that was nothing but tags becomes empty.
+ */
+export function sanitizeTranscript(raw: string): string {
+	const text = raw.replace(/\s+/g, ' ').trim();
+	if (!text) return '';
+	const stripped = text
+		.replace(/[[(][^\])]*[\])]/g, ' ')
+		.replace(/\s+/g, ' ')
+		.trim();
+	if (!stripped) return '';
+	if (NON_SPEECH_PHRASES.test(stripped)) return '';
+	// No letter or digit anywhere: punctuation and music notes are not words.
+	if (!/[\p{L}\p{N}]/u.test(stripped)) return '';
+	return stripped;
 }

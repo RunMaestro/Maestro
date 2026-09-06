@@ -32,6 +32,7 @@ import {
 	type NativeRuntimeDescriptor,
 	type NativeRuntimeId,
 } from '../../../shared/acappella/native-runtimes';
+import { isNativeRuntimeDownloadable } from '../../../shared/acappella/runtime-artifacts';
 import { isWindows } from '../../../shared/platformDetection';
 
 /**
@@ -210,15 +211,24 @@ export function allNativeRuntimeFailures(): NativeRuntimeUnavailable[] {
  * Side-effect free on purpose: it does NOT record into the remembered failures,
  * so asking the question cannot make the debug package report a failure nobody
  * ever hit.
+ *
+ * A DOWNLOADED runtime is checked before the registry's verdict, exactly as
+ * {@link tryLoadNativeRuntime} does: the registry says "not a dependency" about
+ * every runtime the app fetches at run time, and a gate that stopped there
+ * refused the very bytes Voice Setup had just installed. That is not
+ * hypothetical either - it is what made a fresh install with everything
+ * downloaded still answer "ONNX Runtime is not part of this build yet" and never
+ * open a session. Async for that one disk read; nothing here loads a module.
  */
-export function knownNativeRuntimeUnavailability(
+export async function knownNativeRuntimeUnavailability(
 	id: NativeRuntimeId
-): NativeRuntimeUnavailable | null {
+): Promise<NativeRuntimeUnavailable | null> {
 	const remembered = failures.get(id);
 	if (remembered) return remembered;
 
 	const descriptor = getNativeRuntime(id);
 	if (!descriptor) return unknownRuntime(id);
+	if (await resolveDownloadedEntry(id)) return null;
 	return declineBeforeLoading(descriptor);
 }
 
@@ -312,7 +322,15 @@ export async function tryLoadNativeRuntime<T = unknown>(
 function declineBeforeLoading(
 	descriptor: NativeRuntimeDescriptor
 ): NativeRuntimeUnavailable | null {
+	const key = nativePlatformKey(process.platform, process.arch);
+
 	if (!descriptor.declared) {
+		// Not bundled, and the two reasons that can be true want different words:
+		// a runtime the app can FETCH for this platform is merely not downloaded
+		// yet, and the recovery is the same Download button that fetches the
+		// models (so `readinessErrorMessage` states the two as one instruction);
+		// one it cannot fetch is genuinely not part of this build.
+		const downloadable = key !== null && isNativeRuntimeDownloadable(descriptor.id, key);
 		return {
 			kind: 'runtime-unavailable',
 			runtimeId: descriptor.id,
@@ -320,15 +338,18 @@ function declineBeforeLoading(
 			platform: process.platform,
 			arch: process.arch,
 			failure: 'not-a-dependency',
-			message: `${descriptor.label} is not part of this build yet.`,
+			message: downloadable
+				? `${descriptor.label} is not downloaded yet.`
+				: `${descriptor.label} is not part of this build yet.`,
 			// No "for this slot": the detail this rides behind already names the slot,
 			// and `readinessErrorMessage` hoists a shared recovery to the end of a
 			// multi-slot refusal, where a singular "this slot" would be wrong.
-			suggestedAction: 'Use a hosted provider or the mock tier until the local runtime ships.',
+			suggestedAction: downloadable
+				? 'Download it in Settings > Plugins > A Cappella > Voice Setup.'
+				: 'Use a hosted provider or the mock tier until the local runtime ships.',
 		};
 	}
 
-	const key = nativePlatformKey(process.platform, process.arch);
 	if (!key) {
 		return {
 			kind: 'runtime-unavailable',

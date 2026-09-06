@@ -56,6 +56,21 @@ export class PcmBuffer {
 		this.samples = 0;
 	}
 
+	/**
+	 * Drop the oldest audio until at most `maxSamples` remain.
+	 *
+	 * For a recogniser holding a little context ahead of the first word: a room
+	 * that has been quiet for a minute must not turn into a minute of silence in
+	 * front of the utterance, which is slower to decode and easier to hallucinate
+	 * over. Whole frames are dropped, so the tail may sit a frame under the cap.
+	 */
+	keepLast(maxSamples: number): void {
+		while (this.chunks.length > 1 && this.samples - this.chunks[0].length >= maxSamples) {
+			const dropped = this.chunks.shift();
+			this.samples -= dropped?.length ?? 0;
+		}
+	}
+
 	/** Everything buffered, as one contiguous buffer. Does not clear. */
 	toInt16(): Int16Array {
 		const out = new Int16Array(this.samples);

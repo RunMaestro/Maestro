@@ -310,7 +310,11 @@ describe('capability-gate', () => {
 				const stt = readiness.slots.find((slot) => slot.slot === 'stt')!;
 				expect(stt.satisfied).toBe(false);
 				expect(stt.reason).toBe('runtime-unavailable');
-				expect(stt.detail).toContain('not part of this build');
+				// A runtime the app can fetch is "not downloaded yet", and the recovery
+				// is the same Download button that fetches the models; one it cannot
+				// fetch is "not part of this build". Either way it is blocked here,
+				// before a load is attempted.
+				expect(stt.detail).toMatch(/not downloaded yet|not part of this build/);
 				expect(readiness.canStartSession).toBe(false);
 			} finally {
 				declared.onnx = true;

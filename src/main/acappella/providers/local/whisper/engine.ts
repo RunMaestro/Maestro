@@ -28,7 +28,13 @@
  */
 
 import { VoiceProviderError } from '../../../../../shared/acappella/provider-errors';
-import { WhisperMelExtractor, WHISPER_N_FRAMES, WHISPER_N_MELS, WHISPER_N_SAMPLES } from './mel';
+import {
+	WhisperMelExtractor,
+	WHISPER_N_FRAMES,
+	WHISPER_N_MELS,
+	WHISPER_N_SAMPLES,
+	WHISPER_SAMPLE_RATE,
+} from './mel';
 import {
 	WHISPER_EN_SPECIAL_TOKENS,
 	WhisperTokenizer,
@@ -204,7 +210,19 @@ export class WhisperEngine {
 		const generated: number[] = [];
 		let usingCache = false;
 
-		for (let step = 0; step < this.maxTokens; step++) {
+		// Two guards on top of the positional ceiling, both for the same failure:
+		// a decoder that has nothing to attend to (silence, noise, a cough)
+		// free-runs into a fluent loop and pays a decoder step for every token of
+		// it. English runs at a few tokens a second, so a budget proportional to
+		// the audio bounds the damage, and a tail that has repeated itself is
+		// stopped the moment it is recognisable as a loop.
+		const seconds = audio.length / WHISPER_SAMPLE_RATE;
+		const budget = Math.min(
+			this.maxTokens,
+			TOKEN_BUDGET_FLOOR + Math.ceil(seconds) * TOKENS_PER_SECOND_BUDGET
+		);
+
+		for (let step = 0; step < budget; step++) {
 			// First pass feeds the whole prompt; later passes feed only the newest
 			// token, because everything before it is already in the cache.
 			const inputIds = usingCache ? [generated[generated.length - 1]] : [...prompt, ...generated];
@@ -222,6 +240,12 @@ export class WhisperEngine {
 			const next = argmaxLastPosition(outputs.logits);
 			if (next === this.special.endOfText) break;
 			generated.push(next);
+			if (hasRepeatingTail(generated)) {
+				// Keep one copy of the phrase: the first time round it may have been
+				// real, and the transcript filter upstream decides whether it was.
+				generated.length -= repeatingPeriod(generated) * (REPEATS_TO_STOP - 1);
+				break;
+			}
 
 			for (let layer = 0; layer < layers; layer++) {
 				past[`past_key_values.${layer}.decoder.key`] = outputs[`present.${layer}.decoder.key`];
@@ -244,6 +268,42 @@ export class WhisperEngine {
 
 /** Longest audio one pass accepts, so callers can window before they call. */
 export const WHISPER_MAX_SAMPLES = WHISPER_N_SAMPLES;
+
+/**
+ * Tokens allowed regardless of audio length, then per second of it.
+ *
+ * Dictated English decodes to three or four tokens a second; the budget is
+ * roughly three times that, so a fast talker is never cut and a loop over two
+ * seconds of noise stops after a few dozen steps rather than 448.
+ */
+const TOKEN_BUDGET_FLOOR = 24;
+const TOKENS_PER_SECOND_BUDGET = 12;
+
+/** Longest phrase the loop detector looks for, in tokens. */
+const MAX_REPEAT_PERIOD = 8;
+/** Identical consecutive copies before the tail counts as a loop. */
+const REPEATS_TO_STOP = 3;
+/** Under this many tokens nothing is called a loop: "very very very" is English. */
+const MIN_TAIL_FOR_LOOP = 8;
+
+/** The period of the loop at the end of `tokens`, or 0 when there is none. */
+function repeatingPeriod(tokens: readonly number[]): number {
+	if (tokens.length < MIN_TAIL_FOR_LOOP) return 0;
+	for (let period = 1; period <= MAX_REPEAT_PERIOD; period++) {
+		const span = period * REPEATS_TO_STOP;
+		if (tokens.length < span) break;
+		let repeating = true;
+		for (let i = tokens.length - span; i < tokens.length - period && repeating; i++) {
+			if (tokens[i] !== tokens[i + period]) repeating = false;
+		}
+		if (repeating) return period;
+	}
+	return 0;
+}
+
+function hasRepeatingTail(tokens: readonly number[]): boolean {
+	return repeatingPeriod(tokens) > 0;
+}
 
 /**
  * Greedy pick over the final position's logits.

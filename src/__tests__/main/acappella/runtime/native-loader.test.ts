@@ -464,27 +464,42 @@ describe('native-loader', () => {
 	 * anything had attempted a load.
 	 */
 	describe('known unavailability, without loading', () => {
-		it('reports a runtime that is not a dependency before anything tries it', () => {
+		it('reports a runtime that is not a dependency before anything tries it', async () => {
 			const importer = vi.fn();
 			__setNativeImporter(importer);
 
-			const verdict = knownNativeRuntimeUnavailability('whisper');
+			const verdict = await knownNativeRuntimeUnavailability('whisper');
 
 			expect(verdict?.failure).toBe('not-a-dependency');
 			expect(importer).not.toHaveBeenCalled();
 		});
 
-		it('reports a platform with no build before anything tries it', () => {
+		it('is null for a runtime the user downloaded, whatever the registry says', async () => {
+			// `whisper` is not declared, and that is the ordinary state of every
+			// runtime fetched at run time. A gate that stopped at the registry refused
+			// the bytes Voice Setup had just installed and never opened a session.
+			const importer = vi.fn();
+			__setNativeImporter(importer);
+			vi.mocked(installedRuntimeEntry).mockResolvedValue('/runtimes/whisper/dist/index.js');
+
+			expect(await knownNativeRuntimeUnavailability('whisper')).toBeNull();
+			// Still without loading anything: readiness is a disk question.
+			expect(importer).not.toHaveBeenCalled();
+		});
+
+		it('reports a platform with no build before anything tries it', async () => {
 			setPlatform('darwin', 'arm64');
 
 			// `onnx` is declared but shipped nowhere in the stand-in registry.
-			expect(knownNativeRuntimeUnavailability('onnx')?.failure).toBe('unsupported-platform');
+			expect((await knownNativeRuntimeUnavailability('onnx'))?.failure).toBe(
+				'unsupported-platform'
+			);
 		});
 
-		it('is null for a runtime that should load', () => {
+		it('is null for a runtime that should load', async () => {
 			setPlatform('darwin', 'arm64');
 
-			expect(knownNativeRuntimeUnavailability('llama')).toBeNull();
+			expect(await knownNativeRuntimeUnavailability('llama')).toBeNull();
 		});
 
 		it('prefers what actually happened over what the registry predicts', async () => {
@@ -492,11 +507,11 @@ describe('native-loader', () => {
 			__setNativeImporter(vi.fn().mockRejectedValue(new Error('boom')));
 			await tryLoadNativeRuntime('llama');
 
-			expect(knownNativeRuntimeUnavailability('llama')?.failure).toBe('load-failed');
+			expect((await knownNativeRuntimeUnavailability('llama'))?.failure).toBe('load-failed');
 		});
 
-		it('does not record a failure nobody hit', () => {
-			knownNativeRuntimeUnavailability('whisper');
+		it('does not record a failure nobody hit', async () => {
+			await knownNativeRuntimeUnavailability('whisper');
 
 			// Asking must not put anything in the support report: the debug package
 			// lists failures that HAPPENED, not answers to hypothetical questions.

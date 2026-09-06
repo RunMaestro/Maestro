@@ -142,13 +142,16 @@ export interface ResolveVoiceReadinessOptions {
 	readMicPermission?: () => MicPermission;
 	/**
 	 * Why a native runtime will not load, or null when it will. Defaults to the
-	 * loader's answer: a remembered failure if there is one, otherwise the facts
-	 * knowable from the registry alone (not a dependency of this build, no binary
-	 * for this platform). It deliberately does NOT attempt a load, because
-	 * dlopen'ing an inference engine to draw a settings panel is exactly the
-	 * startup cost the lazy loader exists to avoid.
+	 * loader's answer: a remembered failure if there is one, otherwise whether a
+	 * downloaded copy is on disk, otherwise the facts knowable from the registry
+	 * alone (not a dependency of this build, no binary for this platform). It
+	 * deliberately does NOT attempt a load, because dlopen'ing an inference engine
+	 * to draw a settings panel is exactly the startup cost the lazy loader exists
+	 * to avoid.
 	 */
-	readRuntimeFailure?: (runtimeId: NativeRuntimeId) => NativeRuntimeUnavailable | null;
+	readRuntimeFailure?: (
+		runtimeId: NativeRuntimeId
+	) => NativeRuntimeUnavailable | null | Promise<NativeRuntimeUnavailable | null>;
 	/**
 	 * Why the operating system's speech engine cannot run, or null when it can.
 	 * Defaults to the real PATH check. Injected so a test on a Linux runner
@@ -253,14 +256,14 @@ function resolveMicrophone(options: ResolveVoiceReadinessOptions): VoiceSlotRead
  * tries it, and a gate that waited for an attempt would call the slot ready
  * right up until the session died in the provider's `start()`.
  */
-function runtimeFailureFor(
+async function runtimeFailureFor(
 	slot: VoiceSlot,
 	providerId: string,
 	runtimeId: NativeRuntimeId,
 	options: ResolveVoiceReadinessOptions
-): VoiceSlotReadiness | null {
+): Promise<VoiceSlotReadiness | null> {
 	const read = options.readRuntimeFailure ?? knownNativeRuntimeUnavailability;
-	const failure = read(runtimeId);
+	const failure = await read(runtimeId);
 	if (!failure) return null;
 
 	return {
@@ -309,7 +312,12 @@ async function resolveSlot(
 		// repaired by a download, and "download 1.1 GB" is the wrong instruction to
 		// give someone whose real problem is a missing redistributable.
 		if (requirement.runtimeId) {
-			const runtimeVerdict = runtimeFailureFor(slot, providerId, requirement.runtimeId, options);
+			const runtimeVerdict = await runtimeFailureFor(
+				slot,
+				providerId,
+				requirement.runtimeId,
+				options
+			);
 			if (runtimeVerdict) return runtimeVerdict;
 		}
 

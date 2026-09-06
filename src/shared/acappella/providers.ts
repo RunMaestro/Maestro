@@ -61,6 +61,12 @@ export interface VoiceProviderSubstitution {
 // Speech to text
 // ---------------------------------------------------------------------------
 
+/** What the capture path knows about one buffer that the recogniser cannot. */
+export interface SttFeedHint {
+	/** True when the voice activity detector heard speech in this buffer. */
+	speech?: boolean;
+}
+
 export interface SttCallbacks {
 	/** `text` is the full hypothesis so far, not a delta. `stability` is 0 to 1. */
 	onPartial(text: string, stability: number): void;
@@ -97,8 +103,15 @@ export interface SttProvider extends VoiceProviderInfo {
 	readonly transcribesSpeech?: boolean;
 	/** Acquire the device or session. Throws when the provider cannot start. */
 	start(callbacks: SttCallbacks): Promise<void>;
-	/** Push one buffer of 16-bit mono PCM at `sampleRate`. */
-	feed(pcm: Int16Array): void;
+	/**
+	 * Push one buffer of 16-bit mono PCM at `sampleRate`.
+	 *
+	 * The hint is the capture path's voice-activity verdict for this buffer. A
+	 * provider that decodes locally uses it to leave silence alone: a recogniser
+	 * fed a quiet room every 900 ms burns a core and invents "(keyboard clacking)".
+	 * A caller that says nothing is trusted, and every buffer counts as speech.
+	 */
+	feed(pcm: Int16Array, hint?: SttFeedHint): void;
 	/** Force endpointing of the current utterance. */
 	flush(): Promise<void>;
 	stop(): Promise<void>;

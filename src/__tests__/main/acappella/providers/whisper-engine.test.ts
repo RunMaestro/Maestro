@@ -308,3 +308,44 @@ describe('WhisperEngine', () => {
 		await expect(engine.unload()).resolves.toBeUndefined();
 	});
 });
+
+describe('WhisperEngine loop guards', () => {
+	it('stops a tail that repeats itself and keeps one copy of the phrase', async () => {
+		// A six-token phrase, over and over: what the decoder does with a cough.
+		const phrase = [1, 2, 3, 4, 5, 6];
+		const looping = fakeOnnx([...phrase, ...phrase, ...phrase, ...phrase, ...phrase]);
+		const engine = new WhisperEngine({
+			encoderPath: '/models/onnx/encoder_model.onnx',
+			decoderPath: '/models/onnx/decoder_model_merged_q4.onnx',
+			tokenizerJson: JSON.stringify({
+				model: { vocab: vocabFor([' zero', ' a', ' b', ' c', ' d', ' e', ' f']) },
+			}),
+			providerId: 'whisper-local',
+		});
+		await engine.load(looping.module);
+
+		const text = await engine.transcribe(AUDIO);
+
+		// Three copies is the loop threshold, so it stops at 18 tokens rather than
+		// running to the ceiling, and the two extra copies are trimmed off.
+		expect(looping.calls.length).toBe(18);
+		expect(text).toBe('a b c d e f');
+	});
+
+	it('budgets tokens by audio length so noise cannot run to the ceiling', async () => {
+		const neverEnding = fakeOnnx(Array.from({ length: 448 }, (_, i) => (i % 40) + 1));
+		const engine = new WhisperEngine({
+			encoderPath: '/models/onnx/encoder_model.onnx',
+			decoderPath: '/models/onnx/decoder_model_merged_q4.onnx',
+			tokenizerJson: JSON.stringify({
+				model: { vocab: vocabFor(Array.from({ length: 41 }, (_, i) => ` t${i}`)) },
+			}),
+			providerId: 'whisper-local',
+		});
+		await engine.load(neverEnding.module);
+
+		// One second of audio: 24 + 12 tokens, not 448.
+		await engine.transcribe(AUDIO);
+		expect(neverEnding.calls.length).toBe(36);
+	});
+});
