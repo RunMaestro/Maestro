@@ -734,17 +734,21 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 								persistedName || null
 							);
 						}
-						const updatedHistoryEntries = await window.maestro.history.updateSessionName(
-							tab.agentSessionId,
-							persistedName
-						);
-						if (updatedHistoryEntries === 0) {
-							reply({
-								success: false,
-								error: `History not found for agent session: ${tab.agentSessionId}`,
-							});
-							return;
-						}
+						// Relabelling past history entries is SECONDARY, and it is awaited
+						// only so that a thrown error still fails the rename. A count of
+						// zero is not a failure: `agentSessionId` is stamped when the
+						// provider emits its id at the START of a turn, while the entry
+						// carrying that id is written by the exit listener at the END, so
+						// a tab renamed during its first turn legitimately has nothing to
+						// relabel (as does one whose entries aged out of `maxEntries`).
+						// Failing there would be worse than the bug this path fixes: the
+						// provider metadata above has already been written with the new
+						// name, so refusing here leaves the desktop and the web showing
+						// the old name while the new one resurfaces in the Agent Sessions
+						// browser and on resume. It would also make the same rename
+						// succeed on the desktop and fail from the phone, since
+						// `useSessionLifecycle` treats this call as best effort too.
+						await window.maestro.history.updateSessionName(tab.agentSessionId, persistedName);
 					}
 
 					updateAiTab(sessionId, tabId, (t) => ({

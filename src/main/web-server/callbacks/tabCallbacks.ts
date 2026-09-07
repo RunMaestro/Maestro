@@ -155,6 +155,14 @@ export function registerTabCallbacks(
 				// when it is definitely true, which is when the renderer is gone: that
 				// is also the only moment nothing can still mutate, so a reported
 				// failure can never be contradicted afterwards.
+				//
+				// A wrong label on a remote client is not permanent either way: in
+				// LIVE mode `useRemoteIntegration` rebroadcasts each agent's tab
+				// inventory, `name` included, on a 500ms hash-diffed interval, so a
+				// client reconciles to desktop truth shortly after. That backstop is
+				// why a brief disagreement is survivable, and it is NOT a licence to
+				// report an outcome we do not have: it does not run outside LIVE mode,
+				// and it never reaches the caller blocked on this promise.
 				function settle(result: RenameTabResult) {
 					if (settled) return;
 					settled = true;

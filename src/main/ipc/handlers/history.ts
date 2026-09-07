@@ -681,7 +681,7 @@ export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void 
 					sessionName
 				);
 				logger.info(
-					`Persisted sessionName for ${count} history entries with agentSessionId ${agentSessionId}`,
+					`Updated sessionName for ${count} history entries with agentSessionId ${agentSessionId}`,
 					LOG_CONTEXT
 				);
 				return count;

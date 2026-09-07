@@ -1772,8 +1772,38 @@ describe('useRemoteIntegration', () => {
 			});
 		});
 
-		it('reports failure when history persistence updates no entries', async () => {
+		it('still renames when there are no history entries to relabel', async () => {
+			// A tab renamed during its first turn has an agentSessionId (stamped when
+			// the provider emits its id) but no history entry yet (written by the exit
+			// listener at the end of the turn), so the count is legitimately 0. The
+			// provider metadata write above is the authoritative persistence, and the
+			// desktop path treats this same call as best effort, so the rename must
+			// not fail here.
 			mockHistory.updateSessionName.mockResolvedValueOnce(0);
+			const tab = createMockTab({ id: 'tab-1', agentSessionId: 'agent-session-1', name: 'Old' });
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [tab],
+				projectRoot: '/test/project',
+				toolType: 'claude-code',
+			});
+			const deps = createDeps({ sessions: [session] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			await act(async () => {
+				await onRemoteRenameTabHandler?.('session-1', 'tab-1', 'New Name', 'rename-response');
+			});
+
+			const updatedSession = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
+			expect(updatedSession?.aiTabs.find((t) => t.id === 'tab-1')?.name).toBe('New Name');
+			expect(mockProcess.sendRemoteRenameTabResponse).toHaveBeenCalledWith('rename-response', {
+				success: true,
+			});
+		});
+
+		it('still fails the rename when the history update throws', async () => {
+			mockHistory.updateSessionName.mockRejectedValueOnce(new Error('history unreadable'));
 			const tab = createMockTab({ id: 'tab-1', agentSessionId: 'agent-session-1', name: 'Old' });
 			const session = createMockSession({
 				id: 'session-1',
@@ -1793,7 +1823,7 @@ describe('useRemoteIntegration', () => {
 			expect(updatedSession?.aiTabs.find((t) => t.id === 'tab-1')?.name).toBe('Old');
 			expect(mockProcess.sendRemoteRenameTabResponse).toHaveBeenCalledWith('rename-response', {
 				success: false,
-				error: 'History not found for agent session: agent-session-1',
+				error: 'history unreadable',
 			});
 		});
 	});

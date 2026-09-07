@@ -659,14 +659,24 @@ export class HistoryManager {
 	/**
 	 * Update sessionName for all entries matching a given agentSessionId.
 	 * This is used when a tab is renamed to retroactively update past history entries.
-	 * Returns the number of matching entries whose persisted name is now correct.
+	 *
+	 * BEST EFFORT, deliberately. Relabelling old entries is a nicety over the
+	 * authoritative name the provider's own session metadata holds, so a session
+	 * whose file cannot be read or written is logged and skipped rather than
+	 * failing the whole rename. Two consequences follow for callers: the returned
+	 * count is the number of entries actually REWRITTEN, so a tab with no history
+	 * yet (its `agentSessionId` is stamped at the start of a turn, while the entry
+	 * carrying it is written at the end) and a tab already carrying this name both
+	 * return 0; and a partial run still returns a nonzero count. Do NOT read the
+	 * count as "the rename persisted" - it answers only "how many old labels
+	 * changed".
 	 */
 	async updateSessionNameByClaudeSessionId(
 		agentSessionId: string,
 		sessionName: string
 	): Promise<number> {
 		const sessions = await this.listSessionsWithHistory();
-		let matchedCount = 0;
+		let updatedCount = 0;
 
 		// Per session, run the read-modify-write through the per-session write
 		// queue so it can't interleave with a concurrent addEntry on the same
@@ -688,7 +698,6 @@ export class HistoryManager {
 				try {
 					const { data, recovered } = parseHistoryFileData(raw);
 					let modified = recovered;
-					let perSessionMatches = 0;
 					let perSessionUpdates = 0;
 
 					if (recovered) {
@@ -699,9 +708,7 @@ export class HistoryManager {
 					}
 
 					for (const entry of data.entries) {
-						if (entry.agentSessionId !== agentSessionId) continue;
-						perSessionMatches++;
-						if (entry.sessionName !== sessionName) {
+						if (entry.agentSessionId === agentSessionId && entry.sessionName !== sessionName) {
 							entry.sessionName = sessionName;
 							modified = true;
 							perSessionUpdates++;
@@ -710,6 +717,7 @@ export class HistoryManager {
 
 					if (modified) {
 						await atomicWriteJson(filePath, data);
+						updatedCount += perSessionUpdates;
 						if (perSessionUpdates > 0) {
 							logger.debug(
 								`Updated ${perSessionUpdates} entries for agentSessionId ${agentSessionId} in session ${sessionId}`,
@@ -717,7 +725,6 @@ export class HistoryManager {
 							);
 						}
 					}
-					matchedCount += perSessionMatches;
 				} catch (error) {
 					logger.warn(
 						`Failed to update sessionName in session ${sessionId}: ${error}`,
@@ -728,7 +735,7 @@ export class HistoryManager {
 			});
 		}
 
-		return matchedCount;
+		return updatedCount;
 	}
 
 	/**
