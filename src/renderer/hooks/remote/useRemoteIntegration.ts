@@ -199,10 +199,16 @@ const remoteRenameStates = new Map<string, { desired: string; active: number }>(
 function handOffRenameSlotAfter(work: Promise<void>, budgetMs: number): Promise<void> {
 	return new Promise((resolve) => {
 		const timer = setTimeout(resolve, budgetMs);
-		void work.finally(() => {
-			clearTimeout(timer);
-			resolve();
-		});
+		// `catch` rather than a bare `void`: the work answers its own caller and
+		// resolves the slot either way, so a rejection here has nowhere to go and
+		// would surface as an unhandled rejection. The one way it can reject is the
+		// reply itself throwing, which the caller's `finally` deliberately runs last.
+		work
+			.finally(() => {
+				clearTimeout(timer);
+				resolve();
+			})
+			.catch(() => {});
 	});
 }
 
