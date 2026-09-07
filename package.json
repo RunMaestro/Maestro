@@ -101,6 +101,23 @@
 			"notarize": false,
 			"entitlements": "build/entitlements.mac.plist",
 			"entitlementsInherit": "build/entitlements.mac.plist",
+			"extendInfo": {
+				"NSCalendarsUsageDescription": "A program running inside Maestro wants to access your calendars.",
+				"NSCalendarsFullAccessUsageDescription": "A program running inside Maestro wants to read and change your calendars.",
+				"NSCalendarsWriteOnlyAccessUsageDescription": "A program running inside Maestro wants to add events to your calendars.",
+				"NSRemindersUsageDescription": "A program running inside Maestro wants to access your reminders.",
+				"NSRemindersFullAccessUsageDescription": "A program running inside Maestro wants to read and change your reminders.",
+				"NSContactsUsageDescription": "A program running inside Maestro wants to access your contacts.",
+				"NSPhotoLibraryUsageDescription": "A program running inside Maestro wants to access your photo library.",
+				"NSPhotoLibraryAddUsageDescription": "A program running inside Maestro wants to add photos to your photo library.",
+				"NSAppleEventsUsageDescription": "A program running inside Maestro wants to control another app on your Mac.",
+				"NSLocalNetworkUsageDescription": "A program running inside Maestro wants to reach devices on your local network.",
+				"NSDesktopFolderUsageDescription": "A program running inside Maestro wants to read files on your Desktop.",
+				"NSDocumentsFolderUsageDescription": "A program running inside Maestro wants to read files in your Documents folder.",
+				"NSDownloadsFolderUsageDescription": "A program running inside Maestro wants to read files in your Downloads folder.",
+				"NSRemovableVolumesUsageDescription": "A program running inside Maestro wants to read files on a removable volume.",
+				"NSNetworkVolumesUsageDescription": "A program running inside Maestro wants to read files on a network volume."
+			},
 			"target": [
 				"dmg",
 				"zip"
