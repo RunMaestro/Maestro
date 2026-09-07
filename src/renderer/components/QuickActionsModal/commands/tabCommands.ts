@@ -3,7 +3,7 @@ import type { ActiveTabInfo, QuickAction } from '../types';
 import { formatMetaKey } from '../../../utils/shortcutFormatter';
 import { resolveSnoozeTarget } from '../../../utils/snoozeHelpers';
 import { useModalStore } from '../../../stores/modalStore';
-import { resolveActiveTabRef } from '../../../utils/panelLayout';
+import { resolveModelEffortTabId } from '../../../utils/panelLayout';
 import { visibleAiTabs } from '../../../utils/tabHelpers';
 
 interface BuildNewTabCommandsArgs {
@@ -25,6 +25,8 @@ interface BuildNewTabCommandsArgs {
 
 interface BuildTabCommandsArgs {
 	activeSession: Session | undefined;
+	/** Set while a group chat owns the main panel. Suppresses tab-scoped entries a room cannot answer. */
+	activeGroupChatId?: string | null;
 	isAiMode?: boolean;
 	activeTabInfo: ActiveTabInfo;
 	enterToSendAI: boolean;
@@ -128,6 +130,7 @@ export function buildNewTabCommands({
 
 export function buildTabCommands({
 	activeSession,
+	activeGroupChatId,
 	isAiMode,
 	activeTabInfo,
 	enterToSendAI,
@@ -331,12 +334,14 @@ export function buildTabCommands({
 		});
 	}
 
-	// Retune the active AI tab's model and reasoning effort. AI-only: file,
-	// terminal, and browser tabs have no model to change. Resolved through
-	// resolveActiveTabRef so a focused pane in a tiled group is retuned rather
-	// than the standalone tab hidden behind it.
-	const modelEffortRef = activeSession ? resolveActiveTabRef(activeSession) : null;
-	if (modelEffortRef?.type === 'ai') {
+	// Retune the active AI tab's model and reasoning effort. AI-only, and absent
+	// while a group chat owns the view: the palette is reachable from a room, and
+	// `activeSession` still points at the agent selected before the room opened,
+	// so the entry would have retuned a background tab the user is not looking
+	// at. `resolveModelEffortTabId` owns both rules, and the shortcut resolves
+	// its target through the same function.
+	const modelEffortTabId = resolveModelEffortTabId(activeSession, activeGroupChatId);
+	if (modelEffortTabId) {
 		commands.push({
 			id: 'changeModelEffort',
 			label: 'Change Tabs Model and Effort',
@@ -344,7 +349,7 @@ export function buildTabCommands({
 			shortcut: shortcuts.openModelEffort,
 			action: () => {
 				setQuickActionOpen(false);
-				useModalStore.getState().openModal('modelEffort', { tabId: modelEffortRef.id });
+				useModalStore.getState().openModal('modelEffort', { tabId: modelEffortTabId });
 			},
 		});
 	}

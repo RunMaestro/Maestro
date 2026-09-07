@@ -779,6 +779,40 @@ describe('agent-switch window scoping', () => {
 		});
 	});
 
+	// A group chat has no model of its own, and opening one does not clear
+	// `activeSession` - it still points at whichever agent was selected before the
+	// room was opened. So the entry has to be ABSENT, not merely inert: left in
+	// place it resolved a live target and retuned a background agent's tab.
+	it('withholds the model/effort picker while a group chat owns the view', () => {
+		const session = createMockSession({
+			id: 's1',
+			aiTabs: [createMockAITab({ id: 'tab-1' })],
+			activeTabId: 'tab-1',
+		});
+		const args = {
+			activeSession: session,
+			isAiMode: true,
+			activeTabInfo: {
+				isTerminalMode: false,
+				hasActiveTab: true,
+				activeUnifiedIndex: 0,
+				unifiedTabCount: 1,
+				activeTabType: 'ai' as const,
+			},
+			enterToSendAI: true,
+			setQuickActionOpen: close,
+			shortcuts: {},
+			toggleInputMode: vi.fn(),
+		};
+
+		expect(buildTabCommands(args).find((a) => a.id === 'changeModelEffort')).toBeDefined();
+		expect(
+			buildTabCommands({ ...args, activeGroupChatId: 'chat-1' }).find(
+				(a) => a.id === 'changeModelEffort'
+			)
+		).toBeUndefined();
+	});
+
 	// The count in "Close all N tabs" has to match what a close-all actually takes
 	// out, and hidden consult tabs survive it.
 	it('counts only visible tabs in the Close All Tabs subtext', () => {

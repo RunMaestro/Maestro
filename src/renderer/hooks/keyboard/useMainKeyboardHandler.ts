@@ -5,7 +5,11 @@ import {
 	moveActiveUnifiedTabToEdge,
 	toggleReadOnlyModeFields,
 } from '../../utils/tabHelpers';
-import { resolveActiveTabRef, resolveTabRefRenameValue } from '../../utils/panelLayout';
+import {
+	resolveActiveTabRef,
+	resolveModelEffortTabId,
+	resolveTabRefRenameValue,
+} from '../../utils/panelLayout';
 import { DESTINATION_SHORTCUT_IDS, getModalActions, useModalStore } from '../../stores/modalStore';
 import { toggleAllCadenzas } from '../../stores/cadenzaStore';
 import { requestEditLastQueuedMessage } from '../../services/editQueuedMessage';
@@ -850,12 +854,14 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				}
 			} else if (ctx.isShortcut(e, 'openModelEffort')) {
 				e.preventDefault();
-				// AI-only: a file, terminal, or browser tab has no model to retune.
-				// Resolved through resolveActiveTabRef so a focused pane in a tiled
-				// group is retuned rather than the standalone tab hidden behind it.
-				const modelEffortRef = activeSession ? resolveActiveTabRef(activeSession) : null;
-				if (modelEffortRef?.type === 'ai') {
-					useModalStore.getState().openModal('modelEffort', { tabId: modelEffortRef.id });
+				// AI-only, and never while a group chat owns the view - see
+				// resolveModelEffortTabId for why a room resolves to a live but wrong
+				// target rather than to nothing. It also resolves through
+				// resolveActiveTabRef, so a focused pane in a tiled group is retuned
+				// rather than the standalone tab hidden behind it.
+				const modelEffortTabId = resolveModelEffortTabId(activeSession, ctx.activeGroupChatId);
+				if (modelEffortTabId) {
+					useModalStore.getState().openModal('modelEffort', { tabId: modelEffortTabId });
 					trackShortcut('openModelEffort');
 				}
 			} else if (ctx.isShortcut(e, 'openWizard')) {

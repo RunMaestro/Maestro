@@ -624,6 +624,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		}),
 		...buildTabCommands({
 			activeSession,
+			activeGroupChatId,
 			isAiMode,
 			activeTabInfo,
 			enterToSendAI,
