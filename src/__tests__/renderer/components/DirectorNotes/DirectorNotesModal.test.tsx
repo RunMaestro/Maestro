@@ -436,15 +436,17 @@ describe('DirectorNotesModal', () => {
 		it('registers modal layer on mount', async () => {
 			renderModal();
 
-			expect(mockRegisterLayer).toHaveBeenCalledWith({
-				type: 'modal',
-				priority: 848,
-				blocksLowerLayers: true,
-				capturesFocus: true,
-				blocksAppShortcuts: true,
-				focusTrap: 'lenient',
-				onEscape: expect.any(Function),
-			});
+			expect(mockRegisterLayer).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'modal',
+					priority: 848,
+					blocksLowerLayers: true,
+					capturesFocus: true,
+					blocksAppShortcuts: true,
+					focusTrap: 'lenient',
+					onEscape: expect.any(Function),
+				})
+			);
 		});
 
 		it('unregisters modal layer on unmount', async () => {

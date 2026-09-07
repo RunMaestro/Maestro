@@ -59,6 +59,24 @@ export interface BaseLayer {
 
 	/** Optional ARIA label for accessibility */
 	ariaLabel?: string;
+
+	/**
+	 * What had keyboard focus before this layer took it, for the stack to hand
+	 * the caret back to on close.
+	 *
+	 * Omit it and the stack reads `document.activeElement` itself at
+	 * registration time. That default is only correct for a surface that has
+	 * not already focused its own content: registration happens in a passive
+	 * effect, so a host that focuses itself in an EARLIER passive effect makes
+	 * the stack snapshot the layer's own element, which is torn down with the
+	 * layer and leaves the caret on `document.body`. `useModalLayer` passes
+	 * this explicitly from a layout effect for exactly that reason, so the
+	 * order the host happens to call its hooks in cannot change the answer.
+	 *
+	 * `null` means "nothing had focus" and is distinct from omitting the field:
+	 * it suppresses the self-read rather than falling back to it.
+	 */
+	focusOrigin?: HTMLElement | null;
 }
 
 /**
