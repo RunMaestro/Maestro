@@ -734,7 +734,17 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 								persistedName || null
 							);
 						}
-						await window.maestro.history.updateSessionName(tab.agentSessionId, persistedName);
+						const updatedHistoryEntries = await window.maestro.history.updateSessionName(
+							tab.agentSessionId,
+							persistedName
+						);
+						if (updatedHistoryEntries === 0) {
+							reply({
+								success: false,
+								error: `History not found for agent session: ${tab.agentSessionId}`,
+							});
+							return;
+						}
 					}
 
 					updateAiTab(sessionId, tabId, (t) => ({

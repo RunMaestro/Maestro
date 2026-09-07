@@ -416,7 +416,7 @@ describe('useRemoteIntegration', () => {
 
 	const mockHistory = {
 		...window.maestro.history,
-		updateSessionName: vi.fn().mockResolvedValue(true),
+		updateSessionName: vi.fn().mockResolvedValue(1),
 	};
 
 	const mockGit = {
@@ -1769,6 +1769,31 @@ describe('useRemoteIntegration', () => {
 			expect(mockProcess.sendRemoteRenameTabResponse).toHaveBeenCalledWith('rename-response', {
 				success: false,
 				error: 'disk full',
+			});
+		});
+
+		it('reports failure when history persistence updates no entries', async () => {
+			mockHistory.updateSessionName.mockResolvedValueOnce(0);
+			const tab = createMockTab({ id: 'tab-1', agentSessionId: 'agent-session-1', name: 'Old' });
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [tab],
+				projectRoot: '/test/project',
+				toolType: 'claude-code',
+			});
+			const deps = createDeps({ sessions: [session] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			await act(async () => {
+				await onRemoteRenameTabHandler?.('session-1', 'tab-1', 'New Name', 'rename-response');
+			});
+
+			const updatedSession = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
+			expect(updatedSession?.aiTabs.find((t) => t.id === 'tab-1')?.name).toBe('Old');
+			expect(mockProcess.sendRemoteRenameTabResponse).toHaveBeenCalledWith('rename-response', {
+				success: false,
+				error: 'History not found for agent session: agent-session-1',
 			});
 		});
 	});
