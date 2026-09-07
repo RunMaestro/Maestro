@@ -285,7 +285,7 @@ function SlotSelector({
 						))}
 					</select>
 
-					{descriptor && <p className="text-xs opacity-60 mt-1.5">{descriptor.description}</p>}
+					{descriptor && <p className="text-xs opacity-70 mt-1.5">{descriptor.description}</p>}
 				</div>
 
 				<SlotStatus theme={theme} readiness={readiness} onDownload={onDownload} />

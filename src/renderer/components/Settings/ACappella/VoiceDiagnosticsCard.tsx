@@ -197,7 +197,7 @@ function Row({
 }) {
 	return (
 		<div className="flex gap-2">
-			<dt className="opacity-60 shrink-0 w-32">{label}</dt>
+			<dt className="opacity-70 shrink-0 w-32">{label}</dt>
 			<dd
 				className="select-text"
 				style={{ color: warn ? theme.colors.warning : theme.colors.textMain }}
