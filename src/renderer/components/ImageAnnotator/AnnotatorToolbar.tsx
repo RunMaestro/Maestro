@@ -19,9 +19,11 @@ import {
 	Check,
 	Circle,
 	Copy,
+	Crop,
 	Eraser,
 	Move,
 	PenLine,
+	Scissors,
 	Square,
 	SlidersHorizontal,
 	Trash2,
@@ -49,6 +51,8 @@ interface AnnotatorToolbarProps {
 	onSave: () => void | Promise<void>;
 	/** Composite + write to clipboard. Toolbar shows the success flash. */
 	onCopy: () => Promise<void>;
+	/** Cut the base image down to the armed crop selection. */
+	onApplyCrop: () => void | Promise<void>;
 	onCancel: () => void;
 }
 
@@ -59,14 +63,19 @@ export const AnnotatorToolbar = memo(function AnnotatorToolbar({
 	onToggleDrawer,
 	onSave,
 	onCopy,
+	onApplyCrop,
 	onCancel,
 }: AnnotatorToolbarProps) {
-	const { tool, setTool, strokes, shapes, texts, undo, clear } = state;
+	const { tool, setTool, strokes, shapes, texts, cropCount, cropRect, undo, clear } = state;
 	const [confirmingClear, setConfirmingClear] = useState(false);
 	const confirmWrapRef = useRef<HTMLDivElement>(null);
 	const [colorPickerOpen, setColorPickerOpen] = useState(false);
 	const colorWrapRef = useRef<HTMLDivElement>(null);
-	const hasContent = strokes.length > 0 || shapes.length > 0 || texts.length > 0;
+	// Two different questions. "Clear all" only wipes drawables, so it stays
+	// disabled on an image whose only edit is a crop; undo walks the whole
+	// history, so a crop alone is enough to enable it.
+	const hasDrawables = strokes.length > 0 || shapes.length > 0 || texts.length > 0;
+	const hasContent = hasDrawables || cropCount > 0;
 
 	// Current-color swatch. Resolution mirrors AnnotatorSettingsDrawer so the
 	// toolbar always shows (and edits) the same color the drawer would: a
@@ -157,8 +166,8 @@ export const AnnotatorToolbar = memo(function AnnotatorToolbar({
 	}, [confirmingClear]);
 
 	useEffect(() => {
-		if (!hasContent && confirmingClear) setConfirmingClear(false);
-	}, [hasContent, confirmingClear]);
+		if (!hasDrawables && confirmingClear) setConfirmingClear(false);
+	}, [hasDrawables, confirmingClear]);
 
 	useEffect(() => {
 		if (!colorPickerOpen) return;
@@ -277,6 +286,25 @@ export const AnnotatorToolbar = memo(function AnnotatorToolbar({
 			{renderToolButton('ellipse', Circle, 'Circle', 'C')}
 			{renderToolButton('arrow', ArrowUpRight, 'Arrow', 'A')}
 			{renderToolButton('text', Type, 'Text', 'T')}
+			{renderToolButton('crop', Crop, 'Crop', 'R')}
+
+			{/* Applying a crop is the one action that only exists inside a tool, so
+			    its button rides along with the crop tool instead of sitting dead in
+			    the toolbar the rest of the time. */}
+			{tool === 'crop' && (
+				<HoverTooltip label="Apply crop" shortcut="Enter" theme={theme} placement="left">
+					<GhostIconButton
+						onClick={() => void onApplyCrop()}
+						ariaLabel="Apply crop"
+						padding={BUTTON_PADDING}
+						disabled={!cropRect}
+						color={theme.colors.accent}
+						style={cropRect ? { backgroundColor: `${theme.colors.accent}26` } : undefined}
+					>
+						<Scissors className={ICON_CLASS} />
+					</GhostIconButton>
+				</HoverTooltip>
+			)}
 
 			{divider}
 
@@ -301,12 +329,12 @@ export const AnnotatorToolbar = memo(function AnnotatorToolbar({
 				<HoverTooltip label="Clear all" theme={theme} placement="left">
 					<GhostIconButton
 						onClick={() => {
-							if (!canUndo) return;
+							if (!hasDrawables) return;
 							setConfirmingClear((v) => !v);
 						}}
 						ariaLabel="Clear all strokes"
 						padding={BUTTON_PADDING}
-						disabled={!canUndo}
+						disabled={!hasDrawables}
 						color={theme.colors.error}
 					>
 						<Trash2 className={ICON_CLASS} />
