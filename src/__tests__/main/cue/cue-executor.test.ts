@@ -1492,6 +1492,49 @@ describe('cue-executor', () => {
 			expect(result.providerSessionId).toBe('sess-final');
 		});
 
+		it('still extracts the session id when the parser surfaces result text', async () => {
+			// Regression: `runProcess` hands back stdout that has ALREADY been
+			// through `extractCleanStdout`, which collapses a stream-json
+			// transcript down to its result text. Mining the session id out of
+			// that cleaned string finds nothing, because the JSON envelope
+			// carrying `session_id` is gone. The extraction must read the raw
+			// buffer instead.
+			//
+			// The sibling test above cannot catch this: its parser never sets
+			// `text`, so cleaning falls through and returns the raw NDJSON
+			// unchanged. A real agent parser DOES set `text` on the `result`
+			// event - which is exactly what erased the id in production and
+			// left `provider_session_id` NULL on every `cue_events` row.
+			mockGetOutputParser.mockReturnValue({
+				parseJsonLine: (line: string) => {
+					try {
+						return JSON.parse(line);
+					} catch {
+						return null;
+					}
+				},
+				extractSessionId: (event: any) => event?.session_id ?? null,
+			} as any);
+
+			const ndjson = [
+				JSON.stringify({ type: 'system', session_id: 'sess-init' }),
+				JSON.stringify({ type: 'result', session_id: 'sess-final', text: 'All done.' }),
+			].join('\n');
+
+			const config = createExecutionConfig({ toolType: 'claude-code' });
+			const resultPromise = executeCuePrompt(config);
+			await vi.advanceTimersByTimeAsync(0);
+
+			mockChild.stdout.emit('data', ndjson);
+			mockChild.emit('close', 0);
+			const result = await resultPromise;
+
+			// Cleaned stdout is just the result text - the id is only
+			// recoverable from the raw buffer.
+			expect(result.stdout).toBe('All done.');
+			expect(result.providerSessionId).toBe('sess-final');
+		});
+
 		it('returns null provider session id when no parser is registered', async () => {
 			// Plain-text agents / command runs have no parser to mine an id from.
 			mockGetOutputParser.mockReturnValue(null);

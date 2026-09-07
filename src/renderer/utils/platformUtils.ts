@@ -12,7 +12,13 @@
  * first (rejecting the 'browser' sentinel) and falls back to this same bridge.
  */
 
-function getPlatform(): string {
+/**
+ * The raw `process.platform` string as the preload bridge reported it, or '' in
+ * a context with no bridge. Exported for the callers that need the value itself
+ * rather than a boolean - a platform-keyed lookup table has no business being
+ * rewritten as a chain of `isMacOSPlatform()` tests.
+ */
+export function getPlatform(): string {
 	return (window as any).maestro?.platform ?? '';
 }
 

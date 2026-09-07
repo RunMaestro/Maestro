@@ -91,16 +91,27 @@ export type UsageDashboardViewMode =
 	| 'codex-usage'
 	| 'cue'
 	| 'shortcuts';
+/**
+ * Every tab the Settings modal can open on.
+ *
+ * Kept in step with `SettingsTabId` in `SettingsModal.tsx`, which renders them.
+ * This list used to be a stale subset that could not name half the tabs that
+ * existed, so a caller asking to deep-link into Plugins, SSH, or Display simply
+ * would not compile - and the workaround was to open Settings with no tab and
+ * let the user go hunting.
+ */
 export type SettingsTab =
+	| 'about'
 	| 'general'
-	// SettingsModal has always rendered a Display tab and accepted it as an
-	// `initialTab`; it was simply missing from this union, so nothing could
-	// deep-link there through openSettings().
 	| 'display'
+	| 'llm'
 	| 'shortcuts'
 	| 'theme'
 	| 'notifications'
 	| 'aicommands'
+	| 'ssh'
+	| 'environment'
+	| 'encore'
 	| 'prompts';
 // Note: ScratchPadMode was removed as part of the Scratchpad → Auto Run migration
 export type FocusArea = 'sidebar' | 'main' | 'right';
@@ -1709,6 +1720,12 @@ export interface EncoreFeatureFlags {
 	// Groups+ - nested groups, standard folder icons, and label colors.
 	// Off by default. Optional so older fixtures and persisted settings remain valid.
 	groupsPlus?: boolean;
+	// A Cappella - the voice interface (headless voice session in main, HUD in
+	// the renderer). Off by default, and enabling it only makes the Voice Setup
+	// surface reachable: no device, model, or socket is touched until a session
+	// is explicitly started. Optional so older fixtures and persisted settings
+	// remain valid.
+	aCappella?: boolean;
 }
 
 // Director's Notes settings for synopsis generation

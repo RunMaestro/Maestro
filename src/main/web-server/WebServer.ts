@@ -33,6 +33,7 @@ import { logger } from '../utils/logger';
 import { getLocalIpAddress } from '../utils/networkUtils';
 import { captureException } from '../utils/sentry';
 import { WebSocketMessageHandler } from './handlers';
+import { handleACappellaSignalDisconnect } from './handlers/messageHandlers/acappellaSignal';
 import { BroadcastService } from './services';
 import {
 	ApiRoutes,
@@ -966,6 +967,10 @@ export class WebServer {
 						);
 					}
 				}
+				// Tears down any A Cappella peer connection and closes the voice
+				// session if this socket's device was holding the microphone. A
+				// dropped socket must not leave a hot mic behind.
+				handleACappellaSignalDisconnect(clientId);
 				this.webClients.delete(clientId);
 				logger.info(
 					`Client disconnected: ${clientId} (total: ${this.webClients.size})`,
@@ -973,6 +978,7 @@ export class WebServer {
 				);
 			},
 			onClientError: (clientId) => {
+				handleACappellaSignalDisconnect(clientId);
 				this.webClients.delete(clientId);
 			},
 			handleMessage: (clientId, message) => {

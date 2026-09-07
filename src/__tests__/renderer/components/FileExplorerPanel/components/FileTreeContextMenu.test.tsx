@@ -64,6 +64,7 @@ const defaultProps = {
 	onOpenNewFile: vi.fn(),
 	onOpenNewFolder: vi.fn(),
 	onNewAgentHere: vi.fn(),
+	onTalkWithDocument: vi.fn(),
 	onPreviewFile: vi.fn(),
 	onPreviewAllInFolder: vi.fn(),
 	onStageForAutoRun: vi.fn(),
@@ -87,6 +88,44 @@ describe('FileTreeContextMenu', () => {
 
 	afterEach(() => {
 		(window as any).maestro = origMaestro;
+	});
+
+	it('hides Talk with Document until A Cappella is on', () => {
+		render(<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(fileNode)} />);
+		expect(screen.queryByText('Talk with Document')).toBeNull();
+	});
+
+	it('offers Talk with Document for a file when A Cappella is on', () => {
+		const onTalkWithDocument = vi.fn();
+		render(
+			<FileTreeContextMenu
+				{...defaultProps}
+				voiceEnabled
+				onTalkWithDocument={onTalkWithDocument}
+				contextMenu={makeContextMenu(fileNode)}
+			/>
+		);
+		fireEvent.click(screen.getByText('Talk with Document'));
+		expect(onTalkWithDocument).toHaveBeenCalledTimes(1);
+	});
+
+	it('hides Talk with Document for a folder and for anything with no text in it', () => {
+		// A folder is not a document, and an image, a video, or a compiled binary
+		// gives the agent nothing to read.
+		const silent: FileNode[] = [
+			folderNode,
+			mediaNode,
+			{ name: 'diagram.png', type: 'file' },
+			{ name: 'release.zip', type: 'file' },
+		];
+
+		for (const node of silent) {
+			const { unmount } = render(
+				<FileTreeContextMenu {...defaultProps} voiceEnabled contextMenu={makeContextMenu(node)} />
+			);
+			expect(screen.queryByText('Talk with Document')).toBeNull();
+			unmount();
+		}
 	});
 
 	it('shows Preview + Open in Default App + Copy Path + Reveal + Rename + Delete for a file', () => {

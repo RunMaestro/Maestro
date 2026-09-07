@@ -394,6 +394,8 @@ export type ModalId =
 	| 'gitLog'
 	| 'gitCommandRunner'
 	| 'branchSwitcher'
+	// Voice
+	| 'voiceSetup'
 	// Wizard & Tour
 	| 'wizardResume'
 	| 'tour'
@@ -847,6 +849,11 @@ export function getModalActions() {
 			open ? openModal('deleteAgent') : closeModal('deleteAgent'),
 		setDeleteAgentSession: (session: Session | null) =>
 			session ? openModal('deleteAgent', { session }) : closeModal('deleteAgent'),
+
+		// Voice Setup walkthrough. Opened when A Cappella is switched on and its
+		// models are not installed yet, and from the command palette afterwards.
+		setVoiceSetupOpen: (open: boolean) =>
+			open ? openModal('voiceSetup') : closeModal('voiceSetup'),
 
 		// Shortcuts Help Modal
 		setShortcutsHelpOpen: (open: boolean) =>

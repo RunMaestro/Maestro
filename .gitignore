@@ -66,3 +66,16 @@ yarn-error.log*
 
 # Bundled-plugin signing artifact (release-time build output; dev signs locally)
 examples/plugins/*/signature.json
+
+# A Cappella model weights and partial downloads.
+#
+# Models live in userData and are downloaded by the user, never bundled into the
+# installer: one of them is 1.1 GB, and shipping weights would multiply the
+# download for everyone including people who never turn voice on. These patterns
+# exist so a stray copy in the working tree (a manual download, a test fixture, a
+# .part file from an interrupted transfer) cannot be committed by accident.
+*.gguf
+*.onnx
+*.part
+ggml-*.bin
+models/acappella/

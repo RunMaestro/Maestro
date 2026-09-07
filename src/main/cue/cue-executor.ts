@@ -160,7 +160,7 @@ function extractCleanStdout(rawStdout: string, toolType: string): string {
  * Maestro agent id stored on the event row.
  */
 function extractProviderSessionId(rawStdout: string, toolType: string): string | null {
-	if (!rawStdout.trim()) return null;
+	if (!rawStdout?.trim()) return null;
 	const parser = getOutputParser(toolType as ToolType);
 	if (!parser) return null;
 
@@ -290,7 +290,14 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 		durationMs: sleepAwareElapsedMs(runSpan),
 		startedAt,
 		endedAt: new Date().toISOString(),
-		providerSessionId: extractProviderSessionId(processResult.stdout, config.toolType),
+		// MUST read `rawStdout`, not `stdout`. `runProcess` already ran the
+		// buffer through `extractCleanStdout`, which strips the stream-json
+		// envelope down to result text - and with it the `session_id` this
+		// parse depends on. Passing the cleaned string here made this return
+		// null for every run ever recorded, leaving `provider_session_id` NULL
+		// on 100% of `cue_events` rows and the Cue token dashboard reporting
+		// nothing for every pipeline.
+		providerSessionId: extractProviderSessionId(processResult.rawStdout, config.toolType),
 	};
 }
 

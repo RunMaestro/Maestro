@@ -18,6 +18,8 @@ import { Z_LAYERS } from '../../constants/zLayers';
 import { gitService } from '../../services/git';
 import { useWindowContextOptional } from '../../contexts/WindowContext';
 import { useGitAgentActions } from '../../hooks/git/useGitAgentActions';
+import { useVoiceAgentActions } from '../../hooks/voice/useVoiceAgentActions';
+import { useVoiceUiStore } from '../../stores/voiceUiStore';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { getOpenInLabel } from '../../utils/platformUtils';
 import { visibleAiTabs } from '../../utils/tabHelpers';
@@ -49,6 +51,7 @@ import { buildActiveTabContextCommands } from './commands/contextCommands';
 import { buildDebugCommands } from './commands/debugCommands';
 import { buildFeatureCommands } from './commands/featureCommands';
 import { buildGitWorktreeCommands } from './commands/gitWorktreeCommands';
+import { buildVoiceCommands } from './commands/voiceCommands';
 import {
 	buildGroupChatCommands,
 	buildGroupChatJumpCommands,
@@ -362,6 +365,10 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	// The palette is the third surface for the git action set, after the header
 	// branch pill and the Left Bar right-click menu.
 	const gitActions = useGitAgentActions(activeSession);
+	// Same arrangement for voice - see `buildVoiceCommands`.
+	const voiceActions = useVoiceAgentActions(activeSession);
+	const voiceTranscriptVisible = useVoiceUiStore((s) => s.transcriptVisible);
+	const toggleVoiceTranscript = useVoiceUiStore((s) => s.toggleTranscript);
 	// Output search is scoped per agent+AI-tab; open the active window's slot so
 	// the Find bar doesn't follow the user to other agents/tabs.
 	const openActiveOutputSearch = useCallback(
@@ -725,6 +732,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			activeSession,
 			activeSessionId,
 			activeTabType,
+			voiceEnabled: voiceActions.enabled,
 			ghCliAvailable,
 			setSessions,
 			setQuickActionOpen,
@@ -782,6 +790,15 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			notifyToast,
 			openUrl,
 			logger,
+		}),
+		...buildVoiceCommands({
+			activeSession,
+			voiceActions,
+			openVoiceSetup: () => getModalActions().setVoiceSetupOpen(true),
+			transcriptVisible: voiceTranscriptVisible,
+			toggleTranscript: toggleVoiceTranscript,
+			setQuickActionOpen,
+			tabShortcuts,
 		}),
 		...buildRightPanelCommands({
 			autoRunDisabled: useSettingsStore.getState().autoRunDisabled,

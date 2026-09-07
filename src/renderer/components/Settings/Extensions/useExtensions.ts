@@ -24,6 +24,8 @@ import {
 } from '../../../../shared/plugins/first-party';
 import type { PermissionRequest } from '../../../../shared/plugins/permissions';
 import { buildExtensions, type UnifiedExtension } from './extensionModel';
+import { launchFromSettings } from '../../../utils/launchFromSettings';
+import { getModalActions } from '../../../stores/modalStore';
 
 /** Is this Encore flag one of the five first-party plugin-backed features? */
 function isFirstPartyFlag(flag: keyof EncoreFeatureFlags): flag is FirstPartyEncoreFlag {
@@ -133,6 +135,16 @@ export function useExtensions(): UseExtensionsResult {
 			const applyFlag = (value: boolean) => {
 				setEncoreFeatures({ ...encoreFeatures, [flag]: value });
 				if (flag === 'usageStats') setStatsCollectionEnabled(value);
+				// A Cappella is the one feature that cannot work the moment it is
+				// switched on: speech recognition and synthesis are models, and models
+				// have to be downloaded. Offer that walkthrough here rather than leaving
+				// the user with a HUD that listens and transcribes nothing. Routed
+				// through `launchFromSettings` because this is called from inside
+				// Settings, which renders above every other modal - opening directly
+				// would put the walkthrough behind it and read as a dead toggle.
+				if (flag === 'aCappella' && value) {
+					launchFromSettings(() => getModalActions().setVoiceSetupOpen(true));
+				}
 			};
 			if (!isFirstPartyFlag(flag)) {
 				applyFlag(next);

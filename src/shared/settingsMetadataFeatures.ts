@@ -81,6 +81,7 @@ export const FEATURES_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 			opencodeServer: false,
 			concerto: false,
 			groupsPlus: false,
+			aCappella: false,
 		},
 		category: 'advanced',
 	},

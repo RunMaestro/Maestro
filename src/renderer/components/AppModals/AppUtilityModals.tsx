@@ -20,6 +20,8 @@ import type { FlatFileItem } from '../FileSearchModal';
 
 // Modal store (for reading per-modal data passed by callers)
 import { useModalStore, selectModalData, selectModalOpen } from '../../stores/modalStore';
+import { useSettingsStore } from '../../stores/settingsStore';
+import { VoiceSetupModal } from '../Settings/ACappella/VoiceSetupModal';
 import type { GitLogModalData } from '../../stores/modalStore';
 
 // Utility Modal Components
@@ -547,6 +549,18 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	const snoozedTabsOpen = useModalStore(selectModalOpen('snoozedTabs'));
 	// Model & effort picker (Opt+Cmd+.) - same deal: it resolves the tab, agent,
 	// and option lists itself, so all it needs from here is the theme.
+	// Voice Setup walkthrough. Same deal: it reads the model catalog itself, so
+	// all it needs from here is the theme and the Encore flag.
+	const voiceSetupOpen = useModalStore(selectModalOpen('voiceSetup'));
+	const closeVoiceSetup = useCallback(() => useModalStore.getState().closeModal('voiceSetup'), []);
+	// "More options" hands the user to the full Voice Setup panel. Closing this
+	// first, rather than stacking, because Settings renders above every modal.
+	const openACappellaSettings = useCallback(() => {
+		const store = useModalStore.getState();
+		store.closeModal('voiceSetup');
+		store.openModal('settings', { tab: 'encore' });
+	}, []);
+	const aCappellaEnabled = useSettingsStore((state) => state.encoreFeatures.aCappella === true);
 	const modelEffortOpen = useModalStore(selectModalOpen('modelEffort'));
 	const modelEffortData = useModalStore(selectModalData('modelEffort'));
 	const closeModelEffort = useCallback(
@@ -918,6 +932,14 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					theme={theme}
 					onClose={closeSnoozedTabs}
 					onJumpToTab={onSwitchQueueSession}
+				/>
+			)}
+			{voiceSetupOpen && (
+				<VoiceSetupModal
+					theme={theme}
+					enabled={aCappellaEnabled}
+					onClose={closeVoiceSetup}
+					onOpenSettings={openACappellaSettings}
 				/>
 			)}
 		</>

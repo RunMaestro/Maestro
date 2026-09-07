@@ -26,6 +26,7 @@ import {
 	getProfilingStatus,
 	finalizeCapture,
 } from '../../profiling';
+import { runSelfTest, type RuntimeSelfTestReport } from '../../acappella/runtime/runtime-selftest';
 import { AgentDetector } from '../../agents';
 import { ProcessManager } from '../../process-manager';
 import { WebServer } from '../../web-server';
@@ -141,6 +142,25 @@ export function registerDebugHandlers(deps: DebugHandlerDependencies): void {
 			const preview = previewDebugPackage();
 			return preview;
 		})
+	);
+
+	// A Cappella voice self-test. Lives on the debug surface rather than the voice
+	// one because it is a diagnostic, and because it must stay runnable when the
+	// voice feature is exactly what is not working. It loads each native runtime
+	// and no model, so running it is cheap and safe at any time.
+	ipcMain.handle(
+		'debug:voiceSelfTest',
+		createIpcHandler(
+			handlerOpts('voiceSelfTest'),
+			async (): Promise<{ report: RuntimeSelfTestReport }> => {
+				const report = await runSelfTest();
+				logger.info(`Voice self-test: ${report.passed ? 'pass' : 'fail'}`, LOG_CONTEXT);
+				// Nested rather than spread: `createIpcHandler` merges the result into
+				// its `{ success }` envelope, and a report field named `passed` sitting
+				// beside `success` is two words for two different things.
+				return { report };
+			}
+		)
 	);
 
 	// Snapshot of runtime memory / process info for the Debug: View Application Stats modal

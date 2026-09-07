@@ -12,7 +12,7 @@
  * manager's `createSecondaryWindow`, which registers the new window itself.
  */
 
-import { BrowserWindow, ipcMain } from 'electron';
+import { ipcMain } from 'electron';
 import type {
 	WindowBounds,
 	WindowHighlightDropZonePayload,
@@ -95,6 +95,10 @@ function isBridgeEvent(event: Electron.IpcMainInvokeEvent | undefined): boolean 
  * claim the agent into a window the remote user never chose, and a remote panel
  * collapse would silently rewrite a desktop window's persisted state. Reads
  * answering for the primary are defensible; writes landing on it are not.
+ *
+ * The sender -> window resolution itself lives on `registry.findBySender`, so
+ * A Cappella (which scopes a voice session to the window that opened it) does
+ * not need a second copy of it. Only the bridge carve-out is local.
  */
 function resolveCallingWindow(
 	event: Electron.IpcMainInvokeEvent,
@@ -112,9 +116,7 @@ function resolveCallingWindow(
 		// letting BrowserWindow.fromWebContents throw on the missing WebContents.
 		return undefined;
 	}
-	const browserWindow = BrowserWindow.fromWebContents(event.sender);
-	if (!browserWindow) return undefined;
-	return registry.getAll().find((entry) => entry.browserWindow === browserWindow);
+	return registry.findBySender(event.sender);
 }
 
 /**

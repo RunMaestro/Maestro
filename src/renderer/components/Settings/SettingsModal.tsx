@@ -15,7 +15,7 @@ import {
 	Info,
 } from 'lucide-react';
 import { useSettings } from '../../hooks';
-import type { Theme, LLMProvider } from '../../types';
+import type { Theme, LLMProvider, SettingsTab } from '../../types';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { useResizableModal } from '../../hooks/ui/useResizableModal';
 import { useViewportBreakpoint } from '../../hooks/ui/useViewportBreakpoint';
@@ -45,19 +45,11 @@ const FEATURE_FLAGS = {
 	LLM_SETTINGS: false, // LLM provider configuration (OpenRouter, Anthropic, Ollama)
 };
 
-type SettingsTabId =
-	| 'about'
-	| 'general'
-	| 'display'
-	| 'llm'
-	| 'shortcuts'
-	| 'theme'
-	| 'notifications'
-	| 'aicommands'
-	| 'ssh'
-	| 'environment'
-	| 'encore'
-	| 'prompts';
+/**
+ * The tabs this modal renders. Identical to the shared {@link SettingsTab} - an
+ * alias rather than a copy, so a tab added in one place cannot go missing here.
+ */
+type SettingsTabId = SettingsTab;
 
 // Alphabetized by label (case-insensitive) so the sidebar reads predictably
 // regardless of which tabs ship. Mount-time default is still 'general' -
@@ -145,18 +137,13 @@ interface SettingsModalProps {
 	onClose: () => void;
 	theme: Theme;
 	themes: Record<string, Theme>;
-	initialTab?:
-		| 'general'
-		| 'display'
-		| 'llm'
-		| 'shortcuts'
-		| 'theme'
-		| 'notifications'
-		| 'aicommands'
-		| 'ssh'
-		| 'environment'
-		| 'encore'
-		| 'prompts';
+	/**
+	 * Tab to deep-link into. `SettingsTab` rather than a hand-copied union: this
+	 * prop, `SettingsTabId` below, and `SettingsTab` in `renderer/types` were three
+	 * spellings of one list, and they had already drifted - the shared one could
+	 * not name Plugins, so no caller could deep-link there.
+	 */
+	initialTab?: SettingsTab;
 	initialSelectedPromptId?: string;
 	hasNoAgents?: boolean;
 	onThemeImportError?: (message: string) => void;

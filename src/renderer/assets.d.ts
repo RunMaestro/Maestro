@@ -28,6 +28,14 @@ declare module '*.webp' {
 	export default src;
 }
 
+// Vite emits the referenced module as its own self-contained chunk and resolves
+// the import to that chunk's URL. Used for AudioWorklet modules, which have to
+// be fetched by URL rather than linked into the renderer bundle.
+declare module '*?worker&url' {
+	const src: string;
+	export default src;
+}
+
 // Vite-injected build-time constants
 declare const __APP_VERSION__: string;
 declare const __COMMIT_HASH__: string;

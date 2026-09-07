@@ -178,6 +178,20 @@ describe('ToolbarControls', () => {
 			expect(screen.queryByRole('button', { name: /voice input/ })).not.toBeInTheDocument();
 		});
 
+		it('hides the mic when A Cappella owns it, so there is never a second one', () => {
+			// A Cappella's microphone lives under Send, where it shows on every
+			// pointer type. Without this gate a touch device with the Encore Feature
+			// on would draw two microphones wired to the same toggle.
+			setCoarsePointer(true);
+			renderToolbar({
+				voiceSupported: true,
+				onToggleVoiceInput: vi.fn(),
+				voiceHandledElsewhere: true,
+			});
+
+			expect(screen.queryByRole('button', { name: /voice input/ })).not.toBeInTheDocument();
+		});
+
 		it('hides the mic in terminal mode', () => {
 			setCoarsePointer(true);
 			renderToolbar({
@@ -188,6 +202,18 @@ describe('ToolbarControls', () => {
 			});
 
 			expect(screen.queryByRole('button', { name: /voice input/ })).not.toBeInTheDocument();
+		});
+	});
+
+	describe('layout', () => {
+		it('pins the pill row to the bottom of the composer box', () => {
+			// The A Cappella microphone makes the Send column taller than the
+			// textarea, so the composer box stretches and the pills would otherwise
+			// float mid-height with dead space beneath them. jsdom has no layout
+			// engine, so the margin class is the only thing there is to assert.
+			const { container } = renderToolbar();
+
+			expect(container.firstElementChild).toHaveClass('mt-auto');
 		});
 	});
 });

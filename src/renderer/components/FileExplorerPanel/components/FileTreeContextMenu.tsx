@@ -15,6 +15,7 @@ import {
 	Files,
 	Download,
 	Bot,
+	Mic,
 	ListPlus,
 	Play,
 	PlayCircle,
@@ -22,6 +23,7 @@ import {
 } from 'lucide-react';
 import { getRevealLabel } from '../../../utils/platformUtils';
 import { isMediaFile } from '../../../../shared/mediaTypes';
+import { isTalkableDocumentPath } from '../../../../shared/fileKinds';
 import { collectPreviewableFiles } from '../utils/pathHelpers';
 import type { Theme } from '../../../types';
 import type { ContextMenuState } from '../types';
@@ -41,6 +43,11 @@ interface FileTreeContextMenuProps {
 	isMultiSelectionContext?: boolean;
 	selectedCount?: number;
 	/**
+	 * Whether A Cappella is on. False hides "Talk with Document" entirely, which
+	 * is the Encore rule: a feature nobody turned on adds no entries anywhere.
+	 */
+	voiceEnabled?: boolean;
+	/**
 	 * How many Auto Run documents the current menu context resolves to - a
 	 * folder's subtree, one markdown file, or the whole selection. Zero for
 	 * anything outside the agent's Auto Run folder, which hides the staging entry.
@@ -59,6 +66,7 @@ interface FileTreeContextMenuProps {
 	onOpenNewFile: () => void;
 	onOpenNewFolder: () => void;
 	onNewAgentHere: () => void;
+	onTalkWithDocument: () => void;
 	onPreviewFile: () => void;
 	onPreviewAllInFolder: () => void;
 	onStageForAutoRun: () => void;
@@ -84,6 +92,7 @@ export function FileTreeContextMenu({
 	onOpenBrowserTabAt,
 	isMultiSelectionContext = false,
 	selectedCount = 0,
+	voiceEnabled = false,
 	selectedMediaCount = 0,
 	selectedMarkdownCount = 0,
 	autoRunStagedCount = 0,
@@ -96,6 +105,7 @@ export function FileTreeContextMenu({
 	onOpenNewFile,
 	onOpenNewFolder,
 	onNewAgentHere,
+	onTalkWithDocument,
 	onPreviewFile,
 	onPreviewAllInFolder,
 	onStageForAutoRun,
@@ -349,6 +359,22 @@ export function FileTreeContextMenu({
 									<FileText className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
 								)}
 								<span>{isMedia ? 'Play' : 'Preview'}</span>
+							</button>
+						)}
+
+						{/* Talk with Document - a voice session about this file, held with
+						    this agent. Hidden for anything with no text to read: an image,
+						    a video, or a compiled binary. Note this asks about the file
+						    itself, not about `isMedia`, which is false for a video sitting
+						    on an SSH remote purely because there is no way to play it. */}
+						{isFile && voiceEnabled && isTalkableDocumentPath(nodeName) && (
+							<button
+								onClick={onTalkWithDocument}
+								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+								style={{ color: theme.colors.textMain }}
+							>
+								<Mic className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+								<span>Talk with Document</span>
 							</button>
 						)}
 

@@ -100,6 +100,7 @@ describe('extensionModel first-party projection (all Encore features)', () => {
 			'opencodeServer',
 			'concerto',
 			'groupsPlus',
+			'aCappella',
 		]);
 
 		for (const def of BUILTIN_FEATURES) {
@@ -136,6 +137,26 @@ describe('extensionModel first-party projection (all Encore features)', () => {
 			settingsNamespace: 'groupsPlus',
 		});
 		expect(builtinExtension(groupsPlus!, flags({ groupsPlus: true })).state).toBe('enabled');
+	});
+
+	it('projects A Cappella as a beta, disabled-by-default plugin-backed UI extension', () => {
+		const aCappella = BUILTIN_FEATURES.find((def) => def.flag === 'aCappella');
+		expect(aCappella).toBeDefined();
+		expect(aCappella!.beta).toBe(true);
+
+		expect(builtinExtension(aCappella!, flags())).toMatchObject({
+			key: 'builtin:aCappella',
+			state: 'not-installed',
+			name: 'A Cappella',
+			category: 'ui',
+			pluginId: 'com.maestro.acappella',
+			settingsNamespace: 'aCappella',
+		});
+		expect(builtinExtension(aCappella!, flags({ aCappella: true })).state).toBe('enabled');
+
+		// Enabling voice must not imply a running background service: nothing
+		// listens until the user explicitly starts a session.
+		expect(builtinExtension(aCappella!, flags()).backgroundServiceId).toBeUndefined();
 	});
 
 	it('surfaces the plan-table identities on the details pane fields', () => {
