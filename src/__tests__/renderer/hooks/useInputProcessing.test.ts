@@ -36,6 +36,7 @@ import { dispatchShellCommand } from '../../../renderer/services/shellCommand';
 import { requestAiCommand } from '../../../renderer/services/aiCommand';
 import { useAiCommandStore } from '../../../renderer/stores/aiCommandStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { useRetryStore } from '../../../renderer/stores/retryStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import type {
 	Session,
@@ -1316,6 +1317,148 @@ describe('useInputProcessing', () => {
 			expect(updatedSessions[0].state).toBe('idle'); // Session stays idle
 			expect(updatedSessions[0].executionQueue.length).toBe(1); // Message is queued
 			expect(updatedSessions[0].executionQueue[0].text).toBe('regular message');
+		});
+	});
+
+	describe('Agent Resilience holds the composer', () => {
+		// Regression: a quota wall used to eat a whole conversation. The failed turn
+		// schedules a retry and leaves the tab IDLE, so every busy-based queue rule
+		// said "send now"; each send burned against the same wall AND superseded the
+		// pending retry (retryStore.noteDispatch), discarding the prompt it held.
+		const holdTab = (sessionId: string, tabId: string): void => {
+			useRetryStore.setState({
+				retries: {
+					[`${sessionId}:${tabId}`]: {
+						sessionId,
+						tabId,
+						key: `${sessionId}:${tabId}`,
+						outageId: 'outage-1',
+						strategy: 'token-exhaustion',
+						mode: 'resend',
+						status: 'scheduled',
+						attempt: 0,
+						startedAt: Date.now(),
+						nextRetryAt: Date.now() + 60_000,
+						lastMessage: "You've hit your session limit",
+					},
+				},
+			});
+		};
+
+		afterEach(() => {
+			useRetryStore.setState({ retries: {}, outages: {} });
+		});
+
+		it('queues a message instead of dispatching into a tab held by a pending retry', async () => {
+			const tab = createMockTab({ id: 'held-tab', state: 'idle' });
+			const session = createMockSession({
+				state: 'idle',
+				aiTabs: [tab],
+				activeTabId: 'held-tab',
+			});
+			holdTab(session.id, 'held-tab');
+
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'second message',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			const updatedSessions = mockSetSessions.mock.calls[0][0]([session]);
+			expect(updatedSessions[0].state).toBe('idle');
+			expect(updatedSessions[0].executionQueue.length).toBe(1);
+			expect(updatedSessions[0].executionQueue[0].text).toBe('second message');
+		});
+
+		it('holds even a forced-parallel send, since a provider wall is not tab busyness', async () => {
+			useSettingsStore.setState({ forcedParallelExecution: true });
+			const tab = createMockTab({ id: 'held-tab', state: 'idle' });
+			const session = createMockSession({
+				state: 'idle',
+				aiTabs: [tab],
+				activeTabId: 'held-tab',
+			});
+			holdTab(session.id, 'held-tab');
+
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'forced message',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput(undefined, undefined, { forceParallel: true });
+			});
+
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			const updatedSessions = mockSetSessions.mock.calls[0][0]([session]);
+			expect(updatedSessions[0].executionQueue.length).toBe(1);
+			expect(updatedSessions[0].executionQueue[0].text).toBe('forced message');
+		});
+
+		it('queues a slash command instead of spawning it immediately while held', async () => {
+			const tab = createMockTab({ id: 'held-tab', state: 'idle' });
+			const session = createMockSession({
+				state: 'idle',
+				aiTabs: [tab],
+				activeTabId: 'held-tab',
+			});
+			holdTab(session.id, 'held-tab');
+
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: '/test',
+				customAICommands: [
+					{ command: '/test', description: 'Test command', prompt: 'Do the thing' },
+				] as CustomAICommand[],
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+			await act(async () => {
+				await Promise.resolve();
+			});
+
+			expect(mockProcessQueuedItemRef.current).not.toHaveBeenCalled();
+			const queueCall = mockSetSessions.mock.calls.find(
+				(call) => call[0]([session])[0].executionQueue.length > 0
+			);
+			expect(queueCall).toBeDefined();
+			expect(queueCall![0]([session])[0].executionQueue[0].command).toBe('/test');
+		});
+
+		it('sends normally once the retry has cleared', async () => {
+			const tab = createMockTab({ id: 'free-tab', state: 'idle' });
+			const session = createMockSession({
+				state: 'idle',
+				aiTabs: [tab],
+				activeTabId: 'free-tab',
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'after the wall',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			const queued = mockSetSessions.mock.calls.some(
+				(call) => call[0]([session])[0].executionQueue.length > 0
+			);
+			expect(queued).toBe(false);
 		});
 	});
 

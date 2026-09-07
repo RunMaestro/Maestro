@@ -38,6 +38,7 @@ import { parseQuotaLimitDetail, type QuotaLimitDetail } from '../../shared/quota
 import { failoverArmed, selectNextEndpoint } from '../../shared/providerFailover';
 import { switchToNextEndpoint, useFailoverStore } from './failoverStore';
 import { generateId } from '../utils/ids';
+import { captureQueuedTurnSettings } from '../utils/providerTabSessions';
 import { settleTabThinkingState } from '../utils/tabHelpers';
 import { logger } from '../utils/logger';
 import { useSessionStore, selectSessionById, updateSessionWith } from './sessionStore';
@@ -486,6 +487,32 @@ export function scheduleRetryForError(
 	return true;
 }
 
+/**
+ * The snapshotted item to resend, re-codified against the agent's CURRENT
+ * model and effort.
+ *
+ * This is a deliberate exception to codify-at-send. Settings freeze on a
+ * QueuedItem so a turn runs under what the user had selected when they hit
+ * Enter, and so a change made mid-turn never disturbs work already in flight. A
+ * retry is neither of those: the turn failed, and the most common reason a user
+ * touches the model (or swaps the agent's provider) afterwards is to get out
+ * from behind the exact wall that failed it. Replaying the frozen model would
+ * send them straight back into it - and after a provider switch it would hand
+ * the old provider's model name to a binary that has never heard of it.
+ *
+ * Text, images, and slash-command expansion are untouched: the prompt resent is
+ * still the one the user typed. Only the knobs they can reach while the
+ * countdown runs are re-read. The provider was always taken live (see
+ * `codifyQueuedTurnSettings`), so model and effort are all that needed
+ * unfreezing.
+ */
+function replayItem(entry: RetryEntry, item: QueuedItem): QueuedItem {
+	const session = selectSessionById(entry.sessionId)(useSessionStore.getState());
+	if (!session) return item;
+	const tab = session.aiTabs?.find((t) => t.id === entry.tabId);
+	return { ...item, turnSettings: captureQueuedTurnSettings(tab, session) };
+}
+
 /** Fire a scheduled retry now: mark in-flight and re-run the failed work. */
 async function fireRetry(key: string): Promise<void> {
 	const entry = useRetryStore.getState().retries[key];
@@ -541,7 +568,9 @@ async function fireRetry(key: string): Promise<void> {
 			removeEntry(key);
 			return;
 		}
-		await useAgentStore.getState().processQueuedItem(entry.sessionId, snapshot.item, snapshot.deps);
+		await useAgentStore
+			.getState()
+			.processQueuedItem(entry.sessionId, replayItem(entry, snapshot.item), snapshot.deps);
 	} catch (error) {
 		// A dispatch-time throw is itself a failure; leave the entry in-flight so
 		// the incoming agent-error (or a manual action) drives the next step.

@@ -199,6 +199,56 @@ describe('firing the retry', () => {
 		retryNow('nope', 't1');
 		expect(processQueuedItem).not.toHaveBeenCalled();
 	});
+
+	// Codify-at-send freezes model/effort onto the QueuedItem so a queued turn
+	// runs under what was selected when the user hit Enter. A retry is the one
+	// case that must NOT honor that freeze: the whole reason a user touches the
+	// model (or the agent's provider) during the countdown is to get out from
+	// behind the wall that just failed the turn.
+	it('resends under the model and effort the agent carries NOW, not the frozen ones', () => {
+		setupSession('s10', 't1', { customModel: 'fable', customEffort: 'low' });
+		noteDispatch(
+			's10',
+			{
+				id: 'item-1',
+				timestamp: 1,
+				tabId: 't1',
+				type: 'message',
+				text: 'hi',
+				turnSettings: { model: 'opus', effort: 'high' },
+			},
+			deps
+		);
+		scheduleRetryForError('s10', 't1', quota());
+
+		retryNow('s10', 't1');
+
+		expect(processQueuedItem).toHaveBeenCalledWith(
+			's10',
+			expect.objectContaining({
+				text: 'hi',
+				turnSettings: { model: 'fable', effort: 'low' },
+			}),
+			deps
+		);
+	});
+
+	it('prefers the tab override over the agent default when re-codifying', () => {
+		const tab = createMockAITab({ id: 't1', customModel: 'sonnet', customEffort: 'medium' });
+		useSessionStore.setState({
+			sessions: [createMockSession({ id: 's11', aiTabs: [tab], activeTabId: 't1' })],
+		} as any);
+		seedSnapshot('s11', 't1');
+		scheduleRetryForError('s11', 't1', quota());
+
+		retryNow('s11', 't1');
+
+		expect(processQueuedItem).toHaveBeenCalledWith(
+			's11',
+			expect.objectContaining({ turnSettings: { model: 'sonnet', effort: 'medium' } }),
+			deps
+		);
+	});
 });
 
 describe('cancel and settle transitions', () => {

@@ -10,6 +10,7 @@ import React, { useEffect, useState } from 'react';
 import { RefreshCw, X, Zap } from 'lucide-react';
 
 import { useRetryStore, cancelRetry, retryNow } from '../stores/retryStore';
+import { useSessionStore, selectSessionById } from '../stores/sessionStore';
 import type { Theme } from '../types';
 import { humanizeDuration, DURATION_LADDER_HOURS } from '../../shared/duration';
 
@@ -40,6 +41,19 @@ export function RetryCountdownBanner({
 }: RetryCountdownBannerProps): React.ReactElement | null {
 	const key = tabId ? `${sessionId}:${tabId}` : '';
 	const entry = useRetryStore((s) => (key ? s.retries[key] : undefined));
+
+	// Anything the user sent since the failure is queued behind this retry rather
+	// than dispatched into the same wall (see useInputProcessing). Saying so here
+	// is the difference between "it ate my messages" and "it is holding them" -
+	// the queue indicator lives elsewhere and this is where the user is looking.
+	// A count, not a list: the selector must return a stable primitive.
+	const heldCount = useSessionStore((s) => {
+		if (!tabId) return 0;
+		const session = selectSessionById(sessionId)(s);
+		if (!session) return 0;
+		return session.executionQueue.filter((item) => (item.tabId ?? session.activeTabId) === tabId)
+			.length;
+	});
 
 	// Tick once a second to drive the live countdown.
 	const [now, setNow] = useState(() => Date.now());
@@ -74,6 +88,7 @@ export function RetryCountdownBanner({
 						: `Auto-retrying in ${formatRemaining(remainingMs)}${
 								entry.attempt > 0 ? ` (attempt ${entry.attempt + 1})` : ''
 							}`}
+					{heldCount > 0 && ` · ${heldCount} message${heldCount === 1 ? '' : 's'} queued behind it`}
 				</span>
 			</div>
 			<button
