@@ -25,7 +25,7 @@
  */
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Activity, Search } from 'lucide-react';
+import { Activity, Maximize2, Minimize2, Search } from 'lucide-react';
 import type { Session, Theme } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
 import { stripLeadingEmojis } from '../../../shared/emojiUtils';
@@ -58,6 +58,16 @@ import {
 	sortAgentOverviewSessions,
 	type SortMode,
 } from './agentOverviewUtils';
+import { useScalePreference } from '../../hooks/ui/useScalePreference';
+import { useScaleShortcuts } from '../../hooks/ui/useScaleShortcuts';
+import { useIsTopLayer } from '../../hooks/ui/useIsTopLayer';
+import { ScaleControl } from '../ui/ScaleControl';
+import {
+	AGENT_TILE_MIN_WIDTH,
+	AGENT_TILE_SCALE_KEY,
+	TILE_SCALE_RANGE,
+	tileGridColumns,
+} from './tileScale';
 
 /** Dropdown value meaning "do not narrow by group". */
 const ALL_GROUPS_VALUE = '__all__';
@@ -276,6 +286,9 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 }: AgentOverviewCardsProps) {
 	const [sortMode, setSortMode] = useState<SortMode>('name');
 	const [filterQuery, setFilterQuery] = useState('');
+	// How wide a tile is, remembered across restarts. `+` / `-` / `0` drive it
+	// from the keyboard; the control beside the sort pills is the same state.
+	const tileScale = useScalePreference(AGENT_TILE_SCALE_KEY, TILE_SCALE_RANGE);
 	// Narrow the grid to agents that did something inside the selected range.
 	// Off by default: the grid's job is still "every agent I have".
 	const [activeOnly, setActiveOnly] = useState(false);
@@ -377,6 +390,15 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 		blocksLowerLayers: false,
 		capturesFocus: false,
 	});
+
+	// Bare `+` / `-` / `0` resize the tiles, but only while this grid is what
+	// the keyboard is pointed at - an agent detail modal opened from a tile
+	// sits on top and must own those keys instead. The filter's own Escape
+	// layer counts as this grid: it outranks the dashboard while the box holds
+	// text, and zoom has no reason to go dead just because a filter is set.
+	const dashboardIsTop = useIsTopLayer(MODAL_PRIORITIES.USAGE_DASHBOARD);
+	const filterIsTop = useIsTopLayer(MODAL_PRIORITIES.USAGE_DASHBOARD_AGENT_FILTER);
+	useScaleShortcuts(tileScale, { enabled: dashboardIsTop || filterIsTop });
 
 	// Terminal sessions aren't "agents" - excluded inside
 	// `sortAgentOverviewSessions`, which also owns the ordering so the grid and
@@ -545,6 +567,16 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 					)}
 				</div>
 				<div className="flex items-center gap-2">
+					<ScaleControl
+						theme={theme}
+						control={tileScale}
+						decreaseIcon={Minimize2}
+						increaseIcon={Maximize2}
+						subject="tile size"
+						shortcutHint={{ decrease: '-', increase: '+', reset: '0' }}
+						size="sm"
+						testId="agent-overview-tile-zoom"
+					/>
 					<span className="text-xs" style={{ color: theme.colors.textDim }}>
 						Sort by:
 					</span>
@@ -588,7 +620,7 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 				<div
 					className="grid gap-3"
 					style={{
-						gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+						gridTemplateColumns: tileGridColumns(AGENT_TILE_MIN_WIDTH, tileScale.scale),
 					}}
 					data-testid="agent-overview-cards"
 					role="region"
