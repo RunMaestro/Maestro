@@ -878,19 +878,43 @@ describe('DisplayTab', () => {
 			expect(mockResetTypography).toHaveBeenCalledWith('default');
 		});
 
-		it('sits below the pickers it overwrites', async () => {
-			// It used to lead the tab, which opened the Display settings on the one
-			// destructive control and offered a way out before the user had seen
-			// anything to get out of.
+		it('leads the tab, with Save & Restore under it and the pickers last', async () => {
+			// The tab reads coarse to fine: set every font at once, keep a copy of
+			// what you set, then take the individual pickers apart. Both halves are
+			// asserted because the pair is the point - a reset that a user cannot
+			// undo from the section directly beneath it is the destructive control
+			// this ordering exists to make safe.
 			render(<DisplayTab theme={mockTheme} />);
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			const fonts = document.querySelector('[data-setting-id="display-fonts"]')!;
 			const reset = document.querySelector('[data-setting-id="display-typography-reset"]')!;
+			const snapshot = document.querySelector('[data-setting-id="display-typography-snapshot"]')!;
+			const fonts = document.querySelector('[data-setting-id="display-fonts"]')!;
 
-			expect(fonts.compareDocumentPosition(reset) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+			expect(
+				reset.compareDocumentPosition(snapshot) & Node.DOCUMENT_POSITION_FOLLOWING
+			).toBeTruthy();
+			expect(
+				snapshot.compareDocumentPosition(fonts) & Node.DOCUMENT_POSITION_FOLLOWING
+			).toBeTruthy();
+		});
+
+		it('is the first section on the tab', async () => {
+			// Guards the ordering against a section being inserted above it later:
+			// the position assertions above stay green if something else claims the
+			// top of the tab, since they only compare the three font sections.
+			render(<DisplayTab theme={mockTheme} />);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const firstSectionId = document
+				.querySelector('[data-setting-id]')
+				?.getAttribute('data-setting-id');
+
+			expect(firstSectionId).toBe('display-typography-reset');
 		});
 	});
 

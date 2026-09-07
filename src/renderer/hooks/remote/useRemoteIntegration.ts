@@ -30,6 +30,7 @@ import {
 import { openUiSurface } from '../../utils/openUiSurface';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { updateAiTab, updateSessionWith, useSessionStore } from '../../stores/sessionStore';
+import { createKeyedWriteQueue } from '../../../shared/keyedWriteQueue';
 import { useConcertoCreationActivityStore } from '../../stores/concertoCreationActivityStore';
 import { buildThinkingItems } from '../../utils/thinkingItems';
 import type { ConcertoCreationPhase, ConcertoProgressNote } from '../../../shared/movement-types';
@@ -151,6 +152,65 @@ function waitForMovementInspectionPaint(): Promise<void> {
  * read is tail-anchored, so this keeps the newest N and reports the cut.
  */
 const GIST_SESSION_MESSAGE_LIMIT = 10000;
+
+/**
+ * Remote renames of ONE tab, serialized by `${sessionId}:${tabId}`.
+ *
+ * This is where a rename's work happens (provider metadata write, history
+ * relabel, store patch), so this is where it has to run one at a time for the
+ * LATEST rename to end up authoritative. `tabCallbacks.ts` has its own per-tab
+ * queue, but that one orders the PROTOCOL and cannot order work performed in
+ * this process: it stops waiting after a bounded delay so an unresponsive
+ * renderer cannot wedge the tab, and it then dispatches the next rename while
+ * the abandoned one may still be running here. Those two would race, and the
+ * older one landing last is exactly the failure both queues exist to prevent.
+ *
+ * Module scope, not a ref: the listener is registered from an effect that can
+ * re-run, and a queue rebuilt on re-registration would forget the rename still
+ * in flight. Same reason `group-chat-storage.ts` holds its own at module scope.
+ */
+const remoteRenameQueue = createKeyedWriteQueue();
+
+/**
+ * How long a rename may hold its tab's queue slot before the next one starts.
+ * The persistence calls are `ipcRenderer.invoke`, which never times out, so a
+ * main-process handler that never returns leaves its promise pending for the
+ * life of the window; without this every later rename for the tab would sit
+ * behind it unattempted. Well past any plausible write, since handing the slot
+ * on early costs at most a redundant write rather than correctness.
+ */
+const RENAME_SLOT_HANDOFF_MS = 15_000;
+
+/**
+ * Per tab, the newest name a remote rename has REQUESTED. A writer re-reads it
+ * when its own write lands to find out whether it was superseded meanwhile,
+ * which is how a stale write that lands late gets corrected. Kept only while a
+ * rename is in flight, and module scope for the same reason the queue is.
+ */
+const remoteRenameStates = new Map<string, { desired: string; active: number }>();
+
+/**
+ * Resolve when `work` settles, or when the handoff budget expires - whichever
+ * comes first. The work is NOT abandoned or cancelled on expiry (an in-flight
+ * IPC cannot be recalled); it keeps running and re-checks the desired name when
+ * it lands, which is what stops a late stale write from being the final word.
+ * One timer per rename, always cleared once the work settles.
+ */
+function handOffRenameSlotAfter(work: Promise<void>, budgetMs: number): Promise<void> {
+	return new Promise((resolve) => {
+		const timer = setTimeout(resolve, budgetMs);
+		// `catch` rather than a bare `void`: the work answers its own caller and
+		// resolves the slot either way, so a rejection here has nowhere to go and
+		// would surface as an unhandled rejection. The one way it can reject is the
+		// reply itself throwing, which the caller's `finally` deliberately runs last.
+		work
+			.finally(() => {
+				clearTimeout(timer);
+				resolve();
+			})
+			.catch(() => {});
+	});
+}
 
 type GistBody = { body: string } | { error: string };
 
@@ -704,34 +764,42 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				const reply = (result: { success: boolean; error?: string }) =>
 					window.maestro.process.sendRemoteRenameTabResponse(responseChannel, result);
 
-				try {
+				const key = `${sessionId}:${tabId}`;
+				const persistedName = newName || '';
+
+				// Recording the request BEFORE anything is written is what lets a
+				// writer already in flight discover that it has been superseded.
+				const state = remoteRenameStates.get(key) ?? { desired: persistedName, active: 0 };
+				state.desired = persistedName;
+				state.active += 1;
+				remoteRenameStates.set(key, state);
+
+				// One write: provider metadata, then history, then the store. The
+				// session and tab are resolved HERE rather than at dispatch, so a
+				// rename that waited reads the state its predecessor left.
+				const applyRename = async (
+					target: string
+				): Promise<{ success: boolean; error?: string }> => {
 					const session = sessionsRef.current.find((s) => s.id === sessionId);
-					if (!session) {
-						reply({ success: false, error: `Session not found: ${sessionId}` });
-						return;
-					}
+					if (!session) return { success: false, error: `Session not found: ${sessionId}` };
 
 					const tab = session.aiTabs.find((t) => t.id === tabId);
-					if (!tab) {
-						reply({ success: false, error: `Tab not found: ${tabId}` });
-						return;
-					}
+					if (!tab) return { success: false, error: `Tab not found: ${tabId}` };
 
-					const persistedName = newName || '';
 					if (tab.agentSessionId) {
 						const agentId = session.toolType || 'claude-code';
 						if (agentId === 'claude-code') {
 							await window.maestro.claude.updateSessionName(
 								session.projectRoot,
 								tab.agentSessionId,
-								persistedName
+								target
 							);
 						} else {
 							await window.maestro.agentSessions.setSessionName(
 								agentId,
 								session.projectRoot,
 								tab.agentSessionId,
-								persistedName || null
+								target || null
 							);
 						}
 						// Relabelling past history entries is SECONDARY, and it is awaited
@@ -748,12 +816,12 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						// browser and on resume. It would also make the same rename
 						// succeed on the desktop and fail from the phone, since
 						// `useSessionLifecycle` treats this call as best effort too.
-						await window.maestro.history.updateSessionName(tab.agentSessionId, persistedName);
+						await window.maestro.history.updateSessionName(tab.agentSessionId, target);
 					}
 
 					updateAiTab(sessionId, tabId, (t) => ({
 						...t,
-						name: persistedName || null,
+						name: target || null,
 						isGeneratingName: false,
 					}));
 					const updatedTab = useSessionStore
@@ -761,22 +829,83 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						.sessions.find((s) => s.id === sessionId)
 						?.aiTabs.find((t) => t.id === tabId);
 					if (!updatedTab) {
-						reply({ success: false, error: `Tab not found after rename: ${tabId}` });
-						return;
+						return { success: false, error: `Tab not found after rename: ${tabId}` };
 					}
-					if (updatedTab.name !== (persistedName || null)) {
-						reply({ success: false, error: `Tab rename did not update state: ${tabId}` });
-						return;
+					if (updatedTab.name !== (target || null)) {
+						return { success: false, error: `Tab rename did not update state: ${tabId}` };
 					}
-					reply({ success: true });
-				} catch (error) {
-					const message = error instanceof Error ? error.message : String(error);
-					logger.error('Failed to persist remote tab name:', undefined, error);
-					reply({ success: false, error: message });
-				}
+					return { success: true };
+				};
+
+				// Write this request's name, then LOOK AGAIN. Re-reading the desired
+				// name after the write is what keeps the newest one authoritative when
+				// this write was a stale one that landed late: the writer that lands
+				// last simply writes once more, so persistence and the tab both end on
+				// the newest name rather than on whichever call happened to return
+				// last.
+				//
+				// Every pass WRITES, even when the tab already shows the name asked
+				// for. Nothing available here is evidence that the provider agrees
+				// with the tab: auto-naming (`useSessionLifecycle`, `useInputProcessing`)
+				// sets `tab.name` through `updateAiTab` alone, with no provider write,
+				// and a desktop rename writes the provider outside this queue, so a
+				// remembered value goes stale too. Skipping on either signal reports
+				// success for a name that was never persisted. The write is idempotent,
+				// so the cost of always making it is one redundant round trip when two
+				// renames of a tab overlap.
+				const runRename = async () => {
+					// What to tell THIS request's caller, answered once at the end. A
+					// failure is remembered rather than returned on the spot: a write
+					// that failed can still have left a side effect behind, so
+					// reconciling has to happen after ANY of them, or a stale operation
+					// that failed late leaves the provider disagreeing with the tab and
+					// with what the newer request was already told.
+					let ownOutcome: { success: boolean; error?: string } = { success: true };
+					try {
+						let target = persistedName;
+						// Each pass either settles on the desired name or adopts the
+						// newer one that arrived while it was writing, so it cannot spin:
+						// a failed pass moves to `state.desired` and the next pass ends
+						// unless a real request has changed it again.
+						for (;;) {
+							const result = await applyRename(target).catch((error) => {
+								logger.error('Failed to persist remote tab name:', undefined, error);
+								return {
+									success: false,
+									error: error instanceof Error ? error.message : String(error),
+								};
+							});
+							// Only this request's OWN name decides its answer. A repair
+							// write belongs to whoever asked for that name, so failing it
+							// must not turn this caller's successful rename into an error.
+							if (!result.success && target === persistedName) ownOutcome = result;
+							if (state.desired === target) break;
+							target = state.desired;
+						}
+					} catch (error) {
+						const message = error instanceof Error ? error.message : String(error);
+						logger.error('Failed to persist remote tab name:', undefined, error);
+						ownOutcome = { success: false, error: message };
+					} finally {
+						// Cleanup before the reply, so a send that throws cannot leave
+						// this tab's bookkeeping behind for the life of the window.
+						state.active -= 1;
+						if (state.active === 0 && remoteRenameStates.get(key) === state) {
+							remoteRenameStates.delete(key);
+						}
+						reply(ownOutcome);
+					}
+				};
+
+				// The queue keeps a tab's renames in order. Its slot is handed on once
+				// the work settles OR the budget expires, so a persistence call that
+				// never settles cannot wedge the tab: the next rename still runs, and
+				// the loop above repairs the order if the hung one ever lands.
+				await remoteRenameQueue.enqueue(key, () =>
+					handOffRenameSlotAfter(runRename(), RENAME_SLOT_HANDOFF_MS)
+				);
 			}
 		);
-
 		// Handle remote star tab from web interface
 		const unsubscribeStarTab = window.maestro.process.onRemoteStarTab(
 			(sessionId: string, tabId: string, starred: boolean) => {
