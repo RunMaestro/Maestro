@@ -28,6 +28,7 @@ import {
 	AutoRunTask,
 	SessionLifecycleEvent,
 	ResilienceEvent,
+	WizardRun,
 	StatsTimeRange,
 	StatsFilters,
 } from '../../../shared/stats-types';
@@ -435,6 +436,29 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 		withIpcErrorLogging(handlerOpts('getResilience'), async (range: StatsTimeRange) => {
 			const db = getStatsDB();
 			return db.getResilienceEvents(range);
+		})
+	);
+
+	// Auto Run wizard: upsert one run row. Called at every milestone of a wizard
+	// conversation (opened, exchange, documents written, closed) so a run that
+	// is never closed still leaves accurate counts behind.
+	ipcMain.handle(
+		'stats:record-wizard-run',
+		withIpcErrorLogging(handlerOpts('recordWizardRun'), async (run: WizardRun) => {
+			if (!isStatsCollectionEnabled(settingsStore)) {
+				logger.debug('Stats collection disabled, skipping wizard run', LOG_CONTEXT);
+				return null;
+			}
+			const db = getStatsDB();
+			return db.recordWizardRun(run);
+		})
+	);
+
+	ipcMain.handle(
+		'stats:get-wizard-runs',
+		withIpcErrorLogging(handlerOpts('getWizardRuns'), async (range: StatsTimeRange) => {
+			const db = getStatsDB();
+			return db.getWizardRuns(range);
 		})
 	);
 

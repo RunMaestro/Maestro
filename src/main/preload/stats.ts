@@ -17,6 +17,7 @@ import type {
 	StatsAggregation,
 	StatsTimeRange,
 	ResilienceEvent,
+	WizardRun,
 } from '../../shared/stats-types';
 export type {
 	QueryEvent,
@@ -191,6 +192,14 @@ export function createStatsApi() {
 
 		getResilience: (range: StatsTimeRange): Promise<ResilienceEvent[]> =>
 			ipcRenderer.invoke('stats:get-resilience', range),
+
+		// Upsert one Auto Run wizard run (idempotent on run.id) - called at each
+		// milestone of a wizard conversation, not just at the end.
+		recordWizardRun: (run: WizardRun): Promise<string | null> =>
+			ipcRenderer.invoke('stats:record-wizard-run', run),
+
+		getWizardRuns: (range: StatsTimeRange): Promise<WizardRun[]> =>
+			ipcRenderer.invoke('stats:get-wizard-runs', range),
 
 		recordSessionCreated: (event: SessionCreatedEvent): Promise<string | null> =>
 			ipcRenderer.invoke('stats:record-session-created', event),

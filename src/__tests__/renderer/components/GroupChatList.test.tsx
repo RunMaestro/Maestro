@@ -394,4 +394,23 @@ describe('GroupChatList', () => {
 			expect(queryByTitle(UNREAD_TITLE)).toBeNull();
 		});
 	});
+
+	describe('header label', () => {
+		it('renders the label whole when the header has room', () => {
+			const { getByText } = renderList();
+			expect(getByText('Group Chats')).toBeInTheDocument();
+		});
+
+		it('never lets the label truncate - it is whole or absent', () => {
+			// A partial "GROUP CHA..." costs the same row space as the full label
+			// and says less than the icon beside it, so `truncate` must not come
+			// back on this span. jsdom reports no layout, so the visible label is
+			// what is checked here; the drop decision itself is covered in
+			// useOptionalLabelFits.test.tsx.
+			const { getByText } = renderList();
+			const label = getByText('Group Chats');
+			expect(label.className).not.toMatch(/truncate/);
+			expect(label.className).toMatch(/shrink-0/);
+		});
+	});
 });

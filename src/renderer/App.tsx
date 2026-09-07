@@ -2468,6 +2468,7 @@ function MaestroConsoleInner() {
 		handleCopyContext,
 		handleExportHtml,
 		handlePublishTabGist,
+		handleReloadFileTab,
 	});
 
 	// Queue browser handlers - extracted to useQueueHandlers hook

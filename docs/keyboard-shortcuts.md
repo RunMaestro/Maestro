@@ -102,8 +102,12 @@ Memories viewer, `Cmd+G` graphs the memories and `Cmd+U` toggles the unlinked
 filter, in place of their usual meanings.
 
 `Opt+Cmd+R` reloads the file tree, git status, worktree list, and history for
-the active agent in one press. Plain `Cmd+R` is reserved: Maestro blocks it so
-the window can never reload out from under a running agent.
+the active agent in one press. When a File Preview is open it re-reads that file
+from disk too, so everything on screen comes back fresh in one chord. A file you
+have unsaved edits in is left alone: the reload would discard them without
+asking, and the on-disk-change banner is where that question belongs. Plain
+`Cmd+R` is reserved: Maestro blocks it so the window can never reload out from
+under a running agent.
 
 ## Group Chat
 

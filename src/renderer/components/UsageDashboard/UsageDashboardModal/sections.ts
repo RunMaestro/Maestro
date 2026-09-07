@@ -33,6 +33,7 @@ export const ACTIVITY_SECTIONS = [
 ] as const;
 export const AUTORUN_SECTIONS = [
 	'autorun-stats',
+	'wizard-stats',
 	'autorun-task-percentiles',
 	'tasks-by-hour',
 	'longest-autoruns',
@@ -75,6 +76,7 @@ const SECTION_LABELS: Record<SectionId, string> = {
 	'weekday-comparison': 'Weekday vs Weekend Chart',
 	'duration-trends': 'Duration Trends Chart',
 	'autorun-stats': 'Auto Run Statistics',
+	'wizard-stats': 'Auto Run Wizard Statistics',
 	'tasks-by-hour': 'Tasks by Time of Day Chart',
 	'longest-autoruns': 'Top 25 Longest Auto Runs',
 };

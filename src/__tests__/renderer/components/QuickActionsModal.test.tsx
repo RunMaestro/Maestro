@@ -1574,7 +1574,9 @@ describe('QuickActionsModal', () => {
 			render(<QuickActionsModal {...props} />);
 
 			expect(screen.getByText('Refresh Files, Git, History')).toBeInTheDocument();
-			expect(screen.getByText('Reload file tree, git status, and history')).toBeInTheDocument();
+			expect(
+				screen.getByText('Reload file tree, git status, history, and the previewed file')
+			).toBeInTheDocument();
 		});
 
 		it('displays the Refresh Files shortcut when one is bound', () => {

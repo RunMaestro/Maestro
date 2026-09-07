@@ -12,64 +12,19 @@
  * one-line change per branch.
  */
 
-import React, { memo, useState, useEffect, useMemo, useCallback } from 'react';
+import { memo, useState, useEffect, useMemo, useCallback } from 'react';
 import { ShieldCheck, Clock, RefreshCw, Percent } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { StatsTimeRange, ResilienceEvent } from '../../../shared/stats-types';
 import { captureException } from '../../utils/sentry';
 import { formatDurationHuman as formatDuration, formatNumber } from '../../../shared/formatters';
+import { MetricCard } from './MetricCard';
 
 interface ResilienceStatsProps {
 	/** Current time range for filtering */
 	timeRange: StatsTimeRange;
 	/** Current theme for styling */
 	theme: Theme;
-}
-
-interface MetricCardProps {
-	icon: React.ReactNode;
-	label: string;
-	value: string;
-	subValue?: string;
-	theme: Theme;
-}
-
-function MetricCard({ icon, label, value, subValue, theme }: MetricCardProps) {
-	return (
-		<div
-			className="p-4 rounded-lg flex items-start gap-3"
-			style={{ backgroundColor: theme.colors.bgMain }}
-			role="group"
-			aria-label={`${label}: ${value}${subValue ? `, ${subValue}` : ''}`}
-		>
-			<div
-				className="flex-shrink-0 p-2 rounded-md"
-				style={{ backgroundColor: `${theme.colors.accent}15`, color: theme.colors.accent }}
-			>
-				{icon}
-			</div>
-			<div className="min-w-0 flex-1">
-				<div
-					className="text-xs uppercase tracking-wide mb-1"
-					style={{ color: theme.colors.textDim }}
-				>
-					{label}
-				</div>
-				<div
-					className="text-2xl font-bold truncate"
-					style={{ color: theme.colors.textMain }}
-					title={value}
-				>
-					{value}
-				</div>
-				{subValue && (
-					<div className="text-xs mt-0.5" style={{ color: theme.colors.textDim }}>
-						{subValue}
-					</div>
-				)}
-			</div>
-		</div>
-	);
 }
 
 /** Local-midnight day key, so bars bucket by the user's calendar day. */

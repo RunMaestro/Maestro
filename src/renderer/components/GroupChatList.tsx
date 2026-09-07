@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import type { Theme, GroupChat, GroupChatState } from '../types';
 import { useClickOutside, useContextMenuPosition } from '../hooks';
+import { useOptionalLabelFits } from '../hooks/ui/useOptionalLabelFits';
 import { getStatusColor } from '../utils/theme';
 import { isGroupChatBusy, type GroupChatBusySnapshot } from '../utils/groupChatStatus';
 import { CornerDot } from './ui/CornerDot';
@@ -204,6 +205,13 @@ function GroupChatListInner({
 	const [internalIsExpanded, setInternalIsExpanded] = useState(groupChats.length > 0);
 	const isExpanded = controlledIsExpanded !== undefined ? controlledIsExpanded : internalIsExpanded;
 
+	// "GROUP CHA..." is worse than nothing: it eats the same row space and says
+	// less than the icon next to it. Measured rather than a container query
+	// because the font size is a user setting and the controls to the right are
+	// conditional, so no fixed pixel threshold is right for every combination.
+	const headerRowRef = useRef<HTMLDivElement>(null);
+	const headerLabelFits = useOptionalLabelFits(headerRowRef);
+
 	// Shared, not local: whether archived chats are drawn decides which rows the
 	// list contains, and the Cmd+[ / Cmd+] cycle has to walk exactly that set.
 	const showArchived = useUIStore((s) => s.showArchivedGroupChats);
@@ -337,7 +345,11 @@ function GroupChatListInner({
 			    Contract is pinned by GroupChatList.test.tsx and
 			    groupChatHeaderResponsive.regression.test.ts. */}
 			<div
-				className="gc-header-container px-3 py-2 flex items-center justify-between cursor-pointer hover:bg-white/5 group"
+				ref={headerRowRef}
+				// overflow-hidden is what makes the fit measurable: with nothing in
+				// the row allowed to shrink, scrollWidth is the width the row wants
+				// and clientWidth is what it has.
+				className="gc-header-container px-3 py-2 flex items-center justify-between overflow-hidden cursor-pointer hover:bg-white/5 group"
 				onClick={() => setIsExpanded(!isExpanded)}
 			>
 				<div
@@ -350,7 +362,9 @@ function GroupChatListInner({
 						<ChevronRight className="w-3 h-3 shrink-0" />
 					)}
 					<MessageSquare className="w-3.5 h-3.5 shrink-0" />
-					<span className="truncate">Group Chats</span>
+					{/* shrink-0, so it either renders whole or not at all - the hook
+					    reads the resulting overflow to decide which. */}
+					{headerLabelFits && <span className="shrink-0">Group Chats</span>}
 					{activeCount > 0 && (
 						<span
 							className="gc-count-badge relative text-2xs px-1.5 py-0.5 rounded-full font-medium shrink-0"

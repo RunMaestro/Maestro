@@ -682,6 +682,9 @@ const mockMaestro = {
 		onStatsUpdate: vi.fn().mockReturnValue(() => {}),
 		recordResilience: vi.fn().mockResolvedValue('outage-id'),
 		getResilience: vi.fn().mockResolvedValue([]),
+		// Auto Run wizard usage tracking
+		recordWizardRun: vi.fn().mockResolvedValue('wizard-run-id'),
+		getWizardRuns: vi.fn().mockResolvedValue([]),
 		getDatabaseSize: vi.fn().mockResolvedValue(1024 * 1024), // 1MB mock
 		getEarliestTimestamp: vi.fn().mockResolvedValue(null),
 		clearOldData: vi.fn().mockResolvedValue({

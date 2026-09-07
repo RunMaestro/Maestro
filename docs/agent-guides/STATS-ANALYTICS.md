@@ -92,6 +92,35 @@ Tracks individual tasks within an Auto Run session:
 
 **Indexes**: `auto_run_session_id`, `start_time`
 
+#### `wizard_runs` (Migration v10)
+
+One row per Auto Run wizard conversation, powering the Wizard section of the dashboard's Auto Run tab:
+
+| Column         | Type             | Description                                                |
+| -------------- | ---------------- | ---------------------------------------------------------- |
+| `id`           | TEXT PK          | UUID                                                       |
+| `session_id`   | TEXT NOT NULL    | Maestro agent id (`'onboarding'` for the first-run wizard) |
+| `agent_type`   | TEXT NOT NULL    | Agent type                                                 |
+| `surface`      | TEXT NOT NULL    | `'inline'` (the `/wizard` command) or `'onboarding'`       |
+| `mode`         | TEXT NOT NULL    | `'new'` or `'iterate'`                                     |
+| `outcome`      | TEXT NOT NULL    | `'in-progress'`, `'generated'`, or `'abandoned'`           |
+| `started_at`   | INTEGER NOT NULL | Unix timestamp (ms) the wizard opened                      |
+| `ended_at`     | INTEGER NOT NULL | Unix timestamp (ms) of LAST ACTIVITY, not close            |
+| `exchanges`    | INTEGER NOT NULL | User messages sent during the conversation                 |
+| `documents`    | INTEGER NOT NULL | Auto Run documents produced                                |
+| `tasks`        | INTEGER NOT NULL | Task checkboxes across those documents                     |
+| `project_path` | TEXT             | Project path                                               |
+
+**Indexes**: `started_at`, compound `(surface, started_at)`
+
+Unlike every other table here, a row is written **repeatedly** - once per milestone (opened, each
+exchange, documents written, closed), always under the same `id`, via `INSERT OR REPLACE`. The reason
+is that the payoff (documents) and the close are separated by however long the user reads the result,
+and many runs are never closed at all, so a single write at the end would lose whole runs. `ended_at`
+therefore means "last activity", which keeps `ended_at - started_at` an honest measure of time spent
+in the wizard whether or not the run was ever closed. The renderer side of that state machine is
+`src/renderer/services/wizardStats.ts`.
+
 #### `session_lifecycle` (Migration v3)
 
 Tracks session creation and closure for duration analytics:
@@ -164,6 +193,12 @@ Defined in `src/main/stats/migrations.ts`. Migrations are sequential and recorde
 | v2      | Add `is_remote` column to `query_events` for SSH tracking             |
 | v3      | Add `session_lifecycle` table                                         |
 | v4      | Add compound indexes on `query_events` for dashboard performance      |
+| v5      | Add `is_worktree` column to `query_events` and `session_lifecycle`    |
+| v6      | Add `image_annotations` table                                         |
+| v7      | Add `shortcut_usage_daily` table                                      |
+| v8      | Add per-turn token and cost columns to `query_events`                 |
+| v9      | Add `resilience_events` table                                         |
+| v10     | Add `wizard_runs` table                                               |
 
 To add a new migration:
 
@@ -374,6 +409,8 @@ Located in `src/renderer/components/UsageDashboard/`:
 | `WeekdayComparisonChart.tsx`    | Weekday activity comparison                                 |
 | `TasksByHourChart.tsx`          | Auto Run tasks by hour                                      |
 | `AutoRunStats.tsx`              | Auto Run session statistics and details                     |
+| `WizardStats.tsx`               | Auto Run wizard usage: time, runs, documents, tasks         |
+| `MetricCard.tsx`                | Shared labeled single-number tile for those metric rows     |
 | `LongestAutoRunsTable.tsx`      | Table of longest Auto Run sessions                          |
 | `SessionStats.tsx`              | Session lifecycle statistics                                |
 | `ChartErrorBoundary.tsx`        | Error boundary for individual charts                        |

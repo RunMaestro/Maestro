@@ -3613,6 +3613,37 @@ interface MaestroAPI {
 				retries: number;
 			}>
 		>;
+		// Upsert one Auto Run wizard run (idempotent on run.id)
+		recordWizardRun: (run: {
+			id: string;
+			sessionId: string;
+			agentType: string;
+			surface: 'inline' | 'onboarding';
+			mode: 'new' | 'iterate';
+			outcome: 'in-progress' | 'generated' | 'abandoned';
+			startedAt: number;
+			endedAt: number;
+			exchanges: number;
+			documents: number;
+			tasks: number;
+			projectPath?: string;
+		}) => Promise<string | null>;
+		getWizardRuns: (range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all') => Promise<
+			Array<{
+				id: string;
+				sessionId: string;
+				agentType: string;
+				surface: 'inline' | 'onboarding';
+				mode: 'new' | 'iterate';
+				outcome: 'in-progress' | 'generated' | 'abandoned';
+				startedAt: number;
+				endedAt: number;
+				exchanges: number;
+				documents: number;
+				tasks: number;
+				projectPath?: string;
+			}>
+		>;
 		recordSessionCreated: (event: {
 			sessionId: string;
 			agentType: string;

@@ -1240,8 +1240,21 @@ svg.wand-profiling-active path:nth-child(8) {
      1. group chat count badge (the active-chat count)
      2. archived count number (keep the archive button/icon)
      3. "New Chat" label (collapse the button to just "+")
-   Thresholds are sized so that at the minimum sidebar width (280px -> ~256px
-   container) all three have dropped and the row still fits without wrapping. */
+   Thresholds are sized so that at the minimum sidebar width (280px -> ~256em-
+   equivalent container) all three have dropped and the row still fits.
+
+   The "Group Chats" label itself is deliberately NOT a rung here. It is decided
+   by measurement in `useOptionalLabelFits`, because whether it fits depends on
+   which of the conditional controls above are currently rendered - something a
+   width threshold cannot see. See that hook for the full reasoning.
+
+   Thresholds are in `em`, not `px`, and that is load-bearing. Every size in this
+   header (padding, icon boxes, gaps, text) is rem-based, so all of it scales
+   with the `fontSize` setting written to `documentElement.style.fontSize` -
+   while the sidebar's width stays in pixels. Pixel thresholds were therefore
+   correct at exactly one font size and let the row crowd at the larger ones.
+   In a container query `em` resolves against the query container's own font
+   size, so these rungs now move with the user's setting. */
 .gc-header-container {
 	container-type: inline-size;
 	container-name: gcheader;
@@ -1252,22 +1265,22 @@ svg.wand-profiling-active path:nth-child(8) {
 	display: inline;
 }
 
-/* Below 340px: drop the group chat count badge */
-@container gcheader (max-width: 340px) {
+/* Below 21.25em (340px at the default font size): drop the count badge */
+@container gcheader (max-width: 21.25em) {
 	.gc-count-badge {
 		display: none;
 	}
 }
 
-/* Below 305px: drop the archived count number (archive button stays) */
-@container gcheader (max-width: 305px) {
+/* Below 19em (305px): drop the archived count number (archive button stays) */
+@container gcheader (max-width: 19em) {
 	.gc-archived-count {
 		display: none;
 	}
 }
 
-/* Below 275px: collapse the New Chat button to just a plus sign */
-@container gcheader (max-width: 275px) {
+/* Below 17.2em (275px): collapse the New Chat button to just a plus sign */
+@container gcheader (max-width: 17.2em) {
 	.gc-newchat-label {
 		display: none;
 	}

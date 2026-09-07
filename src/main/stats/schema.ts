@@ -215,6 +215,41 @@ export const CREATE_RESILIENCE_EVENTS_INDEXES_SQL = `
 `;
 
 // ============================================================================
+// Wizard Runs (Migration v10)
+// ============================================================================
+
+/**
+ * One row per Auto Run wizard conversation, UPSERTED at every milestone rather
+ * than written once at the end (see `WizardRun` in shared/stats-types.ts). A
+ * run that is never closed keeps `outcome = 'in-progress'` and still carries
+ * accurate exchange/document/task counts.
+ *
+ * `ended_at` means "last activity", so `ended_at - started_at` is the time
+ * spent talking to the wizard whether or not the run was ever closed.
+ */
+export const CREATE_WIZARD_RUNS_SQL = `
+  CREATE TABLE IF NOT EXISTS wizard_runs (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    agent_type TEXT NOT NULL,
+    surface TEXT NOT NULL CHECK(surface IN ('inline', 'onboarding')),
+    mode TEXT NOT NULL CHECK(mode IN ('new', 'iterate')),
+    outcome TEXT NOT NULL CHECK(outcome IN ('in-progress', 'generated', 'abandoned')),
+    started_at INTEGER NOT NULL,
+    ended_at INTEGER NOT NULL,
+    exchanges INTEGER NOT NULL,
+    documents INTEGER NOT NULL,
+    tasks INTEGER NOT NULL,
+    project_path TEXT
+  )
+`;
+
+export const CREATE_WIZARD_RUNS_INDEXES_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_wizard_started ON wizard_runs(started_at);
+  CREATE INDEX IF NOT EXISTS idx_wizard_surface ON wizard_runs(surface, started_at)
+`;
+
+// ============================================================================
 // Compound Indexes (Migration v4)
 // ============================================================================
 
