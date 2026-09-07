@@ -189,8 +189,12 @@ export function canScaleFontForView(view: FontScaleTargetView): boolean {
 /** Extension → syntax highlighting language (module-scope for reuse) */
 const LANGUAGE_MAP: Record<string, string> = {
 	ts: 'typescript',
+	mts: 'typescript',
+	cts: 'typescript',
 	tsx: 'tsx',
 	js: 'javascript',
+	mjs: 'javascript',
+	cjs: 'javascript',
 	jsx: 'jsx',
 	json: 'json',
 	md: 'markdown',
