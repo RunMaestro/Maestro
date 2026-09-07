@@ -6,11 +6,16 @@ export function createAutoRunControlRemoteApi() {
 		/**
 		 * Subscribe to Auto Run state belonging to a DIFFERENT Maestro client.
 		 *
-		 * Only ever fires in the web-desktop (browser) build, where the WebSocket
-		 * shim maps the server's `autorun_state` packet onto this channel. In the
-		 * Electron desktop app nothing sends it - the desktop renderer is the
-		 * owner of its own runs, so there is nothing to mirror - and the
-		 * subscription simply sits idle.
+		 * Two producers feed this one channel. In the web-desktop (browser) build
+		 * the WebSocket shim maps the server's `autorun_state` packet onto it. In
+		 * the Electron desktop app main sends it directly, for a run owned by a
+		 * browser tab - the desktop is not a WebSocket client, so without that
+		 * forward a web-started run was invisible here for its whole duration
+		 * (issue #1519).
+		 *
+		 * A window is never sent its own run back, so the owner keeps its
+		 * controls; see `forwardAutoRunStateToDesktopWindows` in
+		 * `main/ipc/handlers/web.ts`.
 		 */
 		onRemoteAutoRunStateMirror: (
 			callback: (sessionId: string, state: AutoRunBroadcastState | null) => void
