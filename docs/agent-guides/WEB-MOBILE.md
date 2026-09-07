@@ -227,6 +227,55 @@ It is viewport-driven on purpose, not pointer-driven: space is the constraint, a
 
 ---
 
+### Standalone mode (iOS home screen)
+
+Opened as a page in Safari, the web view sits below the browser chrome and
+`env(safe-area-inset-top)` is 0. Added to the Home Screen with the
+`black-translucent` status bar the entry HTML declares, the same page runs under
+the status bar and has to clear it itself. Measured on an iPhone 16 Pro (iOS 26.5
+simulator, 402x874pt):
+
+| Value                                                             | Safari tab | Home-screen web app |
+| ----------------------------------------------------------------- | ---------- | ------------------- |
+| `innerHeight`, `100dvh`                                           | 714        | 874                 |
+| `100svh`, `documentElement.clientHeight`, `html { height: 100% }` | 714        | **812**             |
+| `env(safe-area-inset-top)` / `-bottom`                            | 0 / 0      | 62 / 34             |
+
+Two rules in the "Home-screen web apps on iOS" block of `src/renderer/index.css`
+follow from that table, and both are inert everywhere else because every other
+runtime reports 0 for the insets and the same value for `100%` and `100dvh`:
+
+- **The roots are `100dvh`, not `100%`.** `100%` is the small viewport, so the
+  874pt shell inside an 812pt `#root` with `overflow: hidden` was clipped at the
+  status-bar line, and the band under the composer showed the boot background
+  from the entry HTML (`#0a0a0a`). That band is what a tester reported as the
+  app "not reaching the bottom".
+- **The shell, the floating drawers and the phone modal overlay pad by
+  `--maestro-top-inset`.** iOS 26 draws a frosted status bar layer over any
+  content under the bar and swallows taps in that band, so a header laid out at
+  `y = 0` is dimmed, blurred and dead. The hamburger lived there, which is why
+  the left-edge swipe was the only way to the menu.
+
+`--maestro-top-inset` is `max(env(safe-area-inset-top), var(--maestro-status-bar-inset))`.
+The second operand exists because WebKit sometimes reports the inset as 0 and
+shortens the viewport by the bar height instead
+([WebKit bug 301994](https://bugs.webkit.org/show_bug.cgi?id=301994), reopened
+against iOS 26.5 and the iOS 27 beta). `installStandaloneStatusBarInset()` in
+`src/renderer/utils/standaloneStatusBar.ts` publishes `screen.height - innerHeight`
+for a portrait home-screen web app, and the web bootstrap calls it before the
+renderer loads. The fade itself is Apple's layer, not a Maestro gradient: the only
+top gradient in the stylesheet is the light `chrome-sheen`, which also renders in
+a Safari tab where no fade appears.
+
+**Verifying on a simulator.** `xcrun simctl` cannot add a page to the Home
+Screen, and the share sheet is the one Safari surface neither the accessibility
+bridge nor synthesized taps reach. A configuration profile with a
+`com.apple.webClip.managed` payload (`FullScreen` true) served with the
+`application/x-apple-aspen-config` MIME type installs through Safari's download
+prompt and Settings, all of which the Simulator exposes to macOS accessibility, and
+the resulting web clip runs with `navigator.standalone === true`. Have the probe
+page beacon its numbers to the serving host; screenshots are not needed for them.
+
 ## PWA (Progressive Web App)
 
 The install prompt, offline shell, and app icons come from a small set of static assets that are the only load-bearing part of `src/web/` at runtime.

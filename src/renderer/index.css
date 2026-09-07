@@ -1421,8 +1421,12 @@ svg.wand-profiling-active path:nth-child(8) {
 	   would otherwise silently defeat this phone breakpoint override. */
 	width: 100vw !important;
 	max-width: 100vw !important;
-	height: 100dvh !important;
-	max-height: 100dvh !important;
+	height: calc(
+		100dvh - var(--maestro-top-inset, 0px) - env(safe-area-inset-bottom, 0px)
+	) !important;
+	max-height: calc(
+		100dvh - var(--maestro-top-inset, 0px) - env(safe-area-inset-bottom, 0px)
+	) !important;
 	border-radius: 0;
 	border-width: 0;
 }
@@ -1786,6 +1790,51 @@ html[data-runtime='web-desktop'] .maestro-app-shell {
 }
 
 /*
+ * Home-screen web apps on iOS (Add to Home Screen, `black-translucent` status
+ * bar). Two things went wrong there, and both surfaced on the first RC that
+ * made mobile connectivity work:
+ *
+ * 1. The page extends under the status bar, and iOS 26 draws a frosted status
+ *    bar layer over whatever sits there and swallows taps in that band. Nothing
+ *    applied env(safe-area-inset-top), so the Main Panel header, hamburger
+ *    included, sat inside it: dimmed, blurred, untappable. The left-edge swipe
+ *    was the only way to the menu.
+ * 2. The roots (html, body, #root) were `height: 100%`, which resolves to the
+ *    SMALL viewport (100svh, 812pt on an iPhone 16 Pro) while the shell is
+ *    100dvh (874pt). With overflow hidden on the roots, the shell was clipped
+ *    at the status-bar line and a status-bar-tall band of the boot background
+ *    showed under the composer. Measured on the iOS 26.5 simulator.
+ *
+ * --maestro-top-inset is env() where WebKit reports it, and the JS-measured bar
+ * height where it does not (installStandaloneStatusBarInset: WebKit bug 301994
+ * reports env() as 0 and shortens the viewport instead). Browser-mode Safari,
+ * desktop browsers and Electron report 0 for both, so every rule here is inert
+ * outside a home-screen web app.
+ */
+html[data-runtime='web-desktop'] {
+	--maestro-top-inset: max(env(safe-area-inset-top, 0px), var(--maestro-status-bar-inset, 0px));
+}
+html[data-runtime='web-desktop'],
+html[data-runtime='web-desktop'] body,
+html[data-runtime='web-desktop'] #root {
+	height: 100vh;
+	height: 100dvh;
+}
+html[data-runtime='web-desktop'] .maestro-app-shell {
+	padding-top: var(--maestro-top-inset, 0px);
+}
+/* The floating drawers are position: fixed at top: 0, outside the shell's padding. */
+html[data-runtime='web-desktop'][data-bp='xs']
+	[data-panel='left'][data-collapsed='false'][data-hidden='false'],
+html[data-runtime='web-desktop'][data-bp='sm']
+	[data-panel='left'][data-collapsed='false'][data-hidden='false'],
+html[data-runtime='web-desktop'][data-bp='xs'] [data-panel='right'],
+html[data-runtime='web-desktop'][data-bp='sm'] [data-panel='right'] {
+	padding-top: var(--maestro-top-inset, 0px);
+	padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/*
  * Smooth momentum scrolling on scrollable containers (Tailwind overflow
  * utilities). `-webkit-overflow-scrolling` is an iOS-only property and is
  * silently ignored everywhere else.
@@ -1975,12 +2024,15 @@ html[data-runtime='web-desktop'][data-bp='xs'] [data-shortcut-hint] {
  * rename) pass no resize key and keep their natural size.
  */
 html[data-runtime='web-desktop'][data-bp='xs'] .modal-overlay {
-	padding: 0 !important;
+	/* The status bar band and the home indicator stay outside the modal. */
+	padding: var(--maestro-top-inset, 0px) 0 env(safe-area-inset-bottom, 0px) 0 !important;
 }
 html[data-runtime='web-desktop'][data-bp='xs'] [data-modal-resize-key] {
 	width: 100vw !important;
 	width: 100dvw !important;
-	height: 100dvh !important;
+	height: calc(
+		100dvh - var(--maestro-top-inset, 0px) - env(safe-area-inset-bottom, 0px)
+	) !important;
 	max-width: none !important;
 	max-height: none !important;
 	border-radius: 0 !important;
