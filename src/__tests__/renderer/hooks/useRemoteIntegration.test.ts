@@ -1826,6 +1826,118 @@ describe('useRemoteIntegration', () => {
 				error: 'history unreadable',
 			});
 		});
+
+		// `tabCallbacks.ts` stops waiting on a rename after a bounded delay and
+		// dispatches the next one while the abandoned one may still be running
+		// here, so ordering cannot rely on the server having waited: an older
+		// rename finishing last would overwrite the newer name in BOTH the
+		// provider metadata and the store.
+		it('keeps the newest rename authoritative when an abandoned older one finishes last', async () => {
+			const tab = createMockTab({ id: 'tab-1', agentSessionId: 'agent-session-1', name: 'Old' });
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [tab],
+				projectRoot: '/test/project',
+				toolType: 'claude-code',
+			});
+			const deps = createDeps({ sessions: [session] });
+
+			// The older rename's persistence is held open, and is released only
+			// AFTER the newer rename has been dispatched and given room to run.
+			let releaseOlder: (() => void) | undefined;
+			const olderPersisted = new Promise<void>((resolve) => {
+				releaseOlder = resolve;
+			});
+			const persistOrder: string[] = [];
+			mockClaude.updateSessionName.mockImplementation(
+				async (_projectRoot: string, _agentSessionId: string, name: string) => {
+					if (name === 'Older') await olderPersisted;
+					persistOrder.push(name);
+				}
+			);
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			const olderDone = onRemoteRenameTabHandler?.('session-1', 'tab-1', 'Older', 'response-older');
+			const newerDone = onRemoteRenameTabHandler?.('session-1', 'tab-1', 'Newer', 'response-newer');
+
+			// Let both handlers run as far as they can. The newer one must be
+			// parked behind the older one rather than racing it.
+			await act(async () => {
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+			expect(persistOrder).toEqual([]);
+
+			await act(async () => {
+				releaseOlder!();
+				await olderDone;
+				await newerDone;
+			});
+
+			// Persistence happened in request order, so the last name written to the
+			// provider is the newest request, not the one that was abandoned.
+			expect(persistOrder).toEqual(['Older', 'Newer']);
+
+			const updatedSession = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
+			expect(updatedSession?.aiTabs.find((t) => t.id === 'tab-1')?.name).toBe('Newer');
+
+			// Both callers still get a truthful answer; neither is left hanging.
+			expect(mockProcess.sendRemoteRenameTabResponse).toHaveBeenCalledWith('response-older', {
+				success: true,
+			});
+			expect(mockProcess.sendRemoteRenameTabResponse).toHaveBeenCalledWith('response-newer', {
+				success: true,
+			});
+		});
+
+		it('does not serialize renames of different tabs behind each other', async () => {
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [
+					createMockTab({ id: 'tab-1', agentSessionId: 'agent-session-1', name: 'Old A' }),
+					createMockTab({ id: 'tab-2', agentSessionId: 'agent-session-2', name: 'Old B' }),
+				],
+				projectRoot: '/test/project',
+				toolType: 'claude-code',
+			});
+			const deps = createDeps({ sessions: [session] });
+
+			let releaseFirst: (() => void) | undefined;
+			const firstPersisted = new Promise<void>((resolve) => {
+				releaseFirst = resolve;
+			});
+			const persistOrder: string[] = [];
+			mockClaude.updateSessionName.mockImplementation(
+				async (_projectRoot: string, _agentSessionId: string, name: string) => {
+					if (name === 'Tab One') await firstPersisted;
+					persistOrder.push(name);
+				}
+			);
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			const firstDone = onRemoteRenameTabHandler?.('session-1', 'tab-1', 'Tab One', 'response-one');
+			const secondDone = onRemoteRenameTabHandler?.(
+				'session-1',
+				'tab-2',
+				'Tab Two',
+				'response-two'
+			);
+
+			// tab-2 is not held up by tab-1: the key is per tab, so this must not
+			// become an app-wide rename lock.
+			await act(async () => {
+				await secondDone;
+			});
+			expect(persistOrder).toEqual(['Tab Two']);
+
+			await act(async () => {
+				releaseFirst!();
+				await firstDone;
+			});
+			expect(persistOrder).toEqual(['Tab Two', 'Tab One']);
+		});
 	});
 
 	describe('remote create gist', () => {
