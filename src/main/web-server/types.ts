@@ -329,15 +329,17 @@ export type CloseTabCallback = (sessionId: string, tabId: string) => Promise<boo
 export interface RenameTabResult {
 	success: boolean;
 	error?: string;
+	unconfirmed?: boolean;
 }
 
 export function normalizeRenameTabResult(result: unknown): RenameTabResult {
 	if (typeof result === 'boolean') return { success: result };
 	if (result && typeof result === 'object' && 'success' in result) {
-		const candidate = result as { success?: unknown; error?: unknown };
+		const candidate = result as { success?: unknown; error?: unknown; unconfirmed?: unknown };
 		return {
 			success: candidate.success === true,
 			...(typeof candidate.error === 'string' ? { error: candidate.error } : {}),
+			...(candidate.unconfirmed === true ? { unconfirmed: true } : {}),
 		};
 	}
 	return { success: false, error: 'Invalid rename tab response' };
