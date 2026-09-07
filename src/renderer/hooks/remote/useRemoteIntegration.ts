@@ -182,13 +182,12 @@ const remoteRenameQueue = createKeyedWriteQueue();
 const RENAME_SLOT_HANDOFF_MS = 15_000;
 
 /**
- * Per tab, the newest name REQUESTED and the newest name a write has actually
- * LANDED. A writer compares the two when it finishes to find out whether it was
- * the last one in, which is how a stale write that lands late gets corrected.
- * Kept only while a rename is in flight, and module scope for the same reason
- * the queue is.
+ * Per tab, the newest name a remote rename has REQUESTED. A writer re-reads it
+ * when its own write lands to find out whether it was superseded meanwhile,
+ * which is how a stale write that lands late gets corrected. Kept only while a
+ * rename is in flight, and module scope for the same reason the queue is.
  */
-const remoteRenameStates = new Map<string, { desired: string; applied?: string; active: number }>();
+const remoteRenameStates = new Map<string, { desired: string; active: number }>();
 
 /**
  * Resolve when `work` settles, or when the handoff budget expires - whichever
@@ -832,26 +831,40 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					return { success: true };
 				};
 
+				// Whether the tab ALREADY shows this exact name, which is the one case
+				// a write can be skipped. It reads the live tab rather than
+				// remembering what this queue last wrote, because the tab is renamed
+				// from outside this queue too - `useSessionLifecycle` writes the same
+				// provider metadata, history and store name for a desktop rename - and
+				// a remembered value would skip a write the tab genuinely needs and
+				// then report success for a name it never applied.
+				const tabAlreadyShows = (target: string) => {
+					const tab = useSessionStore
+						.getState()
+						.sessions.find((s) => s.id === sessionId)
+						?.aiTabs.find((t) => t.id === tabId);
+					return tab ? (tab.name ?? '') === target : false;
+				};
+
 				// Write this request's name, then LOOK AGAIN. Re-reading the desired
 				// name after the write is what keeps the newest one authoritative when
 				// this write was a stale one that landed late: the writer that lands
 				// last simply writes once more, so persistence and the tab both end on
 				// the newest name rather than on whichever call happened to return
-				// last. A target another writer already applied is skipped rather than
-				// rewritten, so the ordinary in-order case still writes each name once.
+				// last. The ordinary in-order case still writes each name once, since
+				// a name the tab already carries is not rewritten.
 				const runRename = async () => {
 					try {
 						let target = persistedName;
 						for (;;) {
-							if (state.applied !== target) {
+							if (!tabAlreadyShows(target)) {
 								const outcome = await applyRename(target);
 								if (!outcome.success) {
 									reply(outcome);
 									return;
 								}
-								state.applied = target;
 							}
-							if (state.desired === state.applied) break;
+							if (state.desired === target) break;
 							target = state.desired;
 						}
 						reply({ success: true });

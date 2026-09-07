@@ -7,7 +7,7 @@ import { useRemoteIntegration } from '../../../renderer/hooks';
 import type { Session, AITab } from '../../../renderer/types';
 import { createMockAITab } from '../../helpers/mockTab';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
-import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { updateAiTab, useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useNotificationStore } from '../../../renderer/stores/notificationStore';
 import { useMovementStore } from '../../../renderer/stores/movementStore';
 import { useConcertoCreationActivityStore } from '../../../renderer/stores/concertoCreationActivityStore';
@@ -1965,6 +1965,67 @@ describe('useRemoteIntegration', () => {
 						.sessions.find((s) => s.id === 'session-1')
 						?.aiTabs.find((t) => t.id === 'tab-1')?.name
 				).toBe('Newer');
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		// The tab is renamed from outside this queue too: `useSessionLifecycle`
+		// writes the same provider metadata, history and store name for a desktop
+		// rename. So "already applied" has to be read from the live tab, not
+		// remembered from what this queue last wrote, or a repeat remote rename is
+		// skipped and reported successful while the tab shows something else.
+		it('re-applies a name the tab lost to a rename made outside this queue', async () => {
+			vi.useFakeTimers();
+			try {
+				const tab = createMockTab({ id: 'tab-1', agentSessionId: 'agent-session-1', name: 'Old' });
+				const session = createMockSession({
+					id: 'session-1',
+					aiTabs: [tab],
+					projectRoot: '/test/project',
+					toolType: 'claude-code',
+				});
+				const deps = createDeps({ sessions: [session] });
+				const persistOrder: string[] = [];
+				const neverSettles = new Promise<void>(() => {});
+				mockClaude.updateSessionName.mockImplementation(
+					async (_projectRoot: string, _agentSessionId: string, name: string) => {
+						if (name === 'Hung') await neverSettles;
+						persistOrder.push(name);
+					}
+				);
+
+				renderHook(() => useRemoteIntegration(deps));
+
+				// A rename that never settles keeps this tab's bookkeeping alive, so
+				// anything remembered in it outlives the rename that recorded it.
+				void onRemoteRenameTabHandler?.('session-1', 'tab-1', 'Hung', 'response-hung');
+				await vi.advanceTimersByTimeAsync(60_000);
+
+				void onRemoteRenameTabHandler?.('session-1', 'tab-1', 'Beta', 'response-1');
+				await vi.advanceTimersByTimeAsync(0);
+				expect(persistOrder).toEqual(['Beta']);
+
+				// The desktop renames the tab, bypassing the remote rename queue.
+				act(() => {
+					updateAiTab('session-1', 'tab-1', (t) => ({ ...t, name: 'Gamma' }));
+				});
+
+				// The same remote name is requested again. It must be written, not
+				// skipped as something this queue believes it already applied.
+				void onRemoteRenameTabHandler?.('session-1', 'tab-1', 'Beta', 'response-2');
+				await vi.advanceTimersByTimeAsync(0);
+
+				expect(persistOrder).toEqual(['Beta', 'Beta']);
+				expect(
+					useSessionStore
+						.getState()
+						.sessions.find((s) => s.id === 'session-1')
+						?.aiTabs.find((t) => t.id === 'tab-1')?.name
+				).toBe('Beta');
+				expect(mockProcess.sendRemoteRenameTabResponse).toHaveBeenCalledWith('response-2', {
+					success: true,
+				});
 			} finally {
 				vi.useRealTimers();
 			}
