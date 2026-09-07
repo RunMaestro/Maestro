@@ -2031,6 +2031,87 @@ describe('useRemoteIntegration', () => {
 			}
 		});
 
+		// `applyRename` writes the provider name BEFORE the history relabel, so a
+		// history rejection lands after the provider is already on disk with the
+		// old name. When that happens to a rename a newer one has superseded, the
+		// stale provider write has to be reconciled anyway: reporting the failure
+		// and stopping would leave the provider disagreeing with the tab and with
+		// the success the newer request was already told.
+		it('reconciles the newest name when a stale rename writes the provider then fails on history', async () => {
+			vi.useFakeTimers();
+			try {
+				const tab = createMockTab({ id: 'tab-1', agentSessionId: 'agent-session-1', name: 'Old' });
+				const session = createMockSession({
+					id: 'session-1',
+					aiTabs: [tab],
+					projectRoot: '/test/project',
+					toolType: 'claude-code',
+				});
+				const deps = createDeps({ sessions: [session] });
+
+				// Stands in for the provider metadata on disk.
+				let providerName: string | undefined;
+				let landStaleProviderWrite: (() => void) | undefined;
+				const staleProviderWrite = new Promise<void>((resolve) => {
+					landStaleProviderWrite = resolve;
+				});
+				mockClaude.updateSessionName.mockImplementation(
+					async (_projectRoot: string, _agentSessionId: string, name: string) => {
+						if (name === 'Stale') await staleProviderWrite;
+						providerName = name;
+					}
+				);
+				// The history relabel rejects only for the stale name, which is what
+				// makes that rename fail AFTER it has already written the provider.
+				mockHistory.updateSessionName.mockImplementation(async (_id: string, name: string) => {
+					if (name === 'Stale') throw new Error('history write failed');
+					return 1;
+				});
+
+				renderHook(() => useRemoteIntegration(deps));
+
+				void onRemoteRenameTabHandler?.('session-1', 'tab-1', 'Stale', 'response-stale');
+				await vi.advanceTimersByTimeAsync(60_000);
+				expect(providerName).toBeUndefined();
+
+				// The newer rename completes while the older provider write is still
+				// pending, and is told it succeeded.
+				const newerDone = onRemoteRenameTabHandler?.(
+					'session-1',
+					'tab-1',
+					'Newer',
+					'response-newer'
+				);
+				await vi.advanceTimersByTimeAsync(0);
+				await newerDone;
+				expect(providerName).toBe('Newer');
+				expect(mockProcess.sendRemoteRenameTabResponse).toHaveBeenCalledWith('response-newer', {
+					success: true,
+				});
+
+				// Now the stale provider write lands and its history relabel throws.
+				landStaleProviderWrite!();
+				await vi.advanceTimersByTimeAsync(0);
+
+				// The provider must not be left on the stale name.
+				expect(providerName).toBe('Newer');
+				expect(
+					useSessionStore
+						.getState()
+						.sessions.find((s) => s.id === 'session-1')
+						?.aiTabs.find((t) => t.id === 'tab-1')?.name
+				).toBe('Newer');
+
+				// The stale request is still told the truth about its own rename.
+				expect(mockProcess.sendRemoteRenameTabResponse).toHaveBeenCalledWith('response-stale', {
+					success: false,
+					error: 'history write failed',
+				});
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
 		it('does not serialize renames of different tabs behind each other', async () => {
 			const session = createMockSession({
 				id: 'session-1',

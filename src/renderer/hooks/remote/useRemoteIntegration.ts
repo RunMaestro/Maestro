@@ -854,29 +854,57 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				// last. The ordinary in-order case still writes each name once, since
 				// a name the tab already carries is not rewritten.
 				const runRename = async () => {
+					// What to tell THIS request's caller, answered once at the end. A
+					// failure is remembered rather than returned on the spot: a write
+					// that failed can still have left a side effect behind, so
+					// reconciling has to happen after ANY of them, or a stale operation
+					// that failed late leaves the provider disagreeing with the tab and
+					// with what the newer request was already told.
+					let ownOutcome: { success: boolean; error?: string } = { success: true };
 					try {
 						let target = persistedName;
+						let hasWritten = false;
+						// Each pass either settles on the desired name or adopts the
+						// newer one that arrived while it was writing, so it cannot spin:
+						// a failed pass moves to `state.desired` and the next pass ends
+						// unless a real request has changed it again.
 						for (;;) {
-							if (!tabAlreadyShows(target)) {
-								const outcome = await applyRename(target);
-								if (!outcome.success) {
-									reply(outcome);
-									return;
-								}
+							// The skip answers "does this request need to write at all?",
+							// and only before this runner has written anything. Once it
+							// has, every later pass is a REPAIR of a name it wrote itself,
+							// and the tab is no longer evidence that the provider agrees:
+							// `applyRename` persists the provider name before the history
+							// relabel, so a rejection there leaves the provider on the old
+							// name while the tab still shows the newer one.
+							if (hasWritten || !tabAlreadyShows(target)) {
+								const result = await applyRename(target).catch((error) => {
+									logger.error('Failed to persist remote tab name:', undefined, error);
+									return {
+										success: false,
+										error: error instanceof Error ? error.message : String(error),
+									};
+								});
+								hasWritten = true;
+								// Only this request's OWN name decides its answer. A repair
+								// write belongs to whoever asked for that name, so failing it
+								// must not turn this caller's successful rename into an error.
+								if (!result.success && target === persistedName) ownOutcome = result;
 							}
 							if (state.desired === target) break;
 							target = state.desired;
 						}
-						reply({ success: true });
 					} catch (error) {
 						const message = error instanceof Error ? error.message : String(error);
 						logger.error('Failed to persist remote tab name:', undefined, error);
-						reply({ success: false, error: message });
+						ownOutcome = { success: false, error: message };
 					} finally {
+						// Cleanup before the reply, so a send that throws cannot leave
+						// this tab's bookkeeping behind for the life of the window.
 						state.active -= 1;
 						if (state.active === 0 && remoteRenameStates.get(key) === state) {
 							remoteRenameStates.delete(key);
 						}
+						reply(ownOutcome);
 					}
 				};
 
