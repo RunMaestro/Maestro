@@ -654,6 +654,10 @@ describe('Toast on a phone', () => {
 	});
 
 	it('pins the stack to the right and sizes toasts from the preset on desktop', () => {
+		// Pin the preset rather than leaning on whatever the store defaults to:
+		// the point of this test is that the desktop path uses the preset at all,
+		// and 'dynamic' derives its width from the live Right Bar instead.
+		useSettingsStore.setState({ toastWidth: 'small' });
 		render(<ToastContainer theme={mockTheme} />);
 		const stack = screen.getByTestId('toast-stack');
 		expect(stack).toHaveClass('right-4');
