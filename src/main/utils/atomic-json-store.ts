@@ -21,7 +21,10 @@
  *
  * `createKeyedWriteQueue` fixes (2) within a process: it serializes every
  * mutation for a given key (e.g. a session id) so read-modify-write sequences
- * never interleave.
+ * never interleave. Its implementation lives in `src/shared/keyedWriteQueue.ts`
+ * (the renderer serializes work too and cannot import `fs/promises`) and is
+ * re-exported below, so this stays the import site every main-process caller
+ * already uses.
  *
  * This is the canonical home for the pattern that previously lived inline in
  * `group-chat-storage.ts`.
@@ -81,36 +84,4 @@ export async function atomicWriteFile(
 	}
 }
 
-/** Enqueue an async callback, serialized against others sharing the same key. */
-export interface KeyedWriteQueue {
-	enqueue<T>(key: string, fn: () => Promise<T>): Promise<T>;
-}
-
-/**
- * Create an independent per-key write queue. Each key (e.g. a session id) gets
- * its own promise chain, so callers mutating the same file run strictly one at
- * a time while different keys still run concurrently. Queue entries are cleaned
- * up once settled to keep the backing Map bounded in long-lived processes.
- */
-export function createKeyedWriteQueue(): KeyedWriteQueue {
-	const queues = new Map<string, Promise<void>>();
-
-	function enqueue<T>(key: string, fn: () => Promise<T>): Promise<T> {
-		const prev = queues.get(key) ?? Promise.resolve();
-		// Run fn regardless of whether the prior write resolved or rejected.
-		const next = prev.then(fn, fn);
-		const settled = next.then(
-			() => {},
-			() => {}
-		);
-		queues.set(key, settled);
-		settled.then(() => {
-			if (queues.get(key) === settled) {
-				queues.delete(key);
-			}
-		});
-		return next;
-	}
-
-	return { enqueue };
-}
+export { createKeyedWriteQueue, type KeyedWriteQueue } from '../../shared/keyedWriteQueue';

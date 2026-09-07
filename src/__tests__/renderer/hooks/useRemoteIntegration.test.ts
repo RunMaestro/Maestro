@@ -7,7 +7,7 @@ import { useRemoteIntegration } from '../../../renderer/hooks';
 import type { Session, AITab } from '../../../renderer/types';
 import { createMockAITab } from '../../helpers/mockTab';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
-import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { updateAiTab, useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useNotificationStore } from '../../../renderer/stores/notificationStore';
 import { useMovementStore } from '../../../renderer/stores/movementStore';
 import { useConcertoCreationActivityStore } from '../../../renderer/stores/concertoCreationActivityStore';
@@ -1825,6 +1825,389 @@ describe('useRemoteIntegration', () => {
 				success: false,
 				error: 'history unreadable',
 			});
+		});
+
+		// `tabCallbacks.ts` stops waiting on a rename after a bounded delay and
+		// dispatches the next one while the abandoned one may still be running
+		// here, so ordering cannot rely on the server having waited: an older
+		// rename finishing last would overwrite the newer name in BOTH the
+		// provider metadata and the store.
+		it('keeps the newest rename authoritative when an abandoned older one finishes last', async () => {
+			const tab = createMockTab({ id: 'tab-1', agentSessionId: 'agent-session-1', name: 'Old' });
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [tab],
+				projectRoot: '/test/project',
+				toolType: 'claude-code',
+			});
+			const deps = createDeps({ sessions: [session] });
+
+			// The older rename's persistence is held open, and is released only
+			// AFTER the newer rename has been dispatched and given room to run.
+			let releaseOlder: (() => void) | undefined;
+			const olderPersisted = new Promise<void>((resolve) => {
+				releaseOlder = resolve;
+			});
+			const persistOrder: string[] = [];
+			mockClaude.updateSessionName.mockImplementation(
+				async (_projectRoot: string, _agentSessionId: string, name: string) => {
+					if (name === 'Older') await olderPersisted;
+					persistOrder.push(name);
+				}
+			);
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			const olderDone = onRemoteRenameTabHandler?.('session-1', 'tab-1', 'Older', 'response-older');
+			const newerDone = onRemoteRenameTabHandler?.('session-1', 'tab-1', 'Newer', 'response-newer');
+
+			// Let both handlers run as far as they can. The newer one must be
+			// parked behind the older one rather than racing it.
+			await act(async () => {
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+			expect(persistOrder).toEqual([]);
+
+			await act(async () => {
+				releaseOlder!();
+				await olderDone;
+				await newerDone;
+			});
+
+			// Persistence happened in request order, so the last name written to the
+			// provider is the newest request, not the one that was abandoned. The
+			// trailing repeat is the newer request writing its own name after the
+			// older runner had already reconciled to it: writes are idempotent and
+			// unconditional, because nothing available in the renderer proves the
+			// provider already agrees with the tab.
+			expect(persistOrder).toEqual(['Older', 'Newer', 'Newer']);
+
+			const updatedSession = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
+			expect(updatedSession?.aiTabs.find((t) => t.id === 'tab-1')?.name).toBe('Newer');
+
+			// Both callers still get a truthful answer; neither is left hanging.
+			expect(mockProcess.sendRemoteRenameTabResponse).toHaveBeenCalledWith('response-older', {
+				success: true,
+			});
+			expect(mockProcess.sendRemoteRenameTabResponse).toHaveBeenCalledWith('response-newer', {
+				success: true,
+			});
+		});
+
+		// The persistence calls are `ipcRenderer.invoke`, which never times out, so a
+		// main-process handler that never returns leaves its promise pending for the
+		// life of the window. Without a bounded handoff every later rename for the
+		// tab would queue behind it and never be attempted, and the tab would be
+		// stuck on its old name no matter how many times the user renamed it.
+		it('runs a newer rename when an older one never settles, and keeps it when the old one lands', async () => {
+			vi.useFakeTimers();
+			try {
+				const tab = createMockTab({ id: 'tab-1', agentSessionId: 'agent-session-1', name: 'Old' });
+				const session = createMockSession({
+					id: 'session-1',
+					aiTabs: [tab],
+					projectRoot: '/test/project',
+					toolType: 'claude-code',
+				});
+				const deps = createDeps({ sessions: [session] });
+
+				// The first rename's persistence is never resolved on its own; the test
+				// releases it by hand at the very end to model a hung call finally
+				// landing rather than one that was cancelled.
+				let landHung: (() => void) | undefined;
+				const hungPersisted = new Promise<void>((resolve) => {
+					landHung = resolve;
+				});
+				const persistOrder: string[] = [];
+				mockClaude.updateSessionName.mockImplementation(
+					async (_projectRoot: string, _agentSessionId: string, name: string) => {
+						if (name === 'Hung') await hungPersisted;
+						persistOrder.push(name);
+					}
+				);
+
+				renderHook(() => useRemoteIntegration(deps));
+
+				const hungDone = onRemoteRenameTabHandler?.('session-1', 'tab-1', 'Hung', 'response-hung');
+				await vi.advanceTimersByTimeAsync(0);
+				expect(persistOrder).toEqual([]);
+
+				// The newer rename arrives while the first is still pending. It must
+				// not be blocked forever behind it.
+				const newerDone = onRemoteRenameTabHandler?.(
+					'session-1',
+					'tab-1',
+					'Newer',
+					'response-newer'
+				);
+				await vi.advanceTimersByTimeAsync(60_000);
+
+				expect(persistOrder).toEqual(['Newer']);
+				expect(
+					useSessionStore
+						.getState()
+						.sessions.find((s) => s.id === 'session-1')
+						?.aiTabs.find((t) => t.id === 'tab-1')?.name
+				).toBe('Newer');
+				expect(mockProcess.sendRemoteRenameTabResponse).toHaveBeenCalledWith('response-newer', {
+					success: true,
+				});
+				await newerDone;
+
+				// The hung call finally lands and writes its stale name. The newest
+				// requested name has to come back in persistence AND in the tab, so a
+				// late write can never be the last word.
+				landHung!();
+				await vi.advanceTimersByTimeAsync(0);
+				await hungDone;
+
+				expect(persistOrder).toEqual(['Newer', 'Hung', 'Newer']);
+				expect(
+					useSessionStore
+						.getState()
+						.sessions.find((s) => s.id === 'session-1')
+						?.aiTabs.find((t) => t.id === 'tab-1')?.name
+				).toBe('Newer');
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		// The tab is renamed from outside this queue too: `useSessionLifecycle`
+		// writes the same provider metadata, history and store name for a desktop
+		// rename. A repeat remote rename of a name this queue already wrote must
+		// still be written, because something else has changed the tab since.
+		// Its own session and tab ids are deliberately unique: the parked rename
+		// below never settles, so its bookkeeping entry outlives the test, and a
+		// shared id would couple every later test in this file to it.
+		it('re-applies a name the tab lost to a rename made outside this queue', async () => {
+			vi.useFakeTimers();
+			try {
+				const tab = createMockTab({
+					id: 'tab-parked',
+					agentSessionId: 'agent-session-1',
+					name: 'Old',
+				});
+				const session = createMockSession({
+					id: 'session-parked',
+					aiTabs: [tab],
+					projectRoot: '/test/project',
+					toolType: 'claude-code',
+				});
+				const deps = createDeps({ sessions: [session] });
+				const persistOrder: string[] = [];
+				const neverSettles = new Promise<void>(() => {});
+				mockClaude.updateSessionName.mockImplementation(
+					async (_projectRoot: string, _agentSessionId: string, name: string) => {
+						if (name === 'Hung') await neverSettles;
+						persistOrder.push(name);
+					}
+				);
+
+				renderHook(() => useRemoteIntegration(deps));
+
+				// A rename that never settles keeps this tab's bookkeeping alive, so
+				// anything remembered in it outlives the rename that recorded it.
+				void onRemoteRenameTabHandler?.('session-parked', 'tab-parked', 'Hung', 'response-hung');
+				await vi.advanceTimersByTimeAsync(60_000);
+
+				void onRemoteRenameTabHandler?.('session-parked', 'tab-parked', 'Beta', 'response-1');
+				await vi.advanceTimersByTimeAsync(0);
+				expect(persistOrder).toEqual(['Beta']);
+
+				// The desktop renames the tab, bypassing the remote rename queue.
+				act(() => {
+					updateAiTab('session-parked', 'tab-parked', (t) => ({ ...t, name: 'Gamma' }));
+				});
+
+				// The same remote name is requested again. It must be written, not
+				// skipped as something this queue believes it already applied.
+				void onRemoteRenameTabHandler?.('session-parked', 'tab-parked', 'Beta', 'response-2');
+				await vi.advanceTimersByTimeAsync(0);
+
+				expect(persistOrder).toEqual(['Beta', 'Beta']);
+				expect(
+					useSessionStore
+						.getState()
+						.sessions.find((s) => s.id === 'session-parked')
+						?.aiTabs.find((t) => t.id === 'tab-parked')?.name
+				).toBe('Beta');
+				expect(mockProcess.sendRemoteRenameTabResponse).toHaveBeenCalledWith('response-2', {
+					success: true,
+				});
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		// `applyRename` writes the provider name BEFORE the history relabel, so a
+		// history rejection lands after the provider is already on disk with the
+		// old name. When that happens to a rename a newer one has superseded, the
+		// stale provider write has to be reconciled anyway: reporting the failure
+		// and stopping would leave the provider disagreeing with the tab and with
+		// the success the newer request was already told.
+		it('reconciles the newest name when a stale rename writes the provider then fails on history', async () => {
+			vi.useFakeTimers();
+			try {
+				const tab = createMockTab({ id: 'tab-1', agentSessionId: 'agent-session-1', name: 'Old' });
+				const session = createMockSession({
+					id: 'session-1',
+					aiTabs: [tab],
+					projectRoot: '/test/project',
+					toolType: 'claude-code',
+				});
+				const deps = createDeps({ sessions: [session] });
+
+				// Stands in for the provider metadata on disk.
+				let providerName: string | undefined;
+				let landStaleProviderWrite: (() => void) | undefined;
+				const staleProviderWrite = new Promise<void>((resolve) => {
+					landStaleProviderWrite = resolve;
+				});
+				mockClaude.updateSessionName.mockImplementation(
+					async (_projectRoot: string, _agentSessionId: string, name: string) => {
+						if (name === 'Stale') await staleProviderWrite;
+						providerName = name;
+					}
+				);
+				// The history relabel rejects only for the stale name, which is what
+				// makes that rename fail AFTER it has already written the provider.
+				mockHistory.updateSessionName.mockImplementation(async (_id: string, name: string) => {
+					if (name === 'Stale') throw new Error('history write failed');
+					return 1;
+				});
+
+				renderHook(() => useRemoteIntegration(deps));
+
+				void onRemoteRenameTabHandler?.('session-1', 'tab-1', 'Stale', 'response-stale');
+				await vi.advanceTimersByTimeAsync(60_000);
+				expect(providerName).toBeUndefined();
+
+				// The newer rename completes while the older provider write is still
+				// pending, and is told it succeeded.
+				const newerDone = onRemoteRenameTabHandler?.(
+					'session-1',
+					'tab-1',
+					'Newer',
+					'response-newer'
+				);
+				await vi.advanceTimersByTimeAsync(0);
+				await newerDone;
+				expect(providerName).toBe('Newer');
+				expect(mockProcess.sendRemoteRenameTabResponse).toHaveBeenCalledWith('response-newer', {
+					success: true,
+				});
+
+				// Now the stale provider write lands and its history relabel throws.
+				landStaleProviderWrite!();
+				await vi.advanceTimersByTimeAsync(0);
+
+				// The provider must not be left on the stale name.
+				expect(providerName).toBe('Newer');
+				expect(
+					useSessionStore
+						.getState()
+						.sessions.find((s) => s.id === 'session-1')
+						?.aiTabs.find((t) => t.id === 'tab-1')?.name
+				).toBe('Newer');
+
+				// The stale request is still told the truth about its own rename.
+				expect(mockProcess.sendRemoteRenameTabResponse).toHaveBeenCalledWith('response-stale', {
+					success: false,
+					error: 'history write failed',
+				});
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		// Auto-naming (`useSessionLifecycle`, `useInputProcessing`) sets `tab.name`
+		// through `updateAiTab` alone and writes nothing to the provider, so a tab
+		// showing a name is NOT evidence that the provider carries it. Renaming
+		// remotely to the name the tab already displays therefore has to write, not
+		// skip and claim success for something never persisted.
+		it('persists a remote rename to the name a tab was already auto-named', async () => {
+			const tab = createMockTab({ id: 'tab-1', agentSessionId: 'agent-session-1', name: null });
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [tab],
+				projectRoot: '/test/project',
+				toolType: 'claude-code',
+			});
+			const deps = createDeps({ sessions: [session] });
+			const persistOrder: string[] = [];
+			mockClaude.updateSessionName.mockImplementation(
+				async (_projectRoot: string, _agentSessionId: string, name: string) => {
+					persistOrder.push(name);
+				}
+			);
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			// Auto-naming puts the name on the tab without touching the provider.
+			act(() => {
+				updateAiTab('session-1', 'tab-1', (t) => ({ ...t, name: 'Auto Name' }));
+			});
+			expect(persistOrder).toEqual([]);
+
+			await act(async () => {
+				await onRemoteRenameTabHandler?.('session-1', 'tab-1', 'Auto Name', 'response-1');
+			});
+
+			expect(persistOrder).toEqual(['Auto Name']);
+			expect(mockHistory.updateSessionName).toHaveBeenCalledWith('agent-session-1', 'Auto Name');
+			expect(mockProcess.sendRemoteRenameTabResponse).toHaveBeenCalledWith('response-1', {
+				success: true,
+			});
+		});
+
+		it('does not serialize renames of different tabs behind each other', async () => {
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [
+					createMockTab({ id: 'tab-1', agentSessionId: 'agent-session-1', name: 'Old A' }),
+					createMockTab({ id: 'tab-2', agentSessionId: 'agent-session-2', name: 'Old B' }),
+				],
+				projectRoot: '/test/project',
+				toolType: 'claude-code',
+			});
+			const deps = createDeps({ sessions: [session] });
+
+			let releaseFirst: (() => void) | undefined;
+			const firstPersisted = new Promise<void>((resolve) => {
+				releaseFirst = resolve;
+			});
+			const persistOrder: string[] = [];
+			mockClaude.updateSessionName.mockImplementation(
+				async (_projectRoot: string, _agentSessionId: string, name: string) => {
+					if (name === 'Tab One') await firstPersisted;
+					persistOrder.push(name);
+				}
+			);
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			const firstDone = onRemoteRenameTabHandler?.('session-1', 'tab-1', 'Tab One', 'response-one');
+			const secondDone = onRemoteRenameTabHandler?.(
+				'session-1',
+				'tab-2',
+				'Tab Two',
+				'response-two'
+			);
+
+			// tab-2 is not held up by tab-1: the key is per tab, so this must not
+			// become an app-wide rename lock.
+			await act(async () => {
+				await secondDone;
+			});
+			expect(persistOrder).toEqual(['Tab Two']);
+
+			await act(async () => {
+				releaseFirst!();
+				await firstDone;
+			});
+			expect(persistOrder).toEqual(['Tab Two', 'Tab One']);
 		});
 	});
 
