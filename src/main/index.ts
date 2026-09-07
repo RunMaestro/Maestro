@@ -127,7 +127,12 @@ import { needsSessionRecovery, initiateSessionRecovery } from './group-chat/sess
 import { initializePrompts, getPrompt, savePrompt } from './prompt-manager';
 import { captureException } from './utils/sentry';
 import { initializeSessionStorages } from './storage';
-import { resolveToFilePath, configureImageStore } from './storage/session-image-store';
+import {
+	resolveToFilePath,
+	configureImageStore,
+	parseThumbnailRequest,
+} from './storage/session-image-store';
+import { getOrCreateThumbnail } from './storage/session-image-thumbnails';
 import { MEDIA_SCHEME } from '../shared/mediaTypes';
 import { handleMediaStreamRequest } from './media/media-stream';
 import { closeAllParquetFiles } from './parquet/parquet-file';
@@ -567,17 +572,39 @@ app
 		// or the IPC payload. Registered in dev AND prod. Traversal is guarded by
 		// resolveToFilePath (only lowercase-hex sha256 + known image ext resolve).
 		protocol.handle(IMAGE_SCHEME, async (request) => {
-			const filePath = resolveToFilePath(request.url);
-			if (!filePath) return new Response('bad request', { status: 400 });
+			const sourcePath = resolveToFilePath(request.url);
+			if (!sourcePath) return new Response('bad request', { status: 400 });
+			// A `?tw=&th=` query asks for a downscaled rendition (the transcript's
+			// 200x80 chip). Bare refs - lightbox, clipboard, export - always get the
+			// original bytes. A null result means "no smaller version applies", so
+			// we fall back to the source rather than failing the request.
+			let filePath = sourcePath;
+			const thumb = parseThumbnailRequest(request.url);
+			if (thumb) {
+				try {
+					filePath =
+						(await getOrCreateThumbnail(sourcePath, thumb.maxWidth, thumb.maxHeight)) ?? sourcePath;
+				} catch (err) {
+					logger.warn(
+						`Session image thumbnail failed, serving original: ${(err as Error).message}`,
+						'SessionImages',
+						err
+					);
+				}
+			}
 			try {
 				const data = await readFile(filePath);
+				// Thumbnails are always re-encoded as PNG, so the content type comes
+				// from whatever we actually read, not from the ref's extension.
 				const ext = path.extname(filePath).toLowerCase();
 				const contentType =
 					ext === '.svg'
 						? 'image/svg+xml'
 						: ext === '.jpg' || ext === '.jpeg'
 							? 'image/jpeg'
-							: `image/${ext.slice(1)}`;
+							: ext === '.png'
+								? 'image/png'
+								: `image/${ext.slice(1)}`;
 				return new Response(new Uint8Array(data), {
 					status: 200,
 					headers: { 'content-type': contentType, 'cache-control': 'max-age=31536000, immutable' },

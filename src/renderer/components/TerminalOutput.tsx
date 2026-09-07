@@ -60,6 +60,7 @@ import { SaveMarkdownModal } from './SaveMarkdownModal';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { linkifyNode } from '../utils/linkify';
 import { safeClipboardWrite } from '../utils/clipboard';
+import { sessionImageThumbnailSrc } from '../../shared/sessionImageRefs';
 import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useMessageGistStore } from '../stores/messageGistStore';
@@ -708,11 +709,21 @@ const LogItemComponent = memo(
 									className="shrink-0 p-0 bg-transparent outline-none focus:ring-2 focus:ring-accent rounded"
 									onClick={() => setLightboxImage(img, log.images, 'history')}
 								>
+									{/*
+										The chip is 200x80 CSS px but the source is whatever was
+										pasted - routinely a 4984x2578 Retina screenshot. Ask the
+										protocol handler for a 2x-DPR rendition so Chromium decodes
+										~400x160 instead of 12 megapixels, and let it skip the fetch
+										entirely until the chip scrolls into view. The lightbox
+										(onClick above) still opens the untouched original.
+									*/}
 									<img
-										src={img}
+										src={sessionImageThumbnailSrc(img, 400, 160)}
 										alt={`Terminal output image ${imgIdx + 1}`}
 										className="h-20 rounded border cursor-zoom-in block"
 										style={{ objectFit: 'contain', maxWidth: '200px' }}
+										loading="lazy"
+										decoding="async"
 									/>
 								</button>
 							))}
