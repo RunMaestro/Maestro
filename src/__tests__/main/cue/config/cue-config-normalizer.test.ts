@@ -344,3 +344,50 @@ describe('normalizer - action: notify passthrough', () => {
 		expect(config.subscriptions[0].action).toBeUndefined();
 	});
 });
+
+describe('normalizer - github.label field passthrough', () => {
+	function normalizeSub(sub: Record<string, unknown>) {
+		const raw = yaml.dump({ subscriptions: [sub] });
+		const doc = parseCueConfigDocument(raw, projectRoot);
+		return materializeCueConfig(doc!).config.subscriptions[0];
+	}
+
+	const base = {
+		name: 'labeled-prs',
+		event: 'github.label',
+		prompt: 'A label landed',
+		enabled: true,
+	};
+
+	it('passes through gh_label_target and gh_labels', () => {
+		const sub = normalizeSub({
+			...base,
+			gh_label_target: 'pr',
+			gh_labels: ['ready-to-merge', 'needs-rebase'],
+		});
+		expect(sub.gh_label_target).toBe('pr');
+		expect(sub.gh_labels).toEqual(['ready-to-merge', 'needs-rebase']);
+	});
+
+	it('accepts a bare string for gh_labels', () => {
+		expect(normalizeSub({ ...base, gh_labels: 'ready-to-merge' }).gh_labels).toEqual([
+			'ready-to-merge',
+		]);
+	});
+
+	it('trims, drops blanks, and de-duplicates gh_labels', () => {
+		expect(
+			normalizeSub({ ...base, gh_labels: [' bug ', 'bug', '', '   ', 'triage'] }).gh_labels
+		).toEqual(['bug', 'triage']);
+	});
+
+	it('drops gh_labels entirely when nothing usable remains', () => {
+		expect(normalizeSub({ ...base, gh_labels: ['', '  '] }).gh_labels).toBeUndefined();
+	});
+
+	it('drops an unknown gh_label_target rather than passing it to the poller', () => {
+		expect(
+			normalizeSub({ ...base, gh_label_target: 'discussion' }).gh_label_target
+		).toBeUndefined();
+	});
+});

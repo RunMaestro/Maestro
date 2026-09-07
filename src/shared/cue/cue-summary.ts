@@ -27,6 +27,7 @@ export const CUE_EVENT_LABELS: Record<CueEventType, string> = {
 	'agent.completed': 'Agent Completed',
 	'github.pull_request': 'Pull Request',
 	'github.issue': 'GitHub Issue',
+	'github.label': 'GitHub Label',
 	'task.pending': 'Pending Task',
 	'cli.trigger': 'CLI Trigger',
 };
@@ -73,6 +74,15 @@ export function getCueEventDetail(event: CueEvent): string | undefined {
 			const title = payload.title ? String(payload.title).trim() : '';
 			if (number == null || number === '') return title || undefined;
 			return title ? `#${number} ${title}` : `#${number}`;
+		}
+
+		case 'github.label': {
+			// The label is what distinguishes one of these runs from the next,
+			// so it leads even when the item number is missing.
+			const label = payload.label ? String(payload.label).trim() : '';
+			const number = payload.number;
+			if (number == null || number === '') return label || undefined;
+			return label ? `${label} on #${number}` : `#${number}`;
 		}
 
 		case 'file.changed': {

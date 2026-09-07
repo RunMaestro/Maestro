@@ -26,6 +26,7 @@ Each subscription has a unique `name`, an `event` type, an `enabled` flag, a `pr
 | `agent.completed`     | An upstream agent finishes a run                                     | `source_session` (name or names)                                                                    |
 | `github.pull_request` | A PR matches a filter (polled)                                       | `repo`, `gh_state`, `label`, `poll_minutes`, `filter`, `retrigger_on_comments`, `max_notifications` |
 | `github.issue`        | An issue matches a filter (polled)                                   | `repo`, `gh_state`, `label`, `poll_minutes`, `filter`, `retrigger_on_comments`, `max_notifications` |
+| `github.label`        | A label is added to a PR or issue (polled)                           | `repo`, `gh_label_target` (`pr`/`issue`/`both`), `gh_labels`, `poll_minutes`, `filter`              |
 | `task.pending`        | Pending `- [ ]` tasks detected in watched files                      | `watch`                                                                                             |
 | `cli.trigger`         | Manually fired via `maestro-cli cue trigger`                         | -                                                                                                   |
 
@@ -221,7 +222,7 @@ A **Command node** is a subscription that runs a shell command or invokes `maest
 
 ```yaml
 - name: <unique-within-file>
-  event: <any of the 9 event types - see Event Types table>
+  event: <any of the 10 event types - see Event Types table>
   enabled: true
   action: command # required to become a Command node
   command: # required when action: command
@@ -257,7 +258,7 @@ A **Command node** is a subscription that runs a shell command or invokes `maest
 - `mode: shell` honors the owning session's SSH remote config - runs on the remote host via `bash -c <substituted-command>` with the remote `projectRoot` as cwd.
 - `mode: cli` is intentionally **local-only**. `maestro-cli send` targets the local Maestro daemon, so SSH-wrapping it would point at the wrong daemon.
 
-**Trigger compatibility:** **All 9 event types can fire a Command node directly** (`app.startup`, `time.heartbeat`, `time.scheduled`, `file.changed`, `agent.completed`, `github.pull_request`, `github.issue`, `task.pending`, `cli.trigger`). Event-specific required fields (`interval_minutes`, `schedule_times`, `watch`, `repo`, `source_session`, etc.) apply normally regardless of `action`. The only `action: command`-specific restriction is the `fan_out` rejection above.
+**Trigger compatibility:** **All 10 event types can fire a Command node directly** (`app.startup`, `time.heartbeat`, `time.scheduled`, `file.changed`, `agent.completed`, `github.pull_request`, `github.issue`, `github.label`, `task.pending`, `cli.trigger`). Event-specific required fields (`interval_minutes`, `schedule_times`, `watch`, `repo`, `source_session`, etc.) apply normally regardless of `action`. The only `action: command`-specific restriction is the `fan_out` rejection above.
 
 **Output exposure & chaining (READ THIS):** Command runs route through the **same** completion path as agent runs and emit `agent.completed`. Downstream subscriptions chain off Command nodes the exact same way they chain off prompt subs - there is **no** separate `{{CUE_COMMAND_OUTPUT}}` variable, no separate event type:
 
@@ -336,7 +337,7 @@ subscriptions:
 `{{CUE_SOURCE_SESSION}}`, `{{CUE_SOURCE_OUTPUT}}`, `{{CUE_SOURCE_STATUS}}` (`completed` | `failed` | `timeout`), `{{CUE_SOURCE_EXIT_CODE}}`, `{{CUE_SOURCE_DURATION}}`, `{{CUE_SOURCE_TRIGGERED_BY}}`
 
 **`github.*`:**
-`{{CUE_GH_TYPE}}`, `{{CUE_GH_NUMBER}}`, `{{CUE_GH_TITLE}}`, `{{CUE_GH_AUTHOR}}`, `{{CUE_GH_URL}}`, `{{CUE_GH_BODY}}`, `{{CUE_GH_LABELS}}`, `{{CUE_GH_STATE}}`, `{{CUE_GH_REPO}}`, `{{CUE_GH_BRANCH}}`, `{{CUE_GH_BASE_BRANCH}}`, `{{CUE_GH_ASSIGNEES}}`, `{{CUE_GH_MERGED_AT}}`, `{{CUE_NEW_COMMENTS}}` (comments posted since the last fire - only populated when `retrigger_on_comments: true`), `{{CUE_GH_IS_RETRIGGER}}` (`"true"` / `"false"`), `{{CUE_GH_RETRIGGER_COUNT}}` (re-fire counter, `0` on initial discovery)
+`{{CUE_GH_TYPE}}`, `{{CUE_GH_NUMBER}}`, `{{CUE_GH_TITLE}}`, `{{CUE_GH_AUTHOR}}`, `{{CUE_GH_URL}}`, `{{CUE_GH_BODY}}`, `{{CUE_GH_LABELS}}`, `{{CUE_GH_STATE}}`, `{{CUE_GH_REPO}}`, `{{CUE_GH_BRANCH}}`, `{{CUE_GH_BASE_BRANCH}}`, `{{CUE_GH_ASSIGNEES}}`, `{{CUE_GH_MERGED_AT}}`, `{{CUE_GH_LABEL}}` / `{{CUE_GH_LABEL_ACTOR}}` / `{{CUE_GH_LABELED_AT}}` (github.label: the label that landed, who applied it, when), `{{CUE_NEW_COMMENTS}}` (comments posted since the last fire - only populated when `retrigger_on_comments: true`), `{{CUE_GH_IS_RETRIGGER}}` (`"true"` / `"false"`), `{{CUE_GH_RETRIGGER_COUNT}}` (re-fire counter, `0` on initial discovery)
 
 **`cli.trigger`:**
 `{{CUE_CLI_PROMPT}}`, `{{CUE_SOURCE_AGENT_ID}}`

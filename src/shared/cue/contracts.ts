@@ -28,6 +28,7 @@ export type CueEventType =
 	| 'agent.completed'
 	| 'github.pull_request'
 	| 'github.issue'
+	| 'github.label'
 	| 'task.pending'
 	| 'cli.trigger';
 
@@ -41,6 +42,7 @@ export const CUE_EVENT_TYPES: CueEventType[] = [
 	'agent.completed',
 	'github.pull_request',
 	'github.issue',
+	'github.label',
 	'task.pending',
 	'cli.trigger',
 ];
@@ -50,6 +52,12 @@ export type CueGitHubState = 'open' | 'closed' | 'merged' | 'all';
 
 /** All valid GitHub state values */
 export const CUE_GITHUB_STATES: CueGitHubState[] = ['open', 'closed', 'merged', 'all'];
+
+/** Which kind of item a `github.label` subscription watches. */
+export type CueGitHubLabelTarget = 'pr' | 'issue' | 'both';
+
+/** All valid `gh_label_target` values */
+export const CUE_GITHUB_LABEL_TARGETS: CueGitHubLabelTarget[] = ['pr', 'issue', 'both'];
 
 /** What a subscription does when it fires. */
 export type CueAction = 'prompt' | 'command' | 'notify';
@@ -193,6 +201,14 @@ export interface CueSubscription {
 	repo?: string;
 	poll_minutes?: number;
 	gh_state?: CueGitHubState;
+	/** Which kind of item a `github.label` subscription watches: pull requests
+	 *  only, issues only, or both. Defaults to `'both'`. Ignored by every
+	 *  other event type. */
+	gh_label_target?: CueGitHubLabelTarget;
+	/** Labels a `github.label` subscription fires on. Matched case-insensitively
+	 *  against the label that was just added. Empty / omitted = fire on ANY
+	 *  label being added. Ignored by every other event type. */
+	gh_labels?: string[];
 	/** Re-fire this subscription when a tracked PR/issue receives new activity
 	 *  (comments, edits, reviews, label changes) after its initial discovery.
 	 *  Default `false` (legacy behavior: fire once per item on creation).

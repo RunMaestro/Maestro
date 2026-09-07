@@ -1,10 +1,10 @@
 ---
 title: Cue Event Types
-description: Detailed reference for all ten Maestro Cue event types with configuration, payloads, and examples.
+description: Detailed reference for all eleven Maestro Cue event types with configuration, payloads, and examples.
 icon: calendar-check
 ---
 
-Cue supports ten event types. Each type watches for a different kind of activity and produces a payload that can be injected into prompts via [template variables](./maestro-cue-advanced#template-variables).
+Cue supports eleven event types. Each type watches for a different kind of activity and produces a payload that can be injected into prompts via [template variables](./maestro-cue-advanced#template-variables).
 
 ## app.startup
 
@@ -506,6 +506,67 @@ Same as `github.pull_request`, except:
 | `{{CUE_GH_ASSIGNEES}}` | Comma-separated assignee logins | `alice, bob` |
 
 The branch-specific variables (`{{CUE_GH_BRANCH}}`, `{{CUE_GH_BASE_BRANCH}}`) are not available for issues.
+
+---
+
+## github.label
+
+Fires the moment a label is added to a pull request or an issue. Applying a label becomes the button that starts the work: label a PR `ready-to-merge` and the agent picks it up on the next poll.
+
+Unlike `github.pull_request` / `github.issue`, which poll item lists and fire on discovery, this event reads GitHub's repo-wide issue-event feed. That feed reports the label add itself, with the label name and who applied it, so a label removed and re-added fires twice, and a label buried in an old issue still fires.
+
+**Optional fields:**
+
+| Field             | Type            | Default | Description                                                            |
+| ----------------- | --------------- | ------- | ---------------------------------------------------------------------- |
+| `repo`            | string          | auto    | GitHub repo in `owner/repo` format                                     |
+| `gh_label_target` | string          | `both`  | Which kind to watch: `pr`, `issue`, or `both`                          |
+| `gh_labels`       | string or array | any     | Labels that fire the trigger, matched case-insensitively. Omit for any |
+| `poll_minutes`    | number          | 5       | Minutes between polls (minimum 1)                                      |
+| `gh_state`        | string          | any     | Narrow to items that are `open`, `closed`, or `merged` when labeled    |
+
+**Behavior:**
+
+- Requires the GitHub CLI (`gh`), installed and authenticated
+- Seeds on first run: labels already present when the subscription is first saved never fire, only labels added afterwards
+- Fires once per label add, in the order the labels were applied
+- Polls immediately on system wake, so labels applied while the machine slept are picked up within seconds
+- Scans up to 300 repo events per poll. On a very busy repo, lower `poll_minutes` so a label add cannot be buried between polls (the log warns when it is at risk)
+
+**Example:**
+
+```yaml
+subscriptions:
+  - name: work-labeled-prs
+    event: github.label
+    gh_label_target: pr
+    gh_labels:
+      - ready-to-merge
+      - needs-rebase
+    poll_minutes: 2
+    prompt: |
+      {{CUE_GH_LABEL_ACTOR}} labeled PR #{{CUE_GH_NUMBER}} "{{CUE_GH_LABEL}}".
+
+      {{CUE_GH_TITLE}}
+      {{CUE_GH_URL}}
+
+      {{CUE_GH_BODY}}
+
+      Do what that label asks for.
+```
+
+**Payload fields:**
+
+The GitHub fields of `github.pull_request` / `github.issue` are all present, plus:
+
+| Variable                 | Description                                      | Example                |
+| ------------------------ | ------------------------------------------------ | ---------------------- |
+| `{{CUE_GH_LABEL}}`       | The label that was just added                    | `ready-to-merge`       |
+| `{{CUE_GH_LABEL_ACTOR}}` | Who applied it                                   | `pedramamini`          |
+| `{{CUE_GH_LABELED_AT}}`  | When it was applied (ISO 8601)                   | `2026-09-07T15:28:54Z` |
+| `{{CUE_GH_TYPE}}`        | `pull_request` or `issue`, whichever was labeled | `pull_request`         |
+
+The branch variables (`{{CUE_GH_BRANCH}}`, `{{CUE_GH_BASE_BRANCH}}`) are empty for this event: the label feed does not carry branch data. Fetch it in the prompt with `gh pr view {{CUE_GH_NUMBER}}` when you need it.
 
 ---
 

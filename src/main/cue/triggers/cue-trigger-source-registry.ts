@@ -43,6 +43,7 @@ export function createTriggerSource(
 			return createCueTaskScannerTriggerSource(ctx);
 		case 'github.pull_request':
 		case 'github.issue':
+		case 'github.label':
 			return createCueGitHubPollerTriggerSource(ctx);
 		case 'agent.completed':
 		case 'app.startup':

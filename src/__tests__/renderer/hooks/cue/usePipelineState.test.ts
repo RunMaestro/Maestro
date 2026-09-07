@@ -194,9 +194,9 @@ function makePipeline(overrides?: Partial<CuePipeline>): CuePipeline {
 // ─── DEFAULT_TRIGGER_LABELS ──────────────────────────────────────────────────
 
 describe('DEFAULT_TRIGGER_LABELS', () => {
-	it('has entries for all ten event types', () => {
+	it('has entries for all eleven event types', () => {
 		const keys = Object.keys(DEFAULT_TRIGGER_LABELS);
-		expect(keys).toHaveLength(10);
+		expect(keys).toHaveLength(11);
 		expect(keys).toContain('app.startup');
 		expect(keys).toContain('time.heartbeat');
 		expect(keys).toContain('time.scheduled');
@@ -205,6 +205,7 @@ describe('DEFAULT_TRIGGER_LABELS', () => {
 		expect(keys).toContain('agent.completed');
 		expect(keys).toContain('github.pull_request');
 		expect(keys).toContain('github.issue');
+		expect(keys).toContain('github.label');
 		expect(keys).toContain('task.pending');
 		expect(keys).toContain('cli.trigger');
 	});

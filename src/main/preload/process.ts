@@ -11,6 +11,7 @@
 
 import { ipcRenderer } from 'electron';
 import type { UsageStats } from '../../shared/types';
+import type { ToastClickAction } from '../../shared/toastClickAction';
 
 // Re-export for consumers that import from preload
 export type { UsageStats } from '../../shared/types';
@@ -628,10 +629,7 @@ export function createProcessApi() {
 				tabId?: string;
 				actionUrl?: string;
 				actionLabel?: string;
-				clickAction?:
-					| { kind: 'jump-session'; sessionId: string; tabId?: string }
-					| { kind: 'open-file'; sessionId: string; path: string }
-					| { kind: 'open-url'; url: string };
+				clickAction?: ToastClickAction;
 			}) => void
 		): (() => void) => {
 			const handler = (_: unknown, params: Parameters<typeof callback>[0]) => callback(params);

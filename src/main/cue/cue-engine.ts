@@ -74,47 +74,9 @@ import {
 	parseCueSubscriptionId,
 	pipelineKeyForSubscription,
 } from '../../shared/cue/subscription-id';
+import { triggerGroupKey } from '../../shared/cue/trigger-group-key';
 
 const MAX_CHAIN_DEPTH = 10;
-
-/**
- * Stable identity key grouping subs that represent parallel branches of the
- * same visual trigger. Used by manual-trigger dispatch to fire every sibling
- * sub a scheduled tick would fire - e.g. `Schedule → [Cmd1, Cmd2]` serializes
- * as two subs sharing event config but targeting different commands; both
- * must fire together when the user clicks Play.
- *
- * Mirrors `triggerGroupKey` in `yamlToPipeline.ts` so the runtime's notion of
- * "same trigger" matches the editor's collapse rule on load. Any divergence
- * in event-specific config (different schedule_times, different watch glob,
- * etc.) yields a distinct key and therefore a distinct group, preserving
- * author intent when they configured truly independent triggers.
- */
-function triggerGroupKey(sub: CueSubscription): string {
-	// Sort filter keys so two subs whose filter objects differ only in key
-	// insertion order (hand-written YAML or library-reordered round-trips)
-	// still hash to the same group.
-	const filter = sub.filter
-		? Object.keys(sub.filter)
-				.sort()
-				.reduce<Record<string, unknown>>((acc, k) => {
-					acc[k] = (sub.filter as Record<string, unknown>)[k];
-					return acc;
-				}, {})
-		: null;
-	return JSON.stringify({
-		event: sub.event,
-		schedule_times: sub.schedule_times ?? null,
-		schedule_days: sub.schedule_days ?? null,
-		interval_minutes: sub.interval_minutes ?? null,
-		watch: sub.watch ?? null,
-		repo: sub.repo ?? null,
-		poll_minutes: sub.poll_minutes ?? null,
-		gh_state: sub.gh_state ?? null,
-		label: sub.label ?? null,
-		filter,
-	});
-}
 
 /** Dependencies injected into the CueEngine */
 export interface CueEngineDeps {

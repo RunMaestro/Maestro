@@ -44,6 +44,17 @@ export function getTriggerConfigSummary(data: TriggerNodeData): string {
 		case 'github.pull_request':
 		case 'github.issue':
 			return config.repo ?? 'repo';
+		case 'github.label': {
+			const labels = config.gh_labels ?? [];
+			const kind =
+				config.gh_label_target === 'pr'
+					? 'PRs'
+					: config.gh_label_target === 'issue'
+						? 'issues'
+						: 'PRs + issues';
+			const what = labels.length > 0 ? labels.join(', ') : 'any label';
+			return `${what} on ${kind}`;
+		}
 		case 'task.pending':
 			return config.watch ?? 'tasks';
 		case 'agent.completed':

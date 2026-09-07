@@ -96,6 +96,33 @@ export function TriggerConfig({ node, theme, onUpdateNode }: TriggerConfigProps)
 	);
 
 	/**
+	 * Parse the comma-separated `gh_labels` text box into the string array the
+	 * schema stores. Blank input drops the key entirely so the runtime reads it
+	 * as "fire on any label" rather than "fire on the empty label".
+	 */
+	const updateLabelList = useCallback(
+		(raw: string) => {
+			const labels = Array.from(
+				new Set(
+					raw
+						.split(',')
+						.map((entry) => entry.trim())
+						.filter(Boolean)
+				)
+			);
+			const next = { ...localConfig };
+			if (labels.length === 0) {
+				delete next.gh_labels;
+			} else {
+				next.gh_labels = labels;
+			}
+			setLocalConfig(next);
+			debouncedUpdate(next);
+		},
+		[localConfig, debouncedUpdate]
+	);
+
+	/**
 	 * Handle numeric input changes that need to support a blank state. Empty
 	 * input drops the key from config (so the runtime falls back to its
 	 * default), otherwise stores the parsed integer. Non-numeric junk is
@@ -329,6 +356,63 @@ export function TriggerConfig({ node, theme, onUpdateNode }: TriggerConfigProps)
 							labelStyle={themedLabelStyle}
 						/>
 					)}
+				</div>
+			);
+		}
+		case 'github.label': {
+			const labelTarget = localConfig.gh_label_target ?? 'both';
+			return (
+				<div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+					{nameField}
+					<label style={themedLabelStyle}>
+						Repository
+						<input
+							type="text"
+							value={localConfig.repo ?? ''}
+							onChange={(e) => updateConfig('repo', e.target.value)}
+							placeholder="owner/repo"
+							style={themedInputStyle}
+						/>
+					</label>
+					<label style={themedLabelStyle} htmlFor="cue-label-target-select">
+						Watch
+					</label>
+					<CueSelect
+						id="cue-label-target-select"
+						value={labelTarget}
+						options={[
+							{ value: 'both', label: 'Pull requests and issues' },
+							{ value: 'pr', label: 'Pull requests only' },
+							{ value: 'issue', label: 'Issues only' },
+						]}
+						onChange={(v) => updateConfig('gh_label_target', v)}
+						theme={theme}
+					/>
+					<label style={themedLabelStyle}>
+						Labels (comma-separated, blank = any label)
+						<input
+							type="text"
+							value={(localConfig.gh_labels ?? []).join(', ')}
+							onChange={(e) => updateLabelList(e.target.value)}
+							placeholder="needs-review, bug"
+							style={themedInputStyle}
+						/>
+					</label>
+					<label style={themedLabelStyle}>
+						Poll every N minutes
+						<input
+							type="number"
+							min={1}
+							value={localConfig.poll_minutes ?? ''}
+							onChange={(e) => updateNumericConfig('poll_minutes', e.target.value)}
+							placeholder="5"
+							style={themedInputStyle}
+						/>
+					</label>
+					<div style={{ color: theme.colors.textDim, fontSize: 12, fontStyle: 'italic' }}>
+						Fires once per label that lands on a PR or issue, within one poll interval. Labels
+						already present when the trigger is first saved do not fire.
+					</div>
 				</div>
 			);
 		}

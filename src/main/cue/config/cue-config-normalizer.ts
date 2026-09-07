@@ -5,11 +5,13 @@ import {
 	type CueAction,
 	type CueCommand,
 	type CueConfig,
+	type CueGitHubLabelTarget,
 	type CueGitHubState,
 	type CueNotifyConfig,
 	type CueScheduleDay,
 	type CueSettings,
 	type CueSubscription,
+	CUE_GITHUB_LABEL_TARGETS,
 	CUE_GITHUB_STATES,
 	CUE_SCHEDULE_DAYS,
 	DEFAULT_CUE_SETTINGS,
@@ -85,6 +87,23 @@ function padScheduleTime(time: string): string {
 	const match = time.match(/^(\d{1,2}):(\d{2})$/);
 	if (!match) return time;
 	return `${match[1].padStart(2, '0')}:${match[2]}`;
+}
+
+/**
+ * Normalize `gh_labels` into a trimmed, de-duplicated string array. A bare
+ * string is accepted as a one-element list so hand-written YAML can say
+ * `gh_labels: needs-review` without the sequence syntax. Returns undefined for
+ * anything that yields no usable labels, which the poller reads as "any label".
+ */
+function normalizeGhLabels(value: unknown): string[] | undefined {
+	const raw =
+		typeof value === 'string'
+			? [value]
+			: Array.isArray(value)
+				? value.filter((entry): entry is string => typeof entry === 'string')
+				: [];
+	const labels = Array.from(new Set(raw.map((entry) => entry.trim()).filter(Boolean)));
+	return labels.length > 0 ? labels : undefined;
 }
 
 function normalizeFilter(
@@ -281,6 +300,12 @@ function normalizeSubscription(
 			typeof sub.gh_state === 'string' && CUE_GITHUB_STATES.includes(sub.gh_state as CueGitHubState)
 				? (sub.gh_state as CueGitHubState)
 				: undefined,
+		gh_label_target:
+			typeof sub.gh_label_target === 'string' &&
+			CUE_GITHUB_LABEL_TARGETS.includes(sub.gh_label_target as CueGitHubLabelTarget)
+				? (sub.gh_label_target as CueGitHubLabelTarget)
+				: undefined,
+		gh_labels: normalizeGhLabels(sub.gh_labels),
 		agent_id:
 			typeof sub.agent_id === 'string' && sub.agent_id.trim().length > 0
 				? sub.agent_id.trim()

@@ -14,6 +14,7 @@
 
 import { create } from 'zustand';
 import { logger } from '../utils/logger';
+import type { ToastClickAction } from '../../shared/toastClickAction';
 
 // ============================================================================
 // Types
@@ -45,19 +46,13 @@ const TOAST_TYPE_TO_COLOR: Record<ToastType, ToastColor> = {
 };
 
 /**
- * Discriminated union for what happens when the toast body is clicked.
- *
- * Externally-fired toasts (e.g. via `maestro-cli notify toast`) cannot pass a
- * function callback over the IPC bridge, so we describe the click intent as
- * data instead. The renderer dispatches based on `kind`:
- *   - jump-session: switch to the agent (and optionally a specific AI tab)
- *   - open-file: switch to the agent and open a file in its File Preview pane
- *   - open-url: open an external URL in the system browser
+ * What happens when the toast body is clicked, as data rather than a callback,
+ * so externally-fired toasts (`maestro-cli notify toast`, Cue, the web bridge)
+ * can carry one across the IPC boundary. The canonical shape and its validator
+ * live in `shared/toastClickAction.ts`; the renderer dispatches it through
+ * `services/toastClickActions.ts`.
  */
-export type ToastClickAction =
-	| { kind: 'jump-session'; sessionId: string; tabId?: string }
-	| { kind: 'open-file'; sessionId: string; path: string }
-	| { kind: 'open-url'; url: string };
+export type { ToastClickAction };
 
 export interface Toast {
 	id: string;

@@ -246,3 +246,56 @@ describe('validateSubscription - action: notify', () => {
 		).toBe(true);
 	});
 });
+
+// ────────────────────────────────────────────────────────────────────────────
+// github.label event validation
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('validateSubscription - github.label', () => {
+	const base = {
+		name: 'labeled-prs',
+		event: 'github.label',
+		prompt: 'A label landed',
+		agent_id: 'agent-xyz',
+	};
+
+	it('accepts a bare github.label subscription (any label, both kinds)', () => {
+		expect(errs(base)).toEqual([]);
+	});
+
+	it('accepts gh_label_target and a gh_labels array', () => {
+		expect(errs({ ...base, gh_label_target: 'pr', gh_labels: ['ready-to-merge'] })).toEqual([]);
+	});
+
+	it('accepts a bare string for gh_labels', () => {
+		expect(errs({ ...base, gh_labels: 'ready-to-merge' })).toEqual([]);
+	});
+
+	it('rejects an unknown gh_label_target', () => {
+		const found = errs({ ...base, gh_label_target: 'discussion' });
+		expect(found.some((e) => /"gh_label_target" must be one of: pr, issue, both/.test(e))).toBe(
+			true
+		);
+	});
+
+	it('rejects gh_labels entries that are not strings', () => {
+		const found = errs({ ...base, gh_labels: ['ok', 7] });
+		expect(found.some((e) => /"gh_labels" must be a string or an array of strings/.test(e))).toBe(
+			true
+		);
+	});
+
+	it('rejects poll_minutes below 1', () => {
+		const found = errs({ ...base, poll_minutes: 0 });
+		expect(found.some((e) => /"poll_minutes" must be a number >= 1/.test(e))).toBe(true);
+	});
+
+	it('rejects gh_state "merged" combined with an issue-only target', () => {
+		const found = errs({ ...base, gh_state: 'merged', gh_label_target: 'issue' });
+		expect(
+			found.some((e) =>
+				/"gh_state" value "merged" cannot be combined with "gh_label_target: issue"/.test(e)
+			)
+		).toBe(true);
+	});
+});

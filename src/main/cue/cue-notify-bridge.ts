@@ -12,11 +12,10 @@
 import { BrowserWindow } from 'electron';
 import { isWebContentsAvailable } from '../utils/safe-send';
 import { logger } from '../utils/logger';
+import type { ToastClickAction } from '../../shared/toastClickAction';
 
-export type CueNotifyClickAction =
-	| { kind: 'jump-session'; sessionId: string; tabId?: string }
-	| { kind: 'open-file'; sessionId: string; path: string }
-	| { kind: 'open-url'; url: string };
+/** Alias of the canonical toast click intent (`shared/toastClickAction.ts`). */
+export type CueNotifyClickAction = ToastClickAction;
 
 export interface CueNotifyToastParams {
 	/** Owning agent (session) ID. Drives both `project` lookup in the renderer

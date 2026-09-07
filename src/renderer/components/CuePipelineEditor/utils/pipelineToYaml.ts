@@ -189,6 +189,17 @@ function applyTriggerEventConfig(sub: CueSubscription, triggerData: TriggerNodeD
 				}
 			}
 			break;
+		case 'github.label':
+			if (triggerData.config.repo) sub.repo = triggerData.config.repo;
+			if (triggerData.config.poll_minutes) sub.poll_minutes = triggerData.config.poll_minutes;
+			// 'both' is the runtime default, so only narrower choices reach YAML.
+			if (triggerData.config.gh_label_target && triggerData.config.gh_label_target !== 'both') {
+				sub.gh_label_target = triggerData.config.gh_label_target;
+			}
+			if (triggerData.config.gh_labels?.length) {
+				sub.gh_labels = triggerData.config.gh_labels;
+			}
+			break;
 		case 'task.pending':
 			sub.watch = triggerData.config.watch ?? '**/*.md';
 			break;
@@ -869,6 +880,8 @@ export function pipelinesToSubscriptionRecords(
 			if (sub.poll_minutes != null) record.poll_minutes = sub.poll_minutes;
 			if (sub.retrigger_on_comments === true) record.retrigger_on_comments = true;
 			if (sub.max_notifications != null) record.max_notifications = sub.max_notifications;
+			if (sub.gh_label_target != null) record.gh_label_target = sub.gh_label_target;
+			if (sub.gh_labels != null) record.gh_labels = sub.gh_labels;
 			if (sub.source_session != null) record.source_session = sub.source_session;
 			if (sub.source_session_ids != null) record.source_session_ids = sub.source_session_ids;
 			if (sub.source_sub != null) record.source_sub = sub.source_sub;
