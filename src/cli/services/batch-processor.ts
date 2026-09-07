@@ -28,7 +28,13 @@ import { cheapTurnSettings } from '../../shared/modelTiers';
 // Halt detection moved to `shared/autorunMarkers` so the desktop renderer can
 // draw a pill for a marker that would block the next run. Re-exported because
 // this module is where the CLI engine and its tests reach for it.
-import { detectHaltMarker, findHaltMarker } from '../../shared/autorunMarkers';
+import { detectHaltMarker, findHaltMarker, findPendingHitlGate } from '../../shared/autorunMarkers';
+import { countMarkdownTasks } from '../../shared/markdownTaskScan';
+import {
+	MAX_CONSECUTIVE_NO_CHANGES,
+	describeStall,
+	evaluateStall,
+} from '../../shared/autorunStall';
 export { detectHaltMarker };
 
 /**
@@ -371,7 +377,11 @@ export async function* runPlaybook(
 				const docEntry = playbook.documents[docIndex];
 
 				// Read document and count tasks
-				let { taskCount: remainingTasks } = readDocAndCountTasks(folderPath, docEntry.filename);
+				const { taskCount: initialTaskCount, content: docHeadContent } = readDocAndCountTasks(
+					folderPath,
+					docEntry.filename
+				);
+				let remainingTasks = initialTaskCount;
 
 				// Skip documents with no tasks
 				if (remainingTasks === 0) {
@@ -394,8 +404,39 @@ export async function* runPlaybook(
 					loopNumber: loopIteration + 1,
 				});
 
+				// A gate asks for a human, and a batch run does not have one. Report it
+				// and move on rather than dispatching a task nobody can finish. The
+				// desktop engine pauses here instead, because there IS someone to wait
+				// for; the marker means the same thing on both, only the response
+				// differs.
+				const gate = findPendingHitlGate(docHeadContent);
+				if (gate) {
+					logger.autorun(`Document gated on a human: ${docEntry.filename}`, session.name, {
+						document: docEntry.filename,
+						reason: gate.reason,
+						line: gate.line + 1,
+						loopNumber: loopIteration + 1,
+					});
+
+					yield {
+						type: 'document_gated',
+						timestamp: Date.now(),
+						document: docEntry.filename,
+						reason: gate.reason,
+						artifact: gate.artifact,
+						line: gate.line + 1,
+					};
+					continue;
+				}
+
 				let docTasksCompleted = 0;
 				let taskIndex = 0;
+				// Consecutive dispatches that moved no checkbox. Reset per document so
+				// one stuck document does not condemn the next. Without this the loop
+				// below has exactly one exit - the count reaching zero - so a task the
+				// agent cannot finish is re-dispatched forever.
+				let consecutiveNoChangeCount = 0;
+				let documentStalled: { reason: string; remainingTasks: number } | null = null;
 
 				// Process tasks in this document
 				while (remainingTasks > 0) {
@@ -541,6 +582,26 @@ export async function* runPlaybook(
 					const tasksCompletedThisRun = remainingTasks - newRemainingTasks;
 					const haltMarker = detectHaltMarker(postContent);
 
+					// Did anything actually move? Compared by CHECKBOX, never by document
+					// bytes: an agent that cannot do the task usually writes an
+					// explanation into the file instead, and a byte comparison would read
+					// that as progress and let the loop run forever.
+					const stall = evaluateStall({
+						before: countMarkdownTasks(expandedDocContent || docContent),
+						after: countMarkdownTasks(postContent),
+						consecutiveNoChangeCount,
+					});
+					consecutiveNoChangeCount = stall.consecutiveNoChangeCount;
+
+					if (debug) {
+						yield {
+							type: 'debug',
+							timestamp: Date.now(),
+							category: 'stall',
+							message: `${docEntry.filename}: no-progress counter ${consecutiveNoChangeCount}/${MAX_CONSECUTIVE_NO_CHANGES} (tasks completed this run: ${tasksCompletedThisRun})`,
+						};
+					}
+
 					// Update counters
 					docTasksCompleted += tasksCompletedThisRun;
 					totalCompletedTasks += tasksCompletedThisRun;
@@ -676,6 +737,41 @@ export async function* runPlaybook(
 
 					remainingTasks = newRemainingTasks;
 					taskIndex++;
+
+					// The document made no progress often enough that dispatching it again
+					// would just spend tokens on the same wall. Give up on THIS document
+					// and move to the next one - unlike a halt, the playbook continues.
+					if (stall.stalled) {
+						documentStalled = {
+							reason: stall.reason ?? describeStall(consecutiveNoChangeCount),
+							remainingTasks,
+						};
+						break;
+					}
+				}
+
+				if (documentStalled) {
+					const hasNextDocument = docIndex < playbook.documents.length - 1;
+
+					logger.autorun(`Document stalled: ${docEntry.filename}`, session.name, {
+						document: docEntry.filename,
+						reason: documentStalled.reason,
+						remainingTasks: documentStalled.remainingTasks,
+						loopNumber: loopIteration + 1,
+					});
+
+					yield {
+						type: 'document_stalled',
+						timestamp: Date.now(),
+						document: docEntry.filename,
+						reason: documentStalled.reason,
+						remainingTasks: documentStalled.remainingTasks,
+						hasNextDocument,
+					};
+
+					// Skipped, not completed: emitting document_complete here would tell
+					// every consumer the tasks got done.
+					continue;
 				}
 
 				// Document complete - handle reset-on-completion

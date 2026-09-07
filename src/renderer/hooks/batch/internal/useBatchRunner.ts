@@ -19,6 +19,11 @@ import { countUnfinishedTasks, findPendingHitlGate, uncheckAllTasks } from '../b
 import { DEFAULT_BATCH_STATE, type BatchAction } from '../batchReducer';
 import { createLoopSummaryEntry } from './batchLoopSummary';
 import { buildFinalSummary } from './batchFinalSummary';
+import {
+	MAX_CONSECUTIVE_NO_CHANGES,
+	describeStall,
+	evaluateStall,
+} from '../../../../shared/autorunStall';
 import { createProgressPoll } from './batchProgressPoll';
 import { claimFlushState, type AutoRunFlushStateRefs } from './batchFlushState';
 import { beginSleepAwareSpan } from '../../../services/systemSleep';
@@ -439,13 +444,11 @@ export function useBatchRunner({
 			let totalOutputTokens = 0;
 			let totalCost = 0;
 
-			// Track consecutive runs with no task-level progress (nothing checked off, no tasks
-			// added or removed). Content-level comparison is unreliable because the agent can
-			// mutate the doc (append addenda/explanation text) without doing actual work, which
-			// would reset a content-based counter and hide the stall indefinitely.
+			// Track consecutive runs with no task-level progress. The rule itself lives
+			// in `shared/autorunStall` because the CLI engine has to give up on a
+			// stuck document at exactly the same point this one does.
 			// Note: This counter is reset per-document, so stalling one document doesn't affect others
 			let consecutiveNoChangeCount = 0;
-			const MAX_CONSECUTIVE_NO_CHANGES = 3; // Skip document after 3 consecutive runs with no task-level progress
 
 			// Track stalled documents (document filename -> stall reason)
 			const stalledDocuments: Map<string, string> = new Map();
@@ -806,7 +809,6 @@ export function useBatchRunner({
 							const prevUncheckedCount = remainingTasks;
 							const checkedCountChanged = newCheckedCount !== prevCheckedCount;
 							const uncheckedCountChanged = newRemainingTasks !== prevUncheckedCount;
-							const taskSetChanged = checkedCountChanged || uncheckedCountChanged;
 							const prevNoChangeCount = consecutiveNoChangeCount;
 							const beforeLen = docContent?.length ?? 0;
 							const afterLen = taskResult.contentAfterTask?.length ?? 0;
@@ -816,13 +818,14 @@ export function useBatchRunner({
 							// so skip the heuristic and terminate this document immediately.
 							const isWatchdogFailure =
 								errorKind === 'watchdog-stalled' || errorKind === 'watchdog-timeout';
-							if (isWatchdogFailure) {
-								consecutiveNoChangeCount = MAX_CONSECUTIVE_NO_CHANGES;
-							} else if (tasksCompletedThisRun === 0 && !taskSetChanged) {
-								consecutiveNoChangeCount++;
-							} else {
-								consecutiveNoChangeCount = 0;
-							}
+							const stall = evaluateStall({
+								before: { checked: prevCheckedCount, unchecked: prevUncheckedCount },
+								after: { checked: newCheckedCount, unchecked: newRemainingTasks },
+								consecutiveNoChangeCount,
+								watchdogFailure: isWatchdogFailure,
+							});
+							const taskSetChanged = stall.taskSetChanged;
+							consecutiveNoChangeCount = stall.consecutiveNoChangeCount;
 
 							// AUTORUN LOG: stall detection trace - logged every iteration so field
 							// reports can reconstruct why the counter did or did not increment.
@@ -1004,8 +1007,9 @@ export function useBatchRunner({
 							}
 
 							// Check if we've hit the stalling threshold for this document
-							if (consecutiveNoChangeCount >= MAX_CONSECUTIVE_NO_CHANGES) {
-								const stallReason = `${consecutiveNoChangeCount} consecutive runs with no progress`;
+							if (stall.stalled) {
+								const stallReason =
+									stall.reason ?? describeStall(consecutiveNoChangeCount, isWatchdogFailure);
 
 								// Track this document as stalled
 								stalledDocuments.set(docEntry.filename, stallReason);

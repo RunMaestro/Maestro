@@ -363,6 +363,30 @@ Pills reflect **state, not just presence**. A gate above an unchecked task and a
 
 Marker pills appear only on document surfaces. An agent that mentions the marker syntax in a chat message is describing a marker, not configuring one, so that text keeps rendering as ordinary prose.
 
+## Human-in-the-Loop Gates
+
+When a task needs a person - manual testing, visual judgment, sign-off, or a credential only a human can obtain - the agent writes a gate marker on its own line above that task:
+
+```html
+<!-- MAESTRO:HITL reason="Add SENDGRID_API_KEY to .env before the mailer tasks run" artifact="https://staging.example.com/checkout" -->
+```
+
+In the desktop app the run **pauses** there, surfaces the reason (and the optional `artifact` to look at) in the Auto Run panel and a toast, and waits. You resume by ticking the box above the marker or clicking Resume. That is a deliberate, visible pause, the opposite of a stall.
+
+A headless CLI run has no human to wait for, so `maestro run-playbook` reports the gate as a `document_gated` event naming the reason and the line, then moves to the next document. The marker means the same thing on both surfaces; only the response differs.
+
+A gate is the right answer whenever the blocker is a person. Reaching for the halt marker instead throws away every remaining task in every remaining document because one task needed a signature.
+
+## Stalled Documents
+
+A task the agent cannot finish stays unchecked, and an unchecked task is a task the engine will dispatch again. Left unbounded that is an infinite loop, so both engines count consecutive runs that moved no checkbox and give up on the document after **three** of them.
+
+Progress is measured by checkbox, never by document bytes. An agent that cannot do the work usually writes an explanation into the file instead, and a byte comparison would read that as progress and let the loop run forever. Ticking a box counts; adding or removing tasks counts; a thousand words of apology does not.
+
+When a document stalls, the playbook **continues to the next document** - only that document is abandoned. The desktop app records a History entry and raises a warning toast; the CLI emits a `document_stalled` event naming the reason and how many tasks were left. On the desktop a watchdog failure (the agent hung or blew its time budget) trips the threshold immediately rather than spending two more dispatches to reach the same conclusion.
+
+This is why an agent almost never needs the halt marker. A stuck task resolves itself.
+
 ## Halt Marker (Agent Early Exit)
 
 Sometimes the agent itself discovers that the rest of the playbook cannot meaningfully proceed - a missing dependency, a broken precondition, an ambiguous spec it cannot resolve, or a destructive change it refuses to make. In that case the agent can abort the entire run by writing a halt marker into the current document:
@@ -381,6 +405,15 @@ When the engine re-reads the document after the task and finds this marker, it s
 The bare form `<!-- maestro:halt -->` works without a reason, but agents are instructed to always include one. The agent should leave the unfinishable task **unchecked** so you can see exactly where execution stopped.
 
 This is distinct from clicking **Stop** (a manual user action) or a single task simply failing (which by default does **not** halt the playbook - Auto Run is designed to run independent tasks, so one failure doesn't invalidate the rest).
+
+Halting should be **rare**. Agents are told to reserve it for the case where continuing would actively waste work or cause harm, and to reach for other mechanisms first:
+
+| Situation                                                              | Right mechanism                                        |
+| ---------------------------------------------------------------------- | ------------------------------------------------------ |
+| A task needs a person                                                  | HITL gate - pauses, then resumes on a tick             |
+| A task the agent cannot do                                             | Leave it unchecked; the stall guard skips the document |
+| One task failed, others are independent                                | Nothing; the run continues                             |
+| Everything downstream is now invalid, or continuing would cause damage | Halt                                                   |
 
 A stale halt marker left in a document will block re-runs with an error naming the file and line - Auto Run refuses to start so previously-halted work isn't silently replayed. Remove the marker before launching the playbook again.
 

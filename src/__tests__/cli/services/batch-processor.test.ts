@@ -1318,6 +1318,142 @@ describe('batch-processor', () => {
 		});
 	});
 
+	describe('runPlaybook - stalled documents', () => {
+		it('gives up on a document after 3 runs that move no checkbox', async () => {
+			// Without this guard the loop is `while (remainingTasks > 0)` with no
+			// other exit, so an unfinishable task is dispatched forever - which is
+			// why agents were reaching for the halt marker to escape.
+			vi.mocked(readDocAndCountTasks).mockReturnValue({
+				content: '- [ ] Something the agent cannot do',
+				taskCount: 1,
+			});
+
+			const events = await collectEvents(
+				runPlaybook(mockSession(), mockPlaybook(), '/playbooks', { skipSynopsis: true })
+			);
+
+			const stalled = events.find((e) => e.type === 'document_stalled');
+			expect(stalled).toBeDefined();
+			expect(stalled?.reason).toBe('3 consecutive runs with no progress');
+			expect(stalled?.remainingTasks).toBe(1);
+			expect(spawnAgent).toHaveBeenCalledTimes(3);
+		});
+
+		it('does not report a stalled document as complete', async () => {
+			vi.mocked(readDocAndCountTasks).mockReturnValue({
+				content: '- [ ] Stuck',
+				taskCount: 1,
+			});
+
+			const events = await collectEvents(
+				runPlaybook(mockSession(), mockPlaybook(), '/playbooks', { skipSynopsis: true })
+			);
+
+			expect(events.find((e) => e.type === 'document_complete')).toBeUndefined();
+		});
+
+		it('continues to the next document rather than ending the playbook', async () => {
+			// A stall is not a halt: only the stuck document is abandoned.
+			vi.mocked(readDocAndCountTasks).mockReturnValue({
+				content: '- [ ] Stuck',
+				taskCount: 1,
+			});
+
+			const events = await collectEvents(
+				runPlaybook(
+					mockSession(),
+					mockPlaybook({
+						documents: [
+							{ filename: 'first', resetOnCompletion: false },
+							{ filename: 'second', resetOnCompletion: false },
+						],
+					}),
+					'/playbooks',
+					{ skipSynopsis: true }
+				)
+			);
+
+			const stalled = events.filter((e) => e.type === 'document_stalled');
+			expect(stalled.map((e) => e.document)).toEqual(['first', 'second']);
+			expect(stalled[0]?.hasNextDocument).toBe(true);
+			expect(stalled[1]?.hasNextDocument).toBe(false);
+		});
+
+		it('resets the counter when the agent makes progress again', async () => {
+			// Two dead runs then a completion must NOT leave the document one run
+			// away from being abandoned.
+			// Keyed off DISPATCHES rather than reads: the engine reads the document
+			// several times per iteration, so a read counter would be guesswork.
+			let dispatches = 0;
+			vi.mocked(spawnAgent).mockImplementation(async () => {
+				dispatches++;
+				return { success: true, output: 'done', agentSessionId: 'sess-1' } as never;
+			});
+			vi.mocked(readDocAndCountTasks).mockImplementation(() =>
+				dispatches < 2
+					? { content: '- [ ] One\n- [ ] Two', taskCount: 2 }
+					: { content: '- [x] One\n- [x] Two', taskCount: 0 }
+			);
+
+			const events = await collectEvents(
+				runPlaybook(mockSession(), mockPlaybook(), '/playbooks', { skipSynopsis: true })
+			);
+
+			expect(events.find((e) => e.type === 'document_stalled')).toBeUndefined();
+			expect(events.find((e) => e.type === 'document_complete')).toBeDefined();
+		});
+	});
+
+	describe('runPlaybook - HITL gates', () => {
+		it('skips a gated document instead of dispatching a task no one can finish', async () => {
+			// A batch run has no human to tick the box, so waiting is not an option.
+			vi.mocked(readDocAndCountTasks).mockReturnValue({
+				content: [
+					'<!-- MAESTRO:HITL reason="Add SENDGRID_API_KEY to .env" artifact="https://example.com" -->',
+					'- [ ] Wire the mailer',
+				].join('\n'),
+				taskCount: 1,
+			});
+
+			const events = await collectEvents(
+				runPlaybook(mockSession(), mockPlaybook(), '/playbooks', { skipSynopsis: true })
+			);
+
+			const gated = events.find((e) => e.type === 'document_gated');
+			expect(gated).toMatchObject({
+				document: 'tasks',
+				reason: 'Add SENDGRID_API_KEY to .env',
+				artifact: 'https://example.com',
+				line: 1,
+			});
+			expect(spawnAgent).not.toHaveBeenCalled();
+		});
+
+		it('runs normally once the gate has been passed', async () => {
+			// A checked box below the marker consumes the gate.
+			let call = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				call++;
+				return call <= 4
+					? {
+							content: '<!-- MAESTRO:HITL reason="Approve it" -->\n- [x] Approved\n- [ ] Do work',
+							taskCount: 1,
+						}
+					: {
+							content: '<!-- MAESTRO:HITL reason="Approve it" -->\n- [x] Approved\n- [x] Do work',
+							taskCount: 0,
+						};
+			});
+
+			const events = await collectEvents(
+				runPlaybook(mockSession(), mockPlaybook(), '/playbooks', { skipSynopsis: true })
+			);
+
+			expect(events.find((e) => e.type === 'document_gated')).toBeUndefined();
+			expect(spawnAgent).toHaveBeenCalled();
+		});
+	});
+
 	describe('runPlaybook - mid-execution halt marker', () => {
 		it('emits halt event and stops dispatch when the agent writes the marker', async () => {
 			// Calls 1-4: initial scan, pre-scan halt check, doc-loop initial count,
