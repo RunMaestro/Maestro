@@ -17,6 +17,7 @@ import { safeClipboardWrite, safeClipboardWriteImage } from './clipboard';
 import { DIAGRAMS_DIR } from '../../shared/maestro-paths';
 import { joinPath, isAbsolutePath, fileTimestampSlug } from '../../shared/formatters';
 import { requestFileTreeRefresh } from './fileTreeRefresh';
+import { isSessionImageRef } from '../../shared/sessionImageRefs';
 
 /** Anything the right-click menu can copy or save. */
 export type ExportableImage = SVGSVGElement | HTMLImageElement;
@@ -133,7 +134,10 @@ export async function imgToDataUrl(img: HTMLImageElement): Promise<string | null
 	if (!src) return null;
 	if (src.startsWith('data:')) return src;
 
-	if (src.startsWith('maestro-image://')) {
+	// `src` may carry a `?tw=&th=` thumbnail query (the transcript chip renders a
+	// downscaled rendition). `images.resolve` ignores the query and hands back the
+	// ORIGINAL bytes, which is what an export or a clipboard copy must contain.
+	if (isSessionImageRef(src)) {
 		const resolved = await window.maestro?.images?.resolve(src);
 		if (resolved) return resolved;
 	}

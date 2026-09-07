@@ -32,7 +32,10 @@ import * as crypto from 'crypto';
 import { logger } from '../utils/logger';
 import { getImageMimeType } from '../../shared/gitUtils';
 import {
+	MAX_THUMB_DIMENSION,
 	SESSION_IMAGE_REF_PREFIX,
+	THUMB_HEIGHT_PARAM,
+	THUMB_WIDTH_PARAM,
 	isSessionImageRef,
 	sessionImageRefBasename,
 } from '../../shared/sessionImageRefs';
@@ -97,21 +100,63 @@ export function isInlineImageDataUrl(value: string): boolean {
 	return typeof value === 'string' && value.startsWith('data:image/');
 }
 
+// Matches only the `data:<media type>;base64,` header. The payload is taken by
+// slicing, NOT by a `(.+)` capture group: a pasted Retina screenshot is a
+// multi-megabyte base64 string, and making the regex engine scan and capture
+// the whole payload cost 1.6s of blocked main thread across one 62s field
+// trace (the relocation pass re-parses every image on every persistence flush).
+// `slice` hands back a V8 SlicedString - no copy, no scan.
+const DATA_URL_HEADER_RE = /^data:(image\/[^;]+);base64,/;
+
 /** Parse a data URL into its media type and base64 payload, or null. */
 function parseDataUrl(dataUrl: string): { mediaType: string; base64: string } | null {
-	const match = dataUrl.match(/^data:(image\/[^;]+);base64,(.+)$/);
+	const match = DATA_URL_HEADER_RE.exec(dataUrl);
 	if (!match) return null;
-	return { mediaType: match[1], base64: match[2] };
+	const base64 = dataUrl.slice(match[0].length);
+	if (!base64) return null;
+	return { mediaType: match[1], base64 };
 }
 
-/** Resolve a ref to its on-disk file path, or null if it isn't a valid ref. */
+/**
+ * Resolve a ref to its on-disk file path, or null if it isn't a valid ref.
+ * Any `?...` query (the thumbnail request the protocol handler understands) is
+ * ignored here - it selects a rendition, not a different source file.
+ */
 export function resolveToFilePath(ref: string): string | null {
-	// Only lowercase-hex sha256 basenames with a known image extension resolve.
-	// Guards the protocol handler and the web route against path traversal and
-	// keeps this from touching anything but our own files.
-	const basename = sessionImageRefBasename(ref);
+	// The query selects a RENDITION, not a different source file, so it comes off
+	// before the ref is validated - a thumbnail URL must resolve to the same file
+	// its bare ref does. Validation is then `sessionImageRefBasename`, the shared
+	// grammar the web route and the renderer also use: only a lowercase-hex
+	// sha256 with a known image extension ever resolves, which is what guards the
+	// protocol handler against path traversal. Stripping first cannot widen that:
+	// a traversal attempt with a query appended still fails the basename test.
+	const basename = sessionImageRefBasename(stripRefQuery(ref));
 	if (!basename) return null;
 	return path.join(getImageDir(), basename);
+}
+
+/** Drop a `?query` / `#fragment` suffix from a ref URL. */
+function stripRefQuery(ref: string): string {
+	const cut = ref.search(/[?#]/);
+	return cut === -1 ? ref : ref.slice(0, cut);
+}
+
+/**
+ * Read the thumbnail box (if any) a ref URL is asking for. Returns null for a
+ * bare ref, which must always serve the original bytes - the lightbox, clipboard
+ * copy, and every export path depend on that.
+ */
+export function parseThumbnailRequest(ref: string): { maxWidth: number; maxHeight: number } | null {
+	const q = ref.indexOf('?');
+	if (q === -1) return null;
+	const params = new URLSearchParams(ref.slice(q + 1));
+	const w = Number(params.get(THUMB_WIDTH_PARAM));
+	const h = Number(params.get(THUMB_HEIGHT_PARAM));
+	if (!Number.isFinite(w) || !Number.isFinite(h) || w < 1 || h < 1) return null;
+	return {
+		maxWidth: Math.min(Math.round(w), MAX_THUMB_DIMENSION),
+		maxHeight: Math.min(Math.round(h), MAX_THUMB_DIMENSION),
+	};
 }
 
 /**

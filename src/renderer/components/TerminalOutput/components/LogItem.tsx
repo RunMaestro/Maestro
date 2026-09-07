@@ -26,6 +26,7 @@ import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
 import { MarkdownRenderer } from '../../MarkdownRenderer';
 import { LogFilterControls } from '../../LogFilterControls';
 import { linkifyNode } from '../../../utils/linkify';
+import { sessionImageThumbnailSrc } from '../../../../shared/sessionImageRefs';
 import { displayImageSrc } from '../../../utils/sessionImageSrc';
 import { RetryStatusCard } from '../../RetryStatusCard';
 import { SnoozeReturnCard } from '../../SnoozeReturnCard';
@@ -443,11 +444,29 @@ export const LogItem = memo(
 									className="shrink-0 p-0 bg-transparent outline-none focus:ring-2 focus:ring-accent rounded"
 									onClick={() => setLightboxImage(img, log.images, 'history')}
 								>
+									{/*
+										The chip is 200x80 CSS px but the source is whatever was
+										pasted - routinely a 4984x2578 Retina screenshot. Ask the
+										protocol handler for a 2x-DPR rendition so Chromium decodes
+										~400x160 instead of 12 megapixels, and let it skip the fetch
+										entirely until the chip scrolls into view. The lightbox
+										(onClick above) still opens the untouched original.
+
+										Order matters: `displayImageSrc` runs FIRST because in
+										web-desktop it rewrites the ref to the token-scoped HTTP
+										route, and `sessionImageThumbnailSrc` no-ops on anything
+										that is not a bare ref. So the desktop gets a thumbnail and
+										a browser client keeps receiving originals; appending the
+										query first would leave a `maestro-image://` URL that no
+										browser can load.
+									*/}
 									<img
-										src={displayImageSrc(img)}
+										src={sessionImageThumbnailSrc(displayImageSrc(img), 400, 160)}
 										alt={`Terminal output image ${imgIdx + 1}`}
 										className="h-20 rounded border cursor-zoom-in block"
 										style={{ objectFit: 'contain', maxWidth: '200px' }}
+										loading="lazy"
+										decoding="async"
 									/>
 								</button>
 							))}

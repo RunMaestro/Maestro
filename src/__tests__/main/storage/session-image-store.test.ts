@@ -14,8 +14,10 @@ import {
 	relocateSessionImages,
 	getImageDir,
 	IMAGE_REF_PREFIX,
+	parseThumbnailRequest,
 	__resetImageStoreCacheForTests,
 } from '../../../main/storage/session-image-store';
+import { MAX_THUMB_DIMENSION, sessionImageThumbnailSrc } from '../../../shared/sessionImageRefs';
 
 // Deterministic sample images (bytes need not be valid PNGs - the store is
 // content-addressed by raw bytes).
@@ -70,6 +72,22 @@ describe('session-image-store', () => {
 			const filePath = resolveToFilePath(ref)!;
 			expect(fs.existsSync(filePath)).toBe(true);
 			expect(fs.readFileSync(filePath).toString()).toBe('image-bytes-A');
+		});
+
+		it('parses the header without scanning the payload', async () => {
+			// The payload is taken by slicing rather than by a `(.+)` capture group,
+			// so a multi-megabyte paste costs a header match instead of a full-string
+			// scan + copy. Line-wrapped base64 now parses too (the old `.` could not
+			// cross a newline); Buffer.from ignores the whitespace either way.
+			const payload = Buffer.from('image-bytes-A').toString('base64');
+			const wrapped = `data:image/png;base64,${payload.slice(0, 4)}\n${payload.slice(4)}`;
+			const ref = await storeInlineImage(wrapped);
+			expect(ref).toMatch(/^maestro-image:\/\/store\/[0-9a-f]{64}\.png$/);
+			expect(fs.readFileSync(resolveToFilePath(ref)!).toString()).toBe('image-bytes-A');
+		});
+
+		it('leaves a header-only data URL alone rather than storing empty bytes', async () => {
+			expect(await storeInlineImage('data:image/png;base64,')).toBe('data:image/png;base64,');
 		});
 
 		it('dedupes identical bytes to the same ref (content addressing)', async () => {
@@ -127,6 +145,70 @@ describe('session-image-store', () => {
 			expect(resolveToFilePath(`${IMAGE_REF_PREFIX}abc.exe`)).toBeNull();
 			expect(resolveToFilePath(IMG_A)).toBeNull();
 			expect(resolveToFilePath(`${IMAGE_REF_PREFIX}${'a'.repeat(64)}.png`)).not.toBeNull();
+		});
+
+		it('ignores a thumbnail query and still resolves to the original file', () => {
+			const bare = `${IMAGE_REF_PREFIX}${'a'.repeat(64)}.png`;
+			// A `?tw=&th=` query selects a rendition, not a different source, so the
+			// export / clipboard / lightbox paths must land on the same bytes.
+			expect(resolveToFilePath(`${bare}?tw=400&th=160`)).toBe(resolveToFilePath(bare));
+			expect(resolveToFilePath(`${bare}#frag`)).toBe(resolveToFilePath(bare));
+		});
+
+		it('does not let a query smuggle a traversal past the basename guard', () => {
+			expect(resolveToFilePath(`${IMAGE_REF_PREFIX}../../etc/passwd?tw=1&th=1`)).toBeNull();
+			expect(resolveToFilePath(`${IMAGE_REF_PREFIX}abc.exe?tw=1&th=1`)).toBeNull();
+		});
+	});
+
+	describe('parseThumbnailRequest', () => {
+		const bare = `${IMAGE_REF_PREFIX}${'a'.repeat(64)}.png`;
+
+		it('returns null for a bare ref so the original bytes are always served', () => {
+			expect(parseThumbnailRequest(bare)).toBeNull();
+		});
+
+		it('reads the requested box', () => {
+			expect(parseThumbnailRequest(`${bare}?tw=400&th=160`)).toEqual({
+				maxWidth: 400,
+				maxHeight: 160,
+			});
+		});
+
+		it('clamps an oversized box and rejects nonsense', () => {
+			expect(parseThumbnailRequest(`${bare}?tw=99999&th=99999`)).toEqual({
+				maxWidth: MAX_THUMB_DIMENSION,
+				maxHeight: MAX_THUMB_DIMENSION,
+			});
+			expect(parseThumbnailRequest(`${bare}?tw=0&th=160`)).toBeNull();
+			expect(parseThumbnailRequest(`${bare}?tw=-5&th=160`)).toBeNull();
+			expect(parseThumbnailRequest(`${bare}?tw=abc&th=160`)).toBeNull();
+			expect(parseThumbnailRequest(`${bare}?th=160`)).toBeNull();
+		});
+	});
+
+	describe('sessionImageThumbnailSrc', () => {
+		const bare = `${IMAGE_REF_PREFIX}${'a'.repeat(64)}.png`;
+
+		it('round-trips through parseThumbnailRequest', () => {
+			expect(parseThumbnailRequest(sessionImageThumbnailSrc(bare, 400, 160))).toEqual({
+				maxWidth: 400,
+				maxHeight: 160,
+			});
+		});
+
+		it('leaves non-refs untouched so a mixed images array is safe to map', () => {
+			expect(sessionImageThumbnailSrc(IMG_A, 400, 160)).toBe(IMG_A);
+			expect(sessionImageThumbnailSrc('https://example.com/a.png', 400, 160)).toBe(
+				'https://example.com/a.png'
+			);
+		});
+
+		it('clamps the requested box to the maximum', () => {
+			expect(parseThumbnailRequest(sessionImageThumbnailSrc(bare, 99999, 99999))).toEqual({
+				maxWidth: MAX_THUMB_DIMENSION,
+				maxHeight: MAX_THUMB_DIMENSION,
+			});
 		});
 	});
 

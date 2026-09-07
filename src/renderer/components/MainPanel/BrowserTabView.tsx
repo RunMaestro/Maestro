@@ -570,19 +570,36 @@ export const BrowserTabView = React.memo(
 			// guest page that reports scroll direction via console.log. When the user
 			// scrolls down the address bar collapses; scrolling up or reaching the top
 			// reveals it again.
+			//
+			// The listener MUST ignore scroll events that its own toggle caused, or it
+			// oscillates. Collapsing the bar grows the guest viewport by the bar's
+			// height; at the bottom of a page that shrinks the maximum scroll offset,
+			// so Chromium clamps scrollY downward and fires a scroll event that looks
+			// exactly like the user scrolling up. Revealing the bar shrinks the
+			// viewport again and scroll anchoring pushes the offset back down, which
+			// looks like scrolling down. The bar then flickers open/closed for as long
+			// as the page sits at the bottom. Guard by re-baselining (and starting a
+			// cooldown) whenever the viewport height changes, so only post-resize,
+			// same-height deltas can move the bar.
 			const scrollInjection = `(function(){
 			if(window.__maestroScrollListenerInstalled)return;
 			window.__maestroScrollListenerInstalled=true;
-			var lastY=window.scrollY,hidden=false,ticking=false;
+			var lastY=window.scrollY,lastH=window.innerHeight,hidden=false,ticking=false,settleUntil=0;
+			window.addEventListener('resize',function(){
+				lastH=window.innerHeight;lastY=window.scrollY;settleUntil=Date.now()+400;
+			},{passive:true});
 			window.addEventListener('scroll',function(){
 				if(ticking)return;
 				ticking=true;
 				requestAnimationFrame(function(){
-					var y=window.scrollY;
+					ticking=false;
+					var y=window.scrollY,h=window.innerHeight;
+					if(h!==lastH){lastH=h;lastY=y;settleUntil=Date.now()+400;return;}
+					if(Date.now()<settleUntil){lastY=y;return;}
 					if(y<=0&&hidden){hidden=false;console.log('__MAESTRO_SCROLL__0');}
 					else if(y-lastY>10&&!hidden){hidden=true;console.log('__MAESTRO_SCROLL__1');}
 					else if(lastY-y>10&&hidden){hidden=false;console.log('__MAESTRO_SCROLL__0');}
-					lastY=y;ticking=false;
+					lastY=y;
 				});
 			},{passive:true});
 		})();`;
