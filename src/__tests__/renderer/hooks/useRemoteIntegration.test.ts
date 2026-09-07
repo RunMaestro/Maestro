@@ -1876,8 +1876,12 @@ describe('useRemoteIntegration', () => {
 			});
 
 			// Persistence happened in request order, so the last name written to the
-			// provider is the newest request, not the one that was abandoned.
-			expect(persistOrder).toEqual(['Older', 'Newer']);
+			// provider is the newest request, not the one that was abandoned. The
+			// trailing repeat is the newer request writing its own name after the
+			// older runner had already reconciled to it: writes are idempotent and
+			// unconditional, because nothing available in the renderer proves the
+			// provider already agrees with the tab.
+			expect(persistOrder).toEqual(['Older', 'Newer', 'Newer']);
 
 			const updatedSession = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
 			expect(updatedSession?.aiTabs.find((t) => t.id === 'tab-1')?.name).toBe('Newer');
@@ -2110,6 +2114,46 @@ describe('useRemoteIntegration', () => {
 			} finally {
 				vi.useRealTimers();
 			}
+		});
+
+		// Auto-naming (`useSessionLifecycle`, `useInputProcessing`) sets `tab.name`
+		// through `updateAiTab` alone and writes nothing to the provider, so a tab
+		// showing a name is NOT evidence that the provider carries it. Renaming
+		// remotely to the name the tab already displays therefore has to write, not
+		// skip and claim success for something never persisted.
+		it('persists a remote rename to the name a tab was already auto-named', async () => {
+			const tab = createMockTab({ id: 'tab-1', agentSessionId: 'agent-session-1', name: null });
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [tab],
+				projectRoot: '/test/project',
+				toolType: 'claude-code',
+			});
+			const deps = createDeps({ sessions: [session] });
+			const persistOrder: string[] = [];
+			mockClaude.updateSessionName.mockImplementation(
+				async (_projectRoot: string, _agentSessionId: string, name: string) => {
+					persistOrder.push(name);
+				}
+			);
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			// Auto-naming puts the name on the tab without touching the provider.
+			act(() => {
+				updateAiTab('session-1', 'tab-1', (t) => ({ ...t, name: 'Auto Name' }));
+			});
+			expect(persistOrder).toEqual([]);
+
+			await act(async () => {
+				await onRemoteRenameTabHandler?.('session-1', 'tab-1', 'Auto Name', 'response-1');
+			});
+
+			expect(persistOrder).toEqual(['Auto Name']);
+			expect(mockHistory.updateSessionName).toHaveBeenCalledWith('agent-session-1', 'Auto Name');
+			expect(mockProcess.sendRemoteRenameTabResponse).toHaveBeenCalledWith('response-1', {
+				success: true,
+			});
 		});
 
 		it('does not serialize renames of different tabs behind each other', async () => {

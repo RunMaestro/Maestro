@@ -831,28 +831,22 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					return { success: true };
 				};
 
-				// Whether the tab ALREADY shows this exact name, which is the one case
-				// a write can be skipped. It reads the live tab rather than
-				// remembering what this queue last wrote, because the tab is renamed
-				// from outside this queue too - `useSessionLifecycle` writes the same
-				// provider metadata, history and store name for a desktop rename - and
-				// a remembered value would skip a write the tab genuinely needs and
-				// then report success for a name it never applied.
-				const tabAlreadyShows = (target: string) => {
-					const tab = useSessionStore
-						.getState()
-						.sessions.find((s) => s.id === sessionId)
-						?.aiTabs.find((t) => t.id === tabId);
-					return tab ? (tab.name ?? '') === target : false;
-				};
-
 				// Write this request's name, then LOOK AGAIN. Re-reading the desired
 				// name after the write is what keeps the newest one authoritative when
 				// this write was a stale one that landed late: the writer that lands
 				// last simply writes once more, so persistence and the tab both end on
 				// the newest name rather than on whichever call happened to return
-				// last. The ordinary in-order case still writes each name once, since
-				// a name the tab already carries is not rewritten.
+				// last.
+				//
+				// Every pass WRITES, even when the tab already shows the name asked
+				// for. Nothing available here is evidence that the provider agrees
+				// with the tab: auto-naming (`useSessionLifecycle`, `useInputProcessing`)
+				// sets `tab.name` through `updateAiTab` alone, with no provider write,
+				// and a desktop rename writes the provider outside this queue, so a
+				// remembered value goes stale too. Skipping on either signal reports
+				// success for a name that was never persisted. The write is idempotent,
+				// so the cost of always making it is one redundant round trip when two
+				// renames of a tab overlap.
 				const runRename = async () => {
 					// What to tell THIS request's caller, answered once at the end. A
 					// failure is remembered rather than returned on the spot: a write
@@ -863,33 +857,22 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					let ownOutcome: { success: boolean; error?: string } = { success: true };
 					try {
 						let target = persistedName;
-						let hasWritten = false;
 						// Each pass either settles on the desired name or adopts the
 						// newer one that arrived while it was writing, so it cannot spin:
 						// a failed pass moves to `state.desired` and the next pass ends
 						// unless a real request has changed it again.
 						for (;;) {
-							// The skip answers "does this request need to write at all?",
-							// and only before this runner has written anything. Once it
-							// has, every later pass is a REPAIR of a name it wrote itself,
-							// and the tab is no longer evidence that the provider agrees:
-							// `applyRename` persists the provider name before the history
-							// relabel, so a rejection there leaves the provider on the old
-							// name while the tab still shows the newer one.
-							if (hasWritten || !tabAlreadyShows(target)) {
-								const result = await applyRename(target).catch((error) => {
-									logger.error('Failed to persist remote tab name:', undefined, error);
-									return {
-										success: false,
-										error: error instanceof Error ? error.message : String(error),
-									};
-								});
-								hasWritten = true;
-								// Only this request's OWN name decides its answer. A repair
-								// write belongs to whoever asked for that name, so failing it
-								// must not turn this caller's successful rename into an error.
-								if (!result.success && target === persistedName) ownOutcome = result;
-							}
+							const result = await applyRename(target).catch((error) => {
+								logger.error('Failed to persist remote tab name:', undefined, error);
+								return {
+									success: false,
+									error: error instanceof Error ? error.message : String(error),
+								};
+							});
+							// Only this request's OWN name decides its answer. A repair
+							// write belongs to whoever asked for that name, so failing it
+							// must not turn this caller's successful rename into an error.
+							if (!result.success && target === persistedName) ownOutcome = result;
 							if (state.desired === target) break;
 							target = state.desired;
 						}
