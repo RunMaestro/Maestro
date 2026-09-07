@@ -1288,7 +1288,7 @@ describe('HistoryManager', () => {
 			expect(mockWriteFileSync).not.toHaveBeenCalled();
 		});
 
-		it('should not update entries that already have the correct sessionName', async () => {
+		it('should count entries that already have the correct sessionName', async () => {
 			mockExistsSync.mockReturnValue(true);
 			mockReaddirSync.mockReturnValue(['sess_a.json' as unknown as fs.Dirent]);
 
@@ -1305,7 +1305,7 @@ describe('HistoryManager', () => {
 				'agent-123',
 				'already-correct'
 			);
-			expect(count).toBe(0);
+			expect(count).toBe(1);
 			expect(mockWriteFileSync).not.toHaveBeenCalled();
 		});
 

@@ -659,13 +659,14 @@ export class HistoryManager {
 	/**
 	 * Update sessionName for all entries matching a given agentSessionId.
 	 * This is used when a tab is renamed to retroactively update past history entries.
+	 * Returns the number of matching entries whose persisted name is now correct.
 	 */
 	async updateSessionNameByClaudeSessionId(
 		agentSessionId: string,
 		sessionName: string
 	): Promise<number> {
 		const sessions = await this.listSessionsWithHistory();
-		let updatedCount = 0;
+		let matchedCount = 0;
 
 		// Per session, run the read-modify-write through the per-session write
 		// queue so it can't interleave with a concurrent addEntry on the same
@@ -687,6 +688,7 @@ export class HistoryManager {
 				try {
 					const { data, recovered } = parseHistoryFileData(raw);
 					let modified = recovered;
+					let perSessionMatches = 0;
 					let perSessionUpdates = 0;
 
 					if (recovered) {
@@ -697,7 +699,9 @@ export class HistoryManager {
 					}
 
 					for (const entry of data.entries) {
-						if (entry.agentSessionId === agentSessionId && entry.sessionName !== sessionName) {
+						if (entry.agentSessionId !== agentSessionId) continue;
+						perSessionMatches++;
+						if (entry.sessionName !== sessionName) {
 							entry.sessionName = sessionName;
 							modified = true;
 							perSessionUpdates++;
@@ -706,7 +710,6 @@ export class HistoryManager {
 
 					if (modified) {
 						await atomicWriteJson(filePath, data);
-						updatedCount += perSessionUpdates;
 						if (perSessionUpdates > 0) {
 							logger.debug(
 								`Updated ${perSessionUpdates} entries for agentSessionId ${agentSessionId} in session ${sessionId}`,
@@ -714,6 +717,7 @@ export class HistoryManager {
 							);
 						}
 					}
+					matchedCount += perSessionMatches;
 				} catch (error) {
 					logger.warn(
 						`Failed to update sessionName in session ${sessionId}: ${error}`,
@@ -724,7 +728,7 @@ export class HistoryManager {
 			});
 		}
 
-		return updatedCount;
+		return matchedCount;
 	}
 
 	/**
