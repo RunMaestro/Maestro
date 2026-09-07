@@ -18,6 +18,7 @@ import type {
 	NewTabCallback,
 	CloseTabCallback,
 	RenameTabCallback,
+	RenameTabResult,
 	StarTabCallback,
 	ReorderTabCallback,
 	ToggleBookmarkCallback,
@@ -430,7 +431,11 @@ export class CallbackRegistry {
 		return this.callbacks.closeTab(sessionId, tabId);
 	}
 
-	async renameTab(sessionId: string, tabId: string, newName: string): Promise<boolean> {
+	async renameTab(
+		sessionId: string,
+		tabId: string,
+		newName: string
+	): Promise<boolean | RenameTabResult> {
 		if (!this.callbacks.renameTab) return false;
 		return this.callbacks.renameTab(sessionId, tabId, newName);
 	}

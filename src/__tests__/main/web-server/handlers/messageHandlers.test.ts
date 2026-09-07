@@ -990,6 +990,55 @@ describe('WebSocketMessageHandler', () => {
 			expect(response.success).toBe(true);
 		});
 
+		it('should return explicit failure when desktop rename fails', async () => {
+			vi.mocked(callbacks.renameTab).mockResolvedValueOnce({
+				success: false,
+				error: 'Tab not found: tab-1',
+			});
+
+			handler.handleMessage(client, {
+				type: 'rename_tab',
+				sessionId: 'session-1',
+				tabId: 'tab-1',
+				newName: 'New Name',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.renameTab).toHaveBeenCalledWith('session-1', 'tab-1', 'New Name');
+			});
+			await vi.waitFor(() => {
+				expect(client.socket.send).toHaveBeenCalled();
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('rename_tab_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toBe('Tab not found: tab-1');
+		});
+
+		it('should return explicit failure when desktop rename throws', async () => {
+			vi.mocked(callbacks.renameTab).mockRejectedValueOnce(new Error('disk full'));
+
+			handler.handleMessage(client, {
+				type: 'rename_tab',
+				sessionId: 'session-1',
+				tabId: 'tab-1',
+				newName: 'New Name',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.renameTab).toHaveBeenCalledWith('session-1', 'tab-1', 'New Name');
+			});
+			await vi.waitFor(() => {
+				expect(client.socket.send).toHaveBeenCalled();
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('rename_tab_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toBe('Failed to rename tab: disk full');
+		});
+
 		it('should reject rename tab with missing sessionId', () => {
 			handler.handleMessage(client, {
 				type: 'rename_tab',

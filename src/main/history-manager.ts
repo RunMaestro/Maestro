@@ -659,6 +659,17 @@ export class HistoryManager {
 	/**
 	 * Update sessionName for all entries matching a given agentSessionId.
 	 * This is used when a tab is renamed to retroactively update past history entries.
+	 *
+	 * BEST EFFORT, deliberately. Relabelling old entries is a nicety over the
+	 * authoritative name the provider's own session metadata holds, so a session
+	 * whose file cannot be read or written is logged and skipped rather than
+	 * failing the whole rename. Two consequences follow for callers: the returned
+	 * count is the number of entries actually REWRITTEN, so a tab with no history
+	 * yet (its `agentSessionId` is stamped at the start of a turn, while the entry
+	 * carrying it is written at the end) and a tab already carrying this name both
+	 * return 0; and a partial run still returns a nonzero count. Do NOT read the
+	 * count as "the rename persisted" - it answers only "how many old labels
+	 * changed".
 	 */
 	async updateSessionNameByClaudeSessionId(
 		agentSessionId: string,

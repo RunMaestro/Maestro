@@ -700,34 +700,80 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 
 		// Handle remote rename tab from web interface
 		const unsubscribeRenameTab = window.maestro.process.onRemoteRenameTab(
-			(sessionId: string, tabId: string, newName: string) => {
-				const session = sessionsRef.current.find((s) => s.id === sessionId);
-				// Find the tab to get its agentSessionId for persistence
-				const tab = session?.aiTabs.find((t) => t.id === tabId);
-				if (!session || !tab) return;
+			async (sessionId: string, tabId: string, newName: string, responseChannel: string) => {
+				const reply = (result: { success: boolean; error?: string }) =>
+					window.maestro.process.sendRemoteRenameTabResponse(responseChannel, result);
 
-				// Persist name to agent session metadata (async, fire and forget)
-				// Use projectRoot (not cwd) for consistent session storage access
-				if (tab.agentSessionId) {
-					const agentId = session.toolType || 'claude-code';
-					if (agentId === 'claude-code') {
-						window.maestro.claude
-							.updateSessionName(session.projectRoot, tab.agentSessionId, newName || '')
-							.catch((err) => logger.error('Failed to persist tab name:', undefined, err));
-					} else {
-						window.maestro.agentSessions
-							.setSessionName(agentId, session.projectRoot, tab.agentSessionId, newName || null)
-							.catch((err) => logger.error('Failed to persist tab name:', undefined, err));
+				try {
+					const session = sessionsRef.current.find((s) => s.id === sessionId);
+					if (!session) {
+						reply({ success: false, error: `Session not found: ${sessionId}` });
+						return;
 					}
-					// Also update past history entries with this agentSessionId
-					window.maestro.history
-						.updateSessionName(tab.agentSessionId, newName || '')
-						.catch((err) =>
-							logger.error('Failed to update history session names:', undefined, err)
-						);
-				}
 
-				updateAiTab(sessionId, tabId, (t) => ({ ...t, name: newName || null }));
+					const tab = session.aiTabs.find((t) => t.id === tabId);
+					if (!tab) {
+						reply({ success: false, error: `Tab not found: ${tabId}` });
+						return;
+					}
+
+					const persistedName = newName || '';
+					if (tab.agentSessionId) {
+						const agentId = session.toolType || 'claude-code';
+						if (agentId === 'claude-code') {
+							await window.maestro.claude.updateSessionName(
+								session.projectRoot,
+								tab.agentSessionId,
+								persistedName
+							);
+						} else {
+							await window.maestro.agentSessions.setSessionName(
+								agentId,
+								session.projectRoot,
+								tab.agentSessionId,
+								persistedName || null
+							);
+						}
+						// Relabelling past history entries is SECONDARY, and it is awaited
+						// only so that a thrown error still fails the rename. A count of
+						// zero is not a failure: `agentSessionId` is stamped when the
+						// provider emits its id at the START of a turn, while the entry
+						// carrying that id is written by the exit listener at the END, so
+						// a tab renamed during its first turn legitimately has nothing to
+						// relabel (as does one whose entries aged out of `maxEntries`).
+						// Failing there would be worse than the bug this path fixes: the
+						// provider metadata above has already been written with the new
+						// name, so refusing here leaves the desktop and the web showing
+						// the old name while the new one resurfaces in the Agent Sessions
+						// browser and on resume. It would also make the same rename
+						// succeed on the desktop and fail from the phone, since
+						// `useSessionLifecycle` treats this call as best effort too.
+						await window.maestro.history.updateSessionName(tab.agentSessionId, persistedName);
+					}
+
+					updateAiTab(sessionId, tabId, (t) => ({
+						...t,
+						name: persistedName || null,
+						isGeneratingName: false,
+					}));
+					const updatedTab = useSessionStore
+						.getState()
+						.sessions.find((s) => s.id === sessionId)
+						?.aiTabs.find((t) => t.id === tabId);
+					if (!updatedTab) {
+						reply({ success: false, error: `Tab not found after rename: ${tabId}` });
+						return;
+					}
+					if (updatedTab.name !== (persistedName || null)) {
+						reply({ success: false, error: `Tab rename did not update state: ${tabId}` });
+						return;
+					}
+					reply({ success: true });
+				} catch (error) {
+					const message = error instanceof Error ? error.message : String(error);
+					logger.error('Failed to persist remote tab name:', undefined, error);
+					reply({ success: false, error: message });
+				}
 			}
 		);
 
