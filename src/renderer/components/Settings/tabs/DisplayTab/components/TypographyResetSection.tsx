@@ -24,11 +24,13 @@ interface TypographyResetSectionProps {
  * Factory Reset Fonts - restore all five font families AND all five sizes to a
  * preset in one click.
  *
- * Sits BELOW the pickers it overwrites. It used to lead the Display tab, which
- * put the one destructive control on the tab first and offered a way out before
- * the user had seen anything to get out of. It reads as an escape hatch where it
- * is now: the fine controls, then the one button back. It is also the only way
- * back to the first-run chooser's presets once that modal has been dismissed.
+ * Leads the Display tab, with Save & Restore directly under it, so the tab reads
+ * coarse to fine: set everything at once, keep a copy of what you set, then take
+ * the individual pickers apart. It sat below the pickers for a while on the
+ * argument that a destructive control should not open the tab; the second click
+ * it already requires is what covers that, and burying the one-click way back
+ * under six pickers cost more than it saved. It is also the only way back to the
+ * first-run chooser's presets once that modal has been dismissed.
  *
  * Reset is destructive to deliberate work (ten settings at once), so it asks
  * for a second click rather than firing on the first. The confirmation is
@@ -62,7 +64,7 @@ export function TypographyResetSection({
 				icon={RotateCcw}
 				description={
 					<>
-						Set every font and size above at once. Default is proportional to read and monospace to
+						Set every font and size below at once. Default is proportional to read and monospace to
 						work; Hacker is monospace everywhere.
 						{activePreset
 							? ` You're on ${TYPOGRAPHY_PRESETS[activePreset].label}.`
