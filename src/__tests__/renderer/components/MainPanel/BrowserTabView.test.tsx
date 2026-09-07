@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import React from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import {
@@ -479,6 +479,113 @@ describe('BrowserTabView', () => {
 			// Focus address input - should reveal
 			fireEvent.focus(screen.getByLabelText('Browser URL'));
 			expect(addressBar).toHaveStyle({ maxHeight: '200px' });
+		});
+	});
+
+	// The injected guest listener is the half of the auto-hide that runs inside
+	// the page, so run the real injected source here rather than only asserting
+	// on the console messages the component reacts to. The script is evaluated
+	// against a stand-in window per test - installing it on the real jsdom window
+	// would stack one listener per test, since it registers anonymous handlers
+	// that cannot be removed.
+	describe('injected guest scroll listener', () => {
+		let script = '';
+
+		function installListener() {
+			const listeners: Record<string, Array<() => void>> = {};
+			const guestWindow: Record<string, unknown> = {
+				scrollY: 0,
+				innerHeight: 800,
+				addEventListener(type: string, handler: () => void) {
+					(listeners[type] ??= []).push(handler);
+				},
+			};
+			const logs: string[] = [];
+			const guestConsole = { log: (message: unknown) => logs.push(String(message)) };
+			const runFrame = (cb: FrameRequestCallback) => {
+				cb(0);
+				return 0;
+			};
+			new Function('window', 'console', 'requestAnimationFrame', script)(
+				guestWindow,
+				guestConsole,
+				runFrame
+			);
+			return {
+				logs,
+				scrollTo(y: number, innerHeight?: number) {
+					if (innerHeight !== undefined && innerHeight !== guestWindow.innerHeight) {
+						guestWindow.innerHeight = innerHeight;
+						guestWindow.scrollY = y;
+						(listeners.resize ?? []).forEach((cb) => cb());
+					}
+					guestWindow.scrollY = y;
+					(listeners.scroll ?? []).forEach((cb) => cb());
+				},
+			};
+		}
+
+		beforeEach(async () => {
+			const onUpdateTab = vi.fn();
+			render(<BrowserTabView tab={mockTab} theme={mockTheme} onUpdateTab={onUpdateTab} />);
+			const webview = getWebview();
+			webview.canGoBack = vi.fn(() => false);
+			webview.canGoForward = vi.fn(() => false);
+			webview.getURL = vi.fn(() => 'https://example.com');
+			webview.getTitle = vi.fn(() => 'Example');
+			webview.isLoading = vi.fn(() => false);
+			webview.getWebContentsId = vi.fn(() => 99);
+			webview.executeJavaScript = vi.fn().mockResolvedValue(undefined);
+
+			await act(async () => {
+				webview.dispatchEvent(new Event('dom-ready'));
+			});
+
+			script = webview.executeJavaScript.mock.calls
+				.map((call) => String(call[0]))
+				.find((src) => src.includes('__maestroScrollListenerInstalled')) as string;
+			expect(script).toBeTruthy();
+		});
+
+		afterEach(() => {
+			vi.restoreAllMocks();
+		});
+
+		it('collapses the address bar on a user scroll down', () => {
+			const guest = installListener();
+
+			guest.scrollTo(400);
+
+			expect(guest.logs).toEqual(['__MAESTRO_SCROLL__1']);
+		});
+
+		it('ignores the clamp scroll caused by its own collapse at page bottom', () => {
+			const guest = installListener();
+
+			// User scrolls to the bottom: the bar collapses.
+			guest.scrollTo(400);
+			expect(guest.logs).toEqual(['__MAESTRO_SCROLL__1']);
+
+			// Collapsing grows the viewport, so Chromium clamps scrollY down. That
+			// looks like a scroll up and used to re-reveal the bar, which shrank the
+			// viewport again and flickered for as long as the page sat at the bottom.
+			guest.scrollTo(356, 844);
+
+			expect(guest.logs).toEqual(['__MAESTRO_SCROLL__1']);
+		});
+
+		it('still reveals on a genuine scroll up once the resize has settled', () => {
+			const guest = installListener();
+
+			guest.scrollTo(400);
+			guest.scrollTo(356, 844);
+			expect(guest.logs).toEqual(['__MAESTRO_SCROLL__1']);
+
+			// Past the settle window, a real scroll up reveals the bar again.
+			vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 1000);
+			guest.scrollTo(100);
+
+			expect(guest.logs).toEqual(['__MAESTRO_SCROLL__1', '__MAESTRO_SCROLL__0']);
 		});
 	});
 
