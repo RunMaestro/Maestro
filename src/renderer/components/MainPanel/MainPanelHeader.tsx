@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 // Menu + Command are rc-only: the narrow-viewport sidebar opener and the Quick
 // Actions button, neither of which exists on main's header.
 import {
@@ -36,7 +36,10 @@ import {
 	useClaudeUsageSnapshot,
 	useResolvedClaudeConfigDirKey,
 } from '../../stores/claudeUsageStore';
-import { formatFutureTime } from '../../../shared/formatters';
+import { formatCost, formatFutureTime } from '../../../shared/formatters';
+import { getAgentDisplayName } from '../../../shared/agentMetadata';
+import { providerProfileShortLabel } from '../../../shared/providerProfiles';
+import { useProviderProfiles } from '../../hooks/stats/useProviderProfiles';
 import { PluginUiItemsSlot } from '../plugins/PluginUiItemsSlot';
 
 /** Snapshot an element's viewport rect as plain numbers for the timeline anchor. */
@@ -148,6 +151,15 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 	const resolvedConfigDirKey = useResolvedClaudeConfigDirKey(activeSession);
 	const batchUsageSnapshot = useClaudeUsageSnapshot(resolvedConfigDirKey);
 	const showBatchUsage = activeSession?.toolType === 'claude-code';
+
+	// Provider profile for the tab in view - the same attribution the Usage
+	// Dashboard files this agent under, so the account named here and the
+	// account whose quota bars render below are the same account by
+	// construction. Null for providers with no account split (OpenCode, Droid)
+	// and while $HOME is still resolving.
+	const profileSessions = useMemo(() => [activeSession], [activeSession]);
+	const activeProfileAccountKey =
+		useProviderProfiles(profileSessions).profiles[0]?.accountKey ?? null;
 
 	const headerRef = useRef<HTMLDivElement>(null);
 	// Anchors the git menu, and is the hover target that opens it. Wrapping both
@@ -455,7 +467,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 					(activeTab?.agentSessionId || activeTab?.usageStats) &&
 					hasCapability('supportsCostTracking') && (
 						<span className="header-cost-widget text-xs font-mono font-bold px-2 py-0.5 rounded-full border border-green-500/30 text-green-500 bg-green-500/10">
-							${(activeTab?.usageStats?.totalCostUsd ?? 0).toFixed(2)}
+							{formatCost(activeTab?.usageStats?.totalCostUsd ?? 0)}
 						</span>
 					)}
 
@@ -525,6 +537,44 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 												style={{ color: theme.colors.textDim }}
 											>
 												Context Details
+											</div>
+
+											{/* Which account produced these numbers. With several Claude
+											    accounts in play the provider name alone does not identify
+											    the quota bucket below, and the config dir is the only
+											    thing that tells two of them apart. */}
+											<div
+												className="border-b pb-2 mb-2"
+												style={{ borderColor: theme.colors.border }}
+											>
+												<div className="flex justify-between items-center">
+													<span className="text-xs" style={{ color: theme.colors.textDim }}>
+														Provider
+													</span>
+													<span
+														className="text-xs font-mono"
+														style={{ color: theme.colors.textMain }}
+													>
+														{getAgentDisplayName(activeSession.toolType)}
+													</span>
+												</div>
+												{activeProfileAccountKey && (
+													<div className="flex justify-between items-center mt-1">
+														<span className="text-xs" style={{ color: theme.colors.textDim }}>
+															Profile
+														</span>
+														<span
+															className="text-xs font-mono truncate ml-2"
+															style={{ color: theme.colors.textMain }}
+															title={activeProfileAccountKey}
+														>
+															{providerProfileShortLabel(
+																activeSession.toolType,
+																activeProfileAccountKey
+															)}
+														</span>
+													</div>
+												)}
 											</div>
 
 											<div className="space-y-2">

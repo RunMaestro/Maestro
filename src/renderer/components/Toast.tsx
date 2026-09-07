@@ -4,6 +4,7 @@ import type { Theme } from '../types';
 import { useNotificationStore, type Toast as ToastType } from '../stores/notificationStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { openUrl } from '../utils/openUrl';
+import { dispatchToastClickAction } from '../services/toastClickActions';
 import { formatDurationParts as formatDuration, formatTimestamp } from '../../shared/formatters';
 import { getToastWidthDimensions } from '../../shared/toastWidth';
 import { withMonoFallback } from '../../shared/fontStack';
@@ -78,25 +79,10 @@ const ToastItem = memo(function ToastItem({
 			return;
 		}
 		if (toast.clickAction) {
-			const action = toast.clickAction;
-			switch (action.kind) {
-				case 'jump-session':
-					onSessionClick?.(action.sessionId, action.tabId);
-					break;
-				case 'open-file':
-					// Reuse the existing CLI/remote file-open path. The listener
-					// (useAppRemoteEventListeners) switches to the target session
-					// and opens the file in a preview tab.
-					window.dispatchEvent(
-						new CustomEvent('maestro:openFileTab', {
-							detail: { sessionId: action.sessionId, filePath: action.path },
-						})
-					);
-					break;
-				case 'open-url':
-					openUrl(action.url);
-					break;
-			}
+			// Every kind (AI tab, file preview, terminal tab, browser tab, external
+			// URL) is dispatched by one shared service so the behavior is identical
+			// wherever a toast came from.
+			dispatchToastClickAction(toast.clickAction, { onSessionClick });
 			handleClose();
 			return;
 		}

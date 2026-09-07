@@ -2102,6 +2102,63 @@ describe('MainPanel', () => {
 				expect(screen.getByText('100')).toBeInTheDocument();
 			});
 		});
+
+		it('should display the provider and the account profile the agent runs as', async () => {
+			const session = createSession({
+				customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/test/.claude-gmail' },
+			});
+
+			renderMainPanel({ activeSession: session });
+
+			// rc's context widget is a plain percentage readout, not main's
+			// labelled gauge, so target it by test id like every other test here.
+			const contextWidget = screen.getByTestId('header-context-widget');
+			fireEvent.mouseEnter(contextWidget);
+
+			await waitFor(() => {
+				expect(screen.getByText('Provider')).toBeInTheDocument();
+				expect(screen.getByText('Claude Code')).toBeInTheDocument();
+				expect(screen.getByText('Profile')).toBeInTheDocument();
+				// The account is named by its config dir: `.claude-gmail` -> `gmail`.
+				expect(screen.getByText('gmail')).toBeInTheDocument();
+			});
+		});
+
+		it('should omit the profile row for a provider with no account split', async () => {
+			// OpenCode keeps no per-account config dir, so there is no profile to
+			// name - only the provider itself.
+			setCapabilitiesCache('opencode', {
+				supportsResume: true,
+				supportsReadOnlyMode: true,
+				supportsJsonOutput: true,
+				supportsSessionId: true,
+				supportsImageInput: true,
+				supportsImageInputOnResume: true,
+				supportsSlashCommands: true,
+				supportsSessionStorage: true,
+				supportsCostTracking: true,
+				supportsUsageStats: true,
+				supportsBatchMode: true,
+				requiresPromptToStart: false,
+				supportsStreaming: true,
+				supportsResultMessages: true,
+				supportsModelSelection: false,
+				supportsStreamJsonInput: true,
+			});
+			const session = createSession({ toolType: 'opencode' });
+
+			renderMainPanel({ activeSession: session });
+
+			// rc's context widget is a plain percentage readout, not main's
+			// labelled gauge, so target it by test id like every other test here.
+			const contextWidget = screen.getByTestId('header-context-widget');
+			fireEvent.mouseEnter(contextWidget);
+
+			await waitFor(() => {
+				expect(screen.getByText('Provider')).toBeInTheDocument();
+			});
+			expect(screen.queryByText('Profile')).not.toBeInTheDocument();
+		});
 	});
 
 	describe('Input handling', () => {

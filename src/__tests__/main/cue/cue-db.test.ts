@@ -135,6 +135,7 @@ import {
 	pruneCueEvents,
 	isGitHubItemSeen,
 	markGitHubItemSeen,
+	setGitHubItemRevision,
 	hasAnyGitHubSeen,
 	pruneGitHubSeen,
 	clearGitHubSeenForSubscription,
@@ -479,6 +480,32 @@ describe('cue-db github seen tracking', () => {
 
 		markGitHubItemSeen('sub-1', 'pr:owner/repo:123');
 		pruneGitHubSeen(30 * 24 * 60 * 60 * 1000);
+
+		expect(mockDb.prepare).not.toHaveBeenCalled();
+	});
+
+	it('setGitHubItemRevision should upsert the revision without touching fire_count', () => {
+		setGitHubItemRevision('sub-1', '__label_watermark__', '6000');
+
+		const sql = prepareCalls[prepareCalls.length - 1] as string;
+		expect(sql).toContain('INSERT INTO cue_github_seen');
+		expect(sql).toContain('ON CONFLICT(subscription_id, item_key)');
+		expect(sql).toContain('DO UPDATE SET last_revision = excluded.last_revision');
+		// The watermark must never bump the re-trigger counter - that field
+		// belongs to recordGitHubRetrigger's cap accounting.
+		expect(sql).not.toContain('fire_count = fire_count + 1');
+
+		const lastRun = runCalls[runCalls.length - 1];
+		expect(lastRun[0]).toBe('sub-1');
+		expect(lastRun[1]).toBe('__label_watermark__');
+		expect(typeof lastRun[2]).toBe('number'); // seen_at, refreshed so prune spares it
+		expect(lastRun[3]).toBe('6000');
+	});
+
+	it('setGitHubItemRevision should no-op when the database is closed', () => {
+		closeCueDb();
+
+		setGitHubItemRevision('sub-1', '__label_watermark__', '6000');
 
 		expect(mockDb.prepare).not.toHaveBeenCalled();
 	});

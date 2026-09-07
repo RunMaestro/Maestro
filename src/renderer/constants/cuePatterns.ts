@@ -204,6 +204,24 @@ subscriptions:
 `,
 	},
 	{
+		id: 'label-routing',
+		name: 'Label Routing',
+		description: 'Run an agent the moment a label lands on a PR or issue',
+		explanation:
+			'Watches GitHub label activity and fires when a label is added, so applying a label becomes the button that starts the work. Choose whether to watch pull requests, issues, or both, and list the labels that should fire (omit gh_labels to fire on any label). {{CUE_GH_LABEL}} carries the label that landed and {{CUE_GH_LABEL_ACTOR}} carries who applied it. Labels already present when the subscription is first saved never fire - only new ones do.',
+		yaml: `subscriptions:
+  - name: "Work Labeled PRs"
+    event: github.label
+    # repo: "owner/repo"  # optional - auto-detected from git remote
+    gh_label_target: pr   # pr | issue | both (default: both)
+    gh_labels:
+      - "ready-to-merge"
+    poll_minutes: 2
+    prompt_file: prompts/labeled-pr.md
+    enabled: true
+`,
+	},
+	{
 		id: 'task-queue',
 		name: 'Task Queue',
 		description: 'Process pending markdown tasks from a directory',

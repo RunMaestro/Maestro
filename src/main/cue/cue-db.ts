@@ -820,6 +820,38 @@ export function getGitHubItemState(
 }
 
 /**
+ * Upsert an item's tracked revision WITHOUT touching `fire_count`, refreshing
+ * `seen_at` so the row survives the 30-day prune while its subscription is
+ * still live.
+ *
+ * Used by the `github.label` poller, which tracks one watermark row per
+ * subscription (the highest GitHub issue-event id already processed) rather
+ * than one row per PR/issue. `markGitHubItemSeen` cannot do this: it is
+ * INSERT OR IGNORE, so it silently no-ops once the watermark row exists.
+ */
+export function setGitHubItemRevision(
+	subscriptionId: string,
+	itemKey: string,
+	revision: string
+): void {
+	if (!db) {
+		log(
+			'warn',
+			`Dropping setGitHubItemRevision (subscriptionId=${subscriptionId}, itemKey=${itemKey}): Cue DB not initialized`
+		);
+		return;
+	}
+	getDb()
+		.prepare(
+			`INSERT INTO cue_github_seen (subscription_id, item_key, seen_at, last_revision, fire_count)
+			 VALUES (?, ?, ?, ?, 0)
+			 ON CONFLICT(subscription_id, item_key)
+			 DO UPDATE SET last_revision = excluded.last_revision, seen_at = excluded.seen_at`
+		)
+		.run(subscriptionId, itemKey, Date.now(), revision);
+}
+
+/**
  * Record a re-trigger fire: bump `fire_count` and update `last_revision` so
  * subsequent polls only fire on activity newer than this point. Caller is
  * responsible for the cap check - this helper always advances state.

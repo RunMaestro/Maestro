@@ -65,6 +65,12 @@ export interface TriggerNodeData {
 		repo?: string;
 		poll_minutes?: number;
 		filter?: Record<string, string | number | boolean>;
+		/** `github.label` only: pull requests, issues, or both. See
+		 *  `CueSubscription.gh_label_target`. */
+		gh_label_target?: 'pr' | 'issue' | 'both';
+		/** `github.label` only: labels that fire the trigger. Empty = any label.
+		 *  See `CueSubscription.gh_labels`. */
+		gh_labels?: string[];
 		/** GitHub re-trigger toggle. See `CueSubscription.retrigger_on_comments`. */
 		retrigger_on_comments?: boolean;
 		/** Per-item re-trigger cap. See `CueSubscription.max_notifications`.

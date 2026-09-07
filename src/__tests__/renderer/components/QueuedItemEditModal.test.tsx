@@ -232,6 +232,20 @@ describe('QueuedItemEditModal model + effort override', () => {
 		);
 	});
 
+	it('keeps Add image and the turn pills on one row, pills right-justified', async () => {
+		renderWithSession('claude-code');
+		await waitFor(() => expect(screen.getByTitle('Change model')).toBeInTheDocument());
+
+		// Both controls hang off the same flex row: the button first, the pills
+		// pushed to the far edge by `ml-auto`. Stacking them again would put the
+		// button on its own line and leave the pills flush left.
+		const row = screen.getByRole('button', { name: /Add image/ }).parentElement!;
+		expect(row.className).toContain('flex');
+		const pillGroup = screen.getByTitle('Change model').closest('.ml-auto');
+		expect(pillGroup).not.toBeNull();
+		expect(pillGroup!.parentElement).toBe(row);
+	});
+
 	it('prefills from the item own capture and returns it unchanged on save', () => {
 		const { onSave } = renderWithSession('claude-code', {
 			turnSettings: { model: 'sonnet', effort: 'think' },
