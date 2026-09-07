@@ -23,6 +23,7 @@ import { Spinner } from '../ui/Spinner';
 import { HoverTooltip } from '../ui/HoverTooltip';
 import { captureException } from '../../utils/sentry';
 import { isWebDesktop } from '../../utils/runtimeContext';
+import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { getRevealLabel } from '../../utils/platformUtils';
 import { formatFileSize, formatDateTime, countLines } from './filePreviewUtils';
@@ -175,18 +176,30 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 		return formatShortcutKeys(shortcut.keys);
 	};
 
+	// Phone: the toolbar holds up to fourteen 36px buttons in a cluster that
+	// refuses to shrink, so at 390px the last of them sat past the right edge
+	// (the delete button was 22px off screen). The cluster wraps under the
+	// file name instead, and the row gives up half its horizontal padding.
+	const phone = usePhoneLayout();
+
 	return (
 		<div className="shrink-0" style={{ backgroundColor: theme.colors.bgSidebar }}>
 			{/* Main header row */}
-			<div className="border-b px-6 py-3" style={{ borderColor: theme.colors.border }}>
-				<div className="flex items-center justify-between">
+			<div
+				className={`border-b ${phone ? 'px-3 py-2' : 'px-6 py-3'}`}
+				style={{ borderColor: theme.colors.border }}
+			>
+				<div className={`flex items-center justify-between ${phone ? 'flex-wrap gap-y-2' : ''}`}>
 					<div className="flex items-center gap-3 min-w-0">
 						<FileCode className="w-5 h-5 shrink-0" style={{ color: theme.colors.accent }} />
 						<div className="text-sm font-medium truncate" style={{ color: theme.colors.textMain }}>
 							{file.name}
 						</div>
 					</div>
-					<div className="flex items-center gap-2 shrink-0">
+					<div
+						className={`flex items-center gap-2 ${phone ? 'flex-wrap' : 'shrink-0'}`}
+						data-testid="file-preview-toolbar"
+					>
 						{/* Save button - shown in edit mode, or in preview when unsaved edits remain
 						    (the user can flip to preview while dirty and still needs Save). */}
 						{toolbarVisibility.save &&
@@ -445,7 +458,7 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 			canGoBack ||
 			canGoForward ? (
 				<div
-					className="flex items-center justify-between px-6 py-1.5 border-b transition-all duration-200"
+					className={`flex items-center justify-between ${phone ? 'px-3' : 'px-6'} py-1.5 border-b transition-all duration-200`}
 					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgActivity }}
 				>
 					<div className="flex items-center gap-4 min-w-0 overflow-x-auto no-scrollbar">
