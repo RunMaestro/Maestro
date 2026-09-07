@@ -399,6 +399,25 @@ app-wide `Cmd+=` / `Cmd+-` in [Font Size](#font-size) keeps working while the
 organizer is open. They stop firing while the lightbox or the annotator is open
 on top of it.
 
+## Usage Dashboard
+
+The Agents and Groups tabs draw one tile per agent or group. The tile size is
+yours to set, and it is remembered across restarts. See
+[Usage Dashboard](./usage-dashboard).
+
+| Action                   | macOS      | Windows/Linux |
+| ------------------------ | ---------- | ------------- |
+| Bigger tiles             | `+` or `=` | `+` or `=`    |
+| Smaller tiles            | `-` or `_` | `-` or `_`    |
+| Back to the default size | `0`        | `0`           |
+
+The two tabs keep separate sizes, so widening the agent tiles leaves the group
+tiles alone. The buttons beside the sort pills do the same thing.
+
+Like the other bare zoom keys in this document, they leave `Cmd+=` / `Cmd+-`
+alone, and they stop firing while an agent or group detail view is open on top
+of the grid.
+
 ## Memories Viewer
 
 The file list is focused when the viewer opens, so these work right away. See

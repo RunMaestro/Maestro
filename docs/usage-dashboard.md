@@ -80,6 +80,8 @@ The **N agents** chip on each row of the Anthropic Usage and OpenAI Usage tabs i
 
 **Sorting:** the **Sort by** control orders the grid by Name, Created, Queries, Tabs, Auto %, or Provider (which groups the fleet one account at a time). The stat being sorted on is highlighted on every card, so it is obvious what the order means. When a filter is active, the default Name sort ranks the best match first; any other sort keeps the order you chose.
 
+**Tile size:** `+` and `-` resize the tiles, and `0` returns them to the default. The buttons beside the **Sort by** control do the same. A wider tile shows more of a long agent name before it truncates; a narrower one fits more agents on screen at once. Maestro remembers the size you picked, and the Groups tab keeps its own separate size.
+
 **Per-agent details:** click any card to open a detail view for that agent, covering total queries, total and average duration, active days, a full-window daily activity chart, duration distribution (min / median / p95 / max), the user-vs-auto query split, and Auto Run totals.
 
 #### Tab breakdown

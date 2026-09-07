@@ -1,12 +1,24 @@
 /**
  * EntityTile - the compact stat tile used by the Usage Dashboard's card grids.
  *
- * One shape serves both grids: a status dot, a title, optional badges, a corner
- * age, an optional secondary line, a row of labeled stats, and a sparkline. The
- * agent grid (`AgentOverviewCards`) and the per-agent tab grid (`TabBreakdown`)
- * render the same tile with different data, so the chrome - border states,
- * hover/selected promotion, the staggered enter animation, the highlighted-stat
- * coloring - lives here once instead of being copied per grid.
+ * One shape serves both grids, in four bands:
+ *
+ *   1. status dot, title, corner age
+ *   2. optional secondary line (a worktree's branch, a group's providers)
+ *   3. optional badges, with the sparkline pushed to the right of them
+ *   4. the labeled stats, across the full width
+ *
+ * The title owns its whole row on purpose. Badges and the sparkline used to
+ * flank it and squeeze it, so an ordinary agent name ("Maestro Docs") truncated
+ * to "Ma..." on a tile with room to spare. Dropping them to their own band
+ * costs one short row and buys the name every pixel of the tile's width, and it
+ * frees the stats to spread across the bottom instead of being packed into
+ * whatever the sparkline left them.
+ *
+ * The agent grid (`AgentOverviewCards`) and the per-agent tab grid
+ * (`TabBreakdown`) render the same tile with different data, so the chrome -
+ * border states, hover/selected promotion, the staggered enter animation, the
+ * highlighted-stat coloring - lives here once instead of being copied per grid.
  *
  * Purely presentational: it takes formatted strings and colors, and reports
  * clicks. Callers own their own data shaping and sort/filter state.
@@ -34,24 +46,31 @@ const STAGGER_MAX_STEPS = 12;
  * is deliberately bigger than an agent's - the size difference is the visual
  * cue for the containment relationship, not decoration.
  *
- * The stat layout is the substantive part. The default tile packs stats into a
- * single flex row, which works for three short values but collides once a tile
- * carries four (a group's queries + time + tokens + cost ran together as
- * "79.5M$65.99"). The large tile lays them out in a wrapping grid instead, so
- * adding a stat reflows rather than overlaps.
+ * The stat layout is the substantive part. Both sizes lay stats out as a
+ * wrapping auto-fit grid rather than a flex row: a flex row packs the stats
+ * against one another, and since the labels do not truncate, three of them ran
+ * together as "QUERIESTABS AUTO %" while four (a group's queries + time +
+ * tokens + cost) collided as "79.5M$65.99". Equal columns keep every stat in
+ * its own lane and reflow instead of overlapping when one is added.
+ *
+ * The two sizes differ only in the column floor, which is set by the values
+ * each carries: an agent's counts are short, a group's ("142h 5m", "$187.18")
+ * are not.
  */
 const SIZE_TOKENS = {
 	default: {
 		container: 'p-3 gap-1.5',
+		bottomGap: 'gap-1.5',
 		title: 'text-sm',
 		subtitle: 'text-xs-plus',
 		statLabel: 'text-3xs',
 		statValue: 'text-base',
-		statLayout: 'flex items-end gap-3',
+		statLayout: 'grid gap-x-3 gap-y-2 grid-cols-[repeat(auto-fit,minmax(72px,1fr))]',
 		sparkline: { width: 70, height: 22 },
 	},
 	lg: {
 		container: 'p-4 gap-2',
+		bottomGap: 'gap-2',
 		title: 'text-base',
 		subtitle: 'text-xs',
 		statLabel: 'text-2xs',
@@ -166,6 +185,9 @@ export const EntityTile = memo(function EntityTile({
 	const tokens = SIZE_TOKENS[size];
 	const [isHovered, setIsHovered] = useState(false);
 	const isClickable = Boolean(onClick);
+	// The badge/sparkline band is skipped entirely when a tile carries neither,
+	// so a bare tile does not grow an empty row.
+	const hasMetaRow = Boolean(badges?.length) || Boolean(sparkline);
 
 	// When a drill-down filter selects this tile, the 1px default border is
 	// replaced with a 2px solid accent border. Dashing is suppressed for the
@@ -234,20 +256,6 @@ export const EntityTile = memo(function EntityTile({
 				>
 					{title}
 				</span>
-				{badges?.map((badge) => (
-					<span
-						key={badge.label}
-						className="flex-shrink-0 px-1 py-0.5 rounded text-3xs font-bold uppercase tracking-wide"
-						style={{
-							backgroundColor: `${badge.color ?? theme.colors.accent}20`,
-							color: badge.color ?? theme.colors.accent,
-						}}
-						title={badge.title}
-						data-testid={badge.testId}
-					>
-						{badge.label}
-					</span>
-				))}
 				{age && (
 					<span
 						className="flex-shrink-0 text-2xs tabular-nums"
@@ -273,12 +281,42 @@ export const EntityTile = memo(function EntityTile({
 					{subtitle}
 				</div>
 			)}
-			<div className="flex items-end justify-between gap-3 mt-auto">
-				<div className={`${tokens.statLayout} min-w-0 flex-1`}>
+			<div className={`mt-auto flex flex-col ${tokens.bottomGap}`}>
+				{hasMetaRow && (
+					<div className="flex items-center gap-1.5 min-w-0">
+						{badges?.map((badge) => (
+							<span
+								key={badge.label}
+								className="flex-shrink-0 px-1 py-0.5 rounded text-3xs font-bold uppercase tracking-wide"
+								style={{
+									backgroundColor: `${badge.color ?? theme.colors.accent}20`,
+									color: badge.color ?? theme.colors.accent,
+								}}
+								title={badge.title}
+								data-testid={badge.testId}
+							>
+								{badge.label}
+							</span>
+						))}
+						{sparkline && (
+							<div className="ml-auto flex-shrink-0 opacity-80 pointer-events-none">
+								<Sparkline
+									data={sparkline}
+									color={sparklineColor ?? theme.colors.accent}
+									width={tokens.sparkline.width}
+									height={tokens.sparkline.height}
+								/>
+							</div>
+						)}
+					</div>
+				)}
+				<div className={`${tokens.statLayout} min-w-0`}>
 					{stats.map((stat) => (
 						<div key={stat.label} className="flex flex-col min-w-0">
 							<span
-								className={`${tokens.statLabel} uppercase tracking-wide`}
+								// truncate is a floor guard: the label is short, but a narrow
+								// column must clip it rather than run it into the next stat.
+								className={`${tokens.statLabel} uppercase tracking-wide truncate`}
 								style={{
 									color: stat.highlighted ? theme.colors.accent : theme.colors.textDim,
 								}}
@@ -304,16 +342,6 @@ export const EntityTile = memo(function EntityTile({
 						</div>
 					))}
 				</div>
-				{sparkline && (
-					<div className="flex-shrink-0 opacity-80 pointer-events-none">
-						<Sparkline
-							data={sparkline}
-							color={sparklineColor ?? theme.colors.accent}
-							width={tokens.sparkline.width}
-							height={tokens.sparkline.height}
-						/>
-					</div>
-				)}
 			</div>
 		</div>
 	);

@@ -21,6 +21,7 @@
  */
 
 import { memo, useMemo, useState } from 'react';
+import { Maximize2, Minimize2 } from 'lucide-react';
 import type { Session, Theme } from '../../types';
 import type { StatsAggregation } from '../../../shared/stats-types';
 import type { GroupLike, GroupStatRollup } from '../../../shared/statsGroupRollup';
@@ -33,6 +34,17 @@ import { SegmentedControl, type SegmentedOption } from '../ui/SegmentedControl';
 import { buildGroupsSummary } from './footerSummary';
 import { usePublishFooterSummary } from './useFooterSummary';
 import { EntityTile, type EntityTileStat } from './EntityTile';
+import { useScalePreference } from '../../hooks/ui/useScalePreference';
+import { useScaleShortcuts } from '../../hooks/ui/useScaleShortcuts';
+import { useIsTopLayer } from '../../hooks/ui/useIsTopLayer';
+import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
+import { ScaleControl } from '../ui/ScaleControl';
+import {
+	GROUP_TILE_MIN_WIDTH,
+	GROUP_TILE_SCALE_KEY,
+	TILE_SCALE_RANGE,
+	tileGridColumns,
+} from './tileScale';
 
 const SPARKLINE_DAYS = 14;
 const EM_DASH = '—';
@@ -213,6 +225,14 @@ export const GroupOverviewCards = memo(function GroupOverviewCards({
 }: GroupOverviewCardsProps) {
 	const [sortMode, setSortMode] = useState<SortMode>('queries');
 	const [filterQuery, setFilterQuery] = useState('');
+	// Tile width, remembered across restarts and independent of the Agents
+	// tab's: the two grids start from very different floors, so widening one
+	// says nothing about the other. Bare `+` / `-` / `0` drive it, and only
+	// while this grid is the top layer - a group detail modal opened from a
+	// tile owns those keys while it is up.
+	const tileScale = useScalePreference(GROUP_TILE_SCALE_KEY, TILE_SCALE_RANGE);
+	const dashboardIsTop = useIsTopLayer(MODAL_PRIORITIES.USAGE_DASHBOARD);
+	useScaleShortcuts(tileScale, { enabled: dashboardIsTop });
 
 	const rollups = useMemo(() => {
 		// Terminal sessions aren't agents; excluding them here keeps the group
@@ -292,6 +312,16 @@ export const GroupOverviewCards = memo(function GroupOverviewCards({
 					width={240}
 				/>
 				<div className="flex items-center gap-2">
+					<ScaleControl
+						theme={theme}
+						control={tileScale}
+						decreaseIcon={Minimize2}
+						increaseIcon={Maximize2}
+						subject="tile size"
+						shortcutHint={{ decrease: '-', increase: '+', reset: '0' }}
+						size="sm"
+						testId="group-overview-tile-zoom"
+					/>
 					<span className="text-xs" style={{ color: theme.colors.textDim }}>
 						Sort by:
 					</span>
@@ -317,13 +347,7 @@ export const GroupOverviewCards = memo(function GroupOverviewCards({
 			) : (
 				<div
 					className="grid gap-3"
-					// Twice the agent grid's 220px. A group tile is larger than the
-					// agents it contains, and it carries four stats whose values are
-					// the long ones - "142h 5m", "220.7M", "$187.18" - so the width
-					// buys legible numbers rather than whitespace. Trading a column
-					// for extra rows is the right way round here: the grid scrolls
-					// vertically, so a row costs nothing a clipped value does not.
-					style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(440px, 1fr))' }}
+					style={{ gridTemplateColumns: tileGridColumns(GROUP_TILE_MIN_WIDTH, tileScale.scale) }}
 					data-testid="group-overview-cards"
 					role="region"
 					aria-label="Group usage overview"
