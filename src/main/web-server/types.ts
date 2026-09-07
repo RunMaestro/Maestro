@@ -3,6 +3,7 @@
  * All web server components should import types from this file to avoid duplication.
  */
 
+import type { AutoRunBroadcastState } from '../../shared/autoRunBroadcast';
 import type { DesktopTabEntry } from '../../shared/desktopTabs';
 import type { UsageStats } from '../../shared/types';
 import type { WebSocket } from 'ws';
@@ -183,42 +184,12 @@ export interface SessionBroadcastData {
 
 /**
  * Auto Run state for broadcast messages.
+ *
+ * Alias of the shared cross-boundary shape. The renderer's IPC signature, the
+ * main-process handler, and this file all name the same type so a new field
+ * cannot be added at one end and silently dropped at another.
  */
-export interface AutoRunState {
-	isRunning: boolean;
-	totalTasks: number;
-	completedTasks: number;
-	currentTaskIndex: number;
-	isStopping?: boolean;
-	/** Total number of documents in the run (multi-document progress) */
-	totalDocuments?: number;
-	/** Current document being processed (0-based, multi-document progress) */
-	currentDocumentIndex?: number;
-	/** Total tasks across all documents (multi-document progress) */
-	totalTasksAcrossAllDocs?: number;
-	/** Completed tasks across all documents (multi-document progress) */
-	completedTasksAcrossAllDocs?: number;
-	/** True if batch is paused waiting for error resolution (Phase 5.10) */
-	errorPaused?: boolean;
-	/** Human-readable description of the error that paused the run */
-	errorMessage?: string;
-	/** Error type tag (e.g. 'rate_limit', 'auth', 'context_window') */
-	errorType?: string;
-	/** Whether the error is recoverable (resume vs. abort) */
-	errorRecoverable?: boolean;
-	/** Document index that hit the error (for skip-document UI) */
-	errorDocumentIndex?: number;
-	/** Description of the task that failed (for UI display) */
-	errorTaskDescription?: string;
-	/** True when this run pursues a free-text goal instead of documents */
-	goalMode?: boolean;
-	/** Latest self-reported progress toward the goal (0-100) */
-	goalProgress?: number;
-	/** One-line rationale accompanying the latest goal progress report */
-	goalRationale?: string;
-	/** 1-based iteration number the goal loop is on */
-	goalIteration?: number;
-}
+export type AutoRunState = AutoRunBroadcastState;
 
 /**
  * CLI activity data for session state broadcasts.
@@ -355,11 +326,28 @@ export type NewTabCallback = (
 	background?: boolean
 ) => Promise<{ tabId: string } | null>;
 export type CloseTabCallback = (sessionId: string, tabId: string) => Promise<boolean>;
+export interface RenameTabResult {
+	success: boolean;
+	error?: string;
+}
+
+export function normalizeRenameTabResult(result: unknown): RenameTabResult {
+	if (typeof result === 'boolean') return { success: result };
+	if (result && typeof result === 'object' && 'success' in result) {
+		const candidate = result as { success?: unknown; error?: unknown };
+		return {
+			success: candidate.success === true,
+			...(typeof candidate.error === 'string' ? { error: candidate.error } : {}),
+		};
+	}
+	return { success: false, error: 'Invalid rename tab response' };
+}
+
 export type RenameTabCallback = (
 	sessionId: string,
 	tabId: string,
 	newName: string
-) => Promise<boolean>;
+) => Promise<boolean | RenameTabResult>;
 export type StarTabCallback = (
 	sessionId: string,
 	tabId: string,
@@ -413,6 +401,33 @@ export type OpenModalCallback = (params: OpenModalParams) => Promise<boolean>;
  * --new-tab`) can address the same tab on later calls without owning a persistent
  * channel.
  */
+/**
+ * Consult another agent and return its answer (`maestro-cli ask`).
+ *
+ * Rides the same cross-agent consult path a typed `@mention` does - a hidden
+ * tab on the target, no focus, no unread - but resolves with the answer instead
+ * of streaming it into a chat bubble, because the caller here is an agent
+ * waiting on a tool result rather than a human reading a transcript.
+ */
+export type ConsultAgentParams = {
+	targetSessionId: string;
+	question: string;
+	/** The calling agent, when it named itself. Attribution + continuity. */
+	fromSessionId?: string;
+	/** Forward the caller's transcript as context (off by default). */
+	withContext?: boolean;
+	/** How long the caller is willing to wait, already clamped by the CLI. */
+	timeoutMs: number;
+};
+export type ConsultAgentResult = {
+	success: boolean;
+	answer?: string;
+	error?: string;
+	canceled?: boolean;
+	targetAgentName?: string;
+	targetTabId?: string;
+};
+export type ConsultAgentCallback = (params: ConsultAgentParams) => Promise<ConsultAgentResult>;
 export type NewAITabWithPromptResult = { success: boolean; tabId?: string };
 export type NewAITabWithPromptCallback = (
 	sessionId: string,

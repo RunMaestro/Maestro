@@ -3,6 +3,7 @@ import {
 	endInlineWizardConversation,
 	type InlineWizardConversationSession,
 } from '../../../services/inlineWizardConversation';
+import { finishWizardRun } from '../../../services/wizardStats';
 import { logger } from '../../../utils/logger';
 import { captureException } from '../../../utils/sentry';
 import type { InlineWizardState, PreviousUIState } from './types';
@@ -30,6 +31,9 @@ export function useInlineWizardLifecycleActions({
 			// wizard is left registered forever - a wand on an agent whose wizard tab is gone.
 			const requestedTabId = typeof explicitTabId === 'string' ? explicitTabId : undefined;
 			const tabId = requestedTabId || currentTabId || 'default';
+
+			// Settle the analytics row before the state below is dropped.
+			finishWizardRun(tabId);
 
 			const previousState = previousUIStateRefsMap.current.get(tabId) || null;
 			previousUIStateRefsMap.current.delete(tabId);
@@ -70,6 +74,9 @@ export function useInlineWizardLifecycleActions({
 
 	const reset = useCallback(() => {
 		const tabId = currentTabId || 'default';
+
+		// Settle the analytics row - reset is a close, same as endWizard.
+		finishWizardRun(tabId);
 
 		const session = conversationSessionsMap.current.get(tabId);
 		if (session) {

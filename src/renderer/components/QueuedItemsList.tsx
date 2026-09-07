@@ -11,10 +11,11 @@ import {
 	Pencil,
 	ImageIcon,
 } from 'lucide-react';
-import type { Theme, QueuedItem } from '../types';
+import type { Theme, QueuedItem, QueuedItemEditPatch } from '../types';
 import type { BusyTabSummary, ForceSendEligibility } from '../utils/executionQueue';
 import { getForceSendTitle, shouldOfferForceSend } from '../utils/executionQueue';
 import { safeClipboardWrite } from '../utils/clipboard';
+import { displayImageSrc } from '../utils/sessionImageSrc';
 import { Modal, ModalFooter } from './ui/Modal';
 import { QueuedItemEditModal } from './QueuedItemEditModal';
 import { TurnSettingPills } from './ui/TurnSettingPills';
@@ -49,7 +50,7 @@ interface QueuedItemsListProps {
 	onTogglePauseQueuedItem?: (itemId: string) => void;
 	// Edit a queued message's prompt text and attached images. Only wired for
 	// message items (commands have no image attachments).
-	onEditQueuedItem?: (itemId: string, patch: { text: string; images: string[] }) => void;
+	onEditQueuedItem?: (itemId: string, patch: QueuedItemEditPatch) => void;
 	onReorderItems?: (fromIndex: number, toIndex: number) => void;
 	activeTabId?: string; // If provided, only show queued items for this tab
 	// Force Send support: when forcedParallelExecution is enabled, allow the user
@@ -626,7 +627,7 @@ function QueuedItemRow({
 										title="Click to view full size"
 									>
 										<img
-											src={img}
+											src={displayImageSrc(img)}
 											alt={`Queued attachment ${imgIdx + 1}`}
 											className="h-16 rounded border block"
 											style={{

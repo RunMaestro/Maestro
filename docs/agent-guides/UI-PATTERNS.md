@@ -828,6 +828,31 @@ The same identity trap applies to a non-virtualized list, minus the loop - the s
 
 Testing it needs the virtualizer mocked: jsdom has no layout engine, so the real one measures a zero-height scroll element, yields zero items, and every assertion about row scrolling passes vacuously. `FileSearchModal.render.test.tsx` mocks `useVirtualizer` to emit a fixed window of rows, stubs `Element.prototype.scrollIntoView` (jsdom does not implement it), and asserts it is never called. Lead with a test that the rows exist, or the suite proves nothing.
 
+### Sizing a Virtualized Row the User's Font Decides
+
+`estimateSize` is a guess, not a height. If a row's real height depends on
+anything the app does not control - the user's UI font, a wrapped second line, a
+badge that only some rows carry - the row has to measure itself:
+
+```tsx
+const virtualizer = useVirtualizer({ count, getScrollElement, estimateSize: () => ROW_HEIGHT });
+const measureRow = virtualizer.measureElement;
+
+<button data-index={virtualRow.index} ref={measureRow} style={{ transform: `translateY(${virtualRow.start}px)` }}>
+```
+
+Three parts, and all three are required:
+
+- **`ref={virtualizer.measureElement}`** read straight off the virtualizer. It is a stable instance property, so the ref does not detach and reattach every render. Do NOT wrap it in an inline arrow (`ref={(el) => virtualizer.measureElement(el)}`) - that is the same identity trap as the scroll ref above, and it remeasures the whole window on every render.
+- **`data-index`** on the same node. `measureElement` reads that attribute to learn which row it just measured; without it the size is filed against `NaN` and the row silently keeps the estimate.
+- **No inline `height`.** `height: ${virtualRow.size}px` clamps the row to the number the virtualizer already believes, so measurement can never disagree with the guess. Keep `transform: translateY(...)` for position; let padding and content decide the height.
+
+`HistoryPanel` and `UnifiedHistoryTab` were the first two to do this, for entry cards whose height depends on how much text is in them. `FileSearchModal` is the newest: its rows stack a file name over a directory, and under a proportional UI font two lines do not fit the 44px estimate, so the text crammed together. A fixed-pitch font, meanwhile, wants the tighter box and should not be padded out to match. One number cannot serve both; measurement serves both.
+
+A fixed `estimateSize` with no `measureElement` is still right for a list whose rows genuinely are one uniform line (`TextPreviewFast`, `ParquetGrid`), and it is cheaper. Reach for measurement when the height is not yours to decide.
+
+Testing this in jsdom cannot assert a height - there is no layout engine, and every element reports zero. Assert the wiring instead: the row carries `data-index`, the ref is `measureElement` itself, and no inline `height` is set. `FileSearchModal.render.test.tsx` does exactly that, and all three assertions fail if any part of the pattern is reverted.
+
 ### Rendering Raw Terminal Output (`useAnsiConverter`)
 
 `useAnsiConverter(theme)` in `src/renderer/hooks/ui/useAnsiConverter.ts` returns the theme-aware `ansi-to-html` converter every raw-output surface shares; `createAnsiConverter(theme)` is the non-React form. Feed its result to `getCachedAnsiHtml(text, theme.id, converter)` from `utils/textProcessing`, which converts, sanitizes with DOMPurify, and caches per theme. Callers today: `TerminalOutput` (transcript + terminal pane), `ShellCommandCard` (command mode), `GitCommandRunnerModal` (the Pull / Push console).

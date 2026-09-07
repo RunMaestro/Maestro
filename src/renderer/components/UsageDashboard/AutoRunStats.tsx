@@ -27,6 +27,7 @@ import {
 	groupSessionsByDate,
 	type AutoRunDayData,
 } from './autoRunStatsUtils';
+import { MetricCard } from './MetricCard';
 import { buildAutoRunSummary } from './footerSummary';
 import { usePublishFooterSummary } from './useFooterSummary';
 
@@ -37,59 +38,6 @@ interface AutoRunStatsProps {
 	theme: Theme;
 	/** Number of columns for responsive layout (default: 6) */
 	columns?: number;
-}
-
-/**
- * Single metric card component
- */
-interface MetricCardProps {
-	icon: React.ReactNode;
-	label: string;
-	value: string;
-	subValue?: string;
-	theme: Theme;
-}
-
-function MetricCard({ icon, label, value, subValue, theme }: MetricCardProps) {
-	return (
-		<div
-			className="p-4 rounded-lg flex items-start gap-3"
-			style={{ backgroundColor: theme.colors.bgMain }}
-			data-testid="autorun-metric-card"
-			role="group"
-			aria-label={`${label}: ${value}${subValue ? `, ${subValue}` : ''}`}
-		>
-			<div
-				className="flex-shrink-0 p-2 rounded-md"
-				style={{
-					backgroundColor: `${theme.colors.accent}15`,
-					color: theme.colors.accent,
-				}}
-			>
-				{icon}
-			</div>
-			<div className="min-w-0 flex-1">
-				<div
-					className="text-xs uppercase tracking-wide mb-1"
-					style={{ color: theme.colors.textDim }}
-				>
-					{label}
-				</div>
-				<div
-					className="text-2xl font-bold truncate"
-					style={{ color: theme.colors.textMain }}
-					title={value}
-				>
-					{value}
-				</div>
-				{subValue && (
-					<div className="text-xs mt-1" style={{ color: theme.colors.textDim }}>
-						{subValue}
-					</div>
-				)}
-			</div>
-		</div>
-	);
 }
 
 export const AutoRunStats = memo(function AutoRunStats({
@@ -266,12 +214,14 @@ export const AutoRunStats = memo(function AutoRunStats({
 				aria-label="Auto Run summary metrics"
 			>
 				<MetricCard
+					testId="autorun-metric-card"
 					icon={<Play className="w-4 h-4" />}
 					label="Total Sessions"
 					value={formatNumber(metrics.totalSessions)}
 					theme={theme}
 				/>
 				<MetricCard
+					testId="autorun-metric-card"
 					icon={<CheckSquare className="w-4 h-4" />}
 					label="Tasks Done"
 					value={formatNumber(metrics.totalTasksCompleted)}
@@ -279,24 +229,28 @@ export const AutoRunStats = memo(function AutoRunStats({
 					theme={theme}
 				/>
 				<MetricCard
+					testId="autorun-metric-card"
 					icon={<ListChecks className="w-4 h-4" />}
 					label="Avg Tasks/Session"
 					value={metrics.avgTasksPerSession}
 					theme={theme}
 				/>
 				<MetricCard
+					testId="autorun-metric-card"
 					icon={<Target className="w-4 h-4" />}
 					label="Success Rate"
 					value={`${metrics.successRate}%`}
 					theme={theme}
 				/>
 				<MetricCard
+					testId="autorun-metric-card"
 					icon={<Clock className="w-4 h-4" />}
 					label="Avg Session"
 					value={formatDuration(metrics.avgSessionDuration)}
 					theme={theme}
 				/>
 				<MetricCard
+					testId="autorun-metric-card"
 					icon={<Timer className="w-4 h-4" />}
 					label="Avg Task"
 					value={formatDuration(metrics.avgTaskDuration)}

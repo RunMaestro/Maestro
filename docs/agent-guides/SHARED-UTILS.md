@@ -176,10 +176,19 @@ The font picker stores a bare name (`Roboto Mono`) with no generic fallback, whi
 
 ## JSON Utilities (`src/shared/jsonUtils.ts` - Both)
 
-| Function           | Signature                         | Purpose                                                                   |
-| ------------------ | --------------------------------- | ------------------------------------------------------------------------- |
-| `stripJsonBom`     | `(value: string) => string`       | Remove a leading UTF-8 BOM from JSON text before parsing.                 |
-| `parseJsonWithBom` | `<T = unknown>(value: string): T` | `JSON.parse` wrapper that tolerates a leading BOM in persisted JSON text. |
+| Function                     | Signature                                                                           | Purpose                                                                                                                                             |
+| ---------------------------- | ----------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `stripJsonBom`               | `(value: string) => string`                                                         | Remove a leading UTF-8 BOM from JSON text before parsing.                                                                                           |
+| `parseJsonWithBom`           | `<T = unknown>(value: string): T`                                                   | `JSON.parse` wrapper that tolerates a leading BOM in persisted JSON text.                                                                           |
+| `assertSerializedJsonIsSafe` | `(serialized: string \| undefined, target: string) => asserts serialized is string` | Refuse to write a payload that would clobber a good file. Throws on `undefined`/empty; round-trip parses under 1MB, balanced-delimiter check above. |
+
+`assertSerializedJsonIsSafe` is the guard every atomic JSON writer runs before it
+creates its temp file. It catches the one thing `JSON.stringify` can silently
+hand you - `undefined`, which `writeFile` persists as the literal text
+`"undefined"` - and deliberately stops short of re-parsing large payloads,
+because that cost is paid on the main thread on every store write (~40ms on the
+20MB agent-runs file). Full rationale and the two duplicates it replaced are in
+[CANONICAL-UTILITIES.md](CANONICAL-UTILITIES.md).
 
 ### Search Highlighting (`src/renderer/utils/highlightMatches.tsx` - Renderer)
 
@@ -759,9 +768,10 @@ Renderer performance integration in `src/renderer/utils/logger.ts`:
 
 ### SSH Spawn Wrapper (`src/main/utils/ssh-spawn-wrapper.ts`)
 
-| Function                                        | Signature                                                                                            | Purpose                                                                                                                                     |
-| ----------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `wrapSpawnWithSsh(config, sshConfig, sshStore)` | `(SshSpawnWrapConfig, AgentSshRemoteConfig?, SshRemoteSettingsStore) => Promise<SshSpawnWrapResult>` | Wrap spawn config with SSH remote execution. Handles prompt embedding (small in CLI, large via stdin). Returns local or SSH-wrapped config. |
+| Function                                        | Signature                                                                                            | Purpose                                                                                                                                                                                      |
+| ----------------------------------------------- | ---------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `wrapSpawnWithSsh(config, sshConfig, sshStore)` | `(SshSpawnWrapConfig, AgentSshRemoteConfig?, SshRemoteSettingsStore) => Promise<SshSpawnWrapResult>` | Wrap spawn config with SSH remote execution. Handles prompt embedding (small in CLI, large via stdin). Returns local or SSH-wrapped config.                                                  |
+| `sshUnresolvedRemoteMessage(sshConfig)`         | `(AgentSshRemoteConfig) => string`                                                                   | The error every caller throws when SSH was enabled but the wrapper handed back `sshRemoteUsed: null` (it degrades to a LOCAL spawn carrying the remote's cwd, so taking it is always wrong). |
 
 ---
 

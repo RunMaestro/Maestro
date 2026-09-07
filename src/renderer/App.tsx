@@ -11,6 +11,7 @@ import React, {
 import { useFocusAfterRender, useFocusOnClose } from './hooks/utils/useFocusAfterRender';
 import { isWebDesktop } from './utils/runtimeContext';
 import { isCoarsePointer } from './utils/touch';
+import { useEdgeSwipeHandlers } from './hooks/utils/useEdgeSwipeHandlers';
 import { slashCommands } from './slashCommands';
 import { AppModals } from './components/AppModals';
 import { AppStandaloneModals } from './components/AppStandaloneModals';
@@ -183,10 +184,16 @@ import { PluginModalPanelMount } from './components/plugins/PluginModalPanelMoun
 
 // Import types and constants
 // Note: GroupChat, GroupChatState are imported from types (re-exported from shared)
-import type { RightPanelTab, Session, QueuedItem, CustomAICommand } from './types';
+import type {
+	RightPanelTab,
+	Session,
+	QueuedItem,
+	CustomAICommand,
+	QueuedItemEditPatch,
+} from './types';
 import { useResolvedTheme } from './hooks/ui/useResolvedTheme';
 import { getActiveOutputSearchKey } from './utils/outputSearch';
-import { reorderQueueItem } from './utils/executionQueue';
+import { reorderQueueItem, applyQueuedItemEdit } from './utils/executionQueue';
 import { getContextColor } from './utils/theme';
 // safeClipboardWrite moved to AppStandaloneModals (GistPublishModal handler)
 // Tiling-aware Cmd+Shift+T: restores a pane back into its tiled group when the
@@ -206,8 +213,9 @@ import {
 	navigateToPrevUnifiedTab,
 	navigateToClosestTerminalTab,
 	hasActiveWizard,
-	findNextUnreadSession,
 	isSoleAiTabReplacement,
+	findUnreadSessionInDirection,
+	type UnreadNavDirection,
 } from './utils/tabHelpers';
 import { getForceSendEligibility, type ForceSendEligibility } from './utils/executionQueue';
 // validateNewSession moved to useSymphonyContribution, useSessionCrud hooks
@@ -642,6 +650,41 @@ function MaestroConsoleInner() {
 		prevLeftSidebarOpenRef.current = leftSidebarOpen;
 		prevRightPanelOpenRef.current = rightPanelOpen;
 	}, [isNarrowViewport, leftSidebarOpen, rightPanelOpen]);
+
+	// Narrow viewports: picking an agent from the left drawer is a request to
+	// LOOK at that agent, so the drawer gets out of the way - on a phone it
+	// covers the whole screen, and a drawer that stayed put read as the tap
+	// having done nothing. Keyed on the TRANSITION of activeSessionId, not its
+	// steady state, so a drawer opened after a switch stays open.
+	const prevActiveSessionIdRef = useRef(activeSessionId);
+	useEffect(() => {
+		const changed = prevActiveSessionIdRef.current !== activeSessionId;
+		prevActiveSessionIdRef.current = activeSessionId;
+		if (changed && isNarrowViewport && leftSidebarOpen) {
+			useUIStore.getState().setLeftSidebarOpen(false);
+		}
+	}, [activeSessionId, isNarrowViewport, leftSidebarOpen]);
+
+	// The right drawer follows the same rule. Opening a file from the Files panel,
+	// resuming a conversation from History, or anything else that activates a
+	// tab is a request to look at that tab, and on a phone the drawer covers it -
+	// a file tapped in the tree opened behind the panel and nothing on screen
+	// changed. Keyed on the transition of the active tab (of any kind), so a
+	// drawer opened after the switch stays open.
+	const activeTabKey = [
+		activeSession?.activeTabId,
+		activeSession?.activeFileTabId,
+		activeSession?.activeTerminalTabId,
+		activeSession?.activeBrowserTabId,
+	].join('|');
+	const prevActiveTabKeyRef = useRef(activeTabKey);
+	useEffect(() => {
+		const changed = prevActiveTabKeyRef.current !== activeTabKey;
+		prevActiveTabKeyRef.current = activeTabKey;
+		if (changed && isNarrowViewport && rightPanelOpen) {
+			useUIStore.getState().setRightPanelOpen(false);
+		}
+	}, [activeTabKey, isNarrowViewport, rightPanelOpen]);
 	const activeRightTab = useUIStore((s) => s.activeRightTab);
 	const activeFocus = useUIStore((s) => s.activeFocus);
 	const bookmarksCollapsed = useUIStore((s) => s.bookmarksCollapsed);
@@ -673,21 +716,29 @@ function MaestroConsoleInner() {
 	} = useUIStore.getState();
 
 	// --- EDGE-SWIPE DRAWERS (phones on the web-desktop bundle) ---
-	// Gated on coarse pointer so a narrow *desktop* browser window (mouse) never
-	// gets invisible edge zones that would swallow clicks in the outer 24px. The
-	// opener zones are thin fixed strips at the screen edges (see JSX), so drawer
-	// gestures can only START at the edge - horizontal scrolling inside the
-	// terminal, tab bar, or tables is untouched. Closing swipes ride the mobile
-	// backdrop, which only exists while a drawer is open.
+	// Gated on coarse pointer: a mouse never produces touch events, and a narrow
+	// *desktop* browser window has no drawer gesture to offer. The opener
+	// handlers ride the app shell, gated on WHERE the touch starts
+	// (useEdgeSwipeHandlers), so a drawer gesture can only START in the outer
+	// 24px and every tap or scroll elsewhere is untouched. This replaced two
+	// invisible fixed strips, which sat above the tab bar and swallowed taps on
+	// its magnifier and first chip. Closing swipes ride the mobile backdrop and
+	// the drawers themselves, which only exist while a drawer is open.
 	const drawerSwipeEnabled = isNarrowViewport && isWebDesktop() && isCoarsePointer();
+	const edgeSwipeArmed = drawerSwipeEnabled && !leftSidebarOpen && !rightPanelOpen;
 	const leftEdgeSwipe = useSwipeGestures({
 		onSwipeRight: () => setLeftSidebarOpen(true),
-		enabled: drawerSwipeEnabled && !leftSidebarOpen && !rightPanelOpen,
+		enabled: edgeSwipeArmed,
 	});
 	const rightEdgeSwipe = useSwipeGestures({
 		onSwipeLeft: () => setRightPanelOpen(true),
-		enabled: drawerSwipeEnabled && !rightPanelOpen && !leftSidebarOpen,
+		enabled: edgeSwipeArmed,
 	});
+	const edgeSwipeHandlers = useEdgeSwipeHandlers(
+		leftEdgeSwipe.handlers,
+		rightEdgeSwipe.handlers,
+		edgeSwipeArmed
+	);
 	// Backdrop closer: the left drawer closes by pushing it back left, the right
 	// drawer by pushing it back right. Only one drawer is open at a time (mutual
 	// exclusion above), and the setters are idempotent, so unconditional calls
@@ -1280,7 +1331,10 @@ function MaestroConsoleInner() {
 		handleConfirmAndDeleteWorktreeOnDisk,
 		refreshWorktreeState,
 		handlePRCreated,
-	} = useWorktreeHandlers({ rightPanelRef });
+	} = useWorktreeHandlers({
+		rightPanelRef,
+		isLifecycleOwner: !isWebDesktop() && (windowCtx?.isMainWindow ?? true),
+	});
 
 	// --- APP HANDLERS (drag, file, folder operations) ---
 	// NOTE: file-drop attach is now scoped per-region (useChatFileDropZone for the
@@ -1701,17 +1755,12 @@ function MaestroConsoleInner() {
 	}, []);
 
 	// Edit a queued message's prompt text and attached images in place.
-	const handleEditQueuedItem = useCallback(
-		(itemId: string, patch: { text: string; images: string[] }) => {
-			updateSessionWith(activeSessionIdRef.current, (s) => ({
-				...s,
-				executionQueue: s.executionQueue.map((item) =>
-					item.id === itemId ? { ...item, text: patch.text, images: patch.images } : item
-				),
-			}));
-		},
-		[]
-	);
+	const handleEditQueuedItem = useCallback((itemId: string, patch: QueuedItemEditPatch) => {
+		updateSessionWith(activeSessionIdRef.current, (s) => ({
+			...s,
+			executionQueue: applyQueuedItemEdit(s.executionQueue, itemId, patch),
+		}));
+	}, []);
 
 	// Reorder a queued item within the active session's inline chat list. The
 	// inline list is filtered to a single tab, so fromIndex/toIndex address that
@@ -2150,43 +2199,60 @@ function MaestroConsoleInner() {
 		setUngroupedCollapsed,
 	});
 
-	// goToNextUnreadTab - jump to the next agent with unread tabs, clearing current agent's unreads
-	const goToNextUnreadTab = useCallback(() => {
-		const currentActiveId = useSessionStore.getState().activeSessionId;
-		const sortedSessions = useSidebarNavStore.getState().sortedSessions;
-		// Treat a tab with an active inline wizard as a draft target: an unfinished
-		// wizard is meant to be completed into an Auto Run doc, so the navigation
-		// should stop on it just like any other draft.
-		const result = findNextUnreadSession(sortedSessions, currentActiveId, isWizardActiveForTab);
-
-		// Clear current agent's unread tabs
-		if (result.clearedCurrent) {
-			setSessions((prev) =>
-				prev.map((s) => {
-					if (s.id !== currentActiveId) return s;
-					return {
-						...s,
-						aiTabs: s.aiTabs.map((t) => (t.hasUnread ? { ...t, hasUnread: false } : t)),
-					};
-				})
+	// goToUnreadTab - jump to the next/previous agent with unread tabs, clearing
+	// current agent's unreads. Both directions share this body so the forward
+	// chord (Opt+Cmd+Down) and the backward one (second press of Opt+Cmd+Up)
+	// cannot drift on ordering or clear semantics.
+	const goToUnreadTab = useCallback(
+		(direction: UnreadNavDirection) => {
+			const currentActiveId = useSessionStore.getState().activeSessionId;
+			// Read the order at EVENT time rather than closing over it: the Left Bar
+			// re-sorts as agents go busy, and a captured list walks to whatever was
+			// on screen when this callback was last built.
+			const sortedSessions = useSidebarNavStore.getState().sortedSessions;
+			// Treat a tab with an active inline wizard as a draft target: an unfinished
+			// wizard is meant to be completed into an Auto Run doc, so the navigation
+			// should stop on it just like any other draft.
+			const result = findUnreadSessionInDirection(
+				sortedSessions,
+				currentActiveId,
+				direction,
+				isWizardActiveForTab
 			);
-		}
 
-		if (result.jumped && result.targetSessionId) {
-			setActiveSessionId(result.targetSessionId);
-			const targetTabId = result.targetTabId;
-			if (targetTabId) {
+			// Clear current agent's unread tabs
+			if (result.clearedCurrent) {
 				setSessions((prev) =>
 					prev.map((s) => {
-						if (s.id !== result.targetSessionId) return s;
-						return { ...s, activeTabId: targetTabId };
+						if (s.id !== currentActiveId) return s;
+						return {
+							...s,
+							aiTabs: s.aiTabs.map((t) => (t.hasUnread ? { ...t, hasUnread: false } : t)),
+						};
 					})
 				);
 			}
-		} else {
-			showSuccessFlash('No unread or draft tabs');
-		}
-	}, [setSessions, setActiveSessionId, showSuccessFlash, isWizardActiveForTab]);
+
+			if (result.jumped && result.targetSessionId) {
+				setActiveSessionId(result.targetSessionId);
+				const targetTabId = result.targetTabId;
+				if (targetTabId) {
+					setSessions((prev) =>
+						prev.map((s) => {
+							if (s.id !== result.targetSessionId) return s;
+							return { ...s, activeTabId: targetTabId };
+						})
+					);
+				}
+			} else {
+				showSuccessFlash('No unread or draft tabs');
+			}
+		},
+		[setSessions, setActiveSessionId, showSuccessFlash, isWizardActiveForTab]
+	);
+
+	const goToNextUnreadTab = useCallback(() => goToUnreadTab('next'), [goToUnreadTab]);
+	const goToPreviousUnreadTab = useCallback(() => goToUnreadTab('previous'), [goToUnreadTab]);
 
 	// showConfirmation, performDeleteSession - provided by useSessionLifecycle hook (Phase 2H)
 	// deleteSession, deleteWorktreeGroup - provided by useSessionCrud hook
@@ -2402,6 +2468,7 @@ function MaestroConsoleInner() {
 		handleCopyContext,
 		handleExportHtml,
 		handlePublishTabGist,
+		handleReloadFileTab,
 	});
 
 	// Queue browser handlers - extracted to useQueueHandlers hook
@@ -2627,6 +2694,7 @@ function MaestroConsoleInner() {
 
 		// Next unread tab navigation
 		goToNextUnreadTab,
+		goToPreviousUnreadTab,
 	};
 
 	// NOTE: File explorer effects (flat file list, pending jump path, scroll, keyboard nav) are
@@ -3069,9 +3137,7 @@ function MaestroConsoleInner() {
 				rightPanelOpen={rightPanelOpen}
 				onCloseDrawers={handleCloseDrawers}
 				drawerCloseSwipeHandlers={drawerCloseSwipe.handlers}
-				drawerSwipeEnabled={drawerSwipeEnabled}
-				leftEdgeSwipeHandlers={leftEdgeSwipe.handlers}
-				rightEdgeSwipeHandlers={rightEdgeSwipe.handlers}
+				edgeSwipeHandlers={edgeSwipeHandlers}
 				logViewerOpen={logViewerOpen}
 				onToastSessionClick={handleToastSessionClick}
 				logViewer={
@@ -3462,6 +3528,7 @@ function MaestroConsoleInner() {
 						onQuickActionsNewBrowserTab={handleNewBrowserTab}
 						onQuickActionsNewTerminalTab={handleOpenTerminalTab}
 						onGoToNextUnread={goToNextUnreadTab}
+						onGoToPreviousUnread={goToPreviousUnreadTab}
 						onNavBack={handleNavBack}
 						onNavForward={handleNavForward}
 						onRemoveQueueItem={handleRemoveQueueItem}

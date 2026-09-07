@@ -575,6 +575,70 @@ describe('useMainKeyboardHandler', () => {
 			expect(mockGoToNextUnreadTab).toHaveBeenCalled();
 		});
 
+		it('should allow previous-unread when modals are open, at whatever key it is bound to', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			const mockGoToPreviousUnreadTab = vi.fn();
+			result.current.keyboardHandlerRef.current = createMockContext({
+				hasOpenLayers: () => true,
+				hasOpenModal: () => true,
+				isShortcut: (e: KeyboardEvent, actionId: string) =>
+					actionId === 'previousUnreadTab' && e.shiftKey && e.metaKey && e.key === 'i',
+				sessions: [{ id: 'test' }],
+				goToPreviousUnreadTab: mockGoToPreviousUnreadTab,
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'i',
+						metaKey: true,
+						shiftKey: true,
+						bubbles: true,
+					})
+				);
+			});
+
+			expect(mockGoToPreviousUnreadTab).toHaveBeenCalled();
+		});
+
+		it('escalates a second Focus Active Tab press to previous-unread', () => {
+			// First press parks the tab header; MainPanel reports true when the
+			// header was ALREADY focused and in view, which is the only signal
+			// that the chord has nothing left to do.
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			const mockGoToPreviousUnreadTab = vi.fn();
+			const focusActiveTab = vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true);
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isShortcut: (e: KeyboardEvent, actionId: string) =>
+					actionId === 'focusActiveTab' && e.altKey && e.metaKey && e.key === 'ArrowUp',
+				sessions: [{ id: 'test' }],
+				mainPanelRef: { current: { focusActiveTab } },
+				goToPreviousUnreadTab: mockGoToPreviousUnreadTab,
+			});
+
+			const press = () =>
+				act(() => {
+					window.dispatchEvent(
+						new KeyboardEvent('keydown', {
+							key: 'ArrowUp',
+							metaKey: true,
+							altKey: true,
+							bubbles: true,
+						})
+					);
+				});
+
+			press();
+			expect(focusActiveTab).toHaveBeenCalledTimes(1);
+			expect(mockGoToPreviousUnreadTab).not.toHaveBeenCalled();
+
+			press();
+			expect(focusActiveTab).toHaveBeenCalledTimes(2);
+			expect(mockGoToPreviousUnreadTab).toHaveBeenCalledTimes(1);
+		});
+
 		it('should allow tab management shortcuts (Cmd+T) when only overlays are open', () => {
 			const { result } = renderHook(() => useMainKeyboardHandler());
 

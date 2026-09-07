@@ -208,6 +208,40 @@ describe('SSH Remote IPC Handlers', () => {
 			expect(result.config?.sshOptions).toEqual({ ProxyJump: 'bastion' });
 		});
 
+		it('persists the parked records, which the field-by-field rebuild can drop', async () => {
+			// The handler names every field it copies, so a field it does not name is
+			// discarded on every save from the UI - the feature would work from the
+			// CLI and be dead in Settings.
+			const result = (await invokeHandler('ssh-remote:saveConfig', {
+				name: 'Tunnelled',
+				host: 'tailcat-devbox',
+				port: 22,
+				sshOptions: { ConnectTimeout: '45' },
+				sshOptionsDisabled: { ProxyCommand: 'tailcat tcABC 22' },
+				remoteEnv: { FOO: '1' },
+				remoteEnvDisabled: { BAR: '2' },
+			})) as { success: boolean; config?: SshRemoteConfig };
+
+			expect(result.config?.sshOptionsDisabled).toEqual({ ProxyCommand: 'tailcat tcABC 22' });
+			expect(result.config?.remoteEnvDisabled).toEqual({ BAR: '2' });
+			// The live records are untouched by the parked ones.
+			expect(result.config?.sshOptions).toEqual({ ConnectTimeout: '45' });
+			expect(result.config?.remoteEnv).toEqual({ FOO: '1' });
+		});
+
+		it('strips a reserved key from the parked record too', async () => {
+			// A parked RequestTTY could only ever be switched on into a rejection,
+			// so it does not reach disk in the first place.
+			const result = (await invokeHandler('ssh-remote:saveConfig', {
+				name: 'Tunnelled',
+				host: 'tailcat-devbox',
+				port: 22,
+				sshOptionsDisabled: { RequestTTY: 'force', ProxyJump: 'bastion' },
+			})) as { success: boolean; config?: SshRemoteConfig };
+
+			expect(result.config?.sshOptionsDisabled).toEqual({ ProxyJump: 'bastion' });
+		});
+
 		it('leaves sshOptions unset when none are supplied', async () => {
 			const result = (await invokeHandler('ssh-remote:saveConfig', {
 				name: 'Plain',

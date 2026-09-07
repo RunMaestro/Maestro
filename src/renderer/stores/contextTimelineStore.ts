@@ -115,12 +115,10 @@ export type ContextTimelineView = 'bar' | 'graph';
 interface ContextTimelineState {
 	/** Session whose panel is currently focused/visible (null = panel hidden). */
 	panelSessionId: string | null;
-	/** Whether the visible panel is minimized to a status pill. */
-	minimized: boolean;
 	/**
-	 * Bar list (per-turn rows) or x/y line graph (trend across turns). Lives
-	 * alongside `minimized` so the choice survives closing and reopening the
-	 * panel. Defaults to 'bar' so nothing changes until a user opts in.
+	 * Bar list (per-turn rows) or x/y line graph (trend across turns). Lives on
+	 * the store rather than in the panel so the choice survives closing and
+	 * reopening. Defaults to 'bar' so nothing changes until a user opts in.
 	 */
 	view: ContextTimelineView;
 	/** Viewport rect of the element that opened the panel (null = dock bottom-left). */
@@ -142,10 +140,17 @@ interface ContextTimelineState {
 	) => void;
 	/** Open (or refocus) the inspector for a session, optionally anchored to a rect. */
 	openPanel: (sessionId: string, anchorRect?: TimelineAnchorRect | null) => void;
-	/** Collapse the panel to a status pill; the buffer is untouched. */
-	minimizePanel: () => void;
-	/** Restore the panel from the minimized pill. */
-	restorePanel: () => void;
+	/**
+	 * Open the inspector, or close it when this same session's panel is already
+	 * showing. The context gauge is the ONLY open/close control the panel has, so
+	 * a plain `openPanel` there would be a one-way door: a second click on the
+	 * badge that just opened the panel has to put it away again.
+	 *
+	 * Switching agents while the panel is open re-anchors and re-targets rather
+	 * than closing, because that click asked to see a DIFFERENT agent's history,
+	 * not to dismiss the one on screen.
+	 */
+	togglePanel: (sessionId: string, anchorRect?: TimelineAnchorRect | null) => void;
 	/** Switch between the bar list and the line graph. */
 	setView: (view: ContextTimelineView) => void;
 	/** Hide the panel. History is KEPT so reopening shows it again. */
@@ -158,7 +163,6 @@ interface ContextTimelineState {
 
 export const useContextTimelineStore = create<ContextTimelineState>((set) => ({
 	panelSessionId: null,
-	minimized: false,
 	view: 'bar',
 	anchorRect: null,
 	buffers: {},
@@ -226,7 +230,6 @@ export const useContextTimelineStore = create<ContextTimelineState>((set) => ({
 	openPanel: (sessionId, anchorRect = null) =>
 		set((state) => ({
 			panelSessionId: sessionId,
-			minimized: false,
 			anchorRect,
 			// Preserve any history already captured for this session.
 			buffers: state.buffers[sessionId]
@@ -234,13 +237,23 @@ export const useContextTimelineStore = create<ContextTimelineState>((set) => ({
 				: { ...state.buffers, [sessionId]: { points: [], trimmed: false } },
 		})),
 
-	minimizePanel: () => set({ minimized: true }),
-
-	restorePanel: () => set({ minimized: false }),
+	togglePanel: (sessionId, anchorRect = null) =>
+		set((state) => {
+			if (state.panelSessionId === sessionId) {
+				return { panelSessionId: null, anchorRect: null };
+			}
+			return {
+				panelSessionId: sessionId,
+				anchorRect,
+				buffers: state.buffers[sessionId]
+					? state.buffers
+					: { ...state.buffers, [sessionId]: { points: [], trimmed: false } },
+			};
+		}),
 
 	setView: (view) => set({ view }),
 
-	closePanel: () => set({ panelSessionId: null, minimized: false, anchorRect: null }),
+	closePanel: () => set({ panelSessionId: null, anchorRect: null }),
 
 	clearSession: (sessionId) =>
 		set((state) => ({

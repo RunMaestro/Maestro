@@ -20,8 +20,12 @@ export interface SshRemoteConfig {
 	username: string;
 	privateKeyPath: string;
 	remoteEnv?: Record<string, string>;
+	/** Environment variables switched off; see `src/shared/parkedRecords.ts` */
+	remoteEnvDisabled?: Record<string, string>;
 	/** Extra `ssh -o KEY=VALUE` options; see `src/shared/sshOptions.ts` */
 	sshOptions?: Record<string, string>;
+	/** SSH options switched off, kept editable but never resolved */
+	sshOptionsDisabled?: Record<string, string>;
 	enabled: boolean;
 	/** Whether to use settings from ~/.ssh/config for this host */
 	useSshConfig?: boolean;

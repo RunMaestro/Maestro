@@ -5,7 +5,11 @@ import {
 	moveActiveUnifiedTabToEdge,
 	toggleReadOnlyModeFields,
 } from '../../utils/tabHelpers';
-import { resolveActiveTabRef, resolveTabRefRenameValue } from '../../utils/panelLayout';
+import {
+	resolveActiveTabRef,
+	resolveModelEffortTabId,
+	resolveTabRefRenameValue,
+} from '../../utils/panelLayout';
 import { DESTINATION_SHORTCUT_IDS, getModalActions, useModalStore } from '../../stores/modalStore';
 import { toggleAllCadenzas } from '../../stores/cadenzaStore';
 import { requestEditLastQueuedMessage } from '../../services/editQueuedMessage';
@@ -282,13 +286,15 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				// Allow sidebar toggle shortcuts (Alt+Cmd+Left/Right) even when modals are open
 				const isLayoutShortcut =
 					e.altKey && (e.metaKey || e.ctrlKey) && (e.key === 'ArrowLeft' || e.key === 'ArrowRight');
-				// Next unread / draft tab is benign navigation, so it stays live behind a
-				// modal. Resolved by SHORTCUT ID rather than by key, for two reasons: it
-				// has already moved combos once and the hard-coded arrow left behind by
-				// that move silently stopped matching it, and a user who REBINDS it would
-				// otherwise get a shortcut that dies the moment any modal is open -
-				// including the Shortcuts settings pane they rebound it in.
-				const isNextUnreadTabShortcut = ctx.isShortcut(e, 'nextUnreadTab');
+				// Walking unread / draft tabs is benign navigation, so it stays live
+				// behind a modal - in BOTH directions. Resolved by SHORTCUT ID rather
+				// than by key, for two reasons: it has already moved combos once and the
+				// hard-coded arrow left behind by that move silently stopped matching it,
+				// and a user who REBINDS it would otherwise get a shortcut that dies the
+				// moment any modal is open - including the Shortcuts settings pane they
+				// rebound it in.
+				const isNextUnreadTabShortcut =
+					ctx.isShortcut(e, 'nextUnreadTab') || ctx.isShortcut(e, 'previousUnreadTab');
 				// Allow right panel tab shortcuts (Cmd+Shift+F/H/S) even when overlays are open
 				const keyLower = e.key.toLowerCase();
 				const isRightPanelShortcut =
@@ -848,12 +854,14 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				}
 			} else if (ctx.isShortcut(e, 'openModelEffort')) {
 				e.preventDefault();
-				// AI-only: a file, terminal, or browser tab has no model to retune.
-				// Resolved through resolveActiveTabRef so a focused pane in a tiled
-				// group is retuned rather than the standalone tab hidden behind it.
-				const modelEffortRef = activeSession ? resolveActiveTabRef(activeSession) : null;
-				if (modelEffortRef?.type === 'ai') {
-					useModalStore.getState().openModal('modelEffort', { tabId: modelEffortRef.id });
+				// AI-only, and never while a group chat owns the view - see
+				// resolveModelEffortTabId for why a room resolves to a live but wrong
+				// target rather than to nothing. It also resolves through
+				// resolveActiveTabRef, so a focused pane in a tiled group is retuned
+				// rather than the standalone tab hidden behind it.
+				const modelEffortTabId = resolveModelEffortTabId(activeSession, ctx.activeGroupChatId);
+				if (modelEffortTabId) {
+					useModalStore.getState().openModal('modelEffort', { tabId: modelEffortTabId });
 					trackShortcut('openModelEffort');
 				}
 			} else if (ctx.isShortcut(e, 'openWizard')) {
@@ -893,8 +901,17 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				trackShortcut('focusSidebar');
 			} else if (ctx.isShortcut(e, 'focusActiveTab')) {
 				e.preventDefault();
-				ctx.mainPanelRef?.current?.focusActiveTab();
-				trackShortcut('focusActiveTab');
+				// First press parks focus on the active tab header. A second press has
+				// nothing left to do (the tab is already focused and in view), so it
+				// escalates to walking BACKWARD through unread/draft tabs - the mirror
+				// of Opt+Cmd+Down, which walks forward.
+				const alreadyParked = ctx.mainPanelRef?.current?.focusActiveTab() === true;
+				if (alreadyParked) {
+					ctx.goToPreviousUnreadTab?.();
+					trackShortcut('previousUnreadTab');
+				} else {
+					trackShortcut('focusActiveTab');
+				}
 			} else if (ctx.isShortcut(e, 'searchAllTabs')) {
 				// Resolve the agent from the store at event time rather than reading
 				// `ctx.activeSession`. The keyboard context's shape is not stable across
@@ -983,6 +1000,12 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				ctx.goToNextUnreadTab();
 				trackShortcut('nextUnreadTab');
+			} else if (ctx.isShortcut(e, 'previousUnreadTab')) {
+				// Ships unbound - reachable via a second Opt+Cmd+Up or from Cmd+K -
+				// but honored here for anyone who gives it a dedicated chord.
+				e.preventDefault();
+				ctx.goToPreviousUnreadTab?.();
+				trackShortcut('previousUnreadTab');
 			} else if (ctx.isShortcut(e, 'filterUnreadAgents')) {
 				e.preventDefault();
 				ctx.toggleShowUnreadAgentsOnly();

@@ -54,23 +54,46 @@ class BridgeClient {
 	private resolveReady!: () => void;
 	private pending = new Map<string | number, PendingInvoke>();
 	private listeners = new Map<string, Set<Listener>>();
+	// The server replays live Auto Runs as soon as the socket connects, before
+	// React effects have necessarily subscribed. Retain only frames that have no
+	// listener yet; the first subscriber drains the latest frame per session.
+	private pendingAutoRunFrames = new Map<string, unknown>();
 	private nextRequestId = 1;
 	private queue: string[] = [];
-	// True once any connection has been established. A LATER successful open is
-	// a RE-connect: every push event during the gap is gone for good (the
-	// bridge has no replay), so the renderer's in-memory state - transcripts,
-	// busy pills, tabs - is stale beyond repair. Mobile Safari makes this the
-	// common case: it suspends the socket on every app switch / screen lock.
+	// True once any connection has been established, so a later open is known
+	// to be a RE-connect. Mobile browsers suspend the socket on every app switch
+	// and screen lock, which makes reconnecting the common case.
 	private hadOpenConnection = false;
+	// Resume bookkeeping. Every frame the server broadcasts carries a `seq`; on
+	// reconnect the client reports the last one it saw and the server run it
+	// came from. The server replays what was missed if it still has it, and
+	// only when it cannot is the page reloaded - the bridge has no other way to
+	// recover pushes it never received, and the renderer's in-memory state
+	// (transcripts, busy pills, tabs) would otherwise stay stale for good.
+	private lastSeq = 0;
+	private epoch: string | undefined;
+	private resumePending = false;
 
 	constructor(config: BridgeConfig) {
 		this.ready = new Promise((r) => (this.resolveReady = r));
 		this.connect(config.wsUrl);
 	}
 
+	private resumeUrl(url: string): string {
+		const u = new URL(url);
+		u.searchParams.set('since', String(this.lastSeq));
+		if (this.epoch) u.searchParams.set('epoch', this.epoch);
+		return u.toString();
+	}
+
+	private markReady(): void {
+		this.resolveReady();
+		for (const frame of this.queue.splice(0)) this.ws?.send(frame);
+	}
+
 	private connect(url: string): void {
 		try {
-			this.ws = new WebSocket(url);
+			this.ws = new WebSocket(this.hadOpenConnection ? this.resumeUrl(url) : url);
 		} catch (err) {
 			// SyntaxError on a malformed URL or SECURITY_ERR from a blocked
 			// port can throw synchronously. Without scheduling the same retry
@@ -82,15 +105,13 @@ class BridgeClient {
 		}
 		this.ws.addEventListener('open', () => {
 			if (this.hadOpenConnection) {
-				// Reconnected after a drop: resync by reloading the page. The app
-				// re-bootstraps from the desktop's live store, which is the only
-				// source of truth for whatever happened while we were away.
-				window.location.reload();
+				// Reconnected after a drop. Whether we can carry on is decided by
+				// the `connected` frame the server sends first (see below).
+				this.resumePending = true;
 				return;
 			}
 			this.hadOpenConnection = true;
-			this.resolveReady();
-			for (const frame of this.queue.splice(0)) this.ws?.send(frame);
+			this.markReady();
 		});
 		this.ws.addEventListener('message', (ev: MessageEvent) => {
 			let msg: { type?: string; [k: string]: unknown };
@@ -107,6 +128,30 @@ class BridgeClient {
 					},
 				});
 				this.ws?.close(1003, 'invalid bridge frame');
+				return;
+			}
+			if (typeof msg.seq === 'number') this.lastSeq = msg.seq;
+			if (msg.type === 'connected') {
+				if (typeof msg.bridgeEpoch === 'string') this.epoch = msg.bridgeEpoch;
+				// A fresh connection's baseline is the server's counter at the moment
+				// it accepted us: nothing broadcast before that is ours to replay.
+				// On a resumed connection the replayed frames carry their own seq,
+				// so lastSeq stays where the gap actually starts.
+				if (msg.resumed !== true && typeof msg.bridgeSeq === 'number') {
+					this.lastSeq = msg.bridgeSeq;
+				}
+				if (!this.resumePending) return;
+				this.resumePending = false;
+				if (msg.resumed === true) {
+					// Every frame missed during the gap follows on this socket, so the
+					// renderer converges as if the connection had never dropped.
+					this.markReady();
+					return;
+				}
+				// The server could not replay the gap (it restarted, or the gap
+				// outran its buffer). The desktop's live store is the only source of
+				// truth left, and reloading re-bootstraps from it.
+				window.location.reload();
 				return;
 			}
 			if (msg.type === 'bridge.response') {
@@ -141,24 +186,28 @@ class BridgeClient {
 					Array.isArray(msg.aiTabs) ? msg.aiTabs : undefined,
 					msg.activeTabChanged === true,
 				];
+			} else if (msg.type === 'autorun_state' && typeof msg.sessionId === 'string') {
+				// Auto Run is renderer-owned in-memory state, so it never crosses the
+				// bridge as a `bridge.event` the way `process:*` does - the owning
+				// client hands it to main, which fans it out as this packet. Route it
+				// into a channel so `useAutoRunStateMirror` can render the run. The
+				// server also replays the current state for every active run when a
+				// client connects (wsRoute), so a browser tab opened mid-run catches
+				// up rather than waiting for the next progress tick.
+				channel = 'remote:autoRunStateMirror';
+				args = [msg.sessionId, msg.state ?? null];
 			}
 			if (channel) {
 				const set = this.listeners.get(channel);
-				if (!set) return;
+				if (!set || set.size === 0) {
+					if (channel === 'remote:autoRunStateMirror') {
+						this.pendingAutoRunFrames.set(args[0] as string, args[1]);
+					}
+					return;
+				}
 				const fakeEvent = { senderFrame: null };
 				for (const cb of set) {
-					try {
-						cb(fakeEvent, ...args);
-					} catch (err) {
-						console.error(`[bridge] listener for ${channel} threw`, err);
-						captureException(err, {
-							extra: {
-								component: 'BridgeClient',
-								action: 'listener',
-								channel,
-							},
-						});
-					}
+					this.notifyListener(channel, cb, fakeEvent, args);
 				}
 			}
 		});
@@ -179,6 +228,26 @@ class BridgeClient {
 		this.ws.addEventListener('error', (err: Event) => {
 			console.error('[bridge] WebSocket error', err);
 		});
+	}
+
+	private notifyListener(
+		channel: string,
+		listener: Listener,
+		event: { senderFrame: null },
+		args: unknown[]
+	): void {
+		try {
+			listener(event, ...args);
+		} catch (err) {
+			console.error(`[bridge] listener for ${channel} threw`, err);
+			captureException(err, {
+				extra: {
+					component: 'BridgeClient',
+					action: 'listener',
+					channel,
+				},
+			});
+		}
 	}
 
 	private sendFrame(frame: object): void {
@@ -203,6 +272,17 @@ class BridgeClient {
 			this.listeners.set(channel, set);
 		}
 		set.add(listener);
+		if (channel === 'remote:autoRunStateMirror' && this.pendingAutoRunFrames.size > 0) {
+			const fakeEvent = { senderFrame: null };
+			for (const [sessionId, state] of this.pendingAutoRunFrames) {
+				// `once()` unregisters its wrapper during the first callback. Honor
+				// that removal instead of invoking the stale wrapper for every
+				// buffered session, and preserve frames it did not consume.
+				if (!set.has(listener)) break;
+				this.pendingAutoRunFrames.delete(sessionId);
+				this.notifyListener(channel, listener, fakeEvent, [sessionId, state]);
+			}
+		}
 	}
 
 	off(channel: string, listener: Listener): void {

@@ -19,6 +19,7 @@ import {
 	registerConcertoDesignerFrame,
 } from '../../../renderer/components/Concerto/concertoDesignerBridge';
 import { planCrossAgentMentions } from '../../../renderer/services/crossAgentMentions';
+import { runCrossAgentAsk } from '../../../renderer/services/crossAgentAsk';
 import {
 	clearDesktopAiTabSelections,
 	noteDesktopAiTabSelection,
@@ -28,6 +29,12 @@ import {
 // it as the same flags a composer-queued message does.
 vi.mock('../../../renderer/services/crossAgentMentions', () => ({
 	planCrossAgentMentions: vi.fn(() => null),
+}));
+
+// The CLI's `ask` verb rides the shared consult service; the hook's job is to
+// forward the request and answer the response channel with whatever it returns.
+vi.mock('../../../renderer/services/crossAgentAsk', () => ({
+	runCrossAgentAsk: vi.fn(),
 }));
 
 const createMockTab = (overrides: Partial<AITab> = {}): AITab =>
@@ -83,7 +90,12 @@ describe('useRemoteIntegration', () => {
 		| undefined;
 	let onRemoteCloseTabHandler: ((sessionId: string, tabId: string) => void) | undefined;
 	let onRemoteRenameTabHandler:
-		| ((sessionId: string, tabId: string, newName: string) => void)
+		| ((
+				sessionId: string,
+				tabId: string,
+				newName: string,
+				responseChannel: string
+		  ) => void | Promise<void>)
 		| undefined;
 	let onRemoteStarTabHandler:
 		| ((sessionId: string, tabId: string, starred: boolean) => void)
@@ -94,6 +106,17 @@ describe('useRemoteIntegration', () => {
 	let onRemoteToggleBookmarkHandler: ((sessionId: string) => void) | undefined;
 	let onRequestMovementDesignerInspectionHandler:
 		| ((id: string, expectedRevision: number, responseChannel: string) => void)
+		| undefined;
+	let onRemoteCrossAgentAskHandler:
+		| ((
+				request: {
+					targetSessionId: string;
+					question: string;
+					fromSessionId?: string;
+					withContext?: boolean;
+				},
+				responseChannel: string
+		  ) => void)
 		| undefined;
 	let onRemoteNewAITabWithPromptHandler:
 		| ((sessionId: string, prompt: string, responseChannel: string, background?: boolean) => void)
@@ -171,6 +194,7 @@ describe('useRemoteIntegration', () => {
 			onRemoteRenameTabHandler = handler;
 			return () => {};
 		}),
+		sendRemoteRenameTabResponse: vi.fn(),
 		onRemoteStarTab: vi.fn().mockImplementation((handler) => {
 			onRemoteStarTabHandler = handler;
 			return () => {};
@@ -188,6 +212,11 @@ describe('useRemoteIntegration', () => {
 			return () => {};
 		}),
 		sendRemoteNewAITabWithPromptResponse: vi.fn(),
+		onRemoteCrossAgentAsk: vi.fn().mockImplementation((handler) => {
+			onRemoteCrossAgentAskHandler = handler;
+			return () => {};
+		}),
+		sendRemoteCrossAgentAskResponse: vi.fn(),
 		onRemoteEnqueueCommand: vi.fn().mockImplementation((handler) => {
 			onRemoteEnqueueCommandHandler = handler;
 			return () => {};
@@ -395,7 +424,7 @@ describe('useRemoteIntegration', () => {
 
 	const mockHistory = {
 		...window.maestro.history,
-		updateSessionName: vi.fn().mockResolvedValue(true),
+		updateSessionName: vi.fn().mockResolvedValue(1),
 	};
 
 	const mockGit = {
@@ -425,6 +454,7 @@ describe('useRemoteIntegration', () => {
 		onRemoteReorderTabHandler = undefined;
 		onRemoteToggleBookmarkHandler = undefined;
 		onRemoteNewAITabWithPromptHandler = undefined;
+		onRemoteCrossAgentAskHandler = undefined;
 		onRemoteEnqueueCommandHandler = undefined;
 		onRemoteListQueueHandler = undefined;
 		onRemoteRemoveQueueItemHandler = undefined;
@@ -440,6 +470,9 @@ describe('useRemoteIntegration', () => {
 		useConcertoCreationActivityStore.setState({ tracks: [] });
 		clearConcertoDesignerFramesForTests();
 		clearDesktopAiTabSelections();
+		mockClaude.updateSessionName.mockResolvedValue(undefined);
+		mockAgentSessions.setSessionName.mockResolvedValue(undefined);
+		mockHistory.updateSessionName.mockResolvedValue(true);
 
 		window.maestro = {
 			...originalMaestro,
@@ -1209,6 +1242,62 @@ describe('useRemoteIntegration', () => {
 		});
 	});
 
+	describe('remote cross-agent ask', () => {
+		it('forwards the consult and answers the response channel with the result', async () => {
+			const deps = createDeps({ sessions: [createMockSession({ id: 'session-1' })] });
+			vi.mocked(runCrossAgentAsk).mockResolvedValue({
+				success: true,
+				answer: 'Signed cookie, no session table.',
+				targetAgentName: 'PedTome',
+				targetTabId: 'consult-1',
+			});
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			await act(async () => {
+				onRemoteCrossAgentAskHandler?.(
+					{
+						targetSessionId: 'session-1',
+						question: 'How does the gate work?',
+						fromSessionId: 'caller',
+					},
+					'ask-chan'
+				);
+			});
+
+			expect(runCrossAgentAsk).toHaveBeenCalledWith({
+				targetSessionId: 'session-1',
+				question: 'How does the gate work?',
+				fromSessionId: 'caller',
+			});
+			expect(mockProcess.sendRemoteCrossAgentAskResponse).toHaveBeenCalledWith('ask-chan', {
+				success: true,
+				answer: 'Signed cookie, no session table.',
+				targetAgentName: 'PedTome',
+				targetTabId: 'consult-1',
+			});
+		});
+
+		it('answers the channel on a thrown consult so the caller is never left hanging', async () => {
+			const deps = createDeps({ sessions: [createMockSession({ id: 'session-1' })] });
+			vi.mocked(runCrossAgentAsk).mockRejectedValue(new Error('store exploded'));
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			await act(async () => {
+				onRemoteCrossAgentAskHandler?.(
+					{ targetSessionId: 'session-1', question: 'q' },
+					'ask-chan-2'
+				);
+			});
+
+			expect(mockProcess.sendRemoteCrossAgentAskResponse).toHaveBeenCalledWith('ask-chan-2', {
+				success: false,
+				error: 'store exploded',
+			});
+		});
+	});
+
 	describe('remote new AI tab with prompt', () => {
 		it('creates tab, dispatches remoteCommand, and acks true with the new tab id on idle session', () => {
 			const session = createMockSession({ id: 'session-1', state: 'idle' });
@@ -1682,7 +1771,7 @@ describe('useRemoteIntegration', () => {
 	});
 
 	describe('remote rename tab', () => {
-		it('renames tab and persists to agent session (claude-code)', () => {
+		it('renames tab and persists to agent session before reporting success', async () => {
 			const tab = createMockTab({ id: 'tab-1', agentSessionId: 'agent-session-1' });
 			const session = createMockSession({
 				id: 'session-1',
@@ -1694,8 +1783,8 @@ describe('useRemoteIntegration', () => {
 
 			renderHook(() => useRemoteIntegration(deps));
 
-			act(() => {
-				onRemoteRenameTabHandler?.('session-1', 'tab-1', 'New Tab Name');
+			await act(async () => {
+				await onRemoteRenameTabHandler?.('session-1', 'tab-1', 'New Tab Name', 'rename-response');
 			});
 
 			const updatedSession = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
@@ -1708,20 +1797,123 @@ describe('useRemoteIntegration', () => {
 				'New Tab Name'
 			);
 			expect(mockHistory.updateSessionName).toHaveBeenCalledWith('agent-session-1', 'New Tab Name');
+			expect(mockProcess.sendRemoteRenameTabResponse).toHaveBeenCalledWith('rename-response', {
+				success: true,
+			});
 		});
 
-		it('ignores rename when tab not found', () => {
+		it('reports failure when session is not found', async () => {
+			const deps = createDeps({ sessions: [createMockSession({ id: 'session-1' })] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			await act(async () => {
+				await onRemoteRenameTabHandler?.('missing-session', 'tab-1', 'New Name', 'rename-response');
+			});
+
+			expect(mockProcess.sendRemoteRenameTabResponse).toHaveBeenCalledWith('rename-response', {
+				success: false,
+				error: 'Session not found: missing-session',
+			});
+			expect(mockClaude.updateSessionName).not.toHaveBeenCalled();
+		});
+
+		it('reports failure when tab is not found', async () => {
 			const session = createMockSession({ id: 'session-1' });
 			const deps = createDeps({ sessions: [session] });
 
 			renderHook(() => useRemoteIntegration(deps));
 
-			act(() => {
-				onRemoteRenameTabHandler?.('session-1', 'nonexistent', 'New Name');
+			await act(async () => {
+				await onRemoteRenameTabHandler?.('session-1', 'nonexistent', 'New Name', 'rename-response');
 			});
 
 			expect(mockClaude.updateSessionName).not.toHaveBeenCalled();
 			expect(mockAgentSessions.setSessionName).not.toHaveBeenCalled();
+			expect(mockProcess.sendRemoteRenameTabResponse).toHaveBeenCalledWith('rename-response', {
+				success: false,
+				error: 'Tab not found: nonexistent',
+			});
+		});
+
+		it('does not report success when persistence fails', async () => {
+			mockClaude.updateSessionName.mockRejectedValueOnce(new Error('disk full'));
+			const tab = createMockTab({ id: 'tab-1', agentSessionId: 'agent-session-1', name: 'Old' });
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [tab],
+				projectRoot: '/test/project',
+				toolType: 'claude-code',
+			});
+			const deps = createDeps({ sessions: [session] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			await act(async () => {
+				await onRemoteRenameTabHandler?.('session-1', 'tab-1', 'New Name', 'rename-response');
+			});
+
+			const updatedSession = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
+			expect(updatedSession?.aiTabs.find((t) => t.id === 'tab-1')?.name).toBe('Old');
+			expect(mockProcess.sendRemoteRenameTabResponse).toHaveBeenCalledWith('rename-response', {
+				success: false,
+				error: 'disk full',
+			});
+		});
+
+		it('still renames when there are no history entries to relabel', async () => {
+			// A tab renamed during its first turn has an agentSessionId (stamped when
+			// the provider emits its id) but no history entry yet (written by the exit
+			// listener at the end of the turn), so the count is legitimately 0. The
+			// provider metadata write above is the authoritative persistence, and the
+			// desktop path treats this same call as best effort, so the rename must
+			// not fail here.
+			mockHistory.updateSessionName.mockResolvedValueOnce(0);
+			const tab = createMockTab({ id: 'tab-1', agentSessionId: 'agent-session-1', name: 'Old' });
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [tab],
+				projectRoot: '/test/project',
+				toolType: 'claude-code',
+			});
+			const deps = createDeps({ sessions: [session] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			await act(async () => {
+				await onRemoteRenameTabHandler?.('session-1', 'tab-1', 'New Name', 'rename-response');
+			});
+
+			const updatedSession = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
+			expect(updatedSession?.aiTabs.find((t) => t.id === 'tab-1')?.name).toBe('New Name');
+			expect(mockProcess.sendRemoteRenameTabResponse).toHaveBeenCalledWith('rename-response', {
+				success: true,
+			});
+		});
+
+		it('still fails the rename when the history update throws', async () => {
+			mockHistory.updateSessionName.mockRejectedValueOnce(new Error('history unreadable'));
+			const tab = createMockTab({ id: 'tab-1', agentSessionId: 'agent-session-1', name: 'Old' });
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [tab],
+				projectRoot: '/test/project',
+				toolType: 'claude-code',
+			});
+			const deps = createDeps({ sessions: [session] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			await act(async () => {
+				await onRemoteRenameTabHandler?.('session-1', 'tab-1', 'New Name', 'rename-response');
+			});
+
+			const updatedSession = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
+			expect(updatedSession?.aiTabs.find((t) => t.id === 'tab-1')?.name).toBe('Old');
+			expect(mockProcess.sendRemoteRenameTabResponse).toHaveBeenCalledWith('rename-response', {
+				success: false,
+				error: 'history unreadable',
+			});
 		});
 	});
 

@@ -117,6 +117,9 @@ export type { UsePaginationResult } from './usePagination';
 // ResizeObserver-backed element width, for JS-computed layout
 export { useElementWidth } from './useElementWidth';
 
+// Whether an optional inline label still fits, so it can be dropped not clipped
+export { useOptionalLabelFits } from './useOptionalLabelFits';
+
 // App-level handlers (drag, file, folder operations)
 export { useAppHandlers } from './useAppHandlers';
 export type { UseAppHandlersDeps, UseAppHandlersReturn } from './useAppHandlers';

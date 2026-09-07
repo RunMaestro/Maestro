@@ -18,13 +18,19 @@ import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest';
 // lifecycle (open -> close -> reopen) by hand.
 class InertWebSocket {
 	static readonly CONNECTING = 0;
+	static readonly OPEN = 1;
 	static instances: InertWebSocket[] = [];
 	readyState = 0;
+	readonly url: string;
+	sent: string[] = [];
 	private listeners = new Map<string, Set<(ev?: unknown) => void>>();
-	constructor() {
+	constructor(url: string) {
+		this.url = url;
 		InertWebSocket.instances.push(this);
 	}
-	send(): void {}
+	send(frame: string): void {
+		this.sent.push(frame);
+	}
 	close(): void {}
 	addEventListener(type: string, cb: (ev?: unknown) => void): void {
 		let set = this.listeners.get(type);
@@ -156,30 +162,180 @@ describe('web-desktop electron-shim desktop navigation sync', () => {
 	});
 });
 
+describe('web-desktop electron-shim autorun_state routing', () => {
+	// Auto Run is renderer-owned in-memory state. The owning client pushes it to
+	// main, which fans it out to every WebSocket client as an `autorun_state`
+	// packet - the only way a browser tab can learn a run exists. The router had
+	// no case for it, so the frame was parsed and dropped and every Auto Run
+	// surface in the browser stayed empty for the whole run.
+	it('routes an autorun_state packet onto the mirror channel', () => {
+		const listener = vi.fn();
+		ipcRenderer.on('remote:autoRunStateMirror', listener);
+
+		const state = {
+			isRunning: true,
+			totalTasks: 6,
+			completedTasks: 2,
+			currentTaskIndex: 2,
+			documents: ['plan'],
+		};
+
+		InertWebSocket.instances[0].emit('message', {
+			data: JSON.stringify({ type: 'autorun_state', sessionId: 'session-9', state }),
+		});
+
+		expect(listener).toHaveBeenCalledWith({ senderFrame: null }, 'session-9', state);
+		ipcRenderer.removeListener('remote:autoRunStateMirror', listener);
+	});
+
+	it('replays the latest frame when the renderer subscribes after socket setup', () => {
+		const first = { isRunning: true, totalTasks: 4, completedTasks: 1, currentTaskIndex: 1 };
+		const latest = { ...first, completedTasks: 2, currentTaskIndex: 2 };
+
+		InertWebSocket.instances[0].emit('message', {
+			data: JSON.stringify({ type: 'autorun_state', sessionId: 'late-session', state: first }),
+		});
+		InertWebSocket.instances[0].emit('message', {
+			data: JSON.stringify({ type: 'autorun_state', sessionId: 'late-session', state: latest }),
+		});
+
+		const listener = vi.fn();
+		ipcRenderer.on('remote:autoRunStateMirror', listener);
+
+		expect(listener).toHaveBeenCalledTimes(1);
+		expect(listener).toHaveBeenCalledWith({ senderFrame: null }, 'late-session', latest);
+		ipcRenderer.removeListener('remote:autoRunStateMirror', listener);
+	});
+
+	it('replays only one buffered frame to a once listener and preserves the rest', () => {
+		for (const sessionId of ['first-session', 'second-session']) {
+			InertWebSocket.instances[0].emit('message', {
+				data: JSON.stringify({
+					type: 'autorun_state',
+					sessionId,
+					state: { isRunning: true },
+				}),
+			});
+		}
+
+		const onceListener = vi.fn();
+		ipcRenderer.once('remote:autoRunStateMirror', onceListener);
+
+		expect(onceListener).toHaveBeenCalledTimes(1);
+		expect(onceListener).toHaveBeenCalledWith({ senderFrame: null }, 'first-session', {
+			isRunning: true,
+		});
+
+		const remainingListener = vi.fn();
+		ipcRenderer.on('remote:autoRunStateMirror', remainingListener);
+		expect(remainingListener).toHaveBeenCalledTimes(1);
+		expect(remainingListener).toHaveBeenCalledWith({ senderFrame: null }, 'second-session', {
+			isRunning: true,
+		});
+		ipcRenderer.removeListener('remote:autoRunStateMirror', remainingListener);
+	});
+
+	it('forwards a null state (run cleared) rather than dropping the frame', () => {
+		const listener = vi.fn();
+		ipcRenderer.on('remote:autoRunStateMirror', listener);
+
+		InertWebSocket.instances[0].emit('message', {
+			data: JSON.stringify({ type: 'autorun_state', sessionId: 'session-9', state: null }),
+		});
+
+		expect(listener).toHaveBeenCalledWith({ senderFrame: null }, 'session-9', null);
+		ipcRenderer.removeListener('remote:autoRunStateMirror', listener);
+	});
+
+	it('ignores a packet with no sessionId to address it to', () => {
+		const listener = vi.fn();
+		ipcRenderer.on('remote:autoRunStateMirror', listener);
+
+		InertWebSocket.instances[0].emit('message', {
+			data: JSON.stringify({ type: 'autorun_state', state: { isRunning: true } }),
+		});
+
+		expect(listener).not.toHaveBeenCalled();
+		ipcRenderer.removeListener('remote:autoRunStateMirror', listener);
+	});
+});
+
 describe('web-desktop electron-shim bridge reconnect', () => {
-	it('reloads the page on a RE-connect (drop + reopen), not on the first open', () => {
-		const first = InertWebSocket.instances[0];
-		expect(first).toBeDefined();
+	const frame = (msg: object) => ({ data: JSON.stringify(msg) });
 
-		// First successful open: a normal boot, no reload.
-		first.emit('open');
-		expect(window.location.reload).not.toHaveBeenCalled();
-
-		// Drop the socket. The shim schedules a reconnect in 1s; every push
-		// event during the gap is lost (no replay), so the renderer's state is
-		// stale beyond repair - the reopened connection must trigger a reload
-		// to re-bootstrap from the desktop's live store.
+	// Drop the socket and let the shim's 1s reconnect timer fire. Returns the
+	// socket it opened for the retry.
+	function reconnect(current: InertWebSocket): InertWebSocket {
 		vi.useFakeTimers();
 		try {
-			first.emit('close');
+			current.emit('close');
 			vi.advanceTimersByTime(1000);
 		} finally {
 			vi.useRealTimers();
 		}
+		const next = InertWebSocket.instances[InertWebSocket.instances.length - 1];
+		expect(next).not.toBe(current);
+		return next;
+	}
 
-		const second = InertWebSocket.instances[1];
-		expect(second).toBeDefined();
+	it('resumes in place when the server can replay the gap, and reloads only when it cannot', async () => {
+		const first = InertWebSocket.instances[0];
+		expect(first).toBeDefined();
+
+		// First successful open: a normal boot, no reload. The server names its
+		// run and reports where its counter stands at connect time.
+		first.emit('open');
+		first.emit('message', frame({ type: 'connected', bridgeEpoch: 'run-1', bridgeSeq: 5 }));
+		expect(window.location.reload).not.toHaveBeenCalled();
+
+		// Drop before a single broadcast arrived. The baseline is the counter the
+		// server reported at connect time, not 0: since=0 would replay history
+		// from before the tab opened, or force a reload once seq 1 was evicted.
+		const second = reconnect(first);
+		const url = new URL(second.url);
+		expect(url.searchParams.get('since')).toBe('5');
+		expect(url.searchParams.get('epoch')).toBe('run-1');
+
+		// An invoke issued during the gap waits for the resume decision rather
+		// than hanging or being dropped.
+		second.readyState = InertWebSocket.OPEN;
+		const invoke = ipcRenderer.invoke('some:channel');
 		second.emit('open');
+		expect(second.sent).toHaveLength(0);
+
+		// The server replayed everything missed: no reload, and the queued invoke
+		// goes out on the new socket. The counter on a RESUMED `connected` must
+		// not move lastSeq: the replayed frames that follow carry their own seq,
+		// and jumping ahead would skip any of them lost to a second drop.
+		second.emit(
+			'message',
+			frame({ type: 'connected', bridgeEpoch: 'run-1', bridgeSeq: 99, resumed: true })
+		);
+		await new Promise((r) => setTimeout(r, 0));
+		expect(window.location.reload).not.toHaveBeenCalled();
+		const sentInvoke = second.sent
+			.map((f) => JSON.parse(f))
+			.find((f) => f.channel === 'some:channel');
+		expect(sentInvoke).toBeDefined();
+		second.emit(
+			'message',
+			frame({ type: 'bridge.response', requestId: sentInvoke.requestId, ok: true, result: 'ok' })
+		);
+		await expect(invoke).resolves.toBe('ok');
+		second.emit('message', frame({ type: 'bridge.event', channel: 'noop', args: [], seq: 6 }));
+
+		// Drop again; this time the server cannot replay the gap (it restarted).
+		// The only source of truth left is the desktop's live store, so reload.
+		const third = reconnect(second);
+		expect(new URL(third.url).searchParams.get('since')).toBe('6');
+		third.emit('open');
+		third.emit('message', frame({ type: 'connected', bridgeEpoch: 'run-2', resumed: false }));
 		expect(window.location.reload).toHaveBeenCalledTimes(1);
+
+		// An older server that knows nothing about resume behaves the same way.
+		const fourth = reconnect(third);
+		fourth.emit('open');
+		fourth.emit('message', frame({ type: 'connected' }));
+		expect(window.location.reload).toHaveBeenCalledTimes(2);
 	});
 });

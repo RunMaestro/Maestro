@@ -75,7 +75,7 @@ import { resolveSessionFromPidWalk } from '../../coworking/pid-resolution';
 import { initializeOutputParsers } from '../../parsers';
 import { initializeSessionStorages } from '../../storage';
 import { getCueProcessList } from '../../cue/cue-executor';
-import { getSshRemoteById } from '../../stores';
+import { getSshRemoteById, flushPendingSessionWrites } from '../../stores';
 import { createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
 import { tunnelManager } from '../../tunnel-manager';
 import { captureException } from '../../utils/sentry';
@@ -219,6 +219,10 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		// the bus is created during plugin init and re-authorizes every delivery
 		// against live grants, so this is a no-op when plugins are disabled.
 		emitPluginEvent: (event) => deps.getPluginEventBus()?.emit(event),
+		// Sessions are written behind a coalescing timer so a streaming turn can't
+		// block the UI thread. Await it here so the handlers' boolean
+		// acknowledgement keeps meaning "this revision reached disk".
+		flushSessionWrites: flushPendingSessionWrites,
 	});
 	// Wire the plugin focus verbs into the persistence layer's session.activated
 	// dedupe so the two emit paths share one last-emitted id.

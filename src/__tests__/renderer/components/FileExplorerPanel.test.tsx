@@ -3751,7 +3751,10 @@ describe('FileExplorerPanel', () => {
 			);
 			fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
 			fireEvent.keyDown(window, { key: 'Escape' });
-			expectAllListenersRemoved(spies.addSpy, spies.removeSpy);
+			// Scoped to keydown: the panel is still mounted here, so the viewport
+			// hook's resize/orientationchange subscriptions are live by design. The
+			// unmount case below is the unscoped, stricter check.
+			expectAllListenersRemoved(spies.addSpy, spies.removeSpy, ['keydown']);
 			spies.restore();
 		});
 

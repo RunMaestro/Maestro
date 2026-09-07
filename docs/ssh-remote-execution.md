@@ -128,6 +128,19 @@ connect.
 from whether the agent speaks stream-json, and a forced TTY injects terminal
 control sequences that corrupt that stream.
 
+#### Switching an entry off
+
+The eye button beside a row switches that option (or environment variable) off
+without deleting it. The value stays in the dialog, struck through and dimmed,
+and comes back the moment you switch it on again - so testing whether a
+`ProxyCommand` is the reason a host stopped answering does not mean pasting the
+string into a scratch file first.
+
+A switched-off entry is never passed to `ssh`. It is kept in a separate list
+that nothing but this dialog reads, which is also why a broken entry can be
+parked and saved: only live entries are validated, so an option you cannot get
+working today does not block the rest of the remote.
+
 <Warning>
 A `ProxyCommand` is an arbitrary program run on your machine, with your
 credentials, every time an agent connects. Treat one the same way you would
@@ -145,6 +158,10 @@ maestro-cli create-ssh-remote "Tunnelled box" \
 
 # Adjust one option later without disturbing the rest
 maestro-cli update-ssh-remote tunnelled --ssh-option ConnectTimeout=60
+
+# Switch one off, keeping its value, then switch it back on
+maestro-cli update-ssh-remote tunnelled --disable-ssh-option ProxyCommand
+maestro-cli update-ssh-remote tunnelled --enable-ssh-option ProxyCommand
 
 # See the full option set ssh will actually receive
 maestro-cli list-ssh-remotes --json
@@ -350,10 +367,11 @@ Shared history files respect the **Maximum Log Buffer** setting (Settings → Di
 
 ### Agent Errors
 
-| Error                    | Solution                                 |
-| ------------------------ | ---------------------------------------- |
-| "Command not found"      | Install the AI agent on the remote host  |
-| "Agent binary not found" | Ensure the agent is in the remote's PATH |
+| Error                                         | Solution                                                                                                                                                                                             |
+| --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| "Command not found"                           | Install the AI agent on the remote host                                                                                                                                                              |
+| "Agent binary not found"                      | Ensure the agent is in the remote's PATH                                                                                                                                                             |
+| "the configured remote could not be resolved" | The agent has SSH switched on but points at a remote that no longer exists or is disabled. Re-pick the remote in Edit Agent. Maestro stops rather than quietly running the turn on your own machine. |
 
 ### Tips
 

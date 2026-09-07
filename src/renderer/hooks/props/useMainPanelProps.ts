@@ -21,6 +21,7 @@ import type {
 	AITab,
 	AgentError,
 	QueuedItem,
+	QueuedItemEditPatch,
 } from '../../types';
 import type { FileTreeChanges } from '../../utils/fileExplorer';
 import type { TabCompletionSuggestion, TabCompletionFilter } from '../input/useTabCompletion';
@@ -148,7 +149,7 @@ export interface UseMainPanelPropsDeps {
 	handleDeleteLog: (logId: string) => number | null;
 	handleRemoveQueuedItem: (itemId: string) => void;
 	handleToggleQueuedItemPause: (itemId: string) => void;
-	handleEditQueuedItem: (itemId: string, patch: { text: string; images: string[] }) => void;
+	handleEditQueuedItem: (itemId: string, patch: QueuedItemEditPatch) => void;
 	handleReorderQueuedItem: (fromIndex: number, toIndex: number, tabId?: string) => void;
 	handleForceSendQueuedItem: (itemId: string) => void;
 	forcedParallelEnabled: boolean;

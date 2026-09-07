@@ -34,9 +34,12 @@ import {
 	type ClassifiableError,
 } from '../../shared/retryClassification';
 import { resilienceEnabled } from '../../shared/agentConstants';
+import { parseQuotaLimitDetail, type QuotaLimitDetail } from '../../shared/quotaLimitDetail';
 import { failoverArmed, selectNextEndpoint } from '../../shared/providerFailover';
 import { switchToNextEndpoint, useFailoverStore } from './failoverStore';
 import { generateId } from '../utils/ids';
+import { captureQueuedTurnSettings } from '../utils/providerTabSessions';
+import { settleTabThinkingState } from '../utils/tabHelpers';
 import { logger } from '../utils/logger';
 import { useSessionStore, selectSessionById, updateSessionWith } from './sessionStore';
 import { notifyToast } from './notificationStore';
@@ -122,6 +125,14 @@ export interface OutageRecord {
 	resolvedAt?: number;
 	/** Latest failing message, for the card subtitle. */
 	lastMessage: string;
+	/**
+	 * Structured quota evidence when the provider sent any (Claude Code's
+	 * `quotaLimits`). Lets the card name WHICH window was exhausted and whether
+	 * anything can be done, rather than showing the provider's one collapsed
+	 * sentence. Undefined for availability outages and for providers/transports
+	 * that forward no quota object.
+	 */
+	quota?: QuotaLimitDetail;
 }
 
 interface DispatchSnapshot {
@@ -451,6 +462,11 @@ export function scheduleRetryForError(
 		status: 'active',
 		resolvedAt: undefined,
 		lastMessage: error.message,
+		// Re-read on every reschedule rather than only on the first failure: a
+		// continued outage can cross from the 5-hour window into the weekly one,
+		// and a card still naming the first window sends the user to wait out a
+		// reset that already happened.
+		quota: parseQuotaLimitDetail(error.parsedJson),
 	});
 
 	const delay = Math.max(0, nextRetryAt - now);
@@ -469,6 +485,32 @@ export function scheduleRetryForError(
 		}, delay)
 	);
 	return true;
+}
+
+/**
+ * The snapshotted item to resend, re-codified against the agent's CURRENT
+ * model and effort.
+ *
+ * This is a deliberate exception to codify-at-send. Settings freeze on a
+ * QueuedItem so a turn runs under what the user had selected when they hit
+ * Enter, and so a change made mid-turn never disturbs work already in flight. A
+ * retry is neither of those: the turn failed, and the most common reason a user
+ * touches the model (or swaps the agent's provider) afterwards is to get out
+ * from behind the exact wall that failed it. Replaying the frozen model would
+ * send them straight back into it - and after a provider switch it would hand
+ * the old provider's model name to a binary that has never heard of it.
+ *
+ * Text, images, and slash-command expansion are untouched: the prompt resent is
+ * still the one the user typed. Only the knobs they can reach while the
+ * countdown runs are re-read. The provider was always taken live (see
+ * `codifyQueuedTurnSettings`), so model and effort are all that needed
+ * unfreezing.
+ */
+function replayItem(entry: RetryEntry, item: QueuedItem): QueuedItem {
+	const session = selectSessionById(entry.sessionId)(useSessionStore.getState());
+	if (!session) return item;
+	const tab = session.aiTabs?.find((t) => t.id === entry.tabId);
+	return { ...item, turnSettings: captureQueuedTurnSettings(tab, session) };
 }
 
 /** Fire a scheduled retry now: mark in-flight and re-run the failed work. */
@@ -526,7 +568,9 @@ async function fireRetry(key: string): Promise<void> {
 			removeEntry(key);
 			return;
 		}
-		await useAgentStore.getState().processQueuedItem(entry.sessionId, snapshot.item, snapshot.deps);
+		await useAgentStore
+			.getState()
+			.processQueuedItem(entry.sessionId, replayItem(entry, snapshot.item), snapshot.deps);
 	} catch (error) {
 		// A dispatch-time throw is itself a failure; leave the entry in-flight so
 		// the incoming agent-error (or a manual action) drives the next step.
@@ -675,6 +719,17 @@ export function cancelRetry(sessionId: string, tabId: string): void {
 	const entry = useRetryStore.getState().retries[key];
 	if (!entry) return;
 	logger.info('[retry] User cancelled auto-retry', undefined, { key });
+
+	// A 'scheduled' entry has nothing running behind it: the failed turn is over
+	// (or its resend never spawned), and the tab is only still marked busy because
+	// the countdown was standing in for the turn. Stopping the retry ends that, so
+	// settle the tab - otherwise its dot keeps pulsing and the Thinking pill keeps
+	// counting elapsed time for work nobody is doing. An 'in-flight' entry IS a
+	// live resend; its busy state belongs to the exit listener, so leave it alone.
+	if (entry.status === 'scheduled') {
+		updateSessionWith(sessionId, (s) => settleTabThinkingState(s, tabId));
+	}
+
 	resolveOutage(entry.outageId, 'stopped');
 	removeEntry(key);
 }

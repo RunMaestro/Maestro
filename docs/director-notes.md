@@ -83,6 +83,7 @@ An AI-generated synopsis of recent activity across all agents. This tab uses a c
 - **Refresh** - Regenerate the synopsis with current settings
 - **Save** - Export the synopsis as a markdown file
 - **Copy** - Copy the synopsis to the clipboard as readable markdown
+- **Font zoom** - A circle in the top-right corner of the notes that expands to an **A- / A+** pill on hover or keyboard focus. It scales the reading text in both Rich Mode and Plain Mode, and Maestro remembers the size you picked. The stat cards and charts around the notes keep their own sizing: they are chrome, not reading text.
 
 **Stats Bar:**
 After generation, a stats bar shows:

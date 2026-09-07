@@ -72,6 +72,25 @@ as `dispatch`. Without that, `create-worktree --background --message "..."`
 created the agent quietly and was then yanked onto it one message later, which
 reads as the flag not working.
 
+### `ask` is not `dispatch --background`
+
+`--background` decides where the VIEW lands. It does not decide which
+conversation the prompt joins. A backgrounded `dispatch` still writes into the
+target's active tab, so a question sent that way lands in the middle of whatever
+the user has open with that agent - quietly, which is worse, because they find it
+later with no idea where it came from.
+
+`maestro-cli ask` is the verb for a question. It routes to the cross-agent
+consult path (`cross_agent_ask` -> `consultAgent` -> `runCrossAgentAsk` ->
+`sendCrossAgentRequest`), the same one a typed `@mention` takes: a hidden tab on
+the target, a fresh context, no focus, no unread, and the answer returned to the
+caller. It carries no `--background` flag because there is no foreground form of
+it - a consult that took over the screen would not be a consult.
+
+The rule for a new agent-to-agent verb: if the caller wants an ANSWER, it rides
+the consult path; if it wants the other agent to DO something, it rides dispatch
+and the placement flags apply.
+
 ### Verbs that accept the flag and ignore it
 
 `refresh-files` renders no notice and moves no selection: the Files panel it
@@ -221,6 +240,7 @@ of taking a second round trip or trusting a value the caller guessed.
 | Read one tab's settings back                 | `tab show`, or `session list --json`                              |
 | Move Tab to First / Last                     | `tab move <tab-id> first\|last\|<index>`                          |
 | Send a message, or run a shell command       | `send`, `dispatch`, `send-terminal`                               |
+| Consult another agent (`@mention`)           | `ask <agent> "<question>" --from <caller>`                        |
 | Open a file / URL / terminal tab             | `open-file`, `open-browser`, `open-terminal`                      |
 | Open a modal or dashboard                    | `open <surface> [--tab]` (registry in `src/shared/uiSurfaces.ts`) |
 | Auto Run: start, stop, resume, skip, abort   | `auto-run`, `stop-auto-run`, `resume-auto-run`, ...               |

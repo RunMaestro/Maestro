@@ -60,4 +60,25 @@ describe('Process TabRemote Preload API', () => {
 			expect(mockSend).toHaveBeenCalledWith('response-channel', null);
 		});
 	});
+
+	describe('remote rename tab', () => {
+		it('forwards responseChannel with rename events', () => {
+			const callback = vi.fn();
+
+			api.onRemoteRenameTab(callback);
+			const handler = mockOn.mock.calls.find(([channel]) => channel === 'remote:renameTab')?.[1];
+			handler({}, 'session-1', 'tab-1', 'New name', 'rename-response');
+
+			expect(callback).toHaveBeenCalledWith('session-1', 'tab-1', 'New name', 'rename-response');
+		});
+
+		it('sends rename response via ipcRenderer.send', () => {
+			api.sendRemoteRenameTabResponse('rename-response', { success: false, error: 'No tab' });
+
+			expect(mockSend).toHaveBeenCalledWith('rename-response', {
+				success: false,
+				error: 'No tab',
+			});
+		});
+	});
 });

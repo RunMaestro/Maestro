@@ -6,7 +6,7 @@
  * account dirs + every `<TOOL>_HOME`/`CONFIG_DIR` referenced by a session
  * (agent-level customEnvVars merged under session-level, session wins) + any
  * key already present in the snapshot store. Sessions without an explicit env
- * var fall back to the implicit default (`~/<defaultSubdir>`).
+ * var fall back to that provider's implicit default account dir.
  *
  * The result includes selection state (which account tab is active) clamped to
  * the first account whenever the current selection disappears.
@@ -14,15 +14,17 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSessionStore } from '../../../stores/sessionStore';
+import { resolveAgentAccountKey } from '../../../../shared/providerProfiles';
 import { getHomeDir, getHomeDirAsync } from '../../../utils/homeDir';
 
 export interface UseQuotaAccountsOptions {
-	/** Provider session `toolType` that owns this quota surface. */
+	/**
+	 * Provider session `toolType` that owns this quota surface. The env var and
+	 * default account subdir come from `PROVIDER_PROFILE_CONFIGS` keyed by this,
+	 * so a panel cannot attribute an agent to a different account than the
+	 * Agents grid's provider filter does.
+	 */
 	toolType: string;
-	/** Env var that selects the account home (`CLAUDE_CONFIG_DIR` / `CODEX_HOME`). */
-	envVarName: string;
-	/** Default account subdir under $HOME when no env var is set (`.claude` / `.codex`). */
-	defaultSubdir: string;
 	/** Explicit account keys from the parent (normalized internally). */
 	accountKeys: string[];
 	/** Live snapshot map from the provider store (keys are canonical account keys). */
@@ -58,15 +60,7 @@ export interface UseQuotaAccountsResult {
 }
 
 export function useQuotaAccounts(opts: UseQuotaAccountsOptions): UseQuotaAccountsResult {
-	const {
-		toolType,
-		envVarName,
-		defaultSubdir,
-		accountKeys,
-		snapshots,
-		normalizeKey,
-		deriveShortName,
-	} = opts;
+	const { toolType, accountKeys, snapshots, normalizeKey, deriveShortName } = opts;
 	const sessions = useSessionStore((s) => s.sessions);
 
 	// Keep the latest fetchers in refs so the mount-only effects below can call
@@ -115,7 +109,7 @@ export function useQuotaAccounts(opts: UseQuotaAccountsOptions): UseQuotaAccount
 		};
 	}, []);
 
-	// Home dir for the implicit default `~/<defaultSubdir>` account. The
+	// Home dir for the provider's implicit default account dir. The
 	// renderer has no direct fs access; cached IPC fetch returns synchronously
 	// on subsequent renders.
 	const [homeDir, setHomeDir] = useState<string | undefined>(getHomeDir);
@@ -124,7 +118,6 @@ export function useQuotaAccounts(opts: UseQuotaAccountsOptions): UseQuotaAccount
 			getHomeDirAsync()?.then(setHomeDir);
 		}
 	}, [homeDir]);
-	const defaultAccountKey = homeDir ? normalizeKey(`${homeDir}/${defaultSubdir}`) : null;
 
 	const { configuredAccountKeys, agentCountsByAccount } = useMemo(() => {
 		const keys = new Set<string>();
@@ -143,12 +136,10 @@ export function useQuotaAccounts(opts: UseQuotaAccountsOptions): UseQuotaAccount
 			if (s.toolType !== toolType) continue;
 			const sessionEnv = (s.customEnvVars ?? {}) as Record<string, string>;
 			const merged = { ...agentLevelEnvVars, ...sessionEnv };
-			const dir = merged[envVarName];
 			// An agent with no env var runs against the implicit `~/<subdir>`
 			// account, so it belongs to that bucket - unless $HOME hasn't
 			// resolved yet, in which case there is no key to attribute it to.
-			const resolved =
-				typeof dir === 'string' && dir.length > 0 ? normalizeKey(dir) : defaultAccountKey;
+			const resolved = resolveAgentAccountKey(toolType, merged, homeDir);
 			if (!resolved) continue;
 			keys.add(resolved);
 			counts[resolved] = (counts[resolved] ?? 0) + 1;
@@ -198,9 +189,8 @@ export function useQuotaAccounts(opts: UseQuotaAccountsOptions): UseQuotaAccount
 		sessions,
 		agentLevelEnvVars,
 		snapshots,
-		defaultAccountKey,
+		homeDir,
 		toolType,
-		envVarName,
 		normalizeKey,
 		deriveShortName,
 	]);

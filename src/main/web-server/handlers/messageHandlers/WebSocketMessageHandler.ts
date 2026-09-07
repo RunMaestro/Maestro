@@ -42,7 +42,12 @@ import type {
 	MessageHandlerCallbacks,
 	MessageHandlerContext,
 } from './types';
-import { handleSendCommand, handleSwitchMode, handleSelectSession } from './commands';
+import {
+	handleSendCommand,
+	handleSwitchMode,
+	handleSelectSession,
+	handleCrossAgentAsk,
+} from './commands';
 import { ACAPPELLA_SIGNAL_MESSAGE, handleACappellaSignal } from './acappellaSignal';
 import {
 	handleGetSessions,
@@ -245,6 +250,10 @@ export class WebSocketMessageHandler {
 
 			case 'send_command':
 				handleSendCommand(this.ctx, client, message);
+				break;
+
+			case 'cross_agent_ask':
+				handleCrossAgentAsk(this.ctx, client, message);
 				break;
 
 			case 'switch_mode':

@@ -186,7 +186,10 @@ export const NarrativeSections = memo(function NarrativeSections({
 	groupLookup,
 }: NarrativeSectionsProps) {
 	return (
-		<div className="flex flex-col gap-4 select-text">
+		// `director-notes-narrative` is the hook the AI Overview's font zoom scales
+		// against: these bullets are reading text drawn as widgets, so the prose
+		// rule never reaches them.
+		<div className="director-notes-narrative flex flex-col gap-4 select-text">
 			{narrative.sections.map((section, sectionIndex) => {
 				const accent = accentForKind(section.kind, theme);
 				const Icon = KIND_ICON[section.kind] ?? ArrowRight;

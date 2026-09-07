@@ -399,12 +399,17 @@ textarea::placeholder {
 	}
 }
 
+/* Scrolling stripes for an active progress bar. The stripes live on an
+   oversized ::after that slides by one tile with `transform`, rather than on
+   the bar itself with an animated `background-position`. background-position is
+   not compositable, so the old version repainted the bar every frame for as
+   long as any progress bar was on screen. */
 @keyframes progress-stripe {
 	0% {
-		background-position: 0 0;
+		transform: translateX(0);
 	}
 	100% {
-		background-position: 40px 0;
+		transform: translateX(40px);
 	}
 }
 
@@ -628,6 +633,20 @@ textarea::placeholder {
 
 /* Animated progress bar with stripes for indeterminate state */
 .progress-bar-animated {
+	position: relative;
+	overflow: hidden;
+}
+
+.progress-bar-animated::after {
+	content: '';
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	right: 0;
+	/* One tile wider than the bar, extended in the direction the stripes travel
+	   FROM, so translating by exactly one tile never exposes a gap. */
+	left: -40px;
+	pointer-events: none;
 	background-image: linear-gradient(
 		45deg,
 		rgba(255, 255, 255, 0.15) 25%,
@@ -640,6 +659,7 @@ textarea::placeholder {
 	);
 	background-size: 40px 40px;
 	animation: progress-stripe 1s linear infinite;
+	will-change: transform;
 }
 
 /* Shimmer effect for drag-and-drop */
@@ -666,15 +686,23 @@ textarea::placeholder {
 	}
 }
 
-/* Status indicator glow - subtle box-shadow expansion paired with a colored dot.
-   Set --status-glow-color on the element to control the hue. */
+/* Status indicator glow - a soft breathing halo.
+   Set --status-glow-color on the element to control the hue.
+
+   Implemented as an overlay whose OPACITY animates, not as an animated
+   box-shadow. Chrome cannot composite a box-shadow animation: every frame
+   repaints the element, and this class lands on a full-width transcript card
+   that streams for the length of a turn. The halo now lives on a ::after at a
+   fixed blur, so the whole animation runs on the compositor. The ring is inset
+   because the elements this decorates are `overflow-hidden`, which would clip
+   an outer shadow drawn by a child. */
 @keyframes status-glow {
 	0%,
 	100% {
-		box-shadow: 0 0 4px var(--status-glow-color, currentColor);
+		opacity: 0.45;
 	}
 	50% {
-		box-shadow: 0 0 8px var(--status-glow-color, currentColor);
+		opacity: 1;
 	}
 }
 
@@ -683,7 +711,18 @@ textarea::placeholder {
 }
 
 .animate-status-glow {
+	position: relative;
+}
+
+.animate-status-glow::after {
+	content: '';
+	position: absolute;
+	inset: 0;
+	border-radius: inherit;
+	pointer-events: none;
+	box-shadow: inset 0 0 8px var(--status-glow-color, currentColor);
 	animation: status-glow 2s ease-in-out infinite;
+	will-change: opacity;
 }
 
 /* Restore list styling for markdown preview prose containers */
@@ -826,27 +865,39 @@ textarea::placeholder {
 	width: min(calc(1200px * var(--font-scale, 1)), 95vw);
 }
 
-/* Document Graph - Search highlight animation for matching nodes */
+/* Document Graph - Search highlight animation for matching nodes.
+
+   The ring is drawn once on a ::after overlay and only its opacity and scale
+   animate, both of which the compositor owns. Animating the box-shadow itself
+   repainted every matching node every frame, and a broad query can light up a
+   large share of the graph at once. */
 @keyframes search-highlight-glow {
-	0% {
-		box-shadow:
-			0 0 0 3px var(--search-highlight-color, rgba(99, 102, 241, 0.4)),
-			0 4px 12px var(--search-shadow-color, rgba(99, 102, 241, 0.2));
+	0%,
+	100% {
+		opacity: 1;
+		transform: scale(1);
 	}
 	50% {
-		box-shadow:
-			0 0 0 5px var(--search-highlight-color, rgba(99, 102, 241, 0.25)),
-			0 4px 16px var(--search-shadow-color, rgba(99, 102, 241, 0.3));
-	}
-	100% {
-		box-shadow:
-			0 0 0 3px var(--search-highlight-color, rgba(99, 102, 241, 0.4)),
-			0 4px 12px var(--search-shadow-color, rgba(99, 102, 241, 0.2));
+		opacity: 0.6;
+		transform: scale(1.02);
 	}
 }
 
 .search-highlight {
+	position: relative;
+}
+
+.search-highlight::after {
+	content: '';
+	position: absolute;
+	inset: 0;
+	border-radius: inherit;
+	pointer-events: none;
+	box-shadow:
+		0 0 0 4px var(--search-highlight-color, rgba(99, 102, 241, 0.4)),
+		0 4px 14px var(--search-shadow-color, rgba(99, 102, 241, 0.25));
 	animation: search-highlight-glow 2s ease-in-out infinite;
+	will-change: opacity, transform;
 }
 
 /* Wand sparkle animation - opacity-only. Earlier versions translated the SVG
@@ -1189,8 +1240,21 @@ svg.wand-profiling-active path:nth-child(8) {
      1. group chat count badge (the active-chat count)
      2. archived count number (keep the archive button/icon)
      3. "New Chat" label (collapse the button to just "+")
-   Thresholds are sized so that at the minimum sidebar width (280px -> ~256px
-   container) all three have dropped and the row still fits without wrapping. */
+   Thresholds are sized so that at the minimum sidebar width (280px -> ~256em-
+   equivalent container) all three have dropped and the row still fits.
+
+   The "Group Chats" label itself is deliberately NOT a rung here. It is decided
+   by measurement in `useOptionalLabelFits`, because whether it fits depends on
+   which of the conditional controls above are currently rendered - something a
+   width threshold cannot see. See that hook for the full reasoning.
+
+   Thresholds are in `em`, not `px`, and that is load-bearing. Every size in this
+   header (padding, icon boxes, gaps, text) is rem-based, so all of it scales
+   with the `fontSize` setting written to `documentElement.style.fontSize` -
+   while the sidebar's width stays in pixels. Pixel thresholds were therefore
+   correct at exactly one font size and let the row crowd at the larger ones.
+   In a container query `em` resolves against the query container's own font
+   size, so these rungs now move with the user's setting. */
 .gc-header-container {
 	container-type: inline-size;
 	container-name: gcheader;
@@ -1201,22 +1265,22 @@ svg.wand-profiling-active path:nth-child(8) {
 	display: inline;
 }
 
-/* Below 340px: drop the group chat count badge */
-@container gcheader (max-width: 340px) {
+/* Below 21.25em (340px at the default font size): drop the count badge */
+@container gcheader (max-width: 21.25em) {
 	.gc-count-badge {
 		display: none;
 	}
 }
 
-/* Below 305px: drop the archived count number (archive button stays) */
-@container gcheader (max-width: 305px) {
+/* Below 19em (305px): drop the archived count number (archive button stays) */
+@container gcheader (max-width: 19em) {
 	.gc-archived-count {
 		display: none;
 	}
 }
 
-/* Below 275px: collapse the New Chat button to just a plus sign */
-@container gcheader (max-width: 275px) {
+/* Below 17.2em (275px): collapse the New Chat button to just a plus sign */
+@container gcheader (max-width: 17.2em) {
 	.gc-newchat-label {
 		display: none;
 	}
@@ -1480,14 +1544,18 @@ svg.wand-profiling-active path:nth-child(8) {
 		animation: none !important;
 	}
 
-	/* Disable Document Graph search highlight animations */
-	.search-highlight {
+	/* Disable Document Graph search highlight animations. The ring now lives on
+	   a ::after, so the pseudo-element has to be named or it keeps animating. */
+	.search-highlight,
+	.search-highlight::after {
 		animation: none !important;
 	}
 
-	/* Disable status indicator animations */
+	/* Disable status indicator animations. The glow now lives on a ::after, so
+	   the pseudo-element has to be named or its animation keeps running. */
 	.animate-status-pulse,
-	.animate-status-glow {
+	.animate-status-glow,
+	.animate-status-glow::after {
 		animation: none !important;
 	}
 
@@ -1644,34 +1712,11 @@ html[data-runtime='web-desktop'][data-bp='xs']
 }
 
 /*
- * Edge-swipe opener zones. Thin (24px) invisible strips pinned to the left and
- * right screen edges that host the drawer-opening swipe handlers (App.tsx). They
- * only exist while no drawer is open. `touch-action: pan-y` lets vertical page
- * scrolling that starts in the strip still happen natively while horizontal
- * swipes are handled (and preventDefault'd) by useSwipeGestures. Sitting only at
- * the edges is what keeps center-content horizontal scrolling (terminal, tab
- * bar, tables) free of drawer gestures.
- *
- * They start below the 4rem header (`top: 4rem`) rather than the very top so the
- * strip never overlaps the header hamburger / panel toggle - at xs/sm the header
- * padding shrinks to 0.5rem, so those controls sit inside the outer 24px, and a
- * full-height strip (which paints above the z-20 header) would swallow their
- * taps. Edge swipes start in the body, which is the whole point.
+ * Edge-swipe drawer openers have no element. They used to be two invisible
+ * fixed strips here, which sat in the hit-test order above the tab bar and
+ * swallowed taps on its magnifier and first chip. The gesture now rides the
+ * app shell, gated on where the touch starts - see useEdgeSwipeHandlers.
  */
-.maestro-edge-swipe-zone {
-	position: fixed;
-	top: 4rem;
-	bottom: 0;
-	width: 24px;
-	z-index: 35;
-	touch-action: pan-y;
-}
-.maestro-edge-swipe-zone--left {
-	left: 0;
-}
-.maestro-edge-swipe-zone--right {
-	right: 0;
-}
 
 @keyframes maestro-fade-in {
 	from {
@@ -1712,6 +1757,17 @@ html[data-runtime='web-desktop'] a {
 html[data-runtime='web-desktop'] body,
 html[data-runtime='web-desktop'] .maestro-app-shell {
 	overscroll-behavior-y: contain;
+}
+
+/*
+ * Never let the page itself be wider than the screen. At xs/sm the Right Bar
+ * is parked just outside the viewport while closed; mobile Chromium can count
+ * that off-screen drawer toward the document width and make the page slide
+ * sideways. iOS already receives the stronger body overflow rule below.
+ */
+html[data-runtime='web-desktop'],
+html[data-runtime='web-desktop'] body {
+	overflow-x: hidden;
 }
 
 /*
@@ -1813,6 +1869,124 @@ html[data-runtime='web-desktop'][data-bp='sm'] .maestro-input-text-overlay {
 	[class*='group-hover:opacity-100'] {
 		opacity: 1 !important;
 	}
+}
+
+/*
+ * ============================================================================
+ * Phone layout (web-desktop bundle at the xs breakpoint)
+ * ============================================================================
+ * JS twin: usePhoneLayout() / isPhoneLayout() in hooks/ui/useViewportBreakpoint.ts.
+ * Every rule here matches `html[data-runtime='web-desktop'][data-bp='xs']`, so
+ * a surface that simplifies itself in JS and one that does it in CSS agree
+ * about when a phone is a phone. The native Electron app never sets
+ * data-runtime and is untouched.
+ */
+
+/*
+ * Drawers take the whole screen. A 320px drawer on a 390px phone left a 70px
+ * sliver of main panel showing through that could not be read or used, while
+ * the drawer itself was starved for the width its rows need. The backdrop
+ * behind it is fully covered, so the close-swipe handlers ride the drawer
+ * itself (AppShell wraps each panel) rather than the backdrop.
+ */
+html[data-runtime='web-desktop'][data-bp='xs']
+	[data-panel='left'][data-collapsed='false'][data-hidden='false'],
+html[data-runtime='web-desktop'][data-bp='xs'] [data-panel='right'] {
+	width: 100vw !important;
+	width: 100dvw !important;
+	max-width: none;
+	box-shadow: none;
+}
+
+/* A full-width drawer has no edge to drag; the resize grip would only steal taps. */
+html[data-runtime='web-desktop'][data-bp='xs'] [data-panel='left'] .resize-handle,
+html[data-runtime='web-desktop'][data-bp='xs'] [data-panel='right'] .resize-handle {
+	display: none;
+}
+
+/*
+ * Long-press is a gesture on tab chips and agent rows (it opens their action
+ * menu), so iOS must not answer the same press with its own callout.
+ */
+html[data-runtime='web-desktop'] [data-tab-id],
+html[data-runtime='web-desktop'] .session-row {
+	-webkit-touch-callout: none;
+}
+
+/*
+ * Tab action sheet (TabOverlayPortal on a phone). The menu CONTENT inside is
+ * the very same element the desktop hover popover shows; these rules restyle
+ * it for a finger without the five menu components knowing which shell they
+ * are in. `!important` because the menus set their width, borders, and radius
+ * as inline styles for the anchored shape.
+ */
+.maestro-tab-sheet {
+	background: rgba(0, 0, 0, 0.45);
+	animation: maestro-fade-in 150ms ease;
+}
+.maestro-tab-sheet__panel {
+	animation: maestro-sheet-up 180ms ease-out;
+}
+@keyframes maestro-sheet-up {
+	from {
+		transform: translateY(24px);
+		opacity: 0.6;
+	}
+	to {
+		transform: none;
+		opacity: 1;
+	}
+}
+.maestro-tab-sheet__body > * {
+	min-width: 0 !important;
+	max-width: none !important;
+	width: 100%;
+	border: 0 !important;
+	border-radius: 0 !important;
+	box-shadow: none !important;
+	white-space: normal !important;
+}
+/* Finger-sized action rows; the desktop menu is text-xs / py-1.5 for a mouse. */
+.maestro-tab-sheet__body .p-1 > button {
+	min-height: 44px;
+	font-size: 0.9375rem;
+}
+
+/*
+ * No keyboard on a phone. Every chord badge (⌘K beside a menu row), keycap hint
+ * (the ⌘F in a search box) and arrow-key legend (↑↓ navigate • Enter select)
+ * advertises a key the user does not have, and on a 390px screen they were
+ * also the first things to push a close button off the edge. They all carry
+ * `data-shortcut-hint`, so one rule retires them together. Add the attribute
+ * to any new keyboard-only hint rather than gating it in JSX.
+ */
+html[data-runtime='web-desktop'][data-bp='xs'] [data-shortcut-hint] {
+	display: none !important;
+}
+
+/*
+ * Modals take the whole screen. Every resizable modal stamps
+ * `data-modal-resize-key` (the palette, Settings, the Usage Dashboard,
+ * Director's Notes, Process Monitor, file search, ...) and sizes itself to a
+ * remembered width and height clamped inside a padded overlay. On a phone that
+ * left a 326px box floating in a 390px viewport with the app peeking around
+ * it, headers wrapping to two lines, and nothing gained by the margin. The
+ * resize grips are hidden too: there is no edge to drag. Small dialogs (confirm,
+ * rename) pass no resize key and keep their natural size.
+ */
+html[data-runtime='web-desktop'][data-bp='xs'] .modal-overlay {
+	padding: 0 !important;
+}
+html[data-runtime='web-desktop'][data-bp='xs'] [data-modal-resize-key] {
+	width: 100vw !important;
+	width: 100dvw !important;
+	height: 100dvh !important;
+	max-width: none !important;
+	max-height: none !important;
+	border-radius: 0 !important;
+}
+html[data-runtime='web-desktop'][data-bp='xs'] [data-resize-handle] {
+	display: none !important;
 }
 
 /*

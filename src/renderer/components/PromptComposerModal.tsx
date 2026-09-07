@@ -36,6 +36,7 @@ import { formatFileMention } from '../../shared/mentionPatterns';
 import { useAtMentionCompletion } from '../hooks/input/useAtMentionCompletion';
 import { useModalStore } from '../stores/modalStore';
 import { ResizeHandles } from './ui/ResizeHandles';
+import { displayImageSrc } from '../utils/sessionImageSrc';
 
 const EMPTY_STAGED_IMAGES: string[] = [];
 
@@ -571,7 +572,7 @@ export function PromptComposerModal({
 						{stagedImages.map((img, idx) => (
 							<div key={img} className="relative group shrink-0">
 								<img
-									src={img}
+									src={displayImageSrc(img)}
 									alt={`Prompt composer staged image ${idx + 1}`}
 									className="h-16 rounded border cursor-pointer hover:opacity-80 transition-opacity"
 									style={{

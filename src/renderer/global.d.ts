@@ -491,8 +491,12 @@ interface MaestroAPI {
 		) => void;
 		onRemoteCloseTab: (callback: (sessionId: string, tabId: string) => void) => () => void;
 		onRemoteRenameTab: (
-			callback: (sessionId: string, tabId: string, newName: string) => void
+			callback: (sessionId: string, tabId: string, newName: string, responseChannel: string) => void
 		) => () => void;
+		sendRemoteRenameTabResponse: (
+			responseChannel: string,
+			result: { success: boolean; error?: string }
+		) => void;
 		onRemoteStarTab: (
 			callback: (sessionId: string, tabId: string, starred: boolean) => void
 		) => () => void;
@@ -706,6 +710,30 @@ interface MaestroAPI {
 			success: boolean,
 			tabId?: string
 		) => void;
+		/** Cross-agent consult asked for over the CLI (`maestro-cli ask`). The
+		 *  reply is the consulted agent's ANSWER, so it can arrive minutes later. */
+		onRemoteCrossAgentAsk: (
+			callback: (
+				request: {
+					targetSessionId: string;
+					question: string;
+					fromSessionId?: string;
+					withContext?: boolean;
+				},
+				responseChannel: string
+			) => void
+		) => () => void;
+		sendRemoteCrossAgentAskResponse: (
+			responseChannel: string,
+			result: {
+				success: boolean;
+				answer?: string;
+				error?: string;
+				canceled?: boolean;
+				targetAgentName?: string;
+				targetTabId?: string;
+			}
+		) => void;
 		onRemoteEnqueueCommand: (
 			callback: (
 				sessionId: string,
@@ -823,6 +851,12 @@ interface MaestroAPI {
 			) => void
 		) => () => void;
 		sendRemoteSaveAutoRunDocResponse: (responseChannel: string, success: boolean) => void;
+		onRemoteAutoRunStateMirror: (
+			callback: (
+				sessionId: string,
+				state: import('../shared/autoRunBroadcast').AutoRunBroadcastState | null
+			) => void
+		) => () => void;
 		onRemoteStopAutoRun: (callback: (sessionId: string) => void) => () => void;
 		onRemoteResetAutoRunDocTasks: (
 			callback: (sessionId: string, filename: string, responseChannel: string) => void
@@ -1187,6 +1221,8 @@ interface MaestroAPI {
 		) => Promise<{ success: boolean }>;
 	};
 	web: {
+		claimAutoRunStart: (sessionId: string) => Promise<boolean>;
+		releaseAutoRunStartClaim: (sessionId: string) => Promise<boolean>;
 		requestNewTab: (sessionId: string, background?: boolean) => Promise<{ tabId: string } | null>;
 		broadcastUserInput: (
 			sessionId: string,
@@ -1195,30 +1231,7 @@ interface MaestroAPI {
 		) => Promise<void>;
 		broadcastAutoRunState: (
 			sessionId: string,
-			state: {
-				isRunning: boolean;
-				totalTasks: number;
-				completedTasks: number;
-				currentTaskIndex: number;
-				isStopping?: boolean;
-				// Multi-document progress fields
-				totalDocuments?: number;
-				currentDocumentIndex?: number;
-				totalTasksAcrossAllDocs?: number;
-				completedTasksAcrossAllDocs?: number;
-				// Error pause fields - surfaced to web/mobile so they can show recovery UI
-				errorPaused?: boolean;
-				errorMessage?: string;
-				errorType?: string;
-				errorRecoverable?: boolean;
-				errorDocumentIndex?: number;
-				errorTaskDescription?: string;
-				// Goal-Driven mode fields - surfaced so web/mobile show goal percent + iteration
-				goalMode?: boolean;
-				goalProgress?: number;
-				goalRationale?: string;
-				goalIteration?: number;
-			} | null
+			state: import('../shared/autoRunBroadcast').AutoRunBroadcastState | null
 		) => Promise<void>;
 		broadcastTabsChange: (
 			sessionId: string,
@@ -3628,6 +3641,37 @@ interface MaestroAPI {
 				startedAt: number;
 				resolvedAt: number;
 				retries: number;
+			}>
+		>;
+		// Upsert one Auto Run wizard run (idempotent on run.id)
+		recordWizardRun: (run: {
+			id: string;
+			sessionId: string;
+			agentType: string;
+			surface: 'inline' | 'onboarding';
+			mode: 'new' | 'iterate';
+			outcome: 'in-progress' | 'generated' | 'abandoned';
+			startedAt: number;
+			endedAt: number;
+			exchanges: number;
+			documents: number;
+			tasks: number;
+			projectPath?: string;
+		}) => Promise<string | null>;
+		getWizardRuns: (range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all') => Promise<
+			Array<{
+				id: string;
+				sessionId: string;
+				agentType: string;
+				surface: 'inline' | 'onboarding';
+				mode: 'new' | 'iterate';
+				outcome: 'in-progress' | 'generated' | 'abandoned';
+				startedAt: number;
+				endedAt: number;
+				exchanges: number;
+				documents: number;
+				tasks: number;
+				projectPath?: string;
 			}>
 		>;
 		recordSessionCreated: (event: {

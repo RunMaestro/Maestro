@@ -32,7 +32,12 @@ import {
 	TYPOGRAPHY_PRESET_IDS,
 	type TypographyPresetId,
 } from '../../shared/typographyPresets';
-import { withMonoFallback, SANS_FALLBACK_STACK } from '../../shared/fontStack';
+import {
+	withMonoFallback,
+	SANS_FALLBACK_STACK,
+	FONT_PREVIEW_PROSE,
+	FONT_PREVIEW_CODE,
+} from '../../shared/fontStack';
 import { logger } from '../utils/logger';
 
 export interface TypographyChoiceModalProps {
@@ -57,9 +62,12 @@ export interface TypographyChoiceModalProps {
 	onOpenDisplaySettings: () => void;
 }
 
-/** Preview line rendered inside each card, in that preset's own faces. */
-const PREVIEW_PROSE = 'The quick brown fox jumps over the lazy dog.';
-const PREVIEW_CODE = 'const tempo = 120; // adagio -> allegro';
+/**
+ * Preview lines rendered inside each card, in that preset's own faces. Shared
+ * with the Settings font pickers so a face reads the same on both screens.
+ */
+const PREVIEW_PROSE = FONT_PREVIEW_PROSE;
+const PREVIEW_CODE = FONT_PREVIEW_CODE;
 
 function PresetCard({
 	theme,

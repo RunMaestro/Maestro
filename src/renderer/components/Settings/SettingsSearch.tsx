@@ -169,6 +169,7 @@ export function SettingsSearchInput({
 						{/* Phantom placeholder text positions the kbd hint right after where the real placeholder ends. */}
 						<span style={{ color: 'transparent' }}>Search settings...</span>
 						<kbd
+							data-shortcut-hint=""
 							className="text-2xs px-1.5 py-0.5 rounded font-mono opacity-40"
 							style={{ backgroundColor: theme.colors.bgActivity }}
 						>

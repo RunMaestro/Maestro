@@ -94,3 +94,30 @@ describe('TerminalTouchBar', () => {
 		expect(notCancelled).toBe(false);
 	});
 });
+
+// Phone: eight keys share the row instead of each claiming 44px plus padding,
+// which ran the Enter key off the right edge of a 390px screen.
+vi.mock('../../../renderer/hooks/ui/useViewportBreakpoint', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../renderer/hooks/ui/useViewportBreakpoint')>()),
+	usePhoneLayout: vi.fn(() => false),
+}));
+import { usePhoneLayout } from '../../../renderer/hooks/ui/useViewportBreakpoint';
+
+describe('TerminalTouchBar on a phone', () => {
+	it('lets the keys share the row width instead of holding a fixed minimum', () => {
+		vi.mocked(usePhoneLayout).mockReturnValue(true);
+		renderBar();
+		const enter = screen.getByLabelText('Enter');
+		expect(enter.style.flex).toBe('1 1 0px');
+		expect(enter.style.minWidth).toBe('0px');
+		vi.mocked(usePhoneLayout).mockReturnValue(false);
+	});
+
+	it('keeps fixed-width keys on desktop', () => {
+		vi.mocked(usePhoneLayout).mockReturnValue(false);
+		renderBar();
+		const enter = screen.getByLabelText('Enter');
+		expect(enter.style.flex).toBe('0 0 auto');
+		expect(enter.style.minWidth).toBe('44px');
+	});
+});

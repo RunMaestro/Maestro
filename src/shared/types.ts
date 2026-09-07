@@ -830,6 +830,13 @@ export interface SshRemoteConfig {
 	remoteEnv?: Record<string, string>;
 
 	/**
+	 * Environment variables the user switched OFF: same shape as `remoteEnv`,
+	 * kept so the value survives without reaching the remote. Nothing but the
+	 * editor reads it - see `src/shared/parkedRecords.ts`.
+	 */
+	remoteEnvDisabled?: Record<string, string>;
+
+	/**
 	 * Extra `ssh -o KEY=VALUE` options for this remote, merged over Maestro's
 	 * defaults by `resolveSshOptions()` in `src/shared/sshOptions.ts`.
 	 *
@@ -845,6 +852,15 @@ export interface SshRemoteConfig {
 	 * stream. Overrides for it are rejected on write and ignored on read.
 	 */
 	sshOptions?: Record<string, string>;
+
+	/**
+	 * SSH options the user switched OFF, same shape as `sshOptions`. Being in
+	 * `sshOptions` is exactly the same statement as being live, so this record
+	 * is never merged into a resolved option set: it exists so a `ProxyCommand`
+	 * can be turned off for a while without the user having to keep the string
+	 * somewhere else to paste back.
+	 */
+	sshOptionsDisabled?: Record<string, string>;
 
 	/** Enable this remote configuration */
 	enabled: boolean;

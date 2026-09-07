@@ -45,6 +45,7 @@ import { useContextWindow } from '../../hooks/mainPanel/useContextWindow';
 import { useFilePreviewHandlers } from '../../hooks/mainPanel/useFilePreviewHandlers';
 import { useGitInfo } from '../../hooks/mainPanel/useGitInfo';
 import { useChatFileDropZone } from '../../hooks/ui/useChatFileDropZone';
+import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 import { MainPanelHeader } from './MainPanelHeader';
 import { MainPanelContent } from './MainPanelContent';
 import { AgentErrorBanner } from './AgentErrorBanner';
@@ -180,6 +181,12 @@ export const MainPanel = React.memo(
 			// Inline wizard exit handler
 			onExitWizard,
 		} = props;
+
+		// The panel's 400px floor keeps the header usable when the desktop layout
+		// squeezes it between two sidebars. A phone is 390px wide with no sidebars
+		// beside it, so the floor made the panel 10px wider than the screen and
+		// pushed the header's last button past the edge.
+		const phone = usePhoneLayout();
 
 		// Phase 3C: Direct store subscriptions (migrated from props)
 		const logLevel = useSettingsStore((s) => s.logLevel);
@@ -384,8 +391,9 @@ export const MainPanel = React.memo(
 		// Get agent capabilities for conditional feature rendering
 		const { hasCapability } = useAgentCapabilities(activeSession?.toolType);
 
-		// Model/Effort pills: available options and agent-level defaults. Shared with
-		// the keyboard-only Model & Effort modal so both show the same truth.
+		// Model/Effort pills: available options, current values, and agent-level
+		// defaults. Shared with the keyboard-only Model & Effort modal and with the
+		// queued-message edit modal, so all three show the same truth.
 		const {
 			models: pillModels,
 			efforts: pillEfforts,
@@ -575,19 +583,19 @@ export const MainPanel = React.memo(
 					// deps change, so the captured `activeSession` prop is stale if the
 					// user switches tabs within the same session.
 					const session = selectActiveSession(useSessionStore.getState());
-					if (!session) return;
+					if (!session) return false;
 					// Mirrors TabBar's targetTabId resolution so AI/terminal/file/browser
 					// tabs all map to the right header element.
 					const targetTabId =
 						session.inputMode === 'terminal'
 							? session.activeTerminalTabId || session.activeTabId
 							: session.activeFileTabId || session.activeBrowserTabId || session.activeTabId;
-					if (!targetTabId) return;
+					if (!targetTabId) return false;
 					const container = document.querySelector(`[data-tour="tab-bar"]`) as HTMLElement | null;
 					const tabElement = container?.querySelector(
 						`[data-tab-id="${targetTabId}"]`
 					) as HTMLElement | null;
-					if (!container || !tabElement) return;
+					if (!container || !tabElement) return false;
 					// Center the tab in the scrollable strip. We compute scrollLeft
 					// directly because scrollIntoView({ inline: 'center' }) ignores the
 					// sticky-left search/filter button and the sticky-right "+" button,
@@ -599,10 +607,22 @@ export const MainPanel = React.memo(
 					const tabRect = tabElement.getBoundingClientRect();
 					const tabLeftInContent = tabRect.left - containerRect.left + container.scrollLeft;
 					const visibleWidth = container.clientWidth - stickyLeftWidth - STICKY_RIGHT_WIDTH;
+					// "Already there" means the header holds focus AND is fully in view.
+					// Focus alone is not enough: the user can scroll the strip away
+					// with the tab still focused, and in that case the press should
+					// bring it back rather than escalate to unread navigation.
+					const visibleLeft = container.scrollLeft + stickyLeftWidth;
+					const visibleRight = container.scrollLeft + container.clientWidth - STICKY_RIGHT_WIDTH;
+					const alreadyParked =
+						document.activeElement === tabElement &&
+						tabLeftInContent >= visibleLeft &&
+						tabLeftInContent + tabRect.width <= visibleRight;
+					if (alreadyParked) return true;
 					const target =
 						tabLeftInContent - stickyLeftWidth - Math.max(0, (visibleWidth - tabRect.width) / 2);
 					container.scrollTo({ left: Math.max(0, target), behavior: 'smooth' });
 					tabElement.focus({ preventScroll: true });
+					return false;
 				},
 				reloadBrowserTab: () => {
 					// Same stale-closure caveat as `focusBrowserAddressBar` - read fresh.
@@ -1082,7 +1102,7 @@ export const MainPanel = React.memo(
 					<div
 						className="flex-1 h-full min-h-0 max-h-full flex flex-col relative isolate overflow-hidden"
 						style={{
-							minWidth: '400px',
+							minWidth: phone ? undefined : '400px',
 							backgroundColor: theme.colors.bgMain,
 						}}
 						onClick={() => useUIStore.getState().setActiveFocus('main')}

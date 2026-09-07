@@ -105,6 +105,19 @@ export function selectHasAnyActiveBatch(s: BatchStoreState): boolean {
 	return Object.values(s.batchRunStates).some((state) => state.isRunning);
 }
 
+/**
+ * True when this agent's Auto Run entry is a read-only MIRROR of a run owned by
+ * a different Maestro client (see `useAutoRunStateMirror`). The run loop and the
+ * refs its controls poke live in the owning client, so every mutator bails on a
+ * mirrored entry and every control that calls one renders disabled.
+ *
+ * Reads the store directly so it works outside React, where the control actions
+ * run. `useIsMirroredBatchRun` is the subscribing form for components.
+ */
+export function isMirroredBatchRun(sessionId: string): boolean {
+	return useBatchStore.getState().batchRunStates[sessionId]?.mirrored === true;
+}
+
 /** List of session IDs with active batches */
 export function selectActiveBatchSessionIds(s: BatchStoreState): string[] {
 	return Object.entries(s.batchRunStates)

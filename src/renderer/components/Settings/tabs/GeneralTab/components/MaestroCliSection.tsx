@@ -81,7 +81,7 @@ export function MaestroCliSection({ theme, appVersion, maestroCli }: MaestroCliS
 					aria-atomic="true"
 					className="text-xs space-y-1"
 				>
-					{checking && <div className="opacity-60">Checking Maestro CLI status...</div>}
+					{checking && <div className="opacity-70">Checking Maestro CLI status...</div>}
 					{statusError && <div style={{ color: theme.colors.warning }}>{statusError}</div>}
 					{installMessage && <div style={{ color: theme.colors.success }}>{installMessage}</div>}
 				</div>

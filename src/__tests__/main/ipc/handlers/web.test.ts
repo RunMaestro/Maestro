@@ -4,6 +4,9 @@ import { ipcMain } from 'electron';
 // Track registered handlers
 const registeredHandlers = new Map<string, Function>();
 
+// Desktop windows the Auto Run mirror forward should reach. Mutated per test.
+let mockBrowserWindows: any[] = [];
+
 // Mock ipcMain
 vi.mock('electron', () => ({
 	ipcMain: {
@@ -13,6 +16,9 @@ vi.mock('electron', () => ({
 	},
 	app: {
 		getVersion: vi.fn(() => '0.0.0-test'),
+	},
+	BrowserWindow: {
+		getAllWindows: vi.fn(() => mockBrowserWindows),
 	},
 }));
 
@@ -57,6 +63,7 @@ import {
 	deleteCliServerInfo,
 	readCliServerInfo,
 } from '../../../../shared/cli-server-discovery';
+import { resetAutoRunStateTracker } from '../../../../main/autorun/autorun-state-tracker';
 
 describe('web handlers', () => {
 	let mockWebServer: any;
@@ -68,6 +75,8 @@ describe('web handlers', () => {
 		vi.clearAllMocks();
 		registeredHandlers.clear();
 		lastWrittenInfo = null;
+		mockBrowserWindows = [];
+		resetAutoRunStateTracker();
 		// Re-wire the writeCliServerInfo / readCliServerInfo mocks after
 		// clearAllMocks blew away their implementations.
 		vi.mocked(writeCliServerInfo).mockImplementation((info: any) => {
@@ -127,6 +136,11 @@ describe('web handlers', () => {
 
 	describe('handler registration', () => {
 		it('should register all web/live handlers', () => {
+			expect(ipcMain.handle).toHaveBeenCalledWith('web:claimAutoRunStart', expect.any(Function));
+			expect(ipcMain.handle).toHaveBeenCalledWith(
+				'web:releaseAutoRunStartClaim',
+				expect.any(Function)
+			);
 			expect(ipcMain.handle).toHaveBeenCalledWith('web:broadcastUserInput', expect.any(Function));
 			expect(ipcMain.handle).toHaveBeenCalledWith(
 				'web:broadcastAutoRunState',
@@ -159,6 +173,28 @@ describe('web handlers', () => {
 				'webserver:getConnectedClients',
 				expect.any(Function)
 			);
+		});
+	});
+
+	describe('web:claimAutoRunStart', () => {
+		it('serializes competing starts for the same agent', async () => {
+			const handler = registeredHandlers.get('web:claimAutoRunStart');
+
+			expect(await handler!({}, 'session-123')).toBe(true);
+			expect(await handler!({}, 'session-123')).toBe(false);
+			expect(await handler!({}, 'session-456')).toBe(true);
+		});
+	});
+
+	describe('web:releaseAutoRunStartClaim', () => {
+		it('releases only a start that is still provisional', async () => {
+			const claim = registeredHandlers.get('web:claimAutoRunStart');
+			const release = registeredHandlers.get('web:releaseAutoRunStartClaim');
+
+			expect(await claim!({}, 'session-123')).toBe(true);
+			expect(await release!({}, 'session-123')).toBe(true);
+			expect(await release!({}, 'session-123')).toBe(false);
+			expect(await claim!({}, 'session-123')).toBe(true);
 		});
 	});
 
@@ -226,6 +262,112 @@ describe('web handlers', () => {
 
 			expect(mockWebServer.broadcastAutoRunState).toHaveBeenCalledWith('session-123', state);
 			expect(result).toBe(true);
+		});
+	});
+
+	// Auto Run is renderer-owned, and `autorun_state` only ever reaches WebSocket
+	// clients. A run started in a browser tab therefore had no path back to the
+	// Electron app and the desktop drew the agent as idle for the whole run
+	// (issue #1519). Main forwards a bridge-originated frame to the desktop
+	// windows on the channel the mirror hook already consumes.
+	describe('web:broadcastAutoRunState -> desktop mirror forward', () => {
+		/** The synthetic event `handleBridgeInvoke` calls ipcMain handlers with. */
+		const BRIDGE_EVENT = { senderFrame: null, frameId: -1, processId: -1, type: 'bridge' };
+
+		const makeWindow = () => ({
+			isDestroyed: vi.fn(() => false),
+			webContents: { isDestroyed: vi.fn(() => false), send: vi.fn() },
+		});
+
+		const runningState = { isRunning: true, totalTasks: 3, completedTasks: 1 };
+
+		it('forwards a web-owned run to every desktop window', async () => {
+			const [a, b] = [makeWindow(), makeWindow()];
+			mockBrowserWindows = [a, b];
+
+			const handler = registeredHandlers.get('web:broadcastAutoRunState');
+			await handler!(BRIDGE_EVENT, 'session-123', runningState);
+
+			for (const win of [a, b]) {
+				expect(win.webContents.send).toHaveBeenCalledWith(
+					'remote:autoRunStateMirror',
+					'session-123',
+					runningState
+				);
+			}
+		});
+
+		// The echo that would break the owner: a desktop window receiving its own
+		// state back can have its live run stamped `mirrored: true`, which disables
+		// Stop/Skip/Resume/Abort on the very window driving the run.
+		it('does not forward a run owned by a desktop renderer', async () => {
+			const win = makeWindow();
+			mockBrowserWindows = [win];
+
+			const handler = registeredHandlers.get('web:broadcastAutoRunState');
+			await handler!({ senderFrame: {} }, 'session-123', runningState);
+
+			expect(win.webContents.send).not.toHaveBeenCalled();
+		});
+
+		// `null` is how the owner says the run ended. It has to reach the desktop
+		// or the mirrored card outlives the run it describes.
+		it('forwards a cleared run so the mirror can be torn down', async () => {
+			const win = makeWindow();
+			mockBrowserWindows = [win];
+
+			const handler = registeredHandlers.get('web:broadcastAutoRunState');
+			await handler!(BRIDGE_EVENT, 'session-123', null);
+
+			expect(win.webContents.send).toHaveBeenCalledWith(
+				'remote:autoRunStateMirror',
+				'session-123',
+				null
+			);
+		});
+
+		it('skips a destroyed window and still reaches the live ones', async () => {
+			const dead = makeWindow();
+			dead.isDestroyed.mockReturnValue(true);
+			const live = makeWindow();
+			mockBrowserWindows = [dead, live];
+
+			const handler = registeredHandlers.get('web:broadcastAutoRunState');
+			await handler!(BRIDGE_EVENT, 'session-123', runningState);
+
+			expect(dead.webContents.send).not.toHaveBeenCalled();
+			expect(live.webContents.send).toHaveBeenCalled();
+		});
+
+		// A window closing mid-broadcast must not cost the others their frame, nor
+		// fail the broadcast the web clients are also waiting on.
+		it('keeps going when one window throws', async () => {
+			const throwing = makeWindow();
+			throwing.webContents.send.mockImplementation(() => {
+				throw new Error('render frame disposed');
+			});
+			const healthy = makeWindow();
+			mockBrowserWindows = [throwing, healthy];
+
+			const handler = registeredHandlers.get('web:broadcastAutoRunState');
+			const result = await handler!(BRIDGE_EVENT, 'session-123', runningState);
+
+			expect(healthy.webContents.send).toHaveBeenCalled();
+			expect(result).toBe(true);
+		});
+
+		// The forward must not depend on Live Mode having a server attached: the
+		// tracker and the desktop mirror are both first-party main-process state.
+		it('forwards even when no web server is attached', async () => {
+			webServerRef.current = null;
+			const win = makeWindow();
+			mockBrowserWindows = [win];
+
+			const handler = registeredHandlers.get('web:broadcastAutoRunState');
+			const result = await handler!(BRIDGE_EVENT, 'session-123', runningState);
+
+			expect(win.webContents.send).toHaveBeenCalled();
+			expect(result).toBe(false);
 		});
 	});
 

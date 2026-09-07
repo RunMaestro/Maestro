@@ -19,3 +19,4 @@ export { ModalLayoutSection } from './ModalLayoutSection';
 export { TabOptionsSection } from './TabOptionsSection';
 export { WindowChromeSection } from './WindowChromeSection';
 export { TypographyResetSection } from './TypographyResetSection';
+export { SavedTypographySection } from './SavedTypographySection';

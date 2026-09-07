@@ -19,6 +19,7 @@ import type {
 	AutoRunTask,
 	SessionLifecycleEvent,
 	ResilienceEvent,
+	WizardRun,
 	StatsTimeRange,
 	StatsFilters,
 	StatsAggregation,
@@ -55,6 +56,7 @@ import {
 	clearSessionLifecycleCache,
 } from './session-lifecycle';
 import { recordResilienceEvent, getResilienceEvents, clearResilienceCache } from './resilience';
+import { recordWizardRun, getWizardRuns, clearWizardRunsCache } from './wizard-runs';
 import { getAggregatedStats } from './aggregations';
 import {
 	getQuerySourceTotals,
@@ -209,6 +211,7 @@ export class StatsDB {
 			clearAutoRunCache();
 			clearSessionLifecycleCache();
 			clearResilienceCache();
+			clearWizardRunsCache();
 			clearImageAnnotationCache();
 			clearShortcutUsageCache();
 			clearMultiWindowUsageCache();
@@ -829,6 +832,18 @@ export class StatsDB {
 
 	getResilienceEvents(range: StatsTimeRange): ResilienceEvent[] {
 		return getResilienceEvents(this.database, range);
+	}
+
+	// ============================================================================
+	// Wizard Runs (delegated)
+	// ============================================================================
+
+	recordWizardRun(run: WizardRun): string {
+		return recordWizardRun(this.database, run);
+	}
+
+	getWizardRuns(range: StatsTimeRange): WizardRun[] {
+		return getWizardRuns(this.database, range);
 	}
 
 	// ============================================================================

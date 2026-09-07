@@ -613,7 +613,6 @@ export const FilePreview = React.memo(
 			markdownEditMode,
 			editContent,
 			fileContent: file?.content,
-			accentColor: theme.colors.accent,
 			searchMode,
 			supportsLineSearch: viewHasLineNumbers,
 			displayedContentLength: displayContent.length,

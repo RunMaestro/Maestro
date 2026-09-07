@@ -675,10 +675,14 @@ function TabBarInner({
 				borderColor: theme.colors.border,
 			}}
 		>
-			{/* Sticky left: search + unread filter */}
+			{/* Sticky left: search + unread filter. It paints an opaque background so
+			    scrolling tabs pass underneath, so it has to carry the bar's own sheen
+			    and reach the bar's top edge (-mt-2 cancels the container's pt-2, and
+			    pt-2 puts the icons back where they were). Without that it reads as a
+			    flat patch with a gradient strip floating above it. */}
 			<div
 				ref={stickyLeftRef}
-				className="sticky left-0 flex items-center shrink-0 pl-2 pr-1 gap-1 self-stretch"
+				className="chrome-sheen sticky left-0 flex items-center shrink-0 -mt-2 pt-2 pl-2 pr-1 gap-1 self-stretch"
 				style={{ backgroundColor: theme.colors.bgSidebar, zIndex: 5 }}
 			>
 				{onOpenTabSearch && (

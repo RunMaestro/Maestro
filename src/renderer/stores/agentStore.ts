@@ -675,6 +675,17 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					};
 				})
 			);
+			// Rethrow. Recording the failure is not the same as handling it: every
+			// caller wraps this call in a `.catch()` that puts the prompt back on the
+			// queue, and swallowing here resolved the promise so NONE of them ever
+			// ran. A spawn that failed therefore dropped the user's message outright
+			// - the transcript kept an error bubble and the text was gone. Both the
+			// queue-recovery path (useQueueProcessing) and Force Send
+			// (useQueueHandlers) had written that re-queue independently, and both
+			// were dead code. retryStore's `fireRetry` already documents that it
+			// expects a dispatch-time throw, so this restores the contract callers
+			// were written against.
+			throw error;
 		}
 	},
 

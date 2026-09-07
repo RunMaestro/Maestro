@@ -18,10 +18,12 @@ import {
 	MaxOutputLinesSection,
 	MessageAlignmentSection,
 	ModalLayoutSection,
+	SavedTypographySection,
 	TabOptionsSection,
 	TypographyResetSection,
 	WindowChromeSection,
 } from './components';
+import { typographySnapshotMatches } from '../../../../../shared/typographySnapshot';
 import { useBionifyAlgorithmState, useFontConfigurationState } from './hooks';
 import type { DisplayTabProps } from './types';
 import { PluginPanelSlot } from '../../../plugins/PluginPanelSlot';
@@ -38,8 +40,20 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 		setBionifyAlgorithm: settings.setBionifyAlgorithm,
 	});
 
+	// The store read as a plain record, which is what both the snapshot
+	// comparison and the font pickers below want. Built once so the two cannot
+	// disagree about what is currently set.
+	const settingsRecord = settings as unknown as Record<string, unknown>;
+
 	return (
 		<div className="space-y-5">
+			<FontsSection
+				theme={theme}
+				settings={settingsRecord}
+				fontConfiguration={fontConfiguration}
+				setSurfaceFontFamily={settings.setSurfaceFontFamily}
+				setSurfaceFontSize={settings.setSurfaceFontSize}
+			/>
 			<TypographyResetSection
 				theme={theme}
 				fonts={{
@@ -58,12 +72,12 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 				}}
 				onReset={settings.resetTypography}
 			/>
-			<FontsSection
+			<SavedTypographySection
 				theme={theme}
-				settings={settings as unknown as Record<string, unknown>}
-				fontConfiguration={fontConfiguration}
-				setSurfaceFontFamily={settings.setSurfaceFontFamily}
-				setSurfaceFontSize={settings.setSurfaceFontSize}
+				snapshot={settings.typographySnapshot ?? null}
+				isCurrent={typographySnapshotMatches(settings.typographySnapshot ?? null, settingsRecord)}
+				onSave={settings.saveTypographySnapshot}
+				onRestore={settings.restoreTypographySnapshot}
 			/>
 			<FontZoomSection
 				theme={theme}

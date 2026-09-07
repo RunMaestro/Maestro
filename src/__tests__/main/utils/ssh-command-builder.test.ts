@@ -200,6 +200,25 @@ describe('ssh-command-builder', () => {
 				expect(result.args).not.toContain('ConnectTimeout=10');
 			});
 
+			it('never reads the parked record, which is what parking means', async () => {
+				// Two records rather than one flag is the whole design: being present
+				// in `sshOptions` is exactly the same statement as being live, so the
+				// builder needs no filter and a switched-off ProxyCommand cannot leak
+				// into the argv.
+				const result = await buildSshCommand(
+					{
+						...baseConfig,
+						sshOptions: { ConnectTimeout: '45' },
+						sshOptionsDisabled: { ProxyCommand: '/opt/homebrew/bin/tailcat tcABC 22' },
+					},
+					{ command: 'claude', args: [] }
+				);
+
+				expect(result.args).toContain('ConnectTimeout=45');
+				expect(result.args.join(' ')).not.toContain('ProxyCommand');
+				expect(result.args.join(' ')).not.toContain('tailcat');
+			});
+
 			it('refuses to let a remote pin RequestTTY', async () => {
 				// RequestTTY is derived from whether the remote command speaks
 				// stream-json; a forced TTY corrupts that stream.

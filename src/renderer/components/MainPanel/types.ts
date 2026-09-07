@@ -7,6 +7,7 @@ import type {
 	BrowserTab,
 	AgentError,
 	QueuedItem,
+	QueuedItemEditPatch,
 } from '../../types';
 import type {
 	CopyContextOptions,
@@ -41,8 +42,13 @@ export interface MainPanelHandle {
 	browserBack: () => void;
 	/** Navigate forward in the active browser tab's history */
 	browserForward: () => void;
-	/** Scroll the active tab header into view and focus it */
-	focusActiveTab: () => void;
+	/**
+	 * Scroll the active tab header into view and focus it. Returns true when it
+	 * was ALREADY focused and fully in view, i.e. the call had nothing to do -
+	 * which is what lets the Opt+Cmd+Up chord escalate to Previous Unread /
+	 * Draft Tab on a second press instead of doing nothing.
+	 */
+	focusActiveTab: () => boolean;
 	/** Reload the active browser tab (or stop loading if in progress) */
 	reloadBrowserTab: () => void;
 	/** Copy the active terminal tab's buffer (scrollback) to the clipboard */
@@ -143,7 +149,7 @@ export interface MainPanelProps {
 	onDeleteLog?: (logId: string) => number | null;
 	onRemoveQueuedItem?: (itemId: string) => void;
 	onTogglePauseQueuedItem?: (itemId: string) => void;
-	onEditQueuedItem?: (itemId: string, patch: { text: string; images: string[] }) => void;
+	onEditQueuedItem?: (itemId: string, patch: QueuedItemEditPatch) => void;
 	onReorderQueuedItem?: (fromIndex: number, toIndex: number, tabId?: string) => void;
 	onForceSendQueuedItem?: (itemId: string) => void;
 	forcedParallelEnabled?: boolean;

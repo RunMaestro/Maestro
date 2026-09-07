@@ -431,6 +431,43 @@ describe('settingsStore', () => {
 				expect(state.fileEditorFontFamily).toBe('');
 			});
 
+			it('saveTypographySnapshot captures the live fonts and sizes and persists them', () => {
+				useSettingsStore.setState({
+					fontFamily: 'Verdana',
+					terminalFontFamily: 'Fira Code',
+					fontSize: 17,
+					chatFontSize: 0,
+				});
+				useSettingsStore.getState().saveTypographySnapshot();
+
+				const snapshot = useSettingsStore.getState().typographySnapshot;
+				expect(snapshot?.fonts.fontFamily).toBe('Verdana');
+				expect(snapshot?.fonts.terminalFontFamily).toBe('Fira Code');
+				expect(snapshot?.sizes.fontSize).toBe(17);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('typographySnapshot', snapshot);
+			});
+
+			it('restoreTypographySnapshot puts a saved setup back after a preset overwrote it', () => {
+				// The whole reason the snapshot exists: trying a preset must not
+				// be a one-way door out of a hand-tuned setup.
+				useSettingsStore.setState({ fontFamily: 'Verdana', fontSize: 17 });
+				useSettingsStore.getState().saveTypographySnapshot();
+				useSettingsStore.getState().resetTypography('hacker');
+				expect(useSettingsStore.getState().fontFamily).not.toBe('Verdana');
+
+				useSettingsStore.getState().restoreTypographySnapshot();
+				expect(useSettingsStore.getState().fontFamily).toBe('Verdana');
+				expect(useSettingsStore.getState().fontSize).toBe(17);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('fontFamily', 'Verdana');
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('fontSize', 17);
+			});
+
+			it('restoreTypographySnapshot is a no-op with nothing saved', () => {
+				useSettingsStore.setState({ typographySnapshot: null, fontFamily: 'Verdana' });
+				useSettingsStore.getState().restoreTypographySnapshot();
+				expect(useSettingsStore.getState().fontFamily).toBe('Verdana');
+			});
+
 			it('setTypographyPromptSeen updates state and persists', () => {
 				useSettingsStore.getState().setTypographyPromptSeen(true);
 				expect(useSettingsStore.getState().typographyPromptSeen).toBe(true);
@@ -1874,6 +1911,38 @@ describe('settingsStore', () => {
 			expect(state.fontSize).toBe(16);
 			expect(state.activeThemeId).toBe('one-dark-pro');
 			expect(state.enterToSendAI).toBe(true);
+		});
+
+		it('restores a saved typography snapshot across a restart', async () => {
+			// The snapshot is the only way back to a hand-tuned setup after a
+			// Factory Reset, so a save that did not survive a restart would be
+			// worse than no save at all.
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				typographySnapshot: {
+					savedAt: 1234,
+					fonts: { fontFamily: 'Verdana' },
+					sizes: { fontSize: 17 },
+				},
+			});
+
+			await loadAllSettings();
+
+			const snapshot = useSettingsStore.getState().typographySnapshot;
+			expect(snapshot?.savedAt).toBe(1234);
+			expect(snapshot?.fonts.fontFamily).toBe('Verdana');
+			expect(snapshot?.sizes.fontSize).toBe(17);
+		});
+
+		it('drops a malformed typographySnapshot rather than arming a destructive Restore', async () => {
+			// Restore overwrites live fonts, so a hand-edited settings file must
+			// not be able to produce a button that blanks them.
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				typographySnapshot: 'hacker' as any,
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().typographySnapshot).toBeNull();
 		});
 
 		it('restores both halves of the environment editor', async () => {

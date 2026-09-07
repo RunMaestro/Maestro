@@ -14,6 +14,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { ALL_PROFILES_VALUE, providerProfileKey } from '../../../../shared/providerProfiles';
 import type { StatsTimeRange } from '../../../../shared/stats-types';
 import { GroupDetailModal } from '../GroupDetailModal';
 import { AgentDetailModal } from '../AgentDetailModal';
@@ -121,6 +122,10 @@ export function UsageDashboardModal({
 	});
 	const [focusedSection, setFocusedSection] = useState<SectionId | null>(null);
 	const [detailSession, setDetailSession] = useState<Session | null>(null);
+	// Provider-profile filter for the Agents grid. Owned here (rather than
+	// inside the grid) so the quota tabs' "N agents" chips can select an account
+	// and send the user to the grid already narrowed to it.
+	const [agentProfileFilter, setAgentProfileFilter] = useState<string>(ALL_PROFILES_VALUE);
 	// Groups come straight from the store rather than a prop: the dashboard is
 	// the only consumer, and threading them through AppInfoModals would add a
 	// prop to a component that has no other reason to know about groups.
@@ -145,6 +150,18 @@ export function UsageDashboardModal({
 		contentRef,
 		onViewModeChanged: handleViewModeChanged,
 	});
+
+	// Clicking an account's "N agents" chip on a quota tab answers the question
+	// the chip raises - WHICH agents? - by opening the Agents grid narrowed to
+	// that account. The tab switch is the point here, unlike the group tiles
+	// below: the chip has no detail view of its own to open instead.
+	const handleShowAccountAgents = useCallback(
+		(toolType: string, accountKey: string) => {
+			setAgentProfileFilter(providerProfileKey(toolType, accountKey));
+			switchViewMode('agents');
+		},
+		[switchViewMode]
+	);
 
 	// Clicking a group tile opens its detail modal - the per-agent breakdown of
 	// the totals on the tile. It does NOT switch tabs: the Agents tab answers a
@@ -308,6 +325,7 @@ export function UsageDashboardModal({
 					focusedSection={focusedSection}
 					setSectionRef={setSectionRef}
 					handleSectionKeyDown={handleSectionKeyDown}
+					onShowAccountAgents={handleShowAccountAgents}
 				/>
 			);
 		}
@@ -350,6 +368,8 @@ export function UsageDashboardModal({
 						handleSectionKeyDown={handleSectionKeyDown}
 						onShowAgentDetails={setDetailSession}
 						groups={groups}
+						profileFilter={agentProfileFilter}
+						onProfileFilterChange={setAgentProfileFilter}
 					/>
 				);
 			case 'groups':

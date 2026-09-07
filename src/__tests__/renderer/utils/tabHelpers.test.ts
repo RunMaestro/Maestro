@@ -66,12 +66,14 @@ import {
 	toggleReadOnlyModeFields,
 	cycleShowThinkingFields,
 	findNextUnreadSession,
+	findPreviousUnreadSession,
 	resolveQueuedItemTarget,
 	markTabRunningQueuedItem,
 	isSoleAiTabReplacement,
 	groupHasUnreadTabs,
 	computeUnreadGroupIds,
 	computeQueuedTabIds,
+	settleTabThinkingState,
 	filterUnifiedTabOrderForUnread,
 	groupFocusFields,
 	isSessionIdLabel,
@@ -5680,6 +5682,129 @@ describe('tabHelpers', () => {
 		});
 	});
 
+	describe('findPreviousUnreadSession', () => {
+		it('walks sessions backwards, wrapping around', () => {
+			const sessions = [
+				createMockSession({
+					id: 'a',
+					aiTabs: [createMockTab({ id: 'tab-a', hasUnread: true })],
+					activeTabId: 'tab-a',
+				}),
+				createMockSession({
+					id: 'b',
+					aiTabs: [createMockTab({ id: 'tab-b', hasUnread: false })],
+					activeTabId: 'tab-b',
+				}),
+				createMockSession({
+					id: 'c',
+					aiTabs: [createMockTab({ id: 'tab-c', hasUnread: true })],
+					activeTabId: 'tab-c',
+				}),
+			];
+			// Forward from 'b' lands on 'c'; backward has to land on 'a'.
+			expect(findNextUnreadSession(sessions, 'b').targetSessionId).toBe('c');
+			expect(findPreviousUnreadSession(sessions, 'b').targetSessionId).toBe('a');
+		});
+
+		it('wraps backwards past index 0 without a negative index', () => {
+			const sessions = [
+				createMockSession({
+					id: 'a',
+					aiTabs: [createMockTab({ id: 'tab-a', hasUnread: false })],
+					activeTabId: 'tab-a',
+				}),
+				createMockSession({
+					id: 'b',
+					aiTabs: [createMockTab({ id: 'tab-b', hasUnread: true })],
+					activeTabId: 'tab-b',
+				}),
+			];
+			const result = findPreviousUnreadSession(sessions, 'a');
+			expect(result.jumped).toBe(true);
+			expect(result.targetSessionId).toBe('b');
+		});
+
+		it('picks the LAST actionable tab in the current session, mirroring next', () => {
+			const sessions = [
+				createMockSession({
+					id: 'a',
+					aiTabs: [
+						createMockTab({ id: 'tab-a1', hasUnread: true }),
+						createMockTab({ id: 'tab-a2', hasUnread: false }),
+						createMockTab({ id: 'tab-a3', hasUnread: true }),
+					],
+					activeTabId: 'tab-a2',
+				}),
+			];
+			expect(findNextUnreadSession(sessions, 'a').targetTabId).toBe('tab-a1');
+			expect(findPreviousUnreadSession(sessions, 'a').targetTabId).toBe('tab-a3');
+		});
+
+		it('picks the last actionable tab of the target session', () => {
+			const sessions = [
+				createMockSession({ id: 'a', aiTabs: [], activeTabId: '' }),
+				createMockSession({
+					id: 'b',
+					aiTabs: [
+						createMockTab({ id: 'tab-b1', hasUnread: true }),
+						createMockTab({ id: 'tab-b2', hasUnread: true }),
+					],
+					activeTabId: 'tab-b1',
+				}),
+			];
+			const result = findPreviousUnreadSession(sessions, 'a');
+			expect(result.targetSessionId).toBe('b');
+			expect(result.targetTabId).toBe('tab-b2');
+		});
+
+		it('reports jumped=false when nothing is actionable', () => {
+			const sessions = [
+				createMockSession({
+					id: 'a',
+					aiTabs: [createMockTab({ id: 'tab-a', hasUnread: false })],
+					activeTabId: 'tab-a',
+				}),
+			];
+			const result = findPreviousUnreadSession(sessions, 'a');
+			expect(result.jumped).toBe(false);
+			expect(result.clearedCurrent).toBe(false);
+		});
+
+		it('honors drafts and active wizards the same way the forward walk does', () => {
+			const sessions = [
+				createMockSession({
+					id: 'a',
+					aiTabs: [createMockTab({ id: 'tab-a', hasUnread: false })],
+					activeTabId: 'tab-a',
+				}),
+				createMockSession({
+					id: 'b',
+					aiTabs: [createMockTab({ id: 'tab-b', hasUnread: false, inputValue: 'draft' })],
+					activeTabId: 'tab-b',
+				}),
+			];
+			expect(findPreviousUnreadSession(sessions, 'a').targetSessionId).toBe('b');
+
+			const wizardSessions = [
+				createMockSession({
+					id: 'a',
+					aiTabs: [
+						createMockTab({ id: 'tab-a1', hasUnread: false }),
+						createMockTab({ id: 'tab-a2', hasUnread: false }),
+					],
+					activeTabId: 'tab-a1',
+				}),
+			];
+			const result = findPreviousUnreadSession(
+				wizardSessions,
+				'a',
+				(tabId: string) => tabId === 'tab-a2'
+			);
+			expect(result.jumped).toBe(true);
+			expect(result.targetTabId).toBe('tab-a2');
+		});
+	});
+
 	describe('browser tabs', () => {
 		it('navigates to a browser tab from unified order', () => {
 			const aiTab = createMockTab({ id: 'ai-1' });
@@ -6276,5 +6401,103 @@ describe('tabHelpers', () => {
 			expect(isSessionIdLabel('', 'ses_4bcd1234')).toBe(false);
 			expect(isSessionIdLabel('SES_4BCD', undefined)).toBe(false);
 		});
+	});
+});
+
+/**
+ * settleTabThinkingState - ending a turn that had no process to exit.
+ *
+ * The busy dot and the Thinking pill are normally cleared by the process-exit
+ * listener. A cancelled auto-retry whose resend never spawned has no such exit,
+ * so this is what stops the tab pulsing for work nobody is doing. The session
+ * fields are the part worth guarding: they describe the AGENT, so they may only
+ * be cleared once nothing is left running.
+ */
+describe('settleTabThinkingState', () => {
+	it('idles the tab and clears the agent when nothing else is running', () => {
+		const session = createMockSession({
+			state: 'busy',
+			busySource: 'ai',
+			thinkingStartTime: 1_000,
+			aiTabs: [createMockTab({ id: 't1', state: 'busy', thinkingStartTime: 1_000 })],
+		});
+
+		const result = settleTabThinkingState(session, 't1');
+
+		expect(result.aiTabs[0].state).toBe('idle');
+		expect(result.aiTabs[0].thinkingStartTime).toBeUndefined();
+		expect(result.state).toBe('idle');
+		expect(result.busySource).toBeUndefined();
+		expect(result.thinkingStartTime).toBeUndefined();
+	});
+
+	// Settling one tab must not report the agent as finished: another tab is
+	// mid-turn, and the pill still has to count it.
+	it('leaves the agent busy while another tab is still working', () => {
+		const session = createMockSession({
+			state: 'busy',
+			busySource: 'ai',
+			thinkingStartTime: 1_000,
+			aiTabs: [
+				createMockTab({ id: 't1', state: 'busy' }),
+				createMockTab({ id: 't2', state: 'busy' }),
+			],
+		});
+
+		const result = settleTabThinkingState(session, 't1');
+
+		expect(result.aiTabs[0].state).toBe('idle');
+		expect(result.aiTabs[1].state).toBe('busy');
+		expect(result.state).toBe('busy');
+		expect(result.busySource).toBe('ai');
+		expect(result.thinkingStartTime).toBe(1_000);
+	});
+
+	// A tab closed mid-turn survives only so the pill keeps counting it, so
+	// settling it has to retire the orphan outright - otherwise the agent stays
+	// marked busy for a tab that no longer exists.
+	it('retires an orphaned thinking tab rather than leaving it counting', () => {
+		const session = createMockSession({
+			state: 'busy',
+			busySource: 'ai',
+			thinkingStartTime: 1_000,
+			aiTabs: [createMockTab({ id: 't1', state: 'idle' })],
+			orphanedThinkingTabs: [createMockTab({ id: 'gone', state: 'busy' })],
+		});
+
+		const result = settleTabThinkingState(session, 'gone');
+
+		expect(result.orphanedThinkingTabs).toBeUndefined();
+		expect(result.state).toBe('idle');
+		expect(result.busySource).toBeUndefined();
+	});
+
+	it('keeps the agent busy for an orphan that is not the one being settled', () => {
+		const session = createMockSession({
+			state: 'busy',
+			busySource: 'ai',
+			aiTabs: [createMockTab({ id: 't1', state: 'busy' })],
+			orphanedThinkingTabs: [createMockTab({ id: 'gone', state: 'busy' })],
+		});
+
+		const result = settleTabThinkingState(session, 't1');
+
+		expect(result.orphanedThinkingTabs?.map((t) => t.id)).toEqual(['gone']);
+		expect(result.state).toBe('busy');
+	});
+
+	// 'error' is the blocking modal's state, not a thinking state. Settling a tab
+	// must not dismiss an error the user still has to act on.
+	it('does not clear an error state', () => {
+		const session = createMockSession({
+			state: 'error',
+			busySource: 'ai',
+			aiTabs: [createMockTab({ id: 't1', state: 'busy' })],
+		});
+
+		const result = settleTabThinkingState(session, 't1');
+
+		expect(result.aiTabs[0].state).toBe('idle');
+		expect(result.state).toBe('error');
 	});
 });

@@ -1,12 +1,22 @@
 /**
  * Shared quota formatting primitives for the provider usage panels
  * (`ClaudePlanUsage`, `CodexPlanUsage`). Pure helpers only - no React, no
- * provider coupling - so both panels render bars with identical thresholds,
- * colors, and account-key naming.
+ * provider coupling - so both panels render bars with identical thresholds
+ * and colors.
+ *
+ * Account-key naming (`makeAccountKeyHelpers`) lives in
+ * `src/shared/providerProfiles.ts` and is re-exported here: the Agents grid
+ * needs the same naming to label its provider filter, and one copy is what
+ * keeps a badge's account name equal to the filter's.
  */
 
 import type { Theme } from '../../../types';
 import { humanizeDuration, type DurationUnit } from '../../../../shared/duration';
+
+export {
+	makeAccountKeyHelpers,
+	type QuotaAccountKeyHelpers,
+} from '../../../../shared/providerProfiles';
 
 // Mirrors `LIMIT_THRESHOLD_PERCENT` in `src/main/agents/claude-mode-selector.ts`.
 // Kept renderer-local (no main-process import) and shared across every provider
@@ -37,50 +47,6 @@ export function resolveQuotaFillColor(percent: number, theme: Theme): string {
 	if (percent >= LIMIT_THRESHOLD) return theme.colors.error ?? theme.colors.warning;
 	if (percent >= WARNING_THRESHOLD) return theme.colors.warning;
 	return theme.colors.accent;
-}
-
-export interface QuotaAccountKeyHelpers {
-	/** Short slug used by badges, tabs, and `data-testid`s (`gmail`, `default`). */
-	deriveShortName: (key: string | undefined) => string;
-	/** Humanized variant of the short name (`default` -> `Default account`). */
-	deriveDisplayName: (key: string | undefined) => string;
-	/** Strip trailing slashes so two spellings of one path collapse to one key. */
-	normalizeKey: (value: string) => string;
-}
-
-/**
- * Build the account-key string helpers for a provider whose accounts live in
- * `~/<prefix>` / `~/<prefix>-<name>` directories (`.claude`, `.codex`).
- *
- * Full `path.resolve()` semantics live on the main side; user-configured
- * account dirs are clean absolute paths in practice, so a string-level
- * normalize is enough here. If a renderer-derived key ever drifts from a
- * main-side snapshot key the tab simply shows the "Refresh to sample" CTA
- * instead of bars - graceful degradation rather than a crash.
- */
-export function makeAccountKeyHelpers(prefix: string): QuotaAccountKeyHelpers {
-	const dashPrefix = `${prefix}-`;
-
-	function deriveShortName(key: string | undefined): string {
-		if (!key) return 'default';
-		const trimmed = key.replace(/\/+$/, '');
-		const basename = trimmed.slice(trimmed.lastIndexOf('/') + 1);
-		if (!basename || basename === prefix) return 'default';
-		if (basename.startsWith(dashPrefix)) return basename.slice(dashPrefix.length);
-		if (basename.startsWith(prefix)) return basename.slice(prefix.length) || 'default';
-		return basename;
-	}
-
-	function deriveDisplayName(key: string | undefined): string {
-		const shortName = deriveShortName(key);
-		return shortName === 'default' ? 'Default account' : shortName;
-	}
-
-	function normalizeKey(value: string): string {
-		return value.replace(/\/+$/, '');
-	}
-
-	return { deriveShortName, deriveDisplayName, normalizeKey };
 }
 
 /**

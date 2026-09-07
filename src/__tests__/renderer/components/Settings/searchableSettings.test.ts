@@ -170,6 +170,12 @@ describe('searchableSettings', () => {
 			['bigger', 'display-font-zoom'],
 			['factory reset', 'display-typography-reset'],
 			['hacker', 'display-typography-reset'],
+			// The snapshot section is what makes the two presets above safe to
+			// click, so it has to be findable by the words on its own buttons.
+			['save customizations', 'display-typography-snapshot'],
+			['restore customizations', 'display-typography-snapshot'],
+			['saved fonts', 'display-typography-snapshot'],
+			['manage custom fonts', 'display-custom-fonts'],
 			// The five per-surface pickers are one grouped section now, so every
 			// surface's name has to surface that one entry.
 			['ai chat font', 'display-fonts'],

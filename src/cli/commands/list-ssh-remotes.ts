@@ -24,6 +24,10 @@ export function listSshRemotes(options: ListSshRemotesOptions): void {
 					enabled: remote.enabled,
 					useSshConfig: remote.useSshConfig || false,
 					sshOptions: remote.sshOptions ?? {},
+					// Switched-off entries, reported so an agent can see what exists to
+					// turn back on. They are deliberately absent from resolvedSshOptions.
+					sshOptionsDisabled: remote.sshOptionsDisabled ?? {},
+					remoteEnvDisabled: remote.remoteEnvDisabled ?? {},
 					// The full option set ssh will receive, defaults included. An agent
 					// debugging a connection needs what is actually passed, not just the
 					// overrides layered on top of it.

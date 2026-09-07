@@ -14,6 +14,7 @@ import {
 	parseSshOptionAssignments,
 	resolveSshOptions,
 } from '../../shared/sshOptions';
+import { setKeysParked, type ParkedRecordPair } from '../../shared/parkedRecords';
 
 interface UpdateSshRemoteOptions {
 	name?: string;
@@ -23,8 +24,12 @@ interface UpdateSshRemoteOptions {
 	key?: string;
 	env?: string[];
 	clearEnv?: boolean;
+	disableEnv?: string[];
+	enableEnv?: string[];
 	sshOption?: string[];
 	clearSshOptions?: boolean;
+	disableSshOption?: string[];
+	enableSshOption?: string[];
 	sshConfig?: string;
 	enabled?: string;
 	setDefault?: boolean;
@@ -56,6 +61,33 @@ function parseAssignments(entries: string[], flag: string, json?: boolean): Reco
 		result[entry.slice(0, eqIndex)] = entry.slice(eqIndex + 1);
 	}
 	return result;
+}
+
+/** Keys of `SshRemoteConfig` holding a `Record<string, string>` pair half. */
+type RecordField = 'remoteEnv' | 'remoteEnvDisabled' | 'sshOptions' | 'sshOptionsDisabled';
+
+/**
+ * Apply the `--disable-*` / `--enable-*` flags - the CLI's spelling of the eye
+ * button in the SSH remote dialog.
+ *
+ * Disable runs FIRST so a single command can swap which of two keys is live
+ * without the enable being undone by the disable in the same pass.
+ */
+function applyParkChanges(
+	config: SshRemoteConfig,
+	activeField: RecordField,
+	parkedField: RecordField,
+	disableKeys?: string[],
+	enableKeys?: string[]
+): void {
+	if (!disableKeys?.length && !enableKeys?.length) return;
+
+	let pair: ParkedRecordPair = { active: config[activeField], parked: config[parkedField] };
+	if (disableKeys?.length) pair = setKeysParked(pair, disableKeys, true);
+	if (enableKeys?.length) pair = setKeysParked(pair, enableKeys, false);
+
+	config[activeField] = pair.active;
+	config[parkedField] = pair.parked;
 }
 
 export function updateSshRemote(remoteId: string, options: UpdateSshRemoteOptions): void {
@@ -119,19 +151,41 @@ export function updateSshRemote(remoteId: string, options: UpdateSshRemoteOption
 
 	// Env and -o options MERGE by default so a single edit does not silently drop
 	// the rest of the set; --clear-* is the explicit way to start over.
-	if (options.clearEnv) updated.remoteEnv = undefined;
+	// --clear-* wipes BOTH records: "remove all" that left parked entries behind
+	// would leave invisible state a later --enable-* could resurrect.
+	if (options.clearEnv) {
+		updated.remoteEnv = undefined;
+		updated.remoteEnvDisabled = undefined;
+	}
 	if (options.env && options.env.length > 0) {
 		const parsed = parseAssignments(options.env, '--env', options.json);
 		const merged = { ...(updated.remoteEnv ?? {}), ...parsed };
 		updated.remoteEnv = Object.keys(merged).length > 0 ? merged : undefined;
 	}
+	applyParkChanges(
+		updated,
+		'remoteEnv',
+		'remoteEnvDisabled',
+		options.disableEnv,
+		options.enableEnv
+	);
 
-	if (options.clearSshOptions) updated.sshOptions = undefined;
+	if (options.clearSshOptions) {
+		updated.sshOptions = undefined;
+		updated.sshOptionsDisabled = undefined;
+	}
 	if (options.sshOption && options.sshOption.length > 0) {
 		const parsed = parseSshOptionAssignments(options.sshOption);
 		if (parsed.error) fail(parsed.error, options.json);
 		updated.sshOptions = normalizeSshOptions({ ...(updated.sshOptions ?? {}), ...parsed.options });
 	}
+	applyParkChanges(
+		updated,
+		'sshOptions',
+		'sshOptionsDisabled',
+		options.disableSshOption,
+		options.enableSshOption
+	);
 
 	remotes[index] = updated;
 	writeSshRemotes(remotes);
@@ -152,6 +206,10 @@ export function updateSshRemote(remoteId: string, options: UpdateSshRemoteOption
 				enabled: updated.enabled,
 				useSshConfig: updated.useSshConfig || false,
 				sshOptions: updated.sshOptions ?? {},
+				// Parked entries are reported so an agent can see what is available to
+				// switch back on; they are never part of the resolved set below.
+				sshOptionsDisabled: updated.sshOptionsDisabled ?? {},
+				remoteEnvDisabled: updated.remoteEnvDisabled ?? {},
 				// What ssh will actually receive, defaults included - the point of an
 				// override is usually to change one of those, so echoing only the
 				// overrides would not answer "did my ConnectTimeout take effect?"
@@ -171,6 +229,12 @@ export function updateSshRemote(remoteId: string, options: UpdateSshRemoteOption
 	}
 	for (const [key, value] of Object.entries(resolveSshOptions(updated.sshOptions))) {
 		console.log(`  -o    ${key}=${value}`);
+	}
+	for (const key of Object.keys(updated.sshOptionsDisabled ?? {})) {
+		console.log(`  -o    ${key} (off)`);
+	}
+	for (const key of Object.keys(updated.remoteEnvDisabled ?? {})) {
+		console.log(`  env   ${key} (off)`);
 	}
 	if (options.setDefault) {
 		console.log(`  Set as default`);

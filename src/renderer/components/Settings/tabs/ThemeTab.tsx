@@ -57,9 +57,12 @@ export function ThemeTab({
 	// undefined is a state that really occurs rather than a theoretical one.
 	const glossLevel = asGlossLevel(themeGloss);
 
-	// Auto-focus theme picker on mount
+	// Auto-focus theme picker on mount so Tab cycles themes immediately.
+	// `preventScroll` is required: this container is taller than the scroll port
+	// (three theme groups plus the custom builder), so a focus scroll lands the
+	// panel somewhere in its middle, past the theme grid the user came to see.
 	useEffect(() => {
-		const timer = setTimeout(() => themePickerRef.current?.focus(), 50);
+		const timer = setTimeout(() => themePickerRef.current?.focus({ preventScroll: true }), 50);
 		return () => clearTimeout(timer);
 	}, []);
 
@@ -140,7 +143,7 @@ export function ThemeTab({
 			<div
 				data-setting-id="theme-picker"
 				ref={themePickerRef}
-				className="space-y-6 outline-none"
+				className="space-y-5 outline-none"
 				tabIndex={0}
 				onKeyDown={handleThemePickerKeyDown}
 				role="group"
@@ -148,19 +151,11 @@ export function ThemeTab({
 			>
 				{['dark', 'light', 'vibe'].map((mode) => (
 					<div key={mode}>
-						<div
-							className="text-xs font-bold uppercase mb-3 flex items-center gap-2"
-							style={{ color: theme.colors.textDim }}
+						<SettingsSectionHeading
+							icon={mode === 'dark' ? Moon : mode === 'light' ? Sun : Sparkles}
 						>
-							{mode === 'dark' ? (
-								<Moon className="w-3 h-3" />
-							) : mode === 'light' ? (
-								<Sun className="w-3 h-3" />
-							) : (
-								<Sparkles className="w-3 h-3" />
-							)}
 							{mode} Mode
-						</div>
+						</SettingsSectionHeading>
 						<div className="grid grid-cols-2 gap-3">
 							{groupedThemes[mode]?.map((t: Theme) => (
 								<button

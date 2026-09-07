@@ -18,6 +18,7 @@ import { useGitBranch, useGitDetail, useGitFileStatus } from '../../contexts/Git
 import { gitService } from '../../services/git';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { useGitRunActive } from '../../stores/gitCommandRunStore';
+import { usePRCreationActive } from '../../stores/prCreationStore';
 import type { GitChangeTotals, GitStreamingOperation } from '../../../shared/gitUtils';
 import type { Session } from '../../types';
 
@@ -57,6 +58,12 @@ export interface GitAgentActions {
 	pushRunning: boolean;
 	switchBranch: () => void;
 	createPR: () => void;
+	/**
+	 * True while `gh pr create` started from this agent's repo is still running,
+	 * including after its form was dismissed with Run in Background. Menus badge
+	 * the row with it; clicking the row re-opens the form on that same attempt.
+	 */
+	prRunning: boolean;
 	/**
 	 * Open the worktree configuration modal for this agent. Activates the agent
 	 * first, because the modal reads the active session.
@@ -205,6 +212,10 @@ export function useGitAgentActions(session: Session | null | undefined): GitAgen
 		useModalStore.getState().openModal('createPR', { session, sourceBranch: branch });
 	}, [session, branch]);
 
+	// Keyed on the repo the PR is opened from, so an attempt started from any
+	// surface shows up on every surface.
+	const prRunning = usePRCreationActive(target?.cwd);
+
 	const configureWorktrees = useCallback(() => {
 		if (!session) return;
 		// The config modal renders against the active session, so activating is
@@ -230,6 +241,7 @@ export function useGitAgentActions(session: Session | null | undefined): GitAgen
 		pushRunning,
 		switchBranch,
 		createPR,
+		prRunning,
 		configureWorktrees,
 		// Worktree children can't own a worktree config of their own.
 		canConfigureWorktrees: Boolean(session?.isGitRepo && !session.parentSessionId),

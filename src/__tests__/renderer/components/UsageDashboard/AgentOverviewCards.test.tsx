@@ -11,6 +11,8 @@
  * - Staggered card-enter animation delays are applied
  * - The fuzzy agent filter narrows cards live and clears from the ESC pill
  * - The group dropdown narrows the grid, and only offers groups that hold agents
+ * - The provider dropdown splits agents by backing account, badges the cards,
+ *   and offers a Provider sort
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -19,6 +21,7 @@ import { AgentOverviewCards } from '../../../../renderer/components/UsageDashboa
 import type { StatsAggregation } from '../../../../renderer/hooks/stats/useStats';
 import type { Session } from '../../../../renderer/types';
 import { THEMES } from '../../../../shared/themes';
+import { ALL_PROFILES_VALUE } from '../../../../shared/providerProfiles';
 
 // The agent filter registers a layer while it holds text so Escape clears the
 // box instead of closing the dashboard. Stub the stack so the component can
@@ -947,6 +950,113 @@ describe('AgentOverviewCards', () => {
 
 			expect(screen.getAllByTestId('agent-card')).toHaveLength(1);
 			expect(screen.getByText('Alpha')).toBeInTheDocument();
+		});
+	});
+
+	describe('provider profile filter', () => {
+		const SMASH = '/Users/me/.claude-smash';
+		const GMAIL = '/Users/me/.claude-gmail';
+
+		const PROFILE_SESSIONS: Session[] = [
+			buildSession({ id: 's1', name: 'Alpha', customEnvVars: { CLAUDE_CONFIG_DIR: SMASH } }),
+			buildSession({ id: 's2', name: 'Beta', customEnvVars: { CLAUDE_CONFIG_DIR: GMAIL } }),
+			buildSession({ id: 's3', name: 'Gamma', customEnvVars: { CLAUDE_CONFIG_DIR: GMAIL } }),
+			buildSession({ id: 's4', name: 'Delta', toolType: 'opencode' }),
+		];
+
+		const renderProfiles = (sessions: Session[] = PROFILE_SESSIONS) =>
+			render(<AgentOverviewCards sessions={sessions} data={buildData()} theme={theme} />);
+
+		/** The dropdown only exists once more than one profile is in play. */
+		const trigger = () => screen.getByLabelText('Filter agents by provider account');
+		const pickProfile = (label: string) => {
+			fireEvent.click(trigger());
+			fireEvent.click(screen.getByRole('option', { name: label }));
+		};
+
+		it('offers one option per backing account, with its agent count', () => {
+			renderProfiles();
+
+			fireEvent.click(trigger());
+			expect(screen.getByRole('option', { name: 'All providers' })).toBeInTheDocument();
+			expect(screen.getByRole('option', { name: 'Claude Code - smash (1)' })).toBeInTheDocument();
+			expect(screen.getByRole('option', { name: 'Claude Code - gmail (2)' })).toBeInTheDocument();
+			// An account-less provider is still a profile - one per provider.
+			expect(screen.getByRole('option', { name: 'OpenCode (1)' })).toBeInTheDocument();
+		});
+
+		it('narrows the grid to the picked account', () => {
+			renderProfiles();
+
+			pickProfile('Claude Code - gmail (2)');
+
+			expect(screen.getAllByTestId('agent-card')).toHaveLength(2);
+			expect(screen.getByText('Beta')).toBeInTheDocument();
+			expect(screen.queryByText('Alpha')).not.toBeInTheDocument();
+		});
+
+		it('badges every card with its account so the split is readable unfiltered', () => {
+			renderProfiles();
+
+			expect(screen.getAllByTestId('agent-card-profile-badge')).toHaveLength(4);
+			const labels = screen.getAllByTestId('agent-card-profile-badge').map((el) => el.textContent);
+			expect(labels).toEqual(expect.arrayContaining(['smash', 'gmail', 'OpenCode']));
+		});
+
+		it('renders neither dropdown nor badge when the whole fleet shares one profile', () => {
+			renderProfiles([
+				buildSession({ id: 's1', name: 'Alpha', customEnvVars: { CLAUDE_CONFIG_DIR: SMASH } }),
+				buildSession({ id: 's2', name: 'Beta', customEnvVars: { CLAUDE_CONFIG_DIR: SMASH } }),
+			]);
+
+			expect(screen.getAllByTestId('agent-card')).toHaveLength(2);
+			expect(screen.queryByLabelText('Filter agents by provider account')).toBeNull();
+			expect(screen.queryAllByTestId('agent-card-profile-badge')).toHaveLength(0);
+		});
+
+		it('keeps the toolbar and explains itself when a profile filter empties the grid', () => {
+			// The parent owns the filter when a quota badge can set it, and the
+			// account it names may hold no agents by the time the grid renders.
+			render(
+				<AgentOverviewCards
+					sessions={PROFILE_SESSIONS}
+					data={buildData()}
+					theme={theme}
+					profileFilter="claude-code::/Users/me/.claude-banaco"
+					onProfileFilterChange={vi.fn()}
+				/>
+			);
+
+			expect(screen.queryAllByTestId('agent-card')).toHaveLength(0);
+			expect(screen.getByTestId('agent-overview-group-empty')).toBeInTheDocument();
+		});
+
+		it('reports the picked profile back to a controlling parent', () => {
+			const onChange = vi.fn();
+			render(
+				<AgentOverviewCards
+					sessions={PROFILE_SESSIONS}
+					data={buildData()}
+					theme={theme}
+					profileFilter={ALL_PROFILES_VALUE}
+					onProfileFilterChange={onChange}
+				/>
+			);
+
+			pickProfile('Claude Code - smash (1)');
+
+			expect(onChange).toHaveBeenCalledWith(`claude-code::${SMASH}`);
+		});
+
+		it('groups the grid by account under the Provider sort', () => {
+			renderProfiles();
+
+			fireEvent.click(screen.getByRole('radio', { name: 'Provider' }));
+
+			// Ordered by full label ("Claude Code - gmail", "Claude Code - smash",
+			// "OpenCode"), names ascending inside each block.
+			const names = screen.getAllByTestId('agent-card-profile-badge').map((el) => el.textContent);
+			expect(names).toEqual(['gmail', 'gmail', 'smash', 'OpenCode']);
 		});
 	});
 });

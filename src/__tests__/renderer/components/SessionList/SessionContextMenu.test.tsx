@@ -14,6 +14,7 @@ import {
 	useGitCommandRunStore,
 	type GitCommandRun,
 } from '../../../../renderer/stores/gitCommandRunStore';
+import { usePRCreationStore, prRunKey } from '../../../../renderer/stores/prCreationStore';
 import type { Session } from '../../../../renderer/types';
 import { mockTheme } from '../../../helpers/mockTheme';
 
@@ -159,6 +160,35 @@ describe('SessionContextMenu', () => {
 		expect(screen.getByTestId('session-context-git-pull')).toHaveTextContent('3');
 
 		useGitCommandRunStore.setState({ runs: {} });
+	});
+
+	// Closing the Create PR form no longer abandons the request, so the row that
+	// opens it says the request is still going.
+	it('badges Create Pull Request while a backgrounded creation is in flight', () => {
+		const key = prRunKey('/test/repo');
+		usePRCreationStore.setState({
+			runs: {
+				[key]: {
+					key,
+					sessionId: 'session-1',
+					worktreePath: '/test/repo',
+					sourceBranch: 'feature/login',
+					targetBranch: 'main',
+					title: 'feature login',
+					description: '',
+					status: 'running',
+					announced: false,
+				},
+			},
+		});
+		renderMenu();
+
+		expect(screen.getByTestId('session-context-create-pr-running')).toBeInTheDocument();
+		// Clicking the badged row re-opens the form on that same attempt.
+		fireEvent.click(screen.getByTestId('session-context-create-pr'));
+		expect(mockOpenModal).toHaveBeenCalledWith('createPR', expect.anything());
+
+		usePRCreationStore.setState({ runs: {} });
 	});
 
 	// Without this the row offered a diff without saying whether there was one.

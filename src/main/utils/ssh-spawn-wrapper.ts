@@ -20,22 +20,46 @@ import {
 	QUERY_SOURCE_ENV_VAR,
 	type QuerySource,
 } from '../../shared/querySource';
+import { stripBlankEnvVars } from '../../shared/agentEnvironment';
 
 /**
  * Add the turn-origin marker to the env exported to the remote host. Stamped
  * last so the agent's own overrides cannot relabel a Cue run as interactive.
+ *
+ * Blank values are dropped rather than exported. Nothing of the local env
+ * crosses the SSH boundary, so a blank here can only ever produce `export FOO=''`
+ * on the remote - never a meaningful override of a Maestro layer - and a
+ * set-but-empty variable is what crashes an agent that reads it as a path.
  */
 function withQuerySource(
 	customEnvVars: Record<string, string> | undefined,
 	querySource: QuerySource | undefined
 ): Record<string, string> {
 	return {
-		...(customEnvVars || {}),
+		...stripBlankEnvVars(customEnvVars),
 		[QUERY_SOURCE_ENV_VAR]: querySource ?? DEFAULT_QUERY_SOURCE,
 	};
 }
 
 const LOG_CONTEXT = '[SshSpawnWrapper]';
+
+/**
+ * The message every caller should use when {@link wrapSpawnWithSsh} came back
+ * with `sshRemoteUsed: null` despite SSH being enabled.
+ *
+ * The wrapper degrades to a local spawn in that case, which is never what the
+ * user asked for: they opted into a remote host, so running the agent on their
+ * own machine (with the remote's cwd, no less) is a wrong answer dressed up as a
+ * working one. Callers must check `sshRemoteUsed` and fail with this.
+ */
+export function sshUnresolvedRemoteMessage(sshConfig: AgentSshRemoteConfig): string {
+	const remoteLabel = sshConfig.remoteId ? ` "${sshConfig.remoteId}"` : '';
+	return (
+		`SSH remote execution is enabled for this session but the configured remote${remoteLabel} ` +
+		`could not be resolved. Check that the remote exists, is enabled, and that the ` +
+		`session's remoteId points at a valid SSH remote.`
+	);
+}
 
 /**
  * Configuration for wrapping a spawn with SSH.
