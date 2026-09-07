@@ -18,6 +18,11 @@
  * isn't interrupted. Wheel zoom listens on `document` (with a bounds check
  * against the wrapper) so it survives the click-through state.
  *
+ * The crop tool replaces the drawing surface with a selection frame: a dimmed
+ * mask outside the rect, rule-of-thirds guides inside it, and eight handles.
+ * The rect is stored as `null` when it covers the whole image, so a fresh crop
+ * session works before the image's intrinsic size is known.
+ *
  * Shape interaction routing (when a shape tool is active):
  *   • Pointerdown on a resize handle → start resize
  *   • Pointerdown on a shape body    → select + start move
@@ -40,8 +45,10 @@ import type {
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useEventListener } from '../../hooks/utils/useEventListener';
 import { generateId } from '../../utils/ids';
+import { clampCropRect, resizeCropRect, type CropHandle, type CropRect } from './cropImageDataUrl';
 
 interface AnnotatorCanvasProps {
+	/** The working base image - swapped out by the parent when a crop lands. */
 	imageDataUrl: string;
 	state: UseAnnotatorStateReturn;
 }
@@ -92,6 +99,20 @@ type Interaction =
 			startImgY: number;
 			origX: number;
 			origY: number;
+	  }
+	| { kind: 'crop-draw'; pointerId: number; anchorX: number; anchorY: number }
+	| {
+			kind: 'crop-move';
+			pointerId: number;
+			startImgX: number;
+			startImgY: number;
+			orig: CropRect;
+	  }
+	| {
+			kind: 'crop-resize';
+			pointerId: number;
+			handle: CropHandle;
+			orig: CropRect;
 	  };
 
 const MIN_SCALE = 0.05;
@@ -156,6 +177,19 @@ function arrowHeadPoints(
 	};
 }
 
+const CROP_HANDLES: readonly CropHandle[] = ['tl', 't', 'tr', 'r', 'br', 'b', 'bl', 'l'];
+
+const CROP_HANDLE_CURSORS: Record<CropHandle, string> = {
+	tl: 'nwse-resize',
+	t: 'ns-resize',
+	tr: 'nesw-resize',
+	r: 'ew-resize',
+	br: 'nwse-resize',
+	b: 'ns-resize',
+	bl: 'nesw-resize',
+	l: 'ew-resize',
+};
+
 export const AnnotatorCanvas = forwardRef<SVGSVGElement, AnnotatorCanvasProps>(
 	function AnnotatorCanvas({ imageDataUrl, state }, forwardedRef) {
 		const {
@@ -188,6 +222,8 @@ export const AnnotatorCanvas = forwardRef<SVGSVGElement, AnnotatorCanvasProps>(
 			commitTextEditing,
 			deleteText,
 			selectText,
+			cropRect,
+			setCropRect,
 		} = state;
 
 		const wrapperRef = useRef<HTMLDivElement>(null);
@@ -217,6 +253,17 @@ export const AnnotatorCanvas = forwardRef<SVGSVGElement, AnnotatorCanvasProps>(
 		// (see below) and needs the current view without re-binding.
 		const viewRef = useRef(view);
 		viewRef.current = view;
+
+		// Latest crop rect for the pointerup normalizer, which runs after the
+		// last pointermove's state update has been queued but not yet rendered.
+		const cropRectRef = useRef(cropRect);
+		cropRectRef.current = cropRect;
+
+		// `null` means "the whole image". Resolving it here keeps the null-as-full
+		// convention out of every render and hit-test below.
+		const effectiveCrop: CropRect | null = imgSize
+			? (cropRect ?? { x: 0, y: 0, w: imgSize.w, h: imgSize.h })
+			: null;
 
 		const fitToViewport = useCallback(
 			(w: number, h: number) => {
@@ -401,6 +448,24 @@ export const AnnotatorCanvas = forwardRef<SVGSVGElement, AnnotatorCanvasProps>(
 
 		const handleSvgPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
 			if (!imgSize || e.button !== 0 || panEnabled) return;
+			// Crop - dragging on the dimmed area outside the frame starts a fresh
+			// selection. Drags that begin inside the frame or on a handle are
+			// handled by those elements' own pointerdown (they stop propagation).
+			if (tool === 'crop') {
+				e.stopPropagation();
+				e.preventDefault();
+				e.currentTarget.setPointerCapture(e.pointerId);
+				const pt = clientToImage(e.clientX, e.clientY);
+				if (!pt) return;
+				interactionRef.current = {
+					kind: 'crop-draw',
+					pointerId: e.pointerId,
+					anchorX: pt[0],
+					anchorY: pt[1],
+				};
+				setCropRect({ x: pt[0], y: pt[1], w: 0, h: 0 });
+				return;
+			}
 			// Text - clicking empty area places a new text label at the cursor and
 			// opens its inline editor. Clicks on an existing text are handled by
 			// the text's own pointerdown (which stops propagation).
@@ -493,6 +558,34 @@ export const AnnotatorCanvas = forwardRef<SVGSVGElement, AnnotatorCanvasProps>(
 				});
 				return;
 			}
+			if (interaction.kind === 'crop-draw') {
+				setCropRect({
+					x: interaction.anchorX,
+					y: interaction.anchorY,
+					w: pt[0] - interaction.anchorX,
+					h: pt[1] - interaction.anchorY,
+				});
+				return;
+			}
+			if (interaction.kind === 'crop-move') {
+				const dx = pt[0] - interaction.startImgX;
+				const dy = pt[1] - interaction.startImgY;
+				const { orig } = interaction;
+				// Moving never resizes, so clamp the origin instead of the edges.
+				const maxX = (imgSize?.w ?? orig.w) - orig.w;
+				const maxY = (imgSize?.h ?? orig.h) - orig.h;
+				setCropRect({
+					x: Math.max(0, Math.min(maxX, orig.x + dx)),
+					y: Math.max(0, Math.min(maxY, orig.y + dy)),
+					w: orig.w,
+					h: orig.h,
+				});
+				return;
+			}
+			if (interaction.kind === 'crop-resize') {
+				setCropRect(resizeCropRect(interaction.orig, interaction.handle, pt[0], pt[1]));
+				return;
+			}
 			if (interaction.kind === 'shape-resize') {
 				const next: Partial<Shape> = {};
 				const minX = Math.min(interaction.origX1, interaction.origX2);
@@ -557,6 +650,17 @@ export const AnnotatorCanvas = forwardRef<SVGSVGElement, AnnotatorCanvasProps>(
 				});
 			} else if (interaction.kind === 'shape-draw') {
 				commitCurrentShape();
+			} else if (
+				interaction.kind === 'crop-draw' ||
+				interaction.kind === 'crop-move' ||
+				interaction.kind === 'crop-resize'
+			) {
+				// Normalize on release: an inverted or off-image drag becomes a
+				// clean in-bounds rect, and a stray click (too small to be a crop)
+				// falls back to "whole image" rather than a sliver.
+				const size = imgSize;
+				const raw = cropRectRef.current;
+				setCropRect(size && raw ? clampCropRect(raw, size.w, size.h) : null);
 			}
 			interactionRef.current = null;
 		};
@@ -669,7 +773,7 @@ export const AnnotatorCanvas = forwardRef<SVGSVGElement, AnnotatorCanvasProps>(
 				: 'grab'
 			: tool === 'pen' || tool === 'eraser'
 				? 'crosshair'
-				: SHAPE_TOOLS.has(tool)
+				: SHAPE_TOOLS.has(tool) || tool === 'crop'
 					? 'crosshair'
 					: tool === 'text'
 						? 'text'
@@ -850,6 +954,148 @@ export const AnnotatorCanvas = forwardRef<SVGSVGElement, AnnotatorCanvasProps>(
 							rx={r * 0.15}
 						/>
 					)}
+				</g>
+			);
+		};
+
+		// Drag inside the frame to reposition the crop without resizing it.
+		const handleCropBodyPointerDown = (rect: CropRect, e: React.PointerEvent<SVGElement>) => {
+			if (e.button !== 0 || panEnabled) return;
+			e.stopPropagation();
+			e.preventDefault();
+			const svg = svgRef.current;
+			if (!svg) return;
+			svg.setPointerCapture(e.pointerId);
+			const pt = clientToImage(e.clientX, e.clientY);
+			if (!pt) return;
+			interactionRef.current = {
+				kind: 'crop-move',
+				pointerId: e.pointerId,
+				startImgX: pt[0],
+				startImgY: pt[1],
+				orig: rect,
+			};
+		};
+
+		const handleCropHandlePointerDown = (
+			rect: CropRect,
+			handle: CropHandle,
+			e: React.PointerEvent<SVGElement>
+		) => {
+			if (e.button !== 0 || panEnabled) return;
+			e.stopPropagation();
+			e.preventDefault();
+			const svg = svgRef.current;
+			if (!svg) return;
+			svg.setPointerCapture(e.pointerId);
+			interactionRef.current = {
+				kind: 'crop-resize',
+				pointerId: e.pointerId,
+				handle,
+				orig: rect,
+			};
+		};
+
+		/**
+		 * The crop frame: a dimmed mask over everything outside the selection,
+		 * rule-of-thirds guides inside it, a drag-to-move body, and eight grips.
+		 * All of it is annotator chrome - `compositeAnnotatedImage` strips it, and
+		 * the actual pixel cut happens in `cropImageDataUrl` on apply.
+		 */
+		const renderCropOverlay = (rect: CropRect, size: ImgSize): React.ReactNode => {
+			// Normalize for drawing so an in-progress inverted drag still paints.
+			const x = Math.min(rect.x, rect.x + rect.w);
+			const y = Math.min(rect.y, rect.y + rect.h);
+			const w = Math.abs(rect.w);
+			const h = Math.abs(rect.h);
+			const guide = 1 / view.scale;
+			const maskFill = 'rgba(0, 0, 0, 0.55)';
+			const thirdsX = [x + w / 3, x + (w * 2) / 3];
+			const thirdsY = [y + h / 3, y + (h * 2) / 3];
+			return (
+				<g data-annotator-chrome="true">
+					{/* Dim outside the frame. Four rects instead of a mask element so
+					    the composite path never has to resolve an SVG <mask>. */}
+					<rect x={0} y={0} width={size.w} height={y} fill={maskFill} pointerEvents="none" />
+					<rect
+						x={0}
+						y={y + h}
+						width={size.w}
+						height={Math.max(0, size.h - (y + h))}
+						fill={maskFill}
+						pointerEvents="none"
+					/>
+					<rect x={0} y={y} width={x} height={h} fill={maskFill} pointerEvents="none" />
+					<rect
+						x={x + w}
+						y={y}
+						width={Math.max(0, size.w - (x + w))}
+						height={h}
+						fill={maskFill}
+						pointerEvents="none"
+					/>
+					{/* Drag body - transparent, so the image reads through. */}
+					<rect
+						x={x}
+						y={y}
+						width={w}
+						height={h}
+						fill="transparent"
+						style={{ pointerEvents: 'auto', cursor: 'move' }}
+						onPointerDown={(e) => handleCropBodyPointerDown({ x, y, w, h }, e)}
+					/>
+					{thirdsX.map((gx) => (
+						<line
+							key={`crop-guide-x-${gx}`}
+							x1={gx}
+							y1={y}
+							x2={gx}
+							y2={y + h}
+							stroke="rgba(255,255,255,0.35)"
+							strokeWidth={guide}
+							pointerEvents="none"
+						/>
+					))}
+					{thirdsY.map((gy) => (
+						<line
+							key={`crop-guide-y-${gy}`}
+							x1={x}
+							y1={gy}
+							x2={x + w}
+							y2={gy}
+							stroke="rgba(255,255,255,0.35)"
+							strokeWidth={guide}
+							pointerEvents="none"
+						/>
+					))}
+					<rect
+						x={x}
+						y={y}
+						width={w}
+						height={h}
+						fill="none"
+						stroke="#ffffff"
+						strokeWidth={1.5 / view.scale}
+						pointerEvents="none"
+					/>
+					{CROP_HANDLES.map((handle) => {
+						const hx = handle.includes('l') ? x : handle.includes('r') ? x + w : x + w / 2;
+						const hy = handle.includes('t') ? y : handle.includes('b') ? y + h : y + h / 2;
+						return (
+							<rect
+								key={`crop-handle-${handle}`}
+								x={hx - handleSize / 2}
+								y={hy - handleSize / 2}
+								width={handleSize}
+								height={handleSize}
+								fill="#ffffff"
+								stroke="#000000"
+								strokeWidth={1 / view.scale}
+								style={{ pointerEvents: 'auto', cursor: CROP_HANDLE_CURSORS[handle] }}
+								onPointerDown={(e) => handleCropHandlePointerDown({ x, y, w, h }, handle, e)}
+							/>
+						);
+					})}
 				</g>
 			);
 		};
@@ -1124,6 +1370,11 @@ export const AnnotatorCanvas = forwardRef<SVGSVGElement, AnnotatorCanvasProps>(
 										bbox={textBBoxOf(editingText)}
 									/>
 								</g>
+							)}
+							{/* Crop frame - drawn above everything so the mask dims the
+							    annotations that fall outside the selection too. */}
+							{tool === 'crop' && effectiveCrop && imgSize && (
+								<>{renderCropOverlay(effectiveCrop, imgSize)}</>
 							)}
 						</svg>
 					)}

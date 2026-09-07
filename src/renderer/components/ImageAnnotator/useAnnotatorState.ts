@@ -11,16 +11,30 @@
  * the moment it was finished, so subsequent setting changes only affect
  * future drawables - past ones stay locked in.
  *
- * Undo walks a unified `history` log so it can pop strokes and shapes in the
- * order they were added, regardless of which collection they live in. Move
+ * The base image lives here too, because crop rewrites it: applying a crop
+ * swaps in the cut-down PNG and translates every drawable into the new origin,
+ * so annotations stay live and editable instead of being baked into pixels.
+ *
+ * Undo walks a unified `history` log so it can pop strokes, shapes and crops in
+ * the order they were added, regardless of which collection they live in. Move
  * and resize edits are NOT in the history (live edits) - undoing a moved
- * shape simply removes it.
+ * shape simply removes it. A crop entry carries a full snapshot of the
+ * pre-crop image and drawables, so undoing one restores the whole prior state.
  */
 
 import { useCallback, useState } from 'react';
 import { generateId } from '../../utils/ids';
+import type { CropRect } from './cropImageDataUrl';
 
-export type AnnotatorTool = 'pen' | 'eraser' | 'pan' | 'rect' | 'ellipse' | 'arrow' | 'text';
+export type AnnotatorTool =
+	| 'pen'
+	| 'eraser'
+	| 'pan'
+	| 'rect'
+	| 'ellipse'
+	| 'arrow'
+	| 'text'
+	| 'crop';
 
 export type StrokePoint = [number, number, number];
 
@@ -97,9 +111,31 @@ const INITIAL_VIEW: AnnotatorView = { x: 0, y: 0, scale: 1 };
 type HistoryEntry =
 	| { kind: 'stroke'; id: string }
 	| { kind: 'shape'; id: string }
-	| { kind: 'text'; id: string };
+	| { kind: 'text'; id: string }
+	/**
+	 * A crop is a whole-canvas edit, so its undo entry snapshots everything it
+	 * touched rather than pointing at one drawable by id.
+	 */
+	| {
+			kind: 'crop';
+			image: string;
+			rect: CropRect;
+			strokes: Stroke[];
+			shapes: Shape[];
+			texts: TextBox[];
+	  };
 
 export interface UseAnnotatorStateReturn {
+	/** The working base image. Starts as the opened image, changes on crop. */
+	image: string;
+	/**
+	 * The pending crop selection in image space, or `null` for "the whole
+	 * image". Null is the resting state so the canvas can render a full-frame
+	 * selection without knowing the image size ahead of the image's onload.
+	 */
+	cropRect: CropRect | null;
+	/** How many crops have been applied - drives the unsaved-changes guard. */
+	cropCount: number;
 	strokes: Stroke[];
 	currentPoints: StrokePoint[];
 	shapes: Shape[];
@@ -131,11 +167,16 @@ export interface UseAnnotatorStateReturn {
 	deleteText: (id: string) => void;
 	selectText: (id: string | null) => void;
 	editText: (id: string | null) => void;
+	setCropRect: (rect: CropRect | null) => void;
+	applyCrop: (nextImage: string, rect: CropRect) => void;
 	undo: () => void;
 	clear: () => void;
 }
 
-export function useAnnotatorState(): UseAnnotatorStateReturn {
+export function useAnnotatorState(initialImage: string): UseAnnotatorStateReturn {
+	const [image, setImage] = useState(initialImage);
+	const [cropRect, setCropRect] = useState<CropRect | null>(null);
+	const [cropCount, setCropCount] = useState(0);
 	const [strokes, setStrokes] = useState<Stroke[]>([]);
 	const [currentPoints, setCurrentPoints] = useState<StrokePoint[]>([]);
 	const [shapes, setShapes] = useState<Shape[]>([]);
@@ -154,13 +195,16 @@ export function useAnnotatorState(): UseAnnotatorStateReturn {
 	// Switching tools deselects any shape so the user gets a clean slate. The
 	// in-progress shape is also cleared if they were mid-draw. Text editing
 	// is committed (not cancelled) so a tool change doesn't silently discard
-	// what the user just typed.
+	// what the user just typed. A pending crop selection is dropped too - it
+	// was never applied, and leaving it armed would re-open the crop tool on a
+	// stale rectangle.
 	const setTool = useCallback((next: AnnotatorTool) => {
 		setToolInternal(next);
 		setSelectedShapeId(null);
 		setCurrentShape(null);
 		setSelectedTextId(null);
 		setEditingTextId(null);
+		setCropRect(null);
 	}, []);
 
 	const beginStroke = useCallback((point: StrokePoint) => {
@@ -304,11 +348,65 @@ export function useAnnotatorState(): UseAnnotatorStateReturn {
 		}
 	}, []);
 
+	/**
+	 * Commit a crop: swap in the already-cut image and move every drawable into
+	 * the new origin, so annotations survive as editable objects rather than
+	 * being flattened into the pixels. Drawables that fell outside the crop keep
+	 * their (now negative) coordinates and are simply clipped by the SVG
+	 * viewport - undoing the crop brings them back intact.
+	 */
+	const applyCrop = useCallback(
+		(nextImage: string, rect: CropRect) => {
+			const dx = -rect.x;
+			const dy = -rect.y;
+			setHistory((h) => [...h, { kind: 'crop', image, rect, strokes, shapes, texts }]);
+			setImage(nextImage);
+			setStrokes((prev) =>
+				prev.map((stroke) => ({
+					...stroke,
+					points: stroke.points.map(
+						([px, py, pressure]): StrokePoint => [px + dx, py + dy, pressure]
+					),
+				}))
+			);
+			setShapes((prev) =>
+				prev.map((sh) => ({
+					...sh,
+					x1: sh.x1 + dx,
+					y1: sh.y1 + dy,
+					x2: sh.x2 + dx,
+					y2: sh.y2 + dy,
+				}))
+			);
+			setTexts((prev) => prev.map((t) => ({ ...t, x: t.x + dx, y: t.y + dy })));
+			setCropCount((c) => c + 1);
+			setCropRect(null);
+			setCurrentPoints([]);
+			setCurrentShape(null);
+			setSelectedShapeId(null);
+			setSelectedTextId(null);
+			setEditingTextId(null);
+		},
+		[image, strokes, shapes, texts]
+	);
+
 	const undo = useCallback(() => {
 		setHistory((prev) => {
 			if (prev.length === 0) return prev;
 			const last = prev[prev.length - 1];
-			if (last.kind === 'stroke') {
+			if (last.kind === 'crop') {
+				// Restore the entire pre-crop state, and re-arm the selection at
+				// the rect that was applied so the user can adjust and retry.
+				setImage(last.image);
+				setStrokes(last.strokes);
+				setShapes(last.shapes);
+				setTexts(last.texts);
+				setCropRect(last.rect);
+				setCropCount((c) => Math.max(0, c - 1));
+				setSelectedShapeId(null);
+				setSelectedTextId(null);
+				setEditingTextId(null);
+			} else if (last.kind === 'stroke') {
 				// Match by id so undo removes the same stroke that history points
 				// at, even if earlier strokes were erased mid-session.
 				setStrokes((s) => s.filter((stroke) => stroke.id !== last.id));
@@ -324,6 +422,9 @@ export function useAnnotatorState(): UseAnnotatorStateReturn {
 		});
 	}, []);
 
+	// "Clear all" wipes the drawables, not the crop - the user cropped the frame
+	// deliberately and clearing their pen work shouldn't undo that. Crop entries
+	// stay in the history so the crop itself remains undoable.
 	const clear = useCallback(() => {
 		setStrokes([]);
 		setCurrentPoints([]);
@@ -333,10 +434,13 @@ export function useAnnotatorState(): UseAnnotatorStateReturn {
 		setTexts([]);
 		setSelectedTextId(null);
 		setEditingTextId(null);
-		setHistory([]);
+		setHistory((prev) => prev.filter((entry) => entry.kind === 'crop'));
 	}, []);
 
 	return {
+		image,
+		cropRect,
+		cropCount,
 		strokes,
 		currentPoints,
 		shapes,
@@ -368,6 +472,8 @@ export function useAnnotatorState(): UseAnnotatorStateReturn {
 		deleteText,
 		selectText,
 		editText,
+		setCropRect,
+		applyCrop,
 		undo,
 		clear,
 	};
