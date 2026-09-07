@@ -270,8 +270,17 @@ tccutil reset Calendar com.maestro.app
 tccutil reset Reminders com.maestro.app
 tccutil reset AddressBook com.maestro.app
 tccutil reset Photos com.maestro.app
+tccutil reset MediaLibrary com.maestro.app
+tccutil reset AppleEvents com.maestro.app
+tccutil reset SpeechRecognition com.maestro.app
+tccutil reset SystemPolicyDesktopFolder com.maestro.app
 tccutil reset SystemPolicyDocumentsFolder com.maestro.app
+tccutil reset SystemPolicyDownloadsFolder com.maestro.app
+tccutil reset SystemPolicyRemovableVolumes com.maestro.app
+tccutil reset SystemPolicyNetworkVolumes com.maestro.app
 ```
+
+Run `tccutil reset All com.maestro.app` to clear every service at once. Local network access has no `tccutil` service name; toggle Maestro off and on under System Settings > Privacy & Security > Local Network instead.
 
 Omitting the bundle id resets that service for every app on the machine.
 
