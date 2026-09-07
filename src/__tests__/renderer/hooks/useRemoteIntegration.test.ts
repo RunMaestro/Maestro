@@ -1891,6 +1891,85 @@ describe('useRemoteIntegration', () => {
 			});
 		});
 
+		// The persistence calls are `ipcRenderer.invoke`, which never times out, so a
+		// main-process handler that never returns leaves its promise pending for the
+		// life of the window. Without a bounded handoff every later rename for the
+		// tab would queue behind it and never be attempted, and the tab would be
+		// stuck on its old name no matter how many times the user renamed it.
+		it('runs a newer rename when an older one never settles, and keeps it when the old one lands', async () => {
+			vi.useFakeTimers();
+			try {
+				const tab = createMockTab({ id: 'tab-1', agentSessionId: 'agent-session-1', name: 'Old' });
+				const session = createMockSession({
+					id: 'session-1',
+					aiTabs: [tab],
+					projectRoot: '/test/project',
+					toolType: 'claude-code',
+				});
+				const deps = createDeps({ sessions: [session] });
+
+				// The first rename's persistence is never resolved on its own; the test
+				// releases it by hand at the very end to model a hung call finally
+				// landing rather than one that was cancelled.
+				let landHung: (() => void) | undefined;
+				const hungPersisted = new Promise<void>((resolve) => {
+					landHung = resolve;
+				});
+				const persistOrder: string[] = [];
+				mockClaude.updateSessionName.mockImplementation(
+					async (_projectRoot: string, _agentSessionId: string, name: string) => {
+						if (name === 'Hung') await hungPersisted;
+						persistOrder.push(name);
+					}
+				);
+
+				renderHook(() => useRemoteIntegration(deps));
+
+				const hungDone = onRemoteRenameTabHandler?.('session-1', 'tab-1', 'Hung', 'response-hung');
+				await vi.advanceTimersByTimeAsync(0);
+				expect(persistOrder).toEqual([]);
+
+				// The newer rename arrives while the first is still pending. It must
+				// not be blocked forever behind it.
+				const newerDone = onRemoteRenameTabHandler?.(
+					'session-1',
+					'tab-1',
+					'Newer',
+					'response-newer'
+				);
+				await vi.advanceTimersByTimeAsync(60_000);
+
+				expect(persistOrder).toEqual(['Newer']);
+				expect(
+					useSessionStore
+						.getState()
+						.sessions.find((s) => s.id === 'session-1')
+						?.aiTabs.find((t) => t.id === 'tab-1')?.name
+				).toBe('Newer');
+				expect(mockProcess.sendRemoteRenameTabResponse).toHaveBeenCalledWith('response-newer', {
+					success: true,
+				});
+				await newerDone;
+
+				// The hung call finally lands and writes its stale name. The newest
+				// requested name has to come back in persistence AND in the tab, so a
+				// late write can never be the last word.
+				landHung!();
+				await vi.advanceTimersByTimeAsync(0);
+				await hungDone;
+
+				expect(persistOrder).toEqual(['Newer', 'Hung', 'Newer']);
+				expect(
+					useSessionStore
+						.getState()
+						.sessions.find((s) => s.id === 'session-1')
+						?.aiTabs.find((t) => t.id === 'tab-1')?.name
+				).toBe('Newer');
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
 		it('does not serialize renames of different tabs behind each other', async () => {
 			const session = createMockSession({
 				id: 'session-1',

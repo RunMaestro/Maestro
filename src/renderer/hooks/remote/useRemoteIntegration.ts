@@ -171,6 +171,42 @@ const GIST_SESSION_MESSAGE_LIMIT = 10000;
  */
 const remoteRenameQueue = createKeyedWriteQueue();
 
+/**
+ * How long a rename may hold its tab's queue slot before the next one starts.
+ * The persistence calls are `ipcRenderer.invoke`, which never times out, so a
+ * main-process handler that never returns leaves its promise pending for the
+ * life of the window; without this every later rename for the tab would sit
+ * behind it unattempted. Well past any plausible write, since handing the slot
+ * on early costs at most a redundant write rather than correctness.
+ */
+const RENAME_SLOT_HANDOFF_MS = 15_000;
+
+/**
+ * Per tab, the newest name REQUESTED and the newest name a write has actually
+ * LANDED. A writer compares the two when it finishes to find out whether it was
+ * the last one in, which is how a stale write that lands late gets corrected.
+ * Kept only while a rename is in flight, and module scope for the same reason
+ * the queue is.
+ */
+const remoteRenameStates = new Map<string, { desired: string; applied?: string; active: number }>();
+
+/**
+ * Resolve when `work` settles, or when the handoff budget expires - whichever
+ * comes first. The work is NOT abandoned or cancelled on expiry (an in-flight
+ * IPC cannot be recalled); it keeps running and re-checks the desired name when
+ * it lands, which is what stops a late stale write from being the final word.
+ * One timer per rename, always cleared once the work settles.
+ */
+function handOffRenameSlotAfter(work: Promise<void>, budgetMs: number): Promise<void> {
+	return new Promise((resolve) => {
+		const timer = setTimeout(resolve, budgetMs);
+		void work.finally(() => {
+			clearTimeout(timer);
+			resolve();
+		});
+	});
+}
+
 type GistBody = { body: string } | { error: string };
 
 /**
@@ -723,84 +759,123 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				const reply = (result: { success: boolean; error?: string }) =>
 					window.maestro.process.sendRemoteRenameTabResponse(responseChannel, result);
 
-				// The session and tab are resolved INSIDE the queued unit, so a rename
-				// that waited reads the state its predecessor left rather than a
-				// snapshot taken before it ran.
-				await remoteRenameQueue.enqueue(`${sessionId}:${tabId}`, async () => {
+				const key = `${sessionId}:${tabId}`;
+				const persistedName = newName || '';
+
+				// Recording the request BEFORE anything is written is what lets a
+				// writer already in flight discover that it has been superseded.
+				const state = remoteRenameStates.get(key) ?? { desired: persistedName, active: 0 };
+				state.desired = persistedName;
+				state.active += 1;
+				remoteRenameStates.set(key, state);
+
+				// One write: provider metadata, then history, then the store. The
+				// session and tab are resolved HERE rather than at dispatch, so a
+				// rename that waited reads the state its predecessor left.
+				const applyRename = async (
+					target: string
+				): Promise<{ success: boolean; error?: string }> => {
+					const session = sessionsRef.current.find((s) => s.id === sessionId);
+					if (!session) return { success: false, error: `Session not found: ${sessionId}` };
+
+					const tab = session.aiTabs.find((t) => t.id === tabId);
+					if (!tab) return { success: false, error: `Tab not found: ${tabId}` };
+
+					if (tab.agentSessionId) {
+						const agentId = session.toolType || 'claude-code';
+						if (agentId === 'claude-code') {
+							await window.maestro.claude.updateSessionName(
+								session.projectRoot,
+								tab.agentSessionId,
+								target
+							);
+						} else {
+							await window.maestro.agentSessions.setSessionName(
+								agentId,
+								session.projectRoot,
+								tab.agentSessionId,
+								target || null
+							);
+						}
+						// Relabelling past history entries is SECONDARY, and it is awaited
+						// only so that a thrown error still fails the rename. A count of
+						// zero is not a failure: `agentSessionId` is stamped when the
+						// provider emits its id at the START of a turn, while the entry
+						// carrying that id is written by the exit listener at the END, so
+						// a tab renamed during its first turn legitimately has nothing to
+						// relabel (as does one whose entries aged out of `maxEntries`).
+						// Failing there would be worse than the bug this path fixes: the
+						// provider metadata above has already been written with the new
+						// name, so refusing here leaves the desktop and the web showing
+						// the old name while the new one resurfaces in the Agent Sessions
+						// browser and on resume. It would also make the same rename
+						// succeed on the desktop and fail from the phone, since
+						// `useSessionLifecycle` treats this call as best effort too.
+						await window.maestro.history.updateSessionName(tab.agentSessionId, target);
+					}
+
+					updateAiTab(sessionId, tabId, (t) => ({
+						...t,
+						name: target || null,
+						isGeneratingName: false,
+					}));
+					const updatedTab = useSessionStore
+						.getState()
+						.sessions.find((s) => s.id === sessionId)
+						?.aiTabs.find((t) => t.id === tabId);
+					if (!updatedTab) {
+						return { success: false, error: `Tab not found after rename: ${tabId}` };
+					}
+					if (updatedTab.name !== (target || null)) {
+						return { success: false, error: `Tab rename did not update state: ${tabId}` };
+					}
+					return { success: true };
+				};
+
+				// Write this request's name, then LOOK AGAIN. Re-reading the desired
+				// name after the write is what keeps the newest one authoritative when
+				// this write was a stale one that landed late: the writer that lands
+				// last simply writes once more, so persistence and the tab both end on
+				// the newest name rather than on whichever call happened to return
+				// last. A target another writer already applied is skipped rather than
+				// rewritten, so the ordinary in-order case still writes each name once.
+				const runRename = async () => {
 					try {
-						const session = sessionsRef.current.find((s) => s.id === sessionId);
-						if (!session) {
-							reply({ success: false, error: `Session not found: ${sessionId}` });
-							return;
-						}
-
-						const tab = session.aiTabs.find((t) => t.id === tabId);
-						if (!tab) {
-							reply({ success: false, error: `Tab not found: ${tabId}` });
-							return;
-						}
-
-						const persistedName = newName || '';
-						if (tab.agentSessionId) {
-							const agentId = session.toolType || 'claude-code';
-							if (agentId === 'claude-code') {
-								await window.maestro.claude.updateSessionName(
-									session.projectRoot,
-									tab.agentSessionId,
-									persistedName
-								);
-							} else {
-								await window.maestro.agentSessions.setSessionName(
-									agentId,
-									session.projectRoot,
-									tab.agentSessionId,
-									persistedName || null
-								);
+						let target = persistedName;
+						for (;;) {
+							if (state.applied !== target) {
+								const outcome = await applyRename(target);
+								if (!outcome.success) {
+									reply(outcome);
+									return;
+								}
+								state.applied = target;
 							}
-							// Relabelling past history entries is SECONDARY, and it is awaited
-							// only so that a thrown error still fails the rename. A count of
-							// zero is not a failure: `agentSessionId` is stamped when the
-							// provider emits its id at the START of a turn, while the entry
-							// carrying that id is written by the exit listener at the END, so
-							// a tab renamed during its first turn legitimately has nothing to
-							// relabel (as does one whose entries aged out of `maxEntries`).
-							// Failing there would be worse than the bug this path fixes: the
-							// provider metadata above has already been written with the new
-							// name, so refusing here leaves the desktop and the web showing
-							// the old name while the new one resurfaces in the Agent Sessions
-							// browser and on resume. It would also make the same rename
-							// succeed on the desktop and fail from the phone, since
-							// `useSessionLifecycle` treats this call as best effort too.
-							await window.maestro.history.updateSessionName(tab.agentSessionId, persistedName);
-						}
-
-						updateAiTab(sessionId, tabId, (t) => ({
-							...t,
-							name: persistedName || null,
-							isGeneratingName: false,
-						}));
-						const updatedTab = useSessionStore
-							.getState()
-							.sessions.find((s) => s.id === sessionId)
-							?.aiTabs.find((t) => t.id === tabId);
-						if (!updatedTab) {
-							reply({ success: false, error: `Tab not found after rename: ${tabId}` });
-							return;
-						}
-						if (updatedTab.name !== (persistedName || null)) {
-							reply({ success: false, error: `Tab rename did not update state: ${tabId}` });
-							return;
+							if (state.desired === state.applied) break;
+							target = state.desired;
 						}
 						reply({ success: true });
 					} catch (error) {
 						const message = error instanceof Error ? error.message : String(error);
 						logger.error('Failed to persist remote tab name:', undefined, error);
 						reply({ success: false, error: message });
+					} finally {
+						state.active -= 1;
+						if (state.active === 0 && remoteRenameStates.get(key) === state) {
+							remoteRenameStates.delete(key);
+						}
 					}
-				});
+				};
+
+				// The queue keeps a tab's renames in order. Its slot is handed on once
+				// the work settles OR the budget expires, so a persistence call that
+				// never settles cannot wedge the tab: the next rename still runs, and
+				// the loop above repairs the order if the hung one ever lands.
+				await remoteRenameQueue.enqueue(key, () =>
+					handOffRenameSlotAfter(runRename(), RENAME_SLOT_HANDOFF_MS)
+				);
 			}
 		);
-
 		// Handle remote star tab from web interface
 		const unsubscribeStarTab = window.maestro.process.onRemoteStarTab(
 			(sessionId: string, tabId: string, starred: boolean) => {
