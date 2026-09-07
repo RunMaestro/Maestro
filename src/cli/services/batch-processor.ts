@@ -28,7 +28,7 @@ import { cheapTurnSettings } from '../../shared/modelTiers';
 // Halt detection moved to `shared/autorunMarkers` so the desktop renderer can
 // draw a pill for a marker that would block the next run. Re-exported because
 // this module is where the CLI engine and its tests reach for it.
-import { detectHaltMarker } from '../../shared/autorunMarkers';
+import { detectHaltMarker, findHaltMarker } from '../../shared/autorunMarkers';
 export { detectHaltMarker };
 
 /**
@@ -119,7 +119,7 @@ export async function* runPlaybook(
 		// re-running. Folding both checks into one scan keeps the read count
 		// per-document stable for callers/mocks.
 		let initialTotalTasks = 0;
-		let preExistingHalt: { document: string; reason?: string } | null = null;
+		let preExistingHalt: { document: string; reason?: string; line: number } | null = null;
 		for (const doc of playbook.documents) {
 			const { taskCount, content } = readDocAndCountTasks(folderPath, doc.filename);
 			if (debug) {
@@ -132,9 +132,9 @@ export async function* runPlaybook(
 			}
 			initialTotalTasks += taskCount;
 			if (!preExistingHalt) {
-				const halt = detectHaltMarker(content);
-				if (halt.halted) {
-					preExistingHalt = { document: doc.filename, reason: halt.reason };
+				const halt = findHaltMarker(content);
+				if (halt) {
+					preExistingHalt = { document: doc.filename, reason: halt.reason, line: halt.line };
 				}
 			}
 		}
@@ -163,9 +163,11 @@ export async function* runPlaybook(
 			yield {
 				type: 'error',
 				timestamp: Date.now(),
-				message: `Document "${preExistingHalt.document}" contains an unresolved halt marker${
+				message: `Document "${preExistingHalt.document}" contains an unresolved halt marker on line ${
+					preExistingHalt.line + 1
+				}${
 					preExistingHalt.reason ? `: ${preExistingHalt.reason}` : ''
-				}. Remove the <!-- maestro:halt --> marker before re-running.`,
+				}. Remove the <!-- maestro:halt --> marker before re-running. If the playbook only means to DESCRIBE when a run should stop, wrap the marker in backticks or a code fence so it reads as an example.`,
 				code: 'HALT_MARKER_PRESENT',
 			};
 			return;

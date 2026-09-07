@@ -1261,6 +1261,61 @@ describe('batch-processor', () => {
 			expect(spawnAgent).not.toHaveBeenCalled();
 			expect(unregisterCliActivity).toHaveBeenCalledWith(session.id);
 		});
+
+		it('names the line so the user can find the invisible comment', async () => {
+			vi.mocked(readDocAndCountTasks).mockReturnValue({
+				content: '# Doc\n\n- [ ] Task\n<!-- maestro:halt: stale -->',
+				taskCount: 1,
+			});
+
+			const events = await collectEvents(runPlaybook(mockSession(), mockPlaybook(), '/playbooks'));
+
+			expect(events.find((e) => e.type === 'error')?.message).toContain('line 4');
+		});
+
+		it('does not block on a halt an authoring agent merely DESCRIBED', async () => {
+			// The field bug: playbooks arrive with the marker written as a
+			// conditional, and the run refused to start with no visible cause. Every
+			// halt below is quoted, checkbox-bound, or fenced, so none of them stop
+			// the run. Calls 1-4 are the scans; call 5+ is the post-spawn re-read,
+			// which reports the task done so the loop terminates.
+			const described = [
+				'If the build breaks, halt with `<!-- maestro:halt: reason -->`.',
+				'',
+				'```markdown',
+				'<!-- maestro:halt: brief reason here -->',
+				'```',
+			];
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				return callCount <= 4
+					? {
+							content: [
+								...described,
+								'- [ ] Build it <!-- maestro:halt: only when unrecoverable -->',
+							].join('\n'),
+							taskCount: 1,
+						}
+					: {
+							content: [
+								...described,
+								'- [x] Build it <!-- maestro:halt: only when unrecoverable -->',
+							].join('\n'),
+							taskCount: 0,
+						};
+			});
+
+			const events = await collectEvents(
+				runPlaybook(mockSession(), mockPlaybook(), '/playbooks', { skipSynopsis: true })
+			);
+
+			expect(
+				events.find((e) => e.type === 'error' && e.code === 'HALT_MARKER_PRESENT')
+			).toBeUndefined();
+			expect(events.find((e) => e.type === 'halt')).toBeUndefined();
+			expect(spawnAgent).toHaveBeenCalled();
+		});
 	});
 
 	describe('runPlaybook - mid-execution halt marker', () => {

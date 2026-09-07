@@ -52,6 +52,20 @@ export const HALT_MARKER_REGEX = /<!--\s*maestro:halt\s*(?::\s*([^>]*?))?\s*-->/
 /** `<!-- MAESTRO:MODEL tier="high" effort="high" -->` */
 export const MODEL_MARKER_REGEX = /<!--\s*MAESTRO:MODEL\b([^]*?)-->/i;
 
+/**
+ * Inline code spans, so a marker someone QUOTED in prose is not obeyed.
+ *
+ * `` `<!-- maestro:halt: reason -->` `` in a sentence is an author showing the
+ * syntax; the same bytes without backticks are an agent using it. Markers carry
+ * no backticks of their own, so the naive lazy match is exact here.
+ */
+const INLINE_CODE_SPAN_REGEX = /(`+)[^`]*?\1/g;
+
+/** Blank out inline code spans, preserving nothing that could match a marker. */
+function stripInlineCode(line: string): string {
+	return line.replace(INLINE_CODE_SPAN_REGEX, ' ');
+}
+
 /** Any of the three, for the cheap "is this comment ours at all" test. */
 const ANY_MARKER_REGEX = /<!--\s*(?:MAESTRO:HITL|maestro:halt|MAESTRO:MODEL)\b/i;
 
@@ -107,7 +121,9 @@ export function findPendingHitlGate(content: string): HitlGate | null {
 			return false;
 		}
 
-		const markerMatch = line.match(HITL_MARKER_REGEX);
+		// Quoted markers are shown, not used - same rule the halt scanner and the
+		// pill renderer apply, so all three agree on what is live.
+		const markerMatch = stripInlineCode(line).match(HITL_MARKER_REGEX);
 		if (markerMatch && firstMarkerInPendingChain === null) {
 			firstMarkerInPendingChain = parseHitlAttributes(markerMatch[1] || '', i);
 		}
@@ -117,23 +133,69 @@ export function findPendingHitlGate(content: string): HitlGate | null {
 }
 
 /**
- * Detect the `<!-- maestro:halt -->` early-exit marker in a document.
+ * A halt marker that is actually asking the engine to stop.
  *
- * Agents write this marker into the current Auto Run document to abort the
- * entire playbook (skipping all remaining tasks in the current document and
- * all subsequent documents). The optional reason after the colon is surfaced
- * in the History panel and JSONL `halt` event.
+ * `line` is the 0-indexed line it sits on, so the error a user sees can point
+ * at the thing they have to delete instead of asking them to hunt for an
+ * invisible HTML comment.
+ */
+export interface HaltMarker {
+	reason?: string;
+	line: number;
+}
+
+/**
+ * Find the `<!-- maestro:halt -->` early-exit marker a run must obey.
  *
- * Deliberately NOT fence-aware, unlike every other scanner here: this runs
- * against a document an agent just wrote, and a halt that failed to halt
- * because the agent indented it into a code block would strand the run. The
- * cost of the opposite error is a false stop the user can see and remove.
+ * An EXECUTING agent writes this marker into the current Auto Run document to
+ * abort the whole playbook: no further tasks in this document, no further
+ * documents. The optional reason after the colon is surfaced in the History
+ * panel and the JSONL `halt` event.
+ *
+ * The hard part is that an AUTHORING agent writes the same bytes for the
+ * opposite purpose. Playbook authors are told they may call out halt-worthy
+ * conditions, so they produce lines like "if the build is broken, write
+ * `<!-- maestro:halt: build broken -->`" - a DESCRIPTION of a halt, not a
+ * halt. Matched naively that description blocks the playbook before its first
+ * task ever runs, and because an HTML comment renders as nothing, the user sees
+ * a playbook that refuses to start with no visible cause. That is the failure
+ * this scanner exists to avoid, so three positions are treated as quotation
+ * rather than instruction:
+ *
+ * - Inside a fenced code block. Every other scanner here already skips fences;
+ *   a halt that disagreed with its own pill was the worst of both worlds.
+ * - Inside an inline code span. Backticks around a marker are the single most
+ *   common way an author writes "emit this", and prose is where they write it.
+ * - On a checkbox line. The executing agent is told to leave the unfinishable
+ *   task UNCHECKED and put the marker below it, so a marker riding a `- [ ]`
+ *   line is describing what a future run should do, not reporting a stop.
+ *
+ * Anything else - a marker standing on its own line in ordinary document body,
+ * which is exactly what step 7 of the Auto Run prompt asks for - halts.
+ */
+export function findHaltMarker(content: string): HaltMarker | null {
+	let found: HaltMarker | null = null;
+
+	forEachMarkdownLine(content, (line, index) => {
+		if (CHECKED_TASK_COUNT_REGEX.test(line) || UNCHECKED_TASK_REGEX.test(line)) return;
+
+		const match = stripInlineCode(line).match(HALT_MARKER_REGEX);
+		if (!match) return;
+
+		found = { reason: match[1]?.trim() || undefined, line: index };
+		return false;
+	});
+
+	return found;
+}
+
+/**
+ * Boolean-and-reason form of {@link findHaltMarker}, kept as the engine's API.
  */
 export function detectHaltMarker(content: string): { halted: boolean; reason?: string } {
-	const match = content.match(HALT_MARKER_REGEX);
-	if (!match) return { halted: false };
-	const reason = match[1]?.trim();
-	return { halted: true, reason: reason || undefined };
+	const halt = findHaltMarker(content);
+	if (!halt) return { halted: false };
+	return { halted: true, reason: halt.reason };
 }
 
 /**
@@ -178,10 +240,9 @@ export interface ScannedMarker {
  * Model status is resolved by position relative to the first unfinished task: a
  * hint above it governs the next dispatch, a hint below it does not yet.
  *
- * Fence-aware throughout, so a playbook documenting this syntax draws no pills.
- * Note that this is deliberately STRICTER than `detectHaltMarker`, which is not
- * fence-aware: the engine must never miss a real halt, whereas a pill drawn on
- * a documentation example would be a plain lie about the document's state.
+ * Fence-aware throughout, so a playbook documenting this syntax draws no pills,
+ * and quotation-aware in the same three positions {@link findHaltMarker} uses,
+ * so the pill and the engine cannot disagree about whether a run will stop.
  */
 export function scanMaestroMarkers(content: string): ScannedMarker[] {
 	const markers: ScannedMarker[] = [];
@@ -197,11 +258,14 @@ export function scanMaestroMarkers(content: string): ScannedMarker[] {
 		const isTaskLine = isChecked || isUnchecked;
 
 		// A marker trailing a task line belongs to that task, so it is parsed
-		// before the task resolves the gates above it.
-		if (ANY_MARKER_REGEX.test(line)) {
+		// before the task resolves the gates above it. Inline code spans are
+		// blanked first: a marker in backticks is being SHOWN, and drawing a pill
+		// on an author's example would misreport the document's state.
+		const scanned = stripInlineCode(line);
+		if (ANY_MARKER_REGEX.test(scanned)) {
 			const scope = isTaskLine ? 'task' : 'document';
 
-			const modelMatch = line.match(MODEL_MARKER_REGEX);
+			const modelMatch = scanned.match(MODEL_MARKER_REGEX);
 			if (modelMatch) {
 				const hint = parseModelMarker(modelMatch[1] || '', index, scope);
 				const hasInvalid = (hint.invalid?.length ?? 0) > 0;
@@ -221,20 +285,22 @@ export function scanMaestroMarkers(content: string): ScannedMarker[] {
 				});
 			}
 
-			const haltMatch = line.match(HALT_MARKER_REGEX);
+			const haltMatch = scanned.match(HALT_MARKER_REGEX);
 			if (haltMatch) {
 				markers.push({
 					kind: 'halt',
-					// A halt marker is never spent. It blocks the next run wherever it
-					// sits, which is exactly why it needs to be visible.
-					status: 'live',
+					// A halt standing in the document body is never spent: it blocks the
+					// next run wherever it sits, which is exactly why it needs a pill. One
+					// riding a checkbox line is an author describing when a FUTURE run
+					// should stop, so the engine ignores it and so does the pill.
+					status: scope === 'task' ? 'spent' : 'live',
 					line: index,
 					scope,
 					reason: haltMatch[1]?.trim() || undefined,
 				});
 			}
 
-			const hitlMatch = line.match(HITL_MARKER_REGEX);
+			const hitlMatch = scanned.match(HITL_MARKER_REGEX);
 			if (hitlMatch) {
 				const gate = parseHitlAttributes(hitlMatch[1] || '', index);
 				const marker: ScannedMarker = {

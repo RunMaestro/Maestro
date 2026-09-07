@@ -664,6 +664,11 @@ export function AutoRunnerHelpModal({ theme, onClose, zIndex = 50 }: AutoRunnerH
 							in the History panel and surfaced as a <code>halt</code> event in the JSONL stream.
 						</p>
 						<p>
+							The marker only counts when it stands alone on a line. One inside a code fence, inside
+							backticks, or riding a <code>- [ ]</code> checkbox line is read as an example and
+							ignored, so a playbook can describe its halt conditions without halting itself.
+						</p>
+						<p>
 							A stale halt marker left in a document will block re-runs until removed - Auto Run
 							refuses to start so previously-halted work isn't silently replayed.
 						</p>

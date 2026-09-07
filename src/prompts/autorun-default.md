@@ -100,7 +100,9 @@ docs/
 7. Halting the Auto Run (Early Exit)
    If you encounter a blocking condition that means the rest of the playbook cannot meaningfully proceed - a missing dependency, a broken precondition, an ambiguous spec you cannot resolve, a destructive change you refuse to make, or a test failure that invalidates everything downstream - you can halt the entire Auto Run immediately. This skips all remaining tasks in the current document AND all subsequent documents in the playbook.
 
-   To halt, write the marker `<!-- maestro:halt: brief reason here -->` anywhere in the current document (typically just below the task you couldn't complete). The bare form `<!-- maestro:halt -->` works without a reason, but always include one. Leave the unfinishable task UNCHECKED so a human can see exactly where execution stopped. The reason text is shown in the History panel and emitted to the JSONL stream as a `halt` event.
+   To halt, write the marker `<!-- maestro:halt: brief reason here -->` **on its own line** in the current document, just below the task you couldn't complete. The bare form `<!-- maestro:halt -->` works without a reason, but always include one. Leave the unfinishable task UNCHECKED so a human can see exactly where execution stopped. The reason text is shown in the History panel and emitted to the JSONL stream as a `halt` event.
+
+   The marker must stand alone to count. A marker inside a code fence, inside backticks, or appended to a `- [ ]` checkbox line is read as an EXAMPLE and ignored - that is how a playbook can describe halt conditions without halting itself. So do not append it to the task line, and do not indent it into a code block.
 
    Halt only when continuing would waste work or cause harm. Do NOT halt for ordinary task failures - the playbook is designed to run independent tasks, and one failed task does not invalidate the rest. Reserve the halt marker for true playbook-wide blockers and for tasks that need a human (step 3), which no future run can clear either.
 

@@ -382,7 +382,20 @@ The bare form `<!-- maestro:halt -->` works without a reason, but agents are ins
 
 This is distinct from clicking **Stop** (a manual user action) or a single task simply failing (which by default does **not** halt the playbook - Auto Run is designed to run independent tasks, so one failure doesn't invalidate the rest).
 
-A stale halt marker left in a document will block re-runs with an error - Auto Run refuses to start so previously-halted work isn't silently replayed. Remove the marker before launching the playbook again.
+A stale halt marker left in a document will block re-runs with an error naming the file and line - Auto Run refuses to start so previously-halted work isn't silently replayed. Remove the marker before launching the playbook again.
+
+### The marker has to stand alone
+
+A halt marker is a statement that the run **has** stopped, not a conditional that says when it should. To keep a playbook from halting itself just by describing the feature, three positions are read as quotation and ignored:
+
+| Position                              | Read as     |
+| ------------------------------------- | ----------- |
+| Inside a fenced code block            | Example     |
+| Inside inline backticks               | Example     |
+| On a `- [ ]` or `- [x]` checkbox line | Example     |
+| Alone on a line in the document body  | A real halt |
+
+That is why the code blocks on this page do not brick this document, and why a playbook can safely contain a task like "Run the test suite. If it fails in a way that invalidates later tasks, halt the run." Write halt conditions in words; leave the literal marker to the agent that actually hits one.
 
 ## Parallel Auto Runs
 
