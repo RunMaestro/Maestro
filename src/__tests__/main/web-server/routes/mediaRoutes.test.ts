@@ -42,7 +42,7 @@ let server: FastifyInstance;
 
 beforeAll(async () => {
 	// Same server option WebServer passes, so the test proves it is sufficient.
-	server = Fastify({ maxParamLength: MEDIA_PATH_PARAM_MAX_LENGTH });
+	server = Fastify({ routerOptions: { maxParamLength: MEDIA_PATH_PARAM_MAX_LENGTH } });
 	new MediaRoutes(SECURITY_TOKEN).registerRoutes(server);
 	await server.ready();
 });

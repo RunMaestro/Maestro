@@ -104,7 +104,7 @@ describe('StaticRoutes', () => {
 			const reply = createMockReply();
 			await route!.handler({}, reply);
 
-			expect(reply.redirect).toHaveBeenCalledWith(302, 'https://runmaestro.ai');
+			expect(reply.redirect).toHaveBeenCalledWith('https://runmaestro.ai', 302);
 		});
 	});
 
@@ -165,7 +165,7 @@ describe('StaticRoutes', () => {
 			const reply = createMockReply();
 			await route!.handler({ params: { token: 'invalid-token' } }, reply);
 
-			expect(reply.redirect).toHaveBeenCalledWith(302, 'https://runmaestro.ai');
+			expect(reply.redirect).toHaveBeenCalledWith('https://runmaestro.ai', 302);
 		});
 	});
 

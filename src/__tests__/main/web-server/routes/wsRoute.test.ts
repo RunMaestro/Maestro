@@ -110,12 +110,13 @@ function createMockSocket() {
 }
 
 /**
- * Create mock Fastify connection
+ * Create mock Fastify connection.
+ *
+ * @fastify/websocket v10+ passes the raw WebSocket to the route handler
+ * directly (no `{ socket }` wrapper), so the mock IS the socket.
  */
 function createMockConnection() {
-	return {
-		socket: createMockSocket(),
-	};
+	return createMockSocket();
 }
 
 /**
@@ -204,7 +205,7 @@ describe('WsRoute', () => {
 			expect(callbacks.onClientConnect).toHaveBeenCalledWith(
 				expect.objectContaining({
 					id: expect.stringMatching(/^web-client-/),
-					socket: connection.socket,
+					socket: connection,
 					connectedAt: expect.any(Number),
 				})
 			);
@@ -241,7 +242,7 @@ describe('WsRoute', () => {
 			const connection = createMockConnection();
 			route!.handler(connection, createMockRequest('session-123'));
 
-			const sentMessages = (connection.socket.send as any).mock.calls.map((call: any[]) =>
+			const sentMessages = (connection.send as any).mock.calls.map((call: any[]) =>
 				JSON.parse(call[0])
 			);
 
@@ -257,7 +258,7 @@ describe('WsRoute', () => {
 			const connection = createMockConnection();
 			route!.handler(connection, createMockRequest());
 
-			const sentMessages = (connection.socket.send as any).mock.calls.map((call: any[]) =>
+			const sentMessages = (connection.send as any).mock.calls.map((call: any[]) =>
 				JSON.parse(call[0])
 			);
 
@@ -274,7 +275,7 @@ describe('WsRoute', () => {
 			const connection = createMockConnection();
 			route!.handler(connection, createMockRequest());
 
-			const sentMessages = (connection.socket.send as any).mock.calls.map((call: any[]) =>
+			const sentMessages = (connection.send as any).mock.calls.map((call: any[]) =>
 				JSON.parse(call[0])
 			);
 
@@ -290,7 +291,7 @@ describe('WsRoute', () => {
 			const connection = createMockConnection();
 			route!.handler(connection, createMockRequest());
 
-			const sentMessages = (connection.socket.send as any).mock.calls.map((call: any[]) =>
+			const sentMessages = (connection.send as any).mock.calls.map((call: any[]) =>
 				JSON.parse(call[0])
 			);
 
@@ -303,7 +304,7 @@ describe('WsRoute', () => {
 			const connection = createMockConnection();
 			route!.handler(connection, createMockRequest());
 
-			const sentMessages = (connection.socket.send as any).mock.calls.map((call: any[]) =>
+			const sentMessages = (connection.send as any).mock.calls.map((call: any[]) =>
 				JSON.parse(call[0])
 			);
 
@@ -318,7 +319,7 @@ describe('WsRoute', () => {
 			const connection = createMockConnection();
 			route!.handler(connection, createMockRequest());
 
-			const sentMessages = (connection.socket.send as any).mock.calls.map((call: any[]) =>
+			const sentMessages = (connection.send as any).mock.calls.map((call: any[]) =>
 				JSON.parse(call[0])
 			);
 
@@ -348,7 +349,7 @@ describe('WsRoute', () => {
 			const connection = createMockConnection();
 			route!.handler(connection, createMockRequest());
 
-			const sentMessages = (connection.socket.send as any).mock.calls.map((call: any[]) =>
+			const sentMessages = (connection.send as any).mock.calls.map((call: any[]) =>
 				JSON.parse(call[0])
 			);
 
@@ -365,7 +366,7 @@ describe('WsRoute', () => {
 
 			// Simulate incoming message
 			const message = JSON.stringify({ type: 'ping' });
-			connection.socket.emit('message', message);
+			connection.emit('message', message);
 
 			expect(callbacks.handleMessage).toHaveBeenCalledWith(expect.stringMatching(/^web-client-/), {
 				type: 'ping',
@@ -378,12 +379,12 @@ describe('WsRoute', () => {
 			route!.handler(connection, createMockRequest());
 
 			// Clear previous sends
-			(connection.socket.send as any).mockClear();
+			(connection.send as any).mockClear();
 
 			// Simulate invalid message
-			connection.socket.emit('message', 'not valid json');
+			connection.emit('message', 'not valid json');
 
-			const lastSend = (connection.socket.send as any).mock.calls[0];
+			const lastSend = (connection.send as any).mock.calls[0];
 			const errorMsg = JSON.parse(lastSend[0]);
 			expect(errorMsg.type).toBe('error');
 			expect(errorMsg.message).toBe('Invalid message format');
@@ -399,7 +400,7 @@ describe('WsRoute', () => {
 			const clientId = (callbacks.onClientConnect as any).mock.calls[0][0].id;
 
 			// Simulate close event
-			connection.socket.emit('close');
+			connection.emit('close');
 
 			expect(callbacks.onClientDisconnect).toHaveBeenCalledWith(clientId);
 		});
@@ -415,7 +416,7 @@ describe('WsRoute', () => {
 			const error = new Error('Connection lost');
 
 			// Simulate error event
-			connection.socket.emit('error', error);
+			connection.emit('error', error);
 
 			expect(callbacks.onClientError).toHaveBeenCalledWith(clientId, error);
 		});
@@ -437,7 +438,7 @@ describe('WsRoute', () => {
 			}).not.toThrow();
 
 			// Should still send connected message
-			const sentMessages = (connection.socket.send as any).mock.calls.map((call: any[]) =>
+			const sentMessages = (connection.send as any).mock.calls.map((call: any[]) =>
 				JSON.parse(call[0])
 			);
 			const connectedMsg = sentMessages.find((m: any) => m.type === 'connected');
@@ -485,7 +486,7 @@ describe('WsRoute', () => {
 			const connection = createMockConnection();
 			route!.handler(connection, createMockRequest());
 
-			const sentMessages = (connection.socket.send as any).mock.calls.map((call: any[]) =>
+			const sentMessages = (connection.send as any).mock.calls.map((call: any[]) =>
 				JSON.parse(call[0])
 			);
 
@@ -509,7 +510,7 @@ describe('WsRoute bridge resume', () => {
 	}
 
 	function sentFrames(connection: ReturnType<typeof createMockConnection>) {
-		return (connection.socket.send as any).mock.calls.map((call: any[]) => JSON.parse(call[0]));
+		return (connection.send as any).mock.calls.map((call: any[]) => JSON.parse(call[0]));
 	}
 
 	function resumeRequest(query: string) {
