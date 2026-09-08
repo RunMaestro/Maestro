@@ -6,6 +6,7 @@ import { createMockAITab } from '../../helpers/mockTab';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useNotificationStore } from '../../../renderer/stores/notificationStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 
 const createMockTab = (overrides: Partial<AITab> = {}): AITab =>
 	createMockAITab({
@@ -58,6 +59,9 @@ describe('useRemoteIntegration', () => {
 	let onRemoteToggleBookmarkHandler: ((sessionId: string) => void) | undefined;
 	let onRemoteNewAITabWithPromptHandler:
 		| ((sessionId: string, prompt: string, responseChannel: string) => void)
+		| undefined;
+	let onRemoteSetSettingHandler:
+		| ((key: string, value: unknown, responseChannel: string) => void | Promise<void>)
 		| undefined;
 	let onRemoteCreateGistHandler:
 		| ((
@@ -191,7 +195,8 @@ describe('useRemoteIntegration', () => {
 		onRemoteStopAutoRun: vi.fn().mockImplementation(() => {
 			return () => {};
 		}),
-		onRemoteSetSetting: vi.fn().mockImplementation(() => {
+		onRemoteSetSetting: vi.fn().mockImplementation((handler) => {
+			onRemoteSetSettingHandler = handler;
 			return () => {};
 		}),
 		// Added with `maestro-cli open`: the hook subscribes to this on mount, so
@@ -346,6 +351,7 @@ describe('useRemoteIntegration', () => {
 		onRemoteNewAITabWithPromptHandler = undefined;
 		onRemoteNotifyToastHandler = undefined;
 		onRemoteCreateGistHandler = undefined;
+		onRemoteSetSettingHandler = undefined;
 
 		// Reset zustand stores so cross-test state doesn't leak.
 		useSessionStore.setState({ sessions: [] });
@@ -1319,6 +1325,63 @@ describe('useRemoteIntegration', () => {
 			vi.advanceTimersByTime(1000);
 
 			expect(mockWeb.broadcastTabsChange).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('remote set setting', () => {
+		afterEach(() => {
+			useSettingsStore.setState({ activeThemeId: 'dracula', settingsLoaded: false });
+		});
+
+		// `maestro-cli set-theme` lands here. Persisting alone left the live UI on
+		// the old theme until the next launch, so the CLI reported success and
+		// nothing changed on screen.
+		it('reflects a CLI theme change in the live store, not just on disk', async () => {
+			useSettingsStore.setState({ activeThemeId: 'dracula', settingsLoaded: false });
+			const setSetting = vi.fn().mockResolvedValue(undefined);
+			const getAll = vi.fn().mockResolvedValue({ activeThemeId: 'nord' });
+			window.maestro.settings = {
+				...window.maestro.settings,
+				set: setSetting,
+				getAll,
+			} as typeof window.maestro.settings;
+
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [] })));
+
+			await act(async () => {
+				await onRemoteSetSettingHandler?.('activeThemeId', 'nord', 'response-channel-1');
+			});
+
+			expect(setSetting).toHaveBeenCalledWith('activeThemeId', 'nord');
+			expect(getAll).toHaveBeenCalled();
+			expect(useSettingsStore.getState().activeThemeId).toBe('nord');
+			expect(mockProcess.sendRemoteSetSettingResponse).toHaveBeenCalledWith(
+				'response-channel-1',
+				true
+			);
+		});
+
+		it('reports failure and leaves the store alone when the write fails', async () => {
+			useSettingsStore.setState({ activeThemeId: 'dracula', settingsLoaded: false });
+			const getAll = vi.fn().mockResolvedValue({ activeThemeId: 'nord' });
+			window.maestro.settings = {
+				...window.maestro.settings,
+				set: vi.fn().mockRejectedValue(new Error('disk full')),
+				getAll,
+			} as typeof window.maestro.settings;
+
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [] })));
+
+			await act(async () => {
+				await onRemoteSetSettingHandler?.('activeThemeId', 'nord', 'response-channel-2');
+			});
+
+			expect(getAll).not.toHaveBeenCalled();
+			expect(useSettingsStore.getState().activeThemeId).toBe('dracula');
+			expect(mockProcess.sendRemoteSetSettingResponse).toHaveBeenCalledWith(
+				'response-channel-2',
+				false
+			);
 		});
 	});
 });
