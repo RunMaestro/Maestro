@@ -47,7 +47,7 @@ interface FilePreviewHeaderProps {
 	isSaving: boolean;
 	fileStats: { size: number; modifiedAt: string; createdAt: string } | null;
 	tokenCount: number | null;
-	taskCounts: { open: number; closed: number } | null;
+	taskCounts: { checked: number; unchecked: number; total: number } | null;
 	showStatsBar: boolean;
 	directoryPath: string;
 	showPath: boolean;
@@ -519,11 +519,8 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 								style={{ color: theme.colors.textDim }}
 							>
 								<span className="opacity-60">Tasks:</span>{' '}
-								<span style={{ color: theme.colors.success }}>{taskCounts.closed}</span>
-								<span style={{ color: theme.colors.textMain }}>
-									{' '}
-									of {taskCounts.open + taskCounts.closed}
-								</span>
+								<span style={{ color: theme.colors.success }}>{taskCounts.checked}</span>
+								<span style={{ color: theme.colors.textMain }}> of {taskCounts.total}</span>
 							</div>
 						)}
 					</div>

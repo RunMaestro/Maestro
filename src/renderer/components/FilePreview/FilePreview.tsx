@@ -674,7 +674,7 @@ export const FilePreview = React.memo(
 			if (!isMarkdown || !file?.content) return null;
 			const counts = countMarkdownTasks(file.content);
 			// Only return if there are any tasks
-			if (counts.open === 0 && counts.closed === 0) return null;
+			if (counts.total === 0) return null;
 			return counts;
 		}, [isMarkdown, file?.content]);
 

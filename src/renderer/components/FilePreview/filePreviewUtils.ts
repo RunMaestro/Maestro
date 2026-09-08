@@ -407,26 +407,8 @@ export const formatDateTime = (isoString: string): string => {
 
 // ─── Markdown Helpers ─────────────────────────────────────────────────────────
 
-/** Count markdown task checkboxes (- [ ] and - [x]), skipping code fences */
-export const countMarkdownTasks = (content: string): { open: number; closed: number } => {
-	const lines = content.split('\n');
-	let inCodeFence = false;
-	let open = 0;
-	let closed = 0;
-
-	for (const line of lines) {
-		if (/^ {0,3}(`{3,}|~{3,})/.test(line)) {
-			inCodeFence = !inCodeFence;
-			continue;
-		}
-		if (inCodeFence) continue;
-
-		if (/^[\s]*[-*]\s*\[\s*\]/.test(line)) open++;
-		if (/^[\s]*[-*]\s*\[[xX]\]/.test(line)) closed++;
-	}
-
-	return { open, closed };
-};
+/** Re-export the canonical fence-aware task counter for existing consumers. */
+export { countMarkdownTasks } from '../../../shared/markdownTaskScan';
 
 /**
  * Re-exported from the shared TOC library, which owns heading extraction now
