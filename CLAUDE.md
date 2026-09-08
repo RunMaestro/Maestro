@@ -90,6 +90,7 @@ Grep-verified 2026-09-04 (`npm run docs:verify` re-checks every path). This is t
 - **Whether two subscriptions are the same visual trigger:** `triggerGroupKey(sub)` in `src/shared/cue/trigger-group-key.ts`
 - **Which pipelines belong to an agent:** `pipelinesForSession()`, `pipelineInvolvesSession()` in `src/renderer/components/CuePipelineEditor/utils/pipelineMembership.ts`
 - **How much work happened in a group chat:** `computeGroupChatActivity(entries)`, `elapsedTimeMs` in `src/shared/groupChatActivity.ts`
+- **How big a tab's conversation is and how long it ran:** `computeTabConversationStats()`, `formatConversationDuration()` in `src/shared/tabConversationStats.ts`
 - **Whether an agent is drawn in the Left Bar:** `sessionMatchesFilter()`, `passesUnreadFilter()` in `src/renderer/utils/sidebarMembership.ts`
 - **Session lookup:** `selectActiveSession()`, `selectSessionById()` in `src/renderer/stores/sessionStore.ts`
 - **Session mutation:** `updateSessionWith(sessionId, updater)` in `src/renderer/stores/sessionStore.ts`

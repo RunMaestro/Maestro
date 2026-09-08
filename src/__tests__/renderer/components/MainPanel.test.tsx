@@ -1966,6 +1966,77 @@ describe('MainPanel', () => {
 			});
 		});
 
+		it('should display the conversation message count and span', async () => {
+			const SPAN_MS = 2 * 60 * 60 * 1000 + 15 * 60 * 1000;
+			const start = Date.now() - SPAN_MS;
+			const session = createSession({
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'claude-1',
+						name: 'Tab 1',
+						isUnread: false,
+						createdAt: start,
+						logs: [
+							{ id: 'l1', timestamp: start, source: 'user', text: 'hi' },
+							{ id: 'l2', timestamp: start + 1000, source: 'ai', text: 'hello' },
+							{ id: 'l3', timestamp: start + 2000, source: 'tool', text: 'Read' },
+							{
+								id: 'l4',
+								timestamp: start + SPAN_MS,
+								source: 'ai',
+								text: 'done',
+							},
+						],
+						usageStats: { contextWindow: 200000 },
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+
+			render(<MainPanel {...defaultProps} activeSession={session} />);
+
+			const contextWidget = screen.getAllByText(/^Context( Window)?$/)[0];
+			fireEvent.mouseEnter(contextWidget.parentElement!);
+
+			await waitFor(() => {
+				expect(screen.getByText('Messages')).toBeInTheDocument();
+				// Every conversation entry counts, tool calls included, matching
+				// the "Messages" card in the HTML export.
+				expect(screen.getByText('4')).toBeInTheDocument();
+				expect(screen.getByText('Duration')).toBeInTheDocument();
+				expect(screen.getByText('2h 15m')).toBeInTheDocument();
+			});
+		});
+
+		it('should omit the conversation rows for a tab with no messages', async () => {
+			const session = createSession({
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'claude-1',
+						name: 'Tab 1',
+						isUnread: false,
+						createdAt: Date.now(),
+						logs: [],
+						usageStats: { contextWindow: 200000 },
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+
+			render(<MainPanel {...defaultProps} activeSession={session} />);
+
+			const contextWidget = screen.getAllByText(/^Context( Window)?$/)[0];
+			fireEvent.mouseEnter(contextWidget.parentElement!);
+
+			await waitFor(() => {
+				expect(screen.getByText('Context Details')).toBeInTheDocument();
+			});
+			expect(screen.queryByText('Messages')).not.toBeInTheDocument();
+			expect(screen.queryByText('Duration')).not.toBeInTheDocument();
+		});
+
 		it('should display the provider and the account profile the agent runs as', async () => {
 			const session = createSession({
 				customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/test/.claude-gmail' },

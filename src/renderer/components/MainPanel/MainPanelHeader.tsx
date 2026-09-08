@@ -20,6 +20,10 @@ import {
 import { formatCost, formatFutureTime } from '../../../shared/formatters';
 import { getAgentDisplayName } from '../../../shared/agentMetadata';
 import { providerProfileShortLabel } from '../../../shared/providerProfiles';
+import {
+	computeTabConversationStats,
+	formatConversationDuration,
+} from '../../../shared/tabConversationStats';
 import { useProviderProfiles } from '../../hooks/stats/useProviderProfiles';
 
 /**
@@ -125,6 +129,15 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 	// excludes them from click-outside so clicking a pill can't close it.
 	const gitPillRef = useRef<HTMLDivElement>(null);
 	const contextTooltip = useHoverTooltip(150);
+
+	// Message count and elapsed span for the tab in view - the same figures the
+	// HTML export prints, so they can be read without exporting. Walking the log
+	// array costs O(entries), so it only runs while the popover is actually open.
+	const conversationStats = useMemo(
+		() => (contextTooltip.isOpen ? computeTabConversationStats(activeTab?.logs) : null),
+		[contextTooltip.isOpen, activeTab?.logs]
+	);
+
 	// The git menu opens on hover. The open delay keeps it from popping up while
 	// the pointer merely crosses the header on its way somewhere else; the close
 	// delay covers the gap between the pill and the menu below it.
@@ -510,6 +523,42 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 													</div>
 												)}
 											</div>
+
+											{/* Conversation size and span. Same numbers the HTML export
+											    prints at the top of the document, available here without
+											    having to export first. The span is wall clock between the
+											    first and last entry, so an agent left open overnight
+											    counts the night. */}
+											{conversationStats && conversationStats.totalMessages > 0 && (
+												<div
+													className="border-b pb-2 mb-2"
+													style={{ borderColor: theme.colors.border }}
+												>
+													<div className="flex justify-between items-center">
+														<span className="text-xs" style={{ color: theme.colors.textDim }}>
+															Messages
+														</span>
+														<span
+															className="text-xs font-mono"
+															style={{ color: theme.colors.textMain }}
+															title={`${conversationStats.userMessages.toLocaleString('en-US')} from you, ${conversationStats.aiMessages.toLocaleString('en-US')} from the agent`}
+														>
+															{conversationStats.totalMessages.toLocaleString('en-US')}
+														</span>
+													</div>
+													<div className="flex justify-between items-center mt-1">
+														<span className="text-xs" style={{ color: theme.colors.textDim }}>
+															Duration
+														</span>
+														<span
+															className="text-xs font-mono"
+															style={{ color: theme.colors.textMain }}
+														>
+															{formatConversationDuration(conversationStats.durationMs)}
+														</span>
+													</div>
+												</div>
+											)}
 
 											<div className="space-y-2">
 												<div className="flex justify-between items-center">
