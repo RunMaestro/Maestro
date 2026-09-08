@@ -36,6 +36,7 @@ type MockWebview = HTMLElement & {
 	isLoading: ReturnType<typeof vi.fn>;
 	getWebContentsId: ReturnType<typeof vi.fn>;
 	executeJavaScript: ReturnType<typeof vi.fn>;
+	insertCSS?: ReturnType<typeof vi.fn>;
 	findInPage?: ReturnType<typeof vi.fn>;
 	stopFindInPage?: ReturnType<typeof vi.fn>;
 };
@@ -847,6 +848,83 @@ describe('BrowserTabView', () => {
 				webview.dispatchEvent(fresh);
 			});
 			expect(bar.textContent).toContain('1/3');
+		});
+	});
+
+	describe('themed background', () => {
+		function setupBlankWebview(url: string) {
+			const rendered = render(
+				<BrowserTabView
+					tab={{ ...mockTab, url, title: 'New Tab' }}
+					theme={mockTheme}
+					onUpdateTab={vi.fn()}
+				/>
+			);
+			const webview = getWebview();
+			webview.canGoBack = vi.fn(() => false);
+			webview.canGoForward = vi.fn(() => false);
+			webview.getURL = vi.fn(() => url);
+			webview.getTitle = vi.fn(() => '');
+			webview.isLoading = vi.fn(() => false);
+			webview.getWebContentsId = vi.fn(() => 42);
+			webview.executeJavaScript = vi.fn().mockResolvedValue(undefined);
+			webview.insertCSS = vi.fn().mockResolvedValue('key');
+			return { webview, rendered };
+		}
+
+		it('paints the host and the webview element in the theme background', () => {
+			render(<BrowserTabView tab={mockTab} theme={mockTheme} onUpdateTab={vi.fn()} />);
+
+			const host = screen.getByTestId('browser-tab-host');
+			expect(host.style.backgroundColor).toBe('rgb(40, 42, 54)');
+			expect((getWebview() as HTMLElement).style.backgroundColor).toBe('rgb(40, 42, 54)');
+		});
+
+		it('recolors a blank guest document on dom-ready', async () => {
+			const { webview } = setupBlankWebview(DEFAULT_BROWSER_TAB_URL);
+
+			await act(async () => {
+				webview.dispatchEvent(new Event('dom-ready'));
+			});
+
+			expect(webview.insertCSS).toHaveBeenCalledWith(
+				expect.stringContaining(mockTheme.colors.bgMain)
+			);
+		});
+
+		it('leaves a real page background alone', async () => {
+			const { webview } = setupBlankWebview('https://example.com');
+
+			await act(async () => {
+				webview.dispatchEvent(new Event('dom-ready'));
+			});
+
+			expect(webview.insertCSS).not.toHaveBeenCalled();
+		});
+
+		it('re-applies the blank background when the theme changes', async () => {
+			const { webview, rendered } = setupBlankWebview(DEFAULT_BROWSER_TAB_URL);
+
+			await act(async () => {
+				webview.dispatchEvent(new Event('dom-ready'));
+			});
+			(webview.insertCSS as ReturnType<typeof vi.fn>).mockClear();
+
+			const nextTheme: Theme = {
+				...mockTheme,
+				colors: { ...mockTheme.colors, bgMain: '#101014' },
+			};
+			await act(async () => {
+				rendered.rerender(
+					<BrowserTabView
+						tab={{ ...mockTab, url: DEFAULT_BROWSER_TAB_URL, title: 'New Tab' }}
+						theme={nextTheme}
+						onUpdateTab={vi.fn()}
+					/>
+				);
+			});
+
+			expect(webview.insertCSS).toHaveBeenCalledWith(expect.stringContaining('#101014'));
 		});
 	});
 });
