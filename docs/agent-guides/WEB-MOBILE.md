@@ -92,10 +92,13 @@ Two rules follow, and both are load-bearing:
   tab can be away for hours and no agent id is ever reused, so an old tombstone
   has nothing left to block but a stale write. A client away long enough to
   outlive its tombstone reloads on reconnect regardless: `BridgeClient` has no
-  replay, so it re-reads the store rather than flushing what it still held. Only ADDITIONS travel from `setAll`: that path is a client's opening
-  snapshot of its own tree, taken before it could have heard about anything a
-  peer created, so treating an absent id there as a close would delete live
-  agents. The delta is deliberately lifecycle-only - tab contents, read-state and
+  replay, so it re-reads the store rather than flushing what it still held.
+  `setAll` merges its opening snapshot into the stored tree and only broadcasts
+  additions: the client may not have heard about agents a peer created, so an
+  absent id is preserved rather than treated as a close. Real closes arrive as
+  explicit `removeIds` through `setMany`. Both handlers share one main-process
+  write queue, so a final-agent backup cannot overlap a peer addition and later
+  overwrite it. The delta is deliberately lifecycle-only - tab contents, read-state and
   queued messages are still last-writer-wins.
 - **Which agent a client is looking at is per-client.** Write and read it through
   `src/renderer/utils/activeSessionPersistence.ts`, never

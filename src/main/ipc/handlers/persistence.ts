@@ -33,6 +33,7 @@ import { buildSessionLifecycleEvents } from './plugin-session-events';
 import { relocateSessionImages, resolveToDataUrl } from '../../storage/session-image-store';
 import { backupGroupsBeforeWipe } from '../../stores/groups-backup';
 import { backupSessionsBeforeWipe } from '../../stores/sessions-backup';
+import { createKeyedWriteQueue } from '../../utils/atomic-json-store';
 
 /**
  * Shallow-compare cliActivity for the diff broadcast.
@@ -204,6 +205,11 @@ export function registerPersistenceHandlers(
 		emitPluginEvent,
 		flushSessionWrites,
 	} = deps;
+	const sessionWriteQueue = createKeyedWriteQueue();
+	const queueWrite =
+		<TArgs extends unknown[], TResult>(handler: (...args: TArgs) => Promise<TResult>) =>
+		(...args: TArgs): Promise<TResult> =>
+			sessionWriteQueue.enqueue('sessions', () => handler(...args));
 
 	// Ids closed by a client, newest last. Read by every write path to refuse a
 	// stale peer flush that would resurrect a closed agent (see
@@ -492,15 +498,15 @@ export function registerPersistenceHandlers(
 	 *    session in both lists is removed (remove wins).
 	 *  - Sessions not mentioned in either list are preserved as-is.
 	 *  - Broadcasts to web clients fire only for the touched sessions
-	 *    (added / state-changed / removed), matching `setAll` semantics.
+	 *    (added / state-changed / explicitly removed).
 	 */
 	ipcMain.handle(
 		'sessions:setMany',
-		async (ipcEvent, rawUpdates: StoredSession[] = [], removeIds: string[] = []) => {
+		queueWrite(async (event, input: StoredSession[] = [], removeIds: string[] = []) => {
 			// Relocate any freshly-pasted inline images (data URLs) in the dirty
 			// sessions to the image store before they hit disk, so the sessions
 			// JSON only ever grows by lightweight refs.
-			const { sessions: relocatedUpdates } = await relocateSessionImages(rawUpdates);
+			const { sessions: relocatedUpdates } = await relocateSessionImages(input);
 			const previousSessions = sessionsStore.get('sessions', []);
 			const previousMap = new Map(previousSessions.map((s) => [s.id, s]));
 			// Drop any agent this write would resurrect: another client closed it
@@ -594,6 +600,7 @@ export function registerPersistenceHandlers(
 			}
 
 			try {
+				await backupSessionsBeforeWipe(previousSessions, merged, sessionsStore.path);
 				sessionsStore.set('sessions', merged);
 				// Preserve the renderer acknowledgement contract: true means this
 				// revision reached disk, not merely the in-memory cache.
@@ -624,7 +631,7 @@ export function registerPersistenceHandlers(
 			// invisible to - and resurrectable by - the rest.
 			const removedIds = removeIds.filter((id) => previousMap.has(id));
 			rememberRemovedSessions(removedIds);
-			broadcastSessionLifecycle(senderWebContentsIdOf(ipcEvent), {
+			broadcastSessionLifecycle(senderWebContentsIdOf(event), {
 				added: updates.filter((s) => !previousMap.has(s.id) && !removeSet.has(s.id)),
 				removedIds,
 			});
@@ -639,137 +646,122 @@ export function registerPersistenceHandlers(
 			}
 
 			return true;
-		}
+		})
 	);
 
-	ipcMain.handle('sessions:setAll', async (ipcEvent, rawSessions: StoredSession[]) => {
-		// Relocate inline images (data URLs) out of the sessions before they hit
-		// disk. setAll is the bootstrap/first-flush path, so this also migrates a
-		// legacy in-memory sessions tree the first time it is persisted.
-		const { sessions: relocatedSessions } = await relocateSessionImages(rawSessions);
-		// Get previous sessions to detect changes
-		const previousSessions = sessionsStore.get('sessions', []);
-		const previousSessionMap = new Map(previousSessions.map((s) => [s.id, s]));
-		// Same resurrection guard as setMany: a client that loaded before another
-		// closed an agent still carries it, and this path would write it back.
-		const sessions = dropResurrections(relocatedSessions, new Set(previousSessionMap.keys()));
-		const currentSessionMap = new Map(sessions.map((s) => [s.id, s]));
-
-		// Log session lifecycle events at DEBUG level
-		for (const session of sessions) {
-			const prevSession = previousSessionMap.get(session.id);
-			if (!prevSession) {
-				// New session created
-				logger.debug('Session created', 'Sessions', {
-					sessionId: session.id,
-					name: session.name,
-					toolType: session.toolType,
-					cwd: session.cwd,
-				});
+	ipcMain.handle(
+		'sessions:setAll',
+		queueWrite(async (event, input: StoredSession[]) => {
+			// Relocate inline images (data URLs) out of the sessions before they hit
+			// disk. setAll is the bootstrap/first-flush path, so this also migrates a
+			// legacy in-memory sessions tree the first time it is persisted.
+			const { sessions: relocatedSessions } = await relocateSessionImages(input);
+			// Get previous sessions to detect changes
+			const previousSessions = sessionsStore.get('sessions', []);
+			const previousSessionMap = new Map(previousSessions.map((s) => [s.id, s]));
+			// Same resurrection guard as setMany: a client that loaded before another
+			// closed an agent still carries it, and this path would write it back.
+			const sessions = dropResurrections(relocatedSessions, new Set(previousSessionMap.keys()));
+			const incomingIds = new Set(sessions.map((s) => s.id));
+			// setAll is a client's opening snapshot, so an omitted id means the client
+			// never saw that agent. Only setMany's explicit removeIds may delete one.
+			for (const previousSession of previousSessions) {
+				if (!incomingIds.has(previousSession.id)) {
+					sessions.push(previousSession);
+				}
 			}
-		}
-		for (const prevSession of previousSessions) {
-			if (!currentSessionMap.has(prevSession.id)) {
-				// Session destroyed
-				logger.debug('Session destroyed', 'Sessions', {
-					sessionId: prevSession.id,
-					name: prevSession.name,
-				});
-			}
-		}
 
-		const webServer = getWebServer();
-		// Detect and broadcast changes to web clients
-		if (webServer && webServer.getWebClientCount() > 0) {
-			// Check for state changes in existing sessions
+			// Log session lifecycle events at DEBUG level
 			for (const session of sessions) {
 				const prevSession = previousSessionMap.get(session.id);
-				if (prevSession) {
-					// Session exists - check if state or other tracked properties changed
-					if (
-						prevSession.state !== session.state ||
-						prevSession.inputMode !== session.inputMode ||
-						prevSession.name !== session.name ||
-						prevSession.cwd !== session.cwd ||
-						cliActivityChanged(prevSession.cliActivity, session.cliActivity)
-					) {
-						webServer.broadcastSessionStateChange(session.id, session.state, {
-							name: session.name,
-							toolType: session.toolType,
-							inputMode: session.inputMode,
-							cwd: session.cwd,
-							cliActivity: session.cliActivity,
-						});
-					}
-				} else {
-					// New session added
-					webServer.broadcastSessionAdded({
-						id: session.id,
+				if (!prevSession) {
+					// New session created
+					logger.debug('Session created', 'Sessions', {
+						sessionId: session.id,
 						name: session.name,
 						toolType: session.toolType,
-						state: session.state,
-						inputMode: session.inputMode,
 						cwd: session.cwd,
-						groupId: session.groupId || null,
-						groupName: session.groupName || null,
-						groupEmoji: session.groupEmoji || null,
-						parentSessionId: session.parentSessionId || null,
-						worktreeBranch: session.worktreeBranch || null,
-						autoRunFolderPath: session.autoRunFolderPath || null,
 					});
 				}
 			}
-
-			// Check for removed sessions
-			for (const prevSession of previousSessions) {
-				if (!currentSessionMap.has(prevSession.id)) {
-					webServer.broadcastSessionRemoved(prevSession.id);
+			const webServer = getWebServer();
+			// Detect and broadcast changes to web clients
+			if (webServer && webServer.getWebClientCount() > 0) {
+				// Check for state changes in existing sessions
+				for (const session of sessions) {
+					const prevSession = previousSessionMap.get(session.id);
+					if (prevSession) {
+						// Session exists - check if state or other tracked properties changed
+						if (
+							prevSession.state !== session.state ||
+							prevSession.inputMode !== session.inputMode ||
+							prevSession.name !== session.name ||
+							prevSession.cwd !== session.cwd ||
+							cliActivityChanged(prevSession.cliActivity, session.cliActivity)
+						) {
+							webServer.broadcastSessionStateChange(session.id, session.state, {
+								name: session.name,
+								toolType: session.toolType,
+								inputMode: session.inputMode,
+								cwd: session.cwd,
+								cliActivity: session.cliActivity,
+							});
+						}
+					} else {
+						// New session added
+						webServer.broadcastSessionAdded({
+							id: session.id,
+							name: session.name,
+							toolType: session.toolType,
+							state: session.state,
+							inputMode: session.inputMode,
+							cwd: session.cwd,
+							groupId: session.groupId || null,
+							groupName: session.groupName || null,
+							groupEmoji: session.groupEmoji || null,
+							parentSessionId: session.parentSessionId || null,
+							worktreeBranch: session.worktreeBranch || null,
+							autoRunFolderPath: session.autoRunFolderPath || null,
+						});
+					}
 				}
 			}
-		}
 
-		try {
-			// Keep a copy before an empty tree replaces a populated one. setAll is
-			// the bootstrap flush, which is exactly the path a bad read feeds:
-			// sessions:getAll answers [] for an unmounted sync folder, and the
-			// renderer's first flush would write that back over every agent.
-			// The renderer refuses that write when its read failed (see
-			// useDebouncedPersistence), but the CLI and the web bridge reach
-			// this handler too, so the copy is taken here as well.
-			await backupSessionsBeforeWipe(previousSessions, sessions, sessionsStore.path);
-			sessionsStore.set('sessions', sessions);
-			await flushSessionWrites();
-		} catch (err) {
-			// ENOSPC, ENFILE, or JSON serialization failures are recoverable -
-			// the next debounced write will succeed when conditions improve.
-			// Log but don't throw so the renderer doesn't see an unhandled rejection.
-			const code = (err as NodeJS.ErrnoException).code;
-			logger.warn(`Failed to persist sessions: ${code || (err as Error).message}`, 'Sessions');
-			return false;
-		}
-
-		// Tell the other clients about agents this bootstrap flush introduced.
-		// Only ADDITIONS travel from here: setAll is a client's opening statement
-		// of its own tree, made before it can have heard about anything a peer
-		// created since it loaded, so treating an absent id as a close would let
-		// one client's stale snapshot delete another's live agents. Real closes
-		// arrive as explicit `removeIds` through setMany.
-		broadcastSessionLifecycle(senderWebContentsIdOf(ipcEvent), {
-			added: sessions.filter((s) => !previousSessionMap.has(s.id)),
-			removedIds: [],
-		});
-
-		// Surface metadata-only lifecycle events to subscribed plugins
-		// (events:subscribe). Re-authorized per delivery against live grants.
-		if (emitPluginEvent) {
-			const at = new Date().toISOString();
-			for (const event of buildSessionLifecycleEvents(previousSessionMap, sessions, at)) {
-				emitPluginEvent(event);
+			try {
+				sessionsStore.set('sessions', sessions);
+				await flushSessionWrites();
+			} catch (err) {
+				// ENOSPC, ENFILE, or JSON serialization failures are recoverable -
+				// the next debounced write will succeed when conditions improve.
+				// Log but don't throw so the renderer doesn't see an unhandled rejection.
+				const code = (err as NodeJS.ErrnoException).code;
+				logger.warn(`Failed to persist sessions: ${code || (err as Error).message}`, 'Sessions');
+				return false;
 			}
-		}
 
-		return true;
-	});
+			// Tell the other clients about agents this bootstrap flush introduced.
+			// Only ADDITIONS travel from here: setAll is a client's opening statement
+			// of its own tree, made before it can have heard about anything a peer
+			// created since it loaded, so treating an absent id as a close would let
+			// one client's stale snapshot delete another's live agents. Real closes
+			// arrive as explicit `removeIds` through setMany.
+			broadcastSessionLifecycle(senderWebContentsIdOf(event), {
+				added: sessions.filter((s) => !previousSessionMap.has(s.id)),
+				removedIds: [],
+			});
+
+			// Surface metadata-only lifecycle events to subscribed plugins
+			// (events:subscribe). Re-authorized per delivery against live grants.
+			if (emitPluginEvent) {
+				const at = new Date().toISOString();
+				for (const event of buildSessionLifecycleEvents(previousSessionMap, sessions, at)) {
+					emitPluginEvent(event);
+				}
+			}
+
+			return true;
+		})
+	);
 
 	// Groups persistence
 	ipcMain.handle('groups:getAll', async () => {

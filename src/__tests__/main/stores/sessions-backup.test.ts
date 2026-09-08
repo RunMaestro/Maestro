@@ -4,6 +4,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import path from 'node:path';
 
 vi.mock('../../../main/utils/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -40,7 +41,7 @@ describe('backupSessionsBeforeWipe', () => {
 
 		expect(mockWrite).toHaveBeenCalledTimes(1);
 		const [writtenPath, payload] = mockWrite.mock.calls[0];
-		expect(writtenPath).toBe(`/tmp/maestro-test/${SESSIONS_BACKUP_FILENAME}`);
+		expect(writtenPath).toBe(path.join(path.dirname(STORE_PATH), SESSIONS_BACKUP_FILENAME));
 		expect((payload as { entries: StoredSession[] }).entries).toEqual(stored);
 	});
 
