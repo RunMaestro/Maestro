@@ -6,6 +6,7 @@ import { createSafeSend } from '../../../utils/safe-send';
 import { createIpcHandler } from '../../../utils/ipcHandler';
 import { execFileNoThrow } from '../../../utils/execFile';
 import { ensureForkSetup } from '../../../utils/symphony-fork';
+import { fetchWithTimeout } from '../../../utils/fetchWithTimeout';
 import { BRANCH_TEMPLATE } from '../../../../shared/symphony-constants';
 import type {
 	ActiveContribution,
@@ -27,6 +28,7 @@ import {
 	toSafeDocumentFileName,
 	uniqueDocumentFileName,
 	SymphonyHandlerDependencies,
+	SYMPHONY_DOCUMENT_FETCH_TIMEOUT_MS,
 } from './shared';
 
 /**
@@ -636,7 +638,11 @@ This PR will be updated automatically when the Auto Run completes.`;
 									name: doc.name,
 									url: doc.path,
 								});
-								const response = await fetch(doc.path);
+								const response = await fetchWithTimeout(
+									doc.path,
+									{},
+									SYMPHONY_DOCUMENT_FETCH_TIMEOUT_MS
+								);
 								if (!response.ok) {
 									logger.warn('Failed to download document', LOG_CONTEXT, {
 										name: doc.name,

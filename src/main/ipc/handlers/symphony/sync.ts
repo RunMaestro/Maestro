@@ -4,6 +4,7 @@ import path from 'path';
 import { logger } from '../../../utils/logger';
 import { createSafeSend } from '../../../utils/safe-send';
 import { createIpcHandler } from '../../../utils/ipcHandler';
+import { fetchWithTimeout } from '../../../utils/fetchWithTimeout';
 import { GITHUB_API_BASE } from '../../../../shared/symphony-constants';
 import type { CompletedContribution } from '../../../../shared/symphony-types';
 import {
@@ -15,6 +16,7 @@ import {
 	broadcastSymphonyUpdate,
 	getSymphonyDir,
 	SymphonyHandlerDependencies,
+	SYMPHONY_GITHUB_API_TIMEOUT_MS,
 } from './shared';
 
 /**
@@ -35,12 +37,16 @@ async function discoverPRByBranch(
 		const headRef = `${headOwner || owner}:${branchName}`;
 		const apiUrl = `${GITHUB_API_BASE}/repos/${repoSlug}/pulls?head=${encodeURIComponent(headRef)}&state=all&per_page=1`;
 
-		const response = await fetch(apiUrl, {
-			headers: {
-				Accept: 'application/vnd.github.v3+json',
-				'User-Agent': 'Maestro-Symphony',
+		const response = await fetchWithTimeout(
+			apiUrl,
+			{
+				headers: {
+					Accept: 'application/vnd.github.v3+json',
+					'User-Agent': 'Maestro-Symphony',
+				},
 			},
-		});
+			SYMPHONY_GITHUB_API_TIMEOUT_MS
+		);
 
 		if (!response.ok) {
 			logger.warn('Failed to query GitHub for PRs by branch', LOG_CONTEXT, {
@@ -121,12 +127,16 @@ export function registerSyncHandlers({ app, getMainWindow }: SymphonyHandlerDepe
 					try {
 						// Fetch PR status from GitHub API
 						const prUrl = `${GITHUB_API_BASE}/repos/${completed.repoSlug}/pulls/${completed.prNumber}`;
-						const response = await fetch(prUrl, {
-							headers: {
-								Accept: 'application/vnd.github.v3+json',
-								'User-Agent': 'Maestro-Symphony',
+						const response = await fetchWithTimeout(
+							prUrl,
+							{
+								headers: {
+									Accept: 'application/vnd.github.v3+json',
+									'User-Agent': 'Maestro-Symphony',
+								},
 							},
-						});
+							SYMPHONY_GITHUB_API_TIMEOUT_MS
+						);
 
 						if (!response.ok) {
 							results.errors.push(`Failed to check PR #${completed.prNumber}: ${response.status}`);
@@ -253,12 +263,16 @@ export function registerSyncHandlers({ app, getMainWindow }: SymphonyHandlerDepe
 
 					try {
 						const prUrl = `${GITHUB_API_BASE}/repos/${contribution.repoSlug}/pulls/${contribution.draftPrNumber}`;
-						const response = await fetch(prUrl, {
-							headers: {
-								Accept: 'application/vnd.github.v3+json',
-								'User-Agent': 'Maestro-Symphony',
+						const response = await fetchWithTimeout(
+							prUrl,
+							{
+								headers: {
+									Accept: 'application/vnd.github.v3+json',
+									'User-Agent': 'Maestro-Symphony',
+								},
 							},
-						});
+							SYMPHONY_GITHUB_API_TIMEOUT_MS
+						);
 
 						if (!response.ok) {
 							results.errors.push(
@@ -463,12 +477,16 @@ export function registerSyncHandlers({ app, getMainWindow }: SymphonyHandlerDepe
 					// Step 4: If we have a PR, check its status
 					if (contribution.draftPrNumber) {
 						const prUrl = `${GITHUB_API_BASE}/repos/${contribution.repoSlug}/pulls/${contribution.draftPrNumber}`;
-						const response = await fetch(prUrl, {
-							headers: {
-								Accept: 'application/vnd.github.v3+json',
-								'User-Agent': 'Maestro-Symphony',
+						const response = await fetchWithTimeout(
+							prUrl,
+							{
+								headers: {
+									Accept: 'application/vnd.github.v3+json',
+									'User-Agent': 'Maestro-Symphony',
+								},
 							},
-						});
+							SYMPHONY_GITHUB_API_TIMEOUT_MS
+						);
 
 						if (response.ok) {
 							const pr = (await response.json()) as {

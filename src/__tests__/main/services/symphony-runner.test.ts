@@ -738,7 +738,10 @@ describe('Symphony Runner Service', () => {
 				branchName: 'symphony/test-branch',
 			});
 
-			expect(mockFetch).toHaveBeenCalledWith('https://example.com/doc.md');
+			expect(mockFetch).toHaveBeenCalledWith(
+				'https://example.com/doc.md',
+				expect.objectContaining({ signal: expect.anything() })
+			);
 			expect(fs.writeFile).toHaveBeenCalledWith(
 				'/tmp/test-repo/.maestro/playbooks/doc.md',
 				expect.any(Buffer)
@@ -866,7 +869,10 @@ describe('Symphony Runner Service', () => {
 				branchName: 'symphony/test-branch',
 			});
 
-			expect(mockFetch).toHaveBeenCalledWith('https://example.com/external.md');
+			expect(mockFetch).toHaveBeenCalledWith(
+				'https://example.com/external.md',
+				expect.objectContaining({ signal: expect.anything() })
+			);
 			expect(logger.info).toHaveBeenCalledWith(
 				'Downloading external document',
 				expect.any(String),

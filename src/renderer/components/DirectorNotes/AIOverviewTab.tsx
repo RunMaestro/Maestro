@@ -28,6 +28,7 @@ import { safeClipboardWrite } from '../../utils/clipboard';
 import { formatNumber } from '../../../shared/formatters';
 import { notifyToast } from '../../stores/notificationStore';
 import { useModalStore } from '../../stores/modalStore';
+import { safeStorageGet, safeStorageSet } from '../../utils/safeLocalStorage';
 import {
 	looksLikeStructuredOutput,
 	narrativeToMarkdown,
@@ -66,7 +67,7 @@ type ViewMode = 'rich' | 'plain';
 const VIEW_MODE_DEFAULT: ViewMode = 'rich';
 
 function loadViewMode(persistedDefault: ViewMode): ViewMode {
-	const raw = localStorage.getItem(VIEW_MODE_STORAGE_KEY);
+	const raw = safeStorageGet(VIEW_MODE_STORAGE_KEY);
 	return raw === 'rich' || raw === 'plain' ? raw : persistedDefault;
 }
 
@@ -162,7 +163,7 @@ export const AIOverviewTab = forwardRef<TabFocusHandle, AIOverviewTabProps>(func
 	// Switch reading mode and persist the choice.
 	const changeViewMode = useCallback((mode: ViewMode) => {
 		setViewMode(mode);
-		localStorage.setItem(VIEW_MODE_STORAGE_KEY, mode);
+		safeStorageSet(VIEW_MODE_STORAGE_KEY, mode);
 	}, []);
 
 	// Three paths consume a synopsis result (fresh generation, attaching to an
