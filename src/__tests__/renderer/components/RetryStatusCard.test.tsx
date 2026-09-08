@@ -98,4 +98,66 @@ describe('RetryStatusCard', () => {
 			screen.getByText(/Plan quota exhausted was not resolved after 3 retries/)
 		).toBeInTheDocument();
 	});
+
+	// A limit banner that only says "you've hit your limit" is a verdict with no
+	// evidence: it can't distinguish the 5-hour window from the weekly one, and
+	// can't say whether the stop is recoverable. See issue #1472.
+	describe('plan-limit evidence', () => {
+		it('names the exhausted window instead of the generic quota label', () => {
+			setOutage({
+				strategy: 'token-exhaustion',
+				quota: { window: 'five_hour', status: 'rejected' },
+			});
+			render(<RetryStatusCard outageId="o1" theme={mockTheme} />);
+
+			expect(screen.getByText('5-hour session limit reached')).toBeInTheDocument();
+			expect(screen.queryByText('Plan quota exhausted')).not.toBeInTheDocument();
+		});
+
+		it('distinguishes the weekly window from the 5-hour one', () => {
+			setOutage({ strategy: 'token-exhaustion', quota: { window: 'seven_day' } });
+			render(<RetryStatusCard outageId="o1" theme={mockTheme} />);
+
+			expect(screen.getByText('Weekly limit reached')).toBeInTheDocument();
+		});
+
+		it('says whether anything can be done, and when the window reopens', () => {
+			setOutage({
+				strategy: 'token-exhaustion',
+				quota: {
+					window: 'five_hour',
+					status: 'rejected',
+					resetsAt: NOW + 3 * 60 * 60 * 1000,
+					overageStatus: 'rejected',
+					overageDisabledReason: 'out_of_credits',
+				},
+			});
+			render(<RetryStatusCard outageId="o1" theme={mockTheme} />);
+
+			expect(screen.getByTestId('quota-limit-remedy')).toHaveTextContent(/out of credits/i);
+			expect(screen.getByText(/^Resets /)).toBeInTheDocument();
+		});
+
+		// `overageStatus` stays `allowed` after hard exhaustion; reading it alone
+		// would tell a hard-stopped user they are covered.
+		it('never claims coverage on a rejected request even when overage is allowed', () => {
+			setOutage({
+				strategy: 'token-exhaustion',
+				quota: { window: 'seven_day', status: 'rejected', overageStatus: 'allowed' },
+			});
+			render(<RetryStatusCard outageId="o1" theme={mockTheme} />);
+
+			expect(screen.getByTestId('quota-limit-remedy')).not.toHaveTextContent(/cover/i);
+		});
+
+		it('keeps the generic label and renders no evidence block without a quota payload', () => {
+			// A provider or transport that forwards no quota object leaves the
+			// notice text as the whole story.
+			setOutage({ strategy: 'token-exhaustion' });
+			render(<RetryStatusCard outageId="o1" theme={mockTheme} />);
+
+			expect(screen.getByText('Plan quota exhausted')).toBeInTheDocument();
+			expect(screen.queryByTestId('quota-limit-evidence')).not.toBeInTheDocument();
+		});
+	});
 });

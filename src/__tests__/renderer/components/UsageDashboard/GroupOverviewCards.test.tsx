@@ -7,13 +7,29 @@
  * sort.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, within, fireEvent } from '@testing-library/react';
 import { GroupOverviewCards } from '../../../../renderer/components/UsageDashboard/GroupOverviewCards';
 import type { Session } from '../../../../renderer/types';
 import type { StatsAggregation } from '../../../../shared/stats-types';
 import type { GroupLike } from '../../../../shared/statsGroupRollup';
 import { THEMES } from '../../../../shared/themes';
+import { installLocalStorageMock } from '../../../helpers/mockLocalStorage';
+import { GROUP_TILE_SCALE_KEY } from '../../../../renderer/components/UsageDashboard/tileScale';
+
+// The grid reads the layer stack to decide whether the bare zoom keys are its
+// to answer. Stub it as the top layer so the component renders standalone.
+vi.mock('../../../../renderer/contexts/LayerStackContext', async () => {
+	const { MODAL_PRIORITIES } = await import('../../../../renderer/constants/modalPriorities');
+	return {
+		useLayerStack: () => ({
+			registerLayer: vi.fn(() => 'layer-123'),
+			unregisterLayer: vi.fn(),
+			updateLayerHandler: vi.fn(),
+			getLayers: () => [{ priority: MODAL_PRIORITIES.USAGE_DASHBOARD }],
+		}),
+	};
+});
 
 const theme = THEMES['dracula'];
 
@@ -99,6 +115,11 @@ function renderCards(props: Partial<React.ComponentProps<typeof GroupOverviewCar
 }
 
 describe('GroupOverviewCards', () => {
+	beforeEach(() => {
+		// The tile zoom persists, so each test starts from a fresh store.
+		installLocalStorageMock();
+	});
+
 	it('renders one tile per non-empty group plus an Ungrouped tile', () => {
 		renderCards();
 
@@ -305,6 +326,42 @@ describe('GroupOverviewCards', () => {
 
 		expect(screen.getByTestId('group-overview-cards')).toHaveStyle({
 			gridTemplateColumns: 'repeat(auto-fill, minmax(440px, 1fr))',
+		});
+	});
+
+	describe('tile zoom', () => {
+		const columns = () =>
+			(screen.getByTestId('group-overview-cards') as HTMLElement).style.gridTemplateColumns;
+
+		it('resizes the tiles from the keyboard and remembers the choice', () => {
+			const { unmount } = renderCards();
+
+			fireEvent.keyDown(window, { key: '+' });
+			expect(columns()).toBe('repeat(auto-fill, minmax(484px, 1fr))');
+			expect(window.localStorage.getItem(GROUP_TILE_SCALE_KEY)).toBe('1.1');
+
+			unmount();
+			renderCards();
+			expect(columns()).toBe('repeat(auto-fill, minmax(484px, 1fr))');
+		});
+
+		it('keeps its own size, independent of the agent grid', () => {
+			// Two grids with very different floors answering different questions:
+			// widening one says nothing about the other.
+			renderCards();
+
+			fireEvent.keyDown(window, { key: '-' });
+
+			expect(window.localStorage.getItem('usageDashboard.agentTileScale')).toBeNull();
+			expect(window.localStorage.getItem(GROUP_TILE_SCALE_KEY)).toBe('0.9');
+		});
+
+		it('zooms from the control beside the sort pills as well', () => {
+			renderCards();
+
+			fireEvent.click(screen.getByRole('button', { name: 'Increase tile size' }));
+
+			expect(columns()).toBe('repeat(auto-fill, minmax(484px, 1fr))');
 		});
 	});
 

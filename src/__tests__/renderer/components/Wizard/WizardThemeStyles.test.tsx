@@ -406,7 +406,7 @@ describe('Wizard Theme Styles', () => {
 	});
 
 	describe('WizardExitConfirmModal Theme Rendering', () => {
-		const sampleThemes: ThemeId[] = ['tokyo-night', 'one-light', 'inquest'];
+		const sampleThemes: ThemeId[] = ['tokyo-night', 'one-light', 'winamp'];
 
 		it.each(sampleThemes)('should render with %s theme without errors', (themeId) => {
 			const theme = THEMES[themeId];

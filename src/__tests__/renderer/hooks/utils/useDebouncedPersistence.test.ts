@@ -140,10 +140,80 @@ describe('useDebouncedPersistence', () => {
 		vi.useFakeTimers();
 		vi.clearAllMocks();
 		resetStore(useSessionStore);
+		// The hook refuses to write a tree that was never read from disk. Every
+		// test here is about what happens AFTER a successful read, so model one.
+		useSessionStore.setState({ sessionsReadOk: true });
 	});
 
 	afterEach(() => {
 		vi.useRealTimers();
+	});
+
+	// -----------------------------------------------------------------------
+	// Regression: never write a session tree that was never read
+	// -----------------------------------------------------------------------
+	//
+	// sessions:getAll answers [] both for a new install and for a registry it
+	// could not read, and the restoration hook sets the tree to [] on failure.
+	// initialLoadComplete is set in a finally, so it is true either way, and
+	// flushNow with a snapshot skips it altogether. persistInternal is the one
+	// gate every flush path shares, so the refusal lives there.
+	describe('sessionsReadOk gate', () => {
+		it('does not persist on the debounce timer when the read never came back', () => {
+			useSessionStore.setState({ sessionsReadOk: false });
+			const initialLoadRef = makeInitialLoadRef(true);
+			renderPersistence(initialLoadRef);
+
+			act(() => {
+				seedSessions([makeSession()]);
+			});
+			act(() => {
+				vi.advanceTimersByTime(5000);
+			});
+
+			expect(window.maestro.sessions.setAll).not.toHaveBeenCalled();
+			expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
+		});
+
+		it('does not persist on flushNow with a snapshot when the read never came back', () => {
+			useSessionStore.setState({ sessionsReadOk: false });
+			const initialLoadRef = makeInitialLoadRef(true);
+			const hook = renderPersistence(initialLoadRef);
+
+			// The snapshot form is the path that bypasses initialLoadComplete.
+			act(() => {
+				hook.result.current.flushNow([makeSession()]);
+			});
+
+			expect(window.maestro.sessions.setAll).not.toHaveBeenCalled();
+		});
+
+		it('does not persist on unmount when the read never came back', () => {
+			useSessionStore.setState({ sessionsReadOk: false });
+			const initialLoadRef = makeInitialLoadRef(true);
+			const hook = renderPersistence(initialLoadRef);
+
+			act(() => {
+				seedSessions([makeSession()]);
+			});
+			hook.unmount();
+
+			expect(window.maestro.sessions.setAll).not.toHaveBeenCalled();
+		});
+
+		it('persists an empty tree that WAS read (a new install)', () => {
+			useSessionStore.setState({ sessionsReadOk: true });
+			const initialLoadRef = makeInitialLoadRef(true);
+			const hook = renderPersistence(initialLoadRef);
+
+			// The gate is "did the read succeed", never "was it non-empty" -
+			// otherwise a fresh user could never save their first agent.
+			act(() => {
+				hook.result.current.flushNow([]);
+			});
+
+			expect(window.maestro.sessions.setAll).toHaveBeenCalledWith([]);
+		});
 	});
 
 	// -----------------------------------------------------------------------

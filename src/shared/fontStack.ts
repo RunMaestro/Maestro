@@ -121,3 +121,40 @@ export function resolveSurfaceFont(
 ): string {
 	return withMonoFallback((surfaceFont ?? '').trim() || interfaceFont);
 }
+
+/**
+ * The human-readable name of a font stack: its first family, unquoted.
+ *
+ * Stored font values are not all bare names. The typography presets write full
+ * CSS stacks (`Inter, -apple-system, BlinkMacSystemFont, ...`), which is right
+ * for the stored value - the fallback chain is what makes the preset resolve on
+ * a machine with nothing installed - but wrong for a label. The picker matches
+ * its option list by exact string, so a stack matches nothing, gets surfaced as
+ * the "Current" option, and the whole comma-separated chain is what the user
+ * reads as the name of their font.
+ *
+ * DISPLAY ONLY. Never write the result back to a setting: the tail of the stack
+ * is the fallback, and dropping it is how a font that is merely missing turns
+ * into a serif document default.
+ */
+export function displayFontLabel(fontFamily: string | undefined | null): string {
+	const first = (fontFamily ?? '').split(',')[0]?.trim() ?? '';
+	// Strip a matching pair of surrounding quotes; a family whose name contains
+	// a quote is not a thing, so an unbalanced one is left alone rather than
+	// half-trimmed into something that reads as a typo.
+	const unquoted = first.replace(/^(['"])(.*)\1$/, '$2').trim();
+	return unquoted || first;
+}
+
+/**
+ * Sample copy every font preview draws.
+ *
+ * One pair of strings rather than a per-surface literal: the typography chooser
+ * and the Settings pickers both show "what does this face look like", and two
+ * different samples would make the same font read as two different choices
+ * depending on which screen the user happened to be on. The prose line is a
+ * pangram so every letterform is exercised; the code line carries the
+ * punctuation and digits a fixed-width face is actually judged on.
+ */
+export const FONT_PREVIEW_PROSE = 'The quick brown fox jumps over the lazy dog.';
+export const FONT_PREVIEW_CODE = 'const tempo = 120; // adagio -> allegro';

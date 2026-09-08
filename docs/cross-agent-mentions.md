@@ -36,6 +36,7 @@ The consultation is **non-blocking and isolated**:
 - The answer is still kept. Maestro writes it to a dedicated **consult tab** on the target agent, labeled with who asked (`↩ YourAgent`), so the target has a durable record of what it was consulted about. That agent's History also logs a "Consulted by _YourAgent_" entry, so it remembers who reached out.
 - **Continuity per thread.** Ask the same agent again from the **same tab** and Maestro resumes its consult session, so it carries forward your earlier consults from that thread. A mention from a different tab starts a fresh consult in its own tab.
 - Your chat is never blocked. A small pill at the top of the input shows in-flight consultations (each agent's name and elapsed seconds); click it to expand the list. Each agent in that list is itself a link: click it to jump straight to the consult tab working on your question, so you can watch the answer being written. Keep typing while you wait.
+- **The consulted agent shows as busy.** While it is answering, its dot in the Left Bar pulses amber and reads "Answering a consult", the same way an agent working on its own turn does. It is only a status: the consult still raises no unread mark and no bell, so nothing is left for you to clear once the answer lands.
 - When the target finishes, its reply streams back **inline into the chat you are already in**, attributed to the agent that answered.
 
 Every consulted reply lands in a tinted bubble topped by an **attribution header**: the answering agent's name, its provider, and its session id. That header is what tells replies apart when several agents answer at once, and it does double duty as a jump control. Click the agent name (or the jump button on the right) to open that agent's consult tab in the Left Bar, where the full exchange is kept, so you can continue the thread in its own context; click the session id to copy it. While a reply is still streaming the header shows a spinner, and a consult that failed tints the header red.
@@ -70,7 +71,7 @@ A leading `@file` reference (`@src/app.ts what does this do?`) is a question for
 </Note>
 
 <Note>
-  A consulted agent is told your **working directory** and may **read** files there to answer with real context. By default a consultation is **read-only**: the agent will not write or modify files, and if changes are needed it describes them in its reply so you can apply them yourself. If you want mentioned agents to apply changes directly, switch **Consult Permission** to **Read/Write** under **Settings > General > Cross-Agent Mentions**. Leave it on Read-Only (the default and safest choice) unless you trust the mentioned agent to edit its workspace unattended.
+  A mentioned agent is told your **working directory** and may **read** files there to answer with real context. By default a mention is a **consult**: read-only, so the agent will not write or modify files, and if changes are needed it describes them in its reply so you can apply them yourself. To turn mentions into **delegations**, where the agent applies changes directly, switch **Consult or Delegate** to **Read/Write** under **Settings > General > Cross-Agent Mentions**. Leave it on Read-Only (the default and safest choice) unless you trust the mentioned agent to edit its workspace unattended.
 </Note>
 
 ## Controlling How Much Context You Share
@@ -102,6 +103,42 @@ Groups sort above individual agents in the picker, so a name that matches both s
 
 This is deliberate. When an agent and a group share a name, a hand-typed token cannot tell you which one it resolved to, and the group used to win - so picking the single agent you could see quietly fanned your message out to five.
 </Warning>
+
+## When an agent asks on its own
+
+The consult above is something you type. An agent that decides mid-task it needs another
+agent's knowledge reaches the same machinery through the CLI:
+
+```bash
+maestro-cli ask "Substrate PedTome" "How does your /GUID + password gate work?" \
+  --from <its own agent id>
+```
+
+Everything on this page still applies: a hidden consult tab on the target, read-only by
+default, continuity across repeat asks, a History entry naming who asked. Two differences,
+both because the caller is an agent rather than you:
+
+- **The answer goes back to the agent**, printed on stdout as its tool result, instead of
+  into a chat bubble. Your agent then tells you what it learned in its own words.
+- **The question stands alone.** No transcript is forwarded unless the agent passes
+  `--with-context`, so the target starts from a genuinely fresh context.
+
+`maestro-cli dispatch` is the other verb, and it is not a substitute. Dispatch hands over
+**work**, and the prompt lands in a real tab - which means it appears in the middle of
+whatever conversation you have open with that agent. Asking a question that way interrupts
+you and sends the answer to the screen rather than to the agent that needed it.
+
+### You do not have to type `@`
+
+The `@` picker is how you address an agent **precisely**, not the only phrasing your agent
+acts on. "What does the reviewer think of this?" or "let the docs agent know we shipped it"
+is a routable instruction on its own: your agent resolves the name against its roster and
+picks the verb from what you asked for, consulting with `ask` when you want an answer back
+and handing work over with `dispatch` when you do not.
+
+Reach for the picker when the name is ambiguous. Where a plain-language reference fits
+several agents or none, your agent names its best guess and asks rather than fanning your
+message out, so an `@name` chip is the faster way to say exactly who you meant.
 
 ## Cross-Agent Mentions vs Group Chat
 

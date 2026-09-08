@@ -9,13 +9,52 @@
  * taking index 0, and treat a queue with no runnable items as drained.
  */
 
-import type { QueuedItem, Session, SessionState } from '../types';
+import type { QueuedItem, QueuedItemEditPatch, Session, SessionState } from '../types';
 import {
 	getBusyTabs,
 	getTabDisplayName,
 	markTabRunningQueuedItem,
 	resolveQueuedItemTarget,
 } from './tabHelpers';
+
+/**
+ * Apply an edit-modal patch to one queued item, returning the resulting queue.
+ *
+ * Both save paths route through here - the inline chat list edits the ACTIVE
+ * agent (App.tsx) while the Execution Queue browser edits any agent by id
+ * (useQueueHandlers) - so the two cannot drift on what an edit actually
+ * writes. They already had: one of them dropped `turnSettings` on the floor,
+ * silently discarding the model/effort the user had just picked.
+ *
+ * `turnSettings` is assigned, not merged. The modal always sends the complete
+ * settings it was displaying, so clearing a picker back to "Default" has to
+ * clear the stored field rather than leave the previous value behind.
+ *
+ * `crossAgent` is optional and carries the two `@mention` flags, re-derived by
+ * the caller from the EDITED text. It is a parameter rather than something this
+ * function works out for itself because deriving it needs `planCrossAgentMentions`,
+ * which reads the session store - a dependency a pure queue utility must not take
+ * on. Callers that can resolve a mention pass it; the rest omit it and leave the
+ * item's existing flags alone.
+ */
+export function applyQueuedItemEdit(
+	queue: QueuedItem[],
+	itemId: string,
+	patch: QueuedItemEditPatch,
+	crossAgent?: { crossAgentMention: boolean; crossAgentOnly: boolean }
+): QueuedItem[] {
+	return queue.map((item) =>
+		item.id === itemId
+			? {
+					...item,
+					text: patch.text,
+					images: patch.images,
+					turnSettings: patch.turnSettings,
+					...(crossAgent ?? {}),
+				}
+			: item
+	);
+}
 
 /** A queued item is runnable when it is not held/paused by the user. */
 export function isRunnableQueueItem(item: QueuedItem): boolean {

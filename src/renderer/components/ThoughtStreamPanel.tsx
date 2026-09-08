@@ -21,23 +21,34 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Brain, Search, Trash2, X } from 'lucide-react';
+import { AlertTriangle, Brain, Check, Loader2, Search, Trash2, Wrench, X } from 'lucide-react';
 import type { Theme } from '../types';
 import {
 	useThoughtStreamStore,
-	groupThoughtsIntoBlocks,
+	buildActivityFeed,
 	isThoughtStreamLive,
+	isToolEvent,
 	THOUGHT_LIVE_WINDOW_MS,
-	type ThoughtEntry,
-	type ThoughtBlock,
+	type ActivityFeedItem,
+	type StreamEvent,
+	type ToolActivityEntry,
 } from '../stores/thoughtStreamStore';
 import { useSessionStore } from '../stores/sessionStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useUIStore } from '../stores/uiStore';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
+import { usePersistedToggle } from '../hooks/ui/usePersistedToggle';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
+import { GhostIconButton } from './ui/GhostIconButton';
 import { Markdown } from './Markdown';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
+
+/**
+ * localStorage key for the tool-call display toggle. A view preference, not a
+ * setting: it belongs to the panel, a user flips it by clicking, and it has to
+ * survive the panel unmounting (closing it, or the Right Panel folding away).
+ */
+export const SHOW_TOOL_ACTIVITY_KEY = 'thoughtStream.showToolActivity';
 
 interface ThoughtStreamPanelProps {
 	theme: Theme;
@@ -50,6 +61,90 @@ function formatThoughtTime(ts: number): string {
 		minute: '2-digit',
 		second: '2-digit',
 	});
+}
+
+/** The full one-line rendering of a tool call ("Ran npm test"). */
+function toolActivityText(activity: ToolActivityEntry): string {
+	const { verb, target } = activity.tool.label;
+	return target ? `${verb} ${target}` : verb;
+}
+
+/**
+ * One tool call as a single scannable line: status glyph, verb, target.
+ *
+ * The text is rendered as PLAIN TEXT, not markdown. A shell command or a glob
+ * pattern is full of characters markdown claims (`*`, `_`, backticks), so
+ * running it through the renderer mangles exactly the lines a user is trying to
+ * read. Search highlighting is therefore done here rather than delegated.
+ */
+function ToolActivityRow({
+	activity,
+	theme,
+	query,
+}: {
+	activity: ToolActivityEntry;
+	theme: Theme;
+	query: string;
+}) {
+	const { status } = activity.tool;
+	const text = toolActivityText(activity);
+	const color =
+		status === 'failed'
+			? theme.colors.error
+			: status === 'running'
+				? theme.colors.accent
+				: theme.colors.textDim;
+
+	return (
+		<div className="flex items-start gap-2 text-xs-plus leading-snug">
+			<span
+				className="font-mono shrink-0 select-none pt-px"
+				style={{ color: theme.colors.textDim }}
+				title={new Date(activity.timestamp).toLocaleString()}
+			>
+				{formatThoughtTime(activity.timestamp)}
+			</span>
+			<span className="shrink-0 pt-0.5" style={{ color }}>
+				{status === 'running' ? (
+					<Loader2 className="w-3 h-3 animate-spin" aria-label="running" />
+				) : status === 'failed' ? (
+					<AlertTriangle className="w-3 h-3" aria-label="failed" />
+				) : (
+					<Check className="w-3 h-3" aria-label="completed" />
+				)}
+			</span>
+			<span className="min-w-0 break-words" style={{ color: theme.colors.textMain }}>
+				{highlightQuery(text, query, theme)}
+			</span>
+		</div>
+	);
+}
+
+/**
+ * Split `text` on the search query and wrap the matches. Case-insensitive and
+ * literal (the query is user text, never a pattern).
+ */
+function highlightQuery(text: string, query: string, theme: Theme) {
+	const q = query.trim();
+	if (!q) return text;
+	const lower = text.toLowerCase();
+	const needle = q.toLowerCase();
+	const parts: React.ReactNode[] = [];
+	let from = 0;
+	for (;;) {
+		const at = lower.indexOf(needle, from);
+		if (at === -1) break;
+		if (at > from) parts.push(text.slice(from, at));
+		parts.push(
+			<mark key={at} style={{ backgroundColor: theme.colors.accent, color: theme.colors.bgMain }}>
+				{text.slice(at, at + needle.length)}
+			</mark>
+		);
+		from = at + needle.length;
+	}
+	if (parts.length === 0) return text;
+	if (from < text.length) parts.push(text.slice(from));
+	return parts;
 }
 
 export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
@@ -76,7 +171,7 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 	// pinned to the TOP of the scroll area, not the bottom.
 	const stickToTopRef = useRef(true);
 
-	const entries: ThoughtEntry[] = useMemo(() => buffer?.entries ?? [], [buffer]);
+	const entries: StreamEvent[] = useMemo(() => buffer?.entries ?? [], [buffer]);
 	const trimmed = buffer?.trimmed ?? false;
 	const lastAppendAt = buffer?.lastAppendAt ?? 0;
 
@@ -94,12 +189,47 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 		return () => clearTimeout(timer);
 	}, [lastAppendAt]);
 
-	// Group the granular per-flush entries into timestamped blocks, then show
-	// newest-first (the live block sits at the top and grows; older blocks scroll
-	// down into history).
-	const blocks: ThoughtBlock[] = useMemo(() => groupThoughtsIntoBlocks(entries), [entries]);
+	// Tool-call display is a VIEW filter, never a capture switch - the same rule
+	// the panel itself follows. Turning actions off while a run grinds must not
+	// lose the actions it took while they were hidden, so the timeline keeps
+	// filling and turning them back on shows all of it.
+	const { value: showToolActivity, toggle: toggleToolActivity } = usePersistedToggle(
+		SHOW_TOOL_ACTIVITY_KEY,
+		true
+	);
+
+	// Hiding actions REMOVES them from the timeline the feed is built from
+	// rather than hiding the rendered rows. A tool call closes the open thought
+	// block, so dropping the row alone would leave the reasoning fragmented into
+	// mystery blocks split by an event the user can no longer see. Filtering
+	// first lets the reasoning coalesce exactly as if the agent had never called
+	// a tool, and the 3s gap rule still splits where a long call actually paused
+	// the thinking.
+	const timeline: StreamEvent[] = useMemo(
+		() => (showToolActivity ? entries : entries.filter((event) => !isToolEvent(event))),
+		[entries, showToolActivity]
+	);
+
+	// One walk of the session's timeline produces the whole feed: granular
+	// thinking flushes coalesced into timestamped blocks, tool calls sitting
+	// between the reasoning they interrupted. Displayed newest-first (the live
+	// row sits at the top; older rows scroll down into history).
+	const feed: ActivityFeedItem[] = useMemo(() => buildActivityFeed(timeline), [timeline]);
+
+	// Header counts. Tool calls and reasoning are counted separately because
+	// they answer different questions: "is it still thinking" vs "is it actually
+	// doing anything", and a run stuck in a loop shows a climbing action count
+	// against flat reasoning. The action count is read off the WHOLE buffer, so
+	// it keeps climbing while the rows are hidden - that loop signal is the one
+	// thing the toggle must not take away.
+	const thoughtCount = useMemo(() => feed.filter((i) => i.kind === 'thought').length, [feed]);
+	const actionCount = useMemo(() => entries.filter(isToolEvent).length, [entries]);
 
 	const searching = query.trim().length > 0;
+
+	// The feed is empty ONLY because the toggle is off: the agent did work, we
+	// are just not drawing it.
+	const hiddenActionsOnly = !showToolActivity && feed.length === 0 && actionCount > 0;
 
 	// Compact, theme-aware prose styling for the rendered thought markdown,
 	// scoped so it can't bleed into other prose containers (shared generator).
@@ -108,12 +238,21 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 		[theme]
 	);
 
-	const visibleBlocks = useMemo(() => {
+	const visibleFeed = useMemo(() => {
 		const q = query.trim().toLowerCase();
-		const matched = q ? blocks.filter((b) => b.text.toLowerCase().includes(q)) : blocks;
+		const matched = q
+			? feed.filter((item) =>
+					item.kind === 'thought'
+						? item.block.text.toLowerCase().includes(q)
+						: // Match the rendered line AND the raw provider tool name, so
+							// searching "Bash" finds calls the feed renders as "Ran ...".
+							toolActivityText(item.activity).toLowerCase().includes(q) ||
+							item.activity.tool.name.toLowerCase().includes(q)
+				)
+			: feed;
 		// Reverse a copy for newest-on-top display without mutating the memoized list.
 		return [...matched].reverse();
-	}, [blocks, query]);
+	}, [feed, query]);
 
 	// Escape closes the panel. Nothing is lost by that now: the buffer outlives
 	// the panel, so Escape is a "put it away", not a discard.
@@ -132,11 +271,10 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 		if (!stickToTopRef.current) return;
 		const el = scrollRef.current;
 		if (el) el.scrollTop = 0;
-	}, [visibleBlocks, searching]);
+	}, [visibleFeed, searching]);
 
 	if (!panelSessionId) return null;
 
-	const totalCount = entries.length;
 	const label = sessionName || `${panelSessionId.slice(0, 8)}`;
 
 	// The Thought Stream lives inside the Right Panel, so it folds away with it:
@@ -187,25 +325,46 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 						style={{ color: theme.colors.textDim }}
 						title={label}
 					>
-						{label} · {totalCount} thought{totalCount === 1 ? '' : 's'}
+						{label} · {thoughtCount} thought{thoughtCount === 1 ? '' : 's'} · {actionCount} action
+						{actionCount === 1 ? '' : 's'}
+						{showToolActivity ? '' : ' hidden'}
 						{trimmed ? ' (trimmed)' : ''}
 						{live ? ' · live' : ''}
 					</span>
 				</div>
-				<button
+				<GhostIconButton
+					onClick={toggleToolActivity}
+					pressed={showToolActivity}
+					title={
+						showToolActivity
+							? `Hide tool calls (${actionCount} captured - they keep buffering)`
+							: `Show tool calls (${actionCount} captured while hidden)`
+					}
+					ariaLabel="Show tool calls"
+					testId="thought-stream-tool-toggle"
+					className="shrink-0"
+					color={showToolActivity ? theme.colors.accent : theme.colors.textDim}
+				>
+					<Wrench className="w-3.5 h-3.5" />
+				</GhostIconButton>
+				<GhostIconButton
 					onClick={() => clearBuffer(panelSessionId)}
 					title="Discard buffered thoughts"
-					className="p-1 rounded hover:bg-white/10 transition-colors shrink-0"
+					ariaLabel="Discard buffered thoughts"
+					className="shrink-0"
+					color={theme.colors.textDim}
 				>
-					<Trash2 className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
-				</button>
-				<button
+					<Trash2 className="w-3.5 h-3.5" />
+				</GhostIconButton>
+				<GhostIconButton
 					onClick={closePanel}
 					title="Close (thoughts keep buffering)"
-					className="p-1 rounded hover:bg-white/10 transition-colors shrink-0"
+					ariaLabel="Close Thought Stream"
+					className="shrink-0"
+					color={theme.colors.textDim}
 				>
-					<X className="w-4 h-4" style={{ color: theme.colors.textDim }} />
-				</button>
+					<X className="w-4 h-4" />
+				</GhostIconButton>
 			</div>
 
 			{/* Search */}
@@ -219,7 +378,7 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 						type="text"
 						value={query}
 						onChange={(e) => setQuery(e.target.value)}
-						placeholder="Search thoughts..."
+						placeholder="Search activity..."
 						className="flex-1 bg-transparent border-none outline-none text-xs"
 						style={{ color: theme.colors.textMain }}
 					/>
@@ -246,39 +405,53 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 				style={{ color: theme.colors.textMain }}
 			>
 				<style>{proseStyles}</style>
-				{visibleBlocks.length === 0 ? (
+				{visibleFeed.length === 0 ? (
 					<p className="text-xs italic mt-2" style={{ color: theme.colors.textDim }}>
 						{searching
-							? 'No thoughts match your search.'
-							: 'Nothing captured yet. Thoughts are buffered as the agent thinks, so this fills in on its own.'}
+							? 'Nothing matches your search.'
+							: // An empty feed with actions in the buffer is the toggle's
+								// doing, not an idle agent. Saying "nothing captured yet"
+								// there would be a flat lie about a run that is working.
+								hiddenActionsOnly
+								? `${actionCount} tool call${actionCount === 1 ? '' : 's'} captured and hidden. Turn tool calls back on to read them.`
+								: 'Nothing captured yet. Thinking and tool calls are buffered as the agent works, so this fills in on its own.'}
 					</p>
 				) : (
 					<div className="flex flex-col gap-3">
-						{visibleBlocks.map((block) => (
-							<div key={block.id}>
-								<div
-									className="text-2xs font-mono mb-1 select-none"
-									style={{ color: theme.colors.textDim }}
-									title={new Date(block.startTimestamp).toLocaleString()}
-								>
-									{formatThoughtTime(block.startTimestamp)}
+						{visibleFeed.map((item) =>
+							item.kind === 'tool' ? (
+								<ToolActivityRow
+									key={item.activity.id}
+									activity={item.activity}
+									theme={theme}
+									query={searching ? query : ''}
+								/>
+							) : (
+								<div key={item.block.id}>
+									<div
+										className="text-2xs font-mono mb-1 select-none"
+										style={{ color: theme.colors.textDim }}
+										title={new Date(item.block.startTimestamp).toLocaleString()}
+									>
+										{formatThoughtTime(item.block.startTimestamp)}
+									</div>
+									<div
+										className="prose max-w-none break-words"
+										style={{ fontSize: '0.75rem', color: theme.colors.textMain }}
+									>
+										<Markdown
+											preset="document"
+											content={item.block.text}
+											theme={theme}
+											frontmatter={false}
+											searchHighlight={
+												searching ? { query: query.trim(), currentMatchIndex: -1 } : undefined
+											}
+										/>
+									</div>
 								</div>
-								<div
-									className="prose max-w-none break-words"
-									style={{ fontSize: '0.75rem', color: theme.colors.textMain }}
-								>
-									<Markdown
-										preset="document"
-										content={block.text}
-										theme={theme}
-										frontmatter={false}
-										searchHighlight={
-											searching ? { query: query.trim(), currentMatchIndex: -1 } : undefined
-										}
-									/>
-								</div>
-							</div>
-						))}
+							)
+						)}
 					</div>
 				)}
 			</div>
@@ -288,7 +461,7 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 					className="px-3 py-1.5 border-t text-2xs shrink-0"
 					style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
 				>
-					{visibleBlocks.length} of {blocks.length} block{blocks.length === 1 ? '' : 's'} match
+					{visibleFeed.length} of {feed.length} entr{feed.length === 1 ? 'y' : 'ies'} match
 				</div>
 			)}
 		</div>

@@ -19,6 +19,7 @@ import type { Session, SettingsTab, AgentError } from '../types';
 import type { GitStreamingOperation } from '../../shared/gitUtils';
 import type { SerializableWizardState } from '../components/Wizard';
 import type { ConductorBadge } from '../constants/conductorBadges';
+import { UI_SURFACES } from '../../shared/uiSurfaces';
 import { logger } from '../utils/logger';
 import { safeStorageGet, safeStorageSet } from '../utils/safeLocalStorage';
 
@@ -424,6 +425,108 @@ export type ModalId =
 	// Concerto (agent-composed views)
 	| 'concertoStage';
 
+// ============================================================================
+// Destination surfaces (mutually exclusive)
+// ============================================================================
+
+/**
+ * Destination surfaces: full-window views that are a PLACE YOU GO, not a dialog
+ * you answer. Only one is ever open - opening any of them closes whichever
+ * other one was up.
+ *
+ * Without this rule, every one of these surfaces had a fixed rank in
+ * `MODAL_PRIORITIES`, so what you saw after a hotkey depended on which surface
+ * happened to rank higher rather than on what you just asked for. Opening the
+ * Usage Dashboard (540) while Director's Notes (848) was up rendered it BEHIND
+ * the notes, and opening a main-panel destination (System Logs, Agent Sessions,
+ * Memory) while any overlay was up changed nothing on screen at all. Both read
+ * as a dead keystroke.
+ *
+ * Membership test: does it fill the window, own its own header/tabs, and is it
+ * reachable on its own from a hotkey, the command palette, the Left Bar footer,
+ * or `maestro-cli open`? Dialogs that answer a question ABOUT the surface
+ * beneath them are not members and are meant to layer: confirmations, rename
+ * prompts, the Cue YAML editor, the Playbook name box, the Usage Dashboard's
+ * per-agent detail, the Symphony agent picker.
+ *
+ * `documentGraph` is a destination too but lives in `fileExplorerStore`, so it
+ * registers itself through `registerExternalDestination` instead of appearing
+ * here.
+ */
+export const DESTINATION_MODALS: ReadonlySet<ModalId> = new Set<ModalId>([
+	// Full-window overlays
+	'settings',
+	'usageDashboard',
+	'directorNotes',
+	'symphony',
+	'cueModal',
+	'marketplace',
+	'processMonitor',
+	// Main-panel destinations - these replace the whole center workspace, so an
+	// overlay left open on top of one hides it completely.
+	'logViewer',
+	'agentSessions',
+	'memoryViewer',
+]);
+
+/**
+ * Shortcut ids that open a destination surface.
+ *
+ * The window-level keyboard handler blocks most shortcuts while a modal is up,
+ * so a destination hotkey only reaches its branch if it is on that guard's
+ * allowlist. The allowlist used to be a hardcoded chord test (Alt+Cmd plus
+ * l/p/u/s), which let exactly three destinations through and killed the rest:
+ * Director's Notes to Usage Dashboard worked, Usage Dashboard back to
+ * Director's Notes did nothing, because `Opt+Cmd+U` matched the chord and
+ * `Cmd+Shift+O` did not. Switching between two surfaces worked in one
+ * direction only, which reads as a dead key.
+ *
+ * Derived from `UI_SURFACES` rather than hand-listed, so adding a destination
+ * (or rebinding one) cannot silently drop it back out of the guard. A user who
+ * rebinds a surface keeps a working hotkey, which a chord test cannot promise.
+ */
+export const DESTINATION_SHORTCUT_IDS: ReadonlySet<string> = new Set(
+	UI_SURFACES.filter(
+		(surface) => DESTINATION_MODALS.has(surface.modal as ModalId) && surface.shortcutId
+	).map((surface) => surface.shortcutId as string)
+);
+
+/**
+ * Destinations that are not modal-store entries (currently just the Document
+ * Graph, which lives in `fileExplorerStore`). Each registered closer runs when
+ * a `DESTINATION_MODALS` member opens, so an external surface obeys the same
+ * one-at-a-time rule without this store having to import that one - which would
+ * be a cycle, since the external store imports this one to close modal
+ * destinations on its own way in.
+ */
+type DestinationCloser = () => void;
+const externalDestinationClosers = new Set<DestinationCloser>();
+
+/** Register an out-of-store destination. Returns an unregister function. */
+export function registerExternalDestination(close: DestinationCloser): () => void {
+	externalDestinationClosers.add(close);
+	return () => externalDestinationClosers.delete(close);
+}
+
+/**
+ * Close every open destination surface EXCEPT `keep`. Exported for stores that
+ * own a destination of their own (see `registerExternalDestination`) and need
+ * to clear the modal-store ones before opening it.
+ */
+export function closeOtherDestinations(keep?: ModalId): void {
+	useModalStore.setState((state) => {
+		let changed = false;
+		const newModals = new Map(state.modals);
+		for (const [id, entry] of newModals) {
+			if (entry.open && id !== keep && DESTINATION_MODALS.has(id)) {
+				newModals.set(id, { open: false, data: undefined });
+				changed = true;
+			}
+		}
+		return changed ? { modals: newModals } : state;
+	});
+}
+
 /**
  * Type mapping from ModalId to its data type.
  * Modals not listed here have no associated data (just open/close).
@@ -554,11 +657,25 @@ export const useModalStore = create<ModalStore>()((set, get) => ({
 	promptComposerFullscreen: readStoredPromptComposerFullscreen(),
 
 	openModal: (id, data) => {
+		const isDestination = DESTINATION_MODALS.has(id);
+		// Hand the window over from any non-modal destination (Document Graph)
+		// before this one opens, so the two can't be up at once.
+		if (isDestination && externalDestinationClosers.size > 0) {
+			for (const close of externalDestinationClosers) close();
+		}
 		set((state) => {
 			const current = state.modals.get(id);
 			// Skip if already open with same data reference
 			if (current?.open && current.data === data) return state;
 			const newModals = new Map(state.modals);
+			// One destination at a time - see DESTINATION_MODALS.
+			if (isDestination) {
+				for (const [openId, entry] of newModals) {
+					if (entry.open && openId !== id && DESTINATION_MODALS.has(openId)) {
+						newModals.set(openId, { open: false, data: undefined });
+					}
+				}
+			}
 			newModals.set(id, { open: true, data });
 			// DEBUG: Trace rename modal open/close
 			if (id === 'renameTab') {
@@ -588,16 +705,10 @@ export const useModalStore = create<ModalStore>()((set, get) => ({
 	},
 
 	toggleModal: (id, data) => {
-		set((state) => {
-			const current = state.modals.get(id);
-			const newModals = new Map(state.modals);
-			if (current?.open) {
-				newModals.set(id, { open: false, data: undefined });
-			} else {
-				newModals.set(id, { open: true, data });
-			}
-			return { modals: newModals };
-		});
+		// Routed through open/close rather than flipping the entry inline, so a
+		// toggled destination surface still evicts the other destinations.
+		if (get().isOpen(id)) get().closeModal(id);
+		else get().openModal(id, data);
 	},
 
 	updateModalData: (id, data) => {

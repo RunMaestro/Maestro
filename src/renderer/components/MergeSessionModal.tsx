@@ -27,7 +27,7 @@ import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { formatTokensCompact } from '../utils/formatters';
 import { estimateTokensFromLogs } from '../../shared/formatters';
 import { ScreenReaderAnnouncement, useAnnouncement } from './Wizard/ScreenReaderAnnouncement';
-import { getTabDisplayName } from '../utils/tabHelpers';
+import { getTabDisplayName, visibleAiTabs } from '../utils/tabHelpers';
 import { logger } from '../utils/logger';
 import { ResizeHandles } from './ui/ResizeHandles';
 
@@ -215,8 +215,13 @@ export function MergeSessionModal({
 		}
 
 		for (const session of allSessions) {
+			// Hidden cross-agent consult tabs are not transfer targets: they have no
+			// chip, so picking one would move the user's context into a conversation
+			// they can't see.
+			const sessionTabs = visibleAiTabs(session.aiTabs);
+
 			// Add session tabs (if it has tabs)
-			if (session.aiTabs.length > 0) {
+			if (sessionTabs.length > 0) {
 				// Build display name - prefix worktree children with parent name
 				let displayName = getSessionDisplayName(session);
 				if (session.parentSessionId) {
@@ -226,7 +231,7 @@ export function MergeSessionModal({
 					}
 				}
 
-				for (const tab of session.aiTabs) {
+				for (const tab of sessionTabs) {
 					// Skip the source tab itself (but allow other tabs in same session)
 					if (session.id === sourceSession.id && tab.id === sourceTabId) continue;
 

@@ -203,6 +203,70 @@ export interface MultiWindowUsage {
 }
 
 /**
+ * An Agent Resilience outage, recorded once when it RESOLVES (never while
+ * counting down). One row per outage, not per retry attempt - the question the
+ * dashboard answers is "how often did Maestro carry my work across a wall",
+ * and an outage that took 3 retries is still one carried outage.
+ */
+export interface ResilienceEvent {
+	id: string;
+	/** Maestro agent (Session.id) the outage happened on. */
+	sessionId: string;
+	/** Provider id ('claude-code', 'codex', ...). */
+	agentType: string;
+	/** What we were waiting out. */
+	strategy: 'availability' | 'token-exhaustion';
+	/** 'recovered' = the auto-resend went through; 'stopped' = the user gave up or moved on. */
+	outcome: 'recovered' | 'stopped';
+	/** Epoch ms of the first failure. */
+	startedAt: number;
+	/** Epoch ms the outage resolved. */
+	resolvedAt: number;
+	/** Auto-retries dispatched during the outage. */
+	retries: number;
+}
+
+/**
+ * One conversation with the Auto Run wizard, from the moment it opens to the
+ * moment it closes.
+ *
+ * Unlike `resilience_events` (recorded once, at resolution), a wizard run is
+ * UPSERTED at every milestone - opened, each exchange, documents written,
+ * closed - because the payoff milestone (documents generated) and the close
+ * are separated by however long the user spends reading the result. Recording
+ * only at close would lose an entire run's output to a quit, so a run that is
+ * never closed still leaves an accurate row with `outcome: 'in-progress'`.
+ *
+ * `endedAt` is therefore "last activity", not "closed": `endedAt - startedAt`
+ * is always the time actually spent talking to the wizard.
+ */
+export interface WizardRun {
+	id: string;
+	/** Maestro agent (Session.id) the wizard ran on. `'onboarding'` for the first-run wizard. */
+	sessionId: string;
+	/** Provider id ('claude-code', 'codex', ...). */
+	agentType: string;
+	/** Which wizard: the inline `/wizard` command or the first-run onboarding wizard. */
+	surface: 'inline' | 'onboarding';
+	/** 'new' = writing fresh Auto Run docs; 'iterate' = revising existing ones. */
+	mode: 'new' | 'iterate';
+	/** 'generated' = documents were written; 'abandoned' = closed with nothing; 'in-progress' = never closed. */
+	outcome: 'in-progress' | 'generated' | 'abandoned';
+	/** Epoch ms the wizard opened. */
+	startedAt: number;
+	/** Epoch ms of the last recorded activity in the run. */
+	endedAt: number;
+	/** User messages sent to the wizard during the conversation. */
+	exchanges: number;
+	/** Auto Run documents the run produced. */
+	documents: number;
+	/** Task checkboxes across those documents. */
+	tasks: number;
+	/** Working directory the run targeted, when known. */
+	projectPath?: string;
+}
+
+/**
  * Database schema version for migrations
  */
-export const STATS_DB_VERSION = 8;
+export const STATS_DB_VERSION = 10;

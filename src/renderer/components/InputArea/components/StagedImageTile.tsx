@@ -8,6 +8,7 @@ import { memo } from 'react';
 import { PenLine, X } from 'lucide-react';
 import type { Theme } from '../../../types';
 import { StagedImageDropLine, type StagedImageTileDragHandlers } from './stagedImageDrag';
+import { displayImageSrc } from '../../../utils/sessionImageSrc';
 
 const TILE_SIZES = {
 	strip: { height: '4rem', maxWidth: '200px', badge: 'text-2xs px-1.5' },
@@ -85,7 +86,7 @@ export const StagedImageTile = memo(function StagedImageTile({
 			    `draggable={false}` computes `-webkit-user-drag: none`, which would
 			    stop the drag if it were ever the hit-test target. */}
 			<img
-				src={image}
+				src={displayImageSrc(image)}
 				alt=""
 				draggable={false}
 				className="rounded border group-hover:opacity-80 transition-opacity block pointer-events-none"
@@ -126,13 +127,17 @@ export const StagedImageTile = memo(function StagedImageTile({
 			</button>
 
 			{/* Slot badge. Overlaid on the thumbnail rather than placed under it so
-			    revealing it mid-drag cannot reflow the row the user is dragging in. */}
+			    revealing it mid-drag cannot reflow the row the user is dragging in.
+			    Anchored bottom-left (clear of the top-corner controls) with a solid
+			    accent fill and accent-foreground text plus a shadow, so the number
+			    stays legible over any thumbnail rather than washing out against a
+			    dark screenshot. */}
 			<div
-				className={`absolute bottom-1 left-1/2 -translate-x-1/2 rounded font-semibold pointer-events-none transition-opacity duration-150 ${dims.badge}`}
+				className={`absolute bottom-1 left-1 rounded font-semibold pointer-events-none transition-opacity duration-150 shadow-md ${dims.badge}`}
 				style={{
 					opacity: showSlotNumber ? 1 : 0,
 					backgroundColor: theme.colors.accent,
-					color: theme.colors.bgMain,
+					color: theme.colors.accentForeground,
 				}}
 			>
 				{slot}

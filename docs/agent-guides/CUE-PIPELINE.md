@@ -23,6 +23,7 @@ Cue is an event-driven automation system that triggers AI agent prompts in respo
 | `agent.completed`     | Fires when another agent finishes                         | `cue-engine` (reactive)                        |
 | `github.pull_request` | New PRs detected via `gh` CLI polling                     | `triggers/cue-github-poller-trigger-source.ts` |
 | `github.issue`        | New issues detected via `gh` CLI polling                  | `triggers/cue-github-poller-trigger-source.ts` |
+| `github.label`        | A label added to a PR or issue (repo issue-event feed)    | `triggers/cue-github-poller-trigger-source.ts` |
 | `task.pending`        | Unchecked markdown tasks (`- [ ]`) found in watched files | `triggers/cue-task-scanner-trigger-source.ts`  |
 
 ### Execution Patterns
@@ -133,7 +134,7 @@ The `cue-subscription-setup.ts` module was deleted on rc. Each event source is n
 | `cue-scheduled-trigger-source.ts`     | `time.scheduled` cron-like firing                                   |
 | `cue-schedule-utils.ts`               | Next-occurrence calculation (replaces `calculateNextScheduledTime`) |
 | `cue-file-watcher-trigger-source.ts`  | `file.changed` chokidar wrapper                                     |
-| `cue-github-poller-trigger-source.ts` | `github.pull_request` / `github.issue` poller                       |
+| `cue-github-poller-trigger-source.ts` | `github.pull_request` / `github.issue` / `github.label` poller      |
 | `cue-task-scanner-trigger-source.ts`  | `task.pending` markdown scanner                                     |
 
 ### cue-run-manager.ts (~452 lines)
@@ -176,7 +177,7 @@ Wraps chokidar to watch glob patterns with per-file debouncing. (The trigger sou
 
 ### cue-github-poller.ts (~313 lines)
 
-Polls GitHub CLI for new PRs/issues, tracks "seen" state in SQLite.
+Polls GitHub CLI for new PRs/issues (and for label adds), tracks "seen" state in SQLite.
 
 Key design:
 
@@ -187,6 +188,8 @@ Key design:
 - 30-day retention on seen records; prunes every 24 hours
 - Has its own `execFileAsync` wrapper (local, not the shared utils version)
 - **Re-trigger on activity** (`retrigger_on_comments: true`): re-fires when an item's `updatedAt` advances past the stored revision. Default off - when on, fetches comments-since-last-fire via `gh pr|issue view --json comments` and attaches them to the event payload as `new_comments` (surfaced as `{{CUE_NEW_COMMENTS}}` template var). Capped per-item by `max_notifications` (default 10, `0` = unlimited). Counter tracks re-fires only - initial discovery is always allowed regardless of cap. Once the cap is hit, the poller stops emitting events but freezes `last_revision` so raising the cap later resumes from the right point rather than replaying stale activity.
+
+- **Label events** (`github.label`): a third poll mode that reads `gh api repos/<repo>/issues/events` instead of the PR/issue lists, because that feed reports the label add itself (name, actor, timestamp) rather than a state difference. Projected through `--jq` so the multi-megabyte embedded issue objects never cross the pipe. Dedup is one watermark row per subscription (`item_key = '__label_watermark__'`, `last_revision` = highest processed event id) written via `setGitHubItemRevision`, NOT one row per item - `markGitHubItemSeen` is INSERT OR IGNORE and would silently no-op on the second write. Paginates back up to 3 pages of 100 to find the watermark, warns when it cannot reach it. Narrowed client-side by `gh_label_target` (pr/issue/both) and `gh_labels` (case-insensitive; empty = any label).
 
 ### cue-heartbeat.ts (~52 lines)
 
@@ -373,20 +376,21 @@ remembered tab leaks between cases.
 
 Visual pipeline editor using React Flow for drag-and-drop pipeline construction.
 
-| File / Directory          | Purpose                                          |
-| ------------------------- | ------------------------------------------------ |
-| `CuePipelineEditor.tsx`   | Main editor component                            |
-| `PipelineCanvas.tsx`      | React Flow canvas with nodes and edges           |
-| `PipelineSelector.tsx`    | Dropdown for selecting/managing pipelines        |
-| `PipelineToolbar.tsx`     | Toolbar with layout and zoom controls            |
-| `PipelineContextMenu.tsx` | Right-click context menu                         |
-| `cueEventConstants.ts`    | Event type metadata and icons                    |
-| `pipelineColors.ts`       | Pipeline color palette                           |
-| `drawers/`                | Trigger and agent drawer panels                  |
-| `nodes/`                  | Custom React Flow node components                |
-| `edges/`                  | Custom React Flow edge components                |
-| `panels/`                 | Node and edge configuration panels               |
-| `utils/`                  | Pipeline-to-YAML and YAML-to-pipeline conversion |
+| File / Directory              | Purpose                                          |
+| ----------------------------- | ------------------------------------------------ |
+| `CuePipelineEditor.tsx`       | Main editor component                            |
+| `PipelineCanvas.tsx`          | React Flow canvas with nodes and edges           |
+| `PipelineSelector.tsx`        | Dropdown for selecting/managing pipelines        |
+| `PipelineToolbar.tsx`         | Toolbar with layout and zoom controls            |
+| `PipelineContextMenu.tsx`     | Right-click context menu                         |
+| `cueEventConstants.ts`        | Event type metadata and icons                    |
+| `pipelineColors.ts`           | Pipeline color palette                           |
+| `drawers/`                    | Trigger and agent drawer panels                  |
+| `nodes/`                      | Custom React Flow node components                |
+| `edges/`                      | Custom React Flow edge components                |
+| `panels/`                     | Node and edge configuration panels               |
+| `utils/`                      | Pipeline-to-YAML and YAML-to-pipeline conversion |
+| `utils/pipelineMembership.ts` | Which pipelines belong to a given agent          |
 
 #### Layout buttons (Tidy and Arrange)
 
@@ -397,6 +401,36 @@ Two top-right canvas buttons (in `PipelineCanvas.tsx`, props `onTidy` / `onArran
 - **All Pipelines view** - `arrangePipelineGroups` packs the per-pipeline group cards into a balanced grid via `viewOffset`, leaving node positions untouched. No edges cross between cards, so the Tidy button is hidden here and both modes route through this path.
 
 Pressing either opens a `ConfirmModal` (`arrangeConfirmMode` drives its title/label/copy), then `handleArrange` mutates canonical state (flips dirty, undoable via Discard), persists, and re-fits the view. The layout helpers are pure and unit-tested in `pipelineAutoArrange.test.ts`; the crossing-minimizer is verified with a true segment-intersection count, independent of the layout's internal ordering.
+
+#### Agent scope in the All Pipelines view (`CueGraphTarget` / `CueGraphScope`)
+
+"View in Graph" in the Sessions table hands the editor a `CueGraphTarget`:
+`{ id, nonce, scope? }`. The nonce is what lets a repeat click on the same row
+re-trigger navigation. `id` selects a single pipeline; when it is `null` and
+`scope` is set, the All Pipelines view is narrowed to that agent's pipelines.
+
+Membership is resolved by `pipelinesForSession()` (see
+`utils/pipelineMembership.ts`), never by pipeline color - several pipelines can
+share a color, and a command-only pipeline has no agent node to match at all.
+One owned pipeline selects it outright; several apply a scope; none falls
+through to the unfiltered view.
+
+Three invariants the implementation depends on:
+
+- **The scope filters the CANVAS only.** `visiblePipelines` is what feeds
+  `convertToReactFlowNodes`/`Edges`, the node count, and the viewport hook;
+  `pipelineState.pipelines` stays canonical. Every mutation is already blocked
+  in the All Pipelines view, so a scoped canvas cannot write a partial layout
+  back to disk.
+- **The viewport hook must see the same set the canvas draws.** It stacks
+  pipelines vertically and fits the result, so passing it the unfiltered list
+  fits the view around the empty bands of the pipelines it filtered out. That is
+  why `usePipelineViewport` takes `scopeKey` and re-fits on it: scoping in or
+  out swaps the visible set without changing the selection, which its
+  selection-change re-fit alone would miss.
+- **A scope that resolves to nothing falls back to the unfiltered view**, not an
+  empty canvas - pipelines can be renamed or deleted between the click and the
+  render. Any manual selection clears the scope: the user navigated elsewhere.
 
 #### Visual node identity round-trip (`target_node_key` / `fan_out_node_keys`)
 

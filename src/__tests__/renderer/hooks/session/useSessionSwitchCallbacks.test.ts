@@ -4,6 +4,10 @@ import { useSessionSwitchCallbacks } from '../../../../renderer/hooks/session/us
 import { useUIStore } from '../../../../renderer/stores/uiStore';
 import { outputSearchKeyFor } from '../../../../renderer/utils/outputSearch';
 import {
+	clearDesktopAiTabSelections,
+	consumeDesktopAiTabSelection,
+} from '../../../../renderer/utils/desktopTabSelectionSync';
+import {
 	createMockAITab,
 	createMockFileTab,
 	getSession,
@@ -14,6 +18,7 @@ import {
 describe('useSessionSwitchCallbacks', () => {
 	beforeEach(() => {
 		resetTabHandlerStores();
+		clearDesktopAiTabSelections();
 		if (!window.maestro.app.onDeepLink) {
 			(window.maestro.app as any).onDeepLink = vi.fn();
 		}
@@ -63,7 +68,7 @@ describe('useSessionSwitchCallbacks', () => {
 	});
 
 	it('handleUtilityTabSelect lands on the requested AI tab, clearing non-AI view state', () => {
-		setupSession({
+		const sessionId = setupSession({
 			aiTabs: [createMockAITab({ id: 'ai-1' }), createMockAITab({ id: 'ai-2' })],
 			activeTabId: 'ai-1',
 			activeTerminalTabId: 'term-1',
@@ -79,6 +84,7 @@ describe('useSessionSwitchCallbacks', () => {
 		expect(session.activeTabId).toBe('ai-2');
 		expect(session.activeTerminalTabId).toBeNull();
 		expect(session.inputMode).toBe('ai');
+		expect(consumeDesktopAiTabSelection(sessionId, 'ai-2')).toBe(true);
 	});
 
 	it('handleUtilityFileTabSelect sets the file tab active and switches out of terminal mode', () => {
@@ -121,6 +127,7 @@ describe('useSessionSwitchCallbacks', () => {
 
 		const session = getSession();
 		expect(session.activeTabId).toBe('ai-2');
+		expect(consumeDesktopAiTabSelection(sessionId, 'ai-2')).toBe(true);
 
 		const searchKey = outputSearchKeyFor(sessionId, 'ai-2');
 		const ui = useUIStore.getState();

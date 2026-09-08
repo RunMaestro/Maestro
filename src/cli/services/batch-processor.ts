@@ -36,7 +36,13 @@ import { cheapTurnSettings } from '../../shared/modelTiers';
 // both share it and draw a pill for a marker that would block the next run.
 // Re-exported because this module is where the CLI engine and its tests reach
 // for it.
-import { detectHaltMarker } from '../../shared/autorunMarkers';
+import { detectHaltMarker, findHaltMarker, findPendingHitlGate } from '../../shared/autorunMarkers';
+import { countMarkdownTasks } from '../../shared/markdownTaskScan';
+import {
+	MAX_CONSECUTIVE_NO_CHANGES,
+	describeStall,
+	evaluateStall,
+} from '../../shared/autorunStall';
 export { detectHaltMarker };
 
 /**
@@ -136,7 +142,7 @@ export async function* runPlaybook(
 		// re-running. Folding both checks into one scan keeps the read count
 		// per-document stable for callers/mocks.
 		let initialTotalTasks = 0;
-		let preExistingHalt: { document: string; reason?: string } | null = null;
+		let preExistingHalt: { document: string; reason?: string; line: number } | null = null;
 		for (const doc of playbook.documents) {
 			const { taskCount, content } = readDocAndCountTasks(folderPath, doc.filename);
 			if (debug) {
@@ -149,9 +155,9 @@ export async function* runPlaybook(
 			}
 			initialTotalTasks += taskCount;
 			if (!preExistingHalt) {
-				const halt = detectHaltMarker(content);
-				if (halt.halted) {
-					preExistingHalt = { document: doc.filename, reason: halt.reason };
+				const halt = findHaltMarker(content);
+				if (halt) {
+					preExistingHalt = { document: doc.filename, reason: halt.reason, line: halt.line };
 				}
 			}
 		}
@@ -180,9 +186,11 @@ export async function* runPlaybook(
 			yield {
 				type: 'error',
 				timestamp: Date.now(),
-				message: `Document "${preExistingHalt.document}" contains an unresolved halt marker${
+				message: `Document "${preExistingHalt.document}" contains an unresolved halt marker on line ${
+					preExistingHalt.line + 1
+				}${
 					preExistingHalt.reason ? `: ${preExistingHalt.reason}` : ''
-				}. Remove the <!-- maestro:halt --> marker before re-running.`,
+				}. Remove the <!-- maestro:halt --> marker before re-running. If the playbook only means to DESCRIBE when a run should stop, wrap the marker in backticks or a code fence so it reads as an example.`,
 				code: 'HALT_MARKER_PRESENT',
 			};
 			return;
@@ -429,7 +437,11 @@ export async function* runPlaybook(
 				const docEntry = playbook.documents[docIndex];
 
 				// Read document and count tasks
-				let { taskCount: remainingTasks } = readDocAndCountTasks(folderPath, docEntry.filename);
+				const { taskCount: initialTaskCount, content: docHeadContent } = readDocAndCountTasks(
+					folderPath,
+					docEntry.filename
+				);
+				let remainingTasks = initialTaskCount;
 
 				// Skip documents with no tasks
 				if (remainingTasks === 0) {
@@ -452,8 +464,39 @@ export async function* runPlaybook(
 					loopNumber: loopIteration + 1,
 				});
 
+				// A gate asks for a human, and a batch run does not have one. Report it
+				// and move on rather than dispatching a task nobody can finish. The
+				// desktop engine pauses here instead, because there IS someone to wait
+				// for; the marker means the same thing on both, only the response
+				// differs.
+				const gate = findPendingHitlGate(docHeadContent);
+				if (gate) {
+					logger.autorun(`Document gated on a human: ${docEntry.filename}`, session.name, {
+						document: docEntry.filename,
+						reason: gate.reason,
+						line: gate.line + 1,
+						loopNumber: loopIteration + 1,
+					});
+
+					yield {
+						type: 'document_gated',
+						timestamp: Date.now(),
+						document: docEntry.filename,
+						reason: gate.reason,
+						artifact: gate.artifact,
+						line: gate.line + 1,
+					};
+					continue;
+				}
+
 				let docTasksCompleted = 0;
 				let taskIndex = 0;
+				// Consecutive dispatches that moved no checkbox. Reset per document so
+				// one stuck document does not condemn the next. Without this the loop
+				// below has exactly one exit - the count reaching zero - so a task the
+				// agent cannot finish is re-dispatched forever.
+				let consecutiveNoChangeCount = 0;
+				let documentStalled: { reason: string; remainingTasks: number } | null = null;
 
 				// Process tasks in this document
 				while (remainingTasks > 0) {
@@ -598,6 +641,9 @@ export async function* runPlaybook(
 								customEnvVars: session.customEnvVars,
 								sshRemoteConfig: session.sessionSshRemoteConfig,
 								appendSystemPrompt: playbookSystemPrompt,
+								// This is Auto Run, not someone typing. Marks the turn so delegation
+								// reporting downstream of the spawn does not count it as hands-on work.
+								querySource: 'auto',
 								// Honor the agent's Claude token source for Auto Run task turns.
 								enableMaestroP: session.enableMaestroP,
 								maestroPMode: session.maestroPMode,
@@ -615,6 +661,26 @@ export async function* runPlaybook(
 					);
 					const tasksCompletedThisRun = remainingTasks - newRemainingTasks;
 					const haltMarker = detectHaltMarker(postContent);
+
+					// Did anything actually move? Compared by CHECKBOX, never by document
+					// bytes: an agent that cannot do the task usually writes an
+					// explanation into the file instead, and a byte comparison would read
+					// that as progress and let the loop run forever.
+					const stall = evaluateStall({
+						before: countMarkdownTasks(expandedDocContent || docContent),
+						after: countMarkdownTasks(postContent),
+						consecutiveNoChangeCount,
+					});
+					consecutiveNoChangeCount = stall.consecutiveNoChangeCount;
+
+					if (debug) {
+						yield {
+							type: 'debug',
+							timestamp: Date.now(),
+							category: 'stall',
+							message: `${docEntry.filename}: no-progress counter ${consecutiveNoChangeCount}/${MAX_CONSECUTIVE_NO_CHANGES} (tasks completed this run: ${tasksCompletedThisRun})`,
+						};
+					}
 
 					// Update counters
 					docTasksCompleted += tasksCompletedThisRun;
@@ -668,6 +734,7 @@ export async function* runPlaybook(
 										additionalDirectories: session.additionalDirectories,
 										customEnvVars: session.customEnvVars,
 										sshRemoteConfig: session.sessionSshRemoteConfig,
+										querySource: 'auto',
 										// Honor the token source for the Auto Run synopsis turn too.
 										enableMaestroP: session.enableMaestroP,
 										maestroPMode: session.maestroPMode,
@@ -776,6 +843,41 @@ export async function* runPlaybook(
 
 					remainingTasks = newRemainingTasks;
 					taskIndex++;
+
+					// The document made no progress often enough that dispatching it again
+					// would just spend tokens on the same wall. Give up on THIS document
+					// and move to the next one - unlike a halt, the playbook continues.
+					if (stall.stalled) {
+						documentStalled = {
+							reason: stall.reason ?? describeStall(consecutiveNoChangeCount),
+							remainingTasks,
+						};
+						break;
+					}
+				}
+
+				if (documentStalled) {
+					const hasNextDocument = docIndex < playbook.documents.length - 1;
+
+					logger.autorun(`Document stalled: ${docEntry.filename}`, session.name, {
+						document: docEntry.filename,
+						reason: documentStalled.reason,
+						remainingTasks: documentStalled.remainingTasks,
+						loopNumber: loopIteration + 1,
+					});
+
+					yield {
+						type: 'document_stalled',
+						timestamp: Date.now(),
+						document: docEntry.filename,
+						reason: documentStalled.reason,
+						remainingTasks: documentStalled.remainingTasks,
+						hasNextDocument,
+					};
+
+					// Skipped, not completed: emitting document_complete here would tell
+					// every consumer the tasks got done.
+					continue;
 				}
 
 				// Document complete - handle reset-on-completion

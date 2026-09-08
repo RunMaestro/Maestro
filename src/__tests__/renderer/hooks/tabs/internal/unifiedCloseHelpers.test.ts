@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
 	applyUnifiedTabClosures,
 	excludeDraftRefs,
+	excludeHiddenAiRefs,
+	excludePreservedRefs,
 	getActiveUnifiedRef,
 	getRefsExceptActive,
 	getRefsLeftOfActive,
@@ -169,6 +171,42 @@ describe('unifiedCloseHelpers', () => {
 		setupSession({ aiTabs: [ai1] });
 		const refs = [{ type: 'ai' as const, id: 'ai-1' }];
 		expect(excludeDraftRefs(getSession(), refs)).toBe(refs);
+	});
+
+	it('excludes hidden consult tabs from the close set', () => {
+		const ai1 = createMockAITab({ id: 'ai-1' });
+		const consult = createMockAITab({ id: 'consult', hidden: true });
+		setupSession({ aiTabs: [ai1, consult] });
+
+		const refs = [
+			{ type: 'ai' as const, id: 'ai-1' },
+			{ type: 'ai' as const, id: 'consult' },
+		];
+
+		expect(excludeHiddenAiRefs(getSession(), refs)).toEqual([{ type: 'ai', id: 'ai-1' }]);
+	});
+
+	it('returns the same ref array when no tab is hidden', () => {
+		const ai1 = createMockAITab({ id: 'ai-1' });
+		setupSession({ aiTabs: [ai1] });
+		const refs = [{ type: 'ai' as const, id: 'ai-1' }];
+		expect(excludeHiddenAiRefs(getSession(), refs)).toBe(refs);
+	});
+
+	it('preserves both drafts and hidden consult tabs in one pass', () => {
+		const ai1 = createMockAITab({ id: 'ai-1' });
+		const ai2 = createMockAITab({ id: 'ai-2' });
+		const consult = createMockAITab({ id: 'consult', hidden: true });
+		setupSession({ aiTabs: [ai1, ai2, consult] });
+		setLiveDraft('ai-2', 'pending text');
+
+		const refs = [
+			{ type: 'ai' as const, id: 'ai-1' },
+			{ type: 'ai' as const, id: 'ai-2' },
+			{ type: 'ai' as const, id: 'consult' },
+		];
+
+		expect(excludePreservedRefs(getSession(), refs)).toEqual([{ type: 'ai', id: 'ai-1' }]);
 	});
 
 	it('closes mixed tab refs while preserving browser unified history', () => {

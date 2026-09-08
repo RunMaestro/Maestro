@@ -15,8 +15,51 @@ import type { SshRemoteConfig, AgentSshRemoteConfig } from '../../shared/types';
 import { getSshRemoteConfig, SshRemoteSettingsStore } from './ssh-remote-resolver';
 import { buildSshCommand, buildSshCommandWithStdin } from './ssh-command-builder';
 import { logger } from './logger';
+import {
+	DEFAULT_QUERY_SOURCE,
+	QUERY_SOURCE_ENV_VAR,
+	type QuerySource,
+} from '../../shared/querySource';
+import { stripBlankEnvVars } from '../../shared/agentEnvironment';
+
+/**
+ * Add the turn-origin marker to the env exported to the remote host. Stamped
+ * last so the agent's own overrides cannot relabel a Cue run as interactive.
+ *
+ * Blank values are dropped rather than exported. Nothing of the local env
+ * crosses the SSH boundary, so a blank here can only ever produce `export FOO=''`
+ * on the remote - never a meaningful override of a Maestro layer - and a
+ * set-but-empty variable is what crashes an agent that reads it as a path.
+ */
+function withQuerySource(
+	customEnvVars: Record<string, string> | undefined,
+	querySource: QuerySource | undefined
+): Record<string, string> {
+	return {
+		...stripBlankEnvVars(customEnvVars),
+		[QUERY_SOURCE_ENV_VAR]: querySource ?? DEFAULT_QUERY_SOURCE,
+	};
+}
 
 const LOG_CONTEXT = '[SshSpawnWrapper]';
+
+/**
+ * The message every caller should use when {@link wrapSpawnWithSsh} came back
+ * with `sshRemoteUsed: null` despite SSH being enabled.
+ *
+ * The wrapper degrades to a local spawn in that case, which is never what the
+ * user asked for: they opted into a remote host, so running the agent on their
+ * own machine (with the remote's cwd, no less) is a wrong answer dressed up as a
+ * working one. Callers must check `sshRemoteUsed` and fail with this.
+ */
+export function sshUnresolvedRemoteMessage(sshConfig: AgentSshRemoteConfig): string {
+	const remoteLabel = sshConfig.remoteId ? ` "${sshConfig.remoteId}"` : '';
+	return (
+		`SSH remote execution is enabled for this session but the configured remote${remoteLabel} ` +
+		`could not be resolved. Check that the remote exists, is enabled, and that the ` +
+		`session's remoteId points at a valid SSH remote.`
+	);
+}
 
 /**
  * Configuration for wrapping a spawn with SSH.
@@ -38,6 +81,13 @@ export interface SshSpawnWrapConfig {
 	noPromptSeparator?: boolean;
 	/** Agent's binary name (used for SSH remote command) */
 	agentBinaryName?: string;
+	/**
+	 * Who asked for this turn. Only `customEnvVars` crosses the SSH boundary -
+	 * the local process env that {@link buildChildProcessEnv} stamps the marker
+	 * into never reaches the remote host - so the origin has to be exported
+	 * explicitly here or every remote turn arrives looking hand-typed.
+	 */
+	querySource?: QuerySource;
 }
 
 /**
@@ -154,7 +204,7 @@ export async function wrapSpawnWithSsh(
 			command: remoteCommand,
 			args: [...config.args],
 			cwd: config.cwd,
-			env: config.customEnvVars,
+			env: withQuerySource(config.customEnvVars, config.querySource),
 			stdinInput: config.prompt,
 		});
 
@@ -186,7 +236,7 @@ export async function wrapSpawnWithSsh(
 		command: remoteCommand,
 		args: sshArgs,
 		cwd: config.cwd,
-		env: config.customEnvVars,
+		env: withQuerySource(config.customEnvVars, config.querySource),
 	});
 
 	logger.debug('SSH command built', LOG_CONTEXT, {

@@ -7,6 +7,7 @@
  * Routes:
  * - / - Redirect to GitHub (no access without token)
  * - /health - Health check endpoint
+ * - /og.png - Social preview card (no token; static brand mark)
  * - /$TOKEN/manifest.json - PWA manifest
  * - /$TOKEN/sw.js - PWA service worker
  * - /$TOKEN - Web-desktop interface (the default UI)
@@ -15,11 +16,12 @@
  * - /:token - Invalid token catch-all, redirect to GitHub
  */
 
-import { FastifyInstance, FastifyReply } from 'fastify';
+import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import path from 'path';
 import { existsSync, readFileSync } from 'fs';
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
+import { OG_IMAGE_ROUTE, buildSocialPreviewTags, resolveRequestOrigin } from '../social-preview';
 
 // Logger context for all static route logs
 const LOG_CONTEXT = 'WebServer:Static';
@@ -110,8 +112,12 @@ export class StaticRoutes {
 	 * `/<token>/desktop/assets/` prefix (matching the asset mount in
 	 * WebServer), so the same HTML renders correctly whether it is served from
 	 * the token root or from `/<token>/desktop`.
+	 *
+	 * Takes the request, not just the reply, because the social preview tags
+	 * injected below have to name an ABSOLUTE origin and only the request knows
+	 * which host the page is being reached on.
 	 */
-	private serveDesktopIndex(reply: FastifyReply): void {
+	private serveDesktopIndex(request: FastifyRequest, reply: FastifyReply): void {
 		if (!this.webDesktopPath) {
 			reply.code(503).send({
 				error: 'Service Unavailable',
@@ -163,7 +169,15 @@ export class StaticRoutes {
 				`<link rel="icon" href="/${token}/icons/icon-192x192.png" />` +
 				`<link rel="apple-touch-icon" href="/${token}/icons/icon-192x192.png" />`;
 
-			html = html.replace('</head>', `${configScript}${pwaLinks}</head>`);
+			// Open Graph / Twitter card. Built here rather than in the bundle's
+			// index.html because a crawler drops a relative og:image outright, and
+			// only the request knows the host the link was shared as. Absent a
+			// usable Host header the block is simply omitted - a card pointing at
+			// a guessed origin is worse than no card.
+			const origin = resolveRequestOrigin(request.headers as Record<string, unknown> | undefined);
+			const socialTags = origin ? buildSocialPreviewTags(origin) : '';
+
+			html = html.replace('</head>', `${socialTags}${configScript}${pwaLinks}</head>`);
 
 			reply.type('text/html').send(html);
 		} catch (err) {
@@ -190,6 +204,29 @@ export class StaticRoutes {
 		// Health check (no auth required)
 		server.get('/health', async () => {
 			return { status: 'ok', timestamp: Date.now() };
+		});
+
+		// Social preview card. Deliberately outside the token prefix: see
+		// OG_IMAGE_ROUTE in ../social-preview.ts for why that is safe and why it
+		// matters. Fastify matches a static path ahead of the `/:token` parametric
+		// route below, so this cannot be swallowed by the invalid-token catch-all.
+		server.get(OG_IMAGE_ROUTE, async (_request, reply) => {
+			if (!this.webAssetsPath) {
+				return reply.code(404).send({ error: 'Not Found' });
+			}
+			const imagePath = path.join(this.webAssetsPath, 'og-image.png');
+			if (!existsSync(imagePath)) {
+				return reply.code(404).send({ error: 'Not Found' });
+			}
+			// Not run through getCachedFile: that cache holds utf-8 strings, which
+			// would corrupt a PNG. A crawler fetches this once per share, so the
+			// read is not worth a second cache - but it IS worth a long max-age,
+			// since a brand mark that changes only on rebuild is what immutable
+			// caching is for, and chat clients re-fetch previews aggressively.
+			return reply
+				.type('image/png')
+				.header('Cache-Control', 'public, max-age=86400')
+				.send(readFileSync(imagePath));
 		});
 
 		// PWA manifest.json (cached)
@@ -219,28 +256,28 @@ export class StaticRoutes {
 		});
 
 		// Web-desktop interface - the default UI at the token root.
-		server.get(`/${token}`, async (_request, reply) => {
-			this.serveDesktopIndex(reply);
+		server.get(`/${token}`, async (request, reply) => {
+			this.serveDesktopIndex(request, reply);
 		});
 
 		// Token root with trailing slash
-		server.get(`/${token}/`, async (_request, reply) => {
-			this.serveDesktopIndex(reply);
+		server.get(`/${token}/`, async (request, reply) => {
+			this.serveDesktopIndex(request, reply);
 		});
 
 		// Legacy /desktop alias - kept so URLs from before the desktop bundle
 		// became the default (when it lived at /<token>/desktop) still resolve.
-		server.get(`/${token}/desktop`, async (_request, reply) => {
-			this.serveDesktopIndex(reply);
+		server.get(`/${token}/desktop`, async (request, reply) => {
+			this.serveDesktopIndex(request, reply);
 		});
-		server.get(`/${token}/desktop/`, async (_request, reply) => {
-			this.serveDesktopIndex(reply);
+		server.get(`/${token}/desktop/`, async (request, reply) => {
+			this.serveDesktopIndex(request, reply);
 		});
 
 		// Deprecated single-session deep link. The desktop app manages its own
 		// session selection, so this just serves the full interface.
-		server.get(`/${token}/session/:sessionId`, async (_request, reply) => {
-			this.serveDesktopIndex(reply);
+		server.get(`/${token}/session/:sessionId`, async (request, reply) => {
+			this.serveDesktopIndex(request, reply);
 		});
 
 		// Catch-all for invalid tokens - redirect to GitHub
@@ -250,7 +287,7 @@ export class StaticRoutes {
 				return reply.redirect(302, REDIRECT_URL);
 			}
 			// Valid token but no specific route - serve the desktop interface
-			this.serveDesktopIndex(reply);
+			this.serveDesktopIndex(request, reply);
 		});
 
 		logger.debug('Static routes registered', LOG_CONTEXT);

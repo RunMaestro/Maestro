@@ -48,6 +48,7 @@ import {
 	formatTokensCompact,
 } from '../../../shared/formatters';
 import { aggregateUsage } from '../../../shared/usageStats';
+import { visibleAiTabs } from '../../utils/tabHelpers';
 import { resolveModelPricing, TOKENS_PER_MILLION } from '../../../shared/modelPricing';
 import { countActiveAgents } from '../../../shared/statsActiveAgents';
 import { Sparkline } from './Sparkline';
@@ -496,8 +497,12 @@ export const MetricCard = memo(function MetricCard({
 /**
  * Format hour number (0-23) to human-readable time
  * Examples: 0 → "12 AM", 13 → "1 PM", 9 → "9 AM"
+ *
+ * Exported for the footer summary, which reports the same peak hour this file
+ * puts on the Peak Hour card. (`PeakHoursChart` keeps its own lowercase "8pm"
+ * variant for axis labels - a different style, not a duplicate of this one.)
  */
-function formatHour(hour: number): string {
+export function formatHour(hour: number): string {
 	const suffix = hour >= 12 ? 'PM' : 'AM';
 	const displayHour = hour % 12 || 12;
 	return `${displayHour} ${suffix}`;
@@ -813,7 +818,7 @@ export const SummaryCards = memo(function SummaryCards({
 	const openTabCount = useMemo(() => {
 		if (!sessions) return 0;
 		return sessions.reduce((total, s) => {
-			const aiCount = s.aiTabs?.length ?? 0;
+			const aiCount = visibleAiTabs(s.aiTabs).length;
 			const fileCount = s.filePreviewTabs?.length ?? 0;
 			return total + aiCount + fileCount;
 		}, 0);

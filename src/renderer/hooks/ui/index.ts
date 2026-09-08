@@ -43,6 +43,9 @@ export { useStickToBottom } from './useStickToBottom';
 // Hover tooltip management
 export { useHoverTooltip } from './useHoverTooltip';
 
+// Fixed-pitch font for surfaces that render shell text
+export { useFixedPitchFont } from './useFixedPitchFont';
+
 // Theme-aware ANSI -> HTML converter for raw terminal output
 export { useAnsiConverter, createAnsiConverter } from './useAnsiConverter';
 
@@ -113,6 +116,9 @@ export type { UsePaginationResult } from './usePagination';
 
 // ResizeObserver-backed element width, for JS-computed layout
 export { useElementWidth } from './useElementWidth';
+
+// Whether an optional inline label still fits, so it can be dropped not clipped
+export { useOptionalLabelFits } from './useOptionalLabelFits';
 
 // App-level handlers (drag, file, folder operations)
 export { useAppHandlers } from './useAppHandlers';

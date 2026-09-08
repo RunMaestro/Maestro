@@ -15,7 +15,9 @@ export const UsageDashboardTabs = forwardRef<HTMLDivElement, UsageDashboardTabsP
 		return (
 			<div
 				ref={ref}
-				className="px-6 py-2 border-b flex items-center gap-1 flex-shrink-0 outline-none"
+				// The strip scrolls sideways rather than wrapping: seven tabs do not fit
+				// a phone, and a wrapped tab row put "Agent Overview" on two lines.
+				className="px-6 py-2 border-b flex items-center gap-1 flex-shrink-0 outline-none overflow-x-auto no-scrollbar"
 				style={{ borderColor: theme.colors.border }}
 				role="tablist"
 				aria-label="Dashboard view modes"
@@ -27,7 +29,7 @@ export const UsageDashboardTabs = forwardRef<HTMLDivElement, UsageDashboardTabsP
 					<button
 						key={tab.value}
 						onClick={() => switchViewMode(tab.value)}
-						className="px-4 py-2 rounded-lg text-sm font-medium transition-colors outline-none"
+						className="px-4 py-2 rounded-lg text-sm font-medium transition-colors outline-none whitespace-nowrap shrink-0"
 						style={{
 							backgroundColor: viewMode === tab.value ? `${theme.colors.accent}20` : 'transparent',
 							color: viewMode === tab.value ? theme.colors.accent : theme.colors.textDim,

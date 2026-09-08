@@ -3,7 +3,13 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { withMonoFallback, resolveSurfaceFont, MONO_FALLBACK_STACK } from '../../shared/fontStack';
+import {
+	withMonoFallback,
+	resolveSurfaceFont,
+	displayFontLabel,
+	MONO_FALLBACK_STACK,
+} from '../../shared/fontStack';
+import { DEFAULT_INTERFACE_FONT } from '../../shared/typographyPresets';
 
 describe('withMonoFallback', () => {
 	it('appends the monospace fallback chain to a bare font name', () => {
@@ -66,5 +72,39 @@ describe('resolveSurfaceFont', () => {
 
 	it('still guarantees a generic fallback when neither is set', () => {
 		expect(resolveSurfaceFont('', '')).toBe(MONO_FALLBACK_STACK);
+	});
+});
+
+describe('displayFontLabel', () => {
+	it('reduces a full CSS stack to its leading family', () => {
+		// The Default typography preset stores a whole fallback chain, and the
+		// picker rendered every comma-separated entry as the font's name.
+		expect(displayFontLabel(DEFAULT_INTERFACE_FONT)).toBe('Inter');
+		expect(displayFontLabel('Roboto Mono, Menlo, "Courier New", monospace')).toBe('Roboto Mono');
+	});
+
+	it('strips the quotes a CSS stack puts around a multi-word family', () => {
+		expect(displayFontLabel('"Segoe UI", Roboto, sans-serif')).toBe('Segoe UI');
+		expect(displayFontLabel("'JetBrains Mono', 'Fira Code', monospace")).toBe('JetBrains Mono');
+	});
+
+	it('leaves a bare font name alone', () => {
+		// The picker and the custom-font input both store bare names, which are
+		// already the label.
+		expect(displayFontLabel('Berkeley Mono')).toBe('Berkeley Mono');
+		expect(displayFontLabel('  Berkeley Mono  ')).toBe('Berkeley Mono');
+	});
+
+	it('returns an empty string for empty, whitespace, null, and undefined', () => {
+		// Empty is the stored value for "inherit", which the picker labels with
+		// its own inherit option rather than this.
+		expect(displayFontLabel('')).toBe('');
+		expect(displayFontLabel('   ')).toBe('');
+		expect(displayFontLabel(null)).toBe('');
+		expect(displayFontLabel(undefined)).toBe('');
+	});
+
+	it('leaves an unbalanced quote in place rather than half-trimming it', () => {
+		expect(displayFontLabel('"Segoe UI, Roboto')).toBe('"Segoe UI');
 	});
 });

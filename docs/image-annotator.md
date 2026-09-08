@@ -32,6 +32,7 @@ The vertical toolbar lives on the right edge of the modal. Click an icon to swit
 | **Ellipse**   | `C` | Drag to draw an oval (Circle) - useful for circling specific regions.                                                                                                                                            |
 | **Arrow**     | `A` | Drag from the tail to the head. Direction is preserved.                                                                                                                                                          |
 | **Text**      | `T` | Click to place a text label and type inline. Click an existing label to drag it; double-click empty area to place another.                                                                                       |
+| **Crop**      | `R` | Drag out the area to keep, then press `Enter` (or the scissors icon) to cut the image down to it. Annotations stay editable - they move with the new frame instead of being flattened.                           |
 | **Undo**      |     | Removes the last stroke, shape, or text label. Walks a unified history so it works regardless of which tool created the item.                                                                                    |
 | **Clear**     |     | Wipes every stroke and shape. Inline confirmation prompt so you don't lose work by accident.                                                                                                                     |
 
@@ -45,18 +46,32 @@ Shapes are first-class objects after they're committed:
 
 Pen strokes are immutable once committed - they can be erased or undone, but not edited. This keeps freehand input fast and predictable.
 
+## Cropping
+
+Press `R` (or click the crop icon) to arm the crop tool. The area outside the selection dims, rule-of-thirds guides appear inside it, and eight handles let you shape the frame:
+
+- **Drag** anywhere on the dimmed area to draw a new selection.
+- **Drag the body** to reposition the frame without resizing it.
+- **Drag a handle** - corners resize two edges, side handles resize one.
+- **`Enter`** (or the scissors icon) applies the crop.
+- **`Esc`** clears the selection back to the full frame.
+
+Cropping is not a flatten. The base image is cut, and every stroke, shape, and text label moves into the new origin still fully editable - so you can crop first and keep annotating, or annotate first and crop afterwards. Anything that fell outside the crop is clipped from view but not destroyed: `Cmd+Z` / `Ctrl+Z` undoes the crop and brings back the original frame along with everything on it.
+
+`Clear all` wipes your strokes but leaves the crop in place, since cropping the frame is a separate decision from the marks you drew on it.
+
 ## Pen settings
 
 Click the sliders icon in the toolbar to slide out the **Drawing settings** drawer.
 
 - **Color** - Eight preset swatches plus a custom hex picker. The active swatch persists across sessions.
-- **Size** - Pen width in pixels (1-64).
+- **Size** - Pen width in pixels (1-64). Press `+` / `-` anywhere in the annotator to change it without opening the drawer.
 - **Thinning** - How much pointer pressure affects stroke width (0-1).
 - **Smoothing** - Curve smoothing applied to the raw input (0-1).
 - **Streamline** - Pointer-jitter dampening; higher values produce steadier lines for shaky hands or trackpad use (0-1).
 - **Taper Start** / **Taper End** - Pixel distance over which strokes fade in / out at each end. Useful for arrow-tip aesthetics.
 
-The drawer also has **Text** settings - color, size (10-120px), and font - that drive new text labels. As with strokes and shapes, each label captures the style in effect when it was created.
+The drawer also has **Text** settings - color, size (10-120px), and font - that drive new text labels. `+` / `-` adjust the text size instead of the pen size whenever the Text tool is active or a label is selected, and with any item selected they resize that item rather than the default. As with strokes and shapes, each label captures the style in effect when it was created.
 
 Settings apply immediately and are remembered across the app - including a **Reset to defaults** button at the bottom of the drawer.
 
@@ -75,22 +90,24 @@ When you open the annotator from the **File Preview** pane, saving opens a desti
 
 ## Keyboard shortcuts
 
-| Shortcut                          | Action                                                                  |
-| --------------------------------- | ----------------------------------------------------------------------- |
-| `Cmd+E` / `Ctrl+E` (in Lightbox)  | Open the annotator on the current lightbox image                        |
-| `Opt+Cmd+E` / `Alt+Ctrl+E`        | Open the annotator on the current clipboard image                       |
-| `Cmd+S` / `Ctrl+S`                | Save and exit                                                           |
-| `Cmd+C` / `Ctrl+C`                | Copy the annotated image to the clipboard                               |
-| `Cmd+Z` / `Ctrl+Z`                | Undo last stroke or shape                                               |
-| `Esc`                             | Cancel selection or close the modal                                     |
-| `Delete` / `Backspace`            | Delete the selected shape or text label                                 |
-| `Cmd/Ctrl+Enter` (in text editor) | Commit the text label and exit the editor                               |
-| `D` `E` `P` `S` `C` `A` `T`       | Select tool: Draw / Eraser / Pan / Square / Circle / Arrow / Text       |
-| `0`                               | Reset zoom and pan                                                      |
-| `f`                               | Fit image to viewport                                                   |
-| `Space` (hold)                    | Temporarily switch to pan, regardless of active tool                    |
-| `Shift` (hold)                    | Constrain the Pen to a straight line; temporary pan with any other tool |
-| Mouse wheel / trackpad scroll     | Zoom at cursor (5%-2000%)                                               |
+| Shortcut                          | Action                                                                   |
+| --------------------------------- | ------------------------------------------------------------------------ |
+| `Cmd+E` / `Ctrl+E` (in Lightbox)  | Open the annotator on the current lightbox image                         |
+| `Opt+Cmd+E` / `Alt+Ctrl+E`        | Open the annotator on the current clipboard image                        |
+| `Cmd+S` / `Ctrl+S`                | Save and exit                                                            |
+| `Cmd+C` / `Ctrl+C`                | Copy the annotated image to the clipboard                                |
+| `Cmd+Z` / `Ctrl+Z`                | Undo last stroke, shape, or crop                                         |
+| `Enter`                           | Apply the crop (Crop tool only)                                          |
+| `Esc`                             | Reset the crop selection, cancel a selection, or close the modal         |
+| `Delete` / `Backspace`            | Delete the selected shape or text label                                  |
+| `Cmd/Ctrl+Enter` (in text editor) | Commit the text label and exit the editor                                |
+| `D` `E` `P` `S` `C` `A` `T` `R`   | Select tool: Draw / Eraser / Pan / Square / Circle / Arrow / Text / Crop |
+| `0`                               | Reset zoom and pan                                                       |
+| `f`                               | Fit image to viewport                                                    |
+| `+` / `-`                         | Grow / shrink the size of the current tool (text size for Text)          |
+| `Space` (hold)                    | Temporarily switch to pan, regardless of active tool                     |
+| `Shift` (hold)                    | Constrain the Pen to a straight line; temporary pan with any other tool  |
+| Mouse wheel / trackpad scroll     | Zoom at cursor (5%-2000%)                                                |
 
 The annotator's shortcuts are bound at the modal layer with capture-phase priority, so they always win over the rest of the app's keymap while the modal is open.
 

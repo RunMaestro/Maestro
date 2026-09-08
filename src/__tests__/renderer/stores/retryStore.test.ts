@@ -199,6 +199,56 @@ describe('firing the retry', () => {
 		retryNow('nope', 't1');
 		expect(processQueuedItem).not.toHaveBeenCalled();
 	});
+
+	// Codify-at-send freezes model/effort onto the QueuedItem so a queued turn
+	// runs under what was selected when the user hit Enter. A retry is the one
+	// case that must NOT honor that freeze: the whole reason a user touches the
+	// model (or the agent's provider) during the countdown is to get out from
+	// behind the wall that just failed the turn.
+	it('resends under the model and effort the agent carries NOW, not the frozen ones', () => {
+		setupSession('s10', 't1', { customModel: 'fable', customEffort: 'low' });
+		noteDispatch(
+			's10',
+			{
+				id: 'item-1',
+				timestamp: 1,
+				tabId: 't1',
+				type: 'message',
+				text: 'hi',
+				turnSettings: { model: 'opus', effort: 'high' },
+			},
+			deps
+		);
+		scheduleRetryForError('s10', 't1', quota());
+
+		retryNow('s10', 't1');
+
+		expect(processQueuedItem).toHaveBeenCalledWith(
+			's10',
+			expect.objectContaining({
+				text: 'hi',
+				turnSettings: { model: 'fable', effort: 'low' },
+			}),
+			deps
+		);
+	});
+
+	it('prefers the tab override over the agent default when re-codifying', () => {
+		const tab = createMockAITab({ id: 't1', customModel: 'sonnet', customEffort: 'medium' });
+		useSessionStore.setState({
+			sessions: [createMockSession({ id: 's11', aiTabs: [tab], activeTabId: 't1' })],
+		} as any);
+		seedSnapshot('s11', 't1');
+		scheduleRetryForError('s11', 't1', quota());
+
+		retryNow('s11', 't1');
+
+		expect(processQueuedItem).toHaveBeenCalledWith(
+			's11',
+			expect.objectContaining({ turnSettings: { model: 'sonnet', effort: 'medium' } }),
+			deps
+		);
+	});
 });
 
 describe('cancel and settle transitions', () => {
@@ -212,6 +262,47 @@ describe('cancel and settle transitions', () => {
 
 		vi.advanceTimersByTime(availabilityDelayMs(0));
 		expect(processQueuedItem).not.toHaveBeenCalled();
+	});
+
+	// Stopping a countdown ends the turn: nothing is running, so the tab must not
+	// keep pulsing (and the Thinking pill must stop counting elapsed time).
+	it('cancelRetry settles the tab that was left marked busy', () => {
+		setupSession('s10b', 't1', {
+			state: 'busy',
+			busySource: 'ai',
+			thinkingStartTime: NOW - 60_000,
+			aiTabs: [createMockAITab({ id: 't1', state: 'busy', thinkingStartTime: NOW - 60_000 })],
+		});
+		seedSnapshot('s10b', 't1');
+		scheduleRetryForError('s10b', 't1', overload());
+
+		cancelRetry('s10b', 't1');
+
+		const session = useSessionStore.getState().sessions[0];
+		expect(session.aiTabs[0].state).toBe('idle');
+		expect(session.aiTabs[0].thinkingStartTime).toBeUndefined();
+		expect(session.state).toBe('idle');
+		expect(session.busySource).toBeUndefined();
+		expect(session.thinkingStartTime).toBeUndefined();
+	});
+
+	// An in-flight resend is a REAL running process - the exit listener owns its
+	// busy state, so cancelling must not idle a tab that is still working.
+	it('cancelRetry leaves an in-flight resend busy', () => {
+		setupSession('s10c', 't1', {
+			state: 'busy',
+			busySource: 'ai',
+			aiTabs: [createMockAITab({ id: 't1', state: 'busy' })],
+		});
+		seedSnapshot('s10c', 't1');
+		scheduleRetryForError('s10c', 't1', overload());
+		retryNow('s10c', 't1'); // → in-flight
+
+		cancelRetry('s10c', 't1');
+
+		const session = useSessionStore.getState().sessions[0];
+		expect(session.aiTabs[0].state).toBe('busy');
+		expect(session.state).toBe('busy');
 	});
 
 	it('clearRetryIfSettled clears an in-flight entry (clean completion)', () => {
@@ -287,8 +378,144 @@ describe('noteDispatch supersession', () => {
 	});
 });
 
+// The green "Connection recovered" card and the red error banner were both on
+// screen at once: the error listener deliberately keeps `tab.agentError` set
+// during a retry so Stop can surface it, and nothing cleared it on success.
+describe('clearing the error banner on recovery', () => {
+	/** Put an error on the tab the way the agent-error listener does. */
+	function setTabError(id: string, tabId: string, message: string) {
+		useSessionStore.setState({
+			sessions: useSessionStore.getState().sessions.map((s: any) =>
+				s.id !== id
+					? s
+					: {
+							...s,
+							aiTabs: s.aiTabs.map((t: any) =>
+								t.id === tabId ? { ...t, agentError: err({ message }) } : t
+							),
+						}
+			),
+		} as any);
+	}
+
+	const tabError = (id: string, tabId: string) =>
+		useSessionStore
+			.getState()
+			.sessions.find((s: any) => s.id === id)
+			?.aiTabs.find((t: any) => t.id === tabId)?.agentError;
+
+	it('clears the tab error when the resend settles', () => {
+		setupSession('s17', 't1');
+		seedSnapshot('s17', 't1');
+		scheduleRetryForError('s17', 't1', quota());
+		setTabError('s17', 't1', quota().message);
+		retryNow('s17', 't1');
+
+		clearRetryIfSettled('s17', 't1');
+
+		expect(getRetryEntry('s17', 't1')).toBeUndefined();
+		expect(tabError('s17', 't1')).toBeUndefined();
+	});
+
+	it('keeps a DIFFERENT error that arrived on the resend', () => {
+		setupSession('s18', 't1');
+		seedSnapshot('s18', 't1');
+		scheduleRetryForError('s18', 't1', quota());
+		retryNow('s18', 't1');
+		// agent-error fires before process-exit, so a non-retryable failure on the
+		// resend is already on the tab when the exit lands. It must survive.
+		setTabError('s18', 't1', 'Permission denied');
+
+		clearRetryIfSettled('s18', 't1');
+
+		expect(tabError('s18', 't1')?.message).toBe('Permission denied');
+	});
+
+	it('leaves the tab alone when a retry is still scheduled', () => {
+		setupSession('s19', 't1');
+		seedSnapshot('s19', 't1');
+		scheduleRetryForError('s19', 't1', quota());
+		setTabError('s19', 't1', quota().message);
+
+		// Still counting down - not settled, so nothing is cleared.
+		clearRetryIfSettled('s19', 't1');
+
+		expect(getRetryEntry('s19', 't1')?.status).toBe('scheduled');
+		expect(tabError('s19', 't1')).toBeDefined();
+	});
+});
+
+// Every outage resolution - recovered, stopped, or superseded - must persist
+// exactly one resilience_events row for the Usage Dashboard. The funnel is
+// resolveOutage, so all three paths are asserted through the public API.
+describe('resilience event recording', () => {
+	const recordMock = () =>
+		(window as any).maestro.stats.recordResilience as ReturnType<typeof vi.fn>;
+
+	beforeEach(() => recordMock().mockClear());
+
+	it('records a recovered outage when the resend settles', () => {
+		setupSession('s20', 't1');
+		seedSnapshot('s20', 't1');
+		scheduleRetryForError('s20', 't1', quota());
+		const outageId = getRetryEntry('s20', 't1')!.outageId;
+		retryNow('s20', 't1');
+		expect(recordMock()).not.toHaveBeenCalled(); // never while live
+
+		clearRetryIfSettled('s20', 't1');
+
+		expect(recordMock()).toHaveBeenCalledTimes(1);
+		expect(recordMock()).toHaveBeenCalledWith(
+			expect.objectContaining({
+				id: outageId,
+				sessionId: 's20',
+				strategy: 'token-exhaustion',
+				outcome: 'recovered',
+				retries: 1,
+			})
+		);
+	});
+
+	it('records a stopped outage when the user cancels', () => {
+		setupSession('s21', 't1');
+		seedSnapshot('s21', 't1');
+		scheduleRetryForError('s21', 't1', overload());
+
+		cancelRetry('s21', 't1');
+
+		expect(recordMock()).toHaveBeenCalledTimes(1);
+		expect(recordMock()).toHaveBeenCalledWith(
+			expect.objectContaining({ outcome: 'stopped', strategy: 'availability', retries: 0 })
+		);
+	});
+
+	it('records a stopped outage when a new prompt supersedes the retry', () => {
+		setupSession('s22', 't1');
+		seedSnapshot('s22', 't1');
+		scheduleRetryForError('s22', 't1', quota());
+
+		noteDispatch(
+			's22',
+			{ id: 'item-2', timestamp: 2, tabId: 't1', type: 'message', text: 'moved on' },
+			deps
+		);
+
+		expect(recordMock()).toHaveBeenCalledTimes(1);
+		expect(recordMock()).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'stopped' }));
+	});
+
+	it('does not record on a reschedule (outage continues)', () => {
+		setupSession('s23', 't1');
+		seedSnapshot('s23', 't1');
+		scheduleRetryForError('s23', 't1', overload());
+		scheduleRetryForError('s23', 't1', overload()); // resend failed again
+
+		expect(recordMock()).not.toHaveBeenCalled();
+	});
+});
+
 describe('hasPendingRetry', () => {
-	it('is true only while a retry is counting down', () => {
+	it('is true for the whole outage, including an in-flight resend', () => {
 		setupSession('s16', 't1');
 		seedSnapshot('s16', 't1');
 		expect(hasPendingRetry('s16', 't1')).toBe(false);
@@ -296,10 +523,17 @@ describe('hasPendingRetry', () => {
 		scheduleRetryForError('s16', 't1', quota());
 		expect(hasPendingRetry('s16', 't1')).toBe(true);
 
-		// An in-flight resend is already dispatched - it must NOT hold the queue,
-		// or the queue would never drain after a successful retry.
+		// An in-flight resend holds the queue too. It used to be excluded because
+		// a live resend leaves the tab busy and a busy tab blocks the queue on its
+		// own - which stops being true the moment the dispatch throws instead of
+		// spawning: the tab and session go idle with the outage unresolved, and
+		// everything queued behind the failed turn drains into the same wall.
 		retryNow('s16', 't1');
 		expect(getRetryEntry('s16', 't1')?.status).toBe('in-flight');
+		expect(hasPendingRetry('s16', 't1')).toBe(true);
+
+		// The hold ends when the outage does, not before.
+		clearRetryIfSettled('s16', 't1');
 		expect(hasPendingRetry('s16', 't1')).toBe(false);
 	});
 
@@ -347,6 +581,65 @@ describe('outage records (transcript status card)', () => {
 			startedAt: NOW,
 		});
 		expect(sessionHasActiveOutage('o1')).toBe(true);
+	});
+
+	// The outage card is the surface that has to explain WHICH limit was hit, so
+	// the structured quota payload has to reach the record. See issue #1472.
+	it('carries the provider quota detail onto the outage record', () => {
+		setupSession('oq', 't1');
+		seedSnapshot('oq', 't1');
+		scheduleRetryForError(
+			'oq',
+			't1',
+			err({
+				message: "You've hit your session limit · resets 11:40am (America/Chicago)",
+				parsedJson: {
+					quotaLimits: {
+						status: 'rejected',
+						resetsAt: 1787416800,
+						rateLimitType: 'five_hour',
+						overageStatus: 'rejected',
+						overageDisabledReason: 'out_of_credits',
+					},
+				},
+			})
+		);
+
+		const outage = getOutage(getRetryEntry('oq', 't1')!.outageId)!;
+		expect(outage.quota).toMatchObject({
+			window: 'five_hour',
+			status: 'rejected',
+			overageDisabledReason: 'out_of_credits',
+		});
+	});
+
+	it('leaves quota undefined when the provider sent no quota payload', () => {
+		setupSession('oq2', 't1');
+		seedSnapshot('oq2', 't1');
+		scheduleRetryForError('oq2', 't1', quota());
+
+		expect(getOutage(getRetryEntry('oq2', 't1')!.outageId)!.quota).toBeUndefined();
+	});
+
+	// A long outage can cross out of the 5-hour window and into the weekly one; a
+	// card still naming the first sends the user to wait out a reset that already
+	// happened.
+	it('re-reads the quota detail on a reschedule instead of freezing the first one', () => {
+		setupSession('oq3', 't1');
+		seedSnapshot('oq3', 't1');
+		const withWindow = (rateLimitType: string) =>
+			err({
+				message: "You've hit your session limit",
+				parsedJson: { quotaLimits: { rateLimitType, status: 'rejected' } },
+			});
+
+		scheduleRetryForError('oq3', 't1', withWindow('five_hour'));
+		const outageId = getRetryEntry('oq3', 't1')!.outageId;
+		expect(getOutage(outageId)!.quota?.window).toBe('five_hour');
+
+		vi.setSystemTime(NOW + 60_000);
+		scheduleRetryForError('oq3', 't1', withWindow('seven_day'));
+		expect(getOutage(outageId)!.quota?.window).toBe('seven_day');
 	});
 
 	it('preserves outageId and startedAt across backoff continuations, bumping attempts', () => {
@@ -500,5 +793,176 @@ describe('replayAfterAuth', () => {
 
 		expect(() => replayAfterAuth('sess-1', ['tab-1', 'tab-2'])).not.toThrow();
 		expect(processQueuedItem).toHaveBeenCalledTimes(2);
+	});
+});
+
+/**
+ * The queue is the record of what is still owed.
+ *
+ * A deep queue that hits a quota wall must finish the turn that failed BEFORE
+ * anything behind it runs, and must still be owed that turn after a quit. Both
+ * properties come from the failed prompt physically sitting at the head of
+ * `executionQueue` while the outage lasts, rather than only in the in-memory
+ * snapshot map.
+ */
+describe('queue durability across an outage', () => {
+	const queuedItem = (id: string, tabId: string, text: string) => ({
+		id,
+		timestamp: 1,
+		tabId,
+		type: 'message' as const,
+		text,
+	});
+
+	function sessionQueue(): string[] {
+		return (useSessionStore.getState().sessions[0].executionQueue ?? []).map((i: any) => i.id);
+	}
+
+	it('puts the failed turn back at the head of its tab queue', () => {
+		setupSession('q1', 't1', {
+			executionQueue: [queuedItem('item-2', 't1', '2'), queuedItem('item-3', 't1', '3')],
+		});
+		seedSnapshot('q1', 't1'); // dispatches 'item-1'
+
+		scheduleRetryForError('q1', 't1', quota());
+
+		// Ahead of everything the user queued behind it, in its original order.
+		expect(sessionQueue()).toEqual(['item-1', 'item-2', 'item-3']);
+	});
+
+	it('does not reorder another tab work', () => {
+		setupSession('q2', 't2', {
+			executionQueue: [queuedItem('other-1', 'tOther', 'x'), queuedItem('item-2', 't2', '2')],
+		});
+		noteDispatch('q2', queuedItem('item-1', 't2', '1'), deps);
+
+		scheduleRetryForError('q2', 't2', quota());
+
+		// Inserted at the head of ITS tab's work, not the head of the queue.
+		expect(sessionQueue()).toEqual(['other-1', 'item-1', 'item-2']);
+	});
+
+	it('takes the held copy back out when the resend goes', () => {
+		setupSession('q3', 't1', { executionQueue: [queuedItem('item-2', 't1', '2')] });
+		seedSnapshot('q3', 't1');
+		scheduleRetryForError('q3', 't1', quota());
+		expect(sessionQueue()).toEqual(['item-1', 'item-2']);
+
+		retryNow('q3', 't1');
+
+		// Exactly one copy exists at a time: the queue slot is released the moment
+		// the prompt is handed to the dispatcher, or it would be sent twice.
+		expect(processQueuedItem).toHaveBeenCalledTimes(1);
+		expect(sessionQueue()).toEqual(['item-2']);
+	});
+
+	it('re-queues and reschedules when the resend cannot be dispatched', async () => {
+		setupSession('q4', 't1', { executionQueue: [queuedItem('item-2', 't1', '2')] });
+		seedSnapshot('q4', 't1');
+		scheduleRetryForError('q4', 't1', quota());
+		processQueuedItem.mockRejectedValueOnce(new Error('Agent process already running'));
+
+		retryNow('q4', 't1');
+		await vi.waitFor(() => expect(getRetryEntry('q4', 't1')?.status).toBe('scheduled'));
+
+		// The prompt is back in line and the entry is back on a timer. Leaving it
+		// in-flight would strand the turn and, because the queue holds while an
+		// entry exists, everything behind it too.
+		expect(sessionQueue()).toEqual(['item-1', 'item-2']);
+		expect(hasPendingRetry('q4', 't1')).toBe(true);
+	});
+
+	it('holds the queue for the whole outage and releases it on recovery', () => {
+		setupSession('q5', 't1', { executionQueue: [queuedItem('item-2', 't1', '2')] });
+		seedSnapshot('q5', 't1');
+
+		scheduleRetryForError('q5', 't1', quota());
+		expect(hasPendingRetry('q5', 't1')).toBe(true);
+
+		retryNow('q5', 't1');
+		expect(hasPendingRetry('q5', 't1')).toBe(true); // in-flight still holds
+
+		clearRetryIfSettled('q5', 't1');
+		expect(hasPendingRetry('q5', 't1')).toBe(false); // recovered: queue drains
+	});
+
+	it('keeps the queue held after the user stops the retry', () => {
+		setupSession('q6', 't1', {
+			executionQueue: [queuedItem('item-2', 't1', '2')],
+			aiTabs: [createMockAITab({ id: 't1', agentError: quota() })],
+		});
+		seedSnapshot('q6', 't1');
+		scheduleRetryForError('q6', 't1', quota());
+
+		cancelRetry('q6', 't1');
+
+		// Stopping hands the failure to the user; their prompt keeps its slot and
+		// the session enters the blocking error state, which every dispatch path
+		// already refuses to run in. Without that, removing the entry would
+		// release the hold and drain the whole queue into the wall they just
+		// stopped retrying against.
+		const session = useSessionStore.getState().sessions[0];
+		expect(session.state).toBe('error');
+		expect(session.agentErrorTabId).toBe('t1');
+		expect(sessionQueue()).toEqual(['item-1', 'item-2']);
+	});
+});
+
+/**
+ * "I changed the provider - just go."
+ *
+ * Re-pointing the agent at something that can answer is the user answering the
+ * question the countdown is asking, so the retry fires immediately instead of
+ * waiting out a reset that no longer applies to it.
+ */
+describe('provider change during an outage', () => {
+	it('fires the waiting retry when the model changes', () => {
+		setupSession('p1', 't1', { customModel: 'opus' });
+		seedSnapshot('p1', 't1');
+		scheduleRetryForError('p1', 't1', quota());
+		expect(processQueuedItem).not.toHaveBeenCalled();
+
+		useSessionStore.setState({
+			sessions: [{ ...useSessionStore.getState().sessions[0], customModel: 'sonnet' }],
+		} as any);
+
+		expect(processQueuedItem).toHaveBeenCalledTimes(1);
+	});
+
+	it('fires when the Claude token source changes', () => {
+		setupSession('p2', 't1', { enableMaestroP: true, maestroPMode: 'interactive' });
+		seedSnapshot('p2', 't1');
+		scheduleRetryForError('p2', 't1', quota());
+
+		useSessionStore.setState({
+			sessions: [{ ...useSessionStore.getState().sessions[0], enableMaestroP: false }],
+		} as any);
+
+		expect(processQueuedItem).toHaveBeenCalledTimes(1);
+	});
+
+	it('ignores changes that do not decide who answers', () => {
+		setupSession('p3', 't1', { customModel: 'opus' });
+		seedSnapshot('p3', 't1');
+		scheduleRetryForError('p3', 't1', quota());
+
+		useSessionStore.setState({
+			sessions: [{ ...useSessionStore.getState().sessions[0], name: 'renamed' }],
+		} as any);
+
+		expect(processQueuedItem).not.toHaveBeenCalled();
+	});
+
+	it('stops watching once the outage is over', () => {
+		setupSession('p4', 't1', { customModel: 'opus' });
+		seedSnapshot('p4', 't1');
+		scheduleRetryForError('p4', 't1', quota());
+		cancelRetry('p4', 't1');
+
+		useSessionStore.setState({
+			sessions: [{ ...useSessionStore.getState().sessions[0], customModel: 'sonnet' }],
+		} as any);
+
+		expect(processQueuedItem).not.toHaveBeenCalled();
 	});
 });

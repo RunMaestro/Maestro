@@ -27,6 +27,8 @@ import {
 	AutoRunSession,
 	AutoRunTask,
 	SessionLifecycleEvent,
+	ResilienceEvent,
+	WizardRun,
 	StatsTimeRange,
 	StatsFilters,
 } from '../../../shared/stats-types';
@@ -414,6 +416,52 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 	);
 
 	// Get session lifecycle events within a time range
+	// Agent Resilience: record a RESOLVED outage (recovered or user-stopped).
+	// Called fire-and-forget from the renderer's retryStore at resolution time;
+	// live countdowns are never recorded.
+	ipcMain.handle(
+		'stats:record-resilience',
+		withIpcErrorLogging(handlerOpts('recordResilience'), async (event: ResilienceEvent) => {
+			if (!isStatsCollectionEnabled(settingsStore)) {
+				logger.debug('Stats collection disabled, skipping resilience event', LOG_CONTEXT);
+				return null;
+			}
+			const db = getStatsDB();
+			return db.recordResilienceEvent(event);
+		})
+	);
+
+	ipcMain.handle(
+		'stats:get-resilience',
+		withIpcErrorLogging(handlerOpts('getResilience'), async (range: StatsTimeRange) => {
+			const db = getStatsDB();
+			return db.getResilienceEvents(range);
+		})
+	);
+
+	// Auto Run wizard: upsert one run row. Called at every milestone of a wizard
+	// conversation (opened, exchange, documents written, closed) so a run that
+	// is never closed still leaves accurate counts behind.
+	ipcMain.handle(
+		'stats:record-wizard-run',
+		withIpcErrorLogging(handlerOpts('recordWizardRun'), async (run: WizardRun) => {
+			if (!isStatsCollectionEnabled(settingsStore)) {
+				logger.debug('Stats collection disabled, skipping wizard run', LOG_CONTEXT);
+				return null;
+			}
+			const db = getStatsDB();
+			return db.recordWizardRun(run);
+		})
+	);
+
+	ipcMain.handle(
+		'stats:get-wizard-runs',
+		withIpcErrorLogging(handlerOpts('getWizardRuns'), async (range: StatsTimeRange) => {
+			const db = getStatsDB();
+			return db.getWizardRuns(range);
+		})
+	);
+
 	ipcMain.handle(
 		'stats:get-session-lifecycle',
 		withIpcErrorLogging(handlerOpts('getSessionLifecycle'), async (range: StatsTimeRange) => {

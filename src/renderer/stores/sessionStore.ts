@@ -19,6 +19,7 @@ import { generateId } from '../utils/ids';
 import { getActiveTab } from '../utils/tabHelpers';
 import { hasRunnableQueueItem } from '../utils/executionQueue';
 import { logger } from '../utils/logger';
+import { persistActiveSessionId } from '../utils/activeSessionPersistence';
 import { useUIStore } from './uiStore';
 import {
 	normalizeGroupHierarchy,
@@ -44,6 +45,19 @@ export interface SessionStoreState {
 	sessionsLoaded: boolean;
 	initialLoadComplete: boolean;
 	initialFileTreeReady: boolean;
+
+	// True only once the group registry has been READ back successfully. Group
+	// persistence is gated on it, because an empty in-memory registry means two
+	// very different things - "this user has no groups" and "the registry could
+	// not be read" - and only the second must never be written to disk.
+	groupsLoaded: boolean;
+
+	// True only once the session registry has been READ back successfully.
+	// Distinct from `sessionsLoaded`, which is the splash-screen flag and is set
+	// in a `finally` whether or not the read worked. The flush in
+	// `useDebouncedPersistence` refuses to write while this is false, because
+	// the alternative is writing an unread (empty) tree over every agent.
+	sessionsReadOk: boolean;
 
 	// Worktree tracking (prevents re-discovery of manually removed worktrees)
 	removedWorktreePaths: Set<string>;
@@ -119,6 +133,8 @@ export interface SessionStoreActions {
 
 	setSessionsLoaded: (loaded: boolean | ((prev: boolean) => boolean)) => void;
 	setInitialLoadComplete: (complete: boolean | ((prev: boolean) => boolean)) => void;
+	setGroupsLoaded: (loaded: boolean | ((prev: boolean) => boolean)) => void;
+	setSessionsReadOk: (ok: boolean | ((prev: boolean) => boolean)) => void;
 	setInitialFileTreeReady: (ready: boolean | ((prev: boolean) => boolean)) => void;
 
 	// === Bookmarks ===
@@ -177,6 +193,8 @@ export const useSessionStore = create<SessionStore>()((set) => ({
 	sessionsLoaded: false,
 	initialLoadComplete: false,
 	initialFileTreeReady: false,
+	groupsLoaded: false,
+	sessionsReadOk: false,
 	removedWorktreePaths: new Set(),
 	cyclePosition: -1,
 
@@ -241,11 +259,12 @@ export const useSessionStore = create<SessionStore>()((set) => ({
 		// highlight never lingers. The cycle re-sets it afterward when it lands on
 		// a starred row (see useCycleSession.activateVisualItem).
 		useUIStore.getState().setSidebarExtraSelection(null);
-		// Fire-and-forget: persist to disk for restore on next launch.
-		// Not awaited - UI state must update synchronously; if the write
-		// fails the only consequence is the session won't be pre-selected
-		// on next launch (falls back to first session).
-		window.maestro?.sessions?.setActiveSessionId(id);
+		// Fire-and-forget: persist for restore on next launch. Not awaited - UI
+		// state must update synchronously; if the write fails the only consequence
+		// is the session won't be pre-selected on next launch (falls back to first
+		// session). Routed through the helper because a web-desktop client keeps
+		// its own focused agent rather than sharing the desktop's.
+		persistActiveSessionId(id);
 	},
 
 	hydrateActiveSessionId: (id) => set({ activeSessionId: id, cyclePosition: -1 }),
@@ -312,6 +331,8 @@ export const useSessionStore = create<SessionStore>()((set) => ({
 	setSessionsLoaded: (v) => set((s) => ({ sessionsLoaded: resolve(v, s.sessionsLoaded) })),
 	setInitialLoadComplete: (v) =>
 		set((s) => ({ initialLoadComplete: resolve(v, s.initialLoadComplete) })),
+	setGroupsLoaded: (v) => set((s) => ({ groupsLoaded: resolve(v, s.groupsLoaded) })),
+	setSessionsReadOk: (v) => set((s) => ({ sessionsReadOk: resolve(v, s.sessionsReadOk) })),
 	setInitialFileTreeReady: (v) =>
 		set((s) => ({ initialFileTreeReady: resolve(v, s.initialFileTreeReady) })),
 

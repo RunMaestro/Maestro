@@ -92,6 +92,9 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	fileEditorFontSize: 0,
 	documentGraphFontSize: 0,
 	fontZoom: 1,
+	// The user's own saved fonts and sizes, so the Factory Reset presets are
+	// safe to try. Null until they save one. See shared/typographySnapshot.ts.
+	typographySnapshot: null,
 	typographyPromptSeen: false,
 	themePromptSeen: false,
 	agentPowersPromptSeen: false,

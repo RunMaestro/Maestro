@@ -4,6 +4,7 @@
  * Tests the display settings tab including:
  * - Font family selection and loading
  * - Custom font management (add/remove)
+ * - Saving and restoring the user's own font setup
  * - Font size toggle buttons
  * - Max log buffer toggle buttons
  * - Max output lines toggle buttons
@@ -33,6 +34,8 @@ const mockSetSurfaceFontFamily = vi.fn();
 const mockSetSurfaceFontSize = vi.fn();
 const mockSetFontZoom = vi.fn();
 const mockResetTypography = vi.fn();
+const mockSaveTypographySnapshot = vi.fn();
+const mockRestoreTypographySnapshot = vi.fn();
 const mockSetMaxLogBuffer = vi.fn();
 const mockSetMaxOutputLines = vi.fn();
 const mockSetBionifyReadingMode = vi.fn();
@@ -85,7 +88,7 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		setUserMessageAlignment: mockSetUserMessageAlignment,
 		groupChatAutoScroll: true,
 		setGroupChatAutoScroll: mockSetGroupChatAutoScroll,
-		fileExplorerIconTheme: 'default',
+		fileExplorerIconTheme: 'flat',
 		setFileExplorerIconTheme: mockSetFileExplorerIconTheme,
 		useNativeTitleBar: false,
 		setUseNativeTitleBar: mockSetUseNativeTitleBar,
@@ -165,6 +168,9 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		setSurfaceFontSize: mockSetSurfaceFontSize,
 		setFontZoom: mockSetFontZoom,
 		resetTypography: mockResetTypography,
+		typographySnapshot: null,
+		saveTypographySnapshot: mockSaveTypographySnapshot,
+		restoreTypographySnapshot: mockRestoreTypographySnapshot,
 		...mockUseSettingsOverrides,
 	}),
 }));
@@ -285,6 +291,14 @@ describe('DisplayTab', () => {
 			expect(
 				screen.getByText(/Rich uses Material Icon Theme style file and folder SVGs/i)
 			).toBeInTheDocument();
+		});
+
+		it('should call setFileExplorerIconTheme when Flat is selected', () => {
+			render(<DisplayTab theme={mockTheme} />);
+
+			fireEvent.click(screen.getByRole('button', { name: 'Flat' }));
+
+			expect(mockSetFileExplorerIconTheme).toHaveBeenCalledWith('flat');
 		});
 
 		it('should call setFileExplorerIconTheme when Rich is selected', () => {
@@ -534,6 +548,95 @@ describe('DisplayTab', () => {
 	// Custom Fonts
 	// =========================================================================
 
+	// =========================================================================
+	// Save / Restore Customizations
+	// =========================================================================
+
+	describe('Save & Restore Customizations', () => {
+		// The section is only useful if the buttons reach the STORE. Rendering
+		// it while the tab passed the wrong (or no) action would look identical
+		// on screen and silently do nothing on click.
+		it('wires Save Customizations to the store action', async () => {
+			render(<DisplayTab theme={mockTheme} />);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			fireEvent.click(screen.getByTestId('typography-snapshot-save'));
+
+			expect(mockSaveTypographySnapshot).toHaveBeenCalledTimes(1);
+		});
+
+		it('wires Restore Customizations to the store action once something is saved', async () => {
+			mockUseSettingsOverrides = {
+				typographySnapshot: {
+					savedAt: Date.now(),
+					fonts: { fontFamily: 'Verdana' },
+					sizes: { fontSize: 17 },
+				},
+			};
+			render(<DisplayTab theme={mockTheme} />);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			fireEvent.click(screen.getByTestId('typography-snapshot-restore'));
+
+			expect(mockRestoreTypographySnapshot).toHaveBeenCalledTimes(1);
+		});
+
+		it('offers no Restore to click until the user has saved something', async () => {
+			render(<DisplayTab theme={mockTheme} />);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			fireEvent.click(screen.getByTestId('typography-snapshot-restore'));
+
+			expect(mockRestoreTypographySnapshot).not.toHaveBeenCalled();
+		});
+
+		it('reports the saved setup as active when the live fonts still match it', async () => {
+			// Drives the readout off the REAL comparison rather than a flag, so
+			// the tab cannot claim a setup is active after a preset replaced it.
+			mockUseSettingsOverrides = {
+				fontFamily: 'Verdana',
+				fontSize: 17,
+				typographySnapshot: {
+					savedAt: Date.now(),
+					fonts: { fontFamily: 'Verdana' },
+					sizes: { fontSize: 17 },
+				},
+			};
+			render(<DisplayTab theme={mockTheme} />);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			expect(screen.getByText(/Your saved fonts are active/)).toBeInTheDocument();
+			expect(screen.getByTestId('typography-snapshot-restore')).toBeDisabled();
+		});
+
+		it('says the live fonts are not the saved ones after a preset replaced them', async () => {
+			mockUseSettingsOverrides = {
+				fontFamily: 'Roboto Mono',
+				fontSize: 14,
+				typographySnapshot: {
+					savedAt: Date.now(),
+					fonts: { fontFamily: 'Verdana' },
+					sizes: { fontSize: 17 },
+				},
+			};
+			render(<DisplayTab theme={mockTheme} />);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			expect(screen.getByText(/The fonts below are not it/)).toBeInTheDocument();
+			expect(screen.getByTestId('typography-snapshot-restore')).not.toBeDisabled();
+		});
+	});
+
 	describe('Custom Fonts', () => {
 		it('should add custom font via button click', async () => {
 			render(<DisplayTab theme={mockTheme} />);
@@ -744,7 +847,11 @@ describe('DisplayTab', () => {
 		it('shows an unset surface as inheriting the interface size', async () => {
 			await renderTab({ fontSize: 16, chatFontSize: 0 });
 
-			expect(screen.getByTestId('font-size-chat-value')).toHaveTextContent('Inherit (16px)');
+			// The number stays in the fixed-width value slot and the state moves
+			// to the reserved trailing slot, so the row does not resize as a
+			// surface goes from inheriting to its own size.
+			expect(screen.getByTestId('font-size-chat-value')).toHaveTextContent('16px');
+			expect(screen.getByTestId('font-size-chat-inheriting')).toBeInTheDocument();
 		});
 
 		it('shows a customized surface as its own size', async () => {
@@ -777,6 +884,45 @@ describe('DisplayTab', () => {
 
 			fireEvent.click(screen.getByTestId('typography-reset-default'));
 			expect(mockResetTypography).toHaveBeenCalledWith('default');
+		});
+
+		it('leads the tab, with Save & Restore under it and the pickers last', async () => {
+			// The tab reads coarse to fine: set every font at once, keep a copy of
+			// what you set, then take the individual pickers apart. Both halves are
+			// asserted because the pair is the point - a reset that a user cannot
+			// undo from the section directly beneath it is the destructive control
+			// this ordering exists to make safe.
+			render(<DisplayTab theme={mockTheme} />);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const reset = document.querySelector('[data-setting-id="display-typography-reset"]')!;
+			const snapshot = document.querySelector('[data-setting-id="display-typography-snapshot"]')!;
+			const fonts = document.querySelector('[data-setting-id="display-fonts"]')!;
+
+			expect(
+				reset.compareDocumentPosition(snapshot) & Node.DOCUMENT_POSITION_FOLLOWING
+			).toBeTruthy();
+			expect(
+				snapshot.compareDocumentPosition(fonts) & Node.DOCUMENT_POSITION_FOLLOWING
+			).toBeTruthy();
+		});
+
+		it('is the first section on the tab', async () => {
+			// Guards the ordering against a section being inserted above it later:
+			// the position assertions above stay green if something else claims the
+			// top of the tab, since they only compare the three font sections.
+			render(<DisplayTab theme={mockTheme} />);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const firstSectionId = document
+				.querySelector('[data-setting-id]')
+				?.getAttribute('data-setting-id');
+
+			expect(firstSectionId).toBe('display-typography-reset');
 		});
 	});
 

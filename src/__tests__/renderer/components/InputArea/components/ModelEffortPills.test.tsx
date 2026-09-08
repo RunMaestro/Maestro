@@ -71,4 +71,36 @@ describe('ModelEffortPills', () => {
 		expect(onEffortChange).toHaveBeenCalledWith('low');
 		expect(setEffortMenuOpen).toHaveBeenCalledWith(false);
 	});
+
+	describe('shortcut hint header', () => {
+		it('renders the hint at the top of both menus when one is supplied', () => {
+			const { unmount } = renderPills({ modelMenuOpen: true, shortcutHint: 'Try: X' });
+			expect(screen.getByText('Try: X')).toBeInTheDocument();
+			unmount();
+
+			renderPills({ effortMenuOpen: true, shortcutHint: 'Try: X' });
+			expect(screen.getByText('Try: X')).toBeInTheDocument();
+		});
+
+		it('renders no header when no hint is supplied', () => {
+			renderPills({ modelMenuOpen: true, effortMenuOpen: true });
+
+			expect(screen.queryByText(/^Try:/)).not.toBeInTheDocument();
+		});
+
+		// The hint is decoration, not an option: it must not be reachable by
+		// keyboard, and it must not be counted among the selectable rows.
+		it('is not focusable and is not one of the menu buttons', () => {
+			renderPills({ modelMenuOpen: true, shortcutHint: 'Try: X' });
+
+			const hint = screen.getByText('Try: X');
+			expect(hint.tagName).not.toBe('BUTTON');
+			expect(hint.closest('button')).toBeNull();
+			expect(hint).not.toHaveAttribute('tabindex');
+
+			expect(screen.getAllByRole('button').some((b) => b.textContent?.startsWith('Try:'))).toBe(
+				false
+			);
+		});
+	});
 });

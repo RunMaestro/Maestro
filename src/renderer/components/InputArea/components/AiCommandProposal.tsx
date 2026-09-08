@@ -16,6 +16,8 @@ import { memo, type ReactNode } from 'react';
 import { AlertTriangle, Play, X } from 'lucide-react';
 import type { Theme } from '../../../types';
 import type { AiCommandEntry } from '../../../stores/aiCommandStore';
+import { useSettingsStore } from '../../../stores/settingsStore';
+import { useFixedPitchFont } from '../../../hooks/ui/useFixedPitchFont';
 import { Spinner } from '../../ui/Spinner';
 import { CopyIconButton } from '../../ui/CopyIconButton';
 
@@ -38,6 +40,12 @@ export const AiCommandProposal = memo(function AiCommandProposal({
 	onChoose,
 }: AiCommandProposalProps) {
 	const { status, request, command, error, choice } = entry;
+
+	// The proposal is a command line, so it is set in the same fixed-pitch face
+	// the composer and the output card use - what you confirm here looks exactly
+	// like what runs.
+	const fontFamily = useSettingsStore((state) => state.fontFamily);
+	const shellFontFamily = useFixedPitchFont(fontFamily);
 
 	return (
 		<div
@@ -87,14 +95,14 @@ export const AiCommandProposal = memo(function AiCommandProposal({
 						}}
 					>
 						<span
-							className="text-sm font-mono font-bold select-none shrink-0"
-							style={{ color: theme.colors.accent }}
+							className="text-sm font-bold select-none shrink-0"
+							style={{ color: theme.colors.accent, fontFamily: shellFontFamily }}
 						>
 							$
 						</span>
 						<code
-							className="flex-1 text-sm font-mono whitespace-pre-wrap break-all select-text"
-							style={{ color: theme.colors.textMain }}
+							className="flex-1 text-sm whitespace-pre-wrap break-all select-text"
+							style={{ color: theme.colors.textMain, fontFamily: shellFontFamily }}
 							data-testid="ai-command-proposed"
 						>
 							{command}

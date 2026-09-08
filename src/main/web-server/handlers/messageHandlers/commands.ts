@@ -13,6 +13,15 @@ import { LOG_CONTEXT } from './shared';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
 
 /**
+ * Timeout bounds for a cross-agent consult. A consult spawns a whole agent turn,
+ * so the floor is generous and the ceiling is an hour - past that the caller has
+ * almost certainly gone away and the process is better killed than awaited.
+ */
+const MIN_CONSULT_TIMEOUT_MS = 10_000;
+const MAX_CONSULT_TIMEOUT_MS = 60 * 60 * 1000;
+const DEFAULT_CONSULT_TIMEOUT_MS = 10 * 60 * 1000;
+
+/**
  * Handle send_command message - execute command in session
  */
 export function handleSendCommand(
@@ -331,5 +340,74 @@ export function handleSelectSession(
 		})
 		.catch((error) => {
 			ctx.sendError(client, `Failed to select session: ${error.message}`);
+		});
+}
+
+/**
+ * Handle cross_agent_ask - consult another agent and return its answer
+ * (`maestro-cli ask`).
+ *
+ * Deliberately NOT a variant of `send_command`. A dispatch writes into the
+ * target's active tab, which is whatever conversation the human has open there;
+ * a consult opens a hidden tab of its own and answers the caller. The busy
+ * guard `send_command` applies is also absent on purpose: a consult spawns its
+ * own ephemeral process, so a target mid-turn can answer without either turn
+ * disturbing the other.
+ */
+export function handleCrossAgentAsk(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const targetSessionId = typeof message.sessionId === 'string' ? message.sessionId : '';
+	const question = typeof message.question === 'string' ? message.question : '';
+	const fromSessionId =
+		typeof message.fromSessionId === 'string' ? message.fromSessionId : undefined;
+	const withContext = message.withContext === true;
+	const timeoutMs =
+		typeof message.timeoutMs === 'number' && Number.isFinite(message.timeoutMs)
+			? Math.min(Math.max(message.timeoutMs, MIN_CONSULT_TIMEOUT_MS), MAX_CONSULT_TIMEOUT_MS)
+			: DEFAULT_CONSULT_TIMEOUT_MS;
+
+	const reply = (payload: Record<string, unknown>) => {
+		ctx.send(client, {
+			type: 'cross_agent_ask_result',
+			sessionId: targetSessionId,
+			requestId: message.requestId,
+			...payload,
+		});
+	};
+
+	if (!targetSessionId || !question.trim()) {
+		reply({ success: false, error: 'Missing target agent or question' });
+		return;
+	}
+	if (!ctx.callbacks.getSessionDetail?.(targetSessionId)) {
+		reply({ success: false, error: 'Agent not found' });
+		return;
+	}
+	if (!ctx.callbacks.consultAgent) {
+		reply({ success: false, error: 'Cross-agent consults are not configured' });
+		return;
+	}
+
+	// Metadata only at info level: a consult question can carry proprietary code
+	// or secrets, exactly like a dispatched prompt.
+	logger.info(
+		`[Web Ask] Consult | Target: ${targetSessionId} | From: ${fromSessionId ?? 'unattributed'} | Context: ${withContext ? 'yes' : 'no'} | Timeout: ${timeoutMs}ms | QuestionLength: ${question.length}`,
+		LOG_CONTEXT
+	);
+
+	ctx.callbacks
+		.consultAgent({ targetSessionId, question, fromSessionId, withContext, timeoutMs })
+		.then((result) => reply({ ...result }))
+		.catch((error) => {
+			ctx.reportHandlerError(
+				client,
+				error,
+				'cross_agent_ask',
+				{ sessionId: targetSessionId, requestId: message.requestId },
+				'Failed to consult agent'
+			);
 		});
 }

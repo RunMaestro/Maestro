@@ -54,7 +54,7 @@ import { AutoRunHumanStepBanner } from './AutoRunHumanStepBanner';
 import { AutoRunBottomPanel } from './AutoRunBottomPanel';
 import { NoFolderState, EmptyFolderState } from './AutoRunEmptyStates';
 import { useBatchStore } from '../../stores/batchStore';
-import { useThoughtStreamStore, selectThoughtCount } from '../../stores/thoughtStreamStore';
+import { useThoughtStreamStore, selectActivityCount } from '../../stores/thoughtStreamStore';
 import { AutoRunAttachmentsPanel } from './AutoRunAttachmentsPanel';
 import { useTemplateAutocomplete, useAutoRunUndo, useAutoRunImageHandling } from '../../hooks';
 import { TemplateAutocompleteDropdown } from '../TemplateAutocompleteDropdown';
@@ -74,8 +74,13 @@ import { Maximize2, Edit as EditIcon, Eye, Search, Brain } from 'lucide-react';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { logger } from '../../utils/logger';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 import { notifyToast } from '../../stores/notificationStore';
 import { useImageAnnotatorStore } from '../ImageAnnotator/imageAnnotatorStore';
+import {
+	MIRRORED_RUN_CONTROL_TITLE,
+	useIsMirroredBatchRun,
+} from '../../hooks/batch/useAutoRunStateMirror';
 
 // Inner implementation component
 const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInner(
@@ -139,6 +144,8 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		false;
 	const isAgentBusy = sessionState === 'busy' || sessionState === 'connecting';
 	const isAutoRunActive = batchRunState?.isRunning || false;
+	// Mirrored from another Maestro window - visible, but not steerable here.
+	const isMirroredRun = useIsMirroredBatchRun(sessionId);
 	const isRunningRef = useRef(isAutoRunActive);
 	useEffect(() => {
 		isRunningRef.current = isAutoRunActive;
@@ -153,9 +160,11 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 	// point here for as long as there is something buffered to read.
 	const thoughtStreamSessionId = useThoughtStreamStore((s) => s.panelSessionId);
 	const openThoughtStream = useThoughtStreamStore((s) => s.openPanel);
-	const bufferedThoughts = useThoughtStreamStore(selectThoughtCount(sessionId));
+	// Reasoning AND tool calls: a run that only acted and never narrated still
+	// has a feed worth reopening, so this gate must not be thoughts-only.
+	const bufferedActivity = useThoughtStreamStore(selectActivityCount(sessionId));
 	const showOpenThoughtStream =
-		!isAutoRunActive && bufferedThoughts > 0 && thoughtStreamSessionId !== sessionId;
+		!isAutoRunActive && bufferedActivity > 0 && thoughtStreamSessionId !== sessionId;
 	// Error state (Phase 5.10)
 	// Subscribe directly to the Zustand store to bypass the multi-hop prop chain
 	// (store → useBatchProcessor → useBatchHandlers → App → RightPanel → AutoRun)
@@ -251,6 +260,10 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 	const bionifyReadingMode = useSettingsStore((s) => s.bionifyReadingMode);
 	const bionifyIntensity = useSettingsStore((s) => s.bionifyIntensity);
 	const bionifyAlgorithm = useSettingsStore((s) => s.bionifyAlgorithm);
+
+	// Phone: the editor mode bar goes icon-only (each button keeps its title as
+	// the accessible name) so its four or five buttons fit a 390px drawer.
+	const phone = usePhoneLayout();
 
 	// Search state and effects
 	const {
@@ -753,6 +766,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 					isRecoverable={batchError.recoverable || false}
 					onResumeAfterError={onResumeAfterError}
 					onAbortBatchOnError={onAbortBatchOnError}
+					disabledReason={isMirroredRun ? MIRRORED_RUN_CONTROL_TITLE : undefined}
 				/>
 			)}
 
@@ -791,6 +805,25 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 								: '2px solid transparent',
 					}}
 				>
+					{/* Floating font zoom - the same collapsible "Aa" circle the file
+					    preview uses, so zooming a document reads identically whether it
+					    is open in a file tab or in this panel. Sticky (not absolute) so
+					    it stays pinned while the document scrolls without needing a
+					    positioned ancestor, and h-0 so it never displaces the content. */}
+					{documentList.length > 0 && (
+						<div className="sticky top-2 z-20 h-0 flex items-start justify-end pr-2 pointer-events-none">
+							<FontScaleControl
+								theme={theme}
+								control={activeFontScale}
+								variant="floating"
+								collapsible
+								size="sm"
+								target={mode === 'edit' ? 'editor' : 'preview'}
+								className="pointer-events-auto"
+								testId="autorun-font-scale"
+							/>
+						</div>
+					)}
 					{/* Empty folder state - show when folder is configured but has no documents */}
 					{documentList.length === 0 && !isLoadingDocuments ? (
 						<EmptyFolderState
@@ -937,7 +970,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 							title={`Expand to full screen${shortcuts?.toggleAutoRunExpanded ? ` (${formatShortcutKeys(shortcuts.toggleAutoRunExpanded.keys)})` : ''}`}
 						>
 							<Maximize2 className="w-3 h-3" />
-							Expand
+							{!phone && 'Expand'}
 						</button>
 					)}
 					{/* Search button */}
@@ -952,7 +985,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 						title={`Search (${formatShortcutKeys(['Meta', 'f'])})`}
 					>
 						<Search className="w-3 h-3" />
-						Search
+						{!phone && 'Search'}
 					</button>
 					{/* Edit / Preview toggle */}
 					<button
@@ -981,12 +1014,12 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 						{mode === 'edit' ? (
 							<>
 								<Eye className="w-3 h-3" />
-								Preview
+								{!phone && 'Preview'}
 							</>
 						) : (
 							<>
 								<EditIcon className="w-3 h-3" />
-								Edit
+								{!phone && 'Edit'}
 							</>
 						)}
 					</button>
@@ -1000,22 +1033,12 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 								border: `1px solid ${theme.colors.accent}40`,
 								backgroundColor: `${theme.colors.accent}15`,
 							}}
-							title={`Read this run's ${bufferedThoughts} buffered thought${bufferedThoughts === 1 ? '' : 's'}`}
+							title={`Read this run's ${bufferedActivity} buffered thought${bufferedActivity === 1 ? '' : 's'} and tool call${bufferedActivity === 1 ? '' : 's'}`}
 						>
 							<Brain className="w-3 h-3" />
-							Thoughts
+							{!phone && 'Thoughts'}
 						</button>
 					)}
-					{/* Font zoom for whichever mode is on screen. Separate scales, so
-					    the reading size and the editing size don't fight each other. */}
-					<FontScaleControl
-						theme={theme}
-						control={activeFontScale}
-						size="sm"
-						target={mode === 'edit' ? 'editor' : 'preview'}
-						className="shrink-0"
-						testId="autorun-font-scale"
-					/>
 				</div>
 			)}
 

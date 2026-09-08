@@ -187,9 +187,10 @@ describe('QuickActions command builders', () => {
 				platform: 'darwin',
 				openPath: vi.fn(),
 				onGoToNextUnread: vi.fn(),
+				onGoToPreviousUnread: vi.fn(),
 				shortcuts: {},
 			}).map((a) => a.id)
-		).toContain('nextUnreadTab');
+		).toEqual(expect.arrayContaining(['nextUnreadTab', 'previousUnreadTab']));
 
 		expect(
 			buildNewTabCommands({
@@ -776,6 +777,102 @@ describe('agent-switch window scoping', () => {
 		expect(useModalStore.getState().modals.get('modelEffort')?.data).toMatchObject({
 			tabId: 'tab-2',
 		});
+	});
+
+	// A group chat has no model of its own, and opening one does not clear
+	// `activeSession` - it still points at whichever agent was selected before the
+	// room was opened. So the entry has to be ABSENT, not merely inert: left in
+	// place it resolved a live target and retuned a background agent's tab.
+	it('withholds the model/effort picker while a group chat owns the view', () => {
+		const session = createMockSession({
+			id: 's1',
+			aiTabs: [createMockAITab({ id: 'tab-1' })],
+			activeTabId: 'tab-1',
+		});
+		const args = {
+			activeSession: session,
+			isAiMode: true,
+			activeTabInfo: {
+				isTerminalMode: false,
+				hasActiveTab: true,
+				activeUnifiedIndex: 0,
+				unifiedTabCount: 1,
+				activeTabType: 'ai' as const,
+			},
+			enterToSendAI: true,
+			setQuickActionOpen: close,
+			shortcuts: {},
+			toggleInputMode: vi.fn(),
+		};
+
+		expect(buildTabCommands(args).find((a) => a.id === 'changeModelEffort')).toBeDefined();
+		expect(
+			buildTabCommands({ ...args, activeGroupChatId: 'chat-1' }).find(
+				(a) => a.id === 'changeModelEffort'
+			)
+		).toBeUndefined();
+	});
+
+	// The count in "Close all N tabs" has to match what a close-all actually takes
+	// out, and hidden consult tabs survive it.
+	it('counts only visible tabs in the Close All Tabs subtext', () => {
+		const session = createMockSession({
+			id: 's1',
+			aiTabs: [
+				createMockAITab({ id: 'tab-1' }),
+				createMockAITab({ id: 'tab-2' }),
+				createMockAITab({ id: 'consult', hidden: true }),
+			],
+			activeTabId: 'tab-1',
+		});
+
+		const command = buildTabCommands({
+			activeSession: session,
+			isAiMode: true,
+			activeTabInfo: {
+				isTerminalMode: false,
+				hasActiveTab: true,
+				activeUnifiedIndex: 0,
+				unifiedTabCount: 2,
+				activeTabType: 'ai',
+			},
+			enterToSendAI: true,
+			onCloseAllTabs: vi.fn(),
+			setQuickActionOpen: vi.fn(),
+			shortcuts: {},
+			toggleInputMode: vi.fn(),
+		}).find((a) => a.id === 'closeAllTabs');
+
+		expect(command?.subtext).toBe('Close all 2 tabs');
+	});
+
+	// An agent whose only other tabs are hidden consults has one closable tab, so
+	// the entry must not offer to close a plural it cannot reach.
+	it('omits Close All Tabs when every tab is a hidden consult', () => {
+		const session = createMockSession({
+			id: 's1',
+			aiTabs: [createMockAITab({ id: 'consult', hidden: true })],
+			activeTabId: 'consult',
+		});
+
+		const ids = buildTabCommands({
+			activeSession: session,
+			isAiMode: true,
+			activeTabInfo: {
+				isTerminalMode: false,
+				hasActiveTab: true,
+				activeUnifiedIndex: 0,
+				unifiedTabCount: 0,
+				activeTabType: 'ai',
+			},
+			enterToSendAI: true,
+			onCloseAllTabs: vi.fn(),
+			setQuickActionOpen: vi.fn(),
+			shortcuts: {},
+			toggleInputMode: vi.fn(),
+		}).map((a) => a.id);
+
+		expect(ids).not.toContain('closeAllTabs');
 	});
 
 	it('hides the model/effort picker when the active tab is not an AI tab', () => {

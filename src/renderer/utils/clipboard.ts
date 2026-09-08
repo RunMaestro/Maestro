@@ -15,6 +15,7 @@
  * Fixes MAESTRO-4Z
  */
 
+import { isSessionImageRef } from '../../shared/sessionImageRefs';
 import { isWebDesktop } from './runtimeContext';
 
 /**
@@ -136,7 +137,7 @@ export async function safeClipboardWriteImage(dataUrl: string): Promise<boolean>
 	try {
 		// Persisted transcript images are stored as refs, not data URLs; resolve
 		// to bytes before handing off to the clipboard.
-		if (dataUrl.startsWith('maestro-image://') && window.maestro?.images?.resolve) {
+		if (isSessionImageRef(dataUrl) && window.maestro?.images?.resolve) {
 			const resolved = await window.maestro.images.resolve(dataUrl);
 			if (!resolved) return false;
 			dataUrl = resolved;

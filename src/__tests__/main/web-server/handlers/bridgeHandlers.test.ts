@@ -21,13 +21,23 @@ type Handler = (event: unknown, ...args: unknown[]) => unknown;
 // `vi.hoisted` runs before the module factory so the map is initialized in
 // time for vi.mock - top-level consts would be in the temporal dead zone
 // at hoist time and the mock factory would throw.
-const { invokeHandlers } = vi.hoisted(() => ({
+const { invokeHandlers, sendListeners } = vi.hoisted(() => ({
 	invokeHandlers: new Map<string, Handler>(),
+	// `ipcMain.on` listeners - the OTHER renderer->main direction. These are
+	// ordinary EventEmitter listeners and never appear in `_invokeHandlers`.
+	sendListeners: new Map<string, Handler>(),
 }));
 
 vi.mock('electron', () => ({
 	ipcMain: {
 		_invokeHandlers: invokeHandlers,
+		listenerCount: (channel: string) => (sendListeners.has(channel) ? 1 : 0),
+		emit: (channel: string, event: unknown, ...args: unknown[]) => {
+			const listener = sendListeners.get(channel);
+			if (!listener) return false;
+			listener(event, ...args);
+			return true;
+		},
 	},
 }));
 
@@ -55,6 +65,7 @@ function lastSend(client: ReturnType<typeof makeClient>): Record<string, unknown
 
 beforeEach(() => {
 	invokeHandlers.clear();
+	sendListeners.clear();
 });
 
 describe('handleBridgeInvoke', () => {
@@ -87,6 +98,76 @@ describe('handleBridgeInvoke', () => {
 			ok: false,
 		});
 		expect(String(payload.error)).toMatch(/No ipcMain handler/);
+	});
+
+	/**
+	 * `ipcRenderer.send` is fire-and-forget and pairs with `ipcMain.on`, not
+	 * `ipcMain.handle`. The web shim has only one frame type, so it routes both
+	 * directions through `bridge.invoke` - which used to mean every send-style
+	 * API was a silent no-op in a browser: the server answered "No ipcMain
+	 * handler registered" and the shim's send wrapper, which cannot throw at its
+	 * caller, logged it and swallowed it.
+	 */
+	it('dispatches a send-style channel to its ipcMain.on listener', async () => {
+		const received: unknown[][] = [];
+		sendListeners.set('tabs:aiTabClosed', (_event, ...args) => {
+			received.push(args);
+		});
+
+		const send = vi.fn();
+		const client = makeClient();
+		await handleBridgeInvoke(
+			client,
+			{
+				type: 'bridge.invoke',
+				requestId: 11,
+				channel: 'tabs:aiTabClosed',
+				args: ['agent-1', 'tab-1'],
+			},
+			send
+		);
+
+		expect(received).toEqual([['agent-1', 'tab-1']]);
+		expect(send.mock.calls[0][1]).toMatchObject({
+			type: 'bridge.response',
+			requestId: 11,
+			ok: true,
+		});
+	});
+
+	it('reports a throwing send listener rather than hanging the caller', async () => {
+		sendListeners.set('tabs:aiTabClosed', () => {
+			throw new Error('listener exploded');
+		});
+
+		const send = vi.fn();
+		const client = makeClient();
+		await handleBridgeInvoke(
+			client,
+			{ type: 'bridge.invoke', requestId: 12, channel: 'tabs:aiTabClosed', args: [] },
+			send
+		);
+
+		const payload = send.mock.calls[0][1] as Record<string, unknown>;
+		expect(payload).toMatchObject({ requestId: 12, ok: false });
+		expect(String(payload.error)).toMatch(/listener exploded/);
+	});
+
+	it('prefers an invoke handler when a channel has both', async () => {
+		invokeHandlers.set('dual', async () => 'from-handle');
+		sendListeners.set('dual', () => {
+			throw new Error('the send listener must not run');
+		});
+
+		const send = vi.fn();
+		const client = makeClient();
+		await handleBridgeInvoke(
+			client,
+			{ type: 'bridge.invoke', requestId: 13, channel: 'dual' },
+			send
+		);
+
+		expect(send.mock.calls[0][1]).toMatchObject({ ok: true, result: 'from-handle' });
 	});
 
 	it('returns the handler result on success', async () => {

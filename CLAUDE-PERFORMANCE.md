@@ -344,6 +344,87 @@ instead of pairing raw `addEventListener` / `removeEventListener` inside a
 `useEffect`. The hook handles cleanup, ref-stable handlers, and SSR safety.
 See the canonical-utilities table in [[CLAUDE.md]] for the full rule.
 
+## Looping CSS Animations Must Be Compositable
+
+A CSS animation that loops `infinite` is not a one-off cost: it runs for as long
+as its element is on screen. If it animates a property the compositor cannot
+own, it asks the MAIN THREAD for a frame every frame, forever - style recalc,
+paint, and a layer-tree rebuild at 60fps while the user is doing nothing.
+
+**Only these are composited.** Animate them and the main thread stays idle:
+
+| Safe to animate | Runs on the main thread every frame                               |
+| --------------- | ----------------------------------------------------------------- |
+| `transform`     | `box-shadow`, `filter`, `background-position`, `background-color` |
+| `opacity`       | `width`, `height`, `top`, `left`, `margin`, `padding`, `border-*` |
+
+The recurring mistake in this codebase has been reaching for the property that
+describes the effect (`box-shadow` for a glow, `filter` for a drop-shadow throb,
+`background-position` for a marching stripe) instead of the property that can be
+cheaply animated. **Draw the effect once at a fixed value, then animate its
+`opacity` or `transform`** - usually on an absolutely-positioned `::after`
+overlay so the static paint and the animated property live on different nodes:
+
+```css
+/* WRONG - repaints the element every frame, forever */
+@keyframes glow {
+	0%,
+	100% {
+		box-shadow: 0 0 4px var(--c);
+	}
+	50% {
+		box-shadow: 0 0 8px var(--c);
+	}
+}
+.badge {
+	animation: glow 2s ease-in-out infinite;
+}
+
+/* RIGHT - the shadow is painted once; only opacity animates */
+@keyframes glow {
+	0%,
+	100% {
+		opacity: 0.45;
+	}
+	50% {
+		opacity: 1;
+	}
+}
+.badge {
+	position: relative;
+}
+.badge::after {
+	content: '';
+	position: absolute;
+	inset: 0;
+	border-radius: inherit;
+	pointer-events: none;
+	box-shadow: inset 0 0 8px var(--c);
+	animation: glow 2s ease-in-out infinite;
+	will-change: opacity;
+}
+```
+
+Measured: `background-position` stripes on a single 240x12px progress bar drove
+**744 main-thread frames in 4 seconds** (~186fps of pointless work) against a
+27-frame idle floor. The rewritten `transform` version measured at the floor.
+
+Notes:
+
+- **Use an inset shadow on an overlay when the host is `overflow-hidden`**, or
+  the parent clips a shadow drawn by a child.
+- **Add `will-change` to the animated property** so the layer is promoted before
+  the first frame rather than during it, and reset it to `auto` wherever the
+  animation is disabled.
+- **Name the pseudo-element in the `prefers-reduced-motion` block.**
+  `.thing { animation: none }` does NOT stop `.thing::after` - the reduced-motion
+  opt-out silently stops working when an animation moves onto an overlay.
+- Verify rather than assume. Trace the page and count
+  `ProxyMain::BeginMainFrame`: a composited animation produces none while it
+  plays. Chromium's compositing rules change between versions, so a property
+  that was main-thread-bound in an older engine may not be today - and vice
+  versa. Do not refactor a working animation on theory alone; measure first.
+
 ## Performance Profiling
 
 For React DevTools profiling workflow, see [[CONTRIBUTING.md#profiling]].
@@ -463,6 +544,13 @@ agent activity. Do not add in-app trace parsing.
    FunctionCall / GC), and the hottest JS functions with `url:line` when the
    trace carried script coordinates. Pipe to a file and read it, or let the
    script's output drive the fix.
+
+   > **Known limit:** the script reads the whole trace into one string, so a
+   > `trace.json` over ~512MB fails with `Cannot create a string longer than
+0x1fffffe8 characters`. A full-buffer capture can easily exceed that. Until
+   > it streams, analyze a trace that large by reading `trace.json` line by line
+   > (Chromium emits one event per line) with `readline` and aggregating
+   > yourself.
 
 3. **For frame-level detail**, load `trace.json` into <https://ui.perfetto.dev>
    (or `chrome://tracing`) and jump to the task start times the script reported.

@@ -37,6 +37,7 @@ src/cli/
 │   ├── refresh-files.ts
 │   ├── remove-agent.ts       # Remove agent via WebSocket (requires running app)
 │   ├── update-agent.ts       # Move agent to group / change cwd via WebSocket (requires running app)
+│   ├── update-ssh-remote.ts  # Edit an SSH remote via disk I/O
 │   ├── remove-ssh-remote.ts  # Remove SSH remote via disk I/O
 │   ├── run-playbook.ts
 │   ├── run-doc.ts            # Run raw Auto Run docs headlessly (no saved playbook)
@@ -366,7 +367,7 @@ maestro-cli list ssh-remotes [--json]
 Create a new SSH remote configuration. Direct disk I/O via `readSshRemotes()`/`writeSshRemotes()`.
 
 ```bash
-maestro-cli create-ssh-remote <name> -H <host> [-p <port>] [-u <user>] [-k <key-path>] [--env KEY=VALUE]... [--ssh-config] [--disabled] [--set-default] [--json]
+maestro-cli create-ssh-remote <name> -H <host> [-p <port>] [-u <user>] [-k <key-path>] [--env KEY=VALUE]... [--ssh-option KEY=VALUE]... [--ssh-config] [--disabled] [--set-default] [--json]
 ```
 
 Options:
@@ -376,8 +377,30 @@ Options:
 - `--ssh-config` - Use `~/.ssh/config` mode; host becomes the Host pattern
 - `--set-default` - Writes `defaultSshRemoteId` to settings
 - `--env KEY=VALUE` - Repeatable remote environment variable
+- `--ssh-option KEY=VALUE` - Repeatable extra `ssh -o` option, validated by
+  `validateSshOption()` in `src/shared/sshOptions.ts`
 
 Generates a UUID via `crypto.randomUUID()` for the remote ID.
+
+### `update-ssh-remote <remote-id>`
+
+Edit an existing SSH remote in place. Same direct disk I/O and partial ID
+matching as the other two.
+
+```bash
+maestro-cli update-ssh-remote <remote-id> [-n <name>] [-H <host>] [-p <port>] [-u <user>] [-k <key-path>] [--env KEY=VALUE]... [--clear-env] [--ssh-option KEY=VALUE]... [--clear-ssh-options] [--ssh-config <bool>] [--enabled <bool>] [--set-default] [--json]
+```
+
+`--env` and `--ssh-option` MERGE into the existing maps rather than replacing
+them, so setting one option cannot silently drop the others; `--clear-env` and
+`--clear-ssh-options` empty the respective map first. An empty string to `-u` or
+`-k` clears that field.
+
+`--json` (and `list-ssh-remotes --json`) reports `resolvedSshOptions` alongside
+the stored `sshOptions`: the full merged set `ssh` receives once
+`resolveSshOptions()` has folded the overrides over Maestro's defaults. That is
+the field that answers "did my override take effect?" - the stored map alone
+cannot, since a reserved key is dropped and a default may already hold the slot.
 
 ### `remove-ssh-remote <remote-id>`
 
@@ -734,26 +757,27 @@ Machine-parseable output format. Each line is a complete JSON object. Used when 
 
 ## Key Files Reference
 
-| Concern             | Primary Files                                                                          |
-| ------------------- | -------------------------------------------------------------------------------------- |
-| CLI entry point     | `src/cli/index.ts`                                                                     |
-| Storage reader      | `src/cli/services/storage.ts`                                                          |
-| Agent spawner       | `src/cli/services/agent-spawner.ts`                                                    |
-| Batch processor     | `src/cli/services/batch-processor.ts`                                                  |
-| Playbook management | `src/cli/services/playbooks.ts`                                                        |
-| Agent sessions      | `src/cli/services/agent-sessions.ts`                                                   |
-| Desktop IPC client  | `src/cli/services/maestro-client.ts`                                                   |
-| Human output        | `src/cli/output/formatter.ts`                                                          |
-| JSONL output        | `src/cli/output/jsonl.ts`                                                              |
-| Send command        | `src/cli/commands/send.ts`                                                             |
-| Run playbook        | `src/cli/commands/run-playbook.ts`                                                     |
-| Create agent        | `src/cli/commands/create-agent.ts`                                                     |
-| Remove agent        | `src/cli/commands/remove-agent.ts`                                                     |
-| Update agent        | `src/cli/commands/update-agent.ts`                                                     |
-| SSH remote CRUD     | `src/cli/commands/create-ssh-remote.ts`, `list-ssh-remotes.ts`, `remove-ssh-remote.ts` |
-| Shared types        | `src/shared/types.ts`                                                                  |
-| Template variables  | `src/shared/templateVariables.ts`                                                      |
-| Agent definitions   | `src/main/agents/definitions.ts`                                                       |
-| Agent IDs           | `src/shared/agentIds.ts`                                                               |
-| CLI activity        | `src/shared/cli-activity.ts`                                                           |
-| Prompt templates    | `src/prompts/`                                                                         |
+| Concern             | Primary Files                                                                                                  |
+| ------------------- | -------------------------------------------------------------------------------------------------------------- |
+| CLI entry point     | `src/cli/index.ts`                                                                                             |
+| Storage reader      | `src/cli/services/storage.ts`                                                                                  |
+| Agent spawner       | `src/cli/services/agent-spawner.ts`                                                                            |
+| Batch processor     | `src/cli/services/batch-processor.ts`                                                                          |
+| Playbook management | `src/cli/services/playbooks.ts`                                                                                |
+| Agent sessions      | `src/cli/services/agent-sessions.ts`                                                                           |
+| Desktop IPC client  | `src/cli/services/maestro-client.ts`                                                                           |
+| Human output        | `src/cli/output/formatter.ts`                                                                                  |
+| JSONL output        | `src/cli/output/jsonl.ts`                                                                                      |
+| Send command        | `src/cli/commands/send.ts`                                                                                     |
+| Run playbook        | `src/cli/commands/run-playbook.ts`                                                                             |
+| Create agent        | `src/cli/commands/create-agent.ts`                                                                             |
+| Remove agent        | `src/cli/commands/remove-agent.ts`                                                                             |
+| Update agent        | `src/cli/commands/update-agent.ts`                                                                             |
+| SSH remote CRUD     | `src/cli/commands/create-ssh-remote.ts`, `list-ssh-remotes.ts`, `update-ssh-remote.ts`, `remove-ssh-remote.ts` |
+| SSH `-o` resolution | `src/shared/sshOptions.ts`                                                                                     |
+| Shared types        | `src/shared/types.ts`                                                                                          |
+| Template variables  | `src/shared/templateVariables.ts`                                                                              |
+| Agent definitions   | `src/main/agents/definitions.ts`                                                                               |
+| Agent IDs           | `src/shared/agentIds.ts`                                                                                       |
+| CLI activity        | `src/shared/cli-activity.ts`                                                                                   |
+| Prompt templates    | `src/prompts/`                                                                                                 |

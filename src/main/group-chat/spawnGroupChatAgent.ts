@@ -11,7 +11,7 @@
 
 import { IProcessManager } from './group-chat-moderator';
 import { getContextWindowValue } from '../utils/agent-args';
-import { wrapSpawnWithSsh } from '../utils/ssh-spawn-wrapper';
+import { wrapSpawnWithSsh, sshUnresolvedRemoteMessage } from '../utils/ssh-spawn-wrapper';
 import { getSshRemoteConfig, type SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
 import { ensureRemoteMaestroPProbed } from '../agents/probeRemoteMaestroP';
 import { getWindowsSpawnConfig } from './group-chat-config';
@@ -209,6 +209,14 @@ export async function spawnGroupChatAgent(
 			sshRemoteConfig,
 			sshStore
 		);
+		// wrapSpawnWithSsh quietly hands back the unmodified local config when the
+		// remote cannot be resolved. Taking it would run this agent on the user's
+		// own machine against the REMOTE's cwd - the participant would either fail
+		// on a missing directory or, worse, succeed against the wrong files. The
+		// user opted into a remote host, so fail loudly instead of degrading.
+		if (!sshWrapped.sshRemoteUsed) {
+			throw new Error(sshUnresolvedRemoteMessage(sshRemoteConfig));
+		}
 		spawnCommand = sshWrapped.command;
 		spawnArgs = sshWrapped.args;
 		spawnCwd = sshWrapped.cwd;

@@ -727,10 +727,12 @@ The values come from `LogEntry.turnModel` / `turnEffort`, copied in `useBatchedS
 
 The presence of the `turnSettings` OBJECT is the capture flag, not the presence of its fields. `undefined` model/effort inside a present object means "the agent's default was in force when I queued", which is a real choice - never write `item.turnSettings?.model ?? liveModel`, or an item queued on the default silently inherits whatever the user selected afterwards. The object is absent only on items restored from a build that predates the capture, which is the one case that falls back to live values.
 
+**The token-source half is opt-in.** The `showProviderModePill` display setting (Settings -> Display -> Provider Mode Pill, default OFF) suppresses the `claude -p` / `TUI Wrapper` pill everywhere it appears: the chat footer (`TerminalOutput`), the History list row (`HistoryEntryItem`), and the history detail view (`HistoryDetailModal`). The model and effort pills are NOT gated by it - they are separate facts about the turn. All three surfaces read the store field directly rather than threading a prop, so a new surface that renders `getTokenSourcePill()` has to remember the gate itself.
+
 Two traps when touching this row:
 
 - `collapsedLogs` in `TerminalOutput` merges consecutive non-user entries into one rendered entry built from `[0]`. A group can lead with a system banner that carries no stamp, so the merge lifts `turnModel` / `turnEffort` from the first grouped entry that has them - the same fix `renderStyle` needed.
-- `LogItem`'s memo comparator lists every field that affects rendering. A new pill field that is not in that list will not repaint when it changes.
+- `LogItem`'s memo comparator lists every field that affects rendering. A new pill field that is not in that list will not repaint when it changes. `showProviderModePill` is passed down as a primitive prop (not read from the store inside `LogItem`) for exactly this reason, and it is listed in the comparator.
 
 ### Keycaps (`<Keycap>` / `<KeycapHint>`)
 
@@ -781,6 +783,25 @@ It uses `useLayoutEffect`, not `useEffect`: the scroll has to land in the same f
 
 Distinct from `useScrollIntoView` (brings ONE element into view inside a list, for keyboard navigation) and from `TerminalOutput`'s MutationObserver auto-scroll (owns the whole conversation pane). Pick by scope: one self-contained box, one element in a list, or the whole pane.
 
+### Restoring a Transcript's Scroll Position
+
+An AI tab is left in one of TWO states, and they restore differently. `TerminalOutput` takes both `initialScrollTop` (the tab's saved `scrollTop`) and `initialIsAtBottom` (the tab's saved `isAtBottom`) and hands them to `useTerminalOutputScroll()`, and it needs both.
+
+**Following the tail** (`isAtBottom` true, or unset). The saved `scrollTop` is only a snapshot of where the bottom HAPPENED TO BE at save time, and the transcript keeps growing while the tab is off screen. Restoring that number verbatim drops the user however far the agent wrote while they were away, and because the stale offset is then far above the new bottom, the restore ALSO pauses auto-scroll - so the transcript will not even follow the output that stranded them. Clicking a toast to read a finished reply landed thousands of pixels above it, with the tail switched off. Such a tab restores to the BOTTOM and ignores the saved number.
+
+**Parked mid-history** (`isAtBottom` false). The offset is exactly right and must be honored: new entries are appended BELOW, so what the user was reading has not moved. This restore pauses auto-scroll on purpose, or the MutationObserver yanks the view straight back down.
+
+`undefined` counts as at-bottom, which is the same default the unread gate in `useAgentDataListener` uses (`targetTab.isAtBottom !== false`). Keep the two spellings identical - a tab that is "at the bottom" for unread purposes and "parked" for scroll purposes is the bug above wearing a different hat.
+
+**Neither target is reached in one frame.** A single `requestAnimationFrame` proves the DOM is MOUNTED, not that its height has settled: images are still decoding, fonts still swapping, code blocks still re-highlighting. `scrollHeight` is short on that first frame and `maxScroll` with it, so the restore clamps to less than it was asked for and the tab opens above where the user left it. The restore therefore re-attempts across frames, and the two states latch differently:
+
+- A fixed offset latches as soon as the content is tall enough to hold it, so the restore re-applies under a `ResizeObserver` on the container until it lands, with `SCROLL_RESTORE_SETTLE_MS` as a hard stop.
+- The bottom cannot be latched that way at all, because `maxScroll` MOVES with every late image. "Landed on the bottom" is true on the first frame and wrong on the next, so a tail-following tab does not run the offset restore: the mount-time bottom jump plus the follow-the-tail `MutationObserver`/`ResizeObserver` keep it pinned to the live bottom as the content grows.
+
+A genuine user scroll during the settle abandons the restore (`wheel` / `touchstart` on the container tear the retry down); their input wins, because a restore that keeps yanking the view is worse than landing slightly high. An in-flight cross-tab search jump wins for the same reason (`jumpInFlightRef`).
+
+Do not "simplify" this back to a single saved offset. A pixel offset cannot express "wherever the newest message is", and that is the state most tabs are actually left in.
+
 ### Scrolling a Virtualized List to the Selection
 
 A virtualized list follows its selection through the virtualizer's own `scrollToIndex`, from an effect keyed on the selected index. Never through a `ref` on the selected row.
@@ -806,6 +827,31 @@ The same identity trap applies to a non-virtualized list, minus the loop - the s
 **Smooth or instant is decided by how the user moves through the list**, not by taste. `useScrollIntoView(isOpen, selectedIndex, itemCount, behavior)` defaults to `'smooth'`, which is right for a short dropdown stepped one item at a time (the slash-command, tab-completion, and @-mention popovers in `InputArea`). Pass `'auto'` for a list the user HOLDS an arrow key on: key repeat fires faster than a smooth scroll animates, so each repeat cancels the animation in flight and the list lurches and stalls instead of stepping. An instant scroll per keypress is what reads as smooth under key repeat. `GroupChatHistoryPanel` is the first `'auto'` caller, and it pairs the hook with `scroll-p-2` on the scroll container so `block: 'nearest'` leaves a sliver of the next entry visible at the edges - without the padding the selection pins flat against the boundary and a held arrow looks like the list stopped moving.
 
 Testing it needs the virtualizer mocked: jsdom has no layout engine, so the real one measures a zero-height scroll element, yields zero items, and every assertion about row scrolling passes vacuously. `FileSearchModal.render.test.tsx` mocks `useVirtualizer` to emit a fixed window of rows, stubs `Element.prototype.scrollIntoView` (jsdom does not implement it), and asserts it is never called. Lead with a test that the rows exist, or the suite proves nothing.
+
+### Sizing a Virtualized Row the User's Font Decides
+
+`estimateSize` is a guess, not a height. If a row's real height depends on
+anything the app does not control - the user's UI font, a wrapped second line, a
+badge that only some rows carry - the row has to measure itself:
+
+```tsx
+const virtualizer = useVirtualizer({ count, getScrollElement, estimateSize: () => ROW_HEIGHT });
+const measureRow = virtualizer.measureElement;
+
+<button data-index={virtualRow.index} ref={measureRow} style={{ transform: `translateY(${virtualRow.start}px)` }}>
+```
+
+Three parts, and all three are required:
+
+- **`ref={virtualizer.measureElement}`** read straight off the virtualizer. It is a stable instance property, so the ref does not detach and reattach every render. Do NOT wrap it in an inline arrow (`ref={(el) => virtualizer.measureElement(el)}`) - that is the same identity trap as the scroll ref above, and it remeasures the whole window on every render.
+- **`data-index`** on the same node. `measureElement` reads that attribute to learn which row it just measured; without it the size is filed against `NaN` and the row silently keeps the estimate.
+- **No inline `height`.** `height: ${virtualRow.size}px` clamps the row to the number the virtualizer already believes, so measurement can never disagree with the guess. Keep `transform: translateY(...)` for position; let padding and content decide the height.
+
+`HistoryPanel` and `UnifiedHistoryTab` were the first two to do this, for entry cards whose height depends on how much text is in them. `FileSearchModal` is the newest: its rows stack a file name over a directory, and under a proportional UI font two lines do not fit the 44px estimate, so the text crammed together. A fixed-pitch font, meanwhile, wants the tighter box and should not be padded out to match. One number cannot serve both; measurement serves both.
+
+A fixed `estimateSize` with no `measureElement` is still right for a list whose rows genuinely are one uniform line (`TextPreviewFast`, `ParquetGrid`), and it is cheaper. Reach for measurement when the height is not yours to decide.
+
+Testing this in jsdom cannot assert a height - there is no layout engine, and every element reports zero. Assert the wiring instead: the row carries `data-index`, the ref is `measureElement` itself, and no inline `height` is set. `FileSearchModal.render.test.tsx` does exactly that, and all three assertions fail if any part of the pattern is reverted.
 
 ### Rendering Raw Terminal Output (`useAnsiConverter`)
 
@@ -904,7 +950,7 @@ Three modes with built-in themes:
 
 **Light**: github-light, solarized-light, one-light, gruvbox-light, catppuccin-latte, ayu-light
 
-**Vibe**: pedurple, maestros-choice, dre-synth, inquest
+**Vibe**: pedurple, maestros-choice, dre-synth, winamp
 
 Plus `custom` - user-defined via Custom Theme Builder.
 
@@ -1555,10 +1601,15 @@ const fontScale = useFontScale('filePreview.fontScale');
 - `variant="inline"` - bordered squares for a toolbar or stats bar (Director's Notes).
 - `variant="floating"` - frosted pill for overlaying a scrolling pane (file preview,
   pinned top-right as the mirror of the Table of Contents button at bottom-right).
+  The Auto Run panel uses the same treatment over its document, so zooming reads
+  identically whether a document is open in a file tab or in the Right Bar. Pin it
+  with a `sticky top-* z-20 h-0` row rather than `absolute`: sticky needs no
+  positioned ancestor and the zero height keeps the pill from displacing content.
 - `size` - `'md'` (default) or `'sm'`, which drops the buttons from `w-7 h-7` to
-  `w-6 h-6` and the icons from `w-4` to `w-3.5`. Use `'sm'` in a dense `text-xs`
-  button row (the Auto Run toolbar), where the default squares stand a couple of
-  pixels taller than the row and read heavier than the buttons beside them.
+  `w-6 h-6` and the icons from `w-4` to `w-3.5`. Use `'sm'` where the surface is
+  narrow (the Auto Run panel in the Right Bar) or in a dense `text-xs` button row,
+  where the default squares stand a couple of pixels taller than the row and read
+  heavier than the buttons beside them.
 - **A pane with a read mode and an edit mode gets two scales, not one.** Auto Run
   keeps `autoRun.previewFontScale` and `autoRun.editFontScale` and passes whichever
   matches the current mode; reading rendered prose and editing Markdown source are

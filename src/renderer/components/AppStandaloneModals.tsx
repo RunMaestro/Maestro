@@ -1,11 +1,10 @@
-import { lazy, memo, Suspense, useCallback, useMemo } from 'react';
+import { lazy, memo, Suspense, useMemo } from 'react';
 import { useModalActions, useModalStore } from '../stores/modalStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { useTabStore } from '../stores/tabStore';
 import { useMessageGistStore } from '../stores/messageGistStore';
 import { useActiveSession } from '../hooks/session/useActiveSession';
 import { useSessionStore } from '../stores/sessionStore';
-import { useSettingsStore } from '../stores/settingsStore';
 import { notifyToast } from '../stores/notificationStore';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { THEMES } from '../constants/themes';
@@ -577,6 +576,9 @@ function AppStandaloneModalsInner({
 						// A graph that knows where it came from is one Escape from being
 						// back there, so the "are you sure?" prompt is pure friction.
 						confirmOnClose={documentGraphConfirmClose && !graphReturnTo}
+						// Same component, different subject: a graph opened from the
+						// Memory viewer is graphing memories, not project documents.
+						title={graphReturnTo === 'memoryViewer' ? 'Memory Graph' : undefined}
 						theme={theme}
 						rootPath={graphRootPath || activeSession?.projectRoot || activeSession?.cwd || ''}
 						onDocumentOpen={async (filePath) => {

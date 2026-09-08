@@ -203,18 +203,35 @@ The runner will:
 
 ## Thought Stream
 
-While a run is active, you can watch the agent's live reasoning without changing any settings. In the **Auto Run** card, click **View Thoughts** (the brain icon) to open the **Thought Stream** - a floating, searchable panel that streams the agent's thinking as it works.
+While a run is active, you can watch what the agent is doing without changing any settings. In the **Auto Run** card, click **View Thoughts** (the brain icon) to open the **Thought Stream** - a floating, searchable panel that streams the agent's reasoning _and_ its tool calls as it works.
 
-Thoughts are buffered from the moment the agent starts thinking, whether or not the panel is open. That is deliberate: you usually go looking at the thought stream _because_ a run has been sitting still for a while, and a stream that only started recording when you opened it would hand you an empty log at exactly the wrong moment. Open it after twenty quiet minutes and you get those twenty minutes.
+Every tool call is reduced to one short line in plain language, interleaved with the reasoning that produced it:
 
-It works the same for **Spec-Driven** and **Goal-Driven** runs, because both flow through the same agent. The panel captures the raw reasoning stream directly, so it shows thoughts even when an AI tab's "show thinking" display is turned off.
+```text
+3:42:07 PM  ⟳ Ran npm test
+3:42:04 PM  ✓ Read src/renderer/components/ThoughtStreamPanel.tsx
+3:42:01 PM  ✓ Searched for THOUGHT_BLOCK_GAP_MS
+3:41:58 PM  ! Edited src/renderer/constants/themes.ts
+```
+
+A spinner marks a call still in flight; a check or a warning marks how it ended. A shell command that exits non-zero gets the warning even when the provider calls it "completed". The full inputs and outputs stay in the chat transcript - this feed is built to be _scanned_, so that an agent stuck in a loop or grinding on an unproductive task is obvious at a glance and you can stop it before it burns more tokens.
+
+Tool names are normalized across providers (Claude Code, Codex, OpenCode, Copilot, and MCP servers), so the lines read the same no matter which agent is running.
+
+The **wrench** button in the panel header turns the tool-call lines off and on, and the panel remembers your choice. It is a display filter, not a capture switch: actions keep buffering while they are hidden, the header keeps counting them (`14 actions hidden`), and turning them back on shows everything that happened in the meantime. Turn them off when you only want to follow the agent's reasoning; leave them on when you are watching for a loop.
+
+Thoughts and tool calls are buffered from the moment the agent starts working, whether or not the panel is open. That is deliberate: you usually go looking at the thought stream _because_ a run has been sitting still for a while, and a stream that only started recording when you opened it would hand you an empty log at exactly the wrong moment. Open it after twenty quiet minutes and you get those twenty minutes.
+
+It works the same for **Spec-Driven** and **Goal-Driven** runs, because both flow through the same agent. The panel captures the raw streams directly, so it shows thinking and tool calls even when an AI tab's "show thinking" and tool-call display are turned off. For an Auto Run this is the only place the tool calls appear at all: a run has no chat tab of its own for a transcript to live in.
 
 - **Newest on top** - the live thought sits at the top and grows; scroll down to read the history of the run.
 - **Timestamped blocks** - a continuous burst of thinking is grouped into one block with a time stamp; a pause (or a switch between parallel tabs) starts a new block.
 - **Formatted** - thoughts render as formatted markdown (headings, lists, bold, inline code, code fences), so structured reasoning stays readable.
-- **Search** - filter the captured thoughts with the search box; matches are highlighted.
+- **In order** - a tool call renders between the reasoning that led to it and the reasoning that followed, so the feed reads as the sequence the agent actually performed.
+- **Search** - filter the feed with the search box; matches are highlighted. Searching a tool name ("Bash") finds calls the feed renders under a plain-language verb ("Ran ...").
+- **Counts** - the header tracks thoughts and actions separately. A climbing action count against flat reasoning is what a loop looks like.
 
-The button highlights once there are buffered thoughts waiting to be read, and its tooltip gives the count.
+The button highlights once there is anything buffered to read, and its tooltip gives the count.
 
 **Open, close, clear:**
 
@@ -226,7 +243,7 @@ There is no minimize. It used to mean "hide the panel but keep capturing," which
 
 Once a run finishes, the Right Panel's run card goes away and takes its **View Thoughts** button with it. The buffer outlives the run, so a **Thoughts** button appears at the bottom of the Auto Run panel for as long as there is something buffered to read.
 
-Capture is in-memory only - it does not survive an app restart, and it is bounded on three axes so a fleet of agents running all day can't grow memory without limit: thoughts per agent, characters per agent, and how many agents keep a buffer at all (the least recently active is dropped first, and the agent you have open is never dropped). Trimming within an agent is noted as "trimmed" in the panel header. Running several Auto Runs at once? Each agent buffers independently; opening the panel for one agent never mixes in another's thoughts.
+Capture is in-memory only - it does not survive an app restart, and it is bounded on three axes so a fleet of agents running all day can't grow memory without limit: timeline entries per agent, characters per agent, and how many agents keep a buffer at all (the least recently active is dropped first, and the agent you have open is never dropped). Trimming within an agent is noted as "trimmed" in the panel header. Running several Auto Runs at once? Each agent buffers independently; opening the panel for one agent never mixes in another's thoughts.
 
 ## Session Isolation
 
@@ -452,6 +469,30 @@ Pills reflect **state, not just presence**. A gate above an unchecked task and a
 
 Marker pills appear only on document surfaces. An agent that mentions the marker syntax in a chat message is describing a marker, not configuring one, so that text keeps rendering as ordinary prose.
 
+## Human-in-the-Loop Gates
+
+When a task needs a person - manual testing, visual judgment, sign-off, or a credential only a human can obtain - the agent writes a gate marker on its own line above that task:
+
+```html
+<!-- MAESTRO:HITL reason="Add SENDGRID_API_KEY to .env before the mailer tasks run" artifact="https://staging.example.com/checkout" -->
+```
+
+In the desktop app the run **pauses** there, surfaces the reason (and the optional `artifact` to look at) in the Auto Run panel and a toast, and waits. You resume by ticking the box above the marker or clicking Resume. That is a deliberate, visible pause, the opposite of a stall.
+
+A headless CLI run has no human to wait for, so `maestro run-playbook` reports the gate as a `document_gated` event naming the reason and the line, then moves to the next document. The marker means the same thing on both surfaces; only the response differs.
+
+A gate is the right answer whenever the blocker is a person. Reaching for the halt marker instead throws away every remaining task in every remaining document because one task needed a signature.
+
+## Stalled Documents
+
+A task the agent cannot finish stays unchecked, and an unchecked task is a task the engine will dispatch again. Left unbounded that is an infinite loop, so both engines count consecutive runs that moved no checkbox and give up on the document after **three** of them.
+
+Progress is measured by checkbox, never by document bytes. An agent that cannot do the work usually writes an explanation into the file instead, and a byte comparison would read that as progress and let the loop run forever. Ticking a box counts; adding or removing tasks counts; a thousand words of apology does not.
+
+When a document stalls, the playbook **continues to the next document** - only that document is abandoned. The desktop app records a History entry and raises a warning toast; the CLI emits a `document_stalled` event naming the reason and how many tasks were left. On the desktop a watchdog failure (the agent hung or blew its time budget) trips the threshold immediately rather than spending two more dispatches to reach the same conclusion.
+
+This is why an agent almost never needs the halt marker. A stuck task resolves itself.
+
 ## Halt Marker (Agent Early Exit)
 
 Sometimes the agent itself discovers that the rest of the playbook cannot meaningfully proceed - a missing dependency, a broken precondition, an ambiguous spec it cannot resolve, or a destructive change it refuses to make. In that case the agent can abort the entire run by writing a halt marker into the current document:
@@ -471,7 +512,29 @@ The bare form `<!-- maestro:halt -->` works without a reason, but agents are ins
 
 This is distinct from clicking **Stop** (a manual user action) or a single task simply failing (which by default does **not** halt the playbook - Auto Run is designed to run independent tasks, so one failure doesn't invalidate the rest).
 
-A stale halt marker left in a document will block re-runs with an error - Auto Run refuses to start so previously-halted work isn't silently replayed. Remove the marker before launching the playbook again.
+Halting should be **rare**. Agents are told to reserve it for the case where continuing would actively waste work or cause harm, and to reach for other mechanisms first:
+
+| Situation                                                              | Right mechanism                                        |
+| ---------------------------------------------------------------------- | ------------------------------------------------------ |
+| A task needs a person                                                  | HITL gate - pauses, then resumes on a tick             |
+| A task the agent cannot do                                             | Leave it unchecked; the stall guard skips the document |
+| One task failed, others are independent                                | Nothing; the run continues                             |
+| Everything downstream is now invalid, or continuing would cause damage | Halt                                                   |
+
+A stale halt marker left in a document will block re-runs with an error naming the file and line - Auto Run refuses to start so previously-halted work isn't silently replayed. Remove the marker before launching the playbook again.
+
+### The marker has to stand alone
+
+A halt marker is a statement that the run **has** stopped, not a conditional that says when it should. To keep a playbook from halting itself just by describing the feature, three positions are read as quotation and ignored:
+
+| Position                              | Read as     |
+| ------------------------------------- | ----------- |
+| Inside a fenced code block            | Example     |
+| Inside inline backticks               | Example     |
+| On a `- [ ]` or `- [x]` checkbox line | Example     |
+| Alone on a line in the document body  | A real halt |
+
+That is why the code blocks on this page do not brick this document, and why a playbook can safely contain a task like "Run the test suite. If it fails in a way that invalidates later tasks, halt the run." Write halt conditions in words; leave the literal marker to the agent that actually hits one.
 
 ## Parallel Auto Runs
 

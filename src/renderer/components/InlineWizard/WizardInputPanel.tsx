@@ -44,6 +44,7 @@ import {
 } from '../../utils/shortcutFormatter';
 import { useSessionStore } from '../../stores/sessionStore';
 import { closeTab } from '../../utils/tabHelpers';
+import { displayImageSrc } from '../../utils/sessionImageSrc';
 import { useAutosizeTextarea } from '../../hooks/ui/useAutosizeTextarea';
 
 /** Height cap for the wizard composer; past it the textarea scrolls. */
@@ -256,7 +257,7 @@ export const WizardInputPanel = React.memo(function WizardInputPanel({
 								onClick={() => setLightboxImage?.(img, stagedImages, 'staged')}
 							>
 								<img
-									src={img}
+									src={displayImageSrc(img)}
 									alt={`Staged wizard image ${idx + 1}`}
 									className="h-16 rounded border cursor-pointer hover:opacity-80 transition-opacity block"
 									style={{

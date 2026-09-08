@@ -1,4 +1,5 @@
 import { useRef, useCallback } from 'react';
+import type { Session } from '../../types';
 
 // Kind of tab a navigation entry points at. Mirrors UnifiedTabRef['type'].
 export type NavTabKind = 'ai' | 'file' | 'terminal' | 'browser';
@@ -10,6 +11,41 @@ export interface NavHistoryEntry {
 	tabKind?: NavTabKind; // Kind of the active tab; absent/legacy entries are treated as 'ai'
 	groupChatId?: string; // Set when navigating to a group chat
 }
+
+/**
+ * Resolve the active tab of a session into a breadcrumb descriptor (id + kind).
+ *
+ * Priority mirrors findActiveUnifiedTabIndex (terminal > file > browser > ai)
+ * so the breadcrumb tracks whichever tab the user actually sees.
+ *
+ * Shared by BOTH sides of the breadcrumb: the recorder (useSessionLifecycle)
+ * uses it to stamp each visit, and the navigator (useSessionNavigation) uses it
+ * to tell "this entry would move me" from "this entry is where I already am".
+ * One definition, so the two can never drift into disagreeing about what the
+ * current position is.
+ */
+export function resolveActiveNavTab(session: Session): { tabId?: string; tabKind?: NavTabKind } {
+	if (session.activeTerminalTabId) {
+		return { tabId: session.activeTerminalTabId, tabKind: 'terminal' };
+	}
+	if (session.activeFileTabId) {
+		return { tabId: session.activeFileTabId, tabKind: 'file' };
+	}
+	if (session.activeBrowserTabId) {
+		return { tabId: session.activeBrowserTabId, tabKind: 'browser' };
+	}
+	if (session.aiTabs?.length > 0) {
+		return { tabId: session.activeTabId, tabKind: 'ai' };
+	}
+	return {};
+}
+
+/**
+ * Can this entry still be navigated to, and would going there actually move the
+ * view? Supplied by the caller (which owns session state) to
+ * {@link useNavigationHistory}'s navigateBack/navigateForward.
+ */
+export type NavEntryUsable = (entry: NavHistoryEntry) => boolean;
 
 const MAX_HISTORY = 50;
 
@@ -69,10 +105,32 @@ export function useNavigationHistory() {
 	}, []);
 
 	/**
-	 * Navigate back in history. Returns the entry to navigate to, or null if can't go back.
+	 * Pop the newest entry from `stack` that the caller says is still usable,
+	 * DISCARDING every entry it has to step over.
+	 *
+	 * Discarding is the point. An entry is unusable for one of two reasons, and
+	 * neither can heal: the tab or agent it names is gone, or it names the spot
+	 * the user is already looking at. Keeping such an entry made Cmd+Shift+, a
+	 * dead key - each press silently burned one tombstone and moved nothing, so
+	 * closing a couple of tabs was enough to make breadcrumb navigation look
+	 * broken. Dropping them means one press always produces one visible move.
 	 */
-	const navigateBack = useCallback((): NavHistoryEntry | null => {
-		if (historyRef.current.length === 0) {
+	const popUsable = (stack: NavHistoryEntry[], canUse?: NavEntryUsable): NavHistoryEntry | null => {
+		while (stack.length > 0) {
+			const candidate = stack.pop()!;
+			if (!canUse || canUse(candidate)) return candidate;
+		}
+		return null;
+	};
+
+	/**
+	 * Navigate back in history. Returns the entry to navigate to, or null if can't go back.
+	 *
+	 * @param canUse - Optional filter; entries it rejects are dropped, not visited.
+	 */
+	const navigateBack = useCallback((canUse?: NavEntryUsable): NavHistoryEntry | null => {
+		const entry = popUsable(historyRef.current, canUse);
+		if (!entry) {
 			return null;
 		}
 
@@ -83,8 +141,6 @@ export function useNavigationHistory() {
 			forwardStackRef.current.push(currentRef.current);
 		}
 
-		// Pop from history
-		const entry = historyRef.current.pop()!;
 		currentRef.current = entry;
 
 		// Reset flag after a tick to allow the navigation to complete
@@ -97,9 +153,12 @@ export function useNavigationHistory() {
 
 	/**
 	 * Navigate forward in history. Returns the entry to navigate to, or null if can't go forward.
+	 *
+	 * @param canUse - Optional filter; entries it rejects are dropped, not visited.
 	 */
-	const navigateForward = useCallback((): NavHistoryEntry | null => {
-		if (forwardStackRef.current.length === 0) {
+	const navigateForward = useCallback((canUse?: NavEntryUsable): NavHistoryEntry | null => {
+		const entry = popUsable(forwardStackRef.current, canUse);
+		if (!entry) {
 			return null;
 		}
 
@@ -110,8 +169,6 @@ export function useNavigationHistory() {
 			historyRef.current.push(currentRef.current);
 		}
 
-		// Pop from forward stack
-		const entry = forwardStackRef.current.pop()!;
 		currentRef.current = entry;
 
 		// Reset flag after a tick to allow the navigation to complete

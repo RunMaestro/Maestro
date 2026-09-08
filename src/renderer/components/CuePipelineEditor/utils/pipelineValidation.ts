@@ -25,6 +25,7 @@ export const DEFAULT_TRIGGER_LABELS: Record<CueEventType, string> = {
 	'agent.completed': 'Agent Done',
 	'github.pull_request': 'Pull Request',
 	'github.issue': 'Issue',
+	'github.label': 'Label Added',
 	'task.pending': 'Pending Task',
 	'cli.trigger': 'CLI Trigger',
 	'webhook.received': 'Webhook',
@@ -74,6 +75,7 @@ function validateTriggerConfig(
 			break;
 		case 'github.pull_request':
 		case 'github.issue':
+		case 'github.label':
 			// repo is optional in the YAML schema (defaults to current repo via gh CLI)
 			// but if provided it must be non-empty.
 			if (

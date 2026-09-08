@@ -188,15 +188,28 @@ export const AIOverviewTab = forwardRef<TabFocusHandle, AIOverviewTabProps>(func
 	// narrative inside RichOverview, which injects its own base prose styles.)
 	const proseStyles = generateTerminalProseStyles(theme, '.director-notes-content');
 
-	// Font-scale override. MarkdownRenderer's root `.prose` carries Tailwind's
-	// `text-sm` (0.875rem, an absolute rem unit), which would otherwise pin the
-	// base font size and ignore the zoom control. Override it with a scaled size
-	// (same selector → higher specificity than the utility class) so the em-based
-	// prose children scale proportionally. Injected at the content-container
-	// level so any `.director-notes-content` prose block picks it up. The zoom
-	// buttons themselves are Plain-only: Rich Mode is mostly fixed-size widget
-	// chrome that the rule cannot touch.
-	const proseScaleRule = `.director-notes-content .prose { font-size: calc(0.875rem * ${fontScale}) !important; }`;
+	// Font-scale override, injected at the content-container level so every
+	// reading surface under it picks the zoom up.
+	//
+	// Prose: MarkdownRenderer's root `.prose` carries Tailwind's `text-sm`
+	// (0.875rem, an absolute rem unit), which would otherwise pin the base font
+	// size and ignore the zoom control. Overriding it with a scaled size lets the
+	// em-based prose children scale proportionally.
+	//
+	// Narrative: Rich Mode draws its bullets as widgets rather than prose, so the
+	// `.prose` rule never reaches them and the control read as broken there. Each
+	// utility class the narrative uses gets its own ABSOLUTE scaled size (rather
+	// than an em chain off a scaled root) so nesting cannot compound the zoom. The
+	// two-class selectors outrank Tailwind's single-class utilities without
+	// `!important`. Rich Mode's stat cards and charts stay fixed on purpose: they
+	// are chrome around the reading text, not the reading text.
+	const proseScaleRule = [
+		`.director-notes-content .prose { font-size: calc(0.875rem * ${fontScale}) !important; }`,
+		`.director-notes-narrative { font-size: calc(0.875rem * ${fontScale}); }`,
+		`.director-notes-narrative .text-sm { font-size: calc(0.875rem * ${fontScale}); }`,
+		`.director-notes-narrative .text-xs { font-size: calc(0.75rem * ${fontScale}); }`,
+		`.director-notes-narrative .text-\\[0\\.65rem\\] { font-size: calc(0.65rem * ${fontScale}); }`,
+	].join('\n');
 
 	// Format generation duration for display
 	const formatDurationMs = (ms: number): string => {
@@ -579,19 +592,6 @@ export const AIOverviewTab = forwardRef<TabFocusHandle, AIOverviewTabProps>(func
 							</span>
 						</div>
 					)}
-
-					{/* Font-size controls - Plain Mode only. Rich Mode is a widget
-					    dashboard whose stat cards, timeline and breakdowns carry their
-					    own fixed sizing, so the zoom moved nothing there and the
-					    buttons read as broken. */}
-					{viewMode === 'plain' && (
-						<FontScaleControl
-							theme={theme}
-							control={fontScaleControl}
-							className="ml-auto"
-							testId="director-notes-font-scale"
-						/>
-					)}
 				</div>
 			)}
 
@@ -608,6 +608,24 @@ export const AIOverviewTab = forwardRef<TabFocusHandle, AIOverviewTabProps>(func
 				>
 					{/* Font-scale override - applies to both Plain and Rich narratives. */}
 					<style>{proseScaleRule}</style>
+					{/* Floating font zoom - the same control the file preview floats
+					    opposite its Table of Contents button, here pinned to the
+					    top-right of the pane: a circle at rest that expands to the full
+					    A-/A+ pill on hover or keyboard focus. Sticky (not absolute) so it
+					    stays put while the notes scroll under it, without depending on a
+					    positioned ancestor. */}
+					{synopsis && (
+						<div className="sticky top-0 z-20 h-0 flex items-start justify-end pointer-events-none">
+							<FontScaleControl
+								theme={theme}
+								control={fontScaleControl}
+								variant="floating"
+								collapsible
+								className="pointer-events-auto"
+								testId="director-notes-font-scale"
+							/>
+						</div>
+					)}
 					{/* Error banner - shown above content so old notes remain readable */}
 					{error && (
 						<div

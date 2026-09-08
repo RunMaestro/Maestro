@@ -108,6 +108,23 @@ describe('buildCrossAgentPrompt', () => {
 		expect(prompt).not.toContain('**User:**');
 	});
 
+	it('does not announce a transcript when none was forwarded', () => {
+		// `maestro-cli ask` sends a self-contained question with no transcript.
+		// Telling the target to read "the conversation transcript so far" sends it
+		// hunting for context that is not in the prompt.
+		const prompt = buildCrossAgentPrompt(request({ transcript: [], userPrompt: 'Just this' }));
+		expect(prompt).toContain('no prior conversation to read');
+		expect(prompt).not.toContain('conversation transcript so far');
+	});
+
+	it('still announces the transcript when one was forwarded', () => {
+		const prompt = buildCrossAgentPrompt(
+			request({ transcript: [entry('user', 'Hi')], userPrompt: 'Thoughts?' })
+		);
+		expect(prompt).toContain('conversation transcript so far');
+		expect(prompt).not.toContain('no prior conversation to read');
+	});
+
 	it('grants read access to the source cwd when forwarded, before the question', () => {
 		const prompt = buildCrossAgentPrompt(
 			request({ sourceCwd: '/Users/me/proj', userPrompt: 'Look at the config' })
@@ -129,6 +146,17 @@ describe('buildCrossAgentPrompt', () => {
 			request({ sourceCwd: '/Users/me/proj', userPrompt: 'Fix the bug' })
 		);
 		expect(prompt).toContain('Settings > General > Cross-Agent Mentions');
+		// The remedy has to name the setting as the user sees it in Settings, or
+		// the target sends them hunting for a control that is labeled otherwise.
+		expect(prompt).toContain('Consult or Delegate');
+	});
+
+	it('names the read-only mode a consult so the target can say which mode it is in', () => {
+		const prompt = buildCrossAgentPrompt(
+			request({ sourceCwd: '/Users/me/proj', userPrompt: 'Fix the bug' })
+		);
+		expect(prompt).toContain('consults (read-only)');
+		expect(prompt).not.toContain('DELEGATION');
 	});
 
 	it('grants write access and drops the prohibition when writable is opted into', () => {
@@ -139,6 +167,14 @@ describe('buildCrossAgentPrompt', () => {
 		expect(prompt).toContain('permission to READ and MODIFY');
 		expect(prompt).not.toContain('Do NOT modify or create files');
 		expect(prompt).not.toContain('Settings > General > Cross-Agent Mentions');
+	});
+
+	it('names the writable mode a delegation so the target knows it may apply changes', () => {
+		const prompt = buildCrossAgentPrompt(
+			request({ sourceCwd: '/Users/me/proj', userPrompt: 'Fix the bug' }),
+			true
+		);
+		expect(prompt).toContain('DELEGATION');
 	});
 });
 
@@ -176,6 +212,12 @@ function harness(
 					path: 'claude',
 					args: [],
 					available: true,
+					// Mirrors the real claude-code definition. Both permission branches
+					// have to be present or `buildAgentArgs` emits nothing either way
+					// and the flag assertions below silently pass on any input.
+					fullAccessArgs: ['--dangerously-skip-permissions'],
+					readOnlyArgs: ['--permission-mode', 'plan'],
+					readOnlyCliEnforced: true,
 				}),
 			} as never,
 			sshStore: null,
@@ -221,15 +263,23 @@ describe('startCrossAgentRequest dispatch lifecycle', () => {
 		// The consult prompt promises the target it will not write; the spawn is what
 		// actually enforces it.
 		expect(config.readOnlyMode).toBe(true);
+		expect(config.args).toEqual(expect.arrayContaining(['--permission-mode', 'plan']));
 		expect(config.maxWaitSeconds).toBe(IDLE_MS / 1000);
 	});
 
-	it('spawns the consult read/write when the user opted into writable mentions', async () => {
+	it('spawns a writable delegation with FULL access, not merely "not read-only"', async () => {
 		const { dispatch } = harness({ writable: true });
 		await dispatch();
 
 		const config = vi.mocked(spawnGroupChatAgent).mock.calls[0][0];
 		expect(config.readOnlyMode).toBe(false);
+		// The regression this guards: turning read-only OFF selects buildAgentArgs'
+		// standard branch, which emits no permission flags and leaves the agent on
+		// its interactive default. A `--print` run has no approver, so the first
+		// write tool call blocks forever - no output, no exit - while the prompt has
+		// already told the agent it may apply changes directly.
+		expect(config.args).toContain('--dangerously-skip-permissions');
+		expect(config.args).not.toContain('plan');
 	});
 
 	it('spawns the binary the agent is configured with, not the auto-detected one', async () => {

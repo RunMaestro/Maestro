@@ -22,6 +22,8 @@ import {
 	resolveQueuedItemTarget,
 	toggleReadOnlyModeFields,
 } from '../../utils/tabHelpers';
+import { applyQueuedItemRelease } from '../../utils/executionQueue';
+import { logger } from '../../utils/logger';
 import type { Session } from '../../types';
 import { useSessionStore, selectActiveSession, updateAiTab } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -54,6 +56,8 @@ export interface UseQuickActionsHandlersDeps {
 	handleExportHtml: (tabId: string) => Promise<void>;
 	/** Publish tab as GitHub Gist */
 	handlePublishTabGist: (tabId: string) => void;
+	/** Re-read a file preview tab's content from disk */
+	handleReloadFileTab: (tabId: string) => Promise<void> | void;
 }
 
 // ============================================================================
@@ -115,6 +119,7 @@ export function useQuickActionsHandlers(
 		handleCopyContext,
 		handleExportHtml,
 		handlePublishTabGist,
+		handleReloadFileTab,
 	} = deps;
 
 	// PERF: Never useSessionStore(selectActiveSession). Streamed logs/tokens would
@@ -161,12 +166,37 @@ export function useQuickActionsHandlers(
 	const handleQuickActionsRefreshGitFileState = useCallback(async () => {
 		const activeSessionId = useSessionStore.getState().activeSessionId;
 		if (activeSessionId) {
-			await Promise.all([refreshGitFileState(activeSessionId), refreshWorktreeState()]);
+			// In file preview mode the visible content is a snapshot read from disk,
+			// so the refresh chord re-reads it too. Unsaved edits win over freshness:
+			// the reload would drop them silently, and the on-disk-change banner is
+			// the place that asks before discarding.
+			const session = selectActiveSession(useSessionStore.getState());
+			const fileTab =
+				session?.inputMode === 'ai' && session.activeFileTabId
+					? session.filePreviewTabs.find((tab) => tab.id === session.activeFileTabId)
+					: undefined;
+			const hasUnsavedEdits =
+				fileTab?.editContent !== undefined && fileTab.editContent !== fileTab.content;
+			const reloadFile = Boolean(fileTab) && !hasUnsavedEdits;
+
+			await Promise.all([
+				refreshGitFileState(activeSessionId),
+				refreshWorktreeState(),
+				reloadFile && fileTab
+					? Promise.resolve(handleReloadFileTab(fileTab.id))
+					: Promise.resolve(),
+			]);
 			await mainPanelRef.current?.refreshGitInfo();
-			setSuccessFlashNotification('Files, Git, History Refreshed');
+			setSuccessFlashNotification(
+				reloadFile
+					? 'File Reloaded, Files, Git, History Refreshed'
+					: hasUnsavedEdits
+						? 'Files, Git, History Refreshed - Unsaved Edits Kept'
+						: 'Files, Git, History Refreshed'
+			);
 			setTimeout(() => setSuccessFlashNotification(null), 2000);
 		}
-	}, [refreshGitFileState, refreshWorktreeState]);
+	}, [handleReloadFileTab, refreshGitFileState, refreshWorktreeState]);
 
 	const handleQuickActionsDebugReleaseQueuedItem = useCallback(() => {
 		const { activeSessionId } = useSessionStore.getState();
@@ -214,9 +244,24 @@ export function useQuickActionsHandlers(
 				return { ...s, executionQueue: remainingQueue, aiTabs: updatedAiTabs };
 			})
 		);
-		// Process the item
-		processQueuedItem(activeSessionId, nextItem);
-	}, [processQueuedItem]);
+		// Process the item. `processQueuedItem` rejects on a dispatch failure (see
+		// agentStore), so the rejection needs an owner - unhandled, it would surface
+		// as a crash report rather than a logged failure. The item was already
+		// removed from the queue above, so put it back and release the tab.
+		processQueuedItem(activeSessionId, nextItem).catch((err) => {
+			logger.error('[QuickActions] Dispatch failed, re-queueing item', undefined, err);
+			setSessions((prev) =>
+				prev.map((s) =>
+					s.id === activeSessionId
+						? {
+								...applyQueuedItemRelease(s, nextItem.tabId),
+								executionQueue: [nextItem, ...s.executionQueue],
+							}
+						: s
+				)
+			);
+		});
+	}, [processQueuedItem, setSessions]);
 
 	const handleQuickActionsToggleMarkdownEditMode = useCallback(() => {
 		// Toggle the appropriate mode based on context:

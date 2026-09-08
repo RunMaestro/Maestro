@@ -10,6 +10,7 @@ import {
 	applyQueuedItemRelease,
 	getForceSendEligibility,
 	shouldOfferForceSend,
+	applyQueuedItemEdit,
 } from '../../../renderer/utils/executionQueue';
 import type { AITab, QueuedItem, Session } from '../../../renderer/types';
 import { createMockSession } from '../../helpers/mockSession';
@@ -276,5 +277,76 @@ describe('shouldOfferForceSend', () => {
 	it('hides it when eligibility has not been computed', () => {
 		expect(shouldOfferForceSend(null)).toBe(false);
 		expect(shouldOfferForceSend(undefined)).toBe(false);
+	});
+});
+
+/**
+ * applyQueuedItemEdit is the single write for a queued-message edit. Both save
+ * paths call it - the inline chat list (App.tsx, active agent) and the
+ * Execution Queue browser (useQueueHandlers, any agent by id) - because they
+ * had already drifted once: one of them dropped `turnSettings`, silently
+ * discarding the model and effort the user had just picked in the modal.
+ */
+describe('applyQueuedItemEdit', () => {
+	const patch = (over: Partial<QueuedItem['turnSettings']> | undefined = undefined) => ({
+		text: 'edited',
+		images: [] as string[],
+		turnSettings: over ?? {},
+	});
+
+	it('writes the model/effort override onto the target item', () => {
+		const queue = [item('a'), item('b')];
+
+		const next = applyQueuedItemEdit(queue, 'a', {
+			text: 'edited',
+			images: [],
+			turnSettings: { model: 'opus', effort: 'ultrathink' },
+		});
+
+		expect(next[0].text).toBe('edited');
+		expect(next[0].turnSettings).toEqual({ model: 'opus', effort: 'ultrathink' });
+	});
+
+	it('leaves every other item untouched', () => {
+		const queue = [item('a'), item('b')];
+
+		const next = applyQueuedItemEdit(queue, 'a', patch({ model: 'opus' }));
+
+		expect(next[1]).toBe(queue[1]);
+		expect(next[1].text).toBe('b');
+	});
+
+	it('assigns turnSettings rather than merging, so a cleared picker clears', () => {
+		const queue = [{ ...item('a'), turnSettings: { model: 'opus', effort: 'ultrathink' } }];
+
+		// User cleared the model back to "Default" but kept the effort.
+		const next = applyQueuedItemEdit(queue, 'a', patch({ effort: 'ultrathink' }));
+
+		expect(next[0].turnSettings).toEqual({ effort: 'ultrathink' });
+		expect(next[0].turnSettings?.model).toBeUndefined();
+	});
+
+	it('preserves queue order and length', () => {
+		const queue = [item('a'), item('b'), item('c')];
+
+		const next = applyQueuedItemEdit(queue, 'b', patch({ model: 'opus' }));
+
+		expect(next.map((i) => i.id)).toEqual(['a', 'b', 'c']);
+	});
+
+	it('is a no-op when the id is not in the queue', () => {
+		const queue = [item('a')];
+
+		const next = applyQueuedItemEdit(queue, 'missing', patch({ model: 'opus' }));
+
+		expect(next[0]).toBe(queue[0]);
+	});
+
+	it('does not disturb an item paused state', () => {
+		const queue = [item('a', /* paused */ true)];
+
+		const next = applyQueuedItemEdit(queue, 'a', patch({ model: 'opus' }));
+
+		expect(next[0].paused).toBe(true);
 	});
 });

@@ -55,9 +55,15 @@ Each surface has its own size, which can also inherit. Press **Up** / **Down** o
 
 Maestro tells you which preset is active, or that you have customized away from both.
 
+### Save and restore your own setup
+
+A preset overwrites every font and size, so **Save & Restore Customizations** keeps yours. Click **Save Customizations** once you like what you have, then try a preset or keep tinkering, and **Restore Customizations** puts your fonts back in one click.
+
+There is one slot, and saving again replaces it (Maestro asks first). Zoom is not part of a saved setup, so restoring one never changes how big everything is.
+
 ### Custom fonts
 
-The pickers list fonts Maestro knows about. If you have a font installed that is not in the list, add its name once under **Custom Fonts** and it becomes available in every picker.
+The pickers list fonts Maestro knows about. If you have a font installed that is not in the list, add its name once under **Manage Custom Fonts** and it becomes available in every picker.
 
 <Warning>
 Type the family name exactly as the system reports it. A name that is not installed cannot be resolved, and the surface falls back to the browser default rather than telling you it failed.
@@ -377,6 +383,20 @@ You can also set how wide toasts render:
 | **Medium**  | Roughly 1.4x wider than Small                                                             |
 | **Large**   | Roughly 1.8x wider than Small, for longer content                                         |
 | **Dynamic** | Matches the Right Bar width, filling that column and re-sizing live as you drag the panel |
+
+#### Clicking a Toast
+
+Most toasts are clickable, and where the click takes you depends on what the toast is about:
+
+| The toast points at             | Clicking it                                      |
+| ------------------------------- | ------------------------------------------------ |
+| An agent, or one of its AI tabs | Switches to that agent and tab                   |
+| A file                          | Opens the file in that agent's File Preview pane |
+| A terminal tab                  | Switches to that agent and focuses the terminal  |
+| An in-app browser tab           | Focuses that tab, or opens the URL in a new one  |
+| An external link                | Opens it in your system browser                  |
+
+If the target tab was closed since the toast appeared, the click still switches to the agent and tells you what was missing, so a click never silently does nothing. Scripts and agents choose the target with the `--open-*` flags on [`maestro-cli notify toast`](/cli#notifications). A toast can also carry a separate inline link button beneath its message (`--action-url`); that link is independent of the body click.
 
 ### When Notifications Trigger
 

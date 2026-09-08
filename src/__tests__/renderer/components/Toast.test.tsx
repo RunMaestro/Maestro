@@ -19,6 +19,12 @@ import { useNotificationStore } from '../../../renderer/stores/notificationStore
 import type { Toast } from '../../../renderer/stores/notificationStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { mockTheme } from '../../helpers/mockTheme';
+import { usePhoneLayout } from '../../../renderer/hooks/ui/useViewportBreakpoint';
+
+vi.mock('../../../renderer/hooks/ui/useViewportBreakpoint', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../renderer/hooks/ui/useViewportBreakpoint')>()),
+	usePhoneLayout: vi.fn(() => false),
+}));
 
 const createMockToast = (overrides = {}): Toast => ({
 	id: 'toast-1',
@@ -635,5 +641,41 @@ describe('Toast', () => {
 			expect(screen.getByText(/Completed in 1s/)).toBeInTheDocument();
 			unmount();
 		});
+	});
+});
+
+describe('Toast on a phone', () => {
+	beforeEach(() => {
+		useNotificationStore.setState({ toasts: [createMockToast()] });
+	});
+
+	afterEach(() => {
+		vi.mocked(usePhoneLayout).mockReturnValue(false);
+	});
+
+	it('pins the stack to the right and sizes toasts from the preset on desktop', () => {
+		// Pin the preset rather than leaning on whatever the store defaults to:
+		// the point of this test is that the desktop path uses the preset at all,
+		// and 'dynamic' derives its width from the live Right Bar instead.
+		useSettingsStore.setState({ toastWidth: 'small' });
+		render(<ToastContainer theme={mockTheme} />);
+		const stack = screen.getByTestId('toast-stack');
+		expect(stack).toHaveClass('right-4');
+		expect(stack).not.toHaveClass('left-3');
+		const card = screen.getByText('Test Toast').closest('.rounded-lg') as HTMLElement;
+		expect(card.style.minWidth).toBe('320px');
+		expect(card.style.maxWidth).toBe('400px');
+	});
+
+	it('spans the screen and fills the stack on a phone', () => {
+		vi.mocked(usePhoneLayout).mockReturnValue(true);
+		render(<ToastContainer theme={mockTheme} />);
+		const stack = screen.getByTestId('toast-stack');
+		expect(stack).toHaveClass('left-3');
+		expect(stack).toHaveClass('right-3');
+		const card = screen.getByText('Test Toast').closest('.rounded-lg') as HTMLElement;
+		expect(card.style.minWidth).toBe('');
+		expect(card.style.maxWidth).toBe('');
+		expect(card.style.width).toBe('100%');
 	});
 });

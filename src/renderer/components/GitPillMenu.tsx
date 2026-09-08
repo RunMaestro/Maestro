@@ -36,7 +36,7 @@ import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { GhostIconButton } from './ui/GhostIconButton';
 import { GitChangeCounts } from './ui/GitChangeCounts';
-import { GitRunningBadge } from './ui/GitRunningBadge';
+import { GitRunningBadge, PR_RUNNING_TITLE } from './ui/GitRunningBadge';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
 import { remoteUrlToBrowserUrl, type GitChangeTotals } from '../../shared/gitUtils';
@@ -77,6 +77,8 @@ export interface GitPillMenuProps {
 	 */
 	pullRunning?: boolean;
 	pushRunning?: boolean;
+	/** True while `gh pr create` is still working on this repo. */
+	prRunning?: boolean;
 	onViewLog: () => void;
 	onViewDiff: () => void;
 	onPull: () => void;
@@ -127,6 +129,7 @@ export const GitPillMenu = memo(function GitPillMenu({
 	changes,
 	pullRunning = false,
 	pushRunning = false,
+	prRunning = false,
 	onViewLog,
 	onViewDiff,
 	onPull,
@@ -325,6 +328,17 @@ export const GitPillMenu = memo(function GitPillMenu({
 						testId="git-pill-menu-create-pr"
 						icon={<GitPullRequest className="w-3.5 h-3.5" style={iconStyle} />}
 						label="Create Pull Request"
+						badge={
+							prRunning ? (
+								<GitRunningBadge
+									theme={theme}
+									label="Creating"
+									className="ml-auto flex items-center gap-1 text-2xs"
+									testId="git-pill-menu-create-pr-running"
+									title={PR_RUNNING_TITLE}
+								/>
+							) : undefined
+						}
 						onClick={onCreatePR}
 					/>
 				)}

@@ -9,6 +9,8 @@ import {
 	isSecretEnvKey,
 	maskEnvValue,
 	resolveAgentEnvironment,
+	isBlankEnvValue,
+	stripBlankEnvVars,
 } from '../../shared/agentEnvironment';
 
 describe('resolveAgentEnvironment', () => {
@@ -122,5 +124,45 @@ describe('envSourceLabel', () => {
 		const labels = (['global', 'agent', 'session'] as const).map(envSourceLabel);
 		expect(new Set(labels).size).toBe(3);
 		expect(labels).toEqual(['Global', 'Provider', 'This agent']);
+	});
+});
+
+describe('stripBlankEnvVars', () => {
+	it('drops blank and whitespace-only values, keeps everything else', () => {
+		expect(
+			stripBlankEnvVars({
+				CLAUDE_CONFIG_DIR: '',
+				PADDED: '   ',
+				KEPT: 'value',
+				KEPT_WITH_SPACE: ' value ',
+			})
+		).toEqual({ KEPT: 'value', KEPT_WITH_SPACE: ' value ' });
+	});
+
+	it('returns an empty object for undefined input', () => {
+		expect(stripBlankEnvVars(undefined)).toEqual({});
+	});
+
+	it('does not mutate its input', () => {
+		const input = { A: '', B: 'b' };
+		stripBlankEnvVars(input);
+		expect(input).toEqual({ A: '', B: 'b' });
+	});
+
+	it('classifies blanks the same way isBlankEnvValue does', () => {
+		expect(isBlankEnvValue('')).toBe(true);
+		expect(isBlankEnvValue('\t ')).toBe(true);
+		expect(isBlankEnvValue('0')).toBe(false);
+	});
+});
+
+describe('resolveAgentEnvironment vs stripBlankEnvVars', () => {
+	it('keeps blanks in the reported config even though the spawner drops them', () => {
+		// The two answer different questions: what did the user CONFIGURE (shown in
+		// the env viewer) versus what gets EXPORTED to the child.
+		const resolved = resolveAgentEnvironment({ session: { CLAUDE_CONFIG_DIR: '' } });
+		expect(resolved).toHaveLength(1);
+		expect(resolved[0].value).toBe('');
+		expect(stripBlankEnvVars({ CLAUDE_CONFIG_DIR: '' })).toEqual({});
 	});
 });

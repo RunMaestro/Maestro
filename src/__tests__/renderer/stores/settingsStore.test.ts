@@ -431,6 +431,43 @@ describe('settingsStore', () => {
 				expect(state.fileEditorFontFamily).toBe('');
 			});
 
+			it('saveTypographySnapshot captures the live fonts and sizes and persists them', () => {
+				useSettingsStore.setState({
+					fontFamily: 'Verdana',
+					terminalFontFamily: 'Fira Code',
+					fontSize: 17,
+					chatFontSize: 0,
+				});
+				useSettingsStore.getState().saveTypographySnapshot();
+
+				const snapshot = useSettingsStore.getState().typographySnapshot;
+				expect(snapshot?.fonts.fontFamily).toBe('Verdana');
+				expect(snapshot?.fonts.terminalFontFamily).toBe('Fira Code');
+				expect(snapshot?.sizes.fontSize).toBe(17);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('typographySnapshot', snapshot);
+			});
+
+			it('restoreTypographySnapshot puts a saved setup back after a preset overwrote it', () => {
+				// The whole reason the snapshot exists: trying a preset must not
+				// be a one-way door out of a hand-tuned setup.
+				useSettingsStore.setState({ fontFamily: 'Verdana', fontSize: 17 });
+				useSettingsStore.getState().saveTypographySnapshot();
+				useSettingsStore.getState().resetTypography('hacker');
+				expect(useSettingsStore.getState().fontFamily).not.toBe('Verdana');
+
+				useSettingsStore.getState().restoreTypographySnapshot();
+				expect(useSettingsStore.getState().fontFamily).toBe('Verdana');
+				expect(useSettingsStore.getState().fontSize).toBe(17);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('fontFamily', 'Verdana');
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('fontSize', 17);
+			});
+
+			it('restoreTypographySnapshot is a no-op with nothing saved', () => {
+				useSettingsStore.setState({ typographySnapshot: null, fontFamily: 'Verdana' });
+				useSettingsStore.getState().restoreTypographySnapshot();
+				expect(useSettingsStore.getState().fontFamily).toBe('Verdana');
+			});
+
 			it('setTypographyPromptSeen updates state and persists', () => {
 				useSettingsStore.getState().setTypographyPromptSeen(true);
 				expect(useSettingsStore.getState().typographyPromptSeen).toBe(true);
@@ -1742,7 +1779,7 @@ describe('settingsStore', () => {
 				fileEditorFontFamily: 'Iosevka',
 				typographyPromptSeen: true,
 				fontSize: 16,
-				activeThemeId: 'one-dark-pro',
+				activeThemeId: 'nord',
 				enterToSendAI: true,
 			});
 
@@ -1756,8 +1793,66 @@ describe('settingsStore', () => {
 			expect(state.fileEditorFontFamily).toBe('Iosevka');
 			expect(state.typographyPromptSeen).toBe(true);
 			expect(state.fontSize).toBe(16);
-			expect(state.activeThemeId).toBe('one-dark-pro');
+			expect(state.activeThemeId).toBe('nord');
 			expect(state.enterToSendAI).toBe(true);
+		});
+
+		it('restores a saved typography snapshot across a restart', async () => {
+			// The snapshot is the only way back to a hand-tuned setup after a
+			// Factory Reset, so a save that did not survive a restart would be
+			// worse than no save at all.
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				typographySnapshot: {
+					savedAt: 1234,
+					fonts: { fontFamily: 'Verdana' },
+					sizes: { fontSize: 17 },
+				},
+			});
+
+			await loadAllSettings();
+
+			const snapshot = useSettingsStore.getState().typographySnapshot;
+			expect(snapshot?.savedAt).toBe(1234);
+			expect(snapshot?.fonts.fontFamily).toBe('Verdana');
+			expect(snapshot?.sizes.fontSize).toBe(17);
+		});
+
+		it('drops a malformed typographySnapshot rather than arming a destructive Restore', async () => {
+			// Restore overwrites live fonts, so a hand-edited settings file must
+			// not be able to produce a button that blanks them.
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				typographySnapshot: 'hacker' as any,
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().typographySnapshot).toBeNull();
+		});
+
+		// A user who picked a theme before it was retired still has that id on
+		// disk. App.tsx does a bare THEMES[activeThemeId] lookup, so letting the
+		// dead id through renders the whole app unstyled.
+		it('maps a retired theme id to its replacement on load', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				activeThemeId: 'inquest',
+				customThemeBaseId: 'inquest',
+			});
+
+			await loadAllSettings();
+
+			const state = useSettingsStore.getState();
+			expect(state.activeThemeId).toBe('dracula');
+			expect(state.customThemeBaseId).toBe('dracula');
+		});
+
+		it('falls back rather than storing a theme id that does not exist', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				activeThemeId: 'one-dark-pro',
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().activeThemeId).toBe('dracula');
 		});
 
 		it('restores both halves of the environment editor', async () => {
@@ -1795,8 +1890,19 @@ describe('settingsStore', () => {
 			expect(useSettingsStore.getState().webInterfaceAutoStart).toBe(false);
 		});
 
+		it('migrates the pre-rename "default" icon theme id to flat', async () => {
+			useSettingsStore.setState({ fileExplorerIconTheme: 'rich' });
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				fileExplorerIconTheme: 'default' as unknown as FileExplorerIconTheme,
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().fileExplorerIconTheme).toBe('flat');
+		});
+
 		it('falls back to rich for invalid fileExplorerIconTheme values', async () => {
-			useSettingsStore.setState({ fileExplorerIconTheme: 'default' });
+			useSettingsStore.setState({ fileExplorerIconTheme: 'flat' });
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
 				fileExplorerIconTheme: 'neon' as any,
 			});
@@ -3176,7 +3282,7 @@ describe('settingsStore', () => {
 		});
 
 		it('metadata default matches the value an invalid setting falls back to', async () => {
-			useSettingsStore.setState({ fileExplorerIconTheme: 'default' });
+			useSettingsStore.setState({ fileExplorerIconTheme: 'flat' });
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
 				fileExplorerIconTheme: 'neon' as unknown as FileExplorerIconTheme,
 			});

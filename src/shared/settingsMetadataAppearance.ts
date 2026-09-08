@@ -123,6 +123,13 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: 1,
 		category: 'appearance',
 	},
+	typographySnapshot: {
+		description:
+			"The user's own saved fonts and sizes, restored in one click after trying a Factory Reset preset. Null until they save one. Zoom is deliberately not part of it.",
+		type: 'object',
+		default: null,
+		category: 'appearance',
+	},
 	typographyPromptSeen: {
 		description:
 			'Whether the first-run typography chooser has been shown. False on a fresh install and on any install predating the chooser, which is what shows it to existing users once after the update.',
@@ -218,6 +225,13 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		description: 'Show the per-session running cost pill (e.g. "$21.33") in the main header.',
 		type: 'boolean',
 		default: true,
+		category: 'appearance',
+	},
+	showProviderModePill: {
+		description:
+			'Show the provider mode pill (e.g. "claude -p" / "TUI Wrapper") on Claude turns in the chat footer, History entries, and the history detail view.',
+		type: 'boolean',
+		default: false,
 		category: 'appearance',
 	},
 	showWorktreePill: {
@@ -333,7 +347,7 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	},
 	fileExplorerIconTheme: {
 		description:
-			'Icon theme for the file explorer sidebar. Options: rich (default, Material Icon Theme style) or default.',
+			'Icon theme for the file explorer sidebar. Options: rich (default, Material Icon Theme style) or flat.',
 		type: 'string',
 		default: 'rich',
 		category: 'appearance',

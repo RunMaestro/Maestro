@@ -9,6 +9,7 @@ import {
 	scanMaestroMarkers,
 	findPendingHitlGate,
 	detectHaltMarker,
+	findHaltMarker,
 	hasMaestroMarker,
 } from '../../shared/autorunMarkers';
 
@@ -178,11 +179,74 @@ describe('relocated engine helpers still behave', () => {
 		expect(detectHaltMarker('<!-- maestro:something -->')).toEqual({ halted: false });
 	});
 
-	it('detectHaltMarker stays fence-blind on purpose', () => {
-		// scanMaestroMarkers skips fences so a documentation example draws no pill,
-		// but the ENGINE must never miss a real halt an agent mis-indented.
-		const doc = ['```', '<!-- maestro:halt: agent wrote this inside a fence -->', '```'].join('\n');
-		expect(detectHaltMarker(doc).halted).toBe(true);
+	it('detectHaltMarker ignores a fenced example, agreeing with the pill', () => {
+		// Reversed deliberately: authoring agents document this syntax far more
+		// often than executing agents mis-indent a real halt, and a halt that
+		// blocked the run while drawing no pill was an invisible cause.
+		const doc = ['```', '<!-- maestro:halt: documented, not requested -->', '```'].join('\n');
+		expect(detectHaltMarker(doc).halted).toBe(false);
+		expect(scanMaestroMarkers(doc)).toEqual([]);
+	});
+});
+
+describe('halt marker - description vs instruction', () => {
+	it('obeys a marker standing alone in the document body', () => {
+		const doc = ['# Plan', '', '- [ ] Ship it', '', '<!-- maestro:halt: build is broken -->'].join(
+			'\n'
+		);
+		expect(findHaltMarker(doc)).toEqual({ reason: 'build is broken', line: 4 });
+		expect(detectHaltMarker(doc)).toEqual({ halted: true, reason: 'build is broken' });
+	});
+
+	it('ignores a marker quoted in inline backticks', () => {
+		const doc = 'If the build is broken, write `<!-- maestro:halt: build broken -->` and stop.';
+		expect(findHaltMarker(doc)).toBeNull();
+		expect(detectHaltMarker(doc).halted).toBe(false);
+	});
+
+	it('ignores a marker riding a checkbox line', () => {
+		const doc = '- [ ] Run the tests. On failure emit <!-- maestro:halt: tests failed -->';
+		expect(findHaltMarker(doc)).toBeNull();
+		expect(detectHaltMarker(doc).halted).toBe(false);
+	});
+
+	it('does not let a described halt block a playbook that has real work', () => {
+		// The field bug: an authoring agent writes the marker as a conditional and
+		// the playbook refuses to start before its first task ever runs.
+		const doc = [
+			'# Migration',
+			'',
+			'If any step below fails irrecoverably, halt with `<!-- maestro:halt: reason -->`.',
+			'',
+			'- [ ] Write the migration',
+			'- [ ] Apply the migration <!-- maestro:halt: only if the DB is unreachable -->',
+			'',
+			'```markdown',
+			'<!-- maestro:halt: brief reason here -->',
+			'```',
+		].join('\n');
+		expect(detectHaltMarker(doc).halted).toBe(false);
+	});
+
+	it('reports the first obeyed marker line so the error can point at it', () => {
+		const doc = ['a', '<!-- maestro:halt -->', '<!-- maestro:halt: second -->'].join('\n');
+		expect(findHaltMarker(doc)).toEqual({ reason: undefined, line: 1 });
+	});
+
+	it('draws a spent pill for a described halt and a live one for a real halt', () => {
+		const doc = [
+			'- [ ] Apply it <!-- maestro:halt: describe only -->',
+			'<!-- maestro:halt: really stopped -->',
+		].join('\n');
+		const halts = scanMaestroMarkers(doc).filter((m) => m.kind === 'halt');
+		expect(halts).toEqual([
+			expect.objectContaining({ status: 'spent', scope: 'task', line: 0 }),
+			expect.objectContaining({ status: 'live', scope: 'document', line: 1 }),
+		]);
+	});
+
+	it('draws no pill for a halt quoted in prose', () => {
+		const doc = 'Emit `<!-- maestro:halt: reason -->` to stop the run.';
 		expect(scanMaestroMarkers(doc)).toEqual([]);
 	});
 });

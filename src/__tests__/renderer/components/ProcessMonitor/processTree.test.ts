@@ -107,6 +107,9 @@ describe('getProcessType', () => {
 	it('detects wizard conversation processes', () => {
 		expect(getProcessType('inline-wizard-1700000000000-abc')).toBe('wizard');
 	});
+	it('detects a cross-agent consult', () => {
+		expect(getProcessType('cross-agent-9f1c-4ab2')).toBe('consult');
+	});
 	it('falls through to ai', () => {
 		expect(getProcessType('abc-ai-tab-1')).toBe('ai');
 	});
@@ -417,6 +420,64 @@ describe('buildProcessTree', () => {
 		});
 		expect(tree[0]).toMatchObject({ id: 'cue-section', label: 'CUE RUNS', countLabel: 'run' });
 		expect(tree[0].children![0].cueRunId).toBe('uuid-1');
+	});
+
+	it('emits a CONSULTS section naming both ends of the mention', () => {
+		const tree = buildProcessTree({
+			sessions: [session({ id: 'source-1', name: 'Pedsidian' })],
+			groups: [],
+			groupChats: [],
+			activeProcesses: [proc({ sessionId: 'cross-agent-req-1', pid: 4242 })],
+			crossAgentRequests: [
+				{
+					requestId: 'req-1',
+					sourceSessionId: 'source-1',
+					sourceTabId: 'tab-a',
+					targetSessionId: 'target-1',
+					targetTabId: 'consult-tab',
+					targetAgentName: 'rc',
+					startedAt: 1_700_000_000_000,
+				},
+			],
+		});
+		expect(tree[0]).toMatchObject({
+			id: 'consult-section',
+			label: 'CONSULTS',
+			countLabel: 'consult',
+		});
+		expect(tree[0].children![0]).toMatchObject({
+			label: 'Pedsidian → rc',
+			processType: 'consult',
+			pid: 4242,
+			processSessionId: 'cross-agent-req-1',
+			// Jump target is the consult tab on the TARGET, not the source agent.
+			sessionId: 'target-1',
+			tabId: 'consult-tab',
+		});
+	});
+
+	it('still lists a consult whose registry entry is gone (renderer reload)', () => {
+		const tree = buildProcessTree({
+			sessions: [],
+			groups: [],
+			groupChats: [],
+			activeProcesses: [proc({ sessionId: 'cross-agent-orphan' })],
+		});
+		expect(tree[0].children![0]).toMatchObject({
+			label: 'Cross-agent consult',
+			processSessionId: 'cross-agent-orphan',
+		});
+	});
+
+	it('never files a consult under an agent - it is not that agent’s own turn', () => {
+		const tree = buildProcessTree({
+			sessions: [session({ id: 'session-1' })],
+			groups: [],
+			groupChats: [],
+			activeProcesses: [proc({ sessionId: 'cross-agent-req-1' })],
+		});
+		// One section only: the agent node has no processes of its own.
+		expect(tree.map((n) => n.id)).toEqual(['consult-section']);
 	});
 
 	it('does not stamp node.expanded - that field is intentionally unused', () => {

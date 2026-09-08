@@ -58,6 +58,16 @@ vi.mock('node-pty', () => ({
 	spawn: (file: string, args: string[], options: SpawnOptions) => mockSpawn(file, args, options),
 }));
 
+// Pin the platform to POSIX. The kill assertions below name a literal signal,
+// and killPty deliberately drops the signal on Windows - without this the
+// quit()/kill() expectations would pass locally and fail only on the Windows
+// CI leg. The Windows half of that contract is covered in
+// tui-driver.ptyKill.test.ts.
+vi.mock('../../shared/platformDetection', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../shared/platformDetection')>()),
+	isWindows: () => false,
+}));
+
 // ── Imports (after mocks) ──────────────────────────────────────────────────
 
 import {

@@ -13,6 +13,7 @@ import { showAgent } from './commands/show-agent';
 import { cleanPlaybooks } from './commands/clean-playbooks';
 import { send } from './commands/send';
 import { dispatch } from './commands/dispatch';
+import { ask } from './commands/ask';
 import { queueList, queueRemove } from './commands/queue';
 import { sessionList, sessionShow } from './commands/session';
 import { listSessions } from './commands/list-sessions';
@@ -53,6 +54,7 @@ import { sendTerminal } from './commands/send-terminal';
 import { readTerminal, DEFAULT_TAIL_LINES } from './commands/read-terminal';
 import { createSshRemote } from './commands/create-ssh-remote';
 import { removeSshRemote } from './commands/remove-ssh-remote';
+import { updateSshRemote } from './commands/update-ssh-remote';
 import { directorNotesHistory } from './commands/director-notes-history';
 import { directorNotesSynopsis } from './commands/director-notes-synopsis';
 import { settingsList } from './commands/settings-list';
@@ -451,6 +453,28 @@ program
 		'Give up and fire a timeout callback after this long (default 3600, max 86400)'
 	)
 	.action(dispatch);
+
+// Ask command - the agent-to-agent question. `dispatch` hands WORK to an agent
+// and lands in a real tab; `ask` asks a QUESTION and rides the cross-agent
+// consult path (hidden tab on the target, fresh context, no focus, no unread),
+// returning the answer here instead of interrupting whatever conversation the
+// human has open with that agent.
+program
+	.command('ask <agent-id> <question>')
+	.description(
+		"Ask another agent a question and print its answer (background consult - never touches the target's open conversation)"
+	)
+	.option(
+		'--from <agent-id>',
+		'Your own agent id. Names the consult on the target, keeps continuity across repeat asks, forwards your working directory so it can read your project, and lets Stop cancel the consult'
+	)
+	.option(
+		'--with-context',
+		'Forward your current transcript as context. Off by default: ask sends a self-contained question in a fresh context'
+	)
+	.option('--timeout <seconds>', 'How long to wait for the answer (default 600, min 10, max 3600)')
+	.option('--json', 'Output the answer as JSON')
+	.action(ask);
 
 // Queue commands - inspect and manage the desktop execution queue populated by
 // `dispatch --queue`. Read-only `list` plus a `remove` verb for scriptable
@@ -1229,11 +1253,70 @@ program
 		(val: string, prev: string[]) => [...prev, val],
 		[] as string[]
 	)
+	.option(
+		'--ssh-option <KEY=VALUE>',
+		'Extra ssh -o option, e.g. ProxyCommand=... or ConnectTimeout=45 (repeatable)',
+		(val: string, prev: string[]) => [...prev, val],
+		[] as string[]
+	)
 	.option('--ssh-config', 'Use ~/.ssh/config for connection settings (host becomes Host pattern)')
 	.option('--disabled', 'Create in disabled state')
 	.option('--set-default', 'Set as the global default SSH remote')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(createSshRemote);
+
+// Update SSH remote command - edit an existing SSH remote configuration
+program
+	.command('update-ssh-remote <remote-id>')
+	.description('Update an existing SSH remote configuration')
+	.option('-n, --name <name>', 'Display name')
+	.option('-H, --host <host>', 'SSH hostname, IP, or SSH config Host pattern')
+	.option('-p, --port <port>', 'SSH port')
+	.option('-u, --username <user>', 'SSH username (empty string clears it)')
+	.option('-k, --key <path>', 'Path to private key file (empty string clears it)')
+	.option(
+		'--env <KEY=VALUE>',
+		'Remote environment variable, merged with existing (repeatable)',
+		(val: string, prev: string[]) => [...prev, val],
+		[] as string[]
+	)
+	.option('--clear-env', 'Remove all remote environment variables before applying --env')
+	.option(
+		'--disable-env <KEY>',
+		'Switch an env var off, keeping its value (repeatable)',
+		(val: string, prev: string[]) => [...prev, val],
+		[] as string[]
+	)
+	.option(
+		'--enable-env <KEY>',
+		'Switch a previously disabled env var back on (repeatable)',
+		(val: string, prev: string[]) => [...prev, val],
+		[] as string[]
+	)
+	.option(
+		'--ssh-option <KEY=VALUE>',
+		'Extra ssh -o option, merged with existing (repeatable)',
+		(val: string, prev: string[]) => [...prev, val],
+		[] as string[]
+	)
+	.option('--clear-ssh-options', 'Remove all extra ssh -o options before applying --ssh-option')
+	.option(
+		'--disable-ssh-option <KEY>',
+		'Switch an ssh -o option off, keeping its value (repeatable)',
+		(val: string, prev: string[]) => [...prev, val],
+		[] as string[]
+	)
+	.option(
+		'--enable-ssh-option <KEY>',
+		'Switch a previously disabled ssh -o option back on (repeatable)',
+		(val: string, prev: string[]) => [...prev, val],
+		[] as string[]
+	)
+	.option('--ssh-config <bool>', 'Use ~/.ssh/config for connection settings (true/false)')
+	.option('--enabled <bool>', 'Enable or disable this remote (true/false)')
+	.option('--set-default', 'Set as the global default SSH remote')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(updateSshRemote);
 
 // Remove SSH remote command - delete an SSH remote configuration
 program
@@ -1668,11 +1751,23 @@ notify
 	.option('--action-label <text>', 'Label for --action-url (defaults to the URL itself)')
 	.option(
 		'--open-file <path>',
-		'On click, switch to the agent and open this file in its File Preview pane (requires --agent; mutually exclusive with --open-url)'
+		'On click, switch to the agent and open this file in its File Preview pane (requires --agent; mutually exclusive with the other --open-* flags)'
+	)
+	.option(
+		'--open-terminal [tab]',
+		'On click, switch to the agent and focus a terminal tab. Optional value is a tab id or name; bare uses the active terminal tab (requires --agent)'
+	)
+	.option(
+		'--open-browser <url>',
+		'On click, open this URL in a new in-app browser tab on the agent (requires --agent)'
+	)
+	.option(
+		'--open-browser-tab <id>',
+		'On click, focus this existing in-app browser tab (the id `open-browser` printed; requires --agent)'
 	)
 	.option(
 		'--open-url <url>',
-		'On click, open this URL in the system browser (mutually exclusive with --open-file)'
+		'On click, open this URL in the system browser (opens outside Maestro; use --open-browser for an in-app tab)'
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(notifyToast);

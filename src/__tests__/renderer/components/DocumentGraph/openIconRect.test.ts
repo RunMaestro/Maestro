@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { openIconRect } from '../../../../renderer/components/DocumentGraph/MindMap';
+import { openIconRect } from '../../../../renderer/components/DocumentGraph/mindMapCanvas';
 import { NODE_HEADER_HEIGHT } from '../../../../renderer/components/DocumentGraph/mindMapLayouts';
 
 /** A node is positioned by its CENTER, so the box runs from x - w/2 to x + w/2. */

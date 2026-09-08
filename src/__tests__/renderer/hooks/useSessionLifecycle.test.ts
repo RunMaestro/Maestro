@@ -98,6 +98,8 @@ beforeEach(() => {
 		sessionsLoaded: false,
 		initialLoadComplete: false,
 		groups: [],
+		groupsLoaded: false,
+		sessionsReadOk: false,
 	});
 
 	useModalStore.setState({ modals: new Map() });
@@ -200,6 +202,46 @@ describe('useSessionLifecycle', () => {
 			});
 		});
 
+		it('persists parked env vars alongside the live ones', () => {
+			// The editor keeps switched-off vars OUT of customEnvVars so no spawn
+			// path has to filter. If this argument were dropped here, the parked
+			// rows would vanish the moment the user saved.
+			const session = createMockSession({ id: 'session-1' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			act(() => {
+				result.current.handleSaveEditAgent(
+					'session-1',
+					'Agent',
+					undefined, // toolType unchanged
+					undefined, // nudgeMessage
+					undefined, // newSessionMessage
+					undefined, // customPath
+					undefined, // customArgs
+					{ LIVE: 'a' },
+					undefined, // customModel
+					undefined, // customEffort
+					undefined, // customContextWindow
+					undefined, // sessionSshRemoteConfig
+					undefined, // enableMaestroP
+					undefined, // maestroPPath
+					undefined, // maestroPMode
+					undefined, // retryOnAvailabilityErrors
+					undefined, // retryOnTokenExhaustion
+					undefined, // additionalDirectories
+					undefined, // contextWindowSource
+					undefined, // failoverConfig
+					{ PARKED: 'b' }
+				);
+			});
+
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.customEnvVars).toEqual({ LIVE: 'a' });
+			expect(updated.customEnvVarsDisabled).toEqual({ PARKED: 'b' });
+		});
+
 		it('only modifies the targeted session', () => {
 			const session1 = createMockSession({ id: 'session-1', name: 'Session 1' });
 			const session2 = createMockSession({ id: 'session-2', name: 'Session 2' });
@@ -257,6 +299,7 @@ describe('useSessionLifecycle', () => {
 				customPath: '/old/claude/path',
 				customArgs: '--old-args',
 				customEnvVars: { OLD_KEY: 'old' },
+				customEnvVarsDisabled: { OLD_PARKED: 'old' },
 				customModel: 'sonnet',
 				customEffort: 'high',
 				customContextWindow: 200000,
@@ -299,6 +342,7 @@ describe('useSessionLifecycle', () => {
 			expect(updated.customPath).toBeUndefined();
 			expect(updated.customArgs).toBeUndefined();
 			expect(updated.customEnvVars).toBeUndefined();
+			expect(updated.customEnvVarsDisabled).toBeUndefined();
 			expect(updated.customModel).toBeUndefined();
 			expect(updated.customEffort).toBeUndefined();
 			expect(updated.customContextWindow).toBeUndefined();
@@ -567,7 +611,6 @@ describe('useSessionLifecycle', () => {
 						'session-1',
 						session.name,
 						'codex' as any,
-						undefined,
 						undefined,
 						undefined,
 						undefined,
@@ -1614,6 +1657,7 @@ describe('useSessionLifecycle', () => {
 				activeSessionId: '',
 				groups,
 				initialLoadComplete: true,
+				groupsLoaded: true,
 			});
 
 			renderHook(() => useSessionLifecycle(createDeps()));
@@ -1628,6 +1672,7 @@ describe('useSessionLifecycle', () => {
 				activeSessionId: '',
 				groups,
 				initialLoadComplete: false,
+				groupsLoaded: true,
 			});
 
 			renderHook(() => useSessionLifecycle(createDeps()));
@@ -1642,6 +1687,7 @@ describe('useSessionLifecycle', () => {
 				activeSessionId: '',
 				groups: groups1,
 				initialLoadComplete: true,
+				groupsLoaded: true,
 			});
 
 			renderHook(() => useSessionLifecycle(createDeps()));
@@ -1658,6 +1704,58 @@ describe('useSessionLifecycle', () => {
 			});
 
 			expect(window.maestro.groups.setAll).toHaveBeenCalledWith(groups2);
+		});
+
+		// Regression: a group registry that was never successfully READ must never
+		// be written back. `initialLoadComplete` is set in a `finally` and so is
+		// true even when the groups read failed, which let an empty in-memory
+		// registry overwrite a good one on disk and cost the user every group.
+		it('does not persist groups when the registry was never loaded', () => {
+			useSessionStore.setState({
+				sessions: [],
+				activeSessionId: '',
+				groups: [],
+				initialLoadComplete: true,
+				groupsLoaded: false,
+			});
+
+			renderHook(() => useSessionLifecycle(createDeps()));
+
+			expect(window.maestro.groups.setAll).not.toHaveBeenCalled();
+		});
+
+		it('does not persist a group change while the registry is unloaded', () => {
+			useSessionStore.setState({
+				sessions: [],
+				activeSessionId: '',
+				groups: [],
+				initialLoadComplete: true,
+				groupsLoaded: false,
+			});
+
+			renderHook(() => useSessionLifecycle(createDeps()));
+
+			act(() => {
+				useSessionStore.setState({ groups: [] });
+			});
+
+			expect(window.maestro.groups.setAll).not.toHaveBeenCalled();
+		});
+
+		// A user who genuinely has no groups must still be able to persist: the
+		// gate is "did the read succeed", never "was the result non-empty".
+		it('persists an empty registry that was read successfully', () => {
+			useSessionStore.setState({
+				sessions: [],
+				activeSessionId: '',
+				groups: [],
+				initialLoadComplete: true,
+				groupsLoaded: true,
+			});
+
+			renderHook(() => useSessionLifecycle(createDeps()));
+
+			expect(window.maestro.groups.setAll).toHaveBeenCalledWith([]);
 		});
 	});
 

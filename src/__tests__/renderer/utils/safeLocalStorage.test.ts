@@ -5,17 +5,19 @@
  * Its whole contract is that it never throws: a storage-blocked renderer, a
  * private-mode browser, or a jsdom test without a Storage implementation must
  * cost the user their persistence, never their pane. The accessor itself only
- * covers reaching the global; `safeStorageGet` / `safeStorageSet` are what
- * swallow method-level failures (`getItem` / `setItem` throws) so a quota
- * or private-mode write cannot take a pane down.
+ * covers reaching the global; `safeStorageGet` / `safeStorageSet` /
+ * `writeStorageValue` are what swallow method-level failures (`getItem` /
+ * `setItem` throws) so a quota or private-mode write cannot take a pane down.
  */
 
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { installLocalStorageMock } from '../../helpers/mockLocalStorage';
 import {
 	safeLocalStorage,
+	safeSessionStorage,
 	safeStorageGet,
 	safeStorageSet,
+	writeStorageValue,
 } from '../../../renderer/utils/safeLocalStorage';
 
 /** Restore a working Storage so a hostile define cannot leak into later tests. */
@@ -71,6 +73,58 @@ describe('safeLocalStorage', () => {
 		expect(() => safeLocalStorage()?.getItem('anything')).not.toThrow();
 		expect(safeLocalStorage()?.getItem('anything')).toBeUndefined();
 		expect(() => safeLocalStorage()?.setItem('anything', 'value')).not.toThrow();
+	});
+});
+
+describe('safeSessionStorage', () => {
+	it('returns the tab-scoped Storage when there is one', () => {
+		const storage = safeSessionStorage();
+
+		expect(storage).not.toBeNull();
+		storage?.setItem('probe', 'value');
+		expect(storage?.getItem('probe')).toBe('value');
+	});
+
+	it('returns null instead of throwing when reading the global throws', () => {
+		const original = Object.getOwnPropertyDescriptor(window, 'sessionStorage');
+		Object.defineProperty(window, 'sessionStorage', {
+			configurable: true,
+			get() {
+				throw new Error('storage blocked');
+			},
+		});
+
+		try {
+			expect(() => safeSessionStorage()).not.toThrow();
+			expect(safeSessionStorage()).toBeNull();
+		} finally {
+			if (original) Object.defineProperty(window, 'sessionStorage', original);
+		}
+	});
+});
+
+describe('writeStorageValue', () => {
+	it('writes through a working Storage', () => {
+		const store = installLocalStorageMock();
+		writeStorageValue(safeLocalStorage(), 'key', 'value');
+		expect(store.get('key')).toBe('value');
+	});
+
+	it('swallows a Storage that refuses the write', () => {
+		// The guarded accessor only covers REACHING the object; setItem itself
+		// still throws on a full quota or in Safari private mode, and the contract
+		// is that a failed write costs the user their persistence, not their pane.
+		// Spy the instance: the in-memory mock is not on Storage.prototype.
+		installLocalStorageMock();
+		vi.spyOn(window.localStorage, 'setItem').mockImplementation(() => {
+			throw new DOMException('QuotaExceededError');
+		});
+
+		expect(() => writeStorageValue(safeLocalStorage(), 'key', 'value')).not.toThrow();
+	});
+
+	it('is a no-op when there is no Storage', () => {
+		expect(() => writeStorageValue(null, 'key', 'value')).not.toThrow();
 	});
 });
 

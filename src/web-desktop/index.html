@@ -11,7 +11,16 @@
 		<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 		<!-- Cross-browser standalone PWA hint. -->
 		<meta name="mobile-web-app-capable" content="yes" />
-		<title>Maestro (Web Desktop)</title>
+		<!-- The product name, with no qualifier. "(Web Desktop)" named the BUILD
+		     rather than the product - an internal distinction between two bundles
+		     of the same app - and it surfaced in the browser tab and in the
+		     headline of every shared link preview, as though the recipient were
+		     being handed a variant. The social card's title is built from
+		     SOCIAL_TITLE in src/main/web-server/social-preview.ts; keep the two
+		     saying the same word. Open Graph tags are NOT declared here: they
+		     have to name an absolute origin, which only the request knows, so the
+		     server injects them when it serves this file. -->
+		<title>Maestro</title>
 		<!-- Load JetBrains Mono so this bundle matches the desktop app (the native
 		     app inherits it from the OS; iOS has no such install and depends on
 		     this web-font request). `display=swap` means text paints immediately in

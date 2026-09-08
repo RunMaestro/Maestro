@@ -70,6 +70,8 @@ export function EditAgentModal({
 	const [customPath, setCustomPath] = useState('');
 	const [customArgs, setCustomArgs] = useState('');
 	const [customEnvVars, setCustomEnvVars] = useState<Record<string, string>>({});
+	// Vars the user switched off: listed and editable, never passed to the agent.
+	const [customEnvVarsDisabled, setCustomEnvVarsDisabled] = useState<Record<string, string>>({});
 	// Tri-state, NOT coerced to a boolean: undefined = never configured (so the
 	// SSH default - TUI - applies), false = explicit API, true = explicit
 	// maestro-p. Coercing undefined->false here (or false->undefined on save)
@@ -298,6 +300,7 @@ export function EditAgentModal({
 			setCustomPath('');
 			setCustomArgs('');
 			setCustomEnvVars({});
+			setCustomEnvVarsDisabled({});
 			setEnableMaestroP(undefined);
 			setMaestroPMode('dynamic');
 			setMaestroPPath('');
@@ -310,6 +313,7 @@ export function EditAgentModal({
 			setCustomPath(session.customPath ?? '');
 			setCustomArgs(session.customArgs ?? '');
 			setCustomEnvVars(session.customEnvVars ?? {});
+			setCustomEnvVarsDisabled(session.customEnvVarsDisabled ?? {});
 			// Preserve the tri-state (undefined stays undefined) so an unconfigured
 			// SSH agent keeps its "unset" signal instead of looking like explicit API.
 			setEnableMaestroP(session.enableMaestroP);
@@ -498,7 +502,8 @@ export function EditAgentModal({
 			retryOnTokenExhaustion,
 			normalizeAdditionalDirectories(additionalDirectories, homeDir),
 			contextWindowSource,
-			failoverConfig
+			failoverConfig,
+			Object.keys(customEnvVarsDisabled).length > 0 ? customEnvVarsDisabled : undefined
 		);
 		onClose();
 	}, [
@@ -511,6 +516,7 @@ export function EditAgentModal({
 		customPath,
 		customArgs,
 		customEnvVars,
+		customEnvVarsDisabled,
 		enableMaestroP,
 		maestroPMode,
 		maestroPPath,
@@ -780,24 +786,45 @@ export function EditAgentModal({
 								/* Saved on modal save */
 							}}
 							customEnvVars={customEnvVars}
-							onEnvVarKeyChange={(oldKey, newKey, value) => {
-								const newVars = { ...customEnvVars };
-								delete newVars[oldKey];
-								newVars[newKey] = value;
-								setCustomEnvVars(newVars);
+							customEnvVarsDisabled={customEnvVarsDisabled}
+							onEnvVarToggle={(key, nextEnabled) => {
+								// Move the var between the two records, value intact.
+								const from = nextEnabled ? customEnvVarsDisabled : customEnvVars;
+								const setFrom = nextEnabled ? setCustomEnvVarsDisabled : setCustomEnvVars;
+								const setTo = nextEnabled ? setCustomEnvVars : setCustomEnvVarsDisabled;
+								const value = from[key] ?? '';
+								const remaining = { ...from };
+								delete remaining[key];
+								setFrom(remaining);
+								setTo((prev) => ({ ...prev, [key]: value }));
 							}}
-							onEnvVarValueChange={(key, value) => {
-								setCustomEnvVars((prev) => ({ ...prev, [key]: value }));
+							onEnvVarKeyChange={(oldKey, newKey, value, enabled) => {
+								const setVars = enabled === false ? setCustomEnvVarsDisabled : setCustomEnvVars;
+								setVars((prev) => {
+									const newVars = { ...prev };
+									delete newVars[oldKey];
+									newVars[newKey] = value;
+									return newVars;
+								});
 							}}
-							onEnvVarRemove={(key) => {
-								const newVars = { ...customEnvVars };
-								delete newVars[key];
-								setCustomEnvVars(newVars);
+							onEnvVarValueChange={(key, value, enabled) => {
+								const setVars = enabled === false ? setCustomEnvVarsDisabled : setCustomEnvVars;
+								setVars((prev) => ({ ...prev, [key]: value }));
+							}}
+							onEnvVarRemove={(key, enabled) => {
+								const setVars = enabled === false ? setCustomEnvVarsDisabled : setCustomEnvVars;
+								setVars((prev) => {
+									const newVars = { ...prev };
+									delete newVars[key];
+									return newVars;
+								});
 							}}
 							onEnvVarAdd={() => {
 								let newKey = 'NEW_VAR';
 								let counter = 1;
-								while (customEnvVars[newKey]) {
+								// A parked key still occupies the name - reusing it would collide
+								// the moment the user switches that row back on.
+								while (newKey in customEnvVars || newKey in customEnvVarsDisabled) {
 									newKey = `NEW_VAR_${counter}`;
 									counter++;
 								}

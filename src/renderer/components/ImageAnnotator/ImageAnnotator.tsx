@@ -29,6 +29,16 @@ import {
 import { safeClipboardWriteImage } from '../../utils/clipboard';
 import { notifyToast } from '../../stores/notificationStore';
 import { logger } from '../../utils/logger';
+import { useSettingsStore } from '../../stores/settingsStore';
+import {
+	PEN_SIZE_MAX,
+	PEN_SIZE_MIN,
+	PEN_SIZE_STEP,
+	TEXT_SIZE_MAX,
+	TEXT_SIZE_MIN,
+	TEXT_SIZE_STEP,
+} from './annotatorConstants';
+import { nudgeSize, sizeHotkeyDirection } from './annotatorSizeHotkey';
 import { useImageAnnotatorStore } from './imageAnnotatorStore';
 import { useAnnotatorState } from './useAnnotatorState';
 import type { AnnotatorTool } from './useAnnotatorState';
@@ -36,6 +46,7 @@ import { AnnotatorCanvas } from './AnnotatorCanvas';
 import { AnnotatorToolbar } from './AnnotatorToolbar';
 import { AnnotatorSettingsDrawer } from './AnnotatorSettingsDrawer';
 import compositeAnnotatedImage from './compositeAnnotatedImage';
+import cropImageDataUrl from './cropImageDataUrl';
 
 interface ImageAnnotatorProps {
 	theme: Theme;
@@ -51,6 +62,7 @@ const TOOL_HOTKEYS: Record<string, AnnotatorTool> = {
 	c: 'ellipse', // Circle
 	t: 'text',
 	a: 'arrow',
+	r: 'crop', // cRop - C is already Circle
 };
 
 export function ImageAnnotator({ theme }: ImageAnnotatorProps) {
@@ -121,30 +133,39 @@ function ImageAnnotatorContent({
 	drawerOpen,
 	setDrawerOpen,
 }: ImageAnnotatorContentProps) {
-	const state = useAnnotatorState();
+	const state = useAnnotatorState(imageDataUrl);
 	const svgRef = useRef<SVGSVGElement>(null);
 
 	// Any committed annotation counts as unsaved work - strokes, geometric
-	// shapes, and text labels. An in-progress (uncommitted) freehand stroke
-	// or shape doesn't, because it hasn't survived a pointerup yet.
+	// shapes, text labels, and applied crops. An in-progress (uncommitted)
+	// freehand stroke, shape, or crop selection doesn't, because it hasn't
+	// survived a pointerup yet.
 	const hasUnsavedChanges =
-		state.strokes.length > 0 || state.shapes.length > 0 || state.texts.length > 0;
+		state.strokes.length > 0 ||
+		state.shapes.length > 0 ||
+		state.texts.length > 0 ||
+		state.cropCount > 0;
 
 	const [confirmingDiscard, setConfirmingDiscard] = useState(false);
 
 	// Escape precedence inside the annotator:
 	//   1. If the discard-confirm dialog is up, Escape dismisses it (keep editing).
 	//   2. Else if the settings drawer is open, Escape closes the drawer.
-	//   3. Else if there are unsaved changes, Escape raises the confirm dialog.
-	//   4. Otherwise Escape closes the modal immediately (nothing to lose).
+	//   3. Else if a crop selection is armed, Escape resets it to the full frame.
+	//   4. Else if there are unsaved changes, Escape raises the confirm dialog.
+	//   5. Otherwise Escape closes the modal immediately (nothing to lose).
 	// Refs let the modal-layer-registered handler read the latest values without
-	// re-registering on every render.
+	// re-registering on every render. The layer stack owns Escape at the capture
+	// phase, so this handler is the only place it can be intercepted.
 	const drawerOpenRef = useRef(drawerOpen);
 	drawerOpenRef.current = drawerOpen;
 	const hasChangesRef = useRef(hasUnsavedChanges);
 	hasChangesRef.current = hasUnsavedChanges;
 	const confirmingRef = useRef(confirmingDiscard);
 	confirmingRef.current = confirmingDiscard;
+	const cropRectRef = useRef(state.cropRect);
+	cropRectRef.current = state.cropRect;
+	const setCropRect = state.setCropRect;
 
 	const handleEscape = useCallback(() => {
 		if (confirmingRef.current) {
@@ -155,12 +176,16 @@ function ImageAnnotatorContent({
 			setDrawerOpen(false);
 			return;
 		}
+		if (cropRectRef.current) {
+			setCropRect(null);
+			return;
+		}
 		if (hasChangesRef.current) {
 			setConfirmingDiscard(true);
 			return;
 		}
 		closeAnnotator();
-	}, [closeAnnotator, setDrawerOpen]);
+	}, [closeAnnotator, setDrawerOpen, setCropRect]);
 
 	useModalLayer(MODAL_PRIORITIES.IMAGE_ANNOTATOR, 'Image Annotator', handleEscape, {
 		focusTrap: 'lenient',
@@ -202,6 +227,114 @@ function ImageAnnotatorContent({
 		{ target: typeof document !== 'undefined' ? document : null }
 	);
 
+	// `+` / `-` nudge the size of whatever the user is working on, so the common
+	// adjustment never requires opening the drawer. Text wins when a label is
+	// selected or the text tool is active; otherwise this is the pen / shape
+	// size. Like the drawer's sliders, a selected item is edited in place and
+	// the stored default is left alone.
+	// Read the stored sizes with `getState()` rather than a selector: subscribing
+	// would re-render this whole subtree (canvas included) on every keypress,
+	// and the canvas already watches those settings itself.
+	useEventListener(
+		'keydown',
+		(event) => {
+			const e = event as KeyboardEvent;
+			if (e.metaKey || e.ctrlKey || e.altKey) return;
+			if (isAnnotatorTextEntry(e.target)) return;
+			const direction = sizeHotkeyDirection(e.key);
+			if (!direction) return;
+			e.preventDefault();
+
+			const settings = useSettingsStore.getState();
+			const selectedText = state.selectedTextId
+				? (state.texts.find((t) => t.id === state.selectedTextId) ?? null)
+				: null;
+			if (selectedText || state.tool === 'text') {
+				if (selectedText) {
+					const size = nudgeSize(
+						selectedText.style.size,
+						direction,
+						TEXT_SIZE_STEP,
+						TEXT_SIZE_MIN,
+						TEXT_SIZE_MAX
+					);
+					state.updateText(selectedText.id, { style: { ...selectedText.style, size } });
+				} else {
+					settings.setAnnotatorTextSize(
+						nudgeSize(
+							settings.annotatorTextSize,
+							direction,
+							TEXT_SIZE_STEP,
+							TEXT_SIZE_MIN,
+							TEXT_SIZE_MAX
+						)
+					);
+				}
+				return;
+			}
+
+			const selectedShape = state.selectedShapeId
+				? (state.shapes.find((s) => s.id === state.selectedShapeId) ?? null)
+				: null;
+			if (selectedShape) {
+				const size = nudgeSize(
+					selectedShape.style.size,
+					direction,
+					PEN_SIZE_STEP,
+					PEN_SIZE_MIN,
+					PEN_SIZE_MAX
+				);
+				state.updateShape(selectedShape.id, { style: { ...selectedShape.style, size } });
+			} else {
+				settings.setAnnotatorPenSize(
+					nudgeSize(settings.annotatorPenSize, direction, PEN_SIZE_STEP, PEN_SIZE_MIN, PEN_SIZE_MAX)
+				);
+			}
+		},
+		{ target: typeof document !== 'undefined' ? document : null }
+	);
+
+	// Apply the armed crop: cut the base pixels, then let the state hook move the
+	// annotations into the new origin. A null rect means "the whole image", so
+	// there is nothing to do. Failure leaves the selection armed so the user can
+	// adjust and retry rather than losing it.
+	const applyCropState = state.applyCrop;
+	const currentImage = state.image;
+	const handleApplyCrop = useCallback(async () => {
+		const rect = cropRectRef.current;
+		if (!rect) return;
+		try {
+			const { dataUrl, rect: applied } = await cropImageDataUrl(currentImage, rect);
+			applyCropState(dataUrl, applied);
+		} catch (err) {
+			logger.warn('Failed to crop annotator image', undefined, err);
+			notifyToast({
+				color: 'red',
+				title: 'Crop failed',
+				message: 'The selected area could not be cropped.',
+			});
+		}
+	}, [currentImage, applyCropState]);
+
+	// Enter applies the crop, matching every other image editor. Scoped to the
+	// crop tool so it can't fire while the user is drawing or typing.
+	const toolRef = useRef(state.tool);
+	toolRef.current = state.tool;
+	const applyCropRef = useRef(handleApplyCrop);
+	applyCropRef.current = handleApplyCrop;
+	useEventListener(
+		'keydown',
+		(event) => {
+			const e = event as KeyboardEvent;
+			if (e.key !== 'Enter' || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+			if (toolRef.current !== 'crop') return;
+			if (isAnnotatorTextEntry(e.target)) return;
+			e.preventDefault();
+			void applyCropRef.current();
+		},
+		{ target: typeof document !== 'undefined' ? document : null }
+	);
+
 	const composite = useCallback(async (): Promise<string | null> => {
 		const svg = svgRef.current;
 		if (!svg) return null;
@@ -209,8 +342,8 @@ function ImageAnnotatorContent({
 		// SVG `<text>` element before we serialize. Belt-and-suspenders against
 		// the textarea's own onBlur (which races with the save click target).
 		state.commitTextEditing();
-		return compositeAnnotatedImage(imageDataUrl, svg);
-	}, [imageDataUrl, state]);
+		return compositeAnnotatedImage(state.image, svg);
+	}, [state]);
 
 	const handleSave = useCallback(async () => {
 		try {
@@ -268,7 +401,7 @@ function ImageAnnotatorContent({
 				color: theme.colors.textMain,
 			}}
 		>
-			<AnnotatorCanvas ref={svgRef} imageDataUrl={imageDataUrl} state={state} />
+			<AnnotatorCanvas ref={svgRef} imageDataUrl={state.image} state={state} />
 			<AnnotatorToolbar
 				state={state}
 				theme={theme}
@@ -276,6 +409,7 @@ function ImageAnnotatorContent({
 				onToggleDrawer={toggleDrawer}
 				onSave={handleSave}
 				onCopy={handleCopy}
+				onApplyCrop={handleApplyCrop}
 				onCancel={handleCancel}
 			/>
 			<AnnotatorSettingsDrawer

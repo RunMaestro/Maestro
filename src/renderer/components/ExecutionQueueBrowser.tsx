@@ -19,7 +19,7 @@ import { useResizableModal } from '../hooks/ui/useResizableModal';
 import { useEventListener } from '../hooks/utils/useEventListener';
 import { useFocusOnClose } from '../hooks/utils/useFocusAfterRender';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
-import type { Session, Theme, QueuedItem } from '../types';
+import type { Session, Theme, QueuedItem, QueuedItemEditPatch } from '../types';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
 import { useSettingsStore } from '../stores/settingsStore';
@@ -52,11 +52,7 @@ interface ExecutionQueueBrowserProps {
 	onSwitchSession: (sessionId: string, tabId?: string) => void;
 	onReorderItems?: (sessionId: string, fromIndex: number, toIndex: number) => void;
 	onToggleItemPause?: (sessionId: string, itemId: string) => void;
-	onEditItem?: (
-		sessionId: string,
-		itemId: string,
-		patch: { text: string; images: string[] }
-	) => void;
+	onEditItem?: (sessionId: string, itemId: string, patch: QueuedItemEditPatch) => void;
 	/** Dispatch a queued item immediately, out of queue order */
 	onForceSendItem?: (sessionId: string, itemId: string) => void;
 }
@@ -607,6 +603,7 @@ export function ExecutionQueueBrowser({
 					<QueuedItemEditModal
 						item={editing.item}
 						theme={theme}
+						sessionId={editing.sessionId}
 						onClose={() => setEditing(null)}
 						onSave={(patch) => onEditItem(editing.sessionId, editing.item.id, patch)}
 					/>

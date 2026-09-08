@@ -1,23 +1,37 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ImagePlus, PenLine, X } from 'lucide-react';
-import type { Theme, QueuedItem } from '../types';
+import type { Theme, QueuedItem, QueuedItemEditPatch, QueuedTurnSettings } from '../types';
 import { Modal, ModalFooter } from './ui/Modal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useImageAnnotatorStore } from './ImageAnnotator/imageAnnotatorStore';
 import { addStagedImageIfUnique } from './InputArea/utils/stagedImages';
 import { notifyCenterFlash } from '../stores/centerFlashStore';
 import { captureException } from '../utils/sentry';
+import { displayImageSrc } from '../utils/sessionImageSrc';
 import { useSettingsStore } from '../stores/settingsStore';
+import { selectActiveSession, selectSessionById, useSessionStore } from '../stores/sessionStore';
 import { useKeyboardShortcutHelpers } from '../hooks/keyboard';
 import { useResizableTextarea } from '../hooks/ui/useResizableTextarea';
 import { LightboxModal } from './LightboxModal';
+import { ModelEffortPills } from './InputArea/components/ModelEffortPills';
+import { useModelEffortMenus } from './InputArea/hooks/useModelEffortMenus';
+import { useAgentModelEffortOptions } from '../hooks/agent/useAgentModelEffortOptions';
+import { codifyTurnSettings } from '../utils/providerTabSessions';
 
 interface QueuedItemEditModalProps {
 	item: QueuedItem;
 	theme: Theme;
+	/**
+	 * Agent this item is queued on. Supplies the provider whose model/effort
+	 * options are offered, and the fallback settings shown when the item was
+	 * queued by a build that predates `turnSettings`. Defaults to the active
+	 * agent, which is correct for the inline chat list; the Execution Queue
+	 * browser spans agents and passes the owning one explicitly.
+	 */
+	sessionId?: string;
 	onClose: () => void;
-	onSave: (patch: { text: string; images: string[] }) => void;
+	onSave: (patch: QueuedItemEditPatch) => void;
 }
 
 /**
@@ -28,9 +42,34 @@ interface QueuedItemEditModalProps {
  * LightboxModal so the in-carousel hotkeys (Cmd+E annotate, Cmd+C copy, Delete,
  * arrow nav) operate on THIS modal's images rather than the composer's staged set.
  */
-export function QueuedItemEditModal({ item, theme, onClose, onSave }: QueuedItemEditModalProps) {
+export function QueuedItemEditModal({
+	item,
+	theme,
+	sessionId,
+	onClose,
+	onSave,
+}: QueuedItemEditModalProps) {
+	const session = useSessionStore((s) =>
+		sessionId ? selectSessionById(sessionId)(s) : (selectActiveSession(s) ?? undefined)
+	);
 	const [text, setText] = useState(item.text ?? '');
 	const [images, setImages] = useState<string[]>(item.images ?? []);
+
+	// Model/effort for THIS message. Seeded from the item's own capture; an item
+	// from before the capture existed falls back to what the agent would run it
+	// under right now, which is what it would actually have spawned with.
+	const [turnSettings, setTurnSettings] = useState<QueuedTurnSettings>(() => {
+		if (item.turnSettings) return item.turnSettings;
+		if (!session) return {};
+		const tab = session.aiTabs?.find((t) => t.id === item.tabId);
+		const live = codifyTurnSettings(tab, session);
+		return { model: live.turnModel, effort: live.turnEffort };
+	});
+
+	// Options come from the agent's own provider, never a hardcoded list: Claude
+	// Code's thinking levels and Codex's reasoning efforts are different sets.
+	const providerOptions = useAgentModelEffortOptions(session?.toolType);
+	const menus = useModelEffortMenus();
 	// Currently-viewed image in the local carousel; null when the carousel is closed.
 	const [lightboxImage, setLightboxImage] = useState<string | null>(null);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -111,7 +150,7 @@ export function QueuedItemEditModal({ item, theme, onClose, onSave }: QueuedItem
 
 	const handleSave = () => {
 		if (!canSave) return;
-		onSave({ text, images });
+		onSave({ text, images, turnSettings });
 		onClose();
 	};
 
@@ -199,7 +238,7 @@ export function QueuedItemEditModal({ item, theme, onClose, onSave }: QueuedItem
 										title="Click to view full size"
 									>
 										<img
-											src={img}
+											src={displayImageSrc(img)}
 											alt={`Attachment ${idx + 1}`}
 											className="h-16 rounded border cursor-pointer hover:opacity-80 transition-opacity block"
 											style={{
@@ -238,16 +277,38 @@ export function QueuedItemEditModal({ item, theme, onClose, onSave }: QueuedItem
 						</div>
 					)}
 
-					{/* Add image */}
-					<button
-						type="button"
-						onClick={() => fileInputRef.current?.click()}
-						className="flex items-center gap-1.5 mt-3 px-2.5 py-1.5 rounded text-xs font-medium hover:opacity-80 transition-opacity"
-						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-					>
-						<ImagePlus className="w-4 h-4" />
-						Add image
-					</button>
+					{/* One control row: Add image on the left, this message's model/effort
+					    pills right-justified. Same pills as the composer, so the options,
+					    styling and menu behaviour cannot drift. The pills render nothing
+					    when the provider offers neither, which leaves the button alone. */}
+					<div className="flex items-center gap-2 mt-3">
+						<button
+							type="button"
+							onClick={() => fileInputRef.current?.click()}
+							className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-medium hover:opacity-80 transition-opacity"
+							style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
+						>
+							<ImagePlus className="w-4 h-4" />
+							Add image
+						</button>
+						<div className="flex items-center gap-2 ml-auto">
+							<ModelEffortPills
+								isVisible
+								theme={theme}
+								currentModel={turnSettings.model ?? providerOptions.defaultModel}
+								currentEffort={turnSettings.effort ?? providerOptions.defaultEffort}
+								availableModels={providerOptions.models}
+								availableEfforts={providerOptions.efforts}
+								onModelChange={(model) =>
+									setTurnSettings((prev) => ({ ...prev, model: model || undefined }))
+								}
+								onEffortChange={(effort) =>
+									setTurnSettings((prev) => ({ ...prev, effort: effort || undefined }))
+								}
+								{...menus}
+							/>
+						</div>
+					</div>
 					<input
 						ref={fileInputRef}
 						type="file"

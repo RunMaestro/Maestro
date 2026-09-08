@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { Search, Star, FileText, Terminal, Globe } from 'lucide-react';
+import { Search, Star, FileText, Terminal, Globe, MessageSquare } from 'lucide-react';
 import type {
 	AITab,
 	FilePreviewTab,
@@ -20,7 +20,7 @@ import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { formatTokensCompact, formatRelativeTime, formatCost } from '../utils/formatters';
 import { calculateContextDisplay, calculateDisplayInputTokens } from '../utils/contextUsage';
 import { getExtensionColor } from '../utils/extensionColors';
-import { getTabDisplayName } from '../utils/tabHelpers';
+import { getTabDisplayName, visibleAiTabs } from '../utils/tabHelpers';
 import { useWizardActiveTabs } from '../contexts/InlineWizardContext';
 import { isWizardTab } from '../utils/wizardActivity';
 import { WizardIndicator } from './SessionList/WizardIndicator';
@@ -28,6 +28,8 @@ import { getBrowserTabLabel } from '../utils/browserTabPersistence';
 import { logger } from '../utils/logger';
 import { ResizeHandles } from './ui/ResizeHandles';
 import { EscCloseButton } from './ui/EscCloseButton';
+import { usePhoneLayout } from '../hooks/ui/useViewportBreakpoint';
+import { getTabKindColor } from './TabBar/tabBarUtils';
 
 /** Normalize a project path for comparison (strip trailing slashes) */
 function normalizePath(p: string): string {
@@ -199,6 +201,123 @@ function ContextGauge({
 	);
 }
 
+interface PhoneTabRowProps {
+	theme: Theme;
+	/** Kind glyph (chat bubble, file, terminal, globe). Replaced by a pulsing dot while busy. */
+	icon: React.ReactNode;
+	name: string;
+	isActive: boolean;
+	isBusy: boolean;
+	starred: boolean;
+	onSelect: () => void;
+}
+
+/**
+ * One row of the PHONE tab switcher: kind glyph (or a busy dot), the name, a
+ * star. Nothing else. The desktop rows carry a session-id pill, token and cost
+ * totals, a context gauge, and a hotkey number; at 390px those crowded out the
+ * one thing the row exists to show, and a phone has no keyboard for the hotkey
+ * the number advertises. The active tab is marked with an accent rail rather
+ * than the keyboard-selection highlight, which only means something with arrow
+ * keys to move it.
+ */
+function PhoneTabRow({ theme, icon, name, isActive, isBusy, starred, onSelect }: PhoneTabRowProps) {
+	return (
+		<button
+			type="button"
+			onClick={onSelect}
+			aria-current={isActive ? 'true' : undefined}
+			className="w-full text-left px-4 py-3 min-h-[52px] flex items-center gap-3 row-hover border-l-2"
+			style={{
+				color: theme.colors.textMain,
+				borderColor: isActive ? theme.colors.accent : 'transparent',
+				backgroundColor: isActive ? `${theme.colors.accent}1a` : 'transparent',
+			}}
+		>
+			<span className="shrink-0 w-5 h-5 flex items-center justify-center" aria-hidden="true">
+				{isBusy ? (
+					<span
+						className="w-2.5 h-2.5 rounded-full animate-pulse"
+						style={{ backgroundColor: theme.colors.warning }}
+					/>
+				) : (
+					icon
+				)}
+			</span>
+			<span className="flex-1 min-w-0 truncate text-base font-medium">{name}</span>
+			{starred && (
+				<Star className="w-4 h-4 fill-current shrink-0" style={{ color: theme.colors.warning }} />
+			)}
+		</button>
+	);
+}
+
+/** Flatten a list item into what the phone row shows, whichever kind of tab it is. */
+function phoneRowFor(
+	item: ListItem,
+	ctx: {
+		theme: Theme;
+		activeTabId: string;
+		activeFileTabId?: string | null;
+		activeTerminalTabId?: string | null;
+		activeBrowserTabId?: string | null;
+	}
+): Omit<PhoneTabRowProps, 'theme' | 'onSelect'> & { key: string } {
+	const { theme } = ctx;
+	const iconClass = 'w-4 h-4';
+	switch (item.type) {
+		case 'open':
+			return {
+				key: item.tab.id,
+				icon: (
+					<MessageSquare className={iconClass} style={{ color: getTabKindColor('ai', theme) }} />
+				),
+				name: getTabDisplayName(item.tab),
+				isActive: item.tab.id === ctx.activeTabId,
+				isBusy: item.tab.state === 'busy',
+				starred: !!item.tab.starred,
+			};
+		case 'file':
+			return {
+				key: item.tab.id,
+				icon: <FileText className={iconClass} style={{ color: getTabKindColor('file', theme) }} />,
+				name: item.tab.name,
+				isActive: item.tab.id === ctx.activeFileTabId,
+				isBusy: false,
+				starred: false,
+			};
+		case 'terminal':
+			return {
+				key: item.tab.id,
+				icon: (
+					<Terminal className={iconClass} style={{ color: getTabKindColor('terminal', theme) }} />
+				),
+				name: item.tab.name || 'Terminal',
+				isActive: item.tab.id === ctx.activeTerminalTabId,
+				isBusy: false,
+				starred: false,
+			};
+		case 'browser':
+			return {
+				key: item.tab.id,
+				icon: <Globe className={iconClass} style={{ color: getTabKindColor('browser', theme) }} />,
+				name: getBrowserTabLabel(item.tab),
+				isActive: item.tab.id === ctx.activeBrowserTabId,
+				isBusy: false,
+				starred: false,
+			};
+		case 'named':
+			return {
+				key: item.session.agentSessionId,
+				icon: <MessageSquare className={iconClass} style={{ color: theme.colors.textDim }} />,
+				name: item.session.sessionName,
+				isActive: false,
+				isBusy: false,
+				starred: !!item.session.starred,
+			};
+	}
+}
+
 type ViewMode = 'open' | 'all-named' | 'starred';
 
 const EMPTY_FILE_TABS: FilePreviewTab[] = [];
@@ -213,7 +332,7 @@ const EMPTY_BROWSER_TABS: BrowserTab[] = [];
  */
 export function TabSwitcherModal({
 	theme,
-	tabs,
+	tabs: allTabs,
 	fileTabs = EMPTY_FILE_TABS,
 	terminalTabs = EMPTY_TERMINAL_TABS,
 	browserTabs = EMPTY_BROWSER_TABS,
@@ -232,11 +351,22 @@ export function TabSwitcherModal({
 	onClose,
 	colorBlindMode,
 }: TabSwitcherModalProps) {
+	// Hidden cross-agent consult tabs are not open tabs. They hold the transcript of
+	// a question another agent's user asked, have no chip in the strip, and surface
+	// only when the user opens one from a response bubble. Listing one here offers a
+	// row with nothing to click back from, and syncing its generated `↩ Name` to the
+	// named-session store would invent a session name the user never chose.
+	const tabs = useMemo(() => visibleAiTabs(allTabs), [allTabs]);
+
 	// A tab running `/wizard` looks like any other row here, and its wizard is the one
 	// thing about it the user can't see from the tab strip once the strip overflows.
 	// Read the live map rather than `tab.wizardState`, which is only mirrored onto the
 	// active tab and so is missing on exactly the background tabs this modal exists to find.
 	const wizardActiveTabs = useWizardActiveTabs();
+	// Phone: a full-screen list of open tabs, and nothing else. No mode pills (the
+	// named-session views are a keyboard workflow), no shortcut hints, no per-tab
+	// metadata. See PhoneTabRow for what a row keeps.
+	const phone = usePhoneLayout();
 	const [search, setSearch] = useState('');
 	const [firstVisibleIndex, setFirstVisibleIndex] = useState(0);
 	const [viewMode, setViewMode] = useState<ViewMode>('open');
@@ -266,8 +396,10 @@ export function TabSwitcherModal({
 
 	useModalLayer(MODAL_PRIORITIES.TAB_SWITCHER, 'Tab Switcher', () => onCloseRef.current());
 
-	// Focus input on mount
-	useFocusOnMount(inputRef);
+	// Focus input on mount - but not on a phone, where raising the keyboard
+	// covers the bottom half of the full-screen switcher and buries the tab list
+	// the user opened it to scroll through. Tapping the field still filters.
+	useFocusOnMount(inputRef, undefined, !phone);
 
 	// On mount: sync any named tabs to the origins store, then load named sessions
 	// This ensures tabs that were named before persistence was added get saved
@@ -299,10 +431,12 @@ export function TabSwitcherModal({
 			setNamedSessionsLoaded(true);
 		};
 
-		if (!namedSessionsLoaded) {
+		// The phone switcher lists open tabs only, so it has no use for the named
+		// session catalog and skips the round trip.
+		if (!namedSessionsLoaded && !phone) {
 			syncAndLoad();
 		}
-	}, [namedSessionsLoaded, tabs, projectRoot, agentId]);
+	}, [namedSessionsLoaded, tabs, projectRoot, agentId, phone]);
 
 	// Track scroll position to determine which items are visible
 	const handleScroll = () => {
@@ -622,30 +756,64 @@ export function TabSwitcherModal({
 
 	return (
 		<div
-			className="fixed inset-0 modal-overlay flex items-center justify-center p-8 z-[9999] animate-in fade-in duration-100"
+			className={
+				phone
+					? 'fixed inset-0 z-[9999] animate-in fade-in duration-100'
+					: 'fixed inset-0 modal-overlay flex items-center justify-center p-8 z-[9999] animate-in fade-in duration-100'
+			}
 			onClick={onClose}
 		>
 			<div
-				ref={resizableModal.modalRef}
+				// The resizable-modal hook sizes its element imperatively through this
+				// ref (clamped to the viewport minus a margin), which on a phone shrank
+				// the sheet to a floating box with the app showing around it. The phone
+				// layout is full screen and never resizable, so it gets no ref.
+				ref={phone ? undefined : resizableModal.modalRef}
 				onClick={(e) => e.stopPropagation()}
 				role="dialog"
 				aria-modal="true"
 				aria-label="Tab Switcher"
 				tabIndex={-1}
-				className="relative rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none select-none"
-				style={{
-					...resizableModal.style,
-					backgroundColor: theme.colors.bgActivity,
-					borderColor: theme.colors.border,
-				}}
-				data-modal-resize-key="tab-switcher"
+				className={
+					phone
+						? 'relative w-full flex flex-col outline-none select-none'
+						: 'relative rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none select-none'
+				}
+				style={
+					phone
+						? {
+								backgroundColor: theme.colors.bgActivity,
+								// `--maestro-top-inset`, not raw `env()`: an iOS home-screen
+								// web app can report that inset as 0 and shorten the viewport
+								// instead, which puts this header inside the system status bar
+								// layer where it is dimmed and swallows taps. The variable is
+								// the max() of `env()` and the measured shortfall.
+								paddingTop: 'var(--maestro-top-inset, 0px)',
+								paddingBottom: 'env(safe-area-inset-bottom)',
+								// Sized to the VISIBLE viewport rather than inheriting the
+								// overlay's full height: this surface autofocuses nothing on a
+								// phone now, but the user can still tap the filter field, and
+								// the keyboard slides OVER a layout-viewport-sized sheet
+								// instead of shrinking it - which buries the tab list.
+								height: 'var(--maestro-viewport-height, 100dvh)',
+							}
+						: {
+								...resizableModal.style,
+								backgroundColor: theme.colors.bgActivity,
+								borderColor: theme.colors.border,
+							}
+				}
+				data-modal-resize-key={phone ? undefined : 'tab-switcher'}
+				data-testid={phone ? 'tab-switcher-phone' : undefined}
 			>
-				<ResizeHandles
-					onResizeStart={resizableModal.onResizeStart}
-					accentColor={theme.colors.accent}
-					onResetSize={resizableModal.onResetSize}
-					canReset={resizableModal.canReset}
-				/>
+				{!phone && (
+					<ResizeHandles
+						onResizeStart={resizableModal.onResizeStart}
+						accentColor={theme.colors.accent}
+						onResetSize={resizableModal.onResetSize}
+						canReset={resizableModal.canReset}
+					/>
+				)}
 
 				{/* Search Header */}
 				<div
@@ -669,7 +837,7 @@ export function TabSwitcherModal({
 						onKeyDown={handleKeyDown}
 					/>
 					<div className="flex items-center gap-2">
-						{shortcut && (
+						{shortcut && !phone && (
 							<span
 								className="text-xs font-mono opacity-60"
 								style={{ color: theme.colors.textDim }}
@@ -682,70 +850,74 @@ export function TabSwitcherModal({
 				</div>
 
 				{/* Mode Toggle Pills */}
-				<div
-					className="px-4 py-2 flex items-center gap-2 border-b"
-					style={{ borderColor: theme.colors.border }}
-				>
-					<button
-						onClick={() => handleViewModeChange('open')}
-						className="px-3 py-1 rounded-full text-xs font-medium transition-colors"
-						style={{
-							backgroundColor: viewMode === 'open' ? theme.colors.accent : theme.colors.bgMain,
-							color: viewMode === 'open' ? theme.colors.accentForeground : theme.colors.textDim,
-						}}
+				{!phone && (
+					<div
+						className="px-4 py-2 flex items-center gap-2 border-b"
+						style={{ borderColor: theme.colors.border }}
 					>
-						Open Tabs ({tabs.length + fileTabs.length + terminalTabs.length + browserTabs.length})
-					</button>
-					<button
-						onClick={() => handleViewModeChange('all-named')}
-						className="px-3 py-1 rounded-full text-xs font-medium transition-colors"
-						style={{
-							backgroundColor: viewMode === 'all-named' ? theme.colors.accent : theme.colors.bgMain,
-							color:
-								viewMode === 'all-named' ? theme.colors.accentForeground : theme.colors.textDim,
-						}}
-					>
-						All Named (
-						{tabs.filter((t) => t.agentSessionId && t.name).length +
-							namedSessions.filter((s) => {
-								if (
-									normalizePath(s.projectPath) !== normalizePath(projectRoot) ||
-									openTabSessionIds.has(s.agentSessionId)
-								)
-									return false;
-								const firstOctet = s.agentSessionId.split('-')[0].toUpperCase();
-								return (
-									s.sessionName !== s.agentSessionId && s.sessionName.toUpperCase() !== firstOctet
-								);
-							}).length}
-						)
-					</button>
-					<button
-						onClick={() => handleViewModeChange('starred')}
-						className="px-3 py-1 rounded-full text-xs font-medium transition-colors flex items-center gap-1"
-						style={{
-							backgroundColor: viewMode === 'starred' ? theme.colors.accent : theme.colors.bgMain,
-							color: viewMode === 'starred' ? theme.colors.accentForeground : theme.colors.textDim,
-						}}
-					>
-						<Star
-							className="w-3 h-3"
-							style={{ fill: viewMode === 'starred' ? 'currentColor' : 'none' }}
-						/>
-						Starred (
-						{tabs.filter((t) => t.starred).length +
-							namedSessions.filter(
-								(s) =>
-									s.starred &&
-									s.projectPath === projectRoot &&
-									!openTabSessionIds.has(s.agentSessionId)
-							).length}
-						)
-					</button>
-					<span className="text-2xs opacity-50 ml-auto" style={{ color: theme.colors.textDim }}>
-						Tab / ⇧Tab to switch
-					</span>
-				</div>
+						<button
+							onClick={() => handleViewModeChange('open')}
+							className="px-3 py-1 rounded-full text-xs font-medium transition-colors"
+							style={{
+								backgroundColor: viewMode === 'open' ? theme.colors.accent : theme.colors.bgMain,
+								color: viewMode === 'open' ? theme.colors.accentForeground : theme.colors.textDim,
+							}}
+						>
+							Open Tabs ({tabs.length + fileTabs.length + terminalTabs.length + browserTabs.length})
+						</button>
+						<button
+							onClick={() => handleViewModeChange('all-named')}
+							className="px-3 py-1 rounded-full text-xs font-medium transition-colors"
+							style={{
+								backgroundColor:
+									viewMode === 'all-named' ? theme.colors.accent : theme.colors.bgMain,
+								color:
+									viewMode === 'all-named' ? theme.colors.accentForeground : theme.colors.textDim,
+							}}
+						>
+							All Named (
+							{tabs.filter((t) => t.agentSessionId && t.name).length +
+								namedSessions.filter((s) => {
+									if (
+										normalizePath(s.projectPath) !== normalizePath(projectRoot) ||
+										openTabSessionIds.has(s.agentSessionId)
+									)
+										return false;
+									const firstOctet = s.agentSessionId.split('-')[0].toUpperCase();
+									return (
+										s.sessionName !== s.agentSessionId && s.sessionName.toUpperCase() !== firstOctet
+									);
+								}).length}
+							)
+						</button>
+						<button
+							onClick={() => handleViewModeChange('starred')}
+							className="px-3 py-1 rounded-full text-xs font-medium transition-colors flex items-center gap-1"
+							style={{
+								backgroundColor: viewMode === 'starred' ? theme.colors.accent : theme.colors.bgMain,
+								color:
+									viewMode === 'starred' ? theme.colors.accentForeground : theme.colors.textDim,
+							}}
+						>
+							<Star
+								className="w-3 h-3"
+								style={{ fill: viewMode === 'starred' ? 'currentColor' : 'none' }}
+							/>
+							Starred (
+							{tabs.filter((t) => t.starred).length +
+								namedSessions.filter(
+									(s) =>
+										s.starred &&
+										s.projectPath === projectRoot &&
+										!openTabSessionIds.has(s.agentSessionId)
+								).length}
+							)
+						</button>
+						<span className="text-2xs opacity-50 ml-auto" style={{ color: theme.colors.textDim }}>
+							Tab / ⇧Tab to switch
+						</span>
+					</div>
+				)}
 
 				{/* Item List */}
 				<div
@@ -753,380 +925,283 @@ export function TabSwitcherModal({
 					onScroll={handleScroll}
 					className="overflow-y-auto py-2 scrollbar-thin flex-1"
 				>
-					{filteredItems.map((item, i) => {
-						const isSelected = i === selectedIndex;
-
-						// Calculate dynamic number badge
-						const maxFirstIndex = Math.max(0, filteredItems.length - 10);
-						const effectiveFirstIndex = Math.min(firstVisibleIndex, maxFirstIndex);
-						const distanceFromFirstVisible = i - effectiveFirstIndex;
-						const showNumber = distanceFromFirstVisible >= 0 && distanceFromFirstVisible < 10;
-						const numberBadge = distanceFromFirstVisible === 9 ? 0 : distanceFromFirstVisible + 1;
-
-						if (item.type === 'open') {
-							const { tab } = item;
-							const isActive = tab.id === activeTabId;
-							const displayName = getTabDisplayName(tab);
-							const uuidPill = getUuidPill(tab.agentSessionId);
-							const contextPct = getContextPercentage(tab, agentId as ToolType);
-							const cost = tab.usageStats?.totalCostUsd || 0;
-							const wizardActivity = wizardActiveTabs.get(tab.id);
-
+					{phone &&
+						filteredItems.map((item, i) => {
+							const row = phoneRowFor(item, {
+								theme,
+								activeTabId,
+								activeFileTabId,
+								activeTerminalTabId,
+								activeBrowserTabId,
+							});
 							return (
-								<button
-									key={tab.id}
-									ref={isSelected ? selectedItemRef : null}
-									onClick={() => handleSelectByIndex(i)}
-									className="w-full text-left px-4 py-3 flex items-center gap-3 row-hover"
-									style={{
-										backgroundColor: isSelected ? theme.colors.accent : 'transparent',
-										color: isSelected ? theme.colors.accentForeground : theme.colors.textMain,
-									}}
-								>
-									{/* Number Badge */}
-									{showNumber ? (
-										<div
-											className="flex-shrink-0 w-5 h-5 rounded flex items-center justify-center text-xs font-bold"
-											style={{ backgroundColor: theme.colors.bgMain, color: theme.colors.textDim }}
-										>
-											{numberBadge}
-										</div>
-									) : (
-										<div className="flex-shrink-0 w-5 h-5" />
-									)}
+								<PhoneTabRow
+									key={row.key}
+									theme={theme}
+									icon={row.icon}
+									name={row.name}
+									isActive={row.isActive}
+									isBusy={row.isBusy}
+									starred={row.starred}
+									onSelect={() => handleSelectByIndex(i)}
+								/>
+							);
+						})}
+					{!phone &&
+						filteredItems.map((item, i) => {
+							const isSelected = i === selectedIndex;
 
-									{/* Busy/Active Indicator */}
-									<div className="flex-shrink-0 w-2 h-2">
-										{tab.state === 'busy' ? (
-											<div
-												className="w-2 h-2 rounded-full animate-pulse"
-												style={{ backgroundColor: theme.colors.warning }}
-											/>
-										) : isActive ? (
-											<div
-												className="w-2 h-2 rounded-full"
-												style={{ backgroundColor: theme.colors.success }}
-											/>
-										) : null}
-									</div>
+							// Calculate dynamic number badge
+							const maxFirstIndex = Math.max(0, filteredItems.length - 10);
+							const effectiveFirstIndex = Math.min(firstVisibleIndex, maxFirstIndex);
+							const distanceFromFirstVisible = i - effectiveFirstIndex;
+							const showNumber = distanceFromFirstVisible >= 0 && distanceFromFirstVisible < 10;
+							const numberBadge = distanceFromFirstVisible === 9 ? 0 : distanceFromFirstVisible + 1;
 
-									{/* Tab Info */}
-									<div className="flex flex-col flex-1 min-w-0">
-										<div className="flex items-center gap-2">
-											<span className="font-medium truncate">{displayName}</span>
-											<WizardIndicator
-												active={wizardActivity !== undefined}
-												generatingDocs={!!wizardActivity?.isGeneratingDocs}
-											/>
-											{tab.name && uuidPill && (
-												<span
-													className="text-2xs px-1.5 py-0.5 rounded font-mono flex-shrink-0"
-													style={{
-														backgroundColor: isSelected
-															? 'rgba(255,255,255,0.2)'
-															: theme.colors.bgMain,
-														color: isSelected
-															? theme.colors.accentForeground
-															: theme.colors.textDim,
-													}}
-												>
-													{uuidPill}
-												</span>
-											)}
-											{tab.starred && <span style={{ color: theme.colors.warning }}>★</span>}
+							if (item.type === 'open') {
+								const { tab } = item;
+								const isActive = tab.id === activeTabId;
+								const displayName = getTabDisplayName(tab);
+								const uuidPill = getUuidPill(tab.agentSessionId);
+								const contextPct = getContextPercentage(tab, agentId as ToolType);
+								const cost = tab.usageStats?.totalCostUsd || 0;
+								const wizardActivity = wizardActiveTabs.get(tab.id);
+
+								return (
+									<button
+										key={tab.id}
+										ref={isSelected ? selectedItemRef : null}
+										onClick={() => handleSelectByIndex(i)}
+										className="w-full text-left px-4 py-3 flex items-center gap-3 row-hover"
+										style={{
+											backgroundColor: isSelected ? theme.colors.accent : 'transparent',
+											color: isSelected ? theme.colors.accentForeground : theme.colors.textMain,
+										}}
+									>
+										{/* Number Badge */}
+										{showNumber ? (
+											<div
+												className="flex-shrink-0 w-5 h-5 rounded flex items-center justify-center text-xs font-bold"
+												style={{
+													backgroundColor: theme.colors.bgMain,
+													color: theme.colors.textDim,
+												}}
+											>
+												{numberBadge}
+											</div>
+										) : (
+											<div className="flex-shrink-0 w-5 h-5" />
+										)}
+
+										{/* Busy/Active Indicator */}
+										<div className="flex-shrink-0 w-2 h-2">
+											{tab.state === 'busy' ? (
+												<div
+													className="w-2 h-2 rounded-full animate-pulse"
+													style={{ backgroundColor: theme.colors.warning }}
+												/>
+											) : isActive ? (
+												<div
+													className="w-2 h-2 rounded-full"
+													style={{ backgroundColor: theme.colors.success }}
+												/>
+											) : null}
 										</div>
-										<div className="flex items-center gap-3 text-2xs opacity-60">
-											{tab.usageStats && (
-												<>
-													<span>
-														{formatTokensCompact(
-															calculateDisplayInputTokens(tab.usageStats, agentId) +
-																tab.usageStats.outputTokens
-														)}{' '}
-														tokens
+
+										{/* Tab Info */}
+										<div className="flex flex-col flex-1 min-w-0">
+											<div className="flex items-center gap-2">
+												<span className="font-medium truncate">{displayName}</span>
+												<WizardIndicator
+													active={wizardActivity !== undefined}
+													generatingDocs={!!wizardActivity?.isGeneratingDocs}
+												/>
+												{tab.name && uuidPill && (
+													<span
+														className="text-2xs px-1.5 py-0.5 rounded font-mono flex-shrink-0"
+														style={{
+															backgroundColor: isSelected
+																? 'rgba(255,255,255,0.2)'
+																: theme.colors.bgMain,
+															color: isSelected
+																? theme.colors.accentForeground
+																: theme.colors.textDim,
+														}}
+													>
+														{uuidPill}
 													</span>
-													<span>{formatCost(cost)}</span>
-												</>
-											)}
-											{(() => {
-												const lastActivity = getTabLastActivity(tab);
-												return lastActivity ? (
-													<span>{formatRelativeTime(lastActivity)}</span>
-												) : null;
-											})()}
+												)}
+												{tab.starred && <span style={{ color: theme.colors.warning }}>★</span>}
+											</div>
+											<div className="flex items-center gap-3 text-2xs opacity-60">
+												{tab.usageStats && (
+													<>
+														<span>
+															{formatTokensCompact(
+																calculateDisplayInputTokens(tab.usageStats, agentId) +
+																	tab.usageStats.outputTokens
+															)}{' '}
+															tokens
+														</span>
+														<span>{formatCost(cost)}</span>
+													</>
+												)}
+												{(() => {
+													const lastActivity = getTabLastActivity(tab);
+													return lastActivity ? (
+														<span>{formatRelativeTime(lastActivity)}</span>
+													) : null;
+												})()}
+											</div>
 										</div>
-									</div>
 
-									{/* Context Gauge - hidden when no trustworthy reading is available
+										{/* Context Gauge - hidden when no trustworthy reading is available
 									    (overflow without a preserved fallback) so we don't surface a
 									    misleading 0%. */}
-									{contextPct !== null && (
-										<div className="flex-shrink-0">
-											<ContextGauge percentage={contextPct} theme={theme} />
-										</div>
-									)}
-								</button>
-							);
-						} else if (item.type === 'file') {
-							// File preview tab
-							const { tab } = item;
-							const isActive = tab.id === activeFileTabId;
-							const extColors = getExtensionColor(tab.extension, theme, colorBlindMode);
-							const hasUnsavedEdits = !!tab.editContent;
-
-							return (
-								<button
-									key={tab.id}
-									ref={isSelected ? selectedItemRef : null}
-									onClick={() => handleSelectByIndex(i)}
-									className="w-full text-left px-4 py-3 flex items-center gap-3 row-hover"
-									style={{
-										backgroundColor: isSelected ? theme.colors.accent : 'transparent',
-										color: isSelected ? theme.colors.accentForeground : theme.colors.textMain,
-									}}
-								>
-									{/* Number Badge */}
-									{showNumber ? (
-										<div
-											className="flex-shrink-0 w-5 h-5 rounded flex items-center justify-center text-xs font-bold"
-											style={{ backgroundColor: theme.colors.bgMain, color: theme.colors.textDim }}
-										>
-											{numberBadge}
-										</div>
-									) : (
-										<div className="flex-shrink-0 w-5 h-5" />
-									)}
-
-									{/* File Icon - shows active indicator or file icon */}
-									<div className="flex-shrink-0 w-4 h-4 flex items-center justify-center">
-										{isActive ? (
-											<div
-												className="w-2 h-2 rounded-full"
-												style={{ backgroundColor: theme.colors.success }}
-											/>
-										) : (
-											<FileText className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+										{contextPct !== null && (
+											<div className="flex-shrink-0">
+												<ContextGauge percentage={contextPct} theme={theme} />
+											</div>
 										)}
-									</div>
+									</button>
+								);
+							} else if (item.type === 'file') {
+								// File preview tab
+								const { tab } = item;
+								const isActive = tab.id === activeFileTabId;
+								const extColors = getExtensionColor(tab.extension, theme, colorBlindMode);
+								const hasUnsavedEdits = !!tab.editContent;
 
-									{/* File Info */}
-									<div className="flex flex-col flex-1 min-w-0">
-										<div className="flex items-center gap-2">
-											<span className="font-medium truncate">{tab.name}</span>
-											{/* Extension badge - uppercase without leading dot */}
-											<span
-												className="text-3xs px-1 py-0.5 rounded font-semibold uppercase flex-shrink-0"
+								return (
+									<button
+										key={tab.id}
+										ref={isSelected ? selectedItemRef : null}
+										onClick={() => handleSelectByIndex(i)}
+										className="w-full text-left px-4 py-3 flex items-center gap-3 row-hover"
+										style={{
+											backgroundColor: isSelected ? theme.colors.accent : 'transparent',
+											color: isSelected ? theme.colors.accentForeground : theme.colors.textMain,
+										}}
+									>
+										{/* Number Badge */}
+										{showNumber ? (
+											<div
+												className="flex-shrink-0 w-5 h-5 rounded flex items-center justify-center text-xs font-bold"
 												style={{
-													backgroundColor: isSelected ? 'rgba(255,255,255,0.2)' : extColors.bg,
-													color: isSelected ? theme.colors.accentForeground : extColors.text,
+													backgroundColor: theme.colors.bgMain,
+													color: theme.colors.textDim,
 												}}
 											>
-												{tab.extension.replace(/^\./, '').toUpperCase()}
-											</span>
-											{/* Unsaved indicator */}
-											{hasUnsavedEdits && (
-												<span
-													className="text-2xs opacity-80"
-													style={{ color: theme.colors.warning }}
-												>
-													●
-												</span>
+												{numberBadge}
+											</div>
+										) : (
+											<div className="flex-shrink-0 w-5 h-5" />
+										)}
+
+										{/* File Icon - shows active indicator or file icon */}
+										<div className="flex-shrink-0 w-4 h-4 flex items-center justify-center">
+											{isActive ? (
+												<div
+													className="w-2 h-2 rounded-full"
+													style={{ backgroundColor: theme.colors.success }}
+												/>
+											) : (
+												<FileText className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 											)}
 										</div>
-										{/* File path (truncated) */}
-										<div className="flex items-center gap-3 text-2xs opacity-60 truncate">
-											<span className="truncate">{tab.path}</span>
-										</div>
-									</div>
 
-									{/* File indicator instead of gauge */}
-									<div
-										className="flex-shrink-0 text-2xs px-2 py-1 rounded"
+										{/* File Info */}
+										<div className="flex flex-col flex-1 min-w-0">
+											<div className="flex items-center gap-2">
+												<span className="font-medium truncate">{tab.name}</span>
+												{/* Extension badge - uppercase without leading dot */}
+												<span
+													className="text-3xs px-1 py-0.5 rounded font-semibold uppercase flex-shrink-0"
+													style={{
+														backgroundColor: isSelected ? 'rgba(255,255,255,0.2)' : extColors.bg,
+														color: isSelected ? theme.colors.accentForeground : extColors.text,
+													}}
+												>
+													{tab.extension.replace(/^\./, '').toUpperCase()}
+												</span>
+												{/* Unsaved indicator */}
+												{hasUnsavedEdits && (
+													<span
+														className="text-2xs opacity-80"
+														style={{ color: theme.colors.warning }}
+													>
+														●
+													</span>
+												)}
+											</div>
+											{/* File path (truncated) */}
+											<div className="flex items-center gap-3 text-2xs opacity-60 truncate">
+												<span className="truncate">{tab.path}</span>
+											</div>
+										</div>
+
+										{/* File indicator instead of gauge */}
+										<div
+											className="flex-shrink-0 text-2xs px-2 py-1 rounded"
+											style={{
+												backgroundColor: isSelected ? 'rgba(255,255,255,0.2)' : theme.colors.bgMain,
+												color: isSelected ? theme.colors.accentForeground : theme.colors.textDim,
+											}}
+										>
+											File
+										</div>
+									</button>
+								);
+							} else if (item.type === 'terminal') {
+								// Terminal tab
+								const { tab } = item;
+								const isActive = tab.id === activeTerminalTabId;
+								const displayName = tab.name || 'Terminal';
+
+								return (
+									<button
+										key={tab.id}
+										ref={isSelected ? selectedItemRef : null}
+										onClick={() => handleSelectByIndex(i)}
+										className="w-full text-left px-4 py-3 flex items-center gap-3 row-hover"
 										style={{
-											backgroundColor: isSelected ? 'rgba(255,255,255,0.2)' : theme.colors.bgMain,
-											color: isSelected ? theme.colors.accentForeground : theme.colors.textDim,
+											backgroundColor: isSelected ? theme.colors.accent : 'transparent',
+											color: isSelected ? theme.colors.accentForeground : theme.colors.textMain,
 										}}
 									>
-										File
-									</div>
-								</button>
-							);
-						} else if (item.type === 'terminal') {
-							// Terminal tab
-							const { tab } = item;
-							const isActive = tab.id === activeTerminalTabId;
-							const displayName = tab.name || 'Terminal';
-
-							return (
-								<button
-									key={tab.id}
-									ref={isSelected ? selectedItemRef : null}
-									onClick={() => handleSelectByIndex(i)}
-									className="w-full text-left px-4 py-3 flex items-center gap-3 row-hover"
-									style={{
-										backgroundColor: isSelected ? theme.colors.accent : 'transparent',
-										color: isSelected ? theme.colors.accentForeground : theme.colors.textMain,
-									}}
-								>
-									{/* Number Badge */}
-									{showNumber ? (
-										<div
-											className="flex-shrink-0 w-5 h-5 rounded flex items-center justify-center text-xs font-bold"
-											style={{ backgroundColor: theme.colors.bgMain, color: theme.colors.textDim }}
-										>
-											{numberBadge}
-										</div>
-									) : (
-										<div className="flex-shrink-0 w-5 h-5" />
-									)}
-
-									{/* Terminal Icon - shows active indicator or terminal icon */}
-									<div className="flex-shrink-0 w-4 h-4 flex items-center justify-center">
-										{isActive ? (
+										{/* Number Badge */}
+										{showNumber ? (
 											<div
-												className="w-2 h-2 rounded-full"
-												style={{ backgroundColor: theme.colors.success }}
-											/>
-										) : (
-											<Terminal className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
-										)}
-									</div>
-
-									{/* Terminal Info */}
-									<div className="flex flex-col flex-1 min-w-0">
-										<div className="flex items-center gap-2">
-											<span className="font-medium truncate">{displayName}</span>
-											<span
-												className="text-3xs px-1 py-0.5 rounded font-semibold uppercase flex-shrink-0"
+												className="flex-shrink-0 w-5 h-5 rounded flex items-center justify-center text-xs font-bold"
 												style={{
-													backgroundColor: isSelected
-														? 'rgba(255,255,255,0.2)'
-														: theme.colors.bgMain,
-													color: isSelected ? theme.colors.accentForeground : theme.colors.textDim,
+													backgroundColor: theme.colors.bgMain,
+													color: theme.colors.textDim,
 												}}
 											>
-												{tab.shellType}
-											</span>
-										</div>
-										<div className="flex items-center gap-3 text-2xs opacity-60 truncate">
-											<span className="truncate">{tab.cwd}</span>
-										</div>
-									</div>
-
-									{/* Terminal indicator */}
-									<div
-										className="flex-shrink-0 text-2xs px-2 py-1 rounded"
-										style={{
-											backgroundColor: isSelected ? 'rgba(255,255,255,0.2)' : theme.colors.bgMain,
-											color: isSelected ? theme.colors.accentForeground : theme.colors.textDim,
-										}}
-									>
-										Terminal
-									</div>
-								</button>
-							);
-						} else if (item.type === 'browser') {
-							// Browser tab
-							const { tab } = item;
-							const isActive = tab.id === activeBrowserTabId;
-							const displayName = getBrowserTabLabel(tab);
-
-							return (
-								<button
-									key={tab.id}
-									ref={isSelected ? selectedItemRef : null}
-									onClick={() => handleSelectByIndex(i)}
-									className="w-full text-left px-4 py-3 flex items-center gap-3 row-hover"
-									style={{
-										backgroundColor: isSelected ? theme.colors.accent : 'transparent',
-										color: isSelected ? theme.colors.accentForeground : theme.colors.textMain,
-									}}
-								>
-									{/* Number Badge */}
-									{showNumber ? (
-										<div
-											className="flex-shrink-0 w-5 h-5 rounded flex items-center justify-center text-xs font-bold"
-											style={{ backgroundColor: theme.colors.bgMain, color: theme.colors.textDim }}
-										>
-											{numberBadge}
-										</div>
-									) : (
-										<div className="flex-shrink-0 w-5 h-5" />
-									)}
-
-									{/* Globe Icon - shows active indicator or globe icon */}
-									<div className="flex-shrink-0 w-4 h-4 flex items-center justify-center">
-										{isActive ? (
-											<div
-												className="w-2 h-2 rounded-full"
-												style={{ backgroundColor: theme.colors.success }}
-											/>
+												{numberBadge}
+											</div>
 										) : (
-											<Globe className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+											<div className="flex-shrink-0 w-5 h-5" />
 										)}
-									</div>
 
-									{/* Browser Tab Info */}
-									<div className="flex flex-col flex-1 min-w-0">
-										<div className="flex items-center gap-2">
-											<span className="font-medium truncate">{displayName}</span>
+										{/* Terminal Icon - shows active indicator or terminal icon */}
+										<div className="flex-shrink-0 w-4 h-4 flex items-center justify-center">
+											{isActive ? (
+												<div
+													className="w-2 h-2 rounded-full"
+													style={{ backgroundColor: theme.colors.success }}
+												/>
+											) : (
+												<Terminal className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+											)}
 										</div>
-										{/* URL (truncated) */}
-										<div className="flex items-center gap-3 text-2xs opacity-60 truncate">
-											<span className="truncate">{tab.url}</span>
-										</div>
-									</div>
 
-									{/* Browser indicator */}
-									<div
-										className="flex-shrink-0 text-2xs px-2 py-1 rounded"
-										style={{
-											backgroundColor: isSelected ? 'rgba(255,255,255,0.2)' : theme.colors.bgMain,
-											color: isSelected ? theme.colors.accentForeground : theme.colors.textDim,
-										}}
-									>
-										Browser
-									</div>
-								</button>
-							);
-						} else {
-							// Named session (not open)
-							const { session } = item;
-							const uuidPill = getUuidPill(session.agentSessionId);
-
-							return (
-								<button
-									key={session.agentSessionId}
-									ref={isSelected ? selectedItemRef : null}
-									onClick={() => handleSelectByIndex(i)}
-									className="w-full text-left px-4 py-3 flex items-center gap-3 row-hover"
-									style={{
-										backgroundColor: isSelected ? theme.colors.accent : 'transparent',
-										color: isSelected ? theme.colors.accentForeground : theme.colors.textMain,
-									}}
-								>
-									{/* Number Badge */}
-									{showNumber ? (
-										<div
-											className="flex-shrink-0 w-5 h-5 rounded flex items-center justify-center text-xs font-bold"
-											style={{ backgroundColor: theme.colors.bgMain, color: theme.colors.textDim }}
-										>
-											{numberBadge}
-										</div>
-									) : (
-										<div className="flex-shrink-0 w-5 h-5" />
-									)}
-
-									{/* Empty indicator space (no active/busy state for closed sessions) */}
-									<div className="flex-shrink-0 w-2 h-2" />
-
-									{/* Session Info */}
-									<div className="flex flex-col flex-1 min-w-0">
-										<div className="flex items-center gap-2">
-											<span className="font-medium truncate">{session.sessionName}</span>
-											{uuidPill && (
+										{/* Terminal Info */}
+										<div className="flex flex-col flex-1 min-w-0">
+											<div className="flex items-center gap-2">
+												<span className="font-medium truncate">{displayName}</span>
 												<span
-													className="text-2xs px-1.5 py-0.5 rounded font-mono flex-shrink-0"
+													className="text-3xs px-1 py-0.5 rounded font-semibold uppercase flex-shrink-0"
 													style={{
 														backgroundColor: isSelected
 															? 'rgba(255,255,255,0.2)'
@@ -1136,32 +1211,169 @@ export function TabSwitcherModal({
 															: theme.colors.textDim,
 													}}
 												>
-													{uuidPill}
+													{tab.shellType}
 												</span>
-											)}
-											{session.starred && <span style={{ color: theme.colors.warning }}>★</span>}
+											</div>
+											<div className="flex items-center gap-3 text-2xs opacity-60 truncate">
+												<span className="truncate">{tab.cwd}</span>
+											</div>
 										</div>
-										<div className="flex items-center gap-3 text-2xs opacity-60">
-											{session.lastActivityAt && (
-												<span>{formatRelativeTime(session.lastActivityAt)}</span>
-											)}
-										</div>
-									</div>
 
-									{/* Closed indicator instead of gauge */}
-									<div
-										className="flex-shrink-0 text-2xs px-2 py-1 rounded"
+										{/* Terminal indicator */}
+										<div
+											className="flex-shrink-0 text-2xs px-2 py-1 rounded"
+											style={{
+												backgroundColor: isSelected ? 'rgba(255,255,255,0.2)' : theme.colors.bgMain,
+												color: isSelected ? theme.colors.accentForeground : theme.colors.textDim,
+											}}
+										>
+											Terminal
+										</div>
+									</button>
+								);
+							} else if (item.type === 'browser') {
+								// Browser tab
+								const { tab } = item;
+								const isActive = tab.id === activeBrowserTabId;
+								const displayName = getBrowserTabLabel(tab);
+
+								return (
+									<button
+										key={tab.id}
+										ref={isSelected ? selectedItemRef : null}
+										onClick={() => handleSelectByIndex(i)}
+										className="w-full text-left px-4 py-3 flex items-center gap-3 row-hover"
 										style={{
-											backgroundColor: isSelected ? 'rgba(255,255,255,0.2)' : theme.colors.bgMain,
-											color: isSelected ? theme.colors.accentForeground : theme.colors.textDim,
+											backgroundColor: isSelected ? theme.colors.accent : 'transparent',
+											color: isSelected ? theme.colors.accentForeground : theme.colors.textMain,
 										}}
 									>
-										Closed
-									</div>
-								</button>
-							);
-						}
-					})}
+										{/* Number Badge */}
+										{showNumber ? (
+											<div
+												className="flex-shrink-0 w-5 h-5 rounded flex items-center justify-center text-xs font-bold"
+												style={{
+													backgroundColor: theme.colors.bgMain,
+													color: theme.colors.textDim,
+												}}
+											>
+												{numberBadge}
+											</div>
+										) : (
+											<div className="flex-shrink-0 w-5 h-5" />
+										)}
+
+										{/* Globe Icon - shows active indicator or globe icon */}
+										<div className="flex-shrink-0 w-4 h-4 flex items-center justify-center">
+											{isActive ? (
+												<div
+													className="w-2 h-2 rounded-full"
+													style={{ backgroundColor: theme.colors.success }}
+												/>
+											) : (
+												<Globe className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+											)}
+										</div>
+
+										{/* Browser Tab Info */}
+										<div className="flex flex-col flex-1 min-w-0">
+											<div className="flex items-center gap-2">
+												<span className="font-medium truncate">{displayName}</span>
+											</div>
+											{/* URL (truncated) */}
+											<div className="flex items-center gap-3 text-2xs opacity-60 truncate">
+												<span className="truncate">{tab.url}</span>
+											</div>
+										</div>
+
+										{/* Browser indicator */}
+										<div
+											className="flex-shrink-0 text-2xs px-2 py-1 rounded"
+											style={{
+												backgroundColor: isSelected ? 'rgba(255,255,255,0.2)' : theme.colors.bgMain,
+												color: isSelected ? theme.colors.accentForeground : theme.colors.textDim,
+											}}
+										>
+											Browser
+										</div>
+									</button>
+								);
+							} else {
+								// Named session (not open)
+								const { session } = item;
+								const uuidPill = getUuidPill(session.agentSessionId);
+
+								return (
+									<button
+										key={session.agentSessionId}
+										ref={isSelected ? selectedItemRef : null}
+										onClick={() => handleSelectByIndex(i)}
+										className="w-full text-left px-4 py-3 flex items-center gap-3 row-hover"
+										style={{
+											backgroundColor: isSelected ? theme.colors.accent : 'transparent',
+											color: isSelected ? theme.colors.accentForeground : theme.colors.textMain,
+										}}
+									>
+										{/* Number Badge */}
+										{showNumber ? (
+											<div
+												className="flex-shrink-0 w-5 h-5 rounded flex items-center justify-center text-xs font-bold"
+												style={{
+													backgroundColor: theme.colors.bgMain,
+													color: theme.colors.textDim,
+												}}
+											>
+												{numberBadge}
+											</div>
+										) : (
+											<div className="flex-shrink-0 w-5 h-5" />
+										)}
+
+										{/* Empty indicator space (no active/busy state for closed sessions) */}
+										<div className="flex-shrink-0 w-2 h-2" />
+
+										{/* Session Info */}
+										<div className="flex flex-col flex-1 min-w-0">
+											<div className="flex items-center gap-2">
+												<span className="font-medium truncate">{session.sessionName}</span>
+												{uuidPill && (
+													<span
+														className="text-2xs px-1.5 py-0.5 rounded font-mono flex-shrink-0"
+														style={{
+															backgroundColor: isSelected
+																? 'rgba(255,255,255,0.2)'
+																: theme.colors.bgMain,
+															color: isSelected
+																? theme.colors.accentForeground
+																: theme.colors.textDim,
+														}}
+													>
+														{uuidPill}
+													</span>
+												)}
+												{session.starred && <span style={{ color: theme.colors.warning }}>★</span>}
+											</div>
+											<div className="flex items-center gap-3 text-2xs opacity-60">
+												{session.lastActivityAt && (
+													<span>{formatRelativeTime(session.lastActivityAt)}</span>
+												)}
+											</div>
+										</div>
+
+										{/* Closed indicator instead of gauge */}
+										<div
+											className="flex-shrink-0 text-2xs px-2 py-1 rounded"
+											style={{
+												backgroundColor: isSelected ? 'rgba(255,255,255,0.2)' : theme.colors.bgMain,
+												color: isSelected ? theme.colors.accentForeground : theme.colors.textDim,
+											}}
+										>
+											Closed
+										</div>
+									</button>
+								);
+							}
+						})}
 
 					{filteredItems.length === 0 && (
 						<div
@@ -1177,17 +1389,19 @@ export function TabSwitcherModal({
 					)}
 				</div>
 
-				{/* Footer with stats */}
-				<div
-					className="px-4 py-2 border-t text-xs flex items-center justify-between"
-					style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
-				>
-					<span>
-						{filteredItems.length}{' '}
-						{viewMode === 'open' ? 'tabs' : viewMode === 'starred' ? 'starred' : 'sessions'}
-					</span>
-					<span>{`↑↓ navigate • Enter select • ${formatShortcutKeys(['Meta'])}1-9 quick select`}</span>
-				</div>
+				{/* Footer with stats - keyboard legend, so it has nothing to say on a phone */}
+				{!phone && (
+					<div
+						className="px-4 py-2 border-t text-xs flex items-center justify-between"
+						style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
+					>
+						<span>
+							{filteredItems.length}{' '}
+							{viewMode === 'open' ? 'tabs' : viewMode === 'starred' ? 'starred' : 'sessions'}
+						</span>
+						<span>{`↑↓ navigate • Enter select • ${formatShortcutKeys(['Meta'])}1-9 quick select`}</span>
+					</div>
+				)}
 			</div>
 		</div>
 	);

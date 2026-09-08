@@ -27,6 +27,8 @@ import { outputSearchKeyFor } from '../../utils/outputSearch';
 import type { CrossTabSearchJumpTarget } from '../../components/CrossTabSearchModal';
 import { subscribeToInAppDeepLinks } from '../../utils/openMaestroLink';
 import type { ParsedDeepLink } from '../../../shared/types';
+import { isWebDesktop } from '../../utils/runtimeContext';
+import { noteDesktopAiTabSelection } from '../../utils/desktopTabSelectionSync';
 
 // ============================================================================
 // Dependencies interface
@@ -133,13 +135,15 @@ export function useSessionSwitchCallbacks(
 					)
 				);
 			} else if (tabId) {
-				// Switch to the specific AI tab within the session. Clear file/terminal/browser
-				// state and force AI input mode so the view actually shows the target AI tab even
-				// if the target session was last viewed on a terminal/file/browser tab. Without
-				// this, activeTabId changes but the session still renders its previous non-AI
-				// view (the bug: jumping to an AI tab silently leaves the user on a terminal).
+				// Switch to the specific AI tab within the session, through the shared
+				// jump transform. It clears the file/terminal/browser selections that
+				// outrank the AI tab (without that, activeTabId changes and the session
+				// still renders its previous non-AI view), AND it REVEALS the tab first.
+				// The reveal is what makes a cross-agent consult row usable: consult tabs
+				// are hidden, so activating one the strip refuses to draw strands the
+				// user on a tab with no chip.
 				setSessions((prev) =>
-					prev.map((s) => (s.id === sessionId ? { ...s, ...aiTabFocusFields(tabId) } : s))
+					prev.map((s) => (s.id === sessionId ? focusAiTabInSession(s, tabId) : s))
 				);
 			}
 		},
@@ -278,6 +282,9 @@ export function useSessionSwitchCallbacks(
 		// Land on the AI tab, clearing any active file/terminal/browser view that
 		// would otherwise outrank it in the render precedence.
 		updateSessionWith(activeSession.id, (s) => ({ ...s, ...aiTabFocusFields(tabId) }));
+		if (!isWebDesktop()) {
+			noteDesktopAiTabSelection(activeSession.id, tabId);
+		}
 	}, []);
 
 	// Jump to a specific message from cross-tab search: land on the tab, seed that
@@ -289,6 +296,9 @@ export function useSessionSwitchCallbacks(
 			const activeSession = selectActiveSession(useSessionStore.getState());
 			if (!activeSession) return;
 			updateSessionWith(activeSession.id, (s) => ({ ...s, ...aiTabFocusFields(tabId) }));
+			if (!isWebDesktop()) {
+				noteDesktopAiTabSelection(activeSession.id, tabId);
+			}
 
 			const ui = useUIStore.getState();
 			const searchKey = outputSearchKeyFor(activeSession.id, tabId);
