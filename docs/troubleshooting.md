@@ -107,6 +107,7 @@ Two details worth knowing:
 
 - **Agents on an SSH remote log in on that remote.** The embedded terminal is spawned exactly like a terminal tab, so the login runs on the host the agent actually runs on.
 - **Cue pipelines raise the same dialog.** Cue spawns its agents outside the normal streaming path, so a pipeline that fails on expired credentials used to fail silently in the background. Maestro now classifies the failed run and prompts once per provider. It stays quiet after that until a run for that provider succeeds again, so a busy board cannot bury you in dialogs.
+- **You can sign in before anything breaks.** Command K -> **Re-authenticate Provider** opens the same dialog for the current agent's provider, with nothing failed. Useful when you are switching accounts, or when you know a token is about to lapse and would rather not have it expire mid-run.
 
 ## Debug Package
 
@@ -251,6 +252,41 @@ EOF
 ```
 
 Then rebuild the cache: `fc-cache -f -v`
+
+## macOS Privacy Permissions
+
+macOS gates calendars, reminders, contacts, photos, the local network, and the Desktop / Documents / Downloads folders behind TCC (Transparency, Consent, and Control). TCC attributes a request to the **responsible process**, which for anything an agent shells out to is Maestro itself:
+
+```
+Maestro.app -> claude -> zsh -> ical
+```
+
+So when an agent runs a CLI that touches one of those services, the consent dialog names **Maestro**, and the switch you flip afterwards lives under Maestro's row in System Settings > Privacy & Security. That attribution is expected, not a bug: the tool is borrowing Maestro's identity because Maestro is what launched it.
+
+### A tool reports "access denied" and no dialog ever appears
+
+On older builds, Maestro declared no usage-description string for these services, so macOS denied every such request instantly and silently. It will not prompt on behalf of a purpose string an app never declared, and with nothing to prompt for, no Maestro row appears in the Privacy pane to enable. Update Maestro.
+
+On a current build, a missing prompt usually means macOS has cached an earlier decision. Reset the relevant service and run the command again:
+
+```bash
+tccutil reset Calendar com.maestro.app
+tccutil reset Reminders com.maestro.app
+tccutil reset AddressBook com.maestro.app
+tccutil reset Photos com.maestro.app
+tccutil reset MediaLibrary com.maestro.app
+tccutil reset AppleEvents com.maestro.app
+tccutil reset SpeechRecognition com.maestro.app
+tccutil reset SystemPolicyDesktopFolder com.maestro.app
+tccutil reset SystemPolicyDocumentsFolder com.maestro.app
+tccutil reset SystemPolicyDownloadsFolder com.maestro.app
+tccutil reset SystemPolicyRemovableVolumes com.maestro.app
+tccutil reset SystemPolicyNetworkVolumes com.maestro.app
+```
+
+Run `tccutil reset All com.maestro.app` to clear every service at once. Local network access has no `tccutil` service name; toggle Maestro off and on under System Settings > Privacy & Security > Local Network instead.
+
+Omitting the bundle id resets that service for every app on the machine.
 
 ## Getting Help
 

@@ -10,6 +10,7 @@
  *   - Cmd+R re-samples only when the panel owns the hotkey
  *   - in-flight `refreshing` flag disables the refresh button
  *   - the centered "last refreshed" footer reports the newest sample's age
+ *   - the "N agents" chip is a button only when there are agents to show
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -605,6 +606,50 @@ describe('ClaudePlanUsage - agent count badge', () => {
 		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
 
 		expect(screen.getByTestId('claude-plan-agents-work')).toHaveTextContent('2 agents');
+	});
+
+	it('hands the account back when the chip is clicked, so the grid can filter to it', () => {
+		seedSnapshots({ '/Users/me/.claude-work': snapshotFor('/Users/me/.claude-work') });
+		seedSessions(['/Users/me/.claude-work']);
+		const onShowAccountAgents = vi.fn();
+
+		render(
+			<ClaudePlanUsage
+				theme={theme}
+				showAllAccounts
+				autoRefresh={false}
+				onShowAccountAgents={onShowAccountAgents}
+			/>
+		);
+
+		fireEvent.click(screen.getByTestId('claude-plan-agents-work'));
+
+		expect(onShowAccountAgents).toHaveBeenCalledWith('/Users/me/.claude-work');
+	});
+
+	it('leaves the chip inert for an account no agent uses', () => {
+		// A button that lands on an empty grid answers nothing.
+		seedSnapshots({ '/Users/me/.claude-stale': snapshotFor('/Users/me/.claude-stale') });
+
+		render(
+			<ClaudePlanUsage
+				theme={theme}
+				showAllAccounts
+				autoRefresh={false}
+				onShowAccountAgents={vi.fn()}
+			/>
+		);
+
+		expect(screen.getByTestId('claude-plan-agents-stale').tagName).toBe('SPAN');
+	});
+
+	it('stays a label when no handler is given', () => {
+		seedSnapshots({ '/Users/me/.claude-work': snapshotFor('/Users/me/.claude-work') });
+		seedSessions(['/Users/me/.claude-work']);
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.getByTestId('claude-plan-agents-work').tagName).toBe('SPAN');
 	});
 });
 

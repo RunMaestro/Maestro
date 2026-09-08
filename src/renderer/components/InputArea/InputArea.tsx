@@ -23,8 +23,11 @@ import { useWindowContextOptional } from '../../contexts/WindowContext';
 import { filterSlashCommands } from '../../utils/search';
 import { InputTextarea } from './components/InputTextarea';
 import { NotificationSendControls } from './components/NotificationSendControls';
+import { PhoneComposerHandle } from './components/PhoneComposerHandle';
 import { StagedImagesStrip } from './components/StagedImagesStrip';
 import { ToolbarControls } from './components/ToolbarControls';
+import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
+import { usePersistedToggle } from '../../hooks/ui/usePersistedToggle';
 import { useInputAreaAutosize } from './hooks/useInputAreaAutosize';
 import { useInputAreaTextChange } from './hooks/useInputAreaTextChange';
 import { useModelEffortMenus } from './hooks/useModelEffortMenus';
@@ -45,6 +48,9 @@ import {
 	moveStagedImage,
 	renumberScreenshotReferences,
 } from '../../utils/stagedImageOrder';
+
+/** localStorage key for the phone composer fold (see PhoneComposerHandle). */
+export const PHONE_COMPOSER_COLLAPSED_KEY = 'phone.composer.collapsed';
 
 export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	const {
@@ -382,6 +388,16 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	voiceToggleRef.current = voice.toggleVoiceInput;
 	const handleToggleVoiceInput = useCallback(() => voiceToggleRef.current(), []);
 
+	// Phone: the whole composer folds away behind a slim handle so the transcript
+	// gets the screen; the user pulls it up to type. Remembered across reloads,
+	// and it starts folded - on a handheld the composer is in the way far more
+	// often than it is in use. The handle keeps a busy dot, since Stop lives in
+	// the folded thinking pill, and a pencil for an unsent draft.
+	const phone = usePhoneLayout();
+	const composerFold = usePersistedToggle(PHONE_COMPOSER_COLLAPSED_KEY, true);
+	const phoneHandleBusy = thinkingItems.length > 0 || !!autoRunState?.isRunning;
+	const phoneHandleHasDraft = inputValue.trim().length > 0 || stagedImages.length > 0;
+
 	// Show summarization progress overlay when active for this tab
 	if (isSummarizing && session.inputMode === 'ai' && onCancelSummarize) {
 		return (
@@ -445,11 +461,34 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		);
 	}
 
+	// Folded: nothing but the handle. Every hook above has already run, so the
+	// draft, voice, autosize, and menu state all survive the fold.
+	if (phone && composerFold.value) {
+		return (
+			<PhoneComposerHandle
+				theme={theme}
+				collapsed
+				onToggle={composerFold.toggle}
+				busy={phoneHandleBusy}
+				hasDraft={phoneHandleHasDraft}
+			/>
+		);
+	}
+
 	return (
 		<div
-			className="relative p-4 border-t"
+			className={`relative border-t ${phone ? 'px-3 pb-3 pt-0' : 'p-4'}`}
 			style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
 		>
+			{phone && (
+				<PhoneComposerHandle
+					theme={theme}
+					collapsed={false}
+					onToggle={composerFold.toggle}
+					busy={phoneHandleBusy}
+				/>
+			)}
+
 			{/* QuitWhenIdleIndicator - sits above the thinking pill while a deferred quit is armed */}
 			<QuitWhenIdleIndicator theme={theme} />
 
@@ -675,6 +714,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 							effortMenuOpen={effortMenuOpen}
 							setEffortMenuOpen={setEffortMenuOpen}
 							effortMenuRef={effortMenuRef}
+							processInput={processInput}
 						/>
 					</div>
 					{/* Context Warning Sash - AI mode only, appears below input when context usage is high */}
@@ -691,11 +731,17 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 					)}
 				</div>
 
-				<NotificationSendControls
-					theme={theme}
-					isTerminalMode={isTerminalMode}
-					processInput={processInput}
-				/>
+				{/* Phone: this column is gone. The notification bell opens a settings
+				    popover that has no business on a 390px composer, and send has moved
+				    into the toolbar row (see ToolbarControls' phone branch) so the
+				    composer gets the full width it needs to show what is being typed. */}
+				{!phone && (
+					<NotificationSendControls
+						theme={theme}
+						isTerminalMode={isTerminalMode}
+						processInput={processInput}
+					/>
+				)}
 			</div>
 		</div>
 	);

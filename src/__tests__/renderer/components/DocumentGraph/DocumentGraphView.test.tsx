@@ -2290,6 +2290,40 @@ describe('DocumentGraphView', () => {
 			});
 		});
 
+		describe('title prop', () => {
+			// One component, two subjects. A graph over the agent's memory directory
+			// is a "Memory Graph" to the user; reading "Document Graph" there makes
+			// it look like the wrong surface opened. The prop drives the header, the
+			// dialog aria-label, and the close prompt together, so they cannot drift.
+			const DEFAULT_TITLE = 'Document Graph';
+			const resolveTitle = (title?: string) => title ?? DEFAULT_TITLE;
+
+			it('defaults to Document Graph when the caller says nothing', () => {
+				expect(resolveTitle(undefined)).toBe(DEFAULT_TITLE);
+			});
+
+			it('is accepted as an optional prop', () => {
+				const props: Partial<DocumentGraphViewProps> = { title: 'Memory Graph' };
+				expect(props.title).toBe('Memory Graph');
+			});
+
+			it('names the close prompt after the same subject', () => {
+				// The prompt is `Close ${title}?`, not a hardcoded string, or a
+				// Memory Graph asks you to confirm closing a Document Graph.
+				expect(`Close ${resolveTitle('Memory Graph')}?`).toBe('Close Memory Graph?');
+				expect(`Close ${resolveTitle(undefined)}?`).toBe('Close Document Graph?');
+			});
+
+			it('is set by AppStandaloneModals only for the memory-viewer origin', () => {
+				// `graphReturnTo === 'memoryViewer' ? 'Memory Graph' : undefined` -
+				// every other entry point falls back to the component default.
+				const titleFor = (returnTo?: string) =>
+					returnTo === 'memoryViewer' ? 'Memory Graph' : undefined;
+				expect(resolveTitle(titleFor('memoryViewer'))).toBe('Memory Graph');
+				expect(resolveTitle(titleFor(undefined))).toBe(DEFAULT_TITLE);
+			});
+		});
+
 		describe('container shortcuts (L / D / P / F / S / +-)', () => {
 			// L cycles the layout, D widens the neighbor depth, P cycles the preview
 			// length, S swaps the scroll wheel binding. All route through the SAME

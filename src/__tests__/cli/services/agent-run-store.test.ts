@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import {
 	appendAgentRunEvent,
+	findActiveRunBySession,
 	getAgentRun,
 	getCampaign,
 	listAgentRuns,
@@ -491,5 +492,153 @@ describe('agent-run-store', () => {
 		);
 
 		expect(() => upsertCampaign(campaign({ id: 'campaign-2' }))).toThrow('Invalid campaigns entry');
+	});
+
+	// The runs file is rewritten in full by every upsert and every event append,
+	// so its size is a direct per-write cost on the main thread. These cover the
+	// bound that keeps it from growing without limit, and the guarantee that
+	// bounding it never loses a run.
+	describe('retention', () => {
+		const archivePath = path.join(mockFs.configDir, 'maestro-agent-runs.1.json');
+
+		/** `count` terminal runs, oldest first, ids run-0000.. */
+		const terminalRuns = (count: number, startIndex = 0): AgentRun[] =>
+			Array.from({ length: count }, (_, offset) => {
+				const index = startIndex + offset;
+				return run({
+					id: `run-${String(index).padStart(4, '0')}`,
+					status: 'completed',
+					createdAt: index + 1,
+					updatedAt: index + 1,
+				});
+			});
+
+		const idsIn = (filePath: string): string[] => {
+			const raw = mockFs.files.get(filePath);
+			if (raw === undefined) return [];
+			return (JSON.parse(raw).runs as AgentRun[]).map((entry) => entry.id);
+		};
+
+		it('leaves the live file untouched below the terminal cap', () => {
+			writeAgentRuns(terminalRuns(2000));
+
+			expect(idsIn(runsPath)).toHaveLength(2000);
+			expect(mockFs.files.has(archivePath)).toBe(false);
+		});
+
+		it('evicts the oldest terminal runs past the cap into the archive', () => {
+			writeAgentRuns(terminalRuns(2050));
+
+			const live = idsIn(runsPath);
+			const archived = idsIn(archivePath);
+			expect(live).toHaveLength(2000);
+			expect(archived).toHaveLength(50);
+			// The 50 oldest went to the archive; the newest 2000 stayed live.
+			expect(archived).toEqual(
+				terminalRuns(50)
+					.map((entry) => entry.id)
+					.reverse()
+			);
+			expect(live).not.toContain('run-0000');
+			expect(live).toContain('run-2049');
+		});
+
+		it('still returns evicted runs from readAgentRuns, so history is not lost', () => {
+			writeAgentRuns(terminalRuns(2050));
+
+			const all = readAgentRuns().map((entry) => entry.id);
+			expect(all).toHaveLength(2050);
+			expect(all).toContain('run-0000');
+			expect(getAgentRun('run-0000')?.status).toBe('completed');
+		});
+
+		it('never evicts a non-terminal run, however old', () => {
+			const ancientLive = run({
+				id: 'run-live',
+				status: 'running',
+				createdAt: 0,
+				updatedAt: 0,
+			});
+			writeAgentRuns([ancientLive, ...terminalRuns(2050)]);
+
+			expect(idsIn(runsPath)).toContain('run-live');
+			expect(idsIn(archivePath)).not.toContain('run-live');
+		});
+
+		it('bounds the archive itself rather than growing a second unbounded file', () => {
+			// Two evictions of 1500 each: the archive must cap at 2000, not reach 3000.
+			writeAgentRuns(terminalRuns(3500));
+			writeAgentRuns(terminalRuns(3500, 10000));
+
+			expect(idsIn(archivePath).length).toBeLessThanOrEqual(2000);
+		});
+
+		it('prefers the live copy when a run also exists in the archive', () => {
+			writeAgentRuns(terminalRuns(2050));
+			// Reopen the oldest archived run; the upsert puts it back in the live file.
+			upsertAgentRun(run({ id: 'run-0000', status: 'running', createdAt: 1, updatedAt: 99999 }));
+
+			const reopened = readAgentRuns().filter((entry) => entry.id === 'run-0000');
+			expect(reopened).toHaveLength(1);
+			expect(reopened[0].status).toBe('running');
+		});
+
+		it('applies the bound on the upsert path, not just explicit writes', () => {
+			mockFs.files.set(runsPath, JSON.stringify({ runs: terminalRuns(2050) }));
+
+			upsertAgentRun(run({ id: 'run-new', status: 'running', createdAt: 5, updatedAt: 99999 }));
+
+			expect(idsIn(runsPath)).toHaveLength(2001);
+			expect(idsIn(archivePath)).toHaveLength(50);
+		});
+
+		// A run can be archived, reopened by an audited action (which writes a
+		// fresh copy to the live file), and then archived again. Both copies land
+		// in the archive, and the live-wins dedupe in readAgentRuns cannot see an
+		// archive-vs-archive collision - so the archive has to dedupe itself.
+		it('never lists a run twice after it is archived, reopened, and archived again', () => {
+			writeAgentRuns(terminalRuns(2050));
+			expect(idsIn(archivePath)).toContain('run-0000');
+
+			// Reopen the archived run, then complete it and push it back out.
+			upsertAgentRun(run({ id: 'run-0000', status: 'running', createdAt: 1, updatedAt: 50_000 }));
+			writeAgentRuns([
+				run({ id: 'run-0000', status: 'completed', createdAt: 1, updatedAt: 60_000 }),
+				...terminalRuns(2050, 100_000),
+			]);
+
+			const ids = readAgentRuns().map((entry) => entry.id);
+			expect(ids.filter((id) => id === 'run-0000')).toHaveLength(1);
+			expect(new Set(ids).size).toBe(ids.length);
+		});
+
+		it('keeps the newest copy when the archive dedupes a run', () => {
+			writeAgentRuns(terminalRuns(2050));
+			upsertAgentRun(run({ id: 'run-0000', status: 'running', createdAt: 1, updatedAt: 50_000 }));
+			writeAgentRuns([
+				run({ id: 'run-0000', status: 'discarded', createdAt: 1, updatedAt: 60_000 }),
+				...terminalRuns(2050, 100_000),
+			]);
+
+			expect(getAgentRun('run-0000')?.status).toBe('discarded');
+		});
+
+		// Retention never evicts a non-terminal run, so an active run is by
+		// definition in the live file. Touching the archive here would add a
+		// multi-MB read to a lookup that runs every time work is dispatched.
+		it('finds an active run without reading the archive at all', () => {
+			writeAgentRuns([
+				run({ id: 'run-live', sessionId: 'agent-1', status: 'running', updatedAt: 10 }),
+				...terminalRuns(2050),
+			]);
+			expect(mockFs.files.has(archivePath)).toBe(true);
+			vi.mocked(fs.readFileSync).mockClear();
+
+			expect(findActiveRunBySession('agent-1')?.id).toBe('run-live');
+
+			const readPaths = vi.mocked(fs.readFileSync).mock.calls.map(([target]) => String(target));
+			expect(readPaths).toContain(runsPath);
+			expect(readPaths).not.toContain(archivePath);
+		});
 	});
 });

@@ -275,6 +275,72 @@ describe('MarkdownPreviewFast', () => {
 		});
 	});
 
+	describe('getActiveHeadingSlug imperative handle', () => {
+		/**
+		 * jsdom lays nothing out, so every rect is zero and every block would read
+		 * as "above the fold". Place the mounted blocks by index instead: the
+		 * container fold sits at y=0 and `tops[i]` is where block i starts.
+		 */
+		function placeBlocks(container: HTMLElement, tops: number[]) {
+			container.getBoundingClientRect = () => ({ top: 0 }) as DOMRect;
+			container.querySelectorAll<HTMLElement>('[data-block-index]').forEach((el) => {
+				const index = Number(el.getAttribute('data-block-index'));
+				el.getBoundingClientRect = () => ({ top: tops[index] ?? 9999 }) as DOMRect;
+			});
+		}
+
+		function renderHeadingDoc() {
+			const ref = { current: null } as React.MutableRefObject<MarkdownPreviewFastHandle | null>;
+			const containerRef = { current: null } as React.MutableRefObject<HTMLDivElement | null>;
+			// Blocks: [alpha, body, beta, more body, gamma]
+			const content = ['# Alpha', '', 'body', '', '# Beta', '', 'more body', '', '# Gamma'].join(
+				'\n'
+			);
+			render(
+				<MarkdownPreviewFast
+					ref={ref}
+					content={content}
+					theme={mockTheme}
+					markdownContainerRef={containerRef}
+				/>
+			);
+			return { ref, containerRef };
+		}
+
+		it('reports the heading that opened the block at the top of the view', () => {
+			const { ref, containerRef } = renderHeadingDoc();
+			// Reader is inside Beta's body: blocks 0-3 are above the fold.
+			placeBlocks(containerRef.current!, [-900, -800, -400, -100, 500]);
+			expect(ref.current?.getActiveHeadingSlug()).toBe('beta');
+		});
+
+		it('reports a heading block itself when it is the one at the top', () => {
+			const { ref, containerRef } = renderHeadingDoc();
+			placeBlocks(containerRef.current!, [-900, -800, -400, 300, 800]);
+			expect(ref.current?.getActiveHeadingSlug()).toBe('beta');
+		});
+
+		it('returns null above the first block, where no heading has been passed', () => {
+			const { ref, containerRef } = renderHeadingDoc();
+			placeBlocks(containerRef.current!, [100, 300, 600, 700, 900]);
+			expect(ref.current?.getActiveHeadingSlug()).toBeNull();
+		});
+
+		it('returns null before the document has parsed', () => {
+			const ref = { current: null } as React.MutableRefObject<MarkdownPreviewFastHandle | null>;
+			const containerRef = { current: null } as React.MutableRefObject<HTMLDivElement | null>;
+			render(
+				<MarkdownPreviewFast
+					ref={ref}
+					content={'x'.repeat(100 * 1024)}
+					theme={mockTheme}
+					markdownContainerRef={containerRef}
+				/>
+			);
+			expect(ref.current?.getActiveHeadingSlug()).toBeNull();
+		});
+	});
+
 	describe('scrollToHeading imperative handle', () => {
 		it('scrolls Virtuoso to the matching heading block', () => {
 			const ref = { current: null } as React.MutableRefObject<MarkdownPreviewFastHandle | null>;

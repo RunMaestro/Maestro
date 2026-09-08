@@ -43,6 +43,7 @@ import {
 } from '../../shared/providerAuthIdentity';
 import { generateId } from '../utils/ids';
 import { findLoginUrl } from '../utils/loginUrl';
+import { isWindowsPlatform } from '../utils/platformUtils';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
 import { notifyToast } from '../stores/notificationStore';
@@ -51,6 +52,7 @@ import {
 	formatAgentLoginCommand,
 	getAgentDisplayName,
 	getAgentLoginCommand,
+	loginShellSyntaxFor,
 } from '../../shared/agentMetadata';
 import { resolveAgentEnvironment, type ResolvedEnvVar } from '../../shared/agentEnvironment';
 import type { Session, Theme } from '../types';
@@ -135,6 +137,13 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 			.filter((name): name is string => !!name);
 	}, [sessions, outage.blocked]);
 	const blockedCount = outage.blocked.length;
+	/**
+	 * True when the user opened this from the command palette and nothing has
+	 * failed. Only the copy changes - a login the user asked for is not a
+	 * recovery, so claiming agents are stopped would be a lie they would have to
+	 * go and disprove.
+	 */
+	const userInitiated = outage.initiatedBy === 'user';
 
 	// The environment decides WHICH credentials the login writes and the agent
 	// reads - a base URL override, an API-key var, a profile selector - so an
@@ -186,11 +195,6 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 		return credentialKindBlocksLogin(classifyCredentialKind(session.toolType, env), agentName);
 	}, [providerEnv, effectiveEnv, session.toolType, agentName]);
 
-	// Null until the environment has been read, so the spawn effect below waits
-	// rather than starting a login the classification is about to rule out.
-	const commandLine =
-		providerEnv !== null && !loginBlockedReason && login ? formatAgentLoginCommand(login) : null;
-
 	// Same SSH resolution as a terminal tab: an agent that runs on a remote host
 	// must re-authenticate on that host, not on this laptop.
 	const sshConfig = useMemo(() => {
@@ -217,6 +221,33 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 		return undefined;
 	}, [session.sessionSshRemoteConfig, session.sshRemoteId, session.remoteCwd]);
 
+	/**
+	 * Shell the login runs in.
+	 *
+	 * On Windows the configured default may be WSL, and that is the one shell
+	 * this dialog must NOT use: agents are always spawned as native Windows
+	 * processes (nothing in the spawn path goes through `wsl.exe`), so a login
+	 * inside WSL writes credentials to the WSL home directory that the native
+	 * agent never reads. The login would appear to succeed and fix nothing.
+	 * A remote agent is unaffected - its shell is the SSH remote's own.
+	 */
+	const loginShell = useMemo(() => {
+		if (sshConfig?.enabled) return defaultShell;
+		if (isWindowsPlatform() && defaultShell?.trim().toLowerCase() === 'wsl') return 'powershell';
+		return defaultShell;
+	}, [defaultShell, sshConfig?.enabled]);
+
+	// Null until the environment has been read, so the spawn effect below waits
+	// rather than starting a login the classification is about to rule out.
+	const commandLine =
+		providerEnv !== null && !loginBlockedReason && login
+			? formatAgentLoginCommand(
+					login,
+					// An SSH remote runs a posix shell regardless of this machine.
+					sshConfig?.enabled ? 'posix' : loginShellSyntaxFor(loginShell ?? '', isWindowsPlatform())
+				)
+			: null;
+
 	// Type the login command in, once the shell is actually there to receive it.
 	//
 	// Not sent straight after the spawn resolves: over SSH the spawn resolves as
@@ -233,7 +264,12 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 			clearTimeout(commandTimerRef.current);
 			commandTimerRef.current = null;
 		}
-		void window.maestro.process.write(pending.ptySessionId, `${pending.command}\n`).catch(() => {
+		// CR, not LF: this is what a real Enter key sends (see the terminal
+		// keyboard handler), and it is the only one that submits reliably on
+		// Windows - ConPTY passes LF through as Ctrl+J, which PSReadLine does not
+		// treat as "run this line", so a PowerShell login would sit there untyped.
+		// A Unix PTY maps CR to NL for us, so this is correct on every platform.
+		void window.maestro.process.write(pending.ptySessionId, `${pending.command}\r`).catch(() => {
 			// A failed write surfaces as the process exiting; nothing to add here.
 		});
 	}, []);
@@ -274,7 +310,7 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 				// over SSH). It needs no project directory, and guessing one risks a
 				// `cd` that fails and kills the session before the login can run.
 				cwd: sshConfig?.enabled ? '' : session.cwd || session.projectRoot || '',
-				shell: defaultShell || undefined,
+				shell: loginShell || undefined,
 				shellArgs,
 				shellEnvVars,
 				toolType: session.toolType,
@@ -321,7 +357,7 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 	}, [
 		commandLine,
 		ptySessionId,
-		defaultShell,
+		loginShell,
 		shellArgs,
 		shellEnvVars,
 		sshConfig,
@@ -380,13 +416,15 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 	}, [outage.providerKey, onClose]);
 
 	const statusLine = loginBlockedReason
-		? 'Fix the credential this agent presents, then resume.'
+		? `Fix the credential this agent presents, then ${userInitiated ? 'close' : 'resume'}.`
 		: status === 'failed'
 			? spawnError
 			: status === 'exited'
-				? 'The login session ended. Resume to re-run everything that failed.'
+				? userInitiated
+					? 'The login session ended.'
+					: 'The login session ended. Resume to re-run everything that failed.'
 				: status === 'running'
-					? 'Complete the provider login above, then resume.'
+					? `Complete the provider login above, then ${userInitiated ? 'close this dialog' : 'resume'}.`
 					: 'Starting the login shell...';
 
 	const statusColor = loginBlockedReason
@@ -400,7 +438,9 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 	return (
 		<Modal
 			theme={theme}
-			title="Please reauthenticate the provider."
+			title={
+				userInitiated ? `Sign in to ${agentName} again.` : 'Please reauthenticate the provider.'
+			}
 			priority={MODAL_PRIORITIES.REAUTH}
 			onClose={handleDismiss}
 			width={1100}
@@ -431,7 +471,7 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 						className="px-4 py-1.5 rounded border hover:bg-white/5 transition-colors text-sm"
 						style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 					>
-						Not Now
+						{userInitiated ? 'Cancel' : 'Not Now'}
 					</button>
 					<button
 						type="button"
@@ -443,23 +483,35 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 						}}
 						data-testid="reauth-resume"
 					>
-						{blockedCount > 1 ? `Resume ${blockedCount} Agents` : 'Resume Agent'}
+						{userInitiated
+							? 'Done'
+							: blockedCount > 1
+								? `Resume ${blockedCount} Agents`
+								: 'Resume Agent'}
 					</button>
 				</div>
 			}
 		>
 			<div className="flex flex-col gap-3 flex-1 min-h-0 p-4">
-				<p className="text-sm leading-relaxed" style={{ color: theme.colors.textMain }}>
-					<span style={{ color: theme.colors.textDim }}>{agentName}</span> rejected its stored
-					credentials
-					{outage.fromPipeline ? ', taking Cue pipelines down with it' : ''}.{' '}
-					{blockedCount > 1
-						? `All ${blockedCount} agents on this provider are stopped until you log in again.`
-						: 'This agent is stopped until you log in again.'}{' '}
-					Their queued messages are held, not lost.
-				</p>
+				{userInitiated ? (
+					<p className="text-sm leading-relaxed" style={{ color: theme.colors.textMain }}>
+						Run the <span style={{ color: theme.colors.textDim }}>{agentName}</span> login below.
+						Every agent on this provider shares the credential store, so signing in once covers all
+						of them. Nothing is stopped and no turn is interrupted.
+					</p>
+				) : (
+					<p className="text-sm leading-relaxed" style={{ color: theme.colors.textMain }}>
+						<span style={{ color: theme.colors.textDim }}>{agentName}</span> rejected its stored
+						credentials
+						{outage.fromPipeline ? ', taking Cue pipelines down with it' : ''}.{' '}
+						{blockedCount > 1
+							? `All ${blockedCount} agents on this provider are stopped until you log in again.`
+							: 'This agent is stopped until you log in again.'}{' '}
+						Their queued messages are held, not lost.
+					</p>
+				)}
 
-				{blockedNames.length > 0 && (
+				{!userInitiated && blockedNames.length > 0 && (
 					<div
 						className="flex items-start gap-2 text-xs select-text"
 						style={{ color: theme.colors.textDim }}

@@ -14,6 +14,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { ALL_PROFILES_VALUE, providerProfileKey } from '../../../../shared/providerProfiles';
 import type { StatsTimeRange } from '../../../../shared/stats-types';
 import { GroupDetailModal } from '../GroupDetailModal';
 import { AgentDetailModal } from '../AgentDetailModal';
@@ -21,6 +22,7 @@ import { EmptyState } from '../EmptyState';
 import { DashboardSkeleton } from '../ChartSkeletons';
 import { CueStats } from '../CueStats';
 import { TokenSeriesProvider } from '../TokenSeriesContext';
+import { buildModalOwnedFooterSummary } from '../footerSummary';
 import type { GroupStatRollup } from '../../../../shared/statsGroupRollup';
 import type { Session } from '../../../types';
 import { useModalLayer } from '../../../hooks/ui/useModalLayer';
@@ -33,6 +35,8 @@ import { useCodexUsageStore } from '../../../stores/codexUsageStore';
 import { useGlobalAgentStats } from '../../../hooks/stats/useGlobalAgentStats';
 import type { UsageDashboardModalProps } from './types';
 import { getSectionsForViewMode, type SectionId } from './sections';
+import { TIME_RANGE_OPTIONS } from './constants';
+import { formatDatabaseSize } from './formatters';
 import {
 	hasUsefulAnthropicQuotaDetails,
 	hasUsefulCodexQuotaDetails,
@@ -45,7 +49,8 @@ import {
 	useUsageDashboardLayout,
 	useUsageDashboardTabs,
 } from './hooks';
-import { UsageDashboardFooter, UsageDashboardHeader, UsageDashboardTabs } from './components';
+import { UsageDashboardHeader, UsageDashboardTabs } from './components';
+import { UsageDashboardFooter } from '../UsageDashboardFooter';
 import {
 	ActivityView,
 	AgentOverviewView,
@@ -117,6 +122,10 @@ export function UsageDashboardModal({
 	});
 	const [focusedSection, setFocusedSection] = useState<SectionId | null>(null);
 	const [detailSession, setDetailSession] = useState<Session | null>(null);
+	// Provider-profile filter for the Agents grid. Owned here (rather than
+	// inside the grid) so the quota tabs' "N agents" chips can select an account
+	// and send the user to the grid already narrowed to it.
+	const [agentProfileFilter, setAgentProfileFilter] = useState<string>(ALL_PROFILES_VALUE);
 	// Groups come straight from the store rather than a prop: the dashboard is
 	// the only consumer, and threading them through AppInfoModals would add a
 	// prop to a component that has no other reason to know about groups.
@@ -141,6 +150,18 @@ export function UsageDashboardModal({
 		contentRef,
 		onViewModeChanged: handleViewModeChanged,
 	});
+
+	// Clicking an account's "N agents" chip on a quota tab answers the question
+	// the chip raises - WHICH agents? - by opening the Agents grid narrowed to
+	// that account. The tab switch is the point here, unlike the group tiles
+	// below: the chip has no detail view of its own to open instead.
+	const handleShowAccountAgents = useCallback(
+		(toolType: string, accountKey: string) => {
+			setAgentProfileFilter(providerProfileKey(toolType, accountKey));
+			switchViewMode('agents');
+		},
+		[switchViewMode]
+	);
 
 	// Clicking a group tile opens its detail modal - the per-agent breakdown of
 	// the totals on the tile. It does NOT switch tabs: the Agents tab answers a
@@ -186,6 +207,22 @@ export function UsageDashboardModal({
 	const hasWorktreeAnalytics = useMemo(
 		() => sessions.some((session) => !!session.parentSessionId),
 		[sessions]
+	);
+	// Footer line for the tabs this modal can describe from `data` alone. Tabs
+	// backed by a panel that fetches for itself (Cue, Auto Run, Shortcuts, the
+	// quota panels) and the two card grids that own their own filter state
+	// publish their own line instead, which wins over this one.
+	// The footer is presentational: it takes finished strings rather than the
+	// range enum and a byte count, so it stays the one component both the split
+	// modal and its own test can drive.
+	const footerRangeLabel =
+		data && data.totalQueries > 0
+			? `Showing ${TIME_RANGE_OPTIONS.find((option) => option.value === timeRange)?.label.toLowerCase()} data`
+			: 'No data for selected time range';
+	const footerDatabaseSizeLabel = databaseSize !== null ? formatDatabaseSize(databaseSize) : null;
+	const footerSummary = useMemo(
+		() => buildModalOwnedFooterSummary(viewMode, { data, sessions }),
+		[viewMode, data, sessions]
 	);
 	const currentSections = useMemo(
 		() => getSectionsForViewMode(viewMode, { hasWorktreeAnalytics }),
@@ -288,6 +325,7 @@ export function UsageDashboardModal({
 					focusedSection={focusedSection}
 					setSectionRef={setSectionRef}
 					handleSectionKeyDown={handleSectionKeyDown}
+					onShowAccountAgents={handleShowAccountAgents}
 				/>
 			);
 		}
@@ -330,6 +368,8 @@ export function UsageDashboardModal({
 						handleSectionKeyDown={handleSectionKeyDown}
 						onShowAgentDetails={setDetailSession}
 						groups={groups}
+						profileFilter={agentProfileFilter}
+						onProfileFilterChange={setAgentProfileFilter}
 					/>
 				);
 			case 'groups':
@@ -473,9 +513,10 @@ export function UsageDashboardModal({
 
 				<UsageDashboardFooter
 					theme={theme}
-					data={data}
-					timeRange={timeRange}
-					databaseSize={databaseSize}
+					viewMode={viewMode}
+					rangeLabel={footerRangeLabel}
+					fallbackSummary={footerSummary}
+					databaseSizeLabel={footerDatabaseSizeLabel}
 				/>
 			</div>
 

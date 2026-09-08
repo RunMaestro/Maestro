@@ -4,6 +4,16 @@ import type { WebServer } from '../WebServer';
 import type { WebServerFactoryDependencies } from '../web-server-factory';
 import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
+import { createKeyedWriteQueue } from '../../utils/atomic-json-store';
+import { normalizeRenameTabResult, type RenameTabResult } from '../types';
+
+/**
+ * How long a single remote rename may hold its per-tab queue slot without the
+ * renderer confirming it. Deliberately far past any plausible persistence: this
+ * releases the slot when the renderer is never going to answer at all, it is not
+ * a budget for how long a rename may legitimately take.
+ */
+const RENAME_CONFIRMATION_RELEASE_MS = 60_000;
 
 export function registerTabCallbacks(
 	server: WebServer,
@@ -12,6 +22,19 @@ export function registerTabCallbacks(
 	const { getMainWindow, getWindowForSession } = deps;
 	const resolveSessionWindow = (sessionId: string) =>
 		getWindowForSession?.(sessionId) ?? getMainWindow();
+
+	// Renames for ONE tab run strictly one at a time. A rename is a round trip
+	// through the renderer that persists the name to the provider's session
+	// metadata and to every matching history entry before it answers, so two
+	// overlapping renames race: the request that started FIRST can finish LAST
+	// and leave the tab named after the older request in both the persisted
+	// metadata and the UI. Serializing makes the LATEST rename authoritative,
+	// and it also puts the results back on the wire in request order, so a
+	// client applying them as they arrive cannot regress to an older name.
+	// It lives here rather than in the renderer because this callback is the
+	// single path every remote rename takes (CLI, web client, any future
+	// caller). Different tabs still run concurrently: the key is per tab.
+	const renameQueue = createKeyedWriteQueue();
 
 	// Tab operation callbacks
 	server.setSelectTabCallback(async (sessionId: string, tabId: string) => {
@@ -99,18 +122,102 @@ export function registerTabCallbacks(
 			`[Web→Desktop] Rename tab callback invoked: session=${sessionId}, tab=${tabId}, newName=${newName}`,
 			'WebServer'
 		);
-		const targetWindow = resolveSessionWindow(sessionId);
-		if (!targetWindow) {
-			logger.warn('No owning window is available for renameTab', 'WebServer');
-			return false;
-		}
 
-		if (!isWebContentsAvailable(targetWindow)) {
-			logger.warn('webContents is not available for renameTab', 'WebServer');
-			return false;
-		}
-		targetWindow.webContents.send('remote:renameTab', sessionId, tabId, newName);
-		return true;
+		// The window is resolved INSIDE the queued unit, not before it: a rename
+		// waiting behind another one can be handed a window that has since closed.
+		return renameQueue.enqueue(`${sessionId}:${tabId}`, async (): Promise<RenameTabResult> => {
+			const targetWindow = resolveSessionWindow(sessionId);
+			if (!targetWindow) {
+				logger.warn('No owning window is available for renameTab', 'WebServer');
+				return { success: false, error: 'No owning window is available for renameTab' };
+			}
+
+			if (!isWebContentsAvailable(targetWindow)) {
+				logger.warn('webContents is not available for renameTab', 'WebServer');
+				return { success: false, error: 'webContents is not available for renameTab' };
+			}
+
+			const { webContents } = targetWindow;
+
+			return new Promise<RenameTabResult>((resolve) => {
+				const responseChannel = `remote:renameTab:response:${randomUUID()}`;
+				let settled = false;
+
+				// The renderer answers on EVERY path, including its own catch, so the
+				// ordinary outcomes are its reply and the renderer going away.
+				//
+				// A five second deadline used to sit here and resolve a FAILURE on
+				// expiry. Persisting the name walks every history file for the agent
+				// session, which outruns any fixed budget on a large history, and the
+				// renderer then finished the rename anyway: the caller was told the
+				// rename failed while the desktop went on to persist it and repaint
+				// the tab with the new name. So a failure is now only ever reported
+				// when it is definitely true, which is when the renderer is gone: that
+				// is also the only moment nothing can still mutate, so a reported
+				// failure can never be contradicted afterwards.
+				//
+				// A wrong label on a remote client is not permanent either way: in
+				// LIVE mode `useRemoteIntegration` rebroadcasts each agent's tab
+				// inventory, `name` included, on a 500ms hash-diffed interval, so a
+				// client reconciles to desktop truth shortly after. That backstop is
+				// why a brief disagreement is survivable, and it is NOT a licence to
+				// report an outcome we do not have: it does not run outside LIVE mode,
+				// and it never reaches the caller blocked on this promise.
+				function settle(result: RenameTabResult) {
+					if (settled) return;
+					settled = true;
+					clearTimeout(releaseTimer);
+					ipcMain.removeListener(responseChannel, onResponse);
+					// Touching a destroyed webContents throws, and its listeners die
+					// with it, so only detach while it is still alive.
+					if (isWebContentsAvailable(targetWindow)) {
+						webContents.removeListener('destroyed', onRendererGone);
+						webContents.removeListener('render-process-gone', onRendererGone);
+					}
+					resolve(result);
+				}
+
+				function onResponse(_event: Electron.IpcMainEvent, result: unknown) {
+					settle(normalizeRenameTabResult(result));
+				}
+
+				function onRendererGone() {
+					logger.warn(
+						`renameTab lost its renderer before confirmation for session ${sessionId}`,
+						'WebServer'
+					);
+					settle({
+						success: false,
+						error: 'The desktop renderer went away before the rename was confirmed',
+					});
+				}
+
+				ipcMain.once(responseChannel, onResponse);
+				webContents.once('destroyed', onRendererGone);
+				webContents.once('render-process-gone', onRendererGone);
+				webContents.send('remote:renameTab', sessionId, tabId, newName, responseChannel);
+
+				// A rename delivered while the renderer is mid-reload has no listener
+				// on the other end and no `destroyed` event to end the wait, so without
+				// this every later rename for the tab would queue behind it forever.
+				// The bound exists to RELEASE THE QUEUE SLOT and the listener, not to
+				// answer the caller, so it sits far past any plausible persistence and
+				// it reports only what it knows: the rename was not confirmed. It must
+				// never claim the rename failed, because the renderer may still be
+				// finishing one, and a claim of failure is exactly what the late
+				// mutation would go on to contradict.
+				const releaseTimer = setTimeout(() => {
+					logger.warn(
+						`renameTab was not confirmed within ${RENAME_CONFIRMATION_RELEASE_MS}ms for session ${sessionId}`,
+						'WebServer'
+					);
+					settle({
+						success: false,
+						error: 'The desktop did not confirm the rename; it may still be applying',
+					});
+				}, RENAME_CONFIRMATION_RELEASE_MS);
+			});
+		});
 	});
 
 	server.setStarTabCallback(async (sessionId: string, tabId: string, starred: boolean) => {

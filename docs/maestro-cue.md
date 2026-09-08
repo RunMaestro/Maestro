@@ -73,7 +73,7 @@ The Dashboard tab summarizes engine state at the top (Pipelines, Total Execution
 | ------------------ | ------------------------------------------------------------ |
 | **Session**        | Agent name                                                   |
 | **Agent**          | Provider type (Claude Code, Codex, OpenCode, etc.)           |
-| **Pipelines**      | Color-coded dots for each pipeline configured on this agent  |
+| **Pipelines**      | One color-coded dot per pipeline the agent owns (see below)  |
 | **Status**         | Green = active, yellow = paused, "No Config" = no YAML found |
 | **Last Triggered** | How long ago the most recent event fired                     |
 | **Subs**           | Number of subscriptions in the YAML                          |
@@ -83,7 +83,29 @@ Each row has three action buttons:
 
 - **Run Now** - Manually trigger a subscription on demand, bypassing its normal event conditions. Useful for testing new subscriptions or re-running a failed automation without waiting for the next event.
 - **Edit YAML** - Open the inline YAML editor for that agent.
-- **View in Graph** - Jump to the Pipeline Graph tab with that agent's pipeline selected.
+- **View in Graph** - Jump to the Pipeline Graph tab, scoped to that agent.
+
+An agent "owns" a pipeline in either of two senses, and both count for the
+**Pipelines** dots and for **View in Graph**:
+
+- It appears in the pipeline, as an agent node bound to it or as a command node
+  that runs in its project root.
+- The pipeline is declared in that agent's own `cue.yaml`, even when nothing in
+  the pipeline points back at the agent. A fan-out that only dispatches to other
+  agents is the usual case, as is an `action: command` pipeline that is nothing
+  but a trigger and a shell step.
+
+**View in Graph** then does one of three things:
+
+| The agent owns... | What you get                                                                                                    |
+| ----------------- | --------------------------------------------------------------------------------------------------------------- |
+| One pipeline      | That pipeline, selected and fitted                                                                              |
+| Several           | The All Pipelines view narrowed to just that agent's, with a chip in the toolbar naming the agent and the count |
+| None              | The unfiltered All Pipelines view                                                                               |
+
+Click the `x` on the chip, or pick any pipeline from the selector, to widen back
+out to every pipeline. The scope only changes what the canvas draws - it never
+edits a pipeline, and the All Pipelines view stays read-only either way.
 
 Below the sessions table, the **Active Runs** section lists subscriptions that are currently executing, with a **Stop** button for each.
 
@@ -271,7 +293,7 @@ Cue is configured via a `.maestro/cue.yaml` file placed inside the `.maestro/` d
 
 ## Event Types
 
-Cue supports nine event types that trigger subscriptions:
+Cue supports eleven event types that trigger subscriptions:
 
 | Event Type            | Trigger                             | Key Fields                        |
 | --------------------- | ----------------------------------- | --------------------------------- |
@@ -283,6 +305,7 @@ Cue supports nine event types that trigger subscriptions:
 | `task.pending`        | Unchecked markdown tasks found      | `watch` (glob pattern)            |
 | `github.pull_request` | New PR opened on GitHub             | `repo` (optional)                 |
 | `github.issue`        | New issue opened on GitHub          | `repo` (optional)                 |
+| `github.label`        | A label lands on a PR or issue      | `gh_label_target`, `gh_labels`    |
 | `cli.trigger`         | Manual trigger via `maestro-cli`    | -                                 |
 
 See [Event Types](./maestro-cue-events) for detailed documentation and examples for each type.

@@ -25,6 +25,7 @@ import type { Session, LogEntry } from '../types';
 import { generateId } from '../utils/ids';
 import { updateAiTab, updateSessionWith } from '../stores/sessionStore';
 import { SHELL_COMMAND_PREFIX } from '../utils/shellCommandInput';
+import { requestTranscriptScrollToBottom } from './transcriptScroll';
 import { logger } from '../utils/logger';
 
 /** How many entries the composer's recall history keeps. */
@@ -148,6 +149,12 @@ export async function runShellCommand(options: RunShellCommandOptions): Promise<
 			status: 'running',
 		},
 	});
+
+	// The user pressed Enter to see this output, so reveal it even if they were
+	// reading history at the time. Asked for once, at the top of the run: from
+	// here the transcript's own follow-the-tail handles the stream, and a scroll
+	// up mid-run still pauses it as usual.
+	requestTranscriptScrollToBottom(session.id, tabId);
 
 	// Buffer chunks and flush on a frame so a chatty command doesn't drive one
 	// store write (and full transcript re-render) per stdout chunk.

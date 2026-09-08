@@ -41,6 +41,7 @@ import type { LogEntry, Theme } from '../types';
 import { getCachedAnsiHtml } from '../utils/textProcessing';
 import { cancelShellCommand } from '../services/shellCommand';
 import { useStickToBottom } from '../hooks/ui/useStickToBottom';
+import { useFixedPitchFont } from '../hooks/ui/useFixedPitchFont';
 import { CopyIconButton } from './ui/CopyIconButton';
 import { formatDuration } from '../../shared/performance-metrics';
 import { truncatePath } from '../../shared/formatters';
@@ -49,8 +50,13 @@ import { stripAnsiCodes } from '../../shared/stringUtils';
 interface ShellCommandCardProps {
 	log: LogEntry;
 	theme: Theme;
-	fontFamily: string;
 	ansiConverter: Convert;
+	/**
+	 * Configured font stack. Overridden to a fixed-pitch face when it is not one:
+	 * this card is a terminal, and shell output only reads as a table while every
+	 * glyph is one cell wide.
+	 */
+	fontFamily: string;
 	/**
 	 * Remove this card from the transcript. Omitted where a transcript is not
 	 * the user's to edit (exports, read-only views), which hides the affordance.
@@ -72,6 +78,10 @@ export function ShellCommandCard({
 	onSetDeleteConfirmLogId,
 }: ShellCommandCardProps): React.ReactElement | null {
 	const shell = log.shellCommand;
+
+	// The command line and its output are shell text, not prose: same treatment
+	// the terminal gives them, so a proportional UI font cannot break the grid.
+	const monoFontFamily = useFixedPitchFont(fontFamily);
 
 	const html = React.useMemo(
 		() => (log.text ? getCachedAnsiHtml(log.text, theme.id, ansiConverter) : ''),
@@ -175,7 +185,7 @@ export function ShellCommandCard({
 						className={`text-sm font-medium min-w-0 ${
 							commandExpanded ? 'whitespace-pre-wrap break-all select-text' : 'truncate'
 						}`}
-						style={{ fontFamily, color: theme.colors.textMain }}
+						style={{ fontFamily: monoFontFamily, color: theme.colors.textMain }}
 						// Only useful while truncated; expanded, the text is all there.
 						title={commandExpanded ? undefined : shell.command}
 						data-testid="shell-command-text"
@@ -330,7 +340,7 @@ export function ShellCommandCard({
 					ref={outputRef}
 					className="px-3 py-2 text-sm whitespace-pre overflow-auto scrollbar-thin select-text"
 					style={{
-						fontFamily,
+						fontFamily: monoFontFamily,
 						color: theme.colors.textMain,
 						maxHeight: '480px',
 						overscrollBehavior: 'contain',

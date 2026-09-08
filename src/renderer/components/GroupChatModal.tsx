@@ -315,8 +315,9 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 					</div>
 					<div className="text-xs mt-1 leading-relaxed" style={{ color: theme.colors.textDim }}>
 						An agent brought into this chat runs in its own working directory. When this is on, the
-						moderator skips any agent that is busy with your own conversation, an Auto Run, or a CLI
-						run, and says so in the chat instead of starting a second process there.
+						moderator holds the request for any agent that is busy with your own conversation, an
+						Auto Run, or a CLI run, and sends it the moment that agent is free instead of starting a
+						second process there.
 					</div>
 				</div>
 			</div>

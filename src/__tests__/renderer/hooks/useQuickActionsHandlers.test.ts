@@ -4,7 +4,7 @@
  * Tests:
  *   - handleQuickActionsToggleReadOnlyMode: toggles readOnlyMode on active AI tab, no-op in terminal mode, no-op with no active tab
  *   - handleQuickActionsToggleTabShowThinking: cycles off→on→sticky→off, clears thinking/tool logs on off, no-op in terminal mode, no-op with no active tab
- *   - handleQuickActionsRefreshGitFileState: calls refreshGitFileState, calls mainPanelRef.refreshGitInfo, sets and clears flash notification
+ *   - handleQuickActionsRefreshGitFileState: calls refreshGitFileState, calls mainPanelRef.refreshGitInfo, reloads the previewed file from disk (unless it has unsaved edits, the terminal is showing, or the tab id is stale), sets and clears flash notification
  *   - handleQuickActionsDebugReleaseQueuedItem: removes first item from queue and calls processQueuedItem, no-op with empty queue, no-op with no active session
  *   - handleQuickActionsToggleMarkdownEditMode: toggles markdownEditMode when file tab active, toggles chatRawTextMode when no file tab
  *   - handleQuickActionsSummarizeAndContinue: delegates to handleSummarizeAndContinue
@@ -20,6 +20,7 @@ import type { UseQuickActionsHandlersDeps } from '../../../renderer/hooks/modal/
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
+import { createMockFileTab } from '../../helpers/mockTab';
 
 // ============================================================================
 // Helpers
@@ -101,6 +102,7 @@ function createDeps(
 		handleCopyContext: vi.fn(),
 		handleExportHtml: vi.fn().mockResolvedValue(undefined),
 		handlePublishTabGist: vi.fn(),
+		handleReloadFileTab: vi.fn().mockResolvedValue(undefined),
 		...overrides,
 	};
 }
@@ -690,6 +692,132 @@ describe('useQuickActionsHandlers', () => {
 			});
 
 			expect(deps.refreshWorktreeState).toHaveBeenCalledTimes(1);
+		});
+
+		it('reloads the previewed file from disk when a file tab is active', async () => {
+			const session = createSession({
+				id: 'sess-1',
+				filePreviewTabs: [createMockFileTab({ id: 'file-1' })],
+				activeFileTabId: 'file-1',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'sess-1' });
+
+			const deps = createDeps();
+			const { result } = renderHook(() => useQuickActionsHandlers(deps));
+
+			await act(async () => {
+				await result.current.handleQuickActionsRefreshGitFileState();
+			});
+
+			expect(deps.handleReloadFileTab).toHaveBeenCalledWith('file-1');
+			expect(useCenterFlashStore.getState().active?.message).toBe(
+				'File Reloaded, Files, Git, History Refreshed'
+			);
+		});
+
+		it('does not reload the previewed file when it has unsaved edits', async () => {
+			const session = createSession({
+				id: 'sess-1',
+				filePreviewTabs: [
+					createMockFileTab({ id: 'file-1', content: 'on disk', editContent: 'edited' }),
+				],
+				activeFileTabId: 'file-1',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'sess-1' });
+
+			const deps = createDeps();
+			const { result } = renderHook(() => useQuickActionsHandlers(deps));
+
+			await act(async () => {
+				await result.current.handleQuickActionsRefreshGitFileState();
+			});
+
+			expect(deps.handleReloadFileTab).not.toHaveBeenCalled();
+			expect(useCenterFlashStore.getState().active?.message).toBe(
+				'Files, Git, History Refreshed - Unsaved Edits Kept'
+			);
+		});
+
+		it('does not reload a file tab while the terminal is the active view', async () => {
+			const session = createSession({
+				id: 'sess-1',
+				inputMode: 'terminal',
+				filePreviewTabs: [createMockFileTab({ id: 'file-1' })],
+				activeFileTabId: 'file-1',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'sess-1' });
+
+			const deps = createDeps();
+			const { result } = renderHook(() => useQuickActionsHandlers(deps));
+
+			await act(async () => {
+				await result.current.handleQuickActionsRefreshGitFileState();
+			});
+
+			expect(deps.handleReloadFileTab).not.toHaveBeenCalled();
+			expect(useCenterFlashStore.getState().active?.message).toBe('Files, Git, History Refreshed');
+		});
+
+		it('does not reload when no file tab is open', async () => {
+			const session = createSession({ id: 'sess-1' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'sess-1' });
+
+			const deps = createDeps();
+			const { result } = renderHook(() => useQuickActionsHandlers(deps));
+
+			await act(async () => {
+				await result.current.handleQuickActionsRefreshGitFileState();
+			});
+
+			expect(deps.handleReloadFileTab).not.toHaveBeenCalled();
+		});
+
+		// The rest of the app calls a file tab modified on `editContent !== undefined`
+		// alone (the TabBar badge, the close-tab confirm). This handler deliberately
+		// compares against `content` instead, matching FilePreview's own Save-button
+		// test: a draft that is byte-identical to disk is not work worth protecting,
+		// so refreshing it is safe. Locked here so a later pass toward the other
+		// convention has to be a decision rather than an accident.
+		it('reloads when an edit draft is byte-identical to what is on disk', async () => {
+			const session = createSession({
+				id: 'sess-1',
+				filePreviewTabs: [
+					createMockFileTab({ id: 'file-1', content: 'same', editContent: 'same' }),
+				],
+				activeFileTabId: 'file-1',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'sess-1' });
+
+			const deps = createDeps();
+			const { result } = renderHook(() => useQuickActionsHandlers(deps));
+
+			await act(async () => {
+				await result.current.handleQuickActionsRefreshGitFileState();
+			});
+
+			expect(deps.handleReloadFileTab).toHaveBeenCalledWith('file-1');
+		});
+
+		it('survives an activeFileTabId that no longer has a tab behind it', async () => {
+			// A closed tab can leave the id pointing at nothing. The refresh still has
+			// to do the git and file-tree half of its job rather than throw.
+			const session = createSession({
+				id: 'sess-1',
+				filePreviewTabs: [],
+				activeFileTabId: 'file-gone',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'sess-1' });
+
+			const deps = createDeps();
+			const { result } = renderHook(() => useQuickActionsHandlers(deps));
+
+			await act(async () => {
+				await result.current.handleQuickActionsRefreshGitFileState();
+			});
+
+			expect(deps.handleReloadFileTab).not.toHaveBeenCalled();
+			expect(deps.refreshGitFileState).toHaveBeenCalledWith('sess-1');
+			expect(useCenterFlashStore.getState().active?.message).toBe('Files, Git, History Refreshed');
 		});
 
 		it('does not call refreshWorktreeState when there is no active session', async () => {

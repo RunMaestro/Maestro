@@ -56,6 +56,42 @@ export function toggleReadOnlyModeFields(tab: Pick<AITab, 'readOnlyMode'>): {
 }
 
 /**
+ * Field patch for setting a tab's permission mode outright.
+ *
+ * Same invariant as {@link toggleReadOnlyModeFields} - the legacy
+ * `readOnlyMode` boolean moves with the 3-way `permissionMode`, so the pill and
+ * the spawn path cannot drift - but for the surfaces that name a mode rather
+ * than flipping one. Two exist: the composer toolbar's cycle (`full` ->
+ * `standard` -> `readonly`, tapping through the options) and the phone options
+ * sheet (which lists them and lets the user pick, because tap-to-cycle through
+ * three states is a poor control on a touchscreen). Both spread this rather
+ * than writing the pair by hand.
+ */
+export function permissionModeFields(mode: 'full' | 'standard' | 'readonly'): {
+	permissionMode: 'full' | 'standard' | 'readonly';
+	readOnlyMode: boolean;
+} {
+	return { permissionMode: mode, readOnlyMode: mode === 'readonly' };
+}
+
+/**
+ * The next mode in the composer's permission cycle.
+ *
+ * `full` -> `standard` -> `readonly` -> `full`, with `standard` skipped for an
+ * agent that has no working relay for it, so the cycle can never land on a mode
+ * that does nothing. Shared so the desktop toolbar pill and any other cycling
+ * surface step in the same order.
+ */
+export function nextPermissionMode(
+	current: 'full' | 'standard' | 'readonly',
+	hasStandardCapability: boolean
+): 'full' | 'standard' | 'readonly' {
+	if (current === 'full') return hasStandardCapability ? 'standard' : 'readonly';
+	if (current === 'standard') return 'readonly';
+	return 'full';
+}
+
+/**
  * Field patch for cycling a tab's thinking-display mode via {@link nextThinkingMode}.
  *
  * Turning the mode OFF also drops the tab's stored thinking logs - only thinking
@@ -77,7 +113,25 @@ export function cycleShowThinkingFields(tab: Pick<AITab, 'showThinking' | 'logs'
 	showThinking: ThinkingMode;
 	logs: LogEntry[];
 } {
-	const newMode = nextThinkingMode(tab.showThinking);
+	return setShowThinkingFields(tab, nextThinkingMode(tab.showThinking));
+}
+
+/**
+ * Field patch for setting a tab's thinking-display mode outright.
+ *
+ * The set half of {@link cycleShowThinkingFields}, which now delegates here, so
+ * the log-clearing rule above is written once. Reach for this from a surface
+ * that NAMES a mode instead of stepping to the next one - the phone options
+ * sheet lists all three, because cycling one step per tap through three states
+ * is a poor control on a touchscreen.
+ */
+export function setShowThinkingFields(
+	tab: Pick<AITab, 'logs'>,
+	newMode: ThinkingMode
+): {
+	showThinking: ThinkingMode;
+	logs: LogEntry[];
+} {
 	if (newMode === 'off') {
 		return { showThinking: 'off', logs: tab.logs.filter((l) => l.source !== 'thinking') };
 	}

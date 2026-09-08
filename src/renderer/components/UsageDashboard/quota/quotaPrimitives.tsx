@@ -138,32 +138,53 @@ export const QuotaAgentCountBadge = memo(function QuotaAgentCountBadge({
 	providerLabel,
 	testId,
 	theme,
+	onClick,
 }: {
 	count: number;
 	/** Provider name for the hover title (`Claude` / `Codex`). */
 	providerLabel: string;
 	testId?: string;
 	theme: Theme;
+	/** Makes the chip a button that shows those agents. Omitted when there are
+	 *  none to show - a button that lands on an empty grid is worse than text. */
+	onClick?: () => void;
 }) {
 	const label = `${count} ${count === 1 ? 'agent' : 'agents'}`;
+	const title =
+		count === 0
+			? `No ${providerLabel} agents are configured to use this account`
+			: onClick
+				? `Show the ${label} that ${count === 1 ? 'runs' : 'run'} against this ${providerLabel} account`
+				: `${label} ${count === 1 ? 'runs' : 'run'} against this ${providerLabel} account`;
+	const className =
+		'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs-plus font-medium flex-shrink-0';
+	const style = {
+		color: theme.colors.textDim,
+		backgroundColor: `${theme.colors.border}55`,
+		border: `1px solid ${theme.colors.border}`,
+	};
+
+	if (!onClick) {
+		return (
+			<span className={className} style={style} title={title} data-testid={testId}>
+				<Users className="w-3 h-3" aria-hidden="true" />
+				{label}
+			</span>
+		);
+	}
+
 	return (
-		<span
-			className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs-plus font-medium flex-shrink-0"
-			style={{
-				color: theme.colors.textDim,
-				backgroundColor: `${theme.colors.border}55`,
-				border: `1px solid ${theme.colors.border}`,
-			}}
-			title={
-				count === 0
-					? `No ${providerLabel} agents are configured to use this account`
-					: `${label} ${count === 1 ? 'runs' : 'run'} against this ${providerLabel} account`
-			}
+		<button
+			type="button"
+			onClick={onClick}
+			className={`${className} transition-colors cursor-pointer hover:brightness-125`}
+			style={{ ...style, color: theme.colors.accent, borderColor: `${theme.colors.accent}55` }}
+			title={title}
 			data-testid={testId}
 		>
 			<Users className="w-3 h-3" aria-hidden="true" />
 			{label}
-		</span>
+		</button>
 	);
 });
 
@@ -248,6 +269,7 @@ export const QuotaPendingRow = memo(function QuotaPendingRow({
 	agentCount,
 	providerLabel,
 	theme,
+	onShowAgents,
 }: {
 	accountKey: string;
 	shortName: string;
@@ -257,6 +279,8 @@ export const QuotaPendingRow = memo(function QuotaPendingRow({
 	agentCount?: number;
 	providerLabel: string;
 	theme: Theme;
+	/** Show those agents in the Agents tab, filtered to this account. */
+	onShowAgents?: () => void;
 }) {
 	return (
 		<div className="space-y-2" data-testid={`${testIdPrefix}-row-${shortName}-pending`}>
@@ -268,6 +292,7 @@ export const QuotaPendingRow = memo(function QuotaPendingRow({
 						providerLabel={providerLabel}
 						testId={`${testIdPrefix}-agents-${shortName}`}
 						theme={theme}
+						onClick={agentCount > 0 ? onShowAgents : undefined}
 					/>
 				)}
 				<div className="text-xs truncate" style={{ color: theme.colors.textDim, opacity: 0.7 }}>

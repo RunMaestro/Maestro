@@ -17,6 +17,10 @@
  * items, and a `scrollIntoView` assertion over an empty list passes no matter
  * what the component does. The mock's whole job is to make sure rows EXIST.
  *
+ * The same mock carries the row-sizing tests at the bottom: rows are measured,
+ * not fixed at `ROW_HEIGHT`, so the two stacked lines fit whatever font the user
+ * picked. jsdom cannot report a height, so those assert the wiring instead.
+ *
  * The sibling `FileSearchModal.test.ts` covers the pure `flattenPreviewableFiles`
  * helper; this file covers the component.
  */
@@ -26,6 +30,7 @@ import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 
 const ROW_COUNT = 20;
 const scrollToIndex = vi.fn();
+const measureElement = vi.fn();
 
 vi.mock('@tanstack/react-virtual', () => ({
 	useVirtualizer: ({ count }: { count: number }) => {
@@ -42,7 +47,7 @@ vi.mock('@tanstack/react-virtual', () => ({
 			getVirtualItems: () => items,
 			getTotalSize: () => count * 40,
 			scrollToIndex,
-			measureElement: () => undefined,
+			measureElement,
 		};
 	},
 }));
@@ -67,6 +72,7 @@ describe('FileSearchModal list scrolling', () => {
 
 	beforeEach(() => {
 		scrollToIndex.mockClear();
+		measureElement.mockClear();
 		// jsdom does not implement scrollIntoView at all, so it has to be supplied
 		// before it can be observed.
 		originalScrollIntoView = Element.prototype.scrollIntoView;
@@ -178,5 +184,45 @@ describe('FileSearchModal list scrolling', () => {
 		// long enough for the next wheel gesture to fight it.
 		expect(scrollToIndex).toHaveBeenCalledWith(1, { align: 'auto' });
 		expect(scrollIntoView).not.toHaveBeenCalled();
+	});
+
+	// A row is two stacked lines - file name over directory - so its real height
+	// depends on the font the user picked. `ROW_HEIGHT` is only the virtualizer's
+	// opening guess; the row has to be free to disagree with it. jsdom has no
+	// layout engine, so these assert the wiring that lets measurement happen at
+	// all, which is exactly what silently regresses.
+
+	it('lets a row measure itself instead of pinning it to the estimate', () => {
+		renderModal();
+		const row = screen.getByText('file-000.ts').closest('button');
+
+		// An inline `height` from `virtualRow.size` clamps every row to the
+		// estimate, and a proportional UI font then renders two crammed lines.
+		expect(row?.style.height).toBe('');
+		expect(measureElement).toHaveBeenCalledWith(row);
+	});
+
+	it('tags every row with the index the virtualizer measures by', () => {
+		renderModal();
+
+		// `measureElement` reads `data-index` off the node to learn which row it
+		// just measured. Without the attribute the measurement is filed against
+		// NaN and the row keeps the estimate forever, with nothing to show for it.
+		expect(screen.getByText('file-000.ts').closest('button')).toHaveAttribute('data-index', '0');
+		expect(screen.getByText('file-003.ts').closest('button')).toHaveAttribute('data-index', '3');
+	});
+
+	it('keeps the measuring ref stable across a re-render', () => {
+		renderModal();
+		const input = screen.getByPlaceholderText(/search files/i);
+		measureElement.mockClear();
+
+		// Only the selection moves; the rows are the same nodes. Wrapping
+		// `measureElement` in an inline arrow would detach and reattach the ref
+		// here and remeasure the whole window - the same identity trap the scroll
+		// assertions above exist to prevent.
+		fireEvent.keyDown(input, { key: 'ArrowDown' });
+
+		expect(measureElement).not.toHaveBeenCalled();
 	});
 });

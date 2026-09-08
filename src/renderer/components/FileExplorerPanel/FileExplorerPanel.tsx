@@ -23,6 +23,7 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { useGitDetail } from '../../contexts/GitStatusContext';
 import { buildChangedAncestors, buildFileChangeMap } from '../../utils/gitChangeMap';
 import { RIGHT_PANEL_COMPACT_THRESHOLD } from '../../constants/rightPanel';
+import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 import { getOpenInLabel, fileManagerName } from '../../utils/platformUtils';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
@@ -99,7 +100,13 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 	const dotfilesToggleHidden = useSettingsStore((s) => s.dotfilesToggleHidden);
 	const colorBlindMode = useSettingsStore((s) => s.colorBlindMode);
 	const htmlDoubleClickOpensInBrowser = useSettingsStore((s) => s.htmlDoubleClickOpensInBrowser);
-	const compact = rightPanelWidth < RIGHT_PANEL_COMPACT_THRESHOLD;
+	// Two ways to fit the toolbar in a narrow panel, by what is scarce: a narrow
+	// DESKTOP panel (`compact`) drops the icons and keeps the words for a mouse
+	// user; a PHONE (`iconOnly`) drops the words and keeps the icons, with the
+	// label living on in each button's title.
+	const phone = usePhoneLayout();
+	const iconOnly = phone;
+	const compact = !phone && rightPanelWidth < RIGHT_PANEL_COMPACT_THRESHOLD;
 
 	const [isTouchPointer, setIsTouchPointer] = useState<boolean>(() =>
 		typeof window !== 'undefined' && window.matchMedia
@@ -571,7 +578,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 						title={`Find Files (${formatShortcutKeys(shortcuts.filterFiles?.keys ?? ['Meta', 'f'])})`}
 					>
 						{!compact && <Search className="w-3 h-3" />}
-						Find
+						{!iconOnly && 'Find'}
 					</button>
 					{/* Open in file manager - local sessions only */}
 					{!sshRemoteId && (
@@ -588,7 +595,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 							title={getOpenInLabel(window.maestro?.platform || 'darwin')}
 						>
 							{!compact && <FolderOpen className="w-3 h-3" />}
-							Open
+							{!iconOnly && 'Open'}
 						</button>
 					)}
 					{/* Show/hide dotfiles */}
@@ -607,7 +614,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 						>
 							{!compact &&
 								(showHiddenFiles ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />)}
-							.files
+							{!iconOnly && '.files'}
 						</button>
 					)}
 					{/* Refresh */}
@@ -630,7 +637,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 						}
 					>
 						{!compact && <RefreshCw className={`w-3 h-3 ${isRefreshing ? 'animate-spin' : ''}`} />}
-						Refresh
+						{!iconOnly && 'Refresh'}
 					</button>
 					{/* Expand all */}
 					<button

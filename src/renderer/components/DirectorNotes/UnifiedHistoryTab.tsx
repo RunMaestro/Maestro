@@ -29,6 +29,7 @@ import { HistoryDetailModal } from '../HistoryDetailModal';
 import { useListNavigation, useThrottledCallback } from '../../hooks';
 import { useHistoryPagination } from '../../hooks/history/useHistoryPagination';
 import type { PaginatedPage } from '../../hooks/history/useHistoryPagination';
+import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
@@ -101,6 +102,10 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 		const [detailModalEntry, setDetailModalEntry] = useState<HistoryEntry | null>(null);
 		const [historyStats, setHistoryStats] = useState<HistoryStats | null>(null);
 		const [searchExpanded, setSearchExpanded] = useState(false);
+		// Phone: the activity graph gets its own row. Beside the search button and
+		// three filter pills it was squeezed to ~50px, and its two axis labels
+		// ("Sep 5", "Now") printed on top of each other.
+		const phone = usePhoneLayout();
 		const [searchQuery, setSearchQuery] = useState('');
 
 		// Pre-computed graph buckets from backend (covers all entries in
@@ -707,7 +712,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 				)}
 
 				{/* Header: Search icon + Filters + Activity Graph */}
-				<div className="flex items-start gap-3 mb-4">
+				<div className={`flex items-start gap-3 mb-4 ${phone ? 'flex-wrap' : ''}`}>
 					<button
 						onClick={openSearch}
 						className="flex-shrink-0 p-1.5 rounded-full transition-colors hover:bg-white/10"
@@ -722,18 +727,21 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 						theme={theme}
 						visibleTypes={visibleTypes}
 					/>
-					<ActivityGraph
-						entries={[]}
-						theme={theme}
-						lookbackHours={lookbackHours}
-						onLookbackChange={handleLookbackChange}
-						precomputedBuckets={graphBuckets}
-						precomputedRange={graphRange}
-						viewportRange={graphViewportRange}
-						alwaysShowViewportLabel
-						onBarClick={handleGraphBarClick}
-						activeFilters={activeFilters}
-					/>
+					{/* On a phone the graph wraps onto its own full-width line. */}
+					<div className={phone ? 'basis-full flex min-w-0' : 'contents'}>
+						<ActivityGraph
+							entries={[]}
+							theme={theme}
+							lookbackHours={lookbackHours}
+							onLookbackChange={handleLookbackChange}
+							precomputedBuckets={graphBuckets}
+							precomputedRange={graphRange}
+							viewportRange={graphViewportRange}
+							alwaysShowViewportLabel
+							onBarClick={handleGraphBarClick}
+							activeFilters={activeFilters}
+						/>
+					</div>
 					{/* Entry count badge - shows window position when jumped, total otherwise */}
 					{!isLoading && totalEntries > 0 && (
 						<span
@@ -741,7 +749,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 							style={{ color: theme.colors.textDim }}
 						>
 							{!isAtTop
-								? `${startOffset + 1}–${startOffset + entries.length}/${totalEntries}`
+								? `${startOffset + 1}-${startOffset + entries.length}/${totalEntries}`
 								: entries.length < totalEntries
 									? `${entries.length}/${totalEntries}`
 									: `${totalEntries}`}

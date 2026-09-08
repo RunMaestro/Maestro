@@ -26,6 +26,8 @@ import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
 import { MarkdownRenderer } from '../../MarkdownRenderer';
 import { LogFilterControls } from '../../LogFilterControls';
 import { linkifyNode } from '../../../utils/linkify';
+import { sessionImageThumbnailSrc } from '../../../../shared/sessionImageRefs';
+import { displayImageSrc } from '../../../utils/sessionImageSrc';
 import { RetryStatusCard } from '../../RetryStatusCard';
 import { SnoozeReturnCard } from '../../SnoozeReturnCard';
 import { ShellCommandCard } from '../../ShellCommandCard';
@@ -101,6 +103,7 @@ export const LogItem = memo(
 		userMessageAlignment,
 		isClaudeCode,
 		isAdaptiveMode,
+		showProviderModePill,
 		sessionId,
 		onSessionRecover,
 		isRecoveringSession,
@@ -222,6 +225,30 @@ export const LogItem = memo(
 		const isReversed = isUserMessage
 			? userMessageAlignment === 'left'
 			: userMessageAlignment === 'right';
+
+		// An AI-command entry is a header pill plus an ordinary prompt body. The
+		// body is authored markdown like any other chat message, so it goes through
+		// the markdown stack too - raw source only in edit mode or a shell tab.
+		const renderAiCommandBody = (text: string) =>
+			isAIMode && !markdownEditMode ? (
+				<MarkdownRenderer
+					content={text}
+					theme={theme}
+					onCopy={copyToClipboard}
+					enableBionifyReadingMode={bionifyReadingMode}
+					bionifyIntensity={bionifyIntensity}
+					bionifyAlgorithm={bionifyAlgorithm}
+					fileTree={fileTree}
+					cwd={cwd}
+					projectRoot={projectRoot}
+					onFileClick={onFileClick}
+					sshRemoteId={sshRemoteId}
+					chatLineBreaks
+					chatMath
+				/>
+			) : (
+				<div className="whitespace-pre-wrap text-sm break-words">{linkifyNode(text, theme)}</div>
+			);
 
 		// Command mode: a `!command` run renders as its own terminal-output card
 		// (monospace, ANSI preserved) rather than a markdown chat bubble.
@@ -417,11 +444,29 @@ export const LogItem = memo(
 									className="shrink-0 p-0 bg-transparent outline-none focus:ring-2 focus:ring-accent rounded"
 									onClick={() => setLightboxImage(img, log.images, 'history')}
 								>
+									{/*
+										The chip is 200x80 CSS px but the source is whatever was
+										pasted - routinely a 4984x2578 Retina screenshot. Ask the
+										protocol handler for a 2x-DPR rendition so Chromium decodes
+										~400x160 instead of 12 megapixels, and let it skip the fetch
+										entirely until the chip scrolls into view. The lightbox
+										(onClick above) still opens the untouched original.
+
+										Order matters: `displayImageSrc` runs FIRST because in
+										web-desktop it rewrites the ref to the token-scoped HTTP
+										route, and `sessionImageThumbnailSrc` no-ops on anything
+										that is not a bare ref. So the desktop gets a thumbnail and
+										a browser client keeps receiving originals; appending the
+										query first would leave a `maestro-image://` URL that no
+										browser can load.
+									*/}
 									<img
-										src={img}
+										src={sessionImageThumbnailSrc(displayImageSrc(img), 400, 160)}
 										alt={`Terminal output image ${imgIdx + 1}`}
 										className="h-20 rounded border cursor-zoom-in block"
 										style={{ objectFit: 'contain', maxWidth: '200px' }}
+										loading="lazy"
+										decoding="async"
 									/>
 								</button>
 							))}
@@ -725,7 +770,9 @@ export const LogItem = memo(
 													{log.aiCommand.description}
 												</span>
 											</div>
-											<div>{linkifyNode(filteredText, theme)}</div>
+											<div style={{ color: theme.colors.textMain }}>
+												{renderAiCommandBody(filteredText)}
+											</div>
 										</div>
 									) : isAIMode && !markdownEditMode ? (
 										// Expanded markdown rendering
@@ -801,11 +848,8 @@ export const LogItem = memo(
 												{log.aiCommand.description}
 											</span>
 										</div>
-										<div
-											className="whitespace-pre-wrap text-sm break-words"
-											style={{ color: theme.colors.textMain }}
-										>
-											{linkifyNode(filteredText, theme)}
+										<div style={{ color: theme.colors.textMain }}>
+											{renderAiCommandBody(filteredText)}
 										</div>
 									</div>
 								) : isAIMode && !markdownEditMode ? (
@@ -862,9 +906,10 @@ export const LogItem = memo(
 					    replaces it. */}
 					{!crossAgent &&
 						log.source !== 'user' &&
-						(isClaudeCode || log.turnModel || log.turnEffort) && (
+						((isClaudeCode && showProviderModePill) || log.turnModel || log.turnEffort) && (
 							<div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1 max-w-[60%] pointer-events-none select-none">
 								{isClaudeCode &&
+									showProviderModePill &&
 									(() => {
 										const { label, title } = getTokenSourcePill({
 											mode: log.renderStyle === 'text-stream' ? 'interactive' : 'api',
@@ -1112,7 +1157,12 @@ export const LogItem = memo(
 			prevProps.userMessageAlignment === nextProps.userMessageAlignment &&
 			prevProps.ghCliAvailable === nextProps.ghCliAvailable &&
 			prevProps.onForkConversation === nextProps.onForkConversation &&
-			prevProps.publishedGistUrl === nextProps.publishedGistUrl
+			prevProps.publishedGistUrl === nextProps.publishedGistUrl &&
+			// Unlike isClaudeCode/isAdaptiveMode, which are fixed for the life of an
+			// agent, this one is a toggle the user flips while looking at the
+			// transcript - leave it out and every message already on screen keeps its
+			// pill until something unrelated re-renders it.
+			prevProps.showProviderModePill === nextProps.showProviderModePill
 		);
 	}
 );

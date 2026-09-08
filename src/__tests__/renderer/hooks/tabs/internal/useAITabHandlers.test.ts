@@ -4,6 +4,10 @@ import { useAITabHandlers } from '../../../../../renderer/hooks/tabs/internal/us
 import { useModalStore } from '../../../../../renderer/stores/modalStore';
 import { useSettingsStore } from '../../../../../renderer/stores/settingsStore';
 import { getLiveDraft, setLiveDraft } from '../../../../../renderer/utils/liveDraftStore';
+import {
+	clearDesktopAiTabSelections,
+	consumeDesktopAiTabSelection,
+} from '../../../../../renderer/utils/desktopTabSelectionSync';
 import { createMockAITab, getSession, resetTabHandlerStores, setupSession } from './testUtils';
 
 const inlineWizardMocks = vi.hoisted(() => ({
@@ -25,6 +29,7 @@ vi.mock('../../../../../renderer/utils/runtimeContext', () => runtimeMocks);
 describe('useAITabHandlers', () => {
 	beforeEach(() => {
 		resetTabHandlerStores();
+		clearDesktopAiTabSelections();
 		inlineWizardMocks.endWizard.mockClear();
 		runtimeMocks.isWebDesktop.mockReturnValue(false);
 	});
@@ -92,6 +97,37 @@ describe('useAITabHandlers', () => {
 		expect(getSession().aiTabs.map((tab) => tab.id)).toContain('orphan-1');
 		expect(getSession().activeTabId).toBe('orphan-1');
 		expect(getSession().orphanedThinkingTabs).toBeUndefined();
+	});
+
+	it('records desktop AI-tab selections as explicit focus intent', () => {
+		setupSession({
+			id: 'session-1',
+			aiTabs: [createMockAITab({ id: 'ai-1' }), createMockAITab({ id: 'ai-2' })],
+			activeTabId: 'ai-1',
+		});
+
+		const { result } = renderHook(() => useAITabHandlers());
+		act(() => {
+			result.current.handleTabSelect('ai-2');
+		});
+
+		expect(consumeDesktopAiTabSelection('session-1', 'ai-2')).toBe(true);
+	});
+
+	it('does not record Web-Desktop selections as desktop focus intent', () => {
+		setupSession({
+			id: 'session-1',
+			aiTabs: [createMockAITab({ id: 'ai-1' }), createMockAITab({ id: 'ai-2' })],
+			activeTabId: 'ai-1',
+		});
+		runtimeMocks.isWebDesktop.mockReturnValue(true);
+
+		const { result } = renderHook(() => useAITabHandlers());
+		act(() => {
+			result.current.handleTabSelect('ai-2');
+		});
+
+		expect(consumeDesktopAiTabSelection('session-1', 'ai-2')).toBe(false);
 	});
 
 	it('opens draft confirmation and clears live draft after confirm', () => {

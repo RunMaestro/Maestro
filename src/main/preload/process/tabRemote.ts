@@ -7,10 +7,20 @@ export function createTabRemoteApi() {
 		 * Subscribe to remote tab selection from web interface
 		 */
 		onRemoteSelectTab: (
-			callback: (sessionId: string, tabId: string, aiTabs?: AITabData[]) => void
+			callback: (
+				sessionId: string,
+				tabId: string,
+				aiTabs?: AITabData[],
+				activeTabChanged?: boolean
+			) => void
 		): (() => void) => {
-			const handler = (_: unknown, sessionId: string, tabId: string, aiTabs?: AITabData[]) =>
-				callback(sessionId, tabId, aiTabs);
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				tabId: string,
+				aiTabs?: AITabData[],
+				activeTabChanged?: boolean
+			) => callback(sessionId, tabId, aiTabs, activeTabChanged === true);
 			ipcRenderer.on('remote:selectTab', handler);
 			return () => ipcRenderer.removeListener('remote:selectTab', handler);
 		},
@@ -51,12 +61,24 @@ export function createTabRemoteApi() {
 		 * Subscribe to remote rename tab from web interface
 		 */
 		onRemoteRenameTab: (
-			callback: (sessionId: string, tabId: string, newName: string) => void
+			callback: (sessionId: string, tabId: string, newName: string, responseChannel: string) => void
 		): (() => void) => {
-			const handler = (_: unknown, sessionId: string, tabId: string, newName: string) =>
-				callback(sessionId, tabId, newName);
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				tabId: string,
+				newName: string,
+				responseChannel: string
+			) => callback(sessionId, tabId, newName, responseChannel);
 			ipcRenderer.on('remote:renameTab', handler);
 			return () => ipcRenderer.removeListener('remote:renameTab', handler);
+		},
+
+		sendRemoteRenameTabResponse: (
+			responseChannel: string,
+			result: { success: boolean; error?: string }
+		): void => {
+			ipcRenderer.send(responseChannel, result);
 		},
 
 		/**

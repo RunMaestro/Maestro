@@ -34,7 +34,15 @@ import { getLocalIpAddress } from '../utils/networkUtils';
 import { captureException } from '../utils/sentry';
 import { WebSocketMessageHandler } from './handlers';
 import { BroadcastService } from './services';
-import { ApiRoutes, ConcertoRoutes, StaticRoutes, WsRoute } from './routes';
+import {
+	ApiRoutes,
+	ConcertoRoutes,
+	ImageRoutes,
+	MediaRoutes,
+	StaticRoutes,
+	WsRoute,
+} from './routes';
+import { MEDIA_PATH_PARAM_MAX_LENGTH } from './routes/mediaRoutes';
 import { LiveSessionManager, CallbackRegistry } from './managers';
 
 // Import shared types from canonical location
@@ -79,6 +87,9 @@ import type {
 	ReadTerminalTabCallback,
 	ReadTerminalTabPayload,
 	NewAITabWithPromptCallback,
+	ConsultAgentCallback,
+	ConsultAgentParams,
+	ConsultAgentResult,
 	EnqueueCommandCallback,
 	ListQueueCallback,
 	RemoveQueueItemCallback,
@@ -213,6 +224,8 @@ export class WebServer {
 	// Route instances
 	private apiRoutes: ApiRoutes;
 	private concertoRoutes: ConcertoRoutes;
+	private mediaRoutes: MediaRoutes;
+	private imageRoutes: ImageRoutes;
 	private staticRoutes: StaticRoutes;
 	private wsRoute: WsRoute;
 
@@ -223,6 +236,9 @@ export class WebServer {
 			logger: {
 				level: 'info',
 			},
+			// The media route carries a hex-encoded absolute path as a param; the
+			// default 100-character cap 404s any real file (see mediaRoutes.ts).
+			maxParamLength: MEDIA_PATH_PARAM_MAX_LENGTH,
 		});
 
 		// Use provided token (persistent mode) or generate a new one (ephemeral mode)
@@ -265,6 +281,8 @@ export class WebServer {
 		// Initialize route handlers
 		this.apiRoutes = new ApiRoutes(this.securityToken, this.rateLimitConfig);
 		this.concertoRoutes = new ConcertoRoutes(this.concertoToken);
+		this.mediaRoutes = new MediaRoutes(this.securityToken);
+		this.imageRoutes = new ImageRoutes(this.securityToken);
 		this.staticRoutes = new StaticRoutes(
 			this.securityToken,
 			this.webAssetsPath,
@@ -505,6 +523,10 @@ export class WebServer {
 
 	setNewAITabWithPromptCallback(callback: NewAITabWithPromptCallback): void {
 		this.callbackRegistry.setNewAITabWithPromptCallback(callback);
+	}
+
+	setConsultAgentCallback(callback: ConsultAgentCallback): void {
+		this.callbackRegistry.setConsultAgentCallback(callback);
 	}
 
 	setEnqueueCommandCallback(callback: EnqueueCommandCallback): void {
@@ -912,6 +934,13 @@ export class WebServer {
 		// Concerto HTML documents for browser clients (no custom-scheme handler).
 		this.concertoRoutes.registerRoutes(this.server);
 
+		// Local audio/video for browser clients, same reason: no maestro-media://.
+		this.mediaRoutes.registerRoutes(this.server);
+
+		// Session image store files for browser clients: the desktop loads them
+		// through the maestro-image:// protocol, which a browser cannot resolve.
+		this.imageRoutes.registerRoutes(this.server);
+
 		// Setup WebSocket route callbacks and register route
 		this.wsRoute.setCallbacks({
 			getSessions: () => this.callbackRegistry.getSessions(),
@@ -949,6 +978,10 @@ export class WebServer {
 			handleMessage: (clientId, message) => {
 				this.handleWebClientMessage(clientId, message);
 			},
+			getBridgeEpoch: () => this.broadcastService.bridgeEpoch,
+			getBridgeSeq: () => this.broadcastService.getBridgeSeq(),
+			resumeBridgeClient: (epoch, lastSeq, subscribedSessionId) =>
+				this.broadcastService.resumeBridgeClient(epoch, lastSeq, subscribedSessionId),
 		});
 		this.wsRoute.registerRoute(this.server);
 	}
@@ -1022,6 +1055,8 @@ export class WebServer {
 				this.callbackRegistry.readTerminalTab(sessionId, payload),
 			newAITabWithPrompt: async (sessionId: string, prompt: string, background?: boolean) =>
 				this.callbackRegistry.newAITabWithPrompt(sessionId, prompt, background),
+			consultAgent: async (params: ConsultAgentParams): Promise<ConsultAgentResult> =>
+				this.callbackRegistry.consultAgent(params),
 			enqueueCommand: async (
 				sessionId: string,
 				command: string,
@@ -1266,8 +1301,17 @@ export class WebServer {
 		this.broadcastService.broadcastActiveSessionChange(sessionId);
 	}
 
-	broadcastTabsChange(sessionId: string, aiTabs: AITabData[], activeTabId: string): void {
-		this.broadcastService.broadcastTabsChange(sessionId, aiTabs, activeTabId);
+	/**
+	 * Broadcast the canonical tab inventory and whether its active tab came from
+	 * an explicit desktop selection.
+	 */
+	broadcastTabsChange(
+		sessionId: string,
+		aiTabs: AITabData[],
+		activeTabId: string,
+		activeTabChanged = false
+	): void {
+		this.broadcastService.broadcastTabsChange(sessionId, aiTabs, activeTabId, activeTabChanged);
 	}
 
 	requestNewTab(sessionId: string, background?: boolean): Promise<{ tabId: string } | null> {

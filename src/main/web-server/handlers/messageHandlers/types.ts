@@ -34,6 +34,9 @@ import type {
 	EnqueueCommandResult,
 	ReadTerminalTabPayload,
 	ReadTerminalTabResult,
+	ConsultAgentParams,
+	ConsultAgentResult,
+	RenameTabResult,
 } from '../../types';
 import type { CadenzaPayload } from '../../../../shared/cadenza-types';
 import type { MovementPayload, MovementStateSnapshot } from '../../../../shared/movement-types';
@@ -117,7 +120,11 @@ export interface MessageHandlerCallbacks {
 	selectTab: (sessionId: string, tabId: string) => Promise<boolean>;
 	newTab: (sessionId: string, background?: boolean) => Promise<{ tabId: string } | null>;
 	closeTab: (sessionId: string, tabId: string) => Promise<boolean>;
-	renameTab: (sessionId: string, tabId: string, newName: string) => Promise<boolean>;
+	renameTab: (
+		sessionId: string,
+		tabId: string,
+		newName: string
+	) => Promise<boolean | RenameTabResult>;
 	starTab: (sessionId: string, tabId: string, starred: boolean) => Promise<boolean>;
 	reorderTab: (sessionId: string, fromIndex: number, toIndex: number) => Promise<boolean>;
 	toggleBookmark: (sessionId: string) => Promise<boolean>;
@@ -161,6 +168,8 @@ export interface MessageHandlerCallbacks {
 		prompt: string,
 		background?: boolean
 	) => Promise<{ success: boolean; tabId?: string }>;
+	/** Consult another agent and return its answer (`maestro-cli ask`). */
+	consultAgent: (params: ConsultAgentParams) => Promise<ConsultAgentResult>;
 	enqueueCommand: (
 		sessionId: string,
 		command: string,

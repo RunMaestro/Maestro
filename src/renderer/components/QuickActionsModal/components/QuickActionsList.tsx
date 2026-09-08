@@ -1,6 +1,7 @@
 import React from 'react';
 import type { Theme } from '../../../types';
 import { getStatusColor } from '../../../utils/theme';
+import { usePhoneLayout } from '../../../hooks/ui/useViewportBreakpoint';
 import { getAgentBucket, type QuickAction } from '../types';
 import { QuickActionRow } from './QuickActionRow';
 import { SectionHeader } from './SectionHeader';
@@ -30,6 +31,9 @@ export function QuickActionsList({
 	onScroll,
 	onActionClick,
 }: QuickActionsListProps) {
+	// The number badges are the Cmd+1..9 hotkeys; a phone has no keyboard to
+	// press them on, so the column reads as ten unexplained digits.
+	const phone = usePhoneLayout();
 	return (
 		<div
 			className="overflow-y-auto py-2 scrollbar-thin"
@@ -40,7 +44,7 @@ export function QuickActionsList({
 				const maxFirstIndex = Math.max(0, filtered.length - 10);
 				const effectiveFirstIndex = Math.min(firstVisibleIndex, maxFirstIndex);
 				const distanceFromFirstVisible = index - effectiveFirstIndex;
-				const showNumber = distanceFromFirstVisible >= 0 && distanceFromFirstVisible < 10;
+				const showNumber = !phone && distanceFromFirstVisible >= 0 && distanceFromFirstVisible < 10;
 				const numberBadge = distanceFromFirstVisible === 9 ? 0 : distanceFromFirstVisible + 1;
 
 				// One header at each bucket boundary. Derived from the shared bucket

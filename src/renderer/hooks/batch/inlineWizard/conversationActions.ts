@@ -13,6 +13,11 @@ import {
 	type ExistingDocumentWithContent,
 	type InlineWizardConversationSession,
 } from '../../../services/inlineWizardConversation';
+import {
+	beginWizardRun,
+	countWizardExchange,
+	updateWizardRun,
+} from '../../../services/wizardStats';
 import { logger } from '../../../utils/logger';
 import { hasCapabilityCached } from '../../agent/useAgentCapabilities';
 import {
@@ -129,6 +134,17 @@ export function useInlineWizardConversationActions({
 				conductorProfile,
 			}));
 
+			// Open the analytics row now, not at first message: "how long did I
+			// spend with the wizard" has to include the thinking time before the
+			// first prompt, and a run abandoned during initialization still counts
+			// as a run. Keyed by tab, so parallel wizards stay separate.
+			beginWizardRun(effectiveTabId, {
+				sessionId: sessionId || '',
+				agentType: agentType || 'unknown',
+				surface: 'inline',
+				projectPath,
+			});
+
 			try {
 				const historyFilePath = await fetchHistoryFilePath(sessionId, sessionSshRemoteConfig);
 				const hasExistingDocs = await hasExistingDocuments(effectiveAutoRunFolderPath);
@@ -208,6 +224,12 @@ export function useInlineWizardConversationActions({
 					existingDocuments: existingDocs,
 					historyFilePath,
 				}));
+
+				// Intent parsing is what decides new-vs-iterate; the run opened as
+				// 'new' before we knew. 'ask' stays unsettled until setMode.
+				if (mode === 'new' || mode === 'iterate') {
+					updateWizardRun(effectiveTabId, { mode });
+				}
 			} catch (error) {
 				const errorMessage = error instanceof Error ? error.message : 'Failed to initialize wizard';
 				logger.error('[useInlineWizard] startWizard error:', undefined, error);
@@ -248,6 +270,10 @@ export function useInlineWizardConversationActions({
 				timestamp: Date.now(),
 				...(images && images.length > 0 ? { images } : {}),
 			};
+
+			// Count the exchange at SEND, not at reply: a message the agent never
+			// answered is still back-and-forth the user paid for.
+			countWizardExchange(tabId);
 
 			// Track the in-flight turn so cancelTurn knows what it is stopping
 			activeTurnIdsRef.current.set(tabId, userMessage.id);
@@ -517,6 +543,10 @@ export function useInlineWizardConversationActions({
 				...prev,
 				mode: newMode,
 			}));
+
+			if (newMode === 'new' || newMode === 'iterate') {
+				updateWizardRun(tabId, { mode: newMode });
+			}
 		},
 		[conversationSessionsMap, getEffectiveTabId, setTabState, tabStatesRef]
 	);

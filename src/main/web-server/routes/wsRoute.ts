@@ -54,6 +54,23 @@ export interface WsRouteCallbacks {
 	onClientDisconnect: (clientId: string) => void;
 	onClientError: (clientId: string, error: Error) => void;
 	handleMessage: (clientId: string, message: WebClientMessage) => void;
+	/** Per-server-run id a web-desktop client echoes back when it reconnects. */
+	getBridgeEpoch?: () => string;
+	/**
+	 * The broadcast counter at connect time, the baseline a fresh client resumes
+	 * from. See `BroadcastService.getBridgeSeq`.
+	 */
+	getBridgeSeq?: () => number;
+	/**
+	 * Frames a reconnecting web-desktop client missed, narrowed to what its
+	 * subscription would have received live, or `null` when it must reload
+	 * instead. See `BroadcastService.resumeBridgeClient`.
+	 */
+	resumeBridgeClient?: (
+		epoch: string,
+		lastSeq: number,
+		subscribedSessionId?: string
+	) => string[] | null;
 }
 
 /**
@@ -91,6 +108,22 @@ export class WsRoute {
 			const url = new URL(request.url || '', `http://${request.headers.host || 'localhost'}`);
 			const sessionId = url.searchParams.get('sessionId') || undefined;
 
+			// A web-desktop client reconnecting after a dropped socket says where it
+			// left off. If every frame since then is still buffered it is replayed
+			// right after `connected` and the page carries on; otherwise `resumed`
+			// is false and the client reloads to resync from scratch. The replay is
+			// narrowed by the subscription in THIS URL: a resuming client's
+			// subscription is whatever it reconnects with, so a client that changes
+			// it mid-session (`subscribe` / `select_session`) must carry the current
+			// one in its reconnect URL. The web-desktop bundle never sends either
+			// and reconnects as the dashboard client it connected as.
+			const sinceParam = url.searchParams.get('since');
+			const epochParam = url.searchParams.get('epoch');
+			const replay =
+				sinceParam !== null && epochParam !== null
+					? (this.callbacks.resumeBridgeClient?.(epochParam, Number(sinceParam), sessionId) ?? null)
+					: null;
+
 			const client: WebClient = {
 				socket: connection.socket,
 				id: clientId,
@@ -112,9 +145,17 @@ export class WsRoute {
 					clientId,
 					message: 'Connected to Maestro Web Interface',
 					subscribedSessionId: sessionId,
+					bridgeEpoch: this.callbacks.getBridgeEpoch?.(),
+					bridgeSeq: this.callbacks.getBridgeSeq?.(),
+					resumed: replay !== null,
 					timestamp: Date.now(),
 				})
 			);
+
+			if (replay) {
+				logger.info(`Resumed ${clientId} with ${replay.length} replayed frame(s)`, LOG_CONTEXT);
+				for (const frame of replay) connection.socket.send(frame);
+			}
 
 			// Send initial sessions list (all sessions, not just "live" ones)
 			if (this.callbacks.getSessions) {

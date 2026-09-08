@@ -170,6 +170,22 @@ describe('ThemeTab', () => {
 		expect(draculaButton).toHaveClass('ring-2');
 	});
 
+	it('should auto-focus the theme picker without scrolling the panel', async () => {
+		// The tab content is taller than its scroll port, so a plain focus() scrolls
+		// the panel to wherever the picker lands - past the theme grid the user
+		// opened this tab to see. preventScroll keeps the view at the top.
+		const focusSpy = vi.spyOn(HTMLElement.prototype, 'focus');
+
+		render(<ThemeTab theme={mockTheme} themes={mockThemes} />);
+
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(100);
+		});
+
+		expect(focusSpy).toHaveBeenCalledWith({ preventScroll: true });
+		focusSpy.mockRestore();
+	});
+
 	it('should navigate themes with Tab key', async () => {
 		render(<ThemeTab theme={mockTheme} themes={mockThemes} />);
 
@@ -178,7 +194,9 @@ describe('ThemeTab', () => {
 		});
 
 		// Find the theme picker container
-		const themePickerContainer = screen.getByText('dark Mode').closest('.space-y-6');
+		const themePickerContainer = screen
+			.getByText('dark Mode')
+			.closest('[data-setting-id="theme-picker"]');
 
 		// Fire Tab keydown on the theme picker container
 		fireEvent.keyDown(themePickerContainer!, { key: 'Tab' });
@@ -194,7 +212,9 @@ describe('ThemeTab', () => {
 			await vi.advanceTimersByTimeAsync(100);
 		});
 
-		const themePickerContainer = screen.getByText('dark Mode').closest('.space-y-6');
+		const themePickerContainer = screen
+			.getByText('dark Mode')
+			.closest('[data-setting-id="theme-picker"]');
 
 		// Fire Shift+Tab keydown
 		fireEvent.keyDown(themePickerContainer!, { key: 'Tab', shiftKey: true });

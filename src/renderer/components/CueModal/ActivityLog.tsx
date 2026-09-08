@@ -247,9 +247,17 @@ export function ActivityLog({
 										? ` (${String(entry.event.payload.filename)}: ${String(entry.event.payload.taskCount ?? 0)} task(s))`
 										: '';
 								const githubPayload =
-									(eventType === 'github.pull_request' || eventType === 'github.issue') &&
+									(eventType === 'github.pull_request' ||
+										eventType === 'github.issue' ||
+										eventType === 'github.label') &&
 									entry.event.payload?.number
 										? ` (#${String(entry.event.payload.number)} ${String(entry.event.payload.title ?? '')})`
+										: '';
+								// The label that fired the run is the whole point of a
+								// github.label entry, so it earns its own segment.
+								const githubLabelPayload =
+									eventType === 'github.label' && entry.event.payload?.label
+										? ` [${String(entry.event.payload.label)}]`
 										: '';
 								const isReconciled = entry.event.payload?.reconciled === true;
 								const isExpanded = expandedRunIds.has(entry.runId);
@@ -317,6 +325,7 @@ export function ActivityLog({
 													triggered ({eventType}){filePayload}
 													{taskPayload}
 													{githubPayload}
+													{githubLabelPayload}
 												</div>
 											</td>
 											<td className="py-1.5 pr-2 whitespace-nowrap text-right">

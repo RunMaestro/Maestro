@@ -32,6 +32,7 @@ import type {
 } from '../../shared/agentCapabilities';
 import { buildSnapshotKey } from '../../shared/agentCapabilities';
 import { resolveTabPermissionMode } from '../../shared/agentMetadata';
+import { isAgentAlreadyRunningError } from '../../shared/processErrors';
 import { createTab, getActiveTab } from '../utils/tabHelpers';
 import { codifyQueuedTurnSettings } from '../utils/providerTabSessions';
 import { prepareMaestroSystemPrompt } from '../utils/spawnHelpers';
@@ -630,6 +631,14 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 			}
 		} catch (error: any) {
 			logger.error('[processQueuedItem] Failed to process queued item:', undefined, error);
+			// "Agent process already running" is a collision, not an outcome the
+			// user can act on: the tab is mid-turn and this dispatch simply arrived
+			// too early. The caller puts the item back (the queue paths re-queue it,
+			// Agent Resilience reschedules its retry), so writing a red error frame
+			// only tells the user something went wrong about work that has not
+			// actually been lost - and during an outage it lands directly under the
+			// retry card that is already explaining the wait.
+			const isSpawnCollision = isAgentAlreadyRunningError(error);
 			const errorLogEntry: LogEntry = {
 				id: generateId(),
 				timestamp: Date.now(),
@@ -648,14 +657,14 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 												...tab,
 												state: 'idle' as const,
 												thinkingStartTime: undefined,
-												logs: [...tab.logs, errorLogEntry],
+												logs: isSpawnCollision ? tab.logs : [...tab.logs, errorLogEntry],
 											}
 										: tab
 								)
 							: s.aiTabs;
 
 					const targetTabExists = s.aiTabs?.some((tab) => tab.id === resolvedTabId);
-					if (!targetTabExists) {
+					if (!targetTabExists && !isSpawnCollision) {
 						logger.error(
 							'[processQueuedItem error] Target tab not found - error log dropped',
 							undefined,
@@ -675,6 +684,17 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					};
 				})
 			);
+			// Rethrow. Recording the failure is not the same as handling it: every
+			// caller wraps this call in a `.catch()` that puts the prompt back on the
+			// queue, and swallowing here resolved the promise so NONE of them ever
+			// ran. A spawn that failed therefore dropped the user's message outright
+			// - the transcript kept an error bubble and the text was gone. Both the
+			// queue-recovery path (useQueueProcessing) and Force Send
+			// (useQueueHandlers) had written that re-queue independently, and both
+			// were dead code. retryStore's `fireRetry` already documents that it
+			// expects a dispatch-time throw, so this restores the contract callers
+			// were written against.
+			throw error;
 		}
 	},
 

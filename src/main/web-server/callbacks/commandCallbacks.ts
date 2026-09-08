@@ -4,6 +4,7 @@ import type { StoredSession } from '../../stores/types';
 import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
 import { requestFromRenderer } from './remoteRequest';
+import type { ConsultAgentResult } from '../types';
 
 /**
  * The renderer's answer to a `remote:executeCommand` send: did it accept the
@@ -49,6 +50,28 @@ function parseRemoteCommandReceipt(raw: unknown): RemoteCommandReceipt {
 		}
 	}
 	return { accepted: false, reason: 'malformed-receipt' };
+}
+
+/**
+ * Narrow the renderer's consult reply. An older renderer that does not know the
+ * channel simply never answers and the timeout fallback applies; a malformed
+ * answer is reported as a failure rather than passed through as a truthy object,
+ * so the calling agent never treats "no answer" as an answer.
+ */
+function parseConsultAgentResult(raw: unknown): ConsultAgentResult {
+	if (typeof raw !== 'object' || raw === null) {
+		return { success: false, error: 'malformed-consult-result' };
+	}
+	const r = raw as Record<string, unknown>;
+	const str = (v: unknown) => (typeof v === 'string' ? v : undefined);
+	return {
+		success: r.success === true,
+		answer: str(r.answer),
+		error: str(r.error),
+		canceled: r.canceled === true,
+		targetAgentName: str(r.targetAgentName),
+		targetTabId: str(r.targetTabId),
+	};
 }
 
 export function registerCommandCallbacks(
@@ -131,6 +154,44 @@ export function registerCommandCallbacks(
 			return receipt.accepted;
 		}
 	);
+
+	// Cross-agent consult (`maestro-cli ask`). Forwarded to the renderer, which
+	// owns the consult path a typed `@mention` uses - the hidden tab on the
+	// target, the resumed provider session, the History attribution. The wait is
+	// the whole turn, so the timeout is the caller's, not the 3s delivery receipt
+	// the dispatch path uses: here we are waiting for an ANSWER, not for the
+	// renderer to accept a prompt.
+	server.setConsultAgentCallback(async (params) => {
+		const targetWindow = resolveSessionWindow(params.targetSessionId);
+		if (!targetWindow) {
+			logger.warn('No owning window is available for consultAgent', 'WebServer');
+			return { success: false, error: 'No Maestro window is available' };
+		}
+		if (!isWebContentsAvailable(targetWindow)) {
+			logger.warn('webContents is not available for consultAgent', 'WebServer');
+			return { success: false, error: 'No Maestro window is available' };
+		}
+		logger.info(
+			`[Web \u2192 Renderer] Forwarding consult | Target: ${params.targetSessionId} | From: ${params.fromSessionId ?? 'unattributed'} | QuestionLength: ${params.question.length}`,
+			'WebServer'
+		);
+		return requestFromRenderer<ConsultAgentResult>(targetWindow, 'remote:crossAgentAsk', {
+			fallback: {
+				success: false,
+				error: `The consulted agent did not answer within ${Math.round(params.timeoutMs / 1000)}s`,
+			},
+			timeoutMs: params.timeoutMs,
+			parse: parseConsultAgentResult,
+			args: [
+				{
+					targetSessionId: params.targetSessionId,
+					question: params.question,
+					fromSessionId: params.fromSessionId,
+					withContext: params.withContext,
+				},
+			],
+		});
+	});
 
 	// Set up callback for web server to interrupt sessions through the desktop
 	// This forwards to the renderer which handles state updates and broadcasts

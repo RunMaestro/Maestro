@@ -1,7 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect, memo, useMemo } from 'react';
 import { Bell } from 'lucide-react';
 import type { AITab, UnifiedTabRef } from '../../types';
-import { hasDraft } from '../../utils/tabHelpers';
+import { hasDraft, hasUnreadVisibleTab, visibleAiTabs } from '../../utils/tabHelpers';
 import { updateSessionWith } from '../../stores/sessionStore';
 import { promotePaneToStandalone } from '../../utils/panelLayout';
 import {
@@ -244,8 +244,11 @@ function TabBarInner({
 	const displayedTabs = useMemo(() => {
 		// Window doesn't own this agent: render an empty tab strip (scoped window).
 		if (!ownsActiveAgent) return [];
+		// Hidden consult tabs never get a chip, in either filter state. The unified
+		// path drops them in buildUnifiedTabs; this legacy path has to drop them itself.
+		const visible = visibleAiTabs(tabs);
 		return showUnreadOnly
-			? tabs.filter(
+			? visible.filter(
 					(t) =>
 						t.hasUnread ||
 						t.state === 'busy' ||
@@ -255,7 +258,7 @@ function TabBarInner({
 						(showStarredInUnreadFilter && t.starred) ||
 						(queuedTabIds?.has(t.id) ?? false)
 				)
-			: tabs;
+			: visible;
 	}, [
 		tabs,
 		showUnreadOnly,
@@ -672,10 +675,14 @@ function TabBarInner({
 				borderColor: theme.colors.border,
 			}}
 		>
-			{/* Sticky left: search + unread filter */}
+			{/* Sticky left: search + unread filter. It paints an opaque background so
+			    scrolling tabs pass underneath, so it has to carry the bar's own sheen
+			    and reach the bar's top edge (-mt-2 cancels the container's pt-2, and
+			    pt-2 puts the icons back where they were). Without that it reads as a
+			    flat patch with a gradient strip floating above it. */}
 			<div
 				ref={stickyLeftRef}
-				className="sticky left-0 flex items-center shrink-0 pl-2 pr-1 gap-1 self-stretch"
+				className="chrome-sheen sticky left-0 flex items-center shrink-0 -mt-2 pt-2 pl-2 pr-1 gap-1 self-stretch"
 				style={{ backgroundColor: theme.colors.bgSidebar, zIndex: 5 }}
 			>
 				{onOpenTabSearch && (
@@ -706,7 +713,7 @@ function TabBarInner({
 					}
 				>
 					<Bell className="w-4 h-4" />
-					{tabs.some((t) => t.hasUnread) && (
+					{hasUnreadVisibleTab(tabs) && (
 						<div
 							className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full"
 							style={{ backgroundColor: theme.colors.error }}

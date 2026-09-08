@@ -385,6 +385,16 @@ describe('envBuilder - Global Environment Variables', () => {
 		it('is absent from terminal PTY env - a shell is not an agent turn', () => {
 			expect(buildPtyTerminalEnv().MAESTRO_QUERY_SOURCE).toBeUndefined();
 		});
+
+		it('is dropped even when the marker is already in the parent env', () => {
+			// Maestro launched from an agent shell inherits the marker, which is the
+			// normal case in development. The PTY env spreads process.env, so
+			// without an explicit delete every Command Terminal would announce
+			// itself as an agent turn. The Windows branch is the sharper edge: it
+			// inherits process.env wholesale and strips nothing else.
+			process.env.MAESTRO_QUERY_SOURCE = 'user';
+			expect(buildPtyTerminalEnv().MAESTRO_QUERY_SOURCE).toBeUndefined();
+		});
 	});
 
 	describe('Test 2.5c: PATH Handling', () => {
@@ -640,14 +650,40 @@ describe('envBuilder - Global Environment Variables', () => {
 	});
 
 	describe('Test 2.9: Edge Cases and Special Values', () => {
-		it('should handle empty string values', () => {
+		it('should treat a blank value as "unset", not as an empty export', () => {
+			// A blank field in the env editor is an absence, not a value. Exporting
+			// FOO='' hands the agent a set-but-empty variable, which is how a blank
+			// CLAUDE_CONFIG_DIR made Claude Code call mkdir('') and die before it
+			// ever reached the provider.
 			const globalVars = {
 				EMPTY_VAR: '',
+				WHITESPACE_VAR: '   ',
 			};
 
 			const env = buildChildProcessEnv(undefined, false, globalVars);
 
-			expect(env.EMPTY_VAR).toBe('');
+			expect('EMPTY_VAR' in env).toBe(false);
+			expect('WHITESPACE_VAR' in env).toBe(false);
+		});
+
+		it('should let a blank session value cancel a global value', () => {
+			// "Blank means unset" only holds if the unset actually wins - dropping the
+			// blank before the merge would leave the global value in place.
+			const env = buildChildProcessEnv({ CLAUDE_CONFIG_DIR: '' }, false, {
+				CLAUDE_CONFIG_DIR: '/global/config',
+			});
+
+			expect('CLAUDE_CONFIG_DIR' in env).toBe(false);
+		});
+
+		it('should let a blank value remove an inherited process.env value', () => {
+			process.env.INHERITED_TO_CLEAR = '/inherited';
+			try {
+				const env = buildChildProcessEnv({ INHERITED_TO_CLEAR: '' }, false, undefined);
+				expect('INHERITED_TO_CLEAR' in env).toBe(false);
+			} finally {
+				delete process.env.INHERITED_TO_CLEAR;
+			}
 		});
 
 		it('should handle very long values', () => {
@@ -777,6 +813,21 @@ describe('envBuilder - Global Environment Variables', () => {
 			process.env.SOMETHING_INHERITED = 'inherited';
 			const result = collectMaestroEnvVars({ ONLY_GLOBAL: 'g' });
 			expect(result).toEqual({ ONLY_GLOBAL: 'g' });
+		});
+
+		it('omits blank values, because the process never received them', () => {
+			// This list is what the Process Details modal shows. A blank is dropped at
+			// spawn time, so reporting it here would describe a variable the running
+			// process does not actually have.
+			const result = collectMaestroEnvVars({ BLANK: '', PADDED: '  ', KEPT: 'v' });
+			expect(result).toEqual({ KEPT: 'v' });
+		});
+
+		it('lets a blank session value cancel a global one', () => {
+			// Same merge-then-strip ordering as buildChildProcessEnv: strip before the
+			// merge and the global value would survive a session-level blank.
+			const result = collectMaestroEnvVars({ DEBUG: 'global' }, { DEBUG: '' });
+			expect(result).toEqual({});
 		});
 	});
 

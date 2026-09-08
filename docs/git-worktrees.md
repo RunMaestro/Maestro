@@ -184,6 +184,14 @@ The PR modal shows:
 
 **Requirements:** GitHub CLI (`gh`) must be installed and authenticated. Maestro will detect if it's missing and show installation instructions.
 
+Opening a PR can take a while, and you don't have to sit and watch it. Once you
+press **Create PR**, the **Cancel** button becomes **Run in Background**: close
+the form (or press Escape) and the request keeps going. While it does, the
+**Create Pull Request** entry in the right-click menu, the branch pill menu and
+`Cmd+K` shows a **Creating** spinner - click it to bring the form back and see
+where the request got to. When it lands you get a toast with a link to the new
+PR, and if it fails, the error waits for you both in a toast and in the form.
+
 ### Removing Worktrees
 
 When removing a worktree, you have two options:

@@ -9,6 +9,7 @@ import {
 	type QuerySource,
 } from '../../../shared/querySource';
 import { buildSpawnPath } from '../../utils/spawnPath';
+import { isBlankEnvValue } from '../../../shared/agentEnvironment';
 
 /**
  * Build the base PATH for macOS/Linux with detected Node version manager paths.
@@ -97,6 +98,15 @@ export function buildPtyTerminalEnv(shellEnvVars?: Record<string, string>): Node
 			delete env[key];
 		}
 	}
+
+	// A Command Terminal is a shell the USER drives, not an agent turn, so it
+	// must never carry the query-source marker. It can arrive two ways: Maestro
+	// itself launched from an agent shell that had it set (the normal case in
+	// development), or the Windows branch above, which inherits process.env
+	// wholesale and strips nothing. Deleted unconditionally rather than added to
+	// STRIPPED_ENV_VARS, because buildChildProcessEnv() sets this variable on
+	// purpose and must keep doing so.
+	delete env[QUERY_SOURCE_ENV_VAR];
 
 	// Vim arrow-key ergonomics: when users launch `vi`/`vim` with distro defaults
 	// that force compatible mode, insert-mode arrows can degrade to literal ABCD.
@@ -250,15 +260,16 @@ export function collectMaestroEnvVars(
 	const expand = (value: string): string =>
 		value.startsWith('~/') ? path.join(home, value.slice(2)) : value;
 	const result: Record<string, string> = {};
-	if (globalShellEnvVars) {
-		for (const [key, value] of Object.entries(globalShellEnvVars)) {
-			result[key] = expand(value);
-		}
-	}
-	if (customEnvVars) {
-		for (const [key, value] of Object.entries(customEnvVars)) {
-			result[key] = expand(value);
-		}
+	// Merge first, strip blanks second: a blank at the session layer has to be
+	// able to cancel a value set globally, which it cannot do if it is dropped
+	// before the merge. See stripBlankEnvVars() for why blanks are not exported.
+	const merged: Record<string, string> = {
+		...(globalShellEnvVars || {}),
+		...(customEnvVars || {}),
+	};
+	for (const [key, value] of Object.entries(merged)) {
+		if (isBlankEnvValue(value)) continue;
+		result[key] = expand(value);
 	}
 	if (isResuming) {
 		result.MAESTRO_SESSION_RESUMED = '1';
@@ -314,19 +325,24 @@ export function buildChildProcessEnv(
 		delete env.MAESTRO_SESSION_RESUMED;
 	}
 
-	// Apply global shell environment variables (lower priority than session overrides)
+	// Apply the user-editable layers: global shell vars first, then session-level
+	// overrides on top. Merged before they are applied so a blank session value
+	// can cancel a global one instead of being overwritten by it.
 	const home = os.homedir();
-	if (globalShellEnvVars && Object.keys(globalShellEnvVars).length > 0) {
-		for (const [key, value] of Object.entries(globalShellEnvVars)) {
-			env[key] = value.startsWith('~/') ? path.join(home, value.slice(2)) : value;
+	const userEnvVars: Record<string, string> = {
+		...(globalShellEnvVars || {}),
+		...(customEnvVars || {}),
+	};
+	for (const [key, value] of Object.entries(userEnvVars)) {
+		// A blank value means "do not set this variable" - so it has to remove any
+		// inherited value too, not just skip the assignment. Exporting `FOO=`
+		// instead is what made a blank CLAUDE_CONFIG_DIR crash the agent inside
+		// mkdir('') before it ever reached the provider.
+		if (isBlankEnvValue(value)) {
+			delete env[key];
+			continue;
 		}
-	}
-
-	// Apply session-level custom environment variables (highest priority - override global)
-	if (customEnvVars && Object.keys(customEnvVars).length > 0) {
-		for (const [key, value] of Object.entries(customEnvVars)) {
-			env[key] = value.startsWith('~/') ? path.join(home, value.slice(2)) : value;
-		}
+		env[key] = value.startsWith('~/') ? path.join(home, value.slice(2)) : value;
 	}
 
 	// Who asked for this turn. Stamped after the user-editable layers rather than

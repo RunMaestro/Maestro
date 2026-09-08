@@ -43,15 +43,16 @@ interface AgentGridProps {
 }
 
 /**
- * The provider tiles, in whichever of the two shapes the count calls for.
+ * The provider tiles, in whichever of the two shapes the measured width calls
+ * for.
  *
- * Every supported provider no longer fits above the Continue button, so the
- * full list is a single horizontally scrolling row - which needs to say out
- * loud that there is more past the right edge, hence the edge fades, the arrow
- * buttons, and the provider count. A list short enough for two rows (the usual
- * case once the user filters to what is installed) drops the strip and draws a
- * centered wrapping block instead: a few tiles pinned to the left edge of a
- * wide scrolling row reads as a layout that forgot to reflow.
+ * A set that fits in one or two rows draws as a centered wrapping block, since
+ * a few tiles pinned to the left edge of a wide scrolling row reads as a layout
+ * that forgot to reflow. Only a set too long for two rows becomes the single
+ * horizontally scrolling row, which then has to say out loud that there is more
+ * past the right edge - hence the edge fades, the arrow buttons, and the
+ * provider count. Both shapes measure the same container, so widening the
+ * wizard reflows the block and can retire the strip entirely.
  */
 export function AgentGrid({
 	theme,
@@ -164,7 +165,7 @@ export function AgentGrid({
 						fresh eased animation that trails the input. The arrow buttons ask for
 						smooth explicitly instead.
 					*/
-					<div className="relative w-full max-w-5xl min-w-0">
+					<div className="relative w-full min-w-0">
 						<div
 							ref={stripRef}
 							className="flex gap-4 overflow-x-auto no-scrollbar px-1 py-1"

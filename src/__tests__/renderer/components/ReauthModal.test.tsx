@@ -46,6 +46,7 @@ function createOutage(overrides: Partial<AuthOutage> = {}): AuthOutage {
 		startedAt: 0,
 		blocked: [{ sessionId: 'sess-1', tabIds: [] }],
 		fromPipeline: false,
+		initiatedBy: 'failure',
 		...overrides,
 	};
 }
@@ -66,6 +67,15 @@ vi.mock('../../../renderer/components/XTerminal', () => {
 	XTerminal.displayName = 'XTerminal';
 	return { XTerminal };
 });
+
+// `vi.mock` is hoisted above ordinary declarations, so the flag it reads has
+// to be hoisted too.
+const platformState = vi.hoisted(() => ({ current: 'darwin' }));
+vi.mock('../../../renderer/utils/platformUtils', () => ({
+	isWindowsPlatform: () => platformState.current === 'win32',
+	isMacOSPlatform: () => platformState.current === 'darwin',
+	isLinuxPlatform: () => platformState.current === 'linux',
+}));
 
 const mockSpawnTerminalTab = vi.fn();
 const mockWrite = vi.fn();
@@ -93,6 +103,7 @@ beforeEach(() => {
 	mockWrite.mockResolvedValue(true);
 	mockKill.mockResolvedValue(true);
 	mockGetCustomEnvVars.mockResolvedValue({});
+	platformState.current = 'darwin';
 	// Each test owns its own global layer; the store persists between them.
 	useSettingsStore.setState({ shellEnvVars: {} } as never);
 
@@ -137,7 +148,7 @@ describe('ReauthModal', () => {
 		// how a remote login came up as an empty box.
 		expect(mockWrite).not.toHaveBeenCalled();
 		await emitShellOutput(mockSpawnTerminalTab.mock.calls[0][0].sessionId);
-		expect(mockWrite).toHaveBeenCalledWith(expect.any(String), 'claude /login\n');
+		expect(mockWrite).toHaveBeenCalledWith(expect.any(String), 'claude /login\r');
 	});
 
 	// The routing key is load-bearing twice over: `-terminal-` makes PtySpawner
@@ -184,7 +195,7 @@ describe('ReauthModal', () => {
 
 		// ...and that shell is the one that gets the login typed into it.
 		await emitShellOutput(liveSessionId);
-		expect(mockWrite).toHaveBeenCalledWith(liveSessionId, 'claude /login\n');
+		expect(mockWrite).toHaveBeenCalledWith(liveSessionId, 'claude /login\r');
 	});
 
 	// The abandoned attempt's promise resolves after the remount. It must not
@@ -226,7 +237,7 @@ describe('ReauthModal', () => {
 				vi.advanceTimersByTime(8000);
 			});
 
-			expect(mockWrite).toHaveBeenCalledWith(expect.any(String), 'claude /login\n');
+			expect(mockWrite).toHaveBeenCalledWith(expect.any(String), 'claude /login\r');
 		} finally {
 			vi.useRealTimers();
 		}
@@ -292,7 +303,7 @@ describe('ReauthModal', () => {
 
 		expect(screen.getByText(/then type \/login/)).toBeInTheDocument();
 		await emitShellOutput(mockSpawnTerminalTab.mock.calls[0][0].sessionId);
-		expect(mockWrite).toHaveBeenCalledWith(expect.any(String), 'droid\n');
+		expect(mockWrite).toHaveBeenCalledWith(expect.any(String), 'droid\r');
 	});
 
 	// The Terminal agent is a plain shell: there is no credential to refresh, so
@@ -385,6 +396,71 @@ describe('ReauthModal', () => {
 		expect(screen.getByText('Nightly Triage, Doc Sweep')).toBeInTheDocument();
 		expect(screen.getByText(/All 2 agents on this provider are stopped/)).toBeInTheDocument();
 		expect(screen.getByTestId('reauth-resume').textContent).toBe('Resume 2 Agents');
+	});
+});
+
+/**
+ * The same dialog opened from the command palette, with nothing broken.
+ *
+ * The login itself is identical - that is the point of reusing this - but the
+ * recovery copy would be a lie: no agent is stopped, no queue is held, and
+ * there is nothing to resume. A user who reads "this agent is stopped" here has
+ * to go and disprove it.
+ */
+describe('ReauthModal for a user-initiated login', () => {
+	function createManualOutage(): AuthOutage {
+		return createOutage({ initiatedBy: 'user', message: '' });
+	}
+
+	it('does not claim the agent is stopped', async () => {
+		const session = createMockSession({ id: 'sess-1', name: 'Nightly Triage' });
+		useSessionStore.setState({ sessions: [session] });
+		render(
+			<ReauthModal
+				theme={mockTheme}
+				outage={createManualOutage()}
+				session={session}
+				onClose={vi.fn()}
+			/>
+		);
+		await flushSpawn();
+
+		expect(screen.queryByText(/is stopped until you log in again/)).not.toBeInTheDocument();
+		expect(screen.getByText(/Nothing is stopped and no turn is interrupted/)).toBeInTheDocument();
+	});
+
+	// "Resume Agent" promises a turn will be re-sent. Nothing failed here, so
+	// nothing will be.
+	it('offers Done rather than a resume', async () => {
+		const session = createMockSession({ id: 'sess-1' });
+		render(
+			<ReauthModal
+				theme={mockTheme}
+				outage={createManualOutage()}
+				session={session}
+				onClose={vi.fn()}
+			/>
+		);
+		await flushSpawn();
+
+		expect(screen.getByTestId('reauth-resume').textContent).toBe('Done');
+	});
+
+	// Still the real login shell: the whole reason to reuse this dialog.
+	it('runs the same provider login command', async () => {
+		const session = createMockSession({ id: 'sess-1', toolType: 'claude-code' });
+		render(
+			<ReauthModal
+				theme={mockTheme}
+				outage={createManualOutage()}
+				session={session}
+				onClose={vi.fn()}
+			/>
+		);
+		await flushSpawn();
+		await emitShellOutput(mockSpawnTerminalTab.mock.calls[0][0].sessionId);
+
+		expect(mockWrite).toHaveBeenCalledWith(expect.any(String), 'claude /login\r');
 	});
 });
 
@@ -625,5 +701,90 @@ describe('ReauthModal login URL', () => {
 		await emitShellOutput(ptyId, 'Docs: https://example.com/help\n');
 
 		expect(screen.queryByTestId('reauth-copy-url')).not.toBeInTheDocument();
+	});
+});
+describe('ReauthModal on Windows', () => {
+	/** Windows agents are ALWAYS spawned as native processes - never via wsl.exe. */
+	function windowsSession(overrides: Record<string, unknown> = {}) {
+		platformState.current = 'win32';
+		return createMockSession({ id: 'sess-1', toolType: 'claude-code', ...overrides } as never);
+	}
+
+	// A login inside WSL writes credentials to the WSL home directory, which the
+	// native agent never reads: the flow would appear to succeed and fix nothing.
+	it('never runs the login in WSL, because the agent is a native process', async () => {
+		useSettingsStore.setState({ defaultShell: 'wsl' } as never);
+		const session = windowsSession();
+		render(
+			<ReauthModal theme={mockTheme} outage={createOutage()} session={session} onClose={vi.fn()} />
+		);
+		await flushSpawn();
+
+		expect(mockSpawnTerminalTab.mock.calls[0][0].shell).toBe('powershell');
+	});
+
+	it('honours a native Windows shell the user chose', async () => {
+		useSettingsStore.setState({ defaultShell: 'pwsh' } as never);
+		render(
+			<ReauthModal
+				theme={mockTheme}
+				outage={createOutage()}
+				session={windowsSession()}
+				onClose={vi.fn()}
+			/>
+		);
+		await flushSpawn();
+
+		expect(mockSpawnTerminalTab.mock.calls[0][0].shell).toBe('pwsh');
+	});
+
+	// An SSH remote has its own shell and its own credential store, so the
+	// Windows-only override must not reach across the connection.
+	it('leaves the shell alone for an SSH remote agent', async () => {
+		useSettingsStore.setState({ defaultShell: 'wsl' } as never);
+		const session = windowsSession({
+			sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+		});
+		render(
+			<ReauthModal theme={mockTheme} outage={createOutage()} session={session} onClose={vi.fn()} />
+		);
+		await flushSpawn();
+
+		expect(mockSpawnTerminalTab.mock.calls[0][0].shell).toBe('wsl');
+	});
+
+	// PowerShell echoes a line that starts with a quoted string instead of
+	// running it, so the call operator is what makes the login actually start.
+	it('types a PowerShell-safe command for a path with spaces', async () => {
+		useSettingsStore.setState({ defaultShell: 'powershell' } as never);
+		const session = windowsSession({ customPath: 'C:\\Program Files\\Claude\\claude.exe' });
+		render(
+			<ReauthModal theme={mockTheme} outage={createOutage()} session={session} onClose={vi.fn()} />
+		);
+		await flushSpawn();
+		await emitShellOutput(mockSpawnTerminalTab.mock.calls[0][0].sessionId);
+
+		expect(mockWrite).toHaveBeenCalledWith(
+			expect.any(String),
+			'& "C:\\Program Files\\Claude\\claude.exe" /login\r'
+		);
+	});
+
+	// ConPTY passes LF through as Ctrl+J, which PSReadLine does not treat as
+	// "run this line". CR is what a real Enter key sends on every platform.
+	it('submits with CR rather than LF', async () => {
+		useSettingsStore.setState({ defaultShell: 'powershell' } as never);
+		render(
+			<ReauthModal
+				theme={mockTheme}
+				outage={createOutage()}
+				session={windowsSession()}
+				onClose={vi.fn()}
+			/>
+		);
+		await flushSpawn();
+		await emitShellOutput(mockSpawnTerminalTab.mock.calls[0][0].sessionId);
+
+		expect(mockWrite).toHaveBeenCalledWith(expect.any(String), 'claude /login\r');
 	});
 });

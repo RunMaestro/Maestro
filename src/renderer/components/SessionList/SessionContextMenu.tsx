@@ -29,7 +29,7 @@ import { useClickOutside, useContextMenuPosition } from '../../hooks';
 import { compareNamesIgnoringEmojis } from '../../../shared/emojiUtils';
 import { useGitAgentActions } from '../../hooks/git/useGitAgentActions';
 import { GitChangeCounts } from '../ui/GitChangeCounts';
-import { GitRunningBadge } from '../ui/GitRunningBadge';
+import { GitRunningBadge, PR_RUNNING_TITLE } from '../ui/GitRunningBadge';
 import { formatGitChangeSummary } from '../../../shared/gitUtils';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
@@ -191,7 +191,7 @@ export function SessionContextMenu({
 		return () => document.removeEventListener('keydown', handleKeyDown);
 	}, []);
 
-	const { left, top, ready } = useContextMenuPosition(menuRef, x, y);
+	const { left, top, maxHeight, ready } = useContextMenuPosition(menuRef, x, y);
 
 	// One flyout state machine per submenu (Move to Group, Move to Window). Item
 	// count feeds the above/below flip decision. Extracted so the two flyouts do
@@ -249,6 +249,11 @@ export function SessionContextMenu({
 			style={{
 				left,
 				top,
+				// A menu taller than the viewport pins to the top edge and runs off
+				// the bottom; the container is overflow-hidden, so those items are
+				// simply unreachable. Scroll instead of clipping.
+				maxHeight,
+				overflowY: 'auto',
 				opacity: ready ? 1 : 0,
 				backgroundColor: theme.colors.bgSidebar,
 				borderColor: theme.colors.border,
@@ -714,12 +719,23 @@ export function SessionContextMenu({
 								createPR();
 								onDismiss();
 							}}
-							className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+							className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center justify-between gap-2"
 							style={{ color: theme.colors.accent }}
 							data-testid="session-context-create-pr"
 						>
-							<GitPullRequest className="w-3.5 h-3.5" />
-							Create Pull Request
+							<span className="flex items-center gap-2">
+								<GitPullRequest className="w-3.5 h-3.5" />
+								Create Pull Request
+							</span>
+							{gitActions.prRunning && (
+								<GitRunningBadge
+									theme={theme}
+									label="Creating"
+									className="flex items-center gap-1 text-2xs"
+									testId="session-context-create-pr-running"
+									title={PR_RUNNING_TITLE}
+								/>
+							)}
 						</button>
 					)}
 				</>

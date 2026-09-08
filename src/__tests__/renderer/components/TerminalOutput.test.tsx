@@ -21,6 +21,7 @@ import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import type { Session, Theme, LogEntry } from '../../../renderer/types';
+import { TRANSCRIPT_SCROLL_TO_BOTTOM_EVENT } from '../../../renderer/services/transcriptScroll';
 
 // Mock dependencies
 vi.mock('react-syntax-highlighter', () => ({
@@ -381,6 +382,40 @@ describe('TerminalOutput', () => {
 			const combinedText = markdownBlocks.map((el) => el.textContent).join('|');
 			expect(combinedText).not.toContain('response.Unknown command');
 			expect(combinedText).not.toContain('/nonexistentStart of a later response.');
+		});
+
+		it("keeps Claude's plan-limit banner off the front of the retried answer", () => {
+			// After a plan-quota outage, Claude forwards its banner as a plain
+			// `stdout` entry with no marker. The answer the auto-retry produces
+			// arrives half an hour later but is still the next `stdout` entry in the
+			// same response group, so grouping used to render the reply as
+			// "You've hit your session limit · resets 12:50am (America/Chicago)Yes,
+			// on the first part. ...".
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'Question', source: 'user' }),
+				createLogEntry({
+					id: 'limit-1',
+					text: "You've hit your session limit · resets 12:50am (America/Chicago)",
+					source: 'stdout',
+				}),
+				createLogEntry({ id: 'resp-1', text: 'Yes on the first part.', source: 'stdout' }),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const { container } = render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			// user + banner + answer, not user + one stitched bubble.
+			expect(container.querySelectorAll('[data-log-index]').length).toBe(3);
+
+			const combinedText = screen
+				.getAllByTestId('react-markdown')
+				.map((el) => el.textContent)
+				.join('|');
+			expect(combinedText).not.toContain('(America/Chicago)Yes on the first part.');
 		});
 	});
 
@@ -3038,7 +3073,34 @@ describe('TerminalOutput', () => {
 			expect(screen.getByText('Generate a history synopsis')).toBeInTheDocument();
 		});
 
-		it('renders URLs in the AI command body as clickable links', () => {
+		it('renders the AI command body as markdown, keeping the command header', () => {
+			const body = '## Step 1\n\nRun `the script` and report **what moved**.';
+			const logs: LogEntry[] = [
+				createLogEntry({
+					text: body,
+					source: 'user',
+					aiCommand: {
+						command: '/archive-playbooks',
+						description: 'Archive finished playbooks',
+					},
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const props = createDefaultProps({ session });
+			render(<TerminalOutput {...props} />);
+
+			// Header pill still renders, body goes through the markdown stack
+			// (react-markdown is mocked to a div with this testid).
+			expect(screen.getByText('/archive-playbooks:')).toBeInTheDocument();
+			expect(screen.getByTestId('react-markdown')).toHaveTextContent('Step 1');
+		});
+
+		it('shows the AI command body as raw source in markdown edit mode', () => {
 			const url = 'https://github.com/RunMaestro/Maestro/pull/738';
 			const logs: LogEntry[] = [
 				createLogEntry({
@@ -3058,9 +3120,12 @@ describe('TerminalOutput', () => {
 				activeTabId: 'tab-1',
 			});
 
-			const props = createDefaultProps({ session });
+			const props = createDefaultProps({ session, markdownEditMode: true });
 			render(<TerminalOutput {...props} />);
 
+			expect(screen.queryByTestId('react-markdown')).not.toBeInTheDocument();
+
+			// Raw source still linkifies bare URLs.
 			const link = screen.getByText(url);
 			expect(link.tagName).toBe('A');
 			expect(link).toHaveAttribute('href', url);
@@ -3434,6 +3499,127 @@ describe('TerminalOutput', () => {
 		});
 	});
 
+	describe('explicit scroll-to-bottom request', () => {
+		/**
+		 * A bang command's output card is content the user asked for, so it has
+		 * to be revealed even when they had scrolled up to read history - the one
+		 * case where the auto-scroll pause is the wrong answer.
+		 */
+		function renderScrolledUp() {
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'Hello', source: 'user' }),
+				createLogEntry({ id: 'resp-1', text: 'Response', source: 'stdout' }),
+			];
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const { container } = render(<TerminalOutput {...createDefaultProps({ session })} />);
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+			const scrollToSpy = vi.fn();
+			scrollContainer.scrollTo = scrollToSpy;
+
+			// Park the view away from the bottom, which pauses auto-scroll.
+			Object.defineProperty(scrollContainer, 'scrollHeight', { value: 1000, configurable: true });
+			Object.defineProperty(scrollContainer, 'scrollTop', { value: 0, configurable: true });
+			Object.defineProperty(scrollContainer, 'clientHeight', { value: 400, configurable: true });
+			fireEvent.scroll(scrollContainer);
+
+			return { session, scrollToSpy };
+		}
+
+		async function dispatchScrollRequest(sessionId: string, tabId: string) {
+			await act(async () => {
+				window.dispatchEvent(
+					new CustomEvent(TRANSCRIPT_SCROLL_TO_BOTTOM_EVENT, {
+						detail: { sessionId, tabId },
+					})
+				);
+				vi.advanceTimersByTime(50);
+			});
+		}
+
+		it('jumps to the bottom even while auto-scroll is paused', async () => {
+			const { session, scrollToSpy } = renderScrolledUp();
+			await act(async () => {
+				vi.advanceTimersByTime(50);
+			});
+			scrollToSpy.mockClear();
+
+			await dispatchScrollRequest(session.id, 'tab-1');
+
+			expect(scrollToSpy).toHaveBeenCalledWith({ top: 1000, behavior: 'auto' });
+		});
+
+		it('ignores a request aimed at another tab or another agent', async () => {
+			const { session, scrollToSpy } = renderScrolledUp();
+			await act(async () => {
+				vi.advanceTimersByTime(50);
+			});
+			scrollToSpy.mockClear();
+
+			await dispatchScrollRequest(session.id, 'tab-2');
+			await dispatchScrollRequest('session-other', 'tab-1');
+
+			expect(scrollToSpy).not.toHaveBeenCalled();
+		});
+
+		it('resumes following the tail, so later output stays visible', async () => {
+			const logs: LogEntry[] = [createLogEntry({ id: 'user-1', text: 'Hello', source: 'user' })];
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const { container, rerender } = render(
+				<TerminalOutput {...createDefaultProps({ session })} />
+			);
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+			const scrollToSpy = vi.fn();
+			scrollContainer.scrollTo = scrollToSpy;
+
+			Object.defineProperty(scrollContainer, 'scrollHeight', { value: 1000, configurable: true });
+			Object.defineProperty(scrollContainer, 'scrollTop', { value: 0, configurable: true });
+			Object.defineProperty(scrollContainer, 'clientHeight', { value: 400, configurable: true });
+			fireEvent.scroll(scrollContainer);
+			await act(async () => {
+				vi.advanceTimersByTime(50);
+			});
+
+			await dispatchScrollRequest(session.id, 'tab-1');
+			scrollToSpy.mockClear();
+
+			// Streaming output lands after the request - it must follow, not stall.
+			const newSession = {
+				...session,
+				tabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'claude-123',
+						logs: [
+							...logs,
+							createLogEntry({ id: 'out-1', text: 'command output', source: 'stdout' }),
+						],
+						isUnread: false,
+					},
+				],
+				// New reference so the activeTab memo (keyed on aiTabs) recomputes
+				// the test's mocked legacy `tabs` value after rerender.
+				aiTabs: [{}] as any,
+			};
+			rerender(<TerminalOutput {...createDefaultProps({ session: newSession })} />);
+			await act(async () => {
+				// The MutationObserver callback is a microtask that schedules the
+				// follow-scroll rAF. Drain microtasks between timer steps so the test
+				// cannot advance an empty frame queue on a loaded CI runner.
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			expect(scrollToSpy).toHaveBeenCalled();
+		});
+	});
+
 	describe('scroll position persistence', () => {
 		it('calls onScrollPositionChange when scrolling (throttled)', async () => {
 			const onScrollPositionChange = vi.fn();
@@ -3442,8 +3628,14 @@ describe('TerminalOutput', () => {
 
 			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
 
-			// Simulate scroll
-			Object.defineProperty(scrollContainer, 'scrollTop', { value: 100 });
+			// Simulate scroll. `writable` matters: real `scrollTop` is settable, and
+			// the mount-time restore writes to it, so a read-only stub throws where
+			// the browser would not.
+			Object.defineProperty(scrollContainer, 'scrollTop', {
+				value: 100,
+				writable: true,
+				configurable: true,
+			});
 			fireEvent.scroll(scrollContainer);
 
 			// Wait for throttle
@@ -3454,12 +3646,191 @@ describe('TerminalOutput', () => {
 			expect(onScrollPositionChange).toHaveBeenCalledWith(100);
 		});
 
-		it('restores scroll position from initialScrollTop', () => {
-			const props = createDefaultProps({ initialScrollTop: 500 });
-			const { container } = render(<TerminalOutput {...props} />);
+		/**
+		 * Mount a transcript and hand back a handle on the scroll box, with
+		 * `scrollTop` backed by a real variable so we can see where the restore
+		 * actually put the view. `scrollHeight` is settable because the whole
+		 * point of these tests is content whose height changes underneath the
+		 * restore - while the tab was off screen, or as it settles on mount.
+		 *
+		 * Writes to `scrollTop` are CLAMPED to `scrollHeight - clientHeight`, the
+		 * way a real browser clamps them. Without that, "scroll to the bottom"
+		 * (which asks for `scrollHeight`, the honest way to say "as far as this
+		 * goes") reads back as a number no element could ever hold, and the test
+		 * measures the stub rather than the restore.
+		 */
+		function mountWithScrollBox(
+			extraProps: Record<string, unknown>,
+			{ scrollHeight = 15000, clientHeight = 800 } = {}
+		) {
+			const { container } = render(<TerminalOutput {...createDefaultProps(extraProps)} />);
+			const el = container.querySelector('.overflow-y-auto') as HTMLElement;
+			let top = 0;
+			let height = scrollHeight;
+			const clamp = (v: number) => Math.max(0, Math.min(v, height - clientHeight));
+			Object.defineProperty(el, 'scrollTop', {
+				configurable: true,
+				get: () => top,
+				set: (v: number) => {
+					top = clamp(v);
+				},
+			});
+			Object.defineProperty(el, 'scrollHeight', { configurable: true, get: () => height });
+			Object.defineProperty(el, 'clientHeight', { configurable: true, value: clientHeight });
+			el.scrollTo = ((opts: { top: number }) => {
+				top = clamp(opts.top);
+			}) as unknown as typeof el.scrollTo;
 
-			// The scroll restoration happens via requestAnimationFrame
-			// In tests this is mocked, so we just verify the prop is used
+			return {
+				el,
+				scrollTop: () => top,
+				bottom: () => height - clientHeight,
+				grow: (to: number) => {
+					height = to;
+					// Growth the transcript can SEE. `scrollHeight` is a getter here,
+					// and moving a getter notifies nothing: the follow-the-tail
+					// re-pin hangs off a MutationObserver on the scroll container, so
+					// content has to actually arrive in the DOM for it to fire, the
+					// same as it does in the app.
+					el.appendChild(document.createElement('div'));
+				},
+				settle: async (ms = 800) => {
+					await act(async () => {
+						// Let any pending MutationObserver callback land FIRST. It is
+						// delivered as a microtask and it is what schedules the re-pin
+						// frame, so advancing timers before it runs drains an empty
+						// frame queue and the re-pin is never seen.
+						await Promise.resolve();
+						vi.advanceTimersByTime(ms);
+					});
+				},
+			};
+		}
+
+		it('restores a tab parked mid-history to its saved offset', async () => {
+			// isAtBottom false means the user deliberately scrolled up to read.
+			// New entries are appended BELOW them, so the offset still points at
+			// what they were reading and must be honored exactly.
+			const box = mountWithScrollBox({ initialScrollTop: 4200, initialIsAtBottom: false });
+			await box.settle();
+
+			expect(box.scrollTop()).toBe(4200);
+		});
+
+		it('pauses auto-scroll when it restores mid-history', async () => {
+			// Otherwise the MutationObserver yanks the view straight back down and
+			// the restore is pointless.
+			const onAtBottomChange = vi.fn();
+			const box = mountWithScrollBox({
+				initialScrollTop: 4200,
+				initialIsAtBottom: false,
+				onAtBottomChange,
+			});
+			await box.settle();
+
+			expect(box.scrollTop()).toBeLessThan(box.bottom() - 50);
+		});
+
+		it('restores a tail-following tab to the BOTTOM, not its saved offset', async () => {
+			// The regression: `scrollTop` is a snapshot of where the bottom was at
+			// save time. This tab was AT the bottom when it was 5000px tall (offset
+			// 4200), then the agent wrote another 10000px while it was off screen.
+			// Restoring 4200 verbatim strands the user 10000px above the reply they
+			// clicked a toast to go and read.
+			const box = mountWithScrollBox({ initialScrollTop: 4200, initialIsAtBottom: true });
+			await box.settle();
+
+			expect(box.scrollTop()).toBe(box.bottom());
+		});
+
+		it('treats an unset isAtBottom as following the tail', async () => {
+			// `undefined` is what a tab that has never been scrolled carries. It has
+			// to mean bottom, and it has to mean the SAME thing here as it does to
+			// the unread gate in useAgentDataListener, which reads `!== false`.
+			const box = mountWithScrollBox({ initialScrollTop: 4200 });
+			await box.settle();
+
+			expect(box.scrollTop()).toBe(box.bottom());
+		});
+
+		it('keeps chasing the bottom while the content is still settling', async () => {
+			// Images decoding and code blocks re-highlighting grow the transcript
+			// for several frames after mount, so "landed on the bottom" is true on
+			// the first frame and wrong on the next. Latching there would leave the
+			// tab short by however much arrived late.
+			const box = mountWithScrollBox({ initialIsAtBottom: true }, { scrollHeight: 6000 });
+			await box.settle(50);
+
+			box.grow(21000);
+			await box.settle();
+
+			expect(box.scrollTop()).toBe(box.bottom());
+		});
+
+		it('does not fight a user who scrolls while the restore is still settling', async () => {
+			// Their input wins - a restore that keeps yanking the view is worse
+			// than landing high. The wheel is what makes this the user: a bare
+			// `scroll` event is also what our own writes produce.
+			const box = mountWithScrollBox({ initialIsAtBottom: true }, { scrollHeight: 6000 });
+			fireEvent.wheel(box.el);
+			fireEvent.scroll(box.el);
+			await box.settle();
+
+			box.grow(21000);
+			await box.settle();
+
+			expect(box.scrollTop()).toBeLessThan(box.bottom());
+		});
+
+		it('does not mistake a late echo of its own write for the user scrolling up', async () => {
+			// THE regression behind "I come back and I am way up the transcript".
+			// Every scroll this component performs fires a `scroll` event that is
+			// indistinguishable from the user's, and the one-shot guard covers at
+			// most one of them: the restore writes each frame, the handler is
+			// throttled to 16ms, and `scrollToBottom` drops the guard on a 32ms
+			// timer. An event the guard missed reported an offset that was no longer
+			// the bottom (the content grew underneath it), which read as a scroll-up:
+			// auto-scroll paused and the tab was persisted as parked mid-history, so
+			// every later visit opened it high with the tail no longer followed.
+			const onAtBottomChange = vi.fn();
+			const box = mountWithScrollBox(
+				{ initialIsAtBottom: true, onAtBottomChange },
+				{ scrollHeight: 6000 }
+			);
+			await box.settle();
+			const landed = box.scrollTop();
+
+			// The agent writes more while the user sits at the bottom, then the
+			// event for OUR last write is delivered against the taller content.
+			box.grow(21000);
+			fireEvent.scroll(box.el);
+			await box.settle(250);
+
+			expect(landed).toBe(5200);
+			expect(onAtBottomChange).not.toHaveBeenCalledWith(false);
+		});
+
+		it('does not persist a position while the restore is still settling', async () => {
+			// Saving a way-point of our own restore overwrote the tab's real
+			// position with wherever the climb had got to, and wrote
+			// `isAtBottom: false` for a tab that was following the tail. The tab
+			// then opened there next time, higher every visit.
+			const onScrollPositionChange = vi.fn();
+			const onAtBottomChange = vi.fn();
+			const box = mountWithScrollBox(
+				{ initialIsAtBottom: true, onScrollPositionChange, onAtBottomChange },
+				{ scrollHeight: 6000 }
+			);
+			await box.settle(50);
+
+			box.grow(21000);
+			fireEvent.scroll(box.el);
+			await act(async () => {
+				vi.advanceTimersByTime(250);
+			});
+
+			expect(onAtBottomChange).not.toHaveBeenCalledWith(false);
+			expect(onScrollPositionChange).not.toHaveBeenCalledWith(5200);
 		});
 	});
 
@@ -3520,6 +3891,68 @@ describe('TerminalOutput', () => {
 	});
 
 	describe('mode pill rendering', () => {
+		// The pill is opt-in (Display -> Provider Mode Pill, default off), so every
+		// assertion about its label has to turn the display setting on first.
+		beforeEach(() => {
+			useSettingsStore.setState({ showProviderModePill: true });
+		});
+
+		afterEach(() => {
+			useSettingsStore.setState({ showProviderModePill: false });
+		});
+
+		it('is suppressed entirely when the display setting is off', () => {
+			useSettingsStore.setState({ showProviderModePill: false });
+
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'prompt', source: 'user' }),
+				createLogEntry({
+					id: 'resp-1',
+					text: 'response from API stream',
+					source: 'stdout',
+					renderStyle: 'structured',
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('response from API stream')).toBeInTheDocument();
+			expect(screen.queryByText('claude -p')).not.toBeInTheDocument();
+			expect(screen.queryByText('TUI Wrapper')).not.toBeInTheDocument();
+		});
+
+		it('still renders the model and effort pills when the mode pill is off', () => {
+			useSettingsStore.setState({ showProviderModePill: false });
+
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'prompt', source: 'user' }),
+				createLogEntry({
+					id: 'resp-1',
+					text: 'response',
+					source: 'stdout',
+					renderStyle: 'structured',
+					turnModel: 'opus',
+					turnEffort: 'high',
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('opus')).toBeInTheDocument();
+			expect(screen.getByText('high')).toBeInTheDocument();
+			expect(screen.queryByText('claude -p')).not.toBeInTheDocument();
+		});
+
 		it('labels TUI and API turns separately when both render styles coexist', () => {
 			const logs: LogEntry[] = [
 				createLogEntry({ id: 'user-1', text: 'first prompt', source: 'user' }),

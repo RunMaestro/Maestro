@@ -128,6 +128,36 @@ export async function handleBridgeInvoke(
 	const handlers = (ipcMain as unknown as IpcMainInternal)._invokeHandlers;
 	const handler = handlers?.get(channel);
 	if (!handler) {
+		// Electron has TWO renderer→main directions and the bridge carries both
+		// over this one frame. `ipcRenderer.invoke` pairs with `ipcMain.handle`
+		// (an entry in `_invokeHandlers`, above); `ipcRenderer.send` is
+		// fire-and-forget and pairs with `ipcMain.on`, which is an ordinary
+		// EventEmitter listener and appears nowhere in that map.
+		//
+		// The web shim routes BOTH through `bridge.invoke`, because a WebSocket
+		// has no second channel to send on. So before this, every `send`-based
+		// API was a silent no-op on web-desktop: the server answered "No ipcMain
+		// handler registered", and the shim's `send` wrapper - fire-and-forget by
+		// contract, so it cannot throw at the caller - logged it to the console
+		// and swallowed it. `tabs:aiTabClosed` is the one that bites in practice
+		// (closing a tab from a browser left its armed dispatch callbacks armed),
+		// but the failure is per-DIRECTION, not per-channel: any `send` API added
+		// later is born broken on the web the same way.
+		//
+		// Emitting is the honest equivalent of what `ipcRenderer.send` does, and
+		// it grants no new authority: this same function already dispatches every
+		// registered invoke handler to an authenticated client, so a `send`
+		// listener is strictly less reachable than what is already exposed.
+		if (ipcMain.listenerCount(channel) > 0) {
+			try {
+				ipcMain.emit(channel, FAKE_EVENT, ...args);
+				send(client, { type: 'bridge.response', requestId, ok: true, result: undefined });
+			} catch (err) {
+				const error = err instanceof Error ? err.message : String(err);
+				send(client, { type: 'bridge.response', requestId, ok: false, error });
+			}
+			return;
+		}
 		send(client, {
 			type: 'bridge.response',
 			requestId,

@@ -283,7 +283,7 @@ describe('useSettings', () => {
 
 		it('should load saved UI settings', async () => {
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
-				activeThemeId: 'gruvbox',
+				activeThemeId: 'gruvbox-dark',
 				enterToSendAI: true,
 				defaultSaveToHistory: true,
 				leftSidebarWidth: 300,
@@ -294,7 +294,7 @@ describe('useSettings', () => {
 			const { result } = renderHook(() => useSettings());
 			await waitForSettingsLoaded(result);
 
-			expect(result.current.activeThemeId).toBe('gruvbox');
+			expect(result.current.activeThemeId).toBe('gruvbox-dark');
 			expect(result.current.enterToSendAI).toBe(true);
 			expect(result.current.defaultSaveToHistory).toBe(true);
 			expect(result.current.leftSidebarWidth).toBe(300);

@@ -454,4 +454,22 @@ describe('ShellCommandCard', () => {
 			expect(screen.getByTestId('shell-command-delete')).toBeTruthy();
 		});
 	});
+
+	describe('font', () => {
+		it('renders the command and its output in a fixed-pitch stack', () => {
+			renderCard(
+				makeLog({
+					text: 'total 0\n',
+					shellCommand: { command: 'ls -l', cwd: '/repo', status: 'exited', exitCode: 0 },
+				}),
+				{ fontFamily: 'Avenir Next' }
+			);
+
+			// The card is a terminal: whatever the user picked for the app chrome,
+			// the stack it renders with has to end in a fixed-pitch guarantee or
+			// columns of output stop lining up.
+			expect(screen.getByTestId('shell-command-text').style.fontFamily).toMatch(/monospace/);
+			expect(screen.getByTestId('shell-command-output').style.fontFamily).toMatch(/monospace/);
+		});
+	});
 });

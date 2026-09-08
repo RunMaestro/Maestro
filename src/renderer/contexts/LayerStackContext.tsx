@@ -1,5 +1,6 @@
-import React, { createContext, useContext, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, ReactNode } from 'react';
 import { useLayerStack as useLayerStackHook, type LayerStackAPI } from '../hooks/ui/useLayerStack';
+import { useLayerSwipeDismiss } from '../hooks/ui/useLayerSwipeDismiss';
 
 // Create context with null as default (will throw if used outside provider)
 const LayerStackContext = createContext<LayerStackAPI | null>(null);
@@ -53,6 +54,17 @@ export function LayerStackProvider({ children }: LayerStackProviderProps) {
 			window.removeEventListener('keydown', handleEscape, { capture: true });
 		};
 	}, []); // Empty deps - handler uses ref to get latest stack
+
+	// Phones have no Escape key: a swipe down from the top of the screen closes
+	// the top layer through the same path. Inert everywhere else (see the hook).
+	const swipeDismissApi = useMemo(
+		() => ({
+			hasTopLayer: () => !!layerStackRef.current.getTopLayer(),
+			closeTopLayer: () => layerStackRef.current.closeTopLayer(),
+		}),
+		[]
+	);
+	useLayerSwipeDismiss(swipeDismissApi);
 
 	return <LayerStackContext.Provider value={layerStack}>{children}</LayerStackContext.Provider>;
 }

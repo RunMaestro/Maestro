@@ -199,6 +199,7 @@ export interface QuickActionsModalProps {
 	 * the sidebar's visible ordering.
 	 */
 	onGoToNextUnread?: () => void;
+	onGoToPreviousUnread?: () => void;
 	/**
 	 * Shared session/tab history navigation - same callbacks bound to the
 	 * Cmd+Shift+, / Cmd+Shift+. keyboard shortcuts in App.tsx so the palette and

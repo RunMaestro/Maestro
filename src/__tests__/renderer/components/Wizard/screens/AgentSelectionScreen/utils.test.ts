@@ -27,6 +27,9 @@ import { PICKABLE_AGENT_IDS } from '../../../../../../shared/agentMetadata';
 import { SUPPORTED_AGENTS } from '../../../../../../renderer/components/NewInstanceModal/types';
 import { getNextAgentTileIndex } from '../../../../../../renderer/components/Wizard/screens/AgentSelectionScreen/utils/agentGrid';
 import {
+	AGENT_GRID_EDGE_INSET_PX,
+	AGENT_TILE_GAP_PX,
+	AGENT_TILE_WIDTH_PX,
 	agentTilesPerRow,
 	resolveAgentGridLayout,
 } from '../../../../../../renderer/components/Wizard/screens/AgentSelectionScreen/utils/agentGridLayout';
@@ -135,8 +138,8 @@ describe('AgentSelectionScreen utils', () => {
 	});
 
 	it('balances the rows rather than filling one and stranding the rest', () => {
-		// Wide enough for four across (the strip's own max width).
-		const wide = 1200;
+		// Wide enough for four across, which is the wizard at its default size.
+		const wide = 1136;
 
 		// Everything fits on one row: one row, centered, no leftovers.
 		expect(resolveAgentGridLayout(4, wide)).toMatchObject({ mode: 'wrap', columns: 4 });
@@ -151,13 +154,36 @@ describe('AgentSelectionScreen utils', () => {
 	it('measures the row against the real width, and falls back before it is known', () => {
 		expect(agentTilesPerRow(0)).toBe(4);
 		expect(agentTilesPerRow(300)).toBe(1);
-		expect(agentTilesPerRow(500)).toBe(2);
-		// Capped at the strip's own width, so a maximized wizard does not spread the
-		// tiles wider than the strip it just replaced.
-		expect(agentTilesPerRow(4000)).toBe(4);
+		expect(agentTilesPerRow(532)).toBe(2);
+		// Nothing caps the spread: a stretched wizard gets every tile it has room for.
+		expect(agentTilesPerRow(4000)).toBe(16);
 		// A narrow wizard fits fewer per row, so it drops to the strip sooner.
-		expect(resolveAgentGridLayout(7, 700)).toMatchObject({ mode: 'strip' });
-		expect(resolveAgentGridLayout(5, 700)).toMatchObject({ mode: 'wrap', columns: 3 });
+		expect(resolveAgentGridLayout(7, 732)).toMatchObject({ mode: 'strip' });
+		expect(resolveAgentGridLayout(5, 732)).toMatchObject({ mode: 'wrap', columns: 3 });
+	});
+
+	it('trades the strip for rows as the wizard is stretched', () => {
+		const count = AGENT_TILES.length;
+
+		// Default wizard: too many to wrap, so the scrolling strip.
+		expect(resolveAgentGridLayout(count, 1136).mode).toBe('strip');
+
+		// Stretched until they fit in two rows: balanced rows, no scrolling.
+		const widthFor = (perRow: number): number =>
+			perRow * AGENT_TILE_WIDTH_PX +
+			(perRow - 1) * AGENT_TILE_GAP_PX +
+			AGENT_GRID_EDGE_INSET_PX * 2;
+		const halfRow = Math.ceil(count / 2);
+		expect(resolveAgentGridLayout(count, widthFor(halfRow))).toMatchObject({
+			mode: 'wrap',
+			columns: halfRow,
+		});
+
+		// Stretched until they all fit across: a single row, still no scrolling.
+		expect(resolveAgentGridLayout(count, widthFor(count))).toMatchObject({
+			mode: 'wrap',
+			columns: count,
+		});
 	});
 
 	it('clamps against the RENDERED tile count, not the provider total', () => {

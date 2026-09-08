@@ -16,6 +16,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
+import Fastify, { type FastifyInstance } from 'fastify';
 import { StaticRoutes } from '../../../../main/web-server/routes/staticRoutes';
 
 // Mock the logger
@@ -51,6 +52,7 @@ function createMockReply() {
 		code: vi.fn().mockReturnThis(),
 		send: vi.fn().mockReturnThis(),
 		type: vi.fn().mockReturnThis(),
+		header: vi.fn().mockReturnThis(),
 		redirect: vi.fn().mockReturnThis(),
 	};
 	return reply;
@@ -74,14 +76,17 @@ describe('StaticRoutes', () => {
 
 	describe('Route Registration', () => {
 		it('should register all static routes', () => {
-			// 10 routes: /, /health, manifest.json, sw.js, token root, token root/,
-			// /desktop, /desktop/, session/:id, /:token
-			expect(mockFastify.get).toHaveBeenCalledTimes(10);
+			// 11 routes: /, /health, /og.png, manifest.json, sw.js, token root,
+			// token root/, /desktop, /desktop/, session/:id, /:token
+			expect(mockFastify.get).toHaveBeenCalledTimes(11);
 		});
 
 		it('should register routes with correct paths', () => {
 			expect(mockFastify.routes.has('GET:/')).toBe(true);
 			expect(mockFastify.routes.has('GET:/health')).toBe(true);
+			// The social card is deliberately NOT under the token prefix, so that
+			// the security token stays out of an image URL chat clients cache.
+			expect(mockFastify.routes.has('GET:/og.png')).toBe(true);
 			expect(mockFastify.routes.has(`GET:/${securityToken}/manifest.json`)).toBe(true);
 			expect(mockFastify.routes.has(`GET:/${securityToken}/sw.js`)).toBe(true);
 			expect(mockFastify.routes.has(`GET:/${securityToken}`)).toBe(true);
@@ -288,6 +293,137 @@ describe('StaticRoutes', () => {
 				expect(reply.send).toHaveBeenCalledWith(
 					expect.stringContaining(`/${securityToken}/desktop/assets/main.js`)
 				);
+			} finally {
+				rmSync(tempRoot, { recursive: true, force: true });
+			}
+		});
+	});
+
+	describe('Social preview card', () => {
+		/** Serve the desktop index from a throwaway bundle and return the HTML. */
+		async function serveIndexWith(
+			request: unknown,
+			assetsPath: string | null = webAssetsPath
+		): Promise<string> {
+			const tempRoot = mkdtempSync(path.join(tmpdir(), 'maestro-og-'));
+			const tempDesktopPath = path.join(tempRoot, 'web-desktop');
+			mkdirSync(tempDesktopPath, { recursive: true });
+			try {
+				writeFileSync(
+					path.join(tempDesktopPath, 'index.html'),
+					'<!doctype html><html><head><title>Maestro</title></head><body></body></html>',
+					'utf8'
+				);
+				const routes = new StaticRoutes(securityToken, assetsPath, tempDesktopPath, concertoToken);
+				const fastify = createMockFastify();
+				routes.registerRoutes(fastify as any);
+
+				const reply = createMockReply();
+				await fastify.getRoute('GET', `/${securityToken}`)!.handler(request, reply);
+				return reply.send.mock.calls[0][0] as string;
+			} finally {
+				rmSync(tempRoot, { recursive: true, force: true });
+			}
+		}
+
+		it('injects an absolute og:image built from the request host', async () => {
+			// A crawler resolves og:image against nothing, so the URL has to name
+			// the host the link was actually shared as - which only the request
+			// knows, since one server answers on a LAN IP, on localhost, and
+			// through a tunnel.
+			const html = await serveIndexWith({ headers: { host: '192.168.1.39:8420' } });
+
+			expect(html).toContain('<meta property="og:image" content="http://192.168.1.39:8420/og.png"');
+			expect(html).toContain('<meta property="og:title" content="Maestro" />');
+			expect(html).toContain('<meta name="twitter:card" content="summary_large_image" />');
+		});
+
+		it('keeps the security token out of the card', async () => {
+			// Chat clients cache and re-host preview images, so the image URL is
+			// the one place the token must not appear.
+			const html = await serveIndexWith({ headers: { host: '192.168.1.39:8420' } });
+			const metaTags = html.match(/<meta [^>]*>/g) ?? [];
+
+			expect(metaTags.length).toBeGreaterThan(0);
+			expect(metaTags.join('')).not.toContain(securityToken);
+		});
+
+		it('serves the page without a card when the request names no host', async () => {
+			// Degrades to the plain title rather than emitting a card pointing at
+			// a guessed origin. The page itself must still load.
+			const html = await serveIndexWith({});
+
+			expect(html).not.toContain('og:image');
+			expect(html).toContain('__MAESTRO_CONFIG__');
+			expect(html).toContain('<title>Maestro</title>');
+		});
+
+		it('returns 404 for /og.png when the web assets are not built', async () => {
+			const routes = new StaticRoutes(securityToken, null, webDesktopPath, concertoToken);
+			const fastify = createMockFastify();
+			routes.registerRoutes(fastify as any);
+
+			const reply = createMockReply();
+			await fastify.getRoute('GET', '/og.png')!.handler({}, reply);
+
+			expect(reply.code).toHaveBeenCalledWith(404);
+		});
+
+		it('answers /og.png rather than the invalid-token redirect', async () => {
+			// The one property the mock Fastify above cannot express. `/og.png`
+			// and `/:token` both match a single-segment path, and if the
+			// parametric route ever won, every crawler asking for the card would
+			// be redirected to the marketing site and the preview would render
+			// with a hole in it. Fastify resolves static ahead of parametric, so
+			// this asserts that ordering against the real router.
+			const tempRoot = mkdtempSync(path.join(tmpdir(), 'maestro-og-priority-'));
+			let server: FastifyInstance | null = null;
+			try {
+				writeFileSync(path.join(tempRoot, 'og-image.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+
+				server = Fastify();
+				new StaticRoutes(securityToken, tempRoot, webDesktopPath, concertoToken).registerRoutes(
+					server
+				);
+				await server.ready();
+
+				const card = await server.inject({ method: 'GET', url: '/og.png' });
+				expect(card.statusCode).toBe(200);
+				expect(card.headers['content-type']).toContain('image/png');
+
+				// The catch-all still owns everything else that looks like a token.
+				const bogus = await server.inject({ method: 'GET', url: '/not-the-token' });
+				expect(bogus.statusCode).toBe(302);
+			} finally {
+				await server?.close();
+				rmSync(tempRoot, { recursive: true, force: true });
+			}
+		});
+
+		it('serves the card as a cacheable PNG', async () => {
+			const tempRoot = mkdtempSync(path.join(tmpdir(), 'maestro-og-asset-'));
+			mkdirSync(tempRoot, { recursive: true });
+			try {
+				const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+				writeFileSync(path.join(tempRoot, 'og-image.png'), bytes);
+
+				const routes = new StaticRoutes(securityToken, tempRoot, webDesktopPath, concertoToken);
+				const fastify = createMockFastify();
+				routes.registerRoutes(fastify as any);
+
+				const reply = createMockReply();
+				await fastify.getRoute('GET', '/og.png')!.handler({}, reply);
+
+				expect(reply.type).toHaveBeenCalledWith('image/png');
+				expect(reply.header).toHaveBeenCalledWith(
+					'Cache-Control',
+					expect.stringContaining('max-age')
+				);
+				// Sent as bytes, not through the utf-8 string cache - decoding a PNG
+				// as text corrupts it.
+				const sent = reply.send.mock.calls[0][0];
+				expect(Buffer.isBuffer(sent)).toBe(true);
+				expect(sent.equals(bytes)).toBe(true);
 			} finally {
 				rmSync(tempRoot, { recursive: true, force: true });
 			}

@@ -10,6 +10,7 @@ import { execFileNoThrow, ExecResult } from './utils/execFile';
 import { expandTilde } from '../shared/pathUtils';
 import { captureException } from './utils/sentry';
 import { getPathAccessCache, defaultReadableProbe } from './utils/path-access-cache';
+import { buildSshOptionArgs, validateSshOption } from '../shared/sshOptions';
 
 /**
  * Validation result for SSH remote configuration.
@@ -61,14 +62,6 @@ export class SshRemoteManager {
 	 * Default SSH options used for all connections.
 	 * These options ensure non-interactive key-based authentication.
 	 */
-	private readonly defaultSshOptions: Record<string, string> = {
-		BatchMode: 'yes', // Disable password prompts (key-only)
-		StrictHostKeyChecking: 'accept-new', // Auto-accept new host keys
-		ConnectTimeout: '10', // Connection timeout in seconds
-		ClearAllForwardings: 'yes', // Disable port forwarding from SSH config (avoids "Address already in use" errors)
-		RequestTTY: 'no', // Don't request a TTY for command execution (avoids shell rc issues)
-	};
-
 	/**
 	 * Create a new SshRemoteManager.
 	 *
@@ -125,6 +118,14 @@ export class SshRemoteManager {
 			if (!this.deps.checkFileAccess(keyPath)) {
 				errors.push(`Private key not readable: ${config.privateKeyPath}`);
 			}
+		}
+
+		// Extra `-o` options. A malformed keyword makes ssh exit before it dials,
+		// so rejecting it here names the offending option instead of surfacing a
+		// bare "command-line: line 0: Bad configuration option" at spawn time.
+		for (const [key, value] of Object.entries(config.sshOptions ?? {})) {
+			const invalid = validateSshOption(key, value);
+			if (invalid) errors.push(invalid);
 		}
 
 		return {
@@ -236,10 +237,10 @@ export class SshRemoteManager {
 			args.push('-i', expandTilde(config.privateKeyPath));
 		}
 
-		// Default SSH options
-		for (const [key, value] of Object.entries(this.defaultSshOptions)) {
-			args.push('-o', `${key}=${value}`);
-		}
+		// Default SSH options plus this remote's overrides. Shared with the agent
+		// spawn builder so a remote cannot test green here and then connect with a
+		// different option set when an agent actually runs on it.
+		args.push(...buildSshOptionArgs(config.sshOptions));
 
 		// Port (only add if not using SSH config, or if non-default)
 		if (!config.useSshConfig || config.port !== 22) {

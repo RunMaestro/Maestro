@@ -99,22 +99,23 @@ An agent brought into a group chat runs as its own process, in that agent's own 
 
 **Only work with agents that are free** controls what happens then. It is on by default, and you set it when you create a group chat (or later, through Edit):
 
-| Setting          | Behavior                                                                                                                                                                                                                          |
-| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **On** (default) | The moderator skips any agent that is busy - with your own conversation, an Auto Run, or a CLI run - and posts a note in the chat naming who was skipped. Nothing else about the turn changes; other agents still get their work. |
-| **Off**          | The moderator hands work to an agent even while it is working. Two processes can edit the same files, overwrite each other, and leave both conversations acting on stale state.                                                   |
+| Setting          | Behavior                                                                                                                                                                                                                                                          |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **On** (default) | The moderator holds the request for any agent that is busy - with your own conversation, an Auto Run, or a CLI run - and sends it as soon as that agent is free. It posts a note in the chat naming who it is waiting for. Other agents still get their work now. |
+| **Off**          | The moderator hands work to an agent even while it is working. Two processes can edit the same files, overwrite each other, and leave both conversations acting on stale state.                                                                                   |
 
 <Warning>
   Turn this off only when you know the work cannot collide - separate worktrees, separate projects, or read-only questions. There is no lock behind it; it is your judgment doing the work.
 </Warning>
 
-When an agent is skipped, the chat shows a line like:
+When an agent is busy, the chat shows a line like:
 
 ```
-⏸️ Skipped @Backend - that agent is busy with their own work right now.
+⏳ Waiting for @Backend - that agent is busy with their own work right now.
 ```
 
-Send another message once the agent is free, and the moderator picks the work back up.
+The turn stays open while it waits, and the request is delivered the moment that agent finishes. If the
+agent is still busy after 15 minutes, the chat says so and the turn moves on without it.
 
 ## Tips for Effective Group Chats
 

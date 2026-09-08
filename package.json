@@ -32,6 +32,7 @@
 		"build:preload": "node scripts/build-preload.mjs",
 		"build:cli": "node scripts/build-cli.mjs",
 		"gen:cli-reference": "node scripts/gen-cli-reference.mjs",
+		"gen:og-image": "node scripts/generate-og-image.mjs",
 		"build:maestro-p": "node scripts/build-maestro-p.mjs",
 		"build:permission-relay-bridge": "node scripts/build-permission-relay-bridge.mjs",
 		"build:renderer": "vite build",
@@ -108,6 +109,26 @@
 			"notarize": false,
 			"entitlements": "build/entitlements.mac.plist",
 			"entitlementsInherit": "build/entitlements.mac.plist",
+			"extendInfo": {
+				"NSCalendarsUsageDescription": "A program running inside Maestro wants to access your calendars.",
+				"NSCalendarsFullAccessUsageDescription": "A program running inside Maestro wants to read and change your calendars.",
+				"NSCalendarsWriteOnlyAccessUsageDescription": "A program running inside Maestro wants to add events to your calendars.",
+				"NSRemindersUsageDescription": "A program running inside Maestro wants to access your reminders.",
+				"NSRemindersFullAccessUsageDescription": "A program running inside Maestro wants to read and change your reminders.",
+				"NSContactsUsageDescription": "A program running inside Maestro wants to access your contacts.",
+				"NSPhotoLibraryUsageDescription": "A program running inside Maestro wants to access your photo library.",
+				"NSPhotoLibraryAddUsageDescription": "A program running inside Maestro wants to add photos to your photo library.",
+				"NSAppleMusicUsageDescription": "A program running inside Maestro wants to access your media library.",
+				"NSAppleEventsUsageDescription": "A program running inside Maestro wants to control another app on your Mac.",
+				"NSSpeechRecognitionUsageDescription": "A program running inside Maestro wants to send speech to Apple for recognition.",
+				"NSLocalNetworkUsageDescription": "A program running inside Maestro wants to reach devices on your local network.",
+				"NSLocationWhenInUseUsageDescription": "A program running inside Maestro wants to use your location.",
+				"NSDesktopFolderUsageDescription": "A program running inside Maestro wants to read and change files on your Desktop.",
+				"NSDocumentsFolderUsageDescription": "A program running inside Maestro wants to read and change files in your Documents folder.",
+				"NSDownloadsFolderUsageDescription": "A program running inside Maestro wants to read and change files in your Downloads folder.",
+				"NSRemovableVolumesUsageDescription": "A program running inside Maestro wants to read and change files on a removable volume.",
+				"NSNetworkVolumesUsageDescription": "A program running inside Maestro wants to read and change files on a network volume."
+			},
 			"target": [
 				"dmg",
 				"zip"
@@ -336,7 +357,7 @@
 		"@xterm/addon-web-links": "^0.12.0",
 		"@xterm/addon-webgl": "^0.19.0",
 		"@xterm/xterm": "^6.0.0",
-		"adm-zip": "^0.5.16",
+		"adm-zip": "^0.6.0",
 		"ansi-to-html": "^0.7.2",
 		"archiver": "^7.0.1",
 		"better-sqlite3": "^12.11.1",
@@ -442,6 +463,7 @@
 		"vitest": "^4.1.5"
 	},
 	"overrides": {
+		"brace-expansion": "^5.0.9",
 		"tar": "^7.5.17"
 	},
 	"engines": {

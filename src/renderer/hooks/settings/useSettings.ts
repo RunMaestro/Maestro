@@ -50,6 +50,7 @@ import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { logger } from '../../utils/logger';
 import type { TypographySurface } from '../../../shared/typography';
 import type { TypographyPresetId } from '../../../shared/typographyPresets';
+import type { TypographySnapshot } from '../../../shared/typographySnapshot';
 import { applyTypographyVars } from '../../utils/applyTypographyVars';
 
 export interface UseSettingsReturn {
@@ -113,6 +114,9 @@ export interface UseSettingsReturn {
 	setSurfaceFontSize: (surface: TypographySurface, value: number) => void;
 	setFontZoom: (value: number) => void;
 	resetTypography: (id: TypographyPresetId) => void;
+	typographySnapshot: TypographySnapshot | null;
+	saveTypographySnapshot: () => void;
+	restoreTypographySnapshot: () => void;
 	typographyPromptSeen: boolean;
 	setTypographyPromptSeen: (value: boolean) => void;
 	themePromptSeen: boolean;
@@ -484,6 +488,8 @@ export interface UseSettingsReturn {
 	setShowSessionIdPill: (value: boolean) => void;
 	showSessionCostPill: boolean;
 	setShowSessionCostPill: (value: boolean) => void;
+	showProviderModePill: boolean;
+	setShowProviderModePill: (value: boolean) => void;
 
 	// Worktree display in left panel agent list
 	showWorktreePill: boolean;

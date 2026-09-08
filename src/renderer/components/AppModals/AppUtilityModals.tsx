@@ -11,6 +11,7 @@ import type {
 	BatchRunConfig,
 	SnoozeContent,
 	ThinkingMode,
+	QueuedItemEditPatch,
 } from '../../types';
 import type { FileNode } from '../../types/fileTree';
 import type { MainPanelHandle } from '../MainPanel/types';
@@ -296,11 +297,7 @@ export interface AppUtilityModalsProps {
 	onSwitchQueueSession: (sessionId: string, tabId?: string) => void;
 	onReorderQueueItems: (sessionId: string, fromIndex: number, toIndex: number) => void;
 	onTogglePauseQueueItem: (sessionId: string, itemId: string) => void;
-	onEditQueueItem: (
-		sessionId: string,
-		itemId: string,
-		patch: { text: string; images: string[] }
-	) => void;
+	onEditQueueItem: (sessionId: string, itemId: string, patch: QueuedItemEditPatch) => void;
 	onForceSendQueueItem: (sessionId: string, itemId: string) => void;
 	// New tab creation (for QuickActionsModal)
 	onQuickActionsNewTab?: () => void;
@@ -309,6 +306,8 @@ export interface AppUtilityModalsProps {
 	onQuickActionsNewTerminalTab?: () => void;
 	// Next unread / draft tab navigation (shared with Alt+Cmd+Down)
 	onGoToNextUnread?: () => void;
+	// Previous unread / draft tab navigation (shared with a second Alt+Cmd+Up)
+	onGoToPreviousUnread?: () => void;
 	// Session/tab history navigation (shared with Cmd+Shift+, / Cmd+Shift+.)
 	onNavBack?: () => void;
 	onNavForward?: () => void;
@@ -531,6 +530,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	onQuickActionsNewBrowserTab,
 	onQuickActionsNewTerminalTab,
 	onGoToNextUnread,
+	onGoToPreviousUnread,
 	onNavBack,
 	onNavForward,
 }: AppUtilityModalsProps) {
@@ -697,6 +697,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					onNewBrowserTab={onQuickActionsNewBrowserTab}
 					onNewTerminalTab={onQuickActionsNewTerminalTab}
 					onGoToNextUnread={onGoToNextUnread}
+					onGoToPreviousUnread={onGoToPreviousUnread}
 					onNavBack={onNavBack}
 					onNavForward={onNavForward}
 				/>

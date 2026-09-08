@@ -9,6 +9,13 @@
  * and their checked-out branch - so a parent and its worktrees are
  * visually distinguishable at a glance.
  *
+ * A provider-profile dropdown sits beside the group filter: it narrows the grid
+ * to the agents backed by one provider account (each Claude config dir, each
+ * Codex home, each account-less provider on its own). The same profile is
+ * printed as a badge on every card whenever more than one is in play, so the
+ * backing account is readable without opening the filter, and "Provider" is
+ * offered as a sort so one pass groups the whole fleet by account.
+ *
  * A fuzzy filter above the grid narrows the cards live as the user types,
  * matching on the agent name (with or without its leading emoji) and on a
  * worktree's branch name. An "Active only" toggle beside it drops every agent
@@ -18,7 +25,7 @@
  */
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Activity, Search } from 'lucide-react';
+import { Activity, Maximize2, Minimize2, Search } from 'lucide-react';
 import type { Session, Theme } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
 import { stripLeadingEmojis } from '../../../shared/emojiUtils';
@@ -32,7 +39,14 @@ import { SegmentedControl } from '../ui/SegmentedControl';
 import { ThemedSelect, type ThemedSelectOption } from '../shared/ThemedSelect';
 import { UNGROUPED_ID, UNGROUPED_NAME, type GroupLike } from '../../../shared/statsGroupRollup';
 import { isAgentActiveInRange } from '../../../shared/statsActiveAgents';
-import { EntityTile } from './EntityTile';
+import { ALL_PROFILES_VALUE } from '../../../shared/providerProfiles';
+import {
+	useProviderProfiles,
+	type ProviderProfileIndex,
+} from '../../hooks/stats/useProviderProfiles';
+import { buildAgentsSummary } from './footerSummary';
+import { usePublishFooterSummary } from './useFooterSummary';
+import { EntityTile, type EntityTileBadge } from './EntityTile';
 import {
 	AGENT_OVERVIEW_SORT_OPTIONS,
 	buildSessionSparkline,
@@ -44,6 +58,16 @@ import {
 	sortAgentOverviewSessions,
 	type SortMode,
 } from './agentOverviewUtils';
+import { useScalePreference } from '../../hooks/ui/useScalePreference';
+import { useScaleShortcuts } from '../../hooks/ui/useScaleShortcuts';
+import { useIsTopLayer } from '../../hooks/ui/useIsTopLayer';
+import { ScaleControl } from '../ui/ScaleControl';
+import {
+	AGENT_TILE_MIN_WIDTH,
+	AGENT_TILE_SCALE_KEY,
+	TILE_SCALE_RANGE,
+	tileGridColumns,
+} from './tileScale';
 
 /** Dropdown value meaning "do not narrow by group". */
 const ALL_GROUPS_VALUE = '__all__';
@@ -67,6 +91,9 @@ interface AgentCardProps {
 	/** Which stat to color-emphasize so it's obvious what the cards are sorted by.
 	 *  `null` (Name sort, the default) leaves all stats in their neutral color. */
 	highlightedStat: HighlightedStat;
+	/** Provider account backing this agent (`smash`), or undefined when the whole
+	 *  fleet shares one profile and the badge would say nothing. */
+	profileLabel?: string;
 	/** Click handler for the entire card. When provided, the tile becomes a
 	 *  button that opens the per-agent stats sub-modal and gains a hover
 	 *  affordance to signal clickability. */
@@ -81,6 +108,7 @@ const AgentCard = memo(function AgentCard({
 	isSelected,
 	visibleSessions,
 	highlightedStat,
+	profileLabel,
 	onShowDetails,
 }: AgentCardProps) {
 	const isWorktree = Boolean(session.parentSessionId);
@@ -102,6 +130,20 @@ const AgentCard = memo(function AgentCard({
 	const tabCount = visibleAiTabs(session.aiTabs).length;
 	const statusColor = getStatusColor(session.state, theme);
 
+	const badges = useMemo(() => {
+		const list: EntityTileBadge[] = [];
+		if (isWorktree) list.push({ label: 'WT', testId: 'agent-card-wt-badge' });
+		if (profileLabel) {
+			list.push({
+				label: profileLabel,
+				title: `Backed by ${profileLabel}`,
+				testId: 'agent-card-profile-badge',
+				color: theme.colors.textDim,
+			});
+		}
+		return list.length > 0 ? list : undefined;
+	}, [isWorktree, profileLabel, theme]);
+
 	const autoPctLabel = autoPercent === null ? 'no recorded queries' : `${autoPercent}% auto`;
 
 	// The corner badge normally carries the agent's age. Under the Recent sort
@@ -119,7 +161,9 @@ const AgentCard = memo(function AgentCard({
 	const cornerAriaLabel = ageLabel ? `, ${showLastQuery ? 'last query' : 'age'} ${ageLabel}` : '';
 	const baseAriaLabel = `${session.name}, ${session.state}, ${queryCount} ${
 		queryCount === 1 ? 'query' : 'queries'
-	}, ${tabCount} ${tabCount === 1 ? 'tab' : 'tabs'}, ${autoPctLabel}${cornerAriaLabel}`;
+	}, ${tabCount} ${tabCount === 1 ? 'tab' : 'tabs'}, ${autoPctLabel}${
+		profileLabel ? `, ${profileLabel}` : ''
+	}${cornerAriaLabel}`;
 
 	return (
 		<EntityTile
@@ -131,7 +175,7 @@ const AgentCard = memo(function AgentCard({
 			age={ageLabel}
 			ageTitle={ageTitle}
 			ageHighlighted={highlightedStat === 'created' || showLastQuery}
-			badges={isWorktree ? [{ label: 'WT', testId: 'agent-card-wt-badge' }] : undefined}
+			badges={badges}
 			subtitle={isWorktree ? (session.worktreeBranch ?? undefined) : undefined}
 			subtitleTestId="agent-card-branch"
 			stats={[
@@ -192,6 +236,13 @@ interface AgentOverviewCardsProps {
 	 * one option is a control that can only do nothing.
 	 */
 	groups?: GroupLike[];
+	/**
+	 * Provider-profile filter, when the parent owns it - which it does whenever
+	 * another surface can select one, e.g. clicking an account's agent-count
+	 * badge on a quota tab. Omit both and the dropdown keeps its own state.
+	 */
+	profileFilter?: string;
+	onProfileFilterChange?: (value: string) => void;
 }
 
 /**
@@ -230,15 +281,63 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 	activeFilterKey = null,
 	onShowAgentDetails,
 	groups = EMPTY_GROUPS,
+	profileFilter: profileFilterProp,
+	onProfileFilterChange,
 }: AgentOverviewCardsProps) {
 	const [sortMode, setSortMode] = useState<SortMode>('name');
 	const [filterQuery, setFilterQuery] = useState('');
+	// How wide a tile is, remembered across restarts. `+` / `-` / `0` drive it
+	// from the keyboard; the control beside the sort pills is the same state.
+	const tileScale = useScalePreference(AGENT_TILE_SCALE_KEY, TILE_SCALE_RANGE);
 	// Narrow the grid to agents that did something inside the selected range.
 	// Off by default: the grid's job is still "every agent I have".
 	const [activeOnly, setActiveOnly] = useState(false);
 	// Which group the grid is narrowed to. ALL_GROUPS_VALUE means no narrowing;
 	// UNGROUPED_ID is the agents filed under no group.
 	const [groupFilter, setGroupFilter] = useState<string>(ALL_GROUPS_VALUE);
+	// Which provider account the grid is narrowed to. Controlled by the parent
+	// when it passes both props (a quota badge can then select a profile and
+	// send the user here); otherwise the dropdown owns it.
+	const [internalProfileFilter, setInternalProfileFilter] = useState<string>(ALL_PROFILES_VALUE);
+	const profileFilter = profileFilterProp ?? internalProfileFilter;
+	const setProfileFilter = onProfileFilterChange ?? setInternalProfileFilter;
+
+	// Which provider account backs each agent. Shared with the quota tabs'
+	// per-account badges, so a badge's count is this grid's card count.
+	const profileIndex: ProviderProfileIndex = useProviderProfiles(sessions);
+
+	const profileOptions = useMemo((): ThemedSelectOption[] => {
+		const options: ThemedSelectOption[] = [{ value: ALL_PROFILES_VALUE, label: 'All providers' }];
+		for (const profile of profileIndex.profiles) {
+			options.push({ value: profile.key, label: `${profile.label} (${profile.count})` });
+		}
+		return options;
+	}, [profileIndex]);
+
+	// Per-card badge text, precomputed so the grid does not scan the profile
+	// list once per card. Empty while the whole fleet shares one profile: a
+	// badge every card carries identically is noise.
+	const profileBadgeBySessionId = useMemo((): Record<string, string> => {
+		if (profileIndex.profiles.length < 2) return {};
+		const shortLabelByKey: Record<string, string> = {};
+		for (const profile of profileIndex.profiles) shortLabelByKey[profile.key] = profile.shortLabel;
+		const byId: Record<string, string> = {};
+		for (const [sessionId, key] of Object.entries(profileIndex.profileKeyBySessionId)) {
+			const label = shortLabelByKey[key];
+			if (label) byId[sessionId] = label;
+		}
+		return byId;
+	}, [profileIndex]);
+
+	// A profile disappears when its last agent is deleted or re-pointed. Leaving
+	// the filter on it would strand the grid on a selection with no option
+	// behind it, showing nothing and explaining nothing.
+	useEffect(() => {
+		if (profileFilter === ALL_PROFILES_VALUE) return;
+		if (!profileOptions.some((o) => o.value === profileFilter)) {
+			setProfileFilter(ALL_PROFILES_VALUE);
+		}
+	}, [profileOptions, profileFilter, setProfileFilter]);
 
 	// Only groups that actually hold an agent are offered, plus Ungrouped when
 	// any agent is unfiled. An option that can only ever produce an empty grid
@@ -292,6 +391,15 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 		capturesFocus: false,
 	});
 
+	// Bare `+` / `-` / `0` resize the tiles, but only while this grid is what
+	// the keyboard is pointed at - an agent detail modal opened from a tile
+	// sits on top and must own those keys instead. The filter's own Escape
+	// layer counts as this grid: it outranks the dashboard while the box holds
+	// text, and zoom has no reason to go dead just because a filter is set.
+	const dashboardIsTop = useIsTopLayer(MODAL_PRIORITIES.USAGE_DASHBOARD);
+	const filterIsTop = useIsTopLayer(MODAL_PRIORITIES.USAGE_DASHBOARD_AGENT_FILTER);
+	useScaleShortcuts(tileScale, { enabled: dashboardIsTop || filterIsTop });
+
 	// Terminal sessions aren't "agents" - excluded inside
 	// `sortAgentOverviewSessions`, which also owns the ordering so the grid and
 	// its sort control can't drift. The group filter narrows the input first:
@@ -308,12 +416,21 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 					session.groupId && liveGroupIds.has(session.groupId) ? session.groupId : UNGROUPED_ID;
 				if (resolved !== groupFilter) return false;
 			}
+			// Provider-account narrowing. An agent whose account has not resolved
+			// yet is absent from the index, so it drops out of an explicit account
+			// filter rather than being lumped into whichever one was picked.
+			if (
+				profileFilter !== ALL_PROFILES_VALUE &&
+				profileIndex.profileKeyBySessionId[session.id] !== profileFilter
+			) {
+				return false;
+			}
 			// "Active only" is a RANGE question, so it narrows before sorting -
 			// the query-count ranking stays relative to the cards on screen.
 			return !activeOnly || isAgentActiveInRange(session.id, data.bySessionByDay);
 		});
-		return sortAgentOverviewSessions(scoped, data, sortMode);
-	}, [sessions, data, sortMode, groupFilter, groups, activeOnly]);
+		return sortAgentOverviewSessions(scoped, data, sortMode, profileIndex);
+	}, [sessions, data, sortMode, groupFilter, groups, activeOnly, profileFilter, profileIndex]);
 
 	// Live fuzzy filter. With the default Name sort we re-rank by match score so
 	// the best hit lands first; an explicit sort (Queries, Tabs, ...) is the
@@ -332,6 +449,15 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 		return scored.map((entry) => entry.session);
 	}, [activeSessions, filterQuery, sortMode]);
 
+	// Footer readout. The denominator is every agent, not the group-scoped or
+	// active-only subset, so the line always answers "how much of the fleet am
+	// I looking at" rather than restating the filter back to itself.
+	const totalAgentCount = useMemo(
+		() => sessions.filter((s) => s.toolType !== 'terminal').length,
+		[sessions]
+	);
+	usePublishFooterSummary('agents', buildAgentsSummary(filteredSessions.length, totalAgentCount));
+
 	// The dropdown earns its place only once a REAL group is on offer. With no
 	// groups configured the options collapse to "All groups" and "Ungrouped",
 	// which render the identical grid - a control whose every choice is a no-op.
@@ -339,10 +465,18 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 		(o) => o.value !== ALL_GROUPS_VALUE && o.value !== UNGROUPED_ID
 	);
 	const isGroupFiltered = groupFilter !== ALL_GROUPS_VALUE;
-	// A group or active-only filter that matches nothing must still render the
-	// toolbar, otherwise the tab goes blank with no visible reason and no way
-	// back to the control that emptied it.
-	if (activeSessions.length === 0 && !isGroupFiltered && !activeOnly) return null;
+	// One profile means every card would carry the same badge and every dropdown
+	// choice would render the identical grid - the same "can only do nothing"
+	// test the group dropdown passes above.
+	const hasProfileChoice = profileIndex.profiles.length > 1;
+	const isProfileFiltered = profileFilter !== ALL_PROFILES_VALUE;
+	const profileFilterLabel = profileIndex.labelByKey[profileFilter];
+	// A group, provider, or active-only filter that matches nothing must still
+	// render the toolbar, otherwise the tab goes blank with no visible reason
+	// and no way back to the control that emptied it.
+	if (activeSessions.length === 0 && !isGroupFiltered && !isProfileFiltered && !activeOnly) {
+		return null;
+	}
 
 	return (
 		<div className="flex flex-col gap-3">
@@ -360,6 +494,18 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 							// groups per client, so the menu carries its own search.
 							filterable={groupOptions.length > 8}
 							filterPlaceholder="Filter groups…"
+						/>
+					)}
+					{hasProfileChoice && (
+						<ThemedSelect
+							value={profileFilter}
+							options={profileOptions}
+							onChange={setProfileFilter}
+							theme={theme}
+							style={{ width: 210 }}
+							aria-label="Filter agents by provider account"
+							filterable={profileOptions.length > 8}
+							filterPlaceholder="Filter providers…"
 						/>
 					)}
 					<div className="relative flex items-center" style={{ width: 260, maxWidth: '100%' }}>
@@ -421,6 +567,16 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 					)}
 				</div>
 				<div className="flex items-center gap-2">
+					<ScaleControl
+						theme={theme}
+						control={tileScale}
+						decreaseIcon={Minimize2}
+						increaseIcon={Maximize2}
+						subject="tile size"
+						shortcutHint={{ decrease: '-', increase: '+', reset: '0' }}
+						size="sm"
+						testId="agent-overview-tile-zoom"
+					/>
 					<span className="text-xs" style={{ color: theme.colors.textDim }}>
 						Sort by:
 					</span>
@@ -442,10 +598,14 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 					role="status"
 				>
 					{activeOnly
-						? isGroupFiltered
-							? `No agents in ${groupOptions.find((o) => o.value === groupFilter)?.label ?? 'this group'} ran a query in this time range.`
-							: 'No agents ran a query in this time range.'
-						: `${groupOptions.find((o) => o.value === groupFilter)?.label ?? 'This group'} has no agents.`}
+						? isProfileFiltered
+							? `No ${profileFilterLabel ?? 'matching'} agents ran a query in this time range.`
+							: isGroupFiltered
+								? `No agents in ${groupOptions.find((o) => o.value === groupFilter)?.label ?? 'this group'} ran a query in this time range.`
+								: 'No agents ran a query in this time range.'
+						: isProfileFiltered && !isGroupFiltered
+							? `No agents are backed by ${profileFilterLabel ?? 'this provider account'}.`
+							: `${groupOptions.find((o) => o.value === groupFilter)?.label ?? 'This group'} has no agents${isProfileFiltered ? ` backed by ${profileFilterLabel ?? 'this provider account'}` : ''}.`}
 				</div>
 			) : filteredSessions.length === 0 ? (
 				<div
@@ -460,7 +620,7 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 				<div
 					className="grid gap-3"
 					style={{
-						gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+						gridTemplateColumns: tileGridColumns(AGENT_TILE_MIN_WIDTH, tileScale.scale),
 					}}
 					data-testid="agent-overview-cards"
 					role="region"
@@ -475,7 +635,8 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 							animationIndex={index}
 							isSelected={isSessionHighlighted(session, activeFilterKey)}
 							visibleSessions={activeSessions}
-							highlightedStat={sortMode === 'name' ? null : sortMode}
+							highlightedStat={sortMode === 'name' || sortMode === 'provider' ? null : sortMode}
+							profileLabel={profileBadgeBySessionId[session.id]}
 							onShowDetails={onShowAgentDetails}
 						/>
 					))}

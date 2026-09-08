@@ -47,6 +47,7 @@ import type {
 	QueuedItem,
 	UnifiedTabRef,
 	PaneRects,
+	QueuedItemEditPatch,
 } from '../../types';
 import type { SlashCommand } from './types';
 import type { TabCompletionSuggestion, TabCompletionFilter } from '../../hooks';
@@ -196,7 +197,7 @@ export interface MainPanelContentProps {
 	onStopBatchRun?: (sessionId?: string) => void;
 	onRemoveQueuedItem?: (itemId: string) => void;
 	onTogglePauseQueuedItem?: (itemId: string) => void;
-	onEditQueuedItem?: (itemId: string, patch: { text: string; images: string[] }) => void;
+	onEditQueuedItem?: (itemId: string, patch: QueuedItemEditPatch) => void;
 	onReorderQueuedItem?: (fromIndex: number, toIndex: number, tabId?: string) => void;
 	onForceSendQueuedItem?: (itemId: string) => void;
 	forcedParallelEnabled?: boolean;
@@ -479,7 +480,6 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 	// The command terminal can use its own font (issue #1228).
 	const terminal = useSurfaceTypography('terminal');
 	const terminalFontFamily = terminal.fontFamily;
-	const fontSize = useSettingsStore((s) => s.fontSize);
 	const enterToSendAI = useSettingsStore((s) => s.enterToSendAI);
 	const chatRawTextMode = useSettingsStore((s) => s.chatRawTextMode);
 	const userMessageAlignment = useSettingsStore((s) => s.userMessageAlignment);

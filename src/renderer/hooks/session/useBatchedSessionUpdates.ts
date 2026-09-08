@@ -17,6 +17,7 @@ import { useRef, useCallback, useEffect, useMemo } from 'react';
 import type { Session, SessionState, UsageStats, LogEntry } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
 import { canAppendToLogEntry } from '../../utils/logEntries';
+import { isAiTabHidden } from '../../utils/unifiedTabOrderUtils';
 
 // Default flush interval in milliseconds. 200ms is the sweet spot we landed on:
 // - 150ms collided with high-throughput streams (jitter from setInterval drift
@@ -549,6 +550,10 @@ export function useBatchedSessionUpdates(
 						aiTabs: updatedSession.aiTabs.map((tab) => {
 							const unread = acc.unreadTabs?.get(tab.id);
 							if (unread === undefined) return tab;
+							// A hidden consult tab is answered in the background and draws no
+							// chip, so it must never be SET unread - there would be nothing on
+							// screen to clear the badge with. Clearing one is still allowed.
+							if (unread && isAiTabHidden(tab)) return tab;
 							return { ...tab, hasUnread: unread };
 						}),
 					};

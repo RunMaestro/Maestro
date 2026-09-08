@@ -370,13 +370,13 @@ describe('AIOverviewTab', () => {
 				synopsis: '# Synopsis',
 				stats: { agentCount: 3, entryCount: 42, durationMs: 95000 },
 			});
-			// The zoom controls belong to Plain Mode - see the Rich-mode test below.
 			settingsMock.value.directorNotesSettings.defaultMode = 'plain';
 		});
 
-		// The buttons scale prose, and Rich Mode is fixed-size widget chrome, so
-		// clicking them there moved nothing and read as a broken control.
-		it('hides the controls in Rich Mode', async () => {
+		// The zoom floats over the notes in BOTH modes: Rich Mode's narrative
+		// bullets are reading text too, and a control that vanishes in the default
+		// mode is a control nobody finds.
+		it('renders the controls in Rich Mode', async () => {
 			settingsMock.value.directorNotesSettings.defaultMode = 'rich';
 
 			render(<AIOverviewTab theme={mockTheme} />);
@@ -385,11 +385,29 @@ describe('AIOverviewTab', () => {
 				expect(screen.getByTestId('rich-overview')).toBeInTheDocument();
 			});
 
-			expect(screen.queryByLabelText('Increase font size')).toBeNull();
-			expect(screen.queryByLabelText('Decrease font size')).toBeNull();
+			expect(screen.getByLabelText('Increase font size')).toBeInTheDocument();
+			expect(screen.getByLabelText('Decrease font size')).toBeInTheDocument();
 		});
 
-		it('renders increase/decrease font-size controls with the stats bar', async () => {
+		// The narrative bullets are widgets, not prose, so they need their own
+		// scaled rule or the control moves nothing in Rich Mode.
+		it('scales the Rich narrative bullets as well as prose', async () => {
+			settingsMock.value.directorNotesSettings.defaultMode = 'rich';
+
+			render(<AIOverviewTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('rich-overview')).toBeInTheDocument();
+			});
+
+			const narrativeRule = Array.from(document.querySelectorAll('style'))
+				.map((el) => el.textContent || '')
+				.find((css) => css.includes('.director-notes-narrative .text-sm'));
+
+			expect(narrativeRule).toContain('font-size: calc(0.875rem * 1)');
+		});
+
+		it('renders increase/decrease font-size controls over the notes', async () => {
 			render(<AIOverviewTab theme={mockTheme} />);
 
 			await waitFor(() => {

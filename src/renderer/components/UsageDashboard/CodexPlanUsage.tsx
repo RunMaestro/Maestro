@@ -29,6 +29,8 @@ import {
 } from './quota/quotaPrimitives';
 import { useQuotaAccounts } from './quota/useQuotaAccounts';
 import { useQuotaRefresh } from './quota/useQuotaRefresh';
+import { buildQuotaSummary } from './footerSummary';
+import { usePublishFooterSummary } from './useFooterSummary';
 
 const TEST_ID_PREFIX = 'codex-plan';
 /** Provider id used to key this panel's hidden-account set in uiStore. */
@@ -45,6 +47,12 @@ interface CodexPlanUsageProps {
 	showRefreshButton?: boolean;
 	/** Claim Cmd/Ctrl+R for Refresh while this panel is the visible surface. */
 	refreshHotkey?: boolean;
+	/**
+	 * Show the agents backed by one account. Given, each row's "N agents" chip
+	 * becomes a button that hands the account's CODEX_HOME back so the dashboard
+	 * can open the Agents tab filtered to it. Omitted, the chip stays a label.
+	 */
+	onShowAccountAgents?: (codexHomeKey: string) => void;
 }
 
 interface AccountRowProps {
@@ -53,6 +61,8 @@ interface AccountRowProps {
 	/** Agents pointed at this CODEX_HOME. */
 	agentCount: number;
 	theme: Theme;
+	/** Show this account's agents in the Agents tab. Omit to keep the chip inert. */
+	onShowAgents?: () => void;
 }
 
 const AccountRow = memo(function AccountRow({
@@ -60,6 +70,7 @@ const AccountRow = memo(function AccountRow({
 	snapshot,
 	agentCount,
 	theme,
+	onShowAgents,
 }: AccountRowProps) {
 	const shortName = deriveShortName(codexHomeKey);
 	const hasBars =
@@ -78,6 +89,7 @@ const AccountRow = memo(function AccountRow({
 					providerLabel={PROVIDER_LABEL}
 					testId={`${TEST_ID_PREFIX}-agents-${shortName}`}
 					theme={theme}
+					onClick={agentCount > 0 ? onShowAgents : undefined}
 				/>
 				{snapshot.email && (
 					<QuotaAccountEmail
@@ -164,6 +176,7 @@ export const CodexPlanUsage = memo(function CodexPlanUsage({
 	autoRefresh = true,
 	showRefreshButton = true,
 	refreshHotkey = false,
+	onShowAccountAgents,
 }: CodexPlanUsageProps) {
 	const snapshots = useCodexUsageStore((s) => s.snapshots);
 	const refreshing = useCodexUsageStore((s) => s.refreshing);
@@ -171,8 +184,6 @@ export const CodexPlanUsage = memo(function CodexPlanUsage({
 	const { configuredAccountKeys, agentCountsByAccount, setSelectedKey, effectiveSelectedKey } =
 		useQuotaAccounts({
 			toolType: 'codex',
-			envVarName: 'CODEX_HOME',
-			defaultSubdir: '.codex',
 			accountKeys,
 			snapshots,
 			normalizeKey,
@@ -189,6 +200,39 @@ export const CodexPlanUsage = memo(function CodexPlanUsage({
 		: null;
 	const snapshotCount = Object.keys(snapshots).length;
 	const lastSampledAtMs = useMemo(() => resolveLatestSampledAt(snapshots), [snapshots]);
+
+	// Footer readout, mirroring the Anthropic panel: account count, how many are
+	// locked out, and the tightest window across every account. Codex reports
+	// extra named limits alongside session/weekly, so those count toward the
+	// peak too - a wall is a wall whatever the sampler calls it.
+	const quotaFooter = useMemo(() => {
+		let peak: number | null = null;
+		let needsLogin = 0;
+		for (const key of configuredAccountKeys) {
+			const snap = snapshots[key];
+			if (!snap) continue;
+			if (snap.authState === 'unauthenticated' || snap.authState === 'missing_auth') {
+				needsLogin++;
+				continue;
+			}
+			const windows = [snap.session, snap.weekly, ...(snap.additionalLimits ?? [])];
+			for (const window of windows) {
+				if (typeof window?.percent === 'number' && (peak === null || window.percent > peak)) {
+					peak = window.percent;
+				}
+			}
+		}
+		return { peak, needsLogin };
+	}, [configuredAccountKeys, snapshots]);
+	usePublishFooterSummary(
+		'codex-usage',
+		buildQuotaSummary({
+			accounts: configuredAccountKeys.length,
+			needsLogin: quotaFooter.needsLogin,
+			peakPercent: quotaFooter.peak,
+			sampledAtMs: lastSampledAtMs,
+		})
+	);
 
 	// Hidden-account state (only meaningful in the showAllAccounts list view).
 	const hiddenKeys = useUIStore((s) => s.hiddenQuotaAccounts[PROVIDER_ID]);
@@ -236,6 +280,7 @@ export const CodexPlanUsage = memo(function CodexPlanUsage({
 					snapshot={snapshot}
 					agentCount={agentCount}
 					theme={theme}
+					onShowAgents={onShowAccountAgents ? () => onShowAccountAgents(codexHomeKey) : undefined}
 				/>
 			) : (
 				<QuotaPendingRow
@@ -246,6 +291,7 @@ export const CodexPlanUsage = memo(function CodexPlanUsage({
 					agentCount={agentCount}
 					providerLabel={PROVIDER_LABEL}
 					theme={theme}
+					onShowAgents={onShowAccountAgents ? () => onShowAccountAgents(codexHomeKey) : undefined}
 				/>
 			);
 			// Toggle sits inline to the left of the account pill (items-start keeps
@@ -273,7 +319,7 @@ export const CodexPlanUsage = memo(function CodexPlanUsage({
 				</div>
 			);
 		},
-		[snapshots, theme, hiddenSet, toggleHidden, agentCountsByAccount]
+		[snapshots, theme, hiddenSet, toggleHidden, agentCountsByAccount, onShowAccountAgents]
 	);
 
 	return (

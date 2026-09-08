@@ -248,7 +248,7 @@ export function BranchSwitcherDropdown({
 				className="px-3 py-1.5 border-t text-2xs flex items-center justify-between"
 				style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
 			>
-				<span>↑↓ navigate · Enter switch · Esc close</span>
+				<span data-shortcut-hint="">↑↓ navigate · Enter switch · Esc close</span>
 				<span>{filtered.length}</span>
 			</div>
 		</div>

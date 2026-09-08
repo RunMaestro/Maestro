@@ -71,6 +71,31 @@ describe('FontsSection', () => {
 		expect(screen.getAllByTestId('custom-font-input')).toHaveLength(1);
 	});
 
+	it('states the custom-font heading once, not again inside its card', () => {
+		// The row used to print its own "Custom fonts" title and a restatement of
+		// the description, directly under the section heading and description
+		// saying the same two things.
+		renderSection();
+
+		expect(screen.getAllByText(/custom fonts/i)).toHaveLength(1);
+		expect(
+			screen.queryByText('Added here, offered in every picker below.')
+		).not.toBeInTheDocument();
+	});
+
+	it('gives the two consecutive headings different icons', () => {
+		// Custom Fonts and Fonts sit one above the other. Under one icon they
+		// read as a single section with a stray subheading.
+		renderSection();
+		// The suite stubs every Lucide icon with an svg whose testid is the icon
+		// name, so that attribute is what identifies which icon was passed.
+		const iconFor = (settingId: string) =>
+			document.querySelector(`[data-setting-id="${settingId}"] svg`)?.getAttribute('data-testid');
+
+		expect(iconFor('display-custom-fonts')).toBeTruthy();
+		expect(iconFor('display-custom-fonts')).not.toBe(iconFor('display-fonts'));
+	});
+
 	it('renders every surface in one grid', () => {
 		// Six surfaces at two across is three even rows, so the roots no longer
 		// need a full-width exception.
@@ -245,6 +270,31 @@ describe('FontsSection', () => {
 			const select = within(screen.getByTestId('font-surface-chat')).getByRole('combobox');
 
 			expect(select).not.toHaveAttribute('title');
+		});
+	});
+
+	describe('live previews', () => {
+		it('draws every sample from the custom properties the app paints with', () => {
+			// Reading the published variables rather than re-resolving inheritance
+			// here is what stops the sample from drifting from the running app: a
+			// surface following the terminal previews whatever the terminal
+			// currently resolves to, with no second resolver to disagree.
+			renderSection();
+
+			for (const surface of TYPOGRAPHY_SURFACES) {
+				const spec = TYPOGRAPHY_SURFACE_SPECS[surface];
+				const sample = within(screen.getByTestId(`font-surface-${surface}`))
+					.getByTestId('font-preview')
+					.querySelector('p');
+
+				expect(sample?.style.fontFamily).toBe(`var(${spec.fontVar})`);
+				expect(sample?.style.fontSize).toBe(`var(${spec.sizeVar})`);
+			}
+		});
+
+		it('gives each surface its own sample rather than one for the section', () => {
+			renderSection();
+			expect(screen.getAllByTestId('font-preview')).toHaveLength(TYPOGRAPHY_SURFACES.length);
 		});
 	});
 });

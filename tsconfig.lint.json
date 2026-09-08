@@ -4,5 +4,5 @@
 		"noUnusedLocals": false,
 		"noUnusedParameters": false
 	},
-	"include": ["src/renderer", "src/shared", "src/web", "src/types"]
+	"include": ["src/renderer", "src/shared", "src/web", "src/web-desktop", "src/types"]
 }

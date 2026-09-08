@@ -4,6 +4,7 @@ import {
 	generateInlineDocuments,
 	type DocumentGenerationCallbacks,
 } from '../../../services/inlineWizardDocumentGeneration';
+import { recordWizardDocuments } from '../../../services/wizardStats';
 import { logger } from '../../../utils/logger';
 import { resolveAutoRunFolderPath } from './documents';
 import type { GenerationProgress, InlineWizardState, SetInlineWizardTabState } from './types';
@@ -174,6 +175,14 @@ export function useInlineWizardGenerationActions({
 						subfolderName: result.subfolderName || null,
 						subfolderPath: result.subfolderPath || null,
 					}));
+
+					// Record the payoff as soon as it lands. The user may sit on the
+					// review screen for a long time or never close the wizard at all,
+					// so waiting for endWizard would lose the documents entirely.
+					recordWizardDocuments(tabId, {
+						documents: finalDocs.length,
+						tasks: finalDocs.reduce((sum, doc) => sum + (doc.taskCount || 0), 0),
+					});
 
 					logger.info(
 						`Playbook generation complete - ${finalDocs.length} document(s) created`,

@@ -6,6 +6,17 @@ import type { Theme } from '../../../types';
 interface ModelEffortPillsProps {
 	isVisible: boolean;
 	theme: Theme;
+	/**
+	 * Pinned hint at the top of both dropdowns, e.g. "Try: ⌥ ⌘ .", pointing at
+	 * the full-screen model/effort switcher.
+	 *
+	 * Passed in rather than hardcoded because the chord is a rebindable
+	 * shortcut, and because not every surface that shows these pills is one the
+	 * shortcut can act on: it retunes the ACTIVE tab, so the composer offers the
+	 * hint while the queued-message editor (which edits one pending item, not
+	 * the tab) leaves it undefined. Omit it and no header row renders.
+	 */
+	shortcutHint?: string;
 	currentModel?: string;
 	currentEffort?: string;
 	availableModels: string[];
@@ -20,9 +31,27 @@ interface ModelEffortPillsProps {
 	effortMenuRef: React.RefObject<HTMLDivElement>;
 }
 
+/**
+ * Non-interactive hint row pinned above a dropdown's option list. It sits
+ * OUTSIDE the scroll container so it stays put while the list scrolls, and it
+ * is a plain div: no button, no tabIndex, nothing focusable, so it cannot be
+ * reached by keyboard or clicked into the selection.
+ */
+function ShortcutHintRow({ hint, theme }: { hint: string; theme: Theme }) {
+	return (
+		<div
+			className="px-3 py-1 text-2xs whitespace-nowrap border-b select-none"
+			style={{ color: theme.colors.textDim, borderColor: theme.colors.border }}
+		>
+			{hint}
+		</div>
+	);
+}
+
 export const ModelEffortPills = memo(function ModelEffortPills({
 	isVisible,
 	theme,
+	shortcutHint,
 	currentModel,
 	currentEffort,
 	availableModels,
@@ -62,31 +91,34 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 					</button>
 					{modelMenuOpen && (
 						<div
-							className="absolute bottom-full left-0 mb-1 max-h-48 overflow-y-auto rounded border shadow-lg z-50 scrollbar-thin"
+							className="absolute bottom-full left-0 mb-1 rounded border shadow-lg z-50"
 							style={{
 								backgroundColor: theme.colors.bgMain,
 								borderColor: theme.colors.border,
 							}}
 						>
-							{(availableModels.includes('') ? availableModels : ['', ...availableModels]).map(
-								(model) => (
-									<button
-										key={model || '__default__'}
-										onClick={() => {
-											onModelChange(model);
-											setModelMenuOpen(false);
-										}}
-										className="w-full text-left px-3 py-1.5 text-xs font-mono whitespace-nowrap hover:bg-white/10 transition-colors"
-										style={{
-											color: model === currentModel ? theme.colors.accent : theme.colors.textMain,
-											backgroundColor:
-												model === currentModel ? 'rgba(255,255,255,0.05)' : undefined,
-										}}
-									>
-										{model || '(default)'}
-									</button>
-								)
-							)}
+							{shortcutHint && <ShortcutHintRow hint={shortcutHint} theme={theme} />}
+							<div className="max-h-48 overflow-y-auto scrollbar-thin">
+								{(availableModels.includes('') ? availableModels : ['', ...availableModels]).map(
+									(model) => (
+										<button
+											key={model || '__default__'}
+											onClick={() => {
+												onModelChange(model);
+												setModelMenuOpen(false);
+											}}
+											className="w-full text-left px-3 py-1.5 text-xs font-mono whitespace-nowrap hover:bg-white/10 transition-colors"
+											style={{
+												color: model === currentModel ? theme.colors.accent : theme.colors.textMain,
+												backgroundColor:
+													model === currentModel ? 'rgba(255,255,255,0.05)' : undefined,
+											}}
+										>
+											{model || '(default)'}
+										</button>
+									)
+								)}
+							</div>
 						</div>
 					)}
 				</div>
@@ -111,29 +143,33 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 					</button>
 					{effortMenuOpen && (
 						<div
-							className="absolute bottom-full left-0 mb-1 max-h-48 overflow-y-auto rounded border shadow-lg z-50 scrollbar-thin"
+							className="absolute bottom-full left-0 mb-1 rounded border shadow-lg z-50"
 							style={{
 								backgroundColor: theme.colors.bgMain,
 								borderColor: theme.colors.border,
 							}}
 						>
-							{availableEfforts.map((effort) => (
-								<button
-									key={effort}
-									onClick={() => {
-										onEffortChange(effort);
-										setEffortMenuOpen(false);
-									}}
-									className="w-full text-left px-3 py-1.5 text-xs whitespace-nowrap hover:bg-white/10 transition-colors"
-									style={{
-										color: effort === currentEffort ? theme.colors.warning : theme.colors.textMain,
-										backgroundColor:
-											effort === currentEffort ? 'rgba(255,255,255,0.05)' : undefined,
-									}}
-								>
-									{effort || '(default)'}
-								</button>
-							))}
+							{shortcutHint && <ShortcutHintRow hint={shortcutHint} theme={theme} />}
+							<div className="max-h-48 overflow-y-auto scrollbar-thin">
+								{availableEfforts.map((effort) => (
+									<button
+										key={effort}
+										onClick={() => {
+											onEffortChange(effort);
+											setEffortMenuOpen(false);
+										}}
+										className="w-full text-left px-3 py-1.5 text-xs whitespace-nowrap hover:bg-white/10 transition-colors"
+										style={{
+											color:
+												effort === currentEffort ? theme.colors.warning : theme.colors.textMain,
+											backgroundColor:
+												effort === currentEffort ? 'rgba(255,255,255,0.05)' : undefined,
+										}}
+									>
+										{effort || '(default)'}
+									</button>
+								))}
+							</div>
 						</div>
 					)}
 				</div>

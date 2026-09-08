@@ -62,7 +62,7 @@ Tips and gotchas:
 | Jump to Nearest Terminal      | `Opt+Cmd+J`             | `Alt+Ctrl+J`              |
 | Jump to Bottom                | `Cmd+Shift+J`           | `Ctrl+Shift+J`            |
 | Toggle Bookmark               | `Cmd+Shift+B`           | `Ctrl+Shift+B`            |
-| Maestro Symphony              | `Cmd+Shift+Y`           | `Ctrl+Shift+Y`            |
+| Maestro Symphony              | `Opt+Cmd+Y`             | `Alt+Ctrl+Y`              |
 | Director's Notes              | `Cmd+Shift+O`           | `Ctrl+Shift+O`            |
 | Maestro Cue                   | `Opt+Q`                 | `Alt+Q`                   |
 | Show/Hide Concerto Stage      | `Opt+Cmd+C`             | `Alt+Ctrl+C`              |
@@ -71,6 +71,13 @@ Tips and gotchas:
 | Forced Parallel Send          | `Cmd+Shift+Enter`       | `Ctrl+Shift+Enter`        |
 | Cycle Focus Areas             | `Tab`                   | `Tab`                     |
 | Cycle Focus Backwards         | `Shift+Tab`             | `Shift+Tab`               |
+
+The full-window surfaces in that table (Settings, Usage Dashboard, Director's
+Notes, Symphony, Cue, Process Monitor, System Logs, Agent Sessions, Memory)
+replace each other rather than stacking, and their hotkeys stay live while one
+of them is up. Press `Opt+Cmd+U` from Director's Notes to land on the Usage
+Dashboard, then `Cmd+Shift+O` to go straight back. This holds for a rebound
+surface too, so a chord you chose yourself behaves the same as the default.
 
 ## Panel Shortcuts
 
@@ -95,8 +102,12 @@ Memories viewer, `Cmd+G` graphs the memories and `Cmd+U` toggles the unlinked
 filter, in place of their usual meanings.
 
 `Opt+Cmd+R` reloads the file tree, git status, worktree list, and history for
-the active agent in one press. Plain `Cmd+R` is reserved: Maestro blocks it so
-the window can never reload out from under a running agent.
+the active agent in one press. When a File Preview is open it re-reads that file
+from disk too, so everything on screen comes back fresh in one chord. A file you
+have unsaved edits in is left alone: the reload would discard them without
+asking, and the on-disk-change banner is where that question belongs. Plain
+`Cmd+R` is reserved: Maestro blocks it so the window can never reload out from
+under a running agent.
 
 ## Group Chat
 
@@ -129,10 +140,22 @@ These shortcuts work in AI Terminal mode and affect the current tab:
 | Filter Unread Tabs          | `Cmd+U`               | `Ctrl+U`              |
 | Unread Only (Agents + Tabs) | unassigned by default | unassigned by default |
 | Next Unread/Draft Tab       | `Opt+Cmd+Down`        | `Alt+Ctrl+Down`       |
+| Previous Unread/Draft Tab   | `Opt+Cmd+Up` (twice)  | `Alt+Ctrl+Up` (twice) |
 | Open Image Carousel         | `Cmd+Y`               | `Ctrl+Y`              |
+| Open Image Organizer        | `Cmd+Shift+Y`         | `Ctrl+Shift+Y`        |
 | Open Prompt Composer        | `Cmd+Shift+P`         | `Ctrl+Shift+P`        |
 
 Toggle states are saved per-tab. See [Input Toggles](./general-usage#input-toggles) for details on configuring defaults.
+
+### Walking Unread and Draft Tabs
+
+`Opt+Cmd+Down` walks forward through every tab that is unread, holds an unsent draft, or has an unfinished inline wizard. It prefers a tab in the agent you are already on, then moves to the next agent in the sidebar's visible order, wrapping around at the end.
+
+Walking backward is on the second press of `Opt+Cmd+Up`. The first press brings the current tab into focus in the tab bar and centers it. Once it is centered and focused, that press has nothing left to do, so pressing it again walks backward instead: the tab nearest the left of the strip, then the previous agent, wrapping around at the start. It is the exact mirror of `Opt+Cmd+Down`, so pressing one and then the other returns you to where you started.
+
+If you scroll the tab strip away while the tab header still holds focus, the next press re-centers it rather than jumping, so you never lose the "show me where I am" behavior.
+
+**Previous Unread/Draft Tab** is also its own entry in the command palette (`Cmd+K`) and in **Settings** → **Shortcuts**, where you can give it a dedicated chord if you would rather not press `Opt+Cmd+Up` twice. It ships unbound because the second press already reaches it.
 
 ## Tab Management Shortcuts
 
@@ -166,6 +189,8 @@ Toggle states are saved per-tab. See [Input Toggles](./general-usage#input-toggl
 In a group chat there are no AI tabs, so `Cmd+Shift+[` / `Cmd+Shift+]` walk the
 Right Bar instead, switching between the Participants and History panels. The Right
 Bar opens if it was closed.
+
+**Focus Active Tab** presses twice: the first press centers and focuses the current tab header, the second walks backward through unread and draft tabs. See [Walking Unread and Draft Tabs](#walking-unread-and-draft-tabs).
 
 ### Tab Switcher
 
@@ -362,6 +387,7 @@ the full walkthrough.
 | Copy File Path                      | `Cmd+P`         | `Ctrl+P`        |
 | Open Search                         | `Cmd+F`         | `Ctrl+F`        |
 | Toggle Table of Contents (Markdown) | `Cmd+\`         | `Ctrl+\`        |
+| Jump to Heading (Markdown)          | `#`             | `#`             |
 | Go Back                             | `Cmd+Left`      | `Ctrl+Left`     |
 | Go Forward                          | `Cmd+Right`     | `Ctrl+Right`    |
 | Scroll                              | `Up/Down Arrow` | `Up/Down Arrow` |
@@ -369,6 +395,15 @@ the full walkthrough.
 | Zoom Preview Text Out               | `-` or `_`      | `-` or `_`      |
 | Reset Preview Zoom                  | `0`             | `0`             |
 | Close                               | `Esc`           | `Esc`           |
+
+`#` opens the heading palette: every heading in the document, in the order it
+appears, with a fuzzy filter on top. Type a few characters of a section name,
+move with `Up`/`Down` (`PgUp`/`PgDn` to skip further), and press `Enter` to jump
+there. It reads the same list as the Table of Contents, so use whichever suits
+the moment - the ToC to browse, the palette to go straight to a section by name.
+Like the zoom keys below it is bare, so it never fires while you are typing in
+the find bar or editing the document. The same list is in the command palette as
+**Jump to Heading**, offered only while a markdown file is open in preview.
 
 The three zoom keys are bare - no modifier - and are distinct from the app-wide
 `Cmd+=` / `Cmd+-` in [Font Zoom](#font-zoom), which scales the whole interface.
@@ -413,6 +448,25 @@ The zoom keys are bare, like the ones in [File Preview](#file-preview), so the
 app-wide `Cmd+=` / `Cmd+-` in [Font Size](#font-size) keeps working while the
 organizer is open. They stop firing while the lightbox or the annotator is open
 on top of it.
+
+## Usage Dashboard
+
+The Agents and Groups tabs draw one tile per agent or group. The tile size is
+yours to set, and it is remembered across restarts. See
+[Usage Dashboard](./usage-dashboard).
+
+| Action                   | macOS      | Windows/Linux |
+| ------------------------ | ---------- | ------------- |
+| Bigger tiles             | `+` or `=` | `+` or `=`    |
+| Smaller tiles            | `-` or `_` | `-` or `_`    |
+| Back to the default size | `0`        | `0`           |
+
+The two tabs keep separate sizes, so widening the agent tiles leaves the group
+tiles alone. The buttons beside the sort pills do the same thing.
+
+Like the other bare zoom keys in this document, they leave `Cmd+=` / `Cmd+-`
+alone, and they stop firing while an agent or group detail view is open on top
+of the grid.
 
 ## Memories Viewer
 

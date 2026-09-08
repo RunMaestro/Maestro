@@ -37,6 +37,24 @@ export function visibleAiTabs(tabs: AITab[] | undefined): AITab[] {
 }
 
 /**
+ * Whether an agent has an unread AI tab the user can actually get to.
+ *
+ * The single predicate behind every unread SIGNAL - the Left Bar row dot, the
+ * collapsed rail dot, the sidebar bell, the tab strip's bell dot, and the
+ * "needs attention" filter. A hidden consult tab is deliberately chip-less, so
+ * counting one lights a badge with nothing on screen to clear it: the user
+ * opens the agent, sees every tab already read, and the dot stays lit forever.
+ *
+ * Cross-agent consults are the whole reason this exists. A mention is answered
+ * in the BACKGROUND on the consulted agent - it must not open a tab there and
+ * must not raise an unread anywhere. Reach for this instead of
+ * `aiTabs.some((t) => t.hasUnread)` in any surface that draws an unread mark.
+ */
+export function hasUnreadVisibleTab(tabs: AITab[] | undefined): boolean {
+	return (tabs ?? []).some((tab) => tab.hasUnread && !isAiTabHidden(tab));
+}
+
+/**
  * Narrow a unifiedTabOrder to the refs a keyboard shortcut may land on: the ones
  * `buildUnifiedTabs` actually renders as a chip.
  *

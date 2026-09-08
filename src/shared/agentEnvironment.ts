@@ -118,3 +118,37 @@ export function envSourceLabel(source: EnvVarSource): string {
 			return 'This agent';
 	}
 }
+
+/**
+ * Whether a configured env value means "do not set this variable".
+ *
+ * A blank field in the env editor is an absence, not a value. Exporting it as
+ * `FOO=` hands the child a variable that is set-but-empty, which is the worst of
+ * both worlds: code that checks `if (process.env.FOO)` skips it, but code that
+ * checks `if ('FOO' in process.env)` or reads it as a path uses `''`. That is
+ * how an agent with a blank `CLAUDE_CONFIG_DIR` ended up calling `mkdir('')` and
+ * dying before it made a single API call.
+ */
+export function isBlankEnvValue(value: string): boolean {
+	return value.trim() === '';
+}
+
+/**
+ * Drop blank-valued entries from a set of env vars.
+ *
+ * Note this is the SPAWN-time rule, and it deliberately differs from
+ * {@link resolveAgentEnvironment}, which keeps blanks because it reports what the
+ * user CONFIGURED. Callers that merge layers should merge first and strip second,
+ * so a blank at a higher layer still cancels a value set lower down - "blank
+ * means unset" only holds if the unset actually wins.
+ */
+export function stripBlankEnvVars(
+	vars: Record<string, string> | undefined
+): Record<string, string> {
+	const result: Record<string, string> = {};
+	for (const [key, value] of Object.entries(vars || {})) {
+		if (isBlankEnvValue(value)) continue;
+		result[key] = value;
+	}
+	return result;
+}

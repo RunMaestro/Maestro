@@ -397,6 +397,21 @@ export interface QueuedTurnSettings {
 	effort?: string;
 }
 
+/**
+ * What an edit to a queued message writes back.
+ *
+ * `turnSettings` is always present and is assigned wholesale rather than
+ * merged: clearing a picker back to "Default" must drop the stored field, and
+ * an absent field inside a present `turnSettings` means "the agent's default
+ * applies" - a different thing from the whole object being missing, which marks
+ * an item queued by a build that predates the capture.
+ */
+export interface QueuedItemEditPatch {
+	text: string;
+	images: string[];
+	turnSettings: QueuedTurnSettings;
+}
+
 export interface QueuedItem {
 	id: string; // Unique item ID
 	timestamp: number; // When it was queued (for ordering)
@@ -520,6 +535,18 @@ import type { BatchProcessingState } from '../hooks/batch/batchStateMachine';
 export interface BatchRunState {
 	isRunning: boolean;
 	isStopping: boolean; // Waiting for current task to finish before stopping
+
+	/**
+	 * True when this entry is a read-only MIRROR of a run owned by a different
+	 * Maestro client (see `useAutoRunStateMirror`). The run loop, its cursors,
+	 * and the refs the control actions poke all live in the owning client, so a
+	 * mirroring client can render the run but cannot steer it. Every mutator in
+	 * `useBatchControlActions` / `useBatchKillAction` bails on a mirrored entry,
+	 * and the controls that call them are disabled - a Stop button that quietly
+	 * did nothing would be worse than no Stop button. Absent (not `false`) on a
+	 * run this client actually owns.
+	 */
+	mirrored?: boolean;
 
 	// State machine integration (Phase 11)
 	// Tracks explicit processing state for invariant checking and debugging

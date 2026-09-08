@@ -24,6 +24,7 @@ import type {
 	ThinkingMode,
 	AdditionalDirectory,
 	SessionWorktreeConfig,
+	QueuedItemEditPatch,
 } from '../../types';
 import type { FileNode } from '../../types/fileTree';
 import type { WizardStep } from '../Wizard/WizardContext';
@@ -378,11 +379,7 @@ export interface AppModalsProps {
 	onSwitchQueueSession: (sessionId: string, tabId?: string) => void;
 	onReorderQueueItems: (sessionId: string, fromIndex: number, toIndex: number) => void;
 	onTogglePauseQueueItem: (sessionId: string, itemId: string) => void;
-	onEditQueueItem: (
-		sessionId: string,
-		itemId: string,
-		patch: { text: string; images: string[] }
-	) => void;
+	onEditQueueItem: (sessionId: string, itemId: string, patch: QueuedItemEditPatch) => void;
 	onForceSendQueueItem: (sessionId: string, itemId: string) => void;
 	// New tab creation (for QuickActionsModal)
 	onQuickActionsNewTab?: () => void;
@@ -391,6 +388,7 @@ export interface AppModalsProps {
 	onQuickActionsNewTerminalTab?: () => void;
 	// Next unread / draft tab navigation (shared with Alt+Cmd+Down)
 	onGoToNextUnread?: () => void;
+	onGoToPreviousUnread?: () => void;
 	// Session/tab history navigation (shared with Cmd+Shift+, / Cmd+Shift+.)
 	onNavBack?: () => void;
 	onNavForward?: () => void;
@@ -872,6 +870,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		onQuickActionsNewBrowserTab,
 		onQuickActionsNewTerminalTab,
 		onGoToNextUnread,
+		onGoToPreviousUnread,
 		onNavBack,
 		onNavForward,
 		// Group Chat modals
@@ -1241,6 +1240,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				onQuickActionsNewBrowserTab={onQuickActionsNewBrowserTab}
 				onQuickActionsNewTerminalTab={onQuickActionsNewTerminalTab}
 				onGoToNextUnread={onGoToNextUnread}
+				onGoToPreviousUnread={onGoToPreviousUnread}
 				onNavBack={onNavBack}
 				onNavForward={onNavForward}
 				onRemoveQueueItem={onRemoveQueueItem}

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import path from 'path';
 import { walkLocalFileTree } from '../../../main/utils/file-tree-walk';
 
 vi.mock('fs/promises', () => ({
@@ -26,12 +27,25 @@ const dirent = (entry: FakeEntry) => ({
 });
 
 /**
- * Point the mocked filesystem at a directory map keyed by absolute path.
+ * A path as this test writes it, whatever separator the walker produced.
+ *
+ * The walker descends with `path.join`, which emits backslashes on Windows, so
+ * a directory map keyed by a literal `/project/src` misses every lookup there
+ * and the whole tree reads as unreadable. Normalizing at the boundary keeps the
+ * fixtures readable and is a no-op on POSIX, where `path.sep` is already `/`.
+ */
+const toPosix = (p: string) => p.split(path.sep).join('/');
+
+/** Every directory the mocked `readdir` was asked for, in call order. */
+const scannedPaths = () => vi.mocked(fs.readdir).mock.calls.map((c) => toPosix(String(c[0])));
+
+/**
+ * Point the mocked filesystem at a directory map keyed by absolute POSIX path.
  * Any path missing from the map reads as an unreadable directory.
  */
 const mockTree = (dirs: Record<string, FakeEntry[]>) => {
 	vi.mocked(fs.readdir).mockImplementation((async (dirPath: string) => {
-		const entries = dirs[dirPath];
+		const entries = dirs[toPosix(dirPath)];
 		if (!entries) throw new Error(`ENOENT: ${dirPath}`);
 		return entries.map(dirent);
 	}) as never);
@@ -269,7 +283,7 @@ describe('walkLocalFileTree', () => {
 			const result = await walkLocalFileTree('/project', { maxDepth: 5, maxEntries: 2 });
 
 			expect(result.truncated).toBe(true);
-			expect(fs.readdir).not.toHaveBeenCalledWith('/project/skipped', expect.anything());
+			expect(scannedPaths()).not.toContain('/project/skipped');
 			expect(result.tree.find((n) => n.name === 'skipped')?.children).toEqual([]);
 		});
 
@@ -301,8 +315,7 @@ describe('walkLocalFileTree', () => {
 
 			await walkLocalFileTree('/project', { maxDepth: 5 });
 
-			const paths = vi.mocked(fs.readdir).mock.calls.map((c) => c[0]);
-			expect(paths).toEqual(['/project', '/project/.maestro', '/project/src']);
+			expect(scannedPaths()).toEqual(['/project', '/project/.maestro', '/project/src']);
 		});
 
 		it('loads .maestro in full even past the entry cap', async () => {
