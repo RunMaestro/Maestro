@@ -1236,6 +1236,8 @@ interface MaestroAPI {
 		stopServer: () => Promise<{ success: boolean; error?: string }>;
 		persistCurrentToken: () => Promise<{ success: boolean; message?: string }>;
 		clearPersistentToken: () => Promise<{ success: boolean; message?: string }>;
+		/** Fires when a network change moves the LAN address in the web URL. */
+		onUrlChanged: (handler: (data: { url: string }) => void) => () => void;
 	};
 	agents: {
 		detect: (sshRemoteId?: string) => Promise<AgentConfig[]>;

@@ -14,7 +14,12 @@ describe('useLiveMode', () => {
 		startServer: vi.fn(),
 		stopServer: vi.fn(),
 		disableAll: vi.fn(),
+		onUrlChanged: vi.fn(),
 	};
+
+	/** Captures the handler the hook registers so tests can fire a network change. */
+	let emitUrlChanged: ((data: { url: string }) => void) | null = null;
+	const unsubscribeUrlChanged = vi.fn();
 
 	beforeEach(() => {
 		vi.clearAllMocks();
@@ -23,6 +28,12 @@ describe('useLiveMode', () => {
 		mockLive.startServer.mockResolvedValue({ success: true, url: 'http://localhost:3000' });
 		mockLive.stopServer.mockResolvedValue(undefined);
 		mockLive.disableAll.mockResolvedValue(undefined);
+
+		emitUrlChanged = null;
+		mockLive.onUrlChanged.mockImplementation((handler: (data: { url: string }) => void) => {
+			emitUrlChanged = handler;
+			return unsubscribeUrlChanged;
+		});
 
 		(window as any).maestro = {
 			...originalMaestro,
@@ -342,5 +353,51 @@ describe('useLiveMode', () => {
 		// tunnel.stop and disableAll called once (the single "off" cycle)
 		expect(mockTunnel.stop).toHaveBeenCalledTimes(1);
 		expect(mockLive.disableAll).toHaveBeenCalledTimes(1);
+	});
+	// -----------------------------------------------------------------------
+	// Network changes (WiFi to hotspot, dock to undock)
+	// -----------------------------------------------------------------------
+
+	it('adopts the new URL when the machine moves networks while live', async () => {
+		const { result } = renderHook(() => useLiveMode());
+
+		await act(async () => {
+			await result.current.toggleGlobalLive();
+		});
+		expect(result.current.webInterfaceUrl).toBe('http://localhost:3000');
+
+		act(() => {
+			emitUrlChanged?.({ url: 'http://172.20.10.3:8080/token' });
+		});
+
+		expect(result.current.webInterfaceUrl).toBe('http://172.20.10.3:8080/token');
+		// The server never restarted, so live mode must not have flickered off.
+		expect(result.current.isLiveMode).toBe(true);
+		expect(mockLive.startServer).toHaveBeenCalledTimes(1);
+	});
+
+	it('ignores address changes while live mode is off', () => {
+		const { result } = renderHook(() => useLiveMode());
+
+		act(() => {
+			emitUrlChanged?.({ url: 'http://172.20.10.3:8080/token' });
+		});
+
+		// With Live off the server is CLI-only; its address is not user-facing.
+		expect(result.current.webInterfaceUrl).toBeNull();
+	});
+
+	it('unsubscribes from address changes on unmount', () => {
+		const { unmount } = renderHook(() => useLiveMode());
+
+		expect(mockLive.onUrlChanged).toHaveBeenCalledTimes(1);
+		unmount();
+		expect(unsubscribeUrlChanged).toHaveBeenCalledTimes(1);
+	});
+
+	it('survives a preload without the address-change channel', () => {
+		(window as any).maestro.live = { ...mockLive, onUrlChanged: undefined };
+
+		expect(() => renderHook(() => useLiveMode())).not.toThrow();
 	});
 });
