@@ -90,8 +90,14 @@ export function useSessionRestoration(): SessionRestorationReturn {
 	// useCallback/useEffect without appearing in dependency arrays. Zustand
 	// store actions returned by getState() are stable singletons that never
 	// change, so the empty deps array is intentional.
-	const { setSessions, setGroups, setActiveSessionId, hydrateActiveSessionId, setSessionsLoaded } =
-		useMemo(() => useSessionStore.getState(), []);
+	const {
+		setSessions,
+		setGroups,
+		setActiveSessionId,
+		hydrateActiveSessionId,
+		setSessionsLoaded,
+		setGroupsLoaded,
+	} = useMemo(() => useSessionStore.getState(), []);
 	const { setGroupChats } = useMemo(() => useGroupChatStore.getState(), []);
 
 	// --- initialLoadComplete proxy ref ---
@@ -646,7 +652,6 @@ export function useSessionRestoration(): SessionRestorationReturn {
 			try {
 				window.__updateSplash?.(50, 'Seating the musicians...');
 				const savedSessions = await window.maestro.sessions.getAll();
-				const savedGroups = await window.maestro.groups.getAll();
 
 				// Handle sessions
 				if (savedSessions && savedSessions.length > 0) {
@@ -697,11 +702,40 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					useSessionStore.getState().setInitialFileTreeReady(true);
 				}
 
-				// Handle groups
-				if (savedGroups && savedGroups.length > 0) {
-					setGroups(savedGroups);
-				} else {
-					setGroups([]);
+				// Handle groups.
+				//
+				// Read in its OWN try/catch, and mark the registry loaded only when
+				// the read actually came back. Three things depend on that
+				// distinction, and getting it wrong is how a user loses every group
+				// they have:
+				//
+				//   1. An empty result is ambiguous. `groups:getAll` answers `[]`
+				//      both for a user who has no groups and for a groups file that
+				//      could not be read - and the store lives under the configurable
+				//      sync path, so a cloud folder that has not finished mounting at
+				//      launch produces exactly that, with no exception anywhere.
+				//   2. The persistence effect in `useSessionLifecycle` writes the
+				//      in-memory registry straight back to disk, so an unverified
+				//      empty read becomes the new truth and every later launch
+				//      rewrites it. There is no backup and no undo.
+				//   3. A groups failure must not cost the user their AGENTS. Sharing
+				//      one try with the session read meant a rejected `groups:getAll`
+				//      landed in the outer catch and zeroed `setSessions` too.
+				//
+				// So: never persist a registry we never successfully read.
+				try {
+					const savedGroups = await window.maestro.groups.getAll();
+					setGroups(savedGroups && savedGroups.length > 0 ? savedGroups : []);
+					setGroupsLoaded(true);
+				} catch (groupsError) {
+					// Leave the in-memory registry alone and leave `groupsLoaded`
+					// false, which keeps group persistence switched off for this run.
+					// The groups on disk are untouched and come back on next launch.
+					logger.error(
+						'Failed to load groups - group saving disabled for this session:',
+						undefined,
+						groupsError
+					);
 				}
 
 				// Load group chats
@@ -713,9 +747,11 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					setGroupChats([]);
 				}
 			} catch (e) {
-				logger.error('Failed to load sessions/groups:', undefined, e);
+				logger.error('Failed to load sessions:', undefined, e);
 				setSessions([]);
-				setGroups([]);
+				// Deliberately NOT setGroups([]) here. The group registry is read in
+				// its own try above; wiping it on an unrelated session failure is the
+				// same "unverified empty becomes truth" bug one level up.
 				// Error loading sessions - no file tree to wait for
 				useSessionStore.getState().setInitialFileTreeReady(true);
 			} finally {

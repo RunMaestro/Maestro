@@ -111,6 +111,7 @@ beforeEach(() => {
 		activeSessionId: '',
 		sessionsLoaded: false,
 		initialLoadComplete: false,
+		groupsLoaded: false,
 	} as any);
 
 	useGroupChatStore.setState({
@@ -1607,6 +1608,84 @@ describe('Session & Group loading effect', () => {
 		expect(useSessionStore.getState().groups).toEqual([]);
 		expect(useSessionStore.getState().sessionsLoaded).toBe(true);
 		expect(useSessionStore.getState().initialLoadComplete).toBe(true);
+		// The groups read never ran, so the registry is NOT considered loaded and
+		// group persistence stays switched off. Without this, the empty registry
+		// above is written straight back to disk.
+		expect(useSessionStore.getState().groupsLoaded).toBe(false);
+	});
+
+	// ======================================================================
+	// Regression: the group registry wipe
+	// ======================================================================
+	//
+	// `groups:getAll` answers `[]` both for "this user has no groups" and for a
+	// registry that could not be read, and the store lives under the
+	// configurable sync path, so a cloud folder that has not mounted yet
+	// produces the second with no exception at all. The persistence effect then
+	// wrote that empty registry back as the new truth. `groupsLoaded` is what
+	// tells those two apart.
+
+	describe('group registry load guard', () => {
+		it('marks the registry loaded when groups come back', async () => {
+			mockGetAll.mockResolvedValueOnce([]);
+			mockGroupsGetAll.mockResolvedValueOnce([
+				{ id: 'g1', name: 'Group 1', emoji: '', collapsed: false },
+			]);
+
+			renderHook(() => useSessionRestoration());
+
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 50));
+			});
+
+			expect(useSessionStore.getState().groups).toHaveLength(1);
+			expect(useSessionStore.getState().groupsLoaded).toBe(true);
+		});
+
+		it('marks the registry loaded when the user genuinely has no groups', async () => {
+			mockGetAll.mockResolvedValueOnce([]);
+			mockGroupsGetAll.mockResolvedValueOnce([]);
+
+			renderHook(() => useSessionRestoration());
+
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 50));
+			});
+
+			// An empty result that we actually READ is a real answer, so
+			// persistence must stay enabled - otherwise a brand new user could
+			// never save their first group.
+			expect(useSessionStore.getState().groupsLoaded).toBe(true);
+		});
+
+		it('leaves the registry unloaded when the groups read fails', async () => {
+			mockGetAll.mockResolvedValueOnce([]);
+			mockGroupsGetAll.mockRejectedValueOnce(new Error('groups store unreadable'));
+
+			renderHook(() => useSessionRestoration());
+
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 50));
+			});
+
+			expect(useSessionStore.getState().groupsLoaded).toBe(false);
+		});
+
+		it('keeps the agent list when the groups read fails', async () => {
+			mockGetAll.mockResolvedValueOnce([createMockSession({ id: 'loaded-1' })]);
+			mockGroupsGetAll.mockRejectedValueOnce(new Error('groups store unreadable'));
+
+			renderHook(() => useSessionRestoration());
+
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 50));
+			});
+
+			// A groups failure used to share a try with the session read, so it
+			// landed in the outer catch and zeroed the agents too.
+			expect(useSessionStore.getState().sessions).toHaveLength(1);
+			expect(useSessionStore.getState().sessionsLoaded).toBe(true);
+		});
 	});
 
 	it('handles group chat load failure gracefully', async () => {

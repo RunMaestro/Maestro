@@ -31,6 +31,7 @@ import type { Group, SessionCliActivity } from '../../../shared/types';
 import type { PluginEvent } from '../../../shared/plugins/events';
 import { buildSessionLifecycleEvents } from './plugin-session-events';
 import { relocateSessionImages, resolveToDataUrl } from '../../storage/session-image-store';
+import { backupGroupsBeforeWipe } from '../../stores/groups-backup';
 
 /**
  * Shallow-compare cliActivity for the diff broadcast.
@@ -768,6 +769,21 @@ export function registerPersistenceHandlers(
 
 	ipcMain.handle('groups:setAll', async (_, groups: Group[]) => {
 		try {
+			// Back the registry up before letting an empty one replace it.
+			//
+			// Emptying the group registry is unrecoverable: the group rows carry the
+			// names, emoji and collapsed state, and nothing else on disk holds a
+			// second copy. Agents keep their `groupId`, so the ids survive and point
+			// at rows that no longer exist. A single bad write costs the user every
+			// group they have.
+			//
+			// Deleting the last group is a legitimate thing to do, so this does not
+			// refuse the write - it keeps a copy first, which turns a permanent loss
+			// into a recoverable one. It sits here rather than in the renderer on
+			// purpose: the CLI (`remove-group`) and the web bridge reach the store
+			// through this same handler, so guarding at one caller would not cover
+			// the others.
+			await backupGroupsBeforeWipe(groupsStore, groups);
 			groupsStore.set('groups', groups);
 		} catch (err) {
 			const code = (err as NodeJS.ErrnoException).code;
