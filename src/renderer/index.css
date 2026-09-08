@@ -1963,17 +1963,15 @@ html[data-runtime='web-desktop'] .session-row {
 }
 
 /*
- * Tab action sheet (TabOverlayPortal on a phone). The menu CONTENT inside is
- * the very same element the desktop hover popover shows; these rules restyle
- * it for a finger without the five menu components knowing which shell they
- * are in. `!important` because the menus set their width, borders, and radius
- * as inline styles for the anchored shape.
+ * Bottom sheet chrome, shared by every caller of <PhoneBottomSheet> (the tab
+ * action menu, the composer options sheet). The scrim and the rise animation
+ * belong to the shell; what each caller adds is the styling of its own body.
  */
-.maestro-tab-sheet {
+.maestro-phone-sheet {
 	background: rgba(0, 0, 0, 0.45);
 	animation: maestro-fade-in 150ms ease;
 }
-.maestro-tab-sheet__panel {
+.maestro-phone-sheet__panel {
 	animation: maestro-sheet-up 180ms ease-out;
 }
 @keyframes maestro-sheet-up {
@@ -1986,6 +1984,14 @@ html[data-runtime='web-desktop'] .session-row {
 		opacity: 1;
 	}
 }
+/*
+ * Tab action sheet body. The menu CONTENT inside is the very same element the
+ * desktop hover popover shows; these rules restyle it for a finger without the
+ * five menu components knowing which shell they are in. `!important` because
+ * the menus set their width, borders, and radius as inline styles for the
+ * anchored shape. Scoped to the TAB sheet on purpose - a sheet whose content
+ * was written for a phone in the first place must not be flattened this way.
+ */
 .maestro-tab-sheet__body > * {
 	min-width: 0 !important;
 	max-width: none !important;
