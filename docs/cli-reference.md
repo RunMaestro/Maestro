@@ -1086,6 +1086,20 @@ Remove an SSH remote configuration
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
+## `maestro-cli test-ssh-remote <remote-id>`
+
+Test an SSH remote connection and report what the remote answered
+
+Dials the remote with the same options an agent spawn uses and prints the
+remote's hostname, so a wrong `ProxyCommand` is caught at setup rather than
+surfacing later as an agent that will not start. Works with the desktop closed.
+
+| Option                  | Description                                          | Default |
+| ----------------------- | ---------------------------------------------------- | ------- |
+| `-a, --agent <command>` | Also check whether this binary is on the remote PATH | -       |
+| `--timeout <seconds>`   | Give up after this many seconds                      | `60`    |
+| `--json`                | Output as JSON (for scripting)                       | -       |
+
 ## `maestro-cli settings`
 
 View and manage Maestro configuration

@@ -461,7 +461,11 @@ describe('SshRemoteManager', () => {
 
 			const args = mockExecSsh.mock.calls[0][1] as string[];
 			const lastArg = args[args.length - 1];
-			expect(lastArg).toContain('which claude');
+			// `command -v`, not `which`: `which` is an external binary that minimal
+			// remote images (BusyBox, slim containers) do not ship, and its own "not
+			// found" would be misread as the AGENT being absent. `command -v` is a
+			// POSIX shell builtin, so it is always there.
+			expect(lastArg).toContain('command -v claude');
 		});
 
 		it('handles no route to host error', async () => {

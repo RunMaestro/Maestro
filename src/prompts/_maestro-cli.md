@@ -53,6 +53,34 @@ If declined, offer a manual fallback (e.g. a one-shot `send` later instead of a 
 
 **Auto Run.** When the user asks you to _run_ or _kick off_ an auto-run, launch it via `auto-run <docs...> --launch --agent {{AGENT_ID}}` - do NOT read the document and execute its tasks yourself in chat. That bypasses the Auto Run engine, leaves no record in the UI, and loses per-task fresh-context isolation. Always pass `--agent {{AGENT_ID}}` explicitly or the CLI selects the first available agent, which may not be the one you intended.
 
+**Remote agents over SSH, including transports with no open port.** An agent can run on another machine, and the transport is expressed as ordinary `ssh -o` options rather than a flag per product. There is no `--tailscale`, no `--tailcat`, no `--cloudflared`, and none is needed: `--ssh-option KEY=VALUE` (repeatable, on both `create-ssh-remote` and `update-ssh-remote`) is the escape hatch, and a command-line `-o` outranks `~/.ssh/config`, so it is also the only way to override one of Maestro's own defaults.
+
+Three shapes cover essentially every ask:
+
+- **A tunnel or overlay network, nothing listening on the public internet** (tailcat, Tailscale, cloudflared, Teleport, a SOCKS proxy). Point `ProxyCommand` at the tool: `--ssh-option "ProxyCommand=/path/to/tool <args> 22"`. This is the answer to "how do I SSH without opening a port / forwarding a tunnel". The host does not need to be reachable; the ProxyCommand carries the connection.
+- **A bastion or jump box.** `--ssh-option ProxyJump=user@bastion`.
+- **It already works from my terminal.** Use `--ssh-config` and pass the `Host` pattern as the host. Maestro then reads `~/.ssh/config` for User, Port, HostName, and IdentityFile, so a working setup is reused rather than restated.
+
+**A tunnelled remote needs connection sharing, and leaving it out looks like a flaky network.** Maestro opens several SSH connections per agent (AI tab, terminal tab, file tree, git probes, provider probes). Single-flight transports fail the extras: measured on a tailcat remote, three simultaneous dials produced one success and two `context deadline exceeded`, while the same three staggered two seconds apart all succeeded. Whenever you set a `ProxyCommand`, set these in the same command so every connection rides one master:
+
+```
+--ssh-option ControlMaster=auto --ssh-option ControlPath=~/.ssh/cm-%C \
+  --ssh-option ControlPersist=10m --ssh-option ServerAliveInterval=30 \
+  --ssh-option ConnectTimeout=45
+```
+
+A tunnel also completes its handshake slower than a LAN host, so raise `ConnectTimeout` above the 10s default. `RequestTTY` is reserved and rejected: it is derived per command from whether the remote agent speaks stream-json, and pinning it corrupts that stream.
+
+**Set one up end to end, and verify before handing it over.**
+
+1. `create-ssh-remote "<name>" -H <host> -u <user> --ssh-option ...` prints the remote ID.
+2. `test-ssh-remote <id> --agent claude-code` dials it and reports the remote's hostname, plus whether that binary is on the remote PATH. Always run this. Until it passes, a wrong `ProxyCommand` stays invisible and surfaces much later as an agent that will not start, somewhere that never mentions SSH.
+3. `create-agent "<name>" --ssh-remote <id> --ssh-cwd <remote path> --background`.
+
+If step 2 connects but reports the agent NOT found, the binary is installed somewhere off the non-interactive PATH. Pass `create-agent --custom-path /absolute/path/on/remote` rather than asking the user to edit their shell profile: an SSH command runs without their interactive rc files, so a PATH set in `.zshrc` is not in effect.
+
+**Never hand-edit `maestro-settings.json` to change a remote.** The desktop owns that file and rewrites it, so an edit made while Maestro is running is silently lost. `update-ssh-remote <id>` is the only safe path, and it can also park a value instead of destroying it: `--disable-ssh-option ProxyCommand` keeps the string while taking it out of the connection, and `--enable-ssh-option` puts it back. That is how you test whether the tunnel is the problem without making the user paste the blob again.
+
 **Asking another agent vs handing it work.** These are different verbs and the difference is the other agent's user.
 
 - `ask <agent> "<question>" --from {{AGENT_ID}}` when you want an ANSWER. It runs the same background consult a typed `@mention` does: a hidden tab on that agent, a fresh context, no focus, no unread, and the reply comes back to you on stdout. Nothing appears in the conversation the human has open with that agent. Pass `--from {{AGENT_ID}}` so the consult is attributed to you, a follow-up `ask` resumes the same thread, that agent may read YOUR working directory, and Stop on you cancels it.

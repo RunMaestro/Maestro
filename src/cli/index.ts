@@ -54,6 +54,7 @@ import { sendTerminal } from './commands/send-terminal';
 import { readTerminal, DEFAULT_TAIL_LINES } from './commands/read-terminal';
 import { createSshRemote } from './commands/create-ssh-remote';
 import { removeSshRemote } from './commands/remove-ssh-remote';
+import { testSshRemote } from './commands/test-ssh-remote';
 import { updateSshRemote } from './commands/update-ssh-remote';
 import { directorNotesHistory } from './commands/director-notes-history';
 import { directorNotesSynopsis } from './commands/director-notes-synopsis';
@@ -1324,6 +1325,15 @@ program
 	.description('Remove an SSH remote configuration')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(removeSshRemote);
+
+// Test SSH remote command - dial a configured remote and report the result
+program
+	.command('test-ssh-remote <remote-id>')
+	.description('Test an SSH remote connection and report what the remote answered')
+	.option('-a, --agent <command>', 'Also check whether this binary is on the remote PATH')
+	.option('--timeout <seconds>', 'Give up after this many seconds (default: 60)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(testSshRemote);
 
 // Display / typography commands
 //

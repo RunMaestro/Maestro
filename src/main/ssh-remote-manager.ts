@@ -10,7 +10,13 @@ import { execFileNoThrow, ExecResult } from './utils/execFile';
 import { expandTilde } from '../shared/pathUtils';
 import { captureException } from './utils/sentry';
 import { getPathAccessCache, defaultReadableProbe } from './utils/path-access-cache';
-import { buildSshOptionArgs, validateSshOption } from '../shared/sshOptions';
+import { validateSshOption } from '../shared/sshOptions';
+import {
+	buildSshConnectionArgs,
+	buildSshProbeCommand,
+	describeSshConnectionError,
+	readSshProbeOutput,
+} from '../shared/sshConnection';
 
 /**
  * Validation result for SSH remote configuration.
@@ -164,12 +170,7 @@ export class SshRemoteManager {
 		// Build SSH command for connection test
 		const sshArgs = this.buildSshArgs(config);
 
-		// Test command: echo marker, get hostname, optionally check agent
-		let testCommand = 'echo "SSH_OK" && hostname';
-		if (agentCommand) {
-			testCommand += ` && which ${agentCommand} 2>/dev/null || echo "AGENT_NOT_FOUND"`;
-		}
-		sshArgs.push(testCommand);
+		sshArgs.push(buildSshProbeCommand(agentCommand));
 
 		try {
 			const result = await this.deps.execSsh('ssh', sshArgs);
@@ -180,28 +181,16 @@ export class SshRemoteManager {
 				return { success: false, error: errorMessage };
 			}
 
-			const lines = result.stdout.trim().split('\n');
-
-			// Verify we got our marker
-			if (lines[0] !== 'SSH_OK') {
+			const reading = readSshProbeOutput(result.stdout, Boolean(agentCommand));
+			if (!reading.ok) {
 				return { success: false, error: 'Unexpected response from remote host' };
-			}
-
-			// Extract hostname and agent info
-			const hostname = lines[1] || 'unknown';
-			let agentVersion: string | undefined;
-
-			if (agentCommand && lines[2]) {
-				if (lines[2] !== 'AGENT_NOT_FOUND') {
-					agentVersion = 'installed'; // Path found = agent installed
-				}
 			}
 
 			return {
 				success: true,
 				remoteInfo: {
-					hostname,
-					agentVersion,
+					hostname: reading.hostname ?? 'unknown',
+					agentVersion: reading.agentFound ? 'installed' : undefined,
 				},
 			};
 		} catch (err) {
@@ -226,36 +215,9 @@ export class SshRemoteManager {
 	 * @returns Array of SSH command-line arguments
 	 */
 	buildSshArgs(config: SshRemoteConfig): string[] {
-		const args: string[] = [];
-
-		// Force disable TTY allocation - this helps prevent shell rc files from being sourced
-		args.push('-T');
-
-		// Private key - only add if explicitly provided
-		// SSH will use ~/.ssh/config or ssh-agent if no key is specified
-		if (config.privateKeyPath && config.privateKeyPath.trim()) {
-			args.push('-i', expandTilde(config.privateKeyPath));
-		}
-
-		// Default SSH options plus this remote's overrides. Shared with the agent
-		// spawn builder so a remote cannot test green here and then connect with a
-		// different option set when an agent actually runs on it.
-		args.push(...buildSshOptionArgs(config.sshOptions));
-
-		// Port (only add if not using SSH config, or if non-default)
-		if (!config.useSshConfig || config.port !== 22) {
-			args.push('-p', config.port.toString());
-		}
-
-		// Build destination - use user@host if username provided, otherwise just host
-		// SSH will use current user or ~/.ssh/config User directive if no username specified
-		if (config.username && config.username.trim()) {
-			args.push(`${config.username}@${config.host}`);
-		} else {
-			args.push(config.host);
-		}
-
-		return args;
+		// Delegates so the connection this tests is byte-identical to the one an
+		// agent spawn opens. See src/shared/sshConnection.ts.
+		return buildSshConnectionArgs(config);
 	}
 
 	/**
@@ -265,49 +227,8 @@ export class SshRemoteManager {
 	 * @returns Human-readable error message, or undefined if not recognized
 	 */
 	private parseSSHError(stderr: string): string | undefined {
-		const lowerStderr = stderr.toLowerCase();
-
-		if (lowerStderr.includes('permission denied')) {
-			return 'Authentication failed. Check username and private key.';
-		}
-
-		if (lowerStderr.includes('connection refused')) {
-			return 'Connection refused. Check host and port.';
-		}
-
-		if (lowerStderr.includes('connection timed out') || lowerStderr.includes('timed out')) {
-			return 'Connection timed out. Check host and network.';
-		}
-
-		if (lowerStderr.includes('no route to host')) {
-			return 'No route to host. Check host address and network.';
-		}
-
-		if (
-			lowerStderr.includes('could not resolve hostname') ||
-			lowerStderr.includes('name or service not known')
-		) {
-			return 'Could not resolve hostname. Check the host address.';
-		}
-
-		if (lowerStderr.includes('remote host identification has changed')) {
-			return 'SSH host key changed. Verify server identity and update known_hosts.';
-		}
-
-		if (lowerStderr.includes('passphrase')) {
-			return 'Private key has a passphrase. Key-based auth requires passphrase-less keys.';
-		}
-
-		if (lowerStderr.includes('no such file')) {
-			return 'Private key file not found.';
-		}
-
-		// Return the raw stderr if we don't recognize the pattern
-		if (stderr.trim()) {
-			return stderr.trim();
-		}
-
-		return undefined;
+		// Shared so the CLI's test verb names a failure exactly as the app does.
+		return describeSshConnectionError(stderr);
 	}
 }
 
