@@ -43,6 +43,25 @@ export const MAX_STATUS_BAR_INSET_PX = 80;
 export const STATUS_BAR_INSET_PROPERTY = '--maestro-status-bar-inset';
 
 /**
+ * CSS custom property carrying the height actually visible to the user, on
+ * `<html>`.
+ *
+ * `100dvh` is the *layout* viewport, and on iOS the on-screen keyboard does
+ * not shrink it - it slides over the page. A full-screen phone modal sized to
+ * `100dvh` therefore keeps its full height while the bottom ~45% of it sits
+ * under the keyboard. Both search surfaces autofocus their input on open (the
+ * command palette's `autoFocus`, the tab switcher's `useFocusOnMount`), so the
+ * keyboard is up from the first frame and the results list is born mostly
+ * buried: the user can type to filter, but the rows they are trying to scroll
+ * through are behind the keys. That is the "I can filter but I can't scroll
+ * the options" report.
+ *
+ * `visualViewport.height` is the half that does shrink, so publishing it lets
+ * the phone rules size a modal to what the user can actually see.
+ */
+export const VIEWPORT_HEIGHT_PROPERTY = '--maestro-viewport-height';
+
+/**
  * The status bar height WebKit hid from `env()`, or 0 when there is nothing to
  * correct: not a home-screen web app, landscape (iOS hides the bar there and
  * `screen.height` stays the long edge), a viewport already sized to the
@@ -67,6 +86,21 @@ export function sampleStandaloneViewport(win: Window): StandaloneViewportSample 
 }
 
 /**
+ * The height the user can actually see, in CSS px.
+ *
+ * `visualViewport.height` when the browser reports one (every iOS Safari that
+ * can raise a keyboard does), otherwise `innerHeight`, which is the same
+ * number on a platform where the keyboard already shrinks the layout viewport.
+ * Rounded DOWN so a fractional height can never exceed the real viewport and
+ * push the modal's own footer off the bottom edge.
+ */
+export function measureVisibleViewportHeight(win: Window): number {
+	const visual = win.visualViewport?.height;
+	const height = typeof visual === 'number' && visual > 0 ? visual : win.innerHeight;
+	return Number.isFinite(height) && height > 0 ? Math.floor(height) : 0;
+}
+
+/**
  * Publish the measured inset on `<html>` and keep it current across rotation
  * and viewport changes. Returns a disposer.
  */
@@ -74,6 +108,12 @@ export function installStandaloneStatusBarInset(win: Window): () => void {
 	const apply = () => {
 		const px = measureStandaloneStatusBarInset(sampleStandaloneViewport(win));
 		win.document.documentElement.style.setProperty(STATUS_BAR_INSET_PROPERTY, `${px}px`);
+		// Republished on the same events: the keyboard opening is a
+		// `visualViewport` resize, and it is the event this value exists for.
+		const visible = measureVisibleViewportHeight(win);
+		if (visible > 0) {
+			win.document.documentElement.style.setProperty(VIEWPORT_HEIGHT_PROPERTY, `${visible}px`);
+		}
 	};
 	apply();
 	win.addEventListener('resize', apply);

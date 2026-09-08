@@ -775,6 +775,23 @@ describe('MainPanel', () => {
 			expect(screen.getByText('LOCAL')).toBeInTheDocument();
 		});
 
+		it('should tag the LOCAL badge with the phone-layout hook class', () => {
+			const session = createSession({ isGitRepo: false });
+			renderMainPanel({ activeSession: session });
+
+			// The phone stylesheet retires the inert LOCAL badge by this class.
+			expect(screen.getByText('LOCAL')).toHaveClass('header-local-badge');
+		});
+
+		it('should not tag the git branch pill with the phone-layout hook class', async () => {
+			const session = createSession({ isGitRepo: true });
+			renderMainPanel({ activeSession: session });
+
+			// The git pill opens a menu, so it survives on a phone.
+			const branch = await screen.findByText(/GIT|main/);
+			expect(branch.closest('button')).not.toHaveClass('header-local-badge');
+		});
+
 		it('should display GIT badge with branch name for git repos', async () => {
 			const session = createSession({ isGitRepo: true });
 			renderMainPanel({ activeSession: session });

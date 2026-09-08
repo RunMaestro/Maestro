@@ -42,6 +42,7 @@ import { useFileExplorerStore } from '../../stores/fileExplorerStore';
 import {
 	clearDesktopAiTabSelections,
 	consumeDesktopAiTabSelection,
+	noteDesktopAiTabSelection,
 } from '../../utils/desktopTabSelectionSync';
 import { loadAllSettings } from '../../stores/settingsStore';
 
@@ -642,6 +643,13 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				// A background create must not pull the Left Bar over either.
 				if (newTabId && !background) {
 					setActiveSessionId(sessionId);
+					// The inventory poll broadcasts `activeTabChanged` ONLY for a tab
+					// selection it was told about, and a browser client ignores a new
+					// active tab without that flag. Creating a foreground tab from the
+					// web interface therefore added the chip on the phone and left the
+					// user on the old conversation, which reads as the button doing
+					// nothing. A foreground create IS a selection, so say so.
+					noteDesktopAiTabSelection(sessionId, newTabId);
 				}
 
 				// Send response back with the new tab ID
@@ -701,6 +709,11 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					});
 					if (createdTabId && !background) {
 						setActiveSessionId(sessionId);
+						// Same reason as the plain new-tab handler above: without this
+						// the poll broadcasts the new active tab with
+						// `activeTabChanged: false`, and a browser watching this agent
+						// keeps rendering the tab the user was already on.
+						noteDesktopAiTabSelection(sessionId, createdTabId);
 					}
 				});
 				if (!createdTabId) {

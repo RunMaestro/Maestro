@@ -2,6 +2,7 @@ import React, { memo, useState, useEffect, useRef, useCallback } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import type { Session } from '../../types';
 import type { QuickAction, QuickActionsModalProps } from './types';
+import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { useResizableModal } from '../../hooks/ui/useResizableModal';
 import { useFocusAfterRender } from '../../hooks/utils/useFocusAfterRender';
@@ -353,6 +354,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	}, [openModal]);
 
 	const inputRef = useRef<HTMLInputElement>(null);
+	const phone = usePhoneLayout();
 	const selectedItemRef = useRef<HTMLButtonElement>(null);
 	const scrollContainerRef = useRef<HTMLDivElement>(null);
 	const modalRef = useRef<HTMLDivElement>(null);
@@ -401,7 +403,13 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	// Register layer on mount - escape behavior depends on current mode.
 	useModalLayer(MODAL_PRIORITIES.QUICK_ACTION, 'Quick Actions', handleEscape);
 
-	useFocusAfterRender(inputRef, true, 0);
+	// Not on a phone. Focusing the field raises the iOS keyboard, which covers
+	// roughly the bottom half of a full-screen palette - so the list the user
+	// opened the palette to browse is buried before they have seen a single row,
+	// and the only way to reach it is to dismiss a keyboard they never asked for.
+	// A phone user taps the field when they want to filter; a desktop user is
+	// already typing, and there the keyboard costs nothing.
+	useFocusAfterRender(inputRef, !phone, 0);
 
 	// Track scroll position to determine which items are visible.
 	// Items have variable height (subtext / runningInfo presence, plus LIVE/IDLE

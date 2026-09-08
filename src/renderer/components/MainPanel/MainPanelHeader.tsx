@@ -322,7 +322,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 					    something else genuinely needs the pixels. */}
 					<div
 						ref={gitPillRef}
-						className="relative min-w-0 flex items-center gap-2"
+						className="header-git-pill relative min-w-0 flex items-center gap-2"
 						{...gitPillHoverHandlers}
 					>
 						{/* SSH Host Pill - show SSH remote name when running remotely (replaces the
@@ -341,11 +341,15 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 								<span className="truncate uppercase">{sshRemoteName}</span>
 							</button>
 						) : (
+							/* The LOCAL badge carries the `header-local-badge` hook so the phone
+							   layout can retire it. It is inert for non-git agents (no menu, no
+							   hover handlers), so on a 390px header it spends width to say
+							   nothing; the git pill keeps its icon because that one opens a menu. */
 							<button
 								className={`flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full border min-w-0 cursor-pointer outline-none ${
 									activeSession.isGitRepo
 										? 'border-orange-500/30 text-orange-500 bg-orange-500/10 hover:bg-orange-500/20'
-										: 'border-blue-500/30 text-blue-500 bg-blue-500/10'
+										: 'header-local-badge border-blue-500/30 text-blue-500 bg-blue-500/10'
 								}`}
 								onClick={handleGitPillClick}
 								title={activeSession.isGitRepo && gitInfo?.branch ? gitInfo.branch : undefined}

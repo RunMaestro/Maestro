@@ -11,7 +11,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
 	installStandaloneStatusBarInset,
 	measureStandaloneStatusBarInset,
+	measureVisibleViewportHeight,
 	STATUS_BAR_INSET_PROPERTY,
+	VIEWPORT_HEIGHT_PROPERTY,
 } from '../../../renderer/utils/standaloneStatusBar';
 
 const portrait = { standalone: true, screenHeight: 874, innerHeight: 812, innerWidth: 402 };
@@ -91,5 +93,65 @@ describe('installStandaloneStatusBarInset', () => {
 		});
 		window.dispatchEvent(new Event('resize'));
 		expect(document.documentElement.style.getPropertyValue(STATUS_BAR_INSET_PROPERTY)).toBe('62px');
+	});
+});
+
+/**
+ * The visible-viewport height exists for one failure: on iOS the on-screen
+ * keyboard slides OVER the layout viewport instead of shrinking it, so a
+ * full-screen phone modal sized to 100dvh keeps its full height with its
+ * bottom half behind the keys - and the results list the user opened it to
+ * scroll through is buried.
+ */
+describe('measureVisibleViewportHeight', () => {
+	function win(innerHeight: number, visualHeight?: number): Window {
+		return {
+			innerHeight,
+			visualViewport: visualHeight === undefined ? undefined : { height: visualHeight },
+		} as unknown as Window;
+	}
+
+	it('prefers the visual viewport, which is what the keyboard shrinks', () => {
+		expect(measureVisibleViewportHeight(win(844, 508))).toBe(508);
+	});
+
+	it('falls back to innerHeight where there is no visualViewport', () => {
+		expect(measureVisibleViewportHeight(win(844))).toBe(844);
+	});
+
+	it('rounds DOWN so a fractional height cannot exceed the real viewport', () => {
+		expect(measureVisibleViewportHeight(win(844, 507.6))).toBe(507);
+	});
+
+	it('falls back rather than publishing a zero height', () => {
+		expect(measureVisibleViewportHeight(win(844, 0))).toBe(844);
+	});
+
+	it('publishes the visible height on <html> and follows a keyboard opening', () => {
+		const visualViewport = {
+			height: 844,
+			listeners: new Map<string, () => void>(),
+			addEventListener(type: string, cb: () => void) {
+				this.listeners.set(type, cb);
+			},
+			removeEventListener(type: string) {
+				this.listeners.delete(type);
+			},
+		};
+		Object.defineProperty(window, 'visualViewport', {
+			value: visualViewport,
+			configurable: true,
+		});
+
+		const dispose = installStandaloneStatusBarInset(window);
+		expect(document.documentElement.style.getPropertyValue(VIEWPORT_HEIGHT_PROPERTY)).toBe('844px');
+
+		// The keyboard comes up: only the visual viewport shrinks.
+		visualViewport.height = 508;
+		visualViewport.listeners.get('resize')?.();
+		expect(document.documentElement.style.getPropertyValue(VIEWPORT_HEIGHT_PROPERTY)).toBe('508px');
+
+		dispose();
+		Object.defineProperty(window, 'visualViewport', { value: undefined, configurable: true });
 	});
 });

@@ -2014,6 +2014,36 @@ html[data-runtime='web-desktop'][data-bp='xs'] [data-shortcut-hint] {
 }
 
 /*
+ * Readouts leave the main panel header on a phone: the session cost pill, the
+ * context-remaining percentage, and the inert LOCAL badge. The container-query
+ * rungs above drop these too, but only below 350px / 400px, and a phone header
+ * is the full ~390px viewport - so every rung stayed unfired while the row was
+ * already crowded enough to clip the agent name and overlap the badges.
+ *
+ * All three are readouts, not controls, which is what makes them the ones to
+ * drop: cost and context are still on the Usage Dashboard and the context
+ * timeline panel, and the LOCAL badge has no behavior at all (see the pill's
+ * hover handlers in MainPanelHeader). What stays is everything that DOES
+ * something - the sidebar toggle, the git pill's icon and its menu, the tab
+ * strip, and the panel buttons.
+ */
+html[data-runtime='web-desktop'][data-bp='xs'] .header-cost-widget,
+html[data-runtime='web-desktop'][data-bp='xs'] .header-context-widget,
+html[data-runtime='web-desktop'][data-bp='xs'] .header-local-badge {
+	display: none;
+}
+
+/*
+ * The pill wrapper keeps its `gap-2` after the badge inside it goes, which
+ * leaves 8px of empty space between the agent name and the next control. It is
+ * only ever empty once its one child is hidden, so `:empty` retires it without
+ * anything having to know which branch rendered.
+ */
+html[data-runtime='web-desktop'][data-bp='xs'] .header-git-pill:empty {
+	display: none;
+}
+
+/*
  * Modals take the whole screen. Every resizable modal stamps
  * `data-modal-resize-key` (the palette, Settings, the Usage Dashboard,
  * Director's Notes, Process Monitor, file search, ...) and sizes itself to a
@@ -2030,8 +2060,21 @@ html[data-runtime='web-desktop'][data-bp='xs'] .modal-overlay {
 html[data-runtime='web-desktop'][data-bp='xs'] [data-modal-resize-key] {
 	width: 100vw !important;
 	width: 100dvw !important;
+	/*
+	 * Sized to what the user can SEE, not to the layout viewport. On iOS the
+	 * on-screen keyboard slides over the page instead of shrinking it, so
+	 * `100dvh` keeps a full-screen modal at full height with its bottom ~45%
+	 * behind the keys. Both search surfaces autofocus their input, so the
+	 * keyboard is up from the first frame and the results list is born buried:
+	 * typing filters, but the rows the user is trying to scroll through are
+	 * under the keyboard. `--maestro-viewport-height` is `visualViewport.height`,
+	 * republished on every keyboard open and close (standaloneStatusBar.ts);
+	 * `100dvh` is the fallback for a browser with no visualViewport, where the
+	 * two are the same number anyway.
+	 */
 	height: calc(
-		100dvh - var(--maestro-top-inset, 0px) - env(safe-area-inset-bottom, 0px)
+		var(--maestro-viewport-height, 100dvh) - var(--maestro-top-inset, 0px) -
+			env(safe-area-inset-bottom, 0px)
 	) !important;
 	max-width: none !important;
 	max-height: none !important;

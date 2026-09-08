@@ -85,7 +85,9 @@ describe('useRemoteIntegration', () => {
 				activeTabChanged?: boolean
 		  ) => void)
 		| undefined;
-	let onRemoteNewTabHandler: ((sessionId: string, responseChannel: string) => void) | undefined;
+	let onRemoteNewTabHandler:
+		| ((sessionId: string, responseChannel: string, background?: boolean) => void)
+		| undefined;
 	let onRemoteCloseTabHandler: ((sessionId: string, tabId: string) => void) | undefined;
 	let onRemoteRenameTabHandler:
 		| ((
@@ -2935,6 +2937,52 @@ describe('useRemoteIntegration', () => {
 				expect.arrayContaining([expect.objectContaining({ id: 'tab-2' })]),
 				'tab-2',
 				true
+			);
+		});
+
+		it('marks a foreground remote tab create as focus-changing', () => {
+			const session = createMockSession({ id: 'session-1' });
+			const deps = createDeps({ sessions: [session], isLiveMode: true });
+
+			renderHook(() => useRemoteIntegration(deps));
+			vi.advanceTimersByTime(500);
+
+			act(() => {
+				onRemoteNewTabHandler?.('session-1', 'response-channel-1');
+			});
+			vi.advanceTimersByTime(500);
+
+			// Without the flag a browser client adds the chip and keeps rendering
+			// the tab the user was already on, so its + button looks inert.
+			const createdTab = useSessionStore
+				.getState()
+				.sessions.find((s) => s.id === 'session-1')
+				?.aiTabs.at(-1);
+			expect(mockWeb.broadcastTabsChange).toHaveBeenLastCalledWith(
+				'session-1',
+				expect.arrayContaining([expect.objectContaining({ id: createdTab?.id })]),
+				createdTab?.id,
+				true
+			);
+		});
+
+		it('leaves a background remote tab create unfocused', () => {
+			const session = createMockSession({ id: 'session-1' });
+			const deps = createDeps({ sessions: [session], isLiveMode: true });
+
+			renderHook(() => useRemoteIntegration(deps));
+			vi.advanceTimersByTime(500);
+
+			act(() => {
+				onRemoteNewTabHandler?.('session-1', 'response-channel-1', true);
+			});
+			vi.advanceTimersByTime(500);
+
+			expect(mockWeb.broadcastTabsChange).toHaveBeenLastCalledWith(
+				'session-1',
+				expect.anything(),
+				expect.anything(),
+				false
 			);
 		});
 
