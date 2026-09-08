@@ -37,7 +37,6 @@ Custom themes with unique personality:
 - **Pedurple** - Slate base with a `#9146FF` accent (shown in most screenshots)
 - **Maestro's Choice** - Golden accents on midnight blue
 - **Dre Synth** - Cyberpunk cyan and magenta
-- **InQuest** - Minimal black with crimson accents
 
 ### Custom Theme
 

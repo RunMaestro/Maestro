@@ -389,27 +389,6 @@ const winampAnsi: AnsiPalette = {
 	selection: 'rgba(255, 137, 36, 0.3)',
 };
 
-/** InQuest (vibe) - high-contrast red/black ANSI palette */
-const inquestAnsi: AnsiPalette = {
-	ansiBlack: '#0a0a0a',
-	ansiRed: '#cc0033',
-	ansiGreen: '#f5f5f5',
-	ansiYellow: '#cc0033',
-	ansiBlue: '#888888',
-	ansiMagenta: '#ff3355',
-	ansiCyan: '#ffffff',
-	ansiWhite: '#cccccc',
-	ansiBrightBlack: '#2a2a2a',
-	ansiBrightRed: '#ff1144',
-	ansiBrightGreen: '#ffffff',
-	ansiBrightYellow: '#ff3355',
-	ansiBrightBlue: '#aaaaaa',
-	ansiBrightMagenta: '#ff6677',
-	ansiBrightCyan: '#ffffff',
-	ansiBrightWhite: '#f5f5f5',
-	selection: 'rgba(204, 0, 51, 0.3)',
-};
-
 export const THEMES: Record<ThemeId, Theme> = {
 	// Dark themes
 	dracula: {
@@ -790,28 +769,6 @@ export const THEMES: Record<ThemeId, Theme> = {
 			warning: '#ff2a6d',
 			error: '#ff2a6d',
 			...dreSynthAnsi,
-		},
-	},
-	inquest: {
-		id: 'inquest',
-		name: 'InQuest',
-		mode: 'vibe',
-		colors: {
-			bgMain: '#0a0a0a',
-			bgTitleBar: '#0a0a0a',
-			bgSidebar: '#252323',
-			bgActivity: '#141414',
-			border: '#4a3838',
-			textMain: '#f5f5f5',
-			textDim: '#888888',
-			accent: '#cc0033',
-			accentDim: 'rgba(204, 0, 51, 0.25)',
-			accentText: '#ff3355',
-			accentForeground: '#ffffff',
-			success: '#f5f5f5',
-			warning: '#cc0033',
-			error: '#cc0033',
-			...inquestAnsi,
 		},
 	},
 	winamp: {

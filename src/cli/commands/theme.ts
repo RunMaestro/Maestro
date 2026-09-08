@@ -14,7 +14,12 @@
 import { writeFileSync, readFileSync } from 'fs';
 import { resolve } from 'path';
 import { THEMES } from '../../shared/themes';
-import { isValidThemeId, type ThemeColors, type ThemeId } from '../../shared/theme-types';
+import {
+	isValidThemeId,
+	resolveThemeId,
+	type ThemeColors,
+	type ThemeId,
+} from '../../shared/theme-types';
 import { isValidCssColor } from '../../shared/cssColor';
 import { readSettingValue } from '../services/storage';
 import { sendSimpleCommand, failCommand } from '../services/session-command';
@@ -91,11 +96,11 @@ function readCurrentCustomTheme(): { colors: ThemeColors; baseTheme: ThemeId } {
 			? (stored as ThemeColors)
 			: ({ ...THEMES.dracula.colors } as ThemeColors);
 
+	// resolveThemeId, not a bare isValidThemeId check: a base saved before a
+	// theme was retired maps to that theme's replacement instead of silently
+	// re-basing the user's palette on the default.
 	const storedBase = readSettingValue('customThemeBaseId');
-	const baseTheme =
-		typeof storedBase === 'string' && isValidThemeId(storedBase)
-			? (storedBase as ThemeId)
-			: DEFAULT_BASE_ID;
+	const baseTheme = resolveThemeId(storedBase, DEFAULT_BASE_ID);
 
 	return { colors, baseTheme };
 }
@@ -238,10 +243,7 @@ export async function themeImport(file: string, options: ImportOptions): Promise
 	}
 
 	const colors = data.colors as ThemeColors;
-	const baseTheme =
-		typeof data.baseTheme === 'string' && isValidThemeId(data.baseTheme)
-			? (data.baseTheme as ThemeId)
-			: DEFAULT_BASE_ID;
+	const baseTheme = resolveThemeId(data.baseTheme, DEFAULT_BASE_ID);
 	const activate = !options.noActivate;
 
 	try {

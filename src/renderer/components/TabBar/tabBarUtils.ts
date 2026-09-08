@@ -41,7 +41,7 @@ export function getTabKindIcon(kind: TabKind): LucideIcon {
  * via semantic tokens so the palette adapts to light/dark/vibe themes. Browser
  * uses a fixed sky blue - there's no "info/blue" semantic token in the theme,
  * and the obvious fallback (`ansiBlue`) lands on desaturated purples/grays in
- * several vibe themes (pedurple, winamp, inquest), making the icon read as
+ * several vibe themes (pedurple, winamp), making the icon read as
  * gray next to the other kinds. A stable browser-blue keeps the kind visually
  * distinct from accent/warning/success on every theme.
  * - ai      → accent  (brand hue)

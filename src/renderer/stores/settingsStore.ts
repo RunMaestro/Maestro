@@ -34,6 +34,7 @@ import type {
 	EncoreFeatureFlags,
 } from '../types';
 import { DEFAULT_CUSTOM_THEME_COLORS } from '../constants/themes';
+import { resolveThemeId } from '../../shared/theme-types';
 import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS, FIXED_SHORTCUTS } from '../constants/shortcuts';
 import { findReservedShortcutCombo } from '../../shared/shortcutKeys';
 import { MAESTRO_FONT_STACK } from '../../shared/fontStacks';
@@ -2430,14 +2431,18 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['mediaPlaybackRate'] !== undefined)
 			patch.mediaPlaybackRate = normalizePlaybackRate(allSettings['mediaPlaybackRate']);
 
+		// Both theme ids go through resolveThemeId: a saved id can name a theme
+		// that has since been retired, and the renderer looks the theme up bare
+		// (THEMES[activeThemeId] in App.tsx), so an unresolved id renders the
+		// whole app unstyled instead of falling back.
 		if (allSettings['activeThemeId'] !== undefined)
-			patch.activeThemeId = allSettings['activeThemeId'] as ThemeId;
+			patch.activeThemeId = resolveThemeId(allSettings['activeThemeId']);
 
 		if (allSettings['customThemeColors'] !== undefined)
 			patch.customThemeColors = allSettings['customThemeColors'] as ThemeColors;
 
 		if (allSettings['customThemeBaseId'] !== undefined)
-			patch.customThemeBaseId = allSettings['customThemeBaseId'] as ThemeId;
+			patch.customThemeBaseId = resolveThemeId(allSettings['customThemeBaseId']);
 
 		if (allSettings['enterToSendAI'] !== undefined)
 			patch.enterToSendAI = allSettings['enterToSendAI'] as boolean;

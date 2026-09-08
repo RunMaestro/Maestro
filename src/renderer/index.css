@@ -1428,7 +1428,7 @@ html[data-gloss='max'] .chrome-raised-active {
 /* ============================================================================
    VIBE MODE
 
-   The five vibe themes (Pedurple, Dre Synth, InQuest, Winamp, Maestro's
+   The four vibe themes (Pedurple, Dre Synth, Winamp, Maestro's
    Choice) declare `mode: 'vibe'` in `src/shared/themes.ts`, which
    `useThemeStyles` publishes as `<html data-theme-mode='vibe'>`. Until now the
    only mode-keyed CSS was the light-theme opt-out below, so a vibe theme
