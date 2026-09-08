@@ -54,7 +54,9 @@ describe('WebServer Fastify configuration', () => {
 		// the handler ever runs, and no other test would notice.
 		const server = new WebServer(0);
 
-		expect(server.getServer().initialConfig.maxParamLength).toBe(MEDIA_PATH_PARAM_MAX_LENGTH);
+		expect(server.getServer().initialConfig.routerOptions.maxParamLength).toBe(
+			MEDIA_PATH_PARAM_MAX_LENGTH
+		);
 		expect(MEDIA_PATH_PARAM_MAX_LENGTH).toBeGreaterThan(100);
 	});
 });

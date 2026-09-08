@@ -238,7 +238,9 @@ export class WebServer {
 			},
 			// The media route carries a hex-encoded absolute path as a param; the
 			// default 100-character cap 404s any real file (see mediaRoutes.ts).
-			maxParamLength: MEDIA_PATH_PARAM_MAX_LENGTH,
+			routerOptions: {
+				maxParamLength: MEDIA_PATH_PARAM_MAX_LENGTH,
+			},
 		});
 
 		// Use provided token (persistent mode) or generate a new one (ephemeral mode)
