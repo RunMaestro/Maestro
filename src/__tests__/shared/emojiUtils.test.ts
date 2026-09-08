@@ -1,7 +1,11 @@
 /**
  * Tests for shared emoji utilities
  */
-import { stripLeadingEmojis, compareNamesIgnoringEmojis } from '../../shared/emojiUtils';
+import {
+	stripLeadingEmojis,
+	nameSortKey,
+	compareNamesIgnoringEmojis,
+} from '../../shared/emojiUtils';
 
 describe('emojiUtils', () => {
 	describe('stripLeadingEmojis', () => {
@@ -49,11 +53,11 @@ describe('emojiUtils', () => {
 				expect(stripLeadingEmojis('☺️ Smile')).toBe('Smile');
 			});
 
-			it('should handle ZWJ sequences - may have partial stripping', () => {
-				// Note: ZWJ sequences are complex and the regex may not strip all parts
-				// The important behavior is that it strips what it can consistently
-				const result = stripLeadingEmojis('👨‍👩‍👧‍👦 Family');
-				expect(result).toContain('Family');
+			it('should strip the whole ZWJ sequence, not just its first codepoint', () => {
+				// The ZWJ (U+200D) used to stop the match, leaving the tail of the
+				// sequence glued to the name and poisoning the sort key.
+				expect(stripLeadingEmojis('👨‍👩‍👧‍👦 Family')).toBe('Family');
+				expect(stripLeadingEmojis('🧑‍💼 A&C Overlord')).toBe('A&C Overlord');
 			});
 
 			it('should handle skin tone modifiers', () => {
@@ -93,6 +97,13 @@ describe('emojiUtils', () => {
 				expect(stripLeadingEmojis('🎉 @#$%')).toBe('@#$%');
 			});
 
+			it('should leave a leading digit alone', () => {
+				// ASCII digits carry Emoji=Yes, so the old \p{Emoji} pattern ate the
+				// "0" and filed the agent under "D".
+				expect(stripLeadingEmojis('0DIN Loki')).toBe('0DIN Loki');
+				expect(stripLeadingEmojis('#1 Agent')).toBe('#1 Agent');
+			});
+
 			it('should handle Unicode letters after emoji', () => {
 				expect(stripLeadingEmojis('🎉 café')).toBe('café');
 			});
@@ -100,6 +111,20 @@ describe('emojiUtils', () => {
 			it('should handle CJK characters after emoji', () => {
 				expect(stripLeadingEmojis('🎉 日本語')).toBe('日本語');
 			});
+		});
+	});
+
+	describe('nameSortKey', () => {
+		it('starts the key at the first alphanumeric character', () => {
+			expect(nameSortKey('🧑‍💼 A&C Overlord')).toBe('A&C Overlord');
+			expect(nameSortKey('👀 A&C Overwatch')).toBe('A&C Overwatch');
+			expect(nameSortKey('0DIN Loki')).toBe('0DIN Loki');
+			expect(nameSortKey('  ...Alpha')).toBe('Alpha');
+		});
+
+		it('falls back to the emoji-stripped name when there is no alphanumeric', () => {
+			expect(nameSortKey('🎉 @#$%')).toBe('@#$%');
+			expect(nameSortKey('🎉🎊🎁')).toBe('');
 		});
 	});
 
@@ -143,6 +168,24 @@ describe('emojiUtils', () => {
 		});
 
 		describe('sorting arrays', () => {
+			it('files an emoji-prefixed name under its first letter', () => {
+				const names = [
+					'🧑‍💼 A&C Overlord',
+					'0DIN Loki',
+					'0DIN.ai',
+					'👀 A&C Overwatch',
+					'📷 ATX Sentinel',
+				];
+
+				expect([...names].sort(compareNamesIgnoringEmojis)).toEqual([
+					'0DIN Loki',
+					'0DIN.ai',
+					'🧑‍💼 A&C Overlord',
+					'👀 A&C Overwatch',
+					'📷 ATX Sentinel',
+				]);
+			});
+
 			it('should sort array of names with emojis correctly', () => {
 				const names = ['🍎 Apple', '🎉 Zebra', '🔥 Fire', '🌟 Star', 'Alpha', '🐝 Bee'];
 
