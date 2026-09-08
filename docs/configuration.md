@@ -297,6 +297,20 @@ You can also set how wide toasts render:
 | **Large**   | Roughly 1.8x wider than Small, for longer content                                         |
 | **Dynamic** | Matches the Right Bar width, filling that column and re-sizing live as you drag the panel |
 
+#### Clicking a Toast
+
+Most toasts are clickable, and where the click takes you depends on what the toast is about:
+
+| The toast points at             | Clicking it                                      |
+| ------------------------------- | ------------------------------------------------ |
+| An agent, or one of its AI tabs | Switches to that agent and tab                   |
+| A file                          | Opens the file in that agent's File Preview pane |
+| A terminal tab                  | Switches to that agent and focuses the terminal  |
+| An in-app browser tab           | Focuses that tab, or opens the URL in a new one  |
+| An external link                | Opens it in your system browser                  |
+
+If the target tab was closed since the toast appeared, the click still switches to the agent and tells you what was missing, so a click never silently does nothing. Scripts and agents choose the target with the `--open-*` flags on [`maestro-cli notify toast`](/cli#notifications). A toast can also carry a separate inline link button beneath its message (`--action-url`); that link is independent of the body click.
+
 ### When Notifications Trigger
 
 Notifications are sent when:
