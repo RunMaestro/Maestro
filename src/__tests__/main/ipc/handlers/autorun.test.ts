@@ -86,6 +86,7 @@ const {
 	mockExistsRemote,
 	mockMkdirRemote,
 	mockDeleteRemote,
+	mockListTreeRemote,
 } = vi.hoisted(() => ({
 	mockReadDirRemote: vi.fn(),
 	mockReadFileRemote: vi.fn(),
@@ -93,6 +94,7 @@ const {
 	mockExistsRemote: vi.fn(),
 	mockMkdirRemote: vi.fn(),
 	mockDeleteRemote: vi.fn(),
+	mockListTreeRemote: vi.fn(),
 }));
 
 vi.mock('../../../../main/utils/remote-fs', () => ({
@@ -102,6 +104,8 @@ vi.mock('../../../../main/utils/remote-fs', () => ({
 	existsRemote: mockExistsRemote,
 	mkdirRemote: mockMkdirRemote,
 	deleteRemote: mockDeleteRemote,
+	listTreeRemote: mockListTreeRemote,
+	statRemote: vi.fn(),
 }));
 
 // Mock the logger
@@ -167,6 +171,7 @@ describe('autorun IPC handlers', () => {
 		mockExistsRemote.mockReset();
 		mockMkdirRemote.mockReset();
 		mockDeleteRemote.mockReset();
+		mockListTreeRemote.mockReset();
 
 		// Create mock App and capture event handlers
 		appEventHandlers = new Map();
@@ -532,6 +537,83 @@ describe('autorun IPC handlers', () => {
 
 			expect(result.success).toBe(true);
 			expect(result.files).toEqual(['visible']);
+		});
+	});
+
+	describe('autorun:listDocs SSH', () => {
+		const listTreeOk = (files: string[], directories: string[] = []) => ({
+			success: true,
+			data: { files, directories, truncated: false },
+		});
+
+		it('should scan a remote folder in a single round trip', async () => {
+			mockListTreeRemote.mockResolvedValue(
+				listTreeOk(['root.md', 'message-bus/1_DETECT.md', 'message-bus/2_PLAN.md'])
+			);
+
+			const handler = handlers.get('autorun:listDocs');
+			const result = await handler!({} as any, '/remote/folder', 'ssh-remote-1');
+
+			expect(result.success).toBe(true);
+			expect(result.files).toEqual(['message-bus/1_DETECT', 'message-bus/2_PLAN', 'root']);
+			// One bundled `find`, not one `ls` per directory - a playbooks folder
+			// with hundreds of subdirectories used to time out every caller.
+			expect(mockListTreeRemote).toHaveBeenCalledTimes(1);
+			expect(mockReadDirRemote).not.toHaveBeenCalled();
+			expect(mockListTreeRemote).toHaveBeenCalledWith(
+				'/remote/folder',
+				expect.objectContaining({ ignorePatterns: ['.*'] }),
+				sampleSshRemote
+			);
+		});
+
+		it('should build folders before files and drop the .md extension', async () => {
+			mockListTreeRemote.mockResolvedValue(
+				listTreeOk(['zeta.md', 'alpha/nested/deep.md', 'alpha/one.md'])
+			);
+
+			const handler = handlers.get('autorun:listDocs');
+			const result = await handler!({} as any, '/remote/folder', 'ssh-remote-1');
+
+			expect(result.tree).toEqual([
+				{
+					name: 'alpha',
+					type: 'folder',
+					path: 'alpha',
+					children: [
+						{
+							name: 'nested',
+							type: 'folder',
+							path: 'alpha/nested',
+							children: [{ name: 'deep', type: 'file', path: 'alpha/nested/deep' }],
+						},
+						{ name: 'one', type: 'file', path: 'alpha/one' },
+					],
+				},
+				{ name: 'zeta', type: 'file', path: 'zeta' },
+			]);
+		});
+
+		it('should ignore non-markdown files returned by the scan', async () => {
+			mockListTreeRemote.mockResolvedValue(
+				listTreeOk(['Working/notes.txt', 'Working/report.md', 'script.py'])
+			);
+
+			const handler = handlers.get('autorun:listDocs');
+			const result = await handler!({} as any, '/remote/folder', 'ssh-remote-1');
+
+			expect(result.files).toEqual(['Working/report']);
+		});
+
+		it('should return an empty listing when the remote scan fails', async () => {
+			mockListTreeRemote.mockResolvedValue({ success: false, error: 'ssh: connect failed' });
+
+			const handler = handlers.get('autorun:listDocs');
+			const result = await handler!({} as any, '/remote/folder', 'ssh-remote-1');
+
+			expect(result.success).toBe(true);
+			expect(result.files).toEqual([]);
+			expect(result.tree).toEqual([]);
 		});
 	});
 
