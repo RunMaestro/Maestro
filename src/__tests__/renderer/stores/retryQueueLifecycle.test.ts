@@ -133,8 +133,12 @@ describe('queued messages across a quota outage', () => {
 		// wall. Before this fix each of q1..q3 dispatched, failed, and superseded
 		// the previous retry - so only q3 survived and q0..q2 were lost.
 		expect(simulateExit()).toBeNull();
-		expect(session().executionQueue).toHaveLength(3);
 		expect(dispatched).toEqual(['running']);
+		// The failed turn is back at the head of the queue, ahead of the three
+		// follow-ups. It is not merely "remembered somewhere" for the retry: it
+		// holds its slot in the same list every dispatch path reads, so it cannot
+		// be overtaken, and it survives a quit the way the others do.
+		expect(session().executionQueue.map((i) => i.id)).toEqual(['q0', 'q1', 'q2', 'q3']);
 
 		// The retry is parked on the real reset time, not an arbitrary backoff.
 		const entry = getRetryEntry(SESSION, TAB)!;
@@ -145,6 +149,9 @@ describe('queued messages across a quota outage', () => {
 		await vi.advanceTimersByTimeAsync(entry.nextRetryAt - NOW + 10);
 		expect(dispatched).toEqual(['running', 'running']);
 		expect(getRetryEntry(SESSION, TAB)?.status).toBe('in-flight');
+		// Handed to the dispatcher, so its queue slot is released in the same
+		// beat - the prompt exists in exactly one place at a time.
+		expect(session().executionQueue.map((i) => i.id)).toEqual(['q1', 'q2', 'q3']);
 
 		// That resend succeeds and exits, which releases the queue. Each
 		// subsequent exit walks one more item, in the order they were queued.
@@ -175,7 +182,9 @@ describe('queued messages across a quota outage', () => {
 		expect(getRetryEntry(SESSION, TAB)?.status).toBe('scheduled');
 
 		expect(simulateExit()).toBeNull();
-		expect(session().executionQueue).toHaveLength(1);
+		// The failed turn went back to the head when the resend failed, so the
+		// second attempt starts from the same place the first did.
+		expect(session().executionQueue.map((i) => i.id)).toEqual(['q0', 'q1']);
 		// Same outage continued, not a fresh one - the card keeps one running count.
 		expect(getRetryEntry(SESSION, TAB)?.outageId).toBe(first.outageId);
 		expect(getRetryEntry(SESSION, TAB)?.attempt).toBe(1);
