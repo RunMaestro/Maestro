@@ -1,21 +1,21 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { ProcessNode } from '../types';
 import { getExpandableIdsByDepth } from '../processTree';
-import { safeLocalStorage } from '../../../utils/safeLocalStorage';
+import { safeStorageGet, safeStorageSet } from '../../../utils/safeLocalStorage';
 
 // Persistence for the System Processes expand/collapse stepper.
 // Stores the depth tier last shown so it survives app restarts.
 const PROCESS_MONITOR_LEVEL_KEY = 'maestro.processMonitor.expandedLevel';
 
 function readStoredExpandedLevel(): number | null {
-	const raw = safeLocalStorage()?.getItem(PROCESS_MONITOR_LEVEL_KEY) ?? null;
+	const raw = safeStorageGet(PROCESS_MONITOR_LEVEL_KEY);
 	if (raw === null) return null;
 	const parsed = Number.parseInt(raw, 10);
 	return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 }
 
 function writeStoredExpandedLevel(level: number): void {
-	safeLocalStorage()?.setItem(PROCESS_MONITOR_LEVEL_KEY, String(level));
+	safeStorageSet(PROCESS_MONITOR_LEVEL_KEY, String(level));
 }
 
 export interface UseProcessExpansionResult {

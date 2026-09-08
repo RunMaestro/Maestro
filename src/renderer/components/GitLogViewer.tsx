@@ -10,7 +10,7 @@ import { getBasename } from '../../shared/formatters';
 import { GitFilePathHeader } from './GitFilePathHeader';
 import { useListNavigation } from '../hooks';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
-import { safeLocalStorage } from '../utils/safeLocalStorage';
+import { safeStorageGet, safeStorageSet } from '../utils/safeLocalStorage';
 import { generateDiffViewStyles } from '../utils/markdownConfig';
 import { useSettingsStore } from '../stores/settingsStore';
 import { ResizeHandles } from './ui/ResizeHandles';
@@ -100,7 +100,7 @@ export const GitLogViewer = memo(function GitLogViewer({
 	const [selectedCommitDiff, setSelectedCommitDiff] = useState<string | null>(null);
 	const [loadingDiff, setLoadingDiff] = useState(false);
 	const [viewMode, setViewMode] = useState<ViewMode>(() => {
-		const stored = safeLocalStorage()?.getItem(VIEW_MODE_STORAGE_KEY) ?? null;
+		const stored = safeStorageGet(VIEW_MODE_STORAGE_KEY);
 		return stored === 'graph' ? 'graph' : 'list';
 	});
 	const [graphNodes, setGraphNodes] = useState<GitGraphNode[]>([]);
@@ -114,7 +114,7 @@ export const GitLogViewer = memo(function GitLogViewer({
 	const [graphSelected, setGraphSelected] = useState<GitGraphNode | null>(null);
 
 	useEffect(() => {
-		safeLocalStorage()?.setItem(VIEW_MODE_STORAGE_KEY, viewMode);
+		safeStorageSet(VIEW_MODE_STORAGE_KEY, viewMode);
 		// When leaving graph mode, clear graph-only selection so list selection drives the right panel.
 		if (viewMode !== 'graph') setGraphSelected(null);
 	}, [viewMode]);

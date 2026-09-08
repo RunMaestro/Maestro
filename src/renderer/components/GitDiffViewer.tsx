@@ -11,7 +11,7 @@ import { ImageDiffViewer } from './ImageDiffViewer';
 import { GitFilePathHeader } from './GitFilePathHeader';
 import { generateDiffViewStyles } from '../utils/markdownConfig';
 import { useSettingsStore } from '../stores/settingsStore';
-import { safeLocalStorage } from '../utils/safeLocalStorage';
+import { safeStorageGet, safeStorageSet } from '../utils/safeLocalStorage';
 import { ResizeHandles } from './ui/ResizeHandles';
 import { ModalSubtitle } from './ui/Modal';
 import { useSessionStore } from '../stores/sessionStore';
@@ -22,12 +22,12 @@ export type GitDiffViewType = 'unified' | 'split';
 const VIEW_TYPE_STORAGE_KEY = 'maestro.gitDiffViewer.viewType';
 
 function readStoredViewType(): GitDiffViewType | null {
-	const raw = safeLocalStorage()?.getItem(VIEW_TYPE_STORAGE_KEY) ?? null;
+	const raw = safeStorageGet(VIEW_TYPE_STORAGE_KEY);
 	return raw === 'unified' || raw === 'split' ? raw : null;
 }
 
 function writeStoredViewType(value: GitDiffViewType): void {
-	safeLocalStorage()?.setItem(VIEW_TYPE_STORAGE_KEY, value);
+	safeStorageSet(VIEW_TYPE_STORAGE_KEY, value);
 }
 
 function isFormControl(target: EventTarget | null): boolean {

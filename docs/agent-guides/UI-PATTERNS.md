@@ -2009,9 +2009,12 @@ preference whose answer is one of three words rather than yes/no (the Extensions
 grid's A-Z / Newest sort). It validates the stored string against the option
 list on read, so a mode left behind by an older build falls back to the default
 instead of stranding the surface in a state its control can no longer express.
-Both hooks reach Storage through `safeLocalStorage()`
+Both hooks reach Storage through `safeStorageGet` / `safeStorageSet`
 (`src/renderer/utils/safeLocalStorage.ts`), which is also what
-`useScalePreference` uses - do NOT write a fourth private `storage()` guard.
+`useScalePreference` uses - do NOT write a fourth private `storage()` guard,
+and do NOT optional-chain `getItem`/`setItem` on `safeLocalStorage()`. The
+accessor only covers reaching the object; method-level failures (quota,
+Safari private mode) are what the get/set pair swallows.
 
 ---
 

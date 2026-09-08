@@ -14,10 +14,10 @@
  */
 
 import { useCallback, useState } from 'react';
-import { safeLocalStorage } from '../../utils/safeLocalStorage';
+import { safeStorageGet, safeStorageSet } from '../../utils/safeLocalStorage';
 
 function load<T extends string>(storageKey: string, options: readonly T[], fallback: T): T {
-	const raw = safeLocalStorage()?.getItem(storageKey) ?? null;
+	const raw = safeStorageGet(storageKey);
 	if (raw === null) return fallback;
 	return (options as readonly string[]).includes(raw) ? (raw as T) : fallback;
 }
@@ -41,7 +41,7 @@ export function usePersistedChoice<T extends string>(
 
 	const setValue = useCallback(
 		(next: T) => {
-			safeLocalStorage()?.setItem(storageKey, next);
+			safeStorageSet(storageKey, next);
 			setStateValue(next);
 		},
 		[storageKey]

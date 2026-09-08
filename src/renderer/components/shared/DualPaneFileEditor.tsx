@@ -24,7 +24,7 @@ import type { Theme } from '../../constants/themes';
 import { getOpenInLabel } from '../../utils/platformUtils';
 import { formatTokensCompact } from '../../../shared/formatters';
 import { highlightMatches } from '../../utils/highlightMatches';
-import { safeLocalStorage } from '../../utils/safeLocalStorage';
+import { safeStorageGet, safeStorageSet } from '../../utils/safeLocalStorage';
 import './DualPaneFileEditor.css';
 
 export interface DualPaneFileEditorItem {
@@ -182,7 +182,7 @@ const MAX_LIST_WIDTH = 600;
 
 function readStoredWidth(key: string | undefined): number {
 	if (!key) return DEFAULT_LIST_WIDTH;
-	const raw = safeLocalStorage()?.getItem(key);
+	const raw = safeStorageGet(key);
 	if (!raw) return DEFAULT_LIST_WIDTH;
 	const parsed = Number.parseInt(raw, 10);
 	if (!Number.isFinite(parsed)) return DEFAULT_LIST_WIDTH;
@@ -231,7 +231,7 @@ export function DualPaneFileEditor({
 	// Persist width whenever it settles.
 	useEffect(() => {
 		if (!listWidthStorageKey || isResizing) return;
-		safeLocalStorage()?.setItem(listWidthStorageKey, String(listWidth));
+		safeStorageSet(listWidthStorageKey, String(listWidth));
 	}, [listWidth, listWidthStorageKey, isResizing]);
 
 	const handleResizeStart = useCallback((e: React.MouseEvent<HTMLDivElement>) => {

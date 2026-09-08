@@ -20,7 +20,7 @@ import type { GitStreamingOperation } from '../../shared/gitUtils';
 import type { SerializableWizardState } from '../components/Wizard';
 import type { ConductorBadge } from '../constants/conductorBadges';
 import { logger } from '../utils/logger';
-import { safeLocalStorage } from '../utils/safeLocalStorage';
+import { safeStorageGet, safeStorageSet } from '../utils/safeLocalStorage';
 
 // ============================================================================
 // Prompt Composer full-screen preference (persisted)
@@ -33,11 +33,11 @@ import { safeLocalStorage } from '../utils/safeLocalStorage';
 const PROMPT_COMPOSER_FULLSCREEN_KEY = 'maestro.promptComposer.fullscreen';
 
 function readStoredPromptComposerFullscreen(): boolean {
-	return safeLocalStorage()?.getItem(PROMPT_COMPOSER_FULLSCREEN_KEY) === 'true';
+	return safeStorageGet(PROMPT_COMPOSER_FULLSCREEN_KEY) === 'true';
 }
 
 function writeStoredPromptComposerFullscreen(value: boolean): void {
-	safeLocalStorage()?.setItem(PROMPT_COMPOSER_FULLSCREEN_KEY, String(value));
+	safeStorageSet(PROMPT_COMPOSER_FULLSCREEN_KEY, String(value));
 }
 
 // ============================================================================
