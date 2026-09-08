@@ -8,7 +8,7 @@
  * document side effect so Cmd+Plus / Cmd+Minus can drive zoom in the browser.
  */
 
-import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterAll, afterEach, vi } from 'vitest';
 
 // The shim constructs a BridgeClient (and therefore a WebSocket) at module
 // load. Stub WebSocket with an inert class BEFORE importing the module so the
@@ -31,7 +31,10 @@ class InertWebSocket {
 	send(frame: string): void {
 		this.sent.push(frame);
 	}
-	close(): void {}
+	closeCalls = 0;
+	close(): void {
+		this.closeCalls += 1;
+	}
 	addEventListener(type: string, cb: (ev?: unknown) => void): void {
 		let set = this.listeners.get(type);
 		if (!set) {
@@ -62,7 +65,8 @@ Object.defineProperty(window, 'location', {
 	value: { ...originalLocation, reload: vi.fn() },
 });
 
-const { ipcRenderer, webFrame } = await import('../../web-desktop/electron-shim');
+const { ipcRenderer, webFrame, BRIDGE_HEARTBEAT_INTERVAL_MS, BRIDGE_PONG_TIMEOUT_MS } =
+	await import('../../web-desktop/electron-shim');
 
 afterAll(() => {
 	vi.unstubAllGlobals();
@@ -337,5 +341,78 @@ describe('web-desktop electron-shim bridge reconnect', () => {
 		fourth.emit('open');
 		fourth.emit('message', frame({ type: 'connected' }));
 		expect(window.location.reload).toHaveBeenCalledTimes(2);
+	});
+});
+
+/**
+ * Liveness.
+ *
+ * A suspended mobile socket does not reliably fire `close`: iOS freezes the
+ * connection on app switch and screen lock, and the tab can come back with
+ * `readyState === OPEN` on a socket whose peer is gone. Every invoke then parks
+ * in `pending` forever - no resolve, no reject, no error - so the caller's
+ * button silently does nothing. The heartbeat turns that into a `close`, which
+ * is the one path that already rejects pending invokes and reconnects.
+ */
+describe('web-desktop electron-shim bridge heartbeat', () => {
+	function liveSocket(): InertWebSocket {
+		const ws = InertWebSocket.instances[InertWebSocket.instances.length - 1];
+		ws.readyState = InertWebSocket.OPEN;
+		ws.emit('open');
+		return ws;
+	}
+
+	beforeEach(() => {
+		vi.useFakeTimers();
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it('probes an open socket with the ping the server already answers', () => {
+		const ws = liveSocket();
+		const before = ws.sent.length;
+
+		vi.advanceTimersByTime(BRIDGE_HEARTBEAT_INTERVAL_MS);
+
+		const probes = ws.sent.slice(before).filter((f) => JSON.parse(f).type === 'ping');
+		expect(probes).toHaveLength(1);
+	});
+
+	it('closes a socket that stops answering, so pending invokes are rejected', () => {
+		const ws = liveSocket();
+		const closesBefore = ws.closeCalls;
+
+		vi.advanceTimersByTime(BRIDGE_HEARTBEAT_INTERVAL_MS);
+		expect(ws.closeCalls).toBe(closesBefore);
+
+		// No reply within the budget: whatever readyState claims, nothing is
+		// listening on the far end.
+		vi.advanceTimersByTime(BRIDGE_PONG_TIMEOUT_MS + 1);
+		expect(ws.closeCalls).toBe(closesBefore + 1);
+	});
+
+	it('treats ANY inbound frame as proof of life, not just a pong', () => {
+		// Making liveness depend on one message type would close a healthy socket
+		// whenever a `pong` lost a race with a burst of transcript frames.
+		const ws = liveSocket();
+		const closesBefore = ws.closeCalls;
+
+		vi.advanceTimersByTime(BRIDGE_HEARTBEAT_INTERVAL_MS);
+		ws.emit('message', { data: JSON.stringify({ type: 'agent_output', text: 'hi' }) });
+		vi.advanceTimersByTime(BRIDGE_PONG_TIMEOUT_MS + 1);
+
+		expect(ws.closeCalls).toBe(closesBefore);
+	});
+
+	it('does not probe a socket that is not open', () => {
+		const ws = liveSocket();
+		ws.readyState = InertWebSocket.CONNECTING;
+		const before = ws.sent.length;
+
+		vi.advanceTimersByTime(BRIDGE_HEARTBEAT_INTERVAL_MS * 2);
+
+		expect(ws.sent.slice(before).filter((f) => JSON.parse(f).type === 'ping')).toHaveLength(0);
 	});
 });

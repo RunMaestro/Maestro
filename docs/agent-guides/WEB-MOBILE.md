@@ -257,6 +257,39 @@ runtime reports 0 for the insets and the same value for `100%` and `100dvh`:
   `y = 0` is dimmed, blurred and dead. The hamburger lived there, which is why
   the left-edge swipe was the only way to the menu.
 
+### A dead button on the phone is usually the bridge, not the button
+
+Every `window.maestro.*` call in the browser is a `bridge.invoke` frame over one
+WebSocket (`src/web-desktop/electron-shim.ts`). Two properties of that path make
+a working control look broken, and both are fixed in the bridge rather than per
+caller:
+
+- **A suspended socket does not reliably fire `close`.** iOS freezes the
+  connection on app switch and screen lock, and the tab can come back with
+  `readyState === OPEN` on a socket whose peer is gone. An invoke then parks in
+  `pending` forever - no resolve, no reject, no error. `BridgeClient` now probes
+  with the server's existing `ping` every 15s and closes the socket if no frame
+  arrives within 8s, because `close` is the one path that already rejects every
+  pending invoke and schedules a resuming reconnect. Any inbound frame counts as
+  proof of life, not just a `pong`.
+- **`ipcRenderer.send` and `ipcRenderer.invoke` are different directions.**
+  `invoke` pairs with `ipcMain.handle`; `send` is fire-and-forget and pairs with
+  `ipcMain.on`, which appears nowhere in the `_invokeHandlers` map. The shim has
+  only one frame type, so it routes both through `bridge.invoke` - and every
+  send-style API used to be a silent no-op in a browser, because the server
+  answered "No ipcMain handler registered" and the shim's `send` wrapper, which
+  cannot throw at its caller, logged it and swallowed it. `handleBridgeInvoke`
+  now falls back to `ipcMain.emit` when a channel has `on` listeners. This was
+  per-DIRECTION, not per-channel: any `send` API added later was born broken.
+
+When a control genuinely does nothing on the phone but works on the desktop,
+check for a third shape before hunting the component: a handler that `await`s an
+IPC call **before** it renders anything. `probeSessionAiProcesses` did, so a slow
+or hung round trip meant Enter produced no bubble, no queued card, and no error.
+Draw the optimistic state first, or bound the call.
+
+---
+
 ### The keyboard is not a viewport change
 
 On iOS the on-screen keyboard slides **over** the layout viewport rather than

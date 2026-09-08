@@ -25,7 +25,7 @@ const theme = {
 	},
 } as any;
 
-const contextMenuPos = { top: 100, left: 200, ready: true };
+const contextMenuPos = { top: 100, left: 200, maxHeight: 600, ready: true };
 
 const fileNode: FileNode = { name: 'App.tsx', type: 'file' };
 const folderNode: FileNode = {
@@ -437,7 +437,7 @@ describe('FileTreeContextMenu', () => {
 			<FileTreeContextMenu
 				{...defaultProps}
 				contextMenu={makeContextMenu(fileNode)}
-				contextMenuPos={{ top: 0, left: 0, ready: false }}
+				contextMenuPos={{ top: 0, left: 0, maxHeight: 600, ready: false }}
 			/>
 		);
 		const menu = document.body.querySelector('.fixed') as HTMLElement;

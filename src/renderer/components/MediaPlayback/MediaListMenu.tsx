@@ -7,6 +7,9 @@ import { useAnchoredMenuPosition } from '../../hooks/ui/useAnchoredMenuPosition'
 import { formatMediaTime, type MediaItem } from '../../utils/mediaItems';
 import type { Theme } from '../../types';
 
+/** Design height for the menu, matching the former `max-h-80` utility. */
+const MEDIA_LIST_MENU_MAX_HEIGHT_PX = 320;
+
 interface MediaListMenuProps {
 	/** The title bar button this list hangs off. */
 	anchorRef: RefObject<HTMLElement | null>;
@@ -55,7 +58,9 @@ export const MediaListMenu = memo(function MediaListMenu({
 	testId,
 	theme,
 }: MediaListMenuProps) {
-	const { left, top, ready } = useAnchoredMenuPosition(menuRef, anchorRef, { align: 'end' });
+	const { left, top, maxHeight, ready } = useAnchoredMenuPosition(menuRef, anchorRef, {
+		align: 'end',
+	});
 
 	return createPortal(
 		<div
@@ -63,10 +68,15 @@ export const MediaListMenu = memo(function MediaListMenu({
 			data-testid={testId}
 			// Above the player (60), far below modals (9999) so it can never cover
 			// an overlay.
-			className="fixed z-[100] py-1 rounded shadow-xl border max-h-80 overflow-y-auto select-none min-w-[16rem] max-w-[24rem]"
+			className="fixed z-[100] py-1 rounded shadow-xl border overflow-y-auto select-none min-w-[16rem] max-w-[24rem]"
 			style={{
 				left,
 				top,
+				// The play queue is unbounded, so the menu needs a cap. Take the
+				// SMALLER of the design height and what actually fits below the
+				// anchor: a fixed `max-h-80` still overflows a short viewport (a
+				// phone in landscape), and there is no page behind a menu to scroll.
+				maxHeight: Math.min(maxHeight, MEDIA_LIST_MENU_MAX_HEIGHT_PX),
 				opacity: ready ? 1 : 0,
 				backgroundColor: theme.colors.bgActivity,
 				borderColor: theme.colors.border,

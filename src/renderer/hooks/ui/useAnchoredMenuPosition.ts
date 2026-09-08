@@ -14,7 +14,7 @@
  *
  * Usage:
  *   const menuRef = useRef<HTMLDivElement>(null);
- *   const { left, top, ready } = useAnchoredMenuPosition(menuRef, anchorRef);
+ *   const { left, top, maxHeight, ready } = useAnchoredMenuPosition(menuRef, anchorRef);
  *   return createPortal(
  *     <div ref={menuRef} className="fixed" style={{ left, top, opacity: ready ? 1 : 0 }} />,
  *     document.body
@@ -42,6 +42,13 @@ export interface AnchoredMenuOptions {
 export interface AnchoredMenuPosition {
 	left: number;
 	top: number;
+	/**
+	 * Tallest the menu may be and still fit on screen, in px - passed straight
+	 * through from `useContextMenuPosition`. Apply it with `overflowY: 'auto'`
+	 * on any menu whose content is unbounded; see that hook for why clamping
+	 * position alone leaves the overflowing items unreachable.
+	 */
+	maxHeight: number;
 	/** False until the menu has been measured; render at opacity 0 until true. */
 	ready: boolean;
 }
