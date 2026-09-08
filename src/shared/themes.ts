@@ -298,25 +298,32 @@ const ayuLightAnsi: AnsiPalette = {
 	selection: 'rgba(85, 180, 212, 0.2)',
 };
 
-/** Pedurple (vibe) - purple-themed ANSI palette */
+/**
+ * Pedurple (vibe) - neutral ANSI palette, purple only in the magenta slots.
+ *
+ * The original palette tinted EVERY slot purple, which is why terminal output
+ * read as one wash of violet and the brand color had nothing to pop against.
+ * Purple is the accent here, not the medium: the greens, yellows, blues, and
+ * greys are ordinary, so `#9146ff` is the loudest thing on the screen.
+ */
 const pedurpleAnsi: AnsiPalette = {
-	ansiBlack: '#1a0f24',
-	ansiRed: '#da70d6',
-	ansiGreen: '#7cb342',
-	ansiYellow: '#d4af37',
-	ansiBlue: '#9b59b6',
-	ansiMagenta: '#ff69b4',
-	ansiCyan: '#c3a5e8',
-	ansiWhite: '#e8d5f5',
-	ansiBrightBlack: '#4a2a6a',
-	ansiBrightRed: '#ff82db',
-	ansiBrightGreen: '#8ec952',
-	ansiBrightYellow: '#e8c648',
-	ansiBrightBlue: '#b073d0',
-	ansiBrightMagenta: '#ff8dc7',
-	ansiBrightCyan: '#d4bdef',
-	ansiBrightWhite: '#f3eaf8',
-	selection: 'rgba(255, 105, 180, 0.3)',
+	ansiBlack: '#1f1f26',
+	ansiRed: '#ff5c6a',
+	ansiGreen: '#3ecf8e',
+	ansiYellow: '#f5b642',
+	ansiBlue: '#7c9cff',
+	ansiMagenta: '#9146ff',
+	ansiCyan: '#4fd1e0',
+	ansiWhite: '#dedce6',
+	ansiBrightBlack: '#5a5868',
+	ansiBrightRed: '#ff7a86',
+	ansiBrightGreen: '#6fe3aa',
+	ansiBrightYellow: '#ffc966',
+	ansiBrightBlue: '#9db6ff',
+	ansiBrightMagenta: '#b07cff',
+	ansiBrightCyan: '#7fe0ec',
+	ansiBrightWhite: '#f7f6fa',
+	selection: 'rgba(145, 70, 255, 0.30)',
 };
 
 /** Maestro's Choice (vibe) - gold/dark ANSI palette */
@@ -717,21 +724,27 @@ export const THEMES: Record<ThemeId, Theme> = {
 		id: 'pedurple',
 		name: 'Pedurple',
 		mode: 'vibe',
+		// Slate base, true-Pedurple accent. `#9146FF` IS the Pedurple color, and
+		// the theme that carried the name never used it: the accent was hot pink
+		// and every surface was purple-tinted, so the brand hue had nowhere to
+		// land. The surfaces are neutral grey now and `bgActivity` is the one
+		// place a purple hint survives, on the card fill where it reads as depth
+		// rather than as a wash.
 		colors: {
-			bgMain: '#1a0f24',
-			bgTitleBar: '#1a0f24',
-			bgSidebar: '#140a1c',
-			bgActivity: '#2a1a3a',
-			border: '#4a2a6a',
-			textMain: '#e8d5f5',
-			textDim: '#b89fd0',
-			accent: '#ff69b4',
-			accentDim: 'rgba(255, 105, 180, 0.25)',
-			accentText: '#ff8dc7',
-			accentForeground: '#1a0f24',
-			success: '#7cb342',
-			warning: '#d4af37',
-			error: '#da70d6',
+			bgMain: '#1f1f26',
+			bgTitleBar: '#1a1a20',
+			bgSidebar: '#1a1a20',
+			bgActivity: '#2b2735',
+			border: '#3a3a46',
+			textMain: '#f4f3f7',
+			textDim: '#a09dab',
+			accent: '#9146ff',
+			accentDim: 'rgba(145, 70, 255, 0.22)',
+			accentText: '#b07cff',
+			accentForeground: '#ffffff',
+			success: '#3ecf8e',
+			warning: '#f5b642',
+			error: '#ff5c6a',
 			...pedurpleAnsi,
 		},
 	},

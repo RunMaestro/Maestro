@@ -58,7 +58,7 @@ Maestro ships with a variety of themes that fall under three categories: Dark, L
 
 ### Pedurple
 
-Purple is Pedram's favorite color.
+Pedram's signature `#9146FF` on a neutral slate base. Purple is the accent, not the wallpaper.
 <img width="3592" height="2302" alt="image" src="https://github.com/user-attachments/assets/15875d3e-37c1-4b6c-b967-551afd40b658" />
 
 ### Maestro's Choice
