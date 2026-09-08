@@ -97,6 +97,7 @@ beforeEach(() => {
 		sessionsLoaded: false,
 		initialLoadComplete: false,
 		groups: [],
+		groupsLoaded: false,
 	});
 
 	useModalStore.setState({ modals: new Map() });
@@ -1485,6 +1486,7 @@ describe('useSessionLifecycle', () => {
 				activeSessionId: '',
 				groups,
 				initialLoadComplete: true,
+				groupsLoaded: true,
 			});
 
 			renderHook(() => useSessionLifecycle(createDeps()));
@@ -1499,6 +1501,7 @@ describe('useSessionLifecycle', () => {
 				activeSessionId: '',
 				groups,
 				initialLoadComplete: false,
+				groupsLoaded: true,
 			});
 
 			renderHook(() => useSessionLifecycle(createDeps()));
@@ -1513,6 +1516,7 @@ describe('useSessionLifecycle', () => {
 				activeSessionId: '',
 				groups: groups1,
 				initialLoadComplete: true,
+				groupsLoaded: true,
 			});
 
 			renderHook(() => useSessionLifecycle(createDeps()));
@@ -1529,6 +1533,58 @@ describe('useSessionLifecycle', () => {
 			});
 
 			expect(window.maestro.groups.setAll).toHaveBeenCalledWith(groups2);
+		});
+
+		// Regression: a group registry that was never successfully READ must never
+		// be written back. `initialLoadComplete` is set in a `finally` and so is
+		// true even when the groups read failed, which let an empty in-memory
+		// registry overwrite a good one on disk and cost the user every group.
+		it('does not persist groups when the registry was never loaded', () => {
+			useSessionStore.setState({
+				sessions: [],
+				activeSessionId: '',
+				groups: [],
+				initialLoadComplete: true,
+				groupsLoaded: false,
+			});
+
+			renderHook(() => useSessionLifecycle(createDeps()));
+
+			expect(window.maestro.groups.setAll).not.toHaveBeenCalled();
+		});
+
+		it('does not persist a group change while the registry is unloaded', () => {
+			useSessionStore.setState({
+				sessions: [],
+				activeSessionId: '',
+				groups: [],
+				initialLoadComplete: true,
+				groupsLoaded: false,
+			});
+
+			renderHook(() => useSessionLifecycle(createDeps()));
+
+			act(() => {
+				useSessionStore.setState({ groups: [] });
+			});
+
+			expect(window.maestro.groups.setAll).not.toHaveBeenCalled();
+		});
+
+		// A user who genuinely has no groups must still be able to persist: the
+		// gate is "did the read succeed", never "was the result non-empty".
+		it('persists an empty registry that was read successfully', () => {
+			useSessionStore.setState({
+				sessions: [],
+				activeSessionId: '',
+				groups: [],
+				initialLoadComplete: true,
+				groupsLoaded: true,
+			});
+
+			renderHook(() => useSessionLifecycle(createDeps()));
+
+			expect(window.maestro.groups.setAll).toHaveBeenCalledWith([]);
 		});
 	});
 
