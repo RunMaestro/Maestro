@@ -1551,7 +1551,7 @@ describe('settingsStore', () => {
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
 				fontFamily: 'JetBrains Mono',
 				fontSize: 16,
-				activeThemeId: 'one-dark-pro',
+				activeThemeId: 'nord',
 				enterToSendAI: true,
 			});
 
@@ -1561,8 +1561,34 @@ describe('settingsStore', () => {
 			expect(state.settingsLoaded).toBe(true);
 			expect(state.fontFamily).toBe('JetBrains Mono');
 			expect(state.fontSize).toBe(16);
-			expect(state.activeThemeId).toBe('one-dark-pro');
+			expect(state.activeThemeId).toBe('nord');
 			expect(state.enterToSendAI).toBe(true);
+		});
+
+		// A user who picked a theme before it was retired still has that id on
+		// disk. App.tsx does a bare THEMES[activeThemeId] lookup, so letting the
+		// dead id through renders the whole app unstyled.
+		it('maps a retired theme id to its replacement on load', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				activeThemeId: 'inquest',
+				customThemeBaseId: 'inquest',
+			});
+
+			await loadAllSettings();
+
+			const state = useSettingsStore.getState();
+			expect(state.activeThemeId).toBe('dracula');
+			expect(state.customThemeBaseId).toBe('dracula');
+		});
+
+		it('falls back rather than storing a theme id that does not exist', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				activeThemeId: 'one-dark-pro',
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().activeThemeId).toBe('dracula');
 		});
 
 		it('restores both halves of the environment editor', async () => {
