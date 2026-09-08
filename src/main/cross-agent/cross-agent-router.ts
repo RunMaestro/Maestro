@@ -40,6 +40,7 @@ import type {
 	CrossAgentResponseChunk,
 	CrossAgentTranscriptEntry,
 } from '../../shared/crossAgentTypes';
+import { CROSS_AGENT_SESSION_PREFIX } from '../../shared/crossAgentTypes';
 import { spawnGroupChatAgent } from '../group-chat/spawnGroupChatAgent';
 import { extractTextFromStreamJson } from '../group-chat/output-parser';
 import { buildAgentArgs, applyAgentConfigOverrides } from '../utils/agent-args';
@@ -52,8 +53,12 @@ import { AGENT_LIVENESS_EVENTS } from '../utils/agent-liveness';
 
 const LOG_CONTEXT = '[CrossAgentRouter]';
 
-/** Session-id prefix for the ephemeral processes cross-agent dispatch spawns. */
-export const CROSS_AGENT_SESSION_PREFIX = 'cross-agent-';
+/**
+ * Session-id prefix for the ephemeral processes cross-agent dispatch spawns.
+ * Re-exported from `shared/crossAgentTypes` so the renderer's Process Monitor
+ * can recognize a consult without importing from `src/main`.
+ */
+export { CROSS_AGENT_SESSION_PREFIX };
 
 /**
  * How long a consulted agent may go SILENT before we give up on it. Reset on

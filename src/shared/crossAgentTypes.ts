@@ -31,6 +31,36 @@ import type { ToolType } from './types';
 export const AGENT_COLOR = '#ec4899';
 
 /**
+ * Session-id prefix for the ephemeral processes cross-agent dispatch spawns
+ * (`cross-agent-<requestId>`).
+ *
+ * Lives in shared rather than beside the router because BOTH processes need it:
+ * main mints the id, and the renderer's Process Monitor has to recognize one to
+ * draw it. Before that, a consult was counted in the monitor's "N active" badge
+ * and rendered nowhere - the process really was running, and the one surface a
+ * user opens to check said nothing was.
+ */
+export const CROSS_AGENT_SESSION_PREFIX = 'cross-agent-';
+
+/**
+ * Whether a ProcessManager session id belongs to a cross-agent consult.
+ */
+export function isCrossAgentSessionId(sessionId: string): boolean {
+	return sessionId.startsWith(CROSS_AGENT_SESSION_PREFIX);
+}
+
+/**
+ * The `requestId` inside a `cross-agent-<requestId>` process session id, or null
+ * when the id is not a consult. That id is the join key back to the renderer's
+ * in-flight registry, which is where the source/target agent NAMES live - the
+ * process id itself carries only a uuid.
+ */
+export function crossAgentRequestIdFromSessionId(sessionId: string): string | null {
+	if (!isCrossAgentSessionId(sessionId)) return null;
+	return sessionId.slice(CROSS_AGENT_SESSION_PREFIX.length) || null;
+}
+
+/**
  * The minimal transcript-entry shape the cross-agent pipeline forwards.
  * A structural subset of the renderer `LogEntry` (see file header).
  */
