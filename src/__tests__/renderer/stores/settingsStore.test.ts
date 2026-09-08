@@ -1590,8 +1590,19 @@ describe('settingsStore', () => {
 			expect(useSettingsStore.getState().fileExplorerIconTheme).toBe('rich');
 		});
 
+		it('migrates the pre-rename "default" icon theme id to flat', async () => {
+			useSettingsStore.setState({ fileExplorerIconTheme: 'rich' });
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				fileExplorerIconTheme: 'default' as unknown as FileExplorerIconTheme,
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().fileExplorerIconTheme).toBe('flat');
+		});
+
 		it('falls back to rich for invalid fileExplorerIconTheme values', async () => {
-			useSettingsStore.setState({ fileExplorerIconTheme: 'default' });
+			useSettingsStore.setState({ fileExplorerIconTheme: 'flat' });
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
 				fileExplorerIconTheme: 'neon' as any,
 			});
@@ -2685,7 +2696,7 @@ describe('settingsStore', () => {
 		});
 
 		it('metadata default matches the value an invalid setting falls back to', async () => {
-			useSettingsStore.setState({ fileExplorerIconTheme: 'default' });
+			useSettingsStore.setState({ fileExplorerIconTheme: 'flat' });
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
 				fileExplorerIconTheme: 'neon' as unknown as FileExplorerIconTheme,
 			});

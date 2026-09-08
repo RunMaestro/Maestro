@@ -44,7 +44,7 @@ import {
 } from '../constants/keyboardMastery';
 import { RIGHT_PANEL_MIN_WIDTH, RIGHT_PANEL_MAX_WIDTH } from '../constants/rightPanel';
 import type { FileExplorerIconTheme } from '../utils/fileExplorerIcons/shared';
-import { isFileExplorerIconTheme } from '../utils/fileExplorerIcons/shared';
+import { normalizeFileExplorerIconTheme } from '../utils/fileExplorerIcons/shared';
 import type { MindMapLayoutType } from '../components/DocumentGraph/layoutTypes';
 import { isMindMapLayoutType } from '../components/DocumentGraph/layoutTypes';
 import type { ToastWidth } from '../../shared/toastWidth';
@@ -2505,9 +2505,8 @@ export async function loadAllSettings(): Promise<void> {
 			patch.showHiddenFiles = allSettings['showHiddenFiles'] as boolean;
 
 		if (allSettings['fileExplorerIconTheme'] !== undefined) {
-			patch.fileExplorerIconTheme = isFileExplorerIconTheme(allSettings['fileExplorerIconTheme'])
-				? allSettings['fileExplorerIconTheme']
-				: 'rich';
+			patch.fileExplorerIconTheme =
+				normalizeFileExplorerIconTheme(allSettings['fileExplorerIconTheme']) ?? 'rich';
 		}
 
 		if (allSettings['toastWidth'] !== undefined) {

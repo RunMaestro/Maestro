@@ -578,8 +578,8 @@ export const DISPLAY_SETTINGS: SearchableSetting[] = [
 		tab: 'display',
 		tabLabel: 'Display',
 		label: 'Files Pane Icon Theme',
-		description: 'Default or Rich (Material Icon Theme style) for the Files pane',
-		keywords: ['icon', 'theme', 'files', 'material', 'rich', 'explorer'],
+		description: 'Flat or Rich (Material Icon Theme style) for the Files pane',
+		keywords: ['icon', 'theme', 'files', 'material', 'rich', 'flat', 'explorer'],
 	},
 	{
 		id: 'display-window-chrome',

@@ -383,7 +383,7 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 				<SettingsSectionHeading icon={Palette}>Files Pane Icon Theme</SettingsSectionHeading>
 				<ToggleButtonGroup
 					options={[
-						{ value: 'default', label: 'Default' },
+						{ value: 'flat', label: 'Flat' },
 						{ value: 'rich', label: 'Rich' },
 					]}
 					value={fileExplorerIconTheme}
@@ -391,8 +391,8 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 					theme={theme}
 				/>
 				<p className="text-xs opacity-50 mt-2">
-					Rich uses Material Icon Theme style file and folder SVGs in the Files pane. Default
-					preserves Maestro&apos;s current icon behavior.
+					Rich uses Material Icon Theme style file and folder SVGs in the Files pane. Flat uses
+					Maestro&apos;s simpler monochrome icons.
 				</p>
 			</div>
 
