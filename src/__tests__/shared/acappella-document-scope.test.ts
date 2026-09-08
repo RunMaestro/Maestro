@@ -12,6 +12,7 @@ import { describe, it, expect } from 'vitest';
 import {
 	applyDocumentScope,
 	buildDocumentOpeningPrompt,
+	stripDocumentOpeningPrompt,
 	documentScopeName,
 	isDocumentScope,
 	voiceScopeAgentId,
@@ -66,14 +67,51 @@ describe('documentScopeName', () => {
 
 describe('buildDocumentOpeningPrompt', () => {
 	it('hands over the path and keeps the request intact', () => {
-		const prompt = buildDocumentOpeningPrompt(SCOPE, 'add a diagram of the dispatch flow');
+		const prompt = buildDocumentOpeningPrompt(
+			SCOPE,
+			'add a diagram of the dispatch flow',
+			'spoken'
+		);
 
 		expect(prompt).toContain('/repo/api/docs/system-overview.md');
 		expect(prompt).toContain('add a diagram of the dispatch flow');
 	});
 
 	it('asks for spoken-shaped answers, since nobody is reading the reply', () => {
-		expect(buildDocumentOpeningPrompt(SCOPE, 'what is this')).toContain('spoken conversation');
+		expect(buildDocumentOpeningPrompt(SCOPE, 'what is this', 'spoken')).toContain(
+			'spoken conversation'
+		);
+	});
+
+	it('never claims a typed chat is spoken', () => {
+		// The chat bubble renders markdown perfectly well, so asking for short
+		// plain sentences would be unhelpful - and telling the agent it is being
+		// listened to is simply untrue.
+		const prompt = buildDocumentOpeningPrompt(SCOPE, 'what is this', 'typed');
+
+		expect(prompt).not.toContain('spoken conversation');
+		expect(prompt).toContain('/repo/api/docs/system-overview.md');
+		expect(prompt).toContain('what is this');
+	});
+});
+
+describe('stripDocumentOpeningPrompt', () => {
+	it('recovers the request from either modality', () => {
+		for (const modality of ['spoken', 'typed'] as const) {
+			const prompt = buildDocumentOpeningPrompt(SCOPE, 'what is this', modality);
+			expect(stripDocumentOpeningPrompt(prompt)).toBe('what is this');
+		}
+	});
+
+	it('keeps a multi-line request whole', () => {
+		const request = 'first line\n\nsecond paragraph';
+		const prompt = buildDocumentOpeningPrompt(SCOPE, request, 'typed');
+
+		expect(stripDocumentOpeningPrompt(prompt)).toBe(request);
+	});
+
+	it('leaves an ordinary message alone', () => {
+		expect(stripDocumentOpeningPrompt('just a message')).toBe('just a message');
 	});
 });
 

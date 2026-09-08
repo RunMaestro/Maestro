@@ -181,6 +181,8 @@ The conversation is held with the agent whose workspace the file is in. The firs
 
 The HUD names the **file** rather than the agent while a document session is running, because what you want confirmed before speaking is which document you are talking about.
 
+A document conversation is an ordinary AI tab, tagged with the file it is about, and it is the **same conversation the chat bubble types into** - see [Chatting with a document](./file-preview#chatting-with-a-document). So you can ask something out loud, type the follow-up, and read both in either place. It also survives a restart: come back to the file tomorrow and the conversation is still there.
+
 <Note>
 	The microphone hides itself when A Cappella is off, and for any file with no text in it: images
 	(SVG included), audio and video, and compiled binaries and archives. You can also hide the toolbar

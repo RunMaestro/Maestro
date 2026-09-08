@@ -340,7 +340,12 @@ describe('QuickActions command builders', () => {
 			activeSession: fileSession,
 			activeTabType: 'file',
 		});
-		expect(fileCommands.map((a) => a.id)).toEqual(['deletePreviewedFile']);
+		expect(fileCommands.map((a) => a.id)).toEqual([
+			// Chat is offered without the A Cappella flag: typing needs no voice
+			// stack, so gating it would take text chat away from a default install.
+			'chatWithPreviewedDocument',
+			'deletePreviewedFile',
+		]);
 		expect(fileCommands[0].subtext).toBe('notes.md');
 
 		// A file tab selected while the panel shows a terminal is not a live

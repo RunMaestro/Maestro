@@ -781,6 +781,27 @@ export interface AITab {
 		sourceTabId: string;
 	};
 	/**
+	 * When set, this tab holds the persistent chat about one document: the
+	 * conversation behind the File Preview's chat bubble.
+	 *
+	 * It is the continuity key, the same way `consultOrigin` is. There is at most
+	 * one chat per (agent, path), so reopening a document - after a tab switch,
+	 * after a restart - finds this tab and shows its history rather than starting
+	 * over. The binding lives on the tab so it is persisted, migrated and
+	 * discarded with the conversation it describes, instead of being a side table
+	 * of ids pointing at tabs that may no longer exist.
+	 *
+	 * A document chat is created `hidden` and stays that way until the user pops
+	 * it out (`revealAiTab`), so chatting about a file does not put a chip in the
+	 * strip nobody asked for. Resetting the chat clears this field and reveals the
+	 * tab: the fresh chat gets a new tab, and the old transcript is still there to
+	 * read rather than being destroyed.
+	 */
+	documentOrigin?: {
+		/** Absolute path of the document, as the owning agent sees it. */
+		path: string;
+	};
+	/**
 	 * When true, the tab exists as a data container but is NOT surfaced in the tab
 	 * strip or reachable by tab-cycling shortcuts. Set on consult tabs created by an
 	 * inbound `@mention`: the consulted agent's workspace belongs to the user, and a

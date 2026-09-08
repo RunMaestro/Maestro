@@ -65,6 +65,13 @@ export const DEFAULT_SHORTCUTS = {
 		label: 'Toggle Table of Contents (Markdown Preview)',
 		keys: ['Meta', '\\'],
 	},
+	toggleDocumentChat: {
+		id: 'toggleDocumentChat',
+		label: 'Toggle Document Chat (File Preview)',
+		// Deliberately the Shift twin of the table of contents' Cmd+\: the two
+		// floating panels of the same preview, one on each side, one chord apart.
+		keys: ['Meta', 'Shift', '\\'],
+	},
 	toggleMarkdownMode: {
 		id: 'toggleMarkdownMode',
 		label: 'Toggle Edit/Preview',

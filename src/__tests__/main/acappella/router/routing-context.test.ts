@@ -99,6 +99,35 @@ describe('buildRoutingRoster', () => {
 		expect(agent.tabs.some((tab) => tab.id === 'tab-consult')).toBe(false);
 	});
 
+	it('keeps a hidden DOCUMENT CHAT tab, and says which document it is about', () => {
+		// The carve-out to the rule above, and a deliberate one: the user opened
+		// that conversation themselves from the file preview and can read it in the
+		// chat bubble. Dropping it here is what made a spoken turn open a SECOND
+		// tab about a file the user had already been typing to.
+		const list = sessions();
+		list[0].aiTabs.push(
+			createMockAITab({
+				id: 'tab-doc-chat',
+				name: 'system-overview.md',
+				hidden: true,
+				documentOrigin: { path: '/repo/api/docs/system-overview.md' },
+			} as never)
+		);
+
+		const [agent] = buildRoutingRoster(list);
+
+		expect(agent.tabs.find((tab) => tab.id === 'tab-doc-chat')).toMatchObject({
+			state: 'open',
+			documentPath: '/repo/api/docs/system-overview.md',
+		});
+	});
+
+	it('leaves documentPath off an ordinary tab', () => {
+		const [agent] = buildRoutingRoster(sessions());
+
+		expect(agent.tabs.find((tab) => tab.id === 'tab-auth')).not.toHaveProperty('documentPath');
+	});
+
 	it('keeps the open copy when a tab appears open and closed at once', () => {
 		const list = sessions();
 		list[0].unifiedClosedTabHistory = [

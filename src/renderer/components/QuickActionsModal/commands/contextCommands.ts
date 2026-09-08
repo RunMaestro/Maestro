@@ -2,6 +2,7 @@ import type React from 'react';
 import { buildSessionDeepLink } from '../../../../shared/deep-link-urls';
 import { requestFileDeletion } from '../../../services/fileDeletion';
 import { talkWithDocument } from '../../../services/documentVoice';
+import { requestDocumentChatPanel } from '../../../services/documentChatPanel';
 import { isTalkableDocumentPath } from '../../../../shared/fileKinds';
 import type { Session } from '../../../types';
 import type { MainPanelHandle } from '../../MainPanel/types';
@@ -29,6 +30,8 @@ interface BuildActiveTabContextCommandsArgs {
 	mainPanelRef?: React.RefObject<MainPanelHandle | null>;
 	toggleTabStarShortcut?: QuickAction['shortcut'];
 	toggleTabUnreadShortcut?: QuickAction['shortcut'];
+	/** Chord that toggles the preview's chat bubble, shown on the palette row. */
+	documentChatShortcut?: QuickAction['shortcut'];
 }
 
 export function buildActiveTabContextCommands({
@@ -47,6 +50,7 @@ export function buildActiveTabContextCommands({
 	mainPanelRef,
 	toggleTabStarShortcut,
 	toggleTabUnreadShortcut,
+	documentChatShortcut,
 }: BuildActiveTabContextCommandsArgs): QuickAction[] {
 	if (!activeSession) return [];
 	const commands: QuickAction[] = [];
@@ -116,6 +120,24 @@ export function buildActiveTabContextCommands({
 				? activeSession.filePreviewTabs.find((tab) => tab.id === activeSession.activeFileTabId)
 				: undefined;
 		if (fileTab) {
+			// Chat with Document is the palette's way to the preview's chat bubble.
+			// It opens the panel rather than the conversation's tab, because the
+			// bubble IS the surface - popping out is a button inside it. Ungated by
+			// A Cappella: typing needs no voice stack, so hiding this behind the
+			// Encore Feature would take text chat away from every default install.
+			if (isTalkableDocumentPath(fileTab.path)) {
+				commands.push({
+					id: 'chatWithPreviewedDocument',
+					keywords: ['chat', 'ask', 'message', 'document', 'conversation'],
+					label: 'File: Chat with Document',
+					subtext: `${fileTab.name}${fileTab.extension}`,
+					shortcut: documentChatShortcut,
+					action: () => {
+						setQuickActionOpen(false);
+						requestDocumentChatPanel();
+					},
+				});
+			}
 			// Talk with Document is the palette's copy of the toolbar microphone and
 			// the Files panel menu entry, and the only one of the three that works
 			// when the toolbar button has been hidden in Settings. Same text-only

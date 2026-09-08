@@ -97,7 +97,13 @@ function buildRoutingTabs(session: StoredSession): RosterTab[] {
 	const open = readTabRecords(session.aiTabs)
 		// A hidden tab is a cross-agent consult the user has never opened. It is a
 		// data container, not a conversation they can be sent back to.
-		.filter((tab) => tab.hidden !== true)
+		//
+		// A document chat is the exception, and it is a real one: the user opened
+		// that conversation themselves from the file preview, they can read it in
+		// the chat bubble, and it is hidden only because it has not been popped out
+		// into a tab yet. Dropping it here is what made a spoken turn open a second
+		// tab about a file the user had already been typing to.
+		.filter((tab) => tab.hidden !== true || isDocumentChatTab(tab))
 		.map((tab) => toRosterTab(tab, 'open'));
 
 	const snoozed = readTabRecords(session.snoozedTabs)
@@ -131,13 +137,36 @@ function readTabRecords(value: unknown): Array<Record<string, any>> {
 
 function toRosterTab(tab: Record<string, unknown>, state: RosterTabState): RosterTab {
 	const name = typeof tab.name === 'string' && tab.name.length > 0 ? tab.name : null;
+	const documentPath = documentChatPath(tab);
 	return {
 		id: String(tab.id),
 		name,
 		lastActiveAt: tabLastActiveAt(tab),
 		state,
 		topic: deriveTabTopic(tab, name),
+		...(documentPath ? { documentPath } : {}),
 	};
+}
+
+/**
+ * The document a tab is the persistent chat for, read defensively off a stored
+ * session. Null for every ordinary tab.
+ *
+ * The binding lives on the tab rather than in a side table for the same reason
+ * `consultOrigin` does: it then persists, migrates and is garbage-collected with
+ * the conversation it describes, instead of becoming a map of ids to tabs that
+ * no longer exist.
+ */
+function documentChatPath(tab: Record<string, unknown>): string | null {
+	const origin = tab.documentOrigin;
+	if (!origin || typeof origin !== 'object') return null;
+	const path = (origin as { path?: unknown }).path;
+	return typeof path === 'string' && path.length > 0 ? path : null;
+}
+
+/** Whether this tab is a document chat, hidden or not. */
+function isDocumentChatTab(tab: Record<string, unknown>): boolean {
+	return documentChatPath(tab) !== null;
 }
 
 /**

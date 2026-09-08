@@ -1751,17 +1751,32 @@ export class VoiceSessionService {
 	/**
 	 * The tab this document conversation is living in, while it still exists.
 	 *
-	 * Re-checked against the roster on every turn rather than trusted from the
-	 * last dispatch: the user can close the tab, and a `recall` of a tab that is
-	 * gone fails the turn. Reporting it as absent instead reopens the
-	 * conversation with the document handed over again, which is the only state a
-	 * fresh tab can honestly be in.
+	 * Two sources, in this order, and the order is the whole point:
+	 *
+	 *   1. **The tab BOUND to the document** (`RosterTab.documentPath`). That
+	 *      binding is persisted with the tab, so it survives an app restart and it
+	 *      is the same tab the chat bubble types into. Preferring it is what makes
+	 *      "say something, then type something" one conversation instead of two.
+	 *   2. **The tab this session last dispatched to.** The fallback for a voice
+	 *      conversation that was never opened from the bubble, which is every
+	 *      session started from the composer microphone or the command palette.
+	 *
+	 * Either way it is re-checked against the roster on every turn rather than
+	 * trusted from the last dispatch: the user can close the tab, and a `recall`
+	 * of a tab that is gone fails the turn. Reporting it as absent instead reopens
+	 * the conversation with the document handed over again, which is the only
+	 * state a fresh tab can honestly be in.
 	 */
 	private documentTabId(scope: DocumentVoiceScope, roster: RosterAgent[]): string | null {
+		const agent = roster.find((candidate) => candidate.sessionId === scope.sessionId);
+		if (!agent) return null;
+
+		const bound = agent.tabs.find((tab) => tab.documentPath === scope.path);
+		if (bound) return bound.id;
+
 		const tabId = this.lastDispatch?.result.tabId ?? null;
 		if (!tabId) return null;
-		const agent = roster.find((candidate) => candidate.sessionId === scope.sessionId);
-		return agent?.tabs.some((tab) => tab.id === tabId) ? tabId : null;
+		return agent.tabs.some((tab) => tab.id === tabId) ? tabId : null;
 	}
 
 	private rememberUtterance(utterance: string): void {

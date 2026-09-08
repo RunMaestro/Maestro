@@ -48,25 +48,72 @@ export function documentScopeName(scope: DocumentVoiceScope): string {
 }
 
 /**
+ * How the user is holding this conversation.
+ *
+ * The hand-over is identical either way; the style instruction is not, and
+ * getting it wrong is visible to the user. A typed chat told the agent it was a
+ * spoken conversation would be asking for short plain sentences in a panel that
+ * renders markdown perfectly well - and, worse, would be telling the agent
+ * something untrue about who it is talking to.
+ */
+export type DocumentConversationModality = 'spoken' | 'typed';
+
+/**
+ * The line that hands the document over. The same in every modality.
+ *
+ * It names the path rather than pasting the file, because the agent can read it
+ * (and can read whatever else it turns out to need), and because a document
+ * large enough to be worth talking about is too large to spend a turn's latency
+ * on.
+ */
+export function buildDocumentHandoverLine(path: string): string {
+	return `We are talking about the document at \`${path}\`. Read it first and treat it as the core context for this whole conversation. Read other files and use tools whenever they help.`;
+}
+
+/**
+ * Asking for short prose up front is what makes a spoken reply cheap. It lives
+ * here rather than in the translator prompt because the translator reshapes an
+ * answer that has already been written, so an agent that replied with a wall of
+ * diff has already spent the time.
+ */
+const SPOKEN_STYLE_LINE =
+	'This is a spoken conversation, so answer in short plain sentences unless I ask for detail.';
+
+/**
  * The opening prompt: the request, with the document handed over in front of it.
  *
- * Sent once per conversation. It names the path rather than pasting the file,
- * because the agent can read it (and can read whatever else it turns out to
- * need), and because a document large enough to be worth talking about is too
- * large to spend a spoken turn's latency on.
- *
- * The spoken-form instruction is here rather than in the translator prompt for
- * the same reason: the translator reshapes an answer that has already been
- * written, so an agent that replied with a wall of diff has already spent the
- * time. Asking for short prose up front is what makes the reply cheap.
+ * Sent once per conversation, by whichever surface starts it - a voice session
+ * or the File Preview's chat bubble. One builder for both, so a document
+ * conversation opens from the same instructions no matter how it was begun, and
+ * so `stripDocumentOpeningPrompt` below has exactly one shape to undo.
  */
-export function buildDocumentOpeningPrompt(scope: DocumentVoiceScope, request: string): string {
+export function buildDocumentOpeningPrompt(
+	scope: DocumentVoiceScope,
+	request: string,
+	modality: DocumentConversationModality
+): string {
 	return [
-		`We are talking about the document at \`${scope.path}\`. Read it first and treat it as the core context for this whole conversation. Read other files and use tools whenever they help.`,
-		'This is a spoken conversation, so answer in short plain sentences unless I ask for detail.',
+		buildDocumentHandoverLine(scope.path),
+		...(modality === 'spoken' ? [SPOKEN_STYLE_LINE] : []),
 		'',
 		request,
 	].join('\n');
+}
+
+/**
+ * Recover what the user actually asked from an opening prompt.
+ *
+ * The transcript stores what was really sent - which is the honest record, and
+ * what the agent received - so a surface rendering that first turn back to the
+ * user has to undo the wrapper rather than keeping a second copy of the raw
+ * request. It lives beside the builder because it is the builder's inverse: the
+ * blank line the builder joins on is the separator, and a prompt this did not
+ * produce is returned untouched.
+ */
+export function stripDocumentOpeningPrompt(text: string): string {
+	if (!text.startsWith('We are talking about the document at ')) return text;
+	const split = text.indexOf('\n\n');
+	return split === -1 ? text : text.slice(split + 2);
 }
 
 /**
@@ -96,7 +143,7 @@ export function applyDocumentScope(
 			tabAction: 'new',
 			tabId: undefined,
 			tabName: documentScopeName(scope),
-			prompt: buildDocumentOpeningPrompt(scope, decision.prompt),
+			prompt: buildDocumentOpeningPrompt(scope, decision.prompt, 'spoken'),
 		};
 	}
 

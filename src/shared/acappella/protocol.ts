@@ -91,6 +91,17 @@ export interface RosterTab {
 	 * summarise twelve tabs first would be slower than reading the screen.
 	 */
 	topic?: string | null;
+	/**
+	 * The document this tab is the persistent chat for, when it is one.
+	 *
+	 * Mirrors `AITab.documentOrigin.path`, and it is what lets a spoken turn land
+	 * in the SAME conversation a typed one did. Without it the voice session can
+	 * only remember the tab it opened during this run (see `documentTabId` in
+	 * `voice-session-service.ts`), so restarting the app - or simply typing first
+	 * and then talking - opened a second tab about the same file and split the
+	 * conversation in half.
+	 */
+	documentPath?: string;
 }
 
 /** One agent as the Brain sees it, and later as the phone's project wheel shows it. */

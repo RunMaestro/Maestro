@@ -387,6 +387,7 @@ the full walkthrough.
 | Copy File Path                      | `Cmd+P`         | `Ctrl+P`        |
 | Open Search                         | `Cmd+F`         | `Ctrl+F`        |
 | Toggle Table of Contents (Markdown) | `Cmd+\`         | `Ctrl+\`        |
+| Toggle Document Chat                | `Cmd+Shift+\`   | `Ctrl+Shift+\`  |
 | Jump to Heading (Markdown)          | `#`             | `#`             |
 | Go Back                             | `Cmd+Left`      | `Ctrl+Left`     |
 | Go Forward                          | `Cmd+Right`     | `Ctrl+Right`    |

@@ -5,8 +5,9 @@
  * and tap-to-toggle, because those are two different habits and a voice UI that
  * picks one has half its users fighting it: someone dictating a paragraph holds
  * the button like a walkie-talkie, and someone having a conversation taps it
- * once and forgets about it. The classifier is the same one the global hotkey
- * uses, off the same `holdThresholdMs`, so the button and the key cannot decide
+ * once and forgets about it. The classification lives in `usePressAndHold`,
+ * shared with the document chat's push button and fed the same
+ * `holdThresholdMs` the global hotkey uses, so no two surfaces can decide
  * "hold" at different moments.
  *
  * Unlike the global hotkey, this surface HAS a real release event (see the note
@@ -18,12 +19,13 @@
  * HUD is allowed to be small; it is not allowed to be unreachable.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback } from 'react';
 import { Hand, Mic, MicOff, ScrollText, Square, Volume2, VolumeX } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { Theme } from '../../types';
 import { readableTextOn } from '../../../shared/colorContrast';
 import type { VoiceHudVisualState } from '../../../shared/acappella/hud-state';
+import { usePressAndHold } from '../../hooks/utils/usePressAndHold';
 
 export interface VoiceHudControlsProps {
 	theme: Theme;
@@ -57,70 +59,23 @@ export function VoiceHudControls({
 	onToggleTranscript,
 	onToggleMute,
 }: VoiceHudControlsProps) {
-	const [holding, setHolding] = useState(false);
-	// Held in refs so the window-level release listener stays stable and cannot
-	// read a stale `holding` from the render it was attached in.
-	const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-	const holdingRef = useRef(false);
-	const pressedRef = useRef(false);
-
-	const clearHoldTimer = useCallback(() => {
-		if (holdTimer.current === null) return;
-		clearTimeout(holdTimer.current);
-		holdTimer.current = null;
-	}, []);
-
-	// A press interrupted by unmount must still release the floor: the alternative
-	// is a hot microphone with no widget attached to it.
-	useEffect(() => {
-		return () => {
-			clearHoldTimer();
-			if (holdingRef.current) onStop();
-		};
-	}, [clearHoldTimer, onStop]);
-
-	const beginPress = useCallback(() => {
-		if (pressedRef.current) return;
-		pressedRef.current = true;
-		clearHoldTimer();
-		holdTimer.current = setTimeout(() => {
-			holdTimer.current = null;
-			holdingRef.current = true;
-			setHolding(true);
-			// Already listening: holding is then a "keep it open" gesture, and
-			// re-starting would restart the session under the user's sentence.
-			if (!active) onStart();
-		}, holdThresholdMs);
-	}, [active, clearHoldTimer, holdThresholdMs, onStart]);
-
-	const endPress = useCallback(() => {
-		if (!pressedRef.current) return;
-		pressedRef.current = false;
-		clearHoldTimer();
-		if (holdingRef.current) {
-			holdingRef.current = false;
-			setHolding(false);
-			onStop();
-			return;
-		}
-		// A tap. Toggle, which is what a tap has always meant on the hotkey.
+	// Holding when already listening is a "keep it open" gesture: re-starting
+	// would restart the session under the user's sentence. A tap is the toggle it
+	// has always been on the hotkey.
+	const onHoldStart = useCallback(() => {
+		if (!active) onStart();
+	}, [active, onStart]);
+	const onTap = useCallback(() => {
 		if (active) onStop();
 		else onStart();
-	}, [active, clearHoldTimer, onStart, onStop]);
+	}, [active, onStart, onStop]);
 
-	// Window-scoped release, so a press that ends with the pointer somewhere else
-	// still counts. An element-scoped `onPointerUp` leaves the floor open when the
-	// user drags off the button, which is the commonest way to abort a press.
-	useEffect(() => {
-		if (!holding && holdTimer.current === null) return;
-		const onUp = () => endPress();
-		window.addEventListener('pointerup', onUp);
-		window.addEventListener('pointercancel', onUp);
-		return () => {
-			window.removeEventListener('pointerup', onUp);
-			window.removeEventListener('pointercancel', onUp);
-		};
-	}, [endPress, holding]);
+	const { holding, beginPress, endPress } = usePressAndHold({
+		holdThresholdMs,
+		onHoldStart,
+		onHoldEnd: onStop,
+		onTap,
+	});
 
 	const onAccent = readableTextOn(theme.colors.accentForeground, [theme.colors.accent]);
 	const talkLabel = holding

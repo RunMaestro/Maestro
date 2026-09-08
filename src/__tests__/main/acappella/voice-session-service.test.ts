@@ -349,6 +349,55 @@ describe('VoiceSessionService document scope', () => {
 		expect(decision.prompt).toBe('second thing');
 	});
 
+	it('joins the conversation the chat bubble already started', async () => {
+		// The persistent binding lives on the tab and reaches the router as
+		// `RosterTab.documentPath`. Preferring it over the last dispatch is what
+		// makes "type something, then say something" ONE conversation - and it is
+		// the only source that survives an app restart, since `lastDispatch` is
+		// per-session memory.
+		const path = '/repo/docs/system-overview.md';
+		const h = makeHarness({
+			getRoster: () => [
+				{
+					sessionId: 'agent-backend',
+					name: 'Backend',
+					agentType: 'claude-code',
+					cwd: '/repo',
+					tabs: [
+						{ id: 'tab-1', name: 'Auth', lastActiveAt: 1 },
+						{ id: 'tab-doc', name: 'system-overview.md', lastActiveAt: 2, documentPath: path },
+					],
+				},
+			],
+		});
+		await startDocument(h, path);
+
+		h.brain.decision = { ...h.brain.decision, prompt: 'first thing' };
+		h.service.submitUtterance('first thing');
+		await vi.waitFor(() => expect(h.types()).toContain('dispatch'));
+
+		const [decision] = h.executor.mock.calls[0] as [RouteDecision];
+		// Recall, not new: the very FIRST spoken turn continues the typed one
+		// rather than opening a second tab about the same file.
+		expect(decision.tabAction).toBe('recall');
+		expect(decision.tabId).toBe('tab-doc');
+		expect(decision.prompt).toBe('first thing');
+	});
+
+	it('opens a fresh conversation when the bound tab is gone', async () => {
+		// A binding that no longer resolves is reported as absent, which reopens
+		// the conversation with the document handed over again - the only state a
+		// fresh tab can honestly be in.
+		const h = makeHarness();
+		await startDocument(h);
+
+		h.service.submitUtterance('anything');
+		await vi.waitFor(() => expect(h.types()).toContain('dispatch'));
+
+		const [decision] = h.executor.mock.calls[0] as [RouteDecision];
+		expect(decision.tabAction).toBe('new');
+	});
+
 	it('refuses to let the Brain move the conversation to another running agent', async () => {
 		// The user pointed at a file inside ONE workspace. A second agent is really
 		// running here, so this is the case the roster guard lets through and only
