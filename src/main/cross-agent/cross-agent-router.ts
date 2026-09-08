@@ -389,10 +389,20 @@ export async function startCrossAgentRequest(
 		baseArgs: [...agent.args],
 		prompt: fullPrompt,
 		cwd: target.cwd,
-		// Read-only unless the user opted into read/write cross-agent mentions
-		// (`crossAgentMentionsWritable`). The advisory cwdGrant text above is kept
-		// in agreement with this flag.
-		readOnlyMode: !writable,
+		// A DELEGATION must ask for full access, never merely "not read-only".
+		//
+		// `readOnlyMode: false` selects `buildAgentArgs`' STANDARD branch, which
+		// emits no permission flags at all and leaves the agent on its interactive
+		// default. There is no approver in a `--print` run, so the first write tool
+		// call blocks forever: no output, no exit, no child process, and nothing on
+		// screen until the 10-minute idle watchdog kills it and throws the work
+		// away. That is strictly worse than read-only, which at least declines
+		// promptly - and the prompt has meanwhile TOLD the agent it "may apply
+		// changes directly", so it is guaranteed to try.
+		//
+		// `permissionMode` is therefore stated explicitly at both ends, keeping the
+		// args in agreement with the cwdGrant text above.
+		permissionMode: writable ? 'full' : 'readonly',
 		agentSessionId: request.resumeAgentSessionId,
 	});
 	const configResolution = applyAgentConfigOverrides(agent, baseArgs, {

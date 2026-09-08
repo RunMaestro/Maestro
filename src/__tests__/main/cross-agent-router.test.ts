@@ -212,6 +212,12 @@ function harness(
 					path: 'claude',
 					args: [],
 					available: true,
+					// Mirrors the real claude-code definition. Both permission branches
+					// have to be present or `buildAgentArgs` emits nothing either way
+					// and the flag assertions below silently pass on any input.
+					fullAccessArgs: ['--dangerously-skip-permissions'],
+					readOnlyArgs: ['--permission-mode', 'plan'],
+					readOnlyCliEnforced: true,
 				}),
 			} as never,
 			sshStore: null,
@@ -257,15 +263,23 @@ describe('startCrossAgentRequest dispatch lifecycle', () => {
 		// The consult prompt promises the target it will not write; the spawn is what
 		// actually enforces it.
 		expect(config.readOnlyMode).toBe(true);
+		expect(config.args).toEqual(expect.arrayContaining(['--permission-mode', 'plan']));
 		expect(config.maxWaitSeconds).toBe(IDLE_MS / 1000);
 	});
 
-	it('spawns the consult read/write when the user opted into writable mentions', async () => {
+	it('spawns a writable delegation with FULL access, not merely "not read-only"', async () => {
 		const { dispatch } = harness({ writable: true });
 		await dispatch();
 
 		const config = vi.mocked(spawnGroupChatAgent).mock.calls[0][0];
 		expect(config.readOnlyMode).toBe(false);
+		// The regression this guards: turning read-only OFF selects buildAgentArgs'
+		// standard branch, which emits no permission flags and leaves the agent on
+		// its interactive default. A `--print` run has no approver, so the first
+		// write tool call blocks forever - no output, no exit - while the prompt has
+		// already told the agent it may apply changes directly.
+		expect(config.args).toContain('--dangerously-skip-permissions');
+		expect(config.args).not.toContain('plan');
 	});
 
 	it('spawns the binary the agent is configured with, not the auto-detected one', async () => {
