@@ -950,7 +950,7 @@ Three modes with built-in themes:
 
 **Light**: github-light, solarized-light, one-light, gruvbox-light, catppuccin-latte, ayu-light
 
-**Vibe**: pedurple, maestros-choice, dre-synth, inquest
+**Vibe**: pedurple, maestros-choice, dre-synth, winamp
 
 Plus `custom` - user-defined via Custom Theme Builder.
 

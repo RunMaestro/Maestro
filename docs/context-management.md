@@ -125,6 +125,23 @@ Customize warning thresholds in **Settings** (`Cmd+,` / `Ctrl+,`) → **Display*
 - Set red to **70-80%** - going higher risks quality degradation
 - Lower both thresholds if you frequently work on complex tasks that require the AI to remember many details
 
+### Context Details
+
+Hover the context gauge in the main window header to open **Context Details**, a breakdown of the tab you are looking at:
+
+| Row                                               | What it tells you                                                     |
+| ------------------------------------------------- | --------------------------------------------------------------------- |
+| **Provider** / **Profile**                        | Which agent and which account produced these numbers                  |
+| **Messages**                                      | Conversation entries in this tab. Hover it for the user / agent split |
+| **Duration**                                      | Time between the first and last entry                                 |
+| **Input / Output / Cache Read / Cache Write**     | Token usage reported by the provider                                  |
+| **Context Tokens** / **Context Size** / **Usage** | How full the context window is                                        |
+| **Max Plan Usage**                                | 5-hour and weekly plan windows (Claude Code only)                     |
+
+Messages and Duration are the same figures the [HTML export](#tab-export) prints at the top of the document, so you can read them without exporting first. Duration is wall clock between the first and last entry, not time the agent spent working: a tab left open overnight counts the night.
+
+The same two figures appear in `maestro-cli sessions <agent-id>` for every session Maestro has a tab for.
+
 ## Compact & Continue
 
 When your conversation approaches context limits, you can compress it while preserving essential information:

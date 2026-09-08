@@ -9,6 +9,7 @@
 import type { StateCreator } from 'zustand';
 import type { ThemeId, ThemeColors } from '../types';
 import { DEFAULT_CUSTOM_THEME_COLORS } from '../constants/themes';
+import { resolveThemeId } from '../../shared/theme-types';
 import { TYPOGRAPHY_PRESETS, type TypographyPresetId } from '../../shared/typographyPresets';
 import { MAESTRO_FONT_STACK } from '../../shared/fontStack';
 import type { GlossLevel } from '../../shared/themeGloss';
@@ -313,14 +314,18 @@ export function hydrateThemeSettings(
 
 	if (allSettings['fontSize'] !== undefined) patch.fontSize = allSettings['fontSize'] as number;
 
+	// Both theme ids go through resolveThemeId: a saved id can name a theme
+	// that has since been retired, and the renderer looks the theme up bare
+	// (THEMES[activeThemeId] in App.tsx), so an unresolved id renders the
+	// whole app unstyled instead of falling back.
 	if (allSettings['activeThemeId'] !== undefined)
-		patch.activeThemeId = allSettings['activeThemeId'] as ThemeId;
+		patch.activeThemeId = resolveThemeId(allSettings['activeThemeId']);
 
 	if (allSettings['customThemeColors'] !== undefined)
 		patch.customThemeColors = allSettings['customThemeColors'] as ThemeColors;
 
 	if (allSettings['customThemeBaseId'] !== undefined)
-		patch.customThemeBaseId = allSettings['customThemeBaseId'] as ThemeId;
+		patch.customThemeBaseId = resolveThemeId(allSettings['customThemeBaseId']);
 
 	for (const spec of TYPOGRAPHY_SURFACE_LIST) {
 		if (!canInherit(spec)) continue;

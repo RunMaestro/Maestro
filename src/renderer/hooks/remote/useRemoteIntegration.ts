@@ -43,6 +43,7 @@ import {
 	clearDesktopAiTabSelections,
 	consumeDesktopAiTabSelection,
 } from '../../utils/desktopTabSelectionSync';
+import { loadAllSettings } from '../../stores/settingsStore';
 
 /**
  * Dependencies for the useRemoteIntegration hook.
@@ -1800,13 +1801,24 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		};
 	}, []);
 
-	// Handle remote set setting from web interface
-	// Uses the existing settings infrastructure via window.maestro.settings.set()
+	// Handle remote set setting from the web interface and the CLI bridge
+	// (`maestro-cli set-theme`, `gloss`, `encore`, `theme import`, ...).
+	// Uses the existing settings infrastructure via window.maestro.settings.set().
 	useEffect(() => {
 		const unsubscribe = window.maestro.process.onRemoteSetSetting(
 			async (key: string, value: unknown, responseChannel: string) => {
 				try {
 					await window.maestro.settings.set(key, value);
+					// settings.set() only PERSISTS - it does not touch the Zustand
+					// store the live UI renders from, so without this the app kept
+					// showing the old value until the next launch (a CLI theme
+					// switch reported success and changed nothing on screen). The
+					// settings file watcher cannot cover this either: the write
+					// came from the renderer, so it is deliberately suppressed
+					// there as an internal write. Re-reading is cheap here and
+					// reuses the one mapping table that knows every setting key;
+					// the load already drops any key the user edited mid-flight.
+					await loadAllSettings();
 					window.maestro.process.sendRemoteSetSettingResponse(responseChannel, true);
 				} catch {
 					window.maestro.process.sendRemoteSetSettingResponse(responseChannel, false);

@@ -207,6 +207,19 @@ actually written, and the file tree refreshes so you can see it right away.
 This works on remote agents too. The remote host needs the `zip` command
 installed; without it, Maestro says so rather than failing quietly.
 
+### File Icon Themes
+
+The Files pane draws each file and folder with one of two icon sets, chosen in
+**Settings > Display > Files Pane Icon Theme**:
+
+- **Rich** (the default) uses Material Icon Theme style SVGs: colorful,
+  language-specific icons for 70+ file types plus folder categories such as
+  tests, docs, assets, and config.
+- **Flat** uses Maestro's simpler monochrome icons, which read as less busy on a
+  large tree.
+
+The choice applies to every agent's Files pane and takes effect right away.
+
 ### File Explorer Keyboard Shortcuts
 
 With the Files tab focused, navigate the file list without touching the mouse:

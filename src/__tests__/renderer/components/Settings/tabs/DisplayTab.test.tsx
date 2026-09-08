@@ -88,7 +88,7 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		setUserMessageAlignment: mockSetUserMessageAlignment,
 		groupChatAutoScroll: true,
 		setGroupChatAutoScroll: mockSetGroupChatAutoScroll,
-		fileExplorerIconTheme: 'default',
+		fileExplorerIconTheme: 'flat',
 		setFileExplorerIconTheme: mockSetFileExplorerIconTheme,
 		useNativeTitleBar: false,
 		setUseNativeTitleBar: mockSetUseNativeTitleBar,
@@ -291,6 +291,14 @@ describe('DisplayTab', () => {
 			expect(
 				screen.getByText(/Rich uses Material Icon Theme style file and folder SVGs/i)
 			).toBeInTheDocument();
+		});
+
+		it('should call setFileExplorerIconTheme when Flat is selected', () => {
+			render(<DisplayTab theme={mockTheme} />);
+
+			fireEvent.click(screen.getByRole('button', { name: 'Flat' }));
+
+			expect(mockSetFileExplorerIconTheme).toHaveBeenCalledWith('flat');
 		});
 
 		it('should call setFileExplorerIconTheme when Rich is selected', () => {
