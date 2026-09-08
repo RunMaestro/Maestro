@@ -37,6 +37,7 @@ import type {
 	ConsultAgentParams,
 	ConsultAgentResult,
 	RenameTabResult,
+	ConfigureAutoRunCallback,
 } from '../../types';
 import type { CadenzaPayload } from '../../../../shared/cadenza-types';
 import type { MovementPayload, MovementStateSnapshot } from '../../../../shared/movement-types';
@@ -188,32 +189,7 @@ export interface MessageHandlerCallbacks {
 		itemId: string
 	) => Promise<{ success: boolean; removed: boolean; error?: string }>;
 	refreshAutoRunDocs: (sessionId: string, background?: boolean) => Promise<boolean>;
-	configureAutoRun: (
-		sessionId: string,
-		config: {
-			documents: Array<{ filename: string; resetOnCompletion?: boolean }>;
-			prompt?: string;
-			loopEnabled?: boolean;
-			maxLoops?: number;
-			saveAsPlaybook?: string;
-			launch?: boolean;
-			/**
-			 * Per-run model/effort override (CLI `--model` / `--effort`). Wins over the
-			 * session's configured model for this run's spawns only; never written back
-			 * to the session. Absent means "use the agent default".
-			 */
-			model?: string;
-			effort?: string;
-			worktree?: {
-				enabled: boolean;
-				path: string;
-				branchName: string;
-				baseBranch: string;
-				createPROnCompletion: boolean;
-				prTargetBranch: string;
-			};
-		}
-	) => Promise<{ success: boolean; playbookId?: string; error?: string }>;
+	configureAutoRun: ConfigureAutoRunCallback;
 	/**
 	 * Launch a desktop-owned Goal-Driven Auto Run (`goal-run --visible`). Goal
 	 * mode is document-less, so this carries a free-text goal rather than a

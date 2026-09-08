@@ -296,7 +296,7 @@ describe('MaestroClient', () => {
 
 			const commandPromise = client.sendCommand<{ type: string }>({ type: 'ping' }, 'pong');
 
-			expect(() => mockWsInstance.emit('message', 'not json')).toThrow();
+			expect(() => mockWsInstance.emit('message', 'not json')).not.toThrow();
 			await expect(commandPromise).rejects.toThrow('Invalid message from Maestro desktop app');
 		});
 	});

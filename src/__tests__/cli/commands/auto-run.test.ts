@@ -101,6 +101,37 @@ describe('auto-run command', () => {
 		expect(docs[0].filename).toBe('nested/doc.md');
 	});
 
+	it.each([
+		{ label: 'the default', options: {}, expected: false },
+		{ label: '--background', options: { background: true }, expected: true },
+		{
+			label: '--focus overriding --background',
+			options: { background: true, focus: true },
+			expected: false,
+		},
+	])('should send background=$expected for $label placement', async ({ options, expected }) => {
+		vi.mocked(existsSync).mockReturnValue(true);
+		vi.mocked(resolveTargetSessionId).mockReturnValue('agent-123');
+
+		let sentMessage: Record<string, unknown> | undefined;
+		vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+			const mockClient = {
+				sendCommand: vi.fn().mockImplementation((msg) => {
+					sentMessage = msg;
+					return Promise.resolve({
+						type: 'configure_auto_run_result',
+						success: true,
+					});
+				}),
+			};
+			return action(mockClient as never);
+		});
+
+		await autoRun(['/path/to/doc.md'], options);
+
+		expect(sentMessage?.background).toBe(expected);
+	});
+
 	it('should error with no documents', async () => {
 		await autoRun([], {});
 

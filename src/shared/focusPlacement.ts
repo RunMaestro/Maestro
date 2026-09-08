@@ -104,6 +104,8 @@ export const CLI_BACKGROUND_DEFAULTS = {
 	 * still happens either way.
 	 */
 	'refresh-auto-run': false,
+	/** maestro-cli auto-run - opens the configured Auto Run view today. */
+	'auto-run': false,
 	/**
 	 * maestro-cli switch-mode - proceeds today.
 	 *

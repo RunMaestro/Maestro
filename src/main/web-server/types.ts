@@ -219,6 +219,8 @@ export interface ConfigureAutoRunConfig {
 	maxLoops?: number;
 	saveAsPlaybook?: string;
 	launch?: boolean;
+	/** Configure state without moving the active agent or Auto Run view. */
+	background?: boolean;
 	model?: string;
 	effort?: string;
 	worktree?: {

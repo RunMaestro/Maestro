@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { withMaestroClient, resolveTargetSessionId } from '../services/maestro-client';
 import { getSessionById } from '../services/storage';
+import { resolveBackgroundFlag } from '../../shared/focusPlacement';
 
 interface AutoRunOptions {
 	agent?: string;
@@ -19,6 +20,8 @@ interface AutoRunOptions {
 	worktreePath?: string;
 	createPr?: boolean;
 	prTargetBranch?: string;
+	background?: boolean;
+	focus?: boolean;
 	// Run-scoped overrides: they win over the agent's configured model/effort for
 	// this run only and are never written back to the session.
 	model?: string;
@@ -177,6 +180,7 @@ export async function autoRun(docs: string[], options: AutoRunOptions): Promise<
 	// leaves the agent's configured default untouched.
 	const runModel = options.model?.trim() || undefined;
 	const runEffort = options.effort?.trim() || undefined;
+	const background = resolveBackgroundFlag(options, 'auto-run');
 
 	try {
 		const result = await withMaestroClient(async (client) => {
@@ -190,6 +194,7 @@ export async function autoRun(docs: string[], options: AutoRunOptions): Promise<
 					maxLoops,
 					saveAsPlaybook: options.saveAs,
 					launch: options.launch,
+					background,
 					worktree,
 					...(runModel && { model: runModel }),
 					...(runEffort && { effort: runEffort }),

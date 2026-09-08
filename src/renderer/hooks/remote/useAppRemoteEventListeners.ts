@@ -649,7 +649,13 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 
 	// Handle remote configure auto-run events from CLI/web interface
 	useEventListener('maestro:configureAutoRun', async (e: Event) => {
-		const { sessionId, config, responseChannel } = (e as CustomEvent).detail;
+		const { sessionId, config, responseChannel } = (
+			e as CustomEvent<{
+				sessionId: string;
+				config: import('../../../main/web-server/types').ConfigureAutoRunConfig;
+				responseChannel: string;
+			}>
+		).detail;
 
 		try {
 			// Find the target session
@@ -666,7 +672,10 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			if (config.saveAsPlaybook) {
 				const result = await window.maestro.playbooks.create(sessionId, {
 					name: config.saveAsPlaybook,
-					documents: config.documents || [],
+					documents: (config.documents || []).map((document) => ({
+						...document,
+						resetOnCompletion: document.resetOnCompletion || false,
+					})),
 					loopEnabled: config.loopEnabled || false,
 					maxLoops: config.maxLoops,
 					prompt: config.prompt || '',
@@ -895,10 +904,12 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				)
 			);
 			useBatchStore.getState().setDocumentList(documents.map((document) => document.filename));
-			setActiveSessionId(sessionId);
-			const uiActions = useUIStore.getState();
-			uiActions.setRightPanelOpen(true);
-			uiActions.setActiveRightTab('autorun');
+			if (!config.background) {
+				setActiveSessionId(sessionId);
+				const uiActions = useUIStore.getState();
+				uiActions.setRightPanelOpen(true);
+				uiActions.setActiveRightTab('autorun');
+			}
 			useModalStore.getState().openBatchRunnerWithConfig(batchConfig);
 			window.maestro.process.sendRemoteConfigureAutoRunResponse(responseChannel, {
 				success: true,

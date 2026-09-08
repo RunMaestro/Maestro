@@ -242,9 +242,10 @@ export class MaestroClient {
 						return;
 					}
 				}
-			} catch (error) {
+			} catch {
+				// A malformed frame invalidates this short-lived connection, so reject
+				// every in-flight command through the promises their callers await.
 				this.rejectAllPending(new Error('Invalid message from Maestro desktop app'));
-				throw error;
 			}
 		});
 	}

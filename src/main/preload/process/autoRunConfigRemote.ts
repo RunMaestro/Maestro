@@ -1,4 +1,5 @@
 import { ipcRenderer } from 'electron';
+import type { ConfigureAutoRunConfig } from '../../web-server/types';
 
 export function createAutoRunConfigRemoteApi() {
 	return {
@@ -18,9 +19,14 @@ export function createAutoRunConfigRemoteApi() {
 		 * Subscribe to remote configure auto-run from CLI/web interface
 		 */
 		onRemoteConfigureAutoRun: (
-			callback: (sessionId: string, config: any, responseChannel: string) => void
+			callback: (sessionId: string, config: ConfigureAutoRunConfig, responseChannel: string) => void
 		): (() => void) => {
-			const handler = (_: unknown, sessionId: string, config: any, responseChannel: string) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				config: ConfigureAutoRunConfig,
+				responseChannel: string
+			) => {
 				try {
 					// callback may return a promise even though typed as void
 					Promise.resolve(callback(sessionId, config, responseChannel)).catch((error) => {

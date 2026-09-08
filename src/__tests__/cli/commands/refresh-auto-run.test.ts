@@ -51,7 +51,7 @@ describe('refresh-auto-run command', () => {
 		});
 		await action({ sendCommand } as never);
 		expect(sendCommand).toHaveBeenCalledWith(
-			{ type: 'refresh_auto_run_docs', sessionId: 'target-session' },
+			{ type: 'refresh_auto_run_docs', sessionId: 'target-session', background: false },
 			'refresh_auto_run_docs_result'
 		);
 		expect(consoleSpy).toHaveBeenCalledWith('Auto Run documents refreshed');
@@ -70,7 +70,7 @@ describe('refresh-auto-run command', () => {
 		});
 		await action({ sendCommand } as never);
 		expect(sendCommand).toHaveBeenCalledWith(
-			{ type: 'refresh_auto_run_docs', sessionId: 'resolved-session' },
+			{ type: 'refresh_auto_run_docs', sessionId: 'resolved-session', background: false },
 			'refresh_auto_run_docs_result'
 		);
 	});

@@ -111,6 +111,75 @@ describe('useAppRemoteEventListeners', () => {
 		});
 	});
 
+	it('configures the Batch Runner in the background without moving the view', async () => {
+		const folderPath = path.join(os.tmpdir(), 'maestro-auto-run');
+		const session = createMockSession({ autoRunFolderPath: folderPath });
+		const sessionsRef = { current: [session] };
+		const setSessions = vi.fn((next: Session[] | ((previous: Session[]) => Session[])) => {
+			sessionsRef.current = typeof next === 'function' ? next(sessionsRef.current) : next;
+		});
+		const setActiveSessionId = vi.fn();
+
+		vi.mocked(window.maestro.autorun.readDoc).mockResolvedValue({
+			success: true,
+			content: '# Background Spec',
+		});
+
+		const deps: UseAppRemoteEventListenersDeps = {
+			sessionsRef,
+			setActiveSessionId,
+			setSessions,
+			setGroups: vi.fn(),
+			handleOpenFileTab: vi.fn(),
+			refreshFileTree: vi.fn(),
+			handleAutoRunRefresh: vi.fn(),
+			startBatchRun: vi.fn().mockResolvedValue(undefined),
+			stopBatchRun: vi.fn(),
+			resumeAfterError: vi.fn(),
+			skipCurrentDocument: vi.fn(),
+			abortBatchOnError: vi.fn(),
+		};
+
+		renderHook(() => useAppRemoteEventListeners(deps));
+
+		act(() => {
+			window.dispatchEvent(
+				new CustomEvent('maestro:configureAutoRun', {
+					detail: {
+						sessionId: session.id,
+						config: {
+							documents: [{ filename: 'background.md' }],
+							background: true,
+						},
+						responseChannel: 'background-configure-response',
+					},
+				})
+			);
+		});
+
+		await waitFor(() => {
+			expect(window.maestro.process.sendRemoteConfigureAutoRunResponse).toHaveBeenCalledWith(
+				'background-configure-response',
+				{ success: true }
+			);
+		});
+
+		expect(setActiveSessionId).not.toHaveBeenCalled();
+		expect(sessionsRef.current[0]).toMatchObject({
+			autoRunSelectedFile: 'background',
+			autoRunContent: '# Background Spec',
+		});
+		expect(useUIStore.getState()).toMatchObject({
+			rightPanelOpen: false,
+			activeRightTab: 'files',
+		});
+		expect(useModalStore.getState().getData('batchRunner')).toMatchObject({
+			initialConfig: {
+				documents: [expect.objectContaining({ filename: 'background' })],
+			},
+		});
+	});
+
 	it('preserves a nested relative document path when launching', async () => {
 		const folderPath = path.join(os.tmpdir(), 'maestro-auto-run');
 		const session = createMockSession({ autoRunFolderPath: folderPath });
