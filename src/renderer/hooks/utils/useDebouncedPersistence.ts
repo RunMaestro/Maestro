@@ -44,6 +44,16 @@ import { captureException } from '../../utils/sentry';
 // Maximum persisted logs per AI tab (matches session persistence limit)
 const MAX_PERSISTED_LOGS_PER_TAB = 100;
 
+/**
+ * Thrown by `persistInternal` when the session registry was never read back
+ * from disk. Matched by message in `persistSessions` so it is kept out of
+ * Sentry - it is a user-environment condition (an unmounted sync folder, a
+ * corrupt file), not a Maestro bug, and reporting it on every mutation for
+ * the rest of the run would only be noise.
+ */
+export const SESSIONS_NOT_READ_MESSAGE =
+	'sessions were never read from disk; refusing to persist an unverified tree';
+
 // Maximum persisted file-preview content per tab. Preview tabs hold the full
 // file in `content`, but the viewer only renders a truncated slice (see
 // LARGE_FILE_PREVIEW_LIMIT) and re-reads from disk on activation. Persisting
@@ -408,6 +418,18 @@ export function useDebouncedPersistence(
 	 * still need to log so the failure is visible.
 	 */
 	const persistInternal = useCallback(async (): Promise<void> => {
+		// Never write a tree we never read. sessions:getAll answers [] both for
+		// a new install and for a registry it could not read (the store lives
+		// under the configurable sync path, and a cloud folder that has not
+		// mounted yet is exactly that), and the restoration hook sets the
+		// in-memory tree to [] on failure. Every flush path funnels through
+		// here - the debounce timer, flushNow, unmount, beforeunload - which is
+		// the point: `initialLoadComplete` is set in a `finally`, so it is true
+		// even when the read failed, and flushNow with a snapshot skips it
+		// entirely. This is the one gate they all share.
+		if (!useSessionStore.getState().sessionsReadOk) {
+			throw new Error(SESSIONS_NOT_READ_MESSAGE);
+		}
 		const current = sessionsRef.current;
 		if (previouslyPersistedRef.current === null) {
 			const sessionsForPersistence = current.map(prepareSessionForPersistence);
@@ -465,7 +487,7 @@ export function useDebouncedPersistence(
 			// Maestro bug, so keep it out of Sentry. Genuine flush failures (real
 			// exceptions) still report. (MAESTRO-QF)
 			const message = err instanceof Error ? err.message : String(err);
-			if (!message.includes('recoverable disk error')) {
+			if (!message.includes('recoverable disk error') && message !== SESSIONS_NOT_READ_MESSAGE) {
 				captureException(err instanceof Error ? err : new Error(String(err)), {
 					extra: { operation: 'useDebouncedPersistence.persistSessions' },
 				});

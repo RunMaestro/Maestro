@@ -99,6 +99,7 @@ beforeEach(() => {
 		initialLoadComplete: false,
 		groups: [],
 		groupsLoaded: false,
+		sessionsReadOk: false,
 	});
 
 	useModalStore.setState({ modals: new Map() });

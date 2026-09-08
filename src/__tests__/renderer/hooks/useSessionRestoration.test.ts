@@ -112,6 +112,7 @@ beforeEach(() => {
 		sessionsLoaded: false,
 		initialLoadComplete: false,
 		groupsLoaded: false,
+		sessionsReadOk: false,
 	} as any);
 
 	useGroupChatStore.setState({
@@ -1612,6 +1613,46 @@ describe('Session & Group loading effect', () => {
 		// group persistence stays switched off. Without this, the empty registry
 		// above is written straight back to disk.
 		expect(useSessionStore.getState().groupsLoaded).toBe(false);
+		// Same for sessions: the flush must not write the [] above over the file.
+		expect(useSessionStore.getState().sessionsReadOk).toBe(false);
+	});
+
+	describe('session registry load guard', () => {
+		it('marks the registry read when sessions come back', async () => {
+			mockGetAll.mockResolvedValueOnce([createMockSession({ id: 'loaded-1' })]);
+
+			renderHook(() => useSessionRestoration());
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 50));
+			});
+
+			expect(useSessionStore.getState().sessionsReadOk).toBe(true);
+		});
+
+		it('marks the registry read when the user has no agents yet', async () => {
+			mockGetAll.mockResolvedValueOnce([]);
+
+			renderHook(() => useSessionRestoration());
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 50));
+			});
+
+			// An empty list that was actually READ is a real answer, so a brand
+			// new install can still save its first agent.
+			expect(useSessionStore.getState().sessionsReadOk).toBe(true);
+		});
+
+		it('leaves the registry unread when the sessions read fails', async () => {
+			mockGetAll.mockRejectedValueOnce(new Error('sessions store unreadable'));
+
+			renderHook(() => useSessionRestoration());
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 50));
+			});
+
+			expect(useSessionStore.getState().sessionsReadOk).toBe(false);
+			expect(useSessionStore.getState().initialLoadComplete).toBe(true);
+		});
 	});
 
 	// ======================================================================

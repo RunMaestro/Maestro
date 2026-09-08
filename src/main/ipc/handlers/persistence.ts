@@ -32,6 +32,7 @@ import type { PluginEvent } from '../../../shared/plugins/events';
 import { buildSessionLifecycleEvents } from './plugin-session-events';
 import { relocateSessionImages, resolveToDataUrl } from '../../storage/session-image-store';
 import { backupGroupsBeforeWipe } from '../../stores/groups-backup';
+import { backupSessionsBeforeWipe } from '../../stores/sessions-backup';
 
 /**
  * Shallow-compare cliActivity for the diff broadcast.
@@ -728,6 +729,14 @@ export function registerPersistenceHandlers(
 		}
 
 		try {
+			// Keep a copy before an empty tree replaces a populated one. setAll is
+			// the bootstrap flush, which is exactly the path a bad read feeds:
+			// sessions:getAll answers [] for an unmounted sync folder, and the
+			// renderer's first flush would write that back over every agent.
+			// The renderer refuses that write when its read failed (see
+			// useDebouncedPersistence), but the CLI and the web bridge reach
+			// this handler too, so the copy is taken here as well.
+			await backupSessionsBeforeWipe(previousSessions, sessions, sessionsStore.path);
 			sessionsStore.set('sessions', sessions);
 			await flushSessionWrites();
 		} catch (err) {

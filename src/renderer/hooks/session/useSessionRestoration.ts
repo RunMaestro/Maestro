@@ -97,6 +97,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 		hydrateActiveSessionId,
 		setSessionsLoaded,
 		setGroupsLoaded,
+		setSessionsReadOk,
 	} = useMemo(() => useSessionStore.getState(), []);
 	const { setGroupChats } = useMemo(() => useGroupChatStore.getState(), []);
 
@@ -652,6 +653,11 @@ export function useSessionRestoration(): SessionRestorationReturn {
 			try {
 				window.__updateSplash?.(50, 'Seating the musicians...');
 				const savedSessions = await window.maestro.sessions.getAll();
+				// The read came back. An empty list is a real answer here (a brand
+				// new install), so persistence must stay enabled for it; only a read
+				// that never returned keeps the flush switched off. Same rule, same
+				// reason, as `groupsLoaded` below.
+				setSessionsReadOk(true);
 
 				// Handle sessions
 				if (savedSessions && savedSessions.length > 0) {
@@ -747,7 +753,13 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					setGroupChats([]);
 				}
 			} catch (e) {
-				logger.error('Failed to load sessions:', undefined, e);
+				logger.error(
+					'Failed to load sessions - session saving disabled for this run:',
+					undefined,
+					e
+				);
+				// The in-memory tree is empty but `sessionsReadOk` stays false, so
+				// the flush will not write this emptiness over the file on disk.
 				setSessions([]);
 				// Deliberately NOT setGroups([]) here. The group registry is read in
 				// its own try above; wiping it on an unrelated session failure is the
