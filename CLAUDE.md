@@ -64,7 +64,7 @@ Grep-verified 2026-09-04 (`npm run docs:verify` re-checks every path). This is t
 - **Timestamp for a generated file name:** `fileTimestampSlug(dateOrTimestamp?)`, `saveImageToProject()` in `src/shared/formatters.ts`
 - **Summing a Codex session's tokens:** `CodexTokenCounts`, `token_count` in `src/shared/codexTokenUsage.ts`
 - **Path utilities:** `truncatePath()`, `getParentDir()` in `src/shared/formatters.ts`
-- **Reading a zip from disk:** `readZipArchive()`, `extractZipTo()`, `isUnsafeZipEntryName()` in `src/main/utils/zip-archive.ts`. Playbook import and Cue backup only need names and bytes. Do not bring back `adm-zip` (`extractAllTo` follows dest symlinks; no patched release).
+- **Reading a zip from disk:** `readZipArchive(filePath, options?)`, `extractZipTo()`, `isUnsafeZipEntryName()` in `src/main/utils/zip-archive.ts`. Playbook import and Cue backup only need names and bytes. Pass `names` or `filter` so a manifest-only read does not inflate the rest; default caps refuse a zip bomb. `extractZipTo` walks every path component under the dest root so an intermediate symlink cannot escape. Do not bring back `adm-zip` (`extractAllTo` follows dest symlinks; no patched release).
 - **Referencing / thumbnailing a pasted transcript image:** `isSessionImageRef()`, `sessionImageThumbnailSrc()` in `src/shared/sessionImageRefs.ts`
 - **Loading an image for canvas compositing:** `loadImageElement(src)` in `src/renderer/utils/loadImage.ts`
 - **Saving generated image bytes to disk:** `saveImageDataUrlToDisk(dataUrl, defaultName?)` in `src/renderer/utils/imageExport.ts`

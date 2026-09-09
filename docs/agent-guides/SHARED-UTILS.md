@@ -131,11 +131,11 @@ helpers below.
 
 Playbook import and Cue backup inspect/restore only need entry names and bytes. This module is the one zip reader. Do not import `adm-zip` (its `extractAllTo` follows dest symlinks; no patched release).
 
-| Function / Type                  | Signature                  | Purpose                                                                                                                        |
-| -------------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `readZipArchive(filePath)`       | `(string) => ZipArchive`   | Load a zip from disk. `getEntries()` / `getEntry(name)` return name, directory flag, uncompressed size, and `getData()`.       |
-| `extractZipTo(zipPath, destDir)` | `(string, string) => void` | Write entries under `destDir`. Refuses zip-slip names and will not overwrite a destination that is already a symlink.          |
-| `isUnsafeZipEntryName(name)`     | `(string) => boolean`      | True for `..`, absolute paths, drive letters, or NUL. Used by extract and available to callers that write one file themselves. |
+| Function / Type                      | Signature                                        | Purpose                                                                                                                                                                                                        |
+| ------------------------------------ | ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `readZipArchive(filePath, options?)` | `(string, ReadZipArchiveOptions?) => ZipArchive` | Load a zip from disk. `names` / `filter` run before inflation so a manifest-only caller does not expand the rest. Default caps (`DEFAULT_ZIP_MAX_ENTRIES`, `DEFAULT_ZIP_MAX_ORIGINAL_SIZE`) refuse a zip bomb. |
+| `extractZipTo(zipPath, destDir)`     | `(string, string) => void`                       | Write entries under `destDir`. Refuses zip-slip names, dest-file symlinks, and intermediate path-component symlinks.                                                                                           |
+| `isUnsafeZipEntryName(name)`         | `(string) => boolean`                            | True for `..`, absolute paths, drive letters, or NUL. Used by extract and available to callers that write one file themselves.                                                                                 |
 
 ---
 

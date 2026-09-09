@@ -32,6 +32,21 @@ import { captureException } from '../../utils/sentry';
 const LOG_CONTEXT = '[CueBackup]';
 const BACKUP_DIR_NAME = 'cue-backups';
 const MANIFEST_NAME = 'manifest.json';
+const MANIFEST_ONLY = { names: [MANIFEST_NAME] } as const;
+
+function workspaceZipEntryName(workspaceId: string, relativePath: string): string {
+	return `workspaces/${workspaceId}/${relativePath}`;
+}
+
+function readZipWorkspaceFile(
+	zip: ZipArchive,
+	workspaceId: string,
+	relativePath: string
+): string | null {
+	const entry = zip.getEntry(workspaceZipEntryName(workspaceId, relativePath));
+	if (!entry) return null;
+	return entry.getData().toString('utf-8');
+}
 
 function backupsDir(): string {
 	const dir = path.join(app.getPath('userData'), BACKUP_DIR_NAME);
@@ -236,7 +251,7 @@ export function listCueBackups(): CueBackupSummary[] {
 		const filePath = path.join(dir, entry.name);
 		try {
 			const stat = fs.statSync(filePath);
-			const zip = readZipArchive(filePath);
+			const zip = readZipArchive(filePath, MANIFEST_ONLY);
 			const manifest = readManifestFromZip(zip);
 			if (!manifest) continue;
 			summaries.push({
@@ -265,7 +280,7 @@ function assertBackupPath(filePath: string): void {
 /** Read the manifest of a specific backup zip. */
 export function inspectCueBackup(filePath: string): CueBackupManifest {
 	assertBackupPath(filePath);
-	const zip = readZipArchive(filePath);
+	const zip = readZipArchive(filePath, MANIFEST_ONLY);
 	const manifest = readManifestFromZip(zip);
 	if (!manifest) {
 		throw new Error('Backup is missing or has an invalid manifest');
@@ -284,10 +299,10 @@ export function readCueBackupFile(
 	relativePath: string
 ): string | null {
 	assertBackupPath(filePath);
-	const zip = readZipArchive(filePath);
-	const entry = zip.getEntry(`workspaces/${workspaceId}/${relativePath}`);
-	if (!entry) return null;
-	return entry.getData().toString('utf-8');
+	const zip = readZipArchive(filePath, {
+		names: [workspaceZipEntryName(workspaceId, relativePath)],
+	});
+	return readZipWorkspaceFile(zip, workspaceId, relativePath);
 }
 
 /**
@@ -326,7 +341,13 @@ export function restoreCueBackupFile(
 	relativePath: string
 ): void {
 	assertBackupPath(filePath);
-	const manifest = inspectCueBackup(filePath);
+	const zip = readZipArchive(filePath, {
+		names: [MANIFEST_NAME, workspaceZipEntryName(workspaceId, relativePath)],
+	});
+	const manifest = readManifestFromZip(zip);
+	if (!manifest) {
+		throw new Error('Backup is missing or has an invalid manifest');
+	}
 	const ws = manifest.workspaces.find((w) => w.id === workspaceId);
 	if (!ws) {
 		throw new Error(`Workspace ${workspaceId} not found in backup`);
@@ -334,7 +355,7 @@ export function restoreCueBackupFile(
 	if (!fs.existsSync(ws.cwd)) {
 		throw new Error(`Workspace path no longer exists: ${ws.cwd}`);
 	}
-	const contents = readCueBackupFile(filePath, workspaceId, relativePath);
+	const contents = readZipWorkspaceFile(zip, workspaceId, relativePath);
 	if (contents === null) {
 		throw new Error(`File not found in backup: ${relativePath}`);
 	}
@@ -358,7 +379,11 @@ export function restoreCueBackupFile(
  */
 export function restoreCueBackupAll(filePath: string): CueBackupRestoreResult {
 	assertBackupPath(filePath);
-	const manifest = inspectCueBackup(filePath);
+	const zip = readZipArchive(filePath);
+	const manifest = readManifestFromZip(zip);
+	if (!manifest) {
+		throw new Error('Backup is missing or has an invalid manifest');
+	}
 	const result: CueBackupRestoreResult = { written: 0, skipped: [] };
 
 	for (const ws of manifest.workspaces) {
@@ -374,7 +399,7 @@ export function restoreCueBackupAll(filePath: string): CueBackupRestoreResult {
 		}
 		for (const f of ws.files) {
 			try {
-				const contents = readCueBackupFile(filePath, ws.id, f.relativePath);
+				const contents = readZipWorkspaceFile(zip, ws.id, f.relativePath);
 				if (contents === null) {
 					result.skipped.push({
 						workspaceId: ws.id,

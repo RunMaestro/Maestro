@@ -51,6 +51,64 @@ describe('zip-archive', () => {
 		expect(readZipArchive(zipPath).getEntry('missing.txt')).toBeUndefined();
 	});
 
+	it('inflates only the named entries', () => {
+		const zipPath = writeZip(tmp, {
+			'manifest.json': '{"ok":true}',
+			'workspaces/ws/cue.yaml': 'subscriptions: []\n',
+			'workspaces/ws/prompts/hi.md': '# hi\n',
+		});
+
+		const zip = readZipArchive(zipPath, { names: ['manifest.json'] });
+		expect(zip.getEntry('manifest.json')?.getData().toString('utf-8')).toBe('{"ok":true}');
+		expect(zip.getEntry('workspaces/ws/cue.yaml')).toBeUndefined();
+		expect(zip.getEntries().map((e) => e.entryName)).toEqual(['manifest.json']);
+	});
+
+	it('applies a predicate before inflation', () => {
+		const zipPath = writeZip(tmp, {
+			'keep.json': '{}',
+			'skip.bin': 'nope',
+		});
+
+		const zip = readZipArchive(zipPath, {
+			filter: (file) => file.name.endsWith('.json'),
+		});
+		expect(zip.getEntry('keep.json')).toBeDefined();
+		expect(zip.getEntry('skip.bin')).toBeUndefined();
+	});
+
+	it('refuses a selected entry count above the cap', () => {
+		const zipPath = writeZip(tmp, {
+			'a.txt': 'a',
+			'b.txt': 'b',
+			'c.txt': 'c',
+		});
+		expect(() => readZipArchive(zipPath, { maxEntries: 2 })).toThrow(/more than 2 entries/);
+	});
+
+	it('refuses an aggregate originalSize above the cap', () => {
+		const zipPath = writeZip(tmp, {
+			'big.txt': '0123456789',
+		});
+		expect(() => readZipArchive(zipPath, { maxOriginalSize: 5 })).toThrow(
+			/expanded size exceeds 5 bytes/
+		);
+	});
+
+	it('does not count skipped entries toward the caps', () => {
+		const zipPath = writeZip(tmp, {
+			'manifest.json': '{}',
+			'huge.txt': '0123456789',
+		});
+		const zip = readZipArchive(zipPath, {
+			names: ['manifest.json'],
+			maxEntries: 1,
+			maxOriginalSize: 4,
+		});
+		expect(zip.getEntry('manifest.json')?.getData().toString('utf-8')).toBe('{}');
+		expect(zip.getEntry('huge.txt')).toBeUndefined();
+	});
+
 	it('extracts files under the destination and skips directories', () => {
 		const zipPath = writeZip(tmp, {
 			'readme.txt': 'ok',
@@ -74,7 +132,7 @@ describe('zip-archive', () => {
 		expect(fs.existsSync(path.join(tmp, 'escape.txt'))).toBe(false);
 	});
 
-	it('refuses to overwrite a destination symlink', () => {
+	it.skipIf(process.platform === 'win32')('refuses to overwrite a destination symlink', () => {
 		const zipPath = writeZip(tmp, { 'secret.txt': 'from-zip' });
 		const dest = path.join(tmp, 'out');
 		fs.mkdirSync(dest);
@@ -85,4 +143,21 @@ describe('zip-archive', () => {
 		expect(() => extractZipTo(zipPath, dest)).toThrow(/symlink/);
 		expect(fs.readFileSync(outside, 'utf8')).toBe('keep');
 	});
+
+	it.skipIf(process.platform === 'win32')(
+		'refuses to write through an intermediate symlink',
+		() => {
+			const zipPath = writeZip(tmp, { 'nested/file.txt': 'pwn' });
+			const dest = path.join(tmp, 'out');
+			fs.mkdirSync(dest);
+			const outside = path.join(tmp, 'outside');
+			fs.mkdirSync(outside);
+			fs.writeFileSync(path.join(outside, 'keep.txt'), 'keep');
+			fs.symlinkSync(outside, path.join(dest, 'nested'));
+
+			expect(() => extractZipTo(zipPath, dest)).toThrow(/symlink/);
+			expect(fs.readFileSync(path.join(outside, 'keep.txt'), 'utf8')).toBe('keep');
+			expect(fs.existsSync(path.join(outside, 'file.txt'))).toBe(false);
+		}
+	);
 });
