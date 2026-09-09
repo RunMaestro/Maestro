@@ -18,6 +18,7 @@ import {
 	GroupsData,
 } from '../../../../main/ipc/handlers/persistence';
 import type Store from 'electron-store';
+import type { StoredSession } from '../../../../main/stores/types';
 import type { WebServer } from '../../../../main/web-server';
 import { broadcastBridgeEvent } from '../../../../main/web-server/handlers/bridgeHandlers';
 
@@ -62,6 +63,13 @@ vi.mock('../../../../main/web-server/handlers/bridgeHandlers', () => ({
 	broadcastBridgeEvent: vi.fn(),
 }));
 
+const { backupSessionsBeforeWipeMock } = vi.hoisted(() => ({
+	backupSessionsBeforeWipeMock: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock('../../../../main/stores/sessions-backup', () => ({
+	backupSessionsBeforeWipe: backupSessionsBeforeWipeMock,
+}));
+
 // Mock the themes module
 vi.mock('../../../../main/themes', () => ({
 	getThemeById: vi.fn().mockReturnValue({
@@ -81,6 +89,7 @@ describe('persistence IPC handlers', () => {
 	let mockSessionsStore: {
 		get: ReturnType<typeof vi.fn>;
 		set: ReturnType<typeof vi.fn>;
+		path: string;
 	};
 	let mockGroupsStore: {
 		get: ReturnType<typeof vi.fn>;
@@ -113,6 +122,7 @@ describe('persistence IPC handlers', () => {
 		mockSessionsStore = {
 			get: vi.fn().mockReturnValue([]),
 			set: vi.fn(),
+			path: '/mock/maestro-sessions.json',
 		};
 
 		mockGroupsStore = {
@@ -729,7 +739,7 @@ describe('persistence IPC handlers', () => {
 			});
 		});
 
-		it('should detect removed sessions and broadcast to web clients', async () => {
+		it('should preserve stored sessions omitted from a bootstrap snapshot', async () => {
 			mockWebServer.getWebClientCount.mockReturnValue(2);
 			const previousSessions = [
 				{
@@ -746,7 +756,8 @@ describe('persistence IPC handlers', () => {
 			const handler = handlers.get('sessions:setAll');
 			await handler!({} as any, []);
 
-			expect(mockWebServer.broadcastSessionRemoved).toHaveBeenCalledWith('session-1');
+			expect(mockSessionsStore.set).toHaveBeenCalledWith('sessions', previousSessions);
+			expect(mockWebServer.broadcastSessionRemoved).not.toHaveBeenCalled();
 		});
 
 		it('should detect state changes and broadcast to web clients', async () => {
@@ -1038,7 +1049,6 @@ describe('persistence IPC handlers', () => {
 					inputMode: 'ai',
 					toolType: 'claude-code',
 				}, // state changed
-				// session-2 removed
 				{
 					id: 'session-3',
 					name: 'Session 3',
@@ -1057,10 +1067,15 @@ describe('persistence IPC handlers', () => {
 				'busy',
 				expect.any(Object)
 			);
-			expect(mockWebServer.broadcastSessionRemoved).toHaveBeenCalledWith('session-2');
+			expect(mockWebServer.broadcastSessionRemoved).not.toHaveBeenCalled();
 			expect(mockWebServer.broadcastSessionAdded).toHaveBeenCalledWith(
 				expect.objectContaining({ id: 'session-3' })
 			);
+			expect(mockSessionsStore.set).toHaveBeenCalledWith('sessions', [
+				newSessions[0],
+				newSessions[1],
+				previousSessions[1],
+			]);
 		});
 
 		it('should return false on ENOSPC write error', async () => {
@@ -1164,6 +1179,51 @@ describe('persistence IPC handlers', () => {
 
 			const merged = mockSessionsStore.set.mock.calls[0][1];
 			expect(merged.map((s: any) => s.id)).toEqual(['s2']);
+		});
+
+		it('backs up before explicit removals empty the registry', async () => {
+			const stored = [{ ...baseSession }];
+			mockSessionsStore.get.mockReturnValue(stored);
+
+			await handlers.get('sessions:setMany')!({} as any, [], ['s1']);
+
+			expect(backupSessionsBeforeWipeMock).toHaveBeenCalledWith(
+				stored,
+				[],
+				'/mock/maestro-sessions.json'
+			);
+			expect(mockSessionsStore.set).toHaveBeenCalledWith('sessions', []);
+		});
+
+		it('serializes additions behind a final-agent backup', async () => {
+			let stored = [{ ...baseSession }];
+			mockSessionsStore.get.mockImplementation((key: string, fallback: unknown) =>
+				key === 'sessions' ? stored : fallback
+			);
+			mockSessionsStore.set.mockImplementation((key: string, value: StoredSession[]) => {
+				if (key === 'sessions') stored = value;
+			});
+			let releaseBackup: (() => void) | undefined;
+			backupSessionsBeforeWipeMock.mockImplementationOnce(
+				() =>
+					new Promise<void>((resolve) => {
+						releaseBackup = resolve;
+					})
+			);
+
+			const removal = handlers.get('sessions:setMany')!({} as any, [], ['s1']);
+			await vi.waitFor(() => expect(backupSessionsBeforeWipeMock).toHaveBeenCalled());
+
+			const addition = handlers.get('sessions:setAll')!({} as any, [
+				{ ...baseSession, id: 'created-concurrently' },
+			]);
+			await Promise.resolve();
+			expect(mockSessionsStore.set).not.toHaveBeenCalled();
+
+			releaseBackup?.();
+			await Promise.all([removal, addition]);
+
+			expect(stored.map((session) => session.id)).toEqual(['created-concurrently']);
 		});
 
 		it('handles mixed updates and removes in one call', async () => {
@@ -1501,7 +1561,7 @@ describe('persistence IPC handlers', () => {
 			expect(merged.map((sess: any) => sess.id)).toEqual(['other', 's1']);
 		});
 
-		it("never reports a removal from setAll, which is one client's opening snapshot", async () => {
+		it("preserves agents omitted from one client's opening snapshot", async () => {
 			// A client that loaded before a peer created an agent has no idea it
 			// exists; treating its absence as a close would delete a live agent.
 			mockSessionsStore.get.mockReturnValue([
@@ -1511,6 +1571,8 @@ describe('persistence IPC handlers', () => {
 
 			await handlers.get('sessions:setAll')!({} as any, [{ ...baseSession, id: 's1' }]);
 
+			const persisted = mockSessionsStore.set.mock.calls.at(-1)![1];
+			expect(persisted.map((session: any) => session.id)).toEqual(['s1', 'created-elsewhere']);
 			expect(lastBridgePayload()).toBeNull();
 		});
 

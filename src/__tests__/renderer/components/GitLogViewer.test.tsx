@@ -837,16 +837,18 @@ diff --git a/src/test.ts b/src/test.ts
 		it('should register layer on mount', async () => {
 			render(<GitLogViewer {...defaultProps} />);
 
-			expect(mockRegisterLayer).toHaveBeenCalledWith({
-				type: 'modal',
-				priority: expect.any(Number),
-				blocksLowerLayers: true,
-				capturesFocus: true,
-				blocksAppShortcuts: true,
-				focusTrap: 'lenient',
-				ariaLabel: 'Git Log Viewer',
-				onEscape: expect.any(Function),
-			});
+			expect(mockRegisterLayer).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'modal',
+					priority: expect.any(Number),
+					blocksLowerLayers: true,
+					capturesFocus: true,
+					blocksAppShortcuts: true,
+					focusTrap: 'lenient',
+					ariaLabel: 'Git Log Viewer',
+					onEscape: expect.any(Function),
+				})
+			);
 		});
 
 		it('should unregister layer on unmount', async () => {

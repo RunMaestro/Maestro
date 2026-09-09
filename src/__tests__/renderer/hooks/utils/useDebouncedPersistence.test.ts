@@ -1395,15 +1395,16 @@ describe('useDebouncedPersistence', () => {
 				expect(window.maestro.sessions.setAll).not.toHaveBeenCalled();
 			});
 
-			it('should persist after initialLoadComplete becomes true', () => {
+			it('should use the loaded tree as the first incremental baseline', () => {
 				const session = makeSession();
+				const secondSession = makeSession({ id: 'second-session' });
 				const initialLoadRef = makeInitialLoadRef(false);
 
 				renderPersistence(initialLoadRef);
 
 				// Session change while load incomplete must not persist
 				act(() => {
-					seedSessions([session]);
+					seedSessions([session, secondSession]);
 				});
 				act(() => {
 					vi.advanceTimersByTime(3000);
@@ -1412,7 +1413,7 @@ describe('useDebouncedPersistence', () => {
 
 				// Mark initial load complete, then mutate sessions to schedule persist
 				initialLoadRef.current = true;
-				const updatedSession = makeSession({ id: session.id, name: 'Updated' });
+				const updatedSession = { ...session, name: 'Updated' };
 				act(() => {
 					seedSessions([updatedSession]);
 				});
@@ -1421,7 +1422,65 @@ describe('useDebouncedPersistence', () => {
 					vi.advanceTimersByTime(2000);
 				});
 
-				expect(window.maestro.sessions.setAll).toHaveBeenCalled();
+				expect(window.maestro.sessions.setAll).not.toHaveBeenCalled();
+				expect(window.maestro.sessions.setMany).toHaveBeenCalledWith(
+					[expect.objectContaining({ id: session.id, name: 'Updated' })],
+					['second-session']
+				);
+			});
+
+			it('should persist untouched startup repairs on the first flush', () => {
+				const first = makeSession({ id: 'first', name: 'Stored First' });
+				const second = makeSession({ id: 'second', name: 'Stored Second' });
+				const initialLoadRef = makeInitialLoadRef(false);
+
+				renderPersistence(initialLoadRef);
+				act(() => {
+					seedSessions([first, second]);
+				});
+
+				const repairedFirst = { ...first, name: 'Repaired First' };
+				const repairedSecond = { ...second, name: 'Repaired Second' };
+				act(() => {
+					seedSessions([repairedFirst, repairedSecond]);
+				});
+
+				initialLoadRef.current = true;
+				const updatedFirst = { ...repairedFirst, state: 'busy' as const };
+				act(() => {
+					seedSessions([updatedFirst, repairedSecond]);
+				});
+				act(() => {
+					vi.advanceTimersByTime(2000);
+				});
+
+				expect(window.maestro.sessions.setMany).toHaveBeenCalledWith(
+					[
+						expect.objectContaining({ id: 'first', name: 'Repaired First' }),
+						expect.objectContaining({ id: 'second', name: 'Repaired Second' }),
+					],
+					[]
+				);
+			});
+
+			it('should preserve a deletion when the loaded tree predates the subscription', () => {
+				const first = makeSession({ id: 'first' });
+				const second = makeSession({ id: 'second' });
+				seedSessions([first, second]);
+
+				renderPersistence(makeInitialLoadRef(true));
+				act(() => {
+					seedSessions([first]);
+				});
+				act(() => {
+					vi.advanceTimersByTime(2000);
+				});
+
+				expect(window.maestro.sessions.setAll).not.toHaveBeenCalled();
+				expect(window.maestro.sessions.setMany).toHaveBeenCalledWith(
+					[expect.objectContaining({ id: 'first' })],
+					['second']
+				);
 			});
 		});
 

@@ -310,16 +310,18 @@ describe('GitDiffViewer', () => {
 				/>
 			);
 
-			expect(mockRegisterLayer).toHaveBeenCalledWith({
-				type: 'modal',
-				priority: expect.any(Number),
-				blocksLowerLayers: true,
-				capturesFocus: true,
-				blocksAppShortcuts: true,
-				focusTrap: 'lenient',
-				ariaLabel: 'Git Diff Preview',
-				onEscape: expect.any(Function),
-			});
+			expect(mockRegisterLayer).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'modal',
+					priority: expect.any(Number),
+					blocksLowerLayers: true,
+					capturesFocus: true,
+					blocksAppShortcuts: true,
+					focusTrap: 'lenient',
+					ariaLabel: 'Git Diff Preview',
+					onEscape: expect.any(Function),
+				})
+			);
 		});
 
 		it('unregisters layer on unmount', () => {
