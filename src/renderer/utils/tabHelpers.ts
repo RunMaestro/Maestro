@@ -379,6 +379,59 @@ export function hasWizardInteraction(tab: AITab): boolean {
 }
 
 /**
+ * Turn a wizard tab back into an ordinary AI tab WITHOUT losing anything.
+ *
+ * The inline wizard keeps its conversation in `tab.wizardState.conversationHistory`
+ * and renders it through WizardConversationView, which is a completely separate
+ * store from `tab.logs` / TerminalOutput. Dropping `wizardState` therefore drops
+ * the entire wizard conversation and the provider session handle with it, leaving
+ * a tab that looks empty. Every exit from wizard mode routes through here so the
+ * transcript is flattened into the normal log first:
+ *
+ *   - Wizard completes (handleWizardComplete)
+ *   - User clicks "Exit Wizard" or cancels document generation (handleExitWizard)
+ *   - App restarts and the in-memory wizard state is gone (wizard sync effect)
+ *
+ * Deliberately excluded: closing the wizard TAB. That already warns the user that
+ * progress will be lost, and the tab itself is going away.
+ *
+ * Idempotent - entries already present (matched by their `wizard-` prefixed id)
+ * are not appended twice, so a second call after a racing state update is safe.
+ *
+ * @param tab - The AI tab holding the wizard
+ * @param options.summary - Optional closing entry appended after the transcript
+ * @returns A new tab with the wizard flattened, or the same tab if it has no wizard
+ */
+export function flattenWizardIntoTab(tab: AITab, options?: { summary?: LogEntry }): AITab {
+	const wizardState = tab.wizardState;
+	if (!wizardState) return tab;
+
+	const existingIds = new Set(tab.logs.map((log) => log.id));
+	const wizardLogEntries: LogEntry[] = (wizardState.conversationHistory ?? [])
+		.map((msg) => ({
+			id: `wizard-${msg.id}`,
+			timestamp: msg.timestamp,
+			source: (msg.role === 'user' ? 'user' : 'ai') as LogEntry['source'],
+			text: msg.content,
+			images: msg.images,
+			delivered: true,
+		}))
+		.filter((entry) => !existingIds.has(entry.id));
+
+	const trailing =
+		options?.summary && !existingIds.has(options.summary.id) ? [options.summary] : [];
+
+	return {
+		...tab,
+		logs: [...tab.logs, ...wizardLogEntries, ...trailing],
+		// The wizard owns the provider session while it runs. Promote it so the
+		// user can keep talking to the same context in the plain tab.
+		agentSessionId: wizardState.agentSessionId || tab.agentSessionId,
+		wizardState: undefined,
+	};
+}
+
+/**
  * Filter a unified tab order down to the refs that TabBar actually displays when the
  * "unread only" tab filter is active. Matches TabBar.tsx's displayedUnifiedTabs logic so
  * keyboard jump shortcuts (Cmd+1..9, Cmd+0) stay aligned with the rendered tab strip.

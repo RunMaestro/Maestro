@@ -54,6 +54,7 @@ import {
 	navigateToClosestTerminalTab,
 	createMergedSession,
 	hasActiveWizard,
+	flattenWizardIntoTab,
 	extractQuickTabName,
 	buildUnifiedTabs,
 	ensureInUnifiedTabOrder,
@@ -2437,6 +2438,95 @@ describe('tabHelpers', () => {
 				},
 			});
 			expect(hasActiveWizard(tab)).toBe(true);
+		});
+	});
+
+	describe('flattenWizardIntoTab', () => {
+		const wizardTab = (overrides: Record<string, unknown> = {}) =>
+			createMockTab({
+				id: 'tab-1',
+				logs: [],
+				agentSessionId: null,
+				wizardState: {
+					isActive: true,
+					mode: 'new',
+					confidence: 60,
+					agentSessionId: 'provider-session-abc',
+					conversationHistory: [
+						{ id: 'm1', role: 'user', content: 'build me a playbook', timestamp: 1000 },
+						{ id: 'm2', role: 'assistant', content: 'what is the goal?', timestamp: 2000 },
+					],
+					previousUIState: { readOnlyMode: false, saveToHistory: true, showThinking: 'off' },
+				},
+				...overrides,
+			});
+
+		it('returns the tab untouched when there is no wizard', () => {
+			const tab = createMockTab({ id: 'tab-1' });
+			expect(flattenWizardIntoTab(tab)).toBe(tab);
+		});
+
+		// The wizard conversation lives ONLY in wizardState. Clearing wizardState without
+		// flattening is what used to leave the user staring at an empty tab.
+		it('moves the wizard conversation into the tab log', () => {
+			const result = flattenWizardIntoTab(wizardTab());
+			expect(result.wizardState).toBeUndefined();
+			expect(result.logs.map((l) => l.text)).toEqual(['build me a playbook', 'what is the goal?']);
+			expect(result.logs.map((l) => l.source)).toEqual(['user', 'ai']);
+		});
+
+		it('preserves entries already in the tab and appends the wizard after them', () => {
+			const existing: LogEntry = {
+				id: 'pre-existing',
+				timestamp: 1,
+				source: 'user',
+				text: 'conversation from before /wizard',
+			};
+			const result = flattenWizardIntoTab(wizardTab({ logs: [existing] }));
+			expect(result.logs[0]).toBe(existing);
+			expect(result.logs).toHaveLength(3);
+		});
+
+		// Without this the tab loses the handle to the running provider conversation and
+		// the next message starts a brand new one.
+		it('promotes the wizard provider session onto the tab', () => {
+			expect(flattenWizardIntoTab(wizardTab()).agentSessionId).toBe('provider-session-abc');
+		});
+
+		it('keeps the tab session when the wizard never got one', () => {
+			const tab = wizardTab({ agentSessionId: 'tab-session' });
+			tab.wizardState!.agentSessionId = undefined;
+			expect(flattenWizardIntoTab(tab).agentSessionId).toBe('tab-session');
+		});
+
+		it('appends the summary entry last when one is given', () => {
+			const summary: LogEntry = {
+				id: 'wizard-ended-tab-1',
+				timestamp: 3000,
+				source: 'system',
+				text: 'Wizard mode ended.',
+			};
+			const result = flattenWizardIntoTab(wizardTab(), { summary });
+			expect(result.logs[result.logs.length - 1]).toBe(summary);
+		});
+
+		// A racing state update can call this twice on the same tab. Duplicated transcript
+		// entries would be as confusing as losing them.
+		it('does not duplicate entries when applied twice', () => {
+			const summary: LogEntry = {
+				id: 'wizard-ended-tab-1',
+				timestamp: 3000,
+				source: 'system',
+				text: 'Wizard mode ended.',
+			};
+			const first = flattenWizardIntoTab(wizardTab(), { summary });
+			const second = flattenWizardIntoTab(
+				{ ...first, wizardState: wizardTab().wizardState },
+				{
+					summary,
+				}
+			);
+			expect(second.logs).toHaveLength(3);
 		});
 	});
 
