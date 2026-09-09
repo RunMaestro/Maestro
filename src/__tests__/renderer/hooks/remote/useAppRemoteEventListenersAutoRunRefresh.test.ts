@@ -14,6 +14,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { useAppRemoteEventListeners } from '../../../../renderer/hooks/remote/useAppRemoteEventListeners';
 import { createMockSession } from '../../../helpers/mockSession';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
+import { logger } from '../../../../renderer/utils/logger';
 import type { Session } from '../../../../renderer/types';
 
 vi.mock('../../../../renderer/stores/sessionStore', () => ({
@@ -33,6 +34,9 @@ vi.mock('../../../../renderer/utils/browserTabPersistence', () => ({
 	getBrowserTabPartition: () => 'persist:test',
 }));
 vi.mock('../../../../renderer/utils/ids', () => ({ generateId: () => 'new-tab-id' }));
+vi.mock('../../../../renderer/utils/logger', () => ({
+	logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
 
 /**
  * Mount the listeners with `activeSessionId` as the agent currently on screen.
@@ -117,6 +121,42 @@ describe('remote refresh-auto-run placement', () => {
 
 			expect(setActiveSessionId).not.toHaveBeenCalled();
 			expect(handleAutoRunRefresh).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('the switch names who asked for it', () => {
+		// A remote verb moving the Left Bar looks exactly like a human click once
+		// it has happened. Without an origin on the record, a reported focus jump
+		// starts from zero evidence, which is what happened the last time one was.
+		it('logs the verb and the target when it switches', () => {
+			setup('agent-1');
+
+			dispatchRefresh({ sessionId: 'agent-2' });
+
+			expect(logger.info).toHaveBeenCalledWith('[Remote] active agent switched', undefined, {
+				origin: 'refresh-auto-run',
+				sessionId: 'agent-2',
+			});
+		});
+
+		it('logs nothing when no switch happens', () => {
+			setup('agent-1');
+
+			dispatchRefresh({ sessionId: 'agent-2', background: true });
+
+			expect(logger.info).not.toHaveBeenCalled();
+		});
+
+		// `info`, not `debug`: the main logger defaults to minLevel 'info' and
+		// drops debug, so a debug line would never reach the macOS users who hit
+		// this. Pinning the level keeps a future tidy-up from muting the evidence.
+		it('logs at a level the default configuration actually emits', () => {
+			setup('agent-1');
+
+			dispatchRefresh({ sessionId: 'agent-2' });
+
+			expect(logger.debug).not.toHaveBeenCalled();
+			expect(logger.info).toHaveBeenCalledTimes(1);
 		});
 	});
 
