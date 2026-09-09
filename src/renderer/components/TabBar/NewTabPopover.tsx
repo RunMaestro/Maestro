@@ -163,6 +163,21 @@ export const NewTabPopover = memo(function NewTabPopover({
 								{formatShortcutKeys(newTabKeys)}
 							</span>
 						</button>
+						{/* Terminal sits second: it is the most-reached-for tab after a chat. */}
+						<button
+							className="flex items-center gap-2 w-full px-3 py-2 text-sm text-left hover:bg-white/10 transition-colors"
+							style={{ color: theme.colors.textMain }}
+							onClick={() => closeAndDo(() => onNewTerminalTab?.())}
+						>
+							<Terminal
+								className="w-3.5 h-3.5"
+								style={{ color: getTabKindColor('terminal', theme) }}
+							/>
+							New Terminal
+							<span className="ml-auto text-xs" style={{ color: theme.colors.textDim }}>
+								{formatShortcutKeys(terminalKeys)}
+							</span>
+						</button>
 						{onNewFileTab && (
 							<button
 								className="flex items-center gap-2 w-full px-3 py-2 text-sm text-left hover:bg-white/10 transition-colors"
@@ -195,20 +210,6 @@ export const NewTabPopover = memo(function NewTabPopover({
 								</span>
 							</button>
 						)}
-						<button
-							className="flex items-center gap-2 w-full px-3 py-2 text-sm text-left hover:bg-white/10 transition-colors"
-							style={{ color: theme.colors.textMain }}
-							onClick={() => closeAndDo(() => onNewTerminalTab?.())}
-						>
-							<Terminal
-								className="w-3.5 h-3.5"
-								style={{ color: getTabKindColor('terminal', theme) }}
-							/>
-							New Terminal
-							<span className="ml-auto text-xs" style={{ color: theme.colors.textDim }}>
-								{formatShortcutKeys(terminalKeys)}
-							</span>
-						</button>
 					</div>,
 					document.body
 				)}
