@@ -109,6 +109,7 @@ Grep-verified 2026-09-04 (`npm run docs:verify` re-checks every path). This is t
 - **Telling the Files panel a file appeared or vanished:** `requestFileTreeRefresh(sessionId)`, `nudgeFileTreeForPaths(paths)` in `src/renderer/utils/fileTreeRefresh.ts`
 - **Loading a LOCAL file tree:** `walkLocalFileTree()`, `loadFileTree()` in `src/main/utils/file-tree-walk.ts`
 - **Ask the model for a shell command (AI command mode):** `requestAiCommand()`, `acceptAiCommand()` in `src/renderer/services/aiCommand.ts`
+- **The system-prompt envelope for providers with no `--append-system-prompt`:** `embedSystemPromptInPrompt()`, `stripEmbeddedSystemPrompt()` in `src/shared/embeddedSystemPrompt.ts`
 - **Appending to a transcript entry:** `canAppendToLogEntry(entry, source)`, `isSelfContainedCard(entry)` in `src/renderer/utils/logEntries.ts`
 - **Command mode (`!`) is STATE, not a text prefix, and it is a LADDER:** `isShellCommandMode()`, `isAiCommandMode()` in `src/renderer/utils/shellCommandInput.ts`
 - **Shell tab completion:** `useTabCompletion()`, `commandMode` in `src/renderer/hooks/input/useTabCompletion.ts`
