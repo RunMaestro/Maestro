@@ -24,6 +24,8 @@ Run multiple agents in parallel with a Linear/Superhuman-level responsive interf
   </a>
 
   <div>
+    <a href="https://youtu.be/3wX5Q1I0sgI?si=oJkJDxgAWUvBXX4D">~1m Intro Video</a>
+    &nbsp;|&nbsp;
     <a href="https://youtu.be/fmwwTOg7cyA?si=VOkjO6oYjCSQvM0A">~27m Walkthrough and Demo</a>
     &nbsp;|&nbsp;
     <a href="https://youtu.be/3wX5Q1I0sgI?si=oJkJDxgAWUvBXX4D">~6m Onboarding Demo</a>
