@@ -154,6 +154,21 @@ describe('zip-archive', () => {
 		);
 	});
 
+	it('lets a caller opt out of the default caps', () => {
+		const zipPath = writeZip(tmp, {
+			'big.txt': '0123456789',
+		});
+		expect(() => readZipArchive(zipPath, { maxOriginalSize: 5 })).toThrow(
+			/expanded size exceeds 5 bytes/
+		);
+		expect(
+			readZipArchive(zipPath, { maxOriginalSize: Number.POSITIVE_INFINITY })
+				.getEntry('big.txt')
+				?.getData()
+				.toString('utf-8')
+		).toBe('0123456789');
+	});
+
 	it('does not count skipped entries toward the caps', () => {
 		const zipPath = writeZip(tmp, {
 			'manifest.json': '{}',

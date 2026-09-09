@@ -33,6 +33,16 @@ const LOG_CONTEXT = '[CueBackup]';
 const BACKUP_DIR_NAME = 'cue-backups';
 const MANIFEST_NAME = 'manifest.json';
 const MANIFEST_ONLY = { names: [MANIFEST_NAME] } as const;
+/**
+ * Create writes every cue.yaml and prompt with no size or entry cap.
+ * Full restore / diff must cover that, so they opt out of the untrusted
+ * zip-bomb defaults on `readZipArchive`. List/inspect still use those
+ * defaults because they only inflate `manifest.json`.
+ */
+const CUE_BACKUP_FULL_READ = {
+	maxEntries: Number.POSITIVE_INFINITY,
+	maxOriginalSize: Number.POSITIVE_INFINITY,
+} as const;
 
 function workspaceZipEntryName(workspaceId: string, relativePath: string): string {
 	return `workspaces/${workspaceId}/${relativePath}`;
@@ -300,6 +310,7 @@ export function readCueBackupFile(
 ): string | null {
 	assertBackupPath(filePath);
 	const zip = readZipArchive(filePath, {
+		...CUE_BACKUP_FULL_READ,
 		names: [workspaceZipEntryName(workspaceId, relativePath)],
 	});
 	return readZipWorkspaceFile(zip, workspaceId, relativePath);
@@ -342,6 +353,7 @@ export function restoreCueBackupFile(
 ): void {
 	assertBackupPath(filePath);
 	const zip = readZipArchive(filePath, {
+		...CUE_BACKUP_FULL_READ,
 		names: [MANIFEST_NAME, workspaceZipEntryName(workspaceId, relativePath)],
 	});
 	const manifest = readManifestFromZip(zip);
@@ -379,7 +391,7 @@ export function restoreCueBackupFile(
  */
 export function restoreCueBackupAll(filePath: string): CueBackupRestoreResult {
 	assertBackupPath(filePath);
-	const zip = readZipArchive(filePath);
+	const zip = readZipArchive(filePath, CUE_BACKUP_FULL_READ);
 	const manifest = readManifestFromZip(zip);
 	if (!manifest) {
 		throw new Error('Backup is missing or has an invalid manifest');
@@ -444,7 +456,7 @@ export function restoreCueBackupAll(filePath: string): CueBackupRestoreResult {
  */
 export function getCueBackupDiffStatus(filePath: string): CueBackupDiffStatusMap {
 	assertBackupPath(filePath);
-	const zip = readZipArchive(filePath);
+	const zip = readZipArchive(filePath, CUE_BACKUP_FULL_READ);
 	const manifest = readManifestFromZip(zip);
 	if (!manifest) {
 		throw new Error('Backup is missing or has an invalid manifest');

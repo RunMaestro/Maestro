@@ -43,9 +43,9 @@ export interface ReadZipArchiveOptions {
 	names?: readonly string[];
 	/** Predicate over zip metadata. Runs before inflation. Combined with `names`. */
 	filter?: (file: UnzipFileInfo) => boolean;
-	/** Aggregate `originalSize` of selected entries. Defaults to 256 MiB. */
+	/** Aggregate `originalSize` of selected entries. Defaults to 256 MiB. Pass `Infinity` for a first-party archive the caller already wrote without a create-time cap. */
 	maxOriginalSize?: number;
-	/** Selected entry count. Defaults to 10_000. */
+	/** Selected entry count. Defaults to 10_000. Pass `Infinity` to match an uncapped writer. */
 	maxEntries?: number;
 }
 
