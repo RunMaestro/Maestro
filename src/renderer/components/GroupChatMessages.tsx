@@ -23,6 +23,7 @@ import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { formatTimestamp as formatTimestampShared } from '../../shared/formatters';
+import { isDirectModeratorMessage } from '../../shared/groupChatModeratorView';
 import { useMessageGistStore } from '../stores/messageGistStore';
 import { jumpToMessageEdge, isTextInputTarget } from '../utils/messageScrollNavigation';
 import { JumpToMessageTopButton } from './JumpToMessageTopButton';
@@ -35,6 +36,8 @@ interface GroupChatMessagesProps {
 	markdownEditMode?: boolean;
 	onToggleMarkdownEditMode?: () => void;
 	maxOutputLines?: number;
+	/** True to show only the user <-> moderator conversation, hiding agent traffic */
+	moderatorOnly?: boolean;
 	/** Pre-computed participant colors (if provided, overrides internal color generation) */
 	participantColors?: Record<string, string>;
 	/** Lightbox handler for viewing images full-size */
@@ -60,6 +63,7 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 			markdownEditMode,
 			onToggleMarkdownEditMode,
 			maxOutputLines = 30,
+			moderatorOnly = false,
 			participantColors: externalColors,
 			onOpenLightbox,
 			ghCliAvailable,
@@ -151,12 +155,22 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 			[theme]
 		);
 
+		// The moderator-only view is a display filter, not a deletion: `messages`
+		// still holds the whole transcript, so switching back restores it without a
+		// reload. Each row carries its index in the FULL list so the collapse state
+		// (keyed by that index) survives a flip between the two views.
+		const visibleMessages = useMemo(() => {
+			const rows = messages.map((msg, index) => ({ msg, index }));
+			return moderatorOnly ? rows.filter(({ msg }) => isDirectModeratorMessage(msg)) : rows;
+		}, [messages, moderatorOnly]);
+		const hiddenCount = messages.length - visibleMessages.length;
+
 		// Auto-scroll on new messages
 		useEffect(() => {
 			if (containerRef.current) {
 				containerRef.current.scrollTop = containerRef.current.scrollHeight;
 			}
-		}, [messages]);
+		}, [visibleMessages]);
 
 		// Use external colors if provided, otherwise generate locally
 		// Include 'Moderator' at index 0 to match the participant panel's color assignment
@@ -229,7 +243,24 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 			>
 				{/* Prose styles for markdown rendering */}
 				<style>{proseStyles}</style>
-				{messages.length === 0 ? (
+				{/* Says where the missing messages went, so a filtered room never reads as a lost one. */}
+				{hiddenCount > 0 && visibleMessages.length > 0 && (
+					<div
+						className="px-6 py-1.5 text-2xs text-center"
+						style={{ color: theme.colors.textDim, opacity: 0.7 }}
+					>
+						{hiddenCount} team message{hiddenCount !== 1 ? 's' : ''} hidden by Moderator Only
+					</div>
+				)}
+				{visibleMessages.length === 0 && hiddenCount > 0 ? (
+					<div className="flex items-center justify-center h-full px-6">
+						<p className="text-sm text-center max-w-md" style={{ color: theme.colors.textDim }}>
+							Moderator Only is on, and this room has nothing but agent traffic so far. Switch to
+							Team Chat in the header to see all {hiddenCount} message{hiddenCount !== 1 ? 's' : ''}
+							.
+						</p>
+					</div>
+				) : messages.length === 0 ? (
 					<div className="flex items-center justify-center h-full px-6">
 						<div className="text-center max-w-md space-y-3">
 							<div className="flex justify-center mb-4">
@@ -256,7 +287,7 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 						</div>
 					</div>
 				) : (
-					messages.map((msg, index) => {
+					visibleMessages.map(({ msg, index }) => {
 						const isUser = msg.from === 'user';
 						const isSystem = msg.from === 'system';
 						const msgKey = `${msg.timestamp}-${index}`;

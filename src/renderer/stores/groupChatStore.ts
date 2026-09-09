@@ -23,6 +23,37 @@ import type { QueuedItem } from '../types';
 /** Right panel tab within the group chat view */
 export type GroupChatRightTab = 'participants' | 'history';
 
+// ============================================================================
+// Moderator-only view preference (persisted)
+// ============================================================================
+// Whether a room shows the full team transcript or only the user <-> moderator
+// conversation. It lives in the store rather than in the panel because three
+// unrelated places read it - the header control, the message list, and the
+// right panel's history tab (a sibling of the panel, not a child) - plus the
+// keyboard handler and the command palette, which toggle it from outside the
+// React tree entirely. It is one preference for every room: the user is
+// choosing how they read a group chat, not tagging individual chats.
+
+const MODERATOR_ONLY_VIEW_KEY = 'maestro.groupChat.moderatorOnlyView';
+
+function readStoredModeratorOnlyView(): boolean {
+	if (typeof window === 'undefined') return false;
+	try {
+		return window.localStorage.getItem(MODERATOR_ONLY_VIEW_KEY) === 'true';
+	} catch {
+		return false;
+	}
+}
+
+function writeStoredModeratorOnlyView(value: boolean): void {
+	if (typeof window === 'undefined') return;
+	try {
+		window.localStorage.setItem(MODERATOR_ONLY_VIEW_KEY, String(value));
+	} catch {
+		// Ignore quota / privacy-mode errors - the preference just won't persist.
+	}
+}
+
 /** Group chat error state - tracks which chat has an error and from which participant */
 export interface GroupChatErrorState {
 	groupChatId: string;
@@ -61,6 +92,12 @@ export interface GroupChatStoreState {
 	groupChatRightTab: GroupChatRightTab;
 	groupChatParticipantColors: Record<string, string>;
 	groupChatStagedImages: string[];
+	/**
+	 * True when the room shows only the user <-> moderator conversation, hiding
+	 * delegations and participant replies from both the message list and the
+	 * history tab. Persisted across restarts; a display filter only.
+	 */
+	groupChatModeratorOnly: boolean;
 
 	// Live output peek
 	participantLiveOutput: Map<string, string>;
@@ -125,6 +162,10 @@ export interface GroupChatStoreActions {
 		v: Record<string, string> | ((prev: Record<string, string>) => Record<string, string>)
 	) => void;
 	setGroupChatStagedImages: (v: string[] | ((prev: string[]) => string[])) => void;
+	/** Set the moderator-only view preference and persist it. */
+	setGroupChatModeratorOnly: (v: boolean | ((prev: boolean) => boolean)) => void;
+	/** Flip between the team view and the moderator-only view. */
+	toggleGroupChatModeratorOnly: () => void;
 
 	// Live output peek
 	appendParticipantLiveOutput: (participantName: string, chunk: string) => void;
@@ -178,6 +219,7 @@ export const useGroupChatStore = create<GroupChatStore>()((set) => ({
 	groupChatRightTab: 'participants' as GroupChatRightTab,
 	groupChatParticipantColors: {},
 	groupChatStagedImages: [],
+	groupChatModeratorOnly: readStoredModeratorOnlyView(),
 	participantLiveOutput: new Map(),
 	groupChatError: null,
 
@@ -224,6 +266,19 @@ export const useGroupChatStore = create<GroupChatStore>()((set) => ({
 		set((s) => ({ groupChatParticipantColors: resolve(v, s.groupChatParticipantColors) })),
 	setGroupChatStagedImages: (v) =>
 		set((s) => ({ groupChatStagedImages: resolve(v, s.groupChatStagedImages) })),
+	setGroupChatModeratorOnly: (v) =>
+		set((s) => {
+			const next = resolve(v, s.groupChatModeratorOnly);
+			if (next === s.groupChatModeratorOnly) return {};
+			writeStoredModeratorOnlyView(next);
+			return { groupChatModeratorOnly: next };
+		}),
+	toggleGroupChatModeratorOnly: () =>
+		set((s) => {
+			const next = !s.groupChatModeratorOnly;
+			writeStoredModeratorOnlyView(next);
+			return { groupChatModeratorOnly: next };
+		}),
 	setGroupChatError: (v) => set((s) => ({ groupChatError: resolve(v, s.groupChatError) })),
 
 	appendParticipantLiveOutput: (participantName, chunk) =>

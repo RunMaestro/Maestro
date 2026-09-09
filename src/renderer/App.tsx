@@ -637,6 +637,7 @@ function MaestroConsoleInner() {
 	const groupChatExecutionQueue = useGroupChatStore((s) => s.groupChatExecutionQueue);
 	const groupChatRightTab = useGroupChatStore((s) => s.groupChatRightTab);
 	const groupChatParticipantColors = useGroupChatStore((s) => s.groupChatParticipantColors);
+	const groupChatModeratorOnly = useGroupChatStore((s) => s.groupChatModeratorOnly);
 	const moderatorUsage = useGroupChatStore((s) => s.moderatorUsage);
 	const participantStates = useGroupChatStore((s) => s.participantStates);
 	const groupChatError = useGroupChatStore((s) => s.groupChatError);
@@ -648,6 +649,7 @@ function MaestroConsoleInner() {
 		setGroupChatReadOnlyMode,
 		setGroupChatRightTab,
 		setGroupChatParticipantColors,
+		toggleGroupChatModeratorOnly,
 	} = useGroupChatStore.getState();
 
 	// --- APP INITIALIZATION (extracted hook, Phase 2G) ---
@@ -3462,6 +3464,8 @@ function MaestroConsoleInner() {
 										setTimeout(() => setSuccessFlashNotification(null), 2000);
 									}}
 									participantColors={groupChatParticipantColors}
+									moderatorOnly={groupChatModeratorOnly}
+									onToggleModeratorOnly={toggleGroupChatModeratorOnly}
 									messagesRef={groupChatMessagesRef}
 									ghCliAvailable={ghCliAvailable}
 									onPublishMessageGist={(text: string, messageId?: string) => {
@@ -3514,6 +3518,7 @@ function MaestroConsoleInner() {
 								onTabChange={handleGroupChatRightTabChange}
 								onJumpToMessage={handleJumpToGroupChatMessage}
 								onColorsComputed={setGroupChatParticipantColors}
+								moderatorOnly={groupChatModeratorOnly}
 							/>
 						</>
 					)}

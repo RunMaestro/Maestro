@@ -75,6 +75,10 @@ interface GroupChatPanelProps {
 	ghCliAvailable?: boolean;
 	/** Callback to publish a message as a GitHub Gist */
 	onPublishMessageGist?: (text: string, messageId?: string) => void;
+	/** True when the room shows only the user <-> moderator conversation */
+	moderatorOnly?: boolean;
+	/** Flip between the team view and the moderator-only view */
+	onToggleModeratorOnly: () => void;
 }
 
 export function GroupChatPanel({
@@ -116,6 +120,8 @@ export function GroupChatPanel({
 	messagesRef,
 	ghCliAvailable,
 	onPublishMessageGist,
+	moderatorOnly = false,
+	onToggleModeratorOnly,
 }: GroupChatPanelProps): JSX.Element {
 	return (
 		<div className="flex flex-col h-full" style={{ backgroundColor: theme.colors.bgMain }}>
@@ -123,6 +129,8 @@ export function GroupChatPanel({
 				theme={theme}
 				name={groupChat.name}
 				participantCount={groupChat.participants.length}
+				moderatorOnly={moderatorOnly}
+				onToggleModeratorOnly={onToggleModeratorOnly}
 				totalCost={totalCost}
 				costIncomplete={costIncomplete}
 				state={state}
@@ -143,6 +151,7 @@ export function GroupChatPanel({
 				markdownEditMode={markdownEditMode}
 				onToggleMarkdownEditMode={onToggleMarkdownEditMode}
 				maxOutputLines={maxOutputLines}
+				moderatorOnly={moderatorOnly}
 				participantColors={participantColors}
 				onOpenLightbox={onOpenLightbox}
 				ghCliAvailable={ghCliAvailable}

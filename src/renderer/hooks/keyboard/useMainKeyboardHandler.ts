@@ -7,6 +7,7 @@ import { requestOpenStagedImagesOrganizer } from '../../services/stagedImagesOrg
 import { toggleAllUnreadFilters } from '../../services/unreadFilters';
 import { useNotificationStore } from '../../stores/notificationStore';
 import { useMediaPlaybackStore, selectMediaPlayerTargetId } from '../../stores/mediaPlaybackStore';
+import { useGroupChatStore } from '../../stores/groupChatStore';
 import { stepMediaItem } from '../../utils/mediaItems';
 
 /**
@@ -513,6 +514,14 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				ctx.setShowNewGroupChatModal(true);
 				trackShortcut('newGroupChat');
+			} else if (ctx.isShortcut(e, 'toggleGroupChatModeratorOnly')) {
+				// Only means anything inside a room; outside one the chord stays free
+				// for whatever branch comes after it.
+				if (ctx.activeGroupChatId) {
+					e.preventDefault();
+					useGroupChatStore.getState().toggleGroupChatModeratorOnly();
+					trackShortcut('toggleGroupChatModeratorOnly');
+				}
 			} else if (ctx.isShortcut(e, 'killInstance')) {
 				// Delete whichever is currently active: group chat or agent session
 				if (ctx.activeGroupChatId) {

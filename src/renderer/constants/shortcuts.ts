@@ -20,6 +20,11 @@ export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
 	navForward: { id: 'navForward', label: 'Navigate Forward', keys: ['Meta', 'Shift', '.'] },
 	newInstance: { id: 'newInstance', label: 'New Agent', keys: ['Meta', 'n'] },
 	newGroupChat: { id: 'newGroupChat', label: 'New Group Chat', keys: ['Alt', 'Meta', 'c'] },
+	toggleGroupChatModeratorOnly: {
+		id: 'toggleGroupChatModeratorOnly',
+		label: 'Group Chat: Team Chat / Moderator Only',
+		keys: ['Alt', 'Meta', 'g'],
+	},
 	killInstance: { id: 'killInstance', label: 'Remove', keys: ['Meta', 'Shift', 'Backspace'] },
 	moveToGroup: { id: 'moveToGroup', label: 'Move Session to Group', keys: ['Alt', 'Meta', 'm'] },
 	openMemoryViewer: {

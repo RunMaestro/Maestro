@@ -41,6 +41,8 @@ const defaultProps = {
 	name: 'Test Chat',
 	participantCount: 3,
 	state: 'idle' as const,
+	moderatorOnly: false,
+	onToggleModeratorOnly: vi.fn(),
 	onStopAll: vi.fn(),
 	onRename: vi.fn(),
 	onShowInfo: vi.fn(),
@@ -113,5 +115,50 @@ describe('GroupChatHeader', () => {
 		);
 		fireEvent.click(screen.getByText('Stop All'));
 		expect(onStopAll).toHaveBeenCalledOnce();
+	});
+
+	describe('view mode switch', () => {
+		it('marks Team Chat as the selected segment in the team view', () => {
+			render(<GroupChatHeader {...defaultProps} moderatorOnly={false} />);
+			expect(screen.getByTestId('group-chat-view-mode-team').getAttribute('aria-checked')).toBe(
+				'true'
+			);
+			expect(
+				screen.getByTestId('group-chat-view-mode-moderator').getAttribute('aria-checked')
+			).toBe('false');
+		});
+
+		it('marks Moderator Only as the selected segment in the moderator view', () => {
+			render(<GroupChatHeader {...defaultProps} moderatorOnly={true} />);
+			expect(
+				screen.getByTestId('group-chat-view-mode-moderator').getAttribute('aria-checked')
+			).toBe('true');
+		});
+
+		it('toggles when the other segment is clicked', () => {
+			const onToggleModeratorOnly = vi.fn();
+			render(
+				<GroupChatHeader
+					{...defaultProps}
+					moderatorOnly={false}
+					onToggleModeratorOnly={onToggleModeratorOnly}
+				/>
+			);
+			fireEvent.click(screen.getByTestId('group-chat-view-mode-moderator'));
+			expect(onToggleModeratorOnly).toHaveBeenCalledOnce();
+		});
+
+		it('does not toggle when the already-selected segment is clicked', () => {
+			const onToggleModeratorOnly = vi.fn();
+			render(
+				<GroupChatHeader
+					{...defaultProps}
+					moderatorOnly={false}
+					onToggleModeratorOnly={onToggleModeratorOnly}
+				/>
+			);
+			fireEvent.click(screen.getByTestId('group-chat-view-mode-team'));
+			expect(onToggleModeratorOnly).not.toHaveBeenCalled();
+		});
 	});
 });

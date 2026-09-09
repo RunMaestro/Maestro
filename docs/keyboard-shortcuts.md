@@ -110,8 +110,11 @@ under a running agent.
 
 A group chat has no tab strip, so the tab-cycle chord switches the right panel instead.
 
+Team Chat / Moderator Only switches how much of the room you read. Moderator Only hides the delegations the moderator sends to agents and the replies they send back, in both the transcript and the History tab, leaving just your own conversation with the moderator. Nothing stops or is deleted: the agents keep working and every message is still logged, so switching back shows the full record.
+
 | Action                       | macOS                          | Windows/Linux                    |
 | ---------------------------- | ------------------------------ | -------------------------------- |
+| Team Chat / Moderator Only   | `Opt+Cmd+G`                    | `Alt+Ctrl+G`                     |
 | Cycle Participants / History | `Cmd+Shift+[` or `Cmd+Shift+]` | `Ctrl+Shift+[` or `Ctrl+Shift+]` |
 | Go to Participants Tab       | `Cmd+Shift+F`                  | `Ctrl+Shift+F`                   |
 | Go to History Tab            | `Cmd+Shift+H`                  | `Ctrl+Shift+H`                   |

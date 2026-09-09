@@ -124,7 +124,12 @@ describe('QuickActions command builders', () => {
 				onDeleteGroupChat: vi.fn(),
 				setQuickActionOpen: close,
 			}).map((a) => a.id)
-		).toEqual(['newGroupChat', 'closeGroupChat', 'deleteGroupChat']);
+		).toEqual([
+			'newGroupChat',
+			'closeGroupChat',
+			'toggleGroupChatModeratorOnly',
+			'deleteGroupChat',
+		]);
 	});
 
 	it('lists only running group chats in the agent switcher, bucketed live', () => {
