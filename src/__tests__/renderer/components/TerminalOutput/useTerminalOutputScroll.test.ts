@@ -760,3 +760,213 @@ describe('scrolled-up persistence across unmount (Y1)', () => {
 		});
 	});
 });
+
+/**
+ * Regression coverage for issue #1535: returning to a chat tab landed at a
+ * fixed fraction down the transcript (about 20% from the top) rather than where
+ * it was left.
+ *
+ * A long transcript does not exist yet in the frame the restore runs in. The
+ * progressive render window (issue #1342) mounts only the newest entries and
+ * walks back through history on idle ticks, and every mounted row carries
+ * `content-visibility: auto`, so it is laid out at its `contain-intrinsic-size`
+ * estimate until it comes near the viewport. maxScroll in that frame is a small
+ * fraction of the eventual height.
+ *
+ * Two things made that permanent:
+ *   1. `applyRestore` counted an offset CLAMPED to the current maxScroll as
+ *      "the transcript cannot scroll that far", so it reported success in the
+ *      first frame and the retry loop was never installed.
+ *   2. The retry loop, when it was installed, observed the SCROLL BOX - whose
+ *      border box is the viewport and does not change as entries mount - so it
+ *      never fired for the growth it exists to follow.
+ */
+describe('restore settles as the transcript mounts (#1535)', () => {
+	let rafQueue: FrameRequestCallback[] = [];
+	let resizeObservers: ResizeObserverStubInstance[] = [];
+
+	beforeEach(() => {
+		vi.useFakeTimers();
+		rafQueue = [];
+		resizeObservers = [];
+
+		vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+			rafQueue.push(cb);
+			return rafQueue.length;
+		});
+
+		class ResizeObserverStub {
+			private targets: Element[] = [];
+			private entry: ResizeObserverStubInstance;
+
+			constructor(private callback: () => void) {
+				this.entry = { fire: () => this.callback(), targets: this.targets };
+				resizeObservers.push(this.entry);
+			}
+
+			observe(target: Element) {
+				this.targets.push(target);
+			}
+
+			unobserve(target: Element) {
+				const i = this.targets.indexOf(target);
+				if (i >= 0) this.targets.splice(i, 1);
+			}
+
+			disconnect() {
+				this.targets.length = 0;
+				const i = resizeObservers.indexOf(this.entry);
+				if (i >= 0) resizeObservers.splice(i, 1);
+			}
+		}
+
+		vi.stubGlobal('ResizeObserver', ResizeObserverStub);
+	});
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		vi.useRealTimers();
+	});
+
+	function flushRaf() {
+		act(() => {
+			let guard = 0;
+			while (rafQueue.length > 0 && guard++ < 20) {
+				const cbs = rafQueue.splice(0);
+				cbs.forEach((cb) => cb(0));
+			}
+		});
+	}
+
+	function fireResize() {
+		act(() => {
+			resizeObservers.slice().forEach((o) => o.fire());
+		});
+	}
+
+	/**
+	 * A tab left 5000px down, remounted onto a transcript that has only mounted
+	 * its newest entries: 1200px of scroll where there will eventually be 20000.
+	 */
+	function mountRestoring(savedScrollTop = 5000) {
+		const container = makeGrowableContainer(1200);
+		const ref = { current: container.el };
+		const contentEl = document.createElement('div');
+		const contentRef = { current: contentEl as HTMLElement | null };
+		const onScrollPositionChange = vi.fn();
+		const onAtBottomChange = vi.fn();
+
+		const hook = renderHook(() =>
+			useTerminalOutputScroll({
+				scrollContainerRef: ref,
+				contentRef,
+				initialScrollTop: savedScrollTop,
+				initialIsAtBottom: false,
+				sessionId: 's1',
+				activeTabId: 't1',
+				filteredLogsLength: 3,
+				onScrollPositionChange,
+				onAtBottomChange,
+			})
+		);
+
+		return { container, ref, contentEl, hook, onScrollPositionChange, onAtBottomChange };
+	}
+
+	it('reaches the saved offset once the rest of the transcript mounts', () => {
+		const { container, ref, hook } = mountRestoring();
+
+		flushRaf();
+		// First frame: clamped short. This is the position the tab used to keep.
+		expect(ref.current.scrollTop).toBe(1200);
+
+		// The idle render window mounts the rest of the history and the mounted
+		// rows swap their intrinsic-size estimates for real heights.
+		act(() => container.grow(20000));
+		fireResize();
+
+		expect(ref.current.scrollTop).toBe(5000);
+		expect(hook.result.current.isAtBottom).toBe(false);
+		expect(hook.result.current.autoScrollPaused).toBe(true);
+	});
+
+	it('watches the content wrapper, never the scroll box', () => {
+		const { container, contentEl } = mountRestoring();
+
+		flushRaf();
+
+		// The scroll box only resizes with the viewport, so an observer on it is
+		// inert for content growth.
+		expect(resizeObservers.some((o) => o.targets.includes(contentEl))).toBe(true);
+		expect(resizeObservers.some((o) => o.targets.includes(container.el))).toBe(false);
+	});
+
+	it('re-arms its quiet window while the content keeps growing', () => {
+		const { container, ref } = mountRestoring();
+
+		flushRaf();
+
+		// Just under the quiet window, then a growth chunk - the transcript is
+		// still mounting, so the budget restarts rather than expiring.
+		act(() => vi.advanceTimersByTime(1900));
+		act(() => container.grow(3000));
+		fireResize();
+		expect(ref.current.scrollTop).toBe(3000);
+
+		act(() => vi.advanceTimersByTime(1900));
+		act(() => container.grow(20000));
+		fireResize();
+
+		expect(ref.current.scrollTop).toBe(5000);
+	});
+
+	it('does not persist the clamped intermediate offset over the saved one', () => {
+		const { ref, hook, onScrollPositionChange, onAtBottomChange } = mountRestoring();
+
+		flushRaf();
+		expect(ref.current.scrollTop).toBe(1200);
+
+		// The restore's own write fires a scroll event. Persisting 1200 here would
+		// destroy the 5000 being restored to - and the resulting prop change would
+		// cancel the settle loop through the effect's cleanup.
+		act(() => {
+			hook.result.current.handleScroll();
+		});
+		act(() => vi.advanceTimersByTime(500));
+
+		expect(onScrollPositionChange).not.toHaveBeenCalled();
+		expect(onAtBottomChange).not.toHaveBeenCalled();
+	});
+
+	it('gives up on a transcript that really is shorter, and follows the bottom', () => {
+		const { ref, hook } = mountRestoring();
+
+		flushRaf();
+		expect(hook.result.current.autoScrollPaused).toBe(true);
+
+		// Nothing grows: the entries the offset pointed past are gone. Once the
+		// quiet window expires the hold is lifted, because the view is parked at
+		// the live bottom and has to keep following the stream.
+		act(() => vi.advanceTimersByTime(2100));
+
+		expect(ref.current.scrollTop).toBe(1200);
+		expect(hook.result.current.isAtBottom).toBe(true);
+		expect(hook.result.current.autoScrollPaused).toBe(false);
+	});
+
+	it('stops re-applying once the user takes over', () => {
+		const { container, ref } = mountRestoring();
+
+		flushRaf();
+
+		act(() => {
+			ref.current.dispatchEvent(new Event('wheel'));
+		});
+		act(() => container.grow(20000));
+		fireResize();
+
+		// A restore that fights a scroll already in progress is worse than the
+		// miss it corrects.
+		expect(ref.current.scrollTop).toBe(1200);
+	});
+});
