@@ -18,6 +18,9 @@ import {
 	type LucideIcon,
 } from 'lucide-react';
 import type { IconPackContribution } from '../../../shared/plugins/contributions';
+import { GROUP_ICON_CATALOG, GROUP_LABEL_COLORS } from '../../../shared/groupAppearance';
+
+export { GROUP_LABEL_COLORS };
 
 export interface GroupIconOption {
 	id: string;
@@ -35,35 +38,34 @@ export interface ResolvedGroupAppearance {
 	color: string | undefined;
 }
 
-export const GROUP_ICON_OPTIONS: readonly GroupIconOption[] = [
-	{ id: 'folder', label: 'Folder', Icon: Folder },
-	{ id: 'briefcase', label: 'Briefcase', Icon: Briefcase },
-	{ id: 'rocket', label: 'Rocket', Icon: Rocket },
-	{ id: 'code', label: 'Code', Icon: Code2 },
-	{ id: 'star', label: 'Star', Icon: Star },
-	{ id: 'heart', label: 'Heart', Icon: Heart },
-	{ id: 'lightbulb', label: 'Lightbulb', Icon: Lightbulb },
-	{ id: 'target', label: 'Target', Icon: Target },
-	{ id: 'calendar', label: 'Calendar', Icon: Calendar },
-	{ id: 'book', label: 'Book', Icon: BookOpen },
-	{ id: 'layers', label: 'Layers', Icon: Layers },
-	{ id: 'shield', label: 'Shield', Icon: Shield },
-	{ id: 'wrench', label: 'Wrench', Icon: Wrench },
-	{ id: 'palette', label: 'Palette', Icon: Palette },
-	{ id: 'archive', label: 'Archive', Icon: Archive },
-	{ id: 'zap', label: 'Zap', Icon: Zap },
-];
+/**
+ * Icon-id -> Lucide component. The id list itself lives in the shared catalog
+ * (`shared/groupAppearance.ts`) so the CLI and the WebSocket handlers validate
+ * against the same ids; only this mapping is renderer-owned, because Lucide
+ * cannot be imported outside the renderer bundle.
+ */
+const GROUP_ICON_COMPONENTS: Record<string, LucideIcon> = {
+	folder: Folder,
+	briefcase: Briefcase,
+	rocket: Rocket,
+	code: Code2,
+	star: Star,
+	heart: Heart,
+	lightbulb: Lightbulb,
+	target: Target,
+	calendar: Calendar,
+	book: BookOpen,
+	layers: Layers,
+	shield: Shield,
+	wrench: Wrench,
+	palette: Palette,
+	archive: Archive,
+	zap: Zap,
+};
 
-export const GROUP_LABEL_COLORS = [
-	{ value: '#EF4444', label: 'Red' },
-	{ value: '#F97316', label: 'Orange' },
-	{ value: '#EAB308', label: 'Yellow' },
-	{ value: '#22C55E', label: 'Green' },
-	{ value: '#14B8A6', label: 'Teal' },
-	{ value: '#3B82F6', label: 'Blue' },
-	{ value: '#EC4899', label: 'Pink' },
-	{ value: '#A855F7', label: 'Purple' },
-] as const;
+export const GROUP_ICON_OPTIONS: readonly GroupIconOption[] = GROUP_ICON_CATALOG.filter(
+	(entry) => entry.id in GROUP_ICON_COMPONENTS
+).map((entry) => ({ id: entry.id, label: entry.label, Icon: GROUP_ICON_COMPONENTS[entry.id] }));
 
 /**
  * Resolves a stored group appearance against the current host and plugin option

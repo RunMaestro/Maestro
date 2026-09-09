@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { flushSync } from 'react-dom';
 import type { Session, SessionState, ThinkingMode, QueuedItem } from '../../types';
+import type { GroupAppearance, GroupUpdateRequest } from '../../../shared/groupAppearance';
 import { cueService } from '../../services/cue';
 import { captureException } from '../../utils/sentry';
 import {
@@ -2041,11 +2042,22 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				name: string,
 				emoji: string | undefined,
 				parentGroupId: string | undefined,
+				appearance: GroupAppearance,
 				responseChannel: string
 			) => {
 				window.dispatchEvent(
 					new CustomEvent('maestro:remoteCreateGroup', {
-						detail: { name, emoji, parentGroupId, responseChannel },
+						detail: { name, emoji, parentGroupId, appearance, responseChannel },
+					})
+				);
+			}
+		);
+
+		const unsubscribeUpdateGroup = window.maestro.process.onRemoteUpdateGroup(
+			(groupId: string, update: GroupUpdateRequest, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:remoteUpdateGroup', {
+						detail: { groupId, update, responseChannel },
 					})
 				);
 			}
@@ -2088,6 +2100,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			unsubscribeUpdateSessionConfig();
 			unsubscribeCreateGroup();
 			unsubscribeRenameGroup();
+			unsubscribeUpdateGroup();
 			unsubscribeDeleteGroup();
 			unsubscribeMoveSessionToGroup();
 		};

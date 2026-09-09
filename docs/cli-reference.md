@@ -745,11 +745,13 @@ Create a new agent in the Maestro desktop app
 
 Create a new group in the Maestro desktop app
 
-| Option                | Description                    | Default |
-| --------------------- | ------------------------------ | ------- |
-| `-e, --emoji <emoji>` | Emoji icon for the group       | -       |
-| `--parent <group-id>` | Create inside this root group  | -       |
-| `--json`              | Output as JSON (for scripting) | -       |
+| Option                | Description                                                                                            | Default |
+| --------------------- | ------------------------------------------------------------------------------------------------------ | ------- |
+| `-e, --emoji <emoji>` | Emoji icon for the group                                                                               | -       |
+| `--icon <icon-id>`    | Built-in icon ID (folder, briefcase, rocket, ...) or a plugin icon ID. Mutually exclusive with --emoji | -       |
+| `--color <color>`     | Label color as #RRGGBB, or a plugin color ID                                                           | -       |
+| `--parent <group-id>` | Create inside this root group                                                                          | -       |
+| `--json`              | Output as JSON (for scripting)                                                                         | -       |
 
 ## `maestro-cli remove-group <group-id>`
 
@@ -767,6 +769,23 @@ Rename a group in the Maestro desktop app
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli update-group <group-id>`
+
+Update a group's name, icon, color, or parent in the Maestro desktop app
+
+| Option                | Description                                                                                            | Default |
+| --------------------- | ------------------------------------------------------------------------------------------------------ | ------- |
+| `-n, --name <name>`   | New group name                                                                                         | -       |
+| `-e, --emoji <emoji>` | Emoji icon for the group. Mutually exclusive with --icon                                               | -       |
+| `--icon <icon-id>`    | Built-in icon ID (folder, briefcase, rocket, ...) or a plugin icon ID. Mutually exclusive with --emoji | -       |
+| `--color <color>`     | Label color as #RRGGBB, or a plugin color ID                                                           | -       |
+| `--parent <group-id>` | Move the group inside this root group                                                                  | -       |
+| `--clear-emoji`       | Reset the emoji to the default folder                                                                  | -       |
+| `--clear-icon`        | Remove the icon                                                                                        | -       |
+| `--clear-color`       | Remove the label color                                                                                 | -       |
+| `--clear-parent`      | Promote the group to the top level                                                                     | -       |
+| `--json`              | Output as JSON (for scripting)                                                                         | -       |
 
 ## `maestro-cli create-worktree`
 
