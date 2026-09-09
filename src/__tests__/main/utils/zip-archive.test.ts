@@ -37,7 +37,10 @@ describe('zip-archive', () => {
 		});
 
 		const zip = readZipArchive(zipPath);
-		const names = zip.getEntries().map((e) => e.entryName).sort();
+		const names = zip
+			.getEntries()
+			.map((e) => e.entryName)
+			.sort();
 		expect(names).toEqual(['documents/a.md', 'manifest.json']);
 		expect(zip.getEntry('manifest.json')?.getData().toString('utf-8')).toBe('{"name":"demo"}');
 		expect(zip.getEntry('documents/a.md')?.size).toBe('# hello'.length);
