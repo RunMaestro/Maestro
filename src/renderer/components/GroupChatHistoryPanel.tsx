@@ -7,12 +7,13 @@
  */
 
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
-import { Check, Send, MessageSquare, Layers, AlertTriangle } from 'lucide-react';
+import { Check, Send, MessageSquare, Layers, AlertTriangle, User } from 'lucide-react';
 import type { Theme } from '../types';
 import { useContextMenuPosition } from '../hooks/ui/useContextMenuPosition';
-import type {
-	GroupChatHistoryEntry,
-	GroupChatHistoryEntryType,
+import {
+	GROUP_CHAT_USER_NAME,
+	type GroupChatHistoryEntry,
+	type GroupChatHistoryEntryType,
 } from '../../shared/group-chat-types';
 import { stripMarkdown } from '../utils/textProcessing';
 import { useUIStore } from '../stores/uiStore';
@@ -426,6 +427,7 @@ const TYPE_FILTER_CONFIG: {
 	label: string;
 	icon: typeof Send;
 }[] = [
+	{ type: 'user', label: 'You', icon: User },
 	{ type: 'delegation', label: 'Delegation', icon: Send },
 	{ type: 'response', label: 'Response', icon: MessageSquare },
 	{ type: 'synthesis', label: 'Synthesis', icon: Layers },
@@ -434,6 +436,7 @@ const TYPE_FILTER_CONFIG: {
 
 // All entry types for default filter state
 const ALL_ENTRY_TYPES = new Set<GroupChatHistoryEntryType>([
+	'user',
 	'delegation',
 	'response',
 	'synthesis',
@@ -484,6 +487,14 @@ export function GroupChatHistoryPanel({
 		const settingsKey = `groupChatHistoryLookback:${groupChatId}`;
 		window.maestro.settings.set(settingsKey, hours);
 	};
+
+	// The conductor is not a participant, so no color was ever assigned to them.
+	// Painting their entries in the accent keeps them legible in the row border
+	// AND in the stacked graph, which reads its colors from this same map.
+	const entryColors = useMemo<Record<string, string>>(
+		() => ({ [GROUP_CHAT_USER_NAME]: theme.colors.accent, ...participantColors }),
+		[participantColors, theme.colors.accent]
+	);
 
 	// Toggle a type filter
 	const toggleFilter = useCallback((type: GroupChatHistoryEntryType) => {
@@ -636,7 +647,7 @@ export function GroupChatHistoryPanel({
 				<GroupChatActivityGraph
 					entries={filteredEntries}
 					theme={theme}
-					participantColors={participantColors}
+					participantColors={entryColors}
 					lookbackHours={lookbackHours}
 					onLookbackChange={handleLookbackChange}
 					onBarClick={handleBarClick}
@@ -705,9 +716,7 @@ export function GroupChatHistoryPanel({
 				) : (
 					filteredEntries.map((entry, index) => {
 						const participantColor =
-							participantColors[entry.participantName] ||
-							entry.participantColor ||
-							theme.colors.accent;
+							entryColors[entry.participantName] || entry.participantColor || theme.colors.accent;
 						const isSelected = index === selectedIndex;
 						return (
 							<div

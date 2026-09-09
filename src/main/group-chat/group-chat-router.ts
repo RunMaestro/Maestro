@@ -23,6 +23,7 @@ import { finishGroupChatTurn } from './group-chat-turn-metrics';
 import {
 	type GroupChatMessage,
 	type GroupChatHistoryEntry,
+	GROUP_CHAT_USER_NAME,
 	mentionMatches,
 	normalizeMentionName,
 	requiresIdleParticipants,
@@ -764,6 +765,19 @@ export async function routeUserMessage(
 		...(images && images.length > 0 && { images }),
 	};
 	groupChatEmitters.emitMessage?.(groupChatId, userMessage);
+
+	// Record the prompt itself in history. Every other entry is something an
+	// agent did in reaction to this line, so a history without it shows effects
+	// with no causes - and the timestamp is what makes a click here jump the
+	// transcript back to the message that started the round.
+	await recordGroupChatHistory(groupChatId, {
+		timestamp: Date.now(),
+		summary: extractFirstSentence(message),
+		participantName: GROUP_CHAT_USER_NAME,
+		participantColor: '#808080',
+		type: 'user',
+		fullResponse: message,
+	});
 
 	// Spawn a batch process for the moderator to handle this message
 	// The response will be captured via the process:data event handler in index.ts

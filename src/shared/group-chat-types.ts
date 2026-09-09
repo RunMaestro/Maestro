@@ -152,9 +152,18 @@ export interface GroupChatMessage {
 export type GroupChatState = 'idle' | 'moderator-thinking' | 'agent-working';
 
 /**
+ * Name stamped on the conductor's own history entries. Shared so the main
+ * process writes exactly what the renderer colors and filters on.
+ */
+export const GROUP_CHAT_USER_NAME = 'You';
+
+/**
  * Type of history entry in a group chat
  */
-export type GroupChatHistoryEntryType = 'delegation' | 'response' | 'synthesis' | 'error';
+// 'user' is the conductor's own message into the room. It carries no cost or
+// duration, but without it the history reads as agent chatter with no visible
+// cause - the prompt that started each round is the anchor a reader needs.
+export type GroupChatHistoryEntryType = 'user' | 'delegation' | 'response' | 'synthesis' | 'error';
 
 /**
  * History entry for group chat activity tracking.
