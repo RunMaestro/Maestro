@@ -540,13 +540,22 @@ export class WebServer {
 	 * process (not from a web client). Used by dispatch callbacks to deliver a
 	 * wake-up turn into the caller's live tab: busy callers queue instead of
 	 * being rejected, which is exactly the `dispatch --queue` semantics.
+	 *
+	 * ALWAYS background. This delivery has no user gesture behind it: the turn
+	 * arrives whenever the OTHER agent happens to finish, which can be minutes
+	 * later while the user is reading something else entirely. Letting it focus
+	 * yanks them to the agent that armed the dispatch at a moment they did not
+	 * choose, which is the one thing `--background` exists to prevent. The
+	 * parameter was simply not passed before, and an absent value is read as
+	 * "not background", so every `dispatch --notify-on-complete` callback stole
+	 * the screen.
 	 */
 	enqueueCommandFromMain(
 		sessionId: string,
 		command: string,
 		tabId?: string
 	): ReturnType<CallbackRegistry['enqueueCommand']> {
-		return this.callbackRegistry.enqueueCommand(sessionId, command, 'ai', tabId);
+		return this.callbackRegistry.enqueueCommand(sessionId, command, 'ai', tabId, undefined, true);
 	}
 
 	setListQueueCallback(callback: ListQueueCallback): void {
