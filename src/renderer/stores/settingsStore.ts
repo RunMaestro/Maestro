@@ -709,9 +709,6 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 	/** Monotonic counter to discard stale async completions in setPersistentWebLink */
 	let persistentWebLinkRequestSeq = 0;
 
-	/** ID of the live toast-width preview, so a new pick replaces it instead of stacking. */
-	let toastWidthPreviewId: string | null = null;
-
 	return {
 		// ============================================================================
 		// State (defaults)

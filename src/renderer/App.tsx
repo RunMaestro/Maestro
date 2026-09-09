@@ -1813,7 +1813,6 @@ function MaestroConsoleInner() {
 		clearError: clearInlineWizardError,
 		retryLastMessage: retryInlineWizardMessage,
 		generateDocuments: generateInlineWizardDocuments,
-		endWizard: endInlineWizard,
 		cancelTurn: cancelInlineWizardTurn,
 		isWizardActiveForTab,
 	} = inlineWizardContext;
@@ -1830,6 +1829,7 @@ function MaestroConsoleInner() {
 		handleWizardCommand,
 		handleLaunchWizardTab,
 		isWizardActiveForCurrentTab,
+		handleExitWizard,
 		handleWizardComplete,
 		handleWizardCompleteAndStartAutoRun,
 		handleWizardLetsGo,
@@ -2939,7 +2939,7 @@ function MaestroConsoleInner() {
 		generateInlineWizardDocuments,
 		retryInlineWizardMessage,
 		clearInlineWizardError,
-		endInlineWizard,
+		handleExitWizard,
 		cancelInlineWizardTurn,
 		handleAutoRunRefresh,
 

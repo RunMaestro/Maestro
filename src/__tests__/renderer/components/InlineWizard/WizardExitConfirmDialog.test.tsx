@@ -33,6 +33,7 @@ vi.mock('../../../../renderer/contexts/LayerStackContext', () => ({
 describe('WizardExitConfirmDialog', () => {
 	const defaultProps = {
 		theme: mockTheme,
+		willCloseTab: true,
 		onConfirm: vi.fn(),
 		onCancel: vi.fn(),
 	};
@@ -51,11 +52,19 @@ describe('WizardExitConfirmDialog', () => {
 			expect(screen.getByText('Exit Wizard?')).toBeInTheDocument();
 		});
 
-		it('renders the warning message', () => {
+		it('renders the warning message when exiting closes the wizard tab', () => {
 			render(<WizardExitConfirmDialog {...defaultProps} />);
 			expect(
 				screen.getByText(/Are you sure you want to exit the wizard and lose your progress\?/)
 			).toBeInTheDocument();
+		});
+
+		// The in-place case keeps the conversation (flattenWizardIntoTab), so promising
+		// the user their progress is lost would be a lie that scares them off exiting.
+		it('promises the conversation is kept when the wizard ran in place', () => {
+			render(<WizardExitConfirmDialog {...defaultProps} willCloseTab={false} />);
+			expect(screen.getByText(/The conversation stays in this tab/)).toBeInTheDocument();
+			expect(screen.queryByText(/lose your progress/)).not.toBeInTheDocument();
 		});
 
 		it('renders the destructive confirm and Cancel buttons', () => {

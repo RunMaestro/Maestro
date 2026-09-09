@@ -499,11 +499,11 @@ describe('WizardInputPanel', () => {
 			const textarea = screen.getByPlaceholderText('Tell the wizard about your project...');
 			fireEvent.keyDown(textarea, { key: 'Escape' });
 
-			// Dialog should appear
+			// Dialog should appear. This session has a single tab, so exiting keeps the
+			// tab and flattens the wizard conversation into it - the dialog says so
+			// rather than threatening the user with losing their progress.
 			expect(screen.getByText('Exit Wizard?')).toBeInTheDocument();
-			expect(
-				screen.getByText(/Are you sure you want to exit the wizard and lose your progress\?/)
-			).toBeInTheDocument();
+			expect(screen.getByText(/The conversation stays in this tab/)).toBeInTheDocument();
 		});
 
 		it('shows exit confirmation dialog when Escape is pressed with typed input', () => {

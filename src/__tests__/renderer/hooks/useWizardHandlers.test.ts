@@ -267,6 +267,9 @@ describe('useWizardHandlers', () => {
 			sessions: [],
 			activeSessionId: null,
 			groups: [],
+			// The restart sweep is gated on this. Reset it so a test that flips it on
+			// cannot make the sweep fire inside an unrelated test that follows.
+			sessionsLoaded: false,
 		} as any);
 		useSettingsStore.setState({
 			defaultSaveToHistory: true,
@@ -572,6 +575,55 @@ describe('useWizardHandlers', () => {
 			const updatedSession = useSessionStore.getState().sessions[0];
 			const activeTab = updatedSession.aiTabs.find((t) => t.id === 'tab-1');
 			expect(activeTab?.wizardState).toBeUndefined();
+		});
+
+		// The wizard conversation lives only in wizardState. Clearing it without
+		// flattening used to leave the user an empty tab.
+		it('keeps the wizard conversation in the tab when it clears wizard state', async () => {
+			const tab = createMockTab({
+				logs: [],
+				agentSessionId: null,
+				wizardState: {
+					isActive: true,
+					mode: 'new',
+					confidence: 50,
+					agentSessionId: 'provider-abc',
+					conversationHistory: [
+						{ id: 'm1', role: 'user', content: 'make me a playbook', timestamp: 1000 },
+						{ id: 'm2', role: 'assistant', content: 'what for?', timestamp: 2000 },
+					],
+					previousUIState: {
+						readOnlyMode: false,
+						saveToHistory: true,
+						showThinking: 'off' as const,
+					},
+				} as any,
+			});
+			const session = createMockSession({ aiTabs: [tab] });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const deps = createMockDeps({
+				inlineWizardContext: {
+					...createMockDeps().inlineWizardContext,
+					getStateForTab: vi.fn().mockReturnValue(undefined),
+				} as any,
+			});
+
+			renderHook(() => useWizardHandlers(deps));
+
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 50));
+			});
+
+			const activeTab = useSessionStore.getState().sessions[0].aiTabs.find((t) => t.id === 'tab-1');
+			expect(activeTab?.wizardState).toBeUndefined();
+			expect(activeTab?.logs.map((l) => l.text)).toEqual([
+				'make me a playbook',
+				'what for?',
+				expect.stringContaining('conversation above is preserved'),
+			]);
+			// Without this the tab cannot continue the provider conversation.
+			expect(activeTab?.agentSessionId).toBe('provider-abc');
 		});
 
 		it('maps "ask" mode to "new" WizardMode', async () => {
@@ -1531,6 +1583,224 @@ describe('useWizardHandlers', () => {
 			const { result } = renderHook(() => useWizardHandlers(deps));
 
 			expect(result.current.isWizardActiveForCurrentTab).toBe(false);
+		});
+	});
+
+	// ========================================================================
+	// Restart reconciliation sweep
+	// ========================================================================
+	describe('restart reconciliation', () => {
+		const staleWizardTab = (id: string) =>
+			createMockTab({
+				id,
+				logs: [],
+				agentSessionId: null,
+				wizardState: {
+					isActive: true,
+					mode: 'new',
+					confidence: 40,
+					agentSessionId: `provider-${id}`,
+					conversationHistory: [
+						{ id: `${id}-m1`, role: 'user', content: `hello from ${id}`, timestamp: 1000 },
+					],
+					previousUIState: {
+						readOnlyMode: false,
+						saveToHistory: true,
+						showThinking: 'off' as const,
+					},
+				} as any,
+			});
+
+		// tab.wizardState persists to disk but the in-memory wizard does not, so every
+		// wizard tab present at load is stale. Sweeping only the ACTIVE tab left the
+		// others showing a dead wizard until clicked, then blanked them.
+		it('flattens every stale wizard tab once sessions load, not just the active one', async () => {
+			const sessionA = createMockSession({
+				id: 'session-1',
+				aiTabs: [staleWizardTab('tab-1'), staleWizardTab('tab-2')],
+				activeTabId: 'tab-1',
+			});
+			const sessionB = createMockSession({
+				id: 'session-2',
+				aiTabs: [staleWizardTab('tab-3')],
+				activeTabId: 'tab-3',
+			});
+			useSessionStore.setState({
+				sessions: [sessionA, sessionB],
+				activeSessionId: 'session-1',
+				sessionsLoaded: true,
+			} as any);
+
+			renderHook(() => useWizardHandlers(createMockDeps()));
+
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 50));
+			});
+
+			const allTabs = useSessionStore.getState().sessions.flatMap((s) => s.aiTabs);
+			expect(allTabs).toHaveLength(3);
+			for (const tab of allTabs) {
+				expect(tab.wizardState).toBeUndefined();
+				expect(tab.logs[0]?.text).toBe(`hello from ${tab.id}`);
+				expect(tab.agentSessionId).toBe(`provider-${tab.id}`);
+			}
+		});
+
+		it('leaves sessions alone while they are still loading', async () => {
+			const session = createMockSession({ aiTabs: [staleWizardTab('tab-1')] });
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'session-1',
+				sessionsLoaded: false,
+			} as any);
+
+			const deps = createMockDeps({
+				inlineWizardContext: {
+					...createMockDeps().inlineWizardContext,
+					// Keep the sync effect from clearing it, so we only observe the sweep.
+					getStateForTab: vi.fn((tabId: string) =>
+						tabId === 'tab-1'
+							? createMatchingInlineWizardTabState(session.aiTabs[0].wizardState)
+							: undefined
+					),
+				} as any,
+			});
+
+			renderHook(() => useWizardHandlers(deps));
+
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 50));
+			});
+
+			expect(useSessionStore.getState().sessions[0].aiTabs[0].wizardState).toBeDefined();
+		});
+	});
+
+	// ========================================================================
+	// handleExitWizard
+	// ========================================================================
+	describe('handleExitWizard', () => {
+		const buildWizardSession = () => {
+			const tab = createMockTab({
+				id: 'tab-1',
+				logs: [
+					{
+						id: 'pre-wizard',
+						timestamp: 1,
+						source: 'user' as const,
+						text: 'a conversation from before /wizard',
+					},
+				],
+				agentSessionId: null,
+				wizardState: {
+					isActive: true,
+					mode: 'new',
+					confidence: 30,
+					agentSessionId: 'provider-abc',
+					conversationHistory: [
+						{ id: 'm1', role: 'user', content: 'build a playbook', timestamp: 1000 },
+						{ id: 'm2', role: 'assistant', content: 'about what?', timestamp: 2000 },
+					],
+					previousUIState: {
+						readOnlyMode: false,
+						saveToHistory: true,
+						showThinking: 'off' as const,
+					},
+				} as any,
+			});
+			return createMockSession({ aiTabs: [tab], activeTabId: 'tab-1' });
+		};
+
+		// The Exit Wizard button used to call endWizard straight through, which drops
+		// wizardState and with it the whole wizard conversation.
+		it('preserves the wizard conversation and provider session on exit', () => {
+			const session = buildWizardSession();
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const endWizard = vi.fn().mockResolvedValue(null);
+			const deps = createMockDeps({
+				inlineWizardContext: {
+					...createMockDeps().inlineWizardContext,
+					getStateForTab: vi.fn((tabId: string) =>
+						tabId === 'tab-1'
+							? createMatchingInlineWizardTabState(session.aiTabs[0].wizardState)
+							: undefined
+					),
+					endWizard,
+				} as any,
+			});
+
+			const { result } = renderHook(() => useWizardHandlers(deps));
+
+			act(() => {
+				result.current.handleExitWizard('tab-1');
+			});
+
+			const tab = useSessionStore.getState().sessions[0].aiTabs[0];
+			expect(tab.wizardState).toBeUndefined();
+			expect(tab.logs.map((l) => l.text)).toEqual([
+				'a conversation from before /wizard',
+				'build a playbook',
+				'about what?',
+				expect.stringContaining('conversation above is preserved'),
+			]);
+			expect(tab.agentSessionId).toBe('provider-abc');
+			// Naming the tab matters: the hook's fallback is the last-touched wizard.
+			expect(endWizard).toHaveBeenCalledWith('tab-1');
+		});
+
+		it('adds no closing note when the wizard was never talked to', () => {
+			const session = buildWizardSession();
+			session.aiTabs[0].wizardState!.conversationHistory = [];
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const deps = createMockDeps({
+				inlineWizardContext: {
+					...createMockDeps().inlineWizardContext,
+					getStateForTab: vi.fn((tabId: string) =>
+						tabId === 'tab-1'
+							? createMatchingInlineWizardTabState(session.aiTabs[0].wizardState)
+							: undefined
+					),
+				} as any,
+			});
+
+			const { result } = renderHook(() => useWizardHandlers(deps));
+
+			act(() => {
+				result.current.handleExitWizard('tab-1');
+			});
+
+			const tab = useSessionStore.getState().sessions[0].aiTabs[0];
+			expect(tab.wizardState).toBeUndefined();
+			expect(tab.logs).toHaveLength(1);
+		});
+
+		it('falls back to the active tab when given no tab id', () => {
+			const session = buildWizardSession();
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const endWizard = vi.fn().mockResolvedValue(null);
+			const deps = createMockDeps({
+				inlineWizardContext: {
+					...createMockDeps().inlineWizardContext,
+					getStateForTab: vi.fn((tabId: string) =>
+						tabId === 'tab-1'
+							? createMatchingInlineWizardTabState(session.aiTabs[0].wizardState)
+							: undefined
+					),
+					endWizard,
+				} as any,
+			});
+
+			const { result } = renderHook(() => useWizardHandlers(deps));
+
+			act(() => {
+				result.current.handleExitWizard();
+			});
+
+			expect(endWizard).toHaveBeenCalledWith('tab-1');
+			expect(useSessionStore.getState().sessions[0].aiTabs[0].wizardState).toBeUndefined();
 		});
 	});
 

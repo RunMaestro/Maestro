@@ -57,7 +57,7 @@ Cmd + Shift + N; // Opens wizard
 
 ### State Persistence (Resume)
 
-Wizard state persists to `wizardResumeState` in settings when user advances past step 1. On next app launch, if incomplete state exists, `WizardResumeModal` offers "Resume" or "Start Fresh".
+Wizard state persists to `wizardResumeState` in settings when user advances past step 1. The next time the wizard is OPENED (`openWizardModal` in `App.tsx`, not app launch - nothing checks resume state at startup), incomplete state produces `WizardResumeModal`, which offers "Resume" or "Start Fresh".
 
 ```typescript
 // Check for saved state
@@ -194,6 +194,36 @@ The Inline Wizard creates Auto Run Playbook documents from within an existing ag
 - **`/wizard` runs in place**, so the untouched-wizard branch only closes the tab
   when the host tab has no non-`system` log entries. Otherwise a wizard started
   in a tab with a real conversation would throw that conversation away.
+
+### Leaving wizard mode never destroys the conversation
+
+The wizard conversation lives ONLY in `wizardState.conversationHistory`, rendered
+by `WizardConversationView`. `tab.logs` (what `TerminalOutput` renders) is a
+different store and the wizard never writes to it while it runs. So clearing
+`wizardState` deletes the whole conversation and hands the user an empty tab.
+
+Every exit therefore goes through `flattenWizardIntoTab(tab, { summary? })` in
+`src/renderer/utils/tabHelpers.ts`, which appends the transcript to `tab.logs`,
+promotes `wizardState.agentSessionId` onto `tab.agentSessionId` so the plain tab
+can keep talking to the same provider context, and only then drops the wizard.
+**Never write `wizardState: undefined` by hand.** The three exits:
+
+| Exit                                       | Handler                              | Closing entry                     |
+| ------------------------------------------ | ------------------------------------ | --------------------------------- |
+| Wizard completes                           | `completeWizardImpl`                 | "Wizard Complete" + next steps    |
+| Exit Wizard button / cancel doc generation | `handleExitWizard`                   | one-line "conversation preserved" |
+| App restart                                | restart sweep in `useWizardHandlers` | one-line "did not survive"        |
+
+The restart case exists because `tab.wizardState` persists to disk but
+`useInlineWizard`'s `tabStates` map does not, so every wizard tab present at load
+is stale. The sweep runs once when `sessionsLoaded` flips true and covers EVERY
+tab in EVERY agent - the per-tab sync effect only ever looks at the active tab,
+so relying on it left background wizard tabs showing a dead wizard until clicked.
+
+Closing the wizard TAB is the deliberate exception: it warns the user first and
+passes `skipHistory`, and the tab is going away regardless. `WizardExitConfirmDialog`
+takes a `willCloseTab` prop for exactly this reason - it must not promise the
+user their progress is lost when the in-place path keeps it.
 
 ### Which wizard is running: one source of truth
 

@@ -25,7 +25,6 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { FONT_ZOOM_DEFAULT, FONT_ZOOM_STEP, clampFontZoom } from '../../../shared/typography';
 import { useUIStore } from '../../stores/uiStore';
 import { groupChatOutputSearchKey, isActiveOutputSearchOpen } from '../../utils/outputSearch';
-import { useGroupChatStore } from '../../stores/groupChatStore';
 import { toggleGroupChatRightTab } from '../../utils/groupChatRightTab';
 import { OUTPUT_SEARCH_INPUT_SELECTOR } from '../ui/useOutputSearchLayer';
 import { tileNewTabInSession } from '../../services/tileNewTabAction';
