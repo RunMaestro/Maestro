@@ -83,3 +83,39 @@ export function shellEscapeForDoubleQuotes(str: string): string {
 		.replace(/`/g, '\\`') // Escape backticks
 		.replace(/!/g, '\\!'); // Escape history expansion
 }
+
+/**
+ * Escape a path that will be handed to a REMOTE shell (`cd`, `stat`, `ls`
+ * over SSH), keeping a leading `~` or `$HOME` expandable.
+ *
+ * `shellEscape()` single-quotes its argument, and a single-quoted `'~/proj'`
+ * never expands: the remote shell looks for a directory literally named `~`
+ * and every `cd` into a home-relative path fails. Nothing on the local side
+ * can resolve it either, because the remote user's home is not the local one
+ * (`expandTilde()` turned `~/git-projects` into `/Users/<local>/git-projects`
+ * and the agent then failed to start on the remote host).
+ *
+ * So a home-relative path is rendered as `"$HOME/rest"`, with `rest` escaped
+ * for the double-quoted context, and every other path falls through to
+ * `shellEscape()` unchanged. Use this for every remote path, never the plain
+ * escaper - four builders had grown four private copies of this rule and one
+ * of them (`SshCommandRunner`) defaulted to a quoted `'~'` that could not work.
+ *
+ * @param remotePath The path as the user typed it (may start with `~` or `$HOME`)
+ * @returns A shell-safe token that expands the home prefix on the remote
+ */
+export function shellEscapeRemotePath(remotePath: string): string {
+	if (remotePath === '~' || remotePath === '$HOME') {
+		return '"$HOME"';
+	}
+
+	if (remotePath.startsWith('~/')) {
+		return `"$HOME/${shellEscapeForDoubleQuotes(remotePath.slice(2))}"`;
+	}
+
+	if (remotePath.startsWith('$HOME/')) {
+		return `"$HOME/${shellEscapeForDoubleQuotes(remotePath.slice('$HOME/'.length))}"`;
+	}
+
+	return shellEscape(remotePath);
+}

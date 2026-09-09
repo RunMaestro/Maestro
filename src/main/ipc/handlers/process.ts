@@ -19,7 +19,7 @@ import {
 	CreateHandlerOptions,
 } from '../../utils/ipcHandler';
 import { getSshRemoteConfig, createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
-import { shellEscape } from '../../utils/shell-escape';
+import { shellEscape, shellEscapeRemotePath } from '../../utils/shell-escape';
 import { resolveSshPath } from '../../utils/cliDetection';
 import type { SshRemoteConfig } from '../../../shared/types';
 import { buildSshOptionArgs } from '../../../shared/sshOptions';
@@ -457,13 +457,9 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 
 						// Remote command (must come after destination)
 						if (workingDirOverride) {
-							// Handle leading ~ by using $HOME outside of quotes so the remote shell expands it
-							const cdPath = workingDirOverride.startsWith('~/')
-								? `"$HOME"/${shellEscape(workingDirOverride.slice(2))}`
-								: workingDirOverride === '~'
-									? '"$HOME"'
-									: shellEscape(workingDirOverride);
-							remoteParts.push(`cd ${cdPath}`);
+							// Tilde-aware: `~/proj` reaches the remote as `"$HOME/proj"` so the
+							// shell expands it. The same rule every other remote `cd` uses.
+							remoteParts.push(`cd ${shellEscapeRemotePath(workingDirOverride)}`);
 						}
 
 						// Export merged env vars on the remote side
