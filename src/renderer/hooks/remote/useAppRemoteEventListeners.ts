@@ -12,8 +12,12 @@ import { useEventListener } from '../utils/useEventListener';
 import { generateId } from '../../utils/ids';
 import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { useBatchStore } from '../../stores/batchStore';
+import { useModalStore } from '../../stores/modalStore';
+import { useUIStore } from '../../stores/uiStore';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import { asThinkingMode } from '../../../shared/types';
+import { getBasename, isAbsolutePath } from '../../../shared/formatters';
 import { getBrowserTabPartition } from '../../utils/browserTabPersistence';
 import { insertAfterActiveInUnifiedTabOrder } from '../../utils/unifiedTabOrderUtils';
 import {
@@ -23,7 +27,15 @@ import {
 	getTerminalTabDisplayName,
 	getTerminalSessionId,
 } from '../../utils/terminalTabHelpers';
-import type { Session, AITab, ToolType, Group, BatchRunConfig, BrowserTab } from '../../types';
+import type {
+	Session,
+	AITab,
+	ToolType,
+	Group,
+	BatchRunConfig,
+	BatchDocumentEntry,
+	BrowserTab,
+} from '../../types';
 import { logger } from '../../utils/logger';
 import { FILE_TREE_REFRESH_EVENT } from '../../utils/fileTreeRefresh';
 import { spawnPtyForTab } from '../../services/terminalSpawn';
@@ -109,6 +121,28 @@ function applyGroupUpdate(
 		if (clear.has('color')) delete updated.color;
 		return updated;
 	});
+}
+
+function resolveRemoteAutoRunFilename(filename: string, folderPath: string): string {
+	const normalized = filename.replace(/\\/g, '/').replace(/\.md$/i, '');
+	const normalizedFolder = folderPath.replace(/\\/g, '/').replace(/\/$/, '');
+	let relative = normalized;
+
+	if (isAbsolutePath(filename)) {
+		if (!normalized.toLowerCase().startsWith(`${normalizedFolder.toLowerCase()}/`)) {
+			throw new Error(
+				`Auto Run document is outside the configured folder: ${getBasename(filename)}`
+			);
+		}
+		relative = normalized.slice(normalizedFolder.length + 1);
+	}
+
+	relative = relative.replace(/^\.\/+/, '');
+	if (!relative || relative.split('/').includes('..')) {
+		throw new Error(`Invalid Auto Run document path: ${filename}`);
+	}
+
+	return relative;
 }
 
 // ============================================================================
@@ -701,7 +735,13 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 
 	// Handle remote configure auto-run events from CLI/web interface
 	useEventListener('maestro:configureAutoRun', async (e: Event) => {
-		const { sessionId, config, responseChannel } = (e as CustomEvent).detail;
+		const { sessionId, config, responseChannel } = (
+			e as CustomEvent<{
+				sessionId: string;
+				config: import('../../../main/web-server/types').ConfigureAutoRunConfig;
+				responseChannel: string;
+			}>
+		).detail;
 
 		try {
 			// Find the target session
@@ -718,7 +758,10 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			if (config.saveAsPlaybook) {
 				const result = await window.maestro.playbooks.create(sessionId, {
 					name: config.saveAsPlaybook,
-					documents: config.documents || [],
+					documents: (config.documents || []).map((document) => ({
+						...document,
+						resetOnCompletion: document.resetOnCompletion || false,
+					})),
 					loopEnabled: config.loopEnabled || false,
 					maxLoops: config.maxLoops,
 					prompt: config.prompt || '',
@@ -743,32 +786,12 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				}
 
 				const documents = (config.documents || []).map(
-					(doc: { filename: string; resetOnCompletion?: boolean }) => {
-						// Compute path relative to the session's autoRunFolderPath.
-						// CLI sends full absolute paths (e.g., "/path/to/Auto Run Docs/subdir/temp.md")
-						// but the batch processor expects the path relative to folderPath without .md
-						// (e.g., "subdir/temp").
-						let name = doc.filename.replace(/\.md$/i, '');
-						// Normalize separators to forward slash for comparison
-						const normalized = name.replace(/\\/g, '/');
-						const normalizedFolder = (folderPath || '').replace(/\\/g, '/');
-						// Case-insensitive prefix check for cross-platform compatibility (Windows drive letters)
-						const normalizedLower = normalized.toLowerCase();
-						const folderLower = normalizedFolder.toLowerCase();
-						if (normalizedFolder && normalizedLower.startsWith(folderLower + '/')) {
-							name = normalized.substring(normalizedFolder.length + 1);
-						} else {
-							// Fallback for paths not under folderPath: use basename only
-							const lastSlash = Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\'));
-							if (lastSlash >= 0) name = name.substring(lastSlash + 1);
-						}
-						return {
-							id: generateId(),
-							filename: name,
-							resetOnCompletion: doc.resetOnCompletion || false,
-							isDuplicate: false,
-						};
-					}
+					(doc: { filename: string; resetOnCompletion?: boolean }) => ({
+						id: generateId(),
+						filename: resolveRemoteAutoRunFilename(doc.filename, folderPath),
+						resetOnCompletion: doc.resetOnCompletion || false,
+						isDuplicate: false,
+					})
 				);
 
 				if (documents.length === 0) {
@@ -911,12 +934,71 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				return;
 			}
 
-			// Case 3: Just configure (no launch, no save)
-			// Without --launch or --save-as, there is no persistent state to update.
-			// Return an error guiding the user to use one of those flags.
+			// Case 3: Configure the Batch Runner modal without launching.
+			const folderPath = session.autoRunFolderPath;
+			if (!folderPath) {
+				window.maestro.process.sendRemoteConfigureAutoRunResponse(responseChannel, {
+					success: false,
+					error: 'No Auto Run folder configured for this session',
+				});
+				return;
+			}
+
+			const documents: BatchDocumentEntry[] = (config.documents || []).map(
+				(doc: { filename: string; resetOnCompletion?: boolean }) => ({
+					id: generateId(),
+					filename: resolveRemoteAutoRunFilename(doc.filename, folderPath),
+					resetOnCompletion: doc.resetOnCompletion || false,
+					isDuplicate: false,
+				})
+			);
+			if (documents.length === 0) {
+				window.maestro.process.sendRemoteConfigureAutoRunResponse(responseChannel, {
+					success: false,
+					error: 'No documents provided for auto-run',
+				});
+				return;
+			}
+
+			const selectedFile = documents[0].filename;
+			const sshRemoteId =
+				session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId || undefined;
+			const contentResult = await window.maestro.autorun.readDoc(
+				folderPath,
+				`${selectedFile}.md`,
+				sshRemoteId
+			);
+			const batchConfig: BatchRunConfig = {
+				documents,
+				prompt: config.prompt || '',
+				loopEnabled: config.loopEnabled || false,
+				maxLoops: config.maxLoops ?? null,
+			};
+
+			setSessions((prev) =>
+				prev.map((candidate) =>
+					candidate.id === sessionId
+						? {
+								...candidate,
+								autoRunSelectedFile: selectedFile,
+								autoRunContent: contentResult.success ? contentResult.content || '' : '',
+								autoRunContentVersion: (candidate.autoRunContentVersion || 0) + 1,
+								batchRunnerPrompt: batchConfig.prompt,
+								batchRunnerPromptModifiedAt: Date.now(),
+							}
+						: candidate
+				)
+			);
+			useBatchStore.getState().setDocumentList(documents.map((document) => document.filename));
+			if (!config.background) {
+				setActiveSessionId(sessionId);
+				const uiActions = useUIStore.getState();
+				uiActions.setRightPanelOpen(true);
+				uiActions.setActiveRightTab('autorun');
+			}
+			useModalStore.getState().openBatchRunnerWithConfig(batchConfig);
 			window.maestro.process.sendRemoteConfigureAutoRunResponse(responseChannel, {
-				success: false,
-				error: 'Use --launch to start auto-run immediately, or --save-as to save as a playbook',
+				success: true,
 			});
 		} catch (error) {
 			logger.error('[Remote] Failed to configure auto-run:', undefined, error);

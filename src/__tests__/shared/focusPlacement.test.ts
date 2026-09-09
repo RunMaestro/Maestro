@@ -33,6 +33,7 @@ const FOCUSING_TODAY: BackgroundCapableVerb[] = [
 	'create-worktree',
 	'switch-mode',
 	'refresh-auto-run',
+	'auto-run',
 ];
 
 describe('no verb changes its default', () => {

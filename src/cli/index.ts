@@ -698,6 +698,8 @@ program
 	.option('--max-loops <n>', 'Maximum loop count (implies --loop)')
 	.option('--save-as <name>', "Save as a playbook with this name (don't launch)")
 	.option('--launch', 'Start the auto-run immediately (default: just configure)')
+	.option('--background', 'Configure without switching to the target agent or Auto Run view')
+	.option('--focus', 'Switch to the target agent and Auto Run view while configuring (default)')
 	.option('--reset-on-completion', 'Enable reset-on-completion for all documents')
 	.option(
 		'--worktree',

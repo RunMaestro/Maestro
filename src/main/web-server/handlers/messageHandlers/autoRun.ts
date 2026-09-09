@@ -221,6 +221,7 @@ export function handleConfigureAutoRun(
 		maxLoops: message.maxLoops !== undefined ? Number(message.maxLoops) : undefined,
 		saveAsPlaybook: message.saveAsPlaybook as string | undefined,
 		launch: message.launch as boolean | undefined,
+		background: readBackgroundField(message),
 		model: message.model as string | undefined,
 		effort: message.effort as string | undefined,
 		worktree,
