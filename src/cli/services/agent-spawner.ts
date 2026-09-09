@@ -20,6 +20,7 @@ import {
 import { sanitizeSessionId } from '../../shared/history';
 import { buildExpandedPath, buildExpandedEnv } from '../../shared/pathUtils';
 import { isWindows, getWhichCommand } from '../../shared/platformDetection';
+import { embedSystemPromptInPrompt } from '../../shared/embeddedSystemPrompt';
 import { applyAgentConfigOverrides } from '../../main/utils/agent-args';
 import { buildCliWakaTimeHeartbeat } from './wakatime';
 import {
@@ -895,7 +896,7 @@ async function spawnJsonLineAgent(
 			: resolvedArgs;
 	const effectivePrompt =
 		overrides.appendSystemPrompt && !supportsNativeSystemPrompt && !isResume
-			? `${overrides.appendSystemPrompt}\n\n---\n\n# User Request\n\n${prompt}`
+			? embedSystemPromptInPrompt(overrides.appendSystemPrompt, prompt)
 			: prompt;
 
 	const noPromptSeparator = !!def?.noPromptSeparator;
