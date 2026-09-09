@@ -36,20 +36,20 @@ function loadInput(inputPath) {
 	const lower = inputPath.toLowerCase();
 
 	if (lower.endsWith('.zip')) {
-		let AdmZip;
+		let unzipSync;
 		try {
-			AdmZip = require('adm-zip');
+			({ unzipSync } = require('fflate'));
 		} catch {
 			throw new Error(
-				'Reading a .zip needs adm-zip (a repo dependency). Run from the repo root, or unzip and pass trace.json directly.'
+				'Reading a .zip needs fflate (a repo dependency). Run from the repo root, or unzip and pass trace.json directly.'
 			);
 		}
-		const zip = new AdmZip(inputPath);
-		const traceEntry = zip.getEntry('trace.json');
-		if (!traceEntry) throw new Error('Bundle has no trace.json');
-		const metaEntry = zip.getEntry('metadata.json');
-		const meta = metaEntry ? safeJson(metaEntry.getData().toString('utf-8')) : null;
-		return { traceText: traceEntry.getData().toString('utf-8'), meta };
+		const files = unzipSync(new Uint8Array(fs.readFileSync(inputPath)));
+		const traceBytes = files['trace.json'];
+		if (!traceBytes) throw new Error('Bundle has no trace.json');
+		const metaBytes = files['metadata.json'];
+		const meta = metaBytes ? safeJson(Buffer.from(metaBytes).toString('utf-8')) : null;
+		return { traceText: Buffer.from(traceBytes).toString('utf-8'), meta };
 	}
 
 	if (lower.endsWith('.gz')) {

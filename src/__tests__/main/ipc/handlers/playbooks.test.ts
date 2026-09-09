@@ -12,7 +12,7 @@ import { createWriteStream } from 'fs';
 import crypto from 'crypto';
 import path from 'path';
 import archiver from 'archiver';
-import AdmZip from 'adm-zip';
+import { readZipArchive } from '../../../../main/utils/zip-archive';
 import { PassThrough } from 'stream';
 import {
 	registerPlaybooksHandlers,
@@ -61,17 +61,12 @@ vi.mock('archiver', () => ({
 	default: vi.fn(),
 }));
 
-// Mock adm-zip - AdmZip is used as a class constructor with `new`
-// Using a class mock to properly handle constructor calls
-vi.mock('adm-zip', () => {
-	const MockAdmZip = vi.fn(function (this: { getEntries: () => any[] }) {
-		this.getEntries = vi.fn().mockReturnValue([]);
-		return this;
-	});
-	return {
-		default: MockAdmZip,
-	};
-});
+vi.mock('../../../../main/utils/zip-archive', () => ({
+	readZipArchive: vi.fn(() => ({
+		getEntries: () => [],
+		getEntry: () => undefined,
+	})),
+}));
 
 // Mock crypto
 vi.mock('crypto', () => ({
@@ -547,7 +542,6 @@ describe('playbooks IPC handlers', () => {
 				filePaths: ['/import/path/playbook.zip'],
 			});
 
-			// Mock AdmZip
 			const mockManifest = {
 				name: 'Imported Playbook',
 				documents: [{ filename: 'doc1', order: 0 }],
@@ -566,11 +560,10 @@ describe('playbooks IPC handlers', () => {
 				},
 			];
 
-			// Mock AdmZip instance
-			vi.mocked(AdmZip).mockImplementation(function (this: any) {
-				this.getEntries = () => mockEntries;
-				return this;
-			} as any);
+			vi.mocked(readZipArchive).mockReturnValue({
+				getEntries: () => mockEntries,
+				getEntry: () => undefined,
+			});
 
 			vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT')); // No existing playbooks
 			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
@@ -620,10 +613,10 @@ describe('playbooks IPC handlers', () => {
 				filePaths: ['/import/path/playbook.zip'],
 			});
 
-			vi.mocked(AdmZip).mockImplementation(function (this: any) {
-				this.getEntries = () => []; // No entries
-				return this;
-			} as any);
+			vi.mocked(readZipArchive).mockReturnValue({
+				getEntries: () => [],
+				getEntry: () => undefined,
+			});
 
 			const handler = handlers.get('playbooks:import');
 			const result = await handler!({} as any, 'session-123', '/autorun/path');
@@ -645,10 +638,10 @@ describe('playbooks IPC handlers', () => {
 				},
 			];
 
-			vi.mocked(AdmZip).mockImplementation(function (this: any) {
-				this.getEntries = () => mockEntries;
-				return this;
-			} as any);
+			vi.mocked(readZipArchive).mockReturnValue({
+				getEntries: () => mockEntries,
+				getEntry: () => undefined,
+			});
 
 			const handler = handlers.get('playbooks:import');
 			const result = await handler!({} as any, 'session-123', '/autorun/path');
@@ -676,10 +669,10 @@ describe('playbooks IPC handlers', () => {
 				},
 			];
 
-			vi.mocked(AdmZip).mockImplementation(function (this: any) {
-				this.getEntries = () => mockEntries;
-				return this;
-			} as any);
+			vi.mocked(readZipArchive).mockReturnValue({
+				getEntries: () => mockEntries,
+				getEntry: () => undefined,
+			});
 
 			vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT'));
 			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
@@ -715,10 +708,10 @@ describe('playbooks IPC handlers', () => {
 				},
 			];
 
-			vi.mocked(AdmZip).mockImplementation(function (this: any) {
-				this.getEntries = () => mockEntries;
-				return this;
-			} as any);
+			vi.mocked(readZipArchive).mockReturnValue({
+				getEntries: () => mockEntries,
+				getEntry: () => undefined,
+			});
 
 			vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT'));
 			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
