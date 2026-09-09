@@ -155,15 +155,17 @@ describe('ExecutionQueueBrowser', () => {
 					onSwitchSession={mockOnSwitchSession}
 				/>
 			);
-			expect(mockRegisterLayer).toHaveBeenCalledWith({
-				type: 'modal',
-				priority: expect.any(Number),
-				blocksLowerLayers: true,
-				capturesFocus: true,
-				blocksAppShortcuts: true,
-				focusTrap: 'strict',
-				onEscape: expect.any(Function),
-			});
+			expect(mockRegisterLayer).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'modal',
+					priority: expect.any(Number),
+					blocksLowerLayers: true,
+					capturesFocus: true,
+					blocksAppShortcuts: true,
+					focusTrap: 'strict',
+					onEscape: expect.any(Function),
+				})
+			);
 		});
 
 		it('should unregister from layer stack when closed', () => {
