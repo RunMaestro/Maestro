@@ -20,6 +20,7 @@ import { useEventListener } from '../hooks/utils/useEventListener';
 import { useFocusOnClose } from '../hooks/utils/useFocusAfterRender';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import type { Session, Theme, QueuedItem, QueuedItemEditPatch } from '../types';
+import { formatRelativeTime } from '../../shared/formatters';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
 import { useSettingsStore } from '../stores/settingsStore';
@@ -685,9 +686,9 @@ function QueueItemRow({
 	// card, so longer messages show as much as fits rather than a hard 100-char cut.
 	const displayText = isCommand ? item.command : item.text?.slice(0, 4000);
 
-	const timeSinceQueued = Date.now() - item.timestamp;
-	const minutes = Math.floor(timeSinceQueued / 60000);
-	const timeDisplay = minutes < 1 ? 'Just now' : `${minutes}m ago`;
+	// formatRelativeTime steps up through m / h / d and finally a date, so an
+	// item that has sat in the queue for days reads "3d ago" instead of "4340m ago".
+	const timeDisplay = formatRelativeTime(item.timestamp);
 
 	// Send Now stays visible (dimmed) only when the block is something the user
 	// can go fix - see shouldOfferForceSend. A target tab that is already
