@@ -22,6 +22,15 @@ export const DEFAULT_SHORTCUTS = {
 	// G for Group chat. Moved off Opt+Cmd+C so Concerto - a far more frequently
 	// toggled surface - can have the mnemonic C. Migrated in settingsShortcutsSlice.
 	newGroupChat: { id: 'newGroupChat', label: 'New Group Chat', keys: ['Alt', 'Meta', 'g'] },
+	// Shipped upstream on Opt+Cmd+G, which is New Group Chat here - that move off
+	// Opt+Cmd+C happened on this branch and is migrated onto existing installs, so
+	// the incumbent keeps the chord. The view toggle takes the Shift sibling of the
+	// same letter, matching how Concerto's pair is spelled (Opt+Cmd+C / +Shift+C).
+	toggleGroupChatModeratorOnly: {
+		id: 'toggleGroupChatModeratorOnly',
+		label: 'Group Chat: Team Chat / Moderator Only',
+		keys: ['Alt', 'Meta', 'Shift', 'g'],
+	},
 	killInstance: { id: 'killInstance', label: 'Remove', keys: ['Meta', 'Shift', 'Backspace'] },
 	moveToGroup: { id: 'moveToGroup', label: 'Move Session to Group', keys: ['Alt', 'Meta', 'm'] },
 	openMemoryViewer: {

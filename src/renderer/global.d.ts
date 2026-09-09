@@ -1659,6 +1659,8 @@ interface MaestroAPI {
 		stopServer: () => Promise<{ success: boolean; error?: string }>;
 		persistCurrentToken: () => Promise<{ success: boolean; message?: string }>;
 		clearPersistentToken: () => Promise<{ success: boolean; message?: string }>;
+		/** Fires when a network change moves the LAN address in the web URL. */
+		onUrlChanged: (handler: (data: { url: string }) => void) => () => void;
 	};
 	agents: {
 		detect: (sshRemoteId?: string) => Promise<AgentConfig[]>;
@@ -1994,6 +1996,12 @@ interface MaestroAPI {
 		copyTextToClipboard: (text: string) => Promise<void>;
 		copyImageToClipboard: (dataUrl: string) => Promise<void>;
 		readImageFromClipboard: () => Promise<string | null>;
+		capturePage: (rect?: {
+			x: number;
+			y: number;
+			width: number;
+			height: number;
+		}) => Promise<string | null>;
 	};
 	tunnel: {
 		isCloudflaredInstalled: () => Promise<boolean>;
@@ -3057,7 +3065,7 @@ interface MaestroAPI {
 				summary: string;
 				participantName: string;
 				participantColor: string;
-				type: 'delegation' | 'response' | 'synthesis' | 'error';
+				type: 'user' | 'delegation' | 'response' | 'synthesis' | 'error';
 				elapsedTimeMs?: number;
 				tokenCount?: number;
 				cost?: number;
@@ -3071,7 +3079,7 @@ interface MaestroAPI {
 				summary: string;
 				participantName: string;
 				participantColor: string;
-				type: 'delegation' | 'response' | 'synthesis' | 'error';
+				type: 'user' | 'delegation' | 'response' | 'synthesis' | 'error';
 				elapsedTimeMs?: number;
 				tokenCount?: number;
 				cost?: number;
@@ -3083,7 +3091,7 @@ interface MaestroAPI {
 			summary: string;
 			participantName: string;
 			participantColor: string;
-			type: 'delegation' | 'response' | 'synthesis' | 'error';
+			type: 'user' | 'delegation' | 'response' | 'synthesis' | 'error';
 			elapsedTimeMs?: number;
 			tokenCount?: number;
 			cost?: number;
@@ -3140,7 +3148,7 @@ interface MaestroAPI {
 					summary: string;
 					participantName: string;
 					participantColor: string;
-					type: 'delegation' | 'response' | 'synthesis' | 'error';
+					type: 'user' | 'delegation' | 'response' | 'synthesis' | 'error';
 					elapsedTimeMs?: number;
 					tokenCount?: number;
 					cost?: number;
@@ -3684,7 +3692,13 @@ interface MaestroAPI {
 	// encoreFeatures.maestroCue is off; consumers should catch and render
 	// the "feature off" state.
 	cueStats: {
-		getAggregation: (range: CueStatsTimeRange) => Promise<CueStatsAggregation>;
+		// `excludeTriggerTypes` drops the named raw event types (`time.heartbeat`,
+		// `file.changed`, ...) from every rollup in the payload except
+		// `triggerTypeOptions`, which always reports the unfiltered universe.
+		getAggregation: (
+			range: CueStatsTimeRange,
+			excludeTriggerTypes?: string[]
+		) => Promise<CueStatsAggregation>;
 		// Conductor time (ms) the retained Cue run history would have credited.
 		// Ungated, unlike getAggregation; resolves 0 when there is no history.
 		getHistoricalConductorCredit: () => Promise<number>;

@@ -52,7 +52,7 @@ export interface GroupChatHistoryEntry {
 	summary: string;
 	participantName: string;
 	participantColor: string;
-	type: 'delegation' | 'response' | 'synthesis' | 'error';
+	type: 'user' | 'delegation' | 'response' | 'synthesis' | 'error';
 	elapsedTimeMs?: number;
 	tokenCount?: number;
 	cost?: number;

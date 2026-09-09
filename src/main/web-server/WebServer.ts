@@ -31,6 +31,10 @@ import path from 'path';
 import { existsSync } from 'fs';
 import { logger } from '../utils/logger';
 import { getLocalIpAddress } from '../utils/networkUtils';
+import {
+	createNetworkAddressWatcher,
+	type NetworkAddressWatcher,
+} from '../utils/network-address-watcher';
 import { captureException } from '../utils/sentry';
 import { WebSocketMessageHandler } from './handlers';
 import { BroadcastService } from './services';
@@ -208,8 +212,15 @@ export class WebServer {
 	// Regenerated every startup - documents are in-memory and never outlive it.
 	private concertoToken: string = randomUUID().replace(/-/g, '');
 
-	// Local IP address for generating URLs (detected at startup)
+	// Local IP address for generating URLs (detected at startup, then kept
+	// current by the address watcher below - see onLocalAddressChanged)
 	private localIpAddress: string = 'localhost';
+
+	// Watches for the machine moving between networks. The server itself binds
+	// 0.0.0.0 and keeps serving, but every displayed URL and QR code is built
+	// from localIpAddress, so a roam would otherwise advertise a dead address.
+	private addressWatcher: NetworkAddressWatcher | null = null;
+	private onLocalAddressChanged: ((url: string) => void) | null = null;
 
 	// Extracted managers
 	private liveSessionManager: LiveSessionManager;
@@ -1446,6 +1457,7 @@ export class WebServer {
 			}
 
 			this.isRunning = true;
+			this.startAddressWatcher();
 
 			return {
 				port: this.port,
@@ -1458,10 +1470,49 @@ export class WebServer {
 		}
 	}
 
+	/**
+	 * Notified with the new secure URL whenever the machine's LAN address moves
+	 * (WiFi to hotspot, dock to undock, VPN up). The server keeps running - only
+	 * the address we advertise changed - so this is how the UI stops showing a
+	 * URL nothing on the new network can reach.
+	 */
+	setOnLocalAddressChanged(callback: ((url: string) => void) | null): void {
+		this.onLocalAddressChanged = callback;
+	}
+
+	/**
+	 * Re-detect the LAN address now instead of waiting for the next poll.
+	 * Called on system resume: a laptop that woke on a different network should
+	 * be right before the user looks at the panel.
+	 */
+	async recheckLocalAddress(): Promise<void> {
+		await this.addressWatcher?.check();
+	}
+
+	private startAddressWatcher(): void {
+		if (this.addressWatcher) return;
+
+		this.addressWatcher = createNetworkAddressWatcher({
+			initialAddress: this.localIpAddress,
+			onChange: ({ address }) => {
+				this.localIpAddress = address;
+				this.onLocalAddressChanged?.(this.getSecureUrl());
+			},
+			onLog: (level, message) => {
+				if (level === 'warn') logger.warn(message, LOG_CONTEXT);
+				else logger.info(message, LOG_CONTEXT);
+			},
+		});
+		this.addressWatcher.start();
+	}
+
 	async stop(): Promise<void> {
 		if (!this.isRunning) {
 			return;
 		}
+
+		this.addressWatcher?.stop();
+		this.addressWatcher = null;
 
 		// Clear all session state (handles live sessions and autorun states)
 		this.liveSessionManager.clearAll();

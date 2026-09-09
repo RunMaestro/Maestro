@@ -834,6 +834,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			setQuickActionOpen,
 			newGroupChatShortcut: shortcuts.newGroupChat,
 			killShortcut: shortcuts.killInstance,
+			moderatorOnlyShortcut: shortcuts.toggleGroupChatModeratorOnly,
 		}),
 		...buildDebugCommands({
 			activeSession,

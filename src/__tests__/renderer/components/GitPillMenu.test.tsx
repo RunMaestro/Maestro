@@ -195,7 +195,12 @@ describe('GitPillMenu', () => {
 
 		it('shows no badge on a clean tree', () => {
 			renderMenu();
-			expect(screen.getByTestId('git-pill-menu-diff')).toHaveTextContent(/^View Git Diff$/);
+			// The row still carries its keyboard hint, so assert on the badge's
+			// absence rather than on the row's full text.
+			expect(screen.getByTestId('git-pill-menu-diff')).toHaveTextContent(/^View Git Diff/);
+			expect(
+				screen.getByTestId('git-pill-menu-diff').querySelector('[data-testid="git-change-counts"]')
+			).toBeNull();
 		});
 	});
 });

@@ -218,12 +218,14 @@ window.maestro.documentGraph.unwatchFolder(rootPath);
 
 **Keyboard handling is split across two elements, and the order matters.** The canvas (`MindMap`) handles anything about the SELECTED NODE and returns; whatever it does not claim bubbles to the container (`DocumentGraphView`), which handles the view-level controls. A container binding on a key the canvas already claims never fires.
 
-| Handler                    | Keys                                                    |
-| -------------------------- | ------------------------------------------------------- |
-| Canvas (`MindMap`)         | `Arrows` (spatial navigation), `Enter`, `Space`, `O`    |
-| Container (`...GraphView`) | `L`, `D`, `P`, `F`, `S`, `+` / `-`, `Cmd/Ctrl+F`, `Esc` |
+| Handler                    | Keys                                                         |
+| -------------------------- | ------------------------------------------------------------ |
+| Canvas (`MindMap`)         | `Arrows` (spatial navigation), `Enter`, `Space`, `O`         |
+| Container (`...GraphView`) | `L`, `D`, `P`, `F`, `S`, `C`, `+` / `-`, `Cmd/Ctrl+F`, `Esc` |
 
 The container handler also skips every bare key while a modifier is held or focus is in an `INPUT` / `TEXTAREA`, or searching for "documentation" would cycle the layout four times on the way through.
+
+**Screenshots go through the compositor, not the canvas.** `C` (and the camera button in the footer) opens a chooser that copies the graph to the clipboard or writes it to disk, via `window.maestro.shell.capturePage(rect)`. Serializing `MindMap`'s `<canvas>` would be the obvious route and is the wrong one: the markdown preview pane and the legend are React, not canvas, so a canvas export silently drops most of what the user is looking at. `captureGraphImage()` waits two animation frames after dismissing its own modal so the shot is taken from a frame that no longer has the dialog on top of the graph, and both the key and the button are gated on `capturePage` existing, so the web renderer offers neither.
 
 ### Large File Handling
 

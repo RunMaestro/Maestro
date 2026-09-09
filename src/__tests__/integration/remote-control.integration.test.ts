@@ -36,6 +36,9 @@ vi.mock('../../main/utils/logger', () => ({
 vi.mock('../../main/utils/networkUtils', () => ({
 	getLocalIpAddress: () => Promise.resolve('localhost'),
 	getLocalIpAddressSync: () => 'localhost',
+	// The address watcher polls this to notice a network switch; a fixed value
+	// keeps the server's URL stable for the duration of the test.
+	getIpv4InterfaceFingerprint: () => 'lo0=127.0.0.1',
 }));
 
 // Test fixtures - use actual ThemeId to pass type checks

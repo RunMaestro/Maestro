@@ -21,7 +21,7 @@ import { TabOverlayPortal } from './TabOverlayPortal';
 import { getBrowserTabLabel } from '../../utils/browserTabPersistence';
 import { getTabKindColor } from './tabBarUtils';
 import { useSettingsStore } from '../../stores/settingsStore';
-import { ShortcutHint } from './ShortcutHint';
+import { ShortcutHint, shortcutSuffix } from '../ui/ShortcutHint';
 
 export interface BrowserTabItemProps {
 	tab: BrowserTab;
@@ -393,7 +393,7 @@ export const BrowserTabItem = memo(function BrowserTabItem({
 				<button
 					onClick={handleCloseClick}
 					className="p-0.5 rounded hover:bg-white/10 transition-colors shrink-0"
-					title="Close tab"
+					title={`Close tab${shortcutSuffix(tabShortcuts.closeTab?.keys)}`}
 				>
 					<X className="w-3 h-3" style={{ color: theme.colors.textDim }} />
 				</button>

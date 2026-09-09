@@ -21,7 +21,7 @@ import { buildSessionDeepLink } from '../../../shared/deep-link-urls';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { hasThinkingEntries } from '../../utils/contextExtractor';
 import type { CopyContextOptions } from '../../hooks/tabs/useTabExportHandlers';
-import { ShortcutHint } from './ShortcutHint';
+import { ShortcutHint } from '../ui/ShortcutHint';
 
 export interface AITabOverlayMenuProps {
 	tab: AITab;

@@ -1084,7 +1084,7 @@ describe('ExecutionQueueBrowser', () => {
 	});
 
 	describe('time display', () => {
-		it('should show "Just now" for items less than 1 minute old', () => {
+		it('should show "just now" for items less than 1 minute old', () => {
 			const session = createSession({
 				id: 'active-session',
 				executionQueue: [createQueuedItem({ timestamp: Date.now() })],
@@ -1101,7 +1101,7 @@ describe('ExecutionQueueBrowser', () => {
 				/>
 			);
 
-			expect(screen.getByText('Just now')).toBeInTheDocument();
+			expect(screen.getByText('just now')).toBeInTheDocument();
 		});
 
 		it('should show minutes for items older than 1 minute', () => {
@@ -1123,6 +1123,48 @@ describe('ExecutionQueueBrowser', () => {
 			);
 
 			expect(screen.getByText('5m ago')).toBeInTheDocument();
+		});
+
+		it('should roll up to hours instead of counting minutes past 60', () => {
+			const threeHoursAgo = Date.now() - 3 * 60 * 60 * 1000;
+			const session = createSession({
+				id: 'active-session',
+				executionQueue: [createQueuedItem({ timestamp: threeHoursAgo })],
+			});
+			render(
+				<ExecutionQueueBrowser
+					isOpen={true}
+					onClose={mockOnClose}
+					sessions={[session]}
+					activeSessionId="active-session"
+					theme={theme}
+					onRemoveItem={mockOnRemoveItem}
+					onSwitchSession={mockOnSwitchSession}
+				/>
+			);
+
+			expect(screen.getByText('3h ago')).toBeInTheDocument();
+		});
+
+		it('should roll up to days for an item that has sat in the queue for days', () => {
+			const threeDaysAgo = Date.now() - 3 * 24 * 60 * 60 * 1000;
+			const session = createSession({
+				id: 'active-session',
+				executionQueue: [createQueuedItem({ timestamp: threeDaysAgo })],
+			});
+			render(
+				<ExecutionQueueBrowser
+					isOpen={true}
+					onClose={mockOnClose}
+					sessions={[session]}
+					activeSessionId="active-session"
+					theme={theme}
+					onRemoveItem={mockOnRemoveItem}
+					onSwitchSession={mockOnSwitchSession}
+				/>
+			);
+
+			expect(screen.getByText('3d ago')).toBeInTheDocument();
 		});
 	});
 

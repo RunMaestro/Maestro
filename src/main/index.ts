@@ -2999,6 +2999,12 @@ app
 					win.webContents.send('app:systemResume', { sleptMs });
 				}
 			}
+			// A laptop that woke up on a different network is serving the web
+			// interface on a new LAN address. Re-detect it now so the URL and QR
+			// code are right before the user looks, instead of up to one poll
+			// interval later.
+			void webServer?.recheckLocalAddress();
+
 			// Apply any timezone change BEFORE reconciling: a laptop that flew
 			// across zones while asleep must measure the sleep gap and its missed
 			// local-time slots in the zone it woke up in, not the one it left.

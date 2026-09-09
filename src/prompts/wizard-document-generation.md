@@ -272,6 +272,21 @@ Emit hints when a phase or a task is genuinely mismatched with the rest of the d
 - **`tier="low" effort="low"`** for mechanical renames, import updates, boilerplate scaffolding, applying a plan that another task already wrote.
 - **Nothing at all** for ordinary implementation work. This is most tasks.
 
+Every marker you write must also carry a `reason` explaining the choice:
+
+```markdown
+<!-- MAESTRO:MODEL tier="high" effort="high" reason="Redesigns lock ordering across three services. A wrong ordering corrupts data rather than failing loudly, so this needs the strongest model thinking hard." -->
+```
+
+Rules for the reason:
+
+- **Three sentences at most**, and one is usually enough.
+- **Justify both axes.** Say what makes the work hard (or mechanical), and why that calls for this much thinking. A reason that only restates the levels ("uses the high model at high effort") is worthless.
+- **Plain text, no double quotes inside the value.** The attribute is delimited by `"`, so an inner quote truncates it. Use single quotes if you must quote something.
+- Do not write a reason without a `tier` or `effort` alongside it. A marker that sets no level does nothing, whatever it says.
+
+The reason changes nothing about how the task runs. It is shown to the reader behind an ⓘ on the marker's pill, so that someone auditing the playbook later can see the judgment rather than only its result.
+
 Do not decorate every task. A document with a marker on all ten tasks says nothing about which two actually matter, and the agent's configured default already handles the ordinary case. The common useful shape is a document-wide `low` with one or two inline `high` tasks, which usually costs less than the default. When in doubt, omit the marker.
 
 ### Phase Sizing

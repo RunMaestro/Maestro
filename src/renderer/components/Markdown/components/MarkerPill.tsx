@@ -1,6 +1,7 @@
 import type { Theme } from '../../../types';
 import { readableTextOn, transparentize } from '../../../../shared/colorContrast';
 import type { MarkerStatus, ScannedMarker } from '../../../../shared/autorunMarkers';
+import { HoverTooltip } from '../../ui/HoverTooltip';
 
 interface MarkerPillProps {
 	kind: ScannedMarker['kind'];
@@ -12,8 +13,13 @@ interface MarkerPillProps {
 	detail?: string;
 	/** HITL only: what the human should go look at. */
 	artifact?: string;
+	/** Model only: why the author picked this tier and effort. Shown on hover. */
+	reason?: string;
 	theme: Theme;
 }
+
+/** Cap for the hover overlay, wide enough for a few sentences without becoming a page. */
+const REASON_OVERLAY_MAX_WIDTH = 320;
 
 /**
  * The visible form of an Auto Run marker in a rendered document.
@@ -34,8 +40,14 @@ interface MarkerPillProps {
  *
  * - **error** - a halt. The run will not start.
  * - **warning** - a live gate, or an unparseable setting. Something needs a person.
- * - **accent** - a live model hint. Informational; the run proceeds.
+ * - **accent** - a model hint that governs the next dispatch, or a later one.
  * - **dim** - anything spent. Present in the file, doing nothing.
+ *
+ * A model hint that has not been reached yet keeps the accent hue and loses
+ * some weight, rather than going dim. Dim is reserved for markers that are over
+ * with, and a hint on a phase the run has yet to reach is the opposite of that:
+ * it is the setting that phase is going to be dispatched at. Drawing the two
+ * the same way made an upcoming `high` phase read as expired.
  *
  * Both foreground and background derive from theme colors, so the text runs
  * through `readableTextOn` - a theme whose warning sits near its background
@@ -48,9 +60,11 @@ export function MarkerPill({
 	label,
 	detail,
 	artifact,
+	reason,
 	theme,
 }: MarkerPillProps) {
 	const spent = status === 'spent';
+	const upcoming = status === 'upcoming';
 	const baseColor = spent
 		? theme.colors.textDim
 		: kind === 'halt'
@@ -64,13 +78,15 @@ export function MarkerPill({
 	const borderColor = transparentize(baseColor, theme.colors.bgMain, 0.4);
 
 	// A spent marker is history: it should be legible when looked for and never
-	// compete with the live one three lines below it.
-	const opacity = spent ? 0.65 : 1;
+	// compete with the live one three lines below it. An upcoming one sits
+	// between the two - real, but not what the run is about to do.
+	const opacity = spent ? 0.65 : upcoming ? 0.8 : 1;
 
 	const title = [
 		detail,
 		artifact ? `Artifact: ${artifact}` : undefined,
 		spent ? 'This marker is no longer affecting the run.' : undefined,
+		upcoming ? 'This applies to a later task, not the next one.' : undefined,
 	]
 		.filter(Boolean)
 		.join('\n');
@@ -82,7 +98,10 @@ export function MarkerPill({
 			// Announced as one unit so a screen reader gets "Pauses here, Add the
 			// API key" rather than two unrelated fragments.
 			role="note"
-			aria-label={`${label}${detail ? `: ${detail}` : ''}`}
+			// The reason rides the label rather than the `title` below, so a screen
+			// reader and a keyboard user both get it without the hover overlay, and
+			// so the native tooltip does not fire underneath that overlay.
+			aria-label={`${label}${detail ? `: ${detail}` : ''}${reason ? `. ${reason}` : ''}`}
 			title={title || undefined}
 			style={{
 				display: 'inline-flex',
@@ -122,6 +141,40 @@ export function MarkerPill({
 				>
 					{detail}
 				</span>
+			)}
+			{/*
+			 * Why this model, behind a peek rather than in the pill.
+			 *
+			 * The justification is the author's reasoning, not a setting, and it is
+			 * the same length as the task it sits beside - inlining it would double
+			 * the height of every hinted line and bury the task list it is meant to
+			 * annotate. It also has to work at task scope, where the pill trails the
+			 * task text on one `nowrap` line and there is nowhere to put a sentence.
+			 * A portaled overlay solves both: the reason is one hover away at either
+			 * scope, and the document still reads as a document.
+			 */}
+			{reason && (
+				<HoverTooltip
+					label={reason}
+					theme={theme}
+					maxWidth={REASON_OVERLAY_MAX_WIDTH}
+					triggerClassName="inline-flex"
+					triggerStyle={{ cursor: 'help', alignItems: 'center' }}
+				>
+					{/*
+					 * The empty `title` is load-bearing: without it the pill's own
+					 * `title` tooltip is inherited here and fires underneath the
+					 * overlay, showing the reader two boxes at once.
+					 */}
+					<span
+						data-testid="maestro-marker-reason"
+						title=""
+						aria-hidden="true"
+						style={{ opacity: 0.75, fontWeight: 400 }}
+					>
+						ⓘ
+					</span>
+				</HoverTooltip>
 			)}
 		</span>
 	);

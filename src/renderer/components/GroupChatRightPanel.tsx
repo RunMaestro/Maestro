@@ -12,6 +12,7 @@ import type { GroupChatHistoryEntry } from '../../shared/group-chat-types';
 import { ParticipantCard } from './ParticipantCard';
 import { GroupChatHistoryPanel } from './GroupChatHistoryPanel';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
+import { filterGroupChatHistory } from '../../shared/groupChatModeratorView';
 import {
 	buildParticipantColorMapWithPreferences,
 	loadColorPreferences,
@@ -57,6 +58,12 @@ interface GroupChatRightPanelProps {
 	onJumpToMessage?: (timestamp: number) => void;
 	/** Callback when participant colors are computed (for sharing with other components) */
 	onColorsComputed?: (colors: Record<string, string>) => void;
+	/**
+	 * True to show only the moderator's own history entries, matching the
+	 * message list's moderator-only view. The Participants tab is unaffected -
+	 * the roster is who is in the room, not who is talking.
+	 */
+	moderatorOnly?: boolean;
 }
 
 export function GroupChatRightPanel({
@@ -80,6 +87,7 @@ export function GroupChatRightPanel({
 	onTabChange,
 	onJumpToMessage,
 	onColorsComputed,
+	moderatorOnly = false,
 }: GroupChatRightPanelProps): JSX.Element | null {
 	const participantLiveOutput = useGroupChatStore((s) => s.participantLiveOutput);
 
@@ -305,6 +313,13 @@ export function GroupChatRightPanel({
 		return unsubscribe;
 	}, [groupChatId]);
 
+	// Filtered for display only: `historyEntries` keeps the full activity log, so
+	// flipping back to the team view restores it without re-reading the file.
+	const visibleHistoryEntries = useMemo(
+		() => filterGroupChatHistory(historyEntries, moderatorOnly),
+		[historyEntries, moderatorOnly]
+	);
+
 	if (!isOpen) return null;
 
 	return (
@@ -398,7 +413,7 @@ export function GroupChatRightPanel({
 				<GroupChatHistoryPanel
 					theme={theme}
 					groupChatId={groupChatId}
-					entries={historyEntries}
+					entries={visibleHistoryEntries}
 					isLoading={isLoadingHistory}
 					participantColors={participantColors}
 					onJumpToMessage={onJumpToMessage}

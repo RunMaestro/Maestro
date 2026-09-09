@@ -105,6 +105,24 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		abortBatchOnError,
 	} = deps;
 
+	/**
+	 * Switch the active agent and say who asked.
+	 *
+	 * A remote verb moving the Left Bar selection is indistinguishable, once it
+	 * has happened, from the human clicking an agent: the state looks identical
+	 * and nothing records which verb arrived. That is the evidence gap that made
+	 * the last reported focus jump untraceable, so every agent-level switch this
+	 * file performs goes through here and names its origin.
+	 *
+	 * Logged at `info` deliberately. The main-process logger defaults to
+	 * `minLevel: 'info'` and drops `debug`, and file logging is Windows-only, so
+	 * a `debug` line would be invisible to the macOS users who hit this.
+	 */
+	const switchActiveSession = (sessionId: string, origin: string) => {
+		logger.info('[Remote] active agent switched', undefined, { origin, sessionId });
+		setActiveSessionId(sessionId);
+	};
+
 	// --- File Operations ---
 
 	// Handle remote open file tab events from CLI/web interface
@@ -147,7 +165,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		// one changes the view even when the caller stayed on the same agent.
 		// That is exactly why `--no-switch` reads like `--background` and is not.
 		if (!background && switchToAgent !== false) {
-			setActiveSessionId(sessionId);
+			switchActiveSession(sessionId, 'open-file');
 		}
 		try {
 			const [content, stat] = await Promise.all([
@@ -205,7 +223,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		// and leave whatever tab they were on visible. Agents doing research
 		// open tabs this way so the window doesn't jump mid-keystroke.
 		if (!background) {
-			setActiveSessionId(sessionId);
+			switchActiveSession(sessionId, 'open-browser');
 		}
 		const newBrowserTab: BrowserTab = {
 			id: generateId(),
@@ -303,7 +321,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			return;
 		}
 		if (!background) {
-			setActiveSessionId(sessionId);
+			switchActiveSession(sessionId, 'open-terminal');
 		}
 		const baseTab = createTerminalTabHelper(
 			config?.shell,
@@ -507,7 +525,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		} else {
 			// Switch to the target session - the autoRunFolderPath useEffect
 			// will trigger handleAutoRunRefresh for the newly active session
-			setActiveSessionId(sessionId);
+			switchActiveSession(sessionId, 'refresh-auto-run');
 		}
 	});
 
@@ -1009,7 +1027,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			// background placement is already the behaviour here and `--focus` is
 			// what has to be implemented rather than suppressed.
 			if (!background) {
-				setActiveSessionId(newSessionId);
+				switchActiveSession(newSessionId, 'create-worktree');
 			}
 
 			window.maestro.process.sendRemoteCreateWorktreeSessionResponse(responseChannel, {
@@ -1474,7 +1492,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			// agent still exists, is listed, and is addressable by the id handed
 			// back - it just does not take the window from whoever is working.
 			if (!background) {
-				setActiveSessionId(newId);
+				switchActiveSession(newId, 'create-agent');
 			}
 			(window as any).maestro.stats.recordSessionCreated({
 				sessionId: newId,
@@ -1536,7 +1554,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		setSessions((prev: Session[]) => {
 			const filtered = prev.filter((s) => s.id !== sessionId);
 			if (filtered.length > 0 && useSessionStore.getState().activeSessionId === sessionId) {
-				setActiveSessionId(filtered[0].id);
+				switchActiveSession(filtered[0].id, 'delete-agent-survivor');
 			}
 			return filtered;
 		});

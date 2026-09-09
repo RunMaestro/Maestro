@@ -14,6 +14,8 @@ import { TabOverlayPortal } from './TabOverlayPortal';
 import { LongPressable } from '../shared/LongPressable';
 import { WizardIndicator } from '../SessionList/WizardIndicator';
 import { useTabHasActiveOutage } from '../../stores/retryStore';
+import { useSettingsStore } from '../../stores/settingsStore';
+import { shortcutSuffix } from '../ui/ShortcutHint';
 
 export interface AITabProps {
 	tab: AITabType;
@@ -149,6 +151,7 @@ export const AITab = memo(function AITab({
 	// drag is off - a long-press is also how the OS starts an HTML5 drag, and the
 	// two cannot share the gesture. Reordering stays reachable from the menu.
 	const coarse = isCoarsePointer();
+	const closeTabKeys = useSettingsStore((s) => s.tabShortcuts.closeTab?.keys);
 
 	// Clear copy feedback timeout on unmount
 	useEffect(() => {
@@ -614,7 +617,7 @@ export const AITab = memo(function AITab({
 				<button
 					onClick={handleCloseClick}
 					className="p-0.5 rounded hover:bg-white/10 transition-colors shrink-0"
-					title="Close tab"
+					title={`Close tab${shortcutSuffix(closeTabKeys)}`}
 				>
 					<X className="w-3 h-3" style={{ color: theme.colors.textDim }} />
 				</button>

@@ -113,6 +113,21 @@ export function useLiveMode(autoStart = false): UseLiveModeReturn {
 		}
 	}, [isLiveMode]);
 
+	// Moving between networks (WiFi to hotspot, dock to undock) changes the LAN
+	// address the URL and QR code are built from. The server keeps running on
+	// 0.0.0.0, so main just hands us the new address and the panel redraws -
+	// no restart, and the token stays the same.
+	useEffect(() => {
+		const unsubscribe = (window as any).maestro?.live?.onUrlChanged?.(
+			({ url }: { url: string }) => {
+				// Only while the panel has a URL to show: with Live off the
+				// server is CLI-only and its address is not user-facing.
+				setWebInterfaceUrl((prev) => (prev ? url : prev));
+			}
+		);
+		return () => unsubscribe?.();
+	}, []);
+
 	const restartWebServer = useCallback(async (): Promise<string | null> => {
 		if (!isLiveMode) return null;
 		try {

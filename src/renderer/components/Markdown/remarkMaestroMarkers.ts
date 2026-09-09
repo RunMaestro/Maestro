@@ -39,6 +39,7 @@ export const MARKER_DATA_ATTRIBUTES = {
 	label: 'dataMaestroMarkerLabel',
 	detail: 'dataMaestroMarkerDetail',
 	artifact: 'dataMaestroMarkerArtifact',
+	reason: 'dataMaestroMarkerReason',
 } as const;
 
 /**
@@ -121,6 +122,10 @@ export function remarkMaestroMarkers() {
 			};
 			if (detail) properties[MARKER_DATA_ATTRIBUTES.detail] = detail;
 			if (marker.artifact) properties[MARKER_DATA_ATTRIBUTES.artifact] = marker.artifact;
+			// Only a model marker carries one. A halt or gate reason is the pill's
+			// visible detail text, already handled above; putting it behind a hover
+			// as well would hide from the reader the very thing that stopped the run.
+			if (marker.hint?.reason) properties[MARKER_DATA_ATTRIBUTES.reason] = marker.hint.reason;
 
 			// A task-scoped marker sits inside the task's own paragraph, so it must
 			// stay phrasing content; a standalone one is a block of its own.

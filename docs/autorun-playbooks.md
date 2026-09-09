@@ -406,6 +406,23 @@ Write the Maestro level, not the provider's word. A playbook that says `effort="
 
 Model tiers ship only where the model identifiers are stable enough that a playbook written today still resolves correctly later. Codex and Copilot-CLI discover their catalogues at runtime and their IDs change per release; OpenCode runs whatever models you configured, which may be local. For those, a `tier` hint falls back to the agent's configured model **and says so** - a warning in the History entry, and a `model_resolution` event on the JSONL stream when run through `maestro-cli`. It never silently substitutes a different model.
 
+### Recording why
+
+A marker can carry a `reason` explaining the choice:
+
+```html
+<!-- MAESTRO:MODEL tier="high" effort="high" reason="Redesigns lock ordering across three services. A wrong ordering corrupts data rather than failing loudly, so this is worth the strongest model thinking hard." -->
+```
+
+The reason changes nothing about how the task runs. It appears behind an **ⓘ** on the marker's pill: hover it in any document preview and the justification appears in an overlay. Wizard-generated playbooks include one on every marker they write.
+
+The point is auditing. A tier and an effort tell you what was chosen but not why, so a playbook you come back to a week later gives you no way to judge whether the choice was right or to tune it. Reading the reasoning is also how you decide which prompts to adjust. Keep it to a couple of sentences - it is a peek, not a document, and anything past 400 characters is truncated.
+
+Two things to know when writing one by hand:
+
+- The value cannot contain a double quote, because `"` delimits it. An inner quote truncates the reason. Levels are matched separately, so the task still runs on the model it asked for.
+- A reason with no `tier` or `effort` beside it does nothing. The marker draws a spent pill, because it sets nothing.
+
 ### When to reach for it
 
 Use a hint when a task's cost and its difficulty are genuinely mismatched. The common useful shape is a document-wide `low` with one or two inline `high` tasks, which usually costs **less** than running the whole playbook at the default.
@@ -455,17 +472,25 @@ Both present the same way: you press **Run** and nothing happens, with the cause
 
 So Maestro renders each marker as a small pill wherever the document is previewed - the Auto Run panel, the file preview, the wizard's document editor, and the Playbook Exchange preview. The pill says what the marker **does**, not what it is called:
 
-| Pill                          | Meaning                                                           |
-| ----------------------------- | ----------------------------------------------------------------- |
-| ⏸ **Pauses here**             | A live HITL gate. The run stops here until you tick the box.      |
-| ✓ **Approved**                | A gate you already passed. Inert, shown dimmed.                   |
-| ■ **Halted**                  | A halt marker. Auto Run will refuse to start until you delete it. |
-| ◆ **high model, high effort** | A live model hint governing the next task.                        |
-| ◆ **Unknown setting**         | A misspelled value. It will be ignored at run time.               |
+| Pill                          | Meaning                                                                                                |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------ |
+| ⏸ **Pauses here**             | A live HITL gate. The run stops here until you tick the box.                                           |
+| ✓ **Approved**                | A gate you already passed. Inert, shown dimmed.                                                        |
+| ■ **Halted**                  | A halt marker. Auto Run will refuse to start until you delete it.                                      |
+| ◆ **high model, high effort** | A model hint. Full strength when it governs the next task, slightly muted when it governs a later one. |
+| ◆ **Unknown setting**         | A misspelled value. It will be ignored at run time.                                                    |
 
-A pill carries the marker's reason text alongside it, so a gate reads as "Pauses here - Add STRIPE_SECRET_KEY to .env" rather than making you go find out why.
+A pill carries the marker's reason text alongside it, so a gate reads as "Pauses here - Add STRIPE_SECRET_KEY to .env" rather than making you go find out why. A model hint carrying a `reason` gets an **ⓘ** instead; hover it to read the justification without it taking up a line in the document.
 
-Pills reflect **state, not just presence**. A gate above an unchecked task and a gate above a checked one are nearly identical in the source, but only the first will stop your run, so only the first is drawn as live. Markers inside fenced code blocks draw no pill at all, which is why the examples throughout this page render as plain text.
+Pills reflect **state, not just presence**. A gate above an unchecked task and a gate above a checked one are nearly identical in the source, but only the first will stop your run, so only the first is drawn as live. The same applies to model hints, in three states rather than two:
+
+| Drawn as              | Meaning                                                                    |
+| --------------------- | -------------------------------------------------------------------------- |
+| Accent, full strength | Governs the next task Auto Run will dispatch                               |
+| Accent, muted         | Governs a phase further down that the run has not reached yet              |
+| Dimmed                | Every task below it is done, or a nearer marker replaced it. Doing nothing |
+
+So a document-wide `low` with a `high` phase halfway down shows the `low` at full strength and the `high` muted, and they swap as the run moves past the boundary. Markers inside fenced code blocks draw no pill at all, which is why the examples throughout this page render as plain text.
 
 Marker pills appear only on document surfaces. An agent that mentions the marker syntax in a chat message is describing a marker, not configuring one, so that text keeps rendering as ordinary prose.
 

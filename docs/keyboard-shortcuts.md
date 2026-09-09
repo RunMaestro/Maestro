@@ -113,8 +113,11 @@ under a running agent.
 
 A group chat has no tab strip, so the tab-cycle chord switches the right panel instead.
 
+Team Chat / Moderator Only switches how much of the room you read. Moderator Only hides the delegations the moderator sends to agents and the replies they send back, in both the transcript and the History tab, leaving just your own conversation with the moderator. Nothing stops or is deleted: the agents keep working and every message is still logged, so switching back shows the full record.
+
 | Action                       | macOS                          | Windows/Linux                    |
 | ---------------------------- | ------------------------------ | -------------------------------- |
+| Team Chat / Moderator Only   | `Opt+Cmd+Shift+G`              | `Alt+Ctrl+Shift+G`               |
 | Cycle Participants / History | `Cmd+Shift+[` or `Cmd+Shift+]` | `Ctrl+Shift+[` or `Ctrl+Shift+]` |
 | Go to Participants Tab       | `Cmd+Shift+F`                  | `Ctrl+Shift+F`                   |
 | Go to History Tab            | `Cmd+Shift+H`                  | `Ctrl+Shift+H`                   |
@@ -574,6 +577,7 @@ you are half-way through typing.
 | Cycle preview length               | `P`          |
 | Fit the whole graph on screen      | `F`          |
 | Switch scroll between zoom and pan | `S`          |
+| Screenshot the graph               | `C`          |
 | Increase / decrease node spacing   | `+` / `-`    |
 | Close the preview, then the graph  | `Esc`        |
 
@@ -595,6 +599,10 @@ both directions and `Shift`+scroll zooms. Pan is what you want once the framing
 is right and you are reading across a wide graph, where every scroll otherwise
 changes the zoom you just set. The mode is also a toolbar pill and an inline
 toggle in the Help panel, and it is remembered between visits.
+
+`C` opens the screenshot chooser: copy the graph to the clipboard, or write
+it to disk as a PNG. The shot is the graph area exactly as it is painted, so
+frame it first.
 
 ## Customizing Shortcuts
 

@@ -84,6 +84,9 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			// Added with `maestro-cli open`: the factory wires this on every build,
 			// so omitting it makes every test in this file throw.
 			setOpenModalCallback = vi.fn();
+			// Network-roam handling: the factory subscribes so it can push the new
+			// LAN URL to every window when the machine changes networks.
+			setOnLocalAddressChanged = vi.fn();
 			setOpenDocumentGraphCallback = vi.fn();
 			setGetGroupsCallback = vi.fn();
 			broadcastSettingsChanged = vi.fn();

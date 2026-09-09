@@ -33,6 +33,7 @@ import type {
 	CueStatsTimeRange,
 	CueStatsTotals,
 	CueTimeBucket,
+	CueTriggerTypeOption,
 } from '../../../shared/cue-stats-types';
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -206,12 +207,38 @@ const TRIGGER_TYPE_LABELS: Record<string, string> = {
 	'github.issue': 'GitHub Issue',
 	'task.pending': 'Task Pending',
 	'cli.trigger': 'CLI Trigger',
+	'time.once': 'One-Time',
+	'github.label': 'GitHub Label',
 	'webhook.received': 'Webhook',
 };
 
 function triggerTypeGroupKey(eventType: string): { key: string; label: string } {
 	const label = TRIGGER_TYPE_LABELS[eventType] ?? eventType;
 	return { key: eventType, label };
+}
+
+/**
+ * Count every trigger type in the window, ignoring the exclusion filter. This
+ * is the universe the renderer's filter row draws from - a trigger that has
+ * been filtered out still needs a chip, and a count on that chip, or the user
+ * has no way to bring it back.
+ */
+function buildTriggerTypeOptions(events: CueEventRecord[]): CueTriggerTypeOption[] {
+	const counts = new Map<string, number>();
+	for (const event of events) {
+		counts.set(event.type, (counts.get(event.type) ?? 0) + 1);
+	}
+	const options: CueTriggerTypeOption[] = Array.from(counts.entries()).map(
+		([key, occurrences]) => ({
+			...triggerTypeGroupKey(key),
+			occurrences,
+		})
+	);
+	options.sort((a, b) => {
+		if (b.occurrences !== a.occurrences) return b.occurrences - a.occurrences;
+		return a.label.localeCompare(b.label);
+	});
+	return options;
 }
 
 interface GroupAccumulator {
@@ -419,6 +446,13 @@ function buildCoverageWarnings(summaries: Map<string, SessionTokenSummary>): str
  */
 export interface CueStatsAggregationOptions {
 	subscriptionToPipeline?: Map<string, string>;
+	/**
+	 * Raw `cue_events.type` values to drop before aggregating. Every rollup in
+	 * the payload except `triggerTypeOptions` honors this, so hiding a
+	 * high-volume trigger (a heartbeat firing every minute) rescales the whole
+	 * tab instead of just its own bar.
+	 */
+	excludeTriggerTypes?: string[];
 }
 
 /**
@@ -437,7 +471,12 @@ export async function getCueStatsAggregation(
 	const windowStartMs = getTimeRangeStart(timeRange);
 	const bucketSizeMs = bucketSizeFor(timeRange);
 
-	const events = getRecentCueEvents(windowStartMs);
+	const allEvents = getRecentCueEvents(windowStartMs);
+	const excluded = new Set(options.excludeTriggerTypes ?? []);
+	// Options are counted from the unfiltered set - see buildTriggerTypeOptions.
+	const triggerTypeOptions = buildTriggerTypeOptions(allEvents);
+	const events =
+		excluded.size === 0 ? allEvents : allEvents.filter((event) => !excluded.has(event.type));
 
 	// Token attribution joins on the provider session id each run produced
 	// (the key the on-disk session files use); agent-type labelling joins on
@@ -513,6 +552,8 @@ export async function getCueStatsAggregation(
 		byAgent: freezeGroups(byAgent),
 		bySubscription: freezeGroups(bySubscription),
 		byTriggerType: freezeGroups(byTriggerType),
+		triggerTypeOptions,
+		excludedTriggerTypes: Array.from(excluded),
 		byHourOfDay,
 		chains,
 		timeSeries,

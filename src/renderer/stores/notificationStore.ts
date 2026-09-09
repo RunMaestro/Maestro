@@ -91,9 +91,11 @@ export interface Toast {
 	actionLabel?: string; // Label for the action link (defaults to URL)
 	// Skip custom notification command for this toast (used for synopsis messages)
 	skipCustomNotification?: boolean;
-	// Skip the OS/device notification for this toast. Set when the toast is
-	// itself the fallback for a failed web-desktop notification, so it does not
-	// re-enter showOsNotification() and loop.
+	// Skip the OS/device notification for this toast. Two callers want it: the
+	// toast that is itself the fallback for a failed web-desktop notification
+	// (so it does not re-enter showOsNotification() and loop), and in-app-only
+	// feedback such as the Settings preview of the toast width, which would be
+	// noise in Notification Center.
 	skipOsNotification?: boolean;
 	// Generic click handler - if set, clicking the toast invokes this callback.
 	// Renderer-only - not serializable across the CLI/web bridge.

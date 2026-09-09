@@ -17,7 +17,7 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { isCoarsePointer } from '../../utils/touch';
 import { EmojiPickerOverlay } from '../ui';
 import { LongPressable } from '../shared/LongPressable';
-import { ShortcutHint } from './ShortcutHint';
+import { ShortcutHint } from '../ui/ShortcutHint';
 import { TabOverlayPortal } from './TabOverlayPortal';
 
 export interface GroupTabChipProps {

@@ -13,16 +13,14 @@ import {
 	X,
 } from 'lucide-react';
 import type { Shortcut, Session, Theme, ThinkingMode } from '../../../types';
-import {
-	formatEnterToSend,
-	formatEnterToSendTooltip,
-	formatShortcutKeys,
-} from '../../../utils/shortcutFormatter';
+import { formatEnterToSend, formatEnterToSendTooltip } from '../../../utils/shortcutFormatter';
 import {
 	getPermissionModeLabel,
 	getPermissionModeTooltip,
 	resolveTabPermissionMode,
 } from '../../../../shared/agentMetadata';
+import { useSettingsStore } from '../../../stores/settingsStore';
+import { shortcutSuffix } from '../../ui/ShortcutHint';
 import { updateSessionWith } from '../../../stores/sessionStore';
 import { captureException } from '../../../utils/sentry';
 import { isCoarsePointer } from '../../../utils/touch';
@@ -149,15 +147,18 @@ export const ToolbarControls = memo(function ToolbarControls({
 	// binding is rebindable, its display differs per platform, and on a build
 	// that has no such shortcut this resolves to undefined so no hint renders
 	// instead of pointing at a key combo that does nothing.
-	const modelEffortShortcut = shortcuts?.openModelEffort;
-	// A shortcut the user has cleared is present in the map with an EMPTY key
+	// Handed to ModelEffortPills as raw keys rather than a formatted string:
+	// a shortcut the user has cleared is present in the map with an EMPTY key
 	// list, not absent from it - the store rebuilds the map from the bundled
-	// defaults on every load, so the entry always exists here. Testing the
-	// object alone therefore rendered a bare "Try: " on any build that has the
-	// switcher, which is the same failure as advertising a dead chord.
-	const modelEffortHint = modelEffortShortcut?.keys.length
-		? `Try: ${formatShortcutKeys(modelEffortShortcut.keys)}`
-		: undefined;
+	// defaults on every load, so the entry always exists here. ShortcutHint and
+	// shortcutSuffix both render nothing for an empty list, which is what keeps
+	// a cleared binding from drawing a bare "Try: ".
+	const modelEffortKeys = shortcuts?.openModelEffort?.keys;
+
+	// The three tab-scoped toggles below are all bindable chords. Read them live
+	// from the tab shortcut map rather than spelling the default combo into the
+	// tooltip: a user who rebinds one should see their own chord, not ours.
+	const tabShortcuts = useSettingsStore((s) => s.tabShortcuts);
 
 	const activeTabId = activeTab?.id;
 
@@ -367,7 +368,7 @@ export const ToolbarControls = memo(function ToolbarControls({
 					<button
 						onClick={onOpenPromptComposer}
 						className="p-1 hover:bg-white/10 rounded opacity-50 hover:opacity-100"
-						title={`Open Prompt Composer${shortcuts?.openPromptComposer ? ` (${formatShortcutKeys(shortcuts.openPromptComposer.keys)})` : ''}`}
+						title={`Open Prompt Composer${shortcutSuffix(shortcuts?.openPromptComposer?.keys)}`}
 					>
 						<PenLine className="w-4 h-4" />
 					</button>
@@ -404,7 +405,7 @@ export const ToolbarControls = memo(function ToolbarControls({
 				<ModelEffortPills
 					isVisible={isAiMode}
 					theme={theme}
-					shortcutHint={modelEffortHint}
+					shortcutKeys={modelEffortKeys}
 					currentModel={currentModel}
 					currentEffort={currentEffort}
 					availableModels={availableModels}
@@ -457,7 +458,7 @@ export const ToolbarControls = memo(function ToolbarControls({
 								? `1px solid ${theme.colors.accent}50`
 								: '1px solid transparent',
 						}}
-						title={`Save to History (${formatShortcutKeys(['Meta', 's'])}) - Synopsis added after each completion`}
+						title={`Save to History${shortcutSuffix(tabShortcuts.toggleSaveToHistory?.keys)} - Synopsis added after each completion`}
 					>
 						<History className="w-3 h-3" />
 						<span>History</span>
@@ -493,7 +494,10 @@ export const ToolbarControls = memo(function ToolbarControls({
 										? `1px solid ${theme.colors.accent}50`
 										: '1px solid transparent',
 						}}
-						title={getPermissionModeTooltip(currentPermissionMode, session.toolType)}
+						title={`${getPermissionModeTooltip(
+							currentPermissionMode,
+							session.toolType
+						)}${shortcutSuffix(tabShortcuts.toggleReadOnlyMode?.keys)}`}
 					>
 						<Eye className="w-3 h-3" />
 						<span>{getPermissionModeLabel(currentPermissionMode, session.toolType)}</span>
@@ -525,13 +529,13 @@ export const ToolbarControls = memo(function ToolbarControls({
 										? `1px solid ${theme.colors.accentText}50`
 										: '1px solid transparent',
 						}}
-						title={
+						title={`${
 							tabShowThinking === 'off'
 								? 'Show Thinking - Click to stream AI reasoning'
 								: tabShowThinking === 'on'
 									? 'Thinking (temporary) - Click for sticky mode'
 									: 'Thinking (sticky) - Click to turn off'
-						}
+						}${shortcutSuffix(tabShortcuts.toggleShowThinking?.keys)}`}
 					>
 						<Brain className="w-3 h-3" />
 						<span>Thinking</span>

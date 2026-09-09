@@ -679,6 +679,28 @@ describe('group-chat-router', () => {
 			).rejects.toThrow(/not active/i);
 		});
 
+		it('records the user prompt in history', async () => {
+			const chat = await createTestChatWithModerator('User History Test');
+
+			await routeUserMessage(
+				chat.id,
+				'Ship the login form. Then tell me what broke.',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			const history = await getGroupChatHistory(chat.id);
+			const userEntry = history.find((e) => e.type === 'user');
+			expect(userEntry).toBeDefined();
+			expect(userEntry?.participantName).toBe('You');
+			// Summary is the first sentence; the whole prompt stays searchable.
+			expect(userEntry?.summary).toBe('Ship the login form.');
+			expect(userEntry?.fullResponse).toBe('Ship the login form. Then tell me what broke.');
+			// A conductor prompt costs nothing and takes no time to run.
+			expect(userEntry?.cost).toBeUndefined();
+			expect(userEntry?.elapsedTimeMs).toBeUndefined();
+		});
+
 		it('works without process manager (log only)', async () => {
 			const chat = await createTestChatWithModerator('Log Only Test');
 

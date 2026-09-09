@@ -765,6 +765,7 @@ function MaestroConsoleInner() {
 	const groupChatExecutionQueue = useGroupChatStore((s) => s.groupChatExecutionQueue);
 	const groupChatRightTab = useGroupChatStore((s) => s.groupChatRightTab);
 	const groupChatParticipantColors = useGroupChatStore((s) => s.groupChatParticipantColors);
+	const groupChatModeratorOnly = useGroupChatStore((s) => s.groupChatModeratorOnly);
 	const moderatorUsage = useGroupChatStore((s) => s.moderatorUsage);
 	const participantStates = useGroupChatStore((s) => s.participantStates);
 	const groupChatError = useGroupChatStore((s) => s.groupChatError);
@@ -784,6 +785,7 @@ function MaestroConsoleInner() {
 		setGroupChatRightTab,
 		setGroupChatParticipantColors,
 		setInitiatorWindowId,
+		toggleGroupChatModeratorOnly,
 	} = useGroupChatStore.getState();
 
 	// Multi-window: stamp the initiating window on this window's group-chat store
@@ -3228,6 +3230,8 @@ function MaestroConsoleInner() {
 									setEnterToSendAI={setEnterToSendAI}
 									showFlashNotification={handleGroupChatFlashNotification}
 									participantColors={groupChatParticipantColors}
+									moderatorOnly={groupChatModeratorOnly}
+									onToggleModeratorOnly={toggleGroupChatModeratorOnly}
 									messagesRef={groupChatMessagesRef}
 									ghCliAvailable={ghCliAvailable}
 									onPublishMessageGist={handlePublishGroupChatMessageGist}
@@ -3263,6 +3267,7 @@ function MaestroConsoleInner() {
 								onTabChange={handleGroupChatRightTabChange}
 								onJumpToMessage={handleJumpToGroupChatMessage}
 								onColorsComputed={setGroupChatParticipantColors}
+								moderatorOnly={groupChatModeratorOnly}
 							/>
 						</>
 					) : null

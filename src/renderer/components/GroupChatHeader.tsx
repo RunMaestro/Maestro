@@ -7,12 +7,18 @@
 
 import { Info, Edit2, Columns, DollarSign, StopCircle } from 'lucide-react';
 import type { Theme, Shortcut, GroupChatState } from '../types';
+import type { GroupChatViewMode } from '../../shared/groupChatModeratorView';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
+import { SegmentedControl } from './ui/SegmentedControl';
 
 interface GroupChatHeaderProps {
 	theme: Theme;
 	name: string;
 	participantCount: number;
+	/** True when the room is showing only the user <-> moderator conversation. */
+	moderatorOnly: boolean;
+	/** Flip between the team view and the moderator-only view. */
+	onToggleModeratorOnly: () => void;
 	/** Total accumulated cost from all participants (including moderator) */
 	totalCost?: number;
 	/** True if one or more participants don't have cost data (makes total incomplete) */
@@ -30,6 +36,8 @@ export function GroupChatHeader({
 	theme,
 	name,
 	participantCount,
+	moderatorOnly,
+	onToggleModeratorOnly,
 	totalCost,
 	costIncomplete,
 	state,
@@ -48,7 +56,7 @@ export function GroupChatHeader({
 				borderColor: theme.colors.border,
 			}}
 		>
-			<div className="flex items-center gap-3 min-w-0">
+			<div className="flex items-center gap-3 flex-1 min-w-0">
 				<h1
 					className="text-lg font-semibold cursor-pointer hover:opacity-80 truncate"
 					style={{ color: theme.colors.textMain }}
@@ -75,7 +83,38 @@ export function GroupChatHeader({
 				</button>
 			</div>
 
-			<div className="flex items-center gap-2 shrink-0">
+			{/*
+			  Centered view switch. The zones on either side are `flex-1`, so this sits
+			  in the true middle of the bar; only the title (which has `min-w-0`) gives
+			  ground when the header runs out of room.
+			*/}
+			<div className="shrink-0 px-4">
+				<SegmentedControl<GroupChatViewMode>
+					value={moderatorOnly ? 'moderator' : 'team'}
+					onChange={(next) => {
+						if ((next === 'moderator') !== moderatorOnly) onToggleModeratorOnly();
+					}}
+					options={[
+						{
+							value: 'team',
+							label: 'Team Chat',
+							title:
+								'Show every message and history entry, including agent delegations and replies',
+						},
+						{
+							value: 'moderator',
+							label: 'Moderator Only',
+							title:
+								'Show only your conversation with the moderator, hiding the agent back-and-forth',
+						},
+					]}
+					theme={theme}
+					ariaLabel="Group chat view"
+					testId="group-chat-view-mode"
+				/>
+			</div>
+
+			<div className="flex items-center gap-2 flex-1 justify-end">
 				{/* Stop All button - only shown when active */}
 				{state !== 'idle' && (
 					<button

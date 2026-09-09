@@ -96,9 +96,12 @@ export function registerCueStatsHandlers(deps: CueStatsHandlerDependencies): voi
 	// recovery path. Real errors from the aggregation query stay wrapped.
 	const wrappedAggregation = withIpcErrorLogging(
 		handlerOpts('getAggregation'),
-		async (range: CueStatsTimeRange): Promise<CueStatsAggregation> => {
+		async (
+			range: CueStatsTimeRange,
+			excludeTriggerTypes: string[]
+		): Promise<CueStatsAggregation> => {
 			const subscriptionToPipeline = buildSubscriptionToPipelineMap(getCueEngine);
-			return getCueStatsAggregation(range, { subscriptionToPipeline });
+			return getCueStatsAggregation(range, { subscriptionToPipeline, excludeTriggerTypes });
 		}
 	);
 
@@ -106,12 +109,19 @@ export function registerCueStatsHandlers(deps: CueStatsHandlerDependencies): voi
 		'cue-stats:get-aggregation',
 		async (
 			event: Electron.IpcMainInvokeEvent,
-			range: CueStatsTimeRange
+			range: CueStatsTimeRange,
+			excludeTriggerTypes?: unknown
 		): Promise<CueStatsAggregation> => {
 			if (!isCueStatsEnabled(settingsStore)) {
 				throw new Error('CueStatsDisabled');
 			}
-			return wrappedAggregation(event, range);
+			// The filter arrives from the renderer, so narrow it here rather than
+			// trusting the wire shape - a stray value would otherwise reach the
+			// query's Set and silently exclude nothing (or everything).
+			const excluded = Array.isArray(excludeTriggerTypes)
+				? excludeTriggerTypes.filter((t): t is string => typeof t === 'string' && t.length > 0)
+				: [];
+			return wrappedAggregation(event, range, excluded);
 		}
 	);
 
