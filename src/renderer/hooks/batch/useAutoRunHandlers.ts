@@ -5,6 +5,7 @@ import { notifyToast } from '../../stores/notificationStore';
 import { spawnWorktreeAgentAndDispatch } from '../../utils/worktreeSpawn';
 import { countMarkdownTasks } from './batchUtils';
 import { logger } from '../../utils/logger';
+import { useBatchStore } from '../../stores/batchStore';
 
 /**
  * Tree node structure for Auto Run document tree
@@ -432,6 +433,12 @@ export function useAutoRunHandlers(
 					const newFiles = result.files || [];
 					setAutoRunDocumentList(newFiles);
 					setAutoRunDocumentTree(result.tree || []);
+					// The per-document task counts are cached in the batch store and
+					// only (re)computed for documents missing from that cache, so a
+					// document edited on disk kept its stale count until a restart.
+					// A refresh re-reads the folder; drop the cache so the counts are
+					// re-read from disk as well.
+					useBatchStore.getState().setDocumentTaskCounts(new Map());
 
 					// Show flash notification with result
 					const diff = newFiles.length - previousCount;
