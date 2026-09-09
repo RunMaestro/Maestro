@@ -180,7 +180,11 @@ The Inline Wizard creates Auto Run Playbook documents from within an existing ag
 - Multiple wizards can run in different tabs simultaneously
 - Wizard state is **per-tab** (`AITab.wizardState`), not per-agent
 - Documents written to unique subfolder under playbooks folder (e.g., `.maestro/playbooks/project-name/`)
-- On completion, tab renamed to "Project: {SubfolderName}"
+- Tab starts on the `Wizard` placeholder, then auto-names itself `wizard: {Topic}`
+  from the `/wizard <input>` argument or the first message typed into it
+  (`requestWizardTabAutoName` in `src/renderer/services/tabAutoNaming.ts`). The
+  placeholder counts as unnamed; a tab the user renamed by hand is left alone
+- On completion, tab renamed to the generated subfolder name
 - Final AI message summarizes generated docs and next steps
 - Same `agentSessionId` preserved for context continuity
 - **Escape is a ladder, not a single action.** Mid-turn it stops the running turn
