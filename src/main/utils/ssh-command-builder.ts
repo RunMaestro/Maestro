@@ -8,7 +8,7 @@
  */
 
 import { SshRemoteConfig } from '../../shared/types';
-import { shellEscape, buildShellCommand } from './shell-escape';
+import { shellEscape, buildShellCommand, shellEscapeRemotePath } from './shell-escape';
 import { expandTilde } from '../../shared/pathUtils';
 import { logger } from './logger';
 import { resolveSshPath } from './cliDetection';
@@ -201,9 +201,11 @@ export function buildRemoteCommand(options: RemoteCommandOptions): string {
 
 	const parts: string[] = [];
 
-	// Add cd command if working directory is specified
+	// Add cd command if working directory is specified. Tilde-aware, so a
+	// home-relative remote path expands on the remote instead of failing on
+	// a directory literally named `~`.
 	if (cwd) {
-		parts.push(`cd ${shellEscape(cwd)}`);
+		parts.push(`cd ${shellEscapeRemotePath(cwd)}`);
 	}
 
 	// Build environment variable exports
@@ -349,8 +351,9 @@ export async function buildSshCommandWithStdin(
 
 	// Change directory if specified
 	if (remoteOptions.cwd) {
-		// In the script context, we can use simple quoting
-		scriptLines.push(`cd ${shellEscape(remoteOptions.cwd)} || exit 1`);
+		// Tilde-aware: a `~/proj` cwd must reach the remote as `"$HOME/proj"`,
+		// or the script fails at its first line on a directory named `~`.
+		scriptLines.push(`cd ${shellEscapeRemotePath(remoteOptions.cwd)} || exit 1`);
 	}
 
 	// Merge environment variables

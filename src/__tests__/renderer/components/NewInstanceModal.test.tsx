@@ -3157,6 +3157,194 @@ describe('NewInstanceModal', () => {
 			);
 		});
 
+		it('keeps a home-relative remote path verbatim when SSH is enabled (never expands it against the LOCAL home)', async () => {
+			// `~/git-projects` on an SSH agent is the REMOTE user's home. Expanding it
+			// locally produced `/Users/<local>/git-projects`, which validated green here
+			// (the validator stats the raw text on the remote) and then did not exist on
+			// the host the agent started on. The remote shell is the only thing that can
+			// expand it, and every remote cd/ls/stat renders it as "$HOME/git-projects".
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true }),
+			]);
+			vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
+				success: true,
+				configs: [
+					{
+						id: 'remote-1',
+						name: 'Dev Server',
+						host: 'dev.example.com',
+						port: 22,
+						username: 'devuser',
+						privateKeyPath: '/path/to/key',
+						enabled: true,
+					},
+				],
+			});
+			vi.mocked(window.maestro.fs.stat).mockResolvedValue({
+				size: 4096,
+				createdAt: '2024-01-01T00:00:00.000Z',
+				modifiedAt: '2024-01-15T12:30:00.000Z',
+				isDirectory: true,
+				isFile: false,
+			});
+
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+				/>
+			);
+
+			await waitFor(() => {
+				expect(screen.getByText('SSH Remote Execution')).toBeInTheDocument();
+			});
+			fireEvent.change(screen.getByRole('combobox'), { target: { value: 'remote-1' } });
+			await waitFor(() => {
+				expect(screen.getByText('Claude Code')).toBeInTheDocument();
+			});
+			await act(async () => {
+				fireEvent.click(screen.getByRole('option', { name: /Claude Code/i }));
+			});
+
+			fireEvent.change(screen.getByLabelText('Agent Name'), {
+				target: { value: 'Remote Agent' },
+			});
+			fireEvent.change(screen.getByLabelText('Working Directory'), {
+				target: { value: '~/git-projects' },
+			});
+			await waitFor(
+				() => {
+					expect(screen.getByText('Directory found on dev.example.com')).toBeInTheDocument();
+				},
+				{ timeout: 3000 }
+			);
+
+			await act(async () => {
+				fireEvent.click(screen.getByText('Create Agent'));
+			});
+
+			expect(onCreate).toHaveBeenCalledTimes(1);
+			const [, cwd, , , , , , , , , , sshConfig] = onCreate.mock.calls[0];
+			expect(cwd).toBe('~/git-projects');
+			expect(sshConfig).toEqual(
+				expect.objectContaining({
+					enabled: true,
+					remoteId: 'remote-1',
+					workingDirOverride: '~/git-projects',
+				})
+			);
+		});
+
+		it('derives the duplicate workingDirOverride from the directory typed, not from the source agent', async () => {
+			// Duplicating an SSH agent and changing its directory used to carry the
+			// SOURCE agent's override into the copy: the new agent then started in the
+			// typed directory while its terminals, git calls and file tree were pinned
+			// to the old one. The field is prefilled with the source's remote directory
+			// and whatever is on screen at Create is the one source for both values.
+			const sourceSession: Session = {
+				id: 'session-1',
+				name: 'SSH Agent',
+				toolType: 'claude-code',
+				cwd: '/home/devuser/project',
+				projectRoot: '/home/devuser/project',
+				fullPath: '/home/devuser/project',
+				state: 'idle',
+				inputMode: 'ai',
+				aiPid: 12345,
+				terminalPid: 12346,
+				port: 3000,
+				aiTabs: [],
+				activeTabId: 'tab-1',
+				closedTabHistory: [],
+				shellLogs: [],
+				executionQueue: [],
+				contextUsage: 0,
+				workLog: [],
+				isGitRepo: false,
+				changedFiles: [],
+				fileTree: [],
+				fileExplorerExpanded: [],
+				fileExplorerScrollPos: 0,
+				isLive: false,
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: 'remote-1',
+					workingDirOverride: '/explicit/override/path',
+				},
+			} as Session;
+
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true }),
+			]);
+			vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
+				success: true,
+				configs: [
+					{
+						id: 'remote-1',
+						name: 'Dev Server',
+						host: 'dev.example.com',
+						port: 22,
+						username: 'devuser',
+						privateKeyPath: '/path/to/key',
+						enabled: true,
+					},
+				],
+			});
+			vi.mocked(window.maestro.fs.stat).mockResolvedValue({
+				size: 4096,
+				createdAt: '2024-01-01T00:00:00.000Z',
+				modifiedAt: '2024-01-15T12:30:00.000Z',
+				isDirectory: true,
+				isFile: false,
+			});
+
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+					sourceSession={sourceSession}
+				/>
+			);
+
+			// The field shows the directory the source agent actually runs in on the
+			// remote (its override), not the placeholder in `cwd`.
+			await waitFor(() => {
+				const dirInput = screen.getByLabelText('Working Directory') as HTMLInputElement;
+				expect(dirInput.value).toBe('/explicit/override/path');
+			});
+
+			fireEvent.change(screen.getByLabelText('Working Directory'), {
+				target: { value: '/home/devuser/new-project' },
+			});
+			await waitFor(
+				() => {
+					expect(screen.getByText(/Directory found/)).toBeInTheDocument();
+				},
+				{ timeout: 3000 }
+			);
+
+			await act(async () => {
+				fireEvent.click(screen.getByText('Create Agent'));
+			});
+
+			expect(onCreate).toHaveBeenCalledTimes(1);
+			const [, cwd, , , , , , , , , , sshConfig] = onCreate.mock.calls[0];
+			expect(cwd).toBe('/home/devuser/new-project');
+			expect(sshConfig).toEqual(
+				expect.objectContaining({
+					enabled: true,
+					remoteId: 'remote-1',
+					workingDirOverride: '/home/devuser/new-project',
+				})
+			);
+		});
+
 		it('should preserve explicit workingDirOverride over working directory when duplicating SSH agent', async () => {
 			// When duplicating a session that already has an explicit workingDirOverride,
 			// the explicit value should take precedence over the working directory field.

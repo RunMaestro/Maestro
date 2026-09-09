@@ -1915,7 +1915,7 @@ describe('process IPC handlers', () => {
 			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
 			const lastArg = spawnCall.args[spawnCall.args.length - 1];
 			// Tilde must expand via $HOME, not be single-quoted (which suppresses expansion)
-			expect(lastArg).toContain('cd "$HOME"/\'project\'');
+			expect(lastArg).toContain('cd "$HOME/project"');
 			expect(lastArg).toContain('exec "$SHELL"');
 		});
 

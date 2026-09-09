@@ -286,7 +286,16 @@ export function NewInstanceModal({
 
 			// Pre-fill form fields AFTER agents are loaded (ensures no race condition)
 			if (source) {
-				handleWorkingDirChange(source.cwd);
+				// For an SSH agent the field must show the REMOTE directory the agent
+				// actually runs in. A CLI-created agent (`create-agent --ssh-cwd`) keeps
+				// a local placeholder in `cwd` and the real path in the override, so the
+				// override is what the copy should start from. The value on screen is
+				// then the single source for the new agent's cwd AND its override.
+				handleWorkingDirChange(
+					(source.sessionSshRemoteConfig?.enabled &&
+						source.sessionSshRemoteConfig.workingDirOverride) ||
+						source.cwd
+				);
 				// Clone the grants, don't alias them - the rows are edited in place and
 				// would otherwise mutate the source agent's persisted array.
 				setAdditionalDirectories((source.additionalDirectories ?? []).map((d) => ({ ...d })));
@@ -503,15 +512,21 @@ export function NewInstanceModal({
 	const handleCreate = React.useCallback(() => {
 		const name = instanceName.trim();
 		if (!name) return; // Name is required
-		// Expand tilde before passing to callback
-		const expandedWorkingDir = expandTilde(workingDir.trim());
 
-		// Validate before creating
 		const sshConfig = agentSshRemoteConfigs[selectedAgent] || agentSshRemoteConfigs['_pending_'];
 		const sshRemoteId = sshConfig?.enabled ? sshConfig?.remoteId : null;
+		// With SSH enabled the field holds a REMOTE path, so a leading `~` is the
+		// remote user's home and only the remote shell can expand it: every
+		// remote `cd`/`ls`/`stat` renders it as `"$HOME/..."`. Expanding locally
+		// turned `~/git-projects` into `/Users/<local>/git-projects`, a path that
+		// validated green here (the validator statted the raw text) and then did
+		// not exist on the host the agent started on.
+		const effectiveWorkingDir = sshRemoteId ? workingDir.trim() : expandTilde(workingDir.trim());
+
+		// Validate before creating
 		const result = validateNewSession(
 			name,
-			expandedWorkingDir,
+			effectiveWorkingDir,
 			selectedAgent as ToolType,
 			existingSessions,
 			sshRemoteId
@@ -547,8 +562,11 @@ export function NewInstanceModal({
 						remoteId: sshRemoteConfig.remoteId,
 						// When SSH is enabled, the Working Directory field contains a remote path.
 						// Use it as workingDirOverride so SSH terminals cd to the right place.
-						workingDirOverride:
-							sshRemoteConfig.workingDirOverride || expandedWorkingDir || undefined,
+						// Always the directory TYPED here, never a value carried over from
+						// the agent being duplicated: that carry-over pinned every terminal,
+						// git call and file tree of the new agent to the OLD agent's remote
+						// directory while the agent itself started in the new one.
+						workingDirOverride: effectiveWorkingDir || undefined,
 						syncHistory: sshRemoteConfig.syncHistory,
 						shareHistoryToProjectDir: sshRemoteConfig.shareHistoryToProjectDir,
 					}
@@ -585,7 +603,7 @@ export function NewInstanceModal({
 
 		onCreate(
 			selectedAgent,
-			expandedWorkingDir,
+			effectiveWorkingDir,
 			name,
 			nudgeMessage.trim() || undefined,
 			newSessionMessage.trim() || undefined,
