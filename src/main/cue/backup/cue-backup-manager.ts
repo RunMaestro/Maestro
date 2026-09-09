@@ -10,8 +10,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { app } from 'electron';
-import AdmZip from 'adm-zip';
 import archiver from 'archiver';
+import { readZipArchive, type ZipArchive } from '../../utils/zip-archive';
 import { CUE_CONFIG_PATH, CUE_PROMPTS_DIR, MAESTRO_DIR } from '../../../shared/maestro-paths';
 import {
 	CUE_BACKUP_MANIFEST_VERSION,
@@ -208,7 +208,7 @@ export async function createCueBackup(
 	};
 }
 
-function readManifestFromZip(zip: AdmZip): CueBackupManifest | null {
+function readManifestFromZip(zip: ZipArchive): CueBackupManifest | null {
 	const entry = zip.getEntry(MANIFEST_NAME);
 	if (!entry) return null;
 	try {
@@ -236,7 +236,7 @@ export function listCueBackups(): CueBackupSummary[] {
 		const filePath = path.join(dir, entry.name);
 		try {
 			const stat = fs.statSync(filePath);
-			const zip = new AdmZip(filePath);
+			const zip = readZipArchive(filePath);
 			const manifest = readManifestFromZip(zip);
 			if (!manifest) continue;
 			summaries.push({
@@ -265,7 +265,7 @@ function assertBackupPath(filePath: string): void {
 /** Read the manifest of a specific backup zip. */
 export function inspectCueBackup(filePath: string): CueBackupManifest {
 	assertBackupPath(filePath);
-	const zip = new AdmZip(filePath);
+	const zip = readZipArchive(filePath);
 	const manifest = readManifestFromZip(zip);
 	if (!manifest) {
 		throw new Error('Backup is missing or has an invalid manifest');
@@ -284,7 +284,7 @@ export function readCueBackupFile(
 	relativePath: string
 ): string | null {
 	assertBackupPath(filePath);
-	const zip = new AdmZip(filePath);
+	const zip = readZipArchive(filePath);
 	const entry = zip.getEntry(`workspaces/${workspaceId}/${relativePath}`);
 	if (!entry) return null;
 	return entry.getData().toString('utf-8');
@@ -419,7 +419,7 @@ export function restoreCueBackupAll(filePath: string): CueBackupRestoreResult {
  */
 export function getCueBackupDiffStatus(filePath: string): CueBackupDiffStatusMap {
 	assertBackupPath(filePath);
-	const zip = new AdmZip(filePath);
+	const zip = readZipArchive(filePath);
 	const manifest = readManifestFromZip(zip);
 	if (!manifest) {
 		throw new Error('Backup is missing or has an invalid manifest');
@@ -443,7 +443,7 @@ export function getCueBackupDiffStatus(filePath: string): CueBackupDiffStatusMap
 					continue;
 				}
 				const liveStat = fs.statSync(liveAbs);
-				if (liveStat.size !== entry.header.size) {
+				if (liveStat.size !== entry.size) {
 					result[key] = 'changed';
 					continue;
 				}
