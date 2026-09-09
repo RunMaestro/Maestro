@@ -2,13 +2,14 @@ import { memo } from 'react';
 import type React from 'react';
 import { Gauge, Sparkles } from 'lucide-react';
 import type { Theme } from '../../../types';
+import { ShortcutHint, shortcutSuffix } from '../../ui/ShortcutHint';
 
 interface ModelEffortPillsProps {
 	isVisible: boolean;
 	theme: Theme;
 	/**
-	 * Pinned hint at the top of both dropdowns, e.g. "Try: ⌥ ⌘ .", pointing at
-	 * the full-screen model/effort switcher.
+	 * Chord for the full-screen model/effort switcher, pinned as a hint row at
+	 * the top of both dropdowns ("Try: ⌥ ⌘ .").
 	 *
 	 * Passed in rather than hardcoded because the chord is a rebindable
 	 * shortcut, and because not every surface that shows these pills is one the
@@ -16,7 +17,7 @@ interface ModelEffortPillsProps {
 	 * hint while the queued-message editor (which edits one pending item, not
 	 * the tab) leaves it undefined. Omit it and no header row renders.
 	 */
-	shortcutHint?: string;
+	shortcutKeys?: string[];
 	currentModel?: string;
 	currentEffort?: string;
 	availableModels: string[];
@@ -31,27 +32,10 @@ interface ModelEffortPillsProps {
 	effortMenuRef: React.RefObject<HTMLDivElement>;
 }
 
-/**
- * Non-interactive hint row pinned above a dropdown's option list. It sits
- * OUTSIDE the scroll container so it stays put while the list scrolls, and it
- * is a plain div: no button, no tabIndex, nothing focusable, so it cannot be
- * reached by keyboard or clicked into the selection.
- */
-function ShortcutHintRow({ hint, theme }: { hint: string; theme: Theme }) {
-	return (
-		<div
-			className="px-3 py-1 text-2xs whitespace-nowrap border-b select-none"
-			style={{ color: theme.colors.textDim, borderColor: theme.colors.border }}
-		>
-			{hint}
-		</div>
-	);
-}
-
 export const ModelEffortPills = memo(function ModelEffortPills({
 	isVisible,
 	theme,
-	shortcutHint,
+	shortcutKeys,
 	currentModel,
 	currentEffort,
 	availableModels,
@@ -84,7 +68,7 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 							color: theme.colors.accent,
 							border: `1px solid ${theme.colors.accent}25`,
 						}}
-						title="Change model"
+						title={`Change model${shortcutSuffix(shortcutKeys)}`}
 					>
 						<Sparkles className="w-3 h-3" />
 						<span>{currentModel || 'default'}</span>
@@ -97,7 +81,7 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 								borderColor: theme.colors.border,
 							}}
 						>
-							{shortcutHint && <ShortcutHintRow hint={shortcutHint} theme={theme} />}
+							<ShortcutHint theme={theme} keys={shortcutKeys ?? []} label="Try:" variant="row" />
 							<div className="max-h-48 overflow-y-auto scrollbar-thin">
 								{(availableModels.includes('') ? availableModels : ['', ...availableModels]).map(
 									(model) => (
@@ -136,7 +120,7 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 							color: theme.colors.warning,
 							border: `1px solid ${theme.colors.warning}25`,
 						}}
-						title="Change effort level"
+						title={`Change effort level${shortcutSuffix(shortcutKeys)}`}
 					>
 						<Gauge className="w-3 h-3" />
 						<span>{currentEffort || 'default'}</span>
@@ -149,7 +133,7 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 								borderColor: theme.colors.border,
 							}}
 						>
-							{shortcutHint && <ShortcutHintRow hint={shortcutHint} theme={theme} />}
+							<ShortcutHint theme={theme} keys={shortcutKeys ?? []} label="Try:" variant="row" />
 							<div className="max-h-48 overflow-y-auto scrollbar-thin">
 								{availableEfforts.map((effort) => (
 									<button

@@ -284,7 +284,7 @@ describe('TabBar', () => {
 			fireEvent.click(screen.getByText('Example'));
 			expect(mockOnBrowserTabSelect).toHaveBeenCalledWith('browser-1');
 
-			fireEvent.click(screen.getByTitle('Close tab'));
+			fireEvent.click(screen.getByTitle(/^Close tab/));
 			expect(mockOnBrowserTabClose).toHaveBeenCalledWith('browser-1');
 		});
 
@@ -608,7 +608,7 @@ describe('TabBar', () => {
 				/>
 			);
 
-			const closeButton = screen.getByTitle('Close tab');
+			const closeButton = screen.getByTitle(/^Close tab/);
 			fireEvent.click(closeButton);
 			expect(mockOnTabClose).toHaveBeenCalledWith('tab-1');
 		});
@@ -6294,7 +6294,7 @@ describe('Performance: Many file tabs (10+)', () => {
 
 		// The close button should be visible on the active file tab
 		const fileTab5 = screen.getByText('file-5').closest('[data-tab-id]')!;
-		const closeButton = fileTab5.querySelector('button[title="Close tab"]');
+		const closeButton = fileTab5.querySelector('button[title^="Close tab"]');
 		expect(closeButton).toBeInTheDocument();
 
 		fireEvent.click(closeButton!);

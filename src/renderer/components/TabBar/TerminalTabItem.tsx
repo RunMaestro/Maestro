@@ -18,7 +18,7 @@ import { getTerminalTabDisplayName } from '../../utils/terminalTabHelpers';
 import { useTabHoverOverlay } from '../../hooks/tabs/useTabHoverOverlay';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useTabStore } from '../../stores/tabStore';
-import { formatShortcutKeys } from '../../utils/shortcutFormatter';
+import { ShortcutHint, shortcutSuffix } from '../ui/ShortcutHint';
 
 /**
  * Props for the TerminalTabItem component.
@@ -122,15 +122,6 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 			restartTerminalTab(tab.id);
 		},
 		[restartTerminalTab, tab.id]
-	);
-
-	const ShortcutHint = ({ keys }: { keys: string[] }) => (
-		<span
-			className="ml-auto text-2xs font-mono px-1.5 py-0.5 rounded"
-			style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-		>
-			{formatShortcutKeys(keys)}
-		</span>
 	);
 
 	const handleMouseDown = useCallback(
@@ -416,7 +407,7 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 				<button
 					onClick={handleCloseClick}
 					className="p-0.5 rounded hover:bg-white/10 transition-colors shrink-0"
-					title="Close tab"
+					title={`Close tab${shortcutSuffix(tabShortcuts.closeTab?.keys)}`}
 				>
 					<X className="w-3 h-3" style={{ color: theme.colors.textDim }} />
 				</button>
@@ -488,7 +479,9 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 									>
 										<Clock className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 										Snooze Tab
-										{tabShortcuts.snoozeTab && <ShortcutHint keys={tabShortcuts.snoozeTab.keys} />}
+										{tabShortcuts.snoozeTab && (
+											<ShortcutHint theme={theme} keys={tabShortcuts.snoozeTab.keys} />
+										)}
 									</button>
 								)}
 
@@ -505,7 +498,7 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 										<ChevronsLeft className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 										Move to First Position
 										{tabShortcuts.moveTabToStart && (
-											<ShortcutHint keys={tabShortcuts.moveTabToStart.keys} />
+											<ShortcutHint theme={theme} keys={tabShortcuts.moveTabToStart.keys} />
 										)}
 									</button>
 								)}
@@ -521,7 +514,7 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 										/>
 										Move to Last Position
 										{tabShortcuts.moveTabToEnd && (
-											<ShortcutHint keys={tabShortcuts.moveTabToEnd.keys} />
+											<ShortcutHint theme={theme} keys={tabShortcuts.moveTabToEnd.keys} />
 										)}
 									</button>
 								)}
@@ -577,7 +570,9 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 								>
 									<X className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 									Close Tab
-									{tabShortcuts.closeTab && <ShortcutHint keys={tabShortcuts.closeTab.keys} />}
+									{tabShortcuts.closeTab && (
+										<ShortcutHint theme={theme} keys={tabShortcuts.closeTab.keys} />
+									)}
 								</button>
 
 								{onCloseOtherTabs && (
@@ -592,7 +587,7 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 										<X className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 										Close Other Tabs
 										{tabShortcuts.closeOtherTabs && (
-											<ShortcutHint keys={tabShortcuts.closeOtherTabs.keys} />
+											<ShortcutHint theme={theme} keys={tabShortcuts.closeOtherTabs.keys} />
 										)}
 									</button>
 								)}
@@ -609,7 +604,7 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 										<ChevronsLeft className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 										Close Tabs to Left
 										{tabShortcuts.closeTabsLeft && (
-											<ShortcutHint keys={tabShortcuts.closeTabsLeft.keys} />
+											<ShortcutHint theme={theme} keys={tabShortcuts.closeTabsLeft.keys} />
 										)}
 									</button>
 								)}
@@ -631,7 +626,7 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 										/>
 										Close Tabs to Right
 										{tabShortcuts.closeTabsRight && (
-											<ShortcutHint keys={tabShortcuts.closeTabsRight.keys} />
+											<ShortcutHint theme={theme} keys={tabShortcuts.closeTabsRight.keys} />
 										)}
 									</button>
 								)}

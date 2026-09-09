@@ -74,6 +74,7 @@ Grep-verified 2026-09-04 (`npm run docs:verify` re-checks every path). This is t
 - **Shell escape:** `shellEscape()`, `shellEscapeArgs()` in `src/main/utils/shell-escape.ts`
 - **Platform detection:** `isWindows()`, `isMacOS()` in `src/shared/platformDetection.ts`
 - **Modifier-key display text:** `formatKey()`, `formatShortcutKeys()` in `src/renderer/utils/shortcutFormatter.ts`
+- **Advertising a shortcut next to the control that fires it:** `ShortcutHint`, `shortcutSuffix(keys)` in `src/renderer/components/ui/ShortcutHint.tsx`
 - **Whether a chord may be bound at all:** `findReservedShortcutCombo(keys)`, `RESERVED_SHORTCUT_COMBOS` in `src/shared/shortcutKeys.ts`
 - **How much of the keyboard the user has mastered:** `collectBoundShortcuts(...maps)`, `countUsedBoundShortcuts(bound, usedIds)` in `src/renderer/constants/keyboardMastery.ts`
 - **Naming the OS file manager in copy:** `getFileManagerName(platform)`, `fileManagerName()` in `src/renderer/utils/platformUtils.ts`

@@ -591,7 +591,9 @@ describe('InputArea', () => {
 			});
 			render(<InputArea {...props} />);
 
-			const toggle = screen.getByTitle('Toggle plan mode (agent will plan but not modify files)');
+			const toggle = screen.getByTitle(
+				/^Toggle plan mode \(agent will plan but not modify files\)/
+			);
 			expect(toggle).not.toBeDisabled();
 
 			fireEvent.click(toggle);
@@ -607,7 +609,7 @@ describe('InputArea', () => {
 			render(<InputArea {...props} />);
 
 			expect(
-				screen.getByTitle('Toggle plan mode (agent will plan but not modify files)')
+				screen.getByTitle(/^Toggle plan mode \(agent will plan but not modify files\)/)
 			).toBeInTheDocument();
 		});
 
@@ -620,7 +622,9 @@ describe('InputArea', () => {
 			});
 			render(<InputArea {...props} />);
 
-			const toggle = screen.getByTitle('Toggle plan mode (agent will plan but not modify files)');
+			const toggle = screen.getByTitle(
+				/^Toggle plan mode \(agent will plan but not modify files\)/
+			);
 			expect(toggle).toHaveStyle({ color: mockTheme.colors.textDim });
 		});
 	});

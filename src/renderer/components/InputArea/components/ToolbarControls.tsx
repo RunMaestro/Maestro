@@ -1,12 +1,10 @@
 import React, { memo } from 'react';
 import { Brain, Eye, History, ImageIcon, Keyboard, PenLine, Pin } from 'lucide-react';
 import type { Shortcut, Session, Theme, ThinkingMode } from '../../../types';
-import {
-	formatEnterToSend,
-	formatEnterToSendTooltip,
-	formatShortcutKeys,
-} from '../../../utils/shortcutFormatter';
+import { formatEnterToSend, formatEnterToSendTooltip } from '../../../utils/shortcutFormatter';
 import { getReadOnlyModeLabel, getReadOnlyModeTooltip } from '../../../../shared/agentMetadata';
+import { useSettingsStore } from '../../../stores/settingsStore';
+import { shortcutSuffix } from '../../ui/ShortcutHint';
 import { captureException } from '../../../utils/sentry';
 import { addStagedImageIfUnique } from '../utils/stagedImages';
 import { formatTerminalCwd } from '../utils/terminalPath';
@@ -85,10 +83,12 @@ export const ToolbarControls = memo(function ToolbarControls({
 	// binding is rebindable, its display differs per platform, and on a build
 	// that has no such shortcut this resolves to undefined so no hint renders
 	// instead of pointing at a key combo that does nothing.
-	const modelEffortShortcut = shortcuts?.openModelEffort;
-	const modelEffortHint = modelEffortShortcut
-		? `Try: ${formatShortcutKeys(modelEffortShortcut.keys)}`
-		: undefined;
+	const modelEffortKeys = shortcuts?.openModelEffort?.keys;
+
+	// The three tab-scoped toggles below are all bindable chords. Read them live
+	// from the tab shortcut map rather than spelling the default combo into the
+	// tooltip: a user who rebinds one should see their own chord, not ours.
+	const tabShortcuts = useSettingsStore((s) => s.tabShortcuts);
 
 	return (
 		<div className="flex flex-wrap items-center gap-1 px-2 pb-2 pt-1">
@@ -105,7 +105,7 @@ export const ToolbarControls = memo(function ToolbarControls({
 					<button
 						onClick={onOpenPromptComposer}
 						className="p-1 hover:bg-white/10 rounded opacity-50 hover:opacity-100"
-						title={`Open Prompt Composer${shortcuts?.openPromptComposer ? ` (${formatShortcutKeys(shortcuts.openPromptComposer.keys)})` : ''}`}
+						title={`Open Prompt Composer${shortcutSuffix(shortcuts?.openPromptComposer?.keys)}`}
 					>
 						<PenLine className="w-4 h-4" />
 					</button>
@@ -170,7 +170,7 @@ export const ToolbarControls = memo(function ToolbarControls({
 				<ModelEffortPills
 					isVisible={isAiMode}
 					theme={theme}
-					shortcutHint={modelEffortHint}
+					shortcutKeys={modelEffortKeys}
 					currentModel={currentModel}
 					currentEffort={currentEffort}
 					availableModels={availableModels}
@@ -200,7 +200,7 @@ export const ToolbarControls = memo(function ToolbarControls({
 								? `1px solid ${theme.colors.accent}50`
 								: '1px solid transparent',
 						}}
-						title={`Save to History (${formatShortcutKeys(['Meta', 's'])}) - Synopsis added after each completion`}
+						title={`Save to History${shortcutSuffix(tabShortcuts.toggleSaveToHistory?.keys)} - Synopsis added after each completion`}
 					>
 						<History className="w-3 h-3" />
 						<span>History</span>
@@ -219,7 +219,9 @@ export const ToolbarControls = memo(function ToolbarControls({
 								? `1px solid ${theme.colors.warning}50`
 								: '1px solid transparent',
 						}}
-						title={getReadOnlyModeTooltip(session.toolType)}
+						title={`${getReadOnlyModeTooltip(session.toolType)}${shortcutSuffix(
+							tabShortcuts.toggleReadOnlyMode?.keys
+						)}`}
 					>
 						<Eye className="w-3 h-3" />
 						<span>{getReadOnlyModeLabel(session.toolType)}</span>
@@ -251,13 +253,13 @@ export const ToolbarControls = memo(function ToolbarControls({
 										? `1px solid ${theme.colors.accentText}50`
 										: '1px solid transparent',
 						}}
-						title={
+						title={`${
 							tabShowThinking === 'off'
 								? 'Show Thinking - Click to stream AI reasoning'
 								: tabShowThinking === 'on'
 									? 'Thinking (temporary) - Click for sticky mode'
 									: 'Thinking (sticky) - Click to turn off'
-						}
+						}${shortcutSuffix(tabShortcuts.toggleShowThinking?.keys)}`}
 					>
 						<Brain className="w-3 h-3" />
 						<span>Thinking</span>

@@ -82,3 +82,6 @@ export type { TextareaLineNumbersProps, LineNumberGutterMetrics } from './Textar
 
 export { CornerDot } from './CornerDot';
 export type { CornerDotProps } from './CornerDot';
+
+export { ShortcutHint, shortcutSuffix } from './ShortcutHint';
+export type { ShortcutHintProps } from './ShortcutHint';

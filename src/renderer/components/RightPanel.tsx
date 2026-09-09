@@ -25,6 +25,7 @@ import { HistoryPanel, HistoryPanelHandle } from './HistoryPanel';
 import { AutoRun, AutoRunHandle } from './AutoRun';
 import { AutoRunExpandedModal } from './AutoRun/AutoRunExpandedModal';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
+import { shortcutSuffix } from './ui/ShortcutHint';
 import { ConfirmModal } from './ConfirmModal';
 import { useResizablePanel } from '../hooks';
 import { useAutoRunAutoFollow } from '../hooks/batch/useAutoRunAutoFollow';
@@ -463,20 +464,34 @@ export const RightPanel = memo(
 
 				{/* Tab Header */}
 				<div className="flex border-b h-16" style={{ borderColor: theme.colors.border }}>
-					{(['files', 'history', ...(autoRunDisabled ? [] : ['autorun'])] as const).map((tab) => (
-						<button
-							key={tab}
-							onClick={() => setActiveRightTab(tab as RightPanelTab)}
-							className="flex-1 text-xs font-bold border-b-2 transition-colors"
-							style={{
-								borderColor: activeRightTab === tab ? theme.colors.accent : 'transparent',
-								color: activeRightTab === tab ? theme.colors.textMain : theme.colors.textDim,
-							}}
-							data-tour={`${tab}-tab`}
-						>
-							{tab === 'autorun' ? 'Auto Run' : tab.charAt(0).toUpperCase() + tab.slice(1)}
-						</button>
-					))}
+					{(['files', 'history', ...(autoRunDisabled ? [] : ['autorun'])] as const).map((tab) => {
+						const label =
+							tab === 'autorun' ? 'Auto Run' : tab.charAt(0).toUpperCase() + tab.slice(1);
+						// Each of these three tabs has its own chord. Surfacing it on the
+						// header the user is already clicking is the cheapest place to
+						// teach it.
+						const jumpShortcut =
+							tab === 'files'
+								? shortcuts.goToFiles
+								: tab === 'history'
+									? shortcuts.goToHistory
+									: shortcuts.goToAutoRun;
+						return (
+							<button
+								key={tab}
+								onClick={() => setActiveRightTab(tab as RightPanelTab)}
+								className="flex-1 text-xs font-bold border-b-2 transition-colors"
+								style={{
+									borderColor: activeRightTab === tab ? theme.colors.accent : 'transparent',
+									color: activeRightTab === tab ? theme.colors.textMain : theme.colors.textDim,
+								}}
+								title={`${label}${shortcutSuffix(jumpShortcut?.keys)}`}
+								data-tour={`${tab}-tab`}
+							>
+								{label}
+							</button>
+						);
+					})}
 
 					<button
 						onClick={() => setRightPanelOpen(!rightPanelOpen)}

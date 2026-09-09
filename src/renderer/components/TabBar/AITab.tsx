@@ -11,6 +11,8 @@ import { getConnectingColor } from '../../utils/theme';
 import { AITabOverlayMenu } from './AITabOverlayMenu';
 import { WizardIndicator } from '../SessionList/WizardIndicator';
 import { useTabHasActiveOutage } from '../../stores/retryStore';
+import { useSettingsStore } from '../../stores/settingsStore';
+import { shortcutSuffix } from '../ui/ShortcutHint';
 
 export interface AITabProps {
 	tab: AITabType;
@@ -134,6 +136,7 @@ export const AITab = memo(function AITab({
 	const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	// Agent Resilience: pulsing orange dot when this tab is stuck auto-retrying.
 	const hasActiveOutage = useTabHasActiveOutage(sessionId ?? '', tabId);
+	const closeTabKeys = useSettingsStore((s) => s.tabShortcuts.closeTab?.keys);
 
 	// Clear copy feedback timeout on unmount
 	useEffect(() => {
@@ -579,7 +582,7 @@ export const AITab = memo(function AITab({
 				<button
 					onClick={handleCloseClick}
 					className="p-0.5 rounded hover:bg-white/10 transition-colors shrink-0"
-					title="Close tab"
+					title={`Close tab${shortcutSuffix(closeTabKeys)}`}
 				>
 					<X className="w-3 h-3" style={{ color: theme.colors.textDim }} />
 				</button>
