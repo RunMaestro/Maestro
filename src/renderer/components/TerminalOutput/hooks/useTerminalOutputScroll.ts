@@ -199,7 +199,15 @@ export function useTerminalOutputScroll({
 			programmaticTargetTopRef.current,
 			Date.now() - lastUserInputAtRef.current < USER_SCROLL_WINDOW_MS
 		);
-		if (atBottom || !parkedAtProgrammaticTarget) {
+		// A restore in flight owns these three refs outright. Every offset it
+		// writes fires a real scroll event, and while it is still short of its
+		// target that offset IS the live bottom, so this handler would measure
+		// `atBottom === true` and hand the view straight back to the tail-follower
+		// the restore is trying to walk up through - the MutationObserver gate
+		// reads `isAtBottomRef.current` and re-pins to the next growth. The
+		// user-takeover listeners all clear the flag before the scroll event they
+		// cause reaches here, so their positions are still recorded. (#1535)
+		if (!restoreInFlightRef.current && (atBottom || !parkedAtProgrammaticTarget)) {
 			userScrolledAwayRef.current = !atBottom;
 			setIsAtBottom(atBottom);
 			// Mirror into the ref synchronously so MutationObserver sees the user's
@@ -208,22 +216,16 @@ export function useTerminalOutputScroll({
 
 			if (atBottom !== prevIsAtBottomRef.current) {
 				prevIsAtBottomRef.current = atBottom;
-				// Both halves are skipped while the restore is walking the offset up
-				// through a still-mounting transcript - it crosses this boundary on
-				// the way to the saved position, and persisting there would replace
-				// the pair being restored FROM. (#1535)
-				if (!restoreInFlightRef.current) {
-					onAtBottomChange?.(atBottom);
-					// The flag and the offset MUST be persisted together. The debounced
-					// save below is dropped on unmount (see the cleanup effect), so a
-					// swap within 200ms of crossing the boundary would otherwise store
-					// `isAtBottom: false` with no matching scrollTop - and the remount
-					// restore, which requires `initialScrollTop > 0`, then skips and the
-					// mount-time bottom jump snaps the user back down. Writing both
-					// halves in the same tick, in both directions, keeps the saved pair
-					// coherent no matter when the component goes away. (Y1)
-					onScrollPositionChange?.(scrollTop);
-				}
+				onAtBottomChange?.(atBottom);
+				// The flag and the offset MUST be persisted together. The debounced
+				// save below is dropped on unmount (see the cleanup effect), so a
+				// swap within 200ms of crossing the boundary would otherwise store
+				// `isAtBottom: false` with no matching scrollTop - and the remount
+				// restore, which requires `initialScrollTop > 0`, then skips and the
+				// mount-time bottom jump snaps the user back down. Writing both
+				// halves in the same tick, in both directions, keeps the saved pair
+				// coherent no matter when the component goes away. (Y1)
+				onScrollPositionChange?.(scrollTop);
 			}
 
 			if (atBottom) {
@@ -534,7 +536,22 @@ export function useTerminalOutputScroll({
 				const el = scrollContainerRef.current;
 				el?.removeEventListener('wheel', stopSettling);
 				el?.removeEventListener('touchstart', stopSettling);
+				// Keyboard and scrollbar are the other two ways a user takes the view
+				// over, and neither sends a wheel: a scrollbar drag starts at
+				// `pointerdown`, and PageUp / arrows arrive as `keydown`. Without
+				// these the retry loop kept re-applying the saved offset over the
+				// position they had just chosen, for up to SCROLL_RESTORE_MAX_MS,
+				// while `restoreInFlightRef` also suppressed persisting it.
+				el?.removeEventListener('pointerdown', stopSettling);
+				el?.removeEventListener('keydown', stopSettlingOnKey);
 				releaseRestore();
+			};
+			// A scroll key only counts when it is one that actually moves a scroll
+			// box - typing in an inline editor inside the transcript is not the user
+			// taking the view over. Same filter `noteUserScrollInput` applies.
+			const stopSettlingOnKey = (event: Event) => {
+				if (!SCROLL_KEYS.has((event as KeyboardEvent).key)) return;
+				stopSettling();
 			};
 			cancelRestoreSettleRef.current = stopSettling;
 
@@ -618,6 +635,8 @@ export function useTerminalOutputScroll({
 				capTimer = window.setTimeout(stopSettling, SCROLL_RESTORE_MAX_MS);
 				container.addEventListener('wheel', stopSettling, { passive: true });
 				container.addEventListener('touchstart', stopSettling, { passive: true });
+				container.addEventListener('pointerdown', stopSettling, { passive: true });
+				container.addEventListener('keydown', stopSettlingOnKey, { passive: true });
 			});
 		}
 		return () => cancelRestoreSettleRef.current?.();

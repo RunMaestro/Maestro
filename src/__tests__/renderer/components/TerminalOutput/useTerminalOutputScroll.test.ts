@@ -897,7 +897,11 @@ describe('restore settles as the transcript mounts (#1535)', () => {
 
 		// The scroll box only resizes with the viewport, so an observer on it is
 		// inert for content growth.
-		expect(resizeObservers.some((o) => o.targets.includes(contentEl))).toBe(true);
+		// The bottom-follower's observer and the restore's retry observer, both on
+		// the wrapper. Asserting `some` alone would pass on the follower even if
+		// the restore observer were never installed.
+		expect(resizeObservers).toHaveLength(2);
+		expect(resizeObservers.every((o) => o.targets.includes(contentEl))).toBe(true);
 		expect(resizeObservers.some((o) => o.targets.includes(container.el))).toBe(false);
 	});
 
@@ -968,5 +972,70 @@ describe('restore settles as the transcript mounts (#1535)', () => {
 		// A restore that fights a scroll already in progress is worse than the
 		// miss it corrects.
 		expect(ref.current.scrollTop).toBe(1200);
+	});
+
+	it('stops re-applying when the user drags the scrollbar', () => {
+		const { container, ref } = mountRestoring();
+
+		flushRaf();
+
+		// A scrollbar drag never sends a wheel; it starts at pointerdown.
+		act(() => {
+			ref.current.dispatchEvent(new Event('pointerdown'));
+		});
+		act(() => container.grow(20000));
+		fireResize();
+
+		expect(ref.current.scrollTop).toBe(1200);
+	});
+
+	it('stops re-applying on a scroll key, and ignores ordinary typing', () => {
+		const typing = mountRestoring();
+
+		flushRaf();
+
+		// Typing inside an inline editor in the transcript is not the user taking
+		// the view over, so the restore carries on.
+		act(() => {
+			typing.ref.current.dispatchEvent(new KeyboardEvent('keydown', { key: 'a' }));
+		});
+		act(() => typing.container.grow(20000));
+		fireResize();
+		expect(typing.ref.current.scrollTop).toBe(5000);
+
+		typing.hook.unmount();
+
+		const paging = mountRestoring();
+		flushRaf();
+
+		act(() => {
+			paging.ref.current.dispatchEvent(new KeyboardEvent('keydown', { key: 'PageUp' }));
+		});
+		act(() => paging.container.grow(20000));
+		fireResize();
+		expect(paging.ref.current.scrollTop).toBe(1200);
+	});
+
+	it('holds the at-bottom state down while the restore is short of its target', () => {
+		const { container, ref, hook } = mountRestoring();
+
+		flushRaf();
+		// Clamped short, which parks the view at the CURRENT live bottom. The
+		// scroll event that write fires must not hand the view to the
+		// tail-follower, or it re-pins to every growth the restore is walking up
+		// through.
+		expect(ref.current.scrollTop).toBe(1200);
+
+		act(() => {
+			hook.result.current.handleScroll();
+		});
+
+		expect(hook.result.current.isAtBottom).toBe(false);
+		expect(hook.result.current.autoScrollPaused).toBe(true);
+
+		act(() => container.grow(20000));
+		fireResize();
+
+		expect(ref.current.scrollTop).toBe(5000);
 	});
 });
