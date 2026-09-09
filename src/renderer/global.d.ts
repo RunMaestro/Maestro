@@ -3194,7 +3194,13 @@ interface MaestroAPI {
 	// encoreFeatures.maestroCue is off; consumers should catch and render
 	// the "feature off" state.
 	cueStats: {
-		getAggregation: (range: CueStatsTimeRange) => Promise<CueStatsAggregation>;
+		// `excludeTriggerTypes` drops the named raw event types (`time.heartbeat`,
+		// `file.changed`, ...) from every rollup in the payload except
+		// `triggerTypeOptions`, which always reports the unfiltered universe.
+		getAggregation: (
+			range: CueStatsTimeRange,
+			excludeTriggerTypes?: string[]
+		) => Promise<CueStatsAggregation>;
 		// Conductor time (ms) the retained Cue run history would have credited.
 		// Ungated, unlike getAggregation; resolves 0 when there is no history.
 		getHistoricalConductorCredit: () => Promise<number>;

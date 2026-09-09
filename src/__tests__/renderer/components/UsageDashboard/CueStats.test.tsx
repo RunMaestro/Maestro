@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import React from 'react';
 import { CueStats } from '../../../../renderer/components/UsageDashboard/CueStats';
 import { THEMES } from '../../../../shared/themes';
@@ -53,6 +53,8 @@ const emptyAggregation: CueStatsAggregation = {
 	byAgent: [],
 	bySubscription: [],
 	byTriggerType: [],
+	triggerTypeOptions: [],
+	excludedTriggerTypes: [],
 	byHourOfDay: emptyHourBuckets,
 	chains: [],
 	timeSeries: [],
@@ -249,6 +251,11 @@ const populatedAggregation: CueStatsAggregation = {
 			totals: makeTotals({ occurrences: 5, successCount: 3, failureCount: 2 }),
 		},
 	],
+	triggerTypeOptions: [
+		{ key: 'file.changed', label: 'File Change', occurrences: 7 },
+		{ key: 'time.heartbeat', label: 'Heartbeat', occurrences: 5 },
+	],
+	excludedTriggerTypes: [],
 	byHourOfDay: emptyHourBuckets.map((b, i) => {
 		// Seed a couple of busy hours so the chart actually paints - others
 		// stay zero. Hour 9 has a failure to exercise the warning color path.
@@ -272,6 +279,10 @@ const mockGetAggregation = vi.fn();
 
 beforeEach(() => {
 	mockGetAggregation.mockReset();
+	// The exclusion set persists to localStorage, so a test that toggles a chip
+	// would otherwise leak its filter into the next test. jsdom in this repo can
+	// be Storage-less, hence the guard.
+	window.localStorage?.clear();
 	(window as unknown as { maestro: Record<string, unknown> }).maestro = {
 		...((window as unknown as { maestro: Record<string, unknown> }).maestro ?? {}),
 		cueStats: {
@@ -506,6 +517,80 @@ describe('CueStats', () => {
 
 			expect(screen.queryByTestId('cue-stats-coverage-warnings')).not.toBeInTheDocument();
 			expect(screen.queryByText('Coverage warnings')).not.toBeInTheDocument();
+		});
+	});
+
+	describe('Trigger type filter', () => {
+		beforeEach(() => {
+			mockGetAggregation.mockResolvedValue(populatedAggregation);
+		});
+
+		it('renders a chip per trigger type with its unfiltered occurrence count', async () => {
+			render(<CueStats timeRange="week" theme={theme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('cue-stats-trigger-filter')).toBeInTheDocument();
+			});
+
+			const heartbeat = screen.getByTestId('cue-stats-trigger-chip-time.heartbeat');
+			expect(within(heartbeat).getByText('Heartbeat')).toBeInTheDocument();
+			expect(within(heartbeat).getByText('5')).toBeInTheDocument();
+			expect(heartbeat).toHaveAttribute('data-excluded', 'false');
+			expect(screen.getByTestId('cue-stats-trigger-chip-file.changed')).toBeInTheDocument();
+		});
+
+		it('refetches the aggregation without the trigger when a chip is toggled off', async () => {
+			render(<CueStats timeRange="week" theme={theme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('cue-stats-trigger-filter')).toBeInTheDocument();
+			});
+			expect(mockGetAggregation).toHaveBeenLastCalledWith('week', []);
+
+			fireEvent.click(screen.getByTestId('cue-stats-trigger-chip-time.heartbeat'));
+
+			await waitFor(() => {
+				expect(mockGetAggregation).toHaveBeenLastCalledWith('week', ['time.heartbeat']);
+			});
+			expect(screen.getByTestId('cue-stats-trigger-chip-time.heartbeat')).toHaveAttribute(
+				'data-excluded',
+				'true'
+			);
+		});
+
+		it('restores every trigger from the reset control', async () => {
+			render(<CueStats timeRange="week" theme={theme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('cue-stats-trigger-filter')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByTestId('cue-stats-trigger-chip-time.heartbeat'));
+			await waitFor(() => {
+				expect(screen.getByTestId('cue-stats-trigger-filter-reset')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByTestId('cue-stats-trigger-filter-reset'));
+
+			await waitFor(() => {
+				expect(mockGetAggregation).toHaveBeenLastCalledWith('week', []);
+			});
+			expect(screen.queryByTestId('cue-stats-trigger-filter-reset')).not.toBeInTheDocument();
+		});
+
+		it('keeps the filter row visible when the filter empties the window', async () => {
+			mockGetAggregation.mockResolvedValue({
+				...emptyAggregation,
+				triggerTypeOptions: [{ key: 'time.heartbeat', label: 'Heartbeat', occurrences: 5 }],
+				excludedTriggerTypes: ['time.heartbeat'],
+			});
+
+			render(<CueStats timeRange="week" theme={theme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('cue-stats-trigger-filter')).toBeInTheDocument();
+			});
+			expect(screen.getByText('No Cue activity')).toBeInTheDocument();
 		});
 	});
 

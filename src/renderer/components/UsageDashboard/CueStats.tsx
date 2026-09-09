@@ -14,7 +14,17 @@
 
 import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { format } from 'date-fns';
-import { AlertTriangle, CheckCircle2, Clock, Coins, TimerReset, XCircle, Zap } from 'lucide-react';
+import {
+	AlertTriangle,
+	CheckCircle2,
+	Clock,
+	Coins,
+	Eye,
+	EyeOff,
+	TimerReset,
+	XCircle,
+	Zap,
+} from 'lucide-react';
 // AlertTriangle still used by `DisabledNote`; CoverageWarningsBanner was removed.
 import type { Theme } from '../../types';
 import { SortableTh } from '../ui/SortableTh';
@@ -27,6 +37,7 @@ import type {
 	CueStatsByGroup,
 	CueStatsTotals,
 	CueTimeBucket,
+	CueTriggerTypeOption,
 } from '../../../shared/cue-stats-types';
 import {
 	formatCost,
@@ -853,6 +864,122 @@ const SlowestRunsTable = memo(function SlowestRunsTable({
 	);
 });
 
+/* -------------------------- Trigger type filter -------------------------- */
+
+const EXCLUDED_TRIGGERS_STORAGE_KEY = 'maestro.usageDashboard.cueExcludedTriggers';
+
+/**
+ * Read the persisted exclusion set. Survives reopening the dashboard because
+ * the filter is a standing preference ("stop showing me heartbeats"), not a
+ * per-visit choice. Malformed storage is treated as "nothing excluded" rather
+ * than thrown - a bad key must never blank the tab.
+ */
+function loadExcludedTriggers(): string[] {
+	try {
+		const raw = window.localStorage?.getItem(EXCLUDED_TRIGGERS_STORAGE_KEY);
+		if (!raw) return [];
+		const parsed: unknown = JSON.parse(raw);
+		if (!Array.isArray(parsed)) return [];
+		return parsed.filter((t): t is string => typeof t === 'string' && t.length > 0);
+	} catch {
+		return [];
+	}
+}
+
+function saveExcludedTriggers(keys: string[]): void {
+	try {
+		window.localStorage?.setItem(EXCLUDED_TRIGGERS_STORAGE_KEY, JSON.stringify(keys));
+	} catch {
+		// Storage can be unavailable (private mode, a Storage-less jsdom in
+		// tests). The filter still works for the life of the view.
+	}
+}
+
+/**
+ * Chip row at the top of the Cue tab: one toggle per trigger type present in
+ * the window. Excluding a trigger re-runs the aggregation without it, which
+ * rescales EVERY panel below - the reason this exists is that a heartbeat
+ * firing on a timer is 97% of all occurrences and flattens every other bar.
+ */
+const TriggerTypeFilter = memo(function TriggerTypeFilter({
+	options,
+	excluded,
+	onToggle,
+	onReset,
+	theme,
+}: {
+	options: CueTriggerTypeOption[];
+	excluded: Set<string>;
+	onToggle: (key: string) => void;
+	onReset: () => void;
+	theme: Theme;
+}) {
+	const hiddenCount = options.filter((o) => excluded.has(o.key)).length;
+
+	return (
+		<div
+			className="p-3 rounded-lg select-none"
+			style={{ backgroundColor: theme.colors.bgMain }}
+			data-testid="cue-stats-trigger-filter"
+			role="group"
+			aria-label="Filter Cue stats by trigger type"
+		>
+			<div className="flex items-center gap-2 flex-wrap">
+				<div
+					className="text-xs font-medium mr-1"
+					style={{ color: theme.colors.textDim, whiteSpace: 'nowrap' }}
+				>
+					Trigger Types
+				</div>
+				{options.map((option) => {
+					const isExcluded = excluded.has(option.key);
+					return (
+						<button
+							key={option.key}
+							type="button"
+							onClick={() => onToggle(option.key)}
+							aria-pressed={!isExcluded}
+							title={
+								isExcluded
+									? `Include ${option.label} in every panel below`
+									: `Hide ${option.label} from every panel below`
+							}
+							className="flex items-center gap-1.5 px-2 py-1 rounded text-xs transition-colors"
+							data-testid={`cue-stats-trigger-chip-${option.key}`}
+							data-excluded={isExcluded ? 'true' : 'false'}
+							style={{
+								border: `1px solid ${isExcluded ? theme.colors.border : theme.colors.accent}`,
+								backgroundColor: isExcluded ? 'transparent' : `${theme.colors.accent}22`,
+								color: isExcluded ? theme.colors.textDim : theme.colors.textMain,
+								opacity: isExcluded ? 0.55 : 1,
+							}}
+						>
+							{isExcluded ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+							<span style={{ textDecoration: isExcluded ? 'line-through' : 'none' }}>
+								{option.label}
+							</span>
+							<span className="font-mono" style={{ color: theme.colors.textDim }}>
+								{formatNumber(option.occurrences)}
+							</span>
+						</button>
+					);
+				})}
+				{hiddenCount > 0 && (
+					<button
+						type="button"
+						onClick={onReset}
+						className="px-2 py-1 rounded text-xs ml-auto"
+						data-testid="cue-stats-trigger-filter-reset"
+						style={{ color: theme.colors.accent }}
+					>
+						Show all ({hiddenCount} hidden)
+					</button>
+				)}
+			</div>
+		</div>
+	);
+});
+
 /* ---------------------------- Trigger types ------------------------------ */
 
 /**
@@ -1201,12 +1328,22 @@ export const CueStats = memo(function CueStats({
 	const [aggregation, setAggregation] = useState<CueStatsAggregation | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
+	// Raw trigger types the user has hidden. Kept as a sorted, joined string so
+	// the fetch callback has a primitive dependency and a re-render with an
+	// equivalent set doesn't refire the query.
+	const [excludedTriggers, setExcludedTriggers] = useState<string[]>(loadExcludedTriggers);
+	const excludedKey = useMemo(
+		() => [...excludedTriggers].sort().join('\u0000'),
+		[excludedTriggers]
+	);
+	const excludedSet = useMemo(() => new Set(excludedTriggers), [excludedTriggers]);
 
 	const fetchAggregation = useCallback(async () => {
 		setLoading(true);
 		setError(null);
 		try {
-			const result = await window.maestro.cueStats.getAggregation(timeRange);
+			const excluded = excludedKey.length === 0 ? [] : excludedKey.split('\u0000');
+			const result = await window.maestro.cueStats.getAggregation(timeRange, excluded);
 			setAggregation(result);
 		} catch (err) {
 			// Preload normalizes the disabled sentinel to a bare 'CueStatsDisabled'
@@ -1223,7 +1360,20 @@ export const CueStats = memo(function CueStats({
 		} finally {
 			setLoading(false);
 		}
-	}, [timeRange]);
+	}, [timeRange, excludedKey]);
+
+	const toggleTrigger = useCallback((key: string) => {
+		setExcludedTriggers((prev) => {
+			const next = prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key];
+			saveExcludedTriggers(next);
+			return next;
+		});
+	}, []);
+
+	const resetTriggers = useCallback(() => {
+		setExcludedTriggers([]);
+		saveExcludedTriggers([]);
+	}, []);
 
 	useEffect(() => {
 		fetchAggregation();
@@ -1254,13 +1404,44 @@ export const CueStats = memo(function CueStats({
 		return <ErrorNote theme={theme} message={error} onRetry={fetchAggregation} />;
 	}
 
-	if (!aggregation || aggregation.totals.occurrences === 0) {
+	if (!aggregation) {
 		return (
 			<EmptyState
 				theme={theme}
 				title="No Cue activity"
 				message="No Cue runs in this time range. Trigger a subscription to populate stats."
 			/>
+		);
+	}
+
+	const triggerFilter =
+		aggregation.triggerTypeOptions.length > 0 ? (
+			<TriggerTypeFilter
+				options={aggregation.triggerTypeOptions}
+				excluded={excludedSet}
+				onToggle={toggleTrigger}
+				onReset={resetTriggers}
+				theme={theme}
+			/>
+		) : null;
+
+	// The filter can empty the window on its own, so the filter row has to
+	// render ABOVE the empty state - otherwise hiding every trigger takes the
+	// only control that could bring them back off screen with it.
+	if (aggregation.totals.occurrences === 0) {
+		return (
+			<div className="space-y-6" data-testid="cue-stats">
+				{triggerFilter}
+				<EmptyState
+					theme={theme}
+					title="No Cue activity"
+					message={
+						excludedSet.size > 0
+							? 'Every Cue run in this time range belongs to a hidden trigger type.'
+							: 'No Cue runs in this time range. Trigger a subscription to populate stats.'
+					}
+				/>
+			</div>
 		);
 	}
 
@@ -1274,6 +1455,8 @@ export const CueStats = memo(function CueStats({
 
 	return (
 		<div className="space-y-6" data-testid="cue-stats">
+			{triggerFilter}
+
 			<ChartErrorBoundary theme={theme} chartName="Cue Summary">
 				<SummaryCardsRow
 					totals={aggregation.totals}
