@@ -1,13 +1,35 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
+import { createWriteStream } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { zipSync } from 'fflate';
+import archiver from 'archiver';
 import {
 	extractZipTo,
 	isUnsafeZipEntryName,
 	readZipArchive,
 } from '../../../main/utils/zip-archive';
+
+async function writeArchiverZip(
+	dir: string,
+	files: Record<string, string | Buffer>
+): Promise<string> {
+	const zipPath = path.join(dir, 'archiver.zip');
+	await new Promise<void>((resolve, reject) => {
+		const output = createWriteStream(zipPath);
+		const archive = archiver('zip', { zlib: { level: 9 } });
+		output.on('close', () => resolve());
+		output.on('error', reject);
+		archive.on('error', reject);
+		archive.pipe(output);
+		for (const [name, content] of Object.entries(files)) {
+			archive.append(content, { name });
+		}
+		void archive.finalize();
+	});
+	return zipPath;
+}
 
 function writeZip(dir: string, files: Record<string, string>): string {
 	const encoded: Record<string, Uint8Array> = {};
@@ -92,6 +114,43 @@ describe('zip-archive', () => {
 		});
 		expect(() => readZipArchive(zipPath, { maxOriginalSize: 5 })).toThrow(
 			/expanded size exceeds 5 bytes/
+		);
+	});
+
+	it('reads an archiver zip and can inflate only the manifest', async () => {
+		const zipPath = await writeArchiverZip(tmp, {
+			'manifest.json': JSON.stringify({
+				name: 'Imported Playbook',
+				workspaces: [{ id: 'ws_abc' }],
+			}),
+			'workspaces/ws_abc/cue.yaml': 'subscriptions: []\n',
+			'workspaces/ws_abc/prompts/hello.md': '# hi\n',
+			'documents/doc1.md': '# Document content',
+		});
+
+		const full = readZipArchive(zipPath);
+		expect(full.getEntry('manifest.json')?.getData().toString('utf-8')).toContain('ws_abc');
+		expect(full.getEntry('workspaces/ws_abc/cue.yaml')?.getData().toString('utf-8')).toBe(
+			'subscriptions: []\n'
+		);
+		expect(full.getEntry('documents/doc1.md')?.getData().toString('utf-8')).toBe(
+			'# Document content'
+		);
+
+		const manifestOnly = readZipArchive(zipPath, { names: ['manifest.json'] });
+		expect(
+			JSON.parse(manifestOnly.getEntry('manifest.json')!.getData().toString('utf-8')).name
+		).toBe('Imported Playbook');
+		expect(manifestOnly.getEntry('workspaces/ws_abc/cue.yaml')).toBeUndefined();
+		expect(manifestOnly.getEntry('documents/doc1.md')).toBeUndefined();
+
+		const dest = path.join(tmp, 'extracted');
+		extractZipTo(zipPath, dest);
+		expect(fs.readFileSync(path.join(dest, 'documents', 'doc1.md'), 'utf8')).toBe(
+			'# Document content'
+		);
+		expect(fs.readFileSync(path.join(dest, 'workspaces', 'ws_abc', 'cue.yaml'), 'utf8')).toBe(
+			'subscriptions: []\n'
 		);
 	});
 

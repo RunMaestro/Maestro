@@ -455,7 +455,7 @@ export function getCueBackupDiffStatus(filePath: string): CueBackupDiffStatusMap
 		for (const f of ws.files) {
 			const key = cueBackupStatusKey(ws.id, f.relativePath);
 			try {
-				const entry = zip.getEntry(`workspaces/${ws.id}/${f.relativePath}`);
+				const entry = zip.getEntry(workspaceZipEntryName(ws.id, f.relativePath));
 				if (!entry) {
 					// No content in zip - treat as missing so the user can still
 					// notice; Diff/Restore will both fail loudly with a clear error.
