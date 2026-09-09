@@ -64,7 +64,10 @@ import {
 	moveActiveUnifiedTabToEdge,
 	moveUnifiedTabToTarget,
 	toggleReadOnlyModeFields,
+	permissionModeFields,
+	nextPermissionMode,
 	cycleShowThinkingFields,
+	setShowThinkingFields,
 	findNextUnreadSession,
 	findPreviousUnreadSession,
 	resolveQueuedItemTarget,
@@ -6374,6 +6377,86 @@ describe('tabHelpers', () => {
 				showThinking: 'off',
 				logs: [toolLog, stdoutLog],
 			});
+		});
+	});
+
+	describe('setShowThinkingFields', () => {
+		const thinkingLog: LogEntry = {
+			id: 'think-1',
+			timestamp: 1,
+			source: 'thinking',
+			text: 'reasoning',
+		};
+		const toolLog: LogEntry = { id: 'tool-1', timestamp: 2, source: 'tool', text: 'edit' };
+		const mixedLogs = [thinkingLog, toolLog];
+
+		it('sets the named mode without stepping through the cycle', () => {
+			// The phone options sheet lists all three modes; from 'off' the cycle
+			// would reach 'sticky' only on a second tap.
+			expect(setShowThinkingFields({ logs: mixedLogs }, 'sticky')).toEqual({
+				showThinking: 'sticky',
+				logs: mixedLogs,
+			});
+		});
+
+		it('drops only thinking logs when the mode is set to off', () => {
+			expect(setShowThinkingFields({ logs: mixedLogs }, 'off')).toEqual({
+				showThinking: 'off',
+				logs: [toolLog],
+			});
+		});
+
+		it('agrees with cycleShowThinkingFields on every step of the cycle', () => {
+			// The cycle delegates here, so the log-clearing rule is written once.
+			for (const [from, to] of [
+				['off', 'on'],
+				['on', 'sticky'],
+				['sticky', 'off'],
+			] as const) {
+				expect(cycleShowThinkingFields({ showThinking: from, logs: mixedLogs })).toEqual(
+					setShowThinkingFields({ logs: mixedLogs }, to)
+				);
+			}
+		});
+	});
+
+	describe('permissionModeFields', () => {
+		it('keeps readOnlyMode in lockstep with the named mode', () => {
+			// The pill resolves through resolveTabPermissionMode and the spawn path
+			// reads readOnlyMode, so a mode written without its boolean drifts.
+			expect(permissionModeFields('full')).toEqual({
+				permissionMode: 'full',
+				readOnlyMode: false,
+			});
+			expect(permissionModeFields('standard')).toEqual({
+				permissionMode: 'standard',
+				readOnlyMode: false,
+			});
+			expect(permissionModeFields('readonly')).toEqual({
+				permissionMode: 'readonly',
+				readOnlyMode: true,
+			});
+		});
+
+		it('agrees with resolveTabPermissionMode on what it wrote', () => {
+			for (const mode of ['full', 'standard', 'readonly'] as const) {
+				expect(resolveTabPermissionMode(permissionModeFields(mode))).toBe(mode);
+			}
+		});
+	});
+
+	describe('nextPermissionMode', () => {
+		it('cycles full to standard to readonly and back', () => {
+			expect(nextPermissionMode('full', true)).toBe('standard');
+			expect(nextPermissionMode('standard', true)).toBe('readonly');
+			expect(nextPermissionMode('readonly', true)).toBe('full');
+		});
+
+		it('skips standard for an agent with no working relay', () => {
+			// Landing on it would put the tab in a mode whose tool approvals never
+			// arrive.
+			expect(nextPermissionMode('full', false)).toBe('readonly');
+			expect(nextPermissionMode('readonly', false)).toBe('full');
 		});
 	});
 

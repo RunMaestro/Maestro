@@ -77,6 +77,42 @@ export interface CompleteEvent extends JsonlEvent {
 	haltReason?: string;
 }
 
+/**
+ * A document the engine gave up on because the agent stopped making progress.
+ *
+ * Distinct from a halt: the playbook CONTINUES to the next document. This is
+ * the loop's own escape hatch, so an agent that cannot finish a task no longer
+ * has to reach for the halt marker to stop being re-dispatched forever.
+ */
+export interface DocumentStalledEvent extends JsonlEvent {
+	type: 'document_stalled';
+	document: string;
+	reason: string;
+	/** Unchecked tasks left behind in this document. */
+	remainingTasks: number;
+	/** Whether another document follows, so consumers can word it correctly. */
+	hasNextDocument: boolean;
+}
+
+/**
+ * A document skipped because it holds a HITL gate that no one can tick.
+ *
+ * A gate is a request for a HUMAN, and a batch run has none. The desktop engine
+ * pauses and waits; there is nothing here to wait for, so the run reports the
+ * gate and moves to the next document rather than burning dispatches on a task
+ * that cannot be completed without a person.
+ */
+export interface DocumentGatedEvent extends JsonlEvent {
+	type: 'document_gated';
+	document: string;
+	/** Why the human is needed, from the marker's `reason` attribute. */
+	reason: string;
+	/** What the human should look at, from the optional `artifact` attribute. */
+	artifact?: string;
+	/** 1-indexed line of the marker, so the user can go straight to it. */
+	line: number;
+}
+
 export interface HaltEvent extends JsonlEvent {
 	type: 'halt';
 	document: string;
@@ -172,6 +208,8 @@ export type CliEvent =
 	| TaskStartEvent
 	| TaskCompleteEvent
 	| DocumentCompleteEvent
+	| DocumentStalledEvent
+	| DocumentGatedEvent
 	| LoopCompleteEvent
 	| CompleteEvent
 	| HaltEvent

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 // Menu + Command are rc-only: the narrow-viewport sidebar opener and the Quick
 // Actions button, neither of which exists on main's header.
 import {
@@ -36,7 +36,14 @@ import {
 	useClaudeUsageSnapshot,
 	useResolvedClaudeConfigDirKey,
 } from '../../stores/claudeUsageStore';
-import { formatFutureTime } from '../../../shared/formatters';
+import { formatCost, formatFutureTime } from '../../../shared/formatters';
+import { getAgentDisplayName } from '../../../shared/agentMetadata';
+import { providerProfileShortLabel } from '../../../shared/providerProfiles';
+import {
+	computeTabConversationStats,
+	formatConversationDuration,
+} from '../../../shared/tabConversationStats';
+import { useProviderProfiles } from '../../hooks/stats/useProviderProfiles';
 import { PluginUiItemsSlot } from '../plugins/PluginUiItemsSlot';
 
 /** Snapshot an element's viewport rect as plain numbers for the timeline anchor. */
@@ -149,12 +156,30 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 	const batchUsageSnapshot = useClaudeUsageSnapshot(resolvedConfigDirKey);
 	const showBatchUsage = activeSession?.toolType === 'claude-code';
 
+	// Provider profile for the tab in view - the same attribution the Usage
+	// Dashboard files this agent under, so the account named here and the
+	// account whose quota bars render below are the same account by
+	// construction. Null for providers with no account split (OpenCode, Droid)
+	// and while $HOME is still resolving.
+	const profileSessions = useMemo(() => [activeSession], [activeSession]);
+	const activeProfileAccountKey =
+		useProviderProfiles(profileSessions).profiles[0]?.accountKey ?? null;
+
 	const headerRef = useRef<HTMLDivElement>(null);
 	// Anchors the git menu, and is the hover target that opens it. Wrapping both
 	// pills (SSH host + branch) means either one opens the menu, and it also
 	// excludes them from click-outside so clicking a pill can't close it.
 	const gitPillRef = useRef<HTMLDivElement>(null);
 	const contextTooltip = useHoverTooltip(150);
+
+	// Message count and elapsed span for the tab in view - the same figures the
+	// HTML export prints, so they can be read without exporting. Walking the log
+	// array costs O(entries), so it only runs while the popover is actually open.
+	const conversationStats = useMemo(
+		() => (contextTooltip.isOpen ? computeTabConversationStats(activeTab?.logs) : null),
+		[contextTooltip.isOpen, activeTab?.logs]
+	);
+
 	// The git menu opens on hover. The open delay keeps it from popping up while
 	// the pointer merely crosses the header on its way somewhere else; the close
 	// delay covers the gap between the pill and the menu below it.
@@ -297,7 +322,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 					    something else genuinely needs the pixels. */}
 					<div
 						ref={gitPillRef}
-						className="relative min-w-0 flex items-center gap-2"
+						className="header-git-pill relative min-w-0 flex items-center gap-2"
 						{...gitPillHoverHandlers}
 					>
 						{/* SSH Host Pill - show SSH remote name when running remotely (replaces the
@@ -316,11 +341,15 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 								<span className="truncate uppercase">{sshRemoteName}</span>
 							</button>
 						) : (
+							/* The LOCAL badge carries the `header-local-badge` hook so the phone
+							   layout can retire it. It is inert for non-git agents (no menu, no
+							   hover handlers), so on a 390px header it spends width to say
+							   nothing; the git pill keeps its icon because that one opens a menu. */
 							<button
 								className={`flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full border min-w-0 cursor-pointer outline-none ${
 									activeSession.isGitRepo
 										? 'border-orange-500/30 text-orange-500 bg-orange-500/10 hover:bg-orange-500/20'
-										: 'border-blue-500/30 text-blue-500 bg-blue-500/10'
+										: 'header-local-badge border-blue-500/30 text-blue-500 bg-blue-500/10'
 								}`}
 								onClick={handleGitPillClick}
 								title={activeSession.isGitRepo && gitInfo?.branch ? gitInfo.branch : undefined}
@@ -455,7 +484,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 					(activeTab?.agentSessionId || activeTab?.usageStats) &&
 					hasCapability('supportsCostTracking') && (
 						<span className="header-cost-widget text-xs font-mono font-bold px-2 py-0.5 rounded-full border border-green-500/30 text-green-500 bg-green-500/10">
-							${(activeTab?.usageStats?.totalCostUsd ?? 0).toFixed(2)}
+							{formatCost(activeTab?.usageStats?.totalCostUsd ?? 0)}
 						</span>
 					)}
 
@@ -526,6 +555,80 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 											>
 												Context Details
 											</div>
+
+											{/* Which account produced these numbers. With several Claude
+											    accounts in play the provider name alone does not identify
+											    the quota bucket below, and the config dir is the only
+											    thing that tells two of them apart. */}
+											<div
+												className="border-b pb-2 mb-2"
+												style={{ borderColor: theme.colors.border }}
+											>
+												<div className="flex justify-between items-center">
+													<span className="text-xs" style={{ color: theme.colors.textDim }}>
+														Provider
+													</span>
+													<span
+														className="text-xs font-mono"
+														style={{ color: theme.colors.textMain }}
+													>
+														{getAgentDisplayName(activeSession.toolType)}
+													</span>
+												</div>
+												{activeProfileAccountKey && (
+													<div className="flex justify-between items-center mt-1">
+														<span className="text-xs" style={{ color: theme.colors.textDim }}>
+															Profile
+														</span>
+														<span
+															className="text-xs font-mono truncate ml-2"
+															style={{ color: theme.colors.textMain }}
+															title={activeProfileAccountKey}
+														>
+															{providerProfileShortLabel(
+																activeSession.toolType,
+																activeProfileAccountKey
+															)}
+														</span>
+													</div>
+												)}
+											</div>
+
+											{/* Conversation size and span. Same numbers the HTML export
+											    prints at the top of the document, available here without
+											    having to export first. The span is wall clock between the
+											    first and last entry, so an agent left open overnight
+											    counts the night. */}
+											{conversationStats && conversationStats.totalMessages > 0 && (
+												<div
+													className="border-b pb-2 mb-2"
+													style={{ borderColor: theme.colors.border }}
+												>
+													<div className="flex justify-between items-center">
+														<span className="text-xs" style={{ color: theme.colors.textDim }}>
+															Messages
+														</span>
+														<span
+															className="text-xs font-mono"
+															style={{ color: theme.colors.textMain }}
+															title={`${conversationStats.userMessages.toLocaleString('en-US')} from you, ${conversationStats.aiMessages.toLocaleString('en-US')} from the agent`}
+														>
+															{conversationStats.totalMessages.toLocaleString('en-US')}
+														</span>
+													</div>
+													<div className="flex justify-between items-center mt-1">
+														<span className="text-xs" style={{ color: theme.colors.textDim }}>
+															Duration
+														</span>
+														<span
+															className="text-xs font-mono"
+															style={{ color: theme.colors.textMain }}
+														>
+															{formatConversationDuration(conversationStats.durationMs)}
+														</span>
+													</div>
+												</div>
+											)}
 
 											<div className="space-y-2">
 												<div className="flex justify-between items-center">

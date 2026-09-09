@@ -191,7 +191,7 @@ export function SessionContextMenu({
 		return () => document.removeEventListener('keydown', handleKeyDown);
 	}, []);
 
-	const { left, top, ready } = useContextMenuPosition(menuRef, x, y);
+	const { left, top, maxHeight, ready } = useContextMenuPosition(menuRef, x, y);
 
 	// One flyout state machine per submenu (Move to Group, Move to Window). Item
 	// count feeds the above/below flip decision. Extracted so the two flyouts do
@@ -249,6 +249,11 @@ export function SessionContextMenu({
 			style={{
 				left,
 				top,
+				// A menu taller than the viewport pins to the top edge and runs off
+				// the bottom; the container is overflow-hidden, so those items are
+				// simply unreachable. Scroll instead of clipping.
+				maxHeight,
+				overflowY: 'auto',
 				opacity: ready ? 1 : 0,
 				backgroundColor: theme.colors.bgSidebar,
 				borderColor: theme.colors.border,

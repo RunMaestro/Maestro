@@ -40,7 +40,10 @@ import {
 	browserTabFocusFields,
 	terminalTabFocusFields,
 	toggleReadOnlyModeFields,
+	permissionModeFields,
+	nextPermissionMode,
 	cycleShowThinkingFields,
+	setShowThinkingFields,
 } from './focusFields';
 import {
 	groupFocusFields,
@@ -59,7 +62,10 @@ export {
 	browserTabFocusFields,
 	terminalTabFocusFields,
 	toggleReadOnlyModeFields,
+	permissionModeFields,
+	nextPermissionMode,
 	cycleShowThinkingFields,
+	setShowThinkingFields,
 };
 export { groupFocusFields, resolveFocusedPaneTabRef, findGroupPaneForTab };
 

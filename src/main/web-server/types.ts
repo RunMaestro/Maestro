@@ -6,6 +6,7 @@
 import type { AutoRunBroadcastState } from '../../shared/autoRunBroadcast';
 import type { DesktopTabEntry } from '../../shared/desktopTabs';
 import type { UsageStats } from '../../shared/types';
+import type { ToastClickAction } from '../../shared/toastClickAction';
 import type { WebSocket } from 'ws';
 import type { Theme } from '../../shared/theme-types';
 import type { Shortcut } from '../../shared/shortcut-types';
@@ -329,15 +330,17 @@ export type CloseTabCallback = (sessionId: string, tabId: string) => Promise<boo
 export interface RenameTabResult {
 	success: boolean;
 	error?: string;
+	unconfirmed?: boolean;
 }
 
 export function normalizeRenameTabResult(result: unknown): RenameTabResult {
 	if (typeof result === 'boolean') return { success: result };
 	if (result && typeof result === 'object' && 'success' in result) {
-		const candidate = result as { success?: unknown; error?: unknown };
+		const candidate = result as { success?: unknown; error?: unknown; unconfirmed?: unknown };
 		return {
 			success: candidate.success === true,
 			...(typeof candidate.error === 'string' ? { error: candidate.error } : {}),
+			...(candidate.unconfirmed === true ? { unconfirmed: true } : {}),
 		};
 	}
 	return { success: false, error: 'Invalid rename tab response' };
@@ -681,14 +684,11 @@ export type NotifyToastKind = 'success' | 'info' | 'warning' | 'error';
 export type NotifyCenterFlashVariant = 'success' | 'info' | 'warning' | 'error';
 
 /**
- * Data-driven click intent for an externally-fired toast. Mirrors
- * `ToastClickAction` in `renderer/stores/notificationStore.ts` - the only
+ * Data-driven click intent for an externally-fired toast. Alias of the
+ * canonical `ToastClickAction` (`shared/toastClickAction.ts`) - the only
  * subset that survives serialization across the IPC bridge.
  */
-export type NotifyToastClickAction =
-	| { kind: 'jump-session'; sessionId: string; tabId?: string }
-	| { kind: 'open-file'; sessionId: string; path: string }
-	| { kind: 'open-url'; url: string };
+export type NotifyToastClickAction = ToastClickAction;
 
 export interface NotifyToastParams {
 	title: string;

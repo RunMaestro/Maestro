@@ -347,7 +347,7 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	},
 	fileExplorerIconTheme: {
 		description:
-			'Icon theme for the file explorer sidebar. Options: rich (default, Material Icon Theme style) or default.',
+			'Icon theme for the file explorer sidebar. Options: rich (default, Material Icon Theme style) or flat.',
 		type: 'string',
 		default: 'rich',
 		category: 'appearance',

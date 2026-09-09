@@ -293,7 +293,7 @@ Cue is configured via a `.maestro/cue.yaml` file placed inside the `.maestro/` d
 
 ## Event Types
 
-Cue supports nine event types that trigger subscriptions:
+Cue supports eleven event types that trigger subscriptions:
 
 | Event Type            | Trigger                             | Key Fields                        |
 | --------------------- | ----------------------------------- | --------------------------------- |
@@ -305,6 +305,7 @@ Cue supports nine event types that trigger subscriptions:
 | `task.pending`        | Unchecked markdown tasks found      | `watch` (glob pattern)            |
 | `github.pull_request` | New PR opened on GitHub             | `repo` (optional)                 |
 | `github.issue`        | New issue opened on GitHub          | `repo` (optional)                 |
+| `github.label`        | A label lands on a PR or issue      | `gh_label_target`, `gh_labels`    |
 | `cli.trigger`         | Manual trigger via `maestro-cli`    | -                                 |
 
 See [Event Types](./maestro-cue-events) for detailed documentation and examples for each type.

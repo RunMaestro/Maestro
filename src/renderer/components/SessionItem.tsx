@@ -20,6 +20,7 @@ import { WindowBadge } from './SessionList/WindowBadge';
 import { PluginUiItemsSlot } from './plugins/PluginUiItemsSlot';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useSessionHasActiveOutage } from '../stores/retryStore';
+import { useSessionIsBeingConsulted } from '../stores/crossAgentInFlightStore';
 import { usePhoneLayout } from '../hooks/ui/useViewportBreakpoint';
 import { COLORBLIND_STATUS_COLORS } from '../constants/colorblindPalettes';
 import { getConnectingColor } from '../utils/theme';
@@ -52,6 +53,9 @@ export function hasNoClaudeProviderSession(session: Session): boolean {
  *
  * Special cases:
  * - `isInBatch`: always warning + pulse (Auto Run takes precedence over agent state)
+ * - `isBeingConsulted`: a cross-agent `@mention` runs under a synthetic process
+ *   id and a hidden tab, so it never reaches `session.state` - without this the
+ *   agent draws a green "Ready" dot for the whole time it is working
  * - Claude Code with no tab bound to a provider session: hollow dot signal
  */
 export function getEnhancedStatusColor(
@@ -59,7 +63,8 @@ export function getEnhancedStatusColor(
 	theme: Theme,
 	isInBatch: boolean,
 	colorBlindMode: boolean = false,
-	hasActiveOutage: boolean = false
+	hasActiveOutage: boolean = false,
+	isBeingConsulted: boolean = false
 ): { color: string; animate: boolean; label: string } {
 	const success = colorBlindMode ? COLORBLIND_STATUS_COLORS.success : theme.colors.success;
 	const warning = colorBlindMode ? COLORBLIND_STATUS_COLORS.warning : theme.colors.warning;
@@ -77,6 +82,16 @@ export function getEnhancedStatusColor(
 
 	if (isInBatch) {
 		return { color: warning, animate: true, label: 'Auto Run active' };
+	}
+
+	// Ranked ABOVE the hollow-dot signal on purpose. A consult spawns into a tab
+	// that has no provider session of its own until the agent answers, and for an
+	// agent the user has never opened there is no other bound tab either - so the
+	// unbound check would paint a dim, static dot over exactly the case this
+	// exists to show. Ranked BELOW the agent's own `busy`, which keeps its more
+	// specific "Thinking" / "Running command" label; both draw the same dot.
+	if (isBeingConsulted && session.state !== 'busy') {
+		return { color: warning, animate: true, label: 'Answering a consult' };
 	}
 
 	if (hasNoClaudeProviderSession(session)) {
@@ -268,14 +283,18 @@ export const SessionItem = memo(function SessionItem({
 	// Claude Code agents that haven't bound to a provider session yet. A stuck
 	// Agent Resilience outage overrides to pulsing orange (needs attention).
 	const hasActiveOutage = useSessionHasActiveOutage(session.id);
+	// A cross-agent consult is invisible to `session.state` by design, so the dot
+	// asks the in-flight store directly.
+	const isBeingConsulted = useSessionIsBeingConsulted(session.id);
 	const statusInfo = getEnhancedStatusColor(
 		session,
 		theme,
 		isInBatch,
 		colorBlindMode,
-		hasActiveOutage
+		hasActiveOutage,
+		isBeingConsulted
 	);
-	const isDisconnected = !isInBatch && hasNoClaudeProviderSession(session);
+	const isDisconnected = !isInBatch && !isBeingConsulted && hasNoClaudeProviderSession(session);
 
 	// Determine container styling based on variant
 	const getContainerClassName = () => {

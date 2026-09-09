@@ -439,8 +439,6 @@ function MaestroConsoleInner() {
 	const settings = useSettings();
 	const {
 		conductorProfile,
-		fontFamily,
-		fontSize,
 		enterToSendAI,
 		setEnterToSendAI,
 		enterToSendAIExpanded,

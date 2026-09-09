@@ -171,6 +171,7 @@ export function handleRenameTab(
 		.renameTab(sessionId, tabId, newName || '')
 		.then((result) => {
 			const renameResult = normalizeRenameTabResult(result);
+			if (renameResult.unconfirmed) return;
 			ctx.send(client, {
 				type: 'rename_tab_result',
 				success: renameResult.success,

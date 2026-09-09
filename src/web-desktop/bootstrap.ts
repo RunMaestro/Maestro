@@ -12,6 +12,7 @@
 
 import { registerServiceWorker } from '../web/utils/serviceWorker';
 import { installLoadFailureHandler, markBooted } from './loadFailure';
+import { installStandaloneStatusBarInset } from '../renderer/utils/standaloneStatusBar';
 
 // Take over the failure policy from index.html's inline listeners as early as
 // possible, so a stale hashed chunk auto-reloads instead of tearing down the
@@ -65,6 +66,11 @@ if (!(globalThis as Record<string, unknown>).global) {
 // rules stay inert there. Set before the renderer boots so the very first paint
 // already matches.
 document.documentElement.dataset.runtime = 'web-desktop';
+
+// Home-screen web apps on iOS: publish the status bar height that WebKit stopped
+// reporting through env() so the shell can clear the bar (see the module). Set
+// before the renderer boots for the same reason as the runtime marker above.
+installStandaloneStatusBarInset(window);
 
 interface WebDesktopBootstrapDependencies {
 	preload: () => Promise<unknown>;

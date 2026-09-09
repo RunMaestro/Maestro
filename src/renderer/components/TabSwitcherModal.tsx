@@ -396,8 +396,10 @@ export function TabSwitcherModal({
 
 	useModalLayer(MODAL_PRIORITIES.TAB_SWITCHER, 'Tab Switcher', () => onCloseRef.current());
 
-	// Focus input on mount
-	useFocusOnMount(inputRef);
+	// Focus input on mount - but not on a phone, where raising the keyboard
+	// covers the bottom half of the full-screen switcher and buries the tab list
+	// the user opened it to scroll through. Tapping the field still filters.
+	useFocusOnMount(inputRef, undefined, !phone);
 
 	// On mount: sync any named tabs to the origins store, then load named sessions
 	// This ensures tabs that were named before persistence was added get saved
@@ -774,15 +776,26 @@ export function TabSwitcherModal({
 				tabIndex={-1}
 				className={
 					phone
-						? 'relative h-full w-full flex flex-col outline-none select-none'
+						? 'relative w-full flex flex-col outline-none select-none'
 						: 'relative rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none select-none'
 				}
 				style={
 					phone
 						? {
 								backgroundColor: theme.colors.bgActivity,
-								paddingTop: 'env(safe-area-inset-top)',
+								// `--maestro-top-inset`, not raw `env()`: an iOS home-screen
+								// web app can report that inset as 0 and shorten the viewport
+								// instead, which puts this header inside the system status bar
+								// layer where it is dimmed and swallows taps. The variable is
+								// the max() of `env()` and the measured shortfall.
+								paddingTop: 'var(--maestro-top-inset, 0px)',
 								paddingBottom: 'env(safe-area-inset-bottom)',
+								// Sized to the VISIBLE viewport rather than inheriting the
+								// overlay's full height: this surface autofocuses nothing on a
+								// phone now, but the user can still tap the filter field, and
+								// the keyboard slides OVER a layout-viewport-sized sheet
+								// instead of shrinking it - which buries the tab list.
+								height: 'var(--maestro-viewport-height, 100dvh)',
 							}
 						: {
 								...resizableModal.style,

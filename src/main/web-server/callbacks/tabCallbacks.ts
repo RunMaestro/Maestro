@@ -214,6 +214,7 @@ export function registerTabCallbacks(
 					settle({
 						success: false,
 						error: 'The desktop did not confirm the rename; it may still be applying',
+						unconfirmed: true,
 					});
 				}, RENAME_CONFIRMATION_RELEASE_MS);
 			});

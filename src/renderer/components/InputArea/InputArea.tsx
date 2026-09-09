@@ -714,6 +714,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 							effortMenuOpen={effortMenuOpen}
 							setEffortMenuOpen={setEffortMenuOpen}
 							effortMenuRef={effortMenuRef}
+							processInput={processInput}
 						/>
 					</div>
 					{/* Context Warning Sash - AI mode only, appears below input when context usage is high */}
@@ -730,11 +731,17 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 					)}
 				</div>
 
-				<NotificationSendControls
-					theme={theme}
-					isTerminalMode={isTerminalMode}
-					processInput={processInput}
-				/>
+				{/* Phone: this column is gone. The notification bell opens a settings
+				    popover that has no business on a 390px composer, and send has moved
+				    into the toolbar row (see ToolbarControls' phone branch) so the
+				    composer gets the full width it needs to show what is being typed. */}
+				{!phone && (
+					<NotificationSendControls
+						theme={theme}
+						isTerminalMode={isTerminalMode}
+						processInput={processInput}
+					/>
+				)}
 			</div>
 		</div>
 	);

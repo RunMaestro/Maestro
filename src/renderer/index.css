@@ -1421,8 +1421,12 @@ svg.wand-profiling-active path:nth-child(8) {
 	   would otherwise silently defeat this phone breakpoint override. */
 	width: 100vw !important;
 	max-width: 100vw !important;
-	height: 100dvh !important;
-	max-height: 100dvh !important;
+	height: calc(
+		100dvh - var(--maestro-top-inset, 0px) - env(safe-area-inset-bottom, 0px)
+	) !important;
+	max-height: calc(
+		100dvh - var(--maestro-top-inset, 0px) - env(safe-area-inset-bottom, 0px)
+	) !important;
 	border-radius: 0;
 	border-width: 0;
 }
@@ -1786,6 +1790,51 @@ html[data-runtime='web-desktop'] .maestro-app-shell {
 }
 
 /*
+ * Home-screen web apps on iOS (Add to Home Screen, `black-translucent` status
+ * bar). Two things went wrong there, and both surfaced on the first RC that
+ * made mobile connectivity work:
+ *
+ * 1. The page extends under the status bar, and iOS 26 draws a frosted status
+ *    bar layer over whatever sits there and swallows taps in that band. Nothing
+ *    applied env(safe-area-inset-top), so the Main Panel header, hamburger
+ *    included, sat inside it: dimmed, blurred, untappable. The left-edge swipe
+ *    was the only way to the menu.
+ * 2. The roots (html, body, #root) were `height: 100%`, which resolves to the
+ *    SMALL viewport (100svh, 812pt on an iPhone 16 Pro) while the shell is
+ *    100dvh (874pt). With overflow hidden on the roots, the shell was clipped
+ *    at the status-bar line and a status-bar-tall band of the boot background
+ *    showed under the composer. Measured on the iOS 26.5 simulator.
+ *
+ * --maestro-top-inset is env() where WebKit reports it, and the JS-measured bar
+ * height where it does not (installStandaloneStatusBarInset: WebKit bug 301994
+ * reports env() as 0 and shortens the viewport instead). Browser-mode Safari,
+ * desktop browsers and Electron report 0 for both, so every rule here is inert
+ * outside a home-screen web app.
+ */
+html[data-runtime='web-desktop'] {
+	--maestro-top-inset: max(env(safe-area-inset-top, 0px), var(--maestro-status-bar-inset, 0px));
+}
+html[data-runtime='web-desktop'],
+html[data-runtime='web-desktop'] body,
+html[data-runtime='web-desktop'] #root {
+	height: 100vh;
+	height: 100dvh;
+}
+html[data-runtime='web-desktop'] .maestro-app-shell {
+	padding-top: var(--maestro-top-inset, 0px);
+}
+/* The floating drawers are position: fixed at top: 0, outside the shell's padding. */
+html[data-runtime='web-desktop'][data-bp='xs']
+	[data-panel='left'][data-collapsed='false'][data-hidden='false'],
+html[data-runtime='web-desktop'][data-bp='sm']
+	[data-panel='left'][data-collapsed='false'][data-hidden='false'],
+html[data-runtime='web-desktop'][data-bp='xs'] [data-panel='right'],
+html[data-runtime='web-desktop'][data-bp='sm'] [data-panel='right'] {
+	padding-top: var(--maestro-top-inset, 0px);
+	padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/*
  * Smooth momentum scrolling on scrollable containers (Tailwind overflow
  * utilities). `-webkit-overflow-scrolling` is an iOS-only property and is
  * silently ignored everywhere else.
@@ -1914,17 +1963,15 @@ html[data-runtime='web-desktop'] .session-row {
 }
 
 /*
- * Tab action sheet (TabOverlayPortal on a phone). The menu CONTENT inside is
- * the very same element the desktop hover popover shows; these rules restyle
- * it for a finger without the five menu components knowing which shell they
- * are in. `!important` because the menus set their width, borders, and radius
- * as inline styles for the anchored shape.
+ * Bottom sheet chrome, shared by every caller of <PhoneBottomSheet> (the tab
+ * action menu, the composer options sheet). The scrim and the rise animation
+ * belong to the shell; what each caller adds is the styling of its own body.
  */
-.maestro-tab-sheet {
+.maestro-phone-sheet {
 	background: rgba(0, 0, 0, 0.45);
 	animation: maestro-fade-in 150ms ease;
 }
-.maestro-tab-sheet__panel {
+.maestro-phone-sheet__panel {
 	animation: maestro-sheet-up 180ms ease-out;
 }
 @keyframes maestro-sheet-up {
@@ -1937,6 +1984,14 @@ html[data-runtime='web-desktop'] .session-row {
 		opacity: 1;
 	}
 }
+/*
+ * Tab action sheet body. The menu CONTENT inside is the very same element the
+ * desktop hover popover shows; these rules restyle it for a finger without the
+ * five menu components knowing which shell they are in. `!important` because
+ * the menus set their width, borders, and radius as inline styles for the
+ * anchored shape. Scoped to the TAB sheet on purpose - a sheet whose content
+ * was written for a phone in the first place must not be flattened this way.
+ */
 .maestro-tab-sheet__body > * {
 	min-width: 0 !important;
 	max-width: none !important;
@@ -1965,6 +2020,36 @@ html[data-runtime='web-desktop'][data-bp='xs'] [data-shortcut-hint] {
 }
 
 /*
+ * Readouts leave the main panel header on a phone: the session cost pill, the
+ * context-remaining percentage, and the inert LOCAL badge. The container-query
+ * rungs above drop these too, but only below 350px / 400px, and a phone header
+ * is the full ~390px viewport - so every rung stayed unfired while the row was
+ * already crowded enough to clip the agent name and overlap the badges.
+ *
+ * All three are readouts, not controls, which is what makes them the ones to
+ * drop: cost and context are still on the Usage Dashboard and the context
+ * timeline panel, and the LOCAL badge has no behavior at all (see the pill's
+ * hover handlers in MainPanelHeader). What stays is everything that DOES
+ * something - the sidebar toggle, the git pill's icon and its menu, the tab
+ * strip, and the panel buttons.
+ */
+html[data-runtime='web-desktop'][data-bp='xs'] .header-cost-widget,
+html[data-runtime='web-desktop'][data-bp='xs'] .header-context-widget,
+html[data-runtime='web-desktop'][data-bp='xs'] .header-local-badge {
+	display: none;
+}
+
+/*
+ * The pill wrapper keeps its `gap-2` after the badge inside it goes, which
+ * leaves 8px of empty space between the agent name and the next control. It is
+ * only ever empty once its one child is hidden, so `:empty` retires it without
+ * anything having to know which branch rendered.
+ */
+html[data-runtime='web-desktop'][data-bp='xs'] .header-git-pill:empty {
+	display: none;
+}
+
+/*
  * Modals take the whole screen. Every resizable modal stamps
  * `data-modal-resize-key` (the palette, Settings, the Usage Dashboard,
  * Director's Notes, Process Monitor, file search, ...) and sizes itself to a
@@ -1975,12 +2060,28 @@ html[data-runtime='web-desktop'][data-bp='xs'] [data-shortcut-hint] {
  * rename) pass no resize key and keep their natural size.
  */
 html[data-runtime='web-desktop'][data-bp='xs'] .modal-overlay {
-	padding: 0 !important;
+	/* The status bar band and the home indicator stay outside the modal. */
+	padding: var(--maestro-top-inset, 0px) 0 env(safe-area-inset-bottom, 0px) 0 !important;
 }
 html[data-runtime='web-desktop'][data-bp='xs'] [data-modal-resize-key] {
 	width: 100vw !important;
 	width: 100dvw !important;
-	height: 100dvh !important;
+	/*
+	 * Sized to what the user can SEE, not to the layout viewport. On iOS the
+	 * on-screen keyboard slides over the page instead of shrinking it, so
+	 * `100dvh` keeps a full-screen modal at full height with its bottom ~45%
+	 * behind the keys. Both search surfaces autofocus their input, so the
+	 * keyboard is up from the first frame and the results list is born buried:
+	 * typing filters, but the rows the user is trying to scroll through are
+	 * under the keyboard. `--maestro-viewport-height` is `visualViewport.height`,
+	 * republished on every keyboard open and close (standaloneStatusBar.ts);
+	 * `100dvh` is the fallback for a browser with no visualViewport, where the
+	 * two are the same number anyway.
+	 */
+	height: calc(
+		var(--maestro-viewport-height, 100dvh) - var(--maestro-top-inset, 0px) -
+			env(safe-area-inset-bottom, 0px)
+	) !important;
 	max-width: none !important;
 	max-height: none !important;
 	border-radius: 0 !important;
@@ -2101,7 +2202,7 @@ html[data-gloss='max'] .chrome-raised-active {
 /* ============================================================================
    VIBE MODE
 
-   The five vibe themes (Pedurple, Dre Synth, InQuest, Winamp, Maestro's
+   The four vibe themes (Pedurple, Dre Synth, Winamp, Maestro's
    Choice) declare `mode: 'vibe'` in `src/shared/themes.ts`, which
    `useThemeStyles` publishes as `<html data-theme-mode='vibe'>`. Until now the
    only mode-keyed CSS was the light-theme opt-out below, so a vibe theme

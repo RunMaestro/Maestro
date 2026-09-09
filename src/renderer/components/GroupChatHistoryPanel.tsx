@@ -238,6 +238,10 @@ function GroupChatActivityGraph({
 					style={{
 						left: contextMenuPos.left,
 						top: contextMenuPos.top,
+						// See useContextMenuPosition: a menu taller than the viewport
+						// pins to the top edge and runs off the bottom, unreachable.
+						maxHeight: contextMenuPos.maxHeight,
+						overflowY: 'auto',
 						opacity: contextMenuPos.ready ? 1 : 0,
 						backgroundColor: theme.colors.bgSidebar,
 						borderColor: theme.colors.border,

@@ -1751,11 +1751,23 @@ notify
 	.option('--action-label <text>', 'Label for --action-url (defaults to the URL itself)')
 	.option(
 		'--open-file <path>',
-		'On click, switch to the agent and open this file in its File Preview pane (requires --agent; mutually exclusive with --open-url)'
+		'On click, switch to the agent and open this file in its File Preview pane (requires --agent; mutually exclusive with the other --open-* flags)'
+	)
+	.option(
+		'--open-terminal [tab]',
+		'On click, switch to the agent and focus a terminal tab. Optional value is a tab id or name; bare uses the active terminal tab (requires --agent)'
+	)
+	.option(
+		'--open-browser <url>',
+		'On click, open this URL in a new in-app browser tab on the agent (requires --agent)'
+	)
+	.option(
+		'--open-browser-tab <id>',
+		'On click, focus this existing in-app browser tab (the id `open-browser` printed; requires --agent)'
 	)
 	.option(
 		'--open-url <url>',
-		'On click, open this URL in the system browser (mutually exclusive with --open-file)'
+		'On click, open this URL in the system browser (opens outside Maestro; use --open-browser for an in-app tab)'
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(notifyToast);

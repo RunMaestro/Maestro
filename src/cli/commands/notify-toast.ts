@@ -2,6 +2,7 @@
 
 import { withMaestroClient } from '../services/maestro-client';
 import { resolveAgentId } from '../services/storage';
+import type { ToastClickAction } from '../../shared/toastClickAction';
 
 interface NotifyToastOptions {
 	color?: string;
@@ -14,6 +15,9 @@ interface NotifyToastOptions {
 	actionLabel?: string;
 	openFile?: string;
 	openUrl?: string;
+	openTerminal?: string | boolean;
+	openBrowser?: string;
+	openBrowserTab?: string;
 	json?: boolean;
 }
 
@@ -105,25 +109,66 @@ export async function notifyToast(
 	}
 
 	// Build the clickAction (data-driven click intent that survives the IPC
-	// bridge). At most one of --open-file / --open-url can be set; both fall
-	// back to the simpler --agent jump-session behavior when omitted.
-	let clickAction:
-		| { kind: 'jump-session'; sessionId: string; tabId?: string }
-		| { kind: 'open-file'; sessionId: string; path: string }
-		| { kind: 'open-url'; url: string }
-		| undefined;
+	// bridge). The --open-* flags are mutually exclusive; with none of them set
+	// the toast falls back to the simpler --agent jump-session behavior.
+	let clickAction: ToastClickAction | undefined;
 	const openFile = options.openFile && options.openFile.length > 0 ? options.openFile : undefined;
 	const openUrl = options.openUrl && options.openUrl.length > 0 ? options.openUrl : undefined;
-	if (openFile && openUrl) {
-		console.error('Error: --open-file and --open-url are mutually exclusive');
+	// `--open-terminal` takes an optional tab ref: bare means "the agent's active
+	// terminal tab, or its only one", matching `send-terminal`'s --tab resolution.
+	const openTerminal =
+		options.openTerminal === undefined
+			? undefined
+			: typeof options.openTerminal === 'string' && options.openTerminal.length > 0
+				? options.openTerminal
+				: '';
+	const openBrowser =
+		options.openBrowser && options.openBrowser.length > 0 ? options.openBrowser : undefined;
+	const openBrowserTab =
+		options.openBrowserTab && options.openBrowserTab.length > 0
+			? options.openBrowserTab
+			: undefined;
+
+	const chosen = [
+		openFile !== undefined && '--open-file',
+		openUrl !== undefined && '--open-url',
+		openTerminal !== undefined && '--open-terminal',
+		openBrowser !== undefined && '--open-browser',
+		openBrowserTab !== undefined && '--open-browser-tab',
+	].filter((flag): flag is string => typeof flag === 'string');
+	if (chosen.length > 1) {
+		console.error(`Error: ${chosen.join(', ')} are mutually exclusive`);
 		process.exit(1);
 	}
+
 	if (openFile) {
 		if (!sessionId) {
 			console.error('Error: --open-file requires --agent (file preview is scoped to an agent)');
 			process.exit(1);
 		}
 		clickAction = { kind: 'open-file', sessionId, path: openFile };
+	} else if (openTerminal !== undefined) {
+		if (!sessionId) {
+			console.error(
+				'Error: --open-terminal requires --agent (a terminal tab is scoped to an agent)'
+			);
+			process.exit(1);
+		}
+		clickAction = {
+			kind: 'open-terminal',
+			sessionId,
+			tabRef: openTerminal.length > 0 ? openTerminal : undefined,
+		};
+	} else if (openBrowser || openBrowserTab) {
+		if (!sessionId) {
+			const flag = openBrowser ? '--open-browser' : '--open-browser-tab';
+			console.error(`Error: ${flag} requires --agent (a browser tab is scoped to an agent)`);
+			process.exit(1);
+		}
+		// A tab id (what `open-browser` hands back) focuses that tab; a URL opens
+		// a new in-app browser tab. Kept as two flags so neither has to be guessed
+		// from the value's shape.
+		clickAction = { kind: 'open-browser', sessionId, url: openBrowser, tabId: openBrowserTab };
 	} else if (openUrl) {
 		clickAction = { kind: 'open-url', url: openUrl };
 	}

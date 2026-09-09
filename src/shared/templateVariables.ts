@@ -247,6 +247,12 @@ export interface TemplateContext {
 		ghBaseBranch?: string;
 		ghAssignees?: string;
 		ghMergedAt?: string;
+		/** The label that was just added (github.label only). */
+		ghLabel?: string;
+		/** Who added the label (github.label only). */
+		ghLabelActor?: string;
+		/** ISO timestamp of the label add (github.label only). */
+		ghLabeledAt?: string;
 		/**
 		 * Comments posted to this PR/issue since the previous Cue fire,
 		 * formatted as a single human-readable block. Empty on the initial
@@ -330,6 +336,21 @@ export const TEMPLATE_VARIABLES = [
 	{
 		variable: '{{CUE_GH_IS_RETRIGGER}}',
 		description: '"true" if this fire is a re-trigger (vs. initial discovery)',
+		cueOnly: true,
+	},
+	{
+		variable: '{{CUE_GH_LABEL}}',
+		description: 'The label that was just added (github.label)',
+		cueOnly: true,
+	},
+	{
+		variable: '{{CUE_GH_LABEL_ACTOR}}',
+		description: 'Who added the label (github.label)',
+		cueOnly: true,
+	},
+	{
+		variable: '{{CUE_GH_LABELED_AT}}',
+		description: 'When the label was added (github.label)',
 		cueOnly: true,
 	},
 	{ variable: '{{CUE_GH_LABELS}}', description: 'Labels (comma-separated)', cueOnly: true },
@@ -621,6 +642,9 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		CUE_GH_BASE_BRANCH: context.cue?.ghBaseBranch || '',
 		CUE_GH_ASSIGNEES: context.cue?.ghAssignees || '',
 		CUE_GH_MERGED_AT: context.cue?.ghMergedAt || '',
+		CUE_GH_LABEL: context.cue?.ghLabel || '',
+		CUE_GH_LABEL_ACTOR: context.cue?.ghLabelActor || '',
+		CUE_GH_LABELED_AT: context.cue?.ghLabeledAt || '',
 		CUE_NEW_COMMENTS: context.cue?.ghNewComments || '',
 		CUE_GH_IS_RETRIGGER: context.cue?.ghIsRetrigger || '',
 		CUE_GH_RETRIGGER_COUNT: context.cue?.ghRetriggerCount || '',

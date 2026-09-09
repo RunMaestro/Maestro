@@ -140,10 +140,80 @@ describe('useDebouncedPersistence', () => {
 		vi.useFakeTimers();
 		vi.clearAllMocks();
 		resetStore(useSessionStore);
+		// The hook refuses to write a tree that was never read from disk. Every
+		// test here is about what happens AFTER a successful read, so model one.
+		useSessionStore.setState({ sessionsReadOk: true });
 	});
 
 	afterEach(() => {
 		vi.useRealTimers();
+	});
+
+	// -----------------------------------------------------------------------
+	// Regression: never write a session tree that was never read
+	// -----------------------------------------------------------------------
+	//
+	// sessions:getAll answers [] both for a new install and for a registry it
+	// could not read, and the restoration hook sets the tree to [] on failure.
+	// initialLoadComplete is set in a finally, so it is true either way, and
+	// flushNow with a snapshot skips it altogether. persistInternal is the one
+	// gate every flush path shares, so the refusal lives there.
+	describe('sessionsReadOk gate', () => {
+		it('does not persist on the debounce timer when the read never came back', () => {
+			useSessionStore.setState({ sessionsReadOk: false });
+			const initialLoadRef = makeInitialLoadRef(true);
+			renderPersistence(initialLoadRef);
+
+			act(() => {
+				seedSessions([makeSession()]);
+			});
+			act(() => {
+				vi.advanceTimersByTime(5000);
+			});
+
+			expect(window.maestro.sessions.setAll).not.toHaveBeenCalled();
+			expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
+		});
+
+		it('does not persist on flushNow with a snapshot when the read never came back', () => {
+			useSessionStore.setState({ sessionsReadOk: false });
+			const initialLoadRef = makeInitialLoadRef(true);
+			const hook = renderPersistence(initialLoadRef);
+
+			// The snapshot form is the path that bypasses initialLoadComplete.
+			act(() => {
+				hook.result.current.flushNow([makeSession()]);
+			});
+
+			expect(window.maestro.sessions.setAll).not.toHaveBeenCalled();
+		});
+
+		it('does not persist on unmount when the read never came back', () => {
+			useSessionStore.setState({ sessionsReadOk: false });
+			const initialLoadRef = makeInitialLoadRef(true);
+			const hook = renderPersistence(initialLoadRef);
+
+			act(() => {
+				seedSessions([makeSession()]);
+			});
+			hook.unmount();
+
+			expect(window.maestro.sessions.setAll).not.toHaveBeenCalled();
+		});
+
+		it('persists an empty tree that WAS read (a new install)', () => {
+			useSessionStore.setState({ sessionsReadOk: true });
+			const initialLoadRef = makeInitialLoadRef(true);
+			const hook = renderPersistence(initialLoadRef);
+
+			// The gate is "did the read succeed", never "was it non-empty" -
+			// otherwise a fresh user could never save their first agent.
+			act(() => {
+				hook.result.current.flushNow([]);
+			});
+
+			expect(window.maestro.sessions.setAll).toHaveBeenCalledWith([]);
+		});
 	});
 
 	// -----------------------------------------------------------------------
@@ -1325,15 +1395,16 @@ describe('useDebouncedPersistence', () => {
 				expect(window.maestro.sessions.setAll).not.toHaveBeenCalled();
 			});
 
-			it('should persist after initialLoadComplete becomes true', () => {
+			it('should use the loaded tree as the first incremental baseline', () => {
 				const session = makeSession();
+				const secondSession = makeSession({ id: 'second-session' });
 				const initialLoadRef = makeInitialLoadRef(false);
 
 				renderPersistence(initialLoadRef);
 
 				// Session change while load incomplete must not persist
 				act(() => {
-					seedSessions([session]);
+					seedSessions([session, secondSession]);
 				});
 				act(() => {
 					vi.advanceTimersByTime(3000);
@@ -1342,7 +1413,7 @@ describe('useDebouncedPersistence', () => {
 
 				// Mark initial load complete, then mutate sessions to schedule persist
 				initialLoadRef.current = true;
-				const updatedSession = makeSession({ id: session.id, name: 'Updated' });
+				const updatedSession = { ...session, name: 'Updated' };
 				act(() => {
 					seedSessions([updatedSession]);
 				});
@@ -1351,7 +1422,65 @@ describe('useDebouncedPersistence', () => {
 					vi.advanceTimersByTime(2000);
 				});
 
-				expect(window.maestro.sessions.setAll).toHaveBeenCalled();
+				expect(window.maestro.sessions.setAll).not.toHaveBeenCalled();
+				expect(window.maestro.sessions.setMany).toHaveBeenCalledWith(
+					[expect.objectContaining({ id: session.id, name: 'Updated' })],
+					['second-session']
+				);
+			});
+
+			it('should persist untouched startup repairs on the first flush', () => {
+				const first = makeSession({ id: 'first', name: 'Stored First' });
+				const second = makeSession({ id: 'second', name: 'Stored Second' });
+				const initialLoadRef = makeInitialLoadRef(false);
+
+				renderPersistence(initialLoadRef);
+				act(() => {
+					seedSessions([first, second]);
+				});
+
+				const repairedFirst = { ...first, name: 'Repaired First' };
+				const repairedSecond = { ...second, name: 'Repaired Second' };
+				act(() => {
+					seedSessions([repairedFirst, repairedSecond]);
+				});
+
+				initialLoadRef.current = true;
+				const updatedFirst = { ...repairedFirst, state: 'busy' as const };
+				act(() => {
+					seedSessions([updatedFirst, repairedSecond]);
+				});
+				act(() => {
+					vi.advanceTimersByTime(2000);
+				});
+
+				expect(window.maestro.sessions.setMany).toHaveBeenCalledWith(
+					[
+						expect.objectContaining({ id: 'first', name: 'Repaired First' }),
+						expect.objectContaining({ id: 'second', name: 'Repaired Second' }),
+					],
+					[]
+				);
+			});
+
+			it('should preserve a deletion when the loaded tree predates the subscription', () => {
+				const first = makeSession({ id: 'first' });
+				const second = makeSession({ id: 'second' });
+				seedSessions([first, second]);
+
+				renderPersistence(makeInitialLoadRef(true));
+				act(() => {
+					seedSessions([first]);
+				});
+				act(() => {
+					vi.advanceTimersByTime(2000);
+				});
+
+				expect(window.maestro.sessions.setAll).not.toHaveBeenCalled();
+				expect(window.maestro.sessions.setMany).toHaveBeenCalledWith(
+					[expect.objectContaining({ id: 'first' })],
+					['second']
+				);
 			});
 		});
 

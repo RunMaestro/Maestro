@@ -1,5 +1,6 @@
-import React, { memo, useState } from 'react';
+import React, { memo, useCallback, useState } from 'react';
 import {
+	ArrowUp,
 	Brain,
 	Eye,
 	History,
@@ -26,8 +27,15 @@ import { updateSessionWith } from '../../../stores/sessionStore';
 import { captureException } from '../../../utils/sentry';
 import { isCoarsePointer } from '../../../utils/touch';
 import { useViewportBreakpoint } from '../../../hooks/ui';
+import { usePhoneLayout } from '../../../hooks/ui/useViewportBreakpoint';
+import {
+	nextPermissionMode,
+	permissionModeFields,
+	setShowThinkingFields,
+} from '../../../utils/tabHelpers';
 import { addStagedImageIfUnique } from '../utils/stagedImages';
 import { formatTerminalCwd } from '../utils/terminalPath';
+import { ComposerOptionsSheet } from './ComposerOptionsSheet';
 import { ModelEffortPills } from './ModelEffortPills';
 
 interface ToolbarControlsProps {
@@ -67,6 +75,12 @@ interface ToolbarControlsProps {
 	effortMenuOpen: boolean;
 	setEffortMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
 	effortMenuRef: React.RefObject<HTMLDivElement>;
+	/**
+	 * Send the composer's contents. Only used on a phone, where the send button
+	 * moves into this row (see the phone branch below); the desktop keeps it in
+	 * the column beside the composer.
+	 */
+	processInput?: () => void;
 }
 
 export const ToolbarControls = memo(function ToolbarControls({
@@ -102,11 +116,16 @@ export const ToolbarControls = memo(function ToolbarControls({
 	effortMenuOpen,
 	setEffortMenuOpen,
 	effortMenuRef,
+	processInput,
 }: ToolbarControlsProps) {
 	const isAiMode = session.inputMode === 'ai';
 	const { isNarrow: isNarrowViewport } = useViewportBreakpoint();
+	const phone = usePhoneLayout();
 	const [toolbarExpanded, setToolbarExpanded] = useState(false);
-	const showToggleGroup = !isNarrowViewport || toolbarExpanded;
+	const [optionsSheetOpen, setOptionsSheetOpen] = useState(false);
+	// On a phone every toggle moves into the options sheet, so the inline group
+	// never renders there however the "..." was last left.
+	const showToggleGroup = !phone && (!isNarrowViewport || toolbarExpanded);
 
 	// Voice dictation is a primary touch affordance, so it stays in the always-
 	// visible left action group (next to attach-image) rather than the collapsing
@@ -139,6 +158,199 @@ export const ToolbarControls = memo(function ToolbarControls({
 	const modelEffortHint = modelEffortShortcut?.keys.length
 		? `Try: ${formatShortcutKeys(modelEffortShortcut.keys)}`
 		: undefined;
+
+	const activeTabId = activeTab?.id;
+
+	// One hidden file input, rendered by BOTH the phone row and the desktop row.
+	// The attach button reaches it by element id, so a second copy would give two
+	// elements the same id and the click would resolve to whichever mounted first.
+	const imageFileInput = (
+		<input
+			id="image-file-input"
+			type="file"
+			accept="image/*"
+			multiple
+			className="hidden"
+			onChange={(e) => {
+				const files = Array.from(e.target.files || []);
+				files.forEach((file) => {
+					const reader = new FileReader();
+					reader.onload = (event) => {
+						if (event.target?.result) {
+							const imageData = event.target.result as string;
+							setStagedImages((prev) =>
+								addStagedImageIfUnique(prev, imageData, showFlashNotification)
+							);
+						}
+					};
+					reader.onerror = (event) => {
+						captureException(reader.error ?? event, {
+							extra: {
+								component: 'InputArea.ToolbarControls',
+								action: 'attachImage.readError',
+								fileName: file.name,
+								fileType: file.type,
+								fileSize: file.size,
+							},
+						});
+						showFlashNotification?.('Failed to attach image');
+					};
+					reader.onabort = (event) => {
+						captureException(new Error('Image attachment read aborted'), {
+							extra: {
+								component: 'InputArea.ToolbarControls',
+								action: 'attachImage.readAbort',
+								fileName: file.name,
+								fileType: file.type,
+								fileSize: file.size,
+								eventType: event.type,
+							},
+						});
+						showFlashNotification?.('Image attachment canceled');
+					};
+					reader.readAsDataURL(file);
+				});
+				e.target.value = '';
+			}}
+		/>
+	);
+
+	// The sheet NAMES a mode rather than stepping to the next one, so both
+	// writes go through the shared field patches instead of a second inline copy
+	// of "keep readOnlyMode and permissionMode in lockstep" / "clear the
+	// thinking logs when the mode goes off".
+	const handlePermissionModeChange = useCallback(
+		(mode: 'full' | 'standard' | 'readonly') => {
+			if (!activeTabId) return;
+			updateSessionWith(session.id, (s) => ({
+				...s,
+				aiTabs: s.aiTabs.map((t) =>
+					t.id === activeTabId ? { ...t, ...permissionModeFields(mode) } : t
+				),
+			}));
+		},
+		[session.id, activeTabId]
+	);
+
+	const handleThinkingModeChange = useCallback(
+		(mode: ThinkingMode) => {
+			if (!activeTabId) return;
+			updateSessionWith(session.id, (s) => ({
+				...s,
+				aiTabs: s.aiTabs.map((t) =>
+					t.id === activeTabId ? { ...t, ...setShowThinkingFields(t, mode) } : t
+				),
+			}));
+		},
+		[session.id, activeTabId]
+	);
+
+	// Phone: the row holds only what a thumb reaches for mid-sentence - attach an
+	// image, send, and the "..." that opens every other setting as a half-screen
+	// sheet. The prompt composer and the notification bell are dropped outright
+	// (both open surfaces of their own, neither belongs on a 390px composer),
+	// the model and effort pills move into the sheet, and the send button moves
+	// here from the column beside the composer so the three controls sit on one
+	// reachable line.
+	if (phone) {
+		return (
+			<>
+				<div className="flex min-w-0 items-center gap-1 px-2 pb-2 pt-1">
+					{isTerminalMode && (
+						<div
+							className="text-xs font-mono opacity-60 px-2 truncate min-w-0 flex-1"
+							style={{ color: theme.colors.textDim }}
+						>
+							{formatTerminalCwd(session)}
+						</div>
+					)}
+					{isAiMode && canAttachImages && (
+						<button
+							onClick={() => document.getElementById('image-file-input')?.click()}
+							className="flex h-9 w-9 items-center justify-center rounded opacity-70"
+							title="Attach Image"
+							aria-label="Attach Image"
+						>
+							<ImageIcon className="w-5 h-5" />
+						</button>
+					)}
+					{showVoiceButton && (
+						<button
+							type="button"
+							onClick={onToggleVoiceInput}
+							className={`flex h-9 w-9 items-center justify-center rounded transition-colors ${
+								isVoiceListening ? 'animate-pulse' : 'opacity-70'
+							}`}
+							style={
+								isVoiceListening
+									? { color: theme.colors.accent, backgroundColor: `${theme.colors.accent}20` }
+									: undefined
+							}
+							title={isVoiceListening ? 'Stop voice input' : 'Voice input'}
+							aria-label={isVoiceListening ? 'Stop voice input' : 'Start voice input'}
+							aria-pressed={!!isVoiceListening}
+						>
+							<Mic className="w-5 h-5" />
+						</button>
+					)}
+					{imageFileInput}
+					{/* Send sits in the MIDDLE, between the left actions and the "...", so
+					    it is the one control at the centre of the thumb's arc. */}
+					{processInput && (
+						<button
+							type="button"
+							onClick={() => processInput()}
+							className="mx-auto flex h-9 w-14 items-center justify-center rounded-lg shadow-sm transition-all"
+							style={{
+								backgroundColor: theme.colors.accent,
+								color: theme.colors.accentForeground,
+							}}
+							title={isTerminalMode ? 'Run command' : 'Send message'}
+							aria-label={isTerminalMode ? 'Run command' : 'Send message'}
+						>
+							<ArrowUp className="w-5 h-5" />
+						</button>
+					)}
+					<button
+						type="button"
+						onClick={() => setOptionsSheetOpen(true)}
+						className="flex h-9 w-9 items-center justify-center rounded-full transition-all opacity-70"
+						style={{ color: theme.colors.textDim, border: `1px solid ${theme.colors.border}` }}
+						title="More options"
+						aria-label="More options"
+						aria-haspopup="dialog"
+						aria-expanded={optionsSheetOpen}
+						data-testid="composer-options-button"
+					>
+						<MoreHorizontal className="w-5 h-5" />
+					</button>
+				</div>
+				{isAiMode && (
+					<ComposerOptionsSheet
+						open={optionsSheetOpen}
+						onClose={() => setOptionsSheetOpen(false)}
+						theme={theme}
+						agentId={session.toolType}
+						tabSaveToHistory={tabSaveToHistory}
+						onToggleTabSaveToHistory={onToggleTabSaveToHistory}
+						hasReadOnlyCapability={hasReadOnlyCapability}
+						hasStandardCapability={hasStandardCapability}
+						permissionMode={currentPermissionMode}
+						onPermissionModeChange={handlePermissionModeChange}
+						supportsThinking={supportsThinking}
+						tabShowThinking={tabShowThinking}
+						onThinkingModeChange={onToggleTabShowThinking ? handleThinkingModeChange : undefined}
+						currentModel={currentModel}
+						availableModels={availableModels}
+						onModelChange={onModelChange}
+						currentEffort={currentEffort}
+						availableEfforts={availableEfforts}
+						onEffortChange={onEffortChange}
+					/>
+				)}
+			</>
+		);
+	}
 
 	return (
 		<div className="flex min-w-0 flex-wrap items-center gap-1 px-2 pb-2 pt-1">
@@ -188,54 +400,7 @@ export const ToolbarControls = memo(function ToolbarControls({
 						<Mic className="w-4 h-4" />
 					</button>
 				)}
-				<input
-					id="image-file-input"
-					type="file"
-					accept="image/*"
-					multiple
-					className="hidden"
-					onChange={(e) => {
-						const files = Array.from(e.target.files || []);
-						files.forEach((file) => {
-							const reader = new FileReader();
-							reader.onload = (event) => {
-								if (event.target?.result) {
-									const imageData = event.target.result as string;
-									setStagedImages((prev) =>
-										addStagedImageIfUnique(prev, imageData, showFlashNotification)
-									);
-								}
-							};
-							reader.onerror = (event) => {
-								captureException(reader.error ?? event, {
-									extra: {
-										component: 'InputArea.ToolbarControls',
-										action: 'attachImage.readError',
-										fileName: file.name,
-										fileType: file.type,
-										fileSize: file.size,
-									},
-								});
-								showFlashNotification?.('Failed to attach image');
-							};
-							reader.onabort = (event) => {
-								captureException(new Error('Image attachment read aborted'), {
-									extra: {
-										component: 'InputArea.ToolbarControls',
-										action: 'attachImage.readAbort',
-										fileName: file.name,
-										fileType: file.type,
-										fileSize: file.size,
-										eventType: event.type,
-									},
-								});
-								showFlashNotification?.('Image attachment canceled');
-							};
-							reader.readAsDataURL(file);
-						});
-						e.target.value = '';
-					}}
-				/>
+				{imageFileInput}
 				<ModelEffortPills
 					isVisible={isAiMode}
 					theme={theme}
@@ -300,31 +465,11 @@ export const ToolbarControls = memo(function ToolbarControls({
 				)}
 				{isAiMode && hasReadOnlyCapability && (
 					<button
-						onClick={() => {
-							if (!activeTab) return;
-							// Cycle full -> standard -> readonly -> full. Agents without a
-							// working relay skip `standard` (full -> readonly -> full).
-							const nextMode: 'full' | 'standard' | 'readonly' =
-								currentPermissionMode === 'full'
-									? hasStandardCapability
-										? 'standard'
-										: 'readonly'
-									: currentPermissionMode === 'standard'
-										? 'readonly'
-										: 'full';
-							updateSessionWith(session.id, (s) => ({
-								...s,
-								aiTabs: s.aiTabs.map((t) =>
-									t.id === activeTab.id
-										? {
-												...t,
-												permissionMode: nextMode,
-												readOnlyMode: nextMode === 'readonly',
-											}
-										: t
-								),
-							}));
-						}}
+						onClick={() =>
+							handlePermissionModeChange(
+								nextPermissionMode(currentPermissionMode, hasStandardCapability)
+							)
+						}
 						className={`flex items-center gap-1.5 text-2xs px-2 py-1 rounded-full cursor-pointer transition-all whitespace-nowrap ${
 							currentPermissionMode === 'standard' ? 'opacity-40 hover:opacity-70' : ''
 						}`}

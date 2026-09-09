@@ -19,6 +19,11 @@ import {
 	getExplorerFileIcon,
 	getExplorerFolderIcon,
 } from '../../../renderer/utils/theme';
+import {
+	FILE_EXPLORER_ICON_THEMES,
+	isFileExplorerIconTheme,
+	normalizeFileExplorerIconTheme,
+} from '../../../renderer/utils/fileExplorerIcons/shared';
 import type { Theme, SessionState, FileChangeType } from '../../../renderer/types';
 import { blendColors } from '../../../shared/colorContrast';
 
@@ -496,12 +501,20 @@ describe('theme utilities', () => {
 	});
 
 	describe('explorer icon themes', () => {
-		it('returns the existing default Files pane icon theme by default', () => {
+		it('returns the flat Files pane icon theme by default', () => {
 			const { container } = render(getExplorerFileIcon('index.ts', mockTheme));
 			const icon = container.querySelector('svg');
 
 			expect(icon).toBeTruthy();
+			expect(icon?.getAttribute('data-file-explorer-icon-theme')).toBe('flat');
 			expect(container.querySelector('img')).toBeNull();
+		});
+
+		it('labels flat folder icons with the flat theme id', () => {
+			const { container } = render(getExplorerFolderIcon('src', false, mockTheme));
+			const icon = container.querySelector('svg');
+
+			expect(icon?.getAttribute('data-file-explorer-icon-theme')).toBe('flat');
 		});
 
 		it('returns rich file icons when the rich theme is selected', () => {
@@ -547,6 +560,30 @@ describe('theme utilities', () => {
 			expect(closedIcon).toBeTruthy();
 			expect(openIcon).toBeTruthy();
 			expect(closedIcon?.getAttribute('src')).not.toBe(openIcon?.getAttribute('src'));
+		});
+	});
+
+	describe('normalizeFileExplorerIconTheme', () => {
+		it('maps the pre-rename "default" id forward to flat', () => {
+			expect(normalizeFileExplorerIconTheme('default')).toBe('flat');
+		});
+
+		it('passes through every current theme id unchanged', () => {
+			for (const id of FILE_EXPLORER_ICON_THEMES) {
+				expect(normalizeFileExplorerIconTheme(id)).toBe(id);
+			}
+		});
+
+		it('returns null for values that are not a theme id', () => {
+			expect(normalizeFileExplorerIconTheme('neon')).toBeNull();
+			expect(normalizeFileExplorerIconTheme(undefined)).toBeNull();
+			expect(normalizeFileExplorerIconTheme(null)).toBeNull();
+			expect(normalizeFileExplorerIconTheme(3)).toBeNull();
+		});
+
+		it('does not make the legacy id valid for isFileExplorerIconTheme', () => {
+			expect(isFileExplorerIconTheme('default')).toBe(false);
+			expect(isFileExplorerIconTheme('flat')).toBe(true);
 		});
 	});
 });

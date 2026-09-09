@@ -30,6 +30,7 @@ import { gitService } from '../../services/git';
 import type { CrossAgentMentionPlan } from '../../services/crossAgentMentions';
 import { hasWorkAheadOfNewMessage } from '../../utils/executionQueue';
 import { probeSessionAiProcesses } from '../../services/process';
+import { isAgentAlreadyRunningError } from '../../../shared/processErrors';
 import { hasPendingRetry } from '../../stores/retryStore';
 import { resolveForceParallel } from '../../stores/settingsStore';
 import {
@@ -954,22 +955,40 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				const anySessionAiProcessActive = processState.anyActive;
 				const activeProcessStartTime = processState.earliestStartTime;
 
+				// The probe above is the ONLY await between the user's Enter and the
+				// busy-state write further down; everything in between is synchronous.
+				// So N sends parked on a stalled bridge all resume one at a time, and
+				// each still holds the `activeSession` snapshot taken BEFORE its await
+				// - which said idle for every one of them. All N therefore skipped
+				// this gate and all N called spawn: one won and main refused the rest
+				// with "Agent process already running", whose handler used to drop the
+				// message outright. One field report lost 34 of 35 messages that way.
+				//
+				// Re-read the store here so a send that resumes second sees the busy
+				// state the send that resumed first just wrote, and queues behind it.
+				// The store's `set` runs its updater synchronously, so by the time a
+				// later handler reaches this line the earlier one's write is visible.
+				const liveSession =
+					useSessionStore.getState().sessions.find((s) => s.id === activeSession.id) ??
+					activeSession;
+				const liveTab = resolveTargetTab(liveSession) ?? activeTab;
+
 				// Check if write command can bypass queue (all running/queued items are read-only)
 				const canWriteBypassQueue = (): boolean => {
 					if (isReadOnlyMode) return false; // Only applies to write commands
-					if (activeSession.state !== 'busy') return false; // Nothing to bypass
+					if (liveSession.state !== 'busy') return false; // Nothing to bypass
 
 					// Check all busy tabs are in read-only mode. Include orphaned
 					// (closed-but-still-thinking) tabs: they keep writing in the background
 					// and hold the single-writer slot just like a visible busy tab. Omitting
 					// them lets a new write spawn concurrently with an orphan (single-writer
 					// violation when a tab is closed mid-send).
-					const busyTabs = getBusyTabs(activeSession, { includeOrphans: true });
+					const busyTabs = getBusyTabs(liveSession, { includeOrphans: true });
 					const allBusyTabsReadOnly = busyTabs.every((tab) => tab.readOnlyMode === true);
 					if (!allBusyTabsReadOnly) return false;
 
 					// Check all queued items are from read-only tabs
-					const allQueuedReadOnly = activeSession.executionQueue.every(
+					const allQueuedReadOnly = liveSession.executionQueue.every(
 						(item) => item.readOnlyMode === true
 					);
 					if (!allQueuedReadOnly) return false;
@@ -997,7 +1016,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					sameTabProcessActive ||
 					(!forceParallel &&
 						!isReadOnlyMode &&
-						activeSession.state !== 'busy' &&
+						liveSession.state !== 'busy' &&
 						anySessionAiProcessActive);
 
 				// Agent Resilience holds the line: this tab's provider just refused a
@@ -1014,18 +1033,18 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				// not that. Releasing early is a deliberate act (Cancel or Retry Now on
 				// the countdown banner), not a side effect of hitting Enter again.
 				const retryHoldsTab = hasPendingRetry(
-					activeSession.id,
-					activeTab?.id || activeSession.activeTabId
+					liveSession.id,
+					liveTab?.id || liveSession.activeTabId
 				);
 
 				const shouldQueue =
 					retryHoldsTab ||
 					processStateRequiresQueue ||
 					(forceParallel
-						? activeTab?.state === 'busy' // Force parallel: only queue if THIS tab is busy
+						? liveTab?.state === 'busy' // Force parallel: only queue if THIS tab is busy
 						: isReadOnlyMode
-							? activeTab?.state === 'busy' // Read-only: only queue if THIS tab is busy
-							: (activeSession.state === 'busy' && !canWriteBypassQueue()) || isAutoRunActive); // Write mode: queue if busy OR AutoRun active
+							? liveTab?.state === 'busy' // Read-only: only queue if THIS tab is busy
+							: (liveSession.state === 'busy' && !canWriteBypassQueue()) || isAutoRunActive); // Write mode: queue if busy OR AutoRun active
 
 				// Debug logging to diagnose queue issues
 				logger.info('[processInput] Queue decision:', undefined, {
@@ -1040,20 +1059,20 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					processStateRequiresQueue,
 					retryHoldsTab,
 					shouldQueue,
-					queueLength: activeSession.executionQueue.length,
+					queueLength: liveSession.executionQueue.length,
 				});
 
 				if (shouldQueue) {
 					const queuedItem: QueuedItem = {
 						id: generateId(),
 						timestamp: Date.now(),
-						tabId: activeTab?.id || activeSession.activeTabId,
+						tabId: liveTab?.id || liveSession.activeTabId,
 						type: 'message',
 						text: effectiveInputValue,
 						images: [...effectiveImages],
 						// See the slash-command path above: a fallback label, not the
 						// name the queue actually renders.
-						tabName: activeTab ? getTabDisplayName(activeTab) : undefined,
+						tabName: liveTab ? getTabDisplayName(liveTab) : undefined,
 						readOnlyMode: isReadOnlyMode,
 						...(forceParallel && { forceParallel: true }),
 						// Consult the mentioned agent(s) when this item is dispatched, not
@@ -1061,7 +1080,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						...(crossAgentMentionPlan && { crossAgentMention: true }),
 						// Freeze the model/effort now - see the slash-command queue path
 						// above. Queuing is the send; the dispatch happens later.
-						turnSettings: captureQueuedTurnSettings(activeTab, activeSession),
+						turnSettings: captureQueuedTurnSettings(liveTab, liveSession),
 					};
 
 					// Add to queue - will be processed when:
@@ -1542,6 +1561,14 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						});
 					} catch (error) {
 						logger.error('Failed to spawn agent batch process:', undefined, error);
+						// "Agent process already running" is a COLLISION, not an outcome:
+						// this dispatch arrived while the tab was already mid-turn. The
+						// provider never saw the message and nothing about it is wrong, so
+						// it goes back on the queue and drains when the live turn ends.
+						// Dropping it is how one stalled phone socket destroyed 34 of 35
+						// messages and left only red system lines behind. Same rule
+						// agentStore.processQueuedItem already follows for the queue path.
+						const isSpawnCollision = isAgentAlreadyRunningError(error);
 						const errorLog: LogEntry = {
 							id: generateId(),
 							timestamp: Date.now(),
@@ -1550,6 +1577,30 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						};
 						updateSessionWith(resolvedSessionId, (s) => {
 							const errorTabId = targetTabId ?? s.activeTabId;
+							const errorTab = s.aiTabs?.find((tab) => tab.id === errorTabId);
+							// A collision means the tab is BUSY with somebody else's turn.
+							// Clearing its state told every busy-based rule in the app that
+							// the agent was free while a live process kept streaming into
+							// it: the thinking pill stopped, and the queue drained straight
+							// into the same wall. Leave a colliding tab exactly as it is -
+							// only a real spawn failure, where nothing is running, resets
+							// it and writes the error the user can act on.
+							if (isSpawnCollision) {
+								const requeued: QueuedItem = {
+									id: generateId(),
+									timestamp: Date.now(),
+									tabId: errorTabId,
+									type: 'message',
+									text: effectiveInputValue,
+									images: [...effectiveImages],
+									tabName: errorTab ? getTabDisplayName(errorTab) : undefined,
+									readOnlyMode: isReadOnlyEntry,
+									...(isForceParallel && { forceParallel: true }),
+									...(crossAgentMentionPlan && { crossAgentMention: true }),
+									turnSettings: captureQueuedTurnSettings(errorTab, s),
+								};
+								return { ...s, executionQueue: [...s.executionQueue, requeued] };
+							}
 							// Reset target tab's state to 'idle' and add error log
 							const updatedAiTabs =
 								s.aiTabs?.length > 0

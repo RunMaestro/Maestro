@@ -1558,7 +1558,19 @@ maestro-cli notify toast "Diff ready" "Switch to review tab" \
 maestro-cli notify toast "Patch ready" "Open the diff" \
     --agent <agent-id> --open-file src/foo.ts
 
-# Open an external URL in the system browser on click.
+# Focus one of the agent's terminal tabs on click. The value is a tab id or
+# its name; bare --open-terminal lands on the agent's active terminal tab.
+maestro-cli notify toast "Dev server crashed" "Exit code 1" \
+    --agent <agent-id> --open-terminal "Dev server"
+
+# Open a URL in an in-app browser tab on the agent, or focus a browser tab
+# that is already open (the id `open-browser` printed).
+maestro-cli notify toast "Preview ready" "localhost:3000" \
+    --agent <agent-id> --open-browser http://localhost:3000
+maestro-cli notify toast "Docs updated" "Back to the page you had open" \
+    --agent <agent-id> --open-browser-tab <browser-tab-id>
+
+# Open an external URL in the system browser on click (outside Maestro).
 maestro-cli notify toast "Run finished" "View logs" \
     --open-url https://example.com/logs
 
@@ -1569,20 +1581,23 @@ maestro-cli notify toast "PR opened" "Auto Run completed" \
     --action-url https://github.com/org/repo/pull/42 --action-label "View PR"
 ```
 
-| Flag                    | Description                                                                                     |
-| ----------------------- | ----------------------------------------------------------------------------------------------- |
-| `-c, --color`           | `green \| yellow \| orange \| red \| theme` (default: `theme`)                                  |
-| `-t, --timeout <sec>`   | Auto-dismiss after N seconds (range: `(0, 60]`; omitted = app default)                          |
-| `--dismissible`         | Sticky toast - no auto-dismiss, click to close. Mutually exclusive with `--timeout`             |
-| `-a, --agent <id>`      | Associate with an agent so clicking the toast jumps to it                                       |
-| `--tab <id>`            | AI tab ID within the agent - clicking jumps to that tab. Requires `--agent`                     |
-| `--open-file <path>`    | On click, switch to the agent and open the file in File Preview. Requires `--agent`             |
-| `--open-url <url>`      | On click, open the URL in the system browser. Mutually exclusive with `--open-file`             |
-| `--action-url <url>`    | Inline link rendered beneath the message body (separate from the body click - opens in browser) |
-| `--action-label <text>` | Label for `--action-url` (defaults to the URL itself); requires `--action-url`                  |
-| `--json`                | JSON output for scripting                                                                       |
+| Flag                      | Description                                                                                         |
+| ------------------------- | --------------------------------------------------------------------------------------------------- |
+| `-c, --color`             | `green \| yellow \| orange \| red \| theme` (default: `theme`)                                      |
+| `-t, --timeout <sec>`     | Auto-dismiss after N seconds (range: `(0, 60]`; omitted = app default)                              |
+| `--dismissible`           | Sticky toast - no auto-dismiss, click to close. Mutually exclusive with `--timeout`                 |
+| `-a, --agent <id>`        | Associate with an agent so clicking the toast jumps to it                                           |
+| `--tab <id>`              | AI tab ID within the agent - clicking jumps to that tab. Requires `--agent`                         |
+| `--open-file <path>`      | On click, switch to the agent and open the file in File Preview. Requires `--agent`                 |
+| `--open-terminal [tab]`   | On click, focus a terminal tab on the agent (id or name; bare = its active one). Requires `--agent` |
+| `--open-browser <url>`    | On click, open the URL in a new in-app browser tab on the agent. Requires `--agent`                 |
+| `--open-browser-tab <id>` | On click, focus an existing in-app browser tab. Requires `--agent`                                  |
+| `--open-url <url>`        | On click, open the URL in the system browser (outside Maestro)                                      |
+| `--action-url <url>`      | Inline link rendered beneath the message body (separate from the body click - opens in browser)     |
+| `--action-label <text>`   | Label for `--action-url` (defaults to the URL itself); requires `--action-url`                      |
+| `--json`                  | JSON output for scripting                                                                           |
 
-The body-click hierarchy is: `--open-file` / `--open-url` (mutually exclusive) > `--agent` (+ optional `--tab`). `--action-url` is independent - it renders a separate inline link button and does not affect the body click.
+The body-click hierarchy is: the `--open-*` flags (mutually exclusive with each other) > `--agent` (+ optional `--tab`). A click on the body can therefore land on an AI tab, a File Preview tab, a terminal tab, an in-app browser tab, or the system browser. When the target tab has since been closed, the click still switches to the agent and says what was missing. `--action-url` is independent - it renders a separate inline link button and does not affect the body click.
 
 ##### Center Flash
 

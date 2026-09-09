@@ -6,16 +6,17 @@
  * This hook batches those changes and writes at most once every 2 seconds.
  *
  * Persistence path (after PR-A 1.1):
- *  - First flush after load: ship the entire prepared sessions array via
- *    `sessions:setAll`. This seeds the main process and establishes a
- *    diff baseline (`previouslyPersistedRef`).
- *  - Subsequent flushes: diff `sessionsRef.current` against the baseline
+ *  - During a successful initial load: capture the loaded sessions array as
+ *    the diff baseline (`previouslyPersistedRef`).
+ *  - Subsequent flushes: diff `sessionsRef.current` against that baseline
  *    using reference equality per session, then ship only the changed
  *    sessions plus the ids of any removed sessions via
  *    `sessions:setMany`. With Zustand's immutable update pattern, every
  *    mutated session gets a fresh object reference - so the diff catches
  *    every real change in O(N) without needing per-mutator dirty
  *    tracking.
+ *  - `sessions:setAll` remains a fallback if the hook did not observe the
+ *    initial load, such as after a development remount.
  *
  * Why diff in the hook rather than tracking dirty IDs in the store: the
  * 200+ existing `setSessions((prev) => prev.map(...))` call sites use
@@ -43,6 +44,16 @@ import { captureException } from '../../utils/sentry';
 
 // Maximum persisted logs per AI tab (matches session persistence limit)
 const MAX_PERSISTED_LOGS_PER_TAB = 100;
+
+/**
+ * Thrown by `persistInternal` when the session registry was never read back
+ * from disk. Matched by message in `persistSessions` so it is kept out of
+ * Sentry - it is a user-environment condition (an unmounted sync folder, a
+ * corrupt file), not a Maestro bug, and reporting it on every mutation for
+ * the rest of the run would only be noise.
+ */
+export const SESSIONS_NOT_READ_MESSAGE =
+	'sessions were never read from disk; refusing to persist an unverified tree';
 
 // Maximum persisted file-preview content per tab. Preview tabs hold the full
 // file in `content`, but the viewer only renders a truncated slice (see
@@ -381,11 +392,19 @@ export function useDebouncedPersistence(
 	const flushingRef = useRef(false);
 
 	// Snapshot of the sessions array as it existed at the previous flush.
-	// Starts null - the first flush after load uses setAll to seed the main
-	// process and captures the snapshot. Every subsequent flush diffs the
-	// current sessions array against this snapshot and ships only the
-	// changed subset via setMany.
+	// Captured from the successful initial load. If this hook did not observe
+	// that load, the first flush establishes the baseline instead.
+	// The first observed startup flush makes restored repairs durable, then every
+	// later flush ships only the changed subset via setMany.
 	const previouslyPersistedRef = useRef<Session[] | null>(null);
+	// If loading finished before the subscription mounted, retain that tree only
+	// long enough to express a first-flush deletion through setMany.
+	const mountedSessionsRef = useRef<Session[] | null>(
+		useSessionStore.getState().sessionsReadOk ? sessionsRef.current : null
+	);
+	// Restoring a session repairs its in-memory shape. Those repaired objects are
+	// not durable yet, so the first incremental flush must include the whole tree.
+	const startupBaselineNeedsFullFlushRef = useRef(false);
 
 	/**
 	 * Run one persistence pass. Throws on failure so callers can decide
@@ -394,11 +413,12 @@ export function useDebouncedPersistence(
 	 * leaving beforeunload with no signal to attempt one more retry before
 	 * the window closes.
 	 *
-	 * - First call after load: ships everything via setAll. Baseline is
-	 *   captured ONLY if setAll resolves truthy.
-	 * - Subsequent calls: diffs against the baseline; ships only the
-	 *   changed subset via setMany. Baseline advances ONLY if the IPC
-	 *   resolves truthy.
+	 * - With a startup baseline: the first flush ships the restored tree so
+	 *   startup repairs become durable, then later flushes ship only the changed
+	 *   subset via setMany. Baseline advances ONLY if the IPC resolves truthy.
+	 * - Without a baseline: uses explicit tombstones when a mounted session was
+	 *   removed, otherwise falls back to setAll. Captures the current tree ONLY
+	 *   if the IPC resolves truthy.
 	 * - On rejection or `ok === false`: leave previouslyPersistedRef
 	 *   untouched (so the next diff retries the still-dirty sessions) and
 	 *   throw - caller decides whether to surface and how to handle.
@@ -408,29 +428,51 @@ export function useDebouncedPersistence(
 	 * still need to log so the failure is visible.
 	 */
 	const persistInternal = useCallback(async (): Promise<void> => {
+		// Never write a tree we never read. sessions:getAll answers [] both for
+		// a new install and for a registry it could not read (the store lives
+		// under the configurable sync path, and a cloud folder that has not
+		// mounted yet is exactly that), and the restoration hook sets the
+		// in-memory tree to [] on failure. Every flush path funnels through
+		// here - the debounce timer, flushNow, unmount, beforeunload - which is
+		// the point: `initialLoadComplete` is set in a `finally`, so it is true
+		// even when the read failed, and flushNow with a snapshot skips it
+		// entirely. This is the one gate they all share.
+		if (!useSessionStore.getState().sessionsReadOk) {
+			throw new Error(SESSIONS_NOT_READ_MESSAGE);
+		}
 		const current = sessionsRef.current;
 		if (previouslyPersistedRef.current === null) {
 			const sessionsForPersistence = current.map(prepareSessionForPersistence);
-			const ok = await window.maestro.sessions.setAll(sessionsForPersistence);
+			const tombstones = mountedSessionsRef.current
+				? diffSessions(mountedSessionsRef.current, current).tombstones
+				: [];
+			const ok =
+				tombstones.length > 0
+					? await window.maestro.sessions.setMany(sessionsForPersistence, tombstones)
+					: await window.maestro.sessions.setAll(sessionsForPersistence);
 			if (ok === false) {
-				throw new Error('sessions:setAll returned false (recoverable disk error)');
+				throw new Error('Session persistence returned false (recoverable disk error)');
 			}
 			previouslyPersistedRef.current = current;
+			startupBaselineNeedsFullFlushRef.current = false;
 			return;
 		}
 		const { dirty, tombstones } = diffSessions(previouslyPersistedRef.current, current);
-		if (dirty.length === 0 && tombstones.length === 0) {
+		const sessionsToPersist = startupBaselineNeedsFullFlushRef.current ? current : dirty;
+		if (sessionsToPersist.length === 0 && tombstones.length === 0) {
 			// Nothing changed - safe to advance the baseline (it would be
 			// identical anyway).
 			previouslyPersistedRef.current = current;
+			startupBaselineNeedsFullFlushRef.current = false;
 			return;
 		}
-		const dirtyForPersistence = dirty.map(prepareSessionForPersistence);
+		const dirtyForPersistence = sessionsToPersist.map(prepareSessionForPersistence);
 		const ok = await window.maestro.sessions.setMany(dirtyForPersistence, tombstones);
 		if (ok === false) {
 			throw new Error('sessions:setMany returned false (recoverable disk error)');
 		}
 		previouslyPersistedRef.current = current;
+		startupBaselineNeedsFullFlushRef.current = false;
 	}, []);
 
 	/**
@@ -465,7 +507,7 @@ export function useDebouncedPersistence(
 			// Maestro bug, so keep it out of Sentry. Genuine flush failures (real
 			// exceptions) still report. (MAESTRO-QF)
 			const message = err instanceof Error ? err.message : String(err);
-			if (!message.includes('recoverable disk error')) {
+			if (!message.includes('recoverable disk error') && message !== SESSIONS_NOT_READ_MESSAGE) {
 				captureException(err instanceof Error ? err : new Error(String(err)), {
 					extra: { operation: 'useDebouncedPersistence.persistSessions' },
 				});
@@ -541,6 +583,15 @@ export function useDebouncedPersistence(
 		const unsubscribe = useSessionStore.subscribe((state, prevState) => {
 			if (state.sessions === prevState.sessions) return;
 			sessionsRef.current = state.sessions;
+			if (
+				!initialLoadComplete.current &&
+				state.sessionsReadOk &&
+				previouslyPersistedRef.current === null
+			) {
+				previouslyPersistedRef.current = state.sessions;
+				startupBaselineNeedsFullFlushRef.current = true;
+				return;
+			}
 			schedulePersist();
 		});
 
