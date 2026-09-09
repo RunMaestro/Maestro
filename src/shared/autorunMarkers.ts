@@ -203,12 +203,21 @@ export function detectHaltMarker(content: string): { halted: boolean; reason?: s
  *
  * - `live` - it is changing the next run: a gate that will pause, a halt that
  *   will refuse to start, a model hint that governs the next task.
+ * - `upcoming` - it will change a LATER dispatch. A model hint on a section the
+ *   run has not reached yet. Model markers only; a gate is either standing or
+ *   passed, and a halt blocks wherever it sits.
  * - `spent` - it has already been passed and is now inert. A HITL gate whose
  *   box has been ticked; a model hint whose section is finished.
  * - `invalid` - it names a value Maestro does not understand, so it will be
  *   ignored. Worth showing loudly: the author thinks it is doing something.
+ *
+ * The `upcoming` / `spent` split exists because collapsing them told the reader
+ * the opposite of the truth. A document-wide `low` hint followed by a `high`
+ * phase further down would draw the `high` one as expired, under a tooltip
+ * saying it no longer affects the run, while it was in fact the setting the
+ * next phase was about to be dispatched at.
  */
-export type MarkerStatus = 'live' | 'spent' | 'invalid';
+export type MarkerStatus = 'live' | 'upcoming' | 'spent' | 'invalid';
 
 export interface ScannedMarker {
 	kind: 'hitl' | 'halt' | 'model';
@@ -221,7 +230,12 @@ export interface ScannedMarker {
 	reason?: string;
 	/** HITL only: what the human should look at. */
 	artifact?: string;
-	/** Model only: the parsed hint, including any invalid attribute values. */
+	/**
+	 * Model only: the parsed hint, including any invalid attribute values and the
+	 * author's `reason`. Each pill reads its OWN marker's hint rather than a
+	 * merged one, so a task-scoped explanation never leaks onto the document-wide
+	 * marker it happens to sit under.
+	 */
 	hint?: ModelHint;
 }
 
@@ -237,8 +251,12 @@ export interface ScannedMarker {
  * something) already passed it, and no task at all means it gates nothing. That
  * matches {@link findPendingHitlGate}, which is what the engine actually obeys.
  *
- * Model status is resolved by position relative to the first unfinished task: a
- * hint above it governs the next dispatch, a hint below it does not yet.
+ * Model status is resolved by looking DOWN for the next unchecked task, the
+ * same direction HITL gates use, because that is the task the hint would apply
+ * to. The nearest standalone hint above the FIRST unchecked task is what the
+ * next dispatch runs at (`live`); one governing a later task is `upcoming`; one
+ * a nearer hint supersedes before any task falls between them, or one with no
+ * unchecked task left below it at all, is `spent`.
  *
  * Fence-aware throughout, so a playbook documenting this syntax draws no pills,
  * and quotation-aware in the same three positions {@link findHaltMarker} uses,
@@ -249,7 +267,13 @@ export function scanMaestroMarkers(content: string): ScannedMarker[] {
 	// HITL markers whose status is still unknown because no task has appeared
 	// below them yet. Resolved in bulk when the next task line decides for all.
 	let awaitingTask: ScannedMarker[] = [];
-	// Model markers only govern the run while no unfinished task has been passed.
+	// Standalone model markers waiting on the same question. Held separately
+	// because they resolve by the opposite rule: a gate is a thing to stop at, so
+	// the EARLIEST unacknowledged one wins, whereas a hint is a setting, so the
+	// LATEST assignment wins and the ones it superseded are already spent.
+	let awaitingModelTask: ScannedMarker[] = [];
+	// Whether the run's next dispatch has already been accounted for. The first
+	// unchecked task is the one about to be sent; everything past it is upcoming.
 	let seenUncheckedTask = false;
 
 	forEachMarkdownLine(content, (line, index) => {
@@ -269,20 +293,35 @@ export function scanMaestroMarkers(content: string): ScannedMarker[] {
 			if (modelMatch) {
 				const hint = parseModelMarker(modelMatch[1] || '', index, scope);
 				const hasInvalid = (hint.invalid?.length ?? 0) > 0;
+				// A marker that names no level changes nothing, whatever it explains.
 				const setsNothing = hint.tier === undefined && hint.effort === undefined;
-				markers.push({
+				const marker: ScannedMarker = {
 					kind: 'model',
-					// An inline hint on a CHECKED task is spent with that task, and any
-					// hint below the first unfinished task has not been reached yet.
+					// An inline hint rides its own task, so it needs no lookahead: it is
+					// live only on the task the next dispatch will pick up. A standalone
+					// one is provisionally spent until a task below it proves otherwise,
+					// which is what leaves a trailing marker correctly inert.
 					status: hasInvalid
 						? 'invalid'
-						: (scope === 'task' && isChecked) || seenUncheckedTask || setsNothing
+						: setsNothing || (scope === 'task' && isChecked)
 							? 'spent'
-							: 'live',
+							: scope === 'task'
+								? seenUncheckedTask
+									? 'upcoming'
+									: 'live'
+								: 'spent',
 					line: index,
 					scope,
 					hint,
-				});
+				};
+				markers.push(marker);
+				// Only a standalone hint reaches forward, and only when it is capable
+				// of applying: an invalid or empty one is already in its final state.
+				if (scope === 'document' && !hasInvalid && !setsNothing) {
+					// Anything still awaiting is superseded by this one before a task
+					// could fall between them, so it governed nothing and stays spent.
+					awaitingModelTask = [marker];
+				}
 			}
 
 			const haltMatch = scanned.match(HALT_MARKER_REGEX);
@@ -321,14 +360,23 @@ export function scanMaestroMarkers(content: string): ScannedMarker[] {
 		if (isUnchecked) {
 			// The gate still stands: a human has not ticked the box below it.
 			for (const marker of awaitingTask) marker.status = 'live';
+			// This task is work the run will actually do, so the hint above it is
+			// real. Whether it is the NEXT thing dispatched decides live vs upcoming,
+			// and that is read before the flag is set for the tasks that follow.
+			for (const marker of awaitingModelTask) {
+				marker.status = seenUncheckedTask ? 'upcoming' : 'live';
+			}
+			awaitingModelTask = [];
 			seenUncheckedTask = true;
 		}
-		// Either way the question is now answered for everything above.
+		// Either way the question is now answered for every gate above. A model
+		// hint is NOT resolved by a checked task, though: the setting a completed
+		// task ran under is still the setting the unfinished ones below it need.
 		awaitingTask = [];
 	});
 
-	// Markers left awaiting have no task below them, so they gate nothing and
-	// keep the 'spent' status they were created with.
+	// Markers left awaiting have no unchecked task below them, so they govern
+	// nothing and keep the 'spent' status they were created with.
 	return markers;
 }
 

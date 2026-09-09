@@ -35,9 +35,16 @@
  * document mid-run takes effect on the next task. It mirrors how
  * `findPendingHitlGate` already reads gates, so authors learn one rule.
  *
+ * A marker may also carry a `reason`, which changes nothing about how the task
+ * runs and exists purely so the choice can be audited later:
+ *
+ * ```markdown
+ * <!-- MAESTRO:MODEL tier="high" effort="high" reason="Lock ordering across three services; getting it wrong corrupts data." -->
+ * ```
+ *
  * Markers inside fenced code blocks are ignored, so a playbook can document
- * this syntax without changing its own behavior. This file's own example above
- * is in a fence for exactly that reason.
+ * this syntax without changing its own behavior. This file's own examples above
+ * are in fences for exactly that reason.
  */
 
 import {
@@ -81,6 +88,15 @@ export interface ModelHint {
 	/** Which scope each axis came from. Present on a resolved hint. */
 	scopes?: { tier?: HintScope; effort?: HintScope };
 	/**
+	 * Why the author picked this tier and effort, in the author's own words.
+	 *
+	 * Read by the pill and nothing else: it never reaches {@link settingsKey},
+	 * so two markers whose reasons differ but whose levels match still run as one
+	 * uninterrupted segment. A hint that could be split by its prose would turn a
+	 * documentation change into an extra dispatch.
+	 */
+	reason?: string;
+	/**
 	 * Attribute values that were present but not one of `low|medium|high|default`.
 	 * Carried so the caller can warn about a typo (`tier="hgih"`) instead of
 	 * silently ignoring it, which would run the task on the wrong model with no
@@ -93,6 +109,31 @@ function readAttribute(inner: string, name: 'tier' | 'effort'): string | undefin
 	const match = inner.match(new RegExp(`${name}\\s*=\\s*"([^"]*)"`, 'i'));
 	const value = match?.[1]?.trim();
 	return value ? value.toLowerCase() : undefined;
+}
+
+/**
+ * Longest reason kept. The pill is a peek, not a document: past a couple of
+ * sentences the hover overlay stops being readable at a glance, which is the
+ * only thing it is for. Truncating beats letting one verbose marker paint a
+ * wall of text over the task list.
+ */
+const REASON_MAX_LENGTH = 400;
+
+/**
+ * Read the free-text `reason` attribute.
+ *
+ * Separate from {@link readAttribute} because that one lowercases its value for
+ * the level ladder, and a sentence is not a keyword. The `[^"]*` body means an
+ * author who writes a double quote INSIDE the reason gets a truncated sentence
+ * rather than a broken marker: `tier` and `effort` are matched independently,
+ * so the levels still resolve and the task still runs on the model it asked
+ * for. That is the right way to degrade for an attribute that is documentation.
+ */
+function readReason(inner: string): string | undefined {
+	const match = inner.match(/reason\s*=\s*"([^"]*)"/i);
+	const value = match?.[1]?.replace(/\s+/g, ' ').trim();
+	if (!value) return undefined;
+	return value.length > REASON_MAX_LENGTH ? `${value.slice(0, REASON_MAX_LENGTH - 1)}…` : value;
 }
 
 /** Parse one marker's attributes. Exported for authoring-time validation and tests. */
@@ -121,6 +162,9 @@ export function parseModelMarker(
 		hint.scopes![attribute] = scope;
 	}
 
+	const reason = readReason(markerInner);
+	if (reason) hint.reason = reason;
+
 	if (invalid.length > 0) hint.invalid = invalid;
 	return hint;
 }
@@ -146,6 +190,10 @@ function mergeHints(document: ModelHint | null, task: ModelHint | null): ModelHi
 			tier: task.tier !== undefined ? task.scopes?.tier : document.scopes?.tier,
 			effort: task.effort !== undefined ? task.scopes?.effort : document.scopes?.effort,
 		},
+		// The narrower scope's explanation wins, matching how its levels do. Pills
+		// never read a merged hint - each one shows its own marker's reason - so
+		// this only matters to a caller inspecting what governs the next dispatch.
+		reason: task.reason ?? document.reason,
 	};
 
 	const invalid = [...(document.invalid ?? []), ...(task.invalid ?? [])];

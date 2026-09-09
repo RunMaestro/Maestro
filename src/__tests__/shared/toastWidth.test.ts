@@ -3,6 +3,8 @@ import {
 	TOAST_VIEWPORT_GUTTER,
 	TOAST_WIDTHS,
 	TOAST_WIDTH_DIMENSIONS,
+	TOAST_WIDTH_LABELS,
+	describeToastWidth,
 	getToastWidthDimensions,
 	isToastWidth,
 	type StaticToastWidth,
@@ -102,6 +104,34 @@ describe('toastWidth', () => {
 
 		it('never returns a negative width for an absurdly narrow panel', () => {
 			expect(getToastWidthDimensions('dynamic', 8).minWidth).toBe(0);
+		});
+	});
+
+	describe('TOAST_WIDTH_LABELS', () => {
+		it('labels every preset', () => {
+			for (const preset of TOAST_WIDTHS) {
+				expect(TOAST_WIDTH_LABELS[preset]).toBeTruthy();
+			}
+		});
+	});
+
+	describe('describeToastWidth', () => {
+		it('quotes the min-max pair for a fixed preset', () => {
+			expect(describeToastWidth('large', 384)).toContain('480-720px');
+		});
+
+		it('ignores the panel width for a fixed preset', () => {
+			expect(describeToastWidth('small', 999)).toBe(describeToastWidth('small', 320));
+		});
+
+		it('quotes the tracked Right Bar width for dynamic', () => {
+			expect(describeToastWidth('dynamic', 500)).toContain(`${500 - 2 * TOAST_VIEWPORT_GUTTER}px`);
+		});
+
+		it('describes every preset without an empty string', () => {
+			for (const preset of TOAST_WIDTHS) {
+				expect(describeToastWidth(preset, 384).length).toBeGreaterThan(0);
+			}
 		});
 	});
 

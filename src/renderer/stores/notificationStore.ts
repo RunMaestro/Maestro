@@ -90,6 +90,10 @@ export interface Toast {
 	actionLabel?: string; // Label for the action link (defaults to URL)
 	// Skip custom notification command for this toast (used for synopsis messages)
 	skipCustomNotification?: boolean;
+	// Skip the OS desktop notification for this toast. Use for in-app-only
+	// feedback (e.g. the Settings preview of the toast width) that would be
+	// noise in Notification Center.
+	skipOsNotification?: boolean;
 	// Generic click handler - if set, clicking the toast invokes this callback.
 	// Renderer-only - not serializable across the CLI/web bridge.
 	onClick?: () => void;
@@ -341,7 +345,7 @@ export function notifyToast(toast: NotifyToastInput): string {
 	}
 
 	// OS desktop notification
-	if (config.osNotificationsEnabled) {
+	if (config.osNotificationsEnabled && !toast.skipOsNotification) {
 		if (typeof window !== 'undefined' && window.maestro?.notification?.show) {
 			const notifTitle = toast.project || toast.title;
 

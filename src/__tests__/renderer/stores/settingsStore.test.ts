@@ -10,6 +10,7 @@ import type { SettingsStoreState } from '../../../renderer/stores/settingsStore'
 import { SETTINGS_METADATA } from '../../../shared/settingsMetadata';
 import { MAESTRO_FONT_STACK } from '../../../shared/fontStacks';
 import { useUIStore } from '../../../renderer/stores/uiStore';
+import { useNotificationStore } from '../../../renderer/stores/notificationStore';
 import {
 	selectShowNowPlayingIndicator,
 	useMediaPlaybackStore,
@@ -438,6 +439,51 @@ describe('settingsStore', () => {
 				useSettingsStore.getState().setFileExplorerIconTheme('rich');
 				expect(useSettingsStore.getState().fileExplorerIconTheme).toBe('rich');
 				expect(window.maestro.settings.set).toHaveBeenCalledWith('fileExplorerIconTheme', 'rich');
+			});
+
+			describe('setToastWidth', () => {
+				beforeEach(() => {
+					useNotificationStore.setState({ toasts: [] });
+				});
+
+				it('updates state and persists', () => {
+					useSettingsStore.getState().setToastWidth('large');
+					expect(useSettingsStore.getState().toastWidth).toBe('large');
+					expect(window.maestro.settings.set).toHaveBeenCalledWith('toastWidth', 'large');
+				});
+
+				it('fires a preview toast naming the size that was picked', () => {
+					useSettingsStore.getState().setToastWidth('large');
+					const toasts = useNotificationStore.getState().toasts;
+					expect(toasts).toHaveLength(1);
+					expect(toasts[0].title).toBe('Toast Width: Large');
+					expect(toasts[0].message).toContain('480-720px');
+				});
+
+				it('quotes the live Right Bar width for the dynamic preset', () => {
+					useSettingsStore.setState({ rightPanelWidth: 500 });
+					useSettingsStore.getState().setToastWidth('dynamic');
+					const [toast] = useNotificationStore.getState().toasts;
+					expect(toast.title).toBe('Toast Width: Dynamic');
+					// 500 less the 16px gutter on each side.
+					expect(toast.message).toContain('468px');
+				});
+
+				it('replaces its own preview instead of stacking one per click', () => {
+					useSettingsStore.getState().setToastWidth('small');
+					useSettingsStore.getState().setToastWidth('medium');
+					useSettingsStore.getState().setToastWidth('large');
+					const toasts = useNotificationStore.getState().toasts;
+					expect(toasts).toHaveLength(1);
+					expect(toasts[0].title).toBe('Toast Width: Large');
+				});
+
+				it('keeps the preview in-app only (no TTS command, no OS notification)', () => {
+					useSettingsStore.getState().setToastWidth('medium');
+					const [toast] = useNotificationStore.getState().toasts;
+					expect(toast.skipCustomNotification).toBe(true);
+					expect(toast.skipOsNotification).toBe(true);
+				});
 			});
 		});
 

@@ -161,6 +161,14 @@ Put a standalone marker above the first task and it governs the whole document. 
 
 Both attributes take `low`, `medium`, or `high`, and both are optional. The two scopes layer **per axis**: an inline marker that sets only `tier` keeps the prevailing `effort`. Use `tier="default"` (or `effort="default"`) to push one axis back to the agent's own configuration - that is how a single expensive-looking task opts out of a document-wide hint.
 
+A marker should also carry a `reason` justifying the choice - at most three sentences, plain text, with no double quotes inside the value:
+
+```markdown
+<!-- MAESTRO:MODEL tier="low" effort="low" reason="This phase only catalogues what already exists. Reading and listing call sites needs no judgment, so the cheap model at low effort is enough." -->
+```
+
+Explain what makes the work hard or mechanical rather than restating the levels. The reason has no effect on the run; Maestro shows it behind an ⓘ on the marker's pill so a reader can audit the judgment.
+
 The rules that matter when authoring:
 
 - **`low`/`medium`/`high` are ladder POSITIONS, not literal provider values.** `high` means the ceiling of whatever that provider offers, so on Claude Code `effort="high"` becomes `max`, not `high`. Never write a provider-specific value here.

@@ -1569,6 +1569,12 @@ interface MaestroAPI {
 		showItemInFolder: (itemPath: string) => Promise<void>;
 		copyImageToClipboard: (dataUrl: string) => Promise<void>;
 		readImageFromClipboard: () => Promise<string | null>;
+		capturePage: (rect?: {
+			x: number;
+			y: number;
+			width: number;
+			height: number;
+		}) => Promise<string | null>;
 	};
 	tunnel: {
 		isCloudflaredInstalled: () => Promise<boolean>;

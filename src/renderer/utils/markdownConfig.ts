@@ -549,6 +549,7 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 				label: props['data-maestro-marker-label'],
 				detail: props['data-maestro-marker-detail'],
 				artifact: props['data-maestro-marker-artifact'],
+				reason: props['data-maestro-marker-reason'],
 				theme,
 			});
 		};

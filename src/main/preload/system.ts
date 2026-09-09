@@ -52,6 +52,17 @@ export function createShellApi() {
 		showItemInFolder: (itemPath: string) => ipcRenderer.invoke('shell:showItemInFolder', itemPath),
 		copyImageToClipboard: (dataUrl: string) => ipcRenderer.invoke('clipboard:writeImage', dataUrl),
 		readImageFromClipboard: (): Promise<string | null> => ipcRenderer.invoke('clipboard:readImage'),
+		/**
+		 * Screenshot this window as a PNG data URL. `rect` (CSS pixels, relative
+		 * to the viewport) limits the shot to one region. Resolves to null when
+		 * there is nothing to capture.
+		 */
+		capturePage: (rect?: {
+			x: number;
+			y: number;
+			width: number;
+			height: number;
+		}): Promise<string | null> => ipcRenderer.invoke('window:capturePage', rect),
 	};
 }
 

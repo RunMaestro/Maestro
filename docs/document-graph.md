@@ -82,6 +82,7 @@ The Document Graph is designed for keyboard-first navigation:
 | Cycle preview length          | `P`                               |
 | Fit the whole graph on screen | `F`                               |
 | Switch scroll to zoom or pan  | `S`                               |
+| Screenshot the graph          | `C`                               |
 | Adjust node spacing           | `+` / `-`                         |
 | Focus search                  | `Cmd/Ctrl+F`                      |
 | Step back / close graph       | `Esc`                             |
@@ -221,6 +222,18 @@ document never becomes a node in the first place.
 ### Search
 
 Use the search box to filter documents by name. Matching documents are highlighted in the graph.
+
+### Screenshot
+
+The camera icon in the center of the footer, or `C`, takes a picture of the
+graph exactly as it is on screen, preview pane included, and offers two things
+to do with it:
+
+- **Copy to Clipboard** - paste the image straight into another app.
+- **Save to Disk** - pick a location and write a PNG.
+
+The shot covers the graph area only, so the toolbar and the footer stay out of
+it. Pan and zoom to what you want first: what you see is what gets captured.
 
 ## Understanding the Graph
 

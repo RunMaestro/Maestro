@@ -138,6 +138,10 @@ const KEYBOARD_SHORTCUTS: KeyboardShortcutItem[] = [
 		keys: 'S',
 		description: 'Switch scroll between zoom and pan',
 	},
+	{
+		keys: 'C',
+		description: 'Screenshot the graph',
+	},
 ];
 
 /**

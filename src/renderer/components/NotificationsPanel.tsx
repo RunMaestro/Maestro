@@ -3,6 +3,7 @@ import { Bell, Volume2, Clock, Square, Check, AlertCircle, Loader2, Coffee } fro
 import { Spinner } from './ui/Spinner';
 import type { Theme } from '../types';
 import type { ToastWidth } from '../../shared/toastWidth';
+import { TOAST_WIDTHS, TOAST_WIDTH_LABELS } from '../../shared/toastWidth';
 import { SettingCheckbox } from './SettingCheckbox';
 import { ToggleButtonGroup } from './ToggleButtonGroup';
 import { logger } from '../utils/logger';
@@ -478,12 +479,10 @@ export function NotificationsPanel({
 					Toast Notification Width
 				</label>
 				<ToggleButtonGroup
-					options={[
-						{ value: 'small', label: 'Small' },
-						{ value: 'medium', label: 'Medium' },
-						{ value: 'large', label: 'Large' },
-						{ value: 'dynamic', label: 'Dynamic' },
-					]}
+					options={TOAST_WIDTHS.map((width) => ({
+						value: width,
+						label: TOAST_WIDTH_LABELS[width],
+					}))}
 					value={toastWidth}
 					onChange={setToastWidth}
 					theme={theme}

@@ -99,16 +99,72 @@ describe('scanMaestroMarkers - model', () => {
 		expect(marker.hint).toMatchObject({ tier: 'high', effort: 'high' });
 	});
 
-	it('marks a hint spent once the run has moved past it', () => {
-		// The next dispatch reads the LAST hint above the next unfinished task, so
-		// a hint above an already-passed section no longer governs anything.
+	it('marks a hint governing a later task upcoming, not spent', () => {
+		// Regression: a single "have we passed a task yet" latch stamped every
+		// marker below the first unchecked task as spent, so a document-wide low
+		// with a high phase further down drew the high one as expired - under a
+		// tooltip saying it no longer affected the run, while it was in fact the
+		// setting that phase was about to be dispatched at.
 		const doc = [
 			'<!-- MAESTRO:MODEL tier="high" -->',
 			'- [ ] Next up',
 			'<!-- MAESTRO:MODEL tier="low" -->',
 			'- [ ] Later',
 		].join('\n');
-		expect(scanMaestroMarkers(doc).map((m) => m.status)).toEqual(['live', 'spent']);
+		expect(scanMaestroMarkers(doc).map((m) => m.status)).toEqual(['live', 'upcoming']);
+	});
+
+	it('marks a hint spent once a nearer one supersedes it', () => {
+		// Nothing to govern: no task falls between the two, so the first never
+		// applies to anything and the second is what the next dispatch reads.
+		const doc = [
+			'<!-- MAESTRO:MODEL tier="high" -->',
+			'<!-- MAESTRO:MODEL tier="low" -->',
+			'- [ ] Only task',
+		].join('\n');
+		expect(scanMaestroMarkers(doc).map((m) => m.status)).toEqual(['spent', 'live']);
+	});
+
+	it('marks a hint spent when every task below it is finished', () => {
+		const doc = [
+			'- [ ] Still open',
+			'<!-- MAESTRO:MODEL tier="high" -->',
+			'- [x] Already done',
+		].join('\n');
+		expect(scanMaestroMarkers(doc).map((m) => m.status)).toEqual(['spent']);
+	});
+
+	it('keeps a hint alive across the checked tasks inside its own section', () => {
+		// A half-finished section still needs the setting the rest of it runs at,
+		// so a checked task must not consume the hint the way it consumes a gate.
+		const doc = ['<!-- MAESTRO:MODEL tier="high" -->', '- [x] Done', '- [ ] Not done'].join('\n');
+		expect(scanMaestroMarkers(doc).map((m) => m.status)).toEqual(['live']);
+	});
+
+	it('marks an inline hint on a later unfinished task upcoming', () => {
+		const doc = ['- [ ] First', '- [ ] Design <!-- MAESTRO:MODEL tier="high" -->'].join('\n');
+		const [marker] = scanMaestroMarkers(doc);
+		expect(marker.status).toBe('upcoming');
+		expect(marker.scope).toBe('task');
+	});
+
+	it('marks a marker that sets no level spent however much it explains', () => {
+		const doc = ['<!-- MAESTRO:MODEL reason="This is only prose." -->', '- [ ] Task'].join('\n');
+		const [marker] = scanMaestroMarkers(doc);
+		expect(marker.status).toBe('spent');
+		expect(marker.hint?.reason).toBe('This is only prose.');
+	});
+
+	it('carries the reason through to the marker for the pill to show', () => {
+		const doc = [
+			'<!-- MAESTRO:MODEL tier="high" effort="high" reason="Lock ordering across three services. Getting it wrong corrupts data." -->',
+			'- [ ] Design',
+		].join('\n');
+		const [marker] = scanMaestroMarkers(doc);
+		expect(marker.status).toBe('live');
+		expect(marker.hint?.reason).toBe(
+			'Lock ordering across three services. Getting it wrong corrupts data.'
+		);
 	});
 
 	it('marks an inline hint on a checked task spent', () => {

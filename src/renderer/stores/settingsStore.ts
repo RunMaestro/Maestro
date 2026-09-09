@@ -49,7 +49,8 @@ import { normalizeFileExplorerIconTheme } from '../utils/fileExplorerIcons/share
 import type { MindMapLayoutType } from '../components/DocumentGraph/layoutTypes';
 import { isMindMapLayoutType } from '../components/DocumentGraph/layoutTypes';
 import type { ToastWidth } from '../../shared/toastWidth';
-import { isToastWidth } from '../../shared/toastWidth';
+import { isToastWidth, TOAST_WIDTH_LABELS, describeToastWidth } from '../../shared/toastWidth';
+import { notifyToast, useNotificationStore } from './notificationStore';
 import type { GlossLevel } from '../../shared/themeGloss';
 import { DEFAULT_GLOSS_LEVEL, asGlossLevel } from '../../shared/themeGloss';
 import { normalizePlaybackRate } from '../../shared/mediaTypes';
@@ -721,9 +722,15 @@ export type SettingsStore = SettingsStoreState & SettingsStoreActions;
 // Store Implementation
 // ============================================================================
 
+/** How long the toast-width preview stays up. Long enough to read, short enough not to linger. */
+const TOAST_WIDTH_PREVIEW_DURATION_MS = 5000;
+
 export const useSettingsStore = create<SettingsStore>()((set, get) => {
 	/** Monotonic counter to discard stale async completions in setPersistentWebLink */
 	let persistentWebLinkRequestSeq = 0;
+
+	/** ID of the live toast-width preview, so a new pick replaces it instead of stacking. */
+	let toastWidthPreviewId: string | null = null;
 
 	return {
 		// ============================================================================
@@ -1108,6 +1115,22 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setToastWidth: (value) => {
 			set({ toastWidth: value });
 			window.maestro.settings.set('toastWidth', value);
+			// Fire a sample toast at the new width so the size is visible the
+			// moment it is picked, instead of waiting for the next real
+			// notification. Replaces its own previous preview so clicking
+			// through the presets updates one toast rather than stacking four.
+			if (toastWidthPreviewId) {
+				useNotificationStore.getState().removeToast(toastWidthPreviewId);
+			}
+			toastWidthPreviewId = notifyToast({
+				color: 'theme',
+				title: `Toast Width: ${TOAST_WIDTH_LABELS[value]}`,
+				message: describeToastWidth(value, get().rightPanelWidth),
+				duration: TOAST_WIDTH_PREVIEW_DURATION_MS,
+				// In-app preview only: no TTS command, no Notification Center entry.
+				skipCustomNotification: true,
+				skipOsNotification: true,
+			});
 		},
 
 		setTerminalWidth: (value) => {

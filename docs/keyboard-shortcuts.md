@@ -500,6 +500,7 @@ you are half-way through typing.
 | Cycle preview length               | `P`          |
 | Fit the whole graph on screen      | `F`          |
 | Switch scroll between zoom and pan | `S`          |
+| Screenshot the graph               | `C`          |
 | Increase / decrease node spacing   | `+` / `-`    |
 | Close the preview, then the graph  | `Esc`        |
 
@@ -521,6 +522,10 @@ both directions and `Shift`+scroll zooms. Pan is what you want once the framing
 is right and you are reading across a wide graph, where every scroll otherwise
 changes the zoom you just set. The mode is also a toolbar pill and an inline
 toggle in the Help panel, and it is remembered between visits.
+
+`C` opens the screenshot chooser: copy the graph to the clipboard, or write
+it to disk as a PNG. The shot is the graph area exactly as it is painted, so
+frame it first.
 
 ## Customizing Shortcuts
 

@@ -280,6 +280,8 @@ describe('system IPC handlers', () => {
 				// Clipboard handlers
 				'clipboard:writeImage',
 				'clipboard:readImage',
+				// Page capture
+				'window:capturePage',
 			];
 
 			for (const channel of expectedChannels) {
@@ -288,6 +290,79 @@ describe('system IPC handlers', () => {
 
 			// Verify exact count
 			expect(handlers.size).toBe(expectedChannels.length);
+		});
+	});
+
+	// The graph screenshot shoots the SENDER's contents, and the rect it hands
+	// over comes from getBoundingClientRect(), so it arrives as floats that
+	// Chromium would answer with an empty image.
+	describe('window:capturePage', () => {
+		function makeEvent(capturePage: ReturnType<typeof vi.fn>) {
+			return { sender: { isDestroyed: () => false, capturePage } } as any;
+		}
+
+		function fakeImage(dataUrl: string | null) {
+			return {
+				isEmpty: () => dataUrl === null,
+				toDataURL: () => dataUrl ?? '',
+			};
+		}
+
+		it('rounds a fractional rect outward instead of truncating it', async () => {
+			const capturePage = vi.fn().mockResolvedValue(fakeImage('data:image/png;base64,AAA'));
+
+			const result = await handlers.get('window:capturePage')!(makeEvent(capturePage), {
+				x: 10.6,
+				y: 20.4,
+				width: 100.7,
+				height: 50.9,
+			});
+
+			expect(capturePage).toHaveBeenCalledWith({ x: 10, y: 20, width: 101, height: 51 });
+			expect(result).toBe('data:image/png;base64,AAA');
+		});
+
+		it('captures the whole page when no rect is given', async () => {
+			const capturePage = vi.fn().mockResolvedValue(fakeImage('data:image/png;base64,BBB'));
+
+			await handlers.get('window:capturePage')!(makeEvent(capturePage), undefined);
+
+			expect(capturePage).toHaveBeenCalledWith();
+		});
+
+		it('refuses a zero-area rect rather than asking for an empty shot', async () => {
+			const capturePage = vi.fn();
+
+			const result = await handlers.get('window:capturePage')!(makeEvent(capturePage), {
+				x: 0,
+				y: 0,
+				width: 0,
+				height: 100,
+			});
+
+			expect(result).toBeNull();
+			expect(capturePage).not.toHaveBeenCalled();
+		});
+
+		it('returns null for an empty capture so callers do not paste a blank image', async () => {
+			const capturePage = vi.fn().mockResolvedValue(fakeImage(null));
+
+			const result = await handlers.get('window:capturePage')!(makeEvent(capturePage), {
+				x: 0,
+				y: 0,
+				width: 10,
+				height: 10,
+			});
+
+			expect(result).toBeNull();
+		});
+
+		it('returns null when the sender is already gone', async () => {
+			const capturePage = vi.fn();
+			const event = { sender: { isDestroyed: () => true, capturePage } } as any;
+
+			await expect(handlers.get('window:capturePage')!(event, undefined)).resolves.toBeNull();
+			expect(capturePage).not.toHaveBeenCalled();
 		});
 	});
 

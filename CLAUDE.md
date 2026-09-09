@@ -66,6 +66,8 @@ Grep-verified 2026-09-04 (`npm run docs:verify` re-checks every path). This is t
 - **Path utilities:** `truncatePath()`, `getParentDir()` in `src/shared/formatters.ts`
 - **Referencing / thumbnailing a pasted transcript image:** `isSessionImageRef()`, `sessionImageThumbnailSrc()` in `src/shared/sessionImageRefs.ts`
 - **Loading an image for canvas compositing:** `loadImageElement(src)` in `src/renderer/utils/loadImage.ts`
+- **Saving generated image bytes to disk:** `saveImageDataUrlToDisk(dataUrl, defaultName?)` in `src/renderer/utils/imageExport.ts`
+- **Screenshotting a surface as it is painted:** `window.maestro.shell.capturePage(rect?)` in `src/main/preload/system.ts`
 - **Classifying a file by extension:** `getFileCategory()`, `isPreviewableFile()` in `src/shared/fileCategories.ts`
 - **Strip ANSI:** `stripAnsiCodes()` in `src/shared/stringUtils.ts`
 - **Shell escape:** `shellEscape()`, `shellEscapeArgs()` in `src/main/utils/shell-escape.ts`
