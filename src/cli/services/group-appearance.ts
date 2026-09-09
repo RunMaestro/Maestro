@@ -11,6 +11,7 @@
 // and it does not rely on the desktop echoing anything back to us.
 
 import { readGroups } from './storage';
+import { canSetGroupParent } from '../../shared/groupHierarchy';
 import type { Group } from '../../shared/types';
 
 /** What the persisted group is expected to look like after a write. */
@@ -82,6 +83,43 @@ export function verifyPersistedGroup(groupId: string, expected: ExpectedGroupSta
 
 	if (mismatches.length === 0) return null;
 	return `Group ${groupId} was not stored as requested (${mismatches.join('; ')}). ${VERSION_MISMATCH_HINT}`;
+}
+
+/**
+ * Explain, before the command is sent, why a reparent could not apply.
+ *
+ * The desktop answers an update with a bare boolean (the same shape as
+ * `rename_group` and `delete_group`), so a rejection arrives with no reason
+ * attached and the user is told only "Failed to update group". A bad group id
+ * is already named by `resolveGroupId`; the one remaining silent rejection is
+ * the one-level nesting rule, which is decidable from the persisted group list,
+ * so name it here.
+ *
+ * This is advisory, not authoritative: the renderer holds the live list and
+ * checks again before mutating. A pre-flight that cannot see a problem simply
+ * lets the request through.
+ */
+export function explainGroupReparentRejection(
+	groupId: string,
+	parentGroupId: string | undefined
+): string | null {
+	if (!parentGroupId) return null;
+
+	let groups: Group[];
+	try {
+		groups = readGroups();
+	} catch {
+		// No readable group list means no opinion; let the desktop decide.
+		return null;
+	}
+	// Either id being absent is a stale read, not a verdict - resolveGroupId
+	// already rejected an id the list does not have.
+	if (!groups.some((group) => group.id === groupId)) return null;
+	if (!groups.some((group) => group.id === parentGroupId)) return null;
+
+	if (canSetGroupParent(groups, groupId, parentGroupId)) return null;
+	if (parentGroupId === groupId) return 'A group cannot be its own parent';
+	return `Cannot move ${groupId} into ${parentGroupId}: groups nest one level deep, so the parent must be a top-level group and the group being moved must have no children of its own`;
 }
 
 /** The appearance/hierarchy fields of a stored group, for JSON output. */

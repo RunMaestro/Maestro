@@ -18,7 +18,11 @@ import {
 	type LucideIcon,
 } from 'lucide-react';
 import type { IconPackContribution } from '../../../shared/plugins/contributions';
-import { GROUP_ICON_CATALOG, GROUP_LABEL_COLORS } from '../../../shared/groupAppearance';
+import {
+	GROUP_ICON_CATALOG,
+	GROUP_LABEL_COLORS,
+	type GroupIconId,
+} from '../../../shared/groupAppearance';
 
 export { GROUP_LABEL_COLORS };
 
@@ -43,8 +47,12 @@ export interface ResolvedGroupAppearance {
  * (`shared/groupAppearance.ts`) so the CLI and the WebSocket handlers validate
  * against the same ids; only this mapping is renderer-owned, because Lucide
  * cannot be imported outside the renderer bundle.
+ *
+ * Typed `Record<GroupIconId, LucideIcon>` on purpose: an id added to the shared
+ * catalog and not drawn here is a compile error, rather than an icon the CLI
+ * accepts and the picker silently omits.
  */
-const GROUP_ICON_COMPONENTS: Record<string, LucideIcon> = {
+const GROUP_ICON_COMPONENTS: Record<GroupIconId, LucideIcon> = {
 	folder: Folder,
 	briefcase: Briefcase,
 	rocket: Rocket,
@@ -63,9 +71,11 @@ const GROUP_ICON_COMPONENTS: Record<string, LucideIcon> = {
 	zap: Zap,
 };
 
-export const GROUP_ICON_OPTIONS: readonly GroupIconOption[] = GROUP_ICON_CATALOG.filter(
-	(entry) => entry.id in GROUP_ICON_COMPONENTS
-).map((entry) => ({ id: entry.id, label: entry.label, Icon: GROUP_ICON_COMPONENTS[entry.id] }));
+export const GROUP_ICON_OPTIONS: readonly GroupIconOption[] = GROUP_ICON_CATALOG.map((entry) => ({
+	id: entry.id,
+	label: entry.label,
+	Icon: GROUP_ICON_COMPONENTS[entry.id as GroupIconId],
+}));
 
 /**
  * Resolves a stored group appearance against the current host and plugin option

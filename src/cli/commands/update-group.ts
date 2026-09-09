@@ -8,7 +8,11 @@
 
 import { resolveGroupId } from '../services/storage';
 import { sendSimpleCommand, failCommand } from '../services/session-command';
-import { verifyPersistedGroup, describePersistedGroup } from '../services/group-appearance';
+import {
+	verifyPersistedGroup,
+	describePersistedGroup,
+	explainGroupReparentRejection,
+} from '../services/group-appearance';
 import { validateGroupUpdate, type GroupClearableField } from '../../shared/groupAppearance';
 import { formatSuccess } from '../output/formatter';
 import { isQuiet } from '../output/verbosity';
@@ -62,6 +66,13 @@ export async function updateGroup(groupId: string, options: UpdateGroupOptions):
 	});
 	if (!validated.ok) {
 		return failCommand(validated.error, options.json);
+	}
+
+	// The desktop answers with a bare boolean, so name an illegal reparent here
+	// rather than letting the user read "Failed to update group".
+	const rejection = explainGroupReparentRejection(resolvedGroupId, parentGroupId);
+	if (rejection) {
+		return failCommand(rejection, options.json);
 	}
 
 	let result;

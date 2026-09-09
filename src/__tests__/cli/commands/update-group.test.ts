@@ -227,6 +227,43 @@ describe('update-group command', () => {
 			expect(processExitSpy).toHaveBeenCalledWith(1);
 		});
 
+		it('should name an illegal reparent instead of the bare boolean', async () => {
+			// The desktop answers a rejected reparent with success:false and no
+			// reason, so the CLI has to explain the nesting rule itself.
+			const payload = mockSend({ type: 'update_group_result', success: false });
+			vi.mocked(readGroups).mockReturnValue([
+				{ id: 'g1', name: 'CHILD', emoji: 'a', collapsed: false } as Group,
+				{
+					id: 'g2',
+					name: 'ALSO CHILD',
+					emoji: 'b',
+					collapsed: false,
+					parentGroupId: 'g3',
+				} as Group,
+				{ id: 'g3', name: 'ROOT', emoji: 'c', collapsed: false } as Group,
+			]);
+
+			await updateGroup('g1', { parent: 'g2' });
+
+			expect(vi.mocked(formatError).mock.calls[0][0]).toContain('nest one level deep');
+			// The request never reaches the desktop: nothing to half-apply.
+			expect(payload()).toEqual({});
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+
+		it('should still send a legal reparent', async () => {
+			const payload = mockSend({ type: 'update_group_result', success: true });
+			vi.mocked(readGroups).mockReturnValue([
+				{ id: 'g1', name: 'CHILD', emoji: 'a', collapsed: false, parentGroupId: 'g3' } as Group,
+				{ id: 'g3', name: 'ROOT', emoji: 'c', collapsed: false } as Group,
+			]);
+
+			await updateGroup('g1', { parent: 'g3' });
+
+			expect(payload().parentGroupId).toBe('g3');
+			expect(processExitSpy).not.toHaveBeenCalled();
+		});
+
 		it('should report a connection failure in JSON mode', async () => {
 			vi.mocked(withMaestroClient).mockRejectedValue(new Error('Connection refused'));
 

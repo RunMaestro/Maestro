@@ -25,7 +25,7 @@ export interface GroupColorCatalogEntry {
 	label: string;
 }
 
-export const GROUP_ICON_CATALOG: readonly GroupIconCatalogEntry[] = [
+const GROUP_ICON_CATALOG_ENTRIES = [
 	{ id: 'folder', label: 'Folder' },
 	{ id: 'briefcase', label: 'Briefcase' },
 	{ id: 'rocket', label: 'Rocket' },
@@ -43,6 +43,18 @@ export const GROUP_ICON_CATALOG: readonly GroupIconCatalogEntry[] = [
 	{ id: 'archive', label: 'Archive' },
 	{ id: 'zap', label: 'Zap' },
 ] as const;
+
+/**
+ * The id of a built-in group icon. Derived from the catalog rather than written
+ * out, so the renderer's icon-id -> Lucide map can be typed
+ * `Record<GroupIconId, LucideIcon>` and adding an entry here without drawing it
+ * fails to compile. Without that, a new icon would be accepted by the CLI and
+ * silently undrawable in the picker - the exact split this module exists to
+ * prevent.
+ */
+export type GroupIconId = (typeof GROUP_ICON_CATALOG_ENTRIES)[number]['id'];
+
+export const GROUP_ICON_CATALOG: readonly GroupIconCatalogEntry[] = GROUP_ICON_CATALOG_ENTRIES;
 
 export const GROUP_LABEL_COLORS: readonly GroupColorCatalogEntry[] = [
 	{ value: '#EF4444', label: 'Red' },
