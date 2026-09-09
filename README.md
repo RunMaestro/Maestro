@@ -19,7 +19,7 @@ Run multiple agents in parallel with a Linear/Superhuman-level responsive interf
 > **How It Works:** Maestro is a pass-through to your AI provider. Whatever MCP tools, skills, permissions, or authentication you have configured in Claude Code, Codex, or OpenCode works identically in Maestro. The only difference is we're not running interactively-each task gets a prompt and returns a response, whether it's a new session or resuming a prior one.
 
 <div align="center">
-  <a href="https://youtu.be/fmwwTOg7cyA?si=dJ89K54tGflKa5G4">
+  <a href="https://youtu.be/3wX5Q1I0sgI?si=oJkJDxgAWUvBXX4D">
     <img src="https://github.com/user-attachments/assets/deaf601d-1898-4ede-bf5a-42e46874ebb3"
          alt="Maestro Video Thumbnail"
          width="650" />
