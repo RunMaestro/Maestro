@@ -13,6 +13,7 @@
  */
 
 import type { LogEntry } from '../types';
+import { stripEmbeddedSystemPrompt } from '../../shared/embeddedSystemPrompt';
 import { generateId } from './ids';
 
 /**
@@ -74,24 +75,41 @@ export function stripSynopsisTurns<T extends { type: string; role?: string; cont
  * text content or reconstructed images. Tool-use-only messages (empty text, no
  * images) are skipped - restored tabs start with thinking off, so there is
  * nothing useful to render for those entries.
+ *
+ * A user turn is unwrapped on the way through (`stripEmbeddedSystemPrompt`).
+ * Every provider except Claude Code lacks a system-prompt flag, so the spawn
+ * path embeds the whole Maestro system prompt in the FIRST user turn, and that
+ * turn is what the provider writes to disk. Rendering it verbatim showed the
+ * system prompt, the conductor profile and the injected context as if the user
+ * had typed them, and buried the prompt they really sent at the bottom of it
+ * (issue #1533). Stripping here rather than at each call site is what keeps
+ * resume and backfill producing identical entries for the same message; it also
+ * makes a hydrated first turn match the clean entry a live tab logged, which is
+ * what `selectOlderEntries` needs to find its splice point.
+ *
+ * The strip runs BEFORE the empty check: a turn that carried nothing but the
+ * envelope has no user text to show and should drop out entirely.
  */
 export function transcriptMessagesToLogEntries(messages: TranscriptMessage[]): LogEntry[] {
 	return messages
+		.map((msg) => {
+			const source = msg.type === 'user' ? ('user' as const) : ('stdout' as const);
+			return {
+				// Storage should always supply a uuid; the fallback keeps keys unique if
+				// one is missing. Entries that fall back cannot be matched by id across
+				// two reads, which is why `selectOlderEntries` also compares source+text.
+				id: msg.uuid || generateId(),
+				timestamp: new Date(msg.timestamp).getTime(),
+				source,
+				text: source === 'user' ? stripEmbeddedSystemPrompt(msg.content) : msg.content,
+				...(msg.images && msg.images.length > 0 && { images: msg.images }),
+			};
+		})
 		.filter(
-			(msg) =>
-				(msg.content && msg.content.trim().length > 0) ||
-				(msg.images != null && msg.images.length > 0)
-		)
-		.map((msg) => ({
-			// Storage should always supply a uuid; the fallback keeps keys unique if
-			// one is missing. Entries that fall back cannot be matched by id across
-			// two reads, which is why `selectOlderEntries` also compares source+text.
-			id: msg.uuid || generateId(),
-			timestamp: new Date(msg.timestamp).getTime(),
-			source: msg.type === 'user' ? ('user' as const) : ('stdout' as const),
-			text: msg.content,
-			...(msg.images && msg.images.length > 0 && { images: msg.images }),
-		}));
+			(entry) =>
+				(entry.text && entry.text.trim().length > 0) ||
+				(entry.images != null && entry.images.length > 0)
+		);
 }
 
 /**

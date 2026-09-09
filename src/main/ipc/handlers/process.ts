@@ -17,6 +17,7 @@ import {
 import { getClaudeTokenMode } from '../../../shared/claudeTokenMode';
 import { resolveConfigDirKey } from '../../stores/claudeUsageStore';
 import { isWindows } from '../../../shared/platformDetection';
+import { embedSystemPromptInPrompt } from '../../../shared/embeddedSystemPrompt';
 import { REGEX_AI_SUFFIX } from '../../constants';
 import {
 	getFailoverOverlay,
@@ -603,8 +604,11 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 							}
 						);
 					} else if (effectivePrompt) {
-						// Fallback: embed system prompt in user message
-						effectivePrompt = `${config.appendSystemPrompt}\n\n---\n\n# User Request\n\n${effectivePrompt}`;
+						// Fallback: embed system prompt in user message. The envelope is
+						// built by the shared helper because the transcript renderer has
+						// to take it back apart again when a tab is hydrated from disk
+						// (see src/shared/embeddedSystemPrompt.ts).
+						effectivePrompt = embedSystemPromptInPrompt(config.appendSystemPrompt, effectivePrompt);
 						logger.debug('Embedding system prompt in user message (fallback)', LOG_CONTEXT, {
 							agentId: agent?.id,
 							systemPromptLength: config.appendSystemPrompt.length,
