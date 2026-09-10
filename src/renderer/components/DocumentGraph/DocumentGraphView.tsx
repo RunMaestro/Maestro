@@ -2548,16 +2548,18 @@ export function DocumentGraphView({
 					)}
 				</div>
 
-				{/* Footer */}
+				{/* Footer. A three-column grid, not justify-between: the two side
+				    tracks are always equal, so the Snapshot button sits at the
+				    true center whether or not a selected node fills the right. */}
 				<div
-					className="px-6 py-4 border-t flex items-center justify-between text-xs flex-shrink-0"
+					className="px-6 py-4 border-t grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-4 text-xs flex-shrink-0"
 					style={{
 						borderColor: theme.colors.border,
 						color: theme.colors.textDim,
 						minHeight: 52,
 					}}
 				>
-					<div className="flex items-center gap-3">
+					<div className="flex items-center gap-3 min-w-0">
 						{/* Help Button */}
 						<button
 							onClick={() => setLegendExpanded(!legendExpanded)}
@@ -2659,68 +2661,76 @@ export function DocumentGraphView({
 						)}
 					</div>
 
-					{/* Center: Screenshot the graph. Hidden when the bridge cannot
-					    capture the page, so the button never offers a shot it
-					    can't take. */}
-					<div className="flex-1 flex items-center justify-center">
+					{/* Center: Snapshot. The column always renders so the grid keeps
+					    its middle track; the button inside hides when the bridge
+					    cannot capture the page, so it never offers a shot it can't take. */}
+					<div className="flex items-center justify-center">
 						{!!window.maestro?.shell?.capturePage && (
 							<button
 								onClick={() => setShowScreenshotModal(true)}
-								className="p-1.5 rounded transition-colors"
+								className="flex items-center gap-1.5 px-2 py-1 rounded text-xs transition-colors whitespace-nowrap"
 								style={{
-									backgroundColor: showScreenshotModal ? `${theme.colors.accent}25` : 'transparent',
-									color: showScreenshotModal ? theme.colors.accent : theme.colors.textDim,
+									backgroundColor: showScreenshotModal
+										? `${theme.colors.accent}25`
+										: `${theme.colors.accent}10`,
+									color: showScreenshotModal ? theme.colors.accent : theme.colors.textMain,
 								}}
 								onMouseEnter={(e) =>
-									(e.currentTarget.style.backgroundColor = `${theme.colors.accent}20`)
+									(e.currentTarget.style.backgroundColor = `${theme.colors.accent}30`)
 								}
 								onMouseLeave={(e) =>
 									(e.currentTarget.style.backgroundColor = showScreenshotModal
 										? `${theme.colors.accent}25`
-										: 'transparent')
+										: `${theme.colors.accent}10`)
 								}
-								title="Screenshot the graph view (C)"
-								aria-label="Screenshot the graph view"
+								title="Snapshot the graph view (C)"
+								aria-label="Snapshot the graph view"
 								data-testid="graph-screenshot-button"
 							>
-								<Camera className="w-4 h-4" />
+								<Camera className="w-3.5 h-3.5" />
+								Snapshot
 							</button>
 						)}
 					</div>
 
-					{/* Center: Selected node stats */}
-					{selectedNode?.nodeType === 'document' && (selectedNodeStats || selectedNodeTasks) && (
-						<div className="flex items-center gap-4" style={{ color: theme.colors.textDim }}>
-							{/* Task counts */}
-							{selectedNodeTasks && (
-								<div className="flex items-center gap-1.5" title="Markdown tasks">
-									<CheckSquare className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
-									<span>
-										<span style={{ color: theme.colors.success }}>
-											{selectedNodeTasks.completed}
+					{/* Right: Selected node stats. The wrapper always renders so the
+					    right track exists even with nothing selected. */}
+					<div className="flex items-center justify-end min-w-0">
+						{selectedNode?.nodeType === 'document' && (selectedNodeStats || selectedNodeTasks) && (
+							<div className="flex items-center gap-4" style={{ color: theme.colors.textDim }}>
+								{/* Task counts */}
+								{selectedNodeTasks && (
+									<div className="flex items-center gap-1.5" title="Markdown tasks">
+										<CheckSquare className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+										<span>
+											<span style={{ color: theme.colors.success }}>
+												{selectedNodeTasks.completed}
+											</span>
+											<span> of </span>
+											<span style={{ color: theme.colors.textMain }}>
+												{selectedNodeTasks.total}
+											</span>
+											<span> tasks</span>
 										</span>
-										<span> of </span>
-										<span style={{ color: theme.colors.textMain }}>{selectedNodeTasks.total}</span>
-										<span> tasks</span>
-									</span>
-								</div>
-							)}
-							{/* Created date */}
-							{selectedNodeStats?.createdAt && (
-								<div className="flex items-center gap-1.5" title="Created date">
-									<Calendar className="w-3.5 h-3.5" />
-									<span>Created {formatDate(selectedNodeStats.createdAt)}</span>
-								</div>
-							)}
-							{/* Modified date */}
-							{selectedNodeStats?.modifiedAt && (
-								<div className="flex items-center gap-1.5" title="Modified date">
-									<Calendar className="w-3.5 h-3.5" />
-									<span>Modified {formatDate(selectedNodeStats.modifiedAt)}</span>
-								</div>
-							)}
-						</div>
-					)}
+									</div>
+								)}
+								{/* Created date */}
+								{selectedNodeStats?.createdAt && (
+									<div className="flex items-center gap-1.5" title="Created date">
+										<Calendar className="w-3.5 h-3.5" />
+										<span>Created {formatDate(selectedNodeStats.createdAt)}</span>
+									</div>
+								)}
+								{/* Modified date */}
+								{selectedNodeStats?.modifiedAt && (
+									<div className="flex items-center gap-1.5" title="Modified date">
+										<Calendar className="w-3.5 h-3.5" />
+										<span>Modified {formatDate(selectedNodeStats.modifiedAt)}</span>
+									</div>
+								)}
+							</div>
+						)}
+					</div>
 				</div>
 			</div>
 

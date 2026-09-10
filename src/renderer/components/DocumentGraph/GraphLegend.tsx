@@ -140,7 +140,7 @@ const KEYBOARD_SHORTCUTS: KeyboardShortcutItem[] = [
 	},
 	{
 		keys: 'C',
-		description: 'Screenshot the graph',
+		description: 'Snapshot the graph',
 	},
 ];
 

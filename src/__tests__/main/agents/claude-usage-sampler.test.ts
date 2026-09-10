@@ -24,11 +24,14 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // vi.hoisted(), the factory closes over a `mockExecFile` that hasn't been
 // initialized yet, and the first `import` from the source module crashes
 // with "Cannot access 'mockExecFile' before initialization".
-const { mockExecFile, captureMessageMock, readAccountIdentityMock } = vi.hoisted(() => ({
-	mockExecFile: vi.fn(),
-	captureMessageMock: vi.fn(),
-	readAccountIdentityMock: vi.fn(),
-}));
+const { mockExecFile, captureMessageMock, readAccountIdentityMock, getSnapshotMock } = vi.hoisted(
+	() => ({
+		mockExecFile: vi.fn(),
+		captureMessageMock: vi.fn(),
+		readAccountIdentityMock: vi.fn(),
+		getSnapshotMock: vi.fn(),
+	})
+);
 
 vi.mock('child_process', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('child_process')>();
@@ -79,6 +82,13 @@ vi.mock('../../../main/utils/sentry', () => ({
 vi.mock('../../../main/agents/claude-account-identity', () => ({
 	readClaudeAccountIdentity: readAccountIdentityMock,
 }));
+
+// Only `getSnapshot` is stubbed: the sampler consults the cache to keep the last
+// real secondary-week reading when the parser flags that window unread.
+vi.mock('../../../main/stores/claudeUsageStore', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../../main/stores/claudeUsageStore')>();
+	return { ...actual, getSnapshot: getSnapshotMock };
+});
 
 import path from 'path';
 import { sampleUsage } from '../../../main/agents/claude-usage-sampler';
@@ -143,6 +153,8 @@ describe('claude-usage-sampler', () => {
 		// assertion in this file was written against.
 		readAccountIdentityMock.mockReset();
 		readAccountIdentityMock.mockResolvedValue(null);
+		getSnapshotMock.mockReset();
+		getSnapshotMock.mockReturnValue(null);
 		// Restore env to a known baseline; some tests intentionally drop
 		// CLAUDE_CONFIG_DIR from `process.env` to verify the ~/.claude fallback.
 		for (const key of Object.keys(process.env)) {
@@ -158,6 +170,76 @@ describe('claude-usage-sampler', () => {
 
 	afterEach(() => {
 		vi.useRealTimers();
+	});
+
+	describe('unread secondary weekly window', () => {
+		// The parser flags `week_sonnet_only.unread` when a mid-repaint capture
+		// clobbered that section. Its 0% is a placeholder, not a measurement.
+		const unreadEnvelope = () =>
+			wireEnvelope({
+				week_sonnet_only: { percent: 0, resets_at: '2026-05-22T12:00:00.000Z', unread: true },
+			});
+		const cachedWith = (weekSonnetOnly: Record<string, unknown>) => ({
+			sampledAt: '2026-05-15T11:00:00.000Z',
+			configDirKey: path.resolve('/Users/test/.claude'),
+			session: { percent: 40 },
+			weekAllModels: { percent: 70, resetsAt: '2026-05-22T12:00:00.000Z' },
+			weekSonnetOnly,
+		});
+
+		it('keeps the last real reading while its weekly window is still open', async () => {
+			getSnapshotMock.mockReturnValue(
+				cachedWith({ percent: 18, resetsAt: '2026-05-22T12:00:00.000Z', label: 'Fable' })
+			);
+			primeSuccess(unreadEnvelope());
+
+			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
+
+			expect(getSnapshotMock).toHaveBeenCalledWith(path.resolve('/Users/test/.claude'));
+			expect(snap?.weekSonnetOnly).toEqual({
+				percent: 18,
+				resetsAt: '2026-05-22T12:00:00.000Z',
+				label: 'Fable',
+			});
+		});
+
+		it('keeps the placeholder when the last reading belongs to a window that already reset', async () => {
+			getSnapshotMock.mockReturnValue(
+				cachedWith({ percent: 95, resetsAt: '2026-05-15T06:00:00.000Z', label: 'Fable' })
+			);
+			primeSuccess(unreadEnvelope());
+
+			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
+
+			expect(snap?.weekSonnetOnly).toEqual({ percent: 0, resetsAt: '2026-05-22T12:00:00.000Z' });
+		});
+
+		it('keeps the placeholder when nothing is cached for the account', async () => {
+			primeSuccess(unreadEnvelope());
+
+			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
+
+			expect(snap?.weekSonnetOnly).toEqual({ percent: 0, resetsAt: '2026-05-22T12:00:00.000Z' });
+		});
+
+		it('keeps the placeholder when the cache read throws', async () => {
+			getSnapshotMock.mockImplementation(() => {
+				throw new Error('store unreadable');
+			});
+			primeSuccess(unreadEnvelope());
+
+			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
+
+			expect(snap?.weekSonnetOnly).toEqual({ percent: 0, resetsAt: '2026-05-22T12:00:00.000Z' });
+		});
+
+		it('never consults the cache for a window it did read', async () => {
+			primeSuccess(wireEnvelope());
+
+			await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
+
+			expect(getSnapshotMock).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('account identity', () => {

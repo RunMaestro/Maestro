@@ -48,13 +48,13 @@ Pen strokes are immutable once committed - they can be erased or undone, but not
 
 ## Cropping
 
-Press `R` (or click the crop icon) to arm the crop tool. The area outside the selection dims, rule-of-thirds guides appear inside it, and eight handles let you shape the frame:
+Press `R` (or click the crop icon) to arm the crop tool. It opens on a frame inset from the image edges, so every handle starts clear of the window edge. The area outside the selection dims, rule-of-thirds guides appear inside it, and eight handles let you shape the frame:
 
 - **Drag** anywhere on the dimmed area to draw a new selection.
 - **Drag the body** to reposition the frame without resizing it.
 - **Drag a handle** - corners resize two edges, side handles resize one.
 - **`Enter`** (or the scissors icon) applies the crop.
-- **`Esc`** clears the selection back to the full frame.
+- **`Esc`** resets the selection back to the default frame. Press it again to close the annotator.
 
 Cropping is not a flatten. The base image is cut, and every stroke, shape, and text label moves into the new origin still fully editable - so you can crop first and keep annotating, or annotate first and crop afterwards. Anything that fell outside the crop is clipped from view but not destroyed: `Cmd+Z` / `Ctrl+Z` undoes the crop and brings back the original frame along with everything on it.
 
