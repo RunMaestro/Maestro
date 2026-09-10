@@ -14,6 +14,11 @@ export interface AutoRunMetrics {
 	successRate: number;
 	avgSessionDuration: number;
 	avgTaskDuration: number;
+	/** Sum of every session's duration; always goalDrivenDuration + specDrivenDuration. */
+	totalDuration: number;
+	goalDrivenDuration: number;
+	/** Includes sessions with no or an unrecognized `kind` (rows from before the column). */
+	specDrivenDuration: number;
 }
 
 export function groupSessionsByDate(sessions: AutoRunSession[]): AutoRunDayData[] {
@@ -43,6 +48,12 @@ export function computeAutoRunMetrics(sessions: AutoRunSession[]): AutoRunMetric
 		return sum + (session.tasksTotal ?? 0);
 	}, 0);
 	const totalSessionDuration = sessions.reduce((sum, session) => sum + session.duration, 0);
+	// Classify by the stored kind only - not by the `Goal: ` document-path
+	// prefix, which is a display label and not the source of truth.
+	const goalDrivenDuration = sessions.reduce(
+		(sum, session) => (session.kind === 'goal-driven' ? sum + session.duration : sum),
+		0
+	);
 
 	return {
 		totalSessions,
@@ -53,6 +64,9 @@ export function computeAutoRunMetrics(sessions: AutoRunSession[]): AutoRunMetric
 			totalTasksAttempted > 0 ? Math.round((totalTasksCompleted / totalTasksAttempted) * 100) : 0,
 		avgSessionDuration: totalSessions > 0 ? totalSessionDuration / totalSessions : 0,
 		avgTaskDuration: totalTasksCompleted > 0 ? totalSessionDuration / totalTasksCompleted : 0,
+		totalDuration: totalSessionDuration,
+		goalDrivenDuration,
+		specDrivenDuration: totalSessionDuration - goalDrivenDuration,
 	};
 }
 

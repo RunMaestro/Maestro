@@ -2,7 +2,7 @@
  * Tests for AutoRunStats component
  *
  * Verifies:
- * - Renders all six metric cards correctly
+ * - Renders all seven metric cards correctly
  * - Displays formatted values (numbers, durations, percentages)
  * - Shows mini bar chart for tasks over time
  * - Handles loading, error, and empty states
@@ -183,13 +183,31 @@ describe('AutoRunStats', () => {
 			});
 		});
 
-		it('renders all six metric cards', async () => {
+		it('renders all seven metric cards', async () => {
 			render(<AutoRunStats timeRange="week" theme={theme} />);
 
 			await waitFor(() => {
 				const cards = screen.getAllByTestId('autorun-metric-card');
-				expect(cards).toHaveLength(6);
+				expect(cards).toHaveLength(7);
 			});
+		});
+
+		it('renders Total Auto Run Time with a goal / spec split', async () => {
+			mockStatsApi.getAutoRunSessions.mockResolvedValue([
+				{ ...mockSessions[0], id: 'goal', duration: 3600000, kind: 'goal-driven' }, // 1h
+				{ ...mockSessions[0], id: 'spec', duration: 1800000, kind: 'spec-driven' }, // 30m
+				// Recorded before the kind column existed - counts as spec-driven.
+				{ ...mockSessions[0], id: 'legacy', duration: 900000 }, // 15m
+			]);
+
+			render(<AutoRunStats timeRange="week" theme={theme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Total Auto Run Time')).toBeInTheDocument();
+			});
+			// Total is every session summed: 1h + 30m + 15m.
+			expect(screen.getByText('1h 45m')).toBeInTheDocument();
+			expect(screen.getByText('1h 0m goal / 45m 0s spec')).toBeInTheDocument();
 		});
 
 		it('renders Total Sessions metric', async () => {
@@ -364,7 +382,8 @@ describe('AutoRunStats', () => {
 			render(<AutoRunStats timeRange="week" theme={theme} />);
 
 			await waitFor(() => {
-				expect(screen.getByText('2h 0m')).toBeInTheDocument();
+				// A single session: Avg Session and Total Auto Run Time both read 2h 0m.
+				expect(screen.getAllByText('2h 0m')).toHaveLength(2);
 			});
 		});
 
@@ -496,7 +515,7 @@ describe('AutoRunStats', () => {
 			await waitFor(() => {
 				const metrics = screen.getByTestId('autorun-metrics');
 				const svgElements = metrics.querySelectorAll('svg');
-				expect(svgElements.length).toBe(6);
+				expect(svgElements.length).toBe(7);
 			});
 		});
 	});

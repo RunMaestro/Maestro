@@ -11,6 +11,7 @@
  */
 
 import { ipcRenderer } from 'electron';
+import type { AutoRunKind } from '../../shared/stats-types';
 
 /**
  * Data submitted when creating/updating a leaderboard entry
@@ -30,6 +31,8 @@ export interface LeaderboardSubmitData {
 	longestRunMs?: number;
 	longestRunDate?: string;
 	currentRunMs?: number;
+	/** Which Auto Run engine produced `currentRunMs`. Optional; older clients omit it. */
+	currentRunKind?: AutoRunKind;
 	theme?: string;
 	clientToken?: string;
 	authToken?: string;

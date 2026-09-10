@@ -31,7 +31,7 @@ export function useUsageDashboardLayout(
 			// cards TRUNCATE their value rather than wrapping it, so two columns
 			// on a phone rendered "4h 3…" and "10m …" where the whole point of
 			// the tile is the duration.
-			autoRunStatsCols: isTiny ? 1 : isNarrow ? 2 : isMedium ? 3 : 6,
+			autoRunStatsCols: isTiny ? 1 : isNarrow ? 2 : isMedium ? 3 : 7,
 		};
 	}, [containerWidth]);
 }
