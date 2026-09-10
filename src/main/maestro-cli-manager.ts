@@ -12,8 +12,12 @@ import type { MaestroCliStatus, MaestroCliInstallResult } from '../shared/maestr
 const CLI_BINARY_NAME = 'maestro-cli';
 const LOG_CONTEXT = 'MaestroCliManager';
 
-function normalizeVersion(raw: string): string {
-	const firstLine = raw.trim().split(/\r?\n/)[0] || '';
+export function normalizeVersion(raw: string): string {
+	const lines = splitOutputLines(raw);
+	const exactVersionLine = lines.find((line) => /^v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(line));
+	if (exactVersionLine) return exactVersionLine.replace(/^v/i, '');
+
+	const firstLine = lines[0] || '';
 	const semverMatch = firstLine.match(/(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)/);
 	return semverMatch?.[1] || firstLine.replace(/^v/i, '').trim();
 }
@@ -233,9 +237,11 @@ export class MaestroCliManager {
 			"  $newPath = (($parts + $installDir) | Select-Object -Unique) -join ';'",
 			"  [Environment]::SetEnvironmentVariable('Path', $newPath, 'User')",
 			'}',
-		].join('; ');
+		].join('\n');
 
-		const result = await execFileNoThrow('powershell', [
+		// Use the executable name so execFileNoThrow does not route the command
+		// through cmd.exe, which would reinterpret PowerShell's pipe characters.
+		const result = await execFileNoThrow('powershell.exe', [
 			'-NoProfile',
 			'-NonInteractive',
 			'-Command',

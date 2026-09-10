@@ -176,6 +176,7 @@ import {
 import { isAgentBusy } from './utils/agent-busy';
 import { createTimeZoneWatcher } from './utils/timezone-watcher';
 import { noteSystemSuspend, noteSystemResume } from './utils/sleep-tracker';
+import { clearGhCache } from './utils/cliDetection';
 // Phase 3 refactoring - process listeners
 import { setupProcessListeners as setupProcessListenersModule } from './process-listeners';
 import { setupWakaTimeListener } from './process-listeners/wakatime-listener';
@@ -474,6 +475,11 @@ const settingsWatcher = createSettingsWatcher({
 		if (keepDisplayAwake !== powerManager.isKeepingDisplayAwake()) {
 			powerManager.setKeepDisplayAwake(keepDisplayAwake);
 		}
+		// A CLI or hand write can repoint ghPath without going through
+		// settings:set, which is where the cache is otherwise invalidated. The
+		// clear is unconditional because the previous value is not available
+		// here, and the only cost of an unnecessary one is a single `which`.
+		clearGhCache();
 	},
 });
 
