@@ -22,6 +22,7 @@ import {
 } from '../../utils/cliDetection';
 import { execFileNoThrow } from '../../utils/execFile';
 import { getSettingsStore } from '../../stores/getters';
+import { isInitialized } from '../../stores/instances';
 import { generateDebugPackage, type DebugPackageDependencies } from '../../debug-package';
 import { captureException } from '../../utils/sentry';
 import type { MaestroCliManager } from '../../maestro-cli-manager';
@@ -223,15 +224,17 @@ function buildEnvironmentSummary(payload: FeedbackSubmitPayload): FeedbackEnviro
  * installs where gh is not on the expanded PATH.
  */
 async function resolveFeedbackGhCommand(): Promise<string> {
-	let customPath: string | undefined;
-	try {
-		const configured = getSettingsStore().get('ghPath');
-		customPath =
-			typeof configured === 'string' && configured.trim() ? configured.trim() : undefined;
-	} catch {
-		// Stores are not initialised in every context (unit tests, early startup).
-		// Auto-detection is the correct fallback there.
+	// Guard on the predicate rather than catching. The stores genuinely are not
+	// initialised in every context (unit tests, early startup), and falling back
+	// to auto-detection there is correct, but a blanket catch would also swallow
+	// a real store failure and silently run some other binary.
+	if (!isInitialized()) {
+		return resolveGhPath();
 	}
+
+	const configured = getSettingsStore().get('ghPath');
+	const customPath =
+		typeof configured === 'string' && configured.trim() ? configured.trim() : undefined;
 	return resolveGhPath(customPath);
 }
 

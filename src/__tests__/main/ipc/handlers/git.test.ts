@@ -3676,6 +3676,62 @@ export function Component() {
 		});
 	});
 
+	describe('git:createGist', () => {
+		// The gist call passes BOTH the gist body on stdin and the expanded PATH,
+		// which only works via the structured option object. Dropping either one
+		// breaks it silently: no env means a gh shim cannot reach its parent tool,
+		// and no input means an empty gist.
+		it('sends the content on stdin AND the expanded env', async () => {
+			const cliDetection = await import('../../../../main/utils/cliDetection');
+			vi.mocked(cliDetection.resolveGhPath).mockResolvedValue('gh');
+			vi.mocked(execFile.execFileNoThrow).mockResolvedValueOnce({
+				stdout: 'https://gist.github.com/user/abc123\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const handler = handlers.get('git:createGist');
+			const result = await handler!(
+				{} as any,
+				'log.txt',
+				'gist body contents',
+				'a description',
+				false
+			);
+
+			expect(execFile.execFileNoThrow).toHaveBeenCalledWith(
+				'gh',
+				expect.arrayContaining(['gist', 'create', '--filename', 'log.txt']),
+				undefined,
+				{ input: 'gist body contents', env: { PATH: '/expanded/path:/usr/bin' } }
+			);
+			expect(result).toEqual({
+				success: true,
+				gistUrl: 'https://gist.github.com/user/abc123',
+			});
+		});
+
+		it('honors a custom ghPath', async () => {
+			const cliDetection = await import('../../../../main/utils/cliDetection');
+			vi.mocked(cliDetection.resolveGhPath).mockResolvedValue('/custom/bin/gh');
+			vi.mocked(execFile.execFileNoThrow).mockResolvedValueOnce({
+				stdout: 'https://gist.github.com/user/def456\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const handler = handlers.get('git:createGist');
+			await handler!({} as any, 'log.txt', 'body', '', false, '/custom/bin/gh');
+
+			expect(execFile.execFileNoThrow).toHaveBeenCalledWith(
+				'/custom/bin/gh',
+				expect.any(Array),
+				undefined,
+				expect.objectContaining({ env: { PATH: '/expanded/path:/usr/bin' } })
+			);
+		});
+	});
+
 	describe('git:getDefaultBranch', () => {
 		it('should return branch from remote when HEAD branch is available', async () => {
 			vi.mocked(execFile.execFileNoThrow).mockResolvedValueOnce({

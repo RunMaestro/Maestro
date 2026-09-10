@@ -30,6 +30,7 @@ import {
 	setCachedGhStatus,
 	clearGhCache,
 	resolveGhPath,
+	isGhInstalled,
 } from '../../../main/utils/cliDetection';
 import { execFileNoThrow } from '../../../main/utils/execFile';
 
@@ -557,6 +558,29 @@ describe('cliDetection.ts', () => {
 			vi.advanceTimersByTime(60001);
 
 			expect(getCachedGhStatus()).toBeNull();
+		});
+
+		// Expiring the verdict is not enough on its own: isGhInstalled() returns
+		// early on any non-null detection cache, so a stale `false` left behind
+		// would make the next lookup answer from the result that just expired
+		// instead of probing again.
+		it('re-probes after a NEGATIVE verdict expires, rather than reusing it', async () => {
+			vi.useFakeTimers();
+			setCachedGhStatus(false, false);
+
+			vi.advanceTimersByTime(60001);
+			expect(getCachedGhStatus()).toBeNull();
+
+			// The shim is resolvable now that its parent tool is reachable.
+			mockedExecFileNoThrow.mockResolvedValue({
+				stdout: '/home/testuser/.asdf/shims/gh\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			await expect(isGhInstalled()).resolves.toBe(true);
+			expect(mockedExecFileNoThrow).toHaveBeenCalled();
+			await expect(resolveGhPath()).resolves.toBe('/home/testuser/.asdf/shims/gh');
 		});
 
 		it('expires a positive verdict once the TTL elapses', () => {

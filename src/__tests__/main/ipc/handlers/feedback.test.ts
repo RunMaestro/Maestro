@@ -56,6 +56,10 @@ vi.mock('../../../../main/stores/getters', () => ({
 	getSettingsStore: vi.fn(() => ({ get: vi.fn(() => '') })),
 }));
 
+vi.mock('../../../../main/stores/instances', () => ({
+	isInitialized: vi.fn(() => true),
+}));
+
 vi.mock('../../../../main/utils/execFile', () => ({
 	execFileNoThrow: vi.fn(),
 }));
@@ -77,6 +81,7 @@ import {
 } from '../../../../main/utils/cliDetection';
 import { execFileNoThrow } from '../../../../main/utils/execFile';
 import { getSettingsStore } from '../../../../main/stores/getters';
+import { isInitialized } from '../../../../main/stores/instances';
 import {
 	cleanupTempFiles,
 	saveImageToTempFile,
@@ -529,6 +534,26 @@ describe('feedback handlers', () => {
 			undefined,
 			expect.anything()
 		);
+	});
+
+	// The guard is a predicate rather than a try/catch so that a REAL settings
+	// failure still surfaces instead of silently running some other binary.
+	it('falls back to auto-detection when the stores are not initialised', async () => {
+		vi.mocked(isInitialized).mockReturnValue(false);
+		vi.mocked(getCachedGhStatus).mockReturnValue(null);
+		vi.mocked(isGhInstalled).mockResolvedValue(true);
+		vi.mocked(execFileNoThrow).mockResolvedValue({
+			exitCode: 0,
+			stdout: '',
+			stderr: '',
+		} as any);
+
+		const handler = registeredHandlers.get('feedback:check-gh-auth');
+		const result = await handler!({});
+
+		expect(getSettingsStore).not.toHaveBeenCalled();
+		expect(isGhInstalled).toHaveBeenCalled();
+		expect(result).toEqual({ authenticated: true });
 	});
 
 	describe('feedback:get-conversation-prompt', () => {

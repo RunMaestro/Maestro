@@ -113,6 +113,11 @@ export function getCachedGhStatus(): { installed: boolean; authenticated: boolea
 	// "not installed" would keep gh unavailable for the rest of the app run with
 	// no way to recover short of a restart.
 	if (Date.now() - ghStatusCacheTime >= GH_STATUS_CACHE_TTL_MS) {
+		// Drop the detection cache too, not just the verdict. isGhInstalled()
+		// returns early on any non-null ghInstalledCache, so leaving a stale
+		// `false` there would make the next lookup skip `which` entirely and
+		// answer from the very result that just expired.
+		clearGhCache();
 		return null;
 	}
 
