@@ -18,7 +18,6 @@
 import { useCallback, useEffect } from 'react';
 import type { AdditionalDirectory, Session, FailoverConfig } from '../../types';
 import type { ToolType } from '../../../shared/types';
-import { getClaudeTokenSourceFields } from '../../../shared/claudeTokenMode';
 import {
 	useSessionStore,
 	selectActiveSession,
@@ -29,7 +28,8 @@ import { switchTabProvider } from '../../utils/providerTabSessions';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useModalStore } from '../../stores/modalStore';
 import { notifyToast } from '../../stores/notificationStore';
-import { getActiveTab, extractQuickTabName } from '../../utils/tabHelpers';
+import { getActiveTab } from '../../utils/tabHelpers';
+import { collectNamingPrompt, requestTabAutoName } from '../../services/tabAutoNaming';
 import {
 	renameTerminalTab as renameTerminalTabHelper,
 	getTerminalSessionId,
@@ -423,78 +423,24 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 		const tab = activeSession.aiTabs.find((t) => t.id === renameTabId);
 		if (!tab || !tab.logs.length) return;
 
-		// Collect user messages (first ~2000 chars) for the naming prompt
-		const userMessages: string[] = [];
-		let totalLength = 0;
-		for (const entry of tab.logs) {
-			if (entry.source === 'user' && entry.text.trim()) {
-				const text = entry.text.trim();
-				if (totalLength + text.length > 2000) {
-					userMessages.push(text.substring(0, 2000 - totalLength));
-					break;
-				}
-				userMessages.push(text);
-				totalLength += text.length;
-			}
-		}
-		const summary = userMessages.join('\n\n');
-		if (!summary) return;
-
-		const sessionId = activeSession.id;
-		const tabId = renameTabId;
+		const prompt = collectNamingPrompt(
+			tab.logs.filter((entry) => entry.source === 'user').map((entry) => entry.text)
+		);
+		if (!prompt) return;
 
 		// Close the modal immediately
 		useModalStore.getState().closeModal('renameTab');
 
-		// Fast-path: try extracting a name from known patterns first
-		const quickName = extractQuickTabName(summary);
-		if (quickName) {
-			updateAiTab(sessionId, tabId, (t) => ({ ...t, name: quickName }));
-			return;
-		}
-
-		// Show spinner on the tab
-		updateAiTab(sessionId, tabId, (t) => ({ ...t, isGeneratingName: true }));
-
-		// Fire and forget - generate name via ephemeral agent
-		window.maestro.tabNaming
-			.generateTabName({
-				userMessage: summary,
-				agentType: activeSession.toolType,
-				cwd: activeSession.cwd,
-				sessionSshRemoteConfig: activeSession.sessionSshRemoteConfig,
-				// Forward session env so naming uses the same provider auth as the chat.
-				sessionCustomEnvVars: activeSession.customEnvVars,
-				// Honor the agent's Claude token source for the naming spawn.
-				// Shared extractor guarantees the SAME complete triple the chat
-				// spawn forwards - no partial/drifting forward possible.
-				...getClaudeTokenSourceFields(activeSession),
-			})
-			.then((generatedName) => {
-				updateAiTab(sessionId, tabId, (t) => ({
-					...t,
-					isGeneratingName: false,
-					...(generatedName ? { name: generatedName } : {}),
-				}));
-
-				if (generatedName) {
-					window.maestro.logger.log(
-						'info',
-						`Auto tab named (manual): "${generatedName}"`,
-						'TabNaming',
-						{ tabId, sessionId, generatedName }
-					);
-				}
-			})
-			.catch((error) => {
-				window.maestro.logger.log('error', 'Auto tab naming (manual) failed', 'TabNaming', {
-					tabId,
-					sessionId,
-					error: String(error),
-				});
-				// Clear spinner on error
-				updateAiTab(sessionId, tabId, (t) => ({ ...t, isGeneratingName: false }));
-			});
+		// The user pressed "Auto" - honor it even with automatic naming switched off,
+		// and overwrite whatever the tab is called now.
+		requestTabAutoName({
+			session: activeSession,
+			tabId: renameTabId,
+			prompt,
+			canApply: () => true,
+			force: true,
+			label: 'manual',
+		});
 	}, [renameTabId]);
 
 	const performDeleteSession = useCallback(

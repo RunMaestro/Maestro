@@ -38,6 +38,10 @@ import { useUIStore } from '../../stores/uiStore';
 import { getModalActions, useModalStore } from '../../stores/modalStore';
 import { notifyToast } from '../../stores/notificationStore';
 import { getActiveTab, createTab, flattenWizardIntoTab } from '../../utils/tabHelpers';
+import {
+	requestWizardTabAutoName,
+	WIZARD_TAB_PLACEHOLDER_NAME,
+} from '../../services/tabAutoNaming';
 import { generateId } from '../../utils/ids';
 import { getSlashCommandDescription } from '../../constants/app';
 import { validateNewSession } from '../../utils/sessionValidation';
@@ -860,7 +864,26 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				}
 			);
 
-			updateAiTab(currentSession.id, activeTab.id, (tab) => ({ ...tab, name: 'Wizard' }));
+			const withPlaceholderName = (tab: AITab): AITab =>
+				tab.id === activeTab.id ? { ...tab, name: WIZARD_TAB_PLACEHOLDER_NAME } : tab;
+
+			updateAiTab(currentSession.id, activeTab.id, (tab) => ({
+				...tab,
+				name: WIZARD_TAB_PLACEHOLDER_NAME,
+			}));
+
+			// `/wizard <input>` already says what we are working on, so the placeholder
+			// can be replaced right away instead of waiting for the first chat message.
+			// The snapshot carries the placeholder we just wrote: starting a wizard in an
+			// already-named tab deliberately resets that name, and naming's guard reads
+			// the tab it is handed - the stale name would make it decline to touch it.
+			if (args) {
+				requestWizardTabAutoName(
+					{ ...currentSession, aiTabs: currentSession.aiTabs.map(withPlaceholderName) },
+					activeTab.id,
+					args
+				);
+			}
 
 			const wizardLog: LogEntry = {
 				id: generateId(),
@@ -887,7 +910,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 
 		const currentDefaults = useSettingsStore.getState();
 		const result = createTab(currentSession, {
-			name: 'Wizard',
+			name: WIZARD_TAB_PLACEHOLDER_NAME,
 			saveToHistory: currentDefaults.defaultSaveToHistory,
 			showThinking: currentDefaults.defaultShowThinking,
 		});
@@ -1007,7 +1030,11 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			};
 
 			const subfolderName = wizState.subfolderName || '';
-			const tabName = subfolderName || 'Wizard';
+			// The finished tab is named after the playbook folder it produced. With no
+			// folder, keep whatever the tab is already called (an auto-generated
+			// `wizard: ...` name, or a name the user typed) rather than resetting it to
+			// the placeholder the wizard opened on.
+			const tabName = subfolderName || activeTabLocal.name || WIZARD_TAB_PLACEHOLDER_NAME;
 			const activeTabId = activeTabLocal.id;
 
 			// When starting Auto Run, point the session at the generated subfolder

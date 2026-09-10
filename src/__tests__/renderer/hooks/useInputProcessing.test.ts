@@ -112,6 +112,11 @@ describe('useInputProcessing', () => {
 		mockProcessQueuedItemRef.current.mockResolvedValue(undefined);
 		mockGetBatchState.mockReturnValue(defaultBatchState);
 		useSessionStore.setState({ sessions: [], activeSessionId: '' });
+		// Automatic tab naming ships ON, and this harness routes the store's
+		// updateAiTab through mockSetSessions - so leaving it on makes the naming
+		// spinner the first setSessions call in every unrelated test. The naming
+		// describes below switch it back on for themselves.
+		useSettingsStore.setState({ automaticTabNamingEnabled: false } as any);
 
 		// Mock window.maestro.process.spawn
 		window.maestro = {
@@ -2260,6 +2265,7 @@ describe('useInputProcessing', () => {
 		beforeEach(() => {
 			mockGenerateTabName.mockClear();
 			mockGenerateTabName.mockResolvedValue('Generated Tab Name');
+			useSettingsStore.setState({ automaticTabNamingEnabled: true } as any);
 
 			// Add tabNaming mock to window.maestro
 			window.maestro = {
@@ -2284,7 +2290,6 @@ describe('useInputProcessing', () => {
 				activeSession: session,
 				sessionsRef: { current: [session] },
 				inputValue: 'Help me implement a new feature',
-				automaticTabNamingEnabled: true,
 			});
 			const { result } = renderHook(() => useInputProcessing(deps));
 
@@ -2311,11 +2316,11 @@ describe('useInputProcessing', () => {
 				aiTabs: [newTab],
 				activeTabId: newTab.id,
 			});
+			useSettingsStore.setState({ automaticTabNamingEnabled: false } as any);
 			const deps = createDeps({
 				activeSession: session,
 				sessionsRef: { current: [session] },
 				inputValue: 'Help me with something',
-				automaticTabNamingEnabled: false,
 			});
 			const { result } = renderHook(() => useInputProcessing(deps));
 
@@ -2343,7 +2348,6 @@ describe('useInputProcessing', () => {
 				activeSession: session,
 				sessionsRef: { current: [session] },
 				inputValue: 'Follow up question',
-				automaticTabNamingEnabled: true,
 			});
 			const { result } = renderHook(() => useInputProcessing(deps));
 
@@ -2368,7 +2372,6 @@ describe('useInputProcessing', () => {
 				activeSession: session,
 				sessionsRef: { current: [session] },
 				inputValue: 'Another message',
-				automaticTabNamingEnabled: true,
 			});
 			const { result } = renderHook(() => useInputProcessing(deps));
 
@@ -2392,7 +2395,6 @@ describe('useInputProcessing', () => {
 				activeSession: session,
 				sessionsRef: { current: [session] },
 				inputValue: 'New message',
-				automaticTabNamingEnabled: true,
 			});
 			const { result } = renderHook(() => useInputProcessing(deps));
 
@@ -2419,7 +2421,6 @@ describe('useInputProcessing', () => {
 				sessionsRef: { current: [session] },
 				inputValue: 'ls -la',
 				isAiMode: false,
-				automaticTabNamingEnabled: true,
 			});
 			const { result } = renderHook(() => useInputProcessing(deps));
 
@@ -2445,7 +2446,6 @@ describe('useInputProcessing', () => {
 				sessionsRef: { current: [session] },
 				inputValue: '',
 				stagedImages: ['base64-image-data'], // Only images, no text
-				automaticTabNamingEnabled: true,
 			});
 			const { result } = renderHook(() => useInputProcessing(deps));
 
@@ -2477,7 +2477,6 @@ describe('useInputProcessing', () => {
 				activeSession: session,
 				sessionsRef: { current: [session] },
 				inputValue: 'Test message',
-				automaticTabNamingEnabled: true,
 			});
 			const { result } = renderHook(() => useInputProcessing(deps));
 
@@ -2507,7 +2506,6 @@ describe('useInputProcessing', () => {
 				activeSession: session,
 				sessionsRef: { current: [session] },
 				inputValue: 'https://github.com/RunMaestro/Maestro/pull/380 review this PR',
-				automaticTabNamingEnabled: true,
 			});
 			const { result } = renderHook(() => useInputProcessing(deps));
 
@@ -2535,7 +2533,6 @@ describe('useInputProcessing', () => {
 				activeSession: session,
 				sessionsRef: { current: [session] },
 				inputValue: 'thoughts on this issue? https://github.com/RunMaestro/Maestro/issues/381',
-				automaticTabNamingEnabled: true,
 			});
 			const { result } = renderHook(() => useInputProcessing(deps));
 
@@ -2562,7 +2559,6 @@ describe('useInputProcessing', () => {
 				activeSession: session,
 				sessionsRef: { current: [session] },
 				inputValue: 'Test message',
-				automaticTabNamingEnabled: true,
 			});
 			const { result } = renderHook(() => useInputProcessing(deps));
 
@@ -2923,6 +2919,7 @@ describe('useInputProcessing', () => {
 
 		beforeEach(() => {
 			mockGenerateTabName.mockClear();
+			useSettingsStore.setState({ automaticTabNamingEnabled: true } as any);
 			window.maestro = {
 				...window.maestro,
 				tabNaming: { generateTabName: mockGenerateTabName },
@@ -2946,7 +2943,6 @@ describe('useInputProcessing', () => {
 				activeSession: session,
 				sessionsRef: { current: [session] },
 				inputValue: 'alphabetize the groups in this menu',
-				automaticTabNamingEnabled: true,
 			});
 			const { result } = renderHook(() => useInputProcessing(deps));
 
@@ -2979,7 +2975,6 @@ describe('useInputProcessing', () => {
 				activeSession: session,
 				sessionsRef: { current: [session] },
 				inputValue: 'add compress to folder right click',
-				automaticTabNamingEnabled: true,
 			});
 			const { result } = renderHook(() => useInputProcessing(deps));
 
@@ -3002,7 +2997,6 @@ describe('useInputProcessing', () => {
 				activeSession: session,
 				sessionsRef: { current: [session] },
 				inputValue: 'another message',
-				automaticTabNamingEnabled: true,
 			});
 			const { result } = renderHook(() => useInputProcessing(deps));
 

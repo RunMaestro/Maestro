@@ -1,12 +1,16 @@
 # Maestro
 
+<div align="center">
+
 [![Made with Maestro](docs/assets/made-with-maestro.svg)](https://github.com/RunMaestro/Maestro)
 [![Discord](https://img.shields.io/badge/Discord-Join%20Us-5865F2?logo=discord&logoColor=white)](https://runmaestro.ai/discord)
 [![User Docs](https://img.shields.io/badge/Docs-Usage%20%26%20Documentation-blue?logo=readthedocs&logoColor=white)](https://docs.runmaestro.ai/)
 
 <a href="https://trendshift.io/repositories/21112" target="_blank"><img src="https://trendshift.io/api/badge/repositories/21112" alt="RunMaestro%2FMaestro | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
 
-> Maestro hones fractured attention into focused intent.
+"Maestro hones fractured attention into focused intent."
+
+</div>
 
 Maestro is a cross-platform desktop app for orchestrating your fleet of AI agents and projects. It's a high-velocity solution for hackers who are juggling multiple projects in parallel. Designed for power users who live on the keyboard and rarely touch the mouse.
 
@@ -17,13 +21,15 @@ Run multiple agents in parallel with a Linear/Superhuman-level responsive interf
 > **How It Works:** Maestro is a pass-through to your AI provider. Whatever MCP tools, skills, permissions, or authentication you have configured in Claude Code, Codex, or OpenCode works identically in Maestro. The only difference is we're not running interactively - each task gets a prompt and returns a response, whether it's a new session or resuming a prior one.
 
 <div align="center">
-  <a href="https://youtu.be/fmwwTOg7cyA?si=dJ89K54tGflKa5G4">
+  <a href="https://youtu.be/3wX5Q1I0sgI?si=oJkJDxgAWUvBXX4D">
     <img src="https://github.com/user-attachments/assets/deaf601d-1898-4ede-bf5a-42e46874ebb3"
          alt="Maestro Video Thumbnail"
          width="650" />
   </a>
 
   <div>
+    <a href="https://youtu.be/3wX5Q1I0sgI?si=oJkJDxgAWUvBXX4D">~1m Intro Video</a>
+    &nbsp;|&nbsp;
     <a href="https://youtu.be/fmwwTOg7cyA?si=VOkjO6oYjCSQvM0A">~27m Walkthrough and Demo</a>
     &nbsp;|&nbsp;
     <a href="https://youtu.be/3wX5Q1I0sgI?si=oJkJDxgAWUvBXX4D">~6m Onboarding Demo</a>

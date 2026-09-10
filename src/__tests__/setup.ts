@@ -837,6 +837,12 @@ const mockMaestro = {
 		onSessionMoved: vi.fn(() => () => {}),
 		onHighlightDropZone: vi.fn(() => () => {}),
 	},
+	// Automatic tab naming (ephemeral namer spawn). Returns null by default so a
+	// test that sends a message doesn't accidentally rename tabs; tests that care
+	// override this with their own resolved value.
+	tabNaming: {
+		generateTabName: vi.fn().mockResolvedValue(null),
+	},
 	// Synchronous platform string (replaces async os.getPlatform IPC)
 	platform: 'darwin',
 };
