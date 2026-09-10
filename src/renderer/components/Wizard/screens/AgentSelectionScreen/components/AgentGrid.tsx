@@ -1,11 +1,19 @@
-import { useEffect, useMemo, useRef, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { useElementWidth, useHorizontalScroll } from '../../../../../hooks/ui';
+import {
+	useElementWidth,
+	useFreeHeightInFlexColumn,
+	useHorizontalScroll,
+} from '../../../../../hooks/ui';
 import { ProviderAvailabilityBar } from '../../../../ui/ProviderAvailabilityBar';
 import type { AgentConfig, Theme } from '../../../../../types';
 import type { AgentTile } from '../types';
 import { isAgentAvailable } from '../utils/agentAvailability';
-import { resolveAgentGridLayout } from '../utils/agentGridLayout';
+import {
+	AGENT_GRID_VERTICAL_BREATHING_PX,
+	agentGridRowsThatFit,
+	resolveAgentGridLayout,
+} from '../utils/agentGridLayout';
 import { AgentTileButton } from './AgentTileButton';
 
 /**
@@ -43,8 +51,8 @@ interface AgentGridProps {
 }
 
 /**
- * The provider tiles, in whichever of the two shapes the measured width calls
- * for.
+ * The provider tiles, in whichever of the two shapes the measured width and
+ * height call for.
  *
  * A set that fits in one or two rows draws as a centered wrapping block, since
  * a few tiles pinned to the left edge of a wide scrolling row reads as a layout
@@ -52,7 +60,8 @@ interface AgentGridProps {
  * horizontally scrolling row, which then has to say out loud that there is more
  * past the right edge - hence the edge fades, the arrow buttons, and the
  * provider count. Both shapes measure the same container, so widening the
- * wizard reflows the block and can retire the strip entirely.
+ * wizard reflows the block and can retire the strip entirely, and shortening
+ * it drops to one row (or the strip) instead of clipping the second.
  */
 export function AgentGrid({
 	theme,
@@ -78,9 +87,40 @@ export function AgentGrid({
 	// element instead would feed its own cap back in and shrink it every pass.
 	const measureRef = useRef<HTMLDivElement>(null);
 	const containerWidth = useElementWidth(measureRef);
+
+	// Height follows the same rule on the other axis: the free height is read off
+	// the screen's column (the pane minus the header and footer), never off this
+	// root, whose height is the row count being chosen.
+	const rootRef = useRef<HTMLDivElement>(null);
+	const freeHeight = useFreeHeightInFlexColumn(rootRef);
+	const [tileBox, setTileBox] = useState({ chromeHeight: 0, tileHeight: 0 });
+
+	// The prompt and availability bar above the tiles, and the tallest tile. Both
+	// read the same whichever shape is drawn (tiles are a fixed width, so their
+	// text wraps identically, and every row stretches to its tallest tile), so
+	// reading them back cannot flip the decision they feed.
+	useLayoutEffect(() => {
+		const root = rootRef.current;
+		const tilesBox = measureRef.current;
+		if (!root || !tilesBox) return;
+		const chromeHeight = root.offsetHeight - tilesBox.offsetHeight;
+		const tileHeight = (tileRefs.current ?? [])
+			.slice(0, tiles.length)
+			.reduce((tallest, tile) => Math.max(tallest, tile?.offsetHeight ?? 0), 0);
+		setTileBox((prev) =>
+			prev.chromeHeight === chromeHeight && prev.tileHeight === tileHeight
+				? prev
+				: { chromeHeight, tileHeight }
+		);
+	});
+
+	const maxRows = agentGridRowsThatFit(
+		freeHeight - tileBox.chromeHeight - AGENT_GRID_VERTICAL_BREATHING_PX,
+		tileBox.tileHeight
+	);
 	const layout = useMemo(
-		() => resolveAgentGridLayout(tiles.length, containerWidth),
-		[tiles.length, containerWidth]
+		() => resolveAgentGridLayout(tiles.length, containerWidth, maxRows),
+		[tiles.length, containerWidth, maxRows]
 	);
 
 	// The mode is part of the reset key, not just the tile count: a resize can
@@ -132,7 +172,7 @@ export function AgentGrid({
 	);
 
 	return (
-		<div className="flex flex-col items-center gap-3 w-full min-w-0">
+		<div ref={rootRef} className="flex flex-col items-center gap-3 w-full min-w-0">
 			<p className="text-sm" style={{ color: theme.colors.textDim }}>
 				Select the provider that will power your agent.
 			</p>

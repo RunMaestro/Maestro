@@ -69,6 +69,51 @@ export function useElementWidth(ref: RefObject<HTMLElement | null>, enabled = tr
  * either by the container narrowing or by a neighbour growing.
  */
 export function useFreeWidthInFlexRow(ref: RefObject<HTMLElement | null>, enabled = true): number {
+	return useFreeSpaceInFlexLine(ref, 'width', enabled);
+}
+
+/**
+ * useFreeHeightInFlexColumn - the vertical twin of `useFreeWidthInFlexRow`: how
+ * much height a flex-column child has LEFT, measured from its parent.
+ *
+ * Same reasoning on the other axis. A block choosing how many rows to draw
+ * cannot read its own height to decide, because its height IS the row count.
+ * The parent's content box minus its other children answers "how tall may I
+ * be" without consulting the child.
+ *
+ * The parent needs a height of its own (a `flex-1 min-h-0` pane inside a sized
+ * modal, say). A parent that grows with its content just reports back whatever
+ * the child currently is, which is circular again.
+ */
+export function useFreeHeightInFlexColumn(
+	ref: RefObject<HTMLElement | null>,
+	enabled = true
+): number {
+	return useFreeSpaceInFlexLine(ref, 'height', enabled);
+}
+
+const FLEX_AXIS_METRICS = {
+	width: {
+		client: 'clientWidth',
+		offset: 'offsetWidth',
+		paddingStart: 'paddingLeft',
+		paddingEnd: 'paddingRight',
+		gap: 'columnGap',
+	},
+	height: {
+		client: 'clientHeight',
+		offset: 'offsetHeight',
+		paddingStart: 'paddingTop',
+		paddingEnd: 'paddingBottom',
+		gap: 'rowGap',
+	},
+} as const;
+
+function useFreeSpaceInFlexLine(
+	ref: RefObject<HTMLElement | null>,
+	axis: keyof typeof FLEX_AXIS_METRICS,
+	enabled: boolean
+): number {
 	const [free, setFree] = useState(0);
 
 	useEffect(() => {
@@ -77,22 +122,25 @@ export function useFreeWidthInFlexRow(ref: RefObject<HTMLElement | null>, enable
 		if (!enabled || !element || !parent) {
 			return;
 		}
+		const metrics = FLEX_AXIS_METRICS[axis];
 
 		const measure = () => {
 			const style = getComputedStyle(parent);
 			const children = Array.from(parent.children) as HTMLElement[];
-			const siblingsWidth = children.reduce(
-				(sum, child) => (child === element ? sum : sum + child.offsetWidth),
+			const siblingsSize = children.reduce(
+				(sum, child) => (child === element ? sum : sum + child[metrics.offset]),
 				0
 			);
-			// clientWidth includes the parent's padding, so take it back off.
-			const padding = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
-			const gap = parseFloat(style.columnGap);
+			// client* includes the parent's padding, so take it back off.
+			const padding =
+				parseFloat(style[metrics.paddingStart]) + parseFloat(style[metrics.paddingEnd]);
+			// `normal` (no gap set) parses to NaN and counts as zero.
+			const gap = parseFloat(style[metrics.gap]);
 			const gaps = Number.isFinite(gap) ? gap * Math.max(0, children.length - 1) : 0;
 			setFree(
 				Math.max(
 					0,
-					parent.clientWidth - (Number.isFinite(padding) ? padding : 0) - siblingsWidth - gaps
+					parent[metrics.client] - (Number.isFinite(padding) ? padding : 0) - siblingsSize - gaps
 				)
 			);
 		};
@@ -110,7 +158,7 @@ export function useFreeWidthInFlexRow(ref: RefObject<HTMLElement | null>, enable
 			if (child !== element) observer.observe(child);
 		}
 		return () => observer.disconnect();
-	}, [ref, enabled]);
+	}, [ref, axis, enabled]);
 
 	return free;
 }

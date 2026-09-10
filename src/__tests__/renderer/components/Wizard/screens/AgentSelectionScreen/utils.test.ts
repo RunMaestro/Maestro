@@ -28,8 +28,10 @@ import { SUPPORTED_AGENTS } from '../../../../../../renderer/components/NewInsta
 import { getNextAgentTileIndex } from '../../../../../../renderer/components/Wizard/screens/AgentSelectionScreen/utils/agentGrid';
 import {
 	AGENT_GRID_EDGE_INSET_PX,
+	AGENT_TILE_BLOCK_PADDING_PX,
 	AGENT_TILE_GAP_PX,
 	AGENT_TILE_WIDTH_PX,
+	agentGridRowsThatFit,
 	agentTilesPerRow,
 	resolveAgentGridLayout,
 } from '../../../../../../renderer/components/Wizard/screens/AgentSelectionScreen/utils/agentGridLayout';
@@ -184,6 +186,45 @@ describe('AgentSelectionScreen utils', () => {
 			mode: 'wrap',
 			columns: count,
 		});
+	});
+
+	it('counts the rows that fit in the height, from one up to the two-row cap', () => {
+		const tile = 240;
+		const heightFor = (rows: number): number =>
+			rows * tile + (rows - 1) * AGENT_TILE_GAP_PX + AGENT_TILE_BLOCK_PADDING_PX;
+
+		expect(agentGridRowsThatFit(heightFor(2), tile)).toBe(2);
+		expect(agentGridRowsThatFit(heightFor(2) - 1, tile)).toBe(1);
+		// Never more than two, however tall: a third row buries Continue.
+		expect(agentGridRowsThatFit(heightFor(5), tile)).toBe(2);
+		// Too short for even one row still draws one; the pane scrolls.
+		expect(agentGridRowsThatFit(0, tile)).toBe(1);
+		// Tile height not measured yet (first frame, jsdom): no height cap.
+		expect(agentGridRowsThatFit(0, 0)).toBe(2);
+	});
+
+	it('trades two rows for the strip when the wizard is squeezed short', () => {
+		const count = AGENT_TILES.length;
+		const widthFor = (perRow: number): number =>
+			perRow * AGENT_TILE_WIDTH_PX +
+			(perRow - 1) * AGENT_TILE_GAP_PX +
+			AGENT_GRID_EDGE_INSET_PX * 2;
+		const halfRow = Math.ceil(count / 2);
+
+		// Wide enough for two rows, tall enough for two: two rows.
+		expect(resolveAgentGridLayout(count, widthFor(halfRow), 2)).toMatchObject({
+			mode: 'wrap',
+			columns: halfRow,
+		});
+		// Same width, only one row tall: the scrolling strip, not a clipped second row.
+		expect(resolveAgentGridLayout(count, widthFor(halfRow), 1).mode).toBe('strip');
+		// Wide enough for everything across: one centered row survives the squeeze.
+		expect(resolveAgentGridLayout(count, widthFor(count), 1)).toMatchObject({
+			mode: 'wrap',
+			columns: count,
+		});
+		// A caller asking for more rows than the cap still gets at most two.
+		expect(resolveAgentGridLayout(count, widthFor(halfRow), 9).columns).toBe(halfRow);
 	});
 
 	it('clamps against the RENDERED tile count, not the provider total', () => {

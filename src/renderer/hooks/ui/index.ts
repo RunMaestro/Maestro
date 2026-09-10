@@ -115,7 +115,7 @@ export { usePagination } from './usePagination';
 export type { UsePaginationResult } from './usePagination';
 
 // ResizeObserver-backed element width, for JS-computed layout
-export { useElementWidth } from './useElementWidth';
+export { useElementWidth, useFreeHeightInFlexColumn } from './useElementWidth';
 
 // Whether an optional inline label still fits, so it can be dropped not clipped
 export { useOptionalLabelFits } from './useOptionalLabelFits';
