@@ -391,6 +391,7 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 								longestRunMs: updatedLongestRunMs,
 								longestRunDate,
 								currentRunMs: info.elapsedTimeMs,
+								currentRunKind: info.kind ?? 'spec-driven',
 								theme: activeThemeId,
 								authToken: lbReg.authToken,
 								deltaMs: info.elapsedTimeMs,

@@ -325,6 +325,36 @@ describe('stats IPC handlers', () => {
 				expect(mockMainWindow.webContents.send).toHaveBeenCalledWith('stats:updated');
 				expect(mockMainWindow.webContents.send).toHaveBeenCalledTimes(1);
 			});
+
+			it('passes the run kind through to the database', async () => {
+				const handler = handlers.get('stats:start-autorun');
+
+				await handler!({} as any, {
+					sessionId: 'session-1',
+					agentType: 'claude-code',
+					startTime: Date.now(),
+					kind: 'goal-driven',
+				});
+
+				expect(mockStatsDB.insertAutoRunSession).toHaveBeenCalledWith(
+					expect.objectContaining({ kind: 'goal-driven', duration: 0 })
+				);
+			});
+
+			it('accepts a start with no kind', async () => {
+				const handler = handlers.get('stats:start-autorun');
+
+				await expect(
+					handler!({} as any, {
+						sessionId: 'session-1',
+						agentType: 'claude-code',
+						startTime: Date.now(),
+					})
+				).resolves.toBe('autorun-session-id');
+
+				const calls = mockStatsDB.insertAutoRunSession.mock.calls;
+				expect(calls[calls.length - 1][0].kind).toBeUndefined();
+			});
 		});
 
 		describe('stats:end-autorun', () => {

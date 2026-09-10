@@ -144,6 +144,26 @@ describe('useBatchKillAction', () => {
 		});
 	});
 
+	it('carries the kind the runner registered in its flush state', async () => {
+		const { hook, onComplete } = setupHook({ flushAtStart: mkFlush({ kind: 'goal-driven' }) });
+
+		await act(async () => {
+			await hook.result.current.killBatchRun('sess');
+		});
+
+		expect(onComplete).toHaveBeenCalledWith(expect.objectContaining({ kind: 'goal-driven' }));
+	});
+
+	it('leaves kind undefined when the flush state has none', async () => {
+		const { hook, onComplete } = setupHook();
+
+		await act(async () => {
+			await hook.result.current.killBatchRun('sess');
+		});
+
+		expect(onComplete.mock.calls[0][0].kind).toBeUndefined();
+	});
+
 	it('uses persisted session history when it exceeds the in-memory kill snapshot', async () => {
 		getHistory.mockResolvedValue([
 			{

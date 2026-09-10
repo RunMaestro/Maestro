@@ -277,6 +277,7 @@ describe('useGoalRunner (Goal-Driven Auto Run engine)', () => {
 				completedTasks: 100,
 				totalTasks: 100,
 				wasStopped: false,
+				kind: 'goal-driven',
 			})
 		);
 
@@ -664,6 +665,9 @@ describe('useGoalRunner (Goal-Driven Auto Run engine)', () => {
 		await waitFor(() => {
 			expect(window.maestro.stats.startAutoRun).toHaveBeenCalled();
 		});
+		expect(window.maestro.stats.startAutoRun).toHaveBeenCalledWith(
+			expect.objectContaining({ kind: 'goal-driven' })
+		);
 		expect(mockPowerAddReason).toHaveBeenCalledWith(`autorun:${SESSION_ID}`);
 
 		const running = result.current.getBatchState(SESSION_ID);

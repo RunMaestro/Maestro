@@ -44,6 +44,28 @@ export interface QueryEvent {
 }
 
 /**
+ * Which Auto Run engine produced a run.
+ *
+ * - `goal-driven`: free-text goal pursuit (`useGoalRunner`).
+ * - `spec-driven`: the classic document/checkbox run (`useBatchRunner`).
+ *
+ * The kind is stamped by the runner at start, never inferred from the
+ * document path. Rows written before the column existed read as
+ * `spec-driven`, since goal runs did not exist for most of that history.
+ */
+export type AutoRunKind = 'goal-driven' | 'spec-driven';
+
+/**
+ * Coerce an untrusted or legacy value into an `AutoRunKind`. Anything other
+ * than the literal `'goal-driven'` (null, undefined, a typo, a kind from a
+ * newer build) counts as `spec-driven`, so an unlabeled row is never dropped
+ * from a total.
+ */
+export function normalizeAutoRunKind(value: unknown): AutoRunKind {
+	return value === 'goal-driven' ? 'goal-driven' : 'spec-driven';
+}
+
+/**
  * An Auto Run session - a complete batch processing run of a document
  */
 export interface AutoRunSession {
@@ -56,6 +78,8 @@ export interface AutoRunSession {
 	tasksTotal?: number;
 	tasksCompleted?: number;
 	projectPath?: string;
+	/** Which engine ran it. Optional on the wire; stored as `spec-driven` when absent. */
+	kind?: AutoRunKind;
 }
 
 /**
@@ -269,4 +293,4 @@ export interface WizardRun {
 /**
  * Database schema version for migrations
  */
-export const STATS_DB_VERSION = 10;
+export const STATS_DB_VERSION = 12;

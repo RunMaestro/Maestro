@@ -34,6 +34,7 @@ import {
 	CREATE_RESILIENCE_EVENTS_INDEXES_SQL,
 	CREATE_WIZARD_RUNS_SQL,
 	CREATE_WIZARD_RUNS_INDEXES_SQL,
+	ADD_AUTO_RUN_SESSION_KIND_COLUMN_SQL,
 	runStatements,
 } from './schema';
 import { LOG_CONTEXT } from './utils';
@@ -105,6 +106,11 @@ function getMigrations(): Migration[] {
 			version: 11,
 			description: 'Add wizard_runs table for Auto Run wizard usage tracking',
 			up: (db) => migrateV11(db),
+		},
+		{
+			version: 12,
+			description: 'Add kind column to auto_run_sessions for goal-driven vs spec-driven split',
+			up: (db) => migrateV12(db),
 		},
 	];
 }
@@ -402,6 +408,20 @@ function migrateV11(db: Database.Database): void {
 	runStatements(db, CREATE_WIZARD_RUNS_SQL);
 	runStatements(db, CREATE_WIZARD_RUNS_INDEXES_SQL);
 	logger.debug('Created wizard_runs table', LOG_CONTEXT);
+}
+
+/**
+ * Migration v12: `kind` column on auto_run_sessions ('goal-driven' |
+ * 'spec-driven'), so the Usage Dashboard can split Auto Run time by engine.
+ *
+ * Additive with a DEFAULT, so every existing row reads back as spec-driven with
+ * its other fields untouched. Guarded by hasColumn for the same reason as v5.
+ */
+function migrateV12(db: Database.Database): void {
+	if (!hasColumn(db, 'auto_run_sessions', 'kind')) {
+		db.prepare(ADD_AUTO_RUN_SESSION_KIND_COLUMN_SQL).run();
+	}
+	logger.debug('Added kind column to auto_run_sessions table', LOG_CONTEXT);
 }
 
 /**

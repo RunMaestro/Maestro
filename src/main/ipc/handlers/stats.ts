@@ -147,6 +147,7 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 				logger.info(`Started Auto Run session: ${id}`, LOG_CONTEXT, {
 					sessionId: session.sessionId,
 					documentPath: session.documentPath,
+					kind: session.kind,
 				});
 				broadcastStatsUpdate(safeSend);
 				return id;
