@@ -809,10 +809,21 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 				// and those chunks merge into the next response's bubble (issue #1022).
 				deps.batchedUpdater.flushNow();
 				setTimeout(() => {
-					deps.processQueuedItemRef.current?.(
-						queuedItemToProcess!.sessionId,
-						queuedItemToProcess!.item
-					);
+					// This is the MAIN queue-drain path, and it used to reject into
+					// nothing at all. `processQueuedItem` throws on a dispatch failure by
+					// design, so an unhandled rejection here was how a spawn collision
+					// destroyed a user's prompt: dequeued, carded in the transcript, never
+					// sent, never put back. agentStore owns the recovery now; this only
+					// has to own the rejection.
+					deps.processQueuedItemRef
+						.current?.(queuedItemToProcess!.sessionId, queuedItemToProcess!.item)
+						.catch((err) => {
+							logger.error(
+								'[onProcessExit] Queued dispatch failed, item returned to queue',
+								undefined,
+								err
+							);
+						});
 				}, 0);
 			} else if (toastData) {
 				setTimeout(() => {

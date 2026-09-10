@@ -692,8 +692,17 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 					})
 				);
 
-				// Process the item after state update
-				processQueuedItemRef.current(sessionId, nextItem);
+				// Process the item after state update. `processQueuedItem` rejects on a
+				// dispatch failure (agentStore puts the prompt back), so the rejection
+				// needs an owner here - unhandled, it was a crash report instead of a
+				// logged failure, and the message looked like it had simply vanished.
+				processQueuedItemRef.current(sessionId, nextItem).catch((err) => {
+					logger.error(
+						'[useBatchHandlers] Queued dispatch failed, item returned to queue',
+						undefined,
+						err
+					);
+				});
 			}
 		},
 	});

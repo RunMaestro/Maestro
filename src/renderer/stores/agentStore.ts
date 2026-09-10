@@ -48,7 +48,7 @@ import { substituteTemplateVariables } from '../utils/templateVariables';
 import { gitService } from '../services/git';
 import { dispatchCrossAgentMentionsForMessage } from '../services/crossAgentMentions';
 import { filterYoloArgs } from '../utils/agentArgs';
-import { applyQueuedItemRelease } from '../utils/executionQueue';
+import { applyQueuedItemDispatchFailure, applyQueuedItemRelease } from '../utils/executionQueue';
 import { logger } from '../utils/logger';
 
 // ============================================================================
@@ -564,6 +564,10 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 								command: matchingCommand.command,
 								description: matchingCommand.description,
 							},
+							// Same stamp `markTabRunningQueuedItem` puts on a message card:
+							// this entry is written before the spawn, so a spawn that throws
+							// has to be able to take it back out again.
+							queuedItemId: item.id,
 							...(item.forceParallel && { forceParallel: true }),
 						},
 						item.tabId
@@ -631,69 +635,62 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 			}
 		} catch (error: any) {
 			logger.error('[processQueuedItem] Failed to process queued item:', undefined, error);
-			// "Agent process already running" is a collision, not an outcome the
-			// user can act on: the tab is mid-turn and this dispatch simply arrived
-			// too early. The caller puts the item back (the queue paths re-queue it,
-			// Agent Resilience reschedules its retry), so writing a red error frame
-			// only tells the user something went wrong about work that has not
-			// actually been lost - and during an outage it lands directly under the
-			// retry card that is already explaining the wait.
+
+			// This is the ONE owner of dispatch-failure recovery. It used to only do
+			// the bookkeeping half (idle the tab, write an error frame) and leave the
+			// prompt itself to whichever caller happened to be driving, on the theory
+			// that "every caller wraps this in a .catch() that puts the prompt back".
+			// Five of the eight did not: the process-exit drain and the batch drain
+			// rejected into nothing at all, and Stop / force-kill only logged. A spawn
+			// collision there destroyed the message outright - out of the queue, into
+			// a transcript card, never sent. Recovery therefore lives HERE, where the
+			// failure is known, and every call site is free to just log.
+			//
+			// "Agent process already running" is a collision, not an outcome the user
+			// can act on: the tab is mid-turn and this dispatch simply arrived too
+			// early (Stop dispatches the next item before the interrupted child has
+			// exited, and the exit listener then dispatches it again). It self-corrects
+			// on the next drain trigger, so the item goes back runnable and no red
+			// frame is written - during an outage that frame lands directly under the
+			// retry card already explaining the wait. Any other failure would repeat
+			// identically on the next tick, so the item comes back HELD: preserved,
+			// visible, one click from Force Send, and unable to spin the queue.
 			const isSpawnCollision = isAgentAlreadyRunningError(error);
 			const errorLogEntry: LogEntry = {
 				id: generateId(),
 				timestamp: Date.now(),
 				source: 'error',
-				text: `Error: Failed to process queued ${item.type} - ${error.message}`,
+				text: `Error: Failed to send queued ${item.type} - ${error.message}. The message is held in the queue.`,
 			};
 			useSessionStore.getState().setSessions((prev) =>
 				prev.map((s) => {
 					if (s.id !== sessionId) return s;
-					const resolvedTabId = item.tabId ?? s.activeTabId;
-					const updatedAiTabs =
-						s.aiTabs?.length > 0
-							? s.aiTabs.map((tab) =>
-									tab.id === resolvedTabId
-										? {
-												...tab,
-												state: 'idle' as const,
-												thinkingStartTime: undefined,
-												logs: isSpawnCollision ? tab.logs : [...tab.logs, errorLogEntry],
-											}
-										: tab
-								)
-							: s.aiTabs;
+					const recovered = applyQueuedItemDispatchFailure(s, item, { hold: !isSpawnCollision });
+					if (isSpawnCollision) return recovered;
 
-					const targetTabExists = s.aiTabs?.some((tab) => tab.id === resolvedTabId);
-					if (!targetTabExists && !isSpawnCollision) {
+					const resolvedTabId = item.tabId ?? s.activeTabId;
+					const targetTabExists = recovered.aiTabs?.some((tab) => tab.id === resolvedTabId);
+					if (!targetTabExists) {
 						logger.error(
 							'[processQueuedItem error] Target tab not found - error log dropped',
 							undefined,
-							{
-								sessionId,
-								resolvedTabId,
-							}
+							{ sessionId, resolvedTabId }
 						);
+						return recovered;
 					}
-
 					return {
-						...s,
-						state: 'idle',
-						busySource: undefined,
-						thinkingStartTime: undefined,
-						aiTabs: updatedAiTabs,
+						...recovered,
+						aiTabs: recovered.aiTabs.map((tab) =>
+							tab.id === resolvedTabId ? { ...tab, logs: [...tab.logs, errorLogEntry] } : tab
+						),
 					};
 				})
 			);
-			// Rethrow. Recording the failure is not the same as handling it: every
-			// caller wraps this call in a `.catch()` that puts the prompt back on the
-			// queue, and swallowing here resolved the promise so NONE of them ever
-			// ran. A spawn that failed therefore dropped the user's message outright
-			// - the transcript kept an error bubble and the text was gone. Both the
-			// queue-recovery path (useQueueProcessing) and Force Send
-			// (useQueueHandlers) had written that re-queue independently, and both
-			// were dead code. retryStore's `fireRetry` already documents that it
-			// expects a dispatch-time throw, so this restores the contract callers
-			// were written against.
+
+			// Rethrow. Recovery is not the same as handling: `retryStore.fireRetry`
+			// documents that it expects a dispatch-time throw so it can reschedule
+			// rather than strand an outage entry in-flight, and callers that want to
+			// know a send failed (Force Send's toast, the batch loop) read it here.
 			throw error;
 		}
 	},

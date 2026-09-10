@@ -925,7 +925,11 @@ describe('useQueueHandlers', () => {
 			expect(processQueuedItem).not.toHaveBeenCalled();
 		});
 
-		it('re-queues the item and releases the tab when the dispatch fails', async () => {
+		// Recovery moved to `agentStore.processQueuedItem`, which is the only place
+		// that can tell a transient spawn collision from a real failure. Force Send
+		// must own the REJECTION (an unhandled one is a crash report) but must not
+		// re-queue on its own, or the prompt would come back twice.
+		it('owns the rejection without re-queueing when the dispatch fails', async () => {
 			processQueuedItem.mockRejectedValueOnce(new Error('spawn failed'));
 			const item = createQueuedItem({ id: 'item-a', tabId: 'tab-1' });
 			useSessionStore.setState({
@@ -934,32 +938,19 @@ describe('useQueueHandlers', () => {
 
 			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
 
+			let threw = false;
 			await act(async () => {
-				result.current.handleForceSendQueueItem('sess-1', 'item-a');
+				try {
+					result.current.handleForceSendQueueItem('sess-1', 'item-a');
+				} catch {
+					threw = true;
+				}
 			});
 
-			const updated = useSessionStore.getState().sessions[0];
-			expect(updated.executionQueue.map((i) => i.id)).toEqual(['item-a']);
-			expect(updated.state).toBe('idle');
-			expect(updated.aiTabs[0].state).toBe('idle');
-		});
-
-		it('leaves the agent busy on failure while another tab is still working', async () => {
-			processQueuedItem.mockRejectedValueOnce(new Error('spawn failed'));
-			const item = createQueuedItem({ id: 'item-a', tabId: 'tab-1' });
-			const session = twoTabSession({ id: 'sess-1', executionQueue: [item] });
-			session.aiTabs[1].state = 'busy';
-			useSessionStore.setState({ sessions: [session] });
-
-			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
-
-			await act(async () => {
-				result.current.handleForceSendQueueItem('sess-1', 'item-a');
-			});
-
-			const updated = useSessionStore.getState().sessions[0];
-			expect(updated.state).toBe('busy');
-			expect(updated.aiTabs[0].state).toBe('idle');
+			expect(threw).toBe(false);
+			// The dispatch transition ran; the store is left exactly as agentStore's
+			// recovery (mocked out here) would find it, with no second re-queue.
+			expect(useSessionStore.getState().sessions[0].executionQueue).toEqual([]);
 		});
 	});
 

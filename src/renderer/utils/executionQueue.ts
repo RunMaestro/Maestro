@@ -9,7 +9,7 @@
  * taking index 0, and treat a queue with no runnable items as drained.
  */
 
-import type { QueuedItem, QueuedItemEditPatch, Session, SessionState } from '../types';
+import type { LogEntry, QueuedItem, QueuedItemEditPatch, Session, SessionState } from '../types';
 import {
 	getBusyTabs,
 	getTabDisplayName,
@@ -148,6 +148,68 @@ export function applyQueuedItemRelease(session: Session, tabId: string | undefin
 					busySource: undefined,
 					thinkingStartTime: undefined,
 				}),
+	};
+}
+
+/**
+ * The state transition for a dequeued item whose dispatch THREW before the
+ * agent process ever spawned: the exact inverse of
+ * {@link applyQueuedItemDispatch}.
+ *
+ * This is the one place that decides what happens to a prompt that was taken
+ * out of the queue and then failed to send, because the alternative - each
+ * dispatch site writing its own recovery - is what lost a user's work. Five of
+ * the eight sites had no recovery at all (the process-exit drain and the batch
+ * drain rejected into nothing; Stop and force-kill logged and moved on), so a
+ * spawn collision silently destroyed the message: the queue no longer held it,
+ * the transcript showed a card for it, and no model had ever seen it.
+ *
+ * Three things happen together, and they only make sense together:
+ *
+ * 1. **The tab is released.** Dispatch marked it busy; nothing is running.
+ * 2. **The card is removed.** The user-visible entry is appended BEFORE the
+ *    spawn, so a failed dispatch leaves a card for a prompt that was never
+ *    delivered. Matching is by `queuedItemId`, not by text, so an identical
+ *    message the user genuinely sent earlier is untouched.
+ * 3. **The item goes back to the head of the queue** - so it keeps its place
+ *    ahead of everything queued behind it - unless it is already there. The
+ *    idempotence matters: `retryStore.holdFailedItemInQueue` parks the failed
+ *    turn in the queue for the life of an outage, and a second copy would
+ *    double-send the prompt when the outage cleared.
+ *
+ * `hold` decides whether the item comes back runnable. A spawn collision (the
+ * tab's previous process has not exited yet) is transient and self-correcting,
+ * so the item stays runnable and the next drain trigger sends it a moment
+ * later. Any OTHER failure would fail again the same way on the next tick, so
+ * the item comes back `paused`: still there, still editable, still one click
+ * from Force Send, but not spinning the queue against a wall.
+ */
+export function applyQueuedItemDispatchFailure(
+	session: Session,
+	item: QueuedItem,
+	opts: { hold: boolean }
+): Session {
+	const released = applyQueuedItemRelease(session, item.tabId);
+
+	const stripCard = <T extends { id: string; logs: LogEntry[] }>(tab: T): T =>
+		tab.logs.some((log) => log.queuedItemId === item.id)
+			? { ...tab, logs: tab.logs.filter((log) => log.queuedItemId !== item.id) }
+			: tab;
+
+	const aiTabs = released.aiTabs.map(stripCard);
+	const orphans = released.orphanedThinkingTabs?.map(stripCard);
+
+	const queue = released.executionQueue ?? [];
+	const restored: QueuedItem = opts.hold ? { ...item, paused: true } : item;
+	const executionQueue = queue.some((i) => i.id === item.id)
+		? queue.map((i) => (i.id === item.id ? restored : i))
+		: [restored, ...queue];
+
+	return {
+		...released,
+		aiTabs,
+		...(orphans && { orphanedThinkingTabs: orphans }),
+		executionQueue,
 	};
 }
 

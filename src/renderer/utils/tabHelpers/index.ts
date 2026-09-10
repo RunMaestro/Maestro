@@ -921,6 +921,10 @@ export function markTabRunningQueuedItem(tab: AITab, item: QueuedItem, session: 
 			source: 'user',
 			text: item.text,
 			images: item.images,
+			// Stamped so a dispatch that throws before spawning can take this card
+			// back out again - the prompt never reached a model, and leaving the
+			// card behind makes the re-dispatch look like the user sent it twice.
+			queuedItemId: item.id,
 			...(item.forceParallel && { forceParallel: true }),
 			...(item.readOnlyMode && { readOnly: true }),
 		};
