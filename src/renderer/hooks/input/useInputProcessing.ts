@@ -6,6 +6,7 @@ import type {
 	QueuedItem,
 	CustomAICommand,
 	BatchRunState,
+	AITab,
 } from '../../types';
 import { getActiveTab, getBusyTabs, getTabDisplayName } from '../../utils/tabHelpers';
 import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
@@ -30,7 +31,7 @@ import type { CrossAgentMentionPlan } from '../../services/crossAgentMentions';
 import { hasWorkAheadOfNewMessage } from '../../utils/executionQueue';
 import { probeSessionAiProcesses } from '../../services/process';
 import { isAgentAlreadyRunningError } from '../../../shared/processErrors';
-import { hasPendingRetry } from '../../stores/retryStore';
+import { hasPendingRetry, noteDirectDispatch } from '../../stores/retryStore';
 import { resolveForceParallel } from '../../stores/settingsStore';
 import {
 	useSessionStore,
@@ -1317,6 +1318,29 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				});
 			}
 
+			// The one QueuedItem shape for this send. Used twice: as the Agent
+			// Resilience snapshot taken before the spawn, and as the item put back on the
+			// queue if the spawn collides with a live turn. Both must describe the same
+			// message - the raw text the user typed (no nudge, which processQueuedItem
+			// does not add either), its images, and the turn settings frozen at send.
+			const buildComposerQueuedItem = (
+				tabId: string,
+				tab: AITab | undefined,
+				session: Session
+			): QueuedItem => ({
+				id: generateId(),
+				timestamp: Date.now(),
+				tabId,
+				type: 'message',
+				text: effectiveInputValue,
+				images: [...effectiveImages],
+				tabName: tab ? getTabDisplayName(tab) : undefined,
+				readOnlyMode: isReadOnlyEntry,
+				...(isForceParallel && { forceParallel: true }),
+				...(crossAgentMentionPlan && { crossAgentMention: true }),
+				turnSettings: captureQueuedTurnSettings(tab, session),
+			});
+
 			if (isBatchModeAgent) {
 				// Batch mode: Spawn new agent process with prompt
 				(async () => {
@@ -1424,6 +1448,17 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							activeTabId: targetTabId,
 						});
 
+						// Agent Resilience: snapshot the prompt BEFORE spawning. This path does
+						// not go through agentStore.processQueuedItem, so without this a limit
+						// or overload hit on a message typed into an idle tab had nothing to
+						// resend: scheduleRetryForError logged "No prompt snapshot to resend"
+						// and the retry loop never started. The error can arrive before the
+						// spawn promise settles, so this cannot wait until after the await.
+						noteDirectDispatch(
+							resolvedSessionId,
+							buildComposerQueuedItem(freshActiveTab.id, freshActiveTab, freshSession)
+						);
+
 						// Spawn agent with generic config - the main process will use agent-specific
 						// argument builders (resumeArgs, readOnlyArgs, etc.) to construct the final args
 						await window.maestro.process.spawn({
@@ -1477,19 +1512,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							// only a real spawn failure, where nothing is running, resets
 							// it and writes the error the user can act on.
 							if (isSpawnCollision) {
-								const requeued: QueuedItem = {
-									id: generateId(),
-									timestamp: Date.now(),
-									tabId: errorTabId,
-									type: 'message',
-									text: effectiveInputValue,
-									images: [...effectiveImages],
-									tabName: errorTab ? getTabDisplayName(errorTab) : undefined,
-									readOnlyMode: isReadOnlyEntry,
-									...(isForceParallel && { forceParallel: true }),
-									...(crossAgentMentionPlan && { crossAgentMention: true }),
-									turnSettings: captureQueuedTurnSettings(errorTab, s),
-								};
+								const requeued = buildComposerQueuedItem(errorTabId, errorTab, s);
 								return { ...s, executionQueue: [...s.executionQueue, requeued] };
 							}
 							// Reset target tab's state to 'idle' and add error log

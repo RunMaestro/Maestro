@@ -36,7 +36,12 @@ import { dispatchShellCommand } from '../../../renderer/services/shellCommand';
 import { requestAiCommand } from '../../../renderer/services/aiCommand';
 import { useAiCommandStore } from '../../../renderer/stores/aiCommandStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
-import { useRetryStore } from '../../../renderer/stores/retryStore';
+import {
+	cancelRetry,
+	registerDispatchDepsProvider,
+	scheduleRetryForError,
+	useRetryStore,
+} from '../../../renderer/stores/retryStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { agentAlreadyRunningMessage } from '../../../shared/processErrors';
 import type {
@@ -3005,6 +3010,75 @@ describe('useInputProcessing', () => {
 			});
 
 			expect(mockGenerateTabName).not.toHaveBeenCalled();
+		});
+	});
+
+	// ========================================================================
+	// Agent Resilience snapshot on the idle send
+	// ========================================================================
+
+	// The 2026-09-10 incident: a message typed into an IDLE tab took the direct
+	// spawn path, which never snapshotted the prompt. When it hit the weekly limit,
+	// scheduleRetryForError logged "No prompt snapshot to resend; falling back to
+	// modal" and the retry loop never started.
+	describe('Agent Resilience snapshot on the idle send', () => {
+		const weeklyLimit = {
+			type: 'rate_limited',
+			message: "You've hit your weekly limit · resets 10am (America/Chicago)",
+			recoverable: true,
+			timestamp: Date.now(),
+			agentId: 'claude-code',
+		} as never;
+
+		afterEach(() => {
+			registerDispatchDepsProvider(null);
+		});
+
+		it('snapshots the prompt before spawning, so a limit mid-send enters the retry loop', async () => {
+			registerDispatchDepsProvider(() => ({
+				conductorProfile: '',
+				customAICommands: [],
+				speckitCommands: [],
+				openspecCommands: [],
+			}));
+			const tab = createMockTab({ id: 'tab-snapshot', state: 'idle' });
+			// Default session id on purpose: createDeps pins activeSessionId to the
+			// default mock session, and a mismatched id resolves no session at all.
+			// The unique tab id is what isolates this retry key from other tests.
+			const session = createMockSession({
+				state: 'idle',
+				aiTabs: [tab],
+				activeTabId: tab.id,
+			});
+			useSessionStore.setState({ sessions: [session] });
+
+			// Ask the retry engine the question the error listener asks, from INSIDE
+			// the spawn: the limit error can arrive before the spawn promise settles,
+			// so a snapshot taken after the await would already be too late.
+			let wouldRetry: boolean | undefined;
+			vi.mocked(window.maestro.process.spawn).mockImplementation(async () => {
+				wouldRetry = scheduleRetryForError(session.id, tab.id, weeklyLimit);
+				return undefined as never;
+			});
+
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'almost perfect, just move it to the left a bit',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(window.maestro.process.spawn).toHaveBeenCalledTimes(1);
+			expect(wouldRetry).toBe(true);
+			expect(useRetryStore.getState().retries[`${session.id}:${tab.id}`]?.strategy).toBe(
+				'token-exhaustion'
+			);
+
+			cancelRetry(session.id, tab.id);
 		});
 	});
 });

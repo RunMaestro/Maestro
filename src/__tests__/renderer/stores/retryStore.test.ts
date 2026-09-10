@@ -23,6 +23,8 @@ import {
 	getOutage,
 	sessionHasActiveOutage,
 	registerBatchResumer,
+	registerDispatchDepsProvider,
+	noteDirectDispatch,
 	replayAfterAuth,
 	useRetryStore,
 } from '../../../renderer/stores/retryStore';
@@ -89,6 +91,7 @@ afterEach(() => {
 	vi.clearAllTimers();
 	vi.useRealTimers();
 	registerBatchResumer(null);
+	registerDispatchDepsProvider(null);
 });
 
 describe('scheduleRetryForError - classification gating', () => {
@@ -1088,5 +1091,81 @@ describe('token-exhaustion outage - spin, not sleep', () => {
 		// The card reads "cleared after N retries"; N is now the truth rather
 		// than the 0 a single sleep always reported.
 		expect(getOutage(outageId)!.attempts).toBeGreaterThan(3);
+	});
+});
+
+// ============================================================================
+// Direct spawns snapshot through noteDirectDispatch
+// ============================================================================
+
+// The 2026-09-10 incident: a message typed into an IDLE tab spawns directly
+// instead of going through agentStore.processQueuedItem, so it never called
+// noteDispatch. It hit the weekly limit, scheduleRetryForError found no snapshot,
+// logged "No prompt snapshot to resend; falling back to modal", and the retry
+// loop never started.
+describe('noteDirectDispatch', () => {
+	const weekly = () =>
+		err({
+			message: "You've hit your weekly limit · resets 10am (America/Chicago)",
+			parsedJson: {
+				error: 'rate_limit',
+				quotaLimits: { status: 'rejected', rateLimitType: 'seven_day' },
+			},
+		} as Partial<AgentError> & { message: string });
+
+	const providerDeps = {
+		conductorProfile: 'from-provider',
+		customAICommands: [],
+		speckitCommands: [],
+		openspecCommands: [],
+	} as unknown as ProcessQueuedItemDeps;
+
+	const directItem = {
+		id: 'direct-1',
+		timestamp: 1,
+		tabId: 't1',
+		type: 'message' as const,
+		text: 'almost perfect, just move it to the left a bit',
+		images: ['data:image/png;base64,AAAA'],
+		crossAgentMention: true,
+	};
+
+	it('puts a directly spawned prompt into the retry loop', () => {
+		setupSession('s1', 't1');
+		registerDispatchDepsProvider(() => providerDeps);
+
+		noteDirectDispatch('s1', directItem);
+
+		expect(scheduleRetryForError('s1', 't1', weekly())).toBe(true);
+		expect(getRetryEntry('s1', 't1')?.strategy).toBe('token-exhaustion');
+	});
+
+	it('replays the exact prompt with the provider deps and without re-firing the consult', async () => {
+		setupSession('s1', 't1');
+		registerDispatchDepsProvider(() => providerDeps);
+		noteDirectDispatch('s1', directItem);
+		scheduleRetryForError('s1', 't1', weekly());
+
+		retryNow('s1', 't1');
+		await vi.advanceTimersByTimeAsync(0);
+
+		expect(processQueuedItem).toHaveBeenCalledTimes(1);
+		const [sessionId, item, replayDeps] = processQueuedItem.mock.calls[0];
+		expect(sessionId).toBe('s1');
+		expect(item.text).toBe(directItem.text);
+		expect(item.images).toEqual(directItem.images);
+		// The consult already went out with the original send.
+		expect(item.crossAgentMention).toBeUndefined();
+		expect(replayDeps).toBe(providerDeps);
+	});
+
+	it('records nothing when no provider is registered, rather than a snapshot with no deps', () => {
+		// Its own key: snapshots are module-level and outlive a test, so reusing
+		// s1:t1 would read the snapshot an earlier test left behind.
+		setupSession('s-unwired', 't-unwired');
+
+		noteDirectDispatch('s-unwired', { ...directItem, tabId: 't-unwired' });
+
+		expect(scheduleRetryForError('s-unwired', 't-unwired', weekly())).toBe(false);
 	});
 });

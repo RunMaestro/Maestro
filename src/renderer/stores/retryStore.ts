@@ -285,6 +285,50 @@ export function registerBatchResumer(fn: ((sessionId: string) => void) | null): 
 	batchResumer = fn;
 }
 
+/**
+ * Supplies the `ProcessQueuedItemDeps` a replay needs (conductor profile and the
+ * slash-command lists), registered once by `useQueueProcessing`, which already
+ * owns them. Null until registered (e.g. in tests).
+ *
+ * Exists so a spawn path that does not go through `processQueuedItem` can still
+ * snapshot its prompt without assembling those deps itself - which is how the
+ * remote handler ended up with a private copy of them, and how the desktop
+ * composer ended up with no snapshot at all.
+ */
+let dispatchDepsProvider: (() => ProcessQueuedItemDeps) | null = null;
+
+/** Wire the deps every replay resolves slash commands against. */
+export function registerDispatchDepsProvider(fn: (() => ProcessQueuedItemDeps) | null): void {
+	dispatchDepsProvider = fn;
+}
+
+/**
+ * Snapshot a prompt that is being spawned DIRECTLY rather than through
+ * `agentStore.processQueuedItem` (which calls `noteDispatch` itself).
+ *
+ * Every path that starts a user turn must snapshot it, or Agent Resilience has
+ * nothing to resend when that turn hits a limit: `scheduleRetryForError` logs
+ * "No prompt snapshot to resend" and falls back to the modal, and the retry loop
+ * never starts. The desktop composer's idle-send path skipped this entirely, so
+ * every message typed into an idle tab was unprotected - including the first
+ * message after an app restart, when no earlier queued dispatch had left a
+ * snapshot behind to fall back on.
+ *
+ * `crossAgentMention` is stripped for the same reason `processQueuedItem` strips
+ * it: the consult already fired with the original send, and a replay must not
+ * fan it out a second time.
+ */
+export function noteDirectDispatch(sessionId: string, item: QueuedItem): void {
+	if (!dispatchDepsProvider) {
+		logger.warn('[retry] No dispatch deps provider registered; prompt not snapshotted', undefined, {
+			sessionId,
+			tabId: item.tabId,
+		});
+		return;
+	}
+	noteDispatch(sessionId, { ...item, crossAgentMention: undefined }, dispatchDepsProvider());
+}
+
 function keyFor(sessionId: string, tabId: string): string {
 	return `${sessionId}:${tabId}`;
 }

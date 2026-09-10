@@ -82,8 +82,11 @@ vi.mock('../../../renderer/stores/sessionStore', () => ({
 const pendingRetryTabs = new Set<string>();
 let mockRetries: Record<string, unknown> = {};
 
+const mockRegisterDispatchDepsProvider = vi.fn();
+
 vi.mock('../../../renderer/stores/retryStore', () => ({
 	hasPendingRetry: (_sessionId: string, tabId: string) => pendingRetryTabs.has(tabId),
+	registerDispatchDepsProvider: (...args: unknown[]) => mockRegisterDispatchDepsProvider(...args),
 	useRetryStore: Object.assign(
 		(selector: (s: Record<string, unknown>) => unknown) => selector({ retries: mockRetries }),
 		{
@@ -1511,6 +1514,46 @@ describe('dispatch failure — the hook owns the rejection, not the recovery', (
 		expect(setSessionsUpdaters).toHaveLength(1);
 		expect(mockLoggerError).toHaveBeenCalled();
 		expect(String(mockLoggerError.mock.calls[0][0])).toContain('sess-mixed-busy');
+	});
+});
+
+// ============================================================================
+// Agent Resilience deps provider
+// ============================================================================
+
+// A prompt spawned outside processQueuedItem (the composer's idle send, remote
+// dispatch) snapshots through retryStore.noteDirectDispatch, which needs the
+// same deps a queued send gets. This hook owns them, so it registers the builder.
+describe('Agent Resilience deps provider', () => {
+	it('registers a provider that returns the live deps', () => {
+		const custom = [{ command: '/ship', description: 'Ship', prompt: 'ship it' }] as never;
+		const customAICommandsRef = { current: custom };
+		renderHook(() =>
+			useQueueProcessing(createDeps({ conductorProfile: 'pedram', customAICommandsRef }))
+		);
+
+		expect(mockRegisterDispatchDepsProvider).toHaveBeenCalledTimes(1);
+		const provider = mockRegisterDispatchDepsProvider.mock.calls[0][0] as () => {
+			conductorProfile: string;
+			customAICommands: unknown[];
+			bmadCommands: unknown[];
+		};
+		const deps = provider();
+		expect(deps.conductorProfile).toBe('pedram');
+		expect(deps.customAICommands).toBe(custom);
+		expect(deps.bmadCommands).toEqual([]);
+
+		// Read at replay time, not frozen at mount: a command added later resolves.
+		const later = [{ command: '/later', description: 'Later', prompt: 'later' }] as never;
+		customAICommandsRef.current = later;
+		expect(provider().customAICommands).toBe(later);
+	});
+
+	it('unregisters on unmount so a stale closure never supplies deps', () => {
+		const { unmount } = renderHook(() => useQueueProcessing(createDeps()));
+		unmount();
+
+		expect(mockRegisterDispatchDepsProvider).toHaveBeenLastCalledWith(null);
 	});
 });
 

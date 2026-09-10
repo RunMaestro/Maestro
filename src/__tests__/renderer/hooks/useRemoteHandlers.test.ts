@@ -38,13 +38,13 @@ vi.mock('../../../renderer/utils/ids', () => ({
 	generateId: vi.fn(() => 'mock-id-' + Math.random().toString(36).slice(2, 8)),
 }));
 
-// Agent Resilience records its retry snapshot through `noteDispatch`. Only that
-// one export is replaced - the rest of the store is real, because other modules
-// this file pulls in read the live store.
-const noteDispatchMock = vi.hoisted(() => vi.fn());
+// Agent Resilience records its retry snapshot through `noteDirectDispatch`. Only
+// that one export is replaced - the rest of the store is real, because other
+// modules this file pulls in read the live store.
+const noteDirectDispatchMock = vi.hoisted(() => vi.fn());
 vi.mock('../../../renderer/stores/retryStore', async (importOriginal) => ({
 	...(await importOriginal<typeof import('../../../renderer/stores/retryStore')>()),
-	noteDispatch: noteDispatchMock,
+	noteDirectDispatch: noteDirectDispatchMock,
 }));
 
 vi.mock('../../../renderer/utils/templateVariables', () => ({
@@ -2117,8 +2117,8 @@ describe('useRemoteHandlers', () => {
 
 	// Prompts that arrive from `maestro-cli dispatch`, a Cue pipeline, or the
 	// web/mobile composer come through THIS handler, which spawns directly
-	// instead of going through `agentStore.processQueuedItem` (where the desktop
-	// composer records its retry snapshot). Without a snapshot here,
+	// instead of going through `agentStore.processQueuedItem` (which snapshots
+	// for itself). Without a snapshot here,
 	// `scheduleRetryForError` logs "No prompt snapshot to resend" and falls back
 	// to the error modal - so every unattended prompt lost auto-retry, which is
 	// the case that needs it most.
@@ -2138,8 +2138,8 @@ describe('useRemoteHandlers', () => {
 				);
 			});
 
-			expect(noteDispatchMock).toHaveBeenCalled();
-			const [snapSessionId, item] = noteDispatchMock.mock.calls[0];
+			expect(noteDirectDispatchMock).toHaveBeenCalled();
+			const [snapSessionId, item] = noteDirectDispatchMock.mock.calls[0];
 			expect(snapSessionId).toBe('session-1');
 			// Pinned to the resolved target tab, so a replay lands on the tab this
 			// spawn actually wrote to rather than the agent's current active tab.

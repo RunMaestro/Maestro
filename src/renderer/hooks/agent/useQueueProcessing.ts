@@ -26,14 +26,18 @@ import type {
 	Session,
 } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
-import { useAgentStore } from '../../stores/agentStore';
+import { useAgentStore, type ProcessQueuedItemDeps } from '../../stores/agentStore';
 import { markTabRunningQueuedItem, resolveQueuedItemTarget } from '../../utils/tabHelpers';
 import {
 	hasRunnableQueueItem,
 	nextRunnableQueueItem,
 	takeNextRunnableQueueItem,
 } from '../../utils/executionQueue';
-import { hasPendingRetry, useRetryStore } from '../../stores/retryStore';
+import {
+	hasPendingRetry,
+	registerDispatchDepsProvider,
+	useRetryStore,
+} from '../../stores/retryStore';
 import { queueIsHeldByRetry } from './internal/helpers/exitDequeue';
 import { logger } from '../../utils/logger';
 
@@ -85,6 +89,17 @@ export function selectIdleQueuedSignature(state: { sessions: Session[] }): strin
 		.join('|');
 }
 
+/** The deps `processQueuedItem` needs, read from the hook's live refs. */
+function buildDispatchDeps(d: UseQueueProcessingDeps): ProcessQueuedItemDeps {
+	return {
+		conductorProfile: d.conductorProfile,
+		customAICommands: d.customAICommandsRef.current ?? [],
+		speckitCommands: d.speckitCommandsRef.current ?? [],
+		openspecCommands: d.openspecCommandsRef.current ?? [],
+		bmadCommands: d.bmadCommandsRef?.current ?? [],
+	};
+}
+
 // ============================================================================
 // Hook implementation
 // ============================================================================
@@ -110,14 +125,18 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 	// Process a queued item - delegates to agentStore action.
 	// Stable identity: conductor profile + command refs read from depsRef.
 	const processQueuedItem = useCallback(async (sessionId: string, item: QueuedItem) => {
-		const d = depsRef.current;
-		await useAgentStore.getState().processQueuedItem(sessionId, item, {
-			conductorProfile: d.conductorProfile,
-			customAICommands: d.customAICommandsRef.current ?? [],
-			speckitCommands: d.speckitCommandsRef.current ?? [],
-			openspecCommands: d.openspecCommandsRef.current ?? [],
-			bmadCommands: d.bmadCommandsRef?.current ?? [],
-		});
+		await useAgentStore
+			.getState()
+			.processQueuedItem(sessionId, item, buildDispatchDeps(depsRef.current));
+	}, []);
+
+	// Agent Resilience replays through processQueuedItem, so a prompt spawned by
+	// any OTHER path (the composer's idle send, remote dispatch) needs these same
+	// deps on its snapshot. Registering the one builder here keeps every snapshot
+	// resolving slash commands exactly as a queued send would.
+	useEffect(() => {
+		registerDispatchDepsProvider(() => buildDispatchDeps(depsRef.current));
+		return () => registerDispatchDepsProvider(null);
 	}, []);
 
 	// Update ref for processQueuedItem so batch exit handler can use it

@@ -36,8 +36,7 @@ import {
 	planCrossAgentMentions,
 	dispatchCrossAgentMentions,
 } from '../../services/crossAgentMentions';
-import { noteDispatch } from '../../stores/retryStore';
-import type { ProcessQueuedItemDeps } from '../../stores/agentStore';
+import { noteDirectDispatch } from '../../stores/retryStore';
 import { logger } from '../../utils/logger';
 
 // ============================================================================
@@ -634,41 +633,25 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				// transient failure can auto-resend it.
 				//
 				// This path spawns directly rather than going through
-				// `agentStore.processQueuedItem`, which is where the desktop
-				// composer records its snapshot - so without this call every
-				// prompt that arrives from `maestro-cli dispatch`, a Cue
-				// pipeline, or the web/mobile composer failed with
-				// "No prompt snapshot to resend" and fell back to the error
-				// modal. Those are the UNATTENDED paths, where nobody is
-				// watching to press retry, so they need resilience more than a
-				// typed message does.
+				// `agentStore.processQueuedItem`, so it snapshots for itself - every
+				// prompt that arrives from `maestro-cli dispatch`, a Cue pipeline, or
+				// the web/mobile composer would otherwise fail with "No prompt
+				// snapshot to resend" and fall back to the error modal. Those are the
+				// UNATTENDED paths, where nobody is watching to press retry.
 				//
-				// The synthetic item mirrors what the composer queues: a plain
-				// message pinned to the resolved target tab, so a replay lands
-				// on the same tab this spawn is writing to.
-				// Skip when no real tab resolved: the spawn falls back to a
-				// `-ai-default` route, and a replay keyed on that would land
+				// The item mirrors what the composer queues: a plain message pinned to
+				// the resolved target tab, so a replay lands on the same tab this
+				// spawn is writing to. Skip when no real tab resolved: the spawn falls
+				// back to a `-ai-default` route, and a replay keyed on that would land
 				// nowhere.
 				if (targetTab?.id) {
-					noteDispatch(
-						sessionId,
-						{
-							id: generateId(),
-							timestamp: Date.now(),
-							tabId: targetTab.id,
-							type: 'message',
-							text: promptToSend,
-						},
-						{
-							// Same shape the composer records, so a replayed remote
-							// prompt resolves slash commands identically.
-							conductorProfile: useSettingsStore.getState().conductorProfile,
-							customAICommands: customAICommandsRef.current,
-							speckitCommands: speckitCommandsRef.current,
-							openspecCommands: openspecCommandsRef.current,
-							bmadCommands: bmadCommandsRef?.current,
-						} as ProcessQueuedItemDeps
-					);
+					noteDirectDispatch(sessionId, {
+						id: generateId(),
+						timestamp: Date.now(),
+						tabId: targetTab.id,
+						type: 'message',
+						text: promptToSend,
+					});
 				}
 
 				// Ack delivery on whichever comes first: the spawn settling, or a
