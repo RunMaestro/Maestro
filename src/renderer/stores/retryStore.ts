@@ -29,6 +29,7 @@ import { create } from 'zustand';
 import {
 	classifyRetryableError,
 	availabilityDelayMs,
+	tokenExhaustionDelayMs,
 	tokenExhaustionResetAt,
 	type RetryStrategy,
 	type ClassifiableError,
@@ -518,11 +519,17 @@ export function scheduleRetryForError(
 	// the feature for token-exhaustion, where the strategy wait can be hours. We only
 	// DECIDE here (a pure store read); `fireRetry` performs the async switch.
 	const failingOver = canFailover(sessionId);
+	// Token exhaustion POLLS rather than sleeping to the parsed reset: the wait
+	// can end for reasons the provider's notice cannot know about (the user
+	// re-points the agent at another account, the plan rolls over early, the
+	// message named the wrong window). The parsed time still matters - it is what
+	// keeps us from arriving a poll interval late - it just is not the only
+	// moment we look. See tokenExhaustionDelayMs.
 	const nextRetryAt = failingOver
 		? now + FAILOVER_HANDOVER_DELAY_MS
 		: strategy === 'availability'
 			? now + availabilityDelayMs(attempt)
-			: tokenExhaustionResetAt(error, now);
+			: now + tokenExhaustionDelayMs(attempt, tokenExhaustionResetAt(error, now), now);
 
 	clearTimer(key);
 	const entry: RetryEntry = {

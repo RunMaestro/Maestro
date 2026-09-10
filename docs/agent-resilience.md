@@ -14,23 +14,27 @@ It is on by default for every agent.
 
 When an agent turn fails, Maestro classifies the error and picks one of two strategies.
 
-| Failure                  | What it looks like                                                                                    | What Maestro does                                               |
-| ------------------------ | ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| **Availability**         | `Overloaded`, HTTP 529/503/502/500, `429`, `too many requests`, rate-limit throttling, network errors | Backs off and resends: 30s, 1m, 2m, 4m, 8m, 16m, then every 30m |
-| **Plan quota exhausted** | `You've hit your session limit`, `usage limit reached`, `quota exceeded`, `out of credits`            | Waits until the quota actually resets, then resends             |
+| Failure                  | What it looks like                                                                                    | What Maestro does                                                   |
+| ------------------------ | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| **Availability**         | `Overloaded`, HTTP 529/503/502/500, `429`, `too many requests`, rate-limit throttling, network errors | Backs off and resends: 30s, 1m, 2m, 4m, 8m, 16m, then every 30m     |
+| **Plan quota exhausted** | `You've hit your session limit`, `usage limit reached`, `quota exceeded`, `out of credits`            | Keeps resending until it goes through: 15s, 30s, then once a minute |
 
 The resend is your original prompt replayed through the same code path that sent it the first time, so attached images, slash commands, `@` file mentions, and your tab's model and effort settings all survive unchanged. This holds for every provider, not just Claude Code.
 
-### It waits for the real reset time
+### It keeps trying until it goes through
 
-For a quota failure, backing off in seconds is pointless. Maestro reads the reset moment out of the error itself, in descending order of confidence:
+A quota does come back on a clock, so the obvious thing to do is read the reset time and sleep until it. Maestro does read the reset time, but it does not sleep on it, because the provider's notice is not the only way the wait can end. You can point the agent at a different account or a different provider. The plan can roll over early. The message can name the five-hour window when the weekly one is what actually ran out. A single long sleep is blind to all of that.
+
+So Maestro probes instead: 15 seconds after the limit hits, then 30, then once a minute for as long as it takes, and exactly on the reset moment when the error named one. Each probe is your real prompt resent, because that is the only honest test of whether the quota is back, and it costs nothing when it is not: the provider refuses before spending any tokens, and the outage card updates in place instead of adding a card per attempt. The **Retries** counter on the card is the count of probes so far.
+
+Maestro reads the reset moment out of the error itself, in descending order of confidence, and uses it to make sure a known reset is met on the second rather than up to a minute late:
 
 1. The provider's own quota block. Claude Code sends `quotaLimits.resetsAt` alongside the limit message, which is the exact reset second, so the retry lands the moment your window reopens rather than up to an hour late.
 2. A top-level `retryAfter` / `resetAt` field, or a `retry after 30 seconds` / `try again in 5 minutes` phrase.
 3. Claude Code's legacy `Claude AI usage limit reached|1755500000` epoch marker.
 4. The banner text itself, which names its own timezone: `You've hit your session limit · resets 11:40am (America/Chicago)`. This is the fallback for paths that forward only the message.
 
-If none of those parse, it falls back to waiting an hour and retrying hourly. A wall-clock phrase with no timezone (`resets at 3pm`) is deliberately ignored, since a wrong guess is worse than the reliable hourly poll.
+If none of those parse, nothing is lost: the probes carry on at the same cadence, and the card simply has no **Resets** line to show you. A wall-clock phrase with no timezone (`resets at 3pm`) is deliberately ignored, since a wrong guess would only pull a probe forward to a moment that means nothing.
 
 <Note>
 Claude Code does not report a hit plan limit as an error. It sends an ordinary-looking assistant message whose text is the banner, which is why an unpatched build showed the notice as a normal reply and the turn appeared to succeed. Maestro recognizes that message specifically. It requires the banner to be the entire message, so an agent that merely writes *about* usage limits is never mistaken for one.
@@ -81,7 +85,7 @@ This matters more for automation than for interactive use: when a scheduled pipe
 Both toggles live in the **New Agent** dialog when you create an agent, and in **Edit Agent** afterwards. To reach Edit Agent, right-click the agent in the Left Bar and choose **Edit Agent...**, or press `Cmd+K` / `Ctrl+K` and pick **Edit Agent**.
 
 - **Retry on availability errors** - overloaded, 529, and server errors. Backs off 30s to 30m, then keeps trying.
-- **Retry on token exhaustion** - plan or quota limit reached. Waits until the reset, or hourly.
+- **Retry on token exhaustion** - plan or quota limit reached. Keeps resending, about once a minute, until it goes through.
 
 Both default to on, including for agents you created before the feature existed. Turn one off and that failure class goes back to opening the error dialog immediately.
 

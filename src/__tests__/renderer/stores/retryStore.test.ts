@@ -28,7 +28,7 @@ import {
 } from '../../../renderer/stores/retryStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useAgentStore, type ProcessQueuedItemDeps } from '../../../renderer/stores/agentStore';
-import { availabilityDelayMs } from '../../../shared/retryClassification';
+import { availabilityDelayMs, RESET_TIME_BUFFER_MS } from '../../../shared/retryClassification';
 import { createMockSession } from '../../helpers/mockSession';
 import { createMockAITab } from '../../helpers/mockTab';
 import type { AgentError } from '../../../renderer/types';
@@ -964,5 +964,129 @@ describe('provider change during an outage', () => {
 		} as any);
 
 		expect(processQueuedItem).not.toHaveBeenCalled();
+	});
+});
+
+// ============================================================================
+// Token exhaustion spins until the quota comes back
+// ============================================================================
+
+describe('token-exhaustion outage - spin, not sleep', () => {
+	/** The real Claude notice, with an authoritative reset five hours out. */
+	function quotaWithReset(resetInMs: number) {
+		return err({
+			message: "You've hit your session limit · resets 8pm (America/Chicago)",
+			parsedJson: {
+				error: 'rate_limit',
+				quotaLimits: {
+					status: 'rejected',
+					resetsAt: Math.floor((NOW + resetInMs) / 1000),
+					rateLimitType: 'five_hour',
+				},
+			},
+		} as Partial<AgentError> & { message: string });
+	}
+
+	/**
+	 * Run the outage forward, refusing every probe, and report how many resends
+	 * were actually attempted. Mirrors the live loop: the agent-error listener
+	 * reschedules on each failure, which is what advances `attempt`.
+	 */
+	async function spinRefusing(error: AgentError, forMs: number): Promise<number> {
+		const step = 5 * 1000;
+		for (let elapsed = 0; elapsed < forMs; elapsed += step) {
+			const before = processQueuedItem.mock.calls.length;
+			await vi.advanceTimersByTimeAsync(step);
+			// Every probe that fired is refused again, exactly as the provider does
+			// while the quota is still out.
+			for (let i = before; i < processQueuedItem.mock.calls.length; i++) {
+				scheduleRetryForError('s1', 't1', error);
+			}
+		}
+		return processQueuedItem.mock.calls.length;
+	}
+
+	// The observed failure: a 2h26m outage that "cleared after 0 retries" - one
+	// attempt, at the very end, with no idea what was true at any point between.
+	it('keeps probing all the way through a multi-hour reset window', async () => {
+		setupSession('s1', 't1');
+		seedSnapshot('s1', 't1');
+		const error = quotaWithReset(5 * 60 * 60 * 1000);
+
+		expect(scheduleRetryForError('s1', 't1', error)).toBe(true);
+		const probes = await spinRefusing(error, 60 * 60 * 1000);
+
+		// One a minute after the ramp, for an hour - not one at the end of five.
+		expect(probes).toBeGreaterThan(50);
+		expect(getRetryEntry('s1', 't1')?.status).toBe('scheduled');
+		expect(getOutage(getRetryEntry('s1', 't1')!.outageId)?.status).toBe('active');
+	});
+
+	it('recovers the moment the quota returns, without waiting for the reset', async () => {
+		setupSession('s1', 't1');
+		seedSnapshot('s1', 't1');
+		const error = quotaWithReset(5 * 60 * 60 * 1000);
+		scheduleRetryForError('s1', 't1', error);
+
+		// The account is topped up (or swapped) ten minutes in. The next probe
+		// succeeds, and nothing reschedules it.
+		await spinRefusing(error, 10 * 60 * 1000);
+		const before = processQueuedItem.mock.calls.length;
+		await vi.advanceTimersByTimeAsync(60 * 1000);
+		expect(processQueuedItem.mock.calls.length).toBeGreaterThan(before);
+
+		// The successful resend settles on process exit, as the exit listener does.
+		clearRetryIfSettled('s1', 't1');
+		expect(getRetryEntry('s1', 't1')).toBeUndefined();
+		// Well inside the five-hour window the notice advertised.
+		expect(Date.now()).toBeLessThan(NOW + 30 * 60 * 1000);
+	});
+
+	it('goes on probing when the advertised reset comes and goes', async () => {
+		setupSession('s1', 't1');
+		seedSnapshot('s1', 't1');
+		// The provider said two minutes. It lied, or it meant a different window.
+		const error = quotaWithReset(2 * 60 * 1000);
+		scheduleRetryForError('s1', 't1', error);
+
+		const probes = await spinRefusing(error, 10 * 60 * 1000);
+
+		// A reset in the past is not a reason to stop asking.
+		expect(probes).toBeGreaterThan(8);
+		expect(getRetryEntry('s1', 't1')?.status).toBe('scheduled');
+	});
+
+	it('never sleeps past a reset it can read', () => {
+		setupSession('s1', 't1');
+		seedSnapshot('s1', 't1');
+		// A reset closer than the poll cadence: the probe lands ON it (plus the
+		// standard cushion) rather than a cadence tick after it.
+		scheduleRetryForError('s1', 't1', quotaWithReset(5 * 1000));
+
+		expect(getRetryEntry('s1', 't1')?.nextRetryAt).toBe(NOW + 5 * 1000 + RESET_TIME_BUFFER_MS);
+	});
+
+	it('probes on the poll cadence when no reset can be read at all', () => {
+		setupSession('s1', 't1');
+		seedSnapshot('s1', 't1');
+		// A bare "Usage limit reached" carries no time. This used to mean a blind
+		// one-hour sleep.
+		scheduleRetryForError('s1', 't1', quota());
+
+		expect(getRetryEntry('s1', 't1')?.nextRetryAt).toBe(NOW + 15 * 1000);
+	});
+
+	it('counts every probe on the outage record', async () => {
+		setupSession('s1', 't1');
+		seedSnapshot('s1', 't1');
+		const error = quotaWithReset(60 * 60 * 1000);
+		scheduleRetryForError('s1', 't1', error);
+		const outageId = getRetryEntry('s1', 't1')!.outageId;
+
+		await spinRefusing(error, 5 * 60 * 1000);
+
+		// The card reads "cleared after N retries"; N is now the truth rather
+		// than the 0 a single sleep always reported.
+		expect(getOutage(outageId)!.attempts).toBeGreaterThan(3);
 	});
 });

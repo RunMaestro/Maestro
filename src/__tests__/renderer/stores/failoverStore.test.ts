@@ -25,7 +25,10 @@ import {
 } from '../../../renderer/stores/retryStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useAgentStore, type ProcessQueuedItemDeps } from '../../../renderer/stores/agentStore';
-import { tokenExhaustionResetAt } from '../../../shared/retryClassification';
+import {
+	tokenExhaustionDelayMs,
+	tokenExhaustionResetAt,
+} from '../../../shared/retryClassification';
 import { createMockSession } from '../../helpers/mockSession';
 import { createMockAITab } from '../../helpers/mockTab';
 import type { AgentError } from '../../../renderer/types';
@@ -201,9 +204,12 @@ describe('retry engine integration', () => {
 		const entry = getRetryEntry('s1', 't1');
 		expect(entry?.failingOver).toBe(true);
 		expect(entry?.nextRetryAt).toBe(NOW + FAILOVER_HANDOVER_DELAY_MS);
-		// Without failover this same error would park the agent for the full quota
-		// wait, which is the behavior the feature exists to avoid.
-		expect(tokenExhaustionResetAt(quotaError(), NOW)).toBeGreaterThan(entry!.nextRetryAt);
+		// Without failover this same error would sit out at least the first quota
+		// probe on the endpoint that just refused it. Handing over is faster than
+		// waiting even one poll, which is the behavior the feature exists for.
+		const firstProbe =
+			NOW + tokenExhaustionDelayMs(0, tokenExhaustionResetAt(quotaError(), NOW), NOW);
+		expect(firstProbe).toBeGreaterThan(entry!.nextRetryAt);
 	});
 
 	it('swaps the endpoint into main BEFORE the resend spawns', async () => {
@@ -242,7 +248,9 @@ describe('retry engine integration', () => {
 
 		const entry = getRetryEntry('s1', 't1');
 		expect(entry?.failingOver).toBe(false);
-		expect(entry?.nextRetryAt).toBe(tokenExhaustionResetAt(quotaError(), NOW));
+		expect(entry?.nextRetryAt).toBe(
+			NOW + tokenExhaustionDelayMs(0, tokenExhaustionResetAt(quotaError(), NOW), NOW)
+		);
 	});
 
 	it('leaves agents without a failover config on the plain retry path', () => {

@@ -31,6 +31,7 @@ import {
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useAgentStore, type ProcessQueuedItemDeps } from '../../../renderer/stores/agentStore';
 import { takeNextRunnableQueueItem } from '../../../renderer/utils/executionQueue';
+import { TOKEN_EXHAUSTION_POLL_MAX_MS } from '../../../shared/retryClassification';
 import { createMockSession } from '../../helpers/mockSession';
 import { createMockAITab } from '../../helpers/mockTab';
 import type { AgentError, QueuedItem, Session } from '../../../renderer/types';
@@ -140,12 +141,16 @@ describe('queued messages across a quota outage', () => {
 		// be overtaken, and it survives a quit the way the others do.
 		expect(session().executionQueue.map((i) => i.id)).toEqual(['q0', 'q1', 'q2', 'q3']);
 
-		// The retry is parked on the real reset time, not an arbitrary backoff.
+		// The retry POLLS. It does not park on the parsed reset and go quiet for
+		// hours - the wait can end for reasons the provider's notice cannot know
+		// about, so the first probe is seconds away, not the whole window.
 		const entry = getRetryEntry(SESSION, TAB)!;
 		expect(entry.strategy).toBe('token-exhaustion');
-		expect(entry.nextRetryAt).toBeGreaterThan(NOW + 60 * 60 * 1000);
+		expect(entry.nextRetryAt).toBeLessThanOrEqual(NOW + TOKEN_EXHAUSTION_POLL_MAX_MS);
+		expect(entry.nextRetryAt).toBeGreaterThan(NOW);
 
-		// Quota resets. The retry fires and replays the ORIGINAL failed prompt.
+		// Quota is back by the time that probe lands. It fires and replays the
+		// ORIGINAL failed prompt.
 		await vi.advanceTimersByTimeAsync(entry.nextRetryAt - NOW + 10);
 		expect(dispatched).toEqual(['running', 'running']);
 		expect(getRetryEntry(SESSION, TAB)?.status).toBe('in-flight');

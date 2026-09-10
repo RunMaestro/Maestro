@@ -7,9 +7,11 @@ import {
 	classifyRetryableError,
 	availabilityDelayMs,
 	tokenExhaustionResetAt,
+	tokenExhaustionDelayMs,
 	AVAILABILITY_BASE_DELAY_MS,
 	AVAILABILITY_MAX_DELAY_MS,
-	TOKEN_EXHAUSTION_FALLBACK_DELAY_MS,
+	TOKEN_EXHAUSTION_POLL_BASE_MS,
+	TOKEN_EXHAUSTION_POLL_MAX_MS,
 	RESET_TIME_BUFFER_MS,
 	type ClassifiableError,
 } from '../../shared/retryClassification';
@@ -116,10 +118,11 @@ describe('availabilityDelayMs', () => {
 describe('tokenExhaustionResetAt', () => {
 	const now = 1_700_000_000_000; // fixed epoch ms
 
-	it('falls back to now + 1h when nothing parseable is present', () => {
-		expect(tokenExhaustionResetAt(err({ message: 'Usage limit reached' }), now)).toBe(
-			now + TOKEN_EXHAUSTION_FALLBACK_DELAY_MS
-		);
+	// An unreadable reset is a real answer, not a failure: the caller polls
+	// either way, so `undefined` costs nothing but the card's "Resets at" line.
+	// This used to return `now + 1h`, which the caller then slept through whole.
+	it('returns undefined when nothing parseable is present', () => {
+		expect(tokenExhaustionResetAt(err({ message: 'Usage limit reached' }), now)).toBeUndefined();
 	});
 
 	it('reads relative seconds from parsedJson retryAfter', () => {
@@ -214,14 +217,14 @@ describe('tokenExhaustionResetAt', () => {
 			);
 		});
 
-		it('falls back to the hourly poll for a wall clock with no zone', () => {
+		it('reads no reset from a wall clock with no zone', () => {
 			const e = err({ message: 'usage limit reached, resets at 3pm' });
-			expect(tokenExhaustionResetAt(e, noon)).toBe(noon + TOKEN_EXHAUSTION_FALLBACK_DELAY_MS);
+			expect(tokenExhaustionResetAt(e, noon)).toBeUndefined();
 		});
 
-		it('falls back to the hourly poll for an unknown zone', () => {
+		it('reads no reset from an unknown zone', () => {
 			const e = err({ message: "You've hit your session limit · resets 3pm (Not/AZone)" });
-			expect(tokenExhaustionResetAt(e, noon)).toBe(noon + TOKEN_EXHAUSTION_FALLBACK_DELAY_MS);
+			expect(tokenExhaustionResetAt(e, noon)).toBeUndefined();
 		});
 	});
 
@@ -239,5 +242,62 @@ describe('tokenExhaustionResetAt', () => {
 				err({ message: "You've hit your session limit · resets 11:40am (America/Chicago)" })
 			)
 		).toBe('token-exhaustion');
+	});
+});
+
+// ============================================================================
+// tokenExhaustionDelayMs - the spin, not the sleep
+// ============================================================================
+
+describe('tokenExhaustionDelayMs', () => {
+	const now = 1_700_000_000_000;
+	const min = 60 * 1000;
+
+	it('ramps 15s, 30s, then holds at one probe a minute', () => {
+		expect(tokenExhaustionDelayMs(0, undefined, now)).toBe(15 * 1000);
+		expect(tokenExhaustionDelayMs(1, undefined, now)).toBe(30 * 1000);
+		expect(tokenExhaustionDelayMs(2, undefined, now)).toBe(min);
+		expect(tokenExhaustionDelayMs(3, undefined, now)).toBe(min);
+		expect(tokenExhaustionDelayMs(500, undefined, now)).toBe(TOKEN_EXHAUSTION_POLL_MAX_MS);
+	});
+
+	it('clamps negative and fractional attempts to the first probe', () => {
+		expect(tokenExhaustionDelayMs(-5, undefined, now)).toBe(TOKEN_EXHAUSTION_POLL_BASE_MS);
+		expect(tokenExhaustionDelayMs(0.9, undefined, now)).toBe(TOKEN_EXHAUSTION_POLL_BASE_MS);
+	});
+
+	// The whole point. A 5-hour window used to mean one attempt, five hours in;
+	// an outage that cleared early - because the user swapped accounts, or the
+	// notice named the wrong window - was invisible until the sleep expired.
+	it('keeps polling through a reset that is hours away', () => {
+		const resetAt = now + 5 * 60 * min;
+		expect(tokenExhaustionDelayMs(0, resetAt, now)).toBe(15 * 1000);
+		expect(tokenExhaustionDelayMs(9, resetAt, now)).toBe(min);
+		expect(tokenExhaustionDelayMs(200, resetAt, now)).toBe(min);
+	});
+
+	it('lands exactly on the reset when it arrives sooner than the next probe', () => {
+		// 20s out with a 60s cadence: waiting the full minute would meet a known
+		// reset 40s late, every time, for no reason.
+		expect(tokenExhaustionDelayMs(5, now + 20 * 1000, now)).toBe(20 * 1000);
+		// ...but never LATER than the cadence, which is the sleep this replaced.
+		expect(tokenExhaustionDelayMs(5, now + 90 * 1000, now)).toBe(min);
+	});
+
+	it('goes on polling once the reset has come and gone', () => {
+		// The provider said the quota would be back and it was not. That is a
+		// reason to keep asking, not to stop.
+		expect(tokenExhaustionDelayMs(4, now - 60 * min, now)).toBe(min);
+		expect(tokenExhaustionDelayMs(4, now, now)).toBe(min);
+	});
+
+	it('never returns a delay that could stall the loop', () => {
+		for (let attempt = 0; attempt < 40; attempt++) {
+			for (const resetAt of [undefined, now - 1, now, now + 1, now + 10 * min]) {
+				const delay = tokenExhaustionDelayMs(attempt, resetAt, now);
+				expect(delay).toBeGreaterThan(0);
+				expect(delay).toBeLessThanOrEqual(TOKEN_EXHAUSTION_POLL_MAX_MS);
+			}
+		}
 	});
 });

@@ -11,9 +11,12 @@
  *    backoff: 30s, 1m, 2m, 4m, 8m, 16m, then 30m repeating forever.
  *
  *  - `'token-exhaustion'` - the account's plan quota is depleted ("usage limit
- *    reached", "quota exceeded", "resets at …"). Backing off in seconds is
- *    pointless; the quota resets on a clock. If we can parse a reset time from
- *    the error we wait until then; otherwise we wait 1h and retry every hour.
+ *    reached", "quota exceeded", "resets at …"). We POLL until it comes back:
+ *    every 15s, then 30s, then once a minute for as long as the outage lasts,
+ *    and exactly on the reset time when the error named one. A parsed reset is
+ *    a hint about when to expect recovery, never the only moment we look - the
+ *    account can be switched, the plan can roll over early, and the notice can
+ *    name the wrong window. See {@link tokenExhaustionDelayMs}.
  *
  * This module is intentionally pure and dependency-free so it can run in either
  * the renderer or the main process. It classifies by MESSAGE CONTENT rather than
@@ -31,8 +34,10 @@ export type RetryStrategy = 'availability' | 'token-exhaustion';
 export const AVAILABILITY_BASE_DELAY_MS = 30 * 1000;
 /** Ceiling for the availability backoff: once reached, retries repeat every 30m. */
 export const AVAILABILITY_MAX_DELAY_MS = 30 * 60 * 1000;
-/** Fallback wait for token exhaustion when no reset time can be parsed: 1h. */
-export const TOKEN_EXHAUSTION_FALLBACK_DELAY_MS = 60 * 60 * 1000;
+/** First token-exhaustion poll fires 15s after the limit is hit. */
+export const TOKEN_EXHAUSTION_POLL_BASE_MS = 15 * 1000;
+/** Steady-state token-exhaustion poll: one probe a minute, for as long as it takes. */
+export const TOKEN_EXHAUSTION_POLL_MAX_MS = 60 * 1000;
 /** Small cushion added past a parsed reset time so the quota is actually back. */
 export const RESET_TIME_BUFFER_MS = 5 * 1000;
 
@@ -115,8 +120,13 @@ export function availabilityDelayMs(attempt: number): number {
  * Best-effort, in descending order of confidence: a structured retry/reset hint
  * on `parsedJson`, a `retry after N seconds/minutes` phrase, the legacy
  * `usage limit reached|<epoch>` marker, then a wall-clock reset that names its
- * own IANA timezone ("resets 11:40am (America/Chicago)"). When nothing
- * parseable is found returns `now + 1h` (the hourly fallback).
+ * own IANA timezone ("resets 11:40am (America/Chicago)").
+ *
+ * Returns `undefined` when nothing parseable is found. That is a real answer,
+ * not a failure: the caller polls regardless (see
+ * {@link tokenExhaustionDelayMs}), so an unparsed reset costs nothing but a
+ * missing "Resets at" line on the outage card. It used to return `now + 1h`,
+ * which the caller then slept through in one go.
  *
  * A bare wall-clock phrase like "resets at 3pm" is still ignored: without a
  * zone the guess can be hours off. Claude Code's own notice carries the zone in
@@ -126,7 +136,7 @@ export function availabilityDelayMs(attempt: number): number {
  * @param error the failing error
  * @param now   current epoch ms (injectable for tests)
  */
-export function tokenExhaustionResetAt(error: ClassifiableError, now: number): number {
+export function tokenExhaustionResetAt(error: ClassifiableError, now: number): number | undefined {
 	const fromJson = parseResetFromJson(error.parsedJson, now);
 	if (fromJson !== undefined) return fromJson + RESET_TIME_BUFFER_MS;
 
@@ -141,7 +151,59 @@ export function tokenExhaustionResetAt(error: ClassifiableError, now: number): n
 	const fromClock = parseZonedResetFromMessage(message, now);
 	if (fromClock !== undefined) return fromClock + RESET_TIME_BUFFER_MS;
 
-	return now + TOKEN_EXHAUSTION_FALLBACK_DELAY_MS;
+	return undefined;
+}
+
+/**
+ * Delay before the next token-exhaustion attempt: a POLL, not a sleep.
+ *
+ * A depleted quota does come back on a clock, so the obvious implementation is
+ * to parse the reset time and sleep until it. That is what this used to do, and
+ * it is wrong in one direction that matters: it treats the provider's notice as
+ * the only way the wait can end. It is not. The user can switch the agent to a
+ * different account or provider, the plan can roll over early, the window named
+ * in the message can be the wrong one, or the notice can simply be stale. A
+ * single long sleep is blind to all of it - the observed failure was a 2h26m
+ * outage that cleared "after 0 retries", meaning Maestro tried exactly once,
+ * at the end, and had no idea what was true at any point in between.
+ *
+ * So we keep probing. Each probe is a real resend, because a real resend is the
+ * only honest test of whether the quota is back - and it is nearly free when it
+ * is not: the provider refuses before consuming tokens, and the outage card
+ * updates in place rather than adding a transcript entry per attempt.
+ *
+ * Two rules:
+ *
+ *  1. **Never sleep past the expected reset.** When a reset time was parsed and
+ *     it lands sooner than the next poll, wait exactly that long, so a known
+ *     reset is met on the second rather than up to one poll interval late.
+ *  2. **Otherwise poll on a fixed cadence** that ramps 15s → 30s → 60s and then
+ *     holds. The early probes are quick because the first seconds are when a
+ *     mis-parsed reset or an already-cleared limit is most likely; the ceiling
+ *     keeps a multi-hour outage to one refused request a minute per tab.
+ *
+ * `attempt` is 0-indexed (0 = the first attempt of this outage).
+ *
+ * @param attempt   0-indexed attempt number within this outage
+ * @param resetAt   parsed reset time, or undefined when none could be read
+ * @param now       current epoch ms (injectable for tests)
+ */
+export function tokenExhaustionDelayMs(
+	attempt: number,
+	resetAt: number | undefined,
+	now: number
+): number {
+	const safeAttempt = Math.max(0, Math.floor(attempt));
+	const poll =
+		safeAttempt >= 31
+			? TOKEN_EXHAUSTION_POLL_MAX_MS
+			: Math.min(TOKEN_EXHAUSTION_POLL_BASE_MS * 2 ** safeAttempt, TOKEN_EXHAUSTION_POLL_MAX_MS);
+
+	if (resetAt === undefined) return poll;
+	const untilReset = resetAt - now;
+	// A reset already in the past tells us nothing new - keep polling.
+	if (untilReset <= 0) return poll;
+	return Math.min(poll, untilReset);
 }
 
 /** Recognized numeric hint fields on a structured error payload. */
