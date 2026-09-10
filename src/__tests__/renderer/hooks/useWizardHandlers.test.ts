@@ -252,6 +252,14 @@ const setupMaestroMocks = () => {
 		stats: {
 			recordSessionCreated: vi.fn(),
 		},
+		// `/wizard <input>` names the tab from the argument, which logs and spawns
+		// the ephemeral namer through these two bridges.
+		logger: {
+			log: vi.fn().mockResolvedValue(undefined),
+		},
+		tabNaming: {
+			generateTabName: vi.fn().mockResolvedValue(null),
+		},
 	};
 };
 

@@ -278,7 +278,6 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		[]
 	);
 	const conductorProfile = useSettingsStore((s) => s.conductorProfile);
-	const automaticTabNamingEnabled = useSettingsStore((s) => s.automaticTabNamingEnabled);
 
 	// --- InputContext state (completion dropdowns) ---
 	const {
@@ -701,7 +700,6 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		onWizardSendMessage: sendWizardMessageWithThinking,
 		isWizardActive: isWizardActiveForCurrentTab,
 		onSkillsCommand: handleSkillsCommand,
-		automaticTabNamingEnabled,
 		conductorProfile,
 		onPlanCrossAgentMentions: handleCrossAgentMentionPlan,
 		onDispatchCrossAgentMentions: dispatchCrossAgentMentions,

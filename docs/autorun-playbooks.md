@@ -146,6 +146,8 @@ Generate new playbooks from within an existing session using the **Inline Wizard
 
 ![Inline Wizard](./screenshots/wizard-inline.png)
 
+The wizard names its own tab as soon as it knows what you are planning: the tab opens as `Wizard` and becomes `wizard: <topic>` once you say what you want, so several wizards running side by side stay tellable apart. Rename it yourself at any point and the wizard leaves your name alone.
+
 The Inline Wizard creates documents in a unique subfolder under your Auto Run folder, keeping generated playbooks organized. When complete, your tab is renamed to reflect the project and you can immediately start running the generated tasks.
 
 ### Playbook Exchange

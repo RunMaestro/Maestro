@@ -1,5 +1,4 @@
 import { useCallback, useRef } from 'react';
-import { getClaudeTokenSourceFields } from '../../../shared/claudeTokenMode';
 import type {
 	Session,
 	SessionState,
@@ -8,12 +7,7 @@ import type {
 	CustomAICommand,
 	BatchRunState,
 } from '../../types';
-import {
-	getActiveTab,
-	getBusyTabs,
-	extractQuickTabName,
-	getTabDisplayName,
-} from '../../utils/tabHelpers';
+import { getActiveTab, getBusyTabs, getTabDisplayName } from '../../utils/tabHelpers';
 import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 import { generateId, getInputBroadcastOriginId } from '../../utils/ids';
 import { captureQueuedTurnSettings, codifyTurnSettings } from '../../utils/providerTabSessions';
@@ -25,6 +19,11 @@ import { hasCapabilityCached } from '../agent/useAgentCapabilities';
 import { stripShellCommandEscape, type ComposerCommandMode } from '../../utils/shellCommandInput';
 import { dispatchShellCommand } from '../../services/shellCommand';
 import { requestAiCommand } from '../../services/aiCommand';
+import {
+	collectNamingPrompt,
+	requestTabAutoName,
+	requestWizardTabAutoName,
+} from '../../services/tabAutoNaming';
 import { getAiCommandEntry } from '../../stores/aiCommandStore';
 import { gitService } from '../../services/git';
 import type { CrossAgentMentionPlan } from '../../services/crossAgentMentions';
@@ -141,8 +140,6 @@ export interface UseInputProcessingDeps {
 	isWizardActive?: boolean;
 	/** Handler for the /skills built-in command (lists Claude Code skills) */
 	onSkillsCommand?: () => Promise<void>;
-	/** Whether automatic tab naming is enabled */
-	automaticTabNamingEnabled?: boolean;
 	/** Conductor profile (user's About Me from settings) */
 	conductorProfile?: string;
 	/**
@@ -241,7 +238,6 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 		onWizardSendMessage,
 		isWizardActive,
 		onSkillsCommand,
-		automaticTabNamingEnabled,
 		conductorProfile,
 		onPlanCrossAgentMentions,
 		onDispatchCrossAgentMentions,
@@ -620,6 +616,22 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				// Capture staged images before clearing
 				const imagesToSend = effectiveImages.length > 0 ? [...effectiveImages] : undefined;
 
+				// Name the wizard tab from what the user is asking it to plan. The tab
+				// opened on the "Wizard" placeholder because it existed before anyone knew
+				// the subject; this replaces the placeholder with `wizard: <topic>` and
+				// then leaves the tab alone. Retries on later sends if naming failed.
+				const wizardTab = getActiveTab(activeSession);
+				if (wizardTab) {
+					requestWizardTabAutoName(
+						activeSession,
+						wizardTab.id,
+						effectiveInputValue,
+						(wizardTab.wizardState?.conversationHistory ?? [])
+							.filter((message) => message.role === 'user')
+							.map((message) => message.content)
+					);
+				}
+
 				// Clear input
 				setInputValue('');
 				if (!usingOverrideImages) setStagedImages([]);
@@ -635,7 +647,6 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 
 			// Trigger automatic tab naming. Retries on every send until the tab has a name,
 			// so a failed/timed-out first attempt doesn't leave the tab permanently unnamed.
-			// Skip while a previous attempt is still in flight to avoid duplicate spawns.
 			//
 			// MUST stay ahead of the execution-queue branch below. Naming needs only the
 			// user's text and the target tab, never the spawn, but the queue branch ends in
@@ -644,149 +655,19 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			// tab was busy got queued and the tab stayed permanently unnamed - the retry
 			// never fires because there is no second send.
 			const activeTabForNaming = resolveTargetTab(activeSession);
-			const isAiTab = currentMode === 'ai' && !!activeTabForNaming;
-			const hasTextMessage = effectiveInputValue.trim().length > 0;
-			const hasNoCustomName = !activeTabForNaming?.name;
-			const namingNotInFlight = !activeTabForNaming?.isGeneratingName;
-
-			if (
-				automaticTabNamingEnabled &&
-				isAiTab &&
-				hasTextMessage &&
-				hasNoCustomName &&
-				namingNotInFlight
-			) {
-				// Build the naming prompt from accumulated user messages plus the current one,
-				// capped at 2000 chars. Mirrors the manual Auto handler - richer context produces
-				// more reliable LLM output that survives extractTabName's filters.
-				const MAX_PROMPT_CHARS = 2000;
-				const priorUserMessages: string[] = [];
-				let totalLength = 0;
-				for (const entry of activeTabForNaming.logs) {
-					if (entry.source !== 'user') continue;
-					const text = entry.text.trim();
-					if (!text) continue;
-					if (totalLength + text.length > MAX_PROMPT_CHARS) {
-						priorUserMessages.push(text.substring(0, MAX_PROMPT_CHARS - totalLength));
-						totalLength = MAX_PROMPT_CHARS;
-						break;
-					}
-					priorUserMessages.push(text);
-					totalLength += text.length;
-				}
-				let namingPrompt = effectiveInputValue;
-				if (priorUserMessages.length > 0 && totalLength < MAX_PROMPT_CHARS) {
-					const remaining = MAX_PROMPT_CHARS - totalLength;
-					const currentTrimmed = effectiveInputValue.trim().substring(0, remaining);
-					namingPrompt = [...priorUserMessages, currentTrimmed].join('\n\n');
-				} else if (priorUserMessages.length > 0) {
-					namingPrompt = priorUserMessages.join('\n\n');
-				}
-
-				// Fast-path: extract tab name from known patterns (GitHub URLs, PR/issue refs, Jira tickets)
-				// This avoids spawning an ephemeral agent for messages with obvious identifiers
-				const quickName = extractQuickTabName(namingPrompt);
-				if (quickName) {
-					window.maestro.logger.log('info', `Quick tab named: "${quickName}"`, 'TabNaming', {
-						tabId: activeTabForNaming.id,
-						sessionId: activeSessionId,
-						quickName,
-					});
-					updateAiTab(resolvedSessionId, activeTabForNaming.id, (t) => ({
-						...t,
-						name: quickName,
-					}));
-				} else {
-					// Set isGeneratingName to show spinner in tab
-					updateAiTab(resolvedSessionId, activeTabForNaming.id, (t) => ({
-						...t,
-						isGeneratingName: true,
-					}));
-
-					window.maestro.logger.log('info', 'Auto tab naming started', 'TabNaming', {
-						tabId: activeTabForNaming.id,
-						sessionId: activeSessionId,
-						agentType: activeSession.toolType,
-						messageLength: namingPrompt.length,
-						priorMessageCount: priorUserMessages.length,
-					});
-
-					// Call the tab naming API (async, fire and forget)
-					window.maestro.tabNaming
-						.generateTabName({
-							userMessage: namingPrompt,
-							agentType: activeSession.toolType,
-							cwd: activeSession.cwd,
-							sessionSshRemoteConfig: activeSession.sessionSshRemoteConfig,
-							// Forward session env so naming uses the same provider auth as the chat.
-							sessionCustomEnvVars: activeSession.customEnvVars,
-							// Honor the agent's Claude token source for the naming spawn.
-							// Shared extractor guarantees the SAME complete triple the chat
-							// spawn forwards - no partial/drifting forward possible.
-							...getClaudeTokenSourceFields(activeSession),
-						})
-						.then((generatedName) => {
-							// Clear the generating indicator
-							updateAiTab(resolvedSessionId, activeTabForNaming.id, (t) => ({
-								...t,
-								isGeneratingName: false,
-							}));
-
-							if (!generatedName) {
-								window.maestro.logger.log('warn', 'Auto tab naming returned null', 'TabNaming', {
-									tabId: activeTabForNaming.id,
-									sessionId: activeSessionId,
-								});
-								return;
-							}
-
-							// Update the tab name only if it's still null (user hasn't manually renamed it)
-							updateSessionWith(resolvedSessionId, (s) => {
-								const tab = s.aiTabs.find((t) => t.id === activeTabForNaming.id);
-								if (!tab || tab.name !== null) {
-									window.maestro.logger.log(
-										'info',
-										'Auto tab naming skipped (tab already named)',
-										'TabNaming',
-										{
-											tabId: activeTabForNaming.id,
-											generatedName,
-											existingName: tab?.name,
-										}
-									);
-									return s;
-								}
-								window.maestro.logger.log(
-									'info',
-									`Auto tab named: "${generatedName}"`,
-									'TabNaming',
-									{
-										tabId: activeTabForNaming.id,
-										sessionId: activeSessionId,
-										generatedName,
-									}
-								);
-								return {
-									...s,
-									aiTabs: s.aiTabs.map((t) =>
-										t.id === activeTabForNaming.id ? { ...t, name: generatedName } : t
-									),
-								};
-							});
-						})
-						.catch((error) => {
-							window.maestro.logger.log('error', 'Auto tab naming failed', 'TabNaming', {
-								tabId: activeTabForNaming.id,
-								sessionId: activeSessionId,
-								error: String(error),
-							});
-							// Clear the generating indicator on error
-							updateAiTab(resolvedSessionId, activeTabForNaming.id, (t) => ({
-								...t,
-								isGeneratingName: false,
-							}));
-						});
-				}
+			if (currentMode === 'ai' && activeTabForNaming && effectiveInputValue.trim()) {
+				requestTabAutoName({
+					session: activeSession,
+					tabId: activeTabForNaming.id,
+					// Prior user messages plus the current one - richer context produces
+					// names that survive the extractor's filters.
+					prompt: collectNamingPrompt(
+						activeTabForNaming.logs
+							.filter((entry) => entry.source === 'user')
+							.map((entry) => entry.text),
+						effectiveInputValue
+					),
+				});
 			}
 
 			// Cross-agent @mentions (Phase 03). RESOLVE ONLY - nothing is consulted
