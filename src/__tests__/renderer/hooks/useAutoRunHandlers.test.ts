@@ -398,6 +398,12 @@ describe('useAutoRunHandlers', () => {
 	// ============================================================================
 
 	describe('handleAutoRunRefresh', () => {
+		beforeEach(() => {
+			// A refresh discards its result when its session is no longer the
+			// active one, so the session under test must be active.
+			useSessionStore.setState({ activeSessionId: 'test-session-1' } as any);
+		});
+
 		it('should reload document list and show notification', async () => {
 			const mockSession = createMockSession();
 			const mockDeps = createMockDeps();
