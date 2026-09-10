@@ -107,6 +107,7 @@ const selectRenameTabId = (s: ReturnType<typeof useModalStore.getState>) =>
 const selectGroups = (s: ReturnType<typeof useSessionStore.getState>) => s.groups;
 const selectInitialLoadComplete = (s: ReturnType<typeof useSessionStore.getState>) =>
 	s.initialLoadComplete;
+const selectGroupsLoaded = (s: ReturnType<typeof useSessionStore.getState>) => s.groupsLoaded;
 const selectActiveSessionId = (s: ReturnType<typeof useSessionStore.getState>) => s.activeSessionId;
 
 // ============================================================================
@@ -121,6 +122,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 	const renameTabId = useModalStore(selectRenameTabId);
 	const groups = useSessionStore(selectGroups);
 	const initialLoadComplete = useSessionStore(selectInitialLoadComplete);
+	const groupsLoaded = useSessionStore(selectGroupsLoaded);
 	const activeSessionId = useSessionStore(selectActiveSessionId);
 
 	// ====================================================================
@@ -536,12 +538,18 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 	// Effects
 	// ====================================================================
 
-	// Persist groups directly (groups change infrequently, no need to debounce)
+	// Persist groups directly (groups change infrequently, no need to debounce).
+	//
+	// Gated on `groupsLoaded`, NOT on `initialLoadComplete`. The latter is set in
+	// a `finally` and so is true even when the group read failed, which made this
+	// effect write an empty registry over a good one and then rewrite it on every
+	// launch after. `groupsLoaded` is true only when `groups:getAll` actually came
+	// back, so a registry we never read is never persisted.
 	useEffect(() => {
-		if (initialLoadComplete) {
+		if (initialLoadComplete && groupsLoaded) {
 			window.maestro.groups.setAll(groups);
 		}
-	}, [groups, initialLoadComplete]);
+	}, [groups, initialLoadComplete, groupsLoaded]);
 
 	// Track navigation history when session or AI tab changes
 	const activeGroupChatId = useGroupChatStore((s) => s.activeGroupChatId);

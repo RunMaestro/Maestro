@@ -38,6 +38,12 @@ export interface SessionStoreState {
 	initialLoadComplete: boolean;
 	initialFileTreeReady: boolean;
 
+	// True only once the group registry has been READ back successfully. Group
+	// persistence is gated on it, because an empty in-memory registry means two
+	// very different things - "this user has no groups" and "the registry could
+	// not be read" - and only the second must never be written to disk.
+	groupsLoaded: boolean;
+
 	// Worktree tracking (prevents re-discovery of manually removed worktrees)
 	removedWorktreePaths: Set<string>;
 
@@ -109,6 +115,7 @@ export interface SessionStoreActions {
 
 	setSessionsLoaded: (loaded: boolean | ((prev: boolean) => boolean)) => void;
 	setInitialLoadComplete: (complete: boolean | ((prev: boolean) => boolean)) => void;
+	setGroupsLoaded: (loaded: boolean | ((prev: boolean) => boolean)) => void;
 	setInitialFileTreeReady: (ready: boolean | ((prev: boolean) => boolean)) => void;
 
 	// === Bookmarks ===
@@ -167,6 +174,7 @@ export const useSessionStore = create<SessionStore>()((set) => ({
 	sessionsLoaded: false,
 	initialLoadComplete: false,
 	initialFileTreeReady: false,
+	groupsLoaded: false,
 	removedWorktreePaths: new Set(),
 	cyclePosition: -1,
 
@@ -266,6 +274,7 @@ export const useSessionStore = create<SessionStore>()((set) => ({
 	setSessionsLoaded: (v) => set((s) => ({ sessionsLoaded: resolve(v, s.sessionsLoaded) })),
 	setInitialLoadComplete: (v) =>
 		set((s) => ({ initialLoadComplete: resolve(v, s.initialLoadComplete) })),
+	setGroupsLoaded: (v) => set((s) => ({ groupsLoaded: resolve(v, s.groupsLoaded) })),
 	setInitialFileTreeReady: (v) =>
 		set((s) => ({ initialFileTreeReady: resolve(v, s.initialFileTreeReady) })),
 
