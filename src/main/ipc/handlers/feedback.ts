@@ -486,8 +486,14 @@ export function registerFeedbackHandlers(_deps: FeedbackHandlerDependencies): vo
 		withIpcErrorLogging(
 			handlerOpts('check-gh-auth'),
 			async (): Promise<{ authenticated: boolean; message?: string }> => {
+				// A configured custom path is authoritative: it exists precisely for
+				// binaries that PATH lookup cannot find. Resolve it before reading the
+				// cache, because the cache is keyed by the command a verdict was reached
+				// against, and the other gh callers probe the PATH-resolved binary.
+				const ghCommand = await resolveFeedbackGhCommand();
+
 				// Prefer cache when available
-				const cached = getCachedGhStatus();
+				const cached = getCachedGhStatus(ghCommand);
 				if (cached) {
 					if (!cached.installed) {
 						return { authenticated: false, message: GH_NOT_INSTALLED_MESSAGE };
@@ -498,24 +504,22 @@ export function registerFeedbackHandlers(_deps: FeedbackHandlerDependencies): vo
 					return { authenticated: true };
 				}
 
-				// Check if gh is installed. A configured custom path is authoritative:
-				// it exists precisely for binaries that PATH lookup cannot find, so probe
-				// it directly rather than asking `which` about a name it will never see.
-				const ghCommand = await resolveFeedbackGhCommand();
+				// Check if gh is installed. Probe a custom path directly rather than
+				// asking `which` about a name it will never see.
 				const env = getExpandedEnv();
 				const installed =
 					ghCommand === 'gh'
 						? await isGhInstalled()
 						: (await execFileNoThrow(ghCommand, ['--version'], undefined, env)).exitCode === 0;
 				if (!installed) {
-					setCachedGhStatus(false, false);
+					setCachedGhStatus(ghCommand, false, false);
 					return { authenticated: false, message: GH_NOT_INSTALLED_MESSAGE };
 				}
 
 				// Check auth status (command output ignored; exit code is the signal)
 				const authResult = await execFileNoThrow(ghCommand, ['auth', 'status'], undefined, env);
 				const authenticated = authResult.exitCode === 0;
-				setCachedGhStatus(true, authenticated);
+				setCachedGhStatus(ghCommand, true, authenticated);
 
 				if (!authenticated) {
 					return { authenticated: false, message: GH_NOT_AUTHENTICATED_MESSAGE };

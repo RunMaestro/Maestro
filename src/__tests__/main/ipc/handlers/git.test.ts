@@ -3573,6 +3573,8 @@ export function Component() {
 
 			// Should not call execFileNoThrow because cached result is used
 			expect(execFile.execFileNoThrow).not.toHaveBeenCalled();
+			// The verdict is keyed by the resolved command, not shared across binaries.
+			expect(cliDetection.getCachedGhStatus).toHaveBeenCalledWith('gh');
 			expect(result).toEqual({
 				installed: true,
 				authenticated: true,
@@ -3647,7 +3649,7 @@ export function Component() {
 			await handler!({} as any);
 
 			// Should cache the result
-			expect(cliDetection.setCachedGhStatus).toHaveBeenCalledWith(true, true);
+			expect(cliDetection.setCachedGhStatus).toHaveBeenCalledWith('gh', true, true);
 		});
 
 		it('should not cache result when using custom ghPath', async () => {

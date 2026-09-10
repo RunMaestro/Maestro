@@ -1262,9 +1262,14 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 	ipcMain.handle(
 		'git:checkGhCli',
 		withIpcErrorLogging(handlerOpts('checkGhCli'), async (ghPath?: string) => {
+			// Resolve gh CLI path (uses cached detection or custom path). This comes
+			// before the cache read because the cached verdict is keyed by the command
+			// it was reached against.
+			const ghCommand = await resolveGhPath(ghPath);
+
 			// Check cache first (skip if custom path provided)
 			if (!ghPath) {
-				const cached = getCachedGhStatus();
+				const cached = getCachedGhStatus(ghCommand);
 				if (cached !== null) {
 					logger.debug(
 						`Using cached gh CLI status: installed=${cached.installed}, authenticated=${cached.authenticated}`,
@@ -1274,8 +1279,6 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 				}
 			}
 
-			// Resolve gh CLI path (uses cached detection or custom path)
-			const ghCommand = await resolveGhPath(ghPath);
 			logger.debug(`Checking gh CLI at: ${ghCommand}`, LOG_CONTEXT);
 
 			// Check if gh is installed by running gh --version.
@@ -1292,7 +1295,7 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 					LOG_CONTEXT
 				);
 				const result = { installed: false, authenticated: false };
-				if (!ghPath) setCachedGhStatus(false, false);
+				if (!ghPath) setCachedGhStatus(ghCommand, false, false);
 				return result;
 			}
 			logger.debug(`gh CLI found: ${versionResult.stdout.trim().split('\n')[0]}`, LOG_CONTEXT);
@@ -1307,7 +1310,7 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 
 			// Cache the result (only if not using custom path)
 			if (!ghPath) {
-				setCachedGhStatus(true, authenticated);
+				setCachedGhStatus(ghCommand, true, authenticated);
 			}
 
 			return { installed: true, authenticated };
