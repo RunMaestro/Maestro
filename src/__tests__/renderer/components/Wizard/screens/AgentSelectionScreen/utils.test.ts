@@ -227,6 +227,18 @@ describe('AgentSelectionScreen utils', () => {
 		expect(resolveAgentGridLayout(count, widthFor(halfRow), 9).columns).toBe(halfRow);
 	});
 
+	it('caps the wrap block wide enough for its columns INCLUDING its own padding', () => {
+		// border-box: a cap of exactly N tiles plus gaps leaves the content box short
+		// by the padding, so the block wraps one tile early (11 drew 5 + 5 + 1).
+		const layout = resolveAgentGridLayout(AGENT_TILES.length, 1743);
+		expect(layout.mode).toBe('wrap');
+		const contentWidth = (layout.maxWidthPx ?? 0) - AGENT_TILE_BLOCK_PADDING_PX;
+		const fitsPerLine = Math.floor(
+			(contentWidth + AGENT_TILE_GAP_PX) / (AGENT_TILE_WIDTH_PX + AGENT_TILE_GAP_PX)
+		);
+		expect(fitsPerLine).toBe(layout.columns);
+	});
+
 	it('clamps against the RENDERED tile count, not the provider total', () => {
 		// Filtering to the available providers shortens the strip. Clamping on the
 		// full registry would walk the focus ring off the end of what is drawn.

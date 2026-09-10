@@ -38,7 +38,14 @@ export const AGENT_GRID_EDGE_INSET_PX = 16;
 /** Most rows ever drawn above the Continue button. A short wizard allows fewer. */
 export const AGENT_GRID_MAX_ROWS = 2;
 
-/** Vertical padding on the tile block, matching `py-1` on the wrap block and the strip. */
+/**
+ * Padding on the tile block along each axis, matching `px-1 py-1` on the wrap
+ * block and the strip (4px per side). It keeps a selected tile's ring unclipped.
+ *
+ * The width cap has to include it. Tailwind sizes boxes border-box, so a cap of
+ * exactly N tiles plus gaps leaves the content 8px short of N and the block
+ * wraps one tile early: eleven tiles drew 5 + 5 + 1 instead of 6 + 5.
+ */
 export const AGENT_TILE_BLOCK_PADDING_PX = 8;
 
 /**
@@ -110,6 +117,9 @@ export function resolveAgentGridLayout(
 	return {
 		mode: 'wrap',
 		columns,
-		maxWidthPx: columns * AGENT_TILE_WIDTH_PX + (columns - 1) * AGENT_TILE_GAP_PX,
+		maxWidthPx:
+			columns * AGENT_TILE_WIDTH_PX +
+			(columns - 1) * AGENT_TILE_GAP_PX +
+			AGENT_TILE_BLOCK_PADDING_PX,
 	};
 }
