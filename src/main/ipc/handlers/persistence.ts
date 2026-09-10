@@ -28,6 +28,7 @@ export type { MaestroSettings, SessionsData, GroupsData } from '../../stores/typ
 import type { MaestroSettings, SessionsData, GroupsData, StoredSession } from '../../stores/types';
 import type { Group, SessionCliActivity } from '../../../shared/types';
 import { relocateSessionImages, resolveToDataUrl } from '../../storage/session-image-store';
+import { clearGhCache } from '../../utils/cliDetection';
 
 /**
  * Shallow-compare cliActivity for the diff broadcast.
@@ -155,6 +156,14 @@ export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies
 		logger.info(`Settings updated: ${key}`, 'Settings', { key, value });
 
 		notifyPeerWindows(event?.sender?.id);
+
+		// Pointing at a different gh binary invalidates every cached gh fact:
+		// detection, resolved path, and auth status were all reached against the
+		// old one. Without this the new path is ignored until the app restarts.
+		if (key === 'ghPath') {
+			clearGhCache();
+			logger.info('Cleared gh CLI detection cache after ghPath change', 'Settings');
+		}
 
 		const webServer = getWebServer();
 		// Broadcast theme changes to connected web clients

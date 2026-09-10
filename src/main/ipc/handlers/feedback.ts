@@ -18,8 +18,11 @@ import {
 	setCachedGhStatus,
 	getCachedGhStatus,
 	getExpandedEnv,
+	resolveGhPath,
 } from '../../utils/cliDetection';
 import { execFileNoThrow } from '../../utils/execFile';
+import { getSettingsStore } from '../../stores/getters';
+import { isInitialized } from '../../stores/instances';
 import { generateDebugPackage, type DebugPackageDependencies } from '../../debug-package';
 import { captureException } from '../../utils/sentry';
 import type { MaestroCliManager } from '../../maestro-cli-manager';
@@ -212,9 +215,32 @@ function buildEnvironmentSummary(payload: FeedbackSubmitPayload): FeedbackEnviro
 	};
 }
 
+/**
+ * Resolve the gh binary this handler should invoke.
+ *
+ * Honours the user's configured Settings > GitHub CLI (gh) Path, falling back to
+ * auto-detection. Every gh call in this file must go through here: a bare 'gh'
+ * literal silently ignores that setting, which is the whole reason it exists for
+ * installs where gh is not on the expanded PATH.
+ */
+async function resolveFeedbackGhCommand(): Promise<string> {
+	// Guard on the predicate rather than catching. The stores genuinely are not
+	// initialised in every context (unit tests, early startup), and falling back
+	// to auto-detection there is correct, but a blanket catch would also swallow
+	// a real store failure and silently run some other binary.
+	if (!isInitialized()) {
+		return resolveGhPath();
+	}
+
+	const configured = getSettingsStore().get('ghPath');
+	const customPath =
+		typeof configured === 'string' && configured.trim() ? configured.trim() : undefined;
+	return resolveGhPath(customPath);
+}
+
 async function getGitHubLogin(): Promise<string> {
 	const result = await execFileNoThrow(
-		'gh',
+		await resolveFeedbackGhCommand(),
 		['api', 'user', '--jq', '.login'],
 		undefined,
 		getExpandedEnv()
@@ -242,7 +268,7 @@ function parseAttachmentDataUrl(attachment: FeedbackAttachmentInput): {
 
 async function ensureAttachmentsRepo(owner: string): Promise<void> {
 	const repoCheck = await execFileNoThrow(
-		'gh',
+		await resolveFeedbackGhCommand(),
 		['api', `repos/${owner}/${ATTACHMENTS_REPO}`],
 		undefined,
 		getExpandedEnv()
@@ -252,7 +278,7 @@ async function ensureAttachmentsRepo(owner: string): Promise<void> {
 	}
 
 	const repoCreate = await execFileNoThrow(
-		'gh',
+		await resolveFeedbackGhCommand(),
 		[
 			'api',
 			'user/repos',
@@ -304,7 +330,7 @@ async function uploadAttachments(
 			'utf8'
 		);
 		const uploadResult = await execFileNoThrow(
-			'gh',
+			await resolveFeedbackGhCommand(),
 			[
 				'api',
 				`repos/${owner}/${ATTACHMENTS_REPO}/contents/${repoPath}`,
@@ -344,7 +370,7 @@ async function composeFeedbackPrompt(
 
 async function ensureFeedbackLabel(): Promise<void> {
 	const labelCheck = await execFileNoThrow(
-		'gh',
+		await resolveFeedbackGhCommand(),
 		['api', 'repos/RunMaestro/Maestro/labels/Maestro-feedback'],
 		undefined,
 		getExpandedEnv()
@@ -354,7 +380,7 @@ async function ensureFeedbackLabel(): Promise<void> {
 	}
 
 	const labelCreate = await execFileNoThrow(
-		'gh',
+		await resolveFeedbackGhCommand(),
 		[
 			'label',
 			'create',
@@ -460,8 +486,14 @@ export function registerFeedbackHandlers(_deps: FeedbackHandlerDependencies): vo
 		withIpcErrorLogging(
 			handlerOpts('check-gh-auth'),
 			async (): Promise<{ authenticated: boolean; message?: string }> => {
+				// A configured custom path is authoritative: it exists precisely for
+				// binaries that PATH lookup cannot find. Resolve it before reading the
+				// cache, because the cache is keyed by the command a verdict was reached
+				// against, and the other gh callers probe the PATH-resolved binary.
+				const ghCommand = await resolveFeedbackGhCommand();
+
 				// Prefer cache when available
-				const cached = getCachedGhStatus();
+				const cached = getCachedGhStatus(ghCommand);
 				if (cached) {
 					if (!cached.installed) {
 						return { authenticated: false, message: GH_NOT_INSTALLED_MESSAGE };
@@ -472,22 +504,22 @@ export function registerFeedbackHandlers(_deps: FeedbackHandlerDependencies): vo
 					return { authenticated: true };
 				}
 
-				// Check if gh is installed
-				const installed = await isGhInstalled();
+				// Check if gh is installed. Probe a custom path directly rather than
+				// asking `which` about a name it will never see.
+				const env = getExpandedEnv();
+				const installed =
+					ghCommand === 'gh'
+						? await isGhInstalled()
+						: (await execFileNoThrow(ghCommand, ['--version'], undefined, env)).exitCode === 0;
 				if (!installed) {
-					setCachedGhStatus(false, false);
+					setCachedGhStatus(ghCommand, false, false);
 					return { authenticated: false, message: GH_NOT_INSTALLED_MESSAGE };
 				}
 
 				// Check auth status (command output ignored; exit code is the signal)
-				const authResult = await execFileNoThrow(
-					'gh',
-					['auth', 'status'],
-					undefined,
-					getExpandedEnv()
-				);
+				const authResult = await execFileNoThrow(ghCommand, ['auth', 'status'], undefined, env);
 				const authenticated = authResult.exitCode === 0;
-				setCachedGhStatus(true, authenticated);
+				setCachedGhStatus(ghCommand, true, authenticated);
 
 				if (!authenticated) {
 					return { authenticated: false, message: GH_NOT_AUTHENTICATED_MESSAGE };
@@ -593,7 +625,7 @@ export function registerFeedbackHandlers(_deps: FeedbackHandlerDependencies): vo
 
 				const searchPromises = searchQueries.map(async (q) => {
 					const result = await execFileNoThrow(
-						'gh',
+						await resolveFeedbackGhCommand(),
 						[
 							'search',
 							'issues',
@@ -658,7 +690,7 @@ export function registerFeedbackHandlers(_deps: FeedbackHandlerDependencies): vo
 
 				// Add a +1 reaction to show interest
 				await execFileNoThrow(
-					'gh',
+					await resolveFeedbackGhCommand(),
 					[
 						'api',
 						`repos/RunMaestro/Maestro/issues/${issueNumber}/reactions`,
@@ -674,7 +706,7 @@ export function registerFeedbackHandlers(_deps: FeedbackHandlerDependencies): vo
 				// Add a comment if provided
 				if (comment && comment.trim()) {
 					const commentResult = await execFileNoThrow(
-						'gh',
+						await resolveFeedbackGhCommand(),
 						[
 							'issue',
 							'comment',
@@ -802,7 +834,7 @@ export function registerFeedbackHandlers(_deps: FeedbackHandlerDependencies): vo
 					'utf8'
 				);
 				const issueCreate = await execFileNoThrow(
-					'gh',
+					await resolveFeedbackGhCommand(),
 					[
 						'issue',
 						'create',
@@ -980,7 +1012,7 @@ export function registerFeedbackHandlers(_deps: FeedbackHandlerDependencies): vo
 								'utf8'
 							);
 							const uploadResult = await execFileNoThrow(
-								'gh',
+								await resolveFeedbackGhCommand(),
 								[
 									'api',
 									`repos/${owner}/${ATTACHMENTS_REPO}/contents/${repoPath}`,
@@ -1036,7 +1068,7 @@ export function registerFeedbackHandlers(_deps: FeedbackHandlerDependencies): vo
 
 				try {
 					const issueCreate = await execFileNoThrow(
-						'gh',
+						await resolveFeedbackGhCommand(),
 						[
 							'issue',
 							'create',
