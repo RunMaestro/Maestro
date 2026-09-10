@@ -85,6 +85,8 @@ vi.mock('os', async () => {
 	};
 });
 
+import * as fs from 'fs';
+import path from 'path';
 import {
 	runStartupUsageSampling,
 	isMaestroPBinaryPath,
@@ -92,6 +94,7 @@ import {
 import {
 	clear as clearUsageStore,
 	getSnapshot,
+	setSnapshot,
 	__resetForTests as resetUsageStore,
 	type UsageSnapshot,
 } from '../../../main/stores/claudeUsageStore';
@@ -889,6 +892,85 @@ describe('claude-usage-startup → runStartupUsageSampling', () => {
 			expect(sampleUsageMock).toHaveBeenCalledWith(
 				expect.objectContaining({ configDir: '/Users/test/.claude-agent' })
 			);
+		});
+
+		describe('cached accounts no local agent references', () => {
+			// buildTarget skips SSH sessions, so an account whose agents all run over
+			// SSH would keep rendering its cached row with bars that never update.
+			const remoteKey = path.resolve('/Users/test/.claude-remote');
+			const sshOnlyDeps = () => ({
+				sessionsStore: makeStore({
+					sessions: [
+						{
+							id: 's-remote',
+							toolType: 'claude-code',
+							cwd: '/x',
+							customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/test/.claude-remote' },
+							sessionSshRemoteConfig: { enabled: true, remoteId: 'box' },
+						},
+					],
+				}) as never,
+				agentConfigsStore: makeStore({ configs: {} }) as never,
+				settingsStore: makeStore({}) as never,
+				agentDetector: makeDetector(FAKE_AGENT) as never,
+				mode: 'manual' as const,
+			});
+			const stubAccountDirs = (names: string[]) => {
+				const readdir = vi
+					.spyOn(fs.promises, 'readdir')
+					.mockResolvedValue(names.map((name) => ({ name, isDirectory: () => true })) as never);
+				const access = vi.spyOn(fs.promises, 'access').mockResolvedValue(undefined);
+				return () => {
+					readdir.mockRestore();
+					access.mockRestore();
+				};
+			};
+
+			it('re-samples a cached account dir that is still on disk', async () => {
+				setSnapshot(makeSnapshot({ configDirKey: remoteKey }));
+				sampleUsageMock.mockResolvedValue(makeSnapshot({ configDirKey: remoteKey }));
+				const restore = stubAccountDirs(['.claude-remote']);
+
+				try {
+					await runStartupUsageSampling(sshOnlyDeps());
+				} finally {
+					restore();
+				}
+
+				expect(sampleUsageMock).toHaveBeenCalledTimes(1);
+				expect(sampleUsageMock).toHaveBeenCalledWith(
+					expect.objectContaining({
+						configDir: path.join('/Users/test', '.claude-remote'),
+						cwd: '/Users/test',
+					})
+				);
+			});
+
+			it('does not re-sample a cached account whose dir is gone', async () => {
+				setSnapshot(makeSnapshot({ configDirKey: remoteKey }));
+				const restore = stubAccountDirs([]);
+
+				try {
+					await runStartupUsageSampling(sshOnlyDeps());
+				} finally {
+					restore();
+				}
+
+				expect(sampleUsageMock).not.toHaveBeenCalled();
+			});
+
+			it('does not re-sample cached accounts on the startup pass', async () => {
+				setSnapshot(makeSnapshot({ configDirKey: remoteKey }));
+				const restore = stubAccountDirs(['.claude-remote']);
+
+				try {
+					await runStartupUsageSampling({ ...sshOnlyDeps(), mode: 'startup' as const });
+				} finally {
+					restore();
+				}
+
+				expect(sampleUsageMock).not.toHaveBeenCalled();
+			});
 		});
 
 		it('does NOT sample when only non-claude-code sessions exist', async () => {

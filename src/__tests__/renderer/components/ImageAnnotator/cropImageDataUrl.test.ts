@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+	CROP_DEFAULT_INSET,
 	MIN_CROP_SIZE,
 	clampCropRect,
+	defaultCropRect,
 	isFullImageCrop,
 	resizeCropRect,
 	type CropRect,
@@ -93,5 +95,33 @@ describe('resizeCropRect', () => {
 		const next = resizeCropRect(orig, 'l', 400, 0);
 		expect(next.w).toBeLessThan(0);
 		expect(clampCropRect(next, 800, 600)).toEqual({ x: 300, y: 100, w: 100, h: 100 });
+	});
+});
+
+describe('defaultCropRect', () => {
+	it('insets the frame from every edge of the image', () => {
+		const rect = defaultCropRect(1000, 500);
+		expect(rect).toEqual({
+			x: 1000 * CROP_DEFAULT_INSET,
+			y: 500 * CROP_DEFAULT_INSET,
+			w: 1000 * (1 - CROP_DEFAULT_INSET * 2),
+			h: 500 * (1 - CROP_DEFAULT_INSET * 2),
+		});
+	});
+
+	it('never opens on a full-image frame', () => {
+		// A full-image frame puts the handles on the window edge of a
+		// fit-to-viewport image, where grabbing one resizes the app instead.
+		expect(CROP_DEFAULT_INSET).toBeGreaterThan(0);
+		expect(isFullImageCrop(defaultCropRect(1920, 1080), 1920, 1080)).toBe(false);
+	});
+
+	it('survives the release normalizer unchanged', () => {
+		const rect = defaultCropRect(800, 600);
+		expect(clampCropRect(rect, 800, 600)).toEqual(rect);
+	});
+
+	it('falls back to the whole image when an inset would drop below the minimum', () => {
+		expect(defaultCropRect(MIN_CROP_SIZE, 400)).toEqual({ x: 0, y: 0, w: MIN_CROP_SIZE, h: 400 });
 	});
 });

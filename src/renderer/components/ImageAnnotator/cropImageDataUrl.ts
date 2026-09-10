@@ -74,6 +74,29 @@ export function clampCropRect(
 	return { x: left, y: top, w, h };
 }
 
+/**
+ * Fraction of the image trimmed from EACH side of the frame the crop tool opens
+ * with. It must not be zero: the image is fit to the viewport, so a full-image
+ * frame puts its handles on the window edge, where grabbing one resizes the
+ * Electron window instead of the crop.
+ */
+export const CROP_DEFAULT_INSET = 0.1;
+
+/**
+ * The frame the crop tool opens with - the image inset by
+ * `CROP_DEFAULT_INSET` on every side. An image too small to inset and still
+ * meet `MIN_CROP_SIZE` gets the whole image instead, since a frame smaller than
+ * the minimum could never be applied.
+ */
+export function defaultCropRect(width: number, height: number): CropRect {
+	const dx = width * CROP_DEFAULT_INSET;
+	const dy = height * CROP_DEFAULT_INSET;
+	const w = width - dx * 2;
+	const h = height - dy * 2;
+	if (w < MIN_CROP_SIZE || h < MIN_CROP_SIZE) return { x: 0, y: 0, w: width, h: height };
+	return { x: dx, y: dy, w, h };
+}
+
 /** True when the rect covers the whole image, so cropping would be a no-op. */
 export function isFullImageCrop(rect: CropRect, width: number, height: number): boolean {
 	return (
@@ -84,12 +107,18 @@ export function isFullImageCrop(rect: CropRect, width: number, height: number): 
 	);
 }
 
+/**
+ * A `null` rect is the untouched default frame. It is resolved here, against the
+ * decoded image's real size, so the pixels cut are exactly the frame the canvas
+ * drew from the same `defaultCropRect`.
+ */
 export default async function cropImageDataUrl(
 	imageDataUrl: string,
-	rect: CropRect
+	rect: CropRect | null
 ): Promise<{ dataUrl: string; rect: CropRect }> {
 	const img = await loadImageElement(imageDataUrl);
-	const clamped = clampCropRect(rect, img.naturalWidth, img.naturalHeight);
+	const source = rect ?? defaultCropRect(img.naturalWidth, img.naturalHeight);
+	const clamped = clampCropRect(source, img.naturalWidth, img.naturalHeight);
 	if (!clamped) throw new Error('Crop area is too small');
 
 	// Round to whole pixels so the cropped image has an integral size and the

@@ -151,7 +151,7 @@ function ImageAnnotatorContent({
 	// Escape precedence inside the annotator:
 	//   1. If the discard-confirm dialog is up, Escape dismisses it (keep editing).
 	//   2. Else if the settings drawer is open, Escape closes the drawer.
-	//   3. Else if a crop selection is armed, Escape resets it to the full frame.
+	//   3. Else if a crop selection is armed, Escape resets it to the default frame.
 	//   4. Else if there are unsaved changes, Escape raises the confirm dialog.
 	//   5. Otherwise Escape closes the modal immediately (nothing to lose).
 	// Refs let the modal-layer-registered handler read the latest values without
@@ -295,14 +295,14 @@ function ImageAnnotatorContent({
 	);
 
 	// Apply the armed crop: cut the base pixels, then let the state hook move the
-	// annotations into the new origin. A null rect means "the whole image", so
-	// there is nothing to do. Failure leaves the selection armed so the user can
-	// adjust and retry rather than losing it.
+	// annotations into the new origin. A null rect is the untouched default frame
+	// the canvas is showing, and `cropImageDataUrl` resolves it to that same
+	// frame - so Enter on a fresh crop tool cuts exactly what is on screen.
+	// Failure leaves the selection armed so the user can adjust and retry.
 	const applyCropState = state.applyCrop;
 	const currentImage = state.image;
 	const handleApplyCrop = useCallback(async () => {
 		const rect = cropRectRef.current;
-		if (!rect) return;
 		try {
 			const { dataUrl, rect: applied } = await cropImageDataUrl(currentImage, rect);
 			applyCropState(dataUrl, applied);

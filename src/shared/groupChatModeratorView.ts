@@ -36,11 +36,19 @@ export function isDirectModeratorMessage(message: GroupChatMessage): boolean {
 	return DIRECT_SENDERS.has(message.from);
 }
 
-/** The history entries a given view mode shows. Returns the input array unchanged in team mode. */
+/**
+ * The history entries a given view mode shows. Returns the input array unchanged in team mode.
+ *
+ * The moderator view keeps the user's own prompts beside the moderator's entries,
+ * for the same reason `isDirectModeratorMessage` keeps `user` messages: they are
+ * half of the user <-> moderator conversation, not team traffic.
+ */
 export function filterGroupChatHistory(
 	entries: GroupChatHistoryEntry[],
 	moderatorOnly: boolean
 ): GroupChatHistoryEntry[] {
 	if (!moderatorOnly) return entries;
-	return entries.filter((entry) => entry.participantName === MODERATOR_PARTICIPANT_NAME);
+	return entries.filter(
+		(entry) => entry.type === 'user' || entry.participantName === MODERATOR_PARTICIPANT_NAME
+	);
 }

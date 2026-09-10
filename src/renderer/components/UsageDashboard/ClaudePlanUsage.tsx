@@ -35,6 +35,7 @@ import {
 	QuotaRefreshControls,
 	QuotaSharedAccountBadge,
 	QuotaShowAllToggle,
+	QuotaStaleSampleBadge,
 	QuotaVisibilityToggle,
 	type QuotaTabStatus,
 } from './quota/quotaPrimitives';
@@ -74,6 +75,10 @@ interface AccountRowProps {
 	snapshot: ClaudeUsageSnapshot;
 	/** Agents pointed at this CLAUDE_CONFIG_DIR. */
 	agentCount: number;
+	/** How many of `agentCount` run over SSH, against the remote host's own login. */
+	remoteAgentCount: number;
+	/** Newest `sampledAt` across the panel, so a row the last refresh skipped can say so. */
+	latestSampledAtMs: number | null;
 	/**
 	 * Display names of the other config dirs logged into this same Anthropic
 	 * account. Empty when this row owns its quota bucket alone.
@@ -88,6 +93,8 @@ const AccountRow = memo(function AccountRow({
 	configDirKey,
 	snapshot,
 	agentCount,
+	remoteAgentCount,
+	latestSampledAtMs,
 	sharedWith,
 	theme,
 	onShowAgents,
@@ -105,6 +112,7 @@ const AccountRow = memo(function AccountRow({
 				/>
 				<QuotaAgentCountBadge
 					count={agentCount}
+					remoteCount={remoteAgentCount}
 					providerLabel={PROVIDER_LABEL}
 					testId={`${TEST_ID_PREFIX}-agents-${shortName}`}
 					theme={theme}
@@ -123,6 +131,12 @@ const AccountRow = memo(function AccountRow({
 				<QuotaSharedAccountBadge
 					siblingNames={sharedWith}
 					testId={`${TEST_ID_PREFIX}-shared-${shortName}`}
+					theme={theme}
+				/>
+				<QuotaStaleSampleBadge
+					sampledAt={snapshot.sampledAt}
+					latestSampledAtMs={latestSampledAtMs}
+					testId={`${TEST_ID_PREFIX}-stale-${shortName}`}
 					theme={theme}
 				/>
 				<div className="text-xs truncate" style={{ color: theme.colors.textDim, opacity: 0.7 }}>
@@ -190,19 +204,24 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 	const snapshots = useClaudeUsageStore((s) => s.snapshots);
 	const refreshing = useClaudeUsageStore((s) => s.refreshing);
 
-	const { configuredAccountKeys, agentCountsByAccount, setSelectedKey, effectiveSelectedKey } =
-		useQuotaAccounts({
-			toolType: 'claude-code',
-			accountKeys,
-			snapshots,
-			normalizeKey,
-			deriveShortName,
-			fetchAgentEnvVars: () => window.maestro.agents.getCustomEnvVars('claude-code'),
-			fetchAccountKeys: () => {
-				const fn = window.maestro.agents.getClaudeUsageAccountKeys;
-				return typeof fn === 'function' ? fn() : undefined;
-			},
-		});
+	const {
+		configuredAccountKeys,
+		agentCountsByAccount,
+		remoteAgentCountsByAccount,
+		setSelectedKey,
+		effectiveSelectedKey,
+	} = useQuotaAccounts({
+		toolType: 'claude-code',
+		accountKeys,
+		snapshots,
+		normalizeKey,
+		deriveShortName,
+		fetchAgentEnvVars: () => window.maestro.agents.getCustomEnvVars('claude-code'),
+		fetchAccountKeys: () => {
+			const fn = window.maestro.agents.getClaudeUsageAccountKeys;
+			return typeof fn === 'function' ? fn() : undefined;
+		},
+	});
 
 	const selectedSnapshot: ClaudeUsageSnapshot | null = effectiveSelectedKey
 		? (snapshots[effectiveSelectedKey] ?? null)
@@ -299,11 +318,14 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 			const snapshot = snapshots[configDirKey];
 			const isHidden = hiddenSet.has(configDirKey);
 			const agentCount = agentCountsByAccount[configDirKey] ?? 0;
+			const remoteAgentCount = remoteAgentCountsByAccount[configDirKey] ?? 0;
 			const body = snapshot ? (
 				<AccountRow
 					configDirKey={configDirKey}
 					snapshot={snapshot}
 					agentCount={agentCount}
+					remoteAgentCount={remoteAgentCount}
+					latestSampledAtMs={lastSampledAtMs}
 					sharedWith={sharedAccountNames[configDirKey] ?? EMPTY_SIBLINGS}
 					theme={theme}
 					onShowAgents={onShowAccountAgents ? () => onShowAccountAgents(configDirKey) : undefined}
@@ -315,6 +337,7 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 					displayName={deriveDisplayName(configDirKey)}
 					testIdPrefix={TEST_ID_PREFIX}
 					agentCount={agentCount}
+					remoteAgentCount={remoteAgentCount}
 					providerLabel={PROVIDER_LABEL}
 					theme={theme}
 					onShowAgents={onShowAccountAgents ? () => onShowAccountAgents(configDirKey) : undefined}
@@ -351,6 +374,8 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 			hiddenSet,
 			toggleHidden,
 			agentCountsByAccount,
+			remoteAgentCountsByAccount,
+			lastSampledAtMs,
 			sharedAccountNames,
 			onShowAccountAgents,
 		]
@@ -463,6 +488,8 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 					configDirKey={effectiveSelectedKey}
 					snapshot={selectedSnapshot}
 					agentCount={agentCountsByAccount[effectiveSelectedKey] ?? 0}
+					remoteAgentCount={remoteAgentCountsByAccount[effectiveSelectedKey] ?? 0}
+					latestSampledAtMs={lastSampledAtMs}
 					sharedWith={sharedAccountNames[effectiveSelectedKey] ?? EMPTY_SIBLINGS}
 					theme={theme}
 				/>
@@ -475,6 +502,7 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 					displayName={deriveDisplayName(effectiveSelectedKey)}
 					testIdPrefix={TEST_ID_PREFIX}
 					agentCount={agentCountsByAccount[effectiveSelectedKey] ?? 0}
+					remoteAgentCount={remoteAgentCountsByAccount[effectiveSelectedKey] ?? 0}
 					providerLabel={PROVIDER_LABEL}
 					theme={theme}
 				/>

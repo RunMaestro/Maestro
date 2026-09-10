@@ -20,8 +20,9 @@
  *
  * The crop tool replaces the drawing surface with a selection frame: a dimmed
  * mask outside the rect, rule-of-thirds guides inside it, and eight handles.
- * The rect is stored as `null` when it covers the whole image, so a fresh crop
- * session works before the image's intrinsic size is known.
+ * The rect is stored as `null` until the user shapes it, and `null` renders as
+ * `defaultCropRect` - inset from the image edges, because a fit-to-viewport
+ * image puts full-frame handles on the window edge where they can't be grabbed.
  *
  * Shape interaction routing (when a shape tool is active):
  *   • Pointerdown on a resize handle → start resize
@@ -45,7 +46,13 @@ import type {
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useEventListener } from '../../hooks/utils/useEventListener';
 import { generateId } from '../../utils/ids';
-import { clampCropRect, resizeCropRect, type CropHandle, type CropRect } from './cropImageDataUrl';
+import {
+	clampCropRect,
+	defaultCropRect,
+	resizeCropRect,
+	type CropHandle,
+	type CropRect,
+} from './cropImageDataUrl';
 
 interface AnnotatorCanvasProps {
 	/** The working base image - swapped out by the parent when a crop lands. */
@@ -259,10 +266,12 @@ export const AnnotatorCanvas = forwardRef<SVGSVGElement, AnnotatorCanvasProps>(
 		const cropRectRef = useRef(cropRect);
 		cropRectRef.current = cropRect;
 
-		// `null` means "the whole image". Resolving it here keeps the null-as-full
-		// convention out of every render and hit-test below.
+		// `null` means "the untouched default frame". Resolving it here keeps that
+		// convention out of every render and hit-test below. The apply path
+		// resolves it through the same `defaultCropRect`, so what is drawn is
+		// exactly what gets cut.
 		const effectiveCrop: CropRect | null = imgSize
-			? (cropRect ?? { x: 0, y: 0, w: imgSize.w, h: imgSize.h })
+			? (cropRect ?? defaultCropRect(imgSize.w, imgSize.h))
 			: null;
 
 		const fitToViewport = useCallback(
@@ -657,7 +666,7 @@ export const AnnotatorCanvas = forwardRef<SVGSVGElement, AnnotatorCanvasProps>(
 			) {
 				// Normalize on release: an inverted or off-image drag becomes a
 				// clean in-bounds rect, and a stray click (too small to be a crop)
-				// falls back to "whole image" rather than a sliver.
+				// falls back to the default frame rather than a sliver.
 				const size = imgSize;
 				const raw = cropRectRef.current;
 				setCropRect(size && raw ? clampCropRect(raw, size.w, size.h) : null);

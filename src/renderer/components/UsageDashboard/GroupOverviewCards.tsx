@@ -21,7 +21,7 @@
  */
 
 import { memo, useMemo, useState } from 'react';
-import { Maximize2, Minimize2 } from 'lucide-react';
+import { Minus, Plus } from 'lucide-react';
 import type { Session, Theme } from '../../types';
 import type { StatsAggregation } from '../../../shared/stats-types';
 import type { GroupLike, GroupStatRollup } from '../../../shared/statsGroupRollup';
@@ -311,17 +311,23 @@ export const GroupOverviewCards = memo(function GroupOverviewCards({
 					resultLabel={filterQuery ? `${filtered.length} of ${sorted.length}` : undefined}
 					width={240}
 				/>
-				<div className="flex items-center gap-2">
+				{/* Centered in the free space between the filters and the sort pills
+				    rather than crowding either: the control belongs to the grid, not
+				    to the filtering or the ordering. */}
+				<div className="flex-1 flex justify-center">
 					<ScaleControl
 						theme={theme}
 						control={tileScale}
-						decreaseIcon={Minimize2}
-						increaseIcon={Maximize2}
+						decreaseIcon={Minus}
+						increaseIcon={Plus}
 						subject="tile size"
 						shortcutHint={{ decrease: '-', increase: '+', reset: '0' }}
 						size="sm"
+						showReset={false}
 						testId="group-overview-tile-zoom"
 					/>
+				</div>
+				<div className="flex items-center gap-2">
 					<span className="text-xs" style={{ color: theme.colors.textDim }}>
 						Sort by:
 					</span>

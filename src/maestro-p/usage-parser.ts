@@ -41,6 +41,11 @@
 //   user most needs to see was the one that never cached.
 // - The secondary week borrows `resets_at` from `week_all_models` when its
 //   own line is too garbled (same weekly cadence in every real capture).
+// - A secondary week that never painted readably ships as a 0% placeholder
+//   flagged `unread`. A mid-repaint capture can clobber that section down to
+//   "Fable)\n  2" while the account really sits at 2%, and an unflagged 0%
+//   is a reading nobody can tell apart from a real one. The flag lets the
+//   sampler keep the last real reading instead.
 // - The secondary week specifically does NOT use the inline-scan fallback for
 //   resets - when its line is polluted, the polluted prefix is the *prior*
 //   section's trailing reset (a cursor-positioning carryover), so
@@ -198,6 +203,8 @@ interface SectionExtract {
 	 */
 	resetsAt?: string;
 	label?: string;
+	/** Placeholder for a section the panel never painted readably. */
+	unread?: true;
 }
 
 export function parseUsage(raw: string, nowIso: string, configDir: string): StatusSnapshot | null {
@@ -282,11 +289,13 @@ function toWireWindow(extract: SectionExtract): {
 	percent: number;
 	resets_at?: string;
 	label?: string;
+	unread?: true;
 } {
 	return {
 		percent: extract.percent,
 		...(extract.resetsAt ? { resets_at: extract.resetsAt } : {}),
 		...(extract.label ? { label: extract.label } : {}),
+		...(extract.unread ? { unread: true as const } : {}),
 	};
 }
 
@@ -449,8 +458,13 @@ function resolveSecondaryWeek(
 	}
 
 	// Whole section missing - synthesize a placeholder so downstream
-	// consumers always see a populated field.
-	return { percent: 0, ...(allModels.resetsAt ? { resetsAt: allModels.resetsAt } : {}) };
+	// consumers always see a populated field, flagged so nobody mistakes the
+	// 0% for a measurement.
+	return {
+		percent: 0,
+		...(allModels.resetsAt ? { resetsAt: allModels.resetsAt } : {}),
+		unread: true,
+	};
 }
 
 interface ResetSpecGroups {

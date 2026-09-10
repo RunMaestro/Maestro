@@ -475,6 +475,33 @@ describe('ClaudePlanUsage — hide/show accounts (list view)', () => {
 	});
 });
 
+describe('ClaudePlanUsage - stale row chip', () => {
+	// The footer reports the NEWEST sample, so without a per-row marker an account
+	// the last refresh skipped reads "Last refreshed just now" beside old bars.
+	const snapshotAt = (key: string, sampledAt: string) => ({
+		sampledAt,
+		configDirKey: key,
+		authState: 'authenticated',
+		session: { percent: 0 },
+		weekAllModels: { percent: 100, resetsAt: '2026-05-22T00:00:00.000Z' },
+		weekSonnetOnly: { percent: 87, resetsAt: '2026-05-22T00:00:00.000Z' },
+	});
+
+	it('flags only the row whose sample trails the newest by more than five minutes', () => {
+		seedSnapshots({
+			'/Users/me/.claude-work': snapshotAt('/Users/me/.claude-work', '2026-05-15T02:00:00.000Z'),
+			'/Users/me/.claude-side': snapshotAt('/Users/me/.claude-side', '2026-05-15T00:24:00.000Z'),
+			'/Users/me/.claude-near': snapshotAt('/Users/me/.claude-near', '2026-05-15T01:57:00.000Z'),
+		});
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.getByTestId('claude-plan-stale-side')).toHaveTextContent('stale, read');
+		expect(screen.queryByTestId('claude-plan-stale-work')).toBeNull();
+		expect(screen.queryByTestId('claude-plan-stale-near')).toBeNull();
+	});
+});
+
 describe('ClaudePlanUsage - agent count badge', () => {
 	const snapshotFor = (key: string) => ({
 		sampledAt: '2026-05-15T00:00:00.000Z',
@@ -548,11 +575,11 @@ describe('ClaudePlanUsage - agent count badge', () => {
 	});
 
 	// The main-process sampler skips SSH-remote sessions because it cannot probe a
-	// remote host's directory locally. The COUNT must not copy that rule: a remote
-	// agent configured against this profile still spends this plan's quota, so it
-	// belongs in the total. Locked in by test because the two behaviors look
-	// contradictory and invite a well-meaning "fix".
-	it('counts SSH-remote agents, which the sampler deliberately skips', () => {
+	// remote host's directory locally. The COUNT keeps them - they are configured
+	// against the profile - but marks them remote: that directory on the remote
+	// host holds the host's own login, which can be a different account from the
+	// one these bars measure.
+	it('counts SSH-remote agents and marks them remote', () => {
 		seedSnapshots({ '/Users/me/.claude-work': snapshotFor('/Users/me/.claude-work') });
 		useSessionStore.setState({
 			sessions: [
@@ -576,7 +603,27 @@ describe('ClaudePlanUsage - agent count badge', () => {
 
 		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
 
-		expect(screen.getByTestId('claude-plan-agents-work')).toHaveTextContent('2 agents');
+		expect(screen.getByTestId('claude-plan-agents-work')).toHaveTextContent('2 agents (1 remote)');
+	});
+
+	it('says "remote" outright when every agent on the account runs over SSH', () => {
+		seedSnapshots({ '/Users/me/.claude-work': snapshotFor('/Users/me/.claude-work') });
+		useSessionStore.setState({
+			sessions: [
+				{
+					id: 'remote',
+					name: 'remote',
+					toolType: 'claude-code',
+					cwd: '/tmp',
+					customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/me/.claude-work' },
+					sessionSshRemoteConfig: { enabled: true, remoteId: 'box' },
+				},
+			],
+		} as any);
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.getByTestId('claude-plan-agents-work')).toHaveTextContent('1 remote agent');
 	});
 
 	it('hands the account back when the chip is clicked, so the grid can filter to it', () => {

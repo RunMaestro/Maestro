@@ -503,7 +503,7 @@ you are half-way through typing.
 | Cycle preview length               | `P`          |
 | Fit the whole graph on screen      | `F`          |
 | Switch scroll between zoom and pan | `S`          |
-| Screenshot the graph               | `C`          |
+| Snapshot the graph                 | `C`          |
 | Increase / decrease node spacing   | `+` / `-`    |
 | Close the preview, then the graph  | `Esc`        |
 
@@ -545,6 +545,7 @@ Most shortcuts can be remapped to fit your workflow:
 **Tips:**
 
 - Press `Esc` while recording to cancel without changing the shortcut
+- To unset a shortcut, click the **×** next to its binding, or press `Backspace` / `Delete` while recording. The action shows **Unassigned** until you bind it again
 - Modifier keys alone (Cmd, Ctrl, Alt, Shift) won't register - you need a final key
 - Some shortcuts are fixed and cannot be remapped (like `Esc` to close modals)
 - A combination that another action already uses is refused, and the recorder tells you which action holds it. Clear that one first if you want the combination
