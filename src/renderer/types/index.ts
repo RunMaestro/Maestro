@@ -238,6 +238,13 @@ export interface LogEntry {
 	};
 	// For user messages - tracks if message was successfully delivered to the agent
 	delivered?: boolean;
+	// For user messages written by a queue dispatch: the id of the QueuedItem
+	// this card was written for. A dispatch appends the card BEFORE the spawn,
+	// so a spawn that throws leaves a card for a prompt no model ever saw. The
+	// stamp lets the failure path remove exactly that card (see
+	// applyQueuedItemDispatchFailure) instead of matching on text, which would
+	// also delete an identical message the user really did send earlier.
+	queuedItemId?: string;
 	// For user messages - tracks if message was sent in read-only mode
 	readOnly?: boolean;
 	// For user messages - tracks if message was sent via forced parallel execution

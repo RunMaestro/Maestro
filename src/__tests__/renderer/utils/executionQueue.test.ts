@@ -11,6 +11,7 @@ import {
 	getForceSendEligibility,
 	shouldOfferForceSend,
 	applyQueuedItemEdit,
+	applyQueuedItemDispatchFailure,
 } from '../../../renderer/utils/executionQueue';
 import type { AITab, QueuedItem, Session } from '../../../renderer/types';
 import { createMockSession } from '../../helpers/mockSession';
@@ -348,5 +349,122 @@ describe('applyQueuedItemEdit', () => {
 		const next = applyQueuedItemEdit(queue, 'a', patch({ model: 'opus' }));
 
 		expect(next[0].paused).toBe(true);
+	});
+});
+
+// ============================================================================
+// applyQueuedItemDispatchFailure
+// ============================================================================
+
+describe('applyQueuedItemDispatchFailure', () => {
+	function sessionWithCard(overrides: Partial<Session> = {}): Session {
+		const tab = createMockAITab({
+			id: 'tab-1',
+			state: 'busy',
+			thinkingStartTime: 111,
+			logs: [
+				{ id: 'log-old', timestamp: 1, source: 'user', text: 'send this' },
+				{ id: 'log-card', timestamp: 2, source: 'user', text: 'send this', queuedItemId: 'q1' },
+			],
+		});
+		return createMockSession({
+			id: 's1',
+			state: 'busy',
+			busySource: 'ai',
+			thinkingStartTime: 111,
+			aiTabs: [tab],
+			activeTabId: 'tab-1',
+			executionQueue: [],
+			...overrides,
+		} as Partial<Session>);
+	}
+
+	const failed: QueuedItem = {
+		id: 'q1',
+		timestamp: 0,
+		tabId: 'tab-1',
+		type: 'message',
+		text: 'send this',
+	};
+
+	it('releases the tab, removes only the card this dispatch wrote, and re-queues at the head', () => {
+		const later: QueuedItem = { ...failed, id: 'q2', text: 'later' };
+		const next = applyQueuedItemDispatchFailure(
+			sessionWithCard({ executionQueue: [later] }),
+			failed,
+			{
+				hold: false,
+			}
+		);
+
+		expect(next.aiTabs[0].state).toBe('idle');
+		expect(next.aiTabs[0].thinkingStartTime).toBeUndefined();
+		expect(next.state).toBe('idle');
+		// The identical message the user really did send earlier survives; only the
+		// stamped card for this failed dispatch goes.
+		expect(next.aiTabs[0].logs.map((l) => l.id)).toEqual(['log-old']);
+		// Head of the queue, so it keeps its place ahead of everything behind it.
+		expect(next.executionQueue.map((i) => i.id)).toEqual(['q1', 'q2']);
+		expect(next.executionQueue[0].paused).toBeFalsy();
+	});
+
+	it('holds the item when the failure is not a transient collision', () => {
+		const next = applyQueuedItemDispatchFailure(sessionWithCard(), failed, { hold: true });
+
+		expect(next.executionQueue.map((i) => i.id)).toEqual(['q1']);
+		// Preserved and visible, but it cannot spin the queue against a wall that
+		// would refuse it identically on the next tick.
+		expect(next.executionQueue[0].paused).toBe(true);
+	});
+
+	it('is idempotent when the item is already back in the queue', () => {
+		// `retryStore.holdFailedItemInQueue` parks the failed turn in the queue for
+		// the life of an outage. A second copy would double-send the prompt.
+		const held = sessionWithCard({ executionQueue: [failed] });
+
+		const next = applyQueuedItemDispatchFailure(held, failed, { hold: false });
+
+		expect(next.executionQueue.map((i) => i.id)).toEqual(['q1']);
+	});
+
+	it('leaves the agent busy when another tab is still running its own turn', () => {
+		const base = sessionWithCard();
+		const withOther = {
+			...base,
+			aiTabs: [...base.aiTabs, createMockAITab({ id: 'tab-2', state: 'busy' })],
+		} as Session;
+
+		const next = applyQueuedItemDispatchFailure(withOther, failed, { hold: false });
+
+		expect(next.aiTabs.find((t) => t.id === 'tab-1')!.state).toBe('idle');
+		expect(next.aiTabs.find((t) => t.id === 'tab-2')!.state).toBe('busy');
+		expect(next.state).toBe('busy');
+	});
+
+	it('strips the card from a closed-but-still-draining orphan tab', () => {
+		const orphan = createMockAITab({
+			id: 'tab-9',
+			state: 'busy',
+			logs: [{ id: 'log-card', timestamp: 2, source: 'user', text: 'x', queuedItemId: 'q1' }],
+		});
+		const base = createMockSession({
+			id: 's1',
+			state: 'busy',
+			aiTabs: [createMockAITab({ id: 'tab-1' })],
+			activeTabId: 'tab-1',
+			executionQueue: [],
+			orphanedThinkingTabs: [orphan],
+		} as Partial<Session>);
+
+		const next = applyQueuedItemDispatchFailure(
+			base,
+			{ ...failed, tabId: 'tab-9' },
+			{
+				hold: false,
+			}
+		);
+
+		expect(next.orphanedThinkingTabs![0].logs).toHaveLength(0);
+		expect(next.orphanedThinkingTabs![0].state).toBe('idle');
 	});
 });

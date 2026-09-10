@@ -226,38 +226,18 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 			const dispatchedOntoTabId: string | null = dequeuedOntoTabId;
 			if (!dispatchedOntoTabId) return;
 
-			// Process the item
+			// Process the item. Releasing the tab and putting the prompt back is
+			// `agentStore.processQueuedItem`'s job - it releases only the tab this
+			// dispatch marked busy (the old sweep over every busy tab also cleared
+			// tabs running turns of their own, which told this effect the agent was
+			// free: it dispatched the next queued item into the same live process,
+			// failed the same way, and walked the whole queue into the ground one
+			// message per render).
 			processQueuedItem(session.id, firstItem).catch((err) => {
-				console.error(`[QueueProcessing] Failed for session ${session.id}:`, err);
-				// Reset session busy state and re-queue the failed item so it isn't lost
-				useSessionStore.getState().setSessions((prev) =>
-					prev.map((s) => {
-						if (s.id !== session.id) return s;
-						// Clear ONLY the tab this dispatch marked busy. The old sweep over
-						// every busy tab also cleared tabs running turns of their own, which
-						// told the recovery effect the agent was free: it dispatched the next
-						// queued item into the same live process, failed the same way, and
-						// walked the whole queue into the ground one message per render.
-						const aiTabs = s.aiTabs.map((tab) =>
-							tab.id === dispatchedOntoTabId && tab.state === 'busy'
-								? { ...tab, state: 'idle' as const, thinkingStartTime: undefined }
-								: tab
-						);
-						// Likewise the agent only goes idle if nothing else is still working.
-						const stillBusy = aiTabs.some((tab) => tab.state === 'busy');
-						return {
-							...s,
-							...(stillBusy
-								? {}
-								: {
-										state: 'idle' as SessionState,
-										busySource: undefined,
-										thinkingStartTime: undefined,
-									}),
-							executionQueue: [firstItem, ...s.executionQueue],
-							aiTabs,
-						};
-					})
+				logger.error(
+					`[QueueProcessing] Dispatch failed for session ${session.id}, item returned to queue`,
+					undefined,
+					err
 				);
 			});
 		},

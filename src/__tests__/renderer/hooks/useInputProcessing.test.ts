@@ -95,7 +95,10 @@ describe('useInputProcessing', () => {
 	const mockSyncAiInputToSession = vi.fn();
 	const mockSyncTerminalInputToSession = vi.fn();
 	const mockGetBatchState = vi.fn(() => defaultBatchState);
-	const mockProcessQueuedItemRef = { current: vi.fn() };
+	// Resolves, like the real `processQueuedItem`: it returns Promise<void> and
+	// the dispatch sites attach a `.catch()` so a rejection is logged rather than
+	// surfacing as an unhandled crash report.
+	const mockProcessQueuedItemRef = { current: vi.fn().mockResolvedValue(undefined) };
 	const mockFlushBatchedUpdates = vi.fn();
 	const mockOnHistoryCommand = vi.fn().mockResolvedValue(undefined);
 	const mockInputRef = { current: null } as React.RefObject<HTMLTextAreaElement | null>;
@@ -106,6 +109,7 @@ describe('useInputProcessing', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mockProcessQueuedItemRef.current.mockResolvedValue(undefined);
 		mockGetBatchState.mockReturnValue(defaultBatchState);
 		useSessionStore.setState({ sessions: [], activeSessionId: '' });
 
@@ -916,6 +920,7 @@ describe('useInputProcessing', () => {
 			// Clear the processQueuedItemRef mock between tests in this suite
 			// to ensure mock.calls[0] always refers to current test's call
 			mockProcessQueuedItemRef.current.mockClear();
+			mockProcessQueuedItemRef.current.mockResolvedValue(undefined);
 		});
 
 		it('matches command with arguments and stores args in queued item', async () => {

@@ -579,7 +579,17 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 								// 50ms delay allows React to flush the setState above, ensuring the session
 								// is marked 'busy' before processQueuedItem runs (prevents duplicate processing)
 								setTimeout(() => {
-									processQueuedItemRef.current?.(resolvedSessionId, queuedItem);
+									// Rejects on a dispatch failure. This item was never queued (it
+									// is being sent immediately), so agentStore's recovery is what
+									// puts it INTO the queue rather than back - the prompt survives
+									// a failed spawn instead of disappearing from the composer.
+									processQueuedItemRef.current?.(resolvedSessionId, queuedItem).catch((err) => {
+										logger.error(
+											'[useInputProcessing] Immediate command dispatch failed, prompt queued',
+											undefined,
+											err
+										);
+									});
 								}, 50);
 							} else {
 								// Session is busy - just add to queue

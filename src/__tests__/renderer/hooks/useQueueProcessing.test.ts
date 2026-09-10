@@ -37,6 +37,17 @@ import { renderHook, act, cleanup } from '@testing-library/react';
 
 const mockAgentStoreProcessQueuedItem = vi.fn();
 
+const mockLoggerError = vi.fn();
+
+vi.mock('../../../renderer/utils/logger', () => ({
+	logger: {
+		error: (...args: unknown[]) => mockLoggerError(...args),
+		warn: vi.fn(),
+		info: vi.fn(),
+		debug: vi.fn(),
+	},
+}));
+
 vi.mock('../../../renderer/stores/agentStore', () => ({
 	useAgentStore: Object.assign(vi.fn(), {
 		getState: () => ({
@@ -914,227 +925,7 @@ describe('startup recovery - happy path', () => {
 // ============================================================================
 
 describe('startup recovery - error handling', () => {
-	it('calls the second setSessions to re-queue item and reset to idle on processQueuedItem failure', async () => {
-		vi.useFakeTimers();
-
-		const tab = createTab({ id: 'tab-1', state: 'idle' });
-		const item = createQueuedItem({ id: 'item-fail', tabId: 'tab-1' });
-		const session = createSession({
-			id: 'sess-fail',
-			state: 'idle',
-			aiTabs: [tab],
-			activeTabId: 'tab-1',
-			executionQueue: [item],
-		});
-
-		mockSessionStoreState.sessionsLoaded = true;
-		mockSessionStoreState.sessions = [session];
-		mockGetActiveTab.mockReturnValue(tab);
-
-		// processQueuedItem rejects to trigger the catch path
-		mockAgentStoreProcessQueuedItem.mockRejectedValueOnce(new Error('agent crashed'));
-
-		const setSessionsUpdaters: Array<(prev: Session[]) => Session[]> = [];
-		mockSetSessions.mockImplementation((updater: any) => {
-			setSessionsUpdaters.push(updater);
-			updater(mockSessionStoreState.sessions);
-		});
-
-		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-
-		renderHook(() => useQueueProcessing(createDeps()));
-
-		await act(async () => {
-			vi.advanceTimersByTime(500);
-			// Flush the rejection through the microtask queue
-			await Promise.resolve();
-			await Promise.resolve();
-		});
-
-		consoleError.mockRestore();
-
-		// First call: set to busy. Second call: reset to idle on error.
-		expect(setSessionsUpdaters.length).toBeGreaterThanOrEqual(2);
-
-		// Apply the second updater (error recovery)
-		const busySession: Session = {
-			...session,
-			state: 'busy' as any,
-			busySource: 'ai' as any,
-			thinkingStartTime: Date.now(),
-			executionQueue: [], // first item was removed
-			aiTabs: [{ ...tab, state: 'busy' as const, thinkingStartTime: Date.now() }],
-		};
-
-		const recovered = setSessionsUpdaters[1]([busySession]);
-		expect(recovered[0].state).toBe('idle');
-		expect(recovered[0].busySource).toBeUndefined();
-		expect(recovered[0].thinkingStartTime).toBeUndefined();
-	});
-
-	it('re-queues the failed item at the front of executionQueue on error', async () => {
-		vi.useFakeTimers();
-
-		const tab = createTab({ id: 'tab-1', state: 'idle' });
-		const failedItem = createQueuedItem({ id: 'item-fail', tabId: 'tab-1' });
-		const laterItem = createQueuedItem({ id: 'item-later', tabId: 'tab-1' });
-		const session = createSession({
-			id: 'sess-fail',
-			state: 'idle',
-			aiTabs: [tab],
-			activeTabId: 'tab-1',
-			executionQueue: [failedItem, laterItem],
-		});
-
-		mockSessionStoreState.sessionsLoaded = true;
-		mockSessionStoreState.sessions = [session];
-		mockGetActiveTab.mockReturnValue(tab);
-
-		mockAgentStoreProcessQueuedItem.mockRejectedValueOnce(new Error('boom'));
-
-		const setSessionsUpdaters: Array<(prev: Session[]) => Session[]> = [];
-		mockSetSessions.mockImplementation((updater: any) => {
-			setSessionsUpdaters.push(updater);
-			updater(mockSessionStoreState.sessions);
-		});
-
-		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-
-		renderHook(() => useQueueProcessing(createDeps()));
-
-		await act(async () => {
-			vi.advanceTimersByTime(500);
-			await Promise.resolve();
-			await Promise.resolve();
-		});
-
-		consoleError.mockRestore();
-
-		// The error recovery updater is the second one
-		expect(setSessionsUpdaters.length).toBeGreaterThanOrEqual(2);
-
-		// Simulate the state after the busy updater: queue has only laterItem
-		const busySession: Session = {
-			...session,
-			state: 'busy' as any,
-			executionQueue: [laterItem],
-			aiTabs: [{ ...tab, state: 'busy' as const }],
-		};
-
-		const recovered = setSessionsUpdaters[1]([busySession]);
-		// failedItem should be back at the front of the queue
-		expect(recovered[0].executionQueue[0].id).toBe('item-fail');
-		expect(recovered[0].executionQueue[1].id).toBe('item-later');
-	});
-
-	it('resets busy tabs to idle on error recovery', async () => {
-		vi.useFakeTimers();
-
-		const tab = createTab({ id: 'tab-1', state: 'idle' });
-		const item = createQueuedItem({ tabId: 'tab-1' });
-		const session = createSession({
-			id: 'sess-fail',
-			state: 'idle',
-			aiTabs: [tab],
-			activeTabId: 'tab-1',
-			executionQueue: [item],
-		});
-
-		mockSessionStoreState.sessionsLoaded = true;
-		mockSessionStoreState.sessions = [session];
-		mockGetActiveTab.mockReturnValue(tab);
-
-		mockAgentStoreProcessQueuedItem.mockRejectedValueOnce(new Error('boom'));
-
-		const setSessionsUpdaters: Array<(prev: Session[]) => Session[]> = [];
-		mockSetSessions.mockImplementation((updater: any) => {
-			setSessionsUpdaters.push(updater);
-			updater(mockSessionStoreState.sessions);
-		});
-
-		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-
-		renderHook(() => useQueueProcessing(createDeps()));
-
-		await act(async () => {
-			vi.advanceTimersByTime(500);
-			await Promise.resolve();
-			await Promise.resolve();
-		});
-
-		consoleError.mockRestore();
-
-		expect(setSessionsUpdaters.length).toBeGreaterThanOrEqual(2);
-
-		const busySession: Session = {
-			...session,
-			state: 'busy' as any,
-			executionQueue: [],
-			aiTabs: [{ ...tab, state: 'busy' as const, thinkingStartTime: Date.now() }],
-		};
-
-		const recovered = setSessionsUpdaters[1]([busySession]);
-		expect(recovered[0].aiTabs[0].state).toBe('idle');
-		expect(recovered[0].aiTabs[0].thinkingStartTime).toBeUndefined();
-	});
-
-	it('does not modify tabs that are not busy during error recovery', async () => {
-		vi.useFakeTimers();
-
-		const targetTab = createTab({ id: 'tab-busy', state: 'idle' });
-		const idleTab = createTab({ id: 'tab-idle', state: 'idle' });
-		const item = createQueuedItem({ tabId: 'tab-busy' });
-		const session = createSession({
-			id: 'sess-mixed',
-			state: 'idle',
-			aiTabs: [targetTab, idleTab],
-			activeTabId: 'tab-busy',
-			executionQueue: [item],
-		});
-
-		mockSessionStoreState.sessionsLoaded = true;
-		mockSessionStoreState.sessions = [session];
-		mockGetActiveTab.mockReturnValue(targetTab);
-
-		mockAgentStoreProcessQueuedItem.mockRejectedValueOnce(new Error('boom'));
-
-		const setSessionsUpdaters: Array<(prev: Session[]) => Session[]> = [];
-		mockSetSessions.mockImplementation((updater: any) => {
-			setSessionsUpdaters.push(updater);
-			updater(mockSessionStoreState.sessions);
-		});
-
-		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-
-		renderHook(() => useQueueProcessing(createDeps()));
-
-		await act(async () => {
-			vi.advanceTimersByTime(500);
-			await Promise.resolve();
-			await Promise.resolve();
-		});
-
-		consoleError.mockRestore();
-
-		const busySession: Session = {
-			...session,
-			state: 'busy' as any,
-			executionQueue: [],
-			aiTabs: [
-				{ ...targetTab, state: 'busy' as const },
-				{ ...idleTab, state: 'idle' as const },
-			],
-		};
-
-		const recovered = setSessionsUpdaters[1]([busySession]);
-		const recoveredIdle = recovered[0].aiTabs.find((t) => t.id === 'tab-idle');
-		// The bystander tab is left exactly as it was.
-		expect(recoveredIdle?.state).toBe('idle');
-		// And the tab this dispatch marked busy is released.
-		expect(recovered[0].aiTabs.find((t) => t.id === 'tab-busy')?.state).toBe('idle');
-	});
-
-	it('logs an error to console when processQueuedItem rejects', async () => {
+	it('logs the rejection when processQueuedItem fails, and leaves recovery to agentStore', async () => {
 		vi.useFakeTimers();
 
 		const tab = createTab({ id: 'tab-1' });
@@ -1153,7 +944,11 @@ describe('startup recovery - error handling', () => {
 
 		mockAgentStoreProcessQueuedItem.mockRejectedValueOnce(new Error('oops'));
 
-		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const setSessionsUpdaters: Array<(prev: Session[]) => Session[]> = [];
+		mockSetSessions.mockImplementation((updater: any) => {
+			setSessionsUpdaters.push(updater);
+			updater(mockSessionStoreState.sessions);
+		});
 
 		renderHook(() => useQueueProcessing(createDeps()));
 
@@ -1163,11 +958,11 @@ describe('startup recovery - error handling', () => {
 			await Promise.resolve();
 		});
 
-		expect(consoleError).toHaveBeenCalled();
-		const [logMsg] = consoleError.mock.calls[0];
-		expect(logMsg).toContain('sess-log');
-
-		consoleError.mockRestore();
+		expect(mockLoggerError).toHaveBeenCalled();
+		expect(String(mockLoggerError.mock.calls[0][0])).toContain('sess-log');
+		// The dispatch transition, and nothing after it: re-queueing the prompt is
+		// `agentStore.processQueuedItem`'s job now (see queueDispatchRecovery.test).
+		expect(setSessionsUpdaters).toHaveLength(1);
 	});
 });
 
@@ -1671,8 +1466,14 @@ describe('dispatch — busy target tab', () => {
 // Failed dispatch cleanup
 // ============================================================================
 
-describe('dispatch failure — busy-state cleanup', () => {
-	it('leaves the other tab live turn alone and re-queues the failed item', async () => {
+describe('dispatch failure — the hook owns the rejection, not the recovery', () => {
+	// Releasing the tab and putting the prompt back moved into
+	// `agentStore.processQueuedItem`'s catch, because it is the only place that
+	// can tell a transient spawn collision from a real failure - and because five
+	// of the eight dispatch sites had no recovery of their own, which is how a
+	// collision destroyed a user's message. What this hook still owns is the
+	// REJECTION: unhandled, it surfaces as a crash report instead of a log.
+	it('logs the rejection and writes no recovery updater of its own', async () => {
 		vi.useFakeTimers();
 
 		const target = createTab({ id: 'tab-1', state: 'idle' });
@@ -1698,8 +1499,6 @@ describe('dispatch failure — busy-state cleanup', () => {
 			updater(mockSessionStoreState.sessions);
 		});
 
-		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-
 		renderHook(() => useQueueProcessing(createDeps()));
 
 		await act(async () => {
@@ -1708,29 +1507,10 @@ describe('dispatch failure — busy-state cleanup', () => {
 			await Promise.resolve();
 		});
 
-		consoleError.mockRestore();
-
-		const midDispatch: Session = {
-			...session,
-			state: 'busy' as any,
-			executionQueue: [],
-			aiTabs: [
-				{ ...target, state: 'busy' as const },
-				{ ...otherWorking, state: 'busy' as const },
-			],
-		};
-
-		const recovered = setSessionsUpdaters[1]([midDispatch]);
-
-		// tab-1 (ours) is released; tab-2's real turn is untouched, and the agent
-		// stays busy for it rather than being swept idle. That sweep is what told
-		// the recovery effect the agent was free and walked the whole queue into a
-		// live process, one "Agent process already running" per message.
-		expect(recovered[0].aiTabs.find((t) => t.id === 'tab-1')?.state).toBe('idle');
-		expect(recovered[0].aiTabs.find((t) => t.id === 'tab-2')?.state).toBe('busy');
-		expect(recovered[0].state).toBe('busy');
-		// And the message is back on the queue rather than lost.
-		expect(recovered[0].executionQueue.map((i) => i.id)).toContain('queued-1');
+		// One updater only: the dispatch transition. No second, hook-local recovery.
+		expect(setSessionsUpdaters).toHaveLength(1);
+		expect(mockLoggerError).toHaveBeenCalled();
+		expect(String(mockLoggerError.mock.calls[0][0])).toContain('sess-mixed-busy');
 	});
 });
 

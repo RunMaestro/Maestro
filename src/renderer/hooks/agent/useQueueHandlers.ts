@@ -16,7 +16,6 @@ import { aiTabFocusFields } from '../../utils/tabHelpers';
 import {
 	applyQueuedItemDispatch,
 	applyQueuedItemEdit,
-	applyQueuedItemRelease,
 	getQueueBusyContext,
 } from '../../utils/executionQueue';
 import { useSessionStore } from '../../stores/sessionStore';
@@ -178,19 +177,12 @@ export function useQueueHandlers({
 				prev.map((s) => (s.id === sessionId ? applyQueuedItemDispatch(s, dispatchItem) : s))
 			);
 
+			// Recovery (release the tab, take the card back, re-queue the prompt) is
+			// owned by `agentStore.processQueuedItem`'s catch, which is the only place
+			// that knows WHY the dispatch failed. This rejection still needs an owner
+			// so it does not surface as an unhandled promise crash report.
 			processQueuedItem(sessionId, dispatchItem).catch((err) => {
-				logger.error('[ForceSend] Dispatch failed, re-queueing item', undefined, err);
-				// Put the item back at the front and release the tab. The agent only
-				// returns to idle if no OTHER tab is still working.
-				setSessions((prev) =>
-					prev.map((s) => {
-						if (s.id !== sessionId) return s;
-						return {
-							...applyQueuedItemRelease(s, dispatchItem.tabId),
-							executionQueue: [dispatchItem, ...s.executionQueue],
-						};
-					})
-				);
+				logger.error('[ForceSend] Dispatch failed, item returned to queue', undefined, err);
 			});
 		},
 		[processQueuedItem]
