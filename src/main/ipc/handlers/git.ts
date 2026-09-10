@@ -13,7 +13,12 @@ import {
 	createIpcHandler,
 	CreateHandlerOptions,
 } from '../../utils/ipcHandler';
-import { resolveGhPath, getCachedGhStatus, setCachedGhStatus } from '../../utils/cliDetection';
+import {
+	resolveGhPath,
+	getCachedGhStatus,
+	setCachedGhStatus,
+	getExpandedEnv,
+} from '../../utils/cliDetection';
 import { getShellPath } from '../../runtime/getShellPath';
 import { captureMessage } from '../../utils/sentry';
 import { WINDOWS_LOCKED_SYSTEM_FILES } from '../../utils/watcher-ignore';
@@ -1273,8 +1278,14 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 			const ghCommand = await resolveGhPath(ghPath);
 			logger.debug(`Checking gh CLI at: ${ghCommand}`, LOG_CONTEXT);
 
-			// Check if gh is installed by running gh --version
-			const versionResult = await execFileNoThrow(ghCommand, ['--version']);
+			// Check if gh is installed by running gh --version.
+			// The expanded env is required, not optional: gh is frequently a shim
+			// (asdf, mise, rbenv-style) that re-execs its parent tool, so it only runs
+			// if that parent is on PATH. A GUI-launched Electron process does not
+			// inherit the user's shell PATH, so probing without it reports a perfectly
+			// good install as missing.
+			const env = getExpandedEnv();
+			const versionResult = await execFileNoThrow(ghCommand, ['--version'], undefined, env);
 			if (versionResult.exitCode !== 0) {
 				logger.warn(
 					`gh CLI not found at ${ghCommand}: exit=${versionResult.exitCode}, stderr=${versionResult.stderr}`,
@@ -1287,7 +1298,7 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 			logger.debug(`gh CLI found: ${versionResult.stdout.trim().split('\n')[0]}`, LOG_CONTEXT);
 
 			// Check if gh is authenticated by running gh auth status
-			const authResult = await execFileNoThrow(ghCommand, ['auth', 'status']);
+			const authResult = await execFileNoThrow(ghCommand, ['auth', 'status'], undefined, env);
 			const authenticated = authResult.exitCode === 0;
 			logger.debug(
 				`gh auth status: ${authenticated ? 'authenticated' : 'not authenticated'}`,
@@ -1942,7 +1953,10 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 				}
 				args.push('-'); // Read from stdin
 
-				const gistResult = await execFileNoThrow(ghCommand, args, undefined, { input: content });
+				const gistResult = await execFileNoThrow(ghCommand, args, undefined, {
+					input: content,
+					env: getExpandedEnv(),
+				});
 
 				if (gistResult.exitCode !== 0) {
 					// Check if gh CLI is not installed

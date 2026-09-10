@@ -103,24 +103,28 @@ export async function resolveGhPath(customPath?: string): Promise<string> {
  * Returns null if cache is empty or expired.
  */
 export function getCachedGhStatus(): { installed: boolean; authenticated: boolean } | null {
-	if (ghInstalledCache === null) {
+	if (ghInstalledCache === null || ghStatusCacheTime === null) {
 		return null;
 	}
 
-	// If not installed, we don't need to check TTL
+	// Every cached verdict expires, including a negative one. A failed probe is
+	// usually environmental rather than permanent (a shim that could not reach its
+	// parent tool, a PATH that had not been expanded yet), so a sticky
+	// "not installed" would keep gh unavailable for the rest of the app run with
+	// no way to recover short of a restart.
+	if (Date.now() - ghStatusCacheTime >= GH_STATUS_CACHE_TTL_MS) {
+		return null;
+	}
+
 	if (!ghInstalledCache) {
 		return { installed: false, authenticated: false };
 	}
 
-	// Check if authenticated cache is valid
-	if (ghAuthenticatedCache !== null && ghStatusCacheTime !== null) {
-		const age = Date.now() - ghStatusCacheTime;
-		if (age < GH_STATUS_CACHE_TTL_MS) {
-			return { installed: true, authenticated: ghAuthenticatedCache };
-		}
+	if (ghAuthenticatedCache === null) {
+		return null;
 	}
 
-	return null;
+	return { installed: true, authenticated: ghAuthenticatedCache };
 }
 
 /**
@@ -130,6 +134,18 @@ export function setCachedGhStatus(installed: boolean, authenticated: boolean): v
 	ghInstalledCache = installed;
 	ghAuthenticatedCache = authenticated;
 	ghStatusCacheTime = Date.now();
+}
+
+/**
+ * Clear every cached gh CLI fact: installed, resolved path, and auth status.
+ * Call this when the configured gh path changes so the next probe re-detects
+ * instead of answering from a verdict that was reached against the old binary.
+ */
+export function clearGhCache(): void {
+	ghInstalledCache = null;
+	ghPathCache = null;
+	ghAuthenticatedCache = null;
+	ghStatusCacheTime = null;
 }
 
 // SSH CLI detection cache

@@ -49,6 +49,7 @@ vi.mock('../../../../main/utils/cliDetection', () => ({
 	resolveGhPath: vi.fn().mockResolvedValue('gh'),
 	getCachedGhStatus: vi.fn().mockReturnValue(null),
 	setCachedGhStatus: vi.fn(),
+	getExpandedEnv: vi.fn().mockReturnValue({ PATH: '/expanded/path:/usr/bin' }),
 }));
 
 // Mock fs/promises
@@ -3497,8 +3498,12 @@ export function Component() {
 			const handler = handlers.get('git:checkGhCli');
 			const result = await handler!({} as any);
 
-			expect(execFile.execFileNoThrow).toHaveBeenCalledWith('gh', ['--version']);
-			expect(execFile.execFileNoThrow).toHaveBeenCalledWith('gh', ['auth', 'status']);
+			expect(execFile.execFileNoThrow).toHaveBeenCalledWith('gh', ['--version'], undefined, {
+				PATH: '/expanded/path:/usr/bin',
+			});
+			expect(execFile.execFileNoThrow).toHaveBeenCalledWith('gh', ['auth', 'status'], undefined, {
+				PATH: '/expanded/path:/usr/bin',
+			});
 			expect(result).toEqual({
 				installed: true,
 				authenticated: true,
@@ -3517,7 +3522,9 @@ export function Component() {
 			const result = await handler!({} as any);
 
 			expect(execFile.execFileNoThrow).toHaveBeenCalledTimes(1);
-			expect(execFile.execFileNoThrow).toHaveBeenCalledWith('gh', ['--version']);
+			expect(execFile.execFileNoThrow).toHaveBeenCalledWith('gh', ['--version'], undefined, {
+				PATH: '/expanded/path:/usr/bin',
+			});
 			expect(result).toEqual({
 				installed: false,
 				authenticated: false,
@@ -3542,8 +3549,12 @@ export function Component() {
 			const handler = handlers.get('git:checkGhCli');
 			const result = await handler!({} as any);
 
-			expect(execFile.execFileNoThrow).toHaveBeenCalledWith('gh', ['--version']);
-			expect(execFile.execFileNoThrow).toHaveBeenCalledWith('gh', ['auth', 'status']);
+			expect(execFile.execFileNoThrow).toHaveBeenCalledWith('gh', ['--version'], undefined, {
+				PATH: '/expanded/path:/usr/bin',
+			});
+			expect(execFile.execFileNoThrow).toHaveBeenCalledWith('gh', ['auth', 'status'], undefined, {
+				PATH: '/expanded/path:/usr/bin',
+			});
 			expect(result).toEqual({
 				installed: true,
 				authenticated: false,
@@ -3597,11 +3608,18 @@ export function Component() {
 
 			// Should bypass cache and check with custom path
 			expect(cliDetection.resolveGhPath).toHaveBeenCalledWith('/opt/homebrew/bin/gh');
-			expect(execFile.execFileNoThrow).toHaveBeenCalledWith('/opt/homebrew/bin/gh', ['--version']);
-			expect(execFile.execFileNoThrow).toHaveBeenCalledWith('/opt/homebrew/bin/gh', [
-				'auth',
-				'status',
-			]);
+			expect(execFile.execFileNoThrow).toHaveBeenCalledWith(
+				'/opt/homebrew/bin/gh',
+				['--version'],
+				undefined,
+				{ PATH: '/expanded/path:/usr/bin' }
+			);
+			expect(execFile.execFileNoThrow).toHaveBeenCalledWith(
+				'/opt/homebrew/bin/gh',
+				['auth', 'status'],
+				undefined,
+				{ PATH: '/expanded/path:/usr/bin' }
+			);
 			expect(result).toEqual({
 				installed: true,
 				authenticated: false,

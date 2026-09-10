@@ -26,6 +26,10 @@ import {
 	isCloudflaredInstalled,
 	getCloudflaredPath,
 	clearCloudflaredCache,
+	getCachedGhStatus,
+	setCachedGhStatus,
+	clearGhCache,
+	resolveGhPath,
 } from '../../../main/utils/cliDetection';
 import { execFileNoThrow } from '../../../main/utils/execFile';
 
@@ -514,6 +518,67 @@ describe('cliDetection.ts', () => {
 			await isCloudflaredInstalled();
 
 			expect(getCloudflaredPath()).toBe('/home/user@domain/bin/cloudflared');
+		});
+	});
+	describe('gh status cache', () => {
+		beforeEach(() => {
+			clearGhCache();
+			vi.useRealTimers();
+		});
+
+		afterEach(() => {
+			vi.useRealTimers();
+			clearGhCache();
+		});
+
+		it('returns null before anything has been cached', () => {
+			expect(getCachedGhStatus()).toBeNull();
+		});
+
+		it('serves a positive verdict from cache inside the TTL', () => {
+			setCachedGhStatus(true, true);
+
+			expect(getCachedGhStatus()).toEqual({ installed: true, authenticated: true });
+		});
+
+		it('serves a negative verdict from cache inside the TTL', () => {
+			setCachedGhStatus(false, false);
+
+			expect(getCachedGhStatus()).toEqual({ installed: false, authenticated: false });
+		});
+
+		// Regression: a negative verdict used to skip the TTL check entirely, so one
+		// failed probe at startup made gh unavailable for the whole app run.
+		it('expires a NEGATIVE verdict once the TTL elapses', () => {
+			vi.useFakeTimers();
+			setCachedGhStatus(false, false);
+			expect(getCachedGhStatus()).toEqual({ installed: false, authenticated: false });
+
+			vi.advanceTimersByTime(60001);
+
+			expect(getCachedGhStatus()).toBeNull();
+		});
+
+		it('expires a positive verdict once the TTL elapses', () => {
+			vi.useFakeTimers();
+			setCachedGhStatus(true, true);
+
+			vi.advanceTimersByTime(60001);
+
+			expect(getCachedGhStatus()).toBeNull();
+		});
+
+		it('clearGhCache drops a cached verdict immediately', () => {
+			setCachedGhStatus(true, true);
+
+			clearGhCache();
+
+			expect(getCachedGhStatus()).toBeNull();
+		});
+
+		it('resolveGhPath returns a custom path without probing the filesystem', async () => {
+			await expect(resolveGhPath('/custom/bin/gh')).resolves.toBe('/custom/bin/gh');
+			expect(mockedExecFileNoThrow).not.toHaveBeenCalled();
 		});
 	});
 });
