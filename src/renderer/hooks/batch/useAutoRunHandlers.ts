@@ -469,7 +469,11 @@ export function useAutoRunHandlers(
 					return;
 				}
 			} finally {
-				setAutoRunIsLoadingDocuments(false);
+				// A superseded refresh must not clear the loading flag the newer
+				// refresh still owns.
+				if (refreshSequence === refreshSequenceRef.current) {
+					setAutoRunIsLoadingDocuments(false);
+				}
 			}
 			// Note: Use primitive values (remoteId) not object refs (sessionSshRemoteConfig) to avoid infinite re-render loops
 		},

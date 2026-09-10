@@ -106,6 +106,40 @@ describe('handleAutoRunRefresh', () => {
 		});
 	});
 
+	it('leaves the loading flag to the newer refresh when an older one settles late', async () => {
+		type ListResult = { success: boolean; files: string[]; tree: never[] };
+		const resolvers: Array<(value: ListResult) => void> = [];
+		vi.mocked(window.maestro.autorun.listDocs).mockImplementation(
+			() =>
+				new Promise<ListResult>((resolve) => {
+					resolvers.push(resolve);
+				}) as never
+		);
+		const deps = createDeps();
+		const { result } = renderHook(() => useAutoRunHandlers(createSession(), deps));
+
+		let first: Promise<void> = Promise.resolve();
+		let second: Promise<void> = Promise.resolve();
+		act(() => {
+			first = result.current.handleAutoRunRefresh({ silent: true });
+			second = result.current.handleAutoRunRefresh({ silent: true });
+		});
+		await act(async () => {
+			resolvers[0]({ success: true, files: ['Phase 1'], tree: [] });
+			await first;
+		});
+		// The superseded refresh settled, but the newer one is still loading.
+		expect(deps.setAutoRunIsLoadingDocuments).not.toHaveBeenCalledWith(false);
+		expect(deps.setAutoRunDocumentList).not.toHaveBeenCalled();
+
+		await act(async () => {
+			resolvers[1]({ success: true, files: ['Phase 1', 'Phase 2'], tree: [] });
+			await second;
+		});
+		expect(deps.setAutoRunDocumentList).toHaveBeenCalledWith(['Phase 1', 'Phase 2']);
+		expect(deps.setAutoRunIsLoadingDocuments).toHaveBeenLastCalledWith(false);
+	});
+
 	it('discards a refresh that finishes after the user switched to another session', async () => {
 		let resolveList: (value: {
 			success: boolean;
