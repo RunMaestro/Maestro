@@ -176,7 +176,7 @@ type GroupChatData = {
 import type { CueGraphSession, CueRunResult, CueSessionStatus, CueSettings } from '../shared/cue';
 import type { CueLogPayload } from '../shared/cue-log-types';
 import type { CueStatsAggregation, CueStatsTimeRange } from '../shared/cue-stats-types';
-import type { QueryEvent, StatsAggregation } from '../shared/stats-types';
+import type { AutoRunKind, QueryEvent, StatsAggregation } from '../shared/stats-types';
 import type { MaestroCliStatus, MaestroCliInstallResult } from '../shared/maestro-cli';
 import type { DebugPackageOptions } from '../shared/debugPackage';
 import type {
@@ -3201,6 +3201,7 @@ interface MaestroAPI {
 			longestRunMs?: number;
 			longestRunDate?: string;
 			currentRunMs?: number;
+			currentRunKind?: AutoRunKind;
 			theme?: string;
 			clientToken?: string;
 			authToken?: string;
@@ -3497,6 +3498,7 @@ interface MaestroAPI {
 			startTime: number;
 			tasksTotal?: number;
 			projectPath?: string;
+			kind?: AutoRunKind;
 		}) => Promise<string>;
 		// End an Auto Run session (update duration and completed count)
 		endAutoRun: (id: string, duration: number, tasksCompleted: number) => Promise<boolean>;

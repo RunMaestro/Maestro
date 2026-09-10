@@ -197,6 +197,9 @@ export function useBatchKillAction({
 							outputTokens: finalTotals.totalOutputTokens,
 							totalCostUsd: finalTotals.totalCost,
 							documentsProcessed: flushState.getDocumentsProcessed(),
+							// Left undefined when a registration predates the field; the
+							// handler counts a missing kind as spec-driven.
+							kind: flushState.kind,
 						});
 					} catch (completeError) {
 						logger.error(

@@ -182,6 +182,144 @@ describe('Auto Run session and task recording', () => {
 		});
 	});
 
+	describe('Auto Run kind', () => {
+		const lastRunArgs = () => {
+			const calls = mockStatement.run.mock.calls as unknown as unknown[][];
+			return calls[calls.length - 1];
+		};
+
+		const baseSession = {
+			sessionId: 'session-1',
+			agentType: 'claude-code',
+			documentPath: '/docs/TASK-1.md',
+			startTime: 1000,
+			duration: 0,
+			tasksTotal: 5,
+			projectPath: '/project',
+		};
+
+		it('stores an explicit goal-driven kind', async () => {
+			const { StatsDB } = await import('../../../main/stats');
+			const db = new StatsDB();
+			db.initialize();
+
+			db.insertAutoRunSession({ ...baseSession, kind: 'goal-driven' });
+
+			expect(mockDb.prepare).toHaveBeenCalledWith(expect.stringMatching(/project_path, kind\)/));
+			expect(lastRunArgs()[lastRunArgs().length - 1]).toBe('goal-driven');
+		});
+
+		it('stores spec-driven when the kind is omitted or unrecognized', async () => {
+			const { StatsDB } = await import('../../../main/stats');
+			const db = new StatsDB();
+			db.initialize();
+
+			db.insertAutoRunSession(baseSession);
+			expect(lastRunArgs()[lastRunArgs().length - 1]).toBe('spec-driven');
+
+			db.insertAutoRunSession({ ...baseSession, kind: 'bogus' as never });
+			expect(lastRunArgs()[lastRunArgs().length - 1]).toBe('spec-driven');
+		});
+
+		it('reads a row from before the kind column as spec-driven with its other fields unchanged', async () => {
+			// A pre-v12 row has no `kind` key at all.
+			mockStatement.all.mockReturnValue([
+				{
+					id: 'legacy',
+					session_id: 'session-1',
+					agent_type: 'claude-code',
+					document_path: '/docs/TASK-1.md',
+					start_time: 1000,
+					duration: 60000,
+					tasks_total: 5,
+					tasks_completed: 4,
+					project_path: '/project',
+				},
+			]);
+
+			const { StatsDB } = await import('../../../main/stats');
+			const db = new StatsDB();
+			db.initialize();
+
+			expect(db.getAutoRunSessions('all')).toEqual([
+				{
+					id: 'legacy',
+					sessionId: 'session-1',
+					agentType: 'claude-code',
+					documentPath: '/docs/TASK-1.md',
+					startTime: 1000,
+					duration: 60000,
+					tasksTotal: 5,
+					tasksCompleted: 4,
+					projectPath: '/project',
+					kind: 'spec-driven',
+				},
+			]);
+		});
+	});
+
+	describe('mapAutoRunSessionRow kind', () => {
+		const row = {
+			id: 'auto-1',
+			session_id: 'session-1',
+			agent_type: 'claude-code',
+			document_path: null,
+			start_time: 1000,
+			duration: 60000,
+			tasks_total: null,
+			tasks_completed: null,
+			project_path: null,
+		};
+
+		it('keeps goal-driven and falls back to spec-driven for null or unknown values', async () => {
+			const { mapAutoRunSessionRow } = await import('../../../main/stats/row-mappers');
+
+			expect(mapAutoRunSessionRow({ ...row, kind: 'goal-driven' }).kind).toBe('goal-driven');
+			expect(mapAutoRunSessionRow({ ...row, kind: 'spec-driven' }).kind).toBe('spec-driven');
+			expect(mapAutoRunSessionRow({ ...row, kind: null }).kind).toBe('spec-driven');
+			expect(mapAutoRunSessionRow({ ...row, kind: 'loop-driven' }).kind).toBe('spec-driven');
+		});
+	});
+
+	describe('migration v12 (auto_run_sessions.kind)', () => {
+		const setDbState = (version: number, autoRunColumns: string[]) => {
+			mockDb.pragma.mockImplementation((sql: string) => {
+				if (sql === 'user_version') return [{ user_version: version }];
+				if (sql === 'table_info(auto_run_sessions)') {
+					return autoRunColumns.map((name) => ({ name }));
+				}
+				return undefined;
+			});
+		};
+
+		const kindAlters = () =>
+			(mockDb.prepare.mock.calls as unknown as [string][])
+				.map(([sql]) => sql)
+				.filter((sql) => /ALTER TABLE auto_run_sessions ADD COLUMN kind/.test(sql));
+
+		it("adds the kind column with DEFAULT 'spec-driven' to a v11 database", async () => {
+			setDbState(11, ['id', 'session_id', 'duration']);
+
+			const { StatsDB } = await import('../../../main/stats');
+			const db = new StatsDB();
+			db.initialize();
+
+			const alters = kindAlters();
+			expect(alters).toHaveLength(1);
+			expect(alters[0]).toContain("TEXT DEFAULT 'spec-driven'");
+		});
+
+		it('is a no-op when the kind column already exists', async () => {
+			setDbState(11, ['id', 'session_id', 'duration', 'kind']);
+
+			const { StatsDB } = await import('../../../main/stats');
+			const db = new StatsDB();
+			db.initialize();
+
+			expect(kindAlters()).toHaveLength(0);
+		});
+	});
+
 	describe('Auto Run tasks', () => {
 		it('should insert Auto Run task with success=true', async () => {
 			const { StatsDB } = await import('../../../main/stats');

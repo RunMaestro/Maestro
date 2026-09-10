@@ -273,7 +273,7 @@ describe('UsageDashboardModal hooks', () => {
 
 		Object.defineProperty(content, 'offsetWidth', { value: 920, configurable: true });
 		act(() => observerCallback?.([], {} as ResizeObserver));
-		await waitFor(() => expect(result.current.autoRunStatsCols).toBe(6));
+		await waitFor(() => expect(result.current.autoRunStatsCols).toBe(7));
 
 		unmount();
 		expect(disconnect).toHaveBeenCalled();

@@ -5,7 +5,12 @@
  */
 
 import type Database from 'better-sqlite3';
-import type { AutoRunSession, AutoRunTask, StatsTimeRange } from '../../shared/stats-types';
+import {
+	normalizeAutoRunKind,
+	type AutoRunSession,
+	type AutoRunTask,
+	type StatsTimeRange,
+} from '../../shared/stats-types';
 import { generateId, getTimeRangeStart, normalizePath, LOG_CONTEXT } from './utils';
 import {
 	mapAutoRunSessionRow,
@@ -23,8 +28,8 @@ const stmtCache = new StatementCache();
 // ============================================================================
 
 const INSERT_SESSION_SQL = `
-  INSERT INTO auto_run_sessions (id, session_id, agent_type, document_path, start_time, duration, tasks_total, tasks_completed, project_path)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO auto_run_sessions (id, session_id, agent_type, document_path, start_time, duration, tasks_total, tasks_completed, project_path, kind)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `;
 
 /**
@@ -46,7 +51,9 @@ export function insertAutoRunSession(
 		session.duration,
 		session.tasksTotal ?? null,
 		session.tasksCompleted ?? null,
-		normalizePath(session.projectPath)
+		normalizePath(session.projectPath),
+		// Kind is fixed at start; the value arrives over IPC, so coerce it.
+		normalizeAutoRunKind(session.kind)
 	);
 
 	logger.debug(`Inserted Auto Run session ${id}`, LOG_CONTEXT);

@@ -21,7 +21,8 @@ export function useUsageDashboardLayout(
 			isWide,
 			chartGridCols: isNarrow ? 1 : 2,
 			summaryCardsCols: isNarrow ? 2 : 3,
-			autoRunStatsCols: isNarrow ? 2 : isMedium ? 3 : 6,
+			// Wide keeps all seven Auto Run metric cards on one row.
+			autoRunStatsCols: isNarrow ? 2 : isMedium ? 3 : 7,
 		};
 	}, [containerWidth]);
 }

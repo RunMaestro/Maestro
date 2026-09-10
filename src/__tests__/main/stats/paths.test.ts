@@ -886,7 +886,8 @@ describe('File path normalization in database (forward slashes consistently)', (
 				60000,
 				5,
 				3,
-				'C:/Users/TestUser/Projects/MyApp' // normalized projectPath
+				'C:/Users/TestUser/Projects/MyApp', // normalized projectPath
+				'spec-driven' // kind defaults when omitted
 			);
 		});
 
@@ -912,7 +913,8 @@ describe('File path normalization in database (forward slashes consistently)', (
 				60000,
 				null,
 				null,
-				null // undefined projectPath becomes null
+				null, // undefined projectPath becomes null
+				'spec-driven' // kind defaults when omitted
 			);
 		});
 	});
