@@ -18,7 +18,7 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 import { render, screen } from '@testing-library/react';
 import { useSettings } from '../../renderer/hooks';
 import React from 'react';
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, readdirSync } from 'fs';
 import path from 'path';
 import { useSettingsStore } from '../../renderer/stores/settingsStore';
 
@@ -284,16 +284,50 @@ describe('Cross-platform Fonts and Sizing', () => {
 			expect(readRepoFile('src/renderer/index.css')).toContain("@import './generated-fonts.css';");
 		});
 
-		it('should ship the bundled woff2 subsets the stylesheet references', () => {
-			const fontDir = path.join(__dirname, '../../..', 'src/renderer/public/fonts');
-			const sheet = readFileSync(path.join(fontDir, 'jetbrains-mono.css'), 'utf-8');
+		it('should block, never swap, on every bundled @font-face', () => {
+			// `swap` paints the fallback first and restyles when the woff2 decodes.
+			// On a cold start the splash paints before that, so the MAESTRO
+			// wordmark flashed Courier New -> JetBrains Mono. This shipped once
+			// already: main fixed it in a hand-written sheet, rc merged it but kept
+			// its own generator (which emitted `swap`), and the old test read the
+			// orphaned sheet nothing loaded - so it passed while the real CSS
+			// swapped. Assert against the stylesheet index.css actually imports.
+			const css = readRepoFile('src/renderer/generated-fonts.css');
+			const faces = css.match(/@font-face\s*\{[^}]*\}/g) ?? [];
+			expect(faces.length).toBeGreaterThan(0);
 
-			const referenced = [...sheet.matchAll(/url\('([^']+\.woff2)'\)/g)].map((m) => m[1]);
-			expect(referenced.length).toBeGreaterThan(0);
-
-			for (const file of referenced) {
-				expect(existsSync(path.join(fontDir, file))).toBe(true);
+			for (const face of faces) {
+				expect(face).toMatch(/font-display:\s*block;/);
 			}
+
+			// And the generator, so the next `npm run fonts:fetch` cannot undo it.
+			const script = readRepoFile('scripts/fetch-webfonts.mjs');
+			expect(script).toContain("'\\tfont-display: block;'");
+			expect(script).not.toMatch(/'\\tfont-display: (?!block;)/);
+		});
+
+		it('should preload a woff2 the bundled stylesheet actually declares', () => {
+			// A preload for a file no @font-face uses buys nothing: the face the
+			// splash needs is still discovered late, and the fetch is wasted.
+			const markup = readRepoFile('src/renderer/index.html').replace(/<!--[\s\S]*?-->/g, '');
+			const preload = /href="\.\/fonts\/([^"]+\.woff2)"/.exec(markup);
+			expect(preload).not.toBeNull();
+
+			const css = readRepoFile('src/renderer/generated-fonts.css');
+			expect(css).toContain(`url('/fonts/${preload![1]}')`);
+		});
+
+		it('should not ship font files the bundled stylesheet does not declare', () => {
+			// An undeclared file is dead weight in both bundles, and an undeclared
+			// STYLESHEET is worse: it is where the `block` fix sat unused while a
+			// test read it and passed.
+			const css = readRepoFile('src/renderer/generated-fonts.css');
+			const fontDir = path.join(__dirname, '../../..', 'src/renderer/public/fonts');
+
+			const orphans = readdirSync(fontDir).filter(
+				(name) => name !== 'OFL.txt' && !css.includes(`url('/fonts/${name}')`)
+			);
+			expect(orphans).toEqual([]);
 		});
 
 		it('should pin the wordmark to its own stack, not the user setting', () => {

@@ -143,11 +143,16 @@ async function main() {
 				`\tfont-family: '${family.name}';`,
 				`\tfont-style: ${face.style};`,
 				`\tfont-weight: ${face.weight};`,
-				// `swap` renders fallback text immediately and restyles when the
-				// font lands. These are local files, so the swap window is
-				// effectively zero - but a blocking `block` would flash invisible
-				// text if the disk is slow.
-				'\tfont-display: swap;',
+				// `block`, never `swap`. `swap` tells Chromium to paint the
+				// fallback FIRST and restyle when the woff2 decodes, and on a
+				// cold start the splash paints before that happens - so the
+				// MAESTRO wordmark visibly went Courier New -> JetBrains Mono.
+				// "Local files, so the swap window is effectively zero" was the
+				// reasoning that shipped that flash. `block` holds the text for
+				// at most ~3s and then falls back anyway, so a slow web-desktop
+				// link costs a short blank, never a missing page. Pinned by
+				// fonts-and-sizing.test.ts.
+				'\tfont-display: block;',
 				`\tsrc: url('/fonts/${file}') format('woff2');`,
 				...(face.unicodeRange ? [`\tunicode-range: ${face.unicodeRange};`] : []),
 				'}',
