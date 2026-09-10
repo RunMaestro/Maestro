@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useRef } from 'react';
 import type { Session, BatchRunConfig } from '../../types';
 import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
 import { notifyToast } from '../../stores/notificationStore';
@@ -6,6 +6,7 @@ import { spawnWorktreeAgentAndDispatch } from '../../utils/worktreeSpawn';
 import { countMarkdownTasks } from './batchUtils';
 import { logger } from '../../utils/logger';
 import { useBatchStore } from '../../stores/batchStore';
+import { readTaskCountsAndContent } from './useAutoRunDocumentLoader';
 
 /**
  * Tree node structure for Auto Run document tree
@@ -95,6 +96,7 @@ export function useAutoRunHandlers(
 	activeSession: Session | null,
 	deps: UseAutoRunHandlersDeps
 ): UseAutoRunHandlersReturn {
+	const refreshSequenceRef = useRef(0);
 	const {
 		setSessions,
 		setAutoRunDocumentList,
@@ -421,24 +423,34 @@ export function useAutoRunHandlers(
 		async (options?: { silent?: boolean }) => {
 			if (!activeSession?.autoRunFolderPath) return;
 			const silent = options?.silent === true;
+			const sessionId = activeSession.id;
+			const folderPath = activeSession.autoRunFolderPath;
 			const sshRemoteId = getSshRemoteId(activeSession);
 			const previousCount = autoRunDocumentList.length;
+			// The list and the task counts are written after awaits. A refresh
+			// that was overtaken by a newer one, or whose session is no longer
+			// active, must not write another session's data into the shared
+			// stores (same guard as loadSequenceRef in useAutoRunDocumentLoader).
+			const refreshSequence = ++refreshSequenceRef.current;
+			const isStale = () =>
+				refreshSequence !== refreshSequenceRef.current ||
+				useSessionStore.getState().activeSessionId !== sessionId;
 			setAutoRunIsLoadingDocuments(true);
 			try {
-				const result = await window.maestro.autorun.listDocs(
-					activeSession.autoRunFolderPath,
-					sshRemoteId
-				);
+				const result = await window.maestro.autorun.listDocs(folderPath, sshRemoteId);
+				if (isStale()) return;
 				if (result.success) {
 					const newFiles = result.files || [];
 					setAutoRunDocumentList(newFiles);
 					setAutoRunDocumentTree(result.tree || []);
 					// The per-document task counts are cached in the batch store and
-					// only (re)computed for documents missing from that cache, so a
-					// document edited on disk kept its stale count until a restart.
-					// A refresh re-reads the folder; drop the cache so the counts are
-					// re-read from disk as well.
-					useBatchStore.getState().setDocumentTaskCounts(new Map());
+					// only (re)computed by the Batch Runner for documents missing from
+					// that cache, so a document edited on disk kept its stale count
+					// until a restart. A refresh re-reads the folder; re-read the
+					// counts from disk as well, the same way the document loader does.
+					const { counts } = await readTaskCountsAndContent(folderPath, newFiles, sshRemoteId);
+					if (isStale()) return;
+					useBatchStore.getState().setDocumentTaskCounts(counts);
 
 					// Show flash notification with result
 					const diff = newFiles.length - previousCount;
@@ -462,6 +474,7 @@ export function useAutoRunHandlers(
 			// Note: Use primitive values (remoteId) not object refs (sessionSshRemoteConfig) to avoid infinite re-render loops
 		},
 		[
+			activeSession?.id,
 			activeSession?.autoRunFolderPath,
 			activeSession?.sshRemoteId,
 			activeSession?.sessionSshRemoteConfig?.remoteId,
