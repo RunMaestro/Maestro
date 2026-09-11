@@ -2747,6 +2747,41 @@ describe('WebSocketMessageHandler', () => {
 			const config = (callbacks.configureAutoRun as any).mock.calls[0][1];
 			expect(config.model).toBeUndefined();
 			expect(config.effort).toBeUndefined();
+			expect(config.ignoreModelHints).toBeUndefined();
+		});
+
+		it('should forward ignoreModelHints when set', async () => {
+			(callbacks.configureAutoRun as any).mockResolvedValue({ success: true });
+
+			handler.handleMessage(client, {
+				type: 'configure_auto_run',
+				sessionId: 'session-1',
+				documents: [{ filename: 'doc1.md' }],
+				launch: true,
+				model: 'opus',
+				ignoreModelHints: true,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.configureAutoRun).toHaveBeenCalledWith(
+					'session-1',
+					expect.objectContaining({ model: 'opus', ignoreModelHints: true })
+				);
+			});
+		});
+
+		it('should reject a non-boolean ignoreModelHints', () => {
+			handler.handleMessage(client, {
+				type: 'configure_auto_run',
+				sessionId: 'session-1',
+				documents: [{ filename: 'doc1.md' }],
+				ignoreModelHints: 'yes',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(response.message).toContain('ignoreModelHints must be a boolean');
+			expect(callbacks.configureAutoRun).not.toHaveBeenCalled();
 		});
 
 		it('should reject non-string model', () => {

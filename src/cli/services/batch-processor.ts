@@ -65,6 +65,11 @@ export async function* runPlaybook(
 		model?: string;
 		/** Run-scoped reasoning effort override (same contract as `model`). */
 		effort?: string;
+		/**
+		 * Skip the documents' MAESTRO:MODEL markers, so every task runs at the run
+		 * override, then the agent's settings. Same run-scoped contract.
+		 */
+		ignoreModelHints?: boolean;
 	} = {}
 ): AsyncGenerator<JsonlEvent> {
 	const {
@@ -75,6 +80,7 @@ export async function* runPlaybook(
 		skipSynopsis = false,
 		model: runModel,
 		effort: runEffort,
+		ignoreModelHints = false,
 	} = options;
 	const batchStartTime = Date.now();
 	// Bottom of both ladders for every synopsis turn in this run. Resolved once:
@@ -551,12 +557,14 @@ export async function* runPlaybook(
 					// Same content and baseline the model hint is resolved from below, so
 					// the boundary the prompt names and the settings the run uses cannot
 					// disagree.
-					const hintSegment = countTasksUnderActiveHint(
-						expandedDocContent,
-						session.toolType,
-						session.customModel,
-						session.customEffort
-					);
+					const hintSegment = ignoreModelHints
+						? undefined
+						: countTasksUnderActiveHint(
+								expandedDocContent,
+								session.toolType,
+								runModel ?? session.customModel,
+								runEffort ?? session.customEffort
+							);
 					const selectionBlock = await getCliTaskSelectionBlock(
 						playbook.taskSelectionMode,
 						hintSegment
@@ -602,7 +610,7 @@ export async function* runPlaybook(
 					// the agent's own value.
 					const turnSettings = resolveTurnSettings(
 						session.toolType,
-						findActiveModelHint(expandedDocContent),
+						ignoreModelHints ? null : findActiveModelHint(expandedDocContent),
 						runModel ?? session.customModel,
 						runEffort ?? session.customEffort
 					);

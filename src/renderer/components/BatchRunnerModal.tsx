@@ -19,6 +19,7 @@ import {
 	Target,
 } from 'lucide-react';
 import { Spinner } from './ui/Spinner';
+import { ToggleSwitch } from './ui/ToggleSwitch';
 import type { Theme, BatchDocumentEntry, BatchRunConfig, TaskSelectionMode } from '../types';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { useResizableModal } from '../hooks/ui/useResizableModal';
@@ -150,6 +151,9 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 	// changing the agent's own model, which Session settings already does.
 	const [runModel, setRunModel] = useState('');
 	const [runEffort, setRunEffort] = useState('');
+	// Off on every open, like the pickers. A playbook's hints are its author's
+	// intent, so overriding them is a choice made for one run, never a default.
+	const [ignoreModelHints, setIgnoreModelHints] = useState(false);
 	const [availableModels, setAvailableModels] = useState<string[]>([]);
 	const [availableEfforts, setAvailableEfforts] = useState<string[]>([]);
 
@@ -474,6 +478,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 						...(worktreeTarget && { worktreeTarget }),
 						...(runModel && { model: runModel }),
 						...(runEffort && { effort: runEffort }),
+						...(ignoreModelHints && { ignoreModelHints: true }),
 					};
 
 		logger.info('[BatchRunnerModal] handleGo - calling onGo with config:', undefined, config);
@@ -1128,6 +1133,29 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 								Overrides the agent&apos;s configured model for this run only. The agent&apos;s own
 								settings and its interactive tabs are unchanged.
 							</p>
+							{/* Spec-Driven only: a Goal-Driven run has no documents, so there are
+							    no markers to ignore. */}
+							{autoRunMode !== 'goal' && (
+								<div className="flex items-start justify-between gap-3 pt-1">
+									<div className="flex flex-col gap-0.5">
+										<span className="text-xs font-medium" style={{ color: theme.colors.textMain }}>
+											Ignore model hints in documents
+										</span>
+										<span className="text-2xs" style={{ color: theme.colors.textDim }}>
+											Run every task at the model and effort above, skipping the playbook&apos;s
+											per-phase and per-task model markers. With the pickers on their defaults, that
+											means the agent&apos;s own settings.
+										</span>
+									</div>
+									<ToggleSwitch
+										checked={ignoreModelHints}
+										onChange={setIgnoreModelHints}
+										theme={theme}
+										size="sm"
+										ariaLabel="Ignore model hints in documents"
+									/>
+								</div>
+							)}
 						</div>
 					)}
 				</div>
