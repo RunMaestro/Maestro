@@ -9,6 +9,7 @@ import type {
 	GroupChatWorkflowRun,
 } from '../../shared/group-chat-workflow-types';
 import { logger } from '../utils/logger';
+import { clearWorkflowRunDir } from './workflow-artifacts';
 import { abortRun, approveRun, completeStage, failStage } from './workflow-state-machine';
 
 const LOG_CONTEXT = '[WorkflowRunRegistry]';
@@ -31,8 +32,24 @@ export function getWorkflowRun(groupChatId: string): GroupChatWorkflowRun | unde
 	return workflowRuns.get(groupChatId);
 }
 
-/** Remove the workflow run owned by a group chat. */
-export function clearWorkflowRun(groupChatId: string): void {
+/** Remove disposable artifacts for a run without allowing cleanup to fail its workflow. */
+export async function cleanupWorkflowRunArtifacts(
+	groupChatId: string,
+	run: GroupChatWorkflowRun
+): Promise<void> {
+	try {
+		await clearWorkflowRunDir(groupChatId, run.plan.runId);
+	} catch (error) {
+		logger.warn('Failed to clear workflow run artifacts', LOG_CONTEXT, {
+			groupChatId,
+			runId: run.plan.runId,
+			error,
+		});
+	}
+}
+
+/** Remove the workflow run owned by a group chat and its disposable artifacts. */
+export async function clearWorkflowRun(groupChatId: string): Promise<void> {
 	const run = workflowRuns.get(groupChatId);
 	workflowRuns.delete(groupChatId);
 	if (run) {
@@ -41,6 +58,7 @@ export function clearWorkflowRun(groupChatId: string): void {
 			runId: run.plan.runId,
 			status: run.status,
 		});
+		await cleanupWorkflowRunArtifacts(groupChatId, run);
 	}
 }
 

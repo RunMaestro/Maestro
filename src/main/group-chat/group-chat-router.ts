@@ -78,6 +78,7 @@ import {
 	abortWorkflowRun,
 	approveWorkflowRun,
 	clearWorkflowRun,
+	cleanupWorkflowRunArtifacts,
 	completeWorkflowStage,
 	failWorkflowStage,
 	getWorkflowRun,
@@ -1127,17 +1128,20 @@ export async function routeUserMessage(
 	let workflowTurnContext = '';
 	const pendingWorkflow = getWorkflowRun(groupChatId);
 	if (pendingWorkflow?.status === 'running' && isWorkflowCancellation(message)) {
-		abortWorkflowRun(groupChatId, 'user-cancelled');
+		const abortedRun = abortWorkflowRun(groupChatId, 'user-cancelled');
 		clearPendingParticipants(groupChatId);
 		await announceToChat(groupChatId, chat.logPath, 'Workflow cancelled.');
+		if (abortedRun) {
+			await cleanupWorkflowRunArtifacts(groupChatId, abortedRun);
+		}
 		settleGroupChatToIdle(groupChatId);
 		return;
 	}
 
 	if (pendingWorkflow?.status === 'awaiting-approval') {
 		if (isWorkflowCancellation(message)) {
-			clearWorkflowRun(groupChatId);
 			await announceToChat(groupChatId, chat.logPath, 'Workflow cancelled.');
+			await clearWorkflowRun(groupChatId);
 			settleGroupChatToIdle(groupChatId);
 			return;
 		}
@@ -1593,6 +1597,9 @@ export async function handleInboundWorkflowPlan(
 	}
 	const summary = `${renderWorkflowPlanSummary(result.plan)}\n\nReply \`go\` to start, or tell me what to change.`;
 	await announceToChat(groupChatId, chat.logPath, summary);
+	if (supersededRun) {
+		await cleanupWorkflowRunArtifacts(groupChatId, supersededRun);
+	}
 	return true;
 }
 
@@ -1814,6 +1821,10 @@ export async function routeModeratorResponse(
 			});
 		}
 
+		if (nextRun?.status === 'complete' || nextRun?.status === 'aborted') {
+			await cleanupWorkflowRunArtifacts(groupChatId, nextRun);
+		}
+
 		if (stageDirective.kind === 'complete' && nextRun?.status === 'running') {
 			if (processManager && agentDetector) {
 				await spawnModeratorSynthesis(groupChatId, processManager, agentDetector);
@@ -2008,9 +2019,12 @@ export async function routeModeratorResponse(
 			} else {
 				workflowGuardrailAction = 'abort';
 				const abortMessage = `Workflow aborted: the moderator produced no participant mentions or stage directive after ${MAX_WORKFLOW_STAGE_NUDGES} retries during stage ${workflowRun.currentStageIndex + 1}, ${currentStage.name}.`;
-				abortWorkflowRun(groupChatId, 'moderator-stage-guidance-exhausted');
+				const abortedRun = abortWorkflowRun(groupChatId, 'moderator-stage-guidance-exhausted');
 				workflowStageNudges.delete(groupChatId);
 				await announceToChat(groupChatId, updatedChat.logPath, abortMessage);
+				if (abortedRun) {
+					await cleanupWorkflowRunArtifacts(groupChatId, abortedRun);
+				}
 			}
 		}
 	}

@@ -18,9 +18,14 @@ import {
 	setWorkflowRun,
 } from '../../../main/group-chat/workflow-run-registry';
 import { logger } from '../../../main/utils/logger';
+import { clearWorkflowRunDir } from '../../../main/group-chat/workflow-artifacts';
 
 vi.mock('../../../main/utils/logger', () => ({
-	logger: { info: vi.fn() },
+	logger: { info: vi.fn(), warn: vi.fn() },
+}));
+
+vi.mock('../../../main/group-chat/workflow-artifacts', () => ({
+	clearWorkflowRunDir: vi.fn().mockResolvedValue(undefined),
 }));
 
 function createPlan(runId = 'run-123'): GroupChatWorkflowPlan {
@@ -51,13 +56,15 @@ describe('workflow-run-registry', () => {
 	beforeEach(() => {
 		resetAllWorkflowRuns();
 		vi.mocked(logger.info).mockClear();
+		vi.mocked(logger.warn).mockClear();
+		vi.mocked(clearWorkflowRunDir).mockResolvedValue(undefined);
 	});
 
 	afterEach(() => {
 		resetAllWorkflowRuns();
 	});
 
-	it('stores runs independently by group chat and clears one without affecting another', () => {
+	it('stores runs independently by group chat and clears one with its artifacts', async () => {
 		const firstRun = createRun(createPlan('run-1'));
 		const secondRun = createRun(createPlan('run-2'));
 
@@ -66,9 +73,24 @@ describe('workflow-run-registry', () => {
 		expect(getWorkflowRun('chat-1')).toBe(firstRun);
 		expect(getWorkflowRun('chat-2')).toBe(secondRun);
 
-		clearWorkflowRun('chat-1');
+		await clearWorkflowRun('chat-1');
 		expect(getWorkflowRun('chat-1')).toBeUndefined();
 		expect(getWorkflowRun('chat-2')).toBe(secondRun);
+		expect(clearWorkflowRunDir).toHaveBeenCalledWith('chat-1', 'run-1');
+	});
+
+	it('swallows and logs artifact cleanup failures while clearing registry state', async () => {
+		vi.mocked(clearWorkflowRunDir).mockRejectedValueOnce(new Error('directory locked'));
+		setWorkflowRun('chat-1', createRun(createPlan()));
+
+		await expect(clearWorkflowRun('chat-1')).resolves.toBeUndefined();
+
+		expect(getWorkflowRun('chat-1')).toBeUndefined();
+		expect(logger.warn).toHaveBeenCalledWith(
+			'Failed to clear workflow run artifacts',
+			'[WorkflowRunRegistry]',
+			expect.objectContaining({ groupChatId: 'chat-1', runId: 'run-123' })
+		);
 	});
 
 	it('applies and stores each state-machine transition', () => {

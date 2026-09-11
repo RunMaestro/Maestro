@@ -73,4 +73,12 @@ describe('IPC handler wiring parity', () => {
 	it('wires the Context Timeline handlers into the live bootstrap path', () => {
 		expect(invokedRegistrars(BOOTSTRAP_INDEX)).toContain('registerContextTimelineHandlers');
 	});
+
+	it('sweeps orphaned workflow artifacts from the live startup path', () => {
+		const source = stripComments(readFileSync(BOOTSTRAP_INDEX, 'utf-8'));
+		expect(source).toContain('sweepWorkflowRunDirs().catch(');
+		expect(source.indexOf('sweepWorkflowRunDirs().catch(')).toBeGreaterThan(
+			source.indexOf('registerGroupChatHandlers(')
+		);
+	});
 });
