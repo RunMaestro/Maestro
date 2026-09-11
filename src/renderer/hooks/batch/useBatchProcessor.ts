@@ -52,6 +52,8 @@ export interface BatchCompleteInfo {
 	documentsProcessed: number;
 	/** Which engine ran it. Undefined is treated as spec-driven downstream. */
 	kind?: AutoRunKind;
+	/** Full final batch result suitable for downstream handoffs. */
+	result?: string;
 }
 
 export interface PRResultInfo {

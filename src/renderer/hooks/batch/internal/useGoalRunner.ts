@@ -963,6 +963,7 @@ export function useGoalRunner({
 					totalCostUsd: totalCost,
 					documentsProcessed: 0,
 					kind: 'goal-driven',
+					result: finalDetails,
 				});
 			}
 
