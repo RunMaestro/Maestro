@@ -48,7 +48,11 @@ import {
 	routeUserMessage,
 	spawnModeratorSynthesis,
 } from '../../../main/group-chat/group-chat-router';
-import { createGroupChat, deleteGroupChat } from '../../../main/group-chat/group-chat-storage';
+import {
+	createGroupChat,
+	deleteGroupChat,
+	getGroupChatHistory,
+} from '../../../main/group-chat/group-chat-storage';
 import {
 	getWorkflowRun,
 	resetAllWorkflowRuns,
@@ -240,6 +244,122 @@ describe('group-chat workflow routing', () => {
 		expect(synthesisPrompt).toContain('## Active Workflow Plan');
 		expect(synthesisPrompt).toContain('## Current Stage');
 		expect(synthesisPrompt).toContain('Stage 1 of 1: Build');
+	});
+
+	it('advances a completed stage, keeps the handoff visible, and spawns the next stage', async () => {
+		const chat = await createChatWithModerator('Workflow Stage Advance');
+		const twoStagePlan: GroupChatWorkflowPlan = {
+			...workflowPlan,
+			stages: [
+				workflowPlan.stages[0],
+				{
+					id: 'stage-2',
+					name: 'Review',
+					agents: ['Reviewer'],
+					mode: 'serial',
+					instruction: 'Review the implementation',
+				},
+			],
+		};
+		setWorkflowRun(chat.id, approveRun(createRun(twoStagePlan)));
+		const emitMessage = vi.fn();
+		groupChatEmitters.emitMessage = emitMessage;
+		vi.mocked(mockProcessManager.spawn).mockClear();
+
+		await routeModeratorResponse(
+			chat.id,
+			'!stage-complete\nThe implementation and tests are ready.',
+			mockProcessManager,
+			mockAgentDetector
+		);
+
+		expect(getWorkflowRun(chat.id)).toMatchObject({
+			status: 'running',
+			currentStageIndex: 1,
+			handoffs: [expect.objectContaining({ summary: 'The implementation and tests are ready.' })],
+		});
+		expect(emitMessage).toHaveBeenCalledWith(
+			chat.id,
+			expect.objectContaining({
+				from: 'system',
+				content: 'Stage 1 of 2 complete: Build. Starting stage 2: Review.',
+			})
+		);
+		expect(emitMessage).toHaveBeenCalledWith(
+			chat.id,
+			expect.objectContaining({
+				from: 'moderator',
+				content: 'The implementation and tests are ready.',
+			})
+		);
+		expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
+		const prompt = vi.mocked(mockProcessManager.spawn).mock.calls[0]?.[0]?.prompt ?? '';
+		expect(prompt).toContain('Stage 2 of 2: Review');
+		expect(prompt).toContain('From Build: The implementation and tests are ready.');
+		const history = await getGroupChatHistory(chat.id);
+		expect(history).toContainEqual(
+			expect.objectContaining({
+				participantName: 'Moderator',
+				type: 'synthesis',
+				summary: 'Stage 1 of 2 complete: Build. Starting stage 2: Review.',
+			})
+		);
+	});
+
+	it('completes the terminal stage without spawning another moderator', async () => {
+		const chat = await createChatWithModerator('Workflow Terminal Stage');
+		setWorkflowRun(chat.id, approveRun(createRun(workflowPlan)));
+		const emitMessage = vi.fn();
+		groupChatEmitters.emitMessage = emitMessage;
+		vi.mocked(mockProcessManager.spawn).mockClear();
+
+		await routeModeratorResponse(
+			chat.id,
+			'**!stage-complete**\nThe release is complete and verified.',
+			mockProcessManager,
+			mockAgentDetector
+		);
+
+		expect(getWorkflowRun(chat.id)).toMatchObject({ status: 'complete', currentStageIndex: 1 });
+		expect(emitMessage).toHaveBeenCalledWith(
+			chat.id,
+			expect.objectContaining({
+				from: 'system',
+				content: 'Workflow complete: all 1 stages finished.',
+			})
+		);
+		expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+	});
+
+	it('fails the current stage and stops without dispatching mentioned handoff agents', async () => {
+		const chat = await createChatWithModerator('Workflow Stage Failure');
+		await addParticipant(chat.id, 'Builder', 'claude-code', mockProcessManager);
+		setWorkflowRun(chat.id, approveRun(createRun(workflowPlan)));
+		const emitMessage = vi.fn();
+		groupChatEmitters.emitMessage = emitMessage;
+		vi.mocked(mockProcessManager.spawn).mockClear();
+
+		await routeModeratorResponse(
+			chat.id,
+			'!stage-failed\nThe dependency is unavailable. @Builder should not be dispatched.',
+			mockProcessManager,
+			mockAgentDetector
+		);
+
+		expect(getWorkflowRun(chat.id)).toMatchObject({
+			status: 'aborted',
+			abortReason: 'The dependency is unavailable. @Builder should not be dispatched.',
+			stageStatuses: { 'stage-1': 'failed' },
+		});
+		expect(emitMessage).toHaveBeenCalledWith(
+			chat.id,
+			expect.objectContaining({
+				from: 'system',
+				content:
+					'Stage 1 of 1 failed: Build. The dependency is unavailable. @Builder should not be dispatched.',
+			})
+		);
+		expect(mockProcessManager.spawn).not.toHaveBeenCalled();
 	});
 
 	it('intercepts a moderator plan without dispatching participants or starting synthesis', async () => {
