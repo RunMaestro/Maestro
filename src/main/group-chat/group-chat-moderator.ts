@@ -69,6 +69,14 @@ export function getModeratorSystemPrompt(): string {
 }
 
 /**
+ * Gets the workflow planning prompt for the moderator.
+ * Loaded from src/prompts/group-chat-workflow-planning.md
+ */
+export function getWorkflowPlanningPrompt(): string {
+	return getPrompt('group-chat-workflow-planning');
+}
+
+/**
  * Gets the synthesis prompt for the moderator when reviewing agent responses.
  * Loaded from src/prompts/group-chat-moderator-synthesis.md
  */
