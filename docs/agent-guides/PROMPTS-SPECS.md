@@ -60,6 +60,11 @@ src/main/prompt-manager.ts
 | `group-chat-participant.md`         | `groupChatParticipantPrompt`        | Participant system prompt. Sets response format (overview first, then details).                                                     |
 | `group-chat-participant-request.md` | `groupChatParticipantRequestPrompt` | Per-message request prompt with chat history and moderator's delegation.                                                            |
 
+The workflow fragments are registered in `src/shared/promptDefinitions.ts` as
+`group-chat-workflow-planning` and `group-chat-workflow-stage`. They are loaded
+at runtime with `getPrompt()` by `src/main/group-chat/group-chat-moderator.ts`
+and appended only for the matching planning or active-stage moderator turn.
+
 #### Context Management Prompts
 
 | File                   | Export                   | Purpose                                                                                 |

@@ -575,20 +575,26 @@ Group chat uses four prompt templates from `src/prompts/`:
 
 ## Key Source Files
 
-| File                                          | Purpose                                  |
-| --------------------------------------------- | ---------------------------------------- |
-| `src/main/group-chat/group-chat-router.ts`    | Message routing engine                   |
-| `src/main/group-chat/group-chat-moderator.ts` | Moderator lifecycle management           |
-| `src/main/group-chat/group-chat-agent.ts`     | Participant agent management             |
-| `src/main/group-chat/group-chat-storage.ts`   | File-based CRUD with write serialization |
-| `src/main/group-chat/group-chat-log.ts`       | Pipe-delimited log I/O                   |
-| `src/main/group-chat/group-chat-config.ts`    | Shared Windows spawn config              |
-| `src/main/group-chat/output-buffer.ts`        | Streaming output buffering               |
-| `src/main/group-chat/output-parser.ts`        | Agent JSON/JSONL text extraction         |
-| `src/main/group-chat/session-parser.ts`       | Session ID parsing                       |
-| `src/main/group-chat/session-recovery.ts`     | Session-not-found recovery               |
-| `src/main/ipc/handlers/groupChat.ts`          | IPC handler registration and emitters    |
-| `src/shared/group-chat-types.ts`              | Shared type definitions                  |
-| `src/shared/symphony-types.ts`                | Symphony type definitions                |
-| `src/shared/symphony-constants.ts`            | Symphony constants                       |
-| `src/prompts/group-chat-*.md`                 | Prompt templates                         |
+| File                                             | Purpose                                                                    |
+| ------------------------------------------------ | -------------------------------------------------------------------------- |
+| `src/main/group-chat/group-chat-router.ts`       | Message routing engine                                                     |
+| `src/main/group-chat/group-chat-moderator.ts`    | Moderator lifecycle management                                             |
+| `src/main/group-chat/group-chat-agent.ts`        | Participant agent management                                               |
+| `src/main/group-chat/group-chat-storage.ts`      | File-based CRUD with write serialization                                   |
+| `src/main/group-chat/group-chat-log.ts`          | Pipe-delimited log I/O                                                     |
+| `src/main/group-chat/group-chat-config.ts`       | Shared Windows spawn config                                                |
+| `src/main/group-chat/output-buffer.ts`           | Streaming output buffering                                                 |
+| `src/main/group-chat/output-parser.ts`           | Agent JSON/JSONL text extraction                                           |
+| `src/main/group-chat/session-parser.ts`          | Session ID parsing                                                         |
+| `src/main/group-chat/session-recovery.ts`        | Session-not-found recovery                                                 |
+| `src/main/group-chat/workflow-plan-parser.ts`    | Workflow plan and control-directive parsing and validation                 |
+| `src/main/group-chat/workflow-state-machine.ts`  | Pure workflow run and stage state transitions                              |
+| `src/main/group-chat/workflow-run-registry.ts`   | Disposable per-chat run ownership, transitions, and renderer notifications |
+| `src/main/group-chat/workflow-artifacts.ts`      | Run-scoped storage and cleanup for large stage handoffs                    |
+| `src/main/group-chat/workflow-handoff.ts`        | Unicode-aware handoff sizing, digesting, and prompt formatting             |
+| `src/main/group-chat/workflow-prompt-context.ts` | Active-plan, stage, and prior-handoff prompt context generation            |
+| `src/main/ipc/handlers/groupChat.ts`             | IPC handler registration and emitters                                      |
+| `src/shared/group-chat-types.ts`                 | Shared type definitions                                                    |
+| `src/shared/symphony-types.ts`                   | Symphony type definitions                                                  |
+| `src/shared/symphony-constants.ts`               | Symphony constants                                                         |
+| `src/prompts/group-chat-*.md`                    | Prompt templates                                                           |
