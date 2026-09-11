@@ -120,6 +120,22 @@ describe('GroupChatHistoryPanel', () => {
 			expect(screen.getByRole('button', { name: /Error/i })).toBeInTheDocument();
 		});
 
+		it('prints short labels but keeps the full word as the accessible name', () => {
+			render(<GroupChatHistoryPanel {...defaultProps} />);
+
+			const shortByFull: Record<string, string> = {
+				You: 'You',
+				Delegation: 'Task',
+				Response: 'Reply',
+				Synthesis: 'Synth',
+				Error: 'Err',
+			};
+			for (const [full, short] of Object.entries(shortByFull)) {
+				const btn = screen.getByRole('button', { name: full });
+				expect(btn).toHaveTextContent(short);
+			}
+		});
+
 		it('should have all filters active by default', () => {
 			render(<GroupChatHistoryPanel {...defaultProps} />);
 
