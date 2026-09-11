@@ -8,6 +8,7 @@
 import path from 'path';
 import { isWindows } from '../../shared/platformDetection';
 import { MAESTRO_FONT_STACK } from '../../shared/fontStack';
+import { ENCORE_FEATURE_DEFAULTS } from '../../shared/encoreFeatureDefaults';
 
 import type {
 	MaestroSettings,
@@ -153,6 +154,9 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	autoResumeOnLimit: true,
 	autoResumeCheckIntervalHours: 2,
 	autoResumeGiveUpDays: 7,
+	// Main-side gates (Cue engine boot start, stats recording) read this raw, so
+	// it must match the renderer's defaults. See shared/encoreFeatureDefaults.ts.
+	encoreFeatures: { ...ENCORE_FEATURE_DEFAULTS },
 };
 
 export const SESSIONS_DEFAULTS: SessionsData = {

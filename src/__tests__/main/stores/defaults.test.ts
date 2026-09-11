@@ -200,6 +200,14 @@ describe('stores/defaults', () => {
 		it('should default autoResumeGiveUpDays to 7', () => {
 			expect(SETTINGS_DEFAULTS.autoResumeGiveUpDays).toBe(7);
 		});
+
+		it("should ship Usage & Stats, Director's Notes, and Cue enabled", () => {
+			expect(SETTINGS_DEFAULTS.encoreFeatures).toMatchObject({
+				usageStats: true,
+				directorNotes: true,
+				maestroCue: true,
+			});
+		});
 	});
 
 	describe('SESSIONS_DEFAULTS', () => {

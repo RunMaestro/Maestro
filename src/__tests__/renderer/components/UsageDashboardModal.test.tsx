@@ -9,6 +9,7 @@ import { logger } from '../../../renderer/utils/logger';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { UsageDashboardModal } from '../../../renderer/components/UsageDashboard/UsageDashboardModal';
 import { useUIStore } from '../../../renderer/stores/uiStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import type { Theme } from '../../../renderer/types';
 
 // Mock lucide-react icons - include all icons used by modal and its child components
@@ -231,6 +232,11 @@ describe('UsageDashboardModal', () => {
 		// default 'overview' tab instead of inheriting whatever a prior tab-switching
 		// test left behind.
 		useUIStore.setState({ usageDashboardViewMode: 'overview' });
+		// Pin the Encore flags this file was written against. Cue ships on by
+		// default, which adds a Cue tab and a cueStats fetch these tests do not mock.
+		useSettingsStore.setState((s) => ({
+			encoreFeatures: { ...s.encoreFeatures, usageStats: true, maestroCue: false },
+		}));
 		mockGetAggregation.mockResolvedValue(createSampleData());
 		mockExportCsv.mockResolvedValue('date,count\n2024-01-15,25');
 		mockSaveFile.mockResolvedValue(null); // User cancels by default

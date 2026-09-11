@@ -3,6 +3,7 @@
 // WS message (key: encoreFeatures), so changes apply live and persist. Mirrors
 // the Settings -> Encore Features toggles.
 
+import { ENCORE_FEATURE_DEFAULTS } from '../../shared/encoreFeatureDefaults';
 import { readSettingValue } from '../services/storage';
 import { sendSimpleCommand, reportResult, failCommand } from '../services/session-command';
 
@@ -42,9 +43,11 @@ interface EncoreOptions {
 
 function readFlags(): Record<string, boolean> {
 	const raw = readSettingValue('encoreFeatures');
+	const defaults: Readonly<Record<string, boolean>> = ENCORE_FEATURE_DEFAULTS;
 	const flags: Record<string, boolean> = {};
 	for (const key of Object.keys(FEATURES)) {
-		flags[key] = Boolean((raw as Record<string, unknown> | undefined)?.[key]);
+		const stored = (raw as Record<string, unknown> | undefined)?.[key];
+		flags[key] = stored === undefined ? defaults[key] === true : Boolean(stored);
 	}
 	return flags;
 }

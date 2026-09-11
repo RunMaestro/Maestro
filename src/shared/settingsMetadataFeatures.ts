@@ -7,6 +7,7 @@
  */
 
 import type { SettingMetadata } from './settingsMetadata';
+import { ENCORE_FEATURE_DEFAULTS } from './encoreFeatureDefaults';
 
 export const FEATURES_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	// --- Integrations ---
@@ -70,18 +71,7 @@ export const FEATURES_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	encoreFeatures: {
 		description: 'Feature flags for experimental/encore features. Object with boolean flags.',
 		type: 'object',
-		default: {
-			directorNotes: false,
-			usageStats: true,
-			symphony: true,
-			maestroCue: false,
-			pianola: false,
-			plugins: false,
-			coworking: false,
-			opencodeServer: false,
-			concerto: false,
-			groupsPlus: false,
-		},
+		default: { ...ENCORE_FEATURE_DEFAULTS },
 		category: 'advanced',
 	},
 	directorNotesSettings: {

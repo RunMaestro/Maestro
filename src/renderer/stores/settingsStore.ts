@@ -41,6 +41,7 @@ import { RIGHT_PANEL_MIN_WIDTH, RIGHT_PANEL_MAX_WIDTH } from '../constants/right
 import type { MindMapLayoutType } from '../components/DocumentGraph/layoutTypes';
 import { isMindMapLayoutType } from '../components/DocumentGraph/layoutTypes';
 import { normalizePlaybackRate } from '../../shared/mediaTypes';
+import { ENCORE_FEATURE_DEFAULTS } from '../../shared/encoreFeatureDefaults';
 import {
 	MEDIA_FLOAT_SETTINGS_KEY,
 	MEDIA_QUEUE_SETTINGS_KEY,
@@ -227,16 +228,7 @@ const DEFAULT_ONBOARDING_STATS: OnboardingStats = {
 	averageTasksPerPhase: 0,
 };
 
-const DEFAULT_ENCORE_FEATURES: EncoreFeatureFlags = {
-	directorNotes: false,
-	usageStats: true,
-	symphony: true,
-	maestroCue: false,
-	pianola: false,
-	plugins: false,
-	concerto: false,
-	groupsPlus: false,
-};
+const DEFAULT_ENCORE_FEATURES: EncoreFeatureFlags = { ...ENCORE_FEATURE_DEFAULTS };
 
 // File Preview / Edit toolbar buttons. Each key maps to a visibility toggle in
 // Settings → Display → File Edit & Preview. Buttons can be hidden but the

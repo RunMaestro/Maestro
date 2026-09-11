@@ -17,6 +17,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, act, fireEvent } from '@testing-library/react';
 import { UsageDashboardModal } from '../../../../renderer/components/UsageDashboard/UsageDashboardModal';
 import { useUIStore } from '../../../../renderer/stores/uiStore';
+import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import type { Theme } from '../../../../renderer/types';
 
 // Mock lucide-react icons
@@ -282,6 +283,11 @@ describe('UsageDashboard Responsive Layout', () => {
 		// tests in this file. Reset it so each test starts on 'overview' instead of
 		// inheriting the tab a prior test switched to.
 		useUIStore.setState({ usageDashboardViewMode: 'overview' });
+		// Pin the Encore flags this file was written against. Cue ships on by
+		// default, which adds a Cue tab and a cueStats fetch these tests do not mock.
+		useSettingsStore.setState((s) => ({
+			encoreFeatures: { ...s.encoreFeatures, usageStats: true, maestroCue: false },
+		}));
 		mockGetAggregation.mockResolvedValue(createSampleData());
 		mockExportCsv.mockResolvedValue('date,count\n2024-01-15,25');
 		mockSaveFile.mockResolvedValue(null);

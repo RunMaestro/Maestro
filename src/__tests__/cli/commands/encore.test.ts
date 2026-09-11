@@ -51,7 +51,15 @@ describe('encore commands', () => {
 		encoreList({ json: true });
 		const parsed = JSON.parse(consoleSpy.mock.calls[0][0]);
 		expect(parsed.features.symphony).toBe(true);
-		expect(parsed.features.maestroCue).toBe(false);
+		expect(parsed.features.pianola).toBe(false);
+	});
+
+	it('list falls back to the shipped default for a flag never saved', () => {
+		vi.mocked(readSettingValue).mockReturnValue({ symphony: true, directorNotes: false });
+		encoreList({ json: true });
+		const parsed = JSON.parse(consoleSpy.mock.calls[0][0]);
+		expect(parsed.features.maestroCue).toBe(true);
+		expect(parsed.features.directorNotes).toBe(false);
 	});
 
 	it('enable sends the full merged encoreFeatures object', async () => {

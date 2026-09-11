@@ -7,7 +7,7 @@ icon: clapperboard
 Director's Notes is your bird's-eye view of everything happening across all your AI agents. Instead of switching between tabs to check what each agent has been doing, Director's Notes aggregates all history entries into a single, searchable, filterable timeline - and can generate an AI-powered synopsis of recent activity.
 
 <Note>
-Director's Notes is an **Encore Feature** - it's disabled by default. Enable it in **Settings > Encore Features** to access the shortcut, menu entry, and command palette action.
+Director's Notes is an **Encore Feature** and is on by default. Turn it off in **Settings > Plugins** to remove the shortcut, menu entry, and command palette action.
 </Note>
 
 ![Encore Features settings panel](./screenshots/encore-features.png)

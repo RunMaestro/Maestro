@@ -4,7 +4,7 @@ description: Optional, feature-gated capabilities that let Maestro ship fast wit
 icon: flask
 ---
 
-Encore Features are Maestro's system for shipping powerful capabilities that aren't essential for every user. They're disabled by default and completely invisible when off - no shortcuts, no menu items, no command palette entries. This keeps the core app lean while letting power users opt into advanced workflows.
+Encore Features are Maestro's system for shipping powerful capabilities that aren't essential for every user. A feature that is off is completely invisible - no shortcuts, no menu items, no command palette entries - which keeps the core app lean while letting power users opt into advanced workflows. Usage & Stats, Director's Notes, Maestro Cue, and Maestro Symphony start on; the rest start off.
 
 They are now managed as **plugins**. Every Encore Feature ships as a built-in ("first-party") plugin, listed in the same catalog as community plugins and turned on the same way. What changed is the plumbing and the settings screen, not the idea: a feature you have not enabled still adds nothing to your keyboard, your menus, or your palette.
 

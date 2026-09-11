@@ -7,7 +7,7 @@ icon: bolt
 Maestro Cue is an event-driven automation engine that watches for things happening in your projects and automatically sends prompts to your agents in response. Instead of manually kicking off tasks, you define **subscriptions** - trigger-prompt pairings - in a YAML file, and Cue handles the rest.
 
 <Note>
-Maestro Cue is an **Encore Feature** - it's disabled by default. Enable it in **Settings > Encore Features** to access the shortcut, modal, and automation engine.
+Maestro Cue is an **Encore Feature** and is on by default. Turn it off in **Settings > Plugins** to hide the shortcut and modal and stop the automation engine.
 </Note>
 
 ## What Can Cue Do?

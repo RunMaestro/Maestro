@@ -18,6 +18,7 @@ import '@testing-library/jest-dom';
 import { UsageDashboardModal } from '../../../../renderer/components/UsageDashboard/UsageDashboardModal';
 import { SummaryCards } from '../../../../renderer/components/UsageDashboard/SummaryCards';
 import { useUIStore } from '../../../../renderer/stores/uiStore';
+import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 
 import { mockTheme } from '../../../helpers/mockTheme';
 // Mock lucide-react icons
@@ -160,6 +161,11 @@ beforeEach(() => {
 	// in this file. Reset it so each test starts on 'overview' instead of inheriting
 	// the tab a prior test navigated to (which can mount the Shortcuts panel).
 	useUIStore.setState({ usageDashboardViewMode: 'overview' });
+	// Pin the Encore flags this file was written against. Cue ships on by
+	// default, which adds a Cue tab and a cueStats fetch these tests do not mock.
+	useSettingsStore.setState((s) => ({
+		encoreFeatures: { ...s.encoreFeatures, usageStats: true, maestroCue: false },
+	}));
 	(window as any).maestro = {
 		stats: mockStats,
 		dialog: mockDialog,
