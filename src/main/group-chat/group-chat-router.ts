@@ -33,6 +33,7 @@ import {
 	findUniqueMentionMatch,
 	getMentionNameForContext,
 	getMentionMatchPriority,
+	mentionMatches,
 	stripUnmatchedTrailingClosers,
 	normalizeMentionName,
 	requiresIdleParticipants,
@@ -74,6 +75,7 @@ import {
 } from './workflow-plan-parser';
 import { createRun } from './workflow-state-machine';
 import {
+	abortWorkflowRun,
 	approveWorkflowRun,
 	clearWorkflowRun,
 	completeWorkflowStage,
@@ -257,6 +259,28 @@ const pendingParticipantResponses = new Map<string, Set<string>>();
  * The moderator runs single-threaded per chat, so a plain groupChatId flag is safe.
  */
 const pendingSynthesisRounds = new Set<string>();
+
+/**
+ * Counts corrective moderator retries for the current workflow stage in each chat.
+ * The run and stage ids make a stage transition or replacement reset the budget
+ * without relying on every transition call site to remember a separate cleanup.
+ */
+const workflowStageNudges = new Map<string, { runId: string; stageId: string; count: number }>();
+
+const MAX_WORKFLOW_STAGE_NUDGES = 2;
+
+function incrementWorkflowStageNudge(groupChatId: string, run: GroupChatWorkflowRun): number {
+	const stage = run.plan.stages[run.currentStageIndex];
+	const current = workflowStageNudges.get(groupChatId);
+	const count =
+		current?.runId === run.plan.runId && current.stageId === stage.id ? current.count + 1 : 1;
+	workflowStageNudges.set(groupChatId, {
+		runId: run.plan.runId,
+		stageId: stage.id,
+		count,
+	});
+	return count;
+}
 
 /**
  * Writes a group chat history entry and emits it to the renderer. Centralizes the
@@ -658,6 +682,7 @@ export function clearPendingParticipants(groupChatId: string): void {
 	}
 	pendingParticipantResponses.delete(groupChatId);
 	autoRunParticipantTracker.delete(groupChatId);
+	workflowStageNudges.delete(groupChatId);
 }
 
 /**
@@ -1546,6 +1571,7 @@ export async function handleInboundWorkflowPlan(
 		return true;
 	}
 
+	workflowStageNudges.delete(groupChatId);
 	setWorkflowRun(groupChatId, createRun(result.plan));
 	const summary = `${renderWorkflowPlanSummary(result.plan)}\n\nReply \`go\` to start, or tell me what to change.`;
 	await announceToChat(groupChatId, chat.logPath, summary);
@@ -1725,6 +1751,7 @@ export async function routeModeratorResponse(
 	const workflowRun = getWorkflowRun(groupChatId);
 	const stageDirective = workflowRun?.status === 'running' ? extractStageDirective(message) : null;
 	if (workflowRun?.status === 'running' && stageDirective) {
+		workflowStageNudges.delete(groupChatId);
 		const completedStageIndex = workflowRun.currentStageIndex;
 		const completedStage = workflowRun.plan.stages[completedStageIndex];
 		const stagePosition = completedStageIndex + 1;
@@ -1921,6 +1948,54 @@ export async function routeModeratorResponse(
 	logger.debug(
 		`[GroupChat:Debug] Valid participant mentions found: ${mentions.join(', ') || '(none)'}`
 	);
+
+	let workflowGuardrailAction: 'none' | 'nudge' | 'abort' = 'none';
+	let workflowGuardrailInstruction = '';
+	if (workflowRun?.status === 'running') {
+		const currentStage = workflowRun.plan.stages[workflowRun.currentStageIndex];
+		const rosterMentions = currentStage.agents.map(
+			(agentName) => `@${normalizeMentionName(agentName)}`
+		);
+		const rosterDescription =
+			rosterMentions.length === 0
+				? 'no agents'
+				: rosterMentions.length === 1
+					? rosterMentions[0]
+					: `${rosterMentions.slice(0, -1).join(', ')} and ${rosterMentions.at(-1)}`;
+		const offRosterMentions = mentions.filter(
+			(participantName) =>
+				!currentStage.agents.some((stageAgent) => mentionMatches(stageAgent, participantName))
+		);
+
+		// The moderator remains authoritative: disclose roster deviations, but do
+		// not prevent the requested participant from receiving the handoff.
+		for (const participantName of offRosterMentions) {
+			await announceToChat(
+				groupChatId,
+				updatedChat.logPath,
+				`Note: stage ${workflowRun.currentStageIndex + 1} lists ${rosterDescription}, but @${normalizeMentionName(participantName)} was engaged.`
+			);
+		}
+
+		if (mentions.length === 0) {
+			const nudgeCount = incrementWorkflowStageNudge(groupChatId, workflowRun);
+			if (nudgeCount <= MAX_WORKFLOW_STAGE_NUDGES) {
+				workflowGuardrailAction = 'nudge';
+				workflowGuardrailInstruction = `Your previous turn did not engage an agent or finish the stage. Work only on stage ${workflowRun.currentStageIndex + 1}, ${currentStage.name}. Either mention ${rosterDescription} now or emit !stage-complete or !stage-failed on its own line.`;
+				await announceToChat(
+					groupChatId,
+					updatedChat.logPath,
+					`Workflow stage ${workflowRun.currentStageIndex + 1} needs a moderator action. Retrying (${nudgeCount} of ${MAX_WORKFLOW_STAGE_NUDGES}): mention ${rosterDescription} or emit a stage directive.`
+				);
+			} else {
+				workflowGuardrailAction = 'abort';
+				const abortMessage = `Workflow aborted: the moderator produced no participant mentions or stage directive after ${MAX_WORKFLOW_STAGE_NUDGES} retries during stage ${workflowRun.currentStageIndex + 1}, ${currentStage.name}.`;
+				abortWorkflowRun(groupChatId, 'moderator-stage-guidance-exhausted');
+				workflowStageNudges.delete(groupChatId);
+				await announceToChat(groupChatId, updatedChat.logPath, abortMessage);
+			}
+		}
+	}
 
 	// Track participants that will need to respond for synthesis round
 	const participantsToRespond = new Set<string>();
@@ -2309,7 +2384,10 @@ export async function routeModeratorResponse(
 
 	// If no actionable participant work was started (all directives invalid/skipped, no mentions),
 	// clean up lifecycle state so power blocks don't leak.
-	if (participantsToRespond.size === 0) {
+	if (
+		participantsToRespond.size === 0 &&
+		(workflowGuardrailAction !== 'nudge' || !processManager || !agentDetector)
+	) {
 		logger.debug(
 			`[GroupChat:Debug] No actionable participant work started - moderator response is final`
 		);
@@ -2361,6 +2439,15 @@ export async function routeModeratorResponse(
 	if (participantsToRespond.size > 0) {
 		logger.debug(
 			`[GroupChat:Debug] Waiting for ${participantsToRespond.size} participant(s) to respond: ${[...participantsToRespond].join(', ')}`
+		);
+	}
+
+	if (workflowGuardrailAction === 'nudge' && processManager && agentDetector) {
+		await spawnModeratorSynthesis(
+			groupChatId,
+			processManager,
+			agentDetector,
+			workflowGuardrailInstruction
 		);
 	}
 	logger.debug(`[GroupChat:Debug] ===================================================`);
@@ -2478,7 +2565,8 @@ export async function routeAgentResponse(
 export async function spawnModeratorSynthesis(
 	groupChatId: string,
 	processManager: IProcessManager,
-	agentDetector: AgentDetector
+	agentDetector: AgentDetector,
+	workflowCorrection?: string
 ): Promise<void> {
 	logger.debug(`[GroupChat:Debug] ========== SPAWN MODERATOR SYNTHESIS ==========`);
 	logger.debug(`[GroupChat:Debug] Group Chat ID: ${groupChatId}`);
@@ -2594,6 +2682,7 @@ ${historyContext}
 Review the agent responses above. Either:
 1. Synthesize into a final answer for the user (NO @mentions, NO !autorun) if the question is fully answered
 2. @mention specific agents for follow-up if you need more information
+${workflowCorrection ? `\n## Immediate Workflow Correction\n${workflowCorrection}\n` : ''}
 
 **IMPORTANT: Do NOT include any !autorun directives in this synthesis response.**`;
 

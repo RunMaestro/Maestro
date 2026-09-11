@@ -362,6 +362,99 @@ describe('group-chat workflow routing', () => {
 		expect(mockProcessManager.spawn).not.toHaveBeenCalled();
 	});
 
+	it('dispatches an off-roster mention and announces the deviation', async () => {
+		const chat = await createChatWithModerator('Workflow Roster Deviation');
+		await addParticipant(chat.id, 'Reviewer', 'claude-code', mockProcessManager);
+		setWorkflowRun(chat.id, approveRun(createRun(workflowPlan)));
+		const emitMessage = vi.fn();
+		groupChatEmitters.emitMessage = emitMessage;
+		vi.mocked(mockProcessManager.spawn).mockClear();
+
+		await routeModeratorResponse(
+			chat.id,
+			'@Reviewer Please inspect the implementation.',
+			mockProcessManager,
+			mockAgentDetector
+		);
+
+		expect(emitMessage).toHaveBeenCalledWith(
+			chat.id,
+			expect.objectContaining({
+				from: 'system',
+				content: 'Note: stage 1 lists @Builder, but @Reviewer was engaged.',
+			})
+		);
+		expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
+		expect(vi.mocked(mockProcessManager.spawn).mock.calls[0]?.[0]?.sessionId).toContain(
+			'participant-Reviewer-'
+		);
+		expect(getWorkflowRun(chat.id)?.status).toBe('running');
+	});
+
+	it('nudges a mentionless moderator twice, then aborts the stage loop', async () => {
+		const chat = await createChatWithModerator('Workflow Missing Action');
+		setWorkflowRun(chat.id, approveRun(createRun(workflowPlan)));
+		const emitMessage = vi.fn();
+		groupChatEmitters.emitMessage = emitMessage;
+		vi.mocked(mockProcessManager.spawn).mockClear();
+
+		await routeModeratorResponse(
+			chat.id,
+			'I am still considering the implementation.',
+			mockProcessManager,
+			mockAgentDetector
+		);
+		await routeModeratorResponse(
+			chat.id,
+			'I need to think about it again.',
+			mockProcessManager,
+			mockAgentDetector
+		);
+		await routeModeratorResponse(
+			chat.id,
+			'I have no next action yet.',
+			mockProcessManager,
+			mockAgentDetector
+		);
+
+		expect(mockProcessManager.spawn).toHaveBeenCalledTimes(2);
+		for (const call of vi.mocked(mockProcessManager.spawn).mock.calls) {
+			const prompt = call[0]?.prompt ?? '';
+			expect(prompt).toContain('## Immediate Workflow Correction');
+			expect(prompt).toContain(
+				'Either mention @Builder now or emit !stage-complete or !stage-failed'
+			);
+		}
+		expect(emitMessage).toHaveBeenCalledWith(
+			chat.id,
+			expect.objectContaining({
+				from: 'system',
+				content:
+					'Workflow stage 1 needs a moderator action. Retrying (1 of 2): mention @Builder or emit a stage directive.',
+			})
+		);
+		expect(emitMessage).toHaveBeenCalledWith(
+			chat.id,
+			expect.objectContaining({
+				from: 'system',
+				content:
+					'Workflow stage 1 needs a moderator action. Retrying (2 of 2): mention @Builder or emit a stage directive.',
+			})
+		);
+		expect(emitMessage).toHaveBeenCalledWith(
+			chat.id,
+			expect.objectContaining({
+				from: 'system',
+				content:
+					'Workflow aborted: the moderator produced no participant mentions or stage directive after 2 retries during stage 1, Build.',
+			})
+		);
+		expect(getWorkflowRun(chat.id)).toMatchObject({
+			status: 'aborted',
+			abortReason: 'moderator-stage-guidance-exhausted',
+		});
+	});
+
 	it('intercepts a moderator plan without dispatching participants or starting synthesis', async () => {
 		const chat = await createChatWithModerator('Moderator Workflow Plan');
 		await addParticipant(chat.id, 'Builder', 'claude-code', mockProcessManager);
