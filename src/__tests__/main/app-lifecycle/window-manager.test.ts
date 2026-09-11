@@ -1401,6 +1401,61 @@ describe('app-lifecycle/window-manager', () => {
 			);
 		});
 
+		it('does not forward bare modifier keydowns, so Cmd+V still reaches the page', async () => {
+			// Pressing Cmd alone fires a keyDown for "Meta" before the V arrives.
+			// Forwarding it made the renderer blur the webview, so the paste chord
+			// landed outside the page and nothing was pasted.
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererProductionUrl: 'app://app/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+			});
+
+			windowManager.createWindow();
+
+			const attachHandler = webContentsEventHandlers.get('did-attach-webview');
+			attachHandler?.({} as any, mockGuestWebContents as any);
+
+			const beforeInputHandler = guestWebContentsEventHandlers.get('before-input-event');
+
+			const modifierPresses = [
+				{ key: 'Meta', code: 'MetaLeft', meta: true },
+				{ key: 'Control', code: 'ControlLeft', control: true },
+				{ key: 'Alt', code: 'AltLeft', alt: true },
+				{ key: 'Shift', code: 'ShiftLeft', meta: true, shift: true },
+			];
+			for (const press of modifierPresses) {
+				const event = { preventDefault: vi.fn() };
+				beforeInputHandler?.(event, {
+					type: 'keyDown',
+					meta: false,
+					control: false,
+					alt: false,
+					shift: false,
+					...press,
+				});
+				expect(event.preventDefault).not.toHaveBeenCalled();
+			}
+			expect(mockWebContents.send).not.toHaveBeenCalledWith(
+				'browser-tab:shortcutKey',
+				expect.anything()
+			);
+
+			// The page-level fallback listener must skip bare modifiers too, or it
+			// forwards them through console-message and causes the same blur.
+			guestWebContentsEventHandlers.get('dom-ready')?.();
+			const injectedScript = mockGuestWebContents.executeJavaScript.mock.calls.at(-1)?.[0];
+			expect(injectedScript).toContain('/^(Meta|Control|Alt|Shift)$/.test(e.key)');
+		});
+
 		// Electron 41 removed the legacy `'crashed'` event in favor of
 		// `'render-process-gone'`. These tests pin the wiring so a future
 		// revert can't silently drop renderer-crash reporting.
