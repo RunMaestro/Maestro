@@ -25,6 +25,9 @@ import { useViewportBreakpoint } from '../../hooks/ui/useViewportBreakpoint';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import {
 	useContextTimelineStore,
+	CONTEXT_SURFACE_CLOSE_DELAY_MS,
+	CONTEXT_SURFACE_GAP,
+	CONTEXT_SURFACE_WIDTH,
 	type TimelineAnchorRect,
 } from '../../stores/contextTimelineStore';
 import type { Session, Theme, BatchRunState, AITab } from '../../types';
@@ -170,14 +173,41 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 	// pills (SSH host + branch) means either one opens the menu, and it also
 	// excludes them from click-outside so clicking a pill can't close it.
 	const gitPillRef = useRef<HTMLDivElement>(null);
-	const contextTooltip = useHoverTooltip(150);
+	const contextTooltip = useHoverTooltip(CONTEXT_SURFACE_CLOSE_DELAY_MS);
+
+	// The gauge has two surfaces - Context Details on hover, the Context Timeline
+	// on click - and they are alternatives for one spot, never a stack. The popover
+	// stays hidden while ANY timeline panel is open (there is one app-wide, and it
+	// anchors under this gauge), whatever the hover state says.
+	const timelinePanelOpen = useContextTimelineStore((s) => s.panelSessionId !== null);
+	const contextDetailsVisible = contextTooltip.isOpen && !timelinePanelOpen;
+	// The popover's bordered box, measured at click time so the timeline opens in
+	// exactly the space the popover held.
+	const contextDetailsRef = useRef<HTMLDivElement>(null);
+	const closeContextTooltip = contextTooltip.close;
+
+	// Swap one surface for the other. The popover's size is read while it is still
+	// laid out, then it is closed before the toggle. A toggle with no popover on
+	// screen (keyboard focus) passes no size and the timeline uses its default.
+	const toggleContextTimeline = useCallback(
+		(gauge: HTMLElement) => {
+			const box = contextDetailsRef.current?.getBoundingClientRect();
+			const sourceSize =
+				box && box.width > 0 && box.height > 0
+					? { width: Math.round(box.width), height: Math.round(box.height) }
+					: null;
+			closeContextTooltip();
+			useContextTimelineStore.getState().togglePanel(activeSession.id, rectOf(gauge), sourceSize);
+		},
+		[activeSession.id, closeContextTooltip]
+	);
 
 	// Message count and elapsed span for the tab in view - the same figures the
 	// HTML export prints, so they can be read without exporting. Walking the log
-	// array costs O(entries), so it only runs while the popover is actually open.
+	// array costs O(entries), so it only runs while the popover is on screen.
 	const conversationStats = useMemo(
-		() => (contextTooltip.isOpen ? computeTabConversationStats(activeTab?.logs) : null),
-		[contextTooltip.isOpen, activeTab?.logs]
+		() => (contextDetailsVisible ? computeTabConversationStats(activeTab?.logs) : null),
+		[contextDetailsVisible, activeTab?.logs]
 	);
 
 	// The git menu opens on hover. The open delay keeps it from popping up while
@@ -502,17 +532,11 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 							tabIndex={0}
 							aria-label="Toggle context timeline"
 							{...contextTooltip.triggerHandlers}
-							onClick={(e) =>
-								useContextTimelineStore
-									.getState()
-									.togglePanel(activeSession.id, rectOf(e.currentTarget))
-							}
+							onClick={(e) => toggleContextTimeline(e.currentTarget)}
 							onKeyDown={(e) => {
 								if (e.key === 'Enter' || e.key === ' ') {
 									e.preventDefault();
-									useContextTimelineStore
-										.getState()
-										.togglePanel(activeSession.id, rectOf(e.currentTarget));
+									toggleContextTimeline(e.currentTarget);
 								}
 							}}
 						>
@@ -528,7 +552,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 							</span>
 
 							{/* Context Window Tooltip */}
-							{contextTooltip.isOpen && activeSession.inputMode === 'ai' && (
+							{contextDetailsVisible && activeSession.inputMode === 'ai' && (
 								<>
 									{/* Invisible bridge to prevent hover gap */}
 									<div
@@ -536,13 +560,15 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 										style={{ top: '100%' }}
 										{...contextTooltip.contentHandlers}
 									/>
+									{/* Same width and gap as the Context Timeline, so a click swaps
+									    one surface for the other in place. */}
 									<div
-										className={`absolute top-full right-0 pt-2 z-50 pointer-events-auto ${
-											showBatchUsage && batchUsageSnapshot ? 'w-72' : 'w-64'
-										}`}
+										className="absolute top-full right-0 z-50 pointer-events-auto"
+										style={{ paddingTop: CONTEXT_SURFACE_GAP, width: CONTEXT_SURFACE_WIDTH }}
 										{...contextTooltip.contentHandlers}
 									>
 										<div
+											ref={contextDetailsRef}
 											className="border rounded-lg p-3 shadow-xl"
 											style={{
 												backgroundColor: theme.colors.bgSidebar,

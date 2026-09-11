@@ -40,6 +40,7 @@ function reset() {
 	useContextTimelineStore.setState({
 		panelSessionId: null,
 		anchorRect: null,
+		sourceSize: null,
 		buffers: {},
 	});
 }
@@ -141,6 +142,32 @@ describe('contextTimelineStore', () => {
 		const s = useContextTimelineStore.getState();
 		expect(s.panelSessionId).toBe('other');
 		expect(s.buffers.other).toEqual({ points: [], trimmed: false });
+	});
+
+	it('togglePanel carries the measured popover size, and closing clears it', () => {
+		const rect = { top: 10, left: 20, bottom: 30, right: 120, width: 100, height: 20 };
+		const size = { width: 480, height: 512 };
+		const store = useContextTimelineStore.getState();
+
+		store.togglePanel(SID, rect, size);
+		expect(useContextTimelineStore.getState().sourceSize).toEqual(size);
+
+		store.togglePanel(SID, rect, size);
+		expect(useContextTimelineStore.getState().sourceSize).toBeNull();
+	});
+
+	it('an open with nothing measured does not inherit the previous open size', () => {
+		const store = useContextTimelineStore.getState();
+		store.openPanel(SID, null, { width: 480, height: 512 });
+		store.openPanel(SID);
+		expect(useContextTimelineStore.getState().sourceSize).toBeNull();
+	});
+
+	it('closePanel clears the measured size', () => {
+		const store = useContextTimelineStore.getState();
+		store.openPanel(SID, null, { width: 480, height: 512 });
+		store.closePanel();
+		expect(useContextTimelineStore.getState().sourceSize).toBeNull();
 	});
 
 	it('closePanel hides the panel but KEEPS the history', () => {

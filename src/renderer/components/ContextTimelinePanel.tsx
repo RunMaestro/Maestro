@@ -17,14 +17,22 @@
  * Anchored bottom-LEFT so it never collides with the Thought Stream (which docks
  * bottom-right inside the Right Panel). Closing hides it but KEEPS the history;
  * "Clear" wipes the focused session's recorded points.
+ *
+ * It is a HOVER surface, not a window: it closes once the pointer leaves both it
+ * and the gauge, and it never shares the screen with the Context Details popover
+ * the same gauge shows on hover (MainPanelHeader hides that one while this is
+ * open). The two are alternatives for one spot, so they default to one size.
  */
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Gauge, Trash2, BarChart3, LineChart } from 'lucide-react';
 import type { Theme } from '../types';
 import {
 	useContextTimelineStore,
 	selectPoints,
+	CONTEXT_SURFACE_CLOSE_DELAY_MS,
+	CONTEXT_SURFACE_GAP,
+	CONTEXT_SURFACE_WIDTH,
 	type ContextTimelinePoint,
 	type TimelineAnchorRect,
 } from '../stores/contextTimelineStore';
@@ -49,19 +57,16 @@ interface ContextTimelinePanelProps {
 }
 
 /**
- * Default panel size. The width is set by the WIDEST single line the body draws,
- * not by taste: the per-turn breakdown is `in / cache r / cache w / out` plus a
- * cost, each chip `whitespace-nowrap`, and the subtitle names the window and the
- * provider-reported caveat. At the old 360px both wrapped on every row, which
- * doubled the height of a row whose whole job is to be scanned quickly.
+ * Height used only when the panel opens with no Context Details popover on screen
+ * to measure (keyboard, programmatic open). The width is always
+ * CONTEXT_SURFACE_WIDTH, which that popover shares - see its doc in the store.
  */
-const PANEL_WIDTH = 560;
-const PANEL_HEIGHT = 620;
+const PANEL_FALLBACK_HEIGHT = 620;
 /** Narrower than this and the breakdown line starts wrapping again. */
 const PANEL_MIN_WIDTH = 380;
 const PANEL_MIN_HEIGHT = 260;
 const VIEWPORT_MARGIN = 8;
-const ANCHOR_GAP = 8;
+const ANCHOR_GAP = CONTEXT_SURFACE_GAP;
 /** Key under which the user's dragged size is remembered (settingsStore.modalSizes). */
 const PANEL_RESIZE_KEY = 'context-timeline';
 /** The header context gauge that opens this panel; re-queried for its live rect. */
@@ -133,14 +138,17 @@ export function ContextTimelinePanel({ theme }: ContextTimelinePanelProps) {
 	);
 	const closePanel = useContextTimelineStore((s) => s.closePanel);
 	const clearSession = useContextTimelineStore((s) => s.clearSession);
+	const sourceSize = useContextTimelineStore((s) => s.sourceSize);
 
-	// Drag-to-resize, remembered per user in settingsStore.modalSizes. `topLeft`
+	// Drag-to-resize, remembered per user in settingsStore.modalSizes - one key for
+	// every agent, so a size set on one is the size on all of them. `topLeft`
 	// rather than the default `center`: this panel is pinned to the gauge and
 	// grows from one edge, so a centered scale factor would move it twice as fast
-	// as the cursor.
+	// as the cursor. The DEFAULT is the popover the click replaced, so the swap
+	// lands in the same space; a dragged size still wins over it.
 	const resizable = useResizableModal({
 		resizeKey: PANEL_RESIZE_KEY,
-		defaultSize: { width: PANEL_WIDTH, height: PANEL_HEIGHT },
+		defaultSize: sourceSize ?? { width: CONTEXT_SURFACE_WIDTH, height: PANEL_FALLBACK_HEIGHT },
 		minSize: { width: PANEL_MIN_WIDTH, height: PANEL_MIN_HEIGHT },
 		anchor: 'topLeft',
 	});
@@ -212,8 +220,8 @@ export function ContextTimelinePanel({ theme }: ContextTimelinePanelProps) {
 	// above lower-z dialogs (Create PR, expanded Auto Run) that own the foreground.
 	const { hasOpenModal } = useLayerStack();
 
-	// The context gauge is now the only open/close control, so Escape is the
-	// keyboard's way out. Handled locally rather than through the layer stack for
+	// The gauge opens and closes it and moving the pointer away dismisses it, so
+	// Escape is the keyboard's way out. Handled locally rather than through the layer stack for
 	// the reason above, and gated on the panel actually being on screen: while a
 	// modal is open this component renders nothing, and swallowing that modal's
 	// Escape from behind it would be indistinguishable from the modal hanging.
@@ -224,6 +232,92 @@ export function ContextTimelinePanel({ theme }: ContextTimelinePanelProps) {
 		e.stopPropagation();
 		closePanel();
 	});
+
+	// Hover-dismiss. The panel closes once the pointer has left BOTH it and the
+	// gauge that opened it, after the same grace period the Context Details popover
+	// uses, so crossing the gap between them is not leaving. It is tracked from one
+	// window-level `mouseover` rather than onMouseLeave on each element because the
+	// gauge lives in MainPanelHeader and this panel in AppShell, and "is the pointer
+	// over either?" needs a single place to be asked. `mouseover`, not `mousemove`:
+	// a browser tab's <webview> keeps its pointer events to itself, so moving from
+	// the panel onto one produces no host mousemove at all, while the host still
+	// sees a mouseover targeting the webview element.
+	//
+	// Two things must NOT dismiss it. A resize drag routinely carries the pointer
+	// outside, so nothing closes while one is in progress and the check re-runs
+	// when it ends. And a panel opened from the keyboard, with the pointer parked
+	// elsewhere, stays until the pointer has actually been over it: `armed` is what
+	// separates hovering away from never having hovered at all.
+	const pointerInsideRef = useRef(false);
+	const hoverArmedRef = useRef(false);
+	const hoverDismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	const cancelHoverDismiss = useCallback(() => {
+		if (hoverDismissTimerRef.current) {
+			clearTimeout(hoverDismissTimerRef.current);
+			hoverDismissTimerRef.current = null;
+		}
+	}, []);
+
+	const evaluateHoverDismiss = useCallback(() => {
+		if (pointerInsideRef.current) hoverArmedRef.current = true;
+		if (!panelSessionId || resizable.isResizing || pointerInsideRef.current) {
+			cancelHoverDismiss();
+			return;
+		}
+		if (!hoverArmedRef.current || hoverDismissTimerRef.current) return;
+		hoverDismissTimerRef.current = setTimeout(() => {
+			hoverDismissTimerRef.current = null;
+			closePanel();
+		}, CONTEXT_SURFACE_CLOSE_DELAY_MS);
+	}, [panelSessionId, resizable.isResizing, cancelHoverDismiss, closePanel]);
+
+	// Each open starts from where the pointer actually is. A click leaves the gauge
+	// hovered (`:hover` also covers the popover, which is the gauge's descendant),
+	// so a mouse open is armed at once; a keyboard open is not. Declared before the
+	// re-check below so that effect reads this open's state, not the last one's.
+	useEffect(() => {
+		cancelHoverDismiss();
+		const gauge = panelSessionId ? document.querySelector(HEADER_CONTEXT_WIDGET_SELECTOR) : null;
+		const overGauge = !!gauge?.matches(':hover');
+		pointerInsideRef.current = overGauge;
+		hoverArmedRef.current = overGauge;
+	}, [panelSessionId, cancelHoverDismiss]);
+
+	// Re-check when the inputs change - chiefly a resize drag ending with the
+	// pointer already outside, which produces no further event to react to.
+	useEffect(() => {
+		evaluateHoverDismiss();
+	}, [evaluateHoverDismiss]);
+
+	useEffect(() => cancelHoverDismiss, [cancelHoverDismiss]);
+
+	useEventListener(
+		'mouseover',
+		(event: Event) => {
+			// Hidden behind a modal, the pointer is necessarily "outside" a panel that
+			// is not drawn, and that must not close it out from under the user.
+			if (hasOpenModal()) return;
+			const target = event.target instanceof Node ? event.target : null;
+			const panel = resizable.modalRef.current;
+			const gauge = document.querySelector(HEADER_CONTEXT_WIDGET_SELECTOR);
+			pointerInsideRef.current =
+				!!target && (!!panel?.contains(target) || !!gauge?.contains(target));
+			evaluateHoverDismiss();
+		},
+		{ enabled: !!panelSessionId }
+	);
+
+	// Leaving the window entirely targets nothing, so no mouseover fires for it.
+	useEventListener(
+		'mouseout',
+		(event: Event) => {
+			if ((event as MouseEvent).relatedTarget !== null || hasOpenModal()) return;
+			pointerInsideRef.current = false;
+			evaluateHoverDismiss();
+		},
+		{ enabled: !!panelSessionId }
+	);
 
 	// Auto-tail: when pinned to the top, follow new turns (newest is at the top).
 	useEffect(() => {
