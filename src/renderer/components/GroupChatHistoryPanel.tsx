@@ -10,6 +10,7 @@ import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import { Check, Send, MessageSquare, Layers, AlertTriangle, User } from 'lucide-react';
 import type { Theme } from '../types';
 import { useContextMenuPosition } from '../hooks/ui/useContextMenuPosition';
+import { useOptionalLabelFits } from '../hooks/ui/useOptionalLabelFits';
 import {
 	GROUP_CHAT_USER_NAME,
 	type GroupChatHistoryEntry,
@@ -421,17 +422,20 @@ interface GroupChatHistoryPanelProps {
 	onJumpToMessage?: (timestamp: number) => void;
 }
 
-// Type filter configuration for group chat history entry types
+// Type filter configuration for group chat history entry types.
+// `shortLabel` is what the filter pill prints, so all five fit one row in a
+// narrow panel; `label` stays the full word for tooltips and accessible names.
 const TYPE_FILTER_CONFIG: {
 	type: GroupChatHistoryEntryType;
 	label: string;
+	shortLabel: string;
 	icon: typeof Send;
 }[] = [
-	{ type: 'user', label: 'You', icon: User },
-	{ type: 'delegation', label: 'Delegation', icon: Send },
-	{ type: 'response', label: 'Response', icon: MessageSquare },
-	{ type: 'synthesis', label: 'Synthesis', icon: Layers },
-	{ type: 'error', label: 'Error', icon: AlertTriangle },
+	{ type: 'user', label: 'You', shortLabel: 'You', icon: User },
+	{ type: 'delegation', label: 'Delegation', shortLabel: 'Task', icon: Send },
+	{ type: 'response', label: 'Response', shortLabel: 'Reply', icon: MessageSquare },
+	{ type: 'synthesis', label: 'Synthesis', shortLabel: 'Synth', icon: Layers },
+	{ type: 'error', label: 'Error', shortLabel: 'Err', icon: AlertTriangle },
 ];
 
 // All entry types for default filter state
@@ -461,6 +465,10 @@ export function GroupChatHistoryPanel({
 	const activeFocus = useUIStore((s) => s.activeFocus);
 	const setActiveFocus = useUIStore((s) => s.setActiveFocus);
 	const panelRef = useRef<HTMLDivElement>(null);
+	const pillRowRef = useRef<HTMLDivElement>(null);
+	// The pill icons are the first thing to go when the row is too narrow.
+	// Wrapping to a second line is the last resort, only after they are gone.
+	const pillIconsFit = useOptionalLabelFits(pillRowRef);
 	const listRef = useRef<HTMLDivElement>(null);
 	const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -616,30 +624,37 @@ export function GroupChatHistoryPanel({
 			onKeyDown={handleKeyDown}
 			onClick={() => setActiveFocus('right')}
 		>
-			{/* Type Filter Pills */}
-			<div className="flex gap-1.5 flex-wrap mb-2 justify-center">
-				{TYPE_FILTER_CONFIG.map(({ type, label, icon: Icon }) => {
-					const isActive = activeFilters.has(type);
-					const colors = typePillColor;
-					return (
-						<button
-							key={type}
-							onClick={() => toggleFilter(type)}
-							className={`flex items-center gap-1 px-2 py-1 rounded-full text-2xs font-bold uppercase transition-all ${
-								isActive ? 'opacity-100' : 'opacity-40'
-							}`}
-							style={{
-								backgroundColor: isActive ? colors.bg : 'transparent',
-								color: isActive ? colors.text : theme.colors.textDim,
-								border: `1px solid ${isActive ? colors.border : theme.colors.border}`,
-							}}
-							title={`${isActive ? 'Hide' : 'Show'} ${label} entries`}
-						>
-							<Icon className="w-2.5 h-2.5" />
-							{label}
-						</button>
-					);
-				})}
+			{/* Type Filter Pills. The outer row clips so useOptionalLabelFits can
+			    read overflow; w-fit + mx-auto centers without hiding the left
+			    overflow the way justify-center would. */}
+			<div ref={pillRowRef} className="mb-2 overflow-hidden">
+				<div
+					className={`flex gap-1.5 w-fit mx-auto ${pillIconsFit ? '' : 'flex-wrap justify-center'}`}
+				>
+					{TYPE_FILTER_CONFIG.map(({ type, label, shortLabel, icon: Icon }) => {
+						const isActive = activeFilters.has(type);
+						const colors = typePillColor;
+						return (
+							<button
+								key={type}
+								onClick={() => toggleFilter(type)}
+								className={`shrink-0 whitespace-nowrap flex items-center gap-1 px-2 py-1 rounded-full text-2xs font-bold uppercase transition-all ${
+									isActive ? 'opacity-100' : 'opacity-40'
+								}`}
+								style={{
+									backgroundColor: isActive ? colors.bg : 'transparent',
+									color: isActive ? colors.text : theme.colors.textDim,
+									border: `1px solid ${isActive ? colors.border : theme.colors.border}`,
+								}}
+								aria-label={label}
+								title={`${isActive ? 'Hide' : 'Show'} ${label} entries`}
+							>
+								{pillIconsFit && <Icon className="w-2.5 h-2.5" />}
+								{shortLabel}
+							</button>
+						);
+					})}
+				</div>
 			</div>
 
 			{/* Activity Graph */}
