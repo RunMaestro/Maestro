@@ -44,6 +44,7 @@ import {
 } from '../../../main/group-chat/group-chat-moderator';
 import {
 	buildModeratorPromptSections,
+	markParticipantResponded,
 	routeModeratorResponse,
 	routeUserMessage,
 	spawnModeratorSynthesis,
@@ -453,6 +454,90 @@ describe('group-chat workflow routing', () => {
 			status: 'aborted',
 			abortReason: 'moderator-stage-guidance-exhausted',
 		});
+	});
+
+	it('passes a mid-run user redirect to the moderator with current plan context', async () => {
+		const chat = await createChatWithModerator('Workflow User Redirect');
+		setWorkflowRun(chat.id, approveRun(createRun(workflowPlan)));
+		vi.mocked(mockProcessManager.spawn).mockClear();
+
+		await routeUserMessage(
+			chat.id,
+			'Have @Builder verify the edge cases before continuing.',
+			mockProcessManager,
+			mockAgentDetector
+		);
+
+		expect(getWorkflowRun(chat.id)?.status).toBe('running');
+		expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
+		const prompt = vi.mocked(mockProcessManager.spawn).mock.calls[0]?.[0]?.prompt ?? '';
+		expect(prompt).toContain('## Active Workflow Plan');
+		expect(prompt).toContain('Stage 1 of 1: Build');
+		expect(prompt).toContain('Have @Builder verify the edge cases before continuing.');
+	});
+
+	it('cancels a running workflow and clears pending participant tracking', async () => {
+		const chat = await createChatWithModerator('Workflow Mid-run Cancel');
+		await addParticipant(chat.id, 'Builder', 'claude-code', mockProcessManager);
+		setWorkflowRun(chat.id, approveRun(createRun(workflowPlan)));
+		const emitMessage = vi.fn();
+		groupChatEmitters.emitMessage = emitMessage;
+		vi.mocked(mockProcessManager.spawn).mockClear();
+
+		await routeModeratorResponse(
+			chat.id,
+			'@Builder Please implement the current stage.',
+			mockProcessManager,
+			mockAgentDetector
+		);
+		expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
+
+		vi.mocked(mockProcessManager.spawn).mockClear();
+		await routeUserMessage(chat.id, 'Never mind.', mockProcessManager, mockAgentDetector);
+
+		expect(getWorkflowRun(chat.id)).toMatchObject({
+			status: 'aborted',
+			abortReason: 'user-cancelled',
+		});
+		expect(markParticipantResponded(chat.id, 'Builder')).toBe(false);
+		expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+		expect(emitMessage).toHaveBeenCalledWith(
+			chat.id,
+			expect.objectContaining({ from: 'system', content: 'Workflow cancelled.' })
+		);
+	});
+
+	it('supersedes a running workflow with a new approval-gated plan', async () => {
+		const chat = await createChatWithModerator('Workflow Mid-run Replacement');
+		setWorkflowRun(chat.id, approveRun(createRun(workflowPlan)));
+		const emitMessage = vi.fn();
+		groupChatEmitters.emitMessage = emitMessage;
+		vi.mocked(mockProcessManager.spawn).mockClear();
+
+		await routeUserMessage(
+			chat.id,
+			'```maestro-plan\n{"title":"Revised release","stages":[{"name":"Audit","agents":["Reviewer"],"instruction":"Audit the release"}]}\n```',
+			mockProcessManager,
+			mockAgentDetector
+		);
+
+		expect(getWorkflowRun(chat.id)).toMatchObject({
+			status: 'awaiting-approval',
+			currentStageIndex: 0,
+			plan: {
+				title: 'Revised release',
+				stages: [expect.objectContaining({ name: 'Audit', agents: ['Reviewer'] })],
+			},
+		});
+		expect(emitMessage).toHaveBeenCalledWith(
+			chat.id,
+			expect.objectContaining({
+				from: 'system',
+				content:
+					'Previous workflow superseded by a new plan; approval is required before execution resumes.',
+			})
+		);
+		expect(mockProcessManager.spawn).not.toHaveBeenCalled();
 	});
 
 	it('intercepts a moderator plan without dispatching participants or starting synthesis', async () => {
