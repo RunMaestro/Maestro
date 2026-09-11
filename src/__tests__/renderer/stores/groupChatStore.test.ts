@@ -10,6 +10,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
 	useGroupChatStore,
 	isGroupChatVisibleInWindow,
+	selectActiveGroupChatStagedImages,
 } from '../../../renderer/stores/groupChatStore';
 import type {
 	GroupChatRightTab,
@@ -92,7 +93,7 @@ describe('groupChatStore', () => {
 			expect(state.groupChatReadOnlyMode).toBe(false);
 			expect(state.groupChatRightTab).toBe('participants');
 			expect(state.groupChatParticipantColors).toEqual({});
-			expect(state.groupChatStagedImages).toEqual([]);
+			expect(state.groupChatStagedImagesById).toEqual({});
 			expect(state.groupChatError).toBeNull();
 			expect(state.initiatorWindowId).toBeNull();
 		});
@@ -398,16 +399,64 @@ describe('groupChatStore', () => {
 			});
 		});
 
-		it('sets staged images', () => {
+		it('sets staged images on the active chat', () => {
 			const images = ['base64img1', 'base64img2'];
+			useGroupChatStore.getState().setActiveGroupChatId('gc-1');
 			useGroupChatStore.getState().setGroupChatStagedImages(images);
-			expect(useGroupChatStore.getState().groupChatStagedImages).toEqual(images);
+			expect(selectActiveGroupChatStagedImages(useGroupChatStore.getState())).toEqual(images);
 		});
 
 		it('appends staged images with functional updater', () => {
+			useGroupChatStore.getState().setActiveGroupChatId('gc-1');
 			useGroupChatStore.getState().setGroupChatStagedImages(['img1']);
 			useGroupChatStore.getState().setGroupChatStagedImages((prev) => [...prev, 'img2']);
-			expect(useGroupChatStore.getState().groupChatStagedImages).toEqual(['img1', 'img2']);
+			expect(selectActiveGroupChatStagedImages(useGroupChatStore.getState())).toEqual([
+				'img1',
+				'img2',
+			]);
+		});
+
+		it('keeps staged images scoped to the chat they were pasted into', () => {
+			const store = useGroupChatStore.getState();
+			store.setActiveGroupChatId('gc-1');
+			store.setGroupChatStagedImages(['screenshot']);
+
+			// Switching rooms must not carry the screenshot along.
+			store.setActiveGroupChatId('gc-2');
+			expect(selectActiveGroupChatStagedImages(useGroupChatStore.getState())).toEqual([]);
+
+			// Switching back restores it, like the text draft.
+			store.setActiveGroupChatId('gc-1');
+			expect(selectActiveGroupChatStagedImages(useGroupChatStore.getState())).toEqual([
+				'screenshot',
+			]);
+		});
+
+		it('targets an explicit chat id instead of the active chat', () => {
+			const store = useGroupChatStore.getState();
+			store.setActiveGroupChatId('gc-2');
+			store.setGroupChatStagedImages((prev) => [...prev, 'late-read'], 'gc-1');
+
+			expect(useGroupChatStore.getState().groupChatStagedImagesById).toEqual({
+				'gc-1': ['late-read'],
+			});
+			expect(selectActiveGroupChatStagedImages(useGroupChatStore.getState())).toEqual([]);
+		});
+
+		it('drops the key when a chat is cleared and ignores writes with no chat', () => {
+			const store = useGroupChatStore.getState();
+			store.setGroupChatStagedImages(['orphan']);
+			expect(useGroupChatStore.getState().groupChatStagedImagesById).toEqual({});
+
+			store.setGroupChatStagedImages(['img'], 'gc-1');
+			store.setGroupChatStagedImages([], 'gc-1');
+			expect(useGroupChatStore.getState().groupChatStagedImagesById).toEqual({});
+		});
+
+		it('returns a stable empty array when nothing is staged', () => {
+			const first = selectActiveGroupChatStagedImages(useGroupChatStore.getState());
+			useGroupChatStore.getState().setActiveGroupChatId('gc-1');
+			expect(selectActiveGroupChatStagedImages(useGroupChatStore.getState())).toBe(first);
 		});
 	});
 
@@ -519,7 +568,7 @@ describe('groupChatStore', () => {
 
 			// Non-active fields should be preserved
 			expect(useGroupChatStore.getState().groupChats).toHaveLength(1);
-			expect(useGroupChatStore.getState().groupChatStagedImages).toEqual(['img1']);
+			expect(useGroupChatStore.getState().groupChatStagedImagesById).toEqual({ 'gc-1': ['img1'] });
 			expect(useGroupChatStore.getState().groupChatRightTab).toBe('history');
 		});
 
@@ -635,7 +684,7 @@ describe('groupChatStore', () => {
 			expect(state.groupChatReadOnlyMode).toBe(false);
 			expect(state.groupChatRightTab).toBe('participants');
 			expect(state.groupChatParticipantColors).toEqual({});
-			expect(state.groupChatStagedImages).toEqual([]);
+			expect(state.groupChatStagedImagesById).toEqual({});
 			expect(state.groupChatError).toBeNull();
 			expect(state.initiatorWindowId).toBeNull();
 		});

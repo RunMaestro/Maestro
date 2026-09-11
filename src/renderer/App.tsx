@@ -155,7 +155,11 @@ import { useModalActions, useModalStore } from './stores/modalStore';
 import { GitStatusProvider } from './contexts/GitStatusContext';
 import { WindowProvider, useWindowContextOptional } from './contexts/WindowContext';
 import { InputProvider, useInputContext } from './contexts/InputContext';
-import { useGroupChatStore, isGroupChatVisibleInWindow } from './stores/groupChatStore';
+import {
+	useGroupChatStore,
+	isGroupChatVisibleInWindow,
+	selectActiveGroupChatStagedImages,
+} from './stores/groupChatStore';
 import { useBatchStore } from './stores/batchStore';
 import { registerBatchResumer } from './stores/retryStore';
 // All session state is read directly from useSessionStore in MaestroConsoleInner.
@@ -760,7 +764,7 @@ function MaestroConsoleInner() {
 	const activeGroupChatId = useGroupChatStore((s) => s.activeGroupChatId);
 	const groupChatMessages = useGroupChatStore((s) => s.groupChatMessages);
 	const groupChatState = useGroupChatStore((s) => s.groupChatState);
-	const groupChatStagedImages = useGroupChatStore((s) => s.groupChatStagedImages);
+	const groupChatStagedImages = useGroupChatStore(selectActiveGroupChatStagedImages);
 	const groupChatReadOnlyMode = useGroupChatStore((s) => s.groupChatReadOnlyMode);
 	const groupChatExecutionQueue = useGroupChatStore((s) => s.groupChatExecutionQueue);
 	const groupChatRightTab = useGroupChatStore((s) => s.groupChatRightTab);

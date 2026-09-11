@@ -1857,7 +1857,9 @@ describe('useInputHandlers', () => {
 				});
 
 				expect(pasteEvent.preventDefault).toHaveBeenCalled();
-				expect(mockSetGroupChatStagedImages).toHaveBeenCalled();
+				// Addressed to the room active at paste time, not whichever is active
+				// when the FileReader resolves.
+				expect(mockSetGroupChatStagedImages).toHaveBeenCalledWith(expect.any(Function), 'group-1');
 			} finally {
 				global.FileReader = originalFileReader;
 			}

@@ -36,7 +36,10 @@ import {
 	type UsePromptComposerHandlersDeps,
 } from '../../../renderer/hooks/modal/usePromptComposerHandlers';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
-import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
+import {
+	useGroupChatStore,
+	selectActiveGroupChatStagedImages,
+} from '../../../renderer/stores/groupChatStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useComposerInputStore } from '../../../renderer/stores/composerInputStore';
 
@@ -144,7 +147,7 @@ const initialGroupChatState = {
 	groupChatReadOnlyMode: false,
 	groupChatRightTab: 'participants' as const,
 	groupChatParticipantColors: {},
-	groupChatStagedImages: [],
+	groupChatStagedImagesById: {},
 	groupChatError: null,
 };
 
@@ -380,7 +383,7 @@ describe('usePromptComposerHandlers', () => {
 				useGroupChatStore.setState({
 					activeGroupChatId: 'gc-send',
 					groupChats: [{ id: 'gc-send', name: 'Chat', draftMessage: 'hello' } as any],
-					groupChatStagedImages: [],
+					groupChatStagedImagesById: {},
 					groupChatReadOnlyMode: false,
 				});
 
@@ -402,7 +405,10 @@ describe('usePromptComposerHandlers', () => {
 				useGroupChatStore.setState({
 					activeGroupChatId: 'gc-img',
 					groupChats: [{ id: 'gc-img', name: 'Chat', draftMessage: '' } as any],
-					groupChatStagedImages: ['data:image/png;base64,abc', 'data:image/png;base64,def'],
+					groupChatStagedImagesById: {
+						'gc-img': ['data:image/png;base64,abc', 'data:image/png;base64,def'],
+						'gc-other': ['data:image/png;base64,other'],
+					},
 					groupChatReadOnlyMode: false,
 				});
 
@@ -424,7 +430,7 @@ describe('usePromptComposerHandlers', () => {
 				useGroupChatStore.setState({
 					activeGroupChatId: 'gc-no-img',
 					groupChats: [{ id: 'gc-no-img', name: 'Chat', draftMessage: '' } as any],
-					groupChatStagedImages: [],
+					groupChatStagedImagesById: {},
 					groupChatReadOnlyMode: false,
 				});
 
@@ -446,7 +452,7 @@ describe('usePromptComposerHandlers', () => {
 				useGroupChatStore.setState({
 					activeGroupChatId: 'gc-ro',
 					groupChats: [{ id: 'gc-ro', name: 'Chat', draftMessage: '' } as any],
-					groupChatStagedImages: [],
+					groupChatStagedImagesById: {},
 					groupChatReadOnlyMode: true,
 				});
 
@@ -468,7 +474,10 @@ describe('usePromptComposerHandlers', () => {
 				useGroupChatStore.setState({
 					activeGroupChatId: 'gc-clear-img',
 					groupChats: [{ id: 'gc-clear-img', name: 'Chat', draftMessage: '' } as any],
-					groupChatStagedImages: ['data:image/png;base64,img1'],
+					groupChatStagedImagesById: {
+						'gc-clear-img': ['data:image/png;base64,img1'],
+						'gc-other': ['data:image/png;base64,other'],
+					},
 					groupChatReadOnlyMode: false,
 				});
 
@@ -479,7 +488,11 @@ describe('usePromptComposerHandlers', () => {
 					result.current.handlePromptComposerSend('send and clear');
 				});
 
-				expect(useGroupChatStore.getState().groupChatStagedImages).toEqual([]);
+				expect(selectActiveGroupChatStagedImages(useGroupChatStore.getState())).toEqual([]);
+				// Only the room that sent loses its staged images.
+				expect(useGroupChatStore.getState().groupChatStagedImagesById).toEqual({
+					'gc-other': ['data:image/png;base64,other'],
+				});
 			});
 
 			it('clears the draft message on the active chat after sending', () => {
@@ -488,7 +501,7 @@ describe('usePromptComposerHandlers', () => {
 					groupChats: [
 						{ id: 'gc-draft-clear', name: 'Chat', draftMessage: 'pending draft' } as any,
 					],
-					groupChatStagedImages: [],
+					groupChatStagedImagesById: {},
 					groupChatReadOnlyMode: false,
 				});
 
@@ -511,7 +524,7 @@ describe('usePromptComposerHandlers', () => {
 						{ id: 'gc-active', name: 'Active', draftMessage: 'will be cleared' } as any,
 						{ id: 'gc-other', name: 'Other', draftMessage: 'untouched' } as any,
 					],
-					groupChatStagedImages: [],
+					groupChatStagedImagesById: {},
 					groupChatReadOnlyMode: false,
 				});
 
@@ -533,7 +546,7 @@ describe('usePromptComposerHandlers', () => {
 				useGroupChatStore.setState({
 					activeGroupChatId: 'gc-no-ai',
 					groupChats: [{ id: 'gc-no-ai', name: 'Chat', draftMessage: '' } as any],
-					groupChatStagedImages: [],
+					groupChatStagedImagesById: {},
 					groupChatReadOnlyMode: false,
 				});
 

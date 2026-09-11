@@ -809,7 +809,12 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	const handlePaste = useCallback(
 		(e: React.ClipboardEvent) => {
 			const activeSession = selectActiveSession(useSessionStore.getState());
-			const isGroupChatActive = !!useGroupChatStore.getState().activeGroupChatId;
+			const groupChatId = useGroupChatStore.getState().activeGroupChatId;
+			const isGroupChatActive = !!groupChatId;
+			// Bound now, not when the FileReader resolves: the image belongs to the
+			// room it was pasted into, even if the user switches rooms meanwhile.
+			const stageGroupChatImages = (v: (prev: string[]) => string[]) =>
+				setGroupChatStagedImages(v, groupChatId);
 			const isDirectAIMode = activeSession && activeSession.inputMode === 'ai';
 
 			const items = e.clipboardData.items;
@@ -863,7 +868,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 							if (event.target?.result) {
 								const imageData = event.target!.result as string;
 								if (isGroupChatActive) {
-									setGroupChatStagedImages((prev: string[]) => {
+									stageGroupChatImages((prev: string[]) => {
 										if (prev.includes(imageData)) {
 											setSuccessFlashNotification('Duplicate image ignored');
 											setTimeout(() => setSuccessFlashNotification(null), 2000);
@@ -1039,7 +1044,12 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			setIsDraggingFile(false);
 
 			const activeSession = selectActiveSession(useSessionStore.getState());
-			const isGroupChatActive = !!useGroupChatStore.getState().activeGroupChatId;
+			const groupChatId = useGroupChatStore.getState().activeGroupChatId;
+			const isGroupChatActive = !!groupChatId;
+			// Bound now, not when the FileReader resolves: the image belongs to the
+			// room it was pasted into, even if the user switches rooms meanwhile.
+			const stageGroupChatImages = (v: (prev: string[]) => string[]) =>
+				setGroupChatStagedImages(v, groupChatId);
 			const isDirectAIMode = activeSession && activeSession.inputMode === 'ai';
 
 			// Neither command rung has an agent to hand attachments (or @mentions)
@@ -1158,7 +1168,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 						if (event.target?.result) {
 							const imageData = event.target!.result as string;
 							if (isGroupChatActive) {
-								setGroupChatStagedImages((prev: string[]) => {
+								stageGroupChatImages((prev: string[]) => {
 									if (prev.includes(imageData)) {
 										setSuccessFlashNotification('Duplicate image ignored');
 										setTimeout(() => setSuccessFlashNotification(null), 2000);

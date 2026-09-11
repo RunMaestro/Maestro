@@ -57,7 +57,7 @@ const initialGroupChatState = {
 	groupChatReadOnlyMode: false,
 	groupChatRightTab: 'participants' as const,
 	groupChatParticipantColors: {},
-	groupChatStagedImages: [],
+	groupChatStagedImagesById: {},
 	participantLiveOutput: new Map(),
 	groupChatError: null,
 };
@@ -406,6 +406,22 @@ describe('useGroupChatHandlers', () => {
 			const chats = useGroupChatStore.getState().groupChats;
 			expect(chats.length).toBe(1);
 			expect(chats[0].id).toBe('gc-2');
+		});
+
+		it('drops the deleted chat staged images and keeps other rooms intact', async () => {
+			useGroupChatStore.setState({
+				groupChats: [{ id: 'gc-1', name: 'Chat 1' } as any, { id: 'gc-2', name: 'Chat 2' } as any],
+				groupChatStagedImagesById: { 'gc-1': ['img-a'], 'gc-2': ['img-b'] },
+			});
+
+			const { result } = renderHook(() => useGroupChatHandlers());
+			await act(async () => {
+				await result.current.handleDeleteGroupChat('gc-1');
+			});
+
+			expect(useGroupChatStore.getState().groupChatStagedImagesById).toEqual({
+				'gc-2': ['img-b'],
+			});
 		});
 
 		it('closes active group chat if deleting the active one', async () => {

@@ -610,11 +610,13 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 
 	const handleDeleteGroupChat = useCallback(
 		async (id: string) => {
-			const { activeGroupChatId, groupChats, setGroupChats } = useGroupChatStore.getState();
+			const { activeGroupChatId, groupChats, setGroupChats, setGroupChatStagedImages } =
+				useGroupChatStore.getState();
 			const { closeModal } = useModalStore.getState();
 			const priorChats = groupChats;
 			await window.maestro.groupChat.delete(id);
 			setGroupChats((prev) => prev.filter((c) => c.id !== id));
+			setGroupChatStagedImages([], id);
 			if (activeGroupChatId === id) {
 				await focusNextGroupChatAfterDelete(id, priorChats);
 			}

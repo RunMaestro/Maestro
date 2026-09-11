@@ -91,7 +91,13 @@ export interface GroupChatStoreState {
 	// UI
 	groupChatRightTab: GroupChatRightTab;
 	groupChatParticipantColors: Record<string, string>;
-	groupChatStagedImages: string[];
+	/**
+	 * Images staged in each room's composer, keyed by group chat id. Keyed like
+	 * `draftMessage` so a screenshot pasted into one room never rides along into
+	 * another after a switch. Read the active room's list through
+	 * `selectActiveGroupChatStagedImages`. A room with nothing staged has no key.
+	 */
+	groupChatStagedImagesById: Record<string, string[]>;
 	/**
 	 * True when the room shows only the user <-> moderator conversation, hiding
 	 * delegations and participant replies from both the message list and the
@@ -167,7 +173,16 @@ export interface GroupChatStoreActions {
 	setGroupChatParticipantColors: (
 		v: Record<string, string> | ((prev: Record<string, string>) => Record<string, string>)
 	) => void;
-	setGroupChatStagedImages: (v: string[] | ((prev: string[]) => string[])) => void;
+	/**
+	 * Set one room's staged images. `groupChatId` defaults to the active room;
+	 * pass it explicitly from async work (a FileReader) so the image lands in the
+	 * room it was pasted into even if the user switched rooms meanwhile. A no-op
+	 * when there is no room to own the images.
+	 */
+	setGroupChatStagedImages: (
+		v: string[] | ((prev: string[]) => string[]),
+		groupChatId?: string | null
+	) => void;
 	/** Set the moderator-only view preference and persist it. */
 	setGroupChatModeratorOnly: (v: boolean | ((prev: boolean) => boolean)) => void;
 	/** Flip between the team view and the moderator-only view. */
@@ -223,6 +238,17 @@ export function isGroupChatVisibleInWindow(
 	return initiatorWindowId === windowId;
 }
 
+const EMPTY_GROUP_CHAT_STAGED_IMAGES: string[] = [];
+
+/**
+ * The active room's staged images. Returns one stable empty array when nothing
+ * is staged, so subscribers do not re-render on a fresh `[]` every read.
+ */
+export function selectActiveGroupChatStagedImages(state: GroupChatStoreState): string[] {
+	const id = state.activeGroupChatId;
+	return (id && state.groupChatStagedImagesById[id]) || EMPTY_GROUP_CHAT_STAGED_IMAGES;
+}
+
 // ============================================================================
 // Store
 // ============================================================================
@@ -242,7 +268,7 @@ export const useGroupChatStore = create<GroupChatStore>()((set) => ({
 	groupChatReadOnlyMode: false,
 	groupChatRightTab: 'participants' as GroupChatRightTab,
 	groupChatParticipantColors: {},
-	groupChatStagedImages: [],
+	groupChatStagedImagesById: {},
 	groupChatModeratorOnly: readStoredModeratorOnlyView(),
 	participantLiveOutput: new Map(),
 	groupChatError: null,
@@ -289,8 +315,18 @@ export const useGroupChatStore = create<GroupChatStore>()((set) => ({
 	setGroupChatRightTab: (v) => set((s) => ({ groupChatRightTab: resolve(v, s.groupChatRightTab) })),
 	setGroupChatParticipantColors: (v) =>
 		set((s) => ({ groupChatParticipantColors: resolve(v, s.groupChatParticipantColors) })),
-	setGroupChatStagedImages: (v) =>
-		set((s) => ({ groupChatStagedImages: resolve(v, s.groupChatStagedImages) })),
+	setGroupChatStagedImages: (v, groupChatId) =>
+		set((s) => {
+			const id = groupChatId ?? s.activeGroupChatId;
+			if (!id) return {};
+			const prev = s.groupChatStagedImagesById[id] ?? EMPTY_GROUP_CHAT_STAGED_IMAGES;
+			const next = resolve(v, prev);
+			if (next === prev) return {};
+			const byId = { ...s.groupChatStagedImagesById };
+			if (next.length === 0) delete byId[id];
+			else byId[id] = next;
+			return { groupChatStagedImagesById: byId };
+		}),
 	setGroupChatModeratorOnly: (v) =>
 		set((s) => {
 			const next = resolve(v, s.groupChatModeratorOnly);
