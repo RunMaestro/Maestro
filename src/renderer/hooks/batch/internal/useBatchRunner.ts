@@ -1641,6 +1641,7 @@ export function useBatchRunner({
 					outputTokens: finalTotals.totalOutputTokens,
 					totalCostUsd: finalTotals.totalCost,
 					documentsProcessed: documents.length,
+					result: finalDetails,
 				});
 			}
 

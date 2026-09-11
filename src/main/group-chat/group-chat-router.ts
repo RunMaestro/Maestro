@@ -2054,15 +2054,49 @@ export async function routeModeratorResponse(
 		// Hands one Auto Run to the renderer's batch processor. Returns whether it
 		// actually started, so a delegation parked behind a busy agent can replay
 		// it later and still be closed out if it turns out to be unrunnable.
-		const startAutoRunFor = (
+		const startAutoRunFor = async (
 			participant: GroupChatParticipant,
 			matchingSession: GroupChatSessionInfo | undefined,
 			targetFilename: string | undefined
-		): boolean => {
+		): Promise<boolean> => {
 			if (!matchingSession?.autoRunFolderPath) {
 				console.warn(
 					`[GroupChat:Debug] No autoRunFolderPath configured for ${participant.name} - skipping`
 				);
+				const activeRun = getWorkflowRun(groupChatId);
+				const activeStage =
+					activeRun?.status === 'running'
+						? activeRun.plan.stages[activeRun.currentStageIndex]
+						: undefined;
+				if (
+					activeRun &&
+					activeStage?.autoRun &&
+					mentionMatches(activeStage.autoRun.participantName, participant.name)
+				) {
+					const reason = `Auto Run stage "${activeStage.name}" cannot start because @${normalizeMentionName(participant.name)} has no Auto Run folder configured.`;
+					const failedRun = failWorkflowStage(groupChatId, reason);
+					clearPendingParticipants(groupChatId);
+					await announceToChat(
+						groupChatId,
+						updatedChat.logPath,
+						`Stage ${activeRun.currentStageIndex + 1} of ${activeRun.plan.stages.length} failed: ${activeStage.name}. ${reason}`
+					);
+					await recordGroupChatHistory(groupChatId, {
+						timestamp: Date.now(),
+						summary: reason,
+						participantName: 'Moderator',
+						participantColor: '#808080',
+						type: 'error',
+						fullResponse: reason,
+					});
+					if (failedRun) {
+						await cleanupWorkflowRunArtifacts(groupChatId, failedRun);
+					}
+					settleGroupChatToIdle(groupChatId);
+					// The missing-folder condition is fully handled here. Returning true
+					// prevents a queued delegation from adding a second generic warning.
+					return true;
+				}
 				groupChatEmitters.emitMessage?.(groupChatId, {
 					timestamp: new Date().toISOString(),
 					from: 'system',
@@ -2157,7 +2191,7 @@ export async function routeModeratorResponse(
 				continue;
 			}
 
-			startAutoRunFor(participant, matchingSession, targetFilename);
+			await startAutoRunFor(participant, matchingSession, targetFilename);
 		}
 		logger.debug(`[GroupChat:Debug] =================================================`);
 	}

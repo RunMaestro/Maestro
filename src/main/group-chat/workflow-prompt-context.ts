@@ -8,6 +8,7 @@ import type {
 	GroupChatWorkflowRun,
 	GroupChatWorkflowStage,
 } from '../../shared/group-chat-workflow-types';
+import { normalizeMentionName } from '../../shared/group-chat-types';
 import { formatHandoffForPrompt } from './workflow-handoff';
 
 function asOneLine(value: string): string {
@@ -15,10 +16,10 @@ function asOneLine(value: string): string {
 }
 
 function formatStageTargets(stage: GroupChatWorkflowStage): string {
-	const targets = stage.agents.map((agent) => `@${agent}`);
+	const targets = stage.agents.map((agent) => `@${normalizeMentionName(agent)}`);
 	if (stage.autoRun) {
 		targets.push(
-			`Auto Run @${stage.autoRun.participantName}${stage.autoRun.filename ? ` (${stage.autoRun.filename})` : ''}`
+			`Auto Run @${normalizeMentionName(stage.autoRun.participantName)}${stage.autoRun.filename ? ` (${stage.autoRun.filename})` : ''}`
 		);
 	}
 	return targets.join(', ');
@@ -101,12 +102,15 @@ export function buildCurrentStageContext(run: GroupChatWorkflowRun): string {
 			}`
 		: '(none; this is the first stage)';
 	const currentResponseContext = currentHandoff ? formatParticipantHandoffs(currentHandoff) : '';
+	const autoRunDirective = stage.autoRun
+		? `!autorun @${normalizeMentionName(stage.autoRun.participantName)}${stage.autoRun.filename ? `:${stage.autoRun.filename}` : ''}`
+		: undefined;
 
 	return `## Current Stage
 Stage ${run.currentStageIndex + 1} of ${run.plan.stages.length}: ${stage.name}
 Mode: ${stage.mode}
-Agents: ${stage.agents.map((agent) => `@${agent}`).join(', ') || '(none)'}
-${stage.autoRun ? `Auto Run: @${stage.autoRun.participantName}${stage.autoRun.filename ? ` (${stage.autoRun.filename})` : ''}\n` : ''}Instruction: ${stage.instruction}
+Agents: ${stage.agents.map((agent) => `@${normalizeMentionName(agent)}`).join(', ') || '(none)'}
+${stage.autoRun ? `Auto Run: @${normalizeMentionName(stage.autoRun.participantName)}${stage.autoRun.filename ? ` (${stage.autoRun.filename})` : ''}\nRequired Auto Run directive: ${autoRunDirective}\n` : ''}Instruction: ${stage.instruction}
 Expected output: ${stage.expects || '(not specified)'}
 
 ### Previous Stage Handoff

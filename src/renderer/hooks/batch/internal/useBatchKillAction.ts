@@ -197,6 +197,7 @@ export function useBatchKillAction({
 							outputTokens: finalTotals.totalOutputTokens,
 							totalCostUsd: finalTotals.totalCost,
 							documentsProcessed: flushState.getDocumentsProcessed(),
+							result: `Auto Run stopped: completed ${finalTotals.totalCompletedTasks} of ${Math.max(flushState.getTotalTasks(), finalTotals.totalCompletedTasks)} tasks across ${flushState.getDocumentsProcessed()} document(s).`,
 						});
 					} catch (completeError) {
 						logger.error(

@@ -219,6 +219,25 @@ describe('Group Chat workflow IPC', () => {
 		expect(groupChatRouter.settleGroupChatToIdle).toHaveBeenCalledWith('chat-1');
 	});
 
+	it('routes the complete Auto Run result through the participant handoff path', async () => {
+		vi.mocked(groupChatRouter.markParticipantResponded).mockReturnValue(false);
+		const batchOutput = `Release completed.\n\n${'Detailed batch output. '.repeat(250)}`;
+
+		await handlers.get('groupChat:reportAutoRunComplete')!(
+			{},
+			'chat-1',
+			'Release Agent',
+			batchOutput
+		);
+
+		expect(groupChatRouter.routeAgentResponse).toHaveBeenCalledWith(
+			'chat-1',
+			'Release Agent',
+			batchOutput,
+			processManager
+		);
+	});
+
 	it('emits every stored, approved, advanced, failed, aborted, and cleared transition', async () => {
 		const expectLastEmission = (expectedRun: object | null): void => {
 			expect(webContentsSend).toHaveBeenLastCalledWith(

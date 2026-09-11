@@ -44,13 +44,19 @@ vi.mock('electron-store', () => {
 
 vi.mock('../../../main/prompt-manager', () => ({
 	getPrompt: vi.fn((id: string) => {
+		if (id === 'group-chat-workflow-stage') {
+			const fs = require('fs');
+			const path = require('path');
+			return fs.readFileSync(
+				path.resolve(__dirname, '../../../../src/prompts/group-chat-workflow-stage.md'),
+				'utf8'
+			);
+		}
 		const prompts: Record<string, string> = {
 			'group-chat-moderator-system':
 				'You are a Group Chat Moderator.\n\n{{CONDUCTOR_PROFILE}}\n\nCoordinate multiple AI agents using @mentions.',
 			'group-chat-workflow-planning':
 				'Plan multi-stage workflows and wait for user approval before dispatch.',
-			'group-chat-workflow-stage':
-				'Work only on the current stage and emit a stage directive when it ends.',
 			'group-chat-moderator-synthesis':
 				'Review the agents responses and synthesize a coherent answer.',
 		};
@@ -210,8 +216,10 @@ describe('group-chat-moderator', () => {
 
 		it('workflow stage prompt contains the execution boundary', () => {
 			const stagePrompt = getWorkflowStagePrompt();
-			expect(stagePrompt).toContain('only on the current stage');
+			expect(stagePrompt).toContain('ONLY on the current stage');
 			expect(stagePrompt).toContain('stage directive');
+			expect(stagePrompt).toContain('Required Auto Run directive');
+			expect(stagePrompt).toContain('nothing else');
 		});
 	});
 

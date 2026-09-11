@@ -573,11 +573,15 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 			// This MUST succeed for the moderator to receive the result and continue the conversation.
 			const gcAutoRun = consumeGroupChatAutoRun(info.sessionId);
 			if (gcAutoRun) {
-				const summary = info.wasStopped
+				const fallbackSummary = info.wasStopped
 					? `Auto Run stopped: completed ${info.completedTasks} of ${info.totalTasks} tasks across ${info.documentsProcessed} document(s).`
 					: `Auto Run complete: ${info.completedTasks}/${info.totalTasks} tasks finished across ${info.documentsProcessed} document(s).`;
 				window.maestro.groupChat
-					.reportAutoRunComplete(gcAutoRun.groupChatId, gcAutoRun.participantName, summary)
+					.reportAutoRunComplete(
+						gcAutoRun.groupChatId,
+						gcAutoRun.participantName,
+						info.result || fallbackSummary
+					)
 					.catch((err) => {
 						logger.error('[GroupChat] Failed to report auto run complete:', undefined, err);
 						// Surface the failure so the user knows synthesis will not trigger automatically.

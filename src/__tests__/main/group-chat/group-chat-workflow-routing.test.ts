@@ -44,9 +44,11 @@ import {
 } from '../../../main/group-chat/group-chat-moderator';
 import {
 	buildModeratorPromptSections,
+	clearPendingParticipants,
 	markParticipantResponded,
 	routeModeratorResponse,
 	routeUserMessage,
+	setGetSessionsCallback,
 	spawnModeratorSynthesis,
 } from '../../../main/group-chat/group-chat-router';
 import {
@@ -119,6 +121,8 @@ describe('group-chat workflow routing', () => {
 		resetAllWorkflowRuns();
 		groupChatEmitters.emitMessage = undefined;
 		groupChatEmitters.emitStateChange = undefined;
+		groupChatEmitters.emitAutoRunTriggered = undefined;
+		setGetSessionsCallback(() => []);
 		await fs.rm(testDir, { recursive: true, force: true });
 		vi.clearAllMocks();
 	});
@@ -201,6 +205,127 @@ describe('group-chat workflow routing', () => {
 		expect(executionPrompt).toContain('From Build: The implementation and tests are ready.');
 		expect(executionPrompt).toContain('Full output: src/feature.ts');
 		expect(executionPrompt).toContain('Full output: src/feature.test.ts');
+	});
+
+	it('supplies the one exact directive required to start an Auto Run stage', () => {
+		const autoRunPlan: GroupChatWorkflowPlan = {
+			...workflowPlan,
+			stages: [
+				{
+					id: 'stage-autorun',
+					name: 'Execute playbook',
+					agents: [],
+					mode: 'serial',
+					instruction: 'Run the release playbook',
+					autoRun: { participantName: 'Release Agent', filename: 'release.md' },
+				},
+			],
+		};
+
+		const executionPrompt = buildModeratorPromptSections(
+			'BASE',
+			approveRun(createRun(autoRunPlan))
+		);
+		expect(executionPrompt).toContain('Auto Run: @Release-Agent (release.md)');
+		expect(executionPrompt).toContain(
+			'Required Auto Run directive: !autorun @Release-Agent:release.md'
+		);
+	});
+
+	it('fails an Auto Run stage when its session has no Auto Run folder', async () => {
+		const chat = await createChatWithModerator('Workflow Missing Auto Run Folder');
+		await addParticipant(chat.id, 'Release Agent', 'claude-code', mockProcessManager);
+		const autoRunPlan: GroupChatWorkflowPlan = {
+			...workflowPlan,
+			stages: [
+				{
+					id: 'stage-autorun',
+					name: 'Execute playbook',
+					agents: [],
+					mode: 'serial',
+					instruction: 'Run the release playbook',
+					autoRun: { participantName: 'Release Agent', filename: 'release.md' },
+				},
+			],
+		};
+		setWorkflowRun(chat.id, approveRun(createRun(autoRunPlan)));
+		setGetSessionsCallback(() => [
+			{
+				id: 'release-session',
+				name: 'Release Agent',
+				toolType: 'claude-code',
+				cwd: '/tmp/release',
+			},
+		]);
+		const emitMessage = vi.fn();
+		const emitAutoRunTriggered = vi.fn();
+		groupChatEmitters.emitMessage = emitMessage;
+		groupChatEmitters.emitAutoRunTriggered = emitAutoRunTriggered;
+
+		await routeModeratorResponse(
+			chat.id,
+			'!autorun @Release-Agent:release.md',
+			mockProcessManager,
+			mockAgentDetector
+		);
+
+		expect(emitAutoRunTriggered).not.toHaveBeenCalled();
+		expect(getWorkflowRun(chat.id)).toMatchObject({
+			status: 'aborted',
+			stageStatuses: { 'stage-autorun': 'failed' },
+			abortReason: expect.stringContaining('has no Auto Run folder configured'),
+		});
+		expect(emitMessage).toHaveBeenCalledWith(
+			chat.id,
+			expect.objectContaining({
+				from: 'system',
+				content: expect.stringContaining(
+					'Stage 1 of 1 failed: Execute playbook. Auto Run stage "Execute playbook" cannot start'
+				),
+			})
+		);
+	});
+
+	it('starts an Auto Run stage with its targeted playbook filename', async () => {
+		const chat = await createChatWithModerator('Workflow Auto Run Stage');
+		await addParticipant(chat.id, 'Release Agent', 'claude-code', mockProcessManager);
+		const autoRunPlan: GroupChatWorkflowPlan = {
+			...workflowPlan,
+			stages: [
+				{
+					id: 'stage-autorun',
+					name: 'Execute playbook',
+					agents: [],
+					mode: 'serial',
+					instruction: 'Run the release playbook',
+					autoRun: { participantName: 'Release-Agent', filename: 'release.md' },
+				},
+			],
+		};
+		setWorkflowRun(chat.id, approveRun(createRun(autoRunPlan)));
+		setGetSessionsCallback(() => [
+			{
+				id: 'release-session',
+				name: 'Release Agent',
+				toolType: 'claude-code',
+				cwd: '/tmp/release',
+				autoRunFolderPath: '/tmp/release/playbooks',
+			},
+		]);
+		const emitAutoRunTriggered = vi.fn();
+		groupChatEmitters.emitAutoRunTriggered = emitAutoRunTriggered;
+
+		await routeModeratorResponse(
+			chat.id,
+			'!autorun @Release-Agent:release.md',
+			mockProcessManager,
+			mockAgentDetector
+		);
+
+		expect(emitAutoRunTriggered).toHaveBeenCalledOnce();
+		expect(emitAutoRunTriggered).toHaveBeenCalledWith(chat.id, 'Release Agent', 'release.md');
+		expect(getWorkflowRun(chat.id)?.status).toBe('running');
+		clearPendingParticipants(chat.id);
 	});
 
 	it('places planning guidance after the base prompt and before participant context', async () => {

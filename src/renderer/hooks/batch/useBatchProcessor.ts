@@ -45,6 +45,8 @@ export interface BatchCompleteInfo {
 	totalCostUsd: number;
 	/** Number of documents processed */
 	documentsProcessed: number;
+	/** Full final batch result suitable for downstream handoffs. */
+	result?: string;
 }
 
 export interface PRResultInfo {
