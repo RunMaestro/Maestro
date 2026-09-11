@@ -23,6 +23,14 @@
 // All four cases came out of the captures the conductor took on the
 // prior pass - see MAESTRO-P-01-binary.md "Architectural Lesson #3".
 //
+// Current claude builds paint /usage in the alternate screen with a diffing
+// renderer, and there the damage has an exact cause: a repaint rewrites only
+// the cells that changed and jumps the cursor past the rest, so a stripped
+// capture loses text that is still on screen (a live one read the second
+// weekly header as a bare "Fable)"). `parseUsage` replays those captures onto
+// a screen grid first (see screen-replay.ts) and keeps the heuristics below
+// as the fallback.
+//
 // Approach
 // --------
 // - Match section headers against a whitespace-stripped, lowercased view
@@ -62,6 +70,7 @@
 
 import { stripAnsiCodes } from '../shared/stringUtils';
 import type { StatusSnapshot } from './json-emitter';
+import { capturedAlternateScreen, replayTerminalScreen } from './screen-replay';
 
 // Body of a reset spec - the part AFTER the optional "Resets" prefix.
 // Tolerates:
@@ -208,11 +217,22 @@ interface SectionExtract {
 }
 
 export function parseUsage(raw: string, nowIso: string, configDir: string): StatusSnapshot | null {
-	const stripped = stripAnsiCodes(raw);
+	// Read the screen itself when the panel was painted in the alternate
+	// screen: the bytes alone can omit text the diffing renderer left standing.
+	// The strip path stays the fallback for captures that never entered the
+	// alternate screen (every legacy fixture) or whose replay does not parse.
+	if (capturedAlternateScreen(raw)) {
+		const fromScreen = parseUsageText(replayTerminalScreen(raw), nowIso, configDir);
+		if (fromScreen) return fromScreen;
+	}
+	return parseUsageText(stripAnsiCodes(raw), nowIso, configDir);
+}
+
+function parseUsageText(text: string, nowIso: string, configDir: string): StatusSnapshot | null {
 	// Restore one-row-per-line structure for cursor-addressed panels that
 	// stripped down to a single glued blob; a no-op on panels already
 	// carrying real line feeds. See segmentGluedPanel.
-	const allLines = segmentGluedPanel(stripped).split(/\r?\n/);
+	const allLines = segmentGluedPanel(text).split(/\r?\n/);
 
 	// The full-screen capture holds EVERY repaint of the panel, not just the
 	// final one: claude paints "Current session" first with provisional numbers

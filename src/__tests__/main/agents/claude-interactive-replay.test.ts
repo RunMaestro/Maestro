@@ -78,6 +78,7 @@ function buildContext(
 ): InteractiveReplayContext<FakeSpawnConfig> {
 	return {
 		configDirKey: '/Users/test/.claude',
+		cwd: '/Users/test/project',
 		prompt: 'analyze foo.ts',
 		buildApiSpawnConfig: ({ prompt }) => ({
 			sessionId: 's1',
@@ -115,7 +116,9 @@ describe('createInteractiveReplayController', () => {
 			await flushMicrotasks();
 
 			expect(h.sampleUsage).toHaveBeenCalledTimes(1);
-			expect(h.sampleUsage).toHaveBeenCalledWith('/Users/test/.claude');
+			// Probed from the failed turn's folder, never the home dir (trust prompt
+			// defaults to "No, exit" there and the probe quits).
+			expect(h.sampleUsage).toHaveBeenCalledWith('/Users/test/.claude', '/Users/test/project');
 
 			expect(h.updateSessionInteractive).toHaveBeenCalledTimes(1);
 			expect(h.updateSessionInteractive).toHaveBeenCalledWith('s1', {
@@ -275,6 +278,7 @@ describe('createInteractiveReplayController', () => {
 			const ctxA = buildContext({ configDirKey: '/a', prompt: 'A' });
 			const ctxB = buildContext({
 				configDirKey: '/b',
+				cwd: '/projects/b',
 				prompt: 'B',
 				buildApiSpawnConfig: ({ prompt }) => ({ sessionId: 'sB', prompt }),
 			});
@@ -284,7 +288,7 @@ describe('createInteractiveReplayController', () => {
 			h.emitter.emit('exit', 'sB', LIMIT_EXIT_CODE);
 			await flushMicrotasks();
 
-			expect(h.sampleUsage).toHaveBeenCalledWith('/b');
+			expect(h.sampleUsage).toHaveBeenCalledWith('/b', '/projects/b');
 			expect(h.spawnReplay).toHaveBeenCalledWith('sB', expect.objectContaining({ prompt: 'B' }));
 			expect(h.controller.hasInteractiveReplay('sA')).toBe(true);
 			expect(h.controller.hasInteractiveReplay('sB')).toBe(false);
@@ -370,7 +374,7 @@ describe('createInteractiveReplayController', () => {
 			h.emitter.emit('exit', 's1', LIMIT_EXIT_CODE);
 			await flushMicrotasks();
 
-			expect(h.sampleUsage).toHaveBeenCalledWith('/new');
+			expect(h.sampleUsage).toHaveBeenCalledWith('/new', '/Users/test/project');
 			expect(h.spawnReplay).toHaveBeenCalledWith('s1', expect.objectContaining({ prompt: 'NEW' }));
 		});
 	});
@@ -430,7 +434,7 @@ describe('createInteractiveReplayController', () => {
 			h.emitter.emit('exit', 'sB', LIMIT_EXIT_CODE);
 			await flushMicrotasks();
 
-			expect(h.sampleUsage).toHaveBeenCalledWith('/b');
+			expect(h.sampleUsage).toHaveBeenCalledWith('/b', '/Users/test/project');
 		});
 	});
 });

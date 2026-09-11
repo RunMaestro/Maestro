@@ -898,18 +898,18 @@ describe('claude-usage-startup → runStartupUsageSampling', () => {
 			// buildTarget skips SSH sessions, so an account whose agents all run over
 			// SSH would keep rendering its cached row with bars that never update.
 			const remoteKey = path.resolve('/Users/test/.claude-remote');
-			const sshOnlyDeps = () => ({
-				sessionsStore: makeStore({
-					sessions: [
-						{
-							id: 's-remote',
-							toolType: 'claude-code',
-							cwd: '/x',
-							customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/test/.claude-remote' },
-							sessionSshRemoteConfig: { enabled: true, remoteId: 'box' },
-						},
-					],
-				}) as never,
+			const remoteSession = {
+				id: 's-remote',
+				toolType: 'claude-code',
+				cwd: '/x',
+				customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/test/.claude-remote' },
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'box' },
+			};
+			// A local agent with no CLAUDE_CONFIG_DIR is not a sampling target, but its
+			// folder is where a cached-only account gets probed from.
+			const localSession = { id: 's-local', toolType: 'claude-code', cwd: process.cwd() };
+			const sshOnlyDeps = (sessions: unknown[] = [remoteSession, localSession]) => ({
+				sessionsStore: makeStore({ sessions }) as never,
 				agentConfigsStore: makeStore({ configs: {} }) as never,
 				settingsStore: makeStore({}) as never,
 				agentDetector: makeDetector(FAKE_AGENT) as never,
@@ -941,9 +941,23 @@ describe('claude-usage-startup → runStartupUsageSampling', () => {
 				expect(sampleUsageMock).toHaveBeenCalledWith(
 					expect.objectContaining({
 						configDir: path.join('/Users/test', '.claude-remote'),
-						cwd: '/Users/test',
+						// Never the home dir: claude's trust prompt defaults to "No, exit" there.
+						cwd: process.cwd(),
 					})
 				);
+			});
+
+			it('skips a cached account when no local Claude agent folder exists to probe from', async () => {
+				setSnapshot(makeSnapshot({ configDirKey: remoteKey }));
+				const restore = stubAccountDirs(['.claude-remote']);
+
+				try {
+					await runStartupUsageSampling(sshOnlyDeps([remoteSession]));
+				} finally {
+					restore();
+				}
+
+				expect(sampleUsageMock).not.toHaveBeenCalled();
 			});
 
 			it('does not re-sample a cached account whose dir is gone', async () => {

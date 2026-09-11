@@ -71,6 +71,7 @@ Grep-verified 2026-09-04 (`npm run docs:verify` re-checks every path). This is t
 - **Screenshotting a surface as it is painted:** `window.maestro.shell.capturePage(rect?)` in `src/main/preload/system.ts`
 - **Classifying a file by extension:** `getFileCategory()`, `isPreviewableFile()` in `src/shared/fileCategories.ts`
 - **Strip ANSI:** `stripAnsiCodes()` in `src/shared/stringUtils.ts`
+- **Reading what a TUI painted from a raw capture:** `replayTerminalScreen()`, `capturedAlternateScreen()` in `src/maestro-p/screen-replay.ts`
 - **Shell escape:** `shellEscape()`, `shellEscapeArgs()` in `src/main/utils/shell-escape.ts`
 - **Platform detection:** `isWindows()`, `isMacOS()` in `src/shared/platformDetection.ts`
 - **Modifier-key display text:** `formatKey()`, `formatShortcutKeys()` in `src/renderer/utils/shortcutFormatter.ts`
