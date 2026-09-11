@@ -1,5 +1,5 @@
 /**
- * Registration coverage for the workflow-planning prompt.
+ * Registration coverage for the workflow planning and execution prompts.
  *
  * Keeps the shared prompt inventory, typed ID catalog, on-disk asset, and
  * production prompt loader in sync so the prompt remains customizable in
@@ -27,16 +27,26 @@ vi.mock('../../../main/utils/logger', () => ({
 	},
 }));
 
-describe('workflow planning prompt registration', () => {
-	it('loads the registered prompt and exposes it to the Settings inventory', async () => {
-		const promptId = 'group-chat-workflow-planning';
+describe('workflow prompt registration', () => {
+	it.each([
+		[
+			'group-chat-workflow-planning',
+			'group-chat-workflow-planning.md',
+			PROMPT_IDS.GROUP_CHAT_WORKFLOW_PLANNING,
+		],
+		[
+			'group-chat-workflow-stage',
+			'group-chat-workflow-stage.md',
+			PROMPT_IDS.GROUP_CHAT_WORKFLOW_STAGE,
+		],
+	])('loads %s and exposes it to the Settings inventory', async (promptId, filename, typedId) => {
 		const definition = CORE_PROMPTS.find((prompt) => prompt.id === promptId);
 
-		expect(PROMPT_IDS.GROUP_CHAT_WORKFLOW_PLANNING).toBe(promptId);
+		expect(typedId).toBe(promptId);
 		expect(definition).toEqual(
 			expect.objectContaining({
 				id: promptId,
-				filename: 'group-chat-workflow-planning.md',
+				filename,
 				category: expect.any(String),
 			})
 		);

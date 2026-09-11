@@ -49,6 +49,8 @@ vi.mock('../../../main/prompt-manager', () => ({
 				'You are a Group Chat Moderator.\n\n{{CONDUCTOR_PROFILE}}\n\nCoordinate multiple AI agents using @mentions.',
 			'group-chat-workflow-planning':
 				'Plan multi-stage workflows and wait for user approval before dispatch.',
+			'group-chat-workflow-stage':
+				'Work only on the current stage and emit a stage directive when it ends.',
 			'group-chat-moderator-synthesis':
 				'Review the agents responses and synthesize a coherent answer.',
 		};
@@ -64,6 +66,7 @@ import {
 	clearAllModeratorSessions,
 	getModeratorSystemPrompt,
 	getWorkflowPlanningPrompt,
+	getWorkflowStagePrompt,
 	type IProcessManager,
 } from '../../../main/group-chat/group-chat-moderator';
 import {
@@ -203,6 +206,12 @@ describe('group-chat-moderator', () => {
 			const planningPrompt = getWorkflowPlanningPrompt();
 			expect(planningPrompt).toContain('multi-stage workflows');
 			expect(planningPrompt).toContain('user approval');
+		});
+
+		it('workflow stage prompt contains the execution boundary', () => {
+			const stagePrompt = getWorkflowStagePrompt();
+			expect(stagePrompt).toContain('only on the current stage');
+			expect(stagePrompt).toContain('stage directive');
 		});
 	});
 
