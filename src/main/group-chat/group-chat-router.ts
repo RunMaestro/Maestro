@@ -42,6 +42,7 @@ import {
 	getModeratorSessionId,
 	isModeratorActive,
 	getModeratorSystemPrompt,
+	getWorkflowPlanningPrompt,
 	getModeratorSynthesisPrompt,
 } from './group-chat-moderator';
 import {
@@ -68,7 +69,8 @@ import {
 	renderWorkflowPlanSummary,
 } from './workflow-plan-parser';
 import { createRun } from './workflow-state-machine';
-import { setWorkflowRun } from './workflow-run-registry';
+import { getWorkflowRun, setWorkflowRun } from './workflow-run-registry';
+import type { GroupChatWorkflowRun } from '../../shared/group-chat-workflow-types';
 
 // Import emitters from IPC handlers (will be populated after handlers are registered)
 import { groupChatEmitters } from '../ipc/handlers/groupChat';
@@ -77,6 +79,20 @@ const LOG_CONTEXT = '[GroupChatRouter]';
 
 // Re-export setGetCustomShellPathCallback for index.ts to use
 export { setGetCustomShellPathCallback };
+
+/**
+ * Compose the moderator's base instructions with optional workflow-planning guidance.
+ * Active runs are intentionally excluded until their state-specific prompts are added.
+ */
+export function buildModeratorPromptSections(
+	baseSystemPrompt: string,
+	run: GroupChatWorkflowRun | undefined
+): string {
+	const shouldOfferPlanning = !run || run.status === 'complete' || run.status === 'aborted';
+	return shouldOfferPlanning
+		? `${baseSystemPrompt}\n\n${getWorkflowPlanningPrompt()}`
+		: baseSystemPrompt;
+}
 
 function isModeratorInactiveAutoAddRace(error: unknown, groupChatId: string): boolean {
 	if (!(error instanceof Error)) return false;
@@ -1096,8 +1112,12 @@ export async function routeUserMessage(
 				/\{\{CONDUCTOR_PROFILE\}\}/g,
 				moderatorSettings.conductorProfile || '(No conductor profile set)'
 			);
+			const moderatorPromptSections = buildModeratorPromptSections(
+				baseSystemPrompt,
+				getWorkflowRun(groupChatId)
+			);
 
-			const fullPrompt = `${baseSystemPrompt}
+			const fullPrompt = `${moderatorPromptSections}
 
 ## Current Participants:
 ${participantContext}${availableSessionsContext}

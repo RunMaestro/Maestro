@@ -43,6 +43,7 @@ import {
 	type IProcessManager,
 } from '../../../main/group-chat/group-chat-moderator';
 import {
+	buildModeratorPromptSections,
 	routeModeratorResponse,
 	routeUserMessage,
 } from '../../../main/group-chat/group-chat-router';
@@ -50,7 +51,10 @@ import { createGroupChat, deleteGroupChat } from '../../../main/group-chat/group
 import {
 	getWorkflowRun,
 	resetAllWorkflowRuns,
+	setWorkflowRun,
 } from '../../../main/group-chat/workflow-run-registry';
+import { approveRun, createRun } from '../../../main/group-chat/workflow-state-machine';
+import type { GroupChatWorkflowPlan } from '../../../shared/group-chat-workflow-types';
 
 describe('group-chat workflow routing', () => {
 	let mockProcessManager: IProcessManager;
@@ -115,6 +119,65 @@ describe('group-chat workflow routing', () => {
 		await spawnModerator(chat, mockProcessManager);
 		return chat;
 	}
+
+	const workflowPlan: GroupChatWorkflowPlan = {
+		runId: 'run-prompt-composition',
+		title: 'Prompt composition',
+		createdAt: 1,
+		stages: [
+			{
+				id: 'stage-1',
+				name: 'Build',
+				agents: ['Builder'],
+				mode: 'serial',
+				instruction: 'Build the feature',
+			},
+		],
+	};
+
+	it('composes planning guidance only when no workflow is active', () => {
+		const basePrompt = 'BASE MODERATOR PROMPT';
+		const awaitingRun = createRun(workflowPlan);
+		const runningRun = approveRun(awaitingRun);
+
+		expect(buildModeratorPromptSections(basePrompt, undefined)).toBe(
+			`${basePrompt}\n\nmock prompt for group-chat-workflow-planning`
+		);
+		expect(
+			buildModeratorPromptSections(basePrompt, { ...awaitingRun, status: 'complete' })
+		).toContain('mock prompt for group-chat-workflow-planning');
+		expect(
+			buildModeratorPromptSections(basePrompt, { ...awaitingRun, status: 'aborted' })
+		).toContain('mock prompt for group-chat-workflow-planning');
+		expect(buildModeratorPromptSections(basePrompt, awaitingRun)).toBe(basePrompt);
+		expect(buildModeratorPromptSections(basePrompt, runningRun)).toBe(basePrompt);
+	});
+
+	it('places planning guidance after the base prompt and before participant context', async () => {
+		const chat = await createChatWithModerator('Workflow Planning Prompt');
+		vi.mocked(mockProcessManager.spawn).mockClear();
+
+		await routeUserMessage(chat.id, 'Plan a staged release', mockProcessManager, mockAgentDetector);
+
+		const prompt = vi.mocked(mockProcessManager.spawn).mock.calls[0]?.[0]?.prompt ?? '';
+		const baseIndex = prompt.indexOf('mock prompt for group-chat-moderator-system');
+		const planningIndex = prompt.indexOf('mock prompt for group-chat-workflow-planning');
+		const participantsIndex = prompt.indexOf('## Current Participants:');
+		expect(baseIndex).toBeGreaterThanOrEqual(0);
+		expect(planningIndex).toBeGreaterThan(baseIndex);
+		expect(participantsIndex).toBeGreaterThan(planningIndex);
+	});
+
+	it('omits planning guidance while a workflow is awaiting approval', async () => {
+		const chat = await createChatWithModerator('Active Workflow Prompt');
+		setWorkflowRun(chat.id, createRun(workflowPlan));
+		vi.mocked(mockProcessManager.spawn).mockClear();
+
+		await routeUserMessage(chat.id, 'What is the status?', mockProcessManager, mockAgentDetector);
+
+		const prompt = vi.mocked(mockProcessManager.spawn).mock.calls[0]?.[0]?.prompt ?? '';
+		expect(prompt).not.toContain('mock prompt for group-chat-workflow-planning');
+	});
 
 	it('intercepts a moderator plan without dispatching participants or starting synthesis', async () => {
 		const chat = await createChatWithModerator('Moderator Workflow Plan');

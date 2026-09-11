@@ -61,6 +61,7 @@ vi.mock('../../../main/prompt-manager', () => ({
 			'group-chat-participant-request': 'group-chat-participant-request.md',
 			'group-chat-participant-continuation': 'group-chat-participant-continuation.md',
 			'group-chat-moderator-system': 'group-chat-moderator-system.md',
+			'group-chat-workflow-planning': 'group-chat-workflow-planning.md',
 			'group-chat-moderator-synthesis': 'group-chat-moderator-synthesis.md',
 		};
 		const filename = filenameMap[id];
