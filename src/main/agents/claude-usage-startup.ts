@@ -283,6 +283,31 @@ function buildTarget(
 }
 
 /**
+ * Working directory for probing an account that no local agent points at.
+ *
+ * It cannot be the home directory or the system temp dir: claude's folder-trust
+ * prompt defaults to "No, exit" in both, the driver's unblock tap confirms that
+ * default, and the TUI quits before `/usage` renders. That is how a cached
+ * account whose only agent runs over SSH failed every refresh two seconds in.
+ * A local Claude agent's own folder is the kind of directory every other sample
+ * already runs from. Returns null when there is none, and the caller skips.
+ */
+function findLocalClaudeProbeCwd(sessions: Array<Record<string, unknown>>): string | null {
+	for (const session of sessions) {
+		if (session?.toolType !== 'claude-code') continue;
+		if ((session.sessionSshRemoteConfig as { enabled?: boolean } | undefined)?.enabled) continue;
+		const cwd =
+			typeof session.cwd === 'string' && session.cwd.length > 0
+				? session.cwd
+				: typeof session.projectRoot === 'string' && session.projectRoot.length > 0
+					? session.projectRoot
+					: null;
+		if (cwd && fs.existsSync(cwd)) return cwd;
+	}
+	return null;
+}
+
+/**
  * Sample `maestro-p --status` for every unique CLAUDE_CONFIG_DIR account
  * referenced by an eligible Claude Code session, and write each result to
  * `claudeUsageStore`. Resolves when every parallel sample has settled.
@@ -373,7 +398,15 @@ export async function runStartupUsageSampling(deps: StartupUsageSamplingDeps): P
 	// BROWSER at a no-op besides.
 	if (mode === 'manual') {
 		const cachedOnlyKeys = Object.keys(getAllSnapshots()).filter((key) => !targetsByKey.has(key));
-		if (cachedOnlyKeys.length > 0) {
+		const probeCwd = cachedOnlyKeys.length > 0 ? findLocalClaudeProbeCwd(storedSessions) : null;
+		if (cachedOnlyKeys.length > 0 && !probeCwd) {
+			logger.warn(
+				'Skipping cached Claude accounts: no local Claude agent folder to probe from',
+				LOG_CONTEXT,
+				{ accounts: cachedOnlyKeys }
+			);
+		}
+		if (probeCwd) {
 			const onDiskDirsByKey = new Map(
 				(await discoverClaudeConfigDirs()).map((dir) => [
 					resolveConfigDirKey({ CLAUDE_CONFIG_DIR: dir }),
@@ -386,7 +419,7 @@ export async function runStartupUsageSampling(deps: StartupUsageSamplingDeps): P
 				targetsByKey.set(configDirKey, {
 					configDir,
 					configDirKey,
-					cwd: os.homedir(),
+					cwd: probeCwd,
 					customEnvVars: { ...agentLevelEnvVars },
 				});
 			}

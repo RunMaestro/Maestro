@@ -263,7 +263,26 @@ describe('ClaudePlanUsage - exhausted account', () => {
 
 		const values = screen.getAllByRole('progressbar').map((b) => b.getAttribute('aria-valuenow'));
 		expect(values).toEqual(['0', '100', '36']);
+		// An idle 0% window has no reset because none has started - not a parse miss.
+		expect(screen.getByText('not started')).toBeInTheDocument();
+		expect(screen.queryByText('reset unknown')).toBeNull();
+	});
+
+	it('still says "reset unknown" when a window with usage lost its reset time', () => {
+		seedSnapshots({
+			'/Users/me/.claude-gmail': {
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				configDirKey: '/Users/me/.claude-gmail',
+				session: { percent: 40 },
+				weekAllModels: { percent: 100, resetsAt: '2026-05-22T00:00:00.000Z' },
+				weekSonnetOnly: { percent: 36, resetsAt: '2026-05-22T00:00:00.000Z', label: 'Fable' },
+			},
+		});
+
+		render(<ClaudePlanUsage theme={theme} />);
+
 		expect(screen.getByText('reset unknown')).toBeInTheDocument();
+		expect(screen.queryByText('not started')).toBeNull();
 	});
 
 	it('labels the second weekly window with the name the panel reported', () => {

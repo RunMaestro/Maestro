@@ -95,9 +95,21 @@ export const QuotaBarRow = memo(function QuotaBarRow({
 			<div
 				className="text-xs text-left whitespace-nowrap flex-shrink-0 ml-auto"
 				style={{ color: theme.colors.textDim, minWidth: '12rem' }}
-				title={resetsAt ? `Resets at ${new Date(resetsAt).toLocaleString()}` : undefined}
+				title={
+					resetsAt
+						? `Resets at ${new Date(resetsAt).toLocaleString()}`
+						: clampedPercent === 0
+							? 'No window is running yet, so there is no reset time. The window starts with the next request.'
+							: undefined
+				}
 			>
-				{resetsAt ? `resets ${formatFutureTime(resetsAt)}` : 'reset unknown'}
+				{/* A 0% window with no reset is idle, not unparsed: claude paints no
+				    "Resets" row until a request opens the window. */}
+				{resetsAt
+					? `resets ${formatFutureTime(resetsAt)}`
+					: clampedPercent === 0
+						? 'not started'
+						: 'reset unknown'}
 			</div>
 		</div>
 	);

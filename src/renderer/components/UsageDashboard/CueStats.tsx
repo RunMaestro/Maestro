@@ -925,7 +925,7 @@ const TriggerTypeFilter = memo(function TriggerTypeFilter({
 			role="group"
 			aria-label="Filter Cue stats by trigger type"
 		>
-			<div className="flex items-center gap-2 flex-wrap">
+			<div className="flex items-center justify-center gap-2 flex-wrap">
 				{options.map((option) => {
 					const isExcluded = excluded.has(option.key);
 					return (
@@ -963,7 +963,7 @@ const TriggerTypeFilter = memo(function TriggerTypeFilter({
 					<button
 						type="button"
 						onClick={onReset}
-						className="px-2 py-1 rounded text-xs ml-auto"
+						className="px-2 py-1 rounded text-xs"
 						data-testid="cue-stats-trigger-filter-reset"
 						style={{ color: theme.colors.accent }}
 					>

@@ -105,6 +105,15 @@ describe('parseUsage / fixtures', () => {
 	it('parses an exhausted account whose session row has no Resets and whose second week is "(Fable)"', () => {
 		runFixture('usage-exhausted-fable-no-session-reset');
 	});
+
+	// Real raw PTY capture (2026-09-11, escapes intact, shell-prompt username
+	// redacted). Claude drew the panel in the alternate screen, and its final
+	// paint re-sent only "Fable)" and "72% used" for the second weekly window -
+	// "Current week (" and the bar were left standing from the prior frame.
+	// Stripped, that section parsed as an unread 0%; replayed, it is Fable 72%.
+	it('parses a real alternate-screen capture whose repaint skipped unchanged cells', () => {
+		runFixture('usage-alt-screen-repaint-2026-09-11');
+	});
 });
 
 describe('parseUsage / behavioral guards', () => {
@@ -219,6 +228,25 @@ describe('parseUsage / behavioral guards', () => {
 		const result = parseUsage(raw, nowIso, configDir);
 		expect(result?.session.percent).toBe(23);
 		expect(result?.session.resets_at).toBe('2026-05-15T23:00:00.000Z');
+	});
+
+	it('reads an alternate-screen repaint off the replayed screen, not the stripped bytes', () => {
+		// The diffing renderer's second paint rewrites only the cells that changed:
+		// the header tail and the percentage. Stripped, the bytes still say "Opus"
+		// at 12% with a "Fable)18%" fragment trailing; the screen reads Fable at 18%.
+		const raw =
+			'\x1b[?1049h\x1b[2J\x1b[H' +
+			'Current session\r\n23% used\r\nResets 6pm (America/Chicago)\r\n\r\n' +
+			'Current week (all models)\r\n58% used\r\nResets May 22 at 6pm (America/Chicago)\r\n\r\n' +
+			'Current week (Opus)\r\n12% used\r\nResets May 22 at 6pm (America/Chicago)' +
+			'\x1b[9;15HFable)\x1b[K\x1b[10;1H18%';
+		const result = parseUsage(raw, nowIso, configDir);
+		expect(result?.session).toEqual({ percent: 23, resets_at: '2026-05-15T23:00:00.000Z' });
+		expect(result?.week_sonnet_only).toEqual({
+			percent: 18,
+			resets_at: '2026-05-22T23:00:00.000Z',
+			label: 'Fable',
+		});
 	});
 
 	it('time-only resets in the past today roll forward 24 hours', () => {
