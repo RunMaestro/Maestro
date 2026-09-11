@@ -46,6 +46,7 @@ import {
 	buildModeratorPromptSections,
 	routeModeratorResponse,
 	routeUserMessage,
+	spawnModeratorSynthesis,
 } from '../../../main/group-chat/group-chat-router';
 import { createGroupChat, deleteGroupChat } from '../../../main/group-chat/group-chat-storage';
 import {
@@ -53,7 +54,11 @@ import {
 	resetAllWorkflowRuns,
 	setWorkflowRun,
 } from '../../../main/group-chat/workflow-run-registry';
-import { approveRun, createRun } from '../../../main/group-chat/workflow-state-machine';
+import {
+	approveRun,
+	completeStage,
+	createRun,
+} from '../../../main/group-chat/workflow-state-machine';
 import type { GroupChatWorkflowPlan } from '../../../shared/group-chat-workflow-types';
 
 describe('group-chat workflow routing', () => {
@@ -135,7 +140,7 @@ describe('group-chat workflow routing', () => {
 		],
 	};
 
-	it('composes planning guidance only when no workflow is active', () => {
+	it('composes state-specific workflow guidance', () => {
 		const basePrompt = 'BASE MODERATOR PROMPT';
 		const awaitingRun = createRun(workflowPlan);
 		const runningRun = approveRun(awaitingRun);
@@ -150,7 +155,47 @@ describe('group-chat workflow routing', () => {
 			buildModeratorPromptSections(basePrompt, { ...awaitingRun, status: 'aborted' })
 		).toContain('mock prompt for group-chat-workflow-planning');
 		expect(buildModeratorPromptSections(basePrompt, awaitingRun)).toBe(basePrompt);
-		expect(buildModeratorPromptSections(basePrompt, runningRun)).toBe(basePrompt);
+
+		const executionPrompt = buildModeratorPromptSections(basePrompt, runningRun);
+		expect(executionPrompt).toContain('mock prompt for group-chat-workflow-stage');
+		expect(executionPrompt).toContain('## Active Workflow Plan');
+		expect(executionPrompt).toContain('## Current Stage');
+		expect(executionPrompt).toContain('Stage 1 of 1: Build');
+		expect(executionPrompt).toContain('Agents: @Builder');
+		expect(executionPrompt).toContain('Instruction: Build the feature');
+		expect(executionPrompt).toContain('Expected output: (not specified)');
+		expect(executionPrompt).toContain('(none; this is the first stage)');
+	});
+
+	it('includes the prior handoff and artifact paths in current-stage context', () => {
+		const twoStagePlan: GroupChatWorkflowPlan = {
+			...workflowPlan,
+			stages: [
+				workflowPlan.stages[0],
+				{
+					id: 'stage-2',
+					name: 'Review',
+					agents: ['Reviewer'],
+					mode: 'serial',
+					instruction: 'Review the implementation',
+					expects: 'An approval decision',
+				},
+			],
+		};
+		const runningRun = approveRun(createRun(twoStagePlan));
+		const advancedRun = completeStage(runningRun, {
+			stageId: 'stage-1',
+			stageName: 'Build',
+			summary: 'The implementation and tests are ready.',
+			artifactPaths: ['src/feature.ts', 'src/feature.test.ts'],
+		});
+
+		const executionPrompt = buildModeratorPromptSections('BASE', advancedRun);
+		expect(executionPrompt).toContain('Stage 2 of 2: Review');
+		expect(executionPrompt).toContain('Expected output: An approval decision');
+		expect(executionPrompt).toContain('From Build: The implementation and tests are ready.');
+		expect(executionPrompt).toContain('- src/feature.ts');
+		expect(executionPrompt).toContain('- src/feature.test.ts');
 	});
 
 	it('places planning guidance after the base prompt and before participant context', async () => {
@@ -166,6 +211,35 @@ describe('group-chat workflow routing', () => {
 		expect(baseIndex).toBeGreaterThanOrEqual(0);
 		expect(planningIndex).toBeGreaterThan(baseIndex);
 		expect(participantsIndex).toBeGreaterThan(planningIndex);
+	});
+
+	it('injects current-stage context into user and synthesis moderator turns', async () => {
+		const chat = await createChatWithModerator('Workflow Execution Prompt');
+		const runningRun = approveRun(createRun(workflowPlan));
+		setWorkflowRun(chat.id, runningRun);
+		vi.mocked(mockProcessManager.spawn).mockClear();
+
+		await routeUserMessage(
+			chat.id,
+			'Please keep the implementation focused.',
+			mockProcessManager,
+			mockAgentDetector
+		);
+
+		const userTurnPrompt = vi.mocked(mockProcessManager.spawn).mock.calls[0]?.[0]?.prompt ?? '';
+		expect(userTurnPrompt).toContain('mock prompt for group-chat-workflow-stage');
+		expect(userTurnPrompt).toContain('## Active Workflow Plan');
+		expect(userTurnPrompt).toContain('## Current Stage');
+		expect(userTurnPrompt).toContain('Stage 1 of 1: Build');
+
+		vi.mocked(mockProcessManager.spawn).mockClear();
+		await spawnModeratorSynthesis(chat.id, mockProcessManager, mockAgentDetector);
+
+		const synthesisPrompt = vi.mocked(mockProcessManager.spawn).mock.calls[0]?.[0]?.prompt ?? '';
+		expect(synthesisPrompt).toContain('mock prompt for group-chat-workflow-stage');
+		expect(synthesisPrompt).toContain('## Active Workflow Plan');
+		expect(synthesisPrompt).toContain('## Current Stage');
+		expect(synthesisPrompt).toContain('Stage 1 of 1: Build');
 	});
 
 	it('intercepts a moderator plan without dispatching participants or starting synthesis', async () => {

@@ -43,6 +43,7 @@ import {
 	isModeratorActive,
 	getModeratorSystemPrompt,
 	getWorkflowPlanningPrompt,
+	getWorkflowStagePrompt,
 	getModeratorSynthesisPrompt,
 } from './group-chat-moderator';
 import {
@@ -87,14 +88,40 @@ const LOG_CONTEXT = '[GroupChatRouter]';
 // Re-export setGetCustomShellPathCallback for index.ts to use
 export { setGetCustomShellPathCallback };
 
-/**
- * Compose the moderator's base instructions with optional workflow-planning guidance.
- * Active runs are intentionally excluded until their state-specific prompts are added.
- */
+/** Compose the current stage's complete, durable execution context. */
+function buildCurrentStageContext(run: GroupChatWorkflowRun): string {
+	const stage = run.plan.stages[run.currentStageIndex];
+	if (!stage) return '';
+
+	const previousHandoff = run.handoffs.at(-1);
+	const previousHandoffContext = previousHandoff
+		? `From ${previousHandoff.stageName}: ${previousHandoff.summary}${
+				previousHandoff.artifactPaths?.length
+					? `\nArtifact paths:\n${previousHandoff.artifactPaths.map((artifactPath) => `- ${artifactPath}`).join('\n')}`
+					: ''
+			}`
+		: '(none; this is the first stage)';
+
+	return `## Current Stage
+Stage ${run.currentStageIndex + 1} of ${run.plan.stages.length}: ${stage.name}
+Mode: ${stage.mode}
+Agents: ${stage.agents.map((agent) => `@${agent}`).join(', ') || '(none)'}
+${stage.autoRun ? `Auto Run: @${stage.autoRun.participantName}${stage.autoRun.filename ? ` (${stage.autoRun.filename})` : ''}\n` : ''}Instruction: ${stage.instruction}
+Expected output: ${stage.expects || '(not specified)'}
+
+### Previous Stage Handoff
+${previousHandoffContext}`;
+}
+
+/** Compose the moderator's base instructions with workflow guidance and durable state. */
 export function buildModeratorPromptSections(
 	baseSystemPrompt: string,
 	run: GroupChatWorkflowRun | undefined
 ): string {
+	if (run?.status === 'running') {
+		return `${baseSystemPrompt}\n\n${getWorkflowStagePrompt()}\n\n${buildPlanContextBlock(run)}\n\n${buildCurrentStageContext(run)}`;
+	}
+
 	const shouldOfferPlanning = !run || run.status === 'complete' || run.status === 'aborted';
 	return shouldOfferPlanning
 		? `${baseSystemPrompt}\n\n${getWorkflowPlanningPrompt()}`
@@ -2480,8 +2507,12 @@ export async function spawnModeratorSynthesis(
 		/\{\{CONDUCTOR_PROFILE\}\}/g,
 		synthModeratorSettings.conductorProfile || '(No conductor profile set)'
 	);
+	const synthModeratorPromptSections = buildModeratorPromptSections(
+		synthBasePrompt,
+		getWorkflowRun(groupChatId)
+	);
 
-	const synthesisPrompt = `${synthBasePrompt}
+	const synthesisPrompt = `${synthModeratorPromptSections}
 
 ${getModeratorSynthesisPrompt()}
 
