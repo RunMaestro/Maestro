@@ -81,10 +81,13 @@ import {
 	completeWorkflowStage,
 	failWorkflowStage,
 	getWorkflowRun,
+	recordWorkflowStageResponse,
 	setWorkflowRun,
 } from './workflow-run-registry';
 import type { GroupChatWorkflowRun } from '../../shared/group-chat-workflow-types';
-import { buildPlanContextBlock } from './workflow-prompt-context';
+import { buildCurrentStageContext, buildPlanContextBlock } from './workflow-prompt-context';
+import { classifyHandoff } from './workflow-handoff';
+import { writeStageArtifact } from './workflow-artifacts';
 
 // Import emitters from IPC handlers (will be populated after handlers are registered)
 import { groupChatEmitters } from '../ipc/handlers/groupChat';
@@ -94,29 +97,24 @@ const LOG_CONTEXT = '[GroupChatRouter]';
 // Re-export setGetCustomShellPathCallback for index.ts to use
 export { setGetCustomShellPathCallback };
 
-/** Compose the current stage's complete, durable execution context. */
-function buildCurrentStageContext(run: GroupChatWorkflowRun): string {
-	const stage = run.plan.stages[run.currentStageIndex];
-	if (!stage) return '';
+function buildModeratorHistoryContext(
+	messages: GroupChatMessage[],
+	run: GroupChatWorkflowRun | undefined,
+	limit: number
+): string {
+	const workflowParticipants = new Set(
+		run?.status === 'running'
+			? run.handoffs.flatMap((handoff) =>
+					(handoff.participantHandoffs ?? []).map((response) => response.participantName)
+				)
+			: []
+	);
 
-	const previousHandoff = run.handoffs.at(-1);
-	const previousHandoffContext = previousHandoff
-		? `From ${previousHandoff.stageName}: ${previousHandoff.summary}${
-				previousHandoff.artifactPaths?.length
-					? `\nArtifact paths:\n${previousHandoff.artifactPaths.map((artifactPath) => `- ${artifactPath}`).join('\n')}`
-					: ''
-			}`
-		: '(none; this is the first stage)';
-
-	return `## Current Stage
-Stage ${run.currentStageIndex + 1} of ${run.plan.stages.length}: ${stage.name}
-Mode: ${stage.mode}
-Agents: ${stage.agents.map((agent) => `@${agent}`).join(', ') || '(none)'}
-${stage.autoRun ? `Auto Run: @${stage.autoRun.participantName}${stage.autoRun.filename ? ` (${stage.autoRun.filename})` : ''}\n` : ''}Instruction: ${stage.instruction}
-Expected output: ${stage.expects || '(not specified)'}
-
-### Previous Stage Handoff
-${previousHandoffContext}`;
+	return messages
+		.slice(-limit)
+		.filter((message) => !workflowParticipants.has(message.from))
+		.map((message) => `[${message.from}]: ${message.content}`)
+		.join('\n');
 }
 
 /** Compose the moderator's base instructions with workflow guidance and durable state. */
@@ -1226,10 +1224,11 @@ export async function routeUserMessage(
 			const chatHistory = await readLog(chat.logPath);
 			logger.debug(`[GroupChat:Debug] Chat history entries: ${chatHistory.length}`);
 
-			const historyContext = chatHistory
-				.slice(-20)
-				.map((m) => `[${m.from}]: ${m.content}`)
-				.join('\n');
+			const historyContext = buildModeratorHistoryContext(
+				chatHistory,
+				getWorkflowRun(groupChatId),
+				20
+			);
 
 			// Build image context if user attached images
 			let imageContext = '';
@@ -2529,6 +2528,54 @@ export async function routeAgentResponse(
 	// Extract summary from first sentence (agents are prompted to start with a summary sentence)
 	const summary = extractFirstSentence(message);
 
+	const workflowRun = getWorkflowRun(groupChatId);
+	if (workflowRun?.status === 'running') {
+		const stage = workflowRun.plan.stages[workflowRun.currentStageIndex];
+		if (stage) {
+			const classification = classifyHandoff(message);
+			if (classification.mode === 'artifact') {
+				try {
+					const artifactPath = await writeStageArtifact({
+						groupChatId,
+						runId: workflowRun.plan.runId,
+						stageId: stage.id,
+						participantName,
+						content: message,
+					});
+					recordWorkflowStageResponse(groupChatId, {
+						participantName,
+						mode: 'artifact',
+						digest: classification.digest,
+						artifactPath,
+					});
+				} catch (error) {
+					logger.error(`Failed to write workflow artifact for ${participantName}`, LOG_CONTEXT, {
+						error,
+						groupChatId,
+						runId: workflowRun.plan.runId,
+						stageId: stage.id,
+					});
+					captureException(error, {
+						operation: 'groupChat:writeWorkflowArtifact',
+						participantName,
+						groupChatId,
+					});
+					recordWorkflowStageResponse(groupChatId, {
+						participantName,
+						mode: 'inline',
+						content: message,
+					});
+				}
+			} else {
+				recordWorkflowStageResponse(groupChatId, {
+					participantName,
+					mode: 'inline',
+					content: message,
+				});
+			}
+		}
+	}
+
 	// Update participant stats
 	const currentParticipant = participant;
 	const newMessageCount = (currentParticipant.messageCount || 0) + 1;
@@ -2654,10 +2701,7 @@ export async function spawnModeratorSynthesis(
 	const chatHistory = await readLog(chat.logPath);
 	logger.debug(`[GroupChat:Debug] Chat history entries for synthesis: ${chatHistory.length}`);
 
-	const historyContext = chatHistory
-		.slice(-30)
-		.map((m) => `[${m.from}]: ${m.content}`)
-		.join('\n');
+	const historyContext = buildModeratorHistoryContext(chatHistory, getWorkflowRun(groupChatId), 30);
 
 	// Build participant context for potential follow-up @mentions
 	// Use normalized names (spaces → hyphens) so moderator can @mention them properly

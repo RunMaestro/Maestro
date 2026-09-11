@@ -199,8 +199,8 @@ describe('group-chat workflow routing', () => {
 		expect(executionPrompt).toContain('Stage 2 of 2: Review');
 		expect(executionPrompt).toContain('Expected output: An approval decision');
 		expect(executionPrompt).toContain('From Build: The implementation and tests are ready.');
-		expect(executionPrompt).toContain('- src/feature.ts');
-		expect(executionPrompt).toContain('- src/feature.test.ts');
+		expect(executionPrompt).toContain('Full output: src/feature.ts');
+		expect(executionPrompt).toContain('Full output: src/feature.test.ts');
 	});
 
 	it('places planning guidance after the base prompt and before participant context', async () => {
