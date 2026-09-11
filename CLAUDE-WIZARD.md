@@ -207,7 +207,7 @@ different store and the wizard never writes to it while it runs. So clearing
 `wizardState` deletes the whole conversation and hands the user an empty tab.
 
 Every exit therefore goes through `flattenWizardIntoTab(tab, { summary? })` in
-`src/renderer/utils/tabHelpers.ts`, which appends the transcript to `tab.logs`,
+`src/renderer/utils/tabHelpers/index.ts`, which appends the transcript to `tab.logs`,
 promotes `wizardState.agentSessionId` onto `tab.agentSessionId` so the plain tab
 can keep talking to the same provider context, and only then drops the wizard.
 **Never write `wizardState: undefined` by hand.** The three exits:

@@ -1463,7 +1463,7 @@ Standard cancel/confirm button layout:
 />
 ```
 
-### `<ShortcutHint>` (`src/renderer/components/TabBar/ShortcutHint.tsx`)
+### `<ShortcutHint>` (`src/renderer/components/ui/ShortcutHint.tsx`)
 
 The keys badge at the right edge of a tab overlay-menu row:
 
