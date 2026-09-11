@@ -7,11 +7,28 @@
  * is about (overwrite follows a destination symlink). There is no patched
  * adm-zip release, so read here and write with fs after checking the dest
  * is a real file, not a symlink.
+ *
+ * unzipSync inflates every selected entry. Pass `names` or `filter` so a
+ * caller that only needs `manifest.json` does not expand the rest, and the
+ * default original-size / entry-count caps refuse a zip bomb before the
+ * bytes land in the main process.
+ *
+ * Caps bound inflation of selected entries, not ingest. The compressed
+ * file is read with readFileSync before any cap runs. That is fine for a
+ * zip already sitting on disk.
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { unzipSync } from 'fflate';
+import { unzipSync, type UnzipFileInfo } from 'fflate';
+
+export type { UnzipFileInfo };
+
+/** Default cap on how many entries a read will inflate. */
+export const DEFAULT_ZIP_MAX_ENTRIES = 10_000;
+
+/** Default cap on aggregate uncompressed size of inflated entries (256 MiB). */
+export const DEFAULT_ZIP_MAX_ORIGINAL_SIZE = 256 * 1024 * 1024;
 
 export interface ZipEntry {
 	readonly entryName: string;
@@ -23,6 +40,17 @@ export interface ZipEntry {
 export interface ZipArchive {
 	getEntries(): ZipEntry[];
 	getEntry(name: string): ZipEntry | undefined;
+}
+
+export interface ReadZipArchiveOptions {
+	/** Only inflate these entry names. Compared after slash normalization. */
+	names?: readonly string[];
+	/** Predicate over zip metadata. Runs before inflation. Combined with `names`. */
+	filter?: (file: UnzipFileInfo) => boolean;
+	/** Aggregate `originalSize` of selected entries. Defaults to 256 MiB. Pass `Infinity` for a first-party archive the caller already wrote without a create-time cap. */
+	maxOriginalSize?: number;
+	/** Selected entry count. Defaults to 10_000. Pass `Infinity` to match an uncapped writer. */
+	maxEntries?: number;
 }
 
 function normalizeZipEntryName(name: string): string {
@@ -46,14 +74,61 @@ function toEntry(entryName: string, bytes: Uint8Array): ZipEntry {
 	};
 }
 
-/** Load a zip from disk. Throws if the file is missing or not a zip. */
-export function readZipArchive(filePath: string): ZipArchive {
+function selectedForRead(
+	file: UnzipFileInfo,
+	allowedNames: Set<string> | null,
+	filter?: (file: UnzipFileInfo) => boolean
+): boolean {
+	const name = normalizeZipEntryName(file.name);
+	if (allowedNames && !allowedNames.has(name)) return false;
+	if (filter && !filter(file)) return false;
+	return true;
+}
+
+/**
+ * Load a zip from disk. Throws if the file is missing or not a zip, or if
+ * selected entries exceed the size / count caps.
+ */
+export function readZipArchive(filePath: string, options?: ReadZipArchiveOptions): ZipArchive {
 	const raw = fs.readFileSync(filePath);
-	const unzipped = unzipSync(new Uint8Array(raw));
+	const maxEntries = options?.maxEntries ?? DEFAULT_ZIP_MAX_ENTRIES;
+	const maxOriginalSize = options?.maxOriginalSize ?? DEFAULT_ZIP_MAX_ORIGINAL_SIZE;
+	const allowedNames = options?.names ? new Set(options.names.map(normalizeZipEntryName)) : null;
+	let selectedCount = 0;
+	let selectedOriginalSize = 0;
+	let refuse: Error | undefined;
+
+	const unzipped = unzipSync(new Uint8Array(raw), {
+		filter(file) {
+			if (refuse) return false;
+			if (!selectedForRead(file, allowedNames, options?.filter)) return false;
+
+			selectedCount += 1;
+			if (selectedCount > maxEntries) {
+				refuse = new Error(`Refusing zip: more than ${maxEntries} entries`);
+				return false;
+			}
+
+			selectedOriginalSize += file.originalSize;
+			if (selectedOriginalSize > maxOriginalSize) {
+				refuse = new Error(`Refusing zip: expanded size exceeds ${maxOriginalSize} bytes`);
+				return false;
+			}
+			return true;
+		},
+	});
+
+	if (refuse) throw refuse;
+
 	const byName = new Map<string, ZipEntry>();
+	let inflatedBytes = 0;
 	for (const [name, bytes] of Object.entries(unzipped)) {
 		const entryName = normalizeZipEntryName(name);
 		if (!entryName) continue;
+		inflatedBytes += bytes.byteLength;
+		if (inflatedBytes > maxOriginalSize) {
+			throw new Error(`Refusing zip: expanded size exceeds ${maxOriginalSize} bytes`);
+		}
 		byName.set(entryName, toEntry(entryName, bytes));
 	}
 
@@ -67,13 +142,37 @@ export function readZipArchive(filePath: string): ZipArchive {
 	};
 }
 
+function assertNoSymlinkOnPath(destRoot: string, target: string): void {
+	const rel = path.relative(destRoot, target);
+	if (!rel || rel === '..' || rel.startsWith('..' + path.sep) || path.isAbsolute(rel)) {
+		throw new Error(`Refusing zip entry outside destination: ${rel || target}`);
+	}
+
+	let current = destRoot;
+	for (const part of rel.split(path.sep)) {
+		if (!part || part === '.') continue;
+		current = path.join(current, part);
+		let stat: fs.Stats;
+		try {
+			stat = fs.lstatSync(current);
+		} catch (err) {
+			if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
+			throw err;
+		}
+		if (stat.isSymbolicLink()) {
+			throw new Error(`Refusing to write through symlink: ${current}`);
+		}
+	}
+}
+
 /**
- * Write zip entries under destDir. Refuses zip-slip names and will not
- * overwrite a destination that is already a symlink (the adm-zip advisory).
+ * Write zip entries under destDir. Refuses zip-slip names, will not
+ * overwrite a destination that is already a symlink, and will not write
+ * through an intermediate path component that is already a symlink.
  */
 export function extractZipTo(zipPath: string, destDir: string): void {
-	const destRoot = path.resolve(destDir);
-	fs.mkdirSync(destRoot, { recursive: true });
+	fs.mkdirSync(destDir, { recursive: true });
+	const destRoot = fs.realpathSync(destDir);
 	const zip = readZipArchive(zipPath);
 
 	for (const entry of zip.getEntries()) {
@@ -88,7 +187,17 @@ export function extractZipTo(zipPath: string, destDir: string): void {
 			throw new Error(`Refusing zip entry outside destination: ${entry.entryName}`);
 		}
 
-		fs.mkdirSync(path.dirname(dest), { recursive: true });
+		assertNoSymlinkOnPath(destRoot, dest);
+
+		const parent = path.dirname(dest);
+		fs.mkdirSync(parent, { recursive: true });
+		assertNoSymlinkOnPath(destRoot, dest);
+
+		const realParent = fs.realpathSync(parent);
+		if (realParent !== destRoot && !realParent.startsWith(destRoot + path.sep)) {
+			throw new Error(`Refusing zip entry outside destination: ${entry.entryName}`);
+		}
+
 		if (fs.existsSync(dest) && fs.lstatSync(dest).isSymbolicLink()) {
 			throw new Error(`Refusing to overwrite symlink: ${entry.entryName}`);
 		}
