@@ -81,6 +81,22 @@ describe('prepareMaestroSystemPromptCli', () => {
 		expect(result).toContain('Conductor: senior engineer, prefers concise');
 	});
 
+	it('substitutes the configured worktree directory, and leaves it empty when unset', async () => {
+		// Headless spawns get the same Worktree Directory line as desktop tabs, so
+		// an agent started from the CLI creates worktrees where the app will see them.
+		vi.mocked(getCliPrompt).mockResolvedValue('Worktrees: [{{WORKTREE_BASE_PATH}}]');
+
+		const configured = await prepareMaestroSystemPromptCli(
+			mockSession({
+				worktreeConfig: { basePath: '/home/me/Project-WorkTrees', watchEnabled: true },
+			})
+		);
+		expect(configured).toContain('Worktrees: [/home/me/Project-WorkTrees]');
+
+		const unset = await prepareMaestroSystemPromptCli(mockSession({ worktreeConfig: undefined }));
+		expect(unset).toContain('Worktrees: []');
+	});
+
 	it('returns undefined when the prompt template fails to load (non-fatal)', async () => {
 		vi.mocked(getCliPrompt).mockRejectedValue(
 			new Error('Failed to load prompt "maestro-system-prompt" (maestro-system-prompt.md)')

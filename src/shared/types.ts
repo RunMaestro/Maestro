@@ -256,6 +256,11 @@ export interface SessionInfo {
 	autoRunFolderPath?: string;
 	/** Extra directories granted beyond the working directory (prompt-level grants). */
 	additionalDirectories?: AdditionalDirectory[];
+	/**
+	 * Per-agent worktree settings (Worktree Directory, watcher, setup script).
+	 * Set on parent agents from the Git menu's Configure Worktrees dialog.
+	 */
+	worktreeConfig?: SessionWorktreeConfig;
 	/** Left Bar bookmark - pins the agent to the Bookmarks section at the top. */
 	bookmarked?: boolean;
 	/** Per-session model override (wins over agent-level `model` config option). */
@@ -541,6 +546,23 @@ export interface WorktreeConfig {
 	branchName: string;
 	createPROnCompletion: boolean;
 	prTargetBranch: string;
+}
+
+// Per-agent worktree settings, stored on parent sessions as `worktreeConfig`.
+// Distinct from `WorktreeConfig` above, which describes a single batch run's
+// worktree. Shared because three readers must agree on where worktrees go:
+// the desktop's create-worktree flow, the CLI's `list agents` / `show agent`
+// output, and the {{WORKTREE_BASE_PATH}} line in every agent's system prompt.
+export interface SessionWorktreeConfig {
+	/** Directory where worktrees are created. */
+	basePath: string;
+	/** Whether to watch it for worktrees created outside Maestro (chokidar). */
+	watchEnabled: boolean;
+	/**
+	 * Shell command run inside each newly created worktree (copy .env files,
+	 * run setup.sh, install deps). Blank/undefined disables it.
+	 */
+	setupScript?: string;
 }
 
 // Target specification for dispatching Auto Run to a worktree agent

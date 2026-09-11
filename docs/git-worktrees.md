@@ -100,6 +100,8 @@ In the configuration modal:
 
 **Note:** Once configured, you can quickly create additional worktrees by right-clicking the parent session and selecting **"Create Worktree"** (bypasses the full configuration modal).
 
+**Agents honor it too.** The directory is printed in every agent's system prompt as its Worktree Directory, and `maestro-cli show agent <id> --json` reports it as `worktreeBasePath`. Agents are told to create worktrees only through `maestro-cli create-worktree`, which uses this directory and registers the result as a worktree agent, so nothing an agent branches off ends up somewhere you cannot see.
+
 ### Setup Scripts
 
 A fresh worktree only contains what git tracks, so anything gitignored (a `.env.local`, generated config, `node_modules`) is missing until you put it there. The **Setup Script** field runs a shell command inside each newly created worktree so that bootstrap happens automatically.

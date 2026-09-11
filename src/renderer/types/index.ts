@@ -39,6 +39,7 @@ import type { SymphonySessionMetadata } from '../../shared/symphony-types';
 // Import for extension in this file
 import type {
 	AdditionalDirectory,
+	SessionWorktreeConfig,
 	WorktreeConfig as BaseWorktreeConfig,
 	WorktreeRunTarget,
 	BatchDocumentEntry,
@@ -480,14 +481,11 @@ export interface WorktreeConfig extends BaseWorktreeConfig {
 }
 
 // Per-agent worktree settings, stored on parent sessions as `worktreeConfig`.
-// Distinct from `WorktreeConfig` above, which describes a single batch run's worktree.
-export interface SessionWorktreeConfig {
-	basePath: string; // Directory where worktrees are stored
-	watchEnabled: boolean; // Whether to watch for new worktrees via chokidar
-	// Shell command run inside each newly created worktree (copy .env files,
-	// run setup.sh, install deps). Blank/undefined disables it.
-	setupScript?: string;
-}
+// Distinct from `WorktreeConfig` above, which describes a single batch run's
+// worktree. The shape lives in shared/types so the CLI (`list agents --json`,
+// `show agent`) and the system prompt ({{WORKTREE_BASE_PATH}}) read the same
+// field the desktop writes.
+export type { SessionWorktreeConfig };
 
 // Worktree path validation state (used by useWorktreeValidation hook)
 export interface WorktreeValidationState {

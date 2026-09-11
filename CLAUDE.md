@@ -272,6 +272,10 @@ Before pushing any branch, re-run the relevant formatting, lint, type-check, and
 
 Local validation runs on a single OS and cannot catch platform-specific breakage (path separators, home directories, drive letters). A branch is not mergeable until both CI matrix legs, `test (ubuntu-latest)` and `test (windows-latest)`, are green; never merge on a local single-OS pass alone.
 
+### Worktrees Go in the Worktree Directory
+
+When you need a second checkout of this repository (a scratch branch, a merge trial, a build check against another branch), create it with `maestro-cli create-worktree --agent <your-agent-id> --branch <name> --base-branch <ref>`, never with a bare `git worktree add`. The desktop puts it in the agent's configured Worktree Directory (`~/Projects/Maestro-WorkTrees` for the main Maestro agent) and registers it as a worktree agent in the Left Bar, which is what keeps it visible to the user. Worktrees created by hand under `.worktrees/`, `~/Projects/worktrees/`, or a temp folder are invisible to the app; on 2026-09-11 a finished feature sat uncommitted in one for a day because nothing showed it existed. Remove a scratch worktree when you are done with it (`rm node_modules` first if you symlinked one in, then `git worktree remove`), and never leave work uncommitted in one.
+
 ---
 
 ## Standardized Vernacular

@@ -25,6 +25,7 @@ import type { AdditionalDirectory } from './types';
  *   {{CWD}}               - Current working directory
  *   {{AUTORUN_FOLDER}}    - Auto Run documents folder path
  *   {{ADDITIONAL_DIRECTORIES}} - Markdown block of extra granted directories (empty when none)
+ *   {{WORKTREE_BASE_PATH}} - Directory where this agent's git worktrees are created (empty when none is configured)
  *
  * Auto Run Variables:
  *   {{DOCUMENT_NAME}}     - Current Auto Run document name (without .md)
@@ -184,6 +185,11 @@ export interface TemplateSessionInfo {
 	contextUsage?: number;
 	/** Extra directories granted beyond the working directory (prompt-level grants). */
 	additionalDirectories?: AdditionalDirectory[];
+	/**
+	 * Per-agent worktree settings. Only `basePath` is read here: it becomes
+	 * {{WORKTREE_BASE_PATH}}, the one place an agent may create a worktree.
+	 */
+	worktreeConfig?: { basePath?: string };
 }
 
 export interface TemplateContext {
@@ -303,6 +309,10 @@ export const TEMPLATE_VARIABLES = [
 	{ variable: '{{AGENT_PATH}}', description: 'Agent home directory path' },
 	{ variable: '{{AGENT_SESSION_ID}}', description: 'Agent session ID' },
 	{ variable: '{{AUTORUN_FOLDER}}', description: 'Auto Run folder path', autoRunOnly: true },
+	{
+		variable: '{{WORKTREE_BASE_PATH}}',
+		description: 'Directory where git worktrees are created (empty when not configured)',
+	},
 	{ variable: '{{TAB_ID}}', description: "This conversation's tab ID (for CLI targeting)" },
 	{ variable: '{{TAB_NAME}}', description: 'Custom tab name' },
 	{ variable: '{{CONTEXT_USAGE}}', description: 'Context usage %' },
@@ -549,6 +559,11 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 			autoRunFolder ||
 			session.autoRunFolderPath ||
 			`${session.fullPath || session.projectRoot || session.cwd}/.maestro/playbooks`,
+		// Deliberately NOT defaulted: the desktop falls back to `<parent>/worktrees`
+		// only inside its own create flow. An agent told a guessed path would
+		// `git worktree add` there by hand, and that worktree is exactly the kind
+		// the app never learns about. Empty means "use create-worktree".
+		WORKTREE_BASE_PATH: session.worktreeConfig?.basePath || '',
 
 		// Aliases (not documented in TEMPLATE_VARIABLES but still supported for internal use and backwards compatibility)
 		SESSION_ID: session.id,

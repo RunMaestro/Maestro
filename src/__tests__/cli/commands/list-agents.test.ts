@@ -178,6 +178,24 @@ describe('list-agents command', () => {
 			);
 		});
 
+		it('should expose the worktree directory as worktreeBasePath, null when unset', () => {
+			// An agent reads this to put a worktree where the desktop will see it,
+			// rather than inventing a path the app never registers.
+			vi.mocked(readSessions).mockReturnValue([
+				mockSession({
+					id: 'with-wt',
+					worktreeConfig: { basePath: '/home/user/Project-WorkTrees', watchEnabled: true },
+				}),
+				mockSession({ id: 'without-wt', worktreeConfig: undefined }),
+			]);
+
+			listAgents({ json: true });
+
+			const parsed = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(parsed[0].worktreeBasePath).toBe('/home/user/Project-WorkTrees');
+			expect(parsed[1].worktreeBasePath).toBeNull();
+		});
+
 		it('should output empty JSON array for no agents', () => {
 			vi.mocked(readSessions).mockReturnValue([]);
 

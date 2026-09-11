@@ -89,6 +89,7 @@ export async function prepareMaestroSystemPromptCli(
 			projectRoot: session.projectRoot,
 			autoRunFolderPath: session.autoRunFolderPath,
 			additionalDirectories: session.additionalDirectories,
+			worktreeConfig: session.worktreeConfig,
 			isGitRepo: sessionIsGitRepo,
 		},
 		gitBranch,

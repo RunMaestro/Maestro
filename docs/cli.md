@@ -685,6 +685,8 @@ maestro-cli create-worktree -a <parent-agent-id> -b feature/new-thing --base-bra
 maestro-cli create-worktree -a <parent-agent-id> -b feature/new-thing -m "Start on the API layer"
 ```
 
+The worktree is created in the parent agent's configured Worktree Directory (`show agent <id> --json` reports it as `worktreeBasePath`), so it appears in the Left Bar like one made from the desktop. This is the only supported way for an agent to create a worktree: a bare `git worktree add` produces a checkout the desktop never learns about.
+
 The optional `--message` is delivered to the new agent as a plain prompt (not an Auto Run loop) on the same connection, addressed by the ID the desktop just returned. Both `--agent` and `--branch` support the usual partial-ID resolution.
 
 | Flag                   | Description                                                                   | Default          |
