@@ -424,8 +424,8 @@ describe('Time-range filtering works correctly for all ranges', () => {
 		});
 	});
 
-	describe('exportToCsv time range calculations', () => {
-		it('should export CSV for "day" range only', async () => {
+	describe('getQueryEvents time range calculations', () => {
+		it('should query events for the "day" range only', async () => {
 			const now = Date.now();
 			const oneDayMs = 24 * 60 * 60 * 1000;
 
@@ -433,7 +433,7 @@ describe('Time-range filtering works correctly for all ranges', () => {
 			const db = new StatsDB();
 			db.initialize();
 
-			db.exportToCsv('day');
+			db.getQueryEvents('day');
 
 			const allCalls = mockStatement.all.mock.calls;
 			expect(allCalls.length).toBeGreaterThan(0);
@@ -445,12 +445,12 @@ describe('Time-range filtering works correctly for all ranges', () => {
 			expect(startTimeParam).toBeLessThanOrEqual(now - oneDayMs + 5000);
 		});
 
-		it('should export CSV for "all" range', async () => {
+		it('should query events for the "all" range', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
 			db.initialize();
 
-			db.exportToCsv('all');
+			db.getQueryEvents('all');
 
 			const allCalls = mockStatement.all.mock.calls;
 			expect(allCalls.length).toBeGreaterThan(0);

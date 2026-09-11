@@ -23,7 +23,22 @@ vi.mock('electron', () => ({
 		// query-events buffer; tests don't exercise the hook so a noop is fine.
 		on: vi.fn(),
 		getPath: vi.fn().mockReturnValue('/mock/user/data'),
+		getVersion: vi.fn().mockReturnValue('0.0.0-test'),
 	},
+}));
+
+// The export handler's collaborators: the bundle builder/writer and the token
+// scan, which would otherwise read real agent session files from disk.
+const mockBuildUsageExport = vi.fn();
+const mockWriteUsageExport = vi.fn();
+vi.mock('../../../../main/stats/usage-export', () => ({
+	buildUsageExport: (...args: unknown[]) => mockBuildUsageExport(...args),
+	writeUsageExport: (...args: unknown[]) => mockWriteUsageExport(...args),
+	countUsageExportRows: () => ({ 'query-events': 3 }),
+}));
+const mockGetTokenUsageAggregate = vi.fn();
+vi.mock('../../../../main/stats/token-usage/token-usage-accessor', () => ({
+	getTokenUsageAggregate: (...args: unknown[]) => mockGetTokenUsageAggregate(...args),
 }));
 
 // Mock the stats-db module
@@ -105,7 +120,6 @@ describe('stats IPC handlers', () => {
 				bySessionByDay: {},
 				bySessionSource: {},
 			}),
-			exportToCsv: vi.fn().mockReturnValue('id,sessionId,...'),
 			clearOldData: vi.fn().mockReturnValue({ success: true, deletedCount: 0 }),
 			getDatabaseSize: vi.fn().mockReturnValue({ sizeBytes: 1024, sizeFormatted: '1 KB' }),
 			recordSessionCreated: vi.fn().mockReturnValue('session-lifecycle-id'),
@@ -153,7 +167,7 @@ describe('stats IPC handlers', () => {
 				'stats:get-autorun-sessions',
 				'stats:get-autorun-tasks',
 				'stats:get-aggregation',
-				'stats:export-csv',
+				'stats:export',
 				'stats:clear-old-data',
 				'stats:get-database-size',
 				'stats:record-session-created',
@@ -453,14 +467,64 @@ describe('stats IPC handlers', () => {
 			});
 		});
 
-		describe('stats:export-csv', () => {
-			it('should not broadcast stats:updated when exporting CSV', async () => {
-				const handler = handlers.get('stats:export-csv');
+		describe('stats:export', () => {
+			beforeEach(() => {
+				mockBuildUsageExport.mockReturnValue({ bundle: true });
+				mockWriteUsageExport.mockResolvedValue(undefined);
+				mockGetTokenUsageAggregate.mockResolvedValue({ totals: {} });
+			});
 
-				await handler!({} as any, 'all');
+			it('writes the bundle, reports row counts, and does not broadcast stats:updated', async () => {
+				const handler = handlers.get('stats:export');
 
-				expect(mockStatsDB.exportToCsv).toHaveBeenCalledWith('all');
+				const result = await handler!({} as any, 'all', 'json', '/tmp/usage.json');
+
+				expect(mockBuildUsageExport).toHaveBeenCalledWith(
+					expect.objectContaining({
+						range: 'all',
+						sinceMs: 0,
+						appVersion: '0.0.0-test',
+						cueEvents: null,
+						tokenUsage: { totals: {} },
+					})
+				);
+				expect(mockWriteUsageExport).toHaveBeenCalledWith('/tmp/usage.json', 'json', {
+					bundle: true,
+				});
+				expect(result).toEqual({
+					path: '/tmp/usage.json',
+					format: 'json',
+					rowCounts: { 'query-events': 3 },
+					notes: ['Cue runs are not included because Maestro Cue is off.'],
+				});
 				expect(mockMainWindow.webContents.send).not.toHaveBeenCalled();
+			});
+
+			it('still exports when the token scan fails, and says so', async () => {
+				mockGetTokenUsageAggregate.mockRejectedValue(new Error('scan failed'));
+				const handler = handlers.get('stats:export');
+
+				const result = await handler!({} as any, 'week', 'csv', '/tmp/usage.zip');
+
+				expect(mockBuildUsageExport).toHaveBeenCalledWith(
+					expect.objectContaining({ tokenUsage: null })
+				);
+				expect(mockWriteUsageExport).toHaveBeenCalledWith('/tmp/usage.zip', 'csv', {
+					bundle: true,
+				});
+				expect(result.notes).toContain('Token usage is not included: scan failed');
+			});
+
+			it('rejects an unknown format or a relative path before writing', async () => {
+				const handler = handlers.get('stats:export');
+
+				await expect(handler!({} as any, 'all', 'xml', '/tmp/usage.xml')).rejects.toThrow(
+					'Unsupported export format'
+				);
+				await expect(handler!({} as any, 'all', 'json', 'usage.json')).rejects.toThrow(
+					'Export path must be absolute'
+				);
+				expect(mockWriteUsageExport).not.toHaveBeenCalled();
 			});
 		});
 	});

@@ -145,7 +145,7 @@ const mockStats = {
 	getDatabaseSize: vi.fn(),
 	getAutoRunSessions: vi.fn().mockResolvedValue([]),
 	onStatsUpdate: vi.fn(() => () => {}),
-	exportCsv: vi.fn(),
+	exportUsage: vi.fn(),
 };
 
 const mockDialog = {

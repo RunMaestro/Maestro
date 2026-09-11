@@ -12,6 +12,12 @@ import {
 	useUsageDashboardTabs,
 } from '../../../../renderer/components/UsageDashboard/UsageDashboardModal/hooks';
 
+const mockNotifyToast = vi.hoisted(() => vi.fn());
+vi.mock('../../../../renderer/stores/notificationStore', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../renderer/stores/notificationStore')>()),
+	notifyToast: mockNotifyToast,
+}));
+
 const sampleAggregation: StatsAggregation = {
 	totalQueries: 2,
 	totalDuration: 1000,
@@ -60,7 +66,7 @@ const mockGetDatabaseSize = vi.fn();
 const mockOnStatsUpdate = vi.fn();
 const mockCueAggregation = vi.fn();
 const mockSaveFile = vi.fn();
-const mockExportCsv = vi.fn();
+const mockExportUsage = vi.fn();
 const mockWriteFile = vi.fn();
 const mockRefreshClaudeUsageSnapshots = vi.fn();
 const mockRefreshCodexUsageSnapshots = vi.fn();
@@ -87,7 +93,7 @@ function installMaestroMock() {
 				getDelegationByDay: mockGetDelegationByDay,
 				getDatabaseSize: mockGetDatabaseSize,
 				onStatsUpdate: mockOnStatsUpdate,
-				exportCsv: mockExportCsv,
+				exportUsage: mockExportUsage,
 			},
 			cueStats: {
 				getAggregation: mockCueAggregation,
@@ -129,8 +135,13 @@ describe('UsageDashboardModal hooks', () => {
 		mockCueAggregation.mockResolvedValue({
 			totals: { occurrences: 3, totalDurationMs: 1200 },
 		});
-		mockSaveFile.mockResolvedValue('/tmp/usage.csv');
-		mockExportCsv.mockResolvedValue('a,b\n1,2');
+		mockSaveFile.mockResolvedValue('/tmp/usage.json');
+		mockExportUsage.mockResolvedValue({
+			path: '/tmp/usage.json',
+			format: 'json',
+			rowCounts: { 'query-events': 2, 'wizard-runs': 1 },
+			notes: [],
+		});
 		mockWriteFile.mockResolvedValue(undefined);
 		mockRefreshClaudeUsageSnapshots.mockResolvedValue({ refreshed: 1 });
 		mockRefreshCodexUsageSnapshots.mockResolvedValue({ refreshed: 1 });
@@ -280,30 +291,51 @@ describe('UsageDashboardModal hooks', () => {
 		globalThis.ResizeObserver = originalResizeObserver;
 	});
 
-	it('exports CSV through dialog and filesystem APIs', async () => {
+	it('exports through the save dialog and reports where the file went', async () => {
 		vi.useFakeTimers();
-		vi.setSystemTime(new Date('2026-07-01T12:00:00.000Z'));
+		vi.setSystemTime(new Date(2026, 6, 1, 12, 0, 0));
 		installMaestroMock();
 		const { result } = renderHook(() => useUsageDashboardExport('month'));
 
 		await act(async () => {
-			await result.current.handleExport();
+			await result.current.handleExport('json');
 		});
 
 		expect(mockSaveFile).toHaveBeenCalledWith(
 			expect.objectContaining({
-				defaultPath: 'maestro-usage-month-2026-07-01.csv',
+				defaultPath: 'maestro-usage-month-20260701-120000.json',
+				filters: [{ name: 'JSON', extensions: ['json'] }],
 			})
 		);
-		expect(mockExportCsv).toHaveBeenCalledWith('month');
-		expect(mockWriteFile).toHaveBeenCalledWith('/tmp/usage.csv', 'a,b\n1,2');
+		expect(mockExportUsage).toHaveBeenCalledWith('month', 'json', '/tmp/usage.json');
+		expect(mockNotifyToast).toHaveBeenCalledWith(
+			expect.objectContaining({ color: 'green', message: '3 rows saved to /tmp/usage.json.' })
+		);
 		expect(result.current.isExporting).toBe(false);
 
 		mockSaveFile.mockResolvedValueOnce(null);
 		await act(async () => {
-			await result.current.handleExport();
+			await result.current.handleExport('csv');
 		});
-		expect(mockExportCsv).toHaveBeenCalledTimes(1);
+		expect(mockSaveFile).toHaveBeenLastCalledWith(
+			expect.objectContaining({ filters: [{ name: 'Zip of CSV files', extensions: ['zip'] }] })
+		);
+		expect(mockExportUsage).toHaveBeenCalledTimes(1);
+	});
+
+	it('reports a failed export instead of failing silently', async () => {
+		installMaestroMock();
+		mockExportUsage.mockRejectedValueOnce(new Error('disk full'));
+		const { result } = renderHook(() => useUsageDashboardExport('week'));
+
+		await act(async () => {
+			await result.current.handleExport('csv');
+		});
+
+		expect(mockNotifyToast).toHaveBeenCalledWith(
+			expect.objectContaining({ color: 'red', message: 'disk full' })
+		);
+		expect(result.current.isExporting).toBe(false);
 	});
 
 	it('samples quota tabs once per open and skips when disabled', async () => {

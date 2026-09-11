@@ -159,7 +159,7 @@ global.ResizeObserver = MockResizeObserver as unknown as typeof ResizeObserver;
 
 // Mock maestro API
 const mockGetAggregation = vi.fn();
-const mockExportCsv = vi.fn();
+const mockExportUsage = vi.fn();
 const mockOnStatsUpdate = vi.fn(() => vi.fn());
 const mockGetAutoRunSessions = vi.fn(() => Promise.resolve([]));
 const mockGetAutoRunTasks = vi.fn(() => Promise.resolve([]));
@@ -177,7 +177,7 @@ Object.defineProperty(window, 'maestro', {
 				cue: { count: 0, durationMs: 0 },
 			}),
 			getDelegationByDay: vi.fn().mockResolvedValue([]),
-			exportCsv: mockExportCsv,
+			exportUsage: mockExportUsage,
 			onStatsUpdate: mockOnStatsUpdate,
 			getAutoRunSessions: mockGetAutoRunSessions,
 			getAutoRunTasks: mockGetAutoRunTasks,
@@ -289,7 +289,12 @@ describe('UsageDashboard Responsive Layout', () => {
 			encoreFeatures: { ...s.encoreFeatures, usageStats: true, maestroCue: false },
 		}));
 		mockGetAggregation.mockResolvedValue(createSampleData());
-		mockExportCsv.mockResolvedValue('date,count\n2024-01-15,25');
+		mockExportUsage.mockResolvedValue({
+			path: '/tmp/usage.json',
+			format: 'json',
+			rowCounts: {},
+			notes: [],
+		});
 		mockSaveFile.mockResolvedValue(null);
 		mockWriteFile.mockResolvedValue({ success: true });
 		mockGetDatabaseSize.mockResolvedValue(1024 * 1024 * 5);

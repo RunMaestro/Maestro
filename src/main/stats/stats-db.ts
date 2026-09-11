@@ -64,7 +64,7 @@ import {
 	type QuerySourceTotals,
 	type QuerySourceDay,
 } from './delegation';
-import { clearOldData, exportToCsv } from './data-management';
+import { clearOldData } from './data-management';
 import {
 	insertImageAnnotation,
 	clearImageAnnotationCache,
@@ -940,10 +940,6 @@ export class StatsDB {
 			};
 		}
 		return clearOldData(this.database, olderThanDays);
-	}
-
-	exportToCsv(range: StatsTimeRange): string {
-		return exportToCsv(this.database, range);
 	}
 
 	// ============================================================================

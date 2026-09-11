@@ -14,17 +14,26 @@
  * users post to social.
  */
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { Share2, Copy, Download, Check } from 'lucide-react';
 import type { Theme, AutoRunStats, MaestroUsageStats, LeaderboardRegistration } from '../types';
 import { getBadgeForTime, formatCumulativeTime } from '../constants/conductorBadges';
 import { formatTokensCompact } from '../utils/formatters';
 import { humanizeDuration } from '../../shared/duration';
 import maestroWandIcon from '../assets/icon-wand.png';
-import { safeClipboardWriteBlob } from '../utils/clipboard';
+import { safeClipboardWriteImage } from '../utils/clipboard';
+import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
+import { saveImageDataUrlToDisk } from '../utils/imageExport';
+import { notifyToast } from '../stores/notificationStore';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { useClickOutside } from '../hooks/ui/useClickOutside';
+
+const GITHUB_LOGO_URL = 'https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png';
+
+function githubAvatarUrl(username: string): string {
+	return `https://github.com/${username}.png?size=200`;
+}
 
 /** Shape of the global stats subset the share image consumes. Mirrors the
  * structure used by `AchievementCard`; defined here to keep the new module
@@ -53,7 +62,7 @@ export interface AchievementShareButtonProps {
 	/**
 	 * Visual variant. `default` matches the inline-card placement (small
 	 * subdued icon button). `header` makes the button match the surrounding
-	 * action buttons (Export CSV, etc.) on a modal toolbar: slightly larger
+	 * action buttons (Export, etc.) on a modal toolbar: slightly larger
 	 * hit area, accent tint background.
 	 */
 	variant?: 'default' | 'header';
@@ -131,6 +140,7 @@ export function AchievementShareButton({
 }: AchievementShareButtonProps) {
 	const [shareMenuOpen, setShareMenuOpen] = useState(false);
 	const [copySuccess, setCopySuccess] = useState(false);
+	const [busyAction, setBusyAction] = useState<'copy' | 'save' | null>(null);
 	const shareMenuRef = useRef<HTMLDivElement>(null);
 
 	const currentBadge = getBadgeForTime(autoRunStats.cumulativeTimeMs);
@@ -140,10 +150,33 @@ export function AchievementShareButton({
 		setShareMenuOpen(false);
 	}, []);
 
-	useClickOutside(shareMenuRef, closeShareMenu, shareMenuOpen, {
-		delay: true,
-		eventType: 'click',
-	});
+	// mousedown, not click: the Usage Dashboard stops click propagation at its
+	// dialog, so a document click listener never hears clicks inside the modal
+	// and the menu could not be dismissed there.
+	useClickOutside(shareMenuRef, closeShareMenu, shareMenuOpen);
+
+	// Remote images for the card, shared across generations. A failed load is
+	// dropped so the next attempt retries instead of reusing the null.
+	const remoteImagesRef = useRef(new Map<string, Promise<HTMLImageElement | null>>());
+	const loadRemoteImage = useCallback((url: string) => {
+		const cached = remoteImagesRef.current.get(url);
+		if (cached) return cached;
+		const pending = loadImage(url).then((img) => {
+			if (!img) remoteImagesRef.current.delete(url);
+			return img;
+		});
+		remoteImagesRef.current.set(url, pending);
+		return pending;
+	}, []);
+
+	// Start the fetches when the menu opens: they take seconds (measured 8s for
+	// the avatar, 3s for the logo) and the user is about to ask for the image.
+	const prewarmGithubUsername = leaderboardRegistration?.githubUsername;
+	useEffect(() => {
+		if (!shareMenuOpen) return;
+		void loadRemoteImage(GITHUB_LOGO_URL);
+		if (prewarmGithubUsername) void loadRemoteImage(githubAvatarUrl(prewarmGithubUsername));
+	}, [shareMenuOpen, prewarmGithubUsername, loadRemoteImage]);
 
 	const generateShareImage = useCallback(async (): Promise<HTMLCanvasElement> => {
 		const canvas = document.createElement('canvas');
@@ -179,14 +212,10 @@ export function AchievementShareButton({
 		ctx.imageSmoothingEnabled = true;
 		ctx.imageSmoothingQuality = 'high';
 
-		let avatarImage: HTMLImageElement | null = null;
-		if (githubUsername) {
-			avatarImage = await loadImage(`https://github.com/${githubUsername}.png?size=200`);
-		}
-
-		const githubLogoImage = await loadImage(
-			'https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png'
-		);
+		const [avatarImage, githubLogoImage] = await Promise.all([
+			githubUsername ? loadRemoteImage(githubAvatarUrl(githubUsername)) : Promise.resolve(null),
+			loadRemoteImage(GITHUB_LOGO_URL),
+		]);
 
 		const wandIconImage = await new Promise<HTMLImageElement | null>((resolve) => {
 			const img = new Image();
@@ -571,42 +600,75 @@ export function AchievementShareButton({
 		usageStats,
 		handsOnTimeMs,
 		leaderboardRegistration,
+		loadRemoteImage,
 	]);
 
-	const copyToClipboard = useCallback(async () => {
+	const copyToClipboard = useCallback(async (): Promise<boolean> => {
+		setBusyAction('copy');
 		try {
 			const canvas = await generateShareImage();
-			const blob = await new Promise<Blob | null>((resolve) => {
-				canvas.toBlob((b) => resolve(b), 'image/png');
-			});
-			if (blob) {
-				const ok = await safeClipboardWriteBlob([new ClipboardItem({ 'image/png': blob })]);
-				if (ok) {
-					setCopySuccess(true);
-					setTimeout(() => setCopySuccess(false), 2000);
-				}
+			// Electron's native clipboard, not navigator.clipboard.write: building
+			// the image waits on network fetches, and by the time it is ready
+			// Chromium's user-activation window has closed, so the browser API
+			// rejected and the copy silently did nothing.
+			const ok = await safeClipboardWriteImage(canvas.toDataURL('image/png'));
+			if (!ok) {
+				notifyToast({
+					color: 'red',
+					title: 'Could Not Copy Image',
+					message: 'The clipboard rejected the share image. Try Save as Image instead.',
+				});
+				return false;
 			}
+			setCopySuccess(true);
+			setTimeout(() => setCopySuccess(false), 2000);
+			flashCopiedToClipboard('Achievement share image');
+			return true;
 		} catch (error) {
 			logger.error('Failed to generate share image:', undefined, error);
 			captureException(error, { extra: { action: 'share-achievement-copy' } });
+			notifyToast({
+				color: 'red',
+				title: 'Could Not Create Share Image',
+				message: error instanceof Error ? error.message : String(error),
+			});
+			return false;
+		} finally {
+			setBusyAction(null);
 		}
 	}, [generateShareImage]);
 
-	const downloadImage = useCallback(async () => {
+	const saveImage = useCallback(async () => {
+		setBusyAction('save');
 		try {
 			const canvas = await generateShareImage();
-			const link = document.createElement('a');
-			link.download = `maestro-achievement-level-${currentLevel}.png`;
-			link.href = canvas.toDataURL('image/png');
-			link.click();
+			const result = await saveImageDataUrlToDisk(
+				canvas.toDataURL('image/png'),
+				`maestro-achievement-level-${currentLevel}.png`
+			);
+			if (result.error) {
+				notifyToast({ color: 'red', title: 'Could Not Save Image', message: result.error });
+				return;
+			}
+			setShareMenuOpen(false);
+			if (result.saved && result.path) {
+				notifyToast({ color: 'green', title: 'Image Saved', message: result.path });
+			}
 		} catch (error) {
-			logger.error('Failed to download image:', undefined, error);
-			captureException(error, { extra: { action: 'share-achievement-download', currentLevel } });
+			logger.error('Failed to save share image:', undefined, error);
+			captureException(error, { extra: { action: 'share-achievement-save', currentLevel } });
+			notifyToast({
+				color: 'red',
+				title: 'Could Not Create Share Image',
+				message: error instanceof Error ? error.message : String(error),
+			});
+		} finally {
+			setBusyAction(null);
 		}
 	}, [generateShareImage, currentLevel]);
 
 	// Header variant matches the visual weight of sibling toolbar buttons
-	// (Export CSV, Close); default variant keeps the in-card subdued look.
+	// (Export, Close); default variant keeps the in-card subdued look.
 	const buttonClass =
 		variant === 'header'
 			? 'flex items-center gap-1.5 px-3 py-1.5 rounded text-sm row-hover transition-colors'
@@ -652,29 +714,39 @@ export function AchievementShareButton({
 				>
 					<button
 						onClick={async () => {
-							await copyToClipboard();
-							setTimeout(() => setShareMenuOpen(false), 1000);
+							if (await copyToClipboard()) setTimeout(() => setShareMenuOpen(false), 1000);
 						}}
-						className="w-full flex items-center gap-2 px-3 py-2 rounded text-sm whitespace-nowrap hover:bg-white/10 transition-colors"
+						disabled={busyAction !== null}
+						className="w-full flex items-center gap-2 px-3 py-2 rounded text-sm whitespace-nowrap hover:bg-white/10 transition-colors disabled:opacity-60"
 					>
 						{copySuccess ? (
 							<Check className="w-4 h-4 shrink-0" style={{ color: theme.colors.success }} />
 						) : (
-							<Copy className="w-4 h-4 shrink-0" style={{ color: theme.colors.textDim }} />
+							<Copy
+								className={`w-4 h-4 shrink-0 ${busyAction === 'copy' ? 'animate-pulse' : ''}`}
+								style={{ color: theme.colors.textDim }}
+							/>
 						)}
 						<span style={{ color: theme.colors.textMain }}>
-							{copySuccess ? 'Copied!' : 'Copy to Clipboard'}
+							{busyAction === 'copy'
+								? 'Generating...'
+								: copySuccess
+									? 'Copied!'
+									: 'Copy to Clipboard'}
 						</span>
 					</button>
 					<button
-						onClick={() => {
-							downloadImage();
-							setShareMenuOpen(false);
-						}}
-						className="w-full flex items-center gap-2 px-3 py-2 rounded text-sm whitespace-nowrap hover:bg-white/10 transition-colors"
+						onClick={() => void saveImage()}
+						disabled={busyAction !== null}
+						className="w-full flex items-center gap-2 px-3 py-2 rounded text-sm whitespace-nowrap hover:bg-white/10 transition-colors disabled:opacity-60"
 					>
-						<Download className="w-4 h-4 shrink-0" style={{ color: theme.colors.textDim }} />
-						<span style={{ color: theme.colors.textMain }}>Save as Image</span>
+						<Download
+							className={`w-4 h-4 shrink-0 ${busyAction === 'save' ? 'animate-pulse' : ''}`}
+							style={{ color: theme.colors.textDim }}
+						/>
+						<span style={{ color: theme.colors.textMain }}>
+							{busyAction === 'save' ? 'Generating...' : 'Save as Image'}
+						</span>
 					</button>
 				</div>
 			)}

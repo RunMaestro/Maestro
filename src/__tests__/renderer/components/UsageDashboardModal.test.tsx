@@ -90,9 +90,15 @@ vi.mock('../../../renderer/contexts/LayerStackContext', () => ({
 	}),
 }));
 
+const mockNotifyToast = vi.hoisted(() => vi.fn());
+vi.mock('../../../renderer/stores/notificationStore', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../renderer/stores/notificationStore')>()),
+	notifyToast: mockNotifyToast,
+}));
+
 // Mock maestro stats API
 const mockGetAggregation = vi.fn();
-const mockExportCsv = vi.fn();
+const mockExportUsage = vi.fn();
 const mockOnStatsUpdate = vi.fn(() => vi.fn()); // Returns unsubscribe function
 const mockGetAutoRunSessions = vi.fn(() => Promise.resolve([]));
 const mockGetAutoRunTasks = vi.fn(() => Promise.resolve([]));
@@ -114,7 +120,7 @@ const mockMaestro = {
 			cue: { count: 0, durationMs: 0 },
 		}),
 		getDelegationByDay: vi.fn().mockResolvedValue([]),
-		exportCsv: mockExportCsv,
+		exportUsage: mockExportUsage,
 		onStatsUpdate: mockOnStatsUpdate,
 		getAutoRunSessions: mockGetAutoRunSessions,
 		getAutoRunTasks: mockGetAutoRunTasks,
@@ -238,7 +244,12 @@ describe('UsageDashboardModal', () => {
 			encoreFeatures: { ...s.encoreFeatures, usageStats: true, maestroCue: false },
 		}));
 		mockGetAggregation.mockResolvedValue(createSampleData());
-		mockExportCsv.mockResolvedValue('date,count\n2024-01-15,25');
+		mockExportUsage.mockResolvedValue({
+			path: '/path/to/export.json',
+			format: 'json',
+			rowCounts: { 'query-events': 1 },
+			notes: [],
+		});
 		mockSaveFile.mockResolvedValue(null); // User cancels by default
 		mockWriteFile.mockResolvedValue({ success: true });
 		mockGetDatabaseSize.mockResolvedValue(1024 * 1024 * 5); // 5 MB default
@@ -299,11 +310,11 @@ describe('UsageDashboardModal', () => {
 			});
 		});
 
-		it('renders Export CSV button', async () => {
+		it('renders Export button', async () => {
 			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
 
 			await waitFor(() => {
-				expect(screen.getByText('Export CSV')).toBeInTheDocument();
+				expect(screen.getByRole('button', { name: 'Export' })).toBeInTheDocument();
 			});
 		});
 
@@ -542,20 +553,31 @@ describe('UsageDashboardModal', () => {
 		});
 	});
 
-	describe('CSV Export', () => {
-		it('shows save dialog when export button is clicked', async () => {
-			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
-
+	describe('Export', () => {
+		const openExportMenu = async () => {
 			await waitFor(() => {
-				expect(screen.getByText('Export CSV')).toBeInTheDocument();
+				expect(screen.getByRole('button', { name: 'Export' })).toBeInTheDocument();
 			});
+			fireEvent.click(screen.getByRole('button', { name: 'Export' }));
+		};
 
-			fireEvent.click(screen.getByText('Export CSV'));
+		it('offers JSON and CSV', async () => {
+			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
+			await openExportMenu();
+
+			expect(screen.getByRole('menuitem', { name: /JSON/ })).toBeInTheDocument();
+			expect(screen.getByRole('menuitem', { name: /CSV/ })).toBeInTheDocument();
+		});
+
+		it('asks for a zip file when CSV is chosen', async () => {
+			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
+			await openExportMenu();
+			fireEvent.click(screen.getByRole('menuitem', { name: /CSV/ }));
 
 			await waitFor(() => {
 				expect(mockSaveFile).toHaveBeenCalledWith(
 					expect.objectContaining({
-						filters: [{ name: 'CSV Files', extensions: ['csv'] }],
+						filters: [{ name: 'Zip of CSV files', extensions: ['zip'] }],
 						title: 'Export Usage Data',
 					})
 				);
@@ -566,67 +588,50 @@ describe('UsageDashboardModal', () => {
 			mockSaveFile.mockResolvedValue(null); // User cancels
 
 			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
-
-			await waitFor(() => {
-				expect(screen.getByText('Export CSV')).toBeInTheDocument();
-			});
-
-			fireEvent.click(screen.getByText('Export CSV'));
+			await openExportMenu();
+			fireEvent.click(screen.getByRole('menuitem', { name: /JSON/ }));
 
 			await waitFor(() => {
 				expect(mockSaveFile).toHaveBeenCalled();
 			});
-
-			// exportCsv should not be called if user cancelled
-			expect(mockExportCsv).not.toHaveBeenCalled();
+			expect(mockExportUsage).not.toHaveBeenCalled();
 		});
 
-		it('exports CSV to selected file location', async () => {
-			const testFilePath = '/path/to/export.csv';
-			const csvContent =
-				'id,sessionId,agentType,source,startTime,duration\n"1","test","claude-code","user","2024-01-15","1000"';
-			mockSaveFile.mockResolvedValue(testFilePath);
-			mockExportCsv.mockResolvedValue(csvContent);
+		it('exports to the selected file location and confirms it', async () => {
+			mockSaveFile.mockResolvedValue('/path/to/export.json');
 
 			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
+			await openExportMenu();
+			fireEvent.click(screen.getByRole('menuitem', { name: /JSON/ }));
 
 			await waitFor(() => {
-				expect(screen.getByText('Export CSV')).toBeInTheDocument();
+				expect(mockExportUsage).toHaveBeenCalledWith('week', 'json', '/path/to/export.json');
 			});
-
-			fireEvent.click(screen.getByText('Export CSV'));
-
 			await waitFor(() => {
-				expect(mockExportCsv).toHaveBeenCalledWith('week');
-			});
-
-			await waitFor(() => {
-				expect(mockWriteFile).toHaveBeenCalledWith(testFilePath, csvContent);
+				expect(mockNotifyToast).toHaveBeenCalledWith(expect.objectContaining({ color: 'green' }));
 			});
 		});
 
-		it('handles export error gracefully', async () => {
-			const testFilePath = '/path/to/export.csv';
-			mockSaveFile.mockResolvedValue(testFilePath);
-			mockExportCsv.mockRejectedValue(new Error('Export failed'));
+		it('reports an export error instead of failing silently', async () => {
+			mockSaveFile.mockResolvedValue('/path/to/export.json');
+			mockExportUsage.mockRejectedValue(new Error('Export failed'));
 
 			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 
 			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
-
-			await waitFor(() => {
-				expect(screen.getByText('Export CSV')).toBeInTheDocument();
-			});
-
-			fireEvent.click(screen.getByText('Export CSV'));
+			await openExportMenu();
+			fireEvent.click(screen.getByRole('menuitem', { name: /JSON/ }));
 
 			await waitFor(() => {
 				expect(consoleSpy).toHaveBeenCalledWith(
-					'Failed to export CSV:',
+					'Failed to export usage data:',
 					undefined,
 					expect.any(Error)
 				);
 			});
+			expect(mockNotifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({ color: 'red', message: 'Export failed' })
+			);
 
 			consoleSpy.mockRestore();
 		});

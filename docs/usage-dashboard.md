@@ -225,14 +225,16 @@ The selected time range applies to all tabs and charts. Your preferred time rang
 
 ## Exporting Data
 
-Click **Export CSV** in the top-right corner to download your usage data as a CSV file. The export includes:
+Click **Export** in the top-right corner and pick a format. Both cover the selected time range and hold the same data:
 
-- Query timestamps
-- Agent information
-- Duration metrics
-- Source categorization (interactive vs. Auto Run)
+| Format   | What you get                                                                                        |
+| -------- | --------------------------------------------------------------------------------------------------- |
+| **JSON** | One file with every table and the dashboard's computed totals. Best for scripts and `jq`.           |
+| **CSV**  | A `.zip` with one CSV per table, plus `export-info.json` holding the totals. Best for spreadsheets. |
 
-Use exported data for further analysis in spreadsheet applications or to share usage reports.
+The export includes query events (with per-turn tokens and cost), Auto Run sessions and tasks, agent lifecycle, Agent Resilience outages, wizard runs, daily shortcut usage, multi-window usage, token usage by agent, model, project, and account, and Maestro Cue runs when Cue is on. Cue keeps 7 days of run history, so a longer range includes only the last week of Cue runs.
+
+A toast confirms where the file was saved and how many rows it holds.
 
 ## Data Collection
 

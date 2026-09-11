@@ -325,7 +325,7 @@ Registered in `src/main/ipc/handlers/stats.ts`. All handlers check `statsCollect
 
 | Handler                             | Description                                                                          |
 | ----------------------------------- | ------------------------------------------------------------------------------------ |
-| `stats:export-csv`                  | Export query events to CSV for a time range                                          |
+| `stats:export`                      | Export every stats table, token usage, and Cue runs for a range as JSON or a CSV zip |
 | `stats:clear-old-data`              | Delete records older than N days (transactional across all tables)                   |
 | `stats:get-database-size`           | Get the database file size in bytes                                                  |
 | `stats:get-initialization-result`   | Get the result of the one-shot DB initialization (used by the settings health panel) |

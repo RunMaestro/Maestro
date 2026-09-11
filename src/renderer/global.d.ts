@@ -3574,8 +3574,12 @@ interface MaestroAPI {
 		getDelegationByDay: (
 			range?: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'
 		) => Promise<import('../shared/delegation').DelegationDay[]>;
-		// Export query events to CSV
-		exportCsv: (range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all') => Promise<string>;
+		// Export every stats table for a range: one JSON file, or a zip of CSVs
+		exportUsage: (
+			range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all',
+			format: import('../shared/stats-types').UsageExportFormat,
+			filePath: string
+		) => Promise<import('../shared/stats-types').UsageExportResult>;
 		// Subscribe to stats updates (for real-time dashboard refresh)
 		onStatsUpdate: (callback: () => void) => () => void;
 		// Clear old stats data (older than specified number of days)

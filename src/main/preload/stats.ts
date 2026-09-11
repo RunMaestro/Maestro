@@ -18,6 +18,8 @@ import type {
 	StatsTimeRange,
 	ResilienceEvent,
 	WizardRun,
+	UsageExportFormat,
+	UsageExportResult,
 } from '../../shared/stats-types';
 export type {
 	QueryEvent,
@@ -138,9 +140,13 @@ export function createStatsApi() {
 		getTokenUsage: (query: TokenUsageQuery = {}, force = false): Promise<TokenUsageAggregate> =>
 			ipcRenderer.invoke('stats:get-token-usage', query, force),
 
-		// Export query events to CSV
-		exportCsv: (range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'): Promise<string> =>
-			ipcRenderer.invoke('stats:export-csv', range),
+		// Export every stats table for a range to `filePath`: one JSON file, or a
+		// zip with one CSV per table. Main writes the file.
+		exportUsage: (
+			range: StatsTimeRange,
+			format: UsageExportFormat,
+			filePath: string
+		): Promise<UsageExportResult> => ipcRenderer.invoke('stats:export', range, format, filePath),
 
 		// Subscribe to stats updates (for real-time dashboard refresh)
 		onStatsUpdate: (callback: () => void) => {

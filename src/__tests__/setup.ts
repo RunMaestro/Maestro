@@ -678,7 +678,7 @@ const mockMaestro = {
 		recordAutoTask: vi.fn().mockResolvedValue('task-id'),
 		getAutoRunSessions: vi.fn().mockResolvedValue([]),
 		getAutoRunTasks: vi.fn().mockResolvedValue([]),
-		exportCsv: vi.fn().mockResolvedValue(''),
+		exportUsage: vi.fn().mockResolvedValue({ path: '', format: 'json', rowCounts: {}, notes: [] }),
 		onStatsUpdate: vi.fn().mockReturnValue(() => {}),
 		recordResilience: vi.fn().mockResolvedValue('outage-id'),
 		getResilience: vi.fn().mockResolvedValue([]),
