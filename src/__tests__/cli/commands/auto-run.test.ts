@@ -517,6 +517,27 @@ describe('auto-run command', () => {
 			expect('effort' in sentMessage!).toBe(false);
 		});
 
+		it('should send ignoreModelHints when --ignore-model-hints is given', async () => {
+			const getSent = captureSentMessage();
+
+			await autoRun(['/path/to/doc.md'], {
+				agent: 'agent-123',
+				launch: true,
+				model: 'opus',
+				ignoreModelHints: true,
+			});
+
+			expect(getSent()!.ignoreModelHints).toBe(true);
+		});
+
+		it('should omit ignoreModelHints entirely when the flag is not given', async () => {
+			const getSent = captureSentMessage();
+
+			await autoRun(['/path/to/doc.md'], { agent: 'agent-123', launch: true });
+
+			expect('ignoreModelHints' in getSent()!).toBe(false);
+		});
+
 		it('should treat whitespace-only --model/--effort as unset', async () => {
 			const getSent = captureSentMessage();
 

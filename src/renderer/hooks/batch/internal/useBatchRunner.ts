@@ -36,8 +36,11 @@ import type { ErrorResolutionEntry } from './useBatchControlActions';
 import type { BatchCompleteInfo, PRResultInfo } from '../useBatchProcessor';
 import type { UseTimeTrackingReturn } from '../useTimeTracking';
 import type { UseWorktreeManagerReturn } from '../useWorktreeManager';
-import type { SpawnAgentRunOverrides } from '../../agent/useAgentExecution';
-import type { AutoRunSpawnAgentFn, UseDocumentProcessorReturn } from '../useDocumentProcessor';
+import type {
+	AutoRunSpawnAgentFn,
+	DocumentRunOverrides,
+	UseDocumentProcessorReturn,
+} from '../useDocumentProcessor';
 
 const AUTO_RUN_PROGRESS_POLL_INTERVAL_MS = 20000;
 
@@ -204,11 +207,12 @@ export function useBatchRunner({
 			// default runs pass no spawn options at all. An absent override means the
 			// spawn uses the session's configured model, then the agent default.
 			// Nothing here is written back to the session.
-			const runOverrides: SpawnAgentRunOverrides | undefined =
-				config.model || config.effort
+			const runOverrides: DocumentRunOverrides | undefined =
+				config.model || config.effort || config.ignoreModelHints
 					? {
 							...(config.model && { modelOverride: config.model }),
 							...(config.effort && { effortOverride: config.effort }),
+							...(config.ignoreModelHints && { ignoreModelHints: true }),
 						}
 					: undefined;
 

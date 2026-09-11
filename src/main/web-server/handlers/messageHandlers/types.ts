@@ -205,6 +205,8 @@ export interface MessageHandlerCallbacks {
 			 */
 			model?: string;
 			effort?: string;
+			/** Skip the documents' MAESTRO:MODEL markers for this run (CLI `--ignore-model-hints`). */
+			ignoreModelHints?: boolean;
 			worktree?: {
 				enabled: boolean;
 				path: string;

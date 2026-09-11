@@ -1890,6 +1890,82 @@ describe('batch-processor', () => {
 			expect(warnings[0]).toContain('opencode');
 		});
 
+		it('ignores the marker and runs at the run model when ignoreModelHints is set', async () => {
+			singleTaskDocument('<!-- MAESTRO:MODEL tier="high" effort="high" -->\n- [ ] Task one');
+
+			const session = mockSession({ toolType: 'claude-code', customModel: 'sonnet' });
+			const events = await collectEvents(
+				runPlaybook(session, mockPlaybook(), '/playbooks', {
+					skipSynopsis: true,
+					model: 'haiku',
+					ignoreModelHints: true,
+				})
+			);
+
+			const taskSpawnOpts = vi.mocked(spawnAgent).mock.calls[0][4];
+			expect(taskSpawnOpts?.customModel).toBe('haiku');
+			// Nothing was read from the document, so there is no resolution to report.
+			expect(events.find((e) => e.type === 'model_resolution')).toBeUndefined();
+		});
+
+		it('falls back to the agent model when hints are ignored and no run model is given', async () => {
+			singleTaskDocument('<!-- MAESTRO:MODEL tier="high" -->\n- [ ] Task one');
+
+			const session = mockSession({ toolType: 'claude-code', customModel: 'sonnet' });
+			await collectEvents(
+				runPlaybook(session, mockPlaybook(), '/playbooks', {
+					skipSynopsis: true,
+					ignoreModelHints: true,
+				})
+			);
+
+			expect(vi.mocked(spawnAgent).mock.calls[0][4]?.customModel).toBe('sonnet');
+		});
+
+		it('measures the document-mode segment against the run model, not the agent model', async () => {
+			// Regression: the segment used the agent's own model as its baseline while the
+			// task resolved against the run override. With --model opus both tasks below
+			// run on opus, but the old baseline (sonnet) saw a boundary and told the
+			// agent to stop after the first.
+			const content = '- [ ] a\n- [ ] b <!-- MAESTRO:MODEL tier="high" -->';
+			let calls = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				calls++;
+				return calls <= 3 ? { content, taskCount: 2 } : { content: '', taskCount: 0 };
+			});
+
+			await collectEvents(
+				runPlaybook(
+					mockSession({ toolType: 'claude-code', customModel: 'sonnet' }),
+					mockPlaybook({ taskSelectionMode: 'document' }),
+					'/playbooks',
+					{ skipSynopsis: true, model: 'opus' }
+				)
+			);
+
+			expect(getCliTaskSelectionBlock).toHaveBeenCalledWith('document', { count: 2, total: 2 });
+		});
+
+		it('asks for no segment boundary when hints are ignored', async () => {
+			const content = '- [ ] a\n- [ ] b <!-- MAESTRO:MODEL tier="high" -->';
+			let calls = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				calls++;
+				return calls <= 3 ? { content, taskCount: 2 } : { content: '', taskCount: 0 };
+			});
+
+			await collectEvents(
+				runPlaybook(
+					mockSession({ toolType: 'claude-code', customModel: 'sonnet' }),
+					mockPlaybook({ taskSelectionMode: 'document' }),
+					'/playbooks',
+					{ skipSynopsis: true, ignoreModelHints: true }
+				)
+			);
+
+			expect(getCliTaskSelectionBlock).toHaveBeenCalledWith('document', undefined);
+		});
+
 		it('emits no model_resolution event for a document without a marker', async () => {
 			singleTaskDocument('- [ ] Task one');
 

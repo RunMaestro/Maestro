@@ -810,6 +810,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 					maxLoops: config.maxLoops,
 					...(config.model && { model: config.model }),
 					...(config.effort && { effort: config.effort }),
+					...(config.ignoreModelHints && { ignoreModelHints: true }),
 				};
 
 				// Mirror desktop's useAutoRunHandlers: when worktree dispatch is enabled,

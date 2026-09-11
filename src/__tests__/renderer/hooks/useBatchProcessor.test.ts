@@ -6384,12 +6384,14 @@ describe('useBatchProcessor hook', () => {
 		// startBatchRun -> useBatchRunner -> useDocumentProcessor delegation chain
 		// to reach onSpawnAgent as the 4th argument.
 		const startRun = async (
-			extraConfig: Partial<{ model: string; effort: string }>
+			extraConfig: Partial<{ model: string; effort: string; ignoreModelHints: boolean }>,
+			content = '- [ ] Task'
 		): Promise<void> => {
-			const sessions = [createMockSession()];
+			// Claude Code, so a tier marker resolves to a real model name.
+			const sessions = [createMockSession({ toolType: 'claude-code' })];
 			const groups = [createMockGroup()];
 
-			mockReadDoc.mockResolvedValue({ success: true, content: '- [ ] Task' });
+			mockReadDoc.mockResolvedValue({ success: true, content });
 
 			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
@@ -6430,6 +6432,39 @@ describe('useBatchProcessor hook', () => {
 
 			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', undefined, {
 				modelOverride: 'opus',
+			});
+		});
+
+		it('lets a document marker win over the run model by default', async () => {
+			await startRun({ model: 'sonnet' }, '<!-- MAESTRO:MODEL tier="high" -->\n\n- [ ] Task');
+
+			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', undefined, {
+				modelOverride: 'opus',
+				effortOverride: undefined,
+			});
+		});
+
+		it('runs at the run model when ignoreModelHints is set, whatever the document asks', async () => {
+			await startRun(
+				{ model: 'sonnet', ignoreModelHints: true },
+				'<!-- MAESTRO:MODEL tier="high" effort="high" -->\n\n- [ ] Task'
+			);
+
+			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', undefined, {
+				modelOverride: 'sonnet',
+				effortOverride: undefined,
+			});
+		});
+
+		it('falls back to the agent settings when hints are ignored and no model was picked', async () => {
+			await startRun(
+				{ ignoreModelHints: true },
+				'<!-- MAESTRO:MODEL tier="high" -->\n\n- [ ] Task'
+			);
+
+			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', undefined, {
+				modelOverride: undefined,
+				effortOverride: undefined,
 			});
 		});
 

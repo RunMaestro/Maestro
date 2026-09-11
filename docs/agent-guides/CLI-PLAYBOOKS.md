@@ -200,7 +200,7 @@ maestro-cli show playbook <id> [--json]
 Run a playbook (batch execution of Auto Run documents).
 
 ```bash
-maestro-cli playbook <playbook-id> [--dry-run] [--no-history] [--json] [--debug] [--verbose] [--wait] [--model <model>] [--effort <effort>]
+maestro-cli playbook <playbook-id> [--dry-run] [--no-history] [--json] [--debug] [--verbose] [--wait] [--model <model>] [--effort <effort>] [--ignore-model-hints]
 ```
 
 Options:
@@ -212,6 +212,7 @@ Options:
 - `--verbose` - Show full prompt sent to agent on each iteration
 - `--wait` - Wait for agent to become available if busy
 - `--model <model>` / `--effort <effort>` - Run-scoped model/effort override (see [Per-run model override](#per-run-model-override))
+- `--ignore-model-hints` - Skip the documents' `MAESTRO:MODEL` markers so every task runs at the run override or the agent default
 
 This command is lazy-loaded to avoid eager resolution of prompt templates.
 
@@ -239,7 +240,7 @@ Implemented by `services/goal-runner.ts` (`runGoal`), the CLI counterpart to the
 Run one or more raw Auto Run `.md` documents without a saved playbook. Mirrors `playbook` but builds an ephemeral `Playbook` on the fly (`src/cli/commands/run-doc.ts`), then drives it through the same `batch-processor` generator. Headless and self-contained - it does **not** route through the desktop renderer (unlike `auto-run --launch`), so it runs whether or not the Maestro window is open. This is the path group-chat participants use to execute a document they just wrote.
 
 ```bash
-maestro-cli run-doc <docs...> --agent <id-or-name> [--prompt <text>] [--loop] [--max-loops <n>] [--reset-on-completion] [--dry-run] [--no-history] [--json] [--debug] [--verbose] [--no-synopsis] [--wait] [--model <model>] [--effort <effort>]
+maestro-cli run-doc <docs...> --agent <id-or-name> [--prompt <text>] [--loop] [--max-loops <n>] [--reset-on-completion] [--dry-run] [--no-history] [--json] [--debug] [--verbose] [--no-synopsis] [--wait] [--model <model>] [--effort <effort>] [--ignore-model-hints]
 ```
 
 - `-a, --agent <id>` (required) - target agent by ID (full/partial) or display name

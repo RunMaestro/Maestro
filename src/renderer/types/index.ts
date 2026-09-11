@@ -521,6 +521,10 @@ export interface BatchRunConfig {
 	// override dies with the run. Absent means "use the agent default".
 	model?: string;
 	effort?: string; // Per-run reasoning effort override, same run-scoped rules as `model`
+	// Skip the documents' MAESTRO:MODEL markers so every task runs at the
+	// override above, then the agent's settings. Run-scoped like `model`;
+	// absent means the markers apply as usual.
+	ignoreModelHints?: boolean;
 	// Goal-Driven mode. Its presence is the discriminator that selects goal mode
 	// over the document/task-driven spec mode. When set, the run pursues a free-text
 	// goal instead of checking off `- [ ]` tasks. See src/shared/goalDriven/types.ts.

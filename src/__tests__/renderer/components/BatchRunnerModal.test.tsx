@@ -3276,6 +3276,51 @@ describe('BatchRunnerModal - per-run model/effort override', () => {
 		expect(config).not.toHaveProperty('effort');
 	});
 
+	it('leaves document model hints in charge unless the toggle is switched on', async () => {
+		const props = createDefaultProps();
+		render(<BatchRunnerModal {...props} />);
+
+		const toggle = await screen.findByRole('switch', { name: 'Ignore model hints in documents' });
+		expect(toggle).toHaveAttribute('aria-checked', 'false');
+
+		fireEvent.click(screen.getByRole('button', { name: 'Go' }));
+
+		const config = (props.onGo as ReturnType<typeof vi.fn>).mock.calls[0][0];
+		expect(config).not.toHaveProperty('ignoreModelHints');
+	});
+
+	it('sends ignoreModelHints alongside the picked model when the toggle is on', async () => {
+		const props = createDefaultProps();
+		render(<BatchRunnerModal {...props} />);
+
+		await waitFor(() => {
+			expect(screen.getByLabelText('Model for this run')).toBeInTheDocument();
+		});
+		fireEvent.change(screen.getByLabelText('Model for this run'), { target: { value: 'opus' } });
+		fireEvent.click(screen.getByRole('switch', { name: 'Ignore model hints in documents' }));
+		fireEvent.click(screen.getByRole('button', { name: 'Go' }));
+
+		expect(props.onGo).toHaveBeenCalledWith(
+			expect.objectContaining({ model: 'opus', ignoreModelHints: true })
+		);
+	});
+
+	it('offers no hint toggle in Goal-Driven mode, which has no documents', async () => {
+		render(<BatchRunnerModal {...createDefaultProps()} />);
+
+		await waitFor(() => {
+			expect(screen.getByLabelText('Model for this run')).toBeInTheDocument();
+		});
+		fireEvent.click(screen.getByRole('button', { name: 'Goal-Driven' }));
+		await waitFor(() => {
+			expect(screen.getByText('Iteration Limit')).toBeInTheDocument();
+		});
+
+		expect(
+			screen.queryByRole('switch', { name: 'Ignore model hints in documents' })
+		).not.toBeInTheDocument();
+	});
+
 	it('hides the whole section when the provider exposes no models or efforts', async () => {
 		window.maestro.agents.getModels = vi.fn().mockResolvedValue([]);
 		window.maestro.agents.getConfigOptions = vi.fn().mockResolvedValue([]);

@@ -317,6 +317,10 @@ program
 		'--effort <effort>',
 		"Reasoning effort for this run only, overriding the agent's configured default"
 	)
+	.option(
+		'--ignore-model-hints',
+		'Ignore MAESTRO:MODEL markers in the documents and run every task at --model/--effort (or the agent default)'
+	)
 	.action(async (playbookId: string, options: Record<string, unknown>) => {
 		const { runPlaybook } = await import('./commands/run-playbook');
 		return runPlaybook(playbookId, options);
@@ -378,6 +382,10 @@ program
 	.option(
 		'--effort <effort>',
 		"Reasoning effort for this run only, overriding the agent's configured default"
+	)
+	.option(
+		'--ignore-model-hints',
+		'Ignore MAESTRO:MODEL markers in the documents and run every task at --model/--effort (or the agent default)'
 	)
 	.action(async (docs: string[], options: Record<string, unknown>) => {
 		const { runDoc } = await import('./commands/run-doc');
@@ -724,6 +732,10 @@ program
 	.option(
 		'--effort <effort>',
 		"Reasoning effort for this run only, overriding the agent's configured default"
+	)
+	.option(
+		'--ignore-model-hints',
+		'Ignore MAESTRO:MODEL markers in the documents and run every task at --model/--effort (or the agent default)'
 	)
 	.action(autoRun);
 

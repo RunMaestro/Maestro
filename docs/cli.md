@@ -924,7 +924,7 @@ maestro-cli run-doc plans/spec.md --agent <agent-id> --json --no-history
 maestro-cli run-doc plans/spec.md --agent <agent-id> --model opus --effort high
 ```
 
-`run-doc` accepts the same execution flags as `playbook` (`--dry-run`, `--no-history`, `--json`, `--debug`, `--verbose`, `--no-synopsis`, `--wait`, `--model`, `--effort`) plus `--prompt`, `--loop`, `--max-loops`, and `--reset-on-completion`. When no `--prompt` is given it uses the default Auto Run prompt.
+`run-doc` accepts the same execution flags as `playbook` (`--dry-run`, `--no-history`, `--json`, `--debug`, `--verbose`, `--no-synopsis`, `--wait`, `--model`, `--effort`, `--ignore-model-hints`) plus `--prompt`, `--loop`, `--max-loops`, and `--reset-on-completion`. When no `--prompt` is given it uses the default Auto Run prompt.
 
 #### Per-run model override
 
@@ -935,8 +935,15 @@ per-task synopsis and goal-handoff spawns) and take precedence over the agent's
 configured model, but nothing is written back to the agent. When the run ends,
 the agent is exactly as it was.
 
+`playbook`, `run-doc`, and `auto-run` also take `--ignore-model-hints`. It skips
+every `MAESTRO:MODEL` marker in the run's documents, so each task runs at
+`--model` / `--effort` (or the agent's configured default when those are
+omitted) instead of the tier the document asked for. `goal-run` has no
+documents, so it has no such flag.
+
 ```bash
 maestro-cli playbook <playbook-id> --model opus
+maestro-cli playbook <playbook-id> --model opus --ignore-model-hints
 maestro-cli run-doc plans/spec.md --agent <agent-id> --model opus
 maestro-cli goal-run <agent-id> "Ship the migration" --model opus --effort high
 maestro-cli auto-run doc1.md --agent <agent-id> --launch --model opus
@@ -1726,22 +1733,23 @@ maestro-cli auto-run doc1.md --agent <agent-id> --launch --model opus
 maestro-cli auto-run doc1.md --agent <agent-id> --launch --model opus --effort high
 ```
 
-| Flag                          | Description                                                                                     |
-| ----------------------------- | ----------------------------------------------------------------------------------------------- |
-| `-a, --agent <id>`            | Target agent to run the documents (partial ID supported)                                        |
-| `-p, --prompt <text>`         | Custom prompt/instructions for the agent                                                        |
-| `--loop`                      | Enable looping (re-run documents after completion)                                              |
-| `--max-loops <n>`             | Maximum number of loop iterations (implies `--loop`)                                            |
-| `--save-as <name>`            | Save the configuration as a named playbook                                                      |
-| `--launch`                    | Immediately start the auto-run after configuring                                                |
-| `--reset-on-completion`       | Reset task checkboxes when documents complete                                                   |
-| `--worktree`                  | Run the auto-run inside a git worktree (requires `--launch`, `--branch`, and `--worktree-path`) |
-| `--branch <name>`             | Branch name for the worktree (created if it does not exist)                                     |
-| `--worktree-path <path>`      | Filesystem path for the worktree (must be a sibling of the repo, not nested inside it)          |
-| `--create-pr`                 | Open a GitHub PR when the auto-run completes successfully                                       |
-| `--pr-target-branch <branch>` | Target branch for the PR (defaults to the repo's default branch)                                |
-| `--model <model>`             | Model to use for this run only, overriding the agent's configured default                       |
-| `--effort <effort>`           | Reasoning effort for this run only, overriding the agent's configured default                   |
+| Flag                          | Description                                                                                               |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `-a, --agent <id>`            | Target agent to run the documents (partial ID supported)                                                  |
+| `-p, --prompt <text>`         | Custom prompt/instructions for the agent                                                                  |
+| `--loop`                      | Enable looping (re-run documents after completion)                                                        |
+| `--max-loops <n>`             | Maximum number of loop iterations (implies `--loop`)                                                      |
+| `--save-as <name>`            | Save the configuration as a named playbook                                                                |
+| `--launch`                    | Immediately start the auto-run after configuring                                                          |
+| `--reset-on-completion`       | Reset task checkboxes when documents complete                                                             |
+| `--worktree`                  | Run the auto-run inside a git worktree (requires `--launch`, `--branch`, and `--worktree-path`)           |
+| `--branch <name>`             | Branch name for the worktree (created if it does not exist)                                               |
+| `--worktree-path <path>`      | Filesystem path for the worktree (must be a sibling of the repo, not nested inside it)                    |
+| `--create-pr`                 | Open a GitHub PR when the auto-run completes successfully                                                 |
+| `--pr-target-branch <branch>` | Target branch for the PR (defaults to the repo's default branch)                                          |
+| `--model <model>`             | Model to use for this run only, overriding the agent's configured default                                 |
+| `--effort <effort>`           | Reasoning effort for this run only, overriding the agent's configured default                             |
+| `--ignore-model-hints`        | Skip the documents' `MAESTRO:MODEL` markers; every task runs at `--model`/`--effort` or the agent default |
 
 `--model` and `--effort` are **run-scoped**: they apply to every task spawn in
 this auto-run and are never written back to the agent. The agent's interactive
