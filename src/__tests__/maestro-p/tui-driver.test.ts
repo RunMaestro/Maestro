@@ -61,6 +61,11 @@ vi.mock('node-pty', () => ({
 // ── Imports (after mocks) ──────────────────────────────────────────────────
 
 import {
+	chunkPromptForPty,
+	PROMPT_CHUNK_INTERVAL_MS,
+	PROMPT_CHUNK_MAX_BYTES,
+	PROMPT_SETTLE_MAX_MS,
+	PROMPT_SETTLE_QUIET_MS,
 	QUIT_GRACE_MS,
 	READY_MAX_TAPS,
 	READY_TAP_INTERVAL_MS,
@@ -542,6 +547,32 @@ describe('TuiDriver', () => {
 		});
 	});
 
+	describe('chunkPromptForPty()', () => {
+		it('splits on the byte budget and reassembles to the original text', () => {
+			const text = 'a'.repeat(1100);
+			const chunks = chunkPromptForPty(text, 512);
+			expect(chunks.map((c) => c.length)).toEqual([512, 512, 76]);
+			expect(chunks.join('')).toBe(text);
+		});
+
+		it('budgets UTF-8 bytes and never cuts a multi-byte character or surrogate pair', () => {
+			// 'é' is 2 bytes, '界' is 3, '😀' is 4 (a UTF-16 surrogate pair).
+			const text = 'é界😀'.repeat(200);
+			const chunks = chunkPromptForPty(text, 100);
+			expect(chunks.join('')).toBe(text);
+			for (const chunk of chunks) {
+				expect(Buffer.byteLength(chunk, 'utf8')).toBeLessThanOrEqual(100);
+				// A cut surrogate pair would re-encode as U+FFFD.
+				expect(chunk).not.toContain('�');
+				expect(Buffer.from(chunk, 'utf8').toString('utf8')).toBe(chunk);
+			}
+		});
+
+		it('returns no chunks for an empty prompt', () => {
+			expect(chunkPromptForPty('')).toEqual([]);
+		});
+	});
+
 	describe('send()', () => {
 		beforeEach(() => {
 			vi.useFakeTimers();
@@ -558,7 +589,11 @@ describe('TuiDriver', () => {
 			// emits ready without writing.
 			feed('❯ \n');
 			mockPtyProcess.write.mockClear();
-			driver.send('hello world');
+			const sending = driver.send('hello world');
+			// Nothing is typed until the screen has been quiet for the settle window.
+			expect(mockPtyProcess.write).not.toHaveBeenCalled();
+			await vi.advanceTimersByTimeAsync(PROMPT_SETTLE_QUIET_MS);
+			await sending;
 			// First write is the text body alone - no trailing \r, because
 			// claude's TUI swallows a same-chunk \r as a literal newline in its
 			// multi-line input editor and the prompt sits unsubmitted.
@@ -582,16 +617,99 @@ describe('TuiDriver', () => {
 			}
 		});
 
-		it('throws if called before start()', () => {
+		it('types a long prompt in paced chunks, each well under the PTY input queue', async () => {
+			const driver = await makeDriver();
+			feed('❯ \n');
+			mockPtyProcess.write.mockClear();
+			// 1,300 bytes: one write would overfill a macOS PTY's 1,022-byte input
+			// queue, so any input flush while claude reads it loses a full queue.
+			const prompt = 'x'.repeat(1300);
+			const sending = driver.send(prompt);
+			await vi.advanceTimersByTimeAsync(PROMPT_SETTLE_QUIET_MS);
+			expect(mockPtyProcess.write).toHaveBeenCalledTimes(1);
+			await vi.advanceTimersByTimeAsync(PROMPT_CHUNK_INTERVAL_MS);
+			expect(mockPtyProcess.write).toHaveBeenCalledTimes(2);
+			await vi.advanceTimersByTimeAsync(PROMPT_CHUNK_INTERVAL_MS);
+			await sending;
+			const writes = mockPtyProcess.write.mock.calls.map((c) => c[0] as string);
+			expect(writes).toHaveLength(3);
+			expect(writes.join('')).toBe(prompt);
+			for (const chunk of writes) {
+				expect(chunk.length).toBeLessThanOrEqual(PROMPT_CHUNK_MAX_BYTES);
+			}
+			// No Enter until SEND_ENTER_DELAY_MS after the LAST chunk: an earlier
+			// tap would submit a half-typed prompt.
+			expect(writes).not.toContain('\r');
+			await vi.advanceTimersByTimeAsync(SEND_ENTER_DELAY_MS);
+			expect(mockPtyProcess.write).toHaveBeenLastCalledWith('\r');
+		});
+
+		it('stops typing and never presses Enter if the PTY exits mid-prompt', async () => {
+			const driver = await makeDriver();
+			feed('❯ \n');
+			mockPtyProcess.write.mockClear();
+			const sending = driver.send('y'.repeat(PROMPT_CHUNK_MAX_BYTES * 3));
+			await vi.advanceTimersByTimeAsync(PROMPT_SETTLE_QUIET_MS);
+			expect(mockPtyProcess.write).toHaveBeenCalledTimes(1);
+			triggerExit(1);
+			await vi.advanceTimersByTimeAsync(PROMPT_CHUNK_INTERVAL_MS * 5 + SEND_ENTER_DELAY_MS);
+			await sending;
+			expect(mockPtyProcess.write).toHaveBeenCalledTimes(1);
+		});
+
+		it('waits until the screen has been quiet for the settle window before typing', async () => {
+			const driver = await makeDriver();
+			feed('❯ \n');
+			mockPtyProcess.write.mockClear();
+			const sending = driver.send('hello');
+			await vi.advanceTimersByTimeAsync(PROMPT_SETTLE_QUIET_MS - 100);
+			expect(mockPtyProcess.write).not.toHaveBeenCalled();
+			// claude is still mounting its UI and paints again: the quiet window restarts.
+			feed('auto mode unavailable for this model\n');
+			await vi.advanceTimersByTimeAsync(PROMPT_SETTLE_QUIET_MS - 100);
+			expect(mockPtyProcess.write).not.toHaveBeenCalled();
+			await vi.advanceTimersByTimeAsync(100);
+			await sending;
+			expect(mockPtyProcess.write).toHaveBeenCalledWith('hello');
+		});
+
+		it('types anyway at PROMPT_SETTLE_MAX_MS when the screen never goes quiet', async () => {
+			const driver = await makeDriver();
+			feed('❯ \n');
+			mockPtyProcess.write.mockClear();
+			const sending = driver.send('hello');
+			let elapsed = 0;
+			while (mockPtyProcess.write.mock.calls.length === 0 && elapsed < PROMPT_SETTLE_MAX_MS * 2) {
+				feed('⠋ spinner\n');
+				await vi.advanceTimersByTimeAsync(100);
+				elapsed += 100;
+			}
+			await sending;
+			expect(mockPtyProcess.write).toHaveBeenCalledWith('hello');
+			expect(elapsed).toBeLessThanOrEqual(PROMPT_SETTLE_MAX_MS + 100);
+		});
+
+		it('never types if the PTY exits while waiting for the screen to settle', async () => {
+			const driver = await makeDriver();
+			feed('❯ \n');
+			mockPtyProcess.write.mockClear();
+			const sending = driver.send('hello');
+			triggerExit(1);
+			await vi.advanceTimersByTimeAsync(PROMPT_SETTLE_MAX_MS + SEND_ENTER_DELAY_MS);
+			await sending;
+			expect(mockPtyProcess.write).not.toHaveBeenCalled();
+		});
+
+		it('throws if called before start()', async () => {
 			const driver = new TuiDriver({ binPath: 'claude', args: [], cwd: '/tmp', env: {} });
-			expect(() => driver.send('hello')).toThrow(/before start\(\)/);
+			await expect(driver.send('hello')).rejects.toThrow(/before start\(\)/);
 		});
 
 		it('becomes a no-op after exit', async () => {
 			const driver = await makeDriver();
 			triggerExit(0);
 			mockPtyProcess.write.mockClear();
-			driver.send('ignored');
+			await driver.send('ignored');
 			vi.advanceTimersByTime(SEND_ENTER_DELAY_MS);
 			expect(mockPtyProcess.write).not.toHaveBeenCalled();
 		});
@@ -599,7 +717,7 @@ describe('TuiDriver', () => {
 		it('skips the trailing \\r if exit fires between writes', async () => {
 			const driver = await makeDriver();
 			mockPtyProcess.write.mockClear();
-			driver.send('hello');
+			await driver.send('hello');
 			// Text write already happened; PTY dies before the deferred Enter.
 			expect(mockPtyProcess.write).toHaveBeenCalledTimes(1);
 			triggerExit(1);
@@ -726,6 +844,12 @@ describe('TuiDriver', () => {
 			const driver = await makeDriver();
 			driver.kill();
 			expect(mockPtyProcess.kill).toHaveBeenCalledWith('SIGKILL');
+		});
+
+		it('sends SIGTERM when asked, so claude can shut down its MCP servers', async () => {
+			const driver = await makeDriver();
+			driver.kill('SIGTERM');
+			expect(mockPtyProcess.kill).toHaveBeenCalledWith('SIGTERM');
 		});
 
 		it('is a no-op before start()', () => {

@@ -26,6 +26,7 @@ import { parseArgs, type ParsedArgs } from './args';
 import { JsonEmitter, type EmitResultOptions } from './json-emitter';
 import { JsonlTailer, type ParseErrorPayload } from './jsonl-tailer';
 import { extractExitPlanText } from './plan-mode';
+import { checkPromptEcho, isPromptEchoVerifiable, promptEchoText } from './prompt-echo';
 import { discoverSessionId, cwdSlug } from './session-watcher';
 import { cleanupStreamJsonImages, translateStreamJsonInput } from './stream-json-input';
 import { TuiDriver } from './tui-driver';
@@ -295,6 +296,8 @@ async function runMode(args: ParsedArgs): Promise<never> {
 	// the instant the turn starts (markFirstEntrySeen) and on any finalize.
 	let resubmitTimer: NodeJS.Timeout | null = null;
 	let firstEntrySeen = false;
+	// Set once the first prompt-echo row has been compared with what we typed.
+	let promptEchoChecked = false;
 	let limitHit = false;
 	let aggregatedText = '';
 	const usage = emptyUsage();
@@ -490,8 +493,26 @@ async function runMode(args: ParsedArgs): Promise<never> {
 			}
 			if (hasToolResultBlock(message)) {
 				emitter.emitUserMessage(message);
+				return;
 			}
-			// Otherwise it's the prompt echo claude logs on receipt; drop it.
+			// Otherwise it's the prompt echo claude logs on receipt. It is never
+			// re-emitted, but the first one is proof of what claude actually
+			// received: if the PTY lost part of the prompt on the way in (see
+			// prompt-echo.ts), stop the turn before it acts on a damaged prompt.
+			if (!promptEchoChecked) {
+				const echo = promptEchoText(e);
+				if (echo !== null) {
+					promptEchoChecked = true;
+					const mismatch = isPromptEchoVerifiable(prompt) ? checkPromptEcho(prompt, echo) : null;
+					if (mismatch) {
+						process.stderr.write(
+							`maestro-p: claude received a damaged prompt (${mismatch.receivedBytes} of ${mismatch.sentBytes} bytes; first missing text: "${mismatch.missingFrom}"). The terminal dropped part of the input. Stopping the turn and failing with prompt_truncated.\n`
+						);
+						driver.kill('SIGTERM');
+						finalize({ isError: true, error: 'prompt_truncated', exitCode: 6 });
+					}
+				}
+			}
 			return;
 		}
 
@@ -595,7 +616,8 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		emitter.emitInit({ sessionId: args.resumeSessionId, model: null, cwd });
 		initEmitted = true;
 		flushPending();
-		driver.send(prompt);
+		// Await the whole paced prompt before the resubmit loop can press Enter.
+		await driver.send(prompt);
 		startResubmitLoop();
 	} else {
 		// Fresh-session path: we pre-assigned `freshSessionId` and passed it to
@@ -617,7 +639,8 @@ async function runMode(args: ParsedArgs): Promise<never> {
 			// --max-wait window. The FLOOR still covers a slow cold start.
 			timeoutMs: Math.max(DISCOVERY_TIMEOUT_FLOOR_MS, firstByteTimeoutMs),
 		});
-		driver.send(prompt);
+		// Await the whole paced prompt before the resubmit loop can press Enter.
+		await driver.send(prompt);
 		startResubmitLoop();
 		let discovered: { sessionId: string; jsonlPath: string };
 		try {
