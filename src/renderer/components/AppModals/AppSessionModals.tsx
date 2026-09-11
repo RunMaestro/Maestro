@@ -78,7 +78,8 @@ export interface AppSessionModalsProps {
 		maestroPMode?: 'interactive' | 'dynamic',
 		retryOnAvailabilityErrors?: boolean,
 		retryOnTokenExhaustion?: boolean,
-		customEnvVarsDisabled?: Record<string, string>
+		customEnvVarsDisabled?: Record<string, string>,
+		workingDirectory?: string
 	) => void;
 	editAgentSession: Session | null;
 

@@ -179,7 +179,7 @@ describe('EditAgentModal', () => {
 		});
 	});
 
-	it('should show read-only working directory', async () => {
+	it('should show the working directory as an editable field', async () => {
 		render(
 			<EditAgentModal
 				isOpen={true}
@@ -191,14 +191,89 @@ describe('EditAgentModal', () => {
 			/>
 		);
 
-		await waitFor(() => {
-			expect(screen.getByText('/home/user/my-project')).toBeInTheDocument();
-			expect(
-				screen.getByText(
-					'Directory cannot be changed. Create a new agent for a different directory.'
-				)
-			).toBeInTheDocument();
-		});
+		const input = await screen.findByDisplayValue('/home/user/my-project');
+		expect(input).not.toBeDisabled();
+		expect(screen.queryByText(/Directory cannot be changed/)).not.toBeInTheDocument();
+	});
+
+	it('should pass a changed working directory to onSave', async () => {
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={createSession({ projectRoot: '/home/user/project' })}
+				existingSessions={[]}
+			/>
+		);
+
+		const input = await screen.findByDisplayValue('/home/user/project');
+		fireEvent.change(input, { target: { value: '/home/user/moved-project' } });
+		fireEvent.click(screen.getByText('Save Changes'));
+
+		expect(onSave).toHaveBeenCalledTimes(1);
+		expect(onSave.mock.calls[0][17]).toBe('/home/user/moved-project');
+	});
+
+	it('should fill the working directory from the folder picker', async () => {
+		const selectFolder = vi.fn().mockResolvedValue('/picked/folder');
+		(window.maestro as any).dialog = { ...(window.maestro as any).dialog, selectFolder };
+
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={createSession({ projectRoot: '/home/user/project' })}
+				existingSessions={[]}
+			/>
+		);
+
+		await screen.findByDisplayValue('/home/user/project');
+		fireEvent.click(screen.getByLabelText('Browse folders'));
+
+		expect(await screen.findByDisplayValue('/picked/folder')).toBeInTheDocument();
+		expect(selectFolder).toHaveBeenCalled();
+	});
+
+	it('should refuse a relative local working directory', async () => {
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={createSession({ projectRoot: '/home/user/project' })}
+				existingSessions={[]}
+			/>
+		);
+
+		const input = await screen.findByDisplayValue('/home/user/project');
+		fireEvent.change(input, { target: { value: 'relative/project' } });
+
+		expect(screen.getByText('Enter an absolute path')).toBeInTheDocument();
+		fireEvent.click(screen.getByText('Save Changes'));
+		expect(onSave).not.toHaveBeenCalled();
+	});
+
+	it('should lock the working directory while the agent is busy', async () => {
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={createSession({ projectRoot: '/home/user/project', state: 'busy' })}
+				existingSessions={[]}
+			/>
+		);
+
+		expect(await screen.findByDisplayValue('/home/user/project')).toBeDisabled();
+		expect(
+			screen.getByText('Stop the agent before changing its working directory.')
+		).toBeInTheDocument();
 	});
 
 	it('should show copy session ID button with truncated ID', async () => {
@@ -303,7 +378,8 @@ describe('EditAgentModal', () => {
 			undefined, // maestroPMode
 			true, // retryOnAvailabilityErrors
 			true, // retryOnTokenExhaustion
-			undefined // customEnvVarsDisabled (nothing switched off)
+			undefined, // customEnvVarsDisabled (nothing switched off)
+			undefined // workingDirectory unchanged
 		);
 		expect(onClose).toHaveBeenCalled();
 	});
@@ -534,7 +610,8 @@ describe('EditAgentModal', () => {
 			undefined, // maestroPMode
 			true, // retryOnAvailabilityErrors
 			true, // retryOnTokenExhaustion
-			undefined // customEnvVarsDisabled (nothing switched off)
+			undefined, // customEnvVarsDisabled (nothing switched off)
+			undefined // workingDirectory unchanged
 		);
 	});
 
@@ -605,7 +682,8 @@ describe('EditAgentModal', () => {
 			undefined, // maestroPMode
 			true, // retryOnAvailabilityErrors
 			true, // retryOnTokenExhaustion
-			undefined // customEnvVarsDisabled (nothing switched off)
+			undefined, // customEnvVarsDisabled (nothing switched off)
+			undefined // workingDirectory unchanged
 		);
 	});
 
@@ -682,7 +760,8 @@ describe('EditAgentModal', () => {
 			undefined, // maestroPMode
 			true, // retryOnAvailabilityErrors
 			true, // retryOnTokenExhaustion
-			undefined // customEnvVarsDisabled (nothing switched off)
+			undefined, // customEnvVarsDisabled (nothing switched off)
+			undefined // workingDirectory unchanged
 		);
 	});
 
