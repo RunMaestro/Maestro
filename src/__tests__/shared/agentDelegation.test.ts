@@ -7,6 +7,7 @@ import {
 	isSelfDispatch,
 	readCallerIdentity,
 	readCallerMessageFields,
+	withoutCallerIdentityEnv,
 } from '../../shared/agentDelegation';
 
 describe('caller identity env', () => {
@@ -36,6 +37,19 @@ describe('caller identity env', () => {
 
 	it('never reuses MAESTRO_AGENT_ID, which tells a pianola watch it is Pianola', () => {
 		expect(CALLER_AGENT_ID_ENV_VAR).not.toBe('MAESTRO_AGENT_ID');
+	});
+});
+
+describe('withoutCallerIdentityEnv', () => {
+	it('collapses an identity-only record to undefined, like an agent with no overrides', () => {
+		expect(withoutCallerIdentityEnv(buildCallerIdentityEnv('agent-1', 'tab-1'))).toBeUndefined();
+		expect(withoutCallerIdentityEnv(undefined)).toBeUndefined();
+	});
+
+	it('keeps real configuration and leaves the input untouched', () => {
+		const env = { ...buildCallerIdentityEnv('agent-1'), CLAUDE_CONFIG_DIR: '/cfg' };
+		expect(withoutCallerIdentityEnv(env)).toEqual({ CLAUDE_CONFIG_DIR: '/cfg' });
+		expect(env).toHaveProperty(CALLER_AGENT_ID_ENV_VAR, 'agent-1');
 	});
 });
 

@@ -46,6 +46,24 @@ export function buildCallerIdentityEnv(agentId: string, tabId?: string): Record<
 }
 
 /**
+ * An env override record with the caller identity removed, for anything that
+ * keys a cache on how an agent is CONFIGURED (the omp model catalog). The
+ * identity says which agent is running, not how it is set up, so keeping it
+ * gives every agent its own cache entry and misses the shared warm-up the
+ * detector primes with no overrides at all. Returns undefined when nothing else
+ * is left, which is exactly what an agent with no overrides passes.
+ */
+export function withoutCallerIdentityEnv(
+	env: Record<string, string> | undefined
+): Record<string, string> | undefined {
+	if (!env) return undefined;
+	const rest = { ...env };
+	delete rest[CALLER_AGENT_ID_ENV_VAR];
+	delete rest[CALLER_TAB_ID_ENV_VAR];
+	return Object.keys(rest).length > 0 ? rest : undefined;
+}
+
+/**
  * Read the caller identity from an environment. A blank value counts as absent,
  * the same way a blank env entry means "unset" everywhere else in Maestro, and
  * a tab with no agent is meaningless so it is dropped along with it.

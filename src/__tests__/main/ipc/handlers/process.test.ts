@@ -558,6 +558,8 @@ describe('process IPC handlers', () => {
 				vi.mocked(primeOmpModelCatalog).mock.calls[0];
 			expect(passedBinaryPath).toBe(binaryPath);
 			expect(passedKey).toBe('omp-catalog-key');
+			// The spawn stamps the caller identity into the env overrides; the key must
+			// ignore it, or it never matches the detector's no-override warm-up.
 			expect(computeOmpCatalogKey).toHaveBeenCalledWith(binaryPath, undefined);
 
 			// The prime env's PATH must lead with the binary dir (so the co-located

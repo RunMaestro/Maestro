@@ -21,7 +21,10 @@ import type { AgentConfigsData } from '../../../stores/types';
 import { logger } from '../../../utils/logger';
 import { isWindows } from '../../../../shared/platformDetection';
 import { embedSystemPromptInPrompt } from '../../../../shared/embeddedSystemPrompt';
-import { buildCallerIdentityEnv } from '../../../../shared/agentDelegation';
+import {
+	buildCallerIdentityEnv,
+	withoutCallerIdentityEnv,
+} from '../../../../shared/agentDelegation';
 import { REGEX_AI_SUFFIX } from '../../../constants';
 import { addBreadcrumb, captureException } from '../../../utils/sentry';
 import { isWebContentsAvailable } from '../../../utils/safe-send';
@@ -830,8 +833,12 @@ export async function handleProcessSpawn(
 			// Identity uses the session's stable custom env overrides (not the
 			// platform-expanded `customEnvVarsToPass`, which on Windows is the whole
 			// env) so the same logical config maps to one catalog across platforms and
-			// matches the detector's default-identity warm-up.
-			ompModelCatalogKey = computeOmpCatalogKey(ompPrimeBinaryPath, effectiveCustomEnvVars);
+			// matches the detector's default-identity warm-up. The caller identity is
+			// dropped for the same reason: it names the agent, not its configuration.
+			ompModelCatalogKey = computeOmpCatalogKey(
+				ompPrimeBinaryPath,
+				withoutCallerIdentityEnv(effectiveCustomEnvVars)
+			);
 			// Bounded await: block the spawn only briefly so the first turn resolves
 			// correctly on a warm/fast catalog, and proceed (letting the prime finish
 			// in the background for later turns) when it is slow or fails.
