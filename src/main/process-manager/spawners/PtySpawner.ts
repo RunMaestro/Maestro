@@ -123,7 +123,6 @@ export class PtySpawner {
 					false,
 					shellEnvVars,
 					config.extraPathDirs,
-					config.unsetEnvKeys,
 					config.querySource
 				);
 			}

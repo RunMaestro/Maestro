@@ -5,11 +5,6 @@
 export { AGENT_IDS, isValidAgentId } from './agentIds';
 export type { AgentId } from './agentIds';
 
-// Provider Failover config lives in its own module (pure, main+renderer safe) but
-// is re-exported here so consumers of the Session type get it in one import.
-import type { FailoverConfig } from './providerFailover';
-export type { FailoverConfig, FailoverEndpoint, FailoverState } from './providerFailover';
-
 /**
  * Union type of all valid agent IDs.
  * Derived from AGENT_IDS - the single source of truth in agentIds.ts.
@@ -263,12 +258,6 @@ export interface SessionInfo {
 	 * via {@link resilienceEnabled}. Set explicitly `false` to opt out.
 	 */
 	retryOnTokenExhaustion?: boolean;
-	/**
-	 * Provider Failover: ordered Anthropic-compatible backup endpoints this agent
-	 * falls back to when resilience would otherwise wait out the primary. Off unless
-	 * explicitly armed. See {@link FailoverConfig} in shared/providerFailover.
-	 */
-	failoverConfig?: FailoverConfig;
 	/** Per-session SSH remote config - when enabled, CLI spawns via SSH. */
 	sessionSshRemoteConfig?: AgentSshRemoteConfig;
 }

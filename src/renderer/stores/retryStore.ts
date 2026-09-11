@@ -35,8 +35,6 @@ import {
 } from '../../shared/retryClassification';
 import { resilienceEnabled } from '../../shared/agentConstants';
 import { parseQuotaLimitDetail, type QuotaLimitDetail } from '../../shared/quotaLimitDetail';
-import { failoverArmed, selectNextEndpoint } from '../../shared/providerFailover';
-import { switchToNextEndpoint, useFailoverStore } from './failoverStore';
 import { generateId } from '../utils/ids';
 import { captureQueuedTurnSettings } from '../utils/providerTabSessions';
 import { settleTabThinkingState } from '../utils/tabHelpers';
@@ -80,23 +78,7 @@ export interface RetryEntry {
 	nextRetryAt: number;
 	/** The failing message, for the countdown UI. */
 	lastMessage: string;
-	/**
-	 * Provider Failover: this retry will first swap the agent onto its next backup
-	 * endpoint (see `failoverStore.switchToNextEndpoint`), so it fires after a short
-	 * handover delay instead of the strategy's wait. The actual switch happens in
-	 * `fireRetry` - deciding here and acting there keeps `scheduleRetryForError`
-	 * synchronous for its callers.
-	 */
-	failingOver?: boolean;
 }
-
-/**
- * Handover delay before a failover retry fires. Short by design: the whole point
- * of having a spare tire is not waiting out the primary's reset window. Not zero,
- * so the countdown banner renders and the user gets a beat to cancel before their
- * prompt goes to a different provider.
- */
-export const FAILOVER_HANDOVER_DELAY_MS = 3 * 1000;
 
 /** Lifecycle of an outage as shown on its transcript status card. */
 export type OutageStatus = 'active' | 'recovered' | 'stopped';
@@ -370,19 +352,6 @@ function resolveStrategy(sessionId: string, error: ClassifiableError): RetryStra
 }
 
 /**
- * Whether this agent has an armed failover config with at least one endpoint it
- * hasn't already burned during the current outage. Pure store reads, so it can be
- * called from the synchronous scheduling path.
- */
-function canFailover(sessionId: string): boolean {
-	const session = selectSessionById(sessionId)(useSessionStore.getState());
-	const config = session?.failoverConfig;
-	if (!failoverArmed(config)) return false;
-	const state = useFailoverStore.getState().states[sessionId];
-	return selectNextEndpoint(config, state) !== null;
-}
-
-/**
  * Try to take over an agent error with an automatic retry. Returns `true` if a
  * retry was scheduled (the caller should then suppress the error modal), or
  * `false` if the error is not auto-retryable / resilience is off / we have no
@@ -422,14 +391,8 @@ export function scheduleRetryForError(
 	const outageId = existing?.outageId ?? generateId();
 	const startedAt = existing?.startedAt ?? now;
 
-	// Provider Failover: if this agent carries an untried backup endpoint, hand the
-	// turn over to it instead of waiting out the primary. This is the whole value of
-	// the feature for token-exhaustion, where the strategy wait can be hours. We only
-	// DECIDE here (a pure store read); `fireRetry` performs the async switch.
-	const failingOver = canFailover(sessionId);
-	const nextRetryAt = failingOver
-		? now + FAILOVER_HANDOVER_DELAY_MS
-		: strategy === 'availability'
+	const nextRetryAt =
+		strategy === 'availability'
 			? now + availabilityDelayMs(attempt)
 			: tokenExhaustionResetAt(error, now);
 
@@ -446,7 +409,6 @@ export function scheduleRetryForError(
 		startedAt,
 		nextRetryAt,
 		lastMessage: error.message,
-		failingOver,
 	};
 	useRetryStore.getState().setEntry(key, entry);
 
@@ -531,30 +493,9 @@ async function fireRetry(key: string): Promise<void> {
 		mode: entry.mode,
 		strategy: entry.strategy,
 		attempt: entry.attempt,
-		failingOver: entry.failingOver,
 	});
 
 	try {
-		// Provider Failover: swap the agent onto its next backup endpoint before the
-		// resend. Awaited so main holds the new env by the time we spawn. A null
-		// result means the config changed under us (endpoint deleted, failover
-		// disarmed) - harmless, we just resend on whatever endpoint is live.
-		//
-		// Contained in its own try: a failed overlay write must degrade to "retry on
-		// the current endpoint", never swallow the retry itself. Letting it escape to
-		// the outer catch would skip the resend and strand the entry in-flight, which
-		// is strictly worse than not failing over.
-		if (entry.failingOver) {
-			try {
-				await switchToNextEndpoint(entry.sessionId);
-			} catch (error) {
-				logger.error('[retry] Failover switch failed; retrying on current endpoint', undefined, {
-					key,
-					error,
-				});
-			}
-		}
-
 		if (entry.mode === 'batch-resume') {
 			// The batch loop is parked at its error-resolution await; resuming it
 			// re-reads the doc and re-dispatches the current task itself. Works for

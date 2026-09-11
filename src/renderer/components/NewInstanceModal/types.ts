@@ -1,5 +1,5 @@
 import type React from 'react';
-import type { AgentConfig, Session, ToolType, Theme, FailoverConfig } from '../../types';
+import type { AgentConfig, Session, ToolType, Theme } from '../../types';
 
 // Maximum character length for nudge message and new session message
 export const NUDGE_MESSAGE_MAX_LENGTH = 1000;
@@ -84,7 +84,6 @@ export interface EditAgentModalProps {
 		maestroPMode?: 'interactive' | 'dynamic',
 		retryOnAvailabilityErrors?: boolean,
 		retryOnTokenExhaustion?: boolean,
-		failoverConfig?: FailoverConfig,
 		customEnvVarsDisabled?: Record<string, string>
 	) => void;
 	theme: Theme;

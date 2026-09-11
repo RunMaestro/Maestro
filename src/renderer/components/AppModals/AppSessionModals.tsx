@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import type { Theme, Session, ToolType, FailoverConfig } from '../../types';
+import type { Theme, Session, ToolType } from '../../types';
 
 // Session Management Modal Components
 import { NewInstanceModal, EditAgentModal } from '../NewInstanceModal';
@@ -78,7 +78,6 @@ export interface AppSessionModalsProps {
 		maestroPMode?: 'interactive' | 'dynamic',
 		retryOnAvailabilityErrors?: boolean,
 		retryOnTokenExhaustion?: boolean,
-		failoverConfig?: FailoverConfig,
 		customEnvVarsDisabled?: Record<string, string>
 	) => void;
 	editAgentSession: Session | null;
