@@ -254,10 +254,23 @@ describe('workflow stage loop', () => {
 		);
 	});
 
-	it('writes a large running-stage response as an artifact while emitting the full body', async () => {
+	it('hands a large stage response to the next moderator by digest and artifact path', async () => {
 		const chat = await createChatWithModerator('Workflow Large Response');
 		await addParticipant(chat.id, 'Builder', 'claude-code', mockProcessManager);
-		setWorkflowRun(chat.id, approveRun(createRun(workflowPlan)));
+		const twoStagePlan: GroupChatWorkflowPlan = {
+			...workflowPlan,
+			stages: [
+				workflowPlan.stages[0],
+				{
+					id: 'stage-2',
+					name: 'Review',
+					agents: ['Builder'],
+					mode: 'serial',
+					instruction: 'Review the implementation',
+				},
+			],
+		};
+		setWorkflowRun(chat.id, approveRun(createRun(twoStagePlan)));
 		const emitMessage = vi.fn();
 		groupChatEmitters.emitMessage = emitMessage;
 		const response = `Implementation details.\n\n${'substantial result '.repeat(300)}`;
@@ -275,6 +288,28 @@ describe('workflow stage loop', () => {
 		}
 		expect(run?.handoffs[0].artifactPaths).toEqual([participantHandoff.artifactPath]);
 		expect(await fs.readFile(participantHandoff.artifactPath, 'utf-8')).toBe(response);
+		expect(emitMessage).toHaveBeenCalledWith(
+			chat.id,
+			expect.objectContaining({ from: 'Builder', content: response })
+		);
+		expect(await readLog(chat.logPath)).toContainEqual(
+			expect.objectContaining({ from: 'Builder', content: response })
+		);
+
+		vi.mocked(mockProcessManager.spawn).mockClear();
+		await routeModeratorResponse(
+			chat.id,
+			'!stage-complete\nThe implementation is ready for review.',
+			mockProcessManager,
+			mockAgentDetector
+		);
+
+		expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
+		const nextStagePrompt = vi.mocked(mockProcessManager.spawn).mock.calls[0]?.[0]?.prompt ?? '';
+		expect(nextStagePrompt).toContain('Stage 2 of 2: Review');
+		expect(nextStagePrompt).toContain(participantHandoff.digest);
+		expect(nextStagePrompt).toContain(`Full output: ${participantHandoff.artifactPath}`);
+		expect(nextStagePrompt).not.toContain(response);
 		expect(emitMessage).toHaveBeenCalledWith(
 			chat.id,
 			expect.objectContaining({ from: 'Builder', content: response })
