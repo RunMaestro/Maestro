@@ -5,6 +5,7 @@
 
 import type {
 	GroupChatWorkflowHandoff,
+	GroupChatWorkflowParticipantHandoff,
 	GroupChatWorkflowRun,
 } from '../../shared/group-chat-workflow-types';
 import { logger } from '../utils/logger';
@@ -74,6 +75,69 @@ export function completeWorkflowStage(
 	handoff: GroupChatWorkflowHandoff
 ): GroupChatWorkflowRun | undefined {
 	return applyTransition(groupChatId, 'stage completed', (run) => completeStage(run, handoff));
+}
+
+/** Record one participant response against the currently running stage. */
+export function recordWorkflowStageResponse(
+	groupChatId: string,
+	response: GroupChatWorkflowParticipantHandoff
+): GroupChatWorkflowRun | undefined {
+	const currentRun = workflowRuns.get(groupChatId);
+	if (!currentRun || currentRun.status !== 'running') return currentRun;
+
+	const currentStage = currentRun.plan.stages[currentRun.currentStageIndex];
+	if (!currentStage) return currentRun;
+
+	const handoffs = currentRun.handoffs.map((handoff) => ({
+		...handoff,
+		...(handoff.artifactPaths ? { artifactPaths: [...handoff.artifactPaths] } : {}),
+		...(handoff.participantHandoffs
+			? { participantHandoffs: handoff.participantHandoffs.map((item) => ({ ...item })) }
+			: {}),
+	}));
+	let stageHandoff = handoffs.find((handoff) => handoff.stageId === currentStage.id);
+	if (!stageHandoff) {
+		stageHandoff = {
+			stageId: currentStage.id,
+			stageName: currentStage.name,
+			summary: '',
+		};
+		handoffs.push(stageHandoff);
+	}
+
+	const participantHandoffs = [...(stageHandoff.participantHandoffs ?? [])];
+	const existingResponseIndex = participantHandoffs.findIndex(
+		(item) => item.participantName === response.participantName
+	);
+	const existingResponse =
+		existingResponseIndex >= 0 ? participantHandoffs[existingResponseIndex] : undefined;
+	if (existingResponseIndex >= 0) {
+		participantHandoffs[existingResponseIndex] = response;
+	} else {
+		participantHandoffs.push(response);
+	}
+	stageHandoff.participantHandoffs = participantHandoffs;
+	if (response.mode === 'artifact') {
+		stageHandoff.artifactPaths = [
+			...(stageHandoff.artifactPaths ?? []),
+			response.artifactPath,
+		].filter((artifactPath, index, paths) => paths.indexOf(artifactPath) === index);
+	} else if (existingResponse?.mode === 'artifact') {
+		stageHandoff.artifactPaths = stageHandoff.artifactPaths?.filter(
+			(artifactPath) => artifactPath !== existingResponse.artifactPath
+		);
+	}
+
+	const nextRun = { ...currentRun, handoffs };
+	workflowRuns.set(groupChatId, nextRun);
+	logger.info('Workflow stage response recorded', LOG_CONTEXT, {
+		groupChatId,
+		runId: nextRun.plan.runId,
+		stageId: currentStage.id,
+		participantName: response.participantName,
+		mode: response.mode,
+	});
+	return nextRun;
 }
 
 /** Fail the current workflow stage and abort the owning run. */

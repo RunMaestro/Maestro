@@ -13,6 +13,7 @@ import {
 	completeWorkflowStage,
 	failWorkflowStage,
 	getWorkflowRun,
+	recordWorkflowStageResponse,
 	resetAllWorkflowRuns,
 	setWorkflowRun,
 } from '../../../main/group-chat/workflow-run-registry';
@@ -95,6 +96,41 @@ describe('workflow-run-registry', () => {
 		const aborted = abortWorkflowRun('chat-1', 'User cancelled');
 		expect(aborted).toMatchObject({ status: 'aborted', abortReason: 'User cancelled' });
 		expect(getWorkflowRun('chat-1')).toBe(aborted);
+	});
+
+	it('records inline and artifact participant responses on the current stage', () => {
+		setWorkflowRun('chat-1', createRun(createPlan()));
+		approveWorkflowRun('chat-1');
+
+		recordWorkflowStageResponse('chat-1', {
+			participantName: 'Builder',
+			mode: 'inline',
+			content: 'Small result.',
+		});
+		recordWorkflowStageResponse('chat-1', {
+			participantName: 'Reviewer',
+			mode: 'artifact',
+			digest: 'Large result digest.',
+			artifactPath: '/tmp/run/stage-1/Reviewer.md',
+		});
+
+		expect(getWorkflowRun('chat-1')?.handoffs).toEqual([
+			{
+				stageId: 'stage-1',
+				stageName: 'Build',
+				summary: '',
+				artifactPaths: ['/tmp/run/stage-1/Reviewer.md'],
+				participantHandoffs: [
+					{ participantName: 'Builder', mode: 'inline', content: 'Small result.' },
+					{
+						participantName: 'Reviewer',
+						mode: 'artifact',
+						digest: 'Large result digest.',
+						artifactPath: '/tmp/run/stage-1/Reviewer.md',
+					},
+				],
+			},
+		]);
 	});
 
 	it('returns undefined without creating state when a chat has no run', () => {

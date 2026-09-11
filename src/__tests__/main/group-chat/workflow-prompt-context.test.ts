@@ -43,7 +43,10 @@ import {
 	spawnModeratorSynthesis,
 } from '../../../main/group-chat/group-chat-router';
 import { createGroupChat, deleteGroupChat } from '../../../main/group-chat/group-chat-storage';
-import { buildPlanContextBlock } from '../../../main/group-chat/workflow-prompt-context';
+import {
+	buildCurrentStageContext,
+	buildPlanContextBlock,
+} from '../../../main/group-chat/workflow-prompt-context';
 import {
 	resetAllWorkflowRuns,
 	setWorkflowRun,
@@ -133,6 +136,33 @@ describe('buildPlanContextBlock', () => {
 
 		expect(context).toContain('Current stage: complete (3 of 3)');
 		expect(context).toContain('### Handoff Summaries\n(none)');
+	});
+});
+
+describe('buildCurrentStageContext', () => {
+	it('formats inline and artifact responses without expanding artifact bodies', () => {
+		const run = createRun();
+		run.handoffs.push({
+			stageId: 'stage-2',
+			stageName: 'Build',
+			summary: '',
+			artifactPaths: ['/tmp/run/stage-2/Reviewer.md'],
+			participantHandoffs: [
+				{ participantName: 'Builder', mode: 'inline', content: 'The patch is ready.' },
+				{
+					participantName: 'Reviewer',
+					mode: 'artifact',
+					digest: 'The detailed review found two follow-ups.',
+					artifactPath: '/tmp/run/stage-2/Reviewer.md',
+				},
+			],
+		});
+
+		const context = buildCurrentStageContext(run);
+
+		expect(context).toContain('### Builder\n\nThe patch is ready.');
+		expect(context).toContain('### Reviewer\n\nThe detailed review found two follow-ups.');
+		expect(context).toContain('Full output: /tmp/run/stage-2/Reviewer.md');
 	});
 });
 

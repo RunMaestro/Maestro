@@ -14,7 +14,13 @@ function copyRun(run: GroupChatWorkflowRun): GroupChatWorkflowRun {
 	return {
 		...run,
 		stageStatuses: { ...run.stageStatuses },
-		handoffs: [...run.handoffs],
+		handoffs: run.handoffs.map((handoff) => ({
+			...handoff,
+			...(handoff.artifactPaths ? { artifactPaths: [...handoff.artifactPaths] } : {}),
+			...(handoff.participantHandoffs
+				? { participantHandoffs: handoff.participantHandoffs.map((response) => ({ ...response })) }
+				: {}),
+		})),
 	};
 }
 
@@ -61,10 +67,26 @@ export function completeStage(
 	if (!currentStage) return nextRun;
 
 	nextRun.stageStatuses[currentStage.id] = 'complete';
-	nextRun.handoffs.push({
+	const completedHandoff = {
 		...handoff,
 		...(handoff.artifactPaths ? { artifactPaths: [...handoff.artifactPaths] } : {}),
-	});
+	};
+	const existingHandoffIndex = nextRun.handoffs.findIndex(
+		(existing) => existing.stageId === currentStage.id
+	);
+	if (existingHandoffIndex >= 0) {
+		const existingHandoff = nextRun.handoffs[existingHandoffIndex];
+		nextRun.handoffs[existingHandoffIndex] = {
+			...existingHandoff,
+			...completedHandoff,
+			artifactPaths: [
+				...(existingHandoff.artifactPaths ?? []),
+				...(completedHandoff.artifactPaths ?? []),
+			].filter((artifactPath, index, paths) => paths.indexOf(artifactPath) === index),
+		};
+	} else {
+		nextRun.handoffs.push(completedHandoff);
+	}
 	nextRun.currentStageIndex += 1;
 
 	const nextStage = getCurrentStage(nextRun);

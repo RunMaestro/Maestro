@@ -37,11 +37,25 @@ export type GroupChatWorkflowStageStatus =
 
 export type GroupChatWorkflowRunStatus = 'awaiting-approval' | 'running' | 'complete' | 'aborted';
 
+export type GroupChatWorkflowParticipantHandoff =
+	| {
+			participantName: string;
+			mode: 'inline';
+			content: string;
+	  }
+	| {
+			participantName: string;
+			mode: 'artifact';
+			digest: string;
+			artifactPath: string;
+	  };
+
 export interface GroupChatWorkflowHandoff {
 	stageId: string;
 	stageName: string;
 	summary: string;
 	artifactPaths?: string[];
+	participantHandoffs?: GroupChatWorkflowParticipantHandoff[];
 }
 
 export interface GroupChatWorkflowRun {

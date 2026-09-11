@@ -156,4 +156,36 @@ describe('workflow-state-machine', () => {
 		artifactPaths.push('late-change.md');
 		expect(completed.handoffs[0].artifactPaths).toEqual(['report.md']);
 	});
+
+	it('completes an in-progress handoff without losing participant artifacts', () => {
+		const running = approveRun(createRun(createPlan()));
+		const withResponse = {
+			...running,
+			handoffs: [
+				{
+					stageId: 'stage-1',
+					stageName: 'Plan',
+					summary: '',
+					artifactPaths: ['/tmp/Planner.md'],
+					participantHandoffs: [
+						{
+							participantName: 'Planner',
+							mode: 'artifact' as const,
+							digest: 'Plan digest.',
+							artifactPath: '/tmp/Planner.md',
+						},
+					],
+				},
+			],
+		};
+
+		const completed = completeStage(withResponse, handoff('stage-1', 'Plan'));
+
+		expect(completed.handoffs).toHaveLength(1);
+		expect(completed.handoffs[0]).toMatchObject({
+			summary: 'Plan finished.',
+			artifactPaths: ['/tmp/Planner.md'],
+			participantHandoffs: [expect.objectContaining({ participantName: 'Planner' })],
+		});
+	});
 });

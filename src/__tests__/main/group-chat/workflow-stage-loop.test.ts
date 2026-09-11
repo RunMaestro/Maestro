@@ -44,6 +44,7 @@ import {
 } from '../../../main/group-chat/group-chat-moderator';
 import {
 	markParticipantResponded,
+	routeAgentResponse,
 	routeModeratorResponse,
 	routeUserMessage,
 } from '../../../main/group-chat/group-chat-router';
@@ -52,6 +53,7 @@ import {
 	deleteGroupChat,
 	getGroupChatHistory,
 } from '../../../main/group-chat/group-chat-storage';
+import { readLog } from '../../../main/group-chat/group-chat-log';
 import {
 	extractStageDirective,
 	stripStageDirectives,
@@ -238,6 +240,36 @@ describe('workflow stage loop', () => {
 				type: 'synthesis',
 				summary: 'Stage 1 of 3 complete: Build. Starting stage 2: Review.',
 			})
+		);
+	});
+
+	it('writes a large running-stage response as an artifact while emitting the full body', async () => {
+		const chat = await createChatWithModerator('Workflow Large Response');
+		await addParticipant(chat.id, 'Builder', 'claude-code', mockProcessManager);
+		setWorkflowRun(chat.id, approveRun(createRun(workflowPlan)));
+		const emitMessage = vi.fn();
+		groupChatEmitters.emitMessage = emitMessage;
+		const response = `Implementation details.\n\n${'substantial result '.repeat(300)}`;
+
+		await routeAgentResponse(chat.id, 'Builder', response, mockProcessManager);
+
+		const run = getWorkflowRun(chat.id);
+		const participantHandoff = run?.handoffs[0]?.participantHandoffs?.[0];
+		expect(participantHandoff).toMatchObject({
+			participantName: 'Builder',
+			mode: 'artifact',
+		});
+		if (!participantHandoff || participantHandoff.mode !== 'artifact') {
+			throw new Error('Expected an artifact handoff');
+		}
+		expect(run?.handoffs[0].artifactPaths).toEqual([participantHandoff.artifactPath]);
+		expect(await fs.readFile(participantHandoff.artifactPath, 'utf-8')).toBe(response);
+		expect(emitMessage).toHaveBeenCalledWith(
+			chat.id,
+			expect.objectContaining({ from: 'Builder', content: response })
+		);
+		expect(await readLog(chat.logPath)).toContainEqual(
+			expect.objectContaining({ from: 'Builder', content: response })
 		);
 	});
 
