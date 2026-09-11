@@ -48,12 +48,6 @@ import { EventEmitter } from 'events';
 export interface InteractiveReplayContext<TSpawnConfig> {
 	/** Canonical `CLAUDE_CONFIG_DIR` key for the snapshot lookup. */
 	configDirKey: string;
-	/**
-	 * Working directory of the failed turn, reused for the usage probe. The probe
-	 * cannot run from the home or temp dir: claude's folder-trust prompt defaults
-	 * to "No, exit" there and the TUI quits before `/usage` renders.
-	 */
-	cwd: string;
 	/** The user's prompt that triggered the failed interactive turn. */
 	prompt: string;
 	/** Build the API-mode spawn config at replay time. */
@@ -89,7 +83,7 @@ export interface InteractiveReplayDeps<TSpawnConfig> {
 	 * dir. Failures must not abort the replay flow - a stale snapshot is
 	 * acceptable so long as the user's prompt still lands.
 	 */
-	sampleUsage(configDirKey: string, cwd: string): Promise<void>;
+	sampleUsage(configDirKey: string): Promise<void>;
 	/** Persist the post-fallback claudeInteractive state to the session record. */
 	updateSessionInteractive(sessionId: string, update: SessionInteractiveUpdate): void;
 	/**
@@ -199,7 +193,7 @@ export function createInteractiveReplayController<TSpawnConfig>(
 		// sampleUsage funnels into the same .catch() as an async rejection - a bare
 		// `sampleUsage().catch()` would let a sync throw escape as an unhandled error.
 		void Promise.resolve()
-			.then(() => deps.sampleUsage(ctx.configDirKey, ctx.cwd))
+			.then(() => deps.sampleUsage(ctx.configDirKey))
 			.catch((err) => {
 				deps.logger?.warn?.('[ClaudeInteractiveReplay] sampleUsage threw (background)', {
 					sessionId,

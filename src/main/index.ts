@@ -729,17 +729,14 @@ app
 		// in one place instead of being threaded through registerProcessHandlers.
 		interactiveReplayController = createInteractiveReplayController<ProcessSpawnConfig>({
 			emitter: processManager,
-			sampleUsage: async (configDirKey, cwd) => {
+			sampleUsage: async (configDirKey) => {
 				// Re-run sampleUsage for the relevant config dir so the renderer's
-				// dashboard reflects the post-fallback quota state. Probe from the
-				// failed turn's own folder: from the home dir claude's trust prompt
-				// defaults to "No, exit" and the probe quits before /usage renders.
+				// dashboard reflects the post-fallback quota state.
 				const binPath = getMaestroPBinPath();
 				if (!binPath) return;
 				const snapshot = await sampleClaudeUsage({
 					binPath,
 					configDir: configDirKey,
-					cwd,
 				});
 				if (snapshot) {
 					setClaudeUsageSnapshot(snapshot);

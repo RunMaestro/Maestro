@@ -91,7 +91,6 @@ export interface StartupUsageSamplingDeps {
 interface SamplingTarget {
 	configDir: string;
 	configDirKey: string;
-	cwd: string;
 	customEnvVars: Record<string, string>;
 }
 
@@ -222,7 +221,6 @@ function getAgentLevelCustomPath(agentConfigsStore: Store<AgentConfigsData>): st
  *   - The session is SSH-remote (`sessionSshRemoteConfig.enabled`). Its
  *     `CLAUDE_CONFIG_DIR` points at the remote host; sampling it locally is
  *     meaningless and can pop an OAuth browser against a tokenless local dir.
- *   - The session has no `cwd` (malformed record).
  *   - Neither the session nor the agent explicitly sets `CLAUDE_CONFIG_DIR`
  *     in customEnvVars. We refuse to sample "default" accounts the user
  *     hasn't explicitly configured: the user may have multiple Anthropic
@@ -252,16 +250,6 @@ function buildTarget(
 		return null;
 	}
 
-	const cwd =
-		typeof session.cwd === 'string' && session.cwd.length > 0
-			? session.cwd
-			: typeof session.projectRoot === 'string' && session.projectRoot.length > 0
-				? session.projectRoot
-				: null;
-	if (!cwd) {
-		return null;
-	}
-
 	// Hard requirement: sample only explicitly-configured accounts. If the
 	// user didn't set CLAUDE_CONFIG_DIR anywhere, we don't guess - the
 	// spawn would inherit the default `~/.claude`, which may have stale
@@ -277,34 +265,8 @@ function buildTarget(
 	return {
 		configDir: explicitConfigDir,
 		configDirKey,
-		cwd,
 		customEnvVars,
 	};
-}
-
-/**
- * Working directory for probing an account that no local agent points at.
- *
- * It cannot be the home directory or the system temp dir: claude's folder-trust
- * prompt defaults to "No, exit" in both, the driver's unblock tap confirms that
- * default, and the TUI quits before `/usage` renders. That is how a cached
- * account whose only agent runs over SSH failed every refresh two seconds in.
- * A local Claude agent's own folder is the kind of directory every other sample
- * already runs from. Returns null when there is none, and the caller skips.
- */
-function findLocalClaudeProbeCwd(sessions: Array<Record<string, unknown>>): string | null {
-	for (const session of sessions) {
-		if (session?.toolType !== 'claude-code') continue;
-		if ((session.sessionSshRemoteConfig as { enabled?: boolean } | undefined)?.enabled) continue;
-		const cwd =
-			typeof session.cwd === 'string' && session.cwd.length > 0
-				? session.cwd
-				: typeof session.projectRoot === 'string' && session.projectRoot.length > 0
-					? session.projectRoot
-					: null;
-		if (cwd && fs.existsSync(cwd)) return cwd;
-	}
-	return null;
 }
 
 /**
@@ -369,8 +331,8 @@ export async function runStartupUsageSampling(deps: StartupUsageSamplingDeps): P
 	const agentLevelEnvVars = getAgentLevelEnvVars(deps.agentConfigsStore);
 
 	// Dedup by canonical configDirKey so two sessions pointing at the same
-	// Anthropic account only sample once. First session wins on cwd / env
-	// shape - the snapshot is a per-account quota, not per-session.
+	// Anthropic account only sample once. First session wins on env shape - the
+	// snapshot is a per-account quota, not per-session.
 	const targetsByKey = new Map<string, SamplingTarget>();
 	for (const session of eligibleClaudeSessions) {
 		const target = buildTarget(session, agentLevelEnvVars);
@@ -398,15 +360,7 @@ export async function runStartupUsageSampling(deps: StartupUsageSamplingDeps): P
 	// BROWSER at a no-op besides.
 	if (mode === 'manual') {
 		const cachedOnlyKeys = Object.keys(getAllSnapshots()).filter((key) => !targetsByKey.has(key));
-		const probeCwd = cachedOnlyKeys.length > 0 ? findLocalClaudeProbeCwd(storedSessions) : null;
-		if (cachedOnlyKeys.length > 0 && !probeCwd) {
-			logger.warn(
-				'Skipping cached Claude accounts: no local Claude agent folder to probe from',
-				LOG_CONTEXT,
-				{ accounts: cachedOnlyKeys }
-			);
-		}
-		if (probeCwd) {
+		if (cachedOnlyKeys.length > 0) {
 			const onDiskDirsByKey = new Map(
 				(await discoverClaudeConfigDirs()).map((dir) => [
 					resolveConfigDirKey({ CLAUDE_CONFIG_DIR: dir }),
@@ -419,7 +373,6 @@ export async function runStartupUsageSampling(deps: StartupUsageSamplingDeps): P
 				targetsByKey.set(configDirKey, {
 					configDir,
 					configDirKey,
-					cwd: probeCwd,
 					customEnvVars: { ...agentLevelEnvVars },
 				});
 			}
@@ -462,7 +415,6 @@ export async function runStartupUsageSampling(deps: StartupUsageSamplingDeps): P
 			const snapshot = await sampleUsage({
 				binPath,
 				configDir: target.configDir,
-				cwd: target.cwd,
 				customEnvVars: sampleEnv,
 			});
 

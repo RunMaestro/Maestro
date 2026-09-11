@@ -1187,7 +1187,6 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 
 					deps.interactiveReplayController.registerInteractiveReplay(config.sessionId, {
 						configDirKey: resolvedConfigDirKey,
-						cwd: config.cwd,
 						prompt: replayPrompt,
 						buildApiSpawnConfig: ({ prompt }): ProcessSpawnConfig | null => {
 							// Pull the freshest agentSessionId for this session/tab off the

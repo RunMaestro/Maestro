@@ -42,6 +42,13 @@ export interface TuiDriverOptions {
 	// the content sits unflushed in lineBuffer until exit. Off by default: run
 	// mode never reads the screen and must not pay the unbounded-buffer cost.
 	captureScreen?: boolean;
+	// Answer claude's folder-trust prompt with "Yes, I trust this folder" even
+	// when it highlights "No, exit" (claude 2.1.26x does in the home and temp
+	// dirs, and the blind unblock Enter would quit). Trusting grants claude read,
+	// edit, and execute rights in `cwd`, and claude remembers it, so this is only
+	// for a cwd the caller owns and keeps empty - Maestro's usage probe folder.
+	// Never set it for an agent's working directory.
+	acceptWorkspaceTrust?: boolean;
 }
 
 export const DEFAULT_COLS = 200;
@@ -171,6 +178,49 @@ const LIMIT_REGEX =
 // escapes have been removed without padding.
 const TRUST_PROMPT_REGEX = /trust\s*this\s*folder|Yes,?\s*I\s*trust/i;
 
+// Where the trust prompt's selector sits, for `acceptWorkspaceTrust`. claude
+// 2.1.26x defaults to "No, exit" in risky locations (the home dir, the system
+// temp dir) AND re-renders the dialog ~150ms after first painting it, which
+// snaps a Down already sent back onto "No". A fixed Down-then-Enter either
+// lands its Enter in that re-render (swallowed) or on "No" (claude quits), so
+// the driver reads the selector off every repaint instead: Down while it shows
+// "No", and Enter only once "Yes" has held for TRUST_CONFIRM_QUIET_MS.
+const TRUST_SELECTOR_NO_REGEX = /❯\s*(?:\d+\.\s*)?No,?\s*exit/gi;
+const TRUST_SELECTOR_YES_REGEX = /❯\s*(?:\d+\.\s*)?Yes,?\s*I\s*trust/gi;
+export const TRUST_CONFIRM_QUIET_MS = 250;
+// A Down that draws no repaint within this window is assumed lost and retried.
+export const TRUST_REPAINT_WAIT_MS = 400;
+// Past this many Downs the driver stops and never confirms: a dialog it cannot
+// read fails the run through 'ready-timeout' instead of guessing at Enter.
+export const TRUST_MAX_DOWNS = 4;
+
+function lastMatchIndex(re: RegExp, text: string): number {
+	re.lastIndex = 0;
+	let at = -1;
+	let match: RegExpExecArray | null;
+	while ((match = re.exec(text)) !== null) at = match.index;
+	return at;
+}
+
+/** Which trust option the most recent paint in `text` left the selector on. */
+function latestTrustSelection(text: string): 'yes' | 'no' | null {
+	const no = lastMatchIndex(TRUST_SELECTOR_NO_REGEX, text);
+	const yes = lastMatchIndex(TRUST_SELECTOR_YES_REGEX, text);
+	if (yes > no) return 'yes';
+	return no >= 0 ? 'no' : null;
+}
+
+interface TrustSelection {
+	/** Stripped output since the trust prompt appeared. */
+	text: string;
+	downs: number;
+	/** A Down went out and its repaint has not arrived yet. */
+	awaitingRepaint: boolean;
+	repaintTimer: ReturnType<typeof setTimeout> | null;
+	confirmTimer: ReturnType<typeof setTimeout> | null;
+	confirmed: boolean;
+}
+
 // Claude shows a one-time "Bypass Permissions mode" acceptance screen the first
 // time the INTERACTIVE TUI is launched with `--dangerously-skip-permissions`
 // (the headless `-p` path never shows it). Unlike the trust prompt, its
@@ -225,6 +275,8 @@ export class TuiDriver extends EventEmitter {
 	private limitEmitted = false;
 	private trustHandled = false;
 	private bypassHandled = false;
+	/** Trust-prompt selection in progress (acceptWorkspaceTrust only). */
+	private trustSelection: TrustSelection | null = null;
 	private exited = false;
 	private tapsSent = 0;
 	private tapTimer: ReturnType<typeof setInterval> | null = null;
@@ -286,6 +338,9 @@ export class TuiDriver extends EventEmitter {
 	// so READY_MAX_TAPS is a single global cap, not per-source.
 	private tryUnblockTap(): boolean {
 		if (this.exited) return false;
+		// Mid trust selection an Enter confirms whichever option the dialog shows
+		// at that instant, and after a re-render that is "No, exit".
+		if (this.isSelectingTrust()) return false;
 		// The bypass-permissions gate defaults to "No, exit", so a bare Enter here
 		// would quit claude. Handle it with Down+Enter first; if it fired this
 		// tick, that IS the unblock action - don't also send a plain Enter (which
@@ -344,6 +399,76 @@ export class TuiDriver extends EventEmitter {
 		this.rollingBuffer = '';
 		this.emit('bypass-accepted');
 		return true;
+	}
+
+	private isSelectingTrust(): boolean {
+		return this.trustSelection !== null && !this.trustSelection.confirmed;
+	}
+
+	// Feed trust-dialog output to the selection (acceptWorkspaceTrust only). A
+	// chunk carrying the `❯` selector is the repaint a pending Down waited for.
+	private observeTrustSelection(text: string): void {
+		const selection = this.trustSelection;
+		if (!selection || selection.confirmed) return;
+		selection.text = (selection.text + text).slice(-ROLLING_BUFFER_CAP);
+		if (selection.awaitingRepaint && text.includes('❯')) {
+			selection.awaitingRepaint = false;
+			if (selection.repaintTimer) clearTimeout(selection.repaintTimer);
+			selection.repaintTimer = null;
+		}
+		this.advanceTrustSelection();
+	}
+
+	// Move the selector toward "Yes, I trust this folder" and confirm it once it
+	// has held. Never writes Enter while the latest paint shows "No, exit".
+	private advanceTrustSelection(): void {
+		const selection = this.trustSelection;
+		if (!selection || selection.confirmed || selection.awaitingRepaint || this.exited) return;
+		const selected = latestTrustSelection(selection.text);
+		if (selected === 'no') {
+			if (selection.confirmTimer) clearTimeout(selection.confirmTimer);
+			selection.confirmTimer = null;
+			if (selection.downs >= TRUST_MAX_DOWNS) return;
+			try {
+				this.ptyProcess?.write(ARROW_DOWN);
+			} catch {
+				return; // PTY tearing down; exit / ready-timeout will surface it.
+			}
+			selection.downs += 1;
+			selection.awaitingRepaint = true;
+			selection.repaintTimer = setTimeout(() => {
+				selection.repaintTimer = null;
+				selection.awaitingRepaint = false;
+				this.advanceTrustSelection();
+			}, TRUST_REPAINT_WAIT_MS);
+		} else if (selected === 'yes') {
+			// Re-armed on every chunk, so the Enter waits out a quiet window and a
+			// re-render that snaps back to "No" cancels it above.
+			if (selection.confirmTimer) clearTimeout(selection.confirmTimer);
+			selection.confirmTimer = setTimeout(() => {
+				selection.confirmTimer = null;
+				if (this.exited || selection.confirmed) return;
+				if (latestTrustSelection(selection.text) !== 'yes') return;
+				try {
+					this.ptyProcess?.write('\r');
+				} catch {
+					return;
+				}
+				selection.confirmed = true;
+				// The dialog's own `❯` must not satisfy READY_REGEX afterward.
+				this.rollingBuffer = '';
+				this.emit('trust-accepted');
+			}, TRUST_CONFIRM_QUIET_MS);
+		}
+	}
+
+	private clearTrustSelectionTimers(): void {
+		const selection = this.trustSelection;
+		if (!selection) return;
+		if (selection.repaintTimer) clearTimeout(selection.repaintTimer);
+		if (selection.confirmTimer) clearTimeout(selection.confirmTimer);
+		selection.repaintTimer = null;
+		selection.confirmTimer = null;
 	}
 
 	private clearReadyTimers(): void {
@@ -517,12 +642,28 @@ export class TuiDriver extends EventEmitter {
 		// "Yes, I accept" before the periodic blind-tap can hit the "No, exit"
 		// default (which would quit claude -> tui_exited).
 		this.handleBypassPrompt();
-		if (!this.trustHandled && TRUST_PROMPT_REGEX.test(this.rollingBuffer)) {
+		if (this.isSelectingTrust()) {
+			this.observeTrustSelection(stripped);
+		} else if (!this.trustHandled && TRUST_PROMPT_REGEX.test(this.rollingBuffer)) {
 			this.trustHandled = true;
-			this.tryUnblockTap();
-			this.emit('trust-accepted');
+			if (this.options.acceptWorkspaceTrust) {
+				this.trustSelection = {
+					text: '',
+					downs: 0,
+					awaitingRepaint: false,
+					repaintTimer: null,
+					confirmTimer: null,
+					confirmed: false,
+				};
+				this.observeTrustSelection(this.rollingBuffer);
+			} else {
+				this.tryUnblockTap();
+				this.emit('trust-accepted');
+			}
 		}
-		if (!this.readyEmitted && READY_REGEX.test(this.rollingBuffer)) {
+		// While the trust dialog is still being answered, its `❯` selector is not
+		// the input prompt.
+		if (!this.readyEmitted && !this.isSelectingTrust() && READY_REGEX.test(this.rollingBuffer)) {
 			this.readyEmitted = true;
 			this.clearReadyTimers();
 			this.emit('ready');
@@ -546,6 +687,7 @@ export class TuiDriver extends EventEmitter {
 		if (this.exited) return;
 		this.exited = true;
 		this.clearReadyTimers();
+		this.clearTrustSelectionTimers();
 		// Flush any trailing partial line so consumers (notably the /usage
 		// panel parser in --status mode) don't lose the last row.
 		if (this.lineBuffer.length > 0) {
