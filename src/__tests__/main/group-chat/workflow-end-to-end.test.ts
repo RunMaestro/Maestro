@@ -44,6 +44,7 @@ import { AgentDetector } from '../../../main/agents';
 import {
 	addParticipant,
 	clearAllParticipantSessionsGlobal,
+	getParticipantSessionId,
 } from '../../../main/group-chat/group-chat-agent';
 import {
 	clearAllModeratorSessions,
@@ -53,23 +54,29 @@ import {
 import {
 	clearPendingParticipants,
 	markParticipantResponded,
+	respawnParticipantWithRecovery,
 	routeAgentResponse,
 	routeModeratorResponse,
 	routeUserMessage,
 	setGetSessionsCallback,
+	setModeratorResponseTimeout,
 	spawnModeratorSynthesis,
 } from '../../../main/group-chat/group-chat-router';
 import { getWorkflowRunDir } from '../../../main/group-chat/workflow-artifacts';
 import {
 	getWorkflowRun,
 	resetAllWorkflowRuns,
+	setWorkflowRun,
 	setWorkflowRunChangedEmitter,
 } from '../../../main/group-chat/workflow-run-registry';
 import { createGroupChat, deleteGroupChat } from '../../../main/group-chat/group-chat-storage';
+import { approveRun, createRun } from '../../../main/group-chat/workflow-state-machine';
 import {
 	registerGroupChatHandlers,
 	type GroupChatHandlerDependencies,
 } from '../../../main/ipc/handlers/groupChat';
+import { powerManager } from '../../../main/power-manager';
+import type { GroupChatWorkflowPlan } from '../../../shared/group-chat-workflow-types';
 
 describe('Group Chat workflow end to end', () => {
 	let mockProcessManager: IProcessManager & {
@@ -164,6 +171,7 @@ describe('Group Chat workflow end to end', () => {
 
 	afterEach(async () => {
 		clearPendingParticipants(chatId);
+		powerManager.removeBlockReason(`groupchat:${chatId}`);
 		clearAllModeratorSessions();
 		clearAllParticipantSessionsGlobal();
 		resetAllWorkflowRuns();
@@ -174,6 +182,26 @@ describe('Group Chat workflow end to end', () => {
 		ipcHandlers.clear();
 		vi.clearAllMocks();
 	});
+
+	function startFailurePathRun(stages?: GroupChatWorkflowPlan['stages']): GroupChatWorkflowPlan {
+		const plan: GroupChatWorkflowPlan = {
+			runId: `failure-path-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+			title: 'Failure path workflow',
+			createdAt: Date.now(),
+			stages: stages ?? [
+				{
+					id: 'build',
+					name: 'Build',
+					agents: ['Builder'],
+					mode: 'serial',
+					instruction: 'Build the release candidate.',
+				},
+			],
+		};
+		setWorkflowRun(chatId, approveRun(createRun(plan)));
+		powerManager.addBlockReason(`groupchat:${chatId}`);
+		return plan;
+	}
 
 	it('runs serial, parallel, Auto Run, and final stages without cross-stage dispatch', async () => {
 		const planBlock = `\`\`\`maestro-plan
@@ -353,5 +381,142 @@ ${JSON.stringify({
 				)
 			);
 		expect(participantDispatches).toEqual(['Builder', 'Reviewer', 'Tester', 'Verifier']);
+	});
+
+	it('fails and releases power when a participant times out mid-stage', async () => {
+		vi.useFakeTimers();
+		try {
+			startFailurePathRun();
+			await routeModeratorResponse(
+				chatId,
+				'@Builder Build the release candidate.',
+				mockProcessManager,
+				mockAgentDetector
+			);
+			const participantSessionId = getParticipantSessionId(chatId, 'Builder');
+
+			await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+			await vi.waitFor(() => {
+				expect(getWorkflowRun(chatId)).toMatchObject({
+					status: 'aborted',
+					stageStatuses: { build: 'failed' },
+					abortReason: expect.stringContaining('Participant @Builder went silent'),
+				});
+			});
+
+			expect(mockProcessManager.kill).toHaveBeenCalledWith(participantSessionId);
+			expect(powerManager.getStatus().reasons).not.toContain(`groupchat:${chatId}`);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('fails and releases power when the moderator times out mid-stage', async () => {
+		vi.useFakeTimers();
+		try {
+			startFailurePathRun();
+			const moderatorTurnSessionId = `group-chat-${chatId}-moderator-timeout-turn`;
+			setModeratorResponseTimeout(chatId, mockProcessManager, moderatorTurnSessionId);
+
+			await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+			await vi.waitFor(() => {
+				expect(getWorkflowRun(chatId)).toMatchObject({
+					status: 'aborted',
+					stageStatuses: { build: 'failed' },
+					abortReason: expect.stringContaining('Moderator went silent'),
+				});
+				expect(powerManager.getStatus().reasons).not.toContain(`groupchat:${chatId}`);
+			});
+
+			expect(mockProcessManager.kill).toHaveBeenCalledWith(moderatorTurnSessionId);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('keeps the run active after successful participant recovery and releases power on cleanup', async () => {
+		startFailurePathRun();
+		await routeModeratorResponse(
+			chatId,
+			'@Builder Build the release candidate.',
+			mockProcessManager,
+			mockAgentDetector
+		);
+		vi.mocked(mockProcessManager.spawn).mockClear();
+
+		await respawnParticipantWithRecovery(chatId, 'Builder', mockProcessManager, mockAgentDetector);
+
+		expect(mockProcessManager.spawn).toHaveBeenCalledOnce();
+		expect(mockProcessManager.spawn.mock.calls[0]?.[0]?.sessionId).toContain(
+			`group-chat-${chatId}-participant-Builder-recovery-`
+		);
+		expect(getWorkflowRun(chatId)).toMatchObject({
+			status: 'running',
+			stageStatuses: { build: 'running' },
+		});
+		expect(powerManager.getStatus().reasons).toContain(`groupchat:${chatId}`);
+
+		await ipcHandlers.get('groupChat:stopAll')!({}, chatId);
+		expect(powerManager.getStatus().reasons).not.toContain(`groupchat:${chatId}`);
+	});
+
+	it('aborts, clears pending work, and releases power when stopAll runs mid-stage', async () => {
+		startFailurePathRun();
+		await routeModeratorResponse(
+			chatId,
+			'@Builder Build the release candidate.',
+			mockProcessManager,
+			mockAgentDetector
+		);
+		expect(markParticipantResponded(chatId, 'Builder')).toBe(true);
+
+		await ipcHandlers.get('groupChat:stopAll')!({}, chatId);
+
+		expect(getWorkflowRun(chatId)).toMatchObject({
+			status: 'aborted',
+			abortReason: 'moderator-stopped',
+		});
+		expect(markParticipantResponded(chatId, 'Builder')).toBe(false);
+		expect(webContentsSend).toHaveBeenCalledWith('groupChat:stateChange', chatId, 'idle');
+		expect(powerManager.getStatus().reasons).not.toContain(`groupchat:${chatId}`);
+	});
+
+	it('warns without aborting when a later-stage participant is removed and releases power on cleanup', async () => {
+		startFailurePathRun([
+			{
+				id: 'build',
+				name: 'Build',
+				agents: ['Builder'],
+				mode: 'serial',
+				instruction: 'Build the release candidate.',
+			},
+			{
+				id: 'review',
+				name: 'Review',
+				agents: ['Reviewer'],
+				mode: 'serial',
+				instruction: 'Review the release candidate.',
+			},
+		]);
+
+		await ipcHandlers.get('groupChat:removeParticipant')!({}, chatId, 'Reviewer');
+
+		expect(getWorkflowRun(chatId)).toMatchObject({
+			status: 'running',
+			currentStageIndex: 0,
+			stageStatuses: { build: 'running', review: 'pending' },
+		});
+		expect(webContentsSend).toHaveBeenCalledWith(
+			'groupChat:message',
+			chatId,
+			expect.objectContaining({
+				from: 'system',
+				content: expect.stringContaining('later workflow stages: Review'),
+			})
+		);
+		expect(powerManager.getStatus().reasons).toContain(`groupchat:${chatId}`);
+
+		await ipcHandlers.get('groupChat:stopAll')!({}, chatId);
+		expect(powerManager.getStatus().reasons).not.toContain(`groupchat:${chatId}`);
 	});
 });
