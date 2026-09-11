@@ -194,6 +194,21 @@ describe('zip-archive', () => {
 		expect(fs.readFileSync(path.join(dest, 'nested', 'file.txt'), 'utf8')).toBe('inner');
 	});
 
+	it('extracts a root entry whose name starts with two dots', () => {
+		expect(isUnsafeZipEntryName('..gitignore')).toBe(false);
+		expect(isUnsafeZipEntryName('..foo/bar.txt')).toBe(false);
+		expect(isUnsafeZipEntryName('../escape.txt')).toBe(true);
+
+		const zipPath = writeZip(tmp, {
+			'..gitignore': 'keep',
+			'..foo/bar.txt': 'inner',
+		});
+		const dest = path.join(tmp, 'out');
+		extractZipTo(zipPath, dest);
+		expect(fs.readFileSync(path.join(dest, '..gitignore'), 'utf8')).toBe('keep');
+		expect(fs.readFileSync(path.join(dest, '..foo', 'bar.txt'), 'utf8')).toBe('inner');
+	});
+
 	it('refuses zip-slip names before writing', () => {
 		expect(isUnsafeZipEntryName('../etc/passwd')).toBe(true);
 		expect(isUnsafeZipEntryName('/etc/passwd')).toBe(true);

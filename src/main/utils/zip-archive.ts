@@ -12,6 +12,10 @@
  * caller that only needs `manifest.json` does not expand the rest, and the
  * default original-size / entry-count caps refuse a zip bomb before the
  * bytes land in the main process.
+ *
+ * Caps bound inflation of selected entries, not ingest. The compressed
+ * file is read with readFileSync before any cap runs. That is fine for a
+ * zip already sitting on disk.
  */
 
 import * as fs from 'fs';
@@ -140,7 +144,7 @@ export function readZipArchive(filePath: string, options?: ReadZipArchiveOptions
 
 function assertNoSymlinkOnPath(destRoot: string, target: string): void {
 	const rel = path.relative(destRoot, target);
-	if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) {
+	if (!rel || rel === '..' || rel.startsWith('..' + path.sep) || path.isAbsolute(rel)) {
 		throw new Error(`Refusing zip entry outside destination: ${rel || target}`);
 	}
 
