@@ -64,6 +64,7 @@ import {
 	setWorkflowRun,
 } from '../../../main/group-chat/workflow-run-registry';
 import { approveRun, createRun } from '../../../main/group-chat/workflow-state-machine';
+import { getWorkflowRunDir, writeStageArtifact } from '../../../main/group-chat/workflow-artifacts';
 import type { GroupChatWorkflowPlan } from '../../../shared/group-chat-workflow-types';
 
 describe('workflow stage loop', () => {
@@ -143,6 +144,16 @@ describe('workflow stage loop', () => {
 		createdChatIds.push(chat.id);
 		await spawnModerator(chat, mockProcessManager);
 		return chat;
+	}
+
+	async function seedWorkflowArtifact(groupChatId: string, runId = workflowPlan.runId) {
+		return writeStageArtifact({
+			groupChatId,
+			runId,
+			stageId: 'stage-1',
+			participantName: 'Builder',
+			content: 'Disposable workflow output',
+		});
 	}
 
 	describe('stage directives', () => {
@@ -276,6 +287,7 @@ describe('workflow stage loop', () => {
 	it('completes the terminal stage without spawning another moderator', async () => {
 		const chat = await createChatWithModerator('Workflow Terminal Stage');
 		setWorkflowRun(chat.id, approveRun(createRun(workflowPlan)));
+		await seedWorkflowArtifact(chat.id);
 		const emitMessage = vi.fn();
 		groupChatEmitters.emitMessage = emitMessage;
 		vi.mocked(mockProcessManager.spawn).mockClear();
@@ -296,12 +308,16 @@ describe('workflow stage loop', () => {
 			})
 		);
 		expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+		await expect(fs.access(getWorkflowRunDir(chat.id, workflowPlan.runId))).rejects.toMatchObject({
+			code: 'ENOENT',
+		});
 	});
 
 	it('fails the current stage and stops without further dispatch', async () => {
 		const chat = await createChatWithModerator('Workflow Stage Failure');
 		await addParticipant(chat.id, 'Builder', 'claude-code', mockProcessManager);
 		setWorkflowRun(chat.id, approveRun(createRun(workflowPlan)));
+		await seedWorkflowArtifact(chat.id);
 		const emitMessage = vi.fn();
 		groupChatEmitters.emitMessage = emitMessage;
 		vi.mocked(mockProcessManager.spawn).mockClear();
@@ -327,6 +343,9 @@ describe('workflow stage loop', () => {
 			})
 		);
 		expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+		await expect(fs.access(getWorkflowRunDir(chat.id, workflowPlan.runId))).rejects.toMatchObject({
+			code: 'ENOENT',
+		});
 	});
 
 	it('dispatches an off-roster mention and announces the deviation', async () => {
@@ -415,6 +434,7 @@ describe('workflow stage loop', () => {
 		const chat = await createChatWithModerator('Workflow Mid-run Cancel');
 		await addParticipant(chat.id, 'Builder', 'claude-code', mockProcessManager);
 		setWorkflowRun(chat.id, approveRun(createRun(workflowPlan)));
+		await seedWorkflowArtifact(chat.id);
 		const emitMessage = vi.fn();
 		groupChatEmitters.emitMessage = emitMessage;
 		vi.mocked(mockProcessManager.spawn).mockClear();
@@ -440,11 +460,34 @@ describe('workflow stage loop', () => {
 			chat.id,
 			expect.objectContaining({ from: 'system', content: 'Workflow cancelled.' })
 		);
+		await expect(fs.access(getWorkflowRunDir(chat.id, workflowPlan.runId))).rejects.toMatchObject({
+			code: 'ENOENT',
+		});
+	});
+
+	it('clears an approval-gated run and its artifacts after cancellation is announced', async () => {
+		const chat = await createChatWithModerator('Workflow Approval Cancel');
+		setWorkflowRun(chat.id, createRun(workflowPlan));
+		await seedWorkflowArtifact(chat.id);
+		const emitMessage = vi.fn();
+		groupChatEmitters.emitMessage = emitMessage;
+
+		await routeUserMessage(chat.id, 'cancel', mockProcessManager, mockAgentDetector);
+
+		expect(getWorkflowRun(chat.id)).toBeUndefined();
+		expect(emitMessage).toHaveBeenCalledWith(
+			chat.id,
+			expect.objectContaining({ from: 'system', content: 'Workflow cancelled.' })
+		);
+		await expect(fs.access(getWorkflowRunDir(chat.id, workflowPlan.runId))).rejects.toMatchObject({
+			code: 'ENOENT',
+		});
 	});
 
 	it('supersedes a running workflow with a new approval-gated plan', async () => {
 		const chat = await createChatWithModerator('Workflow Mid-run Replacement');
 		setWorkflowRun(chat.id, approveRun(createRun(workflowPlan)));
+		await seedWorkflowArtifact(chat.id);
 		const emitMessage = vi.fn();
 		groupChatEmitters.emitMessage = emitMessage;
 		vi.mocked(mockProcessManager.spawn).mockClear();
@@ -473,5 +516,8 @@ describe('workflow stage loop', () => {
 			})
 		);
 		expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+		await expect(fs.access(getWorkflowRunDir(chat.id, workflowPlan.runId))).rejects.toMatchObject({
+			code: 'ENOENT',
+		});
 	});
 });
