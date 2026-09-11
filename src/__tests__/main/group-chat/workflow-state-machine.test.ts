@@ -140,15 +140,18 @@ describe('workflow-state-machine', () => {
 	it('does not mutate transition inputs or nested handoff arrays', () => {
 		const created = createRun(createPlan());
 		const approved = approveRun(created);
+		const createdSnapshot = structuredClone(created);
+		const approvedSnapshot = structuredClone(approved);
 		const artifactPaths = ['report.md'];
 		const stageHandoff = { ...handoff('stage-1', 'Plan'), artifactPaths };
 		const completed = completeStage(approved, stageHandoff);
+		const failed = failStage(approved, 'Tests failed');
+		const aborted = abortRun(approved, 'User cancelled');
 
-		expect(created.status).toBe('awaiting-approval');
-		expect(created.stageStatuses['stage-1']).toBe('pending');
-		expect(approved.currentStageIndex).toBe(0);
-		expect(approved.stageStatuses['stage-1']).toBe('running');
-		expect(approved.handoffs).toEqual([]);
+		expect(created).toEqual(createdSnapshot);
+		expect(approved).toEqual(approvedSnapshot);
+		expect(failed).not.toBe(approved);
+		expect(aborted).not.toBe(approved);
 
 		artifactPaths.push('late-change.md');
 		expect(completed.handoffs[0].artifactPaths).toEqual(['report.md']);
