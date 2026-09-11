@@ -65,15 +65,19 @@ import { spawnGroupChatAgent } from './spawnGroupChatAgent';
 import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
 import { generateUUID } from '../../shared/uuid';
 import {
+	extractStageDirective,
 	extractWorkflowPlanBlock,
 	isWorkflowApproval,
 	parseWorkflowPlan,
 	renderWorkflowPlanSummary,
+	stripStageDirectives,
 } from './workflow-plan-parser';
 import { createRun } from './workflow-state-machine';
 import {
 	approveWorkflowRun,
 	clearWorkflowRun,
+	completeWorkflowStage,
+	failWorkflowStage,
 	getWorkflowRun,
 	setWorkflowRun,
 } from './workflow-run-registry';
@@ -1711,6 +1715,70 @@ export async function routeModeratorResponse(
 			settleGroupChatToIdle(groupChatId);
 			return;
 		}
+	}
+
+	// Stage directives are control-plane output from the moderator. Handle them
+	// before mention extraction so a handoff cannot accidentally dispatch work
+	// after it has already advanced or failed the run. The directive itself is
+	// removed from the transcript; its following prose remains as the visible
+	// handoff/final summary.
+	const workflowRun = getWorkflowRun(groupChatId);
+	const stageDirective = workflowRun?.status === 'running' ? extractStageDirective(message) : null;
+	if (workflowRun?.status === 'running' && stageDirective) {
+		const completedStageIndex = workflowRun.currentStageIndex;
+		const completedStage = workflowRun.plan.stages[completedStageIndex];
+		const stagePosition = completedStageIndex + 1;
+		const stageCount = workflowRun.plan.stages.length;
+		const cleanedStageMessage = stripStageDirectives(message);
+		let transitionMessage: string;
+		let nextRun: GroupChatWorkflowRun | undefined;
+
+		if (stageDirective.kind === 'complete') {
+			nextRun = completeWorkflowStage(groupChatId, {
+				stageId: completedStage.id,
+				stageName: completedStage.name,
+				summary: stageDirective.body,
+			});
+			const nextStage = nextRun?.plan.stages[nextRun.currentStageIndex];
+			transitionMessage = nextStage
+				? `Stage ${stagePosition} of ${stageCount} complete: ${completedStage.name}. Starting stage ${stagePosition + 1}: ${nextStage.name}.`
+				: `Workflow complete: all ${stageCount} stages finished.`;
+		} else {
+			nextRun = failWorkflowStage(groupChatId, stageDirective.body);
+			transitionMessage = `Stage ${stagePosition} of ${stageCount} failed: ${completedStage.name}. ${stageDirective.body}`;
+		}
+
+		// Announce and record the state change before the cleaned moderator prose so
+		// the final-stage summary remains the last user-facing word in the chat.
+		await announceToChat(groupChatId, chat.logPath, transitionMessage);
+		await recordGroupChatHistory(groupChatId, {
+			timestamp: Date.now(),
+			summary: transitionMessage,
+			participantName: 'Moderator',
+			participantColor: '#808080',
+			type: 'synthesis',
+			fullResponse: stageDirective.body,
+		});
+
+		if (cleanedStageMessage) {
+			await appendToLog(chat.logPath, 'moderator', cleanedStageMessage);
+			groupChatEmitters.emitMessage?.(groupChatId, {
+				timestamp: new Date().toISOString(),
+				from: 'moderator',
+				content: cleanedStageMessage,
+			});
+		}
+
+		if (stageDirective.kind === 'complete' && nextRun?.status === 'running') {
+			if (processManager && agentDetector) {
+				await spawnModeratorSynthesis(groupChatId, processManager, agentDetector);
+			} else {
+				settleGroupChatToIdle(groupChatId);
+			}
+		} else {
+			settleGroupChatToIdle(groupChatId);
+		}
+		return;
 	}
 
 	// Strip internal !autorun directives from the message before logging/display.
