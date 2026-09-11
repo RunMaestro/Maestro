@@ -48,6 +48,7 @@ describe('planOnboardingSeries', () => {
 		expect(planOnboardingSeries({ ...base, audience: 'new' })).toEqual([
 			'typography',
 			'theme',
+			'updates',
 			'agentPowers',
 		]);
 	});
@@ -55,14 +56,27 @@ describe('planOnboardingSeries', () => {
 	it('skips a step the user has already been shown', () => {
 		expect(planOnboardingSeries({ ...base, audience: 'new', seen: { typography: true } })).toEqual([
 			'theme',
+			'updates',
 			'agentPowers',
 		]);
+	});
+
+	it('shows only the updates step to a user who finished the series before it existed', () => {
+		// The reason every step has its own flag: an existing user sees the new
+		// step once, and nothing they already answered.
+		expect(
+			planOnboardingSeries({
+				audience: 'returning',
+				seen: { typography: true, theme: true, agentPowers: true },
+				activeThemeId: 'nord',
+			})
+		).toEqual(['updates']);
 	});
 
 	it('drops the theme step for a returning user who has chosen one', () => {
 		expect(
 			planOnboardingSeries({ audience: 'returning', seen: {}, activeThemeId: 'nord' })
-		).toEqual(['typography', 'agentPowers']);
+		).toEqual(['typography', 'updates', 'agentPowers']);
 	});
 
 	it('returns nothing once every step has been seen', () => {
@@ -70,14 +84,14 @@ describe('planOnboardingSeries', () => {
 			planOnboardingSeries({
 				...base,
 				audience: 'new',
-				seen: { typography: true, theme: true, agentPowers: true },
+				seen: { typography: true, theme: true, updates: true, agentPowers: true },
 			})
 		).toEqual([]);
 	});
 
 	it('keeps the declared order regardless of which steps survive', () => {
 		const plan = planOnboardingSeries({ ...base, audience: 'new', seen: { theme: true } });
-		expect(plan).toEqual(['typography', 'agentPowers']);
+		expect(plan).toEqual(['typography', 'updates', 'agentPowers']);
 	});
 
 	it('force ignores both the seen flags and the theme gate', () => {

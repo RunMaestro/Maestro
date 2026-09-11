@@ -2679,6 +2679,7 @@ export function getSettingsActions() {
 		resetTypography: state.resetTypography,
 		setTypographyPromptSeen: state.setTypographyPromptSeen,
 		setThemePromptSeen: state.setThemePromptSeen,
+		setUpdatesPromptSeen: state.setUpdatesPromptSeen,
 		setAgentPowersPromptSeen: state.setAgentPowersPromptSeen,
 		applyTypographyPreset: state.applyTypographyPreset,
 		setFontSize: state.setFontSize,

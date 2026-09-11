@@ -24,6 +24,8 @@ describe('onboardingSeriesStore', () => {
 		useOnboardingSeriesStore.getState().advance();
 		expect(current()).toBe('theme');
 		useOnboardingSeriesStore.getState().advance();
+		expect(current()).toBe('updates');
+		useOnboardingSeriesStore.getState().advance();
 		expect(current()).toBe('agentPowers');
 	});
 
@@ -41,7 +43,7 @@ describe('onboardingSeriesStore', () => {
 		// A stale audience would address the next series with the wrong copy.
 		startOnboardingSeries({
 			audience: 'returning',
-			seen: { typography: true, theme: true },
+			seen: { typography: true, theme: true, updates: true },
 			activeThemeId: DEFAULT_THEME_ID,
 		});
 		expect(useOnboardingSeriesStore.getState().audience).toBe('returning');
@@ -53,7 +55,7 @@ describe('onboardingSeriesStore', () => {
 	it('reports whether anything will actually be shown', () => {
 		const started = startOnboardingSeries({
 			audience: 'new',
-			seen: { typography: true, theme: true, agentPowers: true },
+			seen: { typography: true, theme: true, updates: true, agentPowers: true },
 			activeThemeId: DEFAULT_THEME_ID,
 		});
 
@@ -64,7 +66,7 @@ describe('onboardingSeriesStore', () => {
 	it('does not start an empty series', () => {
 		startOnboardingSeries({
 			audience: 'returning',
-			seen: { typography: true, theme: true, agentPowers: true },
+			seen: { typography: true, theme: true, updates: true, agentPowers: true },
 			activeThemeId: 'nord',
 		});
 
@@ -89,7 +91,11 @@ describe('onboardingSeriesStore', () => {
 
 			expect(current()).toBe('theme');
 			// The step it came back from must not be lost on the way forward.
-			expect(useOnboardingSeriesStore.getState().queue).toEqual(['theme', 'agentPowers']);
+			expect(useOnboardingSeriesStore.getState().queue).toEqual([
+				'theme',
+				'updates',
+				'agentPowers',
+			]);
 		});
 
 		it('is a no-op on the first step', () => {

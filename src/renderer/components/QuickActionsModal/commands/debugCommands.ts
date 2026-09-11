@@ -104,7 +104,7 @@ export function buildDebugCommands({
 		{
 			id: 'debugOnboardingNewUser',
 			label: 'Debug: Replay First-Run Series (New User)',
-			subtext: 'Typography, theme, then agent powers - with new-user copy',
+			subtext: 'Typography, theme, updates, then agent powers - with new-user copy',
 			action: () => {
 				// Forced: ignores every seen flag AND the theme gate, and skips
 				// writing the flags back, so replaying the series to look at it
@@ -116,7 +116,7 @@ export function buildDebugCommands({
 		{
 			id: 'debugOnboardingReturningUser',
 			label: 'Debug: Replay First-Run Series (Existing User)',
-			subtext: 'Same three steps, with the copy an upgrading user sees',
+			subtext: 'Same four steps, with the copy an upgrading user sees',
 			action: () => {
 				replayOnboardingSeries('returning');
 				setQuickActionOpen(false);

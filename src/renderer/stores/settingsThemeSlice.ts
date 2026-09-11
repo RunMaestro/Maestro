@@ -76,6 +76,8 @@ export interface ThemeState {
 	typographyPromptSeen: boolean;
 	/** Whether the first-run theme chooser has been shown. See onboardingSeries. */
 	themePromptSeen: boolean;
+	/** Whether the release channel / crash reports / CLI step has been shown. */
+	updatesPromptSeen: boolean;
 	/** Whether the "your agents can drive Maestro" step has been shown. */
 	agentPowersPromptSeen: boolean;
 }
@@ -103,6 +105,7 @@ export interface ThemeActions {
 	setThemeGloss: (value: GlossLevel) => void;
 	setTypographyPromptSeen: (value: boolean) => void;
 	setThemePromptSeen: (value: boolean) => void;
+	setUpdatesPromptSeen: (value: boolean) => void;
 	setAgentPowersPromptSeen: (value: boolean) => void;
 	/** Write all five font settings at once from a typography preset. */
 	applyTypographyPreset: (id: TypographyPresetId) => void;
@@ -132,6 +135,7 @@ export const createThemeSlice: StateCreator<SettingsStore, [], [], ThemeSlice> =
 	themeGloss: DEFAULT_GLOSS_LEVEL,
 	typographyPromptSeen: false,
 	themePromptSeen: false,
+	updatesPromptSeen: false,
 	agentPowersPromptSeen: false,
 
 	setFontFamily: (value) => {
@@ -273,6 +277,11 @@ export const createThemeSlice: StateCreator<SettingsStore, [], [], ThemeSlice> =
 		window.maestro.settings.set('themePromptSeen', value);
 	},
 
+	setUpdatesPromptSeen: (value) => {
+		set({ updatesPromptSeen: value });
+		window.maestro.settings.set('updatesPromptSeen', value);
+	},
+
 	setAgentPowersPromptSeen: (value) => {
 		set({ agentPowersPromptSeen: value });
 		window.maestro.settings.set('agentPowersPromptSeen', value);
@@ -349,6 +358,9 @@ export function hydrateThemeSettings(
 
 	if (allSettings['themePromptSeen'] !== undefined)
 		patch.themePromptSeen = Boolean(allSettings['themePromptSeen']);
+
+	if (allSettings['updatesPromptSeen'] !== undefined)
+		patch.updatesPromptSeen = Boolean(allSettings['updatesPromptSeen']);
 
 	if (allSettings['agentPowersPromptSeen'] !== undefined)
 		patch.agentPowersPromptSeen = Boolean(allSettings['agentPowersPromptSeen']);

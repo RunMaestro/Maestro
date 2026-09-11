@@ -97,6 +97,7 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	typographySnapshot: null,
 	typographyPromptSeen: false,
 	themePromptSeen: false,
+	updatesPromptSeen: false,
 	agentPowersPromptSeen: false,
 	customFonts: [],
 	mediaPlaybackRate: 1,

@@ -121,6 +121,8 @@ export interface UseSettingsReturn {
 	setTypographyPromptSeen: (value: boolean) => void;
 	themePromptSeen: boolean;
 	setThemePromptSeen: (value: boolean) => void;
+	updatesPromptSeen: boolean;
+	setUpdatesPromptSeen: (value: boolean) => void;
 	agentPowersPromptSeen: boolean;
 	setAgentPowersPromptSeen: (value: boolean) => void;
 

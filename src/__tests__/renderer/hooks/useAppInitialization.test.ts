@@ -18,6 +18,7 @@ const mockSettingsState: Record<string, unknown> = {
 	suppressWindowsWarning: false,
 	typographyPromptSeen: false,
 	themePromptSeen: false,
+	updatesPromptSeen: false,
 	agentPowersPromptSeen: false,
 	activeThemeId: 'dracula',
 	enableBetaUpdates: false,
@@ -240,6 +241,7 @@ function resetStores() {
 
 	mockSettingsState.typographyPromptSeen = false;
 	mockSettingsState.themePromptSeen = false;
+	mockSettingsState.updatesPromptSeen = false;
 	mockSettingsState.agentPowersPromptSeen = false;
 	mockSettingsState.activeThemeId = 'dracula';
 	mockSessionState.sessionsLoaded = false;
@@ -498,7 +500,7 @@ describe('useAppInitialization', () => {
 
 			expect(mockStartOnboardingSeries).toHaveBeenCalledWith(
 				expect.objectContaining({
-					seen: { typography: true, theme: false, agentPowers: false },
+					seen: { typography: true, theme: false, updates: false, agentPowers: false },
 				})
 			);
 		});

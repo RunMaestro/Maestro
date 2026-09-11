@@ -76,6 +76,7 @@ export function useAppInitialization(): AppInitializationReturn {
 	const suppressWindowsWarning = useSettingsStore((s) => s.suppressWindowsWarning);
 	const typographyPromptSeen = useSettingsStore((s) => s.typographyPromptSeen);
 	const themePromptSeen = useSettingsStore((s) => s.themePromptSeen);
+	const updatesPromptSeen = useSettingsStore((s) => s.updatesPromptSeen);
 	const agentPowersPromptSeen = useSettingsStore((s) => s.agentPowersPromptSeen);
 	const activeThemeId = useSettingsStore((s) => s.activeThemeId);
 	// "Does this user already have agents" is the only signal that separates a
@@ -172,7 +173,7 @@ export function useAppInitialization(): AppInitializationReturn {
 			});
 	}, [settingsLoaded, suppressWindowsWarning]);
 
-	// --- First-run modal series (typography -> theme -> agent powers) ---
+	// --- First-run modal series (typography -> theme -> updates -> agent powers) ---
 	// Each step carries its own seen flag, so this fires whenever ANY of them is
 	// still unshown - which is what lets a later step reach users who already
 	// answered the earlier ones. Every flag is false on a fresh install and on
@@ -196,6 +197,7 @@ export function useAppInitialization(): AppInitializationReturn {
 			seen: {
 				typography: typographyPromptSeen,
 				theme: themePromptSeen,
+				updates: updatesPromptSeen,
 				agentPowers: agentPowersPromptSeen,
 			},
 			activeThemeId,
@@ -207,6 +209,7 @@ export function useAppInitialization(): AppInitializationReturn {
 		hasAnySession,
 		typographyPromptSeen,
 		themePromptSeen,
+		updatesPromptSeen,
 		agentPowersPromptSeen,
 		activeThemeId,
 	]);

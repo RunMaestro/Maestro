@@ -144,6 +144,13 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: false,
 		category: 'appearance',
 	},
+	updatesPromptSeen: {
+		description:
+			'Whether the first-run step covering release candidate updates, crash reporting, and the Maestro CLI install has been shown.',
+		type: 'boolean',
+		default: false,
+		category: 'appearance',
+	},
 	agentPowersPromptSeen: {
 		description: 'Whether the "your agents can drive Maestro" first-run step has been shown.',
 		type: 'boolean',
