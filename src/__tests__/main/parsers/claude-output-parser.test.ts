@@ -671,6 +671,67 @@ describe('ClaudeOutputParser', () => {
 		});
 	});
 
+	describe('isProvisionalErrorNotice', () => {
+		// Captured live: Claude Code emitted this, retried the call itself, and kept
+		// working for another twenty minutes before any result.
+		const connectionLost = {
+			type: 'assistant',
+			error: 'server_error',
+			is_api_error_message: true,
+			message: {
+				model: '<synthetic>',
+				role: 'assistant',
+				content: [
+					{
+						type: 'text',
+						text: 'API Error: Connection lost mid-response. The response above may be incomplete.',
+					},
+				],
+			},
+			session_id: 'sess-1',
+		};
+
+		it('is still detected as an error', () => {
+			expect(parser.detectErrorFromParsed(connectionLost)).not.toBeNull();
+		});
+
+		it('flags a synthetic API error message as provisional', () => {
+			expect(parser.isProvisionalErrorNotice(connectionLost)).toBe(true);
+		});
+
+		it('accepts the camelCase flag or the synthetic model on its own', () => {
+			expect(
+				parser.isProvisionalErrorNotice({
+					type: 'assistant',
+					error: 'server_error',
+					isApiErrorMessage: true,
+				})
+			).toBe(true);
+			expect(
+				parser.isProvisionalErrorNotice({
+					type: 'assistant',
+					error: 'server_error',
+					message: { model: '<synthetic>' },
+				})
+			).toBe(true);
+		});
+
+		it('treats error events and real model messages as final', () => {
+			expect(parser.isProvisionalErrorNotice({ type: 'error', message: 'Invalid API key' })).toBe(
+				false
+			);
+			expect(parser.isProvisionalErrorNotice({ error: 'context is too long' })).toBe(false);
+			expect(
+				parser.isProvisionalErrorNotice({
+					type: 'assistant',
+					error: 'server_error',
+					message: { model: 'claude-opus-5' },
+				})
+			).toBe(false);
+			expect(parser.isProvisionalErrorNotice(null)).toBe(false);
+		});
+	});
+
 	describe('detectErrorFromExit', () => {
 		it('should return null for exit code 0', () => {
 			expect(parser.detectErrorFromExit(0, '', '')).toBeNull();

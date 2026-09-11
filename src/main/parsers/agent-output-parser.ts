@@ -229,6 +229,21 @@ export interface AgentOutputParser {
 	detectErrorFromParsed(parsed: unknown): AgentError | null;
 
 	/**
+	 * Is this detected error a notice the CLI may still recover from inside the
+	 * same turn? Optional: a parser without it treats every detected error as final.
+	 *
+	 * When true, StdoutHandler holds the error instead of emitting it. More model
+	 * output from the same process drops it; the end of the turn (a result message,
+	 * or process exit) emits it. Emitting it at once put the agent into the
+	 * blocking error state while the turn kept running out of sight, and the next
+	 * message then queued behind a process that was still busy.
+	 *
+	 * @param parsed - The pre-parsed JSON object detectErrorFromParsed flagged
+	 * @returns true if the error must wait for the turn to show whether it recovered
+	 */
+	isProvisionalErrorNotice?(parsed: unknown): boolean;
+
+	/**
 	 * Detect an error from process exit information
 	 * Called when the agent process exits to determine if there was an error
 	 *

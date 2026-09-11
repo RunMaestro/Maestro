@@ -5,6 +5,7 @@ import { logger } from '../../utils/logger';
 import { matchSshErrorPattern } from '../../parsers/error-patterns';
 import { aggregateModelUsage } from '../../parsers/usage-aggregator';
 import { cleanupTempFiles } from '../utils/imageUtils';
+import { settleProvisionalAgentError } from '../utils/provisionalAgentError';
 import type { ManagedProcess, AgentError } from '../types';
 import type { DataBufferManager } from './DataBufferManager';
 import type { SshRemoteConfig } from '../../../shared/types';
@@ -113,6 +114,11 @@ export class ExitHandler {
 			);
 			return;
 		}
+
+		// An in-turn error notice still held at exit had nothing after it, so the
+		// turn ended on it. Emit it first: ahead of the exit event it explains, and
+		// ahead of detectErrorFromExit below, which would report a vaguer failure.
+		settleProvisionalAgentError(this.emitter, sessionId, managedProcess);
 
 		// Handle regular batch mode (not stream-json)
 		if (isBatchMode && !isStreamJsonMode && managedProcess.jsonBuffer) {

@@ -92,6 +92,9 @@ export interface ManagedProcess {
 	agentSessionId?: string;
 	resultEmitted?: boolean;
 	errorEmitted?: boolean;
+	/** An in-turn error notice held until the turn shows whether the agent
+	 *  recovered from it. See `AgentOutputParser.isProvisionalErrorNotice`. */
+	provisionalError?: AgentError;
 	startTime: number;
 	outputParser?: AgentOutputParser;
 	stderrBuffer?: string;
