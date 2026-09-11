@@ -14,7 +14,7 @@ Coworking is an [Encore Feature](/encore-features), off by default. It ships as 
 
 ## Enabling Coworking
 
-Open **Settings -> Extensions**, find **Coworking**, and enable it.
+Open **Settings -> Plugins**, find **Coworking**, and enable it.
 
 Enabling the feature is only half of it. The agent reaches Maestro through an MCP server that has to be installed into that provider's own config, which Maestro does for you from **Settings -> Coworking Setup**. Supported providers and where the entry goes:
 

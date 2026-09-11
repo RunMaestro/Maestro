@@ -12,7 +12,7 @@ Pianola is an [Encore Feature](/encore-features), off by default. It ships as th
 
 ## Enabling Pianola
 
-Open **Settings -> Extensions**, find **Pianola**, and enable it. Enabling it pins one Pianola agent to the top of the Left Bar.
+Open **Settings -> Plugins**, find **Pianola**, and enable it. Enabling it pins one Pianola agent to the top of the Left Bar.
 
 That agent is a real chat agent, so you can talk to it like any other. Its workspace also carries a Dashboard: who needs you right now, who is still working, who just finished, and a live feed of every decision Pianola made.
 
@@ -124,7 +124,7 @@ Your rules, your decision log, and the Pianola agent itself are all kept. Switch
 
 ## What Pianola can reach
 
-Pianola declares its permissions up front, and the Extensions tile shows them before you enable it:
+Pianola declares its permissions up front, and the Plugins tile shows them before you enable it:
 
 | Capability            | Why it needs it                                                        |
 | --------------------- | ---------------------------------------------------------------------- |

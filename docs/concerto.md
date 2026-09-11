@@ -10,7 +10,7 @@ Concerto is an [Encore Feature](/encore-features), off by default. It ships as t
 
 ## Enabling Concerto
 
-Open **Settings -> Extensions**, find **Concerto**, and enable it. (Equivalently, toggle the Concerto Encore Feature.) While it is off, any view an agent tries to open is dropped rather than queued, so enabling it later never floods you with stale cards.
+Open **Settings -> Plugins**, find **Concerto**, and enable it. (Equivalently, toggle the Concerto Encore Feature.) While it is off, any view an agent tries to open is dropped rather than queued, so enabling it later never floods you with stale cards.
 
 ## The two surfaces
 
