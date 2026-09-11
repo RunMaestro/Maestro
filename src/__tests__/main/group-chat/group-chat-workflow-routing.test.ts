@@ -44,8 +44,10 @@ import {
 	type IProcessManager,
 } from '../../../main/group-chat/group-chat-moderator';
 import {
+	abortActiveWorkflowRun,
 	buildModeratorPromptSections,
 	clearPendingParticipants,
+	getGroupChatReadOnlyState,
 	markParticipantResponded,
 	routeModeratorResponse,
 	routeUserMessage,
@@ -324,6 +326,27 @@ describe('group-chat workflow routing', () => {
 		}
 	});
 
+	it('aborts and cleans up an active run when the moderator is stopped', async () => {
+		const chat = await createChatWithModerator('Workflow Moderator Stop');
+		setWorkflowRun(chat.id, approveRun(createRun(workflowPlan)));
+		const runDir = getWorkflowRunDir(chat.id, workflowPlan.runId);
+		await fs.mkdir(runDir, { recursive: true });
+		await fs.writeFile(path.join(runDir, 'handoff.md'), 'temporary handoff');
+		powerManager.addBlockReason(`groupchat:${chat.id}`);
+		const emitStateChange = vi.fn();
+		groupChatEmitters.emitStateChange = emitStateChange;
+
+		await abortActiveWorkflowRun(chat.id, 'moderator-stopped');
+
+		expect(getWorkflowRun(chat.id)).toMatchObject({
+			status: 'aborted',
+			abortReason: 'moderator-stopped',
+		});
+		expect(emitStateChange).toHaveBeenCalledWith(chat.id, 'idle');
+		expect(powerManager.getStatus().reasons).not.toContain(`groupchat:${chat.id}`);
+		await expect(fs.stat(runDir)).rejects.toThrow();
+	});
+
 	it('fails and cleans up a running stage when its participant times out', async () => {
 		vi.useFakeTimers();
 		try {
@@ -426,6 +449,26 @@ describe('group-chat workflow routing', () => {
 		expect(baseIndex).toBeGreaterThanOrEqual(0);
 		expect(planningIndex).toBeGreaterThan(baseIndex);
 		expect(participantsIndex).toBeGreaterThan(planningIndex);
+	});
+
+	it('preserves read-only mode when an active workflow is approved without a mode flag', async () => {
+		const chat = await createChatWithModerator('Read-only Workflow Approval');
+		await routeUserMessage(
+			chat.id,
+			'Plan a read-only staged review',
+			mockProcessManager,
+			mockAgentDetector,
+			true
+		);
+		setWorkflowRun(chat.id, createRun(workflowPlan));
+		vi.mocked(mockProcessManager.spawn).mockClear();
+
+		await routeUserMessage(chat.id, 'go', mockProcessManager, mockAgentDetector);
+
+		const approvalPrompt = vi.mocked(mockProcessManager.spawn).mock.calls[0]?.[0]?.prompt ?? '';
+		expect(approvalPrompt).toContain('READ-ONLY MODE is active.');
+		expect(approvalPrompt).toContain('mock prompt for group-chat-workflow-stage');
+		expect(getGroupChatReadOnlyState(chat.id)).toBe(true);
 	});
 
 	it('injects current-stage context into user and synthesis moderator turns', async () => {

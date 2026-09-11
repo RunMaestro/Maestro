@@ -9,6 +9,10 @@ Recognize when the user is describing a multi-stage or multi-phase workflow rath
 
 For such a request, create a workflow plan before dispatching any work.
 
+## Respect Read-Only Mode
+
+When the user request is marked `READ-ONLY MODE`, planning is allowed, but every stage must be limited to inspection, analysis, or planning. State explicitly in the prose walkthrough and the plan notes that no stage may make file changes while read-only mode is on. Do not include implementation, editing, generation, or other file-changing instructions in any stage.
+
 ## Clarify Genuine Ambiguity Once
 
 If the stage roster, stage ordering, or completion condition is genuinely ambiguous, ask one concise, batched round of clarifying questions in the plain text of your normal response. Ask every blocking question together, not as a drip of one-question turns. End the turn after the questions and wait for the user's reply.
