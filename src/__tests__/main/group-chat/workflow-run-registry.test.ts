@@ -15,6 +15,7 @@ import {
 	getWorkflowRun,
 	recordWorkflowStageResponse,
 	resetAllWorkflowRuns,
+	setWorkflowRunChangedEmitter,
 	setWorkflowRun,
 } from '../../../main/group-chat/workflow-run-registry';
 import { logger } from '../../../main/utils/logger';
@@ -62,6 +63,33 @@ describe('workflow-run-registry', () => {
 
 	afterEach(() => {
 		resetAllWorkflowRuns();
+		setWorkflowRunChangedEmitter(undefined);
+	});
+
+	it('emits the stored run, every state transition, and null when cleared', async () => {
+		const emitRunChanged = vi.fn();
+		setWorkflowRunChangedEmitter(emitRunChanged);
+		setWorkflowRun('chat-1', createRun(createPlan()));
+		approveWorkflowRun('chat-1');
+		completeWorkflowStage('chat-1', {
+			stageId: 'stage-1',
+			stageName: 'Build',
+			summary: 'Done.',
+		});
+		failWorkflowStage('chat-1', 'Verification failed');
+		setWorkflowRun('chat-1', createRun(createPlan('run-456')));
+		abortWorkflowRun('chat-1', 'user-cancelled');
+		await clearWorkflowRun('chat-1');
+
+		expect(emitRunChanged.mock.calls.map(([, run]) => run?.status ?? null)).toEqual([
+			'awaiting-approval',
+			'running',
+			'running',
+			'aborted',
+			'awaiting-approval',
+			'aborted',
+			null,
+		]);
 	});
 
 	it('stores runs independently by group chat and clears one with its artifacts', async () => {

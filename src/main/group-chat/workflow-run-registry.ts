@@ -17,9 +17,26 @@ const LOG_CONTEXT = '[WorkflowRunRegistry]';
 /** Active and recently completed workflow runs, keyed by group chat id. */
 const workflowRuns = new Map<string, GroupChatWorkflowRun>();
 
+/** Renderer notification installed by the live Group Chat IPC registration path. */
+let emitWorkflowRunChanged:
+	| ((groupChatId: string, run: GroupChatWorkflowRun | null) => void)
+	| undefined;
+
+/**
+ * Install the workflow-run notifier without coupling the registry to Electron.
+ * The registry owns every invocation so callers cannot mutate a run and forget
+ * to publish the corresponding renderer update.
+ */
+export function setWorkflowRunChangedEmitter(
+	emitter: ((groupChatId: string, run: GroupChatWorkflowRun | null) => void) | undefined
+): void {
+	emitWorkflowRunChanged = emitter;
+}
+
 /** Store the workflow run owned by a group chat. */
 export function setWorkflowRun(groupChatId: string, run: GroupChatWorkflowRun): void {
 	workflowRuns.set(groupChatId, run);
+	emitWorkflowRunChanged?.(groupChatId, run);
 	logger.info('Workflow run stored', LOG_CONTEXT, {
 		groupChatId,
 		runId: run.plan.runId,
@@ -52,6 +69,7 @@ export async function cleanupWorkflowRunArtifacts(
 export async function clearWorkflowRun(groupChatId: string): Promise<void> {
 	const run = workflowRuns.get(groupChatId);
 	workflowRuns.delete(groupChatId);
+	emitWorkflowRunChanged?.(groupChatId, null);
 	if (run) {
 		logger.info('Workflow run cleared', LOG_CONTEXT, {
 			groupChatId,
@@ -72,6 +90,7 @@ function applyTransition(
 
 	const nextRun = apply(currentRun);
 	workflowRuns.set(groupChatId, nextRun);
+	emitWorkflowRunChanged?.(groupChatId, nextRun);
 	logger.info(`Workflow run ${transition}`, LOG_CONTEXT, {
 		groupChatId,
 		runId: nextRun.plan.runId,
@@ -148,6 +167,7 @@ export function recordWorkflowStageResponse(
 
 	const nextRun = { ...currentRun, handoffs };
 	workflowRuns.set(groupChatId, nextRun);
+	emitWorkflowRunChanged?.(groupChatId, nextRun);
 	logger.info('Workflow stage response recorded', LOG_CONTEXT, {
 		groupChatId,
 		runId: nextRun.plan.runId,
