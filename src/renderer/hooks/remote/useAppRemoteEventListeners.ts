@@ -26,6 +26,7 @@ import {
 import type { Session, AITab, ToolType, Group, BatchRunConfig, BrowserTab } from '../../types';
 import { logger } from '../../utils/logger';
 import { FILE_TREE_REFRESH_EVENT } from '../../utils/fileTreeRefresh';
+import { withWorkingDirectory } from '../../utils/agentWorkingDirectory';
 import { spawnPtyForTab } from '../../services/terminalSpawn';
 import { useTabStore } from '../../stores/tabStore';
 import {
@@ -1443,11 +1444,12 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		}
 	});
 
-	// Handle remote update session cwd from CLI/web. Mutates the UI-facing
-	// cwd/fullPath only; projectRoot is intentionally preserved so historical
-	// provider sessions (stored under the original project root) remain
-	// addressable. The PTY's cwd is fixed at spawn time, so we refuse the
-	// update when an agent process is alive.
+	// Handle remote update session cwd from CLI/web. Every path field moves
+	// together through withWorkingDirectory(): moving cwd alone left projectRoot
+	// and autoRunFolderPath on the old directory, so the Files panel and the Edit
+	// dialog kept describing a folder the agent no longer ran in (#1565). The
+	// PTY's cwd is fixed at spawn time, so we refuse the update when an agent
+	// process is alive.
 	useEventListener('maestro:remoteUpdateSessionCwd', (e: Event) => {
 		const { sessionId, newCwd, responseChannel } = (e as CustomEvent).detail;
 		const session = sessionsRef.current.find((s) => s.id === sessionId);
@@ -1466,9 +1468,14 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			return;
 		}
 		setSessions((prev: Session[]) =>
-			prev.map((s) =>
-				s.id === sessionId ? { ...s, cwd: newCwd, fullPath: newCwd, shellCwd: newCwd } : s
-			)
+			prev.map((s) => {
+				if (s.id !== sessionId) return s;
+				const moved = withWorkingDirectory(s, newCwd);
+				// The helper no-ops when newCwd already names projectRoot. An agent
+				// left split by an older `--cwd` (cwd elsewhere, projectRoot here)
+				// still needs its cwd pulled back to match.
+				return moved === s ? { ...s, cwd: newCwd, fullPath: newCwd, shellCwd: newCwd } : moved;
+			})
 		);
 		window.maestro.process.sendRemoteUpdateSessionCwdResponse(responseChannel, { success: true });
 	});

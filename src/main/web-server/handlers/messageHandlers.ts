@@ -3563,10 +3563,10 @@ export class WebSocketMessageHandler {
 
 	/**
 	 * Handle update_session_cwd message - update an agent's working directory.
-	 * The desktop's `projectRoot` (used for provider session storage) is left
-	 * untouched so historical conversations stay addressable; only the UI-facing
-	 * `cwd`/`fullPath` move. Renderer-side validation rejects updates while an
-	 * agent process is alive - the PTY's cwd is fixed at spawn time.
+	 * The renderer moves `cwd`, `fullPath`, `shellCwd`, `projectRoot`, and an
+	 * Auto Run folder under the old root together (#1565). Renderer-side
+	 * validation rejects updates while an agent process is alive - the PTY's cwd
+	 * is fixed at spawn time.
 	 */
 	private handleUpdateSessionCwd(client: WebClient, message: WebClientMessage): void {
 		const sessionId = message.sessionId as string;

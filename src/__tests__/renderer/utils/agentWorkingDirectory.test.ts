@@ -1,0 +1,117 @@
+/**
+ * Moving an agent to a new working directory must move every path field
+ * together (#1565, #1566): an agent whose `cwd` moved but whose `projectRoot`
+ * did not runs in one directory while its Files panel lists another.
+ */
+import { describe, it, expect } from 'vitest';
+import {
+	rebasePathOntoRoot,
+	withWorkingDirectory,
+	workingDirectoryChangeBlocker,
+} from '../../../renderer/utils/agentWorkingDirectory';
+import { createMockSession } from '../../helpers/mockSession';
+
+describe('withWorkingDirectory', () => {
+	const base = () =>
+		createMockSession({
+			cwd: '/projects/old',
+			fullPath: '/projects/old',
+			shellCwd: '/projects/old',
+			projectRoot: '/projects/old',
+			autoRunFolderPath: '/projects/old/.maestro/playbooks',
+		});
+
+	it('moves every path field to the new directory', () => {
+		const moved = withWorkingDirectory(base(), '/projects/new');
+
+		expect(moved.cwd).toBe('/projects/new');
+		expect(moved.fullPath).toBe('/projects/new');
+		expect(moved.shellCwd).toBe('/projects/new');
+		expect(moved.projectRoot).toBe('/projects/new');
+		expect(moved.autoRunFolderPath).toBe('/projects/new/.maestro/playbooks');
+	});
+
+	it('leaves an Auto Run folder that lives outside the project where the user put it', () => {
+		const session = { ...base(), autoRunFolderPath: '/shared/playbooks' };
+
+		expect(withWorkingDirectory(session, '/projects/new').autoRunFolderPath).toBe(
+			'/shared/playbooks'
+		);
+	});
+
+	it('clears state that describes the old directory so it reloads from the new one', () => {
+		const session = {
+			...base(),
+			fileTree: [{ name: 'stale.ts', type: 'file' }],
+			fileExplorerExpanded: ['src'],
+			fileTreeStats: { fileCount: 1, folderCount: 0, totalSize: 1 } as any,
+			isGitRepo: true,
+			gitBranches: ['main'],
+		};
+
+		const moved = withWorkingDirectory(session, '/projects/new');
+
+		expect(moved.fileTree).toEqual([]);
+		expect(moved.fileExplorerExpanded).toEqual([]);
+		expect(moved.fileTreeStats).toBeUndefined();
+		// Git polling re-detects a repo for sessions marked false.
+		expect(moved.isGitRepo).toBe(false);
+		expect(moved.gitBranches).toBeUndefined();
+	});
+
+	it('moves the SSH working directory override for a remote agent', () => {
+		const session = {
+			...base(),
+			sessionSshRemoteConfig: {
+				enabled: true,
+				remoteId: 'remote-1',
+				workingDirOverride: '/projects/old',
+			},
+		};
+
+		expect(withWorkingDirectory(session, '/projects/new').sessionSshRemoteConfig).toEqual({
+			enabled: true,
+			remoteId: 'remote-1',
+			workingDirOverride: '/projects/new',
+		});
+	});
+
+	it('does not invent an override for an agent that runs locally', () => {
+		const ssh = { enabled: false, remoteId: null, shareHistoryToProjectDir: true };
+		const session = { ...base(), sessionSshRemoteConfig: ssh };
+
+		expect(withWorkingDirectory(session, '/projects/new').sessionSshRemoteConfig).toBe(ssh);
+	});
+
+	it('returns the same session for a blank or unchanged directory', () => {
+		const session = base();
+
+		expect(withWorkingDirectory(session, '   ')).toBe(session);
+		expect(withWorkingDirectory(session, '/projects/old/')).toBe(session);
+	});
+});
+
+describe('rebasePathOntoRoot', () => {
+	it('keeps Windows separators', () => {
+		expect(
+			rebasePathOntoRoot('C:\\work\\old\\.maestro\\playbooks', 'C:\\work\\old', 'C:\\work\\new')
+		).toBe('C:\\work\\new\\.maestro\\playbooks');
+	});
+
+	it('does not treat a sibling that shares a name prefix as inside the root', () => {
+		expect(rebasePathOntoRoot('/projects/old-archive/docs', '/projects/old', '/projects/new')).toBe(
+			'/projects/old-archive/docs'
+		);
+	});
+});
+
+describe('workingDirectoryChangeBlocker', () => {
+	it('allows an idle agent', () => {
+		expect(workingDirectoryChangeBlocker({ state: 'idle', aiPid: 0 })).toBeNull();
+	});
+
+	it('refuses while the agent is busy or its process is alive', () => {
+		expect(workingDirectoryChangeBlocker({ state: 'busy', aiPid: 0 })).toMatch(/Stop the agent/);
+		expect(workingDirectoryChangeBlocker({ state: 'idle', aiPid: 4242 })).toMatch(/Stop the agent/);
+	});
+});
