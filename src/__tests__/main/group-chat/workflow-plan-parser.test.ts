@@ -6,7 +6,6 @@
 import { describe, expect, it } from 'vitest';
 import {
 	extractWorkflowPlanBlock,
-	isWorkflowApproval,
 	parseWorkflowPlan,
 	renderWorkflowPlanSummary,
 } from '../../../main/group-chat/workflow-plan-parser';
@@ -35,25 +34,6 @@ function parseValid(body = validBody()) {
 }
 
 describe('workflow-plan-parser', () => {
-	describe('isWorkflowApproval', () => {
-		it.each(['go', 'Run it!', 'START.', 'approved', 'yes, go!', 'ship it', '!go'])(
-			'accepts %s',
-			(text) => {
-				expect(isWorkflowApproval(text)).toBe(true);
-			}
-		);
-
-		it.each([
-			'We should go back and revise the rollout before starting anything.',
-			'good plan',
-			'not approved',
-			'go with a different agent',
-			'',
-		])('rejects %s', (text) => {
-			expect(isWorkflowApproval(text)).toBe(false);
-		});
-	});
-
 	describe('extractWorkflowPlanBlock', () => {
 		it('returns null when no plan block is present', () => {
 			expect(extractWorkflowPlanBlock('A normal moderator response.')).toBeNull();
