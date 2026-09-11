@@ -65,11 +65,17 @@ import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
 import { generateUUID } from '../../shared/uuid';
 import {
 	extractWorkflowPlanBlock,
+	isWorkflowApproval,
 	parseWorkflowPlan,
 	renderWorkflowPlanSummary,
 } from './workflow-plan-parser';
 import { createRun } from './workflow-state-machine';
-import { getWorkflowRun, setWorkflowRun } from './workflow-run-registry';
+import {
+	approveWorkflowRun,
+	clearWorkflowRun,
+	getWorkflowRun,
+	setWorkflowRun,
+} from './workflow-run-registry';
 import type { GroupChatWorkflowRun } from '../../shared/group-chat-workflow-types';
 
 // Import emitters from IPC handlers (will be populated after handlers are registered)
@@ -92,6 +98,43 @@ export function buildModeratorPromptSections(
 	return shouldOfferPlanning
 		? `${baseSystemPrompt}\n\n${getWorkflowPlanningPrompt()}`
 		: baseSystemPrompt;
+}
+
+function isWorkflowCancellation(text: string): boolean {
+	const trimmed = text.trim();
+	if (/^!cancel(?:[.!?]+)?$/i.test(trimmed)) return true;
+	if (trimmed.length >= 40) return false;
+	const normalized = trimmed
+		.toLowerCase()
+		.replace(/[^\p{L}\p{N}]+/gu, ' ')
+		.trim()
+		.replace(/\s+/g, ' ');
+	return normalized === 'cancel' || normalized === 'never mind' || normalized === 'scrap it';
+}
+
+function buildApprovedWorkflowContext(run: GroupChatWorkflowRun): string {
+	const stage = run.plan.stages[run.currentStageIndex];
+	return `## Approved Workflow Stage
+The user approved the workflow. Begin stage ${run.currentStageIndex + 1} of ${run.plan.stages.length} now: ${stage.name}.
+Assigned agents: ${stage.agents.map((agent) => `@${agent}`).join(', ') || '(Auto Run only)'}
+Instruction: ${stage.instruction}
+
+Current workflow plan JSON:
+\`\`\`json
+${JSON.stringify(run.plan, null, 2)}
+\`\`\``;
+}
+
+function buildWorkflowRevisionContext(run: GroupChatWorkflowRun): string {
+	return `${getWorkflowPlanningPrompt()}
+
+## Workflow Plan Revision
+The user is giving feedback on the pending plan below. Do not dispatch participants. Revise the plan in response, then emit a replacement \`maestro-plan\` block and end the turn as required by the planning instructions.
+
+Current workflow plan JSON:
+\`\`\`json
+${JSON.stringify(run.plan, null, 2)}
+\`\`\``;
 }
 
 function isModeratorInactiveAutoAddRace(error: unknown, groupChatId: string): boolean {
@@ -1024,6 +1067,32 @@ export async function routeUserMessage(
 		return;
 	}
 
+	let workflowTurnContext = '';
+	const pendingWorkflow = getWorkflowRun(groupChatId);
+	if (pendingWorkflow?.status === 'awaiting-approval') {
+		if (isWorkflowCancellation(message)) {
+			clearWorkflowRun(groupChatId);
+			await announceToChat(groupChatId, chat.logPath, 'Workflow cancelled.');
+			settleGroupChatToIdle(groupChatId);
+			return;
+		}
+
+		if (isWorkflowApproval(message)) {
+			const approvedRun = approveWorkflowRun(groupChatId);
+			if (approvedRun?.status === 'running') {
+				const stage = approvedRun.plan.stages[approvedRun.currentStageIndex];
+				await announceToChat(
+					groupChatId,
+					chat.logPath,
+					`Workflow started: stage ${approvedRun.currentStageIndex + 1} of ${approvedRun.plan.stages.length}, ${stage.name}`
+				);
+				workflowTurnContext = buildApprovedWorkflowContext(approvedRun);
+			}
+		} else {
+			workflowTurnContext = buildWorkflowRevisionContext(pendingWorkflow);
+		}
+	}
+
 	// Spawn a batch process for the moderator to handle this message
 	// The response will be captured via the process:data event handler in index.ts
 	if (processManager && agentDetector) {
@@ -1116,8 +1185,11 @@ export async function routeUserMessage(
 				baseSystemPrompt,
 				getWorkflowRun(groupChatId)
 			);
+			const moderatorPromptWithWorkflowContext = workflowTurnContext
+				? `${moderatorPromptSections}\n\n${workflowTurnContext}`
+				: moderatorPromptSections;
 
-			const fullPrompt = `${moderatorPromptSections}
+			const fullPrompt = `${moderatorPromptWithWorkflowContext}
 
 ## Current Participants:
 ${participantContext}${availableSessionsContext}

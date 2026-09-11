@@ -13,6 +13,16 @@ import {
 
 type ParseWorkflowPlanResult = { plan: GroupChatWorkflowPlan } | { error: string };
 
+const WORKFLOW_APPROVAL_MAX_LENGTH = 40;
+const WORKFLOW_APPROVAL_INTENTS = new Set([
+	'go',
+	'run it',
+	'start',
+	'approved',
+	'yes go',
+	'ship it',
+]);
+
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -21,6 +31,20 @@ function nonEmptyString(value: unknown): string | null {
 	if (typeof value !== 'string') return null;
 	const trimmed = value.trim();
 	return trimmed.length > 0 ? trimmed : null;
+}
+
+/** Return whether a short user message explicitly approves a pending workflow. */
+export function isWorkflowApproval(text: string): boolean {
+	const trimmed = text.trim();
+	if (/^!go(?:[.!?]+)?$/i.test(trimmed)) return true;
+	if (trimmed.length >= WORKFLOW_APPROVAL_MAX_LENGTH) return false;
+
+	const normalized = trimmed
+		.toLowerCase()
+		.replace(/[^\p{L}\p{N}]+/gu, ' ')
+		.trim()
+		.replace(/\s+/g, ' ');
+	return WORKFLOW_APPROVAL_INTENTS.has(normalized);
 }
 
 /** Extract the first `maestro-plan` fenced block from Markdown text. */
