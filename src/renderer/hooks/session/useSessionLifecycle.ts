@@ -16,7 +16,7 @@
  */
 
 import { useCallback, useEffect } from 'react';
-import type { AdditionalDirectory, Session, FailoverConfig } from '../../types';
+import type { AdditionalDirectory, Session } from '../../types';
 import type { ToolType } from '../../../shared/types';
 import {
 	useSessionStore,
@@ -40,9 +40,7 @@ import { resolveActiveNavTab } from './useNavigationHistory';
 import type { NavHistoryEntry } from './useNavigationHistory';
 import { captureException } from '../../utils/sentry';
 import { persistTabStarred } from '../../utils/starredSessions';
-import { clearFailover, getActiveEndpoint } from '../../stores/failoverStore';
 import { toggleTabUnreadFilter } from '../../services/unreadFilters';
-import { failoverArmed, findEndpoint } from '../../../shared/providerFailover';
 
 // ============================================================================
 // Dependencies interface
@@ -90,7 +88,6 @@ export interface SessionLifecycleReturn {
 		additionalDirectories?: AdditionalDirectory[],
 		/** Provenance of `customContextWindow` (finding AD1). */
 		contextWindowSource?: 'user-edited',
-		failoverConfig?: FailoverConfig,
 		/** Env vars parked with the eye button: kept, but never handed to a spawn. */
 		customEnvVarsDisabled?: Record<string, string>
 	) => void;
@@ -178,15 +175,9 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			additionalDirectories?: AdditionalDirectory[],
 			/** Provenance of `customContextWindow` (finding AD1). */
 			contextWindowSource?: 'user-edited',
-			failoverConfig?: FailoverConfig,
 			/** Env vars parked with the eye button: kept, but never handed to a spawn. */
 			customEnvVarsDisabled?: Record<string, string>
 		) => {
-			// Provider Failover: snapshot whether this agent is currently pinned to a
-			// backup endpoint BEFORE the update below, so we can tell after the fact
-			// whether the saved config still covers it.
-			const activeEndpoint = getActiveEndpoint(sessionId);
-
 			updateSessionWith(sessionId, (s) => {
 				const updatedFields: Partial<Session> = {
 					name,
@@ -211,7 +202,6 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 					// cleared on a provider switch below (unlike maestroP fields).
 					retryOnAvailabilityErrors,
 					retryOnTokenExhaustion,
-					failoverConfig,
 				};
 
 				// If the provider changed, park each tab's provider-specific state and
@@ -240,8 +230,6 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 						enableMaestroP: undefined,
 						maestroPPath: undefined,
 						maestroPMode: undefined,
-						// Endpoint env carries provider-specific base URLs and tokens.
-						failoverConfig: undefined,
 					});
 
 					// Any turn already in flight keeps running under the provider it was
@@ -253,25 +241,6 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 
 				return { ...s, ...updatedFields };
 			});
-
-			// Provider Failover: the update above may disarm failover or drop the
-			// endpoint this agent is actively pinned to (an explicit edit, or the
-			// provider-switch reset a few lines up, which clears failoverConfig
-			// outright). The live pin is in-memory only (renderer store + main
-			// overlay) and will NOT disappear just because the session record
-			// changed underneath it, so it has to be cleared explicitly here.
-			// clearFailover no-ops when the agent isn't currently pinned, so this
-			// is always safe to check.
-			if (activeEndpoint) {
-				const newConfig = useSessionStore
-					.getState()
-					.sessions.find((s) => s.id === sessionId)?.failoverConfig;
-				const stillCovered =
-					failoverArmed(newConfig) && !!findEndpoint(newConfig, activeEndpoint.id);
-				if (!stillCovered) {
-					void clearFailover(sessionId);
-				}
-			}
 		},
 		[]
 	);
@@ -484,17 +453,6 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			} catch (error) {
 				captureException(error, {
 					extra: { sessionId: id, operation: 'delete-playbooks' },
-				});
-			}
-
-			// Provider Failover: drop any live pin (renderer + main overlay) so a
-			// deleted agent's session id can't keep routing prompts to a backup
-			// provider if it's ever reused. No-op when the agent isn't pinned.
-			try {
-				await clearFailover(id);
-			} catch (error) {
-				captureException(error, {
-					extra: { sessionId: id, operation: 'clear-failover' },
 				});
 			}
 

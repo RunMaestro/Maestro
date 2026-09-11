@@ -362,16 +362,6 @@ interface MaestroAPI {
 			}>
 		>;
 		isTerminalBusy: (sessionId: string) => Promise<boolean>;
-		/**
-		 * Provider Failover: pin an agent to a backup endpoint's env vars (plus its
-		 * model, when it declares one), or pass `env: null` to return to primary.
-		 * Main layers this over `sessionCustomEnvVars` on every subsequent spawn.
-		 */
-		setFailoverOverlay: (
-			sessionId: string,
-			env: Record<string, string> | null,
-			model?: string
-		) => Promise<void>;
 		onData: (callback: (sessionId: string, data: string) => void) => () => void;
 		onUserInput: (
 			callback: (payload: {

@@ -1,12 +1,5 @@
 import type React from 'react';
-import type {
-	AdditionalDirectory,
-	AgentConfig,
-	Session,
-	ToolType,
-	Theme,
-	FailoverConfig,
-} from '../../types';
+import type { AdditionalDirectory, AgentConfig, Session, ToolType, Theme } from '../../types';
 import { PICKABLE_AGENT_IDS } from '../../../shared/agentMetadata';
 
 // Maximum character length for nudge message and new session message
@@ -98,7 +91,6 @@ export interface EditAgentModalProps {
 		additionalDirectories?: AdditionalDirectory[],
 		/** Provenance of `customContextWindow` (finding AD1). */
 		contextWindowSource?: 'user-edited',
-		failoverConfig?: FailoverConfig,
 		/** Env vars parked with the eye button: kept, but never handed to a spawn. */
 		customEnvVarsDisabled?: Record<string, string>
 	) => void;

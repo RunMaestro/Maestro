@@ -221,7 +221,6 @@ describe('ChildProcessSpawner', () => {
 				true,
 				undefined,
 				undefined,
-				undefined,
 				// querySource, threaded through so downstream tooling can tell an
 				// interactive turn from an automated one. Unset on this config.
 				undefined

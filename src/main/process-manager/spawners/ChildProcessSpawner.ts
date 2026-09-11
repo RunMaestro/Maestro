@@ -229,7 +229,6 @@ export class ChildProcessSpawner {
 				isResuming,
 				shellEnvVars,
 				config.extraPathDirs,
-				config.unsetEnvKeys,
 				config.querySource
 			);
 

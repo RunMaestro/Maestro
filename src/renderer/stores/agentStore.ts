@@ -42,7 +42,6 @@ import { useSessionStore, selectSessionById } from './sessionStore';
 // with retryStore is safe - both sides only touch each other inside runtime
 // callbacks, never at module-eval time.
 import { noteDispatch } from './retryStore';
-import { maybeReturnToPrimary } from './failoverStore';
 import { DEFAULT_IMAGE_ONLY_PROMPT } from '../hooks/input/useInputProcessing';
 import { substituteTemplateVariables } from '../utils/templateVariables';
 import { gitService } from '../services/git';
@@ -415,13 +414,6 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		// when the item fell back to the active tab. `crossAgentMention` is dropped:
 		// the consult just fired, and an auto-retry of this turn must not re-fire it.
 		noteDispatch(sessionId, { ...item, tabId: targetTab.id, crossAgentMention: undefined }, deps);
-
-		// Provider Failover: lazy fail-back probe. If this agent has sat on a backup
-		// endpoint past its dwell time, move it back to the primary now so THIS turn
-		// re-tests the real provider. Awaited so the swap lands in main before the
-		// spawn below reads it. If the primary is still down, the resulting error
-		// sends the agent straight back to a backup.
-		await maybeReturnToPrimary(sessionId);
 
 		try {
 			// Get agent configuration for this session's tool type

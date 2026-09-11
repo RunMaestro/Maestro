@@ -1,6 +1,6 @@
 ---
 title: Agent Resilience
-description: Maestro resends your prompt automatically when a provider is overloaded or your plan quota runs out, and can hand the turn to a backup endpoint instead of waiting for the reset window.
+description: Maestro resends your prompt automatically when a provider is overloaded or your plan quota runs out.
 icon: shield-check
 ---
 
@@ -100,48 +100,6 @@ You can still take over: cancel the auto-retry from the status card and the batc
 <Note>
 Auto Run batches launched from `maestro-cli` do not auto-retry. Resilience is a desktop feature, and the CLI's batch runner reports the failure instead. A prompt sent INTO the running desktop app with `maestro-cli dispatch` is different: it is a normal desktop turn and retries like any other.
 </Note>
-
-## Provider Failover
-
-Waiting is the right answer for a 60-second blip. It is a poor one for a weekly quota that resets on Thursday.
-
-Provider Failover is the other half. Give an agent an ordered list of Anthropic-compatible backup endpoints, and when resilience would otherwise start waiting, Maestro hands the turn to the next backup instead and keeps working. A backup can be a local vLLM or Ollama server, a third-party service like Z.AI, an enterprise proxy, or simply a second account.
-
-It is **off by default** and configured per agent, in **Edit Agent** below the resilience toggles.
-
-### Adding an endpoint
-
-An endpoint is a name plus a bundle of environment variables layered on top of the agent's own, so nothing new has to be integrated - every Anthropic-compatible CLI already reads its base URL and token from the environment. Two variables carry it:
-
-```bash
-ANTHROPIC_BASE_URL=https://api.z.ai/api/anthropic
-ANTHROPIC_AUTH_TOKEN=your-token-here
-```
-
-`ANTHROPIC_BASE_URL` is required and must start with `http://` or `https://`. Endpoints are tried top to bottom, so put your preferred spare first; use the arrows on each card to reorder.
-
-<Warning>
-Set a **model override** on each endpoint. Backup providers rarely accept Anthropic's model IDs - Z.AI wants `glm-4.6`, a local server wants whatever it has loaded - so failing over without swapping the model usually just trades a quota error for a 404.
-</Warning>
-
-### How a failover turn plays out
-
-1. A turn fails with a retryable error, and the agent has an untried backup.
-2. Maestro swaps that endpoint's environment into the next spawn and resends after a three second handover. The pause is short on purpose: long enough to see what is about to happen and cancel it, short enough that having a spare tire is worth something.
-3. Each endpoint is tried at most once per outage. When all of them are spent, the agent falls back to plain wait-and-retry on whatever endpoint is currently live.
-4. After **Return to primary after** minutes on a backup (60 by default), the next turn probes your primary again. The probe is lazy - it happens on the next spawn, never on a background timer - so an idle agent never burns quota just to test the water.
-
-Failover requires Agent Resilience to be on for the matching failure class. It rides the same classification, so an error resilience would not retry is not one it will fail over on either.
-
-<Warning>
-While a backup is live, your prompts and your code go to a different operator, under different terms and different retention. That is why this is off by default and armed per agent.
-</Warning>
-
-### Your primary key is never handed to a backup
-
-Auth is all-or-nothing per endpoint. If a backup sets `ANTHROPIC_BASE_URL` but does not supply its own credential, Maestro **removes** `ANTHROPIC_AUTH_TOKEN` and `ANTHROPIC_API_KEY` from that spawn rather than letting the backup inherit them.
-
-A URL-only backup row is the most natural way to configure this, and inheriting the key would present your primary Anthropic credential to a third party. The endpoint fails to authenticate instead, which is loud, recoverable, and much better than the alternative.
 
 ## Tracking it over time
 

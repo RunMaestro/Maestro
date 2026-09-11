@@ -289,7 +289,6 @@ export function buildChildProcessEnv(
 	isResuming?: boolean,
 	globalShellEnvVars?: Record<string, string>,
 	extraPathDirs?: string[],
-	unsetEnvKeys?: string[],
 	querySource?: QuerySource
 ): NodeJS.ProcessEnv {
 	const env = { ...process.env };
@@ -350,17 +349,6 @@ export function buildChildProcessEnv(
 	// the user is offering an opinion on, and a stray global var of the same name
 	// would otherwise silently mislabel every turn on the machine.
 	env[QUERY_SOURCE_ENV_VAR] = querySource ?? DEFAULT_QUERY_SOURCE;
-
-	// Removal runs LAST, after every layer above has had its say, because a merge
-	// cannot express "this must not be present". Provider Failover uses it to make
-	// sure a backup endpoint never receives the primary provider's credential -
-	// which can arrive from the agent's own vars, the global shell settings, or
-	// the inherited `process.env` of whatever shell launched Maestro.
-	if (unsetEnvKeys && unsetEnvKeys.length > 0) {
-		for (const key of unsetEnvKeys) {
-			delete env[key];
-		}
-	}
 
 	return env;
 }
