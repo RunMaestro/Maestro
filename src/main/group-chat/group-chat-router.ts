@@ -61,6 +61,14 @@ import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
 import { setGetCustomShellPathCallback } from './group-chat-config';
 import { spawnGroupChatAgent } from './spawnGroupChatAgent';
 import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
+import { generateUUID } from '../../shared/uuid';
+import {
+	extractWorkflowPlanBlock,
+	parseWorkflowPlan,
+	renderWorkflowPlanSummary,
+} from './workflow-plan-parser';
+import { createRun } from './workflow-state-machine';
+import { setWorkflowRun } from './workflow-run-registry';
 
 // Import emitters from IPC handlers (will be populated after handlers are registered)
 import { groupChatEmitters } from '../ipc/handlers/groupChat';
@@ -855,9 +863,12 @@ export async function routeUserMessage(
 	}
 
 	logger.debug(`[GroupChat:Debug] Moderator is active: true`);
+	const containsWorkflowPlan = extractWorkflowPlanBlock(message) !== null;
 
 	// Auto-add participants mentioned by the user if they match available sessions
-	if (processManager && agentDetector && getSessionsCallback) {
+	// unless this turn is a workflow plan, whose agent names are plan data rather
+	// than immediate delegation targets.
+	if (!containsWorkflowPlan && processManager && agentDetector && getSessionsCallback) {
 		const userMentions = extractAllMentions(message);
 		const sessions = getSessionsCallback();
 		const existingParticipantNames = new Set(chat.participants.map((p) => p.name));
@@ -988,6 +999,14 @@ export async function routeUserMessage(
 		type: 'user',
 		fullResponse: message,
 	});
+
+	// A hand-authored workflow plan is already the moderator-ready artifact for
+	// this turn. Intercept it only after preserving the user's message and any
+	// attached images, then skip spawning the moderator entirely.
+	if (await handleInboundWorkflowPlan(groupChatId, message)) {
+		settleGroupChatToIdle(groupChatId);
+		return;
+	}
 
 	// Spawn a batch process for the moderator to handle this message
 	// The response will be captured via the process:data event handler in index.ts
@@ -1369,6 +1388,45 @@ async function announceToChat(
 }
 
 /**
+ * Intercepts the first workflow plan block in an inbound chat message.
+ *
+ * A recognized fence always consumes the turn, including when validation fails,
+ * so plan JSON and its agent names never fall through to normal mention or
+ * Auto Run routing.
+ */
+export async function handleInboundWorkflowPlan(
+	groupChatId: string,
+	text: string
+): Promise<boolean> {
+	const body = extractWorkflowPlanBlock(text);
+	if (body === null) return false;
+
+	const chat = await loadGroupChat(groupChatId);
+	if (!chat) {
+		logger.info(
+			`[GroupChat] Skipping workflow plan interception - chat ${groupChatId} no longer exists`,
+			LOG_CONTEXT
+		);
+		return true;
+	}
+
+	const result = parseWorkflowPlan(body, generateUUID());
+	if ('error' in result) {
+		logger.warn('Rejected inbound workflow plan', LOG_CONTEXT, {
+			groupChatId,
+			error: result.error,
+		});
+		await announceToChat(groupChatId, chat.logPath, `⚠️ Workflow plan error: ${result.error}`);
+		return true;
+	}
+
+	setWorkflowRun(groupChatId, createRun(result.plan));
+	const summary = `${renderWorkflowPlanSummary(result.plan)}\n\nReply \`go\` to start, or tell me what to change.`;
+	await announceToChat(groupChatId, chat.logPath, summary);
+	return true;
+}
+
+/**
  * Tells the chat (and, through the log, the moderator's next turn) which agents
  * the turn is holding for. Emitted once per moderator turn rather than once per
  * agent, so a fan-out to three busy agents is one line rather than three.
@@ -1507,6 +1565,31 @@ export async function routeModeratorResponse(
 	}
 
 	logger.debug(`[GroupChat:Debug] Chat loaded: "${chat.name}"`);
+
+	// Preserve a moderator-authored plan as its original transcript entry before
+	// the rendered system summary. Detecting the fence first also prevents any
+	// @names or !autorun text inside its JSON from reaching the normal router.
+	if (extractWorkflowPlanBlock(message) !== null) {
+		await appendToLog(chat.logPath, 'moderator', message);
+		groupChatEmitters.emitMessage?.(groupChatId, {
+			timestamp: new Date().toISOString(),
+			from: 'moderator',
+			content: message,
+		});
+
+		if (await handleInboundWorkflowPlan(groupChatId, message)) {
+			await recordGroupChatHistory(groupChatId, {
+				timestamp: Date.now(),
+				summary: extractFirstSentence(message),
+				participantName: 'Moderator',
+				participantColor: '#808080',
+				type: isSynthesisRound ? 'synthesis' : 'response',
+				fullResponse: message,
+			});
+			settleGroupChatToIdle(groupChatId);
+			return;
+		}
+	}
 
 	// Strip internal !autorun directives from the message before logging/display.
 	// These are machine-to-machine commands; storing them in the chat log causes
