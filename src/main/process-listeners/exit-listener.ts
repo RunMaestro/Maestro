@@ -366,6 +366,14 @@ export function setupExitListener(
 				}
 			};
 
+			const failWorkflowForParticipantError = async (reason: string): Promise<boolean> => {
+				const failedRun = await groupChatRouter.failActiveWorkflowStage(
+					groupChatId,
+					`Participant @${participantName} ${reason}`
+				);
+				return !!failedRun;
+			};
+
 			if (bufferedOutput) {
 				debugLog(
 					'GroupChat:Debug',
@@ -442,17 +450,29 @@ export function setupExitListener(
 									from: 'system',
 									content: `⚠️ Failed to create new session for ${participantName}: ${String(respawnErr)}`,
 								});
-								// Mark as responded since recovery failed
-								markAndMaybeSynthesize();
+								const failedWorkflow = await failWorkflowForParticipantError(
+									`could not be recovered after its process exited with code ${code}: ${String(respawnErr)}`
+								);
+								if (!failedWorkflow) markAndMaybeSynthesize();
 							}
 						} else {
 							debugLog(
 								'GroupChat:Debug',
 								` Cannot respawn - processManager or agentDetector not available`
 							);
-							markAndMaybeSynthesize();
+							const failedWorkflow = await failWorkflowForParticipantError(
+								`could not be recovered after its process exited with code ${code} because recovery services were unavailable.`
+							);
+							if (!failedWorkflow) markAndMaybeSynthesize();
 						}
 						debugLog('GroupChat:Debug', ` ===============================================`);
+						return;
+					}
+
+					if (
+						code !== 0 &&
+						(await failWorkflowForParticipantError(`process exited with code ${code}.`))
+					) {
 						return;
 					}
 
@@ -537,8 +557,17 @@ export function setupExitListener(
 					'GroupChat:Debug',
 					` WARNING: No buffered output for participant ${participantName}!`
 				);
-				// No output to log, so mark participant as responded immediately
-				markAndMaybeSynthesize();
+				// A non-zero exit is a stage failure even when the process produced no
+				// parsable output. Preserve the legacy synthesis path for ordinary chats.
+				if (code !== 0) {
+					void failWorkflowForParticipantError(`process exited with code ${code}.`).then(
+						(failedWorkflow) => {
+							if (!failedWorkflow) markAndMaybeSynthesize();
+						}
+					);
+				} else {
+					markAndMaybeSynthesize();
+				}
 			}
 			debugLog('GroupChat:Debug', ` ===============================================`);
 			// Don't send to regular exit handler

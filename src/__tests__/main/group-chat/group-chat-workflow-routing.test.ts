@@ -36,6 +36,7 @@ import { groupChatEmitters } from '../../../main/ipc/handlers/groupChat';
 import {
 	addParticipant,
 	clearAllParticipantSessionsGlobal,
+	getParticipantSessionId,
 } from '../../../main/group-chat/group-chat-agent';
 import {
 	clearAllModeratorSessions,
@@ -49,6 +50,7 @@ import {
 	routeModeratorResponse,
 	routeUserMessage,
 	setGetSessionsCallback,
+	setModeratorResponseTimeout,
 	spawnModeratorSynthesis,
 } from '../../../main/group-chat/group-chat-router';
 import {
@@ -67,6 +69,8 @@ import {
 	createRun,
 } from '../../../main/group-chat/workflow-state-machine';
 import type { GroupChatWorkflowPlan } from '../../../shared/group-chat-workflow-types';
+import { getWorkflowRunDir } from '../../../main/group-chat/workflow-artifacts';
+import { powerManager } from '../../../main/power-manager';
 
 describe('group-chat workflow routing', () => {
 	let mockProcessManager: IProcessManager;
@@ -284,6 +288,87 @@ describe('group-chat workflow routing', () => {
 				),
 			})
 		);
+	});
+
+	it('fails and cleans up a running stage when the moderator times out', async () => {
+		vi.useFakeTimers();
+		try {
+			const chat = await createChatWithModerator('Workflow Moderator Timeout');
+			setWorkflowRun(chat.id, approveRun(createRun(workflowPlan)));
+			const runDir = getWorkflowRunDir(chat.id, workflowPlan.runId);
+			await fs.mkdir(runDir, { recursive: true });
+			await fs.writeFile(path.join(runDir, 'handoff.md'), 'temporary handoff');
+			powerManager.addBlockReason(`groupchat:${chat.id}`);
+			const emitStateChange = vi.fn();
+			groupChatEmitters.emitStateChange = emitStateChange;
+
+			setModeratorResponseTimeout(
+				chat.id,
+				mockProcessManager,
+				`group-chat-${chat.id}-moderator-timeout-turn`
+			);
+			await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+
+			await vi.waitFor(() => {
+				expect(getWorkflowRun(chat.id)).toMatchObject({
+					status: 'aborted',
+					stageStatuses: { 'stage-1': 'failed' },
+					abortReason: expect.stringContaining('Moderator went silent'),
+				});
+				expect(emitStateChange).toHaveBeenCalledWith(chat.id, 'idle');
+			});
+			expect(powerManager.getStatus().reasons).not.toContain(`groupchat:${chat.id}`);
+			await expect(fs.stat(runDir)).rejects.toThrow();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('fails and cleans up a running stage when its participant times out', async () => {
+		vi.useFakeTimers();
+		try {
+			const chat = await createChatWithModerator('Workflow Participant Timeout');
+			await addParticipant(chat.id, 'Builder', 'claude-code', mockProcessManager);
+			setWorkflowRun(chat.id, approveRun(createRun(workflowPlan)));
+			setGetSessionsCallback(() => [
+				{
+					id: 'builder-session',
+					name: 'Builder',
+					toolType: 'claude-code',
+					cwd: '/tmp/builder',
+				},
+			]);
+			const runDir = getWorkflowRunDir(chat.id, workflowPlan.runId);
+			await fs.mkdir(runDir, { recursive: true });
+			await fs.writeFile(path.join(runDir, 'handoff.md'), 'temporary handoff');
+			powerManager.addBlockReason(`groupchat:${chat.id}`);
+			const emitStateChange = vi.fn();
+			groupChatEmitters.emitStateChange = emitStateChange;
+
+			await routeModeratorResponse(
+				chat.id,
+				'@Builder Build the feature.',
+				mockProcessManager,
+				mockAgentDetector
+			);
+			const participantSessionId = getParticipantSessionId(chat.id, 'Builder');
+			await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+
+			await vi.waitFor(() => {
+				expect(getWorkflowRun(chat.id)).toMatchObject({
+					status: 'aborted',
+					stageStatuses: { 'stage-1': 'failed' },
+					abortReason: expect.stringContaining('Participant @Builder went silent'),
+				});
+				expect(emitStateChange).toHaveBeenCalledWith(chat.id, 'idle');
+			});
+			expect(mockProcessManager.kill).toHaveBeenCalledWith(participantSessionId);
+			expect(markParticipantResponded(chat.id, 'Builder')).toBe(false);
+			expect(powerManager.getStatus().reasons).not.toContain(`groupchat:${chat.id}`);
+			await expect(fs.stat(runDir)).rejects.toThrow();
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it('starts an Auto Run stage with its targeted playbook filename', async () => {

@@ -112,6 +112,8 @@ export interface ProcessListenerDependencies {
 		) => Promise<void>;
 		clearActiveParticipantTaskSession: (groupChatId: string, participantName: string) => void;
 		clearModeratorResponseTimeout: (groupChatId: string) => void;
+		/** Fail and fully clean up the current stage when a workflow is running. */
+		failActiveWorkflowStage: (groupChatId: string, reason: string) => Promise<unknown>;
 	};
 	/** Group chat storage functions */
 	groupChatStorage: {

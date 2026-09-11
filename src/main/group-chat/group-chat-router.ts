@@ -416,6 +416,28 @@ export function settleGroupChatToIdle(groupChatId: string): void {
 }
 
 /**
+ * Fail the stage currently owned by a running workflow and perform the complete
+ * abort cleanup in one place. Callers that handle an ordinary, non-workflow
+ * turn receive `undefined` and retain their existing recovery behavior.
+ */
+export async function failActiveWorkflowStage(
+	groupChatId: string,
+	reason: string
+): Promise<GroupChatWorkflowRun | undefined> {
+	const activeRun = getWorkflowRun(groupChatId);
+	if (activeRun?.status !== 'running') return undefined;
+
+	const failedRun = failWorkflowStage(groupChatId, reason);
+	clearModeratorResponseTimeout(groupChatId);
+	clearPendingParticipants(groupChatId);
+	if (failedRun) {
+		await cleanupWorkflowRunArtifacts(groupChatId, failedRun);
+	}
+	settleGroupChatToIdle(groupChatId);
+	return failedRun;
+}
+
+/**
  * Registers a silence budget for the moderator.
  * If the moderator goes quiet for MODERATOR_RESPONSE_TIMEOUT_MS (or runs past
  * MODERATOR_MAX_DURATION_MS while still talking), its process is killed and the
@@ -428,7 +450,7 @@ export function setModeratorResponseTimeout(
 ): void {
 	clearModeratorResponseTimeout(groupChatId);
 
-	const giveUp = (reason: string, budgetMs: number): void => {
+	const giveUp = async (reason: string, budgetMs: number): Promise<void> => {
 		moderatorTimeouts.delete(groupChatId);
 		console.warn(
 			`[GroupChat:Debug] Moderator ${reason} after ${budgetMs / 1000}s for ${groupChatId} - killing and resetting to idle`
@@ -457,8 +479,25 @@ export function setModeratorResponseTimeout(
 			content: `⚠️ Moderator ${reason} after ${budgetMs / 60000} minutes and was stopped. Resetting to idle. You can send another message to retry.`,
 		});
 
-		groupChatEmitters.emitStateChange?.(groupChatId, 'idle');
-		powerManager.removeBlockReason(`groupchat:${groupChatId}`);
+		if (getWorkflowRun(groupChatId)?.status === 'running') {
+			await failActiveWorkflowStage(
+				groupChatId,
+				`Moderator ${reason} after ${budgetMs / 60000} minutes.`
+			);
+		} else {
+			// Keep ordinary chat timeout settlement synchronous. Existing callers and
+			// tests rely on the state clearing in the watchdog callback itself.
+			settleGroupChatToIdle(groupChatId);
+		}
+	};
+
+	const fire = (reason: string, budgetMs: number): void => {
+		void giveUp(reason, budgetMs).catch((error) => {
+			logger.error('Moderator timeout handler failed', LOG_CONTEXT, { groupChatId, error });
+			captureException(error, { operation: 'groupChat:moderatorTimeout', groupChatId });
+			clearPendingParticipants(groupChatId);
+			settleGroupChatToIdle(groupChatId);
+		});
 	};
 
 	moderatorTimeouts.set(
@@ -466,8 +505,8 @@ export function setModeratorResponseTimeout(
 		createIdleWatchdog({
 			idleMs: MODERATOR_RESPONSE_TIMEOUT_MS,
 			maxMs: MODERATOR_MAX_DURATION_MS,
-			onIdle: () => giveUp('went silent', MODERATOR_RESPONSE_TIMEOUT_MS),
-			onMax: () => giveUp('exceeded the single-turn limit', MODERATOR_MAX_DURATION_MS),
+			onIdle: () => fire('went silent', MODERATOR_RESPONSE_TIMEOUT_MS),
+			onMax: () => fire('exceeded the single-turn limit', MODERATOR_MAX_DURATION_MS),
 		})
 	);
 }
@@ -589,6 +628,12 @@ function setParticipantResponseTimeout(
 			autoRunSet.delete(participantName);
 			if (autoRunSet.size === 0) autoRunParticipantTracker.delete(groupChatId);
 		}
+
+		const failedRun = await failActiveWorkflowStage(
+			groupChatId,
+			`Participant @${normalizeMentionName(participantName)} ${reason} after ${budgetMs / 60000} minutes.`
+		);
+		if (failedRun) return;
 
 		// Same close-out as a normal reply, via the shared helper: a timed-out
 		// participant still has to leave the pending set, or the room waits forever
@@ -1359,9 +1404,14 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 			} catch (error) {
 				logger.error(`Failed to spawn moderator for ${groupChatId}`, LOG_CONTEXT, { error });
 				captureException(error, { operation: 'groupChat:spawnModerator', groupChatId });
-				groupChatEmitters.emitStateChange?.(groupChatId, 'idle');
-				// Remove power block reason on error since we're going idle
-				powerManager.removeBlockReason(`groupchat:${groupChatId}`);
+				const failedRun = await failActiveWorkflowStage(
+					groupChatId,
+					`Moderator failed to start: ${error instanceof Error ? error.message : String(error)}`
+				);
+				if (!failedRun) {
+					clearModeratorResponseTimeout(groupChatId);
+					settleGroupChatToIdle(groupChatId);
+				}
 				throw new Error(
 					`Failed to spawn moderator: ${error instanceof Error ? error.message : String(error)}`
 				);
@@ -1797,6 +1847,7 @@ export async function routeModeratorResponse(
 				: `Workflow complete: all ${stageCount} stages finished.`;
 		} else {
 			nextRun = failWorkflowStage(groupChatId, stageDirective.body);
+			clearPendingParticipants(groupChatId);
 			transitionMessage = `Stage ${stagePosition} of ${stageCount} failed: ${completedStage.name}. ${stageDirective.body}`;
 		}
 
@@ -2020,6 +2071,7 @@ export async function routeModeratorResponse(
 				workflowGuardrailAction = 'abort';
 				const abortMessage = `Workflow aborted: the moderator produced no participant mentions or stage directive after ${MAX_WORKFLOW_STAGE_NUDGES} retries during stage ${workflowRun.currentStageIndex + 1}, ${currentStage.name}.`;
 				const abortedRun = abortWorkflowRun(groupChatId, 'moderator-stage-guidance-exhausted');
+				clearPendingParticipants(groupChatId);
 				workflowStageNudges.delete(groupChatId);
 				await announceToChat(groupChatId, updatedChat.logPath, abortMessage);
 				if (abortedRun) {
@@ -2074,8 +2126,7 @@ export async function routeModeratorResponse(
 					mentionMatches(activeStage.autoRun.participantName, participant.name)
 				) {
 					const reason = `Auto Run stage "${activeStage.name}" cannot start because @${normalizeMentionName(participant.name)} has no Auto Run folder configured.`;
-					const failedRun = failWorkflowStage(groupChatId, reason);
-					clearPendingParticipants(groupChatId);
+					await failActiveWorkflowStage(groupChatId, reason);
 					await announceToChat(
 						groupChatId,
 						updatedChat.logPath,
@@ -2089,10 +2140,6 @@ export async function routeModeratorResponse(
 						type: 'error',
 						fullResponse: reason,
 					});
-					if (failedRun) {
-						await cleanupWorkflowRunArtifacts(groupChatId, failedRun);
-					}
-					settleGroupChatToIdle(groupChatId);
 					// The missing-folder condition is fully handled here. Returning true
 					// prevents a queued delegation from adding a second generic warning.
 					return true;
@@ -2689,9 +2736,11 @@ export async function spawnModeratorSynthesis(
 	const chat = await loadGroupChat(groupChatId);
 	if (!chat) {
 		logger.error(`Cannot spawn synthesis - chat not found: ${groupChatId}`, LOG_CONTEXT);
-		// Reset UI state and remove power block on early return
-		groupChatEmitters.emitStateChange?.(groupChatId, 'idle');
-		powerManager.removeBlockReason(`groupchat:${groupChatId}`);
+		const failedRun = await failActiveWorkflowStage(
+			groupChatId,
+			'Moderator synthesis could not start because the group chat no longer exists.'
+		);
+		if (!failedRun) settleGroupChatToIdle(groupChatId);
 		return;
 	}
 
@@ -2699,9 +2748,11 @@ export async function spawnModeratorSynthesis(
 
 	if (!isModeratorActive(groupChatId)) {
 		logger.error(`Cannot spawn synthesis - moderator not active for: ${groupChatId}`, LOG_CONTEXT);
-		// Reset UI state and remove power block on early return
-		groupChatEmitters.emitStateChange?.(groupChatId, 'idle');
-		powerManager.removeBlockReason(`groupchat:${groupChatId}`);
+		const failedRun = await failActiveWorkflowStage(
+			groupChatId,
+			'Moderator synthesis could not start because the moderator is not active.'
+		);
+		if (!failedRun) settleGroupChatToIdle(groupChatId);
 		return;
 	}
 
@@ -2713,9 +2764,11 @@ export async function spawnModeratorSynthesis(
 			`Cannot spawn synthesis - no moderator session ID for: ${groupChatId}`,
 			LOG_CONTEXT
 		);
-		// Reset UI state and remove power block on early return
-		groupChatEmitters.emitStateChange?.(groupChatId, 'idle');
-		powerManager.removeBlockReason(`groupchat:${groupChatId}`);
+		const failedRun = await failActiveWorkflowStage(
+			groupChatId,
+			'Moderator synthesis could not start because its session ID is unavailable.'
+		);
+		if (!failedRun) settleGroupChatToIdle(groupChatId);
 		return;
 	}
 
@@ -2734,9 +2787,11 @@ export async function spawnModeratorSynthesis(
 
 	if (!agent || !agent.available) {
 		logger.error(`Agent '${chat.moderatorAgentId}' is not available for synthesis`, LOG_CONTEXT);
-		// Reset UI state and remove power block on early return
-		groupChatEmitters.emitStateChange?.(groupChatId, 'idle');
-		powerManager.removeBlockReason(`groupchat:${groupChatId}`);
+		const failedRun = await failActiveWorkflowStage(
+			groupChatId,
+			`Moderator synthesis could not start because agent "${chat.moderatorAgentId}" is unavailable.`
+		);
+		if (!failedRun) settleGroupChatToIdle(groupChatId);
 		return;
 	}
 
@@ -2880,9 +2935,11 @@ ${workflowCorrection ? `\n## Immediate Workflow Correction\n${workflowCorrection
 			participantColor: '#808080',
 			type: 'error',
 		});
-		groupChatEmitters.emitStateChange?.(groupChatId, 'idle');
-		// Remove power block reason on synthesis error since we're going idle
-		powerManager.removeBlockReason(`groupchat:${groupChatId}`);
+		const failedRun = await failActiveWorkflowStage(
+			groupChatId,
+			`Moderator synthesis failed to start: ${error instanceof Error ? error.message : String(error)}`
+		);
+		if (!failedRun) settleGroupChatToIdle(groupChatId);
 	}
 }
 
