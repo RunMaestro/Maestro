@@ -70,4 +70,17 @@ describe('workflow prompt registration', () => {
 			})
 		);
 	});
+
+	it('requires inspection-only stages when workflow planning in read-only mode', () => {
+		const definition = CORE_PROMPTS.find(
+			(prompt) => prompt.id === PROMPT_IDS.GROUP_CHAT_WORKFLOW_PLANNING
+		);
+		const promptPath = path.join(__dirname, '../../../prompts', definition!.filename);
+		const diskContent = readFileSync(promptPath, 'utf-8');
+
+		expect(diskContent).toContain(
+			'every stage must be limited to inspection, analysis, or planning'
+		);
+		expect(diskContent).toContain('no stage may make file changes while read-only mode is on');
+	});
 });

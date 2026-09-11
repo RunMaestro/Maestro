@@ -8,13 +8,14 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ipcMain, type BrowserWindow } from 'electron';
 import type { GroupChatWorkflowPlan } from '../../../shared/group-chat-workflow-types';
-import { createRun } from '../../../main/group-chat/workflow-state-machine';
+import { approveRun, createRun } from '../../../main/group-chat/workflow-state-machine';
 import {
 	abortWorkflowRun,
 	approveWorkflowRun,
 	clearWorkflowRun,
 	completeWorkflowStage,
 	failWorkflowStage,
+	getWorkflowRun,
 	resetAllWorkflowRuns,
 	setWorkflowRun,
 	setWorkflowRunChangedEmitter,
@@ -25,6 +26,9 @@ import {
 } from '../../../main/ipc/handlers/groupChat';
 import * as groupChatModerator from '../../../main/group-chat/group-chat-moderator';
 import * as groupChatRouter from '../../../main/group-chat/group-chat-router';
+import * as groupChatAgent from '../../../main/group-chat/group-chat-agent';
+import * as groupChatStorage from '../../../main/group-chat/group-chat-storage';
+import { clearWorkflowRunDir } from '../../../main/group-chat/workflow-artifacts';
 
 vi.mock('electron', () => ({
 	ipcMain: { handle: vi.fn(), removeHandler: vi.fn() },
@@ -69,6 +73,8 @@ vi.mock('../../../main/group-chat/group-chat-agent', () => ({
 
 vi.mock('../../../main/group-chat/group-chat-router', () => ({
 	routeUserMessage: vi.fn(),
+	abortActiveWorkflowRun: vi.fn().mockResolvedValue(undefined),
+	announceToChat: vi.fn().mockResolvedValue(undefined),
 	clearPendingParticipants: vi.fn(),
 	routeAgentResponse: vi.fn(),
 	markParticipantResponded: vi.fn(),
@@ -236,6 +242,84 @@ describe('Group Chat workflow IPC', () => {
 			batchOutput,
 			processManager
 		);
+	});
+
+	it.each(['groupChat:stopModerator', 'groupChat:stopAll'])(
+		'%s aborts an active run as moderator-stopped',
+		async (channel) => {
+			await handlers.get(channel)!({}, 'chat-1');
+
+			expect(groupChatRouter.abortActiveWorkflowRun).toHaveBeenCalledWith(
+				'chat-1',
+				'moderator-stopped'
+			);
+		}
+	);
+
+	it.each([
+		['groupChat:delete', undefined],
+		['groupChat:archive', true],
+	] as const)('%s clears the workflow registry', async (channel, archived) => {
+		const run = createRun(createPlan());
+		setWorkflowRun('chat-1', run);
+		vi.mocked(groupChatStorage.updateGroupChat).mockResolvedValue({
+			id: 'chat-1',
+			name: 'Workflow chat',
+			createdAt: 1,
+			updatedAt: 2,
+			moderatorAgentId: 'claude-code',
+			moderatorSessionId: 'moderator-1',
+			participants: [],
+			logPath: '/tmp/chat.log',
+			imagesDir: '/tmp/images',
+			archived: true,
+		});
+
+		if (archived === undefined) {
+			await handlers.get(channel)!({}, 'chat-1');
+		} else {
+			await handlers.get(channel)!({}, 'chat-1', archived);
+		}
+
+		expect(getWorkflowRun('chat-1')).toBeUndefined();
+		expect(clearWorkflowRunDir).toHaveBeenCalledWith('chat-1', run.plan.runId);
+	});
+
+	it('warns about later stages when their participant is removed without aborting', async () => {
+		const plan = createPlan();
+		plan.stages.push({
+			id: 'publish',
+			name: 'Publish',
+			agents: [],
+			mode: 'serial',
+			instruction: 'Publish the release.',
+			autoRun: { participantName: 'Reviewer', filename: 'Publish.md' },
+		});
+		const runningRun = approveRun(createRun(plan));
+		setWorkflowRun('chat-1', runningRun);
+		vi.mocked(groupChatAgent.removeParticipant).mockResolvedValue({
+			removed: true,
+			chat: {
+				id: 'chat-1',
+				name: 'Workflow chat',
+				createdAt: 1,
+				updatedAt: 2,
+				moderatorAgentId: 'claude-code',
+				moderatorSessionId: 'moderator-1',
+				participants: [],
+				logPath: '/tmp/chat.log',
+				imagesDir: '/tmp/images',
+			},
+		});
+
+		await handlers.get('groupChat:removeParticipant')!({}, 'chat-1', 'Reviewer');
+
+		expect(groupChatRouter.announceToChat).toHaveBeenCalledWith(
+			'chat-1',
+			'/tmp/chat.log',
+			expect.stringContaining('later workflow stages: Verify, Publish')
+		);
+		expect(getWorkflowRun('chat-1')).toMatchObject({ status: 'running', currentStageIndex: 0 });
 	});
 
 	it('emits every stored, approved, advanced, failed, aborted, and cleared transition', async () => {

@@ -73,6 +73,8 @@ vi.mock('../../../../main/group-chat/group-chat-agent', () => ({
 // Mock group-chat-router
 vi.mock('../../../../main/group-chat/group-chat-router', () => ({
 	routeUserMessage: vi.fn(),
+	abortActiveWorkflowRun: vi.fn().mockResolvedValue(undefined),
+	announceToChat: vi.fn().mockResolvedValue(undefined),
 	clearPendingParticipants: vi.fn(),
 	routeAgentResponse: vi.fn(),
 	markParticipantResponded: vi.fn(),
@@ -82,6 +84,7 @@ vi.mock('../../../../main/group-chat/group-chat-router', () => ({
 
 vi.mock('../../../../main/group-chat/workflow-run-registry', () => ({
 	abortWorkflowRun: vi.fn(),
+	clearWorkflowRun: vi.fn().mockResolvedValue(undefined),
 	cleanupWorkflowRunArtifacts: vi.fn().mockResolvedValue(undefined),
 	getWorkflowRun: vi.fn(),
 	setWorkflowRunChangedEmitter: vi.fn(),
@@ -854,6 +857,10 @@ describe('groupChat IPC handlers', () => {
 			await handler!({} as any, 'gc-stop');
 
 			expect(groupChatModerator.killModerator).toHaveBeenCalledWith('gc-stop', mockProcessManager);
+			expect(groupChatRouter.abortActiveWorkflowRun).toHaveBeenCalledWith(
+				'gc-stop',
+				'moderator-stopped'
+			);
 		});
 	});
 
@@ -1242,6 +1249,10 @@ describe('groupChat IPC handlers', () => {
 				mockProcessManager
 			);
 			expect(groupChatRouter.clearPendingParticipants).toHaveBeenCalledWith('gc-stop-all');
+			expect(groupChatRouter.abortActiveWorkflowRun).toHaveBeenCalledWith(
+				'gc-stop-all',
+				'moderator-stopped'
+			);
 		});
 
 		it('should handle null process manager', async () => {

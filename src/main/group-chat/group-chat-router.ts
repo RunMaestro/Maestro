@@ -438,6 +438,31 @@ export async function failActiveWorkflowStage(
 }
 
 /**
+ * Abort whichever workflow run is still active for a chat and perform the same
+ * supervision, artifact, pending-work, and power cleanup as a failed stage.
+ * Lifecycle actions use an abort rather than a stage failure because stopping
+ * the room is a user action, not a failed participant deliverable.
+ */
+export async function abortActiveWorkflowRun(
+	groupChatId: string,
+	reason: string
+): Promise<GroupChatWorkflowRun | undefined> {
+	const activeRun = getWorkflowRun(groupChatId);
+	if (activeRun?.status !== 'awaiting-approval' && activeRun?.status !== 'running') {
+		return undefined;
+	}
+
+	const abortedRun = abortWorkflowRun(groupChatId, reason);
+	clearModeratorResponseTimeout(groupChatId);
+	clearPendingParticipants(groupChatId);
+	if (abortedRun) {
+		await cleanupWorkflowRunArtifacts(groupChatId, abortedRun);
+	}
+	settleGroupChatToIdle(groupChatId);
+	return abortedRun;
+}
+
+/**
  * Registers a silence budget for the moderator.
  * If the moderator goes quiet for MODERATOR_RESPONSE_TIMEOUT_MS (or runs past
  * MODERATOR_MAX_DURATION_MS while still talking), its process is killed and the
@@ -1025,6 +1050,16 @@ export async function routeUserMessage(
 	}
 
 	logger.debug(`[GroupChat:Debug] Moderator is active: true`);
+	// Workflow-strip actions such as Start route through this function without a
+	// renderer mode flag. Preserve the request's read-only state across those
+	// control turns so approval cannot silently make stage 1 writable. Ordinary
+	// messages with no active workflow retain the existing read-write default.
+	if (readOnly === undefined) {
+		const activeRun = getWorkflowRun(groupChatId);
+		if (activeRun?.status === 'awaiting-approval' || activeRun?.status === 'running') {
+			readOnly = getGroupChatReadOnlyState(groupChatId);
+		}
+	}
 	const containsWorkflowPlan = extractWorkflowPlanBlock(message) !== null;
 
 	// Auto-add participants mentioned by the user if they match available sessions
@@ -1584,7 +1619,7 @@ function finishParticipantTurn(
 }
 
 /** Posts a system line to the chat and to the log the moderator reads back. */
-async function announceToChat(
+export async function announceToChat(
 	groupChatId: string,
 	logPath: string,
 	content: string
