@@ -3032,6 +3032,14 @@ interface MaestroAPI {
 			summary: string
 		) => Promise<void>;
 		getModeratorSessionId: (id: string) => Promise<string | null>;
+		// Workflow runs
+		getWorkflowRun: (
+			id: string
+		) => Promise<import('../shared/group-chat-workflow-types').GroupChatWorkflowRun | null>;
+		approveWorkflowPlan: (id: string) => Promise<void>;
+		cancelWorkflowRun: (
+			id: string
+		) => Promise<import('../shared/group-chat-workflow-types').GroupChatWorkflowRun | null>;
 		// Participants
 		addParticipant: (
 			id: string,
@@ -3163,6 +3171,12 @@ interface MaestroAPI {
 		) => () => void;
 		onModeratorSessionIdChanged: (
 			callback: (groupChatId: string, sessionId: string) => void
+		) => () => void;
+		onWorkflowRunChanged: (
+			callback: (
+				groupChatId: string,
+				run: import('../shared/group-chat-workflow-types').GroupChatWorkflowRun | null
+			) => void
 		) => () => void;
 		onAutoRunTriggered: (
 			callback: (groupChatId: string, participantName: string, filename?: string) => void
