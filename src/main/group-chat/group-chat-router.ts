@@ -1128,6 +1128,14 @@ export async function routeUserMessage(
 
 	let workflowTurnContext = '';
 	const pendingWorkflow = getWorkflowRun(groupChatId);
+	if (pendingWorkflow?.status === 'running' && isWorkflowCancellation(message)) {
+		abortWorkflowRun(groupChatId, 'user-cancelled');
+		clearPendingParticipants(groupChatId);
+		await announceToChat(groupChatId, chat.logPath, 'Workflow cancelled.');
+		settleGroupChatToIdle(groupChatId);
+		return;
+	}
+
 	if (pendingWorkflow?.status === 'awaiting-approval') {
 		if (isWorkflowCancellation(message)) {
 			clearWorkflowRun(groupChatId);
@@ -1571,8 +1579,19 @@ export async function handleInboundWorkflowPlan(
 		return true;
 	}
 
+	const supersededRun = getWorkflowRun(groupChatId);
+	if (supersededRun?.status === 'running') {
+		clearPendingParticipants(groupChatId);
+	}
 	workflowStageNudges.delete(groupChatId);
 	setWorkflowRun(groupChatId, createRun(result.plan));
+	if (supersededRun?.status === 'running') {
+		await announceToChat(
+			groupChatId,
+			chat.logPath,
+			'Previous workflow superseded by a new plan; approval is required before execution resumes.'
+		);
+	}
 	const summary = `${renderWorkflowPlanSummary(result.plan)}\n\nReply \`go\` to start, or tell me what to change.`;
 	await announceToChat(groupChatId, chat.logPath, summary);
 	return true;
