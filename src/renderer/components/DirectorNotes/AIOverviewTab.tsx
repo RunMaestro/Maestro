@@ -29,6 +29,10 @@ type SynopsisStats = NonNullable<
 interface AIOverviewTabProps {
 	theme: Theme;
 	onSynopsisReady?: () => void;
+	/** A generation run started (first open or Regenerate). */
+	onSynopsisStart?: () => void;
+	/** A generation run failed. Receives the message the error banner shows. */
+	onSynopsisError?: (error: string) => void;
 }
 
 // Font-scale zoom for the rendered synopsis. Stored as an em multiplier so the
@@ -98,7 +102,12 @@ function fireSynopsisReadyToast() {
 	});
 }
 
-export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
+export function AIOverviewTab({
+	theme,
+	onSynopsisReady,
+	onSynopsisStart,
+	onSynopsisError,
+}: AIOverviewTabProps) {
 	const { directorNotesSettings, bionifyReadingMode } = useSettings();
 	// Agent -> group mapping used to bucket the narrative bullets.
 	const groupLookup = useNarrativeGroupLookup();
@@ -243,12 +252,24 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 		}
 	}, [plainContent]);
 
+	// A failure must reach the modal header too. Without it the AI Overview tab
+	// stays disabled behind a spinner, which hides this error and the Regenerate
+	// button that recovers from it (e.g. after switching providers on a usage limit).
+	const reportError = useCallback(
+		(message: string) => {
+			setError(message);
+			onSynopsisError?.(message);
+		},
+		[onSynopsisError]
+	);
+
 	// Generate synopsis - the handler reads history files directly via file paths,
 	// so the renderer only needs to make a single IPC call.
 	const generateSynopsis = useCallback(async () => {
 		setIsGenerating(true);
 		isGeneratingRef.current = true;
 		setError(null);
+		onSynopsisStart?.();
 
 		const ipcPromise = window.maestro.directorNotes.generateSynopsis({
 			lookbackDays,
@@ -292,11 +313,11 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 				setStats(result.stats ?? null);
 				onSynopsisReady?.();
 			} else {
-				setError(result.error || 'Failed to generate synopsis');
+				reportError(result.error || 'Failed to generate synopsis');
 			}
 		} catch (err) {
 			if (!mountedRef.current) return;
-			setError(err instanceof Error ? err.message : 'Failed to generate synopsis');
+			reportError(err instanceof Error ? err.message : 'Failed to generate synopsis');
 		} finally {
 			// Only clear if this is still the active generation (not overwritten by Regenerate)
 			if (activeGenerationPromise === ipcPromise) {
@@ -307,7 +328,14 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 				setIsGenerating(false);
 			}
 		}
-	}, [lookbackDays, directorNotesSettings, onSynopsisReady, applyNarrative]);
+	}, [
+		lookbackDays,
+		directorNotesSettings,
+		onSynopsisReady,
+		onSynopsisStart,
+		reportError,
+		applyNarrative,
+	]);
 
 	// On mount: use cache if available, attach to in-flight generation, or start fresh
 	useEffect(() => {
@@ -338,12 +366,12 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 						if (cachedSynopsis) setLookbackDays(cachedSynopsis.lookbackDays);
 						onSynopsisReady?.();
 					} else {
-						setError(result.error || 'Failed to generate synopsis');
+						reportError(result.error || 'Failed to generate synopsis');
 					}
 				})
 				.catch((err) => {
 					if (!mountedRef.current) return;
-					setError(err instanceof Error ? err.message : 'Failed to generate synopsis');
+					reportError(err instanceof Error ? err.message : 'Failed to generate synopsis');
 				})
 				.finally(() => {
 					isGeneratingRef.current = false;

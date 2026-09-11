@@ -239,6 +239,45 @@ describe('AIOverviewTab', () => {
 		});
 	});
 
+	// The modal header drives its spinner off these callbacks. A failure that
+	// never reports out leaves the tab disabled behind a spinner forever.
+	it('reports start and failure so the modal header can stop spinning', async () => {
+		mockGenerateSynopsis.mockResolvedValue({
+			success: false,
+			synopsis: '',
+			error: 'Usage limit reached',
+		});
+
+		const onSynopsisStart = vi.fn();
+		const onSynopsisError = vi.fn();
+		const onSynopsisReady = vi.fn();
+		render(
+			<AIOverviewTab
+				theme={mockTheme}
+				onSynopsisStart={onSynopsisStart}
+				onSynopsisError={onSynopsisError}
+				onSynopsisReady={onSynopsisReady}
+			/>
+		);
+
+		await waitFor(() => {
+			expect(onSynopsisError).toHaveBeenCalledWith('Usage limit reached');
+		});
+		expect(onSynopsisStart).toHaveBeenCalledTimes(1);
+		expect(onSynopsisReady).not.toHaveBeenCalled();
+	});
+
+	it('reports a thrown generation error', async () => {
+		mockGenerateSynopsis.mockRejectedValue(new Error('Network error'));
+
+		const onSynopsisError = vi.fn();
+		render(<AIOverviewTab theme={mockTheme} onSynopsisError={onSynopsisError} />);
+
+		await waitFor(() => {
+			expect(onSynopsisError).toHaveBeenCalledWith('Network error');
+		});
+	});
+
 	it('renders lookback slider with default value', async () => {
 		render(<AIOverviewTab theme={mockTheme} />);
 

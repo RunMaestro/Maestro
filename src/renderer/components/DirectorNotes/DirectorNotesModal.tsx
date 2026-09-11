@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback, lazy, Suspense } from 'react';
 import { createPortal } from 'react-dom';
-import { X, History, Sparkles, Clapperboard, HelpCircle } from 'lucide-react';
+import { X, History, Sparkles, Clapperboard, HelpCircle, AlertTriangle } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { Spinner } from '../ui/Spinner';
 import type { Theme } from '../../types';
@@ -57,6 +57,8 @@ export function DirectorNotesModal({
 	const [activeTab, setActiveTab] = useState<TabId>(directorNotesData?.initialTab ?? 'history');
 	const [overviewReady, setOverviewReady] = useState(cached);
 	const [overviewGenerating, setOverviewGenerating] = useState(false);
+	// Message from the last failed synopsis run, cleared when a new run starts.
+	const [overviewError, setOverviewError] = useState<string | null>(null);
 	const [lookbackHours, setLookbackHours] = useState<number | null>(() =>
 		daysToLookbackHours(directorNotesSettings.defaultLookbackDays)
 	);
@@ -125,7 +127,20 @@ export function DirectorNotesModal({
 	// Handle synopsis ready callback from AIOverviewTab
 	const handleSynopsisReady = useCallback(() => {
 		setOverviewGenerating(false);
+		setOverviewError(null);
 		setOverviewReady(true);
+	}, []);
+
+	const handleSynopsisStart = useCallback(() => {
+		setOverviewGenerating(true);
+		setOverviewError(null);
+	}, []);
+
+	// A failed run stops the spinner and unlocks the tab, so the user can read
+	// the error and Regenerate from there.
+	const handleSynopsisError = useCallback((message: string) => {
+		setOverviewGenerating(false);
+		setOverviewError(message);
 	}, []);
 
 	// Start generating indicator when modal opens (skip if cached)
@@ -136,13 +151,13 @@ export function DirectorNotesModal({
 	}, []);
 
 	// Check if a tab can be navigated to
-	// AI Overview is only clickable once generation is complete
+	// AI Overview is only clickable once generation completes or fails
 	const isTabEnabled = useCallback(
 		(tabId: TabId) => {
-			if (tabId === 'ai-overview') return overviewReady;
+			if (tabId === 'ai-overview') return overviewReady || overviewError !== null;
 			return true;
 		},
-		[overviewReady]
+		[overviewReady, overviewError]
 	);
 
 	// Navigate to adjacent tab
@@ -247,12 +262,14 @@ export function DirectorNotesModal({
 						const isActive = activeTab === tab.id;
 						const isDisabled = !isTabEnabled(tab.id);
 						const showGenerating = tab.id === 'ai-overview' && overviewGenerating;
+						const failure = tab.id === 'ai-overview' && !overviewGenerating ? overviewError : null;
 
 						return (
 							<button
 								key={tab.id}
 								onClick={() => !isDisabled && setActiveTab(tab.id)}
 								disabled={isDisabled}
+								title={failure ?? undefined}
 								className={`px-3 py-1.5 rounded text-sm flex items-center gap-2 transition-colors ${isActive ? 'font-semibold' : ''}`}
 								style={{
 									backgroundColor: isActive ? theme.colors.accent + '20' : 'transparent',
@@ -261,9 +278,20 @@ export function DirectorNotesModal({
 									cursor: isDisabled ? 'default' : 'pointer',
 								}}
 							>
-								{showGenerating ? <Spinner size={16} /> : <Icon className="w-4 h-4" />}
+								{showGenerating ? (
+									<Spinner size={16} />
+								) : failure ? (
+									<AlertTriangle className="w-4 h-4" style={{ color: theme.colors.error }} />
+								) : (
+									<Icon className="w-4 h-4" />
+								)}
 								{tab.label}
 								{showGenerating && <span className="text-2xs font-normal">generating…</span>}
+								{failure && (
+									<span className="text-2xs font-normal" style={{ color: theme.colors.error }}>
+										failed
+									</span>
+								)}
 							</button>
 						);
 					})}
@@ -302,7 +330,12 @@ export function DirectorNotesModal({
 							tabIndex={0}
 							className={`h-full outline-none ${activeTab === 'ai-overview' ? '' : 'hidden'}`}
 						>
-							<AIOverviewTab theme={theme} onSynopsisReady={handleSynopsisReady} />
+							<AIOverviewTab
+								theme={theme}
+								onSynopsisReady={handleSynopsisReady}
+								onSynopsisStart={handleSynopsisStart}
+								onSynopsisError={handleSynopsisError}
+							/>
 						</div>
 					</Suspense>
 				</div>

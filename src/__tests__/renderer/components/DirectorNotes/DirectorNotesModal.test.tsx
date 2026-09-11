@@ -54,16 +54,29 @@ vi.mock('../../../../renderer/components/DirectorNotes/AIOverviewTab', () => ({
 	AIOverviewTab: ({
 		theme,
 		onSynopsisReady,
+		onSynopsisStart,
+		onSynopsisError,
 		onProgressChange,
 	}: {
 		theme: Theme;
 		onSynopsisReady?: () => void;
+		onSynopsisStart?: () => void;
+		onSynopsisError?: (error: string) => void;
 		onProgressChange?: (percent: number) => void;
 	}) => (
 		<div data-testid="ai-overview-tab">
 			AI Overview Content
 			<button data-testid="trigger-synopsis-ready" onClick={() => onSynopsisReady?.()}>
 				Trigger Ready
+			</button>
+			<button data-testid="trigger-synopsis-start" onClick={() => onSynopsisStart?.()}>
+				Trigger Start
+			</button>
+			<button
+				data-testid="trigger-synopsis-error"
+				onClick={() => onSynopsisError?.('Usage limit reached')}
+			>
+				Trigger Error
 			</button>
 			<button data-testid="trigger-progress" onClick={() => onProgressChange?.(42)}>
 				Trigger Progress
@@ -258,6 +271,49 @@ describe('DirectorNotesModal', () => {
 			// AI Overview should remain hidden (tab is disabled)
 			const aiOverviewContainer = screen.getByTestId('ai-overview-tab').closest('.h-full');
 			expect(aiOverviewContainer).toHaveClass('hidden');
+		});
+
+		it('replaces the spinner with a failed indicator and unlocks the tab when generation fails', async () => {
+			renderModal();
+
+			await waitFor(() => {
+				expect(screen.getByTestId('ai-overview-tab')).toBeInTheDocument();
+			});
+
+			await act(async () => {
+				fireEvent.click(screen.getByTestId('trigger-synopsis-error'));
+			});
+
+			expect(screen.queryByText('generating…')).not.toBeInTheDocument();
+			expect(screen.getByText('failed')).toBeInTheDocument();
+
+			const overviewTabButton = screen.getByText('AI Overview').closest('button');
+			expect(overviewTabButton).not.toBeDisabled();
+			expect(overviewTabButton).toHaveAttribute('title', 'Usage limit reached');
+
+			// Clicking opens the tab, where the error banner and Regenerate live
+			fireEvent.click(overviewTabButton!);
+			const aiOverviewContainer = screen.getByTestId('ai-overview-tab').closest('.h-full');
+			expect(aiOverviewContainer).not.toHaveClass('hidden');
+		});
+
+		it('returns to generating when a failed run is regenerated', async () => {
+			renderModal();
+
+			await waitFor(() => {
+				expect(screen.getByTestId('ai-overview-tab')).toBeInTheDocument();
+			});
+
+			await act(async () => {
+				fireEvent.click(screen.getByTestId('trigger-synopsis-error'));
+			});
+			await act(async () => {
+				fireEvent.click(screen.getByTestId('trigger-synopsis-start'));
+			});
+
+			expect(screen.getByText('generating…')).toBeInTheDocument();
+			expect(screen.queryByText('failed')).not.toBeInTheDocument();
+			expect(screen.getByText('AI Overview').closest('button')).not.toHaveAttribute('title');
 		});
 
 		it('can switch to Help tab', async () => {
