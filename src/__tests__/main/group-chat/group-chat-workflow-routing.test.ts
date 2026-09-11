@@ -210,6 +210,8 @@ describe('group-chat workflow routing', () => {
 		const prompt = vi.mocked(mockProcessManager.spawn).mock.calls[0]?.[0]?.prompt ?? '';
 		expect(prompt).toContain('mock prompt for group-chat-workflow-planning');
 		expect(prompt).toContain('## Workflow Plan Revision');
+		expect(prompt).toContain('## Active Workflow Plan');
+		expect(prompt).toContain('1. [pending] Build — Agents: @Builder — Build the feature');
 		expect(prompt).toContain('emit a replacement `maestro-plan` block');
 		expect(prompt).toContain('"runId": "run-prompt-composition"');
 	});
