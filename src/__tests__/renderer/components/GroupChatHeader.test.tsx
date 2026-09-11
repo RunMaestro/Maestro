@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { GroupChatHeader } from '../../../renderer/components/GroupChatHeader';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import type { Theme, Shortcut } from '../../../renderer/types';
 
 import { mockTheme } from '../../helpers/mockTheme';
@@ -54,6 +55,7 @@ const defaultProps = {
 describe('GroupChatHeader', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		useSettingsStore.setState({ showSessionCostPill: true });
 	});
 
 	it('renders group chat name and participant count', () => {
@@ -81,6 +83,25 @@ describe('GroupChatHeader', () => {
 	it('shows cost pill when totalCost is provided', () => {
 		render(<GroupChatHeader {...defaultProps} totalCost={6.98} />);
 		expect(screen.getByText('6.98')).toBeTruthy();
+	});
+
+	it('hides cost pill when the session cost pill setting is off', () => {
+		useSettingsStore.setState({ showSessionCostPill: false });
+		render(<GroupChatHeader {...defaultProps} totalCost={6.98} />);
+		expect(screen.queryByText('6.98')).toBeNull();
+		expect(screen.queryByTestId('dollar-icon')).toBeNull();
+	});
+
+	it('tags the participant pill and marks a busy header for the yield ladder', () => {
+		const { container } = render(<GroupChatHeader {...defaultProps} state="moderator-thinking" />);
+		const header = container.firstElementChild as HTMLElement;
+		expect(header).toHaveClass('group-chat-header-container', 'group-chat-header-busy');
+		expect(screen.getByText('3 participants')).toHaveClass('group-chat-header-participants');
+	});
+
+	it('does not mark an idle header as busy', () => {
+		const { container } = render(<GroupChatHeader {...defaultProps} />);
+		expect(container.firstElementChild).not.toHaveClass('group-chat-header-busy');
 	});
 
 	it('shows right panel toggle when panel is closed', () => {
@@ -133,6 +154,12 @@ describe('GroupChatHeader', () => {
 			expect(
 				screen.getByTestId('group-chat-view-mode-moderator').getAttribute('aria-checked')
 			).toBe('true');
+		});
+
+		it('carries short labels for a cramped header', () => {
+			render(<GroupChatHeader {...defaultProps} />);
+			expect(screen.getByText('Team')).toHaveClass('segmented-label-short');
+			expect(screen.getByText('Moderator')).toHaveClass('segmented-label-short');
 		});
 
 		it('toggles when the other segment is clicked', () => {

@@ -503,7 +503,8 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 								Show session cost pill
 							</p>
 							<p className="text-xs opacity-50 mt-0.5">
-								Display the per-session running cost (e.g. &quot;$21.33&quot;) in the main header.
+								Display the per-session running cost (e.g. &quot;$21.33&quot;) in the main header,
+								and the total cost in the group chat header.
 							</p>
 						</div>
 						<ToggleSwitch

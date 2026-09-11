@@ -371,6 +371,8 @@ A horizontal row of mutually exclusive options rendered as one joined pill bar -
 
 It owns the active-segment coloring, the seam borders, `role="radiogroup"` + `role="radio"` semantics, arrow-key navigation between segments, and a single tab stop (`tabIndex` follows the selection, as a native radio group does). Each segment gets `data-testid="${testId}-${value}"`, so existing per-segment test ids keep working when a hand-rolled bar is migrated.
 
+For a bar that must shrink, give an option a `shortLabel`. Both forms render, the short one `hidden`; the HOST's container query swaps them by targeting `.segmented-label-full` / `.segmented-label-short`, because only the host knows what else shares its row. `GroupChatHeader` and its `groupchatheader` block in `index.css` are the reference.
+
 **This is not `<RadioGroup>`.** That primitive renders the same semantics as stacked, description-carrying list rows for settings panes. `SegmentedControl` is the compact toolbar form for short labels where vertical space is scarce. Pick by layout, and do not add a `variant` prop to either one to cover the other.
 
 ### Sortable Table Headers (`<SortableTh>` + `useTableSort`)
