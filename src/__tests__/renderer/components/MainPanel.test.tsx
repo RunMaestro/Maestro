@@ -14,6 +14,7 @@ import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useContextTimelineStore } from '../../../renderer/stores/contextTimelineStore';
 import { WindowProvider } from '../../../renderer/contexts/WindowContext';
 import type { WindowState } from '../../../shared/window-types';
 import {
@@ -2074,6 +2075,64 @@ describe('MainPanel', () => {
 
 			// Tooltip should still be visible
 			expect(screen.getByText('Context Details')).toBeInTheDocument();
+		});
+
+		it('should hide Context Details while the Context Timeline is open', async () => {
+			renderMainPanel();
+
+			fireEvent.mouseEnter(screen.getByTestId('header-context-widget'));
+			await waitFor(() => {
+				expect(screen.getByText('Context Details')).toBeInTheDocument();
+			});
+
+			try {
+				// The two surfaces share one spot under the gauge, so an open timeline
+				// wins over a hover that is still in progress.
+				act(() => {
+					useContextTimelineStore.getState().openPanel('any-agent');
+				});
+				expect(screen.queryByText('Context Details')).not.toBeInTheDocument();
+			} finally {
+				act(() => {
+					useContextTimelineStore.getState().closePanel();
+				});
+			}
+		});
+
+		it('should swap Context Details for the Timeline on click, at the popover size', async () => {
+			renderMainPanel();
+
+			const contextWidget = screen.getByTestId('header-context-widget');
+			fireEvent.mouseEnter(contextWidget);
+			await waitFor(() => {
+				expect(screen.getByText('Context Details')).toBeInTheDocument();
+			});
+
+			// jsdom lays nothing out, so give the popover a real box to be measured.
+			const rectSpy = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({
+				x: 0,
+				y: 0,
+				top: 0,
+				left: 0,
+				bottom: 512,
+				right: 480,
+				width: 480,
+				height: 512,
+				toJSON: () => ({}),
+			} as DOMRect);
+			try {
+				fireEvent.click(contextWidget);
+
+				const state = useContextTimelineStore.getState();
+				expect(state.panelSessionId).not.toBeNull();
+				expect(state.sourceSize).toEqual({ width: 480, height: 512 });
+				expect(screen.queryByText('Context Details')).not.toBeInTheDocument();
+			} finally {
+				rectSpy.mockRestore();
+				act(() => {
+					useContextTimelineStore.getState().closePanel();
+				});
+			}
 		});
 
 		it('should display token stats in context tooltip', async () => {
