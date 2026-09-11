@@ -3,8 +3,56 @@
  * @description Tests for compact active-workflow prompt context.
  */
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as fs from 'fs/promises';
+import * as os from 'os';
+import * as path from 'path';
+
+let mockUserDataPath: string;
+vi.mock('electron', () => ({
+	app: {
+		getPath: vi.fn((name: string) => {
+			if (name === 'userData') return mockUserDataPath;
+			throw new Error(`Unknown path name: ${name}`);
+		}),
+	},
+}));
+
+vi.mock('electron-store', () => ({
+	default: class MockStore {
+		get() {
+			return undefined;
+		}
+		set() {}
+	},
+}));
+
+vi.mock('../../../main/prompt-manager', () => ({
+	getPrompt: vi.fn((id: string) => `mock prompt for ${id}`),
+}));
+
+import { AgentDetector } from '../../../main/agents';
+import { clearAllParticipantSessionsGlobal } from '../../../main/group-chat/group-chat-agent';
+import {
+	clearAllModeratorSessions,
+	spawnModerator,
+	type IProcessManager,
+} from '../../../main/group-chat/group-chat-moderator';
+import {
+	routeUserMessage,
+	spawnModeratorSynthesis,
+} from '../../../main/group-chat/group-chat-router';
+import { createGroupChat, deleteGroupChat } from '../../../main/group-chat/group-chat-storage';
 import { buildPlanContextBlock } from '../../../main/group-chat/workflow-prompt-context';
+import {
+	resetAllWorkflowRuns,
+	setWorkflowRun,
+} from '../../../main/group-chat/workflow-run-registry';
+import {
+	approveRun,
+	completeStage,
+	createRun as createWorkflowRun,
+} from '../../../main/group-chat/workflow-state-machine';
 import type { GroupChatWorkflowRun } from '../../../shared/group-chat-workflow-types';
 
 function createRun(): GroupChatWorkflowRun {
@@ -85,5 +133,122 @@ describe('buildPlanContextBlock', () => {
 
 		expect(context).toContain('Current stage: complete (3 of 3)');
 		expect(context).toContain('### Handoff Summaries\n(none)');
+	});
+});
+
+describe('workflow stage context in moderator spawn prompts', () => {
+	let mockProcessManager: IProcessManager;
+	let mockAgentDetector: AgentDetector;
+	let testDir: string;
+	let createdChatIds: string[];
+
+	beforeEach(async () => {
+		testDir = path.join(
+			os.tmpdir(),
+			`workflow-prompt-context-test-${Date.now()}-${Math.random().toString(36).slice(2)}`
+		);
+		await fs.mkdir(testDir, { recursive: true });
+		mockUserDataPath = testDir;
+		createdChatIds = [];
+
+		mockProcessManager = {
+			spawn: vi.fn().mockReturnValue({ pid: 12345, success: true }),
+			write: vi.fn().mockReturnValue(true),
+			kill: vi.fn().mockReturnValue(true),
+		};
+		mockAgentDetector = {
+			getAgent: vi.fn().mockResolvedValue({
+				id: 'claude-code',
+				name: 'Claude Code',
+				binaryName: 'claude',
+				command: 'claude',
+				args: ['--print', '--verbose', '--output-format', 'stream-json'],
+				available: true,
+				path: '/usr/local/bin/claude',
+				capabilities: {},
+			}),
+			detectAgents: vi.fn().mockResolvedValue([]),
+			clearCache: vi.fn(),
+			setCustomPaths: vi.fn(),
+			getCustomPaths: vi.fn().mockReturnValue({}),
+			discoverModels: vi.fn().mockResolvedValue([]),
+			clearModelCache: vi.fn(),
+		} as unknown as AgentDetector;
+
+		clearAllModeratorSessions();
+		clearAllParticipantSessionsGlobal();
+		resetAllWorkflowRuns();
+	});
+
+	afterEach(async () => {
+		for (const chatId of createdChatIds) {
+			await deleteGroupChat(chatId).catch(() => undefined);
+		}
+		clearAllModeratorSessions();
+		clearAllParticipantSessionsGlobal();
+		resetAllWorkflowRuns();
+		await fs.rm(testDir, { recursive: true, force: true });
+		vi.clearAllMocks();
+	});
+
+	async function createChatWithModerator(name: string) {
+		const chat = await createGroupChat(name, 'claude-code');
+		createdChatIds.push(chat.id);
+		await spawnModerator(chat, mockProcessManager);
+		vi.mocked(mockProcessManager.spawn).mockClear();
+		return chat;
+	}
+
+	it('passes the current stage and prior handoff to user and synthesis spawns', async () => {
+		const chat = await createChatWithModerator('Active workflow context');
+		const run = completeStage(approveRun(createWorkflowRun(createRun().plan)), {
+			stageId: 'stage-1',
+			stageName: 'Plan',
+			summary: 'Release scope agreed and acceptance criteria captured.',
+		});
+		setWorkflowRun(chat.id, run);
+
+		await routeUserMessage(
+			chat.id,
+			'Continue the release workflow.',
+			mockProcessManager,
+			mockAgentDetector
+		);
+
+		const userPrompt = vi.mocked(mockProcessManager.spawn).mock.calls[0]?.[0]?.prompt ?? '';
+		expect(userPrompt).toContain('## Active Workflow Plan');
+		expect(userPrompt).toContain('## Current Stage');
+		expect(userPrompt).toContain('Stage 2 of 3: Build');
+		expect(userPrompt).toContain(
+			'From Plan: Release scope agreed and acceptance criteria captured.'
+		);
+
+		vi.mocked(mockProcessManager.spawn).mockClear();
+		await spawnModeratorSynthesis(chat.id, mockProcessManager, mockAgentDetector);
+
+		const synthesisPrompt = vi.mocked(mockProcessManager.spawn).mock.calls[0]?.[0]?.prompt ?? '';
+		expect(synthesisPrompt).toContain('## Active Workflow Plan');
+		expect(synthesisPrompt).toContain('## Current Stage');
+		expect(synthesisPrompt).toContain('Stage 2 of 3: Build');
+		expect(synthesisPrompt).toContain(
+			'From Plan: Release scope agreed and acceptance criteria captured.'
+		);
+	});
+
+	it('omits stage context from user and synthesis spawns without an active run', async () => {
+		const chat = await createChatWithModerator('Inactive workflow context');
+
+		await routeUserMessage(chat.id, 'Help plan a release.', mockProcessManager, mockAgentDetector);
+
+		const userPrompt = vi.mocked(mockProcessManager.spawn).mock.calls[0]?.[0]?.prompt ?? '';
+		expect(userPrompt).not.toContain('## Active Workflow Plan');
+		expect(userPrompt).not.toContain('## Current Stage');
+
+		vi.mocked(mockProcessManager.spawn).mockClear();
+		await spawnModeratorSynthesis(chat.id, mockProcessManager, mockAgentDetector);
+
+		const synthesisPrompt = vi.mocked(mockProcessManager.spawn).mock.calls[0]?.[0]?.prompt ?? '';
+		expect(synthesisPrompt).not.toContain('## Active Workflow Plan');
+		expect(synthesisPrompt).not.toContain('## Current Stage');
 	});
 });
