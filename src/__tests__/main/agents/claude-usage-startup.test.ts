@@ -347,25 +347,6 @@ describe('claude-usage-startup → runStartupUsageSampling', () => {
 			expect(getSnapshot('/Users/test/.claude')).toEqual(snapshot);
 		});
 
-		it('forwards session cwd into the sampleUsage call', async () => {
-			sampleUsageMock.mockResolvedValue(makeSnapshot());
-
-			const deps = {
-				sessionsStore: makeStore({
-					sessions: [recentClaudeSession({ cwd: '/var/projects/very-specific-path' })],
-				}) as never,
-				agentConfigsStore: makeStore({ configs: {} }) as never,
-				settingsStore: makeStore({}) as never,
-				agentDetector: makeDetector(FAKE_AGENT) as never,
-			};
-
-			await runStartupUsageSampling(deps);
-
-			expect(sampleUsageMock).toHaveBeenCalledWith(
-				expect.objectContaining({ cwd: '/var/projects/very-specific-path' })
-			);
-		});
-
 		it('threads MAESTRO_CLAUDE_BIN from the detected agent path', async () => {
 			sampleUsageMock.mockResolvedValue(makeSnapshot());
 
@@ -906,11 +887,8 @@ describe('claude-usage-startup → runStartupUsageSampling', () => {
 				customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/test/.claude-remote' },
 				sessionSshRemoteConfig: { enabled: true, remoteId: 'box' },
 			};
-			// A local agent with no CLAUDE_CONFIG_DIR is not a sampling target, but its
-			// folder is where a cached-only account gets probed from.
-			const localSession = { id: 's-local', toolType: 'claude-code', cwd: process.cwd() };
-			const sshOnlyDeps = (sessions: unknown[] = [remoteSession, localSession]) => ({
-				sessionsStore: makeStore({ sessions }) as never,
+			const sshOnlyDeps = () => ({
+				sessionsStore: makeStore({ sessions: [remoteSession] }) as never,
 				agentConfigsStore: makeStore({ configs: {} }) as never,
 				settingsStore: makeStore({}) as never,
 				agentDetector: makeDetector(FAKE_AGENT) as never,
@@ -940,25 +918,8 @@ describe('claude-usage-startup → runStartupUsageSampling', () => {
 
 				expect(sampleUsageMock).toHaveBeenCalledTimes(1);
 				expect(sampleUsageMock).toHaveBeenCalledWith(
-					expect.objectContaining({
-						configDir: path.join('/Users/test', '.claude-remote'),
-						// Never the home dir: claude's trust prompt defaults to "No, exit" there.
-						cwd: process.cwd(),
-					})
+					expect.objectContaining({ configDir: path.join('/Users/test', '.claude-remote') })
 				);
-			});
-
-			it('skips a cached account when no local Claude agent folder exists to probe from', async () => {
-				setSnapshot(makeSnapshot({ configDirKey: remoteKey }));
-				const restore = stubAccountDirs(['.claude-remote']);
-
-				try {
-					await runStartupUsageSampling(sshOnlyDeps([remoteSession]));
-				} finally {
-					restore();
-				}
-
-				expect(sampleUsageMock).not.toHaveBeenCalled();
 			});
 
 			it('does not re-sample a cached account whose dir is gone', async () => {

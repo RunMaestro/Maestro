@@ -90,12 +90,15 @@ vi.mock('../../../main/stores/claudeUsageStore', async (importOriginal) => {
 	return { ...actual, getSnapshot: getSnapshotMock };
 });
 
+import * as fs from 'fs';
 import os from 'os';
 import path from 'path';
 import {
+	ensureUsageProbeDir,
 	FAILURE_REREPORT_INTERVAL_MS,
 	resetFailureReportingForTests,
 	sampleUsage,
+	USAGE_PROBE_DIR_NAME,
 } from '../../../main/agents/claude-usage-sampler';
 import { asarNodePath, canonKey } from '../../helpers/pathExpect';
 
@@ -203,7 +206,7 @@ describe('claude-usage-sampler', () => {
 			);
 			primeSuccess(unreadEnvelope());
 
-			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
+			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js' });
 
 			expect(getSnapshotMock).toHaveBeenCalledWith(path.resolve('/Users/test/.claude'));
 			expect(snap?.weekSonnetOnly).toEqual({
@@ -219,7 +222,7 @@ describe('claude-usage-sampler', () => {
 			);
 			primeSuccess(unreadEnvelope());
 
-			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
+			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js' });
 
 			expect(snap?.weekSonnetOnly).toEqual({ percent: 0, resetsAt: '2026-05-22T12:00:00.000Z' });
 		});
@@ -227,7 +230,7 @@ describe('claude-usage-sampler', () => {
 		it('keeps the placeholder when nothing is cached for the account', async () => {
 			primeSuccess(unreadEnvelope());
 
-			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
+			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js' });
 
 			expect(snap?.weekSonnetOnly).toEqual({ percent: 0, resetsAt: '2026-05-22T12:00:00.000Z' });
 		});
@@ -238,7 +241,7 @@ describe('claude-usage-sampler', () => {
 			});
 			primeSuccess(unreadEnvelope());
 
-			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
+			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js' });
 
 			expect(snap?.weekSonnetOnly).toEqual({ percent: 0, resetsAt: '2026-05-22T12:00:00.000Z' });
 		});
@@ -246,7 +249,7 @@ describe('claude-usage-sampler', () => {
 		it('never consults the cache for a window it did read', async () => {
 			primeSuccess(wireEnvelope());
 
-			await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
+			await sampleUsage({ binPath: '/bin/maestro-p.js' });
 
 			expect(getSnapshotMock).not.toHaveBeenCalled();
 		});
@@ -265,7 +268,7 @@ describe('claude-usage-sampler', () => {
 			});
 			primeSuccess(wireEnvelope());
 
-			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
+			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js' });
 
 			expect(snap?.accountEmail).toBe('pedram@smashlabs.com');
 			expect(snap?.accountUuid).toBe('2acf84ae-d765-4a12-ae90-296b9f903018');
@@ -281,7 +284,6 @@ describe('claude-usage-sampler', () => {
 
 			await sampleUsage({
 				binPath: '/bin/maestro-p.js',
-				cwd: '/tmp',
 				configDir: '/Users/test/.claude-smash',
 			});
 
@@ -298,7 +300,7 @@ describe('claude-usage-sampler', () => {
 			readAccountIdentityMock.mockResolvedValue(null);
 			primeSuccess(wireEnvelope());
 
-			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
+			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js' });
 
 			expect(snap).not.toHaveProperty('accountEmail');
 			expect(snap).not.toHaveProperty('accountUuid');
@@ -309,7 +311,7 @@ describe('claude-usage-sampler', () => {
 			readAccountIdentityMock.mockResolvedValue({ email: 'legacy@example.com' });
 			primeSuccess(wireEnvelope());
 
-			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
+			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js' });
 
 			expect(snap?.accountEmail).toBe('legacy@example.com');
 			expect(snap).not.toHaveProperty('accountUuid');
@@ -321,7 +323,6 @@ describe('claude-usage-sampler', () => {
 			primeSuccess(wireEnvelope());
 			const snap = await sampleUsage({
 				binPath: '/opt/maestro/resources/maestro-p.js',
-				cwd: '/tmp/cwd',
 			});
 			expect(snap).toEqual({
 				sampledAt: new Date(FROZEN_NOW).toISOString(),
@@ -341,40 +342,43 @@ describe('claude-usage-sampler', () => {
 			const localIso = new Date(FROZEN_NOW).toISOString();
 			const snap = await sampleUsage({
 				binPath: '/bin/maestro-p.js',
-				cwd: '/tmp',
 			});
 			expect(snap?.sampledAt).toBe(localIso);
 		});
 
 		it('spawns process.execPath with [binPath, --status]', async () => {
 			const inspect = primeSuccess(wireEnvelope());
-			await sampleUsage({ binPath: '/opt/maestro/maestro-p.js', cwd: '/tmp' });
+			await sampleUsage({ binPath: '/opt/maestro/maestro-p.js' });
 			const call = inspect();
 			expect(call?.cmd).toBe(process.execPath);
 			expect(call?.args).toEqual(['/opt/maestro/maestro-p.js', '--status']);
 		});
 
-		it('passes cwd through to the spawn options', async () => {
+		it('starts claude in the private usage probe folder and opts into trusting it', async () => {
+			// Not the caller's folder: an agent's project would load its hooks and
+			// MCP servers on every probe, and the home dir's trust prompt says "No".
 			const inspect = primeSuccess(wireEnvelope());
-			await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/var/projects/foo' });
-			expect(inspect()?.options.cwd).toBe('/var/projects/foo');
+			await sampleUsage({ binPath: '/bin/maestro-p.js' });
+			const options = inspect()?.options as { cwd: string; env: Record<string, string> };
+			expect(options.cwd).toBe(path.join(os.tmpdir(), USAGE_PROBE_DIR_NAME));
+			expect(options.env.MAESTRO_P_ACCEPT_WORKSPACE_TRUST).toBe('1');
 		});
 
 		it('uses the default 30s timeout when none is provided', async () => {
 			const inspect = primeSuccess(wireEnvelope());
-			await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
+			await sampleUsage({ binPath: '/bin/maestro-p.js' });
 			expect(inspect()?.options.timeout).toBe(30_000);
 		});
 
 		it('honors a custom timeoutMs', async () => {
 			const inspect = primeSuccess(wireEnvelope());
-			await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp', timeoutMs: 5_000 });
+			await sampleUsage({ binPath: '/bin/maestro-p.js', timeoutMs: 5_000 });
 			expect(inspect()?.options.timeout).toBe(5_000);
 		});
 
 		it('caps maxBuffer at 1MB', async () => {
 			const inspect = primeSuccess(wireEnvelope());
-			await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
+			await sampleUsage({ binPath: '/bin/maestro-p.js' });
 			expect(inspect()?.options.maxBuffer).toBe(1 * 1024 * 1024);
 		});
 	});
@@ -385,7 +389,6 @@ describe('claude-usage-sampler', () => {
 			const inspect = primeSuccess(wireEnvelope());
 			await sampleUsage({
 				binPath: '/bin/maestro-p.js',
-				cwd: '/tmp',
 				customEnvVars: { MAESTRO_CLAUDE_BIN: '/opt/claude' },
 			});
 			const env = inspect()?.options.env as NodeJS.ProcessEnv;
@@ -401,7 +404,7 @@ describe('claude-usage-sampler', () => {
 			// re-pops authorization windows.
 			process.env.BROWSER = '/usr/bin/open-a-real-browser';
 			const inspect = primeSuccess(wireEnvelope());
-			await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
+			await sampleUsage({ binPath: '/bin/maestro-p.js' });
 			const env = inspect()?.options.env as NodeJS.ProcessEnv;
 			expect(env.BROWSER).toBe('/usr/bin/true');
 		});
@@ -411,7 +414,7 @@ describe('claude-usage-sampler', () => {
 			// instead of executing the maestro-p script, and --status would
 			// never produce a snapshot.
 			const inspect = primeSuccess(wireEnvelope());
-			await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
+			await sampleUsage({ binPath: '/bin/maestro-p.js' });
 			const env = inspect()?.options.env as NodeJS.ProcessEnv;
 			expect(env.ELECTRON_RUN_AS_NODE).toBe('1');
 		});
@@ -430,7 +433,7 @@ describe('claude-usage-sampler', () => {
 			process.env.NODE_PATH = '/pre/existing';
 			try {
 				const inspect = primeSuccess(wireEnvelope());
-				await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
+				await sampleUsage({ binPath: '/bin/maestro-p.js' });
 				const env = inspect()?.options.env as NodeJS.ProcessEnv;
 				const asar = asarNodePath('/Apps/Maestro.app/Contents/Resources');
 				expect(env.NODE_PATH).toBe(`${asar}${path.delimiter}/pre/existing`);
@@ -451,7 +454,7 @@ describe('claude-usage-sampler', () => {
 			delete process.env.NODE_PATH;
 			try {
 				const inspect = primeSuccess(wireEnvelope());
-				await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
+				await sampleUsage({ binPath: '/bin/maestro-p.js' });
 				const env = inspect()?.options.env as NodeJS.ProcessEnv;
 				expect(env.NODE_PATH).toBeUndefined();
 			} finally {
@@ -466,7 +469,6 @@ describe('claude-usage-sampler', () => {
 			const inspect = primeSuccess(wireEnvelope());
 			await sampleUsage({
 				binPath: '/bin/maestro-p.js',
-				cwd: '/tmp',
 				configDir: '/Users/test/.claude-explicit',
 				customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/test/.claude-smuggled' },
 			});
@@ -481,7 +483,6 @@ describe('claude-usage-sampler', () => {
 			primeSuccess(wireEnvelope({ config_dir: '/echoed/by/binary/that/we/ignore' }));
 			const snap = await sampleUsage({
 				binPath: '/bin/maestro-p.js',
-				cwd: '/tmp',
 				configDir: '/Users/test/.claude-gmail',
 			});
 			expect(snap?.configDirKey).toBe(canonKey('/Users/test/.claude-gmail'));
@@ -491,7 +492,6 @@ describe('claude-usage-sampler', () => {
 			primeSuccess(wireEnvelope());
 			const snap = await sampleUsage({
 				binPath: '/bin/maestro-p.js',
-				cwd: '/tmp',
 				configDir: '/Users/test/./.claude-smash/',
 			});
 			expect(snap?.configDirKey).toBe(canonKey('/Users/test/.claude-smash'));
@@ -500,7 +500,7 @@ describe('claude-usage-sampler', () => {
 		it('falls back to ~/.claude when no configDir and no env var', async () => {
 			delete process.env.CLAUDE_CONFIG_DIR;
 			primeSuccess(wireEnvelope());
-			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
+			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js' });
 			expect(snap?.configDirKey).toBe(canonKey(path.join(os.homedir(), '.claude')));
 		});
 
@@ -508,7 +508,6 @@ describe('claude-usage-sampler', () => {
 			primeSuccess(wireEnvelope());
 			const snap = await sampleUsage({
 				binPath: '/bin/maestro-p.js',
-				cwd: '/tmp',
 				customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/test/.claude-via-env' },
 			});
 			expect(snap?.configDirKey).toBe(canonKey('/Users/test/.claude-via-env'));
@@ -522,19 +521,19 @@ describe('claude-usage-sampler', () => {
 				'(Use `node --trace-deprecation ...` to show where the warning was created)\n' +
 				wireEnvelope();
 			primeSuccess(noisy);
-			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
+			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js' });
 			expect(snap?.session.percent).toBe(42);
 		});
 
 		it('tolerates whitespace before the JSON line', async () => {
 			primeSuccess(`   ${wireEnvelope()}`);
-			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
+			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js' });
 			expect(snap).not.toBeNull();
 		});
 
 		it('ignores stderr content entirely (only stdout drives parsing)', async () => {
 			primeSuccess(wireEnvelope(), 'some random stderr output');
-			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
+			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js' });
 			expect(snap).not.toBeNull();
 		});
 	});
@@ -542,7 +541,7 @@ describe('claude-usage-sampler', () => {
 	describe('failure modes - never throw, always return null', () => {
 		it('returns null on ENOENT (binary missing)', async () => {
 			primeFailure(Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' }));
-			const snap = await sampleUsage({ binPath: '/nope.js', cwd: '/tmp' });
+			const snap = await sampleUsage({ binPath: '/nope.js' });
 			expect(snap).toBeNull();
 			expect(captureMessageMock).toHaveBeenCalledWith(
 				'maestro-p --status sample failed',
@@ -553,7 +552,7 @@ describe('claude-usage-sampler', () => {
 
 		it('returns null on EACCES', async () => {
 			primeFailure(Object.assign(new Error('permission denied'), { code: 'EACCES' }));
-			const snap = await sampleUsage({ binPath: '/locked.js', cwd: '/tmp' });
+			const snap = await sampleUsage({ binPath: '/locked.js' });
 			expect(snap).toBeNull();
 			expect(captureMessageMock).toHaveBeenCalledWith(
 				'maestro-p --status sample failed',
@@ -567,7 +566,6 @@ describe('claude-usage-sampler', () => {
 			primeFailure(err);
 			const snap = await sampleUsage({
 				binPath: '/bin/maestro-p.js',
-				cwd: '/tmp',
 				timeoutMs: 1_000,
 			});
 			expect(snap).toBeNull();
@@ -580,7 +578,7 @@ describe('claude-usage-sampler', () => {
 
 		it('returns null on non-zero exit (code is a number)', async () => {
 			primeFailure(Object.assign(new Error('exit 2'), { code: 2 }));
-			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
+			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js' });
 			expect(snap).toBeNull();
 			expect(captureMessageMock).toHaveBeenCalledWith(
 				'maestro-p --status sample failed',
@@ -591,7 +589,7 @@ describe('claude-usage-sampler', () => {
 
 		it('returns null on empty stdout', async () => {
 			primeSuccess('');
-			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
+			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js' });
 			expect(snap).toBeNull();
 			expect(captureMessageMock).toHaveBeenCalledWith(
 				'maestro-p --status sample failed',
@@ -602,7 +600,7 @@ describe('claude-usage-sampler', () => {
 
 		it('returns null when stdout has only non-JSON noise', async () => {
 			primeSuccess('this is not json\nneither is this\n');
-			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
+			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js' });
 			expect(snap).toBeNull();
 			expect(captureMessageMock).toHaveBeenCalledWith(
 				'maestro-p --status sample failed',
@@ -613,7 +611,7 @@ describe('claude-usage-sampler', () => {
 
 		it('returns null on malformed JSON', async () => {
 			primeSuccess('{ not really json }\n');
-			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
+			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js' });
 			expect(snap).toBeNull();
 			expect(captureMessageMock).toHaveBeenCalledWith(
 				'maestro-p --status sample failed',
@@ -624,13 +622,13 @@ describe('claude-usage-sampler', () => {
 
 		it('returns null when type is not status', async () => {
 			primeSuccess(wireEnvelope({ type: 'something-else' }));
-			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
+			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js' });
 			expect(snap).toBeNull();
 		});
 
 		it('returns null when session window is missing', async () => {
 			primeSuccess(wireEnvelope({ session: undefined }));
-			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
+			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js' });
 			expect(snap).toBeNull();
 		});
 
@@ -640,7 +638,7 @@ describe('claude-usage-sampler', () => {
 					session: { percent: '42' as unknown as number, resets_at: '2026-05-15T17:00:00.000Z' },
 				})
 			);
-			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
+			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js' });
 			expect(snap).toBeNull();
 		});
 
@@ -651,7 +649,7 @@ describe('claude-usage-sampler', () => {
 		// needs to show.
 		it('keeps the snapshot when a resets_at field is missing, dropping only that field', async () => {
 			primeSuccess(wireEnvelope({ week_all_models: { percent: 50 } }));
-			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
+			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js' });
 			expect(snap?.weekAllModels).toEqual({ percent: 50 });
 			expect(snap?.session.resetsAt).toBeTruthy();
 		});
@@ -662,7 +660,7 @@ describe('claude-usage-sampler', () => {
 					week_all_models: { percent: 50, resets_at: 12345 as unknown as string },
 				})
 			);
-			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
+			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js' });
 			expect(snap).toBeNull();
 		});
 
@@ -676,13 +674,13 @@ describe('claude-usage-sampler', () => {
 					},
 				})
 			);
-			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
+			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js' });
 			expect(snap?.weekSonnetOnly.label).toBe('Fable');
 		});
 	});
 
 	describe('repeat-failure suppression (MAESTRO-Q2)', () => {
-		const OPTS = { binPath: '/bin/maestro-p.js', cwd: '/tmp', configDir: '/home/u/.claude' };
+		const OPTS = { binPath: '/bin/maestro-p.js', configDir: '/home/u/.claude' };
 
 		it('reports the first failure but not identical repeats', async () => {
 			primeFailure(Object.assign(new Error('boom'), { code: 1 }));
@@ -735,12 +733,10 @@ describe('claude-usage-sampler', () => {
 
 			await sampleUsage({
 				binPath: '/bin/maestro-p.js',
-				cwd: '/tmp',
 				customEnvVars: { CLAUDE_CONFIG_DIR: '/home/u/.claude-env-a' },
 			});
 			await sampleUsage({
 				binPath: '/bin/maestro-p.js',
-				cwd: '/tmp',
 				customEnvVars: { CLAUDE_CONFIG_DIR: '/home/u/.claude-env-b' },
 			});
 
@@ -783,7 +779,6 @@ describe('claude-usage-sampler', () => {
 			primeSuccess('totally not json that mentions secret_token=abc123\n');
 			await sampleUsage({
 				binPath: '/bin/maestro-p.js',
-				cwd: '/tmp',
 				customEnvVars: { SECRET: 'should-not-leak' },
 			});
 			expect(captureMessageMock).toHaveBeenCalledTimes(1);
@@ -800,7 +795,6 @@ describe('claude-usage-sampler', () => {
 			primeSuccess('garbage\n');
 			await sampleUsage({
 				binPath: '/bin/maestro-p.js',
-				cwd: '/tmp',
 				configDir: '/Users/test/.claude-explicit',
 			});
 			const extras = captureMessageMock.mock.calls[0][2] as Record<string, unknown>;
@@ -811,9 +805,51 @@ describe('claude-usage-sampler', () => {
 
 		it('falls back to ~/.claude in the breadcrumb when configDir is omitted', async () => {
 			primeSuccess('garbage\n');
-			await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
+			await sampleUsage({ binPath: '/bin/maestro-p.js' });
 			const extras = captureMessageMock.mock.calls[0][2] as Record<string, unknown>;
 			expect(extras.configDir).toBe(canonKey(path.join(os.homedir(), '.claude')));
 		});
+	});
+});
+
+describe('ensureUsageProbeDir', () => {
+	let base: string;
+
+	beforeEach(async () => {
+		base = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'usage-probe-test-'));
+	});
+
+	afterEach(async () => {
+		await fs.promises.rm(base, { recursive: true, force: true });
+	});
+
+	it('creates the probe folder and returns it, reusing it on later calls', async () => {
+		const dir = await ensureUsageProbeDir(base);
+		expect(dir).toBe(path.join(base, USAGE_PROBE_DIR_NAME));
+		expect((await fs.promises.lstat(dir as string)).isDirectory()).toBe(true);
+		expect(await ensureUsageProbeDir(base)).toBe(dir);
+	});
+
+	it.skipIf(process.platform === 'win32')('creates it private to this user', async () => {
+		const dir = await ensureUsageProbeDir(base);
+		expect((await fs.promises.stat(dir as string)).mode & 0o077).toBe(0);
+	});
+
+	it.skipIf(process.platform === 'win32')(
+		'refuses a symlink planted at the probe path',
+		async () => {
+			// Trusting it would trust wherever the link points.
+			const target = await fs.promises.mkdtemp(path.join(base, 'elsewhere-'));
+			await fs.promises.symlink(target, path.join(base, USAGE_PROBE_DIR_NAME));
+			expect(await ensureUsageProbeDir(base)).toBeNull();
+		}
+	);
+
+	it.skipIf(process.platform === 'win32')('refuses a folder other users can write to', async () => {
+		// Another user could plant a .claude/settings.json hook in it before we trust it.
+		const dir = path.join(base, USAGE_PROBE_DIR_NAME);
+		await fs.promises.mkdir(dir);
+		await fs.promises.chmod(dir, 0o777);
+		expect(await ensureUsageProbeDir(base)).toBeNull();
 	});
 });

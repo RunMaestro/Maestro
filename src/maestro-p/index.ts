@@ -699,6 +699,11 @@ async function statusMode(args: ParsedArgs): Promise<never> {
 		// 'line' events: heavier panels paint via cursor-addressing with no line
 		// feeds, so the 'line' stream is empty and the content would be lost.
 		captureScreen: true,
+		// Set only by Maestro's usage sampler, which runs this from a dedicated
+		// folder it owns and keeps empty. In the home or temp dir claude's trust
+		// prompt defaults to "No, exit", so without this the probe quits before
+		// /usage renders. Never honored implicitly: trust persists for that folder.
+		acceptWorkspaceTrust: process.env.MAESTRO_P_ACCEPT_WORKSPACE_TRUST === '1',
 	});
 
 	const lines: string[] = [];

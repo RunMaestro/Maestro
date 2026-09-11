@@ -83,6 +83,9 @@ import {
 	SEND_ENTER_DELAY_MS,
 	SUBMIT_ENTER_RETRIES,
 	SUBMIT_ENTER_RETRY_INTERVAL_MS,
+	TRUST_CONFIRM_QUIET_MS,
+	TRUST_MAX_DOWNS,
+	TRUST_REPAINT_WAIT_MS,
 	TuiDriver,
 } from '../../maestro-p/tui-driver';
 
@@ -355,6 +358,98 @@ describe('TuiDriver', () => {
 			feed('Checking file permissions...\n');
 			feed('Accepted the changes.\n');
 			expect(bypassHandler).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('acceptWorkspaceTrust (usage probe folder)', () => {
+		// claude 2.1.26x defaults the trust prompt to "No, exit" in the temp dir and
+		// re-renders it shortly after painting, snapping a sent Down back to "No".
+		const PROMPT_ON_NO =
+			'Quicksafetycheck:Isthisaprojectyoucreatedoroneyoutrust?\n❯No,exit\nYes,Itrustthisfolder\n';
+		const REPAINT_ON_YES = 'No, exit\r❯Yes, I trust this folder\r\n';
+		const REPAINT_ON_NO = '❯No, exit\r Yes, I trust this folder\r\n';
+		const writes = () => mockPtyProcess.write.mock.calls.map((call) => call[0]);
+
+		beforeEach(() => {
+			vi.useFakeTimers();
+		});
+		afterEach(() => {
+			vi.useRealTimers();
+		});
+
+		async function makeTrustingDriver(): Promise<TuiDriver> {
+			const driver = new TuiDriver({
+				binPath: 'claude',
+				args: [],
+				cwd: '/tmp/maestro-claude-usage-probe',
+				env: {},
+				acceptWorkspaceTrust: true,
+			});
+			await driver.start();
+			return driver;
+		}
+
+		it('moves off "No, exit" and confirms "Yes" once the selection holds', async () => {
+			const driver = await makeTrustingDriver();
+			const trustHandler = vi.fn();
+			driver.on('trust-accepted', trustHandler);
+
+			feed(PROMPT_ON_NO);
+			expect(writes()).toEqual(['\x1b[B']);
+
+			feed(REPAINT_ON_YES);
+			vi.advanceTimersByTime(TRUST_CONFIRM_QUIET_MS - 1);
+			expect(writes()).toEqual(['\x1b[B']);
+			vi.advanceTimersByTime(1);
+			expect(writes()).toEqual(['\x1b[B', '\r']);
+			expect(trustHandler).toHaveBeenCalledTimes(1);
+		});
+
+		it('selects "Yes" again when a re-render snaps the selector back to "No"', async () => {
+			await makeTrustingDriver();
+			feed(PROMPT_ON_NO);
+			feed(REPAINT_ON_YES);
+			vi.advanceTimersByTime(TRUST_CONFIRM_QUIET_MS - 100);
+
+			feed(REPAINT_ON_NO);
+			vi.advanceTimersByTime(TRUST_CONFIRM_QUIET_MS);
+			// The pending Enter was cancelled: it would have confirmed "No, exit".
+			expect(writes()).toEqual(['\x1b[B', '\x1b[B']);
+
+			feed(REPAINT_ON_YES);
+			vi.advanceTimersByTime(TRUST_CONFIRM_QUIET_MS);
+			expect(writes()).toEqual(['\x1b[B', '\x1b[B', '\r']);
+		});
+
+		it('never presses Enter while the selector stays on "No", blind taps included', async () => {
+			await makeTrustingDriver();
+			feed(PROMPT_ON_NO);
+			// No repaint ever arrives: Downs retry up to the cap, and nothing confirms.
+			vi.advanceTimersByTime(
+				TRUST_REPAINT_WAIT_MS * (TRUST_MAX_DOWNS + 1) + READY_TAP_INTERVAL_MS * READY_MAX_TAPS
+			);
+			expect(writes()).not.toContain('\r');
+			expect(writes().filter((key) => key === '\x1b[B')).toHaveLength(TRUST_MAX_DOWNS);
+		});
+
+		it("does not fire ready on the dialog's own ❯ selector", async () => {
+			const driver = await makeTrustingDriver();
+			const readyHandler = vi.fn();
+			driver.on('ready', readyHandler);
+
+			feed('Yes, I trust this folder\n❯ No, exit\n');
+			feed('❯ Yes, I trust this folder\n');
+			expect(readyHandler).not.toHaveBeenCalled();
+
+			vi.advanceTimersByTime(TRUST_CONFIRM_QUIET_MS);
+			feed('\r❯ Try "edit <filepath>"\n');
+			expect(readyHandler).toHaveBeenCalledTimes(1);
+		});
+
+		it('keeps the plain Enter without the opt-in', async () => {
+			await makeDriver();
+			feed(PROMPT_ON_NO);
+			expect(writes()).toEqual(['\r']);
 		});
 	});
 
