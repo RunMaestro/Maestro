@@ -662,7 +662,7 @@ export const BrowserTabView = React.memo(
 			document.addEventListener('keydown',function(e){
 				var hasMod=e.metaKey||e.ctrlKey;
 				var hasAlt=e.altKey;
-				if(!hasMod&&!hasAlt)return;
+				if((!hasMod&&!hasAlt)||/^(Meta|Control|Alt|Shift)$/.test(e.key))return;
 				var k=e.key.toLowerCase();
 				var te=hasMod&&!hasAlt&&!e.shiftKey&&'acxz'.indexOf(k)!==-1;
 				var re=hasMod&&!hasAlt&&e.shiftKey&&k==='z';

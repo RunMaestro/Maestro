@@ -76,6 +76,51 @@ export const SEND_ENTER_DELAY_MS = 80;
 export const SUBMIT_ENTER_RETRIES = 4;
 export const SUBMIT_ENTER_RETRY_INTERVAL_MS = 750;
 
+// The prompt body is typed in small, paced chunks, never one write. A macOS PTY
+// queues at most 1,022 unread input bytes, and claude discards whatever is
+// sitting in that queue at certain moments (a terminal input flush), so every
+// loss is a multiple of 1,022 bytes. One big write keeps the queue full for as
+// long as claude takes to read the prompt: Cue runs lost 1,022 bytes from the
+// middle of their prompts, and in live trials against claude 2.1.261 a single
+// 4 KB write lost 2-4 KB every time, even 1.5s after startup. Chunks well under
+// the queue size, spaced so claude has read each one before the next lands,
+// keep the queue near-empty: the same prompt typed this way (after the settle
+// wait below) lost nothing. Run mode's prompt-echo check (prompt-echo.ts)
+// still fails the turn loudly if a prompt ever arrives damaged.
+// 512 bytes every 20ms types a 4 KB prompt in ~150ms and 100 KB in ~4s.
+export const PROMPT_CHUNK_MAX_BYTES = 512;
+export const PROMPT_CHUNK_INTERVAL_MS = 20;
+
+// claude also discards input for a moment right after its input prompt first
+// paints, while the rest of its UI is still mounting: paced typing that started
+// the instant `ready` fired lost the first 1,022 bytes in 2 of 2 trials, while
+// starting 500ms later lost nothing. Instead of a fixed sleep that a slow,
+// contended startup could outlast, send() waits until the screen has been quiet
+// (no PTY output) for PROMPT_SETTLE_QUIET_MS, capped at PROMPT_SETTLE_MAX_MS so
+// a screen that never stops animating cannot stall the turn.
+export const PROMPT_SETTLE_QUIET_MS = 300;
+export const PROMPT_SETTLE_MAX_MS = 3000;
+
+// Split `text` into pieces of at most `maxBytes` UTF-8 bytes without cutting a
+// multi-byte character or surrogate pair in half.
+export function chunkPromptForPty(text: string, maxBytes = PROMPT_CHUNK_MAX_BYTES): string[] {
+	const chunks: string[] = [];
+	let current = '';
+	let currentBytes = 0;
+	for (const char of text) {
+		const bytes = Buffer.byteLength(char, 'utf8');
+		if (currentBytes + bytes > maxBytes && current.length > 0) {
+			chunks.push(current);
+			current = '';
+			currentBytes = 0;
+		}
+		current += char;
+		currentBytes += bytes;
+	}
+	if (current.length > 0) chunks.push(current);
+	return chunks;
+}
+
 // Rolling buffer cap for unanchored pattern matching. Large enough that a
 // prompt indicator arriving across many chunks still matches; small enough
 // that we don't grow without bound on long-running sessions.
@@ -175,6 +220,8 @@ export class TuiDriver extends EventEmitter {
 	private lineBuffer = '';
 	/** Full raw PTY accumulator for --status parsing. Populated only when options.captureScreen is set. */
 	private screenCapture = '';
+	/** Date.now() of the last PTY output chunk; send() waits for it to go stale. */
+	private lastDataAt = 0;
 	private readyEmitted = false;
 	private limitEmitted = false;
 	private trustHandled = false;
@@ -311,18 +358,48 @@ export class TuiDriver extends EventEmitter {
 		}
 	}
 
-	send(text: string): void {
-		if (!this.ptyProcess) {
+	// Resolves once the screen has been quiet for PROMPT_SETTLE_QUIET_MS, once
+	// PROMPT_SETTLE_MAX_MS has passed, or once the PTY exits.
+	private async waitForQuietScreen(): Promise<void> {
+		const deadline = Date.now() + PROMPT_SETTLE_MAX_MS;
+		for (;;) {
+			const now = Date.now();
+			const quietFor = now - this.lastDataAt;
+			if (this.exited || quietFor >= PROMPT_SETTLE_QUIET_MS || now >= deadline) return;
+			await new Promise<void>((resolve) =>
+				setTimeout(resolve, Math.min(PROMPT_SETTLE_QUIET_MS - quietFor, deadline - now))
+			);
+		}
+	}
+
+	// Resolves once the whole prompt body has been typed and the Enter taps are
+	// scheduled. Callers must await it before pressing Enter themselves, or a
+	// tap could submit a half-typed prompt.
+	async send(text: string): Promise<void> {
+		const ptyProcess = this.ptyProcess;
+		if (!ptyProcess) {
 			throw new Error('TuiDriver.send() called before start()');
 		}
 		if (this.exited) return;
-		// Writes are split, never one chunk. See SEND_ENTER_DELAY_MS for why the
+		// See PROMPT_SETTLE_QUIET_MS: input typed while claude is still mounting
+		// its UI right after `ready` gets discarded.
+		await this.waitForQuietScreen();
+		if (this.exited) return;
+		// Writes are split, never one chunk. See PROMPT_CHUNK_MAX_BYTES for why
+		// the body is typed in paced pieces. See SEND_ENTER_DELAY_MS for why the
 		// Enter cannot ride in the same write as the text body. See
 		// SUBMIT_ENTER_RETRIES for why a single Enter is not enough on a cold
 		// TUI: the first tap may land before claude's editor can accept a
 		// submit, so we re-tap a few times spaced out until the turn starts.
 		// Extra taps on an already-submitted (empty) input are no-ops.
-		this.ptyProcess.write(text);
+		const chunks = chunkPromptForPty(text);
+		for (let i = 0; i < chunks.length; i += 1) {
+			if (i > 0) {
+				await new Promise<void>((resolve) => setTimeout(resolve, PROMPT_CHUNK_INTERVAL_MS));
+				if (this.exited) return;
+			}
+			ptyProcess.write(chunks[i]);
+		}
 		const sendEnter = () => {
 			if (this.exited) return;
 			try {
@@ -407,10 +484,11 @@ export class TuiDriver extends EventEmitter {
 		});
 	}
 
-	kill(): void {
+	// SIGTERM lets claude shut down its MCP servers; SIGKILL is the hard stop.
+	kill(signal: 'SIGKILL' | 'SIGTERM' = 'SIGKILL'): void {
 		if (!this.ptyProcess || this.exited) return;
 		try {
-			killPty(this.ptyProcess, 'SIGKILL');
+			killPty(this.ptyProcess, signal);
 		} catch {
 			// Already gone - nothing to do.
 		}
@@ -418,6 +496,7 @@ export class TuiDriver extends EventEmitter {
 
 	private handleData(data: string): void {
 		if (this.exited) return;
+		this.lastDataAt = Date.now();
 		// --status capture: keep the full raw stream so statusMode can parse the
 		// /usage panel from the complete screen. Cursor-addressed panels carry no
 		// line feeds, so the 'line' events below never fire and only this buffer

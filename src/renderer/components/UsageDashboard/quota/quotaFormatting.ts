@@ -103,3 +103,26 @@ export function formatLastRefreshed(sampledAtMs: number, nowMs: number): string 
 	});
 	return `${spoken} ago`;
 }
+
+/**
+ * How far one row's sample may trail the panel's newest sample before the row
+ * is flagged. A refresh pass samples every account in parallel, each within the
+ * sampler's 30s budget, so a gap this wide means the last pass skipped or failed
+ * that account and its bars predate the "Last refreshed" footer.
+ */
+export const STALE_ROW_LAG_MS = 5 * 60_000;
+
+/**
+ * True when `sampledAt` trails `latestSampledAtMs` by more than
+ * `STALE_ROW_LAG_MS`. Missing or unparseable stamps are never flagged: there is
+ * no age to report, and a chip that cannot say when is noise.
+ */
+export function isSampleBehindLatest(
+	sampledAt: string | undefined,
+	latestSampledAtMs: number | null
+): boolean {
+	if (!sampledAt || latestSampledAtMs === null) return false;
+	const sampledAtMs = Date.parse(sampledAt);
+	if (!Number.isFinite(sampledAtMs)) return false;
+	return latestSampledAtMs - sampledAtMs > STALE_ROW_LAG_MS;
+}

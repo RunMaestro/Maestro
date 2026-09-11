@@ -64,7 +64,7 @@ import path from 'path';
 import { promisify } from 'util';
 
 import { captureMessage } from '../utils/sentry';
-import { resolveConfigDirKey, type UsageSnapshot } from '../stores/claudeUsageStore';
+import { getSnapshot, resolveConfigDirKey, type UsageSnapshot } from '../stores/claudeUsageStore';
 import { readClaudeAccountIdentity } from './claude-account-identity';
 
 const execFileAsync = promisify(execFile);
@@ -111,7 +111,8 @@ interface StatusWireEnvelope {
 	config_dir: string;
 	session: { percent: number; resets_at?: string };
 	week_all_models: { percent: number; resets_at?: string };
-	week_sonnet_only: { percent: number; resets_at?: string; label?: string };
+	/** `unread` marks the parser's 0% placeholder for a section it could not read. */
+	week_sonnet_only: { percent: number; resets_at?: string; label?: string; unread?: true };
 }
 
 /**
@@ -244,11 +245,49 @@ export async function sampleUsage(opts: SampleUsageOptions): Promise<UsageSnapsh
 		...(identity?.organizationName ? { organizationName: identity.organizationName } : {}),
 		session: toStoreWindow(parsed.session),
 		weekAllModels: toStoreWindow(parsed.week_all_models),
-		weekSonnetOnly: {
-			...toStoreWindow(parsed.week_sonnet_only),
-			...(parsed.week_sonnet_only.label ? { label: parsed.week_sonnet_only.label } : {}),
-		},
+		weekSonnetOnly: parsed.week_sonnet_only.unread
+			? keepLastSecondaryWeekReading(configDirKey, parsed.week_sonnet_only)
+			: toStoreSecondaryWeek(parsed.week_sonnet_only),
 	};
+}
+
+/** Wire secondary weekly window to its store shape, keeping the scraped label. */
+function toStoreSecondaryWeek(
+	window: StatusWireEnvelope['week_sonnet_only']
+): UsageSnapshot['weekSonnetOnly'] {
+	return {
+		...toStoreWindow(window),
+		...(window.label ? { label: window.label } : {}),
+	};
+}
+
+/**
+ * The parser could not read the secondary weekly window this pass and shipped a
+ * flagged 0% placeholder. Keep the account's last real reading while it still
+ * describes the current window (its reset is still ahead): usage only grows
+ * inside a window, so that reading is a floor, where the placeholder is simply
+ * wrong. With no such reading the placeholder stands.
+ */
+function keepLastSecondaryWeekReading(
+	configDirKey: string,
+	placeholder: StatusWireEnvelope['week_sonnet_only']
+): UsageSnapshot['weekSonnetOnly'] {
+	const fallback = toStoreSecondaryWeek(placeholder);
+	let previous: UsageSnapshot | null;
+	try {
+		previous = getSnapshot(configDirKey);
+	} catch {
+		// The cache is context here, not a dependency; a read failure must not
+		// cost the sample (the module contract is that sampling never throws).
+		return fallback;
+	}
+	const previousResetsAtMs = previous?.weekSonnetOnly.resetsAt
+		? Date.parse(previous.weekSonnetOnly.resetsAt)
+		: Number.NaN;
+	if (!previous || !Number.isFinite(previousResetsAtMs) || previousResetsAtMs <= Date.now()) {
+		return fallback;
+	}
+	return previous.weekSonnetOnly;
 }
 
 /**

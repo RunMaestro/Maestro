@@ -66,7 +66,7 @@ export const AnnotatorToolbar = memo(function AnnotatorToolbar({
 	onApplyCrop,
 	onCancel,
 }: AnnotatorToolbarProps) {
-	const { tool, setTool, strokes, shapes, texts, cropCount, cropRect, undo, clear } = state;
+	const { tool, setTool, strokes, shapes, texts, cropCount, undo, clear } = state;
 	const [confirmingClear, setConfirmingClear] = useState(false);
 	const confirmWrapRef = useRef<HTMLDivElement>(null);
 	const [colorPickerOpen, setColorPickerOpen] = useState(false);
@@ -290,16 +290,16 @@ export const AnnotatorToolbar = memo(function AnnotatorToolbar({
 
 			{/* Applying a crop is the one action that only exists inside a tool, so
 			    its button rides along with the crop tool instead of sitting dead in
-			    the toolbar the rest of the time. */}
+			    the toolbar the rest of the time. Always enabled: the crop tool opens
+			    on an inset default frame, so there is always something to apply. */}
 			{tool === 'crop' && (
 				<HoverTooltip label="Apply crop" shortcut="Enter" theme={theme} placement="left">
 					<GhostIconButton
 						onClick={() => void onApplyCrop()}
 						ariaLabel="Apply crop"
 						padding={BUTTON_PADDING}
-						disabled={!cropRect}
 						color={theme.colors.accent}
-						style={cropRect ? { backgroundColor: `${theme.colors.accent}26` } : undefined}
+						style={{ backgroundColor: `${theme.colors.accent}26` }}
 					>
 						<Scissors className={ICON_CLASS} />
 					</GhostIconButton>

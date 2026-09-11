@@ -44,6 +44,7 @@ describe('isDirectModeratorMessage', () => {
 
 describe('filterGroupChatHistory', () => {
 	const entries = [
+		entry('You', 'user'),
 		entry(MODERATOR_PARTICIPANT_NAME, 'delegation'),
 		entry('rc', 'response'),
 		entry(MODERATOR_PARTICIPANT_NAME, 'synthesis'),
@@ -54,9 +55,9 @@ describe('filterGroupChatHistory', () => {
 		expect(filterGroupChatHistory(entries, false)).toBe(entries);
 	});
 
-	it('keeps only the moderator’s own entries in the moderator view', () => {
+	it('keeps the user’s prompts and the moderator’s own entries in the moderator view', () => {
 		const filtered = filterGroupChatHistory(entries, true);
-		expect(filtered.map((e) => e.type)).toEqual(['delegation', 'synthesis']);
+		expect(filtered.map((e) => e.type)).toEqual(['user', 'delegation', 'synthesis']);
 	});
 
 	it('handles an empty log', () => {

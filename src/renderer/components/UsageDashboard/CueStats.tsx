@@ -926,12 +926,6 @@ const TriggerTypeFilter = memo(function TriggerTypeFilter({
 			aria-label="Filter Cue stats by trigger type"
 		>
 			<div className="flex items-center gap-2 flex-wrap">
-				<div
-					className="text-xs font-medium mr-1"
-					style={{ color: theme.colors.textDim, whiteSpace: 'nowrap' }}
-				>
-					Trigger Types
-				</div>
 				{options.map((option) => {
 					const isExcluded = excluded.has(option.key);
 					return (

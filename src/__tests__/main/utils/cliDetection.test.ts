@@ -26,6 +26,11 @@ import {
 	isCloudflaredInstalled,
 	getCloudflaredPath,
 	clearCloudflaredCache,
+	getCachedGhStatus,
+	setCachedGhStatus,
+	clearGhCache,
+	resolveGhPath,
+	isGhInstalled,
 } from '../../../main/utils/cliDetection';
 import { execFileNoThrow } from '../../../main/utils/execFile';
 
@@ -514,6 +519,136 @@ describe('cliDetection.ts', () => {
 			await isCloudflaredInstalled();
 
 			expect(getCloudflaredPath()).toBe('/home/user@domain/bin/cloudflared');
+		});
+	});
+	describe('gh status cache', () => {
+		beforeEach(() => {
+			clearGhCache();
+			vi.useRealTimers();
+		});
+
+		afterEach(() => {
+			vi.useRealTimers();
+			clearGhCache();
+		});
+
+		const DEFAULT_GH = '/opt/homebrew/bin/gh';
+		const CUSTOM_GH = '/custom/bin/gh';
+
+		it('returns null before anything has been cached', () => {
+			expect(getCachedGhStatus(DEFAULT_GH)).toBeNull();
+		});
+
+		it('serves a positive verdict from cache inside the TTL', () => {
+			setCachedGhStatus(DEFAULT_GH, true, true);
+
+			expect(getCachedGhStatus(DEFAULT_GH)).toEqual({ installed: true, authenticated: true });
+		});
+
+		it('serves a negative verdict from cache inside the TTL', () => {
+			setCachedGhStatus(DEFAULT_GH, false, false);
+
+			expect(getCachedGhStatus(DEFAULT_GH)).toEqual({ installed: false, authenticated: false });
+		});
+
+		// Regression: the verdict used to be path-agnostic, so a probe of the
+		// PATH-resolved gh answered for a configured custom path and vice versa.
+		it('treats a verdict reached against a different command as a miss', () => {
+			setCachedGhStatus(DEFAULT_GH, false, false);
+
+			expect(getCachedGhStatus(CUSTOM_GH)).toBeNull();
+		});
+
+		it('does not let a failed custom-path probe answer for the default gh', () => {
+			setCachedGhStatus(CUSTOM_GH, false, false);
+
+			expect(getCachedGhStatus(DEFAULT_GH)).toBeNull();
+			expect(getCachedGhStatus(CUSTOM_GH)).toEqual({ installed: false, authenticated: false });
+		});
+
+		// The status verdict and the `which` detection cache are separate: caching
+		// a custom-path failure must not mark the PATH-resolved gh as missing.
+		it('does not let a failed custom-path probe poison PATH detection', async () => {
+			mockedExecFileNoThrow.mockResolvedValue({
+				stdout: `${DEFAULT_GH}\n`,
+				stderr: '',
+				exitCode: 0,
+			});
+
+			setCachedGhStatus(CUSTOM_GH, false, false);
+
+			await expect(isGhInstalled()).resolves.toBe(true);
+			await expect(resolveGhPath()).resolves.toBe(DEFAULT_GH);
+		});
+
+		it('replaces a verdict for one command with a verdict for another', () => {
+			setCachedGhStatus(DEFAULT_GH, true, true);
+			setCachedGhStatus(CUSTOM_GH, true, false);
+
+			expect(getCachedGhStatus(DEFAULT_GH)).toBeNull();
+			expect(getCachedGhStatus(CUSTOM_GH)).toEqual({ installed: true, authenticated: false });
+		});
+
+		// Regression: a negative verdict used to skip the TTL check entirely, so one
+		// failed probe at startup made gh unavailable for the whole app run.
+		it('expires a NEGATIVE verdict once the TTL elapses', () => {
+			vi.useFakeTimers();
+			setCachedGhStatus(DEFAULT_GH, false, false);
+			expect(getCachedGhStatus(DEFAULT_GH)).toEqual({ installed: false, authenticated: false });
+
+			vi.advanceTimersByTime(60001);
+
+			expect(getCachedGhStatus(DEFAULT_GH)).toBeNull();
+		});
+
+		// Expiring the verdict is not enough on its own: isGhInstalled() returns
+		// early on any non-null detection cache, so a stale `false` left behind
+		// would make the next lookup answer from the result that just expired
+		// instead of probing again.
+		it('re-probes after a NEGATIVE verdict expires, rather than reusing it', async () => {
+			vi.useFakeTimers();
+
+			// Startup: the shim cannot reach its parent tool, so `which` fails.
+			mockedExecFileNoThrow.mockResolvedValue({ stdout: '', stderr: '', exitCode: 1 });
+			await expect(isGhInstalled()).resolves.toBe(false);
+			setCachedGhStatus('gh', false, false);
+
+			vi.advanceTimersByTime(60001);
+			expect(getCachedGhStatus('gh')).toBeNull();
+
+			// The shim is resolvable now that its parent tool is reachable.
+			mockedExecFileNoThrow.mockClear();
+			mockedExecFileNoThrow.mockResolvedValue({
+				stdout: '/home/testuser/.asdf/shims/gh\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			await expect(isGhInstalled()).resolves.toBe(true);
+			expect(mockedExecFileNoThrow).toHaveBeenCalled();
+			await expect(resolveGhPath()).resolves.toBe('/home/testuser/.asdf/shims/gh');
+		});
+
+		it('expires a positive verdict once the TTL elapses', () => {
+			vi.useFakeTimers();
+			setCachedGhStatus(DEFAULT_GH, true, true);
+
+			vi.advanceTimersByTime(60001);
+
+			expect(getCachedGhStatus(DEFAULT_GH)).toBeNull();
+		});
+
+		it('clearGhCache drops a cached verdict immediately', () => {
+			setCachedGhStatus(DEFAULT_GH, true, true);
+
+			clearGhCache();
+
+			expect(getCachedGhStatus(DEFAULT_GH)).toBeNull();
+		});
+
+		it('resolveGhPath returns a custom path without probing the filesystem', async () => {
+			await expect(resolveGhPath('/custom/bin/gh')).resolves.toBe('/custom/bin/gh');
+			expect(mockedExecFileNoThrow).not.toHaveBeenCalled();
 		});
 	});
 });

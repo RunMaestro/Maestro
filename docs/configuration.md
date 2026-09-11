@@ -211,14 +211,16 @@ MY_TOOL_PATH=~/tools/custom
 
 ### Environment Variable Precedence
 
-When an agent or terminal is spawned, variables are merged in this order (highest to lowest priority):
+When an agent or terminal is spawned, the layers are merged in this order (lowest to highest priority). Each layer overrides the one before it:
 
-1. **Session-level overrides** - Temporary per-session customizations
-2. **Global environment variables** (Settings) - Applied to all agents and terminals
-3. **Agent-specific configuration** - Default settings for a particular agent
-4. **System environment** - System and parent process variables
+1. **System environment** - System and parent process variables Maestro inherits
+2. **Global environment variables** (Settings → Environment) - Applied to all agents and terminals
+3. **Provider-level configuration** - Defaults stored for a particular provider (Claude Code, Codex, and so on)
+4. **Per-agent variables** - The values on one agent's own record, set in the **Environment Variables (optional)** panel
 
-This means a session-level override will take precedence over the global setting, which takes precedence over agent defaults.
+So an agent's own value wins over a provider default, which wins over the global setting, which wins over whatever Maestro inherited from the system.
+
+In practice you set layers 2 and 4. Layer 3 is honored when present but has no editor in the current UI, so unless you have older settings carrying provider-level values, the effective order is simply: per-agent beats global beats system.
 
 ### Use Cases
 
@@ -228,13 +230,38 @@ This means a session-level override will take precedence over the global setting
 - **Debugging**: Set `DEBUG=maestro:*` → enable consistent logging across all sessions
 - **Language settings**: Set `LANG=en_US.UTF-8` → consistent text encoding
 
-### Agent-Specific Overrides
+### Per-Agent Environment Variables
 
-To override a global variable for a specific agent:
+Any one agent can carry its own variables, which override the global ones for that agent only. Use this when a single agent needs a different API key, a different base URL, or a tool path the rest of your agents should not see.
 
-1. In the agent configuration panel, scroll to **Environment Variables (optional)**
-2. Add the variable with the override value
-3. This session-specific value takes precedence over the global setting
+The panel is labeled **Environment Variables (optional)** and it appears in two places:
+
+- **When creating the agent** - in the **Create New Agent** dialog, below Working Directory.
+- **At any time afterwards** - open **Edit Agent** and scroll to the same panel. You do not have to recreate an agent to change its variables.
+
+Three ways to reach Edit Agent:
+
+| Route         | How                                                |
+| ------------- | -------------------------------------------------- |
+| Keyboard      | `Alt+Cmd+,` / `Alt+Ctrl+,` with the agent selected |
+| Left Bar      | Right-click the agent → **Edit Agent**             |
+| Quick Actions | `Cmd+K` / `Ctrl+K` → "Edit Agent"                  |
+
+You can also set them from the CLI without opening the app:
+
+```bash
+maestro-cli update-agent <agent-id> --env MY_KEY=value
+maestro-cli create-agent "Reviewer" --env ANTHROPIC_BASE_URL=https://proxy.internal
+maestro-cli update-agent <agent-id> --clear-env   # remove all per-agent variables
+```
+
+The eye button parks a variable here too: the row keeps its key and value and stays editable, but the variable is not passed to the agent. Parked variables are stored separately and are never merged into a spawned process.
+
+### Seeing What an Agent Actually Runs With
+
+Because the layers are edited in different places, no single screen shows the result. To see the merged environment for one agent, open **Quick Actions** (`Cmd+K` / `Ctrl+K`) and run **Re-authenticate Provider** for that agent, then expand the **Environment for &lt;agent&gt;** section. It lists one row per variable, badged with the layer whose value won.
+
+This is the quickest way to catch the case where an agent behaves oddly because an `ANTHROPIC_BASE_URL` or API key from a layer you forgot about is overriding the one you just set. Values that look like credentials are masked until you click the eye on that row.
 
 ## Built-in LLM Provider
 

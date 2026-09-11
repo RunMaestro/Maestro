@@ -34,6 +34,7 @@ import { relocateSessionImages, resolveToDataUrl } from '../../storage/session-i
 import { backupGroupsBeforeWipe } from '../../stores/groups-backup';
 import { backupSessionsBeforeWipe } from '../../stores/sessions-backup';
 import { createKeyedWriteQueue } from '../../utils/atomic-json-store';
+import { clearGhCache } from '../../utils/cliDetection';
 
 /**
  * Shallow-compare cliActivity for the diff broadcast.
@@ -372,6 +373,14 @@ export function registerPersistenceHandlers(
 		// external (maestro-cli) edits. The sender is skipped deliberately - see
 		// notifyPeerWindows.
 		notifyPeerWindows(event?.sender?.id);
+
+		// Pointing at a different gh binary invalidates every cached gh fact:
+		// detection, resolved path, and auth status were all reached against the
+		// old one. Without this the new path is ignored until the app restarts.
+		if (key === 'ghPath') {
+			clearGhCache();
+			logger.info('Cleared gh CLI detection cache after ghPath change', 'Settings');
+		}
 
 		const webServer = getWebServer();
 		// Broadcast theme changes to connected web clients

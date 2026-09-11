@@ -261,6 +261,42 @@ This isolation is critical for playbooks with `Reset on Completion` documents th
 
 ## Environment Variables
 
+### Where a Run's Environment Comes From
+
+An Auto Run inherits the environment of **the agent it executes against**. There is no run-scoped environment: a run does not get its own variables, and the document being run cannot set any.
+
+That matters because of where the variables actually live:
+
+| To change...             | Set it here                                                                                                   |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| Every agent and terminal | **Settings → Environment** (see [Global Environment Variables](./configuration#global-environment-variables)) |
+| One agent only           | That agent's **Environment Variables (optional)** panel, in **Edit Agent** or the Create New Agent dialog     |
+
+Both are documented in [Configuration → Per-Agent Environment Variables](./configuration#per-agent-environment-variables), including the precedence between them and how to inspect the merged result.
+
+Two things Auto Run specifically does **not** give you:
+
+- **A playbook or task document cannot set environment variables.** Frontmatter in an Auto Run document is rendered as a table for you to read, never interpreted. The only in-document directives Maestro acts on are the [HITL gate](#human-in-the-loop-gates), the [halt marker](#halt-marker-agent-early-exit), and the [model and effort markers](#model-tier-and-effort) - there is no `MAESTRO:ENV` equivalent.
+- **The CLI has no per-run environment flag.** `maestro-cli playbook`, `run-doc`, `auto-run`, and `goal-run` take `--model` and `--effort` as run-scoped overrides, but no `--env`. The `--env` flag exists only on `create-agent` and `update-agent`, where it edits the agent record itself and therefore affects every later run on that agent.
+
+So if a run needs different variables, change the agent it runs against, or point the run at a different agent.
+
+### Which Agent a Run Executes Against
+
+By default an Auto Run executes against the **currently active agent**, so it picks up that agent's variables.
+
+The run configuration modal can redirect it. Under [Dispatch to a separate worktree](#run-in-worktree), the dropdown chooses a worktree target, and each option has different consequences for your environment:
+
+| Option                  | Environment the run gets                                                                                                                             |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Open in Maestro**     | An agent already open in Maestro. It runs with **that agent's own variables**, so this is the way to run one document under a different environment. |
+| **Available Worktrees** | A new agent, which **inherits the current agent's variables** verbatim                                                                               |
+| **Create New Worktree** | A new agent, which **inherits the current agent's variables** verbatim                                                                               |
+
+The distinction is easy to miss: creating a worktree does not give you a blank agent to configure. Maestro copies the parent agent's variables (along with its provider, model, and custom arguments) onto the new one, and the worktree dialog has no environment field. If you need a worktree run under a different environment, create the worktree agent first, edit its variables in **Edit Agent**, then dispatch to it with **Open in Maestro**.
+
+### Variables Maestro Sets For You
+
 Maestro sets environment variables that your agent hooks can use to customize behavior:
 
 | Variable                  | Value | Description                                                      |

@@ -60,7 +60,7 @@ describe('parseUsage / fixtures', () => {
 		runFixture('usage-sonnet-no-resets');
 	});
 
-	it('synthesizes a placeholder { percent: 0, resets_at: <all_models> } when the Sonnet section is absent', () => {
+	it('synthesizes a placeholder { percent: 0, resets_at: <all_models>, unread: true } when the Sonnet section is absent', () => {
 		runFixture('usage-sonnet-missing');
 	});
 
@@ -188,6 +188,7 @@ describe('parseUsage / behavioral guards', () => {
 		expect(result?.week_sonnet_only).toEqual({
 			percent: 0,
 			resets_at: '2026-05-22T23:00:00.000Z',
+			unread: true,
 		});
 	});
 

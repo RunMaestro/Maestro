@@ -46,7 +46,7 @@ import type { MaestroSettings } from '../ipc/handlers/persistence';
 import { logger } from '../utils/logger';
 import { isMaestroPBinaryPath } from './claudeSpawnCore';
 import { sampleUsage } from './claude-usage-sampler';
-import { resolveConfigDirKey, setSnapshot } from '../stores/claudeUsageStore';
+import { getAllSnapshots, resolveConfigDirKey, setSnapshot } from '../stores/claudeUsageStore';
 
 const LOG_CONTEXT = '[ClaudeUsageStartup]';
 
@@ -295,6 +295,9 @@ function buildTarget(
  *     references (session- or agent-level CLAUDE_CONFIG_DIR) - we never
  *     discover unconfigured ~/.claude-* dirs on disk, since sampling a stale
  *     leftover account would pop an OAuth browser the user never asked for.
+ *     The one addition: an on-disk account dir that already holds a cached
+ *     snapshot is re-sampled too, so a row the dashboard is showing refreshes
+ *     even when every agent using it runs over SSH.
  *
  * Never throws - every failure surfaces as a warn log and a skipped entry.
  */
@@ -360,6 +363,35 @@ export async function runStartupUsageSampling(deps: StartupUsageSamplingDeps): P
 	// like the startup path - see buildTarget()'s "don't guess the account"
 	// guard. (discoverClaudeConfigDirs() still backs the account-key listing
 	// IPC handler, which lists keys without spawning anything.)
+	//
+	// The exception is a dir that already holds a cached snapshot. The dashboard
+	// keeps rendering that row, and when every agent using the dir runs over SSH
+	// (skipped by buildTarget) nothing ever re-samples it: the footer reads "Last
+	// refreshed just now" off the other accounts while this row's bars sit
+	// frozen until the 24h TTL drops them. A cached snapshot proves a recent
+	// successful sample, so this is not a leftover dir, and the sampler points
+	// BROWSER at a no-op besides.
+	if (mode === 'manual') {
+		const cachedOnlyKeys = Object.keys(getAllSnapshots()).filter((key) => !targetsByKey.has(key));
+		if (cachedOnlyKeys.length > 0) {
+			const onDiskDirsByKey = new Map(
+				(await discoverClaudeConfigDirs()).map((dir) => [
+					resolveConfigDirKey({ CLAUDE_CONFIG_DIR: dir }),
+					dir,
+				])
+			);
+			for (const configDirKey of cachedOnlyKeys) {
+				const configDir = onDiskDirsByKey.get(configDirKey);
+				if (!configDir) continue;
+				targetsByKey.set(configDirKey, {
+					configDir,
+					configDirKey,
+					cwd: os.homedir(),
+					customEnvVars: { ...agentLevelEnvVars },
+				});
+			}
+		}
+	}
 
 	if (targetsByKey.size === 0) {
 		logger.info('Skipping Claude usage sampling: no eligible accounts to sample', LOG_CONTEXT, {

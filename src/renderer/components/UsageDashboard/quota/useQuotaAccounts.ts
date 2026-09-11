@@ -47,13 +47,16 @@ export interface UseQuotaAccountsResult {
 	 * disagree with the tab/row list about which account an agent belongs to.
 	 * Accounts with no agent (a cached snapshot, a discovered dir) are absent.
 	 *
-	 * SSH-remote agents ARE counted. The count answers "how many agents draw on
-	 * this plan?", and an agent configured against a profile spends that plan's
-	 * quota wherever the process happens to run. Do NOT filter them out to match
-	 * the main-process sampler, which skips SSH sessions for an unrelated reason
-	 * - see the note on the counting loop below.
+	 * SSH-remote agents ARE counted, and also tallied in
+	 * `remoteAgentCountsByAccount` - see the note on the counting loop below.
 	 */
 	agentCountsByAccount: Record<string, number>;
+	/**
+	 * How many of each account's agents run over SSH. Absent keys mean zero. The
+	 * directory a remote agent names lives on the remote host, so its quota is
+	 * whatever login that host keeps there - not necessarily this row's.
+	 */
+	remoteAgentCountsByAccount: Record<string, number>;
 	selectedKey: string | null;
 	setSelectedKey: (key: string) => void;
 	effectiveSelectedKey: string | null;
@@ -119,81 +122,93 @@ export function useQuotaAccounts(opts: UseQuotaAccountsOptions): UseQuotaAccount
 		}
 	}, [homeDir]);
 
-	const { configuredAccountKeys, agentCountsByAccount } = useMemo(() => {
-		const keys = new Set<string>();
-		const counts: Record<string, number> = {};
-		for (const key of accountKeys) keys.add(normalizeKey(key));
-		for (const key of discoveredAccountKeys) keys.add(normalizeKey(key));
-		// Deliberately NOT filtered by `sessionSshRemoteConfig.enabled`. The
-		// main-process sampler (`buildTarget` in claude-usage-startup.ts) DOES skip
-		// SSH sessions, and the mismatch looks like a bug until you ask what each
-		// side is for: the sampler asks "can I probe this directory on THIS
-		// machine?" (no - the path names a remote host's disk), while this count
-		// asks "how many agents draw on this plan?" (yes - a remote agent burns the
-		// same account's quota). Making either one match the other reports a number
-		// nobody wants, so if you came here to reconcile them, don't.
-		for (const s of sessions) {
-			if (s.toolType !== toolType) continue;
-			const sessionEnv = (s.customEnvVars ?? {}) as Record<string, string>;
-			const merged = { ...agentLevelEnvVars, ...sessionEnv };
-			// An agent with no env var runs against the implicit `~/<subdir>`
-			// account, so it belongs to that bucket - unless $HOME hasn't
-			// resolved yet, in which case there is no key to attribute it to.
-			const resolved = resolveAgentAccountKey(toolType, merged, homeDir);
-			if (!resolved) continue;
-			keys.add(resolved);
-			counts[resolved] = (counts[resolved] ?? 0) + 1;
-		}
-		// Also include any snapshot key not surfaced in session config - e.g. an
-		// account sampled in a previous run whose session was since deleted.
-		// Keeping the tab lets the user still see the cached data.
-		for (const key of Object.keys(snapshots)) keys.add(normalizeKey(key));
-
-		// Collapse case-variant spellings of the same path - e.g. the canonical
-		// `/Users/me/.claude-x` from the fs scan vs a `/users/me/.claude-x` typed
-		// into a session's CLAUDE_CONFIG_DIR. On a case-insensitive filesystem
-		// (macOS, Windows) those are one directory, so showing two rows is a bug.
-		// Two real account dirs never differ only by case, so folding on lowercase
-		// is safe. Prefer the spelling that has a snapshot so the data-bearing
-		// (main-derived, correctly-cased) key wins; otherwise keep the first seen,
-		// which is the fs-discovered key before any session-typed variant.
-		const byFold = new Map<string, string>();
-		for (const key of keys) {
-			const fold = key.toLowerCase();
-			const existing = byFold.get(fold);
-			if (existing === undefined || (!snapshots[existing] && snapshots[key])) {
-				byFold.set(fold, key);
+	const { configuredAccountKeys, agentCountsByAccount, remoteAgentCountsByAccount } =
+		useMemo(() => {
+			const keys = new Set<string>();
+			const counts: Record<string, number> = {};
+			const remoteCounts: Record<string, number> = {};
+			for (const key of accountKeys) keys.add(normalizeKey(key));
+			for (const key of discoveredAccountKeys) keys.add(normalizeKey(key));
+			// SSH-remote agents are counted, AND tallied on their own. The
+			// main-process sampler (`buildTarget` in claude-usage-startup.ts) skips
+			// them because the path names a directory on the remote host's disk - and
+			// that directory holds the remote host's own login. It can be a different
+			// account from this machine's same-named dir (one real setup had a dir
+			// logged into one account locally and another on the remote), so a bare
+			// "1 agent" beside this machine's bars claimed a quota that agent never
+			// touched. Dropping remote agents would hide who is configured against
+			// the profile; the separate tally lets the chip say "remote" instead.
+			for (const s of sessions) {
+				if (s.toolType !== toolType) continue;
+				const sessionEnv = (s.customEnvVars ?? {}) as Record<string, string>;
+				const merged = { ...agentLevelEnvVars, ...sessionEnv };
+				// An agent with no env var runs against the implicit `~/<subdir>`
+				// account, so it belongs to that bucket - unless $HOME hasn't
+				// resolved yet, in which case there is no key to attribute it to.
+				const resolved = resolveAgentAccountKey(toolType, merged, homeDir);
+				if (!resolved) continue;
+				keys.add(resolved);
+				counts[resolved] = (counts[resolved] ?? 0) + 1;
+				if (s.sessionSshRemoteConfig?.enabled) {
+					remoteCounts[resolved] = (remoteCounts[resolved] ?? 0) + 1;
+				}
 			}
-		}
-		const foldedKeys = Array.from(byFold.values());
+			// Also include any snapshot key not surfaced in session config - e.g. an
+			// account sampled in a previous run whose session was since deleted.
+			// Keeping the tab lets the user still see the cached data.
+			for (const key of Object.keys(snapshots)) keys.add(normalizeKey(key));
 
-		// The counts were tallied per raw spelling, so fold them the same way. A
-		// count left under a spelling that just lost the fold would be stranded:
-		// its key is no longer in the list, and the surviving row would under-report
-		// its agents - exactly the tab/badge disagreement this map exists to prevent.
-		const foldedCounts: Record<string, number> = {};
-		for (const [rawKey, count] of Object.entries(counts)) {
-			const survivor = byFold.get(rawKey.toLowerCase()) ?? rawKey;
-			foldedCounts[survivor] = (foldedCounts[survivor] ?? 0) + count;
-		}
+			// Collapse case-variant spellings of the same path - e.g. the canonical
+			// `/Users/me/.claude-x` from the fs scan vs a `/users/me/.claude-x` typed
+			// into a session's CLAUDE_CONFIG_DIR. On a case-insensitive filesystem
+			// (macOS, Windows) those are one directory, so showing two rows is a bug.
+			// Two real account dirs never differ only by case, so folding on lowercase
+			// is safe. Prefer the spelling that has a snapshot so the data-bearing
+			// (main-derived, correctly-cased) key wins; otherwise keep the first seen,
+			// which is the fs-discovered key before any session-typed variant.
+			const byFold = new Map<string, string>();
+			for (const key of keys) {
+				const fold = key.toLowerCase();
+				const existing = byFold.get(fold);
+				if (existing === undefined || (!snapshots[existing] && snapshots[key])) {
+					byFold.set(fold, key);
+				}
+			}
+			const foldedKeys = Array.from(byFold.values());
 
-		return {
-			configuredAccountKeys: foldedKeys.sort((a, b) =>
-				deriveShortName(a).localeCompare(deriveShortName(b))
-			),
-			agentCountsByAccount: foldedCounts,
-		};
-	}, [
-		accountKeys,
-		discoveredAccountKeys,
-		sessions,
-		agentLevelEnvVars,
-		snapshots,
-		homeDir,
-		toolType,
-		normalizeKey,
-		deriveShortName,
-	]);
+			// The counts were tallied per raw spelling, so fold them the same way. A
+			// count left under a spelling that just lost the fold would be stranded:
+			// its key is no longer in the list, and the surviving row would under-report
+			// its agents - exactly the tab/badge disagreement this map exists to prevent.
+			// Both tallies fold the same way, or the remote chip would read off a
+			// spelling the list no longer shows.
+			const foldCounts = (raw: Record<string, number>): Record<string, number> => {
+				const folded: Record<string, number> = {};
+				for (const [rawKey, count] of Object.entries(raw)) {
+					const survivor = byFold.get(rawKey.toLowerCase()) ?? rawKey;
+					folded[survivor] = (folded[survivor] ?? 0) + count;
+				}
+				return folded;
+			};
+
+			return {
+				configuredAccountKeys: foldedKeys.sort((a, b) =>
+					deriveShortName(a).localeCompare(deriveShortName(b))
+				),
+				agentCountsByAccount: foldCounts(counts),
+				remoteAgentCountsByAccount: foldCounts(remoteCounts),
+			};
+		}, [
+			accountKeys,
+			discoveredAccountKeys,
+			sessions,
+			agentLevelEnvVars,
+			snapshots,
+			homeDir,
+			toolType,
+			normalizeKey,
+			deriveShortName,
+		]);
 
 	// Sub-tab selection. Defaults to the first account; clamps back to the
 	// first whenever the selected key disappears.
@@ -213,6 +228,7 @@ export function useQuotaAccounts(opts: UseQuotaAccountsOptions): UseQuotaAccount
 	return {
 		configuredAccountKeys,
 		agentCountsByAccount,
+		remoteAgentCountsByAccount,
 		selectedKey,
 		setSelectedKey,
 		effectiveSelectedKey,

@@ -1130,6 +1130,10 @@ describe('AgentOverviewCards', () => {
 			fireEvent.click(screen.getByRole('button', { name: 'Increase tile size' }));
 
 			expect(columns()).toBe('repeat(auto-fill, minmax(286px, 1fr))');
+			// A tile width has no meaningful percentage, so the control shows only
+			// the two buttons; `0` is still the way back.
+			expect(screen.queryByRole('button', { name: 'Reset tile size' })).toBeNull();
+			expect(screen.getByTestId('agent-overview-tile-zoom')).not.toHaveTextContent('%');
 		});
 	});
 });

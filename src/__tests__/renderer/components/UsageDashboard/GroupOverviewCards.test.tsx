@@ -362,6 +362,7 @@ describe('GroupOverviewCards', () => {
 			fireEvent.click(screen.getByRole('button', { name: 'Increase tile size' }));
 
 			expect(columns()).toBe('repeat(auto-fill, minmax(484px, 1fr))');
+			expect(screen.queryByRole('button', { name: 'Reset tile size' })).toBeNull();
 		});
 	});
 

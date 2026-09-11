@@ -129,9 +129,11 @@ export interface UseAnnotatorStateReturn {
 	/** The working base image. Starts as the opened image, changes on crop. */
 	image: string;
 	/**
-	 * The pending crop selection in image space, or `null` for "the whole
-	 * image". Null is the resting state so the canvas can render a full-frame
-	 * selection without knowing the image size ahead of the image's onload.
+	 * The pending crop selection in image space, or `null` for "the untouched
+	 * default frame" (`defaultCropRect`, inset from the image edges). Null is the
+	 * resting state so the canvas can render that frame without knowing the
+	 * image size ahead of the image's onload, and so Escape can tell a shaped
+	 * selection (reset it) from an untouched one (fall through and close).
 	 */
 	cropRect: CropRect | null;
 	/** How many crops have been applied - drives the unsaved-changes guard. */

@@ -25,7 +25,7 @@
  */
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Activity, Maximize2, Minimize2, Search } from 'lucide-react';
+import { Activity, Minus, Plus, Search } from 'lucide-react';
 import type { Session, Theme } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
 import { stripLeadingEmojis } from '../../../shared/emojiUtils';
@@ -566,17 +566,23 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 						</span>
 					)}
 				</div>
-				<div className="flex items-center gap-2">
+				{/* Centered in the free space between the filters and the sort pills
+				    rather than crowding either: the control belongs to the grid, not
+				    to the filtering or the ordering. */}
+				<div className="flex-1 flex justify-center">
 					<ScaleControl
 						theme={theme}
 						control={tileScale}
-						decreaseIcon={Minimize2}
-						increaseIcon={Maximize2}
+						decreaseIcon={Minus}
+						increaseIcon={Plus}
 						subject="tile size"
 						shortcutHint={{ decrease: '-', increase: '+', reset: '0' }}
 						size="sm"
+						showReset={false}
 						testId="agent-overview-tile-zoom"
 					/>
+				</div>
+				<div className="flex items-center gap-2">
 					<span className="text-xs" style={{ color: theme.colors.textDim }}>
 						Sort by:
 					</span>

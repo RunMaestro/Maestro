@@ -64,6 +64,7 @@ vi.mock('../../../../main/utils/cliDetection', () => ({
 	resolveGhPath: vi.fn().mockResolvedValue('gh'),
 	getCachedGhStatus: vi.fn().mockReturnValue(null),
 	setCachedGhStatus: vi.fn(),
+	getExpandedEnv: vi.fn().mockReturnValue({ PATH: '/expanded/path:/usr/bin' }),
 }));
 
 // Mock fs/promises
@@ -3648,8 +3649,12 @@ export function Component() {
 			const handler = handlers.get('git:checkGhCli');
 			const result = await handler!({} as any);
 
-			expect(execFile.execFileNoThrow).toHaveBeenCalledWith('gh', ['--version']);
-			expect(execFile.execFileNoThrow).toHaveBeenCalledWith('gh', ['auth', 'status']);
+			expect(execFile.execFileNoThrow).toHaveBeenCalledWith('gh', ['--version'], undefined, {
+				PATH: '/expanded/path:/usr/bin',
+			});
+			expect(execFile.execFileNoThrow).toHaveBeenCalledWith('gh', ['auth', 'status'], undefined, {
+				PATH: '/expanded/path:/usr/bin',
+			});
 			expect(result).toEqual({
 				installed: true,
 				authenticated: true,
@@ -3668,7 +3673,9 @@ export function Component() {
 			const result = await handler!({} as any);
 
 			expect(execFile.execFileNoThrow).toHaveBeenCalledTimes(1);
-			expect(execFile.execFileNoThrow).toHaveBeenCalledWith('gh', ['--version']);
+			expect(execFile.execFileNoThrow).toHaveBeenCalledWith('gh', ['--version'], undefined, {
+				PATH: '/expanded/path:/usr/bin',
+			});
 			expect(result).toEqual({
 				installed: false,
 				authenticated: false,
@@ -3693,8 +3700,12 @@ export function Component() {
 			const handler = handlers.get('git:checkGhCli');
 			const result = await handler!({} as any);
 
-			expect(execFile.execFileNoThrow).toHaveBeenCalledWith('gh', ['--version']);
-			expect(execFile.execFileNoThrow).toHaveBeenCalledWith('gh', ['auth', 'status']);
+			expect(execFile.execFileNoThrow).toHaveBeenCalledWith('gh', ['--version'], undefined, {
+				PATH: '/expanded/path:/usr/bin',
+			});
+			expect(execFile.execFileNoThrow).toHaveBeenCalledWith('gh', ['auth', 'status'], undefined, {
+				PATH: '/expanded/path:/usr/bin',
+			});
 			expect(result).toEqual({
 				installed: true,
 				authenticated: false,
@@ -3713,6 +3724,8 @@ export function Component() {
 
 			// Should not call execFileNoThrow because cached result is used
 			expect(execFile.execFileNoThrow).not.toHaveBeenCalled();
+			// The verdict is keyed by the resolved command, not shared across binaries.
+			expect(cliDetection.getCachedGhStatus).toHaveBeenCalledWith('gh');
 			expect(result).toEqual({
 				installed: true,
 				authenticated: true,
@@ -3748,11 +3761,18 @@ export function Component() {
 
 			// Should bypass cache and check with custom path
 			expect(cliDetection.resolveGhPath).toHaveBeenCalledWith('/opt/homebrew/bin/gh');
-			expect(execFile.execFileNoThrow).toHaveBeenCalledWith('/opt/homebrew/bin/gh', ['--version']);
-			expect(execFile.execFileNoThrow).toHaveBeenCalledWith('/opt/homebrew/bin/gh', [
-				'auth',
-				'status',
-			]);
+			expect(execFile.execFileNoThrow).toHaveBeenCalledWith(
+				'/opt/homebrew/bin/gh',
+				['--version'],
+				undefined,
+				{ PATH: '/expanded/path:/usr/bin' }
+			);
+			expect(execFile.execFileNoThrow).toHaveBeenCalledWith(
+				'/opt/homebrew/bin/gh',
+				['auth', 'status'],
+				undefined,
+				{ PATH: '/expanded/path:/usr/bin' }
+			);
 			expect(result).toEqual({
 				installed: true,
 				authenticated: false,
@@ -3780,7 +3800,7 @@ export function Component() {
 			await handler!({} as any);
 
 			// Should cache the result
-			expect(cliDetection.setCachedGhStatus).toHaveBeenCalledWith(true, true);
+			expect(cliDetection.setCachedGhStatus).toHaveBeenCalledWith('gh', true, true);
 		});
 
 		it('should not cache result when using custom ghPath', async () => {
@@ -3806,6 +3826,62 @@ export function Component() {
 
 			// Should NOT cache when custom path is used
 			expect(cliDetection.setCachedGhStatus).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('git:createGist', () => {
+		// The gist call passes BOTH the gist body on stdin and the expanded PATH,
+		// which only works via the structured option object. Dropping either one
+		// breaks it silently: no env means a gh shim cannot reach its parent tool,
+		// and no input means an empty gist.
+		it('sends the content on stdin AND the expanded env', async () => {
+			const cliDetection = await import('../../../../main/utils/cliDetection');
+			vi.mocked(cliDetection.resolveGhPath).mockResolvedValue('gh');
+			vi.mocked(execFile.execFileNoThrow).mockResolvedValueOnce({
+				stdout: 'https://gist.github.com/user/abc123\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const handler = handlers.get('git:createGist');
+			const result = await handler!(
+				{} as any,
+				'log.txt',
+				'gist body contents',
+				'a description',
+				false
+			);
+
+			expect(execFile.execFileNoThrow).toHaveBeenCalledWith(
+				'gh',
+				expect.arrayContaining(['gist', 'create', '--filename', 'log.txt']),
+				undefined,
+				{ input: 'gist body contents', env: { PATH: '/expanded/path:/usr/bin' } }
+			);
+			expect(result).toEqual({
+				success: true,
+				gistUrl: 'https://gist.github.com/user/abc123',
+			});
+		});
+
+		it('honors a custom ghPath', async () => {
+			const cliDetection = await import('../../../../main/utils/cliDetection');
+			vi.mocked(cliDetection.resolveGhPath).mockResolvedValue('/custom/bin/gh');
+			vi.mocked(execFile.execFileNoThrow).mockResolvedValueOnce({
+				stdout: 'https://gist.github.com/user/def456\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const handler = handlers.get('git:createGist');
+			await handler!({} as any, 'log.txt', 'body', '', false, '/custom/bin/gh');
+
+			expect(execFile.execFileNoThrow).toHaveBeenCalledWith(
+				'/custom/bin/gh',
+				expect.any(Array),
+				undefined,
+				expect.objectContaining({ env: { PATH: '/expanded/path:/usr/bin' } })
+			);
 		});
 	});
 
