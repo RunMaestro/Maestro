@@ -36,6 +36,7 @@ vi.mock('lucide-react', () => {
 		Download: createIcon('download', '⬇️'),
 		RefreshCw: createIcon('refresh', '🔄'),
 		Database: createIcon('database', '💾'),
+		Wand2: createIcon('wand', '🪄'),
 		MessageSquare: createIcon('message-square', '💬'),
 		Clock: createIcon('clock', '🕐'),
 		Timer: createIcon('timer', '⏱️'),
