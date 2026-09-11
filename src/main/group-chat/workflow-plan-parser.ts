@@ -13,6 +13,8 @@ import {
 
 type ParseWorkflowPlanResult = { plan: GroupChatWorkflowPlan } | { error: string };
 
+export type StageDirective = { kind: 'complete' | 'failed'; body: string };
+
 const WORKFLOW_APPROVAL_MAX_LENGTH = 40;
 const WORKFLOW_APPROVAL_INTENTS = new Set([
 	'go',
@@ -22,6 +24,26 @@ const WORKFLOW_APPROVAL_INTENTS = new Set([
 	'yes go',
 	'ship it',
 ]);
+const STAGE_DIRECTIVE_LINE_SOURCE =
+	'^[\\t ]*(?:\\*\\*|__)?!stage-(complete|failed)(?:\\*\\*|__)?[\\t ]*\\r?$';
+
+/** Extract the first stage directive and the prose following its line. */
+export function extractStageDirective(text: string): StageDirective | null {
+	const pattern = new RegExp(STAGE_DIRECTIVE_LINE_SOURCE, 'm');
+	const match = pattern.exec(text);
+	if (!match) return null;
+
+	return {
+		kind: match[1] as StageDirective['kind'],
+		body: text.slice(match.index + match[0].length).trim(),
+	};
+}
+
+/** Remove stage directive lines while preserving the surrounding prose. */
+export function stripStageDirectives(text: string): string {
+	const pattern = new RegExp(STAGE_DIRECTIVE_LINE_SOURCE, 'gm');
+	return text.replace(pattern, '').trim();
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);

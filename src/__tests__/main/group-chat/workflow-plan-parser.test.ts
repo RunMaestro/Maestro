@@ -5,9 +5,11 @@
 
 import { describe, expect, it } from 'vitest';
 import {
+	extractStageDirective,
 	extractWorkflowPlanBlock,
 	parseWorkflowPlan,
 	renderWorkflowPlanSummary,
+	stripStageDirectives,
 } from '../../../main/group-chat/workflow-plan-parser';
 import { MAX_WORKFLOW_STAGES } from '../../../shared/group-chat-workflow-types';
 
@@ -34,6 +36,54 @@ function parseValid(body = validBody()) {
 }
 
 describe('workflow-plan-parser', () => {
+	describe('stage directives', () => {
+		it.each([
+			['!stage-complete\nBuilt and tested the feature.', 'complete'],
+			['   !stage-failed\nThe dependency is unavailable.', 'failed'],
+			['**!stage-complete**\nReview passed.', 'complete'],
+			['\t__!stage-failed__\nReview failed.', 'failed'],
+		])('extracts %s', (text, kind) => {
+			expect(extractStageDirective(text)).toEqual({
+				kind,
+				body: text.split('\n').slice(1).join('\n'),
+			});
+		});
+
+		it('extracts a directive at the start of a later line', () => {
+			expect(
+				extractStageDirective('Review is finished.\n!stage-complete\nPass the patch to QA.')
+			).toEqual({
+				kind: 'complete',
+				body: 'Pass the patch to QA.',
+			});
+		});
+
+		it('supports CRLF directive lines', () => {
+			expect(extractStageDirective('Intro\r\n!stage-complete\r\nHandoff')).toEqual({
+				kind: 'complete',
+				body: 'Handoff',
+			});
+		});
+
+		it('does not match absent, inline, or extended directives', () => {
+			expect(extractStageDirective('No directive here.')).toBeNull();
+			expect(extractStageDirective('Result: !stage-complete')).toBeNull();
+			expect(extractStageDirective('!stage-complete later')).toBeNull();
+		});
+
+		it('strips only directive lines and keeps handoff prose', () => {
+			const text = [
+				'Review is finished.',
+				' **!stage-complete** ',
+				'The tested patch is ready for QA.',
+			].join('\n');
+
+			expect(stripStageDirectives(text)).toBe(
+				'Review is finished.\n\nThe tested patch is ready for QA.'
+			);
+		});
+	});
+
 	describe('extractWorkflowPlanBlock', () => {
 		it('returns null when no plan block is present', () => {
 			expect(extractWorkflowPlanBlock('A normal moderator response.')).toBeNull();
