@@ -125,12 +125,14 @@ function resetGroupChatUI(): void {
 		setGroupChatState,
 		setParticipantStates,
 		setGroupChatError,
+		setWorkflowRun,
 	} = useGroupChatStore.getState();
 	setActiveGroupChatId(null);
 	setGroupChatMessages([]);
 	setGroupChatState('idle');
 	setParticipantStates(new Map());
 	setGroupChatError(null);
+	setWorkflowRun(null);
 }
 
 // ---------------------------------------------------------------------------
@@ -182,6 +184,7 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 			setParticipantStates,
 			appendParticipantLiveOutput,
 			clearParticipantLiveOutput,
+			setWorkflowRun,
 		} = useGroupChatStore.getState();
 
 		const unsubState = window.maestro.groupChat.onStateChange((id, state) => {
@@ -293,6 +296,12 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 			}
 		);
 
+		const unsubWorkflowRun = window.maestro.groupChat.onWorkflowRunChanged?.((id, run) => {
+			if (id === useGroupChatStore.getState().activeGroupChatId) {
+				setWorkflowRun(run);
+			}
+		});
+
 		// Force-complete the batch run for an autorun participant.
 		// Fired by the main process on both normal completion (reportAutoRunComplete) and
 		// on the participant timeout, so the AUTO badge and progress bar always clear.
@@ -331,6 +340,7 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 			unsubParticipantState?.();
 			unsubLiveOutput?.();
 			unsubModeratorSessionId?.();
+			unsubWorkflowRun?.();
 			unsubBatchComplete?.();
 		};
 	}, []); // Mount once - global listeners read activeGroupChatId from store at call time
@@ -453,6 +463,7 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 			setGroupChatRightTab,
 			setGroupChats,
 			setParticipantStates,
+			setWorkflowRun,
 			clearGroupChatUnread,
 			groupChatStates,
 			allGroupChatParticipantStates,
@@ -465,8 +476,13 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 			// so a slow load can't leave the dot up on a room already on screen.
 			clearGroupChatUnread(id);
 			setActiveGroupChatId(id);
-			const messages = await window.maestro.groupChat.getMessages(id);
+			setWorkflowRun(null);
+			const [messages, workflowRun] = await Promise.all([
+				window.maestro.groupChat.getMessages(id),
+				window.maestro.groupChat.getWorkflowRun(id),
+			]);
 			setGroupChatMessages(messages);
+			setWorkflowRun(workflowRun);
 
 			// Restore the state for this specific chat from the per-chat state map
 			setGroupChatState(groupChatStates.get(id) ?? 'idle');

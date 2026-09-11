@@ -910,6 +910,7 @@ export function useGoalRunner({
 					outputTokens: totalOutputTokens,
 					totalCostUsd: totalCost,
 					documentsProcessed: 0,
+					result: finalDetails,
 				});
 			}
 

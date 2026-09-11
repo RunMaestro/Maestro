@@ -77,6 +77,7 @@ import { createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
 import { tunnelManager } from '../../tunnel-manager';
 import { captureException } from '../../utils/sentry';
 import { logger } from '../../utils/logger';
+import { sweepWorkflowRunDirs } from '../../group-chat/workflow-artifacts';
 import {
 	setGetSessionsCallback,
 	setGetCustomEnvVarsCallback,
@@ -261,6 +262,9 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		getAgentDetector: deps.getAgentDetector,
 		getCustomEnvVars: deps.getCustomEnvVarsForAgent,
 		getAgentConfig: deps.getAgentConfigForAgent,
+	});
+	void sweepWorkflowRunDirs().catch((error) => {
+		logger.warn('Failed to sweep orphaned workflow run directories', 'Startup', { error });
 	});
 
 	// Register Debug Package handlers

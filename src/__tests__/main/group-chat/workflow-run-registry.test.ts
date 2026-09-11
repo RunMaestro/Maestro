@@ -1,0 +1,215 @@
+/**
+ * @file workflow-run-registry.test.ts
+ * @description Unit tests for the in-memory Group Chat workflow run registry.
+ */
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { GroupChatWorkflowPlan } from '../../../shared/group-chat-workflow-types';
+import { createRun } from '../../../main/group-chat/workflow-state-machine';
+import {
+	abortWorkflowRun,
+	approveWorkflowRun,
+	clearWorkflowRun,
+	completeWorkflowStage,
+	failWorkflowStage,
+	getWorkflowRun,
+	recordWorkflowStageResponse,
+	resetAllWorkflowRuns,
+	setWorkflowRunChangedEmitter,
+	setWorkflowRun,
+} from '../../../main/group-chat/workflow-run-registry';
+import { logger } from '../../../main/utils/logger';
+import { clearWorkflowRunDir } from '../../../main/group-chat/workflow-artifacts';
+
+vi.mock('../../../main/utils/logger', () => ({
+	logger: { info: vi.fn(), warn: vi.fn() },
+}));
+
+vi.mock('../../../main/group-chat/workflow-artifacts', () => ({
+	clearWorkflowRunDir: vi.fn().mockResolvedValue(undefined),
+}));
+
+function createPlan(runId = 'run-123'): GroupChatWorkflowPlan {
+	return {
+		runId,
+		title: 'Release workflow',
+		createdAt: 1,
+		stages: [
+			{
+				id: 'stage-1',
+				name: 'Build',
+				agents: ['Builder'],
+				mode: 'serial',
+				instruction: 'Build the release.',
+			},
+			{
+				id: 'stage-2',
+				name: 'Verify',
+				agents: ['Reviewer'],
+				mode: 'serial',
+				instruction: 'Verify the release.',
+			},
+		],
+	};
+}
+
+describe('workflow-run-registry', () => {
+	beforeEach(() => {
+		resetAllWorkflowRuns();
+		vi.mocked(logger.info).mockClear();
+		vi.mocked(logger.warn).mockClear();
+		vi.mocked(clearWorkflowRunDir).mockResolvedValue(undefined);
+	});
+
+	afterEach(() => {
+		resetAllWorkflowRuns();
+		setWorkflowRunChangedEmitter(undefined);
+	});
+
+	it('emits the stored run, every state transition, and null when cleared', async () => {
+		const emitRunChanged = vi.fn();
+		setWorkflowRunChangedEmitter(emitRunChanged);
+		setWorkflowRun('chat-1', createRun(createPlan()));
+		approveWorkflowRun('chat-1');
+		completeWorkflowStage('chat-1', {
+			stageId: 'stage-1',
+			stageName: 'Build',
+			summary: 'Done.',
+		});
+		failWorkflowStage('chat-1', 'Verification failed');
+		setWorkflowRun('chat-1', createRun(createPlan('run-456')));
+		abortWorkflowRun('chat-1', 'user-cancelled');
+		await clearWorkflowRun('chat-1');
+
+		expect(emitRunChanged.mock.calls.map(([, run]) => run?.status ?? null)).toEqual([
+			'awaiting-approval',
+			'running',
+			'running',
+			'aborted',
+			'awaiting-approval',
+			'aborted',
+			null,
+		]);
+	});
+
+	it('stores runs independently by group chat and clears one with its artifacts', async () => {
+		const firstRun = createRun(createPlan('run-1'));
+		const secondRun = createRun(createPlan('run-2'));
+
+		setWorkflowRun('chat-1', firstRun);
+		setWorkflowRun('chat-2', secondRun);
+		expect(getWorkflowRun('chat-1')).toBe(firstRun);
+		expect(getWorkflowRun('chat-2')).toBe(secondRun);
+
+		await clearWorkflowRun('chat-1');
+		expect(getWorkflowRun('chat-1')).toBeUndefined();
+		expect(getWorkflowRun('chat-2')).toBe(secondRun);
+		expect(clearWorkflowRunDir).toHaveBeenCalledWith('chat-1', 'run-1');
+	});
+
+	it('swallows and logs artifact cleanup failures while clearing registry state', async () => {
+		vi.mocked(clearWorkflowRunDir).mockRejectedValueOnce(new Error('directory locked'));
+		setWorkflowRun('chat-1', createRun(createPlan()));
+
+		await expect(clearWorkflowRun('chat-1')).resolves.toBeUndefined();
+
+		expect(getWorkflowRun('chat-1')).toBeUndefined();
+		expect(logger.warn).toHaveBeenCalledWith(
+			'Failed to clear workflow run artifacts',
+			'[WorkflowRunRegistry]',
+			expect.objectContaining({ groupChatId: 'chat-1', runId: 'run-123' })
+		);
+	});
+
+	it('applies and stores each state-machine transition', () => {
+		const initial = createRun(createPlan());
+		setWorkflowRun('chat-1', initial);
+
+		const approved = approveWorkflowRun('chat-1');
+		expect(approved).toMatchObject({ status: 'running', currentStageIndex: 0 });
+		expect(approved).not.toBe(initial);
+		expect(getWorkflowRun('chat-1')).toBe(approved);
+
+		const advanced = completeWorkflowStage('chat-1', {
+			stageId: 'stage-1',
+			stageName: 'Build',
+			summary: 'Build finished.',
+		});
+		expect(advanced).toMatchObject({ status: 'running', currentStageIndex: 1 });
+		expect(getWorkflowRun('chat-1')).toBe(advanced);
+
+		const failed = failWorkflowStage('chat-1', 'Verification failed');
+		expect(failed).toMatchObject({ status: 'aborted', abortReason: 'Verification failed' });
+		expect(getWorkflowRun('chat-1')).toBe(failed);
+
+		setWorkflowRun('chat-1', createRun(createPlan('run-456')));
+		const aborted = abortWorkflowRun('chat-1', 'User cancelled');
+		expect(aborted).toMatchObject({ status: 'aborted', abortReason: 'User cancelled' });
+		expect(getWorkflowRun('chat-1')).toBe(aborted);
+	});
+
+	it('records inline and artifact participant responses on the current stage', () => {
+		setWorkflowRun('chat-1', createRun(createPlan()));
+		approveWorkflowRun('chat-1');
+
+		recordWorkflowStageResponse('chat-1', {
+			participantName: 'Builder',
+			mode: 'inline',
+			content: 'Small result.',
+		});
+		recordWorkflowStageResponse('chat-1', {
+			participantName: 'Reviewer',
+			mode: 'artifact',
+			digest: 'Large result digest.',
+			artifactPath: '/tmp/run/stage-1/Reviewer.md',
+		});
+
+		expect(getWorkflowRun('chat-1')?.handoffs).toEqual([
+			{
+				stageId: 'stage-1',
+				stageName: 'Build',
+				summary: '',
+				artifactPaths: ['/tmp/run/stage-1/Reviewer.md'],
+				participantHandoffs: [
+					{ participantName: 'Builder', mode: 'inline', content: 'Small result.' },
+					{
+						participantName: 'Reviewer',
+						mode: 'artifact',
+						digest: 'Large result digest.',
+						artifactPath: '/tmp/run/stage-1/Reviewer.md',
+					},
+				],
+			},
+		]);
+	});
+
+	it('returns undefined without creating state when a chat has no run', () => {
+		expect(approveWorkflowRun('missing')).toBeUndefined();
+		expect(
+			completeWorkflowStage('missing', {
+				stageId: 'stage-1',
+				stageName: 'Build',
+				summary: 'Done.',
+			})
+		).toBeUndefined();
+		expect(failWorkflowStage('missing', 'Failed')).toBeUndefined();
+		expect(abortWorkflowRun('missing', 'Cancelled')).toBeUndefined();
+		expect(getWorkflowRun('missing')).toBeUndefined();
+	});
+
+	it('logs stored runs and every applied transition with registry context', () => {
+		setWorkflowRun('chat-1', createRun(createPlan()));
+		approveWorkflowRun('chat-1');
+		completeWorkflowStage('chat-1', {
+			stageId: 'stage-1',
+			stageName: 'Build',
+			summary: 'Done.',
+		});
+
+		expect(logger.info).toHaveBeenCalledTimes(3);
+		for (const call of vi.mocked(logger.info).mock.calls) {
+			expect(call[1]).toBe('[WorkflowRunRegistry]');
+			expect(call[2]).toMatchObject({ groupChatId: 'chat-1', runId: 'run-123' });
+		}
+	});
+});

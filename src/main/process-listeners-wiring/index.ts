@@ -32,6 +32,7 @@ import {
 	respawnParticipantWithRecovery,
 	clearActiveParticipantTaskSession,
 	clearModeratorResponseTimeout,
+	failActiveWorkflowStage,
 } from '../group-chat/group-chat-router';
 import {
 	updateParticipant,
@@ -96,6 +97,7 @@ export function wireProcessListeners(deps: ProcessListenersWiringDependencies): 
 			respawnParticipantWithRecovery,
 			clearActiveParticipantTaskSession,
 			clearModeratorResponseTimeout,
+			failActiveWorkflowStage,
 		},
 		groupChatStorage: {
 			loadGroupChat,

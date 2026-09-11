@@ -73,6 +73,7 @@ import { useBatchProcessor } from '../../../renderer/hooks/batch/useBatchProcess
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useBatchStore } from '../../../renderer/stores/batchStore';
+import { registerGroupChatAutoRun } from '../../../renderer/utils/groupChatAutoRunRegistry';
 import { useModalStore } from '../../../renderer/stores/modalStore';
 
 // ============================================================================
@@ -191,6 +192,9 @@ beforeEach(() => {
 		},
 		history: {
 			add: vi.fn().mockResolvedValue(undefined),
+		},
+		groupChat: {
+			reportAutoRunComplete: vi.fn().mockResolvedValue(undefined),
 		},
 		leaderboard: {
 			submit: vi.fn().mockResolvedValue({ success: false }),
@@ -913,6 +917,42 @@ describe('useBatchHandlers', () => {
 	// ====================================================================
 
 	describe('onComplete callback', () => {
+		it('reports the full Auto Run result as the group chat stage handoff', async () => {
+			const session = createMockSession({ id: 'session-1', name: 'Release Agent' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+			useSettingsStore.setState({
+				firstAutoRunCompleted: true,
+				leaderboardRegistration: null,
+			});
+			registerGroupChatAutoRun('session-1', 'chat-1', 'Release Agent');
+			renderHook(() => useBatchHandlers(createDeps()));
+			const callArgs = vi.mocked(useBatchProcessor).mock.calls[0][0];
+			const result = `**Auto Run Summary**\n\n${'Playbook result details. '.repeat(250)}`;
+
+			await act(async () => {
+				callArgs.onComplete({
+					sessionId: 'session-1',
+					sessionName: 'Release Agent',
+					completedTasks: 5,
+					totalTasks: 5,
+					wasStopped: false,
+					elapsedTimeMs: 60000,
+					inputTokens: 1000,
+					outputTokens: 500,
+					totalCostUsd: 0.05,
+					documentsProcessed: 2,
+					result,
+				});
+				await Promise.resolve();
+			});
+
+			expect(window.maestro.groupChat.reportAutoRunComplete).toHaveBeenCalledWith(
+				'chat-1',
+				'Release Agent',
+				result
+			);
+		});
+
 		it('sends toast notification on completion', () => {
 			const session = createMockSession({ id: 'session-1', name: 'My Agent' });
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });

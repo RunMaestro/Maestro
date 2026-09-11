@@ -29,6 +29,7 @@ vi.mock('lucide-react', () => {
 		Download: createIcon('download', '⬇️'),
 		RefreshCw: createIcon('refresh', '🔄'),
 		Database: createIcon('database', '💾'),
+		Wand2: createIcon('wand', '🪄'),
 		// SummaryCards icons
 		Filter: createIcon('filter', '🔍'),
 		MessageSquare: createIcon('message-square', '💬'),

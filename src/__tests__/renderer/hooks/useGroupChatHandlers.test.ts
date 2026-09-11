@@ -16,6 +16,7 @@ vi.mock('../../../renderer/stores/notificationStore', async () => {
 });
 import { notifyToast } from '../../../renderer/stores/notificationStore';
 import type { GroupChatMessage } from '../../../shared/group-chat-types';
+import type { GroupChatWorkflowRun } from '../../../shared/group-chat-workflow-types';
 
 type ChatMessageHandler = (chatId: string, message: GroupChatMessage) => void;
 
@@ -25,6 +26,7 @@ type ChatMessageHandler = (chatId: string, message: GroupChatMessage) => void;
 const mockGroupChat = {
 	load: vi.fn().mockResolvedValue(null),
 	getMessages: vi.fn().mockResolvedValue([]),
+	getWorkflowRun: vi.fn().mockResolvedValue(null),
 	create: vi.fn().mockResolvedValue({ id: 'gc-new', name: 'New Chat' }),
 	delete: vi.fn().mockResolvedValue(undefined),
 	rename: vi.fn().mockResolvedValue(undefined),
@@ -38,6 +40,7 @@ const mockGroupChat = {
 	onModeratorUsage: vi.fn().mockReturnValue(() => {}),
 	onParticipantState: vi.fn().mockReturnValue(() => {}),
 	onModeratorSessionIdChanged: vi.fn().mockReturnValue(() => {}),
+	onWorkflowRunChanged: vi.fn().mockReturnValue(() => {}),
 };
 
 // ---------------------------------------------------------------------------
@@ -50,6 +53,7 @@ const initialGroupChatState = {
 	groupChatState: 'idle' as const,
 	participantStates: new Map(),
 	moderatorUsage: null,
+	workflowRun: null,
 	groupChatStates: new Map(),
 	allGroupChatParticipantStates: new Map(),
 	unreadGroupChatIds: new Set<string>(),
@@ -128,6 +132,13 @@ describe('useGroupChatHandlers', () => {
 				groupChatState: 'moderator-thinking',
 				participantStates: new Map([['agent1', 'working']]),
 				groupChatError: { error: { type: 'authentication' } as any, groupChatId: 'gc-1' },
+				workflowRun: {
+					plan: { runId: 'run-1', title: 'Test', createdAt: 1, stages: [] },
+					status: 'running',
+					currentStageIndex: 0,
+					stageStatuses: {},
+					handoffs: [],
+				},
 			});
 
 			const { result } = renderHook(() => useGroupChatHandlers());
@@ -139,6 +150,7 @@ describe('useGroupChatHandlers', () => {
 			expect(state.groupChatState).toBe('idle');
 			expect(state.participantStates.size).toBe(0);
 			expect(state.groupChatError).toBeNull();
+			expect(state.workflowRun).toBeNull();
 		});
 	});
 
@@ -203,6 +215,26 @@ describe('useGroupChatHandlers', () => {
 			expect(state.activeGroupChatId).toBe('gc-1');
 			expect(state.groupChatMessages).toEqual(messages);
 			expect(mockGroupChat.startModerator).toHaveBeenCalledWith('gc-1');
+		});
+
+		it('hydrates the active workflow run when opening a chat', async () => {
+			const run: GroupChatWorkflowRun = {
+				plan: { runId: 'run-1', title: 'Test plan', createdAt: 1, stages: [] },
+				status: 'awaiting-approval',
+				currentStageIndex: 0,
+				stageStatuses: {},
+				handoffs: [],
+			};
+			mockGroupChat.load.mockResolvedValueOnce({ id: 'gc-1', name: 'Chat', participants: [] });
+			mockGroupChat.getWorkflowRun.mockResolvedValueOnce(run);
+
+			const { result } = renderHook(() => useGroupChatHandlers());
+			await act(async () => {
+				await result.current.handleOpenGroupChat('gc-1');
+			});
+
+			expect(mockGroupChat.getWorkflowRun).toHaveBeenCalledWith('gc-1');
+			expect(useGroupChatStore.getState().workflowRun).toBe(run);
 		});
 
 		it('clears the unread flag - opening the room is reading it', async () => {
@@ -1153,6 +1185,7 @@ describe('useGroupChatHandlers', () => {
 			expect(mockGroupChat.onParticipantsChanged).toHaveBeenCalled();
 			expect(mockGroupChat.onParticipantState).toHaveBeenCalled();
 			expect(mockGroupChat.onModeratorSessionIdChanged).toHaveBeenCalled();
+			expect(mockGroupChat.onWorkflowRunChanged).toHaveBeenCalled();
 
 			// onMessage has a global subscriber too - the unread tracker, which
 			// watches the rooms nobody is looking at.
@@ -1174,13 +1207,14 @@ describe('useGroupChatHandlers', () => {
 		it('calls all cleanup functions on unmount', () => {
 			useGroupChatStore.setState({ activeGroupChatId: 'gc-1' });
 
-			const cleanups = Array.from({ length: 6 }, () => vi.fn());
+			const cleanups = Array.from({ length: 7 }, () => vi.fn());
 			mockGroupChat.onStateChange.mockReturnValueOnce(cleanups[0]);
 			mockGroupChat.onParticipantsChanged.mockReturnValueOnce(cleanups[1]);
 			mockGroupChat.onParticipantState.mockReturnValueOnce(cleanups[2]);
 			mockGroupChat.onModeratorSessionIdChanged.mockReturnValueOnce(cleanups[3]);
-			mockGroupChat.onMessage.mockReturnValueOnce(cleanups[4]);
-			mockGroupChat.onModeratorUsage.mockReturnValueOnce(cleanups[5]);
+			mockGroupChat.onWorkflowRunChanged.mockReturnValueOnce(cleanups[4]);
+			mockGroupChat.onMessage.mockReturnValueOnce(cleanups[5]);
+			mockGroupChat.onModeratorUsage.mockReturnValueOnce(cleanups[6]);
 
 			const { unmount } = renderHook(() => useGroupChatHandlers());
 			unmount();
@@ -1206,6 +1240,30 @@ describe('useGroupChatHandlers', () => {
 			const msgs = useGroupChatStore.getState().groupChatMessages;
 			expect(msgs.length).toBe(2);
 			expect(msgs[1]).toEqual({ role: 'assistant', content: 'new' });
+		});
+
+		it('onWorkflowRunChanged updates only the active chat run', () => {
+			useGroupChatStore.setState({ activeGroupChatId: 'gc-1', workflowRun: null });
+			let workflowCallback: ((id: string, run: GroupChatWorkflowRun | null) => void) | undefined;
+			mockGroupChat.onWorkflowRunChanged.mockImplementationOnce((callback) => {
+				workflowCallback = callback;
+				return () => {};
+			});
+
+			renderHook(() => useGroupChatHandlers());
+			const run: GroupChatWorkflowRun = {
+				plan: { runId: 'run-1', title: 'Test plan', createdAt: 1, stages: [] },
+				status: 'running',
+				currentStageIndex: 0,
+				stageStatuses: {},
+				handoffs: [],
+			};
+
+			act(() => workflowCallback?.('gc-other', run));
+			expect(useGroupChatStore.getState().workflowRun).toBeNull();
+
+			act(() => workflowCallback?.('gc-1', run));
+			expect(useGroupChatStore.getState().workflowRun).toBe(run);
 		});
 
 		it('onMessage callback ignores messages for other group chats', () => {

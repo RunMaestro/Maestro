@@ -108,4 +108,18 @@ describe('usePersistedPanelWidth', () => {
 		act(() => result.current.setWidth(700));
 		expect(result.current.width).toBe(700);
 	});
+
+	it('still resizes and resets when Storage has no usable methods', () => {
+		Object.defineProperty(window, 'localStorage', {
+			configurable: true,
+			writable: true,
+			value: {},
+		});
+
+		const { result } = renderHook(() => usePersistedPanelWidth(KEY, BOUNDS));
+		act(() => result.current.setWidth(700));
+		expect(result.current.width).toBe(700);
+		act(() => result.current.reset());
+		expect(result.current.width).toBe(560);
+	});
 });

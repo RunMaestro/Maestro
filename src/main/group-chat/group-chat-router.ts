@@ -33,6 +33,7 @@ import {
 	findUniqueMentionMatch,
 	getMentionNameForContext,
 	getMentionMatchPriority,
+	mentionMatches,
 	stripUnmatchedTrailingClosers,
 	normalizeMentionName,
 	requiresIdleParticipants,
@@ -42,6 +43,8 @@ import {
 	getModeratorSessionId,
 	isModeratorActive,
 	getModeratorSystemPrompt,
+	getWorkflowPlanningPrompt,
+	getWorkflowStagePrompt,
 	getModeratorSynthesisPrompt,
 } from './group-chat-moderator';
 import {
@@ -61,6 +64,31 @@ import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
 import { setGetCustomShellPathCallback } from './group-chat-config';
 import { spawnGroupChatAgent } from './spawnGroupChatAgent';
 import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
+import { generateUUID } from '../../shared/uuid';
+import {
+	extractStageDirective,
+	extractWorkflowPlanBlock,
+	isWorkflowApproval,
+	parseWorkflowPlan,
+	renderWorkflowPlanSummary,
+	stripStageDirectives,
+} from './workflow-plan-parser';
+import { createRun } from './workflow-state-machine';
+import {
+	abortWorkflowRun,
+	approveWorkflowRun,
+	clearWorkflowRun,
+	cleanupWorkflowRunArtifacts,
+	completeWorkflowStage,
+	failWorkflowStage,
+	getWorkflowRun,
+	recordWorkflowStageResponse,
+	setWorkflowRun,
+} from './workflow-run-registry';
+import type { GroupChatWorkflowRun } from '../../shared/group-chat-workflow-types';
+import { buildCurrentStageContext, buildPlanContextBlock } from './workflow-prompt-context';
+import { classifyHandoff } from './workflow-handoff';
+import { writeStageArtifact } from './workflow-artifacts';
 
 // Import emitters from IPC handlers (will be populated after handlers are registered)
 import { groupChatEmitters } from '../ipc/handlers/groupChat';
@@ -69,6 +97,80 @@ const LOG_CONTEXT = '[GroupChatRouter]';
 
 // Re-export setGetCustomShellPathCallback for index.ts to use
 export { setGetCustomShellPathCallback };
+
+function buildModeratorHistoryContext(
+	messages: GroupChatMessage[],
+	run: GroupChatWorkflowRun | undefined,
+	limit: number
+): string {
+	const workflowParticipants = new Set(
+		run?.status === 'running'
+			? run.handoffs.flatMap((handoff) =>
+					(handoff.participantHandoffs ?? []).map((response) => response.participantName)
+				)
+			: []
+	);
+
+	return messages
+		.slice(-limit)
+		.filter((message) => !workflowParticipants.has(message.from))
+		.map((message) => `[${message.from}]: ${message.content}`)
+		.join('\n');
+}
+
+/** Compose the moderator's base instructions with workflow guidance and durable state. */
+export function buildModeratorPromptSections(
+	baseSystemPrompt: string,
+	run: GroupChatWorkflowRun | undefined
+): string {
+	if (run?.status === 'running') {
+		return `${baseSystemPrompt}\n\n${getWorkflowStagePrompt()}\n\n${buildPlanContextBlock(run)}\n\n${buildCurrentStageContext(run)}`;
+	}
+
+	const shouldOfferPlanning = !run || run.status === 'complete' || run.status === 'aborted';
+	return shouldOfferPlanning
+		? `${baseSystemPrompt}\n\n${getWorkflowPlanningPrompt()}`
+		: baseSystemPrompt;
+}
+
+function isWorkflowCancellation(text: string): boolean {
+	const trimmed = text.trim();
+	if (/^!cancel(?:[.!?]+)?$/i.test(trimmed)) return true;
+	if (trimmed.length >= 40) return false;
+	const normalized = trimmed
+		.toLowerCase()
+		.replace(/[^\p{L}\p{N}]+/gu, ' ')
+		.trim()
+		.replace(/\s+/g, ' ');
+	return normalized === 'cancel' || normalized === 'never mind' || normalized === 'scrap it';
+}
+
+function buildApprovedWorkflowContext(run: GroupChatWorkflowRun): string {
+	const stage = run.plan.stages[run.currentStageIndex];
+	return `## Approved Workflow Stage
+The user approved the workflow. Begin stage ${run.currentStageIndex + 1} of ${run.plan.stages.length} now: ${stage.name}.
+Assigned agents: ${stage.agents.map((agent) => `@${agent}`).join(', ') || '(Auto Run only)'}
+Instruction: ${stage.instruction}
+
+Current workflow plan JSON:
+\`\`\`json
+${JSON.stringify(run.plan, null, 2)}
+\`\`\``;
+}
+
+function buildWorkflowRevisionContext(run: GroupChatWorkflowRun): string {
+	return `${getWorkflowPlanningPrompt()}
+
+## Workflow Plan Revision
+The user is giving feedback on the pending plan below. Do not dispatch participants. Revise the plan in response, then emit a replacement \`maestro-plan\` block and end the turn as required by the planning instructions.
+
+${buildPlanContextBlock(run)}
+
+Current workflow plan JSON:
+\`\`\`json
+${JSON.stringify(run.plan, null, 2)}
+\`\`\``;
+}
 
 function isModeratorInactiveAutoAddRace(error: unknown, groupChatId: string): boolean {
 	if (!(error instanceof Error)) return false;
@@ -156,6 +258,28 @@ const pendingParticipantResponses = new Map<string, Set<string>>();
  * The moderator runs single-threaded per chat, so a plain groupChatId flag is safe.
  */
 const pendingSynthesisRounds = new Set<string>();
+
+/**
+ * Counts corrective moderator retries for the current workflow stage in each chat.
+ * The run and stage ids make a stage transition or replacement reset the budget
+ * without relying on every transition call site to remember a separate cleanup.
+ */
+const workflowStageNudges = new Map<string, { runId: string; stageId: string; count: number }>();
+
+const MAX_WORKFLOW_STAGE_NUDGES = 2;
+
+function incrementWorkflowStageNudge(groupChatId: string, run: GroupChatWorkflowRun): number {
+	const stage = run.plan.stages[run.currentStageIndex];
+	const current = workflowStageNudges.get(groupChatId);
+	const count =
+		current?.runId === run.plan.runId && current.stageId === stage.id ? current.count + 1 : 1;
+	workflowStageNudges.set(groupChatId, {
+		runId: run.plan.runId,
+		stageId: stage.id,
+		count,
+	});
+	return count;
+}
 
 /**
  * Writes a group chat history entry and emits it to the renderer. Centralizes the
@@ -292,6 +416,53 @@ export function settleGroupChatToIdle(groupChatId: string): void {
 }
 
 /**
+ * Fail the stage currently owned by a running workflow and perform the complete
+ * abort cleanup in one place. Callers that handle an ordinary, non-workflow
+ * turn receive `undefined` and retain their existing recovery behavior.
+ */
+export async function failActiveWorkflowStage(
+	groupChatId: string,
+	reason: string
+): Promise<GroupChatWorkflowRun | undefined> {
+	const activeRun = getWorkflowRun(groupChatId);
+	if (activeRun?.status !== 'running') return undefined;
+
+	const failedRun = failWorkflowStage(groupChatId, reason);
+	clearModeratorResponseTimeout(groupChatId);
+	clearPendingParticipants(groupChatId);
+	if (failedRun) {
+		await cleanupWorkflowRunArtifacts(groupChatId, failedRun);
+	}
+	settleGroupChatToIdle(groupChatId);
+	return failedRun;
+}
+
+/**
+ * Abort whichever workflow run is still active for a chat and perform the same
+ * supervision, artifact, pending-work, and power cleanup as a failed stage.
+ * Lifecycle actions use an abort rather than a stage failure because stopping
+ * the room is a user action, not a failed participant deliverable.
+ */
+export async function abortActiveWorkflowRun(
+	groupChatId: string,
+	reason: string
+): Promise<GroupChatWorkflowRun | undefined> {
+	const activeRun = getWorkflowRun(groupChatId);
+	if (activeRun?.status !== 'awaiting-approval' && activeRun?.status !== 'running') {
+		return undefined;
+	}
+
+	const abortedRun = abortWorkflowRun(groupChatId, reason);
+	clearModeratorResponseTimeout(groupChatId);
+	clearPendingParticipants(groupChatId);
+	if (abortedRun) {
+		await cleanupWorkflowRunArtifacts(groupChatId, abortedRun);
+	}
+	settleGroupChatToIdle(groupChatId);
+	return abortedRun;
+}
+
+/**
  * Registers a silence budget for the moderator.
  * If the moderator goes quiet for MODERATOR_RESPONSE_TIMEOUT_MS (or runs past
  * MODERATOR_MAX_DURATION_MS while still talking), its process is killed and the
@@ -304,7 +475,7 @@ export function setModeratorResponseTimeout(
 ): void {
 	clearModeratorResponseTimeout(groupChatId);
 
-	const giveUp = (reason: string, budgetMs: number): void => {
+	const giveUp = async (reason: string, budgetMs: number): Promise<void> => {
 		moderatorTimeouts.delete(groupChatId);
 		console.warn(
 			`[GroupChat:Debug] Moderator ${reason} after ${budgetMs / 1000}s for ${groupChatId} - killing and resetting to idle`
@@ -333,8 +504,25 @@ export function setModeratorResponseTimeout(
 			content: `⚠️ Moderator ${reason} after ${budgetMs / 60000} minutes and was stopped. Resetting to idle. You can send another message to retry.`,
 		});
 
-		groupChatEmitters.emitStateChange?.(groupChatId, 'idle');
-		powerManager.removeBlockReason(`groupchat:${groupChatId}`);
+		if (getWorkflowRun(groupChatId)?.status === 'running') {
+			await failActiveWorkflowStage(
+				groupChatId,
+				`Moderator ${reason} after ${budgetMs / 60000} minutes.`
+			);
+		} else {
+			// Keep ordinary chat timeout settlement synchronous. Existing callers and
+			// tests rely on the state clearing in the watchdog callback itself.
+			settleGroupChatToIdle(groupChatId);
+		}
+	};
+
+	const fire = (reason: string, budgetMs: number): void => {
+		void giveUp(reason, budgetMs).catch((error) => {
+			logger.error('Moderator timeout handler failed', LOG_CONTEXT, { groupChatId, error });
+			captureException(error, { operation: 'groupChat:moderatorTimeout', groupChatId });
+			clearPendingParticipants(groupChatId);
+			settleGroupChatToIdle(groupChatId);
+		});
 	};
 
 	moderatorTimeouts.set(
@@ -342,8 +530,8 @@ export function setModeratorResponseTimeout(
 		createIdleWatchdog({
 			idleMs: MODERATOR_RESPONSE_TIMEOUT_MS,
 			maxMs: MODERATOR_MAX_DURATION_MS,
-			onIdle: () => giveUp('went silent', MODERATOR_RESPONSE_TIMEOUT_MS),
-			onMax: () => giveUp('exceeded the single-turn limit', MODERATOR_MAX_DURATION_MS),
+			onIdle: () => fire('went silent', MODERATOR_RESPONSE_TIMEOUT_MS),
+			onMax: () => fire('exceeded the single-turn limit', MODERATOR_MAX_DURATION_MS),
 		})
 	);
 }
@@ -466,6 +654,12 @@ function setParticipantResponseTimeout(
 			if (autoRunSet.size === 0) autoRunParticipantTracker.delete(groupChatId);
 		}
 
+		const failedRun = await failActiveWorkflowStage(
+			groupChatId,
+			`Participant @${normalizeMentionName(participantName)} ${reason} after ${budgetMs / 60000} minutes.`
+		);
+		if (failedRun) return;
+
 		// Same close-out as a normal reply, via the shared helper: a timed-out
 		// participant still has to leave the pending set, or the room waits forever
 		// on a turn that is already over.
@@ -557,6 +751,7 @@ export function clearPendingParticipants(groupChatId: string): void {
 	}
 	pendingParticipantResponses.delete(groupChatId);
 	autoRunParticipantTracker.delete(groupChatId);
+	workflowStageNudges.delete(groupChatId);
 }
 
 /**
@@ -855,9 +1050,22 @@ export async function routeUserMessage(
 	}
 
 	logger.debug(`[GroupChat:Debug] Moderator is active: true`);
+	// Workflow-strip actions such as Start route through this function without a
+	// renderer mode flag. Preserve the request's read-only state across those
+	// control turns so approval cannot silently make stage 1 writable. Ordinary
+	// messages with no active workflow retain the existing read-write default.
+	if (readOnly === undefined) {
+		const activeRun = getWorkflowRun(groupChatId);
+		if (activeRun?.status === 'awaiting-approval' || activeRun?.status === 'running') {
+			readOnly = getGroupChatReadOnlyState(groupChatId);
+		}
+	}
+	const containsWorkflowPlan = extractWorkflowPlanBlock(message) !== null;
 
 	// Auto-add participants mentioned by the user if they match available sessions
-	if (processManager && agentDetector && getSessionsCallback) {
+	// unless this turn is a workflow plan, whose agent names are plan data rather
+	// than immediate delegation targets.
+	if (!containsWorkflowPlan && processManager && agentDetector && getSessionsCallback) {
 		const userMentions = extractAllMentions(message);
 		const sessions = getSessionsCallback();
 		const existingParticipantNames = new Set(chat.participants.map((p) => p.name));
@@ -989,6 +1197,51 @@ export async function routeUserMessage(
 		fullResponse: message,
 	});
 
+	// A hand-authored workflow plan is already the moderator-ready artifact for
+	// this turn. Intercept it only after preserving the user's message and any
+	// attached images, then skip spawning the moderator entirely.
+	if (await handleInboundWorkflowPlan(groupChatId, message)) {
+		settleGroupChatToIdle(groupChatId);
+		return;
+	}
+
+	let workflowTurnContext = '';
+	const pendingWorkflow = getWorkflowRun(groupChatId);
+	if (pendingWorkflow?.status === 'running' && isWorkflowCancellation(message)) {
+		const abortedRun = abortWorkflowRun(groupChatId, 'user-cancelled');
+		clearPendingParticipants(groupChatId);
+		await announceToChat(groupChatId, chat.logPath, 'Workflow cancelled.');
+		if (abortedRun) {
+			await cleanupWorkflowRunArtifacts(groupChatId, abortedRun);
+		}
+		settleGroupChatToIdle(groupChatId);
+		return;
+	}
+
+	if (pendingWorkflow?.status === 'awaiting-approval') {
+		if (isWorkflowCancellation(message)) {
+			await announceToChat(groupChatId, chat.logPath, 'Workflow cancelled.');
+			await clearWorkflowRun(groupChatId);
+			settleGroupChatToIdle(groupChatId);
+			return;
+		}
+
+		if (isWorkflowApproval(message)) {
+			const approvedRun = approveWorkflowRun(groupChatId);
+			if (approvedRun?.status === 'running') {
+				const stage = approvedRun.plan.stages[approvedRun.currentStageIndex];
+				await announceToChat(
+					groupChatId,
+					chat.logPath,
+					`Workflow started: stage ${approvedRun.currentStageIndex + 1} of ${approvedRun.plan.stages.length}, ${stage.name}`
+				);
+				workflowTurnContext = buildApprovedWorkflowContext(approvedRun);
+			}
+		} else {
+			workflowTurnContext = buildWorkflowRevisionContext(pendingWorkflow);
+		}
+	}
+
 	// Spawn a batch process for the moderator to handle this message
 	// The response will be captured via the process:data event handler in index.ts
 	if (processManager && agentDetector) {
@@ -1055,10 +1308,11 @@ export async function routeUserMessage(
 			const chatHistory = await readLog(chat.logPath);
 			logger.debug(`[GroupChat:Debug] Chat history entries: ${chatHistory.length}`);
 
-			const historyContext = chatHistory
-				.slice(-20)
-				.map((m) => `[${m.from}]: ${m.content}`)
-				.join('\n');
+			const historyContext = buildModeratorHistoryContext(
+				chatHistory,
+				getWorkflowRun(groupChatId),
+				20
+			);
 
 			// Build image context if user attached images
 			let imageContext = '';
@@ -1077,8 +1331,15 @@ export async function routeUserMessage(
 				/\{\{CONDUCTOR_PROFILE\}\}/g,
 				moderatorSettings.conductorProfile || '(No conductor profile set)'
 			);
+			const moderatorPromptSections = buildModeratorPromptSections(
+				baseSystemPrompt,
+				getWorkflowRun(groupChatId)
+			);
+			const moderatorPromptWithWorkflowContext = workflowTurnContext
+				? `${moderatorPromptSections}\n\n${workflowTurnContext}`
+				: moderatorPromptSections;
 
-			const fullPrompt = `${baseSystemPrompt}
+			const fullPrompt = `${moderatorPromptWithWorkflowContext}
 
 ## Current Participants:
 ${participantContext}${availableSessionsContext}
@@ -1178,9 +1439,14 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 			} catch (error) {
 				logger.error(`Failed to spawn moderator for ${groupChatId}`, LOG_CONTEXT, { error });
 				captureException(error, { operation: 'groupChat:spawnModerator', groupChatId });
-				groupChatEmitters.emitStateChange?.(groupChatId, 'idle');
-				// Remove power block reason on error since we're going idle
-				powerManager.removeBlockReason(`groupchat:${groupChatId}`);
+				const failedRun = await failActiveWorkflowStage(
+					groupChatId,
+					`Moderator failed to start: ${error instanceof Error ? error.message : String(error)}`
+				);
+				if (!failedRun) {
+					clearModeratorResponseTimeout(groupChatId);
+					settleGroupChatToIdle(groupChatId);
+				}
 				throw new Error(
 					`Failed to spawn moderator: ${error instanceof Error ? error.message : String(error)}`
 				);
@@ -1353,7 +1619,7 @@ function finishParticipantTurn(
 }
 
 /** Posts a system line to the chat and to the log the moderator reads back. */
-async function announceToChat(
+export async function announceToChat(
 	groupChatId: string,
 	logPath: string,
 	content: string
@@ -1366,6 +1632,60 @@ async function announceToChat(
 		from: 'system',
 		content,
 	});
+}
+
+/**
+ * Intercepts the first workflow plan block in an inbound chat message.
+ *
+ * A recognized fence always consumes the turn, including when validation fails,
+ * so plan JSON and its agent names never fall through to normal mention or
+ * Auto Run routing.
+ */
+export async function handleInboundWorkflowPlan(
+	groupChatId: string,
+	text: string
+): Promise<boolean> {
+	const body = extractWorkflowPlanBlock(text);
+	if (body === null) return false;
+
+	const chat = await loadGroupChat(groupChatId);
+	if (!chat) {
+		logger.info(
+			`[GroupChat] Skipping workflow plan interception - chat ${groupChatId} no longer exists`,
+			LOG_CONTEXT
+		);
+		return true;
+	}
+
+	const result = parseWorkflowPlan(body, generateUUID());
+	if ('error' in result) {
+		logger.warn('Rejected inbound workflow plan', LOG_CONTEXT, {
+			groupChatId,
+			error: result.error,
+		});
+		await announceToChat(groupChatId, chat.logPath, `⚠️ Workflow plan error: ${result.error}`);
+		return true;
+	}
+
+	const supersededRun = getWorkflowRun(groupChatId);
+	if (supersededRun?.status === 'running') {
+		clearPendingParticipants(groupChatId);
+	}
+	workflowStageNudges.delete(groupChatId);
+	setWorkflowRun(groupChatId, createRun(result.plan));
+	if (supersededRun?.status === 'running') {
+		await announceToChat(
+			groupChatId,
+			chat.logPath,
+			'Previous workflow superseded by a new plan; approval is required before execution resumes.'
+		);
+	}
+	const summary = `${renderWorkflowPlanSummary(result.plan)}\n\nReply \`go\` to start, or tell me what to change.`;
+	await announceToChat(groupChatId, chat.logPath, summary);
+	if (supersededRun) {
+		await cleanupWorkflowRunArtifacts(groupChatId, supersededRun);
+	}
+	return true;
 }
 
 /**
@@ -1508,6 +1828,101 @@ export async function routeModeratorResponse(
 
 	logger.debug(`[GroupChat:Debug] Chat loaded: "${chat.name}"`);
 
+	// Preserve a moderator-authored plan as its original transcript entry before
+	// the rendered system summary. Detecting the fence first also prevents any
+	// @names or !autorun text inside its JSON from reaching the normal router.
+	if (extractWorkflowPlanBlock(message) !== null) {
+		await appendToLog(chat.logPath, 'moderator', message);
+		groupChatEmitters.emitMessage?.(groupChatId, {
+			timestamp: new Date().toISOString(),
+			from: 'moderator',
+			content: message,
+		});
+
+		if (await handleInboundWorkflowPlan(groupChatId, message)) {
+			await recordGroupChatHistory(groupChatId, {
+				timestamp: Date.now(),
+				summary: extractFirstSentence(message),
+				participantName: 'Moderator',
+				participantColor: '#808080',
+				type: isSynthesisRound ? 'synthesis' : 'response',
+				fullResponse: message,
+			});
+			settleGroupChatToIdle(groupChatId);
+			return;
+		}
+	}
+
+	// Stage directives are control-plane output from the moderator. Handle them
+	// before mention extraction so a handoff cannot accidentally dispatch work
+	// after it has already advanced or failed the run. The directive itself is
+	// removed from the transcript; its following prose remains as the visible
+	// handoff/final summary.
+	const workflowRun = getWorkflowRun(groupChatId);
+	const stageDirective = workflowRun?.status === 'running' ? extractStageDirective(message) : null;
+	if (workflowRun?.status === 'running' && stageDirective) {
+		workflowStageNudges.delete(groupChatId);
+		const completedStageIndex = workflowRun.currentStageIndex;
+		const completedStage = workflowRun.plan.stages[completedStageIndex];
+		const stagePosition = completedStageIndex + 1;
+		const stageCount = workflowRun.plan.stages.length;
+		const cleanedStageMessage = stripStageDirectives(message);
+		let transitionMessage: string;
+		let nextRun: GroupChatWorkflowRun | undefined;
+
+		if (stageDirective.kind === 'complete') {
+			nextRun = completeWorkflowStage(groupChatId, {
+				stageId: completedStage.id,
+				stageName: completedStage.name,
+				summary: stageDirective.body,
+			});
+			const nextStage = nextRun?.plan.stages[nextRun.currentStageIndex];
+			transitionMessage = nextStage
+				? `Stage ${stagePosition} of ${stageCount} complete: ${completedStage.name}. Starting stage ${stagePosition + 1}: ${nextStage.name}.`
+				: `Workflow complete: all ${stageCount} stages finished.`;
+		} else {
+			nextRun = failWorkflowStage(groupChatId, stageDirective.body);
+			clearPendingParticipants(groupChatId);
+			transitionMessage = `Stage ${stagePosition} of ${stageCount} failed: ${completedStage.name}. ${stageDirective.body}`;
+		}
+
+		// Announce and record the state change before the cleaned moderator prose so
+		// the final-stage summary remains the last user-facing word in the chat.
+		await announceToChat(groupChatId, chat.logPath, transitionMessage);
+		await recordGroupChatHistory(groupChatId, {
+			timestamp: Date.now(),
+			summary: transitionMessage,
+			participantName: 'Moderator',
+			participantColor: '#808080',
+			type: 'synthesis',
+			fullResponse: stageDirective.body,
+		});
+
+		if (cleanedStageMessage) {
+			await appendToLog(chat.logPath, 'moderator', cleanedStageMessage);
+			groupChatEmitters.emitMessage?.(groupChatId, {
+				timestamp: new Date().toISOString(),
+				from: 'moderator',
+				content: cleanedStageMessage,
+			});
+		}
+
+		if (nextRun?.status === 'complete' || nextRun?.status === 'aborted') {
+			await cleanupWorkflowRunArtifacts(groupChatId, nextRun);
+		}
+
+		if (stageDirective.kind === 'complete' && nextRun?.status === 'running') {
+			if (processManager && agentDetector) {
+				await spawnModeratorSynthesis(groupChatId, processManager, agentDetector);
+			} else {
+				settleGroupChatToIdle(groupChatId);
+			}
+		} else {
+			settleGroupChatToIdle(groupChatId);
+		}
+		return;
+	}
+
 	// Strip internal !autorun directives from the message before logging/display.
 	// These are machine-to-machine commands; storing them in the chat log causes
 	// the synthesis moderator to see them in history and potentially re-trigger them.
@@ -1649,6 +2064,58 @@ export async function routeModeratorResponse(
 		`[GroupChat:Debug] Valid participant mentions found: ${mentions.join(', ') || '(none)'}`
 	);
 
+	let workflowGuardrailAction: 'none' | 'nudge' | 'abort' = 'none';
+	let workflowGuardrailInstruction = '';
+	if (workflowRun?.status === 'running') {
+		const currentStage = workflowRun.plan.stages[workflowRun.currentStageIndex];
+		const rosterMentions = currentStage.agents.map(
+			(agentName) => `@${normalizeMentionName(agentName)}`
+		);
+		const rosterDescription =
+			rosterMentions.length === 0
+				? 'no agents'
+				: rosterMentions.length === 1
+					? rosterMentions[0]
+					: `${rosterMentions.slice(0, -1).join(', ')} and ${rosterMentions.at(-1)}`;
+		const offRosterMentions = mentions.filter(
+			(participantName) =>
+				!currentStage.agents.some((stageAgent) => mentionMatches(stageAgent, participantName))
+		);
+
+		// The moderator remains authoritative: disclose roster deviations, but do
+		// not prevent the requested participant from receiving the handoff.
+		for (const participantName of offRosterMentions) {
+			await announceToChat(
+				groupChatId,
+				updatedChat.logPath,
+				`Note: stage ${workflowRun.currentStageIndex + 1} lists ${rosterDescription}, but @${normalizeMentionName(participantName)} was engaged.`
+			);
+		}
+
+		if (mentions.length === 0) {
+			const nudgeCount = incrementWorkflowStageNudge(groupChatId, workflowRun);
+			if (nudgeCount <= MAX_WORKFLOW_STAGE_NUDGES) {
+				workflowGuardrailAction = 'nudge';
+				workflowGuardrailInstruction = `Your previous turn did not engage an agent or finish the stage. Work only on stage ${workflowRun.currentStageIndex + 1}, ${currentStage.name}. Either mention ${rosterDescription} now or emit !stage-complete or !stage-failed on its own line.`;
+				await announceToChat(
+					groupChatId,
+					updatedChat.logPath,
+					`Workflow stage ${workflowRun.currentStageIndex + 1} needs a moderator action. Retrying (${nudgeCount} of ${MAX_WORKFLOW_STAGE_NUDGES}): mention ${rosterDescription} or emit a stage directive.`
+				);
+			} else {
+				workflowGuardrailAction = 'abort';
+				const abortMessage = `Workflow aborted: the moderator produced no participant mentions or stage directive after ${MAX_WORKFLOW_STAGE_NUDGES} retries during stage ${workflowRun.currentStageIndex + 1}, ${currentStage.name}.`;
+				const abortedRun = abortWorkflowRun(groupChatId, 'moderator-stage-guidance-exhausted');
+				clearPendingParticipants(groupChatId);
+				workflowStageNudges.delete(groupChatId);
+				await announceToChat(groupChatId, updatedChat.logPath, abortMessage);
+				if (abortedRun) {
+					await cleanupWorkflowRunArtifacts(groupChatId, abortedRun);
+				}
+			}
+		}
+	}
+
 	// Track participants that will need to respond for synthesis round
 	const participantsToRespond = new Set<string>();
 	const autoRunParticipantNames = new Set<string>();
@@ -1674,15 +2141,44 @@ export async function routeModeratorResponse(
 		// Hands one Auto Run to the renderer's batch processor. Returns whether it
 		// actually started, so a delegation parked behind a busy agent can replay
 		// it later and still be closed out if it turns out to be unrunnable.
-		const startAutoRunFor = (
+		const startAutoRunFor = async (
 			participant: GroupChatParticipant,
 			matchingSession: GroupChatSessionInfo | undefined,
 			targetFilename: string | undefined
-		): boolean => {
+		): Promise<boolean> => {
 			if (!matchingSession?.autoRunFolderPath) {
 				console.warn(
 					`[GroupChat:Debug] No autoRunFolderPath configured for ${participant.name} - skipping`
 				);
+				const activeRun = getWorkflowRun(groupChatId);
+				const activeStage =
+					activeRun?.status === 'running'
+						? activeRun.plan.stages[activeRun.currentStageIndex]
+						: undefined;
+				if (
+					activeRun &&
+					activeStage?.autoRun &&
+					mentionMatches(activeStage.autoRun.participantName, participant.name)
+				) {
+					const reason = `Auto Run stage "${activeStage.name}" cannot start because @${normalizeMentionName(participant.name)} has no Auto Run folder configured.`;
+					await failActiveWorkflowStage(groupChatId, reason);
+					await announceToChat(
+						groupChatId,
+						updatedChat.logPath,
+						`Stage ${activeRun.currentStageIndex + 1} of ${activeRun.plan.stages.length} failed: ${activeStage.name}. ${reason}`
+					);
+					await recordGroupChatHistory(groupChatId, {
+						timestamp: Date.now(),
+						summary: reason,
+						participantName: 'Moderator',
+						participantColor: '#808080',
+						type: 'error',
+						fullResponse: reason,
+					});
+					// The missing-folder condition is fully handled here. Returning true
+					// prevents a queued delegation from adding a second generic warning.
+					return true;
+				}
 				groupChatEmitters.emitMessage?.(groupChatId, {
 					timestamp: new Date().toISOString(),
 					from: 'system',
@@ -1777,7 +2273,7 @@ export async function routeModeratorResponse(
 				continue;
 			}
 
-			startAutoRunFor(participant, matchingSession, targetFilename);
+			await startAutoRunFor(participant, matchingSession, targetFilename);
 		}
 		logger.debug(`[GroupChat:Debug] =================================================`);
 	}
@@ -2036,7 +2532,10 @@ export async function routeModeratorResponse(
 
 	// If no actionable participant work was started (all directives invalid/skipped, no mentions),
 	// clean up lifecycle state so power blocks don't leak.
-	if (participantsToRespond.size === 0) {
+	if (
+		participantsToRespond.size === 0 &&
+		(workflowGuardrailAction !== 'nudge' || !processManager || !agentDetector)
+	) {
 		logger.debug(
 			`[GroupChat:Debug] No actionable participant work started - moderator response is final`
 		);
@@ -2088,6 +2587,15 @@ export async function routeModeratorResponse(
 	if (participantsToRespond.size > 0) {
 		logger.debug(
 			`[GroupChat:Debug] Waiting for ${participantsToRespond.size} participant(s) to respond: ${[...participantsToRespond].join(', ')}`
+		);
+	}
+
+	if (workflowGuardrailAction === 'nudge' && processManager && agentDetector) {
+		await spawnModeratorSynthesis(
+			groupChatId,
+			processManager,
+			agentDetector,
+			workflowGuardrailInstruction
 		);
 	}
 	logger.debug(`[GroupChat:Debug] ===================================================`);
@@ -2150,6 +2658,54 @@ export async function routeAgentResponse(
 	// Extract summary from first sentence (agents are prompted to start with a summary sentence)
 	const summary = extractFirstSentence(message);
 
+	const workflowRun = getWorkflowRun(groupChatId);
+	if (workflowRun?.status === 'running') {
+		const stage = workflowRun.plan.stages[workflowRun.currentStageIndex];
+		if (stage) {
+			const classification = classifyHandoff(message);
+			if (classification.mode === 'artifact') {
+				try {
+					const artifactPath = await writeStageArtifact({
+						groupChatId,
+						runId: workflowRun.plan.runId,
+						stageId: stage.id,
+						participantName,
+						content: message,
+					});
+					recordWorkflowStageResponse(groupChatId, {
+						participantName,
+						mode: 'artifact',
+						digest: classification.digest,
+						artifactPath,
+					});
+				} catch (error) {
+					logger.error(`Failed to write workflow artifact for ${participantName}`, LOG_CONTEXT, {
+						error,
+						groupChatId,
+						runId: workflowRun.plan.runId,
+						stageId: stage.id,
+					});
+					captureException(error, {
+						operation: 'groupChat:writeWorkflowArtifact',
+						participantName,
+						groupChatId,
+					});
+					recordWorkflowStageResponse(groupChatId, {
+						participantName,
+						mode: 'inline',
+						content: message,
+					});
+				}
+			} else {
+				recordWorkflowStageResponse(groupChatId, {
+					participantName,
+					mode: 'inline',
+					content: message,
+				});
+			}
+		}
+	}
+
 	// Update participant stats
 	const currentParticipant = participant;
 	const newMessageCount = (currentParticipant.messageCount || 0) + 1;
@@ -2205,7 +2761,8 @@ export async function routeAgentResponse(
 export async function spawnModeratorSynthesis(
 	groupChatId: string,
 	processManager: IProcessManager,
-	agentDetector: AgentDetector
+	agentDetector: AgentDetector,
+	workflowCorrection?: string
 ): Promise<void> {
 	logger.debug(`[GroupChat:Debug] ========== SPAWN MODERATOR SYNTHESIS ==========`);
 	logger.debug(`[GroupChat:Debug] Group Chat ID: ${groupChatId}`);
@@ -2214,9 +2771,11 @@ export async function spawnModeratorSynthesis(
 	const chat = await loadGroupChat(groupChatId);
 	if (!chat) {
 		logger.error(`Cannot spawn synthesis - chat not found: ${groupChatId}`, LOG_CONTEXT);
-		// Reset UI state and remove power block on early return
-		groupChatEmitters.emitStateChange?.(groupChatId, 'idle');
-		powerManager.removeBlockReason(`groupchat:${groupChatId}`);
+		const failedRun = await failActiveWorkflowStage(
+			groupChatId,
+			'Moderator synthesis could not start because the group chat no longer exists.'
+		);
+		if (!failedRun) settleGroupChatToIdle(groupChatId);
 		return;
 	}
 
@@ -2224,9 +2783,11 @@ export async function spawnModeratorSynthesis(
 
 	if (!isModeratorActive(groupChatId)) {
 		logger.error(`Cannot spawn synthesis - moderator not active for: ${groupChatId}`, LOG_CONTEXT);
-		// Reset UI state and remove power block on early return
-		groupChatEmitters.emitStateChange?.(groupChatId, 'idle');
-		powerManager.removeBlockReason(`groupchat:${groupChatId}`);
+		const failedRun = await failActiveWorkflowStage(
+			groupChatId,
+			'Moderator synthesis could not start because the moderator is not active.'
+		);
+		if (!failedRun) settleGroupChatToIdle(groupChatId);
 		return;
 	}
 
@@ -2238,9 +2799,11 @@ export async function spawnModeratorSynthesis(
 			`Cannot spawn synthesis - no moderator session ID for: ${groupChatId}`,
 			LOG_CONTEXT
 		);
-		// Reset UI state and remove power block on early return
-		groupChatEmitters.emitStateChange?.(groupChatId, 'idle');
-		powerManager.removeBlockReason(`groupchat:${groupChatId}`);
+		const failedRun = await failActiveWorkflowStage(
+			groupChatId,
+			'Moderator synthesis could not start because its session ID is unavailable.'
+		);
+		if (!failedRun) settleGroupChatToIdle(groupChatId);
 		return;
 	}
 
@@ -2259,9 +2822,11 @@ export async function spawnModeratorSynthesis(
 
 	if (!agent || !agent.available) {
 		logger.error(`Agent '${chat.moderatorAgentId}' is not available for synthesis`, LOG_CONTEXT);
-		// Reset UI state and remove power block on early return
-		groupChatEmitters.emitStateChange?.(groupChatId, 'idle');
-		powerManager.removeBlockReason(`groupchat:${groupChatId}`);
+		const failedRun = await failActiveWorkflowStage(
+			groupChatId,
+			`Moderator synthesis could not start because agent "${chat.moderatorAgentId}" is unavailable.`
+		);
+		if (!failedRun) settleGroupChatToIdle(groupChatId);
 		return;
 	}
 
@@ -2274,10 +2839,7 @@ export async function spawnModeratorSynthesis(
 	const chatHistory = await readLog(chat.logPath);
 	logger.debug(`[GroupChat:Debug] Chat history entries for synthesis: ${chatHistory.length}`);
 
-	const historyContext = chatHistory
-		.slice(-30)
-		.map((m) => `[${m.from}]: ${m.content}`)
-		.join('\n');
+	const historyContext = buildModeratorHistoryContext(chatHistory, getWorkflowRun(groupChatId), 30);
 
 	// Build participant context for potential follow-up @mentions
 	// Use normalized names (spaces → hyphens) so moderator can @mention them properly
@@ -2302,8 +2864,12 @@ export async function spawnModeratorSynthesis(
 		/\{\{CONDUCTOR_PROFILE\}\}/g,
 		synthModeratorSettings.conductorProfile || '(No conductor profile set)'
 	);
+	const synthModeratorPromptSections = buildModeratorPromptSections(
+		synthBasePrompt,
+		getWorkflowRun(groupChatId)
+	);
 
-	const synthesisPrompt = `${synthBasePrompt}
+	const synthesisPrompt = `${synthModeratorPromptSections}
 
 ${getModeratorSynthesisPrompt()}
 
@@ -2317,6 +2883,7 @@ ${historyContext}
 Review the agent responses above. Either:
 1. Synthesize into a final answer for the user (NO @mentions, NO !autorun) if the question is fully answered
 2. @mention specific agents for follow-up if you need more information
+${workflowCorrection ? `\n## Immediate Workflow Correction\n${workflowCorrection}\n` : ''}
 
 **IMPORTANT: Do NOT include any !autorun directives in this synthesis response.**`;
 
@@ -2403,9 +2970,11 @@ Review the agent responses above. Either:
 			participantColor: '#808080',
 			type: 'error',
 		});
-		groupChatEmitters.emitStateChange?.(groupChatId, 'idle');
-		// Remove power block reason on synthesis error since we're going idle
-		powerManager.removeBlockReason(`groupchat:${groupChatId}`);
+		const failedRun = await failActiveWorkflowStage(
+			groupChatId,
+			`Moderator synthesis failed to start: ${error instanceof Error ? error.message : String(error)}`
+		);
+		if (!failedRun) settleGroupChatToIdle(groupChatId);
 	}
 }
 

@@ -73,10 +73,21 @@ vi.mock('../../../../main/group-chat/group-chat-agent', () => ({
 // Mock group-chat-router
 vi.mock('../../../../main/group-chat/group-chat-router', () => ({
 	routeUserMessage: vi.fn(),
+	abortActiveWorkflowRun: vi.fn().mockResolvedValue(undefined),
+	announceToChat: vi.fn().mockResolvedValue(undefined),
 	clearPendingParticipants: vi.fn(),
 	routeAgentResponse: vi.fn(),
 	markParticipantResponded: vi.fn(),
 	spawnModeratorSynthesis: vi.fn(),
+	settleGroupChatToIdle: vi.fn(),
+}));
+
+vi.mock('../../../../main/group-chat/workflow-run-registry', () => ({
+	abortWorkflowRun: vi.fn(),
+	clearWorkflowRun: vi.fn().mockResolvedValue(undefined),
+	cleanupWorkflowRunArtifacts: vi.fn().mockResolvedValue(undefined),
+	getWorkflowRun: vi.fn(),
+	setWorkflowRunChangedEmitter: vi.fn(),
 }));
 
 // Mock agent-detector
@@ -118,6 +129,7 @@ import * as groupChatLog from '../../../../main/group-chat/group-chat-log';
 import * as groupChatModerator from '../../../../main/group-chat/group-chat-moderator';
 import * as groupChatAgent from '../../../../main/group-chat/group-chat-agent';
 import * as groupChatRouter from '../../../../main/group-chat/group-chat-router';
+import * as workflowRunRegistry from '../../../../main/group-chat/workflow-run-registry';
 import { broadcastBridgeEvent } from '../../../../main/web-server/handlers/bridgeHandlers';
 
 describe('groupChat IPC handlers', () => {
@@ -194,6 +206,9 @@ describe('groupChat IPC handlers', () => {
 				// Moderator handlers
 				'groupChat:startModerator',
 				'groupChat:sendToModerator',
+				'groupChat:getWorkflowRun',
+				'groupChat:approveWorkflowPlan',
+				'groupChat:cancelWorkflowRun',
 				'groupChat:stopModerator',
 				'groupChat:stopAll',
 				'groupChat:reportAutoRunComplete',
@@ -217,6 +232,48 @@ describe('groupChat IPC handlers', () => {
 				expect(handlers.has(channel), `Expected handler for ${channel}`).toBe(true);
 			}
 			expect(handlers.size).toBe(expectedChannels.length);
+		});
+	});
+
+	describe('workflow run handlers', () => {
+		it('returns null when the chat has no workflow run', async () => {
+			vi.mocked(workflowRunRegistry.getWorkflowRun).mockReturnValue(undefined);
+
+			const result = await handlers.get('groupChat:getWorkflowRun')!({} as any, 'gc-1');
+
+			expect(result).toBeNull();
+			expect(workflowRunRegistry.getWorkflowRun).toHaveBeenCalledWith('gc-1');
+		});
+
+		it('routes button approval through the same go-message path', async () => {
+			await handlers.get('groupChat:approveWorkflowPlan')!({} as any, 'gc-approve');
+
+			expect(groupChatRouter.routeUserMessage).toHaveBeenCalledWith(
+				'gc-approve',
+				'go',
+				mockProcessManager,
+				mockAgentDetector,
+				undefined,
+				undefined
+			);
+		});
+
+		it('aborts cancellation with the user-cancelled reason', async () => {
+			const abortedRun = { status: 'aborted', plan: { runId: 'run-1' } } as any;
+			vi.mocked(workflowRunRegistry.abortWorkflowRun).mockReturnValue(abortedRun);
+
+			const result = await handlers.get('groupChat:cancelWorkflowRun')!({} as any, 'gc-cancel');
+
+			expect(workflowRunRegistry.abortWorkflowRun).toHaveBeenCalledWith(
+				'gc-cancel',
+				'user-cancelled'
+			);
+			expect(groupChatRouter.clearPendingParticipants).toHaveBeenCalledWith('gc-cancel');
+			expect(workflowRunRegistry.cleanupWorkflowRunArtifacts).toHaveBeenCalledWith(
+				'gc-cancel',
+				abortedRun
+			);
+			expect(result).toBe(abortedRun);
 		});
 	});
 
@@ -800,6 +857,10 @@ describe('groupChat IPC handlers', () => {
 			await handler!({} as any, 'gc-stop');
 
 			expect(groupChatModerator.killModerator).toHaveBeenCalledWith('gc-stop', mockProcessManager);
+			expect(groupChatRouter.abortActiveWorkflowRun).toHaveBeenCalledWith(
+				'gc-stop',
+				'moderator-stopped'
+			);
 		});
 	});
 
@@ -1188,6 +1249,10 @@ describe('groupChat IPC handlers', () => {
 				mockProcessManager
 			);
 			expect(groupChatRouter.clearPendingParticipants).toHaveBeenCalledWith('gc-stop-all');
+			expect(groupChatRouter.abortActiveWorkflowRun).toHaveBeenCalledWith(
+				'gc-stop-all',
+				'moderator-stopped'
+			);
 		});
 
 		it('should handle null process manager', async () => {

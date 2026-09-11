@@ -15,6 +15,7 @@
 import { create } from 'zustand';
 import type { GroupChat, GroupChatMessage, GroupChatState, AgentError } from '../types';
 import type { QueuedItem } from '../types';
+import type { GroupChatWorkflowRun } from '../../shared/group-chat-workflow-types';
 
 // ============================================================================
 // Types
@@ -71,6 +72,7 @@ export interface GroupChatStoreState {
 	groupChatState: GroupChatState;
 	participantStates: Map<string, 'idle' | 'working'>;
 	moderatorUsage: { contextUsage: number; totalCost: number; tokenCount: number } | null;
+	workflowRun: GroupChatWorkflowRun | null;
 
 	// All-chats tracking (for sidebar busy indicators when chat is not active)
 	groupChatStates: Map<string, GroupChatState>;
@@ -134,6 +136,12 @@ export interface GroupChatStoreActions {
 			| ((
 					prev: { contextUsage: number; totalCost: number; tokenCount: number } | null
 			  ) => { contextUsage: number; totalCost: number; tokenCount: number } | null)
+	) => void;
+	setWorkflowRun: (
+		v:
+			| GroupChatWorkflowRun
+			| null
+			| ((prev: GroupChatWorkflowRun | null) => GroupChatWorkflowRun | null)
 	) => void;
 
 	// All-chats tracking
@@ -235,6 +243,7 @@ export const useGroupChatStore = create<GroupChatStore>()((set) => ({
 	groupChatState: 'idle' as GroupChatState,
 	participantStates: new Map(),
 	moderatorUsage: null,
+	workflowRun: null,
 	groupChatStates: new Map(),
 	allGroupChatParticipantStates: new Map(),
 	unreadGroupChatIds: new Set(),
@@ -255,6 +264,7 @@ export const useGroupChatStore = create<GroupChatStore>()((set) => ({
 	setGroupChatState: (v) => set((s) => ({ groupChatState: resolve(v, s.groupChatState) })),
 	setParticipantStates: (v) => set((s) => ({ participantStates: resolve(v, s.participantStates) })),
 	setModeratorUsage: (v) => set((s) => ({ moderatorUsage: resolve(v, s.moderatorUsage) })),
+	setWorkflowRun: (v) => set((s) => ({ workflowRun: resolve(v, s.workflowRun) })),
 	setGroupChatStates: (v) => set((s) => ({ groupChatStates: resolve(v, s.groupChatStates) })),
 	setAllGroupChatParticipantStates: (v) =>
 		set((s) => ({
@@ -337,6 +347,11 @@ export const useGroupChatStore = create<GroupChatStore>()((set) => ({
 			participantStates: new Map(),
 			participantLiveOutput: new Map(),
 			groupChatError: null,
+			workflowRun: null,
 			initiatorWindowId: null,
 		}),
 }));
+
+/** Select the workflow run scoped to the currently active group chat. */
+export const selectWorkflowRun = (state: GroupChatStore): GroupChatWorkflowRun | null =>
+	state.workflowRun;

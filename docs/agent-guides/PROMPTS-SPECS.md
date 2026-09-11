@@ -54,9 +54,16 @@ src/main/prompt-manager.ts
 | File                                | Export                              | Purpose                                                                                                                             |
 | ----------------------------------- | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | `group-chat-moderator-system.md`    | `groupChatModeratorSystemPrompt`    | Moderator system prompt. Instructs the moderator to assist directly for simple tasks and delegate via `@mentions` for complex work. |
+| `group-chat-workflow-planning.md`   | —                                   | Plan-mode fragment. Instructs the moderator to author a staged workflow and wait for explicit user approval before dispatch.        |
+| `group-chat-workflow-stage.md`      | —                                   | Execution-mode fragment. Keeps the moderator scoped to the active stage and defines completion and failure handoffs.                |
 | `group-chat-moderator-synthesis.md` | `groupChatModeratorSynthesisPrompt` | Synthesis prompt for reviewing agent responses. Moderator decides whether to continue delegating or summarize.                      |
 | `group-chat-participant.md`         | `groupChatParticipantPrompt`        | Participant system prompt. Sets response format (overview first, then details).                                                     |
 | `group-chat-participant-request.md` | `groupChatParticipantRequestPrompt` | Per-message request prompt with chat history and moderator's delegation.                                                            |
+
+The workflow fragments are registered in `src/shared/promptDefinitions.ts` as
+`group-chat-workflow-planning` and `group-chat-workflow-stage`. They are loaded
+at runtime with `getPrompt()` by `src/main/group-chat/group-chat-moderator.ts`
+and appended only for the matching planning or active-stage moderator turn.
 
 #### Context Management Prompts
 

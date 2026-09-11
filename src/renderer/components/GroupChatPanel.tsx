@@ -19,6 +19,7 @@ import type {
 import { GroupChatHeader } from './GroupChatHeader';
 import { GroupChatMessages, type GroupChatMessagesHandle } from './GroupChatMessages';
 import { GroupChatInput } from './GroupChatInput';
+import { WorkflowStageStrip } from './GroupChat/WorkflowStageStrip';
 import { OutputSearchBar } from './TerminalOutput/components/OutputSearchBar';
 import { groupChatOutputSearchKey, groupChatSearchContentRevision } from '../utils/outputSearch';
 import { useOutputSearchSlot } from '../hooks/ui/useOutputSearchSlot';
@@ -242,6 +243,8 @@ export function GroupChatPanel({
 				searchActive={outputSearchOpen}
 				scrollContainerRef={messagesScrollRef}
 			/>
+
+			<WorkflowStageStrip theme={theme} groupChatId={groupChat.id} />
 
 			<GroupChatInput
 				theme={theme}

@@ -61,6 +61,7 @@ vi.mock('../../../main/prompt-manager', () => ({
 			'group-chat-participant-request': 'group-chat-participant-request.md',
 			'group-chat-participant-continuation': 'group-chat-participant-continuation.md',
 			'group-chat-moderator-system': 'group-chat-moderator-system.md',
+			'group-chat-workflow-planning': 'group-chat-workflow-planning.md',
 			'group-chat-moderator-synthesis': 'group-chat-moderator-synthesis.md',
 		};
 		const filename = filenameMap[id];
@@ -1273,12 +1274,14 @@ describe('group-chat-router', () => {
 				false
 			);
 
-			// Prompt should NOT include READ-ONLY MODE indicator
+			// The planning guide explains read-only workflows in every prompt, but
+			// this ordinary turn must not be marked as actively read-only.
 			const spawnCall = mockProcessManager.spawn.mock.calls.find((call) =>
 				call[0].prompt?.includes('Normal message')
 			);
 			expect(spawnCall).toBeDefined();
-			expect(spawnCall?.[0].prompt).not.toContain('READ-ONLY MODE');
+			expect(spawnCall?.[0].prompt).not.toContain('## User Request (READ-ONLY MODE');
+			expect(spawnCall?.[0].prompt).not.toContain('READ-ONLY MODE is active.');
 		});
 
 		it('participants spawn with readOnlyMode matching the readOnly flag', async () => {

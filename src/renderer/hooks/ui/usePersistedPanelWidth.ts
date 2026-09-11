@@ -15,15 +15,7 @@
  */
 
 import { useCallback, useState } from 'react';
-
-/** `localStorage`, or null where there isn't one. */
-function storage(): Storage | null {
-	try {
-		return typeof localStorage === 'undefined' ? null : localStorage;
-	} catch {
-		return null;
-	}
-}
+import { safeLocalStorage, safeStorageGet, safeStorageSet } from '../../utils/safeLocalStorage';
 
 function clampWidth(value: number, minWidth: number, maxWidth: number): number {
 	return Math.round(Math.max(minWidth, Math.min(maxWidth, value)));
@@ -35,7 +27,7 @@ function load(
 	minWidth: number,
 	maxWidth: number
 ): number {
-	const raw = storage()?.getItem(storageKey) ?? null;
+	const raw = safeStorageGet(storageKey);
 	if (raw === null) return clampWidth(defaultWidth, minWidth, maxWidth);
 	const parsed = Number.parseFloat(raw);
 	if (!Number.isFinite(parsed) || parsed <= 0) return clampWidth(defaultWidth, minWidth, maxWidth);
@@ -70,14 +62,18 @@ export function usePersistedPanelWidth(
 	const setWidth = useCallback(
 		(next: number) => {
 			const clamped = clampWidth(next, minWidth, maxWidth);
-			storage()?.setItem(storageKey, String(clamped));
+			safeStorageSet(storageKey, String(clamped));
 			setStateWidth(clamped);
 		},
 		[storageKey, minWidth, maxWidth]
 	);
 
 	const reset = useCallback(() => {
-		storage()?.removeItem(storageKey);
+		try {
+			safeLocalStorage()?.removeItem(storageKey);
+		} catch {
+			/* storage blocked or unavailable - the in-memory width still resets */
+		}
 		setStateWidth(clampWidth(defaultWidth, minWidth, maxWidth));
 	}, [storageKey, defaultWidth, minWidth, maxWidth]);
 
