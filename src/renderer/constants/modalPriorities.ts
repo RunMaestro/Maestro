@@ -161,10 +161,14 @@ export const MODAL_PRIORITIES = {
 	TAB_CONTEXT_MENU: 708,
 
 	/** Snoozed tabs list modal (shows every agent's snoozed tabs) */
-	SNOOZED_TABS: 704,
+	SNOOZED_TABS: 703,
 
-	/** Snooze history log (opens above the snoozed tabs list) */
-	SNOOZE_HISTORY: 703,
+	/**
+	 * Snooze history log. Must rank ABOVE SNOOZED_TABS: it opens on top of that
+	 * list, and Escape closes the highest-priority layer. Ranked below, Escape
+	 * closed the list instead, which unmounted the history with it.
+	 */
+	SNOOZE_HISTORY: 704,
 
 	/** Prompt composer modal for long prompts */
 	PROMPT_COMPOSER: 725,
