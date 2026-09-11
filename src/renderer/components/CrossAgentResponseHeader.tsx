@@ -26,12 +26,9 @@ import type { LogEntry, Theme } from '../types';
 import { getAgentIcon } from '../constants/agentIcons';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
 import { truncateText } from '../../shared/formatters';
-import { useSessionStore } from '../stores/sessionStore';
-import { openMaestroLink } from '../utils/openMaestroLink';
-import { buildSessionDeepLink } from '../../shared/deep-link-urls';
+import { jumpToAgentConversation } from '../utils/jumpToAgentConversation';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
-import { notifyCenterFlash } from '../stores/centerFlashStore';
 
 /** The `crossAgent` provenance stamped onto a cross-agent AI LogEntry. */
 type CrossAgentMeta = NonNullable<NonNullable<LogEntry['metadata']>['crossAgent']>;
@@ -58,26 +55,16 @@ export function CrossAgentResponseHeader({
 	const accent = isError ? theme.colors.error : theme.colors.accent;
 	const ringStyle = { ['--tw-ring-color' as string]: accent } as React.CSSProperties;
 
-	// Resolve at click time (not per-render) so the header stays cheap and never
-	// subscribes to the session store: the consulted agent may have been deleted
-	// since it answered, so we verify before jumping.
-	const jumpToAgent = (): void => {
-		const exists = useSessionStore
-			.getState()
-			.sessions.some((s) => s.id === crossAgent.fromSessionId);
-		if (!exists) {
-			notifyCenterFlash({
-				message: `${crossAgent.fromAgentName} is no longer available`,
-				color: 'orange',
-			});
-			return;
-		}
-		// Deep-link to the consult tab that holds the persisted answer when we have
-		// its id, so the jump lands on the actual conversation rather than whatever
-		// tab was last active. Falls back to a plain agent jump for older entries
-		// (pre-persistence) that carry no `fromTabId`.
-		openMaestroLink(buildSessionDeepLink(crossAgent.fromSessionId, crossAgent.fromTabId));
-	};
+	// Deep-link to the consult tab that holds the persisted answer when we have
+	// its id, so the jump lands on the actual conversation rather than whatever
+	// tab was last active. Older entries (pre-persistence) carry no `fromTabId`
+	// and fall back to a plain agent jump.
+	const jumpToAgent = (): void =>
+		jumpToAgentConversation({
+			sessionId: crossAgent.fromSessionId,
+			tabId: crossAgent.fromTabId,
+			agentName: crossAgent.fromAgentName,
+		});
 
 	const copySessionId = async (): Promise<void> => {
 		if (await safeClipboardWrite(crossAgent.fromSessionId)) {

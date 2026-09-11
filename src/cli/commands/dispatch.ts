@@ -6,6 +6,7 @@ import { resolveAgentId, readSettingValue } from '../services/storage';
 import { withMaestroClient, UnsupportedCommandError } from '../services/maestro-client';
 import { getSettingDefault } from '../../shared/settingsMetadata';
 import { resolveBackgroundFlag } from '../../shared/focusPlacement';
+import { callerMessageFields, readCallerIdentity } from '../../shared/agentDelegation';
 
 export interface DispatchOptions {
 	newTab?: boolean;
@@ -320,9 +321,14 @@ export async function runDispatch(
 	const callback = buildCallbackFields(options, agentId);
 	if (!callback.ok) return callback.response;
 
+	// Who is dispatching, when this runs inside a Maestro agent's shell. The
+	// desktop uses it to mark the hand-off in the CALLER's transcript; a human or
+	// an external script has no identity and the message goes out unchanged.
+	const caller = callerMessageFields(readCallerIdentity(process.env));
+
 	// --queue routes through the renderer's authoritative execution queue.
 	if (queue) {
-		return runQueueDispatch(agentId, message, options, background, callback.fields);
+		return runQueueDispatch(agentId, message, options, background, callback.fields, caller);
 	}
 	try {
 		const dispatched = await withMaestroClient(async (client) => {
@@ -336,6 +342,7 @@ export async function runDispatch(
 						// an agent, and the tab id we return is how the caller follows it.
 						...(background ? { background: true } : {}),
 						...callback.fields,
+						...caller,
 					},
 					'new_ai_tab_with_prompt_result'
 				);
@@ -366,6 +373,7 @@ export async function runDispatch(
 					// spread below it.
 					...(background ? { background: true } : {}),
 					...callback.fields,
+					...caller,
 				},
 				'command_result'
 			);
@@ -405,7 +413,8 @@ async function runQueueDispatch(
 	message: string,
 	options: DispatchOptions,
 	background: boolean,
-	callbackFields: Record<string, unknown>
+	callbackFields: Record<string, unknown>,
+	callerFields: Record<string, unknown>
 ): Promise<DispatchResponse> {
 	try {
 		const result = await withMaestroClient(async (client) =>
@@ -427,6 +436,7 @@ async function runQueueDispatch(
 					...(options.tab ? { tabId: options.tab } : {}),
 					...(background ? { background: true } : {}),
 					...callbackFields,
+					...callerFields,
 				},
 				'enqueue_command_result'
 			)

@@ -689,6 +689,7 @@ interface MaestroAPI {
 					targetSessionId: string;
 					question: string;
 					fromSessionId?: string;
+					fromTabId?: string;
 					withContext?: boolean;
 				},
 				responseChannel: string
@@ -705,6 +706,10 @@ interface MaestroAPI {
 				targetTabId?: string;
 			}
 		) => void;
+		/** A delivered `maestro-cli dispatch` that an agent ran from its own shell. */
+		onRemoteAgentDelegation: (
+			callback: (notice: import('../shared/agentDelegation').AgentDelegationNotice) => void
+		) => () => void;
 		onRemoteEnqueueCommand: (
 			callback: (
 				sessionId: string,

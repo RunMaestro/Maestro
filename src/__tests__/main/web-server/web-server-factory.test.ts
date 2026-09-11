@@ -56,6 +56,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setReadTerminalTabCallback = vi.fn();
 			setNewAITabWithPromptCallback = vi.fn();
 			setConsultAgentCallback = vi.fn();
+			setNoteAgentDelegationCallback = vi.fn();
 			setEnqueueCommandCallback = vi.fn();
 			setListQueueCallback = vi.fn();
 			setRemoveQueueItemCallback = vi.fn();

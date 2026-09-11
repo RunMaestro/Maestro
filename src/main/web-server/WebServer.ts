@@ -95,6 +95,7 @@ import type {
 	ConsultAgentCallback,
 	ConsultAgentParams,
 	ConsultAgentResult,
+	NoteAgentDelegationCallback,
 	EnqueueCommandCallback,
 	ListQueueCallback,
 	RemoveQueueItemCallback,
@@ -542,6 +543,10 @@ export class WebServer {
 
 	setConsultAgentCallback(callback: ConsultAgentCallback): void {
 		this.callbackRegistry.setConsultAgentCallback(callback);
+	}
+
+	setNoteAgentDelegationCallback(callback: NoteAgentDelegationCallback): void {
+		this.callbackRegistry.setNoteAgentDelegationCallback(callback);
 	}
 
 	setEnqueueCommandCallback(callback: EnqueueCommandCallback): void {
@@ -1085,6 +1090,8 @@ export class WebServer {
 				this.callbackRegistry.newAITabWithPrompt(sessionId, prompt, background),
 			consultAgent: async (params: ConsultAgentParams): Promise<ConsultAgentResult> =>
 				this.callbackRegistry.consultAgent(params),
+			noteAgentDelegation: (notice: Parameters<NoteAgentDelegationCallback>[0]) =>
+				this.callbackRegistry.noteAgentDelegation(notice),
 			enqueueCommand: async (
 				sessionId: string,
 				command: string,

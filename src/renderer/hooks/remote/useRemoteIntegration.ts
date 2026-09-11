@@ -15,6 +15,7 @@ import {
 import { logger } from '../../utils/logger';
 import { buildQueuedMessageItem } from '../../services/queuedPrompt';
 import { runCrossAgentAsk } from '../../services/crossAgentAsk';
+import { recordAgentDelegation } from '../../services/agentDelegation';
 import { requestFileTreeRefresh } from '../../utils/fileTreeRefresh';
 import { persistTabStarred } from '../../utils/starredSessions';
 import { formatLogsForClipboard } from '../../utils/contextExtractor';
@@ -746,6 +747,13 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		// focus, no unread - and answers the response channel when the consulted
 		// agent finishes, so the calling agent gets the reply as its tool result
 		// instead of the question landing in whatever tab the human had open.
+		// A `maestro-cli dispatch` an agent ran from its own shell, already
+		// delivered. Mark the hand-off in the delegating agent's transcript, the way
+		// a typed @mention's reply names the agent that answered.
+		const unsubscribeAgentDelegation = window.maestro.process.onRemoteAgentDelegation((notice) => {
+			recordAgentDelegation(notice);
+		});
+
 		const unsubscribeCrossAgentAsk = window.maestro.process.onRemoteCrossAgentAsk(
 			(request, responseChannel) => {
 				void runCrossAgentAsk(request)
@@ -1146,6 +1154,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			unsubscribeNewTab();
 			unsubscribeNewTabWithPrompt();
 			unsubscribeCrossAgentAsk();
+			unsubscribeAgentDelegation();
 			unsubscribeCloseTab();
 			unsubscribeRenameTab();
 			unsubscribeStarTab();

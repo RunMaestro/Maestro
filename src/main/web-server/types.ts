@@ -13,6 +13,7 @@ import type { Theme } from '../../shared/theme-types';
 import type { Shortcut } from '../../shared/shortcut-types';
 import type { CadenzaPayload } from '../../shared/cadenza-types';
 import type { MovementPayload, MovementStateSnapshot } from '../../shared/movement-types';
+import type { AgentDelegationNotice } from '../../shared/agentDelegation';
 import type {
 	ConcertoDesignerAction,
 	ConcertoDesignerActionResult,
@@ -418,6 +419,8 @@ export type ConsultAgentParams = {
 	question: string;
 	/** The calling agent, when it named itself. Attribution + continuity. */
 	fromSessionId?: string;
+	/** The calling agent's AI tab, when its spawn stamped one. Places the consult pill. */
+	fromTabId?: string;
 	/** Forward the caller's transcript as context (off by default). */
 	withContext?: boolean;
 	/** How long the caller is willing to wait, already clamped by the CLI. */
@@ -432,6 +435,12 @@ export type ConsultAgentResult = {
 	targetTabId?: string;
 };
 export type ConsultAgentCallback = (params: ConsultAgentParams) => Promise<ConsultAgentResult>;
+/**
+ * Mark a delivered CLI dispatch in the transcript of the agent that ran it
+ * (`maestro-cli dispatch` from an agent's shell). Fire-and-forget: the dispatch
+ * already succeeded, and the pill is a record of it, not part of it.
+ */
+export type NoteAgentDelegationCallback = (notice: AgentDelegationNotice) => void;
 export type NewAITabWithPromptResult = { success: boolean; tabId?: string };
 export type NewAITabWithPromptCallback = (
 	sessionId: string,

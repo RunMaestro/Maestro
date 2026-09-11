@@ -26,6 +26,8 @@ vi.mock('../../../cli/services/storage', () => ({
 import { ask } from '../../../cli/commands/ask';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import { resolveAgentId } from '../../../cli/services/storage';
+import { isolateAgentEnv } from '../../helpers/agentEnvIsolation';
+import { CALLER_AGENT_ID_ENV_VAR, CALLER_TAB_ID_ENV_VAR } from '../../../shared/agentDelegation';
 
 /** Wire `withMaestroClient` to a stub client and hand back its sendCommand spy. */
 function mockClient(response: Record<string, unknown>) {
@@ -37,6 +39,10 @@ function mockClient(response: Record<string, unknown>) {
 }
 
 describe('ask command', () => {
+	// `--from` defaults to the caller identity in the environment, and the suite
+	// runs in whatever shell launched it - inside a Maestro agent that is a real id.
+	isolateAgentEnv([CALLER_AGENT_ID_ENV_VAR, CALLER_TAB_ID_ENV_VAR]);
+
 	let logSpy: MockInstance;
 	let errorSpy: MockInstance;
 	let exitSpy: MockInstance;
@@ -149,6 +155,42 @@ describe('ask command', () => {
 			agentId: 'resolved-pedtome',
 			agentName: 'PedTome',
 			tabId: 'consult-1',
+		});
+	});
+
+	describe('caller attribution', () => {
+		it('defaults --from to the agent this shell runs under and forwards its tab', async () => {
+			process.env[CALLER_AGENT_ID_ENV_VAR] = 'caller-agent';
+			process.env[CALLER_TAB_ID_ENV_VAR] = 'caller-tab';
+			const sendCommand = mockClient({ success: true, answer: 'yes' });
+
+			await ask('pedtome', 'q', {});
+
+			expect(sendCommand.mock.calls[0][0]).toMatchObject({
+				fromSessionId: 'caller-agent',
+				fromTabId: 'caller-tab',
+			});
+		});
+
+		it("does not lend this shell's tab to an explicit --from naming another agent", async () => {
+			process.env[CALLER_AGENT_ID_ENV_VAR] = 'caller-agent';
+			process.env[CALLER_TAB_ID_ENV_VAR] = 'caller-tab';
+			const sendCommand = mockClient({ success: true, answer: 'yes' });
+
+			await ask('pedtome', 'q', { from: 'kensho' });
+
+			expect(sendCommand.mock.calls[0][0]).toMatchObject({ fromSessionId: 'resolved-kensho' });
+			expect(sendCommand.mock.calls[0][0]).not.toHaveProperty('fromTabId');
+		});
+
+		it('refuses an agent consulting itself through the default', async () => {
+			process.env[CALLER_AGENT_ID_ENV_VAR] = 'resolved-pedtome';
+			const sendCommand = mockClient({ success: true });
+
+			await ask('pedtome', 'q', {});
+
+			expect(sendCommand).not.toHaveBeenCalled();
+			expect(errorSpy).toHaveBeenCalledWith('Error: an agent cannot consult itself');
 		});
 	});
 });

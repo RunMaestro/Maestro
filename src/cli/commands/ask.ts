@@ -16,9 +16,14 @@
 
 import { resolveAgentId } from '../services/storage';
 import { withMaestroClient } from '../services/maestro-client';
+import { readCallerIdentity } from '../../shared/agentDelegation';
 
 export interface AskOptions {
-	/** Your own agent id. Attribution + continuity on the target's consult tab. */
+	/**
+	 * Your own agent id. Attribution + continuity on the target's consult tab.
+	 * Defaults to the agent this runs under when invoked from a Maestro agent's
+	 * shell, so the attribution does not depend on the agent remembering to pass it.
+	 */
 	from?: string;
 	/** Forward your current transcript as context (off by default). */
 	withContext?: boolean;
@@ -79,6 +84,7 @@ export async function ask(agentId: string, question: string, options: AskOptions
 		return;
 	}
 
+	const caller = readCallerIdentity(process.env);
 	let fromSessionId: string | undefined;
 	if (options.from) {
 		try {
@@ -87,11 +93,16 @@ export async function ask(agentId: string, question: string, options: AskOptions
 			fail(`--from: ${error instanceof Error ? error.message : String(error)}`);
 			return;
 		}
-		if (fromSessionId === targetSessionId) {
-			fail('an agent cannot consult itself');
-			return;
-		}
+	} else {
+		fromSessionId = caller?.agentId;
 	}
+	if (fromSessionId && fromSessionId === targetSessionId) {
+		fail('an agent cannot consult itself');
+		return;
+	}
+	// The spawn's tab only describes the agent it was stamped for. An explicit
+	// `--from` naming some other agent must not borrow this shell's tab.
+	const fromTabId = caller?.tabId && fromSessionId === caller.agentId ? caller.tabId : undefined;
 
 	let seconds = DEFAULT_TIMEOUT_SECONDS;
 	if (options.timeout !== undefined) {
@@ -115,6 +126,7 @@ export async function ask(agentId: string, question: string, options: AskOptions
 					sessionId: targetSessionId,
 					question,
 					fromSessionId,
+					...(fromTabId ? { fromTabId } : {}),
 					withContext: options.withContext === true,
 					timeoutMs,
 				},

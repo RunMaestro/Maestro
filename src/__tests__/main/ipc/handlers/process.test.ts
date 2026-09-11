@@ -623,6 +623,30 @@ describe('process IPC handlers', () => {
 			);
 		});
 
+		it('stamps the agent and tab identity so a CLI dispatch from its shell can be attributed', async () => {
+			mockAgentDetector.getAgent.mockResolvedValue({ id: 'opencode', requiresPty: false });
+			mockProcessManager.spawn.mockReturnValue({ pid: 2001, success: true });
+
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'agent-identity-ai-tab-7',
+				tabId: 'tab-7',
+				toolType: 'opencode',
+				cwd: '/test',
+				command: 'opencode',
+				args: [],
+			});
+
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					customEnvVars: expect.objectContaining({
+						MAESTRO_CALLER_AGENT_ID: 'agent-identity',
+						MAESTRO_CALLER_TAB_ID: 'tab-7',
+					}),
+				})
+			);
+		});
+
 		it('should NOT apply readOnlyEnvOverrides when readOnlyMode is false', async () => {
 			const { applyAgentConfigOverrides } = await import('../../../../main/utils/agent-args');
 			const mockApply = vi.mocked(applyAgentConfigOverrides);

@@ -476,7 +476,7 @@ program
 	)
 	.option(
 		'--from <agent-id>',
-		'Your own agent id. Names the consult on the target, keeps continuity across repeat asks, forwards your working directory so it can read your project, and lets Stop cancel the consult'
+		'Your own agent id. Names the consult on the target, keeps continuity across repeat asks, forwards your working directory so it can read your project, and lets Stop cancel the consult. Defaults to the agent this runs under inside Maestro'
 	)
 	.option(
 		'--with-context',

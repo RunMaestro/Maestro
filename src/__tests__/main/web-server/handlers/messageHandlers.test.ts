@@ -112,6 +112,7 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		}),
 		executeCommand: vi.fn().mockResolvedValue(true),
 		consultAgent: vi.fn().mockResolvedValue({ success: true, answer: 'Because HMAC.' }),
+		noteAgentDelegation: vi.fn(),
 		switchMode: vi.fn().mockResolvedValue(true),
 		selectSession: vi.fn().mockResolvedValue(true),
 		selectTab: vi.fn().mockResolvedValue(true),
@@ -310,6 +311,24 @@ describe('WebSocketMessageHandler', () => {
 	});
 
 	describe('Cross-Agent Ask (maestro-cli ask)', () => {
+		it('forwards the asking agent tab so the consult pill lands in that conversation', async () => {
+			handler.handleMessage(client, {
+				type: 'cross_agent_ask',
+				sessionId: 'session-1',
+				question: 'q',
+				fromSessionId: 'caller-1',
+				fromTabId: 'caller-tab',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.consultAgent).toHaveBeenCalledWith(
+					expect.objectContaining({ fromSessionId: 'caller-1', fromTabId: 'caller-tab' })
+				);
+			});
+			// An ask records its own pill in the renderer; the dispatch notice is not used.
+			expect(callbacks.noteAgentDelegation).not.toHaveBeenCalled();
+		});
+
 		it('consults the target and returns the answer without touching its open tab', async () => {
 			handler.handleMessage(client, {
 				type: 'cross_agent_ask',
@@ -421,6 +440,66 @@ describe('WebSocketMessageHandler', () => {
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
 			expect(response.type).toBe('command_result');
 			expect(response.success).toBe(true);
+		});
+
+		it('marks a delivered CLI dispatch in the calling agent transcript', async () => {
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'Take care of the advisory bug',
+				inputMode: 'ai',
+				tabId: 'target-tab',
+				fromSessionId: 'caller-1',
+				fromTabId: 'caller-tab',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.noteAgentDelegation).toHaveBeenCalledWith({
+					kind: 'dispatch',
+					fromSessionId: 'caller-1',
+					fromTabId: 'caller-tab',
+					targetSessionId: 'session-1',
+					targetTabId: 'target-tab',
+					prompt: 'Take care of the advisory bug',
+				});
+			});
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.success).toBe(true);
+		});
+
+		it('does not mark a dispatch the renderer rejected, or one with no caller', async () => {
+			(callbacks.executeCommand as any).mockResolvedValueOnce(false);
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'rejected',
+				inputMode: 'ai',
+				fromSessionId: 'caller-1',
+			});
+			await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalledTimes(1));
+
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'typed by a human',
+				inputMode: 'ai',
+			});
+			await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalledTimes(2));
+
+			expect(callbacks.noteAgentDelegation).not.toHaveBeenCalled();
+		});
+
+		it('does not mark an agent dispatching into its own conversation', async () => {
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'loop',
+				inputMode: 'ai',
+				fromSessionId: 'session-1',
+				fromTabId: 'tab-a',
+			});
+			await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+			expect(callbacks.noteAgentDelegation).not.toHaveBeenCalled();
 		});
 
 		it('should forward terminal command to desktop', async () => {
@@ -1953,6 +2032,28 @@ describe('WebSocketMessageHandler', () => {
 	});
 
 	describe('New AI Tab With Prompt (Web → Desktop)', () => {
+		it('marks a CLI dispatch into a fresh tab with the new tab id', async () => {
+			handler.handleMessage(client, {
+				type: 'new_ai_tab_with_prompt',
+				sessionId: 'session-1',
+				prompt: 'Build it',
+				fromSessionId: 'caller-1',
+				fromTabId: 'caller-tab',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.noteAgentDelegation).toHaveBeenCalledWith({
+					kind: 'dispatch',
+					fromSessionId: 'caller-1',
+					fromTabId: 'caller-tab',
+					targetSessionId: 'session-1',
+					targetTabId: 'tab-mock-123',
+					prompt: 'Build it',
+					newTab: true,
+				});
+			});
+		});
+
 		it('should forward sessionId and prompt to callback', async () => {
 			handler.handleMessage(client, {
 				type: 'new_ai_tab_with_prompt',
@@ -2258,6 +2359,27 @@ describe('WebSocketMessageHandler', () => {
 	});
 
 	describe('Enqueue Command (dispatch --queue)', () => {
+		it('marks a queued CLI dispatch as queued', async () => {
+			handler.handleMessage(client, {
+				type: 'enqueue_command',
+				sessionId: 'session-1',
+				command: 'Later please',
+				inputMode: 'ai',
+				fromSessionId: 'caller-1',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.noteAgentDelegation).toHaveBeenCalledWith({
+					kind: 'dispatch',
+					fromSessionId: 'caller-1',
+					targetSessionId: 'session-1',
+					targetTabId: 'tab-mock-123',
+					prompt: 'Later please',
+					queued: true,
+				});
+			});
+		});
+
 		const lastSend = (): Record<string, unknown> => {
 			const calls = vi.mocked(client.socket.send).mock.calls;
 			return JSON.parse(String(calls[calls.length - 1][0]));

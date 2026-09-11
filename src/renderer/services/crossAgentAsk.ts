@@ -22,6 +22,7 @@ import {
 	sendCrossAgentRequest,
 	type CrossAgentCompletion,
 } from '../hooks/agent/useCrossAgentDispatch';
+import { recordAgentDelegation, settleAgentDelegation } from './agentDelegation';
 import type { LogEntry } from '../types';
 
 /**
@@ -56,6 +57,12 @@ export interface CrossAgentAskRequest {
 	 * cancel the consult.
 	 */
 	fromSessionId?: string;
+	/**
+	 * The caller's AI tab, stamped into its shell at spawn. Only decides where the
+	 * consult pill lands in the caller's transcript; continuity stays keyed on the
+	 * calling AGENT (see {@link CROSS_AGENT_ASK_TAB_ID}).
+	 */
+	fromTabId?: string;
 	/**
 	 * Forward the caller's active-tab transcript as context. Off by default -
 	 * `ask` exists to send a fresh, self-contained question, and a relayed
@@ -110,8 +117,30 @@ export function runCrossAgentAsk(request: CrossAgentAskRequest): Promise<CrossAg
 	const sourceLogs: LogEntry[] =
 		request.withContext && source ? (getActiveTab(source)?.logs ?? []) : [];
 
+	// Mark the consult in the asking agent's transcript, the way a typed @mention
+	// shows who answered. An unattributed caller has no transcript to mark.
+	const pill = source
+		? recordAgentDelegation(
+				{
+					kind: 'ask',
+					fromSessionId: source.id,
+					fromTabId: request.fromTabId,
+					targetSessionId: target.id,
+					prompt: request.question,
+				},
+				{ pending: true }
+			)
+		: null;
+
 	return new Promise<CrossAgentAskResult>((resolve) => {
 		const finish = (completion: CrossAgentCompletion) => {
+			if (pill) {
+				settleAgentDelegation(pill, {
+					status: completion.canceled ? 'canceled' : completion.error ? 'error' : 'done',
+					error: completion.error,
+					toTabId: completion.targetTabId,
+				});
+			}
 			resolve({
 				success: !completion.error && !completion.canceled,
 				answer: completion.text || undefined,

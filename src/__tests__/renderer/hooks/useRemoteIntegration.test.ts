@@ -12,6 +12,7 @@ import { useNotificationStore } from '../../../renderer/stores/notificationStore
 import { useMovementStore } from '../../../renderer/stores/movementStore';
 import { useConcertoCreationActivityStore } from '../../../renderer/stores/concertoCreationActivityStore';
 import type { MovementPayload } from '../../../shared/movement-types';
+import type { AgentDelegationNotice } from '../../../shared/agentDelegation';
 import { CONCERTO_DESIGNER_CHANNEL } from '../../../shared/concerto-html';
 import {
 	clearConcertoDesignerFramesForTests,
@@ -107,6 +108,7 @@ describe('useRemoteIntegration', () => {
 	let onRequestMovementDesignerInspectionHandler:
 		| ((id: string, expectedRevision: number, responseChannel: string) => void)
 		| undefined;
+	let onRemoteAgentDelegationHandler: ((notice: AgentDelegationNotice) => void) | undefined;
 	let onRemoteCrossAgentAskHandler:
 		| ((
 				request: {
@@ -215,6 +217,10 @@ describe('useRemoteIntegration', () => {
 			return () => {};
 		}),
 		sendRemoteCrossAgentAskResponse: vi.fn(),
+		onRemoteAgentDelegation: vi.fn().mockImplementation((handler) => {
+			onRemoteAgentDelegationHandler = handler;
+			return () => {};
+		}),
 		onRemoteEnqueueCommand: vi.fn().mockImplementation((handler) => {
 			onRemoteEnqueueCommandHandler = handler;
 			return () => {};
@@ -457,6 +463,7 @@ describe('useRemoteIntegration', () => {
 		onRemoteToggleBookmarkHandler = undefined;
 		onRemoteNewAITabWithPromptHandler = undefined;
 		onRemoteCrossAgentAskHandler = undefined;
+		onRemoteAgentDelegationHandler = undefined;
 		onRemoteEnqueueCommandHandler = undefined;
 		onRemoteListQueueHandler = undefined;
 		onRemoteRemoveQueueItemHandler = undefined;
@@ -1218,6 +1225,41 @@ describe('useRemoteIntegration', () => {
 				success: false,
 				error: 'store exploded',
 			});
+		});
+	});
+
+	describe('remote agent delegation', () => {
+		it('marks a CLI dispatch in the delegating tab, never the target', () => {
+			const callerTab = createMockTab({ id: 'caller-tab', logs: [] });
+			const caller = createMockSession({
+				id: 'maestro',
+				aiTabs: [callerTab],
+				activeTabId: 'caller-tab',
+			});
+			const target = createMockSession({ id: 'proxmox', name: '🖥 Proxmox' });
+			const deps = createDeps({ sessions: [caller, target] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteAgentDelegationHandler?.({
+					kind: 'dispatch',
+					fromSessionId: 'maestro',
+					fromTabId: 'caller-tab',
+					targetSessionId: 'proxmox',
+					prompt: 'Take care of the advisory bug',
+				});
+			});
+
+			const sessions = useSessionStore.getState().sessions;
+			const callerLogs = sessions.find((s) => s.id === 'maestro')!.aiTabs[0].logs;
+			expect(callerLogs).toHaveLength(1);
+			expect(callerLogs[0].delegation).toMatchObject({
+				kind: 'dispatch',
+				toSessionId: 'proxmox',
+				toAgentName: '🖥 Proxmox',
+			});
+			expect(sessions.find((s) => s.id === 'proxmox')!.aiTabs[0].logs).toHaveLength(0);
 		});
 	});
 

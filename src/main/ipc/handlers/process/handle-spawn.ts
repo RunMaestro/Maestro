@@ -21,6 +21,7 @@ import type { AgentConfigsData } from '../../../stores/types';
 import { logger } from '../../../utils/logger';
 import { isWindows } from '../../../../shared/platformDetection';
 import { embedSystemPromptInPrompt } from '../../../../shared/embeddedSystemPrompt';
+import { buildCallerIdentityEnv } from '../../../../shared/agentDelegation';
 import { REGEX_AI_SUFFIX } from '../../../constants';
 import { addBreadcrumb, captureException } from '../../../utils/sentry';
 import { isWebContentsAvailable } from '../../../utils/safe-send';
@@ -259,6 +260,18 @@ export async function handleProcessSpawn(
 			...(effectiveCustomEnvVars || {}),
 			MAESTRO_CLI_JS: resolveMaestroCliScriptPath(),
 			MAESTRO_AGENT_ID: baseSessionId,
+		};
+	}
+
+	// Tell the agent's shell who it is, so a `maestro-cli dispatch` or `ask` it
+	// runs can be marked in its own transcript (see shared/agentDelegation.ts).
+	// Same injection point as Pianola's id, for the same reason: it has to reach
+	// both the local and the SSH env-merge paths. A terminal is a shell the user
+	// drives, not an agent turn, so it is never stamped.
+	if (config.toolType !== 'terminal') {
+		effectiveCustomEnvVars = {
+			...(effectiveCustomEnvVars || {}),
+			...buildCallerIdentityEnv(baseSessionId, config.tabId),
 		};
 	}
 

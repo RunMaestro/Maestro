@@ -47,6 +47,7 @@ import type {
 	ConsultAgentCallback,
 	ConsultAgentParams,
 	ConsultAgentResult,
+	NoteAgentDelegationCallback,
 	EnqueueCommandCallback,
 	EnqueueCommandResult,
 	ListQueueCallback,
@@ -184,6 +185,7 @@ export interface WebServerCallbacks {
 	readTerminalTab: ReadTerminalTabCallback | null;
 	newAITabWithPrompt: NewAITabWithPromptCallback | null;
 	consultAgent: ConsultAgentCallback | null;
+	noteAgentDelegation: NoteAgentDelegationCallback | null;
 	enqueueCommand: EnqueueCommandCallback | null;
 	listQueue: ListQueueCallback | null;
 	removeQueueItem: RemoveQueueItemCallback | null;
@@ -285,6 +287,7 @@ export class CallbackRegistry {
 		readTerminalTab: null,
 		newAITabWithPrompt: null,
 		consultAgent: null,
+		noteAgentDelegation: null,
 		enqueueCommand: null,
 		listQueue: null,
 		removeQueueItem: null,
@@ -545,6 +548,11 @@ export class CallbackRegistry {
 			return { success: false, error: 'Cross-agent consults are not configured' };
 		}
 		return this.callbacks.consultAgent(params);
+	}
+
+	noteAgentDelegation(notice: Parameters<NoteAgentDelegationCallback>[0]): void {
+		if (!this.callbacks.noteAgentDelegation) return;
+		this.callbacks.noteAgentDelegation(notice);
 	}
 
 	async enqueueCommand(
@@ -1164,6 +1172,10 @@ export class CallbackRegistry {
 
 	setConsultAgentCallback(callback: ConsultAgentCallback): void {
 		this.callbacks.consultAgent = callback;
+	}
+
+	setNoteAgentDelegationCallback(callback: NoteAgentDelegationCallback): void {
+		this.callbacks.noteAgentDelegation = callback;
 	}
 
 	setEnqueueCommandCallback(callback: EnqueueCommandCallback): void {

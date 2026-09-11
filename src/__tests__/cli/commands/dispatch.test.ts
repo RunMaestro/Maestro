@@ -26,8 +26,14 @@ vi.mock('../../../cli/services/storage', () => ({
 import { dispatch, runDispatch } from '../../../cli/commands/dispatch';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import { resolveAgentId, readSettingValue } from '../../../cli/services/storage';
+import { isolateAgentEnv } from '../../helpers/agentEnvIsolation';
+import { CALLER_AGENT_ID_ENV_VAR, CALLER_TAB_ID_ENV_VAR } from '../../../shared/agentDelegation';
 
 describe('dispatch command', () => {
+	// The caller identity is read from the environment, and the suite runs in
+	// whatever shell launched it - inside a Maestro agent that is a real id.
+	isolateAgentEnv([CALLER_AGENT_ID_ENV_VAR, CALLER_TAB_ID_ENV_VAR]);
+
 	let consoleSpy: MockInstance;
 	let processExitSpy: MockInstance;
 
@@ -588,6 +594,62 @@ describe('dispatch command', () => {
 			expect(result.success).toBe(false);
 			expect(result.code).toBe('INVALID_OPTIONS');
 			expect(processExitSpy).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('caller attribution', () => {
+		/** Wire a client that answers every command with `response`. */
+		const stubClient = (response: Record<string, unknown>) => {
+			const sendCommand = vi.fn().mockResolvedValue(response);
+			vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+				action({ sendCommand } as never)
+			);
+			return sendCommand;
+		};
+
+		beforeEach(() => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+		});
+
+		it('names the calling agent and tab when run inside an agent shell', async () => {
+			process.env[CALLER_AGENT_ID_ENV_VAR] = 'caller-agent';
+			process.env[CALLER_TAB_ID_ENV_VAR] = 'caller-tab';
+			const sendCommand = stubClient({ success: true });
+
+			await runDispatch('agent-abc', 'Fix it', {});
+
+			expect(sendCommand.mock.calls[0][0]).toMatchObject({
+				type: 'send_command',
+				fromSessionId: 'caller-agent',
+				fromTabId: 'caller-tab',
+			});
+		});
+
+		it('names the caller on the --new-tab and --queue paths too', async () => {
+			process.env[CALLER_AGENT_ID_ENV_VAR] = 'caller-agent';
+			const sendCommand = stubClient({ success: true, tabId: 'tab-new' });
+
+			await runDispatch('agent-abc', 'Fix it', { newTab: true });
+			await runDispatch('agent-abc', 'Fix it', { queue: true });
+
+			expect(sendCommand.mock.calls[0][0]).toMatchObject({
+				type: 'new_ai_tab_with_prompt',
+				fromSessionId: 'caller-agent',
+			});
+			expect(sendCommand.mock.calls[0][0]).not.toHaveProperty('fromTabId');
+			expect(sendCommand.mock.calls[1][0]).toMatchObject({
+				type: 'enqueue_command',
+				fromSessionId: 'caller-agent',
+			});
+		});
+
+		it('adds nothing when no Maestro agent is calling', async () => {
+			const sendCommand = stubClient({ success: true });
+
+			await runDispatch('agent-abc', 'Fix it', {});
+
+			expect(sendCommand.mock.calls[0][0]).not.toHaveProperty('fromSessionId');
+			expect(sendCommand.mock.calls[0][0]).not.toHaveProperty('fromTabId');
 		});
 	});
 });

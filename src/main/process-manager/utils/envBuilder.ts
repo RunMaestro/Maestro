@@ -10,6 +10,7 @@ import {
 } from '../../../shared/querySource';
 import { buildSpawnPath } from '../../utils/spawnPath';
 import { isBlankEnvValue } from '../../../shared/agentEnvironment';
+import { CALLER_AGENT_ID_ENV_VAR, CALLER_TAB_ID_ENV_VAR } from '../../../shared/agentDelegation';
 
 /**
  * Build the base PATH for macOS/Linux with detected Node version manager paths.
@@ -107,6 +108,10 @@ export function buildPtyTerminalEnv(shellEnvVars?: Record<string, string>): Node
 	// STRIPPED_ENV_VARS, because buildChildProcessEnv() sets this variable on
 	// purpose and must keep doing so.
 	delete env[QUERY_SOURCE_ENV_VAR];
+	// Same for the caller identity: a dispatch typed into a terminal is the user's,
+	// and attributing it to whichever agent launched Maestro would be a lie.
+	delete env[CALLER_AGENT_ID_ENV_VAR];
+	delete env[CALLER_TAB_ID_ENV_VAR];
 
 	// Vim arrow-key ergonomics: when users launch `vi`/`vim` with distro defaults
 	// that force compatible mode, insert-mode arrows can degrade to literal ABCD.
@@ -164,6 +169,11 @@ const STRIPPED_ENV_VARS = [
 	// also strips them itself as a second line of defense.
 	'CLAUDE_CODE_SESSION_ID',
 	'CLAUDE_CODE_CHILD_SESSION',
+	// Caller identity inherited from whatever launched Maestro (an agent shell, in
+	// development). The real identity is re-applied from the session layer, which
+	// is merged after this list is stripped, so only a stale inherited copy dies.
+	CALLER_AGENT_ID_ENV_VAR,
+	CALLER_TAB_ID_ENV_VAR,
 	// Maestro's own NODE_ENV should not leak to agents
 	'NODE_ENV',
 ];

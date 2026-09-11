@@ -62,6 +62,7 @@ export type {
 } from '../../shared/group-chat-types';
 // Import AgentError for use within this file
 import type { AgentError, SessionCliActivity } from '../../shared/types';
+import type { AgentDelegationKind } from '../../shared/agentDelegation';
 import type { ComposerCommandMode } from '../utils/shellCommandInput';
 import type { MindMapLayoutType } from '../components/DocumentGraph/layoutTypes';
 
@@ -368,6 +369,32 @@ export interface LogEntry {
 		wakeAt: number;
 		/** Whether it returned on schedule or the user pulled it back early. */
 		resolution: 'woke' | 'unsnoozed';
+	};
+	// Marks a hand-off this agent made to ANOTHER agent from its own shell
+	// (`maestro-cli dispatch` / `ask`), the counterpart of the attribution header
+	// a typed @mention's reply carries. Written by services/agentDelegation.ts; a
+	// dispatch never changes afterwards, an ask is settled once when the answer
+	// lands. See components/AgentDelegationCard.tsx.
+	delegation?: {
+		kind: AgentDelegationKind;
+		/** The agent the work or question went to. */
+		toSessionId: string;
+		/** The tab it landed in, when known. The jump arrow deep-links to it. */
+		toTabId?: string;
+		/** The target's display name at the time of the hand-off. */
+		toAgentName: string;
+		/** The target's provider, for the glyph and label. */
+		toToolType: ToolType;
+		/** One line of what was handed over. */
+		subject: string;
+		/** The dispatch opened a fresh tab on the target. */
+		newTab?: boolean;
+		/** The dispatch joined the target's execution queue. */
+		queued?: boolean;
+		/** Ask only: `pending` until the answer lands, then how it ended. */
+		status?: 'pending' | 'done' | 'error' | 'canceled';
+		/** Ask only: why no answer came back. */
+		error?: string;
 	};
 }
 

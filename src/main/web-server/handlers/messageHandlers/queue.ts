@@ -9,6 +9,7 @@ import { logger } from '../../../utils/logger';
 import { captureException } from '../../../utils/sentry';
 import { getDispatchCallbackRegistry } from '../../../dispatch-callbacks';
 import { armDispatchCallback } from './dispatchCallbacks';
+import { noteDispatchDelegation } from './agentDelegation';
 import { LOG_CONTEXT } from './shared';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
 
@@ -107,6 +108,14 @@ export function handleEnqueueCommand(
 				...(result.error ? { error: result.error } : {}),
 				requestId: message.requestId,
 			});
+			if (result.success && clientInputMode !== 'terminal') {
+				noteDispatchDelegation(ctx, message, {
+					targetSessionId: sessionId,
+					targetTabId: result.tabId ?? requestedTabId,
+					prompt: command ?? '',
+					queued: result.queued === true,
+				});
+			}
 		})
 		.catch((error) => {
 			cancelArmedCallback();

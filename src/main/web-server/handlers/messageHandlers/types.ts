@@ -38,6 +38,7 @@ import type {
 	ConsultAgentResult,
 	RenameTabResult,
 } from '../../types';
+import type { AgentDelegationNotice } from '../../../../shared/agentDelegation';
 import type { GroupAppearance, GroupUpdateRequest } from '../../../../shared/groupAppearance';
 import type { CadenzaPayload } from '../../../../shared/cadenza-types';
 import type { MovementPayload, MovementStateSnapshot } from '../../../../shared/movement-types';
@@ -171,6 +172,8 @@ export interface MessageHandlerCallbacks {
 	) => Promise<{ success: boolean; tabId?: string }>;
 	/** Consult another agent and return its answer (`maestro-cli ask`). */
 	consultAgent: (params: ConsultAgentParams) => Promise<ConsultAgentResult>;
+	/** Mark a delivered CLI dispatch in the calling agent's transcript. Fire-and-forget. */
+	noteAgentDelegation: (notice: AgentDelegationNotice) => void;
 	enqueueCommand: (
 		sessionId: string,
 		command: string,

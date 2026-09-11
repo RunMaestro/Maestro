@@ -12,6 +12,7 @@ import { readBackgroundField, readSwitchToAgentField } from '../../../../shared/
 import fs from 'fs/promises';
 import { logger } from '../../../utils/logger';
 import { validateCallbackRequest, armDispatchCallback } from './dispatchCallbacks';
+import { noteDispatchDelegation } from './agentDelegation';
 import { LOG_CONTEXT } from './shared';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
 import {
@@ -739,6 +740,14 @@ export function handleNewAITabWithPrompt(
 				...(callbackId ? { callbackId } : {}),
 				requestId: message.requestId,
 			});
+			if (result.success && result.tabId) {
+				noteDispatchDelegation(ctx, message, {
+					targetSessionId: sessionId,
+					targetTabId: result.tabId,
+					prompt,
+					newTab: true,
+				});
+			}
 		})
 		.catch((error) => {
 			sendErrorResult(`Failed to create AI tab with prompt: ${error.message}`);
