@@ -24,6 +24,7 @@
 import type { ToolType, AgentError } from '../../shared/types';
 import type { AgentOutputParser, ParsedEvent } from './agent-output-parser';
 import { getErrorPatterns, matchErrorPattern } from './error-patterns';
+import { compactToolOutput } from '../../shared/toolOutput';
 
 /** Token metrics reported on step_update and on the terminal result envelope. */
 interface AntigravityUsage {
@@ -241,7 +242,7 @@ export class AntigravityOutputParser implements AgentOutputParser {
 					// nowhere - the badge would say failed and show nothing. A step
 					// that produced real output keeps it.
 					...(typeof toolInfo?.output === 'string'
-						? { output: toolInfo.output }
+						? { output: compactToolOutput(toolInfo.output).output }
 						: errorMessage
 							? { output: errorMessage }
 							: {}),

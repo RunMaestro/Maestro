@@ -35,6 +35,7 @@ import { backupGroupsBeforeWipe } from '../../stores/groups-backup';
 import { backupSessionsBeforeWipe } from '../../stores/sessions-backup';
 import { createKeyedWriteQueue } from '../../utils/atomic-json-store';
 import { clearGhCache } from '../../utils/cliDetection';
+import { compactSessionToolOutputs } from '../../../shared/toolOutput';
 
 /**
  * Shallow-compare cliActivity for the diff broadcast.
@@ -438,24 +439,34 @@ export function registerPersistenceHandlers(
 		// no-op once healed (already-relocated sessions carry only refs). We
 		// rewrite the store once so the next launch reads the small file.
 		try {
-			const { sessions: relocated, relocated: count } = await relocateSessionImages(sessions);
-			if (count > 0) {
-				sessionsStore.set('sessions', relocated);
-				logger.info(
-					`Relocated ${count} inline session image(s) out of maestro-sessions.json`,
-					'Sessions'
-				);
-				logger.debug(`Loaded ${relocated.length} sessions from store`, 'Sessions');
-				return relocated;
+			const { sessions: relocated, relocated: imageCount } = await relocateSessionImages(sessions);
+			let toolOutputCount = 0;
+			const compacted = relocated.map((session) => {
+				const result = compactSessionToolOutputs(session);
+				toolOutputCount += result.compacted;
+				return result.session;
+			});
+			if (imageCount > 0 || toolOutputCount > 0) {
+				sessionsStore.set('sessions', compacted);
+				if (imageCount > 0) {
+					logger.info(
+						`Relocated ${imageCount} inline session image(s) out of maestro-sessions.json`,
+						'Sessions'
+					);
+				}
+				if (toolOutputCount > 0) {
+					logger.info(
+						`Compacted ${toolOutputCount} oversized tool result(s) in maestro-sessions.json`,
+						'Sessions'
+					);
+				}
+				logger.debug(`Loaded ${compacted.length} sessions from store`, 'Sessions');
+				return compacted;
 			}
 		} catch (err) {
-			// Never let image relocation block loading sessions - fall through and
-			// return the sessions as-is; the write-boundary relocation will retry.
-			logger.warn(
-				`Session image relocation on load failed: ${(err as Error).message}`,
-				'Sessions',
-				err
-			);
+			// Never let migration block loading sessions. Fall through and return
+			// the sessions as-is; the write boundary will retry on the next save.
+			logger.warn(`Session migration on load failed: ${(err as Error).message}`, 'Sessions', err);
 		}
 		logger.debug(`Loaded ${sessions.length} sessions from store`, 'Sessions');
 		return sessions;

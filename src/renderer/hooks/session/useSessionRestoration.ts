@@ -33,6 +33,9 @@ import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import { logger } from '../../utils/logger';
 import { readPersistedActiveSessionId } from '../../utils/activeSessionPersistence';
 import { useSessionLifecycleSync } from './useSessionLifecycleSync';
+import { useEventListener } from '../utils/useEventListener';
+import { WEB_BRIDGE_RECONCILE_EVENT } from '../../../shared/webClientConfig';
+import { releaseConnectionHeldQueueItems } from '../../utils/executionQueue';
 
 /** Ids of the terminal tabs that are tiled into one of the session's tab groups. */
 function collectGroupedTerminalIds(session: { tabGroups?: Session['tabGroups'] }): Set<string> {
@@ -181,11 +184,20 @@ export function useSessionRestoration(): SessionRestorationReturn {
 		const turns = await fetchLiveAiTurns();
 		// null means the probe failed, which is not the same answer as "nothing is
 		// running" - leave the restored state alone rather than guessing.
-		if (!turns || turns.length === 0) return;
+		if (!turns) return;
 		const owned = turns.filter((turn) => ownedGate.current?.(`${turn.sessionId}-ai-${turn.tabId}`));
-		if (owned.length === 0) return;
-		setSessions((prev) => applyLiveAiTurns(prev, owned));
+		setSessions((prev) => {
+			const released = prev.map((session) => {
+				const executionQueue = releaseConnectionHeldQueueItems(session.executionQueue || []);
+				return executionQueue === session.executionQueue ? session : { ...session, executionQueue };
+			});
+			return applyLiveAiTurns(released, owned);
+		});
 	}, [ownedGate]);
+
+	useEventListener(WEB_BRIDGE_RECONCILE_EVENT, () => {
+		void reattachLiveAiTurns();
+	});
 
 	// --- fetchGitInfoInBackground ---
 	const fetchGitInfoInBackground = useCallback(

@@ -680,6 +680,72 @@ describe('persistence IPC handlers', () => {
 
 			expect(result).toEqual([]);
 		});
+
+		it('should compact oversized tool output before returning legacy sessions', async () => {
+			const oversizedOutput = 'x'.repeat(50_000);
+			const sessions = [
+				{
+					id: 'session-1',
+					name: 'Session 1',
+					cwd: '/test',
+					aiLogs: [
+						{
+							id: 'legacy-tool',
+							metadata: { toolState: { status: 'completed', output: oversizedOutput } },
+						},
+					],
+					aiTabs: [
+						{
+							id: 'tab-1',
+							logs: [
+								{
+									id: 'tool-1',
+									metadata: { toolState: { status: 'completed', output: oversizedOutput } },
+								},
+							],
+						},
+					],
+					snoozedTabs: [
+						{
+							type: 'group',
+							members: [
+								{
+									type: 'ai',
+									tab: {
+										id: 'snoozed-tab',
+										logs: [
+											{
+												id: 'snoozed-tool',
+												metadata: {
+													toolState: {
+														status: 'completed',
+														output: oversizedOutput,
+													},
+												},
+											},
+										],
+									},
+								},
+							],
+						},
+					],
+				},
+			];
+			mockSessionsStore.get.mockReturnValue(sessions);
+
+			const handler = handlers.get('sessions:getAll');
+			const result = (await handler!({} as any)) as typeof sessions;
+			const output = result[0].aiTabs[0].logs[0].metadata.toolState.output;
+			const legacyOutput = result[0].aiLogs[0].metadata.toolState.output;
+			const snoozedOutput =
+				result[0].snoozedTabs[0].members[0].tab.logs[0].metadata.toolState.output;
+
+			expect(output.length).toBeLessThan(5_000);
+			expect(output).toContain('[tool output truncated');
+			expect(legacyOutput).toBe(output);
+			expect(snoozedOutput).toBe(output);
+			expect(mockSessionsStore.set).toHaveBeenCalledWith('sessions', result);
+		});
 	});
 
 	describe('sessions:setAll', () => {

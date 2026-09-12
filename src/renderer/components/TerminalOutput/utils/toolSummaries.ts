@@ -1,4 +1,5 @@
 import type { ToolSummary } from '../types';
+import { compactToolOutput } from '../../../../shared/toolOutput';
 
 /** Handle command values that may be strings or string arrays (Codex uses arrays) */
 const safeCommand = (v: unknown): string | null => {
@@ -78,6 +79,7 @@ const TOOL_OUTPUT_PREVIEW_LINES = 8;
  */
 export const summarizeToolOutput = (output: unknown): string | null => {
 	if (output === undefined || output === null) return null;
+	output = compactToolOutput(output).output;
 	let text: string;
 	if (typeof output === 'string') {
 		text = output;
