@@ -11,14 +11,24 @@
  * SHIPPING CONTRACT:
  * - The matching PRIVATE key is a maintainer/CI secret and is NEVER committed.
  *   Release tooling signs the bundled plugin(s) with it at build time.
- * - Until a real publisher key is added here this list is EMPTY. The seeder is
+ * - This list was EMPTY until the publisher key below was minted. The seeder is
  *   trust-gated (it only installs a bundled plugin that verifies `trusted`), so
- *   an empty anchor means bundled plugins are simply not auto-installed - never
+ *   an empty anchor meant bundled plugins were simply not auto-installed - never
  *   an orphaned, auto-installed-but-untrusted plugin the user did not choose.
  * - Base64 SPKI DER, one entry per publisher key, matching the `publicKey`
  *   field a `signature.json` carries (see `signing.ts`).
  */
-export const MAESTRO_PUBLISHER_KEYS: readonly string[] = [];
+export const MAESTRO_PUBLISHER_KEYS: readonly string[] = [
+	// Maestro release-signing key (ed25519), minted 2026-07-23. The private half
+	// lives ONLY in the MAESTRO_PLUGIN_SIGNING_KEY Actions secret (added
+	// 2026-07-25); it is intentionally not held by any individual, so a bundled
+	// plugin can only be signed by a maintainer-tagged release run. This value
+	// must stay the public counterpart of that secret - the release drift guard
+	// fails the build if they diverge. Rotation: see CLAUDE-PLUGINS.md
+	// "Trust model (v1)", and note it is a TWO-part change (new secret AND a
+	// re-baked key here, in the same release).
+	'MCowBQYDK2VwAyEAgG9ilXDpkj83vdxhlOI64cehRMB2EpbW2CNQO3izPu0=',
+];
 
 /**
  * Union of the built-in publisher anchor and the user's configured trusted keys,
