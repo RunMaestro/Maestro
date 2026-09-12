@@ -288,6 +288,12 @@ describe('settingsStore', () => {
 				expect(window.maestro.settings.set).toHaveBeenCalledWith('llmProvider', 'anthropic');
 			});
 
+			it('setLlmProvider accepts requesty without a cast', () => {
+				useSettingsStore.getState().setLlmProvider('requesty');
+				expect(useSettingsStore.getState().llmProvider).toBe('requesty');
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('llmProvider', 'requesty');
+			});
+
 			it('setModelSlug updates state and persists', () => {
 				useSettingsStore.getState().setModelSlug('gpt-4');
 				expect(useSettingsStore.getState().modelSlug).toBe('gpt-4');

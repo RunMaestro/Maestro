@@ -199,6 +199,29 @@ Because the layers are edited in different places, no single screen shows the re
 
 This is the quickest way to catch the case where an agent behaves oddly because an `ANTHROPIC_BASE_URL` or API key from a layer you forgot about is overriding the one you just set. Values that look like credentials are masked until you click the eye on that row.
 
+## Built-in LLM Provider
+
+Some built-in AI features call an LLM directly (rather than going through a coding
+agent). The provider for these features is configured under **Settings → LLM** via the
+**LLM Provider** dropdown, a **Model Slug** field, and an **API Key** field. A **Test
+Connection** button sends a short prompt to verify connectivity and configuration.
+
+| Provider   | Base URL                        | API style         | Example model slug            |
+| ---------- | ------------------------------- | ----------------- | ----------------------------- |
+| OpenRouter | `https://openrouter.ai/api/v1`  | OpenAI-compatible | `anthropic/claude-3.5-sonnet` |
+| Requesty   | `https://router.requesty.ai/v1` | OpenAI-compatible | `openai/gpt-4o-mini`          |
+| Anthropic  | `https://api.anthropic.com/v1`  | Messages API      | `claude-3-5-sonnet-20241022`  |
+| Ollama     | `http://localhost:11434`        | Ollama (local)    | `llama3:latest`               |
+
+OpenRouter and Requesty both use OpenAI-compatible `provider/model` slugs and a
+`Bearer` API key. For Requesty, create a key at
+[app.requesty.ai/api-keys](https://app.requesty.ai/api-keys) and list available models
+with `GET https://router.requesty.ai/v1/models`. See the
+[Requesty docs](https://docs.requesty.ai) for details.
+
+API keys are stored locally in your Maestro settings file (see [Storage
+Location](#storage-location)).
+
 ## Checking for Updates
 
 Maestro checks for updates automatically on startup (configurable in Settings → General → **Check for updates on startup**).

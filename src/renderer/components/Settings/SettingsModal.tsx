@@ -41,7 +41,7 @@ import type { SearchableSetting } from './searchableSettings';
 
 // Feature flags - set to true to enable dormant features
 const FEATURE_FLAGS = {
-	LLM_SETTINGS: false, // LLM provider configuration (OpenRouter, Anthropic, Ollama)
+	LLM_SETTINGS: false, // LLM provider configuration (OpenRouter, Requesty, Anthropic, Ollama)
 };
 
 type SettingsTabId =
@@ -377,6 +377,39 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 					status: 'success',
 					message: 'Successfully connected to OpenRouter!',
 				});
+			} else if (llmProvider === 'requesty') {
+				if (!apiKey) {
+					throw new Error('API key is required for Requesty');
+				}
+
+				response = await fetch('https://router.requesty.ai/v1/chat/completions', {
+					method: 'POST',
+					headers: {
+						Authorization: `Bearer ${apiKey}`,
+						'Content-Type': 'application/json',
+						'HTTP-Referer': 'https://maestro.local',
+					},
+					body: JSON.stringify({
+						model: modelSlug || 'openai/gpt-4o-mini',
+						messages: [{ role: 'user', content: testPrompt }],
+						max_tokens: 50,
+					}),
+				});
+
+				if (!response.ok) {
+					const error = await response.json();
+					throw new Error(error.error?.message || `Requesty API error: ${response.status}`);
+				}
+
+				const data = await response.json();
+				if (!data.choices?.[0]?.message?.content) {
+					throw new Error('Invalid response from Requesty');
+				}
+
+				setTestResult({
+					status: 'success',
+					message: 'Successfully connected to Requesty!',
+				});
 			} else if (llmProvider === 'anthropic') {
 				if (!apiKey) {
 					throw new Error('API key is required for Anthropic');
@@ -560,6 +593,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 										style={{ borderColor: theme.colors.border }}
 									>
 										<option value="openrouter">OpenRouter</option>
+										<option value="requesty">Requesty</option>
 										<option value="anthropic">Anthropic</option>
 										<option value="ollama">Ollama (Local)</option>
 									</select>
@@ -575,7 +609,11 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 										className="w-full p-2 rounded border bg-transparent outline-none"
 										style={{ borderColor: theme.colors.border }}
 										placeholder={
-											llmProvider === 'ollama' ? 'llama3:latest' : 'anthropic/claude-3.5-sonnet'
+											llmProvider === 'ollama'
+												? 'llama3:latest'
+												: llmProvider === 'requesty'
+													? 'openai/gpt-4o-mini'
+													: 'anthropic/claude-3.5-sonnet'
 										}
 									/>
 								</div>
