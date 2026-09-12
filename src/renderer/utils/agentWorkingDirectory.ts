@@ -30,8 +30,14 @@ function comparablePath(p: string): string {
 	return /^[a-zA-Z]:|\\/.test(trimmed) ? trimmed.replace(/\\/g, '/').toLowerCase() : trimmed;
 }
 
-function samePath(a: string | undefined, b: string): boolean {
-	return comparablePath(a ?? '') === comparablePath(b);
+/**
+ * Whether two paths name the same directory: trailing separators are ignored,
+ * and Windows paths compare case-insensitively. Use this, not `===`, when
+ * deciding whether a user-entered directory differs from the agent's current
+ * one, so `/a/b/` is not reported as a move away from `/a/b`.
+ */
+export function isSameDirectory(a: string | undefined, b: string | undefined): boolean {
+	return comparablePath(a ?? '') === comparablePath(b ?? '');
 }
 
 /**
@@ -44,8 +50,13 @@ export function rebasePathOntoRoot(target: string, oldRoot: string, newRoot: str
 	const from = comparablePath(oldRoot);
 	const current = comparablePath(target);
 	if (current === from) return to;
+	if (!current.startsWith(from)) return target;
 	const rest = trimTrailingSeparators(target).slice(from.length);
-	if (current.startsWith(from) && /^[/\\]/.test(rest)) return joinPath(to, rest);
+	// A bare root (`/`, `C:\`) keeps its separator, so `rest` has none to check:
+	// everything absolute lives under it. Anywhere else the separator is what
+	// separates `/projects/old/docs` from the sibling `/projects/old-archive`.
+	const fromIsBareRoot = /[/\\]$/.test(from);
+	if (fromIsBareRoot || /^[/\\]/.test(rest)) return joinPath(to, rest);
 	return target;
 }
 
@@ -83,10 +94,10 @@ export function withWorkingDirectory(session: Session, newDir: string): Session 
 	// own projectRoot. `shellCwd` is not compared, because a `cd` in the command
 	// terminal moves it on purpose.
 	const alreadyThere =
-		samePath(oldRoot, dir) &&
-		samePath(session.cwd, dir) &&
-		samePath(session.fullPath, dir) &&
-		(!ssh?.enabled || !ssh.workingDirOverride || samePath(ssh.workingDirOverride, dir));
+		isSameDirectory(oldRoot, dir) &&
+		isSameDirectory(session.cwd, dir) &&
+		isSameDirectory(session.fullPath, dir) &&
+		(!ssh?.enabled || !ssh.workingDirOverride || isSameDirectory(ssh.workingDirOverride, dir));
 	if (alreadyThere) return session;
 
 	return {
@@ -100,7 +111,16 @@ export function withWorkingDirectory(session: Session, newDir: string): Session 
 			: session.autoRunFolderPath,
 		// Over SSH the remote spawn cwd is read from the override, so it moves too.
 		sessionSshRemoteConfig: ssh?.enabled ? { ...ssh, workingDirOverride: dir } : ssh,
+		// The remote cwd the agent last reported described the old project. New
+		// terminal tabs read it ahead of the override, so it must not survive.
+		remoteCwd: undefined,
 		fileTree: [],
+		// A load that was in flight for the old root must not be allowed to land.
+		// The auto-loader skips a session while `fileTreeLoading` is set, so the
+		// flag is cleared here; the fresh load it then starts bumps the load
+		// sequence, and the old request discards its result as stale.
+		fileTreeLoading: false,
+		fileTreeLoadingProgress: undefined,
 		fileExplorerExpanded: [],
 		fileExplorerScrollPos: 0,
 		fileTreeStats: undefined,

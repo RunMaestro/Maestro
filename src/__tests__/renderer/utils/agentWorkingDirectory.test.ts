@@ -5,6 +5,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
+	isSameDirectory,
 	rebasePathOntoRoot,
 	withWorkingDirectory,
 	workingDirectoryChangeBlocker,
@@ -57,6 +58,32 @@ describe('withWorkingDirectory', () => {
 		// Git polling re-detects a repo for sessions marked false.
 		expect(moved.isGitRepo).toBe(false);
 		expect(moved.gitBranches).toBeUndefined();
+	});
+
+	it('puts down a file tree load that was in flight for the old directory', () => {
+		const session = {
+			...base(),
+			fileTreeLoading: true,
+			fileTreeLoadingProgress: { directoriesScanned: 3, filesFound: 40, currentDirectory: 'src' },
+		};
+
+		const moved = withWorkingDirectory(session, '/projects/new');
+
+		// With the flag down the auto-loader starts a fresh, newer-sequenced load,
+		// and the old request discards its result as stale instead of writing
+		// the previous project's tree into the moved agent.
+		expect(moved.fileTreeLoading).toBe(false);
+		expect(moved.fileTreeLoadingProgress).toBeUndefined();
+	});
+
+	it('forgets the remote cwd the agent reported in the old directory', () => {
+		const session = {
+			...base(),
+			sshRemoteId: 'remote-1',
+			remoteCwd: '/projects/old/src',
+		};
+
+		expect(withWorkingDirectory(session, '/projects/new').remoteCwd).toBeUndefined();
 	});
 
 	it('moves the SSH working directory override for a remote agent', () => {
@@ -140,6 +167,30 @@ describe('rebasePathOntoRoot', () => {
 		expect(rebasePathOntoRoot('/projects/old-archive/docs', '/projects/old', '/projects/new')).toBe(
 			'/projects/old-archive/docs'
 		);
+	});
+
+	it('moves a folder out from under a bare root', () => {
+		expect(rebasePathOntoRoot('/.maestro/playbooks', '/', '/projects/new')).toBe(
+			'/projects/new/.maestro/playbooks'
+		);
+		expect(rebasePathOntoRoot('C:\\.maestro\\playbooks', 'C:\\', 'D:\\work')).toBe(
+			'D:\\work\\.maestro\\playbooks'
+		);
+	});
+});
+
+describe('isSameDirectory', () => {
+	it('ignores a trailing separator', () => {
+		expect(isSameDirectory('/projects/old/', '/projects/old')).toBe(true);
+	});
+
+	it('ignores case on Windows paths only', () => {
+		expect(isSameDirectory('C:\\Work\\Old', 'c:/work/old')).toBe(true);
+		expect(isSameDirectory('/Projects/Old', '/projects/old')).toBe(false);
+	});
+
+	it('treats a missing path as different from a real one', () => {
+		expect(isSameDirectory(undefined, '/projects/old')).toBe(false);
 	});
 });
 
