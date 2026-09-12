@@ -11,9 +11,11 @@ import { logger } from '../utils/logger';
  * Integration points:
  * 1. After sessions are restored on app launch, refreshes all sessions
  * 2. When a new session is created, refreshes that session
- * 3. When a session is removed, notifies the engine to clean up
- * 4. When the maestroCue encore feature is toggled on, starts the engine
- * 5. When the maestroCue encore feature is toggled off, stops the engine
+ * 3. When a session's projectRoot changes (the agent was moved to another
+ *    directory), refreshes it against the new root
+ * 4. When a session is removed, notifies the engine to clean up
+ * 5. When the maestroCue encore feature is toggled on, starts the engine
+ * 6. When the maestroCue encore feature is toggled off, stops the engine
  *
  * Session discovery always runs so the Cue indicator shows in the Left Bar
  * whenever a .maestro/cue.yaml exists. The encore feature flag only gates
@@ -21,7 +23,8 @@ import { logger } from '../utils/logger';
  */
 export function useCueAutoDiscovery(sessions: Session[], encoreFeatures: EncoreFeatureFlags) {
 	const sessionsLoaded = useSessionStore((s) => s.sessionsLoaded);
-	const prevSessionIdsRef = useRef<Set<string>>(new Set());
+	// projectRoot per session id as of the last pass: spots additions, moves, and removals.
+	const prevProjectRootsRef = useRef<Map<string, string>>(new Map());
 	const prevMaestroCueEnabledRef = useRef<boolean>(encoreFeatures.maestroCue);
 	const initialScanDoneRef = useRef(false);
 	// Serializes in-flight enable/disable IPC calls so rapid toggles
@@ -29,12 +32,12 @@ export function useCueAutoDiscovery(sessions: Session[], encoreFeatures: EncoreF
 	// that disagrees with the observed flag value.
 	const toggleChainRef = useRef<Promise<void>>(Promise.resolve());
 
-	// Track session additions and removals - always runs regardless of encore flag
+	// Track session additions, moves, and removals - always runs regardless of encore flag
 	useEffect(() => {
 		if (!sessionsLoaded) return;
 
-		const currentIds = new Set(sessions.map((s) => s.id));
-		const prevIds = prevSessionIdsRef.current;
+		const currentRoots = new Map(sessions.map((s): [string, string] => [s.id, s.projectRoot]));
+		const prevRoots = prevProjectRootsRef.current;
 
 		// --- Initial scan after sessions are loaded ---
 		if (!initialScanDoneRef.current) {
@@ -48,13 +51,15 @@ export function useCueAutoDiscovery(sessions: Session[], encoreFeatures: EncoreF
 						);
 				}
 			}
-			prevSessionIdsRef.current = currentIds;
+			prevProjectRootsRef.current = currentRoots;
 			return;
 		}
 
-		// --- Detect new sessions ---
+		// --- Detect new sessions and moved sessions ---
+		// A moved agent (`update-agent --cwd`) keeps its id, so comparing ids alone
+		// left the engine on the old folder's cue.yaml until the next app launch.
 		for (const session of sessions) {
-			if (!prevIds.has(session.id) && session.projectRoot) {
+			if (session.projectRoot && prevRoots.get(session.id) !== session.projectRoot) {
 				window.maestro.cue
 					.refreshSession(session.id, session.projectRoot)
 					.catch((err) =>
@@ -64,8 +69,8 @@ export function useCueAutoDiscovery(sessions: Session[], encoreFeatures: EncoreF
 		}
 
 		// --- Detect removed sessions ---
-		for (const prevId of prevIds) {
-			if (!currentIds.has(prevId)) {
+		for (const prevId of prevRoots.keys()) {
+			if (!currentRoots.has(prevId)) {
 				window.maestro.cue
 					.removeSession(prevId)
 					.catch((err) =>
@@ -74,7 +79,7 @@ export function useCueAutoDiscovery(sessions: Session[], encoreFeatures: EncoreF
 			}
 		}
 
-		prevSessionIdsRef.current = currentIds;
+		prevProjectRootsRef.current = currentRoots;
 	}, [sessions, sessionsLoaded]);
 
 	// Track encore feature toggle. Queues enable/disable calls on a single

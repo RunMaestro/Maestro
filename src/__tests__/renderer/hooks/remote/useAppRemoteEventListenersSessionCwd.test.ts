@@ -115,9 +115,23 @@ describe('maestro:remoteUpdateSessionCwd', () => {
 		expect(applyUpdate(setSessions, sessions)[0].fileTree).toEqual([]);
 	});
 
+	// The repair gets the full relocation, not a cwd-only patch: a stale file
+	// tree or SSH override would leave the agent split in a different way.
 	it('repairs an agent an older --cwd left split when moved back to its projectRoot', () => {
-		const split = { ...oldLocation(), cwd: '/projects/new', fullPath: '/projects/new' };
-		const sessions = [{ ...split, shellCwd: '/projects/new' }];
+		const sessions = [
+			{
+				...oldLocation(),
+				cwd: '/projects/new',
+				fullPath: '/projects/new',
+				shellCwd: '/projects/new',
+				fileTree: [{ name: 'stale.ts', type: 'file' as const }],
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: 'remote-1',
+					workingDirOverride: '/projects/new',
+				},
+			},
+		];
 		const { setSessions } = setup(sessions);
 
 		dispatchCwd('session-1', '/projects/old');
@@ -127,6 +141,19 @@ describe('maestro:remoteUpdateSessionCwd', () => {
 		expect(updated.fullPath).toBe('/projects/old');
 		expect(updated.shellCwd).toBe('/projects/old');
 		expect(updated.projectRoot).toBe('/projects/old');
+		expect(updated.sessionSshRemoteConfig?.workingDirOverride).toBe('/projects/old');
+		expect(updated.fileTree).toEqual([]);
+	});
+
+	it('stores the directory without surrounding whitespace', () => {
+		const sessions = [oldLocation()];
+		const { setSessions } = setup(sessions);
+
+		dispatchCwd('session-1', '  /projects/new  ');
+
+		const [updated] = applyUpdate(setSessions, sessions);
+		expect(updated.cwd).toBe('/projects/new');
+		expect(updated.projectRoot).toBe('/projects/new');
 	});
 
 	it('refuses while the agent process is running', () => {
@@ -138,7 +165,20 @@ describe('maestro:remoteUpdateSessionCwd', () => {
 		expect(setSessions).not.toHaveBeenCalled();
 		expect(ack).toHaveBeenCalledWith('ch', {
 			success: false,
-			error: 'Agent process is running; stop it before changing cwd',
+			error: 'Stop the agent before changing its working directory.',
+		});
+	});
+
+	it('refuses while the agent is busy even when no process id is recorded', () => {
+		const sessions = [{ ...oldLocation(), state: 'busy' as const }];
+		const { setSessions } = setup(sessions);
+
+		dispatchCwd('session-1', '/projects/new');
+
+		expect(setSessions).not.toHaveBeenCalled();
+		expect(ack).toHaveBeenCalledWith('ch', {
+			success: false,
+			error: 'Stop the agent before changing its working directory.',
 		});
 	});
 });

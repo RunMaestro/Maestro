@@ -19,16 +19,32 @@ function trimTrailingSeparators(p: string): string {
 }
 
 /**
+ * The form of a path used for comparison. A Windows path (drive letter or a
+ * backslash) is lowercased with forward slashes, because Windows matches paths
+ * case-insensitively: `C:\Work\old` and `c:\work\old` are one folder. POSIX
+ * paths stay case-sensitive. Each mapping is one character to one, so a prefix
+ * length measured here also holds for the original string.
+ */
+function comparablePath(p: string): string {
+	const trimmed = trimTrailingSeparators(p);
+	return /^[a-zA-Z]:|\\/.test(trimmed) ? trimmed.replace(/\\/g, '/').toLowerCase() : trimmed;
+}
+
+function samePath(a: string | undefined, b: string): boolean {
+	return comparablePath(a ?? '') === comparablePath(b);
+}
+
+/**
  * Rebase `target` from under `oldRoot` onto `newRoot`. A path that does not
  * live under `oldRoot` is returned unchanged: an Auto Run folder outside the
  * project was the user's own choice, not something derived from the old root.
  */
 export function rebasePathOntoRoot(target: string, oldRoot: string, newRoot: string): string {
-	const from = trimTrailingSeparators(oldRoot);
 	const to = trimTrailingSeparators(newRoot);
-	const current = trimTrailingSeparators(target);
+	const from = comparablePath(oldRoot);
+	const current = comparablePath(target);
 	if (current === from) return to;
-	const rest = current.slice(from.length);
+	const rest = trimTrailingSeparators(target).slice(from.length);
 	if (current.startsWith(from) && /^[/\\]/.test(rest)) return joinPath(to, rest);
 	return target;
 }
@@ -53,14 +69,26 @@ export function workingDirectoryChangeBlocker(
  * State that describes the OLD directory (file tree, changed files, git refs)
  * is cleared, so the Files panel reloads from the new root and git polling
  * re-detects the repo instead of showing the previous project's tree. Returns
- * the session untouched when `newDir` is blank or names the current directory.
+ * the session untouched when `newDir` is blank or the agent already lives there.
  */
 export function withWorkingDirectory(session: Session, newDir: string): Session {
 	const dir = newDir.trim();
-	const oldRoot = session.projectRoot || session.cwd;
-	if (!dir || trimTrailingSeparators(dir) === trimTrailingSeparators(oldRoot)) return session;
+	if (!dir) return session;
 
+	const oldRoot = session.projectRoot || session.cwd;
 	const ssh = session.sessionSshRemoteConfig;
+	// "Already there" means every field that says where the agent lives names
+	// `dir`, not just projectRoot: an agent an older `update-agent --cwd` left
+	// split (cwd moved, projectRoot did not) is repaired by moving it onto its
+	// own projectRoot. `shellCwd` is not compared, because a `cd` in the command
+	// terminal moves it on purpose.
+	const alreadyThere =
+		samePath(oldRoot, dir) &&
+		samePath(session.cwd, dir) &&
+		samePath(session.fullPath, dir) &&
+		(!ssh?.enabled || !ssh.workingDirOverride || samePath(ssh.workingDirOverride, dir));
+	if (alreadyThere) return session;
+
 	return {
 		...session,
 		cwd: dir,

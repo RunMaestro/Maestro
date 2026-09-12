@@ -155,6 +155,46 @@ describe('useCueAutoDiscovery', () => {
 		});
 	});
 
+	// `update-agent --cwd` keeps the session id and changes projectRoot. The
+	// engine must reload against the new root, not keep the old cue.yaml.
+	describe('session moves', () => {
+		it('should refresh a session whose projectRoot changed', () => {
+			const encoreFeatures = makeEncoreFeatures(true);
+
+			useSessionStore.setState({ sessionsLoaded: true });
+
+			const { rerender } = renderHook(
+				({ sessions, encore }) => useCueAutoDiscovery(sessions, encore),
+				{ initialProps: { sessions: [makeSession('s1', '/project/a')], encore: encoreFeatures } }
+			);
+
+			mockRefreshSession.mockClear();
+
+			rerender({ sessions: [makeSession('s1', '/project/moved')], encore: encoreFeatures });
+
+			expect(mockRefreshSession).toHaveBeenCalledWith('s1', '/project/moved');
+			expect(mockRemoveSession).not.toHaveBeenCalled();
+		});
+
+		it('should not refresh a session whose projectRoot is unchanged', () => {
+			const encoreFeatures = makeEncoreFeatures(true);
+
+			useSessionStore.setState({ sessionsLoaded: true });
+
+			const { rerender } = renderHook(
+				({ sessions, encore }) => useCueAutoDiscovery(sessions, encore),
+				{ initialProps: { sessions: [makeSession('s1', '/project/a')], encore: encoreFeatures } }
+			);
+
+			mockRefreshSession.mockClear();
+
+			const renamed = { ...makeSession('s1', '/project/a'), name: 'renamed' };
+			rerender({ sessions: [renamed], encore: encoreFeatures });
+
+			expect(mockRefreshSession).not.toHaveBeenCalled();
+		});
+	});
+
 	describe('encore feature toggle', () => {
 		it('should enable Cue and scan all sessions when maestroCue is toggled ON', async () => {
 			const sessions = [makeSession('s1', '/project/a'), makeSession('s2', '/project/b')];

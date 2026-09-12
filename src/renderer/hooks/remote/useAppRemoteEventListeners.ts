@@ -26,7 +26,10 @@ import {
 import type { Session, AITab, ToolType, Group, BatchRunConfig, BrowserTab } from '../../types';
 import { logger } from '../../utils/logger';
 import { FILE_TREE_REFRESH_EVENT } from '../../utils/fileTreeRefresh';
-import { withWorkingDirectory } from '../../utils/agentWorkingDirectory';
+import {
+	withWorkingDirectory,
+	workingDirectoryChangeBlocker,
+} from '../../utils/agentWorkingDirectory';
 import { spawnPtyForTab } from '../../services/terminalSpawn';
 import { useTabStore } from '../../stores/tabStore';
 import {
@@ -1447,9 +1450,10 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 	// Handle remote update session cwd from CLI/web. Every path field moves
 	// together through withWorkingDirectory(): moving cwd alone left projectRoot
 	// and autoRunFolderPath on the old directory, so the Files panel and the Edit
-	// dialog kept describing a folder the agent no longer ran in (#1565). The
-	// PTY's cwd is fixed at spawn time, so we refuse the update when an agent
-	// process is alive.
+	// dialog kept describing a folder the agent no longer ran in (#1565). A
+	// spawned process keeps the cwd it launched with, so the update is refused
+	// while the agent is busy or its process is alive
+	// (workingDirectoryChangeBlocker).
 	useEventListener('maestro:remoteUpdateSessionCwd', (e: Event) => {
 		const { sessionId, newCwd, responseChannel } = (e as CustomEvent).detail;
 		const session = sessionsRef.current.find((s) => s.id === sessionId);
@@ -1460,22 +1464,16 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			});
 			return;
 		}
-		if (session.aiPid && session.aiPid > 0) {
+		const blocker = workingDirectoryChangeBlocker(session);
+		if (blocker) {
 			window.maestro.process.sendRemoteUpdateSessionCwdResponse(responseChannel, {
 				success: false,
-				error: 'Agent process is running; stop it before changing cwd',
+				error: blocker,
 			});
 			return;
 		}
 		setSessions((prev: Session[]) =>
-			prev.map((s) => {
-				if (s.id !== sessionId) return s;
-				const moved = withWorkingDirectory(s, newCwd);
-				// The helper no-ops when newCwd already names projectRoot. An agent
-				// left split by an older `--cwd` (cwd elsewhere, projectRoot here)
-				// still needs its cwd pulled back to match.
-				return moved === s ? { ...s, cwd: newCwd, fullPath: newCwd, shellCwd: newCwd } : moved;
-			})
+			prev.map((s) => (s.id === sessionId ? withWorkingDirectory(s, newCwd) : s))
 		);
 		window.maestro.process.sendRemoteUpdateSessionCwdResponse(responseChannel, { success: true });
 	});

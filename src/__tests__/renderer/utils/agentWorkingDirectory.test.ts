@@ -89,6 +89,32 @@ describe('withWorkingDirectory', () => {
 		expect(withWorkingDirectory(session, '   ')).toBe(session);
 		expect(withWorkingDirectory(session, '/projects/old/')).toBe(session);
 	});
+
+	it('treats a terminal `cd` as unchanged, since shellCwd moves on its own', () => {
+		const session = { ...base(), shellCwd: '/projects/old/src' };
+
+		expect(withWorkingDirectory(session, '/projects/old')).toBe(session);
+	});
+
+	it('repairs an agent whose cwd moved while projectRoot stayed behind', () => {
+		const split = {
+			...base(),
+			cwd: '/projects/new',
+			fullPath: '/projects/new',
+			sessionSshRemoteConfig: {
+				enabled: true,
+				remoteId: 'remote-1',
+				workingDirOverride: '/projects/new',
+			},
+		};
+
+		const repaired = withWorkingDirectory(split, '/projects/old');
+
+		expect(repaired).not.toBe(split);
+		expect(repaired.cwd).toBe('/projects/old');
+		expect(repaired.fullPath).toBe('/projects/old');
+		expect(repaired.sessionSshRemoteConfig?.workingDirOverride).toBe('/projects/old');
+	});
 });
 
 describe('rebasePathOntoRoot', () => {
@@ -96,6 +122,18 @@ describe('rebasePathOntoRoot', () => {
 		expect(
 			rebasePathOntoRoot('C:\\work\\old\\.maestro\\playbooks', 'C:\\work\\old', 'C:\\work\\new')
 		).toBe('C:\\work\\new\\.maestro\\playbooks');
+	});
+
+	it('matches a Windows root regardless of case', () => {
+		expect(
+			rebasePathOntoRoot('c:\\Work\\Old\\.maestro\\playbooks', 'C:\\work\\old', 'C:\\work\\new')
+		).toBe('C:\\work\\new\\.maestro\\playbooks');
+	});
+
+	it('keeps POSIX paths case-sensitive', () => {
+		expect(rebasePathOntoRoot('/Projects/Old/docs', '/projects/old', '/projects/new')).toBe(
+			'/Projects/Old/docs'
+		);
 	});
 
 	it('does not treat a sibling that shares a name prefix as inside the root', () => {

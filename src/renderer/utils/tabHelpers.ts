@@ -2645,7 +2645,7 @@ export function createMergedSession(
 		state: 'idle',
 		cwd: projectRoot,
 		fullPath: projectRoot,
-		projectRoot, // Never changes, used for session storage
+		projectRoot, // Used for session storage; moves only through withWorkingDirectory()
 		createdAt: Date.now(),
 		isGitRepo: false, // Will be updated by caller if needed
 		aiLogs: [], // Deprecated - logs are in aiTabs
