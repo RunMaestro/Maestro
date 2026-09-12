@@ -26,6 +26,9 @@ import { useUIStore } from '../../../renderer/stores/uiStore';
 import type { Session, AITab } from '../../../renderer/types';
 import { createMockAITab } from '../../helpers/mockTab';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
+import { notifyToast } from '../../../renderer/stores/notificationStore';
+
+vi.mock('../../../renderer/stores/notificationStore', () => ({ notifyToast: vi.fn() }));
 
 // ============================================================================
 // Test Helpers
@@ -268,6 +271,83 @@ describe('useSessionLifecycle', () => {
 			expect(updated.nudgeMessage).toBeUndefined();
 			expect(updated.newSessionMessage).toBeUndefined();
 			expect(updated.customPath).toBeUndefined();
+		});
+
+		const saveWithWorkingDirectory = (
+			save: ReturnType<typeof useSessionLifecycle>['handleSaveEditAgent'],
+			workingDirectory: string
+		) =>
+			save(
+				'session-1',
+				'Agent',
+				undefined, // toolType
+				undefined, // nudgeMessage
+				undefined, // newSessionMessage
+				undefined, // customPath
+				undefined, // customArgs
+				undefined, // customEnvVars
+				undefined, // customModel
+				undefined, // customContextWindow
+				undefined, // sessionSshRemoteConfig
+				undefined, // enableMaestroP
+				undefined, // maestroPPath
+				undefined, // maestroPMode
+				undefined, // retryOnAvailabilityErrors
+				undefined, // retryOnTokenExhaustion
+				undefined, // customEnvVarsDisabled
+				workingDirectory
+			);
+
+		it('moves every path field when the working directory changes', () => {
+			const session = createMockSession({
+				id: 'session-1',
+				shellCwd: '/projects/myapp',
+				autoRunFolderPath: '/projects/myapp/.maestro/playbooks',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			act(() => {
+				saveWithWorkingDirectory(result.current.handleSaveEditAgent, '/projects/moved');
+			});
+
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.cwd).toBe('/projects/moved');
+			expect(updated.fullPath).toBe('/projects/moved');
+			expect(updated.shellCwd).toBe('/projects/moved');
+			expect(updated.projectRoot).toBe('/projects/moved');
+			expect(updated.autoRunFolderPath).toBe('/projects/moved/.maestro/playbooks');
+		});
+
+		it('does not refuse a busy agent when the directory differs only by a trailing slash', () => {
+			const session = createMockSession({ id: 'session-1', state: 'busy' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			act(() => {
+				saveWithWorkingDirectory(result.current.handleSaveEditAgent, '/projects/myapp/');
+			});
+
+			expect(notifyToast).not.toHaveBeenCalled();
+			expect(useSessionStore.getState().sessions[0].projectRoot).toBe('/projects/myapp');
+		});
+
+		it('keeps the directory when the agent started running before save', () => {
+			const session = createMockSession({ id: 'session-1', state: 'busy' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			act(() => {
+				saveWithWorkingDirectory(result.current.handleSaveEditAgent, '/projects/moved');
+			});
+
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.name).toBe('Agent');
+			expect(updated.cwd).toBe('/projects/myapp');
+			expect(updated.projectRoot).toBe('/projects/myapp');
 		});
 
 		it('preserves tabs and parks the old provider session when toolType changes', () => {

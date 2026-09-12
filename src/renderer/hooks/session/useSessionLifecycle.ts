@@ -34,6 +34,10 @@ import type { NavHistoryEntry } from './useNavigationHistory';
 import { captureException } from '../../utils/sentry';
 import { persistTabStarred } from '../../utils/starredSessions';
 import { toggleTabUnreadFilter } from '../../services/unreadFilters';
+import {
+	withWorkingDirectory,
+	workingDirectoryChangeBlocker,
+} from '../../utils/agentWorkingDirectory';
 
 // ============================================================================
 // Dependencies interface
@@ -77,7 +81,8 @@ export interface SessionLifecycleReturn {
 		maestroPMode?: 'interactive' | 'dynamic',
 		retryOnAvailabilityErrors?: boolean,
 		retryOnTokenExhaustion?: boolean,
-		customEnvVarsDisabled?: Record<string, string>
+		customEnvVarsDisabled?: Record<string, string>,
+		workingDirectory?: string
 	) => void;
 	/** Rename the currently-selected tab (persists to agent session storage + history) */
 	handleRenameTab: (newName: string) => void;
@@ -150,8 +155,25 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			maestroPMode?: 'interactive' | 'dynamic',
 			retryOnAvailabilityErrors?: boolean,
 			retryOnTokenExhaustion?: boolean,
-			customEnvVarsDisabled?: Record<string, string>
+			customEnvVarsDisabled?: Record<string, string>,
+			workingDirectory?: string
 		) => {
+			// The dialog disables the field while the agent runs, but the agent can
+			// start between opening the dialog and saving. Say so rather than
+			// silently keeping the old directory.
+			let relocateTo = workingDirectory;
+			const current = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+			// Only a directory the helper would actually move to is gated: a value
+			// that differs by a trailing slash is not a move, and must not be
+			// reported as a refused one.
+			const wouldMove =
+				!!relocateTo && !!current && withWorkingDirectory(current, relocateTo) !== current;
+			const blocker = wouldMove ? workingDirectoryChangeBlocker(current!) : null;
+			if (blocker) {
+				relocateTo = undefined;
+				notifyToast({ color: 'yellow', title: 'Working directory not changed', message: blocker });
+			}
+
 			useSessionStore.getState().setSessions((prev) =>
 				prev.map((s) => {
 					if (s.id !== sessionId) return s;
@@ -206,7 +228,8 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 						// keeps that turn's late events attributed to the old provider.
 					}
 
-					return { ...s, ...updatedFields };
+					const next = { ...s, ...updatedFields };
+					return relocateTo ? withWorkingDirectory(next, relocateTo) : next;
 				})
 			);
 		},

@@ -31,8 +31,12 @@ export function useRemotePathValidation({
 	const [validation, setValidation] = useState<RemotePathValidationState>(DEFAULT_STATE);
 
 	useEffect(() => {
+		// A result belongs to the path and remote it was checked against. Drop it
+		// the moment either changes, so a directory that validated a keystroke ago
+		// cannot vouch for the path being typed now.
+		setValidation(DEFAULT_STATE);
+
 		if (!isSshEnabled) {
-			setValidation(DEFAULT_STATE);
 			return;
 		}
 

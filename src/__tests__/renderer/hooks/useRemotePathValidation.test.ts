@@ -191,6 +191,35 @@ describe('useRemotePathValidation', () => {
 		});
 	});
 
+	it('should drop a previous result as soon as the path changes', async () => {
+		vi.mocked(window.maestro.fs.stat).mockResolvedValue({
+			isDirectory: true,
+			isFile: false,
+			size: 4096,
+			mtimeMs: Date.now(),
+		});
+
+		const { result, rerender } = renderHook(
+			({ path }) =>
+				useRemotePathValidation({
+					isSshEnabled: true,
+					path,
+					sshRemoteId: 'remote-1',
+					debounceMs: 10,
+				}),
+			{ initialProps: { path: '/home/user/project' } }
+		);
+
+		await waitFor(() => {
+			expect(result.current.valid).toBe(true);
+		});
+
+		// The new path has not been checked yet, so the old verdict must not stand for it.
+		rerender({ path: '/home/user/project-typo' });
+		expect(result.current.valid).toBe(false);
+		expect(result.current.isDirectory).toBe(false);
+	});
+
 	it('should reset to default when SSH is toggled off', async () => {
 		vi.mocked(window.maestro.fs.stat).mockResolvedValue({
 			isDirectory: true,
