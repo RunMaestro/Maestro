@@ -52,33 +52,27 @@ export { CUE_COLOR };
 // can use it too) and re-exported here for History consumers, mirroring CUE_COLOR.
 export { AGENT_COLOR };
 
+/**
+ * Tinted pill scheme from one hex color: faint fill, full-strength text, and a
+ * border between the two. Every history type pill (AI and group chat) uses it.
+ */
+export const tintedPillColors = (color: string) => ({
+	bg: color + '20',
+	text: color,
+	border: color + '40',
+});
+
 /** Get pill color scheme based on entry type */
 export const getPillColor = (type: HistoryEntryType, theme: Theme) => {
 	switch (type) {
 		case 'AUTO':
-			return {
-				bg: theme.colors.warning + '20',
-				text: theme.colors.warning,
-				border: theme.colors.warning + '40',
-			};
+			return tintedPillColors(theme.colors.warning);
 		case 'USER':
-			return {
-				bg: theme.colors.accent + '20',
-				text: theme.colors.accent,
-				border: theme.colors.accent + '40',
-			};
+			return tintedPillColors(theme.colors.accent);
 		case 'CUE':
-			return {
-				bg: CUE_COLOR + '20',
-				text: CUE_COLOR,
-				border: CUE_COLOR + '40',
-			};
+			return tintedPillColors(CUE_COLOR);
 		case 'AGENT':
-			return {
-				bg: AGENT_COLOR + '20',
-				text: AGENT_COLOR,
-				border: AGENT_COLOR + '40',
-			};
+			return tintedPillColors(AGENT_COLOR);
 		default:
 			return {
 				bg: theme.colors.bgActivity,
