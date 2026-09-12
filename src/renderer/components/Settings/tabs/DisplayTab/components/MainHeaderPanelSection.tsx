@@ -53,7 +53,10 @@ export function MainHeaderPanelSection({
 					theme={theme}
 					title="Show session cost pill"
 					description={
-						<>Display the per-session running cost (e.g. &quot;$21.33&quot;) in the main header.</>
+						<>
+							Display the per-session running cost (e.g. &quot;$21.33&quot;) in the main header, and
+							the total cost in the group chat header.
+						</>
 					}
 					checked={showSessionCostPill}
 					onChange={setShowSessionCostPill}

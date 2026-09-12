@@ -118,6 +118,9 @@ export interface ManagedProcess {
 	 *  (coerced to 0 by the spawner's `close` handler) must NOT be surfaced as an
 	 *  "exited without producing a response" error. */
 	interrupted?: boolean;
+	/** An in-turn error notice held until the turn shows whether the agent
+	 *  recovered from it. See `AgentOutputParser.isProvisionalErrorNotice`. */
+	provisionalError?: AgentError;
 	startTime: number;
 	outputParser?: AgentOutputParser;
 	stderrBuffer?: string;

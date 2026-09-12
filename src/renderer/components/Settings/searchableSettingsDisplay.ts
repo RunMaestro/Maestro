@@ -284,6 +284,7 @@ export const DISPLAY_SETTINGS: SearchableSetting[] = [
 			'session uuid',
 			'uuid',
 			'cost',
+			'group chat cost',
 			'pill',
 			'pills',
 			'badge',

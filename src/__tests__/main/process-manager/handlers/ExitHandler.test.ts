@@ -84,7 +84,7 @@ import { waitForCopilotShutdown } from '../../../../main/process-manager/Copilot
 const { waitForCopilotShutdown: actualWaitForCopilotShutdown } = await vi.importActual<
 	typeof import('../../../../main/process-manager/CopilotShutdownWaiter')
 >('../../../../main/process-manager/CopilotShutdownWaiter');
-import type { ManagedProcess } from '../../../../main/process-manager/types';
+import type { AgentError, ManagedProcess } from '../../../../main/process-manager/types';
 import type { AgentOutputParser, ParsedEvent } from '../../../../main/parsers';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -636,6 +636,73 @@ describe('ExitHandler', () => {
 			await exitHandler.handleExit('test-session', 0);
 
 			expect(dataEvents).toContain('Accumulated streaming text');
+		});
+	});
+
+	describe('held in-turn error notice at exit', () => {
+		const heldError: AgentError = {
+			type: 'unknown',
+			message: 'server_error',
+			recoverable: true,
+			agentId: 'claude-code',
+			sessionId: 'test-session',
+			timestamp: 1,
+		};
+
+		it('emits the held notice before the exit event', async () => {
+			const proc = createMockProcess({
+				isStreamJsonMode: true,
+				outputParser: createMockOutputParser(),
+				provisionalError: heldError,
+			});
+			processes.set('test-session', proc);
+
+			const order: string[] = [];
+			emitter.on('agent-error', (_sid: string, error: AgentError) =>
+				order.push(`agent-error:${error.message}`)
+			);
+			emitter.on('exit', () => order.push('exit'));
+
+			await exitHandler.handleExit('test-session', 0);
+
+			expect(order).toEqual(['agent-error:server_error', 'exit']);
+			expect(proc.errorEmitted).toBe(true);
+			expect(proc.provisionalError).toBeUndefined();
+		});
+
+		it('drops a held notice when the user interrupted the turn', async () => {
+			const proc = createMockProcess({
+				isStreamJsonMode: true,
+				outputParser: createMockOutputParser(),
+				interrupted: true,
+				provisionalError: heldError,
+			});
+			processes.set('test-session', proc);
+
+			const onAgentError = vi.fn();
+			emitter.on('agent-error', onAgentError);
+
+			await exitHandler.handleExit('test-session', 0);
+
+			expect(onAgentError).not.toHaveBeenCalled();
+			expect(proc.provisionalError).toBeUndefined();
+		});
+
+		it('does not emit a held notice after an error was already emitted', async () => {
+			const proc = createMockProcess({
+				isStreamJsonMode: true,
+				outputParser: createMockOutputParser(),
+				errorEmitted: true,
+				provisionalError: heldError,
+			});
+			processes.set('test-session', proc);
+
+			const onAgentError = vi.fn();
+			emitter.on('agent-error', onAgentError);
+
+			await exitHandler.handleExit('test-session', 0);
+
+			expect(onAgentError).not.toHaveBeenCalled();
 		});
 	});
 

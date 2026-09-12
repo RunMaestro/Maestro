@@ -694,6 +694,32 @@ export class ClaudeOutputParser implements AgentOutputParser {
 	}
 
 	/**
+	 * Claude Code reports a failed API call INSIDE a turn as a synthetic assistant
+	 * message, and then often retries the call itself and carries on. Captured live:
+	 *
+	 *   { type: 'assistant', error: 'server_error', is_api_error_message: true,
+	 *     message: { model: '<synthetic>', content: [{ type: 'text',
+	 *       text: 'API Error: Connection lost mid-response. ...' }] } }
+	 *
+	 * followed two minutes later by more tool calls from the real model, and no
+	 * `result` for another twenty. The notice alone therefore does not end the turn.
+	 * Stdout carries the flag in snake_case and the transcript in camelCase, so
+	 * both are accepted, and the `<synthetic>` model marks it on paths that forward
+	 * neither.
+	 */
+	isProvisionalErrorNotice(parsed: unknown): boolean {
+		if (!parsed || typeof parsed !== 'object') return false;
+		const obj = parsed as Record<string, unknown>;
+		if (obj.type !== 'assistant') return false;
+		const message = obj.message as { model?: unknown } | undefined;
+		return (
+			obj.is_api_error_message === true ||
+			obj.isApiErrorMessage === true ||
+			message?.model === '<synthetic>'
+		);
+	}
+
+	/**
 	 * Recognize Claude Code's plan-limit notice on any envelope that can carry it,
 	 * or return null when this isn't one.
 	 *

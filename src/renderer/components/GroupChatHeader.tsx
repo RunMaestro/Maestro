@@ -10,6 +10,7 @@ import type { Theme, Shortcut, GroupChatState } from '../types';
 import type { GroupChatViewMode } from '../../shared/groupChatModeratorView';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { SegmentedControl } from './ui/SegmentedControl';
+import { useSettingsStore } from '../stores/settingsStore';
 
 interface GroupChatHeaderProps {
 	theme: Theme;
@@ -48,9 +49,15 @@ export function GroupChatHeader({
 	onToggleRightPanel,
 	shortcuts,
 }: GroupChatHeaderProps): JSX.Element {
+	// Same Display setting that governs the main header's cost pill.
+	const showSessionCostPill = useSettingsStore((s) => s.showSessionCostPill);
+
+	// `group-chat-header-container` drives the yield ladder in index.css: the
+	// participant count goes first, then the view switch shortens its labels.
+	// `-busy` shifts those rungs wider while Stop All occupies the row.
 	return (
 		<div
-			className="flex items-center justify-between px-6 h-16 border-b shrink-0"
+			className={`group-chat-header-container flex items-center justify-between px-6 h-16 border-b shrink-0 ${state !== 'idle' ? 'group-chat-header-busy' : ''}`}
 			style={{
 				backgroundColor: theme.colors.bgSidebar,
 				borderColor: theme.colors.border,
@@ -98,12 +105,14 @@ export function GroupChatHeader({
 						{
 							value: 'team',
 							label: 'Team Chat',
+							shortLabel: 'Team',
 							title:
 								'Show every message and history entry, including agent delegations and replies',
 						},
 						{
 							value: 'moderator',
 							label: 'Moderator Only',
+							shortLabel: 'Moderator',
 							title:
 								'Show only your conversation with the moderator, hiding the agent back-and-forth',
 						},
@@ -132,7 +141,7 @@ export function GroupChatHeader({
 					</button>
 				)}
 				<span
-					className="text-xs px-2 py-0.5 rounded-full whitespace-nowrap shrink-0"
+					className="group-chat-header-participants text-xs px-2 py-0.5 rounded-full whitespace-nowrap shrink-0"
 					style={{
 						backgroundColor: theme.colors.border,
 						color: theme.colors.textDim,
@@ -140,8 +149,8 @@ export function GroupChatHeader({
 				>
 					{participantCount} participant{participantCount !== 1 ? 's' : ''}
 				</span>
-				{/* Total cost pill - only show when there's a cost */}
-				{totalCost !== undefined && totalCost > 0 && (
+				{/* Total cost pill - only show when enabled and there's a cost */}
+				{showSessionCostPill && totalCost !== undefined && totalCost > 0 && (
 					<span
 						className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full whitespace-nowrap shrink-0"
 						style={{

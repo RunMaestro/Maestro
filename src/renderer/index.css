@@ -1286,6 +1286,54 @@ svg.wand-profiling-active path:nth-child(8) {
 	}
 }
 
+/* ==========================================
+   Group Chat View Header Container Queries
+   ==========================================
+   Yield ladder for the header above an open group chat (`GroupChatHeader`).
+   The title truncates first on its own (`min-w-0`); these rungs run before the
+   row runs out entirely:
+     1. participant count pill
+     2. view switch labels shorten ("Team Chat" -> "Team",
+        "Moderator Only" -> "Moderator")
+   Thresholds are in `em` so they scale with the `fontSize` setting (see the
+   Group Chats header block above). They are sized for the cost pill, Info, and
+   right-panel toggle all showing; `.group-chat-header-busy` shifts each rung
+   wider by the Stop All button's width while the chat is working. */
+.group-chat-header-container {
+	container-type: inline-size;
+	container-name: groupchatheader;
+}
+
+@container groupchatheader (max-width: 48em) {
+	.group-chat-header-container .group-chat-header-participants {
+		display: none;
+	}
+}
+
+@container groupchatheader (max-width: 54em) {
+	.group-chat-header-container.group-chat-header-busy .group-chat-header-participants {
+		display: none;
+	}
+}
+
+@container groupchatheader (max-width: 40em) {
+	.group-chat-header-container .segmented-label-full {
+		display: none;
+	}
+	.group-chat-header-container .segmented-label-short {
+		display: inline;
+	}
+}
+
+@container groupchatheader (max-width: 46em) {
+	.group-chat-header-container.group-chat-header-busy .segmented-label-full {
+		display: none;
+	}
+	.group-chat-header-container.group-chat-header-busy .segmented-label-short {
+		display: inline;
+	}
+}
+
 /* When AUTO mode button is visible, we need earlier breakpoints.
    Use a modifier class on the container to shift thresholds. */
 .header-container.header-auto-mode .header-context-label-full {

@@ -5,6 +5,7 @@ import { logger } from '../../utils/logger';
 import { matchSshErrorPattern } from '../../parsers/error-patterns';
 import { aggregateModelUsage } from '../../parsers/usage-aggregator';
 import { cleanupTempFiles } from '../utils/imageUtils';
+import { settleProvisionalAgentError } from '../utils/provisionalAgentError';
 import type { ManagedProcess, AgentError } from '../types';
 import type { ParsedEvent } from '../../parsers/agent-output-parser';
 import type { DataBufferManager } from './DataBufferManager';
@@ -118,6 +119,17 @@ export class ExitHandler {
 			);
 			return;
 		}
+
+		// An in-turn error notice still held at exit had nothing after it, so the
+		// turn ended on it. Emit it first: ahead of the exit event it explains, and
+		// ahead of detectErrorFromExit below, which would report a vaguer failure.
+		// A notice still undecided when the user pressed Stop is dropped instead:
+		// the turn ended on the stop, not on the notice, and raising it would show a
+		// red error for a turn the user deliberately abandoned (see `interrupted`).
+		if (managedProcess.interrupted) {
+			managedProcess.provisionalError = undefined;
+		}
+		settleProvisionalAgentError(this.emitter, sessionId, managedProcess);
 
 		// Handle regular batch mode (not stream-json)
 		if (isBatchMode && !isStreamJsonMode && managedProcess.jsonBuffer) {
