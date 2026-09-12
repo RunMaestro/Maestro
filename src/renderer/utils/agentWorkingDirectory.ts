@@ -13,9 +13,16 @@
 import { joinPath } from '../../shared/formatters';
 import type { Session } from '../types';
 
-/** Drop trailing separators so `/a/b/` and `/a/b` compare equal. A bare root is kept. */
+/**
+ * Drop trailing separators so `/a/b/` and `/a/b` compare equal. A bare root
+ * keeps one: `/` stays `/`, and `C:\` stays `C:\` rather than becoming the
+ * drive-relative `C:`.
+ */
 function trimTrailingSeparators(p: string): string {
-	return p.replace(/[/\\]+$/, '') || p;
+	const trimmed = p.replace(/[/\\]+$/, '');
+	if (!trimmed) return p;
+	if (/^[a-zA-Z]:$/.test(trimmed)) return trimmed + p.charAt(trimmed.length);
+	return trimmed;
 }
 
 /**
@@ -69,7 +76,7 @@ export function rebasePathOntoRoot(target: string, oldRoot: string, newRoot: str
 export function workingDirectoryChangeBlocker(
 	session: Pick<Session, 'state' | 'aiPid'>
 ): string | null {
-	if (session.state === 'busy' || session.aiPid > 0) {
+	if (session.state === 'busy' || session.state === 'connecting' || session.aiPid > 0) {
 		return 'Stop the agent before changing its working directory.';
 	}
 	return null;
@@ -117,8 +124,9 @@ export function withWorkingDirectory(session: Session, newDir: string): Session 
 		fileTree: [],
 		// A load that was in flight for the old root must not be allowed to land.
 		// The auto-loader skips a session while `fileTreeLoading` is set, so the
-		// flag is cleared here; the fresh load it then starts bumps the load
-		// sequence, and the old request discards its result as stale.
+		// flag is cleared here so a fresh load starts. The loader itself refuses
+		// to write a scan whose root no longer matches the session, which covers
+		// the old request finishing before that fresh load begins.
 		fileTreeLoading: false,
 		fileTreeLoadingProgress: undefined,
 		fileExplorerExpanded: [],

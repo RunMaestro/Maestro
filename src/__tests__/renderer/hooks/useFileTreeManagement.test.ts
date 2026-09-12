@@ -14,6 +14,7 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 import { useFileTreeManagement, type UseFileTreeManagementDeps } from '../../../renderer/hooks';
 import type { Session } from '../../../renderer/types';
 import { createMockSession } from '../../helpers/mockSession';
+import { withWorkingDirectory } from '../../../renderer/utils/agentWorkingDirectory';
 import type { FileNode } from '../../../renderer/types/fileTree';
 import type { RightPanelHandle } from '../../../renderer/components/RightPanel';
 import type { RefObject, SetStateAction } from 'react';
@@ -473,6 +474,54 @@ describe('useFileTreeManagement', () => {
 		});
 		expect(state.getSessions()[0].fileTree).toEqual(refreshedTree);
 		expect(state.getSessions()[0].fileTreeLoading).toBe(false);
+	});
+
+	it('discards a scan that finishes after the agent moved to another directory', async () => {
+		// The move (withWorkingDirectory) clears the tree and puts the spinner
+		// down. If the scan it orphaned resolves BEFORE the auto-loader gets to
+		// start a fresh one, it is not yet stale by sequence number - so the
+		// writes must check the root instead, or the old project's tree and
+		// stats land on the relocated agent (and the stats then block a reload).
+		let resolveLoad: (value: ReturnType<typeof asResult>) => void = () => {};
+		const pending = new Promise<ReturnType<typeof asResult>>((resolve) => {
+			resolveLoad = resolve;
+		});
+		vi.mocked(loadFileTree).mockReturnValue(pending);
+		let resolveStats: (value: {
+			fileCount: number;
+			folderCount: number;
+			totalSize: number;
+		}) => void = () => {};
+		vi.mocked(window.maestro.fs.directorySize).mockReturnValue(
+			new Promise((resolve) => {
+				resolveStats = resolve;
+			})
+		);
+
+		const state = createSessionsState([
+			createMockSession({ fileTree: [], cwd: '/projects/old', projectRoot: '/projects/old' }),
+		]);
+		const deps = createDeps(state);
+		renderHook(() => useFileTreeManagement(deps));
+
+		await waitFor(() => {
+			expect(state.getSessions()[0].fileTreeLoading).toBe(true);
+		});
+
+		// Relocate without re-rendering the hook: no new load has started yet.
+		state.setSessions((prev) => prev.map((s) => withWorkingDirectory(s, '/projects/new')));
+
+		await act(async () => {
+			resolveLoad(asResult([{ name: 'old-project.txt', type: 'file' }]));
+			resolveStats({ fileCount: 1, folderCount: 0, totalSize: 10 });
+			await Promise.resolve();
+		});
+
+		const moved = state.getSessions()[0];
+		expect(moved.projectRoot).toBe('/projects/new');
+		expect(moved.fileTree).toEqual([]);
+		expect(moved.fileTreeStats).toBeUndefined();
+		expect(moved.fileTreeLoading).toBe(false);
 	});
 
 	it('cancelFileTreeLoad aborts the in-flight load signal and clears loading state', async () => {

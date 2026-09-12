@@ -169,6 +169,12 @@ describe('rebasePathOntoRoot', () => {
 		);
 	});
 
+	it('moves a bare root onto a bare root without losing the separator', () => {
+		expect(rebasePathOntoRoot('C:\\', 'C:\\', 'D:\\')).toBe('D:\\');
+		expect(rebasePathOntoRoot('C:\\work', 'C:\\', 'D:\\')).toBe('D:\\work');
+		expect(rebasePathOntoRoot('/', '/', '/projects/new')).toBe('/projects/new');
+	});
+
 	it('moves a folder out from under a bare root', () => {
 		expect(rebasePathOntoRoot('/.maestro/playbooks', '/', '/projects/new')).toBe(
 			'/projects/new/.maestro/playbooks'
@@ -201,6 +207,10 @@ describe('workingDirectoryChangeBlocker', () => {
 
 	it('refuses while the agent is busy or its process is alive', () => {
 		expect(workingDirectoryChangeBlocker({ state: 'busy', aiPid: 0 })).toMatch(/Stop the agent/);
+		// A connecting agent is already starting in its current directory.
+		expect(workingDirectoryChangeBlocker({ state: 'connecting', aiPid: 0 })).toMatch(
+			/Stop the agent/
+		);
 		expect(workingDirectoryChangeBlocker({ state: 'idle', aiPid: 4242 })).toMatch(/Stop the agent/);
 	});
 });
