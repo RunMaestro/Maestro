@@ -195,6 +195,10 @@ describe('isSameDirectory', () => {
 		expect(isSameDirectory('/Projects/Old', '/projects/old')).toBe(false);
 	});
 
+	it('keeps a backslash as an ordinary character in a POSIX path', () => {
+		expect(isSameDirectory('/projects/a\\b', '/projects/a/b')).toBe(false);
+	});
+
 	it('treats a missing path as different from a real one', () => {
 		expect(isSameDirectory(undefined, '/projects/old')).toBe(false);
 	});

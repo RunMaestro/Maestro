@@ -26,15 +26,16 @@ function trimTrailingSeparators(p: string): string {
 }
 
 /**
- * The form of a path used for comparison. A Windows path (drive letter or a
- * backslash) is lowercased with forward slashes, because Windows matches paths
- * case-insensitively: `C:\Work\old` and `c:\work\old` are one folder. POSIX
- * paths stay case-sensitive. Each mapping is one character to one, so a prefix
- * length measured here also holds for the original string.
+ * The form of a path used for comparison. A path that starts with `/` is
+ * POSIX: case-sensitive, and a backslash in it is an ordinary character. Any
+ * other path is Windows (`C:\...`, `\\server\share`): lowercased with forward
+ * slashes, because Windows matches paths case-insensitively and accepts either
+ * separator. Each mapping is one character to one, so a prefix length measured
+ * here also holds for the original string.
  */
 function comparablePath(p: string): string {
 	const trimmed = trimTrailingSeparators(p);
-	return /^[a-zA-Z]:|\\/.test(trimmed) ? trimmed.replace(/\\/g, '/').toLowerCase() : trimmed;
+	return trimmed.startsWith('/') ? trimmed : trimmed.replace(/\\/g, '/').toLowerCase();
 }
 
 /**

@@ -488,7 +488,7 @@ For text fields, passing an empty string (for example `--nudge ""`) clears the f
 | `-g, --group <id>`                | Move the agent to this group; supports partial IDs. Use `none` (or `null`) to ungroup                                                              | -       |
 | `-d, --cwd <path>`                | New working directory (resolved to absolute). Agent must be stopped                                                                                | -       |
 | `--ssh-remote <id>`               | SSH remote for remote execution. Use `none` to revert to local. Agent must be stopped                                                              | -       |
-| `--ssh-cwd <path>`                | Working directory override on the SSH remote                                                                                                       | -       |
+| `--ssh-cwd <path>`                | Working directory override on the SSH remote. Agent must be stopped                                                                                | -       |
 | `--sync-history-to-remote <bool>` | Sync history entries to `.maestro/history/` on the remote host                                                                                     | -       |
 | `--nudge <message>`               | Nudge message appended to every message. Empty string clears                                                                                       | -       |
 | `--new-session-message <message>` | Message prefixed to the first message of new sessions. Empty string clears                                                                         | -       |

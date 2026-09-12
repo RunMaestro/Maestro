@@ -689,7 +689,7 @@ export function useFileTreeManagement(
 			const onProgress = (progress: FileTreeProgress) => {
 				setSessions((prev) =>
 					prev.map((s) =>
-						s.id === sessionId
+						s.id === sessionId && stillAtRoot(s)
 							? {
 									...s,
 									fileTreeLoadingProgress: {
@@ -881,9 +881,11 @@ export function useFileTreeManagement(
 						error: error?.message || 'Unknown error',
 					});
 					const errorMsg = error?.message || 'Unknown error';
+					// A failure on the old root must not schedule a retry against the
+					// new one: fileTreeRetryAt would hold the fresh scan for 20 seconds.
 					setSessions((prev) =>
 						prev.map((s) =>
-							s.id === sessionId
+							s.id === sessionId && stillAtRoot(s)
 								? {
 										...s,
 										fileTree: [],

@@ -524,6 +524,36 @@ describe('useFileTreeManagement', () => {
 		expect(moved.fileTreeLoading).toBe(false);
 	});
 
+	it('does not schedule a retry on the new directory when the old scan fails after a move', async () => {
+		let rejectLoad: (reason: Error) => void = () => {};
+		const pending = new Promise<ReturnType<typeof asResult>>((_resolve, reject) => {
+			rejectLoad = reject;
+		});
+		vi.mocked(loadFileTree).mockReturnValue(pending);
+
+		const state = createSessionsState([
+			createMockSession({ fileTree: [], cwd: '/projects/old', projectRoot: '/projects/old' }),
+		]);
+		const deps = createDeps(state);
+		renderHook(() => useFileTreeManagement(deps));
+
+		await waitFor(() => {
+			expect(state.getSessions()[0].fileTreeLoading).toBe(true);
+		});
+
+		state.setSessions((prev) => prev.map((s) => withWorkingDirectory(s, '/projects/new')));
+
+		await act(async () => {
+			rejectLoad(new Error('EACCES'));
+			await Promise.resolve();
+		});
+
+		const moved = state.getSessions()[0];
+		expect(moved.fileTreeError).toBeUndefined();
+		expect(moved.fileTreeRetryAt).toBeUndefined();
+		expect(moved.fileTreeLoading).toBe(false);
+	});
+
 	it('cancelFileTreeLoad aborts the in-flight load signal and clears loading state', async () => {
 		// Hold the load open so we can cancel while it's pending.
 		let resolveLoad: (value: ReturnType<typeof asResult>) => void = () => {};
