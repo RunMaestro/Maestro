@@ -6,8 +6,8 @@
 // JS intrinsics (JSON, Date, Map, Math, setTimeout) are available.
 //
 // Behavior: subscribe to the metadata-only host event stream, maintain a
-// per-session execution-graph model (one lane per session, tool-call nodes per
-// lane), and push coalesced snapshots to the `flow` panel via
+// per-session execution-graph model (one lane per ACTIVE session, tool-call
+// nodes per lane), and push coalesced snapshots to the `flow` panel via
 // `maestro.ui.panelPost`. Everything observed here is metadata only - tool
 // names, timing, and lifecycle phase - never arguments, results, or output.
 //
@@ -51,12 +51,19 @@ var SNAPSHOT_MAX_BYTES = 60000;
 // where `open` maps an in-flight toolCallId to the node it opened, and each
 // node is { toolCallId, toolName, phase, startedAt, endedAt, durationMs }.
 var lanes = new Map();
+// sessionId -> { title, agentId, status }. Metadata for sessions that have NOT
+// (yet) earned a lane: the startup seed and the metadata-only session events
+// write here instead of materializing a lane, so a user with a hundred idle
+// agents does not open the overlay onto a wall of empty dots. A lane born later
+// from real activity picks its title/agentId/status up from this map, so it is
+// labelled the moment it appears.
+var sessionMeta = new Map();
 var lastEventAt = 0;
 var snapshotTimer = 0;
 // Session id of the agent the user is currently looking at, from the
 // metadata-only `session.activated` event. Sent along in every snapshot so the
-// overlay can highlight that node; the "focus current agent only" filter itself
-// is Phase 2.
+// overlay can highlight that node, and consumed by the panel's "current agent
+// only" filter.
 var focusedSessionId = '';
 /** @type {MaestroSdk | null} */
 var sdk = null;
@@ -64,11 +71,12 @@ var sdk = null;
 function getLane(sessionId) {
 	var lane = lanes.get(sessionId);
 	if (!lane) {
+		var meta = sessionMeta.get(sessionId);
 		lane = {
 			sessionId: sessionId,
-			title: '',
-			agentId: '',
-			status: '',
+			title: meta && typeof meta.title === 'string' ? meta.title : '',
+			agentId: meta && typeof meta.agentId === 'string' ? meta.agentId : '',
+			status: meta && typeof meta.status === 'string' ? meta.status : '',
 			usage: null,
 			nodes: [],
 			lastActivity: 0,
@@ -91,6 +99,41 @@ function getLane(sessionId) {
 
 function touch(lane, at) {
 	if (typeof at === 'number' && at > lane.lastActivity) lane.lastActivity = at;
+}
+
+// Record what we know about a session without materializing a lane for it.
+// `fields` is a partial { title, agentId, status }; only string members are
+// taken, so a payload missing a field never clobbers a known one. Returns the
+// stored record.
+function recordMeta(sessionId, fields, onlyIfUnset) {
+	var meta = sessionMeta.get(sessionId);
+	if (!meta) {
+		meta = { title: '', agentId: '', status: '' };
+		sessionMeta.set(sessionId, meta);
+	}
+	if (fields) {
+		// `onlyIfUnset` is the startup seed: `sessions.list()` resolves
+		// asynchronously, and event handlers are registered before it does, so a
+		// `session.created` / `session.updated` that lands in between carries
+		// NEWER data than the list snapshot. Filling only blank fields keeps the
+		// seed from overwriting it. Live events pass this falsy and always win.
+		// (review)
+		var take = function (key, value) {
+			if (typeof value !== 'string') return;
+			if (onlyIfUnset && meta[key]) return;
+			meta[key] = value;
+		};
+		take('title', fields.title);
+		take('agentId', fields.agentId);
+		take('status', fields.status);
+	}
+	return meta;
+}
+
+// Does this session already have a lane? Metadata-only events update an existing
+// lane but must never create one.
+function existingLane(sessionId) {
+	return lanes.get(sessionId);
 }
 
 // Trim a lane to the most recent LANE_NODE_CAP nodes, forgetting any open
@@ -196,6 +239,10 @@ function applyTool(payload, at) {
 	touch(lane, at);
 }
 
+// Clear the graph. `sessionMeta` deliberately survives: it is not graph state
+// but the labels for sessions that still exist, and the `clear` command means
+// "forget the activity", not "forget who the agents are". A lane recreated by
+// the next event still comes up named. `deactivate` clears it separately.
 function resetModel() {
 	lanes.clear();
 }
@@ -335,16 +382,28 @@ var HANDLERS = {
 		lane.lastActivityAt = Date.now();
 		touch(lane, at);
 	},
+	// Metadata only: existence of a session is not activity, so this records the
+	// title/agentId and updates the lane ONLY if activity already created one.
 	'session.created': function (payload, at) {
 		if (!payload || typeof payload.sessionId !== 'string') return;
-		var lane = getLane(payload.sessionId);
+		recordMeta(payload.sessionId, payload);
+		var lane = existingLane(payload.sessionId);
+		if (!lane) return;
 		if (typeof payload.title === 'string') lane.title = payload.title;
 		if (typeof payload.agentId === 'string') lane.agentId = payload.agentId;
+		// `recordMeta` above already stored the status; copy it onto the live lane
+		// too, otherwise the lane shows a stale status until the next
+		// `session.updated` happens to arrive. (review)
+		if (typeof payload.status === 'string') lane.status = payload.status;
 		touch(lane, at);
 	},
+	// Metadata only, same rule as session.created: a rename or a status change on
+	// a session that has never done anything does not earn it a lane.
 	'session.updated': function (payload, at) {
 		if (!payload || typeof payload.sessionId !== 'string') return;
-		var lane = getLane(payload.sessionId);
+		recordMeta(payload.sessionId, payload);
+		var lane = existingLane(payload.sessionId);
+		if (!lane) return;
 		if (typeof payload.title === 'string') lane.title = payload.title;
 		if (typeof payload.status === 'string') lane.status = payload.status;
 		lane.lastActivityAt = Date.now();
@@ -353,18 +412,20 @@ var HANDLERS = {
 	'session.removed': function (payload) {
 		if (!payload || typeof payload.sessionId !== 'string') return;
 		lanes.delete(payload.sessionId);
+		sessionMeta.delete(payload.sessionId);
 		// The highlighted node is gone; drop the highlight rather than pointing at
 		// a lane that no longer exists.
 		if (focusedSessionId === payload.sessionId) focusedSessionId = '';
 	},
 	// Ids only - no title, no path, nothing derived from session content. The host
-	// already debounces rapid focus changes, so this is just a field assignment;
-	// the lane may not exist yet (the user can focus an agent that has produced no
-	// events), which is fine: the panel simply has nothing to highlight until it
-	// does.
-	'session.activated': function (payload) {
+	// already debounces rapid focus changes. This is the one non-activity event
+	// that DOES materialize a lane: the agent the user is looking at always needs
+	// a node for the panel's focus highlight (and the "current agent only" filter)
+	// to land on, even before it has produced any events.
+	'session.activated': function (payload, at) {
 		if (!payload || typeof payload.sessionId !== 'string') return;
 		focusedSessionId = payload.sessionId;
+		touch(getLane(payload.sessionId), at);
 	},
 };
 
@@ -528,8 +589,12 @@ function scheduleSnapshot() {
 
 // ---- startup ---------------------------------------------------------------
 
-// Seed lane titles / agent ids from currently-open sessions. Tolerates denial
-// if the sessions:read grant is missing.
+// Seed session titles / agent ids from currently-open sessions. This fills the
+// `sessionMeta` side map ONLY: it deliberately creates no lanes, so the overlay
+// opens showing the agents that are actually doing something rather than one
+// idle dot per configured agent. A lane created later by activity reads its
+// labels back out of this map. Tolerates denial if the sessions:read grant is
+// missing.
 function seedFromSessions() {
 	if (!sdk) return;
 	try {
@@ -541,10 +606,26 @@ function seedFromSessions() {
 				for (var i = 0; i < list.length; i++) {
 					var s = list[i];
 					if (!s || typeof s.id !== 'string') continue;
-					var lane = getLane(s.id);
-					if (typeof s.title === 'string') lane.title = s.title;
-					if (typeof s.agentId === 'string') lane.agentId = s.agentId;
-					if (typeof s.status === 'string') lane.status = s.status;
+					// `true` = seed mode: only fill fields no event has set yet. A
+					// `session.created`/`updated` that arrived while this list was in
+					// flight carries newer data and must not be clobbered. (review)
+					var meta = recordMeta(
+						s.id,
+						{
+							title: s.title,
+							agentId: s.agentId,
+							status: s.status,
+						},
+						true
+					);
+					// sessions.list() resolves asynchronously, so an event may already
+					// have created a lane for this session; label it now that we know.
+					var lane = existingLane(s.id);
+					if (lane) {
+						if (!lane.title) lane.title = meta.title;
+						if (!lane.agentId) lane.agentId = meta.agentId;
+						if (!lane.status) lane.status = meta.status;
+					}
 				}
 				scheduleSnapshot();
 			},
@@ -633,6 +714,7 @@ function deactivate() {
 		snapshotTimer = 0;
 	}
 	resetModel();
+	sessionMeta.clear();
 	focusedSessionId = '';
 	sdk = null;
 }
