@@ -26,6 +26,9 @@ import { useUIStore } from '../../../renderer/stores/uiStore';
 import type { Session, AITab } from '../../../renderer/types';
 import { createMockAITab } from '../../helpers/mockTab';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
+import { notifyToast } from '../../../renderer/stores/notificationStore';
+
+vi.mock('../../../renderer/stores/notificationStore', () => ({ notifyToast: vi.fn() }));
 
 // ============================================================================
 // Test Helpers
@@ -315,6 +318,20 @@ describe('useSessionLifecycle', () => {
 			expect(updated.shellCwd).toBe('/projects/moved');
 			expect(updated.projectRoot).toBe('/projects/moved');
 			expect(updated.autoRunFolderPath).toBe('/projects/moved/.maestro/playbooks');
+		});
+
+		it('does not refuse a busy agent when the directory differs only by a trailing slash', () => {
+			const session = createMockSession({ id: 'session-1', state: 'busy' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			act(() => {
+				saveWithWorkingDirectory(result.current.handleSaveEditAgent, '/projects/myapp/');
+			});
+
+			expect(notifyToast).not.toHaveBeenCalled();
+			expect(useSessionStore.getState().sessions[0].projectRoot).toBe('/projects/myapp');
 		});
 
 		it('keeps the directory when the agent started running before save', () => {

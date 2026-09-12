@@ -258,6 +258,79 @@ describe('EditAgentModal', () => {
 		expect(onSave).not.toHaveBeenCalled();
 	});
 
+	it('should not treat a trailing slash as a changed working directory', async () => {
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={createSession({ projectRoot: '/home/user/project' })}
+				existingSessions={[]}
+			/>
+		);
+
+		const input = await screen.findByDisplayValue('/home/user/project');
+		fireEvent.change(input, { target: { value: '/home/user/project/' } });
+		fireEvent.click(screen.getByText('Save Changes'));
+
+		expect(onSave).toHaveBeenCalled();
+		const args = onSave.mock.calls[0];
+		expect(args[args.length - 1]).toBeUndefined(); // workingDirectory unchanged
+	});
+
+	it('should refuse a new SSH working directory the remote reports is not a directory', async () => {
+		vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
+			success: true,
+			configs: [
+				{
+					id: 'remote-1',
+					name: 'Dev Server',
+					host: 'dev.example.com',
+					port: 22,
+					username: 'devuser',
+					privateKeyPath: '/path/to/key',
+					enabled: true,
+				},
+			],
+		});
+		vi.mocked(window.maestro.fs.stat).mockResolvedValue({
+			isDirectory: false,
+			isFile: true,
+			size: 0,
+			mtimeMs: 0,
+		});
+
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={createSession({
+					projectRoot: '/home/devuser/my-project',
+					cwd: '/home/devuser/my-project',
+					sessionSshRemoteConfig: {
+						enabled: true,
+						remoteId: 'remote-1',
+						workingDirOverride: '/home/devuser/my-project',
+					},
+				})}
+				existingSessions={[]}
+			/>
+		);
+
+		const input = await screen.findByDisplayValue('/home/devuser/my-project');
+		fireEvent.change(input, { target: { value: '/home/devuser/notes.txt' } });
+
+		await waitFor(() => {
+			// The status line appends the remote host, so match the message as a prefix.
+			expect(screen.getByText(/^Path is a file, not a directory/)).toBeInTheDocument();
+		});
+		fireEvent.click(screen.getByText('Save Changes'));
+		expect(onSave).not.toHaveBeenCalled();
+	});
+
 	it('should lock the working directory while the agent is busy', async () => {
 		render(
 			<EditAgentModal

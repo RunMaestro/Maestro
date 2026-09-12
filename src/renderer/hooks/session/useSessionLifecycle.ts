@@ -163,7 +163,12 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			// silently keeping the old directory.
 			let relocateTo = workingDirectory;
 			const current = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
-			const blocker = relocateTo && current ? workingDirectoryChangeBlocker(current) : null;
+			// Only a directory the helper would actually move to is gated: a value
+			// that differs by a trailing slash is not a move, and must not be
+			// reported as a refused one.
+			const wouldMove =
+				!!relocateTo && !!current && withWorkingDirectory(current, relocateTo) !== current;
+			const blocker = wouldMove ? workingDirectoryChangeBlocker(current!) : null;
 			if (blocker) {
 				relocateTo = undefined;
 				notifyToast({ color: 'yellow', title: 'Working directory not changed', message: blocker });
