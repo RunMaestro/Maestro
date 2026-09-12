@@ -35,6 +35,7 @@ import { backupGroupsBeforeWipe } from '../../stores/groups-backup';
 import { backupSessionsBeforeWipe } from '../../stores/sessions-backup';
 import { createKeyedWriteQueue } from '../../utils/atomic-json-store';
 import { clearGhCache } from '../../utils/cliDetection';
+import { compactSessionToolOutputs } from '../../../shared/toolOutput';
 
 /**
  * Shallow-compare cliActivity for the diff broadcast.
@@ -438,24 +439,34 @@ export function registerPersistenceHandlers(
 		// no-op once healed (already-relocated sessions carry only refs). We
 		// rewrite the store once so the next launch reads the small file.
 		try {
-			const { sessions: relocated, relocated: count } = await relocateSessionImages(sessions);
-			if (count > 0) {
-				sessionsStore.set('sessions', relocated);
-				logger.info(
-					`Relocated ${count} inline session image(s) out of maestro-sessions.json`,
-					'Sessions'
-				);
-				logger.debug(`Loaded ${relocated.length} sessions from store`, 'Sessions');
-				return relocated;
+			const { sessions: relocated, relocated: imageCount } = await relocateSessionImages(sessions);
+			let toolOutputCount = 0;
+			const compacted = relocated.map((session) => {
+				const result = compactSessionToolOutputs(session);
+				toolOutputCount += result.compacted;
+				return result.session;
+			});
+			if (imageCount > 0 || toolOutputCount > 0) {
+				sessionsStore.set('sessions', compacted);
+				if (imageCount > 0) {
+					logger.info(
+						`Relocated ${imageCount} inline session image(s) out of maestro-sessions.json`,
+						'Sessions'
+					);
+				}
+				if (toolOutputCount > 0) {
+					logger.info(
+						`Compacted ${toolOutputCount} oversized tool result(s) in maestro-sessions.json`,
+						'Sessions'
+					);
+				}
+				logger.debug(`Loaded ${compacted.length} sessions from store`, 'Sessions');
+				return compacted;
 			}
 		} catch (err) {
-			// Never let image relocation block loading sessions - fall through and
-			// return the sessions as-is; the write-boundary relocation will retry.
-			logger.warn(
-				`Session image relocation on load failed: ${(err as Error).message}`,
-				'Sessions',
-				err
-			);
+			// Never let migration block loading sessions. Fall through and return
+			// the sessions as-is; the write boundary will retry on the next save.
+			logger.warn(`Session migration on load failed: ${(err as Error).message}`, 'Sessions', err);
 		}
 		logger.debug(`Loaded ${sessions.length} sessions from store`, 'Sessions');
 		return sessions;
@@ -542,6 +553,7 @@ export function registerPersistenceHandlers(
 				if (removeSet.has(newSession.id)) continue;
 				merged.push(newSession);
 			}
+			const sessionsToPersist = merged.map((session) => compactSessionToolOutputs(session).session);
 
 			// Lifecycle logging (parallel to setAll's debug logs)
 			for (const session of updates) {
@@ -609,8 +621,8 @@ export function registerPersistenceHandlers(
 			}
 
 			try {
-				await backupSessionsBeforeWipe(previousSessions, merged, sessionsStore.path);
-				sessionsStore.set('sessions', merged);
+				await backupSessionsBeforeWipe(previousSessions, sessionsToPersist, sessionsStore.path);
+				sessionsStore.set('sessions', sessionsToPersist);
 				// Preserve the renderer acknowledgement contract: true means this
 				// revision reached disk, not merely the in-memory cache.
 				await flushSessionWrites();
@@ -641,7 +653,7 @@ export function registerPersistenceHandlers(
 			const removedIds = removeIds.filter((id) => previousMap.has(id));
 			rememberRemovedSessions(removedIds);
 			broadcastSessionLifecycle(senderWebContentsIdOf(event), {
-				added: updates.filter((s) => !previousMap.has(s.id) && !removeSet.has(s.id)),
+				added: sessionsToPersist.filter((s) => !previousMap.has(s.id) && !removeSet.has(s.id)),
 				removedIds,
 			});
 
@@ -649,7 +661,7 @@ export function registerPersistenceHandlers(
 			// (events:subscribe). Re-authorized per delivery against live grants.
 			if (emitPluginEvent) {
 				const at = new Date().toISOString();
-				for (const event of buildSessionLifecycleEvents(previousMap, merged, at)) {
+				for (const event of buildSessionLifecycleEvents(previousMap, sessionsToPersist, at)) {
 					emitPluginEvent(event);
 				}
 			}
@@ -679,9 +691,12 @@ export function registerPersistenceHandlers(
 					sessions.push(previousSession);
 				}
 			}
+			const sessionsToPersist = sessions.map(
+				(session) => compactSessionToolOutputs(session).session
+			);
 
 			// Log session lifecycle events at DEBUG level
-			for (const session of sessions) {
+			for (const session of sessionsToPersist) {
 				const prevSession = previousSessionMap.get(session.id);
 				if (!prevSession) {
 					// New session created
@@ -697,7 +712,7 @@ export function registerPersistenceHandlers(
 			// Detect and broadcast changes to web clients
 			if (webServer && webServer.getWebClientCount() > 0) {
 				// Check for state changes in existing sessions
-				for (const session of sessions) {
+				for (const session of sessionsToPersist) {
 					const prevSession = previousSessionMap.get(session.id);
 					if (prevSession) {
 						// Session exists - check if state or other tracked properties changed
@@ -737,7 +752,7 @@ export function registerPersistenceHandlers(
 			}
 
 			try {
-				sessionsStore.set('sessions', sessions);
+				sessionsStore.set('sessions', sessionsToPersist);
 				await flushSessionWrites();
 			} catch (err) {
 				// ENOSPC, ENFILE, or JSON serialization failures are recoverable -
@@ -755,7 +770,7 @@ export function registerPersistenceHandlers(
 			// one client's stale snapshot delete another's live agents. Real closes
 			// arrive as explicit `removeIds` through setMany.
 			broadcastSessionLifecycle(senderWebContentsIdOf(event), {
-				added: sessions.filter((s) => !previousSessionMap.has(s.id)),
+				added: sessionsToPersist.filter((s) => !previousSessionMap.has(s.id)),
 				removedIds: [],
 			});
 
@@ -763,7 +778,11 @@ export function registerPersistenceHandlers(
 			// (events:subscribe). Re-authorized per delivery against live grants.
 			if (emitPluginEvent) {
 				const at = new Date().toISOString();
-				for (const event of buildSessionLifecycleEvents(previousSessionMap, sessions, at)) {
+				for (const event of buildSessionLifecycleEvents(
+					previousSessionMap,
+					sessionsToPersist,
+					at
+				)) {
 					emitPluginEvent(event);
 				}
 			}

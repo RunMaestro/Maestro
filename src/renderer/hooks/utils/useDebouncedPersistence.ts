@@ -41,6 +41,7 @@ import {
 import { useSessionStore } from '../../stores/sessionStore';
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
+import { compactSessionToolOutputs } from '../../../shared/toolOutput';
 
 // Maximum persisted logs per AI tab (matches session persistence limit)
 const MAX_PERSISTED_LOGS_PER_TAB = 100;
@@ -240,10 +241,11 @@ const prepareSessionForPersistence = (session: Session): Session => {
 				}
 	);
 
-	return {
+	const prepared = {
 		...sessionWithoutRuntimeFields,
 		aiTabs: truncatedTabs,
 		activeTabId: newActiveTabId,
+		executionQueue: sessionWithoutRuntimeFields.executionQueue || [],
 		snoozedTabs: cleanedSnoozedTabs,
 		filePreviewTabs: cleanedFilePreviewTabs,
 		// Reset terminal tab runtime state
@@ -302,6 +304,7 @@ const prepareSessionForPersistence = (session: Session): Session => {
 		// fields from Session for persistence. The resulting object is a valid
 		// persisted session but missing non-persisted fields.
 	} as unknown as Session;
+	return compactSessionToolOutputs(prepared).session;
 };
 
 export interface UseDebouncedPersistenceReturn {

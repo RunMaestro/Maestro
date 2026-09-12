@@ -1222,10 +1222,11 @@ describe('useInputProcessing', () => {
 			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
 			const updateSessions = mockSetSessions.mock.calls[0][0];
 			const [updatedSession] = updateSessions([session]);
-			expect(updatedSession.state).toBe('busy');
-			expect(updatedSession.aiTabs[0].state).toBe('busy');
+			expect(updatedSession.state).toBe('idle');
+			expect(updatedSession.aiTabs[0].state).toBe('idle');
 			expect(updatedSession.executionQueue).toHaveLength(1);
 			expect(updatedSession.executionQueue[0].text).toBe('preserve this message');
+			expect(updatedSession.executionQueue[0].waitingForConnection).toBe(true);
 		});
 
 		it('re-queues the message when the spawn collides with a live turn', async () => {
@@ -2887,6 +2888,37 @@ describe('useInputProcessing', () => {
 			expect(onDispatchCrossAgentMentions).not.toHaveBeenCalled();
 			const [updated] = mockSetSessions.mock.calls[0][0]([session]);
 			expect(updated.executionQueue[0].crossAgentOnly).toBe(true);
+		});
+
+		it('holds a mention-only message when process reconciliation fails', async () => {
+			const onPlanCrossAgentMentions = vi
+				.fn()
+				.mockReturnValue({ targetSessionIds: ['rc'], suppressLocal: true });
+			const onDispatchCrossAgentMentions = vi.fn();
+			const session = createMockSession({ state: 'idle' });
+			vi.mocked(window.maestro.process.getActiveProcesses).mockRejectedValue(
+				new Error('bridge down')
+			);
+			const deps = createDeps({
+				activeSession: session,
+				activeSessionId: session.id,
+				sessionsRef: { current: [session] },
+				inputValue: '@rc pull in the latest changes',
+				onPlanCrossAgentMentions,
+				onDispatchCrossAgentMentions,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(onDispatchCrossAgentMentions).not.toHaveBeenCalled();
+			const [updated] = mockSetSessions.mock.calls[0][0]([session]);
+			expect(updated.executionQueue[0]).toMatchObject({
+				crossAgentOnly: true,
+				waitingForConnection: true,
+			});
 		});
 
 		it('does not resolve mentions on an override send (queued replay / force-send)', async () => {

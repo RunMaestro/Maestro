@@ -56,9 +56,15 @@ export function applyQueuedItemEdit(
 	);
 }
 
-/** A queued item is runnable when it is not held/paused by the user. */
+/** A queued item is runnable when neither the user nor the bridge holds it. */
 export function isRunnableQueueItem(item: QueuedItem): boolean {
-	return !item.paused;
+	return !item.paused && !item.waitingForConnection;
+}
+
+/** Release bridge holds after main process ownership is known. */
+export function releaseConnectionHeldQueueItems(queue: QueuedItem[]): QueuedItem[] {
+	if (!queue.some((item) => item.waitingForConnection)) return queue;
+	return queue.map(({ waitingForConnection: _waiting, ...item }) => item);
 }
 
 /** The first item that would actually run, or undefined if all are held/empty. */

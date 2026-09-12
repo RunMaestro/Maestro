@@ -12,6 +12,7 @@ import {
 	shouldOfferForceSend,
 	applyQueuedItemEdit,
 	applyQueuedItemDispatchFailure,
+	releaseConnectionHeldQueueItems,
 } from '../../../renderer/utils/executionQueue';
 import type { AITab, QueuedItem, Session } from '../../../renderer/types';
 import { createMockSession } from '../../helpers/mockSession';
@@ -26,9 +27,20 @@ function tabItem(id: string, tabId: string): QueuedItem {
 }
 
 describe('executionQueue helpers', () => {
-	it('isRunnableQueueItem treats only non-paused items as runnable', () => {
+	it('isRunnableQueueItem treats user and connection holds as non-runnable', () => {
 		expect(isRunnableQueueItem(item('a'))).toBe(true);
 		expect(isRunnableQueueItem(item('b', true))).toBe(false);
+		expect(isRunnableQueueItem({ ...item('c'), waitingForConnection: true })).toBe(false);
+	});
+
+	it('releaseConnectionHeldQueueItems removes only the runtime connection hold', () => {
+		const held = { ...item('a', true), waitingForConnection: true };
+		const queue = [held, item('b')];
+		const released = releaseConnectionHeldQueueItems(queue);
+
+		expect(released[0]).toEqual(item('a', true));
+		expect(released[1]).toEqual(item('b'));
+		expect(releaseConnectionHeldQueueItems(released)).toBe(released);
 	});
 
 	it('nextRunnableQueueItem returns the first non-paused item', () => {

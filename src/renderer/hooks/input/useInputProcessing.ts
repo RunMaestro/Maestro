@@ -40,6 +40,7 @@ import {
 	updateAiTab,
 } from '../../stores/sessionStore';
 import { logger } from '../../utils/logger';
+import { WEB_BRIDGE_RECONCILE_EVENT } from '../../../shared/webClientConfig';
 
 let cachedImageOnlyPrompt: string = '';
 let inputProcessingPromptsLoaded = false;
@@ -718,6 +719,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					// whole path exists to prevent.
 					const mentionProbe = await probeSessionAiProcesses(activeSession.id, mentionSourceTabId);
 					if (
+						mentionProbe.probeFailed ||
 						mentionProbe.anyActive ||
 						hasWorkAheadOfNewMessage(activeSession, {
 							autoRunActive: getBatchState(activeSession.id).isRunning,
@@ -739,6 +741,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							readOnlyMode: activeTab?.readOnlyMode === true,
 							crossAgentMention: true,
 							crossAgentOnly: true,
+							...(mentionProbe.probeFailed && { waitingForConnection: true }),
 						};
 
 						updateSessionWith(resolvedSessionId, (s) => {
@@ -758,6 +761,9 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						if (!usingOverrideImages) setStagedImages([]);
 						syncAiInputToSession('', syncTarget);
 						if (inputRef.current) inputRef.current.style.height = 'auto';
+						if (mentionProbe.probeFailed) {
+							window.dispatchEvent(new Event(WEB_BRIDGE_RECONCILE_EVENT));
+						}
 						return;
 					}
 
@@ -836,15 +842,16 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				// Main-process ownership is authoritative: the renderer can briefly say
 				// "idle" before the process-exit event has reconciled into session state,
 				// and spawning another turn with the same id would replace the live
-				// process and discard its eventual response. A failed probe reports busy.
+				// process and discard its eventual response. A failed probe holds the
+				// message until bridge recovery can answer authoritatively.
 				const processState = await probeSessionAiProcesses(activeSession.id, activeTab?.id);
 				if (processState.probeFailed) {
 					logger.warn(
-						'[processInput] Failed to reconcile active processes before queue decision; treating the agent as busy'
+						'[processInput] Failed to reconcile active processes before queue decision; holding the message for bridge recovery'
 					);
 				}
-				const sameTabProcessActive = processState.targetTabActive;
-				const anySessionAiProcessActive = processState.anyActive;
+				const sameTabProcessActive = !processState.probeFailed && processState.targetTabActive;
+				const anySessionAiProcessActive = !processState.probeFailed && processState.anyActive;
 				const activeProcessStartTime = processState.earliestStartTime;
 
 				// The probe above is the ONLY await between the user's Enter and the
@@ -905,6 +912,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				// FORCE PARALLEL: queues only when THIS tab is busy (skips cross-tab and AutoRun wait).
 				// When the tab finishes, the queued item dispatches immediately without waiting for other tabs.
 				const processStateRequiresQueue =
+					processState.probeFailed ||
 					sameTabProcessActive ||
 					(!forceParallel &&
 						!isReadOnlyMode &&
@@ -970,6 +978,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						// Consult the mentioned agent(s) when this item is dispatched, not
 						// now: see the mention-resolution block above.
 						...(crossAgentMentionPlan && { crossAgentMention: true }),
+						...(processState.probeFailed && { waitingForConnection: true }),
 						// Freeze the model/effort now - see the slash-command queue path
 						// above. Queuing is the send; the dispatch happens later.
 						turnSettings: captureQueuedTurnSettings(liveTab, liveSession),
@@ -996,12 +1005,13 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							: s.aiTabs;
 						return {
 							...s,
-							...(processStateRequiresQueue && {
-								state: 'busy' as SessionState,
-								busySource: 'ai' as const,
-								thinkingStartTime: s.thinkingStartTime || activeProcessStartTime || Date.now(),
-								aiTabs: reconciledAiTabs,
-							}),
+							...(processStateRequiresQueue &&
+								!processState.probeFailed && {
+									state: 'busy' as SessionState,
+									busySource: 'ai' as const,
+									thinkingStartTime: s.thinkingStartTime || activeProcessStartTime || Date.now(),
+									aiTabs: reconciledAiTabs,
+								}),
 							executionQueue: [...s.executionQueue, queuedItem],
 						};
 					});
@@ -1011,6 +1021,9 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					if (!usingOverrideImages) setStagedImages([]);
 					syncAiInputToSession('', syncTarget); // Sync empty value to session state
 					if (inputRef.current) inputRef.current.style.height = 'auto';
+					if (processState.probeFailed) {
+						window.dispatchEvent(new Event(WEB_BRIDGE_RECONCILE_EVENT));
+					}
 					return;
 				}
 			}
