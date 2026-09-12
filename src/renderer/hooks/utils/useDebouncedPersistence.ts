@@ -42,7 +42,6 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
 import { compactSessionToolOutputs } from '../../../shared/toolOutput';
-import { releaseConnectionHeldQueueItems } from '../../utils/executionQueue';
 
 // Maximum persisted logs per AI tab (matches session persistence limit)
 const MAX_PERSISTED_LOGS_PER_TAB = 100;
@@ -246,9 +245,7 @@ const prepareSessionForPersistence = (session: Session): Session => {
 		...sessionWithoutRuntimeFields,
 		aiTabs: truncatedTabs,
 		activeTabId: newActiveTabId,
-		executionQueue: releaseConnectionHeldQueueItems(
-			sessionWithoutRuntimeFields.executionQueue || []
-		),
+		executionQueue: sessionWithoutRuntimeFields.executionQueue || [],
 		snoozedTabs: cleanedSnoozedTabs,
 		filePreviewTabs: cleanedFilePreviewTabs,
 		// Reset terminal tab runtime state

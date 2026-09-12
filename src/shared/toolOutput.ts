@@ -13,8 +13,9 @@ export function compactToolOutput(output: unknown): { output: unknown; truncated
 		if (output.length <= MAX_PERSISTED_TOOL_OUTPUT_CHARS) {
 			return { output, truncated: false };
 		}
+		const note = truncationNote(output.length);
 		return {
-			output: `${output.slice(0, MAX_PERSISTED_TOOL_OUTPUT_CHARS)}${truncationNote(output.length)}`,
+			output: `${output.slice(0, MAX_PERSISTED_TOOL_OUTPUT_CHARS - note.length)}${note}`,
 			truncated: true,
 		};
 	}
@@ -25,8 +26,9 @@ export function compactToolOutput(output: unknown): { output: unknown; truncated
 		if (!serialized || serialized.length <= MAX_PERSISTED_TOOL_OUTPUT_CHARS) {
 			return { output, truncated: false };
 		}
+		const note = truncationNote(serialized.length);
 		return {
-			output: `${serialized.slice(0, MAX_PERSISTED_TOOL_OUTPUT_CHARS)}${truncationNote(serialized.length)}`,
+			output: `${serialized.slice(0, MAX_PERSISTED_TOOL_OUTPUT_CHARS - note.length)}${note}`,
 			truncated: true,
 		};
 	} catch {

@@ -13,6 +13,11 @@ describe('tool output compaction', () => {
 			const result = compactToolOutput(value);
 			expect(result.truncated).toBe(true);
 			expect(result.output).toContain('[tool output truncated');
+			expect(result.output).toHaveLength(MAX_PERSISTED_TOOL_OUTPUT_CHARS);
+			expect(compactToolOutput(result.output)).toEqual({
+				output: result.output,
+				truncated: false,
+			});
 		}
 	});
 

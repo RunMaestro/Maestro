@@ -570,7 +570,7 @@ describe('useDebouncedPersistence', () => {
 				expect(output).toContain('[tool output truncated');
 			});
 
-			it('should not persist a runtime connection hold', () => {
+			it('should persist a connection hold until ownership reconciliation succeeds', () => {
 				const session = makeSession({
 					executionQueue: [
 						{
@@ -590,7 +590,7 @@ describe('useDebouncedPersistence', () => {
 				act(() => result.current.flushNow(useSessionStore.getState().sessions));
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
-				expect(persisted[0].executionQueue[0].waitingForConnection).toBeUndefined();
+				expect(persisted[0].executionQueue[0].waitingForConnection).toBe(true);
 			});
 
 			it('should truncate tab logs to 100 entries (MAX_PERSISTED_LOGS_PER_TAB)', () => {

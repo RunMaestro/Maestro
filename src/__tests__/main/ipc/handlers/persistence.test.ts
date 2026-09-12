@@ -770,6 +770,34 @@ describe('persistence IPC handlers', () => {
 			expect(result).toBe(true);
 		});
 
+		it('should compact oversized tool output before writing sessions', async () => {
+			const oversizedOutput = 'x'.repeat(50_000);
+			const sessions = [
+				{
+					id: 'session-1',
+					name: 'Session 1',
+					cwd: '/test',
+					state: 'idle',
+					inputMode: 'ai',
+					toolType: 'claude-code',
+					aiTabs: [
+						{
+							id: 'tab-1',
+							logs: [{ metadata: { toolState: { output: oversizedOutput } } }],
+						},
+					],
+				},
+			];
+			mockSessionsStore.get.mockReturnValue([]);
+
+			await handlers.get('sessions:setAll')!({} as any, sessions);
+
+			const persisted = mockSessionsStore.set.mock.calls[0][1];
+			const output = persisted[0].aiTabs[0].logs[0].metadata.toolState.output;
+			expect(output.length).toBeLessThan(5_000);
+			expect(output).toContain('[tool output truncated');
+		});
+
 		it('should detect new sessions and broadcast to web clients', async () => {
 			mockWebServer.getWebClientCount.mockReturnValue(2);
 			const previousSessions: any[] = [];
@@ -1192,6 +1220,32 @@ describe('persistence IPC handlers', () => {
 				'sessions',
 				expect.arrayContaining([expect.objectContaining({ id: 's1', name: 'Updated' })])
 			);
+		});
+
+		it('compacts oversized tool output before writing merged sessions', async () => {
+			const oversizedOutput = 'x'.repeat(50_000);
+			mockSessionsStore.get.mockReturnValue([]);
+
+			await handlers.get('sessions:setMany')!(
+				{} as any,
+				[
+					{
+						...baseSession,
+						aiTabs: [
+							{
+								id: 'tab-1',
+								logs: [{ metadata: { toolState: { output: oversizedOutput } } }],
+							},
+						],
+					},
+				],
+				[]
+			);
+
+			const persisted = mockSessionsStore.set.mock.calls[0][1];
+			const output = persisted[0].aiTabs[0].logs[0].metadata.toolState.output;
+			expect(output.length).toBeLessThan(5_000);
+			expect(output).toContain('[tool output truncated');
 		});
 
 		it('returns true on success', async () => {
