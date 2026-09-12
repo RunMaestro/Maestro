@@ -662,6 +662,10 @@ export function useFileTreeManagement(
 
 			// Use projectRoot for file tree (consistent with Files tab header)
 			const treeRoot = session.projectRoot || session.cwd;
+			// An agent can be moved to another directory while this scan runs
+			// (withWorkingDirectory). The result then describes a folder the agent
+			// no longer lives in, so every write below checks the root still holds.
+			const stillAtRoot = (s: Session) => (s.projectRoot || s.cwd) === treeRoot;
 
 			// Capture session.id for use in async callbacks to avoid stale closure.
 			// activeSessionId may change if the user switches sessions while loading,
@@ -685,7 +689,7 @@ export function useFileTreeManagement(
 			const onProgress = (progress: FileTreeProgress) => {
 				setSessions((prev) =>
 					prev.map((s) =>
-						s.id === sessionId
+						s.id === sessionId && stillAtRoot(s)
 							? {
 									...s,
 									fileTreeLoadingProgress: {
@@ -730,7 +734,7 @@ export function useFileTreeManagement(
 						shallowTree = shallowResult.tree;
 						setSessions((prev) =>
 							prev.map((s) =>
-								s.id === sessionId && s.fileTreeLoading
+								s.id === sessionId && s.fileTreeLoading && stillAtRoot(s)
 									? {
 											...s,
 											fileTree: shallowResult.tree,
@@ -763,7 +767,7 @@ export function useFileTreeManagement(
 					const merged = spliceMaestroIntoTree(partial.rest ?? shallowTree ?? [], partial.maestro);
 					setSessions((prev) =>
 						prev.map((s) =>
-							s.id === sessionId && s.fileTreeLoading
+							s.id === sessionId && s.fileTreeLoading && stillAtRoot(s)
 								? {
 										...s,
 										fileTree: merged,
@@ -792,7 +796,7 @@ export function useFileTreeManagement(
 					if (isStale(sessionId, seq)) return;
 					setSessions((prev) =>
 						prev.map((s) =>
-							s.id === sessionId
+							s.id === sessionId && stillAtRoot(s)
 								? {
 										...s,
 										fileTreeStats: {
@@ -828,7 +832,7 @@ export function useFileTreeManagement(
 
 					setSessions((prev) =>
 						prev.map((s) =>
-							s.id === sessionId
+							s.id === sessionId && stillAtRoot(s)
 								? {
 										...s,
 										fileTree: loadResult.tree,
@@ -877,9 +881,11 @@ export function useFileTreeManagement(
 						error: error?.message || 'Unknown error',
 					});
 					const errorMsg = error?.message || 'Unknown error';
+					// A failure on the old root must not schedule a retry against the
+					// new one: fileTreeRetryAt would hold the fresh scan for 20 seconds.
 					setSessions((prev) =>
 						prev.map((s) =>
-							s.id === sessionId
+							s.id === sessionId && stillAtRoot(s)
 								? {
 										...s,
 										fileTree: [],

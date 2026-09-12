@@ -903,7 +903,7 @@ export interface Session {
 	state: SessionState;
 	cwd: string;
 	fullPath: string;
-	projectRoot: string; // The initial working directory (never changes, used for Claude session storage)
+	projectRoot: string; // The agent's working directory root (used for provider session storage). Moves only through withWorkingDirectory()
 	createdAt: number; // Timestamp when the session was created
 	aiLogs: LogEntry[];
 	// DEPRECATED: Legacy shell output logs - terminal tabs use xterm.js with direct PTY streaming
