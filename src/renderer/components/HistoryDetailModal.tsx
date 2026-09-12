@@ -1,8 +1,6 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import {
 	X,
-	Bot,
-	User,
 	Copy,
 	Check,
 	CheckCircle,
@@ -33,7 +31,7 @@ import { MarkdownRenderer } from './MarkdownRenderer';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { calculateContextDisplay, calculateDisplayInputTokens } from '../utils/contextUsage';
 import { getContextColor } from '../utils/theme';
-import { DoubleCheck } from './History';
+import { DoubleCheck, getEntryIcon, getPillColor } from './History';
 import { HoverTooltip } from './ui/HoverTooltip';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { ResizeHandles } from './ui/ResizeHandles';
@@ -155,31 +153,8 @@ export function HistoryDetailModal({
 
 	const formatTime = (timestamp: number) => formatTimestamp(timestamp, 'datetime');
 
-	// Get pill color based on type
-	const getPillColor = () => {
-		if (entry.type === 'AUTO') {
-			return {
-				bg: theme.colors.warning + '20',
-				text: theme.colors.warning,
-				border: theme.colors.warning + '40',
-			};
-		}
-		if (entry.type === 'CUE') {
-			return {
-				bg: '#06b6d420',
-				text: '#06b6d4',
-				border: '#06b6d440',
-			};
-		}
-		return {
-			bg: theme.colors.accent + '20',
-			text: theme.colors.accent,
-			border: theme.colors.accent + '40',
-		};
-	};
-
-	const colors = getPillColor();
-	const Icon = entry.type === 'AUTO' ? Bot : entry.type === 'CUE' ? Zap : User;
+	const colors = getPillColor(entry.type, theme);
+	const Icon = getEntryIcon(entry.type);
 
 	// Claude-only per-turn token source pill (TUI = maestro-p / Max plan, API =
 	// claude --print). Absent on non-Claude and older entries, and hidden entirely

@@ -20,6 +20,7 @@ import { stripMarkdown } from '../utils/textProcessing';
 import { useUIStore } from '../stores/uiStore';
 import { formatTimestamp } from '../../shared/formatters';
 import { useListNavigation, useScrollIntoView } from '../hooks';
+import { CUE_COLOR, tintedPillColors } from './History/historyConstants';
 
 // Lookback period options for the activity graph
 type LookbackPeriod = {
@@ -425,17 +426,46 @@ interface GroupChatHistoryPanelProps {
 // Type filter configuration for group chat history entry types.
 // `shortLabel` is what the filter pill prints, so all five fit one row in a
 // narrow panel; `label` stays the full word for tooltips and accessible names.
+// `color` gives each type its own hue so the chips read apart at a glance, as
+// the AI history chips do. "You" shares the accent with the AI history's USER
+// chip. The theme has only four semantic hues, so Synthesis takes the fixed
+// Cue cyan as the fifth.
 const TYPE_FILTER_CONFIG: {
 	type: GroupChatHistoryEntryType;
 	label: string;
 	shortLabel: string;
 	icon: typeof Send;
+	color: (theme: Theme) => string;
 }[] = [
-	{ type: 'user', label: 'You', shortLabel: 'You', icon: User },
-	{ type: 'delegation', label: 'Delegation', shortLabel: 'Task', icon: Send },
-	{ type: 'response', label: 'Response', shortLabel: 'Reply', icon: MessageSquare },
-	{ type: 'synthesis', label: 'Synthesis', shortLabel: 'Synth', icon: Layers },
-	{ type: 'error', label: 'Error', shortLabel: 'Err', icon: AlertTriangle },
+	{ type: 'user', label: 'You', shortLabel: 'You', icon: User, color: (t) => t.colors.accent },
+	{
+		type: 'delegation',
+		label: 'Delegation',
+		shortLabel: 'Task',
+		icon: Send,
+		color: (t) => t.colors.warning,
+	},
+	{
+		type: 'response',
+		label: 'Response',
+		shortLabel: 'Reply',
+		icon: MessageSquare,
+		color: (t) => t.colors.success,
+	},
+	{
+		type: 'synthesis',
+		label: 'Synthesis',
+		shortLabel: 'Synth',
+		icon: Layers,
+		color: () => CUE_COLOR,
+	},
+	{
+		type: 'error',
+		label: 'Error',
+		shortLabel: 'Err',
+		icon: AlertTriangle,
+		color: (t) => t.colors.error,
+	},
 ];
 
 // All entry types for default filter state
@@ -605,15 +635,6 @@ export function GroupChatHistoryPanel({
 		[searchFilterOpen, setSearchFilterOpen, listNavKeyDown]
 	);
 
-	// Filter chips are toggles, not a color legend: per-entry colors come from the
-	// agent (participantColor), so all chips share one neutral accent tint and rely
-	// on their icon + label to differentiate. Active vs inactive is conveyed by opacity.
-	const typePillColor = {
-		bg: theme.colors.accent + '20',
-		text: theme.colors.accent,
-		border: theme.colors.accent + '40',
-	};
-
 	const formatTime = (timestamp: number) => formatTimestamp(timestamp, 'smart');
 
 	return (
@@ -631,9 +652,10 @@ export function GroupChatHistoryPanel({
 				<div
 					className={`flex gap-1.5 w-fit mx-auto ${pillIconsFit ? '' : 'flex-wrap justify-center'}`}
 				>
-					{TYPE_FILTER_CONFIG.map(({ type, label, shortLabel, icon: Icon }) => {
+					{TYPE_FILTER_CONFIG.map(({ type, label, shortLabel, icon: Icon, color }) => {
 						const isActive = activeFilters.has(type);
-						const colors = typePillColor;
+						// Active vs inactive is still conveyed by opacity on top of the hue.
+						const colors = tintedPillColors(color(theme));
 						return (
 							<button
 								key={type}

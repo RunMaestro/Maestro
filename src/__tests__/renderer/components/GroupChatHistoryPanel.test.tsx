@@ -3,7 +3,7 @@
  *
  * Tests cover:
  * - Empty states (loading, no entries, no filter matches, no search matches)
- * - Type filter pills (delegation, response, synthesis, error)
+ * - Type filter pills (user, delegation, response, synthesis, error), each in its own color
  * - Search filter (summary, fullResponse, participantName)
  * - Cmd+F keyboard shortcut to open search
  * - Escape to close search
@@ -134,6 +134,18 @@ describe('GroupChatHistoryPanel', () => {
 				const btn = screen.getByRole('button', { name: full });
 				expect(btn).toHaveTextContent(short);
 			}
+		});
+
+		// Each type carries its own hue so the chips read apart at a glance, the
+		// way the AI history's USER / AUTO / CUE chips do.
+		it('gives every type pill its own color', () => {
+			render(<GroupChatHistoryPanel {...defaultProps} />);
+
+			const colors = ['You', 'Delegation', 'Response', 'Synthesis', 'Error'].map(
+				(label) => screen.getByRole('button', { name: label }).style.color
+			);
+			expect(colors.every(Boolean)).toBe(true);
+			expect(new Set(colors).size).toBe(colors.length);
 		});
 
 		it('should have all filters active by default', () => {
