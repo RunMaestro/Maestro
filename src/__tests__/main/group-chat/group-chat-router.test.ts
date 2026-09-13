@@ -931,6 +931,57 @@ describe('group-chat-router', () => {
 			).toBe(true);
 		});
 
+		it('retries a partial handoff and starts every requested participant after correction', async () => {
+			const chat = await createTestChatWithModerator('Partial Handoff Recovery Test');
+			await addParticipant(chat.id, 'Codex Reviewer', 'codex', mockProcessManager);
+			await addParticipant(chat.id, 'Codex Tester', 'codex', mockProcessManager);
+			await routeUserMessage(
+				chat.id,
+				'@Codex-Reviewer review the migration and @Codex-Tester test it',
+				mockProcessManager,
+				mockAgentDetector
+			);
+			mockProcessManager.spawn.mockClear();
+
+			await routeModeratorResponse(
+				chat.id,
+				'@Codex-Reviewer: Review the migration plan.',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			const retrySpawn = mockProcessManager.spawn.mock.calls.find((call) =>
+				call[0]?.sessionId?.includes(`group-chat-${chat.id}-moderator-`)
+			);
+			expect(retrySpawn).toBeDefined();
+			expect(retrySpawn?.[0].prompt).toContain(
+				'Participants explicitly addressed by the user: @Codex-Reviewer, @Codex-Tester'
+			);
+			expect(
+				mockProcessManager.spawn.mock.calls.some((call) =>
+					call[0]?.sessionId?.includes(`group-chat-${chat.id}-participant-`)
+				)
+			).toBe(false);
+
+			mockProcessManager.spawn.mockClear();
+			await routeModeratorResponse(
+				chat.id,
+				'@Codex-Reviewer: Review the migration plan.\n@Codex-Tester: Test the migration plan.',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			const participantSessionIds = mockProcessManager.spawn.mock.calls
+				.map((call) => call[0]?.sessionId as string)
+				.filter((sessionId) => sessionId?.includes(`group-chat-${chat.id}-participant-`));
+			expect(participantSessionIds).toEqual(
+				expect.arrayContaining([
+					expect.stringContaining('-participant-Codex Reviewer-'),
+					expect.stringContaining('-participant-Codex Tester-'),
+				])
+			);
+		});
+
 		it('auto-adds and spawns sessions with parentheses from moderator mentions', async () => {
 			const chat = await createTestChatWithModerator('Moderator Parentheses Mention Test');
 			setGetSessionsCallback(() => [

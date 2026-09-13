@@ -49,10 +49,11 @@ prompts are customizable, and an older customization must not silently lose a
 functional routing requirement after an app update. Natural-language claims such
 as "the agents were assigned" do not route work and must never be presented as a
 successful handoff without the corresponding mentions. When a user turn explicitly
-mentions a participant, the router tracks that expected handoff. A prose-only
-moderator response is withheld and retried once with a routing correction. If the
-retry still contains no executable mention, the response is rejected and the chat
-receives an explicit system error instead of a false final answer.
+mentions participants, the router tracks the complete expected handoff. A response
+that omits any addressed participant is withheld and retried once with a routing
+correction. If the retry still lacks any required executable mention, the response
+is rejected and the chat receives an explicit system error instead of a false or
+partial handoff.
 
 ## Data Model
 

@@ -554,9 +554,9 @@ interface PendingExplicitParticipantHandoff {
 
 /**
  * User turns that explicitly addressed one or more participants. The moderator
- * must produce at least one executable handoff before its response can be
- * presented as final. One prose-only response gets a correction turn; a second
- * is rejected with an explicit system error.
+ * must produce an executable handoff for every addressed participant before its
+ * response can be presented as final. One incomplete response gets a correction
+ * turn; a second is rejected with an explicit system error.
  */
 const pendingExplicitParticipantHandoffs = new Map<string, PendingExplicitParticipantHandoff>();
 
@@ -1142,7 +1142,7 @@ export async function routeUserMessage(
 			const moderatorRequest = routingRetry
 				? `## Routing Correction
 
-Your previous response was rejected because it contained no executable participant @mention. No participant process started.
+Your previous response was rejected because it did not contain an executable @mention for every participant explicitly addressed by the user. No participant process started.
 
 Participants explicitly addressed by the user: ${participantMentionNames?.map((name) => `@${name}`).join(', ')}
 
@@ -1715,9 +1715,12 @@ export async function routeModeratorResponse(
 
 	const pendingExplicitHandoff = pendingExplicitParticipantHandoffs.get(groupChatId);
 	// `extractMentions` has already resolved these names against the live participant
-	// list. An unrelated or malformed !autorun directive must not satisfy a handoff
-	// that the user explicitly requested.
-	const hasExecutableHandoff = mentions.length > 0;
+	// list. When the user explicitly addressed participants, require the full set:
+	// accepting a partial match would silently drop the omitted participant while
+	// clearing the pending validation state.
+	const hasExecutableHandoff = pendingExplicitHandoff
+		? pendingExplicitHandoff.participantNames.every((name) => mentions.includes(name))
+		: mentions.length > 0;
 	if (pendingExplicitHandoff && !hasExecutableHandoff) {
 		const participantMentionNames = pendingExplicitHandoff.participantNames.map((name) =>
 			getMentionNameForContext(
@@ -1729,7 +1732,7 @@ export async function routeModeratorResponse(
 		if (!pendingExplicitHandoff.retryAttempted && processManager && agentDetector) {
 			pendingExplicitHandoff.retryAttempted = true;
 			logger.warn(
-				'Moderator omitted executable mentions for explicitly addressed participants; retrying once',
+				'Moderator omitted one or more explicitly addressed participants; retrying once',
 				LOG_CONTEXT,
 				{
 					groupChatId,
