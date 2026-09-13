@@ -54,7 +54,7 @@ Source directories:
 - `thinking-chunk` - partial streaming text from agent reasoning
 - `tool-execution` - tool use events (OpenCode, Codex)
 - `slash-commands` - available slash commands from agent init
-- `query-complete` - batch query finished (for stats tracking)
+- `query-complete` - batch query finished (flushes buffered data and thinking text, WakaTime heartbeat)
 
 ### Spawning Strategy: PTY vs child_process
 
@@ -132,7 +132,7 @@ Also handles:
 - Runs error detection on exit code + stderr/stdout buffers
 - SSH error detection on combined output
 - Cleans up temp image files
-- Emits `query-complete` for stats tracking
+- Emits `query-complete` (buffer flushes, WakaTime)
 
 ### Runner Classes
 
@@ -181,7 +181,6 @@ All listeners receive a `ProcessListenerDependencies` object containing:
 - `groupChatEmitters`, `groupChatRouter`, `groupChatStorage` - group chat integration
 - `sessionRecovery`, `outputBuffer`, `outputParser` - support utilities
 - `usageAggregator` - token counting
-- `getStatsDB` - usage database
 - `patterns` - compiled regex patterns for session ID parsing
 
 ### Listener Modules
@@ -220,11 +219,7 @@ All listeners receive a `ProcessListenerDependencies` object containing:
 - Logs error details (type, message, recoverability)
 - Forwards via `safeSend('agent:error', ...)`
 
-**stats-listener.ts** - Query completion tracking:
-
-- Listens to `query-complete` events from batch mode processes
-- Inserts query events into StatsDB with retry logic (3 attempts, exponential backoff)
-- Broadcasts `stats:updated` to renderer for dashboard refresh
+**Query stats** are recorded by the renderer through `stats:record-query`, which carries the turn's tokens and cost. No main-process listener writes rows from `query-complete`: the former `stats-listener.ts` did, and every Auto Run turn landed twice, once without cost.
 
 **exit-listener.ts** - Process exit handling (most complex):
 
@@ -256,7 +251,6 @@ Process Listeners
     |
     +---> WebServer.broadcastToSessionClients() ---> WebSocket ---> Mobile/Web
     |
-    +---> StatsDB (query-complete only)
     |
     +---> WakaTimeManager (heartbeats)
     |

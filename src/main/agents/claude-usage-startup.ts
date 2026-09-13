@@ -47,6 +47,10 @@ import { logger } from '../utils/logger';
 import { isMaestroPBinaryPath } from './claudeSpawnCore';
 import { sampleUsage } from './claude-usage-sampler';
 import { getAllSnapshots, resolveConfigDirKey, setSnapshot } from '../stores/claudeUsageStore';
+import {
+	effectiveAgentCustomEnvVars,
+	resolveAgentBillingCredential,
+} from '../../shared/providerProfiles';
 
 const LOG_CONTEXT = '[ClaudeUsageStartup]';
 
@@ -212,22 +216,25 @@ function getAgentLevelCustomPath(agentConfigsStore: Store<AgentConfigsData>): st
 }
 
 /**
- * Build the per-session sampling target: merge agent-level + session-level
- * customEnvVars (session wins, matching the spawner's runtime precedence),
- * extract `CLAUDE_CONFIG_DIR`, canonicalize, and produce the call shape
- * `sampleUsage()` expects.
+ * Build the per-session sampling target: take the customEnvVars the spawner
+ * actually hands the process (the session's own set, or the agent-level set
+ * when the session has none - they replace, never layer), extract
+ * `CLAUDE_CONFIG_DIR`, canonicalize, and produce the call shape `sampleUsage()`
+ * expects.
  *
  * Returns null when:
  *   - The session is SSH-remote (`sessionSshRemoteConfig.enabled`). Its
  *     `CLAUDE_CONFIG_DIR` points at the remote host; sampling it locally is
  *     meaningless and can pop an OAuth browser against a tokenless local dir.
- *   - Neither the session nor the agent explicitly sets `CLAUDE_CONFIG_DIR`
- *     in customEnvVars. We refuse to sample "default" accounts the user
- *     hasn't explicitly configured: the user may have multiple Anthropic
- *     accounts on this host, and the default `~/.claude` may not match
- *     wherever claude's tokens actually live in the Keychain - so a
- *     "guess the default" sample would trigger an OAuth browser prompt.
- *     Better to skip than to pop a browser the user didn't ask for.
+ *   - The session bills an API key, gateway, or cloud provider. That credential
+ *     outranks the config dir's login, so the agent draws nothing from the
+ *     plan, and sampling with the key in the env probes the key instead.
+ *   - The effective env does not explicitly set `CLAUDE_CONFIG_DIR`. We refuse
+ *     to sample "default" accounts the user hasn't explicitly configured: the
+ *     user may have multiple Anthropic accounts on this host, and the default
+ *     `~/.claude` may not match wherever claude's tokens actually live in the
+ *     Keychain - so a "guess the default" sample would trigger an OAuth browser
+ *     prompt. Better to skip than to pop a browser the user didn't ask for.
  */
 function buildTarget(
 	session: Record<string, unknown>,
@@ -236,8 +243,8 @@ function buildTarget(
 	const sessionEnvVars =
 		session.customEnvVars && typeof session.customEnvVars === 'object'
 			? (session.customEnvVars as Record<string, string>)
-			: {};
-	const customEnvVars: Record<string, string> = { ...agentLevelEnvVars, ...sessionEnvVars };
+			: undefined;
+	const customEnvVars = effectiveAgentCustomEnvVars(sessionEnvVars, agentLevelEnvVars);
 
 	// SSH-remote agents run claude on the remote host, so their CLAUDE_CONFIG_DIR
 	// names a directory on THAT machine. Sampling it locally reads the wrong
@@ -247,6 +254,10 @@ function buildTarget(
 	// remotely; there is nothing useful to sample locally. Skip.
 	const sshRemoteConfig = session.sessionSshRemoteConfig as { enabled?: boolean } | undefined;
 	if (sshRemoteConfig?.enabled) {
+		return null;
+	}
+
+	if (resolveAgentBillingCredential('claude-code', customEnvVars)) {
 		return null;
 	}
 

@@ -623,12 +623,11 @@ describe('ClaudePlanUsage - agent count badge', () => {
 		expect(screen.getByTestId('claude-plan-agents-pending')).toHaveTextContent('2 agents');
 	});
 
-	// The main-process sampler skips SSH-remote sessions because it cannot probe a
-	// remote host's directory locally. The COUNT keeps them - they are configured
-	// against the profile - but marks them remote: that directory on the remote
-	// host holds the host's own login, which can be a different account from the
-	// one these bars measure.
-	it('counts SSH-remote agents and marks them remote', () => {
+	// An SSH-remote agent's config dir is a path on the REMOTE host, holding that
+	// host's own login, so it is not on the local account these bars measure
+	// whatever the directory is called. The Agents grid files it under its own
+	// `account @ host` profile instead.
+	it('does not count SSH-remote agents against the local account', () => {
 		seedSnapshots({ '/Users/me/.claude-work': snapshotFor('/Users/me/.claude-work') });
 		useSessionStore.setState({
 			sessions: [
@@ -652,10 +651,10 @@ describe('ClaudePlanUsage - agent count badge', () => {
 
 		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
 
-		expect(screen.getByTestId('claude-plan-agents-work')).toHaveTextContent('2 agents (1 remote)');
+		expect(screen.getByTestId('claude-plan-agents-work')).toHaveTextContent('1 agent');
 	});
 
-	it('says "remote" outright when every agent on the account runs over SSH', () => {
+	it('shows zero when every agent on the dir runs over SSH', () => {
 		seedSnapshots({ '/Users/me/.claude-work': snapshotFor('/Users/me/.claude-work') });
 		useSessionStore.setState({
 			sessions: [
@@ -672,7 +671,7 @@ describe('ClaudePlanUsage - agent count badge', () => {
 
 		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
 
-		expect(screen.getByTestId('claude-plan-agents-work')).toHaveTextContent('1 remote agent');
+		expect(screen.getByTestId('claude-plan-agents-work')).toHaveTextContent('0 agents');
 	});
 
 	it('hands the account back when the chip is clicked, so the grid can filter to it', () => {

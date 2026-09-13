@@ -457,7 +457,33 @@ describe('claude-usage-startup → runStartupUsageSampling', () => {
 	});
 
 	describe('env precedence', () => {
-		it('uses agent-level customEnvVars when no session-level override exists', async () => {
+		it('uses agent-level customEnvVars when the session has no vars record', async () => {
+			sampleUsageMock.mockResolvedValue(makeSnapshot());
+
+			const deps = {
+				sessionsStore: makeStore({
+					sessions: [recentClaudeSession({ customEnvVars: undefined })],
+				}) as never,
+				agentConfigsStore: makeStore({
+					configs: {
+						'claude-code': { customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/test/.claude-agent' } },
+					},
+				}) as never,
+				settingsStore: makeStore({}) as never,
+				agentDetector: makeDetector(FAKE_AGENT) as never,
+			};
+
+			await runStartupUsageSampling(deps);
+
+			expect(sampleUsageMock).toHaveBeenCalledWith(
+				expect.objectContaining({ configDir: '/Users/test/.claude-agent' })
+			);
+		});
+
+		// The spawner hands the process the session's record OR the agent-level
+		// one, so an empty session record means the agent-level dir never
+		// reaches it, and sampling that dir would report a quota it does not use.
+		it('does not fall back to agent-level customEnvVars for an empty session record', async () => {
 			sampleUsageMock.mockResolvedValue(makeSnapshot());
 
 			const deps = {
@@ -475,9 +501,7 @@ describe('claude-usage-startup → runStartupUsageSampling', () => {
 
 			await runStartupUsageSampling(deps);
 
-			expect(sampleUsageMock).toHaveBeenCalledWith(
-				expect.objectContaining({ configDir: '/Users/test/.claude-agent' })
-			);
+			expect(sampleUsageMock).not.toHaveBeenCalled();
 		});
 
 		it('lets session-level customEnvVars override agent-level customEnvVars', async () => {
@@ -585,7 +609,50 @@ describe('claude-usage-startup → runStartupUsageSampling', () => {
 			expect(sampleUsageMock).toHaveBeenCalledTimes(1);
 		});
 
-		it('preserves non-CLAUDE_CONFIG_DIR customEnvVars through to sampleUsage', async () => {
+		it("passes the session's own customEnvVars to sampleUsage, without the agent-level set", async () => {
+			sampleUsageMock.mockResolvedValue(makeSnapshot());
+
+			const deps = {
+				sessionsStore: makeStore({
+					sessions: [
+						recentClaudeSession({
+							customEnvVars: {
+								HTTP_PROXY: 'http://session-proxy:8080',
+								CLAUDE_CONFIG_DIR: '/Users/test/.claude-x',
+							},
+						}),
+					],
+				}) as never,
+				agentConfigsStore: makeStore({
+					configs: {
+						'claude-code': {
+							customEnvVars: { HTTP_PROXY: 'http://proxy:8080', AGENT_ONLY: '1' },
+						},
+					},
+				}) as never,
+				settingsStore: makeStore({}) as never,
+				agentDetector: makeDetector(FAKE_AGENT) as never,
+			};
+
+			await runStartupUsageSampling(deps);
+
+			expect(sampleUsageMock).toHaveBeenCalledWith(
+				expect.objectContaining({
+					customEnvVars: expect.objectContaining({
+						HTTP_PROXY: 'http://session-proxy:8080',
+						CLAUDE_CONFIG_DIR: '/Users/test/.claude-x',
+					}),
+				})
+			);
+			const [{ customEnvVars }] = sampleUsageMock.mock.calls[0] as [
+				{ customEnvVars: Record<string, string> },
+			];
+			expect(customEnvVars).not.toHaveProperty('AGENT_ONLY');
+		});
+
+		// A key outranks the dir's login, so the agent spends none of that plan -
+		// and sampling the plan with the key in the env probes the key instead.
+		it('skips a session that bills an API key even when it names a config dir', async () => {
 			sampleUsageMock.mockResolvedValue(makeSnapshot());
 
 			const deps = {
@@ -599,23 +666,14 @@ describe('claude-usage-startup → runStartupUsageSampling', () => {
 						}),
 					],
 				}) as never,
-				agentConfigsStore: makeStore({
-					configs: { 'claude-code': { customEnvVars: { HTTP_PROXY: 'http://proxy:8080' } } },
-				}) as never,
+				agentConfigsStore: makeStore({ configs: {} }) as never,
 				settingsStore: makeStore({}) as never,
 				agentDetector: makeDetector(FAKE_AGENT) as never,
 			};
 
 			await runStartupUsageSampling(deps);
 
-			expect(sampleUsageMock).toHaveBeenCalledWith(
-				expect.objectContaining({
-					customEnvVars: expect.objectContaining({
-						HTTP_PROXY: 'http://proxy:8080',
-						ANTHROPIC_API_KEY: 'sk-test',
-					}),
-				})
-			);
+			expect(sampleUsageMock).not.toHaveBeenCalled();
 		});
 	});
 

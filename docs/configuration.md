@@ -147,16 +147,17 @@ MY_TOOL_PATH=~/tools/custom
 
 ### Environment Variable Precedence
 
-When an agent or terminal is spawned, the layers are merged in this order (lowest to highest priority). Each layer overrides the one before it:
+When an agent or terminal is spawned, its environment is built in this order (lowest to highest priority). Each layer overrides the one before it:
 
 1. **System environment** - System and parent process variables Maestro inherits
 2. **Global environment variables** (Settings → Environment) - Applied to all agents and terminals
-3. **Provider-level configuration** - Defaults stored for a particular provider (Claude Code, Codex, and so on)
-4. **Per-agent variables** - The values on one agent's own record, set in the **Environment Variables (optional)** panel
+3. **The agent's own variables, or else the provider-level variables** - One set, never both
 
-So an agent's own value wins over a provider default, which wins over the global setting, which wins over whatever Maestro inherited from the system.
+Layer 3 replaces; it does not merge. Provider-level variables are defaults stored for a particular provider (Claude Code, Codex, and so on), and they reach an agent only when that agent has no variables of its own. Once an agent carries any variable in its **Environment Variables (optional)** panel, the provider-level set is dropped for that agent entirely, including keys the agent never set.
 
-In practice you set layers 2 and 4. Layer 3 is honored when present but has no editor in the current UI, so unless you have older settings carrying provider-level values, the effective order is simply: per-agent beats global beats system.
+So an agent that sets only `ANTHROPIC_API_KEY` does not receive a provider-level `CLAUDE_CONFIG_DIR`. If it needs both, set both on the agent.
+
+Provider-level variables have no editor in the current UI, so unless you have older settings carrying them, the effective order is simply: per-agent beats global beats system.
 
 ### Use Cases
 

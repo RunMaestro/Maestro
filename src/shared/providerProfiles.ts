@@ -234,19 +234,35 @@ export interface ResolvedAgentProfile {
 	key: string;
 	accountKey: string | null;
 	credential: AgentBillingCredential | null;
+	/** SSH remote whose disk the account dir lives on, or null for a local account. */
+	sshRemoteId: string | null;
 	label: string;
 	shortLabel: string;
+}
+
+/** The SSH remote an agent runs on, as far as attribution needs it. */
+export interface AgentProfileRemote {
+	id: string;
+	/** Display name. Absent while the remote list loads, or when the remote was deleted. */
+	name?: string;
 }
 
 /**
  * The profile an agent belongs to, from the env its process receives (see
  * {@link effectiveAgentCustomEnvVars}). Null when the agent needs a config-dir
  * account and $HOME has not resolved yet.
+ *
+ * An SSH-remote agent's config dir is a path on THAT host and holds the host's
+ * own login, so it is a separate profile per host (`banaco @ pedtome`), never
+ * the local account that happens to share the directory name. A credential is
+ * the same account wherever it is presented, so credential profiles are not
+ * split by host.
  */
 export function resolveAgentProfile(
 	toolType: string,
 	env: Record<string, string>,
-	homeDir: string | undefined
+	homeDir: string | undefined,
+	remote?: AgentProfileRemote | null
 ): ResolvedAgentProfile | null {
 	const credential = resolveAgentBillingCredential(toolType, env);
 	if (credential) {
@@ -254,6 +270,7 @@ export function resolveAgentProfile(
 			key: providerProfileKey(toolType, credential.id),
 			accountKey: null,
 			credential,
+			sshRemoteId: null,
 			label: `${getAgentDisplayName(toolType)} - ${credential.label}`,
 			shortLabel: credential.label,
 		};
@@ -261,11 +278,25 @@ export function resolveAgentProfile(
 	const hasAccounts = Boolean(getProviderProfileConfig(toolType));
 	const accountKey = hasAccounts ? resolveAgentAccountKey(toolType, env, homeDir) : null;
 	if (hasAccounts && !accountKey) return null;
+	const label = providerProfileLabel(toolType, accountKey);
+	const shortLabel = providerProfileShortLabel(toolType, accountKey);
+	if (!remote || !accountKey) {
+		return {
+			key: providerProfileKey(toolType, accountKey),
+			accountKey,
+			credential: null,
+			sshRemoteId: null,
+			label,
+			shortLabel,
+		};
+	}
+	const host = remote.name || 'unknown host';
 	return {
-		key: providerProfileKey(toolType, accountKey),
+		key: providerProfileKey(toolType, `${accountKey}@ssh:${remote.id}`),
 		accountKey,
 		credential: null,
-		label: providerProfileLabel(toolType, accountKey),
-		shortLabel: providerProfileShortLabel(toolType, accountKey),
+		sshRemoteId: remote.id,
+		label: `${label} @ ${host}`,
+		shortLabel: `${shortLabel} @ ${host}`,
 	};
 }

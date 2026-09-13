@@ -490,8 +490,11 @@ The CLI spawner is simpler than the desktop process manager but honors the same
 per-agent/per-session overrides that users configure in the desktop app:
 
 - **Honored**: custom binary path, custom CLI args, custom env vars, custom model,
-  custom effort/reasoning - all merged via `applyAgentConfigOverrides()` just
+  custom effort/reasoning - all resolved via `applyAgentConfigOverrides()` just
   like the desktop (`session` wins over `agent config` wins over defaults).
+  Env vars REPLACE rather than layer: an agent with any vars of its own gets
+  none of the provider-level set, so usage attribution can read the same
+  single set back (`effectiveAgentCustomEnvVars()` in `shared/providerProfiles.ts`).
 - **Honored**: SSH remote execution - when `sessionSshRemoteConfig.enabled` is
   true, the spawn is wrapped via `wrapSpawnWithSsh()` (dynamic import so the
   SSH chain stays out of the local hot path). If the configured remote can't

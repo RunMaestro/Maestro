@@ -59,10 +59,8 @@ interface CodexPlanUsageProps {
 interface AccountRowProps {
 	codexHomeKey: string;
 	snapshot: CodexUsageSnapshot;
-	/** Agents pointed at this CODEX_HOME. */
+	/** Local agents pointed at this CODEX_HOME. */
 	agentCount: number;
-	/** How many of `agentCount` run over SSH, against the remote host's own login. */
-	remoteAgentCount: number;
 	/** Newest `sampledAt` across the panel, so a row the last refresh skipped can say so. */
 	latestSampledAtMs: number | null;
 	theme: Theme;
@@ -74,7 +72,6 @@ const AccountRow = memo(function AccountRow({
 	codexHomeKey,
 	snapshot,
 	agentCount,
-	remoteAgentCount,
 	latestSampledAtMs,
 	theme,
 	onShowAgents,
@@ -93,7 +90,6 @@ const AccountRow = memo(function AccountRow({
 				/>
 				<QuotaAgentCountBadge
 					count={agentCount}
-					remoteCount={remoteAgentCount}
 					providerLabel={PROVIDER_LABEL}
 					testId={`${TEST_ID_PREFIX}-agents-${shortName}`}
 					theme={theme}
@@ -195,24 +191,19 @@ export const CodexPlanUsage = memo(function CodexPlanUsage({
 	const snapshots = useCodexUsageStore((s) => s.snapshots);
 	const refreshing = useCodexUsageStore((s) => s.refreshing);
 
-	const {
-		configuredAccountKeys,
-		agentCountsByAccount,
-		remoteAgentCountsByAccount,
-		setSelectedKey,
-		effectiveSelectedKey,
-	} = useQuotaAccounts({
-		toolType: 'codex',
-		accountKeys,
-		snapshots,
-		normalizeKey,
-		deriveShortName,
-		fetchAgentEnvVars: () => window.maestro.agents.getCustomEnvVars('codex'),
-		fetchAccountKeys: () => {
-			const fn = window.maestro.agents.getCodexUsageAccountKeys;
-			return typeof fn === 'function' ? fn() : undefined;
-		},
-	});
+	const { configuredAccountKeys, agentCountsByAccount, setSelectedKey, effectiveSelectedKey } =
+		useQuotaAccounts({
+			toolType: 'codex',
+			accountKeys,
+			snapshots,
+			normalizeKey,
+			deriveShortName,
+			fetchAgentEnvVars: () => window.maestro.agents.getCustomEnvVars('codex'),
+			fetchAccountKeys: () => {
+				const fn = window.maestro.agents.getCodexUsageAccountKeys;
+				return typeof fn === 'function' ? fn() : undefined;
+			},
+		});
 
 	const selectedSnapshot: CodexUsageSnapshot | null = effectiveSelectedKey
 		? (snapshots[effectiveSelectedKey] ?? null)
@@ -293,13 +284,11 @@ export const CodexPlanUsage = memo(function CodexPlanUsage({
 			const snapshot = snapshots[codexHomeKey];
 			const isHidden = hiddenSet.has(codexHomeKey);
 			const agentCount = agentCountsByAccount[codexHomeKey] ?? 0;
-			const remoteAgentCount = remoteAgentCountsByAccount[codexHomeKey] ?? 0;
 			const body = snapshot ? (
 				<AccountRow
 					codexHomeKey={codexHomeKey}
 					snapshot={snapshot}
 					agentCount={agentCount}
-					remoteAgentCount={remoteAgentCount}
 					latestSampledAtMs={lastSampledAtMs}
 					theme={theme}
 					onShowAgents={onShowAccountAgents ? () => onShowAccountAgents(codexHomeKey) : undefined}
@@ -311,7 +300,6 @@ export const CodexPlanUsage = memo(function CodexPlanUsage({
 					displayName={deriveDisplayName(codexHomeKey)}
 					testIdPrefix={TEST_ID_PREFIX}
 					agentCount={agentCount}
-					remoteAgentCount={remoteAgentCount}
 					providerLabel={PROVIDER_LABEL}
 					theme={theme}
 					onShowAgents={onShowAccountAgents ? () => onShowAccountAgents(codexHomeKey) : undefined}
@@ -348,7 +336,6 @@ export const CodexPlanUsage = memo(function CodexPlanUsage({
 			hiddenSet,
 			toggleHidden,
 			agentCountsByAccount,
-			remoteAgentCountsByAccount,
 			lastSampledAtMs,
 			onShowAccountAgents,
 		]
@@ -444,7 +431,6 @@ export const CodexPlanUsage = memo(function CodexPlanUsage({
 					codexHomeKey={effectiveSelectedKey}
 					snapshot={selectedSnapshot}
 					agentCount={agentCountsByAccount[effectiveSelectedKey] ?? 0}
-					remoteAgentCount={remoteAgentCountsByAccount[effectiveSelectedKey] ?? 0}
 					latestSampledAtMs={lastSampledAtMs}
 					theme={theme}
 				/>
@@ -455,7 +441,6 @@ export const CodexPlanUsage = memo(function CodexPlanUsage({
 					displayName={deriveDisplayName(effectiveSelectedKey)}
 					testIdPrefix={TEST_ID_PREFIX}
 					agentCount={agentCountsByAccount[effectiveSelectedKey] ?? 0}
-					remoteAgentCount={remoteAgentCountsByAccount[effectiveSelectedKey] ?? 0}
 					providerLabel={PROVIDER_LABEL}
 					theme={theme}
 				/>

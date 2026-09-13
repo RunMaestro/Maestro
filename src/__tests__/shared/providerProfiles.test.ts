@@ -189,6 +189,35 @@ describe('resolveAgentProfile', () => {
 		});
 	});
 
+	it('splits an SSH-remote agent into its own profile per host', () => {
+		const env = { CLAUDE_CONFIG_DIR: '/Users/me/.claude-banaco' };
+		const local = resolveAgentProfile('claude-code', env, HOME);
+		const remote = resolveAgentProfile('claude-code', env, HOME, { id: 'r1', name: 'pedtome' });
+
+		expect(remote).toMatchObject({
+			key: 'claude-code::/Users/me/.claude-banaco@ssh:r1',
+			accountKey: '/Users/me/.claude-banaco',
+			sshRemoteId: 'r1',
+			label: 'Claude Code - banaco @ pedtome',
+			shortLabel: 'banaco @ pedtome',
+		});
+		expect(remote?.key).not.toBe(local?.key);
+		expect(
+			resolveAgentProfile('claude-code', env, HOME, { id: 'r2', name: 'linode' })?.key
+		).not.toBe(remote?.key);
+		// A deleted remote keeps its own bucket rather than folding into local.
+		expect(resolveAgentProfile('claude-code', env, HOME, { id: 'gone' })?.shortLabel).toBe(
+			'banaco @ unknown host'
+		);
+	});
+
+	it('keeps a credential profile whole across hosts', () => {
+		const env = { ANTHROPIC_API_KEY: 'sk-ant-a1b2' };
+		expect(
+			resolveAgentProfile('claude-code', env, HOME, { id: 'r1', name: 'pedtome' })
+		).toMatchObject({ key: 'claude-code::api-key:a1b2', sshRemoteId: null });
+	});
+
 	it('returns null only while a login agent is waiting on $HOME', () => {
 		expect(resolveAgentProfile('claude-code', {}, undefined)).toBeNull();
 		expect(

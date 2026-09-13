@@ -8,7 +8,6 @@ import type { WebServer } from '../web-server';
 import type { AgentDetector } from '../agents';
 import type { CueEngine } from '../cue/cue-engine';
 import type { SafeSendFn } from '../utils/safe-send';
-import type { StatsDB } from '../stats';
 import type { GroupChat, GroupChatParticipant } from '../group-chat/group-chat-storage';
 import type { GroupChatMessage, GroupChatState } from '../../shared/group-chat-types';
 import type { ParticipantState } from '../ipc/handlers/groupChat';
@@ -147,8 +146,6 @@ export interface ProcessListenerDependencies {
 			cacheCreationInputTokens: number;
 		}) => number;
 	};
-	/** Stats database getter */
-	getStatsDB: () => StatsDB;
 	/** Debug log function */
 	debugLog: (prefix: string, message: string, ...args: unknown[]) => void;
 	/** Regex patterns */

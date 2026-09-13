@@ -257,7 +257,10 @@ export class ExitHandler {
 			cleanupTempFiles(managedProcess.tempImageFiles);
 		}
 
-		// Emit query-complete event for batch mode processes (for stats tracking)
+		// Emit query-complete for batch mode processes. Listeners flush buffered data
+		// and thinking text and send WakaTime heartbeats. No stats row is written from
+		// it: the renderer records each turn, with its tokens and cost, and a second
+		// writer here double-counted every Auto Run turn.
 		if (isBatchMode && managedProcess.querySource) {
 			const duration = Date.now() - managedProcess.startTime;
 			this.emitter.emit('query-complete', sessionId, {

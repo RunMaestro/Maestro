@@ -57,11 +57,16 @@ describe('EnvVarList', () => {
 	// The source badge is the point of the view: the same variable set globally
 	// and per-agent means very different things.
 	it('labels which layer each surviving value came from', () => {
-		renderList({ global: { A: '1' }, agent: { B: '2' }, session: { C: '3' } });
+		const { unmount } = renderList({ global: { A: '1' }, session: { C: '3' } });
+		expect(screen.getByText('Global')).toBeInTheDocument();
+		expect(screen.getByText('This agent')).toBeInTheDocument();
+		unmount();
 
+		// The provider layer shows only for an agent with no vars of its own: the
+		// spawner replaces that set rather than merging over it.
+		renderList({ global: { A: '1' }, agent: { B: '2' } });
 		expect(screen.getByText('Global')).toBeInTheDocument();
 		expect(screen.getByText('Provider')).toBeInTheDocument();
-		expect(screen.getByText('This agent')).toBeInTheDocument();
 	});
 
 	it('reports an overridden value as belonging to the winning layer', () => {

@@ -195,8 +195,8 @@ function fetchClaudeAgentEnv(): Promise<Record<string, string>> {
  * the agent-level set (they do not layer), with the implicit default
  * `~/.claude` as the final fallback. Returns `undefined` when the session isn't
  * a Claude Code session, when it bills an API key, gateway, or cloud provider
- * (there is no plan quota to show), or when no useful resolution is possible
- * yet (no home dir, no env vars, no pre-stamped key).
+ * (there is no plan quota to show), when it runs over SSH, or when no useful
+ * resolution is possible yet (no home dir, no env vars, no pre-stamped key).
  */
 function resolveSessionConfigDirKey(
 	session: Session | null | undefined,
@@ -204,6 +204,9 @@ function resolveSessionConfigDirKey(
 	homeDir: string | undefined
 ): string | undefined {
 	if (!session || session.toolType !== 'claude-code') return undefined;
+	// A remote agent's config dir holds the REMOTE host's login. This machine's
+	// snapshot of the same-named dir is a different account, so show no bars.
+	if (session.sessionSshRemoteConfig?.enabled) return undefined;
 	const env = effectiveAgentCustomEnvVars(
 		session.customEnvVars as Record<string, string> | undefined,
 		agentEnv

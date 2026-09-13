@@ -117,7 +117,7 @@ export interface ManagedProcess {
 	sshRemoteCommand?: string;
 	dataBuffer?: string;
 	dataBufferTimeout?: NodeJS.Timeout;
-	/** Env vars Maestro explicitly set on this process (global + agent + session overrides),
+	/** Env vars Maestro explicitly set on this process (global, then the session's own set or else the agent-level set),
 	 *  with `~/` paths expanded and MAESTRO_SESSION_RESUMED included when applicable.
 	 *  Inherited system env is NOT included - this is the actionable set shown in the
 	 *  Process Details modal. */

@@ -100,7 +100,7 @@ import {
 	cleanupAllGroomingSessions,
 	getActiveGroomingSessionCount,
 } from './ipc/handlers';
-import { initializeStatsDB, closeStatsDB, getStatsDB } from './stats';
+import { initializeStatsDB, closeStatsDB } from './stats';
 import { groupChatEmitters } from './ipc/handlers/groupChat';
 import {
 	routeModeratorResponse,
@@ -1828,7 +1828,6 @@ function setupProcessListeners() {
 			usageAggregator: {
 				calculateContextTokens,
 			},
-			getStatsDB,
 			debugLog,
 			patterns: {
 				REGEX_MODERATOR_SESSION,

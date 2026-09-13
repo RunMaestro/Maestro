@@ -28,6 +28,7 @@ import {
 	type AgentBillingCredential,
 } from '../../../shared/providerProfiles';
 import { getHomeDir, getHomeDirAsync } from '../../utils/homeDir';
+import { ipcCache } from '../../services/ipcWrapper';
 
 export interface ProviderProfile {
 	/** Stable identity, used as the filter dropdown's value. */
@@ -37,6 +38,8 @@ export interface ProviderProfile {
 	accountKey: string | null;
 	/** The API key, gateway, or cloud provider billed instead of a login, or null. */
 	credential: AgentBillingCredential | null;
+	/** SSH remote whose disk the account dir lives on, or null for a local account. */
+	sshRemoteId: string | null;
 	/** `Claude Code - smash`. */
 	label: string;
 	/** `smash` - the account alone, for a card badge where the provider is implied. */
@@ -124,6 +127,38 @@ function useAgentLevelEnvVars(toolTypes: string[]): {
 	return { envByToolType, settled };
 }
 
+/**
+ * SSH remote display names by id, for labelling `account @ host` profiles.
+ *
+ * Fetched only when some agent runs over SSH, through the same 30s
+ * `ssh-configs` cache the remote pickers use. Names never gate `ready`: a
+ * remote profile's key is the remote id, so it is complete without the name,
+ * and a label that fills in a moment later costs nothing.
+ */
+function useSshRemoteNames(needed: boolean): Record<string, string> {
+	const [names, setNames] = useState<Record<string, string>>({});
+	useEffect(() => {
+		if (!needed || typeof window.maestro?.sshRemote?.getConfigs !== 'function') return;
+		let cancelled = false;
+		ipcCache
+			.getOrFetch('ssh-configs', () => window.maestro.sshRemote.getConfigs(), 30000)
+			.then((result) => {
+				if (cancelled || !result?.success || !result.configs) return;
+				const byId: Record<string, string> = {};
+				for (const config of result.configs) byId[config.id] = config.name;
+				setNames(byId);
+			})
+			.catch(() => {
+				// Best-effort: without names a remote profile reads "@ unknown host",
+				// and it still keeps its own bucket.
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [needed]);
+	return names;
+}
+
 export function useProviderProfiles(sessions: Session[]): ProviderProfileIndex {
 	// Only providers that keep accounts in a config dir need their env vars
 	// read; for the rest the profile is the provider itself.
@@ -138,6 +173,12 @@ export function useProviderProfiles(sessions: Session[]): ProviderProfileIndex {
 
 	const { envByToolType: agentLevelEnvVars, settled: envSettled } =
 		useAgentLevelEnvVars(accountProviders);
+
+	const hasRemoteAgents = useMemo(
+		() => sessions.some((s) => s?.sessionSshRemoteConfig?.enabled),
+		[sessions]
+	);
+	const remoteNames = useSshRemoteNames(hasRemoteAgents);
 
 	const [homeDir, setHomeDir] = useState<string | undefined>(getHomeDir);
 	useEffect(() => {
@@ -157,7 +198,14 @@ export function useProviderProfiles(sessions: Session[]): ProviderProfileIndex {
 				session.customEnvVars as Record<string, string> | undefined,
 				agentLevelEnvVars[session.toolType]
 			);
-			const profile = resolveAgentProfile(session.toolType, env, homeDir);
+			const sshConfig = session.sessionSshRemoteConfig;
+			const remoteId = sshConfig?.enabled ? (sshConfig.remoteId ?? 'default') : null;
+			const profile = resolveAgentProfile(
+				session.toolType,
+				env,
+				homeDir,
+				remoteId ? { id: remoteId, name: remoteNames[remoteId] } : null
+			);
 			// $HOME has not resolved yet and the agent named no dir: there is no
 			// account to file it under, and guessing would put it in a bucket it
 			// may not belong to. It reappears on the next render.
@@ -182,5 +230,5 @@ export function useProviderProfiles(sessions: Session[]): ProviderProfileIndex {
 		const labelByKey: Record<string, string> = {};
 		for (const profile of profiles) labelByKey[profile.key] = profile.label;
 		return { profiles, profileKeyBySessionId, labelByKey, ready };
-	}, [sessions, agentLevelEnvVars, envSettled, homeDir]);
+	}, [sessions, agentLevelEnvVars, envSettled, remoteNames, homeDir]);
 }

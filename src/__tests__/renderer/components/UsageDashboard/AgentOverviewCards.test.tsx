@@ -1090,6 +1090,41 @@ describe('AgentOverviewCards', () => {
 			).toBeInTheDocument();
 		});
 
+		it('files an SSH-remote agent under its own account @ host profile', async () => {
+			// The dir names a path on the remote host, holding that host's login, so
+			// it must not share a bucket with the local account of the same name.
+			vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
+				success: true,
+				configs: [{ id: 'r1', name: 'pedtome' }],
+			} as never);
+			render(
+				<AgentOverviewCards
+					sessions={[
+						buildSession({ id: 's1', name: 'Local', customEnvVars: { CLAUDE_CONFIG_DIR: SMASH } }),
+						buildSession({
+							id: 's2',
+							name: 'Remote',
+							customEnvVars: { CLAUDE_CONFIG_DIR: SMASH },
+							sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' },
+						} as Partial<Session>),
+					]}
+					data={buildData()}
+					theme={theme}
+				/>
+			);
+
+			await waitFor(() =>
+				expect(
+					screen.getAllByTestId('agent-card-profile-badge').map((el) => el.textContent)
+				).toContain('smash @ pedtome')
+			);
+			fireEvent.click(trigger());
+			expect(screen.getByRole('option', { name: 'Claude Code - smash (1)' })).toBeInTheDocument();
+			expect(
+				screen.getByRole('option', { name: 'Claude Code - smash @ pedtome (1)' })
+			).toBeInTheDocument();
+		});
+
 		it('groups the grid by account under the Provider sort', () => {
 			renderProfiles();
 

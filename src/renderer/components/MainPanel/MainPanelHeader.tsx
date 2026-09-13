@@ -19,7 +19,6 @@ import {
 } from '../../stores/claudeUsageStore';
 import { formatCost, formatFutureTime } from '../../../shared/formatters';
 import { getAgentDisplayName } from '../../../shared/agentMetadata';
-import { providerProfileShortLabel } from '../../../shared/providerProfiles';
 import {
 	computeTabConversationStats,
 	formatConversationDuration,
@@ -120,8 +119,13 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 	// construction. Null for providers with no account split (OpenCode, Droid)
 	// and while $HOME is still resolving.
 	const profileSessions = useMemo(() => [activeSession], [activeSession]);
-	const activeProfileAccountKey =
-		useProviderProfiles(profileSessions).profiles[0]?.accountKey ?? null;
+	const activeProfile = useProviderProfiles(profileSessions).profiles[0];
+	// Named only for a provider that splits: a config-dir account, a billed
+	// credential, or either one on a remote host.
+	const activeProfileLabel =
+		activeProfile && (activeProfile.accountKey || activeProfile.credential)
+			? activeProfile.shortLabel
+			: null;
 
 	const headerRef = useRef<HTMLDivElement>(null);
 	// Anchors the git menu, and is the hover target that opens it. Wrapping both
@@ -505,7 +509,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 														{getAgentDisplayName(activeSession.toolType)}
 													</span>
 												</div>
-												{activeProfileAccountKey && (
+												{activeProfile && activeProfileLabel && (
 													<div className="flex justify-between items-center mt-1">
 														<span className="text-xs" style={{ color: theme.colors.textDim }}>
 															Profile
@@ -513,12 +517,9 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 														<span
 															className="text-xs font-mono truncate ml-2"
 															style={{ color: theme.colors.textMain }}
-															title={activeProfileAccountKey}
+															title={activeProfile.accountKey ?? activeProfile.label}
 														>
-															{providerProfileShortLabel(
-																activeSession.toolType,
-																activeProfileAccountKey
-															)}
+															{activeProfileLabel}
 														</span>
 													</div>
 												)}

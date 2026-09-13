@@ -148,20 +148,17 @@ export const QuotaAccountPill = memo(function QuotaAccountPill({
  */
 export const QuotaAgentCountBadge = memo(function QuotaAgentCountBadge({
 	count,
-	remoteCount = 0,
 	providerLabel,
 	testId,
 	theme,
 	onClick,
 }: {
-	count: number;
 	/**
-	 * How many of `count` run over SSH. The directory they name lives on the
-	 * remote host and holds THAT host's login, which can be a different account
-	 * from the one this row measures - so the chip says "remote" instead of
-	 * letting the bars beside it pass for those agents' quota.
+	 * Local agents on this account. SSH-remote agents are not counted: the
+	 * directory they name lives on the remote host and holds THAT host's login,
+	 * so the Agents grid files them under their own `account @ host` profile.
 	 */
-	remoteCount?: number;
+	count: number;
 	/** Provider name for the hover title (`Claude` / `Codex`). */
 	providerLabel: string;
 	testId?: string;
@@ -171,24 +168,13 @@ export const QuotaAgentCountBadge = memo(function QuotaAgentCountBadge({
 	onClick?: () => void;
 }) {
 	const noun = count === 1 ? 'agent' : 'agents';
-	const remote = Math.min(Math.max(remoteCount, 0), count);
-	const label =
-		remote === 0
-			? `${count} ${noun}`
-			: remote === count
-				? `${count} remote ${noun}`
-				: `${count} ${noun} (${remote} remote)`;
-	const remoteNote =
-		remote === 0
-			? ''
-			: `. ${remote === count ? (count === 1 ? 'It runs' : 'They all run') : remote === 1 ? 'One runs' : `${remote} run`} over SSH, where this directory holds the remote host's own login - possibly a different account from the one these bars measure`;
+	const label = `${count} ${noun}`;
 	const title =
 		count === 0
 			? `No ${providerLabel} agents are configured to use this account`
-			: (onClick
-					? `Show the ${label} that ${count === 1 ? 'runs' : 'run'} against this ${providerLabel} account`
-					: `${label} ${count === 1 ? 'runs' : 'run'} against this ${providerLabel} account`) +
-				remoteNote;
+			: onClick
+				? `Show the ${label} that ${count === 1 ? 'runs' : 'run'} against this ${providerLabel} account`
+				: `${label} ${count === 1 ? 'runs' : 'run'} against this ${providerLabel} account`;
 	const className =
 		'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs-plus font-medium flex-shrink-0';
 	const style = {
@@ -343,7 +329,6 @@ export const QuotaPendingRow = memo(function QuotaPendingRow({
 	displayName,
 	testIdPrefix,
 	agentCount,
-	remoteAgentCount,
 	providerLabel,
 	theme,
 	onShowAgents,
@@ -354,8 +339,6 @@ export const QuotaPendingRow = memo(function QuotaPendingRow({
 	testIdPrefix: string;
 	/** Agents attributed to this account; omit to hide the badge. */
 	agentCount?: number;
-	/** How many of `agentCount` run over SSH (see `QuotaAgentCountBadge`). */
-	remoteAgentCount?: number;
 	providerLabel: string;
 	theme: Theme;
 	/** Show those agents in the Agents tab, filtered to this account. */
@@ -368,7 +351,6 @@ export const QuotaPendingRow = memo(function QuotaPendingRow({
 				{agentCount !== undefined && (
 					<QuotaAgentCountBadge
 						count={agentCount}
-						remoteCount={remoteAgentCount}
 						providerLabel={providerLabel}
 						testId={`${testIdPrefix}-agents-${shortName}`}
 						theme={theme}

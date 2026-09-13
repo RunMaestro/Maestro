@@ -334,8 +334,10 @@ export function applyAgentConfigOverrides(
 		customArgsSource = 'none';
 	}
 
-	// Merge env vars: agent defaults (lowest) < agent config (medium) < session overrides (highest)
-	// User-configured vars override agent defaults; session vars override both
+	// Env vars: agent defaults (lowest), then ONE user-configured set on top. The
+	// session's own vars REPLACE the provider-level set rather than layering over
+	// it, so an agent that sets any var of its own receives none of the provider's.
+	// Usage attribution follows the same rule (`effectiveAgentCustomEnvVars`).
 	const userEnvVars =
 		overrides.sessionCustomEnvVars ??
 		(agentConfigValues.customEnvVars as Record<string, string> | undefined);

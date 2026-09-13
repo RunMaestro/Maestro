@@ -63,7 +63,7 @@ export function GroupChatHeader({
 				borderColor: theme.colors.border,
 			}}
 		>
-			<div className="flex items-center gap-3 flex-1 min-w-0">
+			<div className="flex items-center gap-3 flex-1 min-w-0 mr-3">
 				<h1
 					className="text-lg font-semibold cursor-pointer hover:opacity-80 truncate"
 					style={{ color: theme.colors.textMain }}
@@ -91,11 +91,14 @@ export function GroupChatHeader({
 			</div>
 
 			{/*
-			  Centered view switch. The zones on either side are `flex-1`, so this sits
-			  in the true middle of the bar; only the title (which has `min-w-0`) gives
-			  ground when the header runs out of room.
+			  Everything except the title is one right-hand cluster that never
+			  shrinks, so the title (the only `min-w-0` element) is handed every
+			  spare pixel and truncates only when the row genuinely runs out. The
+			  switch used to sit in a centered third zone between two `flex-1`
+			  sides, which reserved half the free space to keep it centered and
+			  clipped the chat name while the bar still had room to spare.
 			*/}
-			<div className="shrink-0 px-4">
+			<div className="flex items-center gap-2 shrink-0">
 				<SegmentedControl<GroupChatViewMode>
 					value={moderatorOnly ? 'moderator' : 'team'}
 					onChange={(next) => {
@@ -121,9 +124,6 @@ export function GroupChatHeader({
 					ariaLabel="Group chat view"
 					testId="group-chat-view-mode"
 				/>
-			</div>
-
-			<div className="flex items-center gap-2 flex-1 justify-end">
 				{/* Stop All button - only shown when active */}
 				{state !== 'idle' && (
 					<button
