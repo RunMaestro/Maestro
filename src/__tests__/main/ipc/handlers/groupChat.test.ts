@@ -444,6 +444,7 @@ describe('groupChat IPC handlers', () => {
 				'gc-delete',
 				mockProcessManager
 			);
+			expect(groupChatRouter.clearPendingParticipants).toHaveBeenCalledWith('gc-delete');
 			expect(groupChatStorage.deleteGroupChat).toHaveBeenCalledWith('gc-delete');
 			expect(result).toBe(true);
 		});

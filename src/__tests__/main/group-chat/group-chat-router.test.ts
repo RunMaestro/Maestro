@@ -817,6 +817,120 @@ describe('group-chat-router', () => {
 			expect(spawnCall).toBeDefined();
 		});
 
+		it('retries a prose-only acknowledgement of explicitly mentioned participants', async () => {
+			const chat = await createTestChatWithModerator('Missing Mention Retry Test');
+			await addParticipant(chat.id, 'Codex Reviewer', 'codex', mockProcessManager);
+			await routeUserMessage(
+				chat.id,
+				'@Codex-Reviewer review the migration plan',
+				mockProcessManager,
+				mockAgentDetector
+			);
+			mockProcessManager.spawn.mockClear();
+
+			await routeModeratorResponse(
+				chat.id,
+				'The review has been assigned to the participant.',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			const retrySpawn = mockProcessManager.spawn.mock.calls.find((call) =>
+				call[0]?.sessionId?.includes(`group-chat-${chat.id}-moderator-`)
+			);
+			expect(retrySpawn).toBeDefined();
+			expect(retrySpawn?.[0].prompt).toContain('## Routing Correction');
+			expect(retrySpawn?.[0].prompt).toContain(
+				'Participants explicitly addressed by the user: @Codex-Reviewer'
+			);
+			expect(retrySpawn?.[0].prompt).toContain('The review has been assigned to the participant.');
+
+			const messages = await readLog(chat.logPath);
+			expect(messages.filter((entry) => entry.from === 'user')).toHaveLength(1);
+			expect(messages.some((entry) => entry.from === 'moderator')).toBe(false);
+		});
+
+		it('rejects a second prose-only acknowledgement instead of presenting it as final', async () => {
+			const chat = await createTestChatWithModerator('Missing Mention Rejection Test');
+			await addParticipant(chat.id, 'Client', 'codex', mockProcessManager);
+			await routeUserMessage(
+				chat.id,
+				'@Client review the migration plan',
+				mockProcessManager,
+				mockAgentDetector
+			);
+			await routeModeratorResponse(
+				chat.id,
+				'The review has been assigned.',
+				mockProcessManager,
+				mockAgentDetector
+			);
+			mockProcessManager.spawn.mockClear();
+
+			await routeModeratorResponse(
+				chat.id,
+				'The participant is working now.',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+			const messages = await readLog(chat.logPath);
+			expect(messages.some((entry) => entry.from === 'moderator')).toBe(false);
+			expect(
+				messages.some(
+					(entry) =>
+						entry.from === 'system' &&
+						entry.content.includes('after one retry') &&
+						entry.content.includes('@Client')
+				)
+			).toBe(true);
+
+			const history = await getGroupChatHistory(chat.id);
+			expect(history).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						participantName: 'Moderator',
+						type: 'error',
+					}),
+				])
+			);
+		});
+
+		it('accepts an executable handoff produced by the correction turn', async () => {
+			const chat = await createTestChatWithModerator('Missing Mention Recovery Test');
+			await addParticipant(chat.id, 'Client', 'codex', mockProcessManager);
+			await routeUserMessage(
+				chat.id,
+				'@Client review the migration plan',
+				mockProcessManager,
+				mockAgentDetector
+			);
+			await routeModeratorResponse(
+				chat.id,
+				'The review has been assigned.',
+				mockProcessManager,
+				mockAgentDetector
+			);
+			mockProcessManager.spawn.mockClear();
+
+			await routeModeratorResponse(
+				chat.id,
+				'@Client: Review the migration plan and report any conflicts.',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			const participantSpawn = mockProcessManager.spawn.mock.calls.find((call) =>
+				call[0]?.sessionId?.includes(`group-chat-${chat.id}-participant-Client-`)
+			);
+			expect(participantSpawn).toBeDefined();
+			const messages = await readLog(chat.logPath);
+			expect(
+				messages.some((entry) => entry.from === 'moderator' && entry.content.startsWith('@Client:'))
+			).toBe(true);
+		});
+
 		it('auto-adds and spawns sessions with parentheses from moderator mentions', async () => {
 			const chat = await createTestChatWithModerator('Moderator Parentheses Mention Test');
 			setGetSessionsCallback(() => [

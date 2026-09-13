@@ -336,6 +336,7 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 			const processManager = getProcessManager();
 			await killModerator(id, processManager ?? undefined);
 			await clearAllParticipantSessions(id, processManager ?? undefined);
+			clearPendingParticipants(id);
 
 			// Delete the group chat data
 			await deleteGroupChat(id);
