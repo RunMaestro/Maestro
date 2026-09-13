@@ -67,6 +67,23 @@ import { groupChatEmitters } from '../ipc/handlers/groupChat';
 
 const LOG_CONTEXT = '[GroupChatRouter]';
 
+/**
+ * Non-customizable protocol that connects moderator text to actual participant
+ * processes. Keep this in the runtime prompt builder rather than the bundled
+ * moderator prompt: users may have an older customized prompt, but routing still
+ * depends on literal @mentions in every version.
+ */
+const MODERATOR_ROUTING_PROTOCOL = `## Required Routing Protocol
+
+Participant work starts only when your response contains a literal \`@AgentName\` token matching a name in Current Participants. Describing a handoff in prose does not start an agent.
+
+- If you want a participant to act now, include that participant's exact \`@AgentName\` and an actionable request in this response.
+- Never claim that work was assigned, dispatched, addressed, or started unless the same response contains the matching \`@AgentName\`. Without it, zero participant processes start.
+- When the user explicitly @mentions participants and asks them to work, relay an actionable request to each intended participant with its exact \`@AgentName\`. Do not merely acknowledge the assignments.
+- If you are returning a final answer to the user, use no participant @mentions.
+
+Before responding, verify that every participant you claim is working has a literal matching @mention in your response.`;
+
 // Re-export setGetCustomShellPathCallback for index.ts to use
 export { setGetCustomShellPathCallback };
 
@@ -1082,6 +1099,8 @@ export async function routeUserMessage(
 
 ## Current Participants:
 ${participantContext}${availableSessionsContext}
+
+${MODERATOR_ROUTING_PROTOCOL}
 
 ## Chat History:
 ${historyContext}
@@ -2309,6 +2328,8 @@ ${getModeratorSynthesisPrompt()}
 
 ## Current Participants (you can @mention these for follow-up):
 ${participantContext}
+
+${MODERATOR_ROUTING_PROTOCOL}
 
 ## Recent Chat History (including participant responses):
 ${historyContext}

@@ -109,6 +109,7 @@ import {
 import { readLog } from '../../../main/group-chat/group-chat-log';
 import { AgentDetector } from '../../../main/agents';
 import { groupChatEmitters } from '../../../main/ipc/handlers/groupChat';
+import { getPrompt } from '../../../main/prompt-manager';
 
 describe('group-chat-router', () => {
 	let mockProcessManager: IProcessManager;
@@ -664,6 +665,31 @@ describe('group-chat-router', () => {
 			expect(moderatorPrompt.match(/@Agent-\(X\)/g)).toHaveLength(1);
 		});
 
+		it('injects the executable @mention contract into the moderator prompt', async () => {
+			const chat = await createTestChatWithModerator('Moderator Routing Contract Test');
+			await addParticipant(chat.id, 'Codex Reviewer', 'codex', mockProcessManager);
+			vi.mocked(getPrompt).mockReturnValueOnce(
+				'Customized moderator instructions.\n\n{{CONDUCTOR_PROFILE}}'
+			);
+			mockProcessManager.spawn.mockClear();
+
+			await routeUserMessage(
+				chat.id,
+				'@Codex-Reviewer please inspect the migration plan',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			const moderatorPrompt = mockProcessManager.spawn.mock.calls[0]?.[0]?.prompt ?? '';
+			expect(moderatorPrompt).toContain('Customized moderator instructions.');
+			expect(moderatorPrompt).toContain('## Required Routing Protocol');
+			expect(moderatorPrompt).toContain(
+				'Never claim that work was assigned, dispatched, addressed, or started'
+			);
+			expect(moderatorPrompt).toContain('Without it, zero participant processes start.');
+			expect(moderatorPrompt).toContain('- @Codex-Reviewer (codex session)');
+		});
+
 		it('throws for non-existent chat', async () => {
 			await expect(
 				routeUserMessage('non-existent-id', 'Hello', mockProcessManager, mockAgentDetector)
@@ -1084,6 +1110,21 @@ describe('group-chat-router', () => {
 			const history = await getGroupChatHistory(chat.id);
 			const moderatorEntry = history.find((e) => e.participantName === 'Moderator');
 			expect(moderatorEntry?.type).toBe('synthesis');
+		});
+
+		it('injects the executable @mention contract into synthesis prompts', async () => {
+			const chat = await createTestChatWithModerator('Synthesis Routing Contract Test');
+			await addParticipant(chat.id, 'Codex Reviewer', 'codex', mockProcessManager);
+			mockProcessManager.spawn.mockClear();
+
+			await spawnModeratorSynthesis(chat.id, mockProcessManager, mockAgentDetector);
+
+			const synthesisPrompt = mockProcessManager.spawn.mock.calls[0]?.[0]?.prompt ?? '';
+			expect(synthesisPrompt).toContain('## Required Routing Protocol');
+			expect(synthesisPrompt).toContain(
+				'Before responding, verify that every participant you claim is working'
+			);
+			expect(synthesisPrompt).toContain('- @Codex-Reviewer (codex session)');
 		});
 
 		it('records an error entry when a participant fails to spawn', async () => {
