@@ -4,9 +4,11 @@
  * Derives the account list a provider quota panel should show, mirroring the
  * main-side sampler's sourcing rule: explicit prop keys + locally-discovered
  * account dirs + every `<TOOL>_HOME`/`CONFIG_DIR` referenced by a session
- * (agent-level customEnvVars merged under session-level, session wins) + any
- * key already present in the snapshot store. Sessions without an explicit env
- * var fall back to that provider's implicit default account dir.
+ * (the agent's own customEnvVars, or the provider-level set when it has none -
+ * the spawner replaces, it does not layer) + any key already present in the
+ * snapshot store. Sessions without an explicit env var fall back to that
+ * provider's implicit default account dir. Agents billing an API key, gateway,
+ * or cloud provider are on no account's plan and are not counted.
  *
  * The result includes selection state (which account tab is active) clamped to
  * the first account whenever the current selection disappears.
@@ -14,7 +16,11 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSessionStore } from '../../../stores/sessionStore';
-import { resolveAgentAccountKey } from '../../../../shared/providerProfiles';
+import {
+	effectiveAgentCustomEnvVars,
+	resolveAgentAccountKey,
+	resolveAgentBillingCredential,
+} from '../../../../shared/providerProfiles';
 import { getHomeDir, getHomeDirAsync } from '../../../utils/homeDir';
 
 export interface UseQuotaAccountsOptions {
@@ -140,12 +146,17 @@ export function useQuotaAccounts(opts: UseQuotaAccountsOptions): UseQuotaAccount
 			// the profile; the separate tally lets the chip say "remote" instead.
 			for (const s of sessions) {
 				if (s.toolType !== toolType) continue;
-				const sessionEnv = (s.customEnvVars ?? {}) as Record<string, string>;
-				const merged = { ...agentLevelEnvVars, ...sessionEnv };
+				const env = effectiveAgentCustomEnvVars(
+					s.customEnvVars as Record<string, string> | undefined,
+					agentLevelEnvVars
+				);
+				// An API key, gateway, or cloud provider outranks the config dir's
+				// login, so that agent draws nothing from this plan's quota.
+				if (resolveAgentBillingCredential(toolType, env)) continue;
 				// An agent with no env var runs against the implicit `~/<subdir>`
 				// account, so it belongs to that bucket - unless $HOME hasn't
 				// resolved yet, in which case there is no key to attribute it to.
-				const resolved = resolveAgentAccountKey(toolType, merged, homeDir);
+				const resolved = resolveAgentAccountKey(toolType, env, homeDir);
 				if (!resolved) continue;
 				keys.add(resolved);
 				counts[resolved] = (counts[resolved] ?? 0) + 1;

@@ -14,6 +14,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+	effectiveAgentCustomEnvVars,
 	getProviderProfileConfig,
 	makeAccountKeyHelpers,
 	parseProviderProfileKey,
@@ -21,6 +22,8 @@ import {
 	providerProfileLabel,
 	providerProfileShortLabel,
 	resolveAgentAccountKey,
+	resolveAgentBillingCredential,
+	resolveAgentProfile,
 } from '../../shared/providerProfiles';
 
 const HOME = '/Users/me';
@@ -106,6 +109,92 @@ describe('profile labels', () => {
 	it('falls back to the provider name when there is no account', () => {
 		expect(providerProfileShortLabel('opencode', null)).toBe('OpenCode');
 		expect(providerProfileLabel('opencode', null)).toBe('OpenCode');
+	});
+});
+
+describe('effectiveAgentCustomEnvVars', () => {
+	const provider = { CLAUDE_CONFIG_DIR: '/Users/me/.claude-banaco' };
+
+	it("uses the agent's own vars in place of the provider-level set, never a merge", () => {
+		expect(effectiveAgentCustomEnvVars({ ANTHROPIC_API_KEY: 'k' }, provider)).toEqual({
+			ANTHROPIC_API_KEY: 'k',
+		});
+		expect(effectiveAgentCustomEnvVars({}, provider)).toEqual({});
+	});
+
+	it('falls back to the provider-level set only when the agent has none', () => {
+		expect(effectiveAgentCustomEnvVars(undefined, provider)).toBe(provider);
+		expect(effectiveAgentCustomEnvVars(undefined, undefined)).toEqual({});
+	});
+});
+
+describe('resolveAgentBillingCredential', () => {
+	it('returns null for an agent on its login', () => {
+		expect(
+			resolveAgentBillingCredential('claude-code', { CLAUDE_CONFIG_DIR: '/Users/me/.claude-smash' })
+		).toBeNull();
+	});
+
+	it('identifies an API key by its last 4 characters, never the whole secret', () => {
+		const credential = resolveAgentBillingCredential('claude-code', {
+			ANTHROPIC_API_KEY: 'sk-ant-api03-secret-wXyZ',
+		});
+		expect(credential).toEqual({ kind: 'api-key', id: 'api-key:wXyZ', label: 'API key …wXyZ' });
+		expect(JSON.stringify(credential)).not.toContain('secret');
+		expect(resolveAgentBillingCredential('codex', { OPENAI_API_KEY: 'sk-proj-abcd' })?.id).toBe(
+			'api-key:abcd'
+		);
+	});
+
+	it('names a gateway by host and a cloud provider by name', () => {
+		expect(
+			resolveAgentBillingCredential('claude-code', {
+				ANTHROPIC_BASE_URL: 'https://llm.example.com/v1',
+			})?.label
+		).toBe('llm.example.com');
+		expect(
+			resolveAgentBillingCredential('claude-code', { CLAUDE_CODE_USE_BEDROCK: '1' })?.label
+		).toBe('AWS Bedrock');
+	});
+
+	it('ignores providers with no account split', () => {
+		expect(resolveAgentBillingCredential('opencode', { ANTHROPIC_API_KEY: 'k' })).toBeNull();
+	});
+});
+
+describe('resolveAgentProfile', () => {
+	it('files a keyed agent under the key even when it also names a config dir', () => {
+		expect(
+			resolveAgentProfile(
+				'claude-code',
+				{ CLAUDE_CONFIG_DIR: '/Users/me/.claude-banaco', ANTHROPIC_API_KEY: 'sk-ant-a1b2' },
+				HOME
+			)
+		).toMatchObject({
+			key: 'claude-code::api-key:a1b2',
+			accountKey: null,
+			label: 'Claude Code - API key …a1b2',
+			shortLabel: 'API key …a1b2',
+		});
+	});
+
+	it('files a login agent under its config dir', () => {
+		expect(
+			resolveAgentProfile('claude-code', { CLAUDE_CONFIG_DIR: '/Users/me/.claude-smash' }, HOME)
+		).toMatchObject({
+			key: 'claude-code::/Users/me/.claude-smash',
+			accountKey: '/Users/me/.claude-smash',
+			credential: null,
+			shortLabel: 'smash',
+		});
+	});
+
+	it('returns null only while a login agent is waiting on $HOME', () => {
+		expect(resolveAgentProfile('claude-code', {}, undefined)).toBeNull();
+		expect(
+			resolveAgentProfile('claude-code', { ANTHROPIC_API_KEY: 'sk-ant-a1b2' }, undefined)
+		).not.toBeNull();
+		expect(resolveAgentProfile('opencode', {}, undefined)?.key).toBe('opencode');
 	});
 });
 

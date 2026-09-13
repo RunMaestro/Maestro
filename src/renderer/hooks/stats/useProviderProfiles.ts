@@ -10,9 +10,11 @@
  * and the number of cards the Agents grid shows for that profile are the same
  * number by construction rather than by coincidence.
  *
- * Environment layers, lowest first: agent-level `customEnvVars` (Settings ->
- * Agents, fetched once per provider on mount) merged under the session's own
- * overrides. Global env vars are deliberately not consulted, matching
+ * Environment: the session's own `customEnvVars`, or the agent-level set
+ * (Settings -> Agents, fetched once per provider on mount) when the session has
+ * none. The spawner replaces rather than layers, so this does too. An API key,
+ * gateway, or cloud provider in that env is its own profile, because it outranks
+ * the config dir's login. Global env vars are deliberately not consulted, matching
  * `useQuotaAccounts` - a machine-wide `CLAUDE_CONFIG_DIR` would move every
  * agent at once, which is not a per-agent attribution anyone is asking about.
  */
@@ -20,11 +22,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Session } from '../../types';
 import {
+	effectiveAgentCustomEnvVars,
 	getProviderProfileConfig,
-	providerProfileKey,
-	providerProfileLabel,
-	providerProfileShortLabel,
-	resolveAgentAccountKey,
+	resolveAgentProfile,
+	type AgentBillingCredential,
 } from '../../../shared/providerProfiles';
 import { getHomeDir, getHomeDirAsync } from '../../utils/homeDir';
 
@@ -32,8 +33,10 @@ export interface ProviderProfile {
 	/** Stable identity, used as the filter dropdown's value. */
 	key: string;
 	toolType: string;
-	/** Config dir this profile represents, or null for account-less providers. */
+	/** Config dir this profile represents; null for account-less providers and credential profiles. */
 	accountKey: string | null;
+	/** The API key, gateway, or cloud provider billed instead of a login, or null. */
+	credential: AgentBillingCredential | null;
 	/** `Claude Code - smash`. */
 	label: string;
 	/** `smash` - the account alone, for a card badge where the provider is implied. */
@@ -49,9 +52,15 @@ export interface ProviderProfileIndex {
 	profileKeyBySessionId: Record<string, string>;
 	/** Profile key -> label, for labelling a filter that came from another surface. */
 	labelByKey: Record<string, string>;
+	/**
+	 * False while an attribution input is still loading: an agent-level env var
+	 * fetch in flight, or $HOME unresolved for an agent that needs it. Until then
+	 * a key missing from `profiles` may be late rather than gone.
+	 */
+	ready: boolean;
 }
 
-const EMPTY_INDEX: ProviderProfileIndex = {
+const EMPTY_INDEX: Omit<ProviderProfileIndex, 'ready'> = {
 	profiles: [],
 	profileKeyBySessionId: {},
 	labelByKey: {},
@@ -64,35 +73,55 @@ const EMPTY_INDEX: ProviderProfileIndex = {
  * panels take the same one-shot approach; a stale value costs a mislabelled
  * badge until the dashboard is reopened, not a wrong number in the database.
  */
-function useAgentLevelEnvVars(toolTypes: string[]): Record<string, Record<string, string>> {
+function useAgentLevelEnvVars(toolTypes: string[]): {
+	envByToolType: Record<string, Record<string, string>>;
+	/** Every provider in `toolTypes` has had its fetch resolve or fail. */
+	settled: boolean;
+} {
 	const [envByToolType, setEnvByToolType] = useState<Record<string, Record<string, string>>>({});
+	const [settledToolTypes, setSettledToolTypes] = useState<ReadonlySet<string>>(() => new Set());
 	const fetchedRef = useRef(new Set<string>());
+	// Guards on unmount only. A per-effect cancel flag dropped a fetch still in
+	// flight when `key` changed (or StrictMode re-ran the effect), and
+	// `fetchedRef` then stopped it from ever being asked for again.
+	const mountedRef = useRef(true);
+	useEffect(() => {
+		mountedRef.current = true;
+		return () => {
+			mountedRef.current = false;
+		};
+	}, []);
 	const key = toolTypes.join(',');
 
 	useEffect(() => {
-		let cancelled = false;
+		const markSettled = (toolType: string) => {
+			if (!mountedRef.current) return;
+			setSettledToolTypes((prev) => (prev.has(toolType) ? prev : new Set(prev).add(toolType)));
+		};
 		for (const toolType of key ? key.split(',') : []) {
 			if (fetchedRef.current.has(toolType)) continue;
 			fetchedRef.current.add(toolType);
 			const fetcher = window.maestro?.agents?.getCustomEnvVars;
-			if (typeof fetcher !== 'function') continue;
+			if (typeof fetcher !== 'function') {
+				markSettled(toolType);
+				continue;
+			}
 			Promise.resolve(fetcher(toolType))
 				.then((env) => {
-					if (cancelled || !env) return;
+					if (!mountedRef.current || !env) return;
 					setEnvByToolType((prev) => ({ ...prev, [toolType]: env }));
 				})
 				.catch(() => {
 					// Best-effort: without agent-level vars the session-level
 					// overrides (and the implicit default account) still produce a
 					// usable, if coarser, attribution.
-				});
+				})
+				.finally(() => markSettled(toolType));
 		}
-		return () => {
-			cancelled = true;
-		};
 	}, [key]);
 
-	return envByToolType;
+	const settled = toolTypes.every((toolType) => settledToolTypes.has(toolType));
+	return { envByToolType, settled };
 }
 
 export function useProviderProfiles(sessions: Session[]): ProviderProfileIndex {
@@ -107,7 +136,8 @@ export function useProviderProfiles(sessions: Session[]): ProviderProfileIndex {
 		return Array.from(present).sort();
 	}, [sessions]);
 
-	const agentLevelEnvVars = useAgentLevelEnvVars(accountProviders);
+	const { envByToolType: agentLevelEnvVars, settled: envSettled } =
+		useAgentLevelEnvVars(accountProviders);
 
 	const [homeDir, setHomeDir] = useState<string | undefined>(getHomeDir);
 	useEffect(() => {
@@ -119,45 +149,38 @@ export function useProviderProfiles(sessions: Session[]): ProviderProfileIndex {
 	return useMemo((): ProviderProfileIndex => {
 		const profileKeyBySessionId: Record<string, string> = {};
 		const counts = new Map<string, ProviderProfile>();
+		let everyAgentAttributed = true;
 
 		for (const session of sessions) {
 			if (session.toolType === 'terminal') continue;
-			const hasAccounts = Boolean(getProviderProfileConfig(session.toolType));
-			let accountKey: string | null = null;
-			if (hasAccounts) {
-				const merged = {
-					...(agentLevelEnvVars[session.toolType] ?? {}),
-					...((session.customEnvVars ?? {}) as Record<string, string>),
-				};
-				accountKey = resolveAgentAccountKey(session.toolType, merged, homeDir);
-				// $HOME has not resolved yet and the agent named no dir: there is
-				// no account to file it under, and guessing would put it in a
-				// bucket it may not belong to. It reappears on the next render.
-				if (!accountKey) continue;
+			const env = effectiveAgentCustomEnvVars(
+				session.customEnvVars as Record<string, string> | undefined,
+				agentLevelEnvVars[session.toolType]
+			);
+			const profile = resolveAgentProfile(session.toolType, env, homeDir);
+			// $HOME has not resolved yet and the agent named no dir: there is no
+			// account to file it under, and guessing would put it in a bucket it
+			// may not belong to. It reappears on the next render.
+			if (!profile) {
+				everyAgentAttributed = false;
+				continue;
 			}
 
-			const key = providerProfileKey(session.toolType, accountKey);
-			profileKeyBySessionId[session.id] = key;
-			const existing = counts.get(key);
+			profileKeyBySessionId[session.id] = profile.key;
+			const existing = counts.get(profile.key);
 			if (existing) {
 				existing.count += 1;
 			} else {
-				counts.set(key, {
-					key,
-					toolType: session.toolType,
-					accountKey,
-					label: providerProfileLabel(session.toolType, accountKey),
-					shortLabel: providerProfileShortLabel(session.toolType, accountKey),
-					count: 1,
-				});
+				counts.set(profile.key, { ...profile, toolType: session.toolType, count: 1 });
 			}
 		}
 
-		if (counts.size === 0) return EMPTY_INDEX;
+		const ready = envSettled && everyAgentAttributed;
+		if (counts.size === 0) return { ...EMPTY_INDEX, ready };
 
 		const profiles = Array.from(counts.values()).sort((a, b) => a.label.localeCompare(b.label));
 		const labelByKey: Record<string, string> = {};
 		for (const profile of profiles) labelByKey[profile.key] = profile.label;
-		return { profiles, profileKeyBySessionId, labelByKey };
-	}, [sessions, agentLevelEnvVars, homeDir]);
+		return { profiles, profileKeyBySessionId, labelByKey, ready };
+	}, [sessions, agentLevelEnvVars, envSettled, homeDir]);
 }

@@ -418,13 +418,16 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 
 	// A profile disappears when its last agent is deleted or re-pointed. Leaving
 	// the filter on it would strand the grid on a selection with no option
-	// behind it, showing nothing and explaining nothing.
+	// behind it, showing nothing and explaining nothing. Wait for the index to
+	// settle first: a profile named by an agent-level env var is absent until
+	// that fetch lands, and clearing it then wiped the filter a quota badge had
+	// just set.
 	useEffect(() => {
-		if (profileFilter === ALL_PROFILES_VALUE) return;
+		if (profileFilter === ALL_PROFILES_VALUE || !profileIndex.ready) return;
 		if (!profileOptions.some((o) => o.value === profileFilter)) {
 			setProfileFilter(ALL_PROFILES_VALUE);
 		}
-	}, [profileOptions, profileFilter, setProfileFilter]);
+	}, [profileOptions, profileFilter, setProfileFilter, profileIndex.ready]);
 
 	// Only groups that actually hold an agent are offered, plus Ungrouped when
 	// any agent is unfiled. An option that can only ever produce an empty grid

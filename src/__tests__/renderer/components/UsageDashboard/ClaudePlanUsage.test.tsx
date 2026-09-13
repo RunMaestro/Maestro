@@ -576,6 +576,36 @@ describe('ClaudePlanUsage - agent count badge', () => {
 		expect(screen.getByTestId('claude-plan-agents-work')).toHaveTextContent('1 agent');
 	});
 
+	it('does not count an agent that bills an API key against the plan', () => {
+		seedSnapshots({ '/Users/me/.claude-work': snapshotFor('/Users/me/.claude-work') });
+		useSessionStore.setState({
+			sessions: [
+				{
+					id: 'a',
+					name: 'a',
+					toolType: 'claude-code',
+					cwd: '/tmp',
+					customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/me/.claude-work' },
+				},
+				{
+					// Same dir, but the key outranks its login: these turns bill the key.
+					id: 'b',
+					name: 'b',
+					toolType: 'claude-code',
+					cwd: '/tmp',
+					customEnvVars: {
+						CLAUDE_CONFIG_DIR: '/Users/me/.claude-work',
+						ANTHROPIC_API_KEY: 'sk-ant-test',
+					},
+				},
+			],
+		} as any);
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.getByTestId('claude-plan-agents-work')).toHaveTextContent('1 agent');
+	});
+
 	it('shows zero for a cached account no agent uses any more', () => {
 		seedSnapshots({ '/Users/me/.claude-stale': snapshotFor('/Users/me/.claude-stale') });
 

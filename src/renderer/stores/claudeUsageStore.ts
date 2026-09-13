@@ -24,6 +24,10 @@ import { useEffect, useState } from 'react';
 import { create } from 'zustand';
 import { getHomeDir, getHomeDirAsync } from '../utils/homeDir';
 import type { Session } from '../types';
+import {
+	effectiveAgentCustomEnvVars,
+	resolveAgentBillingCredential,
+} from '../../shared/providerProfiles';
 
 /**
  * Snapshot shape mirrors `UsageSnapshot` in `src/main/agents/claude-mode-selector.ts`.
@@ -187,11 +191,12 @@ function fetchClaudeAgentEnv(): Promise<Record<string, string>> {
 
 /**
  * Resolve the canonical `CLAUDE_CONFIG_DIR` key for a Claude Code session
- * the same way the main-side spawner does: session env wins over agent env,
- * with the implicit default `~/.claude` as the final fallback. Returns
- * `undefined` only when the session isn't a Claude Code session, when no
- * useful resolution is possible yet (no home dir, no env vars, no
- * pre-stamped key), or when the inputs explicitly disable resolution.
+ * the same way the main-side spawner does: the session's own env vars replace
+ * the agent-level set (they do not layer), with the implicit default
+ * `~/.claude` as the final fallback. Returns `undefined` when the session isn't
+ * a Claude Code session, when it bills an API key, gateway, or cloud provider
+ * (there is no plan quota to show), or when no useful resolution is possible
+ * yet (no home dir, no env vars, no pre-stamped key).
  */
 function resolveSessionConfigDirKey(
 	session: Session | null | undefined,
@@ -199,6 +204,11 @@ function resolveSessionConfigDirKey(
 	homeDir: string | undefined
 ): string | undefined {
 	if (!session || session.toolType !== 'claude-code') return undefined;
+	const env = effectiveAgentCustomEnvVars(
+		session.customEnvVars as Record<string, string> | undefined,
+		agentEnv
+	);
+	if (resolveAgentBillingCredential('claude-code', env)) return undefined;
 	// The spawner stamps the canonical key onto claudeInteractive when it
 	// resolves the mode. Prefer that - it's already canonicalized via
 	// `path.resolve()` on the main side.
@@ -206,8 +216,7 @@ function resolveSessionConfigDirKey(
 	if (typeof stamped === 'string' && stamped.length > 0) {
 		return stamped.replace(/\/+$/, '');
 	}
-	const sessionEnv = (session.customEnvVars ?? {}) as Record<string, string>;
-	const explicit = sessionEnv.CLAUDE_CONFIG_DIR ?? agentEnv.CLAUDE_CONFIG_DIR;
+	const explicit = env.CLAUDE_CONFIG_DIR;
 	if (typeof explicit === 'string' && explicit.length > 0) {
 		return explicit.replace(/\/+$/, '');
 	}

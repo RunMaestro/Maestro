@@ -18,6 +18,7 @@
  */
 
 import { getAgentDisplayName } from './agentMetadata';
+import { classifyCredentialKind, type CredentialKind } from './providerAuthIdentity';
 
 /** How a provider names the config directory that selects its account. */
 export interface ProviderProfileConfig {
@@ -179,4 +180,92 @@ export function providerProfileLabel(toolType: string, accountKey: string | null
 	const helpers = getAccountKeyHelpers(toolType);
 	if (!helpers || !accountKey) return provider;
 	return `${provider} - ${helpers.deriveDisplayName(accountKey)}`;
+}
+
+/**
+ * The custom env vars an agent's process actually receives from Maestro.
+ *
+ * The agent's own vars REPLACE the provider-level set; they do not layer over
+ * it. That is what `applyAgentConfigOverrides()` and the CLI's
+ * `resolveAgentOverrides()` do, so an agent that sets only `ANTHROPIC_API_KEY`
+ * never sees the provider's `CLAUDE_CONFIG_DIR`. Attribution built from a
+ * layered merge files that agent under an account its process never uses.
+ */
+export function effectiveAgentCustomEnvVars(
+	sessionEnv: Record<string, string> | undefined,
+	providerEnv: Record<string, string> | undefined
+): Record<string, string> {
+	return sessionEnv ?? providerEnv ?? {};
+}
+
+/** A credential an agent bills instead of its config dir's login. */
+export interface AgentBillingCredential {
+	kind: Exclude<CredentialKind, 'oauth'>;
+	/** Distinct per credential and never the secret: an API key contributes its last 4 characters. */
+	id: string;
+	/** `API key …a1b2`, a gateway host, or a cloud provider name. */
+	label: string;
+}
+
+/**
+ * The API key, gateway, or cloud provider an agent bills, or null when it runs
+ * on its config dir's login. A set credential outranks the login, so an agent
+ * holding one draws nothing from that account's plan quota.
+ *
+ * Only providers with an account split are considered: for the rest there is
+ * no login bucket for a credential to be pulled out of.
+ */
+export function resolveAgentBillingCredential(
+	toolType: string,
+	env: Record<string, string>
+): AgentBillingCredential | null {
+	if (!getProviderProfileConfig(toolType)) return null;
+	const classification = classifyCredentialKind(toolType, env);
+	if (classification.kind === 'oauth') return null;
+	if (classification.kind === 'api-key') {
+		const hint = (env[classification.envVarName ?? ''] ?? '').trim().slice(-4);
+		return { kind: 'api-key', id: `api-key:${hint}`, label: `API key …${hint}` };
+	}
+	const label = classification.label ?? classification.kind;
+	return { kind: classification.kind, id: `${classification.kind}:${label}`, label };
+}
+
+export interface ResolvedAgentProfile {
+	key: string;
+	accountKey: string | null;
+	credential: AgentBillingCredential | null;
+	label: string;
+	shortLabel: string;
+}
+
+/**
+ * The profile an agent belongs to, from the env its process receives (see
+ * {@link effectiveAgentCustomEnvVars}). Null when the agent needs a config-dir
+ * account and $HOME has not resolved yet.
+ */
+export function resolveAgentProfile(
+	toolType: string,
+	env: Record<string, string>,
+	homeDir: string | undefined
+): ResolvedAgentProfile | null {
+	const credential = resolveAgentBillingCredential(toolType, env);
+	if (credential) {
+		return {
+			key: providerProfileKey(toolType, credential.id),
+			accountKey: null,
+			credential,
+			label: `${getAgentDisplayName(toolType)} - ${credential.label}`,
+			shortLabel: credential.label,
+		};
+	}
+	const hasAccounts = Boolean(getProviderProfileConfig(toolType));
+	const accountKey = hasAccounts ? resolveAgentAccountKey(toolType, env, homeDir) : null;
+	if (hasAccounts && !accountKey) return null;
+	return {
+		key: providerProfileKey(toolType, accountKey),
+		accountKey,
+		credential: null,
+		label: providerProfileLabel(toolType, accountKey),
+		shortLabel: providerProfileShortLabel(toolType, accountKey),
+	};
 }

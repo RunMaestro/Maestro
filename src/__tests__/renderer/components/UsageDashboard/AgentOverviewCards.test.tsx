@@ -16,7 +16,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { AgentOverviewCards } from '../../../../renderer/components/UsageDashboard/AgentOverviewCards';
 import type { StatsAggregation } from '../../../../renderer/hooks/stats/useStats';
 import type { Session } from '../../../../renderer/types';
@@ -1008,6 +1008,86 @@ describe('AgentOverviewCards', () => {
 			pickProfile('Claude Code - smash (1)');
 
 			expect(onChange).toHaveBeenCalledWith(`claude-code::${SMASH}`);
+		});
+
+		it('keeps a badge-set filter on an account named only by the agent-level env var', async () => {
+			// Settings -> Agents sets CLAUDE_CONFIG_DIR for every agent that names
+			// none, and that value arrives by IPC after the first render. Clearing
+			// the filter on that render, before the account existed, dropped the
+			// quota chip's selection on the way into this tab.
+			const BANACO = '/Users/me/.claude-banaco';
+			vi.mocked(window.maestro.agents.getCustomEnvVars).mockResolvedValueOnce({
+				CLAUDE_CONFIG_DIR: BANACO,
+			});
+			const onChange = vi.fn();
+			render(
+				<AgentOverviewCards
+					sessions={[
+						buildSession({ id: 's1', name: 'Alpha', customEnvVars: { CLAUDE_CONFIG_DIR: SMASH } }),
+						buildSession({ id: 's2', name: 'Beta' }),
+						buildSession({ id: 's3', name: 'Gamma' }),
+					]}
+					data={buildData()}
+					theme={theme}
+					profileFilter={`claude-code::${BANACO}`}
+					onProfileFilterChange={onChange}
+				/>
+			);
+
+			await waitFor(() => expect(screen.getAllByTestId('agent-card')).toHaveLength(2));
+			expect(screen.queryByText('Alpha')).not.toBeInTheDocument();
+			expect(onChange).not.toHaveBeenCalled();
+		});
+
+		it('still clears a filter whose account is gone once attribution settles', async () => {
+			const onChange = vi.fn();
+			render(
+				<AgentOverviewCards
+					sessions={PROFILE_SESSIONS}
+					data={buildData()}
+					theme={theme}
+					profileFilter="claude-code::/Users/me/.claude-gone"
+					onProfileFilterChange={onChange}
+				/>
+			);
+
+			await waitFor(() => expect(onChange).toHaveBeenCalledWith(ALL_PROFILES_VALUE));
+		});
+
+		it('files agents by the env their process receives: own vars replace, a key outranks a login', async () => {
+			vi.mocked(window.maestro.agents.getCustomEnvVars).mockResolvedValueOnce({
+				CLAUDE_CONFIG_DIR: '/Users/me/.claude-banaco',
+			});
+			render(
+				<AgentOverviewCards
+					sessions={[
+						buildSession({ id: 's1', name: 'Inherits' }),
+						// Own vars with no dir: the provider-level dir never reaches it.
+						buildSession({ id: 's2', name: 'Own', customEnvVars: { PEDRAM: '1' } }),
+						buildSession({
+							id: 's3',
+							name: 'Keyed',
+							customEnvVars: { ANTHROPIC_API_KEY: 'sk-ant-test-a1b2' },
+						}),
+					]}
+					data={buildData()}
+					theme={theme}
+				/>
+			);
+
+			await waitFor(() =>
+				expect(
+					screen.getAllByTestId('agent-card-profile-badge').map((el) => el.textContent)
+				).toContain('banaco')
+			);
+			fireEvent.click(trigger());
+			expect(screen.getByRole('option', { name: 'Claude Code - banaco (1)' })).toBeInTheDocument();
+			expect(
+				screen.getByRole('option', { name: 'Claude Code - Default account (1)' })
+			).toBeInTheDocument();
+			expect(
+				screen.getByRole('option', { name: 'Claude Code - API key …a1b2 (1)' })
+			).toBeInTheDocument();
 		});
 
 		it('groups the grid by account under the Provider sort', () => {
