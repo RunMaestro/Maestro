@@ -337,7 +337,9 @@ describe('CodexSessionStorage', () => {
 
 		const scoped = await storage.listSessions('/test/project', undefined, codexWorkAccountDir);
 		expect(scoped).toHaveLength(1);
-		expect(scoped[0].projectPath).toBe('/test/project');
+		// The storage canonicalizes the rollout's cwd, so route the expectation
+		// through the same primitive rather than hardcoding a POSIX literal.
+		expect(scoped[0].projectPath).toBe(path.resolve('/test/project'));
 	});
 
 	it('should be importable', async () => {
