@@ -32,6 +32,27 @@ const LOG_CONTEXT = '[SharedHistory]';
 const LOCAL_HOSTNAME = os.hostname();
 
 /**
+ * Node fs error codes we expect from a best-effort write into a user-chosen
+ * project directory. The location may be permission-restricted (read-only
+ * Dropbox / CloudStorage team folders), read-only, or simply not exist. These
+ * are environmental, never a Maestro bug, so we keep the local warn but skip
+ * Sentry to avoid telemetry noise (MAESTRO-FM).
+ */
+const EXPECTED_FS_ERROR_CODES = new Set([
+	'EACCES',
+	'EPERM',
+	'EROFS',
+	'ENOENT',
+	'ENOTDIR',
+	'ENOSPC',
+]);
+
+function isExpectedFsError(error: unknown): boolean {
+	const code = (error as NodeJS.ErrnoException | null)?.code;
+	return typeof code === 'string' && EXPECTED_FS_ERROR_CODES.has(code);
+}
+
+/**
  * Per-file cache of parsed shared-history entries keyed by `(host, dir, filename)`.
  *
  * SSH-shared history reads were dominated by re-fetching every JSONL file on
@@ -134,7 +155,13 @@ export function writeEntryLocal(
 		logger.debug(`Wrote shared history entry to ${filePath}`, LOG_CONTEXT);
 	} catch (error) {
 		logger.warn(`Failed to write local shared history: ${error}`, LOG_CONTEXT);
-		captureException(error, { operation: 'sharedHistory:writeLocal', projectPath });
+		// Best-effort cross-host sync write - the primary history store is
+		// unaffected when this fails. Don't report expected filesystem errors
+		// (permission-denied / missing-path on a user-chosen project dir) to
+		// Sentry; only surface genuinely unexpected failures (MAESTRO-FM).
+		if (!isExpectedFsError(error)) {
+			captureException(error, { operation: 'sharedHistory:writeLocal', projectPath });
+		}
 	}
 }
 

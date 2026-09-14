@@ -53,6 +53,12 @@ export interface Migration {
 	description: string;
 	/** Function to apply the migration */
 	up: (db: Database.Database) => void;
+	/**
+	 * Whether the migration's schema is actually present. When set, a database
+	 * whose user_version already covers this migration but lacks its schema gets
+	 * `up` re-applied, so `up` must be idempotent.
+	 */
+	isApplied?: (db: Database.Database) => boolean;
 }
 
 /**
