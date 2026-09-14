@@ -29,6 +29,7 @@ import {
 import { useBatchKillAction } from './internal/useBatchKillAction';
 import { useBatchRunner } from './internal/useBatchRunner';
 import { useGoalRunner, type UseGoalRunnerDeps } from './internal/useGoalRunner';
+import type { AutoRunKind } from '../../../shared/stats-types';
 
 export interface BatchCompleteInfo {
 	sessionId: string;
@@ -45,6 +46,8 @@ export interface BatchCompleteInfo {
 	totalCostUsd: number;
 	/** Number of documents processed */
 	documentsProcessed: number;
+	/** Which engine ran it. Undefined is treated as spec-driven downstream. */
+	kind?: AutoRunKind;
 }
 
 export interface PRResultInfo {

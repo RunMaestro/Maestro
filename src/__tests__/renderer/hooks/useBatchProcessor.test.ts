@@ -1118,6 +1118,7 @@ describe('useBatchProcessor hook', () => {
 				expect.objectContaining({
 					sessionId: 'test-session-id',
 					sessionName: 'Test Session',
+					kind: 'spec-driven',
 				})
 			);
 		});
@@ -1469,6 +1470,9 @@ describe('useBatchProcessor hook', () => {
 			await waitFor(() => {
 				expect(window.maestro.stats.startAutoRun).toHaveBeenCalled();
 			});
+			expect(window.maestro.stats.startAutoRun).toHaveBeenCalledWith(
+				expect.objectContaining({ kind: 'spec-driven' })
+			);
 			await waitFor(() => {
 				expect(mockOnSpawnAgent).toHaveBeenCalled();
 			});
@@ -1485,6 +1489,8 @@ describe('useBatchProcessor hook', () => {
 			expect(completeArg.wasStopped).toBe(true);
 			expect(completeArg.elapsedTimeMs).toBeGreaterThan(0);
 			expect(completeArg.sessionId).toBe('test-session-id');
+			// The kill path reads the kind from the runner's flush-state registration.
+			expect(completeArg.kind).toBe('spec-driven');
 
 			// Let the held processTask resolve so the loop's natural cleanup can run.
 			resolveAgent!({ success: true, agentSessionId: 'test-session' });

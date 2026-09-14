@@ -1868,7 +1868,10 @@ describe('useBatchHandlers', () => {
 			emailConfirmed: true,
 		};
 
-		function completeRun(overrides: Record<string, unknown> = {}) {
+		function completeRun(
+			overrides: Record<string, unknown> = {},
+			info: { kind?: 'goal-driven' | 'spec-driven'; elapsedTimeMs?: number } = {}
+		) {
 			const session = createMockSession({ id: 'session-1', name: 'My Agent' });
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
 			useSettingsStore.setState({
@@ -1901,11 +1904,38 @@ describe('useBatchHandlers', () => {
 					outputTokens: 500,
 					totalCostUsd: 0.05,
 					documentsProcessed: 2,
+					...info,
 				});
 				await Promise.resolve();
 				await Promise.resolve();
 			});
 		}
+
+		it('sends the run kind next to currentRunMs', async () => {
+			vi.mocked(window.maestro.leaderboard.submit).mockResolvedValue({ success: true } as never);
+
+			await completeRun({ leaderboardRegistration: REGISTRATION }, { kind: 'goal-driven' });
+
+			expect(window.maestro.leaderboard.submit).toHaveBeenCalledWith(
+				expect.objectContaining({ currentRunMs: 60000, currentRunKind: 'goal-driven' })
+			);
+		});
+
+		it('labels a run with no kind as spec-driven', async () => {
+			vi.mocked(window.maestro.leaderboard.submit).mockResolvedValue({ success: true } as never);
+
+			await completeRun({ leaderboardRegistration: REGISTRATION });
+
+			expect(window.maestro.leaderboard.submit).toHaveBeenCalledWith(
+				expect.objectContaining({ currentRunMs: 60000, currentRunKind: 'spec-driven' })
+			);
+		});
+
+		it('submits nothing, and so no kind, for a zero-duration run', async () => {
+			await completeRun({ leaderboardRegistration: REGISTRATION }, { elapsedTimeMs: 0 });
+
+			expect(window.maestro.leaderboard.submit).not.toHaveBeenCalled();
+		});
 
 		it('queues the delta when the auth token has not arrived yet', async () => {
 			await completeRun({

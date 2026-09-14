@@ -63,6 +63,25 @@ describe('Stats Preload API', () => {
 			expect(mockInvoke).toHaveBeenCalledWith('stats:start-autorun', session);
 			expect(result).toBe('autorun-123');
 		});
+
+		it('forwards the run kind unchanged', async () => {
+			mockInvoke.mockResolvedValue('autorun-456');
+			const session = {
+				sessionId: 'session-1',
+				agentType: 'claude-code',
+				documentPath: 'Goal: ship it',
+				startTime: Date.now(),
+				tasksTotal: 100,
+				kind: 'goal-driven' as const,
+			};
+
+			await api.startAutoRun(session);
+
+			expect(mockInvoke).toHaveBeenCalledWith(
+				'stats:start-autorun',
+				expect.objectContaining({ kind: 'goal-driven' })
+			);
+		});
 	});
 
 	describe('endAutoRun', () => {

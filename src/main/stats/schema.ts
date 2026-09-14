@@ -102,6 +102,17 @@ export const CREATE_AUTO_RUN_SESSIONS_INDEXES_SQL = `
   CREATE INDEX IF NOT EXISTS idx_auto_session_start ON auto_run_sessions(start_time)
 `;
 
+/**
+ * Auto Run kind column (Migration v12).
+ *
+ * Unlike the token columns this one DOES default: every row written before it
+ * existed came from the document runner or predates goal runs, so reading those
+ * rows as `spec-driven` is the truthful answer rather than an invented zero.
+ */
+export const ADD_AUTO_RUN_SESSION_KIND_COLUMN_SQL = `
+  ALTER TABLE auto_run_sessions ADD COLUMN kind TEXT DEFAULT 'spec-driven'
+`;
+
 // ============================================================================
 // Auto Run Tasks (Migration v1)
 // ============================================================================

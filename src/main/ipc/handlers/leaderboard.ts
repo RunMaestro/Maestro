@@ -15,6 +15,7 @@ import Store from 'electron-store';
 import { logger } from '../../utils/logger';
 import { fetchWithTimeout } from '../../utils/fetchWithTimeout';
 import type { MaestroSettings } from './persistence';
+import type { AutoRunKind } from '../../../shared/stats-types';
 
 // ==========================================================================
 // Constants
@@ -45,6 +46,8 @@ export interface LeaderboardSubmitData {
 	longestRunMs?: number;
 	longestRunDate?: string;
 	currentRunMs?: number;
+	/** Which Auto Run engine produced `currentRunMs`. Optional; older clients omit it. */
+	currentRunKind?: AutoRunKind;
 	theme?: string;
 	clientToken?: string;
 	authToken?: string;

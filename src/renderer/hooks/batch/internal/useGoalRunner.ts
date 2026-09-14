@@ -472,6 +472,7 @@ export function useGoalRunner({
 					startTime: goalStartTime,
 					tasksTotal: 100,
 					projectPath: session.cwd,
+					kind: 'goal-driven',
 				});
 			} catch (statsError) {
 				logger.warn('[GoalRunner] Failed to start stats tracking:', undefined, statsError);
@@ -489,6 +490,7 @@ export function useGoalRunner({
 				getOutputTokens: () => totalOutputTokens,
 				getTotalCost: () => totalCost,
 				getDocumentsProcessed: () => 0,
+				kind: 'goal-driven',
 			};
 
 			const history: GoalIterationRecord[] = [];
@@ -910,6 +912,7 @@ export function useGoalRunner({
 					outputTokens: totalOutputTokens,
 					totalCostUsd: totalCost,
 					documentsProcessed: 0,
+					kind: 'goal-driven',
 				});
 			}
 

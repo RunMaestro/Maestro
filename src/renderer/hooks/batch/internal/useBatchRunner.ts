@@ -510,6 +510,7 @@ export function useBatchRunner({
 					startTime: batchStartTime,
 					tasksTotal: initialTotalTasks,
 					projectPath: session.cwd,
+					kind: 'spec-driven',
 				});
 			} catch (statsError) {
 				// Don't fail the batch if stats tracking fails
@@ -534,6 +535,7 @@ export function useBatchRunner({
 				getOutputTokens: () => totalOutputTokens,
 				getTotalCost: () => totalCost,
 				getDocumentsProcessed: () => documents.length,
+				kind: 'spec-driven',
 			};
 
 			// Per-loop tracking for loop summary. The span is sleep-aware so a
@@ -1645,6 +1647,7 @@ export function useBatchRunner({
 					outputTokens: finalTotals.totalOutputTokens,
 					totalCostUsd: finalTotals.totalCost,
 					documentsProcessed: documents.length,
+					kind: 'spec-driven',
 				});
 			}
 

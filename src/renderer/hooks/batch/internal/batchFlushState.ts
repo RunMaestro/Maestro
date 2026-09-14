@@ -1,4 +1,5 @@
 import type { MutableRefObject } from 'react';
+import type { AutoRunKind } from '../../../../shared/stats-types';
 
 /**
  * Snapshot of an in-flight Auto Run, used to flush stats + history when the
@@ -20,6 +21,8 @@ export interface AutoRunFlushState {
 	getOutputTokens: () => number;
 	getTotalCost: () => number;
 	getDocumentsProcessed: () => number;
+	/** Which engine registered this run, so a force-kill reports the same kind. */
+	kind?: AutoRunKind;
 }
 
 export type AutoRunFlushStateRefs = MutableRefObject<Record<string, AutoRunFlushState>>;
