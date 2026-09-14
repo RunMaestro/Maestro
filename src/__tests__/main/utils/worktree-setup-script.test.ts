@@ -20,6 +20,7 @@ vi.mock('../../../main/utils/remote-git', () => ({
 
 vi.mock('../../../main/runtime/getShellPath', () => ({
 	getShellPath: vi.fn(async () => '/usr/local/bin:/usr/bin'),
+	peekShellPath: vi.fn(() => null),
 }));
 
 vi.mock('../../../main/utils/logger', () => ({
@@ -190,5 +191,9 @@ describe('runWorktreeSetupScript', () => {
 
 		expect(result.success).toBe(true);
 		expect(mockExecFile).toHaveBeenCalled();
+		// The fallback is the expanded spawn PATH, never the inherited launchd
+		// PATH that a Dock/Finder launch hands the app (#1573).
+		const [, , , options] = mockExecFile.mock.calls[0];
+		expect(options?.env?.PATH).toContain('/opt/homebrew/bin');
 	});
 });

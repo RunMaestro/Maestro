@@ -13,6 +13,7 @@
 import { execFileNoThrow } from './execFile';
 import { execShellRemote } from './remote-git';
 import { getShellPath } from '../runtime/getShellPath';
+import { buildSpawnPath } from './spawnPath';
 import { isWindows } from '../../shared/platformDetection';
 import { logger } from './logger';
 import type { SshRemoteConfig } from '../../shared/types';
@@ -161,13 +162,17 @@ export async function runWorktreeSetupScript(
 }
 
 /**
- * Login-shell PATH, falling back to the process PATH when the probe fails.
- * A missing PATH would break most setup scripts, so this never throws.
+ * Login-shell PATH, falling back to the expanded spawn PATH when the probe
+ * fails. Never the bare process PATH: a Dock/Finder launch inherits launchd's
+ * `/usr/bin:/bin:/usr/sbin:/sbin`, which has no Homebrew (#1573). A missing
+ * PATH would break most setup scripts, so this never throws.
  */
 async function resolveLocalPath(): Promise<string> {
 	try {
-		return (await getShellPath()) || process.env.PATH || '';
+		const shellPath = await getShellPath();
+		if (shellPath) return shellPath;
 	} catch {
-		return process.env.PATH || '';
+		// Probe failed or timed out - fall through to the expanded PATH.
 	}
+	return buildSpawnPath();
 }

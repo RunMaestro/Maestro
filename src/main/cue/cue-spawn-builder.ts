@@ -21,6 +21,7 @@ import {
 } from '../agents/resolveClaudeSpawnMode';
 import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
 import { QUERY_SOURCE_ENV_VAR } from '../../shared/querySource';
+import { buildSpawnPath } from '../utils/spawnPath';
 
 // ─── Types ──────���────────────────────────────────────────────────────────────
 
@@ -282,6 +283,11 @@ export async function buildSpawnSpec(
 			cwd: spawnCwd,
 			env: {
 				...process.env,
+				// A Dock/Finder launch hands Maestro launchd's bare PATH
+				// (/usr/bin:/bin:/usr/sbin:/sbin), so inheriting it verbatim leaves the
+				// agent and every tool it shells out to blind to Homebrew and other
+				// user installs. Same PATH the desktop agent spawn builds (#1573).
+				PATH: buildSpawnPath(),
 				...(spawnEnvVars || {}),
 				// Stamped after the user's own vars: a Cue run is a Cue run no matter
 				// what the agent's env overrides say. Without this every downstream
