@@ -17,14 +17,10 @@
  * carries whether its cost was provider-reported or rate-table estimated.
  */
 
-import * as os from 'os';
-import * as path from 'path';
-import * as fsp from 'fs/promises';
 import { getStatsDB } from '../singleton';
 import { getSessionStorage } from '../../agents';
 import type { AgentSessionInfo } from '../../agents/session-storage';
-import { ClaudeSessionStorage } from '../../storage/claude-session-storage';
-import { discoverClaudeConfigDirs } from '../../agents/claude-usage-startup';
+import { getProviderAccountDirs } from '../../agents/provider-account-dirs';
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
 import {
@@ -41,6 +37,7 @@ import {
 	type TokenTimelineGranularity,
 } from '../../../shared/tokenUsage';
 import { getAgentDisplayName } from '../../../shared/agentMetadata';
+import { providerProfileKey, providerProfileLabel } from '../../../shared/providerProfiles';
 import { normalizeModelId } from '../../../shared/modelPricing';
 import {
 	getTokenUsageCache,
@@ -228,31 +225,24 @@ async function collectBreakdowns(cache: TokenUsageCache): Promise<SessionTokenBr
 	const breakdowns: SessionTokenBreakdown[] = [];
 	const liveKeys = new Set<string>();
 
-	// Claude is the one agent users routinely run under several accounts (each a
-	// separate CLAUDE_CONFIG_DIR with its own transcript tree). Reading only the
-	// default ~/.claude would undercount a multi-account user's tokens, so fan out
-	// across every discovered account dir. Other agents get a single default pass.
-	const claudeAccounts = await discoverClaudeAccounts();
-
 	for (const [agentType, projects] of byAgent) {
 		const storage = getSessionStorage(agentType);
 		if (!storage) continue;
 
-		const isClaude = storage instanceof ClaudeSessionStorage;
-		const accounts = isClaude ? claudeAccounts : [DEFAULT_ACCOUNT_KEY];
+		// Users routinely run one provider under several accounts, each a separate
+		// config dir with its own transcript tree. Reading only the default root
+		// would undercount them, so fan out across every discovered account dir.
+		// A provider with no account-selecting env var yields no dirs and gets a
+		// single default pass, filed under DEFAULT_ACCOUNT_KEY.
+		const accountDirs = await getProviderAccountDirs(agentType);
+		const accounts: Array<string | undefined> = accountDirs.length ? accountDirs : [undefined];
 
 		for (const projectPath of projects) {
-			for (const accountKey of accounts) {
+			for (const accountDir of accounts) {
+				const accountKey = accountDir ?? DEFAULT_ACCOUNT_KEY;
 				let sessions: AgentSessionInfo[];
 				try {
-					sessions =
-						isClaude && accountKey !== DEFAULT_ACCOUNT_KEY
-							? await (storage as ClaudeSessionStorage).listSessions(
-									projectPath,
-									undefined,
-									accountKey
-								)
-							: await storage.listSessions(projectPath);
+					sessions = await storage.listSessions(projectPath, undefined, accountDir);
 				} catch (error) {
 					void captureException(error);
 					continue;
@@ -279,56 +269,23 @@ async function collectBreakdowns(cache: TokenUsageCache): Promise<SessionTokenBr
 }
 
 /**
- * Canonical Claude account dirs to read, deduped by the REAL path of their
- * `projects/` tree.
+ * Group key and label for one session's account, via the canonical provider
+ * profile helpers.
  *
- * This dedupe is load-bearing, not defensive. A common multi-account setup
- * symlinks `~/.claude-<name>/projects` back at `~/.claude/projects` so every
- * account shares one transcript pool (only the credentials differ). Reading each
- * config dir blindly would then count the same sessions once per account and
- * multiply the reported tokens. Collapsing on the resolved target means a shared
- * pool is read exactly once; genuinely separate accounts still each get read.
- *
- * Falls back to the default `~/.claude` when discovery finds nothing, so a
- * single-account user still gets their data.
+ * Keyed by provider AND account because a bare account key collides: every
+ * provider with no account split reports the same literal
+ * {@link DEFAULT_ACCOUNT_KEY}, which used to merge Codex, OpenCode, Copilot and
+ * Factory Droid into a single unlabelled "Default" row whose cost was the sum of
+ * four different vendors. Labeling through the same helpers the Agents tab
+ * filter and the quota badges use means those surfaces cannot disagree about
+ * what an account is called.
  */
-async function discoverClaudeAccounts(): Promise<string[]> {
-	const fallback = [path.join(os.homedir(), '.claude')];
-	let dirs: string[];
-	try {
-		dirs = await discoverClaudeConfigDirs();
-	} catch (error) {
-		void captureException(error);
-		return fallback;
-	}
-	if (dirs.length === 0) return fallback;
-
-	const byRealProjects = new Map<string, string>();
-	for (const dir of dirs) {
-		const resolved = path.resolve(dir);
-		let realProjects: string;
-		try {
-			realProjects = await fsp.realpath(path.join(resolved, 'projects'));
-		} catch {
-			// No projects/ tree yet (fresh account): key on the dir itself so it
-			// still appears rather than silently collapsing into another account.
-			realProjects = resolved;
-		}
-		// First writer wins, and `discoverClaudeConfigDirs` sorts alphabetically, so
-		// a shared pool is attributed to the lowest-sorted dir deterministically.
-		if (!byRealProjects.has(realProjects)) {
-			byRealProjects.set(realProjects, resolved);
-		}
-	}
-	return Array.from(byRealProjects.values());
-}
-
-/** Human label for an account key: the config dir's basename (`.claude-gmail` -> `gmail`). */
-function accountLabel(accountKey: string): string {
-	if (!accountKey || accountKey === DEFAULT_ACCOUNT_KEY) return 'Default';
-	const base = path.basename(accountKey);
-	if (base === '.claude') return 'Default (~/.claude)';
-	return base.replace(/^\.claude-/, '');
+function accountGroup(agentType: string, accountKey: string): { key: string; label: string } {
+	const resolved = accountKey === DEFAULT_ACCOUNT_KEY ? null : accountKey;
+	return {
+		key: providerProfileKey(agentType, resolved),
+		label: providerProfileLabel(agentType, resolved),
+	};
 }
 
 // ---------------------------------------------------------------------------
@@ -420,7 +377,8 @@ function aggregate(all: SessionTokenBreakdown[], query: TokenUsageQuery): TokenU
 		totals.sessionCount++;
 		group(byAgent, s.agentType, getAgentDisplayName(s.agentType)).total.sessionCount++;
 		group(byProject, s.projectPath, projectLabel(s.projectPath)).total.sessionCount++;
-		group(byAccount, s.accountKey, accountLabel(s.accountKey)).total.sessionCount++;
+		const account = accountGroup(s.agentType, s.accountKey);
+		group(byAccount, account.key, account.label).total.sessionCount++;
 
 		const bStart = bucketStart(s.timestampMs || Date.now(), granularity);
 		let tb = timeline.get(bStart);
@@ -437,7 +395,7 @@ function aggregate(all: SessionTokenBreakdown[], query: TokenUsageQuery): TokenU
 			addModelToTotals(group(byAgent, s.agentType, getAgentDisplayName(s.agentType)).total, m);
 			addModelToTotals(group(byModel, m.model || 'unknown', modelLabel(m.model)).total, m);
 			addModelToTotals(group(byProject, s.projectPath, projectLabel(s.projectPath)).total, m);
-			addModelToTotals(group(byAccount, s.accountKey, accountLabel(s.accountKey)).total, m);
+			addModelToTotals(group(byAccount, account.key, account.label).total, m);
 			addModelToTotals(tb, m);
 		}
 	}
@@ -588,8 +546,7 @@ export const _internal = {
 	toBreakdown,
 	aggregate,
 	enumerateAgentProjects,
-	discoverClaudeAccounts,
-	accountLabel,
+	accountGroup,
 	bucketStart,
 	buildSeries,
 	localDayKey,
