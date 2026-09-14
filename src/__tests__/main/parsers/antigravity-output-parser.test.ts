@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { AntigravityOutputParser } from '../../../main/parsers/antigravity-output-parser';
+import { MAX_PERSISTED_TOOL_OUTPUT_CHARS } from '../../../shared/toolOutput';
 import { initializeOutputParsers } from '../../../main/parsers';
 
 beforeAll(() => {
@@ -97,6 +98,25 @@ describe('AntigravityOutputParser', () => {
 				sessionId: 'conv-1',
 			})
 		);
+	});
+
+	it('caps oversized tool output before it enters the renderer session', () => {
+		const parser = new AntigravityOutputParser();
+		const event = parser.parseJsonObject({
+			event: 'step_update',
+			step_update: {
+				conversation_id: 'conv-1',
+				step_index: 4,
+				state: 'DONE',
+				step_type: 'tool',
+				tool_name: 'run_command',
+				tool_info: { output: 'x'.repeat(50_000) },
+			},
+		});
+
+		const output = event?.toolState?.output as string;
+		expect(output.length).toBeLessThan(MAX_PERSISTED_TOOL_OUTPUT_CHARS + 100);
+		expect(output).toContain('[tool output truncated');
 	});
 
 	it('reports an ACTIVE tool step as running with its input and no output yet', () => {

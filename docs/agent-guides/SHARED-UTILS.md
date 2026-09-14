@@ -242,6 +242,20 @@ because that cost is paid on the main thread on every store write (~40ms on the
 
 ---
 
+## Tool Output (`src/shared/toolOutput.ts` - Both)
+
+| Function / Constant                  | Signature                                  | Purpose                                                                                                               |
+| ------------------------------------ | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
+| `MAX_PERSISTED_TOOL_OUTPUT_CHARS`    | `number`                                   | Maximum tool-result preview retained in a session.                                                                    |
+| `compactToolOutput(output)`          | `(unknown) => { output, truncated }`       | Preserve short values and replace oversized strings or objects with a bounded text preview.                           |
+| `compactSessionToolOutputs(session)` | `(T) => { session: T, compacted: number }` | Immutably compact tool results in legacy logs, live tabs, and snoozed AI tabs, returning the original when unchanged. |
+
+Use the same compactor at parser ingestion and session persistence boundaries. Browser clients
+receive the entire session tree during bootstrap, so a count-only log cap does not bound the frame
+when one log entry contains a multi-megabyte tool result.
+
+---
+
 ## Durations (`src/shared/duration.ts` - Both)
 
 **Never write another unit ladder.** Every "how long was that?" string renders from one

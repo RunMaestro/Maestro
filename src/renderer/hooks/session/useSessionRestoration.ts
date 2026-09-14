@@ -33,6 +33,11 @@ import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import { logger } from '../../utils/logger';
 import { readPersistedActiveSessionId } from '../../utils/activeSessionPersistence';
 import { useSessionLifecycleSync } from './useSessionLifecycleSync';
+import { useEventListener } from '../utils/useEventListener';
+import { WEB_BRIDGE_RECONCILE_EVENT } from '../../../shared/webClientConfig';
+import { releaseConnectionHeldQueueItems } from '../../utils/executionQueue';
+
+const CONNECTION_RECONCILE_RETRY_MS = 1000;
 
 /** Ids of the terminal tabs that are tiled into one of the session's tab groups. */
 function collectGroupedTerminalIds(session: { tabGroups?: Session['tabGroups'] }): Set<string> {
@@ -129,6 +134,14 @@ export function useSessionRestoration(): SessionRestorationReturn {
 	// answers that (web-desktop's is a permit-all, which is what makes the
 	// reconcile work there at all).
 	const ownedGate = useOwnedSessionGate();
+	const reconcileRetryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	useEffect(
+		() => () => {
+			if (reconcileRetryTimer.current) clearTimeout(reconcileRetryTimer.current);
+		},
+		[]
+	);
 
 	// --- validateAgentInBackground ---
 	// Checks agent availability without blocking session restoration.
@@ -181,11 +194,41 @@ export function useSessionRestoration(): SessionRestorationReturn {
 		const turns = await fetchLiveAiTurns();
 		// null means the probe failed, which is not the same answer as "nothing is
 		// running" - leave the restored state alone rather than guessing.
-		if (!turns || turns.length === 0) return;
+		if (!turns) {
+			const hasConnectionHold = useSessionStore
+				.getState()
+				.sessions.some((session) =>
+					(session.executionQueue ?? []).some((item) => item.waitingForConnection)
+				);
+			if (hasConnectionHold && !reconcileRetryTimer.current) {
+				reconcileRetryTimer.current = setTimeout(() => {
+					reconcileRetryTimer.current = null;
+					window.dispatchEvent(new Event(WEB_BRIDGE_RECONCILE_EVENT));
+				}, CONNECTION_RECONCILE_RETRY_MS);
+			}
+			return;
+		}
+		if (reconcileRetryTimer.current) {
+			clearTimeout(reconcileRetryTimer.current);
+			reconcileRetryTimer.current = null;
+		}
 		const owned = turns.filter((turn) => ownedGate.current?.(`${turn.sessionId}-ai-${turn.tabId}`));
-		if (owned.length === 0) return;
-		setSessions((prev) => applyLiveAiTurns(prev, owned));
+		setSessions((prev) => {
+			let queueChanged = false;
+			const released = prev.map((session) => {
+				const executionQueue = releaseConnectionHeldQueueItems(session.executionQueue || []);
+				if (executionQueue === session.executionQueue) return session;
+				queueChanged = true;
+				return { ...session, executionQueue };
+			});
+			if (!queueChanged && owned.length === 0) return prev;
+			return applyLiveAiTurns(released, owned);
+		});
 	}, [ownedGate]);
+
+	useEventListener(WEB_BRIDGE_RECONCILE_EVENT, () => {
+		void reattachLiveAiTurns();
+	});
 
 	// --- fetchGitInfoInBackground ---
 	const fetchGitInfoInBackground = useCallback(

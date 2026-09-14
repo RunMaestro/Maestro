@@ -541,6 +541,58 @@ describe('useDebouncedPersistence', () => {
 		});
 
 		describe('log truncation', () => {
+			it('should compact oversized tool output before persistence', () => {
+				const oversizedOutput = 'x'.repeat(50_000);
+				const tab = makeTab({
+					id: 'tool-output',
+					logs: [
+						{
+							...makeLog('tool'),
+							metadata: {
+								toolState: { status: 'completed', output: oversizedOutput },
+							},
+						},
+					],
+				});
+				const session = makeSession({ aiTabs: [tab], activeTabId: tab.id });
+
+				const initialLoadRef = makeInitialLoadRef(true);
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
+
+				act(() => {
+					result.current.flushNow(useSessionStore.getState().sessions);
+				});
+
+				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
+				const output = persisted[0].aiTabs[0].logs[0].metadata?.toolState?.output as string;
+				expect(output.length).toBeLessThan(5_000);
+				expect(output).toContain('[tool output truncated');
+			});
+
+			it('should persist a connection hold until ownership reconciliation succeeds', () => {
+				const session = makeSession({
+					executionQueue: [
+						{
+							id: 'held-message',
+							timestamp: 1,
+							tabId: 'default-tab',
+							type: 'message',
+							text: 'send after reconnect',
+							waitingForConnection: true,
+						},
+					],
+				});
+				const initialLoadRef = makeInitialLoadRef(true);
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
+
+				act(() => result.current.flushNow(useSessionStore.getState().sessions));
+
+				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
+				expect(persisted[0].executionQueue[0].waitingForConnection).toBe(true);
+			});
+
 			it('should truncate tab logs to 100 entries (MAX_PERSISTED_LOGS_PER_TAB)', () => {
 				const logs = Array.from({ length: 200 }, (_, i) => makeLog(`log-${i}`));
 				const tab = makeTab({ id: 'big-logs', logs });

@@ -44,6 +44,10 @@ import {
 } from '../../../renderer/stores/retryStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { agentAlreadyRunningMessage } from '../../../shared/processErrors';
+import {
+	releaseConnectionHeldQueueItems,
+	takeNextRunnableQueueItem,
+} from '../../../renderer/utils/executionQueue';
 import type {
 	Session,
 	AITab,
@@ -1222,10 +1226,101 @@ describe('useInputProcessing', () => {
 			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
 			const updateSessions = mockSetSessions.mock.calls[0][0];
 			const [updatedSession] = updateSessions([session]);
-			expect(updatedSession.state).toBe('busy');
-			expect(updatedSession.aiTabs[0].state).toBe('busy');
+			expect(updatedSession.state).toBe('idle');
+			expect(updatedSession.aiTabs[0].state).toBe('idle');
 			expect(updatedSession.executionQueue).toHaveLength(1);
 			expect(updatedSession.executionQueue[0].text).toBe('preserve this message');
+			expect(updatedSession.executionQueue[0].waitingForConnection).toBe(true);
+		});
+
+		it('keeps a new message behind an existing connection-held message', async () => {
+			const session = createMockSession({
+				state: 'idle',
+				executionQueue: [
+					{
+						id: 'held-a',
+						timestamp: 1,
+						tabId: 'tab-1',
+						type: 'message',
+						text: 'A',
+						waitingForConnection: true,
+					},
+				],
+			});
+			session.executionQueue[0].tabId = session.activeTabId;
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'B',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			const [updated] = useSessionStore.getState().sessions;
+			expect(updated.executionQueue.map((queued) => queued.text)).toEqual(['A', 'B']);
+			expect(updated.executionQueue.every((queued) => queued.waitingForConnection)).toBe(true);
+
+			const released = releaseConnectionHeldQueueItems(updated.executionQueue);
+			const first = takeNextRunnableQueueItem(released);
+			const second = takeNextRunnableQueueItem(first.remaining);
+			expect([first.item?.text, second.item?.text]).toEqual(['A', 'B']);
+		});
+
+		it('keeps queue order when reconciliation releases the hold during a new send', async () => {
+			let resolveProbe!: (value: []) => void;
+			vi.mocked(window.maestro.process.getActiveProcesses).mockReturnValue(
+				new Promise((resolve) => {
+					resolveProbe = resolve;
+				})
+			);
+			const session = createMockSession({
+				state: 'idle',
+				executionQueue: [
+					{
+						id: 'held-a',
+						timestamp: 1,
+						tabId: 'tab-1',
+						type: 'message',
+						text: 'A',
+						waitingForConnection: true,
+					},
+				],
+			});
+			session.executionQueue[0].tabId = session.activeTabId;
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'B',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			let send!: Promise<void>;
+			act(() => {
+				send = result.current.processInput();
+			});
+			act(() => {
+				const [live] = useSessionStore.getState().sessions;
+				useSessionStore
+					.getState()
+					.setSessions([
+						{ ...live, executionQueue: releaseConnectionHeldQueueItems(live.executionQueue) },
+					]);
+				resolveProbe([]);
+			});
+			await act(async () => {
+				await send;
+			});
+
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			const [updated] = useSessionStore.getState().sessions;
+			expect(updated.executionQueue.map((queued) => queued.text)).toEqual(['A', 'B']);
+			const first = takeNextRunnableQueueItem(updated.executionQueue);
+			const second = takeNextRunnableQueueItem(first.remaining);
+			expect([first.item?.text, second.item?.text]).toEqual(['A', 'B']);
 		});
 
 		it('re-queues the message when the spawn collides with a live turn', async () => {
@@ -2887,6 +2982,79 @@ describe('useInputProcessing', () => {
 			expect(onDispatchCrossAgentMentions).not.toHaveBeenCalled();
 			const [updated] = mockSetSessions.mock.calls[0][0]([session]);
 			expect(updated.executionQueue[0].crossAgentOnly).toBe(true);
+		});
+
+		it('holds a mention-only message when process reconciliation fails', async () => {
+			const onPlanCrossAgentMentions = vi
+				.fn()
+				.mockReturnValue({ targetSessionIds: ['rc'], suppressLocal: true });
+			const onDispatchCrossAgentMentions = vi.fn();
+			const session = createMockSession({ state: 'idle' });
+			vi.mocked(window.maestro.process.getActiveProcesses).mockRejectedValue(
+				new Error('bridge down')
+			);
+			const deps = createDeps({
+				activeSession: session,
+				activeSessionId: session.id,
+				sessionsRef: { current: [session] },
+				inputValue: '@rc pull in the latest changes',
+				onPlanCrossAgentMentions,
+				onDispatchCrossAgentMentions,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(onDispatchCrossAgentMentions).not.toHaveBeenCalled();
+			const [updated] = mockSetSessions.mock.calls[0][0]([session]);
+			expect(updated.executionQueue[0]).toMatchObject({
+				crossAgentOnly: true,
+				waitingForConnection: true,
+			});
+		});
+
+		it('keeps a mention-only message behind an existing connection hold', async () => {
+			const onPlanCrossAgentMentions = vi
+				.fn()
+				.mockReturnValue({ targetSessionIds: ['rc'], suppressLocal: true });
+			const onDispatchCrossAgentMentions = vi.fn();
+			const session = createMockSession({
+				state: 'idle',
+				executionQueue: [
+					{
+						id: 'held-a',
+						timestamp: 1,
+						tabId: 'tab-1',
+						type: 'message',
+						text: 'A',
+						waitingForConnection: true,
+					},
+				],
+			});
+			session.executionQueue[0].tabId = session.activeTabId;
+			const deps = createDeps({
+				activeSession: session,
+				activeSessionId: session.id,
+				sessionsRef: { current: [session] },
+				inputValue: '@rc B',
+				onPlanCrossAgentMentions,
+				onDispatchCrossAgentMentions,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(onDispatchCrossAgentMentions).not.toHaveBeenCalled();
+			const [updated] = useSessionStore.getState().sessions;
+			expect(updated.executionQueue.map((queued) => queued.text)).toEqual(['A', '@rc B']);
+			expect(updated.executionQueue[1]).toMatchObject({
+				crossAgentOnly: true,
+				waitingForConnection: true,
+			});
 		});
 
 		it('does not resolve mentions on an override send (queued replay / force-send)', async () => {

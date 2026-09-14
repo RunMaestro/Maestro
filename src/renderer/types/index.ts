@@ -464,6 +464,9 @@ export interface QueuedItem {
 	// Held/paused: kept in the queue (preserving order) but skipped by every
 	// dispatch path until the user resumes it. See utils/executionQueue.ts.
 	paused?: boolean;
+	// Hold set when the process ownership probe cannot reach main. The
+	// item becomes runnable only after bridge reconciliation confirms ownership.
+	waitingForConnection?: boolean;
 	// This message `@mentions` another agent, and that consult has NOT fired yet.
 	// It fires when the item is dispatched (agentStore.processQueuedItem), so the
 	// mentioned agent is pulled in at the moment the message becomes the agent's

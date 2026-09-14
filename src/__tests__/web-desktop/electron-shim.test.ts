@@ -118,7 +118,7 @@ describe('web-desktop electron-shim webFrame zoom', () => {
 });
 
 describe('web-desktop electron-shim desktop navigation sync', () => {
-	it('routes desktop active-session packets through the renderer remote-selection event', () => {
+	it('keeps desktop active-session packets from overriding browser-local focus', () => {
 		const listener = vi.fn();
 		ipcRenderer.on('remote:selectSession', listener);
 
@@ -126,7 +126,7 @@ describe('web-desktop electron-shim desktop navigation sync', () => {
 			data: JSON.stringify({ type: 'active_session_changed', sessionId: 'session-2' }),
 		});
 
-		expect(listener).toHaveBeenCalledWith({ senderFrame: null }, 'session-2');
+		expect(listener).not.toHaveBeenCalled();
 		ipcRenderer.removeListener('remote:selectSession', listener);
 	});
 
@@ -163,6 +163,19 @@ describe('web-desktop electron-shim desktop navigation sync', () => {
 			true
 		);
 		ipcRenderer.removeListener('remote:selectTab', listener);
+	});
+});
+
+describe('web-desktop electron-shim foreground recovery', () => {
+	it('probes the socket immediately when the page returns to the foreground', () => {
+		const socket = InertWebSocket.instances[0];
+		socket.readyState = InertWebSocket.OPEN;
+		const before = socket.sent.length;
+
+		window.dispatchEvent(new Event('pageshow'));
+
+		expect(JSON.parse(socket.sent[before])).toEqual({ type: 'ping' });
+		socket.emit('message', { data: JSON.stringify({ type: 'pong' }) });
 	});
 });
 

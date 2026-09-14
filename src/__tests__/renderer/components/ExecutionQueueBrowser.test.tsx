@@ -858,6 +858,29 @@ describe('ExecutionQueueBrowser', () => {
 			expect(screen.getByText('Please fix the bug')).toBeInTheDocument();
 		});
 
+		it('explains when an item is waiting for the connection', () => {
+			const session = createSession({
+				id: 'active-session',
+				executionQueue: [createQueuedItem({ waitingForConnection: true })],
+			});
+			render(
+				<ExecutionQueueBrowser
+					isOpen={true}
+					onClose={mockOnClose}
+					sessions={[session]}
+					activeSessionId="active-session"
+					theme={theme}
+					onRemoveItem={mockOnRemoveItem}
+					onSwitchSession={mockOnSwitchSession}
+				/>
+			);
+
+			expect(screen.getByText('WAITING FOR CONNECTION')).toHaveAttribute(
+				'title',
+				'This message will run after Maestro reconnects'
+			);
+		});
+
 		it('should render up to 4k characters of message text and rely on CSS line-clamp for visual truncation', () => {
 			// Text shorter than the 4k cap renders in full; CSS line-clamp (not a
 			// JS slice) handles the visual truncation to whatever fits the card.

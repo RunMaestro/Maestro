@@ -33,6 +33,7 @@ import {
 import { Modal, ModalFooter } from './ui/Modal';
 import { QueuedItemEditModal } from './QueuedItemEditModal';
 import { TurnSettingPills } from './ui/TurnSettingPills';
+import { MiniBadge } from './ui/MiniBadge';
 import {
 	useQueueReorder,
 	useQueueRowDrag,
@@ -681,6 +682,7 @@ function QueueItemRow({
 	const { showDragReady, showGrabbed, isDimmed } = visual;
 
 	const isCommand = item.type === 'command';
+	const isWaitingForConnection = !!item.waitingForConnection;
 	// Read up to the first 4k characters and let CSS line-clamp cap the card at
 	// three lines. The native ellipsis fills the space without wrapping past the
 	// card, so longer messages show as much as fits rather than a hard 100-char cut.
@@ -744,7 +746,13 @@ function QueueItemRow({
 					boxShadow: isSelected && !isDragging ? `0 0 0 1px ${theme.colors.accent}` : undefined,
 					cursor: canDrag ? (isDragging ? 'grabbing' : 'grab') : 'default',
 					...queueDragCardStyle(theme, { isDragging, showGrabbed }),
-					opacity: isDragging ? 0.95 : isPaused ? 0.45 : isDimmed ? 0.5 : 1,
+					opacity: isDragging
+						? 0.95
+						: isPaused || isWaitingForConnection
+							? 0.45
+							: isDimmed
+								? 0.5
+								: 1,
 				}}
 				{...cardHandlers}
 			>
@@ -806,16 +814,14 @@ function QueueItemRow({
 							<Clock className="w-3 h-3" />
 							{timeDisplay}
 						</span>
-						{isPaused && (
-							<span
-								className="text-2xs font-bold tracking-wider px-1.5 py-0.5 rounded"
-								style={{
-									backgroundColor: theme.colors.warning + '33',
-									color: theme.colors.warning,
-								}}
-							>
-								HELD
-							</span>
+						{isPaused && <MiniBadge label="HELD" theme={theme} color={theme.colors.warning} />}
+						{isWaitingForConnection && (
+							<MiniBadge
+								label="WAITING FOR CONNECTION"
+								theme={theme}
+								color={theme.colors.warning}
+								title="This message will run after Maestro reconnects"
+							/>
 						)}
 					</div>
 					<div

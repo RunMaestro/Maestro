@@ -1,12 +1,13 @@
 /**
- * Helpers for the per-session AI execution queue, centralizing the "skip paused
- * items" rule so every dispatch path treats held items identically.
+ * Helpers for the per-session AI execution queue, centralizing the rules for
+ * user-paused items and connection-held items.
  *
  * A queued item with `paused: true` is held by the user: it stays in the queue
  * (preserving its position) but is invisible to dispatch. Auto-run, on-exit
  * dequeue, interrupt/kill re-dispatch, batch progression, and the manual
  * "process next" action all run the first *non-paused* item instead of blindly
- * taking index 0, and treat a queue with no runnable items as drained.
+ * taking index 0. A connection hold is an ordering barrier: later items cannot
+ * overtake a prompt whose delivery state is still unknown.
  */
 
 import type { LogEntry, QueuedItem, QueuedItemEditPatch, Session, SessionState } from '../types';
@@ -56,19 +57,29 @@ export function applyQueuedItemEdit(
 	);
 }
 
-/** A queued item is runnable when it is not held/paused by the user. */
+/** A queued item is runnable when neither the user nor the bridge holds it. */
 export function isRunnableQueueItem(item: QueuedItem): boolean {
-	return !item.paused;
+	return !item.paused && !item.waitingForConnection;
+}
+
+/** Release bridge holds after main process ownership is known. */
+export function releaseConnectionHeldQueueItems(queue: QueuedItem[]): QueuedItem[] {
+	if (!queue.some((item) => item.waitingForConnection)) return queue;
+	return queue.map(({ waitingForConnection: _waiting, ...item }) => item);
 }
 
 /** The first item that would actually run, or undefined if all are held/empty. */
 export function nextRunnableQueueItem(queue: QueuedItem[]): QueuedItem | undefined {
-	return queue.find(isRunnableQueueItem);
+	for (const item of queue) {
+		if (item.waitingForConnection) return undefined;
+		if (!item.paused) return item;
+	}
+	return undefined;
 }
 
 /** Whether the queue has at least one item that would run (not all held). */
 export function hasRunnableQueueItem(queue: QueuedItem[]): boolean {
-	return queue.some(isRunnableQueueItem);
+	return nextRunnableQueueItem(queue) !== undefined;
 }
 
 /**
@@ -81,14 +92,16 @@ export function takeNextRunnableQueueItem(queue: QueuedItem[]): {
 	item: QueuedItem | null;
 	remaining: QueuedItem[];
 } {
-	const index = queue.findIndex(isRunnableQueueItem);
-	if (index === -1) {
-		return { item: null, remaining: queue };
+	for (let index = 0; index < queue.length; index += 1) {
+		const candidate = queue[index];
+		if (candidate.waitingForConnection) return { item: null, remaining: queue };
+		if (candidate.paused) continue;
+		return {
+			item: candidate,
+			remaining: [...queue.slice(0, index), ...queue.slice(index + 1)],
+		};
 	}
-	return {
-		item: queue[index],
-		remaining: [...queue.slice(0, index), ...queue.slice(index + 1)],
-	};
+	return { item: null, remaining: queue };
 }
 
 /**
@@ -112,7 +125,9 @@ export function hasWorkAheadOfNewMessage(
 ): boolean {
 	if (opts.autoRunActive) return true;
 	if (getBusyTabs(session, { includeOrphans: true }).length > 0) return true;
-	return hasRunnableQueueItem(session.executionQueue ?? []);
+	return (session.executionQueue ?? []).some(
+		(item) => item.waitingForConnection || isRunnableQueueItem(item)
+	);
 }
 
 /**

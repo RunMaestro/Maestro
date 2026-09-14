@@ -17,7 +17,7 @@ import { captureException } from './sentry-shim';
 // Side-effect import: declares `window.__MAESTRO_CONFIG__` once for every
 // bundle that reads it. See the note in that file about the two rival shapes
 // this replaced.
-import '../shared/webClientConfig';
+import { WEB_BRIDGE_RECONCILE_EVENT } from '../shared/webClientConfig';
 
 type Listener = (event: { senderFrame: null }, ...args: unknown[]) => void;
 
@@ -107,6 +107,11 @@ class BridgeClient {
 	constructor(config: BridgeConfig) {
 		this.ready = new Promise((r) => (this.resolveReady = r));
 		this.connect(config.wsUrl);
+		document.addEventListener('visibilitychange', () => {
+			if (!document.hidden) this.probeHeartbeat();
+		});
+		window.addEventListener('pageshow', () => this.probeHeartbeat());
+		window.addEventListener('online', () => this.probeHeartbeat());
 	}
 
 	private resumeUrl(url: string): string {
@@ -119,6 +124,7 @@ class BridgeClient {
 	private markReady(): void {
 		this.resolveReady();
 		for (const frame of this.queue.splice(0)) this.ws?.send(frame);
+		window.dispatchEvent(new Event(WEB_BRIDGE_RECONCILE_EVENT));
 	}
 
 	private connect(url: string): void {
@@ -208,12 +214,6 @@ class BridgeClient {
 			if (msg.type === 'bridge.event') {
 				channel = msg.channel as string;
 				args = (msg.args as unknown[]) ?? [];
-			} else if (msg.type === 'active_session_changed' && typeof msg.sessionId === 'string') {
-				// Desktop navigation still uses the original web-client packets. Route
-				// them through the renderer's existing remote-selection listeners so the
-				// full web-desktop UI follows the active agent without a second state path.
-				channel = 'remote:selectSession';
-				args = [msg.sessionId];
 			} else if (
 				msg.type === 'tabs_changed' &&
 				typeof msg.sessionId === 'string' &&
@@ -300,32 +300,34 @@ class BridgeClient {
 	 */
 	private startHeartbeat(): void {
 		this.stopHeartbeat();
-		this.heartbeatTimer = setInterval(() => {
-			// Only probe a socket that CLAIMS to be open; anything else is already
-			// being handled by the close/reconnect path.
-			if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-			// A probe already in flight: let its deadline settle rather than
-			// stacking a second one and shortening the budget.
-			if (this.pongDeadline !== undefined) return;
-			this.pongDeadline = setTimeout(() => {
-				this.pongDeadline = undefined;
-				// No `pong`. Whatever `readyState` says, nothing is listening. Close
-				// so the existing handler rejects the pending invokes and reconnects;
-				// closing a socket that is genuinely dead is a no-op beyond that.
-				try {
-					this.ws?.close();
-				} catch {
-					// A socket in a bad state can throw here. The reconnect is already
-					// scheduled by the close handler, or by the next heartbeat tick.
-				}
-			}, BRIDGE_PONG_TIMEOUT_MS);
+		this.heartbeatTimer = setInterval(() => this.probeHeartbeat(), BRIDGE_HEARTBEAT_INTERVAL_MS);
+	}
+
+	private probeHeartbeat(): void {
+		// Only probe a socket that CLAIMS to be open; anything else is already
+		// being handled by the close/reconnect path.
+		if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+		// A probe already in flight: let its deadline settle rather than
+		// stacking a second one and shortening the budget.
+		if (this.pongDeadline !== undefined) return;
+		this.pongDeadline = setTimeout(() => {
+			this.pongDeadline = undefined;
+			// No `pong`. Whatever `readyState` says, nothing is listening. Close
+			// so the existing handler rejects the pending invokes and reconnects;
+			// closing a socket that is genuinely dead is a no-op beyond that.
 			try {
-				this.ws.send(JSON.stringify({ type: 'ping' }));
+				this.ws?.close();
 			} catch {
-				// Send threw: the socket is dead now rather than in 8s. Let the
-				// deadline above fire and take the same recovery path.
+				// A socket in a bad state can throw here. The reconnect is already
+				// scheduled by the close handler, or by the next heartbeat tick.
 			}
-		}, BRIDGE_HEARTBEAT_INTERVAL_MS);
+		}, BRIDGE_PONG_TIMEOUT_MS);
+		try {
+			this.ws.send(JSON.stringify({ type: 'ping' }));
+		} catch {
+			// Send threw: the socket is dead now rather than in 8s. Let the
+			// deadline above fire and take the same recovery path.
+		}
 	}
 
 	private stopHeartbeat(): void {

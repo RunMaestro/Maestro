@@ -19,6 +19,7 @@ import { displayImageSrc } from '../utils/sessionImageSrc';
 import { Modal, ModalFooter } from './ui/Modal';
 import { QueuedItemEditModal } from './QueuedItemEditModal';
 import { TurnSettingPills } from './ui/TurnSettingPills';
+import { MiniBadge } from './ui/MiniBadge';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useEventListener } from '../hooks/utils/useEventListener';
 import { useUIStore } from '../stores/uiStore';
@@ -496,6 +497,7 @@ function QueuedItemRow({
 
 	const isCommand = item.type === 'command';
 	const isPaused = !!item.paused;
+	const isWaitingForConnection = !!item.waitingForConnection;
 	const displayText = isCommand ? (item.command ?? '') : (item.text ?? '');
 	const isLongMessage = displayText.length > 200;
 	const accent = isCommand ? theme.colors.success : theme.colors.accent;
@@ -516,25 +518,30 @@ function QueuedItemRow({
 					...queueDragCardStyle(theme, { isDragging, showGrabbed }),
 					// Queued items render dimmed (they're pending); lift the grabbed one and
 					// recede the rest while a drag is in progress.
-					opacity: isDragging ? 0.95 : isPaused ? 0.35 : isDimmed ? 0.3 : 0.6,
+					opacity: isDragging
+						? 0.95
+						: isPaused || isWaitingForConnection
+							? 0.35
+							: isDimmed
+								? 0.3
+								: 0.6,
 				}}
 				{...cardHandlers}
 			>
 				{/* Drag handle - only show when draggable */}
 				{canDrag && <QueueDragHandle theme={theme} visible={showDragReady || showGrabbed} />}
 
-				{/* HELD badge for paused items */}
-				{isPaused && (
-					<div className={canDrag ? 'pl-4 mb-1.5' : 'mb-1.5'}>
-						<span
-							className="px-1.5 py-0.5 rounded text-2xs font-bold tracking-wider"
-							style={{
-								backgroundColor: theme.colors.warning + '33',
-								color: theme.colors.warning,
-							}}
-						>
-							HELD
-						</span>
+				{(isPaused || isWaitingForConnection) && (
+					<div className={`flex items-center gap-1.5 ${canDrag ? 'pl-4 mb-1.5' : 'mb-1.5'}`}>
+						{isPaused && <MiniBadge label="HELD" theme={theme} color={theme.colors.warning} />}
+						{isWaitingForConnection && (
+							<MiniBadge
+								label="WAITING FOR CONNECTION"
+								theme={theme}
+								color={theme.colors.warning}
+								title="This message will run after Maestro reconnects"
+							/>
+						)}
 					</div>
 				)}
 
