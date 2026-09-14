@@ -133,6 +133,22 @@ The profile is resolved the same way the [Usage Dashboard](./usage-dashboard.md)
 
 Providers with no per-account config directory (OpenCode, Factory Droid) show only the **Provider** row.
 
+## The Same Pattern on Other Providers
+
+This page is written around Claude Code because that is where multi-account setups are most common, but the pattern is not Claude-only. Codex and Copilot-CLI each ship their own variable that relocates the whole account home, and Maestro attributes their agents the same way: the Agents tab provider filter, the Context Window tooltip's **Profile** row, and the Usage Dashboard's [Tokens tab](./usage-dashboard.md) Accounts breakdown all split by account for every provider in the table below.
+
+| Provider      | Variable            | Default directory         | Transcripts under |
+| ------------- | ------------------- | ------------------------- | ----------------- |
+| Claude Code   | `CLAUDE_CONFIG_DIR` | `~/.claude`               | `projects/`       |
+| Codex         | `CODEX_HOME`        | `~/.codex`                | `sessions/`       |
+| Copilot-CLI   | `COPILOT_HOME`      | `~/.copilot`              | `session-state/`  |
+| OpenCode      | none                | `~/.local/share/opencode` | `storage/`        |
+| Factory Droid | none                | `~/.factory`              | `sessions/`       |
+
+OpenCode and Factory Droid are listed for completeness: neither CLI ships a variable that selects an account home, so their agents are all one account as far as Maestro can tell. OpenCode's data directory does follow `XDG_DATA_HOME`, but that is an OS-wide setting rather than an OpenCode account selector, and `OPENCODE_CONFIG*` selects the config (agents, commands, plugins) rather than the credential and transcript store. If either CLI ships a home variable later, Maestro's account split follows in a one-line change.
+
+Set the variable exactly as you would `CLAUDE_CONFIG_DIR`: on the agent (**Edit Agent** -> **Environment Variables**), or on the provider in **Settings** -> **Agents** to apply it to every agent of that type that does not set its own.
+
 ## Tips
 
 - **Session resume works cross-account** - because `projects/` is symlinked, you can start a session on one account and resume it on another.
