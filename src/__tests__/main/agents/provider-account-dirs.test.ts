@@ -45,6 +45,12 @@ import { getProviderAccountDirs } from '../../../main/agents/provider-account-di
 let homeDir: string;
 let outsideHome: string;
 
+/**
+ * Windows refuses a 'dir' symlink without elevation or developer mode, but
+ * allows a junction, which realpath resolves identically.
+ */
+const SYMLINK_TYPE = process.platform === 'win32' ? 'junction' : 'dir';
+
 /** Create `<home>/<name>/<sessionsSubdir>` and return the account dir. */
 function makeAccountDir(root: string, name: string, sessionsSubdir: string): string {
 	const dir = path.join(root, name);
@@ -137,7 +143,11 @@ describe('getProviderAccountDirs', () => {
 		// The common multi-account setup: separate credentials, one shared pool.
 		const sharedHome = path.join(homeDir, '.claude-work');
 		fs.mkdirSync(sharedHome, { recursive: true });
-		fs.symlinkSync(path.join(defaultHome, 'projects'), path.join(sharedHome, 'projects'), 'dir');
+		fs.symlinkSync(
+			path.join(defaultHome, 'projects'),
+			path.join(sharedHome, 'projects'),
+			SYMLINK_TYPE
+		);
 
 		const dirs = await getProviderAccountDirs('claude-code', {
 			homeDir,
@@ -154,7 +164,11 @@ describe('getProviderAccountDirs', () => {
 		const ownPool = makeAccountDir(homeDir, '.claude-work', 'projects');
 		const sharedHome = path.join(homeDir, '.claude-gmail');
 		fs.mkdirSync(sharedHome, { recursive: true });
-		fs.symlinkSync(path.join(defaultHome, 'projects'), path.join(sharedHome, 'projects'), 'dir');
+		fs.symlinkSync(
+			path.join(defaultHome, 'projects'),
+			path.join(sharedHome, 'projects'),
+			SYMLINK_TYPE
+		);
 
 		const dirs = await getProviderAccountDirs('claude-code', {
 			homeDir,
