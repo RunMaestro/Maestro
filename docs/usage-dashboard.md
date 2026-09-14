@@ -161,7 +161,21 @@ This tab has a different data source from the rest of the dashboard. Where the o
 Two things it is careful about:
 
 - **Estimated versus reported cost.** Only some agents report a real cost figure. Everything else is priced from a built-in rate table, and those numbers are marked with a `~` and explained in a footnote, so an estimate is never presented as authoritative.
-- **Multiple provider accounts.** Running several Claude accounts from separate `CLAUDE_CONFIG_DIR` homes is common, and the **Accounts** breakdown reports each one's spend separately rather than blending or dropping them.
+- **Multiple provider accounts.** Running several accounts from separate provider homes is common, and the **Accounts** breakdown reports each one's spend separately rather than blending or dropping them. Each row names its provider as well as its account (`Claude Code - Default account`, `Codex - project-acc-1`), so two providers' default accounts can never land in one row. Hover a row to see the account's full directory.
+
+  Which providers can split by account depends on whether the provider's CLI ships a variable that selects its home directory:
+
+  | Provider      | Variable            | Default directory         |
+  | ------------- | ------------------- | ------------------------- |
+  | Claude Code   | `CLAUDE_CONFIG_DIR` | `~/.claude`               |
+  | Codex         | `CODEX_HOME`        | `~/.codex`                |
+  | Copilot-CLI   | `COPILOT_HOME`      | `~/.copilot`              |
+  | OpenCode      | none                | `~/.local/share/opencode` |
+  | Factory Droid | none                | `~/.factory`              |
+
+  OpenCode and Factory Droid ship no per-account home variable, so their spend is reported under a single row per provider. Maestro finds an account from the variable set on an agent (or on the provider, in Settings), from your own shell environment, and from `~/.<provider>-*` directories on disk. Accounts that share one transcript directory by symlink are counted once, not once per account.
+
+  SSH-remote agents are not attributed by account: their transcripts live on the remote host.
 
 Every chart on the dashboard also gains a **Tokens** metric mode, so charts that would otherwise plot query counts or time can plot token consumption over the same range.
 

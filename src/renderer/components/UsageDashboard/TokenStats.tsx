@@ -10,9 +10,12 @@
  *   (OpenCode). Everything else is priced from the `modelPricing` rate table.
  *   Estimated figures are marked with a `~` and explained in the footnote, so a
  *   number is never presented as authoritative when it isn't.
- * - **Multiple provider accounts.** Users commonly run several Claude Max
- *   accounts from separate `CLAUDE_CONFIG_DIR` homes; the Accounts breakdown
- *   shows each one's spend rather than silently blending (or dropping) them.
+ * - **Multiple provider accounts.** Users commonly run several accounts from
+ *   separate provider homes (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`,
+ *   `COPILOT_HOME`); the Accounts breakdown shows each one's spend rather than
+ *   silently blending (or dropping) them. Its rows are keyed and labeled
+ *   through `providerProfiles`, so an account reads the same here as it does in
+ *   the Agents tab filter and the quota badges.
  */
 
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
@@ -25,6 +28,7 @@ import type {
 	TokenUsageQuery,
 } from '../../../shared/tokenUsage';
 import { formatCost, formatNumber, formatTokensCompact } from '../../../shared/formatters';
+import { parseProviderProfileKey } from '../../../shared/providerProfiles';
 import { COLORBLIND_AGENT_PALETTE } from '../../constants/colorblindPalettes';
 import { captureException } from '../../utils/sentry';
 import { ChartErrorBoundary } from './ChartErrorBoundary';
@@ -83,6 +87,12 @@ interface BreakdownProps {
 	/** Copy shown when this dimension has nothing to report. */
 	emptyNote: string;
 	testId: string;
+	/**
+	 * Native-tooltip text for a row, defaulting to the group key. The account
+	 * breakdown overrides it: its key carries the provider id as well, and what
+	 * a truncated account label is hiding is the directory.
+	 */
+	rowTitle?: (group: TokenUsageGroup) => string;
 }
 
 /**
@@ -98,6 +108,7 @@ const Breakdown = memo(function Breakdown({
 	colorBlindMode,
 	emptyNote,
 	testId,
+	rowTitle,
 }: BreakdownProps) {
 	const [hovered, setHovered] = useState<{ group: TokenUsageGroup; x: number; y: number } | null>(
 		null
@@ -142,7 +153,7 @@ const Breakdown = memo(function Breakdown({
 							<span
 								className="text-xs truncate shrink-0"
 								style={{ color: theme.colors.textDim, width: '38%' }}
-								title={g.key}
+								title={rowTitle ? rowTitle(g) : g.key}
 							>
 								{g.label}
 							</span>
@@ -188,6 +199,15 @@ const Breakdown = memo(function Breakdown({
 // ---------------------------------------------------------------------------
 // Timeline (change over time - stacked input/output/cache per bucket)
 // ---------------------------------------------------------------------------
+
+/**
+ * Hover text for an account row: the account's config dir, which is the part
+ * the label drops. Falls back to the label for a provider with no account
+ * split, whose key is just the provider id.
+ */
+function accountRowTitle(group: TokenUsageGroup): string {
+	return parseProviderProfileKey(group.key).accountKey ?? group.label;
+}
 
 interface TimelineProps {
 	data: TokenUsageAggregate;
@@ -451,6 +471,7 @@ export const TokenStats = memo(function TokenStats({
 						colorBlindMode={colorBlindMode}
 						emptyNote="No provider accounts detected."
 						testId="token-by-account"
+						rowTitle={accountRowTitle}
 					/>
 				</ChartErrorBoundary>
 
