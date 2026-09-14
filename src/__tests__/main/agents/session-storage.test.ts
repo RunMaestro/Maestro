@@ -303,6 +303,43 @@ describe('OpenCodeSessionStorage', () => {
 });
 
 describe('CodexSessionStorage', () => {
+	/** A second CODEX_HOME account, used by the account fan-out test. */
+	const codexWorkAccountDir = path.join('/tmp/maestro-session-storage-home', '.codex-work');
+
+	afterEach(async () => {
+		await fs.rm(codexWorkAccountDir, { recursive: true, force: true });
+	});
+
+	it('reads a second CODEX_HOME account only when asked for it', async () => {
+		const dayDir = path.join(codexWorkAccountDir, 'sessions', '2026', '09', '14');
+		await fs.mkdir(dayDir, { recursive: true });
+		await fs.writeFile(
+			path.join(dayDir, 'rollout-2026-09-14T00-00-00-session-work.jsonl'),
+			[
+				JSON.stringify({
+					type: 'session_meta',
+					payload: {
+						id: 'session-work',
+						cwd: '/test/project',
+						timestamp: '2026-09-14T00:00:00.000Z',
+					},
+				}),
+			].join('\n'),
+			'utf8'
+		);
+
+		const { CodexSessionStorage } = await import('../../../main/storage/codex-session-storage');
+		const storage = new CodexSessionStorage();
+
+		// Felipe's case: his transcripts live under a per-account CODEX_HOME, so
+		// a read of the default ~/.codex reports nothing at all for them.
+		expect(await storage.listSessions('/test/project')).toEqual([]);
+
+		const scoped = await storage.listSessions('/test/project', undefined, codexWorkAccountDir);
+		expect(scoped).toHaveLength(1);
+		expect(scoped[0].projectPath).toBe('/test/project');
+	});
+
 	it('should be importable', async () => {
 		const { CodexSessionStorage } = await import('../../../main/storage/codex-session-storage');
 		expect(CodexSessionStorage).toBeDefined();
@@ -373,12 +410,15 @@ describe('CodexSessionStorage', () => {
 });
 
 describe('CopilotSessionStorage', () => {
-	let originalCopilotConfigDir: string | undefined;
+	let originalCopilotHome: string | undefined;
 	const copilotSessionStateDir = path.join(
 		'/tmp/maestro-session-storage-home',
 		'.copilot',
 		'session-state'
 	);
+
+	/** A second COPILOT_HOME account, used by the account fan-out test. */
+	const copilotWorkAccountDir = path.join('/tmp/maestro-session-storage-home', '.copilot-work');
 
 	async function writeCopilotSessionFixture(
 		sessionId: string,
@@ -394,12 +434,13 @@ describe('CopilotSessionStorage', () => {
 	}
 
 	beforeEach(async () => {
-		originalCopilotConfigDir = process.env.COPILOT_CONFIG_DIR;
-		delete process.env.COPILOT_CONFIG_DIR;
+		originalCopilotHome = process.env.COPILOT_HOME;
+		delete process.env.COPILOT_HOME;
 		await fs.rm(path.join('/tmp/maestro-session-storage-home', '.copilot'), {
 			recursive: true,
 			force: true,
 		});
+		await fs.rm(copilotWorkAccountDir, { recursive: true, force: true });
 	});
 
 	afterEach(async () => {
@@ -407,10 +448,11 @@ describe('CopilotSessionStorage', () => {
 			recursive: true,
 			force: true,
 		});
-		if (originalCopilotConfigDir === undefined) {
-			delete process.env.COPILOT_CONFIG_DIR;
+		await fs.rm(copilotWorkAccountDir, { recursive: true, force: true });
+		if (originalCopilotHome === undefined) {
+			delete process.env.COPILOT_HOME;
 		} else {
-			process.env.COPILOT_CONFIG_DIR = originalCopilotConfigDir;
+			process.env.COPILOT_HOME = originalCopilotHome;
 		}
 	});
 
@@ -435,6 +477,36 @@ describe('CopilotSessionStorage', () => {
 		const messages = await storage.readSessionMessages('/test/nonexistent/project', 'session-123');
 		expect(messages.messages).toEqual([]);
 		expect(messages.total).toBe(0);
+	});
+
+	it('reads a second COPILOT_HOME account only when asked for it', async () => {
+		const sessionDir = path.join(copilotWorkAccountDir, 'session-state', 'session-work');
+		await fs.mkdir(sessionDir, { recursive: true });
+		await fs.writeFile(
+			path.join(sessionDir, 'workspace.yaml'),
+			['id: session-work', 'cwd: /test/project', 'git_root: /test/project'].join('\n'),
+			'utf8'
+		);
+		await fs.writeFile(
+			path.join(sessionDir, 'events.jsonl'),
+			JSON.stringify({
+				type: 'assistant.message',
+				id: 'assistant-1',
+				timestamp: '2026-09-14T00:00:00.000Z',
+				data: { content: 'Ready', phase: 'final_answer' },
+			}),
+			'utf8'
+		);
+
+		const { CopilotSessionStorage } = await import('../../../main/storage/copilot-session-storage');
+		const storage = new CopilotSessionStorage();
+
+		// The default account has no such session, so a merged read would be a
+		// silent undercount of this user's Copilot spend.
+		expect(await storage.listSessions('/test/project')).toEqual([]);
+
+		const scoped = await storage.listSessions('/test/project', undefined, copilotWorkAccountDir);
+		expect(scoped.map((session) => session.sessionId)).toEqual(['session-work']);
 	});
 
 	it('should return local events path for getSessionPath', async () => {
