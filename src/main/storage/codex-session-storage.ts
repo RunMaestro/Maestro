@@ -46,19 +46,26 @@ const MAX_SESSION_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
  * Get Codex sessions base directory (platform-specific)
  * - Linux/macOS: ~/.codex/sessions
  * - Windows: %USERPROFILE%\.codex\sessions (Codex uses dotfile convention on all platforms)
+ *
+ * `accountDir` is the `CODEX_HOME` an agent was pointed at, not the `sessions`
+ * subdir. It is a parameter rather than a module const because Maestro sets
+ * `CODEX_HOME` per agent in `customEnvVars`, never in its own environment: the
+ * value this process would read is never the value an agent's process received.
  */
-function getCodexSessionsDir(): string {
+function getCodexSessionsDir(accountDir?: string): string {
 	// Codex CLI uses ~/.codex on all platforms (including Windows)
-	return path.join(os.homedir(), '.codex', 'sessions');
+	return path.join(accountDir || path.join(os.homedir(), '.codex'), 'sessions');
 }
-
-const CODEX_SESSIONS_DIR = getCodexSessionsDir();
 
 // Bumped to 4: Codex's `total_token_usage` is a running session total and was
 // being summed per event, so cached entries hold inflated token counts. Entries
 // are reused whenever `fileMtimeMs` still covers the file, which a parsing fix
 // does not change, so the old numbers would be served until a session is touched.
-const CODEX_SESSION_CACHE_VERSION = 4;
+//
+// Bumped to 5: pruning is now scoped to the account dir that was walked, so
+// entries left behind by an account dir that no longer exists are unreachable.
+// One clean slate here retires the ones that predate the scoped prune.
+const CODEX_SESSION_CACHE_VERSION = 5;
 const CODEX_SESSION_CACHE_FILENAME = 'codex-sessions-cache.json';
 
 /**
@@ -485,10 +492,11 @@ export class CodexSessionStorage extends BaseSessionStorage {
 	readonly agentId: ToolType = 'codex';
 
 	/**
-	 * Get the Codex sessions directory path
+	 * Get the Codex sessions directory path for an account (`CODEX_HOME`), or
+	 * the default account when `accountDir` is undefined.
 	 */
-	private getSessionsDir(): string {
-		return CODEX_SESSIONS_DIR;
+	private getSessionsDir(accountDir?: string): string {
+		return getCodexSessionsDir(accountDir);
 	}
 
 	/**
@@ -502,8 +510,10 @@ export class CodexSessionStorage extends BaseSessionStorage {
 	/**
 	 * Find all session files, organized by date directories
 	 */
-	private async findAllSessionFiles(): Promise<Array<{ filePath: string; filename: string }>> {
-		const sessionsDir = this.getSessionsDir();
+	private async findAllSessionFiles(
+		accountDir?: string
+	): Promise<Array<{ filePath: string; filename: string }>> {
+		const sessionsDir = this.getSessionsDir(accountDir);
 		const sessionFiles: Array<{ filePath: string; filename: string }> = [];
 
 		try {
@@ -825,15 +835,23 @@ export class CodexSessionStorage extends BaseSessionStorage {
 		}
 	}
 
+	/**
+	 * List sessions for a project.
+	 *
+	 * `accountDir` selects which `CODEX_HOME` account's rollouts to read;
+	 * undefined reads the default account. See {@link AgentSessionStorage}.
+	 */
 	async listSessions(
 		projectPath: string,
-		sshConfig?: SshRemoteConfig
+		sshConfig?: SshRemoteConfig,
+		accountDir?: string
 	): Promise<AgentSessionInfo[]> {
 		// Use SSH remote access if config provided
 		if (sshConfig) {
 			return this.listSessionsRemote(projectPath, sshConfig);
 		}
-		const allSessionFiles = await this.findAllSessionFiles();
+		const sessionsDir = this.getSessionsDir(accountDir);
+		const allSessionFiles = await this.findAllSessionFiles(accountDir);
 
 		const cache = (await loadCodexSessionCache()) || {
 			version: CODEX_SESSION_CACHE_VERSION,
@@ -885,7 +903,20 @@ export class CodexSessionStorage extends BaseSessionStorage {
 			}
 		}
 
+		// Prune only entries under the account we just walked. Cache keys are
+		// absolute rollout paths, so two accounts never collide, but a blind
+		// prune would delete the OTHER account's entries on every pass: with
+		// multiple accounts the two calls would take turns evicting each other
+		// and every dashboard refresh would reparse every transcript.
+		// Entries under an account dir the user has since deleted are no longer
+		// reachable by any prefix, so they survive until the cache version is
+		// bumped. They are a handful of stale records, not stale numbers: every
+		// session served to a caller comes from the account it just walked.
+		const accountPrefix = sessionsDir.endsWith(path.sep)
+			? sessionsDir
+			: `${sessionsDir}${path.sep}`;
 		for (const cachedPath of Object.keys(cache.sessions)) {
+			if (!cachedPath.startsWith(accountPrefix)) continue;
 			if (!currentFilePaths.has(cachedPath)) {
 				delete cache.sessions[cachedPath];
 				cacheUpdated = true;
