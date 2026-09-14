@@ -557,9 +557,9 @@ export class TuiDriver extends EventEmitter {
 	}
 
 	// Last `maxBytes` of the ANSI-stripped rolling screen buffer. Used by the
-	// run-mode flow to dump what was on screen at a first_byte_timeout (an
-	// MCP-connecting banner, a modal, or un-submitted prompt text) so the
-	// failure is diagnosable from stderr alone.
+	// run-mode flow to dump what was on screen at a first_byte_timeout or an
+	// idle timeout (an MCP-connecting banner, a permission prompt, a modal, or
+	// un-submitted prompt text) so the failure is diagnosable from stderr alone.
 	getScreenTail(maxBytes = 2048): string {
 		return this.rollingBuffer.slice(-maxBytes);
 	}

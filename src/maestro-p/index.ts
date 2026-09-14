@@ -29,6 +29,7 @@ import { extractExitPlanText } from './plan-mode';
 import { checkPromptEcho, isPromptEchoVerifiable, promptEchoText } from './prompt-echo';
 import { discoverSessionId, cwdSlug } from './session-watcher';
 import { cleanupStreamJsonImages, translateStreamJsonInput } from './stream-json-input';
+import { formatScreenTailReport, idleTimeoutMessage } from './timeout-report';
 import { TuiDriver } from './tui-driver';
 import { parseUsage } from './usage-parser';
 import { VERSION } from './package-info';
@@ -590,10 +591,11 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		// Dump the last screenful so the failure is diagnosable from stderr
 		// alone: an MCP-connecting banner, a blocking modal, or un-submitted
 		// prompt text each point at a different remaining fix.
-		const screenTail = driver.getScreenTail();
 		process.stderr.write(
-			`maestro-p: no transcript output within ${args.firstByteTimeoutSeconds}s of sending the prompt - claude never started the turn (prompt may have been swallowed by a startup modal). Failing with first_byte_timeout.\n` +
-				`maestro-p: last screen at timeout (ANSI-stripped tail):\n${screenTail}\n`
+			formatScreenTailReport(
+				`no transcript output within ${args.firstByteTimeoutSeconds}s of sending the prompt - claude never started the turn (prompt may have been swallowed by a startup modal). Failing with first_byte_timeout.`,
+				driver.getScreenTail()
+			)
 		);
 		finalize({ isError: true, error: 'first_byte_timeout', exitCode: 5 });
 	}, firstByteTimeoutMs);
@@ -652,8 +654,10 @@ async function runMode(args: ParsedArgs): Promise<never> {
 			// bubble to main()'s catch (a bare exit 1 with no result envelope).
 			if (!finalized) {
 				process.stderr.write(
-					`maestro-p: session discovery failed: ${err instanceof Error ? err.message : String(err)}\n` +
-						`maestro-p: last screen at timeout (ANSI-stripped tail):\n${driver.getScreenTail()}\n`
+					formatScreenTailReport(
+						`session discovery failed: ${err instanceof Error ? err.message : String(err)}`,
+						driver.getScreenTail()
+					)
 				);
 				finalize({ isError: true, error: 'first_byte_timeout', exitCode: 5 });
 			}
@@ -676,6 +680,16 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		if (finalized || !tailer) return;
 		const idleMs = Date.now() - tailer.getLastByteAt();
 		if (idleMs > args.maxWaitSeconds * 1000) {
+			// Dump the screen before finalize() quits the TUI: a turn that goes
+			// silent mid-turn is parked on something (a permission prompt, a
+			// modal, a hung tool or API call), and the screen is the only record
+			// of which one.
+			process.stderr.write(
+				formatScreenTailReport(
+					idleTimeoutMessage(idleMs, args.maxWaitSeconds),
+					driver.getScreenTail()
+				)
+			);
 			finalize({ isError: true, error: 'timeout', exitCode: 3 });
 		}
 	}, WATCHDOG_INTERVAL_MS);
