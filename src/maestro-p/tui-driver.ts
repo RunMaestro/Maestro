@@ -16,6 +16,8 @@
 //   3. Surface every ANSI-stripped completed line via 'line' for the
 //      --status mode /usage panel capture. Run mode ignores 'line' events
 //      entirely.
+//   4. Report 'api-billing' when the startup header says claude came up on
+//      API Usage Billing instead of a subscription plan (see billing-mode.ts).
 //
 // Explicitly NOT implemented: spinner regexes, completion-via-spinner-stop,
 // 'ready' re-firing after each response. Completion in run mode is the
@@ -26,6 +28,7 @@ import * as pty from 'node-pty';
 import type { IDisposable, IPty } from 'node-pty';
 
 import { stripAnsiCodes } from '../shared/stringUtils';
+import { showsApiUsageBilling } from './billing-mode';
 
 export interface TuiDriverOptions {
 	binPath: string;
@@ -254,6 +257,7 @@ export type TuiDriverEvent =
 	| 'ready'
 	| 'ready-timeout'
 	| 'limit-hit'
+	| 'api-billing'
 	| 'line'
 	| 'exit'
 	| 'trust-accepted'
@@ -273,6 +277,9 @@ export class TuiDriver extends EventEmitter {
 	private lastDataAt = 0;
 	private readyEmitted = false;
 	private limitEmitted = false;
+	private apiBillingEmitted = false;
+	/** Set once send() starts typing; the billing check reads the screen only before that. */
+	private inputTyped = false;
 	private trustHandled = false;
 	private bypassHandled = false;
 	/** Trust-prompt selection in progress (acceptWorkspaceTrust only). */
@@ -509,6 +516,7 @@ export class TuiDriver extends EventEmitter {
 		// its UI right after `ready` gets discarded.
 		await this.waitForQuietScreen();
 		if (this.exited) return;
+		this.inputTyped = true;
 		// Writes are split, never one chunk. See PROMPT_CHUNK_MAX_BYTES for why
 		// the body is typed in paced pieces. See SEND_ENTER_DELAY_MS for why the
 		// Enter cannot ride in the same write as the text body. See
@@ -631,6 +639,13 @@ export class TuiDriver extends EventEmitter {
 		this.rollingBuffer += stripped;
 		if (this.rollingBuffer.length > ROLLING_BUFFER_CAP) {
 			this.rollingBuffer = this.rollingBuffer.slice(-ROLLING_BUFFER_CAP);
+		}
+		// Billing mode is read off the startup header only. Once input is typed the
+		// screen carries the prompt and then the reply, and either can quote the
+		// header text.
+		if (!this.apiBillingEmitted && !this.inputTyped && showsApiUsageBilling(this.rollingBuffer)) {
+			this.apiBillingEmitted = true;
+			this.emit('api-billing');
 		}
 		// Trust-prompt auto-accept is a fast-path optimization: when the
 		// current wording matches, we send Enter immediately rather than

@@ -23,6 +23,8 @@ import * as os from 'os';
 import * as path from 'path';
 
 import { parseArgs, type ParsedArgs } from './args';
+import { diagnoseApiUsageBilling } from './billing-mode';
+import { buildChildEnv } from './child-env';
 import { JsonEmitter, type EmitResultOptions } from './json-emitter';
 import { JsonlTailer, type ParseErrorPayload } from './jsonl-tailer';
 import { extractExitPlanText } from './plan-mode';
@@ -119,40 +121,6 @@ function resolveBinPath(): string {
 		return envBin;
 	}
 	return 'claude';
-}
-
-// Env vars that mark the CURRENT process as running inside a Claude Code
-// session. When maestro-p is invoked from within a Claude agent (or any
-// process that inherited these), they leak into the claude TUI we spawn and
-// make that child claude believe it is a NESTED/child session: it then runs in
-// an ephemeral mode and never writes its own `<session-id>.jsonl` transcript.
-// Since the JSONL is maestro-p's only source of truth, the run produces no
-// `assistant`/`result` envelopes and times out with `first_byte_timeout` even
-// though the answer rendered on screen - the "synopsis/tab-naming returns
-// empty in TUI mode" bug. Verified by A/B: keeping CLAUDE_CODE_SESSION_ID /
-// CLAUDE_CODE_CHILD_SESSION reproduces the empty-result timeout; stripping both
-// makes the TUI write its transcript and the run succeed. We strip the whole
-// CLAUDE_CODE_* identity family plus the CLAUDECODE marker defensively; auth
-// and config (CLAUDE_CONFIG_DIR, ANTHROPIC_*, MAESTRO_CLAUDE_BIN) are kept.
-const CLAUDE_SESSION_IDENTITY_ENV_VARS = [
-	'CLAUDECODE',
-	'CLAUDE_CODE_SESSION_ID',
-	'CLAUDE_CODE_CHILD_SESSION',
-	'CLAUDE_CODE_ENTRYPOINT',
-] as const;
-
-/**
- * Return a copy of `process.env` with the Claude session-identity markers
- * removed, so the claude TUI maestro-p drives starts as a clean top-level
- * session that persists its own JSONL transcript. See
- * {@link CLAUDE_SESSION_IDENTITY_ENV_VARS} for the why.
- */
-function sanitizeChildEnv(): NodeJS.ProcessEnv {
-	const env: NodeJS.ProcessEnv = { ...process.env };
-	for (const key of CLAUDE_SESSION_IDENTITY_ENV_VARS) {
-		delete env[key];
-	}
-	return env;
 }
 
 function waitForEvent(emitter: EventEmitter, event: string): Promise<void> {
@@ -266,11 +234,23 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		passThroughArgs.push('--session-id', freshSessionId);
 	}
 
+	const childEnv = buildChildEnv();
 	const driver = new TuiDriver({
 		binPath,
 		args: passThroughArgs,
 		cwd,
-		env: sanitizeChildEnv(),
+		env: childEnv,
+	});
+
+	// A turn on API Usage Billing still completes, so nothing downstream would
+	// ever notice it billed per-token credit instead of plan quota. Say so on
+	// stderr, unless the environment asked for API billing on purpose.
+	driver.on('api-billing', () => {
+		const diagnosis = diagnoseApiUsageBilling(childEnv, configDir);
+		if (diagnosis.expected) return;
+		process.stderr.write(
+			`maestro-p: warning: ${diagnosis.reason} This turn is billed as per-token API credit, not plan quota.\n`
+		);
 	});
 
 	if (args.streamThinking) {
@@ -690,11 +670,12 @@ async function statusMode(args: ParsedArgs): Promise<never> {
 	const configDir = resolveConfigDir();
 	const binPath = resolveBinPath();
 
+	const childEnv = buildChildEnv();
 	const driver = new TuiDriver({
 		binPath,
 		args: args.passThroughArgs,
 		cwd,
-		env: sanitizeChildEnv(),
+		env: childEnv,
 		// Parse the /usage panel from the full raw screen, not the `\n`-delimited
 		// 'line' events: heavier panels paint via cursor-addressing with no line
 		// feeds, so the 'line' stream is empty and the content would be lost.
@@ -714,6 +695,14 @@ async function statusMode(args: ParsedArgs): Promise<never> {
 		if (args.streamThinking) {
 			process.stderr.write(`${line}\n`);
 		}
+	});
+
+	// On API Usage Billing the /usage panel has no plan windows, so the parse
+	// below fails. Remember why, so the failure names the billing mode rather
+	// than blaming the parser.
+	let apiBilling = false;
+	driver.on('api-billing', () => {
+		apiBilling = true;
 	});
 
 	let statusFinalized = false;
@@ -777,7 +766,12 @@ async function statusMode(args: ParsedArgs): Promise<never> {
 		process.exit(0);
 	}
 
-	process.stderr.write('maestro-p: failed to parse /usage output\n');
+	if (apiBilling) {
+		const { reason } = diagnoseApiUsageBilling(childEnv, configDir);
+		process.stderr.write(`maestro-p: ${reason} There is no plan usage to report.\n`);
+	} else {
+		process.stderr.write('maestro-p: failed to parse /usage output\n');
+	}
 	await driver.quit();
 	process.exit(1);
 }

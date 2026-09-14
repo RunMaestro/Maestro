@@ -642,6 +642,62 @@ describe('TuiDriver', () => {
 		});
 	});
 
+	// #1577: claude falls back to API Usage Billing without an error when it
+	// cannot read the subscription login, and the startup header is the only
+	// place that says so.
+	describe("'api-billing' event", () => {
+		it('fires when the startup header shows API Usage Billing', async () => {
+			const driver = await makeDriver();
+			const handler = vi.fn();
+			driver.on('api-billing', handler);
+			feed('\x1b[1mFable 5.1\x1b[0m · API Usage Billing\r\n');
+			expect(handler).toHaveBeenCalledTimes(1);
+		});
+
+		it('matches a header split across data chunks', async () => {
+			const driver = await makeDriver();
+			const handler = vi.fn();
+			driver.on('api-billing', handler);
+			feed('Fable 5.1 · API Us');
+			feed('age Billing\n');
+			expect(handler).toHaveBeenCalledTimes(1);
+		});
+
+		it('fires at most once across repaints', async () => {
+			const driver = await makeDriver();
+			const handler = vi.fn();
+			driver.on('api-billing', handler);
+			feed('Fable 5.1 · API Usage Billing\n');
+			feed('Fable 5.1 · API Usage Billing\n');
+			expect(handler).toHaveBeenCalledTimes(1);
+		});
+
+		it('does not fire for a subscription plan header', async () => {
+			const driver = await makeDriver();
+			const handler = vi.fn();
+			driver.on('api-billing', handler);
+			feed('Fable 5.1 · Claude Max\n❯ \n');
+			expect(handler).not.toHaveBeenCalled();
+		});
+
+		it('ignores the phrase once input has been typed', async () => {
+			vi.useFakeTimers();
+			try {
+				const driver = await makeDriver();
+				feed('Fable 5.1 · Claude Max\n❯ \n');
+				const handler = vi.fn();
+				driver.on('api-billing', handler);
+				const sending = driver.send('what does · API Usage Billing mean?');
+				await vi.advanceTimersByTimeAsync(PROMPT_SETTLE_QUIET_MS);
+				await sending;
+				feed('what does · API Usage Billing mean?\n');
+				expect(handler).not.toHaveBeenCalled();
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+	});
+
 	describe('chunkPromptForPty()', () => {
 		it('splits on the byte budget and reassembles to the original text', () => {
 			const text = 'a'.repeat(1100);
