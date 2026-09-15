@@ -19,6 +19,7 @@ import {
 	HelpCircle,
 	WrapText,
 	ListFilter,
+	ListTree,
 	PanelTop,
 	PanelLeft,
 	Palette,
@@ -100,6 +101,8 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 		setUserMessageAlignment,
 		fileExplorerIconTheme,
 		setFileExplorerIconTheme,
+		fileTreeBranchConnectors,
+		setFileTreeBranchConnectors,
 		showStarredInUnreadFilter,
 		setShowStarredInUnreadFilter,
 		showFilePreviewsInUnreadFilter,
@@ -336,6 +339,31 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 					Rich uses Material Icon Theme style file and folder SVGs in the Files pane. Flat uses
 					Maestro&apos;s simpler monochrome icons.
 				</p>
+			</div>
+
+			{/* Files pane tree lines (#1585) */}
+			<div data-setting-id="display-file-tree-connectors">
+				<SettingsSectionHeading icon={ListTree}>Files Pane Tree Lines</SettingsSectionHeading>
+				<div
+					className="flex items-center justify-between p-3 rounded border"
+					style={{ borderColor: theme.colors.border }}
+				>
+					<div className="pr-3">
+						<p className="text-sm" style={{ color: theme.colors.textMain }}>
+							Show branch connectors
+						</p>
+						<p className="text-xs opacity-50 mt-0.5">
+							Hang each row off its folder with an elbow connector, and stop a folder&apos;s guide
+							line at its last item. Off by default, which draws plain full-height indent guides.
+						</p>
+					</div>
+					<ToggleSwitch
+						checked={fileTreeBranchConnectors}
+						onChange={setFileTreeBranchConnectors}
+						theme={theme}
+						ariaLabel="Show file tree branch connectors"
+					/>
+				</div>
 			</div>
 
 			{/* Window Chrome Settings */}
