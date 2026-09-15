@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * CUE-HISTORY-02 task #1 - `getCueHistoryEntries()` in `cue-stats-query.ts`.
  *
