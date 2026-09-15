@@ -13,11 +13,15 @@
  * aggregated per session.
  */
 
-import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { LogIn, Settings } from 'lucide-react';
 import type { Session, Theme } from '../../types';
 import type { QueryEvent, StatsAggregation } from '../../../shared/stats-types';
 import { formatDurationHuman, formatNumber, formatRelativeTime } from '../../../shared/formatters';
 import { Modal } from '../ui/Modal';
+import { HeaderActionButton } from '../ui/HeaderActionButton';
+import { jumpToAgent, openAgentSettings } from '../../services/agentNavigation';
+import { notifyToast } from '../../stores/notificationStore';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { getAgentDisplayName } from '../../../shared/agentMetadata';
 import { computePercentiles } from '../../../shared/percentiles';
@@ -34,6 +38,13 @@ interface AgentDetailModalProps {
 	/** All visible agent sessions - used to surface worktree relationships. */
 	allSessions: Session[];
 	onClose: () => void;
+	/**
+	 * Closes the whole Usage Dashboard, not just this sub-modal. The jump and
+	 * settings actions leave the dashboard behind: the dashboard is a
+	 * full-window modal, so landing on the agent (or on the Edit Agent modal)
+	 * underneath it would look like the click did nothing.
+	 */
+	onCloseDashboard: () => void;
 }
 
 interface AutoRunSessionRow {
@@ -51,6 +62,7 @@ export const AgentDetailModal = memo(function AgentDetailModal({
 	theme,
 	allSessions,
 	onClose,
+	onCloseDashboard,
 }: AgentDetailModalProps) {
 	const [events, setEvents] = useState<QueryEvent[] | null>(null);
 	const [autoRuns, setAutoRuns] = useState<AutoRunSessionRow[] | null>(null);
@@ -147,6 +159,27 @@ export const AgentDetailModal = memo(function AgentDetailModal({
 	const isWorktree = Boolean(session.parentSessionId);
 	const headerLabel = `${session.name}${isWorktree ? ' (worktree)' : ''}`;
 
+	// Both actions dismiss the dashboard: one lands on the agent, the other on
+	// the Edit Agent modal, and neither is visible under a full-window modal.
+	const handleJump = useCallback(() => {
+		if (!jumpToAgent(session.id)) {
+			notifyToast({
+				color: 'yellow',
+				title: 'Agent not found',
+				message: `${session.name} is no longer open. Its stats are kept, but there is nothing to jump to.`,
+			});
+			return;
+		}
+		onClose();
+		onCloseDashboard();
+	}, [session.id, session.name, onClose, onCloseDashboard]);
+
+	const handleOpenSettings = useCallback(() => {
+		openAgentSettings(session);
+		onClose();
+		onCloseDashboard();
+	}, [session, onClose, onCloseDashboard]);
+
 	return (
 		<Modal
 			theme={theme}
@@ -161,6 +194,29 @@ export const AgentDetailModal = memo(function AgentDetailModal({
 			closeOnBackdropClick={true}
 			testId="agent-detail-modal"
 			contentClassName="p-6 overflow-y-auto flex-1 min-h-0"
+			headerActions={
+				<>
+					<HeaderActionButton
+						theme={theme}
+						onClick={handleJump}
+						icon={<LogIn />}
+						title={`Switch to ${session.name}`}
+						testId="agent-detail-jump"
+					>
+						Jump to Agent
+					</HeaderActionButton>
+					<HeaderActionButton
+						theme={theme}
+						onClick={handleOpenSettings}
+						variant="ghost"
+						icon={<Settings />}
+						title={`Edit ${session.name}`}
+						testId="agent-detail-settings"
+					>
+						Agent Settings
+					</HeaderActionButton>
+				</>
+			}
 		>
 			<div className="space-y-5">
 				{/* Identity row */}

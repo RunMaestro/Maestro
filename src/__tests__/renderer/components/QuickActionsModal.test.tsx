@@ -7,6 +7,7 @@ import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 import type { Session, Group, Theme, Shortcut } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { useUIStore } from '../../../renderer/stores/uiStore';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
 import { useFileExplorerStore } from '../../../renderer/stores/fileExplorerStore';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
@@ -212,6 +213,9 @@ describe('QuickActionsModal', () => {
 		useFileExplorerStore.setState({
 			fileTreeFilterOpen: false,
 		});
+		// The reveal half of a jump reads agents and groups straight from the
+		// session store (services/agentNavigation), not from props.
+		useSessionStore.setState({ sessions: [], groups: [] } as never);
 		// Reset group chat run state (drives the jumper's LIVE bucket)
 		useGroupChatStore.setState({
 			groupChatState: 'idle',
@@ -440,14 +444,12 @@ describe('QuickActionsModal', () => {
 				sessions: [session],
 				groups: [group],
 			});
+			useSessionStore.setState({ sessions: [session], groups: [group] } as never);
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Jump to: Test Session'));
 
-			expect(props.setGroups).toHaveBeenCalled();
-			const setGroupsFn = props.setGroups.mock.calls[0][0];
-			const result = setGroupsFn([group]);
-			expect(result[0].collapsed).toBe(false);
+			expect(useSessionStore.getState().groups[0].collapsed).toBe(false);
 		});
 
 		describe('bookmarked-agent jump routing', () => {
@@ -457,13 +459,15 @@ describe('QuickActionsModal', () => {
 				const session = createMockSession({ groupId: 'group-1', bookmarked: true });
 				const group = createMockGroup({ collapsed: true });
 				const props = createDefaultProps({ sessions: [session], groups: [group] });
+				useSessionStore.setState({ sessions: [session], groups: [group] } as never);
 				render(<QuickActionsModal {...props} />);
 
 				fireEvent.click(screen.getByText('Jump to: Test Session'));
 
 				expect(props.setActiveSessionId).toHaveBeenCalledWith('session-1');
 				expect(useUIStore.getState().bookmarksCollapsed).toBe(false);
-				expect(props.setGroups).not.toHaveBeenCalled();
+				// The group stays collapsed - the bookmark row is the lighter reveal.
+				expect(useSessionStore.getState().groups[0].collapsed).toBe(true);
 			});
 
 			it('leaves bookmarks collapsed when the parent group is already expanded', () => {
@@ -472,13 +476,14 @@ describe('QuickActionsModal', () => {
 				const session = createMockSession({ groupId: 'group-1', bookmarked: true });
 				const group = createMockGroup({ collapsed: false });
 				const props = createDefaultProps({ sessions: [session], groups: [group] });
+				useSessionStore.setState({ sessions: [session], groups: [group] } as never);
 				render(<QuickActionsModal {...props} />);
 
 				fireEvent.click(screen.getByText('Jump to: Test Session'));
 
 				expect(props.setActiveSessionId).toHaveBeenCalledWith('session-1');
 				expect(useUIStore.getState().bookmarksCollapsed).toBe(true);
-				expect(props.setGroups).not.toHaveBeenCalled();
+				expect(useSessionStore.getState().groups[0].collapsed).toBe(false);
 			});
 
 			it('does nothing extra when bookmarks section is already expanded', () => {
@@ -487,13 +492,15 @@ describe('QuickActionsModal', () => {
 				const session = createMockSession({ groupId: 'group-1', bookmarked: true });
 				const group = createMockGroup({ collapsed: true });
 				const props = createDefaultProps({ sessions: [session], groups: [group] });
+				useSessionStore.setState({ sessions: [session], groups: [group] } as never);
 				render(<QuickActionsModal {...props} />);
 
 				fireEvent.click(screen.getByText('Jump to: Test Session'));
 
 				expect(props.setActiveSessionId).toHaveBeenCalledWith('session-1');
 				expect(useUIStore.getState().bookmarksCollapsed).toBe(false);
-				expect(props.setGroups).not.toHaveBeenCalled();
+				// The group stays collapsed - the bookmark row is the lighter reveal.
+				expect(useSessionStore.getState().groups[0].collapsed).toBe(true);
 			});
 		});
 

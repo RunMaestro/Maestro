@@ -21,33 +21,22 @@
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 		<title>Maestro - Agent Orchestration Command Center</title>
 
-		<!-- JetBrains Mono, bundled on disk. This used to be a pair of <link>s to
-		     fonts.googleapis.com, which had two problems that both showed up as the
-		     app changing font while it started:
-
-		       1. Google's css2 endpoint serves `font-display: swap`, which is an
-		          explicit instruction to paint the fallback FIRST and reflow when the
-		          woff2 lands. On a cold start the splash rendered in Courier New.
-		       2. The old `rel="preload" as="style"` only fetched the STYLESHEET. The
-		          woff2 URL is not known until that CSS parses, so the font itself was
-		          still discovered late - the preload bought nothing despite the
-		          comment claiming it prevented FOUT.
-
-		     Offline, the font never arrived at all and the splash stayed in Courier
-		     New permanently. A desktop app should not need the network to draw its
-		     own logo. The preload below is `as="font"` on the real file, so the latin
-		     subset is in flight alongside the stylesheet rather than after it;
-		     `crossorigin` is required even same-origin because font fetches are
-		     always CORS-mode. Both `style-src` and `font-src` are back to bare
-		     'self' - do not re-add the Google hosts. -->
+		<!-- Fonts are bundled with the app (see scripts/fetch-webfonts.mjs) and
+		     declared by generated-fonts.css, which index.css imports. There is
+		     deliberately no Google Fonts link here any more: a CDN font is a
+		     network round trip on every launch, it fails offline, and it told
+		     Google each time someone opened the app. -->
+		<!-- Preload the latin subset as a FONT, not as a stylesheet: the woff2 is
+		     then in flight immediately rather than waiting for generated-fonts.css
+		     to parse and reveal its URL. `crossorigin` is required even same-origin,
+		     because font fetches are always CORS-mode. -->
 		<link
 			rel="preload"
-			href="./fonts/jetbrains-mono-latin.woff2"
+			href="./fonts/jetbrains-mono-latin-400_700-1.woff2"
 			as="font"
 			type="font/woff2"
 			crossorigin
 		/>
-		<link rel="stylesheet" href="./fonts/jetbrains-mono.css" />
 
 		<!-- Critical CSS for splash screen - inline to prevent FOUC -->
 		<style>
@@ -114,7 +103,7 @@
 				object-fit: cover;
 			}
 
-			/* MAESTRO_WORDMARK_FONT_STACK (src/shared/fontStacks.ts). The wordmark is
+			/* WORDMARK_FONT_STACK (src/shared/fontStack.ts). The wordmark is
 			   a logo, so it is pinned here and in SessionList's <h1> and never
 			   follows the user's fontFamily setting. */
 			.splash-title {

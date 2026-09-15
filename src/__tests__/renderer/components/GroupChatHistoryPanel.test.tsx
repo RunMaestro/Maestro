@@ -16,7 +16,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { GroupChatHistoryPanel } from '../../../renderer/components/GroupChatHistoryPanel';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
@@ -764,6 +764,9 @@ describe('GroupChatHistoryPanel', () => {
 		beforeEach(() => {
 			installLocalStorageMock();
 			useGroupChatStore.setState({ groupChatViewPrefs: {} });
+			// Back to "nothing saved" so a lookback stub from one test cannot
+			// answer another test's read.
+			vi.mocked(window.maestro.settings.get).mockResolvedValue(undefined);
 		});
 
 		it('swaps the pills when the chat changes, without a remount', () => {
@@ -796,6 +799,55 @@ describe('GroupChatHistoryPanel', () => {
 			// Only 'user' is lit, so a response entry is filtered out immediately,
 			// with no click in this session.
 			expect(screen.getByText('No entries match the selected filters.')).toBeInTheDocument();
+		});
+
+		it('does not carry one chat lookback over to a chat that has none', async () => {
+			// 1 hour is not a selectable option, and an unrecognised value renders
+			// as the 24h default, so chat A uses a real option (1 week) for the
+			// assertion to mean anything.
+			vi.mocked(window.maestro.settings.get).mockImplementation(async (key: string) =>
+				key === 'groupChatHistoryLookback:chat-a' ? 168 : undefined
+			);
+
+			const { rerender } = render(<GroupChatHistoryPanel {...defaultProps} groupChatId="chat-a" />);
+			await waitFor(() => expect(screen.getByTitle(/1 week/i)).toBeInTheDocument());
+
+			// chat-b saved nothing, so it must fall back to 24h rather than keep
+			// showing chat-a's window.
+			rerender(<GroupChatHistoryPanel {...defaultProps} groupChatId="chat-b" />);
+			await waitFor(() => expect(screen.getByTitle(/24 hours/i)).toBeInTheDocument());
+
+			// chat-a still has its own.
+			rerender(<GroupChatHistoryPanel {...defaultProps} groupChatId="chat-a" />);
+			await waitFor(() => expect(screen.getByTitle(/1 week/i)).toBeInTheDocument());
+		});
+
+		it('ignores a lookback read that lands after the chat changed again', async () => {
+			// The slow read belongs to chat-a. It resolves only after the panel has
+			// already moved to chat-b, and must not repaint chat-b with it.
+			let releaseSlowRead: (value: unknown) => void = () => {};
+			vi.mocked(window.maestro.settings.get).mockImplementation((key: string) => {
+				if (key === 'groupChatHistoryLookback:chat-a') {
+					return new Promise((resolve) => {
+						releaseSlowRead = resolve;
+					});
+				}
+				return Promise.resolve(undefined);
+			});
+
+			const { rerender } = render(<GroupChatHistoryPanel {...defaultProps} groupChatId="chat-a" />);
+			rerender(<GroupChatHistoryPanel {...defaultProps} groupChatId="chat-b" />);
+
+			// Let the late resolution and every microtask behind it run to
+			// completion, then assert directly. A waitFor here would poll once
+			// before the value landed and pass even without the fix.
+			await act(async () => {
+				releaseSlowRead(168);
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+
+			expect(screen.getByTitle(/24 hours/i)).toBeInTheDocument();
 		});
 
 		it('writes the chat id it was given, not the previously active one', () => {

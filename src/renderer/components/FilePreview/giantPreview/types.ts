@@ -45,4 +45,12 @@ export interface GiantPreviewProps {
 	filePath?: string;
 	/** Reader font zoom (1 = unzoomed), applied to the CM6 theme. */
 	fontScale?: number;
+	/**
+	 * Resolved File Preview font. CM6 owns `.cm-scroller`'s font, so unlike the
+	 * prose tiers this tier cannot inherit it from the pane. Undefined keeps the
+	 * built-in monospace stack.
+	 */
+	fontFamily?: string;
+	/** File Preview size setting in px, before the pane's own zoom. */
+	baseFontPx?: number;
 }

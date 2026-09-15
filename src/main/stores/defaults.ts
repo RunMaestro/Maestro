@@ -7,7 +7,7 @@
 
 import path from 'path';
 import { isWindows } from '../../shared/platformDetection';
-import { MAESTRO_FONT_STACK } from '../../shared/fontStacks';
+import { MAESTRO_FONT_STACK } from '../../shared/fontStack';
 import { DEFAULT_CUE_HISTORY_RETENTION_DAYS } from '../../shared/cue/retention';
 
 import type {
@@ -79,6 +79,23 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	shortcuts: {},
 	fontSize: 14,
 	fontFamily: MAESTRO_FONT_STACK,
+	terminalFontFamily: '',
+	chatFontFamily: '',
+	filePreviewFontFamily: '',
+	fileEditorFontFamily: '',
+	documentGraphFontFamily: '',
+	chatFontSize: 0,
+	terminalFontSize: 0,
+	filePreviewFontSize: 0,
+	fileEditorFontSize: 0,
+	documentGraphFontSize: 0,
+	fontZoom: 1,
+	typographySnapshot: null,
+	typographyPromptSeen: false,
+	themePromptSeen: false,
+	updatesPromptSeen: false,
+	agentPowersPromptSeen: false,
+	hasPriorInstallation: false,
 	customFonts: [],
 	mediaPlaybackRate: 1,
 	mediaPlayerFloatRect: null,

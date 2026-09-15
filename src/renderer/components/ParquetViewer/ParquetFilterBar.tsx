@@ -184,7 +184,7 @@ export const ParquetFilterBar = forwardRef<ParquetFilterBarHandle, ParquetFilter
 							className="w-full bg-transparent outline-none text-xs"
 							style={{
 								color: theme.colors.textMain,
-								fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+								fontFamily: 'var(--maestro-font-mono, ui-monospace, SFMono-Regular, monospace)',
 								textDecoration: problem ? 'underline wavy' : 'none',
 								textDecorationColor: problem ? theme.colors.error : undefined,
 								textUnderlineOffset: '3px',

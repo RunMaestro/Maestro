@@ -14,6 +14,7 @@ import { BrowserTabView, type BrowserTabViewHandle } from './BrowserTabView';
 import { useBrowserTabMounting } from '../../hooks/browser/useBrowserTabMounting';
 import { useUIStore } from '../../stores/uiStore';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { useSurfaceTypography } from '../../hooks/ui/useSurfaceTypography';
 import { useTabStore } from '../../stores/tabStore';
 import { useLayerStack } from '../../contexts/LayerStackContext';
 import { outputSearchKeyFor } from '../../utils/outputSearch';
@@ -429,9 +430,15 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		onEffortChange,
 	} = props;
 
-	// Self-sourced from settingsStore
-	const fontFamily = useSettingsStore((s) => s.fontFamily);
-	const fontSize = useSettingsStore((s) => s.fontSize);
+	// Chat and terminal each carry their own font and size; an unset value means
+	// "inherit the interface setting". Resolved through useSurfaceTypography so
+	// these agree with the CSS custom properties the rest of the app reads -
+	// xterm paints to a canvas and cannot use a CSS variable.
+	const chat = useSurfaceTypography('chat');
+	const chatFontFamily = chat.fontFamily;
+	const terminal = useSurfaceTypography('terminal');
+	const terminalFontFamily = terminal.fontFamily;
+	const terminalFontSize = terminal.fontSize;
 	const enterToSendAI = useSettingsStore((s) => s.enterToSendAI);
 	const chatRawTextMode = useSettingsStore((s) => s.chatRawTextMode);
 	const userMessageAlignment = useSettingsStore((s) => s.userMessageAlignment);
@@ -649,7 +656,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 								ref={terminalOutputRef}
 								session={activeSession}
 								theme={theme}
-								fontFamily={fontFamily}
+								fontFamily={chatFontFamily}
 								activeFocus={activeFocus}
 								outputSearchOpen={outputSearchOpen}
 								outputSearchQuery={outputSearchQuery}
@@ -846,8 +853,12 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 							}}
 							session={session}
 							theme={theme}
-							fontFamily={fontFamily}
-							fontSize={Math.round(fontSize * 0.85)}
+							fontFamily={terminalFontFamily}
+							// The terminal's own resolved size. This used to be a
+							// hard-coded 0.85 of the interface size, which is exactly
+							// the per-surface ratio the terminal size setting now
+							// expresses explicitly and lets the user change.
+							fontSize={terminalFontSize}
 							onTabStateChange={createTabStateChangeHandler(sessionId)}
 							onTabPidChange={createTabPidChangeHandler(sessionId)}
 							searchOpen={isCurrentSession ? terminalSearchOpen : false}

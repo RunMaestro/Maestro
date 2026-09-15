@@ -17,6 +17,7 @@ import { withIpcErrorLogging, type CreateHandlerOptions } from '../../utils/ipcH
 import { getCueStatsAggregation } from '../../cue/stats/cue-stats-query';
 import { getHistoricalConductorCreditMs } from '../../cue/cue-db';
 import type { CueStatsAggregation, CueStatsTimeRange } from '../../../shared/cue-stats-types';
+import { resolveEncoreFeatures } from '../../../shared/encoreFeatures';
 import type { CueEngine } from '../../cue/cue-engine';
 
 const LOG_CONTEXT = '[CueStats]';
@@ -76,12 +77,13 @@ function buildSubscriptionToPipelineMap(
 
 /**
  * Returns true only when BOTH `encoreFeatures.usageStats` and
- * `encoreFeatures.maestroCue` are explicitly enabled. Reads on every call so
+ * `encoreFeatures.maestroCue` are enabled (their default, unless the user
+ * turned one off). Reads on every call so
  * the renderer sees toggle changes without an app restart.
  */
 function isCueStatsEnabled(settingsStore: { get: (key: string) => unknown }): boolean {
-	const ef = (settingsStore.get('encoreFeatures') ?? {}) as Record<string, unknown>;
-	return ef.usageStats === true && ef.maestroCue === true;
+	const ef = resolveEncoreFeatures(settingsStore.get('encoreFeatures'));
+	return ef.usageStats && ef.maestroCue;
 }
 
 /**

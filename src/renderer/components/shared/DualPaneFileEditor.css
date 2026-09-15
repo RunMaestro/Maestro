@@ -224,8 +224,8 @@
 	padding: 12px;
 	border: 1px solid;
 	border-radius: 4px;
-	font-family: Monaco, Menlo, Consolas, monospace;
-	font-size: 12px;
+	font-family: var(--maestro-font-file-editor, Monaco, Menlo, Consolas, monospace);
+	font-size: var(--maestro-size-file-editor, 12px);
 	line-height: 1.5;
 	resize: none;
 	min-height: 0;

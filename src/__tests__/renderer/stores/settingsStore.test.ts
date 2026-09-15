@@ -8,7 +8,7 @@ import {
 } from '../../../renderer/stores/settingsStore';
 import type { SettingsStoreState } from '../../../renderer/stores/settingsStore';
 import { SETTINGS_METADATA } from '../../../shared/settingsMetadata';
-import { MAESTRO_FONT_STACK } from '../../../shared/fontStacks';
+import { MAESTRO_FONT_STACK } from '../../../shared/fontStack';
 import { DEFAULT_CUE_HISTORY_RETENTION_DAYS } from '../../../shared/cue/retention';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useNotificationStore } from '../../../renderer/stores/notificationStore';

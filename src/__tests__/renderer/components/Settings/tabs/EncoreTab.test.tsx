@@ -202,9 +202,7 @@ describe('EncoreTab', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			expect(
-				screen.getByText(/Optional features that extend Maestro's capabilities/)
-			).toBeInTheDocument();
+			expect(screen.getByText(/Features that extend Maestro's capabilities/)).toBeInTheDocument();
 			expect(screen.getByText(/Disabled features are completely hidden/)).toBeInTheDocument();
 		});
 

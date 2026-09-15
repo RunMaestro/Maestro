@@ -39,6 +39,9 @@ const LOOKBACK_OPTIONS: LookbackPeriod[] = [
 	{ label: 'All time', hours: null, bucketCount: 24 },
 ];
 
+/** What a chat shows before, or without, a saved lookback of its own. */
+const DEFAULT_LOOKBACK_HOURS = 24;
+
 interface GroupChatActivityGraphProps {
 	entries: GroupChatHistoryEntry[];
 	theme: Theme;
@@ -511,7 +514,7 @@ export function GroupChatHistoryPanel({
 	participantColors,
 	onJumpToMessage,
 }: GroupChatHistoryPanelProps): JSX.Element {
-	const [lookbackHours, setLookbackHours] = useState<number | null>(24);
+	const [lookbackHours, setLookbackHours] = useState<number | null>(DEFAULT_LOOKBACK_HOURS);
 	const [searchFilter, setSearchFilter] = useState('');
 	const [activeFilters, setActiveFilters] = useState<Set<GroupChatHistoryEntryType>>(() =>
 		savedFiltersFor(groupChatId)
@@ -542,16 +545,33 @@ export function GroupChatHistoryPanel({
 		setActiveFilters(savedFiltersFor(groupChatId));
 	}, [groupChatId]);
 
-	// Load lookback preference
+	// Load this chat's lookback, after resetting to the default.
+	//
+	// Two separate ways the previous room's window used to leak into the next
+	// one, both invisible until you switch chats:
+	//
+	//  - the loader only wrote when a value existed, so a chat that had never
+	//    saved one simply kept whatever the last chat was showing, and the graph
+	//    silently covered a span the user never chose for it;
+	//  - the read is async, so switching twice quickly could let the FIRST
+	//    chat's value land after the second had already been drawn.
+	//
+	// Resetting first fixes the former; the cancelled flag fixes the latter.
 	useEffect(() => {
+		let cancelled = false;
+		setLookbackHours(DEFAULT_LOOKBACK_HOURS);
+
 		const loadLookbackPreference = async () => {
 			const settingsKey = `groupChatHistoryLookback:${groupChatId}`;
 			const saved = await window.maestro.settings.get(settingsKey);
-			if (saved !== undefined) {
-				setLookbackHours(saved as number | null);
-			}
+			if (cancelled || saved === undefined) return;
+			setLookbackHours(saved as number | null);
 		};
 		loadLookbackPreference();
+
+		return () => {
+			cancelled = true;
+		};
 	}, [groupChatId]);
 
 	// Handler to update lookback and persist

@@ -414,8 +414,6 @@ function MaestroConsoleInner() {
 	const settings = useSettings();
 	const {
 		conductorProfile,
-		fontFamily,
-		fontSize,
 		activeThemeId,
 		customThemeColors,
 		enterToSendAI,
@@ -2900,8 +2898,8 @@ function MaestroConsoleInner() {
 				style={{
 					backgroundColor: theme.colors.bgMain,
 					color: theme.colors.textMain,
-					fontFamily: fontFamily,
-					fontSize: `${fontSize}px`,
+					fontFamily: 'var(--maestro-font-interface, ui-monospace, Menlo, monospace)',
+					fontSize: 'var(--maestro-size-interface, 14px)',
 				}}
 			>
 				{/* External file drops are handled per-region, not globally: the main

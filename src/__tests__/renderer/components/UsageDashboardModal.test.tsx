@@ -270,14 +270,17 @@ describe('UsageDashboardModal', () => {
 
 			await waitFor(() => {
 				// Use getAllByRole('tab') to find tabs - there may be multiple elements with text 'Agents'
+				// Cue ships on, so its tab sits between Auto Run and Shortcuts.
 				const tabs = screen.getAllByRole('tab');
-				expect(tabs).toHaveLength(7);
+				expect(tabs).toHaveLength(8);
 				expect(tabs[0]).toHaveTextContent('Overview');
 				expect(tabs[1]).toHaveTextContent('Agent Overview');
 				expect(tabs[2]).toHaveTextContent('Agents');
 				expect(tabs[3]).toHaveTextContent('Groups');
 				expect(tabs[4]).toHaveTextContent('Activity');
 				expect(tabs[5]).toHaveTextContent('Auto Run');
+				expect(tabs[6]).toHaveTextContent('Cue');
+				expect(tabs[7]).toHaveTextContent('Shortcuts');
 			});
 		});
 
@@ -1625,7 +1628,7 @@ describe('UsageDashboardModal', () => {
 
 			await waitFor(() => {
 				const tabs = screen.getAllByRole('tab');
-				expect(tabs).toHaveLength(7);
+				expect(tabs).toHaveLength(8);
 
 				// First tab (Overview) should be selected
 				expect(tabs[0]).toHaveAttribute('aria-selected', 'true');

@@ -442,7 +442,7 @@ Then add the ID to `ThemeId` type in `src/shared/theme-types.ts` and to the `isV
 
 ## Encore Features (Feature Gating)
 
-Encore Features is Maestro's system for optional, user-toggled features. It serves as a precursor to a full plugin marketplace - features that are powerful but not essential for every user can be shipped as Encore Features, disabled by default.
+Encore Features is Maestro's system for user-toggled features. A capability starts life as a plugin: gated, off, and opt-in. When it earns its place in the core experience it graduates to an Encore Feature and ships on by default, with the toggle kept so users can turn it back off. The default state for every flag lives in `DEFAULT_ENCORE_FEATURES` (`src/shared/encoreFeatures.ts`).
 
 ### When to Use Encore Features
 

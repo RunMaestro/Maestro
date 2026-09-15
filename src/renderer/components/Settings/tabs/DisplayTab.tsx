@@ -6,10 +6,9 @@
  * Context Window Warnings, Local Ignore Patterns.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import {
 	Accessibility,
-	ALargeSmall,
 	AlignHorizontalJustifyCenter,
 	AlertTriangle,
 	AppWindow,
@@ -36,17 +35,23 @@ import type { Theme } from '../../../types';
 import { ToggleButtonGroup } from '../../ToggleButtonGroup';
 import { ToggleSwitch } from '../../ui/ToggleSwitch';
 import { WorktreePill } from '../../ui/WorktreePill';
-import { FontConfigurationPanel } from '../../FontConfigurationPanel';
 import { IgnorePatternsSection } from '../IgnorePatternsSection';
 import { FilePanelSettingsSection } from '../FilePanelSettingsSection';
 import { SettingsSectionHeading } from '../SettingsSectionHeading';
 import { DEFAULT_LOCAL_IGNORE_PATTERNS } from '../../../stores/settingsStore';
-import { logger } from '../../../utils/logger';
 import { Modal } from '../../ui/Modal';
 import { MODAL_PRIORITIES } from '../../../constants/modalPriorities';
 import { DEFAULT_BIONIFY_ALGORITHM } from '../../../utils/bionifyReadingMode';
 import { formatMetaKeyName } from '../../../utils/shortcutFormatter';
 import { getRevealLabel } from '../../../utils/platformUtils';
+import { typographySnapshotMatches } from '../../../../shared/typographySnapshot';
+import {
+	FontsSection,
+	FontZoomSection,
+	SavedTypographySection,
+	TypographyResetSection,
+} from './DisplayTypography/components';
+import { useFontConfigurationState } from './DisplayTypography/hooks/useFontConfigurationState';
 
 const BIONIFY_ALGORITHM_PATTERN = /^[+-](\s+\d+){4}\s+(?:0(?:\.\d+)?|1(?:\.0+)?)$/;
 
@@ -77,11 +82,8 @@ export interface DisplayTabProps {
 export function DisplayTab({ theme }: DisplayTabProps) {
 	// Spelled-out modifier for shortcut hints: 'Command' on macOS, 'Ctrl' elsewhere.
 	const metaKeyName = formatMetaKeyName();
+	const settings = useSettings();
 	const {
-		fontFamily,
-		setFontFamily,
-		fontSize,
-		setFontSize,
 		maxLogBuffer,
 		setMaxLogBuffer,
 		maxOutputLines,
@@ -172,17 +174,12 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 		setSshReduceEntryCapEnabled,
 		sshReduceEntryCapFraction,
 		setSshReduceEntryCapFraction,
-	} = useSettings();
+	} = settings;
 
 	const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures.maestroCue);
+	const fontConfiguration = useFontConfigurationState();
+	const settingsRecord = settings as unknown as Record<string, unknown>;
 
-	const [systemFonts, setSystemFonts] = useState<string[]>([]);
-	const [customFonts, setCustomFonts] = useState<string[]>([]);
-	const [fontLoading, setFontLoading] = useState(false);
-	const [fontsLoaded, setFontsLoaded] = useState(false);
-	// Guards a write that lands before the initial read resolves, so restoring
-	// the saved list can't clobber a font the user just added.
-	const customFontsDirty = useRef(false);
 	const [showBionifyInfoModal, setShowBionifyInfoModal] = useState(false);
 	const [bionifyAlgorithmDraft, setBionifyAlgorithmDraft] = useState(
 		bionifyAlgorithm ?? DEFAULT_BIONIFY_ALGORITHM
@@ -199,102 +196,47 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 		}
 	};
 
-	// The saved custom fonts are loaded on mount rather than with the system
-	// font sweep: the sweep is lazy (it only runs once the user opens the font
-	// dropdown), so gating the pills on it made every added font vanish the
-	// next time the Display tab was opened, and left the <select> unable to
-	// render the current value when that value was a custom font.
-	useEffect(() => {
-		let cancelled = false;
-		void (async () => {
-			try {
-				const saved = (await window.maestro.settings.get('customFonts')) as string[] | undefined;
-				if (cancelled || customFontsDirty.current || !Array.isArray(saved)) return;
-				setCustomFonts(saved);
-			} catch (error) {
-				logger.error('Failed to load custom fonts:', undefined, error);
-			}
-		})();
-		return () => {
-			cancelled = true;
-		};
-	}, []);
-
-	const loadFonts = async () => {
-		if (fontsLoaded) return; // Don't reload if already loaded
-
-		setFontLoading(true);
-		try {
-			const detected = await window.maestro.fonts.detect();
-			setSystemFonts(detected);
-			setFontsLoaded(true);
-		} catch (error) {
-			logger.error('Failed to load fonts:', undefined, error);
-		} finally {
-			setFontLoading(false);
-		}
-	};
-
-	const handleFontInteraction = () => {
-		if (!fontsLoaded && !fontLoading) {
-			loadFonts();
-		}
-	};
-
-	const addCustomFont = (font: string) => {
-		if (!font) return;
-		setCustomFonts((prev) => {
-			if (prev.includes(font)) return prev;
-			const next = [...prev, font];
-			customFontsDirty.current = true;
-			window.maestro.settings.set('customFonts', next);
-			return next;
-		});
-	};
-
-	const removeCustomFont = (font: string) => {
-		setCustomFonts((prev) => {
-			if (!prev.includes(font)) return prev;
-			const next = prev.filter((f) => f !== font);
-			customFontsDirty.current = true;
-			window.maestro.settings.set('customFonts', next);
-			return next;
-		});
-	};
-
 	return (
 		<div className="space-y-5">
-			{/* Font Family */}
-			<div data-setting-id="display-font-family">
-				<FontConfigurationPanel
-					fontFamily={fontFamily}
-					setFontFamily={setFontFamily}
-					systemFonts={systemFonts}
-					fontsLoaded={fontsLoaded}
-					fontLoading={fontLoading}
-					customFonts={customFonts}
-					onAddCustomFont={addCustomFont}
-					onRemoveCustomFont={removeCustomFont}
-					onFontInteraction={handleFontInteraction}
-					theme={theme}
-				/>
-			</div>
-
-			{/* Font Size */}
-			<div data-setting-id="display-font-size">
-				<SettingsSectionHeading icon={ALargeSmall}>Font Size</SettingsSectionHeading>
-				<ToggleButtonGroup
-					options={[
-						{ value: 12, label: 'Small' },
-						{ value: 14, label: 'Medium' },
-						{ value: 16, label: 'Large' },
-						{ value: 18, label: 'X-Large' },
-					]}
-					value={fontSize}
-					onChange={setFontSize}
-					theme={theme}
-				/>
-			</div>
+			<TypographyResetSection
+				theme={theme}
+				fonts={{
+					fontFamily: settings.fontFamily,
+					chatFontFamily: settings.chatFontFamily,
+					terminalFontFamily: settings.terminalFontFamily,
+					filePreviewFontFamily: settings.filePreviewFontFamily,
+					documentGraphFontFamily: settings.documentGraphFontFamily,
+					fileEditorFontFamily: settings.fileEditorFontFamily,
+				}}
+				sizes={{
+					fontSize: settings.fontSize,
+					chatFontSize: settings.chatFontSize,
+					terminalFontSize: settings.terminalFontSize,
+					filePreviewFontSize: settings.filePreviewFontSize,
+					documentGraphFontSize: settings.documentGraphFontSize,
+					fileEditorFontSize: settings.fileEditorFontSize,
+				}}
+				onReset={settings.resetTypography}
+			/>
+			<SavedTypographySection
+				theme={theme}
+				snapshot={settings.typographySnapshot ?? null}
+				isCurrent={typographySnapshotMatches(settings.typographySnapshot ?? null, settingsRecord)}
+				onSave={settings.saveTypographySnapshot}
+				onRestore={settings.restoreTypographySnapshot}
+			/>
+			<FontsSection
+				theme={theme}
+				settings={settingsRecord}
+				fontConfiguration={fontConfiguration}
+				setSurfaceFontFamily={settings.setSurfaceFontFamily}
+				setSurfaceFontSize={settings.setSurfaceFontSize}
+			/>
+			<FontZoomSection
+				theme={theme}
+				fontZoom={settings.fontZoom}
+				setFontZoom={settings.setFontZoom}
+			/>
 
 			{/* Max Log Buffer */}
 			<div data-setting-id="display-max-log-buffer">

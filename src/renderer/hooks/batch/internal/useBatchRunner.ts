@@ -749,6 +749,8 @@ export function useBatchRunner({
 								updateBatchStateAndBroadcastRef.current!(sid, updater, immediate),
 							getSessions: () => sessionsRef.current,
 							onUpdateSession,
+							updateTaskCount: (filename, completed, total) =>
+								useBatchStore.getState().updateTaskCount(filename, completed, total),
 						});
 						await progressPoll.start();
 

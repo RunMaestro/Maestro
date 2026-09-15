@@ -10,44 +10,18 @@
  *
  * Lives outside XTerminal.tsx so the chat-side surfaces (command mode composer,
  * ShellCommandCard) can reuse it without pulling in xterm.
- */
-
-/** Generic CSS families that guarantee a fixed-pitch face. */
-const MONOSPACE_GENERICS = new Set(['monospace', 'ui-monospace']);
-
-/**
- * Stack used when the configured font is not fixed-pitch. Covers each platform's
- * stock monospace face before falling back to the generic.
- */
-export const FIXED_PITCH_FALLBACK_STACK =
-	'Menlo, Consolas, "DejaVu Sans Mono", "Courier New", monospace';
-
-/**
- * Guarantee the terminal's font stack ends in a generic monospace family.
  *
- * This only covers the case where the configured font fails to RESOLVE: the
- * browser then falls back to whatever the context supplies (`sans-serif` on a
- * canvas, the inherited UI font in the DOM), both proportional. It cannot help
- * when the configured font resolves perfectly well and simply is not
- * fixed-pitch - see {@link resolveTerminalFontFamily}.
+ * The FALLBACK half of the job is deliberately not implemented here: it belongs
+ * to the shared `withMonoFallback` / `MONO_FALLBACK_STACK` in
+ * `src/shared/fontStack.ts`, which every surface degrades through. A chain kept
+ * locally drifts the first time one of them gains a platform, and this module
+ * shipped exactly that duplicate (`ensureMonospaceFallback`,
+ * `FIXED_PITCH_FALLBACK_STACK`) before it was folded back in. What IS local is
+ * the MEASUREMENT below, which covers the different failure the shared chain
+ * cannot: a font that resolves perfectly well and simply is not fixed-pitch.
  */
-export function ensureMonospaceFallback(fontFamily: string): string {
-	const families = fontFamily
-		.split(',')
-		.map((family) => family.trim())
-		.filter(Boolean);
 
-	// Already terminated by a generic monospace family - nothing to add. Checked
-	// anywhere in the stack, since a generic beyond the first is still a
-	// guaranteed stop before the context default.
-	if (
-		families.some((family) => MONOSPACE_GENERICS.has(family.toLowerCase().replace(/["']/g, '')))
-	) {
-		return fontFamily;
-	}
-
-	return families.length > 0 ? `${families.join(', ')}, monospace` : 'monospace';
-}
+import { MONO_FALLBACK_STACK, withMonoFallback } from '../../shared/fontStack';
 
 /** Measures the advance width of one character in a given CSS font shorthand. */
 export type MeasureAdvance = (cssFont: string, char: string) => number;
@@ -93,22 +67,28 @@ export function isFixedPitchStack(
  * while wide ones sit flush. The whole grid - box drawing, TUI alignment,
  * cursor position - is built on the assumption that one glyph is one cell.
  *
- * Maestro has a single `fontFamily` setting shared with the app chrome, so a
- * user who picks a proportional UI font silently breaks every terminal. That is
- * not a preference the terminal can honor, so it is overridden here rather than
- * rendering a broken grid.
+ * The terminal font INHERITS the interface font whenever the user has not set
+ * one of its own (see `resolveSurfaceFont`), so picking a proportional UI font
+ * silently breaks every terminal. That is not a preference the terminal can
+ * honor, so it is overridden here rather than rendering a broken grid.
+ *
+ * The fallback chain comes from the shared `withMonoFallback`, which every
+ * other surface degrades through - it only covers a font that fails to
+ * RESOLVE, and cannot help when the configured font resolves perfectly well
+ * and simply is not fixed-pitch. That is what the measurement above is for;
+ * the two mechanisms cover different failures and compose.
  */
 export function resolveTerminalFontFamily(
 	fontFamily: string,
 	fontSize: number,
 	measureAdvance: MeasureAdvance | null
 ): string {
-	const stack = ensureMonospaceFallback(fontFamily);
+	const stack = withMonoFallback(fontFamily);
 	// No way to measure (jsdom, no canvas): keep the configured stack rather
 	// than overriding a font that may well be fine.
 	if (!measureAdvance) return stack;
 	if (isFixedPitchStack(stack, fontSize, measureAdvance)) return stack;
-	return FIXED_PITCH_FALLBACK_STACK;
+	return MONO_FALLBACK_STACK;
 }
 
 /** Canvas-backed {@link MeasureAdvance}, or null where canvas is unavailable. */

@@ -8,7 +8,7 @@ import React, {
 	useDeferredValue,
 	useSyncExternalStore,
 } from 'react';
-import { MAESTRO_WORDMARK_FONT_STACK } from '../../../shared/fontStacks';
+import { WORDMARK_FONT_STACK } from '../../../shared/fontStack';
 import {
 	Wand2,
 	Plus,
@@ -1186,7 +1186,7 @@ function SessionListInner(props: SessionListProps) {
 									className="font-bold tracking-widest text-lg shrink-0 whitespace-nowrap"
 									style={{
 										color: theme.colors.textMain,
-										fontFamily: MAESTRO_WORDMARK_FONT_STACK,
+										fontFamily: WORDMARK_FONT_STACK,
 									}}
 								>
 									MAESTRO

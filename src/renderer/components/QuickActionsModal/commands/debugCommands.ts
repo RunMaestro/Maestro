@@ -2,6 +2,7 @@ import type React from 'react';
 import type { Session } from '../../../types';
 import type { NotifyToastInput } from '../../../stores/notificationStore';
 import { captureException } from '../../../utils/sentry';
+import { replayOnboardingSeries } from '../../../stores/onboardingSeriesStore';
 import type { QuickAction } from '../types';
 
 interface BuildDebugCommandsArgs {
@@ -96,6 +97,27 @@ export function buildDebugCommands({
 						})),
 					}))
 				);
+				setQuickActionOpen(false);
+			},
+		},
+		{
+			id: 'debugOnboardingNewUser',
+			label: 'Debug: Replay First-Run Series (New User)',
+			subtext: 'Typography, theme, updates, then agent powers - with new-user copy',
+			action: () => {
+				// Forced: ignores every seen flag AND the theme gate, and skips
+				// writing the flags back, so replaying the series to look at it
+				// cannot consume a real first run.
+				replayOnboardingSeries('new');
+				setQuickActionOpen(false);
+			},
+		},
+		{
+			id: 'debugOnboardingReturningUser',
+			label: 'Debug: Replay First-Run Series (Existing User)',
+			subtext: 'Same four steps, with the copy an upgrading user sees',
+			action: () => {
+				replayOnboardingSeries('returning');
 				setQuickActionOpen(false);
 			},
 		},

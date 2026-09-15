@@ -13,7 +13,7 @@ Settings are organized into tabs:
 | Tab                             | Contents                                                                                                                                                                                                                                                                                             |
 | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **General**                     | About Me (conductor profile), [system-wide hotkey to summon Maestro](./keyboard-shortcuts#system-wide-hotkey-summon-maestro), shell configuration, input send behavior, default toggles (history, thinking), automatic tab naming, power management, updates, privacy, usage stats, storage location |
-| **Display**                     | Font family and size, terminal width, log level and buffer, max output lines per response, document graph settings, context window warnings, [Accessibility](#accessibility) (Color Blind Mode, Bionify reading emphasis)                                                                            |
+| **Display**                     | [Typography](#typography) (a font and size per surface, presets, custom fonts, zoom), terminal width, log level and buffer, max output lines per response, document graph settings, context window warnings, [Accessibility](#accessibility) (Color Blind Mode, Bionify reading emphasis)            |
 | **Shortcuts**                   | Customize keyboard shortcuts (see [Keyboard Shortcuts](./keyboard-shortcuts))                                                                                                                                                                                                                        |
 | **Themes**                      | Dark, light, and vibe mode themes, custom theme builder with import/export                                                                                                                                                                                                                           |
 | **Notifications**               | OS notifications, custom command notifications, toast notification duration and width                                                                                                                                                                                                                |
@@ -22,6 +22,59 @@ Settings are organized into tabs:
 | **SSH Hosts**                   | Configure remote hosts for [SSH agent execution](./ssh-remote-execution)                                                                                                                                                                                                                             |
 | **Environment**                 | Global environment variables that cascade to all agents and terminal sessions                                                                                                                                                                                                                        |
 | **WakaTime** _(in General tab)_ | WakaTime integration toggle, API key, detailed file tracking                                                                                                                                                                                                                                         |
+
+## Typography
+
+**Settings → Display → Fonts.** Maestro does not have one font: it has a font per surface, so the places you read and the places you work can use different faces.
+
+![The Display tab's font controls, with a picker per surface](./screenshots/settings-fonts.png)
+
+Two surfaces are the roots that everything else can follow:
+
+- **Interface** - the whole app, and the proportional face other surfaces inherit.
+- **Terminal** - the command terminal, and the fixed-width face other surfaces inherit. A Nerd Font here gets you shell prompt glyphs.
+
+Four more surfaces each pick their own face, or inherit:
+
+| Surface            | What it covers                                                     |
+| ------------------ | ------------------------------------------------------------------ |
+| **AI Chat**        | The AI transcript, in the main panel and in tiled panes            |
+| **File Preview**   | A file being read                                                  |
+| **File Editor**    | A file being edited                                                |
+| **Document Graph** | Node titles and previews in the [Document Graph](./document-graph) |
+
+Each surface has its own size, which can also inherit. Press **Up** / **Down** on any picker to step through the installed faces and preview them live.
+
+### Presets
+
+**Factory Reset Fonts** sets every font and size at once:
+
+- **Default** - proportional to read, monospace to work. The interface, AI chat, and file preview are proportional; the terminal and file editor are monospace.
+- **Hacker** - monospace everywhere. The original Maestro look.
+
+Maestro tells you which preset is active, or that you have customized away from both.
+
+### Save and restore your own setup
+
+A preset overwrites every font and size, so **Save & Restore Customizations** keeps yours. Click **Save Customizations** once you like what you have, then try a preset or keep tinkering, and **Restore Customizations** puts your fonts back in one click.
+
+There is one slot, and saving again replaces it (Maestro asks first). Zoom is not part of a saved setup, so restoring one never changes how big everything is.
+
+### Custom fonts
+
+The pickers list fonts Maestro knows about. If you have a font installed that is not in the list, add its name once under **Manage Custom Fonts** and it becomes available in every picker.
+
+<Warning>
+Type the family name exactly as the system reports it. A name that is not installed cannot be resolved, and the surface falls back to the browser default rather than telling you it failed.
+</Warning>
+
+### Zoom
+
+**Zoom** scales every surface by the same amount, so the sizes you set relative to each other are preserved. `Cmd+=` / `Cmd+-` adjusts it and `Cmd+Shift+0` resets it.
+
+<Tip>
+You are offered the Default and Hacker presets once, on first run, so you do not have to find this screen to make Maestro readable. Nothing there is permanent - every choice is a setting you can change here later. See [First run](./getting-started#first-run).
+</Tip>
 
 ## Maestro Prompts
 

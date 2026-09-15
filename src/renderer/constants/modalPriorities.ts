@@ -20,6 +20,22 @@ export const MODAL_PRIORITIES = {
 	/** Keyboard mastery level-up celebration - high priority celebration */
 	KEYBOARD_MASTERY: 1095,
 
+	/**
+	 * First-run typography chooser. Above the tour because it decides what every
+	 * later surface is drawn in - touring an app whose look is about to change
+	 * shows the user the wrong app.
+	 */
+	TYPOGRAPHY_CHOICE: 1060,
+
+	/**
+	 * First-run theme chooser, updates step, and the "your agents can drive
+	 * Maestro" step. They run in sequence after the typography chooser, one at a
+	 * time, so they share its band - only one of the four is ever mounted.
+	 */
+	THEME_CHOICE: 1059,
+	UPDATES_CHOICE: 1058,
+	AGENT_POWERS: 1057,
+
 	/** Onboarding tour overlay - above wizard, guides new users */
 	TOUR: 1050,
 

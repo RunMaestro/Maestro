@@ -1,6 +1,5 @@
 import React, { memo, useState, useEffect, useRef, useCallback } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import type { Session } from '../../types';
 import type { QuickAction, QuickActionsModalProps } from './types';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { useResizableModal } from '../../hooks/ui/useResizableModal';
@@ -13,6 +12,7 @@ import { useModalStore } from '../../stores/modalStore';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { Z_LAYERS } from '../../constants/zLayers';
 import { gitService } from '../../services/git';
+import { revealAgentInSidebar } from '../../services/agentNavigation';
 import { useGitAgentActions } from '../../hooks/git/useGitAgentActions';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { getOpenInLabel } from '../../utils/platformUtils';
@@ -403,25 +403,9 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		setQuickActionOpen(false);
 	};
 
-	// Reveal a jumped-to agent without unnecessarily expanding sections.
-	// - Not bookmarked: expand the parent group if collapsed (existing behavior).
-	// - Bookmarked: prefer whichever section the agent is already visible in. If
-	//   neither bookmarks nor the parent group is open, expand bookmarks (the
-	//   pinned bookmark row is the lighter-weight reveal of the two).
-	const revealJumpTarget = (s: Session) => {
-		if (!s.bookmarked) {
-			if (s.groupId) {
-				setGroups((prev) =>
-					prev.map((g) => (g.id === s.groupId && g.collapsed ? { ...g, collapsed: false } : g))
-				);
-			}
-			return;
-		}
-		const groupOpen = s.groupId ? !groups.find((g) => g.id === s.groupId)?.collapsed : false;
-		if (bookmarksCollapsed && !groupOpen) {
-			setBookmarksCollapsed(false);
-		}
-	};
+	// Reveal a jumped-to agent without unnecessarily expanding sections. Shared
+	// with the Usage Dashboard's Jump to Agent action - see agentNavigation.
+	const revealJumpTarget = revealAgentInSidebar;
 
 	const sessionActions = buildSessionJumpCommands({
 		sessions,

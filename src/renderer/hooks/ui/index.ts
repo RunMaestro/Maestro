@@ -39,6 +39,14 @@ export { useHoverTooltip } from './useHoverTooltip';
 // Fixed-pitch font for surfaces that render shell text
 export { useFixedPitchFont } from './useFixedPitchFont';
 
+// Per-surface font/size for canvas and CodeMirror (cannot read CSS variables)
+export {
+	useSurfaceFontFamily,
+	useSurfaceFontSize,
+	useSurfaceTypography,
+} from './useSurfaceTypography';
+export type { SurfaceTypography } from './useSurfaceTypography';
+
 // Theme-aware ANSI -> HTML converter for raw terminal output
 export { useAnsiConverter, createAnsiConverter } from './useAnsiConverter';
 

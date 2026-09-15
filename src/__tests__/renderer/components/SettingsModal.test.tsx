@@ -91,6 +91,10 @@ const mockSetShortcuts = vi.fn();
 const mockSetTabShortcuts = vi.fn();
 const mockSetFontFamily = vi.fn();
 const mockSetFontSize = vi.fn();
+const mockSetSurfaceFontFamily = vi.fn();
+const mockSetSurfaceFontSize = vi.fn();
+const mockSetFontZoom = vi.fn();
+const mockResetTypography = vi.fn();
 const mockSetLogLevel = vi.fn();
 const mockSetMaxLogBuffer = vi.fn();
 const mockSetMaxOutputLines = vi.fn();
@@ -157,6 +161,19 @@ vi.mock('../../../renderer/hooks/settings/useSettings', () => ({
 		setFontFamily: mockSetFontFamily,
 		fontSize: 14,
 		setFontSize: mockSetFontSize,
+		chatFontFamily: '',
+		terminalFontFamily: '',
+		filePreviewFontFamily: '',
+		fileEditorFontFamily: '',
+		chatFontSize: 0,
+		terminalFontSize: 0,
+		filePreviewFontSize: 0,
+		fileEditorFontSize: 0,
+		fontZoom: 1,
+		setSurfaceFontFamily: mockSetSurfaceFontFamily,
+		setSurfaceFontSize: mockSetSurfaceFontSize,
+		setFontZoom: mockSetFontZoom,
+		resetTypography: mockResetTypography,
 		logLevel: 'info',
 		setLogLevel: mockSetLogLevel,
 		maxLogBuffer: 5000,
@@ -758,23 +775,24 @@ describe('SettingsModal', () => {
 			});
 
 			// Font selector should exist
-			expect(screen.getByText('Interface Font')).toBeInTheDocument();
+			expect(screen.getByText('Fonts')).toBeInTheDocument();
 		});
 
-		it('should call setFontFamily when font is changed', async () => {
-			const setFontFamily = vi.fn();
-			render(<SettingsModal {...createDefaultProps({ setFontFamily, initialTab: 'display' })} />);
+		it('should set the interface font when the first picker changes', async () => {
+			// Pickers are generated from the surface registry and write through
+			// setSurfaceFontFamily, so the surface is named rather than implied
+			// by which of five near-identical setters was called.
+			render(<SettingsModal {...createDefaultProps({ initialTab: 'display' })} />);
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			// Find the font select (first combobox) and trigger change
 			const comboboxes = screen.getAllByRole('combobox');
 			const fontSelect = comboboxes[0] as HTMLSelectElement;
 			fireEvent.change(fontSelect, { target: { value: 'Monaco' } });
 
-			expect(mockSetFontFamily).toHaveBeenCalledWith('Monaco');
+			expect(mockSetSurfaceFontFamily).toHaveBeenCalledWith('interface', 'Monaco');
 		});
 
 		it('should load fonts when font select is focused', async () => {
@@ -797,78 +815,103 @@ describe('SettingsModal', () => {
 		});
 	});
 
-	describe('Display tab - Font size buttons', () => {
-		it('should call setFontSize with 12 when Small is clicked', async () => {
-			const setFontSize = vi.fn();
-			render(<SettingsModal {...createDefaultProps({ setFontSize, initialTab: 'display' })} />);
-
+	describe('Display tab - typography sizing', () => {
+		// The single Small/Medium/Large/X-Large global size was replaced by a
+		// per-surface stepper plus a global zoom multiplier. Four presets are
+		// enough when one number drives the whole app; five surfaces tuned
+		// against each other need single-pixel resolution.
+		// Settings are self-sourced from the (fixed) useSettings mock, so these
+		// assert against its values: fontSize 14, every surface size 0.
+		async function renderDisplayTab() {
+			render(<SettingsModal {...createDefaultProps({ initialTab: 'display' })} />);
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
+		}
 
-			// Scope to the font-size section - the toast-width setting also renders
-			// Small/Medium/Large buttons, so an unscoped query is ambiguous.
-			const fontSizeSection = within(
-				document.querySelector('[data-setting-id="display-font-size"]') as HTMLElement
-			);
-			fireEvent.click(fontSizeSection.getByRole('button', { name: 'Small' }));
-			expect(mockSetFontSize).toHaveBeenCalledWith(12);
+		it('steps the interface size by one pixel at a time', async () => {
+			await renderDisplayTab();
+
+			fireEvent.click(screen.getByTestId('font-size-interface-increase'));
+			expect(mockSetSurfaceFontSize).toHaveBeenCalledWith('interface', 15);
+
+			fireEvent.click(screen.getByTestId('font-size-interface-decrease'));
+			expect(mockSetSurfaceFontSize).toHaveBeenCalledWith('interface', 13);
 		});
 
-		it('should call setFontSize with 14 when Medium is clicked', async () => {
-			const setFontSize = vi.fn();
-			render(<SettingsModal {...createDefaultProps({ setFontSize, initialTab: 'display' })} />);
+		it('shows an unset surface as inheriting, with the size it actually renders at', async () => {
+			await renderDisplayTab();
 
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			const fontSizeSection = within(
-				document.querySelector('[data-setting-id="display-font-size"]') as HTMLElement
-			);
-			fireEvent.click(fontSizeSection.getByRole('button', { name: 'Medium' }));
-			expect(mockSetFontSize).toHaveBeenCalledWith(14);
+			expect(screen.getByTestId('font-size-chat-value')).toHaveTextContent('14px');
+			expect(screen.getByTestId('font-size-chat-inheriting')).toBeInTheDocument();
 		});
 
-		it('should call setFontSize with 16 when Large is clicked', async () => {
-			const setFontSize = vi.fn();
-			render(<SettingsModal {...createDefaultProps({ setFontSize, initialTab: 'display' })} />);
+		it('steps an inheriting surface away from the size it currently shows', async () => {
+			// The first click must nudge by one pixel from what the user can see,
+			// not jump to some unrelated default.
+			await renderDisplayTab();
 
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			const fontSizeSection = within(
-				document.querySelector('[data-setting-id="display-font-size"]') as HTMLElement
-			);
-			fireEvent.click(fontSizeSection.getByRole('button', { name: 'Large' }));
-			expect(mockSetFontSize).toHaveBeenCalledWith(16);
+			fireEvent.click(screen.getByTestId('font-size-chat-increase'));
+			expect(mockSetSurfaceFontSize).toHaveBeenCalledWith('chat', 15);
 		});
 
-		it('should call setFontSize with 18 when X-Large is clicked', async () => {
-			const setFontSize = vi.fn();
-			render(<SettingsModal {...createDefaultProps({ setFontSize, initialTab: 'display' })} />);
+		it('offers no Inherit escape on the interface surface, which is the base', async () => {
+			await renderDisplayTab();
 
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			fireEvent.click(screen.getByRole('button', { name: 'X-Large' }));
-			expect(mockSetFontSize).toHaveBeenCalledWith(18);
+			expect(screen.queryByTestId('font-size-interface-inherit')).not.toBeInTheDocument();
 		});
 
-		it('should highlight selected font size', async () => {
-			render(<SettingsModal {...createDefaultProps({ fontSize: 14, initialTab: 'display' })} />);
+		it('offers no Inherit escape on a surface that is already inheriting', async () => {
+			// There is nothing to undo, and a live control that does nothing
+			// reads as broken.
+			await renderDisplayTab();
 
+			expect(screen.queryByTestId('font-size-chat-inherit')).not.toBeInTheDocument();
+		});
+
+		it('sets the global zoom without touching any surface size', async () => {
+			await renderDisplayTab();
+
+			const zoomSection = within(
+				document.querySelector('[data-setting-id="display-font-zoom"]') as HTMLElement
+			);
+			fireEvent.click(zoomSection.getByRole('button', { name: '125%' }));
+			expect(mockSetFontZoom).toHaveBeenCalledWith(1.25);
+			expect(mockSetSurfaceFontSize).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('Display tab - Factory Reset Fonts', () => {
+		async function renderDisplayTab() {
+			render(<SettingsModal {...createDefaultProps({ initialTab: 'display' })} />);
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
+		}
 
-			const fontSizeSection = within(
-				document.querySelector('[data-setting-id="display-font-size"]') as HTMLElement
-			);
-			const mediumButton = fontSizeSection.getByText('Medium');
-			expect(mediumButton).toHaveClass('ring-2');
+		it('does not reset on the first click', async () => {
+			// Ten settings at once is destructive to deliberate work, so the
+			// button asks for confirmation rather than firing immediately.
+			await renderDisplayTab();
+
+			fireEvent.click(screen.getByTestId('typography-reset-hacker'));
+			expect(mockResetTypography).not.toHaveBeenCalled();
+			expect(screen.getByTestId('typography-reset-hacker')).toHaveTextContent('Reset to Hacker?');
+		});
+
+		it('resets on the second click', async () => {
+			await renderDisplayTab();
+
+			fireEvent.click(screen.getByTestId('typography-reset-hacker'));
+			fireEvent.click(screen.getByTestId('typography-reset-hacker'));
+			expect(mockResetTypography).toHaveBeenCalledWith('hacker');
+		});
+
+		it('offers both presets', async () => {
+			await renderDisplayTab();
+
+			expect(screen.getByTestId('typography-reset-default')).toBeInTheDocument();
+			expect(screen.getByTestId('typography-reset-hacker')).toBeInTheDocument();
 		});
 	});
 
@@ -1612,7 +1655,10 @@ describe('SettingsModal', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			expect(consoleSpy).toHaveBeenCalled();
+			// No error is logged: a failed enumeration is the expected path on
+			// stock macOS and Windows (no fontconfig). The picker stays mounted.
+			expect(consoleSpy).not.toHaveBeenCalled();
+			expect(screen.getAllByRole('combobox')[0]).toBeInTheDocument();
 			consoleSpy.mockRestore();
 		});
 
@@ -2219,12 +2265,8 @@ describe('SettingsModal', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			expect(
-				screen.getByText(/Optional features that extend Maestro's capabilities/)
-			).toBeInTheDocument();
-			expect(
-				screen.getByText(/Contributors building new features should consider gating them here/)
-			).toBeInTheDocument();
+			expect(screen.getByText(/Features that extend Maestro's capabilities/)).toBeInTheDocument();
+			expect(screen.getByText(/Contributors should gate a new feature here/)).toBeInTheDocument();
 		});
 
 		it("should show Director's Notes feature toggle defaulting to off", async () => {
@@ -2619,12 +2661,13 @@ describe('SettingsModal', () => {
 			// Text may be split by highlight spans, so use a function matcher
 			expect(
 				screen.getByText(
-					(_content, element) => element?.textContent === 'Font Family' && element.tagName === 'DIV'
+					(_content, element) => element?.textContent === 'Fonts' && element.tagName === 'DIV'
 				)
 			).toBeInTheDocument();
 			expect(
 				screen.getByText(
-					(_content, element) => element?.textContent === 'Font Size' && element.tagName === 'DIV'
+					(_content, element) =>
+						element?.textContent === 'Factory Reset Fonts' && element.tagName === 'DIV'
 				)
 			).toBeInTheDocument();
 		});

@@ -73,8 +73,8 @@ describe('searchableSettings', () => {
 		});
 
 		it('should match by label', () => {
-			const results = searchSettings('Font Size');
-			expect(results.some((s) => s.id === 'display-font-size')).toBe(true);
+			const results = searchSettings('Fonts');
+			expect(results.some((s) => s.id === 'display-fonts')).toBe(true);
 		});
 
 		it('should match by description', () => {
@@ -113,7 +113,7 @@ describe('searchableSettings', () => {
 
 		it('should rank label matches higher than keyword matches', () => {
 			const results = searchSettings('font');
-			// 'Font Family' and 'Font Size' should appear before items where 'font' is only a keyword
+			// 'Fonts' should appear before items where 'font' is only a keyword
 			const labelMatches = results.filter((s) => s.label.toLowerCase().includes('font'));
 			const keywordOnly = results.filter(
 				(s) =>
@@ -155,9 +155,22 @@ describe('searchableSettings', () => {
 			['collapse cue runs', 'general-group-cue-entries'],
 			['repeated', 'general-group-cue-entries'],
 
-			// Display tab
-			['x-large', 'display-font-size'],
-			['medium', 'display-font-size'],
+			// Display tab. The single Small/Medium/Large global size was replaced
+			// by a per-surface stepper plus a global zoom, so "font size" now
+			// leads to Zoom and to the individual surface pickers.
+			['zoom', 'display-font-zoom'],
+			['bigger', 'display-font-zoom'],
+			['factory reset', 'display-typography-reset'],
+			['hacker', 'display-typography-reset'],
+			['save customizations', 'display-typography-snapshot'],
+			['restore customizations', 'display-typography-snapshot'],
+			['saved fonts', 'display-typography-snapshot'],
+			['manage custom fonts', 'display-custom-fonts'],
+			['ai chat font', 'display-fonts'],
+			['file preview font', 'display-fonts'],
+			['file editor font', 'display-fonts'],
+			['terminal font', 'display-fonts'],
+			['custom font', 'display-fonts'],
 			['ai response', 'display-message-alignment'],
 			['file indexing', 'display-file-indexing'],
 			['file panel', 'display-file-indexing'],

@@ -318,10 +318,13 @@ export function UsageDashboardModal({
 				// separate stats system and only when the Cue tab is enabled; a
 				// failure there must not break the rest of the dashboard, so it
 				// resolves to null rather than rejecting the Promise.all.
+				// The namespace itself is optional: the web bridge doesn't expose
+				// `cueStats`, and reaching through an undefined namespace would
+				// throw past the per-call catch and error out the whole dashboard.
 				const [stats, dbSize, cueAgg] = await Promise.all([
 					window.maestro.stats.getAggregation(timeRange),
 					window.maestro.stats.getDatabaseSize(),
-					cueTabEnabled
+					cueTabEnabled && window.maestro.cueStats
 						? window.maestro.cueStats.getAggregation(timeRange).catch((err) => {
 								logger.warn('Failed to fetch Cue totals for source chart:', undefined, err);
 								return null;
@@ -1787,6 +1790,7 @@ export function UsageDashboardModal({
 					theme={theme}
 					allSessions={sessions}
 					onClose={() => setDetailSession(null)}
+					onCloseDashboard={onClose}
 				/>
 			)}
 		</div>

@@ -36,11 +36,31 @@ import { DEFAULT_CUSTOM_THEME_COLORS } from '../constants/themes';
 import { resolveThemeId } from '../../shared/theme-types';
 import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS, FIXED_SHORTCUTS } from '../constants/shortcuts';
 import { findReservedShortcutCombo } from '../../shared/shortcutKeys';
-import { MAESTRO_FONT_STACK } from '../../shared/fontStacks';
+import { MAESTRO_FONT_STACK } from '../../shared/fontStack';
+import { TYPOGRAPHY_PRESETS, type TypographyPresetId } from '../../shared/typographyPresets';
+import {
+	BASE_FONT_SIZE_DEFAULT,
+	FONT_ZOOM_DEFAULT,
+	SURFACE_FONT_SIZE_MAX,
+	SURFACE_FONT_SIZE_MIN,
+	TYPOGRAPHY_SURFACE_LIST,
+	TYPOGRAPHY_SURFACE_SPECS,
+	canInherit,
+	clampFontZoom,
+	clampSurfaceFontSize,
+	type TypographySurface,
+} from '../../shared/typography';
+import {
+	captureTypographySnapshot,
+	parseTypographySnapshot,
+	typographySnapshotPatch,
+	type TypographySnapshot,
+} from '../../shared/typographySnapshot';
 import {
 	DEFAULT_CUE_HISTORY_RETENTION_DAYS,
 	resolveCueHistoryRetentionDays,
 } from '../../shared/cue/retention';
+import { DEFAULT_ENCORE_FEATURES, resolveEncoreFeatures } from '../../shared/encoreFeatures';
 import {
 	collectBoundShortcuts,
 	countUsedBoundShortcuts,
@@ -237,13 +257,6 @@ const DEFAULT_ONBOARDING_STATS: OnboardingStats = {
 	averageTasksPerPhase: 0,
 };
 
-const DEFAULT_ENCORE_FEATURES: EncoreFeatureFlags = {
-	directorNotes: false,
-	usageStats: true,
-	symphony: true,
-	maestroCue: false,
-};
-
 // File Preview / Edit toolbar buttons. Each key maps to a visibility toggle in
 // Settings → Display → File Edit & Preview. Buttons can be hidden but the
 // underlying actions stay reachable via the command palette and hotkeys.
@@ -349,6 +362,30 @@ export interface SettingsStoreState {
 	ghPath: string;
 	fontFamily: string;
 	fontSize: number;
+	terminalFontFamily: string;
+	chatFontFamily: string;
+	filePreviewFontFamily: string;
+	fileEditorFontFamily: string;
+	documentGraphFontFamily: string;
+	chatFontSize: number;
+	terminalFontSize: number;
+	filePreviewFontSize: number;
+	fileEditorFontSize: number;
+	documentGraphFontSize: number;
+	fontZoom: number;
+	typographySnapshot: TypographySnapshot | null;
+	typographyPromptSeen: boolean;
+	themePromptSeen: boolean;
+	updatesPromptSeen: boolean;
+	agentPowersPromptSeen: boolean;
+	/**
+	 * Set once, on the first boot where an `installationId` already existed on
+	 * disk (i.e. this is not the app's very first launch ever). Read-only from
+	 * the renderer's side; the main process is the sole writer. Lets the
+	 * first-run series tell a returning user who deleted every agent from a
+	 * genuinely new install.
+	 */
+	hasPriorInstallation: boolean;
 	/** Playback speed for audio/video in the file preview. Sticky across files. */
 	mediaPlaybackRate: number;
 	activeThemeId: ThemeId;
@@ -509,7 +546,22 @@ export interface SettingsStoreActions {
 	setShellEnvVarsDisabled: (value: Record<string, string>) => void;
 	setGhPath: (value: string) => void;
 	setFontFamily: (value: string) => void;
+	setTerminalFontFamily: (value: string) => void;
+	setChatFontFamily: (value: string) => void;
+	setFilePreviewFontFamily: (value: string) => void;
+	setFileEditorFontFamily: (value: string) => void;
 	setFontSize: (value: number) => void;
+	setSurfaceFontFamily: (surface: TypographySurface, value: string) => void;
+	setSurfaceFontSize: (surface: TypographySurface, value: number) => void;
+	setFontZoom: (value: number) => void;
+	resetTypography: (id: TypographyPresetId) => void;
+	saveTypographySnapshot: () => void;
+	restoreTypographySnapshot: () => void;
+	setTypographyPromptSeen: (value: boolean) => void;
+	setThemePromptSeen: (value: boolean) => void;
+	setUpdatesPromptSeen: (value: boolean) => void;
+	setAgentPowersPromptSeen: (value: boolean) => void;
+	applyTypographyPreset: (id: TypographyPresetId) => void;
 	setMediaPlaybackRate: (value: number) => void;
 	setActiveThemeId: (value: ThemeId) => void;
 	setCustomThemeColors: (value: ThemeColors) => void;
@@ -748,7 +800,24 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		shellEnvVarsDisabled: {},
 		ghPath: '',
 		fontFamily: MAESTRO_FONT_STACK,
-		fontSize: 14,
+		fontSize: BASE_FONT_SIZE_DEFAULT,
+		terminalFontFamily: '',
+		chatFontFamily: '',
+		filePreviewFontFamily: '',
+		fileEditorFontFamily: '',
+		documentGraphFontFamily: '',
+		chatFontSize: 0,
+		terminalFontSize: 0,
+		filePreviewFontSize: 0,
+		fileEditorFontSize: 0,
+		documentGraphFontSize: 0,
+		fontZoom: FONT_ZOOM_DEFAULT,
+		typographySnapshot: null,
+		typographyPromptSeen: false,
+		themePromptSeen: false,
+		updatesPromptSeen: false,
+		agentPowersPromptSeen: false,
+		hasPriorInstallation: false,
 		mediaPlaybackRate: 1,
 		activeThemeId: 'dracula',
 		customThemeColors: DEFAULT_CUSTOM_THEME_COLORS,
@@ -945,9 +1014,111 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 			window.maestro.settings.set('fontFamily', value);
 		},
 
+		setTerminalFontFamily: (value) => {
+			set({ terminalFontFamily: value });
+			window.maestro.settings.set('terminalFontFamily', value);
+		},
+
+		setChatFontFamily: (value) => {
+			set({ chatFontFamily: value });
+			window.maestro.settings.set('chatFontFamily', value);
+		},
+
+		setFilePreviewFontFamily: (value) => {
+			set({ filePreviewFontFamily: value });
+			window.maestro.settings.set('filePreviewFontFamily', value);
+		},
+
+		setFileEditorFontFamily: (value) => {
+			set({ fileEditorFontFamily: value });
+			window.maestro.settings.set('fileEditorFontFamily', value);
+		},
+
 		setFontSize: (value) => {
 			set({ fontSize: value });
 			window.maestro.settings.set('fontSize', value);
+		},
+
+		setSurfaceFontFamily: (surface, value) => {
+			const spec = TYPOGRAPHY_SURFACE_SPECS[surface];
+			set({ [spec.fontKey]: value } as Partial<SettingsStoreState>);
+			window.maestro.settings.set(spec.fontKey, value);
+		},
+
+		setSurfaceFontSize: (surface, value) => {
+			const spec = TYPOGRAPHY_SURFACE_SPECS[surface];
+			if (!canInherit(spec)) {
+				const clamped = Math.max(
+					SURFACE_FONT_SIZE_MIN,
+					Math.min(SURFACE_FONT_SIZE_MAX, Math.round(value) || BASE_FONT_SIZE_DEFAULT)
+				);
+				set({ fontSize: clamped });
+				window.maestro.settings.set('fontSize', clamped);
+				return;
+			}
+			const clamped = clampSurfaceFontSize(value);
+			set({ [spec.sizeKey]: clamped } as Partial<SettingsStoreState>);
+			window.maestro.settings.set(spec.sizeKey, clamped);
+		},
+
+		setFontZoom: (value) => {
+			const zoom = clampFontZoom(value);
+			set({ fontZoom: zoom });
+			window.maestro.settings.set('fontZoom', zoom);
+		},
+
+		resetTypography: (id) => {
+			const preset = TYPOGRAPHY_PRESETS[id];
+			const patch = { ...preset.fonts, ...preset.sizes };
+			set(patch);
+			for (const [key, value] of Object.entries(patch)) {
+				window.maestro.settings.set(key, value);
+			}
+		},
+
+		saveTypographySnapshot: () => {
+			const snapshot = captureTypographySnapshot(get() as unknown as Record<string, unknown>);
+			set({ typographySnapshot: snapshot });
+			window.maestro.settings.set('typographySnapshot', snapshot);
+		},
+
+		restoreTypographySnapshot: () => {
+			const snapshot = get().typographySnapshot;
+			if (!snapshot) return;
+			const patch = typographySnapshotPatch(snapshot);
+			set(patch as Partial<SettingsStoreState>);
+			for (const [key, value] of Object.entries(patch)) {
+				window.maestro.settings.set(key, value);
+			}
+		},
+
+		setTypographyPromptSeen: (value) => {
+			set({ typographyPromptSeen: value });
+			window.maestro.settings.set('typographyPromptSeen', value);
+		},
+
+		setThemePromptSeen: (value) => {
+			set({ themePromptSeen: value });
+			window.maestro.settings.set('themePromptSeen', value);
+		},
+
+		setUpdatesPromptSeen: (value) => {
+			set({ updatesPromptSeen: value });
+			window.maestro.settings.set('updatesPromptSeen', value);
+		},
+
+		setAgentPowersPromptSeen: (value) => {
+			set({ agentPowersPromptSeen: value });
+			window.maestro.settings.set('agentPowersPromptSeen', value);
+		},
+
+		applyTypographyPreset: (id) => {
+			const preset = TYPOGRAPHY_PRESETS[id];
+			const patch = { ...preset.fonts, ...preset.sizes };
+			set(patch);
+			for (const [key, value] of Object.entries(patch)) {
+				window.maestro.settings.set(key, value);
+			}
 		},
 
 		setMediaPlaybackRate: (value) => {
@@ -2433,10 +2604,57 @@ export async function loadAllSettings(): Promise<void> {
 
 		if (allSettings['ghPath'] !== undefined) patch.ghPath = allSettings['ghPath'] as string;
 
-		if (allSettings['fontFamily'] !== undefined)
-			patch.fontFamily = allSettings['fontFamily'] as string;
+		// Guarded with typeof rather than a blind cast: a corrupted or
+		// hand-edited settings file can hold a non-string here, and assigning it
+		// straight into a CSS custom property (see typography.ts) would break
+		// every surface that inherits from it rather than just this one.
+		if (typeof allSettings['fontFamily'] === 'string') patch.fontFamily = allSettings['fontFamily'];
+
+		if (typeof allSettings['terminalFontFamily'] === 'string')
+			patch.terminalFontFamily = allSettings['terminalFontFamily'];
+
+		if (typeof allSettings['chatFontFamily'] === 'string')
+			patch.chatFontFamily = allSettings['chatFontFamily'];
+
+		if (typeof allSettings['filePreviewFontFamily'] === 'string')
+			patch.filePreviewFontFamily = allSettings['filePreviewFontFamily'];
+
+		if (typeof allSettings['fileEditorFontFamily'] === 'string')
+			patch.fileEditorFontFamily = allSettings['fileEditorFontFamily'];
+
+		if (typeof allSettings['documentGraphFontFamily'] === 'string')
+			patch.documentGraphFontFamily = allSettings['documentGraphFontFamily'];
 
 		if (allSettings['fontSize'] !== undefined) patch.fontSize = allSettings['fontSize'] as number;
+
+		for (const spec of TYPOGRAPHY_SURFACE_LIST) {
+			if (!canInherit(spec)) continue;
+			const raw = allSettings[spec.sizeKey];
+			if (raw !== undefined) {
+				(patch as Record<string, unknown>)[spec.sizeKey] = clampSurfaceFontSize(Number(raw));
+			}
+		}
+
+		if (allSettings['fontZoom'] !== undefined)
+			patch.fontZoom = clampFontZoom(Number(allSettings['fontZoom']));
+
+		if (allSettings['typographySnapshot'] !== undefined)
+			patch.typographySnapshot = parseTypographySnapshot(allSettings['typographySnapshot']);
+
+		if (allSettings['typographyPromptSeen'] !== undefined)
+			patch.typographyPromptSeen = Boolean(allSettings['typographyPromptSeen']);
+
+		if (allSettings['themePromptSeen'] !== undefined)
+			patch.themePromptSeen = Boolean(allSettings['themePromptSeen']);
+
+		if (allSettings['updatesPromptSeen'] !== undefined)
+			patch.updatesPromptSeen = Boolean(allSettings['updatesPromptSeen']);
+
+		if (allSettings['agentPowersPromptSeen'] !== undefined)
+			patch.agentPowersPromptSeen = Boolean(allSettings['agentPowersPromptSeen']);
+
+		if (allSettings['hasPriorInstallation'] !== undefined)
+			patch.hasPriorInstallation = Boolean(allSettings['hasPriorInstallation']);
 
 		if (allSettings['mediaPlaybackRate'] !== undefined)
 			patch.mediaPlaybackRate = normalizePlaybackRate(allSettings['mediaPlaybackRate']);
@@ -3048,12 +3266,10 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['userMessageAlignment'] !== undefined)
 			patch.userMessageAlignment = allSettings['userMessageAlignment'] as 'left' | 'right';
 
-		// Encore Features (merge with defaults to preserve new flags)
+		// Encore Features (merge with defaults so a flag the stored object predates
+		// keeps its default instead of reading as off)
 		if (allSettings['encoreFeatures'] !== undefined) {
-			patch.encoreFeatures = {
-				...DEFAULT_ENCORE_FEATURES,
-				...(allSettings['encoreFeatures'] as Partial<EncoreFeatureFlags>),
-			};
+			patch.encoreFeatures = resolveEncoreFeatures(allSettings['encoreFeatures']);
 		}
 
 		// Symphony registry URLs (additional user-configured registries)
@@ -3323,6 +3539,21 @@ export function getSettingsActions() {
 		setShellEnvVarsDisabled: state.setShellEnvVarsDisabled,
 		setGhPath: state.setGhPath,
 		setFontFamily: state.setFontFamily,
+		setTerminalFontFamily: state.setTerminalFontFamily,
+		setChatFontFamily: state.setChatFontFamily,
+		setFilePreviewFontFamily: state.setFilePreviewFontFamily,
+		setFileEditorFontFamily: state.setFileEditorFontFamily,
+		setSurfaceFontFamily: state.setSurfaceFontFamily,
+		setSurfaceFontSize: state.setSurfaceFontSize,
+		setFontZoom: state.setFontZoom,
+		resetTypography: state.resetTypography,
+		saveTypographySnapshot: state.saveTypographySnapshot,
+		restoreTypographySnapshot: state.restoreTypographySnapshot,
+		setTypographyPromptSeen: state.setTypographyPromptSeen,
+		setThemePromptSeen: state.setThemePromptSeen,
+		setUpdatesPromptSeen: state.setUpdatesPromptSeen,
+		setAgentPowersPromptSeen: state.setAgentPowersPromptSeen,
+		applyTypographyPreset: state.applyTypographyPreset,
 		setFontSize: state.setFontSize,
 		setMediaPlaybackRate: state.setMediaPlaybackRate,
 		setActiveThemeId: state.setActiveThemeId,

@@ -18,7 +18,7 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 import { render, screen } from '@testing-library/react';
 import { useSettings } from '../../renderer/hooks';
 import React from 'react';
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, readdirSync } from 'fs';
 import path from 'path';
 import { useSettingsStore } from '../../renderer/stores/settingsStore';
 
@@ -37,7 +37,7 @@ const DEFAULT_ONBOARDING_STATS = JSON.parse(JSON.stringify(_INITIAL_STATE.onboar
 const DEFAULT_AI_COMMANDS = JSON.parse(JSON.stringify(_INITIAL_STATE.customAICommands));
 import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS } from '../../renderer/constants/shortcuts';
 import { DEFAULT_CUSTOM_THEME_COLORS } from '../../renderer/constants/themes';
-import { MAESTRO_FONT_STACK, MAESTRO_WORDMARK_FONT_STACK } from '../../shared/fontStacks';
+import { MAESTRO_FONT_STACK, WORDMARK_FONT_STACK } from '../../shared/fontStack';
 
 // Mock the FontConfigurationPanel's common monospace fonts list
 const COMMON_MONOSPACE_FONTS = [
@@ -214,22 +214,37 @@ describe('Cross-platform Fonts and Sizing', () => {
 				})
 				.filter(Boolean);
 
+		/**
+		 * Typography drives the app font through CSS variables (`--maestro-font-mono`,
+		 * `--maestro-font-interface`) so a surface can be re-themed at runtime.
+		 * The var's FALLBACK is the shared stack, and that fallback is what has to
+		 * agree with `MAESTRO_FONT_STACK` - it is what paints before the renderer
+		 * publishes the variable, which is the first-paint case this whole
+		 * describe block exists to pin down.
+		 */
+		const varFallback = (declaration: string) => {
+			// Tailwind stores the whole var() as one QUOTED array entry, so the outer
+			// quotes come off before the var() itself can be matched.
+			let text = declaration.trim();
+			while (/^(['"])[\s\S]*\1$/.test(text)) text = text.slice(1, -1).trim();
+			const inner = /^var\(\s*--[\w-]+\s*,([\s\S]*)\)$/.exec(text);
+			return familyNames(inner ? inner[1] : text);
+		};
+
 		it('should match the Tailwind font-mono stack', () => {
 			const tailwind = readRepoFile('tailwind.config.mjs');
 			const mono = /mono:\s*\[([^\]]+)\]/.exec(tailwind);
 			expect(mono).not.toBeNull();
 
-			expect(familyNames(mono![1])).toEqual(familyNames(MAESTRO_FONT_STACK));
+			expect(varFallback(mono![1])).toEqual(familyNames(MAESTRO_FONT_STACK));
 		});
 
 		it('should match the base body font stack in index.css', () => {
 			const css = readRepoFile('src/renderer/index.css');
-			const body = /font-family:\s*'JetBrains Mono'[^;]*;/.exec(css);
+			const body = /font-family:\s*(var\(\s*--maestro-font-interface,[^;]*\));/.exec(css);
 			expect(body).not.toBeNull();
 
-			expect(familyNames(body![0].replace(/^font-family:\s*|;$/g, ''))).toEqual(
-				familyNames(MAESTRO_FONT_STACK)
-			);
+			expect(varFallback(body![1])).toEqual(familyNames(MAESTRO_FONT_STACK));
 		});
 
 		it('should match the splash screen font stack in index.html', () => {
@@ -258,19 +273,41 @@ describe('Cross-platform Fonts and Sizing', () => {
 			// keep the CSP tight enough that a regression fails loudly.
 			expect(markup).not.toContain('fonts.googleapis.com');
 			expect(markup).not.toContain('fonts.gstatic.com');
-			expect(markup).toContain('./fonts/jetbrains-mono.css');
+			expect(markup).toMatch(/href="\.\/fonts\/[^"]+\.woff2"/);
+			expect(readRepoFile('src/renderer/index.css')).toContain("@import './generated-fonts.css';");
 		});
 
-		it('should ship the bundled woff2 subsets the stylesheet references', () => {
-			const fontDir = path.join(__dirname, '../../..', 'src/renderer/public/fonts');
-			const sheet = readFileSync(path.join(fontDir, 'jetbrains-mono.css'), 'utf-8');
+		it('should block, never swap, on every bundled @font-face', () => {
+			const css = readRepoFile('src/renderer/generated-fonts.css');
+			const faces = css.match(/@font-face\s*\{[^}]*\}/g) ?? [];
+			expect(faces.length).toBeGreaterThan(0);
 
-			const referenced = [...sheet.matchAll(/url\('([^']+\.woff2)'\)/g)].map((m) => m[1]);
-			expect(referenced.length).toBeGreaterThan(0);
-
-			for (const file of referenced) {
-				expect(existsSync(path.join(fontDir, file))).toBe(true);
+			for (const face of faces) {
+				expect(face).toMatch(/font-display:\s*block;/);
 			}
+
+			const script = readRepoFile('scripts/fetch-webfonts.mjs');
+			expect(script).toContain("'\\tfont-display: block;'");
+			expect(script).not.toMatch(/'\\tfont-display: (?!block;)/);
+		});
+
+		it('should preload a woff2 the bundled stylesheet actually declares', () => {
+			const markup = readRepoFile('src/renderer/index.html').replace(/<!--[\s\S]*?-->/g, '');
+			const preload = /href="\.\/fonts\/([^"]+\.woff2)"/.exec(markup);
+			expect(preload).not.toBeNull();
+
+			const css = readRepoFile('src/renderer/generated-fonts.css');
+			expect(css).toContain(`url('/fonts/${preload![1]}')`);
+		});
+
+		it('should not ship font files the bundled stylesheet does not declare', () => {
+			const css = readRepoFile('src/renderer/generated-fonts.css');
+			const fontDir = path.join(__dirname, '../../..', 'src/renderer/public/fonts');
+
+			const orphans = readdirSync(fontDir).filter(
+				(name) => name !== 'OFL.txt' && !css.includes(`url('/fonts/${name}')`)
+			);
+			expect(orphans).toEqual([]);
 		});
 
 		it('should pin the wordmark to its own stack, not the user setting', () => {
@@ -278,9 +315,9 @@ describe('Cross-platform Fonts and Sizing', () => {
 			// inherit the root element's inline fontFamily, which is the user's
 			// Settings choice - otherwise picking a terminal font redraws the brand.
 			const sessionList = readRepoFile('src/renderer/components/SessionList/SessionList.tsx');
-			expect(sessionList).toContain('MAESTRO_WORDMARK_FONT_STACK');
+			expect(sessionList).toContain('WORDMARK_FONT_STACK');
 
-			expect(familyNames(MAESTRO_WORDMARK_FONT_STACK)[0]).toBe('JetBrains Mono');
+			expect(familyNames(WORDMARK_FONT_STACK)[0]).toBe('JetBrains Mono');
 		});
 	});
 

@@ -1,16 +1,16 @@
 ---
 title: Encore Features
-description: Optional, feature-gated capabilities that let Maestro ship fast without bloating the core experience.
+description: Capabilities that graduated out of opt-in gating and now ship on by default, each one still a single toggle away from off.
 icon: flask
 ---
 
-Encore Features are Maestro's system for shipping powerful capabilities that aren't essential for every user. They're disabled by default and completely invisible when off - no shortcuts, no menu items, no command palette entries. This keeps the core app lean while letting power users opt into advanced workflows.
+Encore Features are Maestro's system for shipping powerful capabilities behind a single toggle. A capability starts life as a plugin: gated, off, and opt-in. Once it has earned its place in the core experience it graduates to an Encore Feature and ships **on by default**.
 
-Think of them as a precursor to a full plugin marketplace: each Encore Feature adds significant functionality, but only for users who want it.
+Turning one off is still one click, and a disabled feature is completely invisible - no shortcuts, no menu items, no command palette entries.
 
-## Enabling Encore Features
+## Turning Encore Features On and Off
 
-Open **Settings** (`Cmd+,` / `Ctrl+,`) and navigate to the **Encore Features** tab. Toggle individual features on or off. Each feature may have its own configuration options that appear when enabled.
+Every Encore Feature is already on. To turn one off (or back on), open **Settings** (`Cmd+,` / `Ctrl+,`) and navigate to the **Encore Features** tab. Each feature may have its own configuration options that appear when enabled.
 
 ![Encore Features settings panel](./screenshots/encore-features.png)
 
@@ -25,6 +25,6 @@ Open **Settings** (`Cmd+,` / `Ctrl+,`) and navigate to the **Encore Features** t
 
 ## For Developers
 
-Want to build a new Encore Feature? The architecture is designed for easy extension - add a flag, wire up the toggle, gate the access points, and your feature ships behind a clean opt-in.
+Want to build a new Encore Feature? The architecture is designed for easy extension - add a flag, wire up the toggle, gate the access points, and your feature ships behind a clean opt-in. Ship it off by default while it proves itself; flip its entry in `DEFAULT_ENCORE_FEATURES` (`src/shared/encoreFeatures.ts`) when it graduates.
 
 See the [Encore Features contributor guide](https://github.com/RunMaestro/Maestro/blob/main/CONTRIBUTING.md#encore-features-feature-gating) for the full implementation checklist, architecture details, and the canonical reference implementation (Director's Notes).

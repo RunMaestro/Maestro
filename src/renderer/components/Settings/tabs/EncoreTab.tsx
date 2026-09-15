@@ -316,10 +316,10 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 					Encore Features
 				</h3>
 				<p className="text-xs" style={{ color: theme.colors.textDim }}>
-					Optional features that extend Maestro's capabilities. Enable the ones you want. Disabled
-					features are completely hidden from shortcuts, menus, and the command palette.
-					Contributors building new features should consider gating them here to keep the core
-					experience focused.
+					Features that extend Maestro's capabilities. They ship on; turn off the ones you don't
+					want. Disabled features are completely hidden from shortcuts, menus, and the command
+					palette. Contributors should gate a new feature here and leave it off until it earns a
+					place in the core experience.
 				</p>
 			</div>
 
