@@ -167,36 +167,24 @@ export const FileTreeRow = memo(function FileTreeRow({
 	// header gets the extra dashed outline as the primary target.
 	const isInDropGroup = dragOverFolder !== null && dragOverFolder === dropDestRelative;
 	const isDropTargetHeader = isInDropGroup && isFolder;
+	// The highlight starts at the row's own indent rather than the panel edge, so
+	// a selected row never paints across its ancestors' guide lines and reads as
+	// sitting inside its parent folder (#1585). A drop group starts at the
+	// destination folder's indent, so the header and the files that would land
+	// beside it still read as one contiguous block.
+	const highlightDepth = isInDropGroup && !isFolder ? Math.max(0, depth - 1) : depth;
 
 	return (
 		<div
 			key={fullPath}
 			data-file-index={globalIndex}
 			title={isFolder ? 'Alt/Option+click to expand or collapse all subfolders' : undefined}
-			className={`absolute top-0 left-0 w-full flex items-center gap-2 py-1 text-xs cursor-pointer hover:bg-white/5 px-2 rounded transition-colors border-l-2 select-none min-w-0 ${isSelected ? 'bg-white/10' : ''}`}
+			className="group isolate absolute top-0 left-0 w-full flex items-center gap-2 py-1 px-2 text-xs cursor-pointer select-none min-w-0"
 			style={{
 				height: `${virtualRow.size}px`,
 				transform: `translateY(${virtualRow.start}px)`,
 				paddingLeft: `${8 + depth * 20}px`,
 				color: hasChange ? theme.colors.textMain : theme.colors.textDim,
-				borderLeftColor: isInDropGroup
-					? theme.colors.accent
-					: isKeyboardSelected
-						? theme.colors.accent
-						: isMultiSelected
-							? theme.colors.accent
-							: 'transparent',
-				backgroundColor: isInDropGroup
-					? `${theme.colors.accent}33`
-					: isMultiSelected
-						? `${theme.colors.accent}22`
-						: isKeyboardSelected
-							? theme.colors.bgActivity
-							: isSelected
-								? 'rgba(255,255,255,0.1)'
-								: undefined,
-				outline: isDropTargetHeader ? `1px dashed ${theme.colors.accent}` : undefined,
-				outlineOffset: isDropTargetHeader ? '-2px' : undefined,
 			}}
 			draggable
 			onDragStart={(e) => {
@@ -283,13 +271,51 @@ export const FileTreeRow = memo(function FileTreeRow({
 			}}
 			onContextMenu={(e) => handleContextMenu(e, node, fullPath, globalIndex)}
 		>
+			{/* Highlight layer, painted behind the row's content (the row is its own
+			    stacking context via `isolate`). */}
+			<div
+				data-testid="file-tree-row-highlight"
+				aria-hidden="true"
+				className="absolute inset-y-0 right-0 -z-10 rounded border-l-2 transition-colors pointer-events-none group-hover:bg-white/5"
+				style={{
+					left: `${highlightDepth * 20}px`,
+					borderLeftColor: isInDropGroup
+						? theme.colors.accent
+						: isKeyboardSelected
+							? theme.colors.accent
+							: isMultiSelected
+								? theme.colors.accent
+								: 'transparent',
+					backgroundColor: isInDropGroup
+						? `${theme.colors.accent}33`
+						: isMultiSelected
+							? `${theme.colors.accent}22`
+							: isKeyboardSelected
+								? theme.colors.bgActivity
+								: isSelected
+									? 'rgba(255,255,255,0.1)'
+									: undefined,
+					outline: isDropTargetHeader ? `1px dashed ${theme.colors.accent}` : undefined,
+					outlineOffset: isDropTargetHeader ? '-2px' : undefined,
+				}}
+			/>
 			{indentGuides}
-			{isFolder &&
-				(isExpanded ? (
+			{/* Files reserve the chevron slot so a file and a folder at the same
+			    depth share one icon column. Without it a file's icon lined up under
+			    its PARENT folder's icon, and a nested tree read as a staircase. */}
+			{isFolder ? (
+				isExpanded ? (
 					<ChevronDown className="w-3 h-3 flex-shrink-0" />
 				) : (
 					<ChevronRight className="w-3 h-3 flex-shrink-0" />
-				))}
+				)
+			) : (
+				<span
+					data-testid="file-tree-chevron-spacer"
+					aria-hidden="true"
+					className="w-3 h-3 flex-shrink-0"
+				/>
+			)}
 			<span className="flex-shrink-0">
 				{isFolder
 					? getExplorerFolderIcon(node.name, isExpanded, theme, fileExplorerIconTheme)

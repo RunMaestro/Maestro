@@ -39,6 +39,9 @@ const makeItem = (node: FileNode, depth = 0): FlattenedNode => ({
 
 const virtualRow = { index: 0, start: 0, size: 28 };
 
+const getHighlight = (container: HTMLElement) =>
+	container.querySelector('[data-testid="file-tree-row-highlight"]') as HTMLElement;
+
 const session = {
 	id: 'sess-1',
 	fullPath: '/project',
@@ -110,18 +113,40 @@ describe('FileTreeRow', () => {
 		expect(svgs.length).toBeGreaterThan(0);
 	});
 
+	it('reserves the chevron slot on file rows so sibling icons share a column', () => {
+		render(<FileTreeRow {...defaultProps} />);
+		expect(screen.getByTestId('file-tree-chevron-spacer')).toHaveClass('w-3');
+	});
+
+	it('does not render a chevron spacer on folder rows', () => {
+		render(<FileTreeRow {...defaultProps} item={makeItem(folderNode)} />);
+		expect(screen.queryByTestId('file-tree-chevron-spacer')).toBeNull();
+	});
+
 	it('generates indent guides for nested nodes', () => {
 		const { container } = render(<FileTreeRow {...defaultProps} item={makeItem(fileNode, 2)} />);
 		const guides = container.querySelectorAll('.absolute.top-0.bottom-0.w-px');
 		expect(guides).toHaveLength(2);
 	});
 
+	it('starts the row highlight right of its nearest ancestor guide', () => {
+		const item: FlattenedNode = {
+			node: fileNode,
+			path: 'a/b/App.tsx',
+			depth: 2,
+			globalIndex: 0,
+		};
+		const { container } = render(<FileTreeRow {...defaultProps} item={item} />);
+		const guides = container.querySelectorAll<HTMLElement>('.absolute.top-0.bottom-0.w-px');
+		const lastGuideRight = parseFloat(guides[guides.length - 1].style.left) + 1;
+		expect(parseFloat(getHighlight(container).style.left)).toBeGreaterThan(lastGuideRight);
+	});
+
 	it('applies drop-target highlight styles when dragOverFolder matches', () => {
 		const { container } = render(
 			<FileTreeRow {...defaultProps} item={makeItem(folderNode)} dragOverFolder="src" />
 		);
-		const row = container.firstElementChild as HTMLElement;
-		expect(row.style.outline).toContain('dashed');
+		expect(getHighlight(container).style.outline).toContain('dashed');
 	});
 
 	it('highlights a child file row as part of the drop group when dragOverFolder matches its parent', () => {
@@ -136,11 +161,14 @@ describe('FileTreeRow', () => {
 		const { container } = render(
 			<FileTreeRow {...defaultProps} item={nested} dragOverFolder="src" />
 		);
-		const row = container.firstElementChild as HTMLElement;
-		expect(row.style.backgroundColor).toBeTruthy();
-		expect(row.style.borderLeftColor).not.toBe('transparent');
+		const highlight = getHighlight(container);
+		expect(highlight.style.backgroundColor).toBeTruthy();
+		expect(highlight.style.borderLeftColor).not.toBe('transparent');
 		// Only the folder header gets the dashed box, not the child file rows.
-		expect(row.style.outline).not.toContain('dashed');
+		expect(highlight.style.outline).not.toContain('dashed');
+		// The group starts at the destination folder's indent (depth 0), so the
+		// header and its files still read as one block.
+		expect(highlight.style.left).toBe('0px');
 	});
 
 	it("routes a drop on a child file row into that file's parent folder", () => {
@@ -168,8 +196,7 @@ describe('FileTreeRow', () => {
 		const { container } = render(
 			<FileTreeRow {...defaultProps} item={nested} dragOverFolder="docs" />
 		);
-		const row = container.firstElementChild as HTMLElement;
-		expect(row.style.borderLeftColor).toBe('transparent');
+		expect(getHighlight(container).style.borderLeftColor).toBe('transparent');
 	});
 
 	it('shows git change indicator dot when file is changed', () => {
@@ -212,18 +239,17 @@ describe('FileTreeRow', () => {
 				activeRightTab="files"
 			/>
 		);
-		const row = container.firstElementChild as HTMLElement;
-		expect(row.style.backgroundColor).toBeTruthy();
+		expect(getHighlight(container).style.backgroundColor).toBeTruthy();
 	});
 
 	it('shows multi-selected accent border for rows in selectedPaths', () => {
 		const { container } = render(
 			<FileTreeRow {...defaultProps} selectedPaths={new Set(['App.tsx'])} />
 		);
-		const row = container.firstElementChild as HTMLElement;
+		const highlight = getHighlight(container);
 		// jsdom converts hex colors to rgb notation
-		expect(row.style.borderLeftColor).toBeTruthy();
-		expect(row.style.borderLeftColor).not.toBe('transparent');
+		expect(highlight.style.borderLeftColor).toBeTruthy();
+		expect(highlight.style.borderLeftColor).not.toBe('transparent');
 	});
 
 	it('uses colorblind palette colors when colorBlindMode is true', () => {
