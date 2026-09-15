@@ -9,6 +9,9 @@ import {
 	buildTreeFromPaths,
 	spliceMaestroIntoTree,
 	loadFileTreeRemoteBatched,
+	findTreeNode,
+	isDepthCappedFolder,
+	MAX_REMOTE_DEEP_FOLDER_LISTINGS,
 	FileTreeAbortError,
 	FileTreeNode,
 } from '../../../renderer/utils/fileExplorer';
@@ -261,6 +264,17 @@ describe('fileExplorer utils', () => {
 				ignorePatterns: ['.git'],
 				honorGitignore: true,
 			});
+		});
+
+		it('forwards the expanded folders so the walk reads them past the depth cap', async () => {
+			vi.mocked(window.maestro.fs.readDirTree).mockResolvedValueOnce(scanResult([]));
+
+			await loadFileTree('/project', 5, 0, undefined, undefined, { expandedPaths: ['a/b'] });
+
+			expect(window.maestro.fs.readDirTree).toHaveBeenCalledWith(
+				'/project',
+				expect.objectContaining({ expandedPaths: ['a/b'] })
+			);
 		});
 
 		it('sends an unlimited cap as undefined rather than Infinity', async () => {
@@ -864,6 +878,87 @@ describe('fileExplorer utils', () => {
 			});
 
 			expect(result.truncated).toBe(true);
+		});
+
+		it('lists an expanded folder the depth cap cut off and grafts its contents in', async () => {
+			const listTreeMock = window.maestro.fs.listTreeRemote as ReturnType<typeof vi.fn>;
+			listTreeMock
+				.mockResolvedValueOnce({ directories: [], files: [], truncated: false })
+				.mockResolvedValueOnce({ directories: ['a', 'a/b'], files: [], truncated: false })
+				.mockResolvedValueOnce({ directories: ['c'], files: ['x.md'], truncated: false });
+
+			const result = await loadFileTreeRemoteBatched('/project', {
+				maxDepth: 2,
+				maxEntries: 1000,
+				ignorePatterns: ['node_modules'],
+				honorGitignore: false,
+				sshRemoteId: 'remote-1',
+				expandedPaths: ['a', 'a/b'],
+			});
+
+			// Only the capped folder gets a listing; `a` was already complete.
+			expect(listTreeMock).toHaveBeenCalledTimes(3);
+			expect(listTreeMock).toHaveBeenNthCalledWith(3, '/project/a/b', 'remote-1', {
+				maxDepth: 1,
+				ignorePatterns: ['node_modules'],
+			});
+			expect(findTreeNode(result.tree, 'a/b')?.children).toEqual([
+				{ name: 'c', type: 'folder', children: [] },
+				{ name: 'x.md', type: 'file' },
+			]);
+			expect(result.filesFound).toBe(1);
+		});
+
+		it('bounds how many capped folders a single remote load lists', async () => {
+			const listTreeMock = window.maestro.fs.listTreeRemote as ReturnType<typeof vi.fn>;
+			const folders = Array.from(
+				{ length: MAX_REMOTE_DEEP_FOLDER_LISTINGS + 5 },
+				(_, i) => `d${i}`
+			);
+			listTreeMock
+				.mockResolvedValueOnce({ directories: [], files: [], truncated: false })
+				.mockResolvedValueOnce({ directories: folders, files: [], truncated: false })
+				.mockResolvedValue({ directories: [], files: [], truncated: false });
+
+			await loadFileTreeRemoteBatched('/project', {
+				maxDepth: 1,
+				maxEntries: 1000,
+				ignorePatterns: [],
+				honorGitignore: false,
+				sshRemoteId: 'remote-1',
+				expandedPaths: folders,
+			});
+
+			expect(listTreeMock).toHaveBeenCalledTimes(2 + MAX_REMOTE_DEEP_FOLDER_LISTINGS);
+		});
+	});
+
+	// ============================================================================
+	// isDepthCappedFolder
+	// ============================================================================
+	describe('isDepthCappedFolder', () => {
+		const tree: FileTreeNode[] = [
+			{
+				name: 'a',
+				type: 'folder',
+				children: [
+					{ name: 'empty', type: 'folder', children: [] },
+					{ name: 'full', type: 'folder', children: [{ name: 'f.md', type: 'file' }] },
+					{ name: 'note.md', type: 'file' },
+				],
+			},
+		];
+
+		it('matches a childless folder at or past the depth cap', () => {
+			expect(isDepthCappedFolder(tree, 'a/empty', 2)).toBe(true);
+			expect(isDepthCappedFolder(tree, 'a/empty', 1)).toBe(true);
+		});
+
+		it('ignores folders above the cap, loaded folders, files, and missing paths', () => {
+			expect(isDepthCappedFolder(tree, 'a/empty', 3)).toBe(false);
+			expect(isDepthCappedFolder(tree, 'a/full', 2)).toBe(false);
+			expect(isDepthCappedFolder(tree, 'a/note.md', 2)).toBe(false);
+			expect(isDepthCappedFolder(tree, 'a/missing', 2)).toBe(false);
 		});
 	});
 

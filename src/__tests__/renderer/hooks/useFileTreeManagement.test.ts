@@ -157,6 +157,71 @@ describe('useFileTreeManagement', () => {
 		expect(state.getSessions()[0].fileTreeError).toBeUndefined();
 	});
 
+	describe('opening a folder the depth cap cut off', () => {
+		const cappedTree: FileNode[] = [
+			{ name: 'a', type: 'folder', children: [{ name: 'b', type: 'folder', children: [] }] },
+		];
+		const stats = { fileCount: 0, folderCount: 2, totalSize: 0 };
+
+		const renderWithExpansion = (maxDepth: number) => {
+			vi.mocked(loadFileTree).mockResolvedValue(asResult(cappedTree));
+			vi.mocked(compareFileTrees).mockReturnValue({
+				totalChanges: 0,
+				newFiles: 0,
+				newFolders: 0,
+				removedFiles: 0,
+				removedFolders: 0,
+			});
+			const state = createSessionsState([
+				createMockSession({ fileTree: cappedTree, fileTreeStats: stats, fileExplorerExpanded: [] }),
+			]);
+			const { rerender } = renderHook(
+				(deps: UseFileTreeManagementDeps) => useFileTreeManagement(deps),
+				{
+					initialProps: createDeps(state, { fileExplorerMaxDepth: maxDepth }),
+				}
+			);
+			const expand = (paths: string[]) => {
+				state.setSessions((prev) => prev.map((s) => ({ ...s, fileExplorerExpanded: paths })));
+				rerender(createDeps(state, { fileExplorerMaxDepth: maxDepth }));
+			};
+			return { expand };
+		};
+
+		it('rescans with the expanded folders and skips the stats scan', async () => {
+			const { expand } = renderWithExpansion(2);
+			vi.mocked(window.maestro.fs.directorySize).mockClear();
+
+			await act(async () => {
+				expand(['a', 'a/b']);
+			});
+
+			await waitFor(() => {
+				expect(loadFileTree).toHaveBeenCalledWith(
+					'/test/project',
+					2,
+					0,
+					undefined,
+					undefined,
+					{ expandedPaths: ['a', 'a/b'] },
+					100_000,
+					undefined
+				);
+			});
+			expect(window.maestro.fs.directorySize).not.toHaveBeenCalled();
+		});
+
+		it('does not rescan when the opened folder is above the cap', async () => {
+			const { expand } = renderWithExpansion(5);
+
+			await act(async () => {
+				expand(['a', 'a/b']);
+			});
+
+			expect(loadFileTree).not.toHaveBeenCalled();
+		});
+	});
+
 	it('refreshFileTree handles load errors', async () => {
 		vi.mocked(loadFileTree).mockRejectedValue(new Error('boom'));
 

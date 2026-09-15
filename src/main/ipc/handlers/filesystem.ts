@@ -329,6 +329,7 @@ export function registerFilesystemHandlers(): void {
 				maxEntries?: number;
 				ignorePatterns?: string[];
 				honorGitignore?: boolean;
+				expandedPaths?: string[];
 			}
 		) => walkLocalFileTree(dirPath, options)
 	);

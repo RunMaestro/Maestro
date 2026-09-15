@@ -87,6 +87,33 @@ describe('walkLocalFileTree', () => {
 		expect(fs.readdir).toHaveBeenCalledTimes(3);
 	});
 
+	it('reads an expanded folder past maxDepth, one level at a time', async () => {
+		mockTree({
+			'/project': [{ name: 'a', kind: 'dir' }],
+			'/project/a': [{ name: 'b', kind: 'dir' }],
+			'/project/a/b': [
+				{ name: 'x.md', kind: 'file' },
+				{ name: 'c', kind: 'dir' },
+			],
+			'/project/a/b/c': [{ name: 'y.md', kind: 'file' }],
+		});
+
+		const capped = await walkLocalFileTree('/project', { maxDepth: 2 });
+		expect(capped.tree[0].children![0]).toEqual({ name: 'b', type: 'folder', children: [] });
+
+		const result = await walkLocalFileTree('/project', { maxDepth: 2, expandedPaths: ['a/b'] });
+
+		// b is opened, so its contents load; c is not, so it stays unread.
+		expect(result.tree[0].children![0]).toEqual({
+			name: 'b',
+			type: 'folder',
+			children: [
+				{ name: 'c', type: 'folder', children: [] },
+				{ name: 'x.md', type: 'file' },
+			],
+		});
+	});
+
 	it('includes hidden entries but applies the default ignore patterns', async () => {
 		mockTree({
 			'/project': [
