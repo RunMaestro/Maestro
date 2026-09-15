@@ -9,6 +9,7 @@ import type { FileExplorerIconTheme } from '../../../utils/fileExplorerIcons/sha
 import type { FlattenedNode } from '../types';
 import { FILE_TREE_SINGLE_MIME, FILE_TREE_MULTI_MIME } from '../types';
 import { parentDirOf } from '../utils/pathHelpers';
+import { CONNECTOR_ARM_WIDTH, INDENT_STEP, guideLeft, rowPaddingLeft } from '../utils/treeLines';
 
 interface VirtualRow {
 	index: number;
@@ -32,6 +33,12 @@ interface FileTreeRowProps {
 	selectedPathsRef: React.MutableRefObject<Set<string>>;
 	setSelectedPaths: React.Dispatch<React.SetStateAction<Set<string>>>;
 	fileExplorerIconTheme: FileExplorerIconTheme;
+	/**
+	 * Draw elbow connectors from each folder's guide line into its children and
+	 * stop a guide at the folder's last child. Off by default: the pane then
+	 * draws plain full-height indent guides. Settings > Display.
+	 */
+	fileTreeBranchConnectors: boolean;
 	fileTreeFilter: string;
 	htmlDoubleClickOpensInBrowser: boolean;
 	sshRemoteId: string | undefined;
@@ -87,6 +94,7 @@ export const FileTreeRow = memo(function FileTreeRow({
 	selectedPathsRef,
 	setSelectedPaths,
 	fileExplorerIconTheme,
+	fileTreeBranchConnectors,
 	fileTreeFilter,
 	htmlDoubleClickOpensInBrowser,
 	sshRemoteId,
@@ -107,7 +115,7 @@ export const FileTreeRow = memo(function FileTreeRow({
 	handleFileClick,
 	onOpenBrowserTabAt,
 }: FileTreeRowProps) {
-	const { node, path: fullPath, depth, globalIndex } = item;
+	const { node, path: fullPath, depth, globalIndex, isLastChild, ancestorGuideMask } = item;
 	const absolutePath = `${session.fullPath}/${fullPath}`;
 	const isFolder = node.type === 'folder';
 	// Match against the full relative path - `path.includes(node.name)` used
@@ -142,19 +150,55 @@ export const FileTreeRow = memo(function FileTreeRow({
 		activeFocus === 'right' && activeRightTab === 'files' && globalIndex === selectedFileIndex;
 	const isMultiSelected = selectedPaths.has(fullPath);
 
-	// Generate indent guides for each depth level
-	const indentGuides = [];
-	for (let i = 0; i < depth; i++) {
+	// Indent guides. The default is one full-height line per ancestor level.
+	// With branch connectors on (Settings > Display), a line only runs the full
+	// height when the ancestor it belongs to still has a row further down, and
+	// the row's own parent column gets an elbow that points at this row - so a
+	// leaf reads as hanging off its folder instead of continuing the chain (#1585).
+	const indentGuides: React.ReactNode[] = [];
+	if (fileTreeBranchConnectors && depth > 0) {
+		for (let level = 0; level < depth - 1; level++) {
+			if (!(ancestorGuideMask & (1 << level))) continue;
+			indentGuides.push(
+				<div
+					key={level}
+					data-testid="file-tree-indent-guide"
+					className="absolute top-0 bottom-0 w-px"
+					style={{ left: `${guideLeft(level)}px`, backgroundColor: theme.colors.border }}
+				/>
+			);
+		}
+		const elbowLeft = guideLeft(depth - 1);
 		indentGuides.push(
 			<div
-				key={i}
-				className="absolute top-0 bottom-0 w-px"
+				key="connector-stem"
+				data-testid="file-tree-connector-stem"
+				className={`absolute top-0 w-px ${isLastChild ? 'h-1/2' : 'bottom-0'}`}
+				style={{ left: `${elbowLeft}px`, backgroundColor: theme.colors.border }}
+			/>,
+			<div
+				key="connector-arm"
+				data-testid="file-tree-connector-arm"
+				className="absolute h-px"
 				style={{
-					left: `${12 + i * 20}px`,
+					left: `${elbowLeft}px`,
+					top: '50%',
+					width: `${CONNECTOR_ARM_WIDTH}px`,
 					backgroundColor: theme.colors.border,
 				}}
 			/>
 		);
+	} else {
+		for (let level = 0; level < depth; level++) {
+			indentGuides.push(
+				<div
+					key={level}
+					data-testid="file-tree-indent-guide"
+					className="absolute top-0 bottom-0 w-px"
+					style={{ left: `${guideLeft(level)}px`, backgroundColor: theme.colors.border }}
+				/>
+			);
+		}
 	}
 
 	// A row's drop destination: folders accept the move INTO themselves; files
@@ -183,7 +227,7 @@ export const FileTreeRow = memo(function FileTreeRow({
 			style={{
 				height: `${virtualRow.size}px`,
 				transform: `translateY(${virtualRow.start}px)`,
-				paddingLeft: `${8 + depth * 20}px`,
+				paddingLeft: `${rowPaddingLeft(depth)}px`,
 				color: hasChange ? theme.colors.textMain : theme.colors.textDim,
 			}}
 			draggable
@@ -278,7 +322,7 @@ export const FileTreeRow = memo(function FileTreeRow({
 				aria-hidden="true"
 				className="absolute inset-y-0 right-0 -z-10 rounded border-l-2 transition-colors pointer-events-none group-hover:bg-white/5"
 				style={{
-					left: `${highlightDepth * 20}px`,
+					left: `${highlightDepth * INDENT_STEP}px`,
 					borderLeftColor: isInDropGroup
 						? theme.colors.accent
 						: isKeyboardSelected

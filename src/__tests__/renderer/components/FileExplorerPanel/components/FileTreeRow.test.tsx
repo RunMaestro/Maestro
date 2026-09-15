@@ -30,11 +30,20 @@ const theme = {
 const fileNode: FileNode = { name: 'App.tsx', type: 'file' };
 const folderNode: FileNode = { name: 'src', type: 'folder', children: [] };
 
-const makeItem = (node: FileNode, depth = 0): FlattenedNode => ({
+const makeItem = (
+	node: FileNode,
+	depth = 0,
+	overrides: Partial<FlattenedNode> = {}
+): FlattenedNode => ({
 	node,
 	path: node.name,
 	depth,
 	globalIndex: 0,
+	isLastChild: false,
+	// Every ancestor column continues by default, matching a row in the middle
+	// of a tree. Connector tests override this.
+	ancestorGuideMask: depth > 1 ? (1 << (depth - 1)) - 1 : 0,
+	...overrides,
 });
 
 const virtualRow = { index: 0, start: 0, size: 28 };
@@ -66,6 +75,7 @@ const defaultProps = {
 	selectedPathsRef: { current: new Set<string>() },
 	setSelectedPaths: vi.fn(),
 	fileExplorerIconTheme: 'vscode' as any,
+	fileTreeBranchConnectors: false,
 	fileTreeFilter: '',
 	htmlDoubleClickOpensInBrowser: false,
 	sshRemoteId: undefined,
@@ -129,13 +139,77 @@ describe('FileTreeRow', () => {
 		expect(guides).toHaveLength(2);
 	});
 
+	describe('branch connectors (Settings > Display, default off)', () => {
+		const connectorProps = { ...defaultProps, fileTreeBranchConnectors: true };
+
+		it('draws no connector on a depth-0 row', () => {
+			const { container } = render(
+				<FileTreeRow {...connectorProps} item={makeItem(fileNode, 0)} />
+			);
+			expect(container.querySelector('[data-testid="file-tree-connector-stem"]')).toBeNull();
+			expect(container.querySelector('[data-testid="file-tree-connector-arm"]')).toBeNull();
+		});
+
+		it("puts the elbow on the row's own parent column, one indent step left of its icon", () => {
+			const { container } = render(
+				<FileTreeRow {...connectorProps} item={makeItem(fileNode, 2)} />
+			);
+			const arm = container.querySelector<HTMLElement>('[data-testid="file-tree-connector-arm"]')!;
+			const stem = container.querySelector<HTMLElement>(
+				'[data-testid="file-tree-connector-stem"]'
+			)!;
+			// GUIDE_OFFSET 12 + (depth - 1) * INDENT_STEP 20
+			expect(arm.style.left).toBe('32px');
+			expect(stem.style.left).toBe('32px');
+		});
+
+		it('runs the elbow stem full height when the row has a following sibling', () => {
+			const { container } = render(
+				<FileTreeRow {...connectorProps} item={makeItem(fileNode, 1, { isLastChild: false })} />
+			);
+			const stem = container.querySelector<HTMLElement>(
+				'[data-testid="file-tree-connector-stem"]'
+			)!;
+			expect(stem.className).toContain('bottom-0');
+			expect(stem.className).not.toContain('h-1/2');
+		});
+
+		it("stops the elbow stem at the elbow on a folder's last child", () => {
+			const { container } = render(
+				<FileTreeRow {...connectorProps} item={makeItem(fileNode, 1, { isLastChild: true })} />
+			);
+			const stem = container.querySelector<HTMLElement>(
+				'[data-testid="file-tree-connector-stem"]'
+			)!;
+			expect(stem.className).toContain('h-1/2');
+			expect(stem.className).not.toContain('bottom-0');
+		});
+
+		it('only draws pass-through guides for ancestors the mask keeps alive', () => {
+			// depth 3, so pass-through columns are 0 and 1; only column 0 is set.
+			const { container } = render(
+				<FileTreeRow {...connectorProps} item={makeItem(fileNode, 3, { ancestorGuideMask: 0b1 })} />
+			);
+			const guides = container.querySelectorAll<HTMLElement>(
+				'[data-testid="file-tree-indent-guide"]'
+			);
+			expect(Array.from(guides).map((g) => g.style.left)).toEqual(['12px']);
+		});
+
+		it('draws every ancestor column full height when connectors are off', () => {
+			const { container } = render(
+				<FileTreeRow {...defaultProps} item={makeItem(fileNode, 3, { ancestorGuideMask: 0 })} />
+			);
+			const guides = container.querySelectorAll<HTMLElement>(
+				'[data-testid="file-tree-indent-guide"]'
+			);
+			expect(Array.from(guides).map((g) => g.style.left)).toEqual(['12px', '32px', '52px']);
+			expect(container.querySelector('[data-testid="file-tree-connector-stem"]')).toBeNull();
+		});
+	});
+
 	it('starts the row highlight right of its nearest ancestor guide', () => {
-		const item: FlattenedNode = {
-			node: fileNode,
-			path: 'a/b/App.tsx',
-			depth: 2,
-			globalIndex: 0,
-		};
+		const item = makeItem(fileNode, 2, { path: 'a/b/App.tsx' });
 		const { container } = render(<FileTreeRow {...defaultProps} item={item} />);
 		const guides = container.querySelectorAll<HTMLElement>('.absolute.top-0.bottom-0.w-px');
 		const lastGuideRight = parseFloat(guides[guides.length - 1].style.left) + 1;
@@ -152,12 +226,10 @@ describe('FileTreeRow', () => {
 	it('highlights a child file row as part of the drop group when dragOverFolder matches its parent', () => {
 		// Dropping anywhere in an expanded folder's list of files should land in
 		// that folder, so the child rows light up alongside the folder header.
-		const nested: FlattenedNode = {
-			node: { name: 'App.tsx', type: 'file' },
+		const nested = makeItem({ name: 'App.tsx', type: 'file' }, 1, {
 			path: 'src/App.tsx',
-			depth: 1,
 			globalIndex: 1,
-		};
+		});
 		const { container } = render(
 			<FileTreeRow {...defaultProps} item={nested} dragOverFolder="src" />
 		);
@@ -173,12 +245,10 @@ describe('FileTreeRow', () => {
 
 	it("routes a drop on a child file row into that file's parent folder", () => {
 		const handleFolderDrop = vi.fn();
-		const nested: FlattenedNode = {
-			node: { name: 'App.tsx', type: 'file' },
+		const nested = makeItem({ name: 'App.tsx', type: 'file' }, 1, {
 			path: 'src/App.tsx',
-			depth: 1,
 			globalIndex: 1,
-		};
+		});
 		const { container } = render(
 			<FileTreeRow {...defaultProps} item={nested} handleFolderDrop={handleFolderDrop} />
 		);
@@ -187,12 +257,10 @@ describe('FileTreeRow', () => {
 	});
 
 	it('does not highlight a child file row whose parent does not match dragOverFolder', () => {
-		const nested: FlattenedNode = {
-			node: { name: 'App.tsx', type: 'file' },
+		const nested = makeItem({ name: 'App.tsx', type: 'file' }, 1, {
 			path: 'src/App.tsx',
-			depth: 1,
 			globalIndex: 1,
-		};
+		});
 		const { container } = render(
 			<FileTreeRow {...defaultProps} item={nested} dragOverFolder="docs" />
 		);
@@ -229,7 +297,7 @@ describe('FileTreeRow', () => {
 	});
 
 	it('applies keyboard-selected background when globalIndex matches selectedFileIndex', () => {
-		const item: FlattenedNode = { node: fileNode, path: 'App.tsx', depth: 0, globalIndex: 3 };
+		const item = makeItem(fileNode, 0, { globalIndex: 3 });
 		const { container } = render(
 			<FileTreeRow
 				{...defaultProps}

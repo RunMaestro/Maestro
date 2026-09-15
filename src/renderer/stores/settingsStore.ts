@@ -409,6 +409,7 @@ export interface SettingsStoreState {
 	bionifyAlgorithm: string;
 	showHiddenFiles: boolean;
 	fileExplorerIconTheme: FileExplorerIconTheme;
+	fileTreeBranchConnectors: boolean;
 	toastWidth: ToastWidth;
 	terminalWidth: number;
 	logLevel: string;
@@ -588,6 +589,7 @@ export interface SettingsStoreActions {
 	setBionifyAlgorithm: (value: string) => void;
 	setShowHiddenFiles: (value: boolean) => void;
 	setFileExplorerIconTheme: (value: FileExplorerIconTheme) => void;
+	setFileTreeBranchConnectors: (value: boolean) => void;
 	setToastWidth: (value: ToastWidth) => void;
 	setTerminalWidth: (value: number) => void;
 	setMaxOutputLines: (value: number) => void;
@@ -840,6 +842,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		bionifyAlgorithm: '- 0 1 1 2 0.4',
 		showHiddenFiles: true,
 		fileExplorerIconTheme: 'rich',
+		fileTreeBranchConnectors: false,
 		toastWidth: 'dynamic',
 		terminalWidth: 100,
 		logLevel: 'info',
@@ -1266,6 +1269,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setFileExplorerIconTheme: (value) => {
 			set({ fileExplorerIconTheme: value });
 			window.maestro.settings.set('fileExplorerIconTheme', value);
+		},
+
+		setFileTreeBranchConnectors: (value) => {
+			set({ fileTreeBranchConnectors: value });
+			window.maestro.settings.set('fileTreeBranchConnectors', value);
 		},
 
 		setToastWidth: (value) => {
@@ -2742,6 +2750,9 @@ export async function loadAllSettings(): Promise<void> {
 				normalizeFileExplorerIconTheme(allSettings['fileExplorerIconTheme']) ?? 'rich';
 		}
 
+		if (allSettings['fileTreeBranchConnectors'] !== undefined)
+			patch.fileTreeBranchConnectors = allSettings['fileTreeBranchConnectors'] as boolean;
+
 		if (allSettings['toastWidth'] !== undefined) {
 			patch.toastWidth = isToastWidth(allSettings['toastWidth'])
 				? allSettings['toastWidth']
@@ -3576,6 +3587,7 @@ export function getSettingsActions() {
 		setBionifyAlgorithm: state.setBionifyAlgorithm,
 		setShowHiddenFiles: state.setShowHiddenFiles,
 		setFileExplorerIconTheme: state.setFileExplorerIconTheme,
+		setFileTreeBranchConnectors: state.setFileTreeBranchConnectors,
 		setToastWidth: state.setToastWidth,
 		setTerminalWidth: state.setTerminalWidth,
 		setLogLevel: state.setLogLevel,
