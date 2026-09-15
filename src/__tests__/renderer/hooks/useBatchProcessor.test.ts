@@ -1032,6 +1032,52 @@ describe('useBatchProcessor hook', () => {
 			expect(window.maestro.web.releaseAutoRunStartClaim).toHaveBeenCalledWith('test-session-id');
 		});
 
+		it('should not start over a halt marker an earlier run left in a document', async () => {
+			const sessions = [createMockSession()];
+			// Checkboxes were reset for a fresh launch, but the previous run's halt
+			// marker is still in the document (#1588).
+			mockReadDoc.mockResolvedValue({
+				success: true,
+				content: '# Review\n- [ ] Review the queue\n\n<!-- maestro:halt: queue already empty -->',
+			});
+
+			useSessionStore.setState({ sessions, activeSessionId: sessions[0]?.id ?? '' });
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					groups: [createMockGroup()],
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+				})
+			);
+
+			await act(async () => {
+				await result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'review', resetOnCompletion: false }],
+						prompt: 'Test prompt',
+						loopEnabled: true,
+						maxLoops: 12,
+					},
+					'/test/folder'
+				);
+			});
+
+			expect(mockOnSpawnAgent).not.toHaveBeenCalled();
+			expect(mockBroadcastAutoRunState).not.toHaveBeenCalled();
+			expect(mockOnAddHistoryEntry).not.toHaveBeenCalled();
+			expect(window.maestro.web.releaseAutoRunStartClaim).toHaveBeenCalledWith('test-session-id');
+			expect(mockNotifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({
+					title: 'Auto Run Not Started',
+					message: expect.stringContaining(
+						'Document "review" contains an unresolved halt marker on line 4: queue already empty'
+					),
+				})
+			);
+		});
+
 		it('should not start when another client wins the main-process claim', async () => {
 			const sessions = [createMockSession()];
 			useSessionStore.setState({ sessions, activeSessionId: sessions[0]?.id ?? '' });

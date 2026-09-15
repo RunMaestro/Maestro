@@ -199,6 +199,19 @@ export function detectHaltMarker(content: string): { halted: boolean; reason?: s
 }
 
 /**
+ * Why a run refused to start over a halt marker an EARLIER run left behind.
+ *
+ * Both engines refuse: the CLI as its `HALT_MARKER_PRESENT` error, the desktop
+ * as a toast. One wording, so the two cannot drift on what they tell the user
+ * to delete or on how to keep a described halt from blocking the playbook.
+ */
+export function describeUnresolvedHaltMarker(document: string, halt: HaltMarker): string {
+	return `Document "${document}" contains an unresolved halt marker on line ${halt.line + 1}${
+		halt.reason ? `: ${halt.reason}` : ''
+	}. Remove the <!-- maestro:halt --> marker before re-running. If the playbook only means to DESCRIBE when a run should stop, wrap the marker in backticks or a code fence so it reads as an example.`;
+}
+
+/**
  * Whether a marker is currently doing something.
  *
  * - `live` - it is changing the next run: a gate that will pause, a halt that

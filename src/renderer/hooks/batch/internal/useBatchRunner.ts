@@ -16,7 +16,12 @@ import { useBatchStore, isMirroredBatchRun } from '../../../stores/batchStore';
 import { useSessionStore, selectSessionById } from '../../../stores/sessionStore';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { countUnfinishedTasks, findPendingHitlGate, uncheckAllTasks } from '../batchUtils';
-import { detectHaltMarker } from '../../../../shared/autorunMarkers';
+import {
+	describeUnresolvedHaltMarker,
+	detectHaltMarker,
+	findHaltMarker,
+	type HaltMarker,
+} from '../../../../shared/autorunMarkers';
 import { DEFAULT_BATCH_STATE, type BatchAction } from '../batchReducer';
 import { createLoopSummaryEntry } from './batchLoopSummary';
 import {
@@ -312,15 +317,23 @@ export function useBatchRunner({
 					}
 				}
 
-				// Calculate initial total tasks across all documents (checked + unchecked)
+				// Calculate initial total tasks across all documents (checked + unchecked),
+				// and find any halt marker an earlier run left behind in the same pass.
+				let staleHalt: { document: string; halt: HaltMarker } | null = null;
 				for (const doc of documents) {
-					const { taskCount, checkedCount } = await readDocAndCountTasks(
+					const { taskCount, checkedCount, content } = await readDocAndCountTasks(
 						folderPath,
 						doc.filename,
 						sshRemoteId
 					);
 					initialTotalTasks += taskCount + checkedCount;
 					initialCheckedTasks += checkedCount;
+					if (!staleHalt) {
+						const halt = findHaltMarker(content);
+						if (halt) {
+							staleHalt = { document: doc.filename, halt };
+						}
+					}
 				}
 				// Track unchecked count for the "no tasks" early exit check
 				const initialUncheckedTasks = initialTotalTasks - initialCheckedTasks;
@@ -332,6 +345,35 @@ export function useBatchRunner({
 						'BatchProcessor',
 						{ sessionId }
 					);
+					return;
+				}
+
+				// A halt marker that is already in a document before any task runs was
+				// left there by an earlier run. The loop below only looks for one after a
+				// task finishes, and it scans the whole document, so launching over a
+				// leftover marker ran the playbook up to that document and then "halted"
+				// with the previous run's reason (#1588). Refuse to start instead, the
+				// same rule the CLI engine enforces with HALT_MARKER_PRESENT.
+				if (staleHalt) {
+					window.maestro.logger.log(
+						'warn',
+						'Auto Run refused to start: unresolved halt marker',
+						'BatchProcessor',
+						{
+							sessionId,
+							document: staleHalt.document,
+							line: staleHalt.halt.line + 1,
+							reason: staleHalt.halt.reason,
+						}
+					);
+					notifyToast({
+						type: 'warning',
+						title: 'Auto Run Not Started',
+						message: describeUnresolvedHaltMarker(staleHalt.document, staleHalt.halt),
+						project: session.name,
+						sessionId,
+						dismissible: true,
+					});
 					return;
 				}
 
