@@ -247,8 +247,9 @@ REPLACES the provider-level set rather than merging with it.
 Maestro reads these the same way everywhere, so an agent's account is what the
 Agents tab provider filter narrows on, what the Context Window tooltip's
 **Profile** row names, and what the Usage Dashboard's Tokens tab bills the
-tokens to. See [Multiple Claude Accounts](./multi-claude.md) for the full
-per-provider table, including the two providers that ship no such variable.
+tokens to. See [Multiple Accounts](/multi-provider) for the full per-provider
+table, the per-provider setup recipes, and the providers that ship no such
+variable.
 
 ### Inspecting the Effective Environment
 

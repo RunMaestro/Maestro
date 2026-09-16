@@ -19,13 +19,19 @@ variable differently, and a few have no way to express it at all.
 | **Claude Code**  | `CLAUDE_CONFIG_DIR`          | Yes                   | Yes, with symlinks      |
 | **Codex**        | `CODEX_HOME`                 | Yes                   | No                      |
 | **OpenCode**     | `XDG_DATA_HOME`              | No                    | No                      |
-| **Copilot CLI**  | None - one login per machine | n/a                   | n/a                     |
+| **Copilot CLI**  | None - one login per machine | Split by home         | No                      |
 | **Local models** | n/a - no account to switch   | n/a                   | n/a                     |
 
 "Maestro attributes it" means the [Usage Dashboard](/usage-dashboard) account
 filter, the per-card account badge, and the Context Window tooltip name the
 account. For providers outside that column, Maestro sees one profile no matter
 how many logins you juggle.
+
+Copilot CLI is the odd one out. It has no account selector - the login is
+machine-wide - but `COPILOT_HOME` does move the transcripts, so Maestro reads
+every home it finds and files each as its own profile. Those profiles are
+separate transcript trees, not separate logins: they all bill the same GitHub
+account, and the split is a workspace split rather than a quota split.
 
 <Note>
 Stay on **one provider, different accounts**. Mixing providers on the same work
@@ -275,6 +281,13 @@ client on the machine and is not relocatable.
 
 To change accounts, sign out and sign back in - which changes it for every agent
 at once.
+
+Maestro still honors `COPILOT_HOME` when it reads transcripts, from
+`<home>/session-state` rather than `~/.copilot/session-state` only. That matters
+for the [Usage Dashboard](/usage-dashboard): an agent given its own home would
+otherwise have all of its spend go uncounted. Each home shows as its own profile
+there, which reads like two accounts and is not - see the note under the table
+at the top of this page.
 
 ---
 

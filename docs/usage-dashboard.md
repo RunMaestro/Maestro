@@ -182,6 +182,8 @@ Two things it is careful about:
 
   OpenCode and Factory Droid ship no per-account home variable, so their spend is reported under a single row per provider. Maestro finds an account from the variable set on an agent (or on the provider, in Settings), from your own shell environment, and from `~/.<provider>-*` directories on disk. Accounts that share one transcript directory by symlink are counted once, not once per account.
 
+  A home is not always a login. `COPILOT_HOME` relocates Copilot CLI's transcripts but leaves its login machine-wide, so two Copilot homes report as two rows that bill one GitHub account. [Multiple Accounts](/multi-provider) covers what each provider's variable does and does not move.
+
   SSH-remote agents are not attributed by account: their transcripts live on the remote host.
 
 Every chart on the dashboard also gains a **Tokens** metric mode, so charts that would otherwise plot query counts or time can plot token consumption over the same range.
