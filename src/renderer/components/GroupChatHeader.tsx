@@ -1,8 +1,10 @@
 /**
  * GroupChatHeader.tsx
  *
- * Header bar for the Group Chat view. Displays the chat name with participant count
- * and provides actions for rename and info.
+ * Header bar for the Group Chat view. Carries the team/moderator view switch,
+ * the participant count, cost, and the rename and info actions. The chat name
+ * itself is shown in the info overlay rather than here - see the comment on the
+ * left zone below.
  */
 
 import { Info, Edit2, Columns, DollarSign, StopCircle } from 'lucide-react';
@@ -63,40 +65,30 @@ export function GroupChatHeader({
 				borderColor: theme.colors.border,
 			}}
 		>
-			<div className="flex items-center gap-3 flex-1 min-w-0 mr-3">
-				<h1
-					className="text-lg font-semibold cursor-pointer hover:opacity-80 truncate"
-					style={{ color: theme.colors.textMain }}
-					onClick={onRename}
-					onKeyDown={(e) => {
-						if (e.key === 'Enter' || e.key === ' ') {
-							e.preventDefault();
-							onRename();
-						}
-					}}
-					tabIndex={0}
-					role="button"
-					title="Click to rename"
-				>
-					Group Chat: {name}
-				</h1>
+			{/*
+			  The chat name is deliberately NOT printed in this row. Every other
+			  control here is fixed-width, so the name was the only thing that
+			  could yield, and on a phone it yielded down to "G..." - which costs
+			  the same space as the full name and says less. It now lives in the
+			  info overlay's title, in this button's tooltip, and in the rename
+			  dialog this button opens. `flex-1` keeps the cluster hard right.
+			*/}
+			<div className="flex items-center flex-1 min-w-0">
 				<button
 					onClick={onRename}
 					className="p-1 rounded hover:opacity-80 shrink-0"
 					style={{ color: theme.colors.textDim }}
-					title="Rename"
+					title={`Rename "${name}"`}
+					aria-label={`Rename group chat "${name}"`}
 				>
 					<Edit2 className="w-4 h-4" />
 				</button>
 			</div>
 
 			{/*
-			  Everything except the title is one right-hand cluster that never
-			  shrinks, so the title (the only `min-w-0` element) is handed every
-			  spare pixel and truncates only when the row genuinely runs out. The
-			  switch used to sit in a centered third zone between two `flex-1`
-			  sides, which reserved half the free space to keep it centered and
-			  clipped the chat name while the bar still had room to spare.
+			  One right-hand cluster that never shrinks. The switch used to sit in
+			  a centered third zone between two `flex-1` sides, which reserved half
+			  the free space just to keep it centered.
 			*/}
 			<div className="flex items-center gap-2 shrink-0">
 				<SegmentedControl<GroupChatViewMode>

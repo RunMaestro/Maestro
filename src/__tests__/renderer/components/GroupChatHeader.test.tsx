@@ -58,10 +58,19 @@ describe('GroupChatHeader', () => {
 		useSettingsStore.setState({ showSessionCostPill: true });
 	});
 
-	it('renders group chat name and participant count', () => {
+	// The name is NOT printed in the row: it had nowhere to yield on a phone and
+	// clipped to a couple of characters. It lives in the info overlay's title and
+	// on the rename button instead.
+	it('renders the participant count but not the chat name', () => {
 		render(<GroupChatHeader {...defaultProps} />);
-		expect(screen.getByText('Group Chat: Test Chat')).toBeTruthy();
 		expect(screen.getByText('3 participants')).toBeTruthy();
+		expect(screen.queryByText(/Group Chat: Test Chat/)).toBeNull();
+	});
+
+	it('names the chat on the rename button so it stays reachable', () => {
+		render(<GroupChatHeader {...defaultProps} />);
+		expect(screen.getByTitle('Rename "Test Chat"')).toBeTruthy();
+		expect(screen.getByLabelText('Rename group chat "Test Chat"')).toBeTruthy();
 	});
 
 	it('does not render a close (X) button', () => {
@@ -74,9 +83,9 @@ describe('GroupChatHeader', () => {
 		expect(screen.getByTitle('Info')).toBeTruthy();
 	});
 
-	it('calls onRename when title is clicked', () => {
+	it('calls onRename when the edit button is clicked', () => {
 		render(<GroupChatHeader {...defaultProps} />);
-		fireEvent.click(screen.getByText('Group Chat: Test Chat'));
+		fireEvent.click(screen.getByTitle('Rename "Test Chat"'));
 		expect(defaultProps.onRename).toHaveBeenCalled();
 	});
 

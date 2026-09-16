@@ -238,14 +238,25 @@ export function AppShell({
 				className="flex flex-col shrink-0 overflow-hidden border-r w-[320px]"
 			/>
 
-			{isNarrowViewport && hasSessions && (leftSidebarOpen || rightPanelOpen) && (
-				<div
-					className="maestro-mobile-backdrop"
-					onClick={onCloseDrawers}
-					{...drawerCloseSwipeHandlers}
-					aria-hidden
-				/>
-			)}
+			{/*
+			  The right panel is a DRAWER only outside a group chat. Inside one on
+			  a phone it is a full-screen view (`fixed inset-0 z-30`, see
+			  GroupChatRightPanel), and this backdrop is z-40, so it painted ON TOP
+			  of that panel: the whole panel looked dimmed out, and every tap meant
+			  for its Participants / History tabs hit the backdrop instead, which
+			  made the tabs unswitchable. The left sidebar is still a genuine
+			  drawer in a group chat, so opening THAT still earns a backdrop.
+			*/}
+			{isNarrowViewport &&
+				hasSessions &&
+				(leftSidebarOpen || (rightPanelOpen && !activeGroupChatId)) && (
+					<div
+						className="maestro-mobile-backdrop"
+						onClick={onCloseDrawers}
+						{...drawerCloseSwipeHandlers}
+						aria-hidden
+					/>
+				)}
 
 			{logViewer}
 
