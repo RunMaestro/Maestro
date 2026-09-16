@@ -115,3 +115,67 @@ describe('computeSortedSessions - unread filter jump-badge visibility', () => {
 		expect(visibleSessions.map((s) => s.name)).toContain('Parent');
 	});
 });
+
+describe('computeSortedSessions - hidden groups', () => {
+	const hiddenGroup = {
+		id: 'g-hidden',
+		name: 'PARKED',
+		emoji: '\u{1F4C1}',
+		collapsed: false,
+		hidden: true,
+	};
+	const openGroup = { id: 'g-open', name: 'ACTIVE', emoji: '\u{1F4C1}', collapsed: false };
+
+	const parked = () => createMockSession({ id: 'p1', name: 'Parked', groupId: 'g-hidden' });
+	const working = () => createMockSession({ id: 'w1', name: 'Working', groupId: 'g-open' });
+
+	// Jump badges number what is on screen, and the arrow keys step through it,
+	// so neither may land on an agent the Left Bar is not drawing.
+	it('drops a hidden group from the jump-badge and arrow-key projections', () => {
+		const { visibleSessions, navSessions } = computeSortedSessions({
+			sessions: [parked(), working()],
+			groups: [hiddenGroup, openGroup],
+			bookmarksCollapsed: false,
+		});
+
+		expect(visibleSessions.map((s) => s.name)).toEqual(['Working']);
+		expect(navSessions.map((s) => s.name)).toEqual(['Working']);
+	});
+
+	it('restores them when "Show Hidden" is on', () => {
+		const { visibleSessions, navSessions } = computeSortedSessions({
+			sessions: [parked(), working()],
+			groups: [hiddenGroup, openGroup],
+			bookmarksCollapsed: false,
+			showHiddenGroups: true,
+		});
+
+		expect(visibleSessions.map((s) => s.name).sort()).toEqual(['Parked', 'Working']);
+		expect(navSessions.map((s) => s.name).sort()).toEqual(['Parked', 'Working']);
+	});
+
+	// Hiding the group you are working in would strand the cycle on a row that
+	// is not on screen.
+	it('keeps the active agent visible even inside a hidden group', () => {
+		const { visibleSessions } = computeSortedSessions({
+			sessions: [parked(), working()],
+			groups: [hiddenGroup, openGroup],
+			bookmarksCollapsed: false,
+			activeSessionId: 'p1',
+		});
+
+		expect(visibleSessions.map((s) => s.name).sort()).toEqual(['Parked', 'Working']);
+	});
+
+	// `sortedSessions` is the full ordering other callers index into, not a
+	// statement about what is drawn.
+	it('leaves the complete sorted ordering untouched', () => {
+		const { sortedSessions } = computeSortedSessions({
+			sessions: [parked(), working()],
+			groups: [hiddenGroup, openGroup],
+			bookmarksCollapsed: false,
+		});
+
+		expect(sortedSessions.map((s) => s.name).sort()).toEqual(['Parked', 'Working']);
+	});
+});

@@ -29,6 +29,7 @@ export interface UseSessionListPropsDeps {
 	toggleGlobalLive: () => Promise<void>;
 	restartWebServer: () => Promise<string | null>;
 	toggleGroup: (groupId: string) => void;
+	toggleGroupHidden: (groupId: string) => void;
 	handleDragStart: (sessionId: string) => void;
 	handleDragOver: (e: React.DragEvent) => void;
 	handleDropOnGroup: (groupId: string) => void;
@@ -86,6 +87,7 @@ export function useSessionListProps(deps: UseSessionListPropsDeps) {
 			toggleGlobalLive: deps.toggleGlobalLive,
 			restartWebServer: deps.restartWebServer,
 			toggleGroup: deps.toggleGroup,
+			toggleGroupHidden: deps.toggleGroupHidden,
 			handleDragStart: deps.handleDragStart,
 			handleDragOver: deps.handleDragOver,
 			handleDropOnGroup: deps.handleDropOnGroup,
@@ -130,6 +132,7 @@ export function useSessionListProps(deps: UseSessionListPropsDeps) {
 			deps.toggleGlobalLive,
 			deps.restartWebServer,
 			deps.toggleGroup,
+			deps.toggleGroupHidden,
 			deps.handleDragStart,
 			deps.handleDragOver,
 			deps.handleDropOnGroup,

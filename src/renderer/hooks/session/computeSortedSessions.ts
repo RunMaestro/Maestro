@@ -4,6 +4,7 @@ import {
 	sessionOrChildrenNeedAttention,
 	type AttentionContext,
 } from '../../utils/sessionAttention';
+import { resolveHiddenGroupIds } from '../../utils/sidebarMembership';
 
 /**
  * Inputs for {@link computeSortedSessions}. Pure - safe to call from a Zustand
@@ -19,6 +20,9 @@ export interface ComputeSortedSessionsInput {
 	activeBatchSessionIds?: string[];
 	/** Session ids stuck auto-retrying an Agent Resilience outage. */
 	stuckOutageSessionIds?: string[];
+	/** The Left Bar's "Show Hidden" toggle. Hidden groups are not on screen, so
+	 *  their agents are not jump targets either. */
+	showHiddenGroups?: boolean;
 }
 
 /**
@@ -49,6 +53,7 @@ export function computeSortedSessions(input: ComputeSortedSessionsInput): Sorted
 		activeSessionId,
 		activeBatchSessionIds,
 		stuckOutageSessionIds,
+		showHiddenGroups,
 	} = input;
 	const attentionCtx: AttentionContext = {
 		batchSessionIds: new Set(activeBatchSessionIds),
@@ -100,6 +105,17 @@ export function computeSortedSessions(input: ComputeSortedSessionsInput): Sorted
 		groupsById.set(g.id, g);
 	}
 
+	// Both projections below number or step through what is ON SCREEN, so a
+	// hidden group's agents are in neither - the same suppression
+	// `useSessionCategories` applies to the render path, resolved through the one
+	// shared helper so the list and the keyboard cannot disagree about which rows
+	// exist. `sortedSessions` above stays COMPLETE: it is the full ordering other
+	// callers index into, not a statement about visibility.
+	const hiddenGroupIds = resolveHiddenGroupIds(groups, {
+		showHiddenGroups: showHiddenGroups ?? false,
+		activeGroupId: sessions.find((s) => s.id === activeSessionId)?.groupId ?? null,
+	});
+
 	const navSessions: Session[] = [];
 	const navIndexMap = new Map<string, number>();
 	let idx = 0;
@@ -128,6 +144,7 @@ export function computeSortedSessions(input: ComputeSortedSessionsInput): Sorted
 	const bookmarkNavSize = idx;
 
 	for (const group of sortedGroups) {
+		if (hiddenGroupIds.has(group.id)) continue;
 		const groupSessions = sessions
 			.filter((s) => s.groupId === group.id && !s.parentSessionId)
 			.sort((a, b) => compareNamesIgnoringEmojis(a.name, b.name));
@@ -170,7 +187,7 @@ export function computeSortedSessions(input: ComputeSortedSessionsInput): Sorted
 		if (!passesUnreadFilter(session)) return false;
 		if (!session.groupId) return true;
 		const group = groupsById.get(session.groupId);
-		return group && !group.collapsed;
+		return group && !group.collapsed && !hiddenGroupIds.has(group.id);
 	});
 	visibleSessions.push(...groupAndUngrouped);
 

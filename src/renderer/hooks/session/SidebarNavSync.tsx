@@ -44,6 +44,7 @@ function SidebarNavSyncInner() {
 	// nav projections must drop it or keyboard cycling lands on an agent the Left
 	// Bar does not render.
 	const pianolaEnabled = useSettingsStore((s) => s.encoreFeatures?.pianola);
+	const showHiddenGroups = useSettingsStore((s) => s.showHiddenGroups);
 
 	const setSortedProjection = useSidebarNavStore((s) => s.setSortedProjection);
 	const setStarredItems = useSidebarNavStore((s) => s.setStarredItems);
@@ -71,6 +72,7 @@ function SidebarNavSyncInner() {
 				activeSessionId,
 				activeBatchSessionIds,
 				stuckOutageSessionIds: stuckOutageSignature ? stuckOutageSignature.split(',') : [],
+				showHiddenGroups,
 			})
 		);
 	}, [
@@ -81,6 +83,7 @@ function SidebarNavSyncInner() {
 		activeSessionId,
 		activeBatchSessionIds,
 		stuckOutageSignature,
+		showHiddenGroups,
 		setSortedProjection,
 	]);
 
