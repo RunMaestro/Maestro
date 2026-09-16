@@ -222,6 +222,14 @@ export interface Group {
 	color?: string;
 	parentGroupId?: string;
 	collapsed: boolean;
+	/**
+	 * Parked out of the Left Bar. A middle ground between keeping a group on
+	 * screen and deleting it: hiding SUPPRESSES the group from the list, it
+	 * never restricts access, so the agents inside stay reachable through
+	 * search, the Cmd+O switcher, and every other surface. Optional because
+	 * every group written before this field existed reads back as visible.
+	 */
+	hidden?: boolean;
 }
 
 export function isWorktreeGroup(group: Group): boolean {

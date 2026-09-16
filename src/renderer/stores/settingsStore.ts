@@ -412,6 +412,7 @@ export interface SettingsStoreState
 	autoRunStats: AutoRunStats;
 	usageStats: MaestroUsageStats;
 	ungroupedCollapsed: boolean;
+	showHiddenGroups: boolean;
 	groupChatsExpanded: boolean;
 	groupChatSortAlphabetical: boolean;
 	starredSessionsCollapsed: boolean;
@@ -529,6 +530,7 @@ export interface SettingsStoreActions
 	setLogViewerSelectedLevels: (value: string[]) => void;
 	setCustomAICommands: (value: CustomAICommand[]) => void;
 	setUngroupedCollapsed: (value: boolean) => void;
+	setShowHiddenGroups: (value: boolean) => void;
 	setGroupChatsExpanded: (value: boolean) => void;
 	setGroupChatSortAlphabetical: (value: boolean) => void;
 	setStarredSessionsCollapsed: (value: boolean) => void;
@@ -770,6 +772,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		autoRunStats: DEFAULT_AUTO_RUN_STATS,
 		usageStats: DEFAULT_USAGE_STATS,
 		ungroupedCollapsed: false,
+		showHiddenGroups: false,
 		groupChatsExpanded: true,
 		groupChatSortAlphabetical: false,
 		starredSessionsCollapsed: false,
@@ -1094,6 +1097,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setUngroupedCollapsed: (value) => {
 			set({ ungroupedCollapsed: value });
 			window.maestro.settings.set('ungroupedCollapsed', value);
+		},
+
+		setShowHiddenGroups: (value) => {
+			set({ showHiddenGroups: value });
+			window.maestro.settings.set('showHiddenGroups', value);
 		},
 
 		setGroupChatsExpanded: (value) => {
@@ -2228,6 +2236,9 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['ungroupedCollapsed'] !== undefined)
 			patch.ungroupedCollapsed = allSettings['ungroupedCollapsed'] as boolean;
 
+		if (allSettings['showHiddenGroups'] !== undefined)
+			patch.showHiddenGroups = allSettings['showHiddenGroups'] as boolean;
+
 		if (allSettings['groupChatsExpanded'] !== undefined)
 			patch.groupChatsExpanded = allSettings['groupChatsExpanded'] as boolean;
 
@@ -2751,6 +2762,7 @@ export function getSettingsActions() {
 		setUsageStats: state.setUsageStats,
 		updateUsageStats: state.updateUsageStats,
 		setUngroupedCollapsed: state.setUngroupedCollapsed,
+		setShowHiddenGroups: state.setShowHiddenGroups,
 		setGroupChatsExpanded: state.setGroupChatsExpanded,
 		setGroupChatSortAlphabetical: state.setGroupChatSortAlphabetical,
 		setStarredSessionsCollapsed: state.setStarredSessionsCollapsed,

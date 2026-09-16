@@ -12,6 +12,13 @@ interface BuildAgentSwitcherCommandsArgs {
 	/** Multi-window: resolves an agent's owning window so cross-window picks focus
 	 * that window instead of stealing the agent. Omitted = single-window behavior. */
 	getSessionWindow?: GetSessionWindow;
+	/**
+	 * Groups parked out of the Left Bar. Their agents stay in this list - the
+	 * switcher is how you REACH a hidden agent - they just sort into the last
+	 * tier. Deliberately the raw hidden set rather than the sidebar's resolved
+	 * one: "Show Hidden" decides what the list draws, not what the group is.
+	 */
+	hiddenGroupIds?: ReadonlySet<string>;
 }
 
 export function buildAgentSwitcherCommands({
@@ -20,6 +27,7 @@ export function buildAgentSwitcherCommands({
 	setActiveSessionId,
 	revealJumpTarget,
 	getSessionWindow,
+	hiddenGroupIds,
 }: BuildAgentSwitcherCommandsArgs): QuickAction[] {
 	const batchSessionIdSet = new Set(activeBatchSessionIds);
 
@@ -55,6 +63,7 @@ export function buildAgentSwitcherCommands({
 			runningInfo,
 			bookmarked: !!session.bookmarked,
 			agentSortKey: alphabetizeKey(session.name),
+			inHiddenGroup: !!session.groupId && !!hiddenGroupIds?.has(session.groupId),
 		};
 	});
 }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Edit3, FolderInput, FolderPlus, FolderUp, Plus, Trash2 } from 'lucide-react';
+import { Edit3, Eye, EyeOff, FolderInput, FolderPlus, FolderUp, Plus, Trash2 } from 'lucide-react';
 import type { Group, Theme } from '../../types';
 import { useClickOutside, useContextMenuPosition } from '../../hooks';
 
@@ -21,6 +21,8 @@ interface GroupContextMenuProps {
 	onMoveInto?: (parentGroupId: string) => void;
 	onMoveToTopLevel?: () => void;
 	onNewGroupInside?: () => void;
+	/** Park this group out of the Left Bar, or bring it back. */
+	onToggleHidden?: () => void;
 	onDismiss: () => void;
 }
 
@@ -39,6 +41,7 @@ export function GroupContextMenu({
 	onMoveInto,
 	onMoveToTopLevel,
 	onNewGroupInside,
+	onToggleHidden,
 	onDismiss,
 }: GroupContextMenuProps) {
 	const [moveSubmenuOpen, setMoveSubmenuOpen] = useState(false);
@@ -172,6 +175,21 @@ export function GroupContextMenu({
 				>
 					<FolderPlus className="w-3.5 h-3.5" />
 					New group inside...
+				</button>
+			)}
+
+			{onToggleHidden && (
+				<button
+					type="button"
+					onClick={() => {
+						onToggleHidden();
+						onDismiss();
+					}}
+					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+					style={{ color: theme.colors.textMain }}
+				>
+					{group.hidden ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+					{group.hidden ? 'Unhide Group' : 'Hide Group'}
 				</button>
 			)}
 

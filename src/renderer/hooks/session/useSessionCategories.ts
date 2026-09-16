@@ -1,6 +1,11 @@
 import { useCallback, useMemo } from 'react';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
-import { passesUnreadFilter } from '../../utils/sidebarMembership';
+import {
+	passesHiddenGroupFilter,
+	passesUnreadFilter,
+	resolveHiddenGroupIds,
+} from '../../utils/sidebarMembership';
+import { useSettingsStore } from '../../stores/settingsStore';
 import type { Session, Group } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
 import { sidebarSessionEquality } from '../../stores/sessionEquality';
@@ -21,6 +26,13 @@ export interface SessionCategories {
 	sortedUngroupedParentSessions: Session[];
 	sortedFilteredSessions: Session[];
 	sortedGroups: Group[];
+	/**
+	 * Groups the Left Bar is suppressing right now (empty while "Show Hidden" is
+	 * on). Handed back rather than pre-filtered out of `sortedGroups` because
+	 * SessionList needs the full list to draw a revealed group faded and to count
+	 * what the "Show Hidden" button is offering.
+	 */
+	hiddenGroupIds: ReadonlySet<string>;
 }
 
 export function useSessionCategories(
@@ -115,6 +127,27 @@ export function useSessionCategories(
 		[groupIdsSignature]
 	);
 
+	// Which groups are parked out of the list. Keyed on a signature carrying the
+	// two fields suppression actually reads - `hidden` and the parent edge it is
+	// inherited across - for the same reason `groupIdsSignature` exists above: a
+	// collapse toggle rebuilds `groups` without changing any of this, and keying
+	// on the array would re-run the whole filter/categorize/sort pass (#1186).
+	const showHiddenGroups = useSettingsStore((s) => s.showHiddenGroups);
+	const activeGroupId = useMemo(
+		() => sessions.find((s) => s.id === activeSessionId)?.groupId ?? null,
+		[sessions, activeSessionId]
+	);
+	const hiddenSignature = useMemo(
+		() => groups.map((g) => `${g.id}:${g.hidden ? 1 : 0}:${g.parentGroupId ?? ''}`).join('|'),
+		[groups]
+	);
+	const hiddenGroupIds = useMemo(
+		() => resolveHiddenGroupIds(groups, { showHiddenGroups, activeGroupId }),
+		// `groups` is intentionally read through `hiddenSignature` rather than by
+		// reference - see the note above.
+		[hiddenSignature, showHiddenGroups, activeGroupId]
+	);
+
 	// Stable Set of stuck (outage) agent ids, recomputed only when the signature
 	// changes so the categorization memo isn't invalidated on unrelated renders.
 	const stuckOutageSessionIds = useMemo(
@@ -153,6 +186,14 @@ export function useSessionCategories(
 					stuckOutageIds: stuckOutageSessionIds,
 				})
 			) {
+				continue;
+			}
+
+			// A hidden group's agents leave the list ENTIRELY rather than being
+			// re-bucketed: categorization below sends anything without a live group
+			// to Ungrouped, so merely skipping the group header would dump the
+			// agents the user just parked straight back into the list under it.
+			if (!passesHiddenGroupFilter(s, hiddenGroupIds)) {
 				continue;
 			}
 
@@ -239,6 +280,7 @@ export function useSessionCategories(
 		sessions,
 		worktreeChildrenByParentId,
 		groupIds,
+		hiddenGroupIds,
 		stuckOutageSessionIds,
 	]);
 
@@ -261,5 +303,6 @@ export function useSessionCategories(
 		sortedUngroupedParentSessions: sessionCategories.sortedUngroupedParent,
 		sortedFilteredSessions: sessionCategories.sortedFiltered,
 		sortedGroups,
+		hiddenGroupIds,
 	};
 }
