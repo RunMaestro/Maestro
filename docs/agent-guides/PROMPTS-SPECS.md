@@ -28,6 +28,8 @@ Resources/prompts/core/*.md
 src/main/prompt-manager.ts
 ```
 
+<!-- doc-refs-ignore -->
+
 An earlier build step compiled these templates into `src/generated/prompts.ts`. Both that generator and the generated file are gone; the `Export` column below names the constant each prompt used to produce and is retained only as a cross-reference for older code and docs.
 
 ### Template Inventory
