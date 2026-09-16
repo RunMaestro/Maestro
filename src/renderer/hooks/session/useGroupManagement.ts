@@ -40,6 +40,8 @@ export interface UseGroupManagementDeps {
 export interface UseGroupManagementReturn {
 	/** Toggle group collapse/expand state */
 	toggleGroup: (groupId: string) => void;
+	/** Park a group out of the Left Bar, or bring it back. */
+	toggleGroupHidden: (groupId: string) => void;
 	/** Start renaming a group (sets editingGroupId) */
 	startRenamingGroup: (groupId: string) => void;
 	/** Finish renaming a group */
@@ -92,6 +94,20 @@ export function useGroupManagement(deps: UseGroupManagementDeps): UseGroupManage
 			setGroups((prev) =>
 				prev.map((g) => (g.id === groupId ? { ...g, collapsed: !g.collapsed } : g))
 			);
+		},
+		[setGroups]
+	);
+
+	/**
+	 * Park a group out of the Left Bar, or bring it back.
+	 *
+	 * Separate from `toggleGroup`: collapsing folds a group the user is still
+	 * looking at, hiding takes it off the list entirely. They are independent, so
+	 * a group can be hidden while expanded and comes back the way it went away.
+	 */
+	const toggleGroupHidden = useCallback(
+		(groupId: string) => {
+			setGroups((prev) => prev.map((g) => (g.id === groupId ? { ...g, hidden: !g.hidden } : g)));
 		},
 		[setGroups]
 	);
@@ -190,6 +206,7 @@ export function useGroupManagement(deps: UseGroupManagementDeps): UseGroupManage
 
 	return {
 		toggleGroup,
+		toggleGroupHidden,
 		startRenamingGroup,
 		finishRenamingGroup,
 		createNewGroup,

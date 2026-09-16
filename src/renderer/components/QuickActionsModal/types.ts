@@ -43,6 +43,12 @@ export interface QuickAction {
 	// Jump-to-agent actions only: bookmark state and stable sort key.
 	bookmarked?: boolean;
 	agentSortKey?: string;
+	/**
+	 * Jump-to-agent actions only: the agent sits in a group parked out of the
+	 * Left Bar. It stays fully reachable here - hiding suppresses a group from
+	 * the list, it never restricts access - it just sorts into the last tier.
+	 */
+	inHiddenGroup?: boolean;
 }
 
 /**
@@ -50,13 +56,20 @@ export interface QuickAction {
  * Derived rather than stored so the bucket, the section headers, and the sort
  * can never disagree.
  */
-export type AgentBucket = 'live' | 'idle';
+export type AgentBucket = 'live' | 'idle' | 'hidden';
 
+/**
+ * A hidden group outranks `isRunningAgent`: the tier is a property of where the
+ * agent was PARKED, not of what it happens to be doing, so an agent does not
+ * jump between tiers as a turn starts and finishes. That is also what keeps the
+ * hidden tier stable enough to skip past without reading it.
+ */
 export function getAgentBucket(action: QuickAction): AgentBucket {
+	if (action.inHiddenGroup) return 'hidden';
 	return action.isRunningAgent ? 'live' : 'idle';
 }
 
-export const AGENT_BUCKET_ORDER: readonly AgentBucket[] = ['live', 'idle'];
+export const AGENT_BUCKET_ORDER: readonly AgentBucket[] = ['live', 'idle', 'hidden'];
 
 export interface ActiveTabInfo {
 	isTerminalMode: boolean;

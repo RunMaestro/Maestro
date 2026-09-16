@@ -2458,6 +2458,7 @@ function MaestroConsoleInner() {
 	// Extracted hook for group CRUD operations (toggle, rename, create, drag-drop)
 	const {
 		toggleGroup,
+		toggleGroupHidden,
 		startRenamingGroup,
 		finishRenamingGroup,
 		createNewGroup,
@@ -3057,6 +3058,7 @@ function MaestroConsoleInner() {
 		toggleGlobalLive,
 		restartWebServer,
 		toggleGroup,
+		toggleGroupHidden,
 		handleDragStart,
 		handleDragOver,
 		handleDropOnGroup,

@@ -1,4 +1,5 @@
 import React, { memo, useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { collectHiddenGroupIds } from '../../utils/sidebarMembership';
 import { useShallow } from 'zustand/react/shallow';
 import type { QuickAction, QuickActionsModalProps } from './types';
 import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
@@ -923,6 +924,12 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		resetSelectionToFirst,
 	});
 
+	// The RAW hidden set, not the Left Bar's resolved one: the switcher always
+	// lists a hidden agent (that is how you reach one), so what it needs to know
+	// is whether the group is hidden at all - never whether "Show Hidden"
+	// happens to be revealing it in the sidebar right now.
+	const hiddenGroupIds = useMemo(() => collectHiddenGroupIds(groups), [groups]);
+
 	const agentActions = [
 		...buildAgentSwitcherCommands({
 			sessions: switchableSessions,
@@ -931,6 +938,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			revealJumpTarget,
 			getSessionWindow,
 			jumpSlots,
+			hiddenGroupIds,
 		}),
 		...buildGroupChatSwitcherCommands({
 			groupChats,
@@ -948,8 +956,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const filteredRef = useRef(filtered);
 	filteredRef.current = filtered;
 
-	// LIVE/IDLE bucket headers only earn their pixels in agents mode when both
-	// buckets are present - a single-bucket list doesn't need a label above it.
+	// LIVE/IDLE/HIDDEN bucket headers only earn their pixels in agents mode when
+	// more than one bucket is present - a single-bucket list needs no label.
 	const showBucketHeaders = shouldShowAgentBucketHeaders(filtered, mode);
 
 	// Callback for when an item is selected (by Enter key or number hotkey)
