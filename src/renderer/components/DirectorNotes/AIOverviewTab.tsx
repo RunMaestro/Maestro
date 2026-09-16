@@ -26,6 +26,10 @@ import { useSettings } from '../../hooks';
 import { generateTerminalProseStyles } from '../../utils/markdownConfig';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { formatNumber } from '../../../shared/formatters';
+import {
+	isAutoSynopsisProvider,
+	synopsisProviderChoice,
+} from '../../../shared/directorNotesProvider';
 import { notifyToast } from '../../stores/notificationStore';
 import { useModalStore } from '../../stores/modalStore';
 import { safeStorageGet, safeStorageSet } from '../../utils/safeLocalStorage';
@@ -341,12 +345,18 @@ export const AIOverviewTab = forwardRef<TabFocusHandle, AIOverviewTabProps>(func
 		setError(null);
 		onSynopsisStart?.();
 
+		// Under auto-selection the provider is decided in the main process, so the
+		// per-provider overrides stored here (they belong to the MANUAL pick) are
+		// deliberately not sent - applying one provider's custom path or args to a
+		// different binary is worse than sending nothing.
+		const providerChoice = synopsisProviderChoice(directorNotesSettings);
+		const useCustomConfig = !isAutoSynopsisProvider(providerChoice);
 		const ipcPromise = window.maestro.directorNotes.generateSynopsis({
 			lookbackDays,
-			provider: directorNotesSettings.provider,
-			customPath: directorNotesSettings.customPath,
-			customArgs: directorNotesSettings.customArgs,
-			customEnvVars: directorNotesSettings.customEnvVars,
+			provider: providerChoice,
+			customPath: useCustomConfig ? directorNotesSettings.customPath : undefined,
+			customArgs: useCustomConfig ? directorNotesSettings.customArgs : undefined,
+			customEnvVars: useCustomConfig ? directorNotesSettings.customEnvVars : undefined,
 		});
 		activeGenerationPromise = ipcPromise;
 

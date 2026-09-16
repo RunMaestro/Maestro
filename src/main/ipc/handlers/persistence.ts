@@ -35,6 +35,7 @@ import { backupGroupsBeforeWipe } from '../../stores/groups-backup';
 import { backupSessionsBeforeWipe } from '../../stores/sessions-backup';
 import { createKeyedWriteQueue } from '../../utils/atomic-json-store';
 import { clearGhCache } from '../../utils/cliDetection';
+import { mergeUsagePeaks, type UsagePeaks } from '../../../shared/usagePeaks';
 
 /**
  * Shallow-compare cliActivity for the diff broadcast.
@@ -353,8 +354,21 @@ export function registerPersistenceHandlers(
 	});
 
 	ipcMain.handle('settings:set', async (event, key: string, value: any) => {
+		// `usageStats` holds lifetime high-water marks, so a write may only ever
+		// raise them. Enforcing that here - against the value on disk rather than
+		// against any caller's in-memory copy - is what makes the invariant hold
+		// no matter who writes: a renderer that has not finished hydrating (its
+		// copy is still zeroed), a second window with a staler copy, or the web
+		// client. See src/shared/usagePeaks.ts for the incidents this prevents.
+		const toPersist =
+			key === 'usageStats'
+				? mergeUsagePeaks(
+						settingsStore.get('usageStats') as Partial<UsagePeaks> | undefined,
+						value as Partial<UsagePeaks>
+					)
+				: value;
 		try {
-			settingsStore.set(key, value);
+			settingsStore.set(key, toPersist);
 		} catch (err) {
 			// ENOSPC / ENFILE errors are transient disk issues - log and return false
 			// so the renderer doesn't see an unhandled rejection.
@@ -365,7 +379,7 @@ export function registerPersistenceHandlers(
 			);
 			return false;
 		}
-		logger.info(`Settings updated: ${key}`, 'Settings', { key, value });
+		logger.info(`Settings updated: ${key}`, 'Settings', { key, value: toPersist });
 
 		// Settings are global: cascade this change to every OTHER window so all
 		// windows stay in unison (e.g. a theme switch applies everywhere at once).

@@ -6,7 +6,9 @@ import { useSettingsStore } from '../stores/settingsStore';
 import { openUrl } from '../utils/openUrl';
 import { dispatchToastClickAction } from '../services/toastClickActions';
 import { formatDurationParts as formatDuration, formatTimestamp } from '../../shared/formatters';
-import { getToastWidthDimensions } from '../../shared/toastWidth';
+import { getToastWidthDimensions, TOAST_VIEWPORT_GUTTER } from '../../shared/toastWidth';
+import { useMediaPlaybackStore } from '../stores/mediaPlaybackStore';
+import { mediaFloatLaneLift } from '../utils/mediaFloatGeometry';
 import { withMonoFallback } from '../../shared/fontStack';
 import { Z_LAYERS } from '../constants/zLayers';
 import { usePhoneLayout } from '../hooks/ui/useViewportBreakpoint';
@@ -386,6 +388,12 @@ const ToastItem = memo(function ToastItem({
 	);
 });
 
+/** Breathing room left between a lifted toast stack and the media player. */
+const TOAST_MEDIA_PLAYER_GAP = 8;
+
+/** The phone stack is pinned `left-3 right-3`, so its gutter is 0.75rem. */
+const TOAST_PHONE_GUTTER = 12;
+
 export const ToastContainer = memo(function ToastContainer({
 	theme,
 	onSessionClick,
@@ -402,6 +410,25 @@ export const ToastContainer = memo(function ToastContainer({
 	// the width instead and each toast fills it.
 	const phone = usePhoneLayout();
 	const widthDimensions = phone ? null : getToastWidthDimensions(toastWidth, rightPanelWidth);
+
+	// The floating media player opens in this same corner and sits far below
+	// toasts in z-order (toasts have to stay readable over modals), so an
+	// arriving notification used to paint straight over the widget - it looked
+	// like the player had closed itself. The stack steps over it instead: toasts
+	// are transient, and the widget is where the user deliberately put it.
+	//
+	// The lane is measured at the preset's FULL width rather than at the width
+	// this toast happens to render at. A narrower toast is right-aligned inside
+	// the same column, so the worst case is lifting when a short toast would have
+	// cleared the widget anyway - which costs nothing, while the other way round
+	// is the bug being fixed.
+	const floatFootprint = useMediaPlaybackStore((s) => s.floatFootprint);
+	const playerLift = mediaFloatLaneLift(floatFootprint, {
+		fromRight: phone ? TOAST_PHONE_GUTTER : TOAST_VIEWPORT_GUTTER,
+		// A phone stack spans the screen, so it always shares the widget's column.
+		width: widthDimensions ? widthDimensions.maxWidth : Number.POSITIVE_INFINITY,
+		gap: TOAST_MEDIA_PLAYER_GAP,
+	});
 
 	// Toasts portal to document.body, which puts them OUTSIDE the app shell -
 	// the element that carries the interface font. Without restating it here
@@ -420,6 +447,10 @@ export const ToastContainer = memo(function ToastContainer({
 				zIndex: Z_LAYERS.TOAST,
 				fontFamily,
 				paddingBottom: phone ? 'env(safe-area-inset-bottom, 0px)' : undefined,
+				// A margin rather than more padding: the stack is `bottom: 0`, so this
+				// offsets the whole thing upward and leaves the phone's safe-area
+				// padding to do its own job underneath.
+				marginBottom: playerLift || undefined,
 			}}
 			data-testid="toast-stack"
 		>

@@ -116,6 +116,13 @@ export interface CueEngineDeps {
 	 * lifecycle (`cue.runStarted` / `cue.runFinished`) to subscribed plugins;
 	 * carries ids/status only, never prompt text or output. */
 	emitPluginEvent?: (event: PluginEvent) => void;
+	/**
+	 * The user's `cueHistoryRetentionDays` setting, forwarded to the recovery
+	 * service so the engine-start prune uses the window the user chose instead
+	 * of a hardcoded one. Read on every start so a change takes effect without
+	 * an app restart. Omit (tests) to prune with the default window.
+	 */
+	getCueHistoryRetentionDays?: () => unknown;
 }
 
 /**
@@ -541,6 +548,7 @@ export class CueEngine {
 			onDispatch: (sessionId, sub, event) => {
 				this.dispatchService.dispatchSubscription(sessionId, sub, event, sessionId);
 			},
+			getCueHistoryRetentionDays: deps.getCueHistoryRetentionDays,
 		});
 	}
 

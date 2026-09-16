@@ -25,6 +25,18 @@ export interface ToolActivityLabel {
 	verb: string;
 	/** What it acted on: a path, command, pattern, or URL. May be empty. */
 	target: string;
+	/**
+	 * Whether `target` is a LITERAL the user could paste into a shell or an
+	 * editor (a path, a command, a glob, a regex, a URL) rather than prose we
+	 * wrote about the call ("Verifying the harness (3/7)", "create issue").
+	 *
+	 * The activity feed renders a literal target as inline code - the same chip
+	 * markdown backticks get - so a command reads as a command. Running prose
+	 * through that treatment instead dresses an English sentence up as something
+	 * you could run, which is why this is decided HERE, next to the code that
+	 * knows which of the two it just built, and not guessed at by the renderer.
+	 */
+	targetIsCode: boolean;
 }
 
 /** Max characters of `target` shown on the single line. */
@@ -87,7 +99,7 @@ function mcpLabel(toolName: string): ToolActivityLabel | null {
 	const match = /^mcp__([^_]+(?:_[^_]+)*?)__(.+)$/.exec(toolName);
 	if (!match) return null;
 	const [, server, tool] = match;
-	return { verb: `Called ${server}`, target: tool.replace(/_/g, ' ') };
+	return { verb: `Called ${server}`, target: tool.replace(/_/g, ' '), targetIsCode: false };
 }
 
 /**
@@ -136,14 +148,14 @@ export function describeToolActivity(toolName: string, input: unknown): ToolActi
 		case 'readfile':
 		case 'viewfile':
 		case 'catfile':
-			return { verb: 'Read', target: shorten(filePath, true) };
+			return { verb: 'Read', target: shorten(filePath, true), targetIsCode: true };
 
 		case 'write':
 		case 'writefile':
 		case 'writetofile':
 		case 'createfile':
 		case 'create':
-			return { verb: 'Wrote', target: shorten(filePath, true) };
+			return { verb: 'Wrote', target: shorten(filePath, true), targetIsCode: true };
 
 		case 'edit':
 		case 'multiedit':
@@ -155,10 +167,14 @@ export function describeToolActivity(toolName: string, input: unknown): ToolActi
 		case 'editfile':
 			// Codex sends apply_patch as one raw diff string with no path field;
 			// fall back to the patch body so the line is not left bare.
-			return { verb: 'Edited', target: shorten(filePath ?? rawInput, !!filePath) };
+			return {
+				verb: 'Edited',
+				target: shorten(filePath ?? rawInput, !!filePath),
+				targetIsCode: true,
+			};
 
 		case 'notebookedit':
-			return { verb: 'Edited notebook', target: shorten(filePath, true) };
+			return { verb: 'Edited notebook', target: shorten(filePath, true), targetIsCode: true };
 
 		case 'bash':
 		case 'shell':
@@ -168,40 +184,44 @@ export function describeToolActivity(toolName: string, input: unknown): ToolActi
 		case 'runcommand':
 		case 'terminal':
 		case 'runterminalcmd':
-			return { verb: 'Ran', target: shorten(command, false) };
+			return { verb: 'Ran', target: shorten(command, false), targetIsCode: true };
 
 		case 'bashoutput':
-			return { verb: 'Checked background output', target: '' };
+			return { verb: 'Checked background output', target: '', targetIsCode: false };
 
 		case 'killshell':
 		case 'killbash':
-			return { verb: 'Stopped a background command', target: '' };
+			return { verb: 'Stopped a background command', target: '', targetIsCode: false };
 
 		case 'grep':
 		case 'search':
 		case 'ripgrep':
 		case 'searchfiles':
 		case 'grepsearch':
-			return { verb: 'Searched for', target: shorten(pattern, false) };
+			return { verb: 'Searched for', target: shorten(pattern, false), targetIsCode: true };
 
 		case 'glob':
 		case 'find':
 		case 'fileglob':
 		case 'globfilesearch':
-			return { verb: 'Looked for files matching', target: shorten(pattern, false) };
+			return {
+				verb: 'Looked for files matching',
+				target: shorten(pattern, false),
+				targetIsCode: true,
+			};
 
 		case 'ls':
 		case 'list':
 		case 'listdirectory':
 		case 'listdir':
-			return { verb: 'Listed', target: shorten(filePath, true) };
+			return { verb: 'Listed', target: shorten(filePath, true), targetIsCode: true };
 
 		case 'webfetch':
 		case 'fetch':
-			return { verb: 'Fetched', target: shorten(url, false) };
+			return { verb: 'Fetched', target: shorten(url, false), targetIsCode: true };
 
 		case 'websearch':
-			return { verb: 'Searched the web for', target: shorten(pattern, false) };
+			return { verb: 'Searched the web for', target: shorten(pattern, false), targetIsCode: false };
 
 		case 'task':
 		case 'agent':
@@ -209,6 +229,7 @@ export function describeToolActivity(toolName: string, input: unknown): ToolActi
 			return {
 				verb: 'Delegated to a subagent',
 				target: shorten(firstString(record, ['description', 'prompt', 'subagent_type']), false),
+				targetIsCode: false,
 			};
 
 		case 'todowrite':
@@ -217,13 +238,14 @@ export function describeToolActivity(toolName: string, input: unknown): ToolActi
 			return {
 				verb: 'Updated the task list',
 				target: shorten(todoSummary(record.todos ?? record.plan ?? record.steps), false),
+				targetIsCode: false,
 			};
 
 		case 'askuserquestion':
-			return { verb: 'Asked you a question', target: '' };
+			return { verb: 'Asked you a question', target: '', targetIsCode: false };
 
 		case 'exitplanmode':
-			return { verb: 'Presented a plan', target: '' };
+			return { verb: 'Presented a plan', target: '', targetIsCode: false };
 
 		default: {
 			// Unknown tool: still emit a line. Prefer whichever recognizable field
@@ -232,6 +254,8 @@ export function describeToolActivity(toolName: string, input: unknown): ToolActi
 			return {
 				verb: `Used ${name || 'a tool'}`,
 				target: shorten(fallback, fallback === filePath),
+				// Whatever the fallback found is a path, command, pattern, or URL.
+				targetIsCode: true,
 			};
 		}
 	}

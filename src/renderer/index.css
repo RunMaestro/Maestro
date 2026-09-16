@@ -900,12 +900,34 @@ textarea::placeholder {
 	will-change: opacity, transform;
 }
 
+/* The wand sits in the Left Bar header, which is a `.chrome-sheen` root, so it
+   gets its own compositing layer for as long as it animates. Without this, the
+   animation is CORRECT and still ruinous: Chrome cannot composite opacity or
+   filter on SVG sub-elements, so the six sparkle paths repaint on the main
+   thread, and because they share the sidebar's layer they invalidate the WHOLE
+   sidebar - including the full-height `.chrome-sheen` background gradient.
+   A field trace measured that gradient (772x2724 device px) being repainted
+   three times per frame at a locked 60fps through eleven seconds in which the
+   user touched nothing: 0.63ms of paint plus 0.47ms of PaintArtifactCompositor
+   per frame, forever, because one 20px icon was twinkling.
+   `wand-sparkle-active` is set whenever ANY agent is busy, so that was the
+   steady state of an ordinary working session, not a profiling artifact.
+   Promoting the <svg> confines the repaint to the icon's own layer. The classes
+   are only present while animating, which is exactly when `will-change` should
+   be set, so nothing is promoted at rest. */
+svg.wand-sparkle-active,
+svg.wand-profiling-active {
+	will-change: transform;
+}
+
 /* Wand sparkle animation - opacity-only. Earlier versions translated the SVG
    <path> elements by 0.5px for jitter, but Chrome doesn't composite transforms
    on SVG sub-elements, so every animated frame triggered a full layout
    (~720 layouts/sec when any agent was busy). The half-pixel motion was
    imperceptible at typical retina DPR; opacity-only gives the same vanish/
-   reappear feel without driving the layout pipeline. */
+   reappear feel without driving the layout pipeline. Note that this removed the
+   LAYOUT cost only - the per-frame repaint above is the other half, and it is
+   why the promotion rule exists. */
 @keyframes wand-sparkle {
 	0%,
 	100% {
@@ -1006,13 +1028,24 @@ button.maestro-keycap-hint:hover {
 	svg.wand-sparkle-active path:nth-child(n + 3) {
 		animation: none;
 	}
+	/* Nothing animates here, so the promotion above would hold a layer for a
+	   still icon. */
+	svg.wand-sparkle-active {
+		will-change: auto;
+	}
 }
 
 /* Performance-profiling indicator: while a trace is being captured the wand
    glows recording-red so it's unmistakable that profiling is on. The red is
-   forced over the inline theme accent for this debug-only state. A slow (1.5s)
-   pulse is deliberate - it keeps the indicator's own paint cost low and out of
-   the trace it is helping to capture. */
+   forced over the inline theme accent for this debug-only state.
+
+   The 1.5s period does NOT keep this out of the trace it is helping to capture,
+   which an earlier version of this comment claimed. Rate is irrelevant: an
+   animated `filter` is repainted on the main thread every frame regardless of
+   how slowly it interpolates, so this pulsed the wand's layer at 60fps for the
+   entire duration of every capture. The promotion rule near `wand-sparkle`
+   above is what actually bounds the cost, by keeping that repaint off the Left
+   Bar's layer. */
 @keyframes wand-profiling-pulse {
 	0%,
 	100% {
@@ -1055,6 +1088,8 @@ svg.wand-profiling-active path:nth-child(8) {
 	svg.wand-profiling-active {
 		animation: none;
 		filter: drop-shadow(0 0 3px rgba(239, 68, 68, 0.9));
+		/* Static glow, so there is no repaint to confine. */
+		will-change: auto;
 	}
 	svg.wand-profiling-active path:nth-child(n + 3) {
 		animation: none;

@@ -18,6 +18,7 @@ import {
 } from '../../shared/group-chat-types';
 import { stripMarkdown } from '../utils/textProcessing';
 import { useUIStore } from '../stores/uiStore';
+import { useGroupChatStore, viewPrefsFor } from '../stores/groupChatStore';
 import { formatTimestamp } from '../../shared/formatters';
 import { useListNavigation, useScrollIntoView } from '../hooks';
 import { CUE_COLOR, tintedPillColors } from './History/historyConstants';
@@ -37,6 +38,9 @@ const LOOKBACK_OPTIONS: LookbackPeriod[] = [
 	{ label: '1 month', hours: 720, bucketCount: 30 },
 	{ label: 'All time', hours: null, bucketCount: 24 },
 ];
+
+/** What a chat shows before, or without, a saved lookback of its own. */
+const DEFAULT_LOOKBACK_HOURS = 24;
 
 interface GroupChatActivityGraphProps {
 	entries: GroupChatHistoryEntry[];
@@ -487,6 +491,31 @@ const ALL_ENTRY_TYPES = new Set<GroupChatHistoryEntryType>([
 	'error',
 ]);
 
+/**
+ * Turn a chat's saved pill list into the set this build can render.
+ *
+ * `null` means the chat has never saved a set, so everything is on. An empty
+ * array is a real choice - the user switched every pill off - and is kept as
+ * such, which is why this tests for null rather than for emptiness. Types the
+ * saved data mentions but this build does not know are dropped, so a
+ * downgrade cannot put an unrenderable filter into the set.
+ */
+function filtersFromSaved(saved: string[] | null): Set<GroupChatHistoryEntryType> {
+	if (saved === null) return new Set(ALL_ENTRY_TYPES);
+	return new Set(
+		saved.filter((type): type is GroupChatHistoryEntryType =>
+			ALL_ENTRY_TYPES.has(type as GroupChatHistoryEntryType)
+		)
+	);
+}
+
+/** The pills saved for one chat, read straight from the store. */
+function savedFiltersFor(groupChatId: string): Set<GroupChatHistoryEntryType> {
+	return filtersFromSaved(
+		viewPrefsFor(useGroupChatStore.getState().groupChatViewPrefs, groupChatId).historyTypes
+	);
+}
+
 export function GroupChatHistoryPanel({
 	theme,
 	groupChatId,
@@ -495,11 +524,12 @@ export function GroupChatHistoryPanel({
 	participantColors,
 	onJumpToMessage,
 }: GroupChatHistoryPanelProps): JSX.Element {
-	const [lookbackHours, setLookbackHours] = useState<number | null>(24);
+	const [lookbackHours, setLookbackHours] = useState<number | null>(DEFAULT_LOOKBACK_HOURS);
 	const [searchFilter, setSearchFilter] = useState('');
-	const [activeFilters, setActiveFilters] = useState<Set<GroupChatHistoryEntryType>>(
-		new Set(ALL_ENTRY_TYPES)
+	const [activeFilters, setActiveFilters] = useState<Set<GroupChatHistoryEntryType>>(() =>
+		savedFiltersFor(groupChatId)
 	);
+	const setGroupChatHistoryTypes = useGroupChatStore((s) => s.setGroupChatHistoryTypes);
 	const searchFilterOpen = useUIStore((s) => s.groupChatHistorySearchFilterOpen);
 	const setSearchFilterOpen = useUIStore((s) => s.setGroupChatHistorySearchFilterOpen);
 	const activeFocus = useUIStore((s) => s.activeFocus);
@@ -517,16 +547,41 @@ export function GroupChatHistoryPanel({
 		return () => setSearchFilterOpen(false);
 	}, [setSearchFilterOpen]);
 
-	// Load lookback preference
+	// Reload this chat's pills when the room changes. The panel is rendered
+	// without a `key`, so switching chats does not remount it and the initial
+	// useState value would otherwise stay on screen showing the previous room's
+	// filters.
 	useEffect(() => {
+		setActiveFilters(savedFiltersFor(groupChatId));
+	}, [groupChatId]);
+
+	// Load this chat's lookback, after resetting to the default.
+	//
+	// Two separate ways the previous room's window used to leak into the next
+	// one, both invisible until you switch chats:
+	//
+	//  - the loader only wrote when a value existed, so a chat that had never
+	//    saved one simply kept whatever the last chat was showing, and the graph
+	//    silently covered a span the user never chose for it;
+	//  - the read is async, so switching twice quickly could let the FIRST
+	//    chat's value land after the second had already been drawn.
+	//
+	// Resetting first fixes the former; the cancelled flag fixes the latter.
+	useEffect(() => {
+		let cancelled = false;
+		setLookbackHours(DEFAULT_LOOKBACK_HOURS);
+
 		const loadLookbackPreference = async () => {
 			const settingsKey = `groupChatHistoryLookback:${groupChatId}`;
 			const saved = await window.maestro.settings.get(settingsKey);
-			if (saved !== undefined) {
-				setLookbackHours(saved as number | null);
-			}
+			if (cancelled || saved === undefined) return;
+			setLookbackHours(saved as number | null);
 		};
 		loadLookbackPreference();
+
+		return () => {
+			cancelled = true;
+		};
 	}, [groupChatId]);
 
 	// Handler to update lookback and persist
@@ -544,18 +599,24 @@ export function GroupChatHistoryPanel({
 		[participantColors, theme.colors.accent]
 	);
 
-	// Toggle a type filter
-	const toggleFilter = useCallback((type: GroupChatHistoryEntryType) => {
-		setActiveFilters((prev) => {
-			const next = new Set(prev);
-			if (next.has(type)) {
-				next.delete(type);
-			} else {
-				next.add(type);
-			}
-			return next;
-		});
-	}, []);
+	// Toggle a type filter, and remember it for THIS chat.
+	const toggleFilter = useCallback(
+		(type: GroupChatHistoryEntryType) => {
+			setActiveFilters((prev) => {
+				const next = new Set(prev);
+				if (next.has(type)) {
+					next.delete(type);
+				} else {
+					next.add(type);
+				}
+				// Written from inside the updater so the saved set is the one that
+				// just won, with no second render needed to read it back.
+				setGroupChatHistoryTypes(groupChatId, [...next]);
+				return next;
+			});
+		},
+		[groupChatId, setGroupChatHistoryTypes]
+	);
 
 	// Filter entries based on active type filters and search text
 	const filteredEntries = useMemo(

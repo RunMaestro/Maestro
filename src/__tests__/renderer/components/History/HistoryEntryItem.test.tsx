@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { HistoryEntryItem } from '../../../../renderer/components/History';
 import type { HistoryEntry, HistoryEntryType } from '../../../../renderer/types';
 
@@ -523,6 +523,245 @@ describe('HistoryEntryItem', () => {
 		// Should call onOpenAboutModal but NOT onOpenDetailModal (stopPropagation)
 		expect(onOpenAboutModal).toHaveBeenCalled();
 		expect(onOpenDetailModal).not.toHaveBeenCalled();
+	});
+
+	/**
+	 * Collapsed Cue rows (CUE-HISTORY-03 task #3).
+	 *
+	 * A grouped row IS the group's newest run with a `cueGroup` summary attached,
+	 * so these tests pin the three things the collapse changes: the header names
+	 * the TRIGGER rather than leaving the run unlabelled, the per-run success dot
+	 * gives way to the group's failure tally, and a row with no `cueGroup` is
+	 * untouched.
+	 */
+	describe('collapsed Cue group', () => {
+		const groupedRow = (overrides: Partial<HistoryEntry> = {}): HistoryEntry =>
+			createMockEntry({
+				type: 'CUE' as HistoryEntryType,
+				summary: 'Bus drained 4 commands',
+				success: true,
+				cueTriggerName: 'Pedsidian-Command-Bus',
+				cueEventType: 'file.changed',
+				cueGroup: {
+					key: 'Pedsidian-Command-Bus',
+					label: 'Pedsidian-Command-Bus',
+					runCount: 1382,
+					failureCount: 3,
+				},
+				...overrides,
+			});
+
+		const renderRow = (entry: HistoryEntry) =>
+			render(
+				<HistoryEntryItem
+					entry={entry}
+					index={0}
+					isSelected={false}
+					theme={mockTheme}
+					onOpenDetailModal={vi.fn()}
+				/>
+			);
+
+		it('names the trigger and reports the run count with digit grouping', () => {
+			renderRow(groupedRow());
+			expect(screen.getByText('Pedsidian-Command-Bus')).toBeInTheDocument();
+			// The number IS the information here, so it is never abbreviated to "1.4K".
+			expect(screen.getByText('1,382 runs')).toBeInTheDocument();
+		});
+
+		it('reports the failure count when runs failed', () => {
+			renderRow(groupedRow());
+			expect(screen.getByText('3 failed')).toBeInTheDocument();
+		});
+
+		it('omits the failure count when every run succeeded', () => {
+			renderRow(
+				groupedRow({
+					cueGroup: {
+						key: 'Pedsidian-Command-Bus',
+						label: 'Pedsidian-Command-Bus',
+						runCount: 40,
+						failureCount: 0,
+					},
+				})
+			);
+			expect(screen.getByText('40 runs')).toBeInTheDocument();
+			expect(screen.queryByText(/failed$/)).not.toBeInTheDocument();
+		});
+
+		it('keeps the newest run summary as the row body', () => {
+			renderRow(groupedRow());
+			expect(screen.getByText('Bus drained 4 commands')).toBeInTheDocument();
+		});
+
+		it('folds the trigger type into the tally instead of a second subtitle line', () => {
+			const { container } = renderRow(groupedRow());
+			expect(container.textContent).not.toContain('Triggered by:');
+			expect(screen.getByText('File Change')).toBeInTheDocument();
+		});
+
+		it('drops the per-run success indicator, which cannot speak for N runs', () => {
+			const { container } = renderRow(groupedRow());
+			// The ungrouped row paints a success/failure dot from `entry.success`.
+			// On a group that dot would report only the newest run's outcome while
+			// sitting next to a count of 1,382.
+			expect(container.querySelector('[title="Task completed successfully"]')).toBeNull();
+		});
+
+		it('leaves an ungrouped Cue row exactly as it was', () => {
+			const { container } = renderRow(groupedRow({ cueGroup: undefined }));
+			expect(container.textContent).toContain('Triggered by: File Change');
+			expect(container.querySelector('[data-cue-group]')).toBeNull();
+			expect(container.querySelector('[title="Task completed successfully"]')).not.toBeNull();
+		});
+	});
+
+	/**
+	 * Expanding a collapsed row (CUE-HISTORY-03 task #4).
+	 *
+	 * Collapsing 1,382 runs to one line is only honest if the runs stay
+	 * reachable, so these pin the escape hatch: the control exists on a group,
+	 * opening it fetches and lists the runs, a run opens the detail modal on
+	 * ITSELF rather than on the group, and a row with nothing behind it - an
+	 * ungrouped row, or a caller that wired no loader - grows no control.
+	 */
+	describe('expanding a collapsed Cue group', () => {
+		// The runs arrive from an async load, and `waitFor` cannot make progress
+		// against the suite-wide fake clock. These cases do not assert on
+		// timestamps, so real timers cost them nothing.
+		beforeEach(() => {
+			vi.useRealTimers();
+		});
+
+		const runs: HistoryEntry[] = [
+			{
+				id: 'run-new',
+				type: 'CUE' as HistoryEntryType,
+				timestamp: Date.now(),
+				summary: 'Newest run body',
+				projectPath: '/test/project',
+				success: true,
+			},
+			{
+				id: 'run-failed',
+				type: 'CUE' as HistoryEntryType,
+				timestamp: Date.now() - 60_000,
+				summary: 'Failed run body',
+				projectPath: '/test/project',
+				success: false,
+			},
+		];
+
+		const groupedRow = (overrides: Partial<HistoryEntry> = {}): HistoryEntry =>
+			createMockEntry({
+				type: 'CUE' as HistoryEntryType,
+				summary: 'Bus drained 4 commands',
+				sessionId: 'agent-rc',
+				cueTriggerName: 'Pedsidian-Command-Bus',
+				cueGroup: {
+					key: 'Pedsidian-Command-Bus',
+					label: 'Pedsidian-Command-Bus',
+					runCount: 1382,
+					failureCount: 3,
+				},
+				...overrides,
+			});
+
+		const renderRow = (
+			entry: HistoryEntry,
+			opts: {
+				expanded?: boolean;
+				loadRuns?: () => Promise<HistoryEntry[]>;
+				toggle?: (id: string) => void;
+				onOpenDetailModal?: (entry: HistoryEntry, index: number) => void;
+				wired?: boolean;
+			} = {}
+		) => {
+			const expansion = {
+				toggle: opts.toggle ?? vi.fn(),
+				loadRuns: opts.loadRuns ?? vi.fn(async () => runs),
+			};
+			return render(
+				<HistoryEntryItem
+					entry={entry}
+					index={7}
+					isSelected={false}
+					theme={mockTheme}
+					onOpenDetailModal={opts.onOpenDetailModal ?? vi.fn()}
+					cueGroupExpansion={opts.wired === false ? undefined : expansion}
+					isCueGroupExpanded={opts.expanded ?? false}
+				/>
+			);
+		};
+
+		it('renders collapsed by default, with a control to open the runs', () => {
+			renderRow(groupedRow());
+			const expander = screen.getByTitle('Show individual runs');
+			expect(expander).toHaveAttribute('aria-expanded', 'false');
+			expect(screen.queryByText('Newest run body')).not.toBeInTheDocument();
+		});
+
+		it('toggles the group without opening the detail modal', () => {
+			const toggle = vi.fn();
+			const onOpenDetailModal = vi.fn();
+			renderRow(groupedRow({ id: 'group-row' }), { toggle, onOpenDetailModal });
+
+			fireEvent.click(screen.getByTitle('Show individual runs'));
+
+			expect(toggle).toHaveBeenCalledWith('group-row');
+			// The row's own click handler opens the modal; the expander must not.
+			expect(onOpenDetailModal).not.toHaveBeenCalled();
+		});
+
+		it('lists the individual runs once expanded', async () => {
+			const loadRuns = vi.fn(async () => runs);
+			renderRow(groupedRow(), { expanded: true, loadRuns });
+
+			await waitFor(() => expect(screen.getByText('Newest run body')).toBeInTheDocument());
+			expect(screen.getByText('Failed run body')).toBeInTheDocument();
+			expect(loadRuns).toHaveBeenCalledTimes(1);
+			expect(screen.getByTitle('Hide individual runs')).toHaveAttribute('aria-expanded', 'true');
+		});
+
+		it('opens the detail modal on the RUN that was clicked, not the group', async () => {
+			const onOpenDetailModal = vi.fn();
+			renderRow(groupedRow(), { expanded: true, onOpenDetailModal });
+
+			await waitFor(() => expect(screen.getByText('Failed run body')).toBeInTheDocument());
+			fireEvent.click(screen.getByTitle('Failed run body'));
+
+			expect(onOpenDetailModal).toHaveBeenCalledTimes(1);
+			expect(onOpenDetailModal).toHaveBeenCalledWith(runs[1], 7);
+		});
+
+		it('reports a failed load instead of rendering an empty list', async () => {
+			const loadRuns = vi.fn(async () => {
+				throw new Error('database is locked');
+			});
+			renderRow(groupedRow(), { expanded: true, loadRuns });
+
+			await waitFor(() =>
+				expect(screen.getByText(/Failed to load runs: database is locked/)).toBeInTheDocument()
+			);
+		});
+
+		it('says so when the window holds no runs', async () => {
+			renderRow(groupedRow(), { expanded: true, loadRuns: vi.fn(async () => []) });
+
+			await waitFor(() => expect(screen.getByText('No runs in this window.')).toBeInTheDocument());
+		});
+
+		it('gives an UNGROUPED row no expander - there is nothing behind it', () => {
+			renderRow(groupedRow({ cueGroup: undefined }));
+			expect(screen.queryByTitle('Show individual runs')).not.toBeInTheDocument();
+		});
+
+		it('gives a group no expander when the caller wired no loader', () => {
+			// Surfaces that never request grouped rows would otherwise draw a
+			// control that cannot fetch anything.
+			renderRow(groupedRow(), { wired: false });
+			expect(screen.queryByTitle('Show individual runs')).not.toBeInTheDocument();
+		});
 	});
 
 	it('formats today timestamps as time only', () => {

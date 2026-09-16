@@ -25,6 +25,107 @@ function err(partial: Partial<ClassifiableError> & { message: string }): Classif
 	};
 }
 
+/**
+ * The 2026-09-16 report: Codex refused a model with a hard HTTP 400 and Maestro
+ * drew "Service overloaded - auto-retrying" over it, probing every 30 minutes
+ * with no attempt cap while the one actionable instruction - upgrade the CLI -
+ * sat behind a dismissible banner. Nothing in the payload was ambiguous; the
+ * only thing that matched was the phrase "try again" at the end of an apology.
+ */
+describe('a permanently fatal request is never retried', () => {
+	const gpt6Astra = {
+		type: 'error',
+		status: 400,
+		error: {
+			type: 'invalid_request_error',
+			message:
+				"The 'gpt-6-astra' model requires a newer version of Codex. Please upgrade to the latest app or CLI and try again.",
+		},
+	};
+
+	it('does not retry the reported gpt-6-astra 400', () => {
+		expect(
+			classifyRetryableError(
+				err({
+					message:
+						"The 'gpt-6-astra' model requires a newer version of Codex. Please upgrade to the latest app or CLI and try again.",
+					parsedJson: gpt6Astra,
+				})
+			)
+		).toBeNull();
+	});
+
+	it('reads the status structurally, whatever the prose says', () => {
+		// The sentence names a quota, so without the structural gate this would
+		// route to the wait-for-reset strategy and wait out a limit that is not
+		// the reason the request failed.
+		expect(
+			classifyRetryableError(
+				err({ message: 'usage limit reached', parsedJson: { type: 'error', status: 400 } })
+			)
+		).toBeNull();
+	});
+
+	it('reads a provider error type when no status is given', () => {
+		expect(
+			classifyRetryableError(
+				err({
+					message: 'something went wrong, please try again later',
+					parsedJson: { error: { type: 'invalid_request_error' } },
+				})
+			)
+		).toBeNull();
+	});
+
+	it('falls back to prose for providers that send no structure', () => {
+		for (const message of [
+			'This model requires a newer version of Codex. Please try again later.',
+			'Unsupported model: gpt-6-astra',
+			'model not found',
+		]) {
+			expect(classifyRetryableError(err({ message }))).toBeNull();
+		}
+	});
+
+	// The two 4xx that DO clear on their own must be untouched, and 429 in
+	// particular has to stay available to the token-exhaustion strategy.
+	it('leaves 408 and 429 retryable', () => {
+		expect(
+			classifyRetryableError(
+				err({
+					message: 'Request timed out. Please try again later.',
+					parsedJson: { type: 'error', status: 408 },
+				})
+			)
+		).toBe('availability');
+		expect(
+			classifyRetryableError(
+				err({ message: 'usage limit reached', parsedJson: { type: 'error', status: 429 } })
+			)
+		).toBe('token-exhaustion');
+	});
+
+	// The tightened pattern must not cost us the errors it was written for.
+	it('still retries real transient failures', () => {
+		expect(classifyRetryableError(err({ message: 'Overloaded, please try again later' }))).toBe(
+			'availability'
+		);
+		expect(classifyRetryableError(err({ message: 'API Error: 529 Overloaded' }))).toBe(
+			'availability'
+		);
+		expect(
+			classifyRetryableError(err({ message: 'Service is busy. Try again in a few minutes.' }))
+		).toBe('availability');
+	});
+
+	// A bare "try again" is the closing words of an apology, not a signal.
+	it('does not read a bare "try again" as a retry signal', () => {
+		expect(
+			classifyRetryableError(err({ message: 'Something broke. Please fix it and try again.' }))
+		).toBeNull();
+	});
+});
+
 describe('classifyRetryableError', () => {
 	it('classifies overload/529/5xx/throttle messages as availability', () => {
 		for (const message of [
@@ -251,14 +352,28 @@ describe('tokenExhaustionResetAt', () => {
 
 describe('tokenExhaustionDelayMs', () => {
 	const now = 1_700_000_000_000;
-	const min = 60 * 1000;
+	const minute = 60 * 1000;
+	/** The steady-state floor: every probe from the third on waits this long. */
+	const floor = 15 * minute;
 
-	it('ramps 15s, 30s, then holds at one probe a minute', () => {
+	it('probes twice quickly, then holds at the 15 minute floor', () => {
+		// Two fast probes catch a stale notice or an account the user already
+		// switched. Everything after that is a quota coming back on a clock
+		// measured in hours, so it is polled at the floor and not faster.
 		expect(tokenExhaustionDelayMs(0, undefined, now)).toBe(15 * 1000);
-		expect(tokenExhaustionDelayMs(1, undefined, now)).toBe(30 * 1000);
-		expect(tokenExhaustionDelayMs(2, undefined, now)).toBe(min);
-		expect(tokenExhaustionDelayMs(3, undefined, now)).toBe(min);
+		expect(tokenExhaustionDelayMs(1, undefined, now)).toBe(minute);
+		expect(tokenExhaustionDelayMs(2, undefined, now)).toBe(floor);
+		expect(tokenExhaustionDelayMs(3, undefined, now)).toBe(floor);
 		expect(tokenExhaustionDelayMs(500, undefined, now)).toBe(TOKEN_EXHAUSTION_POLL_MAX_MS);
+	});
+
+	// A doubling ramp to the same ceiling reaches the floor on the seventh probe,
+	// roughly 31 minutes in, so the first half hour of a four-hour outage is
+	// still spent probing. The floor has to arrive on probe 3, not eventually.
+	it('reaches the floor by the third probe rather than ramping into it', () => {
+		expect(tokenExhaustionDelayMs(2, undefined, now)).toBe(floor);
+		const firstHour = [0, 1, 2, 3].map((a) => tokenExhaustionDelayMs(a, undefined, now));
+		expect(firstHour.reduce((a, b) => a + b, 0)).toBeGreaterThan(30 * minute);
 	});
 
 	it('clamps negative and fractional attempts to the first probe', () => {
@@ -270,34 +385,123 @@ describe('tokenExhaustionDelayMs', () => {
 	// an outage that cleared early - because the user swapped accounts, or the
 	// notice named the wrong window - was invisible until the sleep expired.
 	it('keeps polling through a reset that is hours away', () => {
-		const resetAt = now + 5 * 60 * min;
+		const resetAt = now + 5 * 60 * minute;
 		expect(tokenExhaustionDelayMs(0, resetAt, now)).toBe(15 * 1000);
-		expect(tokenExhaustionDelayMs(9, resetAt, now)).toBe(min);
-		expect(tokenExhaustionDelayMs(200, resetAt, now)).toBe(min);
+		expect(tokenExhaustionDelayMs(9, resetAt, now)).toBe(floor);
+		expect(tokenExhaustionDelayMs(200, resetAt, now)).toBe(floor);
 	});
 
 	it('lands exactly on the reset when it arrives sooner than the next probe', () => {
-		// 20s out with a 60s cadence: waiting the full minute would meet a known
-		// reset 40s late, every time, for no reason.
+		// 20s out at the floor: waiting the full 15 minutes would meet a known
+		// reset roughly 14 minutes late, every time, for no reason.
 		expect(tokenExhaustionDelayMs(5, now + 20 * 1000, now)).toBe(20 * 1000);
-		// ...but never LATER than the cadence, which is the sleep this replaced.
-		expect(tokenExhaustionDelayMs(5, now + 90 * 1000, now)).toBe(min);
+		expect(tokenExhaustionDelayMs(5, now + 90 * 1000, now)).toBe(90 * 1000);
+	});
+
+	// This is the guard on the clamp DIRECTION, and it is load-bearing. Clamping
+	// the other way (waiting for a distant reset instead of the cadence) restores
+	// the blind sleep this design replaced: the observed failure was a 2h26m
+	// outage that cleared "after 0 retries" because Maestro looked exactly once,
+	// at the end. A far-off reset must never stretch the wait past the floor.
+	it('never waits LONGER than the floor just because a reset is far away', () => {
+		expect(tokenExhaustionDelayMs(5, now + 30 * minute, now)).toBe(floor);
+		expect(tokenExhaustionDelayMs(5, now + 4 * 60 * minute, now)).toBe(floor);
 	});
 
 	it('goes on polling once the reset has come and gone', () => {
 		// The provider said the quota would be back and it was not. That is a
 		// reason to keep asking, not to stop.
-		expect(tokenExhaustionDelayMs(4, now - 60 * min, now)).toBe(min);
-		expect(tokenExhaustionDelayMs(4, now, now)).toBe(min);
+		expect(tokenExhaustionDelayMs(4, now - 60 * minute, now)).toBe(floor);
+		expect(tokenExhaustionDelayMs(4, now, now)).toBe(floor);
 	});
 
 	it('never returns a delay that could stall the loop', () => {
 		for (let attempt = 0; attempt < 40; attempt++) {
-			for (const resetAt of [undefined, now - 1, now, now + 1, now + 10 * min]) {
+			for (const resetAt of [undefined, now - 1, now, now + 1, now + 10 * minute]) {
 				const delay = tokenExhaustionDelayMs(attempt, resetAt, now);
 				expect(delay).toBeGreaterThan(0);
 				expect(delay).toBeLessThanOrEqual(TOKEN_EXHAUSTION_POLL_MAX_MS);
 			}
 		}
+	});
+});
+
+/**
+ * The provider's own error text (`raw.errorLine`).
+ *
+ * Codex's parser replaces `message` with the pattern bank's curated wording, so
+ * before this the scheduler saw "Rate limited. Please wait and try again." for a
+ * multi-hour quota outage and ran the 30s availability backoff against it. These
+ * cover the decision being made off the real line while display keeps using
+ * `message`.
+ */
+describe('classifying off the provider raw line', () => {
+	it('reads exhaustion out of the raw line when the curated message hides it', () => {
+		const error = err({
+			// What the Codex bank rewrote it to.
+			message: 'Rate limited. Please wait and try again.',
+			// What Codex actually printed.
+			raw: { errorLine: "429 - you've hit your usage limit for this plan" },
+		});
+
+		expect(classifyRetryableError(error)).toBe('token-exhaustion');
+	});
+
+	it('prefers exhaustion when the raw line carries both signals', () => {
+		// A throttle read as a quota outage only waits too long; a quota outage
+		// read as a throttle hammers the provider for hours.
+		const error = err({
+			message: 'Rate limit exceeded. Please wait before trying again.',
+			raw: { errorLine: 'rate limit: usage limit reached for your plan' },
+		});
+
+		expect(classifyRetryableError(error)).toBe('token-exhaustion');
+	});
+
+	it('still classifies from message alone when there is no raw line', () => {
+		expect(classifyRetryableError(err({ message: '429 error' }))).toBe('availability');
+		expect(classifyRetryableError(err({ message: 'usage limit reached' }))).toBe(
+			'token-exhaustion'
+		);
+	});
+
+	it('ignores a blank raw line rather than treating it as a text', () => {
+		expect(classifyRetryableError(err({ message: 'usage limit reached', raw: {} }))).toBe(
+			'token-exhaustion'
+		);
+		expect(
+			classifyRetryableError(err({ message: 'usage limit reached', raw: { errorLine: '   ' } }))
+		).toBe('token-exhaustion');
+	});
+
+	it('recovers a reset time that only the raw line carries', () => {
+		const now = Date.UTC(2026, 8, 16, 12, 0, 0);
+		const error = err({
+			message: 'Usage limit reached. Please wait or check your plan quota.',
+			raw: { errorLine: 'You have hit your usage limit. Try again in 4h 12m.' },
+		});
+
+		const resetAt = tokenExhaustionResetAt(error, now);
+
+		// The point of this case is that a hint is recovered AT ALL: before the raw
+		// line was carried, `message` was the curated bank wording and this was
+		// `undefined`, so the scheduler had nothing but its fixed poll.
+		//
+		// The value is 4h, not 4h12m: `parseRetryAfterFromMessage` reads a single
+		// leading unit and ignores the trailing minutes. That is a pre-existing
+		// limit of the parser, unrelated to where the text came from, and it errs
+		// EARLY (probing 12 minutes before the quota is back costs one refused
+		// request), so it is pinned here rather than quietly fixed.
+		expect(resetAt).toBe(now + 4 * 60 * 60 * 1000 + RESET_TIME_BUFFER_MS);
+	});
+
+	it('leaves the reset undefined when neither text names one', () => {
+		const now = Date.UTC(2026, 8, 16, 12, 0, 0);
+		const error = err({
+			message: 'Usage limit reached. Please wait or check your plan quota.',
+			raw: { errorLine: 'stream error: usage limit reached' },
+		});
+
+		expect(tokenExhaustionResetAt(error, now)).toBeUndefined();
 	});
 });

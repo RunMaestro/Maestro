@@ -10,10 +10,12 @@
  */
 
 import type { LogEntry, QueuedItem, QueuedItemEditPatch, Session, SessionState } from '../types';
+import { generateId } from './ids';
 import {
 	getBusyTabs,
 	getTabDisplayName,
 	markTabRunningQueuedItem,
+	markTabRunningTurn,
 	resolveQueuedItemTarget,
 } from './tabHelpers';
 
@@ -452,5 +454,114 @@ export function applyQueuedItemDispatch(session: Session, item: QueuedItem): Ses
 		executionQueue: session.executionQueue.filter((i) => i.id !== item.id),
 		aiTabs,
 		...(orphans !== session.orphanedThinkingTabs && { orphanedThinkingTabs: orphans }),
+	};
+}
+
+// ============================================================================
+// Replaying a turn the provider refused - not a queue dispatch
+// ============================================================================
+
+/**
+ * Is this queued item the same ask as `item`?
+ *
+ * Used to stop a re-authentication replay from running a prompt the user has
+ * ALREADY re-sent by hand. Both copies exist for one reason: the failed turn was
+ * invisible, so the user resent it while the resume had the same prompt
+ * snapshotted. Running both spends two full turns on one question and lands two
+ * sets of edits in the repo.
+ *
+ * Compared on what the user actually typed - target tab, kind, text/command, and
+ * attachment count - NOT on `id`, which is freshly generated per send and would
+ * make every duplicate look distinct. The user's own copy is the one that wins:
+ * it is visible, it is theirs, and the queue already owns its ordering.
+ */
+export function isSameQueuedPrompt(a: QueuedItem, b: QueuedItem): boolean {
+	if (a.tabId !== b.tabId) return false;
+	if (a.type !== b.type) return false;
+	if ((a.text ?? '').trim() !== (b.text ?? '').trim()) return false;
+	if ((a.command ?? '') !== (b.command ?? '')) return false;
+	if ((a.commandArgs ?? '') !== (b.commandArgs ?? '')) return false;
+	return (a.images?.length ?? 0) === (b.images?.length ?? 0);
+}
+
+/** The queued item that already carries this prompt, if the user re-sent it. */
+export function findQueuedDuplicate(
+	session: Pick<Session, 'executionQueue'>,
+	item: QueuedItem
+): QueuedItem | undefined {
+	return session.executionQueue?.find((queued) => isSameQueuedPrompt(queued, item));
+}
+
+/** Why a replay was not dispatched. See {@link applyReplayDispatch}. */
+export type ReplayBlockedReason = 'no-target-tab' | 'target-tab-busy' | 'already-queued';
+
+export interface ReplayDispatchResult {
+	/** The session to commit. Unchanged from the input when `blocked` is set. */
+	session: Session;
+	/** Set when nothing was dispatched - the caller must not spawn. */
+	blocked?: ReplayBlockedReason;
+}
+
+/**
+ * State transition for REPLAYING a turn that already failed: mark its target tab
+ * busy and note in the transcript that the prompt went back out.
+ *
+ * Distinct from {@link applyQueuedItemDispatch} in two ways, both because the
+ * item is not in the queue: nothing is dequeued, and no user bubble is appended
+ * (the original send already wrote one - see {@link markTabRunningTurn}).
+ *
+ * Blocks rather than dispatching when:
+ *  - the tab is gone (nothing to run on);
+ *  - the tab is already mid-turn - a second spawn on one tab key makes the main
+ *    process KILL the live one, so a replay must never race a running turn;
+ *  - the user has already re-sent this exact prompt, which is queued and will
+ *    drain on its own.
+ */
+export function applyReplayDispatch(
+	session: Session,
+	item: QueuedItem,
+	noteText: string
+): ReplayDispatchResult {
+	const duplicate = findQueuedDuplicate(session, item);
+	if (duplicate) return { session, blocked: 'already-queued' };
+
+	const target = resolveQueuedItemTarget(session, item);
+	if (!target) return { session, blocked: 'no-target-tab' };
+
+	const targetTab =
+		session.aiTabs.find((t) => t.id === target.tabId) ??
+		session.orphanedThinkingTabs?.find((t) => t.id === target.tabId);
+	if (targetTab?.state === 'busy') return { session, blocked: 'target-tab-busy' };
+
+	const note: LogEntry = {
+		id: generateId(),
+		timestamp: Date.now(),
+		source: 'system',
+		text: noteText,
+	};
+	const markReplayed = (tab: Session['aiTabs'][number]) => {
+		const next = markTabRunningTurn(tab, item, session);
+		return { ...next, logs: [...tab.logs, note] };
+	};
+
+	const aiTabs = session.aiTabs.map((tab) => (tab.id === target.tabId ? markReplayed(tab) : tab));
+	const orphans =
+		target.location === 'orphan' && session.orphanedThinkingTabs
+			? session.orphanedThinkingTabs.map((tab) =>
+					tab.id === target.tabId ? markReplayed(tab) : tab
+				)
+			: session.orphanedThinkingTabs;
+
+	return {
+		session: {
+			...session,
+			state: 'busy' as SessionState,
+			busySource: 'ai',
+			thinkingStartTime: Date.now(),
+			currentCycleTokens: 0,
+			currentCycleBytes: 0,
+			aiTabs,
+			...(orphans !== session.orphanedThinkingTabs && { orphanedThinkingTabs: orphans }),
+		},
 	};
 }

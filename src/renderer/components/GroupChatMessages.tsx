@@ -297,7 +297,8 @@ export const GroupChatMessages = memo(
 		};
 		const typingIndicatorContent = state !== 'idle' && (
 			<>
-				<div className="w-20 shrink-0" />
+				{/* Matches the timestamp gutter, which only exists from `sm` up. */}
+				<div className="hidden sm:block w-20 shrink-0" />
 				<div
 					className="flex-1 min-w-0 p-4 rounded-xl border rounded-tl-none"
 					style={{ backgroundColor: theme.colors.bgActivity, borderColor: theme.colors.border }}
@@ -420,7 +421,7 @@ export const GroupChatMessages = memo(
 										ref={virtualizer.measureElement}
 										data-index={virtualIndex}
 										data-typing-indicator
-										className="flex gap-4 px-6 py-2"
+										className="flex gap-4 px-3 sm:px-6 py-2"
 										style={{
 											position: 'absolute',
 											top: 0,
@@ -466,7 +467,13 @@ export const GroupChatMessages = memo(
 									data-index={virtualIndex}
 									data-message-index={index}
 									data-message-timestamp={msg.timestamp}
-									className={`flex gap-4 group ${isUser ? 'flex-row-reverse' : ''} px-6 py-2`}
+									// Narrow screens (phones / web-desktop mobile): the fixed side
+									// gutter for the timestamp costs ~96px of bubble width, so the
+									// row stacks - timestamp above, bubble full-width. From `sm` up
+									// it's the classic side-by-side layout with the w-20 timestamp
+									// column. Same treatment as the AI Terminal's own rows in
+									// TerminalOutput/components/LogItem.tsx.
+									className={`flex flex-col gap-1 sm:gap-4 group ${isUser ? 'sm:flex-row-reverse' : 'sm:flex-row'} px-3 sm:px-6 py-2`}
 									style={{
 										position: 'absolute',
 										top: 0,
@@ -477,7 +484,7 @@ export const GroupChatMessages = memo(
 								>
 									{/* Timestamp - outside bubble, like AI Terminal */}
 									<div
-										className={`w-20 shrink-0 text-2xs pt-2 ${isUser ? 'text-right' : 'text-left'}`}
+										className={`shrink-0 text-2xs sm:w-20 sm:pt-2 flex gap-1 sm:block ${isUser ? 'text-right justify-end' : 'text-left'}`}
 										style={{ color: theme.colors.textDim, opacity: 0.6 }}
 									>
 										{formatTimestamp(msg.timestamp)}

@@ -20,7 +20,12 @@ import {
 	cueCommandToCommandNodeFields,
 	getNextPipelineColor,
 } from '../../../../shared/cue-pipeline-types';
-import { triggerGroupKey, type CueCommand, type CueSubscription } from '../../../../shared/cue';
+import {
+	triggerGroupKey,
+	type CueCommand,
+	type CueNotifyConfig,
+	type CueSubscription,
+} from '../../../../shared/cue';
 
 /** Minimal graph session input - compatible with both local and cue-types CueGraphSession */
 interface GraphSessionInput {
@@ -53,6 +58,10 @@ interface GraphSessionInput {
 		cli_output?: { target: string };
 		action?: 'prompt' | 'command' | 'notify';
 		command?: CueCommand;
+		notify?: CueNotifyConfig;
+		fire_at?: string;
+		grace_minutes?: number;
+		self_destruct_on_failure?: boolean;
 		target_node_key?: string;
 		fan_out_node_keys?: string[];
 	}>;
@@ -278,6 +287,16 @@ function extractTriggerConfig(sub: CueSubscription): TriggerNodeData['config'] {
 			if (sub.schedule_times != null) config.schedule_times = sub.schedule_times;
 			if (sub.schedule_days != null) config.schedule_days = sub.schedule_days as string[];
 			break;
+		case 'time.once':
+			// The editor has no one-shot config UI yet, so these are pure
+			// carry-through: read here, re-emitted verbatim by
+			// `applyTriggerEventConfig`. Dropping `fire_at` would strand the
+			// subscription with no instant to fire at.
+			if (sub.fire_at != null) config.fire_at = sub.fire_at;
+			if (sub.grace_minutes != null) config.grace_minutes = sub.grace_minutes;
+			if (sub.self_destruct_on_failure != null)
+				config.self_destruct_on_failure = sub.self_destruct_on_failure;
+			break;
 		case 'file.changed':
 			if (sub.watch != null) config.watch = sub.watch;
 			if (sub.filter != null) config.filter = sub.filter;
@@ -323,6 +342,8 @@ function triggerLabel(eventType: CueEventType): string {
 			return 'Heartbeat';
 		case 'time.scheduled':
 			return 'Scheduled';
+		case 'time.once':
+			return 'One-Time';
 		case 'file.changed':
 			return 'File Change';
 		case 'github.pull_request':
@@ -744,6 +765,7 @@ export function subscriptionsToPipelines(
 							source: triggerId,
 							target: agentNode.id,
 							mode: 'pass' as EdgeMode,
+							subscriptionName: sub.name,
 							...(edgePrompt ? { prompt: edgePrompt } : {}),
 						});
 					}
@@ -773,6 +795,7 @@ export function subscriptionsToPipelines(
 						source: triggerId,
 						target: commandNode.id,
 						mode: 'pass' as EdgeMode,
+						subscriptionName: sub.name,
 					});
 				} else {
 					// Single target - infer target from subscription context.
@@ -813,6 +836,7 @@ export function subscriptionsToPipelines(
 							source: triggerId,
 							target: errorNodeId,
 							mode: 'pass' as EdgeMode,
+							subscriptionName: sub.name,
 							prompt: sub.prompt || undefined,
 						});
 						continue;
@@ -842,12 +866,21 @@ export function subscriptionsToPipelines(
 					// transition without any fallback to `agentData.inputPrompt`
 					// (which used to leak the first trigger's prompt onto every
 					// subsequent trigger feeding the same agent).
+					//
+					// The one exception is `action: notify`, which renders as a
+					// prompt-LESS edge carrying `notify` instead: the engine
+					// surfaces a toast through this agent and never spawns it,
+					// so there is no prompt to carry and the validator must not
+					// demand one.
+					const notifyConfig: CueNotifyConfig | undefined =
+						sub.action === 'notify' ? (sub.notify ?? {}) : undefined;
 					edges.push({
 						id: `edge-${edgeCount++}`,
 						source: triggerId,
 						target: agentNode.id,
 						mode: 'pass' as EdgeMode,
-						prompt: sub.prompt || undefined,
+						subscriptionName: sub.name,
+						...(notifyConfig ? { notify: notifyConfig } : { prompt: sub.prompt || undefined }),
 					});
 
 					// edge.prompt is the single source of truth for trigger→agent

@@ -285,7 +285,12 @@ export const Markdown = memo(function Markdown({
 
 	return (
 		<div
-			className={`prose prose-sm max-w-none text-sm ${className}`}
+			// No text-sm: Tailwind pins that to a fixed 0.875rem, which would
+			// override the chat surface's font size (set inline by the container
+			// that owns it, e.g. GroupChatMessages) instead of inheriting it, and
+			// make the Settings -> Display -> AI Chat size row a no-op for chat
+			// prose. `prose-sm` alone still keeps the tighter chat spacing.
+			className={`prose prose-sm max-w-none ${className}`}
 			style={{ color: theme.colors.textMain, lineHeight: 1.4, paddingLeft: '0.5em' }}
 			onCopy={(event) => {
 				writeRenderedChatSelectionToClipboard(event.nativeEvent, event.currentTarget);

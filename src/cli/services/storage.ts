@@ -6,8 +6,10 @@ import * as path from 'path';
 import * as os from 'os';
 import type { Group, SessionInfo, HistoryEntry, SshRemoteConfig } from '../../shared/types';
 import {
-	HISTORY_VERSION,
-	MAX_ENTRIES_PER_SESSION,
+	HISTORY_JSONL_EXT,
+	HISTORY_LEGACY_JSON_EXT,
+	parseHistoryJsonl,
+	serializeHistoryEntryLine,
 	HistoryFileData,
 	PaginationOptions,
 	PaginatedResult,
@@ -65,24 +67,6 @@ function writeStoreFile<T>(filename: string, data: T): void {
 	}
 	const filePath = path.join(dirPath, filename);
 	fs.writeFileSync(filePath, JSON.stringify(data, null, '\t'), 'utf-8');
-}
-
-/**
- * Atomically write JSON to `filePath` via a temp file + rename. rename() is
- * atomic on POSIX, so a concurrent reader (the desktop app reads these same
- * history files) never sees a partial or `}{`-concatenated file. Mirrors the
- * app-side `atomicWriteJson`; kept local so the CLI bundle stays free of the
- * main-process import chain.
- */
-function atomicWriteFileSync(filePath: string, content: string): void {
-	// Safety gate: never rename empty/unparseable content over a good file.
-	if (!content) {
-		throw new Error(`Refusing to write empty content to ${filePath}`);
-	}
-	JSON.parse(content); // throws before touching the file if content isn't valid JSON
-	const tmp = `${filePath}.tmp`;
-	fs.writeFileSync(tmp, content, 'utf-8');
-	fs.renameSync(tmp, filePath);
 }
 
 // Store file structures (as used by Electron Store)
@@ -160,19 +144,45 @@ function getHistoryDir(): string {
  */
 function getSessionHistoryPath(sessionId: string): string {
 	const safeId = sanitizeSessionId(sessionId);
-	return path.join(getHistoryDir(), `${safeId}.json`);
+	return path.join(getHistoryDir(), `${safeId}${HISTORY_JSONL_EXT}`);
 }
 
 /**
- * Read history entries for a specific session (new per-session format)
+ * Get file path for a session's legacy single-object history file. Present
+ * only until the desktop app migrates that session to JSONL.
+ */
+function getLegacySessionHistoryPath(sessionId: string): string {
+	const safeId = sanitizeSessionId(sessionId);
+	return path.join(getHistoryDir(), `${safeId}${HISTORY_LEGACY_JSON_EXT}`);
+}
+
+/**
+ * Read history entries for a specific session, newest first.
+ *
+ * Reads JSONL when present and falls back to the legacy object otherwise. The
+ * CLI deliberately does NOT migrate: the desktop app owns that conversion, and
+ * having two processes race to rewrite the same file is what this format change
+ * exists to eliminate. Reading both means the CLI stays correct either way.
  */
 function readSessionHistory(sessionId: string): HistoryEntry[] {
-	const filePath = getSessionHistoryPath(sessionId);
-	if (!fs.existsSync(filePath)) {
+	const jsonlPath = getSessionHistoryPath(sessionId);
+	if (fs.existsSync(jsonlPath)) {
+		try {
+			// File order is oldest-first; callers expect newest-first.
+			return normalizeHistoryEntries(
+				parseHistoryJsonl(fs.readFileSync(jsonlPath, 'utf-8')).entries.reverse()
+			);
+		} catch {
+			return [];
+		}
+	}
+
+	const legacyPath = getLegacySessionHistoryPath(sessionId);
+	if (!fs.existsSync(legacyPath)) {
 		return [];
 	}
 	try {
-		const data: HistoryFileData = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+		const data: HistoryFileData = JSON.parse(fs.readFileSync(legacyPath, 'utf-8'));
 		// Re-map legacy cross-agent consults (written as AUTO before the AGENT type
 		// existed), matching HistoryManager.getEntries in the app.
 		return normalizeHistoryEntries(data.entries || []);
@@ -182,17 +192,22 @@ function readSessionHistory(sessionId: string): HistoryEntry[] {
 }
 
 /**
- * List all sessions that have history files
+ * List all sessions that have history files, in either format.
  */
 function listSessionsWithHistory(): string[] {
 	const historyDir = getHistoryDir();
 	if (!fs.existsSync(historyDir)) {
 		return [];
 	}
-	return fs
-		.readdirSync(historyDir)
-		.filter((f) => f.endsWith('.json'))
-		.map((f) => f.replace('.json', ''));
+	const sessionIds = new Set<string>();
+	for (const file of fs.readdirSync(historyDir)) {
+		if (file.endsWith(HISTORY_JSONL_EXT)) {
+			sessionIds.add(file.slice(0, -HISTORY_JSONL_EXT.length));
+		} else if (file.endsWith(HISTORY_LEGACY_JSON_EXT)) {
+			sessionIds.add(file.slice(0, -HISTORY_LEGACY_JSON_EXT.length));
+		}
+	}
+	return Array.from(sessionIds);
 }
 
 /**
@@ -636,48 +651,23 @@ export function addHistoryEntry(entry: HistoryEntry): void {
 				fs.mkdirSync(historyDir, { recursive: true });
 			}
 
-			const filePath = getSessionHistoryPath(sessionId);
-			let data: HistoryFileData;
-
-			if (fs.existsSync(filePath)) {
-				try {
-					data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-				} catch {
-					// Corrupt history: preserve the bytes aside for recovery
-					// instead of silently overwriting them with a fresh file.
-					try {
-						fs.renameSync(filePath, `${filePath}.corrupt-${Date.now()}`);
-					} catch {
-						// best-effort; fall through to a fresh file either way
-					}
-					data = {
-						version: HISTORY_VERSION,
-						sessionId,
-						projectPath: entry.projectPath,
-						entries: [],
-					};
-				}
-			} else {
-				data = {
-					version: HISTORY_VERSION,
-					sessionId,
-					projectPath: entry.projectPath,
-					entries: [],
-				};
-			}
-
-			// Add to beginning (most recent first)
-			data.entries.unshift(entry);
-
-			// Trim to max entries
-			if (data.entries.length > MAX_ENTRIES_PER_SESSION) {
-				data.entries = data.entries.slice(0, MAX_ENTRIES_PER_SESSION);
-			}
-
-			// Update projectPath if it changed
-			data.projectPath = entry.projectPath;
-
-			atomicWriteFileSync(filePath, JSON.stringify(data, null, 2));
+			// Append one line. `appendFileSync` opens with O_APPEND, so the
+			// kernel seeks to EOF as part of the write and this cannot overwrite
+			// bytes the desktop app is writing concurrently. Critically there is
+			// no read-modify-write here any more: the old version read the whole
+			// file, unshifted, and rewrote it, which could silently drop an entry
+			// the app added in between (a cross-process lost update the in-process
+			// write queue could not prevent).
+			//
+			// Trimming is deliberately NOT done here. Rotation is the one
+			// remaining whole-file rewrite and the desktop app owns it; a second
+			// process trimming the same file is exactly the destructive race this
+			// format change removes.
+			fs.appendFileSync(
+				getSessionHistoryPath(sessionId),
+				serializeHistoryEntryLine(entry),
+				'utf-8'
+			);
 		} else {
 			// Use legacy format
 			const filePath = path.posix.join(getConfigDir(), 'maestro-history.json');

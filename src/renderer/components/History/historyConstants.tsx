@@ -121,7 +121,9 @@ export const hasRunOutcome = (type: HistoryEntryType): boolean =>
 //   + 3-line text-xs leading-relaxed summary (~60px, the line-clamp ceiling)
 //   = ~116px base
 // Footer adds: mt-2 (8) + pt-2 (8) + 1px border-t + content (~16px) = ~33px
-// CUE "Triggered by:" subtitle adds: mt-1 (4) + ~14px = ~18px
+// CUE "Triggered by:" subtitle adds: mt-1 (4) + ~14px = ~18px. A collapsed
+// Cue group spends that SAME line on its run/failure tally, so it is charged
+// the identical term - including when the row carries no `cueEventType`.
 export const ESTIMATED_ROW_HEIGHT_BASE = 116;
 export const ESTIMATED_ROW_HEIGHT_FOOTER = 33;
 export const ESTIMATED_ROW_HEIGHT_CUE_SUBTITLE = 18;
@@ -136,6 +138,7 @@ export const estimateHistoryRowHeight = (entry: {
 	achievementAction?: string;
 	hostname?: string;
 	cueEventType?: string;
+	cueGroup?: { runCount: number };
 }): number => {
 	let height = ESTIMATED_ROW_HEIGHT_BASE;
 	const hasFooter =
@@ -144,6 +147,11 @@ export const estimateHistoryRowHeight = (entry: {
 		!!entry.achievementAction ||
 		!!entry.hostname;
 	if (hasFooter) height += ESTIMATED_ROW_HEIGHT_FOOTER;
-	if (entry.type === 'CUE' && entry.cueEventType) height += ESTIMATED_ROW_HEIGHT_CUE_SUBTITLE;
+	// The group's tally line and the "Triggered by:" subtitle are the same
+	// single line, never both - a grouped row folds the trigger type into the
+	// tally rather than adding a second line for it.
+	if (entry.cueGroup || (entry.type === 'CUE' && entry.cueEventType)) {
+		height += ESTIMATED_ROW_HEIGHT_CUE_SUBTITLE;
+	}
 	return height;
 };

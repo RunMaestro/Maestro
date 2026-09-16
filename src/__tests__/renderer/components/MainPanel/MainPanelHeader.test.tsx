@@ -3,6 +3,7 @@ import React from 'react';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { MainPanelHeader } from '../../../../renderer/components/MainPanel/MainPanelHeader';
 import { useModalStore } from '../../../../renderer/stores/modalStore';
+import { useMediaPlaybackStore } from '../../../../renderer/stores/mediaPlaybackStore';
 import type { Session, Theme, AITab } from '../../../../renderer/types';
 
 import { mockTheme } from '../../../helpers/mockTheme';
@@ -18,6 +19,10 @@ vi.mock('../../../../renderer/stores/settingsStore', () => ({
 			showAgentName: true,
 			showSessionIdPill: true,
 			showSessionCostPill: true,
+			// The header derives the Context Details width from the Timeline's
+			// remembered modal size, so the partial store needs the record even
+			// when no size was ever saved.
+			modalSizes: {},
 		})
 	),
 }));
@@ -189,6 +194,9 @@ describe('MainPanelHeader', () => {
 		uiMocks.state.rightPanelOpen = false;
 		uiMocks.state.leftSidebarHidden = false;
 		uiMocks.state.leftSidebarOpen = true;
+		// The header now draws the minimized player, so a test that parks one has
+		// to hand it back: a leaked pill is a stray control in every later test.
+		useMediaPlaybackStore.setState({ dismissed: false, dormant: true, activeItemId: null });
 		runtimeMocks.isWebDesktop.mockReturnValue(false);
 		// Default to a desktop-width viewport so useViewportBreakpoint reports a
 		// non-xs breakpoint unless a test opts into a phone width.
@@ -369,6 +377,43 @@ describe('MainPanelHeader', () => {
 			uiMocks.state.leftSidebarOpen = true;
 			render(<MainPanelHeader {...defaultProps} />);
 			expect(screen.queryByLabelText('Show agents sidebar')).not.toBeInTheDocument();
+		});
+
+		// The minimized player parks in the Left Bar header pill. With the Left Bar
+		// hidden there is no such header, so minimizing used to take the widget off
+		// screen and leave nothing behind - which reads as the player closing
+		// itself, the one thing the minimize/close split exists to prevent. It
+		// rides alongside the opener because that button is here for exactly the
+		// same reason: its home is off screen.
+		it('carries the minimized player when the sidebar is hidden', () => {
+			useMediaPlaybackStore.setState({
+				dismissed: true,
+				dormant: false,
+				activeItemId: 'media-1',
+				items: [{ id: 'media-1', name: 'podcast.mp3', path: '/tmp/podcast.mp3', kind: 'audio' }],
+			} as never);
+			uiMocks.state.leftSidebarHidden = true;
+			uiMocks.state.leftSidebarOpen = false;
+			render(<MainPanelHeader {...defaultProps} />);
+
+			expect(screen.getByTestId('now-playing-indicator')).toBeInTheDocument();
+			expect(screen.getByTestId('now-playing-restore')).toBeInTheDocument();
+		});
+
+		it('leaves the header alone while the sidebar can hold the pill itself', () => {
+			useMediaPlaybackStore.setState({
+				dismissed: true,
+				dormant: false,
+				activeItemId: 'media-1',
+				items: [{ id: 'media-1', name: 'podcast.mp3', path: '/tmp/podcast.mp3', kind: 'audio' }],
+			} as never);
+			runtimeMocks.isWebDesktop.mockReturnValue(false);
+			uiMocks.state.leftSidebarHidden = false;
+			uiMocks.state.leftSidebarOpen = true;
+			render(<MainPanelHeader {...defaultProps} />);
+
+			// Two pills for one player is one control drawn twice.
+			expect(screen.queryByTestId('now-playing-indicator')).not.toBeInTheDocument();
 		});
 
 		it('opens the sidebar drawer when the opener is clicked', () => {

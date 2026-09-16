@@ -18,6 +18,7 @@ vi.mock('../../../cli/output/jsonl', () => ({ emitJsonl: vi.fn() }));
 
 import {
 	displayFont,
+	displayFontList,
 	displayFontSize,
 	displayFontsCatalog,
 	displayPreset,
@@ -99,6 +100,41 @@ describe('display font', () => {
 		displayFont('chat', 'Inter', {});
 		expect(errorSpy).not.toHaveBeenCalled();
 		errorSpy.mockRestore();
+	});
+
+	it('reports "inherits" for inherit:terminal instead of printing the raw sentinel', () => {
+		// '@terminal' is a non-empty string, so a truthiness check on the
+		// normalized value alone read this as "font set to @terminal".
+		const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+		displayFont('filePreview', 'inherit:terminal', {});
+		expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('inherits the terminal font'));
+		expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('@terminal'));
+		logSpy.mockRestore();
+	});
+
+	it('does not warn "not bundled" for an inherit sentinel', () => {
+		// Same root cause as the message above: '@terminal' is not a font name,
+		// so it must not trip the "not bundled" warning either.
+		const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		displayFont('filePreview', 'inherit:terminal', {});
+		expect(errorSpy).not.toHaveBeenCalled();
+		errorSpy.mockRestore();
+	});
+});
+
+describe('display font (list)', () => {
+	it('resolves effectiveFont to the actual rendered family, not an "(inherits X)" label', () => {
+		// chatFontFamily is unset (inherits the interface), so effectiveFont must
+		// be the resolved interface family - the JSON output has to answer "what
+		// am I looking at", not just "what does this follow".
+		displayFontList({ json: true });
+		const call = vi.mocked(emitJsonl).mock.calls[0][0] as {
+			surfaces: Array<{ surface: string; effectiveFont: string; inheritsFrom: string | null }>;
+		};
+		const chatRow = call.surfaces.find((s) => s.surface === 'chat');
+		expect(chatRow?.effectiveFont).toContain('Inter');
+		expect(chatRow?.effectiveFont).not.toContain('(inherits');
+		expect(chatRow?.inheritsFrom).toBe('interface');
 	});
 });
 

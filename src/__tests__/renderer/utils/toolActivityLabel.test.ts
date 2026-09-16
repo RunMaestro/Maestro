@@ -19,6 +19,7 @@ describe('describeToolActivity', () => {
 			expect(describeToolActivity('Read', { file_path: 'src/App.tsx' })).toEqual({
 				verb: 'Read',
 				target: 'src/App.tsx',
+				targetIsCode: true,
 			});
 		});
 
@@ -26,6 +27,7 @@ describe('describeToolActivity', () => {
 			expect(describeToolActivity('read', { path: 'README.md' })).toEqual({
 				verb: 'Read',
 				target: 'README.md',
+				targetIsCode: true,
 			});
 		});
 
@@ -42,13 +44,14 @@ describe('describeToolActivity', () => {
 		it('labels Bash with the command string', () => {
 			expect(
 				describeToolActivity('Bash', { command: 'npm test', description: 'Run tests' })
-			).toEqual({ verb: 'Ran', target: 'npm test' });
+			).toEqual({ verb: 'Ran', target: 'npm test', targetIsCode: true });
 		});
 
 		it('joins an argv-array command (Codex/OpenCode shape)', () => {
 			expect(describeToolActivity('shell', { command: ['npm', 'run', 'lint'] })).toEqual({
 				verb: 'Ran',
 				target: 'npm run lint',
+				targetIsCode: true,
 			});
 		});
 
@@ -61,10 +64,12 @@ describe('describeToolActivity', () => {
 			expect(describeToolActivity('BashOutput', { bash_id: 'x' })).toEqual({
 				verb: 'Checked background output',
 				target: '',
+				targetIsCode: false,
 			});
 			expect(describeToolActivity('KillShell', { shell_id: 'x' })).toEqual({
 				verb: 'Stopped a background command',
 				target: '',
+				targetIsCode: false,
 			});
 		});
 	});
@@ -79,6 +84,7 @@ describe('describeToolActivity', () => {
 			expect(describeToolActivity('write_to_file', { path: 'out.txt' })).toEqual({
 				verb: 'Wrote',
 				target: 'out.txt',
+				targetIsCode: true,
 			});
 		});
 
@@ -94,6 +100,7 @@ describe('describeToolActivity', () => {
 			expect(describeToolActivity('NotebookEdit', { notebook_path: 'nb.ipynb' })).toEqual({
 				verb: 'Edited notebook',
 				target: 'nb.ipynb',
+				targetIsCode: true,
 			});
 		});
 	});
@@ -103,6 +110,7 @@ describe('describeToolActivity', () => {
 			expect(describeToolActivity('Grep', { pattern: 'TODO' })).toEqual({
 				verb: 'Searched for',
 				target: 'TODO',
+				targetIsCode: true,
 			});
 		});
 
@@ -110,6 +118,7 @@ describe('describeToolActivity', () => {
 			expect(describeToolActivity('Glob', { pattern: '**/*.ts' })).toEqual({
 				verb: 'Looked for files matching',
 				target: '**/*.ts',
+				targetIsCode: true,
 			});
 		});
 
@@ -117,10 +126,12 @@ describe('describeToolActivity', () => {
 			expect(describeToolActivity('WebFetch', { url: 'https://example.com' })).toEqual({
 				verb: 'Fetched',
 				target: 'https://example.com',
+				targetIsCode: true,
 			});
 			expect(describeToolActivity('WebSearch', { query: 'electron ipc' })).toEqual({
 				verb: 'Searched the web for',
 				target: 'electron ipc',
+				targetIsCode: false,
 			});
 		});
 	});
@@ -135,7 +146,11 @@ describe('describeToolActivity', () => {
 						{ content: 'three', status: 'pending' },
 					],
 				})
-			).toEqual({ verb: 'Updated the task list', target: 'Doing two (1/3)' });
+			).toEqual({
+				verb: 'Updated the task list',
+				target: 'Doing two (1/3)',
+				targetIsCode: false,
+			});
 		});
 
 		it('handles Codex update_plan, which uses `plan` instead of `todos`', () => {
@@ -143,13 +158,21 @@ describe('describeToolActivity', () => {
 				describeToolActivity('update_plan', {
 					plan: [{ step: 'Investigate', status: 'in_progress' }],
 				})
-			).toEqual({ verb: 'Updated the task list', target: 'Investigate (0/1)' });
+			).toEqual({
+				verb: 'Updated the task list',
+				target: 'Investigate (0/1)',
+				targetIsCode: false,
+			});
 		});
 
 		it('labels Task with its description', () => {
 			expect(
 				describeToolActivity('Task', { description: 'Audit the parsers', prompt: 'long prompt' })
-			).toEqual({ verb: 'Delegated to a subagent', target: 'Audit the parsers' });
+			).toEqual({
+				verb: 'Delegated to a subagent',
+				target: 'Audit the parsers',
+				targetIsCode: false,
+			});
 		});
 	});
 
@@ -158,6 +181,7 @@ describe('describeToolActivity', () => {
 			expect(describeToolActivity('mcp__linear__create_issue', {})).toEqual({
 				verb: 'Called linear',
 				target: 'create issue',
+				targetIsCode: false,
 			});
 		});
 
@@ -169,13 +193,65 @@ describe('describeToolActivity', () => {
 			expect(describeToolActivity('SomeNewTool', { file_path: 'x.ts' })).toEqual({
 				verb: 'Used SomeNewTool',
 				target: 'x.ts',
+				targetIsCode: true,
 			});
 		});
 
 		it('never throws on a missing name or a null input', () => {
-			expect(describeToolActivity('', null)).toEqual({ verb: 'Used a tool', target: '' });
-			expect(describeToolActivity('Read', undefined)).toEqual({ verb: 'Read', target: '' });
-			expect(describeToolActivity('Bash', [1, 2, 3])).toEqual({ verb: 'Ran', target: '' });
+			expect(describeToolActivity('', null)).toEqual({
+				verb: 'Used a tool',
+				target: '',
+				targetIsCode: true,
+			});
+			expect(describeToolActivity('Read', undefined)).toEqual({
+				verb: 'Read',
+				target: '',
+				targetIsCode: true,
+			});
+			expect(describeToolActivity('Bash', [1, 2, 3])).toEqual({
+				verb: 'Ran',
+				target: '',
+				targetIsCode: true,
+			});
+		});
+	});
+
+	/**
+	 * `targetIsCode` decides whether the activity feed wraps the target in the
+	 * same inline-code chip markdown backticks get. The distinction is not
+	 * cosmetic: a literal is something the user can copy and run, and prose we
+	 * wrote about the call is not. Getting it backwards either strips a command
+	 * of the formatting that makes it readable, or dresses an English sentence
+	 * up as something runnable.
+	 */
+	describe('literal vs prose targets', () => {
+		it.each([
+			['Read', { file_path: 'src/App.tsx' }],
+			['Bash', { command: 'npm test' }],
+			['Grep', { pattern: 'TODO' }],
+			['Glob', { pattern: '**/*.ts' }],
+			['WebFetch', { url: 'https://example.com' }],
+			['ls', { path: 'src/' }],
+			['apply_patch', '*** Update File: src/a.ts'],
+			['SomeNewTool', { command: 'do-the-thing --now' }],
+		])('marks %s as a literal the user could paste', (tool, input) => {
+			expect(describeToolActivity(tool, input).targetIsCode).toBe(true);
+		});
+
+		it.each([
+			// "Doing two (1/3)" is a sentence about progress, not a command.
+			[
+				'TodoWrite',
+				{ todos: [{ content: 'two', activeForm: 'Doing two', status: 'in_progress' }] },
+			],
+			// A subagent description is the prompt in English.
+			['Task', { description: 'Audit the parsers' }],
+			// A web search is typed the way you would say it out loud.
+			['WebSearch', { query: 'electron ipc' }],
+			// `create issue` is the MCP tool's name with the underscores taken out.
+			['mcp__linear__create_issue', {}],
+		])('marks %s as prose', (tool, input) => {
+			expect(describeToolActivity(tool, input).targetIsCode).toBe(false);
 		});
 	});
 });

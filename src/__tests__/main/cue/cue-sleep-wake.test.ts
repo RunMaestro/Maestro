@@ -69,6 +69,7 @@ vi.mock('crypto', () => ({
 
 import { CueEngine } from '../../../main/cue/cue-engine';
 import { createMockDeps } from './cue-test-helpers';
+import { DEFAULT_CUE_HISTORY_RETENTION_MS } from '../../../shared/cue/retention';
 
 /** Sleep-wake tests need a config with a default timer subscription */
 function createMockConfig(overrides: Partial<CueConfig> = {}): CueConfig {
@@ -113,14 +114,24 @@ describe('CueEngine sleep/wake detection', () => {
 		engine.stop();
 	});
 
-	it('should prune old events on start', () => {
+	it('should prune old events on start using the default window', () => {
 		const deps = createMockDeps();
 		const engine = new CueEngine(deps);
 		engine.start();
 
 		expect(mockPruneCueEvents).toHaveBeenCalledTimes(1);
-		// 7 days in milliseconds
-		expect(mockPruneCueEvents).toHaveBeenCalledWith(7 * 24 * 60 * 60 * 1000);
+		// No getCueHistoryRetentionDays dep -> the setting's default window.
+		expect(mockPruneCueEvents).toHaveBeenCalledWith(DEFAULT_CUE_HISTORY_RETENTION_MS);
+
+		engine.stop();
+	});
+
+	it('should prune with the user configured retention window', () => {
+		const deps = { ...createMockDeps(), getCueHistoryRetentionDays: () => 30 };
+		const engine = new CueEngine(deps);
+		engine.start();
+
+		expect(mockPruneCueEvents).toHaveBeenCalledWith(30 * 24 * 60 * 60 * 1000);
 
 		engine.stop();
 	});

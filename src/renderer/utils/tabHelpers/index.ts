@@ -907,17 +907,11 @@ export function resolveQueuedItemTarget(
  * back to the live values only for items queued before this was captured.
  */
 export function markTabRunningQueuedItem(tab: AITab, item: QueuedItem, session: Session): AITab {
-	const now = Date.now();
-	const next: AITab = {
-		...tab,
-		state: 'busy',
-		thinkingStartTime: now,
-		...codifyQueuedTurnSettings(item, tab, session),
-	};
+	const next = markTabRunningTurn(tab, item, session);
 	if (item.type === 'message' && item.text) {
 		const logEntry: LogEntry = {
 			id: generateId(),
-			timestamp: now,
+			timestamp: next.thinkingStartTime ?? Date.now(),
 			source: 'user',
 			text: item.text,
 			images: item.images,
@@ -931,6 +925,36 @@ export function markTabRunningQueuedItem(tab: AITab, item: QueuedItem, session: 
 		next.logs = [...tab.logs, logEntry];
 	}
 	return next;
+}
+
+/**
+ * The busy-state half of {@link markTabRunningQueuedItem}, without the user log
+ * entry.
+ *
+ * Split out for the ONE dispatch that must not append a user bubble: replaying a
+ * turn the provider already refused (see `retryStore.replayAfterAuth`). That
+ * message is in the transcript already - the original send put it there before
+ * the turn died - so appending it again would show the user's prompt twice for a
+ * single ask.
+ *
+ * Every dispatch still has to make this transition. A spawn whose tab reads idle
+ * is a GHOST TURN: a real process running with no pulsing dot, no Thinking pill,
+ * and no elapsed timer. The user sees a resumed agent doing nothing, sends
+ * again, and that second message queues behind the invisible turn - which is
+ * exactly what the auth-replay path did before this existed. Worse, the
+ * busy-state is also what the dispatch guards read (`useQueueProcessing` skips a
+ * tab that is `'busy'`, `ProcessManager` KILLS a live process when a second
+ * spawn arrives on the same key), so a tab lying about being idle can lose work
+ * in flight.
+ */
+export function markTabRunningTurn(tab: AITab, item: QueuedItem, session: Session): AITab {
+	const now = Date.now();
+	return {
+		...tab,
+		state: 'busy',
+		thinkingStartTime: now,
+		...codifyQueuedTurnSettings(item, tab, session),
+	};
 }
 
 /**

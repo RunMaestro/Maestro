@@ -242,6 +242,9 @@ export const AITabOverlayMenu = memo(function AITabOverlayMenu({
 					>
 						<Clock className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 						Snooze Tab
+						{tabShortcuts.snoozeTab && (
+							<ShortcutHint keys={tabShortcuts.snoozeTab.keys} theme={theme} />
+						)}
 					</button>
 				)}
 

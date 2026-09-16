@@ -14,7 +14,7 @@
 
 import { create } from 'zustand';
 import type { GroupChat, GroupChatMessage, GroupChatState, AgentError } from '../types';
-import type { QueuedItem } from '../types';
+import type { GroupChatQueueState } from '../../shared/group-chat-types';
 
 // ============================================================================
 // Types
@@ -24,19 +24,56 @@ import type { QueuedItem } from '../types';
 export type GroupChatRightTab = 'participants' | 'history';
 
 // ============================================================================
-// Moderator-only view preference (persisted)
+// Per-chat view preferences (persisted)
 // ============================================================================
-// Whether a room shows the full team transcript or only the user <-> moderator
-// conversation. It lives in the store rather than in the panel because three
-// unrelated places read it - the header control, the message list, and the
-// right panel's history tab (a sibling of the panel, not a child) - plus the
-// keyboard handler and the command palette, which toggle it from outside the
-// React tree entirely. It is one preference for every room: the user is
-// choosing how they read a group chat, not tagging individual chats.
+// How the user reads ONE room: the full team transcript or only the user <->
+// moderator conversation, and which History type pills are lit.
+//
+// These live in the store rather than in the panel because several unrelated
+// places read them - the header control, the message list, and the right
+// panel's history tab (a sibling of the panel, not a child) - plus the keyboard
+// handler and the command palette, which toggle from outside the React tree
+// entirely.
+//
+// They are keyed BY CHAT. The earlier version kept one moderator-only value for
+// every room on the theory that the user is choosing a reading style rather
+// than tagging chats. In practice a room's right answer follows the room: a
+// busy delivery chat is worth reading in full, a noisy one is only worth the
+// moderator's summary, and re-picking on every switch is the annoyance.
+//
+// Storage is renderer localStorage rather than the chat's own `chat.json`,
+// because `updateGroupChat` stamps `updatedAt` on every write
+// (`group-chat-storage.ts`), which would make clicking a filter count as chat
+// activity and reorder the room list. The cost is that these are per device.
+//
+// Deliberately NOT here: the History lookback window. It is already persisted
+// per chat through `window.maestro.settings` under
+// `groupChatHistoryLookback:<id>` (see `GroupChatHistoryPanel`). Folding it in
+// would reset every lookback a user has already chosen, to no benefit.
 
+/** The legacy single-value key, still read once as the default for chats with no entry. */
 const MODERATOR_ONLY_VIEW_KEY = 'maestro.groupChat.moderatorOnlyView';
+const VIEW_PREFS_KEY = 'maestro.groupChat.viewPrefs';
 
-function readStoredModeratorOnlyView(): boolean {
+/** What one chat remembers about how it is being read. */
+export interface GroupChatViewPrefs {
+	/** true = Moderator Only, false = Team Chat. */
+	moderatorOnly: boolean;
+	/**
+	 * History type pills that are switched ON, or null when the chat has never
+	 * saved a set (meaning "all of them").
+	 *
+	 * Held as plain strings so this module stays independent of the history
+	 * entry union; the panel narrows them and drops any it does not recognise.
+	 * An EMPTY array is a real saved state (every pill off) and is preserved,
+	 * which is why "never saved" has to be null rather than `[]`.
+	 */
+	historyTypes: string[] | null;
+}
+
+export type GroupChatViewPrefsMap = Record<string, GroupChatViewPrefs>;
+
+function readLegacyModeratorOnlyView(): boolean {
 	if (typeof window === 'undefined') return false;
 	try {
 		return window.localStorage.getItem(MODERATOR_ONLY_VIEW_KEY) === 'true';
@@ -45,13 +82,103 @@ function readStoredModeratorOnlyView(): boolean {
 	}
 }
 
-function writeStoredModeratorOnlyView(value: boolean): void {
+/**
+ * Read the whole per-chat map, tolerating anything on disk.
+ *
+ * localStorage is user-writable and survives downgrades, so every layer is
+ * checked: unparseable JSON, a non-object root, a non-object entry, or a field
+ * of the wrong type all degrade to "no saved preference" rather than throwing
+ * during store creation, which would take the renderer down on boot.
+ */
+function readStoredViewPrefs(): GroupChatViewPrefsMap {
+	if (typeof window === 'undefined') return {};
+	let raw: string | null = null;
+	try {
+		raw = window.localStorage.getItem(VIEW_PREFS_KEY);
+	} catch {
+		return {};
+	}
+	if (!raw) return {};
+
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(raw);
+	} catch {
+		return {};
+	}
+	if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {};
+
+	const out: GroupChatViewPrefsMap = {};
+	for (const [chatId, value] of Object.entries(parsed as Record<string, unknown>)) {
+		if (typeof value !== 'object' || value === null || Array.isArray(value)) continue;
+		const entry = value as Record<string, unknown>;
+		const types = entry.historyTypes;
+		out[chatId] = {
+			moderatorOnly: entry.moderatorOnly === true,
+			historyTypes: Array.isArray(types)
+				? types.filter((t): t is string => typeof t === 'string')
+				: null,
+		};
+	}
+	return out;
+}
+
+function writeStoredViewPrefs(prefs: GroupChatViewPrefsMap): void {
 	if (typeof window === 'undefined') return;
 	try {
-		window.localStorage.setItem(MODERATOR_ONLY_VIEW_KEY, String(value));
+		window.localStorage.setItem(VIEW_PREFS_KEY, JSON.stringify(prefs));
 	} catch {
 		// Ignore quota / privacy-mode errors - the preference just won't persist.
 	}
+}
+
+/**
+ * The preferences for one chat, falling back to the defaults.
+ *
+ * A chat nobody has configured inherits the legacy global toggle, so upgrading
+ * does not silently flip every room back to Team Chat.
+ */
+export function viewPrefsFor(
+	prefs: GroupChatViewPrefsMap,
+	groupChatId: string | null
+): GroupChatViewPrefs {
+	const saved = groupChatId ? prefs[groupChatId] : undefined;
+	if (saved) return saved;
+	return { moderatorOnly: readLegacyModeratorOnlyView(), historyTypes: null };
+}
+
+/**
+ * Save the moderator-only choice against the open chat and return the store
+ * slice to merge.
+ *
+ * The shortcut and the command palette can fire this with no room open. There
+ * is no chat to key by then, so it falls back to the legacy global value, which
+ * is also what an unconfigured chat inherits - the next room the user opens
+ * therefore starts on the mode they just asked for rather than ignoring them.
+ */
+function persistModeratorOnly(
+	state: { activeGroupChatId: string | null; groupChatViewPrefs: GroupChatViewPrefsMap },
+	moderatorOnly: boolean
+): Partial<{ groupChatViewPrefs: GroupChatViewPrefsMap }> {
+	const chatId = state.activeGroupChatId;
+	if (!chatId) {
+		if (typeof window !== 'undefined') {
+			try {
+				window.localStorage.setItem(MODERATOR_ONLY_VIEW_KEY, String(moderatorOnly));
+			} catch {
+				// Ignore quota / privacy-mode errors.
+			}
+		}
+		return {};
+	}
+
+	const current = viewPrefsFor(state.groupChatViewPrefs, chatId);
+	const prefs: GroupChatViewPrefsMap = {
+		...state.groupChatViewPrefs,
+		[chatId]: { ...current, moderatorOnly },
+	};
+	writeStoredViewPrefs(prefs);
+	return { groupChatViewPrefs: prefs };
 }
 
 /** Group chat error state - tracks which chat has an error and from which participant */
@@ -85,7 +212,17 @@ export interface GroupChatStoreState {
 	unreadGroupChatIds: Set<string>;
 
 	// Execution
-	groupChatExecutionQueue: QueuedItem[];
+	/**
+	 * Pending sends for each chat, as MAIN reports them.
+	 *
+	 * Keyed by chat id and written only from the `groupChat:queueState`
+	 * broadcast. It is a MIRROR, never a source of truth: the queue used to be a
+	 * renderer array, so every client had its own and a message queued on a phone
+	 * was invisible to the desktop and died with the browser tab holding it. Main
+	 * owns it now, so the rule here is simply to render what we are told and send
+	 * every change back over IPC.
+	 */
+	groupChatQueues: Record<string, GroupChatQueueState>;
 	groupChatReadOnlyMode: boolean;
 
 	// UI
@@ -104,6 +241,13 @@ export interface GroupChatStoreState {
 	 * history tab. Persisted across restarts; a display filter only.
 	 */
 	groupChatModeratorOnly: boolean;
+	/**
+	 * Saved view preferences for every chat that has any, keyed by chat id.
+	 * `groupChatModeratorOnly` above is this map's value for the ACTIVE chat,
+	 * kept as its own field so the header, keyboard handler and command palette
+	 * can read one boolean without knowing which chat is open.
+	 */
+	groupChatViewPrefs: GroupChatViewPrefsMap;
 
 	// Live output peek
 	participantLiveOutput: Map<string, string>;
@@ -163,7 +307,8 @@ export interface GroupChatStoreActions {
 	clearGroupChatUnread: (groupChatId?: string) => void;
 
 	// Execution
-	setGroupChatExecutionQueue: (v: QueuedItem[] | ((prev: QueuedItem[]) => QueuedItem[])) => void;
+	/** Replace one chat's mirrored queue from a main broadcast. */
+	setGroupChatQueue: (groupChatId: string, state: GroupChatQueueState) => void;
 	setGroupChatReadOnlyMode: (v: boolean | ((prev: boolean) => boolean)) => void;
 
 	// UI
@@ -187,6 +332,8 @@ export interface GroupChatStoreActions {
 	setGroupChatModeratorOnly: (v: boolean | ((prev: boolean) => boolean)) => void;
 	/** Flip between the team view and the moderator-only view. */
 	toggleGroupChatModeratorOnly: () => void;
+	/** Persist which History type pills are lit for one chat. */
+	setGroupChatHistoryTypes: (groupChatId: string, types: string[]) => void;
 
 	// Live output peek
 	appendParticipantLiveOutput: (participantName: string, chunk: string) => void;
@@ -264,19 +411,36 @@ export const useGroupChatStore = create<GroupChatStore>()((set) => ({
 	groupChatStates: new Map(),
 	allGroupChatParticipantStates: new Map(),
 	unreadGroupChatIds: new Set(),
-	groupChatExecutionQueue: [],
+	groupChatQueues: {},
 	groupChatReadOnlyMode: false,
 	groupChatRightTab: 'participants' as GroupChatRightTab,
 	groupChatParticipantColors: {},
+	// rc keys staged images by chat so switching rooms cannot show one room's
+	// attachments in another; main's flat `groupChatStagedImages` array is the
+	// shape that replaced.
 	groupChatStagedImagesById: {},
-	groupChatModeratorOnly: readStoredModeratorOnlyView(),
+	groupChatViewPrefs: readStoredViewPrefs(),
+	// No chat is open at boot, so this is the legacy default until one is
+	// selected and `setActiveGroupChatId` swaps in that chat's own value.
+	groupChatModeratorOnly: viewPrefsFor(readStoredViewPrefs(), null).moderatorOnly,
 	participantLiveOutput: new Map(),
 	groupChatError: null,
 	initiatorWindowId: null,
 
 	// --- Actions ---
 	setGroupChats: (v) => set((s) => ({ groupChats: resolve(v, s.groupChats) })),
-	setActiveGroupChatId: (v) => set((s) => ({ activeGroupChatId: resolve(v, s.activeGroupChatId) })),
+	// Switching rooms swaps in that room's own reading mode. Recomputed only on
+	// an actual change of id, so re-selecting the open chat cannot clobber a
+	// toggle that is landing in the same tick.
+	setActiveGroupChatId: (v) =>
+		set((s) => {
+			const next = resolve(v, s.activeGroupChatId);
+			if (next === s.activeGroupChatId) return {};
+			return {
+				activeGroupChatId: next,
+				groupChatModeratorOnly: viewPrefsFor(s.groupChatViewPrefs, next).moderatorOnly,
+			};
+		}),
 	setGroupChatMessages: (v) => set((s) => ({ groupChatMessages: resolve(v, s.groupChatMessages) })),
 	setGroupChatState: (v) => set((s) => ({ groupChatState: resolve(v, s.groupChatState) })),
 	setParticipantStates: (v) => set((s) => ({ participantStates: resolve(v, s.participantStates) })),
@@ -308,8 +472,8 @@ export const useGroupChatStore = create<GroupChatStore>()((set) => ({
 			return { unreadGroupChatIds: next };
 		}),
 
-	setGroupChatExecutionQueue: (v) =>
-		set((s) => ({ groupChatExecutionQueue: resolve(v, s.groupChatExecutionQueue) })),
+	setGroupChatQueue: (groupChatId, state) =>
+		set((s) => ({ groupChatQueues: { ...s.groupChatQueues, [groupChatId]: state } })),
 	setGroupChatReadOnlyMode: (v) =>
 		set((s) => ({ groupChatReadOnlyMode: resolve(v, s.groupChatReadOnlyMode) })),
 	setGroupChatRightTab: (v) => set((s) => ({ groupChatRightTab: resolve(v, s.groupChatRightTab) })),
@@ -331,14 +495,22 @@ export const useGroupChatStore = create<GroupChatStore>()((set) => ({
 		set((s) => {
 			const next = resolve(v, s.groupChatModeratorOnly);
 			if (next === s.groupChatModeratorOnly) return {};
-			writeStoredModeratorOnlyView(next);
-			return { groupChatModeratorOnly: next };
+			return { ...persistModeratorOnly(s, next), groupChatModeratorOnly: next };
 		}),
 	toggleGroupChatModeratorOnly: () =>
 		set((s) => {
 			const next = !s.groupChatModeratorOnly;
-			writeStoredModeratorOnlyView(next);
-			return { groupChatModeratorOnly: next };
+			return { ...persistModeratorOnly(s, next), groupChatModeratorOnly: next };
+		}),
+	setGroupChatHistoryTypes: (groupChatId, types) =>
+		set((s) => {
+			const current = viewPrefsFor(s.groupChatViewPrefs, groupChatId);
+			const prefs: GroupChatViewPrefsMap = {
+				...s.groupChatViewPrefs,
+				[groupChatId]: { ...current, historyTypes: types },
+			};
+			writeStoredViewPrefs(prefs);
+			return { groupChatViewPrefs: prefs };
 		}),
 	setGroupChatError: (v) => set((s) => ({ groupChatError: resolve(v, s.groupChatError) })),
 	setInitiatorWindowId: (v) => set((s) => ({ initiatorWindowId: resolve(v, s.initiatorWindowId) })),

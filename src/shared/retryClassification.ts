@@ -12,8 +12,9 @@
  *
  *  - `'token-exhaustion'` - the account's plan quota is depleted ("usage limit
  *    reached", "quota exceeded", "resets at …"). We POLL until it comes back:
- *    every 15s, then 30s, then once a minute for as long as the outage lasts,
- *    and exactly on the reset time when the error named one. A parsed reset is
+ *    at 15s, then 60s, then once every 15 minutes for as long as the outage
+ *    lasts, and exactly on the reset time when the error named one and it lands
+ *    sooner than the next probe. A parsed reset is
  *    a hint about when to expect recovery, never the only moment we look - the
  *    account can be switched, the plan can roll over early, and the notice can
  *    name the wrong window. See {@link tokenExhaustionDelayMs}.
@@ -34,10 +35,33 @@ export type RetryStrategy = 'availability' | 'token-exhaustion';
 export const AVAILABILITY_BASE_DELAY_MS = 30 * 1000;
 /** Ceiling for the availability backoff: once reached, retries repeat every 30m. */
 export const AVAILABILITY_MAX_DELAY_MS = 30 * 60 * 1000;
+/**
+ * The token-exhaustion poll cadence, written out rather than computed.
+ *
+ * An explicit table because the two things this schedule has to satisfy pull in
+ * opposite directions, and a formula cannot express both. The first probes must
+ * be quick, since the seconds right after a limit fires are when a stale notice
+ * or an already-switched account is most likely. Everything after that must be
+ * SLOW: a plan quota comes back on a clock measured in hours, and probing it
+ * every minute is hundreds of refused requests that tell us nothing.
+ *
+ * A doubling ramp looks like it covers both and does not. Ramping from 15s to a
+ * 15m ceiling takes seven probes and about 31 minutes to get there, so the whole
+ * first half hour of a four-hour outage is spent probing - which is the
+ * behaviour being fixed, just slower.
+ *
+ * Two quick probes, then the floor. The last entry repeats forever.
+ */
+export const TOKEN_EXHAUSTION_POLL_STEPS_MS: readonly number[] = [
+	15 * 1000,
+	60 * 1000,
+	15 * 60 * 1000,
+];
 /** First token-exhaustion poll fires 15s after the limit is hit. */
-export const TOKEN_EXHAUSTION_POLL_BASE_MS = 15 * 1000;
-/** Steady-state token-exhaustion poll: one probe a minute, for as long as it takes. */
-export const TOKEN_EXHAUSTION_POLL_MAX_MS = 60 * 1000;
+export const TOKEN_EXHAUSTION_POLL_BASE_MS = TOKEN_EXHAUSTION_POLL_STEPS_MS[0];
+/** Steady-state token-exhaustion poll: one probe every 15m, for as long as it takes. */
+export const TOKEN_EXHAUSTION_POLL_MAX_MS =
+	TOKEN_EXHAUSTION_POLL_STEPS_MS[TOKEN_EXHAUSTION_POLL_STEPS_MS.length - 1];
 /** Small cushion added past a parsed reset time so the quota is actually back. */
 export const RESET_TIME_BUFFER_MS = 5 * 1000;
 
@@ -72,9 +96,70 @@ const TOKEN_EXHAUSTION_RE =
  * `rate_limit` (Claude Code puts exactly that in the `error` field of its
  * plan-limit message), and a whitespace-only pattern classified it as `unknown`,
  * which is not retryable - so a real 429 got no retry at all.
+ *
+ * `try again` REQUIRES a temporal qualifier. A bare `try\s+again` is a catch-all
+ * for the closing words of an apology, and nearly every provider error ends with
+ * one: a hard HTTP 400 reading "requires a newer version of Codex. Please
+ * upgrade to the latest app or CLI and try again" matched on those two words
+ * alone, drew "Service overloaded", and probed every 30 minutes forever - there
+ * is no attempt cap - while the actionable message sat behind a banner. What a
+ * genuinely transient error says is "try again LATER", so that is what is
+ * matched.
  */
 const AVAILABILITY_RE =
-	/overloaded|\b529\b|\b503\b|\b502\b|\b500\b|service\s+(?:unavailable|overloaded)|temporarily\s+(?:unavailable|overloaded)|too\s+many\s+requests|rate[\s_-]?limit|\b429\b|try\s+again/i;
+	/overloaded|\b529\b|\b503\b|\b502\b|\b500\b|service\s+(?:unavailable|overloaded)|temporarily\s+(?:unavailable|overloaded)|too\s+many\s+requests|rate[\s_-]?limit|\b429\b|try\s+again\s+(?:later|shortly|in\s+(?:a\s+(?:few|moment|bit)|\d))/i;
+
+/**
+ * HTTP statuses that describe a request no repetition can fix. 408 and 429 are
+ * deliberately absent: a timeout and a throttle are the two 4xx that genuinely
+ * do clear on their own, and 429 in particular has to stay available to the
+ * token-exhaustion strategy.
+ */
+const PERMANENT_HTTP_STATUSES: ReadonlySet<number> = new Set([
+	400, 401, 403, 404, 405, 409, 413, 422,
+]);
+
+/** Provider error types that name a permanent fault in the request itself. */
+const PERMANENT_ERROR_TYPES: ReadonlySet<string> = new Set([
+	'invalid_request_error',
+	'not_found_error',
+	'permission_error',
+	'authentication_error',
+]);
+
+/**
+ * Prose that names a permanent fault, for providers that hand us no structure.
+ * Deliberately narrow: each phrase describes something the user must change -
+ * the binary, the model name - rather than something that could clear on its own.
+ */
+const PERMANENT_FAILURE_RE =
+	/invalid_request_error|requires\s+a\s+newer\s+version|upgrade\s+to\s+the\s+latest|unsupported\s+model|(?:model|engine)\s+not\s+found|unknown\s+model|no\s+such\s+model/i;
+
+/**
+ * Whether this error is permanently fatal, read STRUCTURALLY where possible.
+ *
+ * The prose is the last resort, not the first: a provider that tells us
+ * `status: 400` and `invalid_request_error` has already answered the question,
+ * and deciding it from the sentence instead is how a substring of an apology
+ * came to schedule an unbounded retry loop.
+ *
+ * Pure and dependency-free, like the rest of this module, so both processes and
+ * the CLI bundle can call it.
+ */
+function isPermanentFailure(error: ClassifiableError): boolean {
+	const json = error.parsedJson;
+	if (json && typeof json === 'object') {
+		const obj = json as Record<string, unknown>;
+		if (typeof obj.status === 'number' && PERMANENT_HTTP_STATUSES.has(obj.status)) return true;
+		const inner = obj.error;
+		if (inner && typeof inner === 'object') {
+			const innerType = (inner as Record<string, unknown>).type;
+			if (typeof innerType === 'string' && PERMANENT_ERROR_TYPES.has(innerType)) return true;
+		}
+		if (typeof obj.type === 'string' && PERMANENT_ERROR_TYPES.has(obj.type)) return true;
+	}
+	return classifiableTexts(error).some((text) => PERMANENT_FAILURE_RE.test(text));
+}
 
 /** The minimal shape {@link classifyRetryableError} needs from an AgentError. */
 export interface ClassifiableError {
@@ -83,6 +168,38 @@ export interface ClassifiableError {
 	recoverable: boolean;
 	/** Optional structured payload from the agent; may carry a reset/retry hint. */
 	parsedJson?: unknown;
+	/**
+	 * The provider's OWN error text, when the parser replaced `message` with a
+	 * curated one from the pattern bank.
+	 *
+	 * Classification has to read this, not just `message`. A pattern bank entry
+	 * is written for a human reading a dialog, so it is short and generic - and
+	 * the two things this module needs are exactly what that rewrite destroys:
+	 * the phrasing that separates a plan-quota outage from a transient throttle,
+	 * and any "resets in 4h 12m" hint. Codex hit both: a 429 that also said
+	 * "usage limit" came through as "Rate limited. Please wait and try again.",
+	 * which reads as `'availability'` and ran a 30s backoff against a multi-hour
+	 * quota outage.
+	 *
+	 * Display keeps using `message`, so populating this changes what Maestro
+	 * DECIDES without changing what the user reads.
+	 */
+	raw?: { errorLine?: string };
+}
+
+/**
+ * Every text this error carries, widest first.
+ *
+ * The provider's own line is checked BEFORE the curated message because it is
+ * strictly more informative; the curated one stays in the list so an error that
+ * only ever had a bank message still classifies exactly as it used to.
+ */
+function classifiableTexts(error: ClassifiableError): string[] {
+	const texts: string[] = [];
+	const rawLine = error.raw?.errorLine;
+	if (typeof rawLine === 'string' && rawLine.trim() !== '') texts.push(rawLine);
+	if (typeof error.message === 'string' && error.message !== '') texts.push(error.message);
+	return texts;
 }
 
 /**
@@ -95,9 +212,21 @@ export function classifyRetryableError(error: ClassifiableError): RetryStrategy 
 	if (!error.recoverable) return null;
 	if (NON_RETRYABLE_TYPES.has(error.type)) return null;
 
-	const message = error.message ?? '';
-	if (TOKEN_EXHAUSTION_RE.test(message)) return 'token-exhaustion';
-	if (AVAILABILITY_RE.test(message) || error.type === 'network_error') return 'availability';
+	// Exhaustion is decided across EVERY text before availability is considered
+	// for any of them, not per text in turn. A quota notice that also says "429"
+	// carries both signals, and the slow poll is the safe reading: treating a
+	// multi-hour outage as a transient throttle retries it every 30 seconds,
+	// while the reverse merely waits a little longer than it had to.
+	// Before either regex: a permanently fatal request must not be retried even
+	// when its prose mentions a quota or ends in "try again". Excluding 429 from
+	// the status list is what keeps a real quota throttle routed below instead.
+	if (isPermanentFailure(error)) return null;
+
+	const texts = classifiableTexts(error);
+	if (texts.some((text) => TOKEN_EXHAUSTION_RE.test(text))) return 'token-exhaustion';
+	if (texts.some((text) => AVAILABILITY_RE.test(text)) || error.type === 'network_error') {
+		return 'availability';
+	}
 	return null;
 }
 
@@ -140,16 +269,19 @@ export function tokenExhaustionResetAt(error: ClassifiableError, now: number): n
 	const fromJson = parseResetFromJson(error.parsedJson, now);
 	if (fromJson !== undefined) return fromJson + RESET_TIME_BUFFER_MS;
 
-	const message = error.message ?? '';
+	// The provider's own line first: a curated bank message never carries a reset
+	// hint, so for any agent whose parser rewrites `message` this is the only
+	// place a "resets in 4h 12m" can still be read.
+	for (const text of classifiableTexts(error)) {
+		const fromMessage = parseRetryAfterFromMessage(text, now);
+		if (fromMessage !== undefined) return fromMessage + RESET_TIME_BUFFER_MS;
 
-	const fromMessage = parseRetryAfterFromMessage(message, now);
-	if (fromMessage !== undefined) return fromMessage + RESET_TIME_BUFFER_MS;
+		const fromEpochMarker = parseEpochMarkerFromMessage(text, now);
+		if (fromEpochMarker !== undefined) return fromEpochMarker + RESET_TIME_BUFFER_MS;
 
-	const fromEpochMarker = parseEpochMarkerFromMessage(message, now);
-	if (fromEpochMarker !== undefined) return fromEpochMarker + RESET_TIME_BUFFER_MS;
-
-	const fromClock = parseZonedResetFromMessage(message, now);
-	if (fromClock !== undefined) return fromClock + RESET_TIME_BUFFER_MS;
+		const fromClock = parseZonedResetFromMessage(text, now);
+		if (fromClock !== undefined) return fromClock + RESET_TIME_BUFFER_MS;
+	}
 
 	return undefined;
 }
@@ -177,10 +309,11 @@ export function tokenExhaustionResetAt(error: ClassifiableError, now: number): n
  *  1. **Never sleep past the expected reset.** When a reset time was parsed and
  *     it lands sooner than the next poll, wait exactly that long, so a known
  *     reset is met on the second rather than up to one poll interval late.
- *  2. **Otherwise poll on a fixed cadence** that ramps 15s → 30s → 60s and then
- *     holds. The early probes are quick because the first seconds are when a
- *     mis-parsed reset or an already-cleared limit is most likely; the ceiling
- *     keeps a multi-hour outage to one refused request a minute per tab.
+ *  2. **Otherwise poll on a fixed cadence**: 15s, 60s, then every 15 minutes for
+ *     as long as it takes. The two early probes are quick because the first
+ *     seconds are when a mis-parsed reset or an already-cleared limit is most
+ *     likely; from the third probe on, the 15-minute floor keeps a four-hour
+ *     outage to about sixteen refused requests per tab rather than 240.
  *
  * `attempt` is 0-indexed (0 = the first attempt of this outage).
  *
@@ -194,10 +327,12 @@ export function tokenExhaustionDelayMs(
 	now: number
 ): number {
 	const safeAttempt = Math.max(0, Math.floor(attempt));
+	// Straight table lookup, clamped to the last entry, which then repeats for
+	// the rest of the outage. No exponent to guard against overflowing.
 	const poll =
-		safeAttempt >= 31
-			? TOKEN_EXHAUSTION_POLL_MAX_MS
-			: Math.min(TOKEN_EXHAUSTION_POLL_BASE_MS * 2 ** safeAttempt, TOKEN_EXHAUSTION_POLL_MAX_MS);
+		TOKEN_EXHAUSTION_POLL_STEPS_MS[
+			Math.min(safeAttempt, TOKEN_EXHAUSTION_POLL_STEPS_MS.length - 1)
+		];
 
 	if (resetAt === undefined) return poll;
 	const untilReset = resetAt - now;

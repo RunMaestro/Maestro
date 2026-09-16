@@ -27,7 +27,9 @@ import React from 'react';
 const createMockDeps = (
 	overrides: Partial<UseAutoRunImageHandlingDeps> = {}
 ): UseAutoRunImageHandlingDeps => {
-	const textareaRef = { current: null } as React.RefObject<HTMLTextAreaElement>;
+	const editorRef = {
+		current: null,
+	} as unknown as UseAutoRunImageHandlingDeps['editorRef'];
 	const lastUndoSnapshotRef = { current: '' };
 
 	return {
@@ -37,25 +39,23 @@ const createMockDeps = (
 		setLocalContent: vi.fn(),
 		handleContentChange: vi.fn(),
 		isLocked: false,
-		textareaRef,
+		editorRef,
 		pushUndoState: vi.fn(),
 		lastUndoSnapshotRef,
 		...overrides,
 	};
 };
 
-const createMockTextarea = (selectionStart = 0): HTMLTextAreaElement => {
-	const textarea = document.createElement('textarea');
-	textarea.value = '# Phase 1\n\nSome content';
-	textarea.selectionStart = selectionStart;
-	textarea.selectionEnd = selectionStart;
-	// Mock setSelectionRange
-	textarea.setSelectionRange = vi.fn();
-	textarea.focus = vi.fn();
-	return textarea;
-};
+/** Stand-in for the CodeMirror editor handle the hook inserts through. */
+const createMockEditor = (caret = 0) => ({
+	getCaret: vi.fn(() => caret),
+	getSelectionRange: vi.fn(() => ({ from: caret, to: caret })),
+	replaceRange: vi.fn(),
+	setSelection: vi.fn(),
+	focus: vi.fn(),
+});
 
-const createMockClipboardEvent = (imageType = 'image/png'): React.ClipboardEvent => {
+const createMockClipboardEvent = (imageType = 'image/png'): ClipboardEvent => {
 	const mockFile = new File(['test image data'], 'test.png', { type: imageType });
 
 	const mockDataTransferItem: DataTransferItem = {
@@ -105,7 +105,7 @@ const createMockClipboardEvent = (imageType = 'image/png'): React.ClipboardEvent
 		isDefaultPrevented: () => false,
 		isPropagationStopped: () => false,
 		persist: () => {},
-	} as unknown as React.ClipboardEvent;
+	} as unknown as ClipboardEvent;
 };
 
 const createMockFileInputEvent = (
@@ -369,9 +369,9 @@ describe('useAutoRunImageHandling', () => {
 		it('should save pasted image and insert markdown at cursor position', async () => {
 			vi.useFakeTimers();
 
-			const textarea = createMockTextarea(10); // Cursor at position 10
+			const editor = createMockEditor(10); // Cursor at position 10
 			const mockDeps = createMockDeps({
-				textareaRef: { current: textarea },
+				editorRef: { current: editor } as unknown as UseAutoRunImageHandlingDeps['editorRef'],
 				localContent: '# Phase 1\n\nSome content',
 			});
 
@@ -385,7 +385,7 @@ describe('useAutoRunImageHandling', () => {
 			const clipboardEvent = createMockClipboardEvent();
 
 			await act(async () => {
-				await result.current.handlePaste(clipboardEvent);
+				result.current.handlePaste(clipboardEvent);
 				vi.runAllTimers();
 			});
 
@@ -407,7 +407,7 @@ describe('useAutoRunImageHandling', () => {
 			const clipboardEvent = createMockClipboardEvent();
 
 			await act(async () => {
-				await result.current.handlePaste(clipboardEvent);
+				result.current.handlePaste(clipboardEvent);
 			});
 
 			expect(clipboardEvent.preventDefault).not.toHaveBeenCalled();
@@ -422,7 +422,7 @@ describe('useAutoRunImageHandling', () => {
 			const clipboardEvent = createMockClipboardEvent();
 
 			await act(async () => {
-				await result.current.handlePaste(clipboardEvent);
+				result.current.handlePaste(clipboardEvent);
 			});
 
 			expect(window.maestro.autorun.saveImage).not.toHaveBeenCalled();
@@ -436,7 +436,7 @@ describe('useAutoRunImageHandling', () => {
 			const clipboardEvent = createMockClipboardEvent();
 
 			await act(async () => {
-				await result.current.handlePaste(clipboardEvent);
+				result.current.handlePaste(clipboardEvent);
 			});
 
 			expect(window.maestro.autorun.saveImage).not.toHaveBeenCalled();
@@ -445,9 +445,9 @@ describe('useAutoRunImageHandling', () => {
 		it('should handle different image types (jpeg)', async () => {
 			vi.useFakeTimers();
 
-			const textarea = createMockTextarea(0);
+			const editor = createMockEditor(0);
 			const mockDeps = createMockDeps({
-				textareaRef: { current: textarea },
+				editorRef: { current: editor } as unknown as UseAutoRunImageHandlingDeps['editorRef'],
 			});
 
 			(window.maestro.autorun as any).saveImage.mockResolvedValue({
@@ -460,7 +460,7 @@ describe('useAutoRunImageHandling', () => {
 			const clipboardEvent = createMockClipboardEvent('image/jpeg');
 
 			await act(async () => {
-				await result.current.handlePaste(clipboardEvent);
+				result.current.handlePaste(clipboardEvent);
 				vi.runAllTimers();
 			});
 
@@ -476,9 +476,9 @@ describe('useAutoRunImageHandling', () => {
 		it('should push undo state before modifying content', async () => {
 			vi.useFakeTimers();
 
-			const textarea = createMockTextarea(0);
+			const editor = createMockEditor(0);
 			const mockDeps = createMockDeps({
-				textareaRef: { current: textarea },
+				editorRef: { current: editor } as unknown as UseAutoRunImageHandlingDeps['editorRef'],
 			});
 
 			(window.maestro.autorun as any).saveImage.mockResolvedValue({
@@ -491,7 +491,7 @@ describe('useAutoRunImageHandling', () => {
 			const clipboardEvent = createMockClipboardEvent();
 
 			await act(async () => {
-				await result.current.handlePaste(clipboardEvent);
+				result.current.handlePaste(clipboardEvent);
 				vi.runAllTimers();
 			});
 
@@ -501,9 +501,9 @@ describe('useAutoRunImageHandling', () => {
 		it('should update attachmentsList after successful paste', async () => {
 			vi.useFakeTimers();
 
-			const textarea = createMockTextarea(0);
+			const editor = createMockEditor(0);
 			const mockDeps = createMockDeps({
-				textareaRef: { current: textarea },
+				editorRef: { current: editor } as unknown as UseAutoRunImageHandlingDeps['editorRef'],
 			});
 
 			(window.maestro.autorun as any).saveImage.mockResolvedValue({
@@ -516,7 +516,7 @@ describe('useAutoRunImageHandling', () => {
 			const clipboardEvent = createMockClipboardEvent();
 
 			await act(async () => {
-				await result.current.handlePaste(clipboardEvent);
+				result.current.handlePaste(clipboardEvent);
 				vi.runAllTimers();
 			});
 
@@ -526,9 +526,9 @@ describe('useAutoRunImageHandling', () => {
 		it('should NOT update state when saveImage fails', async () => {
 			vi.useFakeTimers();
 
-			const textarea = createMockTextarea(0);
+			const editor = createMockEditor(0);
 			const mockDeps = createMockDeps({
-				textareaRef: { current: textarea },
+				editorRef: { current: editor } as unknown as UseAutoRunImageHandlingDeps['editorRef'],
 			});
 
 			(window.maestro.autorun as any).saveImage.mockResolvedValue({
@@ -541,12 +541,132 @@ describe('useAutoRunImageHandling', () => {
 			const clipboardEvent = createMockClipboardEvent();
 
 			await act(async () => {
-				await result.current.handlePaste(clipboardEvent);
+				result.current.handlePaste(clipboardEvent);
 				vi.runAllTimers();
 			});
 
 			expect(result.current.attachmentsList).toEqual([]);
 			expect(mockDeps.setLocalContent).not.toHaveBeenCalled();
+		});
+
+		/**
+		 * The return value IS the contract with CodeMirror: `true` means "I claimed
+		 * this paste, do not insert the clipboard yourself". Getting it wrong is
+		 * silent - a trim that returns `false` leaves the editor inserting the
+		 * untrimmed text right after the trimmed text the hook just wrote.
+		 */
+		describe('claiming the paste (CodeMirror contract)', () => {
+			const textPaste = (text: string): ClipboardEvent =>
+				({
+					clipboardData: {
+						items: {
+							length: 0,
+							item: () => null,
+							[Symbol.iterator]: function* () {},
+						} as unknown as DataTransferItemList,
+						getData: () => text,
+					},
+					preventDefault: vi.fn(),
+				}) as unknown as ClipboardEvent;
+
+			it('claims a text paste it had to trim, and rewrites it through the editor', () => {
+				const editor = createMockEditor(4);
+				const mockDeps = createMockDeps({
+					editorRef: { current: editor } as unknown as UseAutoRunImageHandlingDeps['editorRef'],
+					localContent: 'head tail',
+				});
+
+				const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+
+				const event = textPaste('  padded  ');
+				let claimed: boolean | undefined;
+				act(() => {
+					claimed = result.current.handlePaste(event);
+				});
+
+				expect(claimed).toBe(true);
+				expect(event.preventDefault).toHaveBeenCalled();
+				// Inserted through the editor, not by assigning content - that is what
+				// leaves the caret after the pasted text and routes the change back
+				// through the editor's own onChange.
+				expect(editor.replaceRange).toHaveBeenCalledWith(4, 4, 'padded');
+			});
+
+			it('declines a text paste that needed no trimming', () => {
+				const editor = createMockEditor(0);
+				const mockDeps = createMockDeps({
+					editorRef: { current: editor } as unknown as UseAutoRunImageHandlingDeps['editorRef'],
+				});
+
+				const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+
+				const event = textPaste('clean');
+				let claimed: boolean | undefined;
+				act(() => {
+					claimed = result.current.handlePaste(event);
+				});
+
+				// Declining hands the paste back to CodeMirror, which inserts it once.
+				expect(claimed).toBe(false);
+				expect(event.preventDefault).not.toHaveBeenCalled();
+				expect(editor.replaceRange).not.toHaveBeenCalled();
+			});
+
+			it('claims an image paste synchronously, before the async save resolves', async () => {
+				vi.useFakeTimers();
+
+				const editor = createMockEditor(0);
+				const mockDeps = createMockDeps({
+					editorRef: { current: editor } as unknown as UseAutoRunImageHandlingDeps['editorRef'],
+				});
+				(window.maestro.autorun as any).saveImage.mockResolvedValue({
+					success: true,
+					relativePath: 'images/Phase 1-1.png',
+				});
+
+				const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+
+				// No await: CodeMirror only honors a synchronous answer, so the hook
+				// has to claim the event before it reads the file.
+				const claimed = result.current.handlePaste(createMockClipboardEvent());
+
+				expect(claimed).toBe(true);
+				// The save is still in flight; drain it here so it cannot land in a
+				// later test's mock.
+				await act(async () => {
+					vi.runAllTimers();
+				});
+			});
+
+			it('declines every paste while the document is locked', () => {
+				const mockDeps = createMockDeps({ isLocked: true });
+
+				const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+
+				const event = textPaste('  padded  ');
+				let claimed: boolean | undefined;
+				act(() => {
+					claimed = result.current.handlePaste(event);
+				});
+
+				// A locked editor is readOnly, so CodeMirror drops the paste itself.
+				// Claiming it here would only hide that.
+				expect(claimed).toBe(false);
+				expect(event.preventDefault).not.toHaveBeenCalled();
+			});
+
+			it('declines an image paste with no folder configured', () => {
+				const mockDeps = createMockDeps({ folderPath: null });
+
+				const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+
+				const event = createMockClipboardEvent();
+				const claimed = result.current.handlePaste(event);
+
+				expect(claimed).toBe(false);
+				expect(event.preventDefault).not.toHaveBeenCalled();
+				expect(window.maestro.autorun.saveImage).not.toHaveBeenCalled();
+			});
 		});
 
 		it('should ignore non-image clipboard items', async () => {
@@ -576,10 +696,10 @@ describe('useAutoRunImageHandling', () => {
 					getData: () => 'some text', // Text content for whitespace trim check
 				},
 				preventDefault: vi.fn(),
-			} as unknown as React.ClipboardEvent;
+			} as unknown as ClipboardEvent;
 
 			await act(async () => {
-				await result.current.handlePaste(clipboardEvent);
+				result.current.handlePaste(clipboardEvent);
 			});
 
 			expect(clipboardEvent.preventDefault).not.toHaveBeenCalled();

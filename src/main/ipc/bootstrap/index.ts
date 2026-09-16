@@ -77,6 +77,7 @@ import { createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
 import { tunnelManager } from '../../tunnel-manager';
 import { captureException } from '../../utils/sentry';
 import { logger } from '../../utils/logger';
+import { MAX_ENTRIES_PER_SESSION, resolveHistoryEntryLimit } from '../../../shared/history';
 import {
 	setGetSessionsCallback,
 	setGetCustomEnvVarsCallback,
@@ -127,7 +128,8 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	registerHistoryHandlers({
 		safeSend: deps.safeSend,
 		emitPluginEvent: (event) => deps.getPluginEventBus()?.emit(event),
-		getMaxEntries: () => deps.settingsStore.get('maxLogBuffer', 5000) as number,
+		getMaxEntries: () =>
+			resolveHistoryEntryLimit(deps.settingsStore.get('maxLogBuffer', MAX_ENTRIES_PER_SESSION)),
 		getSshRemoteById,
 		getSessionById: (id: string) => {
 			const sessions = (

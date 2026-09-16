@@ -103,7 +103,6 @@ Spawns background agent processes when triggers fire. Follows the same spawn pat
   8. Returns `CueRunResult`
 - `stopCueRun(runId)` - SIGTERM then SIGKILL after 5 seconds
 - `getCueProcessList()` - Returns serializable process info for the Process Monitor
-- `recordCueHistoryEntry()` - Creates a `HistoryEntry` with type `'CUE'`
 
 Template variables populated for events:
 
@@ -530,7 +529,7 @@ Path constants:
 3. **SSH Remote** - Full SSH wrapping support via `wrapSpawnWithSsh()`
 4. **Template Variables** - Uses shared `substituteTemplateVariables()` from `src/shared/templateVariables.ts`
 5. **Agent System** - Uses `getAgentDefinition()`, `getAgentCapabilities()`, `buildAgentArgs()`, `applyAgentConfigOverrides()`
-6. **History** - Records history entries with type `'CUE'` and Cue-specific metadata
+6. **History** - Cue runs are served to the History panel from the `cue_events` table (`getCueHistoryEntries()` in `src/main/cue/stats/cue-stats-query.ts`), shaped as `HistoryEntry` rows with type `'CUE'`. Nothing writes them to the agent's JSONL history file.
 7. **Output Parsers** - Uses per-agent output parsers to extract clean text from JSON/NDJSON stdout
 8. **CLI Detection** - Uses `resolveGhPath()` and `getExpandedEnv()` from shared utils for GitHub polling
 9. **Stats DB** - Follows the same `better-sqlite3` + WAL pattern as `stats-db.ts`

@@ -227,6 +227,7 @@ Dialog-style modals can offer persisted, center-anchored drag-to-resize via `use
 The shared `<Modal>` component wires this up automatically via `resizable`/`resizeKey`/`defaultSize`/`minSize`/`maxSize` props, but **resizing only activates when the caller passes an explicit, stable `resizeKey`.** Omitting it (the default for most `<Modal>` callers - simple confirms, help dialogs) falls back to the legacy fixed `width`/`maxHeight`/`scaleWidthWithFont` sizing instead of a title-derived key: a title/priority-derived fallback isn't stable across unrelated dialogs (every default-titled `ConfirmModal` would otherwise collide on one persisted size). Bespoke modal shells that don't use `<Modal>` (e.g. `QuitConfirmModal.tsx`) should stay off `useResizableModal` entirely if they're simple, non-resizable confirms.
 
 - `useResizableModal` (`src/renderer/hooks/ui/useResizableModal.ts`) owns the drag. Like `useResizablePanel` it writes to the DOM during the drag and commits React state once on mouseup. Deltas are doubled because the card is centered: growing the width by W moves the right edge by only W/2, so doubling keeps the grip under the pointer.
+- **A surface that is NOT centered passes `anchor="top-left"`**, which drops that doubling and tracks the cursor 1:1. That is the case for anything pinned to a corner rather than to the viewport - a dropdown hanging off its trigger, a popover (`PipelineSelector` is the reference caller). Such a surface must expose only the `s`, `e` and `se` handles, or just `ModalResizeGrip`: dragging `n` or `w` would have to move the anchor, which the hook does not do. Give it a `minSize` of its own too, or the 320 x 240 default floor makes a small menu unresizable.
 - Sizes persist in one `modalSizes` map in `uiStore`, keyed by `resizeKey`, written through to settings and hydrated by `loadAllSettings` on startup.
 - `defaultSize` is the size before any drag: its width falls back to the `width` prop and its height to 320, so a modal that opts in without declaring one opens far shorter than its old `maxHeight` let it grow. Declare both.
 - Minimums default to `DEFAULT_MODAL_MIN_SIZE` (320 x 240) in `src/renderer/utils/modalSizing.ts`. Pass a higher `minSize` when a modal's content stops making sense below a given size - every resizable modal should have a floor that still looks right.
@@ -594,7 +595,7 @@ Losing the whole pane while trying to reset a filter is the bug this prevents. T
 Any pane whose content is a markdown document rides the **File Preview stack**, not a bare `<textarea>`:
 
 - **Reading** - `<Markdown preset="document">` inside a scroll container, with `<style>{generateProseStyles({ theme, scopeSelector })}</style>` so the document typography is scoped to that pane instead of leaking heading and table rules onto the chrome around it.
-- **Editing** - `<MarkdownEditor>` from `components/FilePreview/markdownEditor`, which brings CodeMirror syntax colouring, the wrap-aware line-number gutter, and an imperative handle (`focus`, `scrollToLine`, `setSearchMatches`, scroll-percent sync).
+- **Editing** - `<MarkdownEditor>` from `components/FilePreview/markdownEditor`, which brings CodeMirror syntax colouring, the wrap-aware line-number gutter, and an imperative handle (`focus`, `scrollToLine`, `setSearchMatches`, `getCaret` / `getSelectionRange` / `setSelection`, `replaceRange`, and both scroll-percent and raw `scrollTop` sync). `onPaste` runs at `Prec.highest` like `onKeyDown`, so a host can claim a paste before CM6 inserts the clipboard text - return `true` to swallow it. `placeholder` paints hint text while the document is empty.
 - **Switching** - `Cmd/Ctrl+E`, read from the user's LIVE `toggleMarkdownMode` binding via `eventMatchesShortcutKeys`, never from a literal `e`. One chord flips a file preview and a memory alike; two spellings of one idea is how a keyboard stops being predictable.
 
 **Open in Preview.** A markdown pane is opened to read far more often than to write, so the rendered document is the default state and editing is one keystroke away rather than the state the user has to leave.
@@ -1617,9 +1618,11 @@ const fontScale = useFontScale('filePreview.fontScale');
   matches the current mode; reading rendered prose and editing Markdown source are
   comfortable at different sizes, and one shared value makes each mode fight the
   other. Both hooks stay mounted, so switching back restores the size that mode was
-  left at. When the scale drives a `<textarea>`, scale the `lineHeight` with it
-  (Auto Run uses a unitless `1.45`) - a fixed `20px` row crams taller glyphs once
-  zoomed - and pass the scale as `remeasureKey` to `<TextareaLineNumbers>`.
+  left at. Pass the scale to `<MarkdownEditor fontScale>`, which carries it in the
+  CM6 theme so the line height rides the font size. When the scale drives a bare
+  `<textarea>` instead, scale its `lineHeight` by hand (a unitless `1.45` works) - a
+  fixed `20px` row crams taller glyphs once zoomed - and pass the scale as
+  `remeasureKey` to `<TextareaLineNumbers>`.
 - `collapsible` (floating only) - rests as a circle the size of that Table of Contents
   button and expands to the full pill on hover or keyboard focus. The buttons are
   CLIPPED, not unmounted, so tabbing into them opens the pill instead of skipping a
@@ -2014,9 +2017,11 @@ const metrics = lineNumberGutterMetrics(value);
 
 The metrics are in `ch` units and reserve a minimum of two digits, so the editor
 does not reflow the first time the document reaches line 10, and the gutter
-scales with the monospace font instead of a hard-coded pixel guess. Both callers
-ride it: the Cue YAML editor and the Auto Run expanded modal (`showLineNumbers`,
-which the docked Auto Run panel leaves off because it has no room for a gutter).
+scales with the monospace font instead of a hard-coded pixel guess. The Cue YAML
+editor is the one caller left. Auto Run used to ride it and no longer does - its
+source editor is `<MarkdownEditor>`, which brings CodeMirror's own gutter, so
+`showLineNumbers` there is a CM6 prop rather than this overlay (the docked panel
+still leaves it off because it has no room for a gutter).
 
 Do NOT hand-roll another `value.split('\n').map((_, i) => <div>{i + 1}</div>)`
 gutter. That is what the YAML editor had, and it drifted out of alignment the
@@ -2025,9 +2030,8 @@ moment the file was taller than the box or any line wrapped.
 **Pass `remeasureKey` when the textarea's typography can change without its box
 changing.** The component re-measures on its own `ResizeObserver`, and a font-size
 change leaves the border box exactly the same size, so nothing fires and the
-numbers keep the row heights of the OLD font until the next keystroke. Auto Run
-passes its edit-mode font scale; any surface with a font zoom over a numbered
-textarea needs the same.
+numbers keep the row heights of the OLD font until the next keystroke. Any surface
+with a font zoom over a numbered textarea needs it.
 
 jsdom has no layout engine and no `ResizeObserver`, so under test the gutter
 renders with natural row heights rather than measured ones. That is deliberate,

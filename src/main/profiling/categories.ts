@@ -32,9 +32,11 @@ export const DEFAULT_TRACE_CATEGORIES: string[] = [
 	'disabled-by-default-devtools.timeline',
 	'disabled-by-default-devtools.timeline.frame',
 	'disabled-by-default-devtools.timeline.stack',
-	// Sampling CPU profiler: attributes time to JS call stacks. Kept because the
-	// raw samples live in the trace for deep dives in Perfetto, even though the
-	// markdown analysis leans on the cheaper timeline FunctionCall events.
+	// Sampling CPU profiler. This is the ONLY usable JS attribution in an
+	// Electron trace: the devtools timeline FunctionCall / EvaluateScript events
+	// the analysis script originally looked for are not emitted here, so its
+	// "hottest JS" table was empty until it learned to read these samples. Drop
+	// this category and every JS question becomes unanswerable.
 	'disabled-by-default-v8.cpu_profiler',
 	// Input -> response latency.
 	'latencyInfo',
@@ -45,16 +47,28 @@ export const DEFAULT_TRACE_CATEGORIES: string[] = [
 /**
  * Build the TraceConfig passed to contentTracing.startRecording().
  *
- * `record-until-full` keeps the earliest events and stops capturing once the
- * buffer fills, which suits the intended workflow: start, reproduce the lag for
- * a few seconds, stop. The buffer cap also bounds the on-disk trace size so a
- * forgotten recording cannot grow without limit.
+ * `record-until-full` suits the intended workflow: start, reproduce the lag for
+ * a few seconds, stop.
+ *
+ * The buffer is NOT a whole-capture budget. It is applied per process, and a
+ * busy window overruns it fast: a 14-minute field capture on an 18-core Mac
+ * produced a 657MB bundle whose renderer covered only its final 93 seconds,
+ * with the earlier 87% discarded. Two consequences worth knowing before reading
+ * one of these:
+ *
+ * - The size cap below does not bound the bundle. Six processes each fill their
+ *   own buffer.
+ * - What survives is the tail, not the head, so a trace says nothing about what
+ *   happened at the start of a long recording.
+ *
+ * `analyze-perf-trace.mjs` compares the covered window against
+ * `profilingDurationMs` and warns when it sees this. Keep captures short.
  */
 export function buildTraceConfig(categories: string[] = DEFAULT_TRACE_CATEGORIES): TraceConfig {
 	return {
 		recording_mode: 'record-until-full',
 		included_categories: categories,
-		// ~150MB ceiling. Generous for a manual capture, still bounded.
+		// ~150MB per process, not per capture. See the note above.
 		trace_buffer_size_in_kb: 150_000,
 	};
 }

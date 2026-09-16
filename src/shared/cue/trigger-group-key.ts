@@ -37,6 +37,11 @@ export function triggerGroupKey(sub: CueSubscription): string {
 		schedule_times: sub.schedule_times ?? null,
 		schedule_days: sub.schedule_days ?? null,
 		interval_minutes: sub.interval_minutes ?? null,
+		// `time.once` timing. Two one-shots with the same label but different
+		// instants are independent triggers and must not collapse onto one
+		// node; the matched `-prompt` / `-notify` pair a scheduled task emits
+		// shares one instant and correctly stays a single visual trigger.
+		fire_at: sub.fire_at ?? null,
 		watch: sub.watch ?? null,
 		repo: sub.repo ?? null,
 		poll_minutes: sub.poll_minutes ?? null,

@@ -81,25 +81,36 @@ surface too, so a chord you chose yourself behaves the same as the default.
 
 ## Panel Shortcuts
 
-| Action                         | macOS         | Windows/Linux  |
-| ------------------------------ | ------------- | -------------- |
-| Go to Files Tab                | `Cmd+Shift+F` | `Ctrl+Shift+F` |
-| Go to History Tab              | `Cmd+Shift+H` | `Ctrl+Shift+H` |
-| Go to Auto Run Tab             | `Cmd+Shift+1` | `Ctrl+Shift+1` |
-| Toggle Edit/Preview (Markdown) | `Cmd+E`       | `Ctrl+E`       |
-| Run Auto Run                   | `Cmd+Shift+2` | `Ctrl+Shift+2` |
-| Auto Run Expanded Preview      | `Cmd+Shift+3` | `Ctrl+Shift+3` |
-| Insert Checkbox (Auto Run)     | `Cmd+L`       | `Ctrl+L`       |
-| View Git Diff                  | `Cmd+Shift+D` | `Ctrl+Shift+D` |
-| View Git Log                   | `Cmd+Shift+G` | `Ctrl+Shift+G` |
-| Refresh Files, Git, History    | `Opt+Cmd+R`   | `Alt+Ctrl+R`   |
-| Fuzzy File Search              | `Cmd+G`       | `Ctrl+G`       |
+| Action                         | macOS                 | Windows/Linux         |
+| ------------------------------ | --------------------- | --------------------- |
+| Go to Files Tab                | `Cmd+Shift+F`         | `Ctrl+Shift+F`        |
+| Go to History Tab              | `Cmd+Shift+H`         | `Ctrl+Shift+H`        |
+| Go to Auto Run Tab             | `Cmd+Shift+1`         | `Ctrl+Shift+1`        |
+| Toggle Edit/Preview (Markdown) | `Cmd+E`               | `Ctrl+E`              |
+| Run Auto Run                   | `Cmd+Shift+2`         | `Ctrl+Shift+2`        |
+| Auto Run Expanded Preview      | `Cmd+Shift+3`         | `Ctrl+Shift+3`        |
+| Insert Checkbox (Auto Run)     | `Cmd+L`               | `Ctrl+L`              |
+| View Git Diff                  | `Cmd+Shift+D`         | `Ctrl+Shift+D`        |
+| View Git Log                   | `Cmd+Shift+G`         | `Ctrl+Shift+G`        |
+| Git Pull                       | unassigned by default | unassigned by default |
+| Git Push                       | unassigned by default | unassigned by default |
+| Change Branch                  | unassigned by default | unassigned by default |
+| Create Pull Request            | unassigned by default | unassigned by default |
+| Refresh Files, Git, History    | `Opt+Cmd+R`           | `Alt+Ctrl+R`          |
+| Fuzzy File Search              | `Cmd+G`               | `Ctrl+G`              |
 
 `Cmd+E` toggles edit and preview on a markdown File Preview, in the Memories
 viewer (`Cmd+Shift+M`), where the pane opens on the rendered document, and on
 the Maestro Prompts tab in Settings, where it opens on the source. Inside the
 Memories viewer, `Cmd+G` graphs the memories and `Cmd+U` toggles the unlinked
 filter, in place of their usual meanings.
+
+**Git Pull**, **Git Push**, **Change Branch**, and **Create Pull Request** ship
+unbound. They run against the active agent's repository, exactly as the branch
+pill's dropdown and the command palette (`Cmd+K`) do, and two of them write to a
+remote, so Maestro does not claim four chords for them out of the box. Bind any
+of them in **Settings** -> **Shortcuts** and the chord appears on the matching
+branch-pill row and palette entry.
 
 `Opt+Cmd+R` reloads the file tree, git status, worktree list, and history for
 the active agent in one press. When a File Preview is open it re-reads that file

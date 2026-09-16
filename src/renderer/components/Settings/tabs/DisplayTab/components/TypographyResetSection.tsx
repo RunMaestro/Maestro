@@ -21,7 +21,7 @@ interface TypographyResetSectionProps {
 }
 
 /**
- * Factory Reset Fonts - restore all five font families AND all five sizes to a
+ * Factory Reset Fonts - restore all six font families AND all six sizes to a
  * preset in one click.
  *
  * Leads the Display tab, with Save & Restore directly under it, so the tab reads
@@ -32,7 +32,7 @@ interface TypographyResetSectionProps {
  * under six pickers cost more than it saved. It is also the only way back to the
  * first-run chooser's presets once that modal has been dismissed.
  *
- * Reset is destructive to deliberate work (ten settings at once), so it asks
+ * Reset is destructive to deliberate work (twelve settings at once), so it asks
  * for a second click rather than firing on the first. The confirmation is
  * inline rather than a modal: this is recoverable by picking the other preset,
  * so a blocking dialog would cost more than the mistake.
@@ -109,7 +109,7 @@ export function TypographyResetSection({
 			</div>
 			{pending && (
 				<p className="text-xs mt-2" style={{ color: theme.colors.warning }}>
-					Click again to overwrite all five fonts and all five sizes. Your zoom level is kept.
+					Click again to overwrite all six fonts and all six sizes. Your zoom level is kept.
 				</p>
 			)}
 		</div>

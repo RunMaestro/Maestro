@@ -1,3 +1,9 @@
+---
+title: CLI Reference
+description: Every maestro-cli command, argument, and option, generated from the live command tree.
+icon: book
+---
+
 # maestro-cli Command Reference
 
 > Generated from the CLI command tree by `maestro-cli reference`. Do not edit by hand - run `npm run gen:cli-reference` to refresh.
@@ -332,32 +338,15 @@ Open a file as a preview tab in the Maestro desktop app (audio and video play in
 | `--no-switch`      | Don't switch to the target agent, but still activate the tab there              | -       |
 | `--json`           | Output as JSON (for scripting)                                                  | -       |
 
-## `maestro-cli open-graph [paths...]`
+## `maestro-cli open-graph [paths]`
 
-Open the Document Graph over specific markdown files or a directory.
+Open the Document Graph over specific markdown files or a directory
 
-This is a separate verb rather than an `open <surface>` entry: `open` carries a
-surface name and a tab, and a graph needs a file set.
-
-A single directory stays a directory scope, so the app scans it when it renders
-and picks up documents written since you typed the command. Any other
-combination - several paths, or any explicit file - is flattened to that exact
-list of documents. Documents in the scope that link to nothing else in it are
-drawn in an "Unlinked" band you can toggle off.
-
-| Option             | Description                                                   | Default     |
-| ------------------ | ------------------------------------------------------------- | ----------- |
-| `-a, --agent <id>` | Target agent (defaults to auto-detect by path's owning agent) | -           |
-| `--focus <path>`   | Center the graph on this document                             | most-linked |
-| `--json`           | Output as JSON (for scripting)                                | -           |
-
-```bash
-# Everything under a folder
-maestro-cli open-graph docs/
-
-# An exact set, centered on the one you want to talk about
-maestro-cli open-graph docs/a.md docs/b.md docs/c.md --focus docs/a.md
-```
+| Option             | Description                                                      | Default |
+| ------------------ | ---------------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Target agent (defaults to auto-detect by path's owning agent)    | -       |
+| `--focus <path>`   | Center the graph on this document (default: the most-linked one) | -       |
+| `--json`           | Output as JSON (for scripting)                                   | -       |
 
 ## `maestro-cli open-browser <url>`
 
@@ -1118,6 +1107,50 @@ surfacing later as an agent that will not start. Works with the desktop closed.
 | `-a, --agent <command>` | Also check whether this binary is on the remote PATH | -       |
 | `--timeout <seconds>`   | Give up after this many seconds                      | `60`    |
 | `--json`                | Output as JSON (for scripting)                       | -       |
+
+## `maestro-cli display`
+
+View and manage typography (fonts, sizes, zoom)
+
+## `maestro-cli display font [surface] [value]`
+
+Get or set a surface font. Surfaces: interface, terminal, chat, filePreview, documentGraph, fileEditor. Pass "inherit" (or "inherit:terminal") to follow a root surface. Omit the surface to list all.
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli display size <surface> [value]`
+
+Get or set a surface font size in px. Pass "inherit" to follow the interface size.
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli display zoom [level]`
+
+Get or set the global zoom applied to every surface (e.g. 125% or 1.25)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli display preset [name]`
+
+Get the active typography preset, or reset every font and size to one (default | hacker)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli display fonts`
+
+List the fonts bundled with Maestro (guaranteed available on any machine)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
 
 ## `maestro-cli settings`
 

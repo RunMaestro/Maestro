@@ -10,9 +10,10 @@ import type {
 	CueCommand,
 	CueCommandMode,
 	CueEventType,
+	CueNotifyConfig,
 	CueGraphSession as SharedCueGraphSession,
 } from './cue';
-export type { CueCommand, CueCommandMode, CueEventType } from './cue';
+export type { CueCommand, CueCommandMode, CueEventType, CueNotifyConfig } from './cue';
 
 /** Cue brand color - single source of truth for all Cue UI */
 export const CUE_COLOR = '#06b6d4';
@@ -86,6 +87,20 @@ export interface TriggerNodeData {
 		 *  hydrated and re-emitted so that opening and saving a pipeline in the
 		 *  editor doesn't silently strip a working secret off disk. */
 		webhook_secret?: string;
+		/** `time.once` only: ISO-8601 instant the one-shot fires at. See
+		 *  `CueSubscription.fire_at`. The editor does not offer a date picker
+		 *  yet, but this MUST round-trip: `maestro-cli cue schedule --at` and
+		 *  the Scheduled Tasks tab both write one-shots into cue.yaml, and a
+		 *  save that dropped `fire_at` would turn a dated reminder into a
+		 *  subscription the engine can never fire. */
+		fire_at?: string;
+		/** `time.once` only: missed-fire grace window. See
+		 *  `CueSubscription.grace_minutes`. Round-tripped, not editable. */
+		grace_minutes?: number;
+		/** `time.once` only: keep the sub after a failed run. See
+		 *  `CueSubscription.self_destruct_on_failure`. Round-tripped, not
+		 *  editable. */
+		self_destruct_on_failure?: boolean;
 	};
 	/** Name of the underlying Cue subscription this trigger represents on disk.
 	 *  Populated on load by `yamlToPipeline`. Every trigger node in a multi-
@@ -219,6 +234,23 @@ export interface PipelineEdge {
 	debateConfig?: DebateConfig;
 	/** Per-edge input prompt (used when multiple triggers feed the same agent with different prompts) */
 	prompt?: string;
+	/** Toast config when this edge represents an `action: notify` subscription
+	 *  rather than a prompt run. Mutually exclusive with `prompt`: a notify
+	 *  sub surfaces a toast through the target agent and never spawns it, so
+	 *  the engine's validator deliberately allows an empty `prompt` there
+	 *  (`cue-config-validator.ts`). Carrying the config on the EDGE (not the
+	 *  agent node) is what lets one trigger feed the same agent with both a
+	 *  prompt edge and a notify edge - exactly the pair that
+	 *  `maestro-cli cue schedule --prompt --notify` writes. */
+	notify?: CueNotifyConfig;
+	/** YAML subscription name this edge serializes to. Preserved across saves
+	 *  for the same reason `TriggerNodeData.subscriptionName` is: sub names are
+	 *  stable identities that `source_sub`, the layout store, and the Scheduled
+	 *  Tasks tab all reference. The trigger node can only remember ONE name, so
+	 *  without a per-edge name every branch after the first was renamed to
+	 *  `<pipeline>-chain-N` on save - which silently broke the `-prompt` /
+	 *  `-notify` pairing that Scheduled Tasks relies on. */
+	subscriptionName?: string;
 	/** Per-edge override: whether this source agent's output is included in
 	 *  {{CUE_SOURCE_OUTPUT}} (and its per-source variable) for the target agent.
 	 *  When undefined, falls back to the target agent's `includeUpstreamOutput`.

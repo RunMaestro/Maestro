@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
-import { EditorState, EditorSelection, StateEffect, type Extension } from '@codemirror/state';
+import { EditorState, EditorSelection, Compartment, type Extension } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import { buildBaseExtensions } from './extensions';
 import { buildEditorTheme } from './themeAdapter';
@@ -22,15 +22,23 @@ import type { GiantPreviewHandle, GiantPreviewProps } from './types';
  *
  * Lifecycle:
  *   1. Mount: create `EditorState` synchronously with base extensions
- *      (read-only, search, line numbers) + theme. Document mounts immediately.
+ *      (read-only, search, line numbers) + a theme Compartment. Document
+ *      mounts immediately.
  *   2. Async: kick off `loadLanguageExtension(language)`. When it resolves,
- *      dispatch a `reconfigure` to inject the language extension. The text
- *      already on screen re-tokenizes - usually unnoticeable.
+ *      dispatch a `reconfigure` on the language Compartment to inject the
+ *      language extension. The text already on screen re-tokenizes - usually
+ *      unnoticeable.
  *   3. Cleanup: `view.destroy()` on unmount.
  *
- * Content / theme changes: rather than mutating the existing state we
- * destroy and rebuild the view. CM6 transactions COULD mutate the doc, but
- * for huge documents the rebuild cost is negligible and the code is simpler.
+ * Content change: rather than mutating the existing state we destroy and
+ * rebuild the view. CM6 transactions COULD mutate the doc, but for huge
+ * documents the rebuild cost is negligible and the code is simpler.
+ *
+ * Theme / font change: reconfigured in place via the theme Compartment
+ * instead, same as MarkdownEditor. A remount here would destroy and recreate
+ * the whole view, which loses scroll position and selection - disruptive on
+ * a file the user may be mid-search or mid-read in, and the Settings ->
+ * Display -> zoom controls fire this on every keystroke of a live drag.
  */
 export const GiantPreview = forwardRef<GiantPreviewHandle, GiantPreviewProps>(function GiantPreview(
 	{
@@ -49,11 +57,19 @@ export const GiantPreview = forwardRef<GiantPreviewHandle, GiantPreviewProps>(fu
 	const viewRef = useRef<EditorView | null>(null);
 	const [_isReady, setIsReady] = useState(false);
 
-	// Base extensions don't depend on content - memoize to avoid rebuilding on each render.
-	const baseExtensions = useMemo<Extension[]>(
-		() => [buildBaseExtensions(), buildEditorTheme(theme, fontScale, fontFamily, baseFontPx)],
-		[theme, fontScale, fontFamily, baseFontPx]
+	// Compartments let the theme and the language extension be swapped in
+	// place via `reconfigure` instead of remounting the whole view - see the
+	// "Theme / font change" note above.
+	const compartments = useMemo(
+		() => ({
+			theme: new Compartment(),
+			language: new Compartment(),
+		}),
+		[]
 	);
+
+	// Static: buildBaseExtensions() takes no arguments, so this never changes.
+	const baseExtensions = useMemo<Extension>(() => buildBaseExtensions(), []);
 
 	// Soft-wrap pathologically long lines so CM6's per-line measurement pass
 	// doesn't freeze the renderer. Lines under the threshold pass through
@@ -63,14 +79,19 @@ export const GiantPreview = forwardRef<GiantPreviewHandle, GiantPreviewProps>(fu
 	const wrap = useMemo(() => softWrapLongLines(content, SOFT_WRAP_MAX_LINE_LENGTH), [content]);
 	const displayContent = wrap.wrapped;
 
-	// Mount / remount the editor when content, language or theme changes.
+	// Mount / remount the editor when content or language changes. Theme and
+	// font changes do NOT remount - see the theme-reconfigure effect below.
 	useEffect(() => {
 		const host = hostRef.current;
 		if (!host) return;
 
 		const state = EditorState.create({
 			doc: displayContent,
-			extensions: baseExtensions,
+			extensions: [
+				baseExtensions,
+				compartments.theme.of(buildEditorTheme(theme, fontScale, fontFamily, baseFontPx)),
+				compartments.language.of([]),
+			],
 		});
 
 		const view = new EditorView({ state, parent: host });
@@ -84,7 +105,7 @@ export const GiantPreview = forwardRef<GiantPreviewHandle, GiantPreviewProps>(fu
 			void loadLanguageExtension(language).then((langExt) => {
 				if (cancelled || !langExt || !viewRef.current) return;
 				viewRef.current.dispatch({
-					effects: StateEffect.reconfigure.of([...baseExtensions, langExt]),
+					effects: compartments.language.reconfigure(langExt),
 				});
 			});
 		}
@@ -95,7 +116,22 @@ export const GiantPreview = forwardRef<GiantPreviewHandle, GiantPreviewProps>(fu
 			viewRef.current = null;
 			setIsReady(false);
 		};
-	}, [displayContent, language, baseExtensions]);
+		// theme/fontScale/fontFamily/baseFontPx deliberately excluded: they ride
+		// the theme compartment via the effect below rather than remounting.
+	}, [displayContent, language, baseExtensions, compartments]);
+
+	// Theme, font-zoom, or surface-font change -> reconfigure the theme
+	// compartment in place. Font size and family both ride in the theme (see
+	// themeAdapter), same as MarkdownEditor.
+	useEffect(() => {
+		const view = viewRef.current;
+		if (!view) return;
+		view.dispatch({
+			effects: compartments.theme.reconfigure(
+				buildEditorTheme(theme, fontScale, fontFamily, baseFontPx)
+			),
+		});
+	}, [theme, fontScale, fontFamily, baseFontPx, compartments.theme]);
 
 	// Bridge CM6's content element (not the host) to the parent containerRef.
 	// useFilePreviewSearch walks this container for DOM ranges to register CSS

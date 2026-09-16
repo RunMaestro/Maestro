@@ -1,5 +1,5 @@
 ---
-title: Command Line Interface
+title: CLI
 description: Send messages to agents, list sessions, run playbooks, and manage Maestro settings from the command line.
 icon: square-terminal
 ---
@@ -1988,6 +1988,8 @@ maestro-cli director-notes synopsis --json
 | `history`  | `-l, --limit <n>`     | Maximum entries to show (default 100)                                    |
 
 `synopsis` requires the desktop app to be running; `history` reads from disk and works offline. If `encoreFeatures.directorNotes` is disabled, enable it first with `maestro-cli settings set encoreFeatures.directorNotes true`.
+
+The provider follows the app's Director's Notes setting. By default that is "use the first available provider", so the desktop picks an installed agent when the run starts and `--json` reports which one actually ran. Pin it with `maestro-cli settings set directorNotesSettings.autoSelectProvider false`.
 
 ## Publishing Session Transcripts to Gists
 

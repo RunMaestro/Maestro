@@ -113,7 +113,7 @@ describe('searchableSettings', () => {
 
 		it('should rank label matches higher than keyword matches', () => {
 			const results = searchSettings('font');
-			// 'Font Family' and 'Font Size' should appear before items where 'font' is only a keyword
+			// 'Fonts' should appear before items where 'font' is only a keyword
 			const labelMatches = results.filter((s) => s.label.toLowerCase().includes('font'));
 			const keywordOnly = results.filter(
 				(s) =>
@@ -162,6 +162,9 @@ describe('searchableSettings', () => {
 			['spell check', 'general-spell-check'],
 			['spelling', 'general-spell-check'],
 			['typo', 'general-spell-check'],
+			['group cue', 'general-group-cue-entries'],
+			['collapse cue runs', 'general-group-cue-entries'],
+			['repeated', 'general-group-cue-entries'],
 
 			// Display tab. The single Small/Medium/Large global size was replaced
 			// by a per-surface stepper plus a global zoom, so "font size" now

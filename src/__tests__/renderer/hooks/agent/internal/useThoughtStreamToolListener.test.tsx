@@ -75,7 +75,7 @@ describe('useThoughtStreamToolListener', () => {
 		const events = toolEvents();
 		expect(events).toHaveLength(1);
 		expect(events[0].tool.name).toBe('Bash');
-		expect(events[0].tool.label).toEqual({ verb: 'Ran', target: 'npm test' });
+		expect(events[0].tool.label).toEqual({ verb: 'Ran', target: 'npm test', targetIsCode: true });
 		expect(events[0].tool.status).toBe('running');
 	});
 
@@ -164,7 +164,7 @@ describe('useThoughtStreamToolListener', () => {
 
 		const event = toolEvents()[0];
 		expect(event.tool.status).toBe('failed');
-		expect(event.tool.label).toEqual({ verb: 'Ran', target: 'npm test' });
+		expect(event.tool.label).toEqual({ verb: 'Ran', target: 'npm test', targetIsCode: true });
 	});
 
 	it('leaves a clean Codex shell run a success', () => {

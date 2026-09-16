@@ -1524,10 +1524,19 @@ function SessionListInner(props: SessionListProps) {
 						</div>
 					</>
 				) : (
-					// No now-playing pill on the collapsed rail: it is a 64px icon
-					// strip, and a media control there competes with the agent pills for
-					// the one thing the rail is for. Expand the sidebar, or run "Show
-					// Floating Media Player" from the Command Palette.
+					// The collapsed rail gets the pill too, in its compact form.
+					//
+					// It used to be left out on the grounds that a 64px icon strip is
+					// for agents and a media control there competes with them. That
+					// reasoning ignored what minimizing MEANS: the pill is the only
+					// place the widget parks, so on the rail "minimize" hid the player
+					// with nothing left on screen and no way back - the user reads that
+					// as the player having closed itself, which is precisely what the
+					// minimize/close split exists to prevent. A control the user can
+					// always get back to is worth more than 24px of rail.
+					//
+					// The compact form is the transport and the restore button and
+					// nothing else, which fits the rail's width without a label to clip.
 					<div className="w-full flex flex-col items-center gap-2 relative z-30" ref={menuRef}>
 						<GhostIconButton onClick={() => setMenuOpen(!menuOpen)} padding="p-2" title="Menu">
 							<Wand2
@@ -1537,6 +1546,9 @@ function SessionListInner(props: SessionListProps) {
 								style={{ color: theme.colors.accent }}
 							/>
 						</GhostIconButton>
+						{/* Renders nothing unless the player is actually minimized, so
+						    the rail is unchanged for anyone not playing anything. */}
+						<NowPlayingIndicator theme={theme} compact />
 						{/* Menu Overlay for Collapsed Sidebar */}
 						{menuOpen && (
 							<HamburgerDropdown theme={theme} isPhone={isXs} onClose={() => setMenuOpen(false)}>

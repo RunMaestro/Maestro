@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import React from 'react';
 import { AgentDetailModal } from '../../../../renderer/components/UsageDashboard/AgentDetailModal';
 import { LayerStackProvider } from '../../../../renderer/contexts/LayerStackContext';
@@ -28,6 +28,21 @@ vi.mock('lucide-react', () => ({
 	// The tab breakdown's sortable column headers draw a direction caret.
 	ChevronDown: () => <span data-testid="chevron-down" />,
 	ChevronUp: () => <span data-testid="chevron-up" />,
+	LogIn: () => <span data-testid="log-in-icon" />,
+	Settings: () => <span data-testid="settings-icon" />,
+}));
+
+const jumpToAgent = vi.fn(() => true);
+const openAgentSettings = vi.fn();
+vi.mock('../../../../renderer/services/agentNavigation', () => ({
+	jumpToAgent: (...args: unknown[]) => jumpToAgent(...(args as [])),
+	openAgentSettings: (...args: unknown[]) => openAgentSettings(...(args as [])),
+}));
+
+const notifyToast = vi.fn();
+vi.mock('../../../../renderer/stores/notificationStore', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../renderer/stores/notificationStore')>()),
+	notifyToast: (...args: unknown[]) => notifyToast(...(args as [])),
 }));
 
 const TestWrapper = ({ children }: { children: React.ReactNode }) => (
@@ -47,6 +62,9 @@ const session = createMockSession({
 	aiTabs: [createMockAITab({ id: 'tab-a', name: 'Alpha' })],
 });
 
+const onClose = vi.fn();
+const onCloseDashboard = vi.fn();
+
 const renderModal = () =>
 	render(
 		<AgentDetailModal
@@ -54,12 +72,15 @@ const renderModal = () =>
 			data={buildData()}
 			theme={mockTheme}
 			allSessions={[session]}
-			onClose={vi.fn()}
+			onClose={onClose}
+			onCloseDashboard={onCloseDashboard}
 		/>,
 		{ wrapper: TestWrapper }
 	);
 
 beforeEach(() => {
+	vi.clearAllMocks();
+	jumpToAgent.mockReturnValue(true);
 	useSettingsStore.setState({ modalSizes: {} });
 	(window as unknown as Record<string, unknown>).maestro = {
 		stats: {
@@ -155,5 +176,44 @@ describe('AgentDetailModal frame', () => {
 		expect(headings).toContain('Worktree');
 		expect(headings.indexOf('Auto Run')).toBeLessThan(headings.indexOf('Tabs'));
 		expect(headings.indexOf('Worktree')).toBeLessThan(headings.indexOf('Tabs'));
+	});
+});
+
+// The dashboard is a full-window modal, so both header actions have to take it
+// down with them - otherwise the agent (or the Edit Agent modal) lands behind
+// it and the click reads as a no-op.
+describe('AgentDetailModal header actions', () => {
+	it('jumps to the agent and closes the dashboard', async () => {
+		renderModal();
+		await waitFor(() => expect(screen.getByTestId('agent-detail-jump')).toBeInTheDocument());
+
+		fireEvent.click(screen.getByTestId('agent-detail-jump'));
+
+		expect(jumpToAgent).toHaveBeenCalledWith('session-1');
+		expect(onClose).toHaveBeenCalled();
+		expect(onCloseDashboard).toHaveBeenCalled();
+	});
+
+	it('keeps the dashboard open and warns when the agent is gone', async () => {
+		jumpToAgent.mockReturnValue(false);
+		renderModal();
+		await waitFor(() => expect(screen.getByTestId('agent-detail-jump')).toBeInTheDocument());
+
+		fireEvent.click(screen.getByTestId('agent-detail-jump'));
+
+		expect(notifyToast).toHaveBeenCalledWith(expect.objectContaining({ title: 'Agent not found' }));
+		expect(onClose).not.toHaveBeenCalled();
+		expect(onCloseDashboard).not.toHaveBeenCalled();
+	});
+
+	it('opens the Edit Agent modal and closes the dashboard', async () => {
+		renderModal();
+		await waitFor(() => expect(screen.getByTestId('agent-detail-settings')).toBeInTheDocument());
+
+		fireEvent.click(screen.getByTestId('agent-detail-settings'));
+
+		expect(openAgentSettings).toHaveBeenCalledWith(session);
+		expect(onClose).toHaveBeenCalled();
+		expect(onCloseDashboard).toHaveBeenCalled();
 	});
 });

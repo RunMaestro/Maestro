@@ -47,12 +47,31 @@ export interface BootstrapSettings {
 
 export interface MaestroSettings {
 	activeThemeId: string;
-	llmProvider: string;
-	modelSlug: string;
-	apiKey: string;
 	shortcuts: Record<string, any>;
 	fontSize: number;
 	fontFamily: string;
+	terminalFontFamily: string;
+	chatFontFamily: string;
+	filePreviewFontFamily: string;
+	fileEditorFontFamily: string;
+	documentGraphFontFamily: string;
+	chatFontSize: number;
+	terminalFontSize: number;
+	filePreviewFontSize: number;
+	fileEditorFontSize: number;
+	documentGraphFontSize: number;
+	fontZoom: number;
+	typographySnapshot: unknown;
+	typographyPromptSeen: boolean;
+	themePromptSeen: boolean;
+	updatesPromptSeen: boolean;
+	agentPowersPromptSeen: boolean;
+	// Set once, on the first boot where `installationId` already existed (i.e.
+	// this is not the very first launch of this install ever). Distinguishes a
+	// returning user who has deleted every agent from a genuinely new one, since
+	// `sessions.length > 0` alone reads the former as new. See
+	// useAppInitialization.ts's first-run series gate.
+	hasPriorInstallation: boolean;
 	customFonts: string[];
 	mediaPlaybackRate: number;
 	/**
@@ -112,6 +131,13 @@ export interface MaestroSettings {
 	utilityAgentId: string | null;
 	// Optional model override for the utility agent. When null, the agent default model is used.
 	utilityModelId: string | null;
+	// Days of Maestro Cue run history kept in cue.db. Read by the Cue engine's
+	// prune pass at startup; declared explicitly (rather than left to the index
+	// signature) so main-process readers get `number` instead of `any`.
+	cueHistoryRetentionDays: number;
+	// Collapse repeated Cue runs in the History panel into one row per trigger.
+	// Declared explicitly for the same reason as the retention days above.
+	groupCueEntries: boolean;
 	// Allow dynamic settings keys (electron-store is a key-value store
 	// with many settings not explicitly declared above)
 	[key: string]: any;

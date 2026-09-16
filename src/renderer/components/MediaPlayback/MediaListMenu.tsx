@@ -1,9 +1,11 @@
-import { memo, type RefObject } from 'react';
+import { memo, useCallback, type KeyboardEvent, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { FileAudio, FileVideo, X } from 'lucide-react';
 
+import { EscCloseButton } from '../ui/EscCloseButton';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { useAnchoredMenuPosition } from '../../hooks/ui/useAnchoredMenuPosition';
+import { useFocusOnMount } from '../../hooks/utils/useFocusAfterRender';
 import { formatMediaTime, type MediaItem } from '../../utils/mediaItems';
 import type { Theme } from '../../types';
 
@@ -27,6 +29,8 @@ interface MediaListMenuProps {
 	onRemove: (itemId: string) => void;
 	/** Empties the whole list. Omitted when there is nothing worth clearing. */
 	onClear?: () => void;
+	/** Dismisses the list and hands the caret back to the player. */
+	onClose: () => void;
 	testId: string;
 	theme: Theme;
 }
@@ -55,6 +59,7 @@ export const MediaListMenu = memo(function MediaListMenu({
 	onSelect,
 	onRemove,
 	onClear,
+	onClose,
 	testId,
 	theme,
 }: MediaListMenuProps) {
@@ -62,13 +67,39 @@ export const MediaListMenu = memo(function MediaListMenu({
 		align: 'end',
 	});
 
+	// Take the caret while the list is up, so Escape reaches this menu rather
+	// than the surface the user was typing in before they opened the player. The
+	// container is what holds it: most of this menu is plain rows, so a tap on a
+	// filename or on the padding beside one has no focusable ancestor of its own
+	// and would otherwise drop focus onto `<body>`, which is exactly where the
+	// key went dead.
+	useFocusOnMount(menuRef, 0);
+
+	const handleKeyDown = useCallback(
+		(e: KeyboardEvent) => {
+			if (e.key !== 'Escape' || e.metaKey || e.ctrlKey || e.altKey) return;
+			// The player handles Escape too (it minimizes), and a portal still
+			// propagates through the React tree, so one press would otherwise close
+			// the list AND hide the player behind it.
+			e.preventDefault();
+			e.stopPropagation();
+			onClose();
+		},
+		[onClose]
+	);
+
 	return createPortal(
 		<div
 			ref={menuRef}
 			data-testid={testId}
+			// Focusable without entering the tab order: it exists to catch Escape
+			// and keyboard events from the rows, not to become a Tab stop over the
+			// workspace the player floats on.
+			tabIndex={-1}
+			onKeyDown={handleKeyDown}
 			// Above the player (60), far below modals (9999) so it can never cover
 			// an overlay.
-			className="fixed z-[100] py-1 rounded shadow-xl border overflow-y-auto select-none min-w-[16rem] max-w-[24rem]"
+			className="fixed z-[100] py-1 rounded shadow-xl border overflow-y-auto select-none outline-none min-w-[16rem] max-w-[24rem]"
 			style={{
 				left,
 				top,
@@ -98,6 +129,17 @@ export const MediaListMenu = memo(function MediaListMenu({
 						Clear
 					</button>
 				)}
+				{/* The graphical twin of Escape. A phone or tablet driving the web
+				    interface has no Escape key, and this list covers the player it
+				    came from, so without a control here there is no way back to the
+				    transport at all. `EscCloseButton` draws an X with a finger-sized
+				    target on a coarse pointer and the ESC keycap on a mouse. */}
+				<EscCloseButton
+					theme={theme}
+					onClose={onClose}
+					label="Back to the player (Esc)"
+					testId={`${testId}-close`}
+				/>
 			</div>
 
 			{entries.map((entry) => {

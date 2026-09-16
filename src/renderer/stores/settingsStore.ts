@@ -18,7 +18,6 @@ import { create } from 'zustand';
 import type { BrowserConfirmPolicy } from '../../shared/coworkingBrowser';
 import { isWindowsPlatform } from '../utils/platformUtils';
 import type {
-	LLMProvider,
 	CustomAICommand,
 	AchievementTimeSource,
 	AutoRunStats,
@@ -33,6 +32,18 @@ import type {
 } from '../types';
 import { FIXED_SHORTCUTS } from '../constants/shortcuts';
 import {
+	TYPOGRAPHY_SURFACE_LIST,
+	canInherit,
+	clampFontZoom,
+	clampSurfaceFontSize,
+} from '../../shared/typography';
+import { parseTypographySnapshot } from '../../shared/typographySnapshot';
+import {
+	DEFAULT_CUE_HISTORY_RETENTION_DAYS,
+	resolveCueHistoryRetentionDays,
+} from '../../shared/cue/retention';
+import { resolveEncoreFeatures } from '../../shared/encoreFeatureDefaults';
+import {
 	collectBoundShortcuts,
 	countUsedBoundShortcuts,
 	getLevelIndex,
@@ -42,6 +53,7 @@ import type { MindMapLayoutType } from '../components/DocumentGraph/layoutTypes'
 import { isMindMapLayoutType } from '../components/DocumentGraph/layoutTypes';
 import { normalizePlaybackRate } from '../../shared/mediaTypes';
 import { ENCORE_FEATURE_DEFAULTS } from '../../shared/encoreFeatureDefaults';
+import { ZERO_USAGE_PEAKS, mergeUsagePeaks, usagePeaksEqual } from '../../shared/usagePeaks';
 import {
 	MEDIA_FLOAT_SETTINGS_KEY,
 	MEDIA_QUEUE_SETTINGS_KEY,
@@ -191,13 +203,7 @@ const DEFAULT_AUTO_RUN_STATS: AutoRunStats = {
 	badgeHistory: [],
 };
 
-const DEFAULT_USAGE_STATS: MaestroUsageStats = {
-	maxAgents: 0,
-	maxDefinedAgents: 0,
-	maxSimultaneousAutoRuns: 0,
-	maxSimultaneousQueries: 0,
-	maxQueueDepth: 0,
-};
+const DEFAULT_USAGE_STATS: MaestroUsageStats = { ...ZERO_USAGE_PEAKS };
 
 const DEFAULT_KEYBOARD_MASTERY_STATS: KeyboardMasteryStats = {
 	usedShortcuts: [],
@@ -263,6 +269,7 @@ export const DEFAULT_FILE_PREVIEW_TOOLBAR_VISIBILITY: FilePreviewToolbarVisibili
 
 const DEFAULT_DIRECTOR_NOTES_SETTINGS: DirectorNotesSettings = {
 	provider: 'claude-code',
+	autoSelectProvider: true,
 	defaultLookbackDays: 7,
 	defaultMode: 'rich',
 };
@@ -331,9 +338,6 @@ export interface SettingsStoreState
 	settingsLoaded: boolean;
 	conductorProfile: string;
 	globalShowHotkey: string[];
-	llmProvider: LLMProvider;
-	modelSlug: string;
-	apiKey: string;
 	defaultShell: string;
 	customShellPath: string;
 	shellArgs: string;
@@ -346,6 +350,15 @@ export interface SettingsStoreState
 	 */
 	shellEnvVarsDisabled: Record<string, string>;
 	ghPath: string;
+	/** Playback speed for audio/video in the file preview. Sticky across files. */
+	/**
+	 * True when the main process found an installation id already on disk (i.e.
+	 * this is not the app's very first launch ever). Read-only from the
+	 * renderer's side; the main process is the sole writer. Lets the first-run
+	 * series tell a returning user who deleted every agent from a genuinely new
+	 * install.
+	 */
+	hasPriorInstallation: boolean;
 	/** Playback speed for audio/video in the file preview. Sticky across files. */
 	mediaPlaybackRate: number;
 	enterToSendAI: boolean;
@@ -439,6 +452,8 @@ export interface SettingsStoreState
 	coworkingBackgroundBrowsers: boolean;
 	coworkingBackgroundBrowsersLimit: number;
 	directorNotesSettings: DirectorNotesSettings;
+	cueHistoryRetentionDays: number;
+	groupCueEntries: boolean;
 	useNativeTitleBar: boolean;
 	autoHideMenuBar: boolean;
 	// File Edit & Preview
@@ -470,9 +485,6 @@ export interface SettingsStoreActions
 	// Simple setters
 	setConductorProfile: (value: string) => void;
 	setGlobalShowHotkey: (value: string[]) => void;
-	setLlmProvider: (value: LLMProvider) => void;
-	setModelSlug: (value: string) => void;
-	setApiKey: (value: string) => void;
 	setDefaultShell: (value: string) => void;
 	setCustomShellPath: (value: string) => void;
 	setShellArgs: (value: string) => void;
@@ -552,6 +564,8 @@ export interface SettingsStoreActions
 	setCoworkingBackgroundBrowsers: (value: boolean) => void;
 	setCoworkingBackgroundBrowsersLimit: (value: number) => void;
 	setDirectorNotesSettings: (value: DirectorNotesSettings) => void;
+	setCueHistoryRetentionDays: (value: number) => void;
+	setGroupCueEntries: (value: boolean) => void;
 	setUseNativeTitleBar: (value: boolean) => void;
 	setAutoHideMenuBar: (value: boolean) => void;
 	setFileEditWordWrap: (value: boolean) => void;
@@ -709,15 +723,13 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		settingsLoaded: false,
 		conductorProfile: '',
 		globalShowHotkey: [],
-		llmProvider: 'openrouter',
-		modelSlug: 'anthropic/claude-3.5-sonnet',
-		apiKey: '',
 		defaultShell: isWindowsPlatform() ? 'powershell' : 'zsh',
 		customShellPath: '',
 		shellArgs: '',
 		shellEnvVars: {},
 		shellEnvVarsDisabled: {},
 		ghPath: '',
+		hasPriorInstallation: false,
 		mediaPlaybackRate: 1,
 		enterToSendAI: true,
 		enterToSendAIExpanded: false,
@@ -798,6 +810,8 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		coworkingBackgroundBrowsers: false,
 		coworkingBackgroundBrowsersLimit: 2,
 		directorNotesSettings: DEFAULT_DIRECTOR_NOTES_SETTINGS,
+		cueHistoryRetentionDays: DEFAULT_CUE_HISTORY_RETENTION_DAYS,
+		groupCueEntries: true,
 		useNativeTitleBar: isWindowsPlatform(),
 		autoHideMenuBar: false,
 		fileEditWordWrap: true,
@@ -836,21 +850,6 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setGlobalShowHotkey: (value) => {
 			set({ globalShowHotkey: value });
 			window.maestro.settings.set('globalShowHotkey', value);
-		},
-
-		setLlmProvider: (value) => {
-			set({ llmProvider: value });
-			window.maestro.settings.set('llmProvider', value);
-		},
-
-		setModelSlug: (value) => {
-			set({ modelSlug: value });
-			window.maestro.settings.set('modelSlug', value);
-		},
-
-		setApiKey: (value) => {
-			set({ apiKey: value });
-			window.maestro.settings.set('apiKey', value);
 		},
 
 		setDefaultShell: (value) => {
@@ -1347,6 +1346,16 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 			window.maestro.settings.set('directorNotesSettings', value);
 		},
 
+		setCueHistoryRetentionDays: (value) => {
+			set({ cueHistoryRetentionDays: value });
+			window.maestro.settings.set('cueHistoryRetentionDays', value);
+		},
+
+		setGroupCueEntries: (value) => {
+			set({ groupCueEntries: value });
+			window.maestro.settings.set('groupCueEntries', value);
+		},
+
 		setUseNativeTitleBar: (value) => {
 			set({ useNativeTitleBar: value });
 			window.maestro.settings.set('useNativeTitleBar', value);
@@ -1511,52 +1520,31 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 
 		setUsageStats: (value) => {
 			const prev = get().usageStats;
-			const updated: MaestroUsageStats = {
-				maxAgents: Math.max(prev.maxAgents, value.maxAgents ?? 0),
-				maxDefinedAgents: Math.max(prev.maxDefinedAgents, value.maxDefinedAgents ?? 0),
-				maxSimultaneousAutoRuns: Math.max(
-					prev.maxSimultaneousAutoRuns,
-					value.maxSimultaneousAutoRuns ?? 0
-				),
-				maxSimultaneousQueries: Math.max(
-					prev.maxSimultaneousQueries,
-					value.maxSimultaneousQueries ?? 0
-				),
-				maxQueueDepth: Math.max(prev.maxQueueDepth, value.maxQueueDepth ?? 0),
-			};
+			const updated = mergeUsagePeaks(prev, value);
 			set({ usageStats: updated });
 			window.maestro.settings.set('usageStats', updated);
 		},
 
 		updateUsageStats: (currentValues) => {
+			// Peaks are lifetime high-water marks, and the max below is only
+			// meaningful against a hydrated baseline. Until loadAllSettings
+			// resolves, `prev` is still DEFAULT_USAGE_STATS (all zeros), so a
+			// sample taken now would look like a new record for every counter.
+			// This hook fires on the first `sessions` ref flip, which routinely
+			// beats the settings load, so without this guard a launch persisted a
+			// live snapshot over the real peaks. The main process refuses the
+			// regression too; this keeps the displayed number honest as well.
+			if (!get().settingsLoaded) return;
+
 			const prev = get().usageStats;
-			const updated: MaestroUsageStats = {
-				maxAgents: Math.max(prev.maxAgents, currentValues.maxAgents ?? 0),
-				maxDefinedAgents: Math.max(prev.maxDefinedAgents, currentValues.maxDefinedAgents ?? 0),
-				maxSimultaneousAutoRuns: Math.max(
-					prev.maxSimultaneousAutoRuns,
-					currentValues.maxSimultaneousAutoRuns ?? 0
-				),
-				maxSimultaneousQueries: Math.max(
-					prev.maxSimultaneousQueries,
-					currentValues.maxSimultaneousQueries ?? 0
-				),
-				maxQueueDepth: Math.max(prev.maxQueueDepth, currentValues.maxQueueDepth ?? 0),
-			};
+			const updated = mergeUsagePeaks(prev, currentValues);
 			// PERF: Skip both the persist AND the in-memory set when nothing changed.
 			// updateUsageStats fires from useAutoRunAchievements on every `sessions` ref flip
 			// (i.e., every ~200ms streaming flush). Calling `set` with a fresh object identity
 			// each time triggers every consumer of useSettingsStore() to re-render, which
 			// cascades through MaestroConsoleInner → GitStatusProvider → entire workspace tree.
-			if (
-				updated.maxAgents === prev.maxAgents &&
-				updated.maxDefinedAgents === prev.maxDefinedAgents &&
-				updated.maxSimultaneousAutoRuns === prev.maxSimultaneousAutoRuns &&
-				updated.maxSimultaneousQueries === prev.maxSimultaneousQueries &&
-				updated.maxQueueDepth === prev.maxQueueDepth
-			) {
-				return;
-			}
+			if (usagePeaksEqual(updated, prev)) return;
+
 			window.maestro.settings.set('usageStats', updated);
 			set({ usageStats: updated });
 		},
@@ -1939,14 +1927,6 @@ export async function loadAllSettings(): Promise<void> {
 		if (Array.isArray(allSettings['globalShowHotkey']))
 			patch.globalShowHotkey = allSettings['globalShowHotkey'] as string[];
 
-		if (allSettings['llmProvider'] !== undefined)
-			patch.llmProvider = allSettings['llmProvider'] as LLMProvider;
-
-		if (allSettings['modelSlug'] !== undefined)
-			patch.modelSlug = allSettings['modelSlug'] as string;
-
-		if (allSettings['apiKey'] !== undefined) patch.apiKey = allSettings['apiKey'] as string;
-
 		if (allSettings['defaultShell'] !== undefined)
 			patch.defaultShell = allSettings['defaultShell'] as string;
 
@@ -1965,6 +1945,35 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['ghPath'] !== undefined) patch.ghPath = allSettings['ghPath'] as string;
 
 		hydrateThemeSettings(allSettings, patch);
+
+		for (const spec of TYPOGRAPHY_SURFACE_LIST) {
+			if (!canInherit(spec)) continue;
+			const raw = allSettings[spec.sizeKey];
+			if (raw !== undefined) {
+				(patch as Record<string, unknown>)[spec.sizeKey] = clampSurfaceFontSize(Number(raw));
+			}
+		}
+
+		if (allSettings['fontZoom'] !== undefined)
+			patch.fontZoom = clampFontZoom(Number(allSettings['fontZoom']));
+
+		if (allSettings['typographySnapshot'] !== undefined)
+			patch.typographySnapshot = parseTypographySnapshot(allSettings['typographySnapshot']);
+
+		if (allSettings['typographyPromptSeen'] !== undefined)
+			patch.typographyPromptSeen = Boolean(allSettings['typographyPromptSeen']);
+
+		if (allSettings['themePromptSeen'] !== undefined)
+			patch.themePromptSeen = Boolean(allSettings['themePromptSeen']);
+
+		if (allSettings['updatesPromptSeen'] !== undefined)
+			patch.updatesPromptSeen = Boolean(allSettings['updatesPromptSeen']);
+
+		if (allSettings['agentPowersPromptSeen'] !== undefined)
+			patch.agentPowersPromptSeen = Boolean(allSettings['agentPowersPromptSeen']);
+
+		if (allSettings['hasPriorInstallation'] !== undefined)
+			patch.hasPriorInstallation = Boolean(allSettings['hasPriorInstallation']);
 
 		if (allSettings['mediaPlaybackRate'] !== undefined)
 			patch.mediaPlaybackRate = normalizePlaybackRate(allSettings['mediaPlaybackRate']);
@@ -2183,10 +2192,14 @@ export async function loadAllSettings(): Promise<void> {
 		}
 
 		if (allSettings['usageStats'] !== undefined) {
-			patch.usageStats = {
-				...DEFAULT_USAGE_STATS,
-				...(allSettings['usageStats'] as Partial<MaestroUsageStats>),
-			};
+			// Merge rather than replace: this also runs on reload (system resume,
+			// a peer window's write), and a peak read back from disk must never
+			// lower one this window already holds. mergeUsagePeaks also sanitizes
+			// a missing or non-numeric stored key to 0 instead of NaN.
+			patch.usageStats = mergeUsagePeaks(
+				useSettingsStore.getState().usageStats,
+				allSettings['usageStats'] as Partial<MaestroUsageStats>
+			);
 		}
 
 		if (allSettings['onboardingStats'] !== undefined) {
@@ -2293,7 +2306,27 @@ export async function loadAllSettings(): Promise<void> {
 		// reaches a dormant queue, and the first thing the user opens or
 		// queues wakes it. Recently played is NOT restored - it is per-session by
 		// design.
-		if (allSettings[MEDIA_QUEUE_SETTINGS_KEY] !== undefined) {
+		//
+		// RESTORE ONLY ONTO AN EMPTY PLAYER. `loadAllSettings` is not a
+		// startup-only call - it re-runs on system resume, whenever an external
+		// settings edit is detected (maestro-cli, a peer window), and after a
+		// remote set-setting. Re-applying the snapshot there took a player the
+		// user was listening to and set `dismissed` AND `dormant`, which hides the
+		// widget and suppresses the Left Bar pill that is the only thing it parks
+		// in: the player did not minimize, it vanished, with the track still
+		// playing from nowhere. It also swapped `items` / `activeItemId` for
+		// whatever was last flushed to disk, so the file the user opened was
+		// replaced by an older queue.
+		//
+		// Anything already loaded means this snapshot is stale by definition - it
+		// describes a session that has since moved on - so the live store wins and
+		// the read is skipped entirely. That also makes the hydration idempotent,
+		// which matters because a second `useSettings` mount calls it again.
+		const mediaAlreadyLoaded = (): boolean => {
+			const media = useMediaPlaybackStore.getState();
+			return media.activeItemId !== null || media.items.length > 0;
+		};
+		if (allSettings[MEDIA_QUEUE_SETTINGS_KEY] !== undefined && !mediaAlreadyLoaded()) {
 			const stored = allSettings[MEDIA_QUEUE_SETTINGS_KEY] as PersistedMediaQueue | null;
 			const items = sanitizeMediaItems(stored?.items);
 			if (items.length > 0) {
@@ -2431,12 +2464,10 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['utilityModelId'] !== undefined)
 			patch.utilityModelId = allSettings['utilityModelId'] as string | null;
 
-		// Encore Features (merge with defaults to preserve new flags)
+		// Encore Features (merge with defaults so a flag the stored object predates
+		// keeps its default instead of reading as off)
 		if (allSettings['encoreFeatures'] !== undefined) {
-			patch.encoreFeatures = {
-				...DEFAULT_ENCORE_FEATURES,
-				...(allSettings['encoreFeatures'] as Partial<EncoreFeatureFlags>),
-			};
+			patch.encoreFeatures = resolveEncoreFeatures(allSettings['encoreFeatures']);
 		}
 
 		// Symphony registry URLs (additional user-configured registries)
@@ -2487,6 +2518,19 @@ export async function loadAllSettings(): Promise<void> {
 		}
 
 		hydrateWakatimeSettings(allSettings, patch);
+		// Cue history retention. A stored value that isn't a usable day count
+		// falls back to the default rather than being shown as-is: the number in
+		// the UI is a promise about what the prune keeps, so it must never read
+		// back as NaN or 0. Shared with the engine's prune so the window shown
+		// and the window deleted by can't disagree.
+		if (allSettings['cueHistoryRetentionDays'] !== undefined) {
+			patch.cueHistoryRetentionDays = resolveCueHistoryRetentionDays(
+				allSettings['cueHistoryRetentionDays']
+			);
+		}
+
+		if (allSettings['groupCueEntries'] !== undefined)
+			patch.groupCueEntries = allSettings['groupCueEntries'] as boolean;
 
 		if (allSettings['useNativeTitleBar'] !== undefined)
 			patch.useNativeTitleBar = allSettings['useNativeTitleBar'] as boolean;
@@ -2651,9 +2695,6 @@ export function getSettingsActions() {
 	return {
 		setConductorProfile: state.setConductorProfile,
 		setGlobalShowHotkey: state.setGlobalShowHotkey,
-		setLlmProvider: state.setLlmProvider,
-		setModelSlug: state.setModelSlug,
-		setApiKey: state.setApiKey,
 		setDefaultShell: state.setDefaultShell,
 		setCustomShellPath: state.setCustomShellPath,
 		setShellArgs: state.setShellArgs,

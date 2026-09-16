@@ -20,6 +20,7 @@ import type { Toast } from '../../../renderer/stores/notificationStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { mockTheme } from '../../helpers/mockTheme';
 import { usePhoneLayout } from '../../../renderer/hooks/ui/useViewportBreakpoint';
+import { useMediaPlaybackStore } from '../../../renderer/stores/mediaPlaybackStore';
 
 vi.mock('../../../renderer/hooks/ui/useViewportBreakpoint', async (importOriginal) => ({
 	...(await importOriginal<typeof import('../../../renderer/hooks/ui/useViewportBreakpoint')>()),
@@ -677,5 +678,53 @@ describe('Toast on a phone', () => {
 		expect(card.style.minWidth).toBe('');
 		expect(card.style.maxWidth).toBe('');
 		expect(card.style.width).toBe('100%');
+	});
+});
+
+describe('ToastContainer over the floating media player', () => {
+	beforeEach(() => {
+		useNotificationStore.setState({ toasts: [createMockToast()] });
+		useSettingsStore.setState({ toastWidth: 'small' });
+	});
+
+	afterEach(() => {
+		useMediaPlaybackStore.setState({ floatFootprint: null });
+		vi.mocked(usePhoneLayout).mockReturnValue(false);
+	});
+
+	it('sits on the bottom edge when no player is on screen', () => {
+		useMediaPlaybackStore.setState({ floatFootprint: null });
+		render(<ToastContainer theme={mockTheme} />);
+		expect(screen.getByTestId('toast-stack').style.marginBottom).toBe('');
+	});
+
+	it('steps over a player parked in the same corner', () => {
+		// Without this the toast paints over the widget (toasts are z-index
+		// 100000, the player is 60), and the player appears to close itself.
+		useMediaPlaybackStore.setState({
+			floatFootprint: { fromBottom: 156, fromRight: 24, width: 380, viewportHeight: 900 },
+		});
+		render(<ToastContainer theme={mockTheme} />);
+		expect(screen.getByTestId('toast-stack').style.marginBottom).toBe('164px');
+	});
+
+	it('stays on the bottom edge for a player in another column', () => {
+		useMediaPlaybackStore.setState({
+			floatFootprint: { fromBottom: 156, fromRight: 1100, width: 380, viewportHeight: 900 },
+		});
+		render(<ToastContainer theme={mockTheme} />);
+		expect(screen.getByTestId('toast-stack').style.marginBottom).toBe('');
+	});
+
+	it('keeps the safe-area inset while stepping over the player on a phone', () => {
+		vi.mocked(usePhoneLayout).mockReturnValue(true);
+		useMediaPlaybackStore.setState({
+			floatFootprint: { fromBottom: 156, fromRight: 12, width: 366, viewportHeight: 844 },
+		});
+		render(<ToastContainer theme={mockTheme} />);
+		// The lift is a margin and the safe-area inset is padding, so neither can
+		// eat the other. (jsdom drops the `env()` padding entirely, so only the
+		// margin is assertable here.)
+		expect(screen.getByTestId('toast-stack').style.marginBottom).toBe('164px');
 	});
 });

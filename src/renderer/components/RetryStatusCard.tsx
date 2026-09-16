@@ -18,7 +18,7 @@
 import React, { useEffect, useState } from 'react';
 import { AlertTriangle, Check, RefreshCw, X, Zap } from 'lucide-react';
 
-import { useRetryStore, retryNow, cancelRetry } from '../stores/retryStore';
+import { useRetryStore, useRetryStatus, retryNow, cancelRetry } from '../stores/retryStore';
 import { formatDurationHuman } from '../../shared/formatters';
 import { describeQuotaWindow } from '../../shared/quotaLimitDetail';
 import { getConnectingColor } from '../utils/theme';
@@ -64,6 +64,11 @@ export function RetryStatusCard({
 	fallbackText,
 }: RetryStatusCardProps): React.ReactElement | null {
 	const outage = useRetryStore((s) => s.outages[outageId]);
+
+	// What the retry is ACTUALLY doing, which the outage record cannot say. See
+	// useRetryStatus: `nextRetryAt` is untouched by an early fire, so the
+	// arithmetic below keeps counting down over a resend that is already running.
+	const retryStatus = useRetryStatus(outage?.sessionId ?? '', outage?.tabId ?? '');
 
 	// Constitutional "stuck / backing off" hue - pulsing orange, distinct from
 	// thinking-yellow. Theme-derived so it tracks the palette (see getConnectingColor).
@@ -164,7 +169,9 @@ export function RetryStatusCard({
 	// -- Active outage: live status + controls. -----------------------------------
 	const elapsedMs = Math.max(0, now - outage.startedAt);
 	const remainingMs = outage.nextRetryAt - now;
-	const isFiring = remainingMs <= 0;
+	// Prefer the live entry; fall back to the countdown only when there is no
+	// entry left to ask (a record whose retry has already been cleared).
+	const isFiring = retryStatus ? retryStatus === 'in-flight' : remainingMs <= 0;
 
 	return (
 		<div

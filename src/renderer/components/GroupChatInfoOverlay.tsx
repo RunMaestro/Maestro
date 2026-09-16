@@ -211,7 +211,9 @@ export function GroupChatInfoOverlay({
 	return (
 		<Modal
 			theme={theme}
-			title="Group Chat Info"
+			// The chat name lives here rather than in the header row, which had no
+			// room for it on a phone. See GroupChatHeader's left zone.
+			title={`Group Chat: ${groupChat.name}`}
 			priority={MODAL_PRIORITIES.GROUP_CHAT_INFO}
 			onClose={onClose}
 			width={600}

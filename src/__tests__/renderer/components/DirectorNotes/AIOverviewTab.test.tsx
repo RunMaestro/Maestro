@@ -13,6 +13,8 @@ const settingsMock = vi.hoisted(() => ({
 	value: {
 		directorNotesSettings: {
 			provider: 'claude-code',
+			autoSelectProvider: undefined as boolean | undefined,
+			customPath: undefined as string | undefined,
 			defaultLookbackDays: 7,
 			defaultMode: undefined as 'rich' | 'plain' | undefined,
 		},
@@ -118,6 +120,8 @@ beforeEach(() => {
 
 	// Reset the persisted default mode so each test starts from "unset".
 	settingsMock.value.directorNotesSettings.defaultMode = undefined;
+	settingsMock.value.directorNotesSettings.autoSelectProvider = undefined;
+	settingsMock.value.directorNotesSettings.customPath = undefined;
 
 	// jsdom in this environment doesn't provide a working Storage on
 	// window.localStorage, so install a minimal in-memory mock that satisfies
@@ -201,13 +205,44 @@ describe('AIOverviewTab', () => {
 			expect(screen.getByTestId('markdown-renderer')).toBeInTheDocument();
 		});
 
+		// Auto-selection is the default, so the renderer sends the sentinel and the
+		// main process resolves it against live agent detection.
 		expect(mockGenerateSynopsis).toHaveBeenCalledWith(
 			expect.objectContaining({
 				lookbackDays: 7,
-				provider: 'claude-code',
+				provider: 'auto',
 			})
 		);
 		expect(screen.getByTestId('markdown-renderer')).toHaveAttribute('data-bionify', 'off');
+	});
+
+	it('sends the pinned provider and its overrides when auto-selection is off', async () => {
+		settingsMock.value.directorNotesSettings.autoSelectProvider = false;
+		settingsMock.value.directorNotesSettings.customPath = '/custom/claude';
+		mockGenerateSynopsis.mockResolvedValue({ success: true, synopsis: '# Synopsis' });
+
+		render(<AIOverviewTab theme={mockTheme} />);
+
+		await waitFor(() => {
+			expect(mockGenerateSynopsis).toHaveBeenCalledWith(
+				expect.objectContaining({ provider: 'claude-code', customPath: '/custom/claude' })
+			);
+		});
+	});
+
+	it('withholds per-provider overrides under auto-selection', async () => {
+		// The stored overrides belong to the MANUAL pick. Applying one provider's
+		// binary path to whichever agent auto lands on would be worse than nothing.
+		settingsMock.value.directorNotesSettings.customPath = '/custom/claude';
+		mockGenerateSynopsis.mockResolvedValue({ success: true, synopsis: '# Synopsis' });
+
+		render(<AIOverviewTab theme={mockTheme} />);
+
+		await waitFor(() => {
+			expect(mockGenerateSynopsis).toHaveBeenCalledWith(
+				expect.objectContaining({ provider: 'auto', customPath: undefined })
+			);
+		});
 	});
 
 	it('calls onSynopsisReady when synopsis is generated', async () => {

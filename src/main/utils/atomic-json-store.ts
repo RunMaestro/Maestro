@@ -56,6 +56,12 @@ export async function atomicWriteJson(filePath: string, data: unknown): Promise<
  * non-JSON payloads (TOML, comment-preserving JSON) where the caller has already
  * produced the exact bytes to persist. A crash mid-write leaves the original
  * file intact instead of truncating it.
+ *
+ * Also the write path for line-oriented stores (JSONL history), where the payload
+ * is many independent records rather than one document. Callers own validation:
+ * unlike `atomicWriteJson` there is no parse-back gate, because the content is not
+ * a single parseable value. Never hand this an empty string when the target holds
+ * data you care about.
  */
 export async function atomicWriteFile(
 	filePath: string,

@@ -226,7 +226,9 @@ export interface MainPanelProps {
 	onFileTabEditContentChange?: (
 		tabId: string,
 		editContent: string | undefined,
-		savedContent?: string
+		savedContent?: string,
+		/** mtime of the bytes just written, so the tab stops looking stale to the change poller */
+		savedMtime?: number
 	) => void;
 	/** Handler to update file tab scrollTop when scrolling in FilePreview */
 	onFileTabScrollPositionChange?: (tabId: string, scrollTop: number) => void;

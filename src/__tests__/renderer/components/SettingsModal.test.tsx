@@ -89,9 +89,6 @@ vi.mock('../../../renderer/components/CustomThemeBuilder', () => ({
 const mockSetActiveThemeId = vi.fn();
 const mockSetCustomThemeColors = vi.fn();
 const mockSetCustomThemeBaseId = vi.fn();
-const mockSetLlmProvider = vi.fn();
-const mockSetModelSlug = vi.fn();
-const mockSetApiKey = vi.fn();
 const mockSetShortcuts = vi.fn();
 const mockSetTabShortcuts = vi.fn();
 const mockSetFontFamily = vi.fn();
@@ -152,13 +149,6 @@ vi.mock('../../../renderer/hooks/settings/useSettings', () => ({
 		setCustomThemeBaseId: mockSetCustomThemeBaseId,
 		themeGloss: 'off',
 		setThemeGloss: vi.fn(),
-		// LLM settings
-		llmProvider: 'openrouter',
-		setLlmProvider: mockSetLlmProvider,
-		modelSlug: '',
-		setModelSlug: mockSetModelSlug,
-		apiKey: '',
-		setApiKey: mockSetApiKey,
 		// Shortcut settings
 		shortcuts: {
 			'new-session': { id: 'new-session', label: 'New Session', keys: ['Meta', 'n'] },

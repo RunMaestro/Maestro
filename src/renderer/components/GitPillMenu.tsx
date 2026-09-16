@@ -308,6 +308,7 @@ export const GitPillMenu = memo(function GitPillMenu({
 							</span>
 						) : undefined
 					}
+					shortcutKeys={shortcuts.gitPull?.keys}
 					onClick={onPull}
 				/>
 				<MenuRow
@@ -329,6 +330,7 @@ export const GitPillMenu = memo(function GitPillMenu({
 							</span>
 						) : undefined
 					}
+					shortcutKeys={shortcuts.gitPush?.keys}
 					onClick={onPush}
 				/>
 				<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
@@ -337,6 +339,7 @@ export const GitPillMenu = memo(function GitPillMenu({
 					testId="git-pill-menu-switch-branch"
 					icon={<GitBranch className="w-3.5 h-3.5" style={iconStyle} />}
 					label="Change Branch"
+					shortcutKeys={shortcuts.gitChangeBranch?.keys}
 					onClick={onSwitchBranch}
 				/>
 				{onCreatePR && (
@@ -356,6 +359,7 @@ export const GitPillMenu = memo(function GitPillMenu({
 								/>
 							) : undefined
 						}
+						shortcutKeys={shortcuts.gitCreatePR?.keys}
 						onClick={onCreatePR}
 					/>
 				)}

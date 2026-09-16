@@ -99,11 +99,14 @@ export function QuickActionRow({
 					action.subtext && <span className="text-2xs opacity-50">{action.subtext}</span>
 				)}
 			</div>
-			{action.shortcut && (
+			{/* Length check, not just presence: an action can ship UNBOUND and still
+			    be handed its shortcut record, and an empty chip would draw a blank
+			    box where a chord belongs. */}
+			{action.shortcut?.keys?.length ? (
 				<span className="text-xs font-mono opacity-60" data-shortcut-hint="">
 					{formatShortcutKeys(action.shortcut.keys)}
 				</span>
-			)}
+			) : null}
 		</button>
 	);
 }

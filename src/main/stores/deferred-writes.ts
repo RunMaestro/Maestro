@@ -157,11 +157,29 @@ function indentJson(json: string, depth: number): string {
 	return json.split('\n').join(`\n${pad}`);
 }
 
-/** Serialize one array element, reusing the memo when the object is unchanged. */
+/**
+ * Depth every memoized array element is rendered at. The memo below stores the
+ * ALREADY-INDENTED string, so it is only valid for this one depth - re-indenting
+ * a cache hit was most of what the memo was supposed to save. A field trace put
+ * `indentJson` at 75ms of main-process CPU, roughly twice `serializeWithMemoizedArray`
+ * itself, because every write re-ran a split/join over every unchanged session.
+ */
+const MEMOIZED_ELEMENT_DEPTH = 2;
+
+/**
+ * Serialize one array element at {@link MEMOIZED_ELEMENT_DEPTH}, reusing the
+ * memo when the object is unchanged.
+ *
+ * Returns the indented text, ready to concatenate - not the raw
+ * `JSON.stringify` output.
+ */
 function serializeElement(value: unknown): string | undefined {
 	// Only objects can be WeakMap keys. Primitives are cheap anyway.
 	if (typeof value !== 'object' || value === null) {
-		return JSON.stringify(value, undefined, '\t');
+		const primitive = JSON.stringify(value, undefined, '\t');
+		// `undefined` and functions stringify to undefined; the caller renders
+		// those array slots as `null`, so pass the miss through unindented.
+		return primitive === undefined ? undefined : indentJson(primitive, MEMOIZED_ELEMENT_DEPTH);
 	}
 	const cached = serializedByValue.get(value);
 	if (cached !== undefined) return cached;
@@ -169,8 +187,9 @@ function serializeElement(value: unknown): string | undefined {
 	// `undefined` (a non-serializable value) is not cacheable and JSON.stringify
 	// renders such array slots as `null` anyway - let the caller handle it.
 	if (json === undefined) return undefined;
-	serializedByValue.set(value, json);
-	return json;
+	const indented = indentJson(json, MEMOIZED_ELEMENT_DEPTH);
+	serializedByValue.set(value, indented);
+	return indented;
 }
 
 /**
@@ -194,12 +213,10 @@ export function serializeWithMemoizedArray(data: unknown, memoKey: string): stri
 	for (const [key, value] of Object.entries(record)) {
 		let json: string | undefined;
 		if (key === memoKey) {
-			// Array elements sit at depth 2; `undefined` elements render as `null`,
-			// matching JSON.stringify's array behaviour.
-			const elements = items.map((item) => {
-				const element = serializeElement(item);
-				return `\t\t${indentJson(element ?? 'null', 2)}`;
-			});
+			// `serializeElement` already indents to MEMOIZED_ELEMENT_DEPTH, so only
+			// the element's own leading tabs are added here. `undefined` elements
+			// render as `null`, matching JSON.stringify's array behaviour.
+			const elements = items.map((item) => `\t\t${serializeElement(item) ?? 'null'}`);
 			json = elements.length === 0 ? '[]' : `[\n${elements.join(',\n')}\n\t]`;
 		} else {
 			const plain = JSON.stringify(value, undefined, '\t');

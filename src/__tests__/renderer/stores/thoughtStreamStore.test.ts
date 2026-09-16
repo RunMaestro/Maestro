@@ -452,13 +452,13 @@ describe('tool activity capture', () => {
 	it('prefers a descriptive label when the running event carried no target', () => {
 		useThoughtStreamStore.getState().appendToolActivity(SID, TAB, {
 			toolName: 'Bash',
-			label: { verb: 'Ran', target: '' },
+			label: { verb: 'Ran', target: '', targetIsCode: true },
 			status: 'running',
 			toolCallId: 'c1',
 		});
 		useThoughtStreamStore.getState().appendToolActivity(SID, TAB, {
 			toolName: 'Bash',
-			label: { verb: 'Ran', target: 'npm test' },
+			label: { verb: 'Ran', target: 'npm test', targetIsCode: true },
 			status: 'completed',
 			toolCallId: 'c1',
 		});
@@ -496,7 +496,7 @@ describe('tool activity capture', () => {
 		// when the budget trims and whether the panel admits it trimmed anything.
 		useThoughtStreamStore.getState().appendToolActivity(SID, TAB, {
 			toolName: 'Bash',
-			label: { verb: 'Ran', target: '' },
+			label: { verb: 'Ran', target: '', targetIsCode: true },
 			status: 'running',
 			toolCallId: 'c1',
 		});
@@ -504,7 +504,7 @@ describe('tool activity capture', () => {
 
 		useThoughtStreamStore.getState().appendToolActivity(SID, TAB, {
 			toolName: 'Bash',
-			label: { verb: 'Ran', target: 'npm test' },
+			label: { verb: 'Ran', target: 'npm test', targetIsCode: true },
 			status: 'completed',
 			toolCallId: 'c1',
 		});
@@ -548,7 +548,7 @@ describe('buildActivityFeed', () => {
 		id,
 		timestamp,
 		tabId,
-		tool: { name, label: { verb: name, target: '' }, status },
+		tool: { name, label: { verb: name, target: '', targetIsCode: true }, status },
 	});
 
 	it('returns an empty feed for no events', () => {

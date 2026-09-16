@@ -2,10 +2,10 @@
  * TypographyChoiceModal - the one-time "how should Maestro read?" chooser.
  *
  * Maestro was monospace on every surface until per-surface fonts existed. Now
- * that the interface, chat, terminal, preview, and editor can each carry their
- * own face, the honest opening question is one choice rather than five pickers,
- * so this offers two presets as large side-by-side cards and writes all five
- * settings at once.
+ * that the interface, chat, terminal, preview, document graph, and editor can
+ * each carry their own face, the honest opening question is one choice rather
+ * than six pickers, so this offers two presets as large side-by-side cards and
+ * writes all six settings at once.
  *
  * Shown once, gated on the `typographyPromptSeen` setting. That flag is false
  * both on a fresh install and on every install that predates it, which is what

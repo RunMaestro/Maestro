@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { CodexOutputParser } from '../../../main/parsers/codex-output-parser';
+import {
+	classifyRetryableError,
+	tokenExhaustionResetAt,
+} from '../../../shared/retryClassification';
 
 describe('CodexOutputParser', () => {
 	const parser = new CodexOutputParser();
@@ -667,6 +671,36 @@ describe('CodexOutputParser', () => {
 			expect(error).not.toBeNull();
 			expect(error?.type).toBe('auth_expired');
 			expect(error?.agentId).toBe('codex');
+		});
+
+		// A hard 4xx is decided by the envelope, not by the sentence. Without this
+		// the fallback emitted `recoverable: true` and the retry scheduler read
+		// "try again" out of the message and probed forever.
+		it('marks a hard client error non-recoverable', () => {
+			const line = JSON.stringify({
+				type: 'error',
+				status: 400,
+				error: {
+					type: 'invalid_request_error',
+					message:
+						"The 'gpt-6-astra' model requires a newer version of Codex. Please upgrade to the latest app or CLI and try again.",
+				},
+			});
+			const error = parser.detectErrorFromLine(line);
+			expect(error).not.toBeNull();
+			expect(error?.recoverable).toBe(false);
+			expect(error?.message).toContain('gpt-6-astra');
+		});
+
+		it('leaves a 429 recoverable', () => {
+			const line = JSON.stringify({
+				type: 'error',
+				status: 429,
+				error: { type: 'rate_limit_error', message: 'usage limit reached' },
+			});
+			const error = parser.detectErrorFromLine(line);
+			expect(error).not.toBeNull();
+			expect(error?.recoverable).toBe(true);
 		});
 
 		it('should detect rate limit errors from JSON', () => {
@@ -1932,5 +1966,46 @@ describe('CodexOutputParser', () => {
 
 			expect(event?.type).toBe('error');
 		});
+	});
+});
+
+/**
+ * A Codex quota outage has to reach the retry scheduler as a quota outage.
+ *
+ * Two things used to break that, and both are covered here: the pattern bank
+ * matched `\b429\b` / `rate.*limit` before the usage-limit pattern, and the
+ * parser then replaced Codex's own text with the bank's curated wording. The
+ * result was "Rate limited. Please wait and try again." for a multi-hour plan
+ * outage, which `classifyRetryableError` reads as a transient throttle and
+ * retries every 30 seconds.
+ */
+describe('Codex quota outages reach the retry scheduler intact', () => {
+	it('classifies a 429 that also names a usage limit as exhaustion, not availability', () => {
+		const p = new CodexOutputParser();
+		const error = p.detectErrorFromExit(1, "429 - you've hit your usage limit for this plan", '');
+
+		expect(error).not.toBeNull();
+		expect(classifyRetryableError(error!)).toBe('token-exhaustion');
+	});
+
+	it('keeps Codex own text so a reset hint survives the parser', () => {
+		const p = new CodexOutputParser();
+		const line = 'usage limit reached. try again in 4h.';
+		const error = p.detectErrorFromExit(1, line, '');
+
+		// Display still gets the curated wording.
+		expect(error!.message).toBe('Usage limit reached. Please wait or check your plan quota.');
+		// The decision gets the real line.
+		expect(error!.raw?.errorLine).toContain('4h');
+
+		const now = Date.UTC(2026, 8, 16, 12, 0, 0);
+		expect(tokenExhaustionResetAt(error!, now)).toBeGreaterThan(now + 3 * 60 * 60 * 1000);
+	});
+
+	it('leaves a genuine throttle classified as availability', () => {
+		const p = new CodexOutputParser();
+		const error = p.detectErrorFromExit(1, '429 too many requests', '');
+
+		expect(classifyRetryableError(error!)).toBe('availability');
 	});
 });

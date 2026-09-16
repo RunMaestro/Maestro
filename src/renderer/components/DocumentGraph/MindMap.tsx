@@ -29,6 +29,7 @@ import { clusterHullStyle } from './clusterColors';
 import {
 	NODE_BORDER_RADIUS,
 	drawLink,
+	graphFontPx,
 	openIconRect,
 	renderDocumentNode,
 	renderExternalNode,
@@ -36,7 +37,7 @@ import {
 } from './mindMapCanvas';
 import { logger } from '../../utils/logger';
 import { GraphMiniMap } from './GraphMiniMap';
-import { useSurfaceFontFamily } from '../../hooks/ui/useSurfaceTypography';
+import { useSurfaceFontFamily, useSurfaceFontSize } from '../../hooks/ui/useSurfaceTypography';
 
 export { openIconRect } from './mindMapCanvas';
 
@@ -216,8 +217,10 @@ export function MindMap({
 	scrollMode = DEFAULT_SCROLL_MODE,
 }: MindMapProps) {
 	// Canvas measures and paints glyphs itself, so it needs a resolved family
-	// string rather than the CSS variable the DOM surfaces inherit.
+	// string and a resolved px size rather than the CSS variables the DOM
+	// surfaces inherit.
 	const graphFontFamily = useSurfaceFontFamily('documentGraph');
+	const graphFontSize = useSurfaceFontSize('documentGraph');
 
 	const canvasRef = useRef<HTMLCanvasElement>(null);
 	const internalContainerRef = useRef<HTMLDivElement>(null);
@@ -453,7 +456,7 @@ export function MindMap({
 				ctx.setLineDash([]);
 
 				ctx.fillStyle = ungrouped ? theme.colors.textDim : stroke;
-				ctx.font = '600 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+				ctx.font = `600 ${graphFontPx(13, graphFontSize)}px ${graphFontFamily}`;
 				ctx.textAlign = 'center';
 				ctx.textBaseline = 'middle';
 				ctx.fillText(cluster.label, cluster.labelX, cluster.labelY);
@@ -465,7 +468,7 @@ export function MindMap({
 		// axis with no dates on it is just an arbitrary left-to-right ordering.
 		if (layout.axisLabels && layout.axisLabels.length > 0) {
 			ctx.save();
-			ctx.font = '600 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+			ctx.font = `600 ${graphFontPx(13, graphFontSize)}px ${graphFontFamily}`;
 			ctx.textAlign = 'center';
 			ctx.textBaseline = 'middle';
 			layout.axisLabels.forEach((label) => {
@@ -544,7 +547,8 @@ export function MindMap({
 					matchesSearch,
 					searchActive,
 					previewCharLimit,
-					graphFontFamily
+					graphFontFamily,
+					graphFontSize
 				);
 			} else {
 				renderExternalNode(
@@ -554,7 +558,8 @@ export function MindMap({
 					isHovered,
 					matchesSearch,
 					searchActive,
-					graphFontFamily
+					graphFontFamily,
+					graphFontSize
 				);
 			}
 		});
@@ -604,6 +609,7 @@ export function MindMap({
 		// The canvas paints its own glyphs, so a font change has to force a
 		// redraw explicitly - nothing about it is reactive on its own.
 		graphFontFamily,
+		graphFontSize,
 	]);
 
 	// Render on changes

@@ -127,7 +127,7 @@ The Agents tab shows one card per agent, so you can scan your whole fleet at onc
 
 **Filtering:** the filter box above the grid narrows the cards as you type. Matching is fuzzy, so `cbst` finds "Cyber Stocks", and it searches the agent name (with or without its leading emoji) as well as a worktree's branch name. A count next to the box shows how many of your agents match. Press `Esc` or click the **ESC** pill to clear the filter; clearing it is what `Esc` does first, so the dashboard stays open.
 
-**Provider accounts:** when your agents are split across more than one provider account, an **All providers** dropdown appears beside the filter box, listing each account with the number of agents behind it (`Claude Code - smash (7)`, `Codex - Default account (3)`, `OpenCode (2)`). Pick one to narrow the grid to those agents. Every card is also badged with its account name, so you can read the split without touching the filter. An account is whichever `CLAUDE_CONFIG_DIR` or `CODEX_HOME` that agent runs against; providers that keep one credential store show up as a single entry named after the provider.
+**Provider accounts:** when your agents are split across more than one provider account, an **All providers** dropdown appears beside the filter box, listing each account with the number of agents behind it (`Claude Code - smash (7)`, `Codex - Default account (3)`, `OpenCode (2)`). Pick one to narrow the grid to those agents. Every card is also badged with its account name, so you can read the split without touching the filter. A plain `~/.claude` or `~/.codex` has no name of its own, so those cards badge the provider instead (`CLAUDE CODE DEFAULT`, `CODEX DEFAULT`) rather than a bare "default account" that would read the same on both. An account is whichever `CLAUDE_CONFIG_DIR` or `CODEX_HOME` that agent runs against; providers that keep one credential store show up as a single entry named after the provider.
 
 The **N agents** chip on each row of the Anthropic Usage and OpenAI Usage tabs is a shortcut into this: click it and Maestro opens the Agents tab already narrowed to that account, so you can see which agents are burning the plan you are looking at. Agents that run over SSH are marked **remote**: on the remote host that directory holds the host's own login, which can be a different account from the one the row measures. A row the last refresh could not update shows a **stale** chip with the time its bars were read.
 
@@ -136,6 +136,13 @@ The **N agents** chip on each row of the Anthropic Usage and OpenAI Usage tabs i
 **Tile size:** `+` and `-` resize the tiles, and `0` returns them to the default. The buttons beside the **Sort by** control do the same. A wider tile shows more of a long agent name before it truncates; a narrower one fits more agents on screen at once. Maestro remembers the size you picked, and the Groups tab keeps its own separate size.
 
 **Per-agent details:** click any card to open a detail view for that agent, covering total queries, total and average duration, active days, a full-window daily activity chart, duration distribution (min / median / p95 / max), the user-vs-auto query split, and Auto Run totals.
+
+Two actions in the detail view's header take you out of the numbers and onto the agent itself:
+
+- **Jump to Agent** switches to that agent and lands on its AI transcript, even if you last left it on a terminal, file, or browser tab, and expands whichever Left Bar section it is hiding in.
+- **Agent Settings** opens the Edit Agent dialog for it.
+
+Both close the dashboard on the way, since it covers the whole window and you would otherwise land behind it. Stats outlive the agents that produced them, so an agent you have since deleted still has a card here: **Jump to Agent** tells you it is gone rather than appearing to do nothing.
 
 #### Tab breakdown
 

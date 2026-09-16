@@ -26,6 +26,7 @@ import type { PluginRecord } from '../../../../shared/plugins/plugin-registry';
 import {
 	CATEGORY_LABELS,
 	STATE_LABELS,
+	extensionBadge,
 	type ExtensionState,
 	type UnifiedExtension,
 } from './extensionModel';
@@ -189,6 +190,8 @@ export function ExtensionDetails({
 			? FIRST_PARTY_PLUGINS[ext.flag as keyof typeof FIRST_PARTY_PLUGINS].backgroundServices
 			: [];
 
+	const badge = extensionBadge(ext);
+
 	return (
 		<div data-testid="extension-details" className="select-text">
 			{/* The way back lives in the view's header row, where the grid's
@@ -201,15 +204,17 @@ export function ExtensionDetails({
 						style={{ color: theme.colors.textMain }}
 					>
 						{ext.name}
-						{ext.beta && (
+						{badge && (
 							<span
+								data-testid="extension-details-badge"
+								data-badge={badge.label}
 								className="px-1.5 py-0.5 rounded text-3xs font-bold uppercase"
 								style={{
-									backgroundColor: theme.colors.warning + '30',
-									color: theme.colors.warning,
+									backgroundColor: theme.colors[badge.tone] + '30',
+									color: theme.colors[badge.tone],
 								}}
 							>
-								Beta
+								{badge.label}
 							</span>
 						)}
 					</div>

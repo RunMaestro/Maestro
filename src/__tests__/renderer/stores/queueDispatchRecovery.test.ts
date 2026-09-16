@@ -212,6 +212,41 @@ describe('a queue drain that races a dying process', () => {
 // Failures that are NOT transient
 // ============================================================================
 
+// ============================================================================
+// What the caller is told
+// ============================================================================
+
+describe('what processQueuedItem reports back', () => {
+	// A caller that pulled the item OUT of a queue to run it has no other way to
+	// tell a send from an abort: both resolve, and only one of them leaves
+	// something running that will settle the turn. `retryStore.fireRetry` is that
+	// caller, and reading an abort as a send destroyed the prompt outright.
+	it('resolves true when the dispatch goes out', async () => {
+		const item = queued('q1', 'ship it');
+		setSession({ ...session(), executionQueue: [item] });
+		setSession(applyQueuedItemDispatch(session(), item));
+
+		await expect(useAgentStore.getState().processQueuedItem(SESSION, item, deps)).resolves.toBe(
+			true
+		);
+	});
+
+	it('resolves false when the item names a tab that no longer exists', async () => {
+		const item = queued('q1', 'ship it');
+		setSession({ ...session(), executionQueue: [item] });
+		setSession(applyQueuedItemDispatch(session(), item));
+
+		// The user closed the tab while the item waited - ordinary during an
+		// outage, where the wait runs to fifteen minutes a probe.
+		setSession({ ...session(), aiTabs: [], activeTabId: undefined });
+
+		await expect(useAgentStore.getState().processQueuedItem(SESSION, item, deps)).resolves.toBe(
+			false
+		);
+		expect(mockSpawn).not.toHaveBeenCalled();
+	});
+});
+
 describe('a dispatch that fails for a real reason', () => {
 	it('holds the prompt in the queue and says why', async () => {
 		setSession({ ...session(), executionQueue: [queued('q1', 'hello')] });

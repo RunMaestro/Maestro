@@ -142,7 +142,7 @@ Messages and Duration are the same figures the [HTML export](#tab-export) prints
 
 The same two figures appear in `maestro-cli sessions <agent-id>` for every session Maestro has a tab for.
 
-Click the gauge to swap Context Details for the **Context Timeline**, a turn-by-turn record of how the context window filled. The Timeline opens in the space the popover held and closes as soon as you move the pointer off it, or when you click the gauge again or press `Esc`. The two never show at the same time. Drag an edge to resize the Timeline: the size is remembered for every agent and across restarts, and double-clicking an edge resets it.
+Click the gauge to swap Context Details for the **Context Timeline**, a turn-by-turn record of how the context window filled. The Timeline opens in the space the popover held and closes as soon as you move the pointer off it, or when you click the gauge again or press `Esc`. The two never show at the same time. Drag an edge to resize the Timeline: the size is remembered for every agent and across restarts, and double-clicking an edge resets it. Context Details has no edges of its own, since it closes when the pointer leaves it, so it takes the Timeline's width. Resize the Timeline to resize both.
 
 ## Compact & Continue
 

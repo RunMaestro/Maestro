@@ -21,11 +21,11 @@ import { SegmentedControl } from '../../ui/SegmentedControl';
 import { FirstPartyEnableModal } from './FirstPartyEnableModal';
 import {
 	CATEGORY_FILTERS,
-	CATEGORY_LABELS,
 	EXTENSION_SORT_STORAGE_KEY,
 	EXTENSION_SORT_VALUES,
 	SORT_OPTIONS,
 	filterExtensions,
+	filterLabel,
 	sortExtensions,
 	type CategoryFilter,
 	type ExtensionSort,
@@ -233,7 +233,7 @@ export function ExtensionsView({ theme, settingsBodies }: ExtensionsViewProps) {
 										color: active ? theme.colors.bgMain : theme.colors.textDim,
 									}}
 								>
-									{cat === 'all' ? 'All' : CATEGORY_LABELS[cat]}
+									{filterLabel(cat)}
 								</button>
 							);
 						})}

@@ -41,6 +41,20 @@ function press(view: EditorView, key: string): void {
 	);
 }
 
+/**
+ * A paste of plain text. jsdom has no `ClipboardEvent` constructor with a
+ * working `clipboardData`, so the event is built by hand and the payload is
+ * attached to it - which is all CodeMirror's own paste handler reads.
+ */
+function paste(view: EditorView, text: string): Event {
+	const event = new Event('paste', { bubbles: true, cancelable: true });
+	Object.defineProperty(event, 'clipboardData', {
+		value: { getData: () => text, types: ['text/plain'], items: [], files: [] },
+	});
+	view.contentDOM.dispatchEvent(event);
+	return event;
+}
+
 describe('buildEditorExtensions', () => {
 	it('leaves the document writable by default', () => {
 		const state = stateWith({});
@@ -103,6 +117,95 @@ describe('buildEditorExtensions - host keydown', () => {
 		press(view, 'ArrowRight');
 
 		expect(view.state.selection.main.head).toBe(1);
+		view.destroy();
+	});
+});
+
+/**
+ * The paste-side twin of the keydown seam, and the reason it has to exist:
+ * CodeMirror's own paste handler inserts the clipboard text and stops the
+ * chain, so a host that wants to REWRITE a paste (Auto Run trims stray
+ * whitespace, and turns a clipboard image into a saved attachment) has to see
+ * the event first.
+ *
+ * The failure this guards against is silent and doubles text: if `onPaste` ran
+ * at normal precedence, or its `true` were ignored, the host would insert its
+ * rewritten text AND CodeMirror would insert the raw clipboard text after it.
+ */
+describe('buildEditorExtensions - host paste', () => {
+	it('lets the editor keep a paste the host declines', () => {
+		const onPaste = vi.fn(() => undefined);
+		const view = mountWith({ onPaste });
+
+		paste(view, 'world');
+
+		expect(onPaste).toHaveBeenCalledTimes(1);
+		// Declining leaves the insert to CodeMirror, which is the behaviour every
+		// surface that only WATCHES pastes depends on.
+		expect(view.state.doc.toString()).toBe('worldhello');
+		view.destroy();
+	});
+
+	it('swallows a paste the host claims by returning true', () => {
+		const onPaste = vi.fn(() => true);
+		const view = mountWith({ onPaste });
+
+		paste(view, 'world');
+
+		expect(onPaste).toHaveBeenCalledTimes(1);
+		// Document untouched: the host ran at Prec.highest and consumed the event,
+		// so it is free to insert its own rewritten text without doubling up.
+		expect(view.state.doc.toString()).toBe('hello');
+		view.destroy();
+	});
+
+	it('behaves exactly as before when no host handler is supplied', () => {
+		const view = mountWith({});
+
+		paste(view, 'world');
+
+		expect(view.state.doc.toString()).toBe('worldhello');
+		view.destroy();
+	});
+});
+
+describe('buildEditorExtensions - placeholder', () => {
+	it('paints the hint while the document is empty', () => {
+		const parent = document.createElement('div');
+		document.body.appendChild(parent);
+		const view = new EditorView({
+			state: EditorState.create({
+				doc: '',
+				extensions: buildEditorExtensions({
+					wrap: true,
+					showLineNumbers: false,
+					spellCheck: false,
+					placeholder: 'Capture notes here',
+				}),
+			}),
+			parent,
+		});
+
+		expect(view.dom.textContent).toContain('Capture notes here');
+		view.destroy();
+	});
+
+	it('adds no placeholder widget when none is configured', () => {
+		const parent = document.createElement('div');
+		document.body.appendChild(parent);
+		const view = new EditorView({
+			state: EditorState.create({
+				doc: '',
+				extensions: buildEditorExtensions({
+					wrap: true,
+					showLineNumbers: false,
+					spellCheck: false,
+				}),
+			}),
+			parent,
+		});
+
+		expect(view.dom.querySelector('.cm-placeholder')).toBeNull();
 		view.destroy();
 	});
 });

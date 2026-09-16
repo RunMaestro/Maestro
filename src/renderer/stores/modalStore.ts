@@ -205,7 +205,6 @@ export interface QuitConfirmModalData {
 	activeTerminalTasks?: string[];
 	activeCueRunCount?: number;
 	activeGroupChatCount?: number;
-	hasFeedbackDraft?: boolean;
 }
 
 export interface CueModalData {
@@ -1419,7 +1418,6 @@ export function useModalActions() {
 		// Quit Confirmation Modal
 		quitConfirmModalOpen,
 		activeTerminalTasks: (quitConfirmData?.activeTerminalTasks as string[]) ?? [],
-		hasFeedbackDraft: quitConfirmData?.hasFeedbackDraft ?? false,
 
 		// Rename Instance Modal
 		renameInstanceModalOpen,

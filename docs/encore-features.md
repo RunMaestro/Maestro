@@ -18,7 +18,18 @@ Click a card to open its detail view, then use the **Enable** / **Disable** butt
 
 ![A plugin's detail view, with its own settings and permission list](./screenshots/plugin-detail.png)
 
-Narrow the catalog with the category chips (Automation, Agents, Insights, UI, Data, Dev Tools, Other), the search box, or the **Only installed** toggle. **Sort** switches between A-Z and newest-first.
+Narrow the catalog with the chips (**Encore**, then Automation, Agents, Insights, UI, Data, Dev Tools, Other), the search box, or the **Only installed** toggle. **Sort** switches between A-Z and newest-first.
+
+### Encore vs Beta
+
+A built-in card carries one of two badges, and the badge says where the feature is in its life:
+
+| Badge      | Meaning                                                                                  |
+| ---------- | ---------------------------------------------------------------------------------------- |
+| **Encore** | Graduated. It ships enabled, and you turn it off if you do not want it.                  |
+| **Beta**   | Still proving itself. It is bundled but starts off, so nothing appears until you opt in. |
+
+**Encore** is not a category, so it sits before them in the chip row rather than among them: a graduated feature still belongs to Automation or Insights, and the chip cuts across all of them to answer "what ships on?" in one click. Community plugins are never Encore; one shows a Beta badge only when its own manifest declares it.
 
 <Note>
 Built-in features work with the community plugin subsystem switched off - that is the default, and the banner at the top of the tab says so. **Enable plugins** turns on loading of third-party plugins as well. You do not need it to use anything below.
@@ -50,6 +61,6 @@ Disabling a feature hides its surfaces; it does not delete what you already have
 
 ## For Developers
 
-Want to build a new Encore Feature? The architecture is designed for easy extension - add a flag, wire up the toggle, gate the access points, and your feature ships behind a clean opt-in.
+Want to build a new Encore Feature? The architecture is designed for easy extension - add a flag, wire up the toggle, gate the access points, and your feature ships behind a clean opt-in. Ship it off by default while it proves itself; flip its entry in `DEFAULT_ENCORE_FEATURES` (`src/shared/encoreFeatures.ts`) when it graduates.
 
 See the [Encore Features contributor guide](https://github.com/RunMaestro/Maestro/blob/main/CONTRIBUTING.md#encore-features-feature-gating) for the full implementation checklist, architecture details, and the canonical reference implementation (Director's Notes).

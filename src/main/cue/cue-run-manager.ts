@@ -25,11 +25,11 @@ import {
 	updateCueEventStatus,
 	safeRecordCueEvent,
 	safeUpdateCueEventStatus,
-	type CueEventFailureInfo,
+	type CueEventCompletionInfo,
 } from './cue-db';
 import type { CueQueuePersistence } from './cue-queue-persistence';
 import { SOURCE_OUTPUT_MAX_CHARS } from './cue-fan-in-tracker';
-import { sliceHeadByChars } from './cue-text-utils';
+import { buildCuePersistedOutput, sliceHeadByChars } from './cue-text-utils';
 import { captureException } from '../utils/sentry';
 import { substituteTemplateVariables, type TemplateContext } from '../../shared/templateVariables';
 import { buildCueTemplateContext } from './cue-template-context-builder';
@@ -40,21 +40,28 @@ import { runMaestroCliSend } from './cue-cli-executor';
 const MAX_CUE_ERROR_MESSAGE_CHARS = 2000;
 
 /**
- * Map a run result to the failure diagnostics persisted on its `cue_events`
- * row. `errorMessage` is the trimmed/capped stderr, set only for non-completed
- * runs (a success has nothing to explain); `exitCode` is always carried so the
+ * Map a run result to everything stamped on its `cue_events` row at completion.
+ *
+ * `errorMessage` is the trimmed/capped stderr, set only for non-completed runs
+ * (a success has nothing to explain); `exitCode` is always carried so the
  * activity log can distinguish failure modes - e.g. a maestro-p idle timeout
  * (3) from a first_byte_timeout (5) from a plain non-zero agent exit.
+ *
+ * `outputExcerpt` / `fullOutput` come from the same derivation the JSONL
+ * history writer uses, so the row and the history entry never disagree about
+ * what a run said. Both are null for a run that printed nothing - that is the
+ * signal the Activity Log and History filter on.
  */
-function failureInfoFromResult(
-	result: Pick<CueRunResult, 'status' | 'stderr' | 'exitCode'>
-): CueEventFailureInfo {
+function completionInfoFromResult(
+	result: Pick<CueRunResult, 'status' | 'stdout' | 'stderr' | 'exitCode'>
+): CueEventCompletionInfo {
 	const trimmed = result.stderr?.trim() ?? '';
 	const errorMessage =
 		result.status !== 'completed' && trimmed
 			? sliceHeadByChars(trimmed, MAX_CUE_ERROR_MESSAGE_CHARS)
 			: null;
-	return { errorMessage, exitCode: result.exitCode ?? null };
+	const { excerpt, fullOutput } = buildCuePersistedOutput(result);
+	return { errorMessage, exitCode: result.exitCode ?? null, outputExcerpt: excerpt, fullOutput };
 }
 
 /** Phase of a run in the state machine: running → stopping | finished */
@@ -518,7 +525,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 					runId,
 					runResult.status,
 					runResult.providerSessionId,
-					failureInfoFromResult(runResult)
+					completionInfoFromResult(runResult)
 				);
 				// Emit with the structured runFinished payload so live
 				// listeners (activity log, queue indicators) observe the
@@ -626,7 +633,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 							outputRunId,
 							outputStatus,
 							outputResult?.providerSessionId,
-							outputResult ? failureInfoFromResult(outputResult) : undefined
+							outputResult ? completionInfoFromResult(outputResult) : undefined
 						);
 					} catch (finalizeErr) {
 						captureException(finalizeErr, {
@@ -650,7 +657,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 						runId,
 						result.status,
 						result.providerSessionId,
-						failureInfoFromResult(result)
+						completionInfoFromResult(result)
 					);
 					deps.onLog(
 						'cue',
@@ -767,7 +774,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 						runId,
 						result.status,
 						result.providerSessionId,
-						failureInfoFromResult(result)
+						completionInfoFromResult(result)
 					);
 				} catch (err) {
 					deps.onLog('warn', `[CUE] Failed to update DB status for run ${runId}`);

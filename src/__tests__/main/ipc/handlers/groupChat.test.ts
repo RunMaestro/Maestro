@@ -14,6 +14,10 @@ import {
 	isExpectedGroomingFailure,
 	resolveParticipantSshRemoteConfig,
 } from '../../../../main/ipc/handlers/groupChat';
+import {
+	resetGroupChatQueueForTests,
+	waitForQueueSettledForTests,
+} from '../../../../main/group-chat/group-chat-queue';
 
 // Import types we need for mocking
 import type {
@@ -43,6 +47,9 @@ vi.mock('../../../../main/group-chat/group-chat-storage', () => ({
 	getGroupChatHistory: vi.fn(),
 	deleteGroupChatHistoryEntry: vi.fn(),
 	clearGroupChatHistory: vi.fn(),
+	// Added when the execution queue moved into main: the queue resolves
+	// `queue.json` through this, and `stopAll` now pauses the queue.
+	getGroupChatDir: vi.fn((id: string) => `/tmp/maestro-test-group-chats/${id}`),
 	getGroupChatHistoryFilePath: vi.fn(),
 }));
 
@@ -168,6 +175,10 @@ describe('groupChat IPC handlers', () => {
 			getAgentConfig: vi.fn(),
 		};
 
+		// The queue is module state in main, so it has to be cleared between tests
+		// or one test's items and armed drains leak into the next.
+		resetGroupChatQueueForTests();
+
 		// Register handlers
 		registerGroupChatHandlers(mockDeps);
 	});
@@ -194,6 +205,13 @@ describe('groupChat IPC handlers', () => {
 				// Moderator handlers
 				'groupChat:startModerator',
 				'groupChat:sendToModerator',
+				// Execution queue, now owned by main rather than each client.
+				'groupChat:submitMessage',
+				'groupChat:getQueue',
+				'groupChat:queueAdd',
+				'groupChat:queueRemove',
+				'groupChat:queueReorder',
+				'groupChat:queueResume',
 				'groupChat:stopModerator',
 				'groupChat:stopAll',
 				'groupChat:reportAutoRunComplete',
@@ -1359,6 +1377,40 @@ describe('groupChat IPC handlers', () => {
 					content: 'Test',
 				});
 			}).not.toThrow();
+		});
+	});
+	describe('W1: the execution queue is reachable through IPC and drained by main', () => {
+		// The end-to-end shape of the fix. A client submits; MAIN decides whether that
+		// is a send or a queue, and MAIN drains it when the moderator frees up. No
+		// renderer is involved in either decision, which is what makes a phone's queue
+		// visible to the desktop and delivered even if the phone goes away.
+		it('queues a submit while the moderator is busy and sends it once on idle', async () => {
+			const chatId = 'gc-w1';
+
+			// Busy: the emitter is the single funnel main records state from.
+			groupChatEmitters.emitStateChange?.(chatId, 'moderator-thinking');
+
+			const submit = handlers.get('groupChat:submitMessage')!;
+			const getQueueHandler = handlers.get('groupChat:getQueue')!;
+
+			await submit({} as never, chatId, {
+				id: 'w1-item',
+				timestamp: Date.now(),
+				text: 'queued while busy',
+			});
+
+			// Nothing was handed to the moderator, and every client can see the item.
+			const queued = (await getQueueHandler({} as never, chatId)) as {
+				items: Array<{ id: string }>;
+			};
+			expect(queued.items.map((i) => i.id)).toEqual(['w1-item']);
+
+			// The moderator frees up. Main drains on its own, with no client involved.
+			groupChatEmitters.emitStateChange?.(chatId, 'idle');
+			await waitForQueueSettledForTests();
+
+			const after = (await getQueueHandler({} as never, chatId)) as { items: unknown[] };
+			expect(after.items).toHaveLength(0);
 		});
 	});
 });

@@ -507,6 +507,60 @@ describe('useAgentErrorListener', () => {
 		expect(useRetryStore.getState().retries['sess-2:tab-2']).toBeUndefined();
 	});
 
+	// An Auto Run task process owns no AI tab. Before this guard the tab fallback
+	// resolved to getActiveTab(), so killing an Auto Run painted the batch's error
+	// into the user's unrelated chat tab and flipped the whole agent to `error`.
+	it('leaves the active chat tab alone when a running Auto Run errors', () => {
+		const tab = createMockAITab({ id: 'tab-1' });
+		const session = createMockSession({ id: 'sess-1', aiTabs: [tab], activeTabId: 'tab-1' });
+		useSessionStore.setState({ sessions: [session] } as any);
+
+		const pauseBatchOnError = vi.fn();
+		const deps = {
+			...makeDeps(),
+			getBatchStateRef: {
+				current: () => ({
+					isRunning: true,
+					errorPaused: false,
+					documents: ['plan.md'],
+					currentDocumentIndex: 0,
+				}),
+			},
+			pauseBatchOnErrorRef: { current: pauseBatchOnError },
+		} as any;
+
+		renderHook(() => useAgentErrorListener(deps));
+		handler!('sess-1-batch-1700000000000', { ...baseError, type: 'agent_crashed' });
+
+		const updated = useSessionStore.getState().sessions[0];
+		expect(updated.state).not.toBe('error');
+		expect(updated.agentError).toBeUndefined();
+		expect(updated.agentErrorPaused ?? false).toBe(false);
+		expect(updated.aiTabs[0].logs).toHaveLength(tab.logs.length);
+		expect(updated.aiTabs[0].agentError).toBeUndefined();
+
+		// The Auto Run banner is the surface, not the blocking modal.
+		expect(pauseBatchOnError).toHaveBeenCalled();
+		expect(useModalStore.getState().modals.get('agentError')?.open ?? false).toBe(false);
+	});
+
+	// session_not_found nulls the target tab's agentSessionId. Borrowing the
+	// active tab for a batch error severed an unrelated conversation's resume
+	// chain, which is unrecoverable once the process is gone.
+	it('never clears the active chat tab agentSessionId for a batch error', () => {
+		const tab = createMockAITab({ id: 'tab-1', agentSessionId: 'claude-abc' });
+		const session = createMockSession({ id: 'sess-1', aiTabs: [tab], activeTabId: 'tab-1' });
+		useSessionStore.setState({ sessions: [session] } as any);
+
+		// No batch state registered: the straggler path still must not touch the tab.
+		renderHook(() => useAgentErrorListener(makeDeps()));
+		handler!('sess-1-batch-1700000000000', { ...baseError, type: 'session_not_found' });
+
+		const updated = useSessionStore.getState().sessions[0];
+		expect(updated.aiTabs[0].agentSessionId).toBe('claude-abc');
+		expect(updated.aiTabs[0].logs).toHaveLength(tab.logs.length);
+	});
+
 	it('skips synopsis-process errors', () => {
 		const tab = createMockAITab({ id: 'tab-1' });
 		const session = createMockSession({ id: 'sess-1', aiTabs: [tab] });

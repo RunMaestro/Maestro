@@ -56,6 +56,13 @@ import {
 export interface RightPanelHandle {
 	refreshHistoryPanel: () => void;
 	focusAutoRun: () => void;
+	/**
+	 * Put real DOM focus on the file tree. The History and Auto Run tabs take
+	 * focus when they become active; Files did not, so "go to files" left the
+	 * caret behind in whatever editor the user came from while the app believed
+	 * the Files tab was focused.
+	 */
+	focusFileTree: () => void;
 	toggleAutoRunExpanded: () => void;
 	openAutoRunResetTasksModal: () => void;
 	getAutoRunCompletedTaskCount: () => number;
@@ -377,6 +384,13 @@ export const RightPanel = memo(
 				},
 				focusAutoRun: () => {
 					autoRunRef.current?.focus();
+				},
+				focusFileTree: () => {
+					// Deferred a frame so the panel is open and the tree is mounted
+					// before we reach for it, matching the history/autorun effects.
+					requestAnimationFrame(() => {
+						fileTreeContainerRef.current?.focus();
+					});
 				},
 				toggleAutoRunExpanded,
 				openAutoRunResetTasksModal: () => {

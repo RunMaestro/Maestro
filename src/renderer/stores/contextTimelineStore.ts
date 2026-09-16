@@ -27,7 +27,7 @@
 
 import { create } from 'zustand';
 import { generateId } from '../utils/ids';
-import type { ModalSize } from '../utils/modalSizing';
+import { clampModalSize, normalizeModalSize, type ModalSize } from '../utils/modalSizing';
 
 /**
  * One turn's normalized context accounting. The provider-specific math
@@ -108,6 +108,28 @@ export type ContextTimelineHydrationPoint = ContextTimelinePointInput & { timest
  * The popover's label/value rows have room to spare at the same width.
  */
 export const CONTEXT_SURFACE_WIDTH = 480;
+/** Narrower than this and the Timeline's breakdown line starts wrapping again. */
+export const CONTEXT_SURFACE_MIN_WIDTH = 380;
+/** Key under which the Timeline's dragged size is remembered (settingsStore.modalSizes). */
+export const CONTEXT_TIMELINE_RESIZE_KEY = 'context-timeline';
+
+/**
+ * The width both context surfaces draw at: the width the user dragged the
+ * Timeline to, or CONTEXT_SURFACE_WIDTH when they never did. Clamped with the
+ * same bounds the Timeline's resize hook applies, so the two cannot disagree.
+ *
+ * The popover used to draw at the constant alone. Once the Timeline had been
+ * dragged narrower, hovering showed a wider box than the one a click swapped it
+ * for, and the popover could not be resized at all.
+ */
+export function resolveContextSurfaceWidth(savedSize: unknown): number {
+	const saved = normalizeModalSize(savedSize);
+	return clampModalSize(
+		{ width: saved?.width ?? CONTEXT_SURFACE_WIDTH, height: CONTEXT_SURFACE_MIN_WIDTH },
+		{ minSize: { width: CONTEXT_SURFACE_MIN_WIDTH } }
+	).width;
+}
+
 /** Gap between the bottom of the gauge and the top of either surface (px). */
 export const CONTEXT_SURFACE_GAP = 8;
 /**

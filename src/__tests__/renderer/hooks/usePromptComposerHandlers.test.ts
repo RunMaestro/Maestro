@@ -143,7 +143,7 @@ const initialGroupChatState = {
 	moderatorUsage: null,
 	groupChatStates: new Map(),
 	allGroupChatParticipantStates: new Map(),
-	groupChatExecutionQueue: [],
+	groupChatQueues: {},
 	groupChatReadOnlyMode: false,
 	groupChatRightTab: 'participants' as const,
 	groupChatParticipantColors: {},

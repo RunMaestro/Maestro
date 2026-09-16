@@ -1378,6 +1378,10 @@ program
 //
 // Addressed by SURFACE rather than by settings key: `settings set` can already
 // write these ten keys, but only if you know their names and the
+// Display / typography commands
+//
+// Addressed by SURFACE rather than by settings key: `settings set` can already
+// write these twelve keys, but only if you know their names and the
 // empty-string-means-inherit convention. These validate against the shared
 // registry, so a scripted setup can put the app in a known typographic state.
 const display = program
@@ -1387,7 +1391,7 @@ const display = program
 display
 	.command('font [surface] [value]')
 	.description(
-		'Get or set a surface font. Surfaces: interface, terminal, chat, filePreview, fileEditor. Pass "inherit" (or "inherit:terminal") to follow a root surface. Omit the surface to list all.'
+		'Get or set a surface font. Surfaces: interface, terminal, chat, filePreview, documentGraph, fileEditor. Pass "inherit" (or "inherit:terminal") to follow a root surface. Omit the surface to list all.'
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((surface: string | undefined, value: string | undefined, options: { json?: boolean }) => {

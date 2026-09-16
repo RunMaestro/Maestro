@@ -1,9 +1,9 @@
 /**
  * Typography surfaces - the single registry of "what can carry its own font".
  *
- * Every consumer reads this rather than re-listing the five surfaces: the
+ * Every consumer reads this rather than re-listing the six surfaces: the
  * Settings pickers, the CSS custom properties the renderer publishes, the
- * presets, the CLI verbs, and the web client. Adding a sixth surface means
+ * presets, the CLI verbs, and the web client. Adding another surface means
  * adding one entry here, not touching eight files that each know four of them.
  *
  * Two settings back each surface:

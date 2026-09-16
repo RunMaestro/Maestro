@@ -151,6 +151,59 @@ describe('pipelineValidation', () => {
 			expect(validatePipelines([pipe])).toEqual([]);
 		});
 
+		it('accepts a notify edge with no prompt', () => {
+			// `action: notify` surfaces a toast through the agent and never
+			// spawns it, so `cue-config-validator.ts` allows an empty prompt.
+			// Demanding one here reported a permanent phantom error, and
+			// because `usePipelinePersistence` aborts on ANY error, that one
+			// subscription blocked Save for every pipeline in the editor.
+			const t = triggerNode('t1', 'time.once');
+			const a = agentNode('a1', { sessionName: 'Golf' });
+			const notifyEdge: PipelineEdge = {
+				id: 'e1',
+				source: 't1',
+				target: 'a1',
+				mode: 'pass',
+				notify: { message: 'Heads up', sticky: true },
+			};
+			expect(validatePipelines([pipeline('Notify', [t, a], [notifyEdge])])).toEqual([]);
+		});
+
+		it('accepts an agent fed by both a prompt edge and a notify edge', () => {
+			// The exact pair `maestro-cli cue schedule --prompt --notify`
+			// writes: two subs, one trigger, one agent, two edges.
+			const t = triggerNode('t1', 'time.once');
+			const a = agentNode('a1', { sessionName: 'Hotel' });
+			const notifyEdge: PipelineEdge = {
+				id: 'e2',
+				source: 't1',
+				target: 'a1',
+				mode: 'pass',
+				notify: { message: 'Heads up' },
+			};
+			const pipe = pipeline('Pair', [t, a], [edge('e1', 't1', 'a1', 'do the work'), notifyEdge]);
+			expect(validatePipelines([pipe])).toEqual([]);
+		});
+
+		it('still flags a prompt-less edge that carries no notify config', () => {
+			// Guard the exemption's blast radius: only `notify` excuses a
+			// missing prompt, not any prompt-less edge.
+			const t1 = triggerNode('t1', 'time.once');
+			const t2 = triggerNode('t2', 'app.startup');
+			const a = agentNode('a1', { sessionName: 'India' });
+			const notifyEdge: PipelineEdge = {
+				id: 'e1',
+				source: 't1',
+				target: 'a1',
+				mode: 'pass',
+				notify: { message: 'Heads up' },
+			};
+			const errors = validatePipelines([
+				pipeline('Mixed', [t1, t2, a], [notifyEdge, edge('e2', 't2', 'a1')]),
+			]);
+			expect(errors.some((e) => /agent "India" is missing a prompt/.test(e))).toBe(true);
+		});
+
 		it('flags chain agent with upstream-output disabled and no node prompt', () => {
 			const t = triggerNode('t1', 'app.startup');
 			const a1 = agentNode('a1', { sessionName: 'Echo', inputPrompt: 'Start' });

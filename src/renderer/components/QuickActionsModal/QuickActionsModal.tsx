@@ -1,6 +1,5 @@
-import React, { memo, useState, useEffect, useRef, useCallback } from 'react';
+import React, { memo, useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import type { Session } from '../../types';
 import type { QuickAction, QuickActionsModalProps } from './types';
 import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
@@ -18,6 +17,8 @@ import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { Z_LAYERS } from '../../constants/zLayers';
 import { gitService } from '../../services/git';
 import { useWindowContextOptional } from '../../contexts/WindowContext';
+import { filterSessionsVisibleInSidebar } from '../../utils/sessionVisibility';
+import { revealAgentInSidebar } from '../../services/agentNavigation';
 import { useGitAgentActions } from '../../hooks/git/useGitAgentActions';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { getOpenInLabel } from '../../utils/platformUtils';
@@ -222,6 +223,17 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const showStarredSessionsSection = useSettingsStore((s) => s.showStarredSessionsSection);
 	const setShowStarredSessionsSection = useSettingsStore((s) => s.setShowStarredSessionsSection);
 	const enterToSendAI = useSettingsStore((s) => s.enterToSendAI);
+	// Agents the Left Bar does not render must not be jump targets either. Pianola
+	// persists in the session store once its Encore flag is off, and the palette's
+	// agent list is built from the raw `sessions` array - so a fuzzy match on its
+	// name handed the user an agent with no row to come back to (and, before the
+	// render gate in MainPanel, the whole Pianola Dashboard for a disabled
+	// feature). Same predicate the Left Bar and Cmd+[ / Cmd+] cycling use.
+	const pianolaEnabled = useSettingsStore((s) => s.encoreFeatures?.pianola);
+	const switchableSessions = useMemo(
+		() => filterSessionsVisibleInSidebar(sessions, { pianolaEnabled }),
+		[sessions, pianolaEnabled]
+	);
 	const storeSetHistorySearchFilterOpen = useUIStore((s) => s.setHistorySearchFilterOpen);
 	const setSuccessFlashNotification = useUIStore((s) => s.setSuccessFlashNotification);
 	const bookmarksCollapsed = useUIStore((s) => s.bookmarksCollapsed);
@@ -458,25 +470,9 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		setQuickActionOpen(false);
 	};
 
-	// Reveal a jumped-to agent without unnecessarily expanding sections.
-	// - Not bookmarked: expand the parent group if collapsed (existing behavior).
-	// - Bookmarked: prefer whichever section the agent is already visible in. If
-	//   neither bookmarks nor the parent group is open, expand bookmarks (the
-	//   pinned bookmark row is the lighter-weight reveal of the two).
-	const revealJumpTarget = (s: Session) => {
-		if (!s.bookmarked) {
-			if (s.groupId) {
-				setGroups((prev) =>
-					prev.map((g) => (g.id === s.groupId && g.collapsed ? { ...g, collapsed: false } : g))
-				);
-			}
-			return;
-		}
-		const groupOpen = s.groupId ? !groups.find((g) => g.id === s.groupId)?.collapsed : false;
-		if (bookmarksCollapsed && !groupOpen) {
-			setBookmarksCollapsed(false);
-		}
-	};
+	// Reveal a jumped-to agent without unnecessarily expanding sections. Shared
+	// with the Usage Dashboard's Jump to Agent action - see agentNavigation.
+	const revealJumpTarget = revealAgentInSidebar;
 
 	const sessionActions = buildSessionJumpCommands({
 		sessions,
@@ -784,6 +780,10 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			shortcuts: {
 				viewGitDiff: shortcuts.viewGitDiff,
 				viewGitLog: shortcuts.viewGitLog,
+				gitPull: shortcuts.gitPull,
+				gitPush: shortcuts.gitPush,
+				gitChangeBranch: shortcuts.gitChangeBranch,
+				gitCreatePR: shortcuts.gitCreatePR,
 				refreshGitFileState: shortcuts.refreshGitFileState,
 			},
 			gitService,
@@ -894,7 +894,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 
 	const agentActions = [
 		...buildAgentSwitcherCommands({
-			sessions,
+			sessions: switchableSessions,
 			activeBatchSessionIds,
 			setActiveSessionId,
 			revealJumpTarget,

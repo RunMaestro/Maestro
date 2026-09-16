@@ -183,16 +183,19 @@ A built-in reference guide explaining all Director's Notes features, entry types
 
 ## Settings
 
-Access Director's Notes settings via **Settings > Encore Features** (enable Director's Notes first):
+Access Director's Notes settings via **Settings > Encore Features**:
 
-| Setting              | Description                                                                                        |
-| -------------------- | -------------------------------------------------------------------------------------------------- |
-| **AI Provider**      | Which agent generates the AI Overview synopsis                                                     |
-| **Default Lookback** | Default number of days for the AI Overview lookback slider                                         |
-| **Default Mode**     | Whether the AI Overview opens in Rich or Plain mode                                                |
-| **Custom Path**      | Optional custom binary path for the synopsis provider                                              |
-| **Custom Args**      | Optional custom arguments for the synopsis provider                                                |
-| **Ideal End State**  | Optional goal description that prioritizes named projects and adds a Progress section to the notes |
+| Setting                              | Description                                                                                         |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------- |
+| **Use the first available provider** | On by default. Picks an installed provider each time the synopsis runs, so you never have to choose |
+| **AI Provider**                      | Which agent generates the AI Overview synopsis. Only used when the setting above is off             |
+| **Default Lookback**                 | Default number of days for the AI Overview lookback slider                                          |
+| **Default Mode**                     | Whether the AI Overview opens in Rich or Plain mode                                                 |
+| **Custom Path**                      | Optional custom binary path for the synopsis provider                                               |
+| **Custom Args**                      | Optional custom arguments for the synopsis provider                                                 |
+| **Ideal End State**                  | Optional goal description that prioritizes named projects and adds a Progress section to the notes  |
+
+Auto-selection resolves at generation time against the providers actually installed, in this order: Claude Code, Codex, OpenCode, Factory Droid, Copilot-CLI. Turn it off to pin the synopsis to one agent - the picker, Custom Path, and Custom Args only apply to a pinned provider.
 
 ## Tips
 

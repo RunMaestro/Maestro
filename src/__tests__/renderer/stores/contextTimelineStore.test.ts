@@ -13,6 +13,9 @@ import {
 	useContextTimelineStore,
 	selectPoints,
 	MAX_POINTS_PER_SESSION,
+	CONTEXT_SURFACE_MIN_WIDTH,
+	CONTEXT_SURFACE_WIDTH,
+	resolveContextSurfaceWidth,
 	type ContextTimelinePointInput,
 } from '../../../renderer/stores/contextTimelineStore';
 
@@ -284,5 +287,23 @@ describe('contextTimelineStore', () => {
 		expect(buffer.points).toHaveLength(0);
 		expect(buffer.trimmed).toBe(true);
 		expect(buffer.hydrated).toBe(true);
+	});
+});
+
+describe('resolveContextSurfaceWidth', () => {
+	it('uses the shared default when the Timeline was never resized', () => {
+		expect(resolveContextSurfaceWidth(undefined)).toBe(CONTEXT_SURFACE_WIDTH);
+	});
+
+	it('follows the width the user dragged the Timeline to', () => {
+		expect(resolveContextSurfaceWidth({ width: 430, height: 502 })).toBe(430);
+	});
+
+	it('never goes narrower than the Timeline allows', () => {
+		expect(resolveContextSurfaceWidth({ width: 200, height: 502 })).toBe(CONTEXT_SURFACE_MIN_WIDTH);
+	});
+
+	it('ignores a malformed saved size', () => {
+		expect(resolveContextSurfaceWidth({ width: 'wide', height: 502 })).toBe(CONTEXT_SURFACE_WIDTH);
 	});
 });

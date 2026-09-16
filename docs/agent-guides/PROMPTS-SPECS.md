@@ -2,7 +2,7 @@
 
 # Prompts and Specification Systems
 
-Maestro's prompt system consists of Markdown templates compiled to TypeScript at build time, a template variable substitution engine, and two specification management systems (SpecKit and OpenSpec) that layer user-customizable prompts on top of bundled defaults.
+Maestro's prompt system consists of Markdown templates loaded from disk at runtime, a template variable substitution engine, and two specification management systems (SpecKit and OpenSpec) that layer user-customizable prompts on top of bundled defaults.
 
 ## Shell examples in prompts must live in code fences
 
@@ -27,6 +27,10 @@ Resources/prompts/core/*.md
     v  (read at startup, user customizations layered on top)
 src/main/prompt-manager.ts
 ```
+
+<!-- doc-refs-ignore -->
+
+An earlier build step compiled these templates into `src/generated/prompts.ts`. Both that generator and the generated file are gone; the `Export` column below names the constant each prompt used to produce and is retained only as a cross-reference for older code and docs.
 
 ### Template Inventory
 
@@ -422,7 +426,8 @@ Registered in `src/main/ipc/handlers/openspec.ts`:
 ### At Package Time
 
 1. `package.json`'s `extraResources` copies `src/prompts/` to `Resources/prompts/core/` for every platform
-2. Nothing is compiled; the `.md` files ship as-is
+2. `src/prompts/speckit/` and `src/prompts/openspec/` are copied alongside it
+3. Nothing is compiled; the `.md` files ship as-is
 
 ### At Runtime (Standard Prompts)
 

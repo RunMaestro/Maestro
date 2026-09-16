@@ -38,6 +38,14 @@ const mockGroupChat = {
 	onModeratorUsage: vi.fn().mockReturnValue(() => {}),
 	onParticipantState: vi.fn().mockReturnValue(() => {}),
 	onModeratorSessionIdChanged: vi.fn().mockReturnValue(() => {}),
+	// The queue moved into main, so the hook loads it on open and subscribes to
+	// the broadcast. Without these the hook throws before it does anything else.
+	getQueue: vi.fn().mockResolvedValue({ items: [], paused: false }),
+	submitMessage: vi.fn().mockResolvedValue({ items: [], paused: false }),
+	queueRemove: vi.fn().mockResolvedValue({ state: { items: [], paused: false }, refused: false }),
+	queueReorder: vi.fn().mockResolvedValue({ state: { items: [], paused: false }, refused: false }),
+	queueResume: vi.fn().mockResolvedValue({ items: [], paused: false }),
+	onQueueState: vi.fn().mockReturnValue(() => {}),
 };
 
 // ---------------------------------------------------------------------------
@@ -53,7 +61,7 @@ const initialGroupChatState = {
 	groupChatStates: new Map(),
 	allGroupChatParticipantStates: new Map(),
 	unreadGroupChatIds: new Set<string>(),
-	groupChatExecutionQueue: [],
+	groupChatQueues: {},
 	groupChatReadOnlyMode: false,
 	groupChatRightTab: 'participants' as const,
 	groupChatParticipantColors: {},
@@ -266,6 +274,52 @@ describe('useGroupChatHandlers', () => {
 			const ps = useGroupChatStore.getState().participantStates;
 			expect(ps.get('Agent A')).toBe('working');
 			expect(ps.get('Agent B')).toBe('idle');
+		});
+
+		// The queue is main's, so opening a room has to ASK for it rather than
+		// trusting whatever this client happens to hold: a client can have been
+		// asleep, reloaded, or never seen the chat before.
+		it('pulls the queue from main rather than trusting a local copy', async () => {
+			const chat = { id: 'gc-1', name: 'Chat', participants: [] };
+			mockGroupChat.load.mockResolvedValueOnce(chat);
+			mockGroupChat.getMessages.mockResolvedValueOnce([]);
+			mockGroupChat.startModerator.mockResolvedValueOnce(null);
+			mockGroupChat.getQueue.mockResolvedValueOnce({
+				items: [{ id: 'q-9', timestamp: 7, text: 'queued elsewhere' }],
+				paused: true,
+			});
+			// A stale local mirror that must be replaced, not merged with.
+			useGroupChatStore.setState({
+				groupChatQueues: { 'gc-1': { items: [], paused: false } },
+			});
+
+			const { result } = renderHook(() => useGroupChatHandlers());
+			await act(async () => {
+				await result.current.handleOpenGroupChat('gc-1');
+			});
+
+			expect(mockGroupChat.getQueue).toHaveBeenCalledWith('gc-1');
+			expect(useGroupChatStore.getState().groupChatQueues['gc-1']).toEqual({
+				items: [{ id: 'q-9', timestamp: 7, text: 'queued elsewhere' }],
+				paused: true,
+			});
+		});
+
+		// A missing queue must not stop the room opening: a web client can be on an
+		// older preload with no queue verbs, and the chat is still readable.
+		it('still opens the chat when the queue read fails', async () => {
+			const chat = { id: 'gc-1', name: 'Chat', participants: [] };
+			mockGroupChat.load.mockResolvedValueOnce(chat);
+			mockGroupChat.getMessages.mockResolvedValueOnce([]);
+			mockGroupChat.startModerator.mockResolvedValueOnce(null);
+			mockGroupChat.getQueue.mockRejectedValueOnce(new Error('no such handler'));
+
+			const { result } = renderHook(() => useGroupChatHandlers());
+			await act(async () => {
+				await result.current.handleOpenGroupChat('gc-1');
+			});
+
+			expect(useGroupChatStore.getState().activeGroupChatId).toBe('gc-1');
 		});
 
 		it('restores groupChatState from groupChatStates map', async () => {
@@ -707,177 +761,174 @@ describe('useGroupChatHandlers', () => {
 	// handleSendGroupChatMessage
 	// -----------------------------------------------------------------------
 	describe('handleSendGroupChatMessage', () => {
-		it('sends message to moderator when idle', async () => {
-			useGroupChatStore.setState({
-				activeGroupChatId: 'gc-1',
-				groupChatState: 'idle',
-				groupChats: [{ id: 'gc-1', name: 'Chat' } as any],
-			});
-
+		// The renderer no longer decides between sending and queueing, and no longer
+		// writes the queue. Main owns both, because a client decides from its own
+		// copy and a stale copy sends directly while items are already waiting -
+		// putting the newest message ahead of older ones. These tests therefore
+		// assert the hand-off rather than the old local branch.
+		it('hands the message to main rather than deciding locally', async () => {
+			useGroupChatStore.setState({ activeGroupChatId: 'gc-1', groupChatState: 'idle' });
 			const { result } = renderHook(() => useGroupChatHandlers());
+
 			await act(async () => {
-				await result.current.handleSendGroupChatMessage('Hello', undefined, false);
+				await result.current.handleSendGroupChatMessage('hello');
 			});
 
-			expect(mockGroupChat.sendToModerator).toHaveBeenCalledWith('gc-1', 'Hello', undefined, false);
-			expect(useGroupChatStore.getState().groupChatState).toBe('moderator-thinking');
-		});
-
-		it('sends message with images', async () => {
-			useGroupChatStore.setState({
-				activeGroupChatId: 'gc-1',
-				groupChatState: 'idle',
-				groupChats: [{ id: 'gc-1', name: 'Chat' } as any],
-			});
-
-			const { result } = renderHook(() => useGroupChatHandlers());
-			await act(async () => {
-				await result.current.handleSendGroupChatMessage('Look at this', ['img1.png', 'img2.png']);
-			});
-
-			expect(mockGroupChat.sendToModerator).toHaveBeenCalledWith(
+			expect(mockGroupChat.submitMessage).toHaveBeenCalledWith(
 				'gc-1',
-				'Look at this',
-				['img1.png', 'img2.png'],
-				undefined
+				expect.objectContaining({ text: 'hello' })
 			);
+			// The old path called this directly; main owns the send now.
+			expect(mockGroupChat.sendToModerator).not.toHaveBeenCalled();
 		});
 
-		it('updates groupChatStates map when sending', async () => {
-			useGroupChatStore.setState({
-				activeGroupChatId: 'gc-1',
-				groupChatState: 'idle',
-				groupChats: [{ id: 'gc-1', name: 'Chat' } as any],
-				groupChatStates: new Map(),
-			});
-
-			const { result } = renderHook(() => useGroupChatHandlers());
-			await act(async () => {
-				await result.current.handleSendGroupChatMessage('Hello');
-			});
-
-			expect(useGroupChatStore.getState().groupChatStates.get('gc-1')).toBe('moderator-thinking');
-		});
-
-		it('queues message when chat is busy', async () => {
+		it('hands it to main even while the moderator is busy', async () => {
 			useGroupChatStore.setState({
 				activeGroupChatId: 'gc-1',
 				groupChatState: 'moderator-thinking',
-				groupChats: [{ id: 'gc-1', name: 'Chat' } as any],
 			});
-
 			const { result } = renderHook(() => useGroupChatHandlers());
+
 			await act(async () => {
-				await result.current.handleSendGroupChatMessage('Queued message');
+				await result.current.handleSendGroupChatMessage('queued please');
 			});
 
-			expect(mockGroupChat.sendToModerator).not.toHaveBeenCalled();
-			const queue = useGroupChatStore.getState().groupChatExecutionQueue;
-			expect(queue.length).toBe(1);
-			expect(queue[0].text).toBe('Queued message');
-		});
-
-		it('queued item has correct structure', async () => {
-			useGroupChatStore.setState({
-				activeGroupChatId: 'gc-1',
-				groupChatState: 'agent-working',
-				groupChats: [{ id: 'gc-1', name: 'My Chat' } as any],
-			});
-
-			const { result } = renderHook(() => useGroupChatHandlers());
-			await act(async () => {
-				await result.current.handleSendGroupChatMessage('msg', ['img.png'], true);
-			});
-
-			const queue = useGroupChatStore.getState().groupChatExecutionQueue;
-			expect(queue[0]).toEqual(
-				expect.objectContaining({
-					text: 'msg',
-					images: ['img.png'],
-					readOnlyMode: true,
-					tabId: 'gc-1',
-					tabName: 'My Chat',
-					type: 'message',
-				})
+			// No local branch: busy or idle, the decision belongs to main.
+			expect(mockGroupChat.submitMessage).toHaveBeenCalledWith(
+				'gc-1',
+				expect.objectContaining({ text: 'queued please' })
 			);
-			expect(queue[0].id).toBeDefined();
-			expect(queue[0].timestamp).toBeDefined();
 		});
 
-		it('does nothing when no active group chat', async () => {
+		it('carries images and the read-only flag through', async () => {
+			useGroupChatStore.setState({ activeGroupChatId: 'gc-1', groupChatState: 'idle' });
 			const { result } = renderHook(() => useGroupChatHandlers());
+
 			await act(async () => {
-				await result.current.handleSendGroupChatMessage('test');
+				await result.current.handleSendGroupChatMessage('with pics', ['img-1'], true);
 			});
 
-			expect(mockGroupChat.sendToModerator).not.toHaveBeenCalled();
+			expect(mockGroupChat.submitMessage).toHaveBeenCalledWith(
+				'gc-1',
+				expect.objectContaining({ images: ['img-1'], readOnlyMode: true })
+			);
+		});
+
+		it('does nothing without an active chat', async () => {
+			useGroupChatStore.setState({ activeGroupChatId: null });
+			const { result } = renderHook(() => useGroupChatHandlers());
+
+			await act(async () => {
+				await result.current.handleSendGroupChatMessage('nowhere');
+			});
+
+			expect(mockGroupChat.submitMessage).not.toHaveBeenCalled();
 		});
 	});
 
 	// -----------------------------------------------------------------------
-	// handleGroupChatDraftChange
-	// -----------------------------------------------------------------------
-	describe('handleGroupChatDraftChange', () => {
-		it('updates draft message for the active group chat', () => {
-			useGroupChatStore.setState({
-				activeGroupChatId: 'gc-1',
-				groupChats: [{ id: 'gc-1', name: 'Chat', draftMessage: '' } as any],
-			});
-
-			const { result } = renderHook(() => useGroupChatHandlers());
-			act(() => result.current.handleGroupChatDraftChange('new draft'));
-
-			expect(useGroupChatStore.getState().groupChats[0].draftMessage).toBe('new draft');
-		});
-
-		it('does nothing when no active group chat', () => {
-			useGroupChatStore.setState({
-				groupChats: [{ id: 'gc-1', name: 'Chat', draftMessage: '' } as any],
-			});
-
-			const { result } = renderHook(() => useGroupChatHandlers());
-			act(() => result.current.handleGroupChatDraftChange('test'));
-
-			expect(useGroupChatStore.getState().groupChats[0].draftMessage).toBe('');
-		});
-	});
-
-	// -----------------------------------------------------------------------
-	// Queue item management
+	// queue item management
 	// -----------------------------------------------------------------------
 	describe('queue item management', () => {
-		it('handleRemoveGroupChatQueueItem removes item by id', () => {
-			useGroupChatStore.setState({
-				groupChatExecutionQueue: [
-					{ id: 'q-1', text: 'first' } as any,
-					{ id: 'q-2', text: 'second' } as any,
-				],
+		// Remove and reorder are IPC calls now. Main may REFUSE either when the
+		// item is already in flight, and the client has to say so rather than
+		// silently redrawing the row.
+		it('asks main to remove an item', async () => {
+			useGroupChatStore.setState({ activeGroupChatId: 'gc-1' });
+			const { result } = renderHook(() => useGroupChatHandlers());
+
+			await act(async () => {
+				await result.current.handleRemoveGroupChatQueueItem('q-1');
 			});
 
-			const { result } = renderHook(() => useGroupChatHandlers());
-			act(() => result.current.handleRemoveGroupChatQueueItem('q-1'));
-
-			const queue = useGroupChatStore.getState().groupChatExecutionQueue;
-			expect(queue.length).toBe(1);
-			expect(queue[0].id).toBe('q-2');
+			expect(mockGroupChat.queueRemove).toHaveBeenCalledWith('gc-1', 'q-1');
 		});
 
-		it('handleReorderGroupChatQueueItems reorders items', () => {
-			useGroupChatStore.setState({
-				groupChatExecutionQueue: [
-					{ id: 'q-1', text: 'first' } as any,
-					{ id: 'q-2', text: 'second' } as any,
-					{ id: 'q-3', text: 'third' } as any,
-				],
+		// A refusal needs no extra state: it can only happen while an item is in
+		// flight, and the composer already shows "Sending, cannot remove" for that.
+		// The call still has to be made, and the item still has to survive it.
+		it('leaves a refused item in place rather than dropping it locally', async () => {
+			useGroupChatStore.setState({ activeGroupChatId: 'gc-1' });
+			mockGroupChat.queueRemove.mockResolvedValueOnce({
+				state: { items: [{ id: 'q-1', timestamp: 1, text: 'in flight' }], paused: false },
+				refused: true,
+			});
+			const { result } = renderHook(() => useGroupChatHandlers());
+
+			await act(async () => {
+				await result.current.handleRemoveGroupChatQueueItem('q-1');
 			});
 
-			const { result } = renderHook(() => useGroupChatHandlers());
-			act(() => result.current.handleReorderGroupChatQueueItems(0, 2));
+			expect(mockGroupChat.queueRemove).toHaveBeenCalledWith('gc-1', 'q-1');
+		});
 
-			const queue = useGroupChatStore.getState().groupChatExecutionQueue;
-			expect(queue[0].id).toBe('q-2');
-			expect(queue[1].id).toBe('q-3');
-			expect(queue[2].id).toBe('q-1');
+		it('reorders by item id, not by the index this client last rendered', async () => {
+			useGroupChatStore.setState({
+				activeGroupChatId: 'gc-1',
+				groupChatQueues: {
+					'gc-1': {
+						items: [
+							{ id: 'q-1', timestamp: 1, text: 'a' },
+							{ id: 'q-2', timestamp: 2, text: 'b' },
+						],
+						paused: false,
+					},
+				},
+			});
+			const { result } = renderHook(() => useGroupChatHandlers());
+
+			await act(async () => {
+				await result.current.handleReorderGroupChatQueueItems(0, 1);
+			});
+
+			expect(mockGroupChat.queueReorder).toHaveBeenCalledWith('gc-1', 'q-1', 1);
+		});
+
+		it('asks main to resume a paused queue', async () => {
+			useGroupChatStore.setState({ activeGroupChatId: 'gc-1' });
+			const { result } = renderHook(() => useGroupChatHandlers());
+
+			await act(async () => {
+				await result.current.handleResumeGroupChatQueue();
+			});
+
+			expect(mockGroupChat.queueResume).toHaveBeenCalledWith('gc-1');
+		});
+
+		// The broadcast is the only thing that keeps two clients agreeing about
+		// what is waiting, so the subscription writing into the mirror is the whole
+		// point of the renderer half.
+		it('mirrors a broadcast queue into the store, keyed by chat', () => {
+			let emit: ((id: string, state: { items: unknown[]; paused: boolean }) => void) | undefined;
+			mockGroupChat.onQueueState.mockImplementationOnce((cb: typeof emit) => {
+				emit = cb;
+				return () => {};
+			});
+
+			renderHook(() => useGroupChatHandlers());
+
+			act(() => {
+				emit?.('gc-2', {
+					items: [{ id: 'q-1', timestamp: 1, text: 'from another client' }],
+					paused: false,
+				});
+			});
+
+			// Written under the id the broadcast names, not under whichever chat is open.
+			expect(useGroupChatStore.getState().groupChatQueues['gc-2']).toEqual({
+				items: [{ id: 'q-1', timestamp: 1, text: 'from another client' }],
+				paused: false,
+			});
+		});
+
+		it('unsubscribes from the broadcast on unmount', () => {
+			const unsub = vi.fn();
+			mockGroupChat.onQueueState.mockReturnValueOnce(unsub);
+
+			const { unmount } = renderHook(() => useGroupChatHandlers());
+			unmount();
+
+			expect(unsub).toHaveBeenCalled();
 		});
 	});
 
@@ -1434,69 +1485,15 @@ describe('useGroupChatHandlers', () => {
 	});
 
 	// -----------------------------------------------------------------------
-	// Execution queue processor effect
+	// Execution queue drain: deliberately NOT here any more
 	// -----------------------------------------------------------------------
-	describe('execution queue processor', () => {
-		it('sends next queued item when state becomes idle', async () => {
-			const queuedItem = {
-				id: 'q-1',
-				text: 'queued msg',
-				images: undefined,
-				readOnlyMode: false,
-				timestamp: Date.now(),
-				tabId: 'gc-1',
-				tabName: 'Chat',
-				type: 'message' as const,
-			};
-
-			// Start with idle state and a queued item - the effect should fire
-			useGroupChatStore.setState({
-				activeGroupChatId: 'gc-1',
-				groupChatState: 'idle',
-				groupChatExecutionQueue: [queuedItem],
-			});
-
-			const { result } = renderHook(() => useGroupChatHandlers());
-
-			// Wait for effect to process
-			await act(async () => {
-				await new Promise((r) => setTimeout(r, 10));
-			});
-
-			expect(mockGroupChat.sendToModerator).toHaveBeenCalledWith(
-				'gc-1',
-				'queued msg',
-				undefined,
-				false
-			);
-			expect(useGroupChatStore.getState().groupChatExecutionQueue.length).toBe(0);
-			expect(useGroupChatStore.getState().groupChatState).toBe('moderator-thinking');
-		});
-
-		it('does not process queue when state is not idle', () => {
-			useGroupChatStore.setState({
-				activeGroupChatId: 'gc-1',
-				groupChatState: 'moderator-thinking',
-				groupChatExecutionQueue: [{ id: 'q-1', text: 'msg' } as any],
-			});
-
-			renderHook(() => useGroupChatHandlers());
-
-			expect(mockGroupChat.sendToModerator).not.toHaveBeenCalled();
-		});
-
-		it('does not process queue when no active group chat', () => {
-			useGroupChatStore.setState({
-				activeGroupChatId: null,
-				groupChatState: 'idle',
-				groupChatExecutionQueue: [{ id: 'q-1', text: 'msg' } as any],
-			});
-
-			renderHook(() => useGroupChatHandlers());
-
-			expect(mockGroupChat.sendToModerator).not.toHaveBeenCalled();
-		});
-	});
+	// The renderer used to drain the queue whenever it saw the moderator go idle.
+	// That only worked while this particular client was awake and watching: a
+	// phone that slept or reloaded left its messages queued forever, and two
+	// clients that both saw idle each sent the same item. Main owns the drain now
+	// (`src/main/group-chat/group-chat-queue.ts`), and its behaviour is covered by
+	// `src/__tests__/main/group-chat/group-chat-queue.test.ts`. The old test here
+	// asserted the removed effect, so it is gone rather than adapted.
 
 	// -----------------------------------------------------------------------
 	// handleGroupChatRightTabChange - no active chat

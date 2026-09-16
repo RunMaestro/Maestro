@@ -55,6 +55,7 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 					terminalFontFamily: settings.terminalFontFamily,
 					filePreviewFontFamily: settings.filePreviewFontFamily,
 					fileEditorFontFamily: settings.fileEditorFontFamily,
+					documentGraphFontFamily: settings.documentGraphFontFamily,
 				}}
 				sizes={{
 					fontSize: settings.fontSize,
@@ -62,6 +63,7 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 					terminalFontSize: settings.terminalFontSize,
 					filePreviewFontSize: settings.filePreviewFontSize,
 					fileEditorFontSize: settings.fileEditorFontSize,
+					documentGraphFontSize: settings.documentGraphFontSize,
 				}}
 				onReset={settings.resetTypography}
 			/>

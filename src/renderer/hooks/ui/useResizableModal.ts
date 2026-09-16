@@ -10,6 +10,20 @@ const RESIZE_PERSIST_DEBOUNCE_MS = 300;
 
 export type ModalResizeDirection = 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w' | 'nw';
 
+/**
+ * Which point of the surface stays put while it resizes.
+ *
+ * `center` is a modal: it is centered in the viewport, so growing it pushes
+ * both edges outward and a dragged corner only keeps up with the cursor if the
+ * box grows by twice the cursor delta.
+ *
+ * `top-left` is a surface pinned by its top-left corner - a dropdown under its
+ * trigger, a popover. There the dragged corner moves 1:1 with the cursor. Such
+ * a surface should expose only the `s`, `e` and `se` handles: dragging `n` or
+ * `w` would have to move the anchor, which this hook does not do.
+ */
+export type ModalResizeAnchor = 'center' | 'top-left';
+
 export interface UseResizableModalOptions {
 	resizeKey: ModalResizeKey;
 	defaultSize: ModalSize;
@@ -25,11 +39,11 @@ export interface UseResizableModalOptions {
 	 * grows, so each edge only moves half of what the pointer does and the delta
 	 * is doubled to keep the edge under the cursor.
 	 *
-	 * `topLeft` is for a free-positioned window pinned by its top-left corner.
+	 * `top-left` is for a free-positioned window pinned by its top-left corner.
 	 * Its origin does not move, so the delta applies 1:1 - doubling it there
 	 * would make the frame race away from the pointer at twice its speed.
 	 */
-	anchor?: 'center' | 'topLeft';
+	anchor?: ModalResizeAnchor;
 }
 
 export interface UseResizableModalReturn {
@@ -58,6 +72,9 @@ function nextSizeForDirection({
 	/** 2 for a centered dialog (both edges move), 1 for a top-left-anchored one. */
 	edgeScale: number;
 }): ModalSize {
+	// A centered surface moves both of its edges, so it has to grow by twice the
+	// cursor delta to keep the dragged corner under the pointer. A top-left
+	// anchored one only moves the dragged edge, so it tracks the cursor 1:1.
 	let width = startSize.width;
 	let height = startSize.height;
 

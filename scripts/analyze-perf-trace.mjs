@@ -14,6 +14,8 @@
 import fs from 'node:fs';
 import zlib from 'node:zlib';
 import path from 'node:path';
+import readline from 'node:readline';
+import { Readable } from 'node:stream';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
@@ -25,11 +27,22 @@ const MAX_LONG_TASKS = 20;
 const MAX_COST_ROWS = 15;
 const MAX_HOT_FUNCS = 15;
 const JS_EVENT_NAMES = new Set(['FunctionCall', 'EvaluateScript', 'V8.Execute', 'v8.run']);
+// V8's max string length. Past it a trace can only be read line by line.
+const MAX_WHOLE_PARSE_BYTES = 0x1fffffe8;
+// A frame cadence at or under this gap means the compositor never went idle.
+const CONTINUOUS_FRAME_GAP_MS = 20;
 
 const us2ms = (us) => us / 1000;
 
 // --- Input loading: .zip | .json.gz | .json ---------------------------------
-function loadInput(inputPath) {
+// A field trace is routinely larger than V8's 512MB max string, so the file is
+// never turned into one string. `openTrace` hands back a factory that yields a
+// fresh line stream over the same bytes, and the analysis makes two passes:
+// one to learn the thread names, one to keep only the spans that matter.
+// Chromium writes the Trace Event format one event per line, which is what
+// makes the line scan safe; a trace from another producer falls back to a whole
+// document parse (only possible under the string limit).
+function openTrace(inputPath) {
 	if (!fs.existsSync(inputPath)) {
 		throw new Error(`File not found: ${inputPath}`);
 	}
@@ -49,15 +62,98 @@ function loadInput(inputPath) {
 		if (!traceBytes) throw new Error('Bundle has no trace.json');
 		const metaBytes = files['metadata.json'];
 		const meta = metaBytes ? safeJson(Buffer.from(metaBytes).toString('utf-8')) : null;
-		return { traceText: Buffer.from(traceBytes).toString('utf-8'), meta };
+		const buf = Buffer.from(traceBytes.buffer, traceBytes.byteOffset, traceBytes.byteLength);
+		return { meta, byteLength: buf.length, createStream: () => chunkedStream(buf) };
 	}
 
 	if (lower.endsWith('.gz')) {
 		const buf = zlib.gunzipSync(fs.readFileSync(inputPath));
-		return { traceText: buf.toString('utf-8'), meta: null };
+		return { meta: null, byteLength: buf.length, createStream: () => chunkedStream(buf) };
 	}
 
-	return { traceText: fs.readFileSync(inputPath, 'utf-8'), meta: null };
+	return {
+		meta: null,
+		byteLength: fs.statSync(inputPath).size,
+		createStream: () => fs.createReadStream(inputPath, { highWaterMark: 1 << 22 }),
+	};
+}
+
+// Feed an in-memory buffer out in pieces. Handing readline the whole buffer in
+// one chunk makes its StringDecoder decode it as a single string, which throws
+// on anything past V8's limit - the exact failure this streaming path exists to
+// avoid.
+const STREAM_CHUNK_BYTES = 1 << 22;
+function chunkedStream(buf) {
+	return Readable.from(
+		(function* () {
+			for (let offset = 0; offset < buf.length; offset += STREAM_CHUNK_BYTES) {
+				yield buf.subarray(offset, Math.min(offset + STREAM_CHUNK_BYTES, buf.length));
+			}
+		})()
+	);
+}
+
+// Walk every trace event, calling `onEvent` once per event. Returns the number
+// of events seen so a caller can tell a real trace from an unparsable one.
+async function forEachEvent(trace, onEvent) {
+	const rl = readline.createInterface({ input: trace.createStream(), crlfDelay: Infinity });
+	let seen = 0;
+	for await (const line of rl) {
+		// Events are comma-separated one per line; the first and last lines carry
+		// the enclosing object, which has no event on it.
+		const text = line.endsWith(',') ? line.slice(0, -1) : line;
+		if (text.charCodeAt(0) !== 0x7b /* { */) continue;
+		let event;
+		try {
+			event = JSON.parse(text);
+		} catch {
+			continue;
+		}
+		// A whole trace document on ONE line parses here as a single "event" with
+		// no `ph`, which would leave `seen` at 1 and so skip the whole-document
+		// fallback below, and the run dies with "no CrRendererMain thread" instead
+		// of an analysis. Chrome DevTools' own "Save profile" writes exactly this
+		// shape (`{"metadata":{...},"traceEvents":[...]}`), so expand it here.
+		// The bare-array form starts with `[` and is skipped above, which is what
+		// already routes it to the fallback.
+		if (Array.isArray(event?.traceEvents)) {
+			for (const inner of event.traceEvents) {
+				seen += 1;
+				onEvent(inner);
+			}
+			continue;
+		}
+		seen += 1;
+		onEvent(event);
+	}
+	return seen;
+}
+
+// Fallback for a trace that is not line-delimited (another producer, or a
+// hand-edited file). Only reachable under V8's max string length.
+function forEachEventWhole(trace, onEvent) {
+	if (trace.byteLength > MAX_WHOLE_PARSE_BYTES) {
+		throw new Error(
+			`Trace is ${(trace.byteLength / 1024 / 1024).toFixed(0)}MB and is not line-delimited, so it cannot be ` +
+				'parsed as a single JSON document. Re-capture with Maestro, which writes one event per line.'
+		);
+	}
+	const chunks = [];
+	const stream = trace.createStream();
+	return new Promise((resolve, reject) => {
+		stream.on('data', (c) => chunks.push(c));
+		stream.on('error', reject);
+		stream.on('end', () => {
+			const parsed = safeJson(Buffer.concat(chunks).toString('utf-8'));
+			const events = Array.isArray(parsed) ? parsed : parsed?.traceEvents;
+			if (!Array.isArray(events)) {
+				reject(new Error('Trace did not contain a traceEvents array.'));
+				return;
+			}
+			for (const event of events) onEvent(event);
+			resolve(events.length);
+		});
+	});
 }
 
 function safeJson(text) {
@@ -72,30 +168,77 @@ function safeJson(text) {
 // Trace events on one thread strictly nest by time containment, so
 // self-time(event) = duration - sum(children). Standard flame-graph accounting.
 
-function analyzeEvents(events) {
+// Pass 1: learn which thread is which. Chromium emits the thread_name metadata
+// up front, but counting here also lets pass 2 pick the BUSIEST renderer when
+// an Electron window has several (webviews, the dev tools, a second window).
+async function collectThreads(trace) {
 	const threadName = new Map();
-	const perThread = new Map();
+	const spanCount = new Map();
+	const busyUs = new Map();
+	let totalEvents = 0;
+
+	const onEvent = (e) => {
+		const key = `${e.pid ?? 0}:${e.tid ?? 0}`;
+		if (e.ph === 'M') {
+			if (e.name === 'thread_name' && e.args?.name) threadName.set(key, e.args.name);
+			return;
+		}
+		if (e.ph !== 'X' && e.ph !== 'B' && e.ph !== 'E') return;
+		spanCount.set(key, (spanCount.get(key) ?? 0) + 1);
+		if (e.ph === 'X' && typeof e.dur === 'number') busyUs.set(key, (busyUs.get(key) ?? 0) + e.dur);
+	};
+
+	totalEvents = await forEachEvent(trace, onEvent);
+	if (totalEvents === 0) totalEvents = await forEachEventWhole(trace, onEvent);
+
+	const busiestNamed = (target) => {
+		let best;
+		let bestUs = -1;
+		for (const [key, name] of threadName) {
+			if (name !== target) continue;
+			const us = busyUs.get(key) ?? 0;
+			if (us > bestUs) {
+				bestUs = us;
+				best = key;
+			}
+		}
+		return best;
+	};
+
+	return { threadName, spanCount, totalEvents, busiestNamed };
+}
+
+// Pass 2: keep the spans for the two threads a user actually feels, plus the
+// V8 sampling profiler's chunks. Everything else is dropped as it streams by,
+// which is what keeps a multi-gigabyte trace inside a normal heap.
+async function collectSpans(trace, wantedKeys) {
+	const perThread = new Map([...wantedKeys].map((k) => [k, []]));
 	const beStacks = new Map();
+	const profiles = new Map();
+	// The window is taken from the threads being reported on, not from every
+	// event in the file. Metadata is stamped ts:0, and a background renderer's
+	// compositor can carry events from minutes before the capture started -
+	// either one silently stretches the window and deflates every rate and
+	// utilization figure derived from it.
 	let minTs = Infinity;
 	let maxTs = -Infinity;
 
-	const keyOf = (e) => `${e.pid ?? 0}:${e.tid ?? 0}`;
-	const pushSpan = (key, span) => {
-		let arr = perThread.get(key);
-		if (!arr) perThread.set(key, (arr = []));
-		arr.push(span);
-	};
-
-	for (const e of events) {
-		if (typeof e.ts === 'number') {
+	const onEvent = (e) => {
+		const key = `${e.pid ?? 0}:${e.tid ?? 0}`;
+		if (perThread.has(key) && typeof e.ts === 'number' && e.ts > 0 && e.ph !== 'M') {
 			if (e.ts < minTs) minTs = e.ts;
 			const end = e.ts + (typeof e.dur === 'number' ? e.dur : 0);
 			if (end > maxTs) maxTs = end;
 		}
+		if (e.name === 'Profile' || e.name === 'ProfileChunk') {
+			collectProfileChunk(profiles, e);
+			return;
+		}
+		if (!perThread.has(key)) return;
 		switch (e.ph) {
 			case 'X':
 				if (typeof e.ts === 'number') {
-					pushSpan(keyOf(e), {
+					perThread.get(key).push({
 						ts: e.ts,
 						dur: typeof e.dur === 'number' ? e.dur : 0,
 						name: e.name ?? '(unnamed)',
@@ -105,52 +248,131 @@ function analyzeEvents(events) {
 				break;
 			case 'B': {
 				if (typeof e.ts !== 'number') break;
-				const k = keyOf(e);
-				let st = beStacks.get(k);
-				if (!st) beStacks.set(k, (st = []));
-				st.push({ ts: e.ts, dur: 0, name: e.name ?? '(unnamed)', args: e.args });
+				let stack = beStacks.get(key);
+				if (!stack) beStacks.set(key, (stack = []));
+				stack.push({ ts: e.ts, dur: 0, name: e.name ?? '(unnamed)', args: e.args });
 				break;
 			}
 			case 'E': {
 				if (typeof e.ts !== 'number') break;
-				const open = beStacks.get(keyOf(e))?.pop();
+				const open = beStacks.get(key)?.pop();
 				if (open) {
 					open.dur = e.ts - open.ts;
-					pushSpan(keyOf(e), open);
+					perThread.get(key).push(open);
 				}
 				break;
 			}
-			case 'M':
-				if (e.name === 'thread_name' && e.args?.name) threadName.set(keyOf(e), e.args.name);
-				break;
 			default:
 				break;
 		}
+	};
+
+	const seen = await forEachEvent(trace, onEvent);
+	if (seen === 0) await forEachEventWhole(trace, onEvent);
+
+	return { perThread, profiles, minTs, maxTs };
+}
+
+// The v8.cpu_profiler category carries the only usable JS attribution in an
+// Electron trace: the devtools FunctionCall events this script used to look for
+// are not emitted, so the "hottest JS" table was always empty. Chunks arrive
+// incrementally and share one node table per profile id.
+function collectProfileChunk(profiles, e) {
+	const id = `${e.pid ?? 0}:${e.id ?? e.id2?.local ?? ''}`;
+	let profile = profiles.get(id);
+	if (!profile) {
+		profile = { pid: e.pid ?? 0, tid: e.tid ?? 0, nodes: new Map(), samples: [], deltas: [] };
+		profiles.set(id, profile);
 	}
+	const data = e.args?.data;
+	if (!data) return;
+	if (e.name === 'Profile') {
+		profile.tid = e.tid ?? profile.tid;
+		return;
+	}
+	const cpuProfile = data.cpuProfile;
+	if (!cpuProfile) return;
+	for (const node of cpuProfile.nodes ?? []) profile.nodes.set(node.id, node);
+	for (const sampleId of cpuProfile.samples ?? []) profile.samples.push(sampleId);
+	for (const delta of data.timeDeltas ?? []) profile.deltas.push(delta);
+}
+
+// Self-time per JS function from the sampling profiler, plus the share of the
+// window V8 spent idle - the single most useful number for telling "the app is
+// working hard" apart from "the app is redrawing a static screen".
+function analyzeProfile(profile) {
+	const selfUs = new Map();
+	let sampledUs = 0;
+	let idleUs = 0;
+	const count = Math.min(profile.samples.length, profile.deltas.length);
+	for (let i = 0; i < count; i++) {
+		const delta = profile.deltas[i];
+		// A negative or absurd delta means a dropped chunk; charging it to a
+		// function would invent time that was never spent.
+		if (!(delta > 0) || delta > 1_000_000) continue;
+		sampledUs += delta;
+		const nodeId = profile.samples[i];
+		selfUs.set(nodeId, (selfUs.get(nodeId) ?? 0) + delta);
+	}
+
+	const rows = [];
+	for (const [nodeId, us] of selfUs) {
+		const frame = profile.nodes.get(nodeId)?.callFrame;
+		const name = frame?.functionName || '(anonymous)';
+		if (name === '(idle)') {
+			idleUs += us;
+			continue;
+		}
+		if (name === '(program)' || name === '(root)') continue;
+		const location = frame?.url ? `${frame.url}:${(frame.lineNumber ?? -1) + 1}` : undefined;
+		rows.push({ name, location, selfMs: us2ms(us), count: 0 });
+	}
+
+	return {
+		sampledMs: us2ms(sampledUs),
+		idleMs: us2ms(idleUs),
+		hotFunctions: mergeHot(rows).slice(0, MAX_HOT_FUNCS),
+	};
+}
+
+// How often the compositor committed a frame. A UI that is genuinely idle
+// commits nothing; one pinned at the display cadence for the whole window is
+// burning the renderer, the compositor and the GPU on a static picture, which
+// no long-task table would ever show.
+function analyzeFrameCadence(spans, windowSec) {
+	const commits = spans.filter((s) => s.name === 'Commit').map((s) => s.ts);
+	if (commits.length < 2) return null;
+	commits.sort((a, b) => a - b);
+	const gaps = [];
+	for (let i = 1; i < commits.length; i++) gaps.push(us2ms(commits[i] - commits[i - 1]));
+	const sorted = [...gaps].sort((a, b) => a - b);
+	const continuous = gaps.filter((g) => g <= CONTINUOUS_FRAME_GAP_MS).length;
+	return {
+		frames: commits.length,
+		medianGapMs: sorted[sorted.length >> 1],
+		continuousShare: continuous / gaps.length,
+		framesPerSec: windowSec > 0 ? commits.length / windowSec : 0,
+	};
+}
+
+async function analyzeTrace(trace) {
+	const { threadName, totalEvents, busiestNamed } = await collectThreads(trace);
+	const rendererKey = busiestNamed('CrRendererMain');
+	const browserKey = busiestNamed('CrBrowserMain');
+	const wanted = new Set([rendererKey, browserKey].filter(Boolean));
+	if (wanted.size === 0) throw new Error('Trace has no CrRendererMain or CrBrowserMain thread.');
+
+	const { perThread, profiles, minTs, maxTs } = await collectSpans(trace, wanted);
 
 	const traceDurationSec =
 		Number.isFinite(minTs) && maxTs > minTs ? us2ms(maxTs - minTs) / 1000 : 0;
 
-	const busiestNamed = (target) => {
-		let best,
-			bestLen = 0;
-		for (const [key, name] of threadName) {
-			if (name !== target) continue;
-			const len = perThread.get(key)?.length ?? 0;
-			if (len > bestLen) {
-				bestLen = len;
-				best = key;
-			}
-		}
-		return best;
-	};
-
-	const rKey = busiestNamed('CrRendererMain');
-	const bKey = busiestNamed('CrBrowserMain');
-	const renderer = rKey
-		? analyzeThread(perThread.get(rKey) ?? [], 'Renderer main (UI)', minTs)
+	const renderer = rendererKey
+		? analyzeThread(perThread.get(rendererKey) ?? [], 'Renderer main (UI)', minTs)
 		: null;
-	const browser = bKey ? analyzeThread(perThread.get(bKey) ?? [], 'Browser main', minTs) : null;
+	const browser = browserKey
+		? analyzeThread(perThread.get(browserKey) ?? [], 'Browser main', minTs)
+		: null;
 
 	const longTasks = [...(renderer?.longTasks ?? []), ...(browser?.longTasks ?? [])]
 		.sort((a, b) => b.durationMs - a.durationMs)
@@ -162,23 +384,45 @@ function analyzeEvents(events) {
 		0
 	);
 
+	// Pair each profile with the thread it sampled, so the JS table says which
+	// process the cost landed in rather than merging main and renderer together.
+	const profileFor = (key) => {
+		if (!key) return null;
+		for (const profile of profiles.values()) {
+			if (`${profile.pid}:${profile.tid}` === key) return analyzeProfile(profile);
+		}
+		const [pid] = key.split(':');
+		for (const profile of profiles.values()) {
+			if (String(profile.pid) === pid) return analyzeProfile(profile);
+		}
+		return null;
+	};
+
+	const rendererProfile = profileFor(rendererKey);
+	const browserProfile = profileFor(browserKey);
+
 	const hotFunctions = mergeHot([
+		...(rendererProfile?.hotFunctions ?? []),
+		...(browserProfile?.hotFunctions ?? []),
 		...(renderer?.hotFunctions ?? []),
 		...(browser?.hotFunctions ?? []),
 	]).slice(0, MAX_HOT_FUNCS);
 
 	return {
 		traceDurationSec,
-		totalEvents: events.length,
+		totalEvents,
+		threadCount: threadName.size,
 		rendererMain: renderer?.summary,
 		browserMain: browser?.summary,
+		rendererProfile,
+		browserProfile,
+		frames: analyzeFrameCadence(perThread.get(rendererKey) ?? [], traceDurationSec),
 		longTasks,
 		costByName: (renderer?.costByName ?? browser?.costByName ?? []).slice(0, MAX_COST_ROWS),
 		hotFunctions,
 		jank: { longTaskCount: longTasks.length, worstMs, estimatedDroppedFrames },
 	};
 }
-
 function analyzeThread(spans, label, traceStartUs) {
 	const sorted = [...spans].sort((a, b) => a.ts - b.ts || b.dur - a.dur);
 	const whole = computeSelfTimes(sorted);
@@ -349,6 +593,22 @@ function render(analysis, meta) {
 		out.push('');
 	}
 
+	// A trace buffer that fills stops recording, so the file can cover a small
+	// tail of what the user asked for. Saying so up front stops the next reader
+	// from concluding the app was quiet during the minutes that were discarded.
+	if (meta?.profilingDurationMs && analysis.traceDurationSec > 0) {
+		const requestedSec = meta.profilingDurationMs / 1000;
+		if (analysis.traceDurationSec < requestedSec * 0.9) {
+			out.push(
+				`> [!WARNING]` +
+					`\n> The trace buffer filled. This file covers ${analysis.traceDurationSec.toFixed(1)}s of the ` +
+					`${requestedSec.toFixed(0)}s recording (${((analysis.traceDurationSec / requestedSec) * 100).toFixed(0)}%); ` +
+					`the rest was discarded. Capture a shorter window, or drop the noisiest categories, to see it all.`
+			);
+			out.push('');
+		}
+	}
+
 	const j = analysis.jank;
 	out.push('## Verdict');
 	out.push('');
@@ -365,18 +625,61 @@ function render(analysis, meta) {
 				`Worst: ${ms(worst.durationMs)} at ${worst.startSec.toFixed(1)}s` +
 				(culprit ? `, dominated by ${culprit.name} (${ms(culprit.selfMs)} self-time).` : '.')
 		);
-		if (analysis.rendererMain) {
-			const r = analysis.rendererMain;
-			const util = ((r.busyMs / 1000 / Math.max(analysis.traceDurationSec, 0.001)) * 100).toFixed(
-				0
-			);
-			out.push('');
-			out.push(
-				`Renderer UI thread busy ${ms(r.busyMs)} of ${analysis.traceDurationSec.toFixed(1)}s (${util}% utilization).`
-			);
-		}
+	}
+	if (analysis.rendererMain) {
+		const r = analysis.rendererMain;
+		const util = ((r.busyMs / 1000 / Math.max(analysis.traceDurationSec, 0.001)) * 100).toFixed(0);
+		out.push('');
+		out.push(
+			`Renderer UI thread busy ${ms(r.busyMs)} of ${analysis.traceDurationSec.toFixed(1)}s (${util}% utilization).`
+		);
 	}
 	out.push('');
+
+	// Frame production is reported next to JS idle time on purpose: a renderer
+	// that commits every 16.7ms while V8 sits idle is not doing work a user
+	// asked for, it is animating something nobody is looking at.
+	const f = analysis.frames;
+	if (f) {
+		out.push('## Frame production');
+		out.push('');
+		out.push(
+			`${f.frames.toLocaleString()} frames committed in ${analysis.traceDurationSec.toFixed(1)}s ` +
+				`(${f.framesPerSec.toFixed(1)}/s, median gap ${f.medianGapMs.toFixed(1)}ms).`
+		);
+		if (f.continuousShare > 0.8) {
+			const idlePct = analysis.rendererProfile?.sampledMs
+				? (analysis.rendererProfile.idleMs / analysis.rendererProfile.sampledMs) * 100
+				: null;
+			out.push('');
+			out.push(
+				`> [!IMPORTANT]` +
+					`\n> ${(f.continuousShare * 100).toFixed(0)}% of frames arrived within ${CONTINUOUS_FRAME_GAP_MS}ms of the last one: ` +
+					`the renderer never went idle` +
+					(idlePct !== null ? `, while V8 was idle ${idlePct.toFixed(1)}% of the window` : '') +
+					`. Look for an \`infinite\` CSS animation on a non-composited property (box-shadow, filter, ` +
+					`background) or a permanent requestAnimationFrame loop. Every one of those frames costs the ` +
+					`renderer, the compositor and the GPU process.`
+			);
+		}
+		out.push('');
+	}
+
+	if (analysis.rendererProfile || analysis.browserProfile) {
+		out.push('## JS idle time (V8 sampling profiler)');
+		out.push('');
+		out.push('| Thread | Sampled | Idle | Working |');
+		out.push('| --- | --- | --- | --- |');
+		const row = (label, p) => {
+			if (!p || !p.sampledMs) return;
+			out.push(
+				`| ${label} | ${ms(p.sampledMs)} | ${ms(p.idleMs)} (${((p.idleMs / p.sampledMs) * 100).toFixed(1)}%) | ${ms(p.sampledMs - p.idleMs)} |`
+			);
+		};
+		row('Renderer main (UI)', analysis.rendererProfile);
+		row('Browser main', analysis.browserProfile);
+		out.push('');
+	}
 
 	if (analysis.longTasks.length) {
 		out.push('## Long main-thread tasks (>= 50ms)');
@@ -407,10 +710,14 @@ function render(analysis, meta) {
 	if (analysis.hotFunctions.length) {
 		out.push('## Hottest JS functions');
 		out.push('');
+		// Counts come from devtools FunctionCall events; the sampling profiler has
+		// no call count, so a sampled row shows a dash rather than a fake zero.
 		out.push('| Function | Location | Self-time | Calls |');
 		out.push('| --- | --- | --- | --- |');
 		for (const f of analysis.hotFunctions) {
-			out.push(`| \`${f.name}\` | ${sanitize(f.location) || '-'} | ${ms(f.selfMs)} | ${f.count} |`);
+			out.push(
+				`| \`${f.name}\` | ${sanitize(f.location) || '-'} | ${ms(f.selfMs)} | ${f.count || '-'} |`
+			);
 		}
 		out.push('');
 	}
@@ -421,7 +728,7 @@ function render(analysis, meta) {
 }
 
 // --- main -------------------------------------------------------------------
-function main() {
+async function main() {
 	const inputPath = process.argv[2];
 	if (!inputPath) {
 		console.error(
@@ -435,19 +742,22 @@ function main() {
 		: '?';
 	console.error(`[analyze-perf-trace] Loading ${path.basename(inputPath)} (${sizeMb} MB)...`);
 
-	const { traceText, meta } = loadInput(inputPath);
-	const parsed = JSON.parse(traceText);
-	const events = Array.isArray(parsed) ? parsed : parsed?.traceEvents;
-	if (!Array.isArray(events)) throw new Error('Trace did not contain a traceEvents array.');
+	const trace = openTrace(inputPath);
+	const meta = trace.meta ?? safeJson(readSiblingMetadata(inputPath)) ?? null;
 
-	console.error(`[analyze-perf-trace] Analyzing ${events.length.toLocaleString()} events...`);
-	const analysis = analyzeEvents(events);
+	console.error('[analyze-perf-trace] Scanning threads...');
+	const analysis = await analyzeTrace(trace);
+	console.error(`[analyze-perf-trace] Analyzed ${analysis.totalEvents.toLocaleString()} events.`);
 	process.stdout.write(render(analysis, meta));
 }
 
-try {
-	main();
-} catch (err) {
+/** `metadata.json` next to an already-unzipped `trace.json`, if it is there. */
+function readSiblingMetadata(inputPath) {
+	const sibling = path.join(path.dirname(inputPath), 'metadata.json');
+	return fs.existsSync(sibling) ? fs.readFileSync(sibling, 'utf-8') : '';
+}
+
+main().catch((err) => {
 	console.error(`[analyze-perf-trace] ${err.message}`);
 	process.exit(1);
-}
+});

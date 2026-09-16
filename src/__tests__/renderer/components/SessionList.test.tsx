@@ -4344,6 +4344,32 @@ describe('SessionList', () => {
 			expect(band.contains(screen.getByTestId('icon-trophy'))).toBe(true);
 		});
 
+		// Minimizing is a promise that the widget is parked somewhere reachable,
+		// and the pill is the only place it parks. The collapsed rail used to skip
+		// it on the grounds that a 64px strip belongs to the agents, which made
+		// minimize equal vanish there: no pill, no widget, and the only route back
+		// an unbound shortcut.
+		it('keeps the minimized player reachable on the collapsed rail', () => {
+			useUIStore.setState({ leftSidebarOpen: false, leftSidebarHidden: false });
+			showNowPlayingPill();
+			render(<SessionList {...createDefaultProps({})} />);
+
+			const pill = screen.getByTestId('now-playing-indicator');
+			expect(pill).toBeTruthy();
+			// Compact: the rail is 64px, so the filename is dropped rather than
+			// clipped, leaving the transport and the way back.
+			expect(pill.textContent).toBe('');
+			expect(screen.getByTestId('now-playing-restore')).toBeTruthy();
+		});
+
+		it('leaves the collapsed rail alone when nothing is minimized', () => {
+			// Self-gating: someone who never opened the player sees no change.
+			useUIStore.setState({ leftSidebarOpen: false, leftSidebarHidden: false });
+			render(<SessionList {...createDefaultProps({})} />);
+
+			expect(screen.queryByTestId('now-playing-indicator')).toBeNull();
+		});
+
 		it('shows the wordmark on a wide sidebar', () => {
 			useSettingsStore.setState({ leftSidebarWidth: 600 });
 			render(<SessionList {...createDefaultProps({})} />);

@@ -58,4 +58,27 @@ describe('triggerGroupKey', () => {
 			triggerGroupKey(sub({ event: 'github.label', gh_labels: ['triage'] }))
 		);
 	});
+
+	it('separates one-shots that fire at different instants', () => {
+		const once = (fire_at: string) =>
+			sub({ event: 'time.once', repo: undefined, label: 'Renew the token', fire_at });
+		expect(triggerGroupKey(once('2026-11-09T15:00:00.000Z'))).not.toBe(
+			triggerGroupKey(once('2026-12-01T15:00:00.000Z'))
+		);
+	});
+
+	it('groups the -prompt / -notify pair a scheduled task emits', () => {
+		// `cue schedule --prompt --notify` writes two subs sharing one event,
+		// one instant, and one label. They are one visual trigger with two
+		// outgoing edges, so they must collapse onto a single node.
+		const base = {
+			event: 'time.once' as const,
+			repo: undefined,
+			label: 'Renew the token',
+			fire_at: '2026-11-09T15:00:00.000Z',
+		};
+		expect(triggerGroupKey(sub({ ...base, name: 'renew-prompt' }))).toBe(
+			triggerGroupKey(sub({ ...base, name: 'renew-notify', action: 'notify' }))
+		);
+	});
 });

@@ -40,6 +40,7 @@ import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { usePersistedToggle } from '../hooks/ui/usePersistedToggle';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { GhostIconButton } from './ui/GhostIconButton';
+import { InlineCode } from './Markdown/components/InlineCode';
 import { Markdown } from './Markdown';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
 
@@ -72,10 +73,28 @@ function toolActivityText(activity: ToolActivityEntry): string {
 /**
  * One tool call as a single scannable line: status glyph, verb, target.
  *
- * The text is rendered as PLAIN TEXT, not markdown. A shell command or a glob
- * pattern is full of characters markdown claims (`*`, `_`, backticks), so
- * running it through the renderer mangles exactly the lines a user is trying to
- * read. Search highlighting is therefore done here rather than delegated.
+ * The verb is our prose and stays in the interface font; a literal target (a
+ * path, a command, a glob) renders as inline code, which is what it is. That
+ * split is why the whole line is not simply set in a code face: "Ran" is not
+ * something you can run, and dressing it as code makes the eye stop on the word
+ * instead of the command beside it. `targetIsCode` carries the decision from
+ * `describeToolActivity`, which is the only place that knows whether it built a
+ * literal or a sentence.
+ *
+ * The text is still rendered as PLAIN TEXT, never markdown. A shell command or
+ * a glob pattern is full of characters markdown claims (`*`, `_`, backticks),
+ * so running it through the renderer mangles exactly the lines a user is trying
+ * to read. The code chip is therefore applied by hand, via the same `<code>`
+ * element and the same scoped `.thought-stream-prose code` rule that styles
+ * real backticks in the reasoning blocks above - identical to markdown's inline
+ * code because it IS markdown's inline code, minus the parser. Reusing the
+ * shared `InlineCode` leaf keeps the click-to-copy behavior identical too, so
+ * two things that look the same in this panel also behave the same.
+ *
+ * Search highlighting is done here rather than delegated, and per segment: a
+ * query spanning the verb/target boundary still MATCHES the row (the filter
+ * reads the joined line) but highlights nothing, which beats splitting a
+ * `<mark>` across the chip edge.
  */
 function ToolActivityRow({
 	activity,
@@ -87,7 +106,7 @@ function ToolActivityRow({
 	query: string;
 }) {
 	const { status } = activity.tool;
-	const text = toolActivityText(activity);
+	const { verb, target, targetIsCode } = activity.tool.label;
 	const color =
 		status === 'failed'
 			? theme.colors.error
@@ -114,7 +133,14 @@ function ToolActivityRow({
 				)}
 			</span>
 			<span className="min-w-0 break-words" style={{ color: theme.colors.textMain }}>
-				{highlightQuery(text, query, theme)}
+				{highlightQuery(verb, query, theme)}
+				{target && ' '}
+				{target &&
+					(targetIsCode ? (
+						<InlineCode className="font-mono">{highlightQuery(target, query, theme)}</InlineCode>
+					) : (
+						highlightQuery(target, query, theme)
+					))}
 			</span>
 		</div>
 	);

@@ -207,13 +207,20 @@ export function parseProviderProfileKey(key: string): {
 }
 
 /**
- * Short label for a profile - the account's own name (`smash`, `Default
- * account`) for providers with accounts, and the provider name otherwise.
- * Used where the provider is already obvious from context, e.g. a card badge.
+ * Short label for a profile - the account's own name (`smash`) for providers
+ * with accounts, and the provider name otherwise. Used where space is tight and
+ * the full label would not fit, e.g. a card badge.
+ *
+ * The implicit `~/<subdir>` account has no name of its own, so it is named
+ * after its provider (`Codex default`) rather than as a bare "Default account":
+ * that phrase reads identically for every provider, so a Codex card and a
+ * Claude card carried the same badge with nothing to tell them apart.
  */
 export function providerProfileShortLabel(toolType: string, accountKey: string | null): string {
+	const provider = getAgentDisplayName(toolType);
 	const helpers = getAccountKeyHelpers(toolType);
-	if (!helpers || !accountKey) return getAgentDisplayName(toolType);
+	if (!helpers || !accountKey) return provider;
+	if (helpers.deriveShortName(accountKey) === 'default') return `${provider} default`;
 	return helpers.deriveDisplayName(accountKey);
 }
 

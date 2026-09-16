@@ -25,6 +25,7 @@ import { useLayerStack } from '../../contexts/LayerStackContext';
 import { captureException } from '../../utils/sentry';
 import { resolveFileReference } from '../../utils/fileLinks/resolve';
 import { getBasename } from '../../../shared/formatters';
+import { isTextInputTarget } from '../../utils/messageScrollNavigation';
 
 // ============================================================================
 // Dependencies interface
@@ -321,6 +322,13 @@ export function useFileExplorerEffects(
 	useEffect(() => {
 		const handleFileExplorerKeys = (e: KeyboardEvent) => {
 			if (hasOpenModal()) return;
+
+			// `activeFocus` is app state, not DOM focus, and the two can disagree:
+			// a shortcut can point the app at the Files tab while the caret is still
+			// in the markdown editor or a text field. Without this check, Enter typed
+			// into that editor also opened whatever row the tree had selected, and
+			// the arrow keys drove the tree alongside the caret. Real focus wins.
+			if (isTextInputTarget(e.target)) return;
 
 			if (activeFocus !== 'right' || activeRightTab !== 'files' || flatFileList.length === 0)
 				return;

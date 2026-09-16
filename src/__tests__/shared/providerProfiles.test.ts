@@ -136,8 +136,17 @@ describe('profile labels', () => {
 		);
 	});
 
-	it('humanizes the implicit default account', () => {
-		expect(providerProfileShortLabel('claude-code', '/Users/me/.claude')).toBe('Default account');
+	// "Default account" alone is the same phrase for every provider, so the
+	// short label - the one a card badge prints on its own - names the provider.
+	it('names the implicit default account after its provider', () => {
+		expect(providerProfileShortLabel('claude-code', '/Users/me/.claude')).toBe(
+			'Claude Code default'
+		);
+		expect(providerProfileShortLabel('codex', '/Users/me/.codex')).toBe('Codex default');
+		expect(providerProfileShortLabel('claude-code', '/Users/me/.claude')).not.toBe(
+			providerProfileShortLabel('codex', '/Users/me/.codex')
+		);
+		// The full label already carries the provider, so it is unchanged.
 		expect(providerProfileLabel('codex', '/Users/me/.codex')).toBe('Codex - Default account');
 		expect(providerProfileLabel('copilot-cli', '/Users/me/.copilot')).toBe(
 			'Copilot-CLI - Default account'

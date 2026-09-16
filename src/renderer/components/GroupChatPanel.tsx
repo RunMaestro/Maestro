@@ -7,15 +7,8 @@
  */
 
 import { useCallback, useEffect, useRef } from 'react';
-import type {
-	Theme,
-	GroupChat,
-	GroupChatMessage,
-	GroupChatState,
-	Group,
-	Shortcut,
-	QueuedItem,
-} from '../types';
+import type { GroupChatQueueState } from '../../shared/group-chat-types';
+import type { Theme, GroupChat, GroupChatMessage, GroupChatState, Group, Shortcut } from '../types';
 import { GroupChatHeader } from './GroupChatHeader';
 import { GroupChatMessages, type GroupChatMessagesHandle } from './GroupChatMessages';
 import { GroupChatInput } from './GroupChatInput';
@@ -60,7 +53,9 @@ interface GroupChatPanelProps {
 	// Image lightbox handler
 	onOpenLightbox?: (image: string, contextImages?: string[], source?: 'staged' | 'history') => void;
 	// Execution queue props
-	executionQueue?: QueuedItem[];
+	/** The chat's pending sends as MAIN reports them. Undefined until loaded. */
+	queueState?: GroupChatQueueState;
+	onResumeQueue?: () => void;
 	onRemoveQueuedItem?: (itemId: string) => void;
 	onReorderQueuedItems?: (fromIndex: number, toIndex: number) => void;
 	// Markdown toggle (Cmd+E)
@@ -113,7 +108,8 @@ export function GroupChatPanel({
 	handlePaste,
 	handleDrop,
 	onOpenLightbox,
-	executionQueue,
+	queueState,
+	onResumeQueue,
 	onRemoveQueuedItem,
 	onReorderQueuedItems,
 	markdownEditMode,
@@ -262,7 +258,8 @@ export function GroupChatPanel({
 				handlePaste={handlePaste}
 				handleDrop={handleDrop}
 				onOpenLightbox={onOpenLightbox}
-				executionQueue={executionQueue}
+				queueState={queueState}
+				onResumeQueue={onResumeQueue}
 				onRemoveQueuedItem={onRemoveQueuedItem}
 				onReorderQueuedItems={onReorderQueuedItems}
 				enterToSendAI={enterToSendAI}

@@ -16,6 +16,7 @@ import { HistoryHelpModal } from './HistoryHelpModal';
 import { useThrottledCallback, useListNavigation } from '../hooks';
 import { useHistoryPagination } from '../hooks/history/useHistoryPagination';
 import type { PaginatedPage } from '../hooks/history/useHistoryPagination';
+import { useExpandedCueGroups } from '../hooks/history/useExpandedCueGroups';
 import {
 	ActivityGraph,
 	HistoryEntryItem,
@@ -94,6 +95,11 @@ export const HistoryPanel = React.memo(
 		ref
 	) {
 		const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures.maestroCue);
+		// Collapse repeated Cue triggers into one row. The rollup runs in the
+		// main process (SQL over `cue_events`), so flipping this changes the
+		// SHAPE of the loaded window and has to reset pagination - which it
+		// does by being part of `loadPage`'s identity.
+		const groupCueEntries = useSettingsStore((s) => s.groupCueEntries);
 		const shortcuts = useSettingsStore((s) => s.shortcuts);
 		const rightPanelWidth = useSettingsStore((s) => s.rightPanelWidth);
 		const compact = rightPanelWidth < RIGHT_PANEL_COMPACT_THRESHOLD;
@@ -116,6 +122,12 @@ export const HistoryPanel = React.memo(
 		const activeFiltersAgentIdRef = useRef(session.id);
 		const [detailModalEntry, setDetailModalEntry] = useState<HistoryEntry | null>(null);
 		const [searchFilter, setSearchFilter] = useState('');
+		// Whether a text search is running at all - deliberately a BOOLEAN and
+		// not the search text, because it feeds `loadPage`'s identity (see
+		// `groupCue` there). Keying on the text would reset the pagination
+		// window on every keystroke; keying on "is there a term" resets it once
+		// when the user starts typing and once when they clear the box.
+		const isSearching = searchFilter.length > 0;
 		// Source/host filter - null means "All Sources". When set, both the
 		// entry list and the activity graph narrow to entries from that host.
 		const [selectedHost, setSelectedHost] = useState<string | null>(null);
@@ -199,6 +211,22 @@ export const HistoryPanel = React.memo(
 					// client-side. Changing the host changes this callback's
 					// identity, resetting the window to the newest N of that host.
 					hostKey: selectedHost,
+					// Cue grouping also runs server-side: the panel only ever
+					// holds a page of entries, so grouping here would report a
+					// page's worth of runs for a trigger that ran thousands of
+					// times.
+					//
+					// A live search turns grouping OFF. Search matches text, and
+					// a collapsed row carries the text of exactly one run - its
+					// newest - so leaving grouping on would hide every run whose
+					// output matched the term unless it happened to be the last
+					// one the trigger fired. Serving Cue runs ungrouped while a
+					// term is active is what keeps "the filter matches a run
+					// inside a collapsed group" from silently losing that run:
+					// the run itself is on screen, with its own time and
+					// outcome, which is what the user searching for it wanted.
+					// Density is not the goal mid-search - drilling down is.
+					groupCue: groupCueEntries && !isSearching,
 					pagination: { offset, limit },
 				});
 				return {
@@ -214,7 +242,19 @@ export const HistoryPanel = React.memo(
 				graphLookbackHours,
 				activeFilters,
 				selectedHost,
+				groupCueEntries,
+				isSearching,
 			]
+		);
+
+		// Which collapsed Cue rows are open, and how a row fetches the runs
+		// behind it. Bound to the same lookback the grouped read used, so an
+		// expander can never show a different set of runs than the row counted.
+		const { expandedIds: expandedCueGroupIds, expansion: cueGroupExpansion } = useExpandedCueGroups(
+			{
+				lookbackHours: graphLookbackHours,
+				projectPath: projectPathForHistory,
+			}
 		);
 
 		const getEntryId = useCallback((entry: HistoryEntry) => entry.id, []);
@@ -391,12 +431,19 @@ export const HistoryPanel = React.memo(
 					const sessionIdMatch = entry.agentSessionId?.toLowerCase().includes(searchLower);
 					const sessionNameMatch = entry.sessionName?.toLowerCase().includes(searchLower);
 					const hostnameMatch = entry.hostname?.toLowerCase().includes(searchLower);
+					// The trigger name is the most prominent text on a Cue row
+					// (and the whole label on a collapsed one), so a user who
+					// types it expects that row back. Without this, the name is
+					// only findable when it happens to appear in the run's own
+					// output excerpt.
+					const cueTriggerMatch = entry.cueTriggerName?.toLowerCase().includes(searchLower);
 					if (
 						!summaryMatch &&
 						!responseMatch &&
 						!sessionIdMatch &&
 						!sessionNameMatch &&
-						!hostnameMatch
+						!hostnameMatch &&
+						!cueTriggerMatch
 					)
 						return false;
 				}
@@ -404,6 +451,16 @@ export const HistoryPanel = React.memo(
 				return true;
 			});
 		}, [historyEntries, activeFilters, searchFilter, selectedHost]);
+
+		// Is the user hiding at least one entry type right now? The type filter
+		// runs SERVER-side (see `loadPage`), so `totalCount` is already net of
+		// it - which means "totalCount === 0" alone cannot tell "this agent has
+		// no history" apart from "the pills hid all of it". Without this guard,
+		// deselecting the only type an agent has - the CUE pill on an agent
+		// whose activity is all Cue runs, now that those rows come from
+		// `cue_events` and are withheld server-side when CUE is off - answers
+		// "No history yet", which is simply untrue.
+		const hasNarrowingTypeFilter = visibleTypes.some((type) => !activeFilters.has(type));
 
 		// Tally hosts. Prefers the server-side aggregate from `getGraphData`
 		// (already filtered by the active lookback window and covers the
@@ -897,7 +954,7 @@ export const HistoryPanel = React.memo(
 						<div className="text-center py-8 text-xs opacity-50">Loading history...</div>
 					) : allFilteredEntries.length === 0 ? (
 						<div className="text-center py-8 text-xs opacity-50">
-							{totalCount === 0 ? (
+							{totalCount === 0 && !hasNarrowingTypeFilter ? (
 								graphLookbackHours !== null ? (
 									<>
 										No entries in the last{' '}
@@ -958,6 +1015,8 @@ export const HistoryPanel = React.memo(
 											onOpenDetailModal={openDetailModal}
 											onOpenSessionAsTab={onOpenSessionAsTab}
 											onOpenAboutModal={onOpenAboutModal}
+											cueGroupExpansion={cueGroupExpansion}
+											isCueGroupExpanded={expandedCueGroupIds.has(entry.id)}
 										/>
 									</div>
 								);

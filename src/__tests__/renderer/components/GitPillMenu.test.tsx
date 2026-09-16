@@ -7,6 +7,8 @@ import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { GitPillMenu } from '../../../renderer/components/GitPillMenu';
 import { mockTheme } from '../../helpers/mockTheme';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { DEFAULT_SHORTCUTS } from '../../../renderer/constants/shortcuts';
 
 const mockOpenUrl = vi.fn();
 vi.mock('../../../renderer/utils/openUrl', () => ({
@@ -201,6 +203,40 @@ describe('GitPillMenu', () => {
 			expect(
 				screen.getByTestId('git-pill-menu-diff').querySelector('[data-testid="git-change-counts"]')
 			).toBeNull();
+		});
+	});
+
+	describe('keyboard hints', () => {
+		// The four git actions below ship unbound, so the row that advertises a
+		// chord has to follow the user's binding rather than a default.
+		beforeEach(() => {
+			useSettingsStore.setState({ shortcuts: DEFAULT_SHORTCUTS });
+		});
+
+		it('advertises a chord the user bound to one of the unbound actions', () => {
+			useSettingsStore.setState({
+				shortcuts: {
+					...DEFAULT_SHORTCUTS,
+					gitPull: { ...DEFAULT_SHORTCUTS.gitPull, keys: ['Meta', 'Shift', 'F9'] },
+				},
+			});
+			renderMenu();
+
+			expect(screen.getByTestId('git-pill-menu-pull').textContent).toContain('F9');
+		});
+
+		it('draws no key-cap on an action that is still unbound', () => {
+			renderMenu();
+
+			// Exact text: a blank key-cap would show up as trailing whitespace or a
+			// stray separator rather than as a missing element.
+			expect(screen.getByTestId('git-pill-menu-push')).toHaveTextContent(/^Git Push$/);
+			expect(screen.getByTestId('git-pill-menu-switch-branch')).toHaveTextContent(
+				/^Change Branch$/
+			);
+			expect(screen.getByTestId('git-pill-menu-create-pr')).toHaveTextContent(
+				/^Create Pull Request$/
+			);
 		});
 	});
 });

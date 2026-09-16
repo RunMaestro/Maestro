@@ -32,11 +32,11 @@ import { getOpenSpecCommands } from '../../services/openspec';
 import { getBmadCommands } from '../../services/bmad';
 import { captureException } from '../../utils/sentry';
 import { exposeWindowsWarningModalDebug } from '../../components/WindowsWarningModal';
+import type { GistInfo } from '../../components/GistPublishModal';
 import {
 	exposeOnboardingSeriesDebug,
 	startOnboardingSeries,
 } from '../../stores/onboardingSeriesStore';
-import type { GistInfo } from '../../components/GistPublishModal';
 import {
 	flushLeaderboardOutbox,
 	recoverUncommittedAutoRunCredit,

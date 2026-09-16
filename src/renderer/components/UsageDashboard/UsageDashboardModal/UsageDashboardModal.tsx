@@ -538,6 +538,7 @@ export function UsageDashboardModal({
 					theme={theme}
 					allSessions={sessions}
 					onClose={() => setDetailSession(null)}
+					onCloseDashboard={onClose}
 				/>
 			)}
 		</div>

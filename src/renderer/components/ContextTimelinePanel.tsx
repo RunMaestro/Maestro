@@ -32,7 +32,9 @@ import {
 	selectPoints,
 	CONTEXT_SURFACE_CLOSE_DELAY_MS,
 	CONTEXT_SURFACE_GAP,
+	CONTEXT_SURFACE_MIN_WIDTH,
 	CONTEXT_SURFACE_WIDTH,
+	CONTEXT_TIMELINE_RESIZE_KEY,
 	type ContextTimelinePoint,
 	type TimelineAnchorRect,
 } from '../stores/contextTimelineStore';
@@ -62,13 +64,9 @@ interface ContextTimelinePanelProps {
  * CONTEXT_SURFACE_WIDTH, which that popover shares - see its doc in the store.
  */
 const PANEL_FALLBACK_HEIGHT = 620;
-/** Narrower than this and the breakdown line starts wrapping again. */
-const PANEL_MIN_WIDTH = 380;
 const PANEL_MIN_HEIGHT = 260;
 const VIEWPORT_MARGIN = 8;
 const ANCHOR_GAP = CONTEXT_SURFACE_GAP;
-/** Key under which the user's dragged size is remembered (settingsStore.modalSizes). */
-const PANEL_RESIZE_KEY = 'context-timeline';
 /** The header context gauge that opens this panel; re-queried for its live rect. */
 const HEADER_CONTEXT_WIDGET_SELECTOR = '[data-testid="header-context-widget"]';
 
@@ -147,10 +145,10 @@ export function ContextTimelinePanel({ theme }: ContextTimelinePanelProps) {
 	// as the cursor. The DEFAULT is the popover the click replaced, so the swap
 	// lands in the same space; a dragged size still wins over it.
 	const resizable = useResizableModal({
-		resizeKey: PANEL_RESIZE_KEY,
+		resizeKey: CONTEXT_TIMELINE_RESIZE_KEY,
 		defaultSize: sourceSize ?? { width: CONTEXT_SURFACE_WIDTH, height: PANEL_FALLBACK_HEIGHT },
-		minSize: { width: PANEL_MIN_WIDTH, height: PANEL_MIN_HEIGHT },
-		anchor: 'topLeft',
+		minSize: { width: CONTEXT_SURFACE_MIN_WIDTH, height: PANEL_MIN_HEIGHT },
+		anchor: 'top-left',
 	});
 
 	// Reclamp the anchored position on viewport resize so an open panel never ends
@@ -348,7 +346,7 @@ export function ContextTimelinePanel({ theme }: ContextTimelinePanelProps) {
 				backgroundColor: theme.colors.bgSidebar,
 				borderColor: theme.colors.border,
 			}}
-			data-modal-resize-key={PANEL_RESIZE_KEY}
+			data-modal-resize-key={CONTEXT_TIMELINE_RESIZE_KEY}
 		>
 			<ResizeHandles
 				onResizeStart={resizable.onResizeStart}

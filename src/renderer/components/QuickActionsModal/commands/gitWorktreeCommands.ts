@@ -22,6 +22,10 @@ interface BuildGitWorktreeCommandsArgs {
 	shortcuts: {
 		viewGitDiff?: QuickAction['shortcut'];
 		viewGitLog?: QuickAction['shortcut'];
+		gitPull?: QuickAction['shortcut'];
+		gitPush?: QuickAction['shortcut'];
+		gitChangeBranch?: QuickAction['shortcut'];
+		gitCreatePR?: QuickAction['shortcut'];
 		refreshGitFileState?: QuickAction['shortcut'];
 	};
 	gitService: {
@@ -89,6 +93,7 @@ export function buildGitWorktreeCommands({
 				: gitActions.behind > 0
 					? `${gitActions.behind} commit${gitActions.behind === 1 ? '' : 's'} behind`
 					: 'Pull from origin',
+			shortcut: shortcuts.gitPull,
 			action: () => {
 				gitActions.pull();
 				setQuickActionOpen(false);
@@ -103,6 +108,7 @@ export function buildGitWorktreeCommands({
 				: gitActions.ahead > 0
 					? `${gitActions.ahead} commit${gitActions.ahead === 1 ? '' : 's'} ahead`
 					: 'Push to origin',
+			shortcut: shortcuts.gitPush,
 			action: () => {
 				gitActions.push();
 				setQuickActionOpen(false);
@@ -113,6 +119,7 @@ export function buildGitWorktreeCommands({
 			id: 'changeBranch',
 			label: 'Change Branch',
 			subtext: gitActions.branch ? `Currently on ${gitActions.branch}` : 'Switch to another branch',
+			shortcut: shortcuts.gitChangeBranch,
 			action: () => {
 				gitActions.switchBranch();
 				setQuickActionOpen(false);
@@ -183,6 +190,7 @@ export function buildGitWorktreeCommands({
 				: isWorktreeChild
 					? 'Open PR from this worktree branch'
 					: 'Open PR from the current branch',
+			shortcut: shortcuts.gitCreatePR,
 			action: () => {
 				if (isWorktreeChild && onOpenCreatePR) {
 					onOpenCreatePR(activeSession);

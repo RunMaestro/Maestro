@@ -107,7 +107,7 @@
 			},
 			{
 				"group": "Providers & CLI",
-				"pages": ["provider-notes", "multi-claude", "cli", "cli-reference"]
+				"pages": ["provider-notes", "multi-provider", "cli", "cli-reference"]
 			},
 			{
 				"group": "Integrations",
@@ -121,6 +121,12 @@
 			}
 		]
 	},
+	"redirects": [
+		{
+			"source": "/multi-claude",
+			"destination": "/multi-provider"
+		}
+	],
 	"navbar": {
 		"links": [
 			{

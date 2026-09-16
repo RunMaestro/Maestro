@@ -103,6 +103,25 @@ describe('serializeWithMemoizedArray', () => {
 		const updated = { ...session };
 		expect(serializeWithMemoizedArray({ sessions: [updated] }, 'sessions')).toContain('after');
 	});
+
+	it('indents identically on a memo hit as on a memo miss', () => {
+		// The memo stores the ALREADY-INDENTED element so a repeat write does not
+		// re-run the split/join. That makes indentation part of what is cached, so
+		// a hit and a miss can now disagree - and only the second write of an
+		// unchanged multi-line session would show it. Serialize twice and hold both
+		// against conf's own output.
+		const session = {
+			id: 'a',
+			aiTabs: [{ id: 't1', logs: [{ content: 'line one' }, { content: 'line two' }] }],
+		};
+		const doc = { sessions: [session], activeSessionId: 'a' };
+
+		const miss = serializeWithMemoizedArray(doc, 'sessions');
+		const hit = serializeWithMemoizedArray(doc, 'sessions');
+
+		expect(miss).toBe(confSerialize(doc));
+		expect(hit).toBe(confSerialize(doc));
+	});
 });
 
 describe('deferStoreWrites', () => {

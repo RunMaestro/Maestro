@@ -24,6 +24,11 @@ const mockRefresh = vi.fn();
 const mockFocus = vi.fn();
 const mockWrite = vi.fn();
 const mockXtermClear = vi.fn();
+// The measured grid the stub reports, and the PTY size-push TerminalView triggers
+// after a spawn. A shell born at the 80x24 default paints every full-screen program
+// (nano, vim, less) into that box no matter how large the pane is.
+const mockGetSize = vi.fn(() => ({ cols: 170, rows: 59 }));
+const mockSyncSize = vi.fn();
 // Captures the most recent props passed to each mounted XTerminal instance, keyed by
 // sessionId (the `${sessionId}-terminal-${tabId}` string). Used by tests to invoke the
 // forwarded selection callbacks without needing a real xterm context menu.
@@ -45,6 +50,8 @@ vi.mock('../../../renderer/components/XTerminal', () => {
 				searchPrevious(): boolean;
 				getSelection(): string;
 				resize(): void;
+				getSize(): { cols: number; rows: number } | null;
+				syncSize(): void;
 			}>
 		) => {
 			xtermPropsBySessionId.set(String(props.sessionId), props);
@@ -59,6 +66,8 @@ vi.mock('../../../renderer/components/XTerminal', () => {
 				searchPrevious: vi.fn().mockReturnValue(false),
 				getSelection: vi.fn().mockReturnValue(''),
 				resize: vi.fn(),
+				getSize: mockGetSize,
+				syncSize: mockSyncSize,
 			}));
 			return React.createElement('div', { 'data-testid': 'xterm-mock' });
 		}
@@ -925,5 +934,54 @@ describe('TerminalView - touch key bar (coarse pointer)', () => {
 			bridge?.onConsume();
 		});
 		expect(bridge?.isActive()).toBe(false);
+	});
+});
+
+describe('TerminalView — PTY window size', () => {
+	// The PTY is born 80x24 unless the spawn says otherwise. Anything that asks the
+	// kernel for the window size - nano, vim, less, top - then paints into that box
+	// however large the pane is, while ordinary command output still fills it,
+	// because xterm does the wrapping itself. So the view has to hand its measured
+	// grid to the spawn, and re-assert it once the pid exists: a resize that raced
+	// the spawn is dropped silently (process:resize resolves false for an unknown
+	// session id) and nothing else ever retries it.
+
+	it('spawns the shell at the grid the terminal is actually showing', async () => {
+		const tab = makeTab({ id: 'tab-1', pid: 0, state: 'idle', createdAt: Date.now() });
+
+		await act(async () => {
+			render(<TerminalView {...defaultProps} session={makeSession([tab])} isVisible={true} />);
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		});
+
+		expect(maestro().process.spawnTerminalTab).toHaveBeenCalledWith(
+			expect.objectContaining({ cols: 170, rows: 59 })
+		);
+	});
+
+	it('omits the size when the terminal is hidden and has never been measured', async () => {
+		mockGetSize.mockReturnValueOnce(null as unknown as { cols: number; rows: number });
+		const tab = makeTab({ id: 'tab-1', pid: 0, state: 'idle', createdAt: Date.now() });
+
+		await act(async () => {
+			render(<TerminalView {...defaultProps} session={makeSession([tab])} isVisible={true} />);
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		});
+
+		const config = (maestro().process.spawnTerminalTab as ReturnType<typeof vi.fn>).mock
+			.calls[0][0];
+		expect(config.cols).toBeUndefined();
+		expect(config.rows).toBeUndefined();
+	});
+
+	it('re-asserts the size once the pid lands', async () => {
+		const tab = makeTab({ id: 'tab-1', pid: 0, state: 'idle', createdAt: Date.now() });
+
+		await act(async () => {
+			render(<TerminalView {...defaultProps} session={makeSession([tab])} isVisible={true} />);
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		});
+
+		expect(mockSyncSize).toHaveBeenCalled();
 	});
 });

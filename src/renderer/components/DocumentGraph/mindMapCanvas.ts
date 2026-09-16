@@ -6,6 +6,7 @@
  * handling stay in MindMap.
  */
 
+import { BASE_FONT_SIZE_DEFAULT } from '../../../shared/typography';
 import type { Theme } from '../../types';
 import type { MindMapNode } from './MindMap';
 import {
@@ -275,7 +276,10 @@ export function renderDocumentNode(
 	// cannot read a CSS variable - so it is threaded in rather than inherited.
 	// The historical stack is the default, so an unset setting renders exactly
 	// as before.
-	fontFamily: string = DEFAULT_GRAPH_FONT
+	fontFamily: string = DEFAULT_GRAPH_FONT,
+	// Resolved Document Graph size. Same reason as the family: canvas cannot
+	// inherit it, so it is threaded in and every literal runs through graphFontPx.
+	fontSize: number = BASE_FONT_SIZE_DEFAULT
 ): void {
 	const {
 		x,
@@ -346,7 +350,7 @@ export function renderDocumentNode(
 		ctx.setLineDash([]);
 
 		ctx.fillStyle = '#FFFFFF';
-		ctx.font = `600 12px ${fontFamily}`;
+		ctx.font = `600 ${graphFontPx(12, fontSize)}px ${fontFamily}`;
 		ctx.textAlign = 'left';
 		ctx.textBaseline = 'middle';
 		const pillTitleWidth = width - NODE_PILL_CHROME_WIDTH;
@@ -409,7 +413,7 @@ export function renderDocumentNode(
 
 	// Title text (in header, white or light colored for contrast)
 	ctx.fillStyle = '#FFFFFF';
-	ctx.font = `600 12px ${fontFamily}`;
+	ctx.font = `600 ${graphFontPx(12, fontSize)}px ${fontFamily}`;
 	ctx.textAlign = 'left';
 	ctx.textBaseline = 'middle';
 	const maxTitleWidth = width - OPEN_ICON_SIZE - OPEN_ICON_PADDING * 3 - 12;
@@ -441,7 +445,7 @@ export function renderDocumentNode(
 		const folderPath = pathParts.length > 0 ? pathParts.join('/') : './';
 
 		ctx.fillStyle = theme.colors.textDim;
-		ctx.font = `10px ${fontFamily}`;
+		ctx.font = `${graphFontPx(10, fontSize)}px ${fontFamily}`;
 		ctx.textAlign = 'left';
 		ctx.textBaseline = 'middle';
 
@@ -457,7 +461,7 @@ export function renderDocumentNode(
 	// Preview text (description or content preview, in body, if present)
 	if (previewText) {
 		ctx.fillStyle = theme.colors.textDim;
-		ctx.font = `11px ${fontFamily}`;
+		ctx.font = `${graphFontPx(11, fontSize)}px ${fontFamily}`;
 		ctx.textAlign = 'left';
 		ctx.textBaseline = 'top';
 
@@ -489,6 +493,23 @@ export function renderDocumentNode(
 /**
  * Render an external node on the canvas
  */
+/** Floor so a small Document Graph size never renders unreadable canvas text. */
+const MIN_GRAPH_FONT_PX = 8;
+
+/**
+ * Scale one of the canvas's literal px sizes against the resolved Document
+ * Graph size, so the "Document Graph" row in Settings actually changes what
+ * paints instead of only the family. Canvas text has no cascade to inherit a
+ * size from, so every `ctx.font` call runs its literal through this - the CSS
+ * surfaces pick the size up for free via `--maestro-size-document-graph`.
+ */
+export function graphFontPx(basePx: number, resolvedFontSize: number): number {
+	return Math.max(
+		MIN_GRAPH_FONT_PX,
+		Math.round((basePx * resolvedFontSize) / BASE_FONT_SIZE_DEFAULT)
+	);
+}
+
 export function renderExternalNode(
 	ctx: CanvasRenderingContext2D,
 	node: MindMapNode,
@@ -496,7 +517,8 @@ export function renderExternalNode(
 	isHovered: boolean,
 	matchesSearch: boolean,
 	searchActive: boolean,
-	fontFamily: string = DEFAULT_GRAPH_FONT
+	fontFamily: string = DEFAULT_GRAPH_FONT,
+	fontSize: number = BASE_FONT_SIZE_DEFAULT
 ): void {
 	const { x, y, width, height, domain, isSelected, isFocused } = node;
 
@@ -523,7 +545,7 @@ export function renderExternalNode(
 
 	// Domain text
 	ctx.fillStyle = theme.colors.textDim;
-	ctx.font = `11px ${fontFamily}`;
+	ctx.font = `${graphFontPx(11, fontSize)}px ${fontFamily}`;
 	ctx.textAlign = 'center';
 	ctx.textBaseline = 'middle';
 	ctx.fillText(truncateText(domain || '', 18), x, y);

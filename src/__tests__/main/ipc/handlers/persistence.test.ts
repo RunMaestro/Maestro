@@ -438,6 +438,91 @@ describe('persistence IPC handlers', () => {
 			expect(result).toBe(true);
 		});
 
+		// usageStats holds lifetime high-water marks. The merge lives here, not
+		// in the renderer, because the caller's own copy cannot be trusted: a
+		// renderer mid-hydration still holds zeros, and a second window holds a
+		// stale snapshot. Either one used to be able to overwrite a real peak.
+		describe('usageStats peaks', () => {
+			const stored = {
+				maxAgents: 89,
+				maxDefinedAgents: 89,
+				maxSimultaneousAutoRuns: 8,
+				maxSimultaneousQueries: 8,
+				maxQueueDepth: 16,
+			};
+
+			it('refuses a write that would lower a stored peak', async () => {
+				mockSettingsStore.get.mockReturnValue(stored);
+
+				const handler = handlers.get('settings:set');
+				const result = await handler!({} as any, 'usageStats', {
+					maxAgents: 12,
+					maxDefinedAgents: 12,
+					maxSimultaneousAutoRuns: 1,
+					maxSimultaneousQueries: 2,
+					maxQueueDepth: 0,
+				});
+
+				expect(mockSettingsStore.set).toHaveBeenCalledWith('usageStats', stored);
+				expect(result).toBe(true);
+			});
+
+			it('raises only the counters that were beaten', async () => {
+				mockSettingsStore.get.mockReturnValue(stored);
+
+				const handler = handlers.get('settings:set');
+				await handler!({} as any, 'usageStats', { ...stored, maxQueueDepth: 21 });
+
+				expect(mockSettingsStore.set).toHaveBeenCalledWith('usageStats', {
+					...stored,
+					maxQueueDepth: 21,
+				});
+			});
+
+			// The exact shape of the incident: an unhydrated renderer sends its
+			// zeroed defaults maxed against a live snapshot.
+			it('survives a write from a caller whose baseline is zeroed', async () => {
+				mockSettingsStore.get.mockReturnValue(stored);
+
+				const handler = handlers.get('settings:set');
+				await handler!({} as any, 'usageStats', {
+					maxAgents: 88,
+					maxDefinedAgents: 88,
+					maxSimultaneousAutoRuns: 1,
+					maxSimultaneousQueries: 3,
+					maxQueueDepth: 2,
+				});
+
+				expect(mockSettingsStore.set).toHaveBeenCalledWith('usageStats', stored);
+			});
+
+			it('accepts the first write when nothing is stored yet', async () => {
+				mockSettingsStore.get.mockReturnValue(undefined);
+
+				const handler = handlers.get('settings:set');
+				await handler!({} as any, 'usageStats', { maxAgents: 4 });
+
+				expect(mockSettingsStore.set).toHaveBeenCalledWith('usageStats', {
+					maxAgents: 4,
+					maxDefinedAgents: 0,
+					maxSimultaneousAutoRuns: 0,
+					maxSimultaneousQueries: 0,
+					maxQueueDepth: 0,
+				});
+			});
+
+			it('leaves every other key untouched by the merge', async () => {
+				mockSettingsStore.get.mockReturnValue({ maxAgents: 99 });
+
+				const handler = handlers.get('settings:set');
+				await handler!({} as any, 'autoRunStats', { cumulativeTimeMs: 5 });
+
+				expect(mockSettingsStore.set).toHaveBeenCalledWith('autoRunStats', {
+					cumulativeTimeMs: 5,
+				});
+			});
+		});
+
 		it('should handle nested keys', async () => {
 			const handler = handlers.get('settings:set');
 			const result = await handler!({} as any, 'shortcuts.newTab', { ctrl: true, key: 't' });

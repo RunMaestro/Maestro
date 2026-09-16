@@ -647,4 +647,115 @@ describe('GroupChatInput', () => {
 			expect(screen.getByText('@Agent1')).toBeInTheDocument();
 		});
 	});
+
+	// =========================================================================
+	// QUEUE STATE
+	// =========================================================================
+	//
+	// The queue belongs to main. The composer's job is to render what main says,
+	// which means surfacing the two states a mirror cannot infer for itself: a
+	// paused queue sends nothing, and an item already in flight cannot be pulled
+	// back. Both used to be invisible, so messages sat there with no explanation
+	// and no control.
+	describe('queue state', () => {
+		const queuedItem = (id: string, text: string) => ({ id, timestamp: 1, text });
+
+		it('renders queued messages from the state main broadcasts', () => {
+			render(
+				<GroupChatInput
+					{...createDefaultProps({
+						queueState: { items: [queuedItem('q-1', 'waiting message')], paused: false },
+					})}
+				/>
+			);
+
+			expect(screen.getByText('waiting message')).toBeInTheDocument();
+		});
+
+		it('says why a paused queue is not sending, and offers the way out', () => {
+			const onResumeQueue = vi.fn();
+			render(
+				<GroupChatInput
+					{...createDefaultProps({
+						queueState: { items: [queuedItem('q-1', 'waiting')], paused: true },
+						onResumeQueue,
+					})}
+				/>
+			);
+
+			expect(screen.getByText(/Queue paused/i)).toBeInTheDocument();
+			fireEvent.click(screen.getByRole('button', { name: /Resume/i }));
+			expect(onResumeQueue).toHaveBeenCalled();
+		});
+
+		// The reason is the useful half. "Queue paused" alone sends the user hunting.
+		it('names the failure that paused the queue', () => {
+			render(
+				<GroupChatInput
+					{...createDefaultProps({
+						queueState: {
+							items: [
+								{
+									...queuedItem('q-1', 'waiting'),
+									failed: true,
+									failureReason: 'moderator binary missing',
+								},
+							],
+							paused: true,
+						},
+						onResumeQueue: vi.fn(),
+					})}
+				/>
+			);
+
+			expect(screen.getByText(/moderator binary missing/i)).toBeInTheDocument();
+		});
+
+		// Without a resume handler there is nothing the button could do, so it is
+		// not drawn - a dead control is worse than none.
+		it('omits Resume when no handler was passed', () => {
+			render(
+				<GroupChatInput
+					{...createDefaultProps({
+						queueState: { items: [queuedItem('q-1', 'waiting')], paused: true },
+					})}
+				/>
+			);
+
+			expect(screen.getByText(/Queue paused/i)).toBeInTheDocument();
+			expect(screen.queryByRole('button', { name: /Resume/i })).not.toBeInTheDocument();
+		});
+
+		it('marks the in-flight item as unremovable', () => {
+			render(
+				<GroupChatInput
+					{...createDefaultProps({
+						queueState: {
+							items: [{ ...queuedItem('q-1', 'on its way'), sending: true }],
+							paused: false,
+						},
+					})}
+				/>
+			);
+
+			expect(screen.getByText(/Sending, cannot remove/i)).toBeInTheDocument();
+		});
+
+		it('shows no queue chrome at all when nothing is waiting', () => {
+			render(
+				<GroupChatInput {...createDefaultProps({ queueState: { items: [], paused: false } })} />
+			);
+
+			expect(screen.queryByText(/Queue paused/i)).not.toBeInTheDocument();
+			expect(screen.queryByText(/Sending, cannot remove/i)).not.toBeInTheDocument();
+		});
+
+		// A client that has not heard from main yet has no queue, which is not the
+		// same as an empty one - it must not draw a paused banner on a guess.
+		it('renders nothing before the queue has loaded', () => {
+			render(<GroupChatInput {...createDefaultProps({ queueState: undefined })} />);
+
+			expect(screen.queryByText(/Queue paused/i)).not.toBeInTheDocument();
+		});
+	});
 });

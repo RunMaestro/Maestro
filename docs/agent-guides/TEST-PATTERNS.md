@@ -355,6 +355,41 @@ file and only some of them were applied where they mattered. When an agent
 definition gains a new `defaultEnvVars` key, add it to
 `SHELL_OVERRIDABLE_AGENT_ENV_KEYS`.
 
+### Rendering a Surface That Contains `<MarkdownEditor>` (`markdownEditorModuleMock`)
+
+The editor wraps CodeMirror 6, which measures DOM text to lay itself out. jsdom
+returns zeros and CM6 throws (`textRange(...).getClientRects is not a function`),
+so **every suite that renders a surface containing the editor must mock the
+module** - Auto Run, Maestro Prompts, the memory viewer, and anything that
+embeds them.
+
+Use the one shared double rather than a per-suite stub:
+
+```typescript
+vi.mock('../../../renderer/components/FilePreview/markdownEditor', async () => {
+	const { markdownEditorModuleMock } = await import('../../helpers/mockMarkdownEditor');
+	return markdownEditorModuleMock();
+});
+```
+
+`vi.mock` resolves its first argument from the file that CALLS it, so the module
+path is spelled relative to the test file while the helper import is relative to
+the same place - the two prefixes differ and that is expected.
+
+The double is a plain `<textarea>` that also implements `MarkdownEditorHandle`
+against that textarea: `getCaret`, `getSelectionRange`, `setSelection`,
+`replaceRange`, `getScrollTop` / `setScrollTop`, and the scroll-percent pair all
+do the real arithmetic. That matters - host code driving the editor imperatively
+(tab insert, list continuation, undo restore, paste rewriting, scroll sync)
+exercises its own logic instead of hitting no-op stubs, and `getByRole('textbox')`
+/ `fireEvent.change` keep working unchanged. `setSearchMatches` is the one no-op:
+painted decorations have no jsdom equivalent, so assert on the match COUNT and
+the navigation state, never on highlight nodes.
+
+Do not assert on CM6 typography from a test. The editor carries its font size in
+the CodeMirror theme rather than an inline style, so a font-zoom test asserts on
+the persisted scale the zoom control writes, not on `element.style.fontSize`.
+
 ### Mock Factories
 
 #### Mock Session

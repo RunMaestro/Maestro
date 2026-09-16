@@ -19,6 +19,7 @@ const { mockTileNewTabInSession } = vi.hoisted(() => ({ mockTileNewTabInSession:
 vi.mock('../../../renderer/services/tileNewTabAction', () => ({
 	tileNewTabInSession: (...args: unknown[]) => mockTileNewTabInSession(...args),
 }));
+import { publishGitShortcutActions } from '../../../renderer/services/gitShortcutActions';
 
 /**
  * Creates a minimal mock context with all required handler functions.
@@ -3220,6 +3221,91 @@ describe('useMainKeyboardHandler', () => {
 
 			// Font size should remain unchanged with Alt held
 			expect(useSettingsStore.getState().fontSize).toBe(14);
+		});
+	});
+
+	describe('git branch-pill shortcuts', () => {
+		/**
+		 * The four chords read their actions from the module the bridge publishes
+		 * to, so these tests publish a stub action set instead of rendering the
+		 * whole git context.
+		 */
+		function publishStub(overrides: Record<string, unknown> = {}) {
+			const actions = {
+				isGitRepo: true,
+				canCreatePR: true,
+				pull: vi.fn(),
+				push: vi.fn(),
+				switchBranch: vi.fn(),
+				createPR: vi.fn(),
+				...overrides,
+			};
+			publishGitShortcutActions(actions as never);
+			return actions;
+		}
+
+		function press(id: string, ctxOverrides: Record<string, unknown> = {}) {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isShortcut: (_e: KeyboardEvent, shortcutId: string) => shortcutId === id,
+				activeSessionId: 'test-session',
+				activeSession: { id: 'test-session', name: 'Test', inputMode: 'ai' },
+				activeGroupChatId: null,
+				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+				...ctxOverrides,
+			});
+			act(() => {
+				window.dispatchEvent(new KeyboardEvent('keydown', { key: 'F8', bubbles: true }));
+			});
+		}
+
+		afterEach(() => {
+			publishGitShortcutActions(null);
+		});
+
+		it('fires pull, push, branch switch, and PR from their chords', () => {
+			const pull = publishStub();
+			press('gitPull');
+			expect(pull.pull).toHaveBeenCalled();
+
+			const push = publishStub();
+			press('gitPush');
+			expect(push.push).toHaveBeenCalled();
+
+			const branch = publishStub();
+			press('gitChangeBranch');
+			expect(branch.switchBranch).toHaveBeenCalled();
+
+			const pr = publishStub();
+			press('gitCreatePR');
+			expect(pr.createPR).toHaveBeenCalled();
+		});
+
+		it('does nothing on an agent that is not a git repo', () => {
+			const actions = publishStub({ isGitRepo: false, canCreatePR: false });
+			press('gitPull');
+			press('gitPush');
+			press('gitChangeBranch');
+			press('gitCreatePR');
+
+			expect(actions.pull).not.toHaveBeenCalled();
+			expect(actions.push).not.toHaveBeenCalled();
+			expect(actions.switchBranch).not.toHaveBeenCalled();
+			expect(actions.createPR).not.toHaveBeenCalled();
+		});
+
+		it('withholds Create Pull Request when there is no branch to open it from', () => {
+			// A repo with no resolved branch has no PR source - the same reason the
+			// pill menu omits the row.
+			const actions = publishStub({ canCreatePR: false });
+			press('gitCreatePR');
+			expect(actions.createPR).not.toHaveBeenCalled();
+		});
+
+		it('stays out of group chats, which have no repo of their own', () => {
+			const actions = publishStub();
+			press('gitPull', { activeGroupChatId: 'room-1' });
+			expect(actions.pull).not.toHaveBeenCalled();
 		});
 	});
 

@@ -38,9 +38,6 @@ describe('useSettings', () => {
 			settingsLoaded: false,
 			conductorProfile: '',
 			globalShowHotkey: [],
-			llmProvider: 'openrouter',
-			modelSlug: 'anthropic/claude-3.5-sonnet',
-			apiKey: '',
 			defaultShell: 'zsh',
 			customShellPath: '',
 			shellArgs: '',
@@ -130,15 +127,6 @@ describe('useSettings', () => {
 			const { result } = renderHook(() => useSettings());
 			await waitForSettingsLoaded(result);
 			expect(result.current.settingsLoaded).toBe(true);
-		});
-
-		it('should have correct default values for LLM settings', async () => {
-			const { result } = renderHook(() => useSettings());
-			await waitForSettingsLoaded(result);
-
-			expect(result.current.llmProvider).toBe('openrouter');
-			expect(result.current.modelSlug).toBe('anthropic/claude-3.5-sonnet');
-			expect(result.current.apiKey).toBe('');
 		});
 
 		it('should have correct default values for shell settings', async () => {
@@ -266,21 +254,6 @@ describe('useSettings', () => {
 	});
 
 	describe('loading saved settings', () => {
-		it('should load saved LLM settings', async () => {
-			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
-				llmProvider: 'anthropic',
-				modelSlug: 'claude-3-opus',
-				apiKey: 'test-api-key',
-			});
-
-			const { result } = renderHook(() => useSettings());
-			await waitForSettingsLoaded(result);
-
-			expect(result.current.llmProvider).toBe('anthropic');
-			expect(result.current.modelSlug).toBe('claude-3-opus');
-			expect(result.current.apiKey).toBe('test-api-key');
-		});
-
 		it('should load saved UI settings', async () => {
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
 				activeThemeId: 'gruvbox-dark',
@@ -469,44 +442,6 @@ describe('useSettings', () => {
 			await waitForSettingsLoaded(result);
 
 			expect(result.current.automaticTabNamingEnabled).toBe(false);
-		});
-	});
-
-	describe('setter functions - LLM settings', () => {
-		it('should update llmProvider and persist to settings', async () => {
-			const { result } = renderHook(() => useSettings());
-			await waitForSettingsLoaded(result);
-
-			act(() => {
-				result.current.setLlmProvider('anthropic');
-			});
-
-			expect(result.current.llmProvider).toBe('anthropic');
-			expect(window.maestro.settings.set).toHaveBeenCalledWith('llmProvider', 'anthropic');
-		});
-
-		it('should update modelSlug and persist to settings', async () => {
-			const { result } = renderHook(() => useSettings());
-			await waitForSettingsLoaded(result);
-
-			act(() => {
-				result.current.setModelSlug('claude-3-opus');
-			});
-
-			expect(result.current.modelSlug).toBe('claude-3-opus');
-			expect(window.maestro.settings.set).toHaveBeenCalledWith('modelSlug', 'claude-3-opus');
-		});
-
-		it('should update apiKey and persist to settings', async () => {
-			const { result } = renderHook(() => useSettings());
-			await waitForSettingsLoaded(result);
-
-			act(() => {
-				result.current.setApiKey('new-api-key');
-			});
-
-			expect(result.current.apiKey).toBe('new-api-key');
-			expect(window.maestro.settings.set).toHaveBeenCalledWith('apiKey', 'new-api-key');
 		});
 	});
 
@@ -1451,7 +1386,7 @@ describe('useSettings', () => {
 			await waitForSettingsLoaded(result);
 
 			// Should use defaults
-			expect(result.current.llmProvider).toBe('openrouter');
+			expect(result.current.defaultShell).toBe('zsh');
 			expect(result.current.activeThemeId).toBe('dracula');
 		});
 

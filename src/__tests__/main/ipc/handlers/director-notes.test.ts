@@ -7,8 +7,14 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import * as os from 'os';
+import * as path from 'path';
 import { ipcMain } from 'electron';
 import { registerDirectorNotesHandlers } from '../../../../main/ipc/handlers/director-notes';
+import {
+	HistoryBucketCache,
+	setHistoryBucketCacheForTest,
+} from '../../../../main/utils/history-bucket-cache';
 import * as historyManagerModule from '../../../../main/history-manager';
 import type { HistoryManager } from '../../../../main/history-manager';
 import type { HistoryEntry } from '../../../../shared/types';
@@ -679,6 +685,311 @@ describe('director-notes IPC handlers', () => {
 
 			expect(result.perAgent[0].entryCount).toBe(2);
 			expect(result.perAgent[0].truncated).toBe(false);
+		});
+	});
+
+	// Cue runs stopped being written to the agent's JSONL history file in
+	// CUE-HISTORY-02 and now live only in `cue_events`. Every Director's Notes
+	// surface counted `entry.type === 'CUE'` over those files, so without the
+	// database read below a fleet doing thousands of runs a day reports zero.
+	describe('Cue runs sourced from cue_events', () => {
+		/** Temp dir for the activity-graph bucket cache. */
+		const GRAPH_CACHE_DIR = path.join(os.tmpdir(), `maestro-dn-cue-test-${process.pid}`);
+		let cacheRun = 0;
+
+		/** A Cue run as `getCueHistoryEntries()` shapes it. */
+		const cueRow = (overrides: Partial<HistoryEntry> = {}): HistoryEntry =>
+			createMockEntry({
+				id: 'cue-1',
+				type: 'CUE',
+				sessionId: 'session-1',
+				summary: 'Cue run output',
+				success: true,
+				cueTriggerName: 'Nightly sweep',
+				cueEventType: 'time.interval',
+				...overrides,
+			});
+
+		/** Re-register with Cue queries injected; returns the handler map getter. */
+		const registerWith = (overrides: Record<string, unknown>): ((channel: string) => Function) => {
+			registerDirectorNotesHandlers({
+				getProcessManager: () => mockProcessManager,
+				getAgentDetector: () => mockAgentDetector,
+				agentConfigsStore: { get: vi.fn(() => ({})) } as any,
+				...overrides,
+			} as any);
+			return (channel: string) => handlers.get(channel)!;
+		};
+
+		/** Point the graph handler at a cache nobody else is using. */
+		const useFreshGraphCache = (): void => {
+			setHistoryBucketCacheForTest(
+				new HistoryBucketCache(path.join(GRAPH_CACHE_DIR, `run-${cacheRun++}`))
+			);
+		};
+
+		afterEach(() => {
+			setHistoryBucketCacheForTest(null);
+		});
+
+		it('merges database Cue runs into the unified list and its CUE count', async () => {
+			const now = Date.now();
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([
+				createMockEntry({ id: 'u-new', type: 'USER', timestamp: now - 1000 }),
+				createMockEntry({ id: 'u-old', type: 'USER', timestamp: now - 3000 }),
+			]);
+
+			const handler = registerWith({
+				getCueHistoryEntries: () => [cueRow({ id: 'cue-mid', timestamp: now - 2000 })],
+			})('director-notes:getUnifiedHistory');
+			const result = await handler({} as any, { lookbackDays: 7 });
+
+			expect(result.entries.map((e: HistoryEntry) => e.id)).toEqual(['u-new', 'cue-mid', 'u-old']);
+			expect(result.stats.cueCount).toBe(1);
+			expect(result.stats.userCount).toBe(2);
+			expect(result.stats.totalCount).toBe(3);
+		});
+
+		it('asks the database for the lookback window and the agent it belongs to', async () => {
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue([]);
+			mockGetSessionsStore.mockReturnValue({
+				get: vi
+					.fn()
+					.mockReturnValue([{ id: 'session-1', name: 'Sweeper', projectRoot: '/repo/maestro' }]),
+			});
+			const getCueHistoryEntries = vi.fn(() => []);
+
+			const handler = registerWith({ getCueHistoryEntries })('director-notes:getUnifiedHistory');
+			await handler({} as any, { lookbackDays: 7 });
+
+			expect(getCueHistoryEntries).toHaveBeenCalledTimes(1);
+			const query = getCueHistoryEntries.mock.calls[0][0] as any;
+			expect(query.sessionId).toBe('session-1');
+			expect(query.sessionName).toBe('Sweeper');
+			expect(query.projectPath).toBe('/repo/maestro');
+			expect(query.since).toBeGreaterThan(Date.now() - 8 * 24 * 60 * 60 * 1000);
+
+			// "All time" must not smuggle in a cutoff.
+			await handler({} as any, { lookbackDays: 0 });
+			expect((getCueHistoryEntries.mock.calls[1][0] as any).since).toBeUndefined();
+		});
+
+		it('returns database Cue rows when the CUE filter pill is the only one on', async () => {
+			const now = Date.now();
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([
+				createMockEntry({ id: 'u1', type: 'USER', timestamp: now - 1000 }),
+			]);
+
+			const handler = registerWith({
+				getCueHistoryEntries: () => [cueRow({ id: 'cue-1', timestamp: now - 2000 })],
+			})('director-notes:getUnifiedHistory');
+			const result = await handler({} as any, { lookbackDays: 7, filter: 'CUE' });
+
+			expect(result.entries.map((e: HistoryEntry) => e.id)).toEqual(['cue-1']);
+			// Stats stay unfiltered - the header counts every type.
+			expect(result.stats.userCount).toBe(1);
+		});
+
+		it('counts a run recorded by BOTH writers once', async () => {
+			// Runs from before the JSONL writes were removed are still on disk and
+			// stay there; the database also holds them. Ids differ between the two
+			// writers, so only the (trigger, type, summary, time) match sees it.
+			const now = Date.now();
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([
+				cueRow({ id: 'jsonl-cue', timestamp: now - 1000 }),
+			]);
+
+			const handler = registerWith({
+				getCueHistoryEntries: () => [
+					// Same run: the DB stamps dispatch, the JSONL entry stamped completion.
+					cueRow({ id: 'db-cue', timestamp: now - 3000, elapsedTimeMs: 2000 }),
+					cueRow({ id: 'db-cue-later', timestamp: now, summary: 'A different run' }),
+				],
+			})('director-notes:getUnifiedHistory');
+			const result = await handler({} as any, { lookbackDays: 7 });
+
+			expect(result.stats.cueCount).toBe(2);
+			expect(result.entries.map((e: HistoryEntry) => e.id)).toEqual(['db-cue-later', 'jsonl-cue']);
+		});
+
+		it('includes an agent whose only activity is Cue and has no history file', async () => {
+			const now = Date.now();
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue([]);
+			mockGetSessionsStore.mockReturnValue({
+				get: vi.fn().mockReturnValue([{ id: 'automation', name: 'Automation' }]),
+			});
+
+			const handler = registerWith({
+				getCueHistoryEntries: () => [
+					cueRow({ id: 'cue-1', sessionId: 'automation', timestamp: now - 1000 }),
+				],
+			})('director-notes:getUnifiedHistory');
+			const result = await handler({} as any, { lookbackDays: 7 });
+
+			expect(result.entries).toHaveLength(1);
+			expect(result.entries[0].sourceSessionId).toBe('automation');
+			expect(result.entries[0].agentName).toBe('Automation');
+			expect(result.stats.agentCount).toBe(1);
+		});
+
+		it('keeps the JSONL history readable when the Cue database throws', async () => {
+			const now = Date.now();
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([
+				createMockEntry({ id: 'u1', type: 'USER', timestamp: now }),
+			]);
+
+			const handler = registerWith({
+				getCueHistoryEntries: () => {
+					throw new Error('database is locked');
+				},
+			})('director-notes:getUnifiedHistory');
+			const result = await handler({} as any, { lookbackDays: 7 });
+
+			expect(result.entries.map((e: HistoryEntry) => e.id)).toEqual(['u1']);
+			expect(result.stats.cueCount).toBe(0);
+		});
+
+		it('counts database Cue runs in Rich Mode stats and its timeline', async () => {
+			const now = Date.now();
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([
+				createMockEntry({ id: 'u1', type: 'USER', timestamp: now - 1000, success: true }),
+			]);
+
+			const handler = registerWith({
+				getCueHistoryEntries: () => [
+					cueRow({ id: 'cue-ok', timestamp: now - 2000, success: true }),
+					cueRow({
+						id: 'cue-bad',
+						timestamp: now - 3000,
+						success: false,
+						summary: 'Run failed silently',
+					}),
+				],
+			})('director-notes:getRichOverviewStats');
+			const result = await handler({} as any, { lookbackDays: 7, bucketCount: 4 });
+
+			expect(result.cueCount).toBe(2);
+			expect(result.totalEntries).toBe(3);
+			expect(result.failureCount).toBe(1);
+			expect(result.timelineBuckets.reduce((sum: number, b: any) => sum + b.cue, 0)).toBe(2);
+			expect(result.perAgent[0].entryCount).toBe(3);
+		});
+
+		it('counts Cue rows when resolving a graph-click offset', async () => {
+			// The offset indexes the rendered list, which now includes rows that
+			// are not in any JSONL file.
+			const now = Date.now();
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([
+				createMockEntry({ id: 'u-new', type: 'USER', timestamp: now }),
+				createMockEntry({ id: 'u-old', type: 'USER', timestamp: now - 4000 }),
+			]);
+
+			const handler = registerWith({
+				getCueHistoryEntries: () => [cueRow({ id: 'cue-mid', timestamp: now - 2000 })],
+			})('director-notes:getOffsetForTimestamp');
+
+			// Merged newest-first: [u-new, cue-mid, u-old]
+			expect(await handler({} as any, now - 4000, { lookbackDays: 0 })).toBe(2);
+		});
+
+		it('draws the graph CUE series from cue_events, fleet-wide', async () => {
+			useFreshGraphCache();
+			const now = Date.now();
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([
+				createMockEntry({ id: 'u1', type: 'USER', timestamp: now - 1000 }),
+			]);
+			const getCueHistoryBuckets = vi.fn(() => [
+				{ timestamp: now - 1000, count: 4 },
+				{ timestamp: now, count: 2 },
+			]);
+
+			const handler = registerWith({
+				getCueHistoryBuckets,
+				getCueHistoryFingerprint: () => 'fp',
+			})('director-notes:getGraphData');
+			const result = await handler({} as any, 2, null);
+
+			expect(result.cueCount).toBe(6);
+			expect(result.userCount).toBe(1);
+			expect(result.buckets.reduce((sum: number, b: any) => sum + b.cue, 0)).toBe(6);
+			// No sessionId: this graph spans every agent, so one GROUP BY answers
+			// it rather than one query per agent.
+			expect((getCueHistoryBuckets.mock.calls[0][0] as any).sessionId).toBeUndefined();
+			expect((getCueHistoryBuckets.mock.calls[0][0] as any).since).toBeUndefined();
+		});
+
+		it('asks the graph query for the lookback window when one is set', async () => {
+			useFreshGraphCache();
+			const getCueHistoryBuckets = vi.fn(() => []);
+
+			const handler = registerWith({
+				getCueHistoryBuckets,
+				getCueHistoryFingerprint: () => 'fp',
+			})('director-notes:getGraphData');
+			await handler({} as any, 24, 24);
+
+			const since = (getCueHistoryBuckets.mock.calls[0][0] as any).since;
+			expect(since).toBeGreaterThan(Date.now() - 25 * 60 * 60 * 1000);
+			expect(since).toBeLessThanOrEqual(Date.now() - 23 * 60 * 60 * 1000);
+		});
+
+		it('recomputes cached graph buckets when the Cue fingerprint moves', async () => {
+			// The cache keys off the history files' mtime+size, which no longer
+			// change when a Cue run lands. Without the Cue half of the key the
+			// graph would serve its first answer forever.
+			useFreshGraphCache();
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([]);
+
+			const now = Date.now();
+			let cueFingerprint = 'cue-1';
+			let cueCount = 3;
+			const handler = registerWith({
+				getCueHistoryBuckets: () => [{ timestamp: now, count: cueCount }],
+				getCueHistoryFingerprint: () => cueFingerprint,
+			})('director-notes:getGraphData');
+
+			const first = await handler({} as any, 4, null);
+			expect(first.cached).toBe(false);
+			expect(first.cueCount).toBe(3);
+
+			// Same fingerprint: the cached aggregate answers.
+			cueCount = 99;
+			const second = await handler({} as any, 4, null);
+			expect(second.cached).toBe(true);
+			expect(second.cueCount).toBe(3);
+
+			// Fingerprint moved: recompute, and the new runs show up.
+			cueFingerprint = 'cue-2';
+			const third = await handler({} as any, 4, null);
+			expect(third.cached).toBe(false);
+			expect(third.cueCount).toBe(99);
+		});
+
+		it('still returns the JSONL graph series when the Cue database throws', async () => {
+			useFreshGraphCache();
+			const now = Date.now();
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([
+				createMockEntry({ id: 'u1', type: 'USER', timestamp: now }),
+			]);
+
+			const handler = registerWith({
+				getCueHistoryBuckets: () => {
+					throw new Error('database is locked');
+				},
+			})('director-notes:getGraphData');
+			const result = await handler({} as any, 4, null);
+
+			expect(result.userCount).toBe(1);
+			expect(result.cueCount).toBe(0);
 		});
 	});
 

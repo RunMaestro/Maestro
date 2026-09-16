@@ -31,7 +31,7 @@ import {
 } from '../../shared/typography';
 import { resolveSurfaceFont, withMonoFallback } from '../../shared/fontStack';
 
-/** The five font families and five sizes, plus the base size and zoom. */
+/** The six font families and six sizes, plus the base size and zoom. */
 export interface TypographyVarInput {
 	fonts: Record<TypographySurface, string | undefined>;
 	sizes: Record<TypographySurface, number | undefined>;

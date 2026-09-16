@@ -321,7 +321,7 @@ function AppStandaloneModalsInner({
 				onSetUseBetaChannel={setEnableBetaUpdates}
 			/>
 
-			{/* --- FIRST-RUN SERIES: typography -> theme -> agent powers ---
+			{/* --- FIRST-RUN SERIES: typography -> theme -> updates -> agent powers ---
 			    One step on screen at a time; see OnboardingSeriesHost. */}
 			<OnboardingSeriesHost
 				theme={theme}

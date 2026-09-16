@@ -212,6 +212,7 @@ import type { FirstPartyBridgeState } from '../main/plugins/first-party-bridge';
 import type { FirstPartyEncoreFlag } from '../shared/plugins/first-party';
 import type { AgentRunApi } from '../main/preload/agentRun';
 import type { BrowserOp } from '../shared/coworkingBrowser';
+import type { HistoryEntry } from '../shared/types';
 
 interface MaestroAPI {
 	// Context merging API (for session context transfer and grooming)
@@ -2380,6 +2381,8 @@ interface MaestroAPI {
 			sharedContext?: { sshRemoteId: string; remoteCwd: string };
 			types?: HistoryEntryType[];
 			hostKey?: string | null;
+			/** Collapse Cue runs to one row per trigger (`groupCueEntries`). */
+			groupCue?: boolean;
 		}) => Promise<{
 			entries: Array<{
 				id: string;
@@ -2403,6 +2406,18 @@ interface MaestroAPI {
 			offset: number;
 			hasMore: boolean;
 		}>;
+		/**
+		 * The individual runs behind one collapsed Cue row (`cueGroup.key`),
+		 * newest first. `lookbackHours` must match the window the group was
+		 * counted over, or the expander and the count disagree.
+		 */
+		getCueGroupRuns: (options: {
+			sessionId: string;
+			groupKey: string;
+			projectPath?: string;
+			lookbackHours?: number | null;
+			limit?: number;
+		}) => Promise<HistoryEntry[]>;
 		add: (
 			entry: {
 				id: string;
@@ -3029,6 +3044,43 @@ interface MaestroAPI {
 			images?: string[],
 			readOnly?: boolean
 		) => Promise<void>;
+		// Execution queue. The queue lives in MAIN, so every verb answers with the
+		// WHOLE state and main also broadcasts it on `onQueueState` - a client
+		// renders what it is told rather than its own private copy, which is what
+		// made a phone's queue invisible to the desktop.
+		submitMessage: (
+			id: string,
+			item: import('../shared/group-chat-types').GroupChatQueuedItem
+		) => Promise<import('../shared/group-chat-types').GroupChatQueueState>;
+		getQueue: (id: string) => Promise<import('../shared/group-chat-types').GroupChatQueueState>;
+		queueAdd: (
+			id: string,
+			item: import('../shared/group-chat-types').GroupChatQueuedItem
+		) => Promise<import('../shared/group-chat-types').GroupChatQueueState>;
+		// `refused` is true when the item is already in flight, so the caller can
+		// say why nothing moved instead of silently redrawing the row.
+		queueRemove: (
+			id: string,
+			itemId: string
+		) => Promise<{
+			state: import('../shared/group-chat-types').GroupChatQueueState;
+			refused: boolean;
+		}>;
+		queueReorder: (
+			id: string,
+			itemId: string,
+			toIndex: number
+		) => Promise<{
+			state: import('../shared/group-chat-types').GroupChatQueueState;
+			refused: boolean;
+		}>;
+		queueResume: (id: string) => Promise<import('../shared/group-chat-types').GroupChatQueueState>;
+		onQueueState: (
+			callback: (
+				groupChatId: string,
+				state: import('../shared/group-chat-types').GroupChatQueueState
+			) => void
+		) => () => void;
 		stopModerator: (id: string) => Promise<void>;
 		stopAll: (id: string) => Promise<void>;
 		reportAutoRunComplete: (

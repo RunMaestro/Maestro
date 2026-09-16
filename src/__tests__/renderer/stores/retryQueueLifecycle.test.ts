@@ -92,6 +92,8 @@ beforeEach(() => {
 		dispatched.push(item.text!);
 		// Mirror the real dispatch path, which snapshots every send for replay.
 		noteDispatch(_sessionId, item, deps);
+		// And which reports that the dispatch actually went out.
+		return true;
 	});
 	useAgentStore.setState({ processQueuedItem } as never);
 });

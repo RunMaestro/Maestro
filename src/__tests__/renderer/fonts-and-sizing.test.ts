@@ -76,9 +76,6 @@ describe('Cross-platform Fonts and Sizing', () => {
 		useSettingsStore.setState({
 			settingsLoaded: false,
 			conductorProfile: '',
-			llmProvider: 'openrouter',
-			modelSlug: 'anthropic/claude-3.5-sonnet',
-			apiKey: '',
 			defaultShell: 'zsh',
 			customShellPath: '',
 			shellArgs: '',

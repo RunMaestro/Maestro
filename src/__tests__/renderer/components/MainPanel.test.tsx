@@ -2135,6 +2135,26 @@ describe('MainPanel', () => {
 			}
 		});
 
+		it('should draw Context Details at the width the Timeline was resized to', async () => {
+			useSettingsStore.setState({
+				modalSizes: { 'context-timeline': { width: 430, height: 502 } },
+			});
+			try {
+				renderMainPanel();
+
+				fireEvent.mouseEnter(screen.getByTestId('header-context-widget'));
+				await waitFor(() => {
+					expect(screen.getByText('Context Details')).toBeInTheDocument();
+				});
+
+				// Heading -> bordered box -> positioned wrapper that carries the width.
+				const wrapper = screen.getByText('Context Details').parentElement?.parentElement;
+				expect(wrapper?.style.width).toBe('430px');
+			} finally {
+				useSettingsStore.setState({ modalSizes: {} });
+			}
+		});
+
 		it('should display token stats in context tooltip', async () => {
 			const session = createSession({
 				aiTabs: [

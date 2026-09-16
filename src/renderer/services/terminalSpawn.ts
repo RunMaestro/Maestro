@@ -8,9 +8,10 @@
  * answered "has no running shell yet", and the only cure was to click the tab -
  * exactly what `open-terminal --background` exists to avoid.
  *
- * The spawn itself never needed the view. It touches no DOM, no xterm instance,
- * and no cols/rows; it is an IPC call plus two store writes. So it lives here and
- * both callers share it:
+ * The spawn itself never needed the view. It touches no DOM and no xterm
+ * instance; it is an IPC call plus two store writes. So it lives here and both
+ * callers share it (a caller that HAS a rendered terminal passes its measured
+ * cols/rows in, but nothing here goes looking for them):
  *
  *   - `TerminalView`, when a tab it is rendering has no PID yet
  *   - the `open-terminal` remote handler, the moment it creates the tab
@@ -50,6 +51,16 @@ export function isSpawnInFlight(sessionId: string, tabId: string): boolean {
 export interface SpawnPtyForTabOptions {
 	session: Session;
 	tab: TerminalTab;
+	/**
+	 * The grid the tab is actually showing, when a caller has one to offer. The
+	 * PTY is born 80x24 otherwise (see `ProcessManager.spawnTerminalTab`), which a
+	 * later resize has to correct - and a startup command runs before any resize
+	 * can land, so a full-screen program launched that way would paint into an
+	 * 80x24 box. Callers with no rendered terminal to measure (the background
+	 * `open-terminal` path) omit these and let the resize path catch up.
+	 */
+	cols?: number;
+	rows?: number;
 	/** Called with the real PID once the shell is up. */
 	onPid: (tabId: string, pid: number) => void;
 	/**
@@ -66,7 +77,7 @@ export interface SpawnPtyForTabOptions {
  * concurrent calls for the same tab collapse to one spawn.
  */
 export async function spawnPtyForTab(options: SpawnPtyForTabOptions): Promise<void> {
-	const { session, tab, onPid, onSpawnFailure } = options;
+	const { session, tab, cols, rows, onPid, onSpawnFailure } = options;
 	const tabId = tab.id;
 	const terminalSessionId = getTerminalSessionId(session.id, tabId);
 
@@ -132,6 +143,8 @@ export async function spawnPtyForTab(options: SpawnPtyForTabOptions): Promise<vo
 			shell: defaultShell || undefined,
 			shellArgs,
 			shellEnvVars,
+			cols,
+			rows,
 			toolType: session.toolType,
 			sessionCustomEnvVars: session.customEnvVars,
 			sessionSshRemoteConfig: effectiveSshConfig,

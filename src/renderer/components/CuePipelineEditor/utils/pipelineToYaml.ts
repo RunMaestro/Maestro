@@ -166,6 +166,19 @@ function applyTriggerEventConfig(sub: CueSubscription, triggerData: TriggerNodeD
 				sub.schedule_days = triggerData.config.schedule_days as CueSubscription['schedule_days'];
 			}
 			break;
+		case 'time.once':
+			// Carry-through only - the editor has no one-shot config UI. These
+			// arrive from `maestro-cli cue schedule --at` / the Scheduled Tasks
+			// tab and must survive a graph save untouched; without `fire_at`
+			// the sub has no instant and the engine can never fire it.
+			if (triggerData.config.fire_at) sub.fire_at = triggerData.config.fire_at;
+			if (triggerData.config.grace_minutes != null) {
+				sub.grace_minutes = triggerData.config.grace_minutes;
+			}
+			if (triggerData.config.self_destruct_on_failure != null) {
+				sub.self_destruct_on_failure = triggerData.config.self_destruct_on_failure;
+			}
+			break;
 		case 'file.changed':
 			sub.watch = triggerData.config.watch ?? '**/*';
 			if (triggerData.config.filter) {
@@ -230,16 +243,34 @@ function applyTriggerEventConfig(sub: CueSubscription, triggerData: TriggerNodeD
 }
 
 /**
- * Sets the trigger-sub's `prompt` / `action` / `command` / `output_prompt`
- * fields for a direct target. Shared between single-target and per-branch
- * emission paths.
+ * Sets the trigger-sub's `prompt` / `action` / `command` / `notify` /
+ * `output_prompt` fields for a direct target. Shared between single-target and
+ * per-branch emission paths.
+ *
+ * `edge` is the specific trigger->target edge being serialized, not "some edge
+ * that happens to reach this target": one trigger can feed the same agent over
+ * two edges (a prompt run plus a notify toast, which is what
+ * `maestro-cli cue schedule --prompt --notify` writes), and those two edges
+ * produce two different subscriptions.
  */
 function populateTargetWork(
 	sub: CueSubscription,
 	target: PipelineNode,
 	fallbackName: string,
-	triggerOutgoing: PipelineEdge[]
+	edge: PipelineEdge | undefined
 ): void {
+	if (edge?.notify) {
+		// Notify action: a toast surfaced through the target agent. No prompt,
+		// no command, no fan-out - `cue-config-validator.ts` rejects all three
+		// in combination with `action: notify`, and the dispatcher reads the
+		// body out of `notify.message` via its own fallback chain.
+		sub.action = 'notify';
+		sub.notify = edge.notify;
+		sub.prompt = '';
+		const notifyKey = getNodeKey(target);
+		if (notifyKey) sub.target_node_key = notifyKey;
+		return;
+	}
 	if (target.type === 'command') {
 		const cmdData = target.data as CommandNodeData;
 		const cmd = commandNodeDataToCueCommand(cmdData);
@@ -253,8 +284,7 @@ function populateTargetWork(
 		if (cmd) sub.command = cmd;
 	} else {
 		const agentData = target.data as AgentNodeData;
-		const triggerEdge = triggerOutgoing.find((e) => e.target === target.id);
-		sub.prompt = triggerEdge?.prompt ?? agentData.inputPrompt ?? '';
+		sub.prompt = edge?.prompt ?? agentData.inputPrompt ?? '';
 		if (agentData.outputPrompt) sub.output_prompt = agentData.outputPrompt;
 	}
 	const targetKey = getNodeKey(target);
@@ -356,28 +386,44 @@ export function pipelineToYamlSubscriptions(
 		if (triggerOutgoing.length === 0) continue;
 
 		// Build the first subscription from trigger. A "work target" is anything
-		// that performs work - agent nodes (run a prompt) or command nodes (run
-		// shell/cli). cli_output nodes from rc are now folded into command nodes;
-		// they no longer exist as a node type.
-		const directTargets = triggerOutgoing
-			.map((e) => nodeMap.get(e.target))
-			.filter(Boolean) as PipelineNode[];
-		// Filter out unbound commands (no owning session). They can't be serialized
-		// - `agent_id` on the subscription would be empty and the engine rejects
-		// the config. Validation catches this at save time; this is defense-in-depth.
-		const workTargets = directTargets.filter(
-			(n) =>
-				n.type === 'agent' ||
-				(n.type === 'command' && !!(n.data as CommandNodeData).owningSessionId)
-		);
+		// that performs work - agent nodes (run a prompt), command nodes (run
+		// shell/cli), or a notify edge (surface a toast through the agent).
+		// cli_output nodes from rc are now folded into command nodes; they no
+		// longer exist as a node type.
+		//
+		// Branches are keyed by EDGE, not by target node: a trigger can reach
+		// the same agent twice with different work (prompt + notify), and
+		// collapsing those onto the node would emit one sub instead of two.
+		const branches = triggerOutgoing
+			.map((edge) => ({ edge, node: nodeMap.get(edge.target) }))
+			.filter(
+				(b): b is { edge: PipelineEdge; node: PipelineNode } =>
+					b.node != null &&
+					// Unbound commands (no owning session) can't be serialized -
+					// `agent_id` would be empty and the engine rejects the config.
+					// Validation catches this at save time; this is defense-in-depth.
+					(b.node.type === 'agent' ||
+						(b.node.type === 'command' && !!(b.node.data as CommandNodeData).owningSessionId))
+			);
 
-		if (workTargets.length === 0) continue;
+		if (branches.length === 0) continue;
 
+		const workTargets = branches.map((b) => b.node);
 		const allAgents = workTargets.every((n) => n.type === 'agent');
+		// `fan_out` addresses targets by session name, so it cannot express
+		// either of these and both must fall through to per-branch emission:
+		//   - a notify branch (the engine rejects `fan_out` + `action: notify`)
+		//   - two branches landing on the SAME node, which would emit a
+		//     `fan_out` array with a duplicated session name and, on reload,
+		//     read back as the user having dragged one agent in twice.
+		const hasNotifyBranch = branches.some((b) => !!b.edge.notify);
+		const hasDuplicateTarget = new Set(workTargets.map((n) => n.id)).size < workTargets.length;
 
-		if (workTargets.length === 1) {
+		if (branches.length === 1) {
 			// === Single target: agent or command ===
-			const subName = claimSubName(triggerData.subscriptionName);
+			const subName = claimSubName(
+				branches[0].edge.subscriptionName ?? triggerData.subscriptionName
+			);
 
 			const sub: CueSubscription = {
 				name: subName,
@@ -388,7 +434,7 @@ export function pipelineToYamlSubscriptions(
 			applyTriggerEventConfig(sub, triggerData);
 
 			const target = workTargets[0];
-			populateTargetWork(sub, target, subName, triggerOutgoing);
+			populateTargetWork(sub, target, subName, branches[0].edge);
 
 			subscriptions.push(sub);
 			recordOwner(sub, target);
@@ -407,12 +453,16 @@ export function pipelineToYamlSubscriptions(
 				usedSubNames,
 				ownerOut
 			);
-		} else if (allAgents) {
+		} else if (allAgents && !hasNotifyBranch && !hasDuplicateTarget) {
 			// === Fan-out to agents only - canonical `fan_out` shape ===
 			// The engine's fan_out array addresses sessions by name, which
 			// only makes sense for agent targets (commands have no session
 			// identity of their own). One sub handles N agents at runtime.
-			const subName = claimSubName(triggerData.subscriptionName);
+			// Every edge in a fan-out came from that one sub, so any edge's
+			// remembered name is the same name.
+			const subName = claimSubName(
+				branches[0].edge.subscriptionName ?? triggerData.subscriptionName
+			);
 
 			const sub: CueSubscription = {
 				name: subName,
@@ -517,19 +567,26 @@ export function pipelineToYamlSubscriptions(
 				);
 			}
 		} else {
-			// === Per-branch fan-out: any target is a command ===
-			// `fan_out` can't carry command targets - the engine addresses
-			// fan_out by session name and commands have no session of their
-			// own. Instead we emit one fully-independent subscription per
-			// direct target, each re-carrying the trigger's event config so
-			// they each arm with the engine. On reload, `yamlToPipeline`
-			// groups branch subs that share `pipeline_name` + identical
-			// trigger event config back onto a single visual trigger node.
+			// === Per-branch emission: a command target, a notify branch, or
+			// two branches onto one node ===
+			// `fan_out` can't carry any of those - the engine addresses
+			// fan_out by session name, commands have no session of their own,
+			// and `action: notify` is rejected alongside fan_out outright.
+			// Instead we emit one fully-independent subscription per EDGE,
+			// each re-carrying the trigger's event config so they each arm
+			// with the engine. On reload, `yamlToPipeline` groups branch subs
+			// that share `pipeline_name` + identical trigger event config back
+			// onto a single visual trigger node.
 			let firstBranch = true;
-			for (const target of workTargets) {
-				// Only the first branch can inherit the shared trigger node's
-				// stored subscription name; the rest are genuinely new subs.
-				const branchName = claimSubName(firstBranch ? triggerData.subscriptionName : undefined);
+			for (const { edge, node: target } of branches) {
+				// Each edge remembers the sub name it was loaded from, so a
+				// matched pair (e.g. `<task>-prompt` / `<task>-notify`) keeps
+				// both names across a save. Only a branch with no remembered
+				// name falls back to the trigger node's single stored name,
+				// and only the first such branch may claim it.
+				const branchName = claimSubName(
+					edge.subscriptionName ?? (firstBranch ? triggerData.subscriptionName : undefined)
+				);
 				firstBranch = false;
 
 				const branchSub: CueSubscription = {
@@ -539,12 +596,17 @@ export function pipelineToYamlSubscriptions(
 					prompt: '',
 				};
 				applyTriggerEventConfig(branchSub, triggerData);
-				populateTargetWork(branchSub, target, branchName, triggerOutgoing);
+				populateTargetWork(branchSub, target, branchName, edge);
 
 				subscriptions.push(branchSub);
 				recordOwner(branchSub, target);
-				visited.add(target.id);
 				addSubNameForNode(target.id, branchSub.name);
+
+				// Two branches can land on the same node (prompt + notify onto
+				// one agent). Walk its downstream chain once - `visited` is
+				// what guards that, so check it before marking.
+				if (visited.has(target.id)) continue;
+				visited.add(target.id);
 
 				buildChain(
 					target,
@@ -895,6 +957,11 @@ export function pipelinesToSubscriptionRecords(
 			if (sub.interval_minutes != null) record.interval_minutes = sub.interval_minutes;
 			if (sub.schedule_times != null) record.schedule_times = sub.schedule_times;
 			if (sub.schedule_days != null) record.schedule_days = sub.schedule_days;
+			if (sub.fire_at != null) record.fire_at = sub.fire_at;
+			if (sub.grace_minutes != null) record.grace_minutes = sub.grace_minutes;
+			if (sub.self_destruct_on_failure != null) {
+				record.self_destruct_on_failure = sub.self_destruct_on_failure;
+			}
 			if (sub.watch != null) record.watch = sub.watch;
 			if (sub.repo != null) record.repo = sub.repo;
 			if (sub.poll_minutes != null) record.poll_minutes = sub.poll_minutes;
@@ -934,6 +1001,17 @@ export function pipelinesToSubscriptionRecords(
 			if (sub.action === 'command') {
 				record.action = 'command';
 				if (sub.command != null) record.command = sub.command;
+				allSubscriptions.push(record);
+				continue;
+			}
+
+			// Notify action: emit `action: notify` + the `notify` block. Skip
+			// prompt_file emission the same way - a notify sub has no prompt
+			// to externalize, and writing an empty `.md` beside it would leave
+			// an orphan file the loader never reads.
+			if (sub.action === 'notify') {
+				record.action = 'notify';
+				if (sub.notify != null) record.notify = sub.notify;
 				allSubscriptions.push(record);
 				continue;
 			}

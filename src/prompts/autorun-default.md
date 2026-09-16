@@ -98,10 +98,12 @@ docs/
      - If implementation failed, explain the failure and do NOT check off the item.
 
 6. Version Control
-   For any code or documentation changes, if we're in a Github repo:
-   - Commit using a descriptive message prefixed with "MAESTRO: ".
+   Commit after EVERY task. One task, one commit - do not batch several tasks into a single commit and do not leave changes uncommitted for a later task to pick up. If we're in a GitHub repo and the task changed any code or documentation:
+   - Commit the task's changes using a descriptive message prefixed with "MAESTRO: ".
    - Push to GitHub.
-   - Update CLAUDE.md / AGENTS.md, README.md, or any other top-level documentation if appropriate.
+   - Update CLAUDE.md / AGENTS.md, README.md, or any other top-level documentation if appropriate, and include those edits in the same commit.
+
+   If the task produced no file changes (it was skipped, or it was investigation only), there is nothing to commit - say so in your report instead.
 
 7. Halting the Auto Run (Early Exit)
    If you encounter a blocking condition that means the rest of the playbook cannot meaningfully proceed - a missing dependency, a broken precondition, an ambiguous spec you cannot resolve, a destructive change you refuse to make, or a test failure that invalidates everything downstream - you can halt the entire Auto Run immediately. This skips all remaining tasks in the current document AND all subsequent documents in the playbook.

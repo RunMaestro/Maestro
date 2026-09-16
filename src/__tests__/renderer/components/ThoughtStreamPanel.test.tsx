@@ -51,6 +51,19 @@ function renderPanel() {
 	);
 }
 
+/**
+ * Find a tool row by the whole line it reads as ("Ran npm test").
+ *
+ * The line is deliberately NOT one text node: the verb is prose and the target
+ * is an inline-code chip, so `getByText` on the joined string finds nothing.
+ * Matching on the row element's textContent keeps these assertions about what
+ * the user reads rather than about how it is marked up.
+ */
+function toolRow(line: string): HTMLElement | null {
+	const rows = Array.from(document.querySelectorAll<HTMLElement>('div.flex.items-start'));
+	return rows.find((row) => (row.textContent ?? '').includes(line)) ?? null;
+}
+
 beforeEach(() => {
 	cleanup();
 	// The tool-call toggle persists through localStorage, which jsdom does not
@@ -137,7 +150,7 @@ describe('ThoughtStreamPanel tool activity', () => {
 		store.appendThought(SID, TAB, 'I should check the tests. ');
 		store.appendToolActivity(SID, TAB, {
 			toolName: 'Bash',
-			label: { verb: 'Ran', target: 'npm test' },
+			label: { verb: 'Ran', target: 'npm test', targetIsCode: true },
 			status: 'completed',
 			toolCallId: 'c1',
 		});
@@ -148,20 +161,20 @@ describe('ThoughtStreamPanel tool activity', () => {
 	it('renders a tool call as one plain-language line', () => {
 		seed();
 		renderPanel();
-		expect(screen.getByText('Ran npm test')).toBeInTheDocument();
+		expect(toolRow('Ran npm test')).not.toBeNull();
 	});
 
 	it('shows a running call with a spinner and a failed one with a warning', () => {
 		const store = useThoughtStreamStore.getState();
 		store.appendToolActivity(SID, TAB, {
 			toolName: 'Bash',
-			label: { verb: 'Ran', target: 'npm run build' },
+			label: { verb: 'Ran', target: 'npm run build', targetIsCode: true },
 			status: 'running',
 			toolCallId: 'r1',
 		});
 		store.appendToolActivity(SID, TAB, {
 			toolName: 'Edit',
-			label: { verb: 'Edited', target: 'themes.ts' },
+			label: { verb: 'Edited', target: 'themes.ts', targetIsCode: true },
 			status: 'failed',
 			toolCallId: 'f1',
 		});
@@ -198,6 +211,57 @@ describe('ThoughtStreamPanel tool activity', () => {
 		expect(screen.queryByText('They passed.')).not.toBeInTheDocument();
 	});
 
+	/**
+	 * A command, a path, or a glob is a literal: the user reads it as code and
+	 * often wants to copy it out of a wedged run. It renders in the same inline
+	 * chip a markdown backtick gets in the reasoning blocks right above it. The
+	 * verb is our own prose and stays out of the chip - "Ran" is not runnable.
+	 */
+	describe('literal targets render as inline code', () => {
+		it('wraps the command in a <code> chip and leaves the verb as prose', () => {
+			seed();
+			renderPanel();
+
+			const code = screen.getByText('npm test');
+			expect(code.tagName).toBe('CODE');
+			// The verb sits outside the chip, and the row still reads as one line.
+			expect(code.textContent).toBe('npm test');
+			expect(toolRow('Ran npm test')?.textContent).toContain('Ran npm test');
+		});
+
+		it('leaves a prose target unchipped', () => {
+			// "Doing two (1/3)" is a sentence about progress, not something to run.
+			const store = useThoughtStreamStore.getState();
+			store.appendToolActivity(SID, TAB, {
+				toolName: 'TodoWrite',
+				label: { verb: 'Updated the task list', target: 'Doing two (1/3)', targetIsCode: false },
+				status: 'completed',
+				toolCallId: 't1',
+			});
+			store.openPanel(SID);
+			renderPanel();
+
+			// No chip anywhere, and the sentence still reads as one plain line.
+			expect(document.querySelector('code')).toBeNull();
+			expect(toolRow('Updated the task list Doing two (1/3)')).not.toBeNull();
+		});
+
+		it('draws no empty chip for a call with no target', () => {
+			const store = useThoughtStreamStore.getState();
+			store.appendToolActivity(SID, TAB, {
+				toolName: 'BashOutput',
+				label: { verb: 'Checked background output', target: '', targetIsCode: true },
+				status: 'completed',
+				toolCallId: 'b1',
+			});
+			store.openPanel(SID);
+			renderPanel();
+
+			expect(toolRow('Checked background output')).not.toBeNull();
+			expect(document.querySelector('code')).toBeNull();
+		});
+	});
+
 	it('search also matches the raw provider tool name', () => {
 		// The feed renders "Ran npm test", so searching the tool the user knows
 		// they configured ("Bash") has to find it anyway.
@@ -206,7 +270,7 @@ describe('ThoughtStreamPanel tool activity', () => {
 		fireEvent.change(screen.getByPlaceholderText('Search activity...'), {
 			target: { value: 'Bash' },
 		});
-		expect(screen.getByText('Ran npm test')).toBeInTheDocument();
+		expect(toolRow('Ran npm test')).not.toBeNull();
 	});
 });
 
@@ -225,7 +289,7 @@ describe('ThoughtStreamPanel tool-call toggle', () => {
 		store.appendThought(SID, TAB, 'I should check the tests. ');
 		store.appendToolActivity(SID, TAB, {
 			toolName: 'Bash',
-			label: { verb: 'Ran', target: 'npm test' },
+			label: { verb: 'Ran', target: 'npm test', targetIsCode: true },
 			status: 'completed',
 			toolCallId: 'c1',
 		});
@@ -238,7 +302,7 @@ describe('ThoughtStreamPanel tool-call toggle', () => {
 	it('shows tool calls by default', () => {
 		seedMixed();
 		renderPanel();
-		expect(screen.getByText('Ran npm test')).toBeInTheDocument();
+		expect(toolRow('Ran npm test')).not.toBeNull();
 		expect(toggle()).toHaveAttribute('aria-pressed', 'true');
 	});
 
@@ -248,7 +312,7 @@ describe('ThoughtStreamPanel tool-call toggle', () => {
 
 		fireEvent.click(toggle());
 
-		expect(screen.queryByText('Ran npm test')).not.toBeInTheDocument();
+		expect(toolRow('Ran npm test')).toBeNull();
 		expect(toggle()).toHaveAttribute('aria-pressed', 'false');
 		expect(screen.getAllByTestId('thought-md').length).toBeGreaterThan(0);
 	});
@@ -286,16 +350,16 @@ describe('ThoughtStreamPanel tool-call toggle', () => {
 
 		useThoughtStreamStore.getState().appendToolActivity(SID, TAB, {
 			toolName: 'Edit',
-			label: { verb: 'Edited', target: 'themes.ts' },
+			label: { verb: 'Edited', target: 'themes.ts', targetIsCode: true },
 			status: 'completed',
 			toolCallId: 'c2',
 		});
-		expect(screen.queryByText('Edited themes.ts')).not.toBeInTheDocument();
+		expect(toolRow('Edited themes.ts')).toBeNull();
 
 		fireEvent.click(toggle());
 
-		expect(screen.getByText('Edited themes.ts')).toBeInTheDocument();
-		expect(screen.getByText('Ran npm test')).toBeInTheDocument();
+		expect(toolRow('Edited themes.ts')).not.toBeNull();
+		expect(toolRow('Ran npm test')).not.toBeNull();
 	});
 
 	it('persists the choice, so a reopened panel does not forget it', () => {
@@ -307,7 +371,7 @@ describe('ThoughtStreamPanel tool-call toggle', () => {
 
 		renderPanel();
 		expect(toggle()).toHaveAttribute('aria-pressed', 'false');
-		expect(screen.queryByText('Ran npm test')).not.toBeInTheDocument();
+		expect(toolRow('Ran npm test')).toBeNull();
 	});
 
 	it('says the actions are hidden rather than claiming nothing was captured', () => {
@@ -316,7 +380,7 @@ describe('ThoughtStreamPanel tool-call toggle', () => {
 		// agent, and the user has no way to tell that from an idle one.
 		useThoughtStreamStore.getState().appendToolActivity(SID, TAB, {
 			toolName: 'Bash',
-			label: { verb: 'Ran', target: 'npm test' },
+			label: { verb: 'Ran', target: 'npm test', targetIsCode: true },
 			status: 'completed',
 			toolCallId: 'c1',
 		});

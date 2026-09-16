@@ -242,14 +242,32 @@ describe('SessionList memoization (#1186)', () => {
 				],
 				activeItemId: 's1::/f/a.mp3',
 				dismissed: true,
+				// Explicit: a dormant queue (one restored from disk, untouched this
+				// session) deliberately earns no pill, so leaving this to the default
+				// lets one test that parks a dormant queue suppress the next one's.
+				dormant: false,
 				playing: true,
 			});
 		});
 
-		it('is absent from the collapsed rail', () => {
-			// The rail is a 64px icon strip; a media control there competes with the
-			// agent pills for the only thing it is for.
-			useUIStore.setState({ leftSidebarOpen: false });
+		it('reaches the collapsed rail, compact', () => {
+			// This used to assert the opposite: the rail is a 64px icon strip, and a
+			// media control there competes with the agent pills for the only thing
+			// it is for. That traded 24px of rail for a player the user could not
+			// get back to - the pill is where minimize PARKS the widget, so without
+			// it "minimize" hid the player with nothing left on screen, which reads
+			// as it having closed itself.
+			useUIStore.setState({ leftSidebarOpen: false, leftSidebarHidden: false });
+			const { getByTestId } = render(<SessionList {...createProps([])} />);
+			// Compact: no filename to clip at 64px, but both controls survive.
+			expect(getByTestId('now-playing-indicator').textContent).toBe('');
+			expect(getByTestId('now-playing-restore')).toBeTruthy();
+		});
+
+		it('leaves the collapsed rail alone when the player is not minimized', () => {
+			// Self-gating, so the rail is unchanged for anyone playing nothing.
+			useMediaPlaybackStore.setState({ dismissed: false, dormant: true, activeItemId: null });
+			useUIStore.setState({ leftSidebarOpen: false, leftSidebarHidden: false });
 			const { queryByTestId } = render(<SessionList {...createProps([])} />);
 			expect(queryByTestId('now-playing-indicator')).toBeNull();
 		});

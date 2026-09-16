@@ -347,3 +347,52 @@ export interface GroupChatHistoryEntry {
 	/** Full response text (optional, for detail view) */
 	fullResponse?: string;
 }
+
+/**
+ * One message waiting to be delivered to a group chat's moderator.
+ *
+ * Structurally a narrowed `QueuedItem` (the renderer type in
+ * `src/renderer/types/index.ts`), carrying only the fields a group chat send
+ * actually uses. It lives here rather than there because the QUEUE IS OWNED BY
+ * MAIN: the renderer copy was per-client, so a message queued on a phone was
+ * invisible to the desktop and died with the tab that held it. Main cannot
+ * import a renderer module, so the shape has to be shared.
+ *
+ * `failed` is set when a send attempt threw. The item is KEPT rather than
+ * dropped - a queue that silently discards what the user typed is the failure
+ * this whole change exists to end - and the chat is paused so the same failure
+ * is not retried on every subsequent idle.
+ */
+export interface GroupChatQueuedItem {
+	id: string;
+	timestamp: number;
+	text: string;
+	images?: string[];
+	readOnlyMode?: boolean;
+	failed?: boolean;
+	failureReason?: string;
+	/**
+	 * Handed to the moderator and not yet confirmed.
+	 *
+	 * Broadcast so clients can show it, and checked so remove and reorder refuse
+	 * to touch it: an item the moderator already has cannot be un-sent, and
+	 * letting it be deleted mid-flight is how the completion lands on whatever
+	 * item happened to be first instead.
+	 */
+	sending?: boolean;
+}
+
+/**
+ * A group chat's pending sends, as main holds and broadcasts them.
+ *
+ * `paused` is deliberately part of the persisted state rather than a runtime
+ * flag. It is set by Stop All (nobody presses that expecting the room to start
+ * itself again), by a failed send, and by main loading a non-empty queue at
+ * startup (launching the app must not spawn a moderator just to flush a queue
+ * from a previous session). Each of those must survive a restart, or the very
+ * next idle would undo the pause.
+ */
+export interface GroupChatQueueState {
+	items: GroupChatQueuedItem[];
+	paused: boolean;
+}

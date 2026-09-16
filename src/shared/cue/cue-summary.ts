@@ -175,7 +175,9 @@ export function parseSubscriptionName(name: string): {
  *   `"Maestro" · rc #2 - #891 Feature: …` (legacy YAML, no pipeline_name)
  *   `"Hourly Sync"` (no agent distinction, no payload)
  */
-export function buildCueRunSummary(result: CueRunResult): string {
+export function buildCueRunSummary(
+	result: Pick<CueRunResult, 'subscriptionName' | 'pipelineName' | 'sessionName' | 'event'>
+): string {
 	const parsed = parseSubscriptionName(result.subscriptionName);
 	const triggerLabel = result.pipelineName?.trim() || parsed.base;
 	const trigger = `"${triggerLabel}"`;

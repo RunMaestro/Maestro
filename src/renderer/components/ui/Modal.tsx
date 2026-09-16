@@ -286,7 +286,7 @@ export function Modal({
 		maxSize,
 		enabled: resizingEnabled,
 		externalRef: cardElementRef,
-		anchor: isFloating ? 'topLeft' : 'center',
+		anchor: isFloating ? 'top-left' : 'center',
 	});
 
 	// Register with layer stack for Escape handling and focus management. A hidden

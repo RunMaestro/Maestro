@@ -15,6 +15,7 @@
 import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { useSettingsStore } from '../stores/settingsStore';
+import type { GroupChatQueueState } from '../../shared/group-chat-types';
 import { useSessionStore } from '../stores/sessionStore';
 import { mentionSessionEquality } from '../stores/sessionEquality';
 import { ArrowUp, Bell, ImageIcon, Eye, Keyboard, PenLine, Users } from 'lucide-react';
@@ -91,7 +92,9 @@ interface GroupChatInputProps {
 	// Image lightbox handler
 	onOpenLightbox?: (image: string, contextImages?: string[], source?: 'staged' | 'history') => void;
 	// Execution queue props
-	executionQueue?: QueuedItem[];
+	/** The chat's pending sends as MAIN reports them. Undefined until loaded. */
+	queueState?: GroupChatQueueState;
+	onResumeQueue?: () => void;
 	onRemoveQueuedItem?: (itemId: string) => void;
 	onReorderQueuedItems?: (fromIndex: number, toIndex: number) => void;
 	// Input send behavior (synced with global settings)
@@ -123,7 +126,8 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 	handlePaste,
 	handleDrop,
 	onOpenLightbox,
-	executionQueue,
+	queueState,
+	onResumeQueue,
 	onRemoveQueuedItem,
 	onReorderQueuedItems,
 	enterToSendAI: enterToSendAIProp,
@@ -535,13 +539,72 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 	});
 
 	const isBusy = state !== 'idle';
-	const hasQueuedItems = executionQueue && executionQueue.length > 0;
+
+	// The queue arrives from MAIN in its own shape. `QueuedItemsList` is the
+	// existing renderer widget and speaks `QueuedItem`, so the adaptation happens
+	// here rather than by teaching main about a renderer type.
+	const executionQueue = useMemo(
+		() =>
+			(queueState?.items ?? []).map(
+				(entry): QueuedItem => ({
+					id: entry.id,
+					timestamp: entry.timestamp,
+					tabId: groupChatId,
+					type: 'message',
+					text: entry.text,
+					images: entry.images,
+					readOnlyMode: entry.readOnlyMode,
+				})
+			),
+		[queueState, groupChatId]
+	);
+	const hasQueuedItems = executionQueue.length > 0;
+	const queuePaused = queueState?.paused === true;
+	const failedItem = queueState?.items.find((entry) => entry.failed);
+	const sendingItem = queueState?.items.find((entry) => entry.sending);
 
 	return (
 		<div
 			className="relative p-4 border-t"
 			style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
 		>
+			{/* Paused banner. A paused queue sends nothing, so it has to say so and
+			    offer the way out - otherwise the user sees messages sitting there
+			    with no clue why and no control to release them. */}
+			{(queuePaused || failedItem) && (
+				<div
+					className="mb-2 flex items-center gap-2 rounded-lg border px-3 py-2 text-xs"
+					style={{
+						borderColor: theme.colors.warning,
+						backgroundColor: `color-mix(in srgb, ${theme.colors.warning} 10%, transparent)`,
+						color: theme.colors.textMain,
+					}}
+				>
+					<span className="flex-1 min-w-0">
+						{failedItem
+							? `Queue paused: ${failedItem.failureReason ?? 'a message could not be sent'}`
+							: 'Queue paused'}
+					</span>
+					{onResumeQueue && (
+						<button
+							type="button"
+							onClick={onResumeQueue}
+							className="shrink-0 px-2 py-0.5 rounded text-2xs font-bold"
+							style={{ backgroundColor: theme.colors.accent, color: theme.colors.bgMain }}
+						>
+							Resume
+						</button>
+					)}
+				</div>
+			)}
+
+			{/* One message is on its way to the moderator and cannot be removed. */}
+			{sendingItem && (
+				<div className="mb-2 px-1 text-2xs" style={{ color: theme.colors.textDim }}>
+					Sending, cannot remove
+				</div>
+			)}
+
 			{/* Queued messages display */}
 			{hasQueuedItems && (
 				<QueuedItemsList

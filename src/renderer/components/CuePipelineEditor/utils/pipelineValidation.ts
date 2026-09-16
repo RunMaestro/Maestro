@@ -180,7 +180,13 @@ export function validatePipelines(pipelines: CuePipeline[]): string[] {
 					return src?.type === 'trigger';
 				});
 				const hasNodePrompt = !!agentData.inputPrompt?.trim();
-				const allEdgesHavePrompts = triggerEdges.every((e) => e.prompt?.trim());
+				// A notify edge carries a toast, not work: the engine surfaces
+				// the message through this agent and never spawns it, so
+				// `cue-config-validator.ts` accepts an empty prompt there. Any
+				// agent fed by a `cue schedule --notify` task has such an edge,
+				// and demanding a prompt for it reported a permanent phantom
+				// error that blocked Save for EVERY pipeline in the editor.
+				const allEdgesHavePrompts = triggerEdges.every((e) => e.notify || e.prompt?.trim());
 				if (!hasNodePrompt && !allEdgesHavePrompts) {
 					const name = agentData.sessionName;
 					errors.push(`"${pipeline.name}": agent "${name}" is missing a prompt`);

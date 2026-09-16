@@ -22,6 +22,13 @@ import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 import { createMockTheme } from '../../helpers/mockTheme';
 
 // Mock createPortal to render in same container
+// CodeMirror cannot lay itself out in jsdom, so the Auto Run source editor is
+// swapped for the shared textarea double (it still implements the editor handle).
+vi.mock('../../../renderer/components/FilePreview/markdownEditor', async () => {
+	const { markdownEditorModuleMock } = await import('../../helpers/mockMarkdownEditor');
+	return markdownEditorModuleMock();
+});
+
 vi.mock('react-dom', async () => {
 	const actual = await vi.importActual('react-dom');
 	return {

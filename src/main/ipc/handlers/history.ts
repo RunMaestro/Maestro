@@ -14,7 +14,12 @@
 
 import { ipcMain } from 'electron';
 import { logger } from '../../utils/logger';
-import { HistoryEntry, HistoryEntryType, SshRemoteConfig } from '../../../shared/types';
+import {
+	CueHistoryGroup,
+	HistoryEntry,
+	HistoryEntryType,
+	SshRemoteConfig,
+} from '../../../shared/types';
 import {
 	PaginationOptions,
 	ORPHANED_SESSION_ID,
@@ -40,6 +45,24 @@ import {
 } from '../../utils/history-bucket-cache';
 import { buildBucketAggregate, LOCAL_HOST_AGG_KEY } from '../../utils/history-bucket-builder';
 import type { PluginEvent } from '../../../shared/plugins/events';
+import type {
+	CueHistoryBucket,
+	CueHistoryBucketQuery,
+	CueHistoryGroupRunsQuery,
+	CueHistoryQuery,
+} from '../../cue/stats/cue-stats-query';
+import {
+	cueScopeAgentFromRecord,
+	cueScopeAgentsFromRecords,
+	dropCueRowsAlreadyInJsonl,
+	mergeEntriesById,
+	readCueEntries as readCueEntriesForAgents,
+	readCueGroupedEntries as readCueGroupedEntriesForAgents,
+	readCueGroupRuns as readCueGroupRunsForAgent,
+	readCueGraphBuckets as readCueGraphBucketsForAgent,
+	readCueGraphFingerprint as readCueGraphFingerprintForAgent,
+	type CueScopeAgent,
+} from '../../utils/cue-history-merge';
 
 const LOG_CONTEXT = '[History]';
 
@@ -163,6 +186,120 @@ export interface HistoryHandlerDependencies {
 	 * `history:read`) by the bus itself.
 	 */
 	emitPluginEvent?: (event: PluginEvent) => void;
+	/**
+	 * Every session record, used only to resolve which agents a project-wide or
+	 * global read covers. `cue_events` rows know their agent but not its
+	 * directory, so the sessions store is the only place that mapping exists.
+	 */
+	getAllSessions?: () => Array<Record<string, unknown>>;
+	/**
+	 * Cue runs for one agent, already shaped as {@link HistoryEntry} - see
+	 * `getCueHistoryEntries()` in `src/main/cue/stats/cue-stats-query.ts`.
+	 *
+	 * Injected rather than imported so this module keeps no static edge to the
+	 * Cue SQLite layer (`better-sqlite3` is a native binding built for
+	 * Electron's ABI, and History is exercised well outside that runtime).
+	 * Omitted means History serves JSONL entries only.
+	 */
+	getCueHistoryEntries?: (query: CueHistoryQuery) => HistoryEntry[];
+	/**
+	 * The same runs as {@link getCueHistoryEntries}, collapsed to one row per
+	 * pipeline-level trigger - see `getCueHistoryGroups()` in the same module.
+	 * Used when the caller asks for grouped Cue rows; the rollup runs in SQL
+	 * over the indexed columns, so a week of a chatty pipeline costs one row
+	 * instead of the thousands it actually ran.
+	 */
+	getCueHistoryGroups?: (query: CueHistoryQuery) => CueHistoryGroup[];
+	/**
+	 * The individual runs behind ONE group produced by
+	 * {@link getCueHistoryGroups} - what the panel's expander opens, so a
+	 * collapsed row never hides a run from the user. See
+	 * `getCueHistoryGroupRuns()` in the same module.
+	 */
+	getCueHistoryGroupRuns?: (query: CueHistoryGroupRunsQuery) => HistoryEntry[];
+	/**
+	 * Per-minute Cue run counts for the activity graph - see
+	 * `getCueHistoryBuckets()` in `src/main/cue/stats/cue-stats-query.ts`.
+	 * Counts rather than rows because a bar chart never needs the text.
+	 * Injected for the same reason as {@link getCueHistoryEntries}.
+	 */
+	getCueHistoryBuckets?: (query: CueHistoryBucketQuery) => CueHistoryBucket[];
+	/**
+	 * Change-detector for one agent's Cue history, mixed into the
+	 * activity-graph cache key. Without it the cache keys only off the JSONL
+	 * file, which no longer moves when a Cue run lands, and the CUE bars
+	 * freeze at whatever was first computed.
+	 */
+	getCueHistoryFingerprint?: (sessionId?: string) => string;
+}
+
+/**
+ * Which agents' Cue runs belong in a given read.
+ *
+ * The single-session scope is the one the History panel uses; the project and
+ * global scopes walk the sessions store because an agent's directory lives
+ * there, not on the `cue_events` row.
+ */
+function cueScopeAgents(
+	deps: HistoryHandlerDependencies,
+	sessionId?: string,
+	projectPath?: string
+): CueScopeAgent[] {
+	if (!deps.getCueHistoryEntries && !deps.getCueHistoryGroups) return [];
+	if (sessionId) {
+		return [cueScopeAgentFromRecord(sessionId, deps.getSessionById?.(sessionId), projectPath)];
+	}
+	return cueScopeAgentsFromRecords(deps.getAllSessions?.() ?? [], projectPath);
+}
+
+/** Cue rows for the agents in scope, capped by the user's history limit. */
+function readCueEntries(
+	deps: HistoryHandlerDependencies,
+	agents: CueScopeAgent[],
+	options: { since?: number } = {}
+): HistoryEntry[] {
+	return readCueEntriesForAgents(deps.getCueHistoryEntries, agents, {
+		since: options.since,
+		limit: deps.getMaxEntries?.(),
+	});
+}
+
+/** Cue rows for the agents in scope, collapsed to one row per trigger. */
+function readCueGroupedEntries(
+	deps: HistoryHandlerDependencies,
+	agents: CueScopeAgent[],
+	options: { since?: number } = {}
+): HistoryEntry[] {
+	return readCueGroupedEntriesForAgents(deps.getCueHistoryGroups, agents, {
+		since: options.since,
+		limit: deps.getMaxEntries?.(),
+	});
+}
+
+/** The individual runs behind one collapsed group, newest first. */
+function readCueGroupRuns(
+	deps: HistoryHandlerDependencies,
+	agent: CueScopeAgent,
+	options: { groupKey: string; since?: number; limit?: number }
+): HistoryEntry[] {
+	return readCueGroupRunsForAgent(deps.getCueHistoryGroupRuns, agent, options);
+}
+
+/** The Cue half of one agent's activity-graph cache key. */
+function readCueGraphFingerprint(deps: HistoryHandlerDependencies, sessionId: string): string {
+	return readCueGraphFingerprintForAgent(deps.getCueHistoryFingerprint, sessionId);
+}
+
+/** Per-minute Cue run counts for one agent's activity graph. */
+function readCueGraphBuckets(
+	deps: HistoryHandlerDependencies,
+	sessionId: string,
+	options: { since?: number } = {}
+): CueHistoryBucket[] {
+	return readCueGraphBucketsForAgent(deps.getCueHistoryBuckets, {
+		sessionId,
+		since: options.since,
+	});
 }
 
 // Helper to create handler options with consistent context
@@ -230,21 +367,17 @@ export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void 
 					logger.warn(`Failed to read shared history: ${error}`, LOG_CONTEXT);
 				}
 
-				if (sharedEntries.length === 0) {
-					return localEntries;
-				}
-
 				// Merge and deduplicate by entry ID, then sort
-				const seenIds = new Set(localEntries.map((e) => e.id));
-				const merged = [...localEntries];
-				for (const entry of sharedEntries) {
-					if (!seenIds.has(entry.id)) {
-						seenIds.add(entry.id);
-						merged.push(entry);
-					}
-				}
+				const jsonlEntries = mergeEntriesById(localEntries, sharedEntries);
 
-				return sortEntriesByTimestamp(merged);
+				// Cue runs live in `cue_events`, not in the JSONL file, so they
+				// are merged in here rather than read off disk.
+				const cueEntries = dropCueRowsAlreadyInJsonl(
+					jsonlEntries,
+					readCueEntries(deps, cueScopeAgents(deps, sessionId, projectPath))
+				);
+
+				return mergeEntriesById(jsonlEntries, cueEntries);
 			}
 		)
 	);
@@ -268,9 +401,18 @@ export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void 
 				sharedContext?: SharedHistoryContext;
 				types?: HistoryEntryType[];
 				hostKey?: string | null;
+				groupCue?: boolean;
 			}) => {
-				const { projectPath, sessionId, pagination, lookbackHours, sharedContext, types, hostKey } =
-					options || {};
+				const {
+					projectPath,
+					sessionId,
+					pagination,
+					lookbackHours,
+					sharedContext,
+					types,
+					hostKey,
+					groupCue,
+				} = options || {};
 				const cutoffTime =
 					lookbackHours !== null && lookbackHours !== undefined && lookbackHours > 0
 						? Date.now() - lookbackHours * 60 * 60 * 1000
@@ -302,6 +444,35 @@ export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void 
 					return out;
 				};
 
+				// Cue runs come from `cue_events`, so they are merged in before
+				// the filters and pagination run - a page must hold the newest N
+				// entries of BOTH sources, not the newest N of the JSONL file
+				// with Cue rows sprinkled on afterwards.
+				//
+				// The query is skipped when the request has already filtered Cue
+				// rows out: the CUE pill being off, or a host filter naming a
+				// foreign host (Cue rows carry no hostname, so they only ever
+				// belong to the local bucket).
+				const wantsCue =
+					(!typeSet || typeSet.has('CUE')) && (!hostKey || hostKey === LOCAL_HOST_AGG_KEY);
+				//
+				// `groupCue` (the user's `groupCueEntries` setting) picks the
+				// collapsed read instead: one row per pipeline-level trigger,
+				// rolled up in SQL. The rollup has to happen HERE rather than in
+				// the renderer because the renderer only ever holds a page of
+				// 100 entries - grouping that would report "100 runs" for a
+				// trigger that actually ran 1,382 times, which is the exact
+				// number the row exists to tell the user.
+				const mergeCueEntries = (jsonlEntries: HistoryEntry[]): HistoryEntry[] => {
+					if (!wantsCue) return jsonlEntries;
+					const since = cutoffTime > 0 ? cutoffTime : undefined;
+					const agents = cueScopeAgents(deps, sessionId, projectPath);
+					const cueEntries = groupCue
+						? readCueGroupedEntries(deps, agents, { since })
+						: dropCueRowsAlreadyInJsonl(jsonlEntries, readCueEntries(deps, agents, { since }));
+					return mergeEntriesById(jsonlEntries, cueEntries);
+				};
+
 				// Single-session path: optionally merge shared (SSH or local
 				// project-mirrored) entries before applying lookback + pagination.
 				if (sessionId) {
@@ -330,19 +501,10 @@ export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void 
 							logger.warn(`Failed to read shared history (paginated): ${error}`, LOG_CONTEXT);
 						}
 
-						if (sharedEntries.length > 0) {
-							const seen = new Set(local.map((e) => e.id));
-							for (const e of sharedEntries) {
-								if (!seen.has(e.id)) {
-									local.push(e);
-									seen.add(e.id);
-								}
-							}
-							local = sortEntriesByTimestamp(local);
-						}
+						local = mergeEntriesById(local, sharedEntries);
 					}
 
-					return paginateEntries(applyFilters(local), pagination);
+					return paginateEntries(applyFilters(mergeCueEntries(local)), pagination);
 				}
 
 				if (projectPath) {
@@ -350,20 +512,57 @@ export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void 
 						projectPath,
 						undefined
 					);
-					return paginateEntries(applyFilters(result.entries), pagination);
+					return paginateEntries(applyFilters(mergeCueEntries(result.entries)), pagination);
 				}
 
 				const result = await historyManager.getAllEntriesPaginated(undefined);
-				return paginateEntries(applyFilters(result.entries), pagination);
+				return paginateEntries(applyFilters(mergeCueEntries(result.entries)), pagination);
+			}
+		)
+	);
+
+	// The individual runs behind ONE collapsed Cue row, for the History
+	// panel's expander. Scoped to the agent that ran them (the row carries
+	// its `sessionId`) and to the same lookback the grouped read used, so the
+	// runs returned are exactly the ones the group counted.
+	ipcMain.handle(
+		'history:getCueGroupRuns',
+		withIpcErrorLogging(
+			handlerOpts('getCueGroupRuns'),
+			async (options?: {
+				sessionId?: string;
+				projectPath?: string;
+				groupKey?: string;
+				lookbackHours?: number | null;
+				limit?: number;
+			}) => {
+				const { sessionId, projectPath, groupKey, lookbackHours, limit } = options || {};
+				if (!sessionId || !groupKey) return [];
+
+				const since =
+					lookbackHours !== null && lookbackHours !== undefined && lookbackHours > 0
+						? Date.now() - lookbackHours * 60 * 60 * 1000
+						: undefined;
+				const agent = cueScopeAgentFromRecord(
+					sessionId,
+					deps.getSessionById?.(sessionId),
+					projectPath
+				);
+				return readCueGroupRuns(deps, agent, {
+					groupKey,
+					since,
+					limit: limit ?? deps.getMaxEntries?.(),
+				});
 			}
 		)
 	);
 
 	// Get graph data (buckets + counts) for a single session.
 	// Cached on disk keyed by (sessionId, bucketCount, lookbackHours,
-	// file mtime+size). The lookback is part of the cache key so each
-	// window the user picks gets its own cached aggregate; mtime
-	// invalidates them all at once when the file changes.
+	// file mtime+size + Cue fingerprint). The lookback is part of the cache
+	// key so each window the user picks gets its own cached aggregate; the
+	// fingerprint invalidates them all at once when either source moves -
+	// the JSONL file for USER/AUTO, `cue_events` for CUE.
 	ipcMain.handle(
 		'history:getGraphData',
 		withIpcErrorLogging(
@@ -378,6 +577,10 @@ export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void 
 				const safeBucketCount = Math.max(1, bucketCount | 0);
 				const lookbackMs =
 					lookbackHours !== null && lookbackHours > 0 ? lookbackHours * 60 * 60 * 1000 : null;
+				// One clock for the whole handler: the window the Cue query is
+				// asked for has to be the window the aggregate buckets, or the
+				// oldest bar loses runs to the gap between the two reads.
+				const endTime = Date.now();
 				const filePath = await historyManager.getHistoryFilePath(sessionId);
 				const hasShared = Boolean(sharedContext?.sshRemoteId && sharedContext?.remoteCwd);
 				// Local-shared overlay: a non-SSH session whose project dir
@@ -392,18 +595,28 @@ export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void 
 				// Cache only when there is no shared-history overlay (SSH or
 				// local-mirror). Shared entries come from arbitrary files we
 				// don't fingerprint, so the simple cached path can't see them.
+				// Cue runs are no longer in the JSONL file, so the CUE series comes
+				// from `cue_events` as per-minute counts. Read lazily - a cache
+				// hit only needs the fingerprint.
+				const cueSince = lookbackMs !== null ? endTime - lookbackMs : undefined;
+				const aggregateOptions = () => ({
+					lookbackMs,
+					endTime,
+					cueCounts: readCueGraphBuckets(deps, sessionId, { since: cueSince }),
+				});
+
 				if (filePath && !hasShared && !hasLocalShared) {
 					const cache = getHistoryBucketCache();
 					const lookbackKey = lookbackHours === null ? 'all' : String(lookbackHours);
 					const cacheKey = `single:${sessionId}:bc=${safeBucketCount}:lb=${lookbackKey}`;
-					const fp = fileFingerprint(filePath);
+					const fp = `${fileFingerprint(filePath)}|cue=${readCueGraphFingerprint(deps, sessionId)}`;
 					const hit = await cache.get(cacheKey, fp);
 					if (hit) {
 						return cachedToGraphData(hit, true);
 					}
 
 					const entries = await historyManager.getEntries(sessionId);
-					const agg = buildBucketAggregate(entries, safeBucketCount, { lookbackMs });
+					const agg = buildBucketAggregate(entries, safeBucketCount, aggregateOptions());
 					// Fire-and-forget the disk write - the renderer doesn't need to
 					// wait for it; the in-memory cache layer was already updated.
 					void cache.set({
@@ -462,7 +675,7 @@ export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void 
 						logger.warn(`Failed to read local shared history for graph: ${err}`, LOG_CONTEXT);
 					}
 				}
-				const agg = buildBucketAggregate(entries, safeBucketCount, { lookbackMs });
+				const agg = buildBucketAggregate(entries, safeBucketCount, aggregateOptions());
 				return aggregateToGraphData(agg, safeBucketCount, false);
 			}
 		)
@@ -488,6 +701,18 @@ export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void 
 						? Date.now() - lookbackHours * 60 * 60 * 1000
 						: 0;
 				let entries = await historyManager.getEntries(sessionId);
+				// Cue rows are part of the rendered list but not of the JSONL
+				// file, so they have to be merged here too or every offset past
+				// the first Cue run lands on the wrong entry.
+				entries = mergeEntriesById(
+					entries,
+					dropCueRowsAlreadyInJsonl(
+						entries,
+						readCueEntries(deps, cueScopeAgents(deps, sessionId), {
+							since: cutoffTime > 0 ? cutoffTime : undefined,
+						})
+					)
+				);
 				if (cutoffTime > 0) entries = entries.filter((e) => e.timestamp >= cutoffTime);
 				// Mirror the paginated list's type filter so the resolved offset
 				// lines up with the rendered (type-filtered) indices.

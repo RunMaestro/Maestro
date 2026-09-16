@@ -30,6 +30,7 @@ import type {
 import { formatCost, formatNumber, formatTokensCompact } from '../../../shared/formatters';
 import { parseProviderProfileKey } from '../../../shared/providerProfiles';
 import { COLORBLIND_AGENT_PALETTE } from '../../constants/colorblindPalettes';
+import { usePersistedToggle } from '../../hooks/ui/usePersistedToggle';
 import { captureException } from '../../utils/sentry';
 import { ChartErrorBoundary } from './ChartErrorBoundary';
 import { ChartTooltip } from './ChartTooltip';
@@ -215,14 +216,31 @@ interface TimelineProps {
 	colorBlindMode: boolean;
 }
 
+/** localStorage prefix for the timeline's remembered per-series visibility. */
+const SERIES_VISIBILITY_KEY = 'usageDashboard.tokens.timelineSeries';
+
 /**
  * Stacked bars of token composition per time bucket. Stacking (rather than three
  * separate series) is deliberate: the parts sum to a meaningful whole (total
  * tokens), and the composition shift - especially how much is cache reads - is
  * the story.
+ *
+ * Cache reads routinely dwarf input and output by two orders of magnitude, which
+ * flattens the other two into invisibility. So the legend is a set of toggles:
+ * hiding a series drops it from the stack AND from the scale, which is the only
+ * way to read the smaller series at all. The choice is remembered per series
+ * across restarts, because it is a way of looking at the chart rather than a
+ * one-off. The last visible series cannot be hidden - an empty chart tells
+ * nobody anything.
  */
 const Timeline = memo(function Timeline({ data, theme, colorBlindMode }: TimelineProps) {
 	const [hovered, setHovered] = useState<{ idx: number; x: number; y: number } | null>(null);
+
+	// Hooks cannot be called from a loop over the series list, so the three keys
+	// are spelled out here and threaded into `series` below.
+	const inputToggle = usePersistedToggle(`${SERIES_VISIBILITY_KEY}.inputTokens`, true);
+	const outputToggle = usePersistedToggle(`${SERIES_VISIBILITY_KEY}.outputTokens`, true);
+	const cacheToggle = usePersistedToggle(`${SERIES_VISIBILITY_KEY}.cacheReadTokens`, true);
 
 	const series = useMemo(
 		() => [
@@ -230,25 +248,30 @@ const Timeline = memo(function Timeline({ data, theme, colorBlindMode }: Timelin
 				key: 'inputTokens' as const,
 				label: 'Input',
 				color: colorBlindMode ? COLORBLIND_AGENT_PALETTE[0] : theme.colors.accent,
+				toggle: inputToggle,
 			},
 			{
 				key: 'outputTokens' as const,
 				label: 'Output',
 				color: colorBlindMode ? COLORBLIND_AGENT_PALETTE[1] : theme.colors.success,
+				toggle: outputToggle,
 			},
 			{
 				key: 'cacheReadTokens' as const,
 				label: 'Cache read',
 				color: colorBlindMode ? COLORBLIND_AGENT_PALETTE[2] : theme.colors.warning,
+				toggle: cacheToggle,
 			},
 		],
-		[theme, colorBlindMode]
+		[theme, colorBlindMode, inputToggle, outputToggle, cacheToggle]
 	);
 
+	/** The series the chart, the scale, and the tooltip all agree to show. */
+	const visible = useMemo(() => series.filter((s) => s.toggle.value), [series]);
+
 	const max = useMemo(
-		() =>
-			Math.max(...data.timeline.map((b) => b.inputTokens + b.outputTokens + b.cacheReadTokens), 0),
-		[data.timeline]
+		() => Math.max(...data.timeline.map((b) => visible.reduce((sum, s) => sum + b[s.key], 0)), 0),
+		[data.timeline, visible]
 	);
 
 	if (data.timeline.length === 0) return null;
@@ -259,25 +282,61 @@ const Timeline = memo(function Timeline({ data, theme, colorBlindMode }: Timelin
 				<h3 className="text-sm font-semibold" style={{ color: theme.colors.textMain }}>
 					Token Consumption Over Time
 				</h3>
-				{/* Legend: identity is never carried by color alone. */}
-				<div className="flex items-center gap-3">
-					{series.map((s) => (
-						<span key={s.key} className="flex items-center gap-1.5">
-							<span
-								className="inline-block w-2.5 h-2.5 rounded-sm"
-								style={{ backgroundColor: s.color }}
-							/>
-							<span className="text-xs" style={{ color: theme.colors.textDim }}>
-								{s.label}
-							</span>
-						</span>
-					))}
+				{/*
+				  Legend: identity is never carried by color alone, and each entry is
+				  also the control that shows or hides its series. A hidden series keeps
+				  its swatch as an outline so the color mapping survives being off.
+				*/}
+				<div className="flex items-center gap-1">
+					{series.map((s) => {
+						const on = s.toggle.value;
+						const isLastVisible = on && visible.length === 1;
+						return (
+							<button
+								key={s.key}
+								type="button"
+								onClick={() => s.toggle.toggle()}
+								disabled={isLastVisible}
+								aria-pressed={on}
+								title={
+									isLastVisible
+										? 'At least one series has to stay visible'
+										: on
+											? `Hide ${s.label}`
+											: `Show ${s.label}`
+								}
+								data-testid={`token-timeline-legend-${s.key}`}
+								className="flex items-center gap-1.5 rounded px-1.5 py-0.5 transition-opacity hover:opacity-100"
+								style={{
+									opacity: on ? 1 : 0.45,
+									cursor: isLastVisible ? 'default' : 'pointer',
+								}}
+							>
+								<span
+									className="inline-block w-2.5 h-2.5 rounded-sm"
+									style={{
+										backgroundColor: on ? s.color : 'transparent',
+										boxShadow: `inset 0 0 0 1px ${s.color}`,
+									}}
+								/>
+								<span
+									className="text-xs"
+									style={{
+										color: theme.colors.textDim,
+										textDecoration: on ? undefined : 'line-through',
+									}}
+								>
+									{s.label}
+								</span>
+							</button>
+						);
+					})}
 				</div>
 			</div>
 
 			<div className="flex items-end gap-1 h-40">
 				{data.timeline.map((bucket, idx) => {
-					const total = bucket.inputTokens + bucket.outputTokens + bucket.cacheReadTokens;
+					const total = visible.reduce((sum, s) => sum + bucket[s.key], 0);
 					const heightPct = max > 0 ? (total / max) * 100 : 0;
 					return (
 						<div
@@ -295,7 +354,7 @@ const Timeline = memo(function Timeline({ data, theme, colorBlindMode }: Timelin
 								}}
 							>
 								{/* Rendered top-down so the visual stack reads Input → Output → Cache. */}
-								{series.map((s) => {
+								{visible.map((s) => {
 									const value = bucket[s.key];
 									const segPct = total > 0 ? (value / total) * 100 : 0;
 									if (segPct === 0) return null;
@@ -323,7 +382,7 @@ const Timeline = memo(function Timeline({ data, theme, colorBlindMode }: Timelin
 					<div className="font-semibold mb-1">
 						{new Date(data.timeline[hovered.idx].startMs).toLocaleDateString()}
 					</div>
-					{series.map((s) => (
+					{visible.map((s) => (
 						<div key={s.key}>
 							{s.label}: {formatNumber(data.timeline[hovered.idx][s.key])}
 						</div>

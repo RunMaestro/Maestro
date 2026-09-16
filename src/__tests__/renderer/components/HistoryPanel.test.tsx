@@ -177,17 +177,24 @@ describe('HistoryPanel', () => {
 			async (options?: {
 				pagination?: { offset?: number; limit?: number };
 				lookbackHours?: number | null;
+				types?: string[];
 			}) => {
 				const all = await mockHistoryGetAll();
 				const arr = Array.isArray(all) ? all : [];
-				// Mirror the server: apply lookback filter before paging.
+				// Mirror the server: apply lookback + type filters before paging.
+				// The type filter matters beyond bookkeeping now that CUE rows are
+				// served from `cue_events` (CUE-HISTORY-02): the handler skips that
+				// query entirely when 'CUE' is absent from `types`, so a panel that
+				// stopped sending the array would get Cue rows it asked to hide.
 				const lookback = options?.lookbackHours ?? null;
 				const cutoff =
 					lookback !== null && lookback > 0 ? Date.now() - lookback * 60 * 60 * 1000 : 0;
-				const filtered =
-					cutoff > 0
-						? arr.filter((e: { timestamp?: number }) => (e.timestamp ?? 0) >= cutoff)
-						: arr;
+				const typeSet = options?.types ? new Set(options.types) : null;
+				const filtered = arr.filter(
+					(e: { timestamp?: number; type?: string }) =>
+						(cutoff === 0 || (e.timestamp ?? 0) >= cutoff) &&
+						(!typeSet || typeSet.has(e.type ?? ''))
+				);
 				const offset = options?.pagination?.offset ?? 0;
 				const limit = options?.pagination?.limit ?? 100;
 				const slice = filtered.slice(offset, offset + limit);
@@ -615,6 +622,96 @@ describe('HistoryPanel', () => {
 			});
 		});
 
+		// CUE rows are no longer in the agent's JSONL file - the main process
+		// reads them from `cue_events` and SKIPS that query entirely when 'CUE'
+		// is absent from the request's `types` (CUE-HISTORY-02). So the pill is
+		// only half a client-side filter now; these cover the server half.
+		it('sends the CUE type to the main process so Cue rows are queried at all', async () => {
+			useSettingsStore.setState({
+				encoreFeatures: {
+					directorNotes: false,
+					usageStats: false,
+					symphony: false,
+					maestroCue: true,
+				},
+			});
+			mockHistoryGetAll.mockResolvedValue([]);
+			const getAllPaginated = (
+				window as unknown as {
+					maestro: { history: { getAllPaginated: ReturnType<typeof vi.fn> } };
+				}
+			).maestro.history.getAllPaginated;
+
+			render(<HistoryPanel session={createMockSession()} theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(getAllPaginated).toHaveBeenCalled();
+			});
+			const typesOnLoad = getAllPaginated.mock.calls[getAllPaginated.mock.calls.length - 1][0]
+				.types as string[];
+			// AGENT is rc's cross-agent consult type; it rides along with the
+			// always-on types, so the set is one wider than main's was.
+			expect([...typesOnLoad].sort()).toEqual(['AGENT', 'AUTO', 'CUE', 'USER']);
+
+			// Toggling the pill off must drop CUE from the request, not merely
+			// hide already-fetched rows.
+			fireEvent.click(screen.getByRole('button', { name: /CUE/i }));
+
+			await waitFor(() => {
+				const types = getAllPaginated.mock.calls[getAllPaginated.mock.calls.length - 1][0]
+					.types as string[];
+				expect(types).not.toContain('CUE');
+				expect([...types].sort()).toEqual(['AGENT', 'AUTO', 'USER']);
+			});
+		});
+
+		it('keeps the empty state honest for a Cue-only agent when CUE is toggled off', async () => {
+			// An agent whose activity is entirely Cue runs has no JSONL entries
+			// at all, so the server returns zero rows once CUE leaves `types`.
+			// The empty state must blame the filter, not claim the agent has
+			// never run anything.
+			useSettingsStore.setState({
+				encoreFeatures: {
+					directorNotes: false,
+					usageStats: false,
+					symphony: false,
+					maestroCue: true,
+				},
+			});
+			mockHistoryGetAll.mockResolvedValue([
+				createMockEntry({
+					id: 'cue-only-1',
+					type: 'CUE',
+					summary: 'Nightly sweep finished',
+					cueTriggerName: 'nightly',
+					cueEventType: 'time.interval',
+				}),
+			]);
+
+			render(<HistoryPanel session={createMockSession()} theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Nightly sweep finished')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByRole('button', { name: /CUE/i }));
+
+			await waitFor(() => {
+				expect(
+					screen.getByText('No entries match the selected filters in the loaded window.')
+				).toBeInTheDocument();
+			});
+			expect(screen.queryByText(/No history yet/)).not.toBeInTheDocument();
+
+			// And back on: the rows return from the server, not from a stale
+			// client-side cache.
+			fireEvent.click(screen.getByRole('button', { name: /CUE/i }));
+
+			await waitFor(() => {
+				expect(screen.getByText('Nightly sweep finished')).toBeInTheDocument();
+			});
+		});
+
 		it('should hide CUE filter button when maestroCue is disabled', async () => {
 			useSettingsStore.setState({
 				encoreFeatures: {
@@ -956,6 +1053,261 @@ describe('HistoryPanel', () => {
 	});
 
 	// ===== KEYBOARD NAVIGATION =====
+	// The Cue rollup runs in the MAIN process, because the panel only ever holds
+	// a page of entries and grouping that would report a page's worth of runs for
+	// a trigger that ran thousands of times. So the panel's whole job here is to
+	// forward the setting and to reset the window when it flips.
+	// CUE-HISTORY-03 task #3.
+	describe('groupCueEntries', () => {
+		// The store's default is ON, and these tests flip it. Restore it or the
+		// flip leaks into every later test in the file (see the same trap in
+		// settingsStore.test.ts's partial `resetStore`).
+		afterEach(() => {
+			useSettingsStore.setState({ groupCueEntries: true });
+		});
+
+		const paginatedCalls = () =>
+			(
+				window as unknown as {
+					maestro: { history: { getAllPaginated: { mock: { calls: unknown[][] } } } };
+				}
+			).maestro.history.getAllPaginated.mock.calls;
+
+		it('forwards the setting to the paginated read', async () => {
+			useSettingsStore.setState({ groupCueEntries: true });
+			mockHistoryGetAll.mockResolvedValue([]);
+
+			render(<HistoryPanel session={createMockSession()} theme={mockTheme} />);
+
+			await waitFor(() => expect(paginatedCalls().length).toBeGreaterThan(0));
+			expect((paginatedCalls()[0][0] as { groupCue?: boolean }).groupCue).toBe(true);
+		});
+
+		it('asks for ungrouped rows when the user turns grouping off', async () => {
+			useSettingsStore.setState({ groupCueEntries: false });
+			mockHistoryGetAll.mockResolvedValue([]);
+
+			render(<HistoryPanel session={createMockSession()} theme={mockTheme} />);
+
+			await waitFor(() => expect(paginatedCalls().length).toBeGreaterThan(0));
+			expect((paginatedCalls()[0][0] as { groupCue?: boolean }).groupCue).toBe(false);
+		});
+
+		it('renders a collapsed row with its trigger name and run count', async () => {
+			useSettingsStore.setState({
+				groupCueEntries: true,
+				encoreFeatures: {
+					directorNotes: false,
+					usageStats: false,
+					symphony: false,
+					maestroCue: true,
+				},
+			});
+			mockHistoryGetAll.mockResolvedValue([
+				createMockEntry({
+					id: 'cue-newest',
+					type: 'CUE',
+					summary: 'Bus drained 4 commands',
+					cueTriggerName: 'Pedsidian-Command-Bus',
+					cueEventType: 'file.changed',
+					cueGroup: {
+						key: 'Pedsidian-Command-Bus',
+						label: 'Pedsidian-Command-Bus',
+						runCount: 1382,
+						failureCount: 3,
+					},
+				}),
+			]);
+
+			render(<HistoryPanel session={createMockSession()} theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Pedsidian-Command-Bus')).toBeInTheDocument();
+			});
+			expect(screen.getByText('1,382 runs')).toBeInTheDocument();
+			expect(screen.getByText('3 failed')).toBeInTheDocument();
+		});
+	});
+
+	// CUE-HISTORY-03 task #5. Grouping narrows the list; so do the pills and
+	// the search box. These cover the two ways that combination can lose a run.
+	//
+	// The pill is the easy half: 'CUE' leaving `types` makes the main process
+	// skip the Cue query outright, grouped or not.
+	//
+	// Search is the half that is easy to get wrong. A collapsed row carries the
+	// text of exactly ONE run (its newest), so a term matching any earlier run
+	// in the group would match nothing and the row would vanish - hiding every
+	// run it stood for. The panel therefore turns grouping OFF for the duration
+	// of a search, so the matching run is on screen as itself.
+	describe('grouped Cue rows under the filter pills and search', () => {
+		afterEach(() => {
+			useSettingsStore.setState({ groupCueEntries: true });
+		});
+
+		const CUE_ENCORE = {
+			directorNotes: false,
+			usageStats: false,
+			symphony: false,
+			maestroCue: true,
+		};
+
+		// Two runs of one chatty trigger. Neither summary contains the trigger
+		// name, and only the OLDER one mentions the term the tests search for -
+		// which is exactly the case a collapsed row cannot answer by itself.
+		const newestRun = () =>
+			createMockEntry({
+				id: 'cue-newest',
+				type: 'CUE',
+				timestamp: 3000,
+				summary: 'Bus drained 4 commands',
+				cueTriggerName: 'Pedsidian-Command-Bus',
+				cueEventType: 'file.changed',
+			});
+		const olderRun = () =>
+			createMockEntry({
+				id: 'cue-older',
+				type: 'CUE',
+				timestamp: 1000,
+				summary: 'Bus hit a timeout',
+				success: false,
+				cueTriggerName: 'Pedsidian-Command-Bus',
+				cueEventType: 'file.changed',
+			});
+
+		const paginatedMock = () =>
+			(
+				window as unknown as {
+					maestro: { history: { getAllPaginated: ReturnType<typeof vi.fn> } };
+				}
+			).maestro.history.getAllPaginated;
+
+		const lastRequest = () => {
+			const calls = paginatedMock().mock.calls;
+			return calls[calls.length - 1][0] as { groupCue?: boolean; types?: string[] };
+		};
+
+		/**
+		 * Stands in for the main process's own branch: `groupCue` picks the
+		 * rollup over the per-run read, and 'CUE' missing from `types` skips
+		 * the Cue query entirely. The shared adapter in `beforeEach` cannot do
+		 * this - it slices one fixed array - and the whole point here is that
+		 * the two reads return DIFFERENT rows.
+		 */
+		const installSplitRead = () => {
+			const read = vi.fn(async (options?: { groupCue?: boolean; types?: string[] }) => {
+				const wantsCue = !options?.types || options.types.includes('CUE');
+				const entries = !wantsCue
+					? []
+					: options?.groupCue
+						? [
+								{
+									...newestRun(),
+									cueGroup: {
+										key: 'Pedsidian-Command-Bus',
+										label: 'Pedsidian-Command-Bus',
+										runCount: 2,
+										failureCount: 1,
+									},
+								},
+							]
+						: [newestRun(), olderRun()];
+				return { entries, total: entries.length, limit: 100, offset: 0, hasMore: false };
+			});
+			(
+				window as unknown as {
+					maestro: { history: { getAllPaginated: unknown } };
+				}
+			).maestro.history.getAllPaginated = read;
+			return read;
+		};
+
+		const typeInSearch = (term: string) =>
+			fireEvent.change(screen.getByPlaceholderText('Filter history...'), {
+				target: { value: term },
+			});
+
+		it('surfaces a run inside a collapsed group when the search matches it', async () => {
+			useSettingsStore.setState({ groupCueEntries: true, encoreFeatures: CUE_ENCORE });
+			useUIStore.setState({ historySearchFilterOpen: true });
+			installSplitRead();
+
+			render(<HistoryPanel session={createMockSession()} theme={mockTheme} />);
+
+			// Collapsed: the older run's text is nowhere on screen.
+			await waitFor(() => expect(screen.getByText('2 runs')).toBeInTheDocument());
+			expect(screen.queryByText('Bus hit a timeout')).not.toBeInTheDocument();
+
+			typeInSearch('timeout');
+
+			await waitFor(() => {
+				expect(screen.getByText('Bus hit a timeout')).toBeInTheDocument();
+			});
+			// And the row it was hiding behind is gone, not sitting beside it.
+			expect(screen.queryByText('2 runs')).not.toBeInTheDocument();
+		});
+
+		it('asks the main process for ungrouped rows while a term is typed, and groups again when it is cleared', async () => {
+			useSettingsStore.setState({ groupCueEntries: true, encoreFeatures: CUE_ENCORE });
+			useUIStore.setState({ historySearchFilterOpen: true });
+			mockHistoryGetAll.mockResolvedValue([]);
+
+			render(<HistoryPanel session={createMockSession()} theme={mockTheme} />);
+
+			await waitFor(() => expect(paginatedMock()).toHaveBeenCalled());
+			expect(lastRequest().groupCue).toBe(true);
+
+			typeInSearch('timeout');
+			await waitFor(() => expect(lastRequest().groupCue).toBe(false));
+
+			// Typing MORE must not re-fetch: the read only cares whether a term
+			// exists, so the window is not reset on every keystroke.
+			const callsWhileSearching = paginatedMock().mock.calls.length;
+			typeInSearch('timeout error');
+			await waitFor(() =>
+				expect(screen.getByPlaceholderText('Filter history...')).toHaveValue('timeout error')
+			);
+			expect(paginatedMock().mock.calls.length).toBe(callsWhileSearching);
+
+			typeInSearch('');
+			await waitFor(() => expect(lastRequest().groupCue).toBe(true));
+		});
+
+		it('matches a Cue row by its trigger name, which is all a collapsed row shows', async () => {
+			useSettingsStore.setState({ groupCueEntries: true, encoreFeatures: CUE_ENCORE });
+			useUIStore.setState({ historySearchFilterOpen: true });
+			installSplitRead();
+
+			render(<HistoryPanel session={createMockSession()} theme={mockTheme} />);
+			await waitFor(() => expect(screen.getByText('2 runs')).toBeInTheDocument());
+
+			// Neither run's summary contains 'Pedsidian'.
+			typeInSearch('Pedsidian');
+
+			await waitFor(() => {
+				expect(screen.getByText('Bus drained 4 commands')).toBeInTheDocument();
+			});
+			expect(screen.getByText('Bus hit a timeout')).toBeInTheDocument();
+		});
+
+		it('hides grouped rows entirely when the CUE pill is toggled off', async () => {
+			useSettingsStore.setState({ groupCueEntries: true, encoreFeatures: CUE_ENCORE });
+			installSplitRead();
+
+			render(<HistoryPanel session={createMockSession()} theme={mockTheme} />);
+			await waitFor(() => expect(screen.getByText('Pedsidian-Command-Bus')).toBeInTheDocument());
+
+			fireEvent.click(screen.getByRole('button', { name: /CUE/i }));
+
+			await waitFor(() => {
+				expect(screen.queryByText('Pedsidian-Command-Bus')).not.toBeInTheDocument();
+			});
+			expect(screen.queryByText('2 runs')).not.toBeInTheDocument();
+			// Server half: the rollup must not even be asked for.
+			expect(lastRequest().types).not.toContain('CUE');
+		});
+	});
+
 	describe('keyboard navigation', () => {
 		it('should navigate with ArrowDown', async () => {
 			const entries = [

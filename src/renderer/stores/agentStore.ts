@@ -132,12 +132,21 @@ export interface AgentStoreActions {
 	/**
 	 * Process a queued item (message or command) for a session.
 	 * Builds spawn config and dispatches to the agent process.
+	 *
+	 * Resolves `true` when something is now running that will settle this turn,
+	 * and `false` when the call returned having dispatched nothing - its target
+	 * tab was closed while the item waited, or the command has no definition.
+	 * A caller that took the item OUT of a queue to run it has to be able to tell
+	 * those apart: reading a `false` as success destroys the prompt, because
+	 * nothing sent it and nothing is left holding it. Anything that DID reach a
+	 * dispatch attempt and failed still throws; this is only for the paths that
+	 * resolve normally having done nothing.
 	 */
 	processQueuedItem: (
 		sessionId: string,
 		item: QueuedItem,
 		deps: ProcessQueuedItemDeps
-	) => Promise<void>;
+	) => Promise<boolean>;
 
 	// === Agent Lifecycle ===
 
@@ -264,12 +273,29 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 			const updatedAiTabs = targetTabId
 				? s.aiTabs.map((tab) => (tab.id === targetTabId ? { ...tab, agentError: undefined } : tab))
 				: s.aiTabs;
+			// Clearing the error must not claim the AGENT is idle while one of its
+			// tabs is still mid-turn. A re-authentication resumes blocked agents one
+			// after another (see `resolveAuthOutage`), so this runs while an earlier
+			// tab's replayed turn is already on the wire - and overwriting the busy
+			// state there hides the Thinking pill for live work and tells the queue
+			// recovery pass the agent is free.
+			const stillBusy =
+				updatedAiTabs.some((tab) => tab.state === 'busy') ||
+				!!s.orphanedThinkingTabs?.some((tab) => tab.state === 'busy');
 			return {
 				...s,
 				agentError: undefined,
 				agentErrorTabId: undefined,
 				agentErrorPaused: false,
-				state: 'idle' as SessionState,
+				// Either way the session leaves 'error': the busy branch reports the
+				// work that is genuinely running, the idle branch the absence of any.
+				...(stillBusy
+					? {
+							state: 'busy' as SessionState,
+							busySource: s.busySource ?? 'ai',
+							thinkingStartTime: s.thinkingStartTime ?? Date.now(),
+						}
+					: { state: 'idle' as SessionState }),
 				aiTabs: updatedAiTabs,
 			};
 		});
@@ -332,7 +358,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		const session = getSession(sessionId);
 		if (!session) {
 			logger.error('[processQueuedItem] Session not found:', undefined, sessionId);
-			return;
+			return false;
 		}
 
 		// Find the TARGET tab for this queued item (NOT the active tab!)
@@ -362,7 +388,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					};
 				})
 			);
-			return;
+			return false;
 		}
 
 		const targetTab = tabByItemId || getActiveTab(session);
@@ -373,7 +399,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 				undefined,
 				{ sessionId, itemTabId: item.tabId }
 			);
-			return;
+			return false;
 		}
 
 		const targetSessionId = `${sessionId}-ai-${targetTab.id}`;
@@ -397,7 +423,8 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					.setSessions((prev) =>
 						prev.map((s) => (s.id === sessionId ? applyQueuedItemRelease(s, targetTab.id) : s))
 					);
-				return;
+				// The consult IS this item's dispatch, so the turn is accounted for.
+				return true;
 			}
 		}
 
@@ -623,8 +650,12 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 							};
 						})
 					);
+					// Nothing spawned and nothing will: the command does not exist, so
+					// no exit is coming to settle this turn.
+					return false;
 				}
 			}
+			return true;
 		} catch (error: any) {
 			logger.error('[processQueuedItem] Failed to process queued item:', undefined, error);
 

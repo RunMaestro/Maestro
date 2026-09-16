@@ -274,10 +274,25 @@ export const TerminalView = memo(
 		// failure reporting, which is the one part that needs the live xterm buffer.
 		const spawnPtyForTab = useCallback(
 			(tab: TerminalTab) => {
+				// Spawn at the size the pane is actually showing. Without this the shell
+				// starts at 80x24 and anything that asks the kernel for the window size
+				// (nano, vim, less, top) paints into that box regardless of how large the
+				// pane is - ordinary command output still fills it, because xterm does
+				// the wrapping itself, which is why the bug looks like "only TUIs break".
+				const size = terminalRefs.current.get(tab.id)?.getSize();
 				void spawnPty({
 					session,
 					tab,
-					onPid: (id, pid) => onTabPidChangeRef.current(id, pid),
+					cols: size?.cols,
+					rows: size?.rows,
+					onPid: (id, pid) => {
+						onTabPidChangeRef.current(id, pid);
+						// Re-assert now that the PTY exists. Two cases need it: a tab spawned
+						// into the background had no rendered terminal to measure above, and a
+						// resize that raced the spawn was dropped (process:resize resolves
+						// false for an unknown session id, and nothing retried it).
+						terminalRefs.current.get(id)?.syncSize();
+					},
 					onSpawnFailure: handleSpawnFailure,
 				});
 			},

@@ -55,6 +55,15 @@ export interface CueEventRecord {
 	 * still running) or for status flips that aren't run completions.
 	 */
 	exitCode?: number | null;
+	/**
+	 * Short, sentence-aligned body derived from the run's output - what a
+	 * History row renders as its summary. NULL when the run printed nothing,
+	 * which is what makes it the noise filter (see
+	 * {@link CUE_EVENT_WORTH_SHOWING_SQL}).
+	 */
+	outputExcerpt?: string | null;
+	/** Head-truncated stdout behind the excerpt. NULL for a silent run. */
+	fullOutput?: string | null;
 }
 
 // ============================================================================
@@ -77,18 +86,26 @@ const CREATE_CUE_EVENTS_SQL = `
     parent_event_id TEXT,
     provider_session_id TEXT,
     error_message TEXT,
-    exit_code INTEGER
+    exit_code INTEGER,
+    output_excerpt TEXT,
+    full_output TEXT
   )
 `;
 
 // Additive columns. These are nullable on purpose: existing callers that don't
 // pass lineage / pipeline metadata (e.g. when usageStats is off) must continue
-// to record events. `provider_session_id`, `error_message`, and `exit_code`
-// are written on run completion (NULL at record time, and for command/shell
-// runs that carry no equivalent). Each entry carries its own column type
-// (`exit_code` is INTEGER; the rest are TEXT) - same shape as the
-// `cue_github_seen` additive set. The migration block in initCueDb() ALTERs
-// existing databases to match the CREATE TABLE schema.
+// to record events. `provider_session_id`, `error_message`, `exit_code`,
+// `output_excerpt`, and `full_output` are written on run completion (NULL at
+// record time, and for command/shell runs that carry no equivalent). Each entry
+// carries its own column type (`exit_code` is INTEGER; the rest are TEXT) -
+// same shape as the `cue_github_seen` additive set. The migration block in
+// initCueDb() ALTERs existing databases to match the CREATE TABLE schema.
+//
+// `output_excerpt` is the short row body the activity log renders;
+// `full_output` is the truncated stdout behind it. Both stay NULL for a run
+// that produced no output, which is what makes
+// `WHERE output_excerpt IS NOT NULL` the noise filter that lets History be
+// served from this table instead of the per-agent JSONL files.
 const CUE_EVENTS_ADDITIVE_COLUMNS = [
 	{ name: 'pipeline_id', type: 'TEXT' },
 	{ name: 'chain_root_id', type: 'TEXT' },
@@ -96,6 +113,8 @@ const CUE_EVENTS_ADDITIVE_COLUMNS = [
 	{ name: 'provider_session_id', type: 'TEXT' },
 	{ name: 'error_message', type: 'TEXT' },
 	{ name: 'exit_code', type: 'INTEGER' },
+	{ name: 'output_excerpt', type: 'TEXT' },
+	{ name: 'full_output', type: 'TEXT' },
 ] as const;
 
 const CREATE_CUE_EVENTS_INDEXES_SQL = `
@@ -427,12 +446,21 @@ export function recordCueEvent(event: {
 		);
 }
 
-/** Optional failure diagnostics stamped on an event row at completion time. */
-export interface CueEventFailureInfo {
+/**
+ * Optional diagnostics + output stamped on an event row at completion time.
+ * Every field is a completion-time write: a status flip that isn't a run
+ * completion (e.g. 'stopped') omits the whole object and leaves the columns
+ * untouched rather than clobbering them with NULL.
+ */
+export interface CueEventCompletionInfo {
 	/** Trimmed stderr / agent error reason; null when the run had no error. */
 	errorMessage?: string | null;
 	/** Process exit code; null when none was produced. */
 	exitCode?: number | null;
+	/** Short row body from the run's output; null when it printed nothing. */
+	outputExcerpt?: string | null;
+	/** Head-truncated stdout; null when the run printed nothing. */
+	fullOutput?: string | null;
 }
 
 /**
@@ -444,17 +472,19 @@ export interface CueEventFailureInfo {
  * id (command/shell runs, or status flips that aren't run completions) simply
  * don't pass it rather than clobbering a previously-written value with NULL.
  *
- * When `failure` is provided, `error_message` and `exit_code` are written too
- * (NULL is fine for a success - these are completion-time writes). Status flips
- * that aren't run completions (e.g. 'stopped') omit it and leave both columns
+ * When `completion` is provided, `error_message`, `exit_code`,
+ * `output_excerpt`, and `full_output` are written too (NULL is fine for a
+ * success or a silent run - these are completion-time writes). Status flips
+ * that aren't run completions (e.g. 'stopped') omit it and leave the columns
  * untouched. This is what lets the activity log explain WHY a dispatch failed
- * without a DB dig.
+ * without a DB dig, and what lets History be served from this table instead of
+ * the per-agent JSONL files.
  */
 export function updateCueEventStatus(
 	id: string,
 	status: string,
 	providerSessionId?: string | null,
-	failure?: CueEventFailureInfo
+	completion?: CueEventCompletionInfo
 ): void {
 	const columns = ['status = ?', 'completed_at = ?'];
 	const values: Array<string | number | null> = [status, Date.now()];
@@ -463,11 +493,17 @@ export function updateCueEventStatus(
 		columns.push('provider_session_id = ?');
 		values.push(providerSessionId);
 	}
-	if (failure) {
+	if (completion) {
 		columns.push('error_message = ?');
-		values.push(failure.errorMessage ?? null);
+		values.push(completion.errorMessage ?? null);
 		columns.push('exit_code = ?');
-		values.push(failure.exitCode ?? null);
+		values.push(completion.exitCode ?? null);
+		// NULL, never '' - `WHERE output_excerpt IS NOT NULL` is the filter
+		// that separates runs worth reading from heartbeat noise.
+		columns.push('output_excerpt = ?');
+		values.push(completion.outputExcerpt ?? null);
+		columns.push('full_output = ?');
+		values.push(completion.fullOutput ?? null);
 	}
 
 	values.push(id);
@@ -521,7 +557,7 @@ export function safeUpdateCueEventStatus(
 	id: string,
 	status: string,
 	providerSessionId?: string | null,
-	failure?: CueEventFailureInfo
+	completion?: CueEventCompletionInfo
 ): void {
 	if (!db) {
 		// Expected during shutdown or before init completes - log and skip Sentry.
@@ -532,7 +568,7 @@ export function safeUpdateCueEventStatus(
 		return;
 	}
 	try {
-		updateCueEventStatus(id, status, providerSessionId, failure);
+		updateCueEventStatus(id, status, providerSessionId, completion);
 	} catch (err) {
 		log(
 			'warn',
@@ -553,40 +589,30 @@ export function countCueEvents(): number {
 	return row?.c ?? 0;
 }
 
-/**
- * Retrieve recent Cue events created after a given timestamp.
- *
- * Returns `[]` if the DB hasn't been initialized yet. Mirrors the tolerance of
- * `countCueEvents`: read paths can be hit from IPC (stats UI, activity panel)
- * before/after the engine's start/stop lifecycle has touched the DB, e.g. when
- * boot-time `initCueDb()` failed but the user's encore flags are still on. The
- * UI renders empty results instead of crashing.
- */
-export function getRecentCueEvents(since: number, limit?: number): CueEventRecord[] {
-	if (!db) return [];
-	const sql = limit
-		? `SELECT * FROM cue_events WHERE created_at >= ? ORDER BY created_at DESC LIMIT ?`
-		: `SELECT * FROM cue_events WHERE created_at >= ? ORDER BY created_at DESC`;
+/** Raw `SELECT * FROM cue_events` row shape, before camelCase mapping. */
+interface CueEventRow {
+	id: string;
+	type: string;
+	trigger_name: string;
+	session_id: string;
+	subscription_name: string;
+	status: string;
+	created_at: number;
+	completed_at: number | null;
+	payload: string | null;
+	pipeline_id: string | null;
+	chain_root_id: string | null;
+	parent_event_id: string | null;
+	provider_session_id: string | null;
+	error_message: string | null;
+	exit_code: number | null;
+	output_excerpt: string | null;
+	full_output: string | null;
+}
 
-	const rows = (limit ? db.prepare(sql).all(since, limit) : db.prepare(sql).all(since)) as Array<{
-		id: string;
-		type: string;
-		trigger_name: string;
-		session_id: string;
-		subscription_name: string;
-		status: string;
-		created_at: number;
-		completed_at: number | null;
-		payload: string | null;
-		pipeline_id: string | null;
-		chain_root_id: string | null;
-		parent_event_id: string | null;
-		provider_session_id: string | null;
-		error_message: string | null;
-		exit_code: number | null;
-	}>;
-
-	return rows.map((row) => ({
+/** Single mapping from the on-disk row to {@link CueEventRecord}. */
+function rowToCueEventRecord(row: CueEventRow): CueEventRecord {
+	return {
 		id: row.id,
 		type: row.type,
 		triggerName: row.trigger_name,
@@ -602,6 +628,152 @@ export function getRecentCueEvents(since: number, limit?: number): CueEventRecor
 		providerSessionId: row.provider_session_id,
 		errorMessage: row.error_message,
 		exitCode: row.exit_code,
+		outputExcerpt: row.output_excerpt,
+		fullOutput: row.full_output,
+	};
+}
+
+/**
+ * Whether a finished Cue run is worth a History row. A run earns one when
+ * either is true:
+ *
+ * - It produced output - there is something to read.
+ * - It did not complete cleanly (failed/timeout/stopped) - a silent failure is
+ *   exactly the row worth keeping, precisely because it printed nothing.
+ *
+ * A silent success is a heartbeat with nothing to say: no `fullResponse`, a
+ * summary that degrades to the bare trigger label, and a body that reads "This
+ * run produced no captured output". Thousands of those per week are exactly
+ * what buried real entries in the JSONL files.
+ *
+ * Exported so every reader of this table (History merge, activity-graph
+ * buckets) filters on one predicate instead of three drifting copies.
+ */
+export const CUE_EVENT_WORTH_SHOWING_SQL = `(output_excerpt IS NOT NULL OR status != 'completed')`;
+
+/**
+ * Cue runs for one agent inside a time window, filtered to the runs worth
+ * surfacing in History (see {@link CUE_EVENT_WORTH_SHOWING_SQL}).
+ *
+ * `since` is inclusive, `until` exclusive. Newest first, matching the order
+ * the history read path merges on.
+ *
+ * Returns `[]` when the DB isn't initialized - same tolerance as
+ * `getRecentCueEvents`, because History is readable long before (and after)
+ * the Cue engine's lifecycle has touched the database.
+ */
+export function getCueEventsForHistory(options: {
+	sessionId: string;
+	since?: number;
+	until?: number;
+	limit?: number;
+}): CueEventRecord[] {
+	if (!db) return [];
+
+	const clauses = [`session_id = ?`];
+	const params: unknown[] = [options.sessionId];
+	if (options.since !== undefined) {
+		clauses.push(`created_at >= ?`);
+		params.push(options.since);
+	}
+	if (options.until !== undefined) {
+		clauses.push(`created_at < ?`);
+		params.push(options.until);
+	}
+	clauses.push(CUE_EVENT_WORTH_SHOWING_SQL);
+
+	let sql = `SELECT * FROM cue_events WHERE ${clauses.join(' AND ')} ORDER BY created_at DESC`;
+	if (options.limit !== undefined) {
+		sql += ` LIMIT ?`;
+		params.push(options.limit);
+	}
+
+	const rows = db.prepare(sql).all(...params) as CueEventRow[];
+	return rows.map(rowToCueEventRecord);
+}
+
+/**
+ * One trigger's runs inside a window, collapsed to a single row by
+ * {@link getCueEventGroupCounts}.
+ *
+ * `latest` is the newest run in the group, mapped with the same
+ * {@link rowToCueEventRecord} the ungrouped read path uses, so a caller can
+ * render a one-run group as an ordinary row without a second mapping.
+ */
+export interface CueEventGroupCount {
+	/** `pipeline_id` of the grouped runs; NULL for runs with no lineage. */
+	pipelineId: string | null;
+	/** Raw `subscription_name`, chain suffixes intact. */
+	subscriptionName: string;
+	/** Runs in the group, including silent failures. */
+	runCount: number;
+	/** Runs that did not reach `completed` - the same rule History paints red. */
+	failureCount: number;
+	/** The newest run in the group. Its `createdAt` IS the group's last run. */
+	latest: CueEventRecord;
+}
+
+/**
+ * Per-trigger rollup of the Cue runs worth showing for one agent, for the
+ * History panel's collapsed rows.
+ *
+ * Grouping happens here rather than in the renderer because a week of a chatty
+ * pipeline is thousands of rows: `Pedsidian-Command-Bus` alone put 1,382 of
+ * them in one History list. This returns one row per `(pipeline_id,
+ * subscription_name)` pair instead, which is at most a handful.
+ *
+ * Grouping stops at the raw subscription name on purpose. Collapsing the
+ * `-chain-N` / `-fanin` steps of one pipeline onto a single label is a
+ * NAME-parsing rule that already has a canonical owner in
+ * `parseSubscriptionName()` (shared/cue/cue-summary.ts); re-implementing its
+ * regex in SQL would be a second copy free to drift. The caller folds these
+ * rows the rest of the way - the fold is over a handful of rows, not thousands.
+ *
+ * The bare columns in the `SELECT *` are not arbitrary: SQLite guarantees that
+ * when a query contains exactly one `min()`/`max()` aggregate, every bare
+ * column takes its value from the row that produced that extreme. `MAX(created_at)`
+ * is that aggregate, so `latest` is the newest run of the group - which is
+ * where `output_excerpt` (the group's preview body) comes from.
+ *
+ * `since` is inclusive, `until` exclusive. Newest last-run first.
+ */
+export function getCueEventGroupCounts(options: {
+	sessionId: string;
+	since?: number;
+	until?: number;
+}): CueEventGroupCount[] {
+	if (!db) return [];
+
+	const clauses = [`session_id = ?`];
+	const params: unknown[] = [options.sessionId];
+	if (options.since !== undefined) {
+		clauses.push(`created_at >= ?`);
+		params.push(options.since);
+	}
+	if (options.until !== undefined) {
+		clauses.push(`created_at < ?`);
+		params.push(options.until);
+	}
+	clauses.push(CUE_EVENT_WORTH_SHOWING_SQL);
+
+	const sql = `SELECT *,
+			COUNT(*) AS run_count,
+			MAX(created_at) AS last_run_at,
+			SUM(status != 'completed') AS failure_count
+		FROM cue_events
+		WHERE ${clauses.join(' AND ')}
+		GROUP BY pipeline_id, subscription_name
+		ORDER BY last_run_at DESC`;
+
+	const rows = db.prepare(sql).all(...params) as Array<
+		CueEventRow & { run_count: number; failure_count: number }
+	>;
+	return rows.map((row) => ({
+		pipelineId: row.pipeline_id,
+		subscriptionName: row.subscription_name,
+		runCount: row.run_count,
+		failureCount: row.failure_count,
+		latest: rowToCueEventRecord(row),
 	}));
 }
 
@@ -669,6 +841,141 @@ export function getCueRunTotalsByDay(
 		count: row.count,
 		durationMs: Math.max(0, row.duration_ms),
 	}));
+}
+
+/**
+ * Bucket width the activity-graph counts are grouped to in SQL.
+ *
+ * One minute is finer than the graph's finest bucket by a wide margin (the
+ * tightest lookback is 24 hours over 24 buckets, i.e. one hour a bar), so
+ * grouping here is lossless for every window the renderer can ask for while
+ * collapsing a busy agent's thousands of daily runs into a few hundred rows.
+ */
+export const CUE_EVENT_BUCKET_MS = 60_000;
+
+/** One minute of Cue runs, as counted by {@link getCueEventBucketCounts}. */
+export interface CueEventBucketCount {
+	/** Start of the minute the runs were dispatched in, unix ms. */
+	bucketStart: number;
+	count: number;
+}
+
+/**
+ * Per-minute counts of the Cue runs worth showing inside a time window. Feeds
+ * the activity graph's CUE series.
+ *
+ * This exists instead of counting {@link getCueEventsForHistory} rows because
+ * the graph needs numbers, not text: a bar chart over a year of history would
+ * otherwise drag every run's `full_output` through memory to increment a
+ * counter.
+ *
+ * `sessionId` scopes to one agent (the History panel's graph); omit it for the
+ * whole fleet, which is what Director's Notes draws - one GROUP BY beats one
+ * query per agent.
+ *
+ * `since` is inclusive, `until` exclusive. Ordered oldest first.
+ */
+export function getCueEventBucketCounts(options: {
+	sessionId?: string;
+	since?: number;
+	until?: number;
+}): CueEventBucketCount[] {
+	if (!db) return [];
+
+	const clauses: string[] = [];
+	const params: unknown[] = [];
+	if (options.sessionId !== undefined) {
+		clauses.push(`session_id = ?`);
+		params.push(options.sessionId);
+	}
+	if (options.since !== undefined) {
+		clauses.push(`created_at >= ?`);
+		params.push(options.since);
+	}
+	if (options.until !== undefined) {
+		clauses.push(`created_at < ?`);
+		params.push(options.until);
+	}
+	clauses.push(CUE_EVENT_WORTH_SHOWING_SQL);
+
+	const sql = `SELECT CAST(created_at / ${CUE_EVENT_BUCKET_MS} AS INTEGER) * ${CUE_EVENT_BUCKET_MS} AS bucket_start,
+			COUNT(*) AS run_count
+		FROM cue_events
+		WHERE ${clauses.join(' AND ')}
+		GROUP BY bucket_start
+		ORDER BY bucket_start ASC`;
+
+	const rows = db.prepare(sql).all(...params) as Array<{
+		bucket_start: number;
+		run_count: number;
+	}>;
+	return rows.map((row) => ({ bucketStart: row.bucket_start, count: row.run_count }));
+}
+
+/**
+ * Cheap change-detector for Cue history, used as the Cue half of the
+ * activity-graph cache fingerprint. `sessionId` scopes to one agent; omit it
+ * for the fleet-wide graph Director's Notes draws.
+ *
+ * The graph cache keys off the history JSONL file's mtime + size, which no
+ * longer moves when a Cue run lands - so without this the graph would keep
+ * serving the bars it computed the first time and never show a new run again.
+ *
+ * Three aggregates over the same predicate the bucket query uses, so the stamp
+ * moves on every transition that can change a bar: a new run (count and
+ * `MAX(created_at)`), a run finishing (`MAX(completed_at)`), a silent success
+ * dropping out of the filter or a failure entering it (count).
+ */
+export interface CueEventHistoryStamp {
+	count: number;
+	maxCreatedAt: number;
+	maxCompletedAt: number;
+}
+
+export function getCueEventHistoryStamp(sessionId?: string): CueEventHistoryStamp {
+	if (!db) return { count: 0, maxCreatedAt: 0, maxCompletedAt: 0 };
+
+	const scope = sessionId !== undefined ? `session_id = ? AND ` : '';
+	const params = sessionId !== undefined ? [sessionId] : [];
+	const row = db
+		.prepare(
+			`SELECT COUNT(*) AS run_count,
+				COALESCE(MAX(created_at), 0) AS max_created,
+				COALESCE(MAX(completed_at), 0) AS max_completed
+			FROM cue_events
+			WHERE ${scope}${CUE_EVENT_WORTH_SHOWING_SQL}`
+		)
+		.get(...params) as
+		| { run_count: number; max_created: number; max_completed: number }
+		| undefined;
+
+	return {
+		count: row?.run_count ?? 0,
+		maxCreatedAt: row?.max_created ?? 0,
+		maxCompletedAt: row?.max_completed ?? 0,
+	};
+}
+
+/**
+ * Retrieve recent Cue events created after a given timestamp.
+ *
+ * Returns `[]` if the DB hasn't been initialized yet. Mirrors the tolerance of
+ * `countCueEvents`: read paths can be hit from IPC (stats UI, activity panel)
+ * before/after the engine's start/stop lifecycle has touched the DB, e.g. when
+ * boot-time `initCueDb()` failed but the user's encore flags are still on. The
+ * UI renders empty results instead of crashing.
+ */
+export function getRecentCueEvents(since: number, limit?: number): CueEventRecord[] {
+	if (!db) return [];
+	const sql = limit
+		? `SELECT * FROM cue_events WHERE created_at >= ? ORDER BY created_at DESC LIMIT ?`
+		: `SELECT * FROM cue_events WHERE created_at >= ? ORDER BY created_at DESC`;
+
+	const rows = (
+		limit ? db.prepare(sql).all(since, limit) : db.prepare(sql).all(since)
+	) as CueEventRow[];
+
+	return rows.map(rowToCueEventRecord);
 }
 
 /**

@@ -53,6 +53,10 @@ export function useAutoRunAchievements(deps: UseAutoRunAchievementsDeps): void {
 		}
 		return `${nonTerminal}|${busy}|${queueDepth}`;
 	});
+	// The peak-usage effect below is a no-op until settings hydrate (the store
+	// would otherwise max against zeroed defaults). Subscribing here re-runs it
+	// on the render after hydration, so the sample taken during load is not lost.
+	const settingsLoaded = useSettingsStore((s) => s.settingsLoaded);
 
 	// --- Store actions (stable via getState) ---
 	const { updateAutoRunProgress, updateUsageStats } = useSettingsStore.getState();
@@ -154,6 +158,9 @@ export function useAutoRunAchievements(deps: UseAutoRunAchievementsDeps): void {
 
 	// Track peak usage stats for achievements image
 	useEffect(() => {
+		// Nothing sampled before hydration is trustworthy as a peak, and the
+		// store would be comparing it against zeros. Wait for the real baseline.
+		if (!settingsLoaded) return;
 		const sessions = useSessionStore.getState().sessions;
 
 		// Count current active agents (non-terminal sessions)
@@ -178,5 +185,5 @@ export function useAutoRunAchievements(deps: UseAutoRunAchievementsDeps): void {
 		});
 		// usagePeaksKey encodes the same counts read above; include it so peaks
 		// refresh when agent/busy/queue shift without a full sessions[] sub.
-	}, [usagePeaksKey, activeBatchSessionIds]);
+	}, [usagePeaksKey, activeBatchSessionIds, settingsLoaded]);
 }

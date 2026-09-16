@@ -367,34 +367,47 @@ export function EditAgentModal({
 		trimmedWorkingDir !== '' &&
 		!isSameDirectory(trimmedWorkingDir, session.projectRoot);
 	const workingDirBlocker = session ? workingDirectoryChangeBlocker(session) : null;
-	const workingDirError = useMemo(() => {
-		if (!session) return undefined;
-		if (!trimmedWorkingDir) return 'Working directory is required';
-		// A remote path may start with `~`, which only the remote shell can expand.
-		if (workingDirChanged && !isSshEnabled && !isAbsolutePath(trimmedWorkingDir)) {
-			return 'Enter an absolute path';
-		}
-		return undefined;
-	}, [session, trimmedWorkingDir, workingDirChanged, isSshEnabled]);
+	// A local path is typed as well as picked, so it is checked for shape here
+	// and for existence below. A remote path may start with `~`, which only the
+	// remote shell can expand, so its shape is left to the remote check.
+	const localWorkingDirRelative =
+		workingDirChanged && !isSshEnabled && !isAbsolutePath(trimmedWorkingDir);
 
-	// Validate remote path when SSH is enabled (debounced)
-	// Prefer a newly entered directory, then workingDirOverride (user-specified
-	// remote path), then session.projectRoot
+	// Validate the path (debounced): on the remote when SSH is enabled, locally
+	// when a new local directory was typed. Prefer a newly entered directory,
+	// then workingDirOverride (user-specified remote path), then session.projectRoot.
 	const remotePathValidation = useRemotePathValidation({
 		isSshEnabled: !!isSshEnabled,
+		validateLocal: workingDirChanged && !isSshEnabled && !localWorkingDirRelative,
 		path: workingDirChanged
 			? trimmedWorkingDir
 			: (sshRemoteConfig?.workingDirOverride ?? session?.projectRoot ?? ''),
 		sshRemoteId: sshRemoteConfig?.remoteId,
 	});
-	// A new remote directory must be confirmed to exist before it is saved: the
-	// SSH spawn cwd comes from it, and a typo would strand every later launch.
-	// The existing path is not gated, so an agent whose remote is offline can
-	// still have its other settings edited.
-	const remoteWorkingDirInvalid =
-		!!isSshEnabled &&
-		workingDirChanged &&
-		(remotePathValidation.checking || !remotePathValidation.isDirectory);
+	// A NEW directory must be confirmed to exist before it is saved: it becomes
+	// the spawn cwd, and a typo would strand every later launch. The existing
+	// path is not gated, so an agent whose remote is offline can still have its
+	// other settings edited.
+	const newWorkingDirUnverified =
+		workingDirChanged && (remotePathValidation.checking || !remotePathValidation.isDirectory);
+
+	const workingDirError = useMemo(() => {
+		if (!session) return undefined;
+		if (!trimmedWorkingDir) return 'Working directory is required';
+		if (localWorkingDirRelative) return 'Enter an absolute path';
+		// The SSH status line below the field reports remote failures.
+		if (workingDirChanged && !isSshEnabled && remotePathValidation.error) {
+			return remotePathValidation.error;
+		}
+		return undefined;
+	}, [
+		session,
+		trimmedWorkingDir,
+		localWorkingDirRelative,
+		workingDirChanged,
+		isSshEnabled,
+		remotePathValidation.error,
+	]);
 
 	const handleSelectFolder = useCallback(async () => {
 		const folder = await window.maestro.dialog.selectFolder();
@@ -459,7 +472,7 @@ export function EditAgentModal({
 
 		// Validate before saving
 		const result = validateEditSession(name, session.id, existingSessions);
-		if (!result.valid || workingDirError || remoteWorkingDirInvalid) return;
+		if (!result.valid || workingDirError || newWorkingDirUnverified) return;
 
 		// Get model, contextWindow and effort from agentConfig (updated via onConfigChange).
 		// Pass empty string to explicitly clear (distinguishes from undefined = never set)
@@ -540,7 +553,7 @@ export function EditAgentModal({
 		workingDirChanged,
 		trimmedWorkingDir,
 		workingDirError,
-		remoteWorkingDirInvalid,
+		newWorkingDirUnverified,
 		nudgeMessage,
 		newSessionMessage,
 		additionalDirectories,
@@ -594,13 +607,13 @@ export function EditAgentModal({
 
 	// Check if form is valid for submission
 	const isFormValid = useMemo(() => {
-		// Remote path validation only blocks a NEW directory (remoteWorkingDirInvalid).
+		// Path validation only blocks a NEW directory (newWorkingDirUnverified).
 		// The existing path stays informational so an agent whose remote is offline
 		// can still be edited.
 		return (
-			!!instanceName.trim() && validation.valid && !workingDirError && !remoteWorkingDirInvalid
+			!!instanceName.trim() && validation.valid && !workingDirError && !newWorkingDirUnverified
 		);
-	}, [instanceName, validation.valid, workingDirError, remoteWorkingDirInvalid]);
+	}, [instanceName, validation.valid, workingDirError, newWorkingDirUnverified]);
 
 	// Handle keyboard shortcuts via window listener (Modal stops propagation on its backdrop)
 	useEffect(() => {

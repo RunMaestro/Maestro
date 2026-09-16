@@ -87,6 +87,16 @@ export const DEFAULT_SHORTCUTS = {
 	focusSidebar: { id: 'focusSidebar', label: 'Focus Left Panel', keys: ['Meta', 'Shift', 'a'] },
 	viewGitDiff: { id: 'viewGitDiff', label: 'View Git Diff', keys: ['Meta', 'Shift', 'd'] },
 	viewGitLog: { id: 'viewGitLog', label: 'View Git Log', keys: ['Meta', 'Shift', 'g'] },
+	// The rest of the branch-pill menu. All four ship UNBOUND: they act on the
+	// active agent's repo and two of them (pull, push) write to a remote, so
+	// claiming four default chords - any of which would sit next to an existing
+	// Cmd+Shift binding - is not a cost to impose on everyone. Listing them here
+	// is what puts them in Settings -> Shortcuts, the help sheet, and Cmd+K, and
+	// lets anyone who lives in git give them chords.
+	gitPull: { id: 'gitPull', label: 'Git Pull', keys: [] },
+	gitPush: { id: 'gitPush', label: 'Git Push', keys: [] },
+	gitChangeBranch: { id: 'gitChangeBranch', label: 'Change Branch', keys: [] },
+	gitCreatePR: { id: 'gitCreatePR', label: 'Create Pull Request', keys: [] },
 	refreshGitFileState: {
 		id: 'refreshGitFileState',
 		label: 'Refresh Files, Git, History',

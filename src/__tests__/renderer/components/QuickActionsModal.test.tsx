@@ -7,6 +7,7 @@ import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 import type { Session, Group, Theme, Shortcut } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { useUIStore } from '../../../renderer/stores/uiStore';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
 import { useFileExplorerStore } from '../../../renderer/stores/fileExplorerStore';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
@@ -214,6 +215,9 @@ describe('QuickActionsModal', () => {
 		useFileExplorerStore.setState({
 			fileTreeFilterOpen: false,
 		});
+		// The reveal half of a jump reads agents and groups straight from the
+		// session store (services/agentNavigation), not from props.
+		useSessionStore.setState({ sessions: [], groups: [] } as never);
 		// Reset group chat run state (drives the jumper's LIVE bucket)
 		useGroupChatStore.setState({
 			groupChatState: 'idle',
@@ -442,14 +446,12 @@ describe('QuickActionsModal', () => {
 				sessions: [session],
 				groups: [group],
 			});
+			useSessionStore.setState({ sessions: [session], groups: [group] } as never);
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Jump to: Test Session'));
 
-			expect(props.setGroups).toHaveBeenCalled();
-			const setGroupsFn = props.setGroups.mock.calls[0][0];
-			const result = setGroupsFn([group]);
-			expect(result[0].collapsed).toBe(false);
+			expect(useSessionStore.getState().groups[0].collapsed).toBe(false);
 		});
 
 		describe('bookmarked-agent jump routing', () => {
@@ -459,13 +461,15 @@ describe('QuickActionsModal', () => {
 				const session = createMockSession({ groupId: 'group-1', bookmarked: true });
 				const group = createMockGroup({ collapsed: true });
 				const props = createDefaultProps({ sessions: [session], groups: [group] });
+				useSessionStore.setState({ sessions: [session], groups: [group] } as never);
 				render(<QuickActionsModal {...props} />);
 
 				fireEvent.click(screen.getByText('Jump to: Test Session'));
 
 				expect(props.setActiveSessionId).toHaveBeenCalledWith('session-1');
 				expect(useUIStore.getState().bookmarksCollapsed).toBe(false);
-				expect(props.setGroups).not.toHaveBeenCalled();
+				// The group stays collapsed - the bookmark row is the lighter reveal.
+				expect(useSessionStore.getState().groups[0].collapsed).toBe(true);
 			});
 
 			it('leaves bookmarks collapsed when the parent group is already expanded', () => {
@@ -474,13 +478,14 @@ describe('QuickActionsModal', () => {
 				const session = createMockSession({ groupId: 'group-1', bookmarked: true });
 				const group = createMockGroup({ collapsed: false });
 				const props = createDefaultProps({ sessions: [session], groups: [group] });
+				useSessionStore.setState({ sessions: [session], groups: [group] } as never);
 				render(<QuickActionsModal {...props} />);
 
 				fireEvent.click(screen.getByText('Jump to: Test Session'));
 
 				expect(props.setActiveSessionId).toHaveBeenCalledWith('session-1');
 				expect(useUIStore.getState().bookmarksCollapsed).toBe(true);
-				expect(props.setGroups).not.toHaveBeenCalled();
+				expect(useSessionStore.getState().groups[0].collapsed).toBe(false);
 			});
 
 			it('does nothing extra when bookmarks section is already expanded', () => {
@@ -489,13 +494,15 @@ describe('QuickActionsModal', () => {
 				const session = createMockSession({ groupId: 'group-1', bookmarked: true });
 				const group = createMockGroup({ collapsed: true });
 				const props = createDefaultProps({ sessions: [session], groups: [group] });
+				useSessionStore.setState({ sessions: [session], groups: [group] } as never);
 				render(<QuickActionsModal {...props} />);
 
 				fireEvent.click(screen.getByText('Jump to: Test Session'));
 
 				expect(props.setActiveSessionId).toHaveBeenCalledWith('session-1');
 				expect(useUIStore.getState().bookmarksCollapsed).toBe(false);
-				expect(props.setGroups).not.toHaveBeenCalled();
+				// The group stays collapsed - the bookmark row is the lighter reveal.
+				expect(useSessionStore.getState().groups[0].collapsed).toBe(true);
 			});
 		});
 
@@ -2105,6 +2112,48 @@ describe('QuickActionsModal', () => {
 			expect(screen.queryByText('Create New Agent')).not.toBeInTheDocument();
 			expect(screen.queryByText('Toggle Left Panel')).not.toBeInTheDocument();
 			expect(screen.queryByText('Open Settings')).not.toBeInTheDocument();
+		});
+
+		it('hides the Pianola agent while its Encore flag is off', async () => {
+			// Pianola persists in the session store after the flag is switched off, so
+			// the palette has to apply the same visibility predicate the Left Bar does -
+			// otherwise it hands the user an agent with no row to come back to.
+			const { useSettingsStore } = await import('../../../renderer/stores/settingsStore');
+			useSettingsStore.setState({
+				encoreFeatures: { ...useSettingsStore.getState().encoreFeatures, pianola: false },
+			} as never);
+			const props = createDefaultProps({
+				initialMode: 'agents',
+				sessions: [
+					createMockSession({ id: 'session-1', name: 'Agent Alpha' }),
+					{ ...createMockSession({ id: 'pianola-1', name: 'Pianola' }), isPianola: true },
+				],
+			});
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.getByText('Agent Alpha')).toBeInTheDocument();
+			expect(screen.queryByText('Pianola')).not.toBeInTheDocument();
+		});
+
+		it('lists the Pianola agent once its Encore flag is on', async () => {
+			const { useSettingsStore } = await import('../../../renderer/stores/settingsStore');
+			useSettingsStore.setState({
+				encoreFeatures: { ...useSettingsStore.getState().encoreFeatures, pianola: true },
+			} as never);
+			const props = createDefaultProps({
+				initialMode: 'agents',
+				sessions: [
+					createMockSession({ id: 'session-1', name: 'Agent Alpha' }),
+					{ ...createMockSession({ id: 'pianola-1', name: 'Pianola' }), isPianola: true },
+				],
+			});
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.getByText('Pianola')).toBeInTheDocument();
+
+			useSettingsStore.setState({
+				encoreFeatures: { ...useSettingsStore.getState().encoreFeatures, pianola: false },
+			} as never);
 		});
 
 		it('filters agents by search text in agents mode', () => {

@@ -12,6 +12,8 @@ import {
 	shouldOfferForceSend,
 	applyQueuedItemEdit,
 	applyQueuedItemDispatchFailure,
+	isSameQueuedPrompt,
+	findQueuedDuplicate,
 } from '../../../renderer/utils/executionQueue';
 import type { AITab, QueuedItem, Session } from '../../../renderer/types';
 import { createMockSession } from '../../helpers/mockSession';
@@ -466,5 +468,51 @@ describe('applyQueuedItemDispatchFailure', () => {
 
 		expect(next.orphanedThinkingTabs![0].logs).toHaveLength(0);
 		expect(next.orphanedThinkingTabs![0].state).toBe('idle');
+	});
+});
+
+// The re-authentication resume replays a snapshotted prompt. If the user
+// already re-sent that prompt by hand (which is what they do when the failed
+// turn is invisible), running both spends two turns on one question.
+describe('isSameQueuedPrompt', () => {
+	const base: QueuedItem = { id: 'a', timestamp: 0, tabId: 'tab-1', type: 'message', text: 'hi' };
+
+	it('matches the same ask under a different id', () => {
+		expect(isSameQueuedPrompt(base, { ...base, id: 'b', timestamp: 999 })).toBe(true);
+	});
+
+	it('ignores leading and trailing whitespace', () => {
+		expect(isSameQueuedPrompt(base, { ...base, id: 'b', text: '  hi\n' })).toBe(true);
+	});
+
+	it('does not match a different tab', () => {
+		expect(isSameQueuedPrompt(base, { ...base, id: 'b', tabId: 'tab-2' })).toBe(false);
+	});
+
+	it('does not match different text', () => {
+		expect(isSameQueuedPrompt(base, { ...base, id: 'b', text: 'something else' })).toBe(false);
+	});
+
+	it('does not match when one carries attachments', () => {
+		expect(isSameQueuedPrompt(base, { ...base, id: 'b', images: ['img'] })).toBe(false);
+	});
+
+	it('distinguishes slash commands by name and arguments', () => {
+		const cmd: QueuedItem = {
+			id: 'a',
+			timestamp: 0,
+			tabId: 'tab-1',
+			type: 'command',
+			command: '/x',
+		};
+		expect(isSameQueuedPrompt(cmd, { ...cmd, id: 'b' })).toBe(true);
+		expect(isSameQueuedPrompt(cmd, { ...cmd, id: 'b', command: '/y' })).toBe(false);
+		expect(isSameQueuedPrompt(cmd, { ...cmd, id: 'b', commandArgs: 'now' })).toBe(false);
+	});
+
+	it('findQueuedDuplicate locates the user copy in the queue', () => {
+		const queue = [tabItem('other', 'tab-2'), { ...base, id: 'user-copy' }];
+		expect(findQueuedDuplicate({ executionQueue: queue }, base)?.id).toBe('user-copy');
+		expect(findQueuedDuplicate({ executionQueue: [] }, base)).toBeUndefined();
 	});
 });
