@@ -22,6 +22,7 @@ import type {
 	AgentSelectionScreenProps,
 	AgentSelectionViewMode,
 } from './types';
+import { suggestAgentName } from '../../services/agentNameSuggestions';
 import { AGENT_TILES } from './utils/agentTiles';
 import { buildConfiguringAgent, findDetectedAgent } from './utils/agentAvailability';
 
@@ -52,6 +53,7 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 	const nameInputRef = useRef<HTMLInputElement>(null);
 	const tileRefs = useRef<(HTMLButtonElement | null)[]>([]);
 	const transitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const nameSeededRef = useRef(false);
 
 	const refs = useMemo<AgentSelectionRefs>(
 		() => ({
@@ -77,6 +79,25 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 	}, []);
 
 	useEffect(() => clearTransitionTimer, [clearTransitionTimer]);
+
+	const handleSuggestAgentName = useCallback(() => {
+		setAgentName(suggestAgentName(state.agentName.trim() || undefined));
+	}, [setAgentName, state.agentName]);
+
+	/**
+	 * Pre-fill the name so setup does not open on an empty required field. It runs
+	 * once per mount and only over an empty value, which leaves both a resumed
+	 * wizard and a name the user typed alone - `restoreState` is dispatched before
+	 * `openWizard`, so a resumed name is already in state by the time this screen
+	 * mounts.
+	 */
+	useEffect(() => {
+		if (nameSeededRef.current) return;
+		nameSeededRef.current = true;
+		if (state.agentName.trim() === '') {
+			setAgentName(suggestAgentName());
+		}
+	}, [state.agentName, setAgentName]);
 
 	const { sshRemotes, sshRemoteConfig, handleSshRemoteChange } = useSshRemotes({
 		sessionSshRemoteConfig: state.sessionSshRemoteConfig,
@@ -274,6 +295,7 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 				sshRemotes={sshRemotes}
 				sshRemoteConfig={sshRemoteConfig}
 				onAgentNameChange={setAgentName}
+				onSuggestAgentName={handleSuggestAgentName}
 				onNameFocus={() => setIsNameFieldFocused(true)}
 				onNameBlur={() => setIsNameFieldFocused(false)}
 				onSshRemoteChange={handleSshRemoteChange}

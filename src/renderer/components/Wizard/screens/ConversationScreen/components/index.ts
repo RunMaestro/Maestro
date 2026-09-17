@@ -1,6 +1,7 @@
 export { ConfidenceMeter } from './ConfidenceMeter';
 export { ConversationErrorPanel } from './ConversationErrorPanel';
 export { ConversationInputPanel } from './ConversationInputPanel';
+export { ExploreProjectPrompt } from './ExploreProjectPrompt';
 export { InitialQuestionBubble } from './InitialQuestionBubble';
 export { MessageBubble } from './MessageBubble';
 export { ReadyToProceedPanel } from './ReadyToProceedPanel';

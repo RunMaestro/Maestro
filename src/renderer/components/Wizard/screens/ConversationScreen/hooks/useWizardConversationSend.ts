@@ -10,6 +10,7 @@ import { getNextFillerPhrase } from '../../../services/fillerPhrases';
 import { READY_CONFIDENCE_THRESHOLD } from '../../../services/wizardPrompts';
 import { logger } from '../../../../../utils/logger';
 import { AUTO_CONTINUE_MESSAGE, containsDeferredResponsePhrase } from '../utils/deferredResponse';
+import { PROJECT_EXPLORATION_REQUEST } from '../utils/projectExploration';
 import { fetchExistingDocsForWizard } from '../utils/existingDocs';
 import { extractStreamingTextFromChunk } from '../utils/streamingChunks';
 import { isStructuredThinkingResponse } from '../utils/thinkingFilters';
@@ -221,105 +222,128 @@ export function useWizardConversationSend({
 	scheduleAutoContinue,
 }: WizardConversationSendParams): {
 	handleSendMessage: () => Promise<void>;
+	sendProjectExplorationRequest: () => Promise<void>;
 	sendInitialContinueMessage: () => Promise<void>;
 } {
-	const handleSendMessage = useCallback(async () => {
-		const trimmedInput = inputValue.trim();
-		if (!trimmedInput || state.isConversationLoading || refs.isSendingRef.current) {
-			return;
-		}
-
-		refs.isSendingRef.current = true;
-
-		if (trimmedInput !== AUTO_CONTINUE_MESSAGE) {
-			refs.autoContinueTriggeredRef.current = false;
-		}
-
-		setters.setInputValue('');
-		if (refs.inputRef.current) {
-			refs.inputRef.current.style.height = 'auto';
-		}
-		setConversationError(null);
-		resetTransientState(setters);
-
-		if (showInitialQuestion && !refs.initialQuestionAddedRef.current) {
-			refs.initialQuestionAddedRef.current = true;
-			addMessage({
-				role: 'assistant',
-				content: initialQuestion,
-			});
-			setters.setShowInitialQuestion(false);
-		}
-
-		addMessage(createUserMessage(trimmedInput));
-		setConversationLoading(true);
-		announce('Message sent. AI assistant is thinking...');
-
-		try {
-			if (!conversationManager.isConversationActive()) {
-				if (!state.selectedAgent) {
-					setConversationError('No agent selected. Please go back and select an agent.');
-					setConversationLoading(false);
-					return;
-				}
-				await conversationManager.startConversation({
-					agentType: state.selectedAgent,
-					directoryPath: state.directoryPath,
-					projectName: state.agentName || 'My Project',
-					sshRemoteConfig: state.sessionSshRemoteConfig,
-				});
+	/**
+	 * Send one turn's worth of text.
+	 *
+	 * `fromComposer` is what tells a typed message apart from a canned one (the
+	 * Explore This Project chip). Only the composer's own value may clear the
+	 * composer - clearing it for a canned send would throw away a draft the user
+	 * had already started typing.
+	 */
+	const sendText = useCallback(
+		async (text: string, { fromComposer }: { fromComposer: boolean }) => {
+			const trimmedInput = text.trim();
+			if (!trimmedInput || state.isConversationLoading || refs.isSendingRef.current) {
+				return;
 			}
 
-			let handledByOnError = false;
-			const result = await conversationManager.sendMessage(
-				trimmedInput,
-				state.conversationHistory,
-				createSendCallbacks({
-					mode: 'message',
-					setters,
-					refs,
-					addMessage,
-					setConfidenceLevel,
-					setIsReadyToProceed,
-					setConversationError,
-					announce,
-					scheduleAutoContinue,
-					markErrorHandled: () => {
-						handledByOnError = true;
-					},
-				})
-			);
+			refs.isSendingRef.current = true;
 
-			applySendFailure(result, setConversationError, setters, handledByOnError);
-		} catch (error) {
-			const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-			setConversationError(errorMessage);
-			setters.setErrorRetryCount((prev) => prev + 1);
-		} finally {
-			setConversationLoading(false);
-			refs.isSendingRef.current = false;
-			refs.inputRef.current?.focus();
-		}
-	}, [
-		inputValue,
-		showInitialQuestion,
-		state.isConversationLoading,
-		state.conversationHistory,
-		state.selectedAgent,
-		state.directoryPath,
-		state.agentName,
-		state.sessionSshRemoteConfig,
-		refs,
-		setters,
-		addMessage,
-		initialQuestion,
-		setConversationLoading,
-		setConversationError,
-		setConfidenceLevel,
-		setIsReadyToProceed,
-		announce,
-		scheduleAutoContinue,
-	]);
+			if (trimmedInput !== AUTO_CONTINUE_MESSAGE) {
+				refs.autoContinueTriggeredRef.current = false;
+			}
+
+			if (fromComposer) {
+				setters.setInputValue('');
+				if (refs.inputRef.current) {
+					refs.inputRef.current.style.height = 'auto';
+				}
+			}
+			setConversationError(null);
+			resetTransientState(setters);
+
+			if (showInitialQuestion && !refs.initialQuestionAddedRef.current) {
+				refs.initialQuestionAddedRef.current = true;
+				addMessage({
+					role: 'assistant',
+					content: initialQuestion,
+				});
+				setters.setShowInitialQuestion(false);
+			}
+
+			addMessage(createUserMessage(trimmedInput));
+			setConversationLoading(true);
+			announce('Message sent. AI assistant is thinking...');
+
+			try {
+				if (!conversationManager.isConversationActive()) {
+					if (!state.selectedAgent) {
+						setConversationError('No agent selected. Please go back and select an agent.');
+						setConversationLoading(false);
+						return;
+					}
+					await conversationManager.startConversation({
+						agentType: state.selectedAgent,
+						directoryPath: state.directoryPath,
+						projectName: state.agentName || 'My Project',
+						sshRemoteConfig: state.sessionSshRemoteConfig,
+					});
+				}
+
+				let handledByOnError = false;
+				const result = await conversationManager.sendMessage(
+					trimmedInput,
+					state.conversationHistory,
+					createSendCallbacks({
+						mode: 'message',
+						setters,
+						refs,
+						addMessage,
+						setConfidenceLevel,
+						setIsReadyToProceed,
+						setConversationError,
+						announce,
+						scheduleAutoContinue,
+						markErrorHandled: () => {
+							handledByOnError = true;
+						},
+					})
+				);
+
+				applySendFailure(result, setConversationError, setters, handledByOnError);
+			} catch (error) {
+				const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+				setConversationError(errorMessage);
+				setters.setErrorRetryCount((prev) => prev + 1);
+			} finally {
+				setConversationLoading(false);
+				refs.isSendingRef.current = false;
+				refs.inputRef.current?.focus();
+			}
+		},
+		[
+			showInitialQuestion,
+			state.isConversationLoading,
+			state.conversationHistory,
+			state.selectedAgent,
+			state.directoryPath,
+			state.agentName,
+			state.sessionSshRemoteConfig,
+			refs,
+			setters,
+			addMessage,
+			initialQuestion,
+			setConversationLoading,
+			setConversationError,
+			setConfidenceLevel,
+			setIsReadyToProceed,
+			announce,
+			scheduleAutoContinue,
+		]
+	);
+
+	const handleSendMessage = useCallback(
+		() => sendText(inputValue, { fromComposer: true }),
+		[sendText, inputValue]
+	);
+
+	const sendProjectExplorationRequest = useCallback(
+		() => sendText(PROJECT_EXPLORATION_REQUEST, { fromComposer: false }),
+		[sendText]
+	);
 
 	const sendInitialContinueMessage = useCallback(async () => {
 		if (state.isConversationLoading || refs.isSendingRef.current) {
@@ -406,5 +430,5 @@ export function useWizardConversationSend({
 		scheduleAutoContinue,
 	]);
 
-	return { handleSendMessage, sendInitialContinueMessage };
+	return { handleSendMessage, sendProjectExplorationRequest, sendInitialContinueMessage };
 }
