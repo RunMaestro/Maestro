@@ -30,7 +30,7 @@ vi.mock('../../../../main/process-manager/utils/bufferUtils', () => ({
 	appendToBuffer: vi.fn((buf: string, data: string) => buf + data),
 }));
 
-vi.mock('../../../../main/parsers/usage-aggregator', () => ({
+vi.mock('../../../../shared/maestro-lib/parsers/usage-aggregator', () => ({
 	aggregateModelUsage: vi.fn(() => ({
 		inputTokens: 100,
 		outputTokens: 50,
@@ -41,7 +41,7 @@ vi.mock('../../../../main/parsers/usage-aggregator', () => ({
 	})),
 }));
 
-vi.mock('../../../../main/parsers/error-patterns', () => ({
+vi.mock('../../../../shared/maestro-lib/parsers/error-patterns', () => ({
 	getErrorPatterns: vi.fn(() => ({})),
 	matchErrorPattern: vi.fn(() => null),
 	matchSshErrorPattern: vi.fn(() => null),
@@ -57,7 +57,7 @@ import {
 	StdoutHandler,
 	pushResolvedOmpContextWindow,
 } from '../../../../main/process-manager/handlers/StdoutHandler';
-import { matchSshErrorPattern } from '../../../../main/parsers/error-patterns';
+import { matchSshErrorPattern } from '../../../../shared/maestro-lib/parsers/error-patterns';
 import { ClaudeOutputParser } from '../../../../main/parsers/claude-output-parser';
 import { CopilotOutputParser } from '../../../../main/parsers/copilot-output-parser';
 import { OmpOutputParser } from '../../../../main/parsers/omp-output-parser';

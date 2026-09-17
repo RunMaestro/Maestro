@@ -14,7 +14,7 @@ import type { SshRemoteSettingsStore } from '../../../main/utils/ssh-remote-reso
 import type { SshRemoteConfig } from '../../../shared/types';
 
 // Mock agent-args module to verify override resolution
-vi.mock('../../../main/utils/agent-args', () => ({
+vi.mock('../../../shared/maestro-lib/launch/agent-args', () => ({
 	buildAgentArgs: vi.fn((_agent: unknown, opts: { baseArgs: string[] }) => [...opts.baseArgs]),
 	applyAgentConfigOverrides: vi.fn(
 		(_agent: unknown, baseArgs: string[], overrides: Record<string, unknown>) => ({
@@ -55,7 +55,7 @@ vi.mock('../../../main/utils/logger', () => ({
 	},
 }));
 
-import { buildAgentArgs, applyAgentConfigOverrides } from '../../../main/utils/agent-args';
+import { buildAgentArgs, applyAgentConfigOverrides } from '../../../shared/maestro-lib/launch/agent-args';
 import { isWindows } from '../../../shared/platformDetection';
 
 function makeAgent(overrides: Partial<AgentConfig> = {}): AgentConfig {
