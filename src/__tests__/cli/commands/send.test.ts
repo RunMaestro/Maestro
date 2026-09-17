@@ -36,12 +36,12 @@ vi.mock('../../../cli/services/storage', () => ({
 }));
 
 // Mock usage-aggregator
-vi.mock('../../../main/parsers/usage-aggregator', () => ({
+vi.mock('../../../shared/maestro-lib/parsers/usage-aggregator', () => ({
 	estimateContextUsage: vi.fn(),
 }));
 
 // Mock agent definitions
-vi.mock('../../../main/agents/definitions', () => ({
+vi.mock('../../../shared/maestro-lib/providers/definitions', () => ({
 	getAgentDefinition: vi.fn((agentId: string) => {
 		const defs: Record<string, { name: string; binaryName: string }> = {
 			'claude-code': { name: 'Claude Code', binaryName: 'claude' },
@@ -57,7 +57,7 @@ import { send } from '../../../cli/commands/send';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import { spawnAgent, detectAgent } from '../../../cli/services/agent-spawner';
 import { resolveAgentId, getSessionById } from '../../../cli/services/storage';
-import { estimateContextUsage } from '../../../main/parsers/usage-aggregator';
+import { estimateContextUsage } from '../../../shared/maestro-lib/parsers/usage-aggregator';
 import { prepareMaestroSystemPromptCli } from '../../../cli/services/system-prompt';
 
 describe('send command', () => {

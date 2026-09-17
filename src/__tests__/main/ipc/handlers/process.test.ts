@@ -20,7 +20,7 @@ import {
 } from '../../../../main/ipc/handlers/process';
 import { getDefaultShell } from '../../../../main/stores/defaults';
 import { stripThinkingFromTranscript } from '../../../../main/agents/claude-transcript-sanitizer';
-import { checkCustomPath } from '../../../../main/agents/path-prober';
+import { checkCustomPath } from '../../../../shared/maestro-lib/launch/path-prober';
 import { getChildProcesses } from '../../../../main/process-manager/utils/childProcessInfo';
 import {
 	primeOmpModelCatalog,
@@ -52,12 +52,12 @@ vi.mock('../../../../main/utils/logger', () => ({
 	},
 }));
 
-vi.mock('../../../../main/agents/path-prober', () => ({
+vi.mock('../../../../shared/maestro-lib/launch/path-prober', () => ({
 	checkCustomPath: vi.fn(async (customPath: string) => ({ exists: true, path: customPath })),
 }));
 
 // Mock the agent-args utilities
-vi.mock('../../../../main/utils/agent-args', () => ({
+vi.mock('../../../../shared/maestro-lib/launch/agent-args', () => ({
 	buildAgentArgs: vi.fn((agent, opts) => opts.baseArgs || []),
 	applyAgentConfigOverrides: vi.fn((agent, args, opts) => ({
 		args,
