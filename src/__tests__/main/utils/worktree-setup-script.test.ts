@@ -18,7 +18,7 @@ vi.mock('../../../main/utils/remote-git', () => ({
 	execShellRemote: vi.fn(),
 }));
 
-vi.mock('../../../main/runtime/getShellPath', () => ({
+vi.mock('../../../shared/maestro-lib/launch/getShellPath', () => ({
 	getShellPath: vi.fn(async () => '/usr/local/bin:/usr/bin'),
 	peekShellPath: vi.fn(() => null),
 }));

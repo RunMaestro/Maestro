@@ -28,10 +28,10 @@ vi.mock('../../../main/agents/resolveClaudeSpawnMode', async () => {
 // SSH: stub the wrapper so we can hand back either a resolved remote or the
 // silent local-fallback shape it produces when the remote can't be found.
 const mockWrapSpawnWithSsh = vi.fn();
-vi.mock('../../../main/utils/ssh-spawn-wrapper', async () => {
-	const actual = await vi.importActual<typeof import('../../../main/utils/ssh-spawn-wrapper')>(
-		'../../../main/utils/ssh-spawn-wrapper'
-	);
+vi.mock('../../../shared/maestro-lib/launch/ssh-spawn-wrapper', async () => {
+	const actual = await vi.importActual<
+		typeof import('../../../shared/maestro-lib/launch/ssh-spawn-wrapper')
+	>('../../../shared/maestro-lib/launch/ssh-spawn-wrapper');
 	return {
 		...actual,
 		wrapSpawnWithSsh: (...args: unknown[]) => mockWrapSpawnWithSsh(...args),
