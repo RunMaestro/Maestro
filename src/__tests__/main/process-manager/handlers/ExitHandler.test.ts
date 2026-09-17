@@ -21,11 +21,11 @@ vi.mock('../../../../main/utils/logger', () => ({
 	},
 }));
 
-vi.mock('../../../../main/parsers/error-patterns', () => ({
+vi.mock('../../../../shared/maestro-lib/parsers/error-patterns', () => ({
 	matchSshErrorPattern: vi.fn(() => null),
 }));
 
-vi.mock('../../../../main/parsers/usage-aggregator', () => ({
+vi.mock('../../../../shared/maestro-lib/parsers/usage-aggregator', () => ({
 	aggregateModelUsage: vi.fn(() => ({
 		inputTokens: 100,
 		outputTokens: 50,
@@ -76,7 +76,7 @@ import {
 } from '../../../../main/process-manager/generation';
 import { DataBufferManager } from '../../../../main/process-manager/handlers/DataBufferManager';
 import { captureException } from '../../../../main/utils/sentry';
-import { matchSshErrorPattern } from '../../../../main/parsers/error-patterns';
+import { matchSshErrorPattern } from '../../../../shared/maestro-lib/parsers/error-patterns';
 import { getSshRemoteById } from '../../../../main/stores/getters';
 import { readFileRemote, readFileTailRemote } from '../../../../main/utils/remote-fs';
 import { waitForCopilotShutdown } from '../../../../main/process-manager/CopilotShutdownWaiter';
