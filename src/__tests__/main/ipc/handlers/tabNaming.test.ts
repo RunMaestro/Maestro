@@ -46,7 +46,7 @@ vi.mock('../../../../main/prompt-manager', () => ({
 }));
 
 // Mock the agent args utilities
-vi.mock('../../../../main/utils/agent-args', () => ({
+vi.mock('../../../../shared/maestro-lib/launch/agent-args', () => ({
 	buildAgentArgs: vi.fn((agent, options) => options.baseArgs || []),
 	applyAgentConfigOverrides: vi.fn((agent, args, overrides) => ({
 		args,
