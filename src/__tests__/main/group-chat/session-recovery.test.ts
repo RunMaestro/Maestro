@@ -12,7 +12,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 // Mock dependencies before importing the module under test
-vi.mock('../../../main/parsers/error-patterns', () => ({
+vi.mock('../../../shared/maestro-lib/parsers/error-patterns', () => ({
 	getErrorPatterns: vi.fn(() => ({})),
 	matchErrorPattern: vi.fn(() => null),
 }));
@@ -38,7 +38,7 @@ import {
 	initiateSessionRecovery,
 } from '../../../main/group-chat/session-recovery';
 
-import { getErrorPatterns, matchErrorPattern } from '../../../main/parsers/error-patterns';
+import { getErrorPatterns, matchErrorPattern } from '../../../shared/maestro-lib/parsers/error-patterns';
 import { readLog } from '../../../main/group-chat/group-chat-log';
 import { loadGroupChat, updateParticipant } from '../../../main/group-chat/group-chat-storage';
 
