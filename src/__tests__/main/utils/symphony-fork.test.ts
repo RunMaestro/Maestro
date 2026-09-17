@@ -16,7 +16,7 @@ vi.mock('../../../main/utils/logger', () => ({
 	},
 }));
 
-vi.mock('../../../main/agents/path-prober', () => ({
+vi.mock('../../../shared/maestro-lib/launch/path-prober', () => ({
 	getExpandedEnv: () => ({ PATH: '/usr/bin' }),
 }));
 
