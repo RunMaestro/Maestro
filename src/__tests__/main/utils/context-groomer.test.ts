@@ -55,7 +55,10 @@ vi.mock('../../../main/utils/logger', () => ({
 	},
 }));
 
-import { buildAgentArgs, applyAgentConfigOverrides } from '../../../shared/maestro-lib/launch/agent-args';
+import {
+	buildAgentArgs,
+	applyAgentConfigOverrides,
+} from '../../../shared/maestro-lib/launch/agent-args';
 import { isWindows } from '../../../shared/platformDetection';
 
 function makeAgent(overrides: Partial<AgentConfig> = {}): AgentConfig {

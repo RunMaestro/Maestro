@@ -87,7 +87,7 @@ the library, which is what makes them pass-throughs.
 
 ### A real gap the test run caught (fixed, not just noted)
 
-Physically moving a file changes which *internal* dependency a test's
+Physically moving a file changes which _internal_ dependency a test's
 `vi.mock()` needs to target when that dependency ITSELF also moved. Example:
 `claude-output-parser.ts` imports `error-patterns.ts` via a sibling path
 (`./error-patterns`) - both moved together into `maestro-lib/parsers/`. A test
@@ -105,10 +105,11 @@ across 22 test files, e.g. `ExitHandler.test.ts`, `StderrHandler.test.ts`,
 `session-recovery.test.ts`, `cue-spawn-builder.test.ts`,
 `spawnGroupChatAgent.test.ts`, `process.test.ts`, `context-groomer.test.ts`).
 This is safe and not a behavior change: mocking the real (new) absolute file
-also transparently satisfies any *other* caller reaching it through the old
+also transparently satisfies any _other_ caller reaching it through the old
 shim, since `export * from` forwards live bindings from the same module
 instance. Verified by re-running every affected file individually plus the
 full suite.
+
 - [ ] macOS binary lookup: **not verified in this session** (no macOS runner
       available here). `probeUnixPaths`/`getUnixKnownPaths` logic was moved
       byte-for-byte with no changes, so behavior should be unchanged, but per
