@@ -38,7 +38,10 @@ import {
 	initiateSessionRecovery,
 } from '../../../main/group-chat/session-recovery';
 
-import { getErrorPatterns, matchErrorPattern } from '../../../shared/maestro-lib/parsers/error-patterns';
+import {
+	getErrorPatterns,
+	matchErrorPattern,
+} from '../../../shared/maestro-lib/parsers/error-patterns';
 import { readLog } from '../../../main/group-chat/group-chat-log';
 import { loadGroupChat, updateParticipant } from '../../../main/group-chat/group-chat-storage';
 
