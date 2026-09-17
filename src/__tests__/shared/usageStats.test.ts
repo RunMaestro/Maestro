@@ -5,10 +5,12 @@
 
 import { describe, it, expect } from 'vitest';
 import type { UsageStats } from '../../shared/types';
+import type { SessionTokenTotals } from '../../shared/stats-types';
 import {
 	sumUsageTokens,
 	hasUsage,
 	resolveUsageCost,
+	aggregateRangeUsage,
 	aggregateUsage,
 } from '../../shared/usageStats';
 import { calculateModelCost } from '../../shared/modelPricing';
@@ -125,5 +127,63 @@ describe('aggregateUsage', () => {
 		expect(agg.totalTokens).toBe(0);
 		expect(agg.costUsd).toBe(0);
 		expect(agg.costEstimated).toBe(false);
+	});
+});
+
+describe('aggregateRangeUsage', () => {
+	const totals = (over: Partial<SessionTokenTotals> = {}): SessionTokenTotals => ({
+		inputTokens: 0,
+		outputTokens: 0,
+		cacheReadTokens: 0,
+		cacheCreationTokens: 0,
+		costUsd: 0,
+		pricedQueries: 1,
+		...over,
+	});
+
+	it('sums every bucket across the sessions in the range', () => {
+		const agg = aggregateRangeUsage({
+			s1: totals({ inputTokens: 100, outputTokens: 50, costUsd: 1, pricedQueries: 3 }),
+			s2: totals({ cacheReadTokens: 200, cacheCreationTokens: 25, costUsd: 2, pricedQueries: 4 }),
+		});
+
+		expect(agg.count).toBe(2);
+		expect(agg.inputTokens).toBe(100);
+		expect(agg.outputTokens).toBe(50);
+		expect(agg.cacheReadInputTokens).toBe(200);
+		expect(agg.cacheCreationInputTokens).toBe(25);
+		expect(agg.totalTokens).toBe(375);
+		expect(agg.costUsd).toBe(3);
+		expect(agg.pricedQueries).toBe(7);
+		expect(agg.costEstimated).toBe(false);
+	});
+
+	it('leaves cost at the reported total when no model resolver is supplied', () => {
+		const agg = aggregateRangeUsage({
+			s1: totals({ inputTokens: 1_000_000, outputTokens: 1_000_000, costUsd: 0 }),
+		});
+
+		expect(agg.totalTokens).toBe(2_000_000);
+		expect(agg.costUsd).toBe(0);
+		expect(agg.costEstimated).toBe(false);
+	});
+
+	it('estimates cost from the rate table only for sessions that reported none', () => {
+		const agg = aggregateRangeUsage(
+			{
+				reported: totals({ inputTokens: 100, costUsd: 5 }),
+				unpriced: totals({ inputTokens: 1_000_000, outputTokens: 500_000 }),
+			},
+			() => 'claude-opus-4-8'
+		);
+
+		expect(agg.costEstimated).toBe(true);
+		expect(agg.costUsd).toBeGreaterThan(5);
+	});
+
+	it('returns an empty aggregate when the range holds nothing', () => {
+		expect(aggregateRangeUsage(undefined).count).toBe(0);
+		expect(aggregateRangeUsage({}).totalTokens).toBe(0);
+		expect(aggregateRangeUsage({}).pricedQueries).toBe(0);
 	});
 });

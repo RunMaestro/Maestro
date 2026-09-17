@@ -182,6 +182,116 @@ describe('SummaryCards', () => {
 			expect(cards).toHaveLength(14);
 		});
 
+		// Regression for issue #1399: the Tokens and Cost cards used to sum each
+		// agent's persisted lifetime `usageStats`, which cannot move when the
+		// dashboard's range selector does. They now read the range-scoped
+		// `bySessionTokens` the aggregation already carries.
+		it('reads Tokens and Cost from the range-scoped totals, not lifetime usageStats', () => {
+			const sessionsWithLifetimeUsage = [
+				{
+					id: 's1',
+					toolType: 'claude-code',
+					aiTabs: [],
+					filePreviewTabs: [],
+					// Lifetime counter, deliberately far larger than the range below.
+					usageStats: {
+						inputTokens: 900_000_000,
+						outputTokens: 900_000_000,
+						cacheReadInputTokens: 0,
+						cacheCreationInputTokens: 0,
+						totalCostUsd: 999,
+					},
+				},
+			] as unknown as Session[];
+
+			render(
+				<SummaryCards
+					data={
+						{
+							...mockData,
+							bySessionTokens: {
+								s1: {
+									inputTokens: 1_000_000,
+									outputTokens: 500_000,
+									cacheReadTokens: 0,
+									cacheCreationTokens: 0,
+									costUsd: 12.5,
+									pricedQueries: 40,
+								},
+							},
+						} as StatsAggregation
+					}
+					theme={theme}
+					sessions={sessionsWithLifetimeUsage}
+				/>
+			);
+
+			expect(screen.getByRole('group', { name: 'Tokens: 1.5M' })).toBeInTheDocument();
+			expect(screen.getByRole('group', { name: 'Cost: $12.50' })).toBeInTheDocument();
+		});
+
+		it('shows a dash for Tokens when the selected range recorded none', () => {
+			const sessionsWithLifetimeUsage = [
+				{
+					id: 's1',
+					toolType: 'claude-code',
+					aiTabs: [],
+					filePreviewTabs: [],
+					usageStats: {
+						inputTokens: 5_000_000,
+						outputTokens: 5_000_000,
+						cacheReadInputTokens: 0,
+						cacheCreationInputTokens: 0,
+						totalCostUsd: 42,
+					},
+				},
+			] as unknown as Session[];
+
+			render(
+				<SummaryCards
+					data={{ ...mockData, bySessionTokens: {} } as StatsAggregation}
+					theme={theme}
+					sessions={sessionsWithLifetimeUsage}
+				/>
+			);
+
+			expect(screen.getByRole('group', { name: 'Tokens: \u2014' })).toBeInTheDocument();
+		});
+
+		// The stats DB only stores provider-REPORTED cost, so a provider that
+		// prices nothing itself would blank the Cost card without the rate-table
+		// fallback the lifetime path used to supply.
+		it('estimates Cost from the rate table when the range reported none', () => {
+			const sessions = [
+				{ id: 's1', toolType: 'claude-code', aiTabs: [], filePreviewTabs: [] },
+			] as unknown as Session[];
+
+			render(
+				<SummaryCards
+					data={
+						{
+							...mockData,
+							bySessionTokens: {
+								s1: {
+									inputTokens: 1_000_000,
+									outputTokens: 1_000_000,
+									cacheReadTokens: 0,
+									cacheCreationTokens: 0,
+									costUsd: 0,
+									pricedQueries: 10,
+								},
+							},
+						} as StatsAggregation
+					}
+					theme={theme}
+					sessions={sessions}
+				/>
+			);
+
+			expect(screen.getByText('Est. Cost')).toBeInTheDocument();
+			expect(screen.getByRole('group', { name: /^Est\. Cost: ~\$/ })).toBeInTheDocument();
+		});
+
 		it('renders Total Queries metric', async () => {
 			render(<SummaryCards data={mockData} theme={theme} />);
 
