@@ -10,6 +10,7 @@ import {
 	ConfidenceMeter,
 	ConversationErrorPanel,
 	ConversationInputPanel,
+	ExploreProjectPrompt,
 	InitialQuestionBubble,
 	MessageBubble,
 	ReadyToProceedPanel,
@@ -128,21 +129,22 @@ export function ConversationScreen({
 		handleSendMessageRef,
 	});
 
-	const { handleSendMessage, sendInitialContinueMessage } = useWizardConversationSend({
-		state,
-		inputValue,
-		showInitialQuestion,
-		initialQuestion,
-		refs: conversationRefs,
-		setters: sendSetters,
-		addMessage,
-		setConfidenceLevel,
-		setIsReadyToProceed,
-		setConversationLoading,
-		setConversationError,
-		announce,
-		scheduleAutoContinue,
-	});
+	const { handleSendMessage, sendProjectExplorationRequest, sendInitialContinueMessage } =
+		useWizardConversationSend({
+			state,
+			inputValue,
+			showInitialQuestion,
+			initialQuestion,
+			refs: conversationRefs,
+			setters: sendSetters,
+			addMessage,
+			setConfidenceLevel,
+			setIsReadyToProceed,
+			setConversationLoading,
+			setConversationError,
+			announce,
+			scheduleAutoContinue,
+		});
 
 	useEffect(() => {
 		handleSendMessageRef.current = handleSendMessage;
@@ -230,11 +232,22 @@ export function ConversationScreen({
 				style={{ backgroundColor: theme.colors.bgMain }}
 			>
 				{showInitialQuestion && state.conversationHistory.length === 0 && (
-					<InitialQuestionBubble
-						theme={theme}
-						agentName={state.agentName || ''}
-						initialQuestion={initialQuestion}
-					/>
+					<>
+						<InitialQuestionBubble
+							theme={theme}
+							agentName={state.agentName || ''}
+							initialQuestion={initialQuestion}
+						/>
+						{/* Hidden on the 'continue' path, which auto-sends its own opening
+						    turn asking for a synopsis of the existing Auto Run docs. */}
+						{state.existingDocsChoice !== 'continue' && (
+							<ExploreProjectPrompt
+								theme={theme}
+								disabled={state.isConversationLoading}
+								onExplore={sendProjectExplorationRequest}
+							/>
+						)}
+					</>
 				)}
 
 				{state.conversationHistory.map((message) => (

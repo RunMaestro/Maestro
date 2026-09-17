@@ -24,6 +24,9 @@ vi.mock('lucide-react', () => ({
 	X: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<svg data-testid="x-icon" className={className} style={style} />
 	),
+	Dices: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<svg data-testid="dices-icon" className={className} style={style} />
+	),
 	Check: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<svg data-testid="check-icon" className={className} style={style} />
 	),

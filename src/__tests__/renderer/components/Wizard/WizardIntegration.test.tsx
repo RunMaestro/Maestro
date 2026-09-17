@@ -27,10 +27,17 @@ import { LayerStackProvider } from '../../../../renderer/contexts/LayerStackCont
 import type { AgentConfig } from '../../../../renderer/types';
 
 import { mockTheme } from '../../../helpers/mockTheme';
+import { getAllAgentNameSuggestions } from '../../../../renderer/components/Wizard/services/agentNameSuggestions';
 // Mock lucide-react icons
 vi.mock('lucide-react', () => ({
 	X: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<svg data-testid="x-icon" className={className} style={style} />
+	),
+	FolderSearch: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<svg data-testid="folder-search-icon" className={className} style={style} />
+	),
+	Dices: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<svg data-testid="dices-icon" className={className} style={style} />
 	),
 	Check: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<svg data-testid="check-icon" className={className} style={style} />
@@ -312,6 +319,96 @@ describe('Wizard Integration Tests', () => {
 				expect(screen.getByText('Create a Maestro Agent')).toBeInTheDocument();
 				expect(screen.getByText('Step 1 of 5')).toBeInTheDocument();
 			});
+		});
+
+		it('pre-fills the agent name so setup does not open on an empty required field', async () => {
+			function TestWrapper() {
+				const { openWizard, state } = useWizard();
+
+				React.useEffect(() => {
+					if (!state.isOpen) {
+						openWizard();
+					}
+				}, [openWizard, state.isOpen]);
+
+				return state.isOpen ? <MaestroWizard theme={mockTheme} /> : null;
+			}
+
+			renderWithProviders(<TestWrapper />);
+
+			const nameInput = await screen.findByLabelText<HTMLInputElement>('Agent name');
+			await waitFor(() => {
+				expect(getAllAgentNameSuggestions()).toContain(nameInput.value);
+			});
+		});
+
+		it('re-rolls the suggested agent name to a different one', async () => {
+			function TestWrapper() {
+				const { openWizard, state } = useWizard();
+
+				React.useEffect(() => {
+					if (!state.isOpen) {
+						openWizard();
+					}
+				}, [openWizard, state.isOpen]);
+
+				return state.isOpen ? <MaestroWizard theme={mockTheme} /> : null;
+			}
+
+			renderWithProviders(<TestWrapper />);
+
+			const nameInput = await screen.findByLabelText<HTMLInputElement>('Agent name');
+			await waitFor(() => expect(nameInput.value).not.toBe(''));
+			const seeded = nameInput.value;
+
+			fireEvent.click(screen.getByRole('button', { name: /suggest another agent name/i }));
+
+			await waitFor(() => {
+				expect(nameInput.value).not.toBe(seeded);
+				expect(getAllAgentNameSuggestions()).toContain(nameInput.value);
+			});
+		});
+
+		it('leaves a name the user typed alone', async () => {
+			function TestWrapper() {
+				const { openWizard, state } = useWizard();
+
+				React.useEffect(() => {
+					if (!state.isOpen) {
+						openWizard();
+					}
+				}, [openWizard, state.isOpen]);
+
+				return state.isOpen ? <MaestroWizard theme={mockTheme} /> : null;
+			}
+
+			renderWithProviders(<TestWrapper />);
+
+			const nameInput = await screen.findByLabelText<HTMLInputElement>('Agent name');
+			await waitFor(() => expect(nameInput.value).not.toBe(''));
+
+			fireEvent.change(nameInput, { target: { value: 'Custom Name' } });
+
+			// The seeding effect must not re-fire and clobber a typed name.
+			await waitFor(() => expect(nameInput.value).toBe('Custom Name'));
+		});
+
+		it('explains that the agent name is not the project name', async () => {
+			function TestWrapper() {
+				const { openWizard, state } = useWizard();
+
+				React.useEffect(() => {
+					if (!state.isOpen) {
+						openWizard();
+					}
+				}, [openWizard, state.isOpen]);
+
+				return state.isOpen ? <MaestroWizard theme={mockTheme} /> : null;
+			}
+
+			renderWithProviders(<TestWrapper />);
+
+			expect(await screen.findByText(/not your project's name/i)).toBeInTheDocument();
 		});
 
 		it('should navigate from agent selection to directory selection', async () => {
