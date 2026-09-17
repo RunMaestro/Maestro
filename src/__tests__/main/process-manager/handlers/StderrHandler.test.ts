@@ -25,7 +25,7 @@ vi.mock('../../../../main/utils/terminalFilter', () => ({
 	stripAllAnsiCodes: vi.fn((str: string) => str),
 }));
 
-vi.mock('../../../../main/parsers/error-patterns', () => ({
+vi.mock('../../../../shared/maestro-lib/parsers/error-patterns', () => ({
 	matchSshErrorPattern: vi.fn(() => null),
 }));
 
