@@ -130,6 +130,67 @@ describe('resolveTurnOutcome', () => {
 		expect(result).toEqual({ outcome: 'crashed' });
 	});
 
+	it('does NOT misclassify omp as crashed when a result was already seen, even with nothing in capturedAnswerText', () => {
+		// Regression test: the empty-answer rule must require !resultMessageSeen,
+		// not just !hasAnswer. A provider that already delivered its result
+		// through the normal path (resultEmitted true) must never be
+		// reclassified as a crash just because capturedAnswerText - a separate,
+		// best-effort streamed-text accumulator - happens to be empty at exit.
+		const facts = baseFacts({
+			exitCode: 0,
+			resultMessageSeen: true,
+			capturedAnswerText: undefined,
+		});
+
+		const result = resolveTurnOutcome(facts, neverErrorsProvider(), OMP_CTX);
+
+		expect(result).toEqual({ outcome: 'completed' });
+	});
+
+	it('reports crashed for a signal-terminated exit with no answer and no result, for ANY provider (not omp-scoped)', () => {
+		// Regression test: exitCode ?? 0 coerces a signal-killed process's null
+		// exit code to 0 before calling detectErrorFromExit, and every
+		// provider's detectErrorFromExit treats exit code 0 as success. Without
+		// this rule, a signal-killed turn with nothing captured would fall
+		// through to `completed`, reporting an abnormal termination as success.
+		const facts = baseFacts({
+			exitCode: null,
+			signal: 'SIGKILL',
+			resultMessageSeen: false,
+			capturedAnswerText: undefined,
+		});
+
+		const result = resolveTurnOutcome(facts, neverErrorsProvider(), CLAUDE_CTX);
+
+		expect(result).toEqual({ outcome: 'crashed' });
+	});
+
+	it('does not flag a signal-terminated exit as crashed when a result was already seen', () => {
+		const facts = baseFacts({
+			exitCode: null,
+			signal: 'SIGTERM',
+			resultMessageSeen: true,
+			capturedAnswerText: undefined,
+		});
+
+		const result = resolveTurnOutcome(facts, neverErrorsProvider(), CLAUDE_CTX);
+
+		expect(result).toEqual({ outcome: 'completed' });
+	});
+
+	it('does not flag a signal-terminated exit as crashed when an answer was captured (falls through to completed-with-warning)', () => {
+		const facts = baseFacts({
+			exitCode: null,
+			signal: 'SIGTERM',
+			resultMessageSeen: false,
+			capturedAnswerText: 'partial answer before the signal',
+		});
+
+		const result = resolveTurnOutcome(facts, neverErrorsProvider(), CLAUDE_CTX);
+
+		expect(result).toEqual({ outcome: 'completed-with-warning' });
+	});
+
 	it.each(['agent-terminal', 'session-synopsis-1', 'tab-naming-abc123'])(
 		'does not apply the empty-answer rule to the excluded session shape %s even for omp',
 		(sessionId) => {
