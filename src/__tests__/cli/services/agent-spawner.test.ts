@@ -834,6 +834,45 @@ Some text with [x] in it that's not a checkbox
 			expect(result.available).toBe(false);
 		});
 
+		it('strips the carriage return from a multi-match Windows `where` result', async () => {
+			// `where` separates its matches with CRLF and `.trim()` only strips the
+			// trailing one off the whole buffer, so splitting on '\n' leaves the first
+			// match as 'C:\\a\\opencode.exe\r'. That string gets cached and handed to
+			// spawn, and the path never resolves. A single match hides it, so this
+			// only breaks for users with two copies of an agent on PATH.
+			// `opencode` rather than `cursor-cli`: Cursor resolves through
+			// checkBinaryExists/identity validation, not through `where`.
+			const originalPlatform = process.platform;
+			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+			mockGetAgentCustomPath.mockReturnValue(undefined);
+			mockSpawn.mockReturnValue(mockChild);
+
+			try {
+				const { detectAgent: freshDetectAgent } =
+					await import('../../../cli/services/agent-spawner');
+
+				const resultPromise = freshDetectAgent('opencode');
+				await new Promise((resolve) => setTimeout(resolve, 0));
+				mockStdout.emit(
+					'data',
+					Buffer.from('C:\\a\\opencode.exe\r\nC:\\b\\opencode.exe\r\n', 'utf8')
+				);
+				await new Promise((resolve) => setTimeout(resolve, 0));
+				mockChild.emit('close', 0);
+
+				const result = await resultPromise;
+				expect(mockSpawn.mock.calls[0][0]).toBe('where');
+				expect(result.available).toBe(true);
+				expect(result.path).toBe('C:\\a\\opencode.exe');
+				expect(result.path).not.toMatch(/\r/);
+			} finally {
+				Object.defineProperty(process, 'platform', {
+					value: originalPlatform,
+					configurable: true,
+				});
+			}
+		});
+
 		it('should cache results across calls', async () => {
 			mockGetAgentCustomPath.mockReturnValue('/custom/droid');
 			vi.mocked(fs.promises.stat).mockResolvedValue({

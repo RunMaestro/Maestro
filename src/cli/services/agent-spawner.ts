@@ -343,7 +343,11 @@ async function findCommandInPath(commandName: string): Promise<string | undefine
 		stdout += data.toString();
 	});
 	proc.on('close', (code) => {
-		resolve(code === 0 && stdout.trim() ? stdout.trim().split('\n')[0] : undefined);
+		// Split on `\r?\n`, not `\n`. Windows `where` separates its matches with
+		// CRLF, and `.trim()` only strips the trailing one off the whole buffer -
+		// so a second match on PATH leaves the first element as
+		// `C:\bin\cursor.exe\r`, which gets cached and then fails to spawn.
+		resolve(code === 0 && stdout.trim() ? stdout.trim().split(/\r?\n/)[0] : undefined);
 	});
 	proc.on('error', () => resolve(undefined));
 	return promise;
