@@ -32,7 +32,7 @@ vi.mock('../../../cli/services/agent-spawner', () => ({
 	detectAgent: vi.fn(),
 }));
 
-vi.mock('../../../main/agents/definitions', () => ({
+vi.mock('../../../shared/maestro-lib/providers/definitions', () => ({
 	getAgentDefinition: vi.fn((agentId: string) => {
 		const defs: Record<string, { name: string; binaryName: string }> = {
 			'claude-code': { name: 'Claude Code', binaryName: 'claude' },
