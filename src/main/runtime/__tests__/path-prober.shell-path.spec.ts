@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// Stub getShellPath before importing path-prober
-vi.mock('../../runtime/getShellPath', () => ({
+// Stub getShellPath before importing path-prober. getShellPath now physically
+// lives in maestro-lib (Maestro-lib Part One) and path-prober imports it from
+// there directly, so the mock must target that path rather than the
+// `src/main/runtime/getShellPath` compatibility shim.
+vi.mock('../../../shared/maestro-lib/launch/getShellPath', () => ({
 	getShellPath: vi.fn(),
 }));
 

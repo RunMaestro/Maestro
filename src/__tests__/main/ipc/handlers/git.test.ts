@@ -102,7 +102,7 @@ vi.mock('../../../../main/services/gitSettingsStore', () => ({
 }));
 
 // Mock getShellPath
-vi.mock('../../../../main/runtime/getShellPath', () => ({
+vi.mock('../../../../shared/maestro-lib/launch/getShellPath', () => ({
 	getShellPath: vi.fn().mockResolvedValue('/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin'),
 }));
 

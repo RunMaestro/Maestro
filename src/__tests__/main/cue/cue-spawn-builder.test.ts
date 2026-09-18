@@ -50,13 +50,13 @@ const mockApplyOverrides = vi.fn((_agent: unknown, args: string[], _overrides: u
 	modelSource: 'default' as const,
 }));
 
-vi.mock('../../../main/utils/agent-args', () => ({
+vi.mock('../../../shared/maestro-lib/launch/agent-args', () => ({
 	buildAgentArgs: (...args: unknown[]) => mockBuildAgentArgs(...args),
 	applyAgentConfigOverrides: (...args: unknown[]) => mockApplyOverrides(...args),
 }));
 
 const mockWrapSpawnWithSsh = vi.fn();
-vi.mock('../../../main/utils/ssh-spawn-wrapper', () => ({
+vi.mock('../../../shared/maestro-lib/launch/ssh-spawn-wrapper', () => ({
 	wrapSpawnWithSsh: (...args: unknown[]) => mockWrapSpawnWithSsh(...args),
 }));
 

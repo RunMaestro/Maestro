@@ -42,7 +42,7 @@ vi.mock('electron-store', () => {
 
 // Mock wrapSpawnWithSsh so we can verify it's called for SSH sessions
 const mockWrapSpawnWithSsh = vi.fn();
-vi.mock('../../../main/utils/ssh-spawn-wrapper', () => ({
+vi.mock('../../../shared/maestro-lib/launch/ssh-spawn-wrapper', () => ({
 	wrapSpawnWithSsh: (...args: unknown[]) => mockWrapSpawnWithSsh(...args),
 }));
 

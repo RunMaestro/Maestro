@@ -88,7 +88,7 @@ vi.mock('../../../../main/utils/cliDetection', () => ({
 }));
 
 // Mock execFile utility
-vi.mock('../../../../main/runtime/getShellPath', () => ({
+vi.mock('../../../../shared/maestro-lib/launch/getShellPath', () => ({
 	peekShellPath: vi.fn(() => '/opt/homebrew/bin:/usr/bin:/bin'),
 }));
 vi.mock('../../../../main/utils/sentry', () => ({
