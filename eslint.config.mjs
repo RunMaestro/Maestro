@@ -7,6 +7,7 @@ import prettierConfig from 'eslint-config-prettier';
 import globals from 'globals';
 import maestroPlugin from './eslint-rules/no-em-dash-in-comments.mjs';
 import fontSizesPlugin from './eslint-rules/no-arbitrary-font-sizes.mjs';
+import sharedBoundaryPlugin from './eslint-rules/no-shared-to-main-imports.mjs';
 
 export default tseslint.config(
 	// Ignore patterns
@@ -119,6 +120,16 @@ export default tseslint.config(
 			react: {
 				version: 'detect',
 			},
+		},
+	},
+
+	// maestro-lib Part One boundary guard: src/shared/** must not import
+	// src/main/** except the 13 tracked pre-existing edges.
+	{
+		files: ['src/shared/**/*.ts', 'src/shared/**/*.tsx'],
+		plugins: { 'shared-boundary': sharedBoundaryPlugin },
+		rules: {
+			'shared-boundary/no-shared-to-main-imports': 'error',
 		},
 	}
 );
