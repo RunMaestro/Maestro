@@ -44,10 +44,13 @@ export interface BufferedLineReaderOptions {
 	 * unbounded memory growth from a pathological stream that never produces
 	 * a complete frame. Undefined (the default) means no limit, matching
 	 * every current transport except Copilot's, which already caps at
-	 * `MAX_COPILOT_JSON_BUFFER_LENGTH`. When the limit is exceeded the
-	 * buffer is reset to empty and no frames are returned for that push -
-	 * whatever was pending is lost, matching Copilot's existing behavior
-	 * (`resetOversizedCopilotJsonBuffer`).
+	 * `MAX_COPILOT_JSON_BUFFER_LENGTH`. The cap is checked AFTER extracting
+	 * whatever complete frames are already available, and applies only to
+	 * the leftover remainder - so a push that both completes several frames
+	 * and leaves an oversized unparsed tail still returns those frames; only
+	 * the stuck remainder is dropped. Matches Copilot's existing behavior
+	 * (`resetOversizedCopilotJsonBuffer` runs after `extractConcatenatedJsonObjects`,
+	 * on the remainder alone).
 	 */
 	maxBufferLength?: number;
 	/**
@@ -87,13 +90,23 @@ export class BufferedLineReader {
 	push(chunk: string): string[] {
 		this.buffer += chunk;
 
-		if (this.maxBufferLength !== undefined && this.buffer.length > this.maxBufferLength) {
-			this.buffer = '';
-			return [];
-		}
-
+		// Extract BEFORE checking the length cap, not after. A capped reader
+		// that checked the cap on the raw buffer first would drop every frame
+		// in a chunk merely because the chunk (frames plus remainder) happened
+		// to exceed the cap - a burst containing many small complete frames is
+		// exactly the case that shouldn't be punished. The cap exists to bound
+		// unparsed, stuck content (a stream that never produces a delimiter),
+		// so it only ever applies to what's left AFTER extraction, matching
+		// Copilot's existing behavior (`resetOversizedCopilotJsonBuffer` runs
+		// after `extractConcatenatedJsonObjects`, on the remainder alone -
+		// StdoutHandler.ts:417-419).
 		const { frames, remainder } = this.extractFrames(this.buffer);
 		this.buffer = remainder;
+
+		if (this.maxBufferLength !== undefined && this.buffer.length > this.maxBufferLength) {
+			this.buffer = '';
+		}
+
 		return frames.filter((frame) => frame.trim().length > 0);
 	}
 
