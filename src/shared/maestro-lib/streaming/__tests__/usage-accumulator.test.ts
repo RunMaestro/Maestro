@@ -104,4 +104,40 @@ describe('UsageAccumulator', () => {
 		const firstForB = usage({ inputTokens: 10, outputTokens: 5 });
 		expect(accB.normalize(firstForB)).toEqual(firstForB);
 	});
+
+	describe('lastTotals / isCumulative getters', () => {
+		it('start undefined before any event is seen', () => {
+			const acc = new UsageAccumulator({ attachesAbsoluteUsage: false });
+			expect(acc.lastTotals).toBeUndefined();
+			expect(acc.isCumulative).toBeUndefined();
+		});
+
+		it('expose the raw totals and cumulative flag after a monotonic second event, for a caller mirroring state externally (e.g. ManagedProcess.lastUsageTotals / usageIsCumulative)', () => {
+			const acc = new UsageAccumulator({ attachesAbsoluteUsage: false });
+			acc.normalize(usage({ inputTokens: 500, outputTokens: 100 }));
+			acc.normalize(usage({ inputTokens: 800, outputTokens: 150 }));
+
+			expect(acc.isCumulative).toBe(true);
+			expect(acc.lastTotals).toEqual({
+				inputTokens: 800,
+				outputTokens: 150,
+				cacheReadInputTokens: 0,
+				cacheCreationInputTokens: 0,
+				reasoningTokens: 0,
+			});
+		});
+
+		it('returns a defensive copy from lastTotals - mutating the getter result does not affect internal state', () => {
+			const acc = new UsageAccumulator({ attachesAbsoluteUsage: false });
+			acc.normalize(usage({ inputTokens: 500, outputTokens: 100 }));
+
+			const snapshot = acc.lastTotals;
+			expect(snapshot).toBeDefined();
+			if (snapshot) {
+				snapshot.inputTokens = 999999;
+			}
+
+			expect(acc.lastTotals?.inputTokens).toBe(500);
+		});
+	});
 });
