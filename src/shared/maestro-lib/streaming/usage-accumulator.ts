@@ -53,12 +53,28 @@ export interface UsageAccumulatorOptions {
 }
 
 export class UsageAccumulator {
-	private lastTotals: UsageTotals | undefined;
-	private isCumulative: boolean | undefined;
+	private _lastTotals: UsageTotals | undefined;
+	private _isCumulative: boolean | undefined;
 	private readonly attachesAbsoluteUsage: boolean;
 
 	constructor(options: UsageAccumulatorOptions) {
 		this.attachesAbsoluteUsage = options.attachesAbsoluteUsage;
+	}
+
+	/**
+	 * The most recent raw totals seen, before delta normalization. Exposed
+	 * (as a defensive copy) so a caller that needs to mirror this instance's
+	 * state onto its own external record - e.g. `ManagedProcess.
+	 * lastUsageTotals`, read directly by `plugin-event-listener.ts` - can do
+	 * so without this class knowing anything about that consumer.
+	 */
+	get lastTotals(): UsageTotals | undefined {
+		return this._lastTotals ? { ...this._lastTotals } : undefined;
+	}
+
+	/** Whether this stream has been determined to report cumulative totals. `undefined` until the second event arrives. */
+	get isCumulative(): boolean | undefined {
+		return this._isCumulative;
 	}
 
 	/**
@@ -79,14 +95,14 @@ export class UsageAccumulator {
 		// delta-normalize it - a provider does not switch reporting styles
 		// mid-stream, and re-attempting would misclassify a legitimate
 		// decrease (e.g. a cache eviction) as the reporting style changing.
-		if (this.isCumulative === false) {
-			this.lastTotals = totals;
+		if (this._isCumulative === false) {
+			this._lastTotals = totals;
 			return usageStats;
 		}
 
-		const last = this.lastTotals;
+		const last = this._lastTotals;
 		if (!last) {
-			this.lastTotals = totals;
+			this._lastTotals = totals;
 			return usageStats;
 		}
 
@@ -106,13 +122,13 @@ export class UsageAccumulator {
 			delta.reasoningTokens >= 0;
 
 		if (!isMonotonic) {
-			this.isCumulative = false;
-			this.lastTotals = totals;
+			this._isCumulative = false;
+			this._lastTotals = totals;
 			return usageStats;
 		}
 
-		this.isCumulative = true;
-		this.lastTotals = totals;
+		this._isCumulative = true;
+		this._lastTotals = totals;
 
 		// `...usageStats` first, so an incoming `absoluteUsage` (e.g.
 		// Claude Code's parser-attached last-internal-call snapshot, which is
