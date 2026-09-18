@@ -92,10 +92,24 @@ export interface TurnOutcomeResult {
  * Precedence (see `Plans/maestro-lib-turn-contract.md`, section 1):
  *  1. `interrupted` wins outright, before any error is considered.
  *  2. An already-resolved `explicitError` -> crashed.
- *  3. The provider's own `detectErrorFromExit` -> crashed.
- *  4. No captured answer on a clean exit -> crashed (omp today; see
- *     `generalizeEmptyAnswerRule`), except for the known excluded session
- *     shapes (terminal / synopsis / tab-naming runs).
+ *  3. The provider's own `detectErrorFromExit` -> crashed. `facts.exitCode`
+ *     is coerced to `0` here when `null` (a signal-terminated process) purely
+ *     because the provider callback's signature requires a `number` - this
+ *     does NOT mean a signal-killed exit is treated as clean; rule 4 below
+ *     independently catches the case where that coercion would otherwise let
+ *     a signal kill masquerade as success.
+ *  4. No captured answer AND no explicit done signal (`resultMessageSeen`)
+ *     -> crashed, when either: the exit was signal-terminated (`facts.signal
+ *     !== null`, checked for every provider - an abnormal termination with
+ *     nothing to show for it is unambiguously a crash, not a provider-
+ *     specific judgment call), or the empty-answer-on-clean-exit rule
+ *     applies (omp today; see `generalizeEmptyAnswerRule`). Either way,
+ *     the known excluded session shapes (terminal / synopsis / tab-naming
+ *     runs) are exempt. Requiring `!resultMessageSeen` here (not just
+ *     `!hasAnswer`) matters: a provider that already sent an explicit result
+ *     event before being signal-killed or exiting empty-handed already
+ *     completed its turn, and must not be reclassified as a crash just
+ *     because `capturedAnswerText` happens to be empty at this call site.
  *  5. Clean exit with an explicit done signal -> completed.
  *  6. A captured answer despite a non-zero exit or a missing done signal ->
  *     completed-with-warning.
@@ -130,9 +144,10 @@ export function resolveTurnOutcome(
 
 	const hasAnswer = Boolean(facts.capturedAnswerText?.trim());
 
-	if (!hasAnswer) {
+	if (!hasAnswer && !facts.resultMessageSeen) {
+		const killedBySignal = facts.signal !== null;
 		const emptyAnswerRuleApplies =
-			options.generalizeEmptyAnswerRule || context.providerId === 'omp';
+			killedBySignal || options.generalizeEmptyAnswerRule || context.providerId === 'omp';
 		const isExcludedSession = OMP_EMPTY_ANSWER_SESSION_EXCLUSIONS.some((pattern) =>
 			pattern.test(context.sessionId)
 		);
