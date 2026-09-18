@@ -59,6 +59,23 @@ describe('BufferedLineReader', () => {
 		expect(reader.push('short\n')).toEqual(['short']);
 	});
 
+	it('still returns complete frames from a chunk whose TOTAL size (frames + remainder) exceeds maxBufferLength, dropping only the leftover remainder', () => {
+		// Regression test: the cap must be checked AFTER extraction, on the
+		// remainder alone - not on the raw pushed buffer before extraction.
+		// A burst of many complete, well-formed frames must not be punished
+		// just because the chunk containing them happens to be large.
+		const reader = new BufferedLineReader({ maxBufferLength: 20 });
+		const manySmallFrames = Array.from({ length: 10 }, (_, i) => `frame-${i}`).join('\n') + '\n';
+		expect(manySmallFrames.length).toBeGreaterThan(20); // the whole chunk exceeds the cap...
+
+		const frames = reader.push(manySmallFrames + 'incomplete-tail-well-past-the-cap');
+
+		// ...but every complete frame still comes back...
+		expect(frames).toEqual(Array.from({ length: 10 }, (_, i) => `frame-${i}`));
+		// ...and only the oversized unparsed remainder is dropped.
+		expect(reader.isEmpty).toBe(true);
+	});
+
 	it('accepts a custom frame extractor (e.g. a Copilot-style concatenated-object strategy)', () => {
 		// A deliberately non-newline extractor: frames are delimited by `;`
 		// instead, to prove the class doesn't hardcode newline splitting when
