@@ -28,6 +28,7 @@
 
 import { defaultSchema } from 'rehype-sanitize';
 import type { Schema } from 'hast-util-sanitize';
+import { CODEX_DIRECTIVE_DATA_ATTRIBUTES } from './remarkCodexDirectives';
 
 /** SVG container + presentation element tag names (hast tagName form). */
 const SVG_TAG_NAMES = [
@@ -70,16 +71,22 @@ const SVG_TAG_NAMES = [
 ];
 
 /**
- * `data-maestro-*` attributes (hast camelCase form) that Maestro's own remark
- * transforms emit to drive behavior: file links / previews, image loading, and
- * inline-width hints. The GitHub default schema strips all data attributes, so
- * without these, clickable file links and local images silently break in chat.
+ * Data attributes (hast camelCase form) that Maestro's own remark transforms
+ * emit to drive behavior: file links / previews, image loading, inline-width
+ * hints, and Codex's assistant directives. The GitHub default schema strips ALL
+ * data attributes, so without these a transform still produces its element and
+ * the element arrives with nothing on it - clickable file links and local
+ * images break, and a directive chip renders as an empty span.
+ *
+ * The directive names are read off the plugin rather than restated, so adding a
+ * field there cannot leave it stripped here.
  */
 const MAESTRO_DATA_ATTRIBUTES = [
 	'dataMaestroFile',
 	'dataMaestroFromTree',
 	'dataMaestroImage',
 	'dataMaestroWidth',
+	...Object.values(CODEX_DIRECTIVE_DATA_ATTRIBUTES),
 ];
 
 /**

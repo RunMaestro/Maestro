@@ -72,6 +72,12 @@ export interface MarkdownProps {
 	chatLineBreaks?: boolean;
 	/** Render `$...$` / `$$...$$` as KaTeX math (#622). */
 	chatMath?: boolean;
+	/**
+	 * Chip-render Codex's assistant directives (`:codex-followup[...]{...}`).
+	 * Ignored outside the chat preset - an authored document that contains the
+	 * syntax is quoting it, not offering it. Set this only for Codex agents.
+	 */
+	codexDirectives?: boolean;
 
 	// --- Document preset ---
 	/** Render YAML frontmatter as a table. Defaults to true for document. */
@@ -118,6 +124,7 @@ export const Markdown = memo(function Markdown({
 	allowRawHtml,
 	chatLineBreaks = false,
 	chatMath = false,
+	codexDirectives = false,
 	frontmatter = true,
 	imageRenderer,
 	customLanguageRenderers,
@@ -177,6 +184,10 @@ export const Markdown = memo(function Markdown({
 			// run, so a marker in it is live configuration worth showing. A chat
 			// message only ever describes one.
 			autorunMarkers: preset === 'document',
+			// The mirror image: a Codex directive is live only where an agent just
+			// said it. A document, a release note, or a wizard bubble renders text
+			// somebody authored, where the same string is content.
+			codexDirectives: isChat && codexDirectives,
 			allowRawHtml: effectiveAllowRawHtml,
 			fileLinks: { indices: fileTreeIndices, cwd, projectRoot, homeDir },
 			mentionChips: isChat,
@@ -189,6 +200,7 @@ export const Markdown = memo(function Markdown({
 		isChat,
 		chatLineBreaks,
 		chatMath,
+		codexDirectives,
 		effectiveAllowRawHtml,
 		fileTreeIndices,
 		cwd,

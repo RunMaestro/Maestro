@@ -60,6 +60,14 @@ interface MarkdownRendererProps {
 	 */
 	chatMath?: boolean;
 	/**
+	 * Chip-render Codex's assistant directives (`:codex-followup[...]{...}`).
+	 *
+	 * Off by default, and set only for Codex agents: the syntax is Codex's own
+	 * emitting convention, so a message from any other provider that contains it
+	 * is quoting the format rather than offering an action.
+	 */
+	codexDirectives?: boolean;
+	/**
 	 * Extra rehype plugins appended after the standard stack. Used to add
 	 * `rehype-slug` on surfaces that need heading anchors for a table of
 	 * contents (Director's Notes Plain mode).
