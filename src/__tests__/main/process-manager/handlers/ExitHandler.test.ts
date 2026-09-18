@@ -1171,6 +1171,60 @@ describe('ExitHandler', () => {
 	});
 
 	describe('Copilot post-exit shutdown wait', () => {
+		it('takes the session id from the trailing record without consuming it', async () => {
+			// The peek above `awaitCopilotShutdown` reads the trailing record for its
+			// session id and must leave everything else alone. Clearing `jsonBuffer`
+			// there costs a Copilot run whose final record arrives without a newline
+			// its result text, its usage, the `session-id` emit and - on a terminal
+			// error envelope - the `agent-error` that `detectErrorFromExit` cannot
+			// recover on exit code 0. The tab just stops.
+			const resultJson = '{"type":"result","result":"Copilot answer","session_id":"cp-peek"}';
+			const mockParser = createMockOutputParser({
+				parseJsonLine: vi.fn(() => ({
+					type: 'result',
+					text: 'Copilot answer',
+					sessionId: 'cp-peek',
+				})) as unknown as AgentOutputParser['parseJsonLine'],
+				extractSessionId: vi.fn(
+					() => 'cp-peek'
+				) as unknown as AgentOutputParser['extractSessionId'],
+				isResultMessage: vi.fn(() => true) as unknown as AgentOutputParser['isResultMessage'],
+			});
+			const proc = createMockProcess({
+				toolType: 'copilot-cli',
+				isStreamJsonMode: true,
+				isBatchMode: true,
+				jsonBuffer: resultJson,
+				outputParser: mockParser,
+			});
+			processes.set('test-session', proc);
+
+			// The shutdown wait is the first thing to run after the peek, so the
+			// buffer it observes is the buffer the peek left behind. Asserting on
+			// `proc.jsonBuffer` after `handleExit` returns would prove nothing: the
+			// remainder block clears it by design, so it reads '' either way.
+			// 'missing' returns without touching disk.
+			let bufferAtShutdownWait: string | undefined;
+			vi.mocked(waitForCopilotShutdown).mockImplementation(async () => {
+				bufferAtShutdownWait = proc.jsonBuffer;
+				return 'missing';
+			});
+
+			const dataEvents: string[] = [];
+			emitter.on('data', (_sid: string, data: string) => dataEvents.push(data));
+
+			await exitHandler.handleExit('test-session', 0);
+
+			// The peek ran and handed the shutdown wait its session id...
+			expect(proc.agentSessionId).toBe('cp-peek');
+			// ...without consuming the record it read that id from.
+			expect(bufferAtShutdownWait).toBe(resultJson);
+			// ...and the one consuming block below the supersession guard still
+			// resolved that record into the turn's answer.
+			expect(mockParser.parseJsonLine).toHaveBeenCalledTimes(2);
+			expect(dataEvents).toContain('Copilot answer');
+		});
+
 		it('discovers a Copilot session ID from an unterminated final record before shutdown reconciliation', async () => {
 			const fs = await import('fs/promises');
 			const os = await import('os');

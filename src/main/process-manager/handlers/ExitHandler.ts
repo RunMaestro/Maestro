@@ -121,7 +121,10 @@ export class ExitHandler {
 		// remainder block further down, which sits below the supersession guard. A
 		// peek that emitted from up here would let a predecessor draining at exit
 		// push its remainder events into the successor's turn, which is exactly what
-		// that guard exists to prevent.
+		// that guard exists to prevent. The non-consuming half is pinned by
+		// `takes the session id from the trailing record without consuming it` in
+		// `ExitHandler.test.ts`, which observes the buffer from inside the shutdown
+		// wait - the only point between this peek and the remainder block below.
 		//
 		// Gated on Copilot because that is the only consumer: `awaitCopilotShutdown`
 		// returns immediately for every other tool type, so peeking for them would
