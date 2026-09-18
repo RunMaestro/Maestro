@@ -294,3 +294,83 @@ export function parseCodexDirective(
 ): CodexDirective | null {
 	return parseDirectiveAt(source, 0, options)?.directive ?? null;
 }
+
+/**
+ * Every directive name Maestro understands.
+ *
+ * The allowlist is a hard requirement, not a nicety. The grammar is permissive
+ * enough that ordinary prose about CSS parses as a directive - `a::before{...}`
+ * is a name, a flush brace, and attributes - so a scanner without an allowlist
+ * would find directives in text nobody wrote as one, and a caller that replaces
+ * `raw` would eat it.
+ */
+export const KNOWN_CODEX_DIRECTIVES = [
+	'codex-followup',
+	'codex-file-citation',
+	'git-commit',
+	'git-push',
+	'git-stage',
+	'git-create-branch',
+	'git-create-pr',
+	'code-comment',
+	'codex-inline-vis',
+] as const;
+
+export type KnownCodexDirective = (typeof KNOWN_CODEX_DIRECTIVES)[number];
+
+const KNOWN_CODEX_DIRECTIVE_SET: ReadonlySet<string> = new Set(KNOWN_CODEX_DIRECTIVES);
+
+/** True when `name` is a directive Maestro knows how to render. */
+export function isKnownCodexDirective(name: string): name is KnownCodexDirective {
+	return KNOWN_CODEX_DIRECTIVE_SET.has(name);
+}
+
+export interface CodexDirectiveMatch extends CodexDirective {
+	/** Index of the first colon in `source`. */
+	start: number;
+	/** Index just past the closing `}`, so `source.slice(start, end) === raw`. */
+	end: number;
+}
+
+/**
+ * Find every KNOWN directive in `source`, in order, with its offsets.
+ *
+ * Unknown names are skipped entirely rather than reported, so a caller can
+ * replace each match blind. Offsets are string indices (UTF-16 code units), not
+ * UTF-8 byte offsets, because the point of them is to drive `slice`.
+ */
+export function findCodexDirectives(
+	source: string,
+	options: ParseCodexDirectiveOptions = {}
+): CodexDirectiveMatch[] {
+	const matches: CodexDirectiveMatch[] = [];
+	if (!source) return matches;
+
+	let i = 0;
+	while (i < source.length) {
+		const at = source.indexOf(':', i);
+		if (at < 0) break;
+
+		// Only ever try the FIRST colon of a run. Starting one colon in would
+		// read `::::name{}` - four colons, deliberately not a directive - as the
+		// three-colon form, which is exactly the prose the colon cap excludes.
+		if (at > 0 && source.charCodeAt(at - 1) === COLON) {
+			i = at + 1;
+			continue;
+		}
+
+		const parsed = parseDirectiveAt(source, at, options);
+		if (parsed && isKnownCodexDirective(parsed.directive.name)) {
+			matches.push({ ...parsed.directive, start: at, end: parsed.end });
+			i = parsed.end;
+			continue;
+		}
+
+		// Nothing here. Skip the whole colon run for the same reason as above.
+		let next = at + 1;
+		while (next < source.length && source.charCodeAt(next) === COLON) next += 1;
+		i = next;
+	}
+
+	return matches;
+}
