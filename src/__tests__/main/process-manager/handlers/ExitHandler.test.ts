@@ -21,11 +21,11 @@ vi.mock('../../../../main/utils/logger', () => ({
 	},
 }));
 
-vi.mock('../../../../main/parsers/error-patterns', () => ({
+vi.mock('../../../../shared/maestro-lib/parsers/error-patterns', () => ({
 	matchSshErrorPattern: vi.fn(() => null),
 }));
 
-vi.mock('../../../../main/parsers/usage-aggregator', () => ({
+vi.mock('../../../../shared/maestro-lib/parsers/usage-aggregator', () => ({
 	aggregateModelUsage: vi.fn(() => ({
 		inputTokens: 100,
 		outputTokens: 50,
@@ -76,7 +76,7 @@ import {
 } from '../../../../main/process-manager/generation';
 import { DataBufferManager } from '../../../../main/process-manager/handlers/DataBufferManager';
 import { captureException } from '../../../../main/utils/sentry';
-import { matchSshErrorPattern } from '../../../../main/parsers/error-patterns';
+import { matchSshErrorPattern } from '../../../../shared/maestro-lib/parsers/error-patterns';
 import { getSshRemoteById } from '../../../../main/stores/getters';
 import { readFileRemote, readFileTailRemote } from '../../../../main/utils/remote-fs';
 import { waitForCopilotShutdown } from '../../../../main/process-manager/CopilotShutdownWaiter';
@@ -686,6 +686,48 @@ describe('ExitHandler', () => {
 
 			expect(onAgentError).not.toHaveBeenCalled();
 			expect(proc.provisionalError).toBeUndefined();
+		});
+
+		it('skips detectErrorFromExit and the SSH error match entirely when the user interrupted the turn', async () => {
+			// Regression test for the maestro-lib turn-contract migration:
+			// previously `interrupted` only suppressed the held provisional-
+			// error notice and the omp silent-exit override - detectErrorFromExit
+			// and the SSH pattern match ran regardless, so a stopped turn could
+			// still surface as a crash (e.g. opencode-output-parser flags exit
+			// code 0 with empty stdout and non-empty stderr, a shape a stop can
+			// produce). `interrupted` now suppresses the whole cascade.
+			const detectErrorFromExit = vi.fn(() => ({
+				type: 'agent_crashed' as const,
+				message: 'would have been reported as a crash',
+				recoverable: true,
+				agentId: 'claude-code',
+			}));
+			const mockedMatchSsh = vi.mocked(matchSshErrorPattern);
+			mockedMatchSsh.mockReturnValue({
+				type: 'agent_crashed',
+				message: 'would also have been reported as a crash',
+				recoverable: true,
+			});
+
+			const proc = createMockProcess({
+				interrupted: true,
+				outputParser: createMockOutputParser({ detectErrorFromExit }),
+				sshRemoteId: 'remote-1',
+				stderrBuffer: 'bash: opencode: command not found',
+			});
+			processes.set('test-session', proc);
+
+			const onAgentError = vi.fn();
+			emitter.on('agent-error', onAgentError);
+
+			await exitHandler.handleExit('test-session', 1);
+
+			expect(detectErrorFromExit).not.toHaveBeenCalled();
+			expect(mockedMatchSsh).not.toHaveBeenCalled();
+			expect(onAgentError).not.toHaveBeenCalled();
+			expect(proc.errorEmitted).toBe(false);
+
+			mockedMatchSsh.mockReset();
 		});
 
 		it('does not emit a held notice after an error was already emitted', async () => {
