@@ -3,6 +3,7 @@ import type { IPty } from 'node-pty';
 import type { OpencodeClient } from '@opencode-ai/sdk';
 import type { AgentOutputParser } from '../parsers';
 import type { AgentError } from '../../shared/types';
+import type { UsageAccumulator } from '../../shared/maestro-lib/streaming/usage-accumulator';
 
 /**
  * Kill/interrupt handle for server-backed processes that have no OS child
@@ -139,6 +140,16 @@ export interface ManagedProcess {
 	args?: string[];
 	lastUsageTotals?: UsageTotals;
 	usageIsCumulative?: boolean;
+	/**
+	 * The maestro-lib UsageAccumulator instance doing the actual delta
+	 * normalization for this process (see `normalizeUsageToDelta` in
+	 * StdoutHandler.ts). `lastUsageTotals`/`usageIsCumulative` above are kept
+	 * in sync from its `lastTotals`/`isCumulative` getters after every call -
+	 * they still need to exist as their own fields because
+	 * `plugin-event-listener.ts` and the existing test suite read them
+	 * directly, not through the accumulator.
+	 */
+	usageAccumulator?: UsageAccumulator;
 	emittedToolCallIds?: Set<string>;
 	querySource?: 'user' | 'auto';
 	tabId?: string;
