@@ -46,8 +46,7 @@ export interface ChatMarkdownComponentsOptions {
 	 * Which conversation a clicked `:codex-followup` chip belongs to. Present
 	 * only where a Codex agent's own message is being drawn, because that is the
 	 * only place a directive is an OFFER rather than text somebody typed. Absent
-	 * makes the chip inert: the directive renders as the plain span it already
-	 * is, with no control to press.
+	 * leaves the directive as its label, with no control to press.
 	 */
 	codexFollowup?: { sessionId: string; tabId: string };
 }
@@ -223,24 +222,25 @@ export function createChatMarkdownComponents(
 		/*
 		 * Codex assistant directives, tagged as spans by `remarkCodexDirectives`.
 		 *
-		 * Every branch that is not a wired-up followup falls through to the plain
-		 * span with its children, which keeps the override inert in the two places
-		 * it has to be: a surface with no `codexFollowup` context (a non-Codex
-		 * agent, a user message, a tool result), and any other span in the
-		 * message - chat renders sanitized raw HTML, so an agent drawing its own
+		 * Anything that is not a directive falls through to the plain span with its
+		 * children, which is what keeps the override inert on the rest of a
+		 * message: chat renders sanitized raw HTML, so an agent drawing its own
 		 * `<span>` must still get one.
 		 *
-		 * Only `codex-followup` draws a chip today. The rest of the allowlist is
-		 * recognized by the parser but has no click behavior to offer yet, and a
-		 * directive with no renderer is better left as the text it arrived as than
-		 * turned into a chip that does nothing.
+		 * A directive with no chip behind it renders its LABEL as text. That is
+		 * two real cases - there is no `codexFollowup` context (nothing to click
+		 * into), or the name is one of the allowlist entries nothing draws yet -
+		 * and in both the plain span is NOT the right fallback: the plugin
+		 * deliberately emits no children, so returning it would render nothing at
+		 * all and delete the offer from the message. The label is the part the
+		 * agent wrote for a reader, which is the most the element still carries.
 		 */
 		span: ({ node: _node, children, ...props }: JSX.IntrinsicElements['span'] & ExtraProps) => {
-			const plain = <span {...props}>{children}</span>;
-			if (!codexFollowup) return plain;
-
 			const directive = readCodexDirectiveProps(props as Record<string, unknown>);
-			if (!directive || directive.name !== 'codex-followup') return plain;
+			if (!directive) return <span {...props}>{children}</span>;
+			if (directive.name !== 'codex-followup' || !codexFollowup) {
+				return <span {...props}>{directive.label}</span>;
+			}
 
 			const { sessionId, tabId } = codexFollowup;
 			const prompt = directive.attributes.prompt ?? '';

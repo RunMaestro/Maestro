@@ -102,6 +102,25 @@ export interface LogItemProps {
 	 * including on every user message.
 	 */
 	responseDurationMs?: number;
+	/**
+	 * Draw Codex's assistant directives (`:codex-followup[...]{...}`) as chips
+	 * on this entry's markdown body. True only for a Codex agent: the syntax is
+	 * Codex's own emitting convention, so the same string from any other
+	 * provider is a message quoting the format.
+	 */
+	codexDirectives?: boolean;
+	/**
+	 * The AI tab this transcript is showing, so a clicked followup chip can name
+	 * the conversation it came from. Absent leaves the chips inert - there is
+	 * nowhere for a click to land without it.
+	 *
+	 * Both of these arrive as derived primitives from `TerminalOutput` rather
+	 * than being read out of the session store inside `LogItem`, for the reason
+	 * the Claude pill props give below: LogItem is memo'd per entry, and a store
+	 * subscription per transcript row is a steep price for two strings the
+	 * parent already holds.
+	 */
+	codexFollowupTabId?: string;
 	// Claude mode pill - all passed as primitives so LogItem memo equality stays cheap.
 	isClaudeCode: boolean;
 	isAdaptiveMode: boolean;

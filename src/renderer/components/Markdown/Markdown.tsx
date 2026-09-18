@@ -78,6 +78,12 @@ export interface MarkdownProps {
 	 * syntax is quoting it, not offering it. Set this only for Codex agents.
 	 */
 	codexDirectives?: boolean;
+	/**
+	 * Which conversation a clicked `:codex-followup` chip belongs to. Chat preset
+	 * only. Absent leaves the chips inert - `codexDirectives` decides whether the
+	 * syntax is parsed, this decides whether there is a control to press.
+	 */
+	codexFollowup?: { sessionId: string; tabId: string };
 
 	// --- Document preset ---
 	/** Render YAML frontmatter as a table. Defaults to true for document. */
@@ -125,6 +131,7 @@ export const Markdown = memo(function Markdown({
 	chatLineBreaks = false,
 	chatMath = false,
 	codexDirectives = false,
+	codexFollowup,
 	frontmatter = true,
 	imageRenderer,
 	customLanguageRenderers,
@@ -159,6 +166,21 @@ export const Markdown = memo(function Markdown({
 		}
 		return null;
 	}, [fileTree]);
+
+	// The followup context is an object, and a call site that builds it inline
+	// hands us a new identity on every render - which would invalidate the
+	// `components` memo below and re-run react-markdown's entire parse each time
+	// (#1180). Depending on the two strings instead makes the memo hold however
+	// the caller spells the prop.
+	const followupSessionId = codexFollowup?.sessionId;
+	const followupTabId = codexFollowup?.tabId;
+	const chatFollowup = useMemo(
+		() =>
+			followupSessionId && followupTabId
+				? { sessionId: followupSessionId, tabId: followupTabId }
+				: undefined,
+		[followupSessionId, followupTabId]
+	);
 
 	// Right-click context menus (chat only).
 	const [linkMenu, setLinkMenu] = useState<LinkContextMenuState | null>(null);
@@ -233,6 +255,7 @@ export const Markdown = memo(function Markdown({
 					onLinkContextMenu: (e, url) => setLinkMenu({ x: e.clientX, y: e.clientY, url }),
 					onFileContextMenu: (e, absPath, fileName) =>
 						setFileMenu({ x: e.clientX, y: e.clientY, filePath: absPath, fileName }),
+					codexFollowup: chatFollowup,
 				});
 			case 'wizard-bubble':
 				return createWizardBubbleMarkdownComponents(theme);
@@ -272,6 +295,7 @@ export const Markdown = memo(function Markdown({
 		containerRef,
 		searchHighlight,
 		codeBlockStyle,
+		chatFollowup,
 	]);
 
 	// Memoize the ReactMarkdown element: react-markdown re-runs the full remark+
