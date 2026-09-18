@@ -1,0 +1,372 @@
+/**
+ * Agent Output Parser Interface
+ *
+ * This module defines the abstract interface for parsing AI agent output.
+ * Different agents (Claude Code, OpenCode, etc.) have different JSON schemas
+ * and output formats. This interface provides a common abstraction layer.
+ *
+ * Usage:
+ * ```typescript
+ * const parser = getOutputParser('claude-code');
+ * for (const line of jsonLines) {
+ *   const event = parser.parseJsonLine(line);
+ *   if (event) {
+ *     // Handle normalized event
+ *   }
+ * }
+ * ```
+ *
+ * Error Detection:
+ * ```typescript
+ * const parser = getOutputParser('claude-code');
+ * const error = parser.detectError(line);
+ * if (error) {
+ *   // Handle agent error (auth, rate limit, etc.)
+ * }
+ * ```
+ */
+
+import type { ToolType, AgentError } from '../../types';
+import { isValidAgentId } from '../../agentIds';
+
+// Re-export error types for convenience
+export type { AgentError, AgentErrorType } from '../../types';
+
+/**
+ * Type guard to validate if a string is a valid ToolType.
+ * Delegates to the single source of truth in shared/agentIds.ts.
+ * @param id - The string to check
+ * @returns True if the string is a valid ToolType
+ */
+function isValidToolType(id: string): id is ToolType {
+	return isValidAgentId(id);
+}
+
+/**
+ * Normalized parsed event from agent output.
+ * All agent-specific formats are transformed into this common structure.
+ */
+export interface ParsedEvent {
+	/**
+	 * Event type indicating the nature of the event
+	 * - 'init': Agent initialization (may contain session ID, available commands)
+	 * - 'text': Text content to display to user
+	 * - 'tool_use': Agent is using a tool (file read, bash, etc.)
+	 * - 'result': Final result/response from agent
+	 * - 'error': Error occurred
+	 * - 'usage': Token usage statistics
+	 * - 'system': System-level messages (not user-facing content)
+	 */
+	type: 'init' | 'text' | 'tool_use' | 'result' | 'error' | 'usage' | 'system';
+
+	/**
+	 * Session ID for conversation continuity (if available)
+	 */
+	sessionId?: string;
+
+	/**
+	 * Text content (for 'text', 'result', 'error' types)
+	 */
+	text?: string;
+
+	/**
+	 * Tool name being used (for 'tool_use' type)
+	 */
+	toolName?: string;
+
+	/**
+	 * Tool call identifier (for agents that provide stable tool call IDs)
+	 */
+	toolCallId?: string;
+
+	/**
+	 * Tool execution state (for 'tool_use' type)
+	 * Format varies by agent, preserved for UI rendering
+	 */
+	toolState?: unknown;
+
+	/**
+	 * Id of the parent tool call that spawned the subagent producing this event.
+	 * Set on every event a subagent emits (tool_use, text, thinking), and
+	 * references the spawning tool_use id (claude-code's Task tool). Absent for
+	 * main-transcript events. Only claude-code populates this today; other
+	 * parsers leave it undefined.
+	 */
+	parentToolUseId?: string;
+
+	/**
+	 * Token usage statistics (for 'usage' type)
+	 */
+	usage?: {
+		inputTokens: number;
+		outputTokens: number;
+		cacheReadTokens?: number;
+		cacheCreationTokens?: number;
+		contextWindow?: number;
+		/**
+		 * Authority marker for `contextWindow`: true only when the window value
+		 * came from the provider's own payload, never from a config value or a
+		 * static-table fallback the parser injected. Parsers routinely seed
+		 * `contextWindow` with a fallback (see `usage-aggregator.ts` and
+		 * `codex-output-parser.ts`), so the presence of a window says nothing
+		 * about its provenance - only this flag does. Downstream,
+		 * `StdoutHandler.buildUsageStats` forwards it into
+		 * `UsageStats.contextWindowResolved`, which the renderer ranks above a
+		 * stored `customContextWindow` (finding P1).
+		 */
+		contextWindowReported?: boolean;
+		/**
+		 * Model identifier the provider reported for this turn (e.g.
+		 * `claude-opus-4-8`). Enables downstream resolution of the model's real
+		 * context window from the provider catalog. Set by providers whose window
+		 * is model-dependent (Oh My Pi); omitted otherwise.
+		 */
+		model?: string;
+		costUsd?: number;
+		/**
+		 * Reasoning/thinking tokens (separate from outputTokens)
+		 * Some models like OpenAI o3/o4-mini report reasoning tokens separately.
+		 * These are already included in outputTokens but tracked separately for UI display.
+		 */
+		reasoningTokens?: number;
+		/**
+		 * Absolute context-occupancy snapshot for the turn, when the provider can
+		 * report one. Distinct from the fields above, which for some providers are
+		 * per-turn token SPEND (claude-code sums every internal API call of a turn,
+		 * so a tool-heavy turn can exceed the context window). Set by the
+		 * claude-code parser from the LAST internal API call's `message.usage`,
+		 * which is real occupancy because a single call's input is what was
+		 * physically sent to the model. Copied straight onto `UsageStats.absoluteUsage`
+		 * by StdoutHandler.buildUsageStats.
+		 */
+		absoluteUsage?: {
+			inputTokens: number;
+			outputTokens: number;
+			cacheReadInputTokens: number;
+			cacheCreationInputTokens: number;
+			reasoningTokens: number;
+		};
+	};
+
+	/**
+	 * Available slash commands (for 'init' type)
+	 * Array of command strings (e.g., ['/help', '/compact', '/clear'])
+	 */
+	slashCommands?: string[];
+
+	/**
+	 * Is this a streaming/partial event?
+	 * If true, more content may follow for this message
+	 */
+	isPartial?: boolean;
+
+	/**
+	 * Is this reasoning/thinking content?
+	 * If true, this is internal agent reasoning that should not be included
+	 * in the final response text (streamedText). Used by agents like Copilot
+	 * where reasoning and answer deltas share the same event type.
+	 */
+	isReasoning?: boolean;
+
+	/**
+	 * Tool use blocks extracted from the message (for agents with mixed content)
+	 * When a message contains both text and tool_use, text goes in 'text' field
+	 * and tool_use blocks are here. Process-manager emits tool-execution for each.
+	 */
+	toolUseBlocks?: Array<{
+		name: string;
+		id?: string;
+		input?: unknown;
+	}>;
+
+	/**
+	 * Additional terminal-state tool results carried alongside a primary
+	 * 'tool_use' event when one message bundles several parallel tool_result
+	 * blocks (Claude Code returns parallel tool calls this way). The primary
+	 * result stays in the top-level toolName/toolCallId/toolState fields; the
+	 * remaining results live here so no parallel call is left stuck 'running'.
+	 * Process-manager emits a tool-execution for each.
+	 */
+	toolResultBlocks?: Array<{
+		toolName: string;
+		toolCallId: string;
+		toolState: unknown;
+		parentToolUseId?: string;
+	}>;
+
+	/**
+	 * Original event data for debugging
+	 * Preserved unchanged from agent output
+	 * Optional - primarily used for debugging and not read in production
+	 */
+	raw?: unknown;
+}
+
+/**
+ * Agent Output Parser Interface
+ *
+ * Provides an abstraction for parsing agent output.
+ * Each agent (Claude Code, OpenCode, etc.) implements this interface
+ * to transform their output format into normalized ParsedEvent objects.
+ */
+export interface AgentOutputParser {
+	/**
+	 * The agent ID this parser handles
+	 */
+	readonly agentId: ToolType;
+
+	/**
+	 * Parse a single JSON line from agent output
+	 *
+	 * @param line - A single line of JSON output from the agent
+	 * @returns ParsedEvent if the line is valid and should be processed, null otherwise
+	 */
+	parseJsonLine(line: string): ParsedEvent | null;
+
+	/**
+	 * Check if an event is a final result message
+	 * Result messages indicate the agent has completed its response
+	 *
+	 * @param event - The parsed event to check
+	 * @returns true if this is a final result event
+	 */
+	isResultMessage(event: ParsedEvent): boolean;
+
+	/**
+	 * Extract session ID from an event (if present)
+	 * Session IDs are used for conversation continuity
+	 *
+	 * @param event - The parsed event
+	 * @returns The session ID string or null if not present
+	 */
+	extractSessionId(event: ParsedEvent): string | null;
+
+	/**
+	 * Extract usage statistics from an event (if present)
+	 * Usage stats include token counts, cost, etc.
+	 *
+	 * @param event - The parsed event
+	 * @returns Usage stats or null if not present
+	 */
+	extractUsage(event: ParsedEvent): ParsedEvent['usage'] | null;
+
+	/**
+	 * Extract slash commands from an event (if present)
+	 * Slash commands are typically sent in init messages
+	 *
+	 * @param event - The parsed event
+	 * @returns Array of slash command strings or null if not present
+	 */
+	extractSlashCommands(event: ParsedEvent): string[] | null;
+
+	/**
+	 * Parse a pre-parsed JSON object into a normalized event.
+	 * Like parseJsonLine but accepts an already-parsed object to avoid redundant JSON.parse calls.
+	 * StdoutHandler parses JSON once and passes the object to this method.
+	 *
+	 * @param parsed - A pre-parsed JSON object from agent output
+	 * @returns ParsedEvent if the object is valid and should be processed, null otherwise
+	 */
+	parseJsonObject(parsed: unknown): ParsedEvent | null;
+
+	/**
+	 * Detect an error from a line of agent output
+	 * Checks for error patterns in the output and returns structured error info
+	 *
+	 * @param line - A single line of output from the agent (may be JSON or plain text)
+	 * @returns AgentError if an error was detected, null otherwise
+	 */
+	detectErrorFromLine(line: string): AgentError | null;
+
+	/**
+	 * Detect an error from a pre-parsed JSON object.
+	 * Like detectErrorFromLine but accepts an already-parsed object to avoid redundant JSON.parse calls.
+	 * StdoutHandler parses JSON once and passes the object to this method.
+	 *
+	 * @param parsed - A pre-parsed JSON object from agent output
+	 * @returns AgentError if an error was detected, null otherwise
+	 */
+	detectErrorFromParsed(parsed: unknown): AgentError | null;
+
+	/**
+	 * Is this detected error a notice the CLI may still recover from inside the
+	 * same turn? Optional: a parser without it treats every detected error as final.
+	 *
+	 * When true, StdoutHandler holds the error instead of emitting it. More model
+	 * output from the same process drops it; the end of the turn (a result message,
+	 * or process exit) emits it. Emitting it at once put the agent into the
+	 * blocking error state while the turn kept running out of sight, and the next
+	 * message then queued behind a process that was still busy.
+	 *
+	 * @param parsed - The pre-parsed JSON object detectErrorFromParsed flagged
+	 * @returns true if the error must wait for the turn to show whether it recovered
+	 */
+	isProvisionalErrorNotice?(parsed: unknown): boolean;
+
+	/**
+	 * Detect an error from process exit information
+	 * Called when the agent process exits to determine if there was an error
+	 *
+	 * @param exitCode - The process exit code
+	 * @param stderr - The stderr output (may be empty)
+	 * @param stdout - The stdout output (may be empty)
+	 * @returns AgentError if an error was detected, null otherwise
+	 */
+	detectErrorFromExit(exitCode: number, stderr: string, stdout: string): AgentError | null;
+}
+
+/**
+ * Registry of output parser implementations
+ * Maps agent IDs to their parser implementations
+ */
+const parserRegistry = new Map<ToolType, AgentOutputParser>();
+
+/**
+ * Register an output parser implementation
+ * @param parser - The parser implementation to register
+ */
+export function registerOutputParser(parser: AgentOutputParser): void {
+	parserRegistry.set(parser.agentId, parser);
+}
+
+/**
+ * Get the output parser implementation for an agent
+ * @param agentId - The agent ID (must be a valid ToolType)
+ * @returns The parser implementation or null if not available or invalid agent ID
+ */
+export function getOutputParser(agentId: ToolType | string): AgentOutputParser | null {
+	if (!isValidToolType(agentId)) {
+		return null;
+	}
+	return parserRegistry.get(agentId) || null;
+}
+
+/**
+ * Check if an agent has output parser support
+ * @internal Primarily used for testing - consider using getOutputParser() !== null instead
+ * @param agentId - The agent ID (must be a valid ToolType)
+ * @returns True if the agent has a registered parser, false for invalid agent IDs
+ */
+export function hasOutputParser(agentId: ToolType | string): boolean {
+	if (!isValidToolType(agentId)) {
+		return false;
+	}
+	return parserRegistry.has(agentId);
+}
+
+/**
+ * Get all registered parser implementations
+ * @internal Primarily used for logging and testing - not intended for production use
+ * @returns Array of all registered parser implementations
+ */
+export function getAllOutputParsers(): AgentOutputParser[] {
+	return Array.from(parserRegistry.values());
+}
+
+/**
+ * Clear the parser registry
+ * @internal Exposed for testing only - do not use in production code
+ */
+export function clearParserRegistry(): void {
+	parserRegistry.clear();
+}

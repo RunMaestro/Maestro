@@ -22,7 +22,7 @@ vi.mock('../../../main/utils/sentry', () => ({
 }));
 
 const mockGetShellPath = vi.fn(async () => '/login/shell/bin:/usr/bin:/bin');
-vi.mock('../../../main/runtime/getShellPath', () => ({
+vi.mock('../../../shared/maestro-lib/launch/getShellPath', () => ({
 	getShellPath: () => mockGetShellPath(),
 	peekShellPath: () => null,
 }));
@@ -31,7 +31,7 @@ vi.mock('../../../main/runtime/getShellPath', () => ({
 // code path only (no SSH config provided). Mocking here avoids pulling in the
 // transitive ssh-command-builder → execFile chain, which would try to wrap
 // the mocked `child_process` and break at module load.
-vi.mock('../../../main/utils/ssh-spawn-wrapper', () => ({
+vi.mock('../../../shared/maestro-lib/launch/ssh-spawn-wrapper', () => ({
 	wrapSpawnWithSsh: vi.fn(),
 }));
 
