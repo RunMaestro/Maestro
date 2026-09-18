@@ -2603,6 +2603,54 @@ Some text with [x] in it that's not a checkbox
 			expect(wrapConfig.customEnvVars).toBeDefined();
 			expect(wrapConfig.customEnvVars!.OPENCODE_CONFIG_CONTENT).toContain('"permission"');
 		});
+
+		// An explicit permissionMode outranks the legacy readOnlyMode flag, and
+		// every LOCAL decision in spawnJsonLineAgent already honors that
+		// (`effectiveReadOnly`: args, overrides, local env layers). The SSH env
+		// builder was handed the RAW flag, so a session set to full permissions
+		// still shipped the agent's `readOnlyEnvOverrides` to the remote - and
+		// those overwrite the user's own customEnvVars - so the remote rejected
+		// writes the user had explicitly authorized. Silent, and only over SSH.
+		// `opencode` is the agent used here because it is the only definition that
+		// declares `readOnlyEnvOverrides`; with any other agent the mapping has
+		// nothing to observe. The two cases pin both directions of it.
+		const OPENCODE_SSH_READONLY_PROBE = 'user-authorized-writes';
+
+		async function sshWrapConfigForOpencode(
+			options: Parameters<typeof spawnAgent>[4]
+		): Promise<{ customEnvVars?: Record<string, string> }> {
+			mockWrapSpawnWithSsh.mockResolvedValue(sshWrapResult({ args: ['remotehost'] }));
+			const p = spawnAgent('opencode', '/p', 'hi', undefined, options);
+			await driveSpawnToCompletion(p, 0);
+			return (
+				mockWrapSpawnWithSsh.mock.calls[0] as [{ customEnvVars?: Record<string, string> }]
+			)[0];
+		}
+
+		it('keeps readOnlyEnvOverrides off the remote when permissionMode is full', async () => {
+			const wrapConfig = await sshWrapConfigForOpencode({
+				sshRemoteConfig: { enabled: true, remoteId: 'r1' },
+				readOnlyMode: true,
+				permissionMode: 'full',
+				customEnvVars: { OPENCODE_CONFIG_CONTENT: OPENCODE_SSH_READONLY_PROBE },
+			});
+
+			expect(wrapConfig.customEnvVars!.OPENCODE_CONFIG_CONTENT).toBe(OPENCODE_SSH_READONLY_PROBE);
+		});
+
+		it('applies readOnlyEnvOverrides to the remote when permissionMode is readonly', async () => {
+			const wrapConfig = await sshWrapConfigForOpencode({
+				sshRemoteConfig: { enabled: true, remoteId: 'r1' },
+				readOnlyMode: false,
+				permissionMode: 'readonly',
+				customEnvVars: { OPENCODE_CONFIG_CONTENT: OPENCODE_SSH_READONLY_PROBE },
+			});
+
+			expect(wrapConfig.customEnvVars!.OPENCODE_CONFIG_CONTENT).not.toBe(
+				OPENCODE_SSH_READONLY_PROBE
+			);
+			expect(wrapConfig.customEnvVars!.OPENCODE_CONFIG_CONTENT).toContain('"permission"');
+		});
 	});
 
 	describe('spawnAgent: regression', () => {

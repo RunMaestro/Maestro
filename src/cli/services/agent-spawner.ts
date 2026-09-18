@@ -1005,7 +1005,12 @@ async function spawnJsonLineAgent(
 				args: baseArgs,
 				cwd,
 				prompt: effectivePrompt,
-				customEnvVars: buildSshEnvForRemote(def, readOnlyMode, userCustomEnvVars),
+				// `effectiveReadOnly`, not the raw `readOnlyMode`: every local decision in
+				// this function already honors the explicit permission mode, and handing
+				// the remote the raw flag gives a `permissionMode: 'full'` run the
+				// agent's `readOnlyEnvOverrides` anyway - the remote then rejects writes
+				// the user explicitly authorized, silently and only over SSH.
+				customEnvVars: buildSshEnvForRemote(def, effectiveReadOnly, userCustomEnvVars),
 				agentBinaryName: def?.binaryName,
 				noPromptSeparator,
 				promptArgs: def?.promptArgs,
