@@ -20,7 +20,10 @@ import { InlineCode } from './components/InlineCode';
 import { createMarkdownLink } from './components/MarkdownLink';
 import { createShikiCodeBlock } from './components/ShikiCodeBlock';
 import { AlertCallout } from './components/AlertCallout';
+import { FollowupChip } from './components/FollowupChip';
 import { alertTypeFromClassName } from './remarkAlert';
+import { readCodexDirectiveProps } from './remarkCodexDirectives';
+import { requestCodexFollowup } from '../../services/codexFollowup';
 
 export interface ChatMarkdownComponentsOptions {
 	theme: Theme;
@@ -39,6 +42,14 @@ export interface ChatMarkdownComponentsOptions {
 	/** Right-click handlers (owned by the shell so it can render the menus). */
 	onLinkContextMenu: (e: React.MouseEvent, url: string) => void;
 	onFileContextMenu: (e: React.MouseEvent, absPath: string, fileName: string) => void;
+	/**
+	 * Which conversation a clicked `:codex-followup` chip belongs to. Present
+	 * only where a Codex agent's own message is being drawn, because that is the
+	 * only place a directive is an OFFER rather than text somebody typed. Absent
+	 * makes the chip inert: the directive renders as the plain span it already
+	 * is, with no control to press.
+	 */
+	codexFollowup?: { sessionId: string; tabId: string };
 }
 
 export function createChatMarkdownComponents(
@@ -55,6 +66,7 @@ export function createChatMarkdownComponents(
 		bionifyAlgorithm,
 		onLinkContextMenu,
 		onFileContextMenu,
+		codexFollowup,
 	} = options;
 
 	const withReadableTransforms = (children: React.ReactNode) =>
@@ -208,5 +220,44 @@ export function createChatMarkdownComponents(
 			onToggle: _onToggle,
 			...props
 		}: JSX.IntrinsicElements['details'] & ExtraProps) => <details {...props} />,
+		/*
+		 * Codex assistant directives, tagged as spans by `remarkCodexDirectives`.
+		 *
+		 * Every branch that is not a wired-up followup falls through to the plain
+		 * span with its children, which keeps the override inert in the two places
+		 * it has to be: a surface with no `codexFollowup` context (a non-Codex
+		 * agent, a user message, a tool result), and any other span in the
+		 * message - chat renders sanitized raw HTML, so an agent drawing its own
+		 * `<span>` must still get one.
+		 *
+		 * Only `codex-followup` draws a chip today. The rest of the allowlist is
+		 * recognized by the parser but has no click behavior to offer yet, and a
+		 * directive with no renderer is better left as the text it arrived as than
+		 * turned into a chip that does nothing.
+		 */
+		span: ({ node: _node, children, ...props }: JSX.IntrinsicElements['span'] & ExtraProps) => {
+			const plain = <span {...props}>{children}</span>;
+			if (!codexFollowup) return plain;
+
+			const directive = readCodexDirectiveProps(props as Record<string, unknown>);
+			if (!directive || directive.name !== 'codex-followup') return plain;
+
+			const { sessionId, tabId } = codexFollowup;
+			const prompt = directive.attributes.prompt ?? '';
+			return (
+				<FollowupChip
+					// The `[Label]` is optional in the grammar even though the bundled
+					// skills always emit one. Showing the prompt is the honest fallback:
+					// the alternative is a chip with nothing but an arrow on it, which
+					// says less about what a click does than the wire text did.
+					label={directive.label || prompt}
+					prompt={prompt}
+					sessionId={sessionId}
+					tabId={tabId}
+					theme={theme}
+					onActivate={(mode) => requestCodexFollowup({ prompt, sessionId, tabId, mode })}
+				/>
+			);
+		},
 	};
 }

@@ -45,6 +45,75 @@ export const CODEX_DIRECTIVE_DATA_ATTRIBUTES = {
 	payload: 'dataCodexDirectivePayload',
 } as const;
 
+/** `dataCodexDirectiveLabel` -> `data-codex-directive-label`. */
+function toDomAttribute(hastProperty: string): string {
+	return hastProperty.replace(/[A-Z]/g, (char) => `-${char.toLowerCase()}`);
+}
+
+/**
+ * The same three attributes as REACT hands them to a component.
+ *
+ * A remark plugin writes hast property names (the camelCase form above) and
+ * react-markdown hands a component the HTML attribute name, so the writer and
+ * the reader necessarily spell them differently. They are derived from one list
+ * rather than written twice because the failure mode is silent: a reader
+ * looking for the wrong name simply finds no directive and renders the plain
+ * span, which is indistinguishable from a message that never had one.
+ */
+export const CODEX_DIRECTIVE_DOM_ATTRIBUTES = {
+	name: toDomAttribute(CODEX_DIRECTIVE_DATA_ATTRIBUTES.name),
+	label: toDomAttribute(CODEX_DIRECTIVE_DATA_ATTRIBUTES.label),
+	payload: toDomAttribute(CODEX_DIRECTIVE_DATA_ATTRIBUTES.payload),
+} as const;
+
+/** What a component map recovers from one rendered directive element. */
+export interface RenderedCodexDirective {
+	name: string;
+	label: string;
+	attributes: Record<string, string>;
+}
+
+/**
+ * Read a directive back off the props react-markdown hands a component, or
+ * return `null` when the element is not one.
+ *
+ * This lives beside the writer on purpose: the attribute names and the payload's
+ * JSON shape are decided ten lines up, and a reader in another file drifts from
+ * them silently. A malformed or non-object payload returns `null` so the caller
+ * renders the plain element - throwing here would take down the whole message
+ * over one bad attribute, and the attribute is machine-written, so a reader
+ * cannot assume it was well-formed just because we wrote it.
+ */
+export function readCodexDirectiveProps(
+	props: Record<string, unknown>
+): RenderedCodexDirective | null {
+	const name = props[CODEX_DIRECTIVE_DOM_ATTRIBUTES.name];
+	if (typeof name !== 'string' || !name) return null;
+
+	const rawLabel = props[CODEX_DIRECTIVE_DOM_ATTRIBUTES.label];
+	const rawPayload = props[CODEX_DIRECTIVE_DOM_ATTRIBUTES.payload];
+
+	const attributes: Record<string, string> = {};
+	if (typeof rawPayload === 'string' && rawPayload) {
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(rawPayload);
+		} catch {
+			return null;
+		}
+		// An array or a bare string parses fine and is not an attribute set. Only
+		// string values survive, so a caller never has to type-check one.
+		if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+		for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+			if (typeof value === 'string') attributes[key] = value;
+		}
+	} else if (rawPayload !== undefined) {
+		return null;
+	}
+
+	return { name, label: typeof rawLabel === 'string' ? rawLabel : '', attributes };
+}
+
 /** A half-open source range, in the UTF-16 offsets mdast positions already use. */
 interface Span {
 	start: number;

@@ -109,14 +109,17 @@ export function FollowupChip({
 					lineHeight: 1.5,
 					cursor: 'pointer',
 					verticalAlign: 'baseline',
-					// The label is a short action name; the prompt behind it is not,
-					// and that is what the overlay is for.
+					// One line, and never wider than the prose it sits in. Nothing
+					// bounds the length of an agent-authored label, so a long one
+					// ellipsises here rather than pushing the transcript sideways -
+					// the full text is on the overlay and on the accessible name.
 					whiteSpace: 'nowrap',
+					maxWidth: '100%',
 					textAlign: 'left',
 				}}
 			>
 				<span aria-hidden="true">➤</span>
-				<span>{label}</span>
+				<span style={{ overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{label}</span>
 			</button>
 		</HoverTooltip>
 	);
