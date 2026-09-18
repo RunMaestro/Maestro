@@ -123,6 +123,23 @@ export function isMediaStreamUrl(value: string | null | undefined): boolean {
 }
 
 /**
+ * The HTTP address the web-desktop bundle loads a stream URL from.
+ *
+ * A browser has no handler for the custom scheme, so the embedded web server
+ * exposes the same handler at `/<securityToken>/media/stream/<token>/<hex>`
+ * (see `src/main/web-server/routes/mediaRoutes.ts`). The per-boot media token
+ * still rides in the path, so the route grants exactly what the scheme does.
+ *
+ * @returns The route path, or `null` when `streamUrl` is not a stream URL.
+ */
+export function buildMediaStreamHttpPath(securityToken: string, streamUrl: string): string | null {
+	if (!securityToken || !isMediaStreamUrl(streamUrl)) return null;
+	const segments = streamUrl.slice(`${MEDIA_SCHEME}://${MEDIA_STREAM_HOST}/`.length).split('/');
+	if (segments.length !== 2 || !segments[0] || !segments[1]) return null;
+	return `/${securityToken}/media/stream/${segments[0]}/${segments[1]}`;
+}
+
+/**
  * Validate a stream URL and recover the file path it points at.
  *
  * @returns The absolute path, or `null` when the URL is malformed, targets the

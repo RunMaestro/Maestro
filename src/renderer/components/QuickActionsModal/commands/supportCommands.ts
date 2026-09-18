@@ -33,6 +33,8 @@ interface BuildSupportCommandsArgs {
 		help?: QuickAction['shortcut'];
 		systemLogs?: QuickAction['shortcut'];
 		processMonitor?: QuickAction['shortcut'];
+		openThemeSettings?: QuickAction['shortcut'];
+		openLeaderboard?: QuickAction['shortcut'];
 	};
 }
 
@@ -70,6 +72,7 @@ export function buildSupportCommands({
 		{
 			id: 'theme',
 			label: 'Change Theme',
+			shortcut: shortcuts.openThemeSettings,
 			action: () => {
 				setSettingsModalOpen(true);
 				setSettingsTab('theme');
@@ -131,6 +134,7 @@ export function buildSupportCommands({
 		{
 			id: 'leaderboard',
 			label: isLeaderboardRegistered ? 'Leaderboard Registration' : 'Join Leaderboard',
+			shortcut: shortcuts.openLeaderboard,
 			subtext: isLeaderboardRegistered
 				? 'Update your global runmaestro.ai leaderboard profile'
 				: 'Register for the global runmaestro.ai leaderboard',

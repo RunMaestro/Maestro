@@ -17,6 +17,7 @@ import { notifyCenterFlash } from '../stores/centerFlashStore';
 import { notifyToast } from '../stores/notificationStore';
 import { closeFileTab } from '../utils/tabHelpers';
 import { captureException } from '../utils/sentry';
+import { requestFileTreeRefresh } from '../utils/fileTreeRefresh';
 import { getBasename } from '../../shared/formatters';
 import type { Session } from '../types';
 
@@ -84,8 +85,8 @@ async function deleteFile({ path, sshRemoteId, sessionId }: ResolvedDeleteReques
 	closePreviewTabsForPath(sessionId, path);
 
 	// Nudge the Files panel so the deleted entry disappears without waiting for
-	// its next auto-refresh. Same CustomEvent the remote/CLI paths dispatch.
-	window.dispatchEvent(new CustomEvent('maestro:refreshFileTree', { detail: { sessionId } }));
+	// its next auto-refresh.
+	requestFileTreeRefresh(sessionId);
 
 	notifyCenterFlash({ message: 'Deleted', detail: name, color: 'orange' });
 }

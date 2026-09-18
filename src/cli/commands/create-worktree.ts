@@ -77,6 +77,11 @@ export async function createWorktree(options: CreateWorktreeOptions): Promise<vo
 						sessionId: createdResult.sessionId,
 						command: message,
 						inputMode: 'ai',
+						// Carry the placement the CALLER asked for, rather than letting
+						// send_command re-resolve it as `dispatch`. `--background` created
+						// the agent quietly and this message then selected it anyway, so
+						// the flag looked broken whenever a message was passed.
+						background,
 					},
 					'command_result'
 				);

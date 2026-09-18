@@ -137,6 +137,19 @@ describe('run-doc command', () => {
 		expect(formatInfo).toHaveBeenCalledWith('Agent: Frontend');
 	});
 
+	it('forwards --ignore-model-hints to the engine', async () => {
+		vi.mocked(executePlaybook).mockReturnValue(mockEventGenerator([{ type: 'complete' }]));
+
+		await runDoc(['plans/frontend-plan.md'], { agent: 'Frontend', ignoreModelHints: true });
+
+		expect(executePlaybook).toHaveBeenCalledWith(
+			mockSession(),
+			expect.anything(),
+			'/path/to/playbooks',
+			expect.objectContaining({ ignoreModelHints: true })
+		);
+	});
+
 	it('passes loop configuration through to the ephemeral playbook', async () => {
 		vi.mocked(executePlaybook).mockReturnValue(mockEventGenerator([]));
 

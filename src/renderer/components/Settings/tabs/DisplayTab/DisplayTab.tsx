@@ -11,16 +11,19 @@ import {
 	FontZoomSection,
 	GroupChatSection,
 	IconThemeSection,
+	ProviderModePillSection,
 	LeftSidePanelSection,
 	MainHeaderPanelSection,
 	MaxLogBufferSection,
 	MaxOutputLinesSection,
 	MessageAlignmentSection,
 	ModalLayoutSection,
+	SavedTypographySection,
 	TabOptionsSection,
 	TypographyResetSection,
 	WindowChromeSection,
 } from './components';
+import { typographySnapshotMatches } from '../../../../../shared/typographySnapshot';
 import { useBionifyAlgorithmState, useFontConfigurationState } from './hooks';
 import type { DisplayTabProps } from './types';
 import { PluginPanelSlot } from '../../../plugins/PluginPanelSlot';
@@ -37,6 +40,11 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 		setBionifyAlgorithm: settings.setBionifyAlgorithm,
 	});
 
+	// The store read as a plain record, which is what both the snapshot
+	// comparison and the font pickers below want. Built once so the two cannot
+	// disagree about what is currently set.
+	const settingsRecord = settings as unknown as Record<string, unknown>;
+
 	return (
 		<div className="space-y-5">
 			<TypographyResetSection
@@ -47,6 +55,7 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 					terminalFontFamily: settings.terminalFontFamily,
 					filePreviewFontFamily: settings.filePreviewFontFamily,
 					fileEditorFontFamily: settings.fileEditorFontFamily,
+					documentGraphFontFamily: settings.documentGraphFontFamily,
 				}}
 				sizes={{
 					fontSize: settings.fontSize,
@@ -54,12 +63,20 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 					terminalFontSize: settings.terminalFontSize,
 					filePreviewFontSize: settings.filePreviewFontSize,
 					fileEditorFontSize: settings.fileEditorFontSize,
+					documentGraphFontSize: settings.documentGraphFontSize,
 				}}
 				onReset={settings.resetTypography}
 			/>
+			<SavedTypographySection
+				theme={theme}
+				snapshot={settings.typographySnapshot ?? null}
+				isCurrent={typographySnapshotMatches(settings.typographySnapshot ?? null, settingsRecord)}
+				onSave={settings.saveTypographySnapshot}
+				onRestore={settings.restoreTypographySnapshot}
+			/>
 			<FontsSection
 				theme={theme}
-				settings={settings as unknown as Record<string, unknown>}
+				settings={settingsRecord}
 				fontConfiguration={fontConfiguration}
 				setSurfaceFontFamily={settings.setSurfaceFontFamily}
 				setSurfaceFontSize={settings.setSurfaceFontSize}
@@ -88,6 +105,11 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 				theme={theme}
 				groupChatAutoScroll={settings.groupChatAutoScroll}
 				setGroupChatAutoScroll={settings.setGroupChatAutoScroll}
+			/>
+			<ProviderModePillSection
+				theme={theme}
+				showProviderModePill={settings.showProviderModePill}
+				setShowProviderModePill={settings.setShowProviderModePill}
 			/>
 			<IconThemeSection
 				theme={theme}
@@ -169,6 +191,8 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 				theme={theme}
 				documentGraphShowExternalLinks={settings.documentGraphShowExternalLinks}
 				setDocumentGraphShowExternalLinks={settings.setDocumentGraphShowExternalLinks}
+				documentGraphConfirmClose={settings.documentGraphConfirmClose}
+				setDocumentGraphConfirmClose={settings.setDocumentGraphConfirmClose}
 				documentGraphMaxNodes={settings.documentGraphMaxNodes}
 				setDocumentGraphMaxNodes={settings.setDocumentGraphMaxNodes}
 			/>

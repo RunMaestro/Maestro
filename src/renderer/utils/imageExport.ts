@@ -15,7 +15,9 @@
 
 import { safeClipboardWrite, safeClipboardWriteImage } from './clipboard';
 import { DIAGRAMS_DIR } from '../../shared/maestro-paths';
-import { joinPath, isAbsolutePath } from '../../shared/formatters';
+import { joinPath, isAbsolutePath, fileTimestampSlug } from '../../shared/formatters';
+import { requestFileTreeRefresh } from './fileTreeRefresh';
+import { isSessionImageRef } from '../../shared/sessionImageRefs';
 
 /** Anything the right-click menu can copy or save. */
 export type ExportableImage = SVGSVGElement | HTMLImageElement;
@@ -132,7 +134,10 @@ export async function imgToDataUrl(img: HTMLImageElement): Promise<string | null
 	if (!src) return null;
 	if (src.startsWith('data:')) return src;
 
-	if (src.startsWith('maestro-image://')) {
+	// `src` may carry a `?tw=&th=` thumbnail query (the transcript chip renders a
+	// downscaled rendition). `images.resolve` ignores the query and hands back the
+	// ORIGINAL bytes, which is what an export or a clipboard copy must contain.
+	if (isSessionImageRef(src)) {
 		const resolved = await window.maestro?.images?.resolve(src);
 		if (resolved) return resolved;
 	}
@@ -250,6 +255,12 @@ export interface ImageSaveTarget {
 	relativeDir?: string;
 	/** File name including extension. Defaults to a timestamped suggestion. */
 	fileName?: string;
+	/**
+	 * Agent whose Files panel should pick the new file up. Optional because a
+	 * surface can render an image before any agent exists (the wizard); when it
+	 * is absent the tree simply refreshes on its own timer.
+	 */
+	sessionId?: string;
 }
 
 export interface ImageSaveToProjectResult {
@@ -257,15 +268,6 @@ export interface ImageSaveToProjectResult {
 	path: string;
 	/** Project-relative path, for display (e.g. `.maestro/diagrams/diagram-…svg`). */
 	relativePath: string;
-}
-
-/** `20260713-142530` - sorts chronologically and is filesystem-safe everywhere. */
-function timestampSlug(now: Date): string {
-	const pad = (n: number) => String(n).padStart(2, '0');
-	return (
-		`${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}` +
-		`-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
-	);
 }
 
 /**
@@ -294,7 +296,7 @@ export function defaultExtensionFor(el: ExportableImage, sourceDataUrl?: string 
  */
 export function suggestImageFileName(el: ExportableImage, extension: string): string {
 	const kind = isSvgElement(el) ? 'diagram' : 'image';
-	return `${kind}-${timestampSlug(new Date())}.${extension}`;
+	return `${kind}-${fileTimestampSlug()}.${extension}`;
 }
 
 /** Encode a target in the requested format, as markup or a data URL. */
@@ -410,6 +412,13 @@ export async function saveImageToProject(
 			: await window.maestro.fs.writeImageFile(path, encoded.dataUrl, target.sshRemoteId);
 	if (!result?.success) throw new Error(`Failed to write ${path}`);
 
+	// A file just appeared in the project. The Files panel would not show it
+	// until its next timed refresh, and the toast this save raises offers to
+	// open it - so a tree that has not caught up reads as the save having
+	// failed. Fired here rather than in the caller because this function is the
+	// single in-project destination every "Save Image" surface goes through.
+	requestFileTreeRefresh(target.sessionId);
+
 	return { path, relativePath: joinPath(relativeDir, filename) };
 }
 
@@ -475,6 +484,47 @@ export async function saveImageElementToDisk(el: ExportableImage): Promise<SaveI
 			const bytes = wantsPng && sourceExt !== 'png' ? imgToPngDataUrl(img!) : sourceDataUrl!;
 			await window.maestro.fs.writeImageFile(filePath, bytes);
 		}
+	} catch (err) {
+		return { saved: false, error: err instanceof Error ? err.message : 'Failed to write the file' };
+	}
+
+	return { saved: true, path: filePath };
+}
+
+/**
+ * Save image bytes to disk, asking the user where via the native save dialog.
+ *
+ * The sibling `saveImageElementToDisk` exports an image that is already in the
+ * DOM; this one takes bytes produced on the fly (a screenshot, a canvas render)
+ * that have no element to point at. Falls back to a browser download when the
+ * native dialog is unavailable (web renderer). A cancelled dialog reports
+ * `{ saved: false }` with no error.
+ */
+export async function saveImageDataUrlToDisk(
+	dataUrl: string,
+	defaultName?: string
+): Promise<SaveImageResult> {
+	const ext = dataUrlExtension(dataUrl);
+	const name = defaultName?.trim() || `maestro-image.${ext}`;
+
+	const saveFile = window.maestro?.dialog?.saveFile;
+	if (!saveFile) {
+		downloadDataUrl(dataUrl, name);
+		return { saved: true };
+	}
+
+	const filePath = await saveFile({
+		defaultPath: name,
+		filters: [{ name: `${ext.toUpperCase()} Image`, extensions: [ext] }],
+		title: 'Save Image',
+	});
+	if (!filePath) return { saved: false };
+
+	try {
+		// Raster bytes go through writeImageFile - fs.writeFile is UTF-8 and
+		// would corrupt them.
+		const result = await window.maestro.fs.writeImageFile(filePath, dataUrl);
+		if (!result?.success) return { saved: false, error: `Failed to write ${filePath}` };
 	} catch (err) {
 		return { saved: false, error: err instanceof Error ? err.message : 'Failed to write the file' };
 	}

@@ -1,19 +1,39 @@
 /**
- * useTimeTracking - Visibility- and sleep-aware time tracking for batch processing
+ * useTimeTracking - sleep-aware elapsed time for an Auto Run.
  *
- * This hook provides accurate elapsed time tracking that excludes time when the
- * document is hidden (window minimized, tab switch) AND time the machine spent
- * asleep. This ensures that batch processing elapsed times reflect actual active
- * processing time.
+ * Measures how long a run actually ran. The machine being asleep is subtracted,
+ * because the agent really does stop; nothing else is.
  *
- * Visibility alone does not cover sleep: a system suspend never fires
+ * ## Why the window being hidden is NOT subtracted
+ *
+ * This hook used to pause on `visibilitychange` as well, on the theory that it
+ * was measuring "active processing time". It was not. The agent is a separate
+ * process: it keeps working whether or not the Maestro window is on screen, and
+ * in Electron on macOS `document.hidden` goes true when the window is merely
+ * minimized or fully covered by another app. So the clock stopped whenever the
+ * user looked at something else, which on a long unattended run is nearly all
+ * of it.
+ *
+ * That quantity is the USER'S ATTENTION, and it was being recorded as the
+ * AGENT'S RUNTIME - into `auto_run_sessions.duration` (the Usage Dashboard's
+ * "Longest Auto Runs" table) and into the leaderboard delta submitted at
+ * completion. Measured on one real database: a run whose own task timestamps
+ * span 22h 10m was recorded as 6h 52m, twenty-one runs recorded exactly zero,
+ * and 71 hours went missing in total. The runs that read correctly were the
+ * ones the user happened to sit and watch, which is precisely backwards - an
+ * unattended overnight run is the one whose duration matters most.
+ *
+ * Note the badge/leaderboard tick in `useAutoRunAchievements` never had this
+ * bug: it accrues on a 60s `sleepAwareElapsedMs` interval with no visibility
+ * gate. That is why the local Conductor badge could show a 22h run that the
+ * dashboard table had no row for.
+ *
+ * Sleep still needs its own signal: a system suspend never fires
  * `visibilitychange` (the window stays "visible" while the whole process is
- * frozen), so the sleep gap comes from the main process via `systemSleep`.
+ * frozen), so the gap comes from the main process via `systemSleep`.
  *
  * Features:
  * - Per-session time tracking
- * - Automatic pause when document becomes hidden
- * - Automatic resume when document becomes visible
  * - Machine sleep subtracted from any session that was counting through it
  * - Proper cleanup on unmount
  */
@@ -86,18 +106,23 @@ export interface UseTimeTrackingReturn {
 }
 
 /**
- * Hook for visibility-aware time tracking keyed by session ID
+ * Hook for sleep-aware time tracking keyed by session ID.
  *
  * Time tracking behavior:
  * - When startTracking is called, the current timestamp is recorded
- * - While document is visible, time accumulates normally
- * - When document becomes hidden, the elapsed time since last active is accumulated
- *   and the active timestamp is cleared
- * - When document becomes visible again, a new active timestamp is set
+ * - Time accumulates for as long as the run is tracked, whether or not the
+ *   Maestro window is on screen - see the note at the top of this file
+ * - A machine sleep is subtracted by walking the active timestamp forward
  * - When stopTracking is called, the final accumulated time is returned
  *
+ * `accumulatedTimeRefs` and the nullable `lastActiveTimestampRefs` are kept
+ * even though nothing pauses a session any more: sleep correction writes
+ * through the same timestamp, and the `onTimeUpdate` shape (which persists into
+ * `BatchRunState.accumulatedElapsedMs` / `lastActiveTimestamp`, and from there
+ * into state restored across a reload) is unchanged by this fix.
+ *
  * Memory safety guarantees:
- * - Visibility change listener is removed on unmount
+ * - Sleep subscription is removed on unmount
  * - Session tracking data is cleaned up when stopTracking is called
  */
 export function useTimeTracking(options: UseTimeTrackingOptions): UseTimeTrackingReturn {
@@ -119,41 +144,6 @@ export function useTimeTracking(options: UseTimeTrackingOptions): UseTimeTrackin
 	// Track which sessions are being tracked
 	const trackingSessionsRef = useRef<Set<string>>(new Set());
 
-	// Visibility change handler effect
-	useEffect(() => {
-		const handleVisibilityChange = () => {
-			const now = Date.now();
-
-			// Only update sessions that are currently being tracked
-			for (const sessionId of trackingSessionsRef.current) {
-				if (document.hidden) {
-					// Document is now hidden: accumulate time and clear the active timestamp
-					const lastActive = lastActiveTimestampRefs.current[sessionId];
-					if (lastActive !== null && lastActive !== undefined) {
-						accumulatedTimeRefs.current[sessionId] =
-							(accumulatedTimeRefs.current[sessionId] || 0) + (now - lastActive);
-						lastActiveTimestampRefs.current[sessionId] = null;
-					}
-				} else {
-					// Document is now visible: set a new active timestamp
-					lastActiveTimestampRefs.current[sessionId] = now;
-				}
-
-				// Notify callback if provided
-				if (onTimeUpdateRef.current) {
-					onTimeUpdateRef.current(
-						sessionId,
-						accumulatedTimeRefs.current[sessionId] || 0,
-						lastActiveTimestampRefs.current[sessionId] ?? null
-					);
-				}
-			}
-		};
-
-		document.addEventListener('visibilitychange', handleVisibilityChange);
-		return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-	}, []); // Empty deps - handler uses refs for latest values
-
 	// Machine sleep: discard the slept span from every session that was counting
 	// through it by walking its active timestamp forward.
 	useEffect(() => {
@@ -162,12 +152,12 @@ export function useTimeTracking(options: UseTimeTrackingOptions): UseTimeTrackin
 
 			for (const sessionId of trackingSessionsRef.current) {
 				const lastActive = lastActiveTimestampRefs.current[sessionId];
-				// Already paused (document hidden) - the sleep is excluded anyway.
+				// No live span to correct (a session mid-teardown). Nothing to do.
 				if (lastActive === null || lastActive === undefined) continue;
 
-				// Clamp to the live span so we can never subtract sleep twice. On a
-				// platform where the sleep DID fire a hide/show pair, `lastActive` is
-				// already the wake timestamp and this correction rounds to zero.
+				// Clamp to the live span so we can never subtract more sleep than
+				// this session was actually counting - a session that started after
+				// the machine went to sleep must not have the whole gap taken off it.
 				const skipMs = Math.min(sleptMs, Math.max(0, now - lastActive));
 				if (skipMs <= 0) continue;
 				lastActiveTimestampRefs.current[sessionId] = lastActive + skipMs;
@@ -189,9 +179,12 @@ export function useTimeTracking(options: UseTimeTrackingOptions): UseTimeTrackin
 	const startTracking = useCallback((sessionId: string): number => {
 		const now = Date.now();
 
-		// Initialize tracking for this session
+		// Initialize tracking for this session. Unconditionally counting from now:
+		// a run launched from a background window (a CLI dispatch, a Cue trigger,
+		// a second monitor the user is not looking at) is running, and starting it
+		// at `null` used to leave it that way with nothing to un-pause it.
 		accumulatedTimeRefs.current[sessionId] = 0;
-		lastActiveTimestampRefs.current[sessionId] = document.hidden ? null : now;
+		lastActiveTimestampRefs.current[sessionId] = now;
 		trackingSessionsRef.current.add(sessionId);
 
 		return now;
@@ -204,9 +197,11 @@ export function useTimeTracking(options: UseTimeTrackingOptions): UseTimeTrackin
 		const accumulated = accumulatedTimeRefs.current[sessionId] || 0;
 		const lastActive = lastActiveTimestampRefs.current[sessionId];
 
-		// Calculate final elapsed time
+		// Calculate final elapsed time. The live span counts regardless of window
+		// visibility - a run that finishes while the user is in another app has
+		// still been running, and gating this is what recorded whole runs as zero.
 		let finalElapsed = accumulated;
-		if (lastActive !== null && lastActive !== undefined && !document.hidden) {
+		if (lastActive !== null && lastActive !== undefined) {
 			finalElapsed += Date.now() - lastActive;
 		}
 
@@ -225,8 +220,9 @@ export function useTimeTracking(options: UseTimeTrackingOptions): UseTimeTrackin
 		const accumulated = accumulatedTimeRefs.current[sessionId] || 0;
 		const lastActive = lastActiveTimestampRefs.current[sessionId];
 
-		// If currently visible and tracking, add time since last active timestamp
-		if (lastActive !== null && lastActive !== undefined && !document.hidden) {
+		// Add the live span since the last active timestamp. Not gated on window
+		// visibility: see stopTracking above and the note at the top of the file.
+		if (lastActive !== null && lastActive !== undefined) {
 			return accumulated + (Date.now() - lastActive);
 		}
 

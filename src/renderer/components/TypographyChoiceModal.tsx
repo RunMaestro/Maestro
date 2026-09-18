@@ -2,10 +2,10 @@
  * TypographyChoiceModal - the one-time "how should Maestro read?" chooser.
  *
  * Maestro was monospace on every surface until per-surface fonts existed. Now
- * that the interface, chat, terminal, preview, and editor can each carry their
- * own face, the honest opening question is one choice rather than five pickers,
- * so this offers two presets as large side-by-side cards and writes all five
- * settings at once.
+ * that the interface, chat, terminal, preview, document graph, and editor can
+ * each carry their own face, the honest opening question is one choice rather
+ * than six pickers, so this offers two presets as large side-by-side cards and
+ * writes all six settings at once.
  *
  * Shown once, gated on the `typographyPromptSeen` setting. That flag is false
  * both on a fresh install and on every install that predates it, which is what
@@ -32,7 +32,12 @@ import {
 	TYPOGRAPHY_PRESET_IDS,
 	type TypographyPresetId,
 } from '../../shared/typographyPresets';
-import { withMonoFallback, SANS_FALLBACK_STACK } from '../../shared/fontStack';
+import {
+	withMonoFallback,
+	SANS_FALLBACK_STACK,
+	FONT_PREVIEW_PROSE,
+	FONT_PREVIEW_CODE,
+} from '../../shared/fontStack';
 import { logger } from '../utils/logger';
 
 export interface TypographyChoiceModalProps {
@@ -57,9 +62,12 @@ export interface TypographyChoiceModalProps {
 	onOpenDisplaySettings: () => void;
 }
 
-/** Preview line rendered inside each card, in that preset's own faces. */
-const PREVIEW_PROSE = 'The quick brown fox jumps over the lazy dog.';
-const PREVIEW_CODE = 'const tempo = 120; // adagio -> allegro';
+/**
+ * Preview lines rendered inside each card, in that preset's own faces. Shared
+ * with the Settings font pickers so a face reads the same on both screens.
+ */
+const PREVIEW_PROSE = FONT_PREVIEW_PROSE;
+const PREVIEW_CODE = FONT_PREVIEW_CODE;
 
 function PresetCard({
 	theme,
@@ -109,7 +117,7 @@ function PresetCard({
 				</span>
 				{selected && (
 					<span
-						className="ml-auto flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full"
+						className="ml-auto flex items-center gap-1 text-xs-plus font-bold px-2 py-0.5 rounded-full"
 						style={{
 							backgroundColor: theme.colors.accent,
 							color: theme.colors.accentForeground,
@@ -144,7 +152,7 @@ function PresetCard({
 				</p>
 			</div>
 
-			<dl className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-1 text-[11px]">
+			<dl className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-1 text-xs-plus">
 				{preset.surfaces.map((surface) => (
 					<div key={surface.label} className="contents">
 						<dt style={{ color: theme.colors.textDim, fontFamily: proseFont }}>{surface.label}</dt>

@@ -42,6 +42,14 @@ export const CUE_YAML_TEMPLATE = `# .maestro/cue.yaml
 #     prompt: prompts/issue-triage.md # reference {{CUE_NEW_COMMENTS}} for comment context
 #     enabled: true
 #
+#   - name: "work labeled PRs"
+#     event: github.label
+#     gh_label_target: pr          # pr | issue | both (default both)
+#     gh_labels: ["ready-to-merge"] # omit to fire on any label
+#     poll_minutes: 2
+#     prompt: prompts/labeled-pr.md  # {{CUE_GH_LABEL}} is the label that landed
+#     enabled: true
+#
 #   - name: "process task queue"
 #     event: task.pending
 #     watch: "tasks/**/*.md"

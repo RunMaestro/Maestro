@@ -35,6 +35,13 @@ const renderWithProviders = (ui: React.ReactElement) => {
 };
 
 // Mock the external dependencies
+// CodeMirror cannot lay itself out in jsdom, so the Auto Run source editor is
+// swapped for the shared textarea double (it still implements the editor handle).
+vi.mock('../../../renderer/components/FilePreview/markdownEditor', async () => {
+	const { markdownEditorModuleMock } = await import('../../helpers/mockMarkdownEditor');
+	return markdownEditorModuleMock();
+});
+
 vi.mock('react-markdown', () => ({
 	default: ({ children }: { children: string }) => (
 		<div data-testid="react-markdown">{children}</div>
@@ -707,7 +714,7 @@ describe('AutoRun Save Path Correctness', () => {
 				longContent,
 				undefined // sshRemoteId (undefined for local sessions)
 			);
-		});
+		}, 30_000);
 	});
 
 	describe('Save during batch run lock', () => {

@@ -100,6 +100,18 @@ vi.mock('../../../renderer/components/ThinkingStatusPill', () => ({
 	),
 }));
 
+// Captures the `onInterrupt` prop, which is the whole decision under test: the
+// indicator only carries Stop when the thinking pill is NOT already offering it.
+vi.mock('../../../renderer/components/CrossAgentResponseIndicator', () => ({
+	CrossAgentResponseIndicator: vi.fn(({ onInterrupt }) => (
+		<div
+			data-testid="cross-agent-indicator"
+			data-has-stop={onInterrupt ? 'yes' : 'no'}
+			onClick={onInterrupt}
+		/>
+	)),
+}));
+
 vi.mock('../../../renderer/components/ExecutionQueueIndicator', () => ({
 	ExecutionQueueIndicator: vi.fn(({ onClick }) => (
 		<button data-testid="execution-queue-indicator" onClick={onClick}>
@@ -737,8 +749,10 @@ describe('InputArea', () => {
 			render(<InputArea {...props} />);
 
 			expect(
+				// Prefix match: the tooltip now carries the toggle's chord as a
+				// suffix, so an exact-string lookup would break on every rebind.
 				screen.getByTitle(
-					'Full Access: All permission prompts bypassed. Agent can read, write, and execute without confirmation. Ask-back questions (AskUserQuestion) are not surfaced in this mode.'
+					/^Full Access: All permission prompts bypassed\. Agent can read, write, and execute without confirmation\. Ask-back questions \(AskUserQuestion\) are not surfaced in this mode\./
 				)
 			).toBeInTheDocument();
 		});
@@ -2604,5 +2618,116 @@ describe('InputArea', () => {
 
 			expect(screen.queryByTestId('context-warning-sash')).not.toBeInTheDocument();
 		});
+	});
+});
+
+/**
+ * Stop is one agent-level action, so exactly one Stop may be on screen. The
+ * thinking pill owns it whenever it renders; the cross-agent pill picks it up
+ * only when the thinking pill is absent, which is what happens to a message
+ * addressed solely to other agents (this agent never goes busy). The two render
+ * conditions have to stay each other's inverse or the user gets two Stops or
+ * none.
+ */
+describe('InputArea cross-agent Stop placement', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		useSessionStore.setState({ sessions: [], groups: [] });
+	});
+
+	const indicator = () => screen.getByTestId('cross-agent-indicator');
+
+	it('carries Stop when nothing else is offering one', () => {
+		const props = createDefaultProps();
+		render(<InputArea {...props} />);
+
+		expect(indicator()).toHaveAttribute('data-has-stop', 'yes');
+		expect(screen.queryByTestId('thinking-status-pill')).not.toBeInTheDocument();
+	});
+
+	it('runs the same agent-level interrupt the thinking pill would', () => {
+		const handleInterrupt = vi.fn();
+		const props = createDefaultProps({ handleInterrupt });
+		render(<InputArea {...props} />);
+
+		fireEvent.click(indicator());
+		expect(handleInterrupt).toHaveBeenCalledTimes(1);
+	});
+
+	it('yields Stop to the pill while Auto Run is running', () => {
+		const props = createDefaultProps({ autoRunState: { isRunning: true } as never });
+		render(<InputArea {...props} />);
+
+		expect(indicator()).toHaveAttribute('data-has-stop', 'no');
+	});
+
+	it('draws no indicator at all outside AI mode', () => {
+		const props = createDefaultProps({
+			session: createMockSession({ inputMode: 'terminal' }),
+		});
+		render(<InputArea {...props} />);
+
+		expect(screen.queryByTestId('cross-agent-indicator')).not.toBeInTheDocument();
+	});
+});
+
+// Phone layout: the whole composer folds away behind a slim handle so the
+// transcript gets the screen. Default is folded; a tap on the handle reveals it.
+vi.mock('../../../renderer/hooks/ui/useViewportBreakpoint', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../renderer/hooks/ui/useViewportBreakpoint')>()),
+	usePhoneLayout: vi.fn(() => false),
+}));
+import { usePhoneLayout } from '../../../renderer/hooks/ui/useViewportBreakpoint';
+import { PHONE_COMPOSER_COLLAPSED_KEY } from '../../../renderer/components/InputArea/InputArea';
+
+describe('InputArea on a phone', () => {
+	const mockedUsePhoneLayout = vi.mocked(usePhoneLayout);
+
+	beforeEach(() => {
+		mockedUsePhoneLayout.mockReturnValue(true);
+		useSessionStore.setState({ sessions: [], groups: [] });
+		try {
+			window.localStorage?.removeItem(PHONE_COMPOSER_COLLAPSED_KEY);
+		} catch {
+			/* storage may be absent */
+		}
+	});
+
+	afterEach(() => {
+		mockedUsePhoneLayout.mockReturnValue(false);
+		try {
+			window.localStorage?.removeItem(PHONE_COMPOSER_COLLAPSED_KEY);
+		} catch {
+			/* storage may be absent */
+		}
+	});
+
+	it('starts folded: only the handle, no textarea', () => {
+		render(<InputArea {...createDefaultProps()} />);
+		const handle = screen.getByTestId('phone-composer-handle');
+		expect(handle).toHaveAttribute('aria-expanded', 'false');
+		expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+	});
+
+	it('unfolds on a tap and keeps the handle on top for folding back', () => {
+		render(<InputArea {...createDefaultProps()} />);
+		fireEvent.click(screen.getByTestId('phone-composer-handle'));
+		expect(screen.getByRole('textbox')).toBeInTheDocument();
+		expect(screen.getByTestId('phone-composer-handle')).toHaveAttribute('aria-expanded', 'true');
+
+		fireEvent.click(screen.getByTestId('phone-composer-handle'));
+		expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+	});
+
+	it('marks a folded handle when an unsent draft is waiting behind it', () => {
+		render(<InputArea {...createDefaultProps({ inputValue: 'half a thought' })} />);
+		expect(screen.getByTestId('phone-composer-handle-draft')).toBeInTheDocument();
+	});
+
+	it('draws no handle at all on desktop', () => {
+		mockedUsePhoneLayout.mockReturnValue(false);
+		render(<InputArea {...createDefaultProps()} />);
+		expect(screen.queryByTestId('phone-composer-handle')).not.toBeInTheDocument();
+		expect(screen.getByRole('textbox')).toBeInTheDocument();
 	});
 });

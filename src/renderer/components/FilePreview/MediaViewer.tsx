@@ -27,6 +27,7 @@ import {
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { Spinner } from '../ui/Spinner';
 import { formatMediaTime } from '../../utils/mediaItems';
+import { resolveMediaStreamSrc } from '../../utils/mediaStreamSrc';
 import { MEDIA_PLAYBACK_RATES, isMediaStreamUrl, type MediaKind } from '../../../shared/mediaTypes';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useEventListener } from '../../hooks/utils/useEventListener';
@@ -269,7 +270,9 @@ export const MediaViewer = memo(function MediaViewer({
 					setLoadState('error');
 					return;
 				}
-				setSrc(resolved);
+				// The scheme URL is what the desktop plays; web-desktop maps it onto
+				// the web server's media route, since a browser cannot load the scheme.
+				setSrc(resolveMediaStreamSrc(resolved));
 			} catch {
 				if (!cancelled) setLoadState('error');
 			}
@@ -635,6 +638,9 @@ export const MediaViewer = memo(function MediaViewer({
 					<video
 						ref={mediaRef as React.RefObject<HTMLVideoElement>}
 						{...mediaProps}
+						// iPhone Safari otherwise hijacks every play() into its own
+						// fullscreen player; inert everywhere else.
+						playsInline
 						className="max-w-full max-h-full"
 						onDoubleClick={enterFullscreen}
 					/>
@@ -674,7 +680,7 @@ export const MediaViewer = memo(function MediaViewer({
 				{/* Scrubber */}
 				<div className="flex items-center gap-2">
 					<span
-						className="text-[11px] font-mono tabular-nums shrink-0"
+						className="text-xs-plus font-mono tabular-nums shrink-0"
 						style={{ color: theme.colors.textDim }}
 					>
 						{formatMediaTime(currentTime)}
@@ -692,7 +698,7 @@ export const MediaViewer = memo(function MediaViewer({
 						style={{ accentColor: theme.colors.accent }}
 					/>
 					<span
-						className="text-[11px] font-mono tabular-nums shrink-0"
+						className="text-xs-plus font-mono tabular-nums shrink-0"
 						style={{ color: theme.colors.textDim }}
 					>
 						{formatMediaTime(duration)}

@@ -17,6 +17,10 @@ export function useMaestroCliState({ isOpen }: UseMaestroCliStateArgs): MaestroC
 	const checkStatus = useCallback(async () => {
 		setChecking(true);
 		setStatusError(null);
+		// Clear the previous result up front: leaving the last-known status in
+		// place while a re-check is in flight means a check that then FAILS
+		// still shows the prior "Installed" badge instead of reading as unknown.
+		setStatus(null);
 		try {
 			const nextStatus = await window.maestro.maestroCli.checkStatus();
 			setStatus(nextStatus);

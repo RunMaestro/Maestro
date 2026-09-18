@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import React from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import {
@@ -44,6 +44,7 @@ type MockWebview = HTMLElement & {
 	isLoading: ReturnType<typeof vi.fn>;
 	getWebContentsId: ReturnType<typeof vi.fn>;
 	executeJavaScript: ReturnType<typeof vi.fn>;
+	insertCSS?: ReturnType<typeof vi.fn>;
 	findInPage?: ReturnType<typeof vi.fn>;
 	stopFindInPage?: ReturnType<typeof vi.fn>;
 	reload?: ReturnType<typeof vi.fn>;
@@ -493,6 +494,113 @@ describe('BrowserTabView', () => {
 			// Focus address input - should reveal
 			fireEvent.focus(screen.getByLabelText('Browser URL'));
 			expect(addressBar).toHaveStyle({ maxHeight: '200px' });
+		});
+	});
+
+	// The injected guest listener is the half of the auto-hide that runs inside
+	// the page, so run the real injected source here rather than only asserting
+	// on the console messages the component reacts to. The script is evaluated
+	// against a stand-in window per test - installing it on the real jsdom window
+	// would stack one listener per test, since it registers anonymous handlers
+	// that cannot be removed.
+	describe('injected guest scroll listener', () => {
+		let script = '';
+
+		function installListener() {
+			const listeners: Record<string, Array<() => void>> = {};
+			const guestWindow: Record<string, unknown> = {
+				scrollY: 0,
+				innerHeight: 800,
+				addEventListener(type: string, handler: () => void) {
+					(listeners[type] ??= []).push(handler);
+				},
+			};
+			const logs: string[] = [];
+			const guestConsole = { log: (message: unknown) => logs.push(String(message)) };
+			const runFrame = (cb: FrameRequestCallback) => {
+				cb(0);
+				return 0;
+			};
+			new Function('window', 'console', 'requestAnimationFrame', script)(
+				guestWindow,
+				guestConsole,
+				runFrame
+			);
+			return {
+				logs,
+				scrollTo(y: number, innerHeight?: number) {
+					if (innerHeight !== undefined && innerHeight !== guestWindow.innerHeight) {
+						guestWindow.innerHeight = innerHeight;
+						guestWindow.scrollY = y;
+						(listeners.resize ?? []).forEach((cb) => cb());
+					}
+					guestWindow.scrollY = y;
+					(listeners.scroll ?? []).forEach((cb) => cb());
+				},
+			};
+		}
+
+		beforeEach(async () => {
+			const onUpdateTab = vi.fn();
+			render(<BrowserTabView tab={mockTab} theme={mockTheme} onUpdateTab={onUpdateTab} />);
+			const webview = getWebview();
+			webview.canGoBack = vi.fn(() => false);
+			webview.canGoForward = vi.fn(() => false);
+			webview.getURL = vi.fn(() => 'https://example.com');
+			webview.getTitle = vi.fn(() => 'Example');
+			webview.isLoading = vi.fn(() => false);
+			webview.getWebContentsId = vi.fn(() => 99);
+			webview.executeJavaScript = vi.fn().mockResolvedValue(undefined);
+
+			await act(async () => {
+				webview.dispatchEvent(new Event('dom-ready'));
+			});
+
+			script = webview.executeJavaScript.mock.calls
+				.map((call) => String(call[0]))
+				.find((src) => src.includes('__maestroScrollListenerInstalled')) as string;
+			expect(script).toBeTruthy();
+		});
+
+		afterEach(() => {
+			vi.restoreAllMocks();
+		});
+
+		it('collapses the address bar on a user scroll down', () => {
+			const guest = installListener();
+
+			guest.scrollTo(400);
+
+			expect(guest.logs).toEqual(['__MAESTRO_SCROLL__1']);
+		});
+
+		it('ignores the clamp scroll caused by its own collapse at page bottom', () => {
+			const guest = installListener();
+
+			// User scrolls to the bottom: the bar collapses.
+			guest.scrollTo(400);
+			expect(guest.logs).toEqual(['__MAESTRO_SCROLL__1']);
+
+			// Collapsing grows the viewport, so Chromium clamps scrollY down. That
+			// looks like a scroll up and used to re-reveal the bar, which shrank the
+			// viewport again and flickered for as long as the page sat at the bottom.
+			guest.scrollTo(356, 844);
+
+			expect(guest.logs).toEqual(['__MAESTRO_SCROLL__1']);
+		});
+
+		it('still reveals on a genuine scroll up once the resize has settled', () => {
+			const guest = installListener();
+
+			guest.scrollTo(400);
+			guest.scrollTo(356, 844);
+			expect(guest.logs).toEqual(['__MAESTRO_SCROLL__1']);
+
+			// Past the settle window, a real scroll up reveals the bar again.
+			vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 1000);
+			guest.scrollTo(100);
+
+			expect(guest.logs).toEqual(['__MAESTRO_SCROLL__1', '__MAESTRO_SCROLL__0']);
 		});
 	});
 
@@ -1191,6 +1299,83 @@ describe('BrowserTabView', () => {
 			} finally {
 				vi.useRealTimers();
 			}
+		});
+	});
+
+	describe('themed background', () => {
+		function setupBlankWebview(url: string) {
+			const rendered = render(
+				<BrowserTabView
+					tab={{ ...mockTab, url, title: 'New Tab' }}
+					theme={mockTheme}
+					onUpdateTab={vi.fn()}
+				/>
+			);
+			const webview = getWebview();
+			webview.canGoBack = vi.fn(() => false);
+			webview.canGoForward = vi.fn(() => false);
+			webview.getURL = vi.fn(() => url);
+			webview.getTitle = vi.fn(() => '');
+			webview.isLoading = vi.fn(() => false);
+			webview.getWebContentsId = vi.fn(() => 42);
+			webview.executeJavaScript = vi.fn().mockResolvedValue(undefined);
+			webview.insertCSS = vi.fn().mockResolvedValue('key');
+			return { webview, rendered };
+		}
+
+		it('paints the host and the webview element in the theme background', () => {
+			render(<BrowserTabView tab={mockTab} theme={mockTheme} onUpdateTab={vi.fn()} />);
+
+			const host = screen.getByTestId('browser-tab-host');
+			expect(host.style.backgroundColor).toBe('rgb(40, 42, 54)');
+			expect((getWebview() as HTMLElement).style.backgroundColor).toBe('rgb(40, 42, 54)');
+		});
+
+		it('recolors a blank guest document on dom-ready', async () => {
+			const { webview } = setupBlankWebview(DEFAULT_BROWSER_TAB_URL);
+
+			await act(async () => {
+				webview.dispatchEvent(new Event('dom-ready'));
+			});
+
+			expect(webview.insertCSS).toHaveBeenCalledWith(
+				expect.stringContaining(mockTheme.colors.bgMain)
+			);
+		});
+
+		it('leaves a real page background alone', async () => {
+			const { webview } = setupBlankWebview('https://example.com');
+
+			await act(async () => {
+				webview.dispatchEvent(new Event('dom-ready'));
+			});
+
+			expect(webview.insertCSS).not.toHaveBeenCalled();
+		});
+
+		it('re-applies the blank background when the theme changes', async () => {
+			const { webview, rendered } = setupBlankWebview(DEFAULT_BROWSER_TAB_URL);
+
+			await act(async () => {
+				webview.dispatchEvent(new Event('dom-ready'));
+			});
+			(webview.insertCSS as ReturnType<typeof vi.fn>).mockClear();
+
+			const nextTheme: Theme = {
+				...mockTheme,
+				colors: { ...mockTheme.colors, bgMain: '#101014' },
+			};
+			await act(async () => {
+				rendered.rerender(
+					<BrowserTabView
+						tab={{ ...mockTab, url: DEFAULT_BROWSER_TAB_URL, title: 'New Tab' }}
+						theme={nextTheme}
+						onUpdateTab={vi.fn()}
+					/>
+				);
+			});
+
+			expect(webview.insertCSS).toHaveBeenCalledWith(expect.stringContaining('#101014'));
 		});
 	});
 });

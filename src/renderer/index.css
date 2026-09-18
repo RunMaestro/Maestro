@@ -256,15 +256,21 @@ textarea::placeholder {
 	}
 }
 
+/* --pulse-color is the LIT colour only. The ring has to fade as it expands, and
+   one custom property cannot hold two alphas, so the later frames say
+   `transparent` outright rather than reading the same var through a
+   zero-alpha fallback that only applied while the var was unset. It was unset
+   app-wide until the theme bridge started publishing it, which is why the two
+   surfaces that set it inline pulsed a ring that never faded. */
 @keyframes highlight-pulse {
 	0% {
 		box-shadow: 0 0 0 0 var(--pulse-color, rgba(99, 102, 241, 0.4));
 	}
 	70% {
-		box-shadow: 0 0 0 6px var(--pulse-color, rgba(99, 102, 241, 0));
+		box-shadow: 0 0 0 6px transparent;
 	}
 	100% {
-		box-shadow: 0 0 0 0 var(--pulse-color, rgba(99, 102, 241, 0));
+		box-shadow: 0 0 0 0 transparent;
 	}
 }
 
@@ -393,12 +399,17 @@ textarea::placeholder {
 	}
 }
 
+/* Scrolling stripes for an active progress bar. The stripes live on an
+   oversized ::after that slides by one tile with `transform`, rather than on
+   the bar itself with an animated `background-position`. background-position is
+   not compositable, so the old version repainted the bar every frame for as
+   long as any progress bar was on screen. */
 @keyframes progress-stripe {
 	0% {
-		background-position: 0 0;
+		transform: translateX(0);
 	}
 	100% {
-		background-position: 40px 0;
+		transform: translateX(40px);
 	}
 }
 
@@ -622,6 +633,20 @@ textarea::placeholder {
 
 /* Animated progress bar with stripes for indeterminate state */
 .progress-bar-animated {
+	position: relative;
+	overflow: hidden;
+}
+
+.progress-bar-animated::after {
+	content: '';
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	right: 0;
+	/* One tile wider than the bar, extended in the direction the stripes travel
+	   FROM, so translating by exactly one tile never exposes a gap. */
+	left: -40px;
+	pointer-events: none;
 	background-image: linear-gradient(
 		45deg,
 		rgba(255, 255, 255, 0.15) 25%,
@@ -634,6 +659,7 @@ textarea::placeholder {
 	);
 	background-size: 40px 40px;
 	animation: progress-stripe 1s linear infinite;
+	will-change: transform;
 }
 
 /* Shimmer effect for drag-and-drop */
@@ -660,15 +686,23 @@ textarea::placeholder {
 	}
 }
 
-/* Status indicator glow - subtle box-shadow expansion paired with a colored dot.
-   Set --status-glow-color on the element to control the hue. */
+/* Status indicator glow - a soft breathing halo.
+   Set --status-glow-color on the element to control the hue.
+
+   Implemented as an overlay whose OPACITY animates, not as an animated
+   box-shadow. Chrome cannot composite a box-shadow animation: every frame
+   repaints the element, and this class lands on a full-width transcript card
+   that streams for the length of a turn. The halo now lives on a ::after at a
+   fixed blur, so the whole animation runs on the compositor. The ring is inset
+   because the elements this decorates are `overflow-hidden`, which would clip
+   an outer shadow drawn by a child. */
 @keyframes status-glow {
 	0%,
 	100% {
-		box-shadow: 0 0 4px var(--status-glow-color, currentColor);
+		opacity: 0.45;
 	}
 	50% {
-		box-shadow: 0 0 8px var(--status-glow-color, currentColor);
+		opacity: 1;
 	}
 }
 
@@ -677,7 +711,18 @@ textarea::placeholder {
 }
 
 .animate-status-glow {
+	position: relative;
+}
+
+.animate-status-glow::after {
+	content: '';
+	position: absolute;
+	inset: 0;
+	border-radius: inherit;
+	pointer-events: none;
+	box-shadow: inset 0 0 8px var(--status-glow-color, currentColor);
 	animation: status-glow 2s ease-in-out infinite;
+	will-change: opacity;
 }
 
 /* Restore list styling for markdown preview prose containers */
@@ -820,27 +865,59 @@ textarea::placeholder {
 	width: min(calc(1200px * var(--font-scale, 1)), 95vw);
 }
 
-/* Document Graph - Search highlight animation for matching nodes */
+/* Document Graph - Search highlight animation for matching nodes.
+
+   The ring is drawn once on a ::after overlay and only its opacity and scale
+   animate, both of which the compositor owns. Animating the box-shadow itself
+   repainted every matching node every frame, and a broad query can light up a
+   large share of the graph at once. */
 @keyframes search-highlight-glow {
-	0% {
-		box-shadow:
-			0 0 0 3px var(--search-highlight-color, rgba(99, 102, 241, 0.4)),
-			0 4px 12px var(--search-shadow-color, rgba(99, 102, 241, 0.2));
+	0%,
+	100% {
+		opacity: 1;
+		transform: scale(1);
 	}
 	50% {
-		box-shadow:
-			0 0 0 5px var(--search-highlight-color, rgba(99, 102, 241, 0.25)),
-			0 4px 16px var(--search-shadow-color, rgba(99, 102, 241, 0.3));
-	}
-	100% {
-		box-shadow:
-			0 0 0 3px var(--search-highlight-color, rgba(99, 102, 241, 0.4)),
-			0 4px 12px var(--search-shadow-color, rgba(99, 102, 241, 0.2));
+		opacity: 0.6;
+		transform: scale(1.02);
 	}
 }
 
 .search-highlight {
+	position: relative;
+}
+
+.search-highlight::after {
+	content: '';
+	position: absolute;
+	inset: 0;
+	border-radius: inherit;
+	pointer-events: none;
+	box-shadow:
+		0 0 0 4px var(--search-highlight-color, rgba(99, 102, 241, 0.4)),
+		0 4px 14px var(--search-shadow-color, rgba(99, 102, 241, 0.25));
 	animation: search-highlight-glow 2s ease-in-out infinite;
+	will-change: opacity, transform;
+}
+
+/* The wand sits in the Left Bar header, which is a `.chrome-sheen` root, so it
+   gets its own compositing layer for as long as it animates. Without this, the
+   animation is CORRECT and still ruinous: Chrome cannot composite opacity or
+   filter on SVG sub-elements, so the six sparkle paths repaint on the main
+   thread, and because they share the sidebar's layer they invalidate the WHOLE
+   sidebar - including the full-height `.chrome-sheen` background gradient.
+   A field trace measured that gradient (772x2724 device px) being repainted
+   three times per frame at a locked 60fps through eleven seconds in which the
+   user touched nothing: 0.63ms of paint plus 0.47ms of PaintArtifactCompositor
+   per frame, forever, because one 20px icon was twinkling.
+   `wand-sparkle-active` is set whenever ANY agent is busy, so that was the
+   steady state of an ordinary working session, not a profiling artifact.
+   Promoting the <svg> confines the repaint to the icon's own layer. The classes
+   are only present while animating, which is exactly when `will-change` should
+   be set, so nothing is promoted at rest. */
+svg.wand-sparkle-active,
+svg.wand-profiling-active {
+	will-change: transform;
 }
 
 /* Wand sparkle animation - opacity-only. Earlier versions translated the SVG
@@ -848,7 +925,9 @@ textarea::placeholder {
    on SVG sub-elements, so every animated frame triggered a full layout
    (~720 layouts/sec when any agent was busy). The half-pixel motion was
    imperceptible at typical retina DPR; opacity-only gives the same vanish/
-   reappear feel without driving the layout pipeline. */
+   reappear feel without driving the layout pipeline. Note that this removed the
+   LAYOUT cost only - the per-frame repaint above is the other half, and it is
+   why the promotion rule exists. */
 @keyframes wand-sparkle {
 	0%,
 	100% {
@@ -949,13 +1028,24 @@ button.maestro-keycap-hint:hover {
 	svg.wand-sparkle-active path:nth-child(n + 3) {
 		animation: none;
 	}
+	/* Nothing animates here, so the promotion above would hold a layer for a
+	   still icon. */
+	svg.wand-sparkle-active {
+		will-change: auto;
+	}
 }
 
 /* Performance-profiling indicator: while a trace is being captured the wand
    glows recording-red so it's unmistakable that profiling is on. The red is
-   forced over the inline theme accent for this debug-only state. A slow (1.5s)
-   pulse is deliberate - it keeps the indicator's own paint cost low and out of
-   the trace it is helping to capture. */
+   forced over the inline theme accent for this debug-only state.
+
+   The 1.5s period does NOT keep this out of the trace it is helping to capture,
+   which an earlier version of this comment claimed. Rate is irrelevant: an
+   animated `filter` is repainted on the main thread every frame regardless of
+   how slowly it interpolates, so this pulsed the wand's layer at 60fps for the
+   entire duration of every capture. The promotion rule near `wand-sparkle`
+   above is what actually bounds the cost, by keeping that repaint off the Left
+   Bar's layer. */
 @keyframes wand-profiling-pulse {
 	0%,
 	100% {
@@ -998,6 +1088,8 @@ svg.wand-profiling-active path:nth-child(8) {
 	svg.wand-profiling-active {
 		animation: none;
 		filter: drop-shadow(0 0 3px rgba(239, 68, 68, 0.9));
+		/* Static glow, so there is no repaint to confine. */
+		will-change: auto;
 	}
 	svg.wand-profiling-active path:nth-child(n + 3) {
 		animation: none;
@@ -1183,8 +1275,21 @@ svg.wand-profiling-active path:nth-child(8) {
      1. group chat count badge (the active-chat count)
      2. archived count number (keep the archive button/icon)
      3. "New Chat" label (collapse the button to just "+")
-   Thresholds are sized so that at the minimum sidebar width (280px -> ~256px
-   container) all three have dropped and the row still fits without wrapping. */
+   Thresholds are sized so that at the minimum sidebar width (280px -> ~256em-
+   equivalent container) all three have dropped and the row still fits.
+
+   The "Group Chats" label itself is deliberately NOT a rung here. It is decided
+   by measurement in `useOptionalLabelFits`, because whether it fits depends on
+   which of the conditional controls above are currently rendered - something a
+   width threshold cannot see. See that hook for the full reasoning.
+
+   Thresholds are in `em`, not `px`, and that is load-bearing. Every size in this
+   header (padding, icon boxes, gaps, text) is rem-based, so all of it scales
+   with the `fontSize` setting written to `documentElement.style.fontSize` -
+   while the sidebar's width stays in pixels. Pixel thresholds were therefore
+   correct at exactly one font size and let the row crowd at the larger ones.
+   In a container query `em` resolves against the query container's own font
+   size, so these rungs now move with the user's setting. */
 .gc-header-container {
 	container-type: inline-size;
 	container-name: gcheader;
@@ -1195,24 +1300,72 @@ svg.wand-profiling-active path:nth-child(8) {
 	display: inline;
 }
 
-/* Below 340px: drop the group chat count badge */
-@container gcheader (max-width: 340px) {
+/* Below 21.25em (340px at the default font size): drop the count badge */
+@container gcheader (max-width: 21.25em) {
 	.gc-count-badge {
 		display: none;
 	}
 }
 
-/* Below 305px: drop the archived count number (archive button stays) */
-@container gcheader (max-width: 305px) {
+/* Below 19em (305px): drop the archived count number (archive button stays) */
+@container gcheader (max-width: 19em) {
 	.gc-archived-count {
 		display: none;
 	}
 }
 
-/* Below 275px: collapse the New Chat button to just a plus sign */
-@container gcheader (max-width: 275px) {
+/* Below 17.2em (275px): collapse the New Chat button to just a plus sign */
+@container gcheader (max-width: 17.2em) {
 	.gc-newchat-label {
 		display: none;
+	}
+}
+
+/* ==========================================
+   Group Chat View Header Container Queries
+   ==========================================
+   Yield ladder for the header above an open group chat (`GroupChatHeader`).
+   The title truncates first on its own (`min-w-0`); these rungs run before the
+   row runs out entirely:
+     1. participant count pill
+     2. view switch labels shorten ("Team Chat" -> "Team",
+        "Moderator Only" -> "Moderator")
+   Thresholds are in `em` so they scale with the `fontSize` setting (see the
+   Group Chats header block above). They are sized for the cost pill, Info, and
+   right-panel toggle all showing; `.group-chat-header-busy` shifts each rung
+   wider by the Stop All button's width while the chat is working. */
+.group-chat-header-container {
+	container-type: inline-size;
+	container-name: groupchatheader;
+}
+
+@container groupchatheader (max-width: 48em) {
+	.group-chat-header-container .group-chat-header-participants {
+		display: none;
+	}
+}
+
+@container groupchatheader (max-width: 54em) {
+	.group-chat-header-container.group-chat-header-busy .group-chat-header-participants {
+		display: none;
+	}
+}
+
+@container groupchatheader (max-width: 40em) {
+	.group-chat-header-container .segmented-label-full {
+		display: none;
+	}
+	.group-chat-header-container .segmented-label-short {
+		display: inline;
+	}
+}
+
+@container groupchatheader (max-width: 46em) {
+	.group-chat-header-container.group-chat-header-busy .segmented-label-full {
+		display: none;
+	}
+	.group-chat-header-container.group-chat-header-busy .segmented-label-short {
+		display: inline;
 	}
 }
 
@@ -1351,8 +1504,12 @@ svg.wand-profiling-active path:nth-child(8) {
 	   would otherwise silently defeat this phone breakpoint override. */
 	width: 100vw !important;
 	max-width: 100vw !important;
-	height: 100dvh !important;
-	max-height: 100dvh !important;
+	height: calc(
+		100dvh - var(--maestro-top-inset, 0px) - env(safe-area-inset-bottom, 0px)
+	) !important;
+	max-height: calc(
+		100dvh - var(--maestro-top-inset, 0px) - env(safe-area-inset-bottom, 0px)
+	) !important;
 	border-radius: 0;
 	border-width: 0;
 }
@@ -1474,14 +1631,18 @@ svg.wand-profiling-active path:nth-child(8) {
 		animation: none !important;
 	}
 
-	/* Disable Document Graph search highlight animations */
-	.search-highlight {
+	/* Disable Document Graph search highlight animations. The ring now lives on
+	   a ::after, so the pseudo-element has to be named or it keeps animating. */
+	.search-highlight,
+	.search-highlight::after {
 		animation: none !important;
 	}
 
-	/* Disable status indicator animations */
+	/* Disable status indicator animations. The glow now lives on a ::after, so
+	   the pseudo-element has to be named or its animation keeps running. */
 	.animate-status-pulse,
-	.animate-status-glow {
+	.animate-status-glow,
+	.animate-status-glow::after {
 		animation: none !important;
 	}
 
@@ -1638,34 +1799,11 @@ html[data-runtime='web-desktop'][data-bp='xs']
 }
 
 /*
- * Edge-swipe opener zones. Thin (24px) invisible strips pinned to the left and
- * right screen edges that host the drawer-opening swipe handlers (App.tsx). They
- * only exist while no drawer is open. `touch-action: pan-y` lets vertical page
- * scrolling that starts in the strip still happen natively while horizontal
- * swipes are handled (and preventDefault'd) by useSwipeGestures. Sitting only at
- * the edges is what keeps center-content horizontal scrolling (terminal, tab
- * bar, tables) free of drawer gestures.
- *
- * They start below the 4rem header (`top: 4rem`) rather than the very top so the
- * strip never overlaps the header hamburger / panel toggle - at xs/sm the header
- * padding shrinks to 0.5rem, so those controls sit inside the outer 24px, and a
- * full-height strip (which paints above the z-20 header) would swallow their
- * taps. Edge swipes start in the body, which is the whole point.
+ * Edge-swipe drawer openers have no element. They used to be two invisible
+ * fixed strips here, which sat in the hit-test order above the tab bar and
+ * swallowed taps on its magnifier and first chip. The gesture now rides the
+ * app shell, gated on where the touch starts - see useEdgeSwipeHandlers.
  */
-.maestro-edge-swipe-zone {
-	position: fixed;
-	top: 4rem;
-	bottom: 0;
-	width: 24px;
-	z-index: 35;
-	touch-action: pan-y;
-}
-.maestro-edge-swipe-zone--left {
-	left: 0;
-}
-.maestro-edge-swipe-zone--right {
-	right: 0;
-}
 
 @keyframes maestro-fade-in {
 	from {
@@ -1709,6 +1847,17 @@ html[data-runtime='web-desktop'] .maestro-app-shell {
 }
 
 /*
+ * Never let the page itself be wider than the screen. At xs/sm the Right Bar
+ * is parked just outside the viewport while closed; mobile Chromium can count
+ * that off-screen drawer toward the document width and make the page slide
+ * sideways. iOS already receives the stronger body overflow rule below.
+ */
+html[data-runtime='web-desktop'],
+html[data-runtime='web-desktop'] body {
+	overflow-x: hidden;
+}
+
+/*
  * Lift the app shell above the on-screen keyboard. App.tsx sets
  * `--keyboard-offset` (from useKeyboardVisibility, Visual Viewport API) to the
  * pixel height the virtual keyboard eats. Because the shell is box-sizing:
@@ -1721,6 +1870,51 @@ html[data-runtime='web-desktop'] .maestro-app-shell {
  */
 html[data-runtime='web-desktop'] .maestro-app-shell {
 	padding-bottom: calc(env(safe-area-inset-bottom) + var(--keyboard-offset, 0px));
+}
+
+/*
+ * Home-screen web apps on iOS (Add to Home Screen, `black-translucent` status
+ * bar). Two things went wrong there, and both surfaced on the first RC that
+ * made mobile connectivity work:
+ *
+ * 1. The page extends under the status bar, and iOS 26 draws a frosted status
+ *    bar layer over whatever sits there and swallows taps in that band. Nothing
+ *    applied env(safe-area-inset-top), so the Main Panel header, hamburger
+ *    included, sat inside it: dimmed, blurred, untappable. The left-edge swipe
+ *    was the only way to the menu.
+ * 2. The roots (html, body, #root) were `height: 100%`, which resolves to the
+ *    SMALL viewport (100svh, 812pt on an iPhone 16 Pro) while the shell is
+ *    100dvh (874pt). With overflow hidden on the roots, the shell was clipped
+ *    at the status-bar line and a status-bar-tall band of the boot background
+ *    showed under the composer. Measured on the iOS 26.5 simulator.
+ *
+ * --maestro-top-inset is env() where WebKit reports it, and the JS-measured bar
+ * height where it does not (installStandaloneStatusBarInset: WebKit bug 301994
+ * reports env() as 0 and shortens the viewport instead). Browser-mode Safari,
+ * desktop browsers and Electron report 0 for both, so every rule here is inert
+ * outside a home-screen web app.
+ */
+html[data-runtime='web-desktop'] {
+	--maestro-top-inset: max(env(safe-area-inset-top, 0px), var(--maestro-status-bar-inset, 0px));
+}
+html[data-runtime='web-desktop'],
+html[data-runtime='web-desktop'] body,
+html[data-runtime='web-desktop'] #root {
+	height: 100vh;
+	height: 100dvh;
+}
+html[data-runtime='web-desktop'] .maestro-app-shell {
+	padding-top: var(--maestro-top-inset, 0px);
+}
+/* The floating drawers are position: fixed at top: 0, outside the shell's padding. */
+html[data-runtime='web-desktop'][data-bp='xs']
+	[data-panel='left'][data-collapsed='false'][data-hidden='false'],
+html[data-runtime='web-desktop'][data-bp='sm']
+	[data-panel='left'][data-collapsed='false'][data-hidden='false'],
+html[data-runtime='web-desktop'][data-bp='xs'] [data-panel='right'],
+html[data-runtime='web-desktop'][data-bp='sm'] [data-panel='right'] {
+	padding-top: var(--maestro-top-inset, 0px);
+	padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 /*
@@ -1810,6 +2004,176 @@ html[data-runtime='web-desktop'][data-bp='sm'] .maestro-input-text-overlay {
 }
 
 /*
+ * ============================================================================
+ * Phone layout (web-desktop bundle at the xs breakpoint)
+ * ============================================================================
+ * JS twin: usePhoneLayout() / isPhoneLayout() in hooks/ui/useViewportBreakpoint.ts.
+ * Every rule here matches `html[data-runtime='web-desktop'][data-bp='xs']`, so
+ * a surface that simplifies itself in JS and one that does it in CSS agree
+ * about when a phone is a phone. The native Electron app never sets
+ * data-runtime and is untouched.
+ */
+
+/*
+ * Drawers take the whole screen. A 320px drawer on a 390px phone left a 70px
+ * sliver of main panel showing through that could not be read or used, while
+ * the drawer itself was starved for the width its rows need. The backdrop
+ * behind it is fully covered, so the close-swipe handlers ride the drawer
+ * itself (AppShell wraps each panel) rather than the backdrop.
+ */
+html[data-runtime='web-desktop'][data-bp='xs']
+	[data-panel='left'][data-collapsed='false'][data-hidden='false'],
+html[data-runtime='web-desktop'][data-bp='xs'] [data-panel='right'] {
+	width: 100vw !important;
+	width: 100dvw !important;
+	max-width: none;
+	box-shadow: none;
+}
+
+/* A full-width drawer has no edge to drag; the resize grip would only steal taps. */
+html[data-runtime='web-desktop'][data-bp='xs'] [data-panel='left'] .resize-handle,
+html[data-runtime='web-desktop'][data-bp='xs'] [data-panel='right'] .resize-handle {
+	display: none;
+}
+
+/*
+ * Long-press is a gesture on tab chips and agent rows (it opens their action
+ * menu), so iOS must not answer the same press with its own callout.
+ */
+html[data-runtime='web-desktop'] [data-tab-id],
+html[data-runtime='web-desktop'] .session-row {
+	-webkit-touch-callout: none;
+}
+
+/*
+ * Bottom sheet chrome, shared by every caller of <PhoneBottomSheet> (the tab
+ * action menu, the composer options sheet). The scrim and the rise animation
+ * belong to the shell; what each caller adds is the styling of its own body.
+ */
+.maestro-phone-sheet {
+	background: rgba(0, 0, 0, 0.45);
+	animation: maestro-fade-in 150ms ease;
+}
+.maestro-phone-sheet__panel {
+	animation: maestro-sheet-up 180ms ease-out;
+}
+@keyframes maestro-sheet-up {
+	from {
+		transform: translateY(24px);
+		opacity: 0.6;
+	}
+	to {
+		transform: none;
+		opacity: 1;
+	}
+}
+/*
+ * Tab action sheet body. The menu CONTENT inside is the very same element the
+ * desktop hover popover shows; these rules restyle it for a finger without the
+ * five menu components knowing which shell they are in. `!important` because
+ * the menus set their width, borders, and radius as inline styles for the
+ * anchored shape. Scoped to the TAB sheet on purpose - a sheet whose content
+ * was written for a phone in the first place must not be flattened this way.
+ */
+.maestro-tab-sheet__body > * {
+	min-width: 0 !important;
+	max-width: none !important;
+	width: 100%;
+	border: 0 !important;
+	border-radius: 0 !important;
+	box-shadow: none !important;
+	white-space: normal !important;
+}
+/* Finger-sized action rows; the desktop menu is text-xs / py-1.5 for a mouse. */
+.maestro-tab-sheet__body .p-1 > button {
+	min-height: 44px;
+	font-size: 0.9375rem;
+}
+
+/*
+ * No keyboard on a phone. Every chord badge (⌘K beside a menu row), keycap hint
+ * (the ⌘F in a search box) and arrow-key legend (↑↓ navigate • Enter select)
+ * advertises a key the user does not have, and on a 390px screen they were
+ * also the first things to push a close button off the edge. They all carry
+ * `data-shortcut-hint`, so one rule retires them together. Add the attribute
+ * to any new keyboard-only hint rather than gating it in JSX.
+ */
+html[data-runtime='web-desktop'][data-bp='xs'] [data-shortcut-hint] {
+	display: none !important;
+}
+
+/*
+ * Readouts leave the main panel header on a phone: the session cost pill, the
+ * context-remaining percentage, and the inert LOCAL badge. The container-query
+ * rungs above drop these too, but only below 350px / 400px, and a phone header
+ * is the full ~390px viewport - so every rung stayed unfired while the row was
+ * already crowded enough to clip the agent name and overlap the badges.
+ *
+ * All three are readouts, not controls, which is what makes them the ones to
+ * drop: cost and context are still on the Usage Dashboard and the context
+ * timeline panel, and the LOCAL badge has no behavior at all (see the pill's
+ * hover handlers in MainPanelHeader). What stays is everything that DOES
+ * something - the sidebar toggle, the git pill's icon and its menu, the tab
+ * strip, and the panel buttons.
+ */
+html[data-runtime='web-desktop'][data-bp='xs'] .header-cost-widget,
+html[data-runtime='web-desktop'][data-bp='xs'] .header-context-widget,
+html[data-runtime='web-desktop'][data-bp='xs'] .header-local-badge {
+	display: none;
+}
+
+/*
+ * The pill wrapper keeps its `gap-2` after the badge inside it goes, which
+ * leaves 8px of empty space between the agent name and the next control. It is
+ * only ever empty once its one child is hidden, so `:empty` retires it without
+ * anything having to know which branch rendered.
+ */
+html[data-runtime='web-desktop'][data-bp='xs'] .header-git-pill:empty {
+	display: none;
+}
+
+/*
+ * Modals take the whole screen. Every resizable modal stamps
+ * `data-modal-resize-key` (the palette, Settings, the Usage Dashboard,
+ * Director's Notes, Process Monitor, file search, ...) and sizes itself to a
+ * remembered width and height clamped inside a padded overlay. On a phone that
+ * left a 326px box floating in a 390px viewport with the app peeking around
+ * it, headers wrapping to two lines, and nothing gained by the margin. The
+ * resize grips are hidden too: there is no edge to drag. Small dialogs (confirm,
+ * rename) pass no resize key and keep their natural size.
+ */
+html[data-runtime='web-desktop'][data-bp='xs'] .modal-overlay {
+	/* The status bar band and the home indicator stay outside the modal. */
+	padding: var(--maestro-top-inset, 0px) 0 env(safe-area-inset-bottom, 0px) 0 !important;
+}
+html[data-runtime='web-desktop'][data-bp='xs'] [data-modal-resize-key] {
+	width: 100vw !important;
+	width: 100dvw !important;
+	/*
+	 * Sized to what the user can SEE, not to the layout viewport. On iOS the
+	 * on-screen keyboard slides over the page instead of shrinking it, so
+	 * `100dvh` keeps a full-screen modal at full height with its bottom ~45%
+	 * behind the keys. Both search surfaces autofocus their input, so the
+	 * keyboard is up from the first frame and the results list is born buried:
+	 * typing filters, but the rows the user is trying to scroll through are
+	 * under the keyboard. `--maestro-viewport-height` is `visualViewport.height`,
+	 * republished on every keyboard open and close (standaloneStatusBar.ts);
+	 * `100dvh` is the fallback for a browser with no visualViewport, where the
+	 * two are the same number anyway.
+	 */
+	height: calc(
+		var(--maestro-viewport-height, 100dvh) - var(--maestro-top-inset, 0px) -
+			env(safe-area-inset-bottom, 0px)
+	) !important;
+	max-width: none !important;
+	max-height: none !important;
+	border-radius: 0 !important;
+}
+html[data-runtime='web-desktop'][data-bp='xs'] [data-resize-handle] {
+	display: none !important;
+}
+
+/*
  * Panel resize handles (left sidebar, right panel, group-chat panel).
  *
  * `touch-action: none` tells the browser NOT to treat a drag on the handle as a
@@ -1830,4 +2194,375 @@ html[data-runtime='web-desktop'][data-bp='sm'] .maestro-input-text-overlay {
 		left: -10px;
 		right: -10px;
 	}
+}
+
+/* ============================================================================
+   SURFACE GLOSS
+
+   Adds a light source to the app chrome so surfaces read as stacked layers
+   instead of one flat sheet of paint. It changes no theme colour: it only adds
+   highlights and shadows over the paint that is already there.
+
+   Intensity comes from the `themeGloss` setting, published onto <html> as
+   `data-gloss` by `useThemeStyles`. The vocabulary lives in
+   `src/shared/themeGloss.ts`; every level named there needs rules here, or the
+   Settings slider offers a stop that renders the same as the one before it.
+
+     off     - shipped behaviour, no rules at all
+     sheen   - top highlight + short top-down wash
+     strong  - same, roughly 1.6x, plus a dark edge along the bottom of each bar
+     max     - strong + accent glow on the active surface
+
+   Light themes are excluded outright: a white highlight on a white surface is
+   invisible at best and muddy at worst.
+
+   TWO CHOICES HERE ARE LOAD-BEARING, and both were made after the obvious
+   version turned out to be wrong.
+
+   1. THE BAR SHEEN IS BACKGROUND-IMAGE, NOT BOX-SHADOW. An inline style beats a
+      stylesheet class, and `SessionList` and `RightPanel` both set an inline
+      `boxShadow` for their focus ring. A `box-shadow` sheen therefore vanished
+      from whichever sidebar the user had focused and came back when they moved
+      away, which reads as the gloss flickering rather than as a focus ring.
+      `background-image` has no such collision: every chrome root paints itself
+      with `background-color`, which is a different longhand, so the layers
+      compose and neither side has to know about the other. The 1px highlight is
+      just a gradient with a hard stop. `.chrome-raised` keeps a real
+      `box-shadow` because it needs to cast OUTSIDE its box and nothing sets an
+      inline shadow there.
+
+   2. THE LIGHT SOURCE IS `--sheen-rgb`, NOT `currentColor`. currentColor is
+      whatever text colour happens to be inherited at each root, so a container
+      that sets a dim colour glosses weaker than one that does not, and the same
+      level renders at two strengths in one window for reasons nobody chose. The
+      variable is published from the theme's own `textMain`, so intensity is a
+      property of the level and the hue is a property of the theme. The fallback
+      is white because gloss is dark-theme only.
+   ============================================================================ */
+
+html[data-gloss='sheen'] .chrome-sheen {
+	background-image:
+		linear-gradient(180deg, rgb(var(--sheen-rgb, 255 255 255) / 7%) 0 1px, transparent 1px),
+		linear-gradient(180deg, rgb(var(--sheen-rgb, 255 255 255) / 5%), transparent 110px);
+}
+
+html[data-gloss='strong'] .chrome-sheen,
+html[data-gloss='max'] .chrome-sheen {
+	background-image:
+		linear-gradient(180deg, rgb(var(--sheen-rgb, 255 255 255) / 11%) 0 1px, transparent 1px),
+		linear-gradient(0deg, rgb(0 0 0 / 45%) 0 1px, transparent 1px),
+		linear-gradient(
+			180deg,
+			rgb(var(--sheen-rgb, 255 255 255) / 8%),
+			rgb(var(--sheen-rgb, 255 255 255) / 2%) 34px,
+			transparent 130px
+		);
+}
+
+/* Cards and pills sit ON the chrome, so they get the highlight without the
+   wash - a gradient inside a small rounded box reads as a bad texture - and a
+   real drop shadow, which is the whole point of calling them raised. */
+html[data-gloss='sheen'] .chrome-raised {
+	box-shadow:
+		inset 0 1px 0 rgb(var(--sheen-rgb, 255 255 255) / 6%),
+		0 2px 10px rgb(0 0 0 / 30%);
+}
+
+html[data-gloss='strong'] .chrome-raised,
+html[data-gloss='max'] .chrome-raised {
+	box-shadow:
+		inset 0 1px 0 rgb(var(--sheen-rgb, 255 255 255) / 9%),
+		0 3px 14px rgb(0 0 0 / 42%);
+}
+
+html[data-gloss='max'] .chrome-raised-active {
+	box-shadow:
+		inset 0 1px 0 rgb(var(--sheen-rgb, 255 255 255) / 14%),
+		0 0 0 1px color-mix(in srgb, var(--accent-color) 34%, transparent),
+		0 0 18px color-mix(in srgb, var(--accent-color) 22%, transparent);
+}
+
+/* ============================================================================
+   VIBE MODE
+
+   The four vibe themes (Pedurple, Dre Synth, Winamp, Maestro's
+   Choice) declare `mode: 'vibe'` in `src/shared/themes.ts`, which
+   `useThemeStyles` publishes as `<html data-theme-mode='vibe'>`. Until now the
+   only mode-keyed CSS was the light-theme opt-out below, so a vibe theme
+   rendered exactly like a plain dark one and the mode was a label with no
+   pixels behind it.
+
+   These rules give it pixels: the same gloss vocabulary, mixed a step brighter
+   and carrying an accent-tinted wash off `--accent-color`, so each vibe theme
+   glosses in its OWN hue rather than in the neutral white every dark theme
+   shares. The active surface gets its accent ring at every level instead of
+   only at `max`, because on a vibe theme the accent IS the identity.
+
+   TWO CHOICES HERE ARE DELIBERATE.
+
+   1. EVERY RULE IS SCOPED TO A GLOSS LEVEL. `off` promises flat surfaces,
+      "exactly as Maestro has always rendered" (`GLOSS_LEVEL_META` in
+      `src/shared/themeGloss.ts`), and a theme mode is not a licence to break
+      that: a user who turned gloss off asked for no highlights, not for no
+      highlights unless they happen to like purple. Vibe amplifies gloss, it
+      does not switch it on.
+
+   2. NO `filter` ON CHROME SURFACES. A saturation filter was the obvious way
+      to make these themes read richer, and it is wrong here: `filter` makes
+      the element a containing block for `position: fixed` descendants, and
+      `.chrome-sheen` is the Left Bar root, whose `SessionContextMenu`,
+      `GroupContextMenu`, `LiveOverlayPanel`, and collapsed-pill tooltips are
+      all fixed and NOT portaled. Every one of them would start measuring from
+      the sidebar instead of the viewport, which reads as right-click menus
+      landing in the wrong place. The accent wash below buys the same warmth
+      through `background-image`, which composes with the chrome's own
+      `background-color` and captures nothing.
+   ============================================================================ */
+
+html[data-theme-mode='vibe'][data-gloss='sheen'] .chrome-sheen {
+	background-image:
+		linear-gradient(180deg, rgb(var(--sheen-rgb, 255 255 255) / 9%) 0 1px, transparent 1px),
+		linear-gradient(
+			180deg,
+			color-mix(in srgb, var(--accent-color) 9%, transparent),
+			transparent 96px
+		),
+		linear-gradient(180deg, rgb(var(--sheen-rgb, 255 255 255) / 6%), transparent 110px);
+}
+
+html[data-theme-mode='vibe'][data-gloss='strong'] .chrome-sheen,
+html[data-theme-mode='vibe'][data-gloss='max'] .chrome-sheen {
+	background-image:
+		linear-gradient(180deg, rgb(var(--sheen-rgb, 255 255 255) / 14%) 0 1px, transparent 1px),
+		linear-gradient(0deg, rgb(0 0 0 / 45%) 0 1px, transparent 1px),
+		linear-gradient(
+			180deg,
+			color-mix(in srgb, var(--accent-color) 14%, transparent),
+			transparent 116px
+		),
+		linear-gradient(
+			180deg,
+			rgb(var(--sheen-rgb, 255 255 255) / 10%),
+			rgb(var(--sheen-rgb, 255 255 255) / 3%) 34px,
+			transparent 130px
+		);
+}
+
+/* Raised surfaces pick up a hairline accent ring rather than a wash, for the
+   same reason the neutral rules skip the wash on them: a gradient inside a
+   small rounded box reads as a bad texture. */
+html[data-theme-mode='vibe'][data-gloss='sheen'] .chrome-raised {
+	box-shadow:
+		inset 0 1px 0 rgb(var(--sheen-rgb, 255 255 255) / 8%),
+		0 0 0 1px color-mix(in srgb, var(--accent-color) 12%, transparent),
+		0 2px 12px rgb(0 0 0 / 34%);
+}
+
+html[data-theme-mode='vibe'][data-gloss='strong'] .chrome-raised,
+html[data-theme-mode='vibe'][data-gloss='max'] .chrome-raised {
+	box-shadow:
+		inset 0 1px 0 rgb(var(--sheen-rgb, 255 255 255) / 12%),
+		0 0 0 1px color-mix(in srgb, var(--accent-color) 18%, transparent),
+		0 3px 16px rgb(0 0 0 / 46%);
+}
+
+html[data-theme-mode='vibe'][data-gloss='sheen'] .chrome-raised-active,
+html[data-theme-mode='vibe'][data-gloss='strong'] .chrome-raised-active {
+	box-shadow:
+		inset 0 1px 0 rgb(var(--sheen-rgb, 255 255 255) / 12%),
+		0 0 0 1px color-mix(in srgb, var(--accent-color) 30%, transparent),
+		0 0 14px color-mix(in srgb, var(--accent-color) 18%, transparent);
+}
+
+html[data-theme-mode='vibe'][data-gloss='max'] .chrome-raised-active {
+	box-shadow:
+		inset 0 1px 0 rgb(var(--sheen-rgb, 255 255 255) / 18%),
+		0 0 0 1px color-mix(in srgb, var(--accent-color) 46%, transparent),
+		0 0 24px color-mix(in srgb, var(--accent-color) 30%, transparent);
+}
+
+/* Never on light themes. Placed last so it wins over every level above without
+   needing a level-by-level opt-out. */
+html[data-theme-mode='light'] .chrome-sheen,
+html[data-theme-mode='light'] .chrome-raised,
+html[data-theme-mode='light'] .chrome-raised-active {
+	box-shadow: none;
+	background-image: none;
+}
+
+/* ============================================================================
+   LEFT BAR ROW LAYOUT
+
+   The row used to spend its width on the constant and clip the variable. The
+   agent name is the only thing that differs between rows and the only thing
+   anyone scans for, yet it truncated around fourteen characters, while the
+   provider label underneath reads the same string on nine rows out of ten and
+   got a full uncontested line at almost the same weight.
+
+   The fix gives the title the ENTIRE first line and moves everything else to a
+   second line, so a long name has the full sidebar to itself. It is always two
+   lines, which is what the shipped row already was, and it costs 0.5px of row
+   height.
+
+   The mechanism is `display: contents` on the row's left wrapper, which
+   dissolves that wrapper as a box and promotes the title and meta rows to
+   direct grid children of the row. Without it the title cannot span past the
+   wrapper, and the actions cluster cannot be pulled onto the meta line, since
+   the two live in different parents.
+
+   NOTHING HERE CHANGES LEGIBILITY. An earlier draft also demoted the provider
+   label to 9px at opacity .5 and faded the group chip to .7, and both were
+   wrong for the same measured reason: CSS opacity nests, `.row-meta` already
+   carries `opacity-70`, so the effective alpha was .35 rather than .5. On the
+   shipped palettes that put the label at 1.46:1 on Dracula and 2.34:1 on Olive
+   Nights, against 2.18:1 and 6.13:1 today, and at 9px none of it qualifies as
+   large text, so even the relaxed 3:1 floor is missed on every theme. Moving
+   text costs nothing and buys the actual fix; dimming text costs real
+   legibility and buys an impression. Do not reintroduce a dim here without
+   running the contrast numbers on more than one theme.
+   ============================================================================ */
+
+.session-row {
+	display: grid;
+	grid-template-columns: 1fr auto;
+	align-items: center;
+	column-gap: 0.5rem;
+}
+
+.session-row .row-main {
+	display: contents;
+}
+
+.session-row .row-title {
+	grid-column: 1 / -1;
+	grid-row: 1;
+	min-width: 0;
+}
+
+/* Single line. The ellipsis is a genuine last resort rather than the normal
+   case it was at fourteen characters - `min-width: 0` plus `flex-shrink: 1`
+   is what buys that, and both are still here.
+
+   `flex-grow` is 0 on purpose. It used to be 1, which made the name box
+   stretch across the whole title row even when the name was short, shoving
+   every indicator after it (Cue's bolt, the startup-command terminal, the
+   wizard dot) out to the far right edge. They read as a right-hand status
+   column that way, which they are not: they belong to the NAME, and the meta
+   row below already owns the real right-hand column (`.row-actions`, grid
+   row 2). A long name hid the effect, so it looked like only some indicators
+   were misplaced - in fact every row had it.
+
+   Growing changes nothing about truncation: leftover space only exists when
+   the name already fits, and when it does not, shrink and `min-width: 0` do
+   the ellipsis exactly as before. */
+.session-row .row-name {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	min-width: 0;
+	flex: 0 1 auto;
+}
+
+.session-row .row-meta {
+	grid-column: 1;
+	grid-row: 2;
+	min-width: 0;
+}
+
+.session-row .row-actions {
+	grid-column: 2;
+	grid-row: 2;
+	margin-left: 0;
+	justify-self: end;
+}
+
+/* Width only, no dimming. The chip sits beside the title and would otherwise
+   hold its natural width, so it is capped and given an ellipsis. */
+.session-row .row-group-chip {
+	max-width: 90px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* ============================================================================
+   ROW HOVER WASH
+
+   Replaces the dead `hover:bg-opacity-*` classes that were scattered across the
+   renderer. Tailwind's opacity utility only edits the alpha channel of a
+   `bg-{color}` utility, so an element whose background comes from an INLINE
+   style (every Left Bar agent row, every group header, most icon buttons in the
+   Process Monitor and the Log Viewer) had a hover class that resolved to
+   nothing at all. Those controls had no hover feedback whatsoever.
+
+   The wash is painted with `background-image` rather than `background-color`
+   ON PURPOSE. The rows that need it most are exactly the ones that already
+   carry an inline `backgroundColor` for their active / keyboard-selected /
+   drag-over state, and a hover `background-color` rule loses to that inline
+   declaration (or, with `!important`, erases the selection while the pointer is
+   over it). A gradient is a separate layer: it composites ON TOP of whatever
+   background-color the element sets inline, so a selected row still reads as
+   selected and simply brightens under the cursor.
+
+   Dark and vibe themes lighten, light themes darken. The neutral wash is
+   deliberate: these are ambient surfaces, and tinting every hover with the
+   accent turns the sidebar into a highlight reel.
+
+   `--bg-hover-wash` comes from `useThemeStyles` and is the theme's own
+   `textMain` at a low alpha, which lightens a dark theme and darkens a light
+   one without either rule below having to know which mode is active. The two
+   literals stay as FALLBACKS: they are what paints before the theme effect has
+   run, and what paints for a custom theme whose `textMain` is not a hex colour.
+   ============================================================================ */
+
+.row-hover {
+	--row-hover-wash: var(--bg-hover-wash, rgb(255 255 255 / 0.06));
+}
+
+html[data-theme-mode='light'] .row-hover {
+	--row-hover-wash: var(--bg-hover-wash, rgb(0 0 0 / 0.05));
+}
+
+.row-hover:hover {
+	background-image: linear-gradient(var(--row-hover-wash), var(--row-hover-wash));
+}
+
+/* ============================================================================
+   FILES TOOLBAR HIERARCHY (dormant; no UI and nothing seeds this attribute)
+
+   The same defect the Left Bar had, in another panel: Find, Open, .files and
+   Refresh are rendered from an identical class string, so four buttons plus two
+   icon controls all carry the accent colour, the accent border and the accent
+   fill at equal weight. Six controls shout in unison and the eye has nowhere to
+   land. Find is the one with a keyboard shortcut and the one used constantly,
+   so it becomes the primary and the rest drop to the panel's own text colour.
+
+   NOT SHIPPED, and deliberately behind its own attribute rather than the gloss
+   setting, because it is a different decision. Flip it live to review:
+
+       document.documentElement.dataset.fxToolbar = 'on'
+
+   Two things must change before this can ship: the `!important` below exists
+   only because `FileExplorerPanel` sets these colours inline, so the inline
+   styles need to become a real variant prop; and the hover rules hard-code
+   white alphas, which are wrong on a light theme.
+   ============================================================================ */
+
+html[data-fx-toolbar='on'] .fx-btn:not(.fx-primary) {
+	color: var(--fx-quiet, #98a0bd) !important;
+	border-color: rgba(255, 255, 255, 0.09) !important;
+	background-color: transparent !important;
+	font-weight: 400 !important;
+}
+
+html[data-fx-toolbar='on'] .fx-btn:not(.fx-primary):hover {
+	border-color: rgba(255, 255, 255, 0.18) !important;
+	background-color: rgba(255, 255, 255, 0.05) !important;
+}
+
+html[data-fx-toolbar='on'] .fx-btn.fx-primary {
+	background-color: var(--accent-color) !important;
+	border-color: var(--accent-color) !important;
+	color: #16171f !important;
+	font-weight: 600 !important;
 }

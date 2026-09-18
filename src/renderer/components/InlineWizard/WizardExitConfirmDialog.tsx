@@ -1,12 +1,19 @@
 /**
  * WizardExitConfirmDialog.tsx
  *
- * Destructive confirmation shown before leaving the inline wizard. Leaving discards the
- * whole conversation, so this is the ONLY route out - Escape never exits the wizard
- * directly, it opens this.
+ * Confirmation shown before leaving the inline wizard. This is the ONLY route out -
+ * Escape never exits the wizard directly, it opens this.
  *
- * Confirming is deliberate: the red "Yes, Exit" button is focused, so Enter confirms and
- * Escape (the reflex after an accidental Escape) cancels.
+ * Exiting has two different outcomes and the copy has to say which one applies, because
+ * one of them loses data and the other does not. `willCloseTab` is true when the wizard
+ * got its own throwaway tab: exiting closes that tab and the conversation goes with it.
+ * Otherwise `/wizard` ran in place in a tab the user was already using, and exiting
+ * flattens the wizard conversation into that tab's normal transcript (see
+ * `flattenWizardIntoTab`), so nothing is lost.
+ *
+ * Confirming is deliberate: the "Yes, Exit" button is focused, so Enter confirms and
+ * Escape (the reflex after an accidental Escape) cancels. It is painted in the error
+ * color only when exiting actually destroys something.
  */
 
 import { useEffect, useRef } from 'react';
@@ -17,6 +24,11 @@ import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 
 interface WizardExitConfirmDialogProps {
 	theme: Theme;
+	/**
+	 * True when exiting closes the wizard's own tab, discarding the conversation.
+	 * False when the wizard ran in place and the conversation is kept in the tab.
+	 */
+	willCloseTab: boolean;
 	/** Called when user confirms exit */
 	onConfirm: () => void;
 	/** Called when user cancels and wants to stay in wizard */
@@ -24,13 +36,14 @@ interface WizardExitConfirmDialogProps {
 }
 
 /**
- * WizardExitConfirmDialog - Destructive confirmation for exiting the inline wizard
+ * WizardExitConfirmDialog - Confirmation for exiting the inline wizard
  *
- * Warns that the conversation will be lost (the inline wizard doesn't persist state).
- * Focuses the destructive "Yes, Exit" button so Enter confirms; Escape cancels.
+ * Says whether the conversation is discarded (throwaway wizard tab) or kept in the tab
+ * (`/wizard` run in place). Focuses "Yes, Exit" so Enter confirms; Escape cancels.
  */
 export function WizardExitConfirmDialog({
 	theme,
+	willCloseTab,
 	onConfirm,
 	onCancel,
 }: WizardExitConfirmDialogProps): JSX.Element {
@@ -83,8 +96,16 @@ export function WizardExitConfirmDialog({
 					className="p-4 border-b flex items-center gap-3"
 					style={{ borderColor: theme.colors.border }}
 				>
-					<div className="p-2 rounded-lg" style={{ backgroundColor: `${theme.colors.error}20` }}>
-						<AlertTriangle className="w-5 h-5" style={{ color: theme.colors.error }} />
+					<div
+						className="p-2 rounded-lg"
+						style={{
+							backgroundColor: `${willCloseTab ? theme.colors.error : theme.colors.accent}20`,
+						}}
+					>
+						<AlertTriangle
+							className="w-5 h-5"
+							style={{ color: willCloseTab ? theme.colors.error : theme.colors.accent }}
+						/>
 					</div>
 					<h2
 						id="wizard-exit-dialog-title"
@@ -102,8 +123,9 @@ export function WizardExitConfirmDialog({
 						className="text-sm leading-relaxed"
 						style={{ color: theme.colors.textDim }}
 					>
-						Are you sure you want to exit the wizard and lose your progress? The conversation and
-						anything not yet generated will be discarded.
+						{willCloseTab
+							? 'Are you sure you want to exit the wizard and lose your progress? This closes the wizard tab, so the conversation and anything not yet generated will be discarded.'
+							: 'Leave wizard mode? The conversation stays in this tab and you can keep chatting. Anything not yet generated will be discarded.'}
 					</p>
 
 					{/* Actions. Cancel sits first so the destructive button is not under the
@@ -124,7 +146,7 @@ export function WizardExitConfirmDialog({
 							onClick={onConfirm}
 							className="px-4 py-2 rounded-lg text-sm font-medium outline-none focus:ring-2 focus:ring-offset-1 transition-colors hover:opacity-90"
 							style={{
-								backgroundColor: theme.colors.error,
+								backgroundColor: willCloseTab ? theme.colors.error : theme.colors.accent,
 								color: 'white',
 							}}
 							data-testid="wizard-exit-confirm-button"

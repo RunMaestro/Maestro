@@ -113,7 +113,7 @@ export function AgentDispatchAllowlist({
 			>
 				Dispatch allow list
 			</div>
-			<p className="text-[11px] mb-2" style={{ color: theme.colors.textDim }}>
+			<p className="text-xs-plus mb-2" style={{ color: theme.colors.textDim }}>
 				Choose which agents this plugin may send prompts to. High risk: only allow agents you trust
 				this plugin to drive. Changes apply immediately, with no re-signing.
 			</p>
@@ -148,7 +148,7 @@ export function AgentDispatchAllowlist({
 									{session.name || session.id}
 								</div>
 								<div
-									className="text-[10px] font-mono truncate"
+									className="text-2xs font-mono truncate"
 									style={{ color: theme.colors.textDim }}
 								>
 									{session.id}
@@ -161,7 +161,7 @@ export function AgentDispatchAllowlist({
 
 			{staleChecked.length > 0 && (
 				<p
-					className="text-[10px] mt-1.5"
+					className="text-2xs mt-1.5"
 					data-testid="agent-dispatch-allowlist-stale"
 					style={{ color: theme.colors.warning }}
 				>
@@ -181,7 +181,7 @@ export function AgentDispatchAllowlist({
 				>
 					<Send className="w-3.5 h-3.5" /> Save allow list
 				</button>
-				<span className="text-[11px]" style={{ color: theme.colors.textDim }}>
+				<span className="text-xs-plus" style={{ color: theme.colors.textDim }}>
 					{liveCheckedCount} of {sessions.length} agent{sessions.length === 1 ? '' : 's'} allowed
 				</span>
 			</div>

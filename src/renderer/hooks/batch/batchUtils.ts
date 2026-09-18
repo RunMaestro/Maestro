@@ -6,11 +6,16 @@
 import { describeSegmentLimit } from '../../../shared/autorunModelHints';
 import type { TaskSelectionMode } from '../../types';
 import {
-	CHECKED_TASK_COUNT_REGEX,
 	CHECKED_TASK_REGEX,
 	UNCHECKED_TASK_REGEX,
+	countMarkdownTasks,
 	forEachMarkdownLine,
 } from '../../../shared/markdownTaskScan';
+
+// Task counting moved to `shared/markdownTaskScan` so the CLI engine counts a
+// document exactly the way this one does. Re-exported because the batch hooks
+// and several components import it from here.
+export { countMarkdownTasks, type MarkdownTaskCounts } from '../../../shared/markdownTaskScan';
 
 // HITL gate detection moved to `shared/autorunMarkers` so the CLI engine and the
 // markdown renderer can read gates the same way this engine does. Re-exported
@@ -77,35 +82,6 @@ export function getTaskSelectionBlock(
 // Default batch processing prompt (exported for use by BatchRunnerModal and playbook management)
 // Uses `let` so the binding can be updated after async IPC load completes
 export let DEFAULT_BATCH_PROMPT: string = getAutorunDefaultPrompt();
-
-export interface MarkdownTaskCounts {
-	checked: number;
-	unchecked: number;
-	total: number;
-}
-
-/**
- * Count markdown checkbox tasks while ignoring fenced code blocks.
- * This prevents example snippets from affecting Auto Run progress.
- */
-export function countMarkdownTasks(content: string): MarkdownTaskCounts {
-	let checked = 0;
-	let unchecked = 0;
-
-	forEachMarkdownLine(content, (line) => {
-		if (CHECKED_TASK_COUNT_REGEX.test(line)) {
-			checked++;
-		} else if (UNCHECKED_TASK_REGEX.test(line)) {
-			unchecked++;
-		}
-	});
-
-	return {
-		checked,
-		unchecked,
-		total: checked + unchecked,
-	};
-}
 
 /**
  * Count unchecked tasks in markdown content

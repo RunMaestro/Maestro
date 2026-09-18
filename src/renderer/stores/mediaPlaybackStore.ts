@@ -51,7 +51,11 @@
 import { create } from 'zustand';
 
 import { mediaItemId, pushMediaHistory, trimMediaQueue, type MediaItem } from '../utils/mediaItems';
-import { normalizeMediaAspect, type PersistedMediaFloat } from '../utils/mediaFloatGeometry';
+import {
+	normalizeMediaAspect,
+	type MediaFloatFootprint,
+	type PersistedMediaFloat,
+} from '../utils/mediaFloatGeometry';
 import type { MediaKind } from '../../shared/mediaTypes';
 
 /** Everything needed to queue a file, minus the derived ID. */
@@ -159,6 +163,18 @@ interface MediaPlaybackStoreState {
 	 */
 	floatWidths: Partial<Record<MediaKind, number>>;
 	/**
+	 * Where the visible widget actually sits, in the bottom-right lane's own
+	 * coordinates. Null whenever nothing is on screen (no loaded item, or
+	 * minimized).
+	 *
+	 * Separate from `floatPosition`, which is the PERSISTED position and only
+	 * moves when the user lets go of a drag. This is the live rect, republished
+	 * mid-gesture and on every window resize, and it exists so the toast stack
+	 * can get out of the widget's way - a toast landing on the player at
+	 * z-index 100000 made it look like the widget had closed itself.
+	 */
+	floatFootprint: MediaFloatFootprint | null;
+	/**
 	 * Item ID -> picture aspect ratio, learned from the file when it loads.
 	 *
 	 * Per boot: it costs one frame to re-learn and would otherwise be one more
@@ -250,6 +266,14 @@ interface MediaPlaybackStoreState {
 	 * kind of media.
 	 */
 	setFloatGeometry: (kind: MediaKind, rect: { top: number; left: number; width: number }) => void;
+	/**
+	 * Publish (or clear) the widget's live on-screen footprint.
+	 *
+	 * Called by the widget itself, which is the only thing that knows where it
+	 * ended up - it clamps itself to the viewport, so its rect is not derivable
+	 * from the persisted position.
+	 */
+	setFloatFootprint: (footprint: MediaFloatFootprint | null) => void;
 	/** Remember where an item was paused, so returning to it resumes. */
 	rememberTime: (itemId: string, seconds: number) => void;
 	/** Record how long a file is, for the queue and history lists. */
@@ -362,6 +386,7 @@ export const useMediaPlaybackStore = create<MediaPlaybackStoreState>()((set, get
 	durations: {},
 	floatPosition: null,
 	floatWidths: {},
+	floatFootprint: null,
 	aspects: {},
 
 	openMedia: (request) => {
@@ -621,6 +646,25 @@ export const useMediaPlaybackStore = create<MediaPlaybackStoreState>()((set, get
 			return { floatPosition: { top: float.top, left: float.left }, floatWidths: float.widths };
 		});
 	},
+
+	setFloatFootprint: (footprint) =>
+		set((state) => {
+			const current = state.floatFootprint;
+			if (current === footprint) return state;
+			if (
+				current &&
+				footprint &&
+				current.fromBottom === footprint.fromBottom &&
+				current.fromRight === footprint.fromRight &&
+				current.width === footprint.width &&
+				current.viewportHeight === footprint.viewportHeight
+			) {
+				// A drag fires this on every mousemove; only real movement should
+				// re-render the toast stack subscribed to it.
+				return state;
+			}
+			return { floatFootprint: footprint };
+		}),
 
 	rememberTime: (itemId, seconds) => {
 		set((state) => ({ resumeTimes: { ...state.resumeTimes, [itemId]: seconds } }));

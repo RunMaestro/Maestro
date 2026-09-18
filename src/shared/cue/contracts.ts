@@ -28,6 +28,7 @@ export type CueEventType =
 	| 'agent.completed'
 	| 'github.pull_request'
 	| 'github.issue'
+	| 'github.label'
 	| 'task.pending'
 	| 'cli.trigger'
 	| 'webhook.received';
@@ -42,6 +43,7 @@ export const CUE_EVENT_TYPES: CueEventType[] = [
 	'agent.completed',
 	'github.pull_request',
 	'github.issue',
+	'github.label',
 	'task.pending',
 	'cli.trigger',
 	'webhook.received',
@@ -100,6 +102,12 @@ export type CueGitHubState = 'open' | 'closed' | 'merged' | 'all';
 
 /** All valid GitHub state values */
 export const CUE_GITHUB_STATES: CueGitHubState[] = ['open', 'closed', 'merged', 'all'];
+
+/** Which kind of item a `github.label` subscription watches. */
+export type CueGitHubLabelTarget = 'pr' | 'issue' | 'both';
+
+/** All valid `gh_label_target` values */
+export const CUE_GITHUB_LABEL_TARGETS: CueGitHubLabelTarget[] = ['pr', 'issue', 'both'];
 
 /** What a subscription does when it fires. */
 export type CueAction = 'prompt' | 'command' | 'notify';
@@ -243,6 +251,14 @@ export interface CueSubscription {
 	repo?: string;
 	poll_minutes?: number;
 	gh_state?: CueGitHubState;
+	/** Which kind of item a `github.label` subscription watches: pull requests
+	 *  only, issues only, or both. Defaults to `'both'`. Ignored by every
+	 *  other event type. */
+	gh_label_target?: CueGitHubLabelTarget;
+	/** Labels a `github.label` subscription fires on. Matched case-insensitively
+	 *  against the label that was just added. Empty / omitted = fire on ANY
+	 *  label being added. Ignored by every other event type. */
+	gh_labels?: string[];
 	/** Re-fire this subscription when a tracked PR/issue receives new activity
 	 *  (comments, edits, reviews, label changes) after its initial discovery.
 	 *  Default `false` (legacy behavior: fire once per item on creation).
@@ -330,6 +346,28 @@ export interface CueSettings {
 	 * the session list wins (deterministic per launch).
 	 */
 	owner_agent_id?: string;
+	/**
+	 * Run the 0DIN.ai SusFactor prompt-injection check on GitHub issue/PR bodies
+	 * and comments before an agent sees them. Suspicious items are blocked and
+	 * the user is notified instead of being processed.
+	 *
+	 * NOTE ON EGRESS: enabling this POSTs the text of every scored issue body and
+	 * comment - including those in private repositories - to defense.0din.ai. The
+	 * check also no-ops unless `ODIN_API_TOKEN` is set in the environment.
+	 *
+	 * Defaults to true.
+	 */
+	susfactor_enabled?: boolean;
+	/**
+	 * Score at or above which an item is blocked, on a 0-1 scale, applied to the
+	 * highest-scoring chunk of the content rather than the document as a whole.
+	 *
+	 * Defaults to 0.95. Measured against the live endpoint, benign engineering
+	 * prose topped out around 0.86 while real injections landed at 0.96-0.999,
+	 * so 0.95 sits inside that gap. Lowering it below ~0.9 starts blocking
+	 * ordinary security-flavored text such as "stop logging the bearer token".
+	 */
+	susfactor_threshold?: number;
 }
 
 /** Default Cue settings */
@@ -338,6 +376,8 @@ export const DEFAULT_CUE_SETTINGS: CueSettings = {
 	timeout_on_fail: 'break',
 	max_concurrent: 1,
 	queue_size: 512,
+	susfactor_enabled: true,
+	susfactor_threshold: 0.95,
 };
 
 /** Top-level Cue configuration */

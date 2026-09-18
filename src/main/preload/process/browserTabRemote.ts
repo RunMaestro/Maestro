@@ -82,17 +82,21 @@ export function createBrowserTabRemoteApi() {
 			callback: (
 				sessionId: string,
 				config: { cwd?: string; shell?: string; name?: string | null; command?: string },
-				responseChannel: string
+				responseChannel: string,
+				options: { background?: boolean }
 			) => void
 		): (() => void) => {
 			const handler = (
 				_: unknown,
 				sessionId: string,
 				config: { cwd?: string; shell?: string; name?: string | null; command?: string },
-				responseChannel: string
+				responseChannel: string,
+				options?: { background?: boolean }
 			) => {
 				try {
-					callback(sessionId, config, responseChannel);
+					callback(sessionId, config, responseChannel, {
+						background: options?.background === true,
+					});
 				} catch (error) {
 					ipcRenderer.send(responseChannel, false);
 					throw error;
@@ -262,14 +266,16 @@ export function createBrowserTabRemoteApi() {
 		 * Send response for remote "new AI tab with prompt".
 		 * `tabId` is the id of the freshly-created tab - surfaced so
 		 * `maestro-cli dispatch --new-tab` can return an addressable id to its
-		 * caller without owning a persistent channel.
+		 * caller without owning a persistent channel. `queued` says the prompt is
+		 * waiting behind the agent's current turn rather than running now, and
+		 * `error` is the renderer's own reason for a refusal - without it the CLI
+		 * can only see a missing tab id and has to guess why.
 		 */
 		sendRemoteNewAITabWithPromptResponse: (
 			responseChannel: string,
-			success: boolean,
-			tabId?: string
+			result: { success: boolean; tabId?: string; queued?: boolean; error?: string }
 		): void => {
-			ipcRenderer.send(responseChannel, { success, tabId });
+			ipcRenderer.send(responseChannel, result);
 		},
 	};
 }

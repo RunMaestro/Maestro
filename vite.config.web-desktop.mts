@@ -48,6 +48,7 @@ function bundledFontsPlugin(): PluginOption {
 	const fontsDir = path.join(__dirname, 'src/renderer/public/fonts');
 	return {
 		name: 'maestro-bundled-fonts',
+		enforce: 'post',
 		// Dev: map the request path onto the renderer's public dir.
 		configureServer(server) {
 			server.middlewares.use('/fonts', (req, res, next) => {
@@ -60,15 +61,25 @@ function bundledFontsPlugin(): PluginOption {
 			});
 		},
 		// Build: emit each file so the Fastify server ships them alongside the app.
-		generateBundle() {
+		generateBundle(_options, bundle) {
 			if (!fs.existsSync(fontsDir)) return;
 			for (const name of fs.readdirSync(fontsDir)) {
 				if (!name.endsWith('.woff2')) continue;
 				this.emitFile({
 					type: 'asset',
-					fileName: `fonts/${name}`,
+					fileName: `assets/fonts/${name}`,
 					source: fs.readFileSync(path.join(fontsDir, name)),
 				});
+			}
+
+			// The shared renderer stylesheet uses /fonts/* so Electron can serve the
+			// files from its app root. A leading slash escapes the web server's
+			// security-token prefix, however. Keep the shared source unchanged and
+			// make only this bundle's CSS resolve fonts beside the emitted assets.
+			for (const asset of Object.values(bundle)) {
+				if (asset.type !== 'asset' || !asset.fileName.endsWith('.css')) continue;
+				if (typeof asset.source !== 'string') continue;
+				asset.source = asset.source.replace(/url\((['"]?)\/fonts\//g, 'url($1./fonts/');
 			}
 		},
 	};

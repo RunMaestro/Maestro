@@ -122,6 +122,105 @@ describe('useQueueHandlers', () => {
 	// ========================================================================
 	// handleRemoveQueueItem
 	// ========================================================================
+	// ========================================================================
+	// handleEditQueueItem - per-message model/effort override
+	// ========================================================================
+	describe('handleEditQueueItem', () => {
+		it('persists the model/effort override onto the queued item', () => {
+			const item = createQueuedItem({ id: 'item-a' });
+			useSessionStore.setState({
+				sessions: [createSession({ id: 'sess-1', executionQueue: [item] })],
+			});
+
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
+			act(() => {
+				result.current.handleEditQueueItem('sess-1', 'item-a', {
+					text: 'edited',
+					images: [],
+					turnSettings: { model: 'opus', effort: 'ultrathink' },
+				});
+			});
+
+			const saved = useSessionStore.getState().sessions[0].executionQueue[0];
+			expect(saved.text).toBe('edited');
+			expect(saved.turnSettings).toEqual({ model: 'opus', effort: 'ultrathink' });
+		});
+
+		it('does not change the agent default model/effort', () => {
+			const item = createQueuedItem({ id: 'item-a' });
+			useSessionStore.setState({
+				sessions: [
+					createSession({
+						id: 'sess-1',
+						executionQueue: [item],
+						customModel: 'sonnet',
+						customEffort: 'think',
+					}),
+				],
+			});
+
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
+			act(() => {
+				result.current.handleEditQueueItem('sess-1', 'item-a', {
+					text: 'edited',
+					images: [],
+					turnSettings: { model: 'opus', effort: 'ultrathink' },
+				});
+			});
+
+			// The override is per-message. The agent keeps its own settings.
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.customModel).toBe('sonnet');
+			expect(updated.customEffort).toBe('think');
+		});
+
+		it('clears a stored override rather than merging the old value forward', () => {
+			const item = createQueuedItem({
+				id: 'item-a',
+				turnSettings: { model: 'opus', effort: 'ultrathink' },
+			});
+			useSessionStore.setState({
+				sessions: [createSession({ id: 'sess-1', executionQueue: [item] })],
+			});
+
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
+			act(() => {
+				result.current.handleEditQueueItem('sess-1', 'item-a', {
+					text: 'edited',
+					images: [],
+					turnSettings: { effort: 'ultrathink' },
+				});
+			});
+
+			const saved = useSessionStore.getState().sessions[0].executionQueue[0];
+			expect(saved.turnSettings).toEqual({ effort: 'ultrathink' });
+			expect(saved.turnSettings?.model).toBeUndefined();
+		});
+
+		it('only edits the target session queue', () => {
+			useSessionStore.setState({
+				sessions: [
+					createSession({ id: 'sess-1', executionQueue: [createQueuedItem({ id: 'item-a' })] }),
+					createSession({ id: 'sess-2', executionQueue: [createQueuedItem({ id: 'item-a' })] }),
+				],
+			});
+
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
+			act(() => {
+				result.current.handleEditQueueItem('sess-1', 'item-a', {
+					text: 'edited',
+					images: [],
+					turnSettings: { model: 'opus' },
+				});
+			});
+
+			const [a, b] = useSessionStore.getState().sessions;
+			expect(a.executionQueue[0].turnSettings).toEqual({ model: 'opus' });
+			expect(b.executionQueue[0].turnSettings).toBeUndefined();
+			expect(b.executionQueue[0].text).toBe('Test message');
+		});
+	});
+
 	describe('handleRemoveQueueItem', () => {
 		it('removes the specified item from the session execution queue', () => {
 			const item = createQueuedItem({ id: 'item-a', tabId: 'tab-1' });
@@ -826,7 +925,11 @@ describe('useQueueHandlers', () => {
 			expect(processQueuedItem).not.toHaveBeenCalled();
 		});
 
-		it('re-queues the item and releases the tab when the dispatch fails', async () => {
+		// Recovery moved to `agentStore.processQueuedItem`, which is the only place
+		// that can tell a transient spawn collision from a real failure. Force Send
+		// must own the REJECTION (an unhandled one is a crash report) but must not
+		// re-queue on its own, or the prompt would come back twice.
+		it('owns the rejection without re-queueing when the dispatch fails', async () => {
 			processQueuedItem.mockRejectedValueOnce(new Error('spawn failed'));
 			const item = createQueuedItem({ id: 'item-a', tabId: 'tab-1' });
 			useSessionStore.setState({
@@ -835,32 +938,19 @@ describe('useQueueHandlers', () => {
 
 			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
 
+			let threw = false;
 			await act(async () => {
-				result.current.handleForceSendQueueItem('sess-1', 'item-a');
+				try {
+					result.current.handleForceSendQueueItem('sess-1', 'item-a');
+				} catch {
+					threw = true;
+				}
 			});
 
-			const updated = useSessionStore.getState().sessions[0];
-			expect(updated.executionQueue.map((i) => i.id)).toEqual(['item-a']);
-			expect(updated.state).toBe('idle');
-			expect(updated.aiTabs[0].state).toBe('idle');
-		});
-
-		it('leaves the agent busy on failure while another tab is still working', async () => {
-			processQueuedItem.mockRejectedValueOnce(new Error('spawn failed'));
-			const item = createQueuedItem({ id: 'item-a', tabId: 'tab-1' });
-			const session = twoTabSession({ id: 'sess-1', executionQueue: [item] });
-			session.aiTabs[1].state = 'busy';
-			useSessionStore.setState({ sessions: [session] });
-
-			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
-
-			await act(async () => {
-				result.current.handleForceSendQueueItem('sess-1', 'item-a');
-			});
-
-			const updated = useSessionStore.getState().sessions[0];
-			expect(updated.state).toBe('busy');
-			expect(updated.aiTabs[0].state).toBe('idle');
+			expect(threw).toBe(false);
+			// The dispatch transition ran; the store is left exactly as agentStore's
+			// recovery (mocked out here) would find it, with no second re-queue.
+			expect(useSessionStore.getState().sessions[0].executionQueue).toEqual([]);
 		});
 	});
 

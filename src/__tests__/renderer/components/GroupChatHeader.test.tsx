@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { GroupChatHeader } from '../../../renderer/components/GroupChatHeader';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import type { Theme, Shortcut } from '../../../renderer/types';
 
 import { mockTheme } from '../../helpers/mockTheme';
@@ -41,6 +42,8 @@ const defaultProps = {
 	name: 'Test Chat',
 	participantCount: 3,
 	state: 'idle' as const,
+	moderatorOnly: false,
+	onToggleModeratorOnly: vi.fn(),
 	onStopAll: vi.fn(),
 	onRename: vi.fn(),
 	onShowInfo: vi.fn(),
@@ -52,12 +55,22 @@ const defaultProps = {
 describe('GroupChatHeader', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		useSettingsStore.setState({ showSessionCostPill: true });
 	});
 
-	it('renders group chat name and participant count', () => {
+	// The name is NOT printed in the row: it had nowhere to yield on a phone and
+	// clipped to a couple of characters. It lives in the info overlay's title and
+	// on the rename button instead.
+	it('renders the participant count but not the chat name', () => {
 		render(<GroupChatHeader {...defaultProps} />);
-		expect(screen.getByText('Group Chat: Test Chat')).toBeTruthy();
 		expect(screen.getByText('3 participants')).toBeTruthy();
+		expect(screen.queryByText(/Group Chat: Test Chat/)).toBeNull();
+	});
+
+	it('names the chat on the rename button so it stays reachable', () => {
+		render(<GroupChatHeader {...defaultProps} />);
+		expect(screen.getByTitle('Rename "Test Chat"')).toBeTruthy();
+		expect(screen.getByLabelText('Rename group chat "Test Chat"')).toBeTruthy();
 	});
 
 	it('does not render a close (X) button', () => {
@@ -70,15 +83,34 @@ describe('GroupChatHeader', () => {
 		expect(screen.getByTitle('Info')).toBeTruthy();
 	});
 
-	it('calls onRename when title is clicked', () => {
+	it('calls onRename when the edit button is clicked', () => {
 		render(<GroupChatHeader {...defaultProps} />);
-		fireEvent.click(screen.getByText('Group Chat: Test Chat'));
+		fireEvent.click(screen.getByTitle('Rename "Test Chat"'));
 		expect(defaultProps.onRename).toHaveBeenCalled();
 	});
 
 	it('shows cost pill when totalCost is provided', () => {
 		render(<GroupChatHeader {...defaultProps} totalCost={6.98} />);
 		expect(screen.getByText('6.98')).toBeTruthy();
+	});
+
+	it('hides cost pill when the session cost pill setting is off', () => {
+		useSettingsStore.setState({ showSessionCostPill: false });
+		render(<GroupChatHeader {...defaultProps} totalCost={6.98} />);
+		expect(screen.queryByText('6.98')).toBeNull();
+		expect(screen.queryByTestId('dollar-icon')).toBeNull();
+	});
+
+	it('tags the participant pill and marks a busy header for the yield ladder', () => {
+		const { container } = render(<GroupChatHeader {...defaultProps} state="moderator-thinking" />);
+		const header = container.firstElementChild as HTMLElement;
+		expect(header).toHaveClass('group-chat-header-container', 'group-chat-header-busy');
+		expect(screen.getByText('3 participants')).toHaveClass('group-chat-header-participants');
+	});
+
+	it('does not mark an idle header as busy', () => {
+		const { container } = render(<GroupChatHeader {...defaultProps} />);
+		expect(container.firstElementChild).not.toHaveClass('group-chat-header-busy');
 	});
 
 	it('shows right panel toggle when panel is closed', () => {
@@ -113,5 +145,56 @@ describe('GroupChatHeader', () => {
 		);
 		fireEvent.click(screen.getByText('Stop All'));
 		expect(onStopAll).toHaveBeenCalledOnce();
+	});
+
+	describe('view mode switch', () => {
+		it('marks Team Chat as the selected segment in the team view', () => {
+			render(<GroupChatHeader {...defaultProps} moderatorOnly={false} />);
+			expect(screen.getByTestId('group-chat-view-mode-team').getAttribute('aria-checked')).toBe(
+				'true'
+			);
+			expect(
+				screen.getByTestId('group-chat-view-mode-moderator').getAttribute('aria-checked')
+			).toBe('false');
+		});
+
+		it('marks Moderator Only as the selected segment in the moderator view', () => {
+			render(<GroupChatHeader {...defaultProps} moderatorOnly={true} />);
+			expect(
+				screen.getByTestId('group-chat-view-mode-moderator').getAttribute('aria-checked')
+			).toBe('true');
+		});
+
+		it('carries short labels for a cramped header', () => {
+			render(<GroupChatHeader {...defaultProps} />);
+			expect(screen.getByText('Team')).toHaveClass('segmented-label-short');
+			expect(screen.getByText('Moderator')).toHaveClass('segmented-label-short');
+		});
+
+		it('toggles when the other segment is clicked', () => {
+			const onToggleModeratorOnly = vi.fn();
+			render(
+				<GroupChatHeader
+					{...defaultProps}
+					moderatorOnly={false}
+					onToggleModeratorOnly={onToggleModeratorOnly}
+				/>
+			);
+			fireEvent.click(screen.getByTestId('group-chat-view-mode-moderator'));
+			expect(onToggleModeratorOnly).toHaveBeenCalledOnce();
+		});
+
+		it('does not toggle when the already-selected segment is clicked', () => {
+			const onToggleModeratorOnly = vi.fn();
+			render(
+				<GroupChatHeader
+					{...defaultProps}
+					moderatorOnly={false}
+					onToggleModeratorOnly={onToggleModeratorOnly}
+				/>
+			);
+			fireEvent.click(screen.getByTestId('group-chat-view-mode-team'));
+			expect(onToggleModeratorOnly).not.toHaveBeenCalled();
+		});
 	});
 });

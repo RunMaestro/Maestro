@@ -30,6 +30,16 @@ describe('sessionMatchesFilter', () => {
 		expect(sessionMatchesFilter(s, 'parser')).toBe(true);
 	});
 
+	// A hidden consult tab is not on screen, so its generated name must not keep an
+	// agent in the filtered list.
+	it('does not match a hidden consult tab name', () => {
+		const s = agent({
+			name: 'Alpha',
+			aiTabs: [{ id: 't1', name: '\u21a9 Beta', hidden: true }] as never,
+		});
+		expect(sessionMatchesFilter(s, 'beta')).toBe(false);
+	});
+
 	// A user filtering for a branch expects the parent row that owns the worktree,
 	// since the child is drawn underneath it rather than as a row of its own.
 	it('matches a worktree child by branch name or by name', () => {

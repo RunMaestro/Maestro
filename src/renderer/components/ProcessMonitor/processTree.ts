@@ -1,5 +1,10 @@
 import type { Session, Group, GroupChat } from '../../types';
 import type { ActiveProcess, ProcessNode, ProcessTypeTag } from './types';
+import type { InFlightCrossAgentRequest } from '../../stores/crossAgentInFlightStore';
+import {
+	crossAgentRequestIdFromSessionId,
+	isCrossAgentSessionId,
+} from '../../../shared/crossAgentTypes';
 
 // Parse the base session ID from a process session ID
 // Process session IDs are formatted as:
@@ -29,8 +34,12 @@ export function parseBaseSessionId(processSessionId: string): string {
 // Determine process type from session ID
 export function getProcessType(
 	processSessionId: string
-): 'ai' | 'terminal' | 'batch' | 'synopsis' | 'wizard' | 'wizard-gen' | 'cue' {
+): 'ai' | 'terminal' | 'batch' | 'synopsis' | 'wizard' | 'wizard-gen' | 'cue' | 'consult' {
 	if (processSessionId.startsWith('cue-run-')) return 'cue';
+	// Checked before the suffix tests below: a consult id is `cross-agent-<uuid>`,
+	// which none of them match, so without this it fell through to 'ai' and then
+	// found no session to hang off.
+	if (isCrossAgentSessionId(processSessionId)) return 'consult';
 	if (processSessionId.endsWith('-terminal') || processSessionId.match(/-terminal-.+$/))
 		return 'terminal';
 	if (processSessionId.match(/-batch-\d+$/)) return 'batch';
@@ -90,6 +99,13 @@ export interface BuildProcessTreeInput {
 	groups: Group[];
 	groupChats: GroupChat[];
 	activeProcesses: ActiveProcess[];
+	/**
+	 * The renderer's live cross-agent registry, keyed by `requestId`. A consult
+	 * process id carries only a uuid, so this is the only place the source and
+	 * target agent NAMES exist. Absent entries (a consult that outlived a reload)
+	 * still get a row - anonymous, but killable.
+	 */
+	crossAgentRequests?: InFlightCrossAgentRequest[];
 }
 
 // Build the process tree using real active processes.
@@ -99,7 +115,7 @@ export interface BuildProcessTreeInput {
 // renderer reads `expandedIds.has(node.id)` directly, so the field was never
 // consulted. Dropping it lets the tree memo skip expansion as a dependency.
 export function buildProcessTree(input: BuildProcessTreeInput): ProcessNode[] {
-	const { sessions, groups, groupChats, activeProcesses } = input;
+	const { sessions, groups, groupChats, activeProcesses, crossAgentRequests = [] } = input;
 	const tree: ProcessNode[] = [];
 
 	const sessionsByGroup = new Map<string, Session[]>();
@@ -443,6 +459,65 @@ export function buildProcessTree(input: BuildProcessTreeInput): ProcessNode[] {
 			countLabel: 'run',
 		};
 		tree.push(cueSectionNode);
+	}
+
+	// Cross-agent consult processes (`cross-agent-<requestId>`).
+	//
+	// A consult is deliberately invisible on the agent it is running for - no tab
+	// chip, no unread mark, no thinking pill - because the user never addressed
+	// that agent. The Process Monitor is the one surface they open ON PURPOSE to
+	// ask "what is running right now", so a consult belongs here and nowhere else.
+	// Leaving it out made the badge count a process the tree could not show, which
+	// reads as the mention having silently died while it was still burning tokens.
+	const consultProcesses = activeProcesses.filter((proc) => isCrossAgentSessionId(proc.sessionId));
+
+	if (consultProcesses.length > 0) {
+		const requestsById = new Map(crossAgentRequests.map((r) => [r.requestId, r]));
+		const sessionNamesById = new Map(sessions.map((s) => [s.id, s.name]));
+
+		const consultNodes: ProcessNode[] = consultProcesses.map((proc) => {
+			const requestId = crossAgentRequestIdFromSessionId(proc.sessionId);
+			const request = requestId ? requestsById.get(requestId) : undefined;
+			const sourceName = request ? sessionNamesById.get(request.sourceSessionId) : undefined;
+			const targetName = request?.targetAgentName;
+			// "who asked → who is answering". Falls back progressively rather than
+			// dropping the row: a consult that outlived a renderer reload has no
+			// registry entry, and an anonymous row is still one the user can kill.
+			const label =
+				sourceName && targetName
+					? `${sourceName} → ${targetName}`
+					: (targetName ?? 'Cross-agent consult');
+
+			return {
+				id: `process-${proc.sessionId}`,
+				type: 'process' as const,
+				label,
+				pid: proc.pid,
+				processType: 'consult' as const,
+				processSessionId: proc.sessionId,
+				isAlive: true,
+				toolType: proc.toolType,
+				cwd: proc.cwd,
+				startTime: proc.startTime,
+				// The consult tab on the target, so the jump arrow lands on the
+				// conversation doing the work rather than the target's active tab.
+				sessionId: request?.targetSessionId,
+				tabId: request?.targetTabId,
+				command: proc.command,
+				args: proc.args,
+				maestroEnvVars: proc.maestroEnvVars,
+				sshRemoteCommand: proc.sshRemoteCommand,
+			};
+		});
+
+		tree.push({
+			id: 'consult-section',
+			type: 'group',
+			label: 'CONSULTS',
+			emoji: '↩',
+			children: consultNodes,
+			countLabel: 'consult',
+		});
 	}
 
 	return tree;

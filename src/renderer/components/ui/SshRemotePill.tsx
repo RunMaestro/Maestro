@@ -33,8 +33,8 @@ export interface SshRemotePillProps {
 }
 
 const SIZE_CLASSES: Record<'xs' | 'sm', { pill: string; icon: string }> = {
-	xs: { pill: 'text-[9px] px-1.5 py-0.5 gap-1', icon: 'w-2.5 h-2.5' },
-	sm: { pill: 'text-[10px] px-2 py-0.5 gap-1', icon: 'w-2.5 h-2.5' },
+	xs: { pill: 'text-3xs px-1.5 py-0.5 gap-1', icon: 'w-2.5 h-2.5' },
+	sm: { pill: 'text-2xs px-2 py-0.5 gap-1', icon: 'w-2.5 h-2.5' },
 };
 
 export function SshRemotePill({

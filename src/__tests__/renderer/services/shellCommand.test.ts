@@ -17,6 +17,10 @@ import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { createMockSession } from '../../helpers/mockSession';
 import { createMockAITab } from '../../helpers/mockTab';
 import type { LogEntry } from '../../../renderer/types';
+import {
+	TRANSCRIPT_SCROLL_TO_BOTTOM_EVENT,
+	type TranscriptScrollToBottomDetail,
+} from '../../../renderer/services/transcriptScroll';
 
 const SESSION_ID = 'session-1';
 const TAB_ID = 'tab-1';
@@ -120,6 +124,31 @@ describe('buildShellRunSessionId', () => {
 });
 
 describe('runShellCommand', () => {
+	test('asks the transcript to scroll to the card it just appended', async () => {
+		const seen: TranscriptScrollToBottomDetail[] = [];
+		const onScroll = (e: Event) => {
+			seen.push((e as CustomEvent<TranscriptScrollToBottomDetail>).detail);
+			// The request must land after the card exists, or the transcript
+			// would scroll to a bottom that does not include it yet.
+			expect(getCard()?.shellCommand?.status).toBe('running');
+		};
+		window.addEventListener(TRANSCRIPT_SCROLL_TO_BOTTOM_EVENT, onScroll);
+
+		const promise = runShellCommand({
+			session: useSessionStore.getState().sessions[0],
+			tabId: TAB_ID,
+			command: 'ls',
+		});
+
+		expect(seen).toEqual([{ sessionId: SESSION_ID, tabId: TAB_ID }]);
+
+		emitExit(runCommand.mock.calls[0][0].sessionId, 0);
+		await promise;
+		// Once per run, not once per output chunk.
+		expect(seen).toHaveLength(1);
+		window.removeEventListener(TRANSCRIPT_SCROLL_TO_BOTTOM_EVENT, onScroll);
+	});
+
 	test('runs in the session cwd with a synthetic session id', async () => {
 		const promise = runShellCommand({
 			session: useSessionStore.getState().sessions[0],

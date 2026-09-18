@@ -23,14 +23,35 @@ export interface FileTreeIndices {
 }
 
 /**
+ * One index per file-tree array identity, shared process-wide.
+ *
+ * Each `<Markdown>` memoizes this per component instance, which means a
+ * transcript showing 200 markdown entries builds 200 identical copies of the
+ * same index, and rebuilds all 200 whenever the Files panel hands out a new
+ * tree array. A field trace measured that at ~170ms of renderer main-thread
+ * time in a single 58-second window. The tree is immutable once published, so
+ * one build per array identity is enough for every consumer. WeakMap, so a
+ * superseded tree's index is collected with the tree.
+ */
+const fileTreeIndicesCache = new WeakMap<FileNode[], FileTreeIndices>();
+
+/**
  * Construct a FileTreeIndices from a FileNode tree. Wraps the shared
  * buildFileIndex utility so plugins don't need to know about the tree shape.
+ *
+ * Memoized on the `fileTree` array identity - callers may keep their own
+ * `useMemo` for clarity, but repeated calls with the same array are free.
  */
 export function buildFileTreeIndices(fileTree: FileNode[]): FileTreeIndices {
+	const cached = fileTreeIndicesCache.get(fileTree);
+	if (cached) return cached;
+
 	const entries = buildFileIndex(fileTree);
 	const allPaths = new Set(entries.map((e) => e.relativePath));
 	const filenameIndex = buildFilenameIndex(entries);
-	return { allPaths, filenameIndex };
+	const indices = { allPaths, filenameIndex };
+	fileTreeIndicesCache.set(fileTree, indices);
+	return indices;
 }
 
 function buildFilenameIndex(entries: FilePathEntry[]): Map<string, string[]> {
@@ -142,4 +163,36 @@ export function toRelativePath(absPath: string, projectRoot: string | undefined)
 		return absPath.slice(root.length + 1);
 	}
 	return null;
+}
+
+/**
+ * Union two or more index sets into one, preserving argument order so that
+ * `findClosestMatch`'s proximity tiebreak still prefers the earlier set when
+ * two trees happen to contain the same basename.
+ *
+ * Needed because a surface can sit over more than one root: the Auto Run panel
+ * resolves `[[Playbook]]` against its playbooks folder AND `[[Notes/Thing]]`
+ * against the agent's project, and those two trees have different roots so they
+ * cannot be concatenated as nodes.
+ */
+export function mergeFileTreeIndices(
+	...sets: (FileTreeIndices | null | undefined)[]
+): FileTreeIndices {
+	const allPaths = new Set<string>();
+	const filenameIndex = new Map<string, string[]>();
+	for (const set of sets) {
+		if (!set) continue;
+		for (const path of set.allPaths) allPaths.add(path);
+		for (const [filename, paths] of set.filenameIndex) {
+			const existing = filenameIndex.get(filename);
+			if (existing) {
+				for (const path of paths) {
+					if (!existing.includes(path)) existing.push(path);
+				}
+			} else {
+				filenameIndex.set(filename, [...paths]);
+			}
+		}
+	}
+	return { allPaths, filenameIndex };
 }

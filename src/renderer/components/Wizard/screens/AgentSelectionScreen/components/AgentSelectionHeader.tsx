@@ -34,7 +34,12 @@ export function AgentSelectionHeader({
 				Create a Maestro Agent
 			</h3>
 
-			<div className="flex items-center gap-3">
+			{/* Wraps on a narrow screen: the 256px name input plus the "on <host>"
+			    select add up to ~456px, so on a phone they overflowed both edges of
+			    the row. flex-wrap drops the location group to its own line and
+			    max-w-full lets the input shrink below 256px on the very narrowest
+			    viewports. No effect on desktop, where the row fits on one line. */}
+			<div className="flex flex-wrap items-center justify-center gap-3">
 				<input
 					ref={nameInputRef}
 					id="project-name"
@@ -44,7 +49,7 @@ export function AgentSelectionHeader({
 					onFocus={onNameFocus}
 					onBlur={onNameBlur}
 					placeholder="Name your agent..."
-					className="w-64 px-4 py-2 rounded-lg border outline-none transition-all"
+					className="w-64 max-w-full px-4 py-2 rounded-lg border outline-none transition-all"
 					style={{
 						backgroundColor: theme.colors.bgMain,
 						borderColor: isNameFieldFocused ? theme.colors.accent : theme.colors.border,

@@ -1302,7 +1302,7 @@ function SessionListInner(props: SessionListProps) {
 			data-panel="left"
 			data-collapsed={leftSidebarOpen ? 'false' : 'true'}
 			data-hidden={leftSidebarHidden ? 'true' : 'false'}
-			className={`border-r flex flex-col shrink-0 ${sidebarTransitionClass} outline-none relative z-20 maestro-side-panel maestro-side-panel--left`}
+			className={`chrome-sheen border-r flex flex-col shrink-0 ${sidebarTransitionClass} outline-none relative z-20 maestro-side-panel maestro-side-panel--left`}
 			style={
 				{
 					width: leftSidebarOpen ? `${leftSidebarWidthState}px` : '64px',
@@ -1357,13 +1357,18 @@ function SessionListInner(props: SessionListProps) {
 			>
 				{leftSidebarOpen ? (
 					<>
-						{/* This row neither wraps nor scrolls, so it needs a legitimate
-						    shrink target or any added control (the now-playing pill, a badge)
-						    pushes the hamburger menu off the edge on a narrow sidebar. That
-						    role now belongs to the now-playing pill's filename, which can be
-						    clipped without looking broken. The wordmark is drawn in full or
-						    dropped entirely - see `showWordmark`. */}
-						<div className="flex items-center gap-2 min-w-0">
+						{/* Three zones, left to right: identity, indicators, menu. The
+						    indicator band is the flexible one, so it centers itself in
+						    whatever the other two leave behind and reads as its own group
+						    rather than as a tail on the wordmark.
+
+						    This row neither wraps nor scrolls, so it needs a legitimate
+						    shrink target or any added indicator pushes the hamburger menu
+						    off the edge on a narrow sidebar. That role belongs to the
+						    now-playing pill's filename, which can be clipped without looking
+						    broken. The wordmark is drawn in full or dropped entirely - see
+						    `showWordmark`. */}
+						<div className="flex items-center gap-2 shrink-0">
 							<button
 								type="button"
 								onClick={() => {
@@ -1389,11 +1394,22 @@ function SessionListInner(props: SessionListProps) {
 									style={{ color: theme.colors.textMain }}
 								/>
 							)}
+						</div>
+
+						{/* Indicator band. `flex-1` is what centers it: it takes the space
+						    the identity and menu zones do not, and centers its contents in
+						    that. Anything status-shaped added to the header belongs here,
+						    not beside the wordmark. `min-w-0` so the now-playing filename
+						    stays the row's shrink target. */}
+						<div
+							data-testid="sidebar-header-indicators"
+							className="flex flex-1 items-center justify-center gap-2 min-w-0"
+						>
 							{/* Badge Level Indicator */}
 							{autoRunStats && autoRunStats.currentBadgeLevel > 0 && (
 								<button
 									onClick={() => setAboutModalOpen(true)}
-									className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold transition-colors hover:bg-white/10"
+									className="flex items-center gap-1 px-1.5 py-0.5 rounded text-2xs font-bold transition-colors hover:bg-white/10"
 									title={`${getBadgeForTime(autoRunStats.cumulativeTimeMs)?.name || 'Apprentice'} - Click to view achievements`}
 									style={{
 										color: autoRunStats.currentBadgeLevel >= 8 ? '#FFD700' : theme.colors.accent,
@@ -1422,7 +1438,7 @@ function SessionListInner(props: SessionListProps) {
 												setLiveOverlayOpen(!liveOverlayOpen);
 											}
 										}}
-										className={`flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold transition-colors ${
+										className={`flex items-center gap-1.5 px-2 py-0.5 rounded text-2xs font-bold transition-colors ${
 											isLiveMode
 												? 'bg-green-500/20 text-green-500 hover:bg-green-500/30'
 												: 'text-gray-500 hover:bg-white/10'
@@ -1434,11 +1450,16 @@ function SessionListInner(props: SessionListProps) {
 										}
 									>
 										<Radio className={`w-3 h-3 ${isLiveMode ? 'animate-pulse' : ''}`} />
+										{/* The badge is an indicator and the wordmark is the yield ahead of
+										    it: once the wordmark has been dropped the row already holds more
+										    width than the badge costs, so charging for it either way is what
+										    left a 256px sidebar showing a bare radio dot beside the space the
+										    wordmark had just vacated. */}
 										{leftSidebarWidthState >=
 											LIVE_LABEL_MIN_WIDTH +
 												headerTextDelta.liveLabel +
 												headerTextDelta.wordmark +
-												headerBadgeWidth && (isLiveMode ? 'LIVE' : 'OFFLINE')}
+												(showWordmark ? headerBadgeWidth : 0) && (isLiveMode ? 'LIVE' : 'OFFLINE')}
 									</button>
 
 									{/* LIVE Overlay with URL and QR Code */}
@@ -1471,7 +1492,7 @@ function SessionListInner(props: SessionListProps) {
 								</div>
 							)}
 						</div>
-						<div className="flex items-center">
+						<div className="flex items-center shrink-0">
 							{/* Hamburger Menu */}
 							<div className="relative z-30" ref={menuRef} data-tour="hamburger-menu">
 								<GhostIconButton
@@ -1503,10 +1524,19 @@ function SessionListInner(props: SessionListProps) {
 						</div>
 					</>
 				) : (
-					// No now-playing pill on the collapsed rail: it is a 64px icon
-					// strip, and a media control there competes with the agent pills for
-					// the one thing the rail is for. Expand the sidebar, or run "Show
-					// Floating Media Player" from the Command Palette.
+					// The collapsed rail gets the pill too, in its compact form.
+					//
+					// It used to be left out on the grounds that a 64px icon strip is
+					// for agents and a media control there competes with them. That
+					// reasoning ignored what minimizing MEANS: the pill is the only
+					// place the widget parks, so on the rail "minimize" hid the player
+					// with nothing left on screen and no way back - the user reads that
+					// as the player having closed itself, which is precisely what the
+					// minimize/close split exists to prevent. A control the user can
+					// always get back to is worth more than 24px of rail.
+					//
+					// The compact form is the transport and the restore button and
+					// nothing else, which fits the rail's width without a label to clip.
 					<div className="w-full flex flex-col items-center gap-2 relative z-30" ref={menuRef}>
 						<GhostIconButton onClick={() => setMenuOpen(!menuOpen)} padding="p-2" title="Menu">
 							<Wand2
@@ -1516,6 +1546,9 @@ function SessionListInner(props: SessionListProps) {
 								style={{ color: theme.colors.accent }}
 							/>
 						</GhostIconButton>
+						{/* Renders nothing unless the player is actually minimized, so
+						    the rail is unchanged for anyone not playing anything. */}
+						<NowPlayingIndicator theme={theme} compact />
 						{/* Menu Overlay for Collapsed Sidebar */}
 						{menuOpen && (
 							<HamburgerDropdown theme={theme} isPhone={isXs} onClose={() => setMenuOpen(false)}>
@@ -1632,7 +1665,7 @@ function SessionListInner(props: SessionListProps) {
 							<div className="mb-1">
 								<button
 									type="button"
-									className="w-full px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-opacity-50 group"
+									className="w-full px-3 py-1.5 flex items-center justify-between cursor-pointer row-hover group"
 									onClick={() => setStarredSectionCollapsed(!starredSectionCollapsed)}
 									aria-expanded={!starredSectionCollapsed}
 								>
@@ -1712,7 +1745,7 @@ function SessionListInner(props: SessionListProps) {
 						<div className="mb-1">
 							<button
 								type="button"
-								className="w-full px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-opacity-50 group"
+								className="w-full px-3 py-1.5 flex items-center justify-between cursor-pointer row-hover group"
 								onClick={() => setBookmarksCollapsed(!bookmarksCollapsed)}
 								aria-expanded={!bookmarksCollapsed}
 							>
@@ -1801,7 +1834,7 @@ function SessionListInner(props: SessionListProps) {
 									<div key={group.id} className={parent ? 'ml-4 mb-1 rounded' : 'mb-1 rounded'}>
 										<button
 											type="button"
-											className="w-full px-3 py-1.5 flex items-center gap-2 text-xs font-bold uppercase tracking-wider hover:bg-opacity-50"
+											className="w-full px-3 py-1.5 flex items-center gap-2 text-xs font-bold uppercase tracking-wider row-hover"
 											style={{ color: theme.colors.textDim }}
 											aria-expanded={!collapsed}
 											onClick={() =>
@@ -1907,7 +1940,7 @@ function SessionListInner(props: SessionListProps) {
 												toggleGroup(group.id);
 											}
 										}}
-										className="px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-opacity-50 group"
+										className="px-3 py-1.5 flex items-center justify-between cursor-pointer row-hover group"
 										style={
 											dragOverTarget === group.id
 												? { backgroundColor: `${theme.colors.accent}33` }
@@ -2076,7 +2109,7 @@ function SessionListInner(props: SessionListProps) {
 								<div className="mt-4 px-3">
 									<button
 										onClick={() => createNewGroup()}
-										className="w-full px-2 py-1.5 rounded-full text-[10px] font-medium hover:opacity-80 transition-opacity flex items-center justify-center gap-1"
+										className="w-full px-2 py-1.5 rounded-full text-2xs font-medium hover:opacity-80 transition-opacity flex items-center justify-center gap-1"
 										style={{
 											backgroundColor: theme.colors.accent + '20',
 											color: theme.colors.accent,
@@ -2110,7 +2143,7 @@ function SessionListInner(props: SessionListProps) {
 							onDragLeave={handleDropTargetLeave}
 						>
 							<div
-								className="px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-opacity-50 group"
+								className="px-3 py-1.5 flex items-center justify-between cursor-pointer row-hover group"
 								style={
 									dragOverTarget === UNGROUPED_DROP_TARGET
 										? { backgroundColor: `${theme.colors.accent}33` }
@@ -2149,7 +2182,7 @@ function SessionListInner(props: SessionListProps) {
 											e.stopPropagation();
 											createNewGroup();
 										}}
-										className="px-2 py-0.5 rounded-full text-[10px] font-medium hover:opacity-80 transition-opacity flex items-center gap-1"
+										className="px-2 py-0.5 rounded-full text-2xs font-medium hover:opacity-80 transition-opacity flex items-center gap-1"
 										style={{
 											backgroundColor: theme.colors.accent + '20',
 											color: theme.colors.accent,
@@ -2224,7 +2257,7 @@ function SessionListInner(props: SessionListProps) {
 							)}
 							<button
 								onClick={() => createNewGroup()}
-								className="w-full px-2 py-1.5 rounded-full text-[10px] font-medium hover:opacity-80 transition-opacity flex items-center justify-center gap-1"
+								className="w-full px-2 py-1.5 rounded-full text-2xs font-medium hover:opacity-80 transition-opacity flex items-center justify-center gap-1"
 								style={{
 									backgroundColor: theme.colors.accent + '20',
 									color: theme.colors.accent,

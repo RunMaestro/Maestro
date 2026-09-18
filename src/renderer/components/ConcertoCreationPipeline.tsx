@@ -289,7 +289,7 @@ function TrackPhrase({
 						)}
 						{noteState === 'active' && (
 							<span
-								className="absolute -top-0.5 left-1 text-[6px] font-bold leading-none"
+								className="absolute -top-0.5 left-1 text-[0.429rem] font-bold leading-none"
 								style={{ color: theme.colors.accent }}
 							>
 								{number}
@@ -384,10 +384,10 @@ export const ConcertoCreationPipeline = memo(function ConcertoCreationPipeline({
 					style={{ color: theme.colors.accent }}
 					aria-hidden="true"
 				/>
-				<span className="text-[10px] font-semibold" style={{ color: theme.colors.textMain }}>
+				<span className="text-2xs font-semibold" style={{ color: theme.colors.textMain }}>
 					Concerto score
 				</span>
-				<span className="text-[9px]" style={{ color: theme.colors.textDim }}>
+				<span className="text-3xs" style={{ color: theme.colors.textDim }}>
 					{activeTracks.length} {activeTracks.length === 1 ? 'part' : 'parts'}
 				</span>
 				<GripHorizontal
@@ -448,7 +448,7 @@ export const ConcertoCreationPipeline = memo(function ConcertoCreationPipeline({
 								))}
 							</div>
 							<span
-								className="mt-1 block text-center text-[8px] font-medium leading-none"
+								className="mt-1 block text-center text-[0.571rem] font-medium leading-none"
 								style={{ color: phaseActive ? theme.colors.textMain : theme.colors.textDim }}
 							>
 								{PHASE_LABELS[phase]}
@@ -466,7 +466,7 @@ export const ConcertoCreationPipeline = memo(function ConcertoCreationPipeline({
 						data-concerto-phase={track.phase}
 						data-concerto-step={track.step}
 						data-concerto-steps={track.steps}
-						className="flex max-w-full items-baseline gap-1 text-[9px] leading-tight"
+						className="flex max-w-full items-baseline gap-1 text-3xs leading-tight"
 						style={{ color: theme.colors.textMain }}
 					>
 						<strong style={{ color: theme.colors.accent }}>{index + 1}</strong>

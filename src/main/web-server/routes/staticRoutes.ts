@@ -7,6 +7,7 @@
  * Routes:
  * - / - Redirect to GitHub (no access without token)
  * - /health - Health check endpoint
+ * - /og.png - Social preview card (no token; static brand mark)
  * - /$TOKEN/manifest.json - PWA manifest
  * - /$TOKEN/sw.js - PWA service worker
  * - /$TOKEN - Web-desktop interface (the default UI)
@@ -15,11 +16,14 @@
  * - /:token - Invalid token catch-all, redirect to GitHub
  */
 
-import { FastifyInstance, FastifyReply } from 'fastify';
+import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import path from 'path';
 import { existsSync, readFileSync } from 'fs';
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
+import { OG_IMAGE_ROUTE, buildSocialPreviewTags, resolveRequestOrigin } from '../social-preview';
+import { isWebRequestAuthorized, resolveWebRequestAuth } from '../auth/web-login-policy';
+import { WEB_LOGIN_PATHS } from '../../../shared/webLogin';
 
 // Logger context for all static route logs
 const LOG_CONTEXT = 'WebServer:Static';
@@ -62,6 +66,18 @@ function getCachedFile(filePath: string): string | null {
 		fileCache.set(filePath, { content: '', exists: false });
 		return null;
 	}
+}
+
+/**
+ * JSON for embedding inside a `<script>` element.
+ *
+ * `JSON.stringify` does not escape `<`, so a value containing the literal
+ * `</script>` closes the element early and the rest of it lands in the
+ * document as markup. A display name is typed by a person, so this is the one
+ * value in the injected config that is not a token or a boolean.
+ */
+function jsonForScript(value: unknown): string {
+	return JSON.stringify(value).replace(/</g, '\\u003c');
 }
 
 /**
@@ -110,8 +126,26 @@ export class StaticRoutes {
 	 * `/<token>/desktop/assets/` prefix (matching the asset mount in
 	 * WebServer), so the same HTML renders correctly whether it is served from
 	 * the token root or from `/<token>/desktop`.
+	 *
+	 * Takes the request, not just the reply, because the social preview tags
+	 * injected below have to name an ABSOLUTE origin and only the request knows
+	 * which host the page is being reached on.
 	 */
-	private serveDesktopIndex(reply: FastifyReply): void {
+	private serveDesktopIndex(request: FastifyRequest, reply: FastifyReply): void {
+		// The Web Login gate for the HTML surface. This is a document request, so
+		// it redirects to the form rather than answering 401 - a JSON error body
+		// renders as a wall of text with nothing to click. `next` carries the URL
+		// that was asked for so a deep link survives the detour.
+		//
+		// `web-login-hook.ts` deliberately leaves the index routes ungated for
+		// exactly this reason; the check has to live here.
+		const auth = resolveWebRequestAuth(request);
+		if (!isWebRequestAuthorized(auth)) {
+			const next = encodeURIComponent(request.url || `/${this.securityToken}/`);
+			reply.redirect(`/${this.securityToken}/${WEB_LOGIN_PATHS.page}?next=${next}`, 302);
+			return;
+		}
+
 		if (!this.webDesktopPath) {
 			reply.code(503).send({
 				error: 'Service Unavailable',
@@ -142,6 +176,12 @@ export class StaticRoutes {
 			// Inject config so the renderer's electron-shim knows where to open
 			// the WebSocket bridge. The desktop app manages its own session
 			// selection, so sessionId/tabId are intentionally null.
+			//
+			// `webLoginUser` / `webLoginRequired` say who this page was served to.
+			// They are injected rather than fetched because the renderer needs the
+			// answer on its first paint, and the cookie is HttpOnly so the page
+			// cannot read it for itself. Keep these in step with
+			// `MaestroWebClientConfig` in src/shared/webClientConfig.ts.
 			const configScript = `<script>
         window.__MAESTRO_CONFIG__ = {
           securityToken: ${JSON.stringify(token)},
@@ -149,7 +189,9 @@ export class StaticRoutes {
           tabId: null,
           apiBase: "/${token}/api",
           wsUrl: "/${token}/ws",
-          concertoToken: ${JSON.stringify(this.concertoToken)}
+          concertoToken: ${JSON.stringify(this.concertoToken)},
+          webLoginRequired: ${JSON.stringify(auth.required)},
+          webLoginUser: ${jsonForScript(auth.user ?? null)}
         };
       </script>`;
 
@@ -160,9 +202,18 @@ export class StaticRoutes {
 			// works under the token prefix unchanged.
 			const pwaLinks =
 				`<link rel="manifest" href="/${token}/manifest.json" />` +
+				`<link rel="icon" href="/${token}/icons/icon-192x192.png" />` +
 				`<link rel="apple-touch-icon" href="/${token}/icons/icon-192x192.png" />`;
 
-			html = html.replace('</head>', `${configScript}${pwaLinks}</head>`);
+			// Open Graph / Twitter card. Built here rather than in the bundle's
+			// index.html because a crawler drops a relative og:image outright, and
+			// only the request knows the host the link was shared as. Absent a
+			// usable Host header the block is simply omitted - a card pointing at
+			// a guessed origin is worse than no card.
+			const origin = resolveRequestOrigin(request.headers as Record<string, unknown> | undefined);
+			const socialTags = origin ? buildSocialPreviewTags(origin) : '';
+
+			html = html.replace('</head>', `${socialTags}${configScript}${pwaLinks}</head>`);
 
 			reply.type('text/html').send(html);
 		} catch (err) {
@@ -183,12 +234,35 @@ export class StaticRoutes {
 
 		// Root path - redirect to GitHub (no access without token)
 		server.get('/', async (_request, reply) => {
-			return reply.redirect(302, REDIRECT_URL);
+			return reply.redirect(REDIRECT_URL, 302);
 		});
 
 		// Health check (no auth required)
 		server.get('/health', async () => {
 			return { status: 'ok', timestamp: Date.now() };
+		});
+
+		// Social preview card. Deliberately outside the token prefix: see
+		// OG_IMAGE_ROUTE in ../social-preview.ts for why that is safe and why it
+		// matters. Fastify matches a static path ahead of the `/:token` parametric
+		// route below, so this cannot be swallowed by the invalid-token catch-all.
+		server.get(OG_IMAGE_ROUTE, async (_request, reply) => {
+			if (!this.webAssetsPath) {
+				return reply.code(404).send({ error: 'Not Found' });
+			}
+			const imagePath = path.join(this.webAssetsPath, 'og-image.png');
+			if (!existsSync(imagePath)) {
+				return reply.code(404).send({ error: 'Not Found' });
+			}
+			// Not run through getCachedFile: that cache holds utf-8 strings, which
+			// would corrupt a PNG. A crawler fetches this once per share, so the
+			// read is not worth a second cache - but it IS worth a long max-age,
+			// since a brand mark that changes only on rebuild is what immutable
+			// caching is for, and chat clients re-fetch previews aggressively.
+			return reply
+				.type('image/png')
+				.header('Cache-Control', 'public, max-age=86400')
+				.send(readFileSync(imagePath));
 		});
 
 		// PWA manifest.json (cached)
@@ -218,38 +292,38 @@ export class StaticRoutes {
 		});
 
 		// Web-desktop interface - the default UI at the token root.
-		server.get(`/${token}`, async (_request, reply) => {
-			this.serveDesktopIndex(reply);
+		server.get(`/${token}`, async (request, reply) => {
+			this.serveDesktopIndex(request, reply);
 		});
 
 		// Token root with trailing slash
-		server.get(`/${token}/`, async (_request, reply) => {
-			this.serveDesktopIndex(reply);
+		server.get(`/${token}/`, async (request, reply) => {
+			this.serveDesktopIndex(request, reply);
 		});
 
 		// Legacy /desktop alias - kept so URLs from before the desktop bundle
 		// became the default (when it lived at /<token>/desktop) still resolve.
-		server.get(`/${token}/desktop`, async (_request, reply) => {
-			this.serveDesktopIndex(reply);
+		server.get(`/${token}/desktop`, async (request, reply) => {
+			this.serveDesktopIndex(request, reply);
 		});
-		server.get(`/${token}/desktop/`, async (_request, reply) => {
-			this.serveDesktopIndex(reply);
+		server.get(`/${token}/desktop/`, async (request, reply) => {
+			this.serveDesktopIndex(request, reply);
 		});
 
 		// Deprecated single-session deep link. The desktop app manages its own
 		// session selection, so this just serves the full interface.
-		server.get(`/${token}/session/:sessionId`, async (_request, reply) => {
-			this.serveDesktopIndex(reply);
+		server.get(`/${token}/session/:sessionId`, async (request, reply) => {
+			this.serveDesktopIndex(request, reply);
 		});
 
 		// Catch-all for invalid tokens - redirect to GitHub
 		server.get('/:token', async (request, reply) => {
 			const { token: reqToken } = request.params as { token: string };
 			if (!this.validateToken(reqToken)) {
-				return reply.redirect(302, REDIRECT_URL);
+				return reply.redirect(REDIRECT_URL, 302);
 			}
 			// Valid token but no specific route - serve the desktop interface
-			this.serveDesktopIndex(reply);
+			this.serveDesktopIndex(request, reply);
 		});
 
 		logger.debug('Static routes registered', LOG_CONTEXT);

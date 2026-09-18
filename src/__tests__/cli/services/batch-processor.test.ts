@@ -1566,6 +1566,197 @@ describe('batch-processor', () => {
 			expect(spawnAgent).not.toHaveBeenCalled();
 			expect(unregisterCliActivity).toHaveBeenCalledWith(session.id);
 		});
+
+		it('names the line so the user can find the invisible comment', async () => {
+			vi.mocked(readDocAndCountTasks).mockReturnValue({
+				content: '# Doc\n\n- [ ] Task\n<!-- maestro:halt: stale -->',
+				taskCount: 1,
+			});
+
+			const events = await collectEvents(runPlaybook(mockSession(), mockPlaybook(), '/playbooks'));
+
+			expect(events.find((e) => e.type === 'error')?.message).toContain('line 4');
+		});
+
+		it('does not block on a halt an authoring agent merely DESCRIBED', async () => {
+			// The field bug: playbooks arrive with the marker written as a
+			// conditional, and the run refused to start with no visible cause. Every
+			// halt below is quoted, checkbox-bound, or fenced, so none of them stop
+			// the run. Calls 1-4 are the scans; call 5+ is the post-spawn re-read,
+			// which reports the task done so the loop terminates.
+			const described = [
+				'If the build breaks, halt with `<!-- maestro:halt: reason -->`.',
+				'',
+				'```markdown',
+				'<!-- maestro:halt: brief reason here -->',
+				'```',
+			];
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				return callCount <= 4
+					? {
+							content: [
+								...described,
+								'- [ ] Build it <!-- maestro:halt: only when unrecoverable -->',
+							].join('\n'),
+							taskCount: 1,
+						}
+					: {
+							content: [
+								...described,
+								'- [x] Build it <!-- maestro:halt: only when unrecoverable -->',
+							].join('\n'),
+							taskCount: 0,
+						};
+			});
+
+			const events = await collectEvents(
+				runPlaybook(mockSession(), mockPlaybook(), '/playbooks', { skipSynopsis: true })
+			);
+
+			expect(
+				events.find((e) => e.type === 'error' && e.code === 'HALT_MARKER_PRESENT')
+			).toBeUndefined();
+			expect(events.find((e) => e.type === 'halt')).toBeUndefined();
+			expect(spawnAgent).toHaveBeenCalled();
+		});
+	});
+
+	describe('runPlaybook - stalled documents', () => {
+		it('gives up on a document after 3 runs that move no checkbox', async () => {
+			// Without this guard the loop is `while (remainingTasks > 0)` with no
+			// other exit, so an unfinishable task is dispatched forever - which is
+			// why agents were reaching for the halt marker to escape.
+			vi.mocked(readDocAndCountTasks).mockReturnValue({
+				content: '- [ ] Something the agent cannot do',
+				taskCount: 1,
+			});
+
+			const events = await collectEvents(
+				runPlaybook(mockSession(), mockPlaybook(), '/playbooks', { skipSynopsis: true })
+			);
+
+			const stalled = events.find((e) => e.type === 'document_stalled');
+			expect(stalled).toBeDefined();
+			expect(stalled?.reason).toBe('3 consecutive runs with no progress');
+			expect(stalled?.remainingTasks).toBe(1);
+			expect(spawnAgent).toHaveBeenCalledTimes(3);
+		});
+
+		it('does not report a stalled document as complete', async () => {
+			vi.mocked(readDocAndCountTasks).mockReturnValue({
+				content: '- [ ] Stuck',
+				taskCount: 1,
+			});
+
+			const events = await collectEvents(
+				runPlaybook(mockSession(), mockPlaybook(), '/playbooks', { skipSynopsis: true })
+			);
+
+			expect(events.find((e) => e.type === 'document_complete')).toBeUndefined();
+		});
+
+		it('continues to the next document rather than ending the playbook', async () => {
+			// A stall is not a halt: only the stuck document is abandoned.
+			vi.mocked(readDocAndCountTasks).mockReturnValue({
+				content: '- [ ] Stuck',
+				taskCount: 1,
+			});
+
+			const events = await collectEvents(
+				runPlaybook(
+					mockSession(),
+					mockPlaybook({
+						documents: [
+							{ filename: 'first', resetOnCompletion: false },
+							{ filename: 'second', resetOnCompletion: false },
+						],
+					}),
+					'/playbooks',
+					{ skipSynopsis: true }
+				)
+			);
+
+			const stalled = events.filter((e) => e.type === 'document_stalled');
+			expect(stalled.map((e) => e.document)).toEqual(['first', 'second']);
+			expect(stalled[0]?.hasNextDocument).toBe(true);
+			expect(stalled[1]?.hasNextDocument).toBe(false);
+		});
+
+		it('resets the counter when the agent makes progress again', async () => {
+			// Two dead runs then a completion must NOT leave the document one run
+			// away from being abandoned.
+			// Keyed off DISPATCHES rather than reads: the engine reads the document
+			// several times per iteration, so a read counter would be guesswork.
+			let dispatches = 0;
+			vi.mocked(spawnAgent).mockImplementation(async () => {
+				dispatches++;
+				return { success: true, output: 'done', agentSessionId: 'sess-1' } as never;
+			});
+			vi.mocked(readDocAndCountTasks).mockImplementation(() =>
+				dispatches < 2
+					? { content: '- [ ] One\n- [ ] Two', taskCount: 2 }
+					: { content: '- [x] One\n- [x] Two', taskCount: 0 }
+			);
+
+			const events = await collectEvents(
+				runPlaybook(mockSession(), mockPlaybook(), '/playbooks', { skipSynopsis: true })
+			);
+
+			expect(events.find((e) => e.type === 'document_stalled')).toBeUndefined();
+			expect(events.find((e) => e.type === 'document_complete')).toBeDefined();
+		});
+	});
+
+	describe('runPlaybook - HITL gates', () => {
+		it('skips a gated document instead of dispatching a task no one can finish', async () => {
+			// A batch run has no human to tick the box, so waiting is not an option.
+			vi.mocked(readDocAndCountTasks).mockReturnValue({
+				content: [
+					'<!-- MAESTRO:HITL reason="Add SENDGRID_API_KEY to .env" artifact="https://example.com" -->',
+					'- [ ] Wire the mailer',
+				].join('\n'),
+				taskCount: 1,
+			});
+
+			const events = await collectEvents(
+				runPlaybook(mockSession(), mockPlaybook(), '/playbooks', { skipSynopsis: true })
+			);
+
+			const gated = events.find((e) => e.type === 'document_gated');
+			expect(gated).toMatchObject({
+				document: 'tasks',
+				reason: 'Add SENDGRID_API_KEY to .env',
+				artifact: 'https://example.com',
+				line: 1,
+			});
+			expect(spawnAgent).not.toHaveBeenCalled();
+		});
+
+		it('runs normally once the gate has been passed', async () => {
+			// A checked box below the marker consumes the gate.
+			let call = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				call++;
+				return call <= 4
+					? {
+							content: '<!-- MAESTRO:HITL reason="Approve it" -->\n- [x] Approved\n- [ ] Do work',
+							taskCount: 1,
+						}
+					: {
+							content: '<!-- MAESTRO:HITL reason="Approve it" -->\n- [x] Approved\n- [x] Do work',
+							taskCount: 0,
+						};
+			});
+
+			const events = await collectEvents(
+				runPlaybook(mockSession(), mockPlaybook(), '/playbooks', { skipSynopsis: true })
+			);
+
+			expect(events.find((e) => e.type === 'document_gated')).toBeUndefined();
+			expect(spawnAgent).toHaveBeenCalled();
+		});
 	});
 
 	describe('runPlaybook - mid-execution halt marker', () => {
@@ -1698,6 +1889,82 @@ describe('batch-processor', () => {
 			const warnings = resolution?.warnings as string[];
 			expect(warnings).toHaveLength(1);
 			expect(warnings[0]).toContain('opencode');
+		});
+
+		it('ignores the marker and runs at the run model when ignoreModelHints is set', async () => {
+			singleTaskDocument('<!-- MAESTRO:MODEL tier="high" effort="high" -->\n- [ ] Task one');
+
+			const session = mockSession({ toolType: 'claude-code', customModel: 'sonnet' });
+			const events = await collectEvents(
+				runPlaybook(session, mockPlaybook(), '/playbooks', {
+					skipSynopsis: true,
+					model: 'haiku',
+					ignoreModelHints: true,
+				})
+			);
+
+			const taskSpawnOpts = vi.mocked(spawnAgent).mock.calls[0][4];
+			expect(taskSpawnOpts?.customModel).toBe('haiku');
+			// Nothing was read from the document, so there is no resolution to report.
+			expect(events.find((e) => e.type === 'model_resolution')).toBeUndefined();
+		});
+
+		it('falls back to the agent model when hints are ignored and no run model is given', async () => {
+			singleTaskDocument('<!-- MAESTRO:MODEL tier="high" -->\n- [ ] Task one');
+
+			const session = mockSession({ toolType: 'claude-code', customModel: 'sonnet' });
+			await collectEvents(
+				runPlaybook(session, mockPlaybook(), '/playbooks', {
+					skipSynopsis: true,
+					ignoreModelHints: true,
+				})
+			);
+
+			expect(vi.mocked(spawnAgent).mock.calls[0][4]?.customModel).toBe('sonnet');
+		});
+
+		it('measures the document-mode segment against the run model, not the agent model', async () => {
+			// Regression: the segment used the agent's own model as its baseline while the
+			// task resolved against the run override. With --model opus both tasks below
+			// run on opus, but the old baseline (sonnet) saw a boundary and told the
+			// agent to stop after the first.
+			const content = '- [ ] a\n- [ ] b <!-- MAESTRO:MODEL tier="high" -->';
+			let calls = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				calls++;
+				return calls <= 3 ? { content, taskCount: 2 } : { content: '', taskCount: 0 };
+			});
+
+			await collectEvents(
+				runPlaybook(
+					mockSession({ toolType: 'claude-code', customModel: 'sonnet' }),
+					mockPlaybook({ taskSelectionMode: 'document' }),
+					'/playbooks',
+					{ skipSynopsis: true, model: 'opus' }
+				)
+			);
+
+			expect(getCliTaskSelectionBlock).toHaveBeenCalledWith('document', { count: 2, total: 2 });
+		});
+
+		it('asks for no segment boundary when hints are ignored', async () => {
+			const content = '- [ ] a\n- [ ] b <!-- MAESTRO:MODEL tier="high" -->';
+			let calls = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				calls++;
+				return calls <= 3 ? { content, taskCount: 2 } : { content: '', taskCount: 0 };
+			});
+
+			await collectEvents(
+				runPlaybook(
+					mockSession({ toolType: 'claude-code', customModel: 'sonnet' }),
+					mockPlaybook({ taskSelectionMode: 'document' }),
+					'/playbooks',
+					{ skipSynopsis: true, ignoreModelHints: true }
+				)
+			);
+
+			expect(getCliTaskSelectionBlock).toHaveBeenCalledWith('document', undefined);
 		});
 
 		it('emits no model_resolution event for a document without a marker', async () => {

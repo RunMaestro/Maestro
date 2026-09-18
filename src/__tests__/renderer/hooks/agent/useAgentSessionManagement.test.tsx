@@ -186,3 +186,74 @@ describe('isSynopsisRequest', () => {
 		expect(isSynopsisRequest({ type: 'user', content: 'fix the layout bug' })).toBe(false);
 	});
 });
+
+// A closed session's name survives only in the records that captured it (a
+// history entry, a starred session's label). Resume has to accept that name, and
+// has to reject the id label an unnamed tab records for itself.
+describe('useAgentSessionManagement - naming a resumed session', () => {
+	const AGENT_SESSION_ID = '8535e0e3-90ca-43c7-98ae-c42a09cf23ad';
+
+	beforeEach(() => {
+		(window as any).maestro = {
+			...((window as any).maestro || {}),
+			agentSessions: {
+				read: vi.fn().mockResolvedValue({
+					messages: [{ type: 'user', content: 'hello' }],
+				}),
+			},
+			claude: { getSessionOrigins: vi.fn().mockResolvedValue({}) },
+		};
+	});
+
+	/** Run the functional session updater and return the resulting tabs. */
+	async function resumeWith(sessionName?: string) {
+		const activeSession = createMockSession({
+			id: 'sess-resume',
+			toolType: 'claude-code',
+			projectRoot: '/test/project',
+			aiTabs: [],
+			unifiedTabOrder: [],
+		});
+		seedActiveSession(activeSession);
+		const deps = makeDeps(activeSession);
+		const { result } = renderHook(() => useAgentSessionManagement(deps));
+
+		await act(async () => {
+			await result.current.handleResumeSession(
+				AGENT_SESSION_ID,
+				undefined,
+				sessionName,
+				undefined,
+				undefined,
+				'/test/project'
+			);
+		});
+
+		const updater = (deps.setSessions as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0];
+		expect(typeof updater).toBe('function');
+		return (updater as (prev: Session[]) => Session[])([activeSession])[0].aiTabs;
+	}
+
+	it('names the restored tab from the caller-supplied session name', async () => {
+		const tabs = await resumeWith('PP Farm Meta Data');
+
+		expect(tabs).toHaveLength(1);
+		expect(tabs[0].agentSessionId).toBe(AGENT_SESSION_ID);
+		expect(tabs[0].name).toBe('PP Farm Meta Data');
+	});
+
+	it('leaves the tab unnamed when the recorded name is just the id label', async () => {
+		// A history entry for a tab that never got named records "8535E0E3".
+		// Restoring that as a real name renders identically but permanently opts
+		// the tab out of auto-naming.
+		const tabs = await resumeWith('8535E0E3');
+
+		expect(tabs[0].name).toBeNull();
+	});
+
+	it('leaves the tab unnamed when nothing supplies a name', async () => {
+		const tabs = await resumeWith(undefined);
+
+		expect(tabs[0].name).toBeNull();
+	});
+});

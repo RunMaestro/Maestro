@@ -98,7 +98,7 @@ export const SessionDetailStatsPanel = React.memo(function SessionDetailStatsPan
 						>
 							{formatNumber(totalTokens)}
 						</span>
-						<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
+						<span className="text-2xs" style={{ color: theme.colors.textDim }}>
 							of 200k context{' '}
 							<span className="font-mono font-medium" style={{ color: contextColor }}>
 								{Math.min(100, usagePercent).toFixed(1)}%

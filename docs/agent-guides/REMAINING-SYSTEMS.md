@@ -128,7 +128,7 @@ The central type file. Contains the `Session` interface (the largest type at ~20
 
 - `SessionState` = 'idle' | 'busy' | 'waiting_input' | 'connecting' | 'error'
 - `FileChangeType` = 'modified' | 'added' | 'deleted'
-- `RightPanelTab`, `SettingsTab`, `FocusArea`, `LLMProvider`
+- `RightPanelTab`, `SettingsTab`, `FocusArea`
 
 **Major interfaces (renderer-only):**
 
@@ -306,7 +306,7 @@ Returns: `{ success, draftPrUrl, draftPrNumber, autoRunPath, isFork, forkSlug }`
 - **Group Chat** - No direct connection. Symphony sessions can participate in group chats, but the runner itself has no group chat logic.
 - **IPC integration** - Called from `src/main/ipc/handlers/symphony/contributionStart.ts` via `symphony:startContribution` IPC handler. Frontend accesses it through `useSymphony` hook and `SymphonyModal.tsx`.
 
-- **IPC integration** - Called from `src/main/ipc/handlers/symphony.ts` via `symphony:startContribution` IPC handler. Frontend accesses it through `useSymphony` hook and `SymphonyModal.tsx`.
+- **IPC integration** - Called from `src/main/ipc/handlers/symphony/contributionStart.ts` via `symphony:startContribution` IPC handler. Frontend accesses it through `useSymphony` hook and `SymphonyModal.tsx`.
 
 ---
 

@@ -3,6 +3,7 @@ import type { GeneratedDocument, WizardState } from '../../../WizardContext';
 import { captureException, captureMessage } from '../../../../../utils/sentry';
 import type { LaunchingButton } from '../types';
 import { buildWizardCompletionMetrics } from '../utils/documentStats';
+import { recordCompletedWizardRun } from '../../../../../services/wizardStats';
 
 export function usePhaseReviewLaunch({
 	state,
@@ -42,12 +43,31 @@ export function usePhaseReviewLaunch({
 					await saveNow(localContent);
 				}
 
+				const metrics = buildWizardCompletionMetrics({
+					wizardStartTime,
+					conversationHistory: state.conversationHistory,
+					generatedDocuments: state.generatedDocuments,
+				});
+
+				// The onboarding wizard reports once, at launch, rather than per
+				// milestone like the inline wizard - everything it produced is
+				// already in hand here, so one row is the whole run.
+				recordCompletedWizardRun({
+					sessionId: 'onboarding',
+					agentType: state.selectedAgent || 'unknown',
+					surface: 'onboarding',
+					// 'continue' means the user pointed the wizard at Auto Run docs
+					// that already existed, which is the same shape as the inline
+					// wizard's 'iterate'.
+					mode: state.existingDocsChoice === 'continue' ? 'iterate' : 'new',
+					durationMs: metrics.durationMs,
+					exchanges: metrics.conversationExchanges,
+					documents: metrics.phasesGenerated,
+					tasks: metrics.tasksGenerated,
+					projectPath: state.directoryPath || undefined,
+				});
+
 				if (onWizardComplete) {
-					const metrics = buildWizardCompletionMetrics({
-						wizardStartTime,
-						conversationHistory: state.conversationHistory,
-						generatedDocuments: state.generatedDocuments,
-					});
 					onWizardComplete(
 						metrics.durationMs,
 						metrics.conversationExchanges,

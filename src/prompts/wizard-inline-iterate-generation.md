@@ -115,6 +115,14 @@ A marker sets the model tier and effort level for the work below it. The placeme
 
 Both attributes take `low`, `medium`, or `high` - ladder positions, never provider-specific values like `max` or a model name. Use `tier="high" effort="high"` for architecture, planning, and subtle debugging; `tier="low" effort="low"` for mechanical work; nothing at all for ordinary implementation, which is most tasks. Do not decorate every task - a marker on all of them says nothing about which ones matter.
 
+Every marker must also carry a `reason` justifying both axes - at most three sentences, plain text, and no double quotes inside the value (an inner `"` truncates it):
+
+```markdown
+- [ ] Design the migration <!-- MAESTRO:MODEL tier="high" effort="high" reason="The ordering of these schema changes decides whether a rollback is possible, and the constraint is easy to miss. Worth the strongest model at full effort." -->
+```
+
+Say what makes the work hard or mechanical, not what the levels are. The reason does not affect how the task runs; it is shown behind an ⓘ on the pill so the choice can be reviewed later.
+
 ### Grouping Rules
 
 **DO group together:**

@@ -20,6 +20,8 @@ import {
 	formatActiveTime,
 	formatElapsedTime,
 	formatElapsedTicker,
+	formatElapsedTickerCompact,
+	formatTurnDuration,
 	DURATION_MS,
 	DURATION_LADDER_DAYS,
 	DURATION_LADDER_HOURS,
@@ -318,6 +320,53 @@ describe('shared/duration', () => {
 			expect(formatElapsedTicker(3 * SECOND)).toBe('0m 3s');
 			expect(formatElapsedTicker(HOUR + 2 * MINUTE + 5 * SECOND)).toBe('1h 2m 5s');
 			expect(formatElapsedTicker(DAY + HOUR + MINUTE + SECOND)).toBe('1d 1h 1m 1s');
+		});
+	});
+
+	describe('formatElapsedTickerCompact', () => {
+		it('stays a bare seconds count below a minute', () => {
+			expect(formatElapsedTickerCompact(0)).toBe('0s');
+			expect(formatElapsedTickerCompact(3 * SECOND)).toBe('3s');
+			expect(formatElapsedTickerCompact(59 * SECOND)).toBe('59s');
+		});
+
+		it('humanizes past a minute on the same ladder as the ticker', () => {
+			expect(formatElapsedTickerCompact(MINUTE)).toBe('1m 0s');
+			expect(formatElapsedTickerCompact(20 * MINUTE + 4 * SECOND)).toBe('20m 4s');
+			expect(formatElapsedTickerCompact(HOUR + 2 * MINUTE + 5 * SECOND)).toBe('1h 2m 5s');
+			expect(formatElapsedTickerCompact(DAY + HOUR + MINUTE + SECOND)).toBe('1d 1h 1m 1s');
+		});
+
+		it('collapses a backwards or non-finite clock delta to 0s', () => {
+			expect(formatElapsedTickerCompact(-5000)).toBe('0s');
+			expect(formatElapsedTickerCompact(Number.NaN)).toBe('0s');
+		});
+	});
+
+	describe('formatTurnDuration', () => {
+		it('stops at minutes, so a reply is never timed to the second', () => {
+			expect(formatTurnDuration(25 * MINUTE + 41 * SECOND)).toBe('25m');
+			expect(formatTurnDuration(2 * HOUR + 15 * MINUTE + 9 * SECOND)).toBe('2h 15m');
+		});
+
+		it('reads as instant below a minute rather than printing 0m', () => {
+			expect(formatTurnDuration(0)).toBe('<1m');
+			expect(formatTurnDuration(45 * SECOND)).toBe('<1m');
+			expect(formatTurnDuration(-5000)).toBe('<1m');
+			expect(formatTurnDuration(Number.NaN)).toBe('<1m');
+		});
+
+		it('keeps all three rungs on an absurdly long turn', () => {
+			expect(formatTurnDuration(5 * DAY + 6 * HOUR + 25 * MINUTE)).toBe('5d 6h 25m');
+		});
+
+		it('counts past a week in days, never weeks or months', () => {
+			expect(formatTurnDuration(40 * DAY)).toBe('40d');
+		});
+
+		it('drops a zero rung instead of padding it', () => {
+			expect(formatTurnDuration(3 * HOUR)).toBe('3h');
+			expect(formatTurnDuration(2 * DAY + 30 * MINUTE)).toBe('2d 30m');
 		});
 	});
 

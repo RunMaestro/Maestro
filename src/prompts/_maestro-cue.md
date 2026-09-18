@@ -26,6 +26,7 @@ Each subscription has a unique `name`, an `event` type, an `enabled` flag, a `pr
 | `agent.completed`     | An upstream agent finishes a run                                     | `source_session` (name or names)                                                                    |
 | `github.pull_request` | A PR matches a filter (polled)                                       | `repo`, `gh_state`, `label`, `poll_minutes`, `filter`, `retrigger_on_comments`, `max_notifications` |
 | `github.issue`        | An issue matches a filter (polled)                                   | `repo`, `gh_state`, `label`, `poll_minutes`, `filter`, `retrigger_on_comments`, `max_notifications` |
+| `github.label`        | A label is added to a PR or issue (polled)                           | `repo`, `gh_label_target` (`pr`/`issue`/`both`), `gh_labels`, `poll_minutes`, `filter`              |
 | `task.pending`        | Pending `- [ ]` tasks detected in watched files                      | `watch`                                                                                             |
 | `cli.trigger`         | Manually fired via `maestro-cli cue trigger`                         | -                                                                                                   |
 
@@ -139,7 +140,12 @@ A **pipeline** is a logical grouping of related subscriptions in `cue.yaml` - it
 
 **Two non-negotiable defaults - apply BOTH every time:**
 
-1. **Group related chains under one pipeline.** Do not create one pipeline per chain. If the user describes several automations that share a theme (e.g., "morning briefing + EOD wrap-up + weekly review", or "PR triage + PR review + PR merge"), put them in the same pipeline. Separate pipelines are only justified when the work is genuinely unrelated (different domains, different agents, different lifecycles).
+1. **One pipeline per agent is the default. Do not create a new pipeline per chain.** Before writing anything, read the owning agent's `cue.yaml` and look at the `pipeline_name` values already in it. If that agent already owns a pipeline, put the new subscription in it - reuse the existing `pipeline_name` verbatim. An agent with six automations should render as ONE pipeline card holding six chains, not six cards. This holds even when the new automation is on a different schedule, a different event type, or an unrelated topic from what is already there: the grouping key is the owning agent, not the theme.
+
+   A second pipeline for the same agent needs a reason you can state out loud - a genuinely separate domain the user thinks of as its own thing, a lifecycle that gets paused, disabled, or deleted as a unit independently of the rest, or the user naming the new pipeline themselves. "It is a new automation" is not a reason. When you are unsure, add to the existing pipeline: merging two cards later is a `pipeline_name` edit, while a dashboard already fragmented into a dozen single-chain cards has to be untangled by hand.
+
+   The one case that legitimately produces a pipeline spanning several agents is a chain that crosses them (see **Multi-Root Pipelines** below) - that is still ONE pipeline, and the agents in it do not each get their own.
+
 2. **One trigger → one agent node. Never fan-in by default.** Every subscription gets its own unique `target_node_key` (any UUID) so the Pipeline Graph renders each chain as its own visual line - even when several chains share the same `agent_id`. Fan-in (multiple triggers collapsing onto one shared node) is a deliberate, opt-in topology - never the result of omitting `target_node_key`. The user's reasoning: an individual chain trivially extends to `trigger → agent → agent`, while a fan-in node has to be untangled first to add a downstream stage.
 
 How grouping is expressed in YAML:
@@ -216,7 +222,7 @@ A **Command node** is a subscription that runs a shell command or invokes `maest
 
 ```yaml
 - name: <unique-within-file>
-  event: <any of the 9 event types - see Event Types table>
+  event: <any of the 10 event types - see Event Types table>
   enabled: true
   action: command # required to become a Command node
   command: # required when action: command
@@ -252,7 +258,7 @@ A **Command node** is a subscription that runs a shell command or invokes `maest
 - `mode: shell` honors the owning session's SSH remote config - runs on the remote host via `bash -c <substituted-command>` with the remote `projectRoot` as cwd.
 - `mode: cli` is intentionally **local-only**. `maestro-cli send` targets the local Maestro daemon, so SSH-wrapping it would point at the wrong daemon.
 
-**Trigger compatibility:** **All 9 event types can fire a Command node directly** (`app.startup`, `time.heartbeat`, `time.scheduled`, `file.changed`, `agent.completed`, `github.pull_request`, `github.issue`, `task.pending`, `cli.trigger`). Event-specific required fields (`interval_minutes`, `schedule_times`, `watch`, `repo`, `source_session`, etc.) apply normally regardless of `action`. The only `action: command`-specific restriction is the `fan_out` rejection above.
+**Trigger compatibility:** **All 10 event types can fire a Command node directly** (`app.startup`, `time.heartbeat`, `time.scheduled`, `file.changed`, `agent.completed`, `github.pull_request`, `github.issue`, `github.label`, `task.pending`, `cli.trigger`). Event-specific required fields (`interval_minutes`, `schedule_times`, `watch`, `repo`, `source_session`, etc.) apply normally regardless of `action`. The only `action: command`-specific restriction is the `fan_out` rejection above.
 
 **Output exposure & chaining (READ THIS):** Command runs route through the **same** completion path as agent runs and emit `agent.completed`. Downstream subscriptions chain off Command nodes the exact same way they chain off prompt subs - there is **no** separate `{{CUE_COMMAND_OUTPUT}}` variable, no separate event type:
 
@@ -331,7 +337,7 @@ subscriptions:
 `{{CUE_SOURCE_SESSION}}`, `{{CUE_SOURCE_OUTPUT}}`, `{{CUE_SOURCE_STATUS}}` (`completed` | `failed` | `timeout`), `{{CUE_SOURCE_EXIT_CODE}}`, `{{CUE_SOURCE_DURATION}}`, `{{CUE_SOURCE_TRIGGERED_BY}}`
 
 **`github.*`:**
-`{{CUE_GH_TYPE}}`, `{{CUE_GH_NUMBER}}`, `{{CUE_GH_TITLE}}`, `{{CUE_GH_AUTHOR}}`, `{{CUE_GH_URL}}`, `{{CUE_GH_BODY}}`, `{{CUE_GH_LABELS}}`, `{{CUE_GH_STATE}}`, `{{CUE_GH_REPO}}`, `{{CUE_GH_BRANCH}}`, `{{CUE_GH_BASE_BRANCH}}`, `{{CUE_GH_ASSIGNEES}}`, `{{CUE_GH_MERGED_AT}}`, `{{CUE_NEW_COMMENTS}}` (comments posted since the last fire - only populated when `retrigger_on_comments: true`), `{{CUE_GH_IS_RETRIGGER}}` (`"true"` / `"false"`), `{{CUE_GH_RETRIGGER_COUNT}}` (re-fire counter, `0` on initial discovery)
+`{{CUE_GH_TYPE}}`, `{{CUE_GH_NUMBER}}`, `{{CUE_GH_TITLE}}`, `{{CUE_GH_AUTHOR}}`, `{{CUE_GH_URL}}`, `{{CUE_GH_BODY}}`, `{{CUE_GH_LABELS}}`, `{{CUE_GH_STATE}}`, `{{CUE_GH_REPO}}`, `{{CUE_GH_BRANCH}}`, `{{CUE_GH_BASE_BRANCH}}`, `{{CUE_GH_ASSIGNEES}}`, `{{CUE_GH_MERGED_AT}}`, `{{CUE_GH_LABEL}}` / `{{CUE_GH_LABEL_ACTOR}}` / `{{CUE_GH_LABELED_AT}}` (github.label: the label that landed, who applied it, when), `{{CUE_NEW_COMMENTS}}` (comments posted since the last fire - only populated when `retrigger_on_comments: true`), `{{CUE_GH_IS_RETRIGGER}}` (`"true"` / `"false"`), `{{CUE_GH_RETRIGGER_COUNT}}` (re-fire counter, `0` on initial discovery)
 
 **`cli.trigger`:**
 `{{CUE_CLI_PROMPT}}`, `{{CUE_SOURCE_AGENT_ID}}`
@@ -359,7 +365,7 @@ When a user asks you to add, modify, or debug a Cue subscription:
 
 1. Read the existing config first to understand current subscriptions, pipelines, and naming conventions. Check `.maestro/cue.yaml` (canonical) first, then `maestro-cue.yaml` at the project root (legacy fallback). **If the pipeline involves agents at more than one project root, you must read every participating agent's cue.yaml - there is no single aggregated file.** See **Multi-Root Pipelines** above.
 2. Keep subscription `name` values unique within the file - the engine keys on them.
-3. **Group related chains under one pipeline.** Before adding a new subscription, check whether it belongs in an existing pipeline (matching theme, agent set, or domain) - if so, reuse that `pipeline_name` instead of creating a new pipeline. If the user describes several related automations in one request, emit them as multiple subscriptions sharing a single `pipeline_name`, not as separate pipelines.
+3. **Default to one pipeline per agent.** Before adding a new subscription, list the `pipeline_name` values already in the owning agent's `cue.yaml`. If the agent already has one, reuse it verbatim - a new pipeline is the exception, not the default, and needs a stated reason (separate domain, independent lifecycle, or the user named it). If the user describes several automations in one request, emit them as multiple subscriptions sharing a single `pipeline_name`, not as separate pipelines.
 4. **Within a pipeline, give each subscription its own `target_node_key`** (any UUID) so the Pipeline Graph renders the chains as separate visual lines instead of collapsing them onto one fan-in agent node. This applies whether the chains share an `agent_id` or not. Only reuse a `target_node_key` across subscriptions when you actually want a real fan-in node (multiple triggers/upstreams converging onto one shared agent node). If two chains genuinely need isolated context/models/project-roots, also give them distinct `agent_id`s (create with `{{MAESTRO_CLI_PATH}} create-agent <name> --cwd <project>` if needed); otherwise reusing one `agent_id` is fine and often preferred.
 5. **For Command nodes (shell scripts or `maestro-cli` calls inside a pipeline)** - see the **Command Nodes** section above for the full schema. The keyword is `action: command` plus a `command:` block; there is no separate top-level YAML key, no `event: command` type, and no separate node graph.
 6. For full schema, field reference, and worked examples, fetch the official Cue docs: https://docs.runmaestro.ai/maestro-cue-configuration.md, https://docs.runmaestro.ai/maestro-cue-events.md, https://docs.runmaestro.ai/maestro-cue-advanced.md, https://docs.runmaestro.ai/maestro-cue-examples.md. Don't guess field names.

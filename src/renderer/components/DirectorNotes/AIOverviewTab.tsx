@@ -17,6 +17,7 @@ import { MarkdownRenderer } from '../MarkdownRenderer';
 import { RichOverview } from './RichOverview';
 import type { TabFocusHandle } from './OverviewTab';
 import { NarrativeParseError } from './NarrativeParseError';
+import { useNarrativeGroupLookup } from './useNarrativeGroupLookup';
 import { SaveMarkdownModal } from '../SaveMarkdownModal';
 import { TocOverlay, computeTocWidth } from '../Toc';
 import { buildRichTocEntries, buildPlainTocEntries } from './directorNotesToc';
@@ -25,8 +26,13 @@ import { useSettings } from '../../hooks';
 import { generateTerminalProseStyles } from '../../utils/markdownConfig';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { formatNumber } from '../../../shared/formatters';
+import {
+	isAutoSynopsisProvider,
+	synopsisProviderChoice,
+} from '../../../shared/directorNotesProvider';
 import { notifyToast } from '../../stores/notificationStore';
 import { useModalStore } from '../../stores/modalStore';
+import { safeStorageGet, safeStorageSet } from '../../utils/safeLocalStorage';
 import {
 	looksLikeStructuredOutput,
 	narrativeToMarkdown,
@@ -41,6 +47,10 @@ type SynopsisStats = NonNullable<
 interface AIOverviewTabProps {
 	theme: Theme;
 	onSynopsisReady?: () => void;
+	/** A generation run started (first open or Regenerate). */
+	onSynopsisStart?: () => void;
+	/** A generation run failed. Receives the message the error banner shows. */
+	onSynopsisError?: (error: string) => void;
 }
 
 // Font-scale zoom for the rendered synopsis. Stored as an em multiplier so the
@@ -65,7 +75,7 @@ type ViewMode = 'rich' | 'plain';
 const VIEW_MODE_DEFAULT: ViewMode = 'rich';
 
 function loadViewMode(persistedDefault: ViewMode): ViewMode {
-	const raw = localStorage.getItem(VIEW_MODE_STORAGE_KEY);
+	const raw = safeStorageGet(VIEW_MODE_STORAGE_KEY);
 	return raw === 'rich' || raw === 'plain' ? raw : persistedDefault;
 }
 
@@ -118,10 +128,12 @@ function fireSynopsisReadyToast() {
 }
 
 export const AIOverviewTab = forwardRef<TabFocusHandle, AIOverviewTabProps>(function AIOverviewTab(
-	{ theme, onSynopsisReady },
+	{ theme, onSynopsisReady, onSynopsisStart, onSynopsisError },
 	ref
 ) {
 	const { directorNotesSettings, bionifyReadingMode, shortcuts } = useSettings();
+	// Agent -> group mapping used to bucket the narrative bullets.
+	const groupLookup = useNarrativeGroupLookup();
 	const [lookbackDays, setLookbackDays] = useState(directorNotesSettings.defaultLookbackDays);
 	const [synopsis, setSynopsis] = useState<string>(cachedSynopsis?.content ?? '');
 	// Structured narrative and its overt parse-failure detail, both derived from
@@ -159,7 +171,7 @@ export const AIOverviewTab = forwardRef<TabFocusHandle, AIOverviewTabProps>(func
 	// Switch reading mode and persist the choice.
 	const changeViewMode = useCallback((mode: ViewMode) => {
 		setViewMode(mode);
-		localStorage.setItem(VIEW_MODE_STORAGE_KEY, mode);
+		safeStorageSet(VIEW_MODE_STORAGE_KEY, mode);
 	}, []);
 
 	// Three paths consume a synopsis result (fresh generation, attaching to an
@@ -184,15 +196,28 @@ export const AIOverviewTab = forwardRef<TabFocusHandle, AIOverviewTabProps>(func
 	// narrative inside RichOverview, which injects its own base prose styles.)
 	const proseStyles = generateTerminalProseStyles(theme, '.director-notes-content');
 
-	// Font-scale override. MarkdownRenderer's root `.prose` carries Tailwind's
-	// `text-sm` (0.875rem, an absolute rem unit), which would otherwise pin the
-	// base font size and ignore the zoom control. Override it with a scaled size
-	// (same selector → higher specificity than the utility class) so the em-based
-	// prose children scale proportionally. Injected at the content-container
-	// level so any `.director-notes-content` prose block picks it up. The zoom
-	// buttons themselves are Plain-only: Rich Mode is mostly fixed-size widget
-	// chrome that the rule cannot touch.
-	const proseScaleRule = `.director-notes-content .prose { font-size: calc(0.875rem * ${fontScale}) !important; }`;
+	// Font-scale override, injected at the content-container level so every
+	// reading surface under it picks the zoom up.
+	//
+	// Prose: MarkdownRenderer's root `.prose` carries Tailwind's `text-sm`
+	// (0.875rem, an absolute rem unit), which would otherwise pin the base font
+	// size and ignore the zoom control. Overriding it with a scaled size lets the
+	// em-based prose children scale proportionally.
+	//
+	// Narrative: Rich Mode draws its bullets as widgets rather than prose, so the
+	// `.prose` rule never reaches them and the control read as broken there. Each
+	// utility class the narrative uses gets its own ABSOLUTE scaled size (rather
+	// than an em chain off a scaled root) so nesting cannot compound the zoom. The
+	// two-class selectors outrank Tailwind's single-class utilities without
+	// `!important`. Rich Mode's stat cards and charts stay fixed on purpose: they
+	// are chrome around the reading text, not the reading text.
+	const proseScaleRule = [
+		`.director-notes-content .prose { font-size: calc(0.875rem * ${fontScale}) !important; }`,
+		`.director-notes-narrative { font-size: calc(0.875rem * ${fontScale}); }`,
+		`.director-notes-narrative .text-sm { font-size: calc(0.875rem * ${fontScale}); }`,
+		`.director-notes-narrative .text-xs { font-size: calc(0.75rem * ${fontScale}); }`,
+		`.director-notes-narrative .text-\\[0\\.65rem\\] { font-size: calc(0.65rem * ${fontScale}); }`,
+	].join('\n');
 
 	// Format generation duration for display
 	const formatDurationMs = (ms: number): string => {
@@ -230,9 +255,16 @@ export const AIOverviewTab = forwardRef<TabFocusHandle, AIOverviewTabProps>(func
 	// JSON-shaped, in which case there is no readable report to show and the
 	// parse-error banner takes over. Empty rather than raw JSON: dumping the
 	// object into the markdown renderer is the wall-of-JSON regression itself.
+	// Bullets bucket by group (or agent) here too, so Plain Mode, Copy, and Save
+	// read the same way Rich Mode does rather than as one flat list.
 	const plainContent = useMemo(
-		() => (narrative ? narrativeToMarkdown(narrative) : isStructuredShaped ? '' : synopsis),
-		[narrative, synopsis, isStructuredShaped]
+		() =>
+			narrative
+				? narrativeToMarkdown(narrative, { groupLookup })
+				: isStructuredShaped
+					? ''
+					: synopsis,
+		[narrative, synopsis, isStructuredShaped, groupLookup]
 	);
 
 	// --- Table of contents ---------------------------------------------------
@@ -294,19 +326,37 @@ export const AIOverviewTab = forwardRef<TabFocusHandle, AIOverviewTabProps>(func
 		}
 	}, [plainContent]);
 
+	// A failure must reach the modal header too. Without it the AI Overview tab
+	// stays disabled behind a spinner, which hides this error and the Regenerate
+	// button that recovers from it (e.g. after switching providers on a usage limit).
+	const reportError = useCallback(
+		(message: string) => {
+			setError(message);
+			onSynopsisError?.(message);
+		},
+		[onSynopsisError]
+	);
+
 	// Generate synopsis - the handler reads history files directly via file paths,
 	// so the renderer only needs to make a single IPC call.
 	const generateSynopsis = useCallback(async () => {
 		setIsGenerating(true);
 		isGeneratingRef.current = true;
 		setError(null);
+		onSynopsisStart?.();
 
+		// Under auto-selection the provider is decided in the main process, so the
+		// per-provider overrides stored here (they belong to the MANUAL pick) are
+		// deliberately not sent - applying one provider's custom path or args to a
+		// different binary is worse than sending nothing.
+		const providerChoice = synopsisProviderChoice(directorNotesSettings);
+		const useCustomConfig = !isAutoSynopsisProvider(providerChoice);
 		const ipcPromise = window.maestro.directorNotes.generateSynopsis({
 			lookbackDays,
-			provider: directorNotesSettings.provider,
-			customPath: directorNotesSettings.customPath,
-			customArgs: directorNotesSettings.customArgs,
-			customEnvVars: directorNotesSettings.customEnvVars,
+			provider: providerChoice,
+			customPath: useCustomConfig ? directorNotesSettings.customPath : undefined,
+			customArgs: useCustomConfig ? directorNotesSettings.customArgs : undefined,
+			customEnvVars: useCustomConfig ? directorNotesSettings.customEnvVars : undefined,
 		});
 		activeGenerationPromise = ipcPromise;
 
@@ -343,11 +393,11 @@ export const AIOverviewTab = forwardRef<TabFocusHandle, AIOverviewTabProps>(func
 				setStats(result.stats ?? null);
 				onSynopsisReady?.();
 			} else {
-				setError(result.error || 'Failed to generate synopsis');
+				reportError(result.error || 'Failed to generate synopsis');
 			}
 		} catch (err) {
 			if (!mountedRef.current) return;
-			setError(err instanceof Error ? err.message : 'Failed to generate synopsis');
+			reportError(err instanceof Error ? err.message : 'Failed to generate synopsis');
 		} finally {
 			// Only clear if this is still the active generation (not overwritten by Regenerate)
 			if (activeGenerationPromise === ipcPromise) {
@@ -358,7 +408,14 @@ export const AIOverviewTab = forwardRef<TabFocusHandle, AIOverviewTabProps>(func
 				setIsGenerating(false);
 			}
 		}
-	}, [lookbackDays, directorNotesSettings, onSynopsisReady, applyNarrative]);
+	}, [
+		lookbackDays,
+		directorNotesSettings,
+		onSynopsisReady,
+		onSynopsisStart,
+		reportError,
+		applyNarrative,
+	]);
 
 	// On mount: use cache if available, attach to in-flight generation, or start fresh
 	useEffect(() => {
@@ -389,12 +446,12 @@ export const AIOverviewTab = forwardRef<TabFocusHandle, AIOverviewTabProps>(func
 						if (cachedSynopsis) setLookbackDays(cachedSynopsis.lookbackDays);
 						onSynopsisReady?.();
 					} else {
-						setError(result.error || 'Failed to generate synopsis');
+						reportError(result.error || 'Failed to generate synopsis');
 					}
 				})
 				.catch((err) => {
 					if (!mountedRef.current) return;
-					setError(err instanceof Error ? err.message : 'Failed to generate synopsis');
+					reportError(err instanceof Error ? err.message : 'Failed to generate synopsis');
 				})
 				.finally(() => {
 					isGeneratingRef.current = false;
@@ -568,19 +625,6 @@ export const AIOverviewTab = forwardRef<TabFocusHandle, AIOverviewTabProps>(func
 							</span>
 						</div>
 					)}
-
-					{/* Font-size controls - Plain Mode only. Rich Mode is a widget
-					    dashboard whose stat cards, timeline and breakdowns carry their
-					    own fixed sizing, so the zoom moved nothing there and the
-					    buttons read as broken. */}
-					{viewMode === 'plain' && (
-						<FontScaleControl
-							theme={theme}
-							control={fontScaleControl}
-							className="ml-auto"
-							testId="director-notes-font-scale"
-						/>
-					)}
 				</div>
 			)}
 
@@ -597,6 +641,24 @@ export const AIOverviewTab = forwardRef<TabFocusHandle, AIOverviewTabProps>(func
 				>
 					{/* Font-scale override - applies to both Plain and Rich narratives. */}
 					<style>{proseScaleRule}</style>
+					{/* Floating font zoom - the same control the file preview floats
+					    opposite its Table of Contents button, here pinned to the
+					    top-right of the pane: a circle at rest that expands to the full
+					    A-/A+ pill on hover or keyboard focus. Sticky (not absolute) so it
+					    stays put while the notes scroll under it, without depending on a
+					    positioned ancestor. */}
+					{synopsis && (
+						<div className="sticky top-0 z-20 h-0 flex items-start justify-end pointer-events-none">
+							<FontScaleControl
+								theme={theme}
+								control={fontScaleControl}
+								variant="floating"
+								collapsible
+								className="pointer-events-auto"
+								testId="director-notes-font-scale"
+							/>
+						</div>
+					)}
 					{/* Error banner - shown above content so old notes remain readable */}
 					{error && (
 						<div

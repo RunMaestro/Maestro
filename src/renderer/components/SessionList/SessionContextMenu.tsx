@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, type ReactNode, type RefObject } from 'react';
+import { createPortal } from 'react-dom';
 import {
 	ArrowDown,
 	ArrowDownToLine,
@@ -25,11 +26,11 @@ import {
 	Check,
 } from 'lucide-react';
 import type { Group, Session, Theme } from '../../types';
-import { useClickOutside, useContextMenuPosition } from '../../hooks';
+import { useAnchoredMenuPosition, useClickOutside, useContextMenuPosition } from '../../hooks';
 import { compareNamesIgnoringEmojis } from '../../../shared/emojiUtils';
 import { useGitAgentActions } from '../../hooks/git/useGitAgentActions';
 import { GitChangeCounts } from '../ui/GitChangeCounts';
-import { GitRunningBadge } from '../ui/GitRunningBadge';
+import { GitRunningBadge, PR_RUNNING_TITLE } from '../ui/GitRunningBadge';
 import { formatGitChangeSummary } from '../../../shared/gitUtils';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
@@ -77,22 +78,24 @@ interface SessionContextMenuProps {
 	onRenameWindow?: (windowId: string, name: string) => void;
 }
 
+/** Grace period before a flyout closes, so the pointer can cross the gap. */
+const FLYOUT_CLOSE_DELAY_MS = 300;
+
 /**
- * Hover/focus flyout state for a nested context-menu submenu: open/close with a
- * grace timeout and a viewport-aware above/below + left/right flip. `itemCount`
- * is the flyout's approximate row count, used only to decide the flip. Shared by
- * the Move-to-Group and Move-to-Window submenus so neither reimplements it.
- * The return type is inferred so `containerRef` stays exactly `useRef`'s type
+ * Hover/focus open state for a nested context-menu submenu, with a grace timeout
+ * so the pointer can travel from the parent row into the flyout. Shared by the
+ * Move-to-Group and Move-to-Window submenus so neither reimplements it.
+ * Placement lives in `ContextMenuFlyout` below.
+ * The return type is inferred so `anchorRef` stays exactly `useRef`'s type
  * (directly ref-assignable, avoiding a null-variance mismatch on the JSX ref).
  */
-function useFlyoutSubmenu(itemCount: number) {
-	const containerRef = useRef<HTMLDivElement>(null);
+function useFlyoutSubmenu() {
+	const anchorRef = useRef<HTMLDivElement>(null);
+	// The flyout is portaled out of the menu, so the menu's click-outside check
+	// needs this ref too or selecting an item would dismiss before the click lands.
+	const flyoutRef = useRef<HTMLDivElement>(null);
 	const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const [show, setShow] = useState(false);
-	const [position, setPosition] = useState<{
-		vertical: 'below' | 'above';
-		horizontal: 'right' | 'left';
-	}>({ vertical: 'below', horizontal: 'right' });
 
 	useEffect(() => {
 		return () => {
@@ -109,17 +112,6 @@ function useFlyoutSubmenu(itemCount: number) {
 			timeoutRef.current = null;
 		}
 		setShow(true);
-		if (containerRef.current) {
-			const rect = containerRef.current.getBoundingClientRect();
-			const itemHeight = 28;
-			const submenuHeight = itemCount * itemHeight + 16;
-			const submenuWidth = 160;
-			const spaceBelow = window.innerHeight - rect.top;
-			const spaceRight = window.innerWidth - rect.right;
-			const vertical = spaceBelow < submenuHeight && rect.top > submenuHeight ? 'above' : 'below';
-			const horizontal = spaceRight < submenuWidth && rect.left > submenuWidth ? 'left' : 'right';
-			setPosition({ vertical, horizontal });
-		}
 	};
 
 	const scheduleClose = () => {
@@ -127,12 +119,80 @@ function useFlyoutSubmenu(itemCount: number) {
 		timeoutRef.current = setTimeout(() => {
 			setShow(false);
 			timeoutRef.current = null;
-		}, 300);
+		}, FLYOUT_CLOSE_DELAY_MS);
 	};
 
 	const close = () => setShow(false);
 
-	return { containerRef, show, position, open, scheduleClose, close };
+	return { anchorRef, flyoutRef, show, open, scheduleClose, close };
+}
+
+interface ContextMenuFlyoutProps {
+	/** The menu row the flyout hangs off. */
+	anchorRef: RefObject<HTMLDivElement>;
+	/** The flyout panel itself; the parent menu excludes it from click-outside. */
+	flyoutRef: RefObject<HTMLDivElement>;
+	theme: Theme;
+	/** Keep the flyout open while the pointer or focus is inside it. */
+	onKeepOpen: () => void;
+	/** Start the close timer when the pointer or focus leaves it. */
+	onScheduleClose: () => void;
+	children: ReactNode;
+}
+
+/**
+ * A nested submenu panel, portaled to `<body>` and positioned beside its row.
+ *
+ * It cannot be an `absolute; left: 100%` child of the menu: the menu carries
+ * `overflow-y: auto` so a long one scrolls, and CSS computes `overflow-x` to
+ * `auto` the moment the other axis is not `visible` - which clipped the whole
+ * flyout out of view, so hovering "Move to Group" or "Move to Window" appeared
+ * to do nothing at all.
+ *
+ * Portaling breaks the DOM containment the hover logic relied on (the pointer
+ * entering the flyout used to be "still inside the row"), so the panel repeats
+ * the row's enter/leave handlers to hold itself open.
+ */
+function ContextMenuFlyout({
+	anchorRef,
+	flyoutRef,
+	theme,
+	onKeepOpen,
+	onScheduleClose,
+	children,
+}: ContextMenuFlyoutProps) {
+	const { left, top, maxHeight, ready } = useAnchoredMenuPosition(flyoutRef, anchorRef, {
+		gap: 4,
+		placement: 'right',
+		flip: true,
+	});
+
+	return createPortal(
+		<div
+			ref={flyoutRef}
+			data-testid="session-context-flyout"
+			// Above the z-50 context menu it hangs off: portaled to body, it no
+			// longer inherits that menu's stacking position.
+			className="fixed z-[60] py-1 rounded-md shadow-xl border whitespace-nowrap"
+			style={{
+				left,
+				top,
+				maxHeight,
+				overflowY: 'auto',
+				opacity: ready ? 1 : 0,
+				backgroundColor: theme.colors.bgSidebar,
+				borderColor: theme.colors.border,
+				minWidth: '8.75rem',
+			}}
+			onMouseEnter={onKeepOpen}
+			onMouseLeave={onScheduleClose}
+			onFocus={onKeepOpen}
+			onBlur={onScheduleClose}
+		>
+			{children}
+		</div>,
+		document.body
+	);
 }
 
 export function SessionContextMenu({
@@ -179,7 +239,15 @@ export function SessionContextMenu({
 	const onDismissRef = useRef(onDismiss);
 	onDismissRef.current = onDismiss;
 
-	useClickOutside(menuRef, onDismiss);
+	// One flyout state machine per submenu (Move to Group, Move to Window).
+	// Extracted so the two flyouts do not duplicate the hover/timeout logic.
+	const moveToGroup = useFlyoutSubmenu();
+	const moveToWindow = useFlyoutSubmenu();
+
+	// The flyouts are portaled to <body>, so they are outside `menuRef` in the
+	// DOM: without listing them here, mousedown on a submenu item would dismiss
+	// the menu before the click ever landed on the item.
+	useClickOutside([menuRef, moveToGroup.flyoutRef, moveToWindow.flyoutRef], onDismiss);
 
 	useEffect(() => {
 		const handleKeyDown = (e: KeyboardEvent) => {
@@ -191,13 +259,7 @@ export function SessionContextMenu({
 		return () => document.removeEventListener('keydown', handleKeyDown);
 	}, []);
 
-	const { left, top, ready } = useContextMenuPosition(menuRef, x, y);
-
-	// One flyout state machine per submenu (Move to Group, Move to Window). Item
-	// count feeds the above/below flip decision. Extracted so the two flyouts do
-	// not duplicate the hover/timeout/positioning logic.
-	const moveToGroup = useFlyoutSubmenu(groups.length + 2);
-	const moveToWindow = useFlyoutSubmenu((windowTargets?.length ?? 0) + 2);
+	const { left, top, maxHeight, ready } = useContextMenuPosition(menuRef, x, y);
 
 	// "Move to Window" appears only in a multi-window-capable app: a mover handler
 	// plus at least one enumerated window (empty before the registry hydrates).
@@ -245,10 +307,16 @@ export function SessionContextMenu({
 	return (
 		<div
 			ref={menuRef}
+			data-testid="session-context-menu"
 			className="fixed z-50 py-1 rounded-md shadow-xl border whitespace-nowrap"
 			style={{
 				left,
 				top,
+				// A menu taller than the viewport pins to the top edge and runs off
+				// the bottom; the container is overflow-hidden, so those items are
+				// simply unreachable. Scroll instead of clipping.
+				maxHeight,
+				overflowY: 'auto',
 				opacity: ready ? 1 : 0,
 				backgroundColor: theme.colors.bgSidebar,
 				borderColor: theme.colors.border,
@@ -259,7 +327,7 @@ export function SessionContextMenu({
 			    Left Bar pops the menu away from that row, so without it the
 			    destructive items at the bottom are unattributed. */}
 			<div
-				className="px-3 py-1 text-[10px] uppercase tracking-wider opacity-60"
+				className="px-3 py-1 text-2xs uppercase tracking-wider opacity-60"
 				style={{ color: theme.colors.textDim }}
 				title={session.name}
 			>
@@ -327,8 +395,7 @@ export function SessionContextMenu({
 
 			{showGroupActions && !session.parentSessionId && !session.isPianola && (
 				<div
-					ref={moveToGroup.containerRef}
-					className="relative"
+					ref={moveToGroup.anchorRef}
 					tabIndex={0}
 					onMouseEnter={moveToGroup.open}
 					onMouseLeave={moveToGroup.scheduleClose}
@@ -357,17 +424,12 @@ export function SessionContextMenu({
 					</button>
 
 					{moveToGroup.show && (
-						<div
-							className="absolute py-1 rounded-md shadow-xl border whitespace-nowrap"
-							style={{
-								backgroundColor: theme.colors.bgSidebar,
-								borderColor: theme.colors.border,
-								minWidth: '8.75rem',
-								...(moveToGroup.position.vertical === 'above' ? { bottom: 0 } : { top: 0 }),
-								...(moveToGroup.position.horizontal === 'left'
-									? { right: '100%', marginRight: 4 }
-									: { left: '100%', marginLeft: 4 }),
-							}}
+						<ContextMenuFlyout
+							anchorRef={moveToGroup.anchorRef}
+							flyoutRef={moveToGroup.flyoutRef}
+							theme={theme}
+							onKeepOpen={moveToGroup.open}
+							onScheduleClose={moveToGroup.scheduleClose}
 						>
 							<button
 								type="button"
@@ -381,7 +443,7 @@ export function SessionContextMenu({
 							>
 								<Folder className="w-3.5 h-3.5" />
 								Ungrouped
-								{!session.groupId && <span className="text-[10px] opacity-50">(current)</span>}
+								{!session.groupId && <span className="text-2xs opacity-50">(current)</span>}
 							</button>
 
 							{groups.length > 0 && (
@@ -403,7 +465,7 @@ export function SessionContextMenu({
 									<span>{group.emoji}</span>
 									<span className="truncate">{group.name}</span>
 									{session.groupId === group.id && (
-										<span className="text-[10px] opacity-50">(current)</span>
+										<span className="text-2xs opacity-50">(current)</span>
 									)}
 								</button>
 							))}
@@ -426,15 +488,14 @@ export function SessionContextMenu({
 									Create New Group
 								</button>
 							)}
-						</div>
+						</ContextMenuFlyout>
 					)}
 				</div>
 			)}
 
 			{showMoveToWindow && (
 				<div
-					ref={moveToWindow.containerRef}
-					className="relative"
+					ref={moveToWindow.anchorRef}
 					tabIndex={0}
 					onMouseEnter={moveToWindow.open}
 					// Don't auto-close while a row is being renamed - it would unmount the
@@ -471,16 +532,15 @@ export function SessionContextMenu({
 					</button>
 
 					{moveToWindow.show && (
-						<div
-							className="absolute py-1 rounded-md shadow-xl border whitespace-nowrap"
-							style={{
-								backgroundColor: theme.colors.bgSidebar,
-								borderColor: theme.colors.border,
-								minWidth: '8.75rem',
-								...(moveToWindow.position.vertical === 'above' ? { bottom: 0 } : { top: 0 }),
-								...(moveToWindow.position.horizontal === 'left'
-									? { right: '100%', marginRight: 4 }
-									: { left: '100%', marginLeft: 4 }),
+						<ContextMenuFlyout
+							anchorRef={moveToWindow.anchorRef}
+							flyoutRef={moveToWindow.flyoutRef}
+							theme={theme}
+							onKeepOpen={moveToWindow.open}
+							// Same rename guard as the row: closing mid-edit would unmount
+							// the input before it could commit.
+							onScheduleClose={() => {
+								if (!renamingWindowId) moveToWindow.scheduleClose();
 							}}
 						>
 							<button
@@ -564,7 +624,7 @@ export function SessionContextMenu({
 											<AppWindow className="w-3.5 h-3.5 shrink-0" />
 											<span className="truncate">{target.label}</span>
 											{target.isCurrentOwner && (
-												<span className="text-[10px] opacity-50 shrink-0">(current)</span>
+												<span className="text-2xs opacity-50 shrink-0">(current)</span>
 											)}
 										</button>
 										{/* Rename affordance - secondary windows only; the primary keeps
@@ -586,7 +646,7 @@ export function SessionContextMenu({
 									</div>
 								)
 							)}
-						</div>
+						</ContextMenuFlyout>
 					)}
 				</div>
 			)}
@@ -631,7 +691,7 @@ export function SessionContextMenu({
 						<GitChangeCounts
 							theme={theme}
 							totals={gitActions.changes}
-							className="flex items-center gap-1.5 text-[10px]"
+							className="flex items-center gap-1.5 text-2xs"
 						/>
 					</button>
 					<button
@@ -653,12 +713,12 @@ export function SessionContextMenu({
 						{gitActions.pullRunning ? (
 							<GitRunningBadge
 								theme={theme}
-								className="flex items-center gap-1 text-[10px]"
+								className="flex items-center gap-1 text-2xs"
 								testId="session-context-git-pull-running"
 							/>
 						) : (
 							gitActions.behind > 0 && (
-								<span className="flex items-center gap-0.5 text-[10px] text-red-500">
+								<span className="flex items-center gap-0.5 text-2xs text-red-500">
 									<ArrowDown className="w-3 h-3" />
 									{gitActions.behind}
 								</span>
@@ -682,12 +742,12 @@ export function SessionContextMenu({
 						{gitActions.pushRunning ? (
 							<GitRunningBadge
 								theme={theme}
-								className="flex items-center gap-1 text-[10px]"
+								className="flex items-center gap-1 text-2xs"
 								testId="session-context-git-push-running"
 							/>
 						) : (
 							gitActions.ahead > 0 && (
-								<span className="flex items-center gap-0.5 text-[10px] text-green-500">
+								<span className="flex items-center gap-0.5 text-2xs text-green-500">
 									<ArrowUp className="w-3 h-3" />
 									{gitActions.ahead}
 								</span>
@@ -714,12 +774,23 @@ export function SessionContextMenu({
 								createPR();
 								onDismiss();
 							}}
-							className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+							className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center justify-between gap-2"
 							style={{ color: theme.colors.accent }}
 							data-testid="session-context-create-pr"
 						>
-							<GitPullRequest className="w-3.5 h-3.5" />
-							Create Pull Request
+							<span className="flex items-center gap-2">
+								<GitPullRequest className="w-3.5 h-3.5" />
+								Create Pull Request
+							</span>
+							{gitActions.prRunning && (
+								<GitRunningBadge
+									theme={theme}
+									label="Creating"
+									className="flex items-center gap-1 text-2xs"
+									testId="session-context-create-pr-running"
+									title={PR_RUNNING_TITLE}
+								/>
+							)}
 						</button>
 					)}
 				</>

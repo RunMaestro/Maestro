@@ -32,6 +32,8 @@ import { formatNumber } from '../../../shared/formatters';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { logger } from '../../utils/logger';
 import { MetricCard } from './SummaryCards';
+import { buildShortcutsSummary } from './footerSummary';
+import { usePublishFooterSummary } from './useFooterSummary';
 
 interface KeyboardStatsProps {
 	timeRange: StatsTimeRange;
@@ -258,7 +260,7 @@ function DailyBarChart({ series, theme }: DailyBarChartProps) {
 			</div>
 			{/* X-axis labels */}
 			<div
-				className="flex gap-px mt-2 text-[10px]"
+				className="flex gap-px mt-2 text-2xs"
 				style={{ color: theme.colors.textDim }}
 				aria-hidden="true"
 			>
@@ -353,6 +355,18 @@ export const KeyboardStats = memo(function KeyboardStats({ timeRange, theme }: K
 		const needed = Math.ceil((nextLevel.threshold / 100) * totalShortcuts);
 		return Math.max(0, needed - usedCount);
 	}, [nextLevel, usedCount, totalShortcuts]);
+
+	usePublishFooterSummary(
+		'shortcuts',
+		loading
+			? null
+			: buildShortcutsSummary({
+					presses: total,
+					used: usedCount,
+					bound: totalShortcuts,
+					levelName: currentLevel.name,
+				})
+	);
 
 	const unusedShortcuts = useMemo(() => {
 		return boundShortcuts.filter((s) => !usedSet.has(s.id));
@@ -502,7 +516,7 @@ export const KeyboardStats = memo(function KeyboardStats({ timeRange, theme }: K
 									{s.label}
 								</span>
 								<kbd
-									className="px-1.5 py-0.5 rounded border font-mono text-[10px] font-bold flex-shrink-0 ml-auto"
+									className="px-1.5 py-0.5 rounded border font-mono text-2xs font-bold flex-shrink-0 ml-auto"
 									style={{
 										backgroundColor: theme.colors.bgActivity,
 										borderColor: theme.colors.border,

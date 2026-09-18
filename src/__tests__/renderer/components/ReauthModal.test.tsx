@@ -46,6 +46,7 @@ function createOutage(overrides: Partial<AuthOutage> = {}): AuthOutage {
 		startedAt: 0,
 		blocked: [{ sessionId: 'sess-1', tabIds: [] }],
 		fromPipeline: false,
+		initiatedBy: 'failure',
 		...overrides,
 	};
 }
@@ -66,6 +67,15 @@ vi.mock('../../../renderer/components/XTerminal', () => {
 	XTerminal.displayName = 'XTerminal';
 	return { XTerminal };
 });
+
+// `vi.mock` is hoisted above ordinary declarations, so the flag it reads has
+// to be hoisted too.
+const platformState = vi.hoisted(() => ({ current: 'darwin' }));
+vi.mock('../../../renderer/utils/platformUtils', () => ({
+	isWindowsPlatform: () => platformState.current === 'win32',
+	isMacOSPlatform: () => platformState.current === 'darwin',
+	isLinuxPlatform: () => platformState.current === 'linux',
+}));
 
 const mockSpawnTerminalTab = vi.fn();
 const mockWrite = vi.fn();
@@ -93,6 +103,7 @@ beforeEach(() => {
 	mockWrite.mockResolvedValue(true);
 	mockKill.mockResolvedValue(true);
 	mockGetCustomEnvVars.mockResolvedValue({});
+	platformState.current = 'darwin';
 	// Each test owns its own global layer; the store persists between them.
 	useSettingsStore.setState({ shellEnvVars: {} } as never);
 
@@ -137,7 +148,7 @@ describe('ReauthModal', () => {
 		// how a remote login came up as an empty box.
 		expect(mockWrite).not.toHaveBeenCalled();
 		await emitShellOutput(mockSpawnTerminalTab.mock.calls[0][0].sessionId);
-		expect(mockWrite).toHaveBeenCalledWith(expect.any(String), 'claude /login\n');
+		expect(mockWrite).toHaveBeenCalledWith(expect.any(String), 'claude /login\r');
 	});
 
 	// The routing key is load-bearing twice over: `-terminal-` makes PtySpawner
@@ -184,7 +195,7 @@ describe('ReauthModal', () => {
 
 		// ...and that shell is the one that gets the login typed into it.
 		await emitShellOutput(liveSessionId);
-		expect(mockWrite).toHaveBeenCalledWith(liveSessionId, 'claude /login\n');
+		expect(mockWrite).toHaveBeenCalledWith(liveSessionId, 'claude /login\r');
 	});
 
 	// The abandoned attempt's promise resolves after the remount. It must not
@@ -226,7 +237,7 @@ describe('ReauthModal', () => {
 				vi.advanceTimersByTime(8000);
 			});
 
-			expect(mockWrite).toHaveBeenCalledWith(expect.any(String), 'claude /login\n');
+			expect(mockWrite).toHaveBeenCalledWith(expect.any(String), 'claude /login\r');
 		} finally {
 			vi.useRealTimers();
 		}
@@ -292,7 +303,7 @@ describe('ReauthModal', () => {
 
 		expect(screen.getByText(/then type \/login/)).toBeInTheDocument();
 		await emitShellOutput(mockSpawnTerminalTab.mock.calls[0][0].sessionId);
-		expect(mockWrite).toHaveBeenCalledWith(expect.any(String), 'droid\n');
+		expect(mockWrite).toHaveBeenCalledWith(expect.any(String), 'droid\r');
 	});
 
 	// The Terminal agent is a plain shell: there is no credential to refresh, so
@@ -385,6 +396,71 @@ describe('ReauthModal', () => {
 		expect(screen.getByText('Nightly Triage, Doc Sweep')).toBeInTheDocument();
 		expect(screen.getByText(/All 2 agents on this provider are stopped/)).toBeInTheDocument();
 		expect(screen.getByTestId('reauth-resume').textContent).toBe('Resume 2 Agents');
+	});
+});
+
+/**
+ * The same dialog opened from the command palette, with nothing broken.
+ *
+ * The login itself is identical - that is the point of reusing this - but the
+ * recovery copy would be a lie: no agent is stopped, no queue is held, and
+ * there is nothing to resume. A user who reads "this agent is stopped" here has
+ * to go and disprove it.
+ */
+describe('ReauthModal for a user-initiated login', () => {
+	function createManualOutage(): AuthOutage {
+		return createOutage({ initiatedBy: 'user', message: '' });
+	}
+
+	it('does not claim the agent is stopped', async () => {
+		const session = createMockSession({ id: 'sess-1', name: 'Nightly Triage' });
+		useSessionStore.setState({ sessions: [session] });
+		render(
+			<ReauthModal
+				theme={mockTheme}
+				outage={createManualOutage()}
+				session={session}
+				onClose={vi.fn()}
+			/>
+		);
+		await flushSpawn();
+
+		expect(screen.queryByText(/is stopped until you log in again/)).not.toBeInTheDocument();
+		expect(screen.getByText(/Nothing is stopped and no turn is interrupted/)).toBeInTheDocument();
+	});
+
+	// "Resume Agent" promises a turn will be re-sent. Nothing failed here, so
+	// nothing will be.
+	it('offers Done rather than a resume', async () => {
+		const session = createMockSession({ id: 'sess-1' });
+		render(
+			<ReauthModal
+				theme={mockTheme}
+				outage={createManualOutage()}
+				session={session}
+				onClose={vi.fn()}
+			/>
+		);
+		await flushSpawn();
+
+		expect(screen.getByTestId('reauth-resume').textContent).toBe('Done');
+	});
+
+	// Still the real login shell: the whole reason to reuse this dialog.
+	it('runs the same provider login command', async () => {
+		const session = createMockSession({ id: 'sess-1', toolType: 'claude-code' });
+		render(
+			<ReauthModal
+				theme={mockTheme}
+				outage={createManualOutage()}
+				session={session}
+				onClose={vi.fn()}
+			/>
+		);
+		await flushSpawn();
+		await emitShellOutput(mockSpawnTerminalTab.mock.calls[0][0].sessionId);
+
+		expect(mockWrite).toHaveBeenCalledWith(expect.any(String), 'claude /login\r');
 	});
 });
 
@@ -493,7 +569,9 @@ describe('ReauthModal credential kinds', () => {
 		await renderWithEnv({ ANTHROPIC_API_KEY: 'sk-live-xxx' });
 
 		expect(mockSpawnTerminalTab).not.toHaveBeenCalled();
-		expect(await screen.findByText(/ANTHROPIC_API_KEY/)).toBeInTheDocument();
+		expect(await screen.findByTestId('reauth-login-blocked')).toHaveTextContent(
+			/ANTHROPIC_API_KEY/
+		);
 	});
 
 	// The token belongs to the gateway operator, so it outranks a token check:
@@ -505,14 +583,14 @@ describe('ReauthModal credential kinds', () => {
 		});
 
 		expect(mockSpawnTerminalTab).not.toHaveBeenCalled();
-		expect(await screen.findByText(/api\.z\.ai/)).toBeInTheDocument();
+		expect(await screen.findByTestId('reauth-login-blocked')).toHaveTextContent(/api\.z\.ai/);
 	});
 
 	it('sends a Bedrock agent to its cloud credentials rather than a provider login', async () => {
 		await renderWithEnv({ CLAUDE_CODE_USE_BEDROCK: '1' });
 
 		expect(mockSpawnTerminalTab).not.toHaveBeenCalled();
-		expect(await screen.findByText(/AWS Bedrock/)).toBeInTheDocument();
+		expect(await screen.findByTestId('reauth-login-blocked')).toHaveTextContent(/AWS Bedrock/);
 	});
 
 	// A flag the user turned off must not be read as a Bedrock agent.
@@ -531,13 +609,155 @@ describe('ReauthModal credential kinds', () => {
 		await renderWithEnv({ OPENAI_API_KEY: 'sk-openai' }, 'codex');
 
 		expect(mockSpawnTerminalTab).not.toHaveBeenCalled();
-		expect(await screen.findByText(/OPENAI_API_KEY/)).toBeInTheDocument();
+		expect(await screen.findByTestId('reauth-login-blocked')).toHaveTextContent(/OPENAI_API_KEY/);
 	});
 
 	// Blocked or not, the agents are still stopped and their queues still held.
 	it('still offers to resume the blocked agents', async () => {
 		await renderWithEnv({ ANTHROPIC_API_KEY: 'sk-live-xxx' });
 		expect(screen.getByTestId('reauth-resume')).toBeInTheDocument();
+	});
+});
+
+/**
+ * Which ACCOUNT the login writes to.
+ *
+ * A provider can hold several accounts at once and they are selected by an env
+ * var buried in a list, so the dialog states the answer outright. The attribution
+ * has to come from the shared profile module rather than a lookup of that var,
+ * because the var is not always what decides: an agent that sets a credential of
+ * its own never reads the config directory, and an agent that sets ANY var of
+ * its own receives none of the provider's. Naming the wrong account here costs a
+ * whole login round trip to discover.
+ */
+describe('ReauthModal profile pill', () => {
+	async function renderProfile(
+		providerVars: Record<string, string>,
+		sessionOverrides: Partial<Parameters<typeof createMockSession>[0]> = {},
+		toolType = 'claude-code'
+	) {
+		mockGetCustomEnvVars.mockResolvedValue(providerVars);
+		const session = createMockSession({ id: 'sess-1', toolType, ...sessionOverrides });
+		render(
+			<ReauthModal
+				theme={mockTheme}
+				outage={createOutage({ toolType })}
+				session={session}
+				onClose={vi.fn()}
+			/>
+		);
+		await flushSpawn();
+		// The account key needs $HOME, which arrives over IPC a tick later.
+		return screen.findByTestId('reauth-profile-pill');
+	}
+
+	it('names the implicit account after its provider, and says the var is unset', async () => {
+		const pill = await renderProfile({});
+
+		expect(pill).toHaveTextContent('Claude Code default');
+		expect(screen.getByTestId('reauth-profile-env')).toHaveTextContent('CLAUDE_CONFIG_DIR unset');
+	});
+
+	it('names the configured account and prints the directory that chose it', async () => {
+		const pill = await renderProfile({ CLAUDE_CONFIG_DIR: '/home/testuser/.claude-smash' });
+
+		expect(pill).toHaveTextContent('smash');
+		expect(screen.getByTestId('reauth-profile-env')).toHaveTextContent(
+			'CLAUDE_CONFIG_DIR=/home/testuser/.claude-smash'
+		);
+	});
+
+	// The credential outranks the login, so the config dir sitting beside it is
+	// not the account this agent bills - naming it would send the user to fix a
+	// login that has nothing to do with the failure.
+	it('attributes an API-key agent to its key rather than to the config directory', async () => {
+		const pill = await renderProfile({
+			CLAUDE_CONFIG_DIR: '/home/testuser/.claude-smash',
+			ANTHROPIC_API_KEY: 'sk-ant-0000a1b2',
+		});
+
+		expect(pill).toHaveTextContent('API key');
+		expect(pill).toHaveTextContent('a1b2');
+		expect(pill).not.toHaveTextContent('smash');
+		// Named, never printed: this is shown during a failure, which is exactly
+		// when someone is most likely to be screen-sharing.
+		const hint = screen.getByTestId('reauth-profile-env');
+		expect(hint).toHaveTextContent('ANTHROPIC_API_KEY set');
+		expect(hint).not.toHaveTextContent('sk-ant-0000a1b2');
+	});
+
+	// An agent's own env REPLACES the provider's rather than layering over it
+	// (`effectiveAgentCustomEnvVars`), so an agent that sets one unrelated var
+	// stops receiving the provider's CLAUDE_CONFIG_DIR and falls back to the
+	// default account. Attribution built from a layered merge files it under an
+	// account its process never opens.
+	it('drops the provider config dir for an agent that sets any env of its own', async () => {
+		const pill = await renderProfile(
+			{ CLAUDE_CONFIG_DIR: '/home/testuser/.claude-smash' },
+			{ customEnvVars: { SOME_UNRELATED: '1' } }
+		);
+
+		expect(pill).toHaveTextContent('Claude Code default');
+		expect(pill).not.toHaveTextContent('smash');
+	});
+
+	it('names the account on the SSH host, not the local directory of the same name', async () => {
+		const pill = await renderProfile(
+			{ CLAUDE_CONFIG_DIR: '/home/testuser/.claude-smash' },
+			{ sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' } }
+		);
+
+		expect(pill).toHaveTextContent('smash');
+		expect(pill).toHaveTextContent('@');
+	});
+});
+
+/**
+ * "Once the thing is started, don't touch it."
+ *
+ * The user drives a real login inside this dialog: a device code, a password, a
+ * menu. Anything the app puts on that PTY after the command lands arrives in the
+ * middle of what they were typing. The settings and session stores hand back
+ * fresh object identities whenever they rehydrate from main, so the spawn must
+ * not be keyed on those identities either - re-running it killed the live shell
+ * and typed the command into its replacement.
+ */
+describe('ReauthModal leaves a running login alone', () => {
+	async function renderLogin() {
+		mockGetCustomEnvVars.mockResolvedValue({});
+		render(
+			<ReauthModal
+				theme={mockTheme}
+				outage={createOutage()}
+				session={createMockSession({ id: 'sess-1', toolType: 'claude-code' })}
+				onClose={vi.fn()}
+			/>
+		);
+		await flushSpawn();
+		const spawnedId = mockSpawnTerminalTab.mock.calls[0][0].sessionId as string;
+		await emitShellOutput(spawnedId);
+		expect(mockWrite).toHaveBeenCalledTimes(1);
+		return spawnedId;
+	}
+
+	it('does not restart or retype the login when settings rehydrate mid-flow', async () => {
+		const spawnedId = await renderLogin();
+
+		// A settings write elsewhere in the app: same values, new identities.
+		await act(async () => {
+			useSettingsStore.setState({ shellEnvVars: {}, shellArgs: '' } as never);
+			await Promise.resolve();
+			await Promise.resolve();
+		});
+
+		expect(mockSpawnTerminalTab).toHaveBeenCalledTimes(1);
+		expect(mockKill).not.toHaveBeenCalled();
+		expect(mockWrite).toHaveBeenCalledTimes(1);
+
+		// Even if something did deliver another first byte, the command is typed
+		// once per open dialog and never again.
+		await emitShellOutput(spawnedId);
+		expect(mockWrite).toHaveBeenCalledTimes(1);
 	});
 });
 
@@ -625,5 +845,90 @@ describe('ReauthModal login URL', () => {
 		await emitShellOutput(ptyId, 'Docs: https://example.com/help\n');
 
 		expect(screen.queryByTestId('reauth-copy-url')).not.toBeInTheDocument();
+	});
+});
+describe('ReauthModal on Windows', () => {
+	/** Windows agents are ALWAYS spawned as native processes - never via wsl.exe. */
+	function windowsSession(overrides: Record<string, unknown> = {}) {
+		platformState.current = 'win32';
+		return createMockSession({ id: 'sess-1', toolType: 'claude-code', ...overrides } as never);
+	}
+
+	// A login inside WSL writes credentials to the WSL home directory, which the
+	// native agent never reads: the flow would appear to succeed and fix nothing.
+	it('never runs the login in WSL, because the agent is a native process', async () => {
+		useSettingsStore.setState({ defaultShell: 'wsl' } as never);
+		const session = windowsSession();
+		render(
+			<ReauthModal theme={mockTheme} outage={createOutage()} session={session} onClose={vi.fn()} />
+		);
+		await flushSpawn();
+
+		expect(mockSpawnTerminalTab.mock.calls[0][0].shell).toBe('powershell');
+	});
+
+	it('honours a native Windows shell the user chose', async () => {
+		useSettingsStore.setState({ defaultShell: 'pwsh' } as never);
+		render(
+			<ReauthModal
+				theme={mockTheme}
+				outage={createOutage()}
+				session={windowsSession()}
+				onClose={vi.fn()}
+			/>
+		);
+		await flushSpawn();
+
+		expect(mockSpawnTerminalTab.mock.calls[0][0].shell).toBe('pwsh');
+	});
+
+	// An SSH remote has its own shell and its own credential store, so the
+	// Windows-only override must not reach across the connection.
+	it('leaves the shell alone for an SSH remote agent', async () => {
+		useSettingsStore.setState({ defaultShell: 'wsl' } as never);
+		const session = windowsSession({
+			sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+		});
+		render(
+			<ReauthModal theme={mockTheme} outage={createOutage()} session={session} onClose={vi.fn()} />
+		);
+		await flushSpawn();
+
+		expect(mockSpawnTerminalTab.mock.calls[0][0].shell).toBe('wsl');
+	});
+
+	// PowerShell echoes a line that starts with a quoted string instead of
+	// running it, so the call operator is what makes the login actually start.
+	it('types a PowerShell-safe command for a path with spaces', async () => {
+		useSettingsStore.setState({ defaultShell: 'powershell' } as never);
+		const session = windowsSession({ customPath: 'C:\\Program Files\\Claude\\claude.exe' });
+		render(
+			<ReauthModal theme={mockTheme} outage={createOutage()} session={session} onClose={vi.fn()} />
+		);
+		await flushSpawn();
+		await emitShellOutput(mockSpawnTerminalTab.mock.calls[0][0].sessionId);
+
+		expect(mockWrite).toHaveBeenCalledWith(
+			expect.any(String),
+			'& "C:\\Program Files\\Claude\\claude.exe" /login\r'
+		);
+	});
+
+	// ConPTY passes LF through as Ctrl+J, which PSReadLine does not treat as
+	// "run this line". CR is what a real Enter key sends on every platform.
+	it('submits with CR rather than LF', async () => {
+		useSettingsStore.setState({ defaultShell: 'powershell' } as never);
+		render(
+			<ReauthModal
+				theme={mockTheme}
+				outage={createOutage()}
+				session={windowsSession()}
+				onClose={vi.fn()}
+			/>
+		);
+		await flushSpawn();
+		await emitShellOutput(mockSpawnTerminalTab.mock.calls[0][0].sessionId);
+
+		expect(mockWrite).toHaveBeenCalledWith(expect.any(String), 'claude /login\r');
 	});
 });

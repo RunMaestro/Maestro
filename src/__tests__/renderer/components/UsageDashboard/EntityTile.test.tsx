@@ -192,6 +192,56 @@ describe('EntityTile', () => {
 		expect(screen.getByTestId('tile').style.animationDelay).toBe('720ms');
 	});
 
+	describe('layout bands', () => {
+		// The name is what the tile is for. Badges and the sparkline used to
+		// flank it and squeeze it, so "Maestro Docs" truncated to "Ma..." on a
+		// tile with room to spare; they now sit in their own band below.
+		it('leaves the title row to the title, the status dot, and the age', () => {
+			render(
+				<EntityTile
+					{...baseProps}
+					statusColor="#00ff00"
+					age="3mo"
+					badges={[{ label: 'WT', testId: 'tile-wt' }]}
+					sparkline={[1, 2, 3]}
+				/>
+			);
+
+			const titleRow = screen.getByText('Alpha').parentElement!;
+			expect(titleRow).toContainElement(screen.getByTestId('tile-status-dot'));
+			expect(titleRow).toContainElement(screen.getByTestId('tile-age'));
+			expect(titleRow).not.toContainElement(screen.getByTestId('tile-wt'));
+			expect(titleRow.querySelector('[data-testid="sparkline"]')).toBeNull();
+		});
+
+		it('puts the sparkline on the badge row, above the stats', () => {
+			render(
+				<EntityTile
+					{...baseProps}
+					badges={[{ label: 'WT', testId: 'tile-wt' }]}
+					sparkline={[1, 2, 3]}
+				/>
+			);
+
+			const metaRow = screen.getByTestId('tile-wt').parentElement!;
+			expect(metaRow.querySelector('[data-testid="sparkline"]')).not.toBeNull();
+			// ...and the stats own the full width underneath rather than sharing
+			// the row with the graph.
+			const statRow = screen.getByText('Queries').parentElement!.parentElement!;
+			expect(statRow).not.toContainElement(metaRow);
+			expect(statRow.querySelector('[data-testid="sparkline"]')).toBeNull();
+		});
+
+		it('skips the badge row entirely when there is neither a badge nor a graph', () => {
+			const { container } = render(<EntityTile {...baseProps} />);
+
+			// Title row + stats row inside the bottom stack: no empty band in between.
+			expect(container.querySelector('[data-testid="sparkline"]')).toBeNull();
+			const statRow = screen.getByText('Queries').parentElement!.parentElement!;
+			expect(statRow.parentElement!.children).toHaveLength(1);
+		});
+	});
+
 	describe('size variants', () => {
 		const LONG_STATS = [
 			{ label: 'Queries', value: '848' },
@@ -243,19 +293,25 @@ describe('EntityTile', () => {
 			expect(statRow.className).toContain('minmax(104px,1fr)');
 		});
 
-		it('keeps the default tile on the compact flex stat row', () => {
+		it('gives the default tile a grid too, with a narrower column floor', () => {
+			// Three short stats in a flex row ran their labels together as
+			// "QUERIESTABS AUTO %". Equal columns keep each stat in its own lane;
+			// the floor is lower than the group tile's because the values are
+			// counts rather than "142h 5m".
 			render(
 				<EntityTile
 					{...baseProps}
 					stats={[
 						{ label: 'Queries', value: '5' },
 						{ label: 'Tabs', value: '2' },
+						{ label: 'Auto %', value: '7%' },
 					]}
 				/>
 			);
 
 			const statRow = screen.getByText('Queries').parentElement!.parentElement!;
-			expect(statRow.className).toContain('flex');
+			expect(statRow.className).toContain('grid');
+			expect(statRow.className).toContain('minmax(72px,1fr)');
 		});
 	});
 });

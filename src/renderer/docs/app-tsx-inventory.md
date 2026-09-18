@@ -72,8 +72,7 @@ isMobileLandscape;
 	setGroupChatStagedImages,
 	groupChatReadOnlyMode,
 	setGroupChatReadOnlyMode,
-	groupChatExecutionQueue,
-	setGroupChatExecutionQueue,
+	groupChatQueues, // mirror of main's per-chat queues; no setter here, see setGroupChatQueue
 	groupChatRightTab,
 	setGroupChatRightTab,
 	groupChatParticipantColors,
@@ -554,15 +553,14 @@ Main useEffect that subscribes to group chat IPC events. Re-runs when `activeGro
 
 **Cleanup** (lines 2328-2335): Unsubscribes all 6 listeners.
 
-### Group Chat Execution Queue useEffect (lines 2339-2360)
+### Group Chat Execution Queue useEffect (removed)
 
-Processes queued messages when group chat state becomes idle:
-
-- Triggered when `groupChatState === 'idle'` and queue is non-empty
-- Takes first item from `groupChatExecutionQueue`
-- Sets state to `'moderator-thinking'` (both local and in global Map)
-- Calls `window.maestro.groupChat.sendToModerator()`
-- Dependencies: `[groupChatState, groupChatExecutionQueue, activeGroupChatId]`
+There is no queue-draining effect any more. The queue moved into main
+(`src/main/group-chat/group-chat-queue.ts`), because a renderer-side drain only
+runs while that client is awake and watching. What remains in the renderer is a
+subscription to the `groupChat:queueState` broadcast, which mirrors main's queue
+into `groupChatQueues`; the send itself is a `groupChat:submitMessage` hand-off
+and main decides whether it goes out now or waits.
 
 ### Refs (lines 2363-2401)
 

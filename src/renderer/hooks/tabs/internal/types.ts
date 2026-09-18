@@ -87,7 +87,8 @@ export interface FilePreviewTabHandlersReturn {
 	handleFileTabEditContentChange: (
 		tabId: string,
 		editContent: string | undefined,
-		savedContent?: string
+		savedContent?: string,
+		savedMtime?: number
 	) => void;
 	handleFileTabScrollPositionChange: (tabId: string, scrollTop: number) => void;
 	handleFileTabSearchQueryChange: (tabId: string, searchQuery: string) => void;

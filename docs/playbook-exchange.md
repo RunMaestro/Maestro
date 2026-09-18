@@ -65,6 +65,10 @@ The import creates:
 
 After import, the playbook is immediately available in your **Load Playbook** dropdown in the Auto Run panel.
 
+### Use One as Reference
+
+A playbook does not have to be run as-is. Importing one pulls it down locally, so you can also treat it as reference material: tell your agent what you actually want, point it at the imported document, and let it adapt the structure to your project. Customize it to your desire.
+
 <Note>
 For SSH remote sessions, playbooks can be imported directly to the remote host. The folder browse button is disabled for remote sessions - enter the target path manually instead.
 </Note>

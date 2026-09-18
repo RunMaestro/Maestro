@@ -24,6 +24,7 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { useMessageGistStore } from '../../stores/messageGistStore';
 import { getClaudeTokenMode } from '../../../shared/claudeTokenMode';
 import { collapseAiResponseLogs } from './utils/collapseAiResponseLogs';
+import { computeTurnDurations } from './utils/turnDurations';
 import { groupSubagentToolLogs } from './utils/groupSubagentToolLogs';
 import { buildRenderedIdMap } from './utils/renderedLogIds';
 import { useUIStore } from '../../stores/uiStore';
@@ -138,11 +139,16 @@ export const TerminalOutput = memo(
 		// so hiding here keeps toggling from mutating log storage (the flicker bug)
 		// and preserves running->completed correlation.
 		const collapsedAll = useMemo(() => collapseAiResponseLogs(activeLogs), [activeLogs]);
+		// Per-turn elapsed time for the badge under each reply's clock. Derived from
+		// the RAW logs (not the collapsed ones) because the tool and thinking entries
+		// that mark when the agent stopped working can be filtered out below.
+		const responseDurationByLogId = useMemo(() => computeTurnDurations(activeLogs), [activeLogs]);
 		// Tool visibility is independent of the Thinking toggle. Reading the
 		// reasoning chain and watching tool activity are separate appetites: a tab
 		// can show thinking with a clean, tool-free transcript, or show tools with
 		// no reasoning at all. One switch, one meaning.
 		const toolsVisible = useSettingsStore((s) => s.showToolCalls);
+		const showProviderModePill = useSettingsStore((s) => s.showProviderModePill);
 		const collapsedLogs = useMemo(
 			() => (toolsVisible ? collapsedAll : collapsedAll.filter((l) => l.source !== 'tool')),
 			[collapsedAll, toolsVisible]
@@ -282,6 +288,7 @@ export const TerminalOutput = memo(
 			autoScrollPaused,
 			isAutoScrollActive,
 			handleScroll,
+			noteUserScrollInput,
 			scrollToBottomAndResume,
 			jumpInFlightRef,
 			pauseForJump,
@@ -529,6 +536,14 @@ export const TerminalOutput = memo(
 						fontSize: 'var(--maestro-size-chat, inherit)',
 					}}
 					onScroll={handleScroll}
+					// The input events that prove a scroll is the user's. `scroll` itself
+					// cannot: this component writes `scrollTop` on every frame of a restore
+					// and on every mutation while following the tail, and each of those
+					// writes fires an indistinguishable `scroll` event.
+					onWheel={noteUserScrollInput}
+					onTouchMove={noteUserScrollInput}
+					onPointerDown={noteUserScrollInput}
+					onKeyDown={noteUserScrollInput}
 				>
 					{/* Content wrapper: unstyled block so its height tracks the scrollable
 					    content exactly, giving the scroll hook's ResizeObserver something
@@ -638,8 +653,10 @@ export const TerminalOutput = memo(
 									bionifyIntensity={globalBionifyIntensity}
 									bionifyAlgorithm={globalBionifyAlgorithm}
 									userMessageAlignment={userMessageAlignment}
+									responseDurationMs={responseDurationByLogId.get(log.id)}
 									isClaudeCode={session.toolType === 'claude-code'}
 									isAdaptiveMode={getClaudeTokenMode(session) === 'dynamic'}
+									showProviderModePill={showProviderModePill}
 								/>
 							);
 						})}

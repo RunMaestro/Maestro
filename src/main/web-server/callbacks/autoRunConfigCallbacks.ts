@@ -12,7 +12,7 @@ export function registerAutoRunConfigCallbacks(
 ): void {
 	const { getMainWindow } = deps;
 
-	server.setRefreshAutoRunDocsCallback(async (sessionId: string) => {
+	server.setRefreshAutoRunDocsCallback(async (sessionId: string, background?: boolean) => {
 		const mainWindow = getMainWindow();
 		if (!mainWindow) {
 			logger.warn('mainWindow is null for refreshAutoRunDocs', 'WebServer');
@@ -23,7 +23,7 @@ export function registerAutoRunConfigCallbacks(
 			logger.warn('webContents is not available for refreshAutoRunDocs', 'WebServer');
 			return false;
 		}
-		mainWindow.webContents.send('remote:refreshAutoRunDocs', sessionId);
+		mainWindow.webContents.send('remote:refreshAutoRunDocs', sessionId, background);
 		return true;
 	});
 

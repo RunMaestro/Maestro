@@ -36,15 +36,16 @@ import {
 	computeQueuedTabIds,
 	computeUnreadGroupIds,
 	focusAiTabInSession,
-	getTabDisplayName,
 	groupFocusFields,
 } from '../../utils/tabHelpers';
+import { resolveSnoozeTarget } from '../../utils/snoozeHelpers';
 import { useModalStore } from '../../stores/modalStore';
 import { useSshRemoteName } from '../../hooks/mainPanel/useSshRemoteName';
 import { useContextWindow } from '../../hooks/mainPanel/useContextWindow';
 import { useFilePreviewHandlers } from '../../hooks/mainPanel/useFilePreviewHandlers';
 import { useGitInfo } from '../../hooks/mainPanel/useGitInfo';
 import { useChatFileDropZone } from '../../hooks/ui/useChatFileDropZone';
+import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 import { MainPanelHeader } from './MainPanelHeader';
 import { MainPanelContent } from './MainPanelContent';
 import { AgentErrorBanner } from './AgentErrorBanner';
@@ -181,6 +182,12 @@ export const MainPanel = React.memo(
 			onExitWizard,
 		} = props;
 
+		// The panel's 400px floor keeps the header usable when the desktop layout
+		// squeezes it between two sidebars. A phone is 390px wide with no sidebars
+		// beside it, so the floor made the panel 10px wider than the screen and
+		// pushed the header's last button past the edge.
+		const phone = usePhoneLayout();
+
 		// Phase 3C: Direct store subscriptions (migrated from props)
 		const logLevel = useSettingsStore((s) => s.logLevel);
 		const logViewerSelectedLevels = useSettingsStore((s) => s.logViewerSelectedLevels);
@@ -205,6 +212,17 @@ export const MainPanel = React.memo(
 				s.sessions.filter((x) => !x.isPianola && !x.parentSessionId && x.state === 'waiting_input')
 					.length
 		);
+		// Pianola's manager chrome is Encore-gated, and RENDER has to ask the same
+		// question the navigable lists do. The agent persists in the session store
+		// after the flag is switched off (so re-enabling restores the same chat) and
+		// `filterSessionsVisibleInSidebar` drops it from the Left Bar and its keyboard
+		// orders - but any path that still reaches it (the command palette's agent
+		// switcher, a toast jump, `maestro-cli focus-agent`) would otherwise paint the
+		// Pianola Dashboard over the main panel for a feature the user has switched
+		// off, with no Left Bar row to click back from. Gated here it falls through to
+		// the ordinary claude-code agent render.
+		const pianolaEnabled = useSettingsStore((s) => s.encoreFeatures?.pianola);
+		const showPianolaWorkspace = Boolean(activeSession?.isPianola) && Boolean(pianolaEnabled);
 
 		// isCurrentSessionAutoMode: THIS session has active batch run (for all UI indicators)
 		const isCurrentSessionAutoMode = currentSessionBatchState?.isRunning || false;
@@ -384,8 +402,9 @@ export const MainPanel = React.memo(
 		// Get agent capabilities for conditional feature rendering
 		const { hasCapability } = useAgentCapabilities(activeSession?.toolType);
 
-		// Model/Effort pills: available options and agent-level defaults. Shared with
-		// the keyboard-only Model & Effort modal so both show the same truth.
+		// Model/Effort pills: available options, current values, and agent-level
+		// defaults. Shared with the keyboard-only Model & Effort modal and with the
+		// queued-message edit modal, so all three show the same truth.
 		const {
 			models: pillModels,
 			efforts: pillEfforts,
@@ -494,14 +513,17 @@ export const MainPanel = React.memo(
 		// Opening the snooze picker needs nothing from App.tsx, so it talks to the
 		// modal store directly instead of adding another link to the
 		// App -> useMainPanelProps -> MainPanel -> TabBar prop chain.
+		//
+		// Every chip in the strip routes here - AI, file, terminal, browser, and a
+		// tiled group - so the id is resolved by `resolveSnoozeTarget` rather than
+		// looked up in one array. It used to search `aiTabs` only and return early
+		// for everything else, which made "Snooze Tab" on the other three chips and
+		// "Snooze group" on a group chip silently do nothing.
 		const handleOpenSnooze = useCallback((tabId: string) => {
 			const session = selectActiveSession(useSessionStore.getState());
-			const tab = session?.aiTabs.find((t) => t.id === tabId);
-			if (!tab) return;
-			useModalStore.getState().openModal('snoozeTab', {
-				tabId,
-				tabLabel: getTabDisplayName(tab, session?.agentSessionId),
-			});
+			const target = resolveSnoozeTarget(session, tabId);
+			if (!target) return;
+			useModalStore.getState().openModal('snoozeTab', target);
 		}, []);
 
 		// Expose methods to parent via ref
@@ -572,19 +594,19 @@ export const MainPanel = React.memo(
 					// deps change, so the captured `activeSession` prop is stale if the
 					// user switches tabs within the same session.
 					const session = selectActiveSession(useSessionStore.getState());
-					if (!session) return;
+					if (!session) return false;
 					// Mirrors TabBar's targetTabId resolution so AI/terminal/file/browser
 					// tabs all map to the right header element.
 					const targetTabId =
 						session.inputMode === 'terminal'
 							? session.activeTerminalTabId || session.activeTabId
 							: session.activeFileTabId || session.activeBrowserTabId || session.activeTabId;
-					if (!targetTabId) return;
+					if (!targetTabId) return false;
 					const container = document.querySelector(`[data-tour="tab-bar"]`) as HTMLElement | null;
 					const tabElement = container?.querySelector(
 						`[data-tab-id="${targetTabId}"]`
 					) as HTMLElement | null;
-					if (!container || !tabElement) return;
+					if (!container || !tabElement) return false;
 					// Center the tab in the scrollable strip. We compute scrollLeft
 					// directly because scrollIntoView({ inline: 'center' }) ignores the
 					// sticky-left search/filter button and the sticky-right "+" button,
@@ -596,10 +618,22 @@ export const MainPanel = React.memo(
 					const tabRect = tabElement.getBoundingClientRect();
 					const tabLeftInContent = tabRect.left - containerRect.left + container.scrollLeft;
 					const visibleWidth = container.clientWidth - stickyLeftWidth - STICKY_RIGHT_WIDTH;
+					// "Already there" means the header holds focus AND is fully in view.
+					// Focus alone is not enough: the user can scroll the strip away
+					// with the tab still focused, and in that case the press should
+					// bring it back rather than escalate to unread navigation.
+					const visibleLeft = container.scrollLeft + stickyLeftWidth;
+					const visibleRight = container.scrollLeft + container.clientWidth - STICKY_RIGHT_WIDTH;
+					const alreadyParked =
+						document.activeElement === tabElement &&
+						tabLeftInContent >= visibleLeft &&
+						tabLeftInContent + tabRect.width <= visibleRight;
+					if (alreadyParked) return true;
 					const target =
 						tabLeftInContent - stickyLeftWidth - Math.max(0, (visibleWidth - tabRect.width) / 2);
 					container.scrollTo({ left: Math.max(0, target), behavior: 'smooth' });
 					tabElement.focus({ preventScroll: true });
+					return false;
 				},
 				reloadBrowserTab: () => {
 					// Same stale-closure caveat as `focusBrowserAddressBar` - read fresh.
@@ -1079,7 +1113,7 @@ export const MainPanel = React.memo(
 					<div
 						className="flex-1 h-full min-h-0 max-h-full flex flex-col relative isolate overflow-hidden"
 						style={{
-							minWidth: '400px',
+							minWidth: phone ? undefined : '400px',
 							backgroundColor: theme.colors.bgMain,
 						}}
 						onClick={() => useUIStore.getState().setActiveFocus('main')}
@@ -1118,7 +1152,7 @@ export const MainPanel = React.memo(
 						{/* Pianola is a manager surface: it uses the standard multi-type TabBar
 						    (chat/file/terminal/browser tabs, same "+" menu) with a pinned
 						    Dashboard view button + a Clear-chat action slotted in. */}
-						{activeSession.isPianola ? (
+						{showPianolaWorkspace ? (
 							onTabSelect && onTabClose && onNewTab ? (
 								<TabBar
 									tabs={activeSession.aiTabs}
@@ -1292,7 +1326,7 @@ export const MainPanel = React.memo(
 
 						{/* Pianola's Dashboard view replaces the chat content while selected; the
 						    Chat view (and every non-Pianola agent) renders the normal content. */}
-						{activeSession.isPianola && pianolaView === 'dashboard' ? (
+						{showPianolaWorkspace && pianolaView === 'dashboard' ? (
 							<ErrorBoundary>
 								<PianolaDashboard theme={theme} onJumpToAgent={setActiveSessionId} />
 							</ErrorBoundary>

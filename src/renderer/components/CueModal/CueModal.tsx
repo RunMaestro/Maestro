@@ -20,6 +20,8 @@ import { useCue } from '../../hooks/useCue';
 import type { CueSessionStatus } from '../../hooks/useCue';
 import { CueHelpModal } from '../CueHelpModal';
 import { CuePipelineEditor } from '../CuePipelineEditor';
+import type { CueGraphTarget } from '../CuePipelineEditor/CuePipelineEditor';
+import { pipelinesForSession } from '../CuePipelineEditor/utils/pipelineMembership';
 import { generateId } from '../../utils/ids';
 import { useSessionStore } from '../../stores/sessionStore';
 import { getModalActions, useModalStore, selectModalData } from '../../stores/modalStore';
@@ -186,35 +188,44 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 		getModalActions().openCueYamlEditor(session.sessionId, session.projectRoot);
 	}, []);
 
-	const [pendingPipelineId, setPendingPipelineId] = useState<{
-		id: string | null;
-		nonce: string;
-	} | null>(null);
+	const [pendingGraphTarget, setPendingGraphTarget] = useState<CueGraphTarget | null>(null);
 
 	// Jump to the graph tab with a specific pipeline pre-selected. The nonce is
 	// what lets the editor re-apply the same target on a repeat click.
 	const handleViewInGraph = useCallback((pipelineId: string | null) => {
-		setPendingPipelineId({ id: pipelineId, nonce: generateId() });
+		setPendingGraphTarget({ id: pipelineId, nonce: generateId() });
 		setActiveTab('pipeline');
 	}, []);
 
 	const handleViewInGraphFromSession = useCallback(
 		(session: CueSessionStatus) => {
-			// Find the pipeline by session-membership, not by color. Multiple
-			// pipelines can share a color (e.g. two orange pipelines), so the
-			// older color-based lookup would jump to whichever orange pipeline
-			// appeared first in the array regardless of which agent was clicked.
-			const pipeline = dashboardPipelines.find((p) =>
-				p.nodes.some(
-					(node) =>
-						node.type === 'agent' &&
-						'sessionId' in node.data &&
-						node.data.sessionId === session.sessionId
-				)
-			);
-			handleViewInGraph(pipeline?.id ?? null);
+			// Resolve by session membership, not by color: several pipelines can
+			// share a color, and a command-only pipeline has no agent node to
+			// match at all. `pipelinesForSession` covers both, plus pipelines the
+			// agent declares in its cue.yaml without appearing in.
+			const owned = pipelinesForSession(session.sessionId, dashboardPipelines, graphSessions);
+			if (owned.length === 1) {
+				handleViewInGraph(owned[0].id);
+				return;
+			}
+			// More than one: stay in the All Pipelines view but scope it to this
+			// agent's pipelines, so the user sees their fleet instead of everyone's.
+			// Zero: no scope to apply - fall through to the unfiltered view.
+			setPendingGraphTarget({
+				id: null,
+				nonce: generateId(),
+				scope:
+					owned.length > 1
+						? {
+								sessionId: session.sessionId,
+								sessionName: session.sessionName,
+								pipelineIds: owned.map((p) => p.id),
+							}
+						: undefined,
+			});
+			setActiveTab('pipeline');
 		},
-		[dashboardPipelines, handleViewInGraph]
+		[dashboardPipelines, graphSessions, handleViewInGraph]
 	);
 
 	const handleRemoveCue = useCallback(
@@ -274,7 +285,7 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 	// pending selection token - prevents a stale nonce from re-snapping the editor
 	// to the "View in Graph" target on the next remount.
 	const handleSetActiveTab = useCallback((tab: CueModalTab) => {
-		if (tab !== 'pipeline') setPendingPipelineId(null);
+		if (tab !== 'pipeline') setPendingGraphTarget(null);
 		setActiveTab(tab);
 	}, []);
 
@@ -439,7 +450,7 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 								activeRuns={activeRuns}
 								onTriggerPipeline={triggerSubscription}
 								onSaveSuccess={refreshGraphData}
-								initialPipelineId={pendingPipelineId ?? undefined}
+								initialGraphTarget={pendingGraphTarget ?? undefined}
 								graphLoading={graphInitialLoading}
 							/>
 						)}

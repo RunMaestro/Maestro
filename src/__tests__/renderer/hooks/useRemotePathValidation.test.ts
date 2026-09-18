@@ -191,6 +191,69 @@ describe('useRemotePathValidation', () => {
 		});
 	});
 
+	it('should check the local filesystem when validateLocal is set and SSH is off', async () => {
+		vi.mocked(window.maestro.fs.stat).mockResolvedValue(null);
+
+		const { result } = renderHook(() =>
+			useRemotePathValidation({
+				isSshEnabled: false,
+				validateLocal: true,
+				path: '/home/user/typo',
+				sshRemoteId: 'remote-1',
+				debounceMs: 10,
+			})
+		);
+
+		await waitFor(() => {
+			expect(result.current.error).toBe('Path not found or not accessible');
+		});
+
+		// Local: no remote id is passed, even when the form still holds one.
+		expect(window.maestro.fs.stat).toHaveBeenCalledWith('/home/user/typo', undefined);
+	});
+
+	it('should not check the local filesystem without validateLocal', () => {
+		renderHook(() =>
+			useRemotePathValidation({
+				isSshEnabled: false,
+				path: '/home/user/project',
+				sshRemoteId: undefined,
+				debounceMs: 10,
+			})
+		);
+
+		expect(window.maestro.fs.stat).not.toHaveBeenCalled();
+	});
+
+	it('should drop a previous result as soon as the path changes', async () => {
+		vi.mocked(window.maestro.fs.stat).mockResolvedValue({
+			isDirectory: true,
+			isFile: false,
+			size: 4096,
+			mtimeMs: Date.now(),
+		});
+
+		const { result, rerender } = renderHook(
+			({ path }) =>
+				useRemotePathValidation({
+					isSshEnabled: true,
+					path,
+					sshRemoteId: 'remote-1',
+					debounceMs: 10,
+				}),
+			{ initialProps: { path: '/home/user/project' } }
+		);
+
+		await waitFor(() => {
+			expect(result.current.valid).toBe(true);
+		});
+
+		// The new path has not been checked yet, so the old verdict must not stand for it.
+		rerender({ path: '/home/user/project-typo' });
+		expect(result.current.valid).toBe(false);
+		expect(result.current.isDirectory).toBe(false);
+	});
+
 	it('should reset to default when SSH is toggled off', async () => {
 		vi.mocked(window.maestro.fs.stat).mockResolvedValue({
 			isDirectory: true,

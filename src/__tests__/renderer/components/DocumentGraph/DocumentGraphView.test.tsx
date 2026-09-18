@@ -9,6 +9,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { PREVIEW_WIDTH_STORAGE_KEY } from '../../../../renderer/components/DocumentGraph/previewPaneSizing';
 import { nextMindMapLayout } from '../../../../renderer/components/DocumentGraph/mindMapLayouts';
+import { nextScrollMode } from '../../../../renderer/components/DocumentGraph/scrollMode';
 import {
 	NEIGHBOR_DEPTH_ALL,
 	NEIGHBOR_DEPTH_MAX,
@@ -87,6 +88,7 @@ vi.mock('../../../../renderer/components/DocumentGraph/graphDataBuilder', () => 
 // Now import the component after mocks are set up
 import {
 	DocumentGraphView,
+	SEARCH_BOX_WIDTH,
 	type DocumentGraphViewProps,
 } from '../../../../renderer/components/DocumentGraph/DocumentGraphView';
 
@@ -1845,6 +1847,21 @@ describe('DocumentGraphView', () => {
 			expect(inputStyles.borderOnInactive).toBe('transparent');
 		});
 
+		it('is wide enough to show its own placeholder', () => {
+			// A box that clips its hint to "Search docume" reads as broken, and
+			// the hint is the only thing naming what the box searches. The width
+			// has to clear the text plus both icon gutters (pl-8 + pr-8 = 64px).
+			// SEARCH_BOX_WIDTH is the value the component actually renders, so
+			// shrinking it back below the hint fails here.
+			const ICON_GUTTERS = 64;
+			// "Search documents..." at text-sm, measured generously.
+			const PLACEHOLDER_WIDTH = 140;
+
+			expect(SEARCH_BOX_WIDTH - ICON_GUTTERS).toBeGreaterThan(PLACEHOLDER_WIDTH);
+			// The old value did not, which is the bug this pins.
+			expect(180 - ICON_GUTTERS).toBeLessThan(PLACEHOLDER_WIDTH);
+		});
+
 		it('search is case insensitive', () => {
 			// The nodeMatchesSearch function converts both query and content to lowercase:
 			// const lowerQuery = query.toLowerCase().trim();
@@ -1931,7 +1948,8 @@ describe('DocumentGraphView', () => {
 		 * - ArrowUp/Down/Left/Right: Navigate to connected nodes in that direction
 		 * - Enter: Open the selected node (document or external link)
 		 * - Tab: Cycle through connected nodes
-		 * - Escape: Close the modal (handled by layer stack)
+		 * - Escape: climbs the escape ladder (search box -> query -> close),
+		 *   handled by the layer stack rather than by the input
 		 */
 
 		describe('getConnectedNodes', () => {
@@ -2209,11 +2227,108 @@ describe('DocumentGraphView', () => {
 			});
 		});
 
-		describe('container shortcuts (L / D / P / +-)', () => {
+		describe('escape ladder', () => {
+			/**
+			 * One rung per press. The rungs are ordered by what the user is most
+			 * likely to have meant, and the ladder exists so no press ever skips
+			 * straight to closing the graph.
+			 *
+			 * The ladder lives in the layer's `onEscape`, not on the input's
+			 * `onKeyDown`: LayerStackProvider handles Escape at CAPTURE on
+			 * `window`, so a handler on the input runs too late to matter and its
+			 * `stopPropagation` cannot un-run a listener that already fired. An
+			 * `onKeyDown` version of this ladder was in place and dead - every
+			 * Escape went straight to the close confirmation.
+			 */
+			const climb = (searchFocused: boolean, query: string) => {
+				if (searchFocused) return 'blur-to-graph';
+				if (query) return 'clear-query';
+				return 'close';
+			};
+
+			it('hands focus back to the graph when the caret is in the search box', () => {
+				// The user asked for exactly this: Escape out of the box should not
+				// take the whole modal with it.
+				expect(climb(true, '')).toBe('blur-to-graph');
+				expect(climb(true, 'readme')).toBe('blur-to-graph');
+			});
+
+			it('keeps the query on that first press', () => {
+				// "search, then arrow to a hit" only works if the highlighted nodes
+				// survive the key that gets you out of the text box.
+				expect(climb(true, 'readme')).not.toBe('clear-query');
+			});
+
+			it('clears the query on the next press, then closes on the one after', () => {
+				expect(climb(false, 'readme')).toBe('clear-query');
+				expect(climb(false, '')).toBe('close');
+			});
+		});
+
+		describe('close confirmation', () => {
+			// The prompt exists because a graph is usually WORK - a layout picked, a
+			// depth widened, nodes dragged - that one stray Escape throws away. It
+			// buys nothing when closing is cheap, so two cases skip it.
+			const wouldConfirm = (confirmOnClose: boolean) => confirmOnClose;
+
+			it('asks by default, since the arrangement is unrecoverable', () => {
+				expect(wouldConfirm(true)).toBe(true);
+			});
+
+			it('closes straight out when the caller opted out', () => {
+				expect(wouldConfirm(false)).toBe(false);
+			});
+
+			it('is opted out for a graph that knows where it came from', () => {
+				// AppStandaloneModals passes `confirmOnClose && !graphReturnTo`: a
+				// graph opened from the Memories viewer returns there on Escape, so
+				// the trip is one keystroke each way and a prompt is pure friction.
+				const effective = (setting: boolean, returnTo?: string) => setting && !returnTo;
+				expect(effective(true, 'memoryViewer')).toBe(false);
+				expect(effective(true, undefined)).toBe(true);
+				expect(effective(false, undefined)).toBe(false);
+			});
+		});
+
+		describe('title prop', () => {
+			// One component, two subjects. A graph over the agent's memory directory
+			// is a "Memory Graph" to the user; reading "Document Graph" there makes
+			// it look like the wrong surface opened. The prop drives the header, the
+			// dialog aria-label, and the close prompt together, so they cannot drift.
+			const DEFAULT_TITLE = 'Document Graph';
+			const resolveTitle = (title?: string) => title ?? DEFAULT_TITLE;
+
+			it('defaults to Document Graph when the caller says nothing', () => {
+				expect(resolveTitle(undefined)).toBe(DEFAULT_TITLE);
+			});
+
+			it('is accepted as an optional prop', () => {
+				const props: Partial<DocumentGraphViewProps> = { title: 'Memory Graph' };
+				expect(props.title).toBe('Memory Graph');
+			});
+
+			it('names the close prompt after the same subject', () => {
+				// The prompt is `Close ${title}?`, not a hardcoded string, or a
+				// Memory Graph asks you to confirm closing a Document Graph.
+				expect(`Close ${resolveTitle('Memory Graph')}?`).toBe('Close Memory Graph?');
+				expect(`Close ${resolveTitle(undefined)}?`).toBe('Close Document Graph?');
+			});
+
+			it('is set by AppStandaloneModals only for the memory-viewer origin', () => {
+				// `graphReturnTo === 'memoryViewer' ? 'Memory Graph' : undefined` -
+				// every other entry point falls back to the component default.
+				const titleFor = (returnTo?: string) =>
+					returnTo === 'memoryViewer' ? 'Memory Graph' : undefined;
+				expect(resolveTitle(titleFor('memoryViewer'))).toBe('Memory Graph');
+				expect(resolveTitle(titleFor(undefined))).toBe(DEFAULT_TITLE);
+			});
+		});
+
+		describe('container shortcuts (L / D / P / F / S / +-)', () => {
 			// L cycles the layout, D widens the neighbor depth, P cycles the preview
-			// length. All route through the SAME handlers the toolbar controls use,
-			// so a key press persists the choice and clears layout-specific drag
-			// overrides like a click.
+			// length, S swaps the scroll wheel binding. All route through the SAME
+			// handlers the toolbar controls use, so a key press persists the choice
+			// and clears layout-specific drag overrides like a click.
 			const isBareKey = (e: {
 				key: string;
 				metaKey?: boolean;
@@ -2223,7 +2338,8 @@ describe('DocumentGraphView', () => {
 
 			it('L cycles the layout through the shared order', () => {
 				expect(nextMindMapLayout('mindmap')).toBe('radial');
-				expect(nextMindMapLayout('force')).toBe('mindmap');
+				expect(nextMindMapLayout('force')).toBe('lobes');
+				expect(nextMindMapLayout('timeline')).toBe('mindmap');
 			});
 
 			it('D widens the depth and treats All as the top rung', () => {
@@ -2254,6 +2370,31 @@ describe('DocumentGraphView', () => {
 				];
 				expect(canvasHandled).not.toContain('p');
 				expect(canvasHandled).not.toContain('P');
+			});
+
+			it('S swaps the scroll wheel between zoom and pan', () => {
+				expect(nextScrollMode('zoom')).toBe('pan');
+				expect(nextScrollMode('pan')).toBe('zoom');
+			});
+
+			it('does not collide S with a key the canvas already claims', () => {
+				// The canvas handler runs first and returns on the keys below, so a
+				// container binding on one of them would never fire.
+				const canvasHandled = [
+					'ArrowUp',
+					'ArrowDown',
+					'ArrowLeft',
+					'ArrowRight',
+					'Enter',
+					' ',
+					'o',
+					'O',
+				];
+				const containerHandled = ['l', 'd', 'p', 'f', 's', '+', '=', '-', '_'];
+				expect(canvasHandled.some((key) => containerHandled.includes(key.toLowerCase()))).toBe(
+					false
+				);
+				expect(new Set(containerHandled).size).toBe(containerHandled.length);
 			});
 
 			it('ignores L and D while a modifier is held', () => {

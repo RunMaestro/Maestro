@@ -155,7 +155,7 @@ Recommended storage shape for first pass:
 
 Relevant files/docs:
 
-- `AGENT_SUPPORT.md`
+- `PROVIDER-SUPPORT.md`
 - `docs/agent-guides/AGENT-INFRA.md`
 - `src/shared/agentIds.ts`
 - `src/main/agents/definitions.ts`
@@ -258,7 +258,7 @@ Keep recipes declarative and compile them into existing engines rather than inve
 ### Later phases
 
 1. **ACP client support**: add as a provider/protocol layer after Autopilot’s internal contracts are stable.
-2. **Generic CLI adapter generator**: generate files currently listed in `AGENT_SUPPORT.md` from a manifest.
+2. **Generic CLI adapter generator**: generate files currently listed in `PROVIDER-SUPPORT.md` from a manifest.
 3. **Webhook Cue trigger**: add `webhook.received` trigger source under `src/main/cue/triggers/`, backed by Fastify route/token validation and Cue event dispatch.
 4. **Existing provider-agent import**: map external provider configs into `SessionInfo` plus agent definitions/capabilities.
 5. **Advanced control markers**: extend existing goal-driven/Auto Run marker parsing to support `delegate`, `retry`, `spawn-worktree`, and possibly `requires-human`.

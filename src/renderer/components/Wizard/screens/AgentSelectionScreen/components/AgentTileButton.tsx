@@ -108,7 +108,7 @@ export function AgentTileButton({
 
 			{!tile.supported && (
 				<span
-					className="absolute top-2 left-2 px-1.5 py-0.5 text-[10px] rounded-full font-medium"
+					className="absolute top-2 left-2 px-1.5 py-0.5 text-2xs rounded-full font-medium"
 					style={{
 						backgroundColor: theme.colors.border,
 						color: theme.colors.textDim,
@@ -120,7 +120,7 @@ export function AgentTileButton({
 
 			{tile.supported && isBetaAgent(tile.id) && (
 				<span
-					className="absolute top-2 left-2 px-1.5 py-0.5 text-[9px] rounded font-bold uppercase"
+					className="absolute top-2 left-2 px-1.5 py-0.5 text-3xs rounded font-bold uppercase"
 					style={{
 						backgroundColor: theme.colors.warning + '30',
 						color: theme.colors.warning,
@@ -144,7 +144,7 @@ export function AgentTileButton({
 							onOpenConfig(tile.id);
 						}
 					}}
-					className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1 px-2 py-1 mt-2 rounded text-[10px] hover:bg-white/10 transition-colors cursor-pointer"
+					className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1 px-2 py-1 mt-2 rounded text-2xs hover:bg-white/10 transition-colors cursor-pointer"
 					style={{ color: theme.colors.textDim }}
 					title="Customize agent settings"
 					tabIndex={0}

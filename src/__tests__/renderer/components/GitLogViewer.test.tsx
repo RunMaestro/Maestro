@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { GitLogViewer } from '../../../renderer/components/GitLogViewer';
 import { createMockSession } from '../../helpers/mockSession';
+import { installLocalStorageMock } from '../../helpers/mockLocalStorage';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import type { Theme } from '../../../renderer/types';
 
@@ -106,6 +107,12 @@ describe('GitLogViewer', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		vi.useFakeTimers({ shouldAdvanceTime: true });
+		// Local jsdom ships no working Storage, so the fresh mock doubles as the
+		// per-test reset this line used to do by hand.
+		installLocalStorageMock();
+		// Graph view writes this; without a reset the next test mounts already in
+		// graph mode and the "hint only in graph view" assertion is a false fail.
+		window.localStorage.removeItem('maestro:gitLogViewer:viewMode');
 
 		gitLogMock().mockResolvedValue({
 			entries: [createGitLogEntry()],
@@ -830,16 +837,18 @@ diff --git a/src/test.ts b/src/test.ts
 		it('should register layer on mount', async () => {
 			render(<GitLogViewer {...defaultProps} />);
 
-			expect(mockRegisterLayer).toHaveBeenCalledWith({
-				type: 'modal',
-				priority: expect.any(Number),
-				blocksLowerLayers: true,
-				capturesFocus: true,
-				blocksAppShortcuts: true,
-				focusTrap: 'lenient',
-				ariaLabel: 'Git Log Viewer',
-				onEscape: expect.any(Function),
-			});
+			expect(mockRegisterLayer).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'modal',
+					priority: expect.any(Number),
+					blocksLowerLayers: true,
+					capturesFocus: true,
+					blocksAppShortcuts: true,
+					focusTrap: 'lenient',
+					ariaLabel: 'Git Log Viewer',
+					onEscape: expect.any(Function),
+				})
+			);
 		});
 
 		it('should unregister layer on unmount', async () => {

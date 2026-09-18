@@ -4,6 +4,8 @@
  * Handles interrupting/stopping running AI processes:
  *   - Sends SIGINT to every process this agent still has in flight (AI or terminal mode)
  *   - Cancels pending synopsis before interrupting
+ *   - Cancels every cross-agent (`@mention`) consult this agent fanned out, which
+ *     runs as its own ephemeral process and is otherwise unreachable from here
  *   - Cleans up thinking/tool logs from interrupted tabs
  *   - Processes execution queue after interruption
  *   - Falls back to force-kill if graceful interrupt fails
@@ -140,6 +142,25 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 				undefined,
 				synopsisErr
 			);
+		}
+
+		// Cross-agent consults are part of this agent's turn: a `@mention` fans the
+		// turn out across one ephemeral `cross-agent-*` process per consulted target,
+		// none of which carry this agent's process id, so the loop below can never
+		// reach them. Left running they keep streaming answers into a conversation
+		// the user has already stopped. Cancelled by SOURCE agent (main holds the
+		// authoritative list) so a Stop pressed before `crossAgent.send` resolved
+		// still lands. Non-critical: a failure here must not block the interrupt.
+		if (currentMode === 'ai') {
+			try {
+				await window.maestro.crossAgent.cancel(activeSession.id);
+			} catch (crossAgentErr) {
+				logger.warn(
+					'[useInterruptHandler] Failed to cancel cross-agent consults:',
+					undefined,
+					crossAgentErr
+				);
+			}
 		}
 
 		// Every in-flight process for this agent, not just the active tab's. Resolved
@@ -289,12 +310,25 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 				};
 			});
 
-			// Process the queued item after state update
+			// Process the queued item after state update.
+			//
+			// This dispatch RACES the interrupted process: `process.interrupt` has
+			// only sent the signal, so the child usually still owns its process key
+			// and the spawn is refused with "Agent process already running". That is
+			// expected and harmless - agentStore puts the item back runnable, and the
+			// exit listener drains it for real a moment later, when the child is
+			// actually gone. What was NOT harmless was this catch: it logged and
+			// stopped, so the prompt the updater above had already taken out of the
+			// queue was simply destroyed.
 			if (queuedItemToProcess) {
 				setTimeout(() => {
 					processQueuedItem(queuedItemToProcess!.sessionId, queuedItemToProcess!.item).catch(
 						(err) =>
-							logger.error('[useInterruptHandler] Failed to process queued item:', undefined, err)
+							logger.error(
+								'[useInterruptHandler] Queued dispatch failed, item returned to queue',
+								undefined,
+								err
+							)
 					);
 				}, 0);
 			}
@@ -466,13 +500,15 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 						};
 					});
 
-					// Process the queued item after state update
+					// Process the queued item after state update. Same race as the
+					// interrupt path above, same contract: agentStore puts the prompt
+					// back on any dispatch failure, so this only owns the rejection.
 					if (queuedItemAfterKill) {
 						setTimeout(() => {
 							processQueuedItem(queuedItemAfterKill!.sessionId, queuedItemAfterKill!.item).catch(
 								(err) =>
 									logger.error(
-										'[useInterruptHandler] Failed to process queued item after kill:',
+										'[useInterruptHandler] Queued dispatch after kill failed, item returned to queue',
 										undefined,
 										err
 									)

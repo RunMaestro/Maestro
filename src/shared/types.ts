@@ -5,11 +5,6 @@
 export { AGENT_IDS, isValidAgentId } from './agentIds';
 export type { AgentId } from './agentIds';
 
-// Provider Failover config lives in its own module (pure, main+renderer safe) but
-// is re-exported here so consumers of the Session type get it in one import.
-import type { FailoverConfig } from './providerFailover';
-export type { FailoverConfig, FailoverEndpoint, FailoverState } from './providerFailover';
-
 /**
  * Union type of all valid agent IDs.
  * Derived from AGENT_IDS - the single source of truth in agentIds.ts.
@@ -261,6 +256,11 @@ export interface SessionInfo {
 	autoRunFolderPath?: string;
 	/** Extra directories granted beyond the working directory (prompt-level grants). */
 	additionalDirectories?: AdditionalDirectory[];
+	/**
+	 * Per-agent worktree settings (Worktree Directory, watcher, setup script).
+	 * Set on parent agents from the Git menu's Configure Worktrees dialog.
+	 */
+	worktreeConfig?: SessionWorktreeConfig;
 	/** Left Bar bookmark - pins the agent to the Bookmarks section at the top. */
 	bookmarked?: boolean;
 	/** Per-session model override (wins over agent-level `model` config option). */
@@ -271,6 +271,14 @@ export interface SessionInfo {
 	customArgs?: string;
 	/** Per-session env vars merged over agent-level customEnvVars and agent defaults. */
 	customEnvVars?: Record<string, string>;
+	/**
+	 * Env vars the user switched OFF in the agent editor. Same shape as
+	 * `customEnvVars`, but deliberately kept OUT of it so no spawn path has to
+	 * filter: a parked var is invisible to every consumer of the effective
+	 * environment. The editor is the only reader - it lists these so a variable
+	 * can be turned back on without retyping its value.
+	 */
+	customEnvVarsDisabled?: Record<string, string>;
 	/** Prefixed to the first message of every new session (not shown in chat). */
 	newSessionMessage?: string;
 	/** Appended to every message sent to the agent (not shown in chat). */
@@ -300,11 +308,12 @@ export interface SessionInfo {
 	 */
 	retryOnTokenExhaustion?: boolean;
 	/**
-	 * Provider Failover: ordered Anthropic-compatible backup endpoints this agent
-	 * falls back to when resilience would otherwise wait out the primary. Off unless
-	 * explicitly armed. See {@link FailoverConfig} in shared/providerFailover.
+	 * Codex only: spend a rate-limit reset credit automatically when this agent
+	 * hits a plan-quota wall, instead of waiting for the window to reopen.
+	 * Defaults OFF - credits are finite and irreversible, so unattended spending
+	 * is opt-in. See `shouldAutoSpendCredit` in shared/codexResetCredits.
 	 */
-	failoverConfig?: FailoverConfig;
+	codexAutoResetOnExhaustion?: boolean;
 	/** Per-session SSH remote config - when enabled, CLI spawns via SSH. */
 	sessionSshRemoteConfig?: AgentSshRemoteConfig;
 }
@@ -435,6 +444,17 @@ export interface HistoryEntry {
 	sourceAgentName?: string;
 	/** Hostname of the machine that created this entry (for shared history) */
 	hostname?: string;
+	/** Web Login account that sent the turn (username). Absent for turns typed at the desktop. */
+	userName?: string;
+	/** Display name of the Web Login account named by {@link userName}. */
+	userDisplayName?: string;
+	/**
+	 * Which AI tab the turn ran in. Carried so the main process can look up the
+	 * account that STARTED the turn (`resolveTurnActor`) - the entry is written
+	 * by the desktop renderer's exit listener, where no acting user is in scope.
+	 * Not the provider session id; that is `agentSessionId`.
+	 */
+	tabId?: string;
 	/**
 	 * Claude-only, per-turn: which interface spent the quota for this turn.
 	 * `interactive` = maestro-p TUI (Max plan), `api` = `claude --print` (per-token).
@@ -446,6 +466,55 @@ export interface HistoryEntry {
 	 * selected, `limit` = forced API fallback because the Max plan quota was exhausted.
 	 */
 	tokenSourceReason?: 'auto' | 'limit';
+	/**
+	 * Present when this row STANDS FOR many Cue runs instead of one - the
+	 * collapsed form the History panel draws while `groupCueEntries` is on.
+	 *
+	 * The row itself is still the group's NEWEST run, byte-identical to the
+	 * ungrouped entry, so every existing consumer (detail modal, keyboard
+	 * navigation, the activity graph) keeps working on it unchanged and only
+	 * the row renderer has to know about the collapse. A group of exactly one
+	 * run carries no `cueGroup` at all: there is nothing to collapse, and "1
+	 * run" is a worse row than the run itself.
+	 */
+	cueGroup?: CueHistoryGroupSummary;
+}
+
+/**
+ * A run of Cue rows the History panel collapses into one line, e.g.
+ * "Pedsidian-Command-Bus - 1,382 runs, last 6:54 PM, 3 failed".
+ *
+ * Grouped at the PIPELINE level, so the `-chain-N` / `-fanin` steps that one
+ * pipeline emits share a row instead of each claiming their own.
+ *
+ * `latestEntry` is the newest run, shaped exactly as the ungrouped read path
+ * would have shaped it. That is what lets a group of ONE render as an ordinary
+ * History row rather than as a group with a "1 run" badge.
+ */
+export interface CueHistoryGroup extends CueHistoryGroupSummary {
+	/** `timestamp` of the newest run - what the row's time reads. */
+	lastRunAtMs: number;
+	/** The newest run, as a normal History row. */
+	latestEntry: HistoryEntry;
+}
+
+/**
+ * The part of a {@link CueHistoryGroup} a rendered row needs: what the group is
+ * called and how much it is standing in for.
+ *
+ * Split out because the row the History panel receives IS the group's newest
+ * run (see `HistoryEntry.cueGroup`), so the summary travels attached to that
+ * entry while `latestEntry` would be a self-reference.
+ */
+export interface CueHistoryGroupSummary {
+	/** Stable identity for the group. Equal to {@link label}. */
+	key: string;
+	/** Pipeline name when the runs carry lineage, else the base trigger name. */
+	label: string;
+	/** Runs collapsed into this row, including silent failures. */
+	runCount: number;
+	/** Runs that did not complete cleanly. Zero means the row shows no failures. */
+	failureCount: number;
 }
 
 // Document entry within a playbook
@@ -544,6 +613,23 @@ export interface WorktreeConfig {
 	branchName: string;
 	createPROnCompletion: boolean;
 	prTargetBranch: string;
+}
+
+// Per-agent worktree settings, stored on parent sessions as `worktreeConfig`.
+// Distinct from `WorktreeConfig` above, which describes a single batch run's
+// worktree. Shared because three readers must agree on where worktrees go:
+// the desktop's create-worktree flow, the CLI's `list agents` / `show agent`
+// output, and the {{WORKTREE_BASE_PATH}} line in every agent's system prompt.
+export interface SessionWorktreeConfig {
+	/** Directory where worktrees are created. */
+	basePath: string;
+	/** Whether to watch it for worktrees created outside Maestro (chokidar). */
+	watchEnabled: boolean;
+	/**
+	 * Shell command run inside each newly created worktree (copy .env files,
+	 * run setup.sh, install deps). Blank/undefined disables it.
+	 */
+	setupScript?: string;
 }
 
 // Target specification for dispatching Auto Run to a worktree agent
@@ -820,6 +906,39 @@ export interface SshRemoteConfig {
 
 	/** Environment variables to set on remote */
 	remoteEnv?: Record<string, string>;
+
+	/**
+	 * Environment variables the user switched OFF: same shape as `remoteEnv`,
+	 * kept so the value survives without reaching the remote. Nothing but the
+	 * editor reads it - see `src/shared/parkedRecords.ts`.
+	 */
+	remoteEnvDisabled?: Record<string, string>;
+
+	/**
+	 * Extra `ssh -o KEY=VALUE` options for this remote, merged over Maestro's
+	 * defaults by `resolveSshOptions()` in `src/shared/sshOptions.ts`.
+	 *
+	 * This is how an exotic transport is expressed without a field per
+	 * transport: a `ProxyCommand` through tailcat / cloudflared / Teleport, a
+	 * `ProxyJump` bastion, or simply a `ConnectTimeout` longer than the default
+	 * 10s that a tunnel needs to finish its handshake. It is also the only way
+	 * to change one of Maestro's defaults, since a command-line `-o` outranks
+	 * anything in `~/.ssh/config`.
+	 *
+	 * `RequestTTY` is reserved: it is derived per command from whether the
+	 * remote agent speaks stream-json, so pinning it per host corrupts the
+	 * stream. Overrides for it are rejected on write and ignored on read.
+	 */
+	sshOptions?: Record<string, string>;
+
+	/**
+	 * SSH options the user switched OFF, same shape as `sshOptions`. Being in
+	 * `sshOptions` is exactly the same statement as being live, so this record
+	 * is never merged into a resolved option set: it exists so a `ProxyCommand`
+	 * can be turned off for a while without the user having to keep the string
+	 * somewhere else to paste back.
+	 */
+	sshOptionsDisabled?: Record<string, string>;
 
 	/** Enable this remote configuration */
 	enabled: boolean;

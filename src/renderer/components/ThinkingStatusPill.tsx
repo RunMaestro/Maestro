@@ -11,6 +11,7 @@ import type { Session, Theme, AITab, BatchRunState, ThinkingItem } from '../type
 import { formatTokensCompact } from '../utils/formatters';
 import { sleepAwareElapsedSince } from '../services/systemSleep';
 import { formatElapsedTicker } from '../../shared/duration';
+import { StopTurnButton } from './ui/StopTurnButton';
 
 interface ThinkingStatusPillProps {
 	/** Pre-filtered flat list of (session, tab) pairs - one entry per busy tab across all agents.
@@ -195,7 +196,7 @@ const AutoRunRow = memo(
 					<button
 						onClick={() => !isStopping && onStop()}
 						disabled={isStopping}
-						className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors ${
+						className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-2xs font-medium transition-colors ${
 							isStopping ? 'cursor-not-allowed' : 'hover:opacity-80'
 						}`}
 						style={{
@@ -404,7 +405,7 @@ const AutoRunPill = memo(
 								}}
 								title={`+${concurrentCount} more running`}
 							>
-								<span className="text-[10px] font-bold" style={{ color: theme.colors.warning }}>
+								<span className="text-2xs font-bold" style={{ color: theme.colors.warning }}>
 									+{concurrentCount}
 								</span>
 							</div>
@@ -426,7 +427,7 @@ const AutoRunPill = memo(
 								}}
 							>
 								<div
-									className="px-3 py-1.5 text-[10px] uppercase tracking-wide font-semibold"
+									className="px-3 py-1.5 text-2xs uppercase tracking-wide font-semibold"
 									style={{
 										color: theme.colors.textDim,
 										backgroundColor: theme.colors.bgActivity,
@@ -526,7 +527,11 @@ function ThinkingStatusPillInner({
 			<AutoRunPill
 				theme={theme}
 				autoRunState={autoRunState}
-				onStop={onStopAutoRun}
+				// A run mirrored from another Maestro window has no local loop for
+				// Stop to reach, so drop the button rather than draw a dead one. The
+				// Right Panel card and the Auto Run tab keep a disabled Stop that
+				// explains why; this pill is too tight for that copy.
+				onStop={autoRunState.mirrored ? undefined : onStopAutoRun}
 				thinkingItems={thinkingItems}
 				namedSessions={namedSessions}
 				onSessionClick={onSessionClick}
@@ -697,7 +702,7 @@ function ThinkingStatusPillInner({
 						}}
 						title={`+${extraCount} more running`}
 					>
-						<span className="text-[10px] font-bold" style={{ color: theme.colors.warning }}>
+						<span className="text-2xs font-bold" style={{ color: theme.colors.warning }}>
 							+{extraCount}
 						</span>
 					</div>
@@ -707,21 +712,7 @@ function ThinkingStatusPillInner({
 				{onInterrupt && (
 					<>
 						<div className="w-px h-4 shrink-0" style={{ backgroundColor: theme.colors.border }} />
-						<button
-							type="button"
-							onClick={onInterrupt}
-							className="flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium transition-colors hover:opacity-80"
-							style={{
-								backgroundColor: theme.colors.error,
-								color: 'white',
-							}}
-							title="Interrupt Claude (Ctrl+C)"
-						>
-							<svg className="w-3 h-3" viewBox="0 0 24 24" fill="currentColor">
-								<rect x="6" y="6" width="12" height="12" rx="1" />
-							</svg>
-							Stop
-						</button>
+						<StopTurnButton theme={theme} onClick={onInterrupt} />
 					</>
 				)}
 
@@ -740,7 +731,7 @@ function ThinkingStatusPillInner({
 							}}
 						>
 							<div
-								className="px-3 py-1.5 text-[10px] uppercase tracking-wide font-semibold"
+								className="px-3 py-1.5 text-2xs uppercase tracking-wide font-semibold"
 								style={{
 									color: theme.colors.textDim,
 									backgroundColor: theme.colors.bgActivity,
@@ -754,7 +745,7 @@ function ThinkingStatusPillInner({
 									completedTasks={getAutoRunTaskCounts(demotedAutoRun).completed}
 									totalTasks={getAutoRunTaskCounts(demotedAutoRun).total}
 									isStopping={demotedAutoRun.isStopping}
-									onStop={onStopAutoRun}
+									onStop={demotedAutoRun.mirrored ? undefined : onStopAutoRun}
 								/>
 							)}
 							{thinkingItems.map((item) => (
@@ -793,6 +784,8 @@ export const ThinkingStatusPill = memo(ThinkingStatusPillInner, (prevProps, next
 			prevAutoRun?.totalTasksAcrossAllDocs !== nextAutoRun?.totalTasksAcrossAllDocs ||
 			prevAutoRun?.isStopping !== nextAutoRun?.isStopping ||
 			prevAutoRun?.startTime !== nextAutoRun?.startTime ||
+			// Decides whether the Stop button is rendered at all
+			prevAutoRun?.mirrored !== nextAutoRun?.mirrored ||
 			// Goal-Driven progress fields drive the goal readout on the pill
 			prevAutoRun?.goalMode !== nextAutoRun?.goalMode ||
 			prevAutoRun?.goalProgress !== nextAutoRun?.goalProgress ||

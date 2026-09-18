@@ -35,6 +35,8 @@ import type { Theme, AgentError, AgentErrorType } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal } from './ui/Modal';
 import { CollapsibleJsonViewer } from './CollapsibleJsonViewer';
+import { QuotaLimitEvidence } from './ui/QuotaLimitEvidence';
+import { parseQuotaLimitDetail } from '../../shared/quotaLimitDetail';
 
 /**
  * Props for recovery action buttons
@@ -143,6 +145,9 @@ export function AgentErrorModal({
 	// Check if we have JSON details to show
 	const hasJsonDetails = error.parsedJson !== undefined;
 
+	// Readable form of the provider's quota payload, when it sent one.
+	const quotaDetail = useMemo(() => parseQuotaLimitDetail(error.parsedJson), [error.parsedJson]);
+
 	const errorColor = getErrorColor(error, theme);
 	const errorIcon = getErrorIcon(error.type);
 	const errorTitle = getErrorTitle(error.type);
@@ -193,6 +198,13 @@ export function AgentErrorModal({
 				<p className="text-sm leading-relaxed" style={{ color: theme.colors.textMain }}>
 					{error.message}
 				</p>
+
+				{/* Plan-limit evidence: a provider's limit notice collapses to one
+				    sentence that can't say which window was exhausted or whether
+				    anything can be done. The structured payload riding on the same
+				    message can, so read it out rather than leaving the answer buried
+				    in the raw JSON below. */}
+				<QuotaLimitEvidence detail={quotaDetail} theme={theme} />
 
 				{/* Timestamp */}
 				<div className="text-xs" style={{ color: theme.colors.textDim }}>

@@ -19,7 +19,8 @@ import { useResizableModal } from '../hooks/ui/useResizableModal';
 import { useEventListener } from '../hooks/utils/useEventListener';
 import { useFocusOnClose } from '../hooks/utils/useFocusAfterRender';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
-import type { Session, Theme, QueuedItem } from '../types';
+import type { Session, Theme, QueuedItem, QueuedItemEditPatch } from '../types';
+import { formatRelativeTime } from '../../shared/formatters';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
 import { useSettingsStore } from '../stores/settingsStore';
@@ -32,6 +33,7 @@ import {
 import { Modal, ModalFooter } from './ui/Modal';
 import { QueuedItemEditModal } from './QueuedItemEditModal';
 import { TurnSettingPills } from './ui/TurnSettingPills';
+import { MiniBadge } from './ui/MiniBadge';
 import {
 	useQueueReorder,
 	useQueueRowDrag,
@@ -52,11 +54,7 @@ interface ExecutionQueueBrowserProps {
 	onSwitchSession: (sessionId: string, tabId?: string) => void;
 	onReorderItems?: (sessionId: string, fromIndex: number, toIndex: number) => void;
 	onToggleItemPause?: (sessionId: string, itemId: string) => void;
-	onEditItem?: (
-		sessionId: string,
-		itemId: string,
-		patch: { text: string; images: string[] }
-	) => void;
+	onEditItem?: (sessionId: string, itemId: string, patch: QueuedItemEditPatch) => void;
 	/** Dispatch a queued item immediately, out of queue order */
 	onForceSendItem?: (sessionId: string, itemId: string) => void;
 }
@@ -607,6 +605,7 @@ export function ExecutionQueueBrowser({
 					<QueuedItemEditModal
 						item={editing.item}
 						theme={theme}
+						sessionId={editing.sessionId}
 						onClose={() => setEditing(null)}
 						onSave={(patch) => onEditItem(editing.sessionId, editing.item.id, patch)}
 					/>
@@ -683,14 +682,15 @@ function QueueItemRow({
 	const { showDragReady, showGrabbed, isDimmed } = visual;
 
 	const isCommand = item.type === 'command';
+	const isWaitingForConnection = !!item.waitingForConnection;
 	// Read up to the first 4k characters and let CSS line-clamp cap the card at
 	// three lines. The native ellipsis fills the space without wrapping past the
 	// card, so longer messages show as much as fits rather than a hard 100-char cut.
 	const displayText = isCommand ? item.command : item.text?.slice(0, 4000);
 
-	const timeSinceQueued = Date.now() - item.timestamp;
-	const minutes = Math.floor(timeSinceQueued / 60000);
-	const timeDisplay = minutes < 1 ? 'Just now' : `${minutes}m ago`;
+	// formatRelativeTime steps up through m / h / d and finally a date, so an
+	// item that has sat in the queue for days reads "3d ago" instead of "4340m ago".
+	const timeDisplay = formatRelativeTime(item.timestamp);
 
 	// Send Now stays visible (dimmed) only when the block is something the user
 	// can go fix - see shouldOfferForceSend. A target tab that is already
@@ -746,7 +746,13 @@ function QueueItemRow({
 					boxShadow: isSelected && !isDragging ? `0 0 0 1px ${theme.colors.accent}` : undefined,
 					cursor: canDrag ? (isDragging ? 'grabbing' : 'grab') : 'default',
 					...queueDragCardStyle(theme, { isDragging, showGrabbed }),
-					opacity: isDragging ? 0.95 : isPaused ? 0.45 : isDimmed ? 0.5 : 1,
+					opacity: isDragging
+						? 0.95
+						: isPaused || isWaitingForConnection
+							? 0.45
+							: isDimmed
+								? 0.5
+								: 1,
 				}}
 				{...cardHandlers}
 			>
@@ -808,16 +814,14 @@ function QueueItemRow({
 							<Clock className="w-3 h-3" />
 							{timeDisplay}
 						</span>
-						{isPaused && (
-							<span
-								className="text-[10px] font-bold tracking-wider px-1.5 py-0.5 rounded"
-								style={{
-									backgroundColor: theme.colors.warning + '33',
-									color: theme.colors.warning,
-								}}
-							>
-								HELD
-							</span>
+						{isPaused && <MiniBadge label="HELD" theme={theme} color={theme.colors.warning} />}
+						{isWaitingForConnection && (
+							<MiniBadge
+								label="WAITING FOR CONNECTION"
+								theme={theme}
+								color={theme.colors.warning}
+								title="This message will run after Maestro reconnects"
+							/>
 						)}
 					</div>
 					<div

@@ -33,25 +33,62 @@ describe('AgentPowersModal', () => {
 		expect(screen.queryByTestId('agent-powers-modal')).not.toBeInTheDocument();
 	});
 
-	it('leads with the two things the user was just offered', () => {
-		// Fonts and themes are immediately checkable, which is what makes the
-		// broader claim credible.
+	it('leads with the settings the user was just offered, then keeps going', () => {
+		// The font and the theme are immediately checkable, which is what makes
+		// the broader "any setting" claim credible - so the pill names both and
+		// then names a third thing neither wizard step showed.
 		renderModal();
 
-		expect(screen.getByText('Change the fonts')).toBeInTheDocument();
-		expect(screen.getByText('Change the theme')).toBeInTheDocument();
+		expect(screen.getByText('Change Any Setting')).toBeInTheDocument();
+		const prompt = screen.getByTestId('agent-powers-example-change-any-setting').textContent ?? '';
+		expect(prompt).toMatch(/font/i);
+		expect(prompt).toMatch(/theme/i);
+		expect(prompt).toMatch(/notifications/i);
 	});
 
 	it('shows the range beyond appearance', () => {
 		renderModal();
 
-		expect(screen.getByText('Create agents')).toBeInTheDocument();
-		expect(screen.getByText('Write an Auto Run doc')).toBeInTheDocument();
+		expect(screen.getByText('Create Agents')).toBeInTheDocument();
+		expect(screen.getByText('Write an Auto Run Doc')).toBeInTheDocument();
+		expect(screen.getByText('Schedule a Task')).toBeInTheDocument();
+		expect(screen.getByText('Build a Cue Pipeline')).toBeInTheDocument();
+		expect(screen.getByText('Build Me a Dashboard')).toBeInTheDocument();
 	});
 
-	it('says the list is not exhaustive', () => {
+	it('splits the two automation pills by what starts them', () => {
+		// A Scheduled Task is clock-driven and a pipeline hangs off an event, so
+		// two wall-clock prompts would present one feature twice.
 		renderModal();
-		expect(screen.getByText(/not a fixed list/i)).toBeInTheDocument();
+
+		const scheduled = screen.getByTestId('agent-powers-example-schedule-a-task').textContent ?? '';
+		const pipeline =
+			screen.getByTestId('agent-powers-example-build-a-cue-pipeline').textContent ?? '';
+
+		expect(scheduled).toMatch(/9am|weekday/i);
+		expect(pipeline).toMatch(/whenever|pull request/i);
+		expect(pipeline).not.toMatch(/\bam\b|every (morning|weekday|day)/i);
+	});
+
+	it('tells the user they do not have to be a power user', () => {
+		// The grid can read as a list of things you need to learn. The closing
+		// paragraph exists to say the opposite: the keyboard-driven way is real
+		// and it is optional, because plain language reaches the same places.
+		renderModal();
+
+		const closing = screen.getByText(/power tool/i).textContent ?? '';
+		expect(closing).toMatch(/do not have to/i);
+		expect(closing).toMatch(/plain language/i);
+	});
+
+	it('names the advanced features the agent is taught, as proof of the claim', () => {
+		// "Your agent knows how to drive Maestro" is only worth saying if it names
+		// something the user would not expect it to reach on its own.
+		renderModal();
+
+		const closing = screen.getByText(/power tool/i).textContent ?? '';
+		expect(closing).toMatch(/Auto Run/);
+		expect(closing).toMatch(/Cue/);
 	});
 
 	it('closes on Got it', () => {
@@ -68,7 +105,7 @@ describe('AgentPowersModal', () => {
 			const onTryExample = vi.fn();
 			renderModal({ onTryExample });
 
-			fireEvent.click(screen.getByTestId('agent-powers-example-change-the-theme'));
+			fireEvent.click(screen.getByTestId('agent-powers-example-change-any-setting'));
 			expect(onTryExample).toHaveBeenCalledWith(expect.stringContaining('theme'));
 		});
 
@@ -85,7 +122,7 @@ describe('AgentPowersModal', () => {
 			// the idea, they just cannot be handed anywhere.
 			renderModal({ onTryExample: undefined });
 
-			const example = screen.getByTestId('agent-powers-example-change-the-theme');
+			const example = screen.getByTestId('agent-powers-example-change-any-setting');
 			expect(example).toBeDisabled();
 		});
 

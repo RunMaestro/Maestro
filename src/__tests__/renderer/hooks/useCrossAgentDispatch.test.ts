@@ -76,6 +76,24 @@ describe('accumulateCrossAgentChunk', () => {
 		// The raw accumulation stays clean - the note is presentation, not content.
 		expect(result.accumulated).toBe('partial answer');
 	});
+
+	it('reports a stopped consult as stopped, never as the target failing', () => {
+		const result = accumulateCrossAgentChunk(
+			'partial answer',
+			chunk({ done: true, canceled: true })
+		);
+		expect(result.displayText).toContain('partial answer');
+		expect(result.displayText).toContain('was stopped');
+		// "could not respond" blames the target for a decision the user made.
+		expect(result.displayText).not.toContain('could not respond');
+		expect(result.accumulated).toBe('partial answer');
+	});
+
+	it('shows a standalone stop note when the consult said nothing before Stop', () => {
+		const result = accumulateCrossAgentChunk('', chunk({ done: true, canceled: true }));
+		expect(result.displayText).toContain('Codex');
+		expect(result.displayText).toContain('was stopped');
+	});
 });
 
 describe('buildCrossAgentLogEntry', () => {
@@ -397,6 +415,20 @@ describe('buildConsultHistoryEntry', () => {
 		expect(entry({ accumulated: '' }).fullResponse).toBeUndefined();
 	});
 
+	it('records a stopped consult as a success with a note, not as a failure', () => {
+		// The user pressing Stop is their own decision; logging it against the
+		// target as a failed consult misattributes it.
+		const e = entry({ accumulated: '', canceled: true });
+		expect(e.success).toBe(true);
+		expect(e.fullResponse).toContain('stopped by the user');
+	});
+
+	it('keeps a stopped consult partial answer alongside the stop note', () => {
+		const e = entry({ accumulated: 'I got as far as', canceled: true });
+		expect(e.fullResponse).toContain('I got as far as');
+		expect(e.fullResponse).toContain('stopped by the user');
+	});
+
 	it('stamps the calling agent so the target remembers who consulted it', () => {
 		expect(entry().sourceAgentName).toBe('Pedsidian');
 	});
@@ -442,5 +474,37 @@ describe('sendCrossAgentRequest in-flight registration', () => {
 		// The tab the consult actually runs in - same id handed to the main process.
 		expect(registered.targetTabId).toBe(send.mock.calls[0][0].targetTabId);
 		expect(registered.targetTabId).toBeTruthy();
+	});
+
+	it('delivers onComplete when the send itself rejects', async () => {
+		useSessionStore.setState({
+			sessions: [
+				createMockSession({ id: 'target', name: 'Pedsidian', toolType: 'claude-code' }),
+				createMockSession({ id: 'src', name: 'Scratch' }),
+			],
+		} as never);
+
+		const send = vi.fn().mockRejectedValue(new Error('bridge down'));
+		(globalThis as unknown as { window: Record<string, unknown> }).window.maestro = {
+			crossAgent: { send },
+		} as never;
+
+		const onComplete = vi.fn();
+		sendCrossAgentRequest({
+			sourceSessionId: 'src',
+			sourceAgentName: 'Scratch',
+			sourceTabId: 'src-tab',
+			sourceLogs: [],
+			targetSessionId: 'target',
+			userPrompt: 'How does the gate work?',
+			onComplete,
+		});
+
+		// A rejected send produces no chunk, so nothing else would ever settle a
+		// caller blocked on the answer (`maestro-cli ask`).
+		await vi.waitFor(() => {
+			expect(onComplete).toHaveBeenCalledTimes(1);
+		});
+		expect(onComplete.mock.calls[0][0]).toMatchObject({ text: '', error: 'bridge down' });
 	});
 });

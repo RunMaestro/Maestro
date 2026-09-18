@@ -24,6 +24,7 @@ vi.mock('../../../main/utils/sentry', () => ({
 const mockGetShellPath = vi.fn(async () => '/login/shell/bin:/usr/bin:/bin');
 vi.mock('../../../main/runtime/getShellPath', () => ({
 	getShellPath: () => mockGetShellPath(),
+	peekShellPath: () => null,
 }));
 
 // Keep the ssh-spawn-wrapper inert in this suite; the tests exercise the local
@@ -184,19 +185,49 @@ describe('cue-shell-executor', () => {
 		await promise;
 	});
 
-	it('falls back to default PATH when getShellPath fails', async () => {
-		mockGetShellPath.mockRejectedValueOnce(new Error('shell probe timed out'));
+	it('falls back to the expanded PATH, not the launchd PATH, when getShellPath fails (#1573)', async () => {
+		const launchdPath = '/usr/bin:/bin:/usr/sbin:/sbin';
+		const originalPath = process.env.PATH;
+		process.env.PATH = launchdPath;
+		try {
+			mockGetShellPath.mockRejectedValueOnce(new Error('shell probe timed out'));
+			const config = createConfig();
+			const promise = executeCueShell(config as any);
+			await vi.advanceTimersByTimeAsync(0);
+
+			const opts = mockSpawn.mock.calls[0][2] as Record<string, unknown>;
+			const env = opts.env as Record<string, string>;
+			expect(env.PATH).not.toBe(launchdPath);
+			expect(env.PATH).toContain('/usr/bin');
+			if (process.platform !== 'win32') {
+				const parts = env.PATH.split(':');
+				expect(parts).toContain('/opt/homebrew/bin');
+				expect(parts).toContain('/usr/local/bin');
+			}
+			expect(mockCaptureMessage).toHaveBeenCalledWith(
+				expect.stringContaining('cue:shell falling back to expanded PATH'),
+				'warning'
+			);
+
+			mockChild.emit('close', 0);
+			await promise;
+		} finally {
+			process.env.PATH = originalPath;
+		}
+	});
+
+	it('falls back to the expanded PATH when getShellPath returns nothing', async () => {
+		mockGetShellPath.mockResolvedValueOnce('');
 		const config = createConfig();
 		const promise = executeCueShell(config as any);
 		await vi.advanceTimersByTimeAsync(0);
 
 		const opts = mockSpawn.mock.calls[0][2] as Record<string, unknown>;
 		const env = opts.env as Record<string, string>;
-		expect(env.PATH).toBe(process.env.PATH);
-		expect(mockCaptureMessage).toHaveBeenCalledWith(
-			expect.stringContaining('cue:shell falling back to default PATH'),
-			'warning'
-		);
+		expect(env.PATH).toBeTruthy();
+		if (process.platform !== 'win32') {
+			expect(env.PATH.split(':')).toContain('/opt/homebrew/bin');
+		}
 
 		mockChild.emit('close', 0);
 		await promise;

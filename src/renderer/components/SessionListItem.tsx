@@ -247,11 +247,14 @@ export const SessionListItem = React.memo(function SessionListItem({
 				</div>
 
 				{/* Stats row: origin pill + session ID + stats + match info */}
-				<div className="flex items-center gap-3 text-xs" style={{ color: theme.colors.textDim }}>
+				<div
+					className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs"
+					style={{ color: theme.colors.textDim }}
+				>
 					{/* Session origin pill */}
 					{session.origin === 'user' && (
 						<span
-							className="text-[10px] font-bold px-1.5 py-0.5 rounded"
+							className="text-2xs font-bold px-1.5 py-0.5 rounded"
 							style={{
 								backgroundColor: theme.colors.accent + '40',
 								color: theme.colors.accentText,
@@ -263,7 +266,7 @@ export const SessionListItem = React.memo(function SessionListItem({
 					)}
 					{session.origin === 'auto' && (
 						<span
-							className="text-[10px] font-bold px-1.5 py-0.5 rounded"
+							className="text-2xs font-bold px-1.5 py-0.5 rounded"
 							style={{ backgroundColor: theme.colors.warning + '40', color: theme.colors.warning }}
 							title="Auto-run session"
 						>
@@ -272,7 +275,7 @@ export const SessionListItem = React.memo(function SessionListItem({
 					)}
 					{!session.origin && (
 						<span
-							className="text-[10px] font-bold px-1.5 py-0.5 rounded"
+							className="text-2xs font-bold px-1.5 py-0.5 rounded"
 							style={{ backgroundColor: theme.colors.border, color: theme.colors.textMain }}
 							title="Claude Code CLI session"
 						>
@@ -282,7 +285,7 @@ export const SessionListItem = React.memo(function SessionListItem({
 
 					{/* Session ID pill */}
 					<span
-						className="text-[10px] font-mono px-1.5 py-0.5 rounded"
+						className="text-2xs font-mono px-1.5 py-0.5 rounded"
 						style={{ backgroundColor: theme.colors.border, color: theme.colors.textMain }}
 					>
 						{session.sessionId.startsWith('agent-')
@@ -291,15 +294,15 @@ export const SessionListItem = React.memo(function SessionListItem({
 					</span>
 
 					{/* Stats */}
-					<span className="flex items-center gap-1">
+					<span className="flex items-center gap-1 whitespace-nowrap">
 						<Clock className="w-3 h-3" />
 						{formatRelativeTime(session.modifiedAt)}
 					</span>
-					<span className="flex items-center gap-1">
+					<span className="flex items-center gap-1 whitespace-nowrap">
 						<MessageSquare className="w-3 h-3" />
 						{session.messageCount}
 					</span>
-					<span className="flex items-center gap-1">
+					<span className="flex items-center gap-1 whitespace-nowrap">
 						<HardDrive className="w-3 h-3" />
 						{formatSize(session.sizeBytes)}
 					</span>
@@ -307,7 +310,7 @@ export const SessionListItem = React.memo(function SessionListItem({
 					{/* Cost per session */}
 					{(session.costUsd ?? 0) > 0 && (
 						<span
-							className="flex items-center gap-1 font-mono"
+							className="flex items-center gap-1 font-mono whitespace-nowrap"
 							style={{ color: theme.colors.success }}
 						>
 							<DollarSign className="w-3 h-3" />
@@ -354,7 +357,7 @@ export const SessionListItem = React.memo(function SessionListItem({
 			{/* Active indicator */}
 			{isActive && (
 				<span
-					className="text-[10px] px-2 py-0.5 rounded-full shrink-0"
+					className="text-2xs px-2 py-0.5 rounded-full shrink-0"
 					style={{ backgroundColor: theme.colors.success + '20', color: theme.colors.success }}
 				>
 					ACTIVE

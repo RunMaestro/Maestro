@@ -10,6 +10,8 @@ import {
 	recoverDirectorNotesNarrative,
 	narrativeToMarkdown,
 } from '../../shared/directorNotesNarrative';
+import { AUTO_SYNOPSIS_PROVIDER, synopsisProviderChoice } from '../../shared/directorNotesProvider';
+import type { ToolType } from '../../shared/types';
 
 type OutputFormat = 'json' | 'markdown' | 'text';
 
@@ -31,6 +33,8 @@ interface SynopsisResult {
 	};
 	error?: string;
 	requestId?: string;
+	/** The provider that actually ran (resolved by the desktop under auto). */
+	provider?: string;
 }
 
 function resolveFormat(options: DirectorNotesSynopsisOptions): OutputFormat {
@@ -44,10 +48,21 @@ function getDefaultLookbackDays(): number {
 	return dnSettings?.defaultLookbackDays ?? 7;
 }
 
+/**
+ * The `provider` value to send to the desktop. Auto-selection is the default, so
+ * unless the conductor turned it off this returns the `'auto'` sentinel and the
+ * desktop picks the first installed supported provider at generation time.
+ */
 function getDefaultProvider(): string {
 	const settings = readSettings();
-	const dnSettings = settings.directorNotesSettings as { provider?: string } | undefined;
-	return dnSettings?.provider ?? 'claude-code';
+	const dnSettings = settings.directorNotesSettings as
+		| { provider?: ToolType; autoSelectProvider?: boolean }
+		| undefined;
+	// Same auto-vs-manual rule the desktop uses, so the CLI cannot drift from it.
+	return synopsisProviderChoice({
+		provider: dnSettings?.provider ?? 'claude-code',
+		autoSelectProvider: dnSettings?.autoSelectProvider,
+	});
 }
 
 function checkEncoreFeatureEnabled(): void {
@@ -116,8 +131,10 @@ export async function directorNotesSynopsis(options: DirectorNotesSynopsisOption
 		if (format !== 'json') {
 			const period =
 				lookbackDays > 0 ? `last ${lookbackDays} day${lookbackDays !== 1 ? 's' : ''}` : 'all time';
+			const providerLabel =
+				provider === AUTO_SYNOPSIS_PROVIDER ? 'auto (first available)' : provider;
 			process.stderr.write(
-				`Generating Director's Notes synopsis (${period}, provider: ${provider})...\n`
+				`Generating Director's Notes synopsis (${period}, provider: ${providerLabel})...\n`
 			);
 		}
 
@@ -148,7 +165,9 @@ export async function directorNotesSynopsis(options: DirectorNotesSynopsisOption
 						generatedAt: result.generatedAt,
 						date: result.generatedAt ? new Date(result.generatedAt).toISOString() : undefined,
 						lookbackDays,
-						provider,
+						// Report the provider that actually ran when the desktop tells us;
+						// under auto-selection `provider` here is only the sentinel.
+						provider: result.provider ?? provider,
 						stats: result.stats,
 					},
 					null,

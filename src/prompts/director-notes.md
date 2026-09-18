@@ -75,16 +75,17 @@ Shape rules:
 
 - `version` must be the number `1`.
 - Include the three sections in this order, with `kind` values `"accomplishments"`, `"challenges"`, and `"nextSteps"`. If a later section of this prompt explicitly asks for an additional section, include that one too, after these three.
-- Each `items` entry needs a `text` string. `severity` is optional and must be one of `"info"`, `"warn"`, or `"critical"`. `agent` is optional and names the agent/session the bullet relates to.
+- Each `items` entry needs a `text` string. `severity` is optional and must be one of `"info"`, `"warn"`, or `"critical"`.
+- Set `agent` on EVERY item, copying the session name from the manifest below exactly as written. The reading surface buckets bullets under the agent (or the group that agent belongs to), so an item with no `agent` falls into an unattributed catch-all list. When one bullet genuinely covers several agents, name the one it belongs to most.
 - Use `"critical"` for failed tasks and hard blockers, `"warn"` for risks or repeated attempts, and `"info"` (or omit `severity`) for routine items.
 
 ### Section semantics
 
-**Accomplishments** - what has been completed. Order items by activity volume (most active agent first). Cover key features implemented, bugs fixed, refactoring completed, and documentation written. Set `agent` to the project/agent each item belongs to when patterns emerge.
+**Accomplishments** - what has been completed. Order items by activity volume (most active agent first), and keep each agent's items together rather than interleaving them. Cover key features implemented, bugs fixed, refactoring completed, and documentation written.
 
-**Challenges** - recurring problems, failed tasks, and blockers (look for `success: false`), patterns in error types, and areas with repeated attempts. Use the same agent grouping as Accomplishments.
+**Challenges** - recurring problems, failed tasks, and blockers (look for `success: false`), patterns in error types, and areas with repeated attempts. Use the same agent ordering as Accomplishments.
 
-**Next Steps** - unfinished tasks that should be continued, areas needing attention based on failure patterns, and logical follow-ups to completed work. Use the same agent grouping as Accomplishments.
+**Next Steps** - unfinished tasks that should be continued, areas needing attention based on failure patterns, and logical follow-ups to completed work. Use the same agent ordering as Accomplishments.
 
 ## Guidelines
 

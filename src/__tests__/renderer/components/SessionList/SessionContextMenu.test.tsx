@@ -14,6 +14,7 @@ import {
 	useGitCommandRunStore,
 	type GitCommandRun,
 } from '../../../../renderer/stores/gitCommandRunStore';
+import { usePRCreationStore, prRunKey } from '../../../../renderer/stores/prCreationStore';
 import type { Session } from '../../../../renderer/types';
 import { mockTheme } from '../../../helpers/mockTheme';
 
@@ -44,7 +45,11 @@ vi.mock('../../../../renderer/stores/centerFlashStore', () => ({
 }));
 
 const mockOpenModal = vi.fn();
-vi.mock('../../../../renderer/stores/modalStore', () => ({
+// Spread the real module so a new modalStore export cannot break this mock at
+// import time. `fileExplorerStore` calls `registerExternalDestination` at module
+// scope, and a factory mock that omits it throws before any test runs.
+vi.mock('../../../../renderer/stores/modalStore', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../renderer/stores/modalStore')>()),
 	useModalStore: Object.assign(
 		vi.fn((selector) => selector({ openModal: mockOpenModal })),
 		{ getState: () => ({ openModal: mockOpenModal }) }
@@ -155,6 +160,35 @@ describe('SessionContextMenu', () => {
 		expect(screen.getByTestId('session-context-git-pull')).toHaveTextContent('3');
 
 		useGitCommandRunStore.setState({ runs: {} });
+	});
+
+	// Closing the Create PR form no longer abandons the request, so the row that
+	// opens it says the request is still going.
+	it('badges Create Pull Request while a backgrounded creation is in flight', () => {
+		const key = prRunKey('/test/repo');
+		usePRCreationStore.setState({
+			runs: {
+				[key]: {
+					key,
+					sessionId: 'session-1',
+					worktreePath: '/test/repo',
+					sourceBranch: 'feature/login',
+					targetBranch: 'main',
+					title: 'feature login',
+					description: '',
+					status: 'running',
+					announced: false,
+				},
+			},
+		});
+		renderMenu();
+
+		expect(screen.getByTestId('session-context-create-pr-running')).toBeInTheDocument();
+		// Clicking the badged row re-opens the form on that same attempt.
+		fireEvent.click(screen.getByTestId('session-context-create-pr'));
+		expect(mockOpenModal).toHaveBeenCalledWith('createPR', expect.anything());
+
+		usePRCreationStore.setState({ runs: {} });
 	});
 
 	// Without this the row offered a diff without saying whether there was one.
@@ -333,5 +367,80 @@ describe('SessionContextMenu', () => {
 			'Mercury',
 			'Zebra',
 		]);
+	});
+
+	// The menu itself is `overflow-y: auto` so a long one can scroll, and CSS
+	// computes the other axis to `auto` the moment one axis is not `visible`. A
+	// flyout rendered INSIDE it is therefore clipped away entirely, which is what
+	// made hovering these rows look like nothing happened at all.
+	describe('submenu flyouts escape the scrollable menu', () => {
+		const GROUPS = [{ id: 'g1', name: 'Alpha', emoji: '🅰️', collapsed: false }];
+
+		function openFlyout(label: string) {
+			fireEvent.mouseEnter(screen.getByText(label).closest('div') as HTMLElement);
+			return screen.getByTestId('session-context-flyout');
+		}
+
+		it('renders the Move to Group flyout outside the menu container', () => {
+			renderMenu({ groups: GROUPS, session: makeSession({ groupId: 'g1' }) });
+
+			const flyout = openFlyout('Move to Group');
+
+			expect(screen.getByTestId('session-context-menu')).not.toContainElement(flyout);
+			expect(flyout).toContainElement(screen.getByText('Ungrouped'));
+		});
+
+		it('renders the Move to Window flyout outside the menu container', () => {
+			renderMenu({
+				onMoveToNewWindow: vi.fn(),
+				onMoveToWindow: vi.fn(),
+				windowTargets: [
+					{
+						windowId: 'w1',
+						windowNumber: 1,
+						label: 'Main Window',
+						isMain: true,
+						isCurrentOwner: true,
+					},
+					{
+						windowId: 'w2',
+						windowNumber: 2,
+						label: 'Window 2',
+						isMain: false,
+						isCurrentOwner: false,
+					},
+				],
+			});
+
+			const flyout = openFlyout('Move to Window');
+
+			expect(screen.getByTestId('session-context-menu')).not.toContainElement(flyout);
+			expect(flyout).toContainElement(screen.getByText('Window 2'));
+		});
+
+		// Portaling puts the flyout outside `menuRef`, so the menu's click-outside
+		// watcher has to know about it: otherwise mousedown on a submenu item
+		// dismisses the menu and the click never reaches the item.
+		it('does not dismiss the menu when a flyout item is pressed', () => {
+			const props = renderMenu({ groups: GROUPS, session: makeSession({ groupId: 'g1' }) });
+
+			openFlyout('Move to Group');
+			const ungrouped = screen.getByText('Ungrouped').closest('button') as HTMLElement;
+
+			fireEvent.mouseDown(ungrouped);
+			expect(props.onDismiss).not.toHaveBeenCalled();
+
+			fireEvent.click(ungrouped);
+			expect(props.onMoveToGroup).toHaveBeenCalledWith('');
+		});
+
+		it('still closes the menu on a mousedown outside both the menu and its flyout', () => {
+			const props = renderMenu({ groups: GROUPS, session: makeSession({ groupId: 'g1' }) });
+
+			openFlyout('Move to Group');
+			fireEvent.mouseDown(document.body);
+
+			expect(props.onDismiss).toHaveBeenCalled();
+		});
 	});
 });

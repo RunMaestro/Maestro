@@ -97,6 +97,22 @@ describe('ssh-command-builder', () => {
 			expect(result).toBe("cd '/home/user/project'\\''s name' && claude");
 		});
 
+		it('keeps a home-relative cwd expandable on the remote', async () => {
+			// A single-quoted '~/proj' never expands: the remote shell looks for a
+			// directory literally named `~` and the agent fails to start. The remote
+			// user's home cannot be resolved locally, so it has to reach the shell
+			// as "$HOME/proj".
+			const result = buildRemoteCommand({
+				command: 'claude',
+				args: ['--print'],
+				cwd: '~/git-projects',
+			});
+			expect(result).toBe('cd "$HOME/git-projects" && claude \'--print\'');
+			expect(buildRemoteCommand({ command: 'claude', args: [], cwd: '~' })).toBe(
+				'cd "$HOME" && claude'
+			);
+		});
+
 		it('escapes special characters in env values', async () => {
 			const result = buildRemoteCommand({
 				command: 'claude',
@@ -170,6 +186,66 @@ describe('ssh-command-builder', () => {
 			expect(result.args).toContain('-p');
 			expect(result.args).toContain('22');
 			expect(result.args).toContain('testuser@dev.example.com');
+		});
+
+		describe('per-remote sshOptions overrides', () => {
+			/**
+			 * A command-line -o outranks ~/.ssh/config, so these overrides are the
+			 * ONLY way a user can change one of Maestro's connection defaults. They
+			 * are also how an exotic transport (tailcat, cloudflared, a ProxyJump
+			 * bastion) is expressed without a field per transport.
+			 */
+			it('passes a ProxyCommand through to the ssh argv', async () => {
+				const result = await buildSshCommand(
+					{ ...baseConfig, sshOptions: { ProxyCommand: '/opt/homebrew/bin/tailcat tcABC 22' } },
+					{ command: 'claude', args: [] }
+				);
+
+				expect(result.args).toContain('ProxyCommand=/opt/homebrew/bin/tailcat tcABC 22');
+			});
+
+			it('replaces a default rather than emitting the keyword twice', async () => {
+				// OpenSSH applies -o first-wins, so a duplicate keyword would keep the
+				// default and make the override silently inert.
+				const result = await buildSshCommand(
+					{ ...baseConfig, sshOptions: { ConnectTimeout: '45' } },
+					{ command: 'claude', args: [] }
+				);
+
+				expect(result.args).toContain('ConnectTimeout=45');
+				expect(result.args).not.toContain('ConnectTimeout=10');
+			});
+
+			it('never reads the parked record, which is what parking means', async () => {
+				// Two records rather than one flag is the whole design: being present
+				// in `sshOptions` is exactly the same statement as being live, so the
+				// builder needs no filter and a switched-off ProxyCommand cannot leak
+				// into the argv.
+				const result = await buildSshCommand(
+					{
+						...baseConfig,
+						sshOptions: { ConnectTimeout: '45' },
+						sshOptionsDisabled: { ProxyCommand: '/opt/homebrew/bin/tailcat tcABC 22' },
+					},
+					{ command: 'claude', args: [] }
+				);
+
+				expect(result.args).toContain('ConnectTimeout=45');
+				expect(result.args.join(' ')).not.toContain('ProxyCommand');
+				expect(result.args.join(' ')).not.toContain('tailcat');
+			});
+
+			it('refuses to let a remote pin RequestTTY', async () => {
+				// RequestTTY is derived from whether the remote command speaks
+				// stream-json; a forced TTY corrupts that stream.
+				const result = await buildSshCommand(
+					{ ...baseConfig, sshOptions: { RequestTTY: 'force' } },
+					{ command: 'claude', args: [] }
+				);
+
+				expect(result.args).toContain('RequestTTY=no');
+				expect(result.args).not.toContain('RequestTTY=force');
+			});
 		});
 
 		describe('TTY allocation (CRITICAL for Claude Code)', () => {
@@ -364,6 +440,19 @@ describe('ssh-command-builder', () => {
 			expect(lastArg).toContain('claude');
 			expect(lastArg).toContain('--print');
 			expect(lastArg).toContain('hello world');
+		});
+
+		it('applies per-remote sshOptions while keeping RequestTTY=no', async () => {
+			// Stdin mode never wants a TTY (it would interfere with piping the
+			// script), which the reserved-key rule guarantees no override can change.
+			const result = await buildSshCommandWithStdin(
+				{ ...baseConfig, sshOptions: { ProxyJump: 'bastion', RequestTTY: 'force' } },
+				{ command: 'opencode', args: ['run'] }
+			);
+
+			expect(result.args).toContain('ProxyJump=bastion');
+			expect(result.args).toContain('RequestTTY=no');
+			expect(result.args).not.toContain('RequestTTY=force');
 		});
 
 		it('exposes the bare remote agent invocation via remoteCommandLine', async () => {
@@ -771,6 +860,19 @@ describe('ssh-command-builder', () => {
 			});
 
 			expect(result.stdinScript).toContain("cd '/home/user/project'");
+		});
+
+		it('keeps a home-relative cwd expandable in the stdin script', async () => {
+			const result = await buildSshCommandWithStdin(baseConfig, {
+				command: 'opencode',
+				args: ['run'],
+				cwd: '~/git-projects',
+			});
+
+			// Same rule as buildRemoteCommand: the script's first line is the cd,
+			// and a single-quoted tilde would `exit 1` before the agent ever ran.
+			expect(result.stdinScript).toContain('cd "$HOME/git-projects" || exit 1');
+			expect(result.stdinScript).not.toContain("cd '~");
 		});
 
 		it('includes environment variables in stdin script', async () => {

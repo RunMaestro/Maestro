@@ -1,8 +1,10 @@
 import type { StatsAggregation } from '../../hooks/stats/useStats';
 import type { Session, SessionState, Theme } from '../../types';
 import { compareNamesIgnoringEmojis } from '../../../shared/emojiUtils';
+import { visibleAiTabs } from '../../utils/tabHelpers';
+import type { ProviderProfileIndex } from '../../hooks/stats/useProviderProfiles';
 
-export type SortMode = 'name' | 'created' | 'recent' | 'queries' | 'tabs' | 'auto';
+export type SortMode = 'name' | 'created' | 'recent' | 'queries' | 'tabs' | 'auto' | 'provider';
 
 export const AGENT_OVERVIEW_SORT_OPTIONS: { value: SortMode; label: string }[] = [
 	{ value: 'name', label: 'Name' },
@@ -11,6 +13,7 @@ export const AGENT_OVERVIEW_SORT_OPTIONS: { value: SortMode; label: string }[] =
 	{ value: 'queries', label: 'Queries' },
 	{ value: 'tabs', label: 'Tabs' },
 	{ value: 'auto', label: 'Auto %' },
+	{ value: 'provider', label: 'Provider' },
 ];
 
 const SPARKLINE_DAYS = 7;
@@ -89,7 +92,8 @@ export function isSessionHighlighted(session: Session, activeFilterKey: string |
 export function sortAgentOverviewSessions(
 	sessions: Session[],
 	data: StatsAggregation,
-	sortMode: SortMode
+	sortMode: SortMode,
+	profileIndex?: ProviderProfileIndex
 ): Session[] {
 	const filtered = sessions.filter((session) => session.toolType !== 'terminal');
 	const byName = (a: Session, b: Session) => compareNamesIgnoringEmojis(a.name, b.name);
@@ -118,7 +122,24 @@ export function sortAgentOverviewSessions(
 	}
 
 	if (sortMode === 'tabs') {
-		return alphabetical.slice().sort((a, b) => (b.aiTabs?.length ?? 0) - (a.aiTabs?.length ?? 0));
+		return alphabetical
+			.slice()
+			.sort((a, b) => visibleAiTabs(b.aiTabs).length - visibleAiTabs(a.aiTabs).length);
+	}
+
+	if (sortMode === 'provider') {
+		// Alphabetical by profile label so the fleet reads as one block per
+		// account, names still ascending inside each block. An agent whose
+		// account has not resolved sorts last rather than into an arbitrary
+		// block it may not belong to.
+		return alphabetical.slice().sort((a, b) => {
+			const aLabel = profileIndex?.labelByKey[profileIndex.profileKeyBySessionId[a.id] ?? ''];
+			const bLabel = profileIndex?.labelByKey[profileIndex.profileKeyBySessionId[b.id] ?? ''];
+			if (aLabel === bLabel) return 0;
+			if (!aLabel) return 1;
+			if (!bLabel) return -1;
+			return aLabel.localeCompare(bLabel);
+		});
 	}
 
 	if (sortMode === 'recent') {

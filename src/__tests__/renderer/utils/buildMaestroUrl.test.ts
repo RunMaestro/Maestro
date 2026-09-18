@@ -44,7 +44,7 @@ describe('buildMaestroUrl', () => {
 			'pedurple',
 			'maestros-choice',
 			'dre-synth',
-			'inquest',
+			'winamp',
 		];
 
 		for (const id of themeIds) {

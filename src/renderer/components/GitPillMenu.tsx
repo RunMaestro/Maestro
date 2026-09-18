@@ -36,7 +36,9 @@ import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { GhostIconButton } from './ui/GhostIconButton';
 import { GitChangeCounts } from './ui/GitChangeCounts';
-import { GitRunningBadge } from './ui/GitRunningBadge';
+import { GitRunningBadge, PR_RUNNING_TITLE } from './ui/GitRunningBadge';
+import { ShortcutHint } from './ui/ShortcutHint';
+import { useSettingsStore } from '../stores/settingsStore';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
 import { remoteUrlToBrowserUrl, type GitChangeTotals } from '../../shared/gitUtils';
@@ -77,6 +79,8 @@ export interface GitPillMenuProps {
 	 */
 	pullRunning?: boolean;
 	pushRunning?: boolean;
+	/** True while `gh pr create` is still working on this repo. */
+	prRunning?: boolean;
 	onViewLog: () => void;
 	onViewDiff: () => void;
 	onPull: () => void;
@@ -94,11 +98,16 @@ interface MenuRowProps {
 	icon: React.ReactNode;
 	label: string;
 	badge?: React.ReactNode;
+	/**
+	 * Chord that fires this same action from the keyboard, drawn as a key-cap at
+	 * the end of the row. Rows whose action has no binding leave it undefined.
+	 */
+	shortcutKeys?: string[];
 	onClick: () => void;
 	testId: string;
 }
 
-function MenuRow({ theme, icon, label, badge, onClick, testId }: MenuRowProps) {
+function MenuRow({ theme, icon, label, badge, shortcutKeys, onClick, testId }: MenuRowProps) {
 	return (
 		<button
 			onClick={(e) => {
@@ -111,7 +120,14 @@ function MenuRow({ theme, icon, label, badge, onClick, testId }: MenuRowProps) {
 		>
 			{icon}
 			{label}
-			{badge}
+			{/* Badge and key-cap share ONE `ml-auto` wrapper. Two auto margins on
+			    siblings would split the free space between them and strand the badge
+			    mid-row, and a badge that renders nothing (a clean tree) must still
+			    leave the key-cap flush right. */}
+			<span className="ml-auto flex items-center gap-2">
+				{badge}
+				<ShortcutHint theme={theme} keys={shortcutKeys ?? []} className="ml-0" />
+			</span>
 		</button>
 	);
 }
@@ -127,6 +143,7 @@ export const GitPillMenu = memo(function GitPillMenu({
 	changes,
 	pullRunning = false,
 	pushRunning = false,
+	prRunning = false,
 	onViewLog,
 	onViewDiff,
 	onPull,
@@ -145,6 +162,7 @@ export const GitPillMenu = memo(function GitPillMenu({
 
 	const iconStyle = { color: theme.colors.textDim };
 	const browserUrl = remote ? remoteUrlToBrowserUrl(remote) : null;
+	const shortcuts = useSettingsStore((s) => s.shortcuts);
 
 	return createPortal(
 		<div
@@ -177,7 +195,7 @@ export const GitPillMenu = memo(function GitPillMenu({
 					{branch && (
 						<div className="flex items-center gap-2">
 							<span
-								className="text-[10px] uppercase font-bold w-12 shrink-0"
+								className="text-2xs uppercase font-bold w-12 shrink-0"
 								style={{ color: theme.colors.textDim }}
 							>
 								Branch
@@ -208,7 +226,7 @@ export const GitPillMenu = memo(function GitPillMenu({
 					{remote && (
 						<div className="flex items-center gap-2">
 							<span
-								className="text-[10px] uppercase font-bold w-12 shrink-0"
+								className="text-2xs uppercase font-bold w-12 shrink-0"
 								style={{ color: theme.colors.textDim }}
 							>
 								Origin
@@ -251,6 +269,7 @@ export const GitPillMenu = memo(function GitPillMenu({
 					testId="git-pill-menu-log"
 					icon={<History className="w-3.5 h-3.5" style={iconStyle} />}
 					label="View Git Log"
+					shortcutKeys={shortcuts.viewGitLog?.keys}
 					onClick={onViewLog}
 				/>
 				<MenuRow
@@ -262,9 +281,10 @@ export const GitPillMenu = memo(function GitPillMenu({
 						<GitChangeCounts
 							theme={theme}
 							totals={changes}
-							className="ml-auto flex items-center gap-1.5 text-[10px]"
+							className="flex items-center gap-1.5 text-2xs"
 						/>
 					}
+					shortcutKeys={shortcuts.viewGitDiff?.keys}
 					onClick={onViewDiff}
 				/>
 				<MenuRow
@@ -278,16 +298,17 @@ export const GitPillMenu = memo(function GitPillMenu({
 						pullRunning ? (
 							<GitRunningBadge
 								theme={theme}
-								className="ml-auto flex items-center gap-1 text-[10px]"
+								className="flex items-center gap-1 text-2xs"
 								testId="git-pill-menu-pull-running"
 							/>
 						) : behind > 0 ? (
-							<span className="ml-auto flex items-center gap-0.5 text-[10px] text-red-500">
+							<span className="flex items-center gap-0.5 text-2xs text-red-500">
 								<ArrowDown className="w-3 h-3" />
 								{behind}
 							</span>
 						) : undefined
 					}
+					shortcutKeys={shortcuts.gitPull?.keys}
 					onClick={onPull}
 				/>
 				<MenuRow
@@ -299,16 +320,17 @@ export const GitPillMenu = memo(function GitPillMenu({
 						pushRunning ? (
 							<GitRunningBadge
 								theme={theme}
-								className="ml-auto flex items-center gap-1 text-[10px]"
+								className="flex items-center gap-1 text-2xs"
 								testId="git-pill-menu-push-running"
 							/>
 						) : ahead > 0 ? (
-							<span className="ml-auto flex items-center gap-0.5 text-[10px] text-green-500">
+							<span className="flex items-center gap-0.5 text-2xs text-green-500">
 								<ArrowUp className="w-3 h-3" />
 								{ahead}
 							</span>
 						) : undefined
 					}
+					shortcutKeys={shortcuts.gitPush?.keys}
 					onClick={onPush}
 				/>
 				<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
@@ -317,6 +339,7 @@ export const GitPillMenu = memo(function GitPillMenu({
 					testId="git-pill-menu-switch-branch"
 					icon={<GitBranch className="w-3.5 h-3.5" style={iconStyle} />}
 					label="Change Branch"
+					shortcutKeys={shortcuts.gitChangeBranch?.keys}
 					onClick={onSwitchBranch}
 				/>
 				{onCreatePR && (
@@ -325,6 +348,18 @@ export const GitPillMenu = memo(function GitPillMenu({
 						testId="git-pill-menu-create-pr"
 						icon={<GitPullRequest className="w-3.5 h-3.5" style={iconStyle} />}
 						label="Create Pull Request"
+						badge={
+							prRunning ? (
+								<GitRunningBadge
+									theme={theme}
+									label="Creating"
+									className="flex items-center gap-1 text-2xs"
+									testId="git-pill-menu-create-pr-running"
+									title={PR_RUNNING_TITLE}
+								/>
+							) : undefined
+						}
+						shortcutKeys={shortcuts.gitCreatePR?.keys}
 						onClick={onCreatePR}
 					/>
 				)}

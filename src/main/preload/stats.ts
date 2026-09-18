@@ -16,6 +16,10 @@ import type {
 	ShortcutUsageDay,
 	StatsAggregation,
 	StatsTimeRange,
+	ResilienceEvent,
+	WizardRun,
+	UsageExportFormat,
+	UsageExportResult,
 } from '../../shared/stats-types';
 export type {
 	QueryEvent,
@@ -26,6 +30,8 @@ export type {
 } from '../../shared/stats-types';
 import type { TokenUsageQuery, TokenUsageAggregate } from '../../shared/tokenUsage';
 export type { TokenUsageQuery, TokenUsageAggregate } from '../../shared/tokenUsage';
+import type { DelegationDay, DelegationTotals } from '../../shared/delegation';
+export type { DelegationDay, DelegationTotals } from '../../shared/delegation';
 
 /**
  * Session lifecycle event for recording session creation.
@@ -118,14 +124,29 @@ export function createStatsApi() {
 			range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'
 		): Promise<StatsAggregation> => ipcRenderer.invoke('stats:get-aggregation', range),
 
+		// Interactive vs autonomous (Auto Run + Cue) totals. Merges the stats DB
+		// and the Cue DB in the main process; defaults to all retained history,
+		// which is what the lifetime delegation score reads.
+		getDelegationTotals: (range: StatsTimeRange = 'all'): Promise<DelegationTotals> =>
+			ipcRenderer.invoke('stats:get-delegation-totals', range),
+
+		// The same split bucketed by local-time day. Days with no activity are
+		// omitted; the caller zero-fills.
+		getDelegationByDay: (range: StatsTimeRange = 'all'): Promise<DelegationDay[]> =>
+			ipcRenderer.invoke('stats:get-delegation-by-day', range),
+
 		// Token & cost usage aggregate (Cost & Tokens tab). Reads agent session
 		// storage; `force` bypasses the accessor's in-memory memo for a refresh.
 		getTokenUsage: (query: TokenUsageQuery = {}, force = false): Promise<TokenUsageAggregate> =>
 			ipcRenderer.invoke('stats:get-token-usage', query, force),
 
-		// Export query events to CSV
-		exportCsv: (range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'): Promise<string> =>
-			ipcRenderer.invoke('stats:export-csv', range),
+		// Export every stats table for a range to `filePath`: one JSON file, or a
+		// zip with one CSV per table. Main writes the file.
+		exportUsage: (
+			range: StatsTimeRange,
+			format: UsageExportFormat,
+			filePath: string
+		): Promise<UsageExportResult> => ipcRenderer.invoke('stats:export', range, format, filePath),
 
 		// Subscribe to stats updates (for real-time dashboard refresh)
 		onStatsUpdate: (callback: () => void) => {
@@ -172,6 +193,20 @@ export function createStatsApi() {
 			ipcRenderer.invoke('stats:record-image-annotation', createdAt),
 
 		// Record session creation (for lifecycle tracking)
+		recordResilience: (event: ResilienceEvent): Promise<string | null> =>
+			ipcRenderer.invoke('stats:record-resilience', event),
+
+		getResilience: (range: StatsTimeRange): Promise<ResilienceEvent[]> =>
+			ipcRenderer.invoke('stats:get-resilience', range),
+
+		// Upsert one Auto Run wizard run (idempotent on run.id) - called at each
+		// milestone of a wizard conversation, not just at the end.
+		recordWizardRun: (run: WizardRun): Promise<string | null> =>
+			ipcRenderer.invoke('stats:record-wizard-run', run),
+
+		getWizardRuns: (range: StatsTimeRange): Promise<WizardRun[]> =>
+			ipcRenderer.invoke('stats:get-wizard-runs', range),
+
 		recordSessionCreated: (event: SessionCreatedEvent): Promise<string | null> =>
 			ipcRenderer.invoke('stats:record-session-created', event),
 

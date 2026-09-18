@@ -10,24 +10,22 @@
  */
 
 import { useState, useMemo, useCallback } from 'react';
-import { Clock, RotateCcw, CalendarClock, X, StickyNote, History } from 'lucide-react';
-import type { Theme } from '../types';
+import { Clock, RotateCcw, CalendarClock, X, StickyNote, History, Play } from 'lucide-react';
+import type { SnoozeContent, Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { CountBadge, Modal } from './ui';
 import { getTabKindIcon, getTabKindColor } from './TabBar/tabBarUtils';
 import { SnoozeTabModal } from './SnoozeTabModal';
 import { useSessionStore } from '../stores/sessionStore';
-import { useTabStore } from '../stores/tabStore';
-import { notifyToast } from '../stores/notificationStore';
 import {
+	canSnoozeRunWakePrompt,
 	collectSnoozedTabs,
 	getSnoozedTabLabel,
 	isSnoozedGroup,
-	buildSnoozeHistoryRecord,
 } from '../utils/snoozeHelpers';
-import { recordSnoozeResolution, useSnoozeHistoryStore } from '../stores/snoozeHistoryStore';
+import { dismissSnoozeNow, rescheduleSnoozeNow, wakeSnoozeNow } from '../services/snoozeActions';
+import { useSnoozeHistoryStore } from '../stores/snoozeHistoryStore';
 import { SnoozeHistoryModal } from './SnoozeHistoryModal';
-import { releaseSnoozedTranscript } from '../utils/snoozeTranscriptMirror';
 import { formatSnoozeTarget, formatSnoozeCountdown } from '../../shared/snooze';
 
 export interface SnoozedTabsModalProps {
@@ -43,9 +41,6 @@ export interface SnoozedTabsModalProps {
 
 export function SnoozedTabsModal({ theme, onClose, onJumpToTab }: SnoozedTabsModalProps) {
 	const sessions = useSessionStore((state) => state.sessions);
-	const unsnoozeTab = useTabStore((state) => state.unsnoozeTab);
-	const dismissSnoozedTab = useTabStore((state) => state.dismissSnoozedTab);
-	const rescheduleSnoozedTab = useTabStore((state) => state.rescheduleSnoozedTab);
 
 	// Snooze currently being rescheduled, if any.
 	const [editing, setEditing] = useState<{ sessionId: string; snoozeId: string } | null>(null);
@@ -64,45 +59,23 @@ export function SnoozedTabsModal({ theme, onClose, onJumpToTab }: SnoozedTabsMod
 		[editing, items]
 	);
 
+	// Both verbs drag a fixed sequence behind the store write (release the
+	// transcript mirror, record the resolution, announce it), and that sequence
+	// lives in services/snoozeActions so the CLI's snooze verbs cannot drift
+	// from these rows.
 	const handleUnsnooze = useCallback(
 		(sessionId: string, snoozeId: string) => {
-			const session = sessions.find((s) => s.id === sessionId);
-			const entry = session?.snoozedTabs?.find((s) => s.id === snoozeId);
-			const result = unsnoozeTab(sessionId, snoozeId);
+			const result = wakeSnoozeNow(sessionId, snoozeId);
 			if (!result) return;
-			// Tab is back, so the snooze can let go of its transcript mirror. This
-			// rehydrates first, so a transcript the provider aged out during the
-			// snooze is restored rather than lost.
-			if (entry) {
-				releaseSnoozedTranscript(session, entry);
-				recordSnoozeResolution(buildSnoozeHistoryRecord(entry, 'unsnoozed', session, result.tabId));
-			}
 			onJumpToTab?.(sessionId, result.tabId);
 			onClose();
 		},
-		[sessions, unsnoozeTab, onJumpToTab, onClose]
+		[onJumpToTab, onClose]
 	);
 
-	const handleDismiss = useCallback(
-		(sessionId: string, snoozeId: string, label: string) => {
-			const session = sessions.find((s) => s.id === sessionId);
-			const entry = session?.snoozedTabs?.find((s) => s.id === snoozeId);
-			dismissSnoozedTab(sessionId, snoozeId);
-			// Dismiss discards Maestro's tab, not the conversation - rehydrate the
-			// provider file before releasing so it stays reachable from the Session
-			// Explorer, as the docs promise.
-			if (entry) {
-				releaseSnoozedTranscript(session, entry);
-				recordSnoozeResolution(buildSnoozeHistoryRecord(entry, 'dismissed', session));
-			}
-			notifyToast({
-				color: 'theme',
-				title: 'Snooze dismissed',
-				message: `"${label}" won't come back.`,
-			});
-		},
-		[sessions, dismissSnoozedTab]
-	);
+	const handleDismiss = useCallback((sessionId: string, snoozeId: string) => {
+		dismissSnoozeNow(sessionId, snoozeId);
+	}, []);
 
 	// Jumping from the history list has to dismiss BOTH modals: the history sits
 	// on top of this one, so closing only itself would leave the user staring at
@@ -117,12 +90,12 @@ export function SnoozedTabsModal({ theme, onClose, onJumpToTab }: SnoozedTabsMod
 	);
 
 	const handleReschedule = useCallback(
-		(wakeAt: number, note: string) => {
+		(wakeAt: number, content: SnoozeContent) => {
 			if (!editing) return;
-			rescheduleSnoozedTab(editing.sessionId, editing.snoozeId, wakeAt, note);
+			rescheduleSnoozeNow(editing.sessionId, editing.snoozeId, wakeAt, content);
 			setEditing(null);
 		},
-		[editing, rescheduleSnoozedTab]
+		[editing]
 	);
 
 	return (
@@ -146,7 +119,7 @@ export function SnoozedTabsModal({ theme, onClose, onJumpToTab }: SnoozedTabsMod
 						View History
 						{historyCount > 0 && (
 							<span
-								className="text-[10px] px-1.5 py-0.5 rounded"
+								className="text-2xs px-1.5 py-0.5 rounded"
 								style={{ backgroundColor: theme.colors.bgActivity }}
 							>
 								{historyCount}
@@ -238,6 +211,20 @@ export function SnoozedTabsModal({ theme, onClose, onJumpToTab }: SnoozedTabsMod
 														<span className="italic">{entry.note}</span>
 													</div>
 												)}
+
+												{/* A queued prompt is the row's most consequential fact - it
+												    means unsnoozing starts a turn - so it is shown here rather
+												    than only inside the reschedule dialog. */}
+												{entry.wakePrompt && (
+													<div
+														className="flex items-start gap-1.5 text-xs mt-1.5"
+														style={{ color: theme.colors.accent }}
+														title="Sent to the agent when this tab comes back"
+													>
+														<Play className="w-3 h-3 shrink-0 mt-0.5" />
+														<span>{entry.wakePrompt}</span>
+													</div>
+												)}
 											</div>
 
 											{/* Row actions */}
@@ -262,7 +249,7 @@ export function SnoozedTabsModal({ theme, onClose, onJumpToTab }: SnoozedTabsMod
 												</button>
 												<button
 													type="button"
-													onClick={() => handleDismiss(sessionId, entry.id, label)}
+													onClick={() => handleDismiss(sessionId, entry.id)}
 													title="Dismiss - discard this tab entirely"
 													className="p-1.5 rounded hover:bg-white/10 transition-colors"
 													style={{ color: theme.colors.textDim }}
@@ -293,6 +280,8 @@ export function SnoozedTabsModal({ theme, onClose, onJumpToTab }: SnoozedTabsMod
 					tabLabel={getSnoozedTabLabel(editingItem.entry)}
 					initialWakeAt={editingItem.entry.wakeAt}
 					initialNote={editingItem.entry.note}
+					initialWakePrompt={editingItem.entry.wakePrompt}
+					canRunWakePrompt={canSnoozeRunWakePrompt(editingItem.entry)}
 					onClose={() => setEditing(null)}
 					onConfirm={handleReschedule}
 				/>

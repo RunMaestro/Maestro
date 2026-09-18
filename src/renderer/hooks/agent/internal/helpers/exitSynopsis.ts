@@ -20,6 +20,7 @@ import { notifyToast } from '../../../../stores/notificationStore';
 import { formatRelativeTime } from '../../../../../shared/formatters';
 import { parseSynopsis } from '../../../../../shared/synopsis';
 import { hasRunnableQueueItem } from '../../../../utils/executionQueue';
+import { isSessionIdLabel } from '../../../../utils/tabHelpers';
 import type { ToolType, Session, LogEntry } from '../../../../types';
 import type { UseAgentListenersDeps } from '../types';
 import type { RightPanelHandle } from '../../../../components/RightPanel';
@@ -159,6 +160,10 @@ export async function runExitSynopsis(
 			usageStats: result.usageStats,
 			contextUsage: result.contextUsage,
 			sessionId: synopsisData.sessionId,
+			// Carried so main can attribute the entry to the Web Login account
+			// that started the turn - it noted the account at spawn, keyed by
+			// agent + tab, because no acting user is in scope out here.
+			tabId: synopsisData.tabId,
 			projectPath: synopsisData.cwd,
 			sessionName: synopsisData.tabName,
 			elapsedTimeMs: synopsisData.taskDuration,
@@ -192,14 +197,14 @@ export async function runExitSynopsis(
 /**
  * Persist the tab name to the agent's session origins store so the session
  * remains searchable in TabSwitcherModal's "All Named" view after it closes.
- * Skip UUID-prefix fallback names (8 hex chars) - those aren't real
- * user-facing names.
+ * Skips the id-label fallback an unnamed tab displays - that is not a
+ * user-facing name, and storing it would hand a placeholder back to whatever
+ * restores the session later.
  */
 function persistTabNameAfterSynopsis(synopsisData: SynopsisData): void {
 	const persistName = synopsisData.tabName;
 	if (!persistName) return;
-	const isUuidPrefix = /^[0-9A-F]{8}$/.test(persistName);
-	if (isUuidPrefix) return;
+	if (isSessionIdLabel(persistName, synopsisData.agentSessionId)) return;
 	if (!synopsisData.agentSessionId || !synopsisData.projectRoot) return;
 
 	const persistAgentId = synopsisData.toolType || 'claude-code';

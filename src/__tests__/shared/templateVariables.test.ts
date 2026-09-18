@@ -379,6 +379,27 @@ describe('substituteTemplateVariables', () => {
 			const result = substituteTemplateVariables('Folder: {{AUTORUN_FOLDER}}', context);
 			expect(result).toBe('Folder: /full/path/.maestro/playbooks');
 		});
+
+		it('should replace {{WORKTREE_BASE_PATH}} with the configured worktree directory', () => {
+			const context = createTestContext({
+				session: createTestSession({
+					worktreeConfig: { basePath: '/Users/test/Project-WorkTrees' },
+				}),
+			});
+			const result = substituteTemplateVariables('Worktrees: {{WORKTREE_BASE_PATH}}', context);
+			expect(result).toBe('Worktrees: /Users/test/Project-WorkTrees');
+		});
+
+		it('should render {{WORKTREE_BASE_PATH}} empty when no worktree directory is configured', () => {
+			// Deliberately no fallback: a guessed path is exactly where an agent
+			// would `git worktree add` by hand, producing a checkout the desktop
+			// never registers. Empty tells the prompt to use create-worktree.
+			const context = createTestContext({
+				session: createTestSession({ worktreeConfig: undefined }),
+			});
+			const result = substituteTemplateVariables('Worktrees: {{WORKTREE_BASE_PATH}}', context);
+			expect(result).toBe('Worktrees: ');
+		});
 	});
 
 	describe('Legacy Project Variables (backwards compatibility)', () => {

@@ -105,4 +105,28 @@ describe('SegmentedControl', () => {
 		expect(screen.getByTestId('sort-queries')).toHaveAttribute('title', 'Most queries first');
 		expect(screen.getByTestId('sort-name')).not.toHaveAttribute('title');
 	});
+
+	// The host's container query picks which form is visible, so both must be
+	// in the DOM with the short one hidden by default.
+	it('renders both label forms when a short label is given', () => {
+		render(
+			<SegmentedControl
+				value="name"
+				onChange={vi.fn()}
+				options={[{ value: 'name', label: 'Full Name', shortLabel: 'Name' }]}
+				theme={mockTheme}
+				ariaLabel="Sort agents"
+				testId="sort"
+			/>
+		);
+
+		expect(screen.getByText('Full Name')).toHaveClass('segmented-label-full');
+		expect(screen.getByText('Name')).toHaveClass('segmented-label-short', 'hidden');
+	});
+
+	it('renders a plain label when no short label is given', () => {
+		renderControl('name');
+
+		expect(screen.getByTestId('sort-name').querySelector('.segmented-label-full')).toBeNull();
+	});
 });

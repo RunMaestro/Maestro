@@ -238,7 +238,7 @@ vi.mock('../../../renderer/utils/theme', () => ({
 		name: string,
 		_theme: Theme,
 		type?: string,
-		iconTheme: 'default' | 'rich' = 'default'
+		iconTheme: 'flat' | 'rich' = 'flat'
 	) => {
 		if (type === 'added') return <span data-testid="added-icon">+</span>;
 		if (type === 'modified') return <span data-testid="modified-icon">~</span>;
@@ -254,7 +254,7 @@ vi.mock('../../../renderer/utils/theme', () => ({
 		_name: string,
 		_isExpanded: boolean,
 		_theme: Theme,
-		iconTheme: 'default' | 'rich' = 'default'
+		iconTheme: 'flat' | 'rich' = 'flat'
 	) => <span data-testid={iconTheme === 'rich' ? 'rich-folder-icon' : 'folder-icon'}>📁</span>,
 }));
 
@@ -388,7 +388,7 @@ describe('FileExplorerPanel', () => {
 			onAutoRefreshChange: vi.fn(),
 			onShowFlash: vi.fn(),
 			showHiddenFiles: false,
-			fileExplorerIconTheme: 'default',
+			fileExplorerIconTheme: 'flat',
 			setShowHiddenFiles: vi.fn(),
 		};
 	});
@@ -422,7 +422,7 @@ describe('FileExplorerPanel', () => {
 	});
 
 	describe('Files Pane icon themes', () => {
-		it('renders default theme icons when fileExplorerIconTheme is default', () => {
+		it('renders flat theme icons when fileExplorerIconTheme is flat', () => {
 			render(<FileExplorerPanel {...defaultProps} />);
 
 			expect(screen.getAllByTestId('file-icon').length).toBeGreaterThan(0);
@@ -3751,7 +3751,10 @@ describe('FileExplorerPanel', () => {
 			);
 			fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
 			fireEvent.keyDown(window, { key: 'Escape' });
-			expectAllListenersRemoved(spies.addSpy, spies.removeSpy);
+			// Scoped to keydown: the panel is still mounted here, so the viewport
+			// hook's resize/orientationchange subscriptions are live by design. The
+			// unmount case below is the unscoped, stricter check.
+			expectAllListenersRemoved(spies.addSpy, spies.removeSpy, ['keydown']);
 			spies.restore();
 		});
 

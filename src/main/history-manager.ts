@@ -22,12 +22,18 @@ import * as path from 'path';
 import { app } from 'electron';
 import { logger } from './utils/logger';
 import { captureException } from './utils/sentry';
-import { atomicWriteJson, createKeyedWriteQueue } from './utils/atomic-json-store';
+import { atomicWriteFile, createKeyedWriteQueue } from './utils/atomic-json-store';
 import { parseJsonWithBom, stripJsonBom } from '../shared/jsonUtils';
 import { HistoryEntry } from '../shared/types';
 import {
 	HISTORY_VERSION,
+	HISTORY_JSONL_EXT,
+	HISTORY_LEGACY_JSON_EXT,
 	MAX_ENTRIES_PER_SESSION,
+	resolveHistoryEntryLimit,
+	parseHistoryJsonl,
+	serializeHistoryEntryLine,
+	trimHistoryEntriesToLimit,
 	HistoryFileData,
 	MigrationMarker,
 	PaginationOptions,
@@ -37,6 +43,18 @@ import {
 	sortEntriesByTimestamp,
 	normalizeHistoryEntries,
 } from '../shared/history';
+
+/**
+ * How many appends a session may take before we re-check its file against the
+ * entry cap.
+ *
+ * Rotation is the only remaining read-modify-write on the add path, so it must
+ * be rare: checking on every append would reintroduce exactly the whole-file
+ * rewrite that JSONL exists to remove. Overshoot is bounded by this number
+ * (a file may briefly hold up to `limit + ROTATION_CHECK_APPENDS` entries),
+ * which is invisible to readers because they trim on the way out.
+ */
+const ROTATION_CHECK_APPENDS = 500;
 
 const LOG_CONTEXT = '[HistoryManager]';
 
@@ -160,12 +178,49 @@ export class HistoryManager {
 	 * busy (high-frequency Cue) agents.
 	 */
 	private writeQueue = createKeyedWriteQueue();
+	/**
+	 * Resolves the user's per-session entry cap (`maxLogBuffer`). Set once at
+	 * startup by the main process so fire-and-forget writers - Cue notify,
+	 * Cue command, Cue agent runs - trim to the SAME cap the IPC path uses.
+	 * When each writer picked its own limit, the smallest one won on disk and
+	 * silently destroyed entries the user had asked to keep.
+	 */
+	private maxEntriesResolver: (() => number) | null = null;
+	/**
+	 * Appends taken per session since its file was last checked against the cap.
+	 * In-memory on purpose: losing the counter on restart only costs one extra
+	 * rotation check, and persisting it would reintroduce a per-append write.
+	 */
+	private appendsSinceRotationCheck = new Map<string, number>();
 
 	constructor() {
 		this.configDir = app.getPath('userData');
 		this.historyDir = path.join(this.configDir, 'history');
 		this.legacyFilePath = path.join(this.configDir, 'maestro-history.json');
 		this.migrationMarkerPath = path.join(this.configDir, 'history-migrated.json');
+	}
+
+	/**
+	 * Point the manager at the user's `maxLogBuffer` setting. Call before
+	 * `initialize()` so the migration path honours it too.
+	 */
+	setMaxEntriesResolver(resolver: () => number): void {
+		this.maxEntriesResolver = resolver;
+	}
+
+	/**
+	 * The entry cap for a write: an explicit argument wins, then the user's
+	 * setting, then the built-in fallback.
+	 */
+	private resolveMaxEntries(explicit?: number): number {
+		if (explicit !== undefined) return resolveHistoryEntryLimit(explicit);
+		if (!this.maxEntriesResolver) return MAX_ENTRIES_PER_SESSION;
+		try {
+			return resolveHistoryEntryLimit(this.maxEntriesResolver());
+		} catch {
+			// A settings-store read should never take history writes down.
+			return MAX_ENTRIES_PER_SESSION;
+		}
 	}
 
 	/**
@@ -225,6 +280,7 @@ export class HistoryManager {
 
 			// Group entries by sessionId (skip entries without sessionId)
 			const entriesBySession = new Map<string, HistoryEntry[]>();
+			const migrationLimit = this.resolveMaxEntries();
 			let skippedCount = 0;
 
 			for (const entry of entries) {
@@ -248,15 +304,11 @@ export class HistoryManager {
 			// distinct paths.
 			const writes = Array.from(entriesBySession.entries()).map(
 				async ([sessionId, sessionEntries]) => {
-					const projectPath = sessionEntries[0]?.projectPath || '';
-					const fileData: HistoryFileData = {
-						version: HISTORY_VERSION,
-						sessionId,
-						projectPath,
-						entries: sessionEntries.slice(0, MAX_ENTRIES_PER_SESSION),
-					};
+					// Legacy order is newest-first; JSONL is append order, so the
+					// kept slice is reversed on the way to disk.
+					const kept = sessionEntries.slice(0, migrationLimit).reverse();
 					const filePath = this.getSessionFilePath(sessionId);
-					await atomicWriteJson(filePath, fileData);
+					await atomicWriteFile(filePath, kept.map(serializeHistoryEntryLine).join(''));
 					logger.debug(
 						`Migrated ${sessionEntries.length} entries for session ${sessionId}`,
 						LOG_CONTEXT
@@ -289,59 +341,148 @@ export class HistoryManager {
 	}
 
 	/**
-	 * Get file path for a session's history
+	 * Path to a session's JSONL history file (the current format).
 	 */
 	private getSessionFilePath(sessionId: string): string {
 		const safeId = sanitizeSessionId(sessionId);
-		return path.join(this.historyDir, `${safeId}.json`);
+		return path.join(this.historyDir, `${safeId}${HISTORY_JSONL_EXT}`);
 	}
 
 	/**
-	 * Read history for a specific session
+	 * Path to a session's legacy single-object `.json` file. Only present until
+	 * the session is migrated on first touch.
 	 */
-	async getEntries(sessionId: string): Promise<HistoryEntry[]> {
-		const filePath = this.getSessionFilePath(sessionId);
+	private getLegacySessionFilePath(sessionId: string): string {
+		const safeId = sanitizeSessionId(sessionId);
+		return path.join(this.historyDir, `${safeId}${HISTORY_LEGACY_JSON_EXT}`);
+	}
+
+	/**
+	 * Convert a session's legacy `.json` file to JSONL, once.
+	 *
+	 * The legacy array is newest-first and JSONL is append order (oldest first),
+	 * so the entries are reversed on the way out. The legacy file is renamed to
+	 * `.json.migrated` rather than deleted: this is the user's memory, and a
+	 * one-time format change is not worth a destructive step. Returns the
+	 * migrated entries in file order, or null when there was nothing to migrate.
+	 */
+	private async migrateSessionToJsonl(sessionId: string): Promise<HistoryEntry[] | null> {
+		const legacyPath = this.getLegacySessionFilePath(sessionId);
+		const jsonlPath = this.getSessionFilePath(sessionId);
+
+		let raw: string;
 		try {
-			const raw = await fsp.readFile(filePath, 'utf-8');
-			const { data, recovered } = parseHistoryFileData(raw);
-			if (recovered) {
-				logger.warn(
-					`Recovered concatenated history JSON for session ${sessionId}; rewriting clean file`,
-					LOG_CONTEXT
-				);
-				// Serialize the cleanup rewrite against concurrent mutations so it
-				// can't clobber an add that lands between our read and this write.
-				await this.writeQueue.enqueue(sessionId, () => atomicWriteJson(filePath, data));
-			}
-			// Re-map legacy cross-agent consults (written as AUTO before the AGENT
-			// type existed) so no consumer has to special-case them.
-			return normalizeHistoryEntries(data.entries || []);
+			raw = await fsp.readFile(legacyPath, 'utf-8');
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+			throw error;
+		}
+
+		let legacyEntries: HistoryEntry[];
+		try {
+			legacyEntries = parseHistoryFileData(raw).data.entries || [];
+		} catch (error) {
+			// Unreadable legacy file: preserve it and let the session start clean
+			// on JSONL rather than blocking every future write on a bad parse.
+			await this.preserveCorruptFile(legacyPath, sessionId, error);
+			return null;
+		}
+
+		// Legacy order is newest-first; JSONL is oldest-first.
+		const fileOrder = [...legacyEntries].reverse();
+		const serialized = fileOrder.map(serializeHistoryEntryLine).join('');
+
+		await atomicWriteFile(jsonlPath, serialized);
+		try {
+			await fsp.rename(legacyPath, `${legacyPath}.migrated`);
+		} catch (renameError) {
+			// The JSONL file is already in place, so a failed rename only risks a
+			// duplicate migration on the next read - not data loss.
+			logger.warn(
+				`Migrated history for session ${sessionId} but could not retire the legacy file: ${renameError}`,
+				LOG_CONTEXT
+			);
+		}
+
+		logger.info(
+			`Migrated history for session ${sessionId} to JSONL (${fileOrder.length} entries)`,
+			LOG_CONTEXT
+		);
+		return fileOrder;
+	}
+
+	/**
+	 * Read a session's history in FILE order (oldest first). Migrates a legacy
+	 * `.json` session on first touch. Internal: callers that face the rest of
+	 * the app want newest-first, which is what `getEntries` returns.
+	 */
+	private async readEntriesInFileOrder(sessionId: string): Promise<HistoryEntry[]> {
+		const filePath = this.getSessionFilePath(sessionId);
+		let raw: string;
+		try {
+			raw = await fsp.readFile(filePath, 'utf-8');
 		} catch (error) {
 			const code = (error as NodeJS.ErrnoException).code;
-			if (code === 'ENOENT') return []; // Cold-cache miss is expected
-			// A malformed/truncated history file (e.g. a write interrupted by a crash
-			// or power loss) surfaces as a JSON SyntaxError once recovery fails. That's
-			// an expected, recoverable on-disk condition - not a code bug - so we degrade
-			// gracefully to an empty history rather than reporting it to Sentry, where it
-			// only piled up as non-actionable noise (MAESTRO-QA). Genuinely unexpected
-			// read failures (permissions, I/O, etc.) are still captured below.
-			if (error instanceof SyntaxError) {
-				logger.warn(
-					`Discarding unreadable history for session ${sessionId} (corrupt JSON): ${error}`,
-					LOG_CONTEXT
-				);
+			if (code !== 'ENOENT') {
+				logger.warn(`Failed to read history for session ${sessionId}: ${error}`, LOG_CONTEXT);
+				captureException(error, { operation: 'history:read', sessionId });
 				return [];
 			}
-			logger.warn(`Failed to read history for session ${sessionId}: ${error}`, LOG_CONTEXT);
-			captureException(error, { operation: 'history:read', sessionId });
-			return [];
+			// No JSONL file yet: this is either a brand-new session or one that
+			// still has a legacy `.json` to migrate.
+			try {
+				return (await this.migrateSessionToJsonl(sessionId)) ?? [];
+			} catch (migrateError) {
+				logger.warn(
+					`Failed to migrate history for session ${sessionId}: ${migrateError}`,
+					LOG_CONTEXT
+				);
+				captureException(migrateError, { operation: 'history:migrateJsonl', sessionId });
+				return [];
+			}
 		}
+
+		const { entries, malformedLines } = parseHistoryJsonl(stripJsonBom(raw));
+		if (malformedLines > 0) {
+			// One bad line is the expected cost of a write interrupted by a crash
+			// or power loss, and it costs exactly that one entry. More than one
+			// means something else is writing this file wrongly - worth knowing,
+			// but never a reason to discard the entries that DID parse.
+			logger.warn(
+				`Skipped ${malformedLines} malformed history line(s) for session ${sessionId}`,
+				LOG_CONTEXT
+			);
+			if (malformedLines > 1) {
+				captureException(
+					new Error(`History file for session ${sessionId} had ${malformedLines} bad lines`),
+					{ operation: 'history:malformedLines', sessionId, malformedLines }
+				);
+			}
+		}
+		return entries;
+	}
+
+	/**
+	 * Read history for a specific session, newest first.
+	 *
+	 * The newest-first contract predates JSONL (the legacy file stored entries
+	 * that way) and several callers still rely on it, so the file-order array is
+	 * reversed here rather than at each call site.
+	 */
+	async getEntries(sessionId: string): Promise<HistoryEntry[]> {
+		const entries = await this.readEntriesInFileOrder(sessionId);
+		// Re-map legacy cross-agent consults (written as AUTO before the AGENT
+		// type existed) so no consumer has to special-case them. Applied here
+		// rather than in the file-order reader because the trim/prune paths write
+		// what they read back to disk, and a read is not the moment to rewrite
+		// entries the user has not touched.
+		return normalizeHistoryEntries(entries.reverse());
 	}
 
 	/**
 	 * Add an entry to a session's history
-	 * @param maxEntries - Maximum entries to retain (defaults to MAX_ENTRIES_PER_SESSION).
-	 *                     Pass the user's maxLogBuffer setting to unify the cap.
+	 * @param maxEntries - Maximum entries to retain. Omit to use the user's
+	 *                     maxLogBuffer setting (see setMaxEntriesResolver).
 	 */
 	async addEntry(
 		sessionId: string,
@@ -350,83 +491,106 @@ export class HistoryManager {
 		maxEntries?: number
 	): Promise<void> {
 		const filePath = this.getSessionFilePath(sessionId);
-		const limit = maxEntries ?? MAX_ENTRIES_PER_SESSION;
+		const limit = this.resolveMaxEntries(maxEntries);
 
-		// Serialize per session so two concurrent adds (e.g. overlapping Cue
-		// schedules) can't interleave their read-modify-write and clobber each
-		// other. The atomic write below additionally protects cross-process
-		// readers (and the CLI writer) from ever seeing a partial file.
+		// Serialize per session so an append can't interleave with a rotation
+		// (the one remaining read-modify-write on this path).
 		await this.writeQueue.enqueue(sessionId, async () => {
-			let data: HistoryFileData;
-			// Count of entries we read from a SUCCESSFULLY-parsed existing file.
-			// -1 means "no trustworthy prior" (new file or corrupt-and-preserved),
-			// which disables the shrink tripwire below for this write.
-			let priorCount = -1;
+			// A session still on the legacy format must be converted before its
+			// first append, or the appended line would be tacked onto a JSON
+			// object and make the file unreadable.
+			await this.ensureJsonlFile(sessionId);
+
+			// The file-level projectPath of the old format is gone, so each line
+			// must carry its own - `getEntriesByProjectPath` filters on it.
+			const record: HistoryEntry = entry.projectPath ? entry : { ...entry, projectPath };
 
 			try {
-				const raw = await fsp.readFile(filePath, 'utf-8');
-				data = parseHistoryFileData(raw).data;
-				priorCount = data.entries.length;
-			} catch (error) {
-				const code = (error as NodeJS.ErrnoException).code;
-				if (code === 'ENOENT') {
-					// New session - start with empty file.
-					data = { version: HISTORY_VERSION, sessionId, projectPath, entries: [] };
-				} else {
-					// A readable-but-unparseable file is corrupt history. Do NOT
-					// overwrite it with a fresh empty file - that's what silently
-					// destroyed accumulated history. Preserve the bytes aside for
-					// recovery, then start fresh so writes aren't blocked forever.
-					await this.preserveCorruptFile(filePath, sessionId, error);
-					data = { version: HISTORY_VERSION, sessionId, projectPath, entries: [] };
-				}
-			}
-
-			// A file can parse as valid JSON yet still lack a usable `entries` array
-			// (legacy/partial writes, hand-edited files, or `null`/non-object content).
-			// The catch above only covers JSON.parse throwing, so guard the shape here
-			// before unshift can throw "Cannot read properties of undefined". (MAESTRO-QK)
-			if (!data || typeof data !== 'object' || !Array.isArray(data.entries)) {
-				data = { version: HISTORY_VERSION, sessionId, projectPath, entries: [] };
-			}
-
-			// Add to beginning (most recent first)
-			data.entries.unshift(entry);
-
-			// Trim to max entries
-			if (data.entries.length > limit) {
-				data.entries = data.entries.slice(0, limit);
-			}
-
-			// Shrink tripwire: addEntry only ever GROWS the list (or trims to
-			// `limit`), so the result must hold at least `min(priorCount, limit)`
-			// entries. A smaller count means a logic regression upstream tried to
-			// destroy history through the add path - refuse the write and keep the
-			// good on-disk file rather than clobber it. Only enforced when we have
-			// a trustworthy prior (a clean parse of an existing file).
-			if (priorCount >= 0 && data.entries.length < Math.min(priorCount, limit)) {
-				const msg = `Refusing history write for session ${sessionId}: entry count would shrink ${priorCount} -> ${data.entries.length}`;
-				logger.error(msg, LOG_CONTEXT);
-				captureException(new Error(msg), {
-					operation: 'history:shrinkGuard',
-					sessionId,
-					priorCount,
-					newCount: data.entries.length,
-				});
-				return;
-			}
-
-			// Update projectPath if it changed
-			data.projectPath = projectPath;
-
-			try {
-				await atomicWriteJson(filePath, data);
+				// O_APPEND: the kernel seeks to EOF as part of the write, so two
+				// processes (app + maestro-cli) appending at once cannot overwrite
+				// each other's bytes. There is no read step here, which is what
+				// removes the cross-process lost-update race the old
+				// read-modify-write had.
+				await fsp.appendFile(filePath, serializeHistoryEntryLine(record), 'utf-8');
 				logger.debug(`Added history entry for session ${sessionId}`, LOG_CONTEXT);
 			} catch (error) {
 				logger.error(`Failed to write history for session ${sessionId}: ${error}`, LOG_CONTEXT);
 				captureException(error, { operation: 'history:write', sessionId });
+				return;
 			}
+
+			await this.maybeRotate(sessionId, limit);
 		});
+	}
+
+	/**
+	 * Ensure a JSONL file exists for this session, migrating a legacy `.json`
+	 * first if one is present. Cheap on the steady-state path (one `access`).
+	 */
+	private async ensureJsonlFile(sessionId: string): Promise<void> {
+		if (await pathExists(this.getSessionFilePath(sessionId))) return;
+		try {
+			await this.migrateSessionToJsonl(sessionId);
+		} catch (error) {
+			logger.warn(
+				`Failed to migrate history for session ${sessionId} before append: ${error}`,
+				LOG_CONTEXT
+			);
+			captureException(error, { operation: 'history:migrateJsonl', sessionId });
+		}
+	}
+
+	/**
+	 * Trim a session's file back to `limit`, but only every
+	 * `ROTATION_CHECK_APPENDS` appends.
+	 *
+	 * Must be called from inside the session's write-queue slot: it reads the
+	 * whole file and replaces it, so an append landing in between would be lost.
+	 */
+	private async maybeRotate(sessionId: string, limit: number): Promise<void> {
+		// The first append of an app run always checks, so a cap the user just
+		// LOWERED takes effect on the next entry instead of up to 500 later.
+		const prior = this.appendsSinceRotationCheck.get(sessionId);
+		const sinceCheck = (prior ?? 0) + 1;
+		if (prior !== undefined && sinceCheck < ROTATION_CHECK_APPENDS) {
+			this.appendsSinceRotationCheck.set(sessionId, sinceCheck);
+			return;
+		}
+		this.appendsSinceRotationCheck.set(sessionId, 0);
+
+		const filePath = this.getSessionFilePath(sessionId);
+		try {
+			const raw = await fsp.readFile(filePath, 'utf-8');
+			const { entries } = parseHistoryJsonl(stripJsonBom(raw));
+			const trimmed = trimHistoryEntriesToLimit(entries, limit);
+			if (trimmed.length === entries.length) return;
+
+			// Shrink tripwire, carried over from the old read-modify-write path:
+			// rotation may only ever land ON the cap. Anything smaller means the
+			// limit or the parse went wrong, and silently discarding the user's
+			// memory is the exact failure this guard exists to prevent.
+			if (trimmed.length < Math.min(entries.length, limit)) {
+				const msg = `Refusing history rotation for session ${sessionId}: ${entries.length} -> ${trimmed.length} (limit ${limit})`;
+				logger.error(msg, LOG_CONTEXT);
+				captureException(new Error(msg), {
+					operation: 'history:shrinkGuard',
+					sessionId,
+					priorCount: entries.length,
+					newCount: trimmed.length,
+				});
+				return;
+			}
+
+			await atomicWriteFile(filePath, trimmed.map(serializeHistoryEntryLine).join(''));
+			logger.debug(
+				`Rotated history for session ${sessionId}: ${entries.length} -> ${trimmed.length}`,
+				LOG_CONTEXT
+			);
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+			logger.warn(`Failed to rotate history for session ${sessionId}: ${error}`, LOG_CONTEXT);
+			captureException(error, { operation: 'history:rotate', sessionId });
+		}
 	}
 
 	/**
@@ -463,41 +627,9 @@ export class HistoryManager {
 	 * Delete a specific entry from a session's history
 	 */
 	async deleteEntry(sessionId: string, entryId: string): Promise<boolean> {
-		const filePath = this.getSessionFilePath(sessionId);
-
-		return this.writeQueue.enqueue(sessionId, async () => {
-			let raw: string;
-			try {
-				raw = await fsp.readFile(filePath, 'utf-8');
-			} catch (error) {
-				const code = (error as NodeJS.ErrnoException).code;
-				if (code === 'ENOENT') return false;
-				return false;
-			}
-
-			try {
-				const data = parseHistoryFileData(raw).data;
-				const originalLength = data.entries.length;
-				data.entries = data.entries.filter((e) => e.id !== entryId);
-
-				if (data.entries.length === originalLength) {
-					return false; // Entry not found
-				}
-
-				try {
-					await atomicWriteJson(filePath, data);
-					return true;
-				} catch (writeError) {
-					logger.error(
-						`Failed to write history after delete for session ${sessionId}: ${writeError}`,
-						LOG_CONTEXT
-					);
-					captureException(writeError, { operation: 'history:deleteWrite', sessionId, entryId });
-					return false;
-				}
-			} catch {
-				return false;
-			}
+		return this.rewriteEntries(sessionId, 'delete', entryId, (entries) => {
+			const remaining = entries.filter((e) => e.id !== entryId);
+			return remaining.length === entries.length ? null : remaining;
 		});
 	}
 
@@ -509,39 +641,51 @@ export class HistoryManager {
 		entryId: string,
 		updates: Partial<HistoryEntry>
 	): Promise<boolean> {
-		const filePath = this.getSessionFilePath(sessionId);
+		return this.rewriteEntries(sessionId, 'update', entryId, (entries) => {
+			const index = entries.findIndex((e) => e.id === entryId);
+			if (index === -1) return null;
+			const next = [...entries];
+			next[index] = { ...next[index], ...updates };
+			return next;
+		});
+	}
 
+	/**
+	 * Read-modify-rewrite a session's JSONL file under its write-queue slot.
+	 *
+	 * Deletes and edits are rare and user-initiated, so they can afford the full
+	 * rewrite that appends deliberately avoid. `mutate` returns null to mean
+	 * "nothing matched", which skips the write entirely.
+	 */
+	private async rewriteEntries(
+		sessionId: string,
+		operation: 'delete' | 'update',
+		entryId: string,
+		mutate: (entries: HistoryEntry[]) => HistoryEntry[] | null
+	): Promise<boolean> {
 		return this.writeQueue.enqueue(sessionId, async () => {
-			let raw: string;
-			try {
-				raw = await fsp.readFile(filePath, 'utf-8');
-			} catch (error) {
-				const code = (error as NodeJS.ErrnoException).code;
-				if (code === 'ENOENT') return false;
-				return false;
-			}
+			const entries = await this.readEntriesInFileOrder(sessionId);
+			if (entries.length === 0) return false;
+
+			const next = mutate(entries);
+			if (next === null) return false;
 
 			try {
-				const data = parseHistoryFileData(raw).data;
-				const index = data.entries.findIndex((e) => e.id === entryId);
-
-				if (index === -1) {
-					return false;
-				}
-
-				data.entries[index] = { ...data.entries[index], ...updates };
-				try {
-					await atomicWriteJson(filePath, data);
-					return true;
-				} catch (writeError) {
-					logger.error(
-						`Failed to write history after update for session ${sessionId}: ${writeError}`,
-						LOG_CONTEXT
-					);
-					captureException(writeError, { operation: 'history:updateWrite', sessionId, entryId });
-					return false;
-				}
-			} catch {
+				await atomicWriteFile(
+					this.getSessionFilePath(sessionId),
+					next.map(serializeHistoryEntryLine).join('')
+				);
+				return true;
+			} catch (writeError) {
+				logger.error(
+					`Failed to write history after ${operation} for session ${sessionId}: ${writeError}`,
+					LOG_CONTEXT
+				);
+				captureException(writeError, {
+					operation: `history:${operation}Write`,
+					sessionId,
+					entryId,
+				});
 				return false;
 			}
 		});
@@ -551,29 +695,45 @@ export class HistoryManager {
 	 * Clear all history for a session
 	 */
 	async clearSession(sessionId: string): Promise<void> {
-		const filePath = this.getSessionFilePath(sessionId);
 		// Serialize against queued mutations so the unlink can't land between a
-		// pending add's read and write (which would resurrect the file).
+		// pending append and its rotation check (which would resurrect the file).
 		await this.writeQueue.enqueue(sessionId, async () => {
-			try {
-				await fsp.unlink(filePath);
-				logger.info(`Cleared history for session ${sessionId}`, LOG_CONTEXT);
-			} catch (error) {
-				const code = (error as NodeJS.ErrnoException).code;
-				if (code === 'ENOENT') return; // Already gone is fine
-				logger.error(`Failed to clear history for session ${sessionId}: ${error}`, LOG_CONTEXT);
-				captureException(error, { operation: 'history:clear', sessionId });
+			this.appendsSinceRotationCheck.delete(sessionId);
+			// Remove the legacy file too, or the next read would "migrate" the
+			// history the user just cleared back into place.
+			const paths = [this.getSessionFilePath(sessionId), this.getLegacySessionFilePath(sessionId)];
+			for (const filePath of paths) {
+				try {
+					await fsp.unlink(filePath);
+				} catch (error) {
+					const code = (error as NodeJS.ErrnoException).code;
+					if (code === 'ENOENT') continue; // Already gone is fine
+					logger.error(`Failed to clear history for session ${sessionId}: ${error}`, LOG_CONTEXT);
+					captureException(error, { operation: 'history:clear', sessionId });
+				}
 			}
+			logger.info(`Cleared history for session ${sessionId}`, LOG_CONTEXT);
 		});
 	}
 
 	/**
-	 * List all sessions that have history files
+	 * List all sessions that have history files.
+	 *
+	 * Covers both formats and de-duplicates, so a session mid-migration (JSONL
+	 * written, legacy not yet retired) is not reported twice.
 	 */
 	async listSessionsWithHistory(): Promise<string[]> {
 		try {
 			const files = await fsp.readdir(this.historyDir);
-			return files.filter((f) => f.endsWith('.json')).map((f) => f.replace('.json', ''));
+			const sessionIds = new Set<string>();
+			for (const file of files) {
+				if (file.endsWith(HISTORY_JSONL_EXT)) {
+					sessionIds.add(file.slice(0, -HISTORY_JSONL_EXT.length));
+				} else if (file.endsWith(HISTORY_LEGACY_JSON_EXT)) {
+					sessionIds.add(file.slice(0, -HISTORY_LEGACY_JSON_EXT.length));
+				}
+			}
+			return Array.from(sessionIds);
 		} catch (error) {
 			const code = (error as NodeJS.ErrnoException).code;
 			if (code === 'ENOENT') return [];
@@ -583,10 +743,13 @@ export class HistoryManager {
 
 	/**
 	 * Get the file path for a session's history (for passing to AI as context).
-	 * Returns the path if the file exists, null otherwise.
+	 * Returns the path if the file exists, null otherwise. Migrates a legacy
+	 * session first so the caller always receives a JSONL path.
 	 */
 	async getHistoryFilePath(sessionId: string): Promise<string | null> {
 		const filePath = this.getSessionFilePath(sessionId);
+		if (await pathExists(filePath)) return filePath;
+		await this.ensureJsonlFile(sessionId);
 		return (await pathExists(filePath)) ? filePath : null;
 	}
 
@@ -659,6 +822,17 @@ export class HistoryManager {
 	/**
 	 * Update sessionName for all entries matching a given agentSessionId.
 	 * This is used when a tab is renamed to retroactively update past history entries.
+	 *
+	 * BEST EFFORT, deliberately. Relabelling old entries is a nicety over the
+	 * authoritative name the provider's own session metadata holds, so a session
+	 * whose file cannot be read or written is logged and skipped rather than
+	 * failing the whole rename. Two consequences follow for callers: the returned
+	 * count is the number of entries actually REWRITTEN, so a tab with no history
+	 * yet (its `agentSessionId` is stamped at the start of a turn, while the entry
+	 * carrying it is written at the end) and a tab already carrying this name both
+	 * return 0; and a partial run still returns a nonzero count. Do NOT read the
+	 * count as "the rename persisted" - it answers only "how many old labels
+	 * changed".
 	 */
 	async updateSessionNameByClaudeSessionId(
 		agentSessionId: string,
@@ -672,47 +846,28 @@ export class HistoryManager {
 		// file. Different sessions still proceed sequentially here (the outer
 		// loop awaits each), which is fine for this infrequent rename path.
 		for (const sessionId of sessions) {
-			const filePath = this.getSessionFilePath(sessionId);
 			await this.writeQueue.enqueue(sessionId, async () => {
-				let raw: string;
 				try {
-					raw = await fsp.readFile(filePath, 'utf-8');
-				} catch (error) {
-					const code = (error as NodeJS.ErrnoException).code;
-					if (code === 'ENOENT') return; // file gone since listing - skip
-					logger.warn(`Failed to read session ${sessionId}: ${error}`, LOG_CONTEXT);
-					return;
-				}
-
-				try {
-					const { data, recovered } = parseHistoryFileData(raw);
-					let modified = recovered;
+					const entries = await this.readEntriesInFileOrder(sessionId);
 					let perSessionUpdates = 0;
 
-					if (recovered) {
-						logger.warn(
-							`Recovered concatenated history JSON for session ${sessionId}; rewriting clean file`,
-							LOG_CONTEXT
-						);
-					}
-
-					for (const entry of data.entries) {
+					for (const entry of entries) {
 						if (entry.agentSessionId === agentSessionId && entry.sessionName !== sessionName) {
 							entry.sessionName = sessionName;
-							modified = true;
 							perSessionUpdates++;
 						}
 					}
 
-					if (modified) {
-						await atomicWriteJson(filePath, data);
+					if (perSessionUpdates > 0) {
+						await atomicWriteFile(
+							this.getSessionFilePath(sessionId),
+							entries.map(serializeHistoryEntryLine).join('')
+						);
 						updatedCount += perSessionUpdates;
-						if (perSessionUpdates > 0) {
-							logger.debug(
-								`Updated ${perSessionUpdates} entries for agentSessionId ${agentSessionId} in session ${sessionId}`,
-								LOG_CONTEXT
-							);
-						}
+						logger.debug(
+							`Updated ${perSessionUpdates} entries for agentSessionId ${agentSessionId} in session ${sessionId}`,
+							LOG_CONTEXT
+						);
 					}
 				} catch (error) {
 					logger.warn(
@@ -776,8 +931,10 @@ export class HistoryManager {
 			fs.mkdirSync(this.historyDir, { recursive: true });
 
 			this.watcher = fs.watch(this.historyDir, (_eventType, filename) => {
-				if (filename?.endsWith('.json')) {
-					const sessionId = filename.replace('.json', '');
+				if (filename?.endsWith(HISTORY_JSONL_EXT) || filename?.endsWith(HISTORY_LEGACY_JSON_EXT)) {
+					const sessionId = filename.endsWith(HISTORY_JSONL_EXT)
+						? filename.slice(0, -HISTORY_JSONL_EXT.length)
+						: filename.slice(0, -HISTORY_LEGACY_JSON_EXT.length);
 					logger.debug(`History file changed: ${filename}`, LOG_CONTEXT);
 					onExternalChange(sessionId);
 				}

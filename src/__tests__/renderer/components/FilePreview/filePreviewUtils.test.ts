@@ -39,6 +39,19 @@ describe('filePreviewUtils', () => {
 			expect(getLanguageFromFilename('main.js')).toBe('javascript');
 		});
 
+		// ESM/CJS variants are ordinary JS and TS. They used to fall through to
+		// 'text', which silently disabled syntax highlighting on every
+		// `.mjs` script and `.cjs` config in the tree.
+		it('returns javascript for .mjs and .cjs files', () => {
+			expect(getLanguageFromFilename('script.mjs')).toBe('javascript');
+			expect(getLanguageFromFilename('tailwind.config.cjs')).toBe('javascript');
+		});
+
+		it('returns typescript for .mts and .cts files', () => {
+			expect(getLanguageFromFilename('mod.mts')).toBe('typescript');
+			expect(getLanguageFromFilename('mod.cts')).toBe('typescript');
+		});
+
 		it('returns markdown for .md files', () => {
 			expect(getLanguageFromFilename('README.md')).toBe('markdown');
 		});

@@ -324,7 +324,7 @@ export const AgentEfficiencyChart = memo(function AgentEfficiencyChart({
 									<span className="font-medium" style={{ color: theme.colors.textMain }}>
 										{formatDuration(agent.avgDuration)}
 									</span>
-									<span className="text-[10px] opacity-70">{agent.totalQueries} queries</span>
+									<span className="text-2xs opacity-70">{agent.totalQueries} queries</span>
 								</div>
 							</div>
 						);

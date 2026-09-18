@@ -16,7 +16,31 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
+import Fastify, { type FastifyInstance } from 'fastify';
 import { StaticRoutes } from '../../../../main/web-server/routes/staticRoutes';
+import { WEB_LOGIN_PATHS } from '../../../../shared/webLogin';
+
+// Web Login. The policy itself is exercised in its own suite; here it is a
+// switch, so every pre-existing test keeps running with the gate off and the
+// gate tests below can turn it on without a users store or an Encore flag.
+const { webLogin } = vi.hoisted(() => ({
+	webLogin: {
+		required: false,
+		cli: false,
+		user: undefined as { id: string; username: string; displayName: string } | undefined,
+	},
+}));
+
+vi.mock('../../../../main/web-server/auth/web-login-policy', () => ({
+	resolveWebRequestAuth: () => ({
+		required: webLogin.required,
+		user: webLogin.user,
+		sessionId: webLogin.user ? 'sid' : undefined,
+		cli: webLogin.cli,
+	}),
+	isWebRequestAuthorized: (auth: { required: boolean; cli: boolean; user?: unknown }) =>
+		!auth.required || auth.cli || auth.user !== undefined,
+}));
 
 // Mock the logger
 vi.mock('../../../../main/utils/logger', () => ({
@@ -51,6 +75,7 @@ function createMockReply() {
 		code: vi.fn().mockReturnThis(),
 		send: vi.fn().mockReturnThis(),
 		type: vi.fn().mockReturnThis(),
+		header: vi.fn().mockReturnThis(),
 		redirect: vi.fn().mockReturnThis(),
 	};
 	return reply;
@@ -67,6 +92,9 @@ describe('StaticRoutes', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		webLogin.required = false;
+		webLogin.cli = false;
+		webLogin.user = undefined;
 		staticRoutes = new StaticRoutes(securityToken, webAssetsPath, webDesktopPath, concertoToken);
 		mockFastify = createMockFastify();
 		staticRoutes.registerRoutes(mockFastify as any);
@@ -74,14 +102,17 @@ describe('StaticRoutes', () => {
 
 	describe('Route Registration', () => {
 		it('should register all static routes', () => {
-			// 10 routes: /, /health, manifest.json, sw.js, token root, token root/,
-			// /desktop, /desktop/, session/:id, /:token
-			expect(mockFastify.get).toHaveBeenCalledTimes(10);
+			// 11 routes: /, /health, /og.png, manifest.json, sw.js, token root,
+			// token root/, /desktop, /desktop/, session/:id, /:token
+			expect(mockFastify.get).toHaveBeenCalledTimes(11);
 		});
 
 		it('should register routes with correct paths', () => {
 			expect(mockFastify.routes.has('GET:/')).toBe(true);
 			expect(mockFastify.routes.has('GET:/health')).toBe(true);
+			// The social card is deliberately NOT under the token prefix, so that
+			// the security token stays out of an image URL chat clients cache.
+			expect(mockFastify.routes.has('GET:/og.png')).toBe(true);
 			expect(mockFastify.routes.has(`GET:/${securityToken}/manifest.json`)).toBe(true);
 			expect(mockFastify.routes.has(`GET:/${securityToken}/sw.js`)).toBe(true);
 			expect(mockFastify.routes.has(`GET:/${securityToken}`)).toBe(true);
@@ -99,7 +130,7 @@ describe('StaticRoutes', () => {
 			const reply = createMockReply();
 			await route!.handler({}, reply);
 
-			expect(reply.redirect).toHaveBeenCalledWith(302, 'https://runmaestro.ai');
+			expect(reply.redirect).toHaveBeenCalledWith('https://runmaestro.ai', 302);
 		});
 	});
 
@@ -160,7 +191,7 @@ describe('StaticRoutes', () => {
 			const reply = createMockReply();
 			await route!.handler({ params: { token: 'invalid-token' } }, reply);
 
-			expect(reply.redirect).toHaveBeenCalledWith(302, 'https://runmaestro.ai');
+			expect(reply.redirect).toHaveBeenCalledWith('https://runmaestro.ai', 302);
 		});
 	});
 
@@ -230,6 +261,11 @@ describe('StaticRoutes', () => {
 				);
 				expect(firstReply.send).toHaveBeenCalledWith(
 					expect.stringContaining(
+						`<link rel="icon" href="/${securityToken}/icons/icon-192x192.png" />`
+					)
+				);
+				expect(firstReply.send).toHaveBeenCalledWith(
+					expect.stringContaining(
 						`<link rel="apple-touch-icon" href="/${securityToken}/icons/icon-192x192.png" />`
 					)
 				);
@@ -286,6 +322,230 @@ describe('StaticRoutes', () => {
 			} finally {
 				rmSync(tempRoot, { recursive: true, force: true });
 			}
+		});
+	});
+
+	describe('Social preview card', () => {
+		/** Serve the desktop index from a throwaway bundle and return the HTML. */
+		async function serveIndexWith(
+			request: unknown,
+			assetsPath: string | null = webAssetsPath
+		): Promise<string> {
+			const tempRoot = mkdtempSync(path.join(tmpdir(), 'maestro-og-'));
+			const tempDesktopPath = path.join(tempRoot, 'web-desktop');
+			mkdirSync(tempDesktopPath, { recursive: true });
+			try {
+				writeFileSync(
+					path.join(tempDesktopPath, 'index.html'),
+					'<!doctype html><html><head><title>Maestro</title></head><body></body></html>',
+					'utf8'
+				);
+				const routes = new StaticRoutes(securityToken, assetsPath, tempDesktopPath, concertoToken);
+				const fastify = createMockFastify();
+				routes.registerRoutes(fastify as any);
+
+				const reply = createMockReply();
+				await fastify.getRoute('GET', `/${securityToken}`)!.handler(request, reply);
+				return reply.send.mock.calls[0][0] as string;
+			} finally {
+				rmSync(tempRoot, { recursive: true, force: true });
+			}
+		}
+
+		it('injects an absolute og:image built from the request host', async () => {
+			// A crawler resolves og:image against nothing, so the URL has to name
+			// the host the link was actually shared as - which only the request
+			// knows, since one server answers on a LAN IP, on localhost, and
+			// through a tunnel.
+			const html = await serveIndexWith({ headers: { host: '192.168.1.39:8420' } });
+
+			expect(html).toContain('<meta property="og:image" content="http://192.168.1.39:8420/og.png"');
+			expect(html).toContain('<meta property="og:title" content="Maestro" />');
+			expect(html).toContain('<meta name="twitter:card" content="summary_large_image" />');
+		});
+
+		it('keeps the security token out of the card', async () => {
+			// Chat clients cache and re-host preview images, so the image URL is
+			// the one place the token must not appear.
+			const html = await serveIndexWith({ headers: { host: '192.168.1.39:8420' } });
+			const metaTags = html.match(/<meta [^>]*>/g) ?? [];
+
+			expect(metaTags.length).toBeGreaterThan(0);
+			expect(metaTags.join('')).not.toContain(securityToken);
+		});
+
+		it('serves the page without a card when the request names no host', async () => {
+			// Degrades to the plain title rather than emitting a card pointing at
+			// a guessed origin. The page itself must still load.
+			const html = await serveIndexWith({});
+
+			expect(html).not.toContain('og:image');
+			expect(html).toContain('__MAESTRO_CONFIG__');
+			expect(html).toContain('<title>Maestro</title>');
+		});
+
+		it('returns 404 for /og.png when the web assets are not built', async () => {
+			const routes = new StaticRoutes(securityToken, null, webDesktopPath, concertoToken);
+			const fastify = createMockFastify();
+			routes.registerRoutes(fastify as any);
+
+			const reply = createMockReply();
+			await fastify.getRoute('GET', '/og.png')!.handler({}, reply);
+
+			expect(reply.code).toHaveBeenCalledWith(404);
+		});
+
+		it('answers /og.png rather than the invalid-token redirect', async () => {
+			// The one property the mock Fastify above cannot express. `/og.png`
+			// and `/:token` both match a single-segment path, and if the
+			// parametric route ever won, every crawler asking for the card would
+			// be redirected to the marketing site and the preview would render
+			// with a hole in it. Fastify resolves static ahead of parametric, so
+			// this asserts that ordering against the real router.
+			const tempRoot = mkdtempSync(path.join(tmpdir(), 'maestro-og-priority-'));
+			let server: FastifyInstance | null = null;
+			try {
+				writeFileSync(path.join(tempRoot, 'og-image.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+
+				server = Fastify();
+				new StaticRoutes(securityToken, tempRoot, webDesktopPath, concertoToken).registerRoutes(
+					server
+				);
+				await server.ready();
+
+				const card = await server.inject({ method: 'GET', url: '/og.png' });
+				expect(card.statusCode).toBe(200);
+				expect(card.headers['content-type']).toContain('image/png');
+
+				// The catch-all still owns everything else that looks like a token.
+				const bogus = await server.inject({ method: 'GET', url: '/not-the-token' });
+				expect(bogus.statusCode).toBe(302);
+			} finally {
+				await server?.close();
+				rmSync(tempRoot, { recursive: true, force: true });
+			}
+		});
+
+		it('serves the card as a cacheable PNG', async () => {
+			const tempRoot = mkdtempSync(path.join(tmpdir(), 'maestro-og-asset-'));
+			mkdirSync(tempRoot, { recursive: true });
+			try {
+				const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+				writeFileSync(path.join(tempRoot, 'og-image.png'), bytes);
+
+				const routes = new StaticRoutes(securityToken, tempRoot, webDesktopPath, concertoToken);
+				const fastify = createMockFastify();
+				routes.registerRoutes(fastify as any);
+
+				const reply = createMockReply();
+				await fastify.getRoute('GET', '/og.png')!.handler({}, reply);
+
+				expect(reply.type).toHaveBeenCalledWith('image/png');
+				expect(reply.header).toHaveBeenCalledWith(
+					'Cache-Control',
+					expect.stringContaining('max-age')
+				);
+				// Sent as bytes, not through the utf-8 string cache - decoding a PNG
+				// as text corrupts it.
+				const sent = reply.send.mock.calls[0][0];
+				expect(Buffer.isBuffer(sent)).toBe(true);
+				expect(sent.equals(bytes)).toBe(true);
+			} finally {
+				rmSync(tempRoot, { recursive: true, force: true });
+			}
+		});
+	});
+	/**
+	 * The Web Login gate on the HTML surface.
+	 *
+	 * The index is a DOCUMENT request, so an unauthorized one is redirected to
+	 * the form rather than answered 401 - a JSON error body renders as a wall of
+	 * text with nothing to click, which is why `web-login-hook.ts` deliberately
+	 * leaves these routes to handle themselves.
+	 */
+	describe('Web Login gate', () => {
+		/** Serve the index from a throwaway bundle and return the mock reply. */
+		function serveIndex(request: unknown = { headers: {} }) {
+			const tempRoot = mkdtempSync(path.join(tmpdir(), 'maestro-login-gate-'));
+			const tempDesktopPath = path.join(tempRoot, 'web-desktop');
+			mkdirSync(tempDesktopPath, { recursive: true });
+			try {
+				writeFileSync(
+					path.join(tempDesktopPath, 'index.html'),
+					'<!doctype html><html><head><title>Maestro</title></head><body></body></html>',
+					'utf8'
+				);
+				const routes = new StaticRoutes(
+					securityToken,
+					webAssetsPath,
+					tempDesktopPath,
+					concertoToken
+				);
+				const fastify = createMockFastify();
+				routes.registerRoutes(fastify as any);
+				const reply = createMockReply();
+				void fastify
+					.getRoute('GET', `/${securityToken}/session/:sessionId`)!
+					.handler(request, reply);
+				return reply;
+			} finally {
+				rmSync(tempRoot, { recursive: true, force: true });
+			}
+		}
+
+		it('redirects an unauthorized document request to the login page, carrying the URL it asked for', () => {
+			webLogin.required = true;
+			const asked = `/${securityToken}/session/abc`;
+
+			const reply = serveIndex({ headers: {}, url: asked });
+
+			expect(reply.redirect).toHaveBeenCalledWith(
+				`/${securityToken}/${WEB_LOGIN_PATHS.page}?next=${encodeURIComponent(asked)}`,
+				302
+			);
+			// The bundle is what the gate protects: it must not be served at all.
+			expect(reply.send).not.toHaveBeenCalled();
+		});
+
+		it('serves the bundle to maestro-cli with no session', () => {
+			webLogin.required = true;
+			webLogin.cli = true;
+
+			const reply = serveIndex();
+
+			expect(reply.redirect).not.toHaveBeenCalled();
+			expect(reply.send).toHaveBeenCalled();
+		});
+
+		it('injects who the page was served to so the renderer can draw it', () => {
+			webLogin.required = true;
+			webLogin.user = { id: 'u1', username: 'ada', displayName: 'Ada L' };
+
+			const html = serveIndex().send.mock.calls[0][0] as string;
+
+			expect(html).toContain('webLoginRequired: true');
+			expect(html).toContain('"username":"ada"');
+			expect(html).toContain('"displayName":"Ada L"');
+		});
+
+		it('reports a null user and a false flag when Web Login is off', () => {
+			const html = serveIndex().send.mock.calls[0][0] as string;
+
+			expect(html).toContain('webLoginRequired: false');
+			expect(html).toContain('webLoginUser: null');
+		});
+
+		it('escapes a display name that would close the config script element', () => {
+			// The only value in the injected config a person types. JSON.stringify
+			// does not escape `<`, so without the guard this ends the <script> and
+			// the rest lands in the document as markup.
+			webLogin.required = true;
+			webLogin.user = { id: 'u1', username: 'ada', displayName: '</script><img src=x>' };
+
+			const html = serveIndex().send.mock.calls[0][0] as string;
+
+			expect(html).not.toContain('</script><img src=x>');
+			expect(html).toContain('\\u003c/script>');
 		});
 	});
 });

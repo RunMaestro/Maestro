@@ -53,6 +53,17 @@ export function createShellApi() {
 		copyTextToClipboard: (text: string) => ipcRenderer.invoke('clipboard:writeText', text),
 		copyImageToClipboard: (dataUrl: string) => ipcRenderer.invoke('clipboard:writeImage', dataUrl),
 		readImageFromClipboard: (): Promise<string | null> => ipcRenderer.invoke('clipboard:readImage'),
+		/**
+		 * Screenshot this window as a PNG data URL. `rect` (CSS pixels, relative
+		 * to the viewport) limits the shot to one region. Resolves to null when
+		 * there is nothing to capture.
+		 */
+		capturePage: (rect?: {
+			x: number;
+			y: number;
+			width: number;
+			height: number;
+		}): Promise<string | null> => ipcRenderer.invoke('window:capturePage', rect),
 	};
 }
 
@@ -108,10 +119,13 @@ export function createPowerApi() {
 		setEnabled: (enabled: boolean): Promise<void> =>
 			ipcRenderer.invoke('power:setEnabled', enabled),
 		isEnabled: (): Promise<boolean> => ipcRenderer.invoke('power:isEnabled'),
+		setKeepDisplayAwake: (keepAwake: boolean): Promise<void> =>
+			ipcRenderer.invoke('power:setKeepDisplayAwake', keepAwake),
 		getStatus: (): Promise<{
 			enabled: boolean;
 			blocking: boolean;
 			reasons: string[];
+			keepDisplayAwake: boolean;
 			platform: 'darwin' | 'win32' | 'linux';
 		}> => ipcRenderer.invoke('power:getStatus'),
 		addReason: (reason: string): Promise<void> => ipcRenderer.invoke('power:addReason', reason),

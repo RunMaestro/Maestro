@@ -43,7 +43,7 @@ export function FileTreeTruncatedBanner({
 			/>
 			<div className="flex-1 min-w-0">
 				<div className="text-xs font-medium">Unable to load all files into the file panel.</div>
-				<div className="text-[11px] opacity-70 mt-0.5">
+				<div className="text-xs-plus opacity-70 mt-0.5">
 					Scan stopped at {capLabel} entries to protect memory. Adjust the cap in Settings → Display
 					→ File Indexing.
 				</div>
@@ -52,7 +52,7 @@ export function FileTreeTruncatedBanner({
 						type="button"
 						onClick={onLoadMore}
 						disabled={isRefreshing}
-						className="px-2 py-0.5 rounded text-[11px] font-medium transition-colors disabled:opacity-50"
+						className="px-2 py-0.5 rounded text-xs-plus font-medium transition-colors disabled:opacity-50"
 						style={{
 							backgroundColor: theme.colors.accent,
 							color: theme.colors.bgMain,
@@ -64,7 +64,7 @@ export function FileTreeTruncatedBanner({
 						type="button"
 						onClick={onLoadAll}
 						disabled={isRefreshing}
-						className="px-2 py-0.5 rounded text-[11px] font-medium border transition-colors disabled:opacity-50"
+						className="px-2 py-0.5 rounded text-xs-plus font-medium border transition-colors disabled:opacity-50"
 						style={{
 							borderColor: theme.colors.border,
 							color: theme.colors.textMain,

@@ -65,6 +65,19 @@ export interface AuthOutage {
 	blocked: BlockedAgent[];
 	/** True once any blocked agent was a Cue pipeline run, not a chat turn. */
 	fromPipeline: boolean;
+	/**
+	 * Who raised this prompt.
+	 *
+	 * `'failure'` is the credentials-expired path: agents are stopped, their
+	 * queues are held, and the dialog is a recovery flow. `'user'` is a login the
+	 * user asked for from the command palette with nothing broken - same shell,
+	 * same resume machinery, but the copy must not claim agents are blocked.
+	 *
+	 * Upgrades to `'failure'` and never back: a real failure joining a
+	 * user-started login does block agents, and its roster has to be described
+	 * honestly.
+	 */
+	initiatedBy: 'failure' | 'user';
 }
 
 interface AuthOutageState {
@@ -174,11 +187,16 @@ export function reportAuthFailure({
 		// Already prompting for this provider. Joining is not a no-op: this agent
 		// has to be on the roster or its queued work is never resumed.
 		const blocked = withBlockedTab(existing.blocked, sessionId, tabId);
-		if (blocked !== existing.blocked) {
+		if (blocked !== existing.blocked || existing.initiatedBy === 'user') {
 			useAuthOutageStore.getState().setOutage(key, {
 				...existing,
 				blocked,
+				// A failure landing on a login the user started by hand turns it into
+				// a recovery flow, and the message is the first real evidence of what
+				// went wrong (a manual start has none).
+				message: existing.message || message,
 				fromPipeline: existing.fromPipeline || !!fromPipeline,
+				initiatedBy: 'failure',
 			});
 			logger.info('[auth-outage] Agent joined an existing provider outage', undefined, {
 				providerKey: key,
@@ -201,6 +219,7 @@ export function reportAuthFailure({
 		startedAt: Date.now(),
 		blocked: withBlockedTab([], sessionId, tabId),
 		fromPipeline: !!fromPipeline,
+		initiatedBy: 'failure',
 	});
 	logger.info('[auth-outage] Provider credentials expired', undefined, {
 		providerKey: key,
@@ -208,6 +227,64 @@ export function reportAuthFailure({
 		fromPipeline: !!fromPipeline,
 	});
 	return { opened: true, providerKey: key };
+}
+
+/**
+ * Start a re-authentication the user asked for, with nothing broken yet.
+ *
+ * Deliberately the same outage record the failure path builds, so the login
+ * shell, the SSH resolution, the environment disclosure, and the resume are one
+ * implementation rather than two that drift. The differences are all data: the
+ * roster carries no lost tabs (there are none to replay) and there is no
+ * provider error text to quote.
+ *
+ * Joining an outage that already exists is the point when credentials expire
+ * WHILE the user is reaching for this - they get the recovery prompt with its
+ * real roster, not a second dialog describing the same login.
+ *
+ * @returns the provider key to open the dialog on, or null for an agent that has
+ *   no login flow at all (the Terminal agent) or an id that no longer exists.
+ */
+export function startManualReauth(sessionId: string): { providerKey: ProviderAuthKey | null } {
+	const session = selectSessionById(sessionId)(useSessionStore.getState());
+	if (!session) {
+		logger.warn('[auth-outage] Ignoring manual re-auth for unknown agent', undefined, {
+			sessionId,
+		});
+		return { providerKey: null };
+	}
+
+	const key = providerKeyForSession(session);
+	const existing = useAuthOutageStore.getState().outages[key];
+	if (existing) {
+		// Put this agent on the roster if it is not already there: the user is
+		// signing in from it, and resume has to cover it.
+		const blocked = withBlockedTab(existing.blocked, sessionId);
+		if (blocked !== existing.blocked) {
+			useAuthOutageStore.getState().setOutage(key, { ...existing, blocked });
+		}
+		return { providerKey: key };
+	}
+
+	const sshRemoteId = session.sessionSshRemoteConfig?.enabled
+		? session.sessionSshRemoteConfig.remoteId
+		: session.sshRemoteId;
+
+	useAuthOutageStore.getState().setOutage(key, {
+		providerKey: key,
+		toolType: session.toolType,
+		sshRemoteId: sshRemoteId ?? undefined,
+		message: '',
+		startedAt: Date.now(),
+		blocked: [{ sessionId, tabIds: [] }],
+		fromPipeline: false,
+		initiatedBy: 'user',
+	});
+	logger.info('[auth-outage] User started a provider login', undefined, {
+		providerKey: key,
+		sessionId,
+	});
+	return { providerKey: key };
 }
 
 /**
@@ -248,12 +325,25 @@ export function resolveAuthOutage(key: ProviderAuthKey, resume: boolean = true):
 		const start = () => {
 			// The agent may have been deleted, or the user may have already dealt
 			// with it by hand while the prompt was open.
-			if (!selectSessionById(sessionId)(useSessionStore.getState())) return;
+			const session = selectSessionById(sessionId)(useSessionStore.getState());
+			if (!session) return;
 
 			// Releases the held execution queue and drops the error banner. Whatever
 			// the user had queued behind the failed turn drains on its own once the
 			// replayed turn exits.
-			useAgentStore.getState().clearAgentError(sessionId);
+			//
+			// Skipped for a healthy agent on a login the USER started: nothing is
+			// held there to release, and clearing forces the session to 'idle',
+			// which would report a turn still running in another tab as finished.
+			// A failure outage always clears - that is the whole point of it, and
+			// an agent whose error was cleared by hand still needs its queue freed.
+			const healthyManualLogin =
+				outage.initiatedBy === 'user' &&
+				!session.agentError &&
+				!session.aiTabs.some((tab) => tab.agentError);
+			if (!healthyManualLogin) {
+				useAgentStore.getState().clearAgentError(sessionId);
+			}
 
 			// Only the tabs that actually died are replayed. Every tab has a dispatch
 			// snapshot, so replaying indiscriminately would resend turns that already

@@ -21,11 +21,11 @@ import { SegmentedControl } from '../../ui/SegmentedControl';
 import { FirstPartyEnableModal } from './FirstPartyEnableModal';
 import {
 	CATEGORY_FILTERS,
-	CATEGORY_LABELS,
 	EXTENSION_SORT_STORAGE_KEY,
 	EXTENSION_SORT_VALUES,
 	SORT_OPTIONS,
 	filterExtensions,
+	filterLabel,
 	sortExtensions,
 	type CategoryFilter,
 	type ExtensionSort,
@@ -144,6 +144,7 @@ export function ExtensionsView({ theme, settingsBodies }: ExtensionsViewProps) {
 			<span data-setting-id="encore-pianola" aria-hidden="true" />
 			<span data-setting-id="encore-concerto" aria-hidden="true" />
 			<span data-setting-id="encore-groups-plus" aria-hidden="true" />
+			<span data-setting-id="encore-web-login" aria-hidden="true" />
 			<div className="flex items-center justify-between gap-3 mb-1">
 				<h3 className="text-sm font-bold" style={{ color: theme.colors.textMain }}>
 					Plugins
@@ -233,7 +234,7 @@ export function ExtensionsView({ theme, settingsBodies }: ExtensionsViewProps) {
 										color: active ? theme.colors.bgMain : theme.colors.textDim,
 									}}
 								>
-									{cat === 'all' ? 'All' : CATEGORY_LABELS[cat]}
+									{filterLabel(cat)}
 								</button>
 							);
 						})}

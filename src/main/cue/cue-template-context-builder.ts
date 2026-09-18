@@ -107,6 +107,11 @@ function buildGitHubContext(event: CueEvent): Record<string, string> {
 		ghBaseBranch: String(event.payload.base_branch ?? ''),
 		ghAssignees: String(event.payload.assignees ?? ''),
 		ghMergedAt: String(event.payload.merged_at ?? ''),
+		// Only github.label events carry these; other GitHub events leave the
+		// variables empty rather than absent so prompts stay substitutable.
+		ghLabel: String(event.payload.label ?? ''),
+		ghLabelActor: String(event.payload.label_actor ?? ''),
+		ghLabeledAt: String(event.payload.labeled_at ?? ''),
 		ghNewComments: formatNewCommentsForTemplate(newComments),
 		ghIsRetrigger: event.payload.is_retrigger === true ? 'true' : 'false',
 		ghRetriggerCount: String(event.payload.retrigger_count ?? '0'),
@@ -115,6 +120,7 @@ function buildGitHubContext(event: CueEvent): Record<string, string> {
 
 enricherRegistry.set('github.pull_request', (event) => buildGitHubContext(event));
 enricherRegistry.set('github.issue', (event) => buildGitHubContext(event));
+enricherRegistry.set('github.label', (event) => buildGitHubContext(event));
 
 /** cli.trigger enricher - adds CLI-specific fields. */
 enricherRegistry.set('cli.trigger', (event) => ({

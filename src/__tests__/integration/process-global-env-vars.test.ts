@@ -373,7 +373,7 @@ describe('Test 2.10: Empty/Undefined Global Vars Handled Gracefully', () => {
 		expect(env.INHERITED_VAR).toBe('inherited');
 	});
 
-	it('should handle empty string values in global vars', () => {
+	it('should drop empty string values in global vars', () => {
 		const globalVars = {
 			EMPTY_VAR: '',
 			NORMAL_VAR: 'value',
@@ -381,8 +381,10 @@ describe('Test 2.10: Empty/Undefined Global Vars Handled Gracefully', () => {
 
 		const env = buildChildProcessEnv(undefined, false, globalVars);
 
-		// Assert: Empty strings are preserved, not filtered
-		expect(env.EMPTY_VAR).toBe('');
+		// Assert: a blank field means "do not set this", so it is never exported.
+		// A set-but-empty variable is worse than an absent one - an agent reading it
+		// as a path gets '' rather than falling back to its own default.
+		expect('EMPTY_VAR' in env).toBe(false);
 		expect(env.NORMAL_VAR).toBe('value');
 	});
 

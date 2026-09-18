@@ -89,7 +89,7 @@ export function PluginPanelSlot({ theme, placement, className }: PluginPanelSlot
 					>
 						<PanelRightOpen className="w-4 h-4 shrink-0" />
 						<span
-							className="text-[10px] whitespace-nowrap rotate-180"
+							className="text-2xs whitespace-nowrap rotate-180"
 							style={{ writingMode: 'vertical-rl' }}
 						>
 							{item.title}
@@ -112,7 +112,7 @@ export function PluginPanelSlot({ theme, placement, className }: PluginPanelSlot
 					key={item.id}
 					type="button"
 					onClick={() => toggleHiddenPluginPanel(item.id)}
-					className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] shrink-0 border-b transition-colors hover:bg-white/5"
+					className="flex items-center gap-1.5 px-2.5 py-1 text-xs-plus shrink-0 border-b transition-colors hover:bg-white/5"
 					style={{ color: theme.colors.textDim, borderColor: theme.colors.border }}
 					title={`Show ${item.title} (from ${item.pluginId})`}
 				>
@@ -130,7 +130,7 @@ export function PluginPanelSlot({ theme, placement, className }: PluginPanelSlot
 						style={{ borderColor: theme.colors.border }}
 					>
 						<span
-							className="truncate text-[11px]"
+							className="truncate text-xs-plus"
 							style={{ color: theme.colors.textMain }}
 							title={item.title}
 						>

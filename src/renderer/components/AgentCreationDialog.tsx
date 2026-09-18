@@ -464,7 +464,7 @@ export function AgentCreationDialog({
 													<span className="font-medium">{agent.name}</span>
 													{agentIsBeta && (
 														<span
-															className="text-[9px] px-1.5 py-0.5 rounded font-bold uppercase"
+															className="text-3xs px-1.5 py-0.5 rounded font-bold uppercase"
 															style={{
 																backgroundColor: theme.colors.warning + '30',
 																color: theme.colors.warning,

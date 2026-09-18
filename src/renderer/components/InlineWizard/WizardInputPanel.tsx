@@ -21,7 +21,7 @@
  * - Escape (idle): Opens exit confirmation dialog
  */
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
 	Terminal,
 	Wand2,
@@ -44,6 +44,7 @@ import {
 } from '../../utils/shortcutFormatter';
 import { useSessionStore } from '../../stores/sessionStore';
 import { closeTab } from '../../utils/tabHelpers';
+import { displayImageSrc } from '../../utils/sessionImageSrc';
 import { useAutosizeTextarea } from '../../hooks/ui/useAutosizeTextarea';
 
 /** Height cap for the wizard composer; past it the textarea scrolls. */
@@ -206,19 +207,25 @@ export const WizardInputPanel = React.memo(function WizardInputPanel({
 		[handleInputKeyDown, isBusy, onStopTurn, handleStopTurn]
 	);
 
-	// Handle exit confirmation. Reached ONLY from the dialog, never straight off a keypress.
-	const handleConfirmExit = useCallback(() => {
-		setShowExitConfirm(false);
-		// A wizard that got its own fresh tab is disposable, so close the tab outright.
-		// `/wizard` also runs IN PLACE though, and then the tab may hold a real
-		// conversation that has nothing to do with the wizard - exit wizard mode and
-		// hand that tab back instead. System logs don't count as a conversation: the
-		// wizard writes its own "Starting wizard..." line.
-		const { setSessions } = useSessionStore.getState();
+	// A wizard that got its own fresh tab is disposable, so exiting closes the tab
+	// outright and the wizard conversation goes with it. `/wizard` also runs IN PLACE
+	// though, and then the tab may hold a real conversation that has nothing to do with
+	// the wizard - exiting hands that tab back instead, keeping the wizard transcript in
+	// it. System logs don't count as a conversation: the wizard writes its own
+	// "Starting wizard..." line. The dialog says which of the two is about to happen.
+	const exitWillCloseTab = useMemo(() => {
 		const activeTabId = session.activeTabId;
 		const hostTab = session.aiTabs.find((t) => t.id === activeTabId);
 		const hostTabHasConversation = (hostTab?.logs ?? []).some((log) => log.source !== 'system');
-		if (activeTabId && session.aiTabs.length > 1 && !hostTabHasConversation) {
+		return !!activeTabId && session.aiTabs.length > 1 && !hostTabHasConversation;
+	}, [session]);
+
+	// Handle exit confirmation. Reached ONLY from the dialog, never straight off a keypress.
+	const handleConfirmExit = useCallback(() => {
+		setShowExitConfirm(false);
+		const { setSessions } = useSessionStore.getState();
+		const activeTabId = session.activeTabId;
+		if (exitWillCloseTab && activeTabId) {
 			setSessions((prev) =>
 				prev.map((s) => {
 					if (s.id !== session.id) return s;
@@ -229,7 +236,7 @@ export const WizardInputPanel = React.memo(function WizardInputPanel({
 			return;
 		}
 		onExitWizard();
-	}, [onExitWizard, session]);
+	}, [onExitWizard, session, exitWillCloseTab]);
 
 	// Handle cancel exit
 	const handleCancelExit = useCallback(() => {
@@ -256,7 +263,7 @@ export const WizardInputPanel = React.memo(function WizardInputPanel({
 								onClick={() => setLightboxImage?.(img, stagedImages, 'staged')}
 							>
 								<img
-									src={img}
+									src={displayImageSrc(img)}
 									alt={`Staged wizard image ${idx + 1}`}
 									className="h-16 rounded border cursor-pointer hover:opacity-80 transition-opacity block"
 									style={{
@@ -384,7 +391,7 @@ export const WizardInputPanel = React.memo(function WizardInputPanel({
 								{!isTerminalMode && onToggleShowThinking && (
 									<button
 										onClick={onToggleShowThinking}
-										className={`flex items-center gap-1 text-[10px] px-2 py-1 rounded hover:bg-white/5 transition-opacity ${
+										className={`flex items-center gap-1 text-2xs px-2 py-1 rounded hover:bg-white/5 transition-opacity ${
 											showThinking ? 'opacity-100' : 'opacity-50 hover:opacity-100'
 										}`}
 										title={
@@ -398,7 +405,7 @@ export const WizardInputPanel = React.memo(function WizardInputPanel({
 								)}
 								<button
 									onClick={() => setEnterToSend(!enterToSend)}
-									className="flex items-center gap-1 text-[10px] opacity-50 hover:opacity-100 px-2 py-1 rounded hover:bg-white/5"
+									className="flex items-center gap-1 text-2xs opacity-50 hover:opacity-100 px-2 py-1 rounded hover:bg-white/5"
 									title={formatEnterToSendTooltip(enterToSend)}
 								>
 									<Keyboard className="w-3 h-3" />
@@ -470,6 +477,7 @@ export const WizardInputPanel = React.memo(function WizardInputPanel({
 			{showExitConfirm && (
 				<WizardExitConfirmDialog
 					theme={theme}
+					willCloseTab={exitWillCloseTab}
 					onConfirm={handleConfirmExit}
 					onCancel={handleCancelExit}
 				/>

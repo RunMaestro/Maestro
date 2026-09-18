@@ -9,6 +9,7 @@ import {
 	jumpToMessageEdge,
 	scrollMessageToTop,
 	isTextInputTarget,
+	isTextEntryTarget,
 } from '../../../renderer/utils/messageScrollNavigation';
 
 /**
@@ -178,5 +179,42 @@ describe('isTextInputTarget', () => {
 	it('returns false for null or non-HTMLElement targets', () => {
 		expect(isTextInputTarget(null)).toBe(false);
 		expect(isTextInputTarget({} as EventTarget)).toBe(false);
+	});
+});
+
+describe('isTextEntryTarget', () => {
+	const input = (type?: string) => {
+		const el = document.createElement('input');
+		if (type) el.type = type;
+		return el;
+	};
+
+	it('returns true for text-accepting inputs', () => {
+		for (const type of ['text', 'search', 'url', 'email', 'password', 'number', 'tel']) {
+			expect(isTextEntryTarget(input(type))).toBe(true);
+		}
+	});
+
+	it('treats a typeless <input> as text', () => {
+		expect(isTextEntryTarget(input())).toBe(true);
+	});
+
+	it('returns true for <textarea> and contenteditable', () => {
+		expect(isTextEntryTarget(document.createElement('textarea'))).toBe(true);
+		const editable = document.createElement('div');
+		Object.defineProperty(editable, 'isContentEditable', { value: true });
+		expect(isTextEntryTarget(editable)).toBe(true);
+	});
+
+	it('returns false for inputs that never take typed text', () => {
+		for (const type of ['range', 'color', 'checkbox', 'radio', 'button', 'file']) {
+			expect(isTextEntryTarget(input(type))).toBe(false);
+		}
+	});
+
+	it('returns false for plain, null, and non-HTMLElement targets', () => {
+		expect(isTextEntryTarget(document.createElement('div'))).toBe(false);
+		expect(isTextEntryTarget(null)).toBe(false);
+		expect(isTextEntryTarget({} as EventTarget)).toBe(false);
 	});
 });

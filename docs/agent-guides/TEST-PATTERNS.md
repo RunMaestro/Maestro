@@ -319,6 +319,77 @@ vi.mock('../../../cli/services/agent-spawner', () => ({
 }));
 ```
 
+### Isolating a Test From the Developer's Shell (`isolateAgentEnv`)
+
+Agent env defaults are **shell-wins by design**: `applyEnvLayers` in
+`src/cli/services/agent-spawner.ts` layers an agent's `defaultEnvVars` /
+`batchModeEnvVars` UNDER `process.env`, so a user who exported a value keeps it.
+That means any assertion about a DEFAULT value is really an assertion about
+whatever the test runner's shell happened to export, and it fails on that
+machine only.
+
+This has already bitten once: Claude Code exports
+`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=0` into the shells it runs, so the two
+`agent-spawner.test.ts` tests asserting the `'1'` default failed for anyone
+running the suite from a Maestro terminal or an agent shell, passed in CI, and
+blocked the pre-push hook on a phantom failure.
+
+Call `isolateAgentEnv()` in the body of any `describe` that asserts a default
+env value. It registers its own `beforeEach` / `afterEach`, so it belongs at
+collection time, not inside another hook:
+
+```typescript
+import { isolateAgentEnv } from '../../helpers/agentEnvIsolation';
+
+describe('spawnAgent', () => {
+	isolateAgentEnv();
+	// ...
+});
+```
+
+A test that deliberately exercises the shell-wins path just sets the variable in
+its own body - that runs after the `beforeEach`, and the `afterEach` restores
+the real value, so no `try`/`finally` dance is needed. Do NOT hand-roll another
+save / delete / restore block; there were three near-identical copies in one
+file and only some of them were applied where they mattered. When an agent
+definition gains a new `defaultEnvVars` key, add it to
+`SHELL_OVERRIDABLE_AGENT_ENV_KEYS`.
+
+### Rendering a Surface That Contains `<MarkdownEditor>` (`markdownEditorModuleMock`)
+
+The editor wraps CodeMirror 6, which measures DOM text to lay itself out. jsdom
+returns zeros and CM6 throws (`textRange(...).getClientRects is not a function`),
+so **every suite that renders a surface containing the editor must mock the
+module** - Auto Run, Maestro Prompts, the memory viewer, and anything that
+embeds them.
+
+Use the one shared double rather than a per-suite stub:
+
+```typescript
+vi.mock('../../../renderer/components/FilePreview/markdownEditor', async () => {
+	const { markdownEditorModuleMock } = await import('../../helpers/mockMarkdownEditor');
+	return markdownEditorModuleMock();
+});
+```
+
+`vi.mock` resolves its first argument from the file that CALLS it, so the module
+path is spelled relative to the test file while the helper import is relative to
+the same place - the two prefixes differ and that is expected.
+
+The double is a plain `<textarea>` that also implements `MarkdownEditorHandle`
+against that textarea: `getCaret`, `getSelectionRange`, `setSelection`,
+`replaceRange`, `getScrollTop` / `setScrollTop`, and the scroll-percent pair all
+do the real arithmetic. That matters - host code driving the editor imperatively
+(tab insert, list continuation, undo restore, paste rewriting, scroll sync)
+exercises its own logic instead of hitting no-op stubs, and `getByRole('textbox')`
+/ `fireEvent.change` keep working unchanged. `setSearchMatches` is the one no-op:
+painted decorations have no jsdom equivalent, so assert on the match COUNT and
+the navigation state, never on highlight nodes.
+
+Do not assert on CM6 typography from a test. The editor carries its font size in
+the CodeMirror theme rather than an inline style, so a font-zoom test asserts on
+the persisted scale the zoom control writes, not on `element.style.fontSize`.
+
 ### Mock Factories
 
 #### Mock Session

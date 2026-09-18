@@ -55,7 +55,7 @@ export function PermissionList({
 						style={{ borderColor: theme.colors.border }}
 					>
 						<span
-							className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase flex-shrink-0 mt-0.5"
+							className="px-1.5 py-0.5 rounded text-3xs font-bold uppercase flex-shrink-0 mt-0.5"
 							style={{ backgroundColor: color + '22', color }}
 						>
 							{risk}
@@ -65,22 +65,19 @@ export function PermissionList({
 								{describeCapability(req.capability)}
 							</div>
 							{req.scope && (
-								<div
-									className="text-[10px] font-mono mt-0.5"
-									style={{ color: theme.colors.textDim }}
-								>
+								<div className="text-2xs font-mono mt-0.5" style={{ color: theme.colors.textDim }}>
 									{req.scope}
 								</div>
 							)}
 							{req.reason && (
-								<div className="text-[10px] mt-0.5" style={{ color: theme.colors.textDim }}>
+								<div className="text-2xs mt-0.5" style={{ color: theme.colors.textDim }}>
 									{req.reason}
 								</div>
 							)}
 						</div>
 						<span
 							data-testid="extension-permission-status"
-							className="text-[10px] font-medium flex-shrink-0 mt-0.5"
+							className="text-2xs font-medium flex-shrink-0 mt-0.5"
 							style={{ color: theme.colors.textDim }}
 						>
 							{statusLabel}

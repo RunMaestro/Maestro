@@ -17,12 +17,14 @@ import { useCallback } from 'react';
 import { generateId } from '../../utils/ids';
 import { takeNextRunnableQueueItem } from '../../utils/executionQueue';
 import {
+	cycleShowThinkingFields,
 	moveActiveUnifiedTabToEdge,
 	resolveQueuedItemTarget,
 	toggleReadOnlyModeFields,
 } from '../../utils/tabHelpers';
-import type { Session, ThinkingMode } from '../../types';
-import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
+import { logger } from '../../utils/logger';
+import type { Session } from '../../types';
+import { useSessionStore, selectActiveSession, updateAiTab } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
 import type { MainPanelHandle } from '../../components/MainPanel';
@@ -53,6 +55,8 @@ export interface UseQuickActionsHandlersDeps {
 	handleExportHtml: (tabId: string) => Promise<void>;
 	/** Publish tab as GitHub Gist */
 	handlePublishTabGist: (tabId: string) => void;
+	/** Re-read a file preview tab's content from disk */
+	handleReloadFileTab: (tabId: string) => Promise<void> | void;
 }
 
 // ============================================================================
@@ -114,6 +118,7 @@ export function useQuickActionsHandlers(
 		handleCopyContext,
 		handleExportHtml,
 		handlePublishTabGist,
+		handleReloadFileTab,
 	} = deps;
 
 	// PERF: Never useSessionStore(selectActiveSession). Streamed logs/tokens would
@@ -130,17 +135,10 @@ export function useQuickActionsHandlers(
 	const handleQuickActionsToggleReadOnlyMode = useCallback(() => {
 		const activeSession = selectActiveSession(useSessionStore.getState());
 		if (activeSession?.inputMode === 'ai' && activeSession.activeTabId) {
-			setSessions((prev) =>
-				prev.map((s) => {
-					if (s.id !== activeSession.id) return s;
-					return {
-						...s,
-						aiTabs: s.aiTabs.map((tab) =>
-							tab.id === s.activeTabId ? { ...tab, ...toggleReadOnlyModeFields(tab) } : tab
-						),
-					};
-				})
-			);
+			updateAiTab(activeSession.id, activeSession.activeTabId, (tab) => ({
+				...tab,
+				...toggleReadOnlyModeFields(tab),
+			}));
 		}
 	}, []);
 
@@ -148,63 +146,56 @@ export function useQuickActionsHandlers(
 		const activeSession = selectActiveSession(useSessionStore.getState());
 		if (activeSession?.inputMode !== 'ai' || !activeSession.activeTabId) return;
 		const globalDefault = useSettingsStore.getState().enterToSendAI;
-		setSessions((prev) =>
-			prev.map((s) => {
-				if (s.id !== activeSession.id) return s;
-				return {
-					...s,
-					aiTabs: s.aiTabs.map((tab) =>
-						tab.id === s.activeTabId
-							? { ...tab, enterToSend: !(tab.enterToSend ?? globalDefault) }
-							: tab
-					),
-				};
-			})
-		);
+		updateAiTab(activeSession.id, activeSession.activeTabId, (tab) => ({
+			...tab,
+			enterToSend: !(tab.enterToSend ?? globalDefault),
+		}));
 	}, []);
 
 	const handleQuickActionsToggleTabShowThinking = useCallback(() => {
 		const activeSession = selectActiveSession(useSessionStore.getState());
 		if (activeSession?.inputMode === 'ai' && activeSession.activeTabId) {
-			// Cycle through: off -> on -> sticky -> off
-			const cycleThinkingMode = (current: ThinkingMode | undefined): ThinkingMode => {
-				if (!current || current === 'off') return 'on';
-				if (current === 'on') return 'sticky';
-				return 'off';
-			};
-			setSessions((prev) =>
-				prev.map((s) => {
-					if (s.id !== activeSession.id) return s;
-					return {
-						...s,
-						aiTabs: s.aiTabs.map((tab) => {
-							if (tab.id !== s.activeTabId) return tab;
-							const newMode = cycleThinkingMode(tab.showThinking);
-							// When turning OFF, clear thinking logs; tool logs are render-gated.
-							if (newMode === 'off') {
-								return {
-									...tab,
-									showThinking: 'off',
-									logs: tab.logs.filter((l) => l.source !== 'thinking'),
-								};
-							}
-							return { ...tab, showThinking: newMode };
-						}),
-					};
-				})
-			);
+			updateAiTab(activeSession.id, activeSession.activeTabId, (tab) => ({
+				...tab,
+				...cycleShowThinkingFields(tab),
+			}));
 		}
 	}, []);
 
 	const handleQuickActionsRefreshGitFileState = useCallback(async () => {
 		const activeSessionId = useSessionStore.getState().activeSessionId;
 		if (activeSessionId) {
-			await Promise.all([refreshGitFileState(activeSessionId), refreshWorktreeState()]);
+			// In file preview mode the visible content is a snapshot read from disk,
+			// so the refresh chord re-reads it too. Unsaved edits win over freshness:
+			// the reload would drop them silently, and the on-disk-change banner is
+			// the place that asks before discarding.
+			const session = selectActiveSession(useSessionStore.getState());
+			const fileTab =
+				session?.inputMode === 'ai' && session.activeFileTabId
+					? session.filePreviewTabs.find((tab) => tab.id === session.activeFileTabId)
+					: undefined;
+			const hasUnsavedEdits =
+				fileTab?.editContent !== undefined && fileTab.editContent !== fileTab.content;
+			const reloadFile = Boolean(fileTab) && !hasUnsavedEdits;
+
+			await Promise.all([
+				refreshGitFileState(activeSessionId),
+				refreshWorktreeState(),
+				reloadFile && fileTab
+					? Promise.resolve(handleReloadFileTab(fileTab.id))
+					: Promise.resolve(),
+			]);
 			await mainPanelRef.current?.refreshGitInfo();
-			setSuccessFlashNotification('Files, Git, History Refreshed');
+			setSuccessFlashNotification(
+				reloadFile
+					? 'File Reloaded, Files, Git, History Refreshed'
+					: hasUnsavedEdits
+						? 'Files, Git, History Refreshed - Unsaved Edits Kept'
+						: 'Files, Git, History Refreshed'
+			);
 			setTimeout(() => setSuccessFlashNotification(null), 2000);
 		}
-	}, [refreshGitFileState, refreshWorktreeState]);
+	}, [handleReloadFileTab, refreshGitFileState, refreshWorktreeState]);
 
 	const handleQuickActionsDebugReleaseQueuedItem = useCallback(() => {
 		const { activeSessionId } = useSessionStore.getState();
@@ -252,9 +243,15 @@ export function useQuickActionsHandlers(
 				return { ...s, executionQueue: remainingQueue, aiTabs: updatedAiTabs };
 			})
 		);
-		// Process the item
-		processQueuedItem(activeSessionId, nextItem);
-	}, [processQueuedItem]);
+		// Process the item. `processQueuedItem` rejects on a dispatch failure (see
+		// agentStore), so the rejection needs an owner - unhandled, it would surface
+		// as a crash report rather than a logged failure. Putting the prompt back is
+		// agentStore's job, not this hook's: it is the only caller-independent place
+		// that can tell a transient spawn collision from a real failure.
+		processQueuedItem(activeSessionId, nextItem).catch((err) => {
+			logger.error('[QuickActions] Dispatch failed, item returned to queue', undefined, err);
+		});
+	}, [processQueuedItem, setSessions]);
 
 	const handleQuickActionsToggleMarkdownEditMode = useCallback(() => {
 		// Toggle the appropriate mode based on context:

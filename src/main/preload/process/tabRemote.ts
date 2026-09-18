@@ -1,12 +1,17 @@
 import { ipcRenderer } from 'electron';
+import type { AITabData } from '../../web-server/types';
+import type { SnoozeCommandRequest, SnoozeCommandResult } from '../../../shared/snoozeCommands';
 
 export function createTabRemoteApi() {
 	return {
 		/**
 		 * Subscribe to remote tab selection from web interface
 		 */
-		onRemoteSelectTab: (callback: (sessionId: string, tabId: string) => void): (() => void) => {
-			const handler = (_: unknown, sessionId: string, tabId: string) => callback(sessionId, tabId);
+		onRemoteSelectTab: (
+			callback: (sessionId: string, tabId: string, aiTabs?: AITabData[]) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, tabId: string, aiTabs?: AITabData[]) =>
+				callback(sessionId, tabId, aiTabs);
 			ipcRenderer.on('remote:selectTab', handler);
 			return () => ipcRenderer.removeListener('remote:selectTab', handler);
 		},
@@ -47,12 +52,24 @@ export function createTabRemoteApi() {
 		 * Subscribe to remote rename tab from web interface
 		 */
 		onRemoteRenameTab: (
-			callback: (sessionId: string, tabId: string, newName: string) => void
+			callback: (sessionId: string, tabId: string, newName: string, responseChannel: string) => void
 		): (() => void) => {
-			const handler = (_: unknown, sessionId: string, tabId: string, newName: string) =>
-				callback(sessionId, tabId, newName);
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				tabId: string,
+				newName: string,
+				responseChannel: string
+			) => callback(sessionId, tabId, newName, responseChannel);
 			ipcRenderer.on('remote:renameTab', handler);
 			return () => ipcRenderer.removeListener('remote:renameTab', handler);
+		},
+
+		sendRemoteRenameTabResponse: (
+			responseChannel: string,
+			result: { success: boolean; error?: string }
+		): void => {
+			ipcRenderer.send(responseChannel, result);
 		},
 
 		/**
@@ -65,6 +82,29 @@ export function createTabRemoteApi() {
 				callback(sessionId, tabId, starred);
 			ipcRenderer.on('remote:starTab', handler);
 			return () => ipcRenderer.removeListener('remote:starTab', handler);
+		},
+
+		/**
+		 * Subscribe to a remote snooze verb (`maestro-cli snooze`).
+		 *
+		 * A round trip rather than a fire-and-forget send: every verb answers the
+		 * caller with what it parked, woke, or listed, so the response channel is
+		 * part of the contract rather than an optimization.
+		 */
+		onRemoteSnoozeCommand: (
+			callback: (request: SnoozeCommandRequest, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, request: SnoozeCommandRequest, responseChannel: string) =>
+				callback(request, responseChannel);
+			ipcRenderer.on('remote:snoozeCommand', handler);
+			return () => ipcRenderer.removeListener('remote:snoozeCommand', handler);
+		},
+
+		sendRemoteSnoozeCommandResponse: (
+			responseChannel: string,
+			result: SnoozeCommandResult
+		): void => {
+			ipcRenderer.send(responseChannel, result);
 		},
 
 		/**

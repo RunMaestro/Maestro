@@ -24,8 +24,10 @@ import { createTerminalTab, nextTerminalCoworkingId } from '../terminalTabHelper
 import {
 	findActiveUnifiedTabIndex,
 	getNavigableUnifiedTabOrder,
+	hasUnreadVisibleTab,
 	insertAfterActiveInUnifiedTabOrder,
 	isAiTabHidden,
+	visibleAiTabs,
 } from '../unifiedTabOrderUtils';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { isWindowsPlatform } from '../platformUtils';
@@ -38,6 +40,10 @@ import {
 	browserTabFocusFields,
 	terminalTabFocusFields,
 	toggleReadOnlyModeFields,
+	permissionModeFields,
+	nextPermissionMode,
+	cycleShowThinkingFields,
+	setShowThinkingFields,
 } from './focusFields';
 import {
 	groupFocusFields,
@@ -49,13 +55,17 @@ import {
 // Both live in unifiedTabOrderUtils so terminalTabHelpers can reach them without a
 // circular import; re-exported here because tabHelpers is where callers look for
 // tab visibility rules.
-export { getNavigableUnifiedTabOrder, isAiTabHidden };
+export { getNavigableUnifiedTabOrder, hasUnreadVisibleTab, isAiTabHidden, visibleAiTabs };
 export {
 	aiTabFocusFields,
 	fileTabFocusFields,
 	browserTabFocusFields,
 	terminalTabFocusFields,
 	toggleReadOnlyModeFields,
+	permissionModeFields,
+	nextPermissionMode,
+	cycleShowThinkingFields,
+	setShowThinkingFields,
 };
 export { groupFocusFields, resolveFocusedPaneTabRef, findGroupPaneForTab };
 
@@ -414,7 +424,7 @@ export function getTabDisplayName(tab: AITab, _sessionAgentSessionId?: string | 
 /**
  * Format a session/tab ID into a short display label.
  */
-function formatSessionId(id: string): string {
+export function formatSessionId(id: string): string {
 	// OpenCode format: ses_XXXX... or SES_XXXX...
 	if (id.toLowerCase().startsWith('ses_')) {
 		return `SES_${id.slice(4, 8).toUpperCase()}`;
@@ -429,6 +439,27 @@ function formatSessionId(id: string): string {
 	}
 	// Generic fallback: first 8 chars uppercase
 	return id.slice(0, 8).toUpperCase();
+}
+
+/**
+ * Whether a name is really just the id label {@link getTabDisplayName} falls back
+ * to when a tab has no name at all (`8535E0E3`, `SES_4BCD`, `THR_ABC1`).
+ *
+ * Surfaces that RECORD a tab's display name - the history entry's `sessionName`,
+ * the session-origins store - capture whatever was on screen, so an unnamed tab
+ * records its own fallback. Anything that later restores a name from one of
+ * those records has to ask this first: writing the label back as `tab.name`
+ * turns a placeholder into a CUSTOM name, and a tab with a custom name is never
+ * auto-named again. It renders identically, so the tab looks merely unnamed
+ * while quietly having opted out of ever getting a real name.
+ *
+ * Compares against the formatter rather than matching a hex pattern: only one of
+ * the four id shapes it produces is 8 hex characters, so a regex silently lets
+ * the OpenCode and Codex labels through.
+ */
+export function isSessionIdLabel(name: string | null | undefined, agentSessionId?: string | null) {
+	if (!name || !agentSessionId) return false;
+	return name === formatSessionId(agentSessionId);
 }
 
 export function getInitialRenameValue(tab: AITab): string {
@@ -565,6 +596,59 @@ export function computeQueuedTabIds(queue: QueuedItem[]): Set<string> {
 		ids.add(item.tabId);
 	}
 	return ids;
+}
+
+/**
+ * Turn a wizard tab back into an ordinary AI tab WITHOUT losing anything.
+ *
+ * The inline wizard keeps its conversation in `tab.wizardState.conversationHistory`
+ * and renders it through WizardConversationView, which is a completely separate
+ * store from `tab.logs` / TerminalOutput. Dropping `wizardState` therefore drops
+ * the entire wizard conversation and the provider session handle with it, leaving
+ * a tab that looks empty. Every exit from wizard mode routes through here so the
+ * transcript is flattened into the normal log first:
+ *
+ *   - Wizard completes (handleWizardComplete)
+ *   - User clicks "Exit Wizard" or cancels document generation (handleExitWizard)
+ *   - App restarts and the in-memory wizard state is gone (wizard sync effect)
+ *
+ * Deliberately excluded: closing the wizard TAB. That already warns the user that
+ * progress will be lost, and the tab itself is going away.
+ *
+ * Idempotent - entries already present (matched by their `wizard-` prefixed id)
+ * are not appended twice, so a second call after a racing state update is safe.
+ *
+ * @param tab - The AI tab holding the wizard
+ * @param options.summary - Optional closing entry appended after the transcript
+ * @returns A new tab with the wizard flattened, or the same tab if it has no wizard
+ */
+export function flattenWizardIntoTab(tab: AITab, options?: { summary?: LogEntry }): AITab {
+	const wizardState = tab.wizardState;
+	if (!wizardState) return tab;
+
+	const existingIds = new Set(tab.logs.map((log) => log.id));
+	const wizardLogEntries: LogEntry[] = (wizardState.conversationHistory ?? [])
+		.map((msg) => ({
+			id: `wizard-${msg.id}`,
+			timestamp: msg.timestamp,
+			source: (msg.role === 'user' ? 'user' : 'ai') as LogEntry['source'],
+			text: msg.content,
+			images: msg.images,
+			delivered: true,
+		}))
+		.filter((entry) => !existingIds.has(entry.id));
+
+	const trailing =
+		options?.summary && !existingIds.has(options.summary.id) ? [options.summary] : [];
+
+	return {
+		...tab,
+		logs: [...tab.logs, ...wizardLogEntries, ...trailing],
+		// The wizard owns the provider session while it runs. Promote it so the
+		// user can keep talking to the same context in the plain tab.
+		agentSessionId: wizardState.agentSessionId || tab.agentSessionId,
+		wizardState: undefined,
+	};
 }
 
 /**
@@ -718,9 +802,7 @@ export function getNavigableTabs(session: Session, showUnreadOnly = false): AITa
 	// Hidden tabs aren't in the strip, so no shortcut may land on one. The common
 	// case is no hidden tabs at all: keep returning `session.aiTabs` by reference
 	// then, since callers memoize on its identity.
-	const visible = session.aiTabs.some(isAiTabHidden)
-		? session.aiTabs.filter((tab) => !isAiTabHidden(tab))
-		: session.aiTabs;
+	const visible = visibleAiTabs(session.aiTabs);
 
 	if (showUnreadOnly) {
 		const showStarred = useSettingsStore.getState().showStarredInUnreadFilter;
@@ -752,10 +834,14 @@ export function getActiveTab(session: Session): AITab | undefined {
 	}
 
 	const activeTab = session.aiTabs.find((tab) => tab.id === session.activeTabId);
+	if (activeTab) return activeTab;
 
-	// Fallback to first tab if activeTabId doesn't match any tab
-	// (can happen after tab deletion or data corruption)
-	return activeTab ?? session.aiTabs[0];
+	// Fallback when activeTabId doesn't match any tab (tab deletion, data
+	// corruption, or a deliberately blank id). Prefer a tab the strip draws a chip
+	// for: falling onto a hidden consult tab paints a conversation the user never
+	// opened, with nothing in the strip to click back from. Only when every tab is
+	// hidden does the first one still win, so callers keep getting a tab at all.
+	return session.aiTabs.find((tab) => !isAiTabHidden(tab)) ?? session.aiTabs[0];
 }
 
 /**
@@ -821,26 +907,87 @@ export function resolveQueuedItemTarget(
  * back to the live values only for items queued before this was captured.
  */
 export function markTabRunningQueuedItem(tab: AITab, item: QueuedItem, session: Session): AITab {
-	const now = Date.now();
-	const next: AITab = {
-		...tab,
-		state: 'busy',
-		thinkingStartTime: now,
-		...codifyQueuedTurnSettings(item, tab, session),
-	};
+	const next = markTabRunningTurn(tab, item, session);
 	if (item.type === 'message' && item.text) {
 		const logEntry: LogEntry = {
 			id: generateId(),
-			timestamp: now,
+			timestamp: next.thinkingStartTime ?? Date.now(),
 			source: 'user',
 			text: item.text,
 			images: item.images,
+			// Stamped so a dispatch that throws before spawning can take this card
+			// back out again - the prompt never reached a model, and leaving the
+			// card behind makes the re-dispatch look like the user sent it twice.
+			queuedItemId: item.id,
 			...(item.forceParallel && { forceParallel: true }),
 			...(item.readOnlyMode && { readOnly: true }),
 		};
 		next.logs = [...tab.logs, logEntry];
 	}
 	return next;
+}
+
+/**
+ * The busy-state half of {@link markTabRunningQueuedItem}, without the user log
+ * entry.
+ *
+ * Split out for the ONE dispatch that must not append a user bubble: replaying a
+ * turn the provider already refused (see `retryStore.replayAfterAuth`). That
+ * message is in the transcript already - the original send put it there before
+ * the turn died - so appending it again would show the user's prompt twice for a
+ * single ask.
+ *
+ * Every dispatch still has to make this transition. A spawn whose tab reads idle
+ * is a GHOST TURN: a real process running with no pulsing dot, no Thinking pill,
+ * and no elapsed timer. The user sees a resumed agent doing nothing, sends
+ * again, and that second message queues behind the invisible turn - which is
+ * exactly what the auth-replay path did before this existed. Worse, the
+ * busy-state is also what the dispatch guards read (`useQueueProcessing` skips a
+ * tab that is `'busy'`, `ProcessManager` KILLS a live process when a second
+ * spawn arrives on the same key), so a tab lying about being idle can lose work
+ * in flight.
+ */
+export function markTabRunningTurn(tab: AITab, item: QueuedItem, session: Session): AITab {
+	const now = Date.now();
+	return {
+		...tab,
+		state: 'busy',
+		thinkingStartTime: now,
+		...codifyQueuedTurnSettings(item, tab, session),
+	};
+}
+
+/**
+ * Settle a tab that is no longer doing any work: mark it idle and recompute the
+ * agent's own thinking state from whatever is still running.
+ *
+ * The inverse of {@link markTabRunningQueuedItem}. A tab's pulsing busy dot and
+ * its row on the Thinking pill are driven by `tab.state === 'busy'` plus the
+ * session's `state`/`busySource`/`thinkingStartTime`, which normally only the
+ * process-exit listener clears. Any path that ends a turn WITHOUT a process exit
+ * has to settle that state itself, or the tab blinks forever with nothing behind
+ * it (see `cancelRetry` - a cancelled auto-retry whose resend never spawned).
+ *
+ * A tab the user closed mid-turn lives on in `orphanedThinkingTabs` purely so the
+ * pill keeps counting it, so settling one retires the orphan outright.
+ */
+export function settleTabThinkingState(session: Session, tabId: string): Session {
+	const aiTabs = session.aiTabs.map((tab) =>
+		tab.id === tabId ? { ...tab, state: 'idle' as const, thinkingStartTime: undefined } : tab
+	);
+	const orphans = session.orphanedThinkingTabs?.filter((tab) => tab.id !== tabId);
+	const stillThinking = aiTabs.some((tab) => tab.state === 'busy') || !!orphans?.length;
+
+	return {
+		...session,
+		aiTabs,
+		orphanedThinkingTabs: orphans?.length ? orphans : undefined,
+		// 'error' is the blocking modal's state, not a thinking state - leave it be
+		// so settling a tab can't dismiss an error the user still has to act on.
+		state: stillThinking || session.state === 'error' ? session.state : 'idle',
+		busySource: stillThinking ? session.busySource : undefined,
+		thinkingStartTime: stillThinking ? session.thinkingStartTime : undefined,
+	};
 }
 
 /**
@@ -1026,6 +1173,18 @@ export function closeTab(
 	// Remove tab from aiTabs
 	let updatedTabs = session.aiTabs.filter((tab) => tab.id !== tabId);
 
+	// AI tabs the strip still draws a chip for. A hidden consult tab is a data
+	// container with no chip, so it can neither keep the agent company nor be
+	// switched to: counting one as a survivor leaves an empty strip with some
+	// unrelated conversation rendered under it and no way back.
+	const visibleUpdatedTabs = updatedTabs.filter((tab) => !isAiTabHidden(tab));
+	// Where the closed tab sat among the tabs the user could see, so "the tab to
+	// the left" means the chip to its left rather than an array slot that counts
+	// hidden tabs nobody was looking at.
+	const visibleTabIndex = session.aiTabs
+		.filter((tab) => !isAiTabHidden(tab) || tab.id === tabId)
+		.findIndex((tab) => tab.id === tabId);
+
 	// Tabs of other kinds that survive this close. Closing the last AI tab only
 	// forces a fresh replacement when the agent would otherwise be left with no
 	// tabs at all, so a brand new agent still always has a chat to type into.
@@ -1041,7 +1200,8 @@ export function closeTab(
 	// Fallback unified tab ref when the closed tab was active - may be terminal or file
 	let fallbackRef: UnifiedTabRef | null = null;
 	let createdFreshTab = false;
-	if (updatedTabs.length === 0 && otherTabCount === 0) {
+	let freshTabId = '';
+	if (visibleUpdatedTabs.length === 0 && otherTabCount === 0) {
 		const freshTab: AITab = {
 			id: generateId(),
 			agentSessionId: null,
@@ -1053,7 +1213,10 @@ export function closeTab(
 			createdAt: Date.now(),
 			state: 'idle',
 		};
-		updatedTabs = [freshTab];
+		// Hidden consult tabs survive alongside the replacement - they are the
+		// user's data, and revealing one later is still their call.
+		updatedTabs = [...updatedTabs, freshTab];
+		freshTabId = freshTab.id;
 		newActiveTabId = freshTab.id;
 		createdFreshTab = true;
 	} else if (session.activeTabId === tabId) {
@@ -1072,11 +1235,12 @@ export function closeTab(
 				const closedTabNavIndex = getNavigableTabs(session, true).findIndex((t) => t.id === tabId);
 				const newNavIndex = Math.max(0, closedTabNavIndex - 1);
 				newActiveTabId = navigableTabs[Math.min(newNavIndex, navigableTabs.length - 1)].id;
-			} else {
-				// No more unread tabs - fall back to selecting by position in full list
-				// Select the tab to the left, or first tab if we were at position 0
-				const newIndex = Math.max(0, tabIndex - 1);
-				newActiveTabId = updatedTabs[newIndex].id;
+			} else if (visibleUpdatedTabs.length > 0) {
+				// No more unread tabs - fall back to selecting by position in the list
+				// the strip draws. Select the tab to the left, or the first tab if we
+				// were at position 0.
+				const newIndex = Math.max(0, visibleTabIndex - 1);
+				newActiveTabId = visibleUpdatedTabs[Math.min(newIndex, visibleUpdatedTabs.length - 1)].id;
 			}
 		} else {
 			// Normal mode: use repaired unifiedTabOrder to find the correct left neighbor.
@@ -1099,17 +1263,20 @@ export function closeTab(
 			if (closedUnifiedIndex !== -1 && remainingUnified.length > 0) {
 				const fallbackIndex = Math.max(0, closedUnifiedIndex - 1);
 				fallbackRef = remainingUnified[Math.min(fallbackIndex, remainingUnified.length - 1)];
-			} else if (updatedTabs.length > 0) {
-				// unifiedTabOrder out of sync - fall back to aiTabs position
-				const newIndex = Math.max(0, tabIndex - 1);
-				newActiveTabId = updatedTabs[newIndex].id;
+			} else if (visibleUpdatedTabs.length > 0) {
+				// unifiedTabOrder out of sync - fall back to aiTabs position, counted
+				// over the tabs that actually have a chip.
+				const newIndex = Math.max(0, visibleTabIndex - 1);
+				newActiveTabId = visibleUpdatedTabs[Math.min(newIndex, visibleUpdatedTabs.length - 1)].id;
 			}
 		}
 	}
 
-	// No AI tab survives, so there is nothing for activeTabId to point at. Covers
-	// every path above, including closing a non-active sole AI tab.
-	if (updatedTabs.length === 0) {
+	// No AI tab the user can see survives, so there is nothing for activeTabId to
+	// point at. Covers every path above, including closing a non-active sole AI
+	// tab. Hidden consult tabs do not count: leaving the id on one renders that
+	// conversation with no chip anywhere in the strip.
+	if (visibleUpdatedTabs.length === 0 && !createdFreshTab) {
 		newActiveTabId = '';
 	}
 
@@ -1127,15 +1294,17 @@ export function closeTab(
 	// If we created a fresh tab, add it to unifiedTabOrder at the end
 	let finalUnifiedTabOrder = updatedUnifiedTabOrder;
 	if (createdFreshTab) {
-		const freshTabRef: UnifiedTabRef = { type: 'ai', id: updatedTabs[0].id };
+		const freshTabRef: UnifiedTabRef = { type: 'ai', id: freshTabId };
 		finalUnifiedTabOrder = [...updatedUnifiedTabOrder, freshTabRef];
 	}
 
-	// With no AI tabs left, activeTabId must stop pointing at the tab we just
-	// removed. A dangling id makes a later switch back to AI mode render an input
-	// area bound to a tab that no longer exists. Non-AI fallbacks otherwise keep
-	// activeTabId so returning to AI mode lands on the same tab as before.
-	const survivingActiveTabId = updatedTabs.length === 0 ? '' : session.activeTabId;
+	// With no visible AI tabs left, activeTabId must stop pointing at the tab we
+	// just removed. A dangling id makes a later switch back to AI mode render an
+	// input area bound to a tab that no longer exists - and with hidden consult
+	// tabs in the session it renders one of those instead, chipless. Non-AI
+	// fallbacks otherwise keep activeTabId so returning to AI mode lands on the
+	// same tab as before.
+	const survivingActiveTabId = visibleUpdatedTabs.length === 0 ? '' : session.activeTabId;
 
 	// Create updated session.
 	// When the fallback is a non-AI tab (terminal or file), we must update the corresponding
@@ -3088,7 +3257,7 @@ export function createMergedSession(
 		state: 'idle',
 		cwd: projectRoot,
 		fullPath: projectRoot,
-		projectRoot, // Never changes, used for session storage
+		projectRoot, // Used for session storage; moves only through withWorkingDirectory()
 		createdAt: Date.now(),
 		isGitRepo: false, // Will be updated by caller if needed
 		aiLogs: [], // Deprecated - logs are in aiTabs
@@ -3156,9 +3325,21 @@ export interface GoToNextUnreadResult {
 }
 
 /**
- * Compute the next unread/draft tab to jump to. Prefers a non-active actionable
- * tab in the current session (tab-level jump, no session change); otherwise
- * searches forward through other sessions in the ordered list, wrapping around.
+ * Which way unread/draft navigation walks. `next` is Opt+Cmd+Down; `previous`
+ * is the second press of Opt+Cmd+Up (Focus Active Tab), which has nothing left
+ * to do once the tab is already centered and focused.
+ */
+export type UnreadNavDirection = 'next' | 'previous';
+
+/**
+ * Compute the next/previous unread/draft tab to jump to. Prefers a non-active
+ * actionable tab in the current session (tab-level jump, no session change);
+ * otherwise walks the other sessions in the ordered list in `direction`,
+ * wrapping around.
+ *
+ * The two directions are exact mirrors: `next` reads tabs and sessions in list
+ * order, `previous` reads them in reverse, so pressing one and then the other
+ * lands you back where you started rather than in a third place.
  *
  * A tab with an active inline wizard counts as actionable: an unfinished wizard
  * is effectively a draft (it's meant to be completed into an Auto Run doc), so
@@ -3166,22 +3347,32 @@ export interface GoToNextUnreadResult {
  *
  * Does NOT mutate state - the caller applies the result via setSessions/setActiveSessionId.
  */
-export function findNextUnreadSession(
+export function findUnreadSessionInDirection(
 	orderedSessions: Session[],
 	activeSessionId: string,
+	direction: UnreadNavDirection,
 	isWizardActive?: (tabId: string) => boolean
 ): GoToNextUnreadResult {
+	const step = direction === 'next' ? 1 : -1;
 	const currentIndex = orderedSessions.findIndex((s) => s.id === activeSessionId);
 	const currentSession = orderedSessions.find((s) => s.id === activeSessionId);
+	// A hidden consult tab has no chip, so it can never be an actionable stop:
+	// jumping to one reveals a conversation the user never opened (the jump path
+	// un-hides what it lands on), and it was answered in the background precisely
+	// so it would not ask for attention.
 	const isActionable = (tab: AITab) =>
-		tab.hasUnread || hasDraft(tab) || (isWizardActive?.(tab.id) ?? false);
+		!isAiTabHidden(tab) && (tab.hasUnread || hasDraft(tab) || (isWizardActive?.(tab.id) ?? false));
+	// Scanning the reversed array is what makes `previous` stop on the
+	// actionable tab nearest the LEFT end of the strip instead of repeating the
+	// forward pick.
+	const inScanOrder = (tabs: AITab[]) => (direction === 'next' ? tabs : [...tabs].reverse());
 
 	// 1) Tab-level jump within the current session: if there's an unread/draft
 	//    tab here that isn't already active, switch to it without changing
 	//    sessions. The shortcut is called "Next Unread / Draft *Tab*" - staying
 	//    in the same session is the closest "next" when one exists.
 	if (currentSession) {
-		const inSessionTarget = currentSession.aiTabs?.find(
+		const inSessionTarget = inScanOrder(currentSession.aiTabs ?? []).find(
 			(t) => t.id !== currentSession.activeTabId && isActionable(t)
 		);
 		if (inSessionTarget) {
@@ -3196,11 +3387,14 @@ export function findNextUnreadSession(
 
 	const currentHasUnread = currentSession?.aiTabs?.some(isActionable) ?? false;
 
-	// 2) Search forward through other sessions, wrapping around.
-	for (let i = 1; i <= orderedSessions.length; i++) {
-		const candidate = orderedSessions[(currentIndex + i) % orderedSessions.length];
+	// 2) Search through the other sessions in `direction`, wrapping around. The
+	//    double modulo keeps the backward walk in range: a plain `%` on a
+	//    negative index returns a negative index in JS.
+	const count = orderedSessions.length;
+	for (let i = 1; i <= count; i++) {
+		const candidate = orderedSessions[(((currentIndex + step * i) % count) + count) % count];
 		if (candidate.id !== activeSessionId && candidate.aiTabs?.some(isActionable)) {
-			const firstUnreadTab = candidate.aiTabs.find(isActionable);
+			const firstUnreadTab = inScanOrder(candidate.aiTabs).find(isActionable);
 			return {
 				jumped: true,
 				clearedCurrent: currentHasUnread,
@@ -3217,4 +3411,22 @@ export function findNextUnreadSession(
 		jumped: false,
 		clearedCurrent: false,
 	};
+}
+
+/** Forward walk: see {@link findUnreadSessionInDirection}. */
+export function findNextUnreadSession(
+	orderedSessions: Session[],
+	activeSessionId: string,
+	isWizardActive?: (tabId: string) => boolean
+): GoToNextUnreadResult {
+	return findUnreadSessionInDirection(orderedSessions, activeSessionId, 'next', isWizardActive);
+}
+
+/** Backward walk: see {@link findUnreadSessionInDirection}. */
+export function findPreviousUnreadSession(
+	orderedSessions: Session[],
+	activeSessionId: string,
+	isWizardActive?: (tabId: string) => boolean
+): GoToNextUnreadResult {
+	return findUnreadSessionInDirection(orderedSessions, activeSessionId, 'previous', isWizardActive);
 }

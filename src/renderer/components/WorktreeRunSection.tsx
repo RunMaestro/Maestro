@@ -294,13 +294,13 @@ export function WorktreeRunSection({
 						Dispatch to a separate worktree
 					</span>
 					{isConfigured && !isEnabled && (
-						<span className="text-[11px] ml-auto" style={{ color: theme.colors.textDim }}>
+						<span className="text-xs-plus ml-auto" style={{ color: theme.colors.textDim }}>
 							Off
 						</span>
 					)}
 					{isConfigured && isEnabled && (
 						<span
-							className="text-[11px] ml-auto font-medium"
+							className="text-xs-plus ml-auto font-medium"
 							style={{ color: theme.colors.accent }}
 						>
 							Enabled
@@ -368,7 +368,7 @@ export function WorktreeRunSection({
 										backgroundColor: getStatusColor(selectedOpenAgent.state, theme),
 									}}
 								/>
-								<span className="text-[11px]" style={{ color: theme.colors.textDim }}>
+								<span className="text-xs-plus" style={{ color: theme.colors.textDim }}>
 									{selectedOpenAgent.name} -{' '}
 									{selectedOpenAgent.state === 'idle'
 										? 'ready'
@@ -441,7 +441,7 @@ export function WorktreeRunSection({
 									)}
 									{worktreePathPreview && (
 										<span
-											className="text-[10px] font-mono truncate"
+											className="text-2xs font-mono truncate"
 											style={{ color: theme.colors.textDim, opacity: 0.7 }}
 											title={worktreePathPreview}
 										>

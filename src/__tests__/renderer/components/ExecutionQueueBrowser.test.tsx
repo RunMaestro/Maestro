@@ -155,15 +155,17 @@ describe('ExecutionQueueBrowser', () => {
 					onSwitchSession={mockOnSwitchSession}
 				/>
 			);
-			expect(mockRegisterLayer).toHaveBeenCalledWith({
-				type: 'modal',
-				priority: expect.any(Number),
-				blocksLowerLayers: true,
-				capturesFocus: true,
-				blocksAppShortcuts: true,
-				focusTrap: 'strict',
-				onEscape: expect.any(Function),
-			});
+			expect(mockRegisterLayer).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'modal',
+					priority: expect.any(Number),
+					blocksLowerLayers: true,
+					capturesFocus: true,
+					blocksAppShortcuts: true,
+					focusTrap: 'strict',
+					onEscape: expect.any(Function),
+				})
+			);
 		});
 
 		it('should unregister from layer stack when closed', () => {
@@ -856,6 +858,29 @@ describe('ExecutionQueueBrowser', () => {
 			expect(screen.getByText('Please fix the bug')).toBeInTheDocument();
 		});
 
+		it('explains when an item is waiting for the connection', () => {
+			const session = createSession({
+				id: 'active-session',
+				executionQueue: [createQueuedItem({ waitingForConnection: true })],
+			});
+			render(
+				<ExecutionQueueBrowser
+					isOpen={true}
+					onClose={mockOnClose}
+					sessions={[session]}
+					activeSessionId="active-session"
+					theme={theme}
+					onRemoveItem={mockOnRemoveItem}
+					onSwitchSession={mockOnSwitchSession}
+				/>
+			);
+
+			expect(screen.getByText('WAITING FOR CONNECTION')).toHaveAttribute(
+				'title',
+				'This message will run after Maestro reconnects'
+			);
+		});
+
 		it('should render up to 4k characters of message text and rely on CSS line-clamp for visual truncation', () => {
 			// Text shorter than the 4k cap renders in full; CSS line-clamp (not a
 			// JS slice) handles the visual truncation to whatever fits the card.
@@ -1082,7 +1107,7 @@ describe('ExecutionQueueBrowser', () => {
 	});
 
 	describe('time display', () => {
-		it('should show "Just now" for items less than 1 minute old', () => {
+		it('should show "just now" for items less than 1 minute old', () => {
 			const session = createSession({
 				id: 'active-session',
 				executionQueue: [createQueuedItem({ timestamp: Date.now() })],
@@ -1099,7 +1124,7 @@ describe('ExecutionQueueBrowser', () => {
 				/>
 			);
 
-			expect(screen.getByText('Just now')).toBeInTheDocument();
+			expect(screen.getByText('just now')).toBeInTheDocument();
 		});
 
 		it('should show minutes for items older than 1 minute', () => {
@@ -1121,6 +1146,48 @@ describe('ExecutionQueueBrowser', () => {
 			);
 
 			expect(screen.getByText('5m ago')).toBeInTheDocument();
+		});
+
+		it('should roll up to hours instead of counting minutes past 60', () => {
+			const threeHoursAgo = Date.now() - 3 * 60 * 60 * 1000;
+			const session = createSession({
+				id: 'active-session',
+				executionQueue: [createQueuedItem({ timestamp: threeHoursAgo })],
+			});
+			render(
+				<ExecutionQueueBrowser
+					isOpen={true}
+					onClose={mockOnClose}
+					sessions={[session]}
+					activeSessionId="active-session"
+					theme={theme}
+					onRemoveItem={mockOnRemoveItem}
+					onSwitchSession={mockOnSwitchSession}
+				/>
+			);
+
+			expect(screen.getByText('3h ago')).toBeInTheDocument();
+		});
+
+		it('should roll up to days for an item that has sat in the queue for days', () => {
+			const threeDaysAgo = Date.now() - 3 * 24 * 60 * 60 * 1000;
+			const session = createSession({
+				id: 'active-session',
+				executionQueue: [createQueuedItem({ timestamp: threeDaysAgo })],
+			});
+			render(
+				<ExecutionQueueBrowser
+					isOpen={true}
+					onClose={mockOnClose}
+					sessions={[session]}
+					activeSessionId="active-session"
+					theme={theme}
+					onRemoveItem={mockOnRemoveItem}
+					onSwitchSession={mockOnSwitchSession}
+				/>
+			);
+
+			expect(screen.getByText('3d ago')).toBeInTheDocument();
 		});
 	});
 

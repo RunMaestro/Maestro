@@ -42,10 +42,7 @@ function StatItem({ icon, label, value, color, theme }: StatItemProps) {
 			>
 				{icon}
 			</span>
-			<span
-				className="text-[10px] uppercase tracking-wider"
-				style={{ color: theme.colors.textDim }}
-			>
+			<span className="text-2xs uppercase tracking-wider" style={{ color: theme.colors.textDim }}>
 				{label}
 			</span>
 			<span className="text-xs font-bold tabular-nums" style={{ color: theme.colors.textMain }}>
@@ -140,7 +137,7 @@ export const HistoryStatsBar = memo(function HistoryStatsBar({
 								<Spinner size={12} />
 							</span>
 							<span
-								className="text-[10px] uppercase tracking-wider"
+								className="text-2xs uppercase tracking-wider"
 								style={{ color: theme.colors.textDim }}
 							>
 								Active

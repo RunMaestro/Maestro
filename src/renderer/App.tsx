@@ -11,6 +11,7 @@ import React, {
 import { useFocusAfterRender, useFocusOnClose } from './hooks/utils/useFocusAfterRender';
 import { isWebDesktop } from './utils/runtimeContext';
 import { isCoarsePointer } from './utils/touch';
+import { useEdgeSwipeHandlers } from './hooks/utils/useEdgeSwipeHandlers';
 import { slashCommands } from './slashCommands';
 import { AppModals } from './components/AppModals';
 import { AppStandaloneModals } from './components/AppStandaloneModals';
@@ -153,10 +154,15 @@ import { notifyToast } from './stores/notificationStore';
 import { useModalActions, useModalStore } from './stores/modalStore';
 import { GitStatusProvider } from './contexts/GitStatusContext';
 import { WindowProvider, useWindowContextOptional } from './contexts/WindowContext';
+import { GitShortcutActionsBridge } from './components/GitShortcutActionsBridge';
 import { InputProvider, useInputContext } from './contexts/InputContext';
-import { useGroupChatStore, isGroupChatVisibleInWindow } from './stores/groupChatStore';
+import {
+	useGroupChatStore,
+	isGroupChatVisibleInWindow,
+	selectActiveGroupChatStagedImages,
+} from './stores/groupChatStore';
 import { useBatchStore } from './stores/batchStore';
-import { registerBatchResumer } from './stores/retryStore';
+import { registerBatchResumer } from './services/batchResumer';
 // All session state is read directly from useSessionStore in MaestroConsoleInner.
 import {
 	useSessionStore,
@@ -183,10 +189,16 @@ import { PluginModalPanelMount } from './components/plugins/PluginModalPanelMoun
 
 // Import types and constants
 // Note: GroupChat, GroupChatState are imported from types (re-exported from shared)
-import type { RightPanelTab, Session, QueuedItem, CustomAICommand } from './types';
+import type {
+	RightPanelTab,
+	Session,
+	QueuedItem,
+	CustomAICommand,
+	QueuedItemEditPatch,
+} from './types';
 import { useResolvedTheme } from './hooks/ui/useResolvedTheme';
 import { getActiveOutputSearchKey } from './utils/outputSearch';
-import { reorderQueueItem } from './utils/executionQueue';
+import { reorderQueueItem, applyQueuedItemEdit } from './utils/executionQueue';
 import { getContextColor } from './utils/theme';
 // safeClipboardWrite moved to AppStandaloneModals (GistPublishModal handler)
 // Tiling-aware Cmd+Shift+T: restores a pane back into its tiled group when the
@@ -206,8 +218,9 @@ import {
 	navigateToPrevUnifiedTab,
 	navigateToClosestTerminalTab,
 	hasActiveWizard,
-	findNextUnreadSession,
 	isSoleAiTabReplacement,
+	findUnreadSessionInDirection,
+	type UnreadNavDirection,
 } from './utils/tabHelpers';
 import { getForceSendEligibility, type ForceSendEligibility } from './utils/executionQueue';
 // validateNewSession moved to useSymphonyContribution, useSessionCrud hooks
@@ -431,8 +444,6 @@ function MaestroConsoleInner() {
 	const settings = useSettings();
 	const {
 		conductorProfile,
-		fontFamily,
-		fontSize,
 		enterToSendAI,
 		setEnterToSendAI,
 		enterToSendAIExpanded,
@@ -475,8 +486,10 @@ function MaestroConsoleInner() {
 		keyboardMasteryStats,
 		recordShortcutUsage,
 		colorBlindMode,
+		themeGloss,
 		defaultStatsTimeRange,
 		documentGraphShowExternalLinks,
+		documentGraphConfirmClose,
 		documentGraphMaxNodes,
 		documentGraphPreviewCharLimit,
 		documentGraphLayoutType,
@@ -640,6 +653,41 @@ function MaestroConsoleInner() {
 		prevLeftSidebarOpenRef.current = leftSidebarOpen;
 		prevRightPanelOpenRef.current = rightPanelOpen;
 	}, [isNarrowViewport, leftSidebarOpen, rightPanelOpen]);
+
+	// Narrow viewports: picking an agent from the left drawer is a request to
+	// LOOK at that agent, so the drawer gets out of the way - on a phone it
+	// covers the whole screen, and a drawer that stayed put read as the tap
+	// having done nothing. Keyed on the TRANSITION of activeSessionId, not its
+	// steady state, so a drawer opened after a switch stays open.
+	const prevActiveSessionIdRef = useRef(activeSessionId);
+	useEffect(() => {
+		const changed = prevActiveSessionIdRef.current !== activeSessionId;
+		prevActiveSessionIdRef.current = activeSessionId;
+		if (changed && isNarrowViewport && leftSidebarOpen) {
+			useUIStore.getState().setLeftSidebarOpen(false);
+		}
+	}, [activeSessionId, isNarrowViewport, leftSidebarOpen]);
+
+	// The right drawer follows the same rule. Opening a file from the Files panel,
+	// resuming a conversation from History, or anything else that activates a
+	// tab is a request to look at that tab, and on a phone the drawer covers it -
+	// a file tapped in the tree opened behind the panel and nothing on screen
+	// changed. Keyed on the transition of the active tab (of any kind), so a
+	// drawer opened after the switch stays open.
+	const activeTabKey = [
+		activeSession?.activeTabId,
+		activeSession?.activeFileTabId,
+		activeSession?.activeTerminalTabId,
+		activeSession?.activeBrowserTabId,
+	].join('|');
+	const prevActiveTabKeyRef = useRef(activeTabKey);
+	useEffect(() => {
+		const changed = prevActiveTabKeyRef.current !== activeTabKey;
+		prevActiveTabKeyRef.current = activeTabKey;
+		if (changed && isNarrowViewport && rightPanelOpen) {
+			useUIStore.getState().setRightPanelOpen(false);
+		}
+	}, [activeTabKey, isNarrowViewport, rightPanelOpen]);
 	const activeRightTab = useUIStore((s) => s.activeRightTab);
 	const activeFocus = useUIStore((s) => s.activeFocus);
 	const bookmarksCollapsed = useUIStore((s) => s.bookmarksCollapsed);
@@ -671,21 +719,29 @@ function MaestroConsoleInner() {
 	} = useUIStore.getState();
 
 	// --- EDGE-SWIPE DRAWERS (phones on the web-desktop bundle) ---
-	// Gated on coarse pointer so a narrow *desktop* browser window (mouse) never
-	// gets invisible edge zones that would swallow clicks in the outer 24px. The
-	// opener zones are thin fixed strips at the screen edges (see JSX), so drawer
-	// gestures can only START at the edge - horizontal scrolling inside the
-	// terminal, tab bar, or tables is untouched. Closing swipes ride the mobile
-	// backdrop, which only exists while a drawer is open.
+	// Gated on coarse pointer: a mouse never produces touch events, and a narrow
+	// *desktop* browser window has no drawer gesture to offer. The opener
+	// handlers ride the app shell, gated on WHERE the touch starts
+	// (useEdgeSwipeHandlers), so a drawer gesture can only START in the outer
+	// 24px and every tap or scroll elsewhere is untouched. This replaced two
+	// invisible fixed strips, which sat above the tab bar and swallowed taps on
+	// its magnifier and first chip. Closing swipes ride the mobile backdrop and
+	// the drawers themselves, which only exist while a drawer is open.
 	const drawerSwipeEnabled = isNarrowViewport && isWebDesktop() && isCoarsePointer();
+	const edgeSwipeArmed = drawerSwipeEnabled && !leftSidebarOpen && !rightPanelOpen;
 	const leftEdgeSwipe = useSwipeGestures({
 		onSwipeRight: () => setLeftSidebarOpen(true),
-		enabled: drawerSwipeEnabled && !leftSidebarOpen && !rightPanelOpen,
+		enabled: edgeSwipeArmed,
 	});
 	const rightEdgeSwipe = useSwipeGestures({
 		onSwipeLeft: () => setRightPanelOpen(true),
-		enabled: drawerSwipeEnabled && !rightPanelOpen && !leftSidebarOpen,
+		enabled: edgeSwipeArmed,
 	});
+	const edgeSwipeHandlers = useEdgeSwipeHandlers(
+		leftEdgeSwipe.handlers,
+		rightEdgeSwipe.handlers,
+		edgeSwipeArmed
+	);
 	// Backdrop closer: the left drawer closes by pushing it back left, the right
 	// drawer by pushing it back right. Only one drawer is open at a time (mutual
 	// exclusion above), and the setters are idempotent, so unconditional calls
@@ -709,11 +765,12 @@ function MaestroConsoleInner() {
 	const activeGroupChatId = useGroupChatStore((s) => s.activeGroupChatId);
 	const groupChatMessages = useGroupChatStore((s) => s.groupChatMessages);
 	const groupChatState = useGroupChatStore((s) => s.groupChatState);
-	const groupChatStagedImages = useGroupChatStore((s) => s.groupChatStagedImages);
+	const groupChatStagedImages = useGroupChatStore(selectActiveGroupChatStagedImages);
 	const groupChatReadOnlyMode = useGroupChatStore((s) => s.groupChatReadOnlyMode);
-	const groupChatExecutionQueue = useGroupChatStore((s) => s.groupChatExecutionQueue);
+	const groupChatQueues = useGroupChatStore((s) => s.groupChatQueues);
 	const groupChatRightTab = useGroupChatStore((s) => s.groupChatRightTab);
 	const groupChatParticipantColors = useGroupChatStore((s) => s.groupChatParticipantColors);
+	const groupChatModeratorOnly = useGroupChatStore((s) => s.groupChatModeratorOnly);
 	const moderatorUsage = useGroupChatStore((s) => s.moderatorUsage);
 	const participantStates = useGroupChatStore((s) => s.participantStates);
 	const groupChatError = useGroupChatStore((s) => s.groupChatError);
@@ -733,6 +790,7 @@ function MaestroConsoleInner() {
 		setGroupChatRightTab,
 		setGroupChatParticipantColors,
 		setInitiatorWindowId,
+		toggleGroupChatModeratorOnly,
 	} = useGroupChatStore.getState();
 
 	// Multi-window: stamp the initiating window on this window's group-chat store
@@ -835,7 +893,9 @@ function MaestroConsoleInner() {
 	// See stagedImages/setStagedImages computed from active tab below
 
 	// Global Live Mode - extracted to useLiveMode hook (Tier 3B)
-	const { isLiveMode, webInterfaceUrl, toggleGlobalLive, restartWebServer } = useLiveMode();
+	const { isLiveMode, webInterfaceUrl, toggleGlobalLive, restartWebServer } = useLiveMode(
+		settings.settingsLoaded && settings.webInterfaceAutoStart && !isWebDesktop()
+	);
 
 	// Auto Run document management state (from batchStore)
 	// Content is per-session in session.autoRunContent
@@ -897,7 +957,9 @@ function MaestroConsoleInner() {
 		((sessionId: string, item: QueuedItem) => Promise<void>) | null
 	>(null);
 	// Ref for handleResumeSession - bridges ordering gap between useModalHandlers and useAgentSessionManagement
-	const handleResumeSessionRef = useRef<((agentSessionId: string) => void) | null>(null);
+	const handleResumeSessionRef = useRef<
+		((agentSessionId: string, providedMessages?: undefined, sessionName?: string) => void) | null
+	>(null);
 
 	// Note: thinkingChunkBufferRef and thinkingChunkRafIdRef moved into useAgentListeners hook
 	// Note: pauseBatchOnErrorRef and getBatchStateRef moved into useBatchHandlers hook
@@ -937,7 +999,10 @@ function MaestroConsoleInner() {
 	const { initialLoadComplete } = useSessionRestoration();
 
 	// --- CUE AUTO-DISCOVERY (gated by Encore Feature) ---
-	useCueAutoDiscovery(encoreFeatures);
+	// The Electron renderer owns the one main-process Cue lifecycle. A browser
+	// mirror must not rescan every project root or toggle that shared engine on
+	// mount; doing so floods the WebSocket bridge and starves interactive calls.
+	useCueAutoDiscovery(encoreFeatures, !isWebDesktop());
 
 	// --- PIANOLA AGENT (pinned manager agent, gated by Encore Feature) ---
 	// Ensures the single pinned Pianola agent exists once sessions are loaded and
@@ -1144,6 +1209,7 @@ function MaestroConsoleInner() {
 		handleGroupChatDraftChange,
 		handleRemoveGroupChatQueueItem,
 		handleReorderGroupChatQueueItems,
+		handleResumeGroupChatQueue,
 		handleStopAll: handleGroupChatStopAll,
 		handleNewGroupChat,
 		handleEditGroupChat,
@@ -1271,7 +1337,10 @@ function MaestroConsoleInner() {
 		handleConfirmAndDeleteWorktreeOnDisk,
 		refreshWorktreeState,
 		handlePRCreated,
-	} = useWorktreeHandlers({ rightPanelRef });
+	} = useWorktreeHandlers({
+		rightPanelRef,
+		isLifecycleOwner: !isWebDesktop() && (windowCtx?.isMainWindow ?? true),
+	});
 
 	// --- APP HANDLERS (drag, file, folder operations) ---
 	// NOTE: file-drop attach is now scoped per-region (useChatFileDropZone for the
@@ -1376,7 +1445,6 @@ function MaestroConsoleInner() {
 		isLiveMode,
 		sessionsRef,
 		activeSessionIdRef,
-		setSessions,
 		setActiveSessionId,
 		defaultSaveToHistory,
 		defaultShowThinking,
@@ -1395,6 +1463,8 @@ function MaestroConsoleInner() {
 	// Theme styles hook - manages CSS variables and scrollbar fade animations
 	useThemeStyles({
 		themeColors: theme.colors,
+		themeMode: theme.mode,
+		glossLevel: themeGloss,
 	});
 
 	// Get capabilities for the active session's agent type
@@ -1691,17 +1761,12 @@ function MaestroConsoleInner() {
 	}, []);
 
 	// Edit a queued message's prompt text and attached images in place.
-	const handleEditQueuedItem = useCallback(
-		(itemId: string, patch: { text: string; images: string[] }) => {
-			updateSessionWith(activeSessionIdRef.current, (s) => ({
-				...s,
-				executionQueue: s.executionQueue.map((item) =>
-					item.id === itemId ? { ...item, text: patch.text, images: patch.images } : item
-				),
-			}));
-		},
-		[]
-	);
+	const handleEditQueuedItem = useCallback((itemId: string, patch: QueuedItemEditPatch) => {
+		updateSessionWith(activeSessionIdRef.current, (s) => ({
+			...s,
+			executionQueue: applyQueuedItemEdit(s.executionQueue, itemId, patch),
+		}));
+	}, []);
 
 	// Reorder a queued item within the active session's inline chat list. The
 	// inline list is filtered to a single tab, so fromIndex/toIndex address that
@@ -1754,7 +1819,6 @@ function MaestroConsoleInner() {
 		clearError: clearInlineWizardError,
 		retryLastMessage: retryInlineWizardMessage,
 		generateDocuments: generateInlineWizardDocuments,
-		endWizard: endInlineWizard,
 		cancelTurn: cancelInlineWizardTurn,
 		isWizardActiveForTab,
 	} = inlineWizardContext;
@@ -1771,6 +1835,7 @@ function MaestroConsoleInner() {
 		handleWizardCommand,
 		handleLaunchWizardTab,
 		isWizardActiveForCurrentTab,
+		handleExitWizard,
 		handleWizardComplete,
 		handleWizardCompleteAndStartAutoRun,
 		handleWizardLetsGo,
@@ -2140,43 +2205,60 @@ function MaestroConsoleInner() {
 		setUngroupedCollapsed,
 	});
 
-	// goToNextUnreadTab - jump to the next agent with unread tabs, clearing current agent's unreads
-	const goToNextUnreadTab = useCallback(() => {
-		const currentActiveId = useSessionStore.getState().activeSessionId;
-		const sortedSessions = useSidebarNavStore.getState().sortedSessions;
-		// Treat a tab with an active inline wizard as a draft target: an unfinished
-		// wizard is meant to be completed into an Auto Run doc, so the navigation
-		// should stop on it just like any other draft.
-		const result = findNextUnreadSession(sortedSessions, currentActiveId, isWizardActiveForTab);
-
-		// Clear current agent's unread tabs
-		if (result.clearedCurrent) {
-			setSessions((prev) =>
-				prev.map((s) => {
-					if (s.id !== currentActiveId) return s;
-					return {
-						...s,
-						aiTabs: s.aiTabs.map((t) => (t.hasUnread ? { ...t, hasUnread: false } : t)),
-					};
-				})
+	// goToUnreadTab - jump to the next/previous agent with unread tabs, clearing
+	// current agent's unreads. Both directions share this body so the forward
+	// chord (Opt+Cmd+Down) and the backward one (second press of Opt+Cmd+Up)
+	// cannot drift on ordering or clear semantics.
+	const goToUnreadTab = useCallback(
+		(direction: UnreadNavDirection) => {
+			const currentActiveId = useSessionStore.getState().activeSessionId;
+			// Read the order at EVENT time rather than closing over it: the Left Bar
+			// re-sorts as agents go busy, and a captured list walks to whatever was
+			// on screen when this callback was last built.
+			const sortedSessions = useSidebarNavStore.getState().sortedSessions;
+			// Treat a tab with an active inline wizard as a draft target: an unfinished
+			// wizard is meant to be completed into an Auto Run doc, so the navigation
+			// should stop on it just like any other draft.
+			const result = findUnreadSessionInDirection(
+				sortedSessions,
+				currentActiveId,
+				direction,
+				isWizardActiveForTab
 			);
-		}
 
-		if (result.jumped && result.targetSessionId) {
-			setActiveSessionId(result.targetSessionId);
-			const targetTabId = result.targetTabId;
-			if (targetTabId) {
+			// Clear current agent's unread tabs
+			if (result.clearedCurrent) {
 				setSessions((prev) =>
 					prev.map((s) => {
-						if (s.id !== result.targetSessionId) return s;
-						return { ...s, activeTabId: targetTabId };
+						if (s.id !== currentActiveId) return s;
+						return {
+							...s,
+							aiTabs: s.aiTabs.map((t) => (t.hasUnread ? { ...t, hasUnread: false } : t)),
+						};
 					})
 				);
 			}
-		} else {
-			showSuccessFlash('No unread or draft tabs');
-		}
-	}, [setSessions, setActiveSessionId, showSuccessFlash, isWizardActiveForTab]);
+
+			if (result.jumped && result.targetSessionId) {
+				setActiveSessionId(result.targetSessionId);
+				const targetTabId = result.targetTabId;
+				if (targetTabId) {
+					setSessions((prev) =>
+						prev.map((s) => {
+							if (s.id !== result.targetSessionId) return s;
+							return { ...s, activeTabId: targetTabId };
+						})
+					);
+				}
+			} else {
+				showSuccessFlash('No unread or draft tabs');
+			}
+		},
+		[setSessions, setActiveSessionId, showSuccessFlash, isWizardActiveForTab]
+	);
+
+	const goToNextUnreadTab = useCallback(() => goToUnreadTab('next'), [goToUnreadTab]);
+	const goToPreviousUnreadTab = useCallback(() => goToUnreadTab('previous'), [goToUnreadTab]);
 
 	// showConfirmation, performDeleteSession - provided by useSessionLifecycle hook (Phase 2H)
 	// deleteSession, deleteWorktreeGroup - provided by useSessionCrud hook
@@ -2392,6 +2474,7 @@ function MaestroConsoleInner() {
 		handleCopyContext,
 		handleExportHtml,
 		handlePublishTabGist,
+		handleReloadFileTab,
 	});
 
 	// Queue browser handlers - extracted to useQueueHandlers hook
@@ -2493,6 +2576,7 @@ function MaestroConsoleInner() {
 		setLogViewerOpen,
 		setProcessMonitorOpen,
 		setUsageDashboardOpen,
+		handleQuickActionsRefreshGitFileState,
 		logsEndRef,
 		inputRef,
 		terminalOutputRef,
@@ -2599,6 +2683,9 @@ function MaestroConsoleInner() {
 		handleCloseTerminalTab,
 		mainPanelRef,
 
+		// AI tab handler for keyboard shortcut (Cmd+T)
+		handleNewTab,
+
 		// File tab handler for keyboard shortcut (Alt+N)
 		handleNewFileTab,
 
@@ -2613,6 +2700,7 @@ function MaestroConsoleInner() {
 
 		// Next unread tab navigation
 		goToNextUnreadTab,
+		goToPreviousUnreadTab,
 	};
 
 	// NOTE: File explorer effects (flat file list, pending jump path, scroll, keyboard nav) are
@@ -2857,7 +2945,7 @@ function MaestroConsoleInner() {
 		generateInlineWizardDocuments,
 		retryInlineWizardMessage,
 		clearInlineWizardError,
-		endInlineWizard,
+		handleExitWizard,
 		cancelInlineWizardTurn,
 		handleAutoRunRefresh,
 
@@ -3054,9 +3142,7 @@ function MaestroConsoleInner() {
 				rightPanelOpen={rightPanelOpen}
 				onCloseDrawers={handleCloseDrawers}
 				drawerCloseSwipeHandlers={drawerCloseSwipe.handlers}
-				drawerSwipeEnabled={drawerSwipeEnabled}
-				leftEdgeSwipeHandlers={leftEdgeSwipe.handlers}
-				rightEdgeSwipeHandlers={rightEdgeSwipe.handlers}
+				edgeSwipeHandlers={edgeSwipeHandlers}
 				logViewerOpen={logViewerOpen}
 				onToastSessionClick={handleToastSessionClick}
 				logViewer={
@@ -3138,10 +3224,9 @@ function MaestroConsoleInner() {
 									handlePaste={handlePaste}
 									handleDrop={handleGroupChatDrop}
 									onOpenLightbox={handleSetLightboxImage}
-									executionQueue={groupChatExecutionQueue.filter(
-										(item) => item.tabId === activeGroupChatId
-									)}
+									queueState={activeGroupChatId ? groupChatQueues[activeGroupChatId] : undefined}
 									onRemoveQueuedItem={handleRemoveGroupChatQueueItem}
+									onResumeQueue={handleResumeGroupChatQueue}
 									onReorderQueuedItems={handleReorderGroupChatQueueItems}
 									markdownEditMode={chatRawTextMode}
 									onToggleMarkdownEditMode={handleToggleGroupChatMarkdownMode}
@@ -3150,6 +3235,8 @@ function MaestroConsoleInner() {
 									setEnterToSendAI={setEnterToSendAI}
 									showFlashNotification={handleGroupChatFlashNotification}
 									participantColors={groupChatParticipantColors}
+									moderatorOnly={groupChatModeratorOnly}
+									onToggleModeratorOnly={toggleGroupChatModeratorOnly}
 									messagesRef={groupChatMessagesRef}
 									ghCliAvailable={ghCliAvailable}
 									onPublishMessageGist={handlePublishGroupChatMessageGist}
@@ -3185,6 +3272,7 @@ function MaestroConsoleInner() {
 								onTabChange={handleGroupChatRightTabChange}
 								onJumpToMessage={handleJumpToGroupChatMessage}
 								onColorsComputed={setGroupChatParticipantColors}
+								moderatorOnly={groupChatModeratorOnly}
 							/>
 						</>
 					) : null
@@ -3402,7 +3490,6 @@ function MaestroConsoleInner() {
 						onBrowserTabSelect={handleSelectBrowserTab}
 						onNamedSessionSelect={handleNamedSessionSelect}
 						filteredFileTree={filteredFileTree}
-						fileExplorerExpanded={activeSession?.fileExplorerExpanded}
 						onCloseFileSearch={handleCloseFileSearch}
 						onFileSearchSelect={handleFileSearchSelect}
 						onClosePromptComposer={handleClosePromptComposer}
@@ -3448,6 +3535,7 @@ function MaestroConsoleInner() {
 						onQuickActionsNewBrowserTab={handleNewBrowserTab}
 						onQuickActionsNewTerminalTab={handleOpenTerminalTab}
 						onGoToNextUnread={goToNextUnreadTab}
+						onGoToPreviousUnread={goToPreviousUnreadTab}
 						onNavBack={handleNavBack}
 						onNavForward={handleNavForward}
 						onRemoveQueueItem={handleRemoveQueueItem}
@@ -3533,6 +3621,7 @@ function MaestroConsoleInner() {
 						onOpenFileTab={handleOpenFileTab}
 						mainPanelRef={mainPanelRef}
 						documentGraphShowExternalLinks={documentGraphShowExternalLinks}
+						documentGraphConfirmClose={documentGraphConfirmClose}
 						onExternalLinksChange={settings.setDocumentGraphShowExternalLinks}
 						documentGraphMaxNodes={documentGraphMaxNodes}
 						documentGraphPreviewCharLimit={documentGraphPreviewCharLimit}
@@ -3587,6 +3676,9 @@ function GitStatusProviderFromStore({ children }: { children: ReactNode }) {
 	const activeSessionId = useSessionStore((s) => s.activeSessionId);
 	return (
 		<GitStatusProvider sessions={sessions} activeSessionId={activeSessionId}>
+			{/* Renders nothing - holds the git-status subscription the keyboard
+			    shortcuts for pull/push/branch/PR need, so App doesn't have to. */}
+			<GitShortcutActionsBridge />
 			{children}
 		</GitStatusProvider>
 	);

@@ -23,6 +23,10 @@ vi.mock('electron', () => ({
 }));
 
 // Mock the drag-out icon so the handler doesn't reach into Electron's nativeImage.
+vi.mock('../../../../main/utils/file-tree-walk', () => ({
+	walkLocalFileTree: vi.fn(),
+}));
+
 vi.mock('../../../../main/utils/drag-out-icon', () => ({
 	getDragOutIcon: vi.fn(() => ({ __icon: true })),
 }));
@@ -105,6 +109,7 @@ vi.mock('../../../../main/stores', () => ({
 }));
 
 import { registerFilesystemHandlers } from '../../../../main/ipc/handlers/filesystem';
+import { walkLocalFileTree } from '../../../../main/utils/file-tree-walk';
 import fs from 'fs/promises';
 import { getSshRemoteById } from '../../../../main/stores';
 import {
@@ -140,6 +145,7 @@ describe('filesystem handlers', () => {
 		it('should register all filesystem handlers', () => {
 			expect(ipcMain.handle).toHaveBeenCalledWith('fs:homeDir', expect.any(Function));
 			expect(ipcMain.handle).toHaveBeenCalledWith('fs:readDir', expect.any(Function));
+			expect(ipcMain.handle).toHaveBeenCalledWith('fs:readDirTree', expect.any(Function));
 			expect(ipcMain.handle).toHaveBeenCalledWith('fs:readFile', expect.any(Function));
 			expect(ipcMain.handle).toHaveBeenCalledWith('fs:stat', expect.any(Function));
 			expect(ipcMain.handle).toHaveBeenCalledWith('fs:directorySize', expect.any(Function));
@@ -162,6 +168,32 @@ describe('filesystem handlers', () => {
 
 			const result = await handler!({}, null);
 			expect(result).toBe('/Users/testuser');
+		});
+	});
+
+	describe('fs:readDirTree', () => {
+		it('delegates to the shared walker and passes the scan options through', async () => {
+			const scan = {
+				tree: [{ name: 'a.txt', type: 'file' }],
+				truncated: false,
+				filesFound: 1,
+				directoriesScanned: 1,
+			};
+			vi.mocked(walkLocalFileTree).mockResolvedValue(scan as never);
+
+			const handler = registeredHandlers.get('fs:readDirTree');
+			expect(handler).toBeDefined();
+
+			const options = {
+				maxDepth: 5,
+				maxEntries: 100,
+				ignorePatterns: ['.git'],
+				honorGitignore: true,
+			};
+			const result = await handler!({}, '/test/path', options);
+
+			expect(walkLocalFileTree).toHaveBeenCalledWith('/test/path', options);
+			expect(result).toEqual(scan);
 		});
 	});
 
@@ -1202,6 +1234,63 @@ describe('filesystem handlers', () => {
 				fileCount: 50,
 				folderCount: 5,
 			});
+		});
+
+		// A full recursive stat of the working directory is the most expensive thing
+		// the main process does, and the Files panel asks for it from several places
+		// inside one refresh cycle. Identical back-to-back requests must collapse
+		// into a single walk.
+		it('collapses identical back-to-back local requests into one walk', async () => {
+			const mockFs = (await import('fs/promises')).default;
+
+			vi.mocked(mockFs.readdir).mockImplementation(async (dirPath: any) => {
+				if (dirPath === '/dedupe') {
+					return [{ name: 'file.txt', isDirectory: () => false, isFile: () => true }] as any;
+				}
+				return [];
+			});
+			vi.mocked(mockFs.stat).mockResolvedValue({ size: 7 } as any);
+
+			const handler = registeredHandlers.get('fs:directorySize');
+			const patterns = ['node_modules'];
+
+			const [a, b] = await Promise.all([
+				handler!({}, '/dedupe', undefined, patterns, false),
+				handler!({}, '/dedupe', undefined, patterns, false),
+			]);
+			const c = await handler!({}, '/dedupe', undefined, patterns, false);
+
+			expect(a).toEqual({ totalSize: 7, fileCount: 1, folderCount: 0 });
+			expect(b).toEqual(a);
+			expect(c).toEqual(a);
+			expect(vi.mocked(mockFs.readdir)).toHaveBeenCalledTimes(1);
+		});
+
+		it('does not reuse one directory answer for a different request', async () => {
+			const mockFs = (await import('fs/promises')).default;
+
+			vi.mocked(mockFs.readdir).mockImplementation(async (dirPath: any) => {
+				if (dirPath === '/one') {
+					return [{ name: 'a.txt', isDirectory: () => false, isFile: () => true }] as any;
+				}
+				if (dirPath === '/two') {
+					return [
+						{ name: 'a.txt', isDirectory: () => false, isFile: () => true },
+						{ name: 'b.txt', isDirectory: () => false, isFile: () => true },
+					] as any;
+				}
+				return [];
+			});
+			vi.mocked(mockFs.stat).mockResolvedValue({ size: 10 } as any);
+
+			const handler = registeredHandlers.get('fs:directorySize');
+
+			// Different directory.
+			expect((await handler!({}, '/one', undefined, ['x'], false)).fileCount).toBe(1);
+			expect((await handler!({}, '/two', undefined, ['x'], false)).fileCount).toBe(2);
+			// Same directory, different ignore patterns.
+			expect((await handler!({}, '/two', undefined, ['y'], false)).fileCount).toBe(2);
+			expect(vi.mocked(mockFs.readdir).mock.calls.length).toBeGreaterThanOrEqual(3);
 		});
 
 		it('should respect custom ignore patterns for local directories', async () => {

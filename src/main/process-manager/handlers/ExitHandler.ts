@@ -5,6 +5,7 @@ import { logger } from '../../utils/logger';
 import { matchSshErrorPattern } from '../../parsers/error-patterns';
 import { aggregateModelUsage } from '../../parsers/usage-aggregator';
 import { cleanupTempFiles } from '../utils/imageUtils';
+import { settleProvisionalAgentError } from '../utils/provisionalAgentError';
 import type { ManagedProcess, AgentError } from '../types';
 import type { ParsedEvent } from '../../parsers/agent-output-parser';
 import type { DataBufferManager } from './DataBufferManager';
@@ -112,14 +113,96 @@ export class ExitHandler {
 			});
 		}
 
+		// Copilot may report its session ID only in an unterminated last record, and
+		// `awaitCopilotShutdown` below needs that ID to recover the authoritative
+		// disk-side final state. So peek at the remainder here WITHOUT consuming it:
+		// set the id and nothing else - no emit, no `errorEmitted`, no buffer clear.
+		// Everything this process has to say still leaves through the single
+		// remainder block further down, which sits below the supersession guard. A
+		// peek that emitted from up here would let a predecessor draining at exit
+		// push its remainder events into the successor's turn, which is exactly what
+		// that guard exists to prevent.
+		//
+		// Gated on Copilot because that is the only consumer: `awaitCopilotShutdown`
+		// returns immediately for every other tool type, so peeking for them would
+		// parse the trailing record twice to feed a wait that never runs. This is
+		// every agent's exit path, so the cost of the split stays on the one agent
+		// that needs it.
+		if (
+			managedProcess.toolType === 'copilot-cli' &&
+			isStreamJsonMode &&
+			managedProcess.jsonBuffer?.trim() &&
+			outputParser
+		) {
+			try {
+				const peekedEvent = outputParser.parseJsonLine(managedProcess.jsonBuffer.trim());
+				const peekedSessionId = peekedEvent ? outputParser.extractSessionId(peekedEvent) : null;
+				if (peekedSessionId) {
+					managedProcess.agentSessionId = peekedSessionId;
+				}
+			} catch {
+				// A malformed last line simply yields no id. The remainder block below
+				// owns reporting it; this peek stays silent either way.
+			}
+		}
+
+		// Copilot CLI: wait for the on-disk shutdown marker before emitting
+		// `exit`. Copilot can keep working in subagent processes after our
+		// parent process closes, and `session.shutdown` is only ever
+		// written to `events.jsonl` - never to stdout in batch mode. If
+		// we emit `exit` immediately, the renderer flips to idle while
+		// Copilot is still doing real work; the user has to manually poke
+		// the tab to discover work is ongoing. When the shutdown marker
+		// is found, we also re-derive the authoritative final answer from
+		// disk so the rendered text matches what Copilot truly finished
+		// with (not the stale planning narration our parent saw last).
+		await this.awaitCopilotShutdown(sessionId, managedProcess);
+
+		// The main guard. `awaitCopilotShutdown` is the only suspension point in
+		// this method, so it is the only place a replacement can claim the session
+		// id mid-flight, and this is the earliest point the question can be asked
+		// for everything downstream. (That method has awaits of its OWN and emits
+		// from inside them, so it carries a second check at its emit site - this
+		// one runs after it has already returned.) Every step below emits
+		// into shared per-session state (batch-mode result text, the stream-json
+		// remainder, the streamedText fallback, usage, agent-error, query-complete,
+		// the final flush, exit), so a guard placed any lower silently lets some of
+		// this process's output land in the successor's turn.
+		if (this.isSuperseded(sessionId, managedProcess)) {
+			logger.warn(
+				'[ProcessManager] Session re-spawned during exit handling, suppressing all exit side effects',
+				'ProcessManager',
+				{ sessionId, code }
+			);
+			return;
+		}
+
+		// An in-turn error notice still held at exit had nothing after it, so the
+		// turn ended on it. Emit it first: ahead of the exit event it explains, and
+		// ahead of detectErrorFromExit below, which would report a vaguer failure.
+		// A notice still undecided when the user pressed Stop is dropped instead:
+		// the turn ended on the stop, not on the notice, and raising it would show a
+		// red error for a turn the user deliberately abandoned (see `interrupted`).
+		if (managedProcess.interrupted) {
+			managedProcess.provisionalError = undefined;
+		}
+		settleProvisionalAgentError(this.emitter, sessionId, managedProcess);
+
+		// Handle regular batch mode (not stream-json)
+		if (isBatchMode && !isStreamJsonMode && managedProcess.jsonBuffer) {
+			this.handleBatchModeExit(sessionId, managedProcess);
+		}
+
 		// Handle stream-json mode: process any remaining jsonBuffer content.
 		// The jsonBuffer may contain the last line if it didn't end with \n.
 		// Without this, short-lived processes (tab-naming, batch ops) can lose
 		// their result message if it's the last line without a trailing newline.
 		//
-		// This runs BEFORE provider shutdown reconciliation: Copilot may report its
-		// session ID only in this unterminated record, and the shutdown wait needs
-		// that ID to recover the authoritative disk-side final state.
+		// This is the ONE block that consumes `jsonBuffer`, and it sits below the
+		// supersession guard because every branch of it emits. The session-ID peek
+		// above already handed `awaitCopilotShutdown` the id it needs, without
+		// consuming or emitting anything, so nothing is lost by resolving the
+		// remainder here.
 		if (isStreamJsonMode && managedProcess.jsonBuffer?.trim() && outputParser) {
 			const remainingLine = managedProcess.jsonBuffer.trim();
 			managedProcess.jsonBuffer = '';
@@ -184,40 +267,6 @@ export class ExitHandler {
 				// of a run whose entire output was this one trailing envelope.
 				this.dispatchParsedEvent(sessionId, managedProcess, event, outputParser);
 			}
-		}
-
-		// Copilot CLI: wait for the on-disk shutdown marker before emitting
-		// `exit`. Copilot can keep working in subagent processes after our
-		// parent process closes, and `session.shutdown` is only ever
-		// written to `events.jsonl` - never to stdout in batch mode. If
-		// we emit `exit` immediately, the renderer flips to idle while
-		// Copilot is still doing real work; the user has to manually poke
-		// the tab to discover work is ongoing. When the shutdown marker
-		// is found, we also re-derive the authoritative final answer from
-		// disk so the rendered text matches what Copilot truly finished
-		// with (not the stale planning narration our parent saw last).
-		await this.awaitCopilotShutdown(sessionId, managedProcess);
-
-		// Re-check after the only suspension point in this method. A replacement
-		// can claim the session while Copilot shutdown reconciliation is waiting.
-		// (That method has awaits of its own and emits from inside them, so it
-		// carries another check at its emit site.) Every step below emits
-		// into shared per-session state (batch-mode result text, the stream-json
-		// fallback, usage, agent-error, query-complete,
-		// the final flush, exit), so a guard placed any lower silently lets some of
-		// this process's output land in the successor's turn.
-		if (this.isSuperseded(sessionId, managedProcess)) {
-			logger.warn(
-				'[ProcessManager] Session re-spawned during exit handling, suppressing all exit side effects',
-				'ProcessManager',
-				{ sessionId, code }
-			);
-			return;
-		}
-
-		// Handle regular batch mode (not stream-json)
-		if (isBatchMode && !isStreamJsonMode && managedProcess.jsonBuffer) {
-			this.handleBatchModeExit(sessionId, managedProcess);
 		}
 
 		// Check for errors using the parser (if not already emitted)
@@ -375,7 +424,10 @@ export class ExitHandler {
 			cleanupTempFiles(managedProcess.tempImageFiles);
 		}
 
-		// Emit query-complete event for batch mode processes (for stats tracking)
+		// Emit query-complete for batch mode processes. Listeners flush buffered data
+		// and thinking text and send WakaTime heartbeats. No stats row is written from
+		// it: the renderer records each turn, with its tokens and cost, and a second
+		// writer here double-counted every Auto Run turn.
 		if (isBatchMode && managedProcess.querySource) {
 			const duration = Date.now() - managedProcess.startTime;
 			this.emitter.emit('query-complete', sessionId, {

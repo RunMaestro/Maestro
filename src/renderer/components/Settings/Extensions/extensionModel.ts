@@ -12,6 +12,7 @@
  */
 
 import type { PluginCategory } from '../../../../shared/plugins/plugin-manifest';
+import { ENCORE_FEATURE_DEFAULTS } from '../../../../shared/encoreFeatureDefaults';
 import {
 	FIRST_PARTY_PLUGIN_DEFINITIONS,
 	type FirstPartyEncoreFlag,
@@ -40,8 +41,24 @@ export type ExtensionTrust = PluginSignatureInfo['status'];
  * first-party registry (src/shared/plugins/first-party.ts). */
 export interface BuiltinFeatureDef {
 	flag: keyof EncoreFeatureFlags;
+	/** Graduated: ships enabled, so it wears the Encore badge. */
+	encore?: boolean;
+	/** Still proving itself: bundled but off until the user opts in. */
 	beta?: boolean;
 	pluginBacking: FirstPartyPluginDefinition;
+}
+
+/**
+ * Whether a first-party flag has graduated to an Encore Feature.
+ *
+ * The badge is DERIVED from the shipped default rather than hand-listed: a
+ * capability starts as a plugin (bundled, off, opt-in) and becomes an Encore
+ * Feature the day its entry in ENCORE_FEATURE_DEFAULTS flips to true. Keeping
+ * a separate list meant flipping a default and forgetting the badge, which is
+ * how Cue and Director's Notes kept reading "Beta" after they shipped on.
+ */
+export function isEncoreFlag(flag: keyof EncoreFeatureFlags): boolean {
+	return (ENCORE_FEATURE_DEFAULTS as Readonly<Record<string, boolean>>)[flag] === true;
 }
 
 // The registry's flag union must stay a subset of the renderer's
@@ -63,6 +80,8 @@ export interface UnifiedExtension {
 	description: string;
 	category: PluginCategory;
 	state: ExtensionState;
+	/** Graduated first-party feature: ships on, wears the Encore badge. */
+	encore?: boolean;
 	beta?: boolean;
 	pluginBacked?: boolean;
 	firstParty?: boolean;
@@ -91,18 +110,10 @@ export interface UnifiedExtension {
  * Projected from the shared first-party plugin registry; `beta` is a
  * marketplace-presentation concern, so it stays here. */
 export const BUILTIN_FEATURES: readonly BuiltinFeatureDef[] = FIRST_PARTY_PLUGIN_DEFINITIONS.map(
-	(def) => ({
-		flag: def.encoreFlag,
-		beta:
-			def.encoreFlag === 'maestroCue' ||
-			def.encoreFlag === 'directorNotes' ||
-			def.encoreFlag === 'pianola' ||
-			def.encoreFlag === 'coworking' ||
-			def.encoreFlag === 'opencodeServer' ||
-			def.encoreFlag === 'concerto' ||
-			def.encoreFlag === 'groupsPlus',
-		pluginBacking: def,
-	})
+	(def) => {
+		const encore = isEncoreFlag(def.encoreFlag);
+		return { flag: def.encoreFlag, encore, beta: !encore, pluginBacking: def };
+	}
 );
 
 /** Display labels for the category filter bar + tile badge. */
@@ -123,9 +134,30 @@ export const STATE_LABELS: Record<ExtensionState, string> = {
 	enabled: 'Enabled',
 };
 
-/** The category filter options: 'all' plus every known category. */
-export type CategoryFilter = PluginCategory | 'all';
-export const CATEGORY_FILTERS: readonly CategoryFilter[] = ['all', ...PLUGIN_CATEGORIES];
+/**
+ * The filter-bar options: 'all', the cross-cutting 'encore' designation, then
+ * every known category. 'encore' is not a category - a graduated feature still
+ * belongs to Automation or Insights - so it narrows by badge instead, which is
+ * what makes "show me what ships on" a single click.
+ */
+export type CategoryFilter = PluginCategory | 'all' | 'encore';
+export const CATEGORY_FILTERS: readonly CategoryFilter[] = ['all', 'encore', ...PLUGIN_CATEGORIES];
+
+/** Label for a filter pill. Categories come from CATEGORY_LABELS. */
+export function filterLabel(filter: CategoryFilter): string {
+	if (filter === 'all') return 'All';
+	if (filter === 'encore') return 'Encore';
+	return CATEGORY_LABELS[filter];
+}
+
+/** The badge a tile wears, or null for an unbadged community plugin. */
+export function extensionBadge(
+	ext: UnifiedExtension
+): { label: string; tone: 'accent' | 'warning' } | null {
+	if (ext.encore) return { label: 'Encore', tone: 'accent' };
+	if (ext.beta) return { label: 'Beta', tone: 'warning' };
+	return null;
+}
 
 /** Project a first-party feature flag onto a tile. */
 export function builtinExtension(
@@ -142,6 +174,7 @@ export function builtinExtension(
 		description: backing.description,
 		category: backing.category,
 		state: on ? 'enabled' : 'not-installed',
+		encore: def.encore,
 		beta: def.beta,
 		pluginBacked: true,
 		firstParty: backing.firstParty,
@@ -194,7 +227,9 @@ export function filterExtensions(
 ): UnifiedExtension[] {
 	const q = opts.query.trim().toLowerCase();
 	return all.filter((ext) => {
-		if (opts.category !== 'all' && ext.category !== opts.category) return false;
+		if (opts.category === 'encore') {
+			if (!ext.encore) return false;
+		} else if (opts.category !== 'all' && ext.category !== opts.category) return false;
 		if (opts.onlyInstalled && ext.state === 'not-installed') return false;
 		if (q !== '') {
 			const haystack =

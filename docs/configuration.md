@@ -13,7 +13,7 @@ Settings are organized into tabs:
 | Tab                             | Contents                                                                                                                                                                                                                                                                                             |
 | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **General**                     | About Me (conductor profile), [system-wide hotkey to summon Maestro](./keyboard-shortcuts#system-wide-hotkey-summon-maestro), shell configuration, input send behavior, default toggles (history, thinking), automatic tab naming, power management, updates, privacy, usage stats, storage location |
-| **Display**                     | Font family and size, terminal width, log level and buffer, max output lines per response, document graph settings, context window warnings, [Accessibility](#accessibility) (Color Blind Mode, Bionify reading emphasis)                                                                            |
+| **Display**                     | [Typography](#typography) (a font and size per surface, presets, custom fonts, zoom), terminal width, log level and buffer, max output lines per response, document graph settings, context window warnings, [Accessibility](#accessibility) (Color Blind Mode, Bionify reading emphasis)            |
 | **Shortcuts**                   | Customize keyboard shortcuts (see [Keyboard Shortcuts](./keyboard-shortcuts))                                                                                                                                                                                                                        |
 | **Themes**                      | Dark, light, and vibe mode themes, custom theme builder with import/export                                                                                                                                                                                                                           |
 | **Notifications**               | OS notifications, custom command notifications, toast notification duration and width                                                                                                                                                                                                                |
@@ -21,7 +21,114 @@ Settings are organized into tabs:
 | **Maestro Prompts**             | Browse and edit the 23 core system prompts (wizard, Auto Run, group chat, context, etc.). Changes take effect immediately; reset to bundled defaults at any time                                                                                                                                     |
 | **SSH Hosts**                   | Configure remote hosts for [SSH agent execution](./ssh-remote-execution)                                                                                                                                                                                                                             |
 | **Environment**                 | Global environment variables that cascade to all agents and terminal sessions                                                                                                                                                                                                                        |
-| **WakaTime** _(in General tab)_ | WakaTime integration toggle, API key, detailed file tracking                                                                                                                                                                                                                                         |
+| **Plugins**                     | Enable or disable built-in [Encore Features](./encore-features) and community plugins, with per-plugin settings and permissions                                                                                                                                                                      |
+| **WakaTime** _(in Plugins tab)_ | WakaTime integration toggle, API key, detailed file tracking - under the **Usage & Stats** plugin's settings                                                                                                                                                                                         |
+
+## Typography
+
+**Settings → Display → Fonts.** Maestro does not have one font: it has a font per surface, so the places you read and the places you work can use different faces.
+
+![The Display tab's font controls, with a picker per surface](./screenshots/settings-fonts.png)
+
+Two surfaces are the roots that everything else can follow:
+
+- **Interface** - the whole app, and the proportional face other surfaces inherit.
+- **Terminal** - the command terminal, and the fixed-width face other surfaces inherit. A Nerd Font here gets you shell prompt glyphs.
+
+Four more surfaces each pick their own face, or inherit:
+
+| Surface            | What it covers                                                     |
+| ------------------ | ------------------------------------------------------------------ |
+| **AI Chat**        | The AI transcript, in the main panel and in tiled panes            |
+| **File Preview**   | A file being read                                                  |
+| **File Editor**    | A file being edited                                                |
+| **Document Graph** | Node titles and previews in the [Document Graph](./document-graph) |
+
+Each surface has its own size, which can also inherit. Press **Up** / **Down** on any picker to step through the installed faces and preview them live.
+
+### Presets
+
+**Factory Reset Fonts** sets every font and size at once:
+
+- **Default** - proportional to read, monospace to work. The interface, AI chat, and file preview are proportional; the terminal and file editor are monospace.
+- **Hacker** - monospace everywhere. The original Maestro look.
+
+Maestro tells you which preset is active, or that you have customized away from both.
+
+### Save and restore your own setup
+
+A preset overwrites every font and size, so **Save & Restore Customizations** keeps yours. Click **Save Customizations** once you like what you have, then try a preset or keep tinkering, and **Restore Customizations** puts your fonts back in one click.
+
+There is one slot, and saving again replaces it (Maestro asks first). Zoom is not part of a saved setup, so restoring one never changes how big everything is.
+
+### Custom fonts
+
+The pickers list fonts Maestro knows about. If you have a font installed that is not in the list, add its name once under **Manage Custom Fonts** and it becomes available in every picker.
+
+<Warning>
+Type the family name exactly as the system reports it. A name that is not installed cannot be resolved, and the surface falls back to the browser default rather than telling you it failed.
+</Warning>
+
+### Zoom
+
+**Zoom** scales every surface by the same amount, so the sizes you set relative to each other are preserved. `Cmd+=` / `Cmd+-` adjusts it and `Cmd+Shift+0` resets it.
+
+<Tip>
+You are offered the Default and Hacker presets once, on first run, so you do not have to find this screen to make Maestro readable. Nothing there is permanent - every choice is a setting you can change here later. See [First run](./getting-started#first-run).
+</Tip>
+
+## Typography
+
+**Settings → Display → Fonts.** Maestro does not have one font: it has a font per surface, so the places you read and the places you work can use different faces.
+
+![The Display tab's font controls, with a picker per surface](./screenshots/settings-fonts.png)
+
+Two surfaces are the roots that everything else can follow:
+
+- **Interface** - the whole app, and the proportional face other surfaces inherit.
+- **Terminal** - the command terminal, and the fixed-width face other surfaces inherit. A Nerd Font here gets you shell prompt glyphs.
+
+Four more surfaces each pick their own face, or inherit:
+
+| Surface            | What it covers                                                     |
+| ------------------ | ------------------------------------------------------------------ |
+| **AI Chat**        | The AI transcript, in the main panel and in tiled panes            |
+| **File Preview**   | A file being read                                                  |
+| **File Editor**    | A file being edited                                                |
+| **Document Graph** | Node titles and previews in the [Document Graph](./document-graph) |
+
+Each surface has its own size, which can also inherit. Press **Up** / **Down** on any picker to step through the installed faces and preview them live.
+
+### Presets
+
+**Factory Reset Fonts** sets every font and size at once:
+
+- **Default** - proportional to read, monospace to work. The interface, AI chat, and file preview are proportional; the terminal and file editor are monospace.
+- **Hacker** - monospace everywhere. The original Maestro look.
+
+Maestro tells you which preset is active, or that you have customized away from both.
+
+### Save and restore your own setup
+
+A preset overwrites every font and size, so **Save & Restore Customizations** keeps yours. Click **Save Customizations** once you like what you have, then try a preset or keep tinkering, and **Restore Customizations** puts your fonts back in one click.
+
+There is one slot, and saving again replaces it (Maestro asks first). Zoom is not part of a saved setup, so restoring one never changes how big everything is.
+
+### Custom fonts
+
+The pickers list fonts Maestro knows about. If you have a font installed that is not in the list, add its name once under **Manage Custom Fonts** and it becomes available in every picker.
+
+<Warning>
+Type the family name exactly as the system reports it. A name that is not installed cannot be resolved, and the surface falls back to the browser default rather than telling you it failed.
+</Warning>
+
+### Zoom
+
+**Zoom** scales every surface by the same amount, so the sizes you set relative to each other are preserved. `Cmd+=` / `Cmd+-` adjusts it and `Cmd+Shift+0` resets it.
+
+<Tip>
+You are offered the Default and Hacker presets once, on first run, so you do not have to find this screen to make Maestro readable. Nothing there is permanent - every choice is a setting you can change here later. See [First run](./getting-started#first-run).
+</Tip>
 
 ## Maestro Prompts
 
@@ -70,6 +177,16 @@ Surfaces that aren't recolored: theme accent itself, file extension labels in pl
 ### Bionify Emphasis (Reading Mode)
 
 Bionify-style emphasis bolds the leading fixation portion of each word to make long-form reading easier. It is opt-in and applies **only** to dedicated readers - File Preview and Auto Run document panes. Terminals, logs, chat input, and AI output stay unchanged so they remain easy to copy/paste.
+
+Off, and on, on the same document:
+
+![File preview without Bionify emphasis](./screenshots/bionify-file-preview-before.png)
+
+![The same file preview with Bionify emphasis on](./screenshots/bionify-file-preview-after.png)
+
+The toggle sits in the reader's own toolbar, so you can turn it on for the document in front of you without opening Settings:
+
+![The Bionify toggle in the file preview toolbar](./screenshots/bionify-file-preview-highlighted.png)
 
 - **Intensity** - Soft / Default / Strong. Controls how aggressive the fixation emphasis is.
 - **Algorithm** - Advanced override of the fixation formula. Format: `[+|-] N1 N2 N3 N4 frac` where `-` skips common English words (`a`, `and`, `the`) and `+` highlights every word. The four integers set how many characters are emphasized for words of length 1-4, and `frac` is the fraction of characters emphasized for longer words (e.g. `0.4` = first 40%). Default: `- 0 1 1 2 0.4`. Click the **info** icon next to the toggle for the in-app reference.
@@ -122,6 +239,7 @@ Configure environment variables once in Settings and they automatically apply to
 1. Open **Settings** (`Cmd+,` / `Ctrl+,`) → **Environment** tab
 2. Add your variables in `KEY=VALUE` format using the **Add Variable** button
 3. Variables apply immediately to new agent sessions and terminals
+4. Click the eye button on a row to switch that variable off without deleting it
 
 ![Environment Variables](./screenshots/env-vars.png)
 
@@ -137,6 +255,7 @@ MY_TOOL_PATH=~/tools/custom
 
 ### Important Features
 
+- **Switch a variable off**: The eye button parks a variable - the row stays in the list with its key and value intact and still editable, but the variable is no longer passed to anything Maestro runs. Use it to test without a proxy or an API key instead of deleting the value and retyping it later. Parked variables are stored separately and are never merged into an agent or terminal environment.
 - **Path expansion**: Use `~/` for home directory (e.g., `~/workspace` expands to `/Users/username/workspace`)
 - **Quotes for special characters**: Variables with spaces or special characters should be quoted
 - **Applied to both agents and terminals**: Global vars are available to all agent processes (Claude, OpenCode, etc.) and all terminal sessions
@@ -145,14 +264,17 @@ MY_TOOL_PATH=~/tools/custom
 
 ### Environment Variable Precedence
 
-When an agent or terminal is spawned, variables are merged in this order (highest to lowest priority):
+When an agent or terminal is spawned, its environment is built in this order (lowest to highest priority). Each layer overrides the one before it:
 
-1. **Session-level overrides** - Temporary per-session customizations
-2. **Global environment variables** (Settings) - Applied to all agents and terminals
-3. **Agent-specific configuration** - Default settings for a particular agent
-4. **System environment** - System and parent process variables
+1. **System environment** - System and parent process variables Maestro inherits
+2. **Global environment variables** (Settings → Environment) - Applied to all agents and terminals
+3. **The agent's own variables, or else the provider-level variables** - One set, never both
 
-This means a session-level override will take precedence over the global setting, which takes precedence over agent defaults.
+Layer 3 replaces; it does not merge. Provider-level variables are defaults stored for a particular provider (Claude Code, Codex, and so on), and they reach an agent only when that agent has no variables of its own. Once an agent carries any variable in its **Environment Variables (optional)** panel, the provider-level set is dropped for that agent entirely, including keys the agent never set.
+
+So an agent that sets only `ANTHROPIC_API_KEY` does not receive a provider-level `CLAUDE_CONFIG_DIR`. If it needs both, set both on the agent.
+
+Provider-level variables have no editor in the current UI, so unless you have older settings carrying them, the effective order is simply: per-agent beats global beats system.
 
 ### Use Cases
 
@@ -162,36 +284,72 @@ This means a session-level override will take precedence over the global setting
 - **Debugging**: Set `DEBUG=maestro:*` → enable consistent logging across all sessions
 - **Language settings**: Set `LANG=en_US.UTF-8` → consistent text encoding
 
-### Agent-Specific Overrides
+### Per-Agent Environment Variables
 
-To override a global variable for a specific agent:
+Any one agent can carry its own variables, which override the global ones for that agent only. Use this when a single agent needs a different API key, a different base URL, or a tool path the rest of your agents should not see.
 
-1. In the agent configuration panel, scroll to **Environment Variables (optional)**
-2. Add the variable with the override value
-3. This session-specific value takes precedence over the global setting
+The panel is labeled **Environment Variables (optional)** and it appears in two places:
 
-## Built-in LLM Provider
+- **When creating the agent** - in the **Create New Agent** dialog, below Working Directory.
+- **At any time afterwards** - open **Edit Agent** and scroll to the same panel. You do not have to recreate an agent to change its variables.
 
-Some built-in AI features call an LLM directly (rather than going through a coding
-agent). The provider for these features is configured under **Settings → LLM** via the
-**LLM Provider** dropdown, a **Model Slug** field, and an **API Key** field. A **Test
-Connection** button sends a short prompt to verify connectivity and configuration.
+Three ways to reach Edit Agent:
 
-| Provider   | Base URL                        | API style         | Example model slug            |
-| ---------- | ------------------------------- | ----------------- | ----------------------------- |
-| OpenRouter | `https://openrouter.ai/api/v1`  | OpenAI-compatible | `anthropic/claude-3.5-sonnet` |
-| Requesty   | `https://router.requesty.ai/v1` | OpenAI-compatible | `openai/gpt-4o-mini`          |
-| Anthropic  | `https://api.anthropic.com/v1`  | Messages API      | `claude-3-5-sonnet-20241022`  |
-| Ollama     | `http://localhost:11434`        | Ollama (local)    | `llama3:latest`               |
+| Route         | How                                                |
+| ------------- | -------------------------------------------------- |
+| Keyboard      | `Alt+Cmd+,` / `Alt+Ctrl+,` with the agent selected |
+| Left Bar      | Right-click the agent → **Edit Agent**             |
+| Quick Actions | `Cmd+K` / `Ctrl+K` → "Edit Agent"                  |
 
-OpenRouter and Requesty both use OpenAI-compatible `provider/model` slugs and a
-`Bearer` API key. For Requesty, create a key at
-[app.requesty.ai/api-keys](https://app.requesty.ai/api-keys) and browse available
-models at [app.requesty.ai/router/list](https://app.requesty.ai/router/list). See the
-[Requesty docs](https://docs.requesty.ai) for details.
+You can also set them from the CLI without opening the app:
 
-API keys are stored locally in your Maestro settings file (see [Storage
-Location](#storage-location)).
+```bash
+maestro-cli update-agent <agent-id> --env MY_KEY=value
+maestro-cli create-agent "Reviewer" --env ANTHROPIC_BASE_URL=https://proxy.internal
+maestro-cli update-agent <agent-id> --clear-env   # remove all per-agent variables
+```
+
+The eye button parks a variable here too: the row keeps its key and value and stays editable, but the variable is not passed to the agent. Parked variables are stored separately and are never merged into a spawned process.
+
+### Seeing What an Agent Actually Runs With
+
+Because the layers are edited in different places, no single screen shows the result. To see the merged environment for one agent, open **Quick Actions** (`Cmd+K` / `Ctrl+K`) and run **Re-authenticate Provider** for that agent, then expand the **Environment for &lt;agent&gt;** section. It lists one row per variable, badged with the layer whose value won.
+
+This is the quickest way to catch the case where an agent behaves oddly because an `ANTHROPIC_BASE_URL` or API key from a layer you forgot about is overriding the one you just set. Values that look like credentials are masked until you click the eye on that row.
+
+### Using a Different Token Backend
+
+Maestro spawns each provider's own CLI, so it does not have a "model gateway" setting of its own. What an agent bills to, and which endpoint it talks to, is whatever its CLI reads from the environment. That makes per-agent variables the way to point one agent at a proxy, a gateway, or a company account while every other agent keeps its normal login.
+
+Set these in **Edit Agent → Environment Variables (optional)** (`Alt+Cmd+,` / `Alt+Ctrl+,`) so they apply to that agent alone, or in **Settings → Environment** to apply them everywhere.
+
+| Provider          | Variables that redirect it                                                                                                            | Notes                                                                            |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| **Claude Code**   | `ANTHROPIC_BASE_URL` plus `ANTHROPIC_AUTH_TOKEN` (gateway token) or `ANTHROPIC_API_KEY`. `CLAUDE_CONFIG_DIR` picks a different login. | The endpoint must speak the Anthropic Messages API. See the warning below.       |
+| **Codex**         | `OPENAI_API_KEY`, and `CODEX_HOME` to point at a config directory with its own `base_url`                                             | Codex reads a custom model provider from its own config file.                    |
+| **OpenCode**      | `OPENCODE_CONFIG_DIR`, plus the provider key var for whichever backend you configure (`ANTHROPIC_API_KEY`, `GROQ_API_KEY`, and so on) | OpenCode recognizes roughly a hundred `*_API_KEY` vars and stores them together. |
+| **Copilot CLI**   | `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN` (the CLI's own precedence order)                                                   | Consulted only when there is no stored login. The backend is not redirectable.   |
+| **Factory Droid** | Configured in Droid's own settings                                                                                                    | Maestro passes the environment through but does not define the vars.             |
+
+Claude Code also honors `CLAUDE_CODE_USE_BEDROCK=1` and `CLAUDE_CODE_USE_VERTEX=1`, which route it to AWS Bedrock or Google Vertex AI. Those take credentials from the cloud SDK chain rather than from an Anthropic key, and they override the variables above.
+
+To set one from the CLI instead:
+
+```bash
+maestro-cli update-agent <agent-id> --env ANTHROPIC_BASE_URL=https://gateway.internal/v1
+maestro-cli update-agent <agent-id> --env ANTHROPIC_AUTH_TOKEN=sk-gateway-...
+```
+
+#### What Will Not Work
+
+<Warning>
+An OpenAI-compatible gateway cannot back Claude Code directly. OpenRouter, Requesty, Together, and similar routers expose an OpenAI-shaped `/chat/completions` endpoint, while Claude Code speaks the Anthropic Messages API. Pointing `ANTHROPIC_BASE_URL` straight at one of them produces request failures, not a working agent. Put a translating proxy (LiteLLM, `claude-code-router`, or the router's own Anthropic-compatible route if it publishes one) in between, and point `ANTHROPIC_BASE_URL` at that. Codex and OpenCode have no such problem, because they are OpenAI-shaped already.
+</Warning>
+
+Two more things that surprise people:
+
+- **A per-agent variable replaces the provider-level set, it does not merge with it.** An agent that sets only `ANTHROPIC_BASE_URL` stops receiving a provider-level `CLAUDE_CONFIG_DIR`. Set both on the agent if it needs both.
+- **Re-authenticating cannot fix a gateway.** When an agent runs against a base URL or an API key, a failure belongs to that operator or that key, so running the provider's login command produces a successful-looking flow that changes nothing. Maestro detects this and tells you which credential is actually in play instead of offering a login that would not help.
 
 ## Checking for Updates
 
@@ -318,6 +476,20 @@ You can also set how wide toasts render:
 | **Large**   | Roughly 1.8x wider than Small, for longer content                                         |
 | **Dynamic** | Matches the Right Bar width, filling that column and re-sizing live as you drag the panel |
 
+#### Clicking a Toast
+
+Most toasts are clickable, and where the click takes you depends on what the toast is about:
+
+| The toast points at             | Clicking it                                      |
+| ------------------------------- | ------------------------------------------------ |
+| An agent, or one of its AI tabs | Switches to that agent and tab                   |
+| A file                          | Opens the file in that agent's File Preview pane |
+| A terminal tab                  | Switches to that agent and focuses the terminal  |
+| An in-app browser tab           | Focuses that tab, or opens the URL in a new one  |
+| An external link                | Opens it in your system browser                  |
+
+If the target tab was closed since the toast appeared, the click still switches to the agent and tells you what was missing, so a click never silently does nothing. Scripts and agents choose the target with the `--open-*` flags on [`maestro-cli notify toast`](/cli#notifications). A toast can also carry a separate inline link button beneath its message (`--action-url`); that link is independent of the body click.
+
 ### When Notifications Trigger
 
 Notifications are sent when:
@@ -344,6 +516,16 @@ Sleep prevention automatically activates when:
 - **Group Chat** is in progress (moderator or agents responding)
 
 When all activity stops, sleep prevention deactivates automatically.
+
+### Keep the Display Awake
+
+By default Maestro keeps the machine running but lets the screen go dark, so the screen saver, the screen lock, and your normal power settings all behave as usual.
+
+Turn on **Keep the display awake** (in the same **Power** section, off by default) when you want to watch a long run instead: the display stays lit, the screen saver and lock screen never arrive, and you are not logged out for being idle. It only takes effect while sleep prevention is holding the machine awake, so an idle Maestro still lets everything sleep.
+
+<Warning>
+On macOS, a lit display is how the OS decides someone is at the machine, and it parks discretionary background maintenance while that is true. Spotlight indexing, Photos analysis, XProtect scans, Time Machine thinning, and background updates all wait until the run finishes. That is the trade: an uninterrupted, still-signed-in session in exchange for deferred housekeeping.
+</Warning>
 
 ### Platform Support
 

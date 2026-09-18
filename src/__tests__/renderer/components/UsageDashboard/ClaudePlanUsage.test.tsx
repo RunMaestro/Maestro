@@ -9,6 +9,8 @@
  *   - refresh button calls the IPC and triggers a store refresh
  *   - Cmd+R re-samples only when the panel owns the hotkey
  *   - in-flight `refreshing` flag disables the refresh button
+ *   - the centered "last refreshed" footer reports the newest sample's age
+ *   - the "N agents" chip is a button only when there are agents to show
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -261,7 +263,26 @@ describe('ClaudePlanUsage - exhausted account', () => {
 
 		const values = screen.getAllByRole('progressbar').map((b) => b.getAttribute('aria-valuenow'));
 		expect(values).toEqual(['0', '100', '36']);
+		// An idle 0% window has no reset because none has started - not a parse miss.
+		expect(screen.getByText('not started')).toBeInTheDocument();
+		expect(screen.queryByText('reset unknown')).toBeNull();
+	});
+
+	it('still says "reset unknown" when a window with usage lost its reset time', () => {
+		seedSnapshots({
+			'/Users/me/.claude-gmail': {
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				configDirKey: '/Users/me/.claude-gmail',
+				session: { percent: 40 },
+				weekAllModels: { percent: 100, resetsAt: '2026-05-22T00:00:00.000Z' },
+				weekSonnetOnly: { percent: 36, resetsAt: '2026-05-22T00:00:00.000Z', label: 'Fable' },
+			},
+		});
+
+		render(<ClaudePlanUsage theme={theme} />);
+
 		expect(screen.getByText('reset unknown')).toBeInTheDocument();
+		expect(screen.queryByText('not started')).toBeNull();
 	});
 
 	it('labels the second weekly window with the name the panel reported', () => {
@@ -502,6 +523,33 @@ describe('ClaudePlanUsage - hide/show accounts (list view)', () => {
 	});
 });
 
+describe('ClaudePlanUsage - stale row chip', () => {
+	// The footer reports the NEWEST sample, so without a per-row marker an account
+	// the last refresh skipped reads "Last refreshed just now" beside old bars.
+	const snapshotAt = (key: string, sampledAt: string) => ({
+		sampledAt,
+		configDirKey: key,
+		authState: 'authenticated',
+		session: { percent: 0 },
+		weekAllModels: { percent: 100, resetsAt: '2026-05-22T00:00:00.000Z' },
+		weekSonnetOnly: { percent: 87, resetsAt: '2026-05-22T00:00:00.000Z' },
+	});
+
+	it('flags only the row whose sample trails the newest by more than five minutes', () => {
+		seedSnapshots({
+			'/Users/me/.claude-work': snapshotAt('/Users/me/.claude-work', '2026-05-15T02:00:00.000Z'),
+			'/Users/me/.claude-side': snapshotAt('/Users/me/.claude-side', '2026-05-15T00:24:00.000Z'),
+			'/Users/me/.claude-near': snapshotAt('/Users/me/.claude-near', '2026-05-15T01:57:00.000Z'),
+		});
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.getByTestId('claude-plan-stale-side')).toHaveTextContent('stale, read');
+		expect(screen.queryByTestId('claude-plan-stale-work')).toBeNull();
+		expect(screen.queryByTestId('claude-plan-stale-near')).toBeNull();
+	});
+});
+
 describe('ClaudePlanUsage - agent count badge', () => {
 	const snapshotFor = (key: string) => ({
 		sampledAt: '2026-05-15T00:00:00.000Z',
@@ -557,6 +605,36 @@ describe('ClaudePlanUsage - agent count badge', () => {
 		expect(screen.getByTestId('claude-plan-agents-work')).toHaveTextContent('1 agent');
 	});
 
+	it('does not count an agent that bills an API key against the plan', () => {
+		seedSnapshots({ '/Users/me/.claude-work': snapshotFor('/Users/me/.claude-work') });
+		useSessionStore.setState({
+			sessions: [
+				{
+					id: 'a',
+					name: 'a',
+					toolType: 'claude-code',
+					cwd: '/tmp',
+					customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/me/.claude-work' },
+				},
+				{
+					// Same dir, but the key outranks its login: these turns bill the key.
+					id: 'b',
+					name: 'b',
+					toolType: 'claude-code',
+					cwd: '/tmp',
+					customEnvVars: {
+						CLAUDE_CONFIG_DIR: '/Users/me/.claude-work',
+						ANTHROPIC_API_KEY: 'sk-ant-test',
+					},
+				},
+			],
+		} as any);
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.getByTestId('claude-plan-agents-work')).toHaveTextContent('1 agent');
+	});
+
 	it('shows zero for a cached account no agent uses any more', () => {
 		seedSnapshots({ '/Users/me/.claude-stale': snapshotFor('/Users/me/.claude-stale') });
 
@@ -574,12 +652,11 @@ describe('ClaudePlanUsage - agent count badge', () => {
 		expect(screen.getByTestId('claude-plan-agents-pending')).toHaveTextContent('2 agents');
 	});
 
-	// The main-process sampler skips SSH-remote sessions because it cannot probe a
-	// remote host's directory locally. The COUNT must not copy that rule: a remote
-	// agent configured against this profile still spends this plan's quota, so it
-	// belongs in the total. Locked in by test because the two behaviors look
-	// contradictory and invite a well-meaning "fix".
-	it('counts SSH-remote agents, which the sampler deliberately skips', () => {
+	// An SSH-remote agent's config dir is a path on the REMOTE host, holding that
+	// host's own login, so it is not on the local account these bars measure
+	// whatever the directory is called. The Agents grid files it under its own
+	// `account @ host` profile instead.
+	it('does not count SSH-remote agents against the local account', () => {
 		seedSnapshots({ '/Users/me/.claude-work': snapshotFor('/Users/me/.claude-work') });
 		useSessionStore.setState({
 			sessions: [
@@ -603,7 +680,71 @@ describe('ClaudePlanUsage - agent count badge', () => {
 
 		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
 
-		expect(screen.getByTestId('claude-plan-agents-work')).toHaveTextContent('2 agents');
+		expect(screen.getByTestId('claude-plan-agents-work')).toHaveTextContent('1 agent');
+	});
+
+	it('shows zero when every agent on the dir runs over SSH', () => {
+		seedSnapshots({ '/Users/me/.claude-work': snapshotFor('/Users/me/.claude-work') });
+		useSessionStore.setState({
+			sessions: [
+				{
+					id: 'remote',
+					name: 'remote',
+					toolType: 'claude-code',
+					cwd: '/tmp',
+					customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/me/.claude-work' },
+					sessionSshRemoteConfig: { enabled: true, remoteId: 'box' },
+				},
+			],
+		} as any);
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.getByTestId('claude-plan-agents-work')).toHaveTextContent('0 agents');
+	});
+
+	it('hands the account back when the chip is clicked, so the grid can filter to it', () => {
+		seedSnapshots({ '/Users/me/.claude-work': snapshotFor('/Users/me/.claude-work') });
+		seedSessions(['/Users/me/.claude-work']);
+		const onShowAccountAgents = vi.fn();
+
+		render(
+			<ClaudePlanUsage
+				theme={theme}
+				showAllAccounts
+				autoRefresh={false}
+				onShowAccountAgents={onShowAccountAgents}
+			/>
+		);
+
+		fireEvent.click(screen.getByTestId('claude-plan-agents-work'));
+
+		expect(onShowAccountAgents).toHaveBeenCalledWith('/Users/me/.claude-work');
+	});
+
+	it('leaves the chip inert for an account no agent uses', () => {
+		// A button that lands on an empty grid answers nothing.
+		seedSnapshots({ '/Users/me/.claude-stale': snapshotFor('/Users/me/.claude-stale') });
+
+		render(
+			<ClaudePlanUsage
+				theme={theme}
+				showAllAccounts
+				autoRefresh={false}
+				onShowAccountAgents={vi.fn()}
+			/>
+		);
+
+		expect(screen.getByTestId('claude-plan-agents-stale').tagName).toBe('SPAN');
+	});
+
+	it('stays a label when no handler is given', () => {
+		seedSnapshots({ '/Users/me/.claude-work': snapshotFor('/Users/me/.claude-work') });
+		seedSessions(['/Users/me/.claude-work']);
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.getByTestId('claude-plan-agents-work').tagName).toBe('SPAN');
 	});
 });
 
@@ -721,5 +862,66 @@ describe('ClaudePlanUsage — account identity', () => {
 		expect(title).toContain('/Users/me/.claude-gmail');
 		expect(title).toContain('Logged in as p@smashlabs.com');
 		expect(title).toContain('Shares one quota with smash');
+	});
+});
+
+describe('ClaudePlanUsage - last refreshed footer', () => {
+	it('reports the age of the newest sample, not the oldest', () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date('2026-05-15T12:00:00.000Z'));
+		try {
+			seedSnapshots({
+				'/Users/me/.claude': {
+					sampledAt: '2026-05-15T06:35:00.000Z',
+					configDirKey: '/Users/me/.claude',
+					session: { percent: 50, resetsAt: '2026-05-15T05:00:00.000Z' },
+					weekAllModels: { percent: 30, resetsAt: '2026-05-22T00:00:00.000Z' },
+					weekSonnetOnly: { percent: 10, resetsAt: '2026-05-22T00:00:00.000Z' },
+				},
+				'/Users/me/.claude-gmail': {
+					sampledAt: '2026-05-15T01:00:00.000Z',
+					configDirKey: '/Users/me/.claude-gmail',
+					session: { percent: 20, resetsAt: '2026-05-15T05:00:00.000Z' },
+					weekAllModels: { percent: 10, resetsAt: '2026-05-22T00:00:00.000Z' },
+					weekSonnetOnly: { percent: 0, resetsAt: '2026-05-22T00:00:00.000Z' },
+				},
+			});
+
+			render(<ClaudePlanUsage theme={theme} />);
+			expect(screen.getByTestId('claude-plan-last-refreshed')).toHaveTextContent(
+				'Last refreshed 5 hours and 25 minutes ago'
+			);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('reads "just now" for a fresh sample', () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date('2026-05-15T12:00:00.000Z'));
+		try {
+			seedSnapshots({
+				'/Users/me/.claude': {
+					sampledAt: '2026-05-15T11:59:50.000Z',
+					configDirKey: '/Users/me/.claude',
+					session: { percent: 50, resetsAt: '2026-05-15T05:00:00.000Z' },
+					weekAllModels: { percent: 30, resetsAt: '2026-05-22T00:00:00.000Z' },
+					weekSonnetOnly: { percent: 10, resetsAt: '2026-05-22T00:00:00.000Z' },
+				},
+			});
+
+			render(<ClaudePlanUsage theme={theme} />);
+			expect(screen.getByTestId('claude-plan-last-refreshed')).toHaveTextContent(
+				'Last refreshed just now'
+			);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('renders nothing when no account has been sampled yet', () => {
+		seedSessions(['/Users/me/.claude-pending']);
+		render(<ClaudePlanUsage theme={theme} autoRefresh={false} />);
+		expect(screen.queryByTestId('claude-plan-last-refreshed')).toBeNull();
 	});
 });

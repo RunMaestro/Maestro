@@ -71,6 +71,44 @@ describe('MermaidRenderer', () => {
 		expect(container.querySelector('.mermaid-container svg image')).not.toBeNull();
 	});
 
+	describe('@ in a label (mermaid edge-id lexer rule)', () => {
+		// Mermaid lexes `[^\\s"]+@` as an edge id and jison takes the longest
+		// match, so `-->|@maestro ...|` fails to parse. The renderer escapes `@`
+		// to `#64;` first; mermaid decodes it back when it draws the label.
+		const chart = 'flowchart LR\n  C -->|@maestro from user| E[send]';
+
+		it('escapes @ before parsing and rendering', async () => {
+			renderMock.mockResolvedValue({
+				svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><g/></svg>',
+			});
+			const parseSpy = vi.mocked(mermaid.parse);
+			parseSpy.mockClear();
+
+			const { container } = render(<MermaidRenderer chart={chart} theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(container.querySelector('.mermaid-container svg')).not.toBeNull();
+			});
+			expect(parseSpy.mock.calls[0][0]).toContain('|#64;maestro from user|');
+			expect(renderMock.mock.calls[0][1]).toContain('|#64;maestro from user|');
+		});
+
+		it('shows the author their own source when a diagram still fails', async () => {
+			// The escape is invisible on the happy path; it must stay invisible on
+			// the error path too, or the source view shows text nobody wrote.
+			const parseSpy = vi.mocked(mermaid.parse);
+			parseSpy.mockRejectedValueOnce(new Error('Parse error on line 2'));
+
+			const { container } = render(<MermaidRenderer chart={chart} theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(container.textContent).toContain('Failed to render Mermaid diagram');
+			});
+			expect(container.textContent).toContain('|@maestro from user|');
+			expect(container.textContent).not.toContain('#64;');
+		});
+	});
+
 	describe('foreignObject labels (htmlLabels: true)', () => {
 		// Mermaid renders flowchart labels as HTML inside <foreignObject>, so a
 		// `<br/>` in `A[Visibility only.<br/>Observation]` is a real <br> element.

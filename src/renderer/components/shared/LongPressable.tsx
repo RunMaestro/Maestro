@@ -15,8 +15,17 @@
  * open.
  */
 
-import React, { useRef } from 'react';
+import React, { useCallback, useRef } from 'react';
 import { useLongPress } from '../../hooks/utils/useLongPress';
+
+/**
+ * How long after a long-press the synthesized click is still swallowed. iOS
+ * Safari does not synthesize a click after a long-press at all, so a flag that
+ * waited for "the next click" swallowed the user's NEXT deliberate tap on the
+ * row instead. A window bounds the suppression to the click that belongs to
+ * the press.
+ */
+const POST_LONG_PRESS_CLICK_WINDOW_MS = 700;
 
 export interface LongPressableProps extends React.HTMLAttributes<HTMLDivElement> {
 	/**
@@ -25,6 +34,13 @@ export interface LongPressableProps extends React.HTMLAttributes<HTMLDivElement>
 	 * with `longPressMouseEvent` to hand the rect to a mouse-oriented handler.
 	 */
 	onLongPress: (rect: DOMRect) => void;
+	/**
+	 * Receives the rendered `<div>` so a host that already owns a ref to its
+	 * root (a tab chip registering itself with the tab bar) can keep it. The
+	 * long-press hook needs the element too, so the two are merged here rather
+	 * than forcing the host to choose.
+	 */
+	innerRef?: (el: HTMLDivElement | null) => void;
 }
 
 /**
@@ -42,34 +58,43 @@ export function longPressMouseEvent(rect: DOMRect): React.MouseEvent {
 	} as unknown as React.MouseEvent;
 }
 
-export function LongPressable({ onLongPress, onClick, children, ...rest }: LongPressableProps) {
+export function LongPressable({
+	onLongPress,
+	onClick,
+	innerRef,
+	children,
+	...rest
+}: LongPressableProps) {
 	// A long-press that opens a menu is usually followed by a synthesized click
 	// on touch; swallow that one click so the element's own click action does
-	// not also fire.
-	const suppressNextClickRef = useRef(false);
+	// not also fire. Time-bounded (see POST_LONG_PRESS_CLICK_WINDOW_MS): a
+	// browser that never sends the click must not cost the user their next tap.
+	const suppressClickUntilRef = useRef(0);
 
 	const { elementRef, handlers } = useLongPress({
 		onLongPress: (rect) => {
-			suppressNextClickRef.current = true;
+			suppressClickUntilRef.current = Date.now() + POST_LONG_PRESS_CLICK_WINDOW_MS;
 			onLongPress(rect);
 		},
 	});
 
 	const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
-		if (suppressNextClickRef.current) {
-			suppressNextClickRef.current = false;
-			return;
-		}
+		const suppressUntil = suppressClickUntilRef.current;
+		suppressClickUntilRef.current = 0;
+		if (suppressUntil && Date.now() < suppressUntil) return;
 		onClick?.(e);
 	};
 
+	const setRef = useCallback(
+		(el: HTMLDivElement | null) => {
+			(elementRef as React.MutableRefObject<HTMLElement | null>).current = el;
+			innerRef?.(el);
+		},
+		[elementRef, innerRef]
+	);
+
 	return (
-		<div
-			{...rest}
-			ref={elementRef as React.RefObject<HTMLDivElement>}
-			onClick={handleClick}
-			{...handlers}
-		>
+		<div {...rest} ref={setRef} onClick={handleClick} {...handlers}>
 			{children}
 		</div>
 	);

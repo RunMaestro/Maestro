@@ -77,6 +77,47 @@ describe('marker pills on a document surface', () => {
 		expect(pill.closest('li')).not.toBeNull();
 	});
 
+	it('offers a peek at the reason without spending a line on it', () => {
+		const reason = 'Lock ordering across three services. Getting it wrong corrupts data.';
+		renderDocument(
+			[
+				`<!-- MAESTRO:MODEL tier="high" effort="high" reason="${reason}" -->`,
+				'',
+				'- [ ] Design',
+			].join('\n')
+		);
+		const pill = screen.getByTestId('maestro-marker-model');
+		// Behind the overlay, not printed into the document body.
+		expect(pill).not.toHaveTextContent('Lock ordering');
+		expect(screen.getByTestId('maestro-marker-reason')).toBeInTheDocument();
+		// Reachable without a mouse, which the hover overlay alone would not be.
+		expect(pill.getAttribute('aria-label')).toContain(reason);
+	});
+
+	it('draws no reason affordance when the marker carries no justification', () => {
+		renderDocument('<!-- MAESTRO:MODEL tier="high" -->\n\n- [ ] Design');
+		expect(screen.queryByTestId('maestro-marker-reason')).toBeNull();
+	});
+
+	it('mutes a hint governing a later phase instead of retiring it', () => {
+		// The bug this replaced: everything below the first unchecked task was
+		// stamped spent, so an upcoming high-effort phase read as expired.
+		renderDocument(
+			[
+				'<!-- MAESTRO:MODEL tier="low" -->',
+				'',
+				'- [ ] Catalogue the call sites',
+				'',
+				'<!-- MAESTRO:MODEL tier="high" -->',
+				'',
+				'- [ ] Design the migration',
+			].join('\n')
+		);
+		const [next, later] = screen.getAllByTestId('maestro-marker-model');
+		expect(next).toHaveAttribute('data-marker-status', 'live');
+		expect(later).toHaveAttribute('data-marker-status', 'upcoming');
+	});
+
 	it('flags a misspelled attribute instead of rendering it as a real setting', () => {
 		renderDocument('<!-- MAESTRO:MODEL tier="hgih" -->\n\n- [ ] Task');
 		const pill = screen.getByTestId('maestro-marker-model');

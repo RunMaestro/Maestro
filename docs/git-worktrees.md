@@ -100,6 +100,8 @@ In the configuration modal:
 
 **Note:** Once configured, you can quickly create additional worktrees by right-clicking the parent session and selecting **"Create Worktree"** (bypasses the full configuration modal).
 
+**Agents honor it too.** The directory is printed in every agent's system prompt as its Worktree Directory, and `maestro-cli show agent <id> --json` reports it as `worktreeBasePath`. Agents are told to create worktrees only through `maestro-cli create-worktree`, which uses this directory and registers the result as a worktree agent, so nothing an agent branches off ends up somewhere you cannot see.
+
 ### Setup Scripts
 
 A fresh worktree only contains what git tracks, so anything gitignored (a `.env.local`, generated config, `node_modules`) is missing until you put it there. The **Setup Script** field runs a shell command inside each newly created worktree so that bootstrap happens automatically.
@@ -183,6 +185,14 @@ The PR modal shows:
 - Auto-generated title and description based on your work
 
 **Requirements:** GitHub CLI (`gh`) must be installed and authenticated. Maestro will detect if it's missing and show installation instructions.
+
+Opening a PR can take a while, and you don't have to sit and watch it. Once you
+press **Create PR**, the **Cancel** button becomes **Run in Background**: close
+the form (or press Escape) and the request keeps going. While it does, the
+**Create Pull Request** entry in the right-click menu, the branch pill menu and
+`Cmd+K` shows a **Creating** spinner - click it to bring the form back and see
+where the request got to. When it lands you get a toast with a link to the new
+PR, and if it fails, the error waits for you both in a toast and in the form.
 
 ### Removing Worktrees
 

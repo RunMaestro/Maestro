@@ -61,15 +61,15 @@ export function FeedbackDraftsList({ theme, drafts, onResume, onDelete }: Feedba
 								{draft.suggestedName || 'Untitled feedback'}
 							</p>
 							<div className="flex items-center gap-2 mt-0.5 flex-wrap">
-								<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
+								<span className="text-2xs" style={{ color: theme.colors.textDim }}>
 									Created {formatRelativeTime(draft.createdAt)}
 								</span>
-								<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
+								<span className="text-2xs" style={{ color: theme.colors.textDim }}>
 									Updated {formatRelativeTime(draft.updatedAt)}
 								</span>
 								{draft.attachments.length > 0 && (
 									<span
-										className="flex items-center gap-0.5 text-[10px]"
+										className="flex items-center gap-0.5 text-2xs"
 										style={{ color: theme.colors.textDim }}
 										title={`${draft.attachments.length} attachment${draft.attachments.length === 1 ? '' : 's'}`}
 									>
@@ -79,7 +79,7 @@ export function FeedbackDraftsList({ theme, drafts, onResume, onDelete }: Feedba
 								)}
 								{isMostRecent && (
 									<span
-										className="text-[10px] px-1.5 py-0.5 rounded-full"
+										className="text-2xs px-1.5 py-0.5 rounded-full"
 										style={{
 											backgroundColor: `${theme.colors.accent}20`,
 											color: theme.colors.accent,

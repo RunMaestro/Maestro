@@ -14,6 +14,7 @@ import { captureException } from '../../../utils/sentry';
 import type { AutoRunState } from '../../types';
 import { LOG_CONTEXT } from './shared';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
+import { readBackgroundField } from '../../../../shared/focusPlacement';
 
 /**
  * Validate that a filename is safe for Auto Run read/save operations.
@@ -58,7 +59,7 @@ export function handleRefreshAutoRunDocs(
 	}
 
 	ctx.callbacks
-		.refreshAutoRunDocs(sessionId)
+		.refreshAutoRunDocs(sessionId, readBackgroundField(message))
 		.then((success) => {
 			ctx.send(client, {
 				type: 'refresh_auto_run_docs_result',
@@ -160,6 +161,10 @@ export function handleConfigureAutoRun(
 		ctx.sendError(client, 'effort must be a non-empty string');
 		return;
 	}
+	if (message.ignoreModelHints !== undefined && typeof message.ignoreModelHints !== 'boolean') {
+		ctx.sendError(client, 'ignoreModelHints must be a boolean');
+		return;
+	}
 
 	// Validate optional worktree config - desktop app uses this to create a
 	// git worktree, checkout the branch, and optionally open a PR on completion.
@@ -222,6 +227,7 @@ export function handleConfigureAutoRun(
 		launch: message.launch as boolean | undefined,
 		model: message.model as string | undefined,
 		effort: message.effort as string | undefined,
+		ignoreModelHints: message.ignoreModelHints === true || undefined,
 		worktree,
 	};
 

@@ -6,8 +6,10 @@ import * as path from 'path';
 import * as os from 'os';
 import type { Group, SessionInfo, HistoryEntry, SshRemoteConfig } from '../../shared/types';
 import {
-	HISTORY_VERSION,
-	MAX_ENTRIES_PER_SESSION,
+	HISTORY_JSONL_EXT,
+	HISTORY_LEGACY_JSON_EXT,
+	parseHistoryJsonl,
+	serializeHistoryEntryLine,
 	HistoryFileData,
 	PaginationOptions,
 	PaginatedResult,
@@ -18,7 +20,7 @@ import {
 } from '../../shared/history';
 
 // Get the Maestro config directory path
-function getConfigDir(): string {
+export function getConfigDir(): string {
 	// Allow overriding the data directory (e.g. for dev mode: maestro-dev)
 	if (process.env.MAESTRO_USER_DATA) {
 		return path.resolve(process.env.MAESTRO_USER_DATA);
@@ -65,24 +67,6 @@ function writeStoreFile<T>(filename: string, data: T): void {
 	}
 	const filePath = path.join(dirPath, filename);
 	fs.writeFileSync(filePath, JSON.stringify(data, null, '\t'), 'utf-8');
-}
-
-/**
- * Atomically write JSON to `filePath` via a temp file + rename. rename() is
- * atomic on POSIX, so a concurrent reader (the desktop app reads these same
- * history files) never sees a partial or `}{`-concatenated file. Mirrors the
- * app-side `atomicWriteJson`; kept local so the CLI bundle stays free of the
- * main-process import chain.
- */
-function atomicWriteFileSync(filePath: string, content: string): void {
-	// Safety gate: never rename empty/unparseable content over a good file.
-	if (!content) {
-		throw new Error(`Refusing to write empty content to ${filePath}`);
-	}
-	JSON.parse(content); // throws before touching the file if content isn't valid JSON
-	const tmp = `${filePath}.tmp`;
-	fs.writeFileSync(tmp, content, 'utf-8');
-	fs.renameSync(tmp, filePath);
 }
 
 // Store file structures (as used by Electron Store)
@@ -160,19 +144,45 @@ function getHistoryDir(): string {
  */
 function getSessionHistoryPath(sessionId: string): string {
 	const safeId = sanitizeSessionId(sessionId);
-	return path.join(getHistoryDir(), `${safeId}.json`);
+	return path.join(getHistoryDir(), `${safeId}${HISTORY_JSONL_EXT}`);
 }
 
 /**
- * Read history entries for a specific session (new per-session format)
+ * Get file path for a session's legacy single-object history file. Present
+ * only until the desktop app migrates that session to JSONL.
+ */
+function getLegacySessionHistoryPath(sessionId: string): string {
+	const safeId = sanitizeSessionId(sessionId);
+	return path.join(getHistoryDir(), `${safeId}${HISTORY_LEGACY_JSON_EXT}`);
+}
+
+/**
+ * Read history entries for a specific session, newest first.
+ *
+ * Reads JSONL when present and falls back to the legacy object otherwise. The
+ * CLI deliberately does NOT migrate: the desktop app owns that conversion, and
+ * having two processes race to rewrite the same file is what this format change
+ * exists to eliminate. Reading both means the CLI stays correct either way.
  */
 function readSessionHistory(sessionId: string): HistoryEntry[] {
-	const filePath = getSessionHistoryPath(sessionId);
-	if (!fs.existsSync(filePath)) {
+	const jsonlPath = getSessionHistoryPath(sessionId);
+	if (fs.existsSync(jsonlPath)) {
+		try {
+			// File order is oldest-first; callers expect newest-first.
+			return normalizeHistoryEntries(
+				parseHistoryJsonl(fs.readFileSync(jsonlPath, 'utf-8')).entries.reverse()
+			);
+		} catch {
+			return [];
+		}
+	}
+
+	const legacyPath = getLegacySessionHistoryPath(sessionId);
+	if (!fs.existsSync(legacyPath)) {
 		return [];
 	}
 	try {
-		const data: HistoryFileData = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+		const data: HistoryFileData = JSON.parse(fs.readFileSync(legacyPath, 'utf-8'));
 		// Re-map legacy cross-agent consults (written as AUTO before the AGENT type
 		// existed), matching HistoryManager.getEntries in the app.
 		return normalizeHistoryEntries(data.entries || []);
@@ -182,17 +192,22 @@ function readSessionHistory(sessionId: string): HistoryEntry[] {
 }
 
 /**
- * List all sessions that have history files
+ * List all sessions that have history files, in either format.
  */
 function listSessionsWithHistory(): string[] {
 	const historyDir = getHistoryDir();
 	if (!fs.existsSync(historyDir)) {
 		return [];
 	}
-	return fs
-		.readdirSync(historyDir)
-		.filter((f) => f.endsWith('.json'))
-		.map((f) => f.replace('.json', ''));
+	const sessionIds = new Set<string>();
+	for (const file of fs.readdirSync(historyDir)) {
+		if (file.endsWith(HISTORY_JSONL_EXT)) {
+			sessionIds.add(file.slice(0, -HISTORY_JSONL_EXT.length));
+		} else if (file.endsWith(HISTORY_LEGACY_JSON_EXT)) {
+			sessionIds.add(file.slice(0, -HISTORY_LEGACY_JSON_EXT.length));
+		}
+	}
+	return Array.from(sessionIds);
 }
 
 /**
@@ -492,7 +507,39 @@ export function resolveAgentId(partialId: string): string {
 		throw new Error(`Ambiguous agent name '${partialId}'. Matches:\n${matchList}`);
 	}
 
+	// Last resort: match on the READABLE name, ignoring leading/trailing
+	// decoration. Users prefix agent names with an emoji far more often than not
+	// ("📜 Substrate PedTome"), and both a human and an agent will type the name
+	// they READ, which is the part after the glyph. Without this the exact match
+	// above fails on a name that is on screen, and the caller concludes the agent
+	// does not exist.
+	const readable = readableAgentName(partialId);
+	if (readable) {
+		const byReadable = sessions.filter((s) => readableAgentName(s.name) === readable);
+		if (byReadable.length === 1) {
+			return byReadable[0].id;
+		}
+		if (byReadable.length > 1) {
+			const matchList = byReadable.map((s) => `  ${s.id.slice(0, 8)}  ${s.name}`).join('\n');
+			throw new Error(`Ambiguous agent name '${partialId}'. Matches:\n${matchList}`);
+		}
+	}
+
 	throw new Error(`Agent not found: ${partialId}`);
+}
+
+/**
+ * An agent name reduced to what a person would read aloud: lowercased, with
+ * leading and trailing non-alphanumerics (emoji, symbols, whitespace) removed.
+ * Returns '' for a name that is nothing but decoration, which never matches -
+ * two emoji-only names are not the same agent.
+ */
+function readableAgentName(name: string): string {
+	return name
+		.toLowerCase()
+		.replace(/^[^\p{L}\p{N}]+/u, '')
+		.replace(/[^\p{L}\p{N}]+$/u, '')
+		.trim();
 }
 
 /**
@@ -604,48 +651,23 @@ export function addHistoryEntry(entry: HistoryEntry): void {
 				fs.mkdirSync(historyDir, { recursive: true });
 			}
 
-			const filePath = getSessionHistoryPath(sessionId);
-			let data: HistoryFileData;
-
-			if (fs.existsSync(filePath)) {
-				try {
-					data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-				} catch {
-					// Corrupt history: preserve the bytes aside for recovery
-					// instead of silently overwriting them with a fresh file.
-					try {
-						fs.renameSync(filePath, `${filePath}.corrupt-${Date.now()}`);
-					} catch {
-						// best-effort; fall through to a fresh file either way
-					}
-					data = {
-						version: HISTORY_VERSION,
-						sessionId,
-						projectPath: entry.projectPath,
-						entries: [],
-					};
-				}
-			} else {
-				data = {
-					version: HISTORY_VERSION,
-					sessionId,
-					projectPath: entry.projectPath,
-					entries: [],
-				};
-			}
-
-			// Add to beginning (most recent first)
-			data.entries.unshift(entry);
-
-			// Trim to max entries
-			if (data.entries.length > MAX_ENTRIES_PER_SESSION) {
-				data.entries = data.entries.slice(0, MAX_ENTRIES_PER_SESSION);
-			}
-
-			// Update projectPath if it changed
-			data.projectPath = entry.projectPath;
-
-			atomicWriteFileSync(filePath, JSON.stringify(data, null, 2));
+			// Append one line. `appendFileSync` opens with O_APPEND, so the
+			// kernel seeks to EOF as part of the write and this cannot overwrite
+			// bytes the desktop app is writing concurrently. Critically there is
+			// no read-modify-write here any more: the old version read the whole
+			// file, unshifted, and rewrote it, which could silently drop an entry
+			// the app added in between (a cross-process lost update the in-process
+			// write queue could not prevent).
+			//
+			// Trimming is deliberately NOT done here. Rotation is the one
+			// remaining whole-file rewrite and the desktop app owns it; a second
+			// process trimming the same file is exactly the destructive race this
+			// format change removes.
+			fs.appendFileSync(
+				getSessionHistoryPath(sessionId),
+				serializeHistoryEntryLine(entry),
+				'utf-8'
+			);
 		} else {
 			// Use legacy format
 			const filePath = path.posix.join(getConfigDir(), 'maestro-history.json');

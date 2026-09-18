@@ -113,7 +113,7 @@ function ThemeSwatch({
 					<span key={index} className="h-3 flex-1 rounded-sm" style={{ backgroundColor: color }} />
 				))}
 			</div>
-			<span className="text-[10px] truncate" style={{ color: entry.colors.textDim }}>
+			<span className="text-2xs truncate" style={{ color: entry.colors.textDim }}>
 				const tempo = 120;
 			</span>
 		</button>
@@ -270,7 +270,7 @@ export function ThemeChoiceModal({
 								>
 									{section.label}
 								</h3>
-								<span className="text-[11px]" style={{ color: theme.colors.textDim }}>
+								<span className="text-xs-plus" style={{ color: theme.colors.textDim }}>
 									{section.hint}
 								</span>
 							</div>

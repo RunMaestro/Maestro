@@ -42,6 +42,27 @@ export function splitOnMatches(text: string, query: string): MatchSegment[] {
 	});
 }
 
+/** A `[from, to)` byte range, the shape CodeMirror's decorations want. */
+export interface MatchRange {
+	from: number;
+	to: number;
+}
+
+/**
+ * Byte offsets of every query hit in `text`, for an editor's painted search
+ * decorations (see `MarkdownEditorHandle.setSearchMatches`).
+ *
+ * Built from the SAME `splitOnMatches` the rendered preview highlights with, so
+ * a surface that offers both a preview and a source editor cannot disagree with
+ * itself about what counts as a hit.
+ */
+export function searchMatchRanges(text: string, query: string): MatchRange[] {
+	if (!query) return [];
+	return splitOnMatches(text, query)
+		.filter((segment) => segment.isMatch)
+		.map((segment) => ({ from: segment.start, to: segment.start + segment.text.length }));
+}
+
 export function highlightMatches(text: string, query: string, accentColor: string): ReactNode {
 	if (!query) return text;
 	const segments = splitOnMatches(text, query);

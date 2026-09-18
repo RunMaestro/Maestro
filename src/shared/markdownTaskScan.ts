@@ -63,3 +63,32 @@ export function forEachMarkdownLine(
 		if (visit(line, i) === false) return;
 	}
 }
+
+export interface MarkdownTaskCounts {
+	checked: number;
+	unchecked: number;
+	total: number;
+}
+
+/**
+ * Count markdown checkbox tasks while ignoring fenced code blocks.
+ *
+ * Lives here rather than in the desktop engine's `batchUtils` because the CLI
+ * engine needs the same counts to detect a stalled document, and a stall
+ * heuristic that counted tasks differently from the desktop would trip at a
+ * different time on the same playbook.
+ */
+export function countMarkdownTasks(content: string): MarkdownTaskCounts {
+	let checked = 0;
+	let unchecked = 0;
+
+	forEachMarkdownLine(content, (line) => {
+		if (CHECKED_TASK_COUNT_REGEX.test(line)) {
+			checked++;
+		} else if (UNCHECKED_TASK_REGEX.test(line)) {
+			unchecked++;
+		}
+	});
+
+	return { checked, unchecked, total: checked + unchecked };
+}

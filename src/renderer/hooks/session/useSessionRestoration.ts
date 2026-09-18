@@ -10,6 +10,7 @@
  *
  * Effects:
  *   - Session & group loading on mount (with React Strict Mode guard)
+ *   - Re-derives busy state from the main process's live turns after load
  *   - Sets initialLoadComplete + sessionsLoaded flags for splash coordination
  */
 
@@ -21,12 +22,22 @@ import { useGroupChatStore } from '../../stores/groupChatStore';
 import { gitService } from '../../services/git';
 import { generateId } from '../../utils/ids';
 import { isEphemeralBrowserTab, rehydrateBrowserTab } from '../../utils/browserTabPersistence';
+import { applyLiveAiTurns } from '../../utils/liveTurnReattach';
+import { fetchLiveAiTurns } from '../../services/process';
+import { useOwnedSessionGate } from '../agent/internal/useOwnedSessionGate';
 import { getRepairedUnifiedTabOrder } from '../../utils/tabHelpers';
 import { collectLeafTabRefs, normalizeTabGroups } from '../../utils/panelLayout';
 import { migrateLegacySnoozedTabs } from '../../utils/snoozeHelpers';
 import { isMediaStreamUrl } from '../../../shared/mediaTypes';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import { logger } from '../../utils/logger';
+import { readPersistedActiveSessionId } from '../../utils/activeSessionPersistence';
+import { useSessionLifecycleSync } from './useSessionLifecycleSync';
+import { useEventListener } from '../utils/useEventListener';
+import { WEB_BRIDGE_RECONCILE_EVENT } from '../../../shared/webClientConfig';
+import { releaseConnectionHeldQueueItems } from '../../utils/executionQueue';
+
+const CONNECTION_RECONCILE_RETRY_MS = 1000;
 
 /** Ids of the terminal tabs that are tiled into one of the session's tab groups. */
 function collectGroupedTerminalIds(session: { tabGroups?: Session['tabGroups'] }): Set<string> {
@@ -84,8 +95,15 @@ export function useSessionRestoration(): SessionRestorationReturn {
 	// useCallback/useEffect without appearing in dependency arrays. Zustand
 	// store actions returned by getState() are stable singletons that never
 	// change, so the empty deps array is intentional.
-	const { setSessions, setGroups, setActiveSessionId, hydrateActiveSessionId, setSessionsLoaded } =
-		useMemo(() => useSessionStore.getState(), []);
+	const {
+		setSessions,
+		setGroups,
+		setActiveSessionId,
+		hydrateActiveSessionId,
+		setSessionsLoaded,
+		setGroupsLoaded,
+		setSessionsReadOk,
+	} = useMemo(() => useSessionStore.getState(), []);
 	const { setGroupChats } = useMemo(() => useGroupChatStore.getState(), []);
 
 	// --- initialLoadComplete proxy ref ---
@@ -110,6 +128,20 @@ export function useSessionRestoration(): SessionRestorationReturn {
 			},
 		});
 	}, []) as React.MutableRefObject<boolean>;
+
+	// Window scoping for the live-turn reconcile below. A secondary window must
+	// not light up an agent the primary owns, and the gate is the one place that
+	// answers that (web-desktop's is a permit-all, which is what makes the
+	// reconcile work there at all).
+	const ownedGate = useOwnedSessionGate();
+	const reconcileRetryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	useEffect(
+		() => () => {
+			if (reconcileRetryTimer.current) clearTimeout(reconcileRetryTimer.current);
+		},
+		[]
+	);
 
 	// --- validateAgentInBackground ---
 	// Checks agent availability without blocking session restoration.
@@ -146,6 +178,57 @@ export function useSessionRestoration(): SessionRestorationReturn {
 		},
 		[]
 	);
+
+	// --- reattachLiveAiTurns ---
+	// restoreSession resets every agent to idle because in the Electron app no
+	// spawned process survives a restart. The web-desktop bundle breaks that
+	// assumption: the page is a client of a main process that keeps running, so a
+	// browser reload (or a reconnect after the tab was suspended) drops the
+	// renderer's busy bookkeeping while the agent keeps working - the Left Bar
+	// draws the idle dot and the thinking pill never appears, even as the
+	// transcript fills in, because the output listeners route by process id and
+	// never needed that bookkeeping. Ask main what it is actually running and put
+	// the indicators back. On a cold Electron start the process table is empty, so
+	// this costs one round trip and changes nothing.
+	const reattachLiveAiTurns = useCallback(async () => {
+		const turns = await fetchLiveAiTurns();
+		// null means the probe failed, which is not the same answer as "nothing is
+		// running" - leave the restored state alone rather than guessing.
+		if (!turns) {
+			const hasConnectionHold = useSessionStore
+				.getState()
+				.sessions.some((session) =>
+					(session.executionQueue ?? []).some((item) => item.waitingForConnection)
+				);
+			if (hasConnectionHold && !reconcileRetryTimer.current) {
+				reconcileRetryTimer.current = setTimeout(() => {
+					reconcileRetryTimer.current = null;
+					window.dispatchEvent(new Event(WEB_BRIDGE_RECONCILE_EVENT));
+				}, CONNECTION_RECONCILE_RETRY_MS);
+			}
+			return;
+		}
+		if (reconcileRetryTimer.current) {
+			clearTimeout(reconcileRetryTimer.current);
+			reconcileRetryTimer.current = null;
+		}
+		const owned = turns.filter((turn) => ownedGate.current?.(`${turn.sessionId}-ai-${turn.tabId}`));
+		setSessions((prev) => {
+			let queueChanged = false;
+			const released = prev.map((session) => {
+				const executionQueue = releaseConnectionHeldQueueItems(session.executionQueue || []);
+				if (executionQueue === session.executionQueue) return session;
+				queueChanged = true;
+				return { ...session, executionQueue };
+			});
+			if (!queueChanged && owned.length === 0) return prev;
+			return applyLiveAiTurns(released, owned);
+		});
+	}, [ownedGate]);
+
+	useEventListener(WEB_BRIDGE_RECONCILE_EVENT, () => {
+		void reattachLiveAiTurns();
+	});
 
 	// --- fetchGitInfoInBackground ---
 	const fetchGitInfoInBackground = useCallback(
@@ -613,7 +696,11 @@ export function useSessionRestoration(): SessionRestorationReturn {
 			try {
 				window.__updateSplash?.(50, 'Seating the musicians...');
 				const savedSessions = await window.maestro.sessions.getAll();
-				const savedGroups = await window.maestro.groups.getAll();
+				// The read came back. An empty list is a real answer here (a brand
+				// new install), so persistence must stay enabled for it; only a read
+				// that never returned keeps the flush switched off. Same rule, same
+				// reason, as `groupsLoaded` below.
+				setSessionsReadOk(true);
 
 				// Handle sessions
 				if (savedSessions && savedSessions.length > 0) {
@@ -621,7 +708,10 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					setSessions(restoredSessions);
 
 					// Restore persisted active session ID, falling back to first session.
-					const savedActiveSessionId = await window.maestro.sessions.getActiveSessionId();
+					// Read through the helper: a web-desktop client remembers its OWN
+					// focused agent, so a browser refresh returns to what the user was
+					// working in rather than to whatever the desktop has focused.
+					const savedActiveSessionId = await readPersistedActiveSessionId();
 					if (savedActiveSessionId && restoredSessions.find((s) => s.id === savedActiveSessionId)) {
 						// Saved ID is valid - hydrate locally without writing back to disk
 						hydrateActiveSessionId(savedActiveSessionId);
@@ -630,6 +720,12 @@ export function useSessionRestoration(): SessionRestorationReturn {
 						// doesn't retry the invalid ID on next launch
 						setActiveSessionId(restoredSessions[0].id);
 					}
+
+					// Put back the busy indicators for agents main is still running.
+					// Deliberately not awaited: it must not hold the splash, and a page
+					// that paints an agent idle for one frame before correcting itself is
+					// far better than one that waits on an IPC round trip to paint at all.
+					void reattachLiveAiTurns();
 
 					// Background tasks: agent validation + SSH git info.
 					// These run after splash hides so they never block startup.
@@ -655,11 +751,40 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					useSessionStore.getState().setInitialFileTreeReady(true);
 				}
 
-				// Handle groups
-				if (savedGroups && savedGroups.length > 0) {
-					setGroups(savedGroups);
-				} else {
-					setGroups([]);
+				// Handle groups.
+				//
+				// Read in its OWN try/catch, and mark the registry loaded only when
+				// the read actually came back. Three things depend on that
+				// distinction, and getting it wrong is how a user loses every group
+				// they have:
+				//
+				//   1. An empty result is ambiguous. `groups:getAll` answers `[]`
+				//      both for a user who has no groups and for a groups file that
+				//      could not be read - and the store lives under the configurable
+				//      sync path, so a cloud folder that has not finished mounting at
+				//      launch produces exactly that, with no exception anywhere.
+				//   2. The persistence effect in `useSessionLifecycle` writes the
+				//      in-memory registry straight back to disk, so an unverified
+				//      empty read becomes the new truth and every later launch
+				//      rewrites it. There is no backup and no undo.
+				//   3. A groups failure must not cost the user their AGENTS. Sharing
+				//      one try with the session read meant a rejected `groups:getAll`
+				//      landed in the outer catch and zeroed `setSessions` too.
+				//
+				// So: never persist a registry we never successfully read.
+				try {
+					const savedGroups = await window.maestro.groups.getAll();
+					setGroups(savedGroups && savedGroups.length > 0 ? savedGroups : []);
+					setGroupsLoaded(true);
+				} catch (groupsError) {
+					// Leave the in-memory registry alone and leave `groupsLoaded`
+					// false, which keeps group persistence switched off for this run.
+					// The groups on disk are untouched and come back on next launch.
+					logger.error(
+						'Failed to load groups - group saving disabled for this session:',
+						undefined,
+						groupsError
+					);
 				}
 
 				// Load group chats
@@ -671,9 +796,17 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					setGroupChats([]);
 				}
 			} catch (e) {
-				logger.error('Failed to load sessions/groups:', undefined, e);
+				logger.error(
+					'Failed to load sessions - session saving disabled for this run:',
+					undefined,
+					e
+				);
+				// The in-memory tree is empty but `sessionsReadOk` stays false, so
+				// the flush will not write this emptiness over the file on disk.
 				setSessions([]);
-				setGroups([]);
+				// Deliberately NOT setGroups([]) here. The group registry is read in
+				// its own try above; wiping it on an unrelated session failure is the
+				// same "unverified empty becomes truth" bug one level up.
 				// Error loading sessions - no file tree to wait for
 				useSessionStore.getState().setInitialFileTreeReady(true);
 			} finally {
@@ -686,6 +819,12 @@ export function useSessionRestoration(): SessionRestorationReturn {
 		};
 		loadSessionsAndGroups();
 	}, []);
+
+	// --- Peer client sync ---
+	// Agents another client (a second window, a web-desktop browser tab) creates
+	// or closes land here, restored through the same pass as a disk load. Wired
+	// from this hook because `restoreSession` is what prepares them.
+	useSessionLifecycleSync(restoreSession, reattachLiveAiTurns);
 
 	return {
 		initialLoadComplete,

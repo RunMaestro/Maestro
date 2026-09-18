@@ -569,6 +569,8 @@ describe('PullToRefresh', () => {
 		});
 
 		describe('text styling', () => {
+			// rem rather than px so the label tracks the root font size, and
+			// therefore the interface zoom level, like every other surface.
 			it('applies correct font styles to text', () => {
 				const { container } = render(
 					<PullToRefreshIndicator
@@ -579,7 +581,7 @@ describe('PullToRefresh', () => {
 					/>
 				);
 				const textSpan = container.querySelector('span');
-				expect(textSpan?.style.fontSize).toBe('12px');
+				expect(textSpan?.style.fontSize).toBe('0.75rem');
 				expect(textSpan?.style.fontWeight).toBe('500');
 				expect(textSpan?.style.color).toBe('rgb(136, 136, 136)'); // #888888
 			});

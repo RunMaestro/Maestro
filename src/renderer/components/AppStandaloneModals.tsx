@@ -1,11 +1,10 @@
-import { lazy, memo, Suspense, useCallback, useMemo } from 'react';
-import { useModalActions } from '../stores/modalStore';
+import { lazy, memo, Suspense, useMemo } from 'react';
+import { useModalActions, useModalStore } from '../stores/modalStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { useTabStore } from '../stores/tabStore';
 import { useMessageGistStore } from '../stores/messageGistStore';
 import { useActiveSession } from '../hooks/session/useActiveSession';
 import { useSessionStore } from '../stores/sessionStore';
-import { useSettingsStore } from '../stores/settingsStore';
 import { notifyToast } from '../stores/notificationStore';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { THEMES } from '../constants/themes';
@@ -16,6 +15,7 @@ import { DebugApplicationStatsModal } from './DebugApplicationStatsModal';
 import { DebugAgentProbeModal } from './DebugAgentProbeModal';
 import { WidgetGallery } from './widgets/WidgetGallery';
 import { ProfilingCaptureModal } from './ProfilingCaptureModal';
+import { useProfilingAutoStop } from '../hooks/ui/useProfilingAutoStop';
 import { WindowsWarningModal } from './WindowsWarningModal';
 import { OnboardingSeriesHost } from './OnboardingSeriesHost';
 import { AppOverlays } from './AppOverlays';
@@ -43,6 +43,8 @@ import type { MainPanelHandle } from './MainPanel';
 import type { FileNode } from '../types/fileTree';
 import { openUrl } from '../utils/openUrl';
 import { logger } from '../utils/logger';
+import { resolveFileReference } from '../utils/fileLinks/resolve';
+import { getBasename } from '../../shared/formatters';
 
 // Lazy-loaded components (rarely-used heavy modals)
 const SettingsModal = lazy(() =>
@@ -103,7 +105,11 @@ export interface AppStandaloneModalsProps {
 	encoreFeatures: EncoreFeatureFlags;
 
 	// --- Director's Notes ---
-	onDirectorNotesResumeSession: (sourceSessionId: string, agentSessionId: string) => void;
+	onDirectorNotesResumeSession: (
+		sourceSessionId: string,
+		agentSessionId: string,
+		sessionName?: string
+	) => void;
 	onFileClick: (node: FileNode, path: string) => void;
 
 	// --- Cue ---
@@ -120,6 +126,7 @@ export interface AppStandaloneModalsProps {
 	onOpenFileTab: (info: FileTabInfo) => void;
 	mainPanelRef: React.RefObject<MainPanelHandle | null>;
 	documentGraphShowExternalLinks: boolean;
+	documentGraphConfirmClose: boolean;
 	onExternalLinksChange: (value: boolean) => void;
 	documentGraphMaxNodes: number;
 	documentGraphPreviewCharLimit: number;
@@ -195,6 +202,7 @@ function AppStandaloneModalsInner({
 	onOpenFileTab,
 	mainPanelRef,
 	documentGraphShowExternalLinks,
+	documentGraphConfirmClose,
 	onExternalLinksChange,
 	documentGraphMaxNodes,
 	documentGraphPreviewCharLimit,
@@ -225,6 +233,11 @@ function AppStandaloneModalsInner({
 	recordTourComplete,
 	recordTourSkip,
 }: AppStandaloneModalsProps) {
+	// Ends a performance capture before its trace buffer overflows. Lives here
+	// because it has to be mounted for the whole life of the app - a recording
+	// runs with the command palette closed.
+	useProfilingAutoStop();
+
 	// Self-source modal open states from stores
 	const {
 		debugPackageModalOpen,
@@ -272,6 +285,7 @@ function AppStandaloneModalsInner({
 	const graphScopeFiles = useFileExplorerStore((s) => s.graphScopeFiles);
 	const graphScopeDirectory = useFileExplorerStore((s) => s.graphScopeDirectory);
 	const graphRootPath = useFileExplorerStore((s) => s.graphRootPath);
+	const graphReturnTo = useFileExplorerStore((s) => s.graphReturnTo);
 
 	// Self-source tab gist content
 	const tabGistContent = useTabStore((s) => s.tabGistContent);
@@ -313,7 +327,7 @@ function AppStandaloneModalsInner({
 				onSetUseBetaChannel={setEnableBetaUpdates}
 			/>
 
-			{/* --- FIRST-RUN SERIES: typography -> theme -> agent powers ---
+			{/* --- FIRST-RUN SERIES: typography -> theme -> updates -> agent powers ---
 			    One step on screen at a time; see OnboardingSeriesHost. */}
 			<OnboardingSeriesHost
 				theme={theme}
@@ -416,9 +430,18 @@ function AppStandaloneModalsInner({
 						onClose={() => setDirectorNotesOpen(false)}
 						onResumeSession={onDirectorNotesResumeSession}
 						fileTree={activeSession?.fileTree}
-						onFileClick={(path: string) =>
-							onFileClick({ name: path.split('/').pop() || path, type: 'file' }, path)
-						}
+						cwd={activeSession?.cwd}
+						projectRoot={activeSession?.projectRoot || activeSession?.cwd}
+						onFileClick={(path: string) => {
+							// remarkFileLinks hands back a project-relative path for anything
+							// it matched in the tree, so join it onto the root before the
+							// reader sees it - a bare `Notes/Thing.md` opens nothing.
+							const fullPath = resolveFileReference(
+								activeSession?.projectRoot || activeSession?.cwd || '',
+								path
+							);
+							onFileClick({ name: getBasename(fullPath), type: 'file' }, fullPath);
+						}}
 					/>
 				</Suspense>
 			)}
@@ -541,12 +564,27 @@ function AppStandaloneModalsInner({
 					<DocumentGraphView
 						isOpen={isGraphViewOpen}
 						onClose={() => {
+							// Read the target BEFORE closing - closeGraphView clears it.
+							const returnTo = useFileExplorerStore.getState().graphReturnTo;
 							useFileExplorerStore.getState().closeGraphView();
+							if (returnTo === 'memoryViewer') {
+								// The viewer closed itself to hand the window over, so
+								// closing the graph has to hand it back or the user lands
+								// on an empty workspace.
+								useModalStore.getState().openModal('memoryViewer');
+								return;
+							}
 							// Return focus to file preview if it was open
 							requestAnimationFrame(() => {
 								mainPanelRef.current?.focusFilePreview();
 							});
 						}}
+						// A graph that knows where it came from is one Escape from being
+						// back there, so the "are you sure?" prompt is pure friction.
+						confirmOnClose={documentGraphConfirmClose && !graphReturnTo}
+						// Same component, different subject: a graph opened from the
+						// Memory viewer is graphing memories, not project documents.
+						title={graphReturnTo === 'memoryViewer' ? 'Memory Graph' : undefined}
 						theme={theme}
 						rootPath={graphRootPath || activeSession?.projectRoot || activeSession?.cwd || ''}
 						onDocumentOpen={async (filePath) => {

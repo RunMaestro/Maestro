@@ -12,9 +12,12 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { useRef, useState } from 'react';
 import { render, screen, fireEvent, waitFor, createEvent } from '@testing-library/react';
 import { ModelEffortModal } from '../../../renderer/components/ModelEffortModal';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
+import { useModalLayer } from '../../../renderer/hooks/ui/useModalLayer';
+import { useFocusAfterRender } from '../../../renderer/hooks/utils/useFocusAfterRender';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useTabStore } from '../../../renderer/stores/tabStore';
 import { createMockSession, createMockAITab } from '../../helpers';
@@ -326,5 +329,81 @@ describe('ModelEffortModal', () => {
 
 		fireEvent.mouseDown(keyTarget());
 		expect(onClose).not.toHaveBeenCalled();
+	});
+	/**
+	 * Focus restoration. Maestro is keyboard-first, so a switcher that leaves the
+	 * caret on `document.body` costs the user the very thing they opened it
+	 * mid-draft for: the next Ctrl+Enter goes nowhere and the composer has to be
+	 * clicked back into. Both entry points are pinned because they lose the
+	 * origin for different reasons - the hotkey path because the modal focuses
+	 * its own surface before the stack looks, the palette path because the
+	 * palette's input is already detached by the time the modal registers.
+	 */
+	describe('focus restoration', () => {
+		it('hands the caret back to the composer after the hotkey path commits', async () => {
+			const composer = document.createElement('textarea');
+			document.body.appendChild(composer);
+			composer.focus();
+
+			const { unmount } = renderModal();
+			await screen.findByText('claude-sonnet-4.5');
+			// The modal takes the keyboard while it is open - both axes are live.
+			expect(document.activeElement).toBe(keyTarget());
+
+			fireEvent.keyDown(keyTarget(), { key: 'Enter' });
+			unmount();
+
+			await waitFor(() => expect(document.activeElement).toBe(composer));
+			composer.remove();
+		});
+
+		it('hands the caret back to the composer when the palette opened it', async () => {
+			// The palette closes and opens this modal in ONE tick, so the modal
+			// registers into an empty focus: its origin can only come from the
+			// palette that knew what the user was typing in.
+			const composer = document.createElement('textarea');
+			document.body.appendChild(composer);
+			composer.focus();
+
+			function Palette({ onClose }: { onClose: () => void }) {
+				const inputRef = useRef<HTMLInputElement>(null);
+				// Same order the real QuickActionsModal uses: register, then focus.
+				useModalLayer(600, 'Quick Actions', onClose);
+				useFocusAfterRender(inputRef, true, 0);
+				return <input data-testid="palette-input" ref={inputRef} />;
+			}
+
+			function Harness() {
+				const [surface, setSurface] = useState<'palette' | 'model' | 'none'>('palette');
+				return (
+					<LayerStackProvider>
+						{surface === 'palette' && <Palette onClose={() => setSurface('none')} />}
+						{surface === 'model' && (
+							<ModelEffortModal
+								theme={mockTheme}
+								tabId="tab-1"
+								onClose={() => setSurface('none')}
+							/>
+						)}
+						<button data-testid="run-entry" onClick={() => setSurface('model')}>
+							run
+						</button>
+					</LayerStackProvider>
+				);
+			}
+
+			const { unmount } = render(<Harness />);
+			await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId('palette-input')));
+
+			// The palette entry swaps one surface for the other in a single tick.
+			fireEvent.click(screen.getByTestId('run-entry'));
+			await screen.findByText('claude-sonnet-4.5');
+
+			fireEvent.keyDown(keyTarget(), { key: 'Enter' });
+
+			await waitFor(() => expect(document.activeElement).toBe(composer));
+			unmount();
+			composer.remove();
+		});
 	});
 });

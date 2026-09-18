@@ -547,7 +547,7 @@ function PipelineNameEditor({
 				data-testid="pipeline-rename-input"
 			/>
 			{error && (
-				<span className="text-[10px] flex-shrink-0" style={{ color: theme.colors.error }}>
+				<span className="text-2xs flex-shrink-0" style={{ color: theme.colors.error }}>
 					{error}
 				</span>
 			)}
@@ -660,7 +660,7 @@ function PipelineListRow({
 						</>
 					)}
 					<span
-						className="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide flex-shrink-0"
+						className="px-1.5 py-0.5 rounded text-2xs font-bold uppercase tracking-wide flex-shrink-0"
 						style={{ backgroundColor: `${badgeColor}20`, color: badgeColor }}
 					>
 						{health.label}
@@ -704,7 +704,7 @@ function PipelineListRow({
 
 				{/* How it is doing */}
 				<div
-					className="text-[11px] mt-1 flex items-center gap-1.5 flex-wrap"
+					className="text-xs-plus mt-1 flex items-center gap-1.5 flex-wrap"
 					style={{ color: theme.colors.textDim }}
 				>
 					<span style={{ color: badgeColor }}>{health.detail}</span>
@@ -739,7 +739,7 @@ function PipelineListRow({
 						{health.issues.map((issue, i) => (
 							<li
 								key={i}
-								className="text-[11px] flex items-start gap-1.5"
+								className="text-xs-plus flex items-start gap-1.5"
 								style={{ color: theme.colors.warning }}
 							>
 								<AlertTriangle className="w-3 h-3 flex-shrink-0 mt-[1px]" />
@@ -778,7 +778,7 @@ function PipelineListRow({
 									{t.summary && <span style={{ color: theme.colors.textDim }}> · {t.summary}</span>}
 									{t.subscriptionName && (
 										<span
-											className="block text-[10px] font-mono break-all"
+											className="block text-2xs font-mono break-all"
 											style={{ color: theme.colors.textDim, opacity: 0.7 }}
 										>
 											{t.subscriptionName}
@@ -798,7 +798,7 @@ function PipelineListRow({
 								{!singleRunSub && t.subscriptionName && (
 									<button
 										onClick={() => onTriggerSubscription(t.subscriptionName!)}
-										className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] hover:opacity-80 transition-opacity flex-shrink-0"
+										className="flex items-center gap-1 px-1.5 py-0.5 rounded text-2xs hover:opacity-80 transition-opacity flex-shrink-0"
 										style={{ color: theme.colors.textDim }}
 										title={`Run "${t.subscriptionName}" now`}
 									>
@@ -830,7 +830,7 @@ function PipelineListRow({
 										{s.label}
 										{s.detail && (
 											<span
-												className="block text-[10px] font-mono break-all"
+												className="block text-2xs font-mono break-all"
 												style={{ color, opacity: 0.7 }}
 											>
 												{s.detail}
@@ -893,7 +893,7 @@ function PromptLine({ prompts, theme }: { prompts: CueNodePrompts; theme: Theme 
 				}
 			>
 				<span
-					className="block truncate text-[10px] italic"
+					className="block truncate text-2xs italic"
 					style={{ color: theme.colors.textDim, opacity: 0.85 }}
 				>
 					{prompts.preview}
@@ -901,7 +901,7 @@ function PromptLine({ prompts, theme }: { prompts: CueNodePrompts; theme: Theme 
 			</HoverTooltip>
 			{prompts.count > 1 && (
 				<span
-					className="text-[9px] font-bold flex-shrink-0 px-1 rounded"
+					className="text-3xs font-bold flex-shrink-0 px-1 rounded"
 					style={{ backgroundColor: `${theme.colors.textDim}25`, color: theme.colors.textDim }}
 					title={`${prompts.count} different prompts feed this`}
 				>
@@ -927,17 +927,17 @@ function DetailColumn({
 	return (
 		<div>
 			<div
-				className="text-[10px] font-bold uppercase tracking-wider mb-1"
+				className="text-2xs font-bold uppercase tracking-wider mb-1"
 				style={{ color: theme.colors.textDim }}
 			>
 				{title}
 			</div>
 			{children.length === 0 ? (
-				<div className="text-[11px]" style={{ color: theme.colors.textDim, opacity: 0.7 }}>
+				<div className="text-xs-plus" style={{ color: theme.colors.textDim, opacity: 0.7 }}>
 					{empty}
 				</div>
 			) : (
-				<ul className="space-y-1 text-[11px]">{children}</ul>
+				<ul className="space-y-1 text-xs-plus">{children}</ul>
 			)}
 		</div>
 	);

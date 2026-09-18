@@ -261,6 +261,52 @@ describe('cue-spawn-builder', () => {
 			}
 		});
 
+		it('expands a launchd PATH instead of inheriting it verbatim (#1573)', async () => {
+			const launchdPath = '/usr/bin:/bin:/usr/sbin:/sbin';
+			const originalPath = process.env.PATH;
+			process.env.PATH = launchdPath;
+			try {
+				const result = await buildSpawnSpec(createConfig(), 'prompt');
+
+				expect(result.ok).toBe(true);
+				if (result.ok) {
+					expect(result.spec.env.PATH).not.toBe(launchdPath);
+					expect(result.spec.env.PATH).toContain(launchdPath.split(':')[0]);
+					if (process.platform !== 'win32') {
+						const parts = result.spec.env.PATH.split(':');
+						expect(parts).toContain('/opt/homebrew/bin');
+						expect(parts).toContain('/usr/local/bin');
+					}
+				}
+			} finally {
+				process.env.PATH = originalPath;
+			}
+		});
+
+		it('marks the spawn as a cue turn', async () => {
+			// Nothing else distinguishes a Cue run from a prompt the user typed:
+			// same binary, same args, and the prompt text is the user's own words
+			// out of cue.yaml. Downstream tooling reads this var instead of guessing.
+			const result = await buildSpawnSpec(createConfig(), 'prompt');
+
+			expect(result.ok).toBe(true);
+			if (result.ok) {
+				expect(result.spec.env.MAESTRO_QUERY_SOURCE).toBe('cue');
+			}
+		});
+
+		it('keeps the cue marker even when the agent sets its own env vars', async () => {
+			const result = await buildSpawnSpec(
+				createConfig({ customEnvVars: { MAESTRO_QUERY_SOURCE: 'user' } }),
+				'prompt'
+			);
+
+			expect(result.ok).toBe(true);
+			if (result.ok) {
+				expect(result.spec.env.MAESTRO_QUERY_SOURCE).toBe('cue');
+			}
+		});
+
 		describe('SSH execution', () => {
 			it('calls wrapSpawnWithSsh when SSH is enabled', async () => {
 				const mockSshStore = { getSshRemotes: vi.fn(() => []) };

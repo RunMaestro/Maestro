@@ -21,6 +21,7 @@ import {
 	ThinkingModeSection,
 	UpdatesSection,
 	UtilityAgentSection,
+	WebInterfaceSection,
 } from './components';
 import {
 	useForcedParallelWarningState,
@@ -76,6 +77,11 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 			/>
 			<GitHubCliSection theme={theme} ghPath={settings.ghPath} setGhPath={settings.setGhPath} />
 			<MaestroCliSection theme={theme} appVersion={appVersion} maestroCli={maestroCli} />
+			<WebInterfaceSection
+				theme={theme}
+				webInterfaceAutoStart={settings.webInterfaceAutoStart}
+				setWebInterfaceAutoStart={settings.setWebInterfaceAutoStart}
+			/>
 			<InputBehaviorSection
 				theme={theme}
 				enterToSendAI={settings.enterToSendAI}
@@ -115,6 +121,8 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				setDefaultSaveToHistory={settings.setDefaultSaveToHistory}
 				synopsisDebounceSeconds={settings.synopsisDebounceSeconds}
 				setSynopsisDebounceSeconds={settings.setSynopsisDebounceSeconds}
+				groupCueEntries={settings.groupCueEntries}
+				setGroupCueEntries={settings.setGroupCueEntries}
 			/>
 			<ThinkingModeSection
 				theme={theme}
@@ -153,6 +161,8 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				theme={theme}
 				preventSleepEnabled={settings.preventSleepEnabled}
 				setPreventSleepEnabled={settings.setPreventSleepEnabled}
+				preventDisplaySleepEnabled={settings.preventDisplaySleepEnabled}
+				setPreventDisplaySleepEnabled={settings.setPreventDisplaySleepEnabled}
 			/>
 			<RenderingSection
 				theme={theme}

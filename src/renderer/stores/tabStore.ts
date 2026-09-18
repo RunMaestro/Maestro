@@ -26,7 +26,14 @@
 
 import { create } from 'zustand';
 import { nextThinkingMode } from '../../shared/types';
-import type { AITab, FilePreviewTab, Session, LogEntry, SnoozedTabEntry } from '../types';
+import type {
+	AITab,
+	FilePreviewTab,
+	Session,
+	LogEntry,
+	SnoozeContent,
+	SnoozedTabEntry,
+} from '../types';
 import type { GistInfo } from '../components/GistPublishModal';
 import {
 	createTab as createTabHelper,
@@ -73,6 +80,7 @@ import {
 	updateSnoozedTab as updateSnoozedTabHelper,
 	type WakeSnoozedTabResult,
 } from '../utils/snoozeHelpers';
+import { runSnoozeWakePrompt } from '../services/snoozeWakePrompt';
 import { logger } from '../utils/logger';
 
 /**
@@ -226,17 +234,25 @@ export interface TabStoreActions {
 	setGroupEmoji: (groupId: string, emoji: string) => void;
 
 	/**
-	 * Snooze an AI tab in the active session until `wakeAt`, with an optional
-	 * note surfaced in the wake notification. The tab leaves the tab bar until
-	 * useSnoozeScheduler brings it back.
+	 * Snooze a tab (or tiled group) until `wakeAt`, with an optional note
+	 * surfaced in the wake notification and an optional prompt run the moment it
+	 * returns. The tab leaves the tab bar until useSnoozeScheduler brings it
+	 * back.
+	 *
+	 * `sessionId` defaults to the active agent, which is what every click path
+	 * means - the user is snoozing the tab in front of them. It is explicit for
+	 * a caller that is not the user at the keyboard (`maestro-cli snooze`), where
+	 * "active" is whatever agent the human happens to be looking at and would
+	 * park the wrong tab.
 	 *
 	 * @returns The stored snooze entry, or null if the tab wasn't found
 	 */
 	snoozeTab: (
 		tabId: string,
 		wakeAt: number,
-		note?: string,
-		showUnreadOnly?: boolean
+		content?: SnoozeContent,
+		showUnreadOnly?: boolean,
+		sessionId?: string
 	) => SnoozedTabEntry | null;
 
 	/**
@@ -251,14 +267,14 @@ export interface TabStoreActions {
 	dismissSnoozedTab: (sessionId: string, snoozeId: string) => void;
 
 	/**
-	 * Reschedule a snooze. Passing `note` rewrites it; omitting it keeps the
-	 * existing note.
+	 * Reschedule a snooze. Each field of `content` that is present rewrites its
+	 * value (empty string clears it); an omitted field is left alone.
 	 */
 	rescheduleSnoozedTab: (
 		sessionId: string,
 		snoozeId: string,
 		wakeAt: number,
-		note?: string
+		content?: SnoozeContent
 	) => void;
 
 	/**
@@ -625,18 +641,23 @@ export const useTabStore = create<TabStore>()((set) => ({
 	},
 
 	// Snooze - see utils/snoozeHelpers.ts for why snoozed tabs leave aiTabs entirely
-	snoozeTab: (tabId, wakeAt, note, showUnreadOnly = false) => {
-		const session = getActiveSession();
+	snoozeTab: (tabId, wakeAt, content, showUnreadOnly = false, sessionId) => {
+		const session = sessionId
+			? useSessionStore.getState().sessions.find((s) => s.id === sessionId)
+			: getActiveSession();
 		if (!session) return null;
 		// One id, two shapes: the tab strip hands this the id of whatever the user
 		// right-clicked, and a tiled group is not a tab. Resolve which it is here
 		// rather than making every caller (chip menu, tab menu, palette) ask.
 		const isGroup = (session.tabGroups || []).some((g) => g.id === tabId);
 		const result = isGroup
-			? snoozeTabGroupHelper(session, tabId, wakeAt, note)
-			: snoozeTabHelper(session, tabId, wakeAt, note, showUnreadOnly);
+			? snoozeTabGroupHelper(session, tabId, wakeAt, content)
+			: snoozeTabHelper(session, tabId, wakeAt, content, showUnreadOnly);
 		if (!result) return null;
-		updateActiveSession(result.session);
+		// Written by id rather than through `updateActiveSession`, which keys on
+		// `activeSessionId`: a CLI snooze names its own agent, and that agent is
+		// usually not the one on screen.
+		updateSessionWith(session.id, () => result.session);
 		return result.entry;
 	},
 
@@ -651,6 +672,10 @@ export const useTabStore = create<TabStore>()((set) => ({
 			const grouped = wakeSnoozedTabGroupHelper(session, snoozeId);
 			if (!grouped) return null;
 			updateSessionWith(sessionId, () => grouped.session);
+			// The wake prompt is written against the tab COMING BACK, so pulling it
+			// back early counts. Every member was restored on this path, so nothing
+			// has to be excluded.
+			runSnoozeWakePrompt(sessionId, entry, grouped.groupId);
 			return {
 				session: grouped.session,
 				entry,
@@ -662,6 +687,7 @@ export const useTabStore = create<TabStore>()((set) => ({
 		const result = wakeSnoozedTabHelper(session, snoozeId, 'unsnoozed');
 		if (!result) return null;
 		updateSessionWith(sessionId, () => result.session);
+		runSnoozeWakePrompt(sessionId, result.entry, result.tabId);
 		return result;
 	},
 
@@ -669,9 +695,9 @@ export const useTabStore = create<TabStore>()((set) => ({
 		updateSessionWith(sessionId, (session) => removeSnoozedTabHelper(session, snoozeId));
 	},
 
-	rescheduleSnoozedTab: (sessionId, snoozeId, wakeAt, note) => {
+	rescheduleSnoozedTab: (sessionId, snoozeId, wakeAt, content) => {
 		updateSessionWith(sessionId, (session) =>
-			updateSnoozedTabHelper(session, snoozeId, wakeAt, note)
+			updateSnoozedTabHelper(session, snoozeId, wakeAt, content)
 		);
 	},
 

@@ -140,6 +140,15 @@ export function useLayerStack(): LayerStackAPI {
 	// Key: layer id, Value: the element to hand the caret back to on close.
 	const focusOriginRefs = useRef<Map<string, HTMLElement>>(new Map());
 
+	// The origin of the layer that closed most recently, kept alive for one
+	// macrotask so a surface opened BY a closing surface can inherit it.
+	// One command-palette entry closes the palette and opens the next surface in
+	// the same tick, so by the time that surface registers, the palette's input
+	// is already detached and `document.activeElement` is `document.body` - it
+	// has no origin of its own to record, and the composer the user was actually
+	// typing in is only reachable through the palette that knew about it.
+	const handoffOriginRef = useRef<HTMLElement | null>(null);
+
 	/**
 	 * Register a new layer in the stack
 	 */
@@ -152,9 +161,19 @@ export function useLayerStack(): LayerStackAPI {
 
 		// Remember what the user was typing in before this layer took the
 		// keyboard, so closing it can hand the caret back (see unregisterLayer).
+		//
+		// The caller's own snapshot wins when it supplied one, because it was
+		// taken before this layer's host could focus its own content - reading
+		// `document.activeElement` here would record the layer's own element in
+		// that case, and an element that dies with the layer restores nothing.
+		// A layer that opens into an empty focus inherits from the surface that
+		// just closed, which is what carries the origin across a palette entry
+		// that swaps one surface for another in a single tick.
 		if (newLayer.capturesFocus !== false) {
-			const origin = document.activeElement;
-			if (origin instanceof HTMLElement && origin !== document.body) {
+			const supplied = 'focusOrigin' in newLayer ? newLayer.focusOrigin : document.activeElement;
+			const own = supplied instanceof HTMLElement && supplied !== document.body ? supplied : null;
+			const origin = own ?? handoffOriginRef.current;
+			if (origin?.isConnected) {
 				focusOriginRefs.current.set(id, origin);
 			}
 		}
@@ -194,7 +213,15 @@ export function useLayerStack(): LayerStackAPI {
 		// focusing a result) has already set an active element, and a surface that
 		// restores focus itself via `useFocusOnClose` gets there first.
 		if (!focusOrigin) return;
+
+		// Publish the origin for a surface opening in this same tick to inherit,
+		// and retire it once the restore below has had its turn - past that
+		// point the hand-off is over, and a stale origin would pull the caret
+		// somewhere the user has since navigated away from.
+		handoffOriginRef.current = focusOrigin.isConnected ? focusOrigin : null;
+
 		setTimeout(() => {
+			handoffOriginRef.current = null;
 			if (!focusOrigin.isConnected) return;
 			const current = document.activeElement;
 			if (current && current !== document.body && current.isConnected) return;

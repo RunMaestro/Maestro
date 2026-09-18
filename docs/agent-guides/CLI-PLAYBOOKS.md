@@ -37,6 +37,7 @@ src/cli/
 │   ├── refresh-files.ts
 │   ├── remove-agent.ts       # Remove agent via WebSocket (requires running app)
 │   ├── update-agent.ts       # Move agent to group / change cwd via WebSocket (requires running app)
+│   ├── update-ssh-remote.ts  # Edit an SSH remote via disk I/O
 │   ├── remove-ssh-remote.ts  # Remove SSH remote via disk I/O
 │   ├── run-playbook.ts
 │   ├── run-doc.ts            # Run raw Auto Run docs headlessly (no saved playbook)
@@ -153,6 +154,31 @@ Options:
 - `--skip <count>` - Pagination offset (default: 0)
 - `--search <keyword>` - Filter by name or first message content
 
+### `image list` / `image save`
+
+Reach the images a user pasted into a chat. An agent sees a pasted screenshot as pixels in its context and has no path to it, so writing one into the repo used to be a right-click only the human could perform (`ImageContextMenu` -> Save to Project).
+
+```bash
+maestro-cli image list [-a, --agent <id>] [-t, --tab <tab-id>] [--limit <n>] [--json]
+maestro-cli image save [target] [-a <id>] [-t <tab-id>] [-o, --output <path>] [--all] [--force] [--json]
+```
+
+`target` is a 1-based index from `image list`, a content handle (leading hex of the sha256), or `latest` (the default).
+
+Implementation notes:
+
+- After writing, it calls `nudgeFileTreeForPaths()` so the Files panel picks the new file up instead of waiting for its next timed refresh. Best-effort by contract: the bytes are already on disk, so a closed desktop must not turn a good save into a failure. `--json` reports which agents were nudged as `refreshedAgents`.
+- Reads the sessions file directly (`readSessions()`), not the running app, so it works with the desktop closed. Pasted images are relocated into the content-addressed store on persistence, so the transcript holds `maestro-image://store/<sha>.<ext>` refs that `resolveToBytesSync()` turns back into bytes. The cost is the renderer's 2s persistence debounce: an image pasted this instant may not be on disk yet.
+- The written extension is derived from the resolved media type, never from the requested filename - the same rule `saveImageToProject()` follows in the renderer.
+- `--all` always treats `--output` as a folder, so the same command cannot produce a directory on one conversation and a file on another.
+
+### Shared CLI helpers worth reusing
+
+Two things several verbs need, written once rather than per-command:
+
+- **`resolveOwningAgent(absolutePath)`** in `src/cli/utils/owning-agent.ts` - which agent's workspace a path lives in. Every agent whose `cwd` contains the path is a candidate, the deepest `cwd` wins (nested worktrees), and a genuine tie goes to the most recently active by history-file mtime. It returns the losers as `others` so the caller can name what it picked and how to override. `open-file`, `open-graph`, and the `image save` refresh nudge all ride it; it had already been written out twice, byte for byte, before it was extracted.
+- **`nudgeFileTreeForPaths(paths)` / `refreshFileTreeFor(sessionId)`** in `src/cli/services/file-tree-refresh.ts` - tell the desktop's Files panel to re-read a workspace. The quiet form never throws and never prints (the caller's write already succeeded); the loud form is what `refresh-files` reports on. Any new verb that writes a file into an agent's workspace should call the quiet one.
+
 ### `show agent <id>`
 
 Show detailed agent information including history and usage stats.
@@ -174,7 +200,7 @@ maestro-cli show playbook <id> [--json]
 Run a playbook (batch execution of Auto Run documents).
 
 ```bash
-maestro-cli playbook <playbook-id> [--dry-run] [--no-history] [--json] [--debug] [--verbose] [--wait] [--model <model>] [--effort <effort>]
+maestro-cli playbook <playbook-id> [--dry-run] [--no-history] [--json] [--debug] [--verbose] [--wait] [--model <model>] [--effort <effort>] [--ignore-model-hints]
 ```
 
 Options:
@@ -186,6 +212,7 @@ Options:
 - `--verbose` - Show full prompt sent to agent on each iteration
 - `--wait` - Wait for agent to become available if busy
 - `--model <model>` / `--effort <effort>` - Run-scoped model/effort override (see [Per-run model override](#per-run-model-override))
+- `--ignore-model-hints` - Skip the documents' `MAESTRO:MODEL` markers so every task runs at the run override or the agent default
 
 This command is lazy-loaded to avoid eager resolution of prompt templates.
 
@@ -213,7 +240,7 @@ Implemented by `services/goal-runner.ts` (`runGoal`), the CLI counterpart to the
 Run one or more raw Auto Run `.md` documents without a saved playbook. Mirrors `playbook` but builds an ephemeral `Playbook` on the fly (`src/cli/commands/run-doc.ts`), then drives it through the same `batch-processor` generator. Headless and self-contained - it does **not** route through the desktop renderer (unlike `auto-run --launch`), so it runs whether or not the Maestro window is open. This is the path group-chat participants use to execute a document they just wrote.
 
 ```bash
-maestro-cli run-doc <docs...> --agent <id-or-name> [--prompt <text>] [--loop] [--max-loops <n>] [--reset-on-completion] [--dry-run] [--no-history] [--json] [--debug] [--verbose] [--no-synopsis] [--wait] [--model <model>] [--effort <effort>]
+maestro-cli run-doc <docs...> --agent <id-or-name> [--prompt <text>] [--loop] [--max-loops <n>] [--reset-on-completion] [--dry-run] [--no-history] [--json] [--debug] [--verbose] [--no-synopsis] [--wait] [--model <model>] [--effort <effort>] [--ignore-model-hints]
 ```
 
 - `-a, --agent <id>` (required) - target agent by ID (full/partial) or display name
@@ -230,7 +257,7 @@ Note: `resolveAgentId()` in `src/cli/services/storage.ts` resolves `--agent` by 
 Threading, by entry point:
 
 - **Headless (`playbook`, `run-doc`, `goal-run`)** - the flag rides the command's options object into `services/goal-runner.ts` (`RunGoalOptions`) or `services/batch-processor.ts` (`runPlaybook` options), and both pass `runModel ?? session.customModel` / `runEffort ?? session.customEffort` at every `spawnAgent` call site. `agent-spawner.ts` already accepted `customModel` / `customEffort`, so it needed no change. Note the synopsis and goal-handoff spawns take the override too, so the summary runs on the same model as the work it summarizes.
-- **Desktop-routed (`auto-run`)** - the flags travel in the `configure_auto_run` WebSocket message (`commands/auto-run.ts`), are validated as optional non-empty strings in `handleConfigureAutoRun` (`src/main/web-server/handlers/messageHandlers.ts`), pass through `ConfigureAutoRunCallback` (`src/main/web-server/types.ts`) and `CallbackRegistry.configureAutoRun`, and land on the `BatchRunConfig` built in `useAppRemoteEventListeners.ts`. From there the desktop runners apply them via `spawnAgentForSession`'s `modelOverride` / `effortOverride` options.
+- **Desktop-routed (`auto-run`)** - the flags travel in the `configure_auto_run` WebSocket message (`commands/auto-run.ts`), are validated as optional non-empty strings in `handleConfigureAutoRun` (`src/main/web-server/handlers/messageHandlers/autoRun.ts`), pass through `ConfigureAutoRunCallback` (`src/main/web-server/types.ts`) and `CallbackRegistry.configureAutoRun`, and land on the `BatchRunConfig` built in `useAppRemoteEventListeners.ts`. From there the desktop runners apply them via `spawnAgentForSession`'s `modelOverride` / `effortOverride` options.
 
 Conventions to preserve when touching this:
 
@@ -325,8 +352,8 @@ maestro-cli update-agent <agent-id> [-g <group-id|none>] [-d <new-cwd>] [--json]
 ```
 
 - `--group <id>` sends a `move_session_to_group` message (reuses the same write path as drag-and-drop in the Left Bar). Pass `none`, `null`, or `""` to ungroup. Supports partial group IDs via `resolveGroupId()`.
-- `--cwd <path>` sends the new `update_session_cwd` message. Resolves to absolute via `path.resolve()`. The renderer mutates `cwd`/`fullPath`/`shellCwd` only - `projectRoot` is preserved so historical provider sessions stay addressable (important for archive workflows where you relocate the case folder but want prior conversations to remain attached).
-- The renderer refuses cwd updates when `aiPid > 0` (the PTY's cwd is fixed at spawn time) and returns `{ success: false, error: '...' }`; the CLI surfaces that error and exits non-zero.
+- `--cwd <path>` sends the new `update_session_cwd` message. Resolves to absolute via `path.resolve()`. The renderer relocates the agent through `withWorkingDirectory()` (`src/renderer/utils/agentWorkingDirectory.ts`), which moves `cwd`/`fullPath`/`shellCwd`/`projectRoot` together, rebases `autoRunFolderPath` when it lives under the old root, and clears the file tree and git state so they reload from the new directory. Moving `cwd` alone left the Files panel and the Edit dialog on the old folder (#1565). Provider conversations stored under the old path are not carried over.
+- The renderer refuses cwd updates while the agent is busy or `aiPid > 0` (`workingDirectoryChangeBlocker()`; the PTY's cwd is fixed at spawn time) and returns `{ success: false, error: '...' }`; the CLI surfaces that error and exits non-zero.
 
 ### `list ssh-remotes`
 
@@ -341,7 +368,7 @@ maestro-cli list ssh-remotes [--json]
 Create a new SSH remote configuration. Direct disk I/O via `readSshRemotes()`/`writeSshRemotes()`.
 
 ```bash
-maestro-cli create-ssh-remote <name> -H <host> [-p <port>] [-u <user>] [-k <key-path>] [--env KEY=VALUE]... [--ssh-config] [--disabled] [--set-default] [--json]
+maestro-cli create-ssh-remote <name> -H <host> [-p <port>] [-u <user>] [-k <key-path>] [--env KEY=VALUE]... [--ssh-option KEY=VALUE]... [--ssh-config] [--disabled] [--set-default] [--json]
 ```
 
 Options:
@@ -351,8 +378,30 @@ Options:
 - `--ssh-config` - Use `~/.ssh/config` mode; host becomes the Host pattern
 - `--set-default` - Writes `defaultSshRemoteId` to settings
 - `--env KEY=VALUE` - Repeatable remote environment variable
+- `--ssh-option KEY=VALUE` - Repeatable extra `ssh -o` option, validated by
+  `validateSshOption()` in `src/shared/sshOptions.ts`
 
 Generates a UUID via `crypto.randomUUID()` for the remote ID.
+
+### `update-ssh-remote <remote-id>`
+
+Edit an existing SSH remote in place. Same direct disk I/O and partial ID
+matching as the other two.
+
+```bash
+maestro-cli update-ssh-remote <remote-id> [-n <name>] [-H <host>] [-p <port>] [-u <user>] [-k <key-path>] [--env KEY=VALUE]... [--clear-env] [--ssh-option KEY=VALUE]... [--clear-ssh-options] [--ssh-config <bool>] [--enabled <bool>] [--set-default] [--json]
+```
+
+`--env` and `--ssh-option` MERGE into the existing maps rather than replacing
+them, so setting one option cannot silently drop the others; `--clear-env` and
+`--clear-ssh-options` empty the respective map first. An empty string to `-u` or
+`-k` clears that field.
+
+`--json` (and `list-ssh-remotes --json`) reports `resolvedSshOptions` alongside
+the stored `sshOptions`: the full merged set `ssh` receives once
+`resolveSshOptions()` has folded the overrides over Maestro's defaults. That is
+the field that answers "did my override take effect?" - the stored map alone
+cannot, since a reserved key is dropped and a default may already hold the slot.
 
 ### `remove-ssh-remote <remote-id>`
 
@@ -504,8 +553,11 @@ The CLI spawner is simpler than the desktop process manager but honors the same
 per-agent/per-session overrides that users configure in the desktop app:
 
 - **Honored**: custom binary path, custom CLI args, custom env vars, custom model,
-  custom effort/reasoning - all merged via `applyAgentConfigOverrides()` just
+  custom effort/reasoning - all resolved via `applyAgentConfigOverrides()` just
   like the desktop (`session` wins over `agent config` wins over defaults).
+  Env vars REPLACE rather than layer: an agent with any vars of its own gets
+  none of the provider-level set, so usage attribution can read the same
+  single set back (`effectiveAgentCustomEnvVars()` in `shared/providerProfiles.ts`).
 - **Honored**: SSH remote execution - when `sessionSshRemoteConfig.enabled` is
   true, the spawn is wrapped via `wrapSpawnWithSsh()` (dynamic import so the
   SSH chain stays out of the local hot path). If the configured remote can't
@@ -709,26 +761,27 @@ Machine-parseable output format. Each line is a complete JSON object. Used when 
 
 ## Key Files Reference
 
-| Concern             | Primary Files                                                                          |
-| ------------------- | -------------------------------------------------------------------------------------- |
-| CLI entry point     | `src/cli/index.ts`                                                                     |
-| Storage reader      | `src/cli/services/storage.ts`                                                          |
-| Agent spawner       | `src/cli/services/agent-spawner.ts`                                                    |
-| Batch processor     | `src/cli/services/batch-processor.ts`                                                  |
-| Playbook management | `src/cli/services/playbooks.ts`                                                        |
-| Agent sessions      | `src/cli/services/agent-sessions.ts`                                                   |
-| Desktop IPC client  | `src/cli/services/maestro-client.ts`                                                   |
-| Human output        | `src/cli/output/formatter.ts`                                                          |
-| JSONL output        | `src/cli/output/jsonl.ts`                                                              |
-| Send command        | `src/cli/commands/send.ts`                                                             |
-| Run playbook        | `src/cli/commands/run-playbook.ts`                                                     |
-| Create agent        | `src/cli/commands/create-agent.ts`                                                     |
-| Remove agent        | `src/cli/commands/remove-agent.ts`                                                     |
-| Update agent        | `src/cli/commands/update-agent.ts`                                                     |
-| SSH remote CRUD     | `src/cli/commands/create-ssh-remote.ts`, `list-ssh-remotes.ts`, `remove-ssh-remote.ts` |
-| Shared types        | `src/shared/types.ts`                                                                  |
-| Template variables  | `src/shared/templateVariables.ts`                                                      |
-| Agent definitions   | `src/main/agents/definitions.ts`                                                       |
-| Agent IDs           | `src/shared/agentIds.ts`                                                               |
-| CLI activity        | `src/shared/cli-activity.ts`                                                           |
-| Prompt templates    | `src/prompts/`                                                                         |
+| Concern             | Primary Files                                                                                                  |
+| ------------------- | -------------------------------------------------------------------------------------------------------------- |
+| CLI entry point     | `src/cli/index.ts`                                                                                             |
+| Storage reader      | `src/cli/services/storage.ts`                                                                                  |
+| Agent spawner       | `src/cli/services/agent-spawner.ts`                                                                            |
+| Batch processor     | `src/cli/services/batch-processor.ts`                                                                          |
+| Playbook management | `src/cli/services/playbooks.ts`                                                                                |
+| Agent sessions      | `src/cli/services/agent-sessions.ts`                                                                           |
+| Desktop IPC client  | `src/cli/services/maestro-client.ts`                                                                           |
+| Human output        | `src/cli/output/formatter.ts`                                                                                  |
+| JSONL output        | `src/cli/output/jsonl.ts`                                                                                      |
+| Send command        | `src/cli/commands/send.ts`                                                                                     |
+| Run playbook        | `src/cli/commands/run-playbook.ts`                                                                             |
+| Create agent        | `src/cli/commands/create-agent.ts`                                                                             |
+| Remove agent        | `src/cli/commands/remove-agent.ts`                                                                             |
+| Update agent        | `src/cli/commands/update-agent.ts`                                                                             |
+| SSH remote CRUD     | `src/cli/commands/create-ssh-remote.ts`, `list-ssh-remotes.ts`, `update-ssh-remote.ts`, `remove-ssh-remote.ts` |
+| SSH `-o` resolution | `src/shared/sshOptions.ts`                                                                                     |
+| Shared types        | `src/shared/types.ts`                                                                                          |
+| Template variables  | `src/shared/templateVariables.ts`                                                                              |
+| Agent definitions   | `src/main/agents/definitions.ts`                                                                               |
+| Agent IDs           | `src/shared/agentIds.ts`                                                                                       |
+| CLI activity        | `src/shared/cli-activity.ts`                                                                                   |
+| Prompt templates    | `src/prompts/`                                                                                                 |

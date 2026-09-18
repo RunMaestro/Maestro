@@ -1,5 +1,4 @@
 import { useCallback, useRef } from 'react';
-import { getClaudeTokenSourceFields } from '../../../shared/claudeTokenMode';
 import type {
 	Session,
 	SessionState,
@@ -7,13 +6,9 @@ import type {
 	QueuedItem,
 	CustomAICommand,
 	BatchRunState,
+	AITab,
 } from '../../types';
-import {
-	getActiveTab,
-	getBusyTabs,
-	extractQuickTabName,
-	getTabDisplayName,
-} from '../../utils/tabHelpers';
+import { getActiveTab, getBusyTabs, getTabDisplayName } from '../../utils/tabHelpers';
 import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 import { generateId, getInputBroadcastOriginId } from '../../utils/ids';
 import { captureQueuedTurnSettings, codifyTurnSettings } from '../../utils/providerTabSessions';
@@ -25,11 +20,18 @@ import { hasCapabilityCached } from '../agent/useAgentCapabilities';
 import { stripShellCommandEscape, type ComposerCommandMode } from '../../utils/shellCommandInput';
 import { dispatchShellCommand } from '../../services/shellCommand';
 import { requestAiCommand } from '../../services/aiCommand';
+import {
+	collectNamingPrompt,
+	requestTabAutoName,
+	requestWizardTabAutoName,
+} from '../../services/tabAutoNaming';
 import { getAiCommandEntry } from '../../stores/aiCommandStore';
 import { gitService } from '../../services/git';
 import type { CrossAgentMentionPlan } from '../../services/crossAgentMentions';
-import { hasWorkAheadOfNewMessage } from '../../utils/executionQueue';
+import { hasRunnableQueueItem, hasWorkAheadOfNewMessage } from '../../utils/executionQueue';
 import { probeSessionAiProcesses } from '../../services/process';
+import { isAgentAlreadyRunningError } from '../../../shared/processErrors';
+import { hasPendingRetry, noteDirectDispatch } from '../../stores/retryStore';
 import { resolveForceParallel } from '../../stores/settingsStore';
 import {
 	useSessionStore,
@@ -38,6 +40,7 @@ import {
 	updateAiTab,
 } from '../../stores/sessionStore';
 import { logger } from '../../utils/logger';
+import { WEB_BRIDGE_RECONCILE_EVENT } from '../../../shared/webClientConfig';
 
 let cachedImageOnlyPrompt: string = '';
 let inputProcessingPromptsLoaded = false;
@@ -139,8 +142,6 @@ export interface UseInputProcessingDeps {
 	isWizardActive?: boolean;
 	/** Handler for the /skills built-in command (lists Claude Code skills) */
 	onSkillsCommand?: () => Promise<void>;
-	/** Whether automatic tab naming is enabled */
-	automaticTabNamingEnabled?: boolean;
 	/** Conductor profile (user's About Me from settings) */
 	conductorProfile?: string;
 	/**
@@ -239,7 +240,6 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 		onWizardSendMessage,
 		isWizardActive,
 		onSkillsCommand,
-		automaticTabNamingEnabled,
 		conductorProfile,
 		onPlanCrossAgentMentions,
 		onDispatchCrossAgentMentions,
@@ -506,9 +506,18 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							// Mirrors the regular message path - only THIS tab's state matters; cross-tab
 							// busyness and AutoRun are intentionally bypassed.
 							const forceParallel = resolveForceParallel(options?.forceParallel);
-							const sessionIsIdle = forceParallel
-								? activeTab?.state !== 'busy'
-								: activeSession.state !== 'busy' && !isAutoRunActive;
+							// Agent Resilience holds the line for this tab - see the message
+							// path below for the full reasoning. A held tab is idle, so
+							// without this the command would spawn straight into the wall.
+							const retryHoldsTab = hasPendingRetry(
+								activeSession.id,
+								activeTab?.id || activeSession.activeTabId
+							);
+							const sessionIsIdle =
+								!retryHoldsTab &&
+								(forceParallel
+									? activeTab?.state !== 'busy'
+									: activeSession.state !== 'busy' && !isAutoRunActive);
 
 							const queuedItem: QueuedItem = {
 								id: generateId(),
@@ -568,7 +577,17 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 								// 50ms delay allows React to flush the setState above, ensuring the session
 								// is marked 'busy' before processQueuedItem runs (prevents duplicate processing)
 								setTimeout(() => {
-									processQueuedItemRef.current?.(resolvedSessionId, queuedItem);
+									// Rejects on a dispatch failure. This item was never queued (it
+									// is being sent immediately), so agentStore's recovery is what
+									// puts it INTO the queue rather than back - the prompt survives
+									// a failed spawn instead of disappearing from the composer.
+									processQueuedItemRef.current?.(resolvedSessionId, queuedItem).catch((err) => {
+										logger.error(
+											'[useInputProcessing] Immediate command dispatch failed, prompt queued',
+											undefined,
+											err
+										);
+									});
 								}, 50);
 							} else {
 								// Session is busy - just add to queue
@@ -609,6 +628,22 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				// Capture staged images before clearing
 				const imagesToSend = effectiveImages.length > 0 ? [...effectiveImages] : undefined;
 
+				// Name the wizard tab from what the user is asking it to plan. The tab
+				// opened on the "Wizard" placeholder because it existed before anyone knew
+				// the subject; this replaces the placeholder with `wizard: <topic>` and
+				// then leaves the tab alone. Retries on later sends if naming failed.
+				const wizardTab = getActiveTab(activeSession);
+				if (wizardTab) {
+					requestWizardTabAutoName(
+						activeSession,
+						wizardTab.id,
+						effectiveInputValue,
+						(wizardTab.wizardState?.conversationHistory ?? [])
+							.filter((message) => message.role === 'user')
+							.map((message) => message.content)
+					);
+				}
+
 				// Clear input
 				setInputValue('');
 				if (!usingOverrideImages) setStagedImages([]);
@@ -624,7 +659,6 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 
 			// Trigger automatic tab naming. Retries on every send until the tab has a name,
 			// so a failed/timed-out first attempt doesn't leave the tab permanently unnamed.
-			// Skip while a previous attempt is still in flight to avoid duplicate spawns.
 			//
 			// MUST stay ahead of the execution-queue branch below. Naming needs only the
 			// user's text and the target tab, never the spawn, but the queue branch ends in
@@ -633,149 +667,19 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			// tab was busy got queued and the tab stayed permanently unnamed - the retry
 			// never fires because there is no second send.
 			const activeTabForNaming = resolveTargetTab(activeSession);
-			const isAiTab = currentMode === 'ai' && !!activeTabForNaming;
-			const hasTextMessage = effectiveInputValue.trim().length > 0;
-			const hasNoCustomName = !activeTabForNaming?.name;
-			const namingNotInFlight = !activeTabForNaming?.isGeneratingName;
-
-			if (
-				automaticTabNamingEnabled &&
-				isAiTab &&
-				hasTextMessage &&
-				hasNoCustomName &&
-				namingNotInFlight
-			) {
-				// Build the naming prompt from accumulated user messages plus the current one,
-				// capped at 2000 chars. Mirrors the manual Auto handler - richer context produces
-				// more reliable LLM output that survives extractTabName's filters.
-				const MAX_PROMPT_CHARS = 2000;
-				const priorUserMessages: string[] = [];
-				let totalLength = 0;
-				for (const entry of activeTabForNaming.logs) {
-					if (entry.source !== 'user') continue;
-					const text = entry.text.trim();
-					if (!text) continue;
-					if (totalLength + text.length > MAX_PROMPT_CHARS) {
-						priorUserMessages.push(text.substring(0, MAX_PROMPT_CHARS - totalLength));
-						totalLength = MAX_PROMPT_CHARS;
-						break;
-					}
-					priorUserMessages.push(text);
-					totalLength += text.length;
-				}
-				let namingPrompt = effectiveInputValue;
-				if (priorUserMessages.length > 0 && totalLength < MAX_PROMPT_CHARS) {
-					const remaining = MAX_PROMPT_CHARS - totalLength;
-					const currentTrimmed = effectiveInputValue.trim().substring(0, remaining);
-					namingPrompt = [...priorUserMessages, currentTrimmed].join('\n\n');
-				} else if (priorUserMessages.length > 0) {
-					namingPrompt = priorUserMessages.join('\n\n');
-				}
-
-				// Fast-path: extract tab name from known patterns (GitHub URLs, PR/issue refs, Jira tickets)
-				// This avoids spawning an ephemeral agent for messages with obvious identifiers
-				const quickName = extractQuickTabName(namingPrompt);
-				if (quickName) {
-					window.maestro.logger.log('info', `Quick tab named: "${quickName}"`, 'TabNaming', {
-						tabId: activeTabForNaming.id,
-						sessionId: activeSessionId,
-						quickName,
-					});
-					updateAiTab(resolvedSessionId, activeTabForNaming.id, (t) => ({
-						...t,
-						name: quickName,
-					}));
-				} else {
-					// Set isGeneratingName to show spinner in tab
-					updateAiTab(resolvedSessionId, activeTabForNaming.id, (t) => ({
-						...t,
-						isGeneratingName: true,
-					}));
-
-					window.maestro.logger.log('info', 'Auto tab naming started', 'TabNaming', {
-						tabId: activeTabForNaming.id,
-						sessionId: activeSessionId,
-						agentType: activeSession.toolType,
-						messageLength: namingPrompt.length,
-						priorMessageCount: priorUserMessages.length,
-					});
-
-					// Call the tab naming API (async, fire and forget)
-					window.maestro.tabNaming
-						.generateTabName({
-							userMessage: namingPrompt,
-							agentType: activeSession.toolType,
-							cwd: activeSession.cwd,
-							sessionSshRemoteConfig: activeSession.sessionSshRemoteConfig,
-							// Forward session env so naming uses the same provider auth as the chat.
-							sessionCustomEnvVars: activeSession.customEnvVars,
-							// Honor the agent's Claude token source for the naming spawn.
-							// Shared extractor guarantees the SAME complete triple the chat
-							// spawn forwards - no partial/drifting forward possible.
-							...getClaudeTokenSourceFields(activeSession),
-						})
-						.then((generatedName) => {
-							// Clear the generating indicator
-							updateAiTab(resolvedSessionId, activeTabForNaming.id, (t) => ({
-								...t,
-								isGeneratingName: false,
-							}));
-
-							if (!generatedName) {
-								window.maestro.logger.log('warn', 'Auto tab naming returned null', 'TabNaming', {
-									tabId: activeTabForNaming.id,
-									sessionId: activeSessionId,
-								});
-								return;
-							}
-
-							// Update the tab name only if it's still null (user hasn't manually renamed it)
-							updateSessionWith(resolvedSessionId, (s) => {
-								const tab = s.aiTabs.find((t) => t.id === activeTabForNaming.id);
-								if (!tab || tab.name !== null) {
-									window.maestro.logger.log(
-										'info',
-										'Auto tab naming skipped (tab already named)',
-										'TabNaming',
-										{
-											tabId: activeTabForNaming.id,
-											generatedName,
-											existingName: tab?.name,
-										}
-									);
-									return s;
-								}
-								window.maestro.logger.log(
-									'info',
-									`Auto tab named: "${generatedName}"`,
-									'TabNaming',
-									{
-										tabId: activeTabForNaming.id,
-										sessionId: activeSessionId,
-										generatedName,
-									}
-								);
-								return {
-									...s,
-									aiTabs: s.aiTabs.map((t) =>
-										t.id === activeTabForNaming.id ? { ...t, name: generatedName } : t
-									),
-								};
-							});
-						})
-						.catch((error) => {
-							window.maestro.logger.log('error', 'Auto tab naming failed', 'TabNaming', {
-								tabId: activeTabForNaming.id,
-								sessionId: activeSessionId,
-								error: String(error),
-							});
-							// Clear the generating indicator on error
-							updateAiTab(resolvedSessionId, activeTabForNaming.id, (t) => ({
-								...t,
-								isGeneratingName: false,
-							}));
-						});
-				}
+			if (currentMode === 'ai' && activeTabForNaming && effectiveInputValue.trim()) {
+				requestTabAutoName({
+					session: activeSession,
+					tabId: activeTabForNaming.id,
+					// Prior user messages plus the current one - richer context produces
+					// names that survive the extractor's filters.
+					prompt: collectNamingPrompt(
+						activeTabForNaming.logs
+							.filter((entry) => entry.source === 'user')
+							.map((entry) => entry.text),
+						effectiveInputValue
+					),
+				});
 			}
 
 			// Cross-agent @mentions (Phase 03). RESOLVE ONLY - nothing is consulted
@@ -814,13 +718,20 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					// consult fired in that window is exactly the premature ping this
 					// whole path exists to prevent.
 					const mentionProbe = await probeSessionAiProcesses(activeSession.id, mentionSourceTabId);
+					const liveMentionSession =
+						useSessionStore.getState().sessions.find((s) => s.id === activeSession.id) ??
+						activeSession;
+					const connectionHold = liveMentionSession.executionQueue.some(
+						(item) => item.waitingForConnection
+					);
 					if (
+						mentionProbe.probeFailed ||
 						mentionProbe.anyActive ||
-						hasWorkAheadOfNewMessage(activeSession, {
+						hasWorkAheadOfNewMessage(liveMentionSession, {
 							autoRunActive: getBatchState(activeSession.id).isRunning,
 						})
 					) {
-						const activeTab = resolveTargetTab(activeSession);
+						const activeTab = resolveTargetTab(liveMentionSession);
 						const mentionQueuedItem: QueuedItem = {
 							id: generateId(),
 							timestamp: Date.now(),
@@ -836,6 +747,9 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							readOnlyMode: activeTab?.readOnlyMode === true,
 							crossAgentMention: true,
 							crossAgentOnly: true,
+							...((mentionProbe.probeFailed || connectionHold) && {
+								waitingForConnection: true,
+							}),
 						};
 
 						updateSessionWith(resolvedSessionId, (s) => {
@@ -855,6 +769,9 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						if (!usingOverrideImages) setStagedImages([]);
 						syncAiInputToSession('', syncTarget);
 						if (inputRef.current) inputRef.current.style.height = 'auto';
+						if (mentionProbe.probeFailed) {
+							window.dispatchEvent(new Event(WEB_BRIDGE_RECONCILE_EVENT));
+						}
 						return;
 					}
 
@@ -933,33 +850,54 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				// Main-process ownership is authoritative: the renderer can briefly say
 				// "idle" before the process-exit event has reconciled into session state,
 				// and spawning another turn with the same id would replace the live
-				// process and discard its eventual response. A failed probe reports busy.
+				// process and discard its eventual response. A failed probe holds the
+				// message until bridge recovery can answer authoritatively.
 				const processState = await probeSessionAiProcesses(activeSession.id, activeTab?.id);
 				if (processState.probeFailed) {
 					logger.warn(
-						'[processInput] Failed to reconcile active processes before queue decision; treating the agent as busy'
+						'[processInput] Failed to reconcile active processes before queue decision; holding the message for bridge recovery'
 					);
 				}
-				const sameTabProcessActive = processState.targetTabActive;
-				const anySessionAiProcessActive = processState.anyActive;
+				const sameTabProcessActive = !processState.probeFailed && processState.targetTabActive;
+				const anySessionAiProcessActive = !processState.probeFailed && processState.anyActive;
 				const activeProcessStartTime = processState.earliestStartTime;
+
+				// The probe above is the ONLY await between the user's Enter and the
+				// busy-state write further down; everything in between is synchronous.
+				// So N sends parked on a stalled bridge all resume one at a time, and
+				// each still holds the `activeSession` snapshot taken BEFORE its await
+				// - which said idle for every one of them. All N therefore skipped
+				// this gate and all N called spawn: one won and main refused the rest
+				// with "Agent process already running", whose handler used to drop the
+				// message outright. One field report lost 34 of 35 messages that way.
+				//
+				// Re-read the store here so a send that resumes second sees the busy
+				// state the send that resumed first just wrote, and queues behind it.
+				// The store's `set` runs its updater synchronously, so by the time a
+				// later handler reaches this line the earlier one's write is visible.
+				const liveSession =
+					useSessionStore.getState().sessions.find((s) => s.id === activeSession.id) ??
+					activeSession;
+				const liveTab = resolveTargetTab(liveSession) ?? activeTab;
+				const connectionHold = liveSession.executionQueue.some((item) => item.waitingForConnection);
+				const queuedWorkAhead = hasRunnableQueueItem(liveSession.executionQueue);
 
 				// Check if write command can bypass queue (all running/queued items are read-only)
 				const canWriteBypassQueue = (): boolean => {
 					if (isReadOnlyMode) return false; // Only applies to write commands
-					if (activeSession.state !== 'busy') return false; // Nothing to bypass
+					if (liveSession.state !== 'busy') return false; // Nothing to bypass
 
 					// Check all busy tabs are in read-only mode. Include orphaned
 					// (closed-but-still-thinking) tabs: they keep writing in the background
 					// and hold the single-writer slot just like a visible busy tab. Omitting
 					// them lets a new write spawn concurrently with an orphan (single-writer
 					// violation when a tab is closed mid-send).
-					const busyTabs = getBusyTabs(activeSession, { includeOrphans: true });
+					const busyTabs = getBusyTabs(liveSession, { includeOrphans: true });
 					const allBusyTabsReadOnly = busyTabs.every((tab) => tab.readOnlyMode === true);
 					if (!allBusyTabsReadOnly) return false;
 
 					// Check all queued items are from read-only tabs
-					const allQueuedReadOnly = activeSession.executionQueue.every(
+					const allQueuedReadOnly = liveSession.executionQueue.every(
 						(item) => item.readOnlyMode === true
 					);
 					if (!allQueuedReadOnly) return false;
@@ -984,18 +922,41 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				// FORCE PARALLEL: queues only when THIS tab is busy (skips cross-tab and AutoRun wait).
 				// When the tab finishes, the queued item dispatches immediately without waiting for other tabs.
 				const processStateRequiresQueue =
+					processState.probeFailed ||
 					sameTabProcessActive ||
 					(!forceParallel &&
 						!isReadOnlyMode &&
-						activeSession.state !== 'busy' &&
+						liveSession.state !== 'busy' &&
 						anySessionAiProcessActive);
+
+				// Agent Resilience holds the line: this tab's provider just refused a
+				// turn and a retry is counting down for it. The tab reads IDLE while it
+				// waits, so every busy-based rule below says "send now" - and sending
+				// now is wrong twice over. The message burns against the same wall, AND
+				// the dispatch supersedes the pending retry (see retryStore.noteDispatch),
+				// discarding the prompt that retry was holding. That is how one quota
+				// wall used to eat a whole conversation, one message per Enter.
+				//
+				// Queue instead, so the retry keeps its place and the queue drains in
+				// order behind it once it lands. This overrides forceParallel on purpose:
+				// force-parallel bypasses BUSY-TAB serialization, and a provider wall is
+				// not that. Releasing early is a deliberate act (Cancel or Retry Now on
+				// the countdown banner), not a side effect of hitting Enter again.
+				const retryHoldsTab = hasPendingRetry(
+					liveSession.id,
+					liveTab?.id || liveSession.activeTabId
+				);
+
 				const shouldQueue =
+					connectionHold ||
+					retryHoldsTab ||
 					processStateRequiresQueue ||
+					(!forceParallel && queuedWorkAhead) ||
 					(forceParallel
-						? activeTab?.state === 'busy' // Force parallel: only queue if THIS tab is busy
+						? liveTab?.state === 'busy' // Force parallel: only queue if THIS tab is busy
 						: isReadOnlyMode
-							? activeTab?.state === 'busy' // Read-only: only queue if THIS tab is busy
-							: (activeSession.state === 'busy' && !canWriteBypassQueue()) || isAutoRunActive); // Write mode: queue if busy OR AutoRun active
+							? liveTab?.state === 'busy' // Read-only: only queue if THIS tab is busy
+							: (liveSession.state === 'busy' && !canWriteBypassQueue()) || isAutoRunActive); // Write mode: queue if busy OR AutoRun active
 
 				// Debug logging to diagnose queue issues
 				logger.info('[processInput] Queue decision:', undefined, {
@@ -1008,29 +969,35 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					sameTabProcessActive,
 					anySessionAiProcessActive,
 					processStateRequiresQueue,
+					connectionHold,
+					queuedWorkAhead,
+					retryHoldsTab,
 					shouldQueue,
-					queueLength: activeSession.executionQueue.length,
+					queueLength: liveSession.executionQueue.length,
 				});
 
 				if (shouldQueue) {
 					const queuedItem: QueuedItem = {
 						id: generateId(),
 						timestamp: Date.now(),
-						tabId: activeTab?.id || activeSession.activeTabId,
+						tabId: liveTab?.id || liveSession.activeTabId,
 						type: 'message',
 						text: effectiveInputValue,
 						images: [...effectiveImages],
 						// See the slash-command path above: a fallback label, not the
 						// name the queue actually renders.
-						tabName: activeTab ? getTabDisplayName(activeTab) : undefined,
+						tabName: liveTab ? getTabDisplayName(liveTab) : undefined,
 						readOnlyMode: isReadOnlyMode,
 						...(forceParallel && { forceParallel: true }),
 						// Consult the mentioned agent(s) when this item is dispatched, not
 						// now: see the mention-resolution block above.
 						...(crossAgentMentionPlan && { crossAgentMention: true }),
+						...((processState.probeFailed || connectionHold) && {
+							waitingForConnection: true,
+						}),
 						// Freeze the model/effort now - see the slash-command queue path
 						// above. Queuing is the send; the dispatch happens later.
-						turnSettings: captureQueuedTurnSettings(activeTab, activeSession),
+						turnSettings: captureQueuedTurnSettings(liveTab, liveSession),
 					};
 
 					// Add to queue - will be processed when:
@@ -1054,12 +1021,13 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							: s.aiTabs;
 						return {
 							...s,
-							...(processStateRequiresQueue && {
-								state: 'busy' as SessionState,
-								busySource: 'ai' as const,
-								thinkingStartTime: s.thinkingStartTime || activeProcessStartTime || Date.now(),
-								aiTabs: reconciledAiTabs,
-							}),
+							...(processStateRequiresQueue &&
+								!processState.probeFailed && {
+									state: 'busy' as SessionState,
+									busySource: 'ai' as const,
+									thinkingStartTime: s.thinkingStartTime || activeProcessStartTime || Date.now(),
+									aiTabs: reconciledAiTabs,
+								}),
 							executionQueue: [...s.executionQueue, queuedItem],
 						};
 					});
@@ -1069,6 +1037,9 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					if (!usingOverrideImages) setStagedImages([]);
 					syncAiInputToSession('', syncTarget); // Sync empty value to session state
 					if (inputRef.current) inputRef.current.style.height = 'auto';
+					if (processState.probeFailed) {
+						window.dispatchEvent(new Event(WEB_BRIDGE_RECONCILE_EVENT));
+					}
 					return;
 				}
 			}
@@ -1376,6 +1347,29 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				});
 			}
 
+			// The one QueuedItem shape for this send. Used twice: as the Agent
+			// Resilience snapshot taken before the spawn, and as the item put back on the
+			// queue if the spawn collides with a live turn. Both must describe the same
+			// message - the raw text the user typed (no nudge, which processQueuedItem
+			// does not add either), its images, and the turn settings frozen at send.
+			const buildComposerQueuedItem = (
+				tabId: string,
+				tab: AITab | undefined,
+				session: Session
+			): QueuedItem => ({
+				id: generateId(),
+				timestamp: Date.now(),
+				tabId,
+				type: 'message',
+				text: effectiveInputValue,
+				images: [...effectiveImages],
+				tabName: tab ? getTabDisplayName(tab) : undefined,
+				readOnlyMode: isReadOnlyEntry,
+				...(isForceParallel && { forceParallel: true }),
+				...(crossAgentMentionPlan && { crossAgentMention: true }),
+				turnSettings: captureQueuedTurnSettings(tab, session),
+			});
+
 			if (isBatchModeAgent) {
 				// Batch mode: Spawn new agent process with prompt
 				(async () => {
@@ -1483,6 +1477,17 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							activeTabId: targetTabId,
 						});
 
+						// Agent Resilience: snapshot the prompt BEFORE spawning. This path does
+						// not go through agentStore.processQueuedItem, so without this a limit
+						// or overload hit on a message typed into an idle tab had nothing to
+						// resend: scheduleRetryForError logged "No prompt snapshot to resend"
+						// and the retry loop never started. The error can arrive before the
+						// spawn promise settles, so this cannot wait until after the await.
+						noteDirectDispatch(
+							resolvedSessionId,
+							buildComposerQueuedItem(freshActiveTab.id, freshActiveTab, freshSession)
+						);
+
 						// Spawn agent with generic config - the main process will use agent-specific
 						// argument builders (resumeArgs, readOnlyArgs, etc.) to construct the final args
 						await window.maestro.process.spawn({
@@ -1511,6 +1516,14 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						});
 					} catch (error) {
 						logger.error('Failed to spawn agent batch process:', undefined, error);
+						// "Agent process already running" is a COLLISION, not an outcome:
+						// this dispatch arrived while the tab was already mid-turn. The
+						// provider never saw the message and nothing about it is wrong, so
+						// it goes back on the queue and drains when the live turn ends.
+						// Dropping it is how one stalled phone socket destroyed 34 of 35
+						// messages and left only red system lines behind. Same rule
+						// agentStore.processQueuedItem already follows for the queue path.
+						const isSpawnCollision = isAgentAlreadyRunningError(error);
 						const errorLog: LogEntry = {
 							id: generateId(),
 							timestamp: Date.now(),
@@ -1519,6 +1532,18 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						};
 						updateSessionWith(resolvedSessionId, (s) => {
 							const errorTabId = targetTabId ?? s.activeTabId;
+							const errorTab = s.aiTabs?.find((tab) => tab.id === errorTabId);
+							// A collision means the tab is BUSY with somebody else's turn.
+							// Clearing its state told every busy-based rule in the app that
+							// the agent was free while a live process kept streaming into
+							// it: the thinking pill stopped, and the queue drained straight
+							// into the same wall. Leave a colliding tab exactly as it is -
+							// only a real spawn failure, where nothing is running, resets
+							// it and writes the error the user can act on.
+							if (isSpawnCollision) {
+								const requeued = buildComposerQueuedItem(errorTabId, errorTab, s);
+								return { ...s, executionQueue: [...s.executionQueue, requeued] };
+							}
 							// Reset target tab's state to 'idle' and add error log
 							const updatedAiTabs =
 								s.aiTabs?.length > 0

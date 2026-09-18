@@ -1,9 +1,9 @@
 import type { RefObject, MutableRefObject } from 'react';
+import type { MarkdownEditorHandle } from '../../components/FilePreview/markdownEditor';
 
 export interface UseAutoRunKeyboardParams {
 	localContent: string;
-	setLocalContent: (content: string) => void;
-	textareaRef: RefObject<HTMLTextAreaElement | null>;
+	editorRef: RefObject<MarkdownEditorHandle | null>;
 	pushUndoState: (content?: string, cursor?: number) => void;
 	lastUndoSnapshotRef: MutableRefObject<string>;
 	handleUndo: () => void;
@@ -13,24 +13,32 @@ export interface UseAutoRunKeyboardParams {
 	isLocked: boolean;
 	toggleMode: () => void;
 	openSearch: () => void;
-	handleAutocompleteKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => boolean;
+	handleAutocompleteKeyDown: (event: KeyboardEvent) => boolean;
 }
 
 /**
- * Extracts the textarea keyboard handler from AutoRun.
+ * Keyboard handler for the Auto Run source editor.
  *
- * Handles template autocomplete, tab insertion, undo/redo, save,
- * edit/preview toggle, search, checkbox insertion, and smart list
- * continuation on Enter.
+ * Handles template autocomplete, tab insertion, undo/redo, save, edit/preview
+ * toggle, search, checkbox insertion, and smart list continuation on Enter.
  *
- * Returns a plain function (not useCallback) to match the original
- * behavior - it recreates on every render.
+ * Wired as the `onKeyDown` of the CodeMirror `MarkdownEditor`, so it receives a
+ * native KeyboardEvent and returns `true` to swallow the key before the
+ * editor's own keymap sees it.
+ *
+ * Every content edit here goes through `editorRef.replaceRange`, which
+ * dispatches into CodeMirror and comes back out through the editor's `onChange`
+ * - the same path a keystroke takes. Setting `lastUndoSnapshotRef` to the new
+ * content BEFORE the dispatch is what tells that onChange the edit was explicit
+ * (we already pushed an undo entry) so it does not schedule a second one.
+ *
+ * Returns a plain function (not useCallback) to match the original behavior -
+ * it recreates on every render.
  */
 export function useAutoRunKeyboard(params: UseAutoRunKeyboardParams) {
 	const {
 		localContent,
-		setLocalContent,
-		textareaRef,
+		editorRef,
 		pushUndoState,
 		lastUndoSnapshotRef,
 		handleUndo,
@@ -43,35 +51,32 @@ export function useAutoRunKeyboard(params: UseAutoRunKeyboardParams) {
 		handleAutocompleteKeyDown,
 	} = params;
 
-	const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+	/** Push undo, mark the edit explicit, then apply it through CodeMirror. */
+	const applyEdit = (from: number, to: number, text: string, newContent: string, caret: number) => {
+		pushUndoState();
+		lastUndoSnapshotRef.current = newContent;
+		editorRef.current?.replaceRange(from, to, text);
+		editorRef.current?.setSelection(caret, caret);
+	};
+
+	const handleKeyDown = (e: KeyboardEvent): boolean => {
 		// Let template autocomplete handle keys first
 		if (handleAutocompleteKeyDown(e)) {
-			return;
+			return true;
 		}
 
 		// Normalize key for consistent matching (Shift+z produces 'Z', we want 'z')
 		const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
 
-		// Insert actual tab character instead of moving focus
+		// Insert an actual tab character instead of indenting by CodeMirror's
+		// indent unit - Auto Run documents are hand-written Markdown and the tab
+		// is what the rest of this codebase writes.
 		if (key === 'Tab') {
 			e.preventDefault();
-			const textarea = e.currentTarget;
-			const start = textarea.selectionStart;
-			const end = textarea.selectionEnd;
-
-			// Push undo state before modifying content
-			pushUndoState();
-
-			const newContent = localContent.substring(0, start) + '\t' + localContent.substring(end);
-			setLocalContent(newContent);
-			lastUndoSnapshotRef.current = newContent;
-
-			// Restore cursor position after the tab
-			requestAnimationFrame(() => {
-				textarea.selectionStart = start + 1;
-				textarea.selectionEnd = start + 1;
-			});
-			return;
+			const { from, to } = editorRef.current?.getSelectionRange() ?? { from: 0, to: 0 };
+			const newContent = localContent.substring(0, from) + '\t' + localContent.substring(to);
+			applyEdit(from, to, '\t', newContent, from + 1);
+			return true;
 		}
 
 		// Cmd+Z to undo, Cmd+Shift+Z to redo
@@ -83,7 +88,7 @@ export function useAutoRunKeyboard(params: UseAutoRunKeyboardParams) {
 			} else {
 				handleUndo();
 			}
-			return;
+			return true;
 		}
 
 		// Cmd+S to save
@@ -95,7 +100,7 @@ export function useAutoRunKeyboard(params: UseAutoRunKeyboardParams) {
 					// Save errors are logged by handleSave; nothing to do here
 				});
 			}
-			return;
+			return true;
 		}
 
 		// Command-E to toggle between edit and preview (without Shift)
@@ -107,7 +112,7 @@ export function useAutoRunKeyboard(params: UseAutoRunKeyboardParams) {
 			if (!isLocked) {
 				toggleMode();
 			}
-			return;
+			return true;
 		}
 
 		// Command-F to open search in edit mode (without Shift)
@@ -116,53 +121,32 @@ export function useAutoRunKeyboard(params: UseAutoRunKeyboardParams) {
 			e.preventDefault();
 			e.stopPropagation();
 			openSearch();
-			return;
+			return true;
 		}
 
 		// Command-L to insert a markdown checkbox
 		if ((e.metaKey || e.ctrlKey) && key === 'l') {
 			e.preventDefault();
 			e.stopPropagation();
-			const textarea = e.currentTarget;
-			const cursorPos = textarea.selectionStart;
+			const cursorPos = editorRef.current?.getCaret() ?? 0;
 			const textBeforeCursor = localContent.substring(0, cursorPos);
 			const textAfterCursor = localContent.substring(cursorPos);
-
-			// Push undo state before modifying content
-			pushUndoState();
 
 			// Check if we're at the start of a line or have text before
 			const lastNewline = textBeforeCursor.lastIndexOf('\n');
 			const lineStart = lastNewline === -1 ? 0 : lastNewline + 1;
 			const textOnCurrentLine = textBeforeCursor.substring(lineStart);
 
-			let newContent: string;
-			let newCursorPos: number;
-
-			if (textOnCurrentLine.length === 0) {
-				// At start of line, just insert checkbox
-				newContent = textBeforeCursor + '- [ ] ' + textAfterCursor;
-				newCursorPos = cursorPos + 6; // "- [ ] " is 6 chars
-			} else {
-				// In middle of line, insert newline then checkbox
-				newContent = textBeforeCursor + '\n- [ ] ' + textAfterCursor;
-				newCursorPos = cursorPos + 7; // "\n- [ ] " is 7 chars
-			}
-
-			setLocalContent(newContent);
-			// Update lastUndoSnapshot since we pushed state explicitly
-			lastUndoSnapshotRef.current = newContent;
-			requestAnimationFrame(() => {
-				if (textareaRef.current) {
-					textareaRef.current.setSelectionRange(newCursorPos, newCursorPos);
-				}
-			});
-			return;
+			// At the start of a line, just insert the checkbox; mid-line, break
+			// the line first so the checkbox starts its own list item.
+			const insert = textOnCurrentLine.length === 0 ? '- [ ] ' : '\n- [ ] ';
+			const newContent = textBeforeCursor + insert + textAfterCursor;
+			applyEdit(cursorPos, cursorPos, insert, newContent, cursorPos + insert.length);
+			return true;
 		}
 
 		if (key === 'Enter' && !e.shiftKey) {
-			const textarea = e.currentTarget;
-			const cursorPos = textarea.selectionStart;
+			const cursorPos = editorRef.current?.getCaret() ?? 0;
 			const textBeforeCursor = localContent.substring(0, cursorPos);
 			const textAfterCursor = localContent.substring(cursorPos);
 			const currentLineStart = textBeforeCursor.lastIndexOf('\n') + 1;
@@ -173,55 +157,27 @@ export function useAutoRunKeyboard(params: UseAutoRunKeyboardParams) {
 			const orderedListMatch = currentLine.match(/^(\s*)(\d+)\.\s+/);
 			const taskListMatch = currentLine.match(/^(\s*)- \[([ x])\]\s+/);
 
+			let insert: string | null = null;
 			if (taskListMatch) {
 				// Task list: continue with unchecked checkbox
-				const indent = taskListMatch[1];
-				e.preventDefault();
-				// Push undo state before modifying content
-				pushUndoState();
-				const newContent = textBeforeCursor + '\n' + indent + '- [ ] ' + textAfterCursor;
-				setLocalContent(newContent);
-				lastUndoSnapshotRef.current = newContent;
-				setTimeout(() => {
-					if (textareaRef.current) {
-						const newPos = cursorPos + indent.length + 7; // "\n" + indent + "- [ ] "
-						textareaRef.current.setSelectionRange(newPos, newPos);
-					}
-				});
+				insert = '\n' + taskListMatch[1] + '- [ ] ';
 			} else if (unorderedListMatch) {
 				// Unordered list: continue with same marker
-				const indent = unorderedListMatch[1];
-				const marker = unorderedListMatch[2];
-				e.preventDefault();
-				// Push undo state before modifying content
-				pushUndoState();
-				const newContent = textBeforeCursor + '\n' + indent + marker + ' ' + textAfterCursor;
-				setLocalContent(newContent);
-				lastUndoSnapshotRef.current = newContent;
-				setTimeout(() => {
-					if (textareaRef.current) {
-						const newPos = cursorPos + indent.length + 3; // "\n" + indent + marker + " "
-						textareaRef.current.setSelectionRange(newPos, newPos);
-					}
-				});
+				insert = '\n' + unorderedListMatch[1] + unorderedListMatch[2] + ' ';
 			} else if (orderedListMatch) {
 				// Ordered list: increment number
-				const indent = orderedListMatch[1];
-				const num = parseInt(orderedListMatch[2]);
+				insert = '\n' + orderedListMatch[1] + (parseInt(orderedListMatch[2]) + 1) + '. ';
+			}
+
+			if (insert) {
 				e.preventDefault();
-				// Push undo state before modifying content
-				pushUndoState();
-				const newContent = textBeforeCursor + '\n' + indent + (num + 1) + '. ' + textAfterCursor;
-				setLocalContent(newContent);
-				lastUndoSnapshotRef.current = newContent;
-				setTimeout(() => {
-					if (textareaRef.current) {
-						const newPos = cursorPos + indent.length + (num + 1).toString().length + 3; // "\n" + indent + num + ". "
-						textareaRef.current.setSelectionRange(newPos, newPos);
-					}
-				});
+				const newContent = textBeforeCursor + insert + textAfterCursor;
+				applyEdit(cursorPos, cursorPos, insert, newContent, cursorPos + insert.length);
+				return true;
 			}
 		}
+
+		return false;
 	};
 
 	return handleKeyDown;

@@ -149,7 +149,7 @@ export function StorageLocationSection({ theme, syncStorage }: StorageLocationSe
 					<button
 						onClick={openStorageFolder}
 						disabled={!defaultStoragePath && !customSyncPath}
-						className="flex items-center gap-1.5 text-[11px] opacity-55 hover:opacity-100 transition-opacity disabled:opacity-30"
+						className="flex items-center gap-1.5 text-xs-plus opacity-55 hover:opacity-100 transition-opacity disabled:opacity-30"
 						style={{ color: theme.colors.textMain }}
 						title={customSyncPath || defaultStoragePath}
 					>

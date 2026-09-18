@@ -19,6 +19,12 @@ import type { SymphonyCache, SymphonyState } from '../../../../shared/symphony-t
 
 export const LOG_CONTEXT = '[Symphony]';
 
+/** Budget for calls to the GitHub REST/Search API (issues, PRs, stars). */
+export const SYMPHONY_GITHUB_API_TIMEOUT_MS = 10_000;
+
+/** Budget for fetching a registry manifest or a document body from an arbitrary URL. */
+export const SYMPHONY_DOCUMENT_FETCH_TIMEOUT_MS = 30_000;
+
 export interface SymphonyHandlerDependencies {
 	app: App;
 	getMainWindow: () => BrowserWindow | null;

@@ -17,7 +17,7 @@
  */
 
 import { useCallback, useMemo, useState } from 'react';
-import { safeLocalStorage } from '../../utils/safeLocalStorage';
+import { safeStorageGet, safeStorageSet } from '../../utils/safeLocalStorage';
 
 export interface ScaleRange {
 	min: number;
@@ -35,7 +35,7 @@ export function clampScale(value: number, range: ScaleRange): number {
 }
 
 function loadScale(storageKey: string, range: ScaleRange): number {
-	const raw = safeLocalStorage()?.getItem(storageKey) ?? null;
+	const raw = safeStorageGet(storageKey);
 	if (raw === null) return range.initial;
 	return clampScale(Number(raw), range);
 }
@@ -71,7 +71,7 @@ export function useScalePreference(
 
 	const persist = useCallback(
 		(next: number) => {
-			safeLocalStorage()?.setItem(storageKey, String(next));
+			safeStorageSet(storageKey, String(next));
 			return next;
 		},
 		[storageKey]

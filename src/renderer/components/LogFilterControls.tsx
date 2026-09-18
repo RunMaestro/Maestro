@@ -162,7 +162,7 @@ export const LogFilterControls: React.FC<LogFilterControlsProps> = ({
 	return (
 		<button
 			onClick={() => onToggleFilter(logId)}
-			className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-opacity-10 transition-opacity"
+			className="p-1 rounded opacity-0 group-hover:opacity-100 row-hover transition-opacity"
 			style={{
 				color: filterQuery ? theme.colors.accent : theme.colors.textDim,
 				backgroundColor: filterQuery ? theme.colors.bgActivity : 'transparent',

@@ -40,6 +40,21 @@ The group chat system enables multi-agent collaboration through a hub-and-spoke 
 9. When all pending participants have responded, a moderator synthesis round is spawned
 10. The moderator reviews all responses and either delegates again or returns to the user
 
+**The routing protocol is injected at runtime.** A participant process starts only
+when the moderator response contains a literal `@AgentName` that resolves to that
+participant. `MODERATOR_ROUTING_PROTOCOL` in `group-chat-router.ts` states this
+contract in both initial and synthesis prompts. Keep it in the runtime prompt
+builder rather than only in `group-chat-moderator-system.md`: bundled moderator
+prompts are customizable, and an older customization must not silently lose a
+functional routing requirement after an app update. Natural-language claims such
+as "the agents were assigned" do not route work and must never be presented as a
+successful handoff without the corresponding mentions. When a user turn explicitly
+mentions participants, the router tracks the complete expected handoff. A response
+that omits any addressed participant is withheld and retried once with a routing
+correction. If the retry still lacks any required executable mention, the response
+is rejected and the chat receives an explicit system error instead of a false or
+partial handoff.
+
 ## Data Model
 
 ### GroupChat
@@ -60,8 +75,16 @@ interface GroupChat {
 	logPath: string; // Path to chat.log
 	imagesDir: string; // Path to images/
 	archived?: boolean;
+	requireIdleParticipants?: boolean; // Undefined means ON - read via requiresIdleParticipants()
 }
 ```
+
+**Never test `requireIdleParticipants` directly.** Read it through
+`requiresIdleParticipants(chat)` in `src/shared/group-chat-types.ts`, which
+answers `true` for an undefined field. The default is ON, and chats created
+before the setting existed carry no field at all, so a bare truthiness test opts
+every one of them out of the safe behavior. The router, the create/edit modal,
+and the info overlay all ask the same helper.
 
 ### GroupChatParticipant
 
@@ -130,6 +153,7 @@ group-chats/
     metadata.json    # GroupChat object
     chat.log         # Pipe-delimited message log
     history.jsonl    # Activity history entries (one JSON per line)
+    queue.json       # Pending sends (GroupChatQueueState), owned by main
     images/          # Image attachments
 ```
 
@@ -160,15 +184,77 @@ All located in `src/main/group-chat/`:
 
 The central message routing engine. Key exports:
 
-| Function                           | Purpose                                                                                                                                                                                       |
-| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `routeUserMessage()`               | Routes user message to moderator batch process. Auto-adds `@mentioned` sessions as participants. Builds the full prompt with system prompt, participant list, chat history, and user request. |
-| `routeModeratorResponse()`         | Parses moderator output for `@mentions`, dispatches to participants, tracks pending responses                                                                                                 |
-| `routeAgentResponse()`             | Handles participant response, logs it, emits to renderer                                                                                                                                      |
-| `spawnModeratorSynthesis()`        | Spawns synthesis round after all participants respond                                                                                                                                         |
-| `respawnParticipantWithRecovery()` | Re-spawns a participant with recovery context after session loss                                                                                                                              |
-| `extractMentions()`                | Extracts `@Name` patterns from text, matches against participants                                                                                                                             |
-| `markParticipantResponded()`       | Removes participant from pending set, returns true if last                                                                                                                                    |
+| Function                            | Purpose                                                                                                                                                                                       |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `routeUserMessage()`                | Routes user message to moderator batch process. Auto-adds `@mentioned` sessions as participants. Builds the full prompt with system prompt, participant list, chat history, and user request. |
+| `routeModeratorResponse()`          | Parses moderator output for `@mentions`, dispatches to participants, tracks pending responses                                                                                                 |
+| `routeAgentResponse()`              | Handles participant response, logs it, emits to renderer                                                                                                                                      |
+| `spawnModeratorSynthesis()`         | Spawns synthesis round after all participants respond                                                                                                                                         |
+| `respawnParticipantWithRecovery()`  | Re-spawns a participant with recovery context after session loss                                                                                                                              |
+| `extractMentions()`                 | Extracts `@Name` patterns from text, matches against participants                                                                                                                             |
+| `markParticipantResponded()`        | Removes participant from pending set, returns true if last                                                                                                                                    |
+| `noteGroupChatActivity()`           | Re-arms the silence budget for whichever turn owns a session id. Ignores anything that is not a group chat turn.                                                                              |
+| `setModeratorResponseTimeout()`     | Arms the moderator's silence budget for a turn. Takes the process manager and the FULL spawned session id so the timeout can kill.                                                            |
+| `queueDelegationUntilAgentIsFree()` | Parks a delegation until the target agent goes idle, then replays it (see the availability gate below)                                                                                        |
+
+**Turn supervision is a silence budget, not a duration cap.** Every moderator and
+participant turn is watched by a `createIdleWatchdog` (`src/main/utils/idle-watchdog.ts`):
+10 minutes of SILENCE, plus a 30-minute ceiling for a turn that chatters without
+finishing. The budget is restarted by `noteGroupChatActivity()`, which the
+`group-chat-liveness-listener` calls on every chunk. Before this it was a plain
+`setTimeout` armed at dispatch, which cannot tell a working agent from a wedged
+one, so a participant was declared dead at ten minutes while emitting 19-41
+events per minute.
+
+A timeout **kills the process before reporting**. Telling the room the turn
+failed while leaving the agent running means it goes on editing files and
+committing under a chat that has moved on. The kill uses the full spawned
+session id, never the prefix `getModeratorSessionId()` returns. An Auto Run
+participant has no group chat process of its own, so nothing is killed there -
+the user's own agent must never be taken down to settle a room.
+
+**Agent availability gate.** Before delegating (an `@mention` or an `!autorun`
+directive), the router asks whether the target agent is already working. A
+participant runs as its own process in the AGENT'S working directory, so handing
+work to an agent the user is talking to directly puts two writers in one repo.
+When `requiresIdleParticipants(chat)` is true, the delegation is **held rather
+than dropped**: `queueDelegationUntilAgentIsFree()` parks it,
+`reportQueuedForBusyAgents()` posts one system line naming everyone the turn is
+waiting on (appended to the log as well as emitted, because the moderator reads
+recent log lines as context), and the request is delivered the moment that agent
+goes idle. Rules the implementation depends on:
+
+- **Liveness comes from `isBusy` on `GroupChatSessionInfo`, computed by the
+  session-lookup callback in `src/main/index.ts` via `isAgentBusy()`
+  (`src/main/utils/agent-busy.ts`).** The persisted session record cannot answer
+  this: `useDebouncedPersistence` rewrites every session and tab to `state: 'idle'`
+  on the way to disk, so a stored record always reads idle.
+- **Unknown is not busy.** A participant with no matching Maestro agent cannot be
+  probed and is never blocked, or a participant whose agent was renamed becomes
+  permanently unreachable. `waitForAgentToFree()` applies the same rule: a session
+  that vanishes mid-wait counts as free.
+- **The wait is a poll, not an event.** "Busy" is a property of the whole agent
+  (any AI tab, an Auto Run, a CLI run), so there is no single process exit that
+  means "free now". The loop re-reads the session callback every
+  `QUEUED_DELEGATION_POLL_MS` (5s) and gives up after
+  `QUEUED_DELEGATION_MAX_WAIT_MS` (15 min) so a wedged agent cannot pin a room on
+  `'agent-working'` forever.
+- **The participant is registered as pending BEFORE the wait starts.** The room
+  stays on `'agent-working'` and synthesis waits for a reply that has not been
+  handed out yet. `trackPendingParticipant()` writes to whichever pending set is
+  live, not just the one the originating turn created - a delegation held for
+  minutes can land after a newer turn has taken over the room's set.
+- **Waiters are cancelled, not cleared.** A poll loop has no timer handle, so
+  `clearPendingParticipants()` calls `cancelQueuedDelegations()` to flip
+  cancellation tokens; the loop returns `'cancelled'` on its next tick and
+  delivers nothing into a stopped chat.
+- **One report per turn, and it suppresses the generic retry notice.** A fan-out to
+  three busy agents is one line, and the "no participants engaged" fallback stays
+  quiet when a queued handoff already explained itself - two notices read as two
+  unrelated failures.
+- **Every dead-end path closes the turn out through `finishParticipantTurn()`**
+  (response timeout, gave-up wait, failed delivery). Both callers have to answer
+  "is the room still working?" the same way or the chat hangs.
 
 Module-level callbacks set during initialization:
 
@@ -203,6 +289,56 @@ Manages participant agents:
 | `clearAllParticipantSessions()` | Kills all participant processes for a chat                                                                     |
 
 Participants run with **read-write access** (not read-only) so they can make code changes.
+
+### group-chat-queue.ts
+
+The main process's ownership of each chat's pending sends. The rules themselves
+are pure functions in `src/shared/groupChatQueueModel.ts`; this module adds the
+file, the broadcast, and the send.
+
+**Why main owns it.** The queue used to be a zustand array in the renderer, so
+every client had its own. A message queued on a phone was invisible to the
+desktop, died with the browser tab that held it, and was delivered only if that
+one client happened to observe the moderator going idle. One queue per chat, in
+main, is visible to every client and drained exactly once by the process that
+actually knows when the moderator is free.
+
+| Function                    | Purpose                                                                             |
+| --------------------------- | ----------------------------------------------------------------------------------- |
+| `installGroupChatQueue()`   | Injects the deps (broadcast, send, `postSystemMessage`, `isIdle`) from the handlers |
+| `submitMessage()`           | MAIN decides: send now, or queue. A client's copy is too stale to decide            |
+| `addToQueue()`              | Appends and schedules a drain                                                       |
+| `getQueue()`                | The whole state, read through the same write chain                                  |
+| `removeFromQueue()`         | Drops one item by id; refuses an item already in flight                             |
+| `reorderQueue()`            | Moves an item, clamping a stale index instead of discarding the drag                |
+| `resumeQueueFor()`          | Clears the pause and the failed mark on the head, then drains                       |
+| `pauseQueueFor()`           | Holds the queue. Called by Stop All                                                 |
+| `onModeratorStateChanged()` | The hook `emitStateChange` calls; only an idle transition releases the queue        |
+
+**The one invariant:** a message the user typed is delivered, or it is still in
+the queue with the chat paused and the user told why. There is no third outcome.
+A failed send keeps the item, marks it, pauses the chat and posts a system
+message; it is never retried unattended, because a cause that does not clear (the
+Encore Feature switched off, a missing binary) would re-fire on every idle
+forever.
+
+**Three things that look like details and are not:**
+
+- The whole read-modify-write runs inside the keyed write chain
+  (`createKeyedWriteQueue`), not just the write. Serializing only the write still
+  lets two callers compute changes from the same state and the second save erase
+  the first caller's item.
+- Completion and failure are recorded **by id**, never by position. A send is
+  awaited and the queue can be edited while it is in flight, so "drop whatever is
+  first now" discards a message the moderator never received.
+- A queue restored from disk comes back **paused**, and a `sending` mark left in
+  the file is stripped. Launching the app must not spawn a moderator just to
+  flush a previous session, and a stale in-flight mark makes an item permanently
+  un-removable.
+
+An unreadable `queue.json` is renamed to `queue.json.corrupt-<timestamp>` and
+reported, never quietly replaced with an empty queue - the next save would
+otherwise erase what the user had waiting.
 
 ### group-chat-storage.ts
 
@@ -302,15 +438,30 @@ Registered in `src/main/ipc/handlers/groupChat.ts`. All handler names are prefix
 | `groupChat:saveImage`       | Saves an image attachment                   |
 | `groupChat:getImages`       | Lists saved image attachments for the chat  |
 
+### Execution Queue
+
+The queue lives in main, so every verb answers with the WHOLE state and main also
+broadcasts it on `groupChat:queueState`. A client renders what it is told rather
+than its own private copy.
+
+| Handler                   | Description                                                              |
+| ------------------------- | ------------------------------------------------------------------------ |
+| `groupChat:submitMessage` | Hands a composed message to main, which decides whether to send or queue |
+| `groupChat:getQueue`      | Returns the chat's `GroupChatQueueState`                                 |
+| `groupChat:queueAdd`      | Appends an item without asking main to send it now                       |
+| `groupChat:queueRemove`   | Drops an item by id; answers `{ state, refused }`                        |
+| `groupChat:queueReorder`  | Moves an item to an index; answers `{ state, refused }`                  |
+| `groupChat:queueResume`   | Clears the pause (and the failed mark on the head) and drains            |
+
 ### Moderator
 
-| Handler                           | Description                                          |
-| --------------------------------- | ---------------------------------------------------- |
-| `groupChat:startModerator`        | Spawns the moderator agent                           |
-| `groupChat:stopModerator`         | Kills the moderator                                  |
-| `groupChat:stopAll`               | Kills moderator + all participants                   |
-| `groupChat:getModeratorSessionId` | Returns the moderator's provider session ID (if any) |
-| `groupChat:reportAutoRunComplete` | Signal from an Auto Run batch run that it finished   |
+| Handler                           | Description                                                                                                                                                                 |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `groupChat:startModerator`        | Spawns the moderator agent                                                                                                                                                  |
+| `groupChat:stopModerator`         | Kills the moderator                                                                                                                                                         |
+| `groupChat:stopAll`               | Kills moderator + all participants, and PAUSES the queue (the send path auto-restarts a moderator, so without the pause the next queued item respawns what was just killed) |
+| `groupChat:getModeratorSessionId` | Returns the moderator's provider session ID (if any)                                                                                                                        |
+| `groupChat:reportAutoRunComplete` | Signal from an Auto Run batch run that it finished                                                                                                                          |
 
 ### Participants
 
@@ -343,6 +494,7 @@ The `groupChatEmitters` object provides real-time event broadcasting to the rend
 | `emitModeratorUsage`      | `groupChat:moderatorUsage`      | Context/cost/token updates |
 | `emitHistoryEntry`        | `groupChat:historyEntry`        | New history entry          |
 | `emitParticipantState`    | `groupChat:participantState`    | Participant working/idle   |
+| (queue broadcast)         | `groupChat:queueState`          | Whole pending-send queue   |
 
 ## Renderer Components
 
@@ -364,6 +516,16 @@ Located in `src/renderer/components/`:
 | `CreateGroupModal.tsx`      | Group creation dialog                                                 |
 | `DeleteGroupChatModal.tsx`  | Deletion confirmation                                                 |
 | `RenameGroupChatModal.tsx`  | Rename dialog                                                         |
+
+### The queue on the renderer side
+
+The renderer holds a MIRROR of each chat's pending sends and nothing more.
+
+- **`groupChatQueues` in `groupChatStore`** is that mirror: a `Record<chatId, GroupChatQueueState>`, written from exactly two places - the `groupChat:queueState` broadcast, and the `getQueue` read a chat performs when it opens. Opening pulls from main rather than trusting whatever this client held, because a client can have been asleep, reloaded, or never seen the chat before. Both calls are optional-chained so a web client on an older preload still opens the room.
+- **There is no drain.** `useGroupChatHandlers` used to send the head of the queue whenever it saw the moderator go idle. That only works while that one client is awake and watching: a phone that slept or reloaded left its messages queued forever, and two clients that both saw idle each sent the same item. Main drains it now.
+- **Sending is a hand-off**, `groupChat:submitMessage`. The renderer does not branch on `groupChatState` to decide send-vs-queue - a client's copy is stale by the time it reads it, and a stale copy sends directly while items are already waiting, putting the newest message ahead of older ones. A rejection from that IPC call means main never saw the message and it is in no queue, which is a different outcome from a send that fails inside main (there the item is kept, marked, and the chat paused), so the notice tells the user to send it again.
+- **Remove and reorder are addressed by item id.** `handleReorderGroupChatQueueItems` resolves the dragged row's index against the mirror and sends the id, because main is the authority and its list can have moved since this client rendered the row. Main answers `{ state, refused }`; a refusal only happens while an item is in flight, which the composer is already showing.
+- **`GroupChatInput` adapts and renders.** It maps `GroupChatQueuedItem` onto the `QueuedItem` shape `QueuedItemsList` already speaks - the adaptation belongs here rather than teaching main a renderer type - and it draws the two states a mirror has to surface: a paused banner with a Resume button (a paused queue sends nothing, and messages sitting there with no explanation and no control is the failure), and a "Sending, cannot remove" line for the in-flight item.
 
 ## Symphony System
 

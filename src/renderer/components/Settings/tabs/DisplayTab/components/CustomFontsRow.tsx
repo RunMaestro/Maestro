@@ -37,13 +37,11 @@ export function CustomFontsRow({
 	};
 
 	return (
+		// No heading of its own. The section this renders into already prints
+		// "Custom Fonts" and the same sentence about being offered in every
+		// picker, so a second copy inside the card restated the two lines
+		// directly above it.
 		<div className="space-y-2">
-			<div className="flex items-baseline justify-between gap-3">
-				<span className="text-xs font-medium" style={{ color: theme.colors.textMain }}>
-					Custom fonts
-				</span>
-				<span className="text-[11px] opacity-60">Added here, offered in every picker below.</span>
-			</div>
 			<div className="flex gap-2">
 				<input
 					type="text"

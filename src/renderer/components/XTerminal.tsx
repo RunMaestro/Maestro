@@ -7,7 +7,6 @@ import type { ISearchOptions } from '@xterm/addon-search';
 import type { ILink } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import type { Theme } from '../../shared/theme-types';
-import { MONO_FALLBACK_STACK, withMonoFallback } from '../../shared/fontStack';
 import type { ITheme } from '@xterm/xterm';
 import { LinkContextMenu, type LinkContextMenuState } from './LinkContextMenu';
 import {
@@ -20,6 +19,11 @@ import { toControlChar } from '../utils/terminalKeys';
 import { isTapGesture, type TouchPoint } from '../utils/touch';
 import { readLogicalLine } from '../utils/terminalBuffer';
 import { logger } from '../utils/logger';
+import {
+	createCanvasMeasureAdvance,
+	resolveTerminalFontFamily,
+	type MeasureAdvance,
+} from '../utils/fixedPitchFont';
 
 // ============================================================================
 // Custom key event handler logic
@@ -105,92 +109,6 @@ export function evaluateCustomKeyEvent(e: KeyboardEvent): XtermKeyAction {
 	// processing state to become inconsistent (keydown blocked but keyup allowed),
 	// breaking interactive apps like vim/vi/nano that depend on Escape.
 	return 'handle';
-}
-
-// ============================================================================
-// Font stack
-// ============================================================================
-
-/** Measures the advance width of one character in a given CSS font shorthand. */
-export type MeasureAdvance = (cssFont: string, char: string) => number;
-
-/**
- * Whether a font stack resolves to a fixed-pitch face, by measurement.
- *
- * Asking the font system "are you monospace?" is not possible from CSS, so this
- * measures instead: in a fixed-pitch face every glyph shares one advance, so
- * the widest (`W`) and one of the narrowest (`i`) come out equal. In Avenir
- * Next - the font this was found with - they are 1025 and 296, a 3.5x spread.
- *
- * A tolerance is used rather than strict equality because subpixel metrics and
- * hinting can leave a fractional difference in a genuinely monospace face.
- *
- * Unmeasurable input (no canvas, a zero width) returns true: without evidence
- * we do not second-guess the user's font.
- */
-export function isFixedPitchStack(
-	fontFamily: string,
-	fontSize: number,
-	measureAdvance: MeasureAdvance
-): boolean {
-	const cssFont = `${fontSize}px ${fontFamily}`;
-	let wide: number;
-	let narrow: number;
-	try {
-		wide = measureAdvance(cssFont, 'W');
-		narrow = measureAdvance(cssFont, 'i');
-	} catch {
-		return true;
-	}
-	if (!Number.isFinite(wide) || !Number.isFinite(narrow) || wide <= 0 || narrow <= 0) return true;
-	return Math.abs(wide - narrow) <= wide * 0.02;
-}
-
-/**
- * Pick the font the terminal should actually render with.
- *
- * A terminal in a proportional font is not merely ugly, it is wrong: xterm
- * sizes its grid from the advance of `W` and then puts every character on that
- * fixed pitch, so narrow letters trail a large gap (`Cl aude`, `Mi crosoft`)
- * while wide ones sit flush. The whole grid - box drawing, TUI alignment,
- * cursor position - is built on the assumption that one glyph is one cell.
- *
- * The terminal font INHERITS the interface font whenever the user has not set
- * one of its own (see `resolveSurfaceFont`), so picking a proportional UI font
- * silently breaks every terminal. That is not a preference the terminal can
- * honor, so it is overridden here rather than rendering a broken grid.
- *
- * The fallback chain comes from the shared `withMonoFallback`, which every
- * other surface degrades through - it only covers a font that fails to
- * RESOLVE, and cannot help when the configured font resolves perfectly well
- * and simply is not fixed-pitch. That is what the measurement above is for;
- * the two mechanisms cover different failures and compose.
- */
-export function resolveTerminalFontFamily(
-	fontFamily: string,
-	fontSize: number,
-	measureAdvance: MeasureAdvance | null
-): string {
-	const stack = withMonoFallback(fontFamily);
-	// No way to measure (jsdom, no canvas): keep the configured stack rather
-	// than overriding a font that may well be fine.
-	if (!measureAdvance) return stack;
-	if (isFixedPitchStack(stack, fontSize, measureAdvance)) return stack;
-	return MONO_FALLBACK_STACK;
-}
-
-/** Canvas-backed {@link MeasureAdvance}, or null where canvas is unavailable. */
-export function createCanvasMeasureAdvance(): MeasureAdvance | null {
-	try {
-		const ctx = document.createElement('canvas').getContext('2d');
-		if (!ctx) return null;
-		return (cssFont, char) => {
-			ctx.font = cssFont;
-			return ctx.measureText(char).width;
-		};
-	} catch {
-		return null;
-	}
 }
 
 // ============================================================================
@@ -297,6 +215,10 @@ export interface XTerminalHandle {
 	resize(): void;
 	/** Force fit + full canvas repaint - call when the terminal becomes visible after being hidden */
 	refresh(): void;
+	/** The measured grid, or null when the container is hidden and has never been fit. */
+	getSize(): { cols: number; rows: number } | null;
+	/** Publish the current grid size to the PTY. No-op when the shell already has it. */
+	syncSize(): void;
 }
 
 export interface XTerminalProps {
@@ -360,6 +282,14 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 		measureAdvanceRef.current = createCanvasMeasureAdvance();
 	}
 	const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	// The grid size the PTY has ACCEPTED, recorded only once the main process
+	// confirms it. `process:resize` resolves `false` (it does not throw) when the
+	// session id is unknown, which is exactly what happens when the first
+	// ResizeObserver fire beats the spawn. Latching the size unconditionally would
+	// treat that dropped resize as delivered and leave the shell stuck on its
+	// 80x24 spawn default, so full-screen programs (nano, vim, less) paint into a
+	// small box while ordinary command output still fills the pane.
+	const lastSentSizeRef = useRef<{ cols: number; rows: number } | null>(null);
 	const selectionCopyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const lastAutoCopiedSelectionRef = useRef<string>('');
 	const lastSearchQueryRef = useRef<string>('');
@@ -469,10 +399,58 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 				}
 				fitAddon.fit();
 				term.refresh(0, term.rows - 1);
+				// fit() only changes xterm's own grid. Without this push the shell keeps
+				// whatever size it had while the pane was hidden, and the next TUI the
+				// user starts paints at that stale size.
+				pushPtySizeRef.current();
+			},
+			getSize() {
+				const term = terminalRef.current;
+				const container = containerRef.current;
+				// A hidden container has never been fit, so xterm still reports its
+				// constructor default. Report nothing rather than a measurement that
+				// isn't one.
+				if (!term || !container || container.offsetWidth === 0 || container.offsetHeight === 0) {
+					return null;
+				}
+				if (term.cols <= 0 || term.rows <= 0) return null;
+				return { cols: term.cols, rows: term.rows };
+			},
+			syncSize() {
+				pushPtySizeRef.current();
 			},
 		}),
 		[]
 	);
+
+	// Tell the PTY what the visible grid is. Cheap to call as often as you like: a
+	// size the shell already has is skipped, and a size it never received is
+	// retried on the next call, so this is the one place the winsize is published.
+	const pushPtySize = useCallback(() => {
+		const term = terminalRef.current;
+		if (!term || term.cols <= 0 || term.rows <= 0) return;
+		const { cols, rows } = term;
+		const last = lastSentSizeRef.current;
+		if (last && last.cols === cols && last.rows === rows) return;
+		onResize?.(cols, rows);
+		window.maestro.process
+			.resize(sessionId, cols, rows)
+			.then((delivered) => {
+				if (delivered) lastSentSizeRef.current = { cols, rows };
+			})
+			.catch(() => {
+				// Non-critical: the size stays unrecorded, so the next push retries it.
+			});
+	}, [sessionId, onResize]);
+	// The imperative handle is built once (empty deps), so it reaches the current
+	// callback through a ref rather than capturing a stale closure.
+	const pushPtySizeRef = useRef(pushPtySize);
+	pushPtySizeRef.current = pushPtySize;
+
+	// A different PTY knows nothing about what the previous one was told.
+	useEffect(() => {
+		lastSentSizeRef.current = null;
+	}, [sessionId]);
 
 	// Debounced resize handler
 	const handleResize = useCallback(() => {
@@ -501,13 +479,9 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 			// This handles the display:none → display:flex transition (returning from AI mode):
 			// fitAddon.fit() only resizes rows/cols but doesn't always repaint WebGL content.
 			term.refresh(0, term.rows - 1);
-			const { cols, rows } = term;
-			onResize?.(cols, rows);
-			window.maestro.process.resize(sessionId, cols, rows).catch(() => {
-				// Resize failures are non-critical; the PTY will resize on next interaction
-			});
+			pushPtySize();
 		}, 100);
-	}, [sessionId, onResize]);
+	}, [pushPtySize]);
 
 	// Create a WebGL renderer, wire its context-loss recovery, and attach it to the
 	// terminal. Shared by the initial load, tab reactivation, and post-loss recovery

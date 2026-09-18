@@ -56,6 +56,8 @@ describe('resolveModelPricing', () => {
 	});
 
 	it('falls back to the default tier for unknown, family-less, or empty input', () => {
+		// gpt-4o is outside the GPT-5 family the OpenAI table covers, so it still
+		// takes the default rather than being priced off a family it isn't in.
 		expect(resolveModelPricing('gpt-4o')).toBe(DEFAULT_MODEL_PRICING);
 		expect(resolveModelPricing(undefined)).toBe(DEFAULT_MODEL_PRICING);
 		expect(resolveModelPricing(null)).toBe(DEFAULT_MODEL_PRICING);
@@ -210,6 +212,50 @@ describe('computeClaudeUsageCost', () => {
 		const result = computeClaudeUsageCost(content);
 		expect(result.inputTokens).toBe(1_000_000);
 		expect(result.costUsd).toBeCloseTo(5, 10); // 1M Opus input
+	});
+});
+
+describe('OpenAI (Codex) pricing', () => {
+	it('resolves gpt slugs to the OpenAI tier instead of the Anthropic default', () => {
+		expect(resolveModelPricing('gpt-5-codex').INPUT_PER_MILLION).toBe(1.25);
+		expect(resolveModelPricing('gpt-5-codex').OUTPUT_PER_MILLION).toBe(10);
+		// Point releases Codex discovers at runtime inherit the family rate.
+		expect(resolveModelPricing('gpt-5.4').INPUT_PER_MILLION).toBe(1.25);
+		expect(resolveModelPricing('gpt-5.6-sol').OUTPUT_PER_MILLION).toBe(10);
+		expect(resolveModelPricing('gpt-5.4-mini').INPUT_PER_MILLION).toBe(0.25);
+		expect(resolveModelPricing('gpt-5-nano').INPUT_PER_MILLION).toBe(0.05);
+	});
+
+	it('never prices a gpt model at the Sonnet default', () => {
+		expect(resolveModelPricing('gpt-5.4')).not.toBe(DEFAULT_MODEL_PRICING);
+	});
+
+	it('bills cached tokens once, as the cheap half of input', () => {
+		// OpenAI reports cached tokens INSIDE input_tokens, so a 1M-input turn that
+		// was 80% cache costs 200k at the input rate + 800k at the cache rate.
+		const cost = calculateModelCost(
+			{ inputTokens: 1_000_000, outputTokens: 0, cacheReadTokens: 800_000 },
+			'gpt-5-codex'
+		);
+		expect(cost).toBeCloseTo(0.2 * 1.25 + 0.8 * 0.125, 10);
+	});
+
+	it('a cache hit is cheaper than a cache miss', () => {
+		const miss = calculateModelCost({ inputTokens: 1_000_000, outputTokens: 0 }, 'gpt-5-codex');
+		const hit = calculateModelCost(
+			{ inputTokens: 1_000_000, outputTokens: 0, cacheReadTokens: 1_000_000 },
+			'gpt-5-codex'
+		);
+		expect(hit).toBeLessThan(miss);
+	});
+
+	it('leaves Anthropic cache reads additive', () => {
+		// Claude reports cache reads BESIDE input_tokens, so both are billed.
+		const cost = calculateModelCost(
+			{ inputTokens: 1_000_000, outputTokens: 0, cacheReadTokens: 1_000_000 },
+			'claude-sonnet-4-6'
+		);
+		expect(cost).toBeCloseTo(3 + 0.3, 10);
 	});
 });
 

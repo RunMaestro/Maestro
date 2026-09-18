@@ -17,6 +17,7 @@ import { formatCalendarDay } from '../../../../shared/formatters';
 import { PermissionList, RISK_COLOR } from './PermissionList';
 import { UsageGuide } from './UsageGuide';
 import { AgentDispatchAllowlist } from './AgentDispatchAllowlist';
+import { WebLoginUsers } from './WebLoginUsers';
 import type { PluginGrantsSnapshot } from '../../../../main/ipc/handlers/plugins';
 import type {
 	AggregatedContributions,
@@ -26,6 +27,7 @@ import type { PluginRecord } from '../../../../shared/plugins/plugin-registry';
 import {
 	CATEGORY_LABELS,
 	STATE_LABELS,
+	extensionBadge,
 	type ExtensionState,
 	type UnifiedExtension,
 } from './extensionModel';
@@ -119,6 +121,9 @@ export function ExtensionDetails({
 	}, [isPlugin, ext.id, getGrants]);
 
 	const isPianola = !isPlugin && ext.flag === 'pianola';
+	// Web Login manages its accounts in its own tile: the channels behind that
+	// pane are desktop-only, so there is nowhere else they could be offered.
+	const isWebLogin = !isPlugin && ext.flag === 'webLogin';
 
 	const pluginSettings: SettingContribution[] = contributions
 		? contributions.settings.filter((s) => s.pluginId === ext.id)
@@ -127,7 +132,7 @@ export function ExtensionDetails({
 
 	// The Settings sub-tab exists when there's something to configure: a
 	// first-party config body, a configurable plugin, or Pianola's modal entry.
-	const hasSettingsTab = Boolean(settingsBody) || canConfigurePlugin || isPianola;
+	const hasSettingsTab = Boolean(settingsBody) || canConfigurePlugin || isPianola || isWebLogin;
 
 	// Reset transient editor + sub-tab when switching extensions. Default to
 	// Settings when it exists, else Permissions.
@@ -189,6 +194,8 @@ export function ExtensionDetails({
 			? FIRST_PARTY_PLUGINS[ext.flag as keyof typeof FIRST_PARTY_PLUGINS].backgroundServices
 			: [];
 
+	const badge = extensionBadge(ext);
+
 	return (
 		<div data-testid="extension-details" className="select-text">
 			{/* The way back lives in the view's header row, where the grid's
@@ -201,15 +208,17 @@ export function ExtensionDetails({
 						style={{ color: theme.colors.textMain }}
 					>
 						{ext.name}
-						{ext.beta && (
+						{badge && (
 							<span
-								className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
+								data-testid="extension-details-badge"
+								data-badge={badge.label}
+								className="px-1.5 py-0.5 rounded text-3xs font-bold uppercase"
 								style={{
-									backgroundColor: theme.colors.warning + '30',
-									color: theme.colors.warning,
+									backgroundColor: theme.colors[badge.tone] + '30',
+									color: theme.colors[badge.tone],
 								}}
 							>
-								Beta
+								{badge.label}
 							</span>
 						)}
 					</div>
@@ -229,7 +238,7 @@ export function ExtensionDetails({
 				</div>
 				<span
 					data-testid="extension-details-state"
-					className="px-2 py-0.5 rounded text-[11px] font-bold flex-shrink-0"
+					className="px-2 py-0.5 rounded text-xs-plus font-bold flex-shrink-0"
 					style={{ backgroundColor: stateColor(ext.state) + '22', color: stateColor(ext.state) }}
 				>
 					{STATE_LABELS[ext.state]}
@@ -384,13 +393,13 @@ export function ExtensionDetails({
 											<div className="text-xs font-mono" style={{ color: theme.colors.textMain }}>
 												{service.id}
 											</div>
-											<div className="text-[10px] mt-0.5" style={{ color: theme.colors.textDim }}>
+											<div className="text-2xs mt-0.5" style={{ color: theme.colors.textDim }}>
 												{service.description}
 											</div>
 										</div>
 										<span
 											data-testid="extension-background-service-status"
-											className="text-[10px] font-medium flex-shrink-0 mt-0.5"
+											className="text-2xs font-medium flex-shrink-0 mt-0.5"
 											style={{
 												color:
 													ext.state === 'enabled' ? theme.colors.success : theme.colors.textDim,
@@ -427,7 +436,7 @@ export function ExtensionDetails({
 											style={{ borderColor: theme.colors.border }}
 										>
 											<span
-												className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase flex-shrink-0 mt-0.5"
+												className="px-1.5 py-0.5 rounded text-3xs font-bold uppercase flex-shrink-0 mt-0.5"
 												style={{ backgroundColor: color + '22', color }}
 											>
 												{risk}
@@ -438,7 +447,7 @@ export function ExtensionDetails({
 												</div>
 												{req.scope && (
 													<div
-														className="text-[10px] font-mono mt-0.5"
+														className="text-2xs font-mono mt-0.5"
 														style={{ color: theme.colors.textDim }}
 													>
 														{req.scope}
@@ -446,7 +455,7 @@ export function ExtensionDetails({
 												)}
 											</div>
 											<span
-												className="text-[10px] font-medium flex-shrink-0 mt-0.5"
+												className="text-2xs font-medium flex-shrink-0 mt-0.5"
 												style={{ color: granted ? theme.colors.success : theme.colors.textDim }}
 											>
 												{granted ? 'Granted' : 'Not granted'}
@@ -509,7 +518,7 @@ export function ExtensionDetails({
 									return (
 										<span
 											key={bucket.label}
-											className="px-1.5 py-0.5 rounded text-[10px]"
+											className="px-1.5 py-0.5 rounded text-2xs"
 											style={{
 												backgroundColor: theme.colors.bgActivity,
 												color: theme.colors.textDim,
@@ -550,6 +559,22 @@ export function ExtensionDetails({
 							</div>
 						)
 					) : null}
+
+					{/* Web Login: the accounts are the configuration. With the flag off
+					    the gate is not consulted at all, so managing accounts there
+					    would be editing something nothing reads. */}
+					{isWebLogin &&
+						(ext.state === 'enabled' ? (
+							<WebLoginUsers theme={theme} />
+						) : (
+							<div
+								data-testid="extension-settings-disabled-hint"
+								className="text-xs rounded-lg border p-3"
+								style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
+							>
+								Enable Web Login to manage accounts.
+							</div>
+						))}
 
 					{/* Pianola: config lives in its dedicated modal, which renders below
 					    Settings - so the launch closes Settings first. */}
@@ -600,7 +625,7 @@ export function ExtensionDetails({
 														{setting.key}
 													</div>
 													{setting.description && (
-														<div className="text-[11px]" style={{ color: theme.colors.textDim }}>
+														<div className="text-xs-plus" style={{ color: theme.colors.textDim }}>
 															{setting.description}
 														</div>
 													)}

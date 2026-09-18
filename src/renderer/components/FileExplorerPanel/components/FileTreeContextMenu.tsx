@@ -30,7 +30,7 @@ interface FileTreeContextMenuProps {
 	theme: Theme;
 	contextMenu: ContextMenuState;
 	contextMenuRef: React.RefObject<HTMLDivElement>;
-	contextMenuPos: { top: number; left: number; ready?: boolean };
+	contextMenuPos: { top: number; left: number; maxHeight: number; ready?: boolean };
 	sshRemoteId: string | undefined;
 	onFocusFileInGraph?: (relativePath: string) => void;
 	/** Graph every markdown file under the right-clicked folder. */
@@ -151,13 +151,20 @@ export function FileTreeContextMenu({
 	return createPortal(
 		<div
 			ref={contextMenuRef}
-			className="fixed z-[10000] rounded-lg shadow-xl border overflow-hidden whitespace-nowrap"
+			className="fixed z-[10000] rounded-lg shadow-xl border whitespace-nowrap"
 			style={{
 				backgroundColor: theme.colors.bgSidebar,
 				borderColor: theme.colors.border,
 				minWidth: '180px',
 				top: contextMenuPos.top,
 				left: contextMenuPos.left,
+				// This menu carries up to ~27 entries, which is taller than a phone
+				// in portrait and than a laptop in a short window. Clamped only by
+				// POSITION it pinned to the top edge and ran off the bottom, and
+				// `overflow-hidden` made everything past the fold unreachable - a
+				// context menu does not scroll the page behind it. Scroll instead.
+				maxHeight: contextMenuPos.maxHeight,
+				overflowY: 'auto',
 				opacity: contextMenuPos.ready ? 1 : 0,
 			}}
 		>

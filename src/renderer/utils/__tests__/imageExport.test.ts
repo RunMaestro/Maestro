@@ -18,10 +18,12 @@ import {
 	imgToDataUrl,
 	copyImageElementToClipboard,
 	saveImageElementToDisk,
+	saveImageDataUrlToDisk,
 	saveImageToProject,
 	suggestImageFileName,
 	defaultExtensionFor,
 } from '../imageExport';
+import { FILE_TREE_REFRESH_EVENT } from '../fileTreeRefresh';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -298,6 +300,75 @@ describe('saveImageElementToDisk', () => {
 	});
 });
 
+describe('saveImageDataUrlToDisk', () => {
+	beforeEach(() => {
+		vi.mocked(window.maestro.dialog.saveFile).mockClear();
+		vi.mocked(window.maestro.fs.writeFile).mockClear().mockResolvedValue({ success: true });
+		vi.mocked(window.maestro.fs.writeImageFile).mockClear().mockResolvedValue({ success: true });
+	});
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	it('writes the bytes through the binary path with the caller name suggested', async () => {
+		vi.mocked(window.maestro.dialog.saveFile).mockResolvedValue('/tmp/graph.png');
+
+		const result = await saveImageDataUrlToDisk(PNG_DATA_URL, 'graph-20260908-101500.png');
+
+		expect(result).toEqual({ saved: true, path: '/tmp/graph.png' });
+		expect(window.maestro.dialog.saveFile).toHaveBeenCalledWith(
+			expect.objectContaining({
+				defaultPath: 'graph-20260908-101500.png',
+				filters: [{ name: 'PNG Image', extensions: ['png'] }],
+			})
+		);
+		// writeFile would encode the base64 payload as text and corrupt the image.
+		expect(window.maestro.fs.writeImageFile).toHaveBeenCalledWith('/tmp/graph.png', PNG_DATA_URL);
+		expect(window.maestro.fs.writeFile).not.toHaveBeenCalled();
+	});
+
+	it('falls back to the data URL extension when no name is given', async () => {
+		vi.mocked(window.maestro.dialog.saveFile).mockResolvedValue(null);
+
+		await saveImageDataUrlToDisk('data:image/jpeg;base64,AAAA');
+
+		expect(window.maestro.dialog.saveFile).toHaveBeenCalledWith(
+			expect.objectContaining({
+				defaultPath: 'maestro-image.jpg',
+				filters: [{ name: 'JPG Image', extensions: ['jpg'] }],
+			})
+		);
+	});
+
+	it('reports a cancelled dialog as not-saved with no error', async () => {
+		vi.mocked(window.maestro.dialog.saveFile).mockResolvedValue(null);
+
+		await expect(saveImageDataUrlToDisk(PNG_DATA_URL)).resolves.toEqual({ saved: false });
+		expect(window.maestro.fs.writeImageFile).not.toHaveBeenCalled();
+	});
+
+	it('surfaces a write failure instead of claiming success', async () => {
+		vi.mocked(window.maestro.dialog.saveFile).mockResolvedValue('/tmp/graph.png');
+		vi.mocked(window.maestro.fs.writeImageFile).mockRejectedValue(new Error('EACCES'));
+
+		await expect(saveImageDataUrlToDisk(PNG_DATA_URL)).resolves.toEqual({
+			saved: false,
+			error: 'EACCES',
+		});
+	});
+
+	it('reports a write the main process refused rather than a silent success', async () => {
+		vi.mocked(window.maestro.dialog.saveFile).mockResolvedValue('/tmp/graph.png');
+		vi.mocked(window.maestro.fs.writeImageFile).mockResolvedValue({ success: false });
+
+		await expect(saveImageDataUrlToDisk(PNG_DATA_URL)).resolves.toEqual({
+			saved: false,
+			error: 'Failed to write /tmp/graph.png',
+		});
+	});
+});
+
 describe('saveImageToProject', () => {
 	beforeEach(() => {
 		vi.mocked(window.maestro.fs.mkdir).mockClear().mockResolvedValue({ success: true });
@@ -394,6 +465,48 @@ describe('saveImageToProject', () => {
 		await expect(
 			saveImageToProject(makeSvg(), { projectRoot: '/p', fileName: 'd.svg' }, 'svg')
 		).rejects.toThrow(/Failed to write/);
+	});
+
+	it('nudges the Files panel so the new file appears without waiting for a refresh', async () => {
+		const listener = vi.fn();
+		window.addEventListener(FILE_TREE_REFRESH_EVENT, listener);
+
+		await saveImageToProject(
+			makeSvg(),
+			{ projectRoot: '/p', fileName: 'd.svg', sessionId: 'agent-1' },
+			'svg'
+		);
+
+		window.removeEventListener(FILE_TREE_REFRESH_EVENT, listener);
+		expect(listener).toHaveBeenCalledTimes(1);
+		expect((listener.mock.calls[0][0] as CustomEvent).detail).toEqual({ sessionId: 'agent-1' });
+	});
+
+	it('does not refresh when no agent owns the save (e.g. the wizard)', async () => {
+		const listener = vi.fn();
+		window.addEventListener(FILE_TREE_REFRESH_EVENT, listener);
+
+		await saveImageToProject(makeSvg(), { projectRoot: '/p', fileName: 'd.svg' }, 'svg');
+
+		window.removeEventListener(FILE_TREE_REFRESH_EVENT, listener);
+		expect(listener).not.toHaveBeenCalled();
+	});
+
+	it('does not refresh when the write failed', async () => {
+		vi.mocked(window.maestro.fs.writeFile).mockResolvedValue({ success: false });
+		const listener = vi.fn();
+		window.addEventListener(FILE_TREE_REFRESH_EVENT, listener);
+
+		await expect(
+			saveImageToProject(
+				makeSvg(),
+				{ projectRoot: '/p', fileName: 'd.svg', sessionId: 'agent-1' },
+				'svg'
+			)
+		).rejects.toThrow(/Failed to write/);
+
+		window.removeEventListener(FILE_TREE_REFRESH_EVENT, listener);
+		expect(listener).not.toHaveBeenCalled();
 	});
 });
 

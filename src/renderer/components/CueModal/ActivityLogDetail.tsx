@@ -80,13 +80,13 @@ export function ActivityLogDetail({ entry, theme }: ActivityLogDetailProps) {
 			{payloadEntries.length > 0 && (
 				<div>
 					<div
-						className="text-[10px] font-bold uppercase tracking-wider mb-1"
+						className="text-2xs font-bold uppercase tracking-wider mb-1"
 						style={{ color: theme.colors.textDim }}
 					>
 						Event Payload
 					</div>
 					<div
-						className="rounded px-2 py-1.5 font-mono text-[11px] space-y-0.5 max-h-32 overflow-y-auto"
+						className="rounded px-2 py-1.5 font-mono text-xs-plus space-y-0.5 max-h-32 overflow-y-auto"
 						style={{ backgroundColor: theme.colors.bgActivity }}
 					>
 						{payloadEntries.map(([key, value]) => (
@@ -107,13 +107,13 @@ export function ActivityLogDetail({ entry, theme }: ActivityLogDetailProps) {
 			{hasStdout && (
 				<div>
 					<div
-						className="text-[10px] font-bold uppercase tracking-wider mb-1"
+						className="text-2xs font-bold uppercase tracking-wider mb-1"
 						style={{ color: theme.colors.textDim }}
 					>
 						Output
 					</div>
 					<pre
-						className="rounded px-2 py-1.5 text-[11px] max-h-48 overflow-y-auto whitespace-pre-wrap break-all"
+						className="rounded px-2 py-1.5 text-xs-plus max-h-48 overflow-y-auto whitespace-pre-wrap break-all"
 						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textMain }}
 					>
 						{entry.stdout.slice(-5000)}
@@ -124,12 +124,12 @@ export function ActivityLogDetail({ entry, theme }: ActivityLogDetailProps) {
 			{/* stderr */}
 			{hasStderr && (
 				<div>
-					<div className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider mb-1">
+					<div className="flex items-center gap-1 text-2xs font-bold uppercase tracking-wider mb-1">
 						<AlertTriangle className="w-3 h-3" style={{ color: theme.colors.error }} />
 						<span style={{ color: theme.colors.error }}>Errors</span>
 					</div>
 					<pre
-						className="rounded px-2 py-1.5 text-[11px] max-h-32 overflow-y-auto whitespace-pre-wrap break-all"
+						className="rounded px-2 py-1.5 text-xs-plus max-h-32 overflow-y-auto whitespace-pre-wrap break-all"
 						style={{ backgroundColor: `${theme.colors.error}10`, color: theme.colors.error }}
 					>
 						{displayStderr.slice(-3000)}

@@ -26,20 +26,23 @@ import {
 	getTriggerConfigSummary,
 	summarizeCommandNode,
 } from '../../../../shared/cue-pipeline-summary';
+import {
+	NODE_BG_WIDTH,
+	NODE_BG_HEIGHT,
+	PIPELINE_GROUP_PADDING,
+	pipelineCardBounds,
+} from './nodeFootprint';
 
 // ─── Pipeline Y-offset (for "All Pipelines" view) ──────────────────────────
 
 const PIPELINE_GAP = 100; // px between pipeline groups
 const NODE_HEIGHT = 100; // approximate node height
 
-// Approximate node footprint used to compute the bounding box of the per-pipeline
-// translucent background card in All Pipelines view. Real nodes are a touch
-// narrower/shorter, so the box always fully encloses them. Exported so the
-// auto-arrange layout (pipelineAutoArrange.ts) sizes group cells with the exact
-// same footprint the renderer uses, keeping grid spacing pixel-accurate.
-export const NODE_BG_WIDTH = 320;
-export const NODE_BG_HEIGHT = 100;
-export const PIPELINE_GROUP_PADDING = 28;
+// Node footprint and group-card geometry live in nodeFootprint.ts so the
+// renderer, the drag-overlap test below, and the auto-arrange packer all size a
+// card from the same numbers. Re-exported here because this module has long
+// been where callers reach for them.
+export { NODE_BG_WIDTH, NODE_BG_HEIGHT, PIPELINE_GROUP_PADDING };
 
 /**
  * Computes vertical offsets so pipeline groups don't overlap in the
@@ -131,32 +134,20 @@ interface PipelineBBox {
  * Computes the All-Pipelines-view bounding box for a single pipeline at a
  * given offset. Returns null for empty pipelines (no nodes ⇒ no box).
  *
- * Box dimensions match the translucent group card rendered in
- * `convertToReactFlowNodes` (NODE_BG_WIDTH/HEIGHT + PIPELINE_GROUP_PADDING),
- * so collision tests align with what the user sees.
+ * Box dimensions come from `pipelineCardBounds`, the same measurement the
+ * translucent group card is rendered at, so a drop that looks clear is clear.
  */
 function pipelineBoundingBox(
 	pipeline: CuePipelineState['pipelines'][number],
 	offset: { x: number; y: number }
 ): PipelineBBox | null {
-	if (pipeline.nodes.length === 0) return null;
-	let minX = Infinity;
-	let minY = Infinity;
-	let maxX = -Infinity;
-	let maxY = -Infinity;
-	for (const n of pipeline.nodes) {
-		const x = n.position.x + offset.x;
-		const y = n.position.y + offset.y;
-		minX = Math.min(minX, x);
-		minY = Math.min(minY, y);
-		maxX = Math.max(maxX, x + NODE_BG_WIDTH);
-		maxY = Math.max(maxY, y + NODE_BG_HEIGHT);
-	}
+	const card = pipelineCardBounds(pipeline.nodes, { offset });
+	if (!card) return null;
 	return {
-		minX: minX - PIPELINE_GROUP_PADDING,
-		minY: minY - PIPELINE_GROUP_PADDING,
-		maxX: maxX + PIPELINE_GROUP_PADDING,
-		maxY: maxY + PIPELINE_GROUP_PADDING,
+		minX: card.x,
+		minY: card.y,
+		maxX: card.x + card.width,
+		maxY: card.y + card.height,
 	};
 }
 
@@ -284,32 +275,23 @@ export function convertToReactFlowNodes(
 		for (const pipeline of pipelines) {
 			if (pipeline.nodes.length === 0) continue;
 			const offset = resolvePipelineOffset(pipeline, pipelineYOffsets);
-			let minX = Infinity;
-			let minY = Infinity;
-			let maxX = -Infinity;
-			let maxY = -Infinity;
-			for (const pNode of pipeline.nodes) {
-				const x = pNode.position.x + offset.x;
-				const y = pNode.position.y + offset.y;
-				minX = Math.min(minX, x);
-				minY = Math.min(minY, y);
-				maxX = Math.max(maxX, x + NODE_BG_WIDTH);
-				maxY = Math.max(maxY, y + NODE_BG_HEIGHT);
-			}
+			// Sized from the real node footprints, not a flat NODE_BG_WIDTH: a node
+			// named after the script it runs renders far wider than the canonical
+			// 320, and a card measured as if it were 320 draws its own contents
+			// outside itself.
+			const card = pipelineCardBounds(pipeline.nodes, { offset });
+			if (!card) continue;
 			const groupData: PipelineGroupNodeDataProps = {
 				pipelineName: pipeline.name,
 				color: pipeline.color,
-				width: maxX - minX + 2 * PIPELINE_GROUP_PADDING,
-				height: maxY - minY + 2 * PIPELINE_GROUP_PADDING,
+				width: card.width,
+				height: card.height,
 				theme,
 			};
 			nodes.push({
 				id: `pipeline-group:${pipeline.id}`,
 				type: 'pipeline-group',
-				position: {
-					x: minX - PIPELINE_GROUP_PADDING,
-					y: minY - PIPELINE_GROUP_PADDING,
-				},
+				position: { x: card.x, y: card.y },
 				data: groupData,
 				// Group is the user-grabbable handle for the whole pipeline in
 				// pointer/select mode. ReactFlow honors per-node `draggable` /

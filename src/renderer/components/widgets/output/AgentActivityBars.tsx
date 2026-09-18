@@ -118,7 +118,7 @@ export const AgentActivityBars = memo(function AgentActivityBars({
 				)}
 			</div>
 			{unitLabel && (
-				<div className="text-right text-[11px]" style={{ color: theme.colors.textDim }}>
+				<div className="text-right text-xs-plus" style={{ color: theme.colors.textDim }}>
 					{unitLabel}
 				</div>
 			)}

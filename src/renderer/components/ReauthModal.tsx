@@ -15,6 +15,12 @@
  * (see `resolveAuthOutage`), so the queued messages that piled up behind the
  * failure run in order without the user hunting for them.
  *
+ * The account the login writes to is named up front in a pill. A provider can
+ * hold several accounts at once (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`) and the
+ * wrong one is invisible until the login "succeeds" and the agent fails again,
+ * so which account is in play is headline information, not something to go
+ * looking for behind a disclosure.
+ *
  * The PTY is a real terminal tab process (`process:spawnTerminalTab`), so the
  * provider's TUI, its device-code prompts, and SSH remotes all behave exactly
  * as they do in a terminal tab. The routing key carries `-terminal-` because
@@ -28,6 +34,7 @@ import {
 	Copy,
 	KeyRound,
 	Terminal as TerminalIcon,
+	UserRound,
 	Users,
 } from 'lucide-react';
 import { Modal } from './ui/Modal';
@@ -43,6 +50,7 @@ import {
 } from '../../shared/providerAuthIdentity';
 import { generateId } from '../utils/ids';
 import { findLoginUrl } from '../utils/loginUrl';
+import { isWindowsPlatform } from '../utils/platformUtils';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
 import { notifyToast } from '../stores/notificationStore';
@@ -51,8 +59,16 @@ import {
 	formatAgentLoginCommand,
 	getAgentDisplayName,
 	getAgentLoginCommand,
+	loginShellSyntaxFor,
 } from '../../shared/agentMetadata';
 import { resolveAgentEnvironment, type ResolvedEnvVar } from '../../shared/agentEnvironment';
+import {
+	effectiveAgentCustomEnvVars,
+	getProviderProfileConfig,
+	resolveAgentProfile,
+} from '../../shared/providerProfiles';
+import { useSshRemoteNames } from '../hooks/stats/useProviderProfiles';
+import { getHomeDir, getHomeDirAsync } from '../utils/homeDir';
 import type { Session, Theme } from '../types';
 
 export interface ReauthModalProps {
@@ -106,6 +122,12 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 	const spawnGenerationRef = useRef(0);
 	// The login command, held until the shell proves it is alive. See below.
 	const pendingCommandRef = useRef<{ ptySessionId: string; command: string } | null>(null);
+	// Latched the first time the command is actually typed, and never cleared
+	// while this dialog is open. Once the user is inside a login the app must
+	// not put another keystroke on that PTY: they may be halfway through a
+	// device code or a password, and a replayed command line lands in the middle
+	// of whatever they were entering.
+	const hasTypedCommandRef = useRef(false);
 	const commandTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
 	const [status, setStatus] = useState<ReauthStatus>('starting');
@@ -135,6 +157,13 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 			.filter((name): name is string => !!name);
 	}, [sessions, outage.blocked]);
 	const blockedCount = outage.blocked.length;
+	/**
+	 * True when the user opened this from the command palette and nothing has
+	 * failed. Only the copy changes - a login the user asked for is not a
+	 * recovery, so claiming agents are stopped would be a lie they would have to
+	 * go and disprove.
+	 */
+	const userInitiated = outage.initiatedBy === 'user';
 
 	// The environment decides WHICH credentials the login writes and the agent
 	// reads - a base URL override, an API-key var, a profile selector - so an
@@ -186,11 +215,6 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 		return credentialKindBlocksLogin(classifyCredentialKind(session.toolType, env), agentName);
 	}, [providerEnv, effectiveEnv, session.toolType, agentName]);
 
-	// Null until the environment has been read, so the spawn effect below waits
-	// rather than starting a login the classification is about to rule out.
-	const commandLine =
-		providerEnv !== null && !loginBlockedReason && login ? formatAgentLoginCommand(login) : null;
-
 	// Same SSH resolution as a terminal tab: an agent that runs on a remote host
 	// must re-authenticate on that host, not on this laptop.
 	const sshConfig = useMemo(() => {
@@ -217,6 +241,106 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 		return undefined;
 	}, [session.sessionSshRemoteConfig, session.sshRemoteId, session.remoteCwd]);
 
+	const [homeDir, setHomeDir] = useState<string | undefined>(getHomeDir);
+	useEffect(() => {
+		if (!homeDir) {
+			void getHomeDirAsync()?.then(setHomeDir);
+		}
+	}, [homeDir]);
+
+	const remoteNames = useSshRemoteNames(Boolean(sshConfig?.enabled));
+
+	/**
+	 * The env the profile below is read from: the spawner's own layer stack,
+	 * with global vars underneath and the ONE winning custom set on top. An
+	 * agent's own vars REPLACE the provider's rather than layering over them,
+	 * which is why this is not the same merge as `effectiveEnv` above - that one
+	 * is the disclosure, this one is the attribution.
+	 */
+	const profileEnv = useMemo(
+		() => ({
+			...shellEnvVars,
+			...effectiveAgentCustomEnvVars(
+				session.customEnvVars as Record<string, string> | undefined,
+				providerEnv ?? undefined
+			),
+		}),
+		[shellEnvVars, session.customEnvVars, providerEnv]
+	);
+
+	/**
+	 * The account this login will actually write to.
+	 *
+	 * Resolved through `providerProfiles` rather than by reading a config-dir
+	 * env var straight off the list, because a set `ANTHROPIC_API_KEY` outranks
+	 * the config dir entirely: naming that directory would credit the login to
+	 * an account the agent never bills. Going through the shared module also
+	 * means this pill and the Usage Dashboard's provider filter cannot disagree
+	 * about which account an agent is on.
+	 *
+	 * Null until the provider env has been read, and null for a config-dir
+	 * provider whose $HOME has not resolved yet - there is no account to name,
+	 * and guessing one is the exact failure this pill exists to prevent.
+	 */
+	const profile = useMemo(() => {
+		if (providerEnv === null) return null;
+		const remoteId = sshConfig?.enabled ? (sshConfig.remoteId ?? 'default') : null;
+		return resolveAgentProfile(
+			session.toolType,
+			profileEnv,
+			homeDir,
+			remoteId ? { id: remoteId, name: remoteNames[remoteId] } : null
+		);
+	}, [providerEnv, session.toolType, profileEnv, homeDir, sshConfig, remoteNames]);
+
+	/**
+	 * The one env var that decided the profile, spelled out beside the pill.
+	 * This is the line the user would otherwise have to expand the whole
+	 * environment to find. A config directory is printed because the path IS the
+	 * account; a credential is only named, never printed.
+	 */
+	const profileEnvHint = useMemo(() => {
+		if (!profile) return null;
+		if (profile.credential) {
+			const named = classifyCredentialKind(session.toolType, profileEnv).envVarName;
+			return named ? `${named} set` : null;
+		}
+		const config = getProviderProfileConfig(session.toolType);
+		if (!config) return null;
+		const configured = profileEnv[config.envVar];
+		return configured ? `${config.envVar}=${configured}` : `${config.envVar} unset`;
+	}, [profile, session.toolType, profileEnv]);
+
+	/**
+	 * Shell the login runs in.
+	 *
+	 * On Windows the configured default may be WSL, and that is the one shell
+	 * this dialog must NOT use: agents are always spawned as native Windows
+	 * processes (nothing in the spawn path goes through `wsl.exe`), so a login
+	 * inside WSL writes credentials to the WSL home directory that the native
+	 * agent never reads. The login would appear to succeed and fix nothing.
+	 * A remote agent is unaffected - its shell is the SSH remote's own.
+	 */
+	const loginShell = useMemo(() => {
+		if (sshConfig?.enabled) return defaultShell;
+		if (isWindowsPlatform() && defaultShell?.trim().toLowerCase() === 'wsl') return 'powershell';
+		return defaultShell;
+	}, [defaultShell, sshConfig?.enabled]);
+
+	// Null until the environment has been read, so the spawn effect below waits
+	// rather than starting a login the classification is about to rule out.
+	const commandLine =
+		providerEnv !== null && !loginBlockedReason && login
+			? formatAgentLoginCommand(
+					login,
+					// An SSH remote runs a posix shell regardless of this machine.
+					sshConfig?.enabled ? 'posix' : loginShellSyntaxFor(loginShell ?? '', isWindowsPlatform())
+				)
+			: null;
+	// The spawn effect keys off this, not off the command text: a command that
+	// is re-derived to the same string is not a reason to restart a live login.
+	const hasCommandLine = Boolean(commandLine);
+
 	// Type the login command in, once the shell is actually there to receive it.
 	//
 	// Not sent straight after the spawn resolves: over SSH the spawn resolves as
@@ -233,7 +357,14 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 			clearTimeout(commandTimerRef.current);
 			commandTimerRef.current = null;
 		}
-		void window.maestro.process.write(pending.ptySessionId, `${pending.command}\n`).catch(() => {
+		if (hasTypedCommandRef.current) return;
+		hasTypedCommandRef.current = true;
+		// CR, not LF: this is what a real Enter key sends (see the terminal
+		// keyboard handler), and it is the only one that submits reliably on
+		// Windows - ConPTY passes LF through as Ctrl+J, which PSReadLine does not
+		// treat as "run this line", so a PowerShell login would sit there untyped.
+		// A Unix PTY maps CR to NL for us, so this is correct on every platform.
+		void window.maestro.process.write(pending.ptySessionId, `${pending.command}\r`).catch(() => {
 			// A failed write surfaces as the process exiting; nothing to add here.
 		});
 	}, []);
@@ -253,6 +384,42 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 		});
 	}, [ptySessionId, flushPendingCommand]);
 
+	/**
+	 * Everything the spawn below needs, refreshed every render but deliberately
+	 * NOT a dependency of it.
+	 *
+	 * These values are objects and arrays out of the settings and session stores
+	 * (`shellEnvVars`, `shellArgs`, the SSH config, the agent's own env), and
+	 * their IDENTITY churns whenever either store rehydrates from main, even
+	 * when nothing about them changed. As effect dependencies that churn tore
+	 * down a live login shell and started a fresh one mid-flow, which is how the
+	 * login command came to be typed a second time over whatever the user was
+	 * entering. A login shell is started once per open dialog and then left
+	 * alone; a settings write is never a reason to restart it.
+	 */
+	const spawnInputsRef = useRef({
+		commandLine,
+		loginShell,
+		shellArgs,
+		shellEnvVars,
+		sshConfig,
+		cwd: session.cwd,
+		projectRoot: session.projectRoot,
+		toolType: session.toolType,
+		customEnvVars: session.customEnvVars,
+	});
+	spawnInputsRef.current = {
+		commandLine,
+		loginShell,
+		shellArgs,
+		shellEnvVars,
+		sshConfig,
+		cwd: session.cwd,
+		projectRoot: session.projectRoot,
+		toolType: session.toolType,
+		customEnvVars: session.customEnvVars,
+	};
+
 	// Spawn the login shell, and tear it down when this modal really goes away.
 	//
 	// Spawn and kill live in ONE effect on purpose. Split across two, React's
@@ -261,8 +428,14 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 	// from starting another - leaving a dead or orphaned PTY that nobody ever
 	// typed into. The guard is therefore a generation counter that the cleanup
 	// resets, so a remount always ends up with exactly one live shell.
+	//
+	// The only thing that starts a shell is the command line existing, which
+	// happens once, when the environment finishes resolving. See the ref above
+	// for why nothing else belongs in the dependency list.
 	useEffect(() => {
-		if (!commandLine) return;
+		const spawn = spawnInputsRef.current;
+		const command = spawn.commandLine;
+		if (!command) return;
 
 		const generation = ++spawnGenerationRef.current;
 		let disposed = false;
@@ -273,13 +446,13 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 				// The login runs wherever the shell lands (the remote's home dir
 				// over SSH). It needs no project directory, and guessing one risks a
 				// `cd` that fails and kills the session before the login can run.
-				cwd: sshConfig?.enabled ? '' : session.cwd || session.projectRoot || '',
-				shell: defaultShell || undefined,
-				shellArgs,
-				shellEnvVars,
-				toolType: session.toolType,
-				sessionCustomEnvVars: session.customEnvVars,
-				sessionSshRemoteConfig: sshConfig,
+				cwd: spawn.sshConfig?.enabled ? '' : spawn.cwd || spawn.projectRoot || '',
+				shell: spawn.loginShell || undefined,
+				shellArgs: spawn.shellArgs,
+				shellEnvVars: spawn.shellEnvVars,
+				toolType: spawn.toolType,
+				sessionCustomEnvVars: spawn.customEnvVars,
+				sessionSshRemoteConfig: spawn.sshConfig,
 			})
 			.then((result) => {
 				// A superseded generation's shell is already being replaced; writing
@@ -288,14 +461,14 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 				if (!result.success) {
 					setStatus('failed');
 					setSpawnError(
-						sshConfig?.enabled
+						spawn.sshConfig?.enabled
 							? 'The SSH remote could not be reached. Check that the remote is enabled and online.'
 							: 'A shell could not be started for the login flow.'
 					);
 					return;
 				}
 				setStatus('running');
-				pendingCommandRef.current = { ptySessionId, command: commandLine };
+				pendingCommandRef.current = { ptySessionId, command };
 				commandTimerRef.current = setTimeout(flushPendingCommand, SILENT_SHELL_FALLBACK_MS);
 			})
 			.catch((err: unknown) => {
@@ -318,19 +491,7 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 				// Already gone - that is the desired end state either way.
 			});
 		};
-	}, [
-		commandLine,
-		ptySessionId,
-		defaultShell,
-		shellArgs,
-		shellEnvVars,
-		sshConfig,
-		session.cwd,
-		session.projectRoot,
-		session.toolType,
-		session.customEnvVars,
-		flushPendingCommand,
-	]);
+	}, [hasCommandLine, ptySessionId, flushPendingCommand]);
 
 	// The login shell exiting means the flow is over, one way or the other. A
 	// shell that dies without printing anything (a dropped SSH transport, a
@@ -380,13 +541,15 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 	}, [outage.providerKey, onClose]);
 
 	const statusLine = loginBlockedReason
-		? 'Fix the credential this agent presents, then resume.'
+		? `Fix the credential this agent presents, then ${userInitiated ? 'close' : 'resume'}.`
 		: status === 'failed'
 			? spawnError
 			: status === 'exited'
-				? 'The login session ended. Resume to re-run everything that failed.'
+				? userInitiated
+					? 'The login session ended.'
+					: 'The login session ended. Resume to re-run everything that failed.'
 				: status === 'running'
-					? 'Complete the provider login above, then resume.'
+					? `Complete the provider login above, then ${userInitiated ? 'close this dialog' : 'resume'}.`
 					: 'Starting the login shell...';
 
 	const statusColor = loginBlockedReason
@@ -400,7 +563,9 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 	return (
 		<Modal
 			theme={theme}
-			title="Please reauthenticate the provider."
+			title={
+				userInitiated ? `Sign in to ${agentName} again.` : 'Please reauthenticate the provider.'
+			}
 			priority={MODAL_PRIORITIES.REAUTH}
 			onClose={handleDismiss}
 			width={1100}
@@ -428,38 +593,50 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 					<button
 						type="button"
 						onClick={handleDismiss}
-						className="px-4 py-2 rounded border hover:bg-white/5 transition-colors"
+						className="px-4 py-1.5 rounded border hover:bg-white/5 transition-colors text-sm"
 						style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 					>
-						Not Now
+						{userInitiated ? 'Cancel' : 'Not Now'}
 					</button>
 					<button
 						type="button"
 						onClick={handleResume}
-						className="px-4 py-2 rounded transition-colors"
+						className="px-4 py-1.5 rounded transition-colors text-sm"
 						style={{
 							backgroundColor: theme.colors.accent,
 							color: theme.colors.accentForeground,
 						}}
 						data-testid="reauth-resume"
 					>
-						{blockedCount > 1 ? `Resume ${blockedCount} Agents` : 'Resume Agent'}
+						{userInitiated
+							? 'Done'
+							: blockedCount > 1
+								? `Resume ${blockedCount} Agents`
+								: 'Resume Agent'}
 					</button>
 				</div>
 			}
 		>
 			<div className="flex flex-col gap-3 flex-1 min-h-0 p-4">
-				<p className="text-sm leading-relaxed" style={{ color: theme.colors.textMain }}>
-					<span style={{ color: theme.colors.textDim }}>{agentName}</span> rejected its stored
-					credentials
-					{outage.fromPipeline ? ', taking Cue pipelines down with it' : ''}.{' '}
-					{blockedCount > 1
-						? `All ${blockedCount} agents on this provider are stopped until you log in again.`
-						: 'This agent is stopped until you log in again.'}{' '}
-					Their queued messages are held, not lost.
-				</p>
+				{userInitiated ? (
+					<p className="text-sm leading-relaxed" style={{ color: theme.colors.textMain }}>
+						Run the <span style={{ color: theme.colors.textDim }}>{agentName}</span> login below.
+						Every agent on this provider shares the credential store, so signing in once covers all
+						of them. Nothing is stopped and no turn is interrupted.
+					</p>
+				) : (
+					<p className="text-sm leading-relaxed" style={{ color: theme.colors.textMain }}>
+						<span style={{ color: theme.colors.textDim }}>{agentName}</span> rejected its stored
+						credentials
+						{outage.fromPipeline ? ', taking Cue pipelines down with it' : ''}.{' '}
+						{blockedCount > 1
+							? `All ${blockedCount} agents on this provider are stopped until you log in again.`
+							: 'This agent is stopped until you log in again.'}{' '}
+						Their queued messages are held, not lost.
+					</p>
+				)}
 
-				{blockedNames.length > 0 && (
+				{!userInitiated && blockedNames.length > 0 && (
 					<div
 						className="flex items-start gap-2 text-xs select-text"
 						style={{ color: theme.colors.textDim }}
@@ -475,8 +652,40 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 					</p>
 				)}
 
-				{/* Which profile this agent runs as. Collapsed by default so the
-				    login stays the focus, but one click away because a base-URL or
+				{/* Which account the login writes to, stated outright. A provider
+				    can hold several at once and the wrong one costs a whole round
+				    trip to discover, so this does not sit behind the disclosure
+				    below - it sits above it, with the single env var that decided
+				    it spelled out alongside. */}
+				{profile && (
+					<div className="flex items-center gap-2 flex-wrap shrink-0">
+						<span
+							className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-medium select-text"
+							style={{
+								borderColor: theme.colors.accent,
+								color: theme.colors.accent,
+								backgroundColor: `${theme.colors.accent}20`,
+							}}
+							data-testid="reauth-profile-pill"
+						>
+							<UserRound className="w-3.5 h-3.5 shrink-0" />
+							<span className="truncate">{profile.shortLabel}</span>
+						</span>
+						{profileEnvHint && (
+							<span
+								className="text-xs font-mono min-w-0 truncate select-text"
+								style={{ color: theme.colors.textDim }}
+								title={profileEnvHint}
+								data-testid="reauth-profile-env"
+							>
+								{profileEnvHint}
+							</span>
+						)}
+					</div>
+				)}
+
+				{/* Every other variable this agent runs with. Collapsed by default so
+				    the login stays the focus, but one click away because a base-URL or
 				    API-key override is a common reason a login "succeeds" and the
 				    agent still fails. */}
 				<div className="shrink-0">
@@ -541,7 +750,11 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 						)}
 					</div>
 				) : loginBlockedReason ? (
-					<p className="text-sm select-text" style={{ color: theme.colors.warning }}>
+					<p
+						className="text-sm select-text"
+						style={{ color: theme.colors.warning }}
+						data-testid="reauth-login-blocked"
+					>
 						{loginBlockedReason}
 					</p>
 				) : providerEnv === null ? (

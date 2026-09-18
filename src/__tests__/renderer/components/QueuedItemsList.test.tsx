@@ -50,6 +50,14 @@ describe('QueuedItemsList pause/hold', () => {
 		expect(props.onTogglePauseQueuedItem).toHaveBeenCalledWith('q1');
 	});
 
+	it('explains when an item is waiting for the connection', () => {
+		setup({ executionQueue: [item({ waitingForConnection: true })] });
+		expect(screen.getByText('WAITING FOR CONNECTION')).toHaveAttribute(
+			'title',
+			'This message will run after Maestro reconnects'
+		);
+	});
+
 	it('omits the hold control when no toggle handler is provided', () => {
 		setup({ onTogglePauseQueuedItem: undefined });
 		expect(screen.queryByTitle(/Hold this message/i)).toBeNull();

@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { CodexOutputParser } from '../../../main/parsers/codex-output-parser';
+import {
+	classifyRetryableError,
+	tokenExhaustionResetAt,
+} from '../../../shared/retryClassification';
 
 describe('CodexOutputParser', () => {
 	const parser = new CodexOutputParser();
@@ -538,6 +542,97 @@ describe('CodexOutputParser', () => {
 		});
 	});
 
+	describe('call_id correlation', () => {
+		const functionCall = (name: string, callId: string, args: string) =>
+			JSON.stringify({
+				type: 'response_item',
+				payload: { type: 'function_call', name, arguments: args, call_id: callId },
+			});
+		const functionCallOutput = (callId: string, output: string) =>
+			JSON.stringify({
+				type: 'response_item',
+				payload: { type: 'function_call_output', call_id: callId, output },
+			});
+
+		it('forwards call_id as toolCallId on both halves of a call', () => {
+			// Without an id the renderer merges a completion onto whichever
+			// same-named badge is still running (issue #1485).
+			const p = new CodexOutputParser();
+
+			const call = p.parseJsonLine(functionCall('shell', 'call_a', '{"command":"ls"}'));
+			const output = p.parseJsonLine(functionCallOutput('call_a', 'a.txt'));
+
+			expect(call?.toolCallId).toBe('call_a');
+			expect(output?.toolCallId).toBe('call_a');
+			expect(output?.toolName).toBe('shell');
+		});
+
+		it('attributes parallel calls to their own tools regardless of settle order', () => {
+			// The single lastToolName slot labeled the FIRST output to arrive with
+			// the SECOND call's tool name.
+			const p = new CodexOutputParser();
+
+			p.parseJsonLine(functionCall('read_file', 'call_a', '{"path":"one.ts"}'));
+			p.parseJsonLine(functionCall('run_tests', 'call_b', '{}'));
+
+			const settleB = p.parseJsonLine(functionCallOutput('call_b', 'ok'));
+			const settleA = p.parseJsonLine(functionCallOutput('call_a', 'contents'));
+
+			expect(settleB).toMatchObject({ toolCallId: 'call_b', toolName: 'run_tests' });
+			expect(settleA).toMatchObject({ toolCallId: 'call_a', toolName: 'read_file' });
+		});
+
+		it('still carries the name over for a payload with no call_id', () => {
+			// Legacy/id-less payloads keep the lastToolName fallback.
+			const p = new CodexOutputParser();
+
+			p.parseJsonLine(
+				JSON.stringify({
+					type: 'response_item',
+					payload: { type: 'function_call', name: 'shell', arguments: '{}' },
+				})
+			);
+			const output = p.parseJsonLine(
+				JSON.stringify({
+					type: 'response_item',
+					payload: { type: 'function_call_output', output: 'done' },
+				})
+			);
+
+			expect(output?.toolName).toBe('shell');
+			expect(output?.toolCallId).toBeUndefined();
+		});
+
+		it('correlates a command_execution across item.started and item.completed by item id', () => {
+			// Every command_execution badge is named 'shell', so the id is the only
+			// thing telling two parallel commands apart.
+			const p = new CodexOutputParser();
+
+			const started = p.parseJsonLine(
+				JSON.stringify({
+					type: 'item.started',
+					item: { id: 'item_1', type: 'command_execution', command: 'npm test' },
+				})
+			);
+			const completed = p.parseJsonLine(
+				JSON.stringify({
+					type: 'item.completed',
+					item: {
+						id: 'item_1',
+						type: 'command_execution',
+						command: 'npm test',
+						status: 'completed',
+						aggregated_output: 'ok',
+						exit_code: 0,
+					},
+				})
+			);
+
+			expect(started?.toolCallId).toBe('item_1');
+			expect(completed?.toolCallId).toBe('item_1');
+		});
+	});
+
 	describe('tool output truncation', () => {
 		it('should truncate tool output exceeding 10000 chars', () => {
 			const p = new CodexOutputParser();
@@ -576,6 +671,36 @@ describe('CodexOutputParser', () => {
 			expect(error).not.toBeNull();
 			expect(error?.type).toBe('auth_expired');
 			expect(error?.agentId).toBe('codex');
+		});
+
+		// A hard 4xx is decided by the envelope, not by the sentence. Without this
+		// the fallback emitted `recoverable: true` and the retry scheduler read
+		// "try again" out of the message and probed forever.
+		it('marks a hard client error non-recoverable', () => {
+			const line = JSON.stringify({
+				type: 'error',
+				status: 400,
+				error: {
+					type: 'invalid_request_error',
+					message:
+						"The 'gpt-6-astra' model requires a newer version of Codex. Please upgrade to the latest app or CLI and try again.",
+				},
+			});
+			const error = parser.detectErrorFromLine(line);
+			expect(error).not.toBeNull();
+			expect(error?.recoverable).toBe(false);
+			expect(error?.message).toContain('gpt-6-astra');
+		});
+
+		it('leaves a 429 recoverable', () => {
+			const line = JSON.stringify({
+				type: 'error',
+				status: 429,
+				error: { type: 'rate_limit_error', message: 'usage limit reached' },
+			});
+			const error = parser.detectErrorFromLine(line);
+			expect(error).not.toBeNull();
+			expect(error?.recoverable).toBe(true);
 		});
 
 		it('should detect rate limit errors from JSON', () => {
@@ -1282,6 +1407,48 @@ describe('CodexOutputParser', () => {
 				expect(orphan?.toolName).toBeUndefined();
 			});
 
+			it('keeps an id-less call named when an id-correlated one finishes first', () => {
+				// Interleaving: a legacy id-less call is still open when a correlated
+				// call starts and completes. The id-less output must still know its own
+				// name. Two things used to break it - every function_call overwrote
+				// `lastToolName`, and every completion cleared it - so this output
+				// arrived either mislabeled with the other tool or with no name at all.
+				const p = new CodexOutputParser();
+
+				p.parseJsonLine(
+					JSON.stringify({
+						type: 'response_item',
+						payload: { type: 'function_call', name: 'legacy_tool', arguments: '{}' },
+					})
+				);
+				p.parseJsonLine(
+					JSON.stringify({
+						type: 'response_item',
+						payload: {
+							type: 'function_call',
+							name: 'correlated_tool',
+							arguments: '{}',
+							call_id: 'c9',
+						},
+					})
+				);
+				p.parseJsonLine(
+					JSON.stringify({
+						type: 'response_item',
+						payload: { type: 'function_call_output', call_id: 'c9', output: 'done' },
+					})
+				);
+
+				const idless = p.parseJsonLine(
+					JSON.stringify({
+						type: 'response_item',
+						payload: { type: 'function_call_output', output: 'legacy output' },
+					})
+				);
+
+				expect(idless?.toolName).toBe('legacy_tool');
+			});
+
 			it('should handle function_call_output with undefined output', () => {
 				const p = new CodexOutputParser();
 				const event = p.parseJsonLine(
@@ -1799,5 +1966,46 @@ describe('CodexOutputParser', () => {
 
 			expect(event?.type).toBe('error');
 		});
+	});
+});
+
+/**
+ * A Codex quota outage has to reach the retry scheduler as a quota outage.
+ *
+ * Two things used to break that, and both are covered here: the pattern bank
+ * matched `\b429\b` / `rate.*limit` before the usage-limit pattern, and the
+ * parser then replaced Codex's own text with the bank's curated wording. The
+ * result was "Rate limited. Please wait and try again." for a multi-hour plan
+ * outage, which `classifyRetryableError` reads as a transient throttle and
+ * retries every 30 seconds.
+ */
+describe('Codex quota outages reach the retry scheduler intact', () => {
+	it('classifies a 429 that also names a usage limit as exhaustion, not availability', () => {
+		const p = new CodexOutputParser();
+		const error = p.detectErrorFromExit(1, "429 - you've hit your usage limit for this plan", '');
+
+		expect(error).not.toBeNull();
+		expect(classifyRetryableError(error!)).toBe('token-exhaustion');
+	});
+
+	it('keeps Codex own text so a reset hint survives the parser', () => {
+		const p = new CodexOutputParser();
+		const line = 'usage limit reached. try again in 4h.';
+		const error = p.detectErrorFromExit(1, line, '');
+
+		// Display still gets the curated wording.
+		expect(error!.message).toBe('Usage limit reached. Please wait or check your plan quota.');
+		// The decision gets the real line.
+		expect(error!.raw?.errorLine).toContain('4h');
+
+		const now = Date.UTC(2026, 8, 16, 12, 0, 0);
+		expect(tokenExhaustionResetAt(error!, now)).toBeGreaterThan(now + 3 * 60 * 60 * 1000);
+	});
+
+	it('leaves a genuine throttle classified as availability', () => {
+		const p = new CodexOutputParser();
+		const error = p.detectErrorFromExit(1, '429 too many requests', '');
+
+		expect(classifyRetryableError(error!)).toBe('availability');
 	});
 });

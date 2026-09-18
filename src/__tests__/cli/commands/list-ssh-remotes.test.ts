@@ -104,6 +104,40 @@ describe('list-ssh-remotes command', () => {
 			expect(second.isDefault).toBe(false);
 		});
 
+		it('should report both the overrides and the full resolved option set', () => {
+			// An agent debugging a connection needs what ssh actually receives, not
+			// just the overrides layered on top of the defaults.
+			vi.mocked(readSshRemotes).mockReturnValue([
+				mockRemote({ sshOptions: { ProxyCommand: 'tailcat tcABC 22', ConnectTimeout: '45' } }),
+			]);
+			vi.mocked(readSettingValue).mockReturnValue(null);
+
+			listSshRemotes({ json: true });
+
+			const parsed = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(parsed.sshOptions).toEqual({
+				ProxyCommand: 'tailcat tcABC 22',
+				ConnectTimeout: '45',
+			});
+			expect(parsed.resolvedSshOptions).toMatchObject({
+				ProxyCommand: 'tailcat tcABC 22',
+				ConnectTimeout: '45',
+				BatchMode: 'yes',
+				RequestTTY: 'no',
+			});
+		});
+
+		it('should report an empty override set for a remote with no options', () => {
+			vi.mocked(readSshRemotes).mockReturnValue([mockRemote()]);
+			vi.mocked(readSettingValue).mockReturnValue(null);
+
+			listSshRemotes({ json: true });
+
+			const parsed = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(parsed.sshOptions).toEqual({});
+			expect(parsed.resolvedSshOptions.ConnectTimeout).toBe('10');
+		});
+
 		it('should output nothing for empty list', () => {
 			vi.mocked(readSshRemotes).mockReturnValue([]);
 			vi.mocked(readSettingValue).mockReturnValue(null);

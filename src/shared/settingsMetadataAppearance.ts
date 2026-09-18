@@ -15,6 +15,13 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: 'dracula',
 		category: 'appearance',
 	},
+	themeGloss: {
+		description:
+			"How much light the app chrome catches: 'off' (flat, the shipped look), 'sheen', 'strong', or 'max'. Adds highlights and shadows only; it changes no theme color, and it has no effect on light themes.",
+		type: 'string',
+		default: 'off',
+		category: 'appearance',
+	},
 	customThemeColors: {
 		description: 'Custom color overrides when using a user-defined theme.',
 		type: 'object',
@@ -116,6 +123,13 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: 1,
 		category: 'appearance',
 	},
+	typographySnapshot: {
+		description:
+			"The user's own saved fonts and sizes, restored in one click after trying a Factory Reset preset. Null until they save one. Zoom is deliberately not part of it.",
+		type: 'object',
+		default: null,
+		category: 'appearance',
+	},
 	typographyPromptSeen: {
 		description:
 			'Whether the first-run typography chooser has been shown. False on a fresh install and on any install predating the chooser, which is what shows it to existing users once after the update.',
@@ -126,6 +140,13 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	themePromptSeen: {
 		description:
 			'Whether the first-run theme chooser has been shown. Its own flag rather than one for the whole first-run series, so a later step can be added without re-showing this one.',
+		type: 'boolean',
+		default: false,
+		category: 'appearance',
+	},
+	updatesPromptSeen: {
+		description:
+			'Whether the first-run step covering release candidate updates, crash reporting, and the Maestro CLI install has been shown.',
 		type: 'boolean',
 		default: false,
 		category: 'appearance',
@@ -211,6 +232,13 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		description: 'Show the per-session running cost pill (e.g. "$21.33") in the main header.',
 		type: 'boolean',
 		default: true,
+		category: 'appearance',
+	},
+	showProviderModePill: {
+		description:
+			'Show the provider mode pill (e.g. "claude -p" / "TUI Wrapper") on Claude turns in the chat footer, History entries, and the history detail view.',
+		type: 'boolean',
+		default: false,
 		category: 'appearance',
 	},
 	showWorktreePill: {
@@ -325,9 +353,10 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		category: 'appearance',
 	},
 	fileExplorerIconTheme: {
-		description: 'Icon theme for the file explorer sidebar. Options: default, material, or none.',
+		description:
+			'Icon theme for the file explorer sidebar. Options: rich (default, Material Icon Theme style) or flat.',
 		type: 'string',
-		default: 'default',
+		default: 'rich',
 		category: 'appearance',
 	},
 	toastWidth: {

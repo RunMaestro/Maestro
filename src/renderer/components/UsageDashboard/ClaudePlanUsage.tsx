@@ -23,23 +23,27 @@ import { memo, useCallback, useMemo, useState } from 'react';
 import type { Theme } from '../../types';
 import { useClaudeUsageStore, type ClaudeUsageSnapshot } from '../../stores/claudeUsageStore';
 import { useUIStore } from '../../stores/uiStore';
-import { makeAccountKeyHelpers } from './quota/quotaFormatting';
+import { makeAccountKeyHelpers, resolveLatestSampledAt } from './quota/quotaFormatting';
 import {
 	QuotaAccountEmail,
 	QuotaAccountPill,
 	QuotaAccountTabs,
 	QuotaAgentCountBadge,
 	QuotaBarRow,
+	QuotaLastRefreshed,
 	QuotaPendingRow,
 	QuotaRefreshControls,
 	QuotaSharedAccountBadge,
 	QuotaShowAllToggle,
+	QuotaStaleSampleBadge,
 	QuotaVisibilityToggle,
 	type QuotaTabStatus,
 } from './quota/quotaPrimitives';
 import { groupAccountKeysByIdentity } from '../../../shared/claudeAccountIdentity';
 import { useQuotaAccounts } from './quota/useQuotaAccounts';
 import { useQuotaRefresh } from './quota/useQuotaRefresh';
+import { buildQuotaSummary } from './footerSummary';
+import { usePublishFooterSummary } from './useFooterSummary';
 
 const TEST_ID_PREFIX = 'claude-plan';
 /** Provider id used to key this panel's hidden-account set in uiStore. */
@@ -58,27 +62,39 @@ interface ClaudePlanUsageProps {
 	showRefreshButton?: boolean;
 	/** Claim Cmd/Ctrl+R for Refresh while this panel is the visible surface. */
 	refreshHotkey?: boolean;
+	/**
+	 * Show the agents backed by one account. Given, each row's "N agents" chip
+	 * becomes a button that hands the account's config dir back so the dashboard
+	 * can open the Agents tab filtered to it. Omitted, the chip stays a label.
+	 */
+	onShowAccountAgents?: (configDirKey: string) => void;
 }
 
 interface AccountRowProps {
 	configDirKey: string;
 	snapshot: ClaudeUsageSnapshot;
-	/** Agents pointed at this CLAUDE_CONFIG_DIR. */
+	/** Local agents pointed at this CLAUDE_CONFIG_DIR. */
 	agentCount: number;
+	/** Newest `sampledAt` across the panel, so a row the last refresh skipped can say so. */
+	latestSampledAtMs: number | null;
 	/**
 	 * Display names of the other config dirs logged into this same Anthropic
 	 * account. Empty when this row owns its quota bucket alone.
 	 */
 	sharedWith: string[];
 	theme: Theme;
+	/** Show this account's agents in the Agents tab. Omit to keep the chip inert. */
+	onShowAgents?: () => void;
 }
 
 const AccountRow = memo(function AccountRow({
 	configDirKey,
 	snapshot,
 	agentCount,
+	latestSampledAtMs,
 	sharedWith,
 	theme,
+	onShowAgents,
 }: AccountRowProps) {
 	const shortName = deriveShortName(configDirKey);
 	const isUnauthenticated = snapshot.authState === 'unauthenticated';
@@ -96,6 +112,7 @@ const AccountRow = memo(function AccountRow({
 					providerLabel={PROVIDER_LABEL}
 					testId={`${TEST_ID_PREFIX}-agents-${shortName}`}
 					theme={theme}
+					onClick={agentCount > 0 ? onShowAgents : undefined}
 				/>
 				{/* The pill above is the config dir the user named; this is who
 				    that dir is actually logged in as. They drift apart whenever
@@ -110,6 +127,12 @@ const AccountRow = memo(function AccountRow({
 				<QuotaSharedAccountBadge
 					siblingNames={sharedWith}
 					testId={`${TEST_ID_PREFIX}-shared-${shortName}`}
+					theme={theme}
+				/>
+				<QuotaStaleSampleBadge
+					sampledAt={snapshot.sampledAt}
+					latestSampledAtMs={latestSampledAtMs}
+					testId={`${TEST_ID_PREFIX}-stale-${shortName}`}
 					theme={theme}
 				/>
 				<div className="text-xs truncate" style={{ color: theme.colors.textDim, opacity: 0.7 }}>
@@ -172,6 +195,7 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 	autoRefresh = true,
 	showRefreshButton = true,
 	refreshHotkey = false,
+	onShowAccountAgents,
 }: ClaudePlanUsageProps) {
 	const snapshots = useClaudeUsageStore((s) => s.snapshots);
 	const refreshing = useClaudeUsageStore((s) => s.refreshing);
@@ -179,8 +203,6 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 	const { configuredAccountKeys, agentCountsByAccount, setSelectedKey, effectiveSelectedKey } =
 		useQuotaAccounts({
 			toolType: 'claude-code',
-			envVarName: 'CLAUDE_CONFIG_DIR',
-			defaultSubdir: '.claude',
 			accountKeys,
 			snapshots,
 			normalizeKey,
@@ -196,6 +218,7 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 		? (snapshots[effectiveSelectedKey] ?? null)
 		: null;
 	const snapshotCount = Object.keys(snapshots).length;
+	const lastSampledAtMs = useMemo(() => resolveLatestSampledAt(snapshots), [snapshots]);
 
 	// Config dirs that resolve to one Anthropic account share a single quota
 	// bucket, so their bars are identical by construction. Resolve the sibling
@@ -214,6 +237,37 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 		}
 		return named;
 	}, [snapshots]);
+
+	// Footer readout. The peak is the highest of the three windows across every
+	// configured account: one account pinned at 96% is the fact worth surfacing,
+	// and any average would bury it under three idle ones.
+	const quotaFooter = useMemo(() => {
+		let peak: number | null = null;
+		let needsLogin = 0;
+		for (const key of configuredAccountKeys) {
+			const snap = snapshots[key];
+			if (!snap) continue;
+			if (snap.authState === 'unauthenticated') {
+				needsLogin++;
+				continue;
+			}
+			for (const window of [snap.session, snap.weekAllModels, snap.weekSonnetOnly]) {
+				if (typeof window?.percent === 'number' && (peak === null || window.percent > peak)) {
+					peak = window.percent;
+				}
+			}
+		}
+		return { peak, needsLogin };
+	}, [configuredAccountKeys, snapshots]);
+	usePublishFooterSummary(
+		'anthropic-usage',
+		buildQuotaSummary({
+			accounts: configuredAccountKeys.length,
+			needsLogin: quotaFooter.needsLogin,
+			peakPercent: quotaFooter.peak,
+			sampledAtMs: lastSampledAtMs,
+		})
+	);
 
 	// Hidden-account state (only meaningful in the showAllAccounts list view).
 	const hiddenKeys = useUIStore((s) => s.hiddenQuotaAccounts[PROVIDER_ID]);
@@ -260,8 +314,10 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 					configDirKey={configDirKey}
 					snapshot={snapshot}
 					agentCount={agentCount}
+					latestSampledAtMs={lastSampledAtMs}
 					sharedWith={sharedAccountNames[configDirKey] ?? EMPTY_SIBLINGS}
 					theme={theme}
+					onShowAgents={onShowAccountAgents ? () => onShowAccountAgents(configDirKey) : undefined}
 				/>
 			) : (
 				<QuotaPendingRow
@@ -272,6 +328,7 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 					agentCount={agentCount}
 					providerLabel={PROVIDER_LABEL}
 					theme={theme}
+					onShowAgents={onShowAccountAgents ? () => onShowAccountAgents(configDirKey) : undefined}
 				/>
 			);
 			// Toggle sits inline to the left of the account pill (items-start keeps
@@ -299,7 +356,16 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 				</div>
 			);
 		},
-		[snapshots, theme, hiddenSet, toggleHidden, agentCountsByAccount, sharedAccountNames]
+		[
+			snapshots,
+			theme,
+			hiddenSet,
+			toggleHidden,
+			agentCountsByAccount,
+			lastSampledAtMs,
+			sharedAccountNames,
+			onShowAccountAgents,
+		]
 	);
 
 	return (
@@ -409,6 +475,7 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 					configDirKey={effectiveSelectedKey}
 					snapshot={selectedSnapshot}
 					agentCount={agentCountsByAccount[effectiveSelectedKey] ?? 0}
+					latestSampledAtMs={lastSampledAtMs}
 					sharedWith={sharedAccountNames[effectiveSelectedKey] ?? EMPTY_SIBLINGS}
 					theme={theme}
 				/>
@@ -425,6 +492,12 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 					theme={theme}
 				/>
 			) : null}
+
+			<QuotaLastRefreshed
+				sampledAtMs={lastSampledAtMs}
+				theme={theme}
+				testIdPrefix={TEST_ID_PREFIX}
+			/>
 		</div>
 	);
 });

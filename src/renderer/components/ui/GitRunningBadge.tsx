@@ -16,6 +16,12 @@ import { memo } from 'react';
 import { Spinner } from './Spinner';
 import type { Theme } from '../../types';
 
+/**
+ * Hover text for the Create Pull Request row's badge. `gh pr create` has no
+ * console to watch, so the promise is the outcome, not the output.
+ */
+export const PR_RUNNING_TITLE = 'Still creating in the background - you will be told how it went';
+
 export interface GitRunningBadgeProps {
 	theme: Theme;
 	/** Badge text. Defaults to `Running`. */
@@ -24,6 +30,8 @@ export interface GitRunningBadgeProps {
 	className?: string;
 	/** Test id, so each menu can assert its own row. */
 	testId?: string;
+	/** Hover text. Defaults to the pull/push wording. */
+	title?: string;
 }
 
 export const GitRunningBadge = memo(function GitRunningBadge({
@@ -31,15 +39,16 @@ export const GitRunningBadge = memo(function GitRunningBadge({
 	label = 'Running',
 	className = 'flex items-center gap-1',
 	testId = 'git-running-badge',
+	title = 'Still running in the background - open it to watch the output',
 }: GitRunningBadgeProps) {
 	return (
 		<span
 			className={className}
 			style={{ color: theme.colors.accent }}
 			data-testid={testId}
-			title="Still running in the background - open it to watch the output"
+			title={title}
 		>
-			<Spinner size={11} ariaLabel="Git command running" />
+			<Spinner size={11} ariaLabel={`${label}...`} />
 			{label}
 		</span>
 	);

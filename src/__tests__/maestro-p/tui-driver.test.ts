@@ -58,9 +58,26 @@ vi.mock('node-pty', () => ({
 	spawn: (file: string, args: string[], options: SpawnOptions) => mockSpawn(file, args, options),
 }));
 
+// Pin the platform to POSIX. The kill assertions below name a literal signal,
+// and killPty deliberately drops the signal on Windows - without this the
+// quit()/kill() expectations would pass locally and fail only on the Windows
+// CI leg. The Windows half of that contract is covered in
+// tui-driver.ptyKill.test.ts.
+vi.mock('../../shared/platformDetection', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../shared/platformDetection')>()),
+	isWindows: () => false,
+}));
+
 // ── Imports (after mocks) ──────────────────────────────────────────────────
 
 import {
+	chunkPromptForPty,
+	MACOS_PTY_INPUT_QUEUE_BYTES,
+	PROMPT_CHUNK_DRAIN_TIMEOUT_MS,
+	PROMPT_CHUNK_INTERVAL_MS,
+	PROMPT_CHUNK_MAX_BYTES,
+	PROMPT_SETTLE_MAX_MS,
+	PROMPT_SETTLE_QUIET_MS,
 	QUIT_GRACE_MS,
 	READY_MAX_TAPS,
 	READY_TAP_INTERVAL_MS,
@@ -68,6 +85,9 @@ import {
 	SEND_ENTER_DELAY_MS,
 	SUBMIT_ENTER_RETRIES,
 	SUBMIT_ENTER_RETRY_INTERVAL_MS,
+	TRUST_CONFIRM_QUIET_MS,
+	TRUST_MAX_DOWNS,
+	TRUST_REPAINT_WAIT_MS,
 	TuiDriver,
 } from '../../maestro-p/tui-driver';
 
@@ -343,6 +363,98 @@ describe('TuiDriver', () => {
 		});
 	});
 
+	describe('acceptWorkspaceTrust (usage probe folder)', () => {
+		// claude 2.1.26x defaults the trust prompt to "No, exit" in the temp dir and
+		// re-renders it shortly after painting, snapping a sent Down back to "No".
+		const PROMPT_ON_NO =
+			'Quicksafetycheck:Isthisaprojectyoucreatedoroneyoutrust?\n❯No,exit\nYes,Itrustthisfolder\n';
+		const REPAINT_ON_YES = 'No, exit\r❯Yes, I trust this folder\r\n';
+		const REPAINT_ON_NO = '❯No, exit\r Yes, I trust this folder\r\n';
+		const writes = () => mockPtyProcess.write.mock.calls.map((call) => call[0]);
+
+		beforeEach(() => {
+			vi.useFakeTimers();
+		});
+		afterEach(() => {
+			vi.useRealTimers();
+		});
+
+		async function makeTrustingDriver(): Promise<TuiDriver> {
+			const driver = new TuiDriver({
+				binPath: 'claude',
+				args: [],
+				cwd: '/tmp/maestro-claude-usage-probe',
+				env: {},
+				acceptWorkspaceTrust: true,
+			});
+			await driver.start();
+			return driver;
+		}
+
+		it('moves off "No, exit" and confirms "Yes" once the selection holds', async () => {
+			const driver = await makeTrustingDriver();
+			const trustHandler = vi.fn();
+			driver.on('trust-accepted', trustHandler);
+
+			feed(PROMPT_ON_NO);
+			expect(writes()).toEqual(['\x1b[B']);
+
+			feed(REPAINT_ON_YES);
+			vi.advanceTimersByTime(TRUST_CONFIRM_QUIET_MS - 1);
+			expect(writes()).toEqual(['\x1b[B']);
+			vi.advanceTimersByTime(1);
+			expect(writes()).toEqual(['\x1b[B', '\r']);
+			expect(trustHandler).toHaveBeenCalledTimes(1);
+		});
+
+		it('selects "Yes" again when a re-render snaps the selector back to "No"', async () => {
+			await makeTrustingDriver();
+			feed(PROMPT_ON_NO);
+			feed(REPAINT_ON_YES);
+			vi.advanceTimersByTime(TRUST_CONFIRM_QUIET_MS - 100);
+
+			feed(REPAINT_ON_NO);
+			vi.advanceTimersByTime(TRUST_CONFIRM_QUIET_MS);
+			// The pending Enter was cancelled: it would have confirmed "No, exit".
+			expect(writes()).toEqual(['\x1b[B', '\x1b[B']);
+
+			feed(REPAINT_ON_YES);
+			vi.advanceTimersByTime(TRUST_CONFIRM_QUIET_MS);
+			expect(writes()).toEqual(['\x1b[B', '\x1b[B', '\r']);
+		});
+
+		it('never presses Enter while the selector stays on "No", blind taps included', async () => {
+			await makeTrustingDriver();
+			feed(PROMPT_ON_NO);
+			// No repaint ever arrives: Downs retry up to the cap, and nothing confirms.
+			vi.advanceTimersByTime(
+				TRUST_REPAINT_WAIT_MS * (TRUST_MAX_DOWNS + 1) + READY_TAP_INTERVAL_MS * READY_MAX_TAPS
+			);
+			expect(writes()).not.toContain('\r');
+			expect(writes().filter((key) => key === '\x1b[B')).toHaveLength(TRUST_MAX_DOWNS);
+		});
+
+		it("does not fire ready on the dialog's own ❯ selector", async () => {
+			const driver = await makeTrustingDriver();
+			const readyHandler = vi.fn();
+			driver.on('ready', readyHandler);
+
+			feed('Yes, I trust this folder\n❯ No, exit\n');
+			feed('❯ Yes, I trust this folder\n');
+			expect(readyHandler).not.toHaveBeenCalled();
+
+			vi.advanceTimersByTime(TRUST_CONFIRM_QUIET_MS);
+			feed('\r❯ Try "edit <filepath>"\n');
+			expect(readyHandler).toHaveBeenCalledTimes(1);
+		});
+
+		it('keeps the plain Enter without the opt-in', async () => {
+			await makeDriver();
+			feed(PROMPT_ON_NO);
+			expect(writes()).toEqual(['\r']);
+		});
+	});
+
 	describe('blind-tap fallback + ready-timeout (g)', () => {
 		beforeEach(() => {
 			vi.useFakeTimers();
@@ -542,6 +654,88 @@ describe('TuiDriver', () => {
 		});
 	});
 
+	// #1577: claude falls back to API Usage Billing without an error when it
+	// cannot read the subscription login, and the startup header is the only
+	// place that says so.
+	describe("'api-billing' event", () => {
+		it('fires when the startup header shows API Usage Billing', async () => {
+			const driver = await makeDriver();
+			const handler = vi.fn();
+			driver.on('api-billing', handler);
+			feed('\x1b[1mFable 5.1\x1b[0m · API Usage Billing\r\n');
+			expect(handler).toHaveBeenCalledTimes(1);
+		});
+
+		it('matches a header split across data chunks', async () => {
+			const driver = await makeDriver();
+			const handler = vi.fn();
+			driver.on('api-billing', handler);
+			feed('Fable 5.1 · API Us');
+			feed('age Billing\n');
+			expect(handler).toHaveBeenCalledTimes(1);
+		});
+
+		it('fires at most once across repaints', async () => {
+			const driver = await makeDriver();
+			const handler = vi.fn();
+			driver.on('api-billing', handler);
+			feed('Fable 5.1 · API Usage Billing\n');
+			feed('Fable 5.1 · API Usage Billing\n');
+			expect(handler).toHaveBeenCalledTimes(1);
+		});
+
+		it('does not fire for a subscription plan header', async () => {
+			const driver = await makeDriver();
+			const handler = vi.fn();
+			driver.on('api-billing', handler);
+			feed('Fable 5.1 · Claude Max\n❯ \n');
+			expect(handler).not.toHaveBeenCalled();
+		});
+
+		it('ignores the phrase once input has been typed', async () => {
+			vi.useFakeTimers();
+			try {
+				const driver = await makeDriver();
+				feed('Fable 5.1 · Claude Max\n❯ \n');
+				const handler = vi.fn();
+				driver.on('api-billing', handler);
+				const sending = driver.send('what does · API Usage Billing mean?');
+				await vi.advanceTimersByTimeAsync(PROMPT_SETTLE_QUIET_MS);
+				await sending;
+				feed('what does · API Usage Billing mean?\n');
+				expect(handler).not.toHaveBeenCalled();
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+	});
+
+	describe('chunkPromptForPty()', () => {
+		it('splits on the byte budget and reassembles to the original text', () => {
+			const text = 'a'.repeat(1100);
+			const chunks = chunkPromptForPty(text, 512);
+			expect(chunks.map((c) => c.length)).toEqual([512, 512, 76]);
+			expect(chunks.join('')).toBe(text);
+		});
+
+		it('budgets UTF-8 bytes and never cuts a multi-byte character or surrogate pair', () => {
+			// 'é' is 2 bytes, '界' is 3, '😀' is 4 (a UTF-16 surrogate pair).
+			const text = 'é界😀'.repeat(200);
+			const chunks = chunkPromptForPty(text, 100);
+			expect(chunks.join('')).toBe(text);
+			for (const chunk of chunks) {
+				expect(Buffer.byteLength(chunk, 'utf8')).toBeLessThanOrEqual(100);
+				// A cut surrogate pair would re-encode as U+FFFD.
+				expect(chunk).not.toContain('�');
+				expect(Buffer.from(chunk, 'utf8').toString('utf8')).toBe(chunk);
+			}
+		});
+
+		it('returns no chunks for an empty prompt', () => {
+			expect(chunkPromptForPty('')).toEqual([]);
+		});
+	});
+
 	describe('send()', () => {
 		beforeEach(() => {
 			vi.useFakeTimers();
@@ -558,7 +752,11 @@ describe('TuiDriver', () => {
 			// emits ready without writing.
 			feed('❯ \n');
 			mockPtyProcess.write.mockClear();
-			driver.send('hello world');
+			const sending = driver.send('hello world');
+			// Nothing is typed until the screen has been quiet for the settle window.
+			expect(mockPtyProcess.write).not.toHaveBeenCalled();
+			await vi.advanceTimersByTimeAsync(PROMPT_SETTLE_QUIET_MS);
+			await sending;
 			// First write is the text body alone - no trailing \r, because
 			// claude's TUI swallows a same-chunk \r as a literal newline in its
 			// multi-line input editor and the prompt sits unsubmitted.
@@ -582,16 +780,163 @@ describe('TuiDriver', () => {
 			}
 		});
 
-		it('throws if called before start()', () => {
+		// A chunk that claude has not read yet is still sitting in the PTY's input
+		// queue when the next one lands. At 512 bytes two undrained chunks were
+		// 1,024 against a 1,022-byte queue, which is how 3.4 KB prompts kept
+		// losing exactly one queue (issue #1598) with paced writes already in
+		// place. The budget has to leave room for several chunks in flight.
+		it('sizes chunks so several can sit undrained inside the PTY input queue', () => {
+			expect(PROMPT_CHUNK_MAX_BYTES * 3).toBeLessThan(MACOS_PTY_INPUT_QUEUE_BYTES);
+		});
+
+		it('types a long prompt in paced chunks, each well under the PTY input queue', async () => {
+			const driver = await makeDriver();
+			feed('❯ \n');
+			mockPtyProcess.write.mockClear();
+			// 1,300 bytes: one write would overfill a macOS PTY's 1,022-byte input
+			// queue, so any input flush while claude reads it loses a full queue.
+			const prompt = 'x'.repeat(1300);
+			const sending = driver.send(prompt);
+			await vi.advanceTimersByTimeAsync(PROMPT_SETTLE_QUIET_MS);
+			let typed = 1;
+			expect(mockPtyProcess.write).toHaveBeenCalledTimes(typed);
+			// Each subsequent chunk waits for claude to paint (drain evidence) and
+			// then the floor, so drive both per chunk until the prompt is out.
+			while (mockPtyProcess.write.mock.calls.length < Math.ceil(1300 / PROMPT_CHUNK_MAX_BYTES)) {
+				feed('redraw');
+				await vi.advanceTimersByTimeAsync(PROMPT_CHUNK_INTERVAL_MS);
+				typed += 1;
+				expect(mockPtyProcess.write).toHaveBeenCalledTimes(typed);
+			}
+			await sending;
+			const writes = mockPtyProcess.write.mock.calls.map((c) => c[0] as string);
+			expect(writes).toHaveLength(Math.ceil(1300 / PROMPT_CHUNK_MAX_BYTES));
+			expect(writes.join('')).toBe(prompt);
+			for (const chunk of writes) {
+				expect(chunk.length).toBeLessThanOrEqual(PROMPT_CHUNK_MAX_BYTES);
+			}
+			// No Enter until SEND_ENTER_DELAY_MS after the LAST chunk: an earlier
+			// tap would submit a half-typed prompt.
+			expect(writes).not.toContain('\r');
+			await vi.advanceTimersByTimeAsync(SEND_ENTER_DELAY_MS);
+			expect(mockPtyProcess.write).toHaveBeenLastCalledWith('\r');
+		});
+
+		// The point of drain-aware pacing: a chunk is held until claude has
+		// actually read the last one, so a slow editor render cannot let chunks
+		// pile up in the queue the way a fixed interval did.
+		it('holds the next chunk until claude paints, however long that takes', async () => {
+			const driver = await makeDriver();
+			feed('❯ \n');
+			mockPtyProcess.write.mockClear();
+			const sending = driver.send('z'.repeat(PROMPT_CHUNK_MAX_BYTES * 2));
+			await vi.advanceTimersByTimeAsync(PROMPT_SETTLE_QUIET_MS);
+			expect(mockPtyProcess.write).toHaveBeenCalledTimes(1);
+			// The floor alone is not enough: with no paint, nothing more is typed.
+			await vi.advanceTimersByTimeAsync(PROMPT_CHUNK_INTERVAL_MS * 4);
+			expect(mockPtyProcess.write).toHaveBeenCalledTimes(1);
+			// claude redraws its editor - it read the chunk. Typing resumes.
+			feed('redraw');
+			await vi.advanceTimersByTimeAsync(PROMPT_CHUNK_INTERVAL_MS);
+			await sending;
+			expect(mockPtyProcess.write).toHaveBeenCalledTimes(2);
+		});
+
+		// A screen that goes quiet must not strand the prompt: past the ceiling
+		// we keep typing, which is no worse than the fixed interval it replaced.
+		it('types on anyway once the drain ceiling passes with no paint', async () => {
+			const driver = await makeDriver();
+			feed('❯ \n');
+			mockPtyProcess.write.mockClear();
+			const sending = driver.send('q'.repeat(PROMPT_CHUNK_MAX_BYTES * 2));
+			await vi.advanceTimersByTimeAsync(PROMPT_SETTLE_QUIET_MS);
+			expect(mockPtyProcess.write).toHaveBeenCalledTimes(1);
+			await vi.advanceTimersByTimeAsync(PROMPT_CHUNK_DRAIN_TIMEOUT_MS + PROMPT_CHUNK_INTERVAL_MS);
+			await sending;
+			expect(mockPtyProcess.write).toHaveBeenCalledTimes(2);
+		});
+
+		// send() parks on a paint that a dead PTY will never send; exit has to
+		// release it rather than leave the caller waiting out the ceiling.
+		it('unwinds immediately when the PTY exits while waiting for a paint', async () => {
+			const driver = await makeDriver();
+			feed('❯ \n');
+			mockPtyProcess.write.mockClear();
+			const sending = driver.send('w'.repeat(PROMPT_CHUNK_MAX_BYTES * 2));
+			await vi.advanceTimersByTimeAsync(PROMPT_SETTLE_QUIET_MS);
+			expect(mockPtyProcess.write).toHaveBeenCalledTimes(1);
+			triggerExit(1);
+			// No timer advance at all: the exit itself is what resolves send().
+			await sending;
+			expect(mockPtyProcess.write).toHaveBeenCalledTimes(1);
+		});
+
+		it('stops typing and never presses Enter if the PTY exits mid-prompt', async () => {
+			const driver = await makeDriver();
+			feed('❯ \n');
+			mockPtyProcess.write.mockClear();
+			const sending = driver.send('y'.repeat(PROMPT_CHUNK_MAX_BYTES * 3));
+			await vi.advanceTimersByTimeAsync(PROMPT_SETTLE_QUIET_MS);
+			expect(mockPtyProcess.write).toHaveBeenCalledTimes(1);
+			triggerExit(1);
+			await vi.advanceTimersByTimeAsync(PROMPT_CHUNK_INTERVAL_MS * 5 + SEND_ENTER_DELAY_MS);
+			await sending;
+			expect(mockPtyProcess.write).toHaveBeenCalledTimes(1);
+		});
+
+		it('waits until the screen has been quiet for the settle window before typing', async () => {
+			const driver = await makeDriver();
+			feed('❯ \n');
+			mockPtyProcess.write.mockClear();
+			const sending = driver.send('hello');
+			await vi.advanceTimersByTimeAsync(PROMPT_SETTLE_QUIET_MS - 100);
+			expect(mockPtyProcess.write).not.toHaveBeenCalled();
+			// claude is still mounting its UI and paints again: the quiet window restarts.
+			feed('auto mode unavailable for this model\n');
+			await vi.advanceTimersByTimeAsync(PROMPT_SETTLE_QUIET_MS - 100);
+			expect(mockPtyProcess.write).not.toHaveBeenCalled();
+			await vi.advanceTimersByTimeAsync(100);
+			await sending;
+			expect(mockPtyProcess.write).toHaveBeenCalledWith('hello');
+		});
+
+		it('types anyway at PROMPT_SETTLE_MAX_MS when the screen never goes quiet', async () => {
+			const driver = await makeDriver();
+			feed('❯ \n');
+			mockPtyProcess.write.mockClear();
+			const sending = driver.send('hello');
+			let elapsed = 0;
+			while (mockPtyProcess.write.mock.calls.length === 0 && elapsed < PROMPT_SETTLE_MAX_MS * 2) {
+				feed('⠋ spinner\n');
+				await vi.advanceTimersByTimeAsync(100);
+				elapsed += 100;
+			}
+			await sending;
+			expect(mockPtyProcess.write).toHaveBeenCalledWith('hello');
+			expect(elapsed).toBeLessThanOrEqual(PROMPT_SETTLE_MAX_MS + 100);
+		});
+
+		it('never types if the PTY exits while waiting for the screen to settle', async () => {
+			const driver = await makeDriver();
+			feed('❯ \n');
+			mockPtyProcess.write.mockClear();
+			const sending = driver.send('hello');
+			triggerExit(1);
+			await vi.advanceTimersByTimeAsync(PROMPT_SETTLE_MAX_MS + SEND_ENTER_DELAY_MS);
+			await sending;
+			expect(mockPtyProcess.write).not.toHaveBeenCalled();
+		});
+
+		it('throws if called before start()', async () => {
 			const driver = new TuiDriver({ binPath: 'claude', args: [], cwd: '/tmp', env: {} });
-			expect(() => driver.send('hello')).toThrow(/before start\(\)/);
+			await expect(driver.send('hello')).rejects.toThrow(/before start\(\)/);
 		});
 
 		it('becomes a no-op after exit', async () => {
 			const driver = await makeDriver();
 			triggerExit(0);
 			mockPtyProcess.write.mockClear();
-			driver.send('ignored');
+			await driver.send('ignored');
 			vi.advanceTimersByTime(SEND_ENTER_DELAY_MS);
 			expect(mockPtyProcess.write).not.toHaveBeenCalled();
 		});
@@ -599,7 +944,7 @@ describe('TuiDriver', () => {
 		it('skips the trailing \\r if exit fires between writes', async () => {
 			const driver = await makeDriver();
 			mockPtyProcess.write.mockClear();
-			driver.send('hello');
+			await driver.send('hello');
 			// Text write already happened; PTY dies before the deferred Enter.
 			expect(mockPtyProcess.write).toHaveBeenCalledTimes(1);
 			triggerExit(1);
@@ -728,6 +1073,12 @@ describe('TuiDriver', () => {
 			expect(mockPtyProcess.kill).toHaveBeenCalledWith('SIGKILL');
 		});
 
+		it('sends SIGTERM when asked, so claude can shut down its MCP servers', async () => {
+			const driver = await makeDriver();
+			driver.kill('SIGTERM');
+			expect(mockPtyProcess.kill).toHaveBeenCalledWith('SIGTERM');
+		});
+
 		it('is a no-op before start()', () => {
 			const driver = new TuiDriver({ binPath: 'claude', args: [], cwd: '/tmp', env: {} });
 			driver.kill();
@@ -740,6 +1091,51 @@ describe('TuiDriver', () => {
 			mockPtyProcess.kill.mockClear();
 			driver.kill();
 			expect(mockPtyProcess.kill).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('getScreenCapture()', () => {
+		async function makeCapturingDriver(): Promise<TuiDriver> {
+			const driver = new TuiDriver({
+				binPath: 'claude',
+				args: [],
+				cwd: '/tmp',
+				env: { HOME: '/home/test' },
+				captureScreen: true,
+			});
+			await driver.start();
+			return driver;
+		}
+
+		it('stays empty when captureScreen is not set', async () => {
+			// Run mode never asks for the capture, and paying to concatenate every byte
+			// of a long session would be pure overhead there.
+			const driver = await makeDriver();
+			feed('some output\r\n');
+			expect(driver.getScreenCapture()).toBe('');
+		});
+
+		it('ACCUMULATES across paints instead of replacing', async () => {
+			// Required by statusMode's /usage retry (#1595): a re-sent /usage
+			// appends its panel rather than replacing the previous one, and parseUsage
+			// resolves that by anchoring on the LAST `Current session` header. If this
+			// ever becomes a per-paint snapshot, the retry still "works" but silently
+			// loses claude's differential repaints - the ones that carry only changed
+			// cells and no section header - and every retry parses to null.
+			const driver = await makeCapturingDriver();
+			feed('first panel');
+			feed(' second panel');
+			expect(driver.getScreenCapture()).toBe('first panel second panel');
+		});
+
+		it('keeps raw ANSI rather than the stripped line stream', async () => {
+			// Why statusMode parses this instead of the 'line' events: heavier /usage
+			// panels paint by cursor-addressing with no line feeds, so the newline
+			// -delimited stream is empty while the panel is fully present here.
+			const driver = await makeCapturingDriver();
+			feed('\u001b[2J\u001b[H23% used');
+			expect(driver.getScreenCapture()).toContain('\u001b[2J');
+			expect(driver.getScreenCapture()).toContain('23% used');
 		});
 	});
 });

@@ -4,6 +4,7 @@ import type { StoredSession } from '../../stores/types';
 import type { Group } from '../../../shared/types';
 import { asThinkingMode } from '../../../shared/types';
 import { getSessionIdsBusyWithCli } from '../../../shared/cli-activity';
+import { isAiTabProcessActive } from '../../utils/agent-busy';
 import { isImageRef, resolveToDataUrlSync } from '../../storage/session-image-store';
 
 export function registerSessionCallbacks(
@@ -118,9 +119,11 @@ export function registerSessionCallbacks(
 			for (const tab of aiTabs) {
 				if (!tab || typeof tab.id !== 'string') continue;
 				const isActiveTab = tab.id === s.activeTabId;
-				const managedProcessActive = Boolean(
-					processManager?.get(`${s.id}-ai-${tab.id}`) ||
-					(isActiveTab && processManager?.get(`${s.id}-ai`))
+				const managedProcessActive = isAiTabProcessActive(
+					processManager,
+					s.id,
+					tab.id,
+					isActiveTab
 				);
 				const processActive = managedProcessActive || (isActiveTab && cliBusy);
 				const state =

@@ -16,6 +16,8 @@ import { memo, type ReactNode } from 'react';
 import { AlertTriangle, Play, X } from 'lucide-react';
 import type { Theme } from '../../../types';
 import type { AiCommandEntry } from '../../../stores/aiCommandStore';
+import { useSettingsStore } from '../../../stores/settingsStore';
+import { useFixedPitchFont } from '../../../hooks/ui/useFixedPitchFont';
 import { Spinner } from '../../ui/Spinner';
 import { CopyIconButton } from '../../ui/CopyIconButton';
 
@@ -39,6 +41,12 @@ export const AiCommandProposal = memo(function AiCommandProposal({
 }: AiCommandProposalProps) {
 	const { status, request, command, error, choice } = entry;
 
+	// The proposal is a command line, so it is set in the same fixed-pitch face
+	// the composer and the output card use - what you confirm here looks exactly
+	// like what runs.
+	const fontFamily = useSettingsStore((state) => state.fontFamily);
+	const shellFontFamily = useFixedPitchFont(fontFamily);
+
 	return (
 		<div
 			className="flex flex-col gap-2 px-3 py-2 border-b"
@@ -47,7 +55,11 @@ export const AiCommandProposal = memo(function AiCommandProposal({
 		>
 			{/* The request stays on screen the whole time. Judging a proposed
 			    command means judging it against what was actually asked for. */}
-			<div className="text-[11px] truncate" style={{ color: theme.colors.textDim }} title={request}>
+			<div
+				className="text-xs-plus truncate"
+				style={{ color: theme.colors.textDim }}
+				title={request}
+			>
 				{request}
 			</div>
 
@@ -83,14 +95,14 @@ export const AiCommandProposal = memo(function AiCommandProposal({
 						}}
 					>
 						<span
-							className="text-sm font-mono font-bold select-none shrink-0"
-							style={{ color: theme.colors.accent }}
+							className="text-sm font-bold select-none shrink-0"
+							style={{ color: theme.colors.accent, fontFamily: shellFontFamily }}
 						>
 							$
 						</span>
 						<code
-							className="flex-1 text-sm font-mono whitespace-pre-wrap break-all select-text"
-							style={{ color: theme.colors.textMain }}
+							className="flex-1 text-sm whitespace-pre-wrap break-all select-text"
+							style={{ color: theme.colors.textMain, fontFamily: shellFontFamily }}
 							data-testid="ai-command-proposed"
 						>
 							{command}
@@ -126,7 +138,7 @@ export const AiCommandProposal = memo(function AiCommandProposal({
 							onSelect={() => onChoose('cancel')}
 							onActivate={onDismiss}
 						/>
-						<span className="ml-auto text-[10px]" style={{ color: theme.colors.textDim }}>
+						<span className="ml-auto text-2xs" style={{ color: theme.colors.textDim }}>
 							&#8592; &#8594; to choose
 						</span>
 					</div>
@@ -184,7 +196,7 @@ function ChoiceButton({
 			{icon}
 			{label}
 			<kbd
-				className="px-1 rounded border font-mono text-[10px]"
+				className="px-1 rounded border font-mono text-2xs"
 				style={{ borderColor: theme.colors.border }}
 			>
 				{hint}

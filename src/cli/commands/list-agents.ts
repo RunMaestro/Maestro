@@ -36,6 +36,9 @@ export function listAgents(options: ListAgentsOptions): void {
 				cwd: s.cwd,
 				groupId: s.groupId,
 				autoRunFolderPath: s.autoRunFolderPath,
+				// Where this agent's worktrees go, so a caller can honor it instead of
+				// inventing a location the desktop never sees. Null when unset.
+				worktreeBasePath: s.worktreeConfig?.basePath ?? null,
 				bookmarked: !!s.bookmarked,
 				sessionSshRemoteConfig: s.sessionSshRemoteConfig ?? null,
 			}));

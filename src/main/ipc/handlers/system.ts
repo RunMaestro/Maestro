@@ -380,6 +380,43 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 		return img.toDataURL();
 	});
 
+	// ============ Page Capture ============
+
+	// Screenshot the calling window exactly as it is painted, as a PNG data URL.
+	// `rect` (CSS pixels, viewport-relative) narrows the shot to one region;
+	// omit it for the whole page. Captures from the SENDER rather than the main
+	// window so a graph opened in a second window shoots itself, not window one.
+	ipcMain.handle(
+		'window:capturePage',
+		async (
+			event,
+			rect?: { x: number; y: number; width: number; height: number }
+		): Promise<string | null> => {
+			const contents = event.sender;
+			if (!contents || contents.isDestroyed()) return null;
+
+			// getBoundingClientRect() hands back floats; Chromium wants whole
+			// DIPs and answers an out-of-range rect with an empty image, so the
+			// region is rounded and clamped before it goes over.
+			let area: Electron.Rectangle | undefined;
+			if (rect) {
+				const x = Math.max(0, Math.floor(rect.x));
+				const y = Math.max(0, Math.floor(rect.y));
+				area = {
+					x,
+					y,
+					width: Math.floor(rect.x + rect.width) - x,
+					height: Math.floor(rect.y + rect.height) - y,
+				};
+				if (area.width <= 0 || area.height <= 0) return null;
+			}
+
+			const image = area ? await contents.capturePage(area) : await contents.capturePage();
+			if (image.isEmpty()) return null;
+			return image.toDataURL();
+		}
+	);
+
 	// ============ Tunnel Handlers (Cloudflare) ============
 
 	ipcMain.handle('tunnel:isCloudflaredInstalled', async () => {
@@ -746,6 +783,14 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 		logger.info('Sleep prevention restored from settings', 'PowerManager');
 	}
 
+	const savedKeepDisplayAwake = settingsStore.get(
+		'preventDisplaySleepEnabled' as keyof MaestroSettings
+	);
+	if (savedKeepDisplayAwake === true) {
+		powerManager.setKeepDisplayAwake(true);
+		logger.info('Display sleep prevention restored from settings', 'PowerManager');
+	}
+
 	// Set whether sleep prevention is enabled
 	ipcMain.handle('power:setEnabled', async (_event, enabled: boolean) => {
 		powerManager.setEnabled(enabled);
@@ -755,6 +800,12 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 	// Check if sleep prevention is enabled
 	ipcMain.handle('power:isEnabled', async () => {
 		return powerManager.isEnabled();
+	});
+
+	// Lift blockers to prevent-display-sleep (screen saver / lock / idle logout)
+	ipcMain.handle('power:setKeepDisplayAwake', async (_event, keepAwake: boolean) => {
+		powerManager.setKeepDisplayAwake(keepAwake);
+		settingsStore.set('preventDisplaySleepEnabled' as keyof MaestroSettings, keepAwake);
 	});
 
 	// Get current power management status

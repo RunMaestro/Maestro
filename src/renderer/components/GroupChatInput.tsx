@@ -15,9 +15,10 @@
 import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { useSettingsStore } from '../stores/settingsStore';
+import type { GroupChatQueueState } from '../../shared/group-chat-types';
 import { useSessionStore } from '../stores/sessionStore';
 import { mentionSessionEquality } from '../stores/sessionEquality';
-import { ArrowUp, Bell, ImageIcon, Eye, Keyboard, PenLine, Users } from 'lucide-react';
+import { ArrowUp, Bell, ImageIcon, Eye, Keyboard, PenLine } from 'lucide-react';
 import type {
 	Theme,
 	GroupChatParticipant,
@@ -34,13 +35,19 @@ import {
 import { QueuedItemsList } from './QueuedItemsList';
 import { NotificationPopover } from './NotificationPopover';
 import { useImageAnnotatorStore } from './ImageAnnotator/imageAnnotatorStore';
-import {
-	normalizeMentionName,
-	getMentionNameForContext,
-	formatGroupMentionExpansion,
-} from '../utils/participantColors';
 import { logger } from '../utils/logger';
-import { useDebouncedCallback } from '../hooks/utils/useThrottle';
+import { useDraftPersistence } from '../hooks/input/useDraftPersistence';
+import {
+	useMentionPicker,
+	buildMentionAccept,
+	type MentionPickerItem,
+} from '../hooks/input/useMentionPicker';
+import type { AtMentionSuggestion } from '../hooks/input/useAtMentionCompletion';
+import { AtMentionPopover } from './InputArea/overlays/AtMentionPopover';
+import { getAtMentionTrigger } from './InputArea/utils/inputTriggers';
+import { useScrollIntoView } from '../hooks/ui/useScrollIntoView';
+import { StagedImagesStrip } from './InputArea/components/StagedImagesStrip';
+import { moveStagedImage } from '../utils/stagedImageOrder';
 import { useUIStore } from '../stores/uiStore';
 import { groupChatOutputSearchKey } from '../utils/outputSearch';
 import { OUTPUT_SEARCH_INPUT_SELECTOR } from '../hooks/ui/useOutputSearchLayer';
@@ -53,17 +60,11 @@ const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
 /** Allowed image MIME types */
 const ALLOWED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
 
-/** Union type for items shown in the @ mention dropdown */
-type MentionItem =
-	| { type: 'agent'; name: string; mentionName: string; agentId: string; sessionId: string }
-	| {
-			type: 'group';
-			group: Group;
-			mentionName: string;
-			memberCount: number;
-			/** Insert-ready expansion: every member's `@name` token (see `formatGroupMentionExpansion`). */
-			memberMentions: string;
-	  };
+/**
+ * Group Chat has no file/directory mentions, only agents and groups - the unified
+ * `@` picker's `fileSuggestions` input is always this stable empty array.
+ */
+const NO_FILE_SUGGESTIONS: AtMentionSuggestion[] = [];
 
 interface GroupChatInputProps {
 	theme: Theme;
@@ -90,7 +91,9 @@ interface GroupChatInputProps {
 	// Image lightbox handler
 	onOpenLightbox?: (image: string, contextImages?: string[], source?: 'staged' | 'history') => void;
 	// Execution queue props
-	executionQueue?: QueuedItem[];
+	/** The chat's pending sends as MAIN reports them. Undefined until loaded. */
+	queueState?: GroupChatQueueState;
+	onResumeQueue?: () => void;
 	onRemoveQueuedItem?: (itemId: string) => void;
 	onReorderQueuedItems?: (fromIndex: number, toIndex: number) => void;
 	// Input send behavior (synced with global settings)
@@ -122,7 +125,8 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 	handlePaste,
 	handleDrop,
 	onOpenLightbox,
-	executionQueue,
+	queueState,
+	onResumeQueue,
 	onRemoveQueuedItem,
 	onReorderQueuedItems,
 	enterToSendAI: enterToSendAIProp,
@@ -132,9 +136,14 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 }: GroupChatInputProps): JSX.Element {
 	const spellCheckEnabled = useSettingsStore((state) => state.spellCheck);
 	const [message, setMessage] = useState(draftMessage || '');
-	const [showMentions, setShowMentions] = useState(false);
-	const [mentionFilter, setMentionFilter] = useState('');
-	const [selectedMentionIndex, setSelectedMentionIndex] = useState(0);
+	// Unified `@` mention picker state (see useMentionPicker/AtMentionPopover).
+	// Local rather than lifted through InputArea's useInputContext - that context
+	// also orchestrates slash commands and tab completion, neither of which
+	// Group Chat has.
+	const [atMentionOpen, setAtMentionOpen] = useState(false);
+	const [atMentionFilter, setAtMentionFilter] = useState('');
+	const [atMentionStartIndex, setAtMentionStartIndex] = useState(-1);
+	const [selectedAtMentionIndex, setSelectedAtMentionIndex] = useState(0);
 	// Use lifted state if provided, otherwise local state
 	const [localReadOnlyMode, setLocalReadOnlyMode] = useState(false);
 	const readOnlyMode = readOnlyModeProp ?? localReadOnlyMode;
@@ -148,23 +157,28 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 	const setStagedImages = setStagedImagesProp ?? setLocalStagedImages;
 	const localInputRef = useRef<HTMLTextAreaElement>(null);
 	const inputRef = inputRefProp ?? localInputRef;
-	const mentionListRef = useRef<HTMLDivElement>(null);
-	const selectedMentionRef = useRef<HTMLButtonElement>(null);
 	const prevGroupChatIdRef = useRef(groupChatId);
 	const [notificationPopoverOpen, setNotificationPopoverOpen] = useState(false);
 	const notificationBtnRef = useRef<HTMLButtonElement>(null);
 	const lastPersistedDraftRef = useRef<{ groupChatId: string; draft: string } | null>(null);
-	const {
-		debouncedCallback: persistDraft,
-		flush: flushDraft,
-		cancel: cancelDraft,
-	} = useDebouncedCallback(
-		(draft: string, targetGroupChatId: string) => {
+	// Shared with AI Chat's own draft write-back (useInputSync) - see
+	// useDraftPersistence's doc comment for why a key (here, groupChatId)
+	// switch flushes the old key immediately rather than dropping it.
+	const onPersistDraft = useCallback(
+		(targetGroupChatId: string, draft: string) => {
 			lastPersistedDraftRef.current = { groupChatId: targetGroupChatId, draft };
 			onDraftChange?.(draft, targetGroupChatId);
 		},
-		300,
-		{ flushOnUnmount: true }
+		[onDraftChange]
+	);
+	const {
+		queueFlush: queueDraftFlush,
+		flushPending: flushDraft,
+		cancelPending: cancelDraft,
+	} = useDraftPersistence<string>(onPersistDraft, 300);
+	const persistDraft = useCallback(
+		(draft: string, targetGroupChatId: string) => queueDraftFlush(targetGroupChatId, draft),
+		[queueDraftFlush]
 	);
 
 	useEffect(() => {
@@ -182,80 +196,23 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 		mentionSessionEquality
 	);
 
-	// Build list of mentionable items: groups first, then individual agents
-	// Groups expand into all their member @mentions when selected
-	const mentionItems = useMemo(() => {
-		const items: MentionItem[] = [];
-		const sessionNamesForMentions = sessions
-			.filter((s) => s.toolType !== 'terminal')
-			.map((s) => s.name);
-
-		// Add groups (only those with at least 1 non-terminal member)
-		if (groups) {
-			for (const group of groups) {
-				const members = sessions.filter((s) => s.groupId === group.id && s.toolType !== 'terminal');
-				if (members.length > 0) {
-					items.push({
-						type: 'group',
-						group,
-						mentionName: normalizeMentionName(group.name),
-						memberCount: members.length,
-						memberMentions: formatGroupMentionExpansion(
-							members.map((m) => m.name),
-							sessionNamesForMentions
-						),
-					});
-				}
-			}
-		}
-
-		// Add individual agents (excluding terminal-only)
-		for (const s of sessions) {
-			if (s.toolType !== 'terminal') {
-				items.push({
-					type: 'agent',
-					name: s.name,
-					mentionName: getMentionNameForContext(s.name, sessionNamesForMentions),
-					agentId: s.toolType,
-					sessionId: s.id,
-				});
-			}
-		}
-
-		return items;
-	}, [sessions, groups]);
-
-	// Filter mention items based on filter text
-	const filteredMentions = useMemo(() => {
-		if (!mentionFilter) return mentionItems;
-		return mentionItems.filter((item) => {
-			if (item.type === 'group') {
-				return (
-					item.group.name.toLowerCase().includes(mentionFilter) ||
-					item.mentionName.toLowerCase().includes(mentionFilter)
-				);
-			}
-			return (
-				item.name.toLowerCase().includes(mentionFilter) ||
-				item.mentionName.toLowerCase().includes(mentionFilter)
-			);
-		});
-	}, [mentionItems, mentionFilter]);
-
-	// Scroll selected mention into view when selection changes
-	useEffect(() => {
-		if (showMentions) {
-			// Use requestAnimationFrame to ensure DOM has updated with new ref assignment
-			requestAnimationFrame(() => {
-				if (selectedMentionRef.current) {
-					selectedMentionRef.current.scrollIntoView({
-						block: 'nearest',
-						behavior: 'smooth',
-					});
-				}
-			});
-		}
-	}, [selectedMentionIndex, showMentions]);
+	// Unified `@` mention picker, locked to the Agents category (Group Chat has
+	// no file/directory mentions) and with no `currentSessionId` to exclude -
+	// group chat isn't itself a mentioning agent, so every non-terminal session
+	// stays eligible, same as the hand-rolled version this replaced.
+	const { items: atMentionItems } = useMentionPicker({
+		filter: atMentionFilter,
+		category: 'agents',
+		sessions,
+		groups,
+		currentSessionId: undefined,
+		fileSuggestions: NO_FILE_SUGGESTIONS,
+	});
+	const atMentionItemRefs = useScrollIntoView<HTMLButtonElement>(
+		atMentionOpen,
+		selectedAtMentionIndex,
+		atMentionItems.length
+	);
 
 	// Sync message state when switching to a different group chat
 	useEffect(() => {
@@ -288,6 +245,43 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 			onDraftChange?.('', groupChatId);
 		}
 	}, [message, onSend, readOnlyMode, cancelDraft, onDraftChange, groupChatId, stagedImages]);
+
+	// Keyboard-driven accept (Tab/Enter). A row clicked directly in the popover
+	// is instead accepted by AtMentionPopover's own internal handler, wired
+	// through the setInputValue/setOpen/... props passed to it below.
+	const acceptAtMention = useCallback(
+		(item: MentionPickerItem) => {
+			// The category is locked to 'agents' here, so every row is an agent or a
+			// group - never a directory - and `buildMentionAccept`'s drill-in
+			// (`keepOpen`) branch, used by the unified file picker, never applies.
+			const accept = buildMentionAccept(message, atMentionStartIndex, atMentionFilter, item);
+			setMessage(accept.value);
+			persistDraft(accept.value, groupChatId);
+			setAtMentionOpen(false);
+			setAtMentionFilter('');
+			setAtMentionStartIndex(-1);
+			inputRef.current?.focus();
+			// Land the caret right after the inserted token, deferred a frame so it
+			// runs after the controlled value commits (matches AtMentionPopover's own
+			// click-to-accept timing).
+			requestAnimationFrame(() => {
+				const el = inputRef.current;
+				if (el) el.selectionStart = el.selectionEnd = accept.caretPos;
+			});
+		},
+		[message, atMentionStartIndex, atMentionFilter, persistDraft, groupChatId]
+	);
+
+	// AtMentionPopover's own click-to-accept path calls this instead of
+	// acceptAtMention directly - it needs a draft-persisting setInputValue, not
+	// just a state setter.
+	const setAtMentionInputValue = useCallback(
+		(value: string) => {
+			setMessage(value);
+			persistDraft(value, groupChatId);
+		},
+		[persistDraft, groupChatId]
+	);
 
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent) => {
@@ -339,29 +333,54 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 				return;
 			}
 
-			if (showMentions && filteredMentions.length > 0) {
+			// Mirrors AI Chat's useInputKeyDown shape: gated on atMentionOpen alone
+			// (not atMentionItems.length > 0), so Escape and Tab/Enter still fire
+			// when the popover is showing an empty state - AtMentionPopover stays
+			// mounted and renders "No agents available" rather than unmounting.
+			if (atMentionOpen) {
 				if (e.key === 'ArrowDown') {
 					e.preventDefault();
 					e.stopPropagation();
-					setSelectedMentionIndex((prev) => (prev < filteredMentions.length - 1 ? prev + 1 : 0));
+					if (atMentionItems.length > 0) {
+						setSelectedAtMentionIndex((prev) => Math.min(prev + 1, atMentionItems.length - 1));
+					}
 					return;
 				}
 				if (e.key === 'ArrowUp') {
 					e.preventDefault();
 					e.stopPropagation();
-					setSelectedMentionIndex((prev) => (prev > 0 ? prev - 1 : filteredMentions.length - 1));
+					if (atMentionItems.length > 0) {
+						setSelectedAtMentionIndex((prev) => Math.max(prev - 1, 0));
+					}
 					return;
 				}
 				if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
 					e.preventDefault();
 					e.stopPropagation();
-					insertMention(filteredMentions[selectedMentionIndex]);
+					// atMentionItems can shrink for reasons other than an Arrow keypress
+					// (the session/group list changing, or the filter narrowing results)
+					// while the popover is open, so the index isn't guaranteed to still
+					// be in range. Look the item up rather than assume it's there - a
+					// stale, out-of-range index falls through to closing the popover
+					// with nothing inserted, same as AI Chat, instead of either
+					// crashing or silently auto-accepting an item the user never
+					// highlighted.
+					const selected = atMentionItems[selectedAtMentionIndex];
+					if (selected) {
+						acceptAtMention(selected);
+					} else {
+						setAtMentionOpen(false);
+						setAtMentionFilter('');
+						setAtMentionStartIndex(-1);
+					}
 					return;
 				}
 				if (e.key === 'Escape') {
 					e.preventDefault();
 					e.stopPropagation();
-					setShowMentions(false);
+					setAtMentionOpen(false);
+					setAtMentionFilter('');
+					setAtMentionStartIndex(-1);
 					return;
 				}
 			}
@@ -376,9 +395,10 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 		},
 		[
 			handleSend,
-			showMentions,
-			filteredMentions,
-			selectedMentionIndex,
+			atMentionOpen,
+			atMentionItems,
+			selectedAtMentionIndex,
+			acceptAtMention,
 			enterToSend,
 			readOnlyMode,
 			setReadOnlyMode,
@@ -394,46 +414,19 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 			setMessage(value);
 			persistDraft(value, groupChatId);
 
-			// Check for @mention trigger
-			const lastAtIndex = value.lastIndexOf('@');
-			if (lastAtIndex !== -1 && lastAtIndex === value.length - 1) {
-				setShowMentions(true);
-				setMentionFilter('');
-				setSelectedMentionIndex(0);
-			} else if (lastAtIndex !== -1) {
-				const afterAt = value.slice(lastAtIndex + 1);
-				if (!/\s/.test(afterAt)) {
-					setShowMentions(true);
-					setMentionFilter(afterAt.toLowerCase());
-					setSelectedMentionIndex(0);
-				} else {
-					setShowMentions(false);
-				}
+			// Check for @mention trigger, using the same canonical detector InputArea
+			// uses so a trigger fires on identical text/caret shapes on both surfaces.
+			const trigger = getAtMentionTrigger(value, e.target.selectionStart ?? value.length);
+			if (trigger) {
+				setAtMentionOpen(true);
+				setAtMentionFilter(trigger.filter);
+				setAtMentionStartIndex(trigger.startIndex);
+				setSelectedAtMentionIndex(0);
 			} else {
-				setShowMentions(false);
+				setAtMentionOpen(false);
 			}
 		},
 		[persistDraft, groupChatId]
-	);
-
-	const insertMention = useCallback(
-		(item: MentionItem) => {
-			const lastAtIndex = message.lastIndexOf('@');
-			const prefix = message.slice(0, lastAtIndex);
-			let insertion: string;
-			if (item.type === 'group') {
-				// Expand group into all member @mentions
-				insertion = item.memberMentions;
-			} else {
-				insertion = `@${item.mentionName} `;
-			}
-			const newMessage = prefix + insertion;
-			setMessage(newMessage);
-			persistDraft(newMessage, groupChatId);
-			setShowMentions(false);
-			inputRef.current?.focus();
-		},
-		[message, persistDraft, groupChatId]
 	);
 
 	// Wrapped paste handler that trims text and delegates images to prop handler
@@ -521,9 +514,15 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 		[showFlashNotification]
 	);
 
-	const removeImage = useCallback((img: string) => {
-		setStagedImages((prev) => prev.filter((x) => x !== img));
-	}, []);
+	// Reordering the strip reorders what the agent receives (every send path
+	// walks stagedImages in order - see stagedImageOrder.ts). Group Chat has no
+	// "Screenshot N" text-reference convention the way AI Chat's InputArea does
+	// (nothing here ever writes that text into the draft), so unlike InputArea's
+	// own handleReorderStagedImages there is no accompanying text to renumber.
+	const handleReorderStagedImages = useCallback(
+		(from: number, to: number) => setStagedImages((prev) => moveStagedImage(prev, from, to)),
+		[setStagedImages]
+	);
 
 	// Auto-resize textarea as content changes (matches InputArea behavior), keeping
 	// the caret visible once the composer is tall enough to scroll.
@@ -534,13 +533,72 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 	});
 
 	const isBusy = state !== 'idle';
-	const hasQueuedItems = executionQueue && executionQueue.length > 0;
+
+	// The queue arrives from MAIN in its own shape. `QueuedItemsList` is the
+	// existing renderer widget and speaks `QueuedItem`, so the adaptation happens
+	// here rather than by teaching main about a renderer type.
+	const executionQueue = useMemo(
+		() =>
+			(queueState?.items ?? []).map(
+				(entry): QueuedItem => ({
+					id: entry.id,
+					timestamp: entry.timestamp,
+					tabId: groupChatId,
+					type: 'message',
+					text: entry.text,
+					images: entry.images,
+					readOnlyMode: entry.readOnlyMode,
+				})
+			),
+		[queueState, groupChatId]
+	);
+	const hasQueuedItems = executionQueue.length > 0;
+	const queuePaused = queueState?.paused === true;
+	const failedItem = queueState?.items.find((entry) => entry.failed);
+	const sendingItem = queueState?.items.find((entry) => entry.sending);
 
 	return (
 		<div
 			className="relative p-4 border-t"
 			style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
 		>
+			{/* Paused banner. A paused queue sends nothing, so it has to say so and
+			    offer the way out - otherwise the user sees messages sitting there
+			    with no clue why and no control to release them. */}
+			{(queuePaused || failedItem) && (
+				<div
+					className="mb-2 flex items-center gap-2 rounded-lg border px-3 py-2 text-xs"
+					style={{
+						borderColor: theme.colors.warning,
+						backgroundColor: `color-mix(in srgb, ${theme.colors.warning} 10%, transparent)`,
+						color: theme.colors.textMain,
+					}}
+				>
+					<span className="flex-1 min-w-0">
+						{failedItem
+							? `Queue paused: ${failedItem.failureReason ?? 'a message could not be sent'}`
+							: 'Queue paused'}
+					</span>
+					{onResumeQueue && (
+						<button
+							type="button"
+							onClick={onResumeQueue}
+							className="shrink-0 px-2 py-0.5 rounded text-2xs font-bold"
+							style={{ backgroundColor: theme.colors.accent, color: theme.colors.bgMain }}
+						>
+							Resume
+						</button>
+					)}
+				</div>
+			)}
+
+			{/* One message is on its way to the moderator and cannot be removed. */}
+			{sendingItem && (
+				<div className="mb-2 px-1 text-2xs" style={{ color: theme.colors.textDim }}>
+					Sending, cannot remove
+				</div>
+			)}
+
 			{/* Queued messages display */}
 			{hasQueuedItems && (
 				<QueuedItemsList
@@ -552,110 +610,39 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 				/>
 			)}
 
-			{/* Mention dropdown */}
-			{showMentions && filteredMentions.length > 0 && (
-				<div
-					ref={mentionListRef}
-					className="mb-2 rounded-lg border p-1 max-h-48 overflow-y-auto"
-					style={{
-						backgroundColor: theme.colors.bgSidebar,
-						borderColor: theme.colors.border,
-					}}
-				>
-					{filteredMentions.map((item, index) => (
-						<button
-							key={item.type === 'group' ? `group-${item.group.id}` : item.sessionId}
-							ref={index === selectedMentionIndex ? selectedMentionRef : null}
-							onClick={() => insertMention(item)}
-							className="w-full text-left px-3 py-1.5 rounded text-sm transition-colors flex items-center gap-2"
-							style={{
-								color: theme.colors.textMain,
-								backgroundColor:
-									index === selectedMentionIndex ? `${theme.colors.accent}20` : 'transparent',
-							}}
-						>
-							{item.type === 'group' ? (
-								<>
-									<Users className="w-3.5 h-3.5 shrink-0" style={{ color: theme.colors.accent }} />
-									<span>{item.group.emoji}</span>
-									<span>@{item.mentionName}</span>
-									<span
-										className="ml-auto text-[10px] px-1.5 py-0.5 rounded-full"
-										style={{
-											backgroundColor: `${theme.colors.accent}20`,
-											color: theme.colors.accent,
-										}}
-									>
-										group · {item.memberCount}
-									</span>
-								</>
-							) : (
-								<>
-									<span>@{item.mentionName}</span>
-									{item.name !== item.mentionName && (
-										<span className="text-xs" style={{ color: theme.colors.textDim }}>
-											({item.name})
-										</span>
-									)}
-									<span className="ml-auto text-xs" style={{ color: theme.colors.textDim }}>
-										{item.agentId}
-									</span>
-								</>
-							)}
-						</button>
-					))}
-				</div>
-			)}
+			<AtMentionPopover
+				isOpen={atMentionOpen}
+				isTerminalMode={false}
+				items={atMentionItems}
+				category="agents"
+				showCategoryBar={false}
+				selectedIndex={selectedAtMentionIndex}
+				filter={atMentionFilter}
+				startIndex={atMentionStartIndex}
+				inputValue={message}
+				itemRefs={atMentionItemRefs}
+				theme={theme}
+				setInputValue={setAtMentionInputValue}
+				setOpen={setAtMentionOpen}
+				setFilter={setAtMentionFilter}
+				setStartIndex={setAtMentionStartIndex}
+				setSelectedIndex={setSelectedAtMentionIndex}
+				inputRef={inputRef}
+			/>
 
-			{/* Staged images preview */}
-			{stagedImages.length > 0 && (
-				<div className="flex gap-2 mb-2 flex-wrap">
-					{stagedImages.map((img) => (
-						<div key={img} className="relative group">
-							<img
-								src={img}
-								alt="Staged image"
-								className="w-16 h-16 object-cover rounded border cursor-pointer hover:opacity-80 transition-opacity"
-								style={{ borderColor: theme.colors.border }}
-								onClick={() => onOpenLightbox?.(img, stagedImages, 'staged')}
-							/>
-							<button
-								type="button"
-								onClick={(e) => {
-									e.stopPropagation();
-									// Match by content rather than captured `idx` - index can
-									// shift if the user removes another staged image while the
-									// annotator is open.
-									useImageAnnotatorStore
-										.getState()
-										.openAnnotator(img, (newDataUrl) =>
-											setStagedImages((prev) => prev.map((s) => (s === img ? newDataUrl : s)))
-										);
-								}}
-								title="Annotate image"
-								aria-label="Annotate image"
-								className="absolute -top-1 -left-1 w-4 h-4 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity outline-none focus-visible:ring-2 focus-visible:ring-white"
-								style={{
-									backgroundColor: theme.colors.bgActivity,
-									color: theme.colors.textMain,
-								}}
-							>
-								<PenLine className="w-2.5 h-2.5" />
-							</button>
-							<button
-								onClick={() => removeImage(img)}
-								className="absolute -top-1 -right-1 w-4 h-4 rounded-full flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition-opacity"
-								style={{
-									backgroundColor: theme.colors.error,
-									color: '#ffffff',
-								}}
-							>
-								×
-							</button>
-						</div>
-					))}
-				</div>
-			)}
+			<StagedImagesStrip
+				isVisible
+				stagedImages={stagedImages}
+				theme={theme}
+				setLightboxImage={(img, contextImages, source) => {
+					if (img) onOpenLightbox?.(img, contextImages, source);
+				}}
+				setStagedImages={setStagedImages}
+				openAnnotator={(img, onSave) =>
+					useImageAnnotatorStore.getState().openAnnotator(img, onSave)
+				}
+				onReorder={handleReorderStagedImages}
+			/>
 
 			<div className="flex gap-3">
 				{/* Main input area */}
@@ -724,7 +711,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 							{/* Read-only mode toggle */}
 							<button
 								onClick={() => setReadOnlyMode(!readOnlyMode)}
-								className={`flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-full cursor-pointer transition-all ${
+								className={`flex items-center gap-1.5 text-2xs px-2 py-1 rounded-full cursor-pointer transition-all ${
 									readOnlyMode ? '' : 'opacity-40 hover:opacity-70'
 								}`}
 								style={{
@@ -743,7 +730,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 							{/* Enter to send toggle */}
 							<button
 								onClick={() => setEnterToSend(!enterToSend)}
-								className="flex items-center gap-1 text-[10px] opacity-50 hover:opacity-100 px-2 py-1 rounded hover:bg-white/5"
+								className="flex items-center gap-1 text-2xs opacity-50 hover:opacity-100 px-2 py-1 rounded hover:bg-white/5"
 								title={formatEnterToSendTooltip(enterToSend)}
 							>
 								<Keyboard className="w-3 h-3" />

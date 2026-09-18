@@ -141,7 +141,8 @@ Every history entry with a Session ID has a **RESUME** button. Clicking it:
 
 1. Opens the AI Terminal for that agent
 2. Loads the exact session where the work was done
-3. Positions you to continue the conversation
+3. Restores the tab under the name shown on the entry's session pill
+4. Positions you to continue the conversation
 
 This is especially powerful for Auto Run tasks - you can pick up exactly where the agent left off, with full conversation context preserved.
 

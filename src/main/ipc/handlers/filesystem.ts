@@ -57,6 +57,7 @@ import {
 } from '../../utils/remote-fs';
 import type { SshRemoteConfig } from '../../../shared/types';
 import { resolveDirentType } from '../../utils/dirent-utils';
+import { walkLocalFileTree } from '../../utils/file-tree-walk';
 import { getDragOutIcon } from '../../utils/drag-out-icon';
 import { getSshRemoteById } from '../../stores';
 import { captureException } from '../../utils/sentry';
@@ -142,6 +143,24 @@ async function uploadLocalPathToRemote(
  * Supported image file extensions for base64 encoding
  */
 const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg', 'ico'];
+
+/** Directory-size result shape shared by the local and SSH branches. */
+interface DirectorySizeResult {
+	totalSize: number;
+	fileCount: number;
+	folderCount: number;
+}
+
+/**
+ * How long a settled `fs:directorySize` answer stays reusable.
+ *
+ * Deliberately short. This backs the Files panel footer ("N files, M folders,
+ * 1.2 GB"), so a stale value is invisible for a moment and correct again on the
+ * next refresh - whereas recomputing it for every caller in a refresh cycle
+ * costs a full recursive stat of the working directory each time. The window
+ * only has to outlive one burst of callers, not act as a real cache.
+ */
+const DIRECTORY_SIZE_CACHE_MS = 2_000;
 
 /**
  * Request budget for fs:fetchImageAsBase64. The renderer blocks a preview on
@@ -318,6 +337,28 @@ export function registerFilesystemHandlers(): void {
 			})
 		);
 	});
+
+	// Walk a local directory tree in one round-trip.
+	//
+	// The renderer's own recursive walk needs an `fs:readDir` round-trip per
+	// directory, so a large tree costs hundreds of them and each one waits its
+	// turn on a renderer main thread that may be busy rendering a streaming
+	// transcript. Doing the walk here keeps it at the ~100ms of real filesystem
+	// work it always was. SSH trees have their own batched loader.
+	ipcMain.handle(
+		'fs:readDirTree',
+		async (
+			_,
+			dirPath: string,
+			options: {
+				maxDepth: number;
+				maxEntries?: number;
+				ignorePatterns?: string[];
+				honorGitignore?: boolean;
+				expandedPaths?: string[];
+			}
+		) => walkLocalFileTree(dirPath, options)
+	);
 
 	// In-flight cancellable remote reads keyed by renderer-supplied requestId.
 	// Lets the renderer SIGTERM the underlying ssh+cat when the user closes
@@ -566,6 +607,13 @@ export function registerFilesystemHandlers(): void {
 		}
 	});
 
+	// In-flight and just-settled directory-size walks, keyed by request. Scoped to
+	// the registration rather than the module so a re-registration starts clean.
+	const directorySizeCache = new Map<
+		string,
+		{ startedAt: number; result: Promise<DirectorySizeResult> }
+	>();
+
 	// Calculate total size of a directory recursively
 	// Respects the same ignore patterns as loadFileTree
 	ipcMain.handle(
@@ -598,65 +646,116 @@ export function registerFilesystemHandlers(): void {
 				};
 			}
 
-			// Build effective ignore patterns (same logic as loadFileTree)
-			let effectivePatterns = ignorePatterns ?? LOCAL_IGNORE_DEFAULTS;
-
-			if (honorGitignore) {
-				try {
-					const gitignorePath = path.join(dirPath, '.gitignore');
-					const content = await fs.readFile(gitignorePath, 'utf-8');
-					if (content) {
-						effectivePatterns = [...effectivePatterns, ...parseGitignoreContent(content)];
-					}
-				} catch {
-					// .gitignore may not exist or be readable - not an error
-				}
+			// The Files panel asks for this from several places that all fire inside
+			// one refresh cycle (tree load, git refresh, auto-refresh tick), and the
+			// answer is a full recursive stat of the working directory - the single
+			// most expensive thing the main process does on a large repo. Collapse
+			// those into one walk: a request that arrives while a matching walk is
+			// still running joins it, and the settled answer is reused for a beat
+			// afterwards so the back-to-back callers do not each pay for it.
+			const cacheKey = `${dirPath}\u0000${honorGitignore ? 1 : 0}\u0000${(
+				ignorePatterns ?? LOCAL_IGNORE_DEFAULTS
+			).join('\u0001')}`;
+			const cached = directorySizeCache.get(cacheKey);
+			if (cached && Date.now() - cached.startedAt < DIRECTORY_SIZE_CACHE_MS) {
+				return cached.result;
 			}
 
-			// Local: use standard fs operations
-			let totalSize = 0;
-			let fileCount = 0;
-			let folderCount = 0;
+			const pending = computeDirectorySize();
+			const now = Date.now();
+			// Prune while we are here so a long-lived session cannot accumulate one
+			// entry per directory the user ever opened.
+			for (const [key, entry] of directorySizeCache) {
+				if (now - entry.startedAt >= DIRECTORY_SIZE_CACHE_MS) directorySizeCache.delete(key);
+			}
+			directorySizeCache.set(cacheKey, { startedAt: now, result: pending });
+			// A failed walk must not be cached: the next caller should retry, not
+			// inherit the rejection for the rest of the TTL.
+			pending.catch(() => directorySizeCache.delete(cacheKey));
+			return pending;
 
-			const calculateSize = async (currentPath: string, depth: number = 0): Promise<void> => {
-				// Limit recursion depth to match file tree loading
-				if (depth >= 10) return;
+			async function computeDirectorySize(): Promise<DirectorySizeResult> {
+				// Build effective ignore patterns (same logic as loadFileTree)
+				let effectivePatterns = ignorePatterns ?? LOCAL_IGNORE_DEFAULTS;
 
-				try {
-					const entries = await fs.readdir(currentPath, { withFileTypes: true });
-
-					for (const entry of entries) {
-						if (shouldIgnore(entry.name, effectivePatterns)) {
-							continue;
+				if (honorGitignore) {
+					try {
+						const gitignorePath = path.join(dirPath, '.gitignore');
+						const content = await fs.readFile(gitignorePath, 'utf-8');
+						if (content) {
+							effectivePatterns = [...effectivePatterns, ...parseGitignoreContent(content)];
 						}
+					} catch {
+						// .gitignore may not exist or be readable - not an error
+					}
+				}
 
-						const fullPath = path.join(currentPath, entry.name);
+				// Local: use standard fs operations
+				let totalSize = 0;
+				let fileCount = 0;
+				let folderCount = 0;
 
-						if (entry.isDirectory()) {
-							folderCount++;
-							await calculateSize(fullPath, depth + 1);
-						} else if (entry.isFile()) {
-							fileCount++;
-							try {
-								const stats = await fs.stat(fullPath);
-								totalSize += stats.size;
-							} catch {
-								// Skip files we can't stat (permissions, etc.)
+				const calculateSize = async (currentPath: string, depth: number = 0): Promise<void> => {
+					// Limit recursion depth to match file tree loading
+					if (depth >= 10) return;
+
+					try {
+						const entries = await fs.readdir(currentPath, { withFileTypes: true });
+
+						// Child paths by concatenation, not `path.join`. join() re-normalizes
+						// the whole string every call, and a field trace attributed ~625ms of
+						// main-process CPU in one 58-second window to this loop's joins alone.
+						// `currentPath` is already a real path and a dirent name cannot
+						// contain a separator, so the only thing join was fixing was the
+						// trailing-separator seam - handled once per directory here.
+						const childPrefix = currentPath.endsWith(path.sep)
+							? currentPath
+							: currentPath + path.sep;
+
+						// Files are stat'd as a batch AFTER the directory listing rather than
+						// one-at-a-time inside it. Awaiting each stat in turn leaves libuv's
+						// threadpool idle between calls, which is why the same trace showed
+						// 1.5s of main-thread time sitting in `stat` for a single walk.
+						const filePaths: string[] = [];
+
+						for (const entry of entries) {
+							if (shouldIgnore(entry.name, effectivePatterns)) {
+								continue;
+							}
+
+							if (entry.isDirectory()) {
+								folderCount++;
+								await calculateSize(childPrefix + entry.name, depth + 1);
+							} else if (entry.isFile()) {
+								fileCount++;
+								filePaths.push(childPrefix + entry.name);
 							}
 						}
+
+						const sizes = await Promise.all(
+							filePaths.map((filePath) =>
+								// A file we cannot stat (permissions, a race with a delete)
+								// contributes nothing rather than failing the whole walk.
+								fs.stat(filePath).then(
+									(stats) => stats.size,
+									() => 0
+								)
+							)
+						);
+						for (const size of sizes) totalSize += size;
+					} catch {
+						// Skip directories we can't read
 					}
-				} catch {
-					// Skip directories we can't read
-				}
-			};
+				};
 
-			await calculateSize(dirPath);
+				await calculateSize(dirPath);
 
-			return {
-				totalSize,
-				fileCount,
-				folderCount,
-			};
+				return {
+					totalSize,
+					fileCount,
+					folderCount,
+				};
+			}
 		}
 	);
 

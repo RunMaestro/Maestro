@@ -2,7 +2,7 @@
 
 # Prompts and Specification Systems
 
-Maestro's prompt system consists of Markdown templates compiled to TypeScript at build time, a template variable substitution engine, and two specification management systems (SpecKit and OpenSpec) that layer user-customizable prompts on top of bundled defaults.
+Maestro's prompt system consists of Markdown templates loaded from disk at runtime, a template variable substitution engine, and two specification management systems (SpecKit and OpenSpec) that layer user-customizable prompts on top of bundled defaults.
 
 ## Shell examples in prompts must live in code fences
 
@@ -12,19 +12,25 @@ Nothing type-checks a prompt and the damage is invisible in review - it just qui
 
 ## Prompt Templates
 
-### Build Pipeline
+### Load Pipeline
 
-Prompt templates are stored as `.md` files in `src/prompts/`. At build time, `scripts/generate-prompts.mjs` compiles them into `src/generated/prompts.ts` as exported string constants. The barrel file `src/prompts/index.ts` re-exports these constants.
+Prompt templates are stored as `.md` files in `src/prompts/` and stay `.md` all the way to the running app. There is no build-time compilation step: `package.json`'s `extraResources` copies `src/prompts/` to `Resources/prompts/core/`, and `src/main/prompt-manager.ts` reads them from disk once at startup.
+
+The source of truth for which prompts exist is `src/shared/promptDefinitions.ts` (`CORE_PROMPTS`, `PROMPT_IDS`); `src/prompts/index.ts` is a thin re-export of it, not a bundle of prompt text.
 
 ```text
 src/prompts/*.md
     |
-    v  (scripts/generate-prompts.mjs)
-src/generated/prompts.ts
+    v  (package.json extraResources)
+Resources/prompts/core/*.md
     |
-    v  (re-export)
-src/prompts/index.ts
+    v  (read at startup, user customizations layered on top)
+src/main/prompt-manager.ts
 ```
+
+<!-- doc-refs-ignore -->
+
+An earlier build step compiled these templates into `src/generated/prompts.ts`. Both that generator and the generated file are gone; the `Export` column below names the constant each prompt used to produce and is retained only as a cross-reference for older code and docs.
 
 ### Template Inventory
 
@@ -179,7 +185,7 @@ Variables populated only when a prompt is rendered as part of a Maestro Cue run.
 - **File change events:** `{{CUE_FILE_PATH}}`, `{{CUE_FILE_NAME}}`, `{{CUE_FILE_DIR}}`, `{{CUE_FILE_EXT}}`, `{{CUE_FILE_CHANGE_TYPE}}`
 - **Agent-completion / chained-run events:** `{{CUE_SOURCE_SESSION}}`, `{{CUE_SOURCE_OUTPUT}}`, `{{CUE_SOURCE_STATUS}}`, `{{CUE_SOURCE_EXIT_CODE}}`, `{{CUE_SOURCE_DURATION}}`, `{{CUE_SOURCE_TRIGGERED_BY}}`
 - **Task pending events (`task.pending`):** `{{CUE_TASK_FILE}}`, `{{CUE_TASK_FILE_NAME}}`, `{{CUE_TASK_FILE_DIR}}`, `{{CUE_TASK_COUNT}}`, `{{CUE_TASK_LIST}}`, `{{CUE_TASK_CONTENT}}`
-- **GitHub events (`github.pull_request`, `github.issue`):** `{{CUE_GH_TYPE}}`, `{{CUE_GH_NUMBER}}`, `{{CUE_GH_TITLE}}`, `{{CUE_GH_AUTHOR}}`, `{{CUE_GH_URL}}`, `{{CUE_GH_BODY}}`, `{{CUE_GH_LABELS}}`, `{{CUE_GH_STATE}}`, `{{CUE_GH_REPO}}`, `{{CUE_GH_BRANCH}}`, `{{CUE_GH_BASE_BRANCH}}`, `{{CUE_GH_ASSIGNEES}}`, `{{CUE_GH_MERGED_AT}}`
+- **GitHub events (`github.pull_request`, `github.issue`, `github.label`):** `{{CUE_GH_TYPE}}`, `{{CUE_GH_NUMBER}}`, `{{CUE_GH_TITLE}}`, `{{CUE_GH_AUTHOR}}`, `{{CUE_GH_URL}}`, `{{CUE_GH_BODY}}`, `{{CUE_GH_LABELS}}`, `{{CUE_GH_STATE}}`, `{{CUE_GH_REPO}}`, `{{CUE_GH_BRANCH}}`, `{{CUE_GH_BASE_BRANCH}}`, `{{CUE_GH_ASSIGNEES}}`, `{{CUE_GH_MERGED_AT}}`, and for `github.label` only: `{{CUE_GH_LABEL}}`, `{{CUE_GH_LABEL_ACTOR}}`, `{{CUE_GH_LABELED_AT}}`
 
 ### Substitution Flow
 
@@ -233,7 +239,7 @@ interface TemplateContext {
 		taskCount?: string;
 		taskList?: string;
 		taskContent?: string;
-		// github.pull_request / github.issue fields
+		// github.pull_request / github.issue / github.label fields
 		ghType?: string;
 		ghNumber?: string;
 		ghTitle?: string;
@@ -417,19 +423,18 @@ Registered in `src/main/ipc/handlers/openspec.ts`:
 
 ## Prompt Loading Flow
 
-### At Build Time
+### At Package Time
 
-1. `scripts/generate-prompts.mjs` reads all `.md` files from `src/prompts/`
-2. Each file is converted to a TypeScript string constant export
-3. The generated file is written to `src/generated/prompts.ts`
-4. `src/prompts/index.ts` re-exports all constants
+1. `package.json`'s `extraResources` copies `src/prompts/` to `Resources/prompts/core/` for every platform
+2. `src/prompts/speckit/` and `src/prompts/openspec/` are copied alongside it
+3. Nothing is compiled; the `.md` files ship as-is
 
 ### At Runtime (Standard Prompts)
 
-1. Main process imports prompt constants from `src/prompts/index.ts`
-2. Prompt text is used directly (e.g., `groupChatModeratorSystemPrompt`)
-3. Template variables (`{{...}}`) are replaced at call sites using `String.replace()`
-4. The fully resolved prompt is passed to the agent spawn configuration
+1. `src/main/prompt-manager.ts` reads every `.md` under `Resources/prompts/core/` once at startup
+2. A user customization from `userData/core-prompts-customizations.json` wins over the bundled text when `isModified` is set
+3. `{{INCLUDE:name}}` inlines another prompt (recursive, max depth 3, cycle-detected) and `{{REF:name}}` expands to the bundled file's absolute path
+4. Template variables (`{{...}}`) are replaced at call sites, and the fully resolved prompt is passed to the agent spawn configuration
 
 ### At Runtime (SpecKit/OpenSpec)
 
@@ -451,12 +456,12 @@ Registered in `src/main/ipc/handlers/openspec.ts`:
 
 | File                                                | Purpose                                             |
 | --------------------------------------------------- | --------------------------------------------------- |
-| `src/prompts/index.ts`                              | Prompt barrel file (re-exports generated constants) |
+| `src/prompts/index.ts`                              | Re-export of `promptDefinitions.ts`                 |
 | `src/prompts/*.md`                                  | Raw prompt templates                                |
 | `src/prompts/speckit/*.md`                          | Bundled SpecKit prompts                             |
 | `src/prompts/openspec/*.md`                         | Bundled OpenSpec prompts                            |
-| `scripts/generate-prompts.mjs`                      | Build-time prompt compiler                          |
-| `src/generated/prompts.ts`                          | Generated TypeScript prompt constants               |
+| `src/shared/promptDefinitions.ts`                   | `CORE_PROMPTS` / `PROMPT_IDS` - the prompt registry |
+| `src/main/prompt-manager.ts`                        | Reads bundled prompts, layers user customizations   |
 | `src/shared/templateVariables.ts`                   | Template variable definitions and types             |
 | `src/renderer/utils/templateVariables.ts`           | Runtime template substitution                       |
 | `src/main/speckit-manager.ts`                       | SpecKit prompt loading, updates, and customization  |

@@ -55,6 +55,8 @@ export const AgentPickerGrid = React.memo(function AgentPickerGrid({
 	dynamicOptions = {},
 	loadingDynamicOptions = {},
 	onLoadDynamicOptionsForAgent,
+	codexAutoResetByAgent,
+	onCodexAutoResetChange,
 }: AgentPickerGridProps) {
 	return (
 		<div>
@@ -171,7 +173,7 @@ export const AgentPickerGrid = React.memo(function AgentPickerGrid({
 										<span className="font-medium">{agent.name}</span>
 										{isBetaAgent(agent.id) && (
 											<span
-												className="text-[9px] px-1.5 py-0.5 rounded font-bold uppercase"
+												className="text-3xs px-1.5 py-0.5 rounded font-bold uppercase"
 												style={{
 													backgroundColor: theme.colors.warning + '30',
 													color: theme.colors.warning,
@@ -291,6 +293,12 @@ export const AgentPickerGrid = React.memo(function AgentPickerGrid({
 													? (value) => onEnableMaestroPChange(agent.id, value)
 													: undefined
 											}
+											codexAutoResetOnExhaustion={codexAutoResetByAgent?.[agent.id] ?? false}
+											onCodexAutoResetChange={
+												onCodexAutoResetChange
+													? (value) => onCodexAutoResetChange(agent.id, value)
+													: undefined
+											}
 											maestroPMode={maestroPModeByAgent?.[agent.id] ?? 'dynamic'}
 											onMaestroPModeChange={
 												onMaestroPModeChange
@@ -358,7 +366,7 @@ export const AgentPickerGrid = React.memo(function AgentPickerGrid({
 						<div>
 							<span className="opacity-50">PATH:</span>
 						</div>
-						<div className="pl-2 break-all text-[10px]">
+						<div className="pl-2 break-all text-2xs">
 							{debugInfo.envPath.split(debugInfo.platform === 'win32' ? ';' : ':').map((p, i) => (
 								<div key={`${debugInfo.platform}-${i}-${p}`}>{p}</div>
 							))}

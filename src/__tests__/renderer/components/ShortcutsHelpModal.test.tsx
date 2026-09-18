@@ -11,6 +11,7 @@ import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext
 import type { Theme, Shortcut, KeyboardMasteryStats } from '../../../renderer/types';
 
 import { createMockTheme } from '../../helpers/mockTheme';
+import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 
 // Create mock shortcuts for testing
 const createMockShortcuts = (): Record<string, Shortcut> => ({
@@ -832,6 +833,66 @@ describe('ShortcutsHelpModal', () => {
 				expect(within(row as HTMLElement).getByText('Unassigned')).toBeInTheDocument();
 				// No progress circle either - there is nothing to go press.
 				expect((row as HTMLElement).querySelectorAll('span.rounded-full.border')).toHaveLength(0);
+			});
+
+			it('shows the double-press chord instead of Unassigned when one exists', () => {
+				// previousUnreadTab ships with no chord of its own but is reached by
+				// pressing Focus Active Tab twice, so "Unassigned" would hide a way
+				// in the user already has.
+				renderModal(
+					{
+						...mockShortcuts,
+						focusActiveTab: {
+							id: 'focusActiveTab',
+							label: 'Focus Active Tab',
+							keys: ['Alt', 'Meta', 'ArrowUp'],
+							category: 'general',
+						},
+						previousUnreadTab: {
+							id: 'previousUnreadTab',
+							label: 'Previous Unread / Draft Tab',
+							keys: [],
+							category: 'general',
+						},
+					} as Record<string, Shortcut>,
+					createMockMasteryStats(['new-session'])
+				);
+
+				const row = screen
+					.getByText('Previous Unread / Draft Tab')
+					.closest('div.justify-between') as HTMLElement;
+				expect(row).not.toBeNull();
+				expect(within(row).queryByText('Unassigned')).toBeNull();
+				expect(
+					within(row).getByText(formatShortcutKeys(['Alt', 'Meta', 'ArrowUp']))
+				).toBeInTheDocument();
+				expect(within(row).getByText('twice')).toBeInTheDocument();
+			});
+
+			it('falls back to Unassigned when the double-press host chord is cleared', () => {
+				renderModal(
+					{
+						...mockShortcuts,
+						focusActiveTab: {
+							id: 'focusActiveTab',
+							label: 'Focus Active Tab',
+							keys: [],
+							category: 'general',
+						},
+						previousUnreadTab: {
+							id: 'previousUnreadTab',
+							label: 'Previous Unread / Draft Tab',
+							keys: [],
+							category: 'general',
+						},
+					} as Record<string, Shortcut>,
+					createMockMasteryStats(['new-session'])
+				);
+
+				const row = screen
+					.getByText('Previous Unread / Draft Tab')
+					.closest('div.justify-between') as HTMLElement;
+				expect(within(row).getByText('Unassigned')).toBeInTheDocument();
 			});
 
 			it('never counts a used id whose binding is gone', () => {

@@ -5,11 +5,16 @@
  * stay pixel-identical without copy-pasting markup.
  */
 
-import { memo } from 'react';
+import { memo, useEffect, useState } from 'react';
 import { ChevronDown, Clock, Eye, EyeOff, Link2, Loader2, RefreshCw, Users } from 'lucide-react';
 import type { Theme } from '../../../types';
-import { formatFutureTime } from '../../../../shared/formatters';
-import { QUOTA_REFRESH_OPTIONS, resolveQuotaFillColor } from './quotaFormatting';
+import { formatFutureTime, formatTimestamp } from '../../../../shared/formatters';
+import {
+	formatLastRefreshed,
+	isSampleBehindLatest,
+	QUOTA_REFRESH_OPTIONS,
+	resolveQuotaFillColor,
+} from './quotaFormatting';
 import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
 
 interface QuotaBarRowProps {
@@ -90,9 +95,21 @@ export const QuotaBarRow = memo(function QuotaBarRow({
 			<div
 				className="text-xs text-left whitespace-nowrap flex-shrink-0 ml-auto"
 				style={{ color: theme.colors.textDim, minWidth: '12rem' }}
-				title={resetsAt ? `Resets at ${new Date(resetsAt).toLocaleString()}` : undefined}
+				title={
+					resetsAt
+						? `Resets at ${new Date(resetsAt).toLocaleString()}`
+						: clampedPercent === 0
+							? 'No window is running yet, so there is no reset time. The window starts with the next request.'
+							: undefined
+				}
 			>
-				{resetsAt ? `resets ${formatFutureTime(resetsAt)}` : 'reset unknown'}
+				{/* A 0% window with no reset is idle, not unparsed: claude paints no
+				    "Resets" row until a request opens the window. */}
+				{resetsAt
+					? `resets ${formatFutureTime(resetsAt)}`
+					: clampedPercent === 0
+						? 'not started'
+						: 'reset unknown'}
 			</div>
 		</div>
 	);
@@ -134,32 +151,59 @@ export const QuotaAgentCountBadge = memo(function QuotaAgentCountBadge({
 	providerLabel,
 	testId,
 	theme,
+	onClick,
 }: {
+	/**
+	 * Local agents on this account. SSH-remote agents are not counted: the
+	 * directory they name lives on the remote host and holds THAT host's login,
+	 * so the Agents grid files them under their own `account @ host` profile.
+	 */
 	count: number;
 	/** Provider name for the hover title (`Claude` / `Codex`). */
 	providerLabel: string;
 	testId?: string;
 	theme: Theme;
+	/** Makes the chip a button that shows those agents. Omitted when there are
+	 *  none to show - a button that lands on an empty grid is worse than text. */
+	onClick?: () => void;
 }) {
-	const label = `${count} ${count === 1 ? 'agent' : 'agents'}`;
+	const noun = count === 1 ? 'agent' : 'agents';
+	const label = `${count} ${noun}`;
+	const title =
+		count === 0
+			? `No ${providerLabel} agents are configured to use this account`
+			: onClick
+				? `Show the ${label} that ${count === 1 ? 'runs' : 'run'} against this ${providerLabel} account`
+				: `${label} ${count === 1 ? 'runs' : 'run'} against this ${providerLabel} account`;
+	const className =
+		'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs-plus font-medium flex-shrink-0';
+	const style = {
+		color: theme.colors.textDim,
+		backgroundColor: `${theme.colors.border}55`,
+		border: `1px solid ${theme.colors.border}`,
+	};
+
+	if (!onClick) {
+		return (
+			<span className={className} style={style} title={title} data-testid={testId}>
+				<Users className="w-3 h-3" aria-hidden="true" />
+				{label}
+			</span>
+		);
+	}
+
 	return (
-		<span
-			className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium flex-shrink-0"
-			style={{
-				color: theme.colors.textDim,
-				backgroundColor: `${theme.colors.border}55`,
-				border: `1px solid ${theme.colors.border}`,
-			}}
-			title={
-				count === 0
-					? `No ${providerLabel} agents are configured to use this account`
-					: `${label} ${count === 1 ? 'runs' : 'run'} against this ${providerLabel} account`
-			}
+		<button
+			type="button"
+			onClick={onClick}
+			className={`${className} transition-colors cursor-pointer hover:brightness-125`}
+			style={{ ...style, color: theme.colors.accent, borderColor: `${theme.colors.accent}55` }}
+			title={title}
 			data-testid={testId}
 		>
 			<Users className="w-3 h-3" aria-hidden="true" />
 			{label}
-		</span>
+		</button>
 	);
 });
 
@@ -216,7 +260,7 @@ export const QuotaSharedAccountBadge = memo(function QuotaSharedAccountBadge({
 
 	return (
 		<span
-			className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium flex-shrink-0"
+			className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs-plus font-medium flex-shrink-0"
 			style={{
 				color,
 				backgroundColor: `${color}15`,
@@ -227,6 +271,49 @@ export const QuotaSharedAccountBadge = memo(function QuotaSharedAccountBadge({
 		>
 			<Link2 className="w-3 h-3" aria-hidden="true" />
 			shared with {joined}
+		</span>
+	);
+});
+
+/**
+ * "Stale" chip for a row the latest refresh did not update.
+ *
+ * The footer reports the NEWEST sample, so one freshly-sampled account makes the
+ * whole panel read "Last refreshed just now" - including a row whose bars are
+ * hours old because its account could not be sampled this pass (every agent
+ * using it runs over SSH, or the probe failed). The chip prints when that row
+ * was actually read. A clock time rather than an age, so it stays true without
+ * a ticking re-render.
+ */
+export const QuotaStaleSampleBadge = memo(function QuotaStaleSampleBadge({
+	sampledAt,
+	latestSampledAtMs,
+	testId,
+	theme,
+}: {
+	/** This row's own `sampledAt` stamp. */
+	sampledAt: string | undefined;
+	/** Newest `sampledAt` across the panel (`resolveLatestSampledAt`). */
+	latestSampledAtMs: number | null;
+	testId?: string;
+	theme: Theme;
+}) {
+	if (!sampledAt || !isSampleBehindLatest(sampledAt, latestSampledAtMs)) return null;
+	const color = theme.colors.warning ?? theme.colors.accent;
+
+	return (
+		<span
+			className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs-plus font-medium flex-shrink-0"
+			style={{
+				color,
+				backgroundColor: `${color}15`,
+				border: `1px solid ${color}35`,
+			}}
+			title={`The last refresh did not update this account. These bars were read ${formatTimestamp(sampledAt, 'full')}.`}
+			data-testid={testId}
+		>
+			<Clock className="w-3 h-3" aria-hidden="true" />
+			stale, read {formatTimestamp(sampledAt, 'smart')}
 		</span>
 	);
 });
@@ -244,6 +331,7 @@ export const QuotaPendingRow = memo(function QuotaPendingRow({
 	agentCount,
 	providerLabel,
 	theme,
+	onShowAgents,
 }: {
 	accountKey: string;
 	shortName: string;
@@ -253,6 +341,8 @@ export const QuotaPendingRow = memo(function QuotaPendingRow({
 	agentCount?: number;
 	providerLabel: string;
 	theme: Theme;
+	/** Show those agents in the Agents tab, filtered to this account. */
+	onShowAgents?: () => void;
 }) {
 	return (
 		<div className="space-y-2" data-testid={`${testIdPrefix}-row-${shortName}-pending`}>
@@ -264,6 +354,7 @@ export const QuotaPendingRow = memo(function QuotaPendingRow({
 						providerLabel={providerLabel}
 						testId={`${testIdPrefix}-agents-${shortName}`}
 						theme={theme}
+						onClick={agentCount > 0 ? onShowAgents : undefined}
 					/>
 				)}
 				<div className="text-xs truncate" style={{ color: theme.colors.textDim, opacity: 0.7 }}>
@@ -552,7 +643,7 @@ export const QuotaAccountTabs = memo(function QuotaAccountTabs({
 							    - none    = snapshot present + healthy */}
 							{status === 'warning' ? (
 								<span
-									className="text-[10px]"
+									className="text-2xs"
 									style={{ color: theme.colors.warning ?? theme.colors.accent }}
 									title={warningTitle}
 								>
@@ -560,7 +651,7 @@ export const QuotaAccountTabs = memo(function QuotaAccountTabs({
 								</span>
 							) : status === 'pending' ? (
 								<span
-									className="text-[10px]"
+									className="text-2xs"
 									style={{ color: theme.colors.textDim, opacity: 0.6 }}
 									title="No snapshot yet - hit Refresh"
 								>
@@ -571,6 +662,56 @@ export const QuotaAccountTabs = memo(function QuotaAccountTabs({
 					</button>
 				);
 			})}
+		</div>
+	);
+});
+
+/**
+ * Centered footer line reporting how stale the panel's numbers are:
+ * "Last refreshed just now" / "Last refreshed 5 hours and 25 minutes ago".
+ *
+ * It reads the newest `sampledAt` in the provider's snapshot map rather than
+ * remembering when the Refresh button was last clicked, so it stays truthful
+ * across a reopened dashboard and across the main-process background sampler -
+ * both of which produce fresh data with nobody clicking anything. A refresh
+ * that fails therefore keeps counting up instead of resetting to "just now",
+ * which is the point: the line describes the data, not the button press.
+ *
+ * Renders nothing when nothing has been sampled yet.
+ */
+export const QuotaLastRefreshed = memo(function QuotaLastRefreshed({
+	sampledAtMs,
+	theme,
+	testIdPrefix,
+}: {
+	sampledAtMs: number | null;
+	theme: Theme;
+	testIdPrefix: string;
+}) {
+	// Minute-granularity display, so a half-minute tick keeps the printed value
+	// within one tick of the truth without a per-second re-render.
+	const [now, setNow] = useState(() => Date.now());
+	useEffect(() => {
+		const id = window.setInterval(() => setNow(Date.now()), 30_000);
+		return () => window.clearInterval(id);
+	}, []);
+
+	// A fresh sample must read "just now" immediately, not on the next tick.
+	useEffect(() => {
+		setNow(Date.now());
+	}, [sampledAtMs]);
+
+	if (sampledAtMs === null) return null;
+
+	return (
+		<div
+			className="flex items-center justify-center gap-1.5 mt-4 text-xs"
+			style={{ color: theme.colors.textDim, opacity: 0.8 }}
+			data-testid={`${testIdPrefix}-last-refreshed`}
+			title={new Date(sampledAtMs).toLocaleString()}
+		>
+			<Clock className="w-3 h-3" />
+			<span>Last refreshed {formatLastRefreshed(sampledAtMs, now)}</span>
 		</div>
 	);
 });

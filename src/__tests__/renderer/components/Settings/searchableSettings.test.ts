@@ -113,7 +113,7 @@ describe('searchableSettings', () => {
 
 		it('should rank label matches higher than keyword matches', () => {
 			const results = searchSettings('font');
-			// 'Font Family' and 'Font Size' should appear before items where 'font' is only a keyword
+			// 'Fonts' should appear before items where 'font' is only a keyword
 			const labelMatches = results.filter((s) => s.label.toLowerCase().includes('font'));
 			const keywordOnly = results.filter(
 				(s) =>
@@ -143,11 +143,15 @@ describe('searchableSettings', () => {
 			['prompt composer', 'general-input-behavior'],
 			['ai interaction mode', 'general-input-behavior'],
 			['cross-agent mentions', 'general-cross-agent-mentions'],
-			['consult permission', 'general-cross-agent-mentions'],
+			['consult or delegate', 'general-cross-agent-mentions'],
+			['delegation', 'general-cross-agent-mentions'],
 			['read-only consult', 'general-cross-agent-mentions'],
 			['custom shell path', 'general-default-shell'],
 			['pwsh', 'general-default-shell'],
 			['worktree', 'general-gh-path'],
+			['web interface', 'general-web-interface-auto-start'],
+			['online at launch', 'general-web-interface-auto-start'],
+			['remote control', 'general-web-interface-auto-start'],
 			['cue pipeline', 'general-power'],
 			['ctrl+click', 'general-browser'],
 			['context menu', 'general-browser'],
@@ -158,6 +162,9 @@ describe('searchableSettings', () => {
 			['spell check', 'general-spell-check'],
 			['spelling', 'general-spell-check'],
 			['typo', 'general-spell-check'],
+			['group cue', 'general-group-cue-entries'],
+			['collapse cue runs', 'general-group-cue-entries'],
+			['repeated', 'general-group-cue-entries'],
 
 			// Display tab. The single Small/Medium/Large global size was replaced
 			// by a per-surface stepper plus a global zoom, so "font size" now
@@ -166,6 +173,12 @@ describe('searchableSettings', () => {
 			['bigger', 'display-font-zoom'],
 			['factory reset', 'display-typography-reset'],
 			['hacker', 'display-typography-reset'],
+			// The snapshot section is what makes the two presets above safe to
+			// click, so it has to be findable by the words on its own buttons.
+			['save customizations', 'display-typography-snapshot'],
+			['restore customizations', 'display-typography-snapshot'],
+			['saved fonts', 'display-typography-snapshot'],
+			['manage custom fonts', 'display-custom-fonts'],
 			// The five per-surface pickers are one grouped section now, so every
 			// surface's name has to surface that one entry.
 			['ai chat font', 'display-fonts'],

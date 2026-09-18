@@ -1,4 +1,5 @@
 import { useRef, useCallback, useEffect } from 'react';
+import type { MarkdownEditorHandle } from '../../components/FilePreview/markdownEditor';
 
 /**
  * Undo/Redo state interface representing a snapshot of content and cursor position
@@ -28,8 +29,8 @@ export interface UseAutoRunUndoDeps {
 	localContent: string;
 	/** Function to update the local content state */
 	setLocalContent: (content: string) => void;
-	/** Ref to the textarea element for cursor position and focus */
-	textareaRef: React.RefObject<HTMLTextAreaElement>;
+	/** Ref to the CodeMirror editor, for cursor position and focus */
+	editorRef: React.RefObject<MarkdownEditorHandle>;
 }
 
 /**
@@ -65,7 +66,7 @@ export interface UseAutoRunUndoReturn {
  *   selectedFile,
  *   localContent,
  *   setLocalContent,
- *   textareaRef,
+ *   editorRef,
  * });
  *
  * // In onChange handler:
@@ -84,7 +85,7 @@ export function useAutoRunUndo({
 	selectedFile,
 	localContent,
 	setLocalContent,
-	textareaRef,
+	editorRef,
 }: UseAutoRunUndoDeps): UseAutoRunUndoReturn {
 	// Undo/Redo history maps - keyed by document filename (selectedFile)
 	// Using refs so history persists across re-renders without triggering re-renders
@@ -106,7 +107,7 @@ export function useAutoRunUndo({
 			if (!selectedFile) return;
 
 			const snapshotContent = contentToSnapshot ?? localContent;
-			const snapshotCursor = cursorPos ?? textareaRef.current?.selectionStart ?? 0;
+			const snapshotCursor = cursorPos ?? editorRef.current?.getCaret() ?? 0;
 
 			const currentState: UndoState = {
 				content: snapshotContent,
@@ -140,7 +141,7 @@ export function useAutoRunUndo({
 			// Clear redo stack on new edit action
 			redoHistoryRef.current.set(selectedFile, []);
 		},
-		[selectedFile, localContent, textareaRef]
+		[selectedFile, localContent, editorRef]
 	);
 
 	/**
@@ -176,7 +177,7 @@ export function useAutoRunUndo({
 		const redoStack = redoHistoryRef.current.get(selectedFile) || [];
 		redoStack.push({
 			content: localContent,
-			cursorPosition: textareaRef.current?.selectionStart || 0,
+			cursorPosition: editorRef.current?.getCaret() || 0,
 		});
 		redoHistoryRef.current.set(selectedFile, redoStack);
 
@@ -190,12 +191,10 @@ export function useAutoRunUndo({
 
 		// Restore cursor position after React re-renders
 		requestAnimationFrame(() => {
-			if (textareaRef.current) {
-				textareaRef.current.setSelectionRange(prevState.cursorPosition, prevState.cursorPosition);
-				textareaRef.current.focus();
-			}
+			editorRef.current?.setSelection(prevState.cursorPosition, prevState.cursorPosition);
+			editorRef.current?.focus();
 		});
-	}, [selectedFile, localContent, setLocalContent, textareaRef]);
+	}, [selectedFile, localContent, setLocalContent, editorRef]);
 
 	/**
 	 * Handle redo action (Cmd+Shift+Z).
@@ -211,7 +210,7 @@ export function useAutoRunUndo({
 		const undoStack = undoHistoryRef.current.get(selectedFile) || [];
 		undoStack.push({
 			content: localContent,
-			cursorPosition: textareaRef.current?.selectionStart || 0,
+			cursorPosition: editorRef.current?.getCaret() || 0,
 		});
 		undoHistoryRef.current.set(selectedFile, undoStack);
 
@@ -225,12 +224,10 @@ export function useAutoRunUndo({
 
 		// Restore cursor position after React re-renders
 		requestAnimationFrame(() => {
-			if (textareaRef.current) {
-				textareaRef.current.setSelectionRange(nextState.cursorPosition, nextState.cursorPosition);
-				textareaRef.current.focus();
-			}
+			editorRef.current?.setSelection(nextState.cursorPosition, nextState.cursorPosition);
+			editorRef.current?.focus();
 		});
-	}, [selectedFile, localContent, setLocalContent, textareaRef]);
+	}, [selectedFile, localContent, setLocalContent, editorRef]);
 
 	/**
 	 * Reset undo history for current document.

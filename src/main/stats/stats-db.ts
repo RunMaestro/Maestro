@@ -18,6 +18,8 @@ import type {
 	AutoRunSession,
 	AutoRunTask,
 	SessionLifecycleEvent,
+	ResilienceEvent,
+	WizardRun,
 	StatsTimeRange,
 	StatsFilters,
 	StatsAggregation,
@@ -53,8 +55,16 @@ import {
 	getSessionLifecycleEvents,
 	clearSessionLifecycleCache,
 } from './session-lifecycle';
+import { recordResilienceEvent, getResilienceEvents, clearResilienceCache } from './resilience';
+import { recordWizardRun, getWizardRuns, clearWizardRunsCache } from './wizard-runs';
 import { getAggregatedStats } from './aggregations';
-import { clearOldData, exportToCsv } from './data-management';
+import {
+	getQuerySourceTotals,
+	getQuerySourceByDay,
+	type QuerySourceTotals,
+	type QuerySourceDay,
+} from './delegation';
+import { clearOldData } from './data-management';
 import {
 	insertImageAnnotation,
 	clearImageAnnotationCache,
@@ -200,6 +210,8 @@ export class StatsDB {
 			clearQueryEventCache();
 			clearAutoRunCache();
 			clearSessionLifecycleCache();
+			clearResilienceCache();
+			clearWizardRunsCache();
 			clearImageAnnotationCache();
 			clearShortcutUsageCache();
 			clearMultiWindowUsageCache();
@@ -811,6 +823,30 @@ export class StatsDB {
 	}
 
 	// ============================================================================
+	// Resilience Events (delegated)
+	// ============================================================================
+
+	recordResilienceEvent(event: ResilienceEvent): string {
+		return recordResilienceEvent(this.database, event);
+	}
+
+	getResilienceEvents(range: StatsTimeRange): ResilienceEvent[] {
+		return getResilienceEvents(this.database, range);
+	}
+
+	// ============================================================================
+	// Wizard Runs (delegated)
+	// ============================================================================
+
+	recordWizardRun(run: WizardRun): string {
+		return recordWizardRun(this.database, run);
+	}
+
+	getWizardRuns(range: StatsTimeRange): WizardRun[] {
+		return getWizardRuns(this.database, range);
+	}
+
+	// ============================================================================
 	// Session Lifecycle (delegated)
 	// ============================================================================
 
@@ -832,6 +868,20 @@ export class StatsDB {
 
 	getAggregatedStats(range: StatsTimeRange): StatsAggregation {
 		return getAggregatedStats(this.database, range);
+	}
+
+	/**
+	 * Interactive vs Auto Run turn counts and REAL summed durations. The Cue
+	 * half of the delegation split lives in the Cue DB; the IPC handler merges
+	 * them.
+	 */
+	getQuerySourceTotals(range: StatsTimeRange = 'all'): QuerySourceTotals {
+		return getQuerySourceTotals(this.database, range);
+	}
+
+	/** The same split, bucketed by local-time day. */
+	getQuerySourceByDay(range: StatsTimeRange = 'all'): QuerySourceDay[] {
+		return getQuerySourceByDay(this.database, range);
 	}
 
 	// ============================================================================
@@ -890,10 +940,6 @@ export class StatsDB {
 			};
 		}
 		return clearOldData(this.database, olderThanDays);
-	}
-
-	exportToCsv(range: StatsTimeRange): string {
-		return exportToCsv(this.database, range);
 	}
 
 	// ============================================================================

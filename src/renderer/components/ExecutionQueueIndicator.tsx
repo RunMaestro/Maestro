@@ -2,6 +2,8 @@ import { useRef, useState, useEffect, useCallback } from 'react';
 import { ListOrdered, Command, MessageSquare } from 'lucide-react';
 import type { Session, Theme } from '../types';
 import { resolveQueuedItemTabName } from '../utils/executionQueue';
+import { useSettingsStore } from '../stores/settingsStore';
+import { shortcutSuffix } from './ui/ShortcutHint';
 
 interface ExecutionQueueIndicatorProps {
 	session: Session;
@@ -24,6 +26,8 @@ export function ExecutionQueueIndicator({
 	onSwitchTab,
 }: ExecutionQueueIndicatorProps) {
 	const queue = session.executionQueue || [];
+	const executionQueueKeys = useSettingsStore((s) => s.shortcuts.executionQueue?.keys);
+	const openQueueTitle = `View execution queue${shortcutSuffix(executionQueueKeys)}`;
 	const containerRef = useRef<HTMLDivElement>(null);
 	const [maxVisiblePills, setMaxVisiblePills] = useState(3);
 
@@ -148,7 +152,7 @@ export function ExecutionQueueIndicator({
 				type="button"
 				onClick={onClick}
 				className="flex items-center gap-2 transition-all hover:opacity-90"
-				title="View execution queue"
+				title={openQueueTitle}
 			>
 				<ListOrdered className="w-4 h-4 flex-shrink-0" style={{ color: theme.colors.warning }} />
 
@@ -228,7 +232,7 @@ export function ExecutionQueueIndicator({
 				type="button"
 				onClick={onClick}
 				className="text-xs opacity-50 flex-shrink-0 whitespace-nowrap transition-all hover:opacity-80"
-				title="View execution queue"
+				title={openQueueTitle}
 			>
 				Click to view
 			</button>

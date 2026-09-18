@@ -1,12 +1,16 @@
 # Maestro
 
+<div align="center">
+
 [![Made with Maestro](docs/assets/made-with-maestro.svg)](https://github.com/RunMaestro/Maestro)
 [![Discord](https://img.shields.io/badge/Discord-Join%20Us-5865F2?logo=discord&logoColor=white)](https://runmaestro.ai/discord)
 [![User Docs](https://img.shields.io/badge/Docs-Usage%20%26%20Documentation-blue?logo=readthedocs&logoColor=white)](https://docs.runmaestro.ai/)
 
 <a href="https://trendshift.io/repositories/21112" target="_blank"><img src="https://trendshift.io/api/badge/repositories/21112" alt="RunMaestro%2FMaestro | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
 
-> Maestro hones fractured attention into focused intent.
+"Maestro hones fractured attention into focused intent."
+
+</div>
 
 Maestro is a cross-platform desktop app for orchestrating your fleet of AI agents and projects. It's a high-velocity solution for hackers who are juggling multiple projects in parallel. Designed for power users who live on the keyboard and rarely touch the mouse.
 
@@ -17,13 +21,15 @@ Run multiple agents in parallel with a Linear/Superhuman-level responsive interf
 > **How It Works:** Maestro is a pass-through to your AI provider. Whatever MCP tools, skills, permissions, or authentication you have configured in Claude Code, Codex, or OpenCode works identically in Maestro. The only difference is we're not running interactively - each task gets a prompt and returns a response, whether it's a new session or resuming a prior one.
 
 <div align="center">
-  <a href="https://youtu.be/fmwwTOg7cyA?si=dJ89K54tGflKa5G4">
+  <a href="https://youtu.be/3wX5Q1I0sgI?si=oJkJDxgAWUvBXX4D">
     <img src="https://github.com/user-attachments/assets/deaf601d-1898-4ede-bf5a-42e46874ebb3"
          alt="Maestro Video Thumbnail"
          width="650" />
   </a>
 
   <div>
+    <a href="https://youtu.be/3wX5Q1I0sgI?si=oJkJDxgAWUvBXX4D">~1m Intro Video</a>
+    &nbsp;|&nbsp;
     <a href="https://youtu.be/fmwwTOg7cyA?si=VOkjO6oYjCSQvM0A">~27m Walkthrough and Demo</a>
     &nbsp;|&nbsp;
     <a href="https://youtu.be/3wX5Q1I0sgI?si=oJkJDxgAWUvBXX4D">~6m Onboarding Demo</a>
@@ -36,7 +42,8 @@ Run multiple agents in parallel with a Linear/Superhuman-level responsive interf
 
 - 🌳 **[Git Worktrees](https://docs.runmaestro.ai/git-worktrees)** - Run AI agents in parallel on isolated branches. Create worktree sub-agents from the git branch menu, each operating in their own directory. Work interactively in the main repo while sub-agents process tasks independently - then create PRs with one click. True parallel development without conflicts.
 - 🤖 **[Auto Run & Playbooks](https://docs.runmaestro.ai/autorun-playbooks)** - File-system-based task runner that batch-processes markdown checklists (Spec-Driven) or pursues a free-text objective (Goal-Driven) through AI agents. Create playbooks for repeatable workflows, run in loops, and track progress with full history. Each task gets its own AI session for clean conversation context, and you can open the live Thought Stream to watch the agent's reasoning as it works.
-- 💬 **[Group Chat](https://docs.runmaestro.ai/group-chat)** - Coordinate multiple AI agents in a single conversation. A moderator AI orchestrates discussions, routing questions to the right agents and synthesizing their responses for cross-project questions and architecture discussions.
+- 💬 **[Group Chat](https://docs.runmaestro.ai/group-chat)** - Delegate the moderating. You appoint one agent as moderator and hand it the question; it routes to the right agents, follows up when an answer is thin, and keeps going for as many rounds as it takes before returning a synthesis. The multi-turn collaboration is the point, and it is what an inline `@mention` cannot do.
+- 📣 **[Cross-Agent Mentions](https://docs.runmaestro.ai/cross-agent-mentions)** - Type `@another-agent` in any chat to consult it inline. Maestro forwards the relevant slice of your conversation, runs the other agent in the background without blocking you, and streams its reply back attributed to who answered. Each mention is a single-turn consult and you stay the moderator, so reach for Group Chat when you want an agent to run the follow-ups instead.
 - 🌐 **[Mobile Remote Control](https://docs.runmaestro.ai/remote-access)** - Built-in web server with QR code access. Monitor and control all your agents from your phone. Supports local network access and remote tunneling via Cloudflare for access from anywhere.
 - 💻 **[Command Line Interface](https://docs.runmaestro.ai/cli)** - Full CLI (`maestro-cli`) for headless operation. List agents/groups, run playbooks from cron jobs or CI/CD pipelines, with human-readable or JSONL output for scripting.
 - 🚀 **Multi-Agent Management** - Run unlimited agents and terminal sessions in parallel. Each agent has its own workspace, conversation history, and isolated context.
@@ -62,7 +69,7 @@ Run multiple agents in parallel with a Linear/Superhuman-level responsive interf
 
 ### Analytics & Visualization
 
-- 📊 **Usage Dashboard** - Comprehensive analytics for tracking AI usage patterns across all sessions. View aggregated statistics with multiple time ranges (day, week, month, year, all time), compare agent performance, analyze user vs. Auto Run activity distribution, and explore activity heatmaps. Fuzzy-filter your agents, then click any one to drill into its stats and see the breakdown per AI tab. Includes CSV export, real-time updates, and configurable colorblind-friendly palettes. Access via `Opt+Cmd+U` (macOS) / `Alt+Ctrl+U` (Windows/Linux) or the Command K menu.
+- 📊 **Usage Dashboard** - Comprehensive analytics for tracking AI usage patterns across all sessions. View aggregated statistics with multiple time ranges (day, week, month, year, all time), compare agent performance, analyze user vs. Auto Run activity distribution, and explore activity heatmaps. Fuzzy-filter your agents, then click any one to drill into its stats and see the breakdown per AI tab, or jump straight from there to the agent itself or its settings. Includes CSV export, real-time updates, and configurable colorblind-friendly palettes. Access via `Opt+Cmd+U` (macOS) / `Alt+Ctrl+U` (Windows/Linux) or the Command K menu.
 - 🕸️ **Document Graph** - Visual knowledge graph of your markdown documentation. Automatically discovers internal `[[wiki-links]]` and `[markdown](links)`, visualizes document relationships with interactive nodes and edges. Toggle between force-directed and hierarchical layouts, search/filter documents, navigate via keyboard, and track external link references. Includes mini-map, legend, and pagination for large directories. Access from the File Explorer context menu or Command K menu.
 
 #### Keyboard Shortcuts for Analytics Features
@@ -87,8 +94,12 @@ On the Agents tab, Escape clears the agent filter first when it holds text, so f
 | Preview document / open link | Enter                          |
 | Recenter graph on node       | Space                          |
 | Cycle preview length         | P                              |
-| Close graph                  | Escape                         |
+| Step back / close graph      | Escape                         |
 | Search documents             | Focus search input, type query |
+
+Escape steps back one level at a time: out of the search box first (your query stays,
+so the matches are still highlighted while you arrow to one), then it clears the query,
+then it closes the graph.
 
 Additional interactions: Drag nodes to reposition, scroll to zoom, use mini-map for overview.
 

@@ -44,6 +44,13 @@ import {
 import { registerMarketplaceHandlers, MarketplaceHandlerDependencies } from './marketplace';
 import { registerStatsHandlers, StatsHandlerDependencies } from './stats';
 import { registerCueStatsHandlers, CueStatsHandlerDependencies } from './cue-stats';
+import {
+	getCueHistoryBuckets,
+	getCueHistoryEntries,
+	getCueHistoryFingerprint,
+	getCueHistoryGroupRuns,
+	getCueHistoryGroups,
+} from '../../cue/stats/cue-stats-query';
 import { registerDocumentGraphHandlers, DocumentGraphHandlerDependencies } from './documentGraph';
 import { registerSshRemoteHandlers, SshRemoteHandlerDependencies } from './ssh-remote';
 import { registerFilesystemHandlers } from './filesystem';
@@ -56,6 +63,7 @@ import {
 	stopCliDiscoveryWatchdog,
 	WebHandlerDependencies,
 } from './web';
+import { registerWebLoginHandlers } from './webLogin';
 import { registerLeaderboardHandlers, LeaderboardHandlerDependencies } from './leaderboard';
 import { registerNotificationsHandlers } from './notifications';
 import { registerSymphonyHandlers, SymphonyHandlerDependencies } from './symphony';
@@ -133,6 +141,7 @@ export {
 	stopCliDiscoveryWatchdog,
 };
 export type { WebHandlerDependencies };
+export { registerWebLoginHandlers };
 export { registerLeaderboardHandlers };
 export type { LeaderboardHandlerDependencies };
 export { registerNotificationsHandlers };
@@ -199,6 +208,8 @@ export interface HandlerDependencies {
 	settingsStore: Store<MaestroSettings>;
 	// Persistence-specific dependencies
 	sessionsStore: Store<SessionsData>;
+	/** Flush the writer that owns `sessionsStore` before acknowledging persistence. */
+	flushSessionWrites: () => Promise<void>;
 	groupsStore: Store<GroupsData>;
 	getWebServer: () => WebServer | null;
 	// System-specific dependencies
@@ -228,16 +239,21 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	});
 	registerAutorunHandlers(deps);
 	registerPlaybooksHandlers(deps);
+	const readSessionRecords = (): Array<Record<string, unknown>> =>
+		(deps.sessionsStore.get('sessions', []) as Array<Record<string, unknown>>).filter(
+			(s) => typeof s === 'object' && s !== null
+		);
 	registerHistoryHandlers({
 		safeSend: createSafeSend(() => BrowserWindow.getAllWindows()),
 		getMaxEntries: () => deps.settingsStore.get('maxLogBuffer', 5000) as number,
 		getSshRemoteById,
-		getSessionById: (id: string) => {
-			const sessions = (
-				deps.sessionsStore.get('sessions', []) as Array<Record<string, unknown>>
-			).filter((s) => typeof s === 'object' && s !== null);
-			return sessions.find((s) => s.id === id);
-		},
+		getSessionById: (id: string) => readSessionRecords().find((s) => s.id === id),
+		getAllSessions: readSessionRecords,
+		getCueHistoryEntries,
+		getCueHistoryGroups,
+		getCueHistoryGroupRuns,
+		getCueHistoryBuckets,
+		getCueHistoryFingerprint,
 	});
 	registerAgentsHandlers({
 		getAgentDetector: deps.getAgentDetector,
@@ -258,6 +274,7 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		sessionsStore: deps.sessionsStore,
 		groupsStore: deps.groupsStore,
 		getWebServer: deps.getWebServer,
+		flushSessionWrites: deps.flushSessionWrites,
 	});
 	registerSystemHandlers({
 		getMainWindow: deps.getMainWindow,
@@ -363,6 +380,9 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		getAgentDetector: deps.getAgentDetector,
 		agentConfigsStore: deps.agentConfigsStore,
 		getMainWindow: deps.getMainWindow,
+		getCueHistoryEntries,
+		getCueHistoryBuckets,
+		getCueHistoryFingerprint,
 	});
 	// Register Feedback handlers (gh auth + feedback submission)
 	registerFeedbackHandlers({

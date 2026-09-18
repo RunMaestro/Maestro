@@ -50,7 +50,7 @@ interface UseFileContextMenuResult {
 	multiDeleteModal: MultiDeleteModalState | null;
 	isMultiDeleting: boolean;
 	contextMenuRef: React.RefObject<HTMLDivElement>;
-	contextMenuPos: { top: number; left: number; ready?: boolean };
+	contextMenuPos: { top: number; left: number; maxHeight: number; ready?: boolean };
 	openContextMenuAt: (
 		x: number,
 		y: number,

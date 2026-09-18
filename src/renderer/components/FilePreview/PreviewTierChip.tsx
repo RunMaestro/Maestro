@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ChevronDown, Zap, Sparkles, Database } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import type { Theme } from '../../constants/themes';
 import type { PreviewTier } from './filePreviewUtils';
 import { HoverTooltip } from '../ui/HoverTooltip';
@@ -26,16 +27,15 @@ export interface PreviewTierChipProps {
 	headerIconClass?: string;
 }
 
-const TIER_META: Record<
-	PreviewTier,
-	{ label: string; icon: React.ComponentType<{ className?: string }> }
-> = {
+/** Label + icon per tier. Shared with the phone actions sheet, which draws
+ *  the same four choices as an accordion instead of an anchored popover. */
+export const TIER_META: Record<PreviewTier, { label: string; icon: LucideIcon }> = {
 	rich: { label: 'Rich', icon: Sparkles },
 	fast: { label: 'Fast', icon: Zap },
 	giant: { label: 'Giant', icon: Database },
 };
 
-const TIER_DESCRIPTION: Record<PreviewTier, string> = {
+export const TIER_DESCRIPTION: Record<PreviewTier, string> = {
 	rich: 'Full features (Mermaid, math, full plugins). Slower on huge files.',
 	fast: 'Virtualized markdown-it preview. Best for 5k+ line documents.',
 	giant: 'CodeMirror viewer (multi-MB files). Read-only, instant open.',
@@ -157,7 +157,7 @@ export const PreviewTierChip: React.FC<PreviewTierChipProps> = ({
 					    rendering right now (override if set, otherwise auto). */}
 					<div
 						data-testid="preview-tier-chip-status"
-						className="px-3 py-2 text-[10px] uppercase tracking-wider border-b"
+						className="px-3 py-2 text-2xs uppercase tracking-wider border-b"
 						style={{
 							color: theme.colors.textDim,
 							backgroundColor: theme.colors.bgMain,
@@ -226,7 +226,7 @@ const MenuRow: React.FC<MenuRowProps> = ({ theme, active, label, description, ic
 		{icon}
 		<div className="flex-1 min-w-0">
 			<div className="text-xs font-medium">{label}</div>
-			<div className="text-[10px]" style={{ color: theme.colors.textDim }}>
+			<div className="text-2xs" style={{ color: theme.colors.textDim }}>
 				{description}
 			</div>
 		</div>

@@ -14,12 +14,14 @@ import {
 	arrangePipelineGroups,
 	beautifyPipelineLayouts,
 	estimateNodeWidth,
+	separateOverlappingNodes,
 } from '../../../../../renderer/components/CuePipelineEditor/utils/pipelineAutoArrange';
 import {
 	NODE_BG_WIDTH,
 	NODE_BG_HEIGHT,
 	PIPELINE_GROUP_PADDING,
 } from '../../../../../renderer/components/CuePipelineEditor/utils/pipelineGraph';
+import { pipelineCardBounds } from '../../../../../renderer/components/CuePipelineEditor/utils/nodeFootprint';
 import type { CuePipeline, PipelineNode } from '../../../../../shared/cue-pipeline-types';
 
 function agentNode(id: string, x: number, y: number): PipelineNode {
@@ -540,16 +542,16 @@ describe('arrangePipelineGroups', () => {
 	// the SAME footprint math as groupInfo, so we can assert geometric packing
 	// properties the old uniform-grid layout violated.
 	function cardRect(p: CuePipeline, offset: { x: number; y: number }) {
-		const minX = Math.min(...p.nodes.map((n) => n.position.x));
-		const minY = Math.min(...p.nodes.map((n) => n.position.y));
-		const maxX = Math.max(...p.nodes.map((n) => n.position.x + NODE_BG_WIDTH));
-		const maxY = Math.max(...p.nodes.map((n) => n.position.y + NODE_BG_HEIGHT));
-		const width = maxX - minX + 2 * PIPELINE_GROUP_PADDING;
-		const height = maxY - minY + 2 * PIPELINE_GROUP_PADDING;
-		// Card renders at (minX + offset - PADDING); offset is what arrange returns.
-		const left = minX + offset.x - PIPELINE_GROUP_PADDING;
-		const top = minY + offset.y - PIPELINE_GROUP_PADDING;
-		return { left, top, right: left + width, bottom: top + height };
+		// Ask for the rect the renderer draws rather than restating its geometry,
+		// so a change to the footprint cannot leave the packer and this test
+		// asserting different boxes.
+		const card = pipelineCardBounds(p.nodes, { offset })!;
+		return {
+			left: card.x,
+			top: card.y,
+			right: card.x + card.width,
+			bottom: card.y + card.height,
+		};
 	}
 
 	function rectsOverlap(a: ReturnType<typeof cardRect>, b: ReturnType<typeof cardRect>): boolean {
@@ -731,13 +733,12 @@ describe('beautifyPipelineLayouts', () => {
 		expect(healed[1].viewOffset).toBeDefined();
 		// Cards must not overlap in the All-Pipelines frame.
 		const rects = healed.map((p) => {
-			const xs = p.nodes.map((n) => n.position.x + p.viewOffset!.x);
-			const ys = p.nodes.map((n) => n.position.y + p.viewOffset!.y);
+			const card = pipelineCardBounds(p.nodes, { offset: p.viewOffset! })!;
 			return {
-				l: Math.min(...xs) - PIPELINE_GROUP_PADDING,
-				r: Math.max(...xs) + NODE_BG_WIDTH + PIPELINE_GROUP_PADDING,
-				t: Math.min(...ys) - PIPELINE_GROUP_PADDING,
-				b: Math.max(...ys) + NODE_BG_HEIGHT + PIPELINE_GROUP_PADDING,
+				l: card.x,
+				r: card.x + card.width,
+				t: card.y,
+				b: card.y + card.height,
 			};
 		});
 		const cardsOverlap =
@@ -760,5 +761,129 @@ describe('beautifyPipelineLayouts', () => {
 		const healed = beautifyPipelineLayouts([naivePipeline('p1'), naivePipeline('p2')]);
 		const again = beautifyPipelineLayouts(healed);
 		expect(JSON.stringify(again)).toBe(JSON.stringify(healed));
+	});
+});
+
+describe('separateOverlappingNodes', () => {
+	// The collision guard is the backstop for the two ways a node ends up drawn
+	// on top of its neighbour: a width ESTIMATE that came in under the rendered
+	// width (a wide user font), and a DATA edit that grew a node without
+	// changing the topology (so no heal fired). It works off the widths
+	// ReactFlow measured, and moves only nodes that genuinely collide.
+	const WIDE = 900;
+
+	it('returns the input array reference when nothing overlaps', () => {
+		const p = pipeline({
+			nodes: [triggerNode('t', 0, 0), agentNode('a', 500, 0)],
+		});
+		expect(separateOverlappingNodes(p, new Map([['t', 400]]))).toBe(p.nodes);
+	});
+
+	it('returns the input array reference for 0- and 1-node pipelines', () => {
+		const empty = pipeline();
+		expect(separateOverlappingNodes(empty)).toBe(empty.nodes);
+		const single = pipeline({ nodes: [agentNode('a', 0, 0)] });
+		expect(separateOverlappingNodes(single)).toBe(single.nodes);
+	});
+
+	it('pushes a covered node clear of the wide node that overlaps it', () => {
+		// The screenshot bug: a trigger renders 900px wide but the layout spaced
+		// the agent at the 320px footprint pitch, so the agent sits ON the
+		// trigger's label.
+		const p = pipeline({
+			nodes: [triggerNode('t', 0, 10), agentNode('a', 365, 0)],
+		});
+		const out = separateOverlappingNodes(p, new Map([['t', WIDE]]));
+		const agent = out.find((n) => n.id === 'a')!;
+		expect(agent.position.x).toBe(WIDE + NODE_GAP);
+		// Rows are preserved: the guard only ever moves horizontally.
+		expect(agent.position.y).toBe(0);
+		// The left node of a collision never moves.
+		expect(out.find((n) => n.id === 't')!.position.x).toBe(0);
+	});
+
+	it('leaves nodes on other rows alone however wide the neighbour renders', () => {
+		const p = pipeline({
+			nodes: [triggerNode('t', 0, 0), agentNode('a', 365, 400)],
+		});
+		expect(separateOverlappingNodes(p, new Map([['t', WIDE]]))).toBe(p.nodes);
+	});
+
+	it('resolves a chain of collisions in one pass', () => {
+		const p = pipeline({
+			nodes: [triggerNode('t', 0, 0), agentNode('a1', 365, 0), agentNode('a2', 730, 0)],
+		});
+		const widths = new Map([
+			['t', WIDE],
+			['a1', 500],
+		]);
+		const out = separateOverlappingNodes(p, widths);
+		const a1 = out.find((n) => n.id === 'a1')!;
+		const a2 = out.find((n) => n.id === 'a2')!;
+		expect(a1.position.x).toBe(WIDE + NODE_GAP);
+		expect(a2.position.x).toBe(a1.position.x + 500 + NODE_GAP);
+	});
+
+	it('is idempotent: a repaired layout is left alone on the next pass', () => {
+		const p = pipeline({
+			nodes: [triggerNode('t', 0, 10), agentNode('a', 365, 0)],
+		});
+		const widths = new Map([['t', WIDE]]);
+		const repaired = pipeline({ nodes: separateOverlappingNodes(p, widths) });
+		expect(separateOverlappingNodes(repaired, widths)).toBe(repaired.nodes);
+	});
+
+	it('falls back to the text estimate for nodes ReactFlow has not measured', () => {
+		const longLabel = 'Renew the WebMCP origin trial token (expires Nov 17)';
+		const t: PipelineNode = {
+			id: 't',
+			type: 'trigger',
+			position: { x: 0, y: 10 },
+			data: { eventType: 'time.heartbeat', label: longLabel, config: {} },
+		};
+		const p = pipeline({ nodes: [t, agentNode('a', 365, 0)] });
+		const out = separateOverlappingNodes(p);
+		expect(out.find((n) => n.id === 'a')!.position.x).toBe(estimateNodeWidth(t) + NODE_GAP);
+	});
+});
+
+describe('group card footprints', () => {
+	it('packs cards without overlap when a node renders wider than its footprint', () => {
+		// A `max-content` node wider than NODE_BG_WIDTH used to hang outside its
+		// own card, which put it on top of the card packed beside it. Card
+		// footprints now come from the same measured widths the node layout uses.
+		const pipelines = [
+			pipeline({ id: 'wide', nodes: [agentNode('w', 0, 0)], viewOffset: { x: 0, y: 0 } }),
+			pipeline({ id: 'p2', nodes: [agentNode('b', 0, 0)], viewOffset: { x: 0, y: 100 } }),
+			pipeline({ id: 'p3', nodes: [agentNode('c', 0, 0)], viewOffset: { x: 0, y: 200 } }),
+			pipeline({ id: 'p4', nodes: [agentNode('d', 0, 0)], viewOffset: { x: 0, y: 300 } }),
+		];
+		const widths = new Map([['w', 1200]]);
+		const offsets = arrangePipelineGroups(pipelines, new Map(), widths);
+
+		const rect = (p: CuePipeline) => {
+			const offset = offsets.get(p.id)!;
+			const xs = p.nodes.map((n) => n.position.x + offset.x);
+			const ys = p.nodes.map((n) => n.position.y + offset.y);
+			const right = Math.max(
+				...p.nodes.map(
+					(n) => n.position.x + offset.x + Math.max(NODE_BG_WIDTH, widths.get(n.id) ?? 0)
+				)
+			);
+			return {
+				l: Math.min(...xs) - PIPELINE_GROUP_PADDING,
+				r: right + PIPELINE_GROUP_PADDING,
+				t: Math.min(...ys) - PIPELINE_GROUP_PADDING,
+				b: Math.max(...ys) + NODE_BG_HEIGHT + PIPELINE_GROUP_PADDING,
+			};
+		};
+		const rects = pipelines.map(rect);
+		for (let i = 0; i < rects.length; i++) {
+			for (let j = i + 1; j < rects.length; j++) {
+				const a = rects[i];
+				const b = rects[j];
+				expect(a.l < b.r && b.l < a.r && a.t < b.b && b.t < a.b).toBe(false);
+			}
+		}
 	});
 });

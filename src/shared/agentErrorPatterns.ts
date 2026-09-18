@@ -538,7 +538,29 @@ const CODEX_ERROR_PATTERNS: AgentErrorPatterns = {
 		},
 	],
 
+	// ORDER IS LOAD-BEARING: first match wins, and the chosen `message` is what
+	// the retry scheduler reads to pick a strategy. The two PLAN-QUOTA patterns
+	// therefore come first. Codex says things like "429 ... you've hit your usage
+	// limit", which matched `rate.*limit` (or `\b429\b`) and was rewritten to
+	// "Rate limited. Please wait and try again." - wording that reads as a
+	// transient throttle, so a multi-hour quota outage was retried on the 30s
+	// availability backoff instead of the slow exhaustion poll.
+	//
+	// Getting this wrong is asymmetric: calling a quota outage a throttle hammers
+	// the provider for hours, while calling a throttle a quota outage just waits
+	// longer than it needed to. When a line carries both signals, quota wins.
 	rate_limited: [
+		{
+			// Matches: "You've hit your usage limit" or "usage limit reached/exceeded"
+			pattern: /usage.?limit|hit your.*limit/i,
+			message: 'Usage limit reached. Please wait or check your plan quota.',
+			recoverable: true,
+		},
+		{
+			pattern: /quota.*exceeded/i,
+			message: 'Your API quota has been exceeded. Resume when quota resets.',
+			recoverable: true,
+		},
 		{
 			pattern: /rate.*limit/i,
 			message: 'Rate limit exceeded. Please wait before trying again.',
@@ -550,20 +572,9 @@ const CODEX_ERROR_PATTERNS: AgentErrorPatterns = {
 			recoverable: true,
 		},
 		{
-			pattern: /quota.*exceeded/i,
-			message: 'Your API quota has been exceeded. Resume when quota resets.',
-			recoverable: true,
-		},
-		{
 			// HTTP 429 - Rate limited. Word boundary prevents false positives from ports/versions
 			pattern: /\b429\b/,
 			message: 'Rate limited. Please wait and try again.',
-			recoverable: true,
-		},
-		{
-			// Matches: "You've hit your usage limit" or "usage limit reached/exceeded"
-			pattern: /usage.?limit|hit your.*limit/i,
-			message: 'Usage limit reached. Please wait or check your plan quota.',
 			recoverable: true,
 		},
 	],

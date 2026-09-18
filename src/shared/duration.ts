@@ -327,18 +327,43 @@ export function formatElapsedTime(ms: number): string {
  */
 export function formatElapsedTicker(ms: number): string {
 	const safe = Number.isFinite(ms) && ms > 0 ? ms : 0;
-	const units =
-		safe >= DURATION_MS.day
-			? DURATION_LADDER_DAYS
-			: safe >= DURATION_MS.hour
-				? DURATION_LADDER_HOURS
-				: (['minute', 'second'] as const);
 	return humanizeDuration(safe, {
-		units,
+		units: elapsedTickerLadder(safe),
 		keepZeroUnits: true,
 		keepLeadingZero: true,
 		maxUnits: 4,
 	});
+}
+
+/**
+ * `formatElapsedTicker` without the padded lead: `"3s"`, `"1m 0s"`, `"20m 4s"`,
+ * `"1h 2m 5s"`.
+ *
+ * For an inline counter sitting inside a sentence or a chip, where a bare
+ * seconds count is the natural reading below a minute but `1203s` is not a
+ * duration anyone can read past it. Same ladder as the ticker, so a chip and
+ * the ticker beside it agree on segments once both are past a minute.
+ *
+ * @param ms - Duration in milliseconds
+ * @returns Formatted duration
+ */
+export function formatElapsedTickerCompact(ms: number): string {
+	const safe = Number.isFinite(ms) && ms > 0 ? ms : 0;
+	return humanizeDuration(safe, {
+		units: elapsedTickerLadder(safe),
+		keepZeroUnits: true,
+		maxUnits: 4,
+	});
+}
+
+/**
+ * Ladder for the live tickers: minutes below an hour, hours below a day, then
+ * days - so a short wait never prints a `0d` / `0h` segment it will not reach.
+ */
+function elapsedTickerLadder(ms: number): readonly DurationUnit[] {
+	if (ms >= DURATION_MS.day) return DURATION_LADDER_DAYS;
+	if (ms >= DURATION_MS.hour) return DURATION_LADDER_HOURS;
+	return ['minute', 'second'];
 }
 
 /**
@@ -356,4 +381,28 @@ export function formatDurationDecimal(ms: number): string {
 	if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
 	if (ms < 3_600_000) return `${(ms / 60_000).toFixed(1)}m`;
 	return `${(ms / 3_600_000).toFixed(1)}h`;
+}
+
+/**
+ * Turn time as read in a transcript gutter: `"<1m"`, `"25m"`, `"2h 15m"`,
+ * `"5d 6h 25m"`.
+ *
+ * Day-capped and second-free on purpose. This string answers "how long did the
+ * agent take on that?", a question nobody asks to the second: a reply is
+ * minutes or it is a coffee break, and the difference between 25m 13s and
+ * 25m 41s changes nothing. Anything under a minute collapses to `<1m` rather
+ * than printing `0m`, which reads as an error rather than as "instant".
+ *
+ * Three rungs, not two, so a genuinely long-running turn stays legible as
+ * `5d 6h 25m` instead of rounding its minutes away.
+ *
+ * @param ms - Duration in milliseconds
+ * @returns Formatted duration
+ */
+export function formatTurnDuration(ms: number): string {
+	return humanizeDuration(ms, {
+		units: ['day', 'hour', 'minute'],
+		maxUnits: 3,
+		fallback: '<1m',
+	});
 }

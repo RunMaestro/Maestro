@@ -164,6 +164,12 @@ export interface UIStoreState {
 	// (contentTracing singleton); the command palette reconciles this on open.
 	profilingActive: boolean;
 
+	// Trace-buffer usage of the active recording, 0-1. Chromium drops events once
+	// the buffer fills, so this - not elapsed time - is what limits a capture, and
+	// showing it is what lets a user see how much window they have left instead of
+	// guessing. Refreshed whenever the palette reconciles profiling status.
+	profilingBufferPercent: number;
+
 	// Last-selected Usage Dashboard tab. In-memory only: survives closing and
 	// reopening the dashboard within a session, resets to 'overview' on restart.
 	usageDashboardViewMode: UsageDashboardViewMode;
@@ -290,6 +296,7 @@ export interface UIStoreActions {
 
 	// Performance-profiling indicator (drives the wand animation)
 	setProfilingActive: (active: boolean | ((prev: boolean) => boolean)) => void;
+	setProfilingBufferPercent: (percent: number) => void;
 
 	// Usage Dashboard last-selected tab
 	setUsageDashboardViewMode: (
@@ -411,6 +418,7 @@ export const useUIStore = create<UIStore>()((set) => ({
 	editingQueuedItemId: null,
 	autoFollowEnabled: false,
 	profilingActive: false,
+	profilingBufferPercent: 0,
 	usageDashboardViewMode: 'overview',
 	hiddenQuotaAccounts: {},
 	usageRefreshIntervals: {},
@@ -529,6 +537,7 @@ export const useUIStore = create<UIStore>()((set) => ({
 	setAutoFollowEnabled: (v) => set((s) => ({ autoFollowEnabled: resolve(v, s.autoFollowEnabled) })),
 
 	setProfilingActive: (v) => set((s) => ({ profilingActive: resolve(v, s.profilingActive) })),
+	setProfilingBufferPercent: (percent) => set({ profilingBufferPercent: percent }),
 
 	setUsageDashboardViewMode: (v) =>
 		set((s) => ({ usageDashboardViewMode: resolve(v, s.usageDashboardViewMode) })),

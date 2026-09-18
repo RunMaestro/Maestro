@@ -15,6 +15,7 @@ The `window.maestro` API exposes the following namespaces:
 - `parquet` - Windowed reads over an open Parquet file (see Parquet API below)
 - `dialog` - Folder selection
 - `shells` - Detect available shells
+- `shell` - OS shell integration: openExternal, openPath, trashItem, showItemInFolder, clipboard image read/write, and `capturePage(rect?)`. `capturePage` screenshots the CALLING window as a PNG data URL (`window:capturePage` shoots `event.sender`, so a surface opened in a second window captures itself); pass a viewport-relative CSS-pixel rect to narrow the shot to one region, omit it for the whole page. Resolves null when there is nothing to capture.
 - `logger` - System logging
 
 ## Agent & Provider Sessions

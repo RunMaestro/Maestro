@@ -27,10 +27,7 @@ export const SessionTooltipContent = memo(function SessionTooltipContent({
 	return (
 		<>
 			{groupName && (
-				<div
-					className="text-[10px] font-bold uppercase mb-1"
-					style={{ color: theme.colors.textDim }}
-				>
+				<div className="text-2xs font-bold uppercase mb-1" style={{ color: theme.colors.textDim }}>
 					{groupName}
 				</div>
 			)}
@@ -42,7 +39,7 @@ export const SessionTooltipContent = memo(function SessionTooltipContent({
 					<>
 						{session.sessionSshRemoteConfig?.enabled && session.sshConnectionFailed && (
 							<span
-								className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold"
+								className="flex items-center gap-1 px-1.5 py-0.5 rounded text-3xs font-bold"
 								style={{
 									backgroundColor: theme.colors.error + '30',
 									color: theme.colors.error,
@@ -59,7 +56,7 @@ export const SessionTooltipContent = memo(function SessionTooltipContent({
 							<>
 								{session.sessionSshRemoteConfig?.enabled && !session.sshConnectionFailed && (
 									<span
-										className="flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold"
+										className="flex items-center px-1.5 py-0.5 rounded text-3xs font-bold"
 										style={{
 											backgroundColor: theme.colors.success + '30',
 											color: theme.colors.success,
@@ -70,7 +67,7 @@ export const SessionTooltipContent = memo(function SessionTooltipContent({
 									</span>
 								)}
 								<span
-									className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
+									className="px-1.5 py-0.5 rounded text-3xs font-bold uppercase"
 									style={{
 										backgroundColor: theme.colors.accent + '30',
 										color: theme.colors.accent,
@@ -82,7 +79,7 @@ export const SessionTooltipContent = memo(function SessionTooltipContent({
 						) : session.sessionSshRemoteConfig?.enabled ? (
 							!session.sshConnectionFailed && (
 								<span
-									className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
+									className="px-1.5 py-0.5 rounded text-3xs font-bold uppercase"
 									style={{
 										backgroundColor: theme.colors.warning + '30',
 										color: theme.colors.warning,
@@ -93,7 +90,7 @@ export const SessionTooltipContent = memo(function SessionTooltipContent({
 							)
 						) : (
 							<span
-								className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
+								className="px-1.5 py-0.5 rounded text-3xs font-bold uppercase"
 								style={{
 									backgroundColor: theme.colors.textDim + '20',
 									color: theme.colors.textDim,
@@ -106,7 +103,7 @@ export const SessionTooltipContent = memo(function SessionTooltipContent({
 				)}
 				{isInBatch && (
 					<span
-						className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
+						className="flex items-center gap-1 px-1.5 py-0.5 rounded text-3xs font-bold uppercase"
 						style={{
 							backgroundColor: theme.colors.warning + '30',
 							color: theme.colors.warning,
@@ -117,7 +114,7 @@ export const SessionTooltipContent = memo(function SessionTooltipContent({
 					</span>
 				)}
 			</div>
-			<div className="text-[10px] capitalize mb-2" style={{ color: theme.colors.textDim }}>
+			<div className="text-2xs capitalize mb-2" style={{ color: theme.colors.textDim }}>
 				{session.state} • {session.toolType}
 				{session.sessionSshRemoteConfig?.enabled ? ' (SSH)' : ''}
 			</div>
@@ -126,7 +123,7 @@ export const SessionTooltipContent = memo(function SessionTooltipContent({
 				className="pt-2 mt-2 space-y-1.5"
 				style={{ borderTop: `1px solid ${theme.colors.border}` }}
 			>
-				<div className="flex items-center justify-between text-[10px]">
+				<div className="flex items-center justify-between text-2xs">
 					<span style={{ color: theme.colors.textDim }}>Context Window</span>
 					<span style={{ color: theme.colors.textMain }}>{clampedContextUsage}%</span>
 				</div>
@@ -149,7 +146,7 @@ export const SessionTooltipContent = memo(function SessionTooltipContent({
 				</div>
 
 				{session.isGitRepo && gitFileCount !== undefined && gitFileCount > 0 && (
-					<div className="flex items-center justify-between text-[10px] pt-1">
+					<div className="flex items-center justify-between text-2xs pt-1">
 						<span className="flex items-center gap-1" style={{ color: theme.colors.textDim }}>
 							<GitBranch className="w-3 h-3" />
 							Git Changes
@@ -159,7 +156,7 @@ export const SessionTooltipContent = memo(function SessionTooltipContent({
 				)}
 
 				{session.usageStats && session.usageStats.totalCostUsd > 0 && (
-					<div className="flex items-center justify-between text-[10px] pt-1">
+					<div className="flex items-center justify-between text-2xs pt-1">
 						<span style={{ color: theme.colors.textDim }}>Agent Cost</span>
 						<span className="font-mono font-bold" style={{ color: theme.colors.success }}>
 							${session.usageStats.totalCostUsd.toFixed(2)}
@@ -168,7 +165,7 @@ export const SessionTooltipContent = memo(function SessionTooltipContent({
 				)}
 
 				{session.activeTimeMs > 0 && (
-					<div className="flex items-center justify-between text-[10px] pt-1">
+					<div className="flex items-center justify-between text-2xs pt-1">
 						<span className="flex items-center gap-1" style={{ color: theme.colors.textDim }}>
 							<Clock className="w-3 h-3" />
 							Active Time
@@ -180,7 +177,7 @@ export const SessionTooltipContent = memo(function SessionTooltipContent({
 				)}
 
 				<div
-					className="flex items-center gap-1.5 text-[10px] font-mono pt-1"
+					className="flex items-center gap-1.5 text-2xs font-mono pt-1"
 					style={{ color: theme.colors.textDim }}
 				>
 					<Folder className="w-3 h-3 shrink-0" />

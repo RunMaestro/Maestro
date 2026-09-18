@@ -31,9 +31,13 @@ const LOG_CONTEXT = '[TokenUsageCache]';
 
 /**
  * Bump to invalidate every persisted entry (e.g. when the breakdown shape
- * changes). v2 added `accountKey` to `SessionTokenBreakdown`; v3 added `origin`.
+ * changes, or when the DERIVATION changes for files whose fingerprint won't).
+ * v2 added `accountKey` to `SessionTokenBreakdown`; v3 added `origin`; v4 fixed
+ * Codex token accounting (its cumulative `total_token_usage` was being summed)
+ * and added OpenAI pricing, neither of which touches a transcript's mtime or
+ * size, so the fingerprint alone would keep serving the old numbers forever.
  */
-export const TOKEN_USAGE_CACHE_VERSION = 3;
+export const TOKEN_USAGE_CACHE_VERSION = 4;
 
 /** One cached session: the fingerprint it was derived at plus the derived breakdown. */
 interface CachedSession {

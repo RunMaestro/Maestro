@@ -15,7 +15,6 @@ import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { shallow } from 'zustand/shallow';
 import type { BrowserConfirmPolicy } from '../../../shared/coworkingBrowser';
 import type {
-	LLMProvider,
 	ThemeId,
 	ThemeColors,
 	Shortcut,
@@ -32,6 +31,7 @@ import type {
 } from '../../types';
 import type { FileExplorerIconTheme } from '../../utils/fileExplorerIcons/shared';
 import type { ToastWidth } from '../../../shared/toastWidth';
+import type { GlossLevel } from '../../../shared/themeGloss';
 import {
 	useSettingsStore,
 	loadAllSettings,
@@ -49,6 +49,7 @@ import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { logger } from '../../utils/logger';
 import type { TypographySurface } from '../../../shared/typography';
 import type { TypographyPresetId } from '../../../shared/typographyPresets';
+import type { TypographySnapshot } from '../../../shared/typographySnapshot';
 import { applyTypographyVars } from '../../utils/applyTypographyVars';
 
 export interface UseSettingsReturn {
@@ -63,14 +64,6 @@ export interface UseSettingsReturn {
 	globalShowHotkey: string[];
 	setGlobalShowHotkey: (value: string[]) => void;
 
-	// LLM settings
-	llmProvider: LLMProvider;
-	modelSlug: string;
-	apiKey: string;
-	setLlmProvider: (value: LLMProvider) => void;
-	setModelSlug: (value: string) => void;
-	setApiKey: (value: string) => void;
-
 	// Shell settings
 	defaultShell: string;
 	setDefaultShell: (value: string) => void;
@@ -80,6 +73,9 @@ export interface UseSettingsReturn {
 	setShellArgs: (value: string) => void;
 	shellEnvVars: Record<string, string>;
 	setShellEnvVars: (value: Record<string, string>) => void;
+	/** Variables switched off in the editor: kept for later, never spawned with. */
+	shellEnvVarsDisabled: Record<string, string>;
+	setShellEnvVarsDisabled: (value: Record<string, string>) => void;
 
 	// GitHub CLI settings
 	ghPath: string;
@@ -109,10 +105,15 @@ export interface UseSettingsReturn {
 	setSurfaceFontSize: (surface: TypographySurface, value: number) => void;
 	setFontZoom: (value: number) => void;
 	resetTypography: (id: TypographyPresetId) => void;
+	typographySnapshot: TypographySnapshot | null;
+	saveTypographySnapshot: () => void;
+	restoreTypographySnapshot: () => void;
 	typographyPromptSeen: boolean;
 	setTypographyPromptSeen: (value: boolean) => void;
 	themePromptSeen: boolean;
 	setThemePromptSeen: (value: boolean) => void;
+	updatesPromptSeen: boolean;
+	setUpdatesPromptSeen: (value: boolean) => void;
 	agentPowersPromptSeen: boolean;
 	setAgentPowersPromptSeen: (value: boolean) => void;
 
@@ -286,6 +287,8 @@ export interface UseSettingsReturn {
 	isLeaderboardRegistered: boolean;
 
 	// Web Interface settings
+	webInterfaceAutoStart: boolean;
+	setWebInterfaceAutoStart: (value: boolean) => void;
 	webInterfaceUseCustomPort: boolean;
 	setWebInterfaceUseCustomPort: (value: boolean) => void;
 	webInterfaceCustomPort: number;
@@ -306,6 +309,10 @@ export interface UseSettingsReturn {
 	// Accessibility settings
 	colorBlindMode: boolean;
 	setColorBlindMode: (value: boolean) => void;
+
+	// Surface gloss (app-chrome lighting; changes no theme color)
+	themeGloss: GlossLevel;
+	setThemeGloss: (value: GlossLevel) => void;
 
 	// Tab filtering settings
 	showStarredInUnreadFilter: boolean;
@@ -328,6 +335,8 @@ export interface UseSettingsReturn {
 	// Document Graph settings
 	documentGraphShowExternalLinks: boolean;
 	setDocumentGraphShowExternalLinks: (value: boolean) => void;
+	documentGraphConfirmClose: boolean;
+	setDocumentGraphConfirmClose: (value: boolean) => void;
 	documentGraphMaxNodes: number;
 	setDocumentGraphMaxNodes: (value: number) => void;
 	documentGraphPreviewCharLimit: number;
@@ -344,6 +353,8 @@ export interface UseSettingsReturn {
 	// Power management settings
 	preventSleepEnabled: boolean;
 	setPreventSleepEnabled: (value: boolean) => Promise<void>;
+	preventDisplaySleepEnabled: boolean;
+	setPreventDisplaySleepEnabled: (value: boolean) => Promise<void>;
 
 	// Rendering settings
 	disableGpuAcceleration: boolean;
@@ -449,6 +460,14 @@ export interface UseSettingsReturn {
 	directorNotesSettings: DirectorNotesSettings;
 	setDirectorNotesSettings: (value: DirectorNotesSettings) => void;
 
+	// Maestro Cue history retention (days kept in cue.db)
+	cueHistoryRetentionDays: number;
+	setCueHistoryRetentionDays: (value: number) => void;
+
+	// Collapse repeated Cue runs in the History panel into one row per trigger
+	groupCueEntries: boolean;
+	setGroupCueEntries: (value: boolean) => void;
+
 	// WakaTime integration settings
 	wakatimeApiKey: string;
 	setWakatimeApiKey: (value: string) => void;
@@ -470,6 +489,8 @@ export interface UseSettingsReturn {
 	setShowSessionIdPill: (value: boolean) => void;
 	showSessionCostPill: boolean;
 	setShowSessionCostPill: (value: boolean) => void;
+	showProviderModePill: boolean;
+	setShowProviderModePill: (value: boolean) => void;
 
 	// Worktree display in left panel agent list
 	showWorktreePill: boolean;

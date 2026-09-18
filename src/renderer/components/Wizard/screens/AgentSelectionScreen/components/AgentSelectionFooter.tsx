@@ -29,7 +29,9 @@ export function AgentSelectionFooter({
 				Continue
 			</button>
 
-			<div className="flex justify-center gap-6">
+			{/* Keyboard legend - a phone has no keyboard, so the phone stylesheet
+			    retires anything carrying data-shortcut-hint. */}
+			<div className="flex justify-center gap-6" data-shortcut-hint="">
 				<span className="text-xs flex items-center gap-1" style={{ color: theme.colors.textDim }}>
 					<kbd
 						className="px-1.5 py-0.5 rounded text-xs"

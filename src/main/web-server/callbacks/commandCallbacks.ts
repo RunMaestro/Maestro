@@ -4,6 +4,7 @@ import type { StoredSession } from '../../stores/types';
 import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
 import { requestFromRenderer } from './remoteRequest';
+import type { ConsultAgentResult } from '../types';
 
 /**
  * The renderer's answer to a `remote:executeCommand` send: did it accept the
@@ -51,11 +52,38 @@ function parseRemoteCommandReceipt(raw: unknown): RemoteCommandReceipt {
 	return { accepted: false, reason: 'malformed-receipt' };
 }
 
+/**
+ * Narrow the renderer's consult reply. An older renderer that does not know the
+ * channel simply never answers and the timeout fallback applies; a malformed
+ * answer is reported as a failure rather than passed through as a truthy object,
+ * so the calling agent never treats "no answer" as an answer.
+ */
+function parseConsultAgentResult(raw: unknown): ConsultAgentResult {
+	if (typeof raw !== 'object' || raw === null) {
+		return { success: false, error: 'malformed-consult-result' };
+	}
+	const r = raw as Record<string, unknown>;
+	const str = (v: unknown) => (typeof v === 'string' ? v : undefined);
+	return {
+		success: r.success === true,
+		answer: str(r.answer),
+		error: str(r.error),
+		canceled: r.canceled === true,
+		targetAgentName: str(r.targetAgentName),
+		targetTabId: str(r.targetTabId),
+	};
+}
+
 export function registerCommandCallbacks(
 	server: WebServer,
-	deps: Pick<WebServerFactoryDependencies, 'getMainWindow' | 'sessionsStore'>
+	deps: Pick<
+		WebServerFactoryDependencies,
+		'getMainWindow' | 'getWindowForSession' | 'sessionsStore'
+	>
 ): void {
-	const { getMainWindow, sessionsStore } = deps;
+	const { getMainWindow, getWindowForSession, sessionsStore } = deps;
+	const resolveSessionWindow = (sessionId: string) =>
+		getWindowForSession?.(sessionId) ?? getMainWindow();
 
 	// Set up callback for web server to execute commands through the desktop
 	// This forwards AI commands to the renderer, ensuring single source of truth
@@ -70,9 +98,9 @@ export function registerCommandCallbacks(
 			images?: string[],
 			background?: boolean
 		) => {
-			const mainWindow = getMainWindow();
-			if (!mainWindow) {
-				logger.warn('mainWindow is null for executeCommand', 'WebServer');
+			const targetWindow = resolveSessionWindow(sessionId);
+			if (!targetWindow) {
+				logger.warn('No owning window is available for executeCommand', 'WebServer');
 				return false;
 			}
 
@@ -93,7 +121,7 @@ export function registerCommandCallbacks(
 				`[Web → Renderer] Command preview (truncated): ${command.substring(0, 100)}`,
 				'WebServer'
 			);
-			if (!isWebContentsAvailable(mainWindow)) {
+			if (!isWebContentsAvailable(targetWindow)) {
 				logger.warn('webContents is not available for executeCommand', 'WebServer');
 				return false;
 			}
@@ -106,7 +134,7 @@ export function registerCommandCallbacks(
 			// simply ignores the extra response channel and falls through to
 			// the timeout below, which is why the fallback resolves `false`.
 			const receipt = await requestFromRenderer<RemoteCommandReceipt>(
-				mainWindow,
+				targetWindow,
 				'remote:executeCommand',
 				{
 					fallback: { accepted: false, reason: 'renderer-timeout', timedOut: true },
@@ -127,23 +155,74 @@ export function registerCommandCallbacks(
 		}
 	);
 
+	// Cross-agent consult (`maestro-cli ask`). Forwarded to the renderer, which
+	// owns the consult path a typed `@mention` uses - the hidden tab on the
+	// target, the resumed provider session, the History attribution. The wait is
+	// the whole turn, so the timeout is the caller's, not the 3s delivery receipt
+	// the dispatch path uses: here we are waiting for an ANSWER, not for the
+	// renderer to accept a prompt.
+	server.setConsultAgentCallback(async (params) => {
+		const targetWindow = resolveSessionWindow(params.targetSessionId);
+		if (!targetWindow) {
+			logger.warn('No owning window is available for consultAgent', 'WebServer');
+			return { success: false, error: 'No Maestro window is available' };
+		}
+		if (!isWebContentsAvailable(targetWindow)) {
+			logger.warn('webContents is not available for consultAgent', 'WebServer');
+			return { success: false, error: 'No Maestro window is available' };
+		}
+		logger.info(
+			`[Web \u2192 Renderer] Forwarding consult | Target: ${params.targetSessionId} | From: ${params.fromSessionId ?? 'unattributed'} | QuestionLength: ${params.question.length}`,
+			'WebServer'
+		);
+		return requestFromRenderer<ConsultAgentResult>(targetWindow, 'remote:crossAgentAsk', {
+			fallback: {
+				success: false,
+				error: `The consulted agent did not answer within ${Math.round(params.timeoutMs / 1000)}s`,
+			},
+			timeoutMs: params.timeoutMs,
+			parse: parseConsultAgentResult,
+			args: [
+				{
+					targetSessionId: params.targetSessionId,
+					question: params.question,
+					fromSessionId: params.fromSessionId,
+					fromTabId: params.fromTabId,
+					withContext: params.withContext,
+				},
+			],
+		});
+	});
+
+	// A dispatch run from an agent's own shell names its caller. The pill goes to
+	// the CALLER's window, not the target's: it belongs to the conversation that
+	// handed the work over.
+	server.setNoteAgentDelegationCallback((notice) => {
+		const callerWindow = resolveSessionWindow(notice.fromSessionId);
+		if (!callerWindow || !isWebContentsAvailable(callerWindow)) {
+			logger.warn('No owning window is available for noteAgentDelegation', 'WebServer');
+			return;
+		}
+		callerWindow.webContents.send('remote:agentDelegation', notice);
+	});
+
 	// Set up callback for web server to interrupt sessions through the desktop
 	// This forwards to the renderer which handles state updates and broadcasts
 	server.setInterruptSessionCallback(async (sessionId: string) => {
-		const mainWindow = getMainWindow();
-		if (!mainWindow) {
-			logger.warn('mainWindow is null for interrupt', 'WebServer');
+		const targetWindow = resolveSessionWindow(sessionId);
+		if (!targetWindow) {
+			logger.warn('No owning window is available for interrupt', 'WebServer');
 			return false;
 		}
 
 		// Forward to renderer - it will handle interrupt, state update, and broadcasts
 		// This ensures web interrupts go through exact same code path as desktop interrupts
 		logger.debug(`Forwarding interrupt to renderer for session ${sessionId}`, 'WebServer');
-		if (!isWebContentsAvailable(mainWindow)) {
+		if (!isWebContentsAvailable(targetWindow)) {
 			logger.warn('webContents is not available for interrupt', 'WebServer');
 			return false;
 		}
-		mainWindow.webContents.send('remote:interrupt', sessionId);
+		targetWindow.webContents.send('remote:interrupt', sessionId);
 		return true;
 	});
 
@@ -155,20 +234,20 @@ export function registerCommandCallbacks(
 				`[Web→Desktop] Mode switch callback invoked: session=${sessionId}, mode=${mode}`,
 				'WebServer'
 			);
-			const mainWindow = getMainWindow();
-			if (!mainWindow) {
-				logger.warn('mainWindow is null for switchMode', 'WebServer');
+			const targetWindow = resolveSessionWindow(sessionId);
+			if (!targetWindow) {
+				logger.warn('No owning window is available for switchMode', 'WebServer');
 				return false;
 			}
 
 			// Forward to renderer - it will handle mode switch and broadcasts
 			// This ensures web mode switches go through exact same code path as desktop
 			logger.info(`[Web→Desktop] Sending IPC remote:switchMode to renderer`, 'WebServer');
-			if (!isWebContentsAvailable(mainWindow)) {
+			if (!isWebContentsAvailable(targetWindow)) {
 				logger.warn('webContents is not available for switchMode', 'WebServer');
 				return false;
 			}
-			mainWindow.webContents.send('remote:switchMode', sessionId, mode, background === true);
+			targetWindow.webContents.send('remote:switchMode', sessionId, mode, background === true);
 			return true;
 		}
 	);
@@ -181,25 +260,24 @@ export function registerCommandCallbacks(
 			`[Web→Desktop] Session select callback invoked: session=${sessionId}, tab=${tabId || 'none'}, focus=${focus || false}`,
 			'WebServer'
 		);
-		const mainWindow = getMainWindow();
-		if (!mainWindow) {
-			logger.warn('mainWindow is null for selectSession', 'WebServer');
+		const targetWindow = resolveSessionWindow(sessionId);
+		if (!targetWindow) {
+			logger.warn('No owning window is available for selectSession', 'WebServer');
 			return false;
-		}
-
-		// When focus is requested, bring the window to the foreground
-		if (focus) {
-			mainWindow.show();
-			mainWindow.focus();
 		}
 
 		// Forward to renderer - it will handle session selection and broadcasts
 		logger.info(`[Web→Desktop] Sending IPC remote:selectSession to renderer`, 'WebServer');
-		if (!isWebContentsAvailable(mainWindow)) {
+		if (!isWebContentsAvailable(targetWindow)) {
 			logger.warn('webContents is not available for selectSession', 'WebServer');
 			return false;
 		}
-		mainWindow.webContents.send('remote:selectSession', sessionId, tabId);
+		// When focus is requested, bring the verified owning window forward.
+		if (focus) {
+			targetWindow.show();
+			targetWindow.focus();
+		}
+		targetWindow.webContents.send('remote:selectSession', sessionId, tabId);
 		return true;
 	});
 }

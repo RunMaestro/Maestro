@@ -194,7 +194,7 @@ vi.mock('../../../../renderer/components/History', () => ({
 			if (raw !== null) {
 				const parsed = JSON.parse(raw);
 				if (Array.isArray(parsed)) {
-					const valid = parsed.filter((t) => ['USER', 'AUTO', 'CUE'].includes(t));
+					const valid = parsed.filter((t) => ['USER', 'AGENT', 'AUTO', 'CUE'].includes(t));
 					const set = new Set<string>(valid);
 					if (!maestroCueEnabled) set.delete('CUE');
 					return set;
@@ -203,7 +203,9 @@ vi.mock('../../../../renderer/components/History', () => ({
 		} catch {
 			// fall through to default
 		}
-		return new Set(maestroCueEnabled ? ['USER', 'AUTO', 'CUE'] : ['USER', 'AUTO']);
+		return new Set(
+			maestroCueEnabled ? ['USER', 'AGENT', 'AUTO', 'CUE'] : ['USER', 'AGENT', 'AUTO']
+		);
 	},
 	savePersistedHistoryFilters: (key: string, filters: Set<string>) => {
 		try {
@@ -386,7 +388,7 @@ describe('UnifiedHistoryTab', () => {
 					lookbackDays: 7,
 					// All visible types selected by default; pushed to the server so
 					// pagination spans the filtered dataset (maestroCue disabled here).
-					filter: ['USER', 'AUTO'],
+					filter: ['USER', 'AGENT', 'AUTO'],
 					limit: 100,
 					offset: 0,
 				});
@@ -411,7 +413,7 @@ describe('UnifiedHistoryTab', () => {
 			await waitFor(() => {
 				expect(mockGetUnifiedHistory).toHaveBeenCalledWith({
 					lookbackDays: 0,
-					filter: ['USER', 'AUTO'],
+					filter: ['USER', 'AGENT', 'AUTO'],
 					limit: 100,
 					offset: 0,
 				});
@@ -573,6 +575,48 @@ describe('UnifiedHistoryTab', () => {
 			await waitFor(() => {
 				expect(screen.getByTestId('filter-cue')).toBeInTheDocument();
 			});
+		});
+
+		it('blames the filter, not the fleet, when the pills empty the list', async () => {
+			// The pill selection is sent to the main process as `filter`, and
+			// since CUE-HISTORY-02 Cue rows live in `cue_events` and are not
+			// queried at all when CUE is off. So an empty response with a pill
+			// switched off must NOT be reported as "no history entries found".
+			useSettingsStore.setState({
+				encoreFeatures: {
+					directorNotes: false,
+					usageStats: false,
+					symphony: false,
+					maestroCue: true,
+				},
+			});
+			const cueEntry = {
+				...createMockEntries()[0],
+				id: 'cue-only-1',
+				type: 'CUE',
+				summary: 'Nightly sweep finished',
+			};
+			// Mirror the handler: serve rows only for the requested types.
+			mockGetUnifiedHistory.mockImplementation(async (options: { filter?: string[] }) =>
+				createPaginatedResponse(
+					(options?.filter ?? []).includes('CUE') ? [cueEntry] : [],
+					false,
+					(options?.filter ?? []).includes('CUE') ? 1 : 0
+				)
+			);
+
+			render(<UnifiedHistoryTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Nightly sweep finished')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByTestId('filter-cue'));
+
+			await waitFor(() => {
+				expect(screen.getByText('No entries match the current filters.')).toBeInTheDocument();
+			});
+			expect(screen.queryByText(/No history entries/)).not.toBeInTheDocument();
 		});
 	});
 
@@ -749,7 +793,11 @@ describe('UnifiedHistoryTab', () => {
 		// must match what clicking the entry's session pill does.
 		it('jumps to the entry session via onSelectAlternate (Cmd+Enter)', async () => {
 			const entries = createMockEntries();
-			entries[0] = { ...entries[0], agentSessionId: 'agent-sess-abc' };
+			entries[0] = {
+				...entries[0],
+				agentSessionId: 'agent-sess-abc',
+				sessionName: 'Named Session',
+			};
 			mockGetUnifiedHistory.mockResolvedValue(createPaginatedResponse(entries));
 
 			const onResumeSession = vi.fn();
@@ -764,8 +812,10 @@ describe('UnifiedHistoryTab', () => {
 				mockOnSelectAlternate!(0);
 			});
 
-			// Both ids travel: the agent to switch to, and the session to open there.
-			expect(onResumeSession).toHaveBeenCalledWith('session-1', 'agent-sess-abc');
+			// Both ids travel: the agent to switch to, and the session to open there -
+			// plus the recorded name, which is the only surviving copy once the tab
+			// that carried it is closed.
+			expect(onResumeSession).toHaveBeenCalledWith('session-1', 'agent-sess-abc', 'Named Session');
 			// The jump replaces the detail modal rather than stacking on top of it.
 			expect(screen.queryByTestId('history-detail-modal')).not.toBeInTheDocument();
 		});
@@ -950,5 +1000,34 @@ describe('UnifiedHistoryTab', () => {
 				expect(screen.getByText(/No history entries in this time range/)).toBeInTheDocument();
 			});
 		});
+	});
+});
+
+// Phone: the activity graph wraps onto its own full-width line. Beside the
+// search button and three filter pills it was squeezed to ~50px and its two
+// axis labels printed on top of each other.
+vi.mock('../../../../renderer/hooks/ui/useViewportBreakpoint', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../renderer/hooks/ui/useViewportBreakpoint')>()),
+	usePhoneLayout: vi.fn(() => false),
+}));
+import { usePhoneLayout } from '../../../../renderer/hooks/ui/useViewportBreakpoint';
+
+describe('UnifiedHistoryTab on a phone', () => {
+	afterEach(() => {
+		vi.mocked(usePhoneLayout).mockReturnValue(false);
+	});
+
+	it('gives the activity graph its own full-width row', async () => {
+		vi.mocked(usePhoneLayout).mockReturnValue(true);
+		render(<UnifiedHistoryTab theme={mockTheme} />);
+		const graph = await screen.findByTestId('activity-graph');
+		expect(graph.parentElement).toHaveClass('basis-full');
+	});
+
+	it('keeps the graph inline on desktop', async () => {
+		vi.mocked(usePhoneLayout).mockReturnValue(false);
+		render(<UnifiedHistoryTab theme={mockTheme} />);
+		const graph = await screen.findByTestId('activity-graph');
+		expect(graph.parentElement).toHaveClass('contents');
 	});
 });

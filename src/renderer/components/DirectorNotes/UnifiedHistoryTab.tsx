@@ -29,6 +29,7 @@ import { HistoryDetailModal } from '../HistoryDetailModal';
 import { useListNavigation, useThrottledCallback } from '../../hooks';
 import { useHistoryPagination } from '../../hooks/history/useHistoryPagination';
 import type { PaginatedPage } from '../../hooks/history/useHistoryPagination';
+import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
@@ -53,8 +54,10 @@ interface UnifiedHistoryEntry extends HistoryEntry {
 interface UnifiedHistoryTabProps {
 	theme: Theme;
 	/** Navigate to a session tab - receives (sourceSessionId, agentSessionId) */
-	onResumeSession?: (sourceSessionId: string, agentSessionId: string) => void;
+	onResumeSession?: (sourceSessionId: string, agentSessionId: string, sessionName?: string) => void;
 	fileTree?: FileNode[];
+	cwd?: string;
+	projectRoot?: string;
 	onFileClick?: (path: string) => void;
 	/** Lookback window in hours, lifted to the parent so the modal title can reflect it. null = All time. */
 	lookbackHours: number | null;
@@ -63,7 +66,16 @@ interface UnifiedHistoryTabProps {
 
 export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabProps>(
 	function UnifiedHistoryTab(
-		{ theme, onResumeSession, fileTree, onFileClick, lookbackHours, onLookbackChange },
+		{
+			theme,
+			onResumeSession,
+			fileTree,
+			cwd,
+			projectRoot,
+			onFileClick,
+			lookbackHours,
+			onLookbackChange,
+		},
 		ref
 	) {
 		const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures.maestroCue);
@@ -87,9 +99,15 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 			() => visibleTypes.filter((t) => activeFilters.has(t)),
 			[visibleTypes, activeFilters]
 		);
+		/** At least one entry type is switched off, so the list is narrowed. */
+		const hasNarrowingTypeFilter = activeFilterArray.length < visibleTypes.length;
 		const [detailModalEntry, setDetailModalEntry] = useState<HistoryEntry | null>(null);
 		const [historyStats, setHistoryStats] = useState<HistoryStats | null>(null);
 		const [searchExpanded, setSearchExpanded] = useState(false);
+		// Phone: the activity graph gets its own row. Beside the search button and
+		// three filter pills it was squeezed to ~50px, and its two axis labels
+		// ("Sep 5", "Now") printed on top of each other.
+		const phone = usePhoneLayout();
 		const [searchQuery, setSearchQuery] = useState('');
 
 		// Pre-computed graph buckets from backend (covers all entries in
@@ -442,7 +460,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 							return;
 						}
 						trackShortcutUsage('historyJumpToSession');
-						onResumeSession(entry.sourceSessionId, entry.agentSessionId);
+						onResumeSession(entry.sourceSessionId, entry.agentSessionId, entry.sessionName);
 					}
 				: undefined,
 			initialIndex: -1,
@@ -604,7 +622,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 					| UnifiedHistoryEntry
 					| undefined;
 				if (entry) {
-					onResumeSession(entry.sourceSessionId, agentSessionId);
+					onResumeSession(entry.sourceSessionId, agentSessionId, entry.sessionName);
 				}
 			},
 			[onResumeSession, entries]
@@ -615,7 +633,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 			(agentSessionId: string) => {
 				if (!onResumeSession || !detailModalEntry) return;
 				const entry = detailModalEntry as UnifiedHistoryEntry;
-				onResumeSession(entry.sourceSessionId, agentSessionId);
+				onResumeSession(entry.sourceSessionId, agentSessionId, entry.sessionName);
 			},
 			[onResumeSession, detailModalEntry]
 		);
@@ -679,7 +697,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 						/>
 						{searchQuery && (
 							<span
-								className="text-[10px] font-mono whitespace-nowrap flex-shrink-0"
+								className="text-2xs font-mono whitespace-nowrap flex-shrink-0"
 								style={{ color: theme.colors.textDim }}
 							>
 								{filteredEntries.length}
@@ -696,7 +714,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 				)}
 
 				{/* Header: Search icon + Filters + Activity Graph */}
-				<div className="flex items-start gap-3 mb-4">
+				<div className={`flex items-start gap-3 mb-4 ${phone ? 'flex-wrap' : ''}`}>
 					<button
 						onClick={openSearch}
 						className="flex-shrink-0 p-1.5 rounded-full transition-colors hover:bg-white/10"
@@ -711,26 +729,29 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 						theme={theme}
 						visibleTypes={visibleTypes}
 					/>
-					<ActivityGraph
-						entries={[]}
-						theme={theme}
-						lookbackHours={lookbackHours}
-						onLookbackChange={handleLookbackChange}
-						precomputedBuckets={graphBuckets}
-						precomputedRange={graphRange}
-						viewportRange={graphViewportRange}
-						alwaysShowViewportLabel
-						onBarClick={handleGraphBarClick}
-						activeFilters={activeFilters}
-					/>
+					{/* On a phone the graph wraps onto its own full-width line. */}
+					<div className={phone ? 'basis-full flex min-w-0' : 'contents'}>
+						<ActivityGraph
+							entries={[]}
+							theme={theme}
+							lookbackHours={lookbackHours}
+							onLookbackChange={handleLookbackChange}
+							precomputedBuckets={graphBuckets}
+							precomputedRange={graphRange}
+							viewportRange={graphViewportRange}
+							alwaysShowViewportLabel
+							onBarClick={handleGraphBarClick}
+							activeFilters={activeFilters}
+						/>
+					</div>
 					{/* Entry count badge - shows window position when jumped, total otherwise */}
 					{!isLoading && totalEntries > 0 && (
 						<span
-							className="text-[10px] font-mono whitespace-nowrap flex-shrink-0 mt-1"
+							className="text-2xs font-mono whitespace-nowrap flex-shrink-0 mt-1"
 							style={{ color: theme.colors.textDim }}
 						>
 							{!isAtTop
-								? `${startOffset + 1}–${startOffset + entries.length}/${totalEntries}`
+								? `${startOffset + 1}-${startOffset + entries.length}/${totalEntries}`
 								: entries.length < totalEntries
 									? `${entries.length}/${totalEntries}`
 									: `${totalEntries}`}
@@ -772,7 +793,12 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 								? `No entries matching "${searchQuery}".`
 								: activeFilters.size === 0
 									? 'No entry types selected. Enable a filter above.'
-									: entries.length === 0
+									: // `filter` is sent to the main process, so `entries` is already
+										// net of the pills - an empty list with a pill switched off
+										// means "the filter hid everything", not "there is nothing".
+										// Since CUE-HISTORY-02 that is the common case: Cue rows come
+										// from `cue_events` and are not queried at all when CUE is off.
+										entries.length === 0 && !hasNarrowingTypeFilter
 										? lookbackHours !== null
 											? 'No history entries in this time range. Try expanding the lookback period.'
 											: 'No history entries found across any agents.'
@@ -845,6 +871,8 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 							virtualizer.scrollToIndex(index, { align: 'center', behavior: 'smooth' });
 						}}
 						fileTree={fileTree}
+						cwd={cwd}
+						projectRoot={projectRoot}
 						onFileClick={onFileClick}
 					/>
 				)}

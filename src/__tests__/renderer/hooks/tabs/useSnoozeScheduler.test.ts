@@ -58,7 +58,14 @@ function spyOnSetSessions() {
  * store, returning the snooze ID.
  */
 function snoozeInStore(tabId: string, wakeAt: number, note?: string): string {
-	const result = snoozeTab(currentSession(), tabId, wakeAt, note)!;
+	const result = snoozeTab(currentSession(), tabId, wakeAt, { note })!;
+	useSessionStore.setState({ sessions: [result.session] });
+	return result.entry.id;
+}
+
+/** Snooze `tabId` with a prompt to run the moment it returns. */
+function snoozeWithPrompt(tabId: string, wakeAt: number, wakePrompt: string): string {
+	const result = snoozeTab(currentSession(), tabId, wakeAt, { wakePrompt })!;
 	useSessionStore.setState({ sessions: [result.session] });
 	return result.entry.id;
 }
@@ -309,5 +316,67 @@ describe('useSnoozeScheduler', () => {
 
 		expect(currentSession().snoozedTabs).toHaveLength(1);
 		expect(notifyToast).not.toHaveBeenCalled();
+	});
+});
+
+describe('useSnoozeScheduler wake prompts', () => {
+	beforeEach(() => {
+		vi.useFakeTimers();
+		notifyToast.mockClear();
+		useSessionStore.setState({ sessions: [], activeSessionId: null });
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it('queues the wake prompt on the restored tab', () => {
+		seedSession();
+		snoozeWithPrompt('b', Date.now() + SWEEP_INTERVAL_MS, 'summarize what changed');
+		renderHook(() => useSnoozeScheduler());
+
+		act(() => {
+			vi.advanceTimersByTime(SWEEP_INTERVAL_MS * 2);
+		});
+
+		const session = currentSession();
+		expect(session.aiTabs.map((t) => t.id)).toEqual(['a', 'b']);
+		// Queued rather than spawned: the tab was restored in this same tick, so
+		// nothing downstream may depend on React having re-rendered around it.
+		expect(session.executionQueue).toHaveLength(1);
+		expect(session.executionQueue[0]).toMatchObject({
+			tabId: 'b',
+			type: 'message',
+			text: 'summarize what changed',
+		});
+	});
+
+	it('leaves the queue alone for a snooze that carries no prompt', () => {
+		seedSession();
+		snoozeInStore('b', Date.now() + SWEEP_INTERVAL_MS, 'just a reminder');
+		renderHook(() => useSnoozeScheduler());
+
+		act(() => {
+			vi.advanceTimersByTime(SWEEP_INTERVAL_MS * 2);
+		});
+
+		expect(currentSession().executionQueue).toHaveLength(0);
+	});
+
+	it('still notifies as well as prompting - the two are independent', () => {
+		seedSession();
+		const result = snoozeTab(currentSession(), 'b', Date.now() + SWEEP_INTERVAL_MS, {
+			note: 'check the build',
+			wakePrompt: 'run the test suite',
+		})!;
+		useSessionStore.setState({ sessions: [result.session] });
+		renderHook(() => useSnoozeScheduler());
+
+		act(() => {
+			vi.advanceTimersByTime(SWEEP_INTERVAL_MS * 2);
+		});
+
+		expect(notifyToast.mock.calls[0][0].message).toBe('check the build');
+		expect(currentSession().executionQueue[0].text).toBe('run the test suite');
 	});
 });

@@ -45,6 +45,13 @@ export type MarkdownPreviewSearchMatch = SearchHit;
 export interface MarkdownPreviewFastHandle {
 	scrollToHeading: (slug: string) => boolean;
 	/**
+	 * Slug of the heading the reader is currently under, so the Table of Contents
+	 * can follow the scroll. Owned by the preview because virtualization leaves
+	 * most headings unmounted, which is exactly what the parent's DOM walk needs
+	 * and cannot see. `null` means the view sits above the first heading.
+	 */
+	getActiveHeadingSlug: () => string | null;
+	/**
 	 * Search the source string for `query` and return all matches. The Cmd+F UI
 	 * calls this once per query change to drive match counts. Empty query
 	 * returns []. Result is ordered by source offset ascending.

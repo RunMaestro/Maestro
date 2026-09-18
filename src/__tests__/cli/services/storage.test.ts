@@ -23,6 +23,7 @@ const originalEnv = { ...process.env };
 vi.mock('fs', () => ({
 	readFileSync: vi.fn(),
 	writeFileSync: vi.fn(),
+	appendFileSync: vi.fn(),
 	existsSync: vi.fn(),
 	readdirSync: vi.fn(),
 	mkdirSync: vi.fn(),
@@ -486,6 +487,54 @@ describe('storage service', () => {
 			vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({ sessions: [] }));
 
 			expect(() => resolveAgentId('nonexistent')).toThrow('Agent not found: nonexistent');
+		});
+
+		it('matches the readable name when the stored name carries an emoji prefix', () => {
+			// Agent names are routinely prefixed with a glyph. Both a human and an
+			// agent type the name they READ, so an exact-name match alone reports a
+			// visible agent as missing.
+			vi.mocked(fs.readFileSync).mockReturnValue(
+				JSON.stringify({
+					sessions: [mockSession({ id: 'ped-1', name: '\u{1F4DC} Substrate PedTome' })],
+				})
+			);
+
+			expect(resolveAgentId('Substrate PedTome')).toBe('ped-1');
+			expect(resolveAgentId('substrate pedtome')).toBe('ped-1');
+		});
+
+		it('still prefers an exact name match over a decoration-stripped one', () => {
+			vi.mocked(fs.readFileSync).mockReturnValue(
+				JSON.stringify({
+					sessions: [
+						mockSession({ id: 'plain-1', name: 'Kensho' }),
+						mockSession({ id: 'fancy-1', name: '\u{1F94B} Kensho' }),
+					],
+				})
+			);
+
+			expect(resolveAgentId('Kensho')).toBe('plain-1');
+		});
+
+		it('reports ambiguity rather than guessing between two decorated names', () => {
+			vi.mocked(fs.readFileSync).mockReturnValue(
+				JSON.stringify({
+					sessions: [
+						mockSession({ id: 'a-1', name: '\u{1F94B} Kensho' }),
+						mockSession({ id: 'b-1', name: '\u{1F4DC} Kensho' }),
+					],
+				})
+			);
+
+			expect(() => resolveAgentId('Kensho')).toThrow('Ambiguous agent name');
+		});
+
+		it('does not match two decoration-only names to each other', () => {
+			vi.mocked(fs.readFileSync).mockReturnValue(
+				JSON.stringify({ sessions: [mockSession({ id: 'glyph-1', name: '\u{1F4DC}' })] })
+			);
+
+			expect(() => resolveAgentId('\u{1F94B}')).toThrow('Agent not found');
 		});
 
 		it('should throw with match list when ambiguous', () => {
@@ -993,16 +1042,13 @@ describe('storage service', () => {
 
 		describe('readHistory with per-session storage', () => {
 			it('should read from session file when sessionId provided', () => {
-				const sessionHistoryData = {
-					version: 1,
-					sessionId: 'session-123',
-					projectPath: '/project/path',
-					entries: [
-						mockHistoryEntry({ id: 'e1', sessionId: 'session-123' }),
-						mockHistoryEntry({ id: 'e2', sessionId: 'session-123' }),
-					],
-				};
-				vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(sessionHistoryData));
+				const sessionEntries = [
+					mockHistoryEntry({ id: 'e1', sessionId: 'session-123' }),
+					mockHistoryEntry({ id: 'e2', sessionId: 'session-123' }),
+				];
+				vi.mocked(fs.readFileSync).mockReturnValue(
+					sessionEntries.map((e) => `${JSON.stringify(e)}\n`).join('')
+				);
 
 				const result = readHistory(undefined, 'session-123');
 
@@ -1041,24 +1087,10 @@ describe('storage service', () => {
 				vi.mocked(fs.readFileSync).mockImplementation((filepath) => {
 					const pathStr = path.normalize(String(filepath));
 					if (pathStr.includes('session-123.json')) {
-						return JSON.stringify({
-							version: 1,
-							sessionId: 'session-123',
-							projectPath: '/project/alpha',
-							entries: [
-								mockHistoryEntry({ id: 'e1', projectPath: '/project/alpha', timestamp: 2000 }),
-							],
-						});
+						return `${JSON.stringify(mockHistoryEntry({ id: 'e1', projectPath: '/project/alpha', timestamp: 2000 }))}\n`;
 					}
 					if (pathStr.includes('session-456.json')) {
-						return JSON.stringify({
-							version: 1,
-							sessionId: 'session-456',
-							projectPath: '/project/beta',
-							entries: [
-								mockHistoryEntry({ id: 'e2', projectPath: '/project/beta', timestamp: 1000 }),
-							],
-						});
+						return `${JSON.stringify(mockHistoryEntry({ id: 'e2', projectPath: '/project/beta', timestamp: 1000 }))}\n`;
 					}
 					return '{}';
 				});
@@ -1086,20 +1118,10 @@ describe('storage service', () => {
 				vi.mocked(fs.readFileSync).mockImplementation((filepath) => {
 					const pathStr = path.normalize(String(filepath));
 					if (pathStr.includes('session-123.json')) {
-						return JSON.stringify({
-							version: 1,
-							sessionId: 'session-123',
-							projectPath: '/project/alpha',
-							entries: [mockHistoryEntry({ id: 'e1', timestamp: 1000 })],
-						});
+						return `${JSON.stringify(mockHistoryEntry({ id: 'e1', timestamp: 1000 }))}\n`;
 					}
 					if (pathStr.includes('session-456.json')) {
-						return JSON.stringify({
-							version: 1,
-							sessionId: 'session-456',
-							projectPath: '/project/beta',
-							entries: [mockHistoryEntry({ id: 'e2', timestamp: 2000 })],
-						});
+						return `${JSON.stringify(mockHistoryEntry({ id: 'e2', timestamp: 2000 }))}\n`;
 					}
 					return '{}';
 				});
@@ -1136,13 +1158,9 @@ describe('storage service', () => {
 					return pathStr.includes(`${path.sep}history`);
 				});
 
-				const existingData = {
-					version: 1,
-					sessionId: 'session-123',
-					projectPath: '/project',
-					entries: [mockHistoryEntry({ id: 'existing' })],
-				};
-				vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(existingData));
+				vi.mocked(fs.readFileSync).mockReturnValue(
+					`${JSON.stringify(mockHistoryEntry({ id: 'existing' }))}\n`
+				);
 
 				const newEntry = mockHistoryEntry({
 					id: 'new-entry',
@@ -1151,12 +1169,15 @@ describe('storage service', () => {
 				});
 				addHistoryEntry(newEntry);
 
-				expect(fs.writeFileSync).toHaveBeenCalled();
-				const writeCall = vi.mocked(fs.writeFileSync).mock.calls[0];
-				expect(writeCall[0]).toContain(path.join('history', 'session-123.json'));
-				const writtenData = JSON.parse(writeCall[1] as string);
-				expect(writtenData.entries).toHaveLength(2);
-				expect(writtenData.entries[0].id).toBe('new-entry'); // New entry at beginning
+				// Appends one line; must NOT rewrite the file. A rewrite here is a
+				// cross-process lost update waiting to happen, because the desktop
+				// app appends to this same file concurrently.
+				expect(fs.writeFileSync).not.toHaveBeenCalled();
+				const appendCall = vi.mocked(fs.appendFileSync).mock.calls[0];
+				expect(appendCall[0]).toContain(path.join('history', 'session-123.jsonl'));
+				const appended = String(appendCall[1]);
+				expect(appended.trimEnd().split('\n')).toHaveLength(1);
+				expect(JSON.parse(appended.trim()).id).toBe('new-entry');
 			});
 
 			it('should create history directory if it does not exist', () => {
@@ -1201,7 +1222,7 @@ describe('storage service', () => {
 				expect(fs.writeFileSync).not.toHaveBeenCalled();
 			});
 
-			it('should enforce max entries limit (5000)', () => {
+			it('does NOT trim the file - rotation belongs to the desktop app', () => {
 				vi.mocked(fs.existsSync).mockImplementation((filepath: fs.PathLike) => {
 					const pathStr = path.normalize(String(filepath));
 					if (pathStr.includes('history-migrated.json')) {
@@ -1210,32 +1231,21 @@ describe('storage service', () => {
 					return pathStr.includes(`${path.sep}history`);
 				});
 
-				// Create 5000 existing entries
-				const existingEntries = Array.from({ length: 5000 }, (_, i) =>
-					mockHistoryEntry({ id: `entry-${i}` })
+				const existingEntries = Array.from(
+					{ length: 5000 },
+					(_, i) => `${JSON.stringify(mockHistoryEntry({ id: `entry-${i}` }))}\n`
+				).join('');
+				vi.mocked(fs.readFileSync).mockReturnValue(existingEntries);
+
+				addHistoryEntry(
+					mockHistoryEntry({ id: 'new-entry', sessionId: 'session-123', projectPath: '/project' })
 				);
-				const existingData = {
-					version: 1,
-					sessionId: 'session-123',
-					projectPath: '/project',
-					entries: existingEntries,
-				};
-				vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(existingData));
 
-				const newEntry = mockHistoryEntry({
-					id: 'new-entry',
-					sessionId: 'session-123',
-					projectPath: '/project',
-				});
-				addHistoryEntry(newEntry);
-
-				expect(fs.writeFileSync).toHaveBeenCalled();
-				const writeCall = vi.mocked(fs.writeFileSync).mock.calls[0];
-				const writtenData = JSON.parse(writeCall[1] as string);
-				expect(writtenData.entries).toHaveLength(5000);
-				expect(writtenData.entries[0].id).toBe('new-entry'); // New entry at beginning
-				// Last entry should be trimmed
-				expect(writtenData.entries[4999].id).toBe('entry-4998');
+				// One append, no rewrite: two processes trimming the same file is
+				// exactly the destructive race the append-only format removes. The
+				// app rotates on its own schedule.
+				expect(vi.mocked(fs.appendFileSync)).toHaveBeenCalledTimes(1);
+				expect(fs.writeFileSync).not.toHaveBeenCalled();
 			});
 		});
 	});

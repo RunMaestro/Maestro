@@ -3,6 +3,7 @@ import type { UsageDashboardViewMode as ViewMode } from '../../../types';
 export const OVERVIEW_SECTIONS = [
 	'year-in-pixels',
 	'summary-cards',
+	'delegation-score',
 	'query-percentiles',
 	'agent-comparison',
 	'provider-trends',
@@ -25,12 +26,14 @@ export const AGENT_OVERVIEW_WITH_WORKTREE_SECTIONS = [
 	'agent-usage',
 ] as const;
 export const ACTIVITY_SECTIONS = [
+	'delegation-trend',
 	'activity-heatmap',
 	'weekday-comparison',
 	'duration-trends',
 ] as const;
 export const AUTORUN_SECTIONS = [
 	'autorun-stats',
+	'wizard-stats',
 	'autorun-task-percentiles',
 	'tasks-by-hour',
 	'longest-autoruns',
@@ -52,6 +55,8 @@ export type SectionId =
 const SECTION_LABELS: Record<SectionId, string> = {
 	'year-in-pixels': 'Past Year Activity Strip',
 	'summary-cards': 'Summary Cards',
+	'delegation-score': 'Delegation Score',
+	'delegation-trend': 'Interactive vs Delegated Trend',
 	'query-percentiles': 'Query Duration Percentiles',
 	'autorun-task-percentiles': 'Auto Run Task Duration Percentiles',
 	'agent-overview-cards': 'Active Agents Overview',
@@ -71,6 +76,7 @@ const SECTION_LABELS: Record<SectionId, string> = {
 	'weekday-comparison': 'Weekday vs Weekend Chart',
 	'duration-trends': 'Duration Trends Chart',
 	'autorun-stats': 'Auto Run Statistics',
+	'wizard-stats': 'Auto Run Wizard Statistics',
 	'tasks-by-hour': 'Tasks by Time of Day Chart',
 	'longest-autoruns': 'Top 25 Longest Auto Runs',
 };

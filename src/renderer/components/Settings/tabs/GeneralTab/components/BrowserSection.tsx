@@ -48,7 +48,7 @@ export function BrowserSection({
 			/>
 			<div
 				data-setting-id="general-html-double-click"
-				className="mt-3 flex items-center justify-between p-3 rounded border cursor-pointer hover:bg-opacity-10"
+				className="mt-3 flex items-center justify-between p-3 rounded border cursor-pointer row-hover"
 				style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
 				onClick={() => setHtmlDoubleClickOpensInBrowser(!htmlDoubleClickOpensInBrowser)}
 				role="button"

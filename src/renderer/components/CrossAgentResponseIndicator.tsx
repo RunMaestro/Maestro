@@ -7,7 +7,7 @@
  *
  * Renders in normal flow at the top of the input area (next to the thinking
  * pill). Clicking it expands a small dropdown listing each in-flight request -
- * the consulted agent's name plus elapsed seconds. Each agent chip is a deep
+ * the consulted agent's name plus how long it has been running. Each agent chip is a deep
  * link: clicking it jumps to that agent AND to the consult tab actually running
  * the request (the same jump the response bubble's attribution header makes),
  * rather than landing on whatever tab that agent last had active. Renders
@@ -22,7 +22,8 @@ import {
 	useCrossAgentInFlightStore,
 } from '../stores/crossAgentInFlightStore';
 import { getAgentIcon } from '../constants/agentIcons';
-import { truncateText } from '../../shared/formatters';
+import { StopTurnButton } from './ui/StopTurnButton';
+import { formatElapsedTickerCompact, truncateText } from '../../shared/formatters';
 
 interface CrossAgentResponseIndicatorProps {
 	theme: Theme;
@@ -36,6 +37,14 @@ interface CrossAgentResponseIndicatorProps {
 	 * way every other cross-agent navigation affordance does.
 	 */
 	onSessionClick?: (sessionId: string, tabId?: string) => void;
+	/**
+	 * Stop this agent's turn, consults included. Omitted when the thinking pill
+	 * below is already showing its own Stop (the two run the same agent-level
+	 * interrupt, so both on screen is one control drawn twice). Passed in when it
+	 * is NOT - a message that leads with a mention is answered only by the
+	 * consulted agents, so this agent never goes busy and no other Stop exists.
+	 */
+	onInterrupt?: () => void;
 }
 
 export function CrossAgentResponseIndicator({
@@ -43,6 +52,7 @@ export function CrossAgentResponseIndicator({
 	sourceSessionId,
 	sourceTabId,
 	onSessionClick,
+	onInterrupt,
 }: CrossAgentResponseIndicatorProps): JSX.Element | null {
 	const requests = useCrossAgentInFlightStore((s) => s.requests);
 	const inFlight = useMemo(
@@ -110,9 +120,13 @@ export function CrossAgentResponseIndicator({
 					/>
 				</button>
 
+				{onInterrupt && <StopTurnButton theme={theme} onClick={onInterrupt} />}
+
 				{expanded &&
 					inFlight.map((req) => {
-						const elapsedSec = Math.max(0, Math.floor((now - req.startedAt) / 1000));
+						// Seconds below a minute, then the same segments the thinking pill
+						// below it shows - a long consult reads `20m 4s`, never `1203s`.
+						const elapsed = formatElapsedTickerCompact(now - req.startedAt);
 						// The chip is only a link when we can navigate. Without a handler it
 						// stays a plain, non-focusable label rather than a button that does
 						// nothing when clicked.
@@ -133,8 +147,8 @@ export function CrossAgentResponseIndicator({
 								}}
 								title={
 									canJump
-										? `Jump to ${req.targetAgentName} · ${elapsedSec}s`
-										: `${req.targetAgentName} · ${elapsedSec}s`
+										? `Jump to ${req.targetAgentName} · ${elapsed}`
+										: `${req.targetAgentName} · ${elapsed}`
 								}
 							>
 								<span className="shrink-0 leading-none">
@@ -144,7 +158,7 @@ export function CrossAgentResponseIndicator({
 									{truncateText(req.targetAgentName, 24)}
 								</span>
 								<span className="shrink-0 tabular-nums" style={{ color: theme.colors.textDim }}>
-									{elapsedSec}s
+									{elapsed}
 								</span>
 							</button>
 						);

@@ -287,7 +287,7 @@ export function AutoRunnerHelpModal({ theme, onClose, zIndex = 50 }: AutoRunnerH
 							<span>
 								<strong style={{ color: theme.colors.textMain }}>Quick Insert:</strong> Press{' '}
 								<kbd
-									className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold"
+									className="px-1.5 py-0.5 rounded text-2xs font-mono font-bold"
 									style={{
 										backgroundColor: theme.colors.bgActivity,
 										border: `1px solid ${theme.colors.border}`,
@@ -844,6 +844,11 @@ export function AutoRunnerHelpModal({ theme, onClose, zIndex = 50 }: AutoRunnerH
 							When the engine sees this marker after a task, it stops immediately - no further tasks
 							in the current document, no further documents in the playbook. The reason is recorded
 							in the History panel and surfaced as a <code>halt</code> event in the JSONL stream.
+						</p>
+						<p>
+							The marker only counts when it stands alone on a line. One inside a code fence, inside
+							backticks, or riding a <code>- [ ]</code> checkbox line is read as an example and
+							ignored, so a playbook can describe its halt conditions without halting itself.
 						</p>
 						<p>
 							A stale halt marker left in a document will block re-runs until removed - Auto Run

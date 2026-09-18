@@ -1,5 +1,5 @@
 /**
- * LLM Provider, Shell, and Logging settings metadata.
+ * Shell and Logging settings metadata.
  *
  * Part of the settingsMetadata.ts domain-file split, mirroring the
  * settingsStore.ts slice decomposition (see settingsAnnotatorSlice.ts
@@ -41,27 +41,6 @@ export const CORE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: null,
 		category: 'advanced',
 	},
-	// --- LLM / Provider ---
-	llmProvider: {
-		description:
-			'LLM provider for built-in AI features. E.g., openrouter, requesty, anthropic, ollama.',
-		type: 'string',
-		default: 'openrouter',
-		category: 'advanced',
-	},
-	modelSlug: {
-		description: 'Model identifier for the selected LLM provider.',
-		type: 'string',
-		default: 'anthropic/claude-3.5-sonnet',
-		category: 'advanced',
-	},
-	apiKey: {
-		description: 'API key for the selected LLM provider.',
-		type: 'string',
-		default: '',
-		sensitive: true,
-		category: 'advanced',
-	},
 	allowConcurrentSend: {
 		description:
 			'Allow `maestro-cli send --live --force` to dispatch prompts to an agent whose active tab is already busy. Enables concurrent writes to a single agent; off by default because it can interleave responses.',
@@ -93,6 +72,13 @@ export const CORE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	shellEnvVars: {
 		description:
 			'Extra environment variables injected into shell sessions. Object mapping names to values.',
+		type: 'object',
+		default: {},
+		category: 'shell',
+	},
+	shellEnvVarsDisabled: {
+		description:
+			'Parked environment variables the user switched off in Settings. Same shape as shellEnvVars, but never injected into any process - the editor keeps them here so a variable can be turned back on without retyping it.',
 		type: 'object',
 		default: {},
 		category: 'shell',

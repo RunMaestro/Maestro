@@ -11,6 +11,7 @@
 import { describe, it, expect } from 'vitest';
 import { render } from '@testing-library/react';
 import {
+	getConnectingColor,
 	getContextColor,
 	getStatusColor,
 	formatActiveTime,
@@ -18,7 +19,13 @@ import {
 	getExplorerFileIcon,
 	getExplorerFolderIcon,
 } from '../../../renderer/utils/theme';
+import {
+	FILE_EXPLORER_ICON_THEMES,
+	isFileExplorerIconTheme,
+	normalizeFileExplorerIconTheme,
+} from '../../../renderer/utils/fileExplorerIcons/shared';
 import type { Theme, SessionState, FileChangeType } from '../../../renderer/types';
+import { blendColors } from '../../../shared/colorContrast';
 
 import { mockTheme } from '../../helpers/mockTheme';
 // Mock theme with known colors for testing
@@ -177,8 +184,14 @@ describe('theme utilities', () => {
 				expect(getStatusColor('error', mockTheme)).toBe(mockTheme.colors.error);
 			});
 
-			it('returns hardcoded orange (#ff8800) for connecting state', () => {
-				expect(getStatusColor('connecting', mockTheme)).toBe('#ff8800');
+			it('returns the theme-derived connecting orange for connecting state', () => {
+				expect(getStatusColor('connecting', mockTheme)).toBe(getConnectingColor(mockTheme));
+			});
+
+			it('keeps connecting distinct from the busy and error colors', () => {
+				const connecting = getStatusColor('connecting', mockTheme);
+				expect(connecting).not.toBe(mockTheme.colors.warning);
+				expect(connecting).not.toBe(mockTheme.colors.error);
 			});
 		});
 
@@ -203,9 +216,30 @@ describe('theme utilities', () => {
 				expect(getStatusColor('error', alternativeTheme)).toBe(alternativeTheme.colors.error);
 			});
 
-			it('connecting state uses hardcoded orange regardless of theme', () => {
-				expect(getStatusColor('connecting', alternativeTheme)).toBe('#ff8800');
+			it('derives the connecting color from the alternative theme, not a literal', () => {
+				expect(getStatusColor('connecting', alternativeTheme)).toBe(
+					getConnectingColor(alternativeTheme)
+				);
+				expect(getStatusColor('connecting', alternativeTheme)).not.toBe(
+					getStatusColor('connecting', mockTheme)
+				);
 			});
+		});
+	});
+
+	// ============================================================================
+	// getConnectingColor tests
+	// ============================================================================
+	describe('getConnectingColor', () => {
+		it('mixes the theme warning and error slots into an orange', () => {
+			// 35% of the theme's error color mixed into its warning color.
+			expect(getConnectingColor(mockTheme)).toBe(
+				blendColors(mockTheme.colors.warning, mockTheme.colors.error, 0.35)
+			);
+		});
+
+		it('changes when the theme repaints its semantic palette', () => {
+			expect(getConnectingColor(alternativeTheme)).not.toBe(getConnectingColor(mockTheme));
 		});
 	});
 
@@ -467,12 +501,20 @@ describe('theme utilities', () => {
 	});
 
 	describe('explorer icon themes', () => {
-		it('returns the existing default Files pane icon theme by default', () => {
+		it('returns the flat Files pane icon theme by default', () => {
 			const { container } = render(getExplorerFileIcon('index.ts', mockTheme));
 			const icon = container.querySelector('svg');
 
 			expect(icon).toBeTruthy();
+			expect(icon?.getAttribute('data-file-explorer-icon-theme')).toBe('flat');
 			expect(container.querySelector('img')).toBeNull();
+		});
+
+		it('labels flat folder icons with the flat theme id', () => {
+			const { container } = render(getExplorerFolderIcon('src', false, mockTheme));
+			const icon = container.querySelector('svg');
+
+			expect(icon?.getAttribute('data-file-explorer-icon-theme')).toBe('flat');
 		});
 
 		it('returns rich file icons when the rich theme is selected', () => {
@@ -518,6 +560,30 @@ describe('theme utilities', () => {
 			expect(closedIcon).toBeTruthy();
 			expect(openIcon).toBeTruthy();
 			expect(closedIcon?.getAttribute('src')).not.toBe(openIcon?.getAttribute('src'));
+		});
+	});
+
+	describe('normalizeFileExplorerIconTheme', () => {
+		it('maps the pre-rename "default" id forward to flat', () => {
+			expect(normalizeFileExplorerIconTheme('default')).toBe('flat');
+		});
+
+		it('passes through every current theme id unchanged', () => {
+			for (const id of FILE_EXPLORER_ICON_THEMES) {
+				expect(normalizeFileExplorerIconTheme(id)).toBe(id);
+			}
+		});
+
+		it('returns null for values that are not a theme id', () => {
+			expect(normalizeFileExplorerIconTheme('neon')).toBeNull();
+			expect(normalizeFileExplorerIconTheme(undefined)).toBeNull();
+			expect(normalizeFileExplorerIconTheme(null)).toBeNull();
+			expect(normalizeFileExplorerIconTheme(3)).toBeNull();
+		});
+
+		it('does not make the legacy id valid for isFileExplorerIconTheme', () => {
+			expect(isFileExplorerIconTheme('default')).toBe(false);
+			expect(isFileExplorerIconTheme('flat')).toBe(true);
 		});
 	});
 });

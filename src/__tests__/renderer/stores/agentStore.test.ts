@@ -1883,9 +1883,13 @@ describe('agentStore', () => {
 
 			const item = createQueuedItem({ tabId: 'tab-1', text: 'Will fail' });
 
-			await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
+			// The failure is recorded AND rethrown: callers wrap this in a `.catch()`
+			// that re-queues the prompt, and swallowing it dropped the user's message.
+			await expect(
+				useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps)
+			).rejects.toThrow('Spawn failed');
 
-			// Should have reset to idle
+			// Should still have reset to idle on the way out
 			const updated = useSessionStore.getState().sessions[0];
 			expect(updated.state).toBe('idle');
 			expect(updated.busySource).toBeUndefined();
@@ -1931,14 +1935,16 @@ describe('agentStore', () => {
 
 			const item = createQueuedItem({ tabId: 'tab-1', text: 'Will fail' });
 
-			await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
+			await expect(
+				useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps)
+			).rejects.toThrow('Spawn failed');
 
 			const updated = useSessionStore.getState().sessions[0];
 			const tab1 = updated.aiTabs.find((t) => t.id === 'tab-1')!;
 			const tab2 = updated.aiTabs.find((t) => t.id === 'tab-2')!;
 
 			expect(tab1.logs).toHaveLength(1);
-			expect(tab1.logs[0].text).toContain('Failed to process queued');
+			expect(tab1.logs[0].text).toContain('Failed to send queued');
 			expect(tab1.logs[0].source).toBe('error');
 			expect(tab2.logs).toHaveLength(0);
 
@@ -1987,7 +1993,9 @@ describe('agentStore', () => {
 
 			const item = createQueuedItem({ tabId: 'tab-1', text: 'Will fail' });
 
-			await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
+			await expect(
+				useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps)
+			).rejects.toThrow('Spawn failed');
 
 			expect(consoleSpy).toHaveBeenCalledWith(
 				'[processQueuedItem error] Target tab not found - error log dropped',

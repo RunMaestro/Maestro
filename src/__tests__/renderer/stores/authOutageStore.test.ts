@@ -12,6 +12,7 @@ import {
 	reportAuthFailure,
 	resolveAuthOutage,
 	providerKeyForSession,
+	startManualReauth,
 	useAuthOutageStore,
 } from '../../../renderer/stores/authOutageStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
@@ -220,5 +221,116 @@ describe('resolveAuthOutage', () => {
 	it('is a no-op for an outage that is already gone', () => {
 		expect(() => resolveAuthOutage('claude-code')).not.toThrow();
 		expect(replayAfterAuth).not.toHaveBeenCalled();
+	});
+});
+
+/**
+ * A login the user asks for from the command palette, with nothing broken.
+ *
+ * It reuses the outage record on purpose (one login shell, one resume path), so
+ * these guard the two places where reuse could hurt: the copy the modal keys
+ * off, and a resume that must not disturb a healthy agent.
+ */
+describe('startManualReauth', () => {
+	it('opens an outage the modal can describe as a user-initiated login', () => {
+		seed([agent({ id: 'a' })]);
+
+		const { providerKey } = startManualReauth('a');
+
+		expect(providerKey).toBe('claude-code');
+		const outage = useAuthOutageStore.getState().outages['claude-code'];
+		expect(outage.initiatedBy).toBe('user');
+		expect(outage.message).toBe('');
+		// No turn died, so there is nothing to replay for it.
+		expect(outage.blocked).toEqual([{ sessionId: 'a', tabIds: [] }]);
+	});
+
+	it('routes an SSH agent to its own remote credential store', () => {
+		const remote = agent({
+			id: 'r',
+			sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+		});
+		seed([remote]);
+
+		const { providerKey } = startManualReauth('r');
+
+		expect(providerKey).toBe(providerKeyForSession(remote));
+		expect(useAuthOutageStore.getState().outages[providerKey!].sshRemoteId).toBe('remote-1');
+	});
+
+	it('ignores an agent that no longer exists', () => {
+		expect(startManualReauth('gone')).toEqual({ providerKey: null });
+		expect(useAuthOutageStore.getState().outages).toEqual({});
+	});
+
+	// Credentials expiring while the user reaches for the palette must not
+	// produce a second dialog describing the same login.
+	it('joins a failure outage already on screen instead of replacing it', () => {
+		seed([agent({ id: 'a' }), agent({ id: 'b' })]);
+		reportAuthFailure({ sessionId: 'a', message: 'OAuth token has expired.', tabId: 't1' });
+
+		startManualReauth('b');
+
+		const outage = useAuthOutageStore.getState().outages['claude-code'];
+		expect(outage.initiatedBy).toBe('failure');
+		expect(outage.message).toBe('OAuth token has expired.');
+		// The agent the user signed in from is on the roster, so resume covers it.
+		expect(outage.blocked).toEqual([
+			{ sessionId: 'a', tabIds: ['t1'] },
+			{ sessionId: 'b', tabIds: [] },
+		]);
+	});
+
+	// The other order: the login was started by hand, then a real failure landed
+	// on it. It IS a recovery now, and the dialog has to say so.
+	it('upgrades to a failure outage when a real failure joins it', () => {
+		seed([agent({ id: 'a' }), agent({ id: 'b' })]);
+		startManualReauth('a');
+
+		reportAuthFailure({ sessionId: 'b', message: 'OAuth token has expired.', tabId: 't2' });
+
+		const outage = useAuthOutageStore.getState().outages['claude-code'];
+		expect(outage.initiatedBy).toBe('failure');
+		expect(outage.message).toBe('OAuth token has expired.');
+		expect(outage.blocked).toEqual([
+			{ sessionId: 'a', tabIds: [] },
+			{ sessionId: 'b', tabIds: ['t2'] },
+		]);
+	});
+
+	// clearAgentError forces the session to 'idle'. On a healthy agent that is
+	// mid-turn in another tab, that reports a running turn as finished.
+	it('leaves a healthy agent alone when the manual login finishes', () => {
+		seed([agent({ id: 'a' })]);
+		startManualReauth('a');
+
+		resolveAuthOutage('claude-code');
+		vi.runAllTimers();
+
+		expect(clearAgentError).not.toHaveBeenCalled();
+		expect(replayAfterAuth).toHaveBeenCalledWith('a', []);
+		expect(useAuthOutageStore.getState().outages).toEqual({});
+	});
+
+	// An agent that IS in the error state still needs its held queue released,
+	// even when the login was started by hand rather than by the failure.
+	it('still clears the error for a blocked agent on a manual login', () => {
+		seed([
+			agent({
+				id: 'a',
+				agentError: {
+					type: 'auth_expired',
+					message: 'OAuth token has expired.',
+					recoverable: true,
+					agentId: 'claude-code',
+				},
+			}),
+		]);
+		startManualReauth('a');
+
+		resolveAuthOutage('claude-code');
+		vi.runAllTimers();
+
+		expect(clearAgentError).toHaveBeenCalledWith('a');
 	});
 });

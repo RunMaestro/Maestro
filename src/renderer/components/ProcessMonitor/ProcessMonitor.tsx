@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Activity, ChevronDown, ChevronUp, RefreshCw, X } from 'lucide-react';
+import { useCrossAgentInFlightStore } from '../../stores/crossAgentInFlightStore';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { useResizableModal } from '../../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
@@ -43,6 +44,14 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 	} | null>(null);
 	const containerRef = useRef<HTMLDivElement>(null);
 
+	// The live consult registry. A `cross-agent-*` process id carries only a uuid,
+	// so this is what turns an anonymous consult row into "Pedsidian → rc".
+	const crossAgentRequests = useCrossAgentInFlightStore((s) => s.requests);
+	const crossAgentRequestList = useMemo(
+		() => Object.values(crossAgentRequests),
+		[crossAgentRequests]
+	);
+
 	const tree = useMemo(
 		() =>
 			buildProcessTree({
@@ -50,8 +59,9 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 				groups,
 				groupChats,
 				activeProcesses: data.activeProcesses,
+				crossAgentRequests: crossAgentRequestList,
 			}),
-		[sessions, groups, groupChats, data.activeProcesses]
+		[sessions, groups, groupChats, data.activeProcesses, crossAgentRequestList]
 	);
 
 	const expansion = useProcessExpansion(tree, data.isLoading);
@@ -194,7 +204,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 							<div className="flex items-center gap-1">
 								<button
 									onClick={() => data.refresh()}
-									className="p-1.5 rounded hover:bg-opacity-10 flex items-center gap-1"
+									className="p-1.5 rounded row-hover flex items-center gap-1"
 									style={{ color: theme.colors.textDim }}
 									onMouseEnter={(e) =>
 										(e.currentTarget.style.backgroundColor = `${theme.colors.accent}20`)
@@ -206,7 +216,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 								</button>
 								<button
 									onClick={expansion.expandStep}
-									className="p-1.5 rounded hover:bg-opacity-10"
+									className="p-1.5 rounded row-hover"
 									style={{ color: theme.colors.textDim }}
 									onMouseEnter={(e) =>
 										(e.currentTarget.style.backgroundColor = `${theme.colors.accent}20`)
@@ -221,7 +231,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 								</button>
 								<button
 									onClick={expansion.collapseStep}
-									className="p-1.5 rounded hover:bg-opacity-10"
+									className="p-1.5 rounded row-hover"
 									style={{ color: theme.colors.textDim }}
 									onMouseEnter={(e) =>
 										(e.currentTarget.style.backgroundColor = `${theme.colors.accent}20`)
@@ -236,7 +246,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 								</button>
 								<button
 									onClick={onClose}
-									className="p-1.5 rounded hover:bg-opacity-10"
+									className="p-1.5 rounded row-hover"
 									style={{ color: theme.colors.textDim }}
 									onMouseEnter={(e) =>
 										(e.currentTarget.style.backgroundColor = `${theme.colors.accent}20`)
@@ -279,7 +289,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 								{sessions.length} {sessions.length === 1 ? 'session' : 'sessions'} • {groups.length}{' '}
 								{groups.length === 1 ? 'group' : 'groups'}
 							</span>
-							<span className="whitespace-nowrap" style={{ opacity: 0.7 }}>
+							<span className="whitespace-nowrap" style={{ opacity: 0.7 }} data-shortcut-hint="">
 								↑↓ navigate • Enter view details • R refresh
 							</span>
 						</div>

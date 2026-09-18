@@ -9,10 +9,11 @@
  * the story if you cannot tell whether it came from this one agent or from
  * every agent on the machine.
  *
- * Precedence (later wins), mirroring `process:spawnTerminalTab`:
+ * Precedence (later wins), mirroring the agent spawner:
  *   1. global   - Settings -> Environment, applies to every process Maestro spawns
- *   2. agent    - Settings -> Agents, applies to every agent of one provider
- *   3. session  - this agent's own overrides, from Edit Agent
+ *   2. session  - this agent's own vars, from Edit Agent, OR, when the agent has
+ *      no vars record at all, agent: the provider-level set for its provider.
+ *      Never both - the session record replaces the provider set.
  */
 
 /** Which layer a value was set in. */
@@ -75,6 +76,11 @@ export function maskEnvValue(value: string): string {
 /**
  * Merge the layers and report where each surviving value came from.
  *
+ * The session layer REPLACES the agent layer rather than merging over it: once
+ * an agent has a vars record of its own, even an empty one, the provider-level
+ * set never reaches the process (`applyAgentConfigOverrides()` in
+ * main/utils/agent-args.ts). Global still layers underneath either one.
+ *
  * Empty-string values are kept: `FOO=` is a real, meaningful setting (it
  * overrides a lower layer with an empty value), not an absent one.
  *
@@ -83,8 +89,7 @@ export function maskEnvValue(value: string): string {
 export function resolveAgentEnvironment(layers: AgentEnvironmentLayers): ResolvedEnvVar[] {
 	const ordered: Array<[EnvVarSource, Record<string, string> | undefined]> = [
 		['global', layers.global],
-		['agent', layers.agent],
-		['session', layers.session],
+		layers.session !== undefined ? ['session', layers.session] : ['agent', layers.agent],
 	];
 
 	const resolved = new Map<string, ResolvedEnvVar>();
@@ -117,4 +122,38 @@ export function envSourceLabel(source: EnvVarSource): string {
 		case 'session':
 			return 'This agent';
 	}
+}
+
+/**
+ * Whether a configured env value means "do not set this variable".
+ *
+ * A blank field in the env editor is an absence, not a value. Exporting it as
+ * `FOO=` hands the child a variable that is set-but-empty, which is the worst of
+ * both worlds: code that checks `if (process.env.FOO)` skips it, but code that
+ * checks `if ('FOO' in process.env)` or reads it as a path uses `''`. That is
+ * how an agent with a blank `CLAUDE_CONFIG_DIR` ended up calling `mkdir('')` and
+ * dying before it made a single API call.
+ */
+export function isBlankEnvValue(value: string): boolean {
+	return value.trim() === '';
+}
+
+/**
+ * Drop blank-valued entries from a set of env vars.
+ *
+ * Note this is the SPAWN-time rule, and it deliberately differs from
+ * {@link resolveAgentEnvironment}, which keeps blanks because it reports what the
+ * user CONFIGURED. Callers that merge layers should merge first and strip second,
+ * so a blank at a higher layer still cancels a value set lower down - "blank
+ * means unset" only holds if the unset actually wins.
+ */
+export function stripBlankEnvVars(
+	vars: Record<string, string> | undefined
+): Record<string, string> {
+	const result: Record<string, string> = {};
+	for (const [key, value] of Object.entries(vars || {})) {
+		if (isBlankEnvValue(value)) continue;
+		result[key] = value;
+	}
+	return result;
 }

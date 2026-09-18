@@ -19,6 +19,7 @@ import {
 	ListChecks,
 } from 'lucide-react';
 import type { Theme } from '../../types';
+import { ToggleSwitchTrack } from '../ui/ToggleSwitch';
 import { CUE_COLOR } from '../../../shared/cue-pipeline-types';
 
 /** Tab ids. Kept in sync with the `cue` entry in `shared/uiSurfaces.ts`, which
@@ -107,19 +108,12 @@ function CueModalHeaderInner({
 							color: isEnabled ? theme.colors.accent : theme.colors.textDim,
 						}}
 					>
-						<div
-							className="relative w-8 h-4 rounded-full transition-colors"
-							style={{
-								backgroundColor: isEnabled ? theme.colors.accent : theme.colors.border,
-							}}
-						>
-							<div
-								className="absolute top-0.5 w-3 h-3 rounded-full bg-white transition-transform"
-								style={{
-									transform: isEnabled ? 'translateX(17px)' : 'translateX(2px)',
-								}}
-							/>
-						</div>
+						<ToggleSwitchTrack
+							checked={isEnabled}
+							theme={theme}
+							size="sm"
+							inactiveColor={theme.colors.border}
+						/>
 						{isEnabled ? 'Enabled' : 'Disabled'}
 					</button>
 

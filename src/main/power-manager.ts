@@ -62,6 +62,8 @@ export interface PowerStatus {
 	reasons: string[];
 	/** The blocker type currently in effect, or null when not blocking */
 	blockerType: PowerBlockerType | null;
+	/** Whether the user opted every blocker up to `prevent-display-sleep` */
+	keepDisplayAwake: boolean;
 	/** Current platform */
 	platform: 'darwin' | 'win32' | 'linux';
 }
@@ -96,6 +98,13 @@ class PowerManager {
 	/** User preference - whether sleep prevention feature is enabled */
 	private enabled: boolean = false;
 
+	/**
+	 * User preference - lift every reason to `prevent-display-sleep` instead of
+	 * the `prevent-app-suspension` default. Off by default: it is the setting
+	 * that stops the screen saver, the screen lock, and macOS maintenance.
+	 */
+	private keepDisplayAwake: boolean = false;
+
 	constructor() {
 		// Log platform support information on init
 		const platform = process.platform;
@@ -129,6 +138,32 @@ class PowerManager {
 	 */
 	isEnabled(): boolean {
 		return this.enabled;
+	}
+
+	/**
+	 * Opt every block reason up to `prevent-display-sleep`, so the screen stays
+	 * lit (and on macOS the screen saver, the screen lock, and idle logout never
+	 * arrive) for as long as work is in flight.
+	 *
+	 * This is a deliberate override of the per-reason type. Background work asks
+	 * for `prevent-app-suspension` because it does not need the panel lit, and
+	 * that is the right default; a user who wants to watch an agent run says so
+	 * here once rather than at every call site.
+	 */
+	setKeepDisplayAwake(keepAwake: boolean): void {
+		if (this.keepDisplayAwake === keepAwake) return;
+		this.keepDisplayAwake = keepAwake;
+
+		logger.info(`Keep display awake ${keepAwake ? 'enabled' : 'disabled'}`, CONTEXT);
+
+		this.syncBlocker();
+	}
+
+	/**
+	 * Check whether block reasons are lifted to `prevent-display-sleep`.
+	 */
+	isKeepingDisplayAwake(): boolean {
+		return this.keepDisplayAwake;
 	}
 
 	/**
@@ -196,6 +231,7 @@ class PowerManager {
 			blocking: this.blockerId !== null,
 			reasons: Array.from(this.activeReasons.keys()),
 			blockerType: this.activeType,
+			keepDisplayAwake: this.keepDisplayAwake,
 			platform: process.platform as 'darwin' | 'win32' | 'linux',
 		};
 	}
@@ -204,6 +240,10 @@ class PowerManager {
 	 * The strongest blocker type any active reason is asking for, or null when
 	 * there are no reasons. Electron only honours the highest-precedence type, so
 	 * this is the one type the process can actually hold.
+	 *
+	 * `keepDisplayAwake` raises the floor rather than adding a reason of its own,
+	 * so it can never hold a blocker on an idle app: with nothing to block for,
+	 * the answer stays null and the machine sleeps normally.
 	 */
 	private requiredType(): PowerBlockerType | null {
 		let required: PowerBlockerType | null = null;
@@ -212,6 +252,7 @@ class PowerManager {
 				required = type;
 			}
 		}
+		if (required !== null && this.keepDisplayAwake) return 'prevent-display-sleep';
 		return required;
 	}
 

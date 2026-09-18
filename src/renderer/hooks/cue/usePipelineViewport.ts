@@ -36,6 +36,10 @@ export interface UsePipelineViewportParams {
 	computedNodeCount: number;
 	pendingSavedViewportRef: React.MutableRefObject<{ x: number; y: number; zoom: number } | null>;
 	reactFlowInstance: ReactFlowInstance;
+	/** Identifies the agent scope applied to the All Pipelines view. Scoping in
+	 *  or out swaps the visible set without changing the selection, so it needs
+	 *  the same re-fit that a selection change gets. */
+	scopeKey?: string | null;
 }
 
 export interface UsePipelineViewportReturn {
@@ -50,6 +54,7 @@ export function usePipelineViewport({
 	computedNodeCount,
 	pendingSavedViewportRef,
 	reactFlowInstance,
+	scopeKey = null,
 }: UsePipelineViewportParams): UsePipelineViewportReturn {
 	// Structure key includes node ids + counts but NOT positions - prevents
 	// the feedback loop where dragging a node would shift all pipelines below.
@@ -69,12 +74,13 @@ export function usePipelineViewport({
 	const stableYOffsetsRef = useRef(stableYOffsets);
 	stableYOffsetsRef.current = stableYOffsets;
 
-	// ── Re-fit on pipeline-selection change ────────────────────────────────
-	const prevSelectedIdRef = useRef(pipelineState.selectedPipelineId);
+	// ── Re-fit on view change (selection, or agent scope) ──────────────────
+	const viewKey = `${pipelineState.selectedPipelineId ?? 'all'}::${scopeKey ?? ''}`;
+	const prevSelectedIdRef = useRef(viewKey);
 	const hasHydratedSelectionRef = useRef(false);
 	useEffect(() => {
-		if (prevSelectedIdRef.current === pipelineState.selectedPipelineId) return;
-		prevSelectedIdRef.current = pipelineState.selectedPipelineId;
+		if (prevSelectedIdRef.current === viewKey) return;
+		prevSelectedIdRef.current = viewKey;
 
 		// Skip first change (mount hydration) so saved viewport isn't overwritten.
 		if (!hasHydratedSelectionRef.current) {
@@ -86,7 +92,7 @@ export function usePipelineViewport({
 			reactFlowInstance.fitView({ padding: 0.2, duration: 300 });
 		}, FIT_VIEW_DELAY_MS);
 		return () => clearTimeout(timer);
-	}, [pipelineState.selectedPipelineId, reactFlowInstance]);
+	}, [viewKey, reactFlowInstance]);
 
 	// ── Initial viewport (saved OR fitView) ────────────────────────────────
 	const nodesInitialized = useNodesInitialized();

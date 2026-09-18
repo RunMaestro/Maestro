@@ -21,8 +21,8 @@ function ExternalLink({ url, theme }: { url: string; theme: Theme }) {
 			}}
 			className="underline hover:opacity-80 cursor-pointer"
 			// accentText (not accent) so links stay legible against accent-tinted
-			// surfaces like the user-message bubble; on InQuest accent is the same
-			// red as the bubble, so a raw-accent link is invisible there.
+			// surfaces like the user-message bubble; on a theme whose accent is the
+			// same hue as the bubble, a raw-accent link is invisible there.
 			style={{ color: theme.colors.accentText }}
 		>
 			{url}

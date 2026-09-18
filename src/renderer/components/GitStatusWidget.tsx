@@ -190,7 +190,7 @@ function GitStatusTooltip({
 			data-testid="git-status-tooltip"
 		>
 			<div
-				className="text-[10px] uppercase font-bold p-3 border-b"
+				className="text-2xs uppercase font-bold p-3 border-b"
 				style={{
 					color: theme.colors.textDim,
 					borderColor: theme.colors.border,
@@ -218,7 +218,7 @@ function GitStatusTooltip({
 								<span className="font-mono flex-1 min-w-0" title={file.path}>
 									{file.path}
 								</span>
-								<div className="flex items-center gap-2 shrink-0 text-[10px]">
+								<div className="flex items-center gap-2 shrink-0 text-2xs">
 									{file.additions > 0 && <span className="text-green-500">+{file.additions}</span>}
 									{file.deletions > 0 && <span className="text-red-500">−{file.deletions}</span>}
 								</div>

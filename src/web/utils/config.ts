@@ -7,27 +7,15 @@
 import { webLogger } from './logger';
 
 /**
- * Configuration injected by the server
+ * Configuration injected by the server.
+ *
+ * The shape and the `window.__MAESTRO_CONFIG__` declaration are canonical in
+ * `src/shared/webClientConfig.ts`, because the web-desktop shim reads the same
+ * object and the two used to declare it differently. Re-exported here under the
+ * old name so existing importers are unchanged.
  */
-export interface MaestroConfig {
-	/** Security token (UUID) - required in all API/WS URLs */
-	securityToken: string;
-	/** Session ID if viewing a specific session, null for dashboard */
-	sessionId: string | null;
-	/** Tab ID if viewing a specific tab within a session, null for default tab */
-	tabId: string | null;
-	/** Base path for API requests (e.g., "/$TOKEN/api") */
-	apiBase: string;
-	/** WebSocket URL path (e.g., "/$TOKEN/ws") */
-	wsUrl: string;
-}
-
-// Extend Window interface
-declare global {
-	interface Window {
-		__MAESTRO_CONFIG__?: MaestroConfig;
-	}
-}
+export type { MaestroWebClientConfig as MaestroConfig } from '../../shared/webClientConfig';
+import type { MaestroWebClientConfig as MaestroConfig } from '../../shared/webClientConfig';
 
 /**
  * Get the Maestro config from window

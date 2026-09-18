@@ -73,8 +73,7 @@ export interface CredentialClassification {
 
 /**
  * Anthropic secret-bearing keys, most specific first so a gateway token wins
- * over a plain API key. Mirrors `ANTHROPIC_CREDENTIAL_ENV_KEYS` in
- * `shared/providerFailover.ts`, which is that module's name for the same two.
+ * over a plain API key.
  */
 const ANTHROPIC_SECRET_ENV_KEYS = ['ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY'] as const;
 
@@ -103,8 +102,7 @@ const OPENCODE_API_KEY_PATTERN = /^[A-Z][A-Z0-9_]*_API_KEY$/;
  * Read an env var, treating whitespace-only as unset.
  *
  * Blank has to mean unset here: an explicitly emptied row is how a user turns an
- * inherited variable off, and `resolveFailoverEnv()` already skips blank values
- * for the same reason. A half-filled editor row must not invent a credential.
+ * inherited variable off. A half-filled editor row must not invent a credential.
  */
 function envValue(env: Record<string, string>, key: string): string {
 	return (env[key] ?? '').trim();
@@ -162,7 +160,6 @@ export function classifyCredentialKind(
 		}
 		// A gateway outranks the token check even when a token is present: the
 		// token belongs to the gateway operator, and no provider login can fix it.
-		// Same reasoning as `failoverUnsetEnvKeys()` in shared/providerFailover.ts.
 		const baseUrl = envValue(env, 'ANTHROPIC_BASE_URL');
 		if (baseUrl !== '') {
 			return { kind: 'gateway', envVarName: 'ANTHROPIC_BASE_URL', label: baseUrlHost(baseUrl) };

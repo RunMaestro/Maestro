@@ -25,6 +25,14 @@ import type { Theme } from '../../types';
 export interface SegmentedOption<T extends string> {
 	value: T;
 	label: string;
+	/**
+	 * Abbreviated label for a cramped bar. Both forms render: the short one is
+	 * `hidden` by default, and the host's container query swaps them by targeting
+	 * `.segmented-label-full` / `.segmented-label-short`. The control does not
+	 * decide when space is short, because only the host knows what else shares
+	 * its row.
+	 */
+	shortLabel?: string;
 	/** Tooltip text. Useful when the label is abbreviated to fit the bar. */
 	title?: string;
 }
@@ -92,7 +100,14 @@ export function SegmentedControl<T extends string>({
 						tabIndex={isActive ? 0 : -1}
 						data-testid={testId ? `${testId}-${opt.value}` : undefined}
 					>
-						{opt.label}
+						{opt.shortLabel ? (
+							<>
+								<span className="segmented-label-full">{opt.label}</span>
+								<span className="segmented-label-short hidden">{opt.shortLabel}</span>
+							</>
+						) : (
+							opt.label
+						)}
 					</button>
 				);
 			})}

@@ -22,7 +22,9 @@ When you need detailed guidance on a Maestro feature, fetch the relevant documen
 | **Playbook Exchange**                                        | https://docs.runmaestro.ai/playbook-exchange.md         |
 | **Local Manifest** (custom/local playbooks)                  | https://docs.runmaestro.ai/local-manifest.md            |
 | **Slash commands** (custom commands, template vars)          | https://docs.runmaestro.ai/slash-commands.md            |
-| **Group Chat** (multi-agent orchestration)                   | https://docs.runmaestro.ai/group-chat.md                |
+| **Agent Collaboration** (mention vs group chat, picking one) | https://docs.runmaestro.ai/agent-collaboration.md       |
+| **Group Chat** (delegated moderation, multi-turn)            | https://docs.runmaestro.ai/group-chat.md                |
+| **Cross-Agent Mentions** (`@name`, single-turn consult)      | https://docs.runmaestro.ai/cross-agent-mentions.md      |
 | **Symphony mode** (token-donation contributions)             | https://docs.runmaestro.ai/symphony.md                  |
 | **SpecKit commands** (spec-driven workflow)                  | https://docs.runmaestro.ai/speckit-commands.md          |
 | **OpenSpec commands** (change management workflow)           | https://docs.runmaestro.ai/openspec-commands.md         |
@@ -33,7 +35,7 @@ When you need detailed guidance on a Maestro feature, fetch the relevant documen
 | **Git worktrees**                                            | https://docs.runmaestro.ai/git-worktrees.md             |
 | **Context management**                                       | https://docs.runmaestro.ai/context-management.md        |
 | **Memories** (per-project persistent memory)                 | https://docs.runmaestro.ai/memories.md                  |
-| **Multiple Claude accounts**                                 | https://docs.runmaestro.ai/multi-claude.md              |
+| **Multiple accounts per provider**                           | https://docs.runmaestro.ai/multi-provider.md            |
 | **Provider Notes** (Claude/Codex/OpenCode differences)       | https://docs.runmaestro.ai/provider-notes.md            |
 | **CLI commands**                                             | https://docs.runmaestro.ai/cli.md                       |
 | **Keyboard shortcuts**                                       | https://docs.runmaestro.ai/keyboard-shortcuts.md        |

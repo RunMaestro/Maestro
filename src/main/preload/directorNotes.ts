@@ -10,6 +10,7 @@ import { ipcRenderer } from 'electron';
 import type { ToolType, HistoryEntry, HistoryEntryType } from '../../shared/types';
 import type { DirectorNotesNarrative } from '../../shared/directorNotesNarrative';
 import type { GraphBucket } from '../../shared/history';
+import type { SynopsisProviderChoice } from '../../shared/directorNotesProvider';
 
 /** Aggregate stats returned alongside unified history */
 export interface UnifiedHistoryStats {
@@ -76,7 +77,8 @@ export interface UnifiedHistoryEntry {
  */
 export interface SynopsisOptions {
 	lookbackDays: number;
-	provider: ToolType;
+	/** The agent to spawn, or `'auto'` for the first installed supported provider. */
+	provider: SynopsisProviderChoice;
 	customPath?: string;
 	customArgs?: string;
 	customEnvVars?: Record<string, string>;
@@ -106,6 +108,8 @@ export interface SynopsisResult {
 	narrativeError?: string;
 	/** Set when `narrative` was salvaged; explains what had to be recovered. */
 	narrativeRecovery?: string;
+	/** The provider that actually ran (the resolved one under auto-selection). */
+	provider?: ToolType;
 }
 
 /**

@@ -265,6 +265,11 @@ describe('AgentSelectionScreen components', () => {
 		expect(onAgentNameChange).toHaveBeenCalledWith('New Project');
 		expect(onNameBlur).toHaveBeenCalled();
 		expect(onSshRemoteChange).toHaveBeenCalledWith('remote-1');
+
+		// The name input and the location select share one row that must wrap on a
+		// narrow phone: at 256px + a 160px select they overflowed both edges.
+		expect(input.parentElement).toHaveClass('flex-wrap');
+		expect(input).toHaveClass('max-w-full');
 	});
 
 	it('renders footer disabled and enabled states', () => {

@@ -33,20 +33,20 @@ interface ParquetSchemaPanelProps {
 function StatsLine({ column, theme }: { column: ParquetColumnInfo; theme: Theme }) {
 	if (column.nested) {
 		return (
-			<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
+			<span className="text-2xs" style={{ color: theme.colors.textDim }}>
 				nested - rendered as JSON
 			</span>
 		);
 	}
 	if (column.stats.min === null && column.stats.max === null) {
 		return (
-			<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
+			<span className="text-2xs" style={{ color: theme.colors.textDim }}>
 				no statistics recorded
 			</span>
 		);
 	}
 	return (
-		<span className="text-[10px] truncate block" style={{ color: theme.colors.textDim }}>
+		<span className="text-2xs truncate block" style={{ color: theme.colors.textDim }}>
 			{formatCell(column.stats.min, column.kind)} … {formatCell(column.stats.max, column.kind)}
 			{column.stats.partial ? ' (partial)' : ''}
 		</span>
@@ -85,7 +85,7 @@ export function ParquetSchemaPanel({
 				<span className="text-xs font-semibold" style={{ color: theme.colors.textMain }}>
 					Schema
 				</span>
-				<span className="text-[11px]" style={{ color: theme.colors.textDim }}>
+				<span className="text-xs-plus" style={{ color: theme.colors.textDim }}>
 					{info.columns.length} columns
 				</span>
 			</div>
@@ -137,7 +137,7 @@ export function ParquetSchemaPanel({
 
 						<div className="flex items-center gap-2 mt-0.5">
 							<span
-								className="text-[10px] px-1 rounded font-mono shrink-0"
+								className="text-2xs px-1 rounded font-mono shrink-0"
 								style={{
 									backgroundColor: `${theme.colors.accent}22`,
 									color: theme.colors.accentText,
@@ -146,13 +146,13 @@ export function ParquetSchemaPanel({
 								{columnTypeBadge(column)}
 							</span>
 							{!column.optional && (
-								<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
+								<span className="text-2xs" style={{ color: theme.colors.textDim }}>
 									required
 								</span>
 							)}
 							{nullShare !== null && nullShare > 0 && (
 								<span
-									className="text-[10px]"
+									className="text-2xs"
 									style={{ color: nullShare > 0.5 ? theme.colors.warning : theme.colors.textDim }}
 									title={`${formatCount(column.stats.nullCount ?? 0)} null values`}
 								>
@@ -182,7 +182,7 @@ export function ParquetSchemaPanel({
 								/>
 							</div>
 							<span
-								className="text-[10px] shrink-0 tabular-nums"
+								className="text-2xs shrink-0 tabular-nums"
 								style={{ color: theme.colors.textDim }}
 								title={`${formatSize(column.compressedBytes)} compressed, ${formatSize(column.uncompressedBytes)} raw${column.compression ? ` (${column.compression})` : ''}`}
 							>

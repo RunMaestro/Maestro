@@ -62,6 +62,8 @@ The share image includes comprehensive usage statistics:
 
 These peak usage stats are tracked automatically and persist across sessions. They represent your high-water marks - evidence of your most intensive Maestro orchestrations.
 
+A peak only ever moves up. Nothing ages it out, prunes it, or recomputes it from your current setup, so a record you set months ago still stands even if you have since slimmed down to a handful of agents. Maestro enforces that when the value is written to disk rather than in the window that observed it, so a second window, or a window that is still starting up, cannot lower a record another one set.
+
 ## Keyboard Mastery
 
 Separate from Conductor ranks, Maestro tracks your **keyboard mastery** based on shortcut usage. As you discover and use more keyboard shortcuts, you level up through 5 mastery levels:

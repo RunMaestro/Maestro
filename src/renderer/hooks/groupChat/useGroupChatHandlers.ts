@@ -10,8 +10,8 @@ import { useCallback, useEffect, useRef } from 'react';
 import type { GroupChatMessagesHandle } from '../../components/GroupChatMessages';
 import type { GroupChatRightTab } from '../../components/GroupChatRightPanel';
 import type { RecoveryAction } from '../../components/AgentErrorModal';
-import type { QueuedItem } from '../../types';
 import { useGroupChatStore } from '../../stores/groupChatStore';
+import type { GroupChatQueueState } from '../../../shared/group-chat-types';
 import { useModalStore } from '../../stores/modalStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useBatchStore } from '../../stores/batchStore';
@@ -96,6 +96,7 @@ export interface GroupChatHandlersReturn {
 	handleGroupChatDraftChange: (draft: string, groupChatId?: string) => void;
 	handleRemoveGroupChatQueueItem: (itemId: string) => void;
 	handleReorderGroupChatQueueItems: (fromIndex: number, toIndex: number) => void;
+	handleResumeGroupChatQueue: () => void;
 
 	// Modal openers
 	handleNewGroupChat: () => void;
@@ -144,8 +145,6 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 
 	// --- Reactive reads (for effects only) ---
 	const activeGroupChatId = useGroupChatStore((s) => s.activeGroupChatId);
-	const groupChatState = useGroupChatStore((s) => s.groupChatState);
-	const groupChatExecutionQueue = useGroupChatStore((s) => s.groupChatExecutionQueue);
 	const groupChatError = useGroupChatStore((s) => s.groupChatError);
 
 	// =======================================================================
@@ -373,54 +372,22 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 	}, [activeGroupChatId]);
 
 	// =======================================================================
-	// Execution queue processor
+	// Execution queue
 	// =======================================================================
+	//
+	// There is NO drain here any more. Main owns the queue and drains it on the
+	// moderator's idle transition, because a renderer-side drain only runs while
+	// that client is awake and watching: a phone that slept, reloaded, or simply
+	// missed the idle event left its messages queued forever, and two clients
+	// that both saw idle each sent the same item. The renderer's whole job now is
+	// to render what main broadcasts and to send changes back over IPC.
 
 	useEffect(() => {
-		if (groupChatState === 'idle' && groupChatExecutionQueue.length > 0 && activeGroupChatId) {
-			const {
-				setGroupChatExecutionQueue,
-				setGroupChatState: setGCState,
-				setGroupChatStates: setGCStates,
-				setGroupChatMessages: setGCMessages,
-			} = useGroupChatStore.getState();
-
-			const [nextItem, ...remainingQueue] = groupChatExecutionQueue;
-			setGroupChatExecutionQueue(remainingQueue);
-
-			setGCState('moderator-thinking');
-			setGCStates((prev) => {
-				const next = new Map(prev);
-				next.set(activeGroupChatId, 'moderator-thinking');
-				return next;
-			});
-			window.maestro.groupChat
-				.sendToModerator(
-					activeGroupChatId,
-					nextItem.text || '',
-					nextItem.images,
-					nextItem.readOnlyMode
-				)
-				.catch((err: unknown) => {
-					const msg = err instanceof Error ? err.message : String(err);
-					// Reset to idle so user can retry
-					setGCState('idle');
-					setGCStates((prev) => {
-						const next = new Map(prev);
-						next.set(activeGroupChatId, 'idle');
-						return next;
-					});
-					setGCMessages((prev) => [
-						...prev,
-						{
-							timestamp: new Date().toISOString(),
-							from: 'system',
-							content: `⚠️ Moderator is not available. Try sending your message again. (${msg})`,
-						},
-					]);
-				});
-		}
-	}, [groupChatState, groupChatExecutionQueue, activeGroupChatId]);
+		const unsub = window.maestro.groupChat.onQueueState?.((id, state) => {
+			useGroupChatStore.getState().setGroupChatQueue(id, state as GroupChatQueueState);
+		});
+		return () => unsub?.();
+	}, []);
 
 	// =======================================================================
 	// Navigate to group chat from ProcessMonitor
@@ -454,8 +421,6 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 			setGroupChats,
 			setParticipantStates,
 			clearGroupChatUnread,
-			groupChatStates,
-			allGroupChatParticipantStates,
 		} = useGroupChatStore.getState();
 		const { setActiveFocus } = useUIStore.getState();
 
@@ -468,11 +433,34 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 			const messages = await window.maestro.groupChat.getMessages(id);
 			setGroupChatMessages(messages);
 
-			// Restore the state for this specific chat from the per-chat state map
-			setGroupChatState(groupChatStates.get(id) ?? 'idle');
+			// Restore the state for this specific chat from the per-chat state map.
+			//
+			// Re-read the store rather than using the copy destructured at the top of
+			// this function: two awaits have happened since (`load` and `getMessages`,
+			// which are WebSocket round trips on the web bridge), and a
+			// `groupChat:stateChange` that landed during either one has already
+			// updated the map. Writing the pre-await snapshot puts a stale
+			// `moderator-thinking` back onto the scalar the execution-queue drain
+			// reads, and nothing ever re-derives it - no timer, no retry, no
+			// reconciliation on reconnect. The room then stays busy forever and every
+			// queued message sits behind a QUEUED badge that will never clear.
+			const liveStore = useGroupChatStore.getState();
+			setGroupChatState(liveStore.groupChatStates.get(id) ?? 'idle');
 
-			// Restore participant states for this chat
-			setParticipantStates(allGroupChatParticipantStates.get(id) ?? new Map());
+			// Pull the queue from MAIN rather than trusting anything this client held.
+			// A client can have been asleep, reloaded, or never seen the chat before,
+			// so the authoritative list is the one main hands back.
+			// Optional-chained: a web client can be running an older preload that has
+			// no queue verbs yet, and a missing queue must not stop the room opening.
+			void window.maestro.groupChat
+				.getQueue?.(id)
+				?.then((queueState) =>
+					useGroupChatStore.getState().setGroupChatQueue(id, queueState as GroupChatQueueState)
+				)
+				?.catch(() => {});
+
+			// Restore participant states for this chat (same staleness applies).
+			setParticipantStates(liveStore.allGroupChatParticipantStates.get(id) ?? new Map());
 
 			// Load saved right tab preference for this group chat
 			const savedTab = await window.maestro.settings.get(`groupChatRightTab:${id}`);
@@ -574,12 +562,18 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 				enableMaestroP?: boolean;
 				maestroPMode?: 'interactive' | 'dynamic';
 				maestroPPath?: string;
-			}
+			},
+			requireIdleParticipants?: boolean
 		) => {
 			const { setGroupChats } = useGroupChatStore.getState();
 			const { closeModal } = useModalStore.getState();
 			try {
-				const chat = await window.maestro.groupChat.create(name, moderatorAgentId, moderatorConfig);
+				const chat = await window.maestro.groupChat.create(
+					name,
+					moderatorAgentId,
+					moderatorConfig,
+					requireIdleParticipants
+				);
 				setGroupChats((prev) => [chat, ...prev]);
 				closeModal('newGroupChat');
 				handleOpenGroupChat(chat.id);
@@ -604,11 +598,13 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 
 	const handleDeleteGroupChat = useCallback(
 		async (id: string) => {
-			const { activeGroupChatId, groupChats, setGroupChats } = useGroupChatStore.getState();
+			const { activeGroupChatId, groupChats, setGroupChats, setGroupChatStagedImages } =
+				useGroupChatStore.getState();
 			const { closeModal } = useModalStore.getState();
 			const priorChats = groupChats;
 			await window.maestro.groupChat.delete(id);
 			setGroupChats((prev) => prev.filter((c) => c.id !== id));
+			setGroupChatStagedImages([], id);
 			if (activeGroupChatId === id) {
 				await focusNextGroupChatAfterDelete(id, priorChats);
 			}
@@ -649,7 +645,8 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 				enableMaestroP?: boolean;
 				maestroPMode?: 'interactive' | 'dynamic';
 				maestroPPath?: string;
-			}
+			},
+			requireIdleParticipants?: boolean
 		) => {
 			const { setGroupChats } = useGroupChatStore.getState();
 			const { closeModal } = useModalStore.getState();
@@ -657,6 +654,7 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 				name,
 				moderatorAgentId,
 				moderatorConfig,
+				requireIdleParticipants,
 			});
 			setGroupChats((prev) => prev.map((c) => (c.id === id ? updated : c)));
 			closeModal('editGroupChat');
@@ -719,48 +717,30 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 
 	const handleSendGroupChatMessage = useCallback(
 		async (content: string, images?: string[], readOnly?: boolean) => {
-			const {
-				activeGroupChatId,
-				groupChatState,
-				groupChats,
-				setGroupChatExecutionQueue,
-				setGroupChatState,
-				setGroupChatStates,
-			} = useGroupChatStore.getState();
+			const { activeGroupChatId, setGroupChatState, setGroupChatStates } =
+				useGroupChatStore.getState();
 			if (!activeGroupChatId) return;
 
-			// If group chat is busy, queue the message instead of sending immediately
-			if (groupChatState !== 'idle') {
-				const queuedItem: QueuedItem = {
+			// MAIN decides whether this is sent now or queued. The client used to
+			// make that call from its own copy of the queue, and a copy that is even
+			// slightly stale sends directly while items are already waiting - so the
+			// newest message reaches the moderator ahead of older ones, which is the
+			// one thing a queue exists to prevent. Main is the only party that knows
+			// both the real queue and the moderator's real state.
+			try {
+				await window.maestro.groupChat.submitMessage(activeGroupChatId, {
 					id: generateId(),
 					timestamp: Date.now(),
-					tabId: activeGroupChatId,
-					type: 'message',
 					text: content,
 					images: images ? [...images] : undefined,
-					tabName: groupChats.find((c) => c.id === activeGroupChatId)?.name || 'Group Chat',
 					readOnlyMode: readOnly,
-				};
-				setGroupChatExecutionQueue((prev) => [...prev, queuedItem]);
-				return;
-			}
-
-			setGroupChatState('moderator-thinking');
-			setGroupChatStates((prev) => {
-				const next = new Map(prev);
-				next.set(activeGroupChatId, 'moderator-thinking');
-				return next;
-			});
-			try {
-				await window.maestro.groupChat.sendToModerator(
-					activeGroupChatId,
-					content,
-					images,
-					readOnly
-				);
+				});
 			} catch (err: unknown) {
 				const msg = err instanceof Error ? err.message : String(err);
-				// Reset to idle so user can retry
+				// Reaching here means the IPC call itself failed, so main never saw the
+				// message and it is NOT in any queue. (A send that fails INSIDE main
+				// is different: there the item is kept, marked and the chat paused.)
+				// The user has to send it again, which is what the notice says.
 				setGroupChatState('idle');
 				setGroupChatStates((prev) => {
 					const next = new Map(prev);
@@ -814,19 +794,42 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 		);
 	}, []);
 
-	const handleRemoveGroupChatQueueItem = useCallback((itemId: string) => {
-		useGroupChatStore
-			.getState()
-			.setGroupChatExecutionQueue((prev) => prev.filter((item) => item.id !== itemId));
+	/**
+	 * Remove one queued message.
+	 *
+	 * Main may REFUSE this: an item already handed to the moderator cannot be
+	 * un-sent, so the removal comes back untouched with `refused: true` and the
+	 * UI says so rather than silently redrawing the row. The broadcast that
+	 * follows a successful removal is what updates every client.
+	 */
+	const handleRemoveGroupChatQueueItem = useCallback(async (itemId: string) => {
+		const { activeGroupChatId } = useGroupChatStore.getState();
+		if (!activeGroupChatId) return;
+		// A refusal needs no separate message: it can only happen while an item is
+		// in flight, and the composer already shows "Sending, cannot remove" for
+		// exactly that state. The broadcast that follows a successful removal is
+		// what updates every client.
+		await window.maestro.groupChat.queueRemove(activeGroupChatId, itemId);
 	}, []);
 
-	const handleReorderGroupChatQueueItems = useCallback((fromIndex: number, toIndex: number) => {
-		useGroupChatStore.getState().setGroupChatExecutionQueue((prev) => {
-			const queue = [...prev];
-			const [removed] = queue.splice(fromIndex, 1);
-			queue.splice(toIndex, 0, removed);
-			return queue;
-		});
+	const handleReorderGroupChatQueueItems = useCallback(
+		async (fromIndex: number, toIndex: number) => {
+			const { activeGroupChatId, groupChatQueues } = useGroupChatStore.getState();
+			if (!activeGroupChatId) return;
+			// Reorder is addressed by ITEM ID, not by index: main is the authority and
+			// its list can have moved since this client rendered the row.
+			const moving = groupChatQueues[activeGroupChatId]?.items[fromIndex];
+			if (!moving) return;
+			await window.maestro.groupChat.queueReorder(activeGroupChatId, moving.id, toIndex);
+		},
+		[]
+	);
+
+	/** Let a paused queue run again. Main clears the failed mark on the head. */
+	const handleResumeGroupChatQueue = useCallback(async () => {
+		const { activeGroupChatId } = useGroupChatStore.getState();
+		if (!activeGroupChatId) return;
+		await window.maestro.groupChat.queueResume(activeGroupChatId);
 	}, []);
 
 	// =======================================================================
@@ -932,6 +935,7 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 		handleGroupChatDraftChange,
 		handleRemoveGroupChatQueueItem,
 		handleReorderGroupChatQueueItems,
+		handleResumeGroupChatQueue,
 
 		// Modal openers
 		handleNewGroupChat,

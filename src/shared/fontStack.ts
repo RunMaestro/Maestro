@@ -55,8 +55,39 @@ export const SANS_FALLBACK_STACK =
  * Kept in sync by hand with `.splash-title` in src/renderer/index.html and
  * `.md-splash__wordmark` in src/web-desktop/index.html, which paint before any
  * JavaScript runs and so cannot import this.
+ *
+ * Deliberately a separate NAME from {@link MAESTRO_FONT_STACK} even though it
+ * currently holds the same value: that one follows the user's `fontFamily`
+ * setting as its default and may be changed, this one must never follow it. If
+ * the two ever need to diverge, change this one and leave the body text alone.
  */
-export const WORDMARK_FONT_STACK = "'JetBrains Mono', 'Fira Code', 'Courier New', monospace";
+/**
+ * The font stack Maestro itself ships with, and the default the `fontFamily`
+ * SETTING carries.
+ *
+ * It has to be identical in the places that render at different moments during
+ * startup, because any disagreement between them shows up as the app visibly
+ * changing font while it boots:
+ *
+ *   1. the splash screen's inline CSS in `src/renderer/index.html`
+ *   2. `body` in `src/renderer/index.css`
+ *   3. the `font-mono` utility in `tailwind.config.mjs`
+ *   4. the `fontFamily` setting default, in BOTH `src/main/stores/defaults.ts`
+ *      and `src/renderer/stores/settingsStore.ts`
+ *
+ * The splash paints before React mounts and the setting arrives from disk after
+ * it, so a default naming a different family than the splash repaints the whole
+ * window the instant React takes over. That is exactly what shipped: the splash
+ * asked for JetBrains Mono while the setting default asked for Roboto Mono, so
+ * a cold start went Courier New -> JetBrains Mono -> Menlo.
+ *
+ * JetBrains Mono leads because it is bundled (see bundledFonts.ts), so it is
+ * the one family here guaranteed to resolve; the rest are fallbacks for a
+ * renderer that somehow fails to load it.
+ */
+export const MAESTRO_FONT_STACK = "'JetBrains Mono', 'Fira Code', 'Courier New', monospace";
+
+export const WORDMARK_FONT_STACK = MAESTRO_FONT_STACK;
 
 /**
  * Ensure a CSS font-family value degrades to monospace rather than the browser's
@@ -90,3 +121,40 @@ export function resolveSurfaceFont(
 ): string {
 	return withMonoFallback((surfaceFont ?? '').trim() || interfaceFont);
 }
+
+/**
+ * The human-readable name of a font stack: its first family, unquoted.
+ *
+ * Stored font values are not all bare names. The typography presets write full
+ * CSS stacks (`Inter, -apple-system, BlinkMacSystemFont, ...`), which is right
+ * for the stored value - the fallback chain is what makes the preset resolve on
+ * a machine with nothing installed - but wrong for a label. The picker matches
+ * its option list by exact string, so a stack matches nothing, gets surfaced as
+ * the "Current" option, and the whole comma-separated chain is what the user
+ * reads as the name of their font.
+ *
+ * DISPLAY ONLY. Never write the result back to a setting: the tail of the stack
+ * is the fallback, and dropping it is how a font that is merely missing turns
+ * into a serif document default.
+ */
+export function displayFontLabel(fontFamily: string | undefined | null): string {
+	const first = (fontFamily ?? '').split(',')[0]?.trim() ?? '';
+	// Strip a matching pair of surrounding quotes; a family whose name contains
+	// a quote is not a thing, so an unbalanced one is left alone rather than
+	// half-trimmed into something that reads as a typo.
+	const unquoted = first.replace(/^(['"])(.*)\1$/, '$2').trim();
+	return unquoted || first;
+}
+
+/**
+ * Sample copy every font preview draws.
+ *
+ * One pair of strings rather than a per-surface literal: the typography chooser
+ * and the Settings pickers both show "what does this face look like", and two
+ * different samples would make the same font read as two different choices
+ * depending on which screen the user happened to be on. The prose line is a
+ * pangram so every letterform is exercised; the code line carries the
+ * punctuation and digits a fixed-width face is actually judged on.
+ */
+export const FONT_PREVIEW_PROSE = 'The quick brown fox jumps over the lazy dog.';
+export const FONT_PREVIEW_CODE = 'const tempo = 120; // adagio -> allegro';

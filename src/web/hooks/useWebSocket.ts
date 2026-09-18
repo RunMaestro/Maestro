@@ -144,6 +144,7 @@ export type ServerMessageType =
 	| 'settings_changed'
 	| 'groups_changed'
 	| 'tabs_changed'
+	| 'rename_tab_result'
 	| 'group_chat_message'
 	| 'group_chat_state_change'
 	| 'context_operation_progress'
@@ -410,6 +411,19 @@ export interface TabsChangedMessage extends ServerMessage {
 	sessionId: string;
 	aiTabs: AITabData[];
 	activeTabId: string;
+	activeTabChanged?: boolean;
+}
+
+/**
+ * Rename tab result message from server.
+ */
+export interface RenameTabResultMessage extends ServerMessage {
+	type: 'rename_tab_result';
+	success: boolean;
+	sessionId: string;
+	tabId: string;
+	newName: string;
+	error?: string;
 }
 
 /**
@@ -509,6 +523,7 @@ export type TypedServerMessage =
 	| SettingsChangedMessage
 	| GroupsChangedMessage
 	| TabsChangedMessage
+	| RenameTabResultMessage
 	| GroupChatMessageBroadcast
 	| GroupChatStateChangeBroadcast
 	| ToolEventMessage
@@ -570,7 +585,20 @@ export interface WebSocketEventHandlers {
 	/** Called when groups are changed (created, renamed, deleted, membership) */
 	onGroupsChanged?: (groups: GroupData[]) => void;
 	/** Called when tabs change in a session */
-	onTabsChanged?: (sessionId: string, aiTabs: AITabData[], activeTabId: string) => void;
+	onTabsChanged?: (
+		sessionId: string,
+		aiTabs: AITabData[],
+		activeTabId: string,
+		activeTabChanged?: boolean
+	) => void;
+	/** Called when a tab rename request completes */
+	onRenameTabResult?: (
+		sessionId: string,
+		tabId: string,
+		success: boolean,
+		newName: string,
+		error?: string
+	) => void;
 	/** Called when a group chat message is broadcast */
 	onGroupChatMessage?: (chatId: string, message: GroupChatMessage) => void;
 	/** Called when group chat state changes */
@@ -995,7 +1023,20 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
 						handlersRef.current?.onTabsChanged?.(
 							tabsMsg.sessionId,
 							tabsMsg.aiTabs,
-							tabsMsg.activeTabId
+							tabsMsg.activeTabId,
+							tabsMsg.activeTabChanged
+						);
+						break;
+					}
+
+					case 'rename_tab_result': {
+						const renameMsg = message as RenameTabResultMessage;
+						handlersRef.current?.onRenameTabResult?.(
+							renameMsg.sessionId,
+							renameMsg.tabId,
+							renameMsg.success,
+							renameMsg.newName,
+							renameMsg.error
 						);
 						break;
 					}

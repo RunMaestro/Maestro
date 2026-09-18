@@ -17,14 +17,24 @@
  * Anchored bottom-LEFT so it never collides with the Thought Stream (which docks
  * bottom-right inside the Right Panel). Closing hides it but KEEPS the history;
  * "Clear" wipes the focused session's recorded points.
+ *
+ * It is a HOVER surface, not a window: it closes once the pointer leaves both it
+ * and the gauge, and it never shares the screen with the Context Details popover
+ * the same gauge shows on hover (MainPanelHeader hides that one while this is
+ * open). The two are alternatives for one spot, so they default to one size.
  */
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { Gauge, Minus, X, Trash2, BarChart3, LineChart } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { Gauge, Trash2, BarChart3, LineChart } from 'lucide-react';
 import type { Theme } from '../types';
 import {
 	useContextTimelineStore,
 	selectPoints,
+	CONTEXT_SURFACE_CLOSE_DELAY_MS,
+	CONTEXT_SURFACE_GAP,
+	CONTEXT_SURFACE_MIN_WIDTH,
+	CONTEXT_SURFACE_WIDTH,
+	CONTEXT_TIMELINE_RESIZE_KEY,
 	type ContextTimelinePoint,
 	type TimelineAnchorRect,
 } from '../stores/contextTimelineStore';
@@ -41,24 +51,36 @@ import {
 	forgetContextTimelineCaptures,
 } from '../services/contextTimelineHydration';
 import { ContextTimelineGraph } from './ContextTimelineGraph';
+import { useResizableModal } from '../hooks/ui/useResizableModal';
+import { ResizeHandles } from './ui/ResizeHandles';
 
 interface ContextTimelinePanelProps {
 	theme: Theme;
 }
 
-const PANEL_WIDTH = 360;
-const PANEL_MAX_HEIGHT = 600;
+/**
+ * Height used only when the panel opens with no Context Details popover on screen
+ * to measure (keyboard, programmatic open). The width is always
+ * CONTEXT_SURFACE_WIDTH, which that popover shares - see its doc in the store.
+ */
+const PANEL_FALLBACK_HEIGHT = 620;
+const PANEL_MIN_HEIGHT = 260;
 const VIEWPORT_MARGIN = 8;
-const ANCHOR_GAP = 8;
+const ANCHOR_GAP = CONTEXT_SURFACE_GAP;
 /** The header context gauge that opens this panel; re-queried for its live rect. */
 const HEADER_CONTEXT_WIDGET_SELECTOR = '[data-testid="header-context-widget"]';
 
-/** Position the panel near the element that opened it, clamped to the viewport. */
-function anchoredStyle(anchor: TimelineAnchorRect): CSSProperties {
+/**
+ * Position the panel near the element that opened it, clamped to the viewport.
+ * The size is passed in rather than read from a constant so the user's dragged
+ * size drives the anchoring too: a panel widened past its default still has to
+ * stay pinned to the gauge and inside the window.
+ */
+function anchoredStyle(anchor: TimelineAnchorRect, size: { width: number; height: number }) {
 	const vw = window.innerWidth;
 	const vh = window.innerHeight;
-	const width = Math.min(PANEL_WIDTH, vw - VIEWPORT_MARGIN * 2);
-	const height = Math.min(PANEL_MAX_HEIGHT, Math.round(vh * 0.7));
+	const width = Math.min(size.width, vw - VIEWPORT_MARGIN * 2);
+	const height = Math.min(size.height, vh - VIEWPORT_MARGIN * 2);
 	// Right-align the panel under the trigger and open downward by default.
 	let left = anchor.right - width;
 	let top = anchor.bottom + ANCHOR_GAP;
@@ -72,14 +94,16 @@ function anchoredStyle(anchor: TimelineAnchorRect): CSSProperties {
 }
 
 /** Default dock (bottom-left) used when the panel was opened without an anchor. */
-const FALLBACK_STYLE: CSSProperties = {
-	bottom: 16,
-	left: 16,
-	width: PANEL_WIDTH,
-	maxWidth: 'calc(100vw - 2rem)',
-	height: '70vh',
-	maxHeight: PANEL_MAX_HEIGHT,
-};
+function fallbackStyle(size: { width: number; height: number }): CSSProperties {
+	return {
+		bottom: 16,
+		left: 16,
+		width: size.width,
+		maxWidth: 'calc(100vw - 2rem)',
+		height: size.height,
+		maxHeight: 'calc(100vh - 2rem)',
+	};
+}
 
 /** Time-of-day stamp for a turn (e.g. "3:42:07 PM"). */
 function formatPointTime(ts: number): string {
@@ -104,16 +128,28 @@ function TokenChip({ label, value, color }: { label: string; value: number; colo
 export function ContextTimelinePanel({ theme }: ContextTimelinePanelProps) {
 	const panelSessionId = useContextTimelineStore((s) => s.panelSessionId);
 	const anchorRect = useContextTimelineStore((s) => s.anchorRect);
-	const minimized = useContextTimelineStore((s) => s.minimized);
 	const view = useContextTimelineStore((s) => s.view);
 	const setView = useContextTimelineStore((s) => s.setView);
 	const points = useContextTimelineStore(selectPoints(panelSessionId));
 	const buffer = useContextTimelineStore((s) =>
 		panelSessionId ? s.buffers[panelSessionId] : undefined
 	);
-	const minimizePanel = useContextTimelineStore((s) => s.minimizePanel);
 	const closePanel = useContextTimelineStore((s) => s.closePanel);
 	const clearSession = useContextTimelineStore((s) => s.clearSession);
+	const sourceSize = useContextTimelineStore((s) => s.sourceSize);
+
+	// Drag-to-resize, remembered per user in settingsStore.modalSizes - one key for
+	// every agent, so a size set on one is the size on all of them. `topLeft`
+	// rather than the default `center`: this panel is pinned to the gauge and
+	// grows from one edge, so a centered scale factor would move it twice as fast
+	// as the cursor. The DEFAULT is the popover the click replaced, so the swap
+	// lands in the same space; a dragged size still wins over it.
+	const resizable = useResizableModal({
+		resizeKey: CONTEXT_TIMELINE_RESIZE_KEY,
+		defaultSize: sourceSize ?? { width: CONTEXT_SURFACE_WIDTH, height: PANEL_FALLBACK_HEIGHT },
+		minSize: { width: CONTEXT_SURFACE_MIN_WIDTH, height: PANEL_MIN_HEIGHT },
+		anchor: 'top-left',
+	});
 
 	// Reclamp the anchored position on viewport resize so an open panel never ends
 	// up partly offscreen after the Electron window changes size (anchoredStyle
@@ -175,27 +211,120 @@ export function ContextTimelinePanel({ theme }: ContextTimelinePanelProps) {
 		[points]
 	);
 
-	// This is a PASSIVE inspector that does NOT register a layer, so it is closed
-	// with its own X / minimize buttons rather than Escape. Historically it had no
-	// choice: any registered layer tripped hasOpenLayers()/hasOpenModal() and
-	// suppressed global shortcuts + file-tree keys while the panel was open.
-	// `blocksAppShortcuts: false` (see ThoughtStreamPanel) now covers exactly this
-	// case, so registering here would buy Escape-to-close without the keyboard
-	// cost - worth doing next time this file is touched. It does read the shared
-	// stack to hide itself while a real modal is open, so its high z-index can't
-	// float above lower-z dialogs (Create PR, expanded Auto Run) that own the
-	// foreground.
+	// This is a PASSIVE inspector that does NOT register a layer: any registered
+	// layer trips hasOpenLayers()/hasOpenModal() and suppresses global shortcuts +
+	// file-tree keys while the panel is open. It does READ the shared stack to
+	// hide itself while a real modal is open, so its high z-index can't float
+	// above lower-z dialogs (Create PR, expanded Auto Run) that own the foreground.
 	const { hasOpenModal } = useLayerStack();
+
+	// The gauge opens and closes it and moving the pointer away dismisses it, so
+	// Escape is the keyboard's way out. Handled locally rather than through the layer stack for
+	// the reason above, and gated on the panel actually being on screen: while a
+	// modal is open this component renders nothing, and swallowing that modal's
+	// Escape from behind it would be indistinguishable from the modal hanging.
+	useEventListener('keydown', (event: Event) => {
+		const e = event as KeyboardEvent;
+		if (e.key !== 'Escape') return;
+		if (!panelSessionId || hasOpenModal()) return;
+		e.stopPropagation();
+		closePanel();
+	});
+
+	// Hover-dismiss. The panel closes once the pointer has left BOTH it and the
+	// gauge that opened it, after the same grace period the Context Details popover
+	// uses, so crossing the gap between them is not leaving. It is tracked from one
+	// window-level `mouseover` rather than onMouseLeave on each element because the
+	// gauge lives in MainPanelHeader and this panel in AppShell, and "is the pointer
+	// over either?" needs a single place to be asked. `mouseover`, not `mousemove`:
+	// a browser tab's <webview> keeps its pointer events to itself, so moving from
+	// the panel onto one produces no host mousemove at all, while the host still
+	// sees a mouseover targeting the webview element.
+	//
+	// Two things must NOT dismiss it. A resize drag routinely carries the pointer
+	// outside, so nothing closes while one is in progress and the check re-runs
+	// when it ends. And a panel opened from the keyboard, with the pointer parked
+	// elsewhere, stays until the pointer has actually been over it: `armed` is what
+	// separates hovering away from never having hovered at all.
+	const pointerInsideRef = useRef(false);
+	const hoverArmedRef = useRef(false);
+	const hoverDismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	const cancelHoverDismiss = useCallback(() => {
+		if (hoverDismissTimerRef.current) {
+			clearTimeout(hoverDismissTimerRef.current);
+			hoverDismissTimerRef.current = null;
+		}
+	}, []);
+
+	const evaluateHoverDismiss = useCallback(() => {
+		if (pointerInsideRef.current) hoverArmedRef.current = true;
+		if (!panelSessionId || resizable.isResizing || pointerInsideRef.current) {
+			cancelHoverDismiss();
+			return;
+		}
+		if (!hoverArmedRef.current || hoverDismissTimerRef.current) return;
+		hoverDismissTimerRef.current = setTimeout(() => {
+			hoverDismissTimerRef.current = null;
+			closePanel();
+		}, CONTEXT_SURFACE_CLOSE_DELAY_MS);
+	}, [panelSessionId, resizable.isResizing, cancelHoverDismiss, closePanel]);
+
+	// Each open starts from where the pointer actually is. A click leaves the gauge
+	// hovered (`:hover` also covers the popover, which is the gauge's descendant),
+	// so a mouse open is armed at once; a keyboard open is not. Declared before the
+	// re-check below so that effect reads this open's state, not the last one's.
+	useEffect(() => {
+		cancelHoverDismiss();
+		const gauge = panelSessionId ? document.querySelector(HEADER_CONTEXT_WIDGET_SELECTOR) : null;
+		const overGauge = !!gauge?.matches(':hover');
+		pointerInsideRef.current = overGauge;
+		hoverArmedRef.current = overGauge;
+	}, [panelSessionId, cancelHoverDismiss]);
+
+	// Re-check when the inputs change - chiefly a resize drag ending with the
+	// pointer already outside, which produces no further event to react to.
+	useEffect(() => {
+		evaluateHoverDismiss();
+	}, [evaluateHoverDismiss]);
+
+	useEffect(() => cancelHoverDismiss, [cancelHoverDismiss]);
+
+	useEventListener(
+		'mouseover',
+		(event: Event) => {
+			// Hidden behind a modal, the pointer is necessarily "outside" a panel that
+			// is not drawn, and that must not close it out from under the user.
+			if (hasOpenModal()) return;
+			const target = event.target instanceof Node ? event.target : null;
+			const panel = resizable.modalRef.current;
+			const gauge = document.querySelector(HEADER_CONTEXT_WIDGET_SELECTOR);
+			pointerInsideRef.current =
+				!!target && (!!panel?.contains(target) || !!gauge?.contains(target));
+			evaluateHoverDismiss();
+		},
+		{ enabled: !!panelSessionId }
+	);
+
+	// Leaving the window entirely targets nothing, so no mouseover fires for it.
+	useEventListener(
+		'mouseout',
+		(event: Event) => {
+			if ((event as MouseEvent).relatedTarget !== null || hasOpenModal()) return;
+			pointerInsideRef.current = false;
+			evaluateHoverDismiss();
+		},
+		{ enabled: !!panelSessionId }
+	);
 
 	// Auto-tail: when pinned to the top, follow new turns (newest is at the top).
 	useEffect(() => {
-		if (minimized) return;
 		if (!stickToTopRef.current) return;
 		const el = scrollRef.current;
 		if (el) el.scrollTop = 0;
-	}, [ordered, minimized]);
+	}, [ordered]);
 
-	if (!panelSessionId || minimized) return null;
+	if (!panelSessionId) return null;
 	if (hasOpenModal()) return null;
 
 	const label = sessionName || panelSessionId.slice(0, 8);
@@ -210,13 +339,22 @@ export function ContextTimelinePanel({ theme }: ContextTimelinePanelProps) {
 
 	return (
 		<div
+			ref={resizable.modalRef}
 			className="fixed z-[9997] flex flex-col rounded-lg border shadow-2xl select-none"
 			style={{
-				...(liveAnchor ? anchoredStyle(liveAnchor) : FALLBACK_STYLE),
+				...(liveAnchor ? anchoredStyle(liveAnchor, resizable.size) : fallbackStyle(resizable.size)),
 				backgroundColor: theme.colors.bgSidebar,
 				borderColor: theme.colors.border,
 			}}
+			data-modal-resize-key={CONTEXT_TIMELINE_RESIZE_KEY}
 		>
+			<ResizeHandles
+				onResizeStart={resizable.onResizeStart}
+				accentColor={theme.colors.accent}
+				onResetSize={resizable.onResetSize}
+				canReset={resizable.canReset}
+			/>
+
 			{/* Header */}
 			<div
 				className="flex items-center gap-2 px-3 py-2.5 border-b shrink-0"
@@ -231,7 +369,7 @@ export function ContextTimelinePanel({ theme }: ContextTimelinePanelProps) {
 						Context Timeline
 					</span>
 					<span
-						className="text-[10px] truncate leading-tight"
+						className="text-2xs truncate leading-tight"
 						style={{ color: theme.colors.textDim }}
 						title={label}
 					>
@@ -296,26 +434,12 @@ export function ContextTimelinePanel({ theme }: ContextTimelinePanelProps) {
 				>
 					<Trash2 className="w-4 h-4" style={{ color: theme.colors.textDim }} />
 				</button>
-				<button
-					onClick={minimizePanel}
-					title="Minimize"
-					className="p-1 rounded hover:bg-white/10 transition-colors shrink-0"
-				>
-					<Minus className="w-4 h-4" style={{ color: theme.colors.textDim }} />
-				</button>
-				<button
-					onClick={closePanel}
-					title="Close (keeps history)"
-					className="p-1 rounded hover:bg-white/10 transition-colors shrink-0"
-				>
-					<X className="w-4 h-4" style={{ color: theme.colors.textDim }} />
-				</button>
 			</div>
 
 			{/* Window readout */}
 			{latestWindow > 0 && (
 				<div
-					className="px-3 py-1.5 border-b shrink-0 text-[10px]"
+					className="px-3 py-1.5 border-b shrink-0 text-2xs"
 					style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
 				>
 					Window: {formatTokensCompact(latestWindow)} tokens · denominator is provider-reported when
@@ -367,14 +491,14 @@ export function ContextTimelinePanel({ theme }: ContextTimelinePanelProps) {
 								<div key={p.id} className="flex flex-col gap-1">
 									<div className="flex items-center justify-between gap-2">
 										<span
-											className="text-[10px] font-mono select-none"
+											className="text-2xs font-mono select-none"
 											style={{ color: theme.colors.textDim }}
 											title={new Date(p.timestamp).toLocaleString()}
 										>
 											{formatPointTime(p.timestamp)}
 										</span>
 										<span
-											className="text-[10px] font-mono tabular-nums"
+											className="text-2xs font-mono tabular-nums"
 											data-testid="timeline-row-label"
 											style={{ color: barColor }}
 											title={
@@ -414,7 +538,7 @@ export function ContextTimelinePanel({ theme }: ContextTimelinePanelProps) {
 										)}
 									</div>
 									{/* Per-turn token breakdown */}
-									<div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[10px]">
+									<div className="flex flex-wrap gap-x-3 gap-y-0.5 text-2xs">
 										<TokenChip label="in" value={p.inputTokens} color={theme.colors.textMain} />
 										<TokenChip
 											label="cache r"

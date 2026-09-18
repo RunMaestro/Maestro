@@ -40,6 +40,18 @@ import { mentionMatches, type GroupChatHistoryEntry } from '../../../shared/grou
 
 // Group chat log imports
 import { appendToLog, readLog, saveImage, GroupChatMessage } from '../../group-chat/group-chat-log';
+import {
+	addToQueue,
+	getQueue,
+	installGroupChatQueue,
+	onModeratorStateChanged,
+	pauseQueueFor,
+	removeFromQueue,
+	reorderQueue,
+	resumeQueueFor,
+	submitMessage,
+} from '../../group-chat/group-chat-queue';
+import type { GroupChatQueuedItem } from '../../../shared/group-chat-types';
 
 // Group chat moderator imports
 import {
@@ -69,6 +81,7 @@ import {
 	clearPendingParticipants,
 	routeAgentResponse,
 	markParticipantResponded,
+	settleGroupChatToIdle,
 	spawnModeratorSynthesis,
 } from '../../group-chat/group-chat-router';
 
@@ -270,13 +283,20 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 					enableMaestroP?: boolean;
 					maestroPMode?: 'interactive' | 'dynamic';
 					maestroPPath?: string;
-				}
+				},
+				requireIdleParticipants?: boolean
 			): Promise<GroupChat> => {
 				logger.info(`Creating group chat: ${name}`, LOG_CONTEXT, {
 					moderatorAgentId,
 					hasConfig: !!moderatorConfig,
+					requireIdleParticipants: requireIdleParticipants !== false,
 				});
-				const chat = await createGroupChat(name, moderatorAgentId, moderatorConfig);
+				const chat = await createGroupChat(
+					name,
+					moderatorAgentId,
+					moderatorConfig,
+					requireIdleParticipants
+				);
 
 				// Initialize the moderator immediately so it's "hot and ready"
 				// This spawns the session ID prefix so the UI doesn't show "pending"
@@ -328,6 +348,7 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 			const processManager = getProcessManager();
 			await killModerator(id, processManager ?? undefined);
 			await clearAllParticipantSessions(id, processManager ?? undefined);
+			clearPendingParticipants(id);
 
 			// Delete the group chat data
 			await deleteGroupChat(id);
@@ -389,6 +410,7 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 						maestroPMode?: 'interactive' | 'dynamic';
 						maestroPPath?: string;
 					};
+					requireIdleParticipants?: boolean;
 				}
 			): Promise<GroupChat> => {
 				logger.info(`Updating group chat ${id}`, LOG_CONTEXT, updates);
@@ -413,6 +435,12 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 					name: updates.name,
 					moderatorAgentId: updates.moderatorAgentId,
 					moderatorConfig: updates.moderatorConfig,
+					// Only written when the caller actually stated it: `updateGroupChat`
+					// spreads its updates, so an explicit `undefined` would erase the
+					// stored choice and silently fall back to the default.
+					...(updates.requireIdleParticipants !== undefined
+						? { requireIdleParticipants: updates.requireIdleParticipants }
+						: {}),
 				});
 
 				// Restart moderator if agent changed
@@ -538,58 +566,148 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 		})
 	);
 
+	/**
+	 * Deliver one user message to a group chat's moderator.
+	 *
+	 * Extracted verbatim from the `groupChat:sendToModerator` handler body so the
+	 * main-process execution queue can send an item itself. The queue is drained
+	 * by main rather than by whichever client happens to be watching, so the send
+	 * has to be reachable from somewhere other than an IPC callback - and it
+	 * cannot be the low-level `sendToModerator` primitive re-exported at the top
+	 * of this file, which skips the Encore gate and the auto-restart below.
+	 *
+	 * Kept inside `registerGroupChatHandlers` because it closes over
+	 * `getProcessManager` and `getAgentDetector`, which are per-registration
+	 * dependencies rather than module state.
+	 *
+	 * It deliberately does NOT catch: the IPC handler is wrapped in
+	 * `withIpcErrorLogging`, and the queue drainer does its own catching so it can
+	 * keep the item and warn the user rather than dropping it silently.
+	 */
+	const sendUserMessageToModerator = async (
+		id: string,
+		message: string,
+		images?: string[],
+		readOnly?: boolean
+	): Promise<void> => {
+		assertGroupChatProviderProcessesEnabled();
+		logger.info(`[GroupChat:Debug] ========== USER MESSAGE RECEIVED ==========`);
+		logger.info(`[GroupChat:Debug] Group Chat ID: ${id}`);
+		logger.info(
+			`[GroupChat:Debug] Message: "${message.substring(0, 200)}${message.length > 200 ? '...' : ''}"`
+		);
+		logger.info(`[GroupChat:Debug] Read-only: ${readOnly ?? false}`);
+		logger.info(`[GroupChat:Debug] Images: ${images?.length ?? 0}`);
+
+		const processManager = getProcessManager();
+		const agentDetector = getAgentDetector();
+
+		logger.info(`[GroupChat:Debug] Process manager available: ${!!processManager}`);
+		logger.info(`[GroupChat:Debug] Agent detector available: ${!!agentDetector}`);
+
+		// Auto-restart moderator if it exited (e.g., after completing a turn)
+		if (!isModeratorActive(id) && processManager) {
+			logger.info(`[GroupChat:Debug] Moderator not active, auto-restarting...`);
+			const chat = await loadGroupChat(id);
+			if (!chat) {
+				throw new Error(`Group chat not found: ${id}`);
+			}
+			await spawnModerator(chat, processManager);
+			logger.info(`[GroupChat:Debug] Moderator auto-restarted`);
+		}
+
+		// Route through the user message router which handles logging and forwarding
+		await routeUserMessage(
+			id,
+			message,
+			processManager ?? undefined,
+			agentDetector ?? undefined,
+			readOnly,
+			images
+		);
+
+		logger.info(`[GroupChat:Debug] User message routed to moderator`);
+		logger.info(`[GroupChat:Debug] ===========================================`);
+
+		logger.debug(`Sent message to moderator in ${id}`, LOG_CONTEXT, {
+			messageLength: message.length,
+			imageCount: images?.length ?? 0,
+			readOnly: readOnly ?? false,
+		});
+	};
+
 	// Send a message to the moderator
 	ipcMain.handle(
 		'groupChat:sendToModerator',
 		withIpcErrorLogging(
 			handlerOpts('sendToModerator'),
 			async (id: string, message: string, images?: string[], readOnly?: boolean): Promise<void> => {
-				assertGroupChatProviderProcessesEnabled();
-				logger.info(`[GroupChat:Debug] ========== USER MESSAGE RECEIVED ==========`);
-				logger.info(`[GroupChat:Debug] Group Chat ID: ${id}`);
-				logger.info(
-					`[GroupChat:Debug] Message: "${message.substring(0, 200)}${message.length > 200 ? '...' : ''}"`
-				);
-				logger.info(`[GroupChat:Debug] Read-only: ${readOnly ?? false}`);
-				logger.info(`[GroupChat:Debug] Images: ${images?.length ?? 0}`);
-
-				const processManager = getProcessManager();
-				const agentDetector = getAgentDetector();
-
-				logger.info(`[GroupChat:Debug] Process manager available: ${!!processManager}`);
-				logger.info(`[GroupChat:Debug] Agent detector available: ${!!agentDetector}`);
-
-				// Auto-restart moderator if it exited (e.g., after completing a turn)
-				if (!isModeratorActive(id) && processManager) {
-					logger.info(`[GroupChat:Debug] Moderator not active, auto-restarting...`);
-					const chat = await loadGroupChat(id);
-					if (!chat) {
-						throw new Error(`Group chat not found: ${id}`);
-					}
-					await spawnModerator(chat, processManager);
-					logger.info(`[GroupChat:Debug] Moderator auto-restarted`);
-				}
-
-				// Route through the user message router which handles logging and forwarding
-				await routeUserMessage(
-					id,
-					message,
-					processManager ?? undefined,
-					agentDetector ?? undefined,
-					readOnly,
-					images
-				);
-
-				logger.info(`[GroupChat:Debug] User message routed to moderator`);
-				logger.info(`[GroupChat:Debug] ===========================================`);
-
-				logger.debug(`Sent message to moderator in ${id}`, LOG_CONTEXT, {
-					messageLength: message.length,
-					imageCount: images?.length ?? 0,
-					readOnly: readOnly ?? false,
-				});
+				await sendUserMessageToModerator(id, message, images, readOnly);
 			}
 		)
+	);
+
+	// =====================================================================
+	// Execution queue
+	//
+	// The queue lives in MAIN (`group-chat-queue.ts`) rather than in each
+	// client's store. Every change is answered with the whole state AND
+	// broadcast on `groupChat:queueState`, so a phone and the desktop are
+	// looking at the same list rather than two private ones.
+	// =====================================================================
+
+	/**
+	 * Hand a freshly composed message to the queue.
+	 *
+	 * MAIN decides whether it is sent now or queued, not the client. A client
+	 * decides from its own copy, and a copy that is even slightly stale sends
+	 * directly while items are already waiting - so the newest message reaches
+	 * the moderator ahead of older ones.
+	 */
+	ipcMain.handle(
+		'groupChat:submitMessage',
+		withIpcErrorLogging(
+			handlerOpts('submitMessage'),
+			async (
+				id: string,
+				item: GroupChatQueuedItem
+			): Promise<ReturnType<typeof submitMessage> extends Promise<infer R> ? R : never> => {
+				assertGroupChatProviderProcessesEnabled();
+				return submitMessage(id, item);
+			}
+		)
+	);
+
+	ipcMain.handle(
+		'groupChat:getQueue',
+		withIpcErrorLogging(handlerOpts('getQueue'), async (id: string) => getQueue(id))
+	);
+
+	ipcMain.handle(
+		'groupChat:queueAdd',
+		withIpcErrorLogging(handlerOpts('queueAdd'), async (id: string, item: GroupChatQueuedItem) =>
+			addToQueue(id, item)
+		)
+	);
+
+	ipcMain.handle(
+		'groupChat:queueRemove',
+		withIpcErrorLogging(handlerOpts('queueRemove'), async (id: string, itemId: string) =>
+			removeFromQueue(id, itemId)
+		)
+	);
+
+	ipcMain.handle(
+		'groupChat:queueReorder',
+		withIpcErrorLogging(
+			handlerOpts('queueReorder'),
+			async (id: string, itemId: string, toIndex: number) => reorderQueue(id, itemId, toIndex)
+		)
+	);
+
+	ipcMain.handle(
+		'groupChat:queueResume',
+		withIpcErrorLogging(handlerOpts('queueResume'), async (id: string) => resumeQueueFor(id))
 	);
 
 	// Stop the moderator for a group chat
@@ -627,6 +745,11 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 			}
 
 			// Emit idle state for the group chat
+			// D8: Stop All holds the queue. Nobody presses it expecting the room to
+			// start again, and the send path auto-restarts a moderator that is not
+			// running - so without this the next queued item respawns what was just
+			// killed.
+			await pauseQueueFor(id);
 			groupChatEmitters.emitStateChange?.(id, 'idle');
 
 			logger.info(`Stopped all activity in group chat: ${id}`, LOG_CONTEXT);
@@ -673,12 +796,32 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 				// Maestro session - so we must call markParticipantResponded here.
 				const agentDetector = getAgentDetector();
 				const isLast = markParticipantResponded(groupChatId, participantName);
-				if (isLast && processManager && agentDetector) {
-					logger.info(
-						`All participants responded after autorun, spawning synthesis for ${groupChatId}`,
-						LOG_CONTEXT
-					);
-					await spawnModeratorSynthesis(groupChatId, processManager, agentDetector);
+				if (isLast) {
+					// Same split as the exit listener and the participant timeout: the
+					// room is finished whether or not synthesis can run, so the clear
+					// must not ride on the spawn's preconditions. A synthesis THROW has
+					// to settle the room too - this one is awaited rather than caught,
+					// so a rejection used to leave the room on 'agent-working' with its
+					// power block held, which the quit dialog reports as a running chat.
+					if (processManager && agentDetector) {
+						logger.info(
+							`All participants responded after autorun, spawning synthesis for ${groupChatId}`,
+							LOG_CONTEXT
+						);
+						try {
+							await spawnModeratorSynthesis(groupChatId, processManager, agentDetector);
+						} catch (err) {
+							logger.error(
+								`Failed to spawn synthesis after autorun for ${groupChatId}`,
+								LOG_CONTEXT,
+								{ error: err, participantName }
+							);
+							settleGroupChatToIdle(groupChatId);
+							throw err;
+						}
+					} else {
+						settleGroupChatToIdle(groupChatId);
+					}
 				}
 			}
 		)
@@ -1048,11 +1191,47 @@ Respond with ONLY the summary text, no additional commentary.`;
 	};
 
 	/**
+	 * Each chat's last known moderator state.
+	 *
+	 * Main owns the queue now, so it cannot ask a renderer whether the moderator
+	 * is idle: a client may be asleep, reloading, or absent entirely. Recorded
+	 * from `emitStateChange` below, which is the single funnel every transition
+	 * already goes through.
+	 */
+	const lastModeratorState = new Map<string, GroupChatState>();
+
+	installGroupChatQueue({
+		broadcast: (groupChatId, state) => safeSend('groupChat:queueState', groupChatId, state),
+		send: sendUserMessageToModerator,
+		postSystemMessage: async (groupChatId, content) => {
+			// Same path a normal system message takes: write to the chat's own log
+			// and tell every client, so the warning survives a reload rather than
+			// living only in whichever renderer happened to be open.
+			const chat = await loadGroupChat(groupChatId);
+			if (!chat) return;
+			await appendToLog(chat.logPath, 'system', content);
+			groupChatEmitters.emitMessage?.(groupChatId, {
+				timestamp: new Date().toISOString(),
+				from: 'system',
+				content,
+			});
+		},
+		// Absent means nothing has run yet, which is idle.
+		isIdle: (groupChatId) => (lastModeratorState.get(groupChatId) ?? 'idle') === 'idle',
+	});
+
+	/**
 	 * Emit a state change event to the renderer.
 	 * Called when the group chat state changes (idle, moderator-thinking, agent-working).
 	 */
 	groupChatEmitters.emitStateChange = (groupChatId: string, state: GroupChatState): void => {
+		// The queue drains in MAIN, so main needs its own answer to "is the
+		// moderator free?". This emitter is the one funnel every state change
+		// already passes through, so the map is recorded here rather than being
+		// re-derived somewhere that could disagree with what clients were told.
+		lastModeratorState.set(groupChatId, state);
 		safeSend('groupChat:stateChange', groupChatId, state);
+		onModeratorStateChanged(groupChatId, state === 'idle');
 	};
 
 	/**

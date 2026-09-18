@@ -46,7 +46,7 @@ export function FileTreeLoadingProgress({
 
 				{currentFolder && (
 					<div
-						className="text-[10px] mt-1.5 max-w-[200px] truncate opacity-60"
+						className="text-2xs mt-1.5 max-w-[200px] truncate opacity-60"
 						style={{ color: theme.colors.textDim }}
 						title={progress?.currentDirectory}
 					>
@@ -58,7 +58,7 @@ export function FileTreeLoadingProgress({
 					<button
 						type="button"
 						onClick={onCancel}
-						className="text-[11px] mt-3 underline-offset-2 hover:underline transition-opacity"
+						className="text-xs-plus mt-3 underline-offset-2 hover:underline transition-opacity"
 						style={{ color: theme.colors.textDim }}
 					>
 						Stop loading

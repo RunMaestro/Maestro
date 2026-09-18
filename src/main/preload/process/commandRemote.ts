@@ -1,4 +1,5 @@
 import { ipcRenderer } from 'electron';
+import type { AgentDelegationNotice } from '../../../shared/agentDelegation';
 
 /**
  * Helper to log via the main process logger.
@@ -85,6 +86,103 @@ export function createCommandRemoteApi() {
 		): void => {
 			log('Sending remote command receipt', { receiptChannel, accepted, reason });
 			ipcRenderer.send(receiptChannel, { accepted, reason });
+		},
+
+		/**
+		 * Subscribe to cross-agent consults asked for over the CLI
+		 * (`maestro-cli ask`). Unlike `remote:executeCommand`, the reply is the
+		 * ANSWER, not a delivery receipt - the caller is an agent blocked on a tool
+		 * result - so the renderer answers `responseChannel` when the consulted
+		 * agent finishes, which can be minutes later.
+		 */
+		onRemoteCrossAgentAsk: (
+			callback: (
+				request: {
+					targetSessionId: string;
+					question: string;
+					fromSessionId?: string;
+					fromTabId?: string;
+					withContext?: boolean;
+				},
+				responseChannel: string
+			) => void
+		): (() => void) => {
+			log('Registering onRemoteCrossAgentAsk listener');
+			const handler = (
+				_: unknown,
+				request: {
+					targetSessionId: string;
+					question: string;
+					fromSessionId?: string;
+					fromTabId?: string;
+					withContext?: boolean;
+				},
+				responseChannel: string
+			) => {
+				log('Received remote:crossAgentAsk IPC', {
+					targetSessionId: request?.targetSessionId,
+					fromSessionId: request?.fromSessionId,
+					withContext: request?.withContext,
+					responseChannel,
+				});
+				try {
+					callback(request, responseChannel);
+				} catch (error) {
+					ipcRenderer.invoke(
+						'logger:log',
+						'error',
+						'Error invoking remote cross-agent ask callback',
+						'Preload',
+						{ error: String(error) }
+					);
+				}
+			};
+			ipcRenderer.on('remote:crossAgentAsk', handler);
+			return () => ipcRenderer.removeListener('remote:crossAgentAsk', handler);
+		},
+
+		/** Answer a `remote:crossAgentAsk` channel with the consult's outcome. */
+		sendRemoteCrossAgentAskResponse: (
+			responseChannel: string,
+			result: {
+				success: boolean;
+				answer?: string;
+				error?: string;
+				canceled?: boolean;
+				targetAgentName?: string;
+				targetTabId?: string;
+			}
+		): void => {
+			log('Sending cross-agent ask response', {
+				responseChannel,
+				success: result?.success,
+				answerLength: result?.answer?.length ?? 0,
+			});
+			ipcRenderer.send(responseChannel, result);
+		},
+
+		/**
+		 * Subscribe to delegations an agent made from its own shell
+		 * (`maestro-cli dispatch`), delivered to the window that owns the CALLER so
+		 * the hand-off can be marked in its transcript. Fire-and-forget: there is
+		 * no reply channel, because the dispatch already succeeded.
+		 */
+		onRemoteAgentDelegation: (callback: (notice: AgentDelegationNotice) => void): (() => void) => {
+			const handler = (_: unknown, notice: AgentDelegationNotice) => {
+				try {
+					callback(notice);
+				} catch (error) {
+					ipcRenderer.invoke(
+						'logger:log',
+						'error',
+						'Error invoking remote agent delegation callback',
+						'Preload',
+						{ error: String(error) }
+					);
+				}
+			};
+			ipcRenderer.on('remote:agentDelegation', handler);
+			return () => ipcRenderer.removeListener('remote:agentDelegation', handler);
 		},
 
 		/**

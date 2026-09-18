@@ -196,7 +196,7 @@ function SshRemoteDropdown({
 						<span className="text-xs font-medium" style={{ color: theme.colors.textMain }}>
 							Sync history to remote
 						</span>
-						<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
+						<span className="text-2xs" style={{ color: theme.colors.textDim }}>
 							Share history entries via .maestro/history/ on the remote host for cross-machine
 							visibility.
 						</span>
@@ -237,7 +237,7 @@ function SshRemoteDropdown({
 						<span className="text-xs font-medium" style={{ color: theme.colors.textMain }}>
 							This agent is remote-controlled
 						</span>
-						<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
+						<span className="text-2xs" style={{ color: theme.colors.textDim }}>
 							Mirror history entries to this project's local .maestro/history/ so another Maestro
 							(SSH'd into this machine) can see what was done here.
 						</span>

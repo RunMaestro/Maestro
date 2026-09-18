@@ -11,25 +11,36 @@
  * - Staggered card-enter animation delays are applied
  * - The fuzzy agent filter narrows cards live and clears from the ESC pill
  * - The group dropdown narrows the grid, and only offers groups that hold agents
+ * - The provider dropdown splits agents by backing account, badges the cards,
+ *   and offers a Provider sort
  */
 
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { AgentOverviewCards } from '../../../../renderer/components/UsageDashboard/AgentOverviewCards';
 import type { StatsAggregation } from '../../../../renderer/hooks/stats/useStats';
 import type { Session } from '../../../../renderer/types';
 import { THEMES } from '../../../../shared/themes';
+import { ALL_PROFILES_VALUE } from '../../../../shared/providerProfiles';
+import { installLocalStorageMock } from '../../../helpers/mockLocalStorage';
+import { AGENT_TILE_SCALE_KEY } from '../../../../renderer/components/UsageDashboard/tileScale';
 
 // The agent filter registers a layer while it holds text so Escape clears the
 // box instead of closing the dashboard. Stub the stack so the component can
 // render standalone.
-vi.mock('../../../../renderer/contexts/LayerStackContext', () => ({
-	useLayerStack: () => ({
-		registerLayer: vi.fn(() => 'layer-123'),
-		unregisterLayer: vi.fn(),
-		updateLayerHandler: vi.fn(),
-	}),
-}));
+vi.mock('../../../../renderer/contexts/LayerStackContext', async () => {
+	const { MODAL_PRIORITIES } = await import('../../../../renderer/constants/modalPriorities');
+	return {
+		useLayerStack: () => ({
+			registerLayer: vi.fn(() => 'layer-123'),
+			unregisterLayer: vi.fn(),
+			updateLayerHandler: vi.fn(),
+			// The tile-zoom keys bind only while this grid is the top layer, so
+			// the stub reports the dashboard as topmost.
+			getLayers: () => [{ priority: MODAL_PRIORITIES.USAGE_DASHBOARD }],
+		}),
+	};
+});
 
 const theme = THEMES['dracula'];
 
@@ -73,6 +84,12 @@ const buildData = (overrides: Partial<StatsAggregation> = {}): StatsAggregation 
 });
 
 describe('AgentOverviewCards', () => {
+	beforeEach(() => {
+		// The tile zoom persists to localStorage, so each test starts from a
+		// fresh store rather than inheriting the previous one's zoom.
+		installLocalStorageMock();
+	});
+
 	it('renders the grid container with one card per non-terminal session', () => {
 		const sessions: Session[] = [
 			buildSession({ id: 's1', name: 'Alpha' }),
@@ -871,6 +888,367 @@ describe('AgentOverviewCards', () => {
 
 			expect(screen.getAllByTestId('agent-card')).toHaveLength(1);
 			expect(screen.getByText('Alpha')).toBeInTheDocument();
+		});
+	});
+	describe('active-only toggle', () => {
+		const SESSIONS: Session[] = [
+			buildSession({ id: 's1', name: 'Alpha' }),
+			buildSession({ id: 's2', name: 'Beta', toolType: 'codex' }),
+		];
+		// Only Alpha recorded a query in the range.
+		const DATA = buildData({
+			byAgent: { 'claude-code': { count: 9, duration: 0 }, codex: { count: 4, duration: 0 } },
+			bySessionByDay: { s1: [{ date: '2026-09-01', count: 9, duration: 1000 }] },
+		});
+
+		const toggle = () => screen.getByTestId('agent-overview-active-only');
+
+		it('is off by default and shows every agent', () => {
+			render(<AgentOverviewCards sessions={SESSIONS} data={DATA} theme={theme} />);
+
+			expect(toggle()).toHaveAttribute('aria-checked', 'false');
+			expect(screen.getAllByTestId('agent-card')).toHaveLength(2);
+		});
+
+		it('drops agents with no queries in the range when switched on', () => {
+			render(<AgentOverviewCards sessions={SESSIONS} data={DATA} theme={theme} />);
+
+			fireEvent.click(toggle());
+
+			expect(toggle()).toHaveAttribute('aria-checked', 'true');
+			expect(screen.getAllByTestId('agent-card')).toHaveLength(1);
+			expect(screen.getByText('Alpha')).toBeInTheDocument();
+			expect(screen.queryByText('Beta')).not.toBeInTheDocument();
+		});
+
+		it('does not count the provider-total fallback as activity', () => {
+			// Beta is the only codex agent, so its CARD borrows the provider total.
+			// That must not promote it to "active" - it ran nothing itself.
+			render(<AgentOverviewCards sessions={SESSIONS} data={DATA} theme={theme} />);
+			fireEvent.click(toggle());
+
+			expect(screen.queryByText('Beta')).not.toBeInTheDocument();
+		});
+
+		it('keeps the toolbar and explains itself when it empties the grid', () => {
+			// Emptying the grid must never hide the control that emptied it.
+			render(<AgentOverviewCards sessions={SESSIONS} data={buildData()} theme={theme} />);
+
+			fireEvent.click(toggle());
+
+			expect(toggle()).toBeInTheDocument();
+			expect(screen.getByTestId('agent-overview-group-empty')).toHaveTextContent(
+				'No agents ran a query in this time range.'
+			);
+		});
+
+		it('composes with the keyword filter', () => {
+			render(
+				<AgentOverviewCards
+					sessions={[...SESSIONS, buildSession({ id: 's3', name: 'Alpine' })]}
+					data={{
+						...DATA,
+						bySessionByDay: {
+							...DATA.bySessionByDay,
+							s3: [{ date: '2026-09-01', count: 2, duration: 100 }],
+						},
+					}}
+					theme={theme}
+				/>
+			);
+
+			fireEvent.click(toggle());
+			fireEvent.change(screen.getByTestId('agent-overview-filter-input'), {
+				target: { value: 'Alph' },
+			});
+
+			expect(screen.getAllByTestId('agent-card')).toHaveLength(1);
+			expect(screen.getByText('Alpha')).toBeInTheDocument();
+		});
+	});
+
+	describe('provider profile filter', () => {
+		const SMASH = '/Users/me/.claude-smash';
+		const GMAIL = '/Users/me/.claude-gmail';
+
+		const PROFILE_SESSIONS: Session[] = [
+			buildSession({ id: 's1', name: 'Alpha', customEnvVars: { CLAUDE_CONFIG_DIR: SMASH } }),
+			buildSession({ id: 's2', name: 'Beta', customEnvVars: { CLAUDE_CONFIG_DIR: GMAIL } }),
+			buildSession({ id: 's3', name: 'Gamma', customEnvVars: { CLAUDE_CONFIG_DIR: GMAIL } }),
+			buildSession({ id: 's4', name: 'Delta', toolType: 'opencode' }),
+		];
+
+		const renderProfiles = (sessions: Session[] = PROFILE_SESSIONS) =>
+			render(<AgentOverviewCards sessions={sessions} data={buildData()} theme={theme} />);
+
+		/** The dropdown only exists once more than one profile is in play. */
+		const trigger = () => screen.getByLabelText('Filter agents by provider account');
+		const pickProfile = (label: string) => {
+			fireEvent.click(trigger());
+			fireEvent.click(screen.getByRole('option', { name: label }));
+		};
+
+		it('offers one option per backing account, with its agent count', () => {
+			renderProfiles();
+
+			fireEvent.click(trigger());
+			expect(screen.getByRole('option', { name: 'All providers' })).toBeInTheDocument();
+			expect(screen.getByRole('option', { name: 'Claude Code - smash (1)' })).toBeInTheDocument();
+			expect(screen.getByRole('option', { name: 'Claude Code - gmail (2)' })).toBeInTheDocument();
+			// An account-less provider is still a profile - one per provider.
+			expect(screen.getByRole('option', { name: 'OpenCode (1)' })).toBeInTheDocument();
+		});
+
+		it('narrows the grid to the picked account', () => {
+			renderProfiles();
+
+			pickProfile('Claude Code - gmail (2)');
+
+			expect(screen.getAllByTestId('agent-card')).toHaveLength(2);
+			expect(screen.getByText('Beta')).toBeInTheDocument();
+			expect(screen.queryByText('Alpha')).not.toBeInTheDocument();
+		});
+
+		it('badges every card with its account so the split is readable unfiltered', () => {
+			renderProfiles();
+
+			expect(screen.getAllByTestId('agent-card-profile-badge')).toHaveLength(4);
+			const labels = screen.getAllByTestId('agent-card-profile-badge').map((el) => el.textContent);
+			expect(labels).toEqual(expect.arrayContaining(['smash', 'gmail', 'OpenCode']));
+		});
+
+		it('renders neither dropdown nor badge when the whole fleet shares one profile', () => {
+			renderProfiles([
+				buildSession({ id: 's1', name: 'Alpha', customEnvVars: { CLAUDE_CONFIG_DIR: SMASH } }),
+				buildSession({ id: 's2', name: 'Beta', customEnvVars: { CLAUDE_CONFIG_DIR: SMASH } }),
+			]);
+
+			expect(screen.getAllByTestId('agent-card')).toHaveLength(2);
+			expect(screen.queryByLabelText('Filter agents by provider account')).toBeNull();
+			expect(screen.queryAllByTestId('agent-card-profile-badge')).toHaveLength(0);
+		});
+
+		it('keeps the toolbar and explains itself when a profile filter empties the grid', () => {
+			// The parent owns the filter when a quota badge can set it, and the
+			// account it names may hold no agents by the time the grid renders.
+			render(
+				<AgentOverviewCards
+					sessions={PROFILE_SESSIONS}
+					data={buildData()}
+					theme={theme}
+					profileFilter="claude-code::/Users/me/.claude-banaco"
+					onProfileFilterChange={vi.fn()}
+				/>
+			);
+
+			expect(screen.queryAllByTestId('agent-card')).toHaveLength(0);
+			expect(screen.getByTestId('agent-overview-group-empty')).toBeInTheDocument();
+		});
+
+		it('reports the picked profile back to a controlling parent', () => {
+			const onChange = vi.fn();
+			render(
+				<AgentOverviewCards
+					sessions={PROFILE_SESSIONS}
+					data={buildData()}
+					theme={theme}
+					profileFilter={ALL_PROFILES_VALUE}
+					onProfileFilterChange={onChange}
+				/>
+			);
+
+			pickProfile('Claude Code - smash (1)');
+
+			expect(onChange).toHaveBeenCalledWith(`claude-code::${SMASH}`);
+		});
+
+		it('keeps a badge-set filter on an account named only by the agent-level env var', async () => {
+			// Settings -> Agents sets CLAUDE_CONFIG_DIR for every agent that names
+			// none, and that value arrives by IPC after the first render. Clearing
+			// the filter on that render, before the account existed, dropped the
+			// quota chip's selection on the way into this tab.
+			const BANACO = '/Users/me/.claude-banaco';
+			vi.mocked(window.maestro.agents.getCustomEnvVars).mockResolvedValueOnce({
+				CLAUDE_CONFIG_DIR: BANACO,
+			});
+			const onChange = vi.fn();
+			render(
+				<AgentOverviewCards
+					sessions={[
+						buildSession({ id: 's1', name: 'Alpha', customEnvVars: { CLAUDE_CONFIG_DIR: SMASH } }),
+						buildSession({ id: 's2', name: 'Beta' }),
+						buildSession({ id: 's3', name: 'Gamma' }),
+					]}
+					data={buildData()}
+					theme={theme}
+					profileFilter={`claude-code::${BANACO}`}
+					onProfileFilterChange={onChange}
+				/>
+			);
+
+			await waitFor(() => expect(screen.getAllByTestId('agent-card')).toHaveLength(2));
+			expect(screen.queryByText('Alpha')).not.toBeInTheDocument();
+			expect(onChange).not.toHaveBeenCalled();
+		});
+
+		it('still clears a filter whose account is gone once attribution settles', async () => {
+			const onChange = vi.fn();
+			render(
+				<AgentOverviewCards
+					sessions={PROFILE_SESSIONS}
+					data={buildData()}
+					theme={theme}
+					profileFilter="claude-code::/Users/me/.claude-gone"
+					onProfileFilterChange={onChange}
+				/>
+			);
+
+			await waitFor(() => expect(onChange).toHaveBeenCalledWith(ALL_PROFILES_VALUE));
+		});
+
+		it('files agents by the env their process receives: own vars replace, a key outranks a login', async () => {
+			vi.mocked(window.maestro.agents.getCustomEnvVars).mockResolvedValueOnce({
+				CLAUDE_CONFIG_DIR: '/Users/me/.claude-banaco',
+			});
+			render(
+				<AgentOverviewCards
+					sessions={[
+						buildSession({ id: 's1', name: 'Inherits' }),
+						// Own vars with no dir: the provider-level dir never reaches it.
+						buildSession({ id: 's2', name: 'Own', customEnvVars: { PEDRAM: '1' } }),
+						buildSession({
+							id: 's3',
+							name: 'Keyed',
+							customEnvVars: { ANTHROPIC_API_KEY: 'sk-ant-test-a1b2' },
+						}),
+					]}
+					data={buildData()}
+					theme={theme}
+				/>
+			);
+
+			await waitFor(() =>
+				expect(
+					screen.getAllByTestId('agent-card-profile-badge').map((el) => el.textContent)
+				).toContain('banaco')
+			);
+			fireEvent.click(trigger());
+			expect(screen.getByRole('option', { name: 'Claude Code - banaco (1)' })).toBeInTheDocument();
+			expect(
+				screen.getByRole('option', { name: 'Claude Code - Default account (1)' })
+			).toBeInTheDocument();
+			expect(
+				screen.getByRole('option', { name: 'Claude Code - API key …a1b2 (1)' })
+			).toBeInTheDocument();
+		});
+
+		it('files an SSH-remote agent under its own account @ host profile', async () => {
+			// The dir names a path on the remote host, holding that host's login, so
+			// it must not share a bucket with the local account of the same name.
+			vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
+				success: true,
+				configs: [{ id: 'r1', name: 'pedtome' }],
+			} as never);
+			render(
+				<AgentOverviewCards
+					sessions={[
+						buildSession({ id: 's1', name: 'Local', customEnvVars: { CLAUDE_CONFIG_DIR: SMASH } }),
+						buildSession({
+							id: 's2',
+							name: 'Remote',
+							customEnvVars: { CLAUDE_CONFIG_DIR: SMASH },
+							sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' },
+						} as Partial<Session>),
+					]}
+					data={buildData()}
+					theme={theme}
+				/>
+			);
+
+			await waitFor(() =>
+				expect(
+					screen.getAllByTestId('agent-card-profile-badge').map((el) => el.textContent)
+				).toContain('smash @ pedtome')
+			);
+			fireEvent.click(trigger());
+			expect(screen.getByRole('option', { name: 'Claude Code - smash (1)' })).toBeInTheDocument();
+			expect(
+				screen.getByRole('option', { name: 'Claude Code - smash @ pedtome (1)' })
+			).toBeInTheDocument();
+		});
+
+		it('groups the grid by account under the Provider sort', () => {
+			renderProfiles();
+
+			fireEvent.click(screen.getByRole('radio', { name: 'Provider' }));
+
+			// Ordered by full label ("Claude Code - gmail", "Claude Code - smash",
+			// "OpenCode"), names ascending inside each block.
+			const names = screen.getAllByTestId('agent-card-profile-badge').map((el) => el.textContent);
+			expect(names).toEqual(['gmail', 'gmail', 'smash', 'OpenCode']);
+		});
+	});
+
+	describe('tile zoom', () => {
+		const renderGrid = () =>
+			render(
+				<AgentOverviewCards
+					sessions={[buildSession({ id: 's1', name: 'Alpha' })]}
+					data={buildData()}
+					theme={theme}
+				/>
+			);
+		const columns = () =>
+			(screen.getByTestId('agent-overview-cards') as HTMLElement).style.gridTemplateColumns;
+
+		it('ships a column floor wide enough to hold an ordinary agent name', () => {
+			renderGrid();
+
+			expect(columns()).toBe('repeat(auto-fill, minmax(260px, 1fr))');
+		});
+
+		it('widens the tiles on + and narrows them on -', () => {
+			renderGrid();
+
+			fireEvent.keyDown(window, { key: '+' });
+			expect(columns()).toBe('repeat(auto-fill, minmax(286px, 1fr))');
+
+			fireEvent.keyDown(window, { key: '-' });
+			fireEvent.keyDown(window, { key: '-' });
+			expect(columns()).toBe('repeat(auto-fill, minmax(234px, 1fr))');
+		});
+
+		it('leaves the tiles alone when the key carries a modifier', () => {
+			// Cmd/Ctrl +/- is the application's own zoom and has to keep working.
+			renderGrid();
+
+			fireEvent.keyDown(window, { key: '+', metaKey: true });
+			expect(columns()).toBe('repeat(auto-fill, minmax(260px, 1fr))');
+		});
+
+		it('remembers the size across a remount, and 0 puts it back', () => {
+			const { unmount } = renderGrid();
+			fireEvent.keyDown(window, { key: '+' });
+			expect(window.localStorage.getItem(AGENT_TILE_SCALE_KEY)).toBe('1.1');
+			unmount();
+
+			renderGrid();
+			expect(columns()).toBe('repeat(auto-fill, minmax(286px, 1fr))');
+
+			fireEvent.keyDown(window, { key: '0' });
+			expect(columns()).toBe('repeat(auto-fill, minmax(260px, 1fr))');
+		});
+
+		it('zooms from the control beside the sort pills as well', () => {
+			renderGrid();
+
+			fireEvent.click(screen.getByRole('button', { name: 'Increase tile size' }));
+
+			expect(columns()).toBe('repeat(auto-fill, minmax(286px, 1fr))');
+			// A tile width has no meaningful percentage, so the control shows only
+			// the two buttons; `0` is still the way back.
+			expect(screen.queryByRole('button', { name: 'Reset tile size' })).toBeNull();
+			expect(screen.getByTestId('agent-overview-tile-zoom')).not.toHaveTextContent('%');
 		});
 	});
 });

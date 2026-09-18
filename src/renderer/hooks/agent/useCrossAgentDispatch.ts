@@ -99,27 +99,68 @@ export interface SendCrossAgentRequestOptions {
 	 * cwd, so this is the only pointer it has to the user's project).
 	 */
 	sourceCwd?: string;
+	/**
+	 * Called once with the finished answer. A typed `@mention` needs nothing here
+	 * (the streamed bubble IS the delivery), but a consult asked for over the CLI
+	 * has to hand the text back to a caller that is blocked waiting for it, so
+	 * `maestro-cli ask` rides this instead of growing a second dispatch path.
+	 *
+	 * Guaranteed to fire exactly once per request, including for a failure that
+	 * lands before `crossAgent.send` resolves - see `completedRequests`.
+	 */
+	onComplete?: (completion: CrossAgentCompletion) => void;
+}
+
+/**
+ * The terminal state of one consult: what the target said, and why it stopped
+ * if it stopped early. Handed to {@link SendCrossAgentRequestOptions.onComplete}.
+ */
+export interface CrossAgentCompletion {
+	/** Accumulated answer text (may be empty when the consult failed outright). */
+	text: string;
+	/** Failure reason, when the consult errored. */
+	error?: string;
+	/** The user pressed Stop; not a failure of the target agent. */
+	canceled?: boolean;
+	/** The consult tab on the target that holds the persisted answer. */
+	targetTabId?: string;
+	/** The target's provider session id, when one was captured. */
+	targetAgentSessionId?: string;
+}
+
+/**
+ * Pure: the note explaining why a consult ended, or null when it simply
+ * finished. The attribution header only carries `error` in an `sr-only` span, so
+ * the reason has to reach the bubble body or the user never sees it.
+ *
+ * Stop and failure are deliberately worded apart: the user pressing Stop is not
+ * the target agent failing to answer, and reporting it as one blames the wrong
+ * party for something the user chose.
+ */
+export function crossAgentTerminationNote(chunk: CrossAgentResponseChunk): string | null {
+	if (chunk.canceled) return `⏹ ${chunk.targetAgentName} was stopped.`;
+	if (chunk.error) return `⚠️ ${chunk.targetAgentName} could not respond: ${chunk.error}`;
+	return null;
 }
 
 /**
  * Pure: fold a chunk's text into the prior accumulation and resolve what should
  * be displayed. Exported for unit testing.
  *
- * Three cases, all of which must show the user WHY a consult failed - the
- * attribution header only carries `error` in an `sr-only` span, so the reason has
- * to reach the bubble body:
- * - success: the accumulated text, verbatim.
- * - error, nothing accumulated: a standalone failure note.
- * - error WITH partial text (a timed-out consult that had already said something):
- *   the partial, followed by the reason. Dropping either one loses information.
+ * Three cases:
+ * - finished cleanly: the accumulated text, verbatim.
+ * - ended early, nothing accumulated: the termination note on its own.
+ * - ended early WITH partial text (a stopped or timed-out consult that had
+ *   already said something): the partial, followed by the note. Dropping either
+ *   one loses information.
  */
 export function accumulateCrossAgentChunk(
 	prior: string,
 	chunk: CrossAgentResponseChunk
 ): { accumulated: string; displayText: string } {
 	const accumulated = prior + (chunk.chunk ?? '');
-	if (!chunk.error) return { accumulated, displayText: accumulated };
-	const note = `⚠️ ${chunk.targetAgentName} could not respond: ${chunk.error}`;
+	const note = crossAgentTerminationNote(chunk);
+	if (!note) return { accumulated, displayText: accumulated };
 	return {
 		accumulated,
 		displayText: accumulated ? `${accumulated}\n\n${note}` : note,
@@ -282,21 +323,41 @@ interface TrackedRequest {
 	 */
 	subject?: string;
 	accumulated: string;
+	/** Delivered the finished answer to a blocked caller (`maestro-cli ask`). */
+	onComplete?: (completion: CrossAgentCompletion) => void;
 }
 
 /**
- * requestId -> tracking state, and the ids whose terminal (`done`) chunk already
- * landed. Module scope, not hook state, for two reasons: the send path is a
- * plain function (callable from the queue drain, which is not React), and an
- * in-flight consult must survive a remount of the subscribing hook.
+ * requestId -> tracking state, and the terminal state of the ids whose `done`
+ * chunk already landed. Module scope, not hook state, for two reasons: the send
+ * path is a plain function (callable from the queue drain, which is not React),
+ * and an in-flight consult must survive a remount of the subscribing hook.
  *
  * `completedRequests` guards the race where a fast failure/short response
  * arrives BEFORE send() resolves: without it, the late `.then()` re-registers
  * the request and calls start() for an already-finished one, leaving the
  * "N agents responding" pill stuck.
+ *
+ * It remembers the COMPLETION rather than just the id because that same race
+ * decides whether a blocked caller ever hears back. `crossAgent.send` resolves
+ * on a round trip to main, and "target agent not found" is emitted before it
+ * does - so a bare id set would let the `.then()` return having never run
+ * `onComplete`, and `maestro-cli ask` would sit there until its own timeout for
+ * a consult that failed instantly. Bounded: this is a race guard, not a log.
  */
 const pendingRequests = new Map<string, TrackedRequest>();
-const completedRequests = new Set<string>();
+const completedRequests = new Map<string, CrossAgentCompletion>();
+const COMPLETED_REQUEST_MEMORY = 100;
+
+/** Record a finished request, evicting the oldest once past the cap. */
+function rememberCompletion(requestId: string, completion: CrossAgentCompletion): void {
+	completedRequests.set(requestId, completion);
+	while (completedRequests.size > COMPLETED_REQUEST_MEMORY) {
+		const oldest = completedRequests.keys().next();
+		if (oldest.done) break;
+		completedRequests.delete(oldest.value);
+	}
+}
 
 /**
  * Pure: build the History entry for a finished consult. Exported for unit
@@ -314,6 +375,8 @@ export function buildConsultHistoryEntry(opts: {
 	accumulated: string;
 	/** Failure reason, when the consult errored. */
 	error?: string;
+	/** The user stopped the consult; not a failure of the target agent. */
+	canceled?: boolean;
 	/** The target agent's provider session id, when one was captured. */
 	agentSessionId?: string;
 	/** Fallback label when there is no subject. */
@@ -333,12 +396,17 @@ export function buildConsultHistoryEntry(opts: {
 		? `↩ ${opts.subject}`
 		: (opts.consultTabName ?? opts.targetName ?? undefined) || undefined;
 
-	// A failed consult accumulates nothing, so the raw text alone would leave the
-	// detail view blank behind a red X. `error` is the only record of WHY, and it
-	// lives on the chunk - not in `accumulated` - so fold it in here the same way
-	// the inline bubble does (partial text first, then the reason).
-	const failureNote = opts.error ? `⚠️ Consult failed: ${opts.error}` : '';
-	const detailFallback = [opts.accumulated, failureNote].filter(Boolean).join('\n\n');
+	// A failed or stopped consult may accumulate nothing, so the raw text alone
+	// would leave the detail view blank. The reason lives on the chunk - not in
+	// `accumulated` - so fold it in here the same way the inline bubble does
+	// (partial text first, then the reason). A cancel is recorded as a SUCCESS
+	// with a note: the user stopping a consult is not the target failing.
+	const endNote = opts.canceled
+		? '⏹ Consult stopped by the user.'
+		: opts.error
+			? `⚠️ Consult failed: ${opts.error}`
+			: '';
+	const detailFallback = [opts.accumulated, endNote].filter(Boolean).join('\n\n');
 
 	return {
 		id: opts.entryId,
@@ -401,6 +469,7 @@ function recordConsultHistory(
 				subject: tracked.subject?.trim() || '',
 				accumulated: tracked.accumulated,
 				error: chunk.error,
+				canceled: chunk.canceled,
 				agentSessionId: chunk.targetAgentSessionId ?? consultTab?.agentSessionId ?? undefined,
 				consultTabName: consultTab?.name,
 				targetName: target.name,
@@ -527,8 +596,14 @@ export function sendCrossAgentRequest(opts: SendCrossAgentRequestOptions): void 
 		})
 		.then(({ requestId }) => {
 			// The terminal chunk already landed (fast failure/short response that
-			// beat this resolution) - don't resurrect a finished request.
-			if (completedRequests.has(requestId)) return;
+			// beat this resolution) - don't resurrect a finished request, but DO
+			// deliver its answer: this is the only path a caller blocked on
+			// `onComplete` has when the consult failed before send() resolved.
+			const finished = completedRequests.get(requestId);
+			if (finished) {
+				opts.onComplete?.(finished);
+				return;
+			}
 			// Pre-register so streamed chunks reuse one stable LogEntry id. If a
 			// chunk already created a fallback entry (it lacks the source name +
 			// subject, which only the send side knows), backfill them.
@@ -536,6 +611,7 @@ export function sendCrossAgentRequest(opts: SendCrossAgentRequestOptions): void 
 			if (existing) {
 				existing.sourceAgentName ??= opts.sourceAgentName;
 				existing.subject ??= subject;
+				existing.onComplete ??= opts.onComplete;
 			} else {
 				pendingRequests.set(requestId, {
 					sourceSessionId: opts.sourceSessionId,
@@ -547,6 +623,7 @@ export function sendCrossAgentRequest(opts: SendCrossAgentRequestOptions): void 
 					sourceAgentName: opts.sourceAgentName,
 					subject,
 					accumulated: '',
+					onComplete: opts.onComplete,
 				});
 			}
 			// Register for the live "N agents responding…" indicator. Resolve
@@ -572,6 +649,9 @@ export function sendCrossAgentRequest(opts: SendCrossAgentRequestOptions): void 
 				undefined,
 				err
 			);
+			// A rejected send never produces a chunk, so nothing else will ever
+			// settle a caller blocked on the answer.
+			opts.onComplete?.({ text: '', error: err instanceof Error ? err.message : String(err) });
 		});
 }
 
@@ -667,7 +747,18 @@ export function useCrossAgentDispatch(
 			// caller so its History shows who consulted it (and about what).
 			recordConsultHistory(tracked, chunk, spawnSynopsisRef.current);
 			map.delete(chunk.requestId);
-			completedRequests.add(chunk.requestId);
+			const completion: CrossAgentCompletion = {
+				text: accumulated,
+				error: chunk.error,
+				canceled: chunk.canceled,
+				targetTabId: tracked.targetTabId,
+				targetAgentSessionId: chunk.targetAgentSessionId,
+			};
+			rememberCompletion(chunk.requestId, completion);
+			// Hand the answer to a caller blocked on it (`maestro-cli ask`). Runs
+			// after the transcript writes so the consult tab already holds the text
+			// the caller is about to be given.
+			tracked.onComplete?.(completion);
 			// Drop it from the live "N agents responding…" indicator.
 			useCrossAgentInFlightStore.getState().finish(chunk.requestId);
 		}

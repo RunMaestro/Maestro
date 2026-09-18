@@ -5,10 +5,10 @@ import { THEMES } from '../../../../shared/themes';
 import type { Session } from '../../../../renderer/types';
 import {
 	DashboardSection,
-	UsageDashboardFooter,
 	UsageDashboardHeader,
 	UsageDashboardTabs,
 } from '../../../../renderer/components/UsageDashboard/UsageDashboardModal/components';
+import { UsageDashboardFooter } from '../../../../renderer/components/UsageDashboard/UsageDashboardFooter';
 import {
 	ActivityView,
 	AgentOverviewView,
@@ -224,10 +224,12 @@ describe('UsageDashboardModal shell components', () => {
 		expect(screen.getByText('Usage Dashboard')).toBeInTheDocument();
 		expect(screen.getByTestId('new-data-indicator')).toHaveTextContent('Updated');
 		fireEvent.change(screen.getByRole('combobox'), { target: { value: 'month' } });
-		fireEvent.click(screen.getByText('Export CSV'));
+		fireEvent.click(screen.getByRole('button', { name: 'Export' }));
+		fireEvent.click(screen.getByRole('menuitem', { name: /JSON/ }));
+		expect(screen.queryByRole('menu')).not.toBeInTheDocument();
 		fireEvent.click(screen.getByTitle('Close (Esc)'));
 		expect(onRange).toHaveBeenCalledWith('month');
-		expect(onExport).toHaveBeenCalled();
+		expect(onExport).toHaveBeenCalledWith('json');
 		expect(onClose).toHaveBeenCalled();
 	});
 
@@ -256,14 +258,26 @@ describe('UsageDashboardModal shell components', () => {
 
 	it('renders footer range text and exact database size formatting', () => {
 		render(
-			<UsageDashboardFooter theme={theme} data={data} timeRange="month" databaseSize={2048} />
+			<UsageDashboardFooter
+				theme={theme}
+				viewMode="overview"
+				rangeLabel="Showing this month data"
+				fallbackSummary={null}
+				databaseSizeLabel="2.0 KB"
+			/>
 		);
 		expect(screen.getByText('Showing this month data')).toBeInTheDocument();
 		expect(screen.getByTestId('database-size-indicator')).toHaveTextContent('2.0 KB');
 		expect(screen.getByText('Press Esc to close')).toBeInTheDocument();
 
 		render(
-			<UsageDashboardFooter theme={theme} data={null} timeRange="month" databaseSize={null} />
+			<UsageDashboardFooter
+				theme={theme}
+				viewMode="overview"
+				rangeLabel="No data for selected time range"
+				fallbackSummary={null}
+				databaseSizeLabel={null}
+			/>
 		);
 		expect(screen.getByText('No data for selected time range')).toBeInTheDocument();
 		expect(emptyCell).toBe(String.fromCharCode(8212));
@@ -400,5 +414,59 @@ describe('UsageDashboardModal view modules', () => {
 		expect(codexPlanUsageProps).toHaveBeenCalledWith(
 			expect.objectContaining({ refreshHotkey: true })
 		);
+	});
+});
+
+// Phone: the header keeps its title on one line and its export button keeps
+// only its icon, so the time-range select is not pushed off the right edge;
+// the footer's Esc legend carries data-shortcut-hint for the phone stylesheet.
+vi.mock('../../../../renderer/hooks/ui/useViewportBreakpoint', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../renderer/hooks/ui/useViewportBreakpoint')>()),
+	usePhoneLayout: vi.fn(() => false),
+}));
+import { usePhoneLayout } from '../../../../renderer/hooks/ui/useViewportBreakpoint';
+
+describe('UsageDashboard shell on a phone', () => {
+	const headerProps = {
+		theme,
+		showNewDataIndicator: false,
+		timeRange: 'week' as const,
+		onTimeRangeChange: vi.fn(),
+		onExport: vi.fn(),
+		isExporting: false,
+		onClose: vi.fn(),
+		autoRunStats: undefined,
+		globalStats: null,
+		usageStats: null,
+		handsOnTimeMs: 0,
+		leaderboardRegistration: null,
+	};
+
+	it('keeps the export button reachable by name with only its icon', () => {
+		vi.mocked(usePhoneLayout).mockReturnValue(true);
+		render(<UsageDashboardHeader {...headerProps} />);
+		const exportButton = screen.getByRole('button', { name: 'Export' });
+		expect(exportButton.textContent).toBe('');
+		fireEvent.click(exportButton);
+		fireEvent.click(screen.getByRole('menuitem', { name: /CSV/ }));
+		expect(headerProps.onExport).toHaveBeenCalledWith('csv');
+		expect(screen.getByText('Usage Dashboard')).toHaveClass('whitespace-nowrap');
+		// The controls drop to their own row; the close button rides the title row, once.
+		expect(screen.getAllByTitle('Close (Esc)')).toHaveLength(1);
+		expect(exportButton.closest('.basis-full')).not.toBeNull();
+		vi.mocked(usePhoneLayout).mockReturnValue(false);
+	});
+
+	it('shows the export label on desktop', () => {
+		vi.mocked(usePhoneLayout).mockReturnValue(false);
+		render(<UsageDashboardHeader {...headerProps} />);
+		expect(screen.getByRole('button', { name: 'Export' }).textContent).toBe('Export');
+	});
+
+	it('tags the Esc legend so the phone stylesheet can hide it', () => {
+		render(
+			<UsageDashboardFooter theme={theme} data={null} timeRange="month" databaseSize={null} />
+		);
+		expect(screen.getByText('Press Esc to close')).toHaveAttribute('data-shortcut-hint');
 	});
 });

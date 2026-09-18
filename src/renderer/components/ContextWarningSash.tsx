@@ -1,5 +1,6 @@
 import { memo, useMemo, useState, useCallback } from 'react';
 import { AlertTriangle, X } from 'lucide-react';
+import { AA_LARGE_CONTRAST, readableTextOn, transparentize } from '../../shared/colorContrast';
 import type { Theme } from '../types';
 
 export interface ContextWarningSashProps {
@@ -78,27 +79,20 @@ export const ContextWarningSash = memo(function ContextWarningSash({
 
 	const isRed = warningLevel === 'red';
 
-	// Color values - light mode needs darker text/icon colors for contrast
-	const backgroundColor = isRed
-		? isLight
-			? 'rgba(239, 68, 68, 0.12)'
-			: 'rgba(239, 68, 68, 0.15)'
-		: isLight
-			? 'rgba(234, 179, 8, 0.12)'
-			: 'rgba(234, 179, 8, 0.15)';
-
-	const borderColor = isRed ? 'rgba(239, 68, 68, 0.5)' : 'rgba(234, 179, 8, 0.5)';
-
-	const textColor = isRed
-		? isLight
-			? '#991b1b' // red-800
-			: '#fca5a5' // red-300
-		: isLight
-			? '#854d0e' // yellow-800
-			: '#fde047'; // yellow-300
-
-	const iconColor = isRed ? (isLight ? '#dc2626' : '#ef4444') : isLight ? '#ca8a04' : '#eab308';
-	const buttonBgColor = isRed ? '#ef4444' : '#eab308';
+	// The whole sash is one severity color washed over the theme's own background,
+	// so a theme that recolors error/warning recolors the warning with it. Text and
+	// icon are run through readableTextOn against the tint they actually sit on
+	// rather than hand-picked per mode - a light theme and a dark theme land on
+	// different shades of the same theme color instead of two hard-coded ramps.
+	const severityColor = isRed ? theme.colors.error : theme.colors.warning;
+	const backgroundColor = transparentize(severityColor, theme.colors.bgMain, isLight ? 0.12 : 0.15);
+	const borderColor = transparentize(severityColor, theme.colors.bgMain, 0.5);
+	const textColor = readableTextOn(severityColor, [backgroundColor]);
+	// An icon is a graphic, so it clears the 3:1 non-text bar rather than the 4.5:1
+	// text bar - holding it to AA would wash the severity color out of the glyph.
+	const iconColor = readableTextOn(severityColor, [backgroundColor], AA_LARGE_CONTRAST);
+	const buttonBgColor = severityColor;
+	const buttonTextColor = readableTextOn(theme.colors.accentForeground, [buttonBgColor]);
 
 	return (
 		<div
@@ -141,10 +135,10 @@ export const ContextWarningSash = memo(function ContextWarningSash({
 					onClick={onSummarizeClick}
 					onKeyDown={(e) => e.key === 'Enter' && onSummarizeClick()}
 					tabIndex={0}
-					className="px-1.5 py-0.5 text-[10px] font-medium rounded transition-colors hover:opacity-90"
+					className="px-1.5 py-0.5 text-2xs font-medium rounded transition-colors hover:opacity-90"
 					style={{
 						backgroundColor: buttonBgColor,
-						color: '#000',
+						color: buttonTextColor,
 					}}
 				>
 					Compact & Continue

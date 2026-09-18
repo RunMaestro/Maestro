@@ -9,6 +9,7 @@ import { logger } from '../../../renderer/utils/logger';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { UsageDashboardModal } from '../../../renderer/components/UsageDashboard/UsageDashboardModal';
 import { useUIStore } from '../../../renderer/stores/uiStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import type { Theme } from '../../../renderer/types';
 
 // Mock lucide-react icons - include all icons used by modal and its child components
@@ -70,6 +71,10 @@ vi.mock('lucide-react', () => {
 		Sparkles: createIcon('sparkles', '✨'),
 		// AgentOverviewCards agent filter icon
 		Search: createIcon('search', '🔎'),
+		// Delegation score card + summary ratio card icons
+		Rocket: createIcon('rocket', '🚀'),
+		Info: createIcon('info', 'ℹ️'),
+		Split: createIcon('split', '🔀'),
 	};
 });
 
@@ -85,9 +90,15 @@ vi.mock('../../../renderer/contexts/LayerStackContext', () => ({
 	}),
 }));
 
+const mockNotifyToast = vi.hoisted(() => vi.fn());
+vi.mock('../../../renderer/stores/notificationStore', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../renderer/stores/notificationStore')>()),
+	notifyToast: mockNotifyToast,
+}));
+
 // Mock maestro stats API
 const mockGetAggregation = vi.fn();
-const mockExportCsv = vi.fn();
+const mockExportUsage = vi.fn();
 const mockOnStatsUpdate = vi.fn(() => vi.fn()); // Returns unsubscribe function
 const mockGetAutoRunSessions = vi.fn(() => Promise.resolve([]));
 const mockGetAutoRunTasks = vi.fn(() => Promise.resolve([]));
@@ -103,7 +114,13 @@ const mockGetShortcutUsageTotal = vi.fn(() => Promise.resolve(0));
 const mockMaestro = {
 	stats: {
 		getAggregation: mockGetAggregation,
-		exportCsv: mockExportCsv,
+		getDelegationTotals: vi.fn().mockResolvedValue({
+			interactive: { count: 0, durationMs: 0 },
+			autoRun: { count: 0, durationMs: 0 },
+			cue: { count: 0, durationMs: 0 },
+		}),
+		getDelegationByDay: vi.fn().mockResolvedValue([]),
+		exportUsage: mockExportUsage,
 		onStatsUpdate: mockOnStatsUpdate,
 		getAutoRunSessions: mockGetAutoRunSessions,
 		getAutoRunTasks: mockGetAutoRunTasks,
@@ -221,8 +238,18 @@ describe('UsageDashboardModal', () => {
 		// default 'overview' tab instead of inheriting whatever a prior tab-switching
 		// test left behind.
 		useUIStore.setState({ usageDashboardViewMode: 'overview' });
+		// Pin the Encore flags this file was written against. Cue ships on by
+		// default, which adds a Cue tab and a cueStats fetch these tests do not mock.
+		useSettingsStore.setState((s) => ({
+			encoreFeatures: { ...s.encoreFeatures, usageStats: true, maestroCue: false },
+		}));
 		mockGetAggregation.mockResolvedValue(createSampleData());
-		mockExportCsv.mockResolvedValue('date,count\n2024-01-15,25');
+		mockExportUsage.mockResolvedValue({
+			path: '/path/to/export.json',
+			format: 'json',
+			rowCounts: { 'query-events': 1 },
+			notes: [],
+		});
 		mockSaveFile.mockResolvedValue(null); // User cancels by default
 		mockWriteFile.mockResolvedValue({ success: true });
 		mockGetDatabaseSize.mockResolvedValue(1024 * 1024 * 5); // 5 MB default
@@ -271,6 +298,7 @@ describe('UsageDashboardModal', () => {
 
 			await waitFor(() => {
 				// Use getAllByRole('tab') to find tabs - there may be multiple elements with text 'Agents'
+				// Cue ships on, so its tab sits between Auto Run and Shortcuts.
 				const tabs = screen.getAllByRole('tab');
 				expect(tabs).toHaveLength(8);
 				expect(tabs[0]).toHaveTextContent('Overview');
@@ -283,11 +311,11 @@ describe('UsageDashboardModal', () => {
 			});
 		});
 
-		it('renders Export CSV button', async () => {
+		it('renders Export button', async () => {
 			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
 
 			await waitFor(() => {
-				expect(screen.getByText('Export CSV')).toBeInTheDocument();
+				expect(screen.getByRole('button', { name: 'Export' })).toBeInTheDocument();
 			});
 		});
 
@@ -526,20 +554,31 @@ describe('UsageDashboardModal', () => {
 		});
 	});
 
-	describe('CSV Export', () => {
-		it('shows save dialog when export button is clicked', async () => {
-			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
-
+	describe('Export', () => {
+		const openExportMenu = async () => {
 			await waitFor(() => {
-				expect(screen.getByText('Export CSV')).toBeInTheDocument();
+				expect(screen.getByRole('button', { name: 'Export' })).toBeInTheDocument();
 			});
+			fireEvent.click(screen.getByRole('button', { name: 'Export' }));
+		};
 
-			fireEvent.click(screen.getByText('Export CSV'));
+		it('offers JSON and CSV', async () => {
+			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
+			await openExportMenu();
+
+			expect(screen.getByRole('menuitem', { name: /JSON/ })).toBeInTheDocument();
+			expect(screen.getByRole('menuitem', { name: /CSV/ })).toBeInTheDocument();
+		});
+
+		it('asks for a zip file when CSV is chosen', async () => {
+			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
+			await openExportMenu();
+			fireEvent.click(screen.getByRole('menuitem', { name: /CSV/ }));
 
 			await waitFor(() => {
 				expect(mockSaveFile).toHaveBeenCalledWith(
 					expect.objectContaining({
-						filters: [{ name: 'CSV Files', extensions: ['csv'] }],
+						filters: [{ name: 'Zip of CSV files', extensions: ['zip'] }],
 						title: 'Export Usage Data',
 					})
 				);
@@ -550,67 +589,50 @@ describe('UsageDashboardModal', () => {
 			mockSaveFile.mockResolvedValue(null); // User cancels
 
 			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
-
-			await waitFor(() => {
-				expect(screen.getByText('Export CSV')).toBeInTheDocument();
-			});
-
-			fireEvent.click(screen.getByText('Export CSV'));
+			await openExportMenu();
+			fireEvent.click(screen.getByRole('menuitem', { name: /JSON/ }));
 
 			await waitFor(() => {
 				expect(mockSaveFile).toHaveBeenCalled();
 			});
-
-			// exportCsv should not be called if user cancelled
-			expect(mockExportCsv).not.toHaveBeenCalled();
+			expect(mockExportUsage).not.toHaveBeenCalled();
 		});
 
-		it('exports CSV to selected file location', async () => {
-			const testFilePath = '/path/to/export.csv';
-			const csvContent =
-				'id,sessionId,agentType,source,startTime,duration\n"1","test","claude-code","user","2024-01-15","1000"';
-			mockSaveFile.mockResolvedValue(testFilePath);
-			mockExportCsv.mockResolvedValue(csvContent);
+		it('exports to the selected file location and confirms it', async () => {
+			mockSaveFile.mockResolvedValue('/path/to/export.json');
 
 			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
+			await openExportMenu();
+			fireEvent.click(screen.getByRole('menuitem', { name: /JSON/ }));
 
 			await waitFor(() => {
-				expect(screen.getByText('Export CSV')).toBeInTheDocument();
+				expect(mockExportUsage).toHaveBeenCalledWith('week', 'json', '/path/to/export.json');
 			});
-
-			fireEvent.click(screen.getByText('Export CSV'));
-
 			await waitFor(() => {
-				expect(mockExportCsv).toHaveBeenCalledWith('week');
-			});
-
-			await waitFor(() => {
-				expect(mockWriteFile).toHaveBeenCalledWith(testFilePath, csvContent);
+				expect(mockNotifyToast).toHaveBeenCalledWith(expect.objectContaining({ color: 'green' }));
 			});
 		});
 
-		it('handles export error gracefully', async () => {
-			const testFilePath = '/path/to/export.csv';
-			mockSaveFile.mockResolvedValue(testFilePath);
-			mockExportCsv.mockRejectedValue(new Error('Export failed'));
+		it('reports an export error instead of failing silently', async () => {
+			mockSaveFile.mockResolvedValue('/path/to/export.json');
+			mockExportUsage.mockRejectedValue(new Error('Export failed'));
 
 			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 
 			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
-
-			await waitFor(() => {
-				expect(screen.getByText('Export CSV')).toBeInTheDocument();
-			});
-
-			fireEvent.click(screen.getByText('Export CSV'));
+			await openExportMenu();
+			fireEvent.click(screen.getByRole('menuitem', { name: /JSON/ }));
 
 			await waitFor(() => {
 				expect(consoleSpy).toHaveBeenCalledWith(
-					'Failed to export CSV:',
+					'Failed to export usage data:',
 					undefined,
 					expect.any(Error)
 				);
 			});
+			expect(mockNotifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({ color: 'red', message: 'Export failed' })
+			);
 
 			consoleSpy.mockRestore();
 		});
@@ -1813,10 +1835,10 @@ describe('UsageDashboardModal', () => {
 			summarySection.focus();
 			fireEvent.keyDown(summarySection, { key: 'ArrowDown' });
 
-			// Should focus Query Duration Percentiles (next section, inserted
-			// between summary cards and provider comparison).
+			// Should focus the Delegation Score card, which sits directly under
+			// the summary cards on Overview.
 			await waitFor(() => {
-				expect(document.activeElement).toBe(screen.getByTestId('section-query-percentiles'));
+				expect(document.activeElement).toBe(screen.getByTestId('section-delegation-score'));
 			});
 		});
 
@@ -1833,9 +1855,9 @@ describe('UsageDashboardModal', () => {
 			percentilesSection.focus();
 			fireEvent.keyDown(percentilesSection, { key: 'ArrowUp' });
 
-			// Should focus summary cards (previous section)
+			// Should focus the Delegation Score card (previous section)
 			await waitFor(() => {
-				expect(document.activeElement).toBe(screen.getByTestId('section-summary-cards'));
+				expect(document.activeElement).toBe(screen.getByTestId('section-delegation-score'));
 			});
 		});
 
@@ -2032,7 +2054,7 @@ describe('UsageDashboardModal', () => {
 			fireEvent.keyDown(summarySection, { key: 'ArrowDown' });
 
 			await waitFor(() => {
-				expect(document.activeElement).toBe(screen.getByTestId('section-query-percentiles'));
+				expect(document.activeElement).toBe(screen.getByTestId('section-delegation-score'));
 			});
 
 			// Switch to Agents view by name (its index drifted when "Agent

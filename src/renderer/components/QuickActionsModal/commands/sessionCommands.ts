@@ -1,4 +1,7 @@
 import type React from 'react';
+import { getAgentDisplayName, getAgentLoginCommand } from '../../../../shared/agentMetadata';
+import { startManualReauth } from '../../../stores/authOutageStore';
+import { getModalActions } from '../../../stores/modalStore';
 import type { Session } from '../../../types';
 import type { QuickAction } from '../types';
 import { alphabetizeKey } from '../utils/quickActionSorting';
@@ -130,6 +133,24 @@ export function buildSessionManagementCommands({
 				const bookmarkedCount = sessions.filter((session) => session.bookmarked).length;
 				setQuickActionOpen(false);
 				openClearBookmarksConfirm(bookmarkedCount);
+			},
+		});
+	}
+
+	// Same login flow the expired-credentials prompt runs, reachable before
+	// anything breaks: a token the user knows is about to lapse, an account
+	// switch, or a provider that started rejecting turns without saying so.
+	// Hidden for an agent with no login of its own (the Terminal agent).
+	if (activeSession && getAgentLoginCommand(activeSession.toolType, activeSession.customPath)) {
+		const agentName = getAgentDisplayName(activeSession.toolType);
+		commands.push({
+			id: 'reauthenticateProvider',
+			label: `Re-authenticate Provider: ${agentName}`,
+			subtext: `Sign in to ${agentName} again for ${activeSession.name}`,
+			action: () => {
+				const { providerKey } = startManualReauth(activeSession.id);
+				setQuickActionOpen(false);
+				if (providerKey) getModalActions().openReauthModal({ providerKey });
 			},
 		});
 	}

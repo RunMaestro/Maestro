@@ -16,6 +16,8 @@
 //   3. Surface every ANSI-stripped completed line via 'line' for the
 //      --status mode /usage panel capture. Run mode ignores 'line' events
 //      entirely.
+//   4. Report 'api-billing' when the startup header says claude came up on
+//      API Usage Billing instead of a subscription plan (see billing-mode.ts).
 //
 // Explicitly NOT implemented: spinner regexes, completion-via-spinner-stop,
 // 'ready' re-firing after each response. Completion in run mode is the
@@ -26,6 +28,8 @@ import * as pty from 'node-pty';
 import type { IDisposable, IPty } from 'node-pty';
 
 import { stripAnsiCodes } from '../shared/stringUtils';
+import { killPty } from '../shared/ptyKill';
+import { showsApiUsageBilling } from './billing-mode';
 
 export interface TuiDriverOptions {
 	binPath: string;
@@ -42,6 +46,13 @@ export interface TuiDriverOptions {
 	// the content sits unflushed in lineBuffer until exit. Off by default: run
 	// mode never reads the screen and must not pay the unbounded-buffer cost.
 	captureScreen?: boolean;
+	// Answer claude's folder-trust prompt with "Yes, I trust this folder" even
+	// when it highlights "No, exit" (claude 2.1.26x does in the home and temp
+	// dirs, and the blind unblock Enter would quit). Trusting grants claude read,
+	// edit, and execute rights in `cwd`, and claude remembers it, so this is only
+	// for a cwd the caller owns and keeps empty - Maestro's usage probe folder.
+	// Never set it for an agent's working directory.
+	acceptWorkspaceTrust?: boolean;
 }
 
 export const DEFAULT_COLS = 200;
@@ -74,6 +85,79 @@ export const SEND_ENTER_DELAY_MS = 80;
 // cold spawn submits, while an 80ms-only Enter does not.
 export const SUBMIT_ENTER_RETRIES = 4;
 export const SUBMIT_ENTER_RETRY_INTERVAL_MS = 750;
+
+// How many unread input bytes a macOS PTY holds. Every prompt loss seen in the
+// field has been an exact multiple of it. Named so the chunk budget below can
+// be checked against it rather than against a number in a comment.
+export const MACOS_PTY_INPUT_QUEUE_BYTES = 1022;
+
+// The prompt body is typed in small, paced chunks, never one write. A macOS PTY
+// queues at most 1,022 unread input bytes, and claude discards whatever is
+// sitting in that queue at certain moments (a terminal input flush), so every
+// loss is a multiple of 1,022 bytes. One big write keeps the queue full for as
+// long as claude takes to read the prompt: Cue runs lost 1,022 bytes from the
+// middle of their prompts, and in live trials against claude 2.1.261 a single
+// 4 KB write lost 2-4 KB every time, even 1.5s after startup. Chunks well under
+// the queue size, spaced so claude has read each one before the next lands,
+// keep the queue near-empty. Run mode's prompt-echo check (prompt-echo.ts)
+// still fails the turn loudly if a prompt ever arrives damaged.
+//
+// The SIZE has to leave room for more than one chunk in flight. 512 bytes does
+// not: two undrained chunks are 1,024 bytes against a 1,022-byte queue, so a
+// single chunk claude has not read yet is enough to overflow the next one.
+// claude re-renders its whole input editor on every keystroke batch, and that
+// render grows with the text already typed, so a multi-KB prompt reliably
+// pushes one render past the 20ms interval - which is why 3.4 KB prompts still
+// lost exactly one queue (issue #1598) with the 512-byte pacing in place.
+// 256 bytes keeps three chunks in flight (768 B) inside the queue.
+export const PROMPT_CHUNK_MAX_BYTES = 256;
+// Floor between writes. This is a FLOOR, not the pacing: see
+// PROMPT_CHUNK_DRAIN_TIMEOUT_MS for why a fixed interval cannot be the whole
+// answer.
+export const PROMPT_CHUNK_INTERVAL_MS = 20;
+
+// Pacing is DRAIN-AWARE, not clock-driven. A fixed interval is a guess about
+// how fast claude reads, and it is wrong exactly when it matters: the slower
+// claude gets (a big editor, a contended machine), the more chunks pile up
+// unread and the closer the queue gets to overflowing. claude repaints the
+// editor when it consumes typed input, so PTY output arriving after a write is
+// the one piece of evidence we have that the bytes were read, and send() waits
+// for that paint before the next chunk instead of assuming 20ms was enough.
+// The wait is capped so a screen that stops painting (claude busy elsewhere,
+// output suppressed) cannot stall the turn - past the cap we fall through and
+// keep typing, which is no worse than the fixed interval was.
+// 256 bytes per paint types a 4 KB prompt in ~320ms and 100 KB in ~8s.
+export const PROMPT_CHUNK_DRAIN_TIMEOUT_MS = 250;
+
+// claude also discards input for a moment right after its input prompt first
+// paints, while the rest of its UI is still mounting: paced typing that started
+// the instant `ready` fired lost the first 1,022 bytes in 2 of 2 trials, while
+// starting 500ms later lost nothing. Instead of a fixed sleep that a slow,
+// contended startup could outlast, send() waits until the screen has been quiet
+// (no PTY output) for PROMPT_SETTLE_QUIET_MS, capped at PROMPT_SETTLE_MAX_MS so
+// a screen that never stops animating cannot stall the turn.
+export const PROMPT_SETTLE_QUIET_MS = 300;
+export const PROMPT_SETTLE_MAX_MS = 3000;
+
+// Split `text` into pieces of at most `maxBytes` UTF-8 bytes without cutting a
+// multi-byte character or surrogate pair in half.
+export function chunkPromptForPty(text: string, maxBytes = PROMPT_CHUNK_MAX_BYTES): string[] {
+	const chunks: string[] = [];
+	let current = '';
+	let currentBytes = 0;
+	for (const char of text) {
+		const bytes = Buffer.byteLength(char, 'utf8');
+		if (currentBytes + bytes > maxBytes && current.length > 0) {
+			chunks.push(current);
+			current = '';
+			currentBytes = 0;
+		}
+		current += char;
+		currentBytes += bytes;
+	}
+	if (current.length > 0) chunks.push(current);
+	return chunks;
+}
 
 // Rolling buffer cap for unanchored pattern matching. Large enough that a
 // prompt indicator arriving across many chunks still matches; small enough
@@ -126,6 +210,49 @@ const LIMIT_REGEX =
 // escapes have been removed without padding.
 const TRUST_PROMPT_REGEX = /trust\s*this\s*folder|Yes,?\s*I\s*trust/i;
 
+// Where the trust prompt's selector sits, for `acceptWorkspaceTrust`. claude
+// 2.1.26x defaults to "No, exit" in risky locations (the home dir, the system
+// temp dir) AND re-renders the dialog ~150ms after first painting it, which
+// snaps a Down already sent back onto "No". A fixed Down-then-Enter either
+// lands its Enter in that re-render (swallowed) or on "No" (claude quits), so
+// the driver reads the selector off every repaint instead: Down while it shows
+// "No", and Enter only once "Yes" has held for TRUST_CONFIRM_QUIET_MS.
+const TRUST_SELECTOR_NO_REGEX = /❯\s*(?:\d+\.\s*)?No,?\s*exit/gi;
+const TRUST_SELECTOR_YES_REGEX = /❯\s*(?:\d+\.\s*)?Yes,?\s*I\s*trust/gi;
+export const TRUST_CONFIRM_QUIET_MS = 250;
+// A Down that draws no repaint within this window is assumed lost and retried.
+export const TRUST_REPAINT_WAIT_MS = 400;
+// Past this many Downs the driver stops and never confirms: a dialog it cannot
+// read fails the run through 'ready-timeout' instead of guessing at Enter.
+export const TRUST_MAX_DOWNS = 4;
+
+function lastMatchIndex(re: RegExp, text: string): number {
+	re.lastIndex = 0;
+	let at = -1;
+	let match: RegExpExecArray | null;
+	while ((match = re.exec(text)) !== null) at = match.index;
+	return at;
+}
+
+/** Which trust option the most recent paint in `text` left the selector on. */
+function latestTrustSelection(text: string): 'yes' | 'no' | null {
+	const no = lastMatchIndex(TRUST_SELECTOR_NO_REGEX, text);
+	const yes = lastMatchIndex(TRUST_SELECTOR_YES_REGEX, text);
+	if (yes > no) return 'yes';
+	return no >= 0 ? 'no' : null;
+}
+
+interface TrustSelection {
+	/** Stripped output since the trust prompt appeared. */
+	text: string;
+	downs: number;
+	/** A Down went out and its repaint has not arrived yet. */
+	awaitingRepaint: boolean;
+	repaintTimer: ReturnType<typeof setTimeout> | null;
+	confirmTimer: ReturnType<typeof setTimeout> | null;
+	confirmed: boolean;
+}
+
 // Claude shows a one-time "Bypass Permissions mode" acceptance screen the first
 // time the INTERACTIVE TUI is launched with `--dangerously-skip-permissions`
 // (the headless `-p` path never shows it). Unlike the trust prompt, its
@@ -159,6 +286,7 @@ export type TuiDriverEvent =
 	| 'ready'
 	| 'ready-timeout'
 	| 'limit-hit'
+	| 'api-billing'
 	| 'line'
 	| 'exit'
 	| 'trust-accepted'
@@ -174,10 +302,19 @@ export class TuiDriver extends EventEmitter {
 	private lineBuffer = '';
 	/** Full raw PTY accumulator for --status parsing. Populated only when options.captureScreen is set. */
 	private screenCapture = '';
+	/** Date.now() of the last PTY output chunk; send() waits for it to go stale. */
+	private lastDataAt = 0;
+	/** Resolvers waiting on the next PTY paint. See waitForPaint(). */
+	private paintWaiters: Array<() => void> = [];
 	private readyEmitted = false;
 	private limitEmitted = false;
+	private apiBillingEmitted = false;
+	/** Set once send() starts typing; the billing check reads the screen only before that. */
+	private inputTyped = false;
 	private trustHandled = false;
 	private bypassHandled = false;
+	/** Trust-prompt selection in progress (acceptWorkspaceTrust only). */
+	private trustSelection: TrustSelection | null = null;
 	private exited = false;
 	private tapsSent = 0;
 	private tapTimer: ReturnType<typeof setInterval> | null = null;
@@ -239,6 +376,9 @@ export class TuiDriver extends EventEmitter {
 	// so READY_MAX_TAPS is a single global cap, not per-source.
 	private tryUnblockTap(): boolean {
 		if (this.exited) return false;
+		// Mid trust selection an Enter confirms whichever option the dialog shows
+		// at that instant, and after a re-render that is "No, exit".
+		if (this.isSelectingTrust()) return false;
 		// The bypass-permissions gate defaults to "No, exit", so a bare Enter here
 		// would quit claude. Handle it with Down+Enter first; if it fired this
 		// tick, that IS the unblock action - don't also send a plain Enter (which
@@ -299,6 +439,76 @@ export class TuiDriver extends EventEmitter {
 		return true;
 	}
 
+	private isSelectingTrust(): boolean {
+		return this.trustSelection !== null && !this.trustSelection.confirmed;
+	}
+
+	// Feed trust-dialog output to the selection (acceptWorkspaceTrust only). A
+	// chunk carrying the `❯` selector is the repaint a pending Down waited for.
+	private observeTrustSelection(text: string): void {
+		const selection = this.trustSelection;
+		if (!selection || selection.confirmed) return;
+		selection.text = (selection.text + text).slice(-ROLLING_BUFFER_CAP);
+		if (selection.awaitingRepaint && text.includes('❯')) {
+			selection.awaitingRepaint = false;
+			if (selection.repaintTimer) clearTimeout(selection.repaintTimer);
+			selection.repaintTimer = null;
+		}
+		this.advanceTrustSelection();
+	}
+
+	// Move the selector toward "Yes, I trust this folder" and confirm it once it
+	// has held. Never writes Enter while the latest paint shows "No, exit".
+	private advanceTrustSelection(): void {
+		const selection = this.trustSelection;
+		if (!selection || selection.confirmed || selection.awaitingRepaint || this.exited) return;
+		const selected = latestTrustSelection(selection.text);
+		if (selected === 'no') {
+			if (selection.confirmTimer) clearTimeout(selection.confirmTimer);
+			selection.confirmTimer = null;
+			if (selection.downs >= TRUST_MAX_DOWNS) return;
+			try {
+				this.ptyProcess?.write(ARROW_DOWN);
+			} catch {
+				return; // PTY tearing down; exit / ready-timeout will surface it.
+			}
+			selection.downs += 1;
+			selection.awaitingRepaint = true;
+			selection.repaintTimer = setTimeout(() => {
+				selection.repaintTimer = null;
+				selection.awaitingRepaint = false;
+				this.advanceTrustSelection();
+			}, TRUST_REPAINT_WAIT_MS);
+		} else if (selected === 'yes') {
+			// Re-armed on every chunk, so the Enter waits out a quiet window and a
+			// re-render that snaps back to "No" cancels it above.
+			if (selection.confirmTimer) clearTimeout(selection.confirmTimer);
+			selection.confirmTimer = setTimeout(() => {
+				selection.confirmTimer = null;
+				if (this.exited || selection.confirmed) return;
+				if (latestTrustSelection(selection.text) !== 'yes') return;
+				try {
+					this.ptyProcess?.write('\r');
+				} catch {
+					return;
+				}
+				selection.confirmed = true;
+				// The dialog's own `❯` must not satisfy READY_REGEX afterward.
+				this.rollingBuffer = '';
+				this.emit('trust-accepted');
+			}, TRUST_CONFIRM_QUIET_MS);
+		}
+	}
+
+	private clearTrustSelectionTimers(): void {
+		const selection = this.trustSelection;
+		if (!selection) return;
+		if (selection.repaintTimer) clearTimeout(selection.repaintTimer);
+		if (selection.confirmTimer) clearTimeout(selection.confirmTimer);
+		selection.repaintTimer = null;
+		selection.confirmTimer = null;
+	}
+
 	private clearReadyTimers(): void {
 		if (this.tapTimer) {
 			clearInterval(this.tapTimer);
@@ -310,18 +520,90 @@ export class TuiDriver extends EventEmitter {
 		}
 	}
 
-	send(text: string): void {
-		if (!this.ptyProcess) {
+	// Wake everything waiting on evidence that claude read what we typed.
+	private notifyPaint(): void {
+		if (this.paintWaiters.length === 0) return;
+		const waiters = this.paintWaiters;
+		this.paintWaiters = [];
+		for (const resolve of waiters) resolve();
+	}
+
+	// Resolves on the next PTY output chunk, or after `timeoutMs`, or at once if
+	// the PTY is already gone. claude repaints its input editor as it consumes
+	// typed input, so a paint after a write is our only proof the bytes left the
+	// PTY input queue - which is what send() paces on. The timeout is what keeps
+	// a screen that goes silent from stalling the prompt forever.
+	private waitForPaint(timeoutMs: number): Promise<void> {
+		if (this.exited) return Promise.resolve();
+		return new Promise<void>((resolve) => {
+			let settled = false;
+			const done = (): void => {
+				if (settled) return;
+				settled = true;
+				clearTimeout(timer);
+				// A waiter that timed out would otherwise sit in the list until
+				// the next paint drains it. notifyPaint() has already swapped the
+				// array out by the time it calls us, so this only ever fires on
+				// the timeout path.
+				const at = this.paintWaiters.indexOf(done);
+				if (at >= 0) this.paintWaiters.splice(at, 1);
+				resolve();
+			};
+			const timer = setTimeout(done, timeoutMs);
+			this.paintWaiters.push(done);
+		});
+	}
+
+	// Resolves once the screen has been quiet for PROMPT_SETTLE_QUIET_MS, once
+	// PROMPT_SETTLE_MAX_MS has passed, or once the PTY exits.
+	private async waitForQuietScreen(): Promise<void> {
+		const deadline = Date.now() + PROMPT_SETTLE_MAX_MS;
+		for (;;) {
+			const now = Date.now();
+			const quietFor = now - this.lastDataAt;
+			if (this.exited || quietFor >= PROMPT_SETTLE_QUIET_MS || now >= deadline) return;
+			await new Promise<void>((resolve) =>
+				setTimeout(resolve, Math.min(PROMPT_SETTLE_QUIET_MS - quietFor, deadline - now))
+			);
+		}
+	}
+
+	// Resolves once the whole prompt body has been typed and the Enter taps are
+	// scheduled. Callers must await it before pressing Enter themselves, or a
+	// tap could submit a half-typed prompt.
+	async send(text: string): Promise<void> {
+		const ptyProcess = this.ptyProcess;
+		if (!ptyProcess) {
 			throw new Error('TuiDriver.send() called before start()');
 		}
 		if (this.exited) return;
-		// Writes are split, never one chunk. See SEND_ENTER_DELAY_MS for why the
+		// See PROMPT_SETTLE_QUIET_MS: input typed while claude is still mounting
+		// its UI right after `ready` gets discarded.
+		await this.waitForQuietScreen();
+		if (this.exited) return;
+		this.inputTyped = true;
+		// Writes are split, never one chunk. See PROMPT_CHUNK_MAX_BYTES for why
+		// the body is typed in paced pieces. See SEND_ENTER_DELAY_MS for why the
 		// Enter cannot ride in the same write as the text body. See
 		// SUBMIT_ENTER_RETRIES for why a single Enter is not enough on a cold
 		// TUI: the first tap may land before claude's editor can accept a
 		// submit, so we re-tap a few times spaced out until the turn starts.
 		// Extra taps on an already-submitted (empty) input are no-ops.
-		this.ptyProcess.write(text);
+		const chunks = chunkPromptForPty(text);
+		for (let i = 0; i < chunks.length; i += 1) {
+			ptyProcess.write(chunks[i]);
+			if (i === chunks.length - 1) break;
+			// Drain-aware pacing: hold the next chunk until claude paints (proof
+			// it read this one), then honour the floor. See
+			// PROMPT_CHUNK_DRAIN_TIMEOUT_MS. Ordering matters - the paint wait is
+			// armed AFTER the write, so a paint still in flight from before the
+			// write cannot be mistaken for this chunk's drain signal for more than
+			// one chunk, and the size budget covers that one.
+			await this.waitForPaint(PROMPT_CHUNK_DRAIN_TIMEOUT_MS);
+			if (this.exited) return;
+			await new Promise<void>((resolve) => setTimeout(resolve, PROMPT_CHUNK_INTERVAL_MS));
+			if (this.exited) return;
+		}
 		const sendEnter = () => {
 			if (this.exited) return;
 			try {
@@ -355,9 +637,9 @@ export class TuiDriver extends EventEmitter {
 	}
 
 	// Last `maxBytes` of the ANSI-stripped rolling screen buffer. Used by the
-	// run-mode flow to dump what was on screen at a first_byte_timeout (an
-	// MCP-connecting banner, a modal, or un-submitted prompt text) so the
-	// failure is diagnosable from stderr alone.
+	// run-mode flow to dump what was on screen at a first_byte_timeout or an
+	// idle timeout (an MCP-connecting banner, a permission prompt, a modal, or
+	// un-submitted prompt text) so the failure is diagnosable from stderr alone.
 	getScreenTail(maxBytes = 2048): string {
 		return this.rollingBuffer.slice(-maxBytes);
 	}
@@ -365,6 +647,15 @@ export class TuiDriver extends EventEmitter {
 	// Full raw PTY stream captured since start(). Empty unless options.captureScreen
 	// was set. statusMode parses the /usage panel from this so cursor-addressed
 	// (newline-free) panels are not lost to the `\n`-delimited 'line' stream.
+	//
+	// Deliberately an ACCUMULATOR with no reset, and statusMode's /usage retry
+	// depends on that. A re-sent /usage appends a second panel rather than
+	// replacing the first, and parseUsage anchors on the LAST `Current session`
+	// header (see sliceToFinalPanel), so the newest panel is what gets read.
+	// Clearing between attempts would look tidier and would break the case where
+	// claude repaints differentially - only the changed cells arrive, carrying no
+	// fresh section header, so a cleared buffer holds anchorless fragments that
+	// parse to null. Keep the history; let the parser pick the end.
 	getScreenCapture(): string {
 		return this.screenCapture;
 	}
@@ -393,7 +684,10 @@ export class TuiDriver extends EventEmitter {
 				settled = true;
 				this.off('exit', onExit);
 				try {
-					this.ptyProcess?.kill('SIGTERM');
+					// killPty, not ptyProcess.kill('SIGTERM'): node-pty's Windows
+					// backend throws for ANY signal, and it throws from a deferred
+					// flushed on a socket event, so this catch would not contain it.
+					if (this.ptyProcess) killPty(this.ptyProcess, 'SIGTERM');
 				} catch {
 					// PTY may already be gone; nothing to escalate against.
 				}
@@ -403,10 +697,11 @@ export class TuiDriver extends EventEmitter {
 		});
 	}
 
-	kill(): void {
+	// SIGTERM lets claude shut down its MCP servers; SIGKILL is the hard stop.
+	kill(signal: 'SIGKILL' | 'SIGTERM' = 'SIGKILL'): void {
 		if (!this.ptyProcess || this.exited) return;
 		try {
-			this.ptyProcess.kill('SIGKILL');
+			killPty(this.ptyProcess, signal);
 		} catch {
 			// Already gone - nothing to do.
 		}
@@ -414,6 +709,10 @@ export class TuiDriver extends EventEmitter {
 
 	private handleData(data: string): void {
 		if (this.exited) return;
+		this.lastDataAt = Date.now();
+		// Any output at all counts as a paint, including chunks that strip to
+		// nothing (a bare cursor move is still claude redrawing after a read).
+		this.notifyPaint();
 		// --status capture: keep the full raw stream so statusMode can parse the
 		// /usage panel from the complete screen. Cursor-addressed panels carry no
 		// line feeds, so the 'line' events below never fire and only this buffer
@@ -428,6 +727,13 @@ export class TuiDriver extends EventEmitter {
 		if (this.rollingBuffer.length > ROLLING_BUFFER_CAP) {
 			this.rollingBuffer = this.rollingBuffer.slice(-ROLLING_BUFFER_CAP);
 		}
+		// Billing mode is read off the startup header only. Once input is typed the
+		// screen carries the prompt and then the reply, and either can quote the
+		// header text.
+		if (!this.apiBillingEmitted && !this.inputTyped && showsApiUsageBilling(this.rollingBuffer)) {
+			this.apiBillingEmitted = true;
+			this.emit('api-billing');
+		}
 		// Trust-prompt auto-accept is a fast-path optimization: when the
 		// current wording matches, we send Enter immediately rather than
 		// waiting up to READY_TAP_INTERVAL_MS for the periodic tap. The
@@ -438,12 +744,28 @@ export class TuiDriver extends EventEmitter {
 		// "Yes, I accept" before the periodic blind-tap can hit the "No, exit"
 		// default (which would quit claude -> tui_exited).
 		this.handleBypassPrompt();
-		if (!this.trustHandled && TRUST_PROMPT_REGEX.test(this.rollingBuffer)) {
+		if (this.isSelectingTrust()) {
+			this.observeTrustSelection(stripped);
+		} else if (!this.trustHandled && TRUST_PROMPT_REGEX.test(this.rollingBuffer)) {
 			this.trustHandled = true;
-			this.tryUnblockTap();
-			this.emit('trust-accepted');
+			if (this.options.acceptWorkspaceTrust) {
+				this.trustSelection = {
+					text: '',
+					downs: 0,
+					awaitingRepaint: false,
+					repaintTimer: null,
+					confirmTimer: null,
+					confirmed: false,
+				};
+				this.observeTrustSelection(this.rollingBuffer);
+			} else {
+				this.tryUnblockTap();
+				this.emit('trust-accepted');
+			}
 		}
-		if (!this.readyEmitted && READY_REGEX.test(this.rollingBuffer)) {
+		// While the trust dialog is still being answered, its `❯` selector is not
+		// the input prompt.
+		if (!this.readyEmitted && !this.isSelectingTrust() && READY_REGEX.test(this.rollingBuffer)) {
 			this.readyEmitted = true;
 			this.clearReadyTimers();
 			this.emit('ready');
@@ -466,7 +788,11 @@ export class TuiDriver extends EventEmitter {
 	private handleExit(exitCode: number): void {
 		if (this.exited) return;
 		this.exited = true;
+		// Release a send() parked on a paint that will never come, so it unwinds
+		// on the exit rather than sitting out its drain timeout.
+		this.notifyPaint();
 		this.clearReadyTimers();
+		this.clearTrustSelectionTimers();
 		// Flush any trailing partial line so consumers (notably the /usage
 		// panel parser in --status mode) don't lose the last row.
 		if (this.lineBuffer.length > 0) {

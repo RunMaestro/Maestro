@@ -12,12 +12,16 @@ import {
 } from '../../../renderer/stores/settingsStore';
 import type { SettingsStoreState } from '../../../renderer/stores/settingsStore';
 import { SETTINGS_METADATA } from '../../../shared/settingsMetadata';
+import { MAESTRO_FONT_STACK } from '../../../shared/fontStack';
+import { DEFAULT_CUE_HISTORY_RETENTION_DAYS } from '../../../shared/cue/retention';
 import { useUIStore } from '../../../renderer/stores/uiStore';
+import { useNotificationStore } from '../../../renderer/stores/notificationStore';
 import {
 	selectShowNowPlayingIndicator,
 	useMediaPlaybackStore,
 } from '../../../renderer/stores/mediaPlaybackStore';
 import type { FileExplorerIconTheme } from '../../../renderer/utils/fileExplorerIcons/shared';
+import { FILE_EXPLORER_ICON_THEMES } from '../../../renderer/utils/fileExplorerIcons/shared';
 import {
 	DEFAULT_SHORTCUTS,
 	TAB_SHORTCUTS,
@@ -86,15 +90,12 @@ function resetStore() {
 		settingsLoaded: false,
 		conductorProfile: '',
 		globalShowHotkey: [],
-		llmProvider: 'openrouter',
-		modelSlug: 'anthropic/claude-3.5-sonnet',
-		apiKey: '',
 		defaultShell: 'zsh',
 		customShellPath: '',
 		shellArgs: '',
 		shellEnvVars: {},
 		ghPath: '',
-		fontFamily: 'Roboto Mono, Menlo, "Courier New", monospace',
+		fontFamily: MAESTRO_FONT_STACK,
 		fontSize: 14,
 		activeThemeId: 'dracula',
 		customThemeColors: DEFAULT_CUSTOM_THEME_COLORS,
@@ -111,7 +112,7 @@ function resetStore() {
 		chatRawTextMode: false,
 		groupChatAutoScroll: true,
 		showHiddenFiles: true,
-		fileExplorerIconTheme: 'default',
+		fileExplorerIconTheme: 'rich',
 		terminalWidth: 100,
 		logLevel: 'info',
 		maxLogBuffer: 5000,
@@ -138,6 +139,7 @@ function resetStore() {
 		firstAutoRunCompleted: false,
 		onboardingStats: DEFAULT_ONBOARDING_STATS,
 		leaderboardRegistration: null,
+		webInterfaceAutoStart: false,
 		webInterfaceUseCustomPort: false,
 		webInterfaceCustomPort: 8080,
 		contextManagementSettings: DEFAULT_CONTEXT_MANAGEMENT_SETTINGS,
@@ -150,6 +152,7 @@ function resetStore() {
 		statsCollectionEnabled: true,
 		defaultStatsTimeRange: 'week',
 		preventSleepEnabled: false,
+		preventDisplaySleepEnabled: false,
 		disableGpuAcceleration: false,
 		disableConfetti: false,
 		sshRemoteIgnorePatterns: ['.git', '*cache*'],
@@ -158,6 +161,8 @@ function resetStore() {
 		fileTabAutoRefreshEnabled: false,
 		suppressWindowsWarning: false,
 		directorNotesSettings: { provider: 'claude-code', defaultLookbackDays: 7 },
+		cueHistoryRetentionDays: DEFAULT_CUE_HISTORY_RETENTION_DAYS,
+		groupCueEntries: true,
 		wakatimeApiKey: '',
 		wakatimeEnabled: false,
 		forcedParallelExecution: false,
@@ -174,6 +179,7 @@ describe('settingsStore', () => {
 		if (!window.maestro.power) {
 			(window.maestro as any).power = {
 				setEnabled: vi.fn().mockResolvedValue(undefined),
+				setKeepDisplayAwake: vi.fn().mockResolvedValue(undefined),
 			};
 		}
 
@@ -200,15 +206,13 @@ describe('settingsStore', () => {
 
 			expect(state.settingsLoaded).toBe(false);
 			expect(state.conductorProfile).toBe('');
-			expect(state.llmProvider).toBe('openrouter');
-			expect(state.modelSlug).toBe('anthropic/claude-3.5-sonnet');
-			expect(state.apiKey).toBe('');
 			expect(state.defaultShell).toBe('zsh');
 			expect(state.customShellPath).toBe('');
 			expect(state.shellArgs).toBe('');
 			expect(state.shellEnvVars).toEqual({});
+			expect(state.shellEnvVarsDisabled).toEqual({});
 			expect(state.ghPath).toBe('');
-			expect(state.fontFamily).toBe('Roboto Mono, Menlo, "Courier New", monospace');
+			expect(state.fontFamily).toBe(MAESTRO_FONT_STACK);
 			// Every surface font defaults to empty, meaning "inherit the interface
 			// font", so a fresh install pins no surface to a face of its own.
 			expect(state.terminalFontFamily).toBe('');
@@ -234,7 +238,7 @@ describe('settingsStore', () => {
 			expect(state.chatRawTextMode).toBe(false);
 			expect(state.groupChatAutoScroll).toBe(true);
 			expect(state.showHiddenFiles).toBe(true);
-			expect(state.fileExplorerIconTheme).toBe('default');
+			expect(state.fileExplorerIconTheme).toBe('rich');
 			expect(state.fileExplorerMaxDepth).toBe(10);
 			expect(state.fileExplorerMaxEntries).toBe(100_000);
 			expect(state.sshReduceEntryCapEnabled).toBe(false);
@@ -265,6 +269,7 @@ describe('settingsStore', () => {
 			expect(state.firstAutoRunCompleted).toBe(false);
 			expect(state.onboardingStats).toEqual(DEFAULT_ONBOARDING_STATS);
 			expect(state.leaderboardRegistration).toBeNull();
+			expect(state.webInterfaceAutoStart).toBe(false);
 			expect(state.webInterfaceUseCustomPort).toBe(false);
 			expect(state.webInterfaceCustomPort).toBe(8080);
 			expect(state.contextManagementSettings).toEqual(DEFAULT_CONTEXT_MANAGEMENT_SETTINGS);
@@ -300,26 +305,6 @@ describe('settingsStore', () => {
 	// ========================================================================
 
 	describe('simple setters', () => {
-		describe('AI/LLM', () => {
-			it('setLlmProvider updates state and persists', () => {
-				useSettingsStore.getState().setLlmProvider('anthropic' as any);
-				expect(useSettingsStore.getState().llmProvider).toBe('anthropic');
-				expect(window.maestro.settings.set).toHaveBeenCalledWith('llmProvider', 'anthropic');
-			});
-
-			it('setModelSlug updates state and persists', () => {
-				useSettingsStore.getState().setModelSlug('gpt-4');
-				expect(useSettingsStore.getState().modelSlug).toBe('gpt-4');
-				expect(window.maestro.settings.set).toHaveBeenCalledWith('modelSlug', 'gpt-4');
-			});
-
-			it('setApiKey updates state and persists', () => {
-				useSettingsStore.getState().setApiKey('sk-test-key');
-				expect(useSettingsStore.getState().apiKey).toBe('sk-test-key');
-				expect(window.maestro.settings.set).toHaveBeenCalledWith('apiKey', 'sk-test-key');
-			});
-		});
-
 		describe('Shell', () => {
 			it('setDefaultShell updates state and persists', () => {
 				useSettingsStore.getState().setDefaultShell('bash');
@@ -347,6 +332,21 @@ describe('settingsStore', () => {
 				useSettingsStore.getState().setShellEnvVars(envVars);
 				expect(useSettingsStore.getState().shellEnvVars).toEqual(envVars);
 				expect(window.maestro.settings.set).toHaveBeenCalledWith('shellEnvVars', envVars);
+			});
+
+			it('setShellEnvVarsDisabled updates state and persists', () => {
+				const parked = { HTTP_PROXY: 'http://proxy:8080' };
+				useSettingsStore.getState().setShellEnvVarsDisabled(parked);
+				expect(useSettingsStore.getState().shellEnvVarsDisabled).toEqual(parked);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('shellEnvVarsDisabled', parked);
+			});
+
+			it('keeps parked variables out of the effective shell env', () => {
+				// The two records are separate on purpose: a spawner reads only
+				// shellEnvVars, so parking a variable is what stops it shipping.
+				useSettingsStore.getState().setShellEnvVars({ KEEP: 'yes' });
+				useSettingsStore.getState().setShellEnvVarsDisabled({ OFF: 'no' });
+				expect(useSettingsStore.getState().shellEnvVars).toEqual({ KEEP: 'yes' });
 			});
 
 			it('setGhPath updates state and persists', () => {
@@ -407,6 +407,43 @@ describe('settingsStore', () => {
 				expect(state.terminalFontFamily).toBe('');
 				expect(state.filePreviewFontFamily).toBe('');
 				expect(state.fileEditorFontFamily).toBe('');
+			});
+
+			it('saveTypographySnapshot captures the live fonts and sizes and persists them', () => {
+				useSettingsStore.setState({
+					fontFamily: 'Verdana',
+					terminalFontFamily: 'Fira Code',
+					fontSize: 17,
+					chatFontSize: 0,
+				});
+				useSettingsStore.getState().saveTypographySnapshot();
+
+				const snapshot = useSettingsStore.getState().typographySnapshot;
+				expect(snapshot?.fonts.fontFamily).toBe('Verdana');
+				expect(snapshot?.fonts.terminalFontFamily).toBe('Fira Code');
+				expect(snapshot?.sizes.fontSize).toBe(17);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('typographySnapshot', snapshot);
+			});
+
+			it('restoreTypographySnapshot puts a saved setup back after a preset overwrote it', () => {
+				// The whole reason the snapshot exists: trying a preset must not
+				// be a one-way door out of a hand-tuned setup.
+				useSettingsStore.setState({ fontFamily: 'Verdana', fontSize: 17 });
+				useSettingsStore.getState().saveTypographySnapshot();
+				useSettingsStore.getState().resetTypography('hacker');
+				expect(useSettingsStore.getState().fontFamily).not.toBe('Verdana');
+
+				useSettingsStore.getState().restoreTypographySnapshot();
+				expect(useSettingsStore.getState().fontFamily).toBe('Verdana');
+				expect(useSettingsStore.getState().fontSize).toBe(17);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('fontFamily', 'Verdana');
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('fontSize', 17);
+			});
+
+			it('restoreTypographySnapshot is a no-op with nothing saved', () => {
+				useSettingsStore.setState({ typographySnapshot: null, fontFamily: 'Verdana' });
+				useSettingsStore.getState().restoreTypographySnapshot();
+				expect(useSettingsStore.getState().fontFamily).toBe('Verdana');
 			});
 
 			it('setTypographyPromptSeen updates state and persists', () => {
@@ -507,6 +544,51 @@ describe('settingsStore', () => {
 				useSettingsStore.getState().setFileExplorerIconTheme('rich');
 				expect(useSettingsStore.getState().fileExplorerIconTheme).toBe('rich');
 				expect(window.maestro.settings.set).toHaveBeenCalledWith('fileExplorerIconTheme', 'rich');
+			});
+
+			describe('setToastWidth', () => {
+				beforeEach(() => {
+					useNotificationStore.setState({ toasts: [] });
+				});
+
+				it('updates state and persists', () => {
+					useSettingsStore.getState().setToastWidth('large');
+					expect(useSettingsStore.getState().toastWidth).toBe('large');
+					expect(window.maestro.settings.set).toHaveBeenCalledWith('toastWidth', 'large');
+				});
+
+				it('fires a preview toast naming the size that was picked', () => {
+					useSettingsStore.getState().setToastWidth('large');
+					const toasts = useNotificationStore.getState().toasts;
+					expect(toasts).toHaveLength(1);
+					expect(toasts[0].title).toBe('Toast Width: Large');
+					expect(toasts[0].message).toContain('480-720px');
+				});
+
+				it('quotes the live Right Bar width for the dynamic preset', () => {
+					useSettingsStore.setState({ rightPanelWidth: 500 });
+					useSettingsStore.getState().setToastWidth('dynamic');
+					const [toast] = useNotificationStore.getState().toasts;
+					expect(toast.title).toBe('Toast Width: Dynamic');
+					// 500 less the 16px gutter on each side.
+					expect(toast.message).toContain('468px');
+				});
+
+				it('replaces its own preview instead of stacking one per click', () => {
+					useSettingsStore.getState().setToastWidth('small');
+					useSettingsStore.getState().setToastWidth('medium');
+					useSettingsStore.getState().setToastWidth('large');
+					const toasts = useNotificationStore.getState().toasts;
+					expect(toasts).toHaveLength(1);
+					expect(toasts[0].title).toBe('Toast Width: Large');
+				});
+
+				it('keeps the preview in-app only (no TTS command, no OS notification)', () => {
+					useSettingsStore.getState().setToastWidth('medium');
+					const [toast] = useNotificationStore.getState().toasts;
+					expect(toast.skipCustomNotification).toBe(true);
+					expect(toast.skipOsNotification).toBe(true);
+				});
 			});
 		});
 
@@ -657,6 +739,12 @@ describe('settingsStore', () => {
 		});
 
 		describe('Web', () => {
+			it('setWebInterfaceAutoStart updates state and persists', () => {
+				useSettingsStore.getState().setWebInterfaceAutoStart(true);
+				expect(useSettingsStore.getState().webInterfaceAutoStart).toBe(true);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('webInterfaceAutoStart', true);
+			});
+
 			it('setWebInterfaceUseCustomPort updates state and persists', () => {
 				useSettingsStore.getState().setWebInterfaceUseCustomPort(true);
 				expect(useSettingsStore.getState().webInterfaceUseCustomPort).toBe(true);
@@ -698,6 +786,35 @@ describe('settingsStore', () => {
 					'documentGraphLayoutType',
 					'hierarchical'
 				);
+			});
+		});
+
+		describe('Cue history retention', () => {
+			it('defaults to the shared retention constant', () => {
+				expect(useSettingsStore.getState().cueHistoryRetentionDays).toBe(
+					DEFAULT_CUE_HISTORY_RETENTION_DAYS
+				);
+			});
+
+			it('setCueHistoryRetentionDays updates state and persists', () => {
+				useSettingsStore.getState().setCueHistoryRetentionDays(30);
+				expect(useSettingsStore.getState().cueHistoryRetentionDays).toBe(30);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('cueHistoryRetentionDays', 30);
+			});
+		});
+
+		describe('Cue History grouping', () => {
+			// Default ON: the ungrouped view is what made the History panel
+			// unreadable on a machine running high-frequency triggers.
+			it('defaults to grouping Cue entries', () => {
+				expect(useSettingsStore.getState().groupCueEntries).toBe(true);
+				expect(SETTINGS_METADATA.groupCueEntries.default).toBe(true);
+			});
+
+			it('setGroupCueEntries updates state and persists', () => {
+				useSettingsStore.getState().setGroupCueEntries(false);
+				expect(useSettingsStore.getState().groupCueEntries).toBe(false);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('groupCueEntries', false);
 			});
 		});
 
@@ -1017,6 +1134,22 @@ describe('settingsStore', () => {
 			expect(window.maestro.settings.set).toHaveBeenCalledWith('preventSleepEnabled', true);
 			expect(window.maestro.power.setEnabled).toHaveBeenCalledWith(true);
 		});
+
+		it('setPreventDisplaySleepEnabled updates state, persists, and calls power.setKeepDisplayAwake', async () => {
+			await useSettingsStore.getState().setPreventDisplaySleepEnabled(true);
+			expect(useSettingsStore.getState().preventDisplaySleepEnabled).toBe(true);
+			expect(window.maestro.settings.set).toHaveBeenCalledWith('preventDisplaySleepEnabled', true);
+			expect(window.maestro.power.setKeepDisplayAwake).toHaveBeenCalledWith(true);
+		});
+
+		it('setPreventDisplaySleepEnabled rolls back when the power call fails', async () => {
+			(window.maestro.power.setKeepDisplayAwake as any).mockRejectedValueOnce(new Error('boom'));
+
+			await expect(useSettingsStore.getState().setPreventDisplaySleepEnabled(true)).rejects.toThrow(
+				'boom'
+			);
+			expect(useSettingsStore.getState().preventDisplaySleepEnabled).toBe(false);
+		});
 	});
 
 	// ========================================================================
@@ -1073,6 +1206,7 @@ describe('settingsStore', () => {
 					maxSimultaneousQueries: 4,
 					maxQueueDepth: 1,
 				},
+				settingsLoaded: true,
 			});
 			vi.clearAllMocks();
 
@@ -1099,6 +1233,7 @@ describe('settingsStore', () => {
 					maxSimultaneousQueries: 4,
 					maxQueueDepth: 1,
 				},
+				settingsLoaded: true,
 			});
 			vi.clearAllMocks();
 
@@ -1119,6 +1254,7 @@ describe('settingsStore', () => {
 					maxSimultaneousQueries: 4,
 					maxQueueDepth: 1,
 				},
+				settingsLoaded: true,
 			});
 			vi.clearAllMocks();
 
@@ -1139,6 +1275,7 @@ describe('settingsStore', () => {
 					maxSimultaneousQueries: 4,
 					maxQueueDepth: 1,
 				},
+				settingsLoaded: true,
 			});
 			vi.clearAllMocks();
 
@@ -1157,11 +1294,45 @@ describe('settingsStore', () => {
 					maxSimultaneousQueries: 4,
 					maxQueueDepth: 1,
 				},
+				settingsLoaded: true,
 			});
 			vi.clearAllMocks();
 
 			useSettingsStore.getState().updateUsageStats({});
 			expect(useSettingsStore.getState().usageStats.maxAgents).toBe(5);
+		});
+
+		// Regression: peaks are lifetime high-water marks, but before
+		// loadAllSettings resolves the store still holds the zeroed defaults.
+		// The sampling effect in useAutoRunAchievements fires on the first
+		// `sessions` ref flip, which routinely beats the settings load, so an
+		// unguarded write persisted a live snapshot AS the all-time peak. A real
+		// install lost maxSimultaneousQueries 6 -> 3 and maxQueueDepth 16 -> 10
+		// this way. Nothing may be written until the baseline is real.
+		it('updateUsageStats writes nothing before settings have loaded', () => {
+			useSettingsStore.setState({
+				usageStats: {
+					maxAgents: 0,
+					maxDefinedAgents: 0,
+					maxSimultaneousAutoRuns: 0,
+					maxSimultaneousQueries: 0,
+					maxQueueDepth: 0,
+				},
+				settingsLoaded: false,
+			});
+			vi.clearAllMocks();
+
+			// A live snapshot that would look like a new record for every counter.
+			useSettingsStore.getState().updateUsageStats({
+				maxAgents: 88,
+				maxDefinedAgents: 88,
+				maxSimultaneousAutoRuns: 1,
+				maxSimultaneousQueries: 2,
+				maxQueueDepth: 1,
+			});
+
+			expect(window.maestro.settings.set).not.toHaveBeenCalled();
+			expect(useSettingsStore.getState().usageStats.maxAgents).toBe(0);
 		});
 	});
 
@@ -1698,7 +1869,7 @@ describe('settingsStore', () => {
 				fileEditorFontFamily: 'Iosevka',
 				typographyPromptSeen: true,
 				fontSize: 16,
-				activeThemeId: 'one-dark-pro',
+				activeThemeId: 'nord',
 				enterToSendAI: true,
 			});
 
@@ -1712,8 +1883,145 @@ describe('settingsStore', () => {
 			expect(state.fileEditorFontFamily).toBe('Iosevka');
 			expect(state.typographyPromptSeen).toBe(true);
 			expect(state.fontSize).toBe(16);
-			expect(state.activeThemeId).toBe('one-dark-pro');
+			expect(state.activeThemeId).toBe('nord');
 			expect(state.enterToSendAI).toBe(true);
+		});
+
+		it('restores a saved typography snapshot across a restart', async () => {
+			// The snapshot is the only way back to a hand-tuned setup after a
+			// Factory Reset, so a save that did not survive a restart would be
+			// worse than no save at all.
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				typographySnapshot: {
+					savedAt: 1234,
+					fonts: { fontFamily: 'Verdana' },
+					sizes: { fontSize: 17 },
+				},
+			});
+
+			await loadAllSettings();
+
+			const snapshot = useSettingsStore.getState().typographySnapshot;
+			expect(snapshot?.savedAt).toBe(1234);
+			expect(snapshot?.fonts.fontFamily).toBe('Verdana');
+			expect(snapshot?.sizes.fontSize).toBe(17);
+		});
+
+		it('drops a malformed typographySnapshot rather than arming a destructive Restore', async () => {
+			// Restore overwrites live fonts, so a hand-edited settings file must
+			// not be able to produce a button that blanks them.
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				typographySnapshot: 'hacker' as any,
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().typographySnapshot).toBeNull();
+		});
+
+		// A user who picked a theme before it was retired still has that id on
+		// disk. App.tsx does a bare THEMES[activeThemeId] lookup, so letting the
+		// dead id through renders the whole app unstyled.
+		it('maps a retired theme id to its replacement on load', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				activeThemeId: 'inquest',
+				customThemeBaseId: 'inquest',
+			});
+
+			await loadAllSettings();
+
+			const state = useSettingsStore.getState();
+			expect(state.activeThemeId).toBe('dracula');
+			expect(state.customThemeBaseId).toBe('dracula');
+		});
+
+		it('falls back rather than storing a theme id that does not exist', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				activeThemeId: 'one-dark-pro',
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().activeThemeId).toBe('dracula');
+		});
+
+		// Opting out has to survive a restart: a user who turned grouping off
+		// did so because they need to see every run.
+		it('loads a persisted Cue grouping opt-out', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				groupCueEntries: false,
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().groupCueEntries).toBe(false);
+		});
+
+		it('keeps Cue grouping on when nothing is stored', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().groupCueEntries).toBe(true);
+		});
+
+		it('loads a persisted Cue retention window', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				cueHistoryRetentionDays: 30,
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().cueHistoryRetentionDays).toBe(30);
+		});
+
+		// A hand-edited settings file or a CLI write can store the number as
+		// text. The shared resolver parses it rather than discarding what the
+		// user asked for, so the store agrees with the engine's prune window.
+		it('parses a numeric string stored by a hand edit', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				cueHistoryRetentionDays: '30',
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().cueHistoryRetentionDays).toBe(30);
+		});
+
+		// The number shown in the UI is a promise about what the prune keeps, so
+		// an unusable stored value must read back as the default rather than as
+		// NaN or 0 - a 0-day window would mean "delete everything".
+		it.each([
+			['a non-numeric string', 'abc'],
+			['zero', 0],
+			['a negative count', -5],
+			['NaN', Number.NaN],
+			['null', null],
+		])('falls back to the default when the stored value is %s', async (_label, stored) => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				cueHistoryRetentionDays: stored,
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().cueHistoryRetentionDays).toBe(
+				DEFAULT_CUE_HISTORY_RETENTION_DAYS
+			);
+		});
+
+		it('restores both halves of the environment editor', async () => {
+			// A parked variable that did not survive a restart would come back
+			// live, which is the opposite of what switching it off asked for.
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				shellEnvVars: { KEEP: 'yes' },
+				shellEnvVarsDisabled: { PARKED: 'later' },
+			});
+
+			await loadAllSettings();
+
+			const state = useSettingsStore.getState();
+			expect(state.shellEnvVars).toEqual({ KEEP: 'yes' });
+			expect(state.shellEnvVarsDisabled).toEqual({ PARKED: 'later' });
 		});
 
 		it('loads fileExplorerIconTheme when the persisted value is valid', async () => {
@@ -1726,15 +2034,36 @@ describe('settingsStore', () => {
 			expect(useSettingsStore.getState().fileExplorerIconTheme).toBe('rich');
 		});
 
-		it('falls back to default for invalid fileExplorerIconTheme values', async () => {
+		it('ignores a non-boolean persisted webInterfaceAutoStart value', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				webInterfaceAutoStart: 'false' as any,
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().webInterfaceAutoStart).toBe(false);
+		});
+
+		it('migrates the pre-rename "default" icon theme id to flat', async () => {
 			useSettingsStore.setState({ fileExplorerIconTheme: 'rich' });
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				fileExplorerIconTheme: 'default' as unknown as FileExplorerIconTheme,
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().fileExplorerIconTheme).toBe('flat');
+		});
+
+		it('falls back to rich for invalid fileExplorerIconTheme values', async () => {
+			useSettingsStore.setState({ fileExplorerIconTheme: 'flat' });
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
 				fileExplorerIconTheme: 'neon' as any,
 			});
 
 			await loadAllSettings();
 
-			expect(useSettingsStore.getState().fileExplorerIconTheme).toBe('default');
+			expect(useSettingsStore.getState().fileExplorerIconTheme).toBe('rich');
 		});
 
 		it('keeps edits made while a reload is in flight', async () => {
@@ -1851,6 +2180,35 @@ describe('settingsStore', () => {
 				expect(state.history).toEqual([]);
 			});
 
+			it('leaves a player the user is already using alone', async () => {
+				// `loadAllSettings` is not a startup-only call: it re-runs on system
+				// resume, on an external settings edit (maestro-cli, a peer window),
+				// and on a remote set-setting. Re-applying the on-disk snapshot there
+				// hid the widget AND suppressed the Left Bar pill, so a player that
+				// was mid-track simply vanished with no way back.
+				useMediaPlaybackStore.getState().openMedia({
+					path: '/files/live.mp3',
+					name: 'live.mp3',
+					sessionId: 's9',
+					sessionName: 'Agent Nine',
+					kind: 'audio',
+				});
+				useMediaPlaybackStore.setState({ playing: true, dismissed: false, dormant: false });
+
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					mediaPlayerQueue: stored,
+				});
+				await loadAllSettings();
+
+				const state = useMediaPlaybackStore.getState();
+				// Still on screen, still playing, still the user's file.
+				expect(state.dismissed).toBe(false);
+				expect(state.dormant).toBe(false);
+				expect(state.playing).toBe(true);
+				expect(state.activeItemId).toBe('s9::/files/live.mp3');
+				expect(state.items.map((i) => i.name)).toContain('live.mp3');
+			});
+
 			it('ignores a stored queue with nothing usable left in it', async () => {
 				useMediaPlaybackStore.setState({ items: [], activeItemId: null });
 				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
@@ -1870,7 +2228,7 @@ describe('settingsStore', () => {
 
 			const state = useSettingsStore.getState();
 			expect(state.settingsLoaded).toBe(true);
-			expect(state.fontFamily).toBe('Roboto Mono, Menlo, "Courier New", monospace');
+			expect(state.fontFamily).toBe(MAESTRO_FONT_STACK);
 			expect(state.fontSize).toBe(14);
 		});
 
@@ -3087,6 +3445,43 @@ describe('settingsStore', () => {
 
 			for (const key of FILE_PREVIEW_TOOLBAR_BUTTON_KEYS) {
 				expect(description).toContain(key);
+			}
+		});
+	});
+	// ========================================================================
+	// 16. File Explorer Icon Theme Metadata Parity
+	// ========================================================================
+
+	// The shipped default lives in three places: the store's initial state, the
+	// invalid-value fallback in loadAllSettings, and SETTINGS_METADATA (which is
+	// what `maestro-cli settings` reports and what a reset writes to disk). The
+	// metadata description had already drifted far enough to advertise two theme
+	// values that never existed.
+	describe('fileExplorerIconTheme metadata parity', () => {
+		it('metadata default is a real icon theme', () => {
+			expect(FILE_EXPLORER_ICON_THEMES).toContain(
+				SETTINGS_METADATA.fileExplorerIconTheme.default as FileExplorerIconTheme
+			);
+		});
+
+		it('metadata default matches the value an invalid setting falls back to', async () => {
+			useSettingsStore.setState({ fileExplorerIconTheme: 'flat' });
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				fileExplorerIconTheme: 'neon' as unknown as FileExplorerIconTheme,
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().fileExplorerIconTheme).toBe(
+				SETTINGS_METADATA.fileExplorerIconTheme.default
+			);
+		});
+
+		it('metadata description names every real icon theme', () => {
+			const { description } = SETTINGS_METADATA.fileExplorerIconTheme;
+
+			for (const value of FILE_EXPLORER_ICON_THEMES) {
+				expect(description).toContain(value);
 			}
 		});
 	});

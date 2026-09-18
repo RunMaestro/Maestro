@@ -53,6 +53,7 @@ vi.mock('../../../../main/profiling', () => ({
 	startProfiling: vi.fn(),
 	stopProfiling: vi.fn(),
 	getProfilingStatus: vi.fn(),
+	setProfilingAutoStopHandler: vi.fn(),
 	finalizeCapture: vi.fn(),
 }));
 
@@ -401,11 +402,12 @@ describe('debug IPC handlers', () => {
 
 			expect(dialog.showSaveDialog).not.toHaveBeenCalled();
 			expect(profiling.stopProfiling).toHaveBeenCalled();
+			// finalizeCapture now takes the whole stop outcome, so the bundle's
+			// metadata can record buffer pressure and whether the watchdog ended it.
 			expect(profiling.finalizeCapture).toHaveBeenCalledWith(
 				expect.stringContaining('maestro-trace-'),
 				expect.stringContaining('maestro-profile-'),
-				1500,
-				['devtools.timeline']
+				expect.objectContaining({ durationMs: 1500, categories: ['devtools.timeline'] })
 			);
 			// Raw trace temp file is cleaned up after bundling.
 			expect(fs.promises.unlink).toHaveBeenCalledWith(expect.stringContaining('maestro-trace-'));

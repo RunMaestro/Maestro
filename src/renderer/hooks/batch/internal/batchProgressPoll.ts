@@ -30,6 +30,12 @@ export interface ProgressPollDeps {
 	) => void;
 	getSessions: () => Session[];
 	onUpdateSession: (sessionId: string, updates: Partial<Session>) => void;
+	/**
+	 * Writes the polled document's checked/total into the shared per-document
+	 * task-count cache that draws the progress badges in the Auto Run document
+	 * selector. Injected so this module stays store-free like its other deps.
+	 */
+	updateTaskCount: (filename: string, completed: number, total: number) => void;
 }
 
 export interface ProgressPollController {
@@ -46,8 +52,9 @@ export interface ProgressPollController {
  * an interval and dispatches batch-state updates whenever the totals shift.
  *
  * It also refreshes `autoRunContent` on the session if the user is viewing
- * a document, so the renderer stays in sync even when filesystem watcher
- * events are coalesced or dropped.
+ * a document, and writes the polled document's count into the shared
+ * task-count cache behind the document selector's progress badges, so both
+ * stay in sync even when filesystem watcher events are coalesced or dropped.
  *
  * Generation tracking guards against stale results from in-flight polls
  * after `stop()` or `restart()`.
@@ -64,6 +71,7 @@ export function createProgressPoll(deps: ProgressPollDeps): ProgressPollControll
 		updateBatchState,
 		getSessions,
 		onUpdateSession,
+		updateTaskCount,
 	} = deps;
 
 	let active = false;
@@ -98,6 +106,14 @@ export function createProgressPoll(deps: ProgressPollDeps): ProgressPollControll
 			const polledTotal = otherDocsTotal + r.taskCount + r.checkedCount;
 			const polledChecked = otherDocsChecked + r.checkedCount;
 			if (!active || gen !== generation) return;
+
+			// The document selector's badges read this cache, which is otherwise
+			// only written by the chokidar watcher (no watcher at all on SSH
+			// remotes) - so a coalesced or dropped file event left the running
+			// document's badge stale until a manual refresh. The store no-ops
+			// when the numbers are unchanged, so a quiet tick costs nothing.
+			updateTaskCount(docEntry.filename, r.checkedCount, r.taskCount + r.checkedCount);
+
 			updateBatchState(sessionId, (prev) => {
 				const prevState = prev[sessionId] || DEFAULT_BATCH_STATE;
 				if (

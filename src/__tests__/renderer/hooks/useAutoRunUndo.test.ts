@@ -21,27 +21,31 @@ import React from 'react';
 // Test Helpers
 // ============================================================================
 
-const createMockTextarea = (selectionStart = 0, value = 'Initial content'): HTMLTextAreaElement => {
-	const textarea = document.createElement('textarea');
-	textarea.value = value;
-	textarea.selectionStart = selectionStart;
-	textarea.selectionEnd = selectionStart;
-	textarea.setSelectionRange = vi.fn((start: number, end: number) => {
-		textarea.selectionStart = start;
-		textarea.selectionEnd = end;
-	});
-	textarea.focus = vi.fn();
-	return textarea;
+/**
+ * Stand-in for the CodeMirror editor handle the hook drives. Only the caret
+ * read, the selection write, and focus matter here; the rest of
+ * `MarkdownEditorHandle` is unused by undo/redo.
+ */
+const createMockEditor = (caret = 0, value = 'Initial content') => {
+	let head = caret;
+	return {
+		value,
+		getCaret: vi.fn(() => head),
+		setSelection: vi.fn((from: number, _to: number) => {
+			head = from;
+		}),
+		focus: vi.fn(),
+	};
 };
 
 const createMockDeps = (overrides: Partial<UseAutoRunUndoDeps> = {}): UseAutoRunUndoDeps => {
-	const textareaRef = { current: null } as React.RefObject<HTMLTextAreaElement>;
+	const editorRef = { current: null } as unknown as UseAutoRunUndoDeps['editorRef'];
 
 	return {
 		selectedFile: 'Phase 1',
 		localContent: 'Initial content',
 		setLocalContent: vi.fn(),
-		textareaRef,
+		editorRef,
 		...overrides,
 	};
 };
@@ -134,11 +138,11 @@ describe('useAutoRunUndo', () => {
 			expect(mockDeps.setLocalContent).not.toHaveBeenCalled();
 		});
 
-		it('should use textarea cursor position when not provided', () => {
-			const textarea = createMockTextarea(15, 'Some content here');
+		it('should use the editor caret when a cursor position is not provided', () => {
+			const editor = createMockEditor(15, 'Some content here');
 			const mockDeps = createMockDeps({
 				localContent: 'Updated content',
-				textareaRef: { current: textarea },
+				editorRef: { current: editor } as unknown as UseAutoRunUndoDeps['editorRef'],
 			});
 			const { result } = renderHook(() => useAutoRunUndo(mockDeps));
 
@@ -231,10 +235,10 @@ describe('useAutoRunUndo', () => {
 
 	describe('handleUndo and handleRedo', () => {
 		it('should undo to previous state and push current to redo stack', async () => {
-			const textarea = createMockTextarea(0, 'Version 2');
+			const editor = createMockEditor(0, 'Version 2');
 			const mockDeps = createMockDeps({
 				localContent: 'Version 2',
-				textareaRef: { current: textarea },
+				editorRef: { current: editor } as unknown as UseAutoRunUndoDeps['editorRef'],
 			});
 			const { result } = renderHook(() => useAutoRunUndo(mockDeps));
 
@@ -544,10 +548,10 @@ describe('useAutoRunUndo', () => {
 
 	describe('cursor position restoration', () => {
 		it('should restore cursor position on undo', async () => {
-			const textarea = createMockTextarea(20, 'Current content');
+			const editor = createMockEditor(20, 'Current content');
 			const mockDeps = createMockDeps({
 				localContent: 'Current content',
-				textareaRef: { current: textarea },
+				editorRef: { current: editor } as unknown as UseAutoRunUndoDeps['editorRef'],
 			});
 			const { result } = renderHook(() => useAutoRunUndo(mockDeps));
 
@@ -566,15 +570,15 @@ describe('useAutoRunUndo', () => {
 				vi.advanceTimersByTime(100);
 			});
 
-			expect(textarea.setSelectionRange).toHaveBeenCalledWith(10, 10);
-			expect(textarea.focus).toHaveBeenCalled();
+			expect(editor.setSelection).toHaveBeenCalledWith(10, 10);
+			expect(editor.focus).toHaveBeenCalled();
 		});
 
 		it('should restore cursor position on redo', async () => {
-			const textarea = createMockTextarea(5, 'Version 2');
+			const editor = createMockEditor(5, 'Version 2');
 			const mockDeps = createMockDeps({
 				localContent: 'Version 2',
-				textareaRef: { current: textarea },
+				editorRef: { current: editor } as unknown as UseAutoRunUndoDeps['editorRef'],
 			});
 			const { result } = renderHook(() => useAutoRunUndo(mockDeps));
 
@@ -588,7 +592,7 @@ describe('useAutoRunUndo', () => {
 
 			// Update deps for redo
 			mockDeps.localContent = 'Version 1';
-			textarea.selectionStart = 10;
+			editor.getCaret.mockReturnValue(10);
 
 			// Redo
 			act(() => {
@@ -601,14 +605,14 @@ describe('useAutoRunUndo', () => {
 			});
 
 			// The redo should restore the cursor position that was saved when we undid
-			expect(textarea.setSelectionRange).toHaveBeenCalled();
-			expect(textarea.focus).toHaveBeenCalled();
+			expect(editor.setSelection).toHaveBeenCalled();
+			expect(editor.focus).toHaveBeenCalled();
 		});
 
-		it('should handle missing textarea ref gracefully', async () => {
+		it('should handle a missing editor ref gracefully', async () => {
 			const mockDeps = createMockDeps({
 				localContent: 'Version 2',
-				textareaRef: { current: null },
+				editorRef: { current: null } as unknown as UseAutoRunUndoDeps['editorRef'],
 			});
 			const { result } = renderHook(() => useAutoRunUndo(mockDeps));
 
@@ -630,16 +634,14 @@ describe('useAutoRunUndo', () => {
 			expect(mockDeps.setLocalContent).toHaveBeenCalledWith('Version 1');
 		});
 
-		it('should use 0 as cursor position when textarea has no selectionStart', () => {
-			const textarea = createMockTextarea(0, 'Content');
-			// Simulate undefined selectionStart
-			Object.defineProperty(textarea, 'selectionStart', {
-				get: () => undefined,
-			});
+		it('should use 0 as cursor position when the editor reports no caret', () => {
+			const editor = createMockEditor(0, 'Content');
+			// Simulate an editor that has not mounted its view yet
+			editor.getCaret.mockReturnValue(undefined as unknown as number);
 
 			const mockDeps = createMockDeps({
 				localContent: 'Updated content',
-				textareaRef: { current: textarea },
+				editorRef: { current: editor } as unknown as UseAutoRunUndoDeps['editorRef'],
 			});
 			const { result } = renderHook(() => useAutoRunUndo(mockDeps));
 
@@ -736,10 +738,10 @@ describe('useAutoRunUndo', () => {
 		});
 
 		it('should use correct cursor position from scheduled snapshot', async () => {
-			const textarea = createMockTextarea(100, 'Current content');
+			const editor = createMockEditor(100, 'Current content');
 			const mockDeps = createMockDeps({
 				localContent: 'Current content',
-				textareaRef: { current: textarea },
+				editorRef: { current: editor } as unknown as UseAutoRunUndoDeps['editorRef'],
 			});
 			const { result } = renderHook(() => useAutoRunUndo(mockDeps));
 
@@ -763,7 +765,7 @@ describe('useAutoRunUndo', () => {
 			});
 
 			// Verify cursor position was restored
-			expect(textarea.setSelectionRange).toHaveBeenCalledWith(42, 42);
+			expect(editor.setSelection).toHaveBeenCalledWith(42, 42);
 		});
 
 		it('should clean up pending timeout on unmount', () => {

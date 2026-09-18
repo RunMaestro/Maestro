@@ -17,6 +17,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, act, fireEvent } from '@testing-library/react';
 import { UsageDashboardModal } from '../../../../renderer/components/UsageDashboard/UsageDashboardModal';
 import { useUIStore } from '../../../../renderer/stores/uiStore';
+import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import type { Theme } from '../../../../renderer/types';
 
 // Mock lucide-react icons
@@ -67,6 +68,10 @@ vi.mock('lucide-react', () => {
 		CalendarCheck: createIcon('calendar-check', '📆'),
 		PenLine: createIcon('pen-line', '✏️'),
 		Coins: createIcon('coins', '🪙'),
+		// Delegation score card + summary ratio card icons
+		Rocket: createIcon('rocket', '🚀'),
+		Info: createIcon('info', 'ℹ️'),
+		Split: createIcon('split', '🔀'),
 	};
 });
 
@@ -154,7 +159,7 @@ global.ResizeObserver = MockResizeObserver as unknown as typeof ResizeObserver;
 
 // Mock maestro API
 const mockGetAggregation = vi.fn();
-const mockExportCsv = vi.fn();
+const mockExportUsage = vi.fn();
 const mockOnStatsUpdate = vi.fn(() => vi.fn());
 const mockGetAutoRunSessions = vi.fn(() => Promise.resolve([]));
 const mockGetAutoRunTasks = vi.fn(() => Promise.resolve([]));
@@ -166,7 +171,13 @@ Object.defineProperty(window, 'maestro', {
 	value: {
 		stats: {
 			getAggregation: mockGetAggregation,
-			exportCsv: mockExportCsv,
+			getDelegationTotals: vi.fn().mockResolvedValue({
+				interactive: { count: 0, durationMs: 0 },
+				autoRun: { count: 0, durationMs: 0 },
+				cue: { count: 0, durationMs: 0 },
+			}),
+			getDelegationByDay: vi.fn().mockResolvedValue([]),
+			exportUsage: mockExportUsage,
 			onStatsUpdate: mockOnStatsUpdate,
 			getAutoRunSessions: mockGetAutoRunSessions,
 			getAutoRunTasks: mockGetAutoRunTasks,
@@ -272,8 +283,18 @@ describe('UsageDashboard Responsive Layout', () => {
 		// tests in this file. Reset it so each test starts on 'overview' instead of
 		// inheriting the tab a prior test switched to.
 		useUIStore.setState({ usageDashboardViewMode: 'overview' });
+		// Pin the Encore flags this file was written against. Cue ships on by
+		// default, which adds a Cue tab and a cueStats fetch these tests do not mock.
+		useSettingsStore.setState((s) => ({
+			encoreFeatures: { ...s.encoreFeatures, usageStats: true, maestroCue: false },
+		}));
 		mockGetAggregation.mockResolvedValue(createSampleData());
-		mockExportCsv.mockResolvedValue('date,count\n2024-01-15,25');
+		mockExportUsage.mockResolvedValue({
+			path: '/tmp/usage.json',
+			format: 'json',
+			rowCounts: {},
+			notes: [],
+		});
 		mockSaveFile.mockResolvedValue(null);
 		mockWriteFile.mockResolvedValue({ success: true });
 		mockGetDatabaseSize.mockResolvedValue(1024 * 1024 * 5);

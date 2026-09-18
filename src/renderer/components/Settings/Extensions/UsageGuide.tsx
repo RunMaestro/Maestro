@@ -49,7 +49,7 @@ export function UsageGuide({ theme, usage }: UsageGuideProps) {
 	return (
 		<div className="mt-4" data-testid="extension-usage-guide">
 			<h4
-				className="text-[11px] font-bold uppercase tracking-wide mb-2"
+				className="text-xs-plus font-bold uppercase tracking-wide mb-2"
 				style={{ color: theme.colors.textDim }}
 			>
 				How to use it
@@ -120,7 +120,7 @@ export function UsageGuide({ theme, usage }: UsageGuideProps) {
 					{usage.steps.map((step, index) => (
 						<li key={step.title} className="flex gap-3">
 							<span
-								className="mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full text-[11px] font-bold"
+								className="mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full text-xs-plus font-bold"
 								style={{ backgroundColor: theme.colors.accent + '22', color: theme.colors.accent }}
 							>
 								{index + 1}
@@ -144,7 +144,7 @@ export function UsageGuide({ theme, usage }: UsageGuideProps) {
 			{usage.notes && usage.notes.length > 0 && (
 				<div className="mt-4" data-testid="extension-usage-notes">
 					<h4
-						className="text-[11px] font-bold uppercase tracking-wide mb-2"
+						className="text-xs-plus font-bold uppercase tracking-wide mb-2"
 						style={{ color: theme.colors.textDim }}
 					>
 						Good to know
@@ -167,7 +167,7 @@ export function UsageGuide({ theme, usage }: UsageGuideProps) {
 			{usage.agentCommands && usage.agentCommands.length > 0 && (
 				<div className="mt-4" data-testid="extension-usage-agent">
 					<h4
-						className="text-[11px] font-bold uppercase tracking-wide mb-2"
+						className="text-xs-plus font-bold uppercase tracking-wide mb-2"
 						style={{ color: theme.colors.textDim }}
 					>
 						How agents drive it
@@ -179,7 +179,7 @@ export function UsageGuide({ theme, usage }: UsageGuideProps) {
 									{entry.label}
 								</div>
 								<code
-									className="mt-0.5 block rounded px-2 py-1 text-[11px] break-all select-text"
+									className="mt-0.5 block rounded px-2 py-1 text-xs-plus break-all select-text"
 									style={{
 										backgroundColor: theme.colors.bgMain,
 										color: theme.colors.textMain,

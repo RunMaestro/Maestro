@@ -157,7 +157,22 @@ describe('NowPlayingIndicator', () => {
 		// It needs min-w-0 to be able to shrink at all: a flex item defaults to
 		// min-width:auto and would refuse to go below its content.
 		expect(pill.className).toContain('min-w-0');
-		expect(screen.getByTestId('now-playing-toggle').className).toContain('min-w-0');
+		// The shrinking stops at the toggle, though. The label span inside it is
+		// `truncate`, which already gives it a zero automatic minimum, so the button
+		// needs no `min-w-0` of its own - and must not have one: with it the button
+		// shrank past its own padding box and the `shrink-0` glyph spilled out over
+		// the divider.
+		expect(screen.getByTestId('now-playing-toggle').className).not.toContain('min-w-0');
+	});
+
+	it('centers each glyph in its own half of the pill', () => {
+		render(<NowPlayingIndicator theme={mockTheme} compact />);
+		for (const id of ['now-playing-toggle', 'now-playing-restore']) {
+			expect(screen.getByTestId(id).className).toContain('justify-center');
+			expect(screen.getByTestId(id).className).toContain('items-center');
+		}
+		// The restore half has nothing that may be clipped, so it never yields.
+		expect(screen.getByTestId('now-playing-restore').className).toContain('shrink-0');
 	});
 
 	it('never sheds a control, only the filename', () => {

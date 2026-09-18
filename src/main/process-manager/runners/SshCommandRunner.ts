@@ -4,12 +4,13 @@ import { spawn } from 'child_process';
 import { EventEmitter } from 'events';
 import { logger } from '../../utils/logger';
 import { matchSshErrorPattern } from '../../parsers/error-patterns';
-import { shellEscapeForDoubleQuotes } from '../../utils/shell-escape';
+import { shellEscapeForDoubleQuotes, shellEscapeRemotePath } from '../../utils/shell-escape';
 import { getExpandedEnv, resolveSshPath } from '../../utils/cliDetection';
 import { expandTilde } from '../../../shared/pathUtils';
 import { killProcessTreeNow } from '../utils/commandKill';
 import type { CommandResult } from '../types';
 import type { SshRemoteConfig } from '../../../shared/types';
+import { buildSshOptionArgs } from '../../../shared/sshOptions';
 
 /** Exit code for a command we SIGKILLed. 128+9, the shell convention. */
 const SIGKILL_EXIT_CODE = 137;
@@ -60,17 +61,9 @@ export class SshCommandRunner {
 			sshArgs.push('-i', expandTilde(sshConfig.privateKeyPath));
 		}
 
-		// Default SSH options for non-interactive operation
-		const sshOptions: Record<string, string> = {
-			BatchMode: 'yes',
-			StrictHostKeyChecking: 'accept-new',
-			ConnectTimeout: '10',
-			ClearAllForwardings: 'yes',
-			RequestTTY: 'no',
-		};
-		for (const [key, value] of Object.entries(sshOptions)) {
-			sshArgs.push('-o', `${key}=${value}`);
-		}
+		// Default SSH options for non-interactive operation, plus this remote's
+		// overrides (ProxyCommand, a longer ConnectTimeout for a tunnelled host).
+		sshArgs.push(...buildSshOptionArgs(sshConfig.sshOptions));
 
 		// Port specification
 		if (!sshConfig.useSshConfig || sshConfig.port !== 22) {
@@ -85,7 +78,9 @@ export class SshCommandRunner {
 			sshArgs.push(sshConfig.host);
 		}
 
-		// Determine the working directory on the remote
+		// Determine the working directory on the remote. Rendered through the
+		// tilde-aware escaper below: the old single-quoted `'~'` default could
+		// never expand, so a command with no cwd failed on `cd` before it ran.
 		const remoteCwd = cwd || '~';
 
 		// Merge environment variables: SSH config's remoteEnv + shell env vars
@@ -102,11 +97,12 @@ export class SshCommandRunner {
 
 		// Escape the user's command for the remote shell
 		const escapedCommand = shellEscapeForDoubleQuotes(command);
+		const escapedCwd = shellEscapeRemotePath(remoteCwd);
 		let remoteCommand: string;
 		if (envExports) {
-			remoteCommand = `cd '${remoteCwd.replace(/'/g, "'\\''")}' && ${envExports} $SHELL -lc "${escapedCommand}"`;
+			remoteCommand = `cd ${escapedCwd} && ${envExports} $SHELL -lc "${escapedCommand}"`;
 		} else {
-			remoteCommand = `cd '${remoteCwd.replace(/'/g, "'\\''")}' && $SHELL -lc "${escapedCommand}"`;
+			remoteCommand = `cd ${escapedCwd} && $SHELL -lc "${escapedCommand}"`;
 		}
 
 		// Wrap the entire thing for SSH

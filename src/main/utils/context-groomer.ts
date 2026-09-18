@@ -16,7 +16,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { logger } from './logger';
 import { buildAgentArgs, applyAgentConfigOverrides } from './agent-args';
-import { wrapSpawnWithSsh } from './ssh-spawn-wrapper';
+import { wrapSpawnWithSsh, sshUnresolvedRemoteMessage } from './ssh-spawn-wrapper';
 import type { SshRemoteSettingsStore } from './ssh-remote-resolver';
 import type { SshRemoteConfig } from '../../shared/types';
 import { isWindows } from '../../shared/platformDetection';
@@ -342,14 +342,7 @@ export async function groomContext(
 		// remote can't be resolved. Fail loudly instead - the user opted into SSH,
 		// so a local run is the wrong answer, not a graceful degradation.
 		if (!wrapped.sshRemoteUsed) {
-			const remoteLabel = sessionSshRemoteConfig.remoteId
-				? ` "${sessionSshRemoteConfig.remoteId}"`
-				: '';
-			throw new Error(
-				`SSH remote execution is enabled for this session but the configured remote${remoteLabel} ` +
-					`could not be resolved. Check that the remote exists, is enabled, and that the ` +
-					`session's remoteId points at a valid SSH remote.`
-			);
+			throw new Error(sshUnresolvedRemoteMessage(sessionSshRemoteConfig));
 		}
 
 		spawnCommand = wrapped.command;

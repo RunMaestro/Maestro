@@ -252,6 +252,85 @@ describe('HistoryFilterToggle', () => {
 		expect(screen.getByText('USER')).toBeInTheDocument();
 		expect(screen.getByText('CUE')).toBeInTheDocument();
 	});
+	describe('fillWidth', () => {
+		/**
+		 * The pills share their toolbar row with the search and help buttons. The
+		 * row neither wraps nor scrolls, and nothing in it used to shrink, so once
+		 * the pills outgrew the space the overflow spilled out of both ends of a
+		 * centred row and took the two buttons with it.
+		 */
+		it('stays its natural width so the flanking controls sit beside the pills', () => {
+			// `flex-1` would make the row swallow the whole toolbar and strand the
+			// search and help buttons against the two panel edges. The row only
+			// needs to KNOW the free width, not occupy it.
+			const { container } = render(
+				<HistoryFilterToggle
+					activeFilters={new Set<HistoryEntryType>(['AUTO'])}
+					onToggleFilter={vi.fn()}
+					theme={mockTheme}
+					fillWidth
+				/>
+			);
+			const row = container.querySelector('[data-testid="history-filter-toggle"]')!;
+			expect(row.className).not.toContain('flex-1');
+		});
+
+		it('may still shrink, so a squeeze clips a pill instead of a button', () => {
+			// min-w-0 with flex-shrink left at its default. Without min-w-0 a flex
+			// item refuses to go below its content and pushes its neighbours out
+			// instead, which is the original bug.
+			const { container } = render(
+				<HistoryFilterToggle
+					activeFilters={new Set<HistoryEntryType>(['AUTO'])}
+					onToggleFilter={vi.fn()}
+					theme={mockTheme}
+					fillWidth
+				/>
+			);
+			const row = container.querySelector('[data-testid="history-filter-toggle"]')!;
+			expect(row.className).toContain('min-w-0');
+			expect(row.className).not.toContain('flex-shrink-0');
+			expect(row.className).toContain('overflow-hidden');
+		});
+
+		it('measures the labels off to one side, not the live pills', () => {
+			// Measuring the rendered pills would feed each density choice into the
+			// next one and oscillate. The mirror is fixed at the base size, so its
+			// width is a property of the font rather than of the current rung.
+			const { container } = render(
+				<HistoryFilterToggle
+					activeFilters={new Set<HistoryEntryType>(['AUTO'])}
+					onToggleFilter={vi.fn()}
+					theme={mockTheme}
+					visibleTypes={['USER', 'AGENT', 'AUTO', 'CUE']}
+					fillWidth
+				/>
+			);
+			const mirror = container.querySelector<HTMLElement>(
+				'[data-testid="history-filter-pill-mirror"]'
+			)!;
+			expect(mirror.textContent).toBe('USERAGENTAUTOCUE');
+			expect(mirror.style.visibility).toBe('hidden');
+			expect(mirror.getAttribute('aria-hidden')).toBe('true');
+			expect(mirror.className).toContain('absolute');
+		});
+
+		it('opts out entirely when the toolbar has no free width to read', () => {
+			// Director's Notes puts the pills beside an activity graph that already
+			// consumes the leftover space, so there is no free figure to measure.
+			const { container } = render(
+				<HistoryFilterToggle
+					activeFilters={new Set<HistoryEntryType>(['AUTO'])}
+					onToggleFilter={vi.fn()}
+					theme={mockTheme}
+				/>
+			);
+			const row = container.querySelector('[data-testid="history-filter-toggle"]')!;
+			expect(row.className).toContain('flex-shrink-0');
+			expect(container.querySelector('[data-testid="history-filter-pill-mirror"]')).toBeNull();
+		});
+	});
+
 	describe('type scale', () => {
 		/**
 		 * These pills sit beside the search button and the activity graph as

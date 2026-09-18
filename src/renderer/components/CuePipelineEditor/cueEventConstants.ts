@@ -11,6 +11,7 @@ import {
 	Zap,
 	GitPullRequest,
 	CircleDot,
+	Tag,
 	CheckSquare,
 	Power,
 	Terminal,
@@ -29,6 +30,7 @@ export const EVENT_ICONS: Record<CueEventType, typeof Clock> = {
 	'agent.completed': Zap,
 	'github.pull_request': GitPullRequest,
 	'github.issue': CircleDot,
+	'github.label': Tag,
 	'task.pending': CheckSquare,
 	'cli.trigger': Terminal,
 	'webhook.received': Webhook,
@@ -66,6 +68,14 @@ Branch: {{CUE_GH_BRANCH}} → {{CUE_GH_BASE_BRANCH}}
 Labels: {{CUE_GH_LABELS}}
 
 {{CUE_GH_BODY}}`,
+	'github.label': `Label added: {{CUE_GH_LABEL}} (by {{CUE_GH_LABEL_ACTOR}})
+URL: {{CUE_GH_URL}}
+#: {{CUE_GH_NUMBER}}
+Title: {{CUE_GH_TITLE}}
+Author: {{CUE_GH_AUTHOR}}
+All labels: {{CUE_GH_LABELS}}
+
+{{CUE_GH_BODY}}`,
 	'file.changed': 'Changed file: {{CUE_FILE_PATH}}\n\n',
 	'agent.completed': '{{CUE_SOURCE_OUTPUT}}\n\n',
 	'task.pending': 'Pending tasks in {{CUE_TASK_FILE}}:\n{{CUE_TASK_LIST}}\n\n',
@@ -98,6 +108,7 @@ export const EVENT_COLORS: Record<CueEventType, string> = {
 	'agent.completed': '#22c55e',
 	'github.pull_request': '#a855f7',
 	'github.issue': '#f97316',
+	'github.label': '#ec4899',
 	'task.pending': '#06b6d4',
 	'cli.trigger': '#64748b',
 	'webhook.received': '#ec4899',

@@ -1,4 +1,4 @@
-import { Clock, History } from 'lucide-react';
+import { Clock, History, Layers } from 'lucide-react';
 import type { Theme } from '../../../../../types';
 import { SettingCheckbox } from '../../../../SettingCheckbox';
 import { ToggleButtonGroup } from '../../../../ToggleButtonGroup';
@@ -10,6 +10,8 @@ interface HistorySectionProps {
 	setDefaultSaveToHistory: (enabled: boolean) => void;
 	synopsisDebounceSeconds: number;
 	setSynopsisDebounceSeconds: (seconds: number) => void;
+	groupCueEntries: boolean;
+	setGroupCueEntries: (enabled: boolean) => void;
 }
 
 export function HistorySection({
@@ -18,6 +20,8 @@ export function HistorySection({
 	setDefaultSaveToHistory,
 	synopsisDebounceSeconds,
 	setSynopsisDebounceSeconds,
+	groupCueEntries,
+	setGroupCueEntries,
 }: HistorySectionProps) {
 	return (
 		<div data-setting-id="general-history">
@@ -54,6 +58,19 @@ export function HistorySection({
 					</p>
 				</div>
 			)}
+
+			{/* Group Cue entries in the History panel */}
+			<div className="mt-3" data-setting-id="general-group-cue-entries">
+				<SettingCheckbox
+					icon={Layers}
+					sectionLabel="Group Cue History Entries"
+					title="Collapse repeated Cue runs into one History row"
+					description="A high-frequency trigger becomes a single row with its run count, the most recent run time, and a failure count. Expand the row to see the individual runs. Turn this off to list every Cue run separately."
+					checked={groupCueEntries}
+					onChange={setGroupCueEntries}
+					theme={theme}
+				/>
+			</div>
 		</div>
 	);
 }

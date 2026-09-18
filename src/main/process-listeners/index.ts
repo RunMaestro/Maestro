@@ -12,10 +12,10 @@ import type { ProcessListenerDependencies } from './types';
 // Import individual listener setup functions
 import { setupForwardingListeners } from './forwarding-listeners';
 import { setupDataListener } from './data-listener';
+import { setupGroupChatLivenessListener } from './group-chat-liveness-listener';
 import { setupUsageListener } from './usage-listener';
 import { setupSessionIdListener } from './session-id-listener';
 import { setupErrorListener } from './error-listener';
-import { setupStatsListener } from './stats-listener';
 import { setupExitListener } from './exit-listener';
 import { setupPluginEventListener } from './plugin-event-listener';
 import { setupDispatchCallbackListener } from './dispatch-callback-listener';
@@ -40,6 +40,9 @@ export function setupProcessListeners(
 	// Data output listener (with group chat buffering and web broadcast)
 	setupDataListener(processManager, deps);
 
+	// Re-arms the Group Chat router's per-turn silence budgets on any proof of life.
+	setupGroupChatLivenessListener(processManager);
+
 	// Usage statistics listener (with group chat participant/moderator updates)
 	setupUsageListener(processManager, deps);
 
@@ -48,9 +51,6 @@ export function setupProcessListeners(
 
 	// Agent error listener
 	setupErrorListener(processManager, deps);
-
-	// Stats/query-complete listener
-	setupStatsListener(processManager, deps);
 
 	// Exit listener (with group chat routing, recovery, and synthesis)
 	setupExitListener(processManager, deps);

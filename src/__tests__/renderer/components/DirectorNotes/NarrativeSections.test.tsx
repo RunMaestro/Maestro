@@ -19,6 +19,7 @@ import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { NarrativeSections } from '../../../../renderer/components/DirectorNotes/NarrativeSections';
 import type { DirectorNotesNarrative } from '../../../../shared/directorNotesNarrative';
+import { buildNarrativeGroupLookup } from '../../../../shared/directorNotesGrouping';
 import { mockTheme, createMockTheme } from '../../../helpers/mockTheme';
 
 // Canonical narrative exercising every section kind and the full severity/agent
@@ -153,6 +154,78 @@ describe('NarrativeSections', () => {
 
 			const dot = warn.closest('li')?.querySelector('span[aria-hidden="true"]') as HTMLElement;
 			expect(dot).toHaveStyle({ backgroundColor: '#aa8800' });
+		});
+	});
+
+	// Bullets bucket by the agent's group when Maestro knows one and by the agent
+	// otherwise, so a long section stops making the reader re-derive ownership on
+	// every line.
+	describe('bucketing', () => {
+		const MULTI_AGENT: DirectorNotesNarrative = {
+			version: 1,
+			sections: [
+				{
+					kind: 'accomplishments',
+					title: 'Accomplishments',
+					items: [
+						{ text: 'Shipped the dashboard', agent: 'Maestro' },
+						{ text: 'Merged the rc branch', agent: 'rc' },
+						{ text: 'Trained the voice model', agent: 'acappella' },
+					],
+				},
+			],
+		};
+
+		const lookup = buildNarrativeGroupLookup([
+			{ agent: 'Maestro', group: 'Maestro Core', emoji: '\u{1F3AC}' },
+			{ agent: 'rc', group: 'Maestro Core', emoji: '\u{1F3AC}' },
+		]);
+
+		it('draws one header per group and keeps the member pill inside it', () => {
+			render(<NarrativeSections theme={mockTheme} narrative={MULTI_AGENT} groupLookup={lookup} />);
+
+			// Two grouped agents collapse under the group; the ungrouped one keeps
+			// its own header.
+			expect(screen.getByText(/Maestro Core/)).toBeInTheDocument();
+			expect(screen.getByText('acappella')).toBeInTheDocument();
+			// Inside a group the pill still names which member did it.
+			expect(screen.getByText('Maestro')).toBeInTheDocument();
+			expect(screen.getByText('rc')).toBeInTheDocument();
+		});
+
+		it('falls back to per-agent headers with no lookup and drops the redundant pill', () => {
+			render(<NarrativeSections theme={mockTheme} narrative={MULTI_AGENT} />);
+
+			// One header per agent, and the pill under it would only repeat it, so
+			// each name appears exactly once.
+			expect(screen.getAllByText('Maestro')).toHaveLength(1);
+			expect(screen.getAllByText('rc')).toHaveLength(1);
+			expect(screen.getAllByText('acappella')).toHaveLength(1);
+		});
+
+		it('stays a flat list when every bullet shares one owner', () => {
+			render(
+				<NarrativeSections
+					theme={mockTheme}
+					narrative={{
+						version: 1,
+						sections: [
+							{
+								kind: 'accomplishments',
+								title: 'Accomplishments',
+								items: [
+									{ text: 'Shipped the dashboard', agent: 'Maestro' },
+									{ text: 'Merged the rc branch', agent: 'Maestro' },
+								],
+							},
+						],
+					}}
+				/>
+			);
+
+			// A lone header repeats the section title, so the pill carries the
+			// attribution instead - once per bullet.
+			expect(screen.getAllByText('Maestro')).toHaveLength(2);
 		});
 	});
 

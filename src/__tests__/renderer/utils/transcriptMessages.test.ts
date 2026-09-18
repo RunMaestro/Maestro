@@ -18,6 +18,7 @@ import {
 	transcriptMessagesToLogEntries,
 	type TranscriptMessage,
 } from '../../../renderer/utils/transcriptMessages';
+import { embedSystemPromptInPrompt } from '../../../shared/embeddedSystemPrompt';
 
 function entry(id: string, text: string, source: LogEntry['source'] = 'user', ts = 0): LogEntry {
 	return { id, text, source, timestamp: ts };
@@ -53,6 +54,57 @@ describe('transcriptMessagesToLogEntries', () => {
 
 		expect(entries.map((e) => e.id)).toEqual(['img']);
 		expect(entries[0].images).toEqual(['data:image/png;base64,AAA']);
+	});
+
+	// Issue #1533: every provider but Claude Code takes Maestro's system prompt
+	// embedded in the first user turn, and that turn is what lands on disk. A
+	// hydrated tab used to render the whole envelope as if the user had typed it.
+	it('unwraps the embedded system prompt from a hydrated user turn', () => {
+		const wrapped = embedSystemPromptInPrompt(
+			'# Maestro System Context\n\nYou are **Scout**, working in /repo.',
+			'run the test suite'
+		);
+
+		const entries = transcriptMessagesToLogEntries([
+			message({ uuid: 'u', type: 'user', content: wrapped }),
+		]);
+
+		expect(entries[0].text).toBe('run the test suite');
+		expect(entries[0].text).not.toContain('Maestro System Context');
+	});
+
+	it('drops a turn that carried nothing but the envelope', () => {
+		const entries = transcriptMessagesToLogEntries([
+			message({ uuid: 'sys', type: 'user', content: embedSystemPromptInPrompt('# Context', '') }),
+			message({ uuid: 'a', type: 'assistant', content: 'done' }),
+		]);
+
+		expect(entries.map((e) => e.id)).toEqual(['a']);
+	});
+
+	it('leaves an assistant message that quotes the marker alone', () => {
+		// Only a user turn is ever wrapped, and an agent explaining the format
+		// must not have its answer truncated.
+		const quoted = 'The spawn path sends:\n\n---\n\n# User Request\n\n<your prompt>';
+		const entries = transcriptMessagesToLogEntries([
+			message({ uuid: 'a', type: 'assistant', content: quoted }),
+		]);
+
+		expect(entries[0].text).toBe(quoted);
+	});
+
+	// The backfill matches a hydrated entry against what the live tab logged to
+	// find its splice point, and a live tab logs the CLEAN prompt. Unwrapping is
+	// what lets those two texts line up at all.
+	it('produces a first turn that matches the entry a live tab logged', () => {
+		const wrapped = embedSystemPromptInPrompt('# Maestro System Context', 'fix the flaky test');
+		const loaded = transcriptMessagesToLogEntries([
+			message({ uuid: 'disk-1', type: 'user', content: wrapped }),
+			message({ uuid: 'disk-2', type: 'assistant', content: 'on it' }),
+		]);
+
+		const visible = [entry('live-2', 'on it', 'stdout')];
+		expect(selectOlderEntries(loaded, visible).map((e) => e.text)).toEqual(['fix the flaky test']);
 	});
 });
 

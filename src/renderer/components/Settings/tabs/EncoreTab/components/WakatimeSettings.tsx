@@ -137,7 +137,7 @@ export function WakatimeSettings({
 							</button>
 						)}
 					</div>
-					<p className="text-[10px] mt-1.5 opacity-55">
+					<p className="text-2xs mt-1.5 opacity-55">
 						Get your API key from wakatime.com/settings/api-key. Keys are stored locally in
 						~/.maestro/settings.json.
 					</p>

@@ -549,6 +549,7 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 				label: props['data-maestro-marker-label'],
 				detail: props['data-maestro-marker-detail'],
 				artifact: props['data-maestro-marker-artifact'],
+				reason: props['data-maestro-marker-reason'],
 				theme,
 			});
 		};
@@ -889,7 +890,7 @@ export function generateTerminalProseStyles(theme: Theme, scopeSelector: string)
     ${s} p { color: ${c.textMain}; margin: 0 !important; line-height: 1.4; }
     ${s} p + p { margin-top: 0.5em !important; }
     ${s} p:empty { display: none; }
-    ${s} > ul, ${s} > ol { color: ${c.textMain}; margin: 0.25em 0 !important; padding-left: 2em; list-style-position: outside; }
+    ${s} ul, ${s} ol { color: ${c.textMain}; margin: 0.25em 0 !important; padding-left: 2em; list-style-position: outside; }
     ${s} li ul, ${s} li ol { margin: 0 !important; padding-left: 1.5em; list-style-position: outside; }
     ${s} li { margin: 0 !important; padding: 0; line-height: 1.4; display: list-item; }
     ${s} li > p:first-child { margin: 0 !important; display: inline; vertical-align: baseline; line-height: inherit; }

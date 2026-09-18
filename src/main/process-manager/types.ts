@@ -75,12 +75,6 @@ export interface ProcessConfig {
 	 *  script's `#!/usr/bin/env node` shebang. Local spawn only - SSH builds
 	 *  its remote PATH separately. */
 	extraPathDirs?: string[];
-	/** Env vars to REMOVE from the child environment, applied after every other
-	 *  layer. Provider Failover sets this so a backup endpoint cannot inherit the
-	 *  primary provider's credential from global settings or `process.env`; a
-	 *  merge alone cannot express a removal. Local spawn only - SSH builds its
-	 *  remote environment separately. */
-	unsetEnvKeys?: string[];
 	/** Agent-reported session id when this spawn is resuming a prior session
 	 *  (e.g. Copilot's `--resume=<id>`, Claude's `--resume <id>`). The spawner
 	 *  uses it to seed `ManagedProcess.agentSessionId` so post-exit work that
@@ -124,6 +118,9 @@ export interface ManagedProcess {
 	 *  (coerced to 0 by the spawner's `close` handler) must NOT be surfaced as an
 	 *  "exited without producing a response" error. */
 	interrupted?: boolean;
+	/** An in-turn error notice held until the turn shows whether the agent
+	 *  recovered from it. See `AgentOutputParser.isProvisionalErrorNotice`. */
+	provisionalError?: AgentError;
 	startTime: number;
 	outputParser?: AgentOutputParser;
 	stderrBuffer?: string;
@@ -153,7 +150,7 @@ export interface ManagedProcess {
 	sshRemoteCommand?: string;
 	dataBuffer?: string;
 	dataBufferTimeout?: NodeJS.Timeout;
-	/** Env vars Maestro explicitly set on this process (global + agent + session overrides),
+	/** Env vars Maestro explicitly set on this process (global, then the session's own set or else the agent-level set),
 	 *  with `~/` paths expanded and MAESTRO_SESSION_RESUMED included when applicable.
 	 *  Inherited system env is NOT included - this is the actionable set shown in the
 	 *  Process Details modal. */

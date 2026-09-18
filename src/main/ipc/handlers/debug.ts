@@ -24,6 +24,7 @@ import {
 	startProfiling,
 	stopProfiling,
 	getProfilingStatus,
+	setProfilingAutoStopHandler,
 	finalizeCapture,
 } from '../../profiling';
 import { AgentDetector } from '../../agents';
@@ -225,31 +226,57 @@ export function registerDebugHandlers(deps: DebugHandlerDependencies): void {
 	// Off by default with zero steady-state cost: Chromium's trace points are
 	// dormant until a recording enables their category.
 
-	// Whether a recording is currently in flight (drives the palette toggle).
+	const profilingStatusPayload = () => {
+		const s = getProfilingStatus();
+		return {
+			active: s.active,
+			startedAt: s.startedAt,
+			elapsedMs: s.elapsedMs,
+			categories: s.categories,
+			bufferPercent: s.bufferPercent,
+			peakBufferPercent: s.peakBufferPercent,
+			bufferSizeKb: s.bufferSizeKb,
+			autoStopRequested: s.autoStopRequested,
+		};
+	};
+
+	// The buffer watchdog ends a recording before Chromium starts dropping
+	// events. It deliberately does NOT stop the recording itself: it tells the
+	// renderer, which opens the same capture modal the user's own "End
+	// Performance Profiling" opens, so an automatic stop and a manual one run
+	// the identical stop -> save -> bundle path. One flow, one set of bugs.
+	setProfilingAutoStopHandler((reason) => {
+		const mainWindow = getMainWindow();
+		if (!mainWindow || mainWindow.isDestroyed()) {
+			logger.warn(
+				`${LOG_CONTEXT} Trace buffer full but no window is available to finish the capture`
+			);
+			return;
+		}
+		logger.info(`${LOG_CONTEXT} Auto-stopping capture (${reason})`);
+		try {
+			mainWindow.webContents.send('debug:profilingAutoStopped', {
+				reason,
+				...profilingStatusPayload(),
+			});
+		} catch {
+			// window gone mid-capture; ignore
+		}
+	});
+
+	// Whether a recording is currently in flight (drives the palette toggle) and
+	// how close it is to the buffer limit.
 	ipcMain.handle(
 		'debug:getProfilingStatus',
-		createIpcHandler(handlerOpts('getProfilingStatus', false), async () => {
-			const s = getProfilingStatus();
-			return {
-				active: s.active,
-				startedAt: s.startedAt,
-				elapsedMs: s.elapsedMs,
-				categories: s.categories,
-			};
-		})
+		createIpcHandler(handlerOpts('getProfilingStatus', false), async () => profilingStatusPayload())
 	);
 
 	// Begin capturing a trace across all Electron processes.
 	ipcMain.handle(
 		'debug:startProfiling',
 		createIpcHandler(handlerOpts('startProfiling'), async () => {
-			const s = await startProfiling();
-			return {
-				active: s.active,
-				startedAt: s.startedAt,
-				elapsedMs: s.elapsedMs,
-				categories: s.categories,
-			};
+			await startProfiling();
+			return profilingStatusPayload();
 		})
 	);
 
@@ -280,7 +307,8 @@ export function registerDebugHandlers(deps: DebugHandlerDependencies): void {
 			// ends immediately, before the user fiddles with the save dialog.
 			const tracePath = path.join(app.getPath('temp'), `maestro-trace-${timestamp}.json`);
 			sendProgress({ phase: 'stopping' });
-			const { durationMs, categories } = await stopProfiling(tracePath);
+			const outcome = await stopProfiling(tracePath);
+			const { durationMs } = outcome;
 
 			sendProgress({ phase: 'awaiting-save' });
 			const result = await dialog.showSaveDialog(mainWindow, {
@@ -298,6 +326,9 @@ export function registerDebugHandlers(deps: DebugHandlerDependencies): void {
 					bundleSizeBytes: 0,
 					traceSizeBytes: 0,
 					durationMs,
+					peakBufferPercent: outcome.peakBufferPercent,
+					autoStopped: outcome.autoStopped,
+					bufferExhausted: outcome.bufferExhausted,
 				};
 			}
 
@@ -306,8 +337,7 @@ export function registerDebugHandlers(deps: DebugHandlerDependencies): void {
 				const finalized = await finalizeCapture(
 					tracePath,
 					result.filePath,
-					durationMs,
-					categories,
+					outcome,
 					(percent, bytesProcessed, totalBytes) =>
 						sendProgress({ phase: 'compressing', percent, bytesProcessed, totalBytes })
 				);
@@ -324,6 +354,9 @@ export function registerDebugHandlers(deps: DebugHandlerDependencies): void {
 					bundleSizeBytes: finalized.bundleSizeBytes,
 					traceSizeBytes: finalized.traceSizeBytes,
 					durationMs,
+					peakBufferPercent: outcome.peakBufferPercent,
+					autoStopped: outcome.autoStopped,
+					bufferExhausted: outcome.bufferExhausted,
 				};
 			} catch (err) {
 				sendProgress({
@@ -347,10 +380,11 @@ export function registerDebugHandlers(deps: DebugHandlerDependencies): void {
 		createIpcHandler(handlerOpts('stopProfilingToFile'), async () => {
 			const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
 			const tracePath = path.join(app.getPath('temp'), `maestro-trace-${timestamp}.json`);
-			const { durationMs, categories } = await stopProfiling(tracePath);
+			const outcome = await stopProfiling(tracePath);
+			const { durationMs } = outcome;
 			const bundlePath = path.join(app.getPath('temp'), `maestro-profile-${timestamp}.zip`);
 			try {
-				const finalized = await finalizeCapture(tracePath, bundlePath, durationMs, categories);
+				const finalized = await finalizeCapture(tracePath, bundlePath, outcome);
 				logger.info(`${LOG_CONTEXT} Performance profile captured for feedback: ${finalized.path}`);
 				return {
 					path: finalized.path,

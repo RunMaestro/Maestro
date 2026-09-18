@@ -35,7 +35,7 @@ export const StatCard = memo(function StatCard({
 		>
 			<div className="flex items-center gap-1.5" style={{ color: theme.colors.textDim }}>
 				{Icon && <Icon className="w-3.5 h-3.5" style={{ color: accent }} aria-hidden="true" />}
-				<span className="text-[11px] font-medium uppercase tracking-wide truncate">{label}</span>
+				<span className="text-xs-plus font-medium uppercase tracking-wide truncate">{label}</span>
 			</div>
 			<div className="flex items-end justify-between gap-2">
 				<span className="text-2xl font-bold leading-none" style={{ color: theme.colors.textMain }}>
@@ -44,7 +44,7 @@ export const StatCard = memo(function StatCard({
 				{hasTrend && <Sparkline data={trend} color={accent} width={64} height={22} />}
 			</div>
 			{caption && (
-				<span className="text-[11px]" style={{ color: theme.colors.textDim }}>
+				<span className="text-xs-plus" style={{ color: theme.colors.textDim }}>
 					{caption}
 				</span>
 			)}

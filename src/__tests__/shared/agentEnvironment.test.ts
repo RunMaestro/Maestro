@@ -9,6 +9,8 @@ import {
 	isSecretEnvKey,
 	maskEnvValue,
 	resolveAgentEnvironment,
+	isBlankEnvValue,
+	stripBlankEnvVars,
 } from '../../shared/agentEnvironment';
 
 describe('resolveAgentEnvironment', () => {
@@ -16,7 +18,7 @@ describe('resolveAgentEnvironment', () => {
 		expect(resolveAgentEnvironment({})).toEqual([]);
 	});
 
-	it('applies precedence: session over provider over global', () => {
+	it('applies precedence: session over global, with the provider layer replaced', () => {
 		const resolved = resolveAgentEnvironment({
 			global: { MODEL: 'global' },
 			agent: { MODEL: 'provider' },
@@ -24,7 +26,7 @@ describe('resolveAgentEnvironment', () => {
 		});
 
 		expect(resolved).toEqual([
-			{ key: 'MODEL', value: 'session', source: 'session', shadowedBy: ['global', 'agent'] },
+			{ key: 'MODEL', value: 'session', source: 'session', shadowedBy: ['global'] },
 		]);
 	});
 
@@ -41,13 +43,21 @@ describe('resolveAgentEnvironment', () => {
 		expect(entry).toMatchObject({ value: 'b', source: 'agent', shadowedBy: ['global'] });
 	});
 
-	it('merges keys from different layers rather than replacing the map', () => {
+	// The spawner hands a process the agent's own vars OR the provider's, never
+	// both, so a provider key the agent does not set must not appear.
+	it('drops the provider layer once the agent has a vars record, even an empty one', () => {
 		const resolved = resolveAgentEnvironment({
 			global: { A: '1' },
 			agent: { B: '2' },
 			session: { C: '3' },
 		});
-		expect(resolved.map((e) => e.key)).toEqual(['A', 'B', 'C']);
+		expect(resolved.map((e) => e.key)).toEqual(['A', 'C']);
+		expect(resolveAgentEnvironment({ agent: { B: '2' }, session: {} })).toEqual([]);
+	});
+
+	it('layers the provider set over global when the agent has no vars record', () => {
+		const resolved = resolveAgentEnvironment({ global: { A: '1' }, agent: { B: '2' } });
+		expect(resolved.map((e) => e.key)).toEqual(['A', 'B']);
 	});
 
 	// `FOO=` is a real setting that blanks a lower layer, not an absent one.
@@ -122,5 +132,45 @@ describe('envSourceLabel', () => {
 		const labels = (['global', 'agent', 'session'] as const).map(envSourceLabel);
 		expect(new Set(labels).size).toBe(3);
 		expect(labels).toEqual(['Global', 'Provider', 'This agent']);
+	});
+});
+
+describe('stripBlankEnvVars', () => {
+	it('drops blank and whitespace-only values, keeps everything else', () => {
+		expect(
+			stripBlankEnvVars({
+				CLAUDE_CONFIG_DIR: '',
+				PADDED: '   ',
+				KEPT: 'value',
+				KEPT_WITH_SPACE: ' value ',
+			})
+		).toEqual({ KEPT: 'value', KEPT_WITH_SPACE: ' value ' });
+	});
+
+	it('returns an empty object for undefined input', () => {
+		expect(stripBlankEnvVars(undefined)).toEqual({});
+	});
+
+	it('does not mutate its input', () => {
+		const input = { A: '', B: 'b' };
+		stripBlankEnvVars(input);
+		expect(input).toEqual({ A: '', B: 'b' });
+	});
+
+	it('classifies blanks the same way isBlankEnvValue does', () => {
+		expect(isBlankEnvValue('')).toBe(true);
+		expect(isBlankEnvValue('\t ')).toBe(true);
+		expect(isBlankEnvValue('0')).toBe(false);
+	});
+});
+
+describe('resolveAgentEnvironment vs stripBlankEnvVars', () => {
+	it('keeps blanks in the reported config even though the spawner drops them', () => {
+		// The two answer different questions: what did the user CONFIGURE (shown in
+		// the env viewer) versus what gets EXPORTED to the child.
+		const resolved = resolveAgentEnvironment({ session: { CLAUDE_CONFIG_DIR: '' } });
+		expect(resolved).toHaveLength(1);
+		expect(resolved[0].value).toBe('');
+		expect(stripBlankEnvVars({ CLAUDE_CONFIG_DIR: '' })).toEqual({});
 	});
 });

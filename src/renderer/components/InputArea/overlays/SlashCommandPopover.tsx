@@ -67,7 +67,7 @@ export const SlashCommandPopover = memo(function SlashCommandPopover({
 						<div className="font-mono text-sm leading-tight">
 							{highlightSlashCommand(cmd.command, inputValueLower.replace(/^\//, ''))}
 						</div>
-						<div className="text-[11px] opacity-70 leading-tight">{cmd.description}</div>
+						<div className="text-xs-plus opacity-70 leading-tight">{cmd.description}</div>
 					</button>
 				))}
 			</div>

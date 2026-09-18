@@ -108,6 +108,20 @@ vi.mock('../../../../main/auto-updater', () => ({
 	setAllowPrerelease: vi.fn(),
 }));
 
+// Mock power manager. The real singleton reaches for electron's
+// powerSaveBlocker, which this file's electron mock does not provide.
+vi.mock('../../../../main/power-manager', () => ({
+	powerManager: {
+		setEnabled: vi.fn(),
+		isEnabled: vi.fn(),
+		setKeepDisplayAwake: vi.fn(),
+		isKeepingDisplayAwake: vi.fn(),
+		getStatus: vi.fn(),
+		addBlockReason: vi.fn(),
+		removeBlockReason: vi.fn(),
+	},
+}));
+
 // Mock tunnel manager
 vi.mock('../../../../main/tunnel-manager', () => ({
 	tunnelManager: {
@@ -140,6 +154,7 @@ import { captureException } from '../../../../main/utils/sentry';
 import { checkForUpdates } from '../../../../main/update-checker';
 import { setAllowPrerelease } from '../../../../main/auto-updater';
 import { tunnelManager } from '../../../../main/tunnel-manager';
+import { powerManager } from '../../../../main/power-manager';
 import * as fsSync from 'fs';
 
 describe('system IPC handlers', () => {
@@ -265,6 +280,7 @@ describe('system IPC handlers', () => {
 				// Power management handlers
 				'power:setEnabled',
 				'power:isEnabled',
+				'power:setKeepDisplayAwake',
 				'power:getStatus',
 				'power:addReason',
 				'power:removeReason',
@@ -272,6 +288,8 @@ describe('system IPC handlers', () => {
 				'clipboard:writeText',
 				'clipboard:writeImage',
 				'clipboard:readImage',
+				// Page capture
+				'window:capturePage',
 			];
 
 			for (const channel of expectedChannels) {
@@ -280,6 +298,120 @@ describe('system IPC handlers', () => {
 
 			// Verify exact count
 			expect(handlers.size).toBe(expectedChannels.length);
+		});
+	});
+
+	// The graph screenshot shoots the SENDER's contents, and the rect it hands
+	// over comes from getBoundingClientRect(), so it arrives as floats that
+	// Chromium would answer with an empty image.
+	describe('window:capturePage', () => {
+		function makeEvent(capturePage: ReturnType<typeof vi.fn>) {
+			return { sender: { isDestroyed: () => false, capturePage } } as any;
+		}
+
+		function fakeImage(dataUrl: string | null) {
+			return {
+				isEmpty: () => dataUrl === null,
+				toDataURL: () => dataUrl ?? '',
+			};
+		}
+
+		it('rounds a fractional rect outward instead of truncating it', async () => {
+			const capturePage = vi.fn().mockResolvedValue(fakeImage('data:image/png;base64,AAA'));
+
+			const result = await handlers.get('window:capturePage')!(makeEvent(capturePage), {
+				x: 10.6,
+				y: 20.4,
+				width: 100.7,
+				height: 50.9,
+			});
+
+			expect(capturePage).toHaveBeenCalledWith({ x: 10, y: 20, width: 101, height: 51 });
+			expect(result).toBe('data:image/png;base64,AAA');
+		});
+
+		it('captures the whole page when no rect is given', async () => {
+			const capturePage = vi.fn().mockResolvedValue(fakeImage('data:image/png;base64,BBB'));
+
+			await handlers.get('window:capturePage')!(makeEvent(capturePage), undefined);
+
+			expect(capturePage).toHaveBeenCalledWith();
+		});
+
+		it('refuses a zero-area rect rather than asking for an empty shot', async () => {
+			const capturePage = vi.fn();
+
+			const result = await handlers.get('window:capturePage')!(makeEvent(capturePage), {
+				x: 0,
+				y: 0,
+				width: 0,
+				height: 100,
+			});
+
+			expect(result).toBeNull();
+			expect(capturePage).not.toHaveBeenCalled();
+		});
+
+		it('returns null for an empty capture so callers do not paste a blank image', async () => {
+			const capturePage = vi.fn().mockResolvedValue(fakeImage(null));
+
+			const result = await handlers.get('window:capturePage')!(makeEvent(capturePage), {
+				x: 0,
+				y: 0,
+				width: 10,
+				height: 10,
+			});
+
+			expect(result).toBeNull();
+		});
+
+		it('returns null when the sender is already gone', async () => {
+			const capturePage = vi.fn();
+			const event = { sender: { isDestroyed: () => true, capturePage } } as any;
+
+			await expect(handlers.get('window:capturePage')!(event, undefined)).resolves.toBeNull();
+			expect(capturePage).not.toHaveBeenCalled();
+		});
+	});
+
+	// `preventDisplaySleepEnabled` is the only power preference the main process
+	// has to restore for itself: the renderer's toggle pushes the value down on
+	// change, but nothing replays it after a restart, so without the read at
+	// registration the setting reads as ON in Settings while the blocker is
+	// still running at the weaker `prevent-app-suspension` type.
+	describe('power:setKeepDisplayAwake', () => {
+		it('persists the preference and pushes it to the power manager', async () => {
+			await handlers.get('power:setKeepDisplayAwake')!({} as any, true);
+
+			expect(powerManager.setKeepDisplayAwake).toHaveBeenCalledWith(true);
+			expect(mockSettingsStore.set).toHaveBeenCalledWith('preventDisplaySleepEnabled', true);
+		});
+
+		it('persists the off state too', async () => {
+			await handlers.get('power:setKeepDisplayAwake')!({} as any, false);
+
+			expect(powerManager.setKeepDisplayAwake).toHaveBeenCalledWith(false);
+			expect(mockSettingsStore.set).toHaveBeenCalledWith('preventDisplaySleepEnabled', false);
+		});
+
+		it('restores a saved preference at registration', () => {
+			vi.clearAllMocks();
+			mockSettingsStore.get.mockImplementation((key: string) =>
+				key === 'preventDisplaySleepEnabled' ? true : undefined
+			);
+
+			registerSystemHandlers(deps);
+
+			expect(powerManager.setKeepDisplayAwake).toHaveBeenCalledWith(true);
+		});
+
+		it('does not touch the power manager when nothing was saved', () => {
+			vi.clearAllMocks();
+			mockSettingsStore.get.mockReturnValue(undefined);
+
+			registerSystemHandlers(deps);
+
+			expect(powerManager.setKeepDisplayAwake).not.toHaveBeenCalled();
 		});
 	});
 

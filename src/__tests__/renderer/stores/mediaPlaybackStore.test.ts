@@ -506,6 +506,36 @@ describe('mediaPlaybackStore', () => {
 		});
 	});
 
+	describe('float footprint', () => {
+		const FOOTPRINT = { fromBottom: 156, fromRight: 24, width: 380, viewportHeight: 900 };
+
+		it('publishes where the widget landed, for the toast lane to step over', () => {
+			initial.setFloatFootprint(FOOTPRINT);
+			expect(useMediaPlaybackStore.getState().floatFootprint).toEqual(FOOTPRINT);
+		});
+
+		it('ignores a repeat of the same rect', () => {
+			// A drag republishes on every mousemove, and the toast stack subscribes
+			// to this - an unchanged rect must not re-render it.
+			initial.setFloatFootprint(FOOTPRINT);
+			const first = useMediaPlaybackStore.getState().floatFootprint;
+			initial.setFloatFootprint({ ...FOOTPRINT });
+			expect(useMediaPlaybackStore.getState().floatFootprint).toBe(first);
+		});
+
+		it('takes a rect that actually moved', () => {
+			initial.setFloatFootprint(FOOTPRINT);
+			initial.setFloatFootprint({ ...FOOTPRINT, fromBottom: 300 });
+			expect(useMediaPlaybackStore.getState().floatFootprint?.fromBottom).toBe(300);
+		});
+
+		it('clears when the widget leaves the screen', () => {
+			initial.setFloatFootprint(FOOTPRINT);
+			initial.setFloatFootprint(null);
+			expect(useMediaPlaybackStore.getState().floatFootprint).toBeNull();
+		});
+	});
+
 	describe('durations', () => {
 		it('remembers how long a file is', () => {
 			initial.rememberDuration('a', 266.7);

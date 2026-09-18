@@ -163,7 +163,7 @@ export const LanguagePicker = memo(function LanguagePicker({
 				ref={buttonRef}
 				type="button"
 				onClick={handleOpen}
-				className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-mono opacity-50 hover:!opacity-100 transition-opacity"
+				className="flex items-center gap-1 px-1.5 py-0.5 rounded text-xs-plus font-mono opacity-50 hover:!opacity-100 transition-opacity"
 				style={{
 					backgroundColor: theme.colors.bgActivity,
 					color: theme.colors.textDim,
@@ -228,7 +228,7 @@ export const LanguagePicker = memo(function LanguagePicker({
 										}}
 									>
 										<span className="flex-1 truncate">{entry.name}</span>
-										<span className="text-[10px] font-mono" style={{ color: theme.colors.textDim }}>
+										<span className="text-2xs font-mono" style={{ color: theme.colors.textDim }}>
 											{entry.id}
 										</span>
 										{isCurrent && (

@@ -325,7 +325,7 @@ export function PianolaModal({ theme, onClose }: PianolaModalProps) {
 				    answers agents from the CLI watcher; this dashboard configures the
 				    rules it uses and shows what it did. */}
 				<div
-					className="shrink-0 px-5 py-2.5 border-t text-[11px] select-text"
+					className="shrink-0 px-5 py-2.5 border-t text-xs-plus select-text"
 					style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
 				>
 					Pianola watches an agent and acts on these rules when you run{' '}

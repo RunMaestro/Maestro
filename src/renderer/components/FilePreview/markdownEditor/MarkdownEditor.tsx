@@ -42,10 +42,13 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 			language,
 			theme,
 			spellCheck = false,
+			readOnly = false,
 			wrap = true,
 			showLineNumbers = true,
 			onLineNumberContextMenu,
 			onKeyDown,
+			onPaste,
+			placeholder,
 			fontScale = 1,
 			fontFamily,
 			baseFontPx,
@@ -60,6 +63,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 		// fresh closures without us reconfiguring on every prop change.
 		const onChangeRef = useRef(onChange);
 		const onKeyDownRef = useRef(onKeyDown);
+		const onPasteRef = useRef(onPaste);
 		const onGutterContextRef = useRef(onLineNumberContextMenu);
 		useEffect(() => {
 			onChangeRef.current = onChange;
@@ -67,6 +71,9 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 		useEffect(() => {
 			onKeyDownRef.current = onKeyDown;
 		}, [onKeyDown]);
+		useEffect(() => {
+			onPasteRef.current = onPaste;
+		}, [onPaste]);
 		useEffect(() => {
 			onGutterContextRef.current = onLineNumberContextMenu;
 		}, [onLineNumberContextMenu]);
@@ -98,8 +105,11 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 				wrap,
 				showLineNumbers,
 				spellCheck,
+				readOnly,
 				onGutterContextMenu: (lineNumber, event) => onGutterContextRef.current?.(lineNumber, event),
 				onKeyDown: (event) => onKeyDownRef.current?.(event),
+				onPaste: (event) => onPasteRef.current?.(event),
+				placeholder,
 			});
 
 			const updateListener = EditorView.updateListener.of((update) => {
@@ -202,11 +212,14 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 				wrap,
 				showLineNumbers,
 				spellCheck,
+				readOnly,
 				onGutterContextMenu: (lineNumber, event) => onGutterContextRef.current?.(lineNumber, event),
 				onKeyDown: (event) => onKeyDownRef.current?.(event),
+				onPaste: (event) => onPasteRef.current?.(event),
+				placeholder,
 			});
 			view.dispatch({ effects: compartments.base.reconfigure(baseExt) });
-		}, [wrap, showLineNumbers, spellCheck, compartments.base]);
+		}, [wrap, showLineNumbers, spellCheck, readOnly, placeholder, compartments.base]);
 
 		useImperativeHandle(
 			ref,
@@ -269,6 +282,54 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 							? EditorView.scrollIntoView(clampedFrom, { y: 'center' })
 							: undefined,
 					});
+				},
+				getCaret() {
+					const view = viewRef.current;
+					if (!view) return 0;
+					return view.state.selection.main.head;
+				},
+				getSelectionRange() {
+					const view = viewRef.current;
+					if (!view) return { from: 0, to: 0 };
+					const { from, to } = view.state.selection.main;
+					return { from, to };
+				},
+				getScrollTop() {
+					const view = viewRef.current;
+					if (!view) return 0;
+					return view.scrollDOM.scrollTop;
+				},
+				setScrollTop(px: number) {
+					const view = viewRef.current;
+					if (!view) return;
+					view.scrollDOM.scrollTop = Math.max(0, px);
+				},
+				coordsAtPos(pos: number) {
+					const view = viewRef.current;
+					const host = hostRef.current;
+					if (!view || !host) return null;
+					const docLen = view.state.doc.length;
+					const coords = view.coordsAtPos(Math.max(0, Math.min(pos, docLen)));
+					if (!coords) return null;
+					// Viewport coordinates, rebased onto the host so a popup can be
+					// positioned with plain `absolute` inside it.
+					const hostRect = host.getBoundingClientRect();
+					return {
+						top: coords.bottom - hostRect.top + 4,
+						left: coords.left - hostRect.left,
+					};
+				},
+				replaceRange(from: number, to: number, text: string) {
+					const view = viewRef.current;
+					if (!view) return;
+					const docLen = view.state.doc.length;
+					const clampedFrom = Math.max(0, Math.min(from, docLen));
+					const clampedTo = Math.max(clampedFrom, Math.min(to, docLen));
+					view.dispatch({
+						changes: { from: clampedFrom, to: clampedTo, insert: text },
+						selection: EditorSelection.single(clampedFrom + text.length),
+					});
+					view.contentDOM.focus({ preventScroll: true });
 				},
 				setSearchMatches(matches, currentIndex) {
 					const view = viewRef.current;

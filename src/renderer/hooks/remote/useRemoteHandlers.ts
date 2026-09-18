@@ -36,6 +36,7 @@ import {
 	planCrossAgentMentions,
 	dispatchCrossAgentMentions,
 } from '../../services/crossAgentMentions';
+import { noteDirectDispatch } from '../../stores/retryStore';
 import { logger } from '../../utils/logger';
 
 // ============================================================================
@@ -627,6 +628,31 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 						};
 					})
 				);
+
+				// Agent Resilience: snapshot the prompt BEFORE spawning so a
+				// transient failure can auto-resend it.
+				//
+				// This path spawns directly rather than going through
+				// `agentStore.processQueuedItem`, so it snapshots for itself - every
+				// prompt that arrives from `maestro-cli dispatch`, a Cue pipeline, or
+				// the web/mobile composer would otherwise fail with "No prompt
+				// snapshot to resend" and fall back to the error modal. Those are the
+				// UNATTENDED paths, where nobody is watching to press retry.
+				//
+				// The item mirrors what the composer queues: a plain message pinned to
+				// the resolved target tab, so a replay lands on the same tab this
+				// spawn is writing to. Skip when no real tab resolved: the spawn falls
+				// back to a `-ai-default` route, and a replay keyed on that would land
+				// nowhere.
+				if (targetTab?.id) {
+					noteDirectDispatch(sessionId, {
+						id: generateId(),
+						timestamp: Date.now(),
+						tabId: targetTab.id,
+						type: 'message',
+						text: promptToSend,
+					});
+				}
 
 				// Ack delivery on whichever comes first: the spawn settling, or a
 				// timer set inside the main-side receipt timeout.

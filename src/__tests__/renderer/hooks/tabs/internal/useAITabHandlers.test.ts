@@ -4,10 +4,18 @@ import { useAITabHandlers } from '../../../../../renderer/hooks/tabs/internal/us
 import { useModalStore } from '../../../../../renderer/stores/modalStore';
 import { useSettingsStore } from '../../../../../renderer/stores/settingsStore';
 import { getLiveDraft, setLiveDraft } from '../../../../../renderer/utils/liveDraftStore';
+import {
+	clearDesktopAiTabSelections,
+	consumeDesktopAiTabSelection,
+} from '../../../../../renderer/utils/desktopTabSelectionSync';
 import { createMockAITab, getSession, resetTabHandlerStores, setupSession } from './testUtils';
 
 const inlineWizardMocks = vi.hoisted(() => ({
 	endWizard: vi.fn(async () => null),
+}));
+
+const runtimeMocks = vi.hoisted(() => ({
+	isWebDesktop: vi.fn(() => false),
 }));
 
 vi.mock('../../../../../renderer/contexts/InlineWizardContext', () => ({
@@ -16,10 +24,14 @@ vi.mock('../../../../../renderer/contexts/InlineWizardContext', () => ({
 	}),
 }));
 
+vi.mock('../../../../../renderer/utils/runtimeContext', () => runtimeMocks);
+
 describe('useAITabHandlers', () => {
 	beforeEach(() => {
 		resetTabHandlerStores();
+		clearDesktopAiTabSelections();
 		inlineWizardMocks.endWizard.mockClear();
+		runtimeMocks.isWebDesktop.mockReturnValue(false);
 	});
 
 	afterEach(() => {
@@ -27,7 +39,11 @@ describe('useAITabHandlers', () => {
 	});
 
 	it('creates a new AI tab with default settings', () => {
-		setupSession({ aiTabs: [createMockAITab({ id: 'ai-1' })] });
+		setupSession({
+			aiTabs: [createMockAITab({ id: 'ai-1' })],
+			inputMode: 'terminal',
+			activeTerminalTabId: 'terminal-1',
+		});
 		useSettingsStore.setState({
 			defaultSaveToHistory: false,
 			defaultShowThinking: 'sticky',
@@ -45,6 +61,25 @@ describe('useAITabHandlers', () => {
 			showThinking: 'sticky',
 		});
 		expect(session.activeTabId).toBe(session.aiTabs[1].id);
+		expect(session.inputMode).toBe('ai');
+		expect(session.activeTerminalTabId).toBeNull();
+	});
+
+	it('requests a desktop-owned tab instead of creating a browser-local tab', () => {
+		setupSession({ id: 'session-1', aiTabs: [createMockAITab({ id: 'ai-1' })] });
+		runtimeMocks.isWebDesktop.mockReturnValue(true);
+		const requestNewTab = vi.fn().mockResolvedValue({ tabId: 'ai-2' });
+		(
+			window.maestro.web as typeof window.maestro.web & { requestNewTab: typeof requestNewTab }
+		).requestNewTab = requestNewTab;
+
+		const { result } = renderHook(() => useAITabHandlers());
+		act(() => {
+			result.current.handleNewTab();
+		});
+
+		expect(requestNewTab).toHaveBeenCalledWith('session-1', false);
+		expect(getSession().aiTabs.map((tab) => tab.id)).toEqual(['ai-1']);
 	});
 
 	it('restores an orphaned thinking tab when selected', () => {
@@ -62,6 +97,37 @@ describe('useAITabHandlers', () => {
 		expect(getSession().aiTabs.map((tab) => tab.id)).toContain('orphan-1');
 		expect(getSession().activeTabId).toBe('orphan-1');
 		expect(getSession().orphanedThinkingTabs).toBeUndefined();
+	});
+
+	it('records desktop AI-tab selections as explicit focus intent', () => {
+		setupSession({
+			id: 'session-1',
+			aiTabs: [createMockAITab({ id: 'ai-1' }), createMockAITab({ id: 'ai-2' })],
+			activeTabId: 'ai-1',
+		});
+
+		const { result } = renderHook(() => useAITabHandlers());
+		act(() => {
+			result.current.handleTabSelect('ai-2');
+		});
+
+		expect(consumeDesktopAiTabSelection('session-1', 'ai-2')).toBe(true);
+	});
+
+	it('does not record Web-Desktop selections as desktop focus intent', () => {
+		setupSession({
+			id: 'session-1',
+			aiTabs: [createMockAITab({ id: 'ai-1' }), createMockAITab({ id: 'ai-2' })],
+			activeTabId: 'ai-1',
+		});
+		runtimeMocks.isWebDesktop.mockReturnValue(true);
+
+		const { result } = renderHook(() => useAITabHandlers());
+		act(() => {
+			result.current.handleTabSelect('ai-2');
+		});
+
+		expect(consumeDesktopAiTabSelection('session-1', 'ai-2')).toBe(false);
 	});
 
 	it('opens draft confirmation and clears live draft after confirm', () => {
@@ -102,6 +168,45 @@ describe('useAITabHandlers', () => {
 		await vi.waitFor(() => {
 			expect(inlineWizardMocks.endWizard).toHaveBeenCalledWith('wizard-1');
 		});
+	});
+
+	// "Close all" is scoped to what the strip draws. A hidden consult tab holds a
+	// transcript and a resume id the user was never shown a chip for, so closing it
+	// here would destroy work silently.
+	it('leaves a hidden consult tab alive when closing all tabs', () => {
+		const consult = createMockAITab({ id: 'consult', hidden: true });
+		setupSession({
+			aiTabs: [createMockAITab({ id: 'ai-1' }), createMockAITab({ id: 'ai-2' }), consult],
+			activeTabId: 'ai-1',
+		});
+
+		const { result } = renderHook(() => useAITabHandlers());
+		act(() => {
+			result.current.handleCloseAllTabs();
+		});
+
+		const ids = getSession().aiTabs.map((tab) => tab.id);
+		expect(ids).toContain('consult');
+		expect(ids).not.toContain('ai-1');
+		expect(ids).not.toContain('ai-2');
+	});
+
+	// The draft prompt guards tabs the user can still get back to. A draft parked on
+	// a chipless consult must not put a confirmation in front of a close-all.
+	it('does not prompt about drafts that live only on hidden consult tabs', () => {
+		setupSession({
+			aiTabs: [createMockAITab({ id: 'ai-1' }), createMockAITab({ id: 'consult', hidden: true })],
+			activeTabId: 'ai-1',
+		});
+		setLiveDraft('consult', 'pending consult text');
+
+		const { result } = renderHook(() => useAITabHandlers());
+		act(() => {
+			result.current.handleCloseAllTabs();
+		});
+
+		expect(useModalStore.getState().modals.get('confirm')).toBeUndefined();
+		expect(getSession().aiTabs.map((tab) => tab.id)).toContain('consult');
 	});
 
 	it('persists star changes through the provider-specific API', () => {

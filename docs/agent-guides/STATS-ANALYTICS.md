@@ -51,8 +51,16 @@ Tracks individual AI query/response cycles:
 | `project_path` | TEXT             | Normalized project path         |
 | `tab_id`       | TEXT             | AI tab that issued the query    |
 | `is_remote`    | INTEGER          | SSH remote flag (added in v2)   |
+| `is_worktree`  | INTEGER          | Worktree agent flag (v5)        |
+| `user_name`    | TEXT             | Web Login sender (v12)          |
 
-**Indexes**: `start_time`, `agent_type`, `source`, `session_id`, `project_path`, `is_remote`, compound `(start_time, agent_type)`, `(start_time, project_path)`, `(start_time, source)`
+`user_name` is the Web Login account that SENT the turn, and NULL means "nobody
+was signed in" - a turn typed at the desktop, which is every turn while Web
+Login is off. It is stamped by `stats:record-query` from what the spawn noted
+(`resolveTurnActor`), never from the acting user at write time: the row is
+written by the desktop renderer's exit listener even for a turn a browser sent.
+
+**Indexes**: `start_time`, `agent_type`, `source`, `session_id`, `project_path`, `is_remote`, `is_worktree`, `user_name`, compound `(start_time, agent_type)`, `(start_time, project_path)`, `(start_time, source)`
 
 Note there is deliberately **no index on `tab_id` and no aggregation that groups by it**. The one consumer, the Usage Dashboard's per-tab breakdown (`UsageDashboard/TabBreakdown.tsx`), groups client-side over the rows `AgentDetailModal` has already fetched for a single agent via `getStats('all', { sessionId })`. That set is one agent's events, not the whole table, so it stays cheap and needs no new IPC. Reach for a real index only if something ever needs to query by tab across all agents.
 
@@ -91,6 +99,35 @@ Tracks individual tasks within an Auto Run session:
 | `success`             | INTEGER NOT NULL | 0 or 1                             |
 
 **Indexes**: `auto_run_session_id`, `start_time`
+
+#### `wizard_runs` (Migration v10)
+
+One row per Auto Run wizard conversation, powering the Wizard section of the dashboard's Auto Run tab:
+
+| Column         | Type             | Description                                                |
+| -------------- | ---------------- | ---------------------------------------------------------- |
+| `id`           | TEXT PK          | UUID                                                       |
+| `session_id`   | TEXT NOT NULL    | Maestro agent id (`'onboarding'` for the first-run wizard) |
+| `agent_type`   | TEXT NOT NULL    | Agent type                                                 |
+| `surface`      | TEXT NOT NULL    | `'inline'` (the `/wizard` command) or `'onboarding'`       |
+| `mode`         | TEXT NOT NULL    | `'new'` or `'iterate'`                                     |
+| `outcome`      | TEXT NOT NULL    | `'in-progress'`, `'generated'`, or `'abandoned'`           |
+| `started_at`   | INTEGER NOT NULL | Unix timestamp (ms) the wizard opened                      |
+| `ended_at`     | INTEGER NOT NULL | Unix timestamp (ms) of LAST ACTIVITY, not close            |
+| `exchanges`    | INTEGER NOT NULL | User messages sent during the conversation                 |
+| `documents`    | INTEGER NOT NULL | Auto Run documents produced                                |
+| `tasks`        | INTEGER NOT NULL | Task checkboxes across those documents                     |
+| `project_path` | TEXT             | Project path                                               |
+
+**Indexes**: `started_at`, compound `(surface, started_at)`
+
+Unlike every other table here, a row is written **repeatedly** - once per milestone (opened, each
+exchange, documents written, closed), always under the same `id`, via `INSERT OR REPLACE`. The reason
+is that the payoff (documents) and the close are separated by however long the user reads the result,
+and many runs are never closed at all, so a single write at the end would lose whole runs. `ended_at`
+therefore means "last activity", which keeps `ended_at - started_at` an honest measure of time spent
+in the wizard whether or not the run was ever closed. The renderer side of that state machine is
+`src/renderer/services/wizardStats.ts`.
 
 #### `session_lifecycle` (Migration v3)
 
@@ -164,6 +201,14 @@ Defined in `src/main/stats/migrations.ts`. Migrations are sequential and recorde
 | v2      | Add `is_remote` column to `query_events` for SSH tracking             |
 | v3      | Add `session_lifecycle` table                                         |
 | v4      | Add compound indexes on `query_events` for dashboard performance      |
+| v5      | Add `is_worktree` column to `query_events` and `session_lifecycle`    |
+| v6      | Add `image_annotations` table                                         |
+| v7      | Add `shortcut_usage_daily` table                                      |
+| v8      | Add `multi_window_usage_daily` table                                  |
+| v9      | Add per-turn token and cost columns to `query_events`                 |
+| v10     | Add `resilience_events` table                                         |
+| v11     | Add `wizard_runs` table                                               |
+| v12     | Add `user_name` column to `query_events` for Web Login attribution    |
 
 To add a new migration:
 
@@ -290,7 +335,7 @@ Registered in `src/main/ipc/handlers/stats.ts`. All handlers check `statsCollect
 
 | Handler                             | Description                                                                          |
 | ----------------------------------- | ------------------------------------------------------------------------------------ |
-| `stats:export-csv`                  | Export query events to CSV for a time range                                          |
+| `stats:export`                      | Export every stats table, token usage, and Cue runs for a range as JSON or a CSV zip |
 | `stats:clear-old-data`              | Delete records older than N days (transactional across all tables)                   |
 | `stats:get-database-size`           | Get the database file size in bytes                                                  |
 | `stats:get-initialization-result`   | Get the result of the one-shot DB initialization (used by the settings health panel) |
@@ -374,11 +419,52 @@ Located in `src/renderer/components/UsageDashboard/`:
 | `WeekdayComparisonChart.tsx`    | Weekday activity comparison                                 |
 | `TasksByHourChart.tsx`          | Auto Run tasks by hour                                      |
 | `AutoRunStats.tsx`              | Auto Run session statistics and details                     |
+| `WizardStats.tsx`               | Auto Run wizard usage: time, runs, documents, tasks         |
+| `MetricCard.tsx`                | Shared labeled single-number tile for those metric rows     |
 | `LongestAutoRunsTable.tsx`      | Table of longest Auto Run sessions                          |
 | `SessionStats.tsx`              | Session lifecycle statistics                                |
 | `ChartErrorBoundary.tsx`        | Error boundary for individual charts                        |
 | `ChartSkeletons.tsx`            | Loading skeletons for chart placeholders                    |
 | `EmptyState.tsx`                | Empty state when no data exists                             |
+| `UsageDashboardFooter.tsx`      | Status bar: range label, per-tab summary, Esc hint          |
+| `footerSummary.ts`              | All footer summary copy, as pure builders (see below)       |
+| `useFooterSummary.ts`           | Store letting a panel publish its own footer line           |
+
+### Footer Summaries (per-tab status line)
+
+The footer's center slot states what the current tab is actually showing:
+`24 of 84 agents`, `126 runs · 12 pipelines · 8 failed`, `3 accounts · peak
+window 87%`. Every string is built by a pure function in `footerSummary.ts` -
+do NOT inline a new one at a call site, or the separator, pluralization, and
+tone drift across tabs within a release.
+
+The rule is **whoever owns the data writes the summary**:
+
+| Owner                                         | Tabs                                                               | How                                                        |
+| --------------------------------------------- | ------------------------------------------------------------------ | ---------------------------------------------------------- |
+| `UsageDashboardModal` (holds the aggregation) | `overview`, `agent-overview`, `activity`, `tokens`                 | `buildModalOwnedFooterSummary()` -> `fallbackSummary` prop |
+| The panel (fetches or filters for itself)     | `agents`, `groups`, `autorun`, `cue`, `shortcuts`, both quota tabs | `usePublishFooterSummary(tab, buildXSummary(...))`         |
+
+A published summary always beats the modal's fallback, because the panel knows
+about filter state and fetches the modal cannot see.
+
+Two traps the implementation already handles - do not "simplify" them away:
+
+- **Summaries are keyed by tab, not stored as one current value.** React mounts
+  the incoming panel before unmounting the outgoing one, so a single-slot store
+  would let the outgoing panel's cleanup erase the line the new tab just wrote.
+- **It is a Zustand store, not a React context, on purpose.** A provider has to
+  wrap the modal's whole body, and re-indenting that file is what turns a
+  main -> rc merge into hand-resolution work (`rc` has split
+  `UsageDashboardModal` into a directory).
+- **`usePublishFooterSummary` must be called above any early return.** Panels
+  with loading/error/empty branches (`CueStats`, `AutoRunStats`) bail early, and
+  a hook cannot sit behind a return - the bailing panel is exactly the one that
+  needs to clear its stale line. Pass `null` while loading.
+
+`FooterSummaryTab` includes `'tokens'`, which this branch has no tab for; the
+split dashboard on `rc` does, so the case is carried here to make that port a
+copy rather than a rewrite.
 
 ## Module Organization
 

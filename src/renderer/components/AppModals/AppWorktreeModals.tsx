@@ -5,6 +5,8 @@ import { gitService } from '../../services/git';
 import { useModalStore } from '../../stores/modalStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { resolveGitCwd, resolveGitSshRemoteId } from '../../hooks/git/useGitAgentActions';
+import { usePRCreationNotifier } from '../../hooks/git/usePRCreationNotifier';
+import { prRunKey } from '../../stores/prCreationStore';
 
 // Worktree Modal Components
 import { WorktreeConfigModal } from '../WorktreeConfigModal';
@@ -123,6 +125,15 @@ export const AppWorktreeModals = memo(function AppWorktreeModals({
 		};
 	}, [createPRModalOpen, prSession?.id, prSession?.gitBranches?.length]);
 
+	// The PR request outlives this form (prCreationStore), so the settlement is
+	// reported from here - a host that is always mounted - rather than from the
+	// modal, which is gone the moment the user closes it.
+	usePRCreationNotifier(
+		createPRModalOpen && prSession ? prRunKey(prSession.cwd) : null,
+		onPRCreated,
+		onCloseCreatePRModal
+	);
+
 	const prSourceBranch =
 		prSession?.worktreeBranch || createPRSourceBranch || prSession?.gitBranches?.[0] || 'main';
 	const prAvailableBranches = prSession?.gitBranches?.length
@@ -164,8 +175,8 @@ export const AppWorktreeModals = memo(function AppWorktreeModals({
 					worktreePath={prSession.cwd}
 					worktreeBranch={prSourceBranch}
 					agentName={prSession.name}
+					sessionId={prSession.id}
 					availableBranches={prAvailableBranches}
-					onPRCreated={onPRCreated}
 				/>
 			)}
 

@@ -13,7 +13,16 @@
  */
 
 import { useCallback, useRef } from 'react';
-import { Bot, Palette, Type, Users, FileText, Sparkles } from 'lucide-react';
+import {
+	Bot,
+	SlidersHorizontal,
+	Users,
+	FileText,
+	CalendarClock,
+	Workflow,
+	LayoutDashboard,
+	Sparkles,
+} from 'lucide-react';
 import type { Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal } from './ui/Modal';
@@ -39,35 +48,58 @@ export interface AgentPowersModalProps {
 }
 
 /**
- * Examples worth showing, in the order they build confidence: the two things
- * the user was JUST offered (so the claim is immediately checkable), then the
- * ones that show the range.
+ * Examples worth showing, in the order they build confidence: the thing the
+ * user was JUST offered (so the claim is immediately checkable), then the ones
+ * that show the range.
+ *
+ * The first example deliberately names the font and the theme the user has this
+ * second finished picking, and then keeps going past them - the claim being
+ * made is "any setting", and a pill that stopped at typography would read as a
+ * shortcut for the two screens behind it rather than a door onto all of them.
+ *
+ * The two automation examples are split by what STARTS them, because that is
+ * the distinction the app actually makes: a Scheduled Task is clock-driven
+ * (`time.scheduled` / `time.once`), while a pipeline hangs off an event nobody
+ * can predict the timing of. Giving both a wall-clock prompt would present one
+ * feature twice under two names.
  */
 const EXAMPLES: Array<{
-	icon: typeof Palette;
+	icon: typeof Users;
 	label: string;
 	prompt: string;
 }> = [
 	{
-		icon: Type,
-		label: 'Change the fonts',
-		prompt: 'Set my AI chat font to Inter and my terminal font to JetBrains Mono.',
-	},
-	{
-		icon: Palette,
-		label: 'Change the theme',
-		prompt: 'Switch Maestro to a light theme and tell me which one you picked.',
+		icon: SlidersHorizontal,
+		label: 'Change Any Setting',
+		prompt:
+			'Set my AI chat font to Inter, switch me to a light theme, and turn on OS notifications.',
 	},
 	{
 		icon: Users,
-		label: 'Create agents',
+		label: 'Create Agents',
 		prompt: 'Create a new agent called Scratch pointed at my home directory.',
 	},
 	{
 		icon: FileText,
-		label: 'Write an Auto Run doc',
+		label: 'Write an Auto Run Doc',
 		prompt:
 			'Write me an Auto Run document that reviews this repo for TODOs and lists them as tasks.',
+	},
+	{
+		icon: CalendarClock,
+		label: 'Schedule a Task',
+		prompt: 'Every weekday at 9am, summarize what changed in this repo overnight.',
+	},
+	{
+		icon: Workflow,
+		label: 'Build a Cue Pipeline',
+		prompt: 'Whenever a pull request opens on this repo, have an agent review it and report back.',
+	},
+	{
+		icon: LayoutDashboard,
+		label: 'Build Me a Dashboard',
+		prompt:
+			'Build me an HTML dashboard of this repo: commits per week, top contributors, open TODOs.',
 	},
 ];
 
@@ -93,7 +125,7 @@ export function AgentPowersModal({
 	return (
 		<Modal
 			theme={theme}
-			title="Your agents can drive Maestro"
+			title="Your Agents Can Drive Maestro"
 			headerIcon={<Bot className="w-4 h-4" style={{ color: theme.colors.accent }} />}
 			priority={MODAL_PRIORITIES.AGENT_POWERS}
 			onClose={onDismiss}
@@ -123,9 +155,9 @@ export function AgentPowersModal({
 		>
 			<div className="space-y-4">
 				<p className="text-sm leading-relaxed" style={{ color: theme.colors.textMain }}>
-					You just picked your typography and your theme by hand. You didn't have to. Anything you
-					can do in Maestro, the agents inside it can do too - they reach the same controls the
-					interface does, so you can simply ask.
+					You just had the chance to set your typography and your theme by hand. Either way,
+					anything you can do in Maestro, the agents inside it can do too - they reach the same
+					controls the interface does, so you can simply ask.
 				</p>
 
 				<div className="grid grid-cols-2 gap-2">
@@ -152,7 +184,7 @@ export function AgentPowersModal({
 										{label}
 									</span>
 								</span>
-								<span className="text-[11px] leading-snug" style={{ color: theme.colors.textDim }}>
+								<span className="text-xs-plus leading-snug" style={{ color: theme.colors.textDim }}>
 									&ldquo;{prompt}&rdquo;
 								</span>
 							</button>
@@ -169,9 +201,12 @@ export function AgentPowersModal({
 				>
 					<Sparkles className="w-4 h-4 mt-0.5 shrink-0" style={{ color: theme.colors.accent }} />
 					<p className="text-xs leading-relaxed" style={{ color: theme.colors.textMain }}>
-						This is not a fixed list. Creating agents, opening files, running playbooks, scheduling
-						automation, rearranging the window - if it is in Maestro, it is reachable. Ask for what
-						you want and let the agent find the way there.
+						Maestro is a power tool. If you are a hacker it will feel like home: keyboard shortcuts
+						all the way down, dozens of agents conducted at once, hands never leaving the keys. You
+						do not have to work that way to get the benefit. Every agent running in Maestro is
+						handed the knowledge of how to drive Maestro, down to the advanced parts like Auto Run
+						and Cue pipelines, so ask for what you want in plain language and let the agent find the
+						way there.
 						{onTryExample ? ' Pick an example above to drop it into the composer.' : ''}
 					</p>
 				</div>

@@ -31,6 +31,11 @@ import {
 	Type,
 	ChevronLeft,
 	ChevronRight,
+	ZoomIn,
+	Move,
+	Camera,
+	Copy,
+	Download,
 } from 'lucide-react';
 import { Spinner } from '../ui/Spinner';
 import type { Theme } from '../../types';
@@ -95,9 +100,23 @@ import {
 } from './previewCharLimit';
 import { NodeContextMenu } from './NodeContextMenu';
 import { GraphLegend } from './GraphLegend';
+import {
+	DEFAULT_SCROLL_MODE,
+	SCROLL_MODE_LABELS,
+	SCROLL_MODE_STORAGE_KEY,
+	nextScrollMode,
+	scrollModeFromPans,
+	scrollModePans,
+	type GraphScrollMode,
+} from './scrollMode';
+import { usePersistedToggle } from '../../hooks/ui/usePersistedToggle';
 import { MarkdownRenderer } from '../MarkdownRenderer';
 import { generateProseStyles } from '../../utils/markdownConfig';
-import { safeClipboardWrite } from '../../utils/clipboard';
+import { safeClipboardWrite, safeClipboardWriteImage } from '../../utils/clipboard';
+import { saveImageDataUrlToDisk } from '../../utils/imageExport';
+import { notifyToast } from '../../stores/notificationStore';
+import { notifyCenterFlash } from '../../stores/centerFlashStore';
+import { fileTimestampSlug, getBasename } from '../../../shared/formatters';
 import { buildFileTreeFromPaths } from '../../utils/fileTree';
 import { countMarkdownTasks } from '../FilePreview/filePreviewUtils';
 import { logger } from '../../utils/logger';
@@ -106,6 +125,13 @@ import { useSettingsStore } from '../../stores/settingsStore';
 /** Debounce delay for graph rebuilds when settings change (ms) */
 const GRAPH_REBUILD_DEBOUNCE_DELAY = 300;
 
+/**
+ * Width of the toolbar's search box, in px.
+ *
+ * Wide enough for the full "Search documents..." placeholder at `text-sm` plus
+ * both icon gutters. It was 180, which clipped the hint mid-word.
+ */
+export const SEARCH_BOX_WIDTH = 230;
 /** Default maximum number of nodes to load initially */
 const DEFAULT_MAX_NODES = 200;
 /** Number of additional nodes to load when clicking "Load more" */
@@ -150,6 +176,16 @@ export interface DocumentGraphViewProps {
 	scopeDirectory?: string;
 	/** Callback when focus file is consumed (cleared after focusing) */
 	onFocusFileConsumed?: () => void;
+	/**
+	 * Ask before closing. Defaults to true.
+	 *
+	 * The prompt exists because a graph is usually WORK: a layout picked, a
+	 * depth widened, nodes dragged into place, all of it thrown away by one
+	 * stray Escape. It is worth nothing when closing is cheap - a graph opened
+	 * from another surface goes straight back to it, and a user who has turned
+	 * the prompt off in Settings has said the trade is not worth it to them.
+	 */
+	confirmOnClose?: boolean;
 	/** Default setting for showing external links (from settings) */
 	defaultShowExternalLinks?: boolean;
 	/** Callback to persist external links toggle changes */
@@ -170,6 +206,13 @@ export interface DocumentGraphViewProps {
 	onLayoutTypeChange?: (type: MindMapLayoutType) => void;
 	/** Optional SSH remote ID - if provided, shows unavailable message (can't scan remote filesystem) */
 	sshRemoteId?: string;
+	/**
+	 * What to call this graph in the header, the dialog label, and the close
+	 * prompt. Same component either way - a graph over the agent's memory
+	 * directory is a "Memory Graph" to the user, and reading "Document Graph"
+	 * there makes it look like the wrong surface opened.
+	 */
+	title?: string;
 }
 
 /**
@@ -186,6 +229,7 @@ export function DocumentGraphView({
 	scopeFiles,
 	scopeDirectory,
 	onFocusFileConsumed: _onFocusFileConsumed,
+	confirmOnClose = true,
 	defaultShowExternalLinks = false,
 	onExternalLinksChange,
 	defaultMaxNodes = DEFAULT_MAX_NODES,
@@ -196,6 +240,7 @@ export function DocumentGraphView({
 	defaultLayoutType = 'hierarchical',
 	onLayoutTypeChange,
 	sshRemoteId,
+	title = 'Document Graph',
 }: DocumentGraphViewProps) {
 	const bionifyReadingMode = useSettingsStore((s) => s.bionifyReadingMode);
 	// Graph data state
@@ -229,6 +274,30 @@ export function DocumentGraphView({
 	const [layoutType, setLayoutType] = useState<MindMapLayoutType>(defaultLayoutType);
 	const [showLayoutDropdown, setShowLayoutDropdown] = useState(false);
 	const [spacingScale, setSpacingScale] = useState<number>(SPACING_SCALE_DEFAULT);
+	// Bumped by `F` to re-frame the whole graph. A token rather than a callback
+	// because the transform lives inside the canvas component.
+	const [fitToken, setFitToken] = useState(0);
+	// What the scroll wheel does. Persisted because it is a working posture
+	// rather than a per-visit choice: a user reading a wide graph in Pan mode
+	// should not have to switch back every time the graph is reopened.
+	const { value: scrollPans, setValue: setScrollPans } = usePersistedToggle(
+		SCROLL_MODE_STORAGE_KEY,
+		scrollModePans(DEFAULT_SCROLL_MODE)
+	);
+	const scrollMode = scrollModeFromPans(scrollPans);
+	// The Help panel's segmented control names a destination while `S` and the
+	// pill flip, so clicking the mode you are already in is a no-op rather than
+	// a toggle that undoes itself. Both go through the same setter, and the flip
+	// goes through `nextScrollMode` for the same reason `L` goes through
+	// `nextMindMapLayout`: one place decides what comes next.
+	const setScrollMode = useCallback(
+		(mode: GraphScrollMode) => setScrollPans(scrollModePans(mode)),
+		[setScrollPans]
+	);
+	const toggleScrollMode = useCallback(
+		() => setScrollMode(nextScrollMode(scrollMode)),
+		[setScrollMode, scrollMode]
+	);
 
 	// Close all other dropdowns when opening one
 	const openDropdown = (which: 'depth' | 'preview' | 'layout') => {
@@ -300,6 +369,10 @@ export function DocumentGraphView({
 	const [showCloseConfirmation, setShowCloseConfirmation] = useState(false);
 	const confirmCloseButtonRef = useRef<HTMLButtonElement>(null);
 
+	// Screenshot modal state
+	const [showScreenshotModal, setShowScreenshotModal] = useState(false);
+	const screenshotCopyButtonRef = useRef<HTMLButtonElement>(null);
+
 	// Container refs
 	const containerRef = useRef<HTMLDivElement>(null);
 	const graphContainerRef = useRef<HTMLDivElement>(null);
@@ -366,11 +439,26 @@ export function DocumentGraphView({
 	const streamingActiveRef = useRef(false);
 
 	/**
-	 * Handle escape - show confirmation modal
+	 * Handle escape.
+	 *
+	 * The body lives in `escapeLadderRef`, assigned during render further down
+	 * where the search query, the node list, and `handleNodeSelect` are all in
+	 * scope. Registering this stable wrapper instead keeps the layer
+	 * registration from re-running on every keystroke in the search box.
 	 */
+	const escapeLadderRef = useRef<() => void>(() => {});
 	const handleEscapeRequest = useCallback(() => {
-		setShowCloseConfirmation(true);
+		escapeLadderRef.current();
 	}, []);
+
+	/** The bottom rung: confirm first, unless closing is cheap enough not to. */
+	const requestClose = useCallback(() => {
+		if (!confirmOnClose) {
+			onCloseRef.current();
+			return;
+		}
+		setShowCloseConfirmation(true);
+	}, [confirmOnClose]);
 
 	/**
 	 * Register with layer stack for Escape handling
@@ -1016,6 +1104,91 @@ export function DocumentGraphView({
 	);
 
 	/**
+	 * Screenshot the graph area exactly as it is painted, preview pane included.
+	 *
+	 * Goes through Electron's page capture rather than serializing the canvas:
+	 * the graph, the markdown preview and the legend are three different render
+	 * paths, and only the compositor knows what the user is actually looking at.
+	 *
+	 * The screenshot modal is dismissed by the caller first; this waits two
+	 * frames so the shot is taken from a frame that no longer has the modal (or
+	 * its backdrop) sitting on top of the graph.
+	 */
+	const captureGraphImage = useCallback(async (): Promise<string | null> => {
+		const el = graphContainerRef.current;
+		const capturePage = window.maestro?.shell?.capturePage;
+		if (!el || !capturePage) return null;
+
+		await new Promise<void>((resolve) =>
+			requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+		);
+
+		const rect = el.getBoundingClientRect();
+		if (rect.width <= 0 || rect.height <= 0) return null;
+		return await capturePage({
+			x: rect.left,
+			y: rect.top,
+			width: rect.width,
+			height: rect.height,
+		});
+	}, []);
+
+	const handleScreenshotCopy = useCallback(async () => {
+		setShowScreenshotModal(false);
+		try {
+			const dataUrl = await captureGraphImage();
+			if (dataUrl && (await safeClipboardWriteImage(dataUrl))) {
+				notifyCenterFlash({ message: 'Graph Copied', color: 'green' });
+				return;
+			}
+			notifyToast({
+				color: 'red',
+				title: 'Copy Failed',
+				message: 'Could not capture the graph view.',
+			});
+		} catch (err) {
+			logger.error('Failed to copy graph screenshot:', undefined, err);
+			notifyToast({
+				color: 'red',
+				title: 'Copy Failed',
+				message: err instanceof Error ? err.message : 'Could not capture the graph view.',
+			});
+		}
+	}, [captureGraphImage]);
+
+	const handleScreenshotSave = useCallback(async () => {
+		setShowScreenshotModal(false);
+		try {
+			const dataUrl = await captureGraphImage();
+			if (!dataUrl) {
+				notifyToast({
+					color: 'red',
+					title: 'Save Failed',
+					message: 'Could not capture the graph view.',
+				});
+				return;
+			}
+			const result = await saveImageDataUrlToDisk(dataUrl, `graph-${fileTimestampSlug()}.png`);
+			if (result.saved) {
+				notifyCenterFlash({
+					message: 'Graph Saved',
+					detail: result.path ? getBasename(result.path) : undefined,
+					color: 'green',
+				});
+			} else if (result.error) {
+				notifyToast({ color: 'red', title: 'Save Failed', message: result.error });
+			}
+		} catch (err) {
+			logger.error('Failed to save graph screenshot:', undefined, err);
+			notifyToast({
+				color: 'red',
+				title: 'Save Failed',
+				message: err instanceof Error ? err.message : 'Could not capture the graph view.',
+			});
+		}
+	}, [captureGraphImage]);
+
+	/**
 	 * Handle load more
 	 */
 	const handleLoadMore = useCallback(async () => {
@@ -1320,38 +1493,53 @@ export function DocumentGraphView({
 	 * First Escape: clear search if there's content
 	 * Second Escape (or first if empty): blur search, return focus to graph, select center node
 	 */
-	const handleSearchKeyDown = useCallback(
-		(e: React.KeyboardEvent<HTMLInputElement>) => {
-			if (e.key === 'Escape') {
-				e.stopPropagation(); // Prevent layer stack from handling
-				if (searchQuery) {
-					// First Escape: clear search query
-					setSearchQuery('');
-				} else {
-					// Second Escape (or first if empty): blur search, select center node, focus graph
-					searchInputRef.current?.blur();
+	/**
+	 * Escape is a LADDER, climbed one rung per press, never skipping to close.
+	 *
+	 *   1. caret in the search box -> hand focus back to the graph, query intact
+	 *   2. search still has text    -> clear it
+	 *   3. otherwise                -> close (confirming per `confirmOnClose`)
+	 *
+	 * Rung 1 is what makes "search, then arrow to a hit" work: the query has to
+	 * survive the key that gets you out of the text box, or the highlighted
+	 * nodes you were about to walk to go dim as you reach for them.
+	 *
+	 * This is assigned during render rather than bound to the input's own
+	 * `onKeyDown`, because the layer stack handles Escape at CAPTURE on
+	 * `window` (see `LayerStackProvider`) - so a handler on the input never
+	 * sees the key, and `stopPropagation` there cannot stop a listener that has
+	 * already run. An `onKeyDown` version of this ladder was in place and dead:
+	 * every Escape went straight to the close confirmation.
+	 */
+	escapeLadderRef.current = () => {
+		if (document.activeElement === searchInputRef.current) {
+			searchInputRef.current?.blur();
 
-					// Select the center node (the focus file) first
-					if (activeFocusFile) {
-						const centerNode = nodes.find((n) => n.filePath === activeFocusFile);
-						if (centerNode) {
-							handleNodeSelect(centerNode);
-						}
-					}
-
-					// Focus the mind map container after state update
-					requestAnimationFrame(() => {
-						mindMapContainerRef.current?.focus();
-					});
+			// Select the center node (the focus file) first, so the arrow keys
+			// have somewhere to start from.
+			if (activeFocusFile) {
+				const centerNode = nodes.find((n) => n.filePath === activeFocusFile);
+				if (centerNode) {
+					handleNodeSelect(centerNode);
 				}
 			}
-		},
-		[searchQuery, activeFocusFile, nodes, handleNodeSelect]
-	);
+
+			// Focus the mind map container after state update
+			requestAnimationFrame(() => {
+				mindMapContainerRef.current?.focus();
+			});
+			return;
+		}
+		if (searchQuery) {
+			setSearchQuery('');
+			return;
+		}
+		requestClose();
+	};
 
 	/**
 	 * Handle container keyboard shortcuts (Cmd+F search; L layout; D depth;
-	 * P preview length; +/- node spacing)
+	 * P preview length; F fit to view; C screenshot; +/- node spacing)
 	 */
 	const handleContainerKeyDown = useCallback(
 		(e: React.KeyboardEvent) => {
@@ -1393,6 +1581,32 @@ export function DocumentGraphView({
 				return;
 			}
 
+			// F re-frames the entire graph. Zooming out by hand cannot always get
+			// there, so this is the only reliable way back to the whole picture.
+			if (e.key === 'f' || e.key === 'F') {
+				e.preventDefault();
+				setFitToken((prev) => prev + 1);
+				return;
+			}
+
+			// S swaps what the scroll wheel does. Reachable without leaving the
+			// canvas, because the moment you want it is mid-gesture: the framing
+			// is right and the next scroll just threw it away.
+			if (e.key === 's' || e.key === 'S') {
+				e.preventDefault();
+				toggleScrollMode();
+				return;
+			}
+
+			// C opens the screenshot chooser, matching the camera button in the
+			// footer. Gated on the same capability the button is, so the key is
+			// inert rather than opening a dialog whose actions would both fail.
+			if ((e.key === 'c' || e.key === 'C') && !!window.maestro?.shell?.capturePage) {
+				e.preventDefault();
+				setShowScreenshotModal(true);
+				return;
+			}
+
 			// '=' is the unshifted '+' key on US layouts; accept both for ergonomics.
 			const isIncrease = e.key === '+' || e.key === '=';
 			const isDecrease = e.key === '-' || e.key === '_';
@@ -1413,6 +1627,7 @@ export function DocumentGraphView({
 			layoutType,
 			neighborDepth,
 			previewCharLimit,
+			toggleScrollMode,
 		]
 	);
 	// The graph is a canvas the user pans around in, so its useful default is
@@ -1495,7 +1710,7 @@ export function DocumentGraphView({
 				tabIndex={-1}
 				role="dialog"
 				aria-modal="true"
-				aria-label="Document Graph"
+				aria-label={title}
 				className="relative rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none"
 				style={{
 					...resizableModal.style,
@@ -1518,13 +1733,17 @@ export function DocumentGraphView({
 					className="px-6 py-4 border-b flex items-center justify-between flex-shrink-0"
 					style={{ borderColor: theme.colors.border }}
 				>
-					<div className="flex items-center gap-3">
-						<Network className="w-5 h-5" style={{ color: theme.colors.accent }} />
-						<h2 className="text-lg font-semibold" style={{ color: theme.colors.textMain }}>
-							Document Graph
+					{/* The title yields first. This row neither wraps nor scrolls, and
+					    the modal clips at its right edge, so something has to give when
+					    it gets tight - and a truncated heading costs the user nothing
+					    next to a close button pushed out of the window. */}
+					<div className="flex items-center gap-3 min-w-0 shrink">
+						<Network className="w-5 h-5 shrink-0" style={{ color: theme.colors.accent }} />
+						<h2 className="text-lg font-semibold truncate" style={{ color: theme.colors.textMain }}>
+							{title}
 						</h2>
 						<span
-							className="text-xs px-2 py-0.5 rounded"
+							className="text-xs px-2 py-0.5 rounded truncate"
 							style={{
 								backgroundColor: `${theme.colors.accent}20`,
 								color: theme.colors.textDim,
@@ -1534,9 +1753,9 @@ export function DocumentGraphView({
 						</span>
 					</div>
 
-					<div className="flex items-center gap-3">
+					<div className="flex items-center gap-3 shrink-0">
 						{/* Search Input */}
-						<div className="relative">
+						<div className="relative shrink-0">
 							<Search
 								className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none"
 								style={{ color: theme.colors.textDim }}
@@ -1546,14 +1765,20 @@ export function DocumentGraphView({
 								type="text"
 								value={searchQuery}
 								onChange={(e) => setSearchQuery(e.target.value)}
-								onKeyDown={handleSearchKeyDown}
 								placeholder="Search documents..."
-								className="pl-8 pr-3 py-1.5 rounded text-sm outline-none transition-colors"
+								// `pr-8` keeps a permanent slot for the clear button rather
+								// than adding one when a query appears: a padding that
+								// changes with the value reflows the text under the caret on
+								// the first keystroke.
+								className="pl-8 pr-8 py-1.5 rounded text-sm outline-none transition-colors"
 								style={{
 									backgroundColor: `${theme.colors.accent}10`,
 									color: theme.colors.textMain,
 									border: `1px solid ${searchQuery ? theme.colors.accent : 'transparent'}`,
-									width: 180,
+									// Sized to hold the whole placeholder. A box that clips its
+									// own hint to "Search docume" reads as a broken control,
+									// and the hint is the only thing naming what it searches.
+									width: SEARCH_BOX_WIDTH,
 								}}
 								onFocus={(e) => (e.currentTarget.style.borderColor = theme.colors.accent)}
 								onBlur={(e) =>
@@ -1791,6 +2016,33 @@ export function DocumentGraphView({
 								</div>
 							)}
 						</div>
+
+						{/* Scroll mode indicator. Reads as ACTIVE in Pan, because Zoom
+						    is the shipped default and a permanently-lit pill stops
+						    meaning anything. The label names what the wheel does
+						    right now, not what clicking would change it to. */}
+						<button
+							onClick={toggleScrollMode}
+							className="flex items-center gap-1.5 px-3 py-1.5 rounded text-sm transition-colors"
+							style={{
+								backgroundColor:
+									scrollMode === 'pan' ? `${theme.colors.accent}25` : `${theme.colors.accent}10`,
+								color: scrollMode === 'pan' ? theme.colors.accent : theme.colors.textDim,
+							}}
+							onMouseEnter={(e) =>
+								(e.currentTarget.style.backgroundColor = `${theme.colors.accent}30`)
+							}
+							onMouseLeave={(e) =>
+								(e.currentTarget.style.backgroundColor =
+									scrollMode === 'pan' ? `${theme.colors.accent}25` : `${theme.colors.accent}10`)
+							}
+							title={`Scroll wheel: ${SCROLL_MODE_LABELS[scrollMode].wheelAction}. Shift+scroll: ${SCROLL_MODE_LABELS[scrollMode].modifierAction}. (S to switch)`}
+							aria-pressed={scrollMode === 'pan'}
+							data-testid="document-graph-scroll-mode-toggle"
+						>
+							{scrollMode === 'pan' ? <Move className="w-4 h-4" /> : <ZoomIn className="w-4 h-4" />}
+							Scroll: {SCROLL_MODE_LABELS[scrollMode].name}
+						</button>
 
 						{/* External Links Toggle */}
 						<button
@@ -2045,6 +2297,8 @@ export function DocumentGraphView({
 							onNodePositionChange={handleNodePositionChange}
 							containerRef={mindMapContainerRef}
 							legendExpanded={legendExpanded}
+							fitToken={fitToken}
+							scrollMode={scrollMode}
 						/>
 					) : (
 						<div
@@ -2062,6 +2316,8 @@ export function DocumentGraphView({
 						<GraphLegend
 							theme={theme}
 							showExternalLinks={includeExternalLinks}
+							scrollMode={scrollMode}
+							onScrollModeChange={setScrollMode}
 							onClose={() => setLegendExpanded(false)}
 						/>
 					)}
@@ -2234,16 +2490,18 @@ export function DocumentGraphView({
 					)}
 				</div>
 
-				{/* Footer */}
+				{/* Footer. A three-column grid, not justify-between: the two side
+				    tracks are always equal, so the Snapshot button sits at the
+				    true center whether or not a selected node fills the right. */}
 				<div
-					className="px-6 py-4 border-t flex items-center justify-between text-xs flex-shrink-0"
+					className="px-6 py-4 border-t grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-4 text-xs flex-shrink-0"
 					style={{
 						borderColor: theme.colors.border,
 						color: theme.colors.textDim,
 						minHeight: 52,
 					}}
 				>
-					<div className="flex items-center gap-3">
+					<div className="flex items-center gap-3 min-w-0">
 						{/* Help Button */}
 						<button
 							onClick={() => setLegendExpanded(!legendExpanded)}
@@ -2345,47 +2603,150 @@ export function DocumentGraphView({
 						)}
 					</div>
 
-					{/* Center: Selected node stats */}
-					{selectedNode?.nodeType === 'document' && (selectedNodeStats || selectedNodeTasks) && (
-						<div className="flex items-center gap-4" style={{ color: theme.colors.textDim }}>
-							{/* Task counts */}
-							{selectedNodeTasks && (
-								<div className="flex items-center gap-1.5" title="Markdown tasks">
-									<CheckSquare className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
-									<span>
-										<span style={{ color: theme.colors.success }}>
-											{selectedNodeTasks.completed}
+					{/* Center: Snapshot. The column always renders so the grid keeps
+					    its middle track; the button inside hides when the bridge
+					    cannot capture the page, so it never offers a shot it can't take. */}
+					<div className="flex items-center justify-center">
+						{!!window.maestro?.shell?.capturePage && (
+							<button
+								onClick={() => setShowScreenshotModal(true)}
+								className="flex items-center gap-1.5 px-2 py-1 rounded text-xs transition-colors whitespace-nowrap"
+								style={{
+									backgroundColor: showScreenshotModal
+										? `${theme.colors.accent}25`
+										: `${theme.colors.accent}10`,
+									color: showScreenshotModal ? theme.colors.accent : theme.colors.textMain,
+								}}
+								onMouseEnter={(e) =>
+									(e.currentTarget.style.backgroundColor = `${theme.colors.accent}30`)
+								}
+								onMouseLeave={(e) =>
+									(e.currentTarget.style.backgroundColor = showScreenshotModal
+										? `${theme.colors.accent}25`
+										: `${theme.colors.accent}10`)
+								}
+								title="Snapshot the graph view (C)"
+								aria-label="Snapshot the graph view"
+								data-testid="graph-screenshot-button"
+							>
+								<Camera className="w-3.5 h-3.5" />
+								Snapshot
+							</button>
+						)}
+					</div>
+
+					{/* Right: Selected node stats. The wrapper always renders so the
+					    right track exists even with nothing selected. */}
+					<div className="flex items-center justify-end min-w-0">
+						{selectedNode?.nodeType === 'document' && (selectedNodeStats || selectedNodeTasks) && (
+							<div className="flex items-center gap-4" style={{ color: theme.colors.textDim }}>
+								{/* Task counts */}
+								{selectedNodeTasks && (
+									<div className="flex items-center gap-1.5" title="Markdown tasks">
+										<CheckSquare className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+										<span>
+											<span style={{ color: theme.colors.success }}>
+												{selectedNodeTasks.completed}
+											</span>
+											<span> of </span>
+											<span style={{ color: theme.colors.textMain }}>
+												{selectedNodeTasks.total}
+											</span>
+											<span> tasks</span>
 										</span>
-										<span> of </span>
-										<span style={{ color: theme.colors.textMain }}>{selectedNodeTasks.total}</span>
-										<span> tasks</span>
-									</span>
-								</div>
-							)}
-							{/* Created date */}
-							{selectedNodeStats?.createdAt && (
-								<div className="flex items-center gap-1.5" title="Created date">
-									<Calendar className="w-3.5 h-3.5" />
-									<span>Created {formatDate(selectedNodeStats.createdAt)}</span>
-								</div>
-							)}
-							{/* Modified date */}
-							{selectedNodeStats?.modifiedAt && (
-								<div className="flex items-center gap-1.5" title="Modified date">
-									<Calendar className="w-3.5 h-3.5" />
-									<span>Modified {formatDate(selectedNodeStats.modifiedAt)}</span>
-								</div>
-							)}
-						</div>
-					)}
+									</div>
+								)}
+								{/* Created date */}
+								{selectedNodeStats?.createdAt && (
+									<div className="flex items-center gap-1.5" title="Created date">
+										<Calendar className="w-3.5 h-3.5" />
+										<span>Created {formatDate(selectedNodeStats.createdAt)}</span>
+									</div>
+								)}
+								{/* Modified date */}
+								{selectedNodeStats?.modifiedAt && (
+									<div className="flex items-center gap-1.5" title="Modified date">
+										<Calendar className="w-3.5 h-3.5" />
+										<span>Modified {formatDate(selectedNodeStats.modifiedAt)}</span>
+									</div>
+								)}
+							</div>
+						)}
+					</div>
 				</div>
 			</div>
+
+			{/* Screenshot Modal */}
+			{showScreenshotModal && (
+				<Modal
+					theme={theme}
+					title="Screenshot Graph"
+					headerIcon={<Camera className="w-4 h-4" style={{ color: theme.colors.accent }} />}
+					priority={MODAL_PRIORITIES.DOCUMENT_GRAPH + 1}
+					onClose={() => setShowScreenshotModal(false)}
+					width={420}
+					closeOnBackdropClick
+					initialFocusRef={screenshotCopyButtonRef}
+				>
+					<div className="flex flex-col gap-2 select-none">
+						<p className="text-xs mb-1" style={{ color: theme.colors.textDim }}>
+							Captures the graph exactly as it is on screen, including the preview pane when it is
+							open.
+						</p>
+						<button
+							ref={screenshotCopyButtonRef}
+							onClick={handleScreenshotCopy}
+							className="w-full flex items-center gap-3 px-3 py-2.5 rounded text-sm text-left transition-colors"
+							style={{
+								backgroundColor: `${theme.colors.accent}10`,
+								color: theme.colors.textMain,
+							}}
+							onMouseEnter={(e) =>
+								(e.currentTarget.style.backgroundColor = `${theme.colors.accent}25`)
+							}
+							onMouseLeave={(e) =>
+								(e.currentTarget.style.backgroundColor = `${theme.colors.accent}10`)
+							}
+						>
+							<Copy className="w-4 h-4 shrink-0" style={{ color: theme.colors.accent }} />
+							<span>
+								Copy to Clipboard
+								<span className="block text-xs" style={{ color: theme.colors.textDim }}>
+									Paste the image straight into another app
+								</span>
+							</span>
+						</button>
+						<button
+							onClick={handleScreenshotSave}
+							className="w-full flex items-center gap-3 px-3 py-2.5 rounded text-sm text-left transition-colors"
+							style={{
+								backgroundColor: `${theme.colors.accent}10`,
+								color: theme.colors.textMain,
+							}}
+							onMouseEnter={(e) =>
+								(e.currentTarget.style.backgroundColor = `${theme.colors.accent}25`)
+							}
+							onMouseLeave={(e) =>
+								(e.currentTarget.style.backgroundColor = `${theme.colors.accent}10`)
+							}
+						>
+							<Download className="w-4 h-4 shrink-0" style={{ color: theme.colors.accent }} />
+							<span>
+								Save to Disk
+								<span className="block text-xs" style={{ color: theme.colors.textDim }}>
+									Write a PNG wherever you choose
+								</span>
+							</span>
+						</button>
+					</div>
+				</Modal>
+			)}
 
 			{/* Close Confirmation Modal */}
 			{showCloseConfirmation && (
 				<Modal
 					theme={theme}
-					title="Close Document Graph?"
+					title={`Close ${title}?`}
 					priority={MODAL_PRIORITIES.DOCUMENT_GRAPH + 1}
 					onClose={() => setShowCloseConfirmation(false)}
 					width={400}
@@ -2404,9 +2765,7 @@ export function DocumentGraphView({
 					}
 					initialFocusRef={confirmCloseButtonRef}
 				>
-					<p style={{ color: theme.colors.textDim }}>
-						Are you sure you want to close the Document Graph?
-					</p>
+					<p style={{ color: theme.colors.textDim }}>Are you sure you want to close the {title}?</p>
 				</Modal>
 			)}
 

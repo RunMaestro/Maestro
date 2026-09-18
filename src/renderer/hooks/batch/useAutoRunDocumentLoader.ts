@@ -37,6 +37,60 @@ const REMOTE_POLL_INTERVAL_MS = 20000;
 // Hook implementation
 // ============================================================================
 
+/**
+ * Reads each Auto Run document once, counts its markdown tasks, and optionally
+ * captures the content of a single document so callers don't have to re-read
+ * it. `captureInList` tells the caller whether the requested capture target
+ * was part of the documents list (so they can decide whether to fall back to
+ * an explicit read for a stale selectedFile).
+ *
+ * Shared by the document loader (initial load, file watcher, SSH poll) and
+ * the manual "Refresh document list" handler so both refresh the per-document
+ * task counts the same way.
+ */
+export async function readTaskCountsAndContent(
+	folderPath: string,
+	documents: string[],
+	sshRemoteId: string | undefined,
+	captureContentFor?: string
+): Promise<{
+	counts: Map<string, { completed: number; total: number }>;
+	capturedContent: string | undefined;
+	captureInList: boolean;
+}> {
+	const counts = new Map<string, { completed: number; total: number }>();
+	let capturedContent: string | undefined;
+	const captureInList = !!captureContentFor && documents.includes(captureContentFor);
+
+	await Promise.all(
+		documents.map(async (docPath) => {
+			try {
+				const result = await window.maestro.autorun.readDoc(
+					folderPath,
+					docPath + '.md',
+					sshRemoteId
+				);
+				if (result.success && result.content) {
+					const taskCount = countMarkdownTasks(result.content);
+					if (taskCount.total > 0) {
+						counts.set(docPath, {
+							completed: taskCount.checked,
+							total: taskCount.total,
+						});
+					}
+					if (captureContentFor && captureContentFor === docPath) {
+						capturedContent = result.content;
+					}
+				}
+			} catch {
+				// Ignore errors for individual documents
+			}
+		})
+	);
+
+	return { counts, capturedContent, captureInList };
+}
+
 export function useAutoRunDocumentLoader(): UseAutoRunDocumentLoaderReturn {
 	const loadSequenceRef = useRef(0);
 	// Last (sessionId|folder|sshRemoteId) tuple - lets us distinguish a true
@@ -65,60 +119,13 @@ export function useAutoRunDocumentLoader(): UseAutoRunDocumentLoaderReturn {
 		setDocumentTaskCounts: setAutoRunDocumentTaskCounts,
 	} = useBatchStore.getState();
 
-	// Internal helper: reads each doc once, counts tasks, and optionally
-	// captures content for a single doc so callers don't have to re-read it.
-	// `captureInList` tells the caller whether the requested capture target was
-	// part of the documents list (so they can decide whether to fall back to an
-	// explicit read for a stale selectedFile).
-	const readTaskCountsAndContent = useCallback(
-		async (
-			folderPath: string,
-			documents: string[],
-			sshRemoteId: string | undefined,
-			captureContentFor?: string
-		) => {
-			const counts = new Map<string, { completed: number; total: number }>();
-			let capturedContent: string | undefined;
-			const captureInList = !!captureContentFor && documents.includes(captureContentFor);
-
-			await Promise.all(
-				documents.map(async (docPath) => {
-					try {
-						const result = await window.maestro.autorun.readDoc(
-							folderPath,
-							docPath + '.md',
-							sshRemoteId
-						);
-						if (result.success && result.content) {
-							const taskCount = countMarkdownTasks(result.content);
-							if (taskCount.total > 0) {
-								counts.set(docPath, {
-									completed: taskCount.checked,
-									total: taskCount.total,
-								});
-							}
-							if (captureContentFor && captureContentFor === docPath) {
-								capturedContent = result.content;
-							}
-						}
-					} catch {
-						// Ignore errors for individual documents
-					}
-				})
-			);
-
-			return { counts, capturedContent, captureInList };
-		},
-		[]
-	);
-
 	// Public API: load task counts for all documents (back-compat signature)
 	const loadTaskCounts = useCallback(
 		async (folderPath: string, documents: string[], sshRemoteId?: string) => {
 			const { counts } = await readTaskCountsAndContent(folderPath, documents, sshRemoteId);
 			return counts;
 		},
-		[readTaskCountsAndContent]
+		[]
 	);
 
 	// Helper: update a session's autoRunContent if it actually changed.
@@ -247,13 +254,7 @@ export function useAutoRunDocumentLoader(): UseAutoRunDocumentLoaderReturn {
 
 		load();
 		// Note: Use primitive values (remoteId) not object refs (sessionSshRemoteConfig) to avoid infinite re-render loops
-	}, [
-		activeSessionId,
-		autoRunFolderPath,
-		autoRunSelectedFile,
-		autoRunSshRemoteId,
-		readTaskCountsAndContent,
-	]);
+	}, [activeSessionId, autoRunFolderPath, autoRunSelectedFile, autoRunSshRemoteId]);
 
 	// File watching for Auto Run - watch whenever a folder is configured
 	// Updates reflect immediately whether from batch runs, terminal commands, or external editors
@@ -365,13 +366,7 @@ export function useAutoRunDocumentLoader(): UseAutoRunDocumentLoaderReturn {
 		// the latest selected file from the store at refresh time, so changing
 		// the selected doc shouldn't tear down and re-establish the watcher.
 		// Note: Use primitive values (remoteId) not object refs (sessionSshRemoteConfig) to avoid infinite re-render loops
-	}, [
-		activeSessionId,
-		autoRunFolderPath,
-		autoRunSshRemoteId,
-		readTaskCountsAndContent,
-		applySelectedContent,
-	]);
+	}, [activeSessionId, autoRunFolderPath, autoRunSshRemoteId, applySelectedContent]);
 
 	return { loadTaskCounts };
 }

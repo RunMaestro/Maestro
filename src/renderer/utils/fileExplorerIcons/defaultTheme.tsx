@@ -62,14 +62,14 @@ const defaultFileIconProps = (
 			: theme.colors.warning,
 		color: fileTypeColor(type, fallbackColor),
 	},
-	'data-file-explorer-icon-theme': 'default',
+	'data-file-explorer-icon-theme': 'flat',
 	'data-file-explorer-icon-key': iconKey,
 });
 
 const defaultFolderIconProps = (iconKey: string, color: string) => ({
 	className: 'w-3.5 h-3.5',
 	style: { color },
-	'data-file-explorer-icon-theme': 'default',
+	'data-file-explorer-icon-theme': 'flat',
 	'data-file-explorer-icon-key': iconKey,
 });
 

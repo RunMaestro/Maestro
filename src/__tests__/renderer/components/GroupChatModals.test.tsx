@@ -26,6 +26,11 @@ vi.mock('lucide-react', async (importOriginal) => ({
 			×
 		</span>
 	),
+	AlertTriangle: ({ className }: { className?: string }) => (
+		<span data-testid="alert-triangle-icon" className={className}>
+			⚠️
+		</span>
+	),
 	RefreshCw: ({ className }: { className?: string }) => (
 		<span data-testid="refresh-icon" className={className}>
 			🔄
@@ -301,6 +306,59 @@ describe('GroupChatModal', () => {
 				{ timeout: 3000 }
 			);
 		});
+
+		it('should not label Group Chat itself as Beta', async () => {
+			// Group Chat graduated out of Beta. The per-provider "(Beta)" suffix in
+			// the moderator dropdown is a different thing and stays; what must not
+			// come back is a feature-level badge on the modal header.
+			render(
+				<GroupChatModal
+					mode="create"
+					theme={createMockTheme()}
+					isOpen={true}
+					onClose={vi.fn()}
+					onCreate={vi.fn()}
+				/>
+			);
+
+			await waitFor(
+				() => {
+					expect(screen.getByRole('combobox', { name: /select moderator/i })).toBeInTheDocument();
+				},
+				{ timeout: 3000 }
+			);
+
+			expect(screen.queryByText(/^Beta$/)).not.toBeInTheDocument();
+		});
+
+		it('should keep the standard header title and close control in create mode', async () => {
+			// The create header used to be a bespoke `customHeader` carrying the
+			// Beta badge. Dropping it hands the header back to <Modal>, which owns
+			// the title and the graphical exit - both must survive the swap.
+			const onClose = vi.fn();
+
+			render(
+				<GroupChatModal
+					mode="create"
+					theme={createMockTheme()}
+					isOpen={true}
+					onClose={onClose}
+					onCreate={vi.fn()}
+				/>
+			);
+
+			await waitFor(
+				() => {
+					expect(screen.getByRole('combobox', { name: /select moderator/i })).toBeInTheDocument();
+				},
+				{ timeout: 3000 }
+			);
+
+			expect(screen.getByRole('heading', { name: 'New Group Chat' })).toBeInTheDocument();
+
+			fireEvent.click(screen.getByRole('button', { name: /close modal/i }));
+			expect(onClose).toHaveBeenCalled();
+		});
 	});
 
 	describe('edit mode', () => {
@@ -383,6 +441,133 @@ describe('GroupChatModal', () => {
 			await waitFor(() => {
 				expect(screen.getByText(/changing the moderator agent/i)).toBeInTheDocument();
 			});
+		});
+	});
+
+	describe('agent availability', () => {
+		function availabilityToggle() {
+			return screen.getByRole('switch', { name: /only work with agents that are free/i });
+		}
+
+		it('creates with the idle requirement on and no warning showing', async () => {
+			const onCreate = vi.fn();
+
+			render(
+				<GroupChatModal
+					mode="create"
+					theme={createMockTheme()}
+					isOpen={true}
+					onClose={vi.fn()}
+					onCreate={onCreate}
+				/>
+			);
+
+			await waitFor(
+				() => {
+					expect(availabilityToggle()).toHaveAttribute('aria-checked', 'true');
+				},
+				{ timeout: 3000 }
+			);
+			expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+
+			fireEvent.change(screen.getByPlaceholderText(/Auth Feature Implementation/i), {
+				target: { value: 'Busy Guard Chat' },
+			});
+			fireEvent.click(screen.getByRole('button', { name: /^create$/i }));
+
+			expect(onCreate).toHaveBeenCalledWith('Busy Guard Chat', 'claude-code', undefined, true);
+		});
+
+		it('warns when the user turns the idle requirement off, and saves the opt-out', async () => {
+			const onCreate = vi.fn();
+
+			render(
+				<GroupChatModal
+					mode="create"
+					theme={createMockTheme()}
+					isOpen={true}
+					onClose={vi.fn()}
+					onCreate={onCreate}
+				/>
+			);
+
+			await waitFor(
+				() => {
+					expect(availabilityToggle()).toBeInTheDocument();
+				},
+				{ timeout: 3000 }
+			);
+
+			fireEvent.click(availabilityToggle());
+
+			expect(availabilityToggle()).toHaveAttribute('aria-checked', 'false');
+			expect(screen.getByRole('alert')).toHaveTextContent(/agents will be interrupted/i);
+
+			fireEvent.change(screen.getByPlaceholderText(/Auth Feature Implementation/i), {
+				target: { value: 'Override Chat' },
+			});
+			fireEvent.click(screen.getByRole('button', { name: /^create$/i }));
+
+			expect(onCreate).toHaveBeenCalledWith('Override Chat', 'claude-code', undefined, false);
+		});
+
+		it('reflects a chat that opted out, and counts a change back as an edit', async () => {
+			const onSave = vi.fn();
+			const groupChat = createMockGroupChat({ requireIdleParticipants: false });
+
+			render(
+				<GroupChatModal
+					mode="edit"
+					theme={createMockTheme()}
+					isOpen={true}
+					groupChat={groupChat}
+					onClose={vi.fn()}
+					onSave={onSave}
+				/>
+			);
+
+			await waitFor(
+				() => {
+					expect(availabilityToggle()).toHaveAttribute('aria-checked', 'false');
+				},
+				{ timeout: 3000 }
+			);
+
+			// Save is disabled until something changes; flipping the toggle IS a change.
+			expect(screen.getByRole('button', { name: /^save$/i })).toBeDisabled();
+			fireEvent.click(availabilityToggle());
+			fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+			expect(onSave).toHaveBeenCalledWith(
+				'group-chat-1',
+				'Test Group Chat',
+				'claude-code',
+				undefined,
+				true
+			);
+		});
+
+		it('treats a chat saved before this setting existed as requiring idle agents', async () => {
+			const groupChat = createMockGroupChat();
+			delete (groupChat as { requireIdleParticipants?: boolean }).requireIdleParticipants;
+
+			render(
+				<GroupChatModal
+					mode="edit"
+					theme={createMockTheme()}
+					isOpen={true}
+					groupChat={groupChat}
+					onClose={vi.fn()}
+					onSave={vi.fn()}
+				/>
+			);
+
+			await waitFor(
+				() => {
+					expect(availabilityToggle()).toHaveAttribute('aria-checked', 'true');
+				},
+				{ timeout: 3000 }
+			);
 		});
 	});
 });

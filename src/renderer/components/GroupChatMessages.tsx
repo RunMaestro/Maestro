@@ -18,12 +18,15 @@ import {
 import { Eye, FileText, Copy, ChevronDown, ChevronUp, Share2 } from 'lucide-react';
 import type { GroupChatMessage, GroupChatParticipant, GroupChatState, Theme } from '../types';
 import { MarkdownRenderer } from './MarkdownRenderer';
+import { useSurfaceTypography } from '../hooks/ui/useSurfaceTypography';
 import { stripMarkdown } from '../utils/textProcessing';
+import { displayImageSrc } from '../utils/sessionImageSrc';
 import { generateParticipantColor, buildParticipantColorMap } from '../utils/participantColors';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { formatTimestamp as formatTimestampShared } from '../../shared/formatters';
+import { isDirectModeratorMessage } from '../../shared/groupChatModeratorView';
 import { useMessageGistStore } from '../stores/messageGistStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { isTextInputTarget } from '../utils/messageScrollNavigation';
@@ -44,6 +47,8 @@ interface GroupChatMessagesProps {
 	markdownEditMode?: boolean;
 	onToggleMarkdownEditMode?: () => void;
 	maxOutputLines?: number;
+	/** True to show only the user <-> moderator conversation, hiding agent traffic */
+	moderatorOnly?: boolean;
 	/** Pre-computed participant colors (if provided, overrides internal color generation) */
 	participantColors?: Record<string, string>;
 	/** Lightbox handler for viewing images full-size */
@@ -77,6 +82,7 @@ export const GroupChatMessages = memo(
 			markdownEditMode,
 			onToggleMarkdownEditMode,
 			maxOutputLines = 30,
+			moderatorOnly = false,
 			participantColors: externalColors,
 			onOpenLightbox,
 			ghCliAvailable,
@@ -86,6 +92,10 @@ export const GroupChatMessages = memo(
 		},
 		ref
 	) {
+		// Group chat is an AI transcript, so it rides the AI Chat surface rather
+		// than inheriting whatever the app shell happens to be set to.
+		const { fontFamily: chatFontFamily, fontSize: chatFontSize } = useSurfaceTypography('chat');
+
 		const containerRef = useRef<HTMLDivElement | null>(null);
 		const setContainerRef = useCallback(
 			(el: HTMLDivElement | null) => {
@@ -97,12 +107,28 @@ export const GroupChatMessages = memo(
 			[externalScrollRef]
 		);
 		const [expandedMessages, setExpandedMessages] = useState<Set<string>>(new Set());
-		const hasVirtualTypingIndicator = state !== 'idle' && messages.length > 0;
-		const virtualItemCount = messages.length + (hasVirtualTypingIndicator ? 1 : 0);
+
+		// The moderator-only view is a display filter, not a deletion: `messages`
+		// still holds the whole transcript, so switching back restores it without a
+		// reload. Each row carries its index in the FULL list so the collapse state
+		// (keyed by that index) survives a flip between the two views - and so the
+		// timestamp jump below can still find a row by its original position.
+		//
+		// The virtualizer is measured against THIS list, not `messages`: a virtual
+		// index is a position in what is drawn, so counting hidden rows would leave
+		// the window scrolling past rows that render nothing.
+		const visibleMessages = useMemo(() => {
+			const rows = messages.map((msg, index) => ({ msg, index }));
+			return moderatorOnly ? rows.filter(({ msg }) => isDirectModeratorMessage(msg)) : rows;
+		}, [messages, moderatorOnly]);
+		const hiddenCount = messages.length - visibleMessages.length;
+
+		const hasVirtualTypingIndicator = state !== 'idle' && visibleMessages.length > 0;
+		const virtualItemCount = visibleMessages.length + (hasVirtualTypingIndicator ? 1 : 0);
 		const estimateMessageHeight = useCallback(
 			(index: number) => {
-				if (index === messages.length) return 72;
-				const message = messages[index];
+				if (index === visibleMessages.length) return 72;
+				const message = visibleMessages[index]?.msg;
 				if (!message) return 140;
 				const lineCount = message.content.split('\n').length;
 				const visibleLines =
@@ -110,17 +136,20 @@ export const GroupChatMessages = memo(
 				const imageHeight = message.images?.length ? 96 : 0;
 				return Math.max(112, Math.min(visibleLines, 24) * 22 + 88 + imageHeight);
 			},
-			[messages, maxOutputLines]
+			[visibleMessages, maxOutputLines]
 		);
 		const virtualizer = useVirtualizer({
 			count: virtualItemCount,
 			getScrollElement: () => containerRef.current,
 			estimateSize: estimateMessageHeight,
-			getItemKey: (index) =>
-				index === messages.length
-					? 'typing-indicator'
-					: `${messages[index]?.timestamp ?? 'message'}-${index}`,
-			overscan: searchActive ? Math.max(messages.length, 50) : 5,
+			getItemKey: (index) => {
+				if (index === visibleMessages.length) return 'typing-indicator';
+				const row = visibleMessages[index];
+				// Keyed by the ORIGINAL index so a row keeps its identity (and its
+				// measured height) when the filter flips and its visible position moves.
+				return `${row?.msg.timestamp ?? 'message'}-${row?.index ?? index}`;
+			},
+			overscan: searchActive ? Math.max(visibleMessages.length, 50) : 5,
 			initialRect: { width: 900, height: 700 },
 		});
 		const virtualMessages = virtualizer.getVirtualItems();
@@ -144,7 +173,13 @@ export const GroupChatMessages = memo(
 						}
 					});
 					if (targetIndex < 0 || closestDiff >= 5000) return;
-					virtualizer.scrollToIndex(targetIndex, { align: 'center' });
+					// The virtualizer indexes what is DRAWN, so a jump has to be
+					// expressed in visible-row space. A message hidden by the
+					// moderator-only filter has no row to scroll to, so bail rather
+					// than scrolling to an unrelated one.
+					const visibleIndex = visibleMessages.findIndex((row) => row.index === targetIndex);
+					if (visibleIndex < 0) return;
+					virtualizer.scrollToIndex(visibleIndex, { align: 'center' });
 					let remainingFrames = 12;
 					const highlightWhenMounted = () => {
 						const element = containerRef.current?.querySelector(
@@ -224,7 +259,7 @@ export const GroupChatMessages = memo(
 				containerRef.current.scrollTop = containerRef.current.scrollHeight;
 				virtualizer.scrollToIndex(virtualItemCount - 1, { align: 'end' });
 			}
-		}, [messages, virtualizer, virtualItemCount]);
+		}, [visibleMessages, virtualizer, virtualItemCount]);
 
 		// Use external colors if provided, otherwise generate locally
 		// Include 'Moderator' at index 0 to match the participant panel's color assignment
@@ -262,7 +297,8 @@ export const GroupChatMessages = memo(
 		};
 		const typingIndicatorContent = state !== 'idle' && (
 			<>
-				<div className="w-20 shrink-0" />
+				{/* Matches the timestamp gutter, which only exists from `sm` up. */}
+				<div className="hidden sm:block w-20 shrink-0" />
 				<div
 					className="flex-1 min-w-0 p-4 rounded-xl border rounded-tl-none"
 					style={{ backgroundColor: theme.colors.bgActivity, borderColor: theme.colors.border }}
@@ -287,6 +323,13 @@ export const GroupChatMessages = memo(
 				role="region"
 				aria-label="Group chat messages"
 				className="group-chat-messages flex-1 overflow-y-auto scrollbar-thin py-2 outline-none"
+				// A group chat IS an AI transcript, so it follows the AI Chat font
+				// like the main panel and the tiled panes do. Set on the scroll
+				// container and inherited by every message below, the same way
+				// TerminalOutput carries it - the markdown, the tool cards, and the
+				// code fences nested several components deep all pick it up without
+				// being touched.
+				style={{ fontFamily: chatFontFamily, fontSize: `${chatFontSize}px` }}
 				onKeyDown={(e) => {
 					if (
 						(e.key !== 'ArrowUp' && e.key !== 'ArrowDown') ||
@@ -312,7 +355,7 @@ export const GroupChatMessages = memo(
 						const edgeIndex =
 							e.key === 'ArrowUp'
 								? Math.max(0, (firstVisible?.index ?? 0) - 1)
-								: Math.min(messages.length - 1, (lastVisible?.index ?? 0) + 1);
+								: Math.min(virtualItemCount - 1, (lastVisible?.index ?? 0) + 1);
 						virtualizer.scrollToIndex(edgeIndex, {
 							align: e.key === 'ArrowUp' ? 'start' : 'end',
 							behavior: 'smooth',
@@ -326,21 +369,26 @@ export const GroupChatMessages = memo(
 			>
 				{/* Prose styles for markdown rendering */}
 				<style>{proseStyles}</style>
-				{messages.length === 0 ? (
+				{/* Says where the missing messages went, so a filtered room never reads as a lost one. */}
+				{hiddenCount > 0 && visibleMessages.length > 0 && (
+					<div
+						className="px-6 py-1.5 text-2xs text-center"
+						style={{ color: theme.colors.textDim, opacity: 0.7 }}
+					>
+						{hiddenCount} team message{hiddenCount !== 1 ? 's' : ''} hidden by Moderator Only
+					</div>
+				)}
+				{visibleMessages.length === 0 && hiddenCount > 0 ? (
+					<div className="flex items-center justify-center h-full px-6">
+						<p className="text-sm text-center max-w-md" style={{ color: theme.colors.textDim }}>
+							Moderator Only is on, and this room has nothing but agent traffic so far. Switch to
+							Team Chat in the header to see all {hiddenCount} message{hiddenCount !== 1 ? 's' : ''}
+							.
+						</p>
+					</div>
+				) : messages.length === 0 ? (
 					<div className="flex items-center justify-center h-full px-6">
 						<div className="text-center max-w-md space-y-3">
-							<div className="flex justify-center mb-4">
-								<span
-									className="text-[10px] font-semibold tracking-wide uppercase px-2 py-0.5 rounded"
-									style={{
-										backgroundColor: `${theme.colors.accent}20`,
-										color: theme.colors.accent,
-										border: `1px solid ${theme.colors.accent}40`,
-									}}
-								>
-									Beta
-								</span>
-							</div>
 							<p className="text-sm" style={{ color: theme.colors.textDim }}>
 								Messages you send go directly to the{' '}
 								<span style={{ color: theme.colors.warning }}>moderator</span>, who orchestrates the
@@ -361,15 +409,19 @@ export const GroupChatMessages = memo(
 						}}
 					>
 						{virtualMessages.map((virtualMessage) => {
-							const index = virtualMessage.index;
-							if (index === messages.length) {
+							// Position in the DRAWN list. `data-index` must carry this one -
+							// it is how the virtualizer matches a measured element back to
+							// its row - while the message's own identity below stays on its
+							// index in the full transcript.
+							const virtualIndex = virtualMessage.index;
+							if (virtualIndex === visibleMessages.length) {
 								return (
 									<div
 										key="typing-indicator"
 										ref={virtualizer.measureElement}
-										data-index={index}
+										data-index={virtualIndex}
 										data-typing-indicator
-										className="flex gap-4 px-6 py-2"
+										className="flex gap-4 px-3 sm:px-6 py-2"
 										style={{
 											position: 'absolute',
 											top: 0,
@@ -382,7 +434,9 @@ export const GroupChatMessages = memo(
 									</div>
 								);
 							}
-							const msg = messages[index];
+							const row = visibleMessages[virtualIndex];
+							if (!row) return null;
+							const { msg, index } = row;
 							const isUser = msg.from === 'user';
 							const isSystem = msg.from === 'system';
 							const msgKey = `${msg.timestamp}-${index}`;
@@ -410,10 +464,16 @@ export const GroupChatMessages = memo(
 								<div
 									key={msgKey}
 									ref={virtualizer.measureElement}
-									data-index={index}
+									data-index={virtualIndex}
 									data-message-index={index}
 									data-message-timestamp={msg.timestamp}
-									className={`flex gap-4 group ${isUser ? 'flex-row-reverse' : ''} px-6 py-2`}
+									// Narrow screens (phones / web-desktop mobile): the fixed side
+									// gutter for the timestamp costs ~96px of bubble width, so the
+									// row stacks - timestamp above, bubble full-width. From `sm` up
+									// it's the classic side-by-side layout with the w-20 timestamp
+									// column. Same treatment as the AI Terminal's own rows in
+									// TerminalOutput/components/LogItem.tsx.
+									className={`flex flex-col gap-1 sm:gap-4 group ${isUser ? 'sm:flex-row-reverse' : 'sm:flex-row'} px-3 sm:px-6 py-2`}
 									style={{
 										position: 'absolute',
 										top: 0,
@@ -424,7 +484,7 @@ export const GroupChatMessages = memo(
 								>
 									{/* Timestamp - outside bubble, like AI Terminal */}
 									<div
-										className={`w-20 shrink-0 text-[10px] pt-2 ${isUser ? 'text-right' : 'text-left'}`}
+										className={`shrink-0 text-2xs sm:w-20 sm:pt-2 flex gap-1 sm:block ${isUser ? 'text-right justify-end' : 'text-left'}`}
 										style={{ color: theme.colors.textDim, opacity: 0.6 }}
 									>
 										{formatTimestamp(msg.timestamp)}
@@ -468,7 +528,7 @@ export const GroupChatMessages = memo(
 														onClick={() => onOpenLightbox?.(img, msg.images, 'history')}
 													>
 														<img
-															src={img}
+															src={displayImageSrc(img)}
 															alt={`Attached image ${imgIdx + 1}`}
 															className="h-20 rounded border cursor-zoom-in block"
 															style={{

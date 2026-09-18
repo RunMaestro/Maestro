@@ -11,36 +11,14 @@ import {
 	type CuePipeline,
 	type CueGraphSession,
 } from '../../../shared/cue-pipeline-types';
-import { getPipelineColorForAgent } from '../CuePipelineEditor/pipelineColors';
+import { pipelinesForSession } from '../CuePipelineEditor/utils/pipelineMembership';
 import { StatusDot, PipelineDot } from './StatusDot';
 import { formatRelativeTime } from './cueModalUtils';
-import type { CueSubscription } from '../../../shared/cue';
+import { triggerGroupKey } from '../../../shared/cue';
 
 // Mirrors the engine's anchor-group key so Run Now fires exactly one
 // representative per (pipeline_name, trigger-config) pair - not one per
 // pipeline_name, which would miss distinct trigger groups within a pipeline.
-function triggerGroupKey(sub: CueSubscription): string {
-	const filter = sub.filter
-		? Object.keys(sub.filter)
-				.sort()
-				.reduce<Record<string, unknown>>((acc, k) => {
-					acc[k] = (sub.filter as Record<string, unknown>)[k];
-					return acc;
-				}, {})
-		: null;
-	return JSON.stringify({
-		event: sub.event,
-		schedule_times: sub.schedule_times ?? null,
-		schedule_days: sub.schedule_days ?? null,
-		interval_minutes: sub.interval_minutes ?? null,
-		watch: sub.watch ?? null,
-		repo: sub.repo ?? null,
-		poll_minutes: sub.poll_minutes ?? null,
-		gh_state: sub.gh_state ?? null,
-		label: sub.label ?? null,
-		filter,
-	});
-}
 
 interface SessionsTableProps {
 	sessions: CueSessionStatus[];
@@ -152,21 +130,21 @@ export function SessionsTable({
 							</td>
 							<td className="py-2">
 								{(() => {
-									const colors = getPipelineColorForAgent(s.sessionId, pipelines);
-									if (colors.length === 0) {
+									// Dots are per PIPELINE, not per color: two pipelines can share a
+									// color, and pairing names to colors dropped one of them and
+									// mislabeled the other.
+									const owned = pipelinesForSession(s.sessionId, pipelines, graphSessions);
+									if (owned.length === 0) {
 										return <span style={{ color: theme.colors.textDim }}>—</span>;
 									}
-									const pipelineNames = pipelines
-										.filter((p) => colors.includes(p.color))
-										.map((p) => p.name);
 									return (
 										<span className="flex items-center gap-1">
-											{colors.map((color, i) => (
-												<PipelineDot key={color} color={color} name={pipelineNames[i] ?? ''} />
+											{owned.map((p) => (
+												<PipelineDot key={p.id} color={p.color} name={p.name} />
 											))}
-											{colors.length > 1 && (
+											{owned.length > 1 && (
 												<span style={{ color: theme.colors.textDim, fontSize: '0.7rem' }}>
-													×{colors.length}
+													×{owned.length}
 												</span>
 											)}
 										</span>

@@ -27,6 +27,7 @@ export const CUE_EVENT_LABELS: Record<CueEventType, string> = {
 	'agent.completed': 'Agent Completed',
 	'github.pull_request': 'Pull Request',
 	'github.issue': 'GitHub Issue',
+	'github.label': 'GitHub Label',
 	'task.pending': 'Pending Task',
 	'cli.trigger': 'CLI Trigger',
 	'webhook.received': 'Webhook',
@@ -74,6 +75,15 @@ export function getCueEventDetail(event: CueEvent): string | undefined {
 			const title = payload.title ? String(payload.title).trim() : '';
 			if (number == null || number === '') return title || undefined;
 			return title ? `#${number} ${title}` : `#${number}`;
+		}
+
+		case 'github.label': {
+			// The label is what distinguishes one of these runs from the next,
+			// so it leads even when the item number is missing.
+			const label = payload.label ? String(payload.label).trim() : '';
+			const number = payload.number;
+			if (number == null || number === '') return label || undefined;
+			return label ? `${label} on #${number}` : `#${number}`;
 		}
 
 		case 'file.changed': {
@@ -165,7 +175,9 @@ export function parseSubscriptionName(name: string): {
  *   `"Maestro" · rc #2 - #891 Feature: …` (legacy YAML, no pipeline_name)
  *   `"Hourly Sync"` (no agent distinction, no payload)
  */
-export function buildCueRunSummary(result: CueRunResult): string {
+export function buildCueRunSummary(
+	result: Pick<CueRunResult, 'subscriptionName' | 'pipelineName' | 'sessionName' | 'event'>
+): string {
 	const parsed = parseSubscriptionName(result.subscriptionName);
 	const triggerLabel = result.pipelineName?.trim() || parsed.base;
 	const trigger = `"${triggerLabel}"`;

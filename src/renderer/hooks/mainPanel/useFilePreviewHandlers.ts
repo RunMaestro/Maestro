@@ -1,7 +1,8 @@
 import { useMemo, useCallback } from 'react';
 import type { Session, FilePreviewTab } from '../../types';
-import { useSessionStore } from '../../stores/sessionStore';
+import { updateFileTab } from '../../stores/sessionStore';
 import { getFileTabFileName } from '../../utils/tabHelpers';
+import { requestFileTreeRefresh } from '../../utils/fileTreeRefresh';
 
 interface UseFilePreviewHandlersParams {
 	activeSession: Session | null;
@@ -12,7 +13,8 @@ interface UseFilePreviewHandlersParams {
 	onFileTabEditContentChange?: (
 		tabId: string,
 		editContent: string | undefined,
-		savedContent?: string
+		savedContent?: string,
+		savedMtime?: number
 	) => void;
 	onFileTabScrollPositionChange?: (tabId: string, scrollTop: number) => void;
 	onFileTabSearchQueryChange?: (tabId: string, searchQuery: string) => void;
@@ -115,6 +117,19 @@ export function useFilePreviewHandlers({
 
 			await window.maestro.fs.writeFile(savePath, content, filePreviewSshRemoteId);
 
+			// Stamp the tab with the mtime our own write just produced. The tab's
+			// lastModified is what the change poller compares the disk against, so a
+			// tab left holding its pre-save timestamp reports "File changed on disk"
+			// for a change it made itself - every time FilePreview remounts.
+			let savedMtime = Date.now();
+			try {
+				const st = await window.maestro.fs.stat(savePath, filePreviewSshRemoteId);
+				if (st?.modifiedAt) savedMtime = new Date(st.modifiedAt).getTime();
+			} catch {
+				// Non-critical: the wall clock is never earlier than the write, so the
+				// worst case is that a later external edit goes unnoticed for a moment.
+			}
+
 			if (activeFileTabId) {
 				// Path changed (untitled save, or redirect after a move/delete): refresh
 				// the tab's metadata so it now tracks the real on-disk location.
@@ -122,44 +137,25 @@ export function useFilePreviewHandlers({
 					const fileName = savePath.split('/').pop() || 'Untitled';
 					const ext = fileName.includes('.') ? '.' + fileName.split('.').pop() : '';
 					const nameWithoutExt = ext ? fileName.slice(0, -ext.length) : fileName;
-					const { setSessions } = useSessionStore.getState();
 					const sessionId = activeSession?.id;
-					setSessions((prev: Session[]) =>
-						prev.map((s) => {
-							if (s.id !== sessionId) return s;
-							return {
-								...s,
-								filePreviewTabs: s.filePreviewTabs.map((tab) =>
-									tab.id === activeFileTabId
-										? {
-												...tab,
-												path: savePath,
-												name: nameWithoutExt,
-												extension: ext,
-												content,
-												editContent: undefined,
-												lastModified: Date.now(),
-											}
-										: tab
-								),
-							};
-						})
-					);
+					if (sessionId) {
+						updateFileTab(sessionId, activeFileTabId, (tab) => ({
+							...tab,
+							path: savePath,
+							name: nameWithoutExt,
+							extension: ext,
+							content,
+							editContent: undefined,
+							lastModified: savedMtime,
+						}));
+					}
 
 					// A file just landed at a new on-disk location (untitled save, or
 					// redirect after a move/delete). The Files panel won't show it until
-					// its next refresh, so nudge the tree to pick it up now. Reuse the
-					// existing CustomEvent the remote/CLI path already dispatches, so we
-					// avoid prop-drilling refreshFileTree into this deeply-nested hook.
-					if (sessionId) {
-						window.dispatchEvent(
-							new CustomEvent('maestro:refreshFileTree', {
-								detail: { sessionId },
-							})
-						);
-					}
+					// its next refresh, so nudge the tree to pick it up now.
+					requestFileTreeRefresh(sessionId);
 				} else {
-					onFileTabEditContentChange?.(activeFileTabId, undefined, content);
+					onFileTabEditContentChange?.(activeFileTabId, undefined, content, savedMtime);
 				}
 			}
 			return true;

@@ -86,6 +86,12 @@ export interface GroupChat {
 	logPath: string;
 	imagesDir: string;
 	archived?: boolean;
+	/**
+	 * When true (the default), the moderator only hands work to an agent whose
+	 * Maestro agent is idle. Undefined means enabled - read it through
+	 * `requiresIdleParticipants()` in shared/group-chat-types.
+	 */
+	requireIdleParticipants?: boolean;
 }
 
 /**
@@ -102,6 +108,7 @@ export type GroupChatUpdate = Partial<
 		| 'participants'
 		| 'updatedAt'
 		| 'archived'
+		| 'requireIdleParticipants'
 	>
 >;
 
@@ -185,7 +192,8 @@ function sanitizeChatName(name: string): string {
 export async function createGroupChat(
 	name: string,
 	moderatorAgentId: string,
-	moderatorConfig?: ModeratorConfig
+	moderatorConfig?: ModeratorConfig,
+	requireIdleParticipants?: boolean
 ): Promise<GroupChat> {
 	// Validate agent ID supports group chat moderation
 	if (!hasCapability(moderatorAgentId, 'supportsGroupChatModeration')) {
@@ -222,6 +230,9 @@ export async function createGroupChat(
 		participants: [],
 		logPath,
 		imagesDir,
+		// Persisted explicitly (rather than left undefined) so the chat's own record
+		// states the choice the user made at creation time.
+		requireIdleParticipants: requireIdleParticipants !== false,
 	};
 
 	// Write metadata (atomic: write tmp then rename)

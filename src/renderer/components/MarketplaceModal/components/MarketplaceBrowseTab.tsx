@@ -209,13 +209,13 @@ export function MarketplaceBrowseTab({
 				<span>Use arrow keys to navigate, Enter to select</span>
 				<span className="flex items-center gap-3">
 					<span>
-						<kbd className="px-1.5 py-0.5 rounded bg-white/10 font-mono text-[10px]">
+						<kbd className="px-1.5 py-0.5 rounded bg-white/10 font-mono text-2xs">
 							{formatShortcutKeys(['Meta', 'f'])}
 						</kbd>{' '}
 						search
 					</span>
 					<span>
-						<kbd className="px-1.5 py-0.5 rounded bg-white/10 font-mono text-[10px]">
+						<kbd className="px-1.5 py-0.5 rounded bg-white/10 font-mono text-2xs">
 							{formatShortcutKeys(['Meta', 'Shift'])}+[/]
 						</kbd>{' '}
 						to switch tabs

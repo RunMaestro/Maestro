@@ -9,7 +9,9 @@ import type {
 	RightPanelTab,
 	SettingsTab,
 	BatchRunConfig,
+	SnoozeContent,
 	ThinkingMode,
+	QueuedItemEditPatch,
 } from '../../types';
 import type { FileNode } from '../../types/fileTree';
 import type { MainPanelHandle } from '../MainPanel/types';
@@ -29,11 +31,7 @@ import type { CrossTabSearchJumpTarget } from '../CrossTabSearchModal';
 import { SnoozeTabModal } from '../SnoozeTabModal';
 import { ModelEffortModal } from '../ModelEffortModal';
 import { SnoozedTabsModal } from '../SnoozedTabsModal';
-import { useTabStore } from '../../stores/tabStore';
-import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
-import { notifyCenterFlash } from '../../stores/centerFlashStore';
-import { formatSnoozeTarget } from '../../../shared/snooze';
-import { mirrorSnoozedTranscript } from '../../utils/snoozeTranscriptMirror';
+import { snoozeTabWithMirror } from '../../services/snoozeActions';
 import { PromptComposerModal } from '../PromptComposerModal';
 import { ExecutionQueueBrowser } from '../ExecutionQueueBrowser';
 import { BatchRunnerModal } from '../BatchRunnerModal';
@@ -258,7 +256,6 @@ export interface AppUtilityModalsProps {
 	// FileSearchModal
 	fuzzyFileSearchOpen: boolean;
 	filteredFileTree: FileNode[];
-	fileExplorerExpanded?: string[];
 	onCloseFileSearch: () => void;
 	onFileSearchSelect: (file: FlatFileItem) => void;
 
@@ -296,11 +293,7 @@ export interface AppUtilityModalsProps {
 	onSwitchQueueSession: (sessionId: string, tabId?: string) => void;
 	onReorderQueueItems: (sessionId: string, fromIndex: number, toIndex: number) => void;
 	onTogglePauseQueueItem: (sessionId: string, itemId: string) => void;
-	onEditQueueItem: (
-		sessionId: string,
-		itemId: string,
-		patch: { text: string; images: string[] }
-	) => void;
+	onEditQueueItem: (sessionId: string, itemId: string, patch: QueuedItemEditPatch) => void;
 	onForceSendQueueItem: (sessionId: string, itemId: string) => void;
 	// New tab creation (for QuickActionsModal)
 	onQuickActionsNewTab?: () => void;
@@ -309,6 +302,8 @@ export interface AppUtilityModalsProps {
 	onQuickActionsNewTerminalTab?: () => void;
 	// Next unread / draft tab navigation (shared with Alt+Cmd+Down)
 	onGoToNextUnread?: () => void;
+	// Previous unread / draft tab navigation (shared with a second Alt+Cmd+Up)
+	onGoToPreviousUnread?: () => void;
 	// Session/tab history navigation (shared with Cmd+Shift+, / Cmd+Shift+.)
 	onNavBack?: () => void;
 	onNavForward?: () => void;
@@ -492,7 +487,6 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	// FileSearchModal
 	fuzzyFileSearchOpen,
 	filteredFileTree,
-	fileExplorerExpanded,
 	onCloseFileSearch,
 	onFileSearchSelect,
 	// PromptComposerModal
@@ -532,6 +526,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	onQuickActionsNewBrowserTab,
 	onQuickActionsNewTerminalTab,
 	onGoToNextUnread,
+	onGoToPreviousUnread,
 	onNavBack,
 	onNavForward,
 }: AppUtilityModalsProps) {
@@ -560,24 +555,15 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 		[]
 	);
 
-	const handleSnoozeConfirm = useCallback((tabId: string, wakeAt: number, note: string) => {
-		// Capture the session BEFORE snoozing: the tab leaves aiTabs as part of the
-		// snooze, taking its agentSessionId with it.
-		const sessionBefore = selectActiveSession(useSessionStore.getState());
-		const tabBefore = sessionBefore?.aiTabs.find((t) => t.id === tabId);
-
-		const entry = useTabStore.getState().snoozeTab(tabId, wakeAt, note);
-		if (!entry) return;
-
-		// A snooze can outlive the provider's retention of the transcript, so keep
-		// our own copy for its duration - same protection starred sessions get.
-		mirrorSnoozedTranscript(sessionBefore, tabBefore);
-
-		notifyCenterFlash({
-			message: `Snoozed until ${formatSnoozeTarget(wakeAt)}`,
-			color: 'theme',
-		});
-	}, []);
+	const handleSnoozeConfirm = useCallback(
+		(tabId: string, wakeAt: number, content: SnoozeContent) => {
+			// The transcript mirror and the ack ride along inside the service, which
+			// `maestro-cli snooze` shares, so a scripted snooze and a clicked one
+			// leave the same state behind.
+			snoozeTabWithMirror(tabId, wakeAt, content);
+		},
+		[]
+	);
 
 	return (
 		<>
@@ -692,6 +678,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					onNewBrowserTab={onQuickActionsNewBrowserTab}
 					onNewTerminalTab={onQuickActionsNewTerminalTab}
 					onGoToNextUnread={onGoToNextUnread}
+					onGoToPreviousUnread={onGoToPreviousUnread}
 					onNavBack={onNavBack}
 					onNavForward={onNavForward}
 				/>
@@ -834,7 +821,6 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 				<FileSearchModal
 					theme={theme}
 					fileTree={filteredFileTree}
-					expandedFolders={fileExplorerExpanded}
 					shortcut={shortcuts.fuzzyFileSearch}
 					onFileSelect={onFileSearchSelect}
 					onClose={onCloseFileSearch}
@@ -893,9 +879,10 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 				<SnoozeTabModal
 					theme={theme}
 					tabLabel={snoozeTabData.tabLabel}
+					canRunWakePrompt={snoozeTabData.canRunWakePrompt}
 					onClose={closeSnoozeTab}
-					onConfirm={(wakeAt, note) => {
-						handleSnoozeConfirm(snoozeTabData.tabId, wakeAt, note);
+					onConfirm={(wakeAt, content) => {
+						handleSnoozeConfirm(snoozeTabData.tabId, wakeAt, content);
 						closeSnoozeTab();
 					}}
 				/>

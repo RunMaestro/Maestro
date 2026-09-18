@@ -91,6 +91,42 @@ describe('LongPressable', () => {
 		expect(onClick).toHaveBeenCalledTimes(1);
 	});
 
+	it('stops suppressing once the click window has passed (iOS sends no click after a long-press)', () => {
+		const onClick = vi.fn();
+		const { getByText } = render(
+			<LongPressable onClick={onClick} onLongPress={vi.fn()}>
+				row
+			</LongPressable>
+		);
+		const el = getByText('row');
+
+		act(() => {
+			fireEvent.touchStart(el, { touches: [{ clientX: 0, clientY: 0 }] });
+		});
+		act(() => {
+			vi.advanceTimersByTime(500);
+			fireEvent.touchEnd(el);
+		});
+
+		// No synthesized click arrives. The user's next deliberate tap, well after
+		// the press, must reach onClick rather than being eaten by a stale flag.
+		act(() => {
+			vi.advanceTimersByTime(2000);
+		});
+		fireEvent.click(el);
+		expect(onClick).toHaveBeenCalledTimes(1);
+	});
+
+	it('hands the rendered element to innerRef so a host can keep its own ref', () => {
+		const innerRef = vi.fn();
+		const { getByText } = render(
+			<LongPressable onLongPress={vi.fn()} innerRef={innerRef}>
+				row
+			</LongPressable>
+		);
+		expect(innerRef).toHaveBeenCalledWith(getByText('row'));
+	});
+
 	it('longPressMouseEvent anchors near the rect and no-ops preventDefault', () => {
 		const rect = { left: 100, top: 40, width: 200, height: 20 } as DOMRect;
 		const evt = longPressMouseEvent(rect);

@@ -241,21 +241,21 @@ export function ExistingAutoRunDocsModal({
 					<p className="text-center text-xs pt-2" style={{ color: theme.colors.textDim }}>
 						Press{' '}
 						<kbd
-							className="px-1.5 py-0.5 rounded text-[10px] font-mono"
+							className="px-1.5 py-0.5 rounded text-2xs font-mono"
 							style={{ backgroundColor: theme.colors.bgActivity }}
 						>
 							Tab
 						</kbd>{' '}
 						to switch,{' '}
 						<kbd
-							className="px-1.5 py-0.5 rounded text-[10px] font-mono"
+							className="px-1.5 py-0.5 rounded text-2xs font-mono"
 							style={{ backgroundColor: theme.colors.bgActivity }}
 						>
 							Enter
 						</kbd>{' '}
 						to confirm,{' '}
 						<kbd
-							className="px-1.5 py-0.5 rounded text-[10px] font-mono"
+							className="px-1.5 py-0.5 rounded text-2xs font-mono"
 							style={{ backgroundColor: theme.colors.bgActivity }}
 						>
 							Esc

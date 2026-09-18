@@ -60,11 +60,14 @@
  */
 
 import { execFile } from 'child_process';
+import * as fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { promisify } from 'util';
 
+import { isWindows } from '../../shared/platformDetection';
 import { captureMessage } from '../utils/sentry';
-import { resolveConfigDirKey, type UsageSnapshot } from '../stores/claudeUsageStore';
+import { getSnapshot, resolveConfigDirKey, type UsageSnapshot } from '../stores/claudeUsageStore';
 import { readClaudeAccountIdentity } from './claude-account-identity';
 
 const execFileAsync = promisify(execFile);
@@ -83,8 +86,6 @@ export interface SampleUsageOptions {
 	 * `customEnvVars.CLAUDE_CONFIG_DIR` smuggled in via the env block.
 	 */
 	configDir?: string;
-	/** Working directory for the spawn. */
-	cwd: string;
 	/**
 	 * Per-spawn env overrides layered onto `process.env`. The caller is
 	 * responsible for setting `MAESTRO_CLAUDE_BIN` here when the real claude
@@ -111,7 +112,52 @@ interface StatusWireEnvelope {
 	config_dir: string;
 	session: { percent: number; resets_at?: string };
 	week_all_models: { percent: number; resets_at?: string };
-	week_sonnet_only: { percent: number; resets_at?: string; label?: string };
+	/** `unread` marks the parser's 0% placeholder for a section it could not read. */
+	week_sonnet_only: { percent: number; resets_at?: string; label?: string; unread?: true };
+}
+
+/** Name of the folder, under the OS temp dir, that every `/usage` probe runs in. */
+export const USAGE_PROBE_DIR_NAME = 'maestro-claude-usage-probe';
+
+/**
+ * The folder `maestro-p --status` starts claude in, created on demand.
+ *
+ * Every existing location is wrong for it. The home and temp dirs put claude's
+ * folder-trust prompt on "No, exit", so the probe quits before /usage renders.
+ * An agent's project folder loads that project's hooks, MCP servers, and
+ * CLAUDE.md on every refresh tick. So the probe gets a folder of its own, and
+ * maestro-p answers the trust prompt for it (MAESTRO_P_ACCEPT_WORKSPACE_TRUST).
+ * claude records that trust per account on the first probe and skips the
+ * prompt from then on.
+ *
+ * Trust grants claude read, edit, and execute rights in the folder, so it must
+ * be one no other user can plant a `.claude/settings.json` hook in: a real
+ * directory (not a symlink), owned by this user, not group- or world-writable.
+ * A look-alike pre-created in a shared `/tmp` fails the check and the sample is
+ * skipped instead of trusted. Never the temp dir itself: claude treats every
+ * subfolder of a trusted folder as trusted.
+ *
+ * Resolves to null when the folder cannot be created or fails a check.
+ */
+export async function ensureUsageProbeDir(baseDir = os.tmpdir()): Promise<string | null> {
+	const dir = path.join(baseDir, USAGE_PROBE_DIR_NAME);
+	try {
+		await fs.promises.mkdir(dir, { mode: 0o700 });
+	} catch (err) {
+		if ((err as NodeJS.ErrnoException).code !== 'EEXIST') return null;
+	}
+	let stat: fs.Stats;
+	try {
+		stat = await fs.promises.lstat(dir);
+	} catch {
+		return null;
+	}
+	if (stat.isSymbolicLink() || !stat.isDirectory()) return null;
+	if (!isWindows()) {
+		if (typeof process.getuid === 'function' && stat.uid !== process.getuid()) return null;
+		if ((stat.mode & 0o022) !== 0) return null;
+	}
+	return dir;
 }
 
 /**
@@ -147,6 +193,24 @@ export async function sampleUsage(opts: SampleUsageOptions): Promise<UsageSnapsh
 	// sessions - those spawn through the process manager, not this sampler.
 	childEnv.BROWSER = '/usr/bin/true';
 
+	// The canonical key for WHICH account this sample is about. Resolved before
+	// the spawn because the failure paths below need it too: `CLAUDE_CONFIG_DIR`
+	// can arrive via `customEnvVars` rather than `opts.configDir`, and keying off
+	// `opts.configDir` alone collapses two such accounts onto the same
+	// home-directory key - one broken account would then mute the other's reports
+	// and name the wrong directory in the breadcrumb.
+	const configDirKey = resolveConfigDirKey(childEnv);
+
+	// Start claude in the private probe folder, and let maestro-p answer the
+	// folder-trust prompt there. See ensureUsageProbeDir for why neither the
+	// caller's working directory nor the home dir will do.
+	const probeDir = await ensureUsageProbeDir();
+	if (!probeDir) {
+		void reportFailure('spawn', opts, configDirKey, 'usage probe folder is missing or not private');
+		return null;
+	}
+	childEnv.MAESTRO_P_ACCEPT_WORKSPACE_TRUST = '1';
+
 	// `maestro-p.js` is shipped via `extraResources` at the resources root and
 	// `require('node-pty')` (left external by its esbuild bundle). From outside
 	// the asar, Node can't find node-pty without help. Point NODE_PATH at the
@@ -169,18 +233,10 @@ export async function sampleUsage(opts: SampleUsageOptions): Promise<UsageSnapsh
 			: asarModules;
 	}
 
-	// The canonical key for WHICH account this sample is about. Resolved before
-	// the spawn because the failure paths below need it too: `CLAUDE_CONFIG_DIR`
-	// can arrive via `customEnvVars` rather than `opts.configDir`, and keying off
-	// `opts.configDir` alone collapses two such accounts onto the same
-	// home-directory key - one broken account would then mute the other's reports
-	// and name the wrong directory in the breadcrumb.
-	const configDirKey = resolveConfigDirKey(childEnv);
-
 	let stdout: string;
 	try {
 		const result = await execFileAsync(process.execPath, [opts.binPath, '--status'], {
-			cwd: opts.cwd,
+			cwd: probeDir,
 			env: childEnv,
 			encoding: 'utf8',
 			maxBuffer: MAX_BUFFER_BYTES,
@@ -244,11 +300,49 @@ export async function sampleUsage(opts: SampleUsageOptions): Promise<UsageSnapsh
 		...(identity?.organizationName ? { organizationName: identity.organizationName } : {}),
 		session: toStoreWindow(parsed.session),
 		weekAllModels: toStoreWindow(parsed.week_all_models),
-		weekSonnetOnly: {
-			...toStoreWindow(parsed.week_sonnet_only),
-			...(parsed.week_sonnet_only.label ? { label: parsed.week_sonnet_only.label } : {}),
-		},
+		weekSonnetOnly: parsed.week_sonnet_only.unread
+			? keepLastSecondaryWeekReading(configDirKey, parsed.week_sonnet_only)
+			: toStoreSecondaryWeek(parsed.week_sonnet_only),
 	};
+}
+
+/** Wire secondary weekly window to its store shape, keeping the scraped label. */
+function toStoreSecondaryWeek(
+	window: StatusWireEnvelope['week_sonnet_only']
+): UsageSnapshot['weekSonnetOnly'] {
+	return {
+		...toStoreWindow(window),
+		...(window.label ? { label: window.label } : {}),
+	};
+}
+
+/**
+ * The parser could not read the secondary weekly window this pass and shipped a
+ * flagged 0% placeholder. Keep the account's last real reading while it still
+ * describes the current window (its reset is still ahead): usage only grows
+ * inside a window, so that reading is a floor, where the placeholder is simply
+ * wrong. With no such reading the placeholder stands.
+ */
+function keepLastSecondaryWeekReading(
+	configDirKey: string,
+	placeholder: StatusWireEnvelope['week_sonnet_only']
+): UsageSnapshot['weekSonnetOnly'] {
+	const fallback = toStoreSecondaryWeek(placeholder);
+	let previous: UsageSnapshot | null;
+	try {
+		previous = getSnapshot(configDirKey);
+	} catch {
+		// The cache is context here, not a dependency; a read failure must not
+		// cost the sample (the module contract is that sampling never throws).
+		return fallback;
+	}
+	const previousResetsAtMs = previous?.weekSonnetOnly.resetsAt
+		? Date.parse(previous.weekSonnetOnly.resetsAt)
+		: Number.NaN;
+	if (!previous || !Number.isFinite(previousResetsAtMs) || previousResetsAtMs <= Date.now()) {
+		return fallback;
+	}
+	return previous.weekSonnetOnly;
 }
 
 /**

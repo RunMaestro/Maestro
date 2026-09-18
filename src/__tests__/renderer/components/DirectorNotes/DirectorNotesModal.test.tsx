@@ -54,16 +54,29 @@ vi.mock('../../../../renderer/components/DirectorNotes/AIOverviewTab', () => ({
 	AIOverviewTab: ({
 		theme,
 		onSynopsisReady,
+		onSynopsisStart,
+		onSynopsisError,
 		onProgressChange,
 	}: {
 		theme: Theme;
 		onSynopsisReady?: () => void;
+		onSynopsisStart?: () => void;
+		onSynopsisError?: (error: string) => void;
 		onProgressChange?: (percent: number) => void;
 	}) => (
 		<div data-testid="ai-overview-tab">
 			AI Overview Content
 			<button data-testid="trigger-synopsis-ready" onClick={() => onSynopsisReady?.()}>
 				Trigger Ready
+			</button>
+			<button data-testid="trigger-synopsis-start" onClick={() => onSynopsisStart?.()}>
+				Trigger Start
+			</button>
+			<button
+				data-testid="trigger-synopsis-error"
+				onClick={() => onSynopsisError?.('Usage limit reached')}
+			>
+				Trigger Error
 			</button>
 			<button data-testid="trigger-progress" onClick={() => onProgressChange?.(42)}>
 				Trigger Progress
@@ -260,6 +273,53 @@ describe('DirectorNotesModal', () => {
 			expect(aiOverviewContainer).toHaveClass('hidden');
 		});
 
+		it('replaces the spinner with a failed indicator and unlocks the tab when generation fails', async () => {
+			renderModal();
+
+			await waitFor(() => {
+				expect(screen.getByTestId('ai-overview-tab')).toBeInTheDocument();
+			});
+
+			await act(async () => {
+				fireEvent.click(screen.getByTestId('trigger-synopsis-error'));
+			});
+
+			expect(screen.queryByText('generating…')).not.toBeInTheDocument();
+			expect(screen.getByText('failed')).toBeInTheDocument();
+
+			const overviewTabButton = screen.getByText('AI Overview').closest('button');
+			expect(overviewTabButton).not.toBeDisabled();
+			expect(overviewTabButton).toHaveAttribute('title', 'Usage limit reached');
+
+			// Clicking opens the tab, where the error banner and Regenerate live
+			fireEvent.click(overviewTabButton!);
+			const aiOverviewContainer = screen.getByTestId('ai-overview-tab').closest('.h-full');
+			expect(aiOverviewContainer).not.toHaveClass('hidden');
+		});
+
+		it('returns to generating when a failed run is regenerated', async () => {
+			renderModal();
+
+			await waitFor(() => {
+				expect(screen.getByTestId('ai-overview-tab')).toBeInTheDocument();
+			});
+
+			await act(async () => {
+				fireEvent.click(screen.getByTestId('trigger-synopsis-error'));
+			});
+			await act(async () => {
+				fireEvent.click(screen.getByTestId('trigger-synopsis-start'));
+			});
+
+			expect(screen.getByText('generating…')).toBeInTheDocument();
+			expect(screen.queryByText('failed')).not.toBeInTheDocument();
+			// rc titles every tab with its label; only the failure message is gone.
+			expect(screen.getByText('AI Overview').closest('button')).toHaveAttribute(
+				'title',
+				'AI Overview'
+			);
+		});
+
 		it('can switch to Help tab', async () => {
 			renderModal();
 
@@ -436,15 +496,17 @@ describe('DirectorNotesModal', () => {
 		it('registers modal layer on mount', async () => {
 			renderModal();
 
-			expect(mockRegisterLayer).toHaveBeenCalledWith({
-				type: 'modal',
-				priority: 848,
-				blocksLowerLayers: true,
-				capturesFocus: true,
-				blocksAppShortcuts: true,
-				focusTrap: 'lenient',
-				onEscape: expect.any(Function),
-			});
+			expect(mockRegisterLayer).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'modal',
+					priority: 848,
+					blocksLowerLayers: true,
+					capturesFocus: true,
+					blocksAppShortcuts: true,
+					focusTrap: 'lenient',
+					onEscape: expect.any(Function),
+				})
+			);
 		});
 
 		it('unregisters modal layer on unmount', async () => {
@@ -554,5 +616,44 @@ describe('DirectorNotesModal', () => {
 			const overviewTabButton = screen.getByText('AI Overview').closest('button');
 			expect(overviewTabButton).not.toBeDisabled();
 		});
+	});
+});
+
+// Phone: the title drops its "Since <date>" tail (it wrapped to two lines) and
+// the tab strip shows short labels so three tabs fit one row.
+vi.mock('../../../../renderer/hooks/ui/useViewportBreakpoint', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../renderer/hooks/ui/useViewportBreakpoint')>()),
+	usePhoneLayout: vi.fn(() => false),
+}));
+import { usePhoneLayout } from '../../../../renderer/hooks/ui/useViewportBreakpoint';
+
+describe('DirectorNotesModal on a phone', () => {
+	afterEach(() => {
+		vi.mocked(usePhoneLayout).mockReturnValue(false);
+	});
+
+	it('shows a bare title and short tab labels', async () => {
+		vi.mocked(usePhoneLayout).mockReturnValue(true);
+		render(<DirectorNotesModal theme={mockTheme} onClose={vi.fn()} />);
+		await waitFor(() => {
+			expect(screen.getByText("Director's Notes")).toBeInTheDocument();
+		});
+		expect(screen.queryByText(/Director's Notes Since/)).not.toBeInTheDocument();
+		expect(screen.getByRole('button', { name: /^History$/ })).toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: /Unified History/ })).not.toBeInTheDocument();
+		// The full label survives as the tooltip.
+		expect(screen.getByRole('button', { name: /^History$/ })).toHaveAttribute(
+			'title',
+			'Unified History'
+		);
+	});
+
+	it('keeps the dated title and full labels on desktop', async () => {
+		vi.mocked(usePhoneLayout).mockReturnValue(false);
+		render(<DirectorNotesModal theme={mockTheme} onClose={vi.fn()} />);
+		await waitFor(() => {
+			expect(screen.getByText(/Director's Notes Since/)).toBeInTheDocument();
+		});
+		expect(screen.getByRole('button', { name: /Unified History/ })).toBeInTheDocument();
 	});
 });

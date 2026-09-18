@@ -26,13 +26,19 @@ import type {
 	Session,
 } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
-import { useAgentStore } from '../../stores/agentStore';
+import { useAgentStore, type ProcessQueuedItemDeps } from '../../stores/agentStore';
 import { markTabRunningQueuedItem, resolveQueuedItemTarget } from '../../utils/tabHelpers';
 import {
 	hasRunnableQueueItem,
 	nextRunnableQueueItem,
 	takeNextRunnableQueueItem,
 } from '../../utils/executionQueue';
+import {
+	hasPendingRetry,
+	registerDispatchDepsProvider,
+	useRetryStore,
+} from '../../stores/retryStore';
+import { queueIsHeldByRetry } from './internal/helpers/exitDequeue';
 import { logger } from '../../utils/logger';
 
 // ============================================================================
@@ -83,6 +89,17 @@ export function selectIdleQueuedSignature(state: { sessions: Session[] }): strin
 		.join('|');
 }
 
+/** The deps `processQueuedItem` needs, read from the hook's live refs. */
+function buildDispatchDeps(d: UseQueueProcessingDeps): ProcessQueuedItemDeps {
+	return {
+		conductorProfile: d.conductorProfile,
+		customAICommands: d.customAICommandsRef.current ?? [],
+		speckitCommands: d.speckitCommandsRef.current ?? [],
+		openspecCommands: d.openspecCommandsRef.current ?? [],
+		bmadCommands: d.bmadCommandsRef?.current ?? [],
+	};
+}
+
 // ============================================================================
 // Hook implementation
 // ============================================================================
@@ -94,6 +111,11 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 	// --- Narrow reactive subscriptions (not the full sessions array) ---
 	const sessionsLoaded = useSessionStore((s) => s.sessionsLoaded);
 	const idleQueuedSignature = useSessionStore(selectIdleQueuedSignature);
+	// Runtime recovery holds the queue while a retry counts down (see
+	// dispatchQueuedItem). Subscribing to the retry entries re-runs that effect
+	// the moment one clears - cancelled, recovered, or superseded - so a held
+	// queue drains then instead of waiting for an unrelated session change.
+	const retries = useRetryStore((s) => s.retries);
 
 	// --- Refs ---
 	const processQueuedItemRef = useRef<
@@ -103,14 +125,18 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 	// Process a queued item - delegates to agentStore action.
 	// Stable identity: conductor profile + command refs read from depsRef.
 	const processQueuedItem = useCallback(async (sessionId: string, item: QueuedItem) => {
-		const d = depsRef.current;
-		await useAgentStore.getState().processQueuedItem(sessionId, item, {
-			conductorProfile: d.conductorProfile,
-			customAICommands: d.customAICommandsRef.current ?? [],
-			speckitCommands: d.speckitCommandsRef.current ?? [],
-			openspecCommands: d.openspecCommandsRef.current ?? [],
-			bmadCommands: d.bmadCommandsRef?.current ?? [],
-		});
+		await useAgentStore
+			.getState()
+			.processQueuedItem(sessionId, item, buildDispatchDeps(depsRef.current));
+	}, []);
+
+	// Agent Resilience replays through processQueuedItem, so a prompt spawned by
+	// any OTHER path (the composer's idle send, remote dispatch) needs these same
+	// deps on its snapshot. Registering the one builder here keeps every snapshot
+	// resolving slash commands exactly as a queued send would.
+	useEffect(() => {
+		registerDispatchDepsProvider(() => buildDispatchDeps(depsRef.current));
+		return () => registerDispatchDepsProvider(null);
 	}, []);
 
 	// Update ref for processQueuedItem so batch exit handler can use it
@@ -126,6 +152,27 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 			// held, there's nothing to do.
 			const firstItem = nextRunnableQueueItem(session.executionQueue);
 			if (!firstItem) return;
+
+			// Agent Resilience owns the queue while a retry counts down. The exit path
+			// already holds it (chooseNextQueuedItem returns 'wait'), which leaves the
+			// agent idle with items still queued - exactly the shape this recovery
+			// effect fires on. Without the same rule here, recovery dispatches ~1s
+			// later anyway: the item burns against the wall the provider just put up,
+			// AND the dispatch supersedes the pending retry (retryStore.noteDispatch),
+			// discarding the prompt that retry was holding. A queue of N items ran the
+			// whole agent dry in seconds and left the user re-typing every one of them.
+			// Hold instead; the queue drains in order once the retry lands.
+			if (queueIsHeldByRetry(session, undefined, (tabId) => hasPendingRetry(session.id, tabId))) {
+				return;
+			}
+
+			// Whether the dequeue below actually took the item, and onto which tab.
+			// The updater runs exactly once, synchronously, inside the store's `set`
+			// (see sessionStore.setSessions), so reading these back after the call is
+			// deterministic - and it is the ONLY honest answer to "did we take it?",
+			// because every bail below is a data-dependent re-check of live state that
+			// the caller's (possibly stale) session snapshot cannot predict.
+			let dequeuedOntoTabId: string | null = null;
 
 			// Set session to busy and remove item from queue
 			setSessions((prev) =>
@@ -147,6 +194,22 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 					const target = resolveQueuedItemTarget(s, firstItem);
 					if (!target) return s;
 
+					// A tab runs at most one turn at a time, and the agent process is keyed
+					// per tab (`${sessionId}-ai-${tabId}`), so the session-level `state`
+					// check above is NOT sufficient: an agent can read idle while this
+					// exact tab is still mid-turn. Dispatching there makes main reject the
+					// spawn ("Agent process already running for session ...-ai-<tabId>"),
+					// and the rejection lands in the catch below - which re-queues into a
+					// race it usually loses, so the message is simply gone.
+					//
+					// Resolved-target lookup rather than `getQueueBusyContext`: that helper
+					// keys off `item.tabId` alone, which misses both the active-tab
+					// fallback and orphan tabs that `resolveQueuedItemTarget` handles.
+					const targetTab =
+						s.aiTabs.find((t) => t.id === target.tabId) ??
+						s.orphanedThinkingTabs?.find((t) => t.id === target.tabId);
+					if (targetTab?.state === 'busy') return s;
+
 					const updatedAiTabs = s.aiTabs.map((tab) =>
 						tab.id === target.tabId ? markTabRunningQueuedItem(tab, firstItem, s) : tab
 					);
@@ -158,6 +221,7 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 								)
 							: s.orphanedThinkingTabs;
 
+					dequeuedOntoTabId = target.tabId;
 					return {
 						...s,
 						state: 'busy' as SessionState,
@@ -174,30 +238,25 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 				})
 			);
 
-			// Process the item
+			// The dequeue bailed on a live re-check (agent busy, tab mid-turn, queue
+			// already drained by another trigger). Dispatching anyway would spawn a
+			// second turn on a tab that already has one, so the item stays queued and
+			// this recovery pass does nothing - the next trigger picks it up.
+			const dispatchedOntoTabId: string | null = dequeuedOntoTabId;
+			if (!dispatchedOntoTabId) return;
+
+			// Process the item. Releasing the tab and putting the prompt back is
+			// `agentStore.processQueuedItem`'s job - it releases only the tab this
+			// dispatch marked busy (the old sweep over every busy tab also cleared
+			// tabs running turns of their own, which told this effect the agent was
+			// free: it dispatched the next queued item into the same live process,
+			// failed the same way, and walked the whole queue into the ground one
+			// message per render).
 			processQueuedItem(session.id, firstItem).catch((err) => {
-				console.error(`[QueueProcessing] Failed for session ${session.id}:`, err);
-				// Reset session busy state and re-queue the failed item so it isn't lost
-				useSessionStore.getState().setSessions((prev) =>
-					prev.map((s) => {
-						if (s.id !== session.id) return s;
-						return {
-							...s,
-							state: 'idle',
-							busySource: undefined,
-							thinkingStartTime: undefined,
-							executionQueue: [firstItem, ...s.executionQueue],
-							aiTabs: s.aiTabs.map((tab) =>
-								tab.state === 'busy'
-									? {
-											...tab,
-											state: 'idle' as const,
-											thinkingStartTime: undefined,
-										}
-									: tab
-							),
-						};
-					})
+				logger.error(
+					`[QueueProcessing] Dispatch failed for session ${session.id}, item returned to queue`,
+					undefined,
+					err
 				);
 			});
 		},
@@ -284,7 +343,12 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 				dispatchQueuedItem(session);
 			}
 		}
-	}, [sessionsLoaded, idleQueuedSignature, dispatchQueuedItem]);
+		// Neither `idleQueuedSignature` nor `retries` is read in the body: both are
+		// re-run triggers. The signature fires when a session goes idle holding a
+		// runnable item, and `retries` fires when a queue held by
+		// `dispatchQueuedItem`'s resilience check gets a fresh look because the
+		// retry that held it went away - cancelled, recovered, or superseded.
+	}, [sessionsLoaded, idleQueuedSignature, retries, dispatchQueuedItem]);
 
 	return {
 		processQueuedItem,

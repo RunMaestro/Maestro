@@ -29,6 +29,90 @@
  * - abbreviateGroupName: Shorten a group name for badge/pill display
  */
 
+// ============================================================================
+// Cached Intl formatters
+// ============================================================================
+// `date.toLocaleTimeString(...)`, `date.toLocaleString(...)` and
+// `number.toLocaleString(...)` construct a brand new `Intl` formatter on EVERY
+// call, and constructing one costs one to two orders of magnitude more than
+// formatting with one that already exists.
+//
+// This is not a micro-optimization. A field performance trace (Sep 2026,
+// 95-second window) measured `formatTimestamp` alone at 2.1s of renderer
+// main-thread self-time - 38% of ALL renderer JS work in that window - because
+// a transcript and a history list each call it once per visible row on every
+// React render, and every one of those calls built a throwaway
+// `Intl.DateTimeFormat`.
+//
+// These are lazy module singletons rather than a keyed cache so there is no
+// per-call key to build either. `undefined` as the locale resolves to the
+// user's default, which is exactly what `toLocale*String()` and
+// `toLocale*String([])` resolve to, so output is byte-identical to the calls
+// these replaced (including the implicit numeric year/month/day/hour/minute/
+// second option set that a bare `toLocaleString()` expands to).
+//
+// Adding a new date or number format: add a singleton here rather than calling
+// `toLocale*String` in a formatter body.
+
+function lazyDateTimeFormat(
+	locale: string | undefined,
+	options?: Intl.DateTimeFormatOptions
+): () => Intl.DateTimeFormat {
+	let cached: Intl.DateTimeFormat | undefined;
+	return () => (cached ??= new Intl.DateTimeFormat(locale, options));
+}
+
+function lazyNumberFormat(
+	locale?: string,
+	options?: Intl.NumberFormatOptions
+): () => Intl.NumberFormat {
+	let cached: Intl.NumberFormat | undefined;
+	return () => (cached ??= new Intl.NumberFormat(locale, options));
+}
+
+/** `8:30 AM` in the user's locale. */
+const dtfLocalTime = lazyDateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
+/** `Mar 5, 8:30 AM` in the user's locale. */
+const dtfLocalDateTime = lazyDateTimeFormat(undefined, {
+	month: 'short',
+	day: 'numeric',
+	hour: 'numeric',
+	minute: '2-digit',
+});
+/** `Mar 5` in the user's locale. */
+const dtfLocalMonthDay = lazyDateTimeFormat(undefined, { month: 'short', day: 'numeric' });
+/** `3/5/2026, 8:30:45 AM` - the option set a bare `toLocaleString()` expands to. */
+const dtfLocalFull = lazyDateTimeFormat(undefined, {
+	year: 'numeric',
+	month: 'numeric',
+	day: 'numeric',
+	hour: 'numeric',
+	minute: 'numeric',
+	second: 'numeric',
+});
+/** `Mar 5`, always US English (these call sites hard-coded `en-US`). */
+const dtfUsMonthDay = lazyDateTimeFormat('en-US', { month: 'short', day: 'numeric' });
+/** `8:30 AM`, always US English. */
+const dtfUsTime = lazyDateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' });
+/** `Thu`, always US English. */
+const dtfUsWeekday = lazyDateTimeFormat('en-US', { weekday: 'short' });
+/** `1,204,993` in the user's locale. */
+const nfLocalCount = lazyNumberFormat();
+/** `40,950.60`, always US English, always two decimals. */
+const nfUsdAmount = lazyNumberFormat('en-US', {
+	minimumFractionDigits: 2,
+	maximumFractionDigits: 2,
+});
+
+/** True when both dates fall on the same local calendar day. */
+function isSameLocalDay(a: Date, b: Date): boolean {
+	return (
+		a.getFullYear() === b.getFullYear() &&
+		a.getMonth() === b.getMonth() &&
+		a.getDate() === b.getDate()
+	);
+}
+
 /**
  * Format a file size in bytes to a human-readable string.
  * Automatically scales to appropriate unit (B, KB, MB, GB, TB).
@@ -70,7 +154,7 @@ export function formatNumber(num: number): string {
  * @returns Formatted string (e.g., "42", "1,204,993")
  */
 export function formatCount(count: number): string {
-	return count.toLocaleString();
+	return nfLocalCount().format(count);
 }
 
 /**
@@ -141,7 +225,7 @@ export function formatRelativeTime(
 	if (diffHours < 24) return `${diffHours}h ago`;
 	if (diffDays < 7) return `${diffDays}d ago`;
 	// Show compact date format (e.g., "Dec 3") for older dates
-	return new Date(timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+	return dtfUsMonthDay().format(new Date(timestamp));
 }
 
 /**
@@ -270,24 +354,17 @@ export function formatFutureTime(dateOrTimestamp: Date | number | string): strin
 	if (diffMins < 60) return `in ${diffMins}m`;
 
 	const target = new Date(timestamp);
-	const nowDate = new Date(now);
-	const sameDay =
-		target.getFullYear() === nowDate.getFullYear() &&
-		target.getMonth() === nowDate.getMonth() &&
-		target.getDate() === nowDate.getDate();
+	const sameDay = isSameLocalDay(target, new Date(now));
 
-	const timeStr = target.toLocaleTimeString('en-US', {
-		hour: 'numeric',
-		minute: '2-digit',
-	});
+	const timeStr = dtfUsTime().format(target);
 
 	if (sameDay) return `today at ${timeStr}`;
 	if (diffHours < 24) return `in ${diffHours}h`;
 	if (diffDays < 7) {
-		const weekday = target.toLocaleDateString('en-US', { weekday: 'short' });
+		const weekday = dtfUsWeekday().format(target);
 		return `${weekday} ${timeStr}`;
 	}
-	const dateStr = target.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+	const dateStr = dtfUsMonthDay().format(target);
 	return `${dateStr} at ${timeStr}`;
 }
 
@@ -303,7 +380,7 @@ export function formatCost(cost: number): string {
 	if (cost < 0.01) return '<$0.01';
 	// Thousands separators: large all-time totals (e.g. $40,950.60) are unreadable
 	// as an undelimited digit run.
-	return '$' + cost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+	return '$' + nfUsdAmount().format(cost);
 }
 
 /**
@@ -573,37 +650,49 @@ export function formatTimestamp(
 	style: 'time' | 'datetime' | 'smart' | 'full' = 'smart'
 ): string {
 	const date = new Date(timestamp);
+	// `Intl.DateTimeFormat.format()` THROWS on an invalid date, where the
+	// `toLocale*String()` calls the cached formatters replaced returned the string
+	// "Invalid Date". Callers pass whatever a transcript, a group chat, or a
+	// history row carries - a numeric string that `Date` cannot parse reaches here
+	// in practice - so keep the old, non-throwing answer rather than letting a
+	// single bad row take a render down.
+	if (Number.isNaN(date.getTime())) return 'Invalid Date';
 
 	switch (style) {
 		case 'time':
-			return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+			return dtfLocalTime().format(date);
 
 		case 'datetime':
-			return date.toLocaleString([], {
-				month: 'short',
-				day: 'numeric',
-				hour: 'numeric',
-				minute: '2-digit',
-			});
+			return dtfLocalDateTime().format(date);
 
 		case 'full':
-			return date.toLocaleString();
+			return dtfLocalFull().format(date);
 
 		case 'smart':
 		default: {
-			const now = new Date();
-			const isToday = date.toDateString() === now.toDateString();
-
-			if (isToday) {
-				return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+			if (isSameLocalDay(date, new Date())) {
+				return dtfLocalTime().format(date);
 			}
-			return (
-				date.toLocaleDateString([], { month: 'short', day: 'numeric' }) +
-				' ' +
-				date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
-			);
+			return dtfLocalMonthDay().format(date) + ' ' + dtfLocalTime().format(date);
 		}
 	}
+}
+
+/**
+ * `20260713-142530` - a filesystem-safe, chronologically sortable stamp for a
+ * generated file name (saved chat images, exports).
+ *
+ * Local time on purpose: the name is read by a human who pasted the image at
+ * that wall-clock moment, and a UTC stamp reads as the wrong hour to everyone
+ * outside UTC.
+ */
+export function fileTimestampSlug(dateOrTimestamp: Date | number = new Date()): string {
+	const date = typeof dateOrTimestamp === 'number' ? new Date(dateOrTimestamp) : dateOrTimestamp;
+	const pad = (n: number) => String(n).padStart(2, '0');
+	return (
+		`${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}` +
+		`-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`
+	);
 }
 
 // ============================================================================
@@ -627,6 +716,8 @@ export {
 	formatActiveTime,
 	formatElapsedTime,
 	formatElapsedTicker,
+	formatElapsedTickerCompact,
+	formatTurnDuration,
 	DURATION_MS,
 	DURATION_LADDER_FULL,
 	DURATION_LADDER_DAYS,

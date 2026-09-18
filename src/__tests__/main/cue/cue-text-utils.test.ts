@@ -4,7 +4,12 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { sliceHeadByChars, sliceTailByChars } from '../../../main/cue/cue-text-utils';
+import {
+	buildCuePersistedOutput,
+	MAX_HISTORY_RESPONSE_LENGTH,
+	sliceHeadByChars,
+	sliceTailByChars,
+} from '../../../main/cue/cue-text-utils';
 
 // A supplementary-plane code point (U+1F600 😀) encodes as the surrogate pair
 // D83D DE00 - two UTF-16 code units. A naive `.slice()` that lands between
@@ -113,5 +118,55 @@ describe('sliceHeadByChars', () => {
 	it('handles BMP characters (single code units) unchanged', () => {
 		const input = HEART + HEART + HEART;
 		expect(sliceHeadByChars(input, 2)).toBe(HEART + HEART);
+	});
+});
+
+describe('buildCuePersistedOutput', () => {
+	it('returns null for both fields when the run printed nothing', () => {
+		// NULL (not '') is what makes `WHERE output_excerpt IS NOT NULL` the
+		// noise filter on cue_events - a heartbeat that says nothing must not
+		// leave a row that looks like it has something to read.
+		expect(buildCuePersistedOutput({ stdout: '', stderr: '' })).toEqual({
+			excerpt: null,
+			fullOutput: null,
+		});
+	});
+
+	it('treats whitespace-only output as silent', () => {
+		expect(buildCuePersistedOutput({ stdout: '   \n\t ', stderr: '' }).excerpt).toBeNull();
+	});
+
+	it('excerpts stdout for a chatty run and carries the full output', () => {
+		const { excerpt, fullOutput } = buildCuePersistedOutput({
+			stdout: 'Reviewed 3 PRs. Merged the docs fix.',
+			stderr: '',
+		});
+		expect(excerpt).toBe('Reviewed 3 PRs. Merged the docs fix.');
+		expect(fullOutput).toBe('Reviewed 3 PRs. Merged the docs fix.');
+	});
+
+	it('falls back to stderr for the excerpt when stdout is empty', () => {
+		// A failed run kept for its error output must not be reduced to a bare
+		// trigger label. fullOutput stays null - stderr has its own column.
+		const { excerpt, fullOutput } = buildCuePersistedOutput({
+			stdout: '',
+			stderr: 'Agent exited with status 3.',
+		});
+		expect(excerpt).toBe('Agent exited with status 3.');
+		expect(fullOutput).toBeNull();
+	});
+
+	it('head-truncates full output at the persisted cap', () => {
+		const long = 'x'.repeat(MAX_HISTORY_RESPONSE_LENGTH + 500);
+		const { fullOutput } = buildCuePersistedOutput({ stdout: long, stderr: '' });
+		expect(fullOutput).toHaveLength(MAX_HISTORY_RESPONSE_LENGTH);
+	});
+
+	it('strips ANSI codes out of the excerpt', () => {
+		const { excerpt } = buildCuePersistedOutput({
+			stdout: '\u001b[32mBuild passed.\u001b[0m',
+			stderr: '',
+		});
+		expect(excerpt).toBe('Build passed.');
 	});
 });

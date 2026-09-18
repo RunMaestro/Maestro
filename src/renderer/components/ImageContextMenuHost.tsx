@@ -113,6 +113,7 @@ export function ImageContextMenuHost({ theme }: ImageContextMenuHostProps) {
 						sshRemoteId: pendingSave.sshRemoteId,
 						relativeDir: destination.relativeDir,
 						fileName: destination.fileName,
+						sessionId: pendingSave.sessionId,
 					},
 					destination.format
 				);

@@ -12,6 +12,7 @@ import { readBackgroundField, readSwitchToAgentField } from '../../../../shared/
 import fs from 'fs/promises';
 import { logger } from '../../../utils/logger';
 import { validateCallbackRequest, armDispatchCallback } from './dispatchCallbacks';
+import { noteDispatchDelegation } from './agentDelegation';
 import { LOG_CONTEXT } from './shared';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
 import {
@@ -20,6 +21,7 @@ import {
 	resolveUiSurfaceTab,
 	surfaceTabIds,
 } from '../../../../shared/uiSurfaces';
+import { normalizeRenameTabResult } from '../../types';
 
 /**
  * Handle select_tab message - select a tab within a session
@@ -168,18 +170,29 @@ export function handleRenameTab(
 	// newName can be empty string to clear the name
 	ctx.callbacks
 		.renameTab(sessionId, tabId, newName || '')
-		.then((success) => {
+		.then((result) => {
+			const renameResult = normalizeRenameTabResult(result);
+			if (renameResult.unconfirmed) return;
 			ctx.send(client, {
 				type: 'rename_tab_result',
-				success,
+				success: renameResult.success,
 				sessionId,
 				tabId,
 				newName: newName || '',
+				...(renameResult.error ? { error: renameResult.error } : {}),
 				requestId: message.requestId,
 			});
 		})
 		.catch((error) => {
-			ctx.sendError(client, `Failed to rename tab: ${error.message}`);
+			ctx.send(client, {
+				type: 'rename_tab_result',
+				success: false,
+				sessionId,
+				tabId,
+				newName: newName || '',
+				error: `Failed to rename tab: ${error.message}`,
+				requestId: message.requestId,
+			});
 		});
 }
 
@@ -724,9 +737,24 @@ export function handleNewAITabWithPrompt(
 				success: result.success,
 				sessionId,
 				...(result.tabId ? { tabId: result.tabId } : {}),
+				// `queued` distinguishes "the turn is running now" from "the agent
+				// was mid-turn, so the prompt is waiting its place in the queue" -
+				// both are successes, and an automated caller wants to know which.
+				...(result.queued ? { queued: true } : {}),
+				// Carry the renderer's own reason for a refusal. Without it the CLI
+				// can only see a missing tab id and has to guess why.
+				...(result.error ? { error: result.error } : {}),
 				...(callbackId ? { callbackId } : {}),
 				requestId: message.requestId,
 			});
+			if (result.success && result.tabId) {
+				noteDispatchDelegation(ctx, message, {
+					targetSessionId: sessionId,
+					targetTabId: result.tabId,
+					prompt,
+					newTab: true,
+				});
+			}
 		})
 		.catch((error) => {
 			sendErrorResult(`Failed to create AI tab with prompt: ${error.message}`);

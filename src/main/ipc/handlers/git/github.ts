@@ -2,7 +2,12 @@ import { ipcMain } from 'electron';
 import { execFileNoThrow } from '../../../utils/execFile';
 import { logger } from '../../../utils/logger';
 import { withIpcErrorLogging } from '../../../utils/ipcHandler';
-import { resolveGhPath, getCachedGhStatus, setCachedGhStatus } from '../../../utils/cliDetection';
+import {
+	resolveGhPath,
+	getCachedGhStatus,
+	setCachedGhStatus,
+	getExpandedEnv,
+} from '../../../utils/cliDetection';
 import { getShellPath } from '../../../runtime/getShellPath';
 import { captureMessage } from '../../../utils/sentry';
 import { LOG_CONTEXT, handlerOpts } from './shared';
@@ -89,9 +94,14 @@ export function registerGithubHandlers(): void {
 	ipcMain.handle(
 		'git:checkGhCli',
 		withIpcErrorLogging(handlerOpts('checkGhCli'), async (ghPath?: string) => {
+			// Resolve gh CLI path (uses cached detection or custom path). This comes
+			// before the cache read because the cached verdict is keyed by the command
+			// it was reached against.
+			const ghCommand = await resolveGhPath(ghPath);
+
 			// Check cache first (skip if custom path provided)
 			if (!ghPath) {
-				const cached = getCachedGhStatus();
+				const cached = getCachedGhStatus(ghCommand);
 				if (cached !== null) {
 					logger.debug(
 						`Using cached gh CLI status: installed=${cached.installed}, authenticated=${cached.authenticated}`,
@@ -101,25 +111,29 @@ export function registerGithubHandlers(): void {
 				}
 			}
 
-			// Resolve gh CLI path (uses cached detection or custom path)
-			const ghCommand = await resolveGhPath(ghPath);
 			logger.debug(`Checking gh CLI at: ${ghCommand}`, LOG_CONTEXT);
 
-			// Check if gh is installed by running gh --version
-			const versionResult = await execFileNoThrow(ghCommand, ['--version']);
+			// Check if gh is installed by running gh --version.
+			// The expanded env is required, not optional: gh is frequently a shim
+			// (asdf, mise, rbenv-style) that re-execs its parent tool, so it only runs
+			// if that parent is on PATH. A GUI-launched Electron process does not
+			// inherit the user's shell PATH, so probing without it reports a perfectly
+			// good install as missing.
+			const env = getExpandedEnv();
+			const versionResult = await execFileNoThrow(ghCommand, ['--version'], undefined, env);
 			if (versionResult.exitCode !== 0) {
 				logger.warn(
 					`gh CLI not found at ${ghCommand}: exit=${versionResult.exitCode}, stderr=${versionResult.stderr}`,
 					LOG_CONTEXT
 				);
 				const result = { installed: false, authenticated: false };
-				if (!ghPath) setCachedGhStatus(false, false);
+				if (!ghPath) setCachedGhStatus(ghCommand, false, false);
 				return result;
 			}
 			logger.debug(`gh CLI found: ${versionResult.stdout.trim().split('\n')[0]}`, LOG_CONTEXT);
 
 			// Check if gh is authenticated by running gh auth status
-			const authResult = await execFileNoThrow(ghCommand, ['auth', 'status']);
+			const authResult = await execFileNoThrow(ghCommand, ['auth', 'status'], undefined, env);
 			const authenticated = authResult.exitCode === 0;
 			logger.debug(
 				`gh auth status: ${authenticated ? 'authenticated' : 'not authenticated'}`,
@@ -128,7 +142,7 @@ export function registerGithubHandlers(): void {
 
 			// Cache the result (only if not using custom path)
 			if (!ghPath) {
-				setCachedGhStatus(true, authenticated);
+				setCachedGhStatus(ghCommand, true, authenticated);
 			}
 
 			return { installed: true, authenticated };
@@ -163,7 +177,10 @@ export function registerGithubHandlers(): void {
 				}
 				args.push('-'); // Read from stdin
 
-				const gistResult = await execFileNoThrow(ghCommand, args, undefined, { input: content });
+				const gistResult = await execFileNoThrow(ghCommand, args, undefined, {
+					input: content,
+					env: getExpandedEnv(),
+				});
 
 				if (gistResult.exitCode !== 0) {
 					// Check if gh CLI is not installed

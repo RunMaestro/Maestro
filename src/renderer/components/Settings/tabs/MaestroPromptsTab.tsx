@@ -7,31 +7,43 @@
  * Layout chrome (split pane, list, editor actions, open-in-finder) is provided by
  * the shared `DualPaneFileEditor`. This component owns the prompt-specific state,
  * template autocomplete, preview mode, and help content.
+ *
+ * Reading surfaces match the Memory Viewer, deliberately: the same
+ * `SegmentedControl` flips between the rendered document and the source, the
+ * source is the same CodeMirror `MarkdownEditor` the File Preview edits with,
+ * the same `FilterInput` narrows the list, and `toggleMarkdownMode` (Cmd/Ctrl+E)
+ * is the same key in both. A prompt is a markdown document like any other, so
+ * it should not look or behave like a different kind of thing here.
+ *
+ * One thing IS prompt-specific: Preview resolves `{{TEMPLATE}}` variables
+ * against the active agent before rendering, because what matters about a
+ * prompt is what the agent finally receives, not what is on disk.
  */
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import {
-	ExternalLink,
-	Maximize2,
-	Minimize2,
-	HelpCircle,
-	X,
-	Eye,
-	EyeOff,
-	GitCompare,
-} from 'lucide-react';
+import { ExternalLink, Maximize2, Minimize2, HelpCircle, X, GitCompare } from 'lucide-react';
 import type { Theme } from '../../../constants/themes';
 import { refreshRendererPrompts } from '../../../services/promptInit';
 import { captureException, captureMessage } from '../../../utils/sentry';
 import { openUrl } from '../../../utils/openUrl';
 import { buildMaestroUrl } from '../../../utils/buildMaestroUrl';
-import { useTemplateAutocomplete } from '../../../hooks/input/useTemplateAutocomplete';
+import { useEditorTemplateAutocomplete } from '../../../hooks/input/useEditorTemplateAutocomplete';
 import { TemplateAutocompleteDropdown } from '../../TemplateAutocompleteDropdown';
 import { TEMPLATE_VARIABLES, substituteTemplateVariables } from '../../../utils/templateVariables';
 import { useActiveSession } from '../../../hooks/session/useActiveSession';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { gitService } from '../../../services/git';
 import { DualPaneFileEditor, type DualPaneFileEditorItem } from '../../shared/DualPaneFileEditor';
+import { FilterInput } from '../../ui/FilterInput';
+import { SegmentedControl } from '../../ui/SegmentedControl';
+import { Markdown } from '../../Markdown';
+import { MarkdownEditor, type MarkdownEditorHandle } from '../../FilePreview/markdownEditor';
+import { generateProseStyles } from '../../../utils/markdownConfig';
+import { searchMatchRanges } from '../../../utils/highlightMatches';
+import { useDebouncedValue } from '../../../hooks/utils/useThrottle';
+import { useEventListener } from '../../../hooks/utils/useEventListener';
+import { eventMatchesShortcutKeys } from '../../../utils/shortcutMatch';
+import { isTextInputTarget } from '../../../utils/messageScrollNavigation';
 import { PROMPT_IDS } from '../../../../shared/promptDefinitions';
 import { estimateTokenCount } from '../../../../shared/formatters';
 import { usePluginContributions } from '../../../hooks/usePluginContributions';
@@ -55,6 +67,35 @@ interface MaestroPromptsTabProps {
 	theme: Theme;
 	initialSelectedPromptId?: string;
 	onEscapeHandled?: (handler: (() => boolean) | null) => void;
+}
+
+/** Which half of the Preview/Edit switch is showing. */
+type PromptViewMode = 'preview' | 'edit';
+
+// Same order as the Memory Viewer so the two switches read alike; the DEFAULT
+// differs (`edit`), because this pane exists to change a prompt rather than to
+// read one.
+const VIEW_MODE_OPTIONS = [
+	{
+		value: 'preview' as const,
+		label: 'Preview',
+		title: 'Rendered, with template variables resolved',
+	},
+	{ value: 'edit' as const, label: 'Edit', title: 'Syntax-highlighted source' },
+];
+
+/**
+ * The first line of `content` containing `query`, trimmed for a tooltip.
+ *
+ * A prompt matched on its body needs to show WHY it survived the filter - the
+ * id and description on the row already failed to explain it.
+ */
+function matchingLine(content: string, query: string): string | undefined {
+	const lower = query.toLowerCase();
+	const line = content.split('\n').find((l) => l.toLowerCase().includes(lower));
+	if (!line) return undefined;
+	const trimmed = line.trim();
+	return trimmed.length > 120 ? `${trimmed.slice(0, 117)}...` : trimmed;
 }
 
 // Category display names (sorted alphabetically by label)
@@ -289,7 +330,12 @@ export function MaestroPromptsTab({
 	const [promptsPath, setPromptsPath] = useState<string | null>(null);
 	const [isEditorExpanded, setIsEditorExpanded] = useState(false);
 	const [showHelp, setShowHelp] = useState(false);
-	const [isPreviewMode, setIsPreviewMode] = useState(false);
+	/**
+	 * Reading or writing. Unlike the Memory Viewer this opens on `edit`: a
+	 * prompt is opened here to be changed, and the rendered form is one
+	 * keystroke away rather than the state you have to leave first.
+	 */
+	const [viewMode, setViewMode] = useState<PromptViewMode>('edit');
 	const [previewContent, setPreviewContent] = useState('');
 	const [isBuildingPreview, setIsBuildingPreview] = useState(false);
 	// "Show bundled default" overlay: read-only view of the current bundled
@@ -298,7 +344,17 @@ export function MaestroPromptsTab({
 	const [isShowingDefault, setIsShowingDefault] = useState(false);
 	const [bundledDefaultContent, setBundledDefaultContent] = useState('');
 	const [isLoadingBundledDefault, setIsLoadingBundledDefault] = useState(false);
-	const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+	// Keyword filter over id, description, and body. Everything is already in
+	// memory, so this is a local narrow rather than a search round trip.
+	const [filterQuery, setFilterQuery] = useState('');
+	const debouncedFilter = useDebouncedValue(filterQuery, 120);
+	const filterInputRef = useRef<HTMLInputElement>(null);
+	// Bumped to hand keyboard focus back to the list (leaving the filter box).
+	const [listFocusToken, setListFocusToken] = useState(0);
+
+	const editorRef = useRef<MarkdownEditorHandle>(null);
+	const previewScrollRef = useRef<HTMLDivElement>(null);
 	const activeSession = useActiveSession();
 	const conductorProfile = useSettingsStore((s) => s.conductorProfile);
 	const lastSelectedPromptId = useSettingsStore((s) => s.lastSelectedPromptId);
@@ -337,23 +393,51 @@ export function MaestroPromptsTab({
 	);
 	const isSelectedPluginPrompt = selectedPrompt ? pluginPromptIds.has(selectedPrompt.id) : false;
 
-	const autocomplete = useTemplateAutocomplete({
-		textareaRef: textareaRef as React.RefObject<HTMLTextAreaElement>,
-		value: editedContent,
+	const autocomplete = useEditorTemplateAutocomplete({
+		editorRef: editorRef as React.RefObject<MarkdownEditorHandle>,
 		onChange: (newValue: string) => {
 			setEditedContent(newValue);
 			setHasUnsavedChanges(newValue !== selectedPrompt?.content);
 		},
 	});
 
-	// Layered escape: help → overlays (preview/default) → expanded editor → list view → (modal closes)
-	const handleEscape = useCallback(() => {
-		if (showHelp) {
-			setShowHelp(false);
+	/** Move keyboard focus back to the prompt list. */
+	const focusList = useCallback(() => setListFocusToken((t) => t + 1), []);
+
+	/**
+	 * Escape is a LADDER, climbed one rung per press, never skipping to close:
+	 *
+	 *   1. autocomplete open      -> dismiss the popup
+	 *   2. caret in the filter box -> hand focus back to the list, query intact
+	 *   3. filter still has text   -> clear it
+	 *   4. help panel / bundled-default overlay / expanded editor -> back out
+	 *   5. otherwise               -> report unhandled and let Settings close
+	 *
+	 * Rung 2 is what makes "filter, then arrow through the hits" work: the query
+	 * has to survive the key that gets you out of the text box.
+	 *
+	 * Every rung lives here because the layer stack handles Escape at CAPTURE on
+	 * `window`, so neither `FilterInput` nor the CodeMirror editor ever sees the
+	 * key - without this the whole Settings modal would close instead.
+	 */
+	const visibleIdsRef = useRef<string[]>([]);
+	const escapeStateRef = useRef<() => boolean>(() => false);
+	escapeStateRef.current = () => {
+		if (autocomplete.autocompleteState.isOpen) {
+			autocomplete.closeAutocomplete();
 			return true;
 		}
-		if (isPreviewMode) {
-			setIsPreviewMode(false);
+		if (document.activeElement === filterInputRef.current && visibleIdsRef.current.length > 0) {
+			filterInputRef.current?.blur();
+			focusList();
+			return true;
+		}
+		if (filterQuery) {
+			setFilterQuery('');
+			return true;
+		}
+		if (showHelp) {
+			setShowHelp(false);
 			return true;
 		}
 		if (isShowingDefault) {
@@ -365,74 +449,150 @@ export function MaestroPromptsTab({
 			return true;
 		}
 		return false;
-	}, [showHelp, isPreviewMode, isShowingDefault, isEditorExpanded]);
+	};
 
-	// Register escape handler with parent so escape navigates through overlays before closing the modal
+	// Registered unconditionally: two of the rungs above (focus in the filter
+	// box, an open autocomplete) are not React state, so there is no state to
+	// gate registration on. The handler reports `false` when no rung applies,
+	// which is what lets Settings close normally.
+	const handleEscape = useCallback(() => escapeStateRef.current(), []);
 	useEffect(() => {
-		if (showHelp || isPreviewMode || isShowingDefault || isEditorExpanded) {
-			onEscapeHandled?.(handleEscape);
-		} else {
-			onEscapeHandled?.(null);
-		}
+		onEscapeHandled?.(handleEscape);
 		return () => onEscapeHandled?.(null);
-	}, [showHelp, isPreviewMode, isShowingDefault, isEditorExpanded, onEscapeHandled, handleEscape]);
+	}, [onEscapeHandled, handleEscape]);
 
-	// Exit overlays when switching prompts
+	/**
+	 * Jump to the filter box with a bare `/`.
+	 *
+	 * Cmd/Ctrl+F is deliberately NOT bound here: the Settings modal already owns
+	 * it for the settings search, and taking a chord away from its incumbent is
+	 * worse than having one way in. `/` is a legal character, so it only fires
+	 * when the caret is outside a text surface - typing a path into a prompt
+	 * must never fling focus into the filter mid-word.
+	 */
+	useEventListener('keydown', (event) => {
+		const e = event as KeyboardEvent;
+		if (e.key !== '/' || e.metaKey || e.ctrlKey || e.altKey) return;
+		if (isTextInputTarget(e.target)) return;
+		e.preventDefault();
+		e.stopPropagation();
+		filterInputRef.current?.focus();
+		filterInputRef.current?.select();
+	});
+
+	/**
+	 * Cmd/Ctrl+E flips between the rendered prompt and the source editor.
+	 *
+	 * Read from the user's LIVE `toggleMarkdownMode` binding rather than a
+	 * literal `e`, so the chord that flips a file preview, a memory, and a
+	 * prompt stays one key after a remap.
+	 */
+	const toggleModeKeys = useSettingsStore((s) => s.shortcuts?.toggleMarkdownMode?.keys);
+
+	/**
+	 * Picking a mode also leaves the bundled-default comparison. That overlay
+	 * covers the whole pane, so switching underneath it would move nothing on
+	 * screen and read as a dead control.
+	 */
+	const changeViewMode = useCallback((mode: PromptViewMode) => {
+		setIsShowingDefault(false);
+		setViewMode(mode);
+	}, []);
+
+	useEventListener('keydown', (event) => {
+		const e = event as KeyboardEvent;
+		if (!eventMatchesShortcutKeys(e, toggleModeKeys)) return;
+		e.preventDefault();
+		e.stopPropagation();
+		setIsShowingDefault(false);
+		setViewMode((mode) => (mode === 'preview' ? 'edit' : 'preview'));
+	});
+
+	/**
+	 * Land the caret in the editor on the way into Edit, and hand it back to the
+	 * list on the way out. Without the first half, the switch puts a writable
+	 * surface on screen that silently swallows nothing: every keystroke still
+	 * goes wherever focus already was, which reads as a broken editor.
+	 */
+	const previousViewModeRef = useRef(viewMode);
 	useEffect(() => {
-		setIsPreviewMode(false);
+		const previous = previousViewModeRef.current;
+		previousViewModeRef.current = viewMode;
+		if (previous === viewMode || showHelp) return;
+		if (viewMode === 'edit') {
+			requestAnimationFrame(() => editorRef.current?.focus());
+		} else {
+			focusList();
+		}
+	}, [viewMode, showHelp, focusList]);
+
+	// Exit the bundled-default overlay when switching prompts - it describes the
+	// prompt you were looking at, not the one you just opened.
+	useEffect(() => {
 		setIsShowingDefault(false);
 	}, [selectedPrompt?.id]);
 
-	const handleTogglePreview = useCallback(async () => {
-		if (isPreviewMode) {
-			setIsPreviewMode(false);
-			return;
-		}
-		// Preview and "show bundled default" are mutually exclusive overlays.
-		setIsShowingDefault(false);
+	/**
+	 * Resolve the prompt's template variables against the active agent.
+	 *
+	 * Read through a ref rather than a dependency: the content only changes in
+	 * Edit mode, so rebuilding per keystroke would resolve a preview nobody is
+	 * looking at.
+	 */
+	const editedContentRef = useRef(editedContent);
+	editedContentRef.current = editedContent;
+	useEffect(() => {
+		if (viewMode !== 'preview') return;
+		let cancelled = false;
+		const content = editedContentRef.current;
 		if (!activeSession) {
 			setPreviewContent(
 				'Preview unavailable: no active agent session to resolve template variables against.'
 			);
-			setIsPreviewMode(true);
 			return;
 		}
 		setIsBuildingPreview(true);
-		try {
-			let gitBranch: string | undefined;
-			if (activeSession.isGitRepo) {
+		void (async () => {
+			try {
+				let gitBranch: string | undefined;
+				if (activeSession.isGitRepo) {
+					try {
+						const status = await gitService.getStatus(activeSession.cwd);
+						gitBranch = status.branch;
+					} catch {
+						// ignore
+					}
+				}
+				let historyFilePath: string | undefined;
 				try {
-					const status = await gitService.getStatus(activeSession.cwd);
-					gitBranch = status.branch;
+					historyFilePath =
+						(await window.maestro.history.getFilePath(activeSession.id)) || undefined;
 				} catch {
 					// ignore
 				}
+				if (cancelled) return;
+				setPreviewContent(
+					substituteTemplateVariables(content, {
+						session: activeSession as any,
+						gitBranch,
+						groupId: (activeSession as any).groupId,
+						historyFilePath,
+						conductorProfile,
+					})
+				);
+			} catch (err) {
+				captureException(err instanceof Error ? err : new Error(String(err)), {
+					extra: { context: 'MaestroPromptsTab.buildPreview' },
+				});
+				if (!cancelled) setPreviewContent(`Preview failed: ${String(err)}`);
+			} finally {
+				if (!cancelled) setIsBuildingPreview(false);
 			}
-			let historyFilePath: string | undefined;
-			try {
-				historyFilePath = (await window.maestro.history.getFilePath(activeSession.id)) || undefined;
-			} catch {
-				// ignore
-			}
-			const interpolated = substituteTemplateVariables(editedContent, {
-				session: activeSession as any,
-				gitBranch,
-				groupId: (activeSession as any).groupId,
-				historyFilePath,
-				conductorProfile,
-			});
-			setPreviewContent(interpolated);
-			setIsPreviewMode(true);
-		} catch (err) {
-			captureException(err instanceof Error ? err : new Error(String(err)), {
-				extra: { context: 'MaestroPromptsTab.togglePreview' },
-			});
-			setPreviewContent(`Preview failed: ${String(err)}`);
-			setIsPreviewMode(true);
-		} finally {
-			setIsBuildingPreview(false);
-		}
-	}, [isPreviewMode, activeSession, editedContent, conductorProfile]);
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, [viewMode, selectedPrompt?.id, activeSession, conductorProfile]);
 
 	const handleToggleShowDefault = useCallback(async () => {
 		if (isShowingDefault) {
@@ -440,8 +600,9 @@ export function MaestroPromptsTab({
 			return;
 		}
 		if (!selectedPrompt) return;
-		// Preview and "show bundled default" are mutually exclusive overlays.
-		setIsPreviewMode(false);
+		// The bundled default is a comparison view of the SOURCE, so it takes
+		// over the editor pane rather than sitting beside the rendered preview.
+		setViewMode('edit');
 		setIsLoadingBundledDefault(true);
 		try {
 			const result = await window.maestro.prompts.getBundledDefault(selectedPrompt.id);
@@ -511,23 +672,67 @@ export function MaestroPromptsTab({
 		})();
 	}, []);
 
+	const filterQueryTrimmed = debouncedFilter.trim();
+
+	/**
+	 * Prompts matching the filter, with the body line that matched.
+	 *
+	 * The body is searched as well as the id and description because that is
+	 * where the answer to "which prompt tells the agent X?" actually lives -
+	 * matching only the names would leave the whole point of the box undone.
+	 */
+	const filteredPrompts = useMemo(() => {
+		const sorted = [...allPrompts].sort((a, b) => a.id.localeCompare(b.id));
+		if (!filterQueryTrimmed) return sorted.map((prompt) => ({ prompt, snippet: undefined }));
+		const q = filterQueryTrimmed.toLowerCase();
+		return sorted
+			.map((prompt) => ({
+				prompt,
+				matches:
+					prompt.id.toLowerCase().includes(q) ||
+					prompt.description.toLowerCase().includes(q) ||
+					prompt.content.toLowerCase().includes(q) ||
+					// A prompt with unsaved edits is never filtered away. The editor
+					// pane only exists while its row does, so hiding the row would
+					// take an unsaved draft off screen with no way back to it.
+					(hasUnsavedChanges && prompt.id === selectedPrompt?.id),
+				snippet: matchingLine(prompt.content, filterQueryTrimmed),
+			}))
+			.filter((entry) => entry.matches);
+	}, [allPrompts, filterQueryTrimmed, hasUnsavedChanges, selectedPrompt?.id]);
+
+	// Read at filter time to hand focus back to the list; a ref keeps the
+	// Escape ladder off the filtered list's identity.
+	visibleIdsRef.current = filteredPrompts.map((entry) => entry.prompt.id);
+
 	// Build items for the shared editor (sorted by id within category; category order is handled by the shared component).
-	const items = useMemo<DualPaneFileEditorItem[]>(() => {
-		return [...allPrompts]
-			.sort((a, b) => a.id.localeCompare(b.id))
-			.map((p) => ({
-				id: p.id,
-				label: p.id,
-				description: p.description,
-				category: p.category,
-				isModified: p.isModified,
-				hasDefaultDrifted: p.hasDefaultDrifted,
-			}));
-	}, [allPrompts]);
+	const items = useMemo<DualPaneFileEditorItem[]>(
+		() =>
+			filteredPrompts.map(({ prompt, snippet }) => ({
+				id: prompt.id,
+				label: prompt.id,
+				description: snippet ? `${prompt.description}\nmatch: ${snippet}` : prompt.description,
+				category: prompt.category,
+				isModified: prompt.isModified,
+				hasDefaultDrifted: prompt.hasDefaultDrifted,
+			})),
+		[filteredPrompts]
+	);
 
 	const editorTokenCount = useMemo(
 		() => (selectedPrompt ? estimateTokenCount(editedContent) : undefined),
 		[selectedPrompt, editedContent]
+	);
+
+	const openPrompt = useCallback(
+		(prompt: CorePrompt) => {
+			setSelectedPrompt(prompt);
+			setEditedContent(prompt.content);
+			setHasUnsavedChanges(false);
+			setSuccessMessage(null);
+			setLastSelectedPromptId(prompt.id);
+		},
+		[setLastSelectedPromptId]
 	);
 
 	const handleSelectPrompt = useCallback(
@@ -538,14 +743,20 @@ export function MaestroPromptsTab({
 				const discard = window.confirm('You have unsaved changes. Discard them?');
 				if (!discard) return;
 			}
-			setSelectedPrompt(prompt);
-			setEditedContent(prompt.content);
-			setHasUnsavedChanges(false);
-			setSuccessMessage(null);
-			setLastSelectedPromptId(id);
+			openPrompt(prompt);
 		},
-		[allPrompts, hasUnsavedChanges, setLastSelectedPromptId]
+		[prompts, hasUnsavedChanges, openPrompt]
 	);
+
+	// A filter that hides the current selection moves to the top hit, so typing
+	// shows the match instead of an editor pinned to a row that is gone.
+	// Unsaved edits win: never yank the user off a prompt they have changed.
+	useEffect(() => {
+		if (!filterQueryTrimmed || hasUnsavedChanges) return;
+		if (selectedPrompt && filteredPrompts.some((e) => e.prompt.id === selectedPrompt.id)) return;
+		const first = filteredPrompts[0];
+		if (first) openPrompt(first.prompt);
+	}, [filterQueryTrimmed, filteredPrompts, selectedPrompt, hasUnsavedChanges, openPrompt]);
 
 	const toggleCategory = useCallback((category: string) => {
 		setCollapsedCategories((prev) => {
@@ -653,19 +864,6 @@ export function MaestroPromptsTab({
 
 	const editorHeaderActions = (
 		<>
-			{isEditorExpanded && (
-				<button
-					className="expand-toggle-button"
-					onClick={() => setShowHelp(true)}
-					title="Prompt reference"
-					style={{
-						color: theme.colors.textDim,
-						borderColor: theme.colors.border,
-					}}
-				>
-					<HelpCircle className="w-3.5 h-3.5" />
-				</button>
-			)}
 			{selectedPrompt?.hasDefaultDrifted && (
 				<button
 					className="expand-toggle-button"
@@ -682,24 +880,6 @@ export function MaestroPromptsTab({
 					}}
 				>
 					<GitCompare className="w-3.5 h-3.5" />
-				</button>
-			)}
-			{!isSelectedPluginPrompt && (
-				<button
-					className="expand-toggle-button"
-					onClick={handleTogglePreview}
-					disabled={isBuildingPreview}
-					title={
-						isPreviewMode
-							? 'Exit preview (show editable source)'
-							: 'Preview with template variables resolved'
-					}
-					style={{
-						color: isPreviewMode ? theme.colors.accent : theme.colors.textDim,
-						borderColor: isPreviewMode ? theme.colors.accent : theme.colors.border,
-					}}
-				>
-					{isPreviewMode ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
 				</button>
 			)}
 			<button
@@ -720,69 +900,111 @@ export function MaestroPromptsTab({
 		</>
 	);
 
+	/**
+	 * Repaint the editor's filter highlights whenever the query or the document
+	 * changes. Pushed imperatively because CodeMirror owns its document -
+	 * re-rendering the component would not move a decoration, and rebuilding the
+	 * view would throw away the undo history and the caret.
+	 *
+	 * `-1` for the active index washes every hit equally: this is a filter, not
+	 * a find bar, so there is no cursor into the results.
+	 */
+	useEffect(() => {
+		if (viewMode !== 'edit' || isShowingDefault) return;
+		editorRef.current?.setSearchMatches(searchMatchRanges(editedContent, filterQueryTrimmed), -1);
+	}, [viewMode, isShowingDefault, editedContent, filterQueryTrimmed]);
+
 	const renderEditorBody = useCallback(() => {
-		if (isShowingDefault) {
-			return (
-				<textarea
-					className="dual-pane-textarea dual-pane-textarea-preview"
-					value={bundledDefaultContent}
-					readOnly
-					spellCheck={false}
-					style={{
-						borderColor: theme.colors.warning,
-						backgroundColor: theme.colors.bgMain,
-						color: theme.colors.textMain,
-					}}
-				/>
-			);
-		}
-		// Plugin prompts are read-only: render their content in a non-editable
-		// textarea with no autocomplete, so a plugin's prompt can be read/copied
-		// but never edited or saved through this tab.
+		// A plugin owns its prompt's content, so it is shown in the same editor
+		// with writing switched off - readable and copyable, never saveable.
 		if (isSelectedPluginPrompt) {
 			return (
-				<textarea
-					className="dual-pane-textarea dual-pane-textarea-preview"
-					value={editedContent}
-					readOnly
-					spellCheck={false}
-					style={{
-						borderColor: theme.colors.border,
-						backgroundColor: theme.colors.bgMain,
-						color: theme.colors.textMain,
-					}}
-				/>
+				<div className="prompt-editor-shell" style={{ borderColor: theme.colors.border }}>
+					<MarkdownEditor
+						key={`plugin-${selectedPrompt?.id ?? 'none'}`}
+						value={editedContent}
+						onChange={() => {}}
+						readOnly
+						language="markdown"
+						theme={theme}
+					/>
+				</div>
 			);
 		}
-		return isPreviewMode ? (
-			<textarea
-				className="dual-pane-textarea dual-pane-textarea-preview"
-				value={previewContent}
-				readOnly
-				spellCheck={false}
-				style={{
-					borderColor: theme.colors.accent,
-					backgroundColor: theme.colors.bgMain,
-					color: theme.colors.textMain,
-				}}
-			/>
-		) : (
-			<>
-				<textarea
-					ref={textareaRef}
-					className="dual-pane-textarea"
-					value={editedContent}
-					onChange={autocomplete.handleChange}
-					onKeyDown={(e) => {
-						autocomplete.handleKeyDown(e);
-					}}
-					spellCheck={false}
+
+		// The bundled default is a read-only comparison view, so it takes the
+		// editor's place rather than opening beside it - and it is shown as
+		// SOURCE, since the point is to diff wording against your own copy.
+		if (isShowingDefault) {
+			return (
+				<div className="prompt-editor-shell" style={{ borderColor: theme.colors.warning }}>
+					<MarkdownEditor
+						key={`default-${selectedPrompt?.id ?? 'none'}`}
+						value={bundledDefaultContent}
+						onChange={() => {}}
+						readOnly
+						language="markdown"
+						theme={theme}
+					/>
+				</div>
+			);
+		}
+
+		if (viewMode === 'preview') {
+			return (
+				<div
+					ref={previewScrollRef}
+					className="prompt-preview"
+					// Focusable so the pane scrolls with the keyboard the moment it
+					// is shown; a reading surface you have to click first is one the
+					// arrow keys look broken on.
+					tabIndex={0}
 					style={{
-						borderColor: theme.colors.border,
+						borderColor: theme.colors.accent,
 						backgroundColor: theme.colors.bgMain,
 						color: theme.colors.textMain,
 					}}
-				/>
+					data-testid="prompt-preview"
+				>
+					<Markdown
+						preset="document"
+						content={isBuildingPreview && !previewContent ? 'Building preview...' : previewContent}
+						theme={theme}
+						containerRef={previewScrollRef}
+						searchHighlight={
+							filterQueryTrimmed ? { query: filterQueryTrimmed, currentMatchIndex: -1 } : undefined
+						}
+					/>
+				</div>
+			);
+		}
+
+		// Same CodeMirror editor the File Preview and the Memory Viewer write
+		// with, so a prompt is coloured like every other markdown document in the
+		// app and the gutter stays aligned through soft wraps.
+		//
+		// Keyed on the prompt id so switching prompts remounts the view: undo
+		// history belongs to one document, and carrying it across files lets an
+		// undo paste the previous prompt's text into this one.
+		return (
+			<>
+				{/* The border lives on a wrapper rather than on the editor's own
+				    host: CodeMirror measures its viewport against that host, and a
+				    border on it is counted twice once the content scrolls. */}
+				<div className="prompt-editor-shell" style={{ borderColor: theme.colors.border }}>
+					<MarkdownEditor
+						key={selectedPrompt?.id ?? 'prompt'}
+						ref={editorRef}
+						value={editedContent}
+						onChange={autocomplete.handleChange}
+						onKeyDown={autocomplete.handleKeyDown}
+						language="markdown"
+						theme={theme}
+					/>
+				</div>
+				{/* Outside the editor shell, which clips its overflow, but inside
+				    the body - that is the positioned ancestor the dropdown's
+				    caret-relative coordinates are measured against. */}
 				<TemplateAutocompleteDropdown
 					ref={autocomplete.autocompleteRef}
 					theme={theme}
@@ -791,11 +1013,31 @@ export function MaestroPromptsTab({
 				/>
 			</>
 		);
-	}, [isPreviewMode, previewContent, editedContent, autocomplete, theme, isSelectedPluginPrompt]);
+	}, [
+		isSelectedPluginPrompt,
+		isShowingDefault,
+		bundledDefaultContent,
+		viewMode,
+		previewContent,
+		isBuildingPreview,
+		filterQueryTrimmed,
+		editedContent,
+		selectedPrompt?.id,
+		autocomplete,
+		theme,
+	]);
 
-	const header =
-		!isEditorExpanded && !showHelp ? (
-			<div className="prompts-tab-header">
+	/**
+	 * Title block plus the toolbar that carries every control the pane offers.
+	 *
+	 * The toolbar stays on screen while the editor is expanded - the filter and
+	 * the view switch are how you get around in here, and hiding them behind the
+	 * expand button would make expanding cost more than it buys. Only the prose
+	 * above it yields, since that is the part that is purely explanatory.
+	 */
+	const header = showHelp ? null : (
+		<div className="prompts-tab-header">
+			{!isEditorExpanded && (
 				<div className="prompts-tab-header-text">
 					<div className="text-xs font-bold opacity-70 uppercase mb-1">Core System Prompts</div>
 					<p className="text-xs opacity-70">
@@ -804,6 +1046,20 @@ export function MaestroPromptsTab({
 						prompt files.
 					</p>
 				</div>
+			)}
+			<div className="prompts-toolbar" style={{ color: theme.colors.textDim }}>
+				<FilterInput
+					ref={filterInputRef}
+					theme={theme}
+					value={filterQuery}
+					onChange={setFilterQuery}
+					placeholder="Filter prompts by name or content..."
+					ariaLabel="Filter prompts by name, description, or content"
+					title="Filter prompts by name, description, or content (/)"
+					width={280}
+					resultLabel={filterQueryTrimmed ? `${items.length}/${prompts.length}` : undefined}
+				/>
+				<div className="flex-1" />
 				<button
 					className="prompts-help-button"
 					onClick={() => setShowHelp(true)}
@@ -815,11 +1071,24 @@ export function MaestroPromptsTab({
 				>
 					<HelpCircle className="w-3.5 h-3.5" />
 				</button>
+				<SegmentedControl
+					value={viewMode}
+					onChange={changeViewMode}
+					options={VIEW_MODE_OPTIONS}
+					theme={theme}
+					ariaLabel="Show the prompt rendered with template variables resolved, or as editable source"
+					testId="prompt-view-mode"
+				/>
 			</div>
-		) : null;
+		</div>
+	);
 
 	return (
 		<div className="maestro-prompts-settings-tab">
+			{/* Scoped so the rendered prompt picks up the app's document
+			    typography without leaking heading and table rules onto the
+			    settings chrome around it. */}
+			<style>{generateProseStyles({ theme, scopeSelector: '.prompt-preview' })}</style>
 			<DualPaneFileEditor
 				theme={theme}
 				items={items}
@@ -832,7 +1101,17 @@ export function MaestroPromptsTab({
 				helpPanel={<PromptsHelpPanel theme={theme} onClose={() => setShowHelp(false)} />}
 				showHelp={showHelp}
 				isExpanded={isEditorExpanded}
-				emptyStateMessage="Select a prompt to edit"
+				emptyStateMessage={
+					filterQueryTrimmed && items.length === 0
+						? `No prompt matches "${filterQueryTrimmed}"`
+						: 'Select a prompt to edit'
+				}
+				highlightQuery={filterQueryTrimmed}
+				listFocusToken={listFocusToken}
+				// So Up/Down walk the prompts without having to click a row first.
+				// It defers to anything that already holds focus, so opening the
+				// tab by clicking its button does not yank the caret away.
+				autoFocusList
 				editorTitle={selectedPrompt?.id}
 				editorDescription={selectedPrompt?.description}
 				editorTokenCount={editorTokenCount}

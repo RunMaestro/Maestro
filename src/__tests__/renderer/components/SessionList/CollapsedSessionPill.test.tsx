@@ -7,6 +7,10 @@ import {
 import type { Session, Theme } from '../../../../renderer/types';
 
 import { mockTheme } from '../../../helpers/mockTheme';
+import {
+	useCrossAgentInFlightStore,
+	type InFlightCrossAgentRequest,
+} from '../../../../renderer/stores/crossAgentInFlightStore';
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -60,9 +64,21 @@ function createDefaultProps(overrides: Partial<Parameters<typeof CollapsedSessio
 // Tests
 // ---------------------------------------------------------------------------
 
+function consult(targetSessionId: string): InFlightCrossAgentRequest {
+	return {
+		requestId: `req-${targetSessionId}`,
+		sourceSessionId: 'asker',
+		sourceTabId: 'tab-1',
+		targetSessionId,
+		targetAgentName: 'Target',
+		startedAt: Date.now(),
+	};
+}
+
 describe('CollapsedSessionPill', () => {
 	beforeEach(() => {
 		idCounter = 0;
+		useCrossAgentInFlightStore.setState({ requests: {} });
 	});
 
 	it('renders a single pill segment for a session without worktrees', () => {
@@ -157,6 +173,57 @@ describe('CollapsedSessionPill', () => {
 		const segment = container.firstElementChild!.firstElementChild! as HTMLElement;
 		expect(segment.style.border).toContain('1px solid');
 		expect(segment.style.backgroundColor).toBe('transparent');
+	});
+
+	/**
+	 * A consult never touches `session.state` (hidden tab, synthetic process id),
+	 * so the pill folds the in-flight store in beside Auto Run - otherwise a
+	 * consulted worktree segment stays green for the whole time it is working.
+	 */
+	it('applies busy styling to a consulted segment', () => {
+		const session = makeSession({ id: 'consulted' });
+		useCrossAgentInFlightStore.setState({ requests: { a: consult('consulted') } });
+
+		const { container } = render(<CollapsedSessionPill {...createDefaultProps({ session })} />);
+
+		const segment = container.firstElementChild!.firstElementChild! as HTMLElement;
+		expect(segment.className).toContain('animate-pulse');
+		expect(segment.style.backgroundColor).not.toBe('transparent');
+	});
+
+	// An unopened Claude agent is the COMMON consult target, so the hollow pill
+	// would mask exactly the case the consult signal exists to show.
+	it('outranks the unbound-Claude hollow pill', () => {
+		const session = makeSession({
+			id: 'consulted',
+			toolType: 'claude-code',
+			agentSessionId: undefined,
+		});
+		useCrossAgentInFlightStore.setState({ requests: { a: consult('consulted') } });
+
+		const { container } = render(<CollapsedSessionPill {...createDefaultProps({ session })} />);
+
+		const segment = container.firstElementChild!.firstElementChild! as HTMLElement;
+		expect(segment.style.border).toBe('');
+		expect(segment.style.backgroundColor).not.toBe('transparent');
+	});
+
+	// Segments are per-agent, so a consult on the parent must not light a
+	// worktree child sitting beside it.
+	it('lights only the consulted segment in a worktree pill', () => {
+		const parent = makeSession({ id: 'p1' });
+		const child = makeSession({ id: 'c1' });
+		useCrossAgentInFlightStore.setState({ requests: { a: consult('c1') } });
+
+		const { container } = render(
+			<CollapsedSessionPill
+				{...createDefaultProps({ session: parent, getWorktreeChildren: vi.fn(() => [child]) })}
+			/>
+		);
+
+		const segments = container.firstElementChild!.children;
+		expect(segments[0].className).not.toContain('animate-pulse');
+		expect(segments[1].className).toContain('animate-pulse');
 	});
 
 	it('renders tooltip content within each segment', () => {

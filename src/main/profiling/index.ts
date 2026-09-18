@@ -11,17 +11,22 @@ import fs from 'fs';
 import os from 'os';
 import { app } from 'electron';
 import { writeProfileBundle } from './bundle';
-import type { ProfileMetadata } from './types';
+import { TRACE_BUFFER_SIZE_KB } from './categories';
+import type { ProfileMetadata, StopProfilingOutcome } from './types';
 
-export { startProfiling, stopProfiling, isProfiling, getProfilingStatus } from './content-tracing';
-export { DEFAULT_TRACE_CATEGORIES } from './categories';
-export type { ProfilingStatus, StopProfilingResult } from './types';
+export {
+	startProfiling,
+	stopProfiling,
+	isProfiling,
+	getProfilingStatus,
+	setProfilingAutoStopHandler,
+	BUFFER_STOP_THRESHOLD,
+} from './content-tracing';
+export { DEFAULT_TRACE_CATEGORIES, TRACE_BUFFER_SIZE_KB } from './categories';
+export type { ProfilingStatus, StopProfilingResult, StopProfilingOutcome } from './types';
+export type { ProfilingOrigin } from './content-tracing';
 
-function buildMetadata(
-	tracePath: string,
-	durationMs: number,
-	categories: string[]
-): ProfileMetadata {
+function buildMetadata(tracePath: string, outcome: StopProfilingOutcome): ProfileMetadata {
 	const mem = process.memoryUsage();
 	let traceSizeBytes = 0;
 	try {
@@ -42,10 +47,14 @@ function buildMetadata(
 		totalMemBytes: os.totalmem(),
 		freeMemBytes: os.freemem(),
 		loadAvg: os.loadavg(),
-		profilingDurationMs: durationMs,
+		profilingDurationMs: outcome.durationMs,
 		recordingMode: 'record-until-full',
-		categories,
+		categories: outcome.categories,
 		traceSizeBytes,
+		traceBufferSizeKb: TRACE_BUFFER_SIZE_KB,
+		peakBufferPercent: outcome.peakBufferPercent,
+		autoStopped: outcome.autoStopped,
+		bufferExhausted: outcome.bufferExhausted,
 		mainProcessMemory: {
 			rss: mem.rss,
 			heapTotal: mem.heapTotal,
@@ -62,15 +71,14 @@ function buildMetadata(
 export async function finalizeCapture(
 	tracePath: string,
 	outputPath: string,
-	durationMs: number,
-	categories: string[],
+	outcome: StopProfilingOutcome,
 	onProgress?: (percent: number, bytesProcessed: number, totalBytes: number) => void
 ): Promise<{
 	path: string;
 	bundleSizeBytes: number;
 	traceSizeBytes: number;
 }> {
-	const meta = buildMetadata(tracePath, durationMs, categories);
+	const meta = buildMetadata(tracePath, outcome);
 	const { path: bundlePath, sizeBytes } = await writeProfileBundle(
 		tracePath,
 		meta,

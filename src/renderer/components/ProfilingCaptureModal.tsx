@@ -49,6 +49,12 @@ export function ProfilingCaptureModal({ theme, onClose }: ProfilingCaptureModalP
 	const [savedPath, setSavedPath] = useState<string | null>(null);
 	const [bundleSize, setBundleSize] = useState(0);
 	const [errorMessage, setErrorMessage] = useState<string | null>(null);
+	// Whether the saved trace covers the whole recording, or only whatever fit in
+	// Chromium's buffer before it started dropping events. Reported because there
+	// is no way to tell from the file itself, and a reader who does not know is a
+	// reader who will draw conclusions about a session from a fragment of it.
+	const [bufferExhausted, setBufferExhausted] = useState(false);
+	const [peakBufferPercent, setPeakBufferPercent] = useState(0);
 	const startedRef = useRef(false);
 
 	const isTerminal = phase === 'done' || phase === 'cancelled' || phase === 'error';
@@ -95,6 +101,8 @@ export function ProfilingCaptureModal({ theme, onClose }: ProfilingCaptureModalP
 				}
 				setSavedPath(res.path);
 				setBundleSize(res.bundleSizeBytes);
+				setBufferExhausted(Boolean(res.bufferExhausted));
+				setPeakBufferPercent(res.peakBufferPercent ?? 0);
 				setPercent(100);
 				setPhase('done');
 			} catch (err) {
@@ -232,6 +240,15 @@ export function ProfilingCaptureModal({ theme, onClose }: ProfilingCaptureModalP
 							</div>
 						)}
 						{bundleSize > 0 && <span>Bundle size: {formatSize(bundleSize)}</span>}
+						<span style={{ color: bufferExhausted ? theme.colors.warning : theme.colors.textDim }}>
+							{bufferExhausted
+								? `Incomplete: the trace buffer filled (peak ${Math.round(
+										peakBufferPercent * 100
+									)}%), so events were dropped and this trace covers less time than the recording ran for.`
+								: `Complete capture: peak trace-buffer usage ${Math.round(
+										peakBufferPercent * 100
+									)}%, so no events were dropped.`}
+						</span>
 					</div>
 				)}
 				{phase === 'cancelled' && (

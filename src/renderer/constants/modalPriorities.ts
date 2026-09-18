@@ -28,12 +28,13 @@ export const MODAL_PRIORITIES = {
 	TYPOGRAPHY_CHOICE: 1060,
 
 	/**
-	 * First-run theme chooser and the "your agents can drive Maestro" step.
-	 * They run in sequence after the typography chooser, one at a time, so they
-	 * share its band - only one of the three is ever mounted.
+	 * First-run theme chooser, updates step, and the "your agents can drive
+	 * Maestro" step. They run in sequence after the typography chooser, one at a
+	 * time, so they share its band - only one of the four is ever mounted.
 	 */
 	THEME_CHOICE: 1059,
-	AGENT_POWERS: 1058,
+	UPDATES_CHOICE: 1058,
+	AGENT_POWERS: 1057,
 
 	/** Onboarding tour overlay - above wizard, guides new users */
 	TOUR: 1050,
@@ -160,10 +161,14 @@ export const MODAL_PRIORITIES = {
 	TAB_CONTEXT_MENU: 708,
 
 	/** Snoozed tabs list modal (shows every agent's snoozed tabs) */
-	SNOOZED_TABS: 704,
+	SNOOZED_TABS: 703,
 
-	/** Snooze history log (opens above the snoozed tabs list) */
-	SNOOZE_HISTORY: 703,
+	/**
+	 * Snooze history log. Must rank ABOVE SNOOZED_TABS: it opens on top of that
+	 * list, and Escape closes the highest-priority layer. Ranked below, Escape
+	 * closed the list instead, which unmounted the history with it.
+	 */
+	SNOOZE_HISTORY: 704,
 
 	/** Prompt composer modal for long prompts */
 	PROMPT_COMPOSER: 725,

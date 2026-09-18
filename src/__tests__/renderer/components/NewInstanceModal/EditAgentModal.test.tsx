@@ -180,7 +180,7 @@ describe('EditAgentModal', () => {
 		});
 	});
 
-	it('should show read-only working directory', async () => {
+	it('should show the working directory as an editable field', async () => {
 		render(
 			<EditAgentModal
 				isOpen={true}
@@ -192,14 +192,197 @@ describe('EditAgentModal', () => {
 			/>
 		);
 
+		const input = await screen.findByDisplayValue('/home/user/my-project');
+		expect(input).not.toBeDisabled();
+		expect(screen.queryByText(/Directory cannot be changed/)).not.toBeInTheDocument();
+	});
+
+	it('should pass a changed working directory to onSave', async () => {
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={createSession({ projectRoot: '/home/user/project' })}
+				existingSessions={[]}
+			/>
+		);
+
+		const input = await screen.findByDisplayValue('/home/user/project');
+		fireEvent.change(input, { target: { value: '/home/user/moved-project' } });
+
+		// Save waits for the directory to be confirmed on disk.
 		await waitFor(() => {
-			expect(screen.getByText('/home/user/my-project')).toBeInTheDocument();
-			expect(
-				screen.getByText(
-					'Directory cannot be changed. Create a new agent for a different directory.'
-				)
-			).toBeInTheDocument();
+			expect(window.maestro.fs.stat).toHaveBeenCalledWith('/home/user/moved-project', undefined);
 		});
+		await waitFor(() => {
+			expect(screen.getByText('Save Changes').closest('button')).not.toBeDisabled();
+		});
+		fireEvent.click(screen.getByText('Save Changes'));
+
+		expect(onSave).toHaveBeenCalledTimes(1);
+		const args = onSave.mock.calls[0];
+		// `workingDirectory` is second-from-last now that `codexAutoResetOnExhaustion`
+		// trails it - anchor on the slot rather than on "last".
+		expect(args[args.length - 2]).toBe('/home/user/moved-project');
+	});
+
+	it('should refuse a local working directory that does not exist', async () => {
+		vi.mocked(window.maestro.fs.stat).mockResolvedValue(null);
+
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={createSession({ projectRoot: '/home/user/project' })}
+				existingSessions={[]}
+			/>
+		);
+
+		const input = await screen.findByDisplayValue('/home/user/project');
+		fireEvent.change(input, { target: { value: '/home/user/projectt' } });
+
+		expect(await screen.findByText('Path not found or not accessible')).toBeInTheDocument();
+		fireEvent.click(screen.getByText('Save Changes'));
+		expect(onSave).not.toHaveBeenCalled();
+	});
+
+	it('should fill the working directory from the folder picker', async () => {
+		const selectFolder = vi.fn().mockResolvedValue('/picked/folder');
+		(window.maestro as any).dialog = { ...(window.maestro as any).dialog, selectFolder };
+
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={createSession({ projectRoot: '/home/user/project' })}
+				existingSessions={[]}
+			/>
+		);
+
+		await screen.findByDisplayValue('/home/user/project');
+		fireEvent.click(screen.getByLabelText('Browse folders'));
+
+		expect(await screen.findByDisplayValue('/picked/folder')).toBeInTheDocument();
+		expect(selectFolder).toHaveBeenCalled();
+	});
+
+	it('should refuse a relative local working directory', async () => {
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={createSession({ projectRoot: '/home/user/project' })}
+				existingSessions={[]}
+			/>
+		);
+
+		const input = await screen.findByDisplayValue('/home/user/project');
+		fireEvent.change(input, { target: { value: 'relative/project' } });
+
+		expect(screen.getByText('Enter an absolute path')).toBeInTheDocument();
+		fireEvent.click(screen.getByText('Save Changes'));
+		expect(onSave).not.toHaveBeenCalled();
+	});
+
+	it('should not treat a trailing slash as a changed working directory', async () => {
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={createSession({ projectRoot: '/home/user/project' })}
+				existingSessions={[]}
+			/>
+		);
+
+		const input = await screen.findByDisplayValue('/home/user/project');
+		fireEvent.change(input, { target: { value: '/home/user/project/' } });
+		fireEvent.click(screen.getByText('Save Changes'));
+
+		expect(onSave).toHaveBeenCalled();
+		const args = onSave.mock.calls[0];
+		// `workingDirectory` is second-from-last now that `codexAutoResetOnExhaustion`
+		// trails it - anchor on the slot rather than on "last".
+		expect(args[args.length - 2]).toBeUndefined(); // workingDirectory unchanged
+	});
+
+	it('should refuse a new SSH working directory the remote reports is not a directory', async () => {
+		vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
+			success: true,
+			configs: [
+				{
+					id: 'remote-1',
+					name: 'Dev Server',
+					host: 'dev.example.com',
+					port: 22,
+					username: 'devuser',
+					privateKeyPath: '/path/to/key',
+					enabled: true,
+				},
+			],
+		});
+		vi.mocked(window.maestro.fs.stat).mockResolvedValue({
+			isDirectory: false,
+			isFile: true,
+			size: 0,
+			mtimeMs: 0,
+		});
+
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={createSession({
+					projectRoot: '/home/devuser/my-project',
+					cwd: '/home/devuser/my-project',
+					sessionSshRemoteConfig: {
+						enabled: true,
+						remoteId: 'remote-1',
+						workingDirOverride: '/home/devuser/my-project',
+					},
+				})}
+				existingSessions={[]}
+			/>
+		);
+
+		const input = await screen.findByDisplayValue('/home/devuser/my-project');
+		fireEvent.change(input, { target: { value: '/home/devuser/notes.txt' } });
+
+		await waitFor(() => {
+			// The status line appends the remote host, so match the message as a prefix.
+			expect(screen.getByText(/^Path is a file, not a directory/)).toBeInTheDocument();
+		});
+		fireEvent.click(screen.getByText('Save Changes'));
+		expect(onSave).not.toHaveBeenCalled();
+	});
+
+	it('should lock the working directory while the agent is busy', async () => {
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={createSession({ projectRoot: '/home/user/project', state: 'busy' })}
+				existingSessions={[]}
+			/>
+		);
+
+		expect(await screen.findByDisplayValue('/home/user/project')).toBeDisabled();
+		expect(
+			screen.getByText('Stop the agent before changing its working directory.')
+		).toBeInTheDocument();
 	});
 
 	it('should show copy session ID button with truncated ID', async () => {
@@ -335,7 +518,9 @@ describe('EditAgentModal', () => {
 				undefined, // additionalDirectories
 				undefined, // contextWindowSource: the window was not touched, so no
 				// provenance is recorded and P1 precedence stands (finding AD1)
-				undefined // failoverConfig (not configured on this agent)
+				undefined, // customEnvVarsDisabled (nothing switched off)
+				undefined, // workingDirectory unchanged
+				false // codexAutoResetOnExhaustion: off by default
 			);
 		});
 
@@ -433,45 +618,11 @@ describe('EditAgentModal', () => {
 			undefined, // additionalDirectories
 			undefined, // contextWindowSource: the window was not touched, so no
 			// provenance is recorded and P1 precedence stands (finding AD1)
-			undefined // failoverConfig (not configured on this agent)
+			undefined, // customEnvVarsDisabled (nothing switched off)
+			undefined, // workingDirectory unchanged
+			false // codexAutoResetOnExhaustion: off by default
 		);
 		expect(onClose).toHaveBeenCalled();
-	});
-
-	it('round-trips an existing Provider Failover config through save', async () => {
-		const failoverConfig = {
-			enabled: true,
-			returnToPrimaryMinutes: 45,
-			endpoints: [
-				{
-					id: 'zai',
-					label: 'Z.AI',
-					env: { ANTHROPIC_BASE_URL: 'https://api.z.ai/api/anthropic' },
-					model: 'glm-4.6',
-				},
-			],
-		};
-		const session = createSession({ id: 'test-id', name: 'Original Name', failoverConfig });
-
-		render(
-			<EditAgentModal
-				isOpen={true}
-				onClose={onClose}
-				onSave={onSave}
-				theme={theme}
-				session={session}
-				existingSessions={[]}
-			/>
-		);
-
-		// The endpoint should load into the editor rather than starting blank.
-		expect(await screen.findByDisplayValue('Z.AI')).toBeInTheDocument();
-
-		fireEvent.click(screen.getByText('Save Changes'));
-
-		// Saving without touching failover must hand the config back unchanged -
-		// a dropped arg anywhere in the save chain silently disarms the feature.
-		expect(onSave.mock.calls[0][19]).toEqual(failoverConfig);
 	});
 
 	it('should trigger save on Cmd+Enter when form is valid', async () => {
@@ -704,7 +855,9 @@ describe('EditAgentModal', () => {
 			undefined, // additionalDirectories
 			undefined, // contextWindowSource: the window was not touched, so no
 			// provenance is recorded and P1 precedence stands (finding AD1)
-			undefined // failoverConfig (not configured on this agent)
+			undefined, // customEnvVarsDisabled (nothing switched off)
+			undefined, // workingDirectory unchanged
+			false // codexAutoResetOnExhaustion: off by default
 		);
 	});
 
@@ -779,7 +932,9 @@ describe('EditAgentModal', () => {
 			undefined, // additionalDirectories
 			undefined, // contextWindowSource: the window was not touched, so no
 			// provenance is recorded and P1 precedence stands (finding AD1)
-			undefined // failoverConfig (not configured on this agent)
+			undefined, // customEnvVarsDisabled (nothing switched off)
+			undefined, // workingDirectory unchanged
+			false // codexAutoResetOnExhaustion: off by default
 		);
 	});
 
@@ -860,7 +1015,9 @@ describe('EditAgentModal', () => {
 			undefined, // additionalDirectories
 			undefined, // contextWindowSource: the window was not touched, so no
 			// provenance is recorded and P1 precedence stands (finding AD1)
-			undefined // failoverConfig (not configured on this agent)
+			undefined, // customEnvVarsDisabled (nothing switched off)
+			undefined, // workingDirectory unchanged
+			false // codexAutoResetOnExhaustion: off by default
 		);
 	});
 
@@ -1218,6 +1375,104 @@ describe('EditAgentModal', () => {
 			const args = onSave.mock.calls[0];
 			expect(args[10]).toBe(120000);
 			expect(args[18]).toBe('user-edited');
+		});
+	});
+
+	// The toggle is the ONLY way a user opts into unattended spending of a
+	// finite, non-refundable grant, so both directions are pinned: an agent that
+	// asked for it must come back with it on, and Save must carry the new value
+	// out. A regression in either direction is silent - the checkbox still
+	// renders, it just stops meaning anything.
+	describe('Codex automatic usage resets', () => {
+		const codexAgent = {
+			id: 'codex',
+			name: 'Codex',
+			available: true,
+			path: '/usr/local/bin/codex',
+			binaryName: 'codex',
+			hidden: false,
+		} as AgentConfig;
+
+		const codexSession = (overrides: Partial<Session> = {}) =>
+			createSession({
+				id: 'codex-1',
+				toolType: 'codex',
+				customPath: undefined,
+				customModel: undefined,
+				customEnvVars: undefined,
+				...overrides,
+			});
+
+		function renderCodex(session: Session) {
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([codexAgent]);
+			return render(
+				<EditAgentModal
+					isOpen={true}
+					onClose={onClose}
+					onSave={onSave}
+					theme={theme}
+					session={session}
+					existingSessions={[]}
+				/>
+			);
+		}
+
+		const toggle = () =>
+			screen.getByLabelText(
+				'Automatically redeem a reset credit when usage limits are hit'
+			) as HTMLInputElement;
+
+		it('renders the toggle off for a Codex agent that never opted in', async () => {
+			renderCodex(codexSession());
+
+			await waitFor(() => expect(toggle()).toBeInTheDocument());
+			expect(toggle().checked).toBe(false);
+		});
+
+		it('reflects an agent that already opted in', async () => {
+			renderCodex(codexSession({ codexAutoResetOnExhaustion: true }));
+
+			await waitFor(() => expect(toggle().checked).toBe(true));
+		});
+
+		it('carries the opt-in out through Save', async () => {
+			renderCodex(codexSession());
+
+			await waitFor(() => expect(toggle()).toBeInTheDocument());
+			fireEvent.click(toggle());
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			const args = onSave.mock.calls[0];
+			expect(args[args.length - 1]).toBe(true);
+		});
+
+		it('carries an opt-OUT out through Save', async () => {
+			// Turning it back off has to reach the session too: leaving the old
+			// `true` in place would keep spending credits after the user stopped it.
+			renderCodex(codexSession({ codexAutoResetOnExhaustion: true }));
+
+			await waitFor(() => expect(toggle().checked).toBe(true));
+			fireEvent.click(toggle());
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			const args = onSave.mock.calls[0];
+			expect(args[args.length - 1]).toBe(false);
+		});
+
+		it('is absent for a provider with no reset credits', async () => {
+			render(
+				<EditAgentModal
+					isOpen={true}
+					onClose={onClose}
+					onSave={onSave}
+					theme={theme}
+					session={createSession()}
+					existingSessions={[]}
+				/>
+			);
+
+			await waitFor(() => expect(screen.getByDisplayValue('My Agent')).toBeInTheDocument());
+			expect(screen.queryByTestId('codex-auto-reset-option')).not.toBeInTheDocument();
 		});
 	});
 });

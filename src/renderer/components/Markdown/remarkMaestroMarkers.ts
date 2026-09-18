@@ -39,6 +39,7 @@ export const MARKER_DATA_ATTRIBUTES = {
 	label: 'dataMaestroMarkerLabel',
 	detail: 'dataMaestroMarkerDetail',
 	artifact: 'dataMaestroMarkerArtifact',
+	reason: 'dataMaestroMarkerReason',
 } as const;
 
 /**
@@ -108,8 +109,10 @@ export function remarkMaestroMarkers() {
 			if (typeof line !== 'number') return;
 			const marker = markers.get(`${line}:${kind}`);
 			// No entry means the scanner skipped it - almost always because it sits
-			// inside a fence. Leaving the node untouched keeps it invisible, which
-			// is the correct rendering for a documentation example.
+			// inside a fence. Leaving the node untouched is the correct rendering
+			// for a documentation example; `remarkStripHtmlComments`, which runs
+			// after this plugin, is what actually keeps it invisible (react-markdown
+			// would otherwise print the raw comment as text).
 			if (!marker) return;
 
 			const detail = detailFor(marker);
@@ -121,6 +124,10 @@ export function remarkMaestroMarkers() {
 			};
 			if (detail) properties[MARKER_DATA_ATTRIBUTES.detail] = detail;
 			if (marker.artifact) properties[MARKER_DATA_ATTRIBUTES.artifact] = marker.artifact;
+			// Only a model marker carries one. A halt or gate reason is the pill's
+			// visible detail text, already handled above; putting it behind a hover
+			// as well would hide from the reader the very thing that stopped the run.
+			if (marker.hint?.reason) properties[MARKER_DATA_ATTRIBUTES.reason] = marker.hint.reason;
 
 			// A task-scoped marker sits inside the task's own paragraph, so it must
 			// stay phrasing content; a standalone one is a block of its own.

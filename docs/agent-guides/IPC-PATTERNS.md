@@ -86,6 +86,8 @@ These namespaces are exposed on `window.maestro` via the preload bridge:
 
 ### Step 1: Create the handler file
 
+<!-- doc-refs-ignore -->
+
 Create `src/main/ipc/handlers/myFeature.ts`:
 
 ```typescript
@@ -148,6 +150,8 @@ registerMyFeatureHandlers({
 ```
 
 ### Step 3: Create the preload bridge
+
+<!-- doc-refs-ignore -->
 
 Create `src/main/preload/myFeature.ts`:
 

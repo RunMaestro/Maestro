@@ -257,7 +257,47 @@ describe('groupChatExport', () => {
 				expect(html).toContain('Agents');
 				expect(html).toContain('Messages');
 				expect(html).toContain('Agent Replies');
-				expect(html).toContain('Duration');
+				expect(html).toContain('Working');
+				expect(html).toContain('Tokens');
+				expect(html).toContain('Cost');
+			});
+
+			it('reports working time from the history log, not the message span', () => {
+				const groupChat = createMockGroupChat();
+				const messages = createMockMessages(5);
+				const start = Date.parse('2023-12-21T10:00:00Z');
+				const history: GroupChatHistoryEntry[] = [
+					{
+						id: 'h1',
+						timestamp: start + 120_000,
+						summary: 'worked',
+						participantName: 'Agent1',
+						participantColor: '#fff',
+						type: 'response',
+						elapsedTimeMs: 120_000,
+						tokenCount: 1500,
+						cost: 0.42,
+					},
+				];
+
+				const html = generateGroupChatExportHtml(groupChat, messages, history, {}, mockTheme);
+
+				expect(html).toContain('<div class="stat-value">2m</div>');
+				expect(html).toContain('<div class="stat-value">~2K</div>');
+				expect(html).toContain('<div class="stat-value">$0.42</div>');
+			});
+
+			it('reports tokens as unknown rather than zero when no turn recorded usage', () => {
+				const groupChat = createMockGroupChat();
+				const html = generateGroupChatExportHtml(
+					groupChat,
+					createMockMessages(5),
+					[],
+					{},
+					mockTheme
+				);
+
+				expect(html).toContain('<div class="stat-value">-</div>');
 			});
 		});
 

@@ -198,6 +198,9 @@ describe('agents IPC handlers', () => {
 				'claude:usage:refresh-all',
 				'agents:getCodexUsageSnapshots',
 				'agents:getCodexUsageAccountKeys',
+				// Codex rate-limit reset credits: READ the list, WRITE one back.
+				'agents:getCodexResetCredits',
+				'agents:consumeCodexResetCredit',
 				'codex:usage:refresh-all',
 			];
 
