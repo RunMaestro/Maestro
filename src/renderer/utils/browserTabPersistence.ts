@@ -228,6 +228,7 @@ export function sanitizeBrowserTabForPersistence(tab: BrowserTab, sessionId: str
 		isLoading: false,
 		webContentsId: undefined,
 		remotePage: undefined,
+		requestedUrl: undefined,
 	};
 }
 
