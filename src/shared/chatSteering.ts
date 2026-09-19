@@ -153,6 +153,19 @@ export interface SteeringResultFrame {
  */
 export const STEERING_MAX_TEXT_BYTES = 8192;
 
+/**
+ * UTF-8 byte length of steering text.
+ *
+ * `TextEncoder` rather than `Buffer.byteLength` on purpose: this module is
+ * imported by the RENDERER for its verdict types, and the renderer has no Node
+ * Buffer. Measured in bytes rather than characters because the text is typed into
+ * the PTY as bytes and queued by the kernel as bytes, so a character-counted cap
+ * would let through several times the intended size for non-ASCII text.
+ */
+export function steeringTextBytes(text: string): number {
+	return new TextEncoder().encode(text).length;
+}
+
 /** Parse one NDJSON control line. Returns null for anything unrecognized. */
 export function parseSteeringRequest(line: string): SteeringRequestFrame | null {
 	const trimmed = line.trim();
@@ -168,7 +181,7 @@ export function parseSteeringRequest(line: string): SteeringRequestFrame | null 
 	if (frame.type !== 'steer') return null;
 	if (typeof frame.id !== 'string' || frame.id.length === 0) return null;
 	if (typeof frame.text !== 'string' || frame.text.length === 0) return null;
-	if (Buffer.byteLength(frame.text, 'utf8') > STEERING_MAX_TEXT_BYTES) return null;
+	if (steeringTextBytes(frame.text) > STEERING_MAX_TEXT_BYTES) return null;
 	return { type: 'steer', id: frame.id, text: frame.text };
 }
 
@@ -203,4 +216,48 @@ export function classifyQueueOperation(
 	}
 	// `enqueue` only proves claude accepted the keystrokes. Not a verdict.
 	return null;
+}
+
+/**
+ * Every verdict, for runtime validation. Typed as the verdict union so adding a
+ * case to `SteeringVerdict` without listing it here fails to compile, rather than
+ * silently becoming unparseable on the wire.
+ */
+export const STEERING_VERDICTS: readonly SteeringVerdict[] = [
+	'delivered',
+	'absorbed',
+	'queued',
+	'dropped',
+	'refused',
+	'unknown',
+];
+
+/**
+ * Parse one NDJSON verdict line. Returns null for anything unrecognized.
+ *
+ * The client's mirror of `parseSteeringRequest`, and it VALIDATES rather than
+ * casting for the same reason: a frame carrying a verdict this build does not know
+ * would otherwise reach the UI, which has no branch for it and would show a steer
+ * as neither delivered nor refused. Unknown fields are dropped rather than passed
+ * through, so a newer maestro-p cannot smuggle state into an older desktop.
+ */
+export function parseSteeringResult(line: string): SteeringResultFrame | null {
+	const trimmed = line.trim();
+	if (!trimmed) return null;
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(trimmed);
+	} catch {
+		return null;
+	}
+	if (!parsed || typeof parsed !== 'object') return null;
+	const frame = parsed as Partial<SteeringResultFrame>;
+	if (frame.type !== 'steering') return null;
+	if (typeof frame.id !== 'string' || frame.id.length === 0) return null;
+	if (typeof frame.verdict !== 'string') return null;
+	if (!STEERING_VERDICTS.includes(frame.verdict)) return null;
+	const result: SteeringResultFrame = { type: 'steering', id: frame.id, verdict: frame.verdict };
+	if (typeof frame.refusal === 'string') result.refusal = frame.refusal as SteeringRefusal;
+	if (typeof frame.detail === 'string') result.detail = frame.detail;
+	return result;
 }

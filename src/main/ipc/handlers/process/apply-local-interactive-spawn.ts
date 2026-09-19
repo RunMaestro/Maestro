@@ -2,6 +2,8 @@ import * as path from 'path';
 import type { AgentConfig } from '../../../agents/definitions';
 import { applyClaudeSpawnDecision } from '../../../agents/resolveClaudeSpawnMode';
 import { isMaestroPBinaryPath } from '../../../agents/claude-usage-startup';
+import { STEERING_SOCKET_ENV_VAR } from '../../../../shared/chatSteering';
+import { steeringSocketPathFor } from '../../../process-manager/steering-client';
 import { logger } from '../../../utils/logger';
 import type { ClaudeSpawnContext } from './resolve-claude-spawn-context';
 import type { SpawnProcessConfig } from './spawn-types';
@@ -85,9 +87,24 @@ export function applyLocalInteractiveSpawnDecision(
 		configDirKey: resolvedConfigDirKey,
 	});
 
+	// Chat steering: this function is the ONE place that knows a spawn resolved to
+	// a LOCAL maestro-p, which is the only shape that can be steered - an API
+	// (`claude --print`) turn has no writable PTY for the length of the turn, and
+	// the branch above has already returned for both that and SSH. Naming the
+	// socket here is therefore the same decision as "this turn is steerable",
+	// rather than a second guess about it made somewhere else.
+	//
+	// The path is DERIVED from the process key instead of minted and passed along,
+	// because the client runs later from an IPC call that knows only that key. See
+	// steeringSocketPathFor.
+	const steeringEnv = {
+		...applied.customEnvVars,
+		[STEERING_SOCKET_ENV_VAR]: steeringSocketPathFor(config.sessionId),
+	};
+
 	return {
 		commandToSpawn: applied.command,
 		argsToSpawn: applied.args,
-		customEnvVarsToPass: applied.customEnvVars,
+		customEnvVarsToPass: steeringEnv,
 	};
 }

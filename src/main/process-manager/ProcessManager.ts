@@ -1,6 +1,7 @@
 // src/main/process-manager/ProcessManager.ts
 
 import { EventEmitter } from 'events';
+import { randomUUID } from 'crypto';
 import { execFile, execFileSync } from 'child_process';
 import type {
 	ProcessConfig,
@@ -19,6 +20,8 @@ import { LocalCommandRunner } from './runners/LocalCommandRunner';
 import { SshCommandRunner } from './runners/SshCommandRunner';
 import { opencodeServerManager } from '../opencode-server/OpencodeServerManager';
 import { logger } from '../utils/logger';
+import type { SteeringResultFrame } from '../../shared/chatSteering';
+import { sendSteeringRequest } from './steering-client';
 import { isPidAlive } from './utils/childProcessInfo';
 import { isWindows } from '../../shared/platformDetection';
 import { expandTilde } from '../../shared/pathUtils';
@@ -277,6 +280,37 @@ export class ProcessManager extends EventEmitter {
 	/**
 	 * Write data to a process's stdin
 	 */
+	/**
+	 * Ask a running Claude turn to take `text` into the turn in flight (chat
+	 * steering). Resolves with a verdict for the UI; never rejects.
+	 *
+	 * Requires the process to still be REGISTERED, checked here rather than left to
+	 * the socket, because a finished turn and an un-steerable one need different
+	 * words: "the turn has already finished" is actionable (send it normally) where
+	 * "not steerable" invites the user to go looking for a setting.
+	 *
+	 * Everything else is deliberately NOT decided here. Whether the turn is on
+	 * maestro-p at all is answered by whether a channel exists (the spawn opens one
+	 * only for a local interactive turn), and whether the TUI can accept keystroke
+	 * right now is answered by maestro-p, which is the only party holding the
+	 * screen. Re-deriving either would mean two places believing different things
+	 * about the same turn.
+	 */
+	async steer(sessionId: string, text: string): Promise<SteeringResultFrame> {
+		const id = randomUUID();
+		const process = this.processes.get(sessionId);
+		if (!process) {
+			return {
+				type: 'steering',
+				id,
+				verdict: 'refused',
+				refusal: 'not-running',
+				detail: 'that turn has already finished, so there is nothing to steer',
+			};
+		}
+		return sendSteeringRequest({ processKey: sessionId, text, id });
+	}
+
 	write(sessionId: string, data: string): boolean {
 		const process = this.processes.get(sessionId);
 		if (!process) {
