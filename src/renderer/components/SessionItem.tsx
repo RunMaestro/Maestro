@@ -226,16 +226,20 @@ export const SessionItem = memo(function SessionItem({
 	const startupCommandIndicatorActive =
 		showLeftPanelStartupCommandIndicator && startupCommandTabCount > 0;
 
-	// Parent agents get an inline chevron toggle. Keyed off worktreeConfig OR an
-	// actual child count: several spawn paths (Auto Run worktree dispatch in
-	// worktreeSpawn.ts, quick-create, watcher discovery) attach children via
-	// parentSessionId without ever writing worktreeConfig on the parent. Gating
-	// on worktreeConfig alone left those parents with a permanently expanded,
-	// uncollapsible subtree. SessionList renders children off the same child
-	// count, so this keeps the toggle present whenever a subtree is visible.
+	// Parent agents get an inline chevron toggle, keyed off the LIVE child count
+	// and nothing else. `worktreeConfig` is a persistent per-agent SETTING (base
+	// path, watcher, setup script) that outlives the worktrees created under it,
+	// so gating on it left a chevron on a parent whose last worktree was removed:
+	// it toggled an empty subtree and came back after a restart, because the
+	// setting is what is on disk (#1616). The count also covers the parents
+	// worktreeConfig never described - several spawn paths (Auto Run worktree
+	// dispatch in worktreeSpawn.ts, quick-create, watcher discovery) attach
+	// children via parentSessionId without writing worktreeConfig, and those
+	// parents used to render a permanently expanded, uncollapsible subtree
+	// (#1292). SessionList renders the subtree off this same count, so the
+	// toggle is present exactly when there is something to toggle.
 	// Default to expanded when worktreesExpanded is undefined to match useSortedSessions.
-	const isWorktreeParent =
-		variant !== 'worktree' && (Boolean(session.worktreeConfig) || (worktreeChildCount ?? 0) > 0);
+	const isWorktreeParent = variant !== 'worktree' && (worktreeChildCount ?? 0) > 0;
 	const worktreesExpanded = session.worktreesExpanded ?? true;
 	const showCollapsedCountBadge =
 		isWorktreeParent && !worktreesExpanded && (worktreeChildCount ?? 0) > 0;
