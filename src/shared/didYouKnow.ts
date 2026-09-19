@@ -5,6 +5,7 @@
  * The pinned list is a deliberate editorial choice, not an accident of array order.
  */
 import type { UiSurfaceEncoreFlag } from './uiSurfaces';
+import { shuffleWithSeed } from './shuffle';
 
 export interface DidYouKnowTip {
 	/** Stable kebab-case id persisted in the seen list. Never rename once shipped. */
@@ -105,3 +106,51 @@ export const PINNED_TIP_IDS: readonly string[] = [
 	'group-chat',
 	'remote-agents',
 ];
+
+/** Keep the editorial pins first, then shuffle the remaining tips reproducibly. */
+export function buildTipOrder(
+	seed: number,
+	tips: readonly DidYouKnowTip[] = DID_YOU_KNOW_TIPS
+): DidYouKnowTip[] {
+	const pinned = PINNED_TIP_IDS.flatMap((id) => {
+		const tip = getTipById(id, tips);
+		return tip ? [tip] : [];
+	});
+	const rest = tips.filter((tip) => !PINNED_TIP_IDS.includes(tip.id));
+	return [...pinned, ...shuffleWithSeed(rest, seed)];
+}
+
+/** Prefer the first unseen tip; after a full rotation, continue after the last tip. */
+export function pickNextTip(
+	order: readonly DidYouKnowTip[],
+	seenIds: readonly string[],
+	afterId?: string
+): DidYouKnowTip | null {
+	if (order.length === 0) return null;
+	const seen = new Set(seenIds);
+	const unseen = order.find((tip) => !seen.has(tip.id));
+	if (unseen) return unseen;
+	const afterIndex = order.findIndex((tip) => tip.id === afterId);
+	return order[(afterIndex + 1) % order.length];
+}
+
+/** Pick uniformly from unseen tips, or all tips when none remain unseen. */
+export function pickRandomTip(
+	order: readonly DidYouKnowTip[],
+	seenIds: readonly string[],
+	random: () => number = Math.random
+): DidYouKnowTip | null {
+	if (order.length === 0) return null;
+	const seen = new Set(seenIds);
+	const unseen = order.filter((tip) => !seen.has(tip.id));
+	const candidates = unseen.length > 0 ? unseen : order;
+	return candidates[Math.floor(random() * candidates.length)];
+}
+
+/** Resolve a permanent tip id in the registry or an explicitly supplied catalog. */
+export function getTipById(
+	id: string,
+	tips: readonly DidYouKnowTip[] = DID_YOU_KNOW_TIPS
+): DidYouKnowTip | undefined {
+	return tips.find((tip) => tip.id === id);
+}
