@@ -55,6 +55,7 @@
 					"agent-collaboration",
 					"group-chat",
 					"cross-agent-mentions",
+					"codex-directives",
 					"image-annotator",
 					"media-player",
 					"file-formats",

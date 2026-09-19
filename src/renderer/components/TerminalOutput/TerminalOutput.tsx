@@ -654,6 +654,15 @@ export const TerminalOutput = memo(
 									bionifyAlgorithm={globalBionifyAlgorithm}
 									userMessageAlignment={userMessageAlignment}
 									responseDurationMs={responseDurationByLogId.get(log.id)}
+									// Codex's assistant directives are Codex's own emitting
+									// convention, so the same string from another provider is a
+									// message about the format. The tab comes from the resolved
+									// `activeTab` rather than `session.activeTabId`, which can
+									// still name a hidden consult tab - the transcript below is
+									// drawing `activeTab`'s logs, so that is the conversation a
+									// chip in them belongs to.
+									codexDirectives={session.toolType === 'codex'}
+									codexFollowupTabId={activeTab?.id}
 									isClaudeCode={session.toolType === 'claude-code'}
 									isAdaptiveMode={getClaudeTokenMode(session) === 'dynamic'}
 									showProviderModePill={showProviderModePill}
