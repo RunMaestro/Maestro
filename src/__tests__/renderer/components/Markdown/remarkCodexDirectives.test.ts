@@ -207,6 +207,65 @@ describe('remarkCodexDirectives', () => {
 		expect(textNodes(tree).join('').trim()).toBe('');
 	});
 
+	it('drops an inline visualization and says so, keeping its HTML out of the output', () => {
+		// The payload is a whole HTML document with external script tags in it.
+		// Rendering it would mean raw HTML passthrough plus third-party script
+		// pulled off the network at read time; parking it in a data attribute
+		// would print it straight back out. So it goes, and a sentence stays.
+		const tree = transform(
+			'Chart: ::codex-inline-vis{html="<html><script src=\\"https://unpkg.com/chart.js\\"></script><body></body></html>"} above.'
+		);
+
+		expect(directives(tree)).toHaveLength(0);
+		const html = toHtml(tree);
+		expect(html).not.toContain('<script');
+		expect(html).not.toContain('unpkg.com');
+		expect(html).not.toContain('codex-inline-vis');
+		// A silent drop is the other wrong answer: the reader could not tell an
+		// omission from a message that never had one.
+		expect(textNodes(tree).join('')).toContain('Inline visualization not shown');
+		expect(textNodes(tree).join('')).toContain('Chart: ');
+		expect(textNodes(tree).join('')).toContain(' above.');
+	});
+
+	it('drops the visualization on the real chat surface too, raw HTML and all', () => {
+		// The plain transform above has no raw-HTML pass, so it could hide a leak
+		// that the chat preset - which DOES render sanitized raw HTML - would
+		// show. This is the configuration the directive actually meets.
+		const { remarkPlugins, rehypePlugins } = buildMarkdownPlugins({
+			codexDirectives: true,
+			allowRawHtml: true,
+		});
+		const html = toHtml(
+			transform(
+				'::codex-inline-vis{html="<script src=\\"https://unpkg.com/d3.js\\"></script><div id=\\"chart\\"></div>"}',
+				remarkPlugins,
+				rehypePlugins
+			)
+		);
+
+		expect(html).not.toContain('<script');
+		expect(html).not.toContain('unpkg.com');
+		expect(html).toContain('Inline visualization not shown');
+	});
+
+	it('keeps the omitted placeholder out of the directive readers reach', () => {
+		// It carries no name and no payload on purpose, so the component map
+		// reads no directive off it and renders the plain span its text already
+		// is.
+		const tree = transform('::codex-inline-vis{html="<b>x</b>"}');
+
+		let placeholders = 0;
+		visit(tree, 'element', (node: Element) => {
+			const properties = (node.properties ?? {}) as Record<string, unknown>;
+			if (properties[CODEX_DIRECTIVE_DATA_ATTRIBUTES.omitted] === undefined) return;
+			placeholders += 1;
+			expect(properties[CODEX_DIRECTIVE_DATA_ATTRIBUTES.name]).toBeUndefined();
+			expect(properties[CODEX_DIRECTIVE_DATA_ATTRIBUTES.payload]).toBeUndefined();
+		});
+		expect(placeholders).toBe(1);
+	});
+
 	it('keeps a directive inside a fenced code block as literal text', () => {
 		// Maestro's own docs quote this syntax. Drawing a chip on an example
 		// would offer the reader an action nobody is offering.

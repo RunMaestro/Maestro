@@ -43,6 +43,13 @@ export const CODEX_DIRECTIVE_DATA_ATTRIBUTES = {
 	name: 'dataCodexDirective',
 	label: 'dataCodexDirectiveLabel',
 	payload: 'dataCodexDirectivePayload',
+	/**
+	 * Marks the placeholder left where a directive was DROPPED rather than
+	 * rendered. It deliberately carries no name and no payload, so
+	 * `readCodexDirectiveProps` reports no directive and the element renders as
+	 * the plain span its text child already is.
+	 */
+	omitted: 'dataCodexDirectiveOmitted',
 } as const;
 
 /** `dataCodexDirectiveLabel` -> `data-codex-directive-label`. */
@@ -64,6 +71,7 @@ export const CODEX_DIRECTIVE_DOM_ATTRIBUTES = {
 	name: toDomAttribute(CODEX_DIRECTIVE_DATA_ATTRIBUTES.name),
 	label: toDomAttribute(CODEX_DIRECTIVE_DATA_ATTRIBUTES.label),
 	payload: toDomAttribute(CODEX_DIRECTIVE_DATA_ATTRIBUTES.payload),
+	omitted: toDomAttribute(CODEX_DIRECTIVE_DATA_ATTRIBUTES.omitted),
 } as const;
 
 /** What a component map recovers from one rendered directive element. */
@@ -156,7 +164,47 @@ function withoutCodeSpans(tree: Root, directives: CodexDirectiveMatch[]): CodexD
 	return directives.filter((directive) => !codeSpans.some((span) => overlaps(directive, span)));
 }
 
+/**
+ * Directives that are DROPPED rather than drawn, with the text left in their
+ * place.
+ *
+ * `codex-inline-vis` carries a whole HTML document as an attribute value,
+ * external `<script src="https://unpkg.com/...">` tags included. Rendering it
+ * would mean two things Maestro does not do on a chat surface: raw HTML
+ * passthrough for agent-authored markup, and third-party script pulled off the
+ * network at read time. Neither is a trade worth a chart.
+ *
+ * Dropping it SILENTLY is the other wrong answer - the agent said something
+ * there, and a reader who sees nothing cannot tell an omission from a message
+ * that never had one. So the payload goes and a sentence stays.
+ */
+const OMITTED_DIRECTIVES: ReadonlyMap<string, string> = new Map([
+	['codex-inline-vis', 'Inline visualization not shown'],
+]);
+
+/**
+ * The inert element left where an omitted directive was.
+ *
+ * It carries the placeholder as a TEXT CHILD and nothing else: no name, no
+ * payload, so the component map reads no directive off it and renders the plain
+ * span. That is what keeps the dropped HTML out of the document entirely rather
+ * than parking it in an attribute where `toHtml` would print it straight back.
+ */
+function omittedDirectiveNode(text: string): PhrasingContent {
+	return {
+		type: 'emphasis',
+		children: [textNode(text)],
+		data: {
+			hName: 'span',
+			hProperties: { [CODEX_DIRECTIVE_DATA_ATTRIBUTES.omitted]: 'true' },
+		},
+	} as unknown as PhrasingContent;
+}
+
 function directiveNode(match: CodexDirectiveMatch): PhrasingContent {
+	const omitted = OMITTED_DIRECTIVES.get(match.name);
+	if (omitted) return omittedDirectiveNode(omitted);
+
 	const properties: Record<string, string> = {
 		[CODEX_DIRECTIVE_DATA_ATTRIBUTES.name]: match.name,
 		// Always serialized, even when there are no attributes, so the reader
