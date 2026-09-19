@@ -107,3 +107,63 @@
 		grid-row: 2;
 	}
 }
+
+/* One positioned shell interpolates between the gallery and its reading controller. */
+.dyk-overlay {
+	background-color: rgb(0 0 0 / 60%);
+	transition: background-color 220ms ease;
+}
+
+.dyk-dialog {
+	position: absolute;
+	right: 50%;
+	bottom: 50%;
+	transform: translate(50%, 50%);
+	width: min(760px, calc(100vw - 32px));
+	max-height: calc(100vh - 32px);
+	overflow-y: auto;
+	pointer-events: auto;
+	transition:
+		right 220ms ease,
+		bottom 220ms ease,
+		transform 220ms ease,
+		width 220ms ease;
+}
+
+.dyk-overlay[data-reading='true'] {
+	background-color: transparent;
+	pointer-events: none;
+}
+
+.dyk-overlay[data-reading='true'] .dyk-dialog {
+	right: 16px;
+	bottom: 16px;
+	transform: translate(0, 0);
+	width: min(380px, calc(100vw - 32px));
+}
+
+.dyk-overlay[data-reading='true'] .dyk-footer {
+	margin-top: 0;
+	grid-template-columns: minmax(0, 1fr) 36px 36px;
+	grid-template-rows: 40px;
+}
+
+.dyk-overlay[data-reading='true'] .dyk-docs {
+	grid-column: 1;
+	justify-self: start;
+}
+
+.dyk-overlay[data-reading='true'] .dyk-back {
+	grid-column: 2;
+}
+
+.dyk-overlay[data-reading='true'] .dyk-next {
+	grid-column: 3;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.dyk-overlay,
+	.dyk-dialog {
+		transition: none;
+	}
+}
