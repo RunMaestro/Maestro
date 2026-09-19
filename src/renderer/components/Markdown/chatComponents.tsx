@@ -23,6 +23,7 @@ import { AlertCallout } from './components/AlertCallout';
 import { FollowupChip } from './components/FollowupChip';
 import { CodexFileCitation } from './components/CodexFileCitation';
 import { CodeCommentCard } from './components/CodeCommentCard';
+import { GitActionCard, isGitDirectiveName } from './components/GitActionCard';
 import { alertTypeFromClassName } from './remarkAlert';
 import { readCodexDirectiveProps } from './remarkCodexDirectives';
 import { requestCodexFollowup } from '../../services/codexFollowup';
@@ -45,10 +46,11 @@ export interface ChatMarkdownComponentsOptions {
 	onLinkContextMenu: (e: React.MouseEvent, url: string) => void;
 	onFileContextMenu: (e: React.MouseEvent, absPath: string, fileName: string) => void;
 	/**
-	 * Which conversation a clicked `:codex-followup` chip belongs to. Present
-	 * only where a Codex agent's own message is being drawn, because that is the
-	 * only place a directive is an OFFER rather than text somebody typed. Absent
-	 * leaves the directive as its label, with no control to press.
+	 * Which conversation an ACTIONABLE directive belongs to - a `:codex-followup`
+	 * chip and the five `::git-*` actions. Present only where a Codex agent's own
+	 * message is being drawn, because that is the only place a directive is an
+	 * OFFER rather than text somebody typed. Absent leaves the directive as its
+	 * label, with no control to press.
 	 */
 	codexFollowup?: { sessionId: string; tabId: string };
 }
@@ -275,6 +277,20 @@ export function createChatMarkdownComponents(
 						priority={directive.attributes.priority}
 						theme={theme}
 						LinkComponent={ChatLink}
+					/>
+				);
+			}
+
+			// A git action is about ONE agent's repository, so it needs the same
+			// conversation context a follow-up does - without it there is no agent
+			// to act on, and the directive falls through to its label.
+			if (isGitDirectiveName(directive.name) && codexFollowup) {
+				return (
+					<GitActionCard
+						name={directive.name}
+						attributes={directive.attributes}
+						sessionId={codexFollowup.sessionId}
+						theme={theme}
 					/>
 				);
 			}
