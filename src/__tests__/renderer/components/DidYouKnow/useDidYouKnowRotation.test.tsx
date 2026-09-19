@@ -3,12 +3,27 @@ import { act, cleanup, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useDidYouKnowRotation } from '../../../../renderer/components/DidYouKnow/useDidYouKnowRotation';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
+import * as tipRegistry from '../../../../shared/didYouKnow';
+import { useSessionStore } from '../../../../renderer/stores/sessionStore';
+import { notifyToast } from '../../../../renderer/stores/notificationStore';
+import { createMockSession } from '../../../helpers/mockSession';
+import { buildMaestroUrl } from '../../../../renderer/utils/buildMaestroUrl';
 import { buildTipOrder } from '../../../../shared/didYouKnow';
 import { resetStore } from '../../../helpers';
+
+vi.mock('../../../../renderer/stores/notificationStore', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../renderer/stores/notificationStore')>()),
+	notifyToast: vi.fn(),
+}));
 
 describe('useDidYouKnowRotation', () => {
 	beforeEach(() => {
 		resetStore(useSettingsStore);
+		resetStore(useSessionStore);
+		useSessionStore.setState({
+			sessions: [createMockSession({ id: 'session-1', browserTabs: [] })],
+			activeSessionId: 'session-1',
+		});
 		useSettingsStore.setState({ didYouKnowSeed: 42 });
 		vi.clearAllMocks();
 	});
@@ -16,6 +31,96 @@ describe('useDidYouKnowRotation', () => {
 	afterEach(() => {
 		cleanup();
 		vi.restoreAllMocks();
+	});
+
+	it('opens themed docs once and reuses the tab for Next, Back, and forward history', () => {
+		const { result, rerender } = renderHook(() => useDidYouKnowRotation({}), {
+			wrapper: StrictMode,
+		});
+		expect(result.current.isReading).toBe(false);
+		expect(useSessionStore.getState().sessions[0].browserTabs).toHaveLength(0);
+		const first = result.current.tip!;
+		act(() => result.current.openDocs());
+		expect(result.current.isReading).toBe(true);
+		const opened = useSessionStore.getState().sessions[0].browserTabs![0];
+		expect(opened).toMatchObject({
+			url: buildMaestroUrl(`https://docs.runmaestro.ai/${first.docsSlug}`),
+			title: first.title,
+		});
+		act(() => result.current.goNext());
+		const next = result.current.tip!;
+		expect(useSessionStore.getState().sessions[0].browserTabs).toEqual([
+			expect.objectContaining({
+				id: opened.id,
+				title: next.title,
+				requestedUrl: buildMaestroUrl(`https://docs.runmaestro.ai/${next.docsSlug}`),
+			}),
+		]);
+		act(() => result.current.goBack());
+		expect(useSessionStore.getState().sessions[0].browserTabs![0].title).toBe(first.title);
+		act(() => result.current.goNext());
+		expect(useSessionStore.getState().sessions[0].browserTabs![0].title).toBe(next.title);
+		rerender();
+		expect(useSessionStore.getState().sessions[0].browserTabs).toHaveLength(1);
+		const beforeExit = useSessionStore.getState().sessions;
+		act(() => result.current.exitReading());
+		expect(result.current.isReading).toBe(false);
+		act(() => result.current.goNext());
+		act(() => result.current.goBack());
+		expect(useSessionStore.getState().sessions).toBe(beforeExit);
+	});
+
+	it('leaves the docs page untouched and explains tips without docs in either direction', () => {
+		const order = buildTipOrder(42).map((tip, index) =>
+			index === 1 ? { ...tip, docsSlug: undefined } : tip
+		);
+		vi.spyOn(tipRegistry, 'buildTipOrder').mockReturnValue(order);
+		const { result } = renderHook(() => useDidYouKnowRotation({}));
+		act(() => result.current.openDocs());
+		const before = useSessionStore.getState().sessions;
+		act(() => result.current.goNext());
+		expect(result.current.tip?.id).toBe(order[1].id);
+		expect(result.current.isReading).toBe(true);
+		expect(useSessionStore.getState().sessions).toBe(before);
+		expect(notifyToast).toHaveBeenCalledWith(
+			expect.objectContaining({
+				title: order[1].title,
+				message: expect.stringContaining('browser stays on the last page'),
+			})
+		);
+		act(() => result.current.goNext());
+		const afterNext = useSessionStore.getState().sessions;
+		act(() => result.current.goBack());
+		expect(useSessionStore.getState().sessions).toBe(afterNext);
+		expect(notifyToast).toHaveBeenCalledTimes(2);
+	});
+
+	it('does not enter reading mode or open a blank tab when the tip has no docs', () => {
+		vi.spyOn(tipRegistry, 'buildTipOrder').mockReturnValue(
+			buildTipOrder(42).map((tip) => ({ ...tip, docsSlug: undefined }))
+		);
+		const { result } = renderHook(() => useDidYouKnowRotation({}));
+		act(() => result.current.openDocs());
+		expect(result.current.isReading).toBe(false);
+		expect(useSessionStore.getState().sessions[0].browserTabs).toHaveLength(0);
+		expect(notifyToast).toHaveBeenCalledOnce();
+	});
+
+	it('replaces a closed reading tab without touching unrelated browser tabs', () => {
+		const { result } = renderHook(() => useDidYouKnowRotation({}));
+		act(() => result.current.openDocs());
+		const session = useSessionStore.getState().sessions[0];
+		const unrelated = { ...session.browserTabs![0], id: 'unrelated' };
+		act(() =>
+			useSessionStore.setState({
+				sessions: [{ ...session, browserTabs: [unrelated], activeBrowserTabId: unrelated.id }],
+			})
+		);
+		act(() => result.current.goNext());
+		const tabs = useSessionStore.getState().sessions[0].browserTabs!;
+		expect(tabs).toHaveLength(2);
+		expect(tabs[0]).toBe(unrelated);
+		expect(tabs[1].title).toBe(result.current.tip!.title);
 	});
 
 	it('resumes at the first unseen tip and persists it immediately', () => {
