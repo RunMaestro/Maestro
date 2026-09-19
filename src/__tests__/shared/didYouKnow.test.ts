@@ -11,7 +11,7 @@ import {
 	PINNED_TIP_IDS,
 } from '../../shared/didYouKnow';
 import type { DidYouKnowTip } from '../../shared/didYouKnow';
-import { UI_SURFACES } from '../../shared/uiSurfaces';
+import { resolveUiSurface } from '../../shared/uiSurfaces';
 import type { UiSurfaceEncoreFlag } from '../../shared/uiSurfaces';
 import {
 	DEFAULT_SHORTCUTS,
@@ -120,7 +120,7 @@ describe('Did You Know tip model', () => {
 	);
 
 	it.each(DID_YOU_KNOW_TIPS)('$id only links to existing documentation and actions', (tip) => {
-		if (tip.docsSlug) {
+		if (tip.docsSlug !== undefined) {
 			expect(existsSync(resolve('docs', `${tip.docsSlug}.md`))).toBe(true);
 		}
 		if (tip.shortcutId) {
@@ -128,9 +128,20 @@ describe('Did You Know tip model', () => {
 				tip.shortcutId
 			);
 		}
-		if (tip.surface) {
-			const surface = UI_SURFACES.find((entry) => entry.id === tip.surface);
-			expect(surface).toBeDefined();
+		if (tip.encore !== undefined) {
+			// Keep the runtime check exhaustive against the type, including tips without a surface.
+			const validFlags = {
+				directorNotes: true,
+				usageStats: true,
+				symphony: true,
+				maestroCue: true,
+				concerto: true,
+			} satisfies Record<UiSurfaceEncoreFlag, true>;
+			expect(Object.keys(validFlags)).toContain(tip.encore);
+		}
+		if (tip.surface !== undefined) {
+			const surface = resolveUiSurface(tip.surface);
+			expect(surface).not.toBeNull();
 			expect(surface?.encore).toBe(tip.encore);
 			// A tip can teach an action whose shortcut differs from its browser surface.
 			if (surface?.shortcutId) expect(surface.shortcutId).toBe(tip.shortcutId);
@@ -142,11 +153,13 @@ describe('Did You Know ordering and selection', () => {
 	const order = Object.freeze([...DID_YOU_KNOW_TIPS]);
 	const allSeen = Object.freeze(order.map((tip) => tip.id));
 
-	it('uses the default registry and restores editorial order from a reversed catalog', () => {
-		expect(buildTipOrder(42)).toEqual(buildTipOrder(42, order));
-		expect(buildTipOrder(42, [...order].reverse()).slice(0, PINNED_TIP_IDS.length)).toEqual(
-			order.slice(0, PINNED_TIP_IDS.length)
-		);
+	it.each([0, 1, 42, 99, -1, 0xffffffff])('preserves editorial pins for seed %s', (seed) => {
+		expect(buildTipOrder(seed)).toEqual(buildTipOrder(seed, order));
+		const result = buildTipOrder(seed, [...order].reverse());
+		expect(result.slice(0, PINNED_TIP_IDS.length).map((tip) => tip.id)).toEqual(PINNED_TIP_IDS);
+		expect(
+			result.slice(PINNED_TIP_IDS.length).every((tip) => !PINNED_TIP_IDS.includes(tip.id))
+		).toBe(true);
 	});
 
 	it('skips retired pins and handles empty catalogs', () => {
@@ -182,6 +195,12 @@ describe('Did You Know ordering and selection', () => {
 		[allSeen[allSeen.length - 1], 0],
 	])('continues after %s when every tip has been seen', (afterId, index) => {
 		expect(pickNextTip(order, allSeen, afterId)).toBe(order[index]);
+	});
+
+	it('wraps after every tip without dead-ending a completed rotation', () => {
+		for (const [index, tip] of order.entries()) {
+			expect(pickNextTip(order, allSeen, tip.id)).toBe(order[(index + 1) % order.length]);
+		}
 	});
 
 	it('returns null only for an empty next-tip order, and wraps a single tip', () => {
