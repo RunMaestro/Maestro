@@ -31,6 +31,161 @@ describe('useFilePreviewTabHandlers', () => {
 		cleanup();
 	});
 
+	describe('preview tabs', () => {
+		// VS Code-style preview mode (issue #1614): a single click opens a
+		// REPLACEABLE tab, so browsing a tree costs one chip instead of thirty.
+		const open = (
+			result: { current: ReturnType<typeof useFilePreviewTabHandlers> },
+			name: string,
+			preview: boolean
+		) =>
+			act(() => {
+				result.current.handleOpenFileTab(
+					{ path: `/p/${name}`, name, content: `// ${name}` },
+					preview ? { preview: true } : undefined
+				);
+			});
+
+		it('reuses the one preview tab instead of stacking chips', () => {
+			setupSession({});
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			open(result, 'a.ts', true);
+			open(result, 'b.ts', true);
+			open(result, 'c.ts', true);
+
+			const session = getSession();
+			// The whole point: three files browsed, one tab.
+			expect(session.filePreviewTabs).toHaveLength(1);
+			expect(session.filePreviewTabs[0]).toMatchObject({
+				path: '/p/c.ts',
+				name: 'c',
+				isPreview: true,
+			});
+			expect(session.unifiedTabOrder.filter((r) => r.type === 'file')).toHaveLength(1);
+		});
+
+		it('never replaces a pinned tab', () => {
+			setupSession({});
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			// A file opened permanently, then a browse alongside it.
+			open(result, 'kept.ts', false);
+			open(result, 'a.ts', true);
+			open(result, 'b.ts', true);
+
+			const session = getSession();
+			const paths = session.filePreviewTabs.map((t) => t.path).sort();
+			// The pinned file survives; only the preview churned. Targeting the
+			// ACTIVE tab instead of the preview tab is what would eat it here.
+			expect(paths).toEqual(['/p/b.ts', '/p/kept.ts']);
+			expect(session.filePreviewTabs.find((t) => t.path === '/p/kept.ts')?.isPreview).toBeFalsy();
+		});
+
+		it('pins the preview tab when the same file is opened permanently', () => {
+			setupSession({});
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			// This is the double-click: the click previewed it, the second click
+			// arrives as a normal open of a file that is already on screen.
+			open(result, 'a.ts', true);
+			open(result, 'a.ts', false);
+
+			const session = getSession();
+			expect(session.filePreviewTabs).toHaveLength(1);
+			expect(session.filePreviewTabs[0].isPreview).toBeFalsy();
+
+			// With nothing left to reuse, the next browse opens its own tab.
+			open(result, 'b.ts', true);
+			expect(getSession().filePreviewTabs).toHaveLength(2);
+		});
+
+		it('opens a plain tab when preview mode is off', () => {
+			setupSession({});
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			open(result, 'a.ts', false);
+			open(result, 'b.ts', false);
+
+			const session = getSession();
+			expect(session.filePreviewTabs).toHaveLength(2);
+			expect(session.filePreviewTabs.every((t) => !t.isPreview)).toBe(true);
+		});
+
+		it('pins the preview tab on the first edit', () => {
+			setupSession({});
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			open(result, 'a.ts', true);
+			const tabId = getSession().filePreviewTabs[0].id;
+
+			act(() => {
+				result.current.handleFileTabEditContentChange(tabId, '// edited');
+			});
+
+			// A file the user has typed into must stop being the one the next
+			// browse replaces - otherwise the edit buffer goes with it.
+			expect(getSession().filePreviewTabs[0].isPreview).toBeFalsy();
+
+			open(result, 'b.ts', true);
+			expect(getSession().filePreviewTabs).toHaveLength(2);
+		});
+
+		it('pins the preview tab on entering edit mode', () => {
+			setupSession({});
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			open(result, 'a.ts', true);
+			const tabId = getSession().filePreviewTabs[0].id;
+
+			act(() => {
+				result.current.handleFileTabEditModeChange(tabId, true);
+			});
+
+			expect(getSession().filePreviewTabs[0].isPreview).toBeFalsy();
+		});
+
+		it('does not pin when an edit buffer is discarded', () => {
+			setupSession({});
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			open(result, 'a.ts', true);
+			const tabId = getSession().filePreviewTabs[0].id;
+
+			act(() => {
+				result.current.handleFileTabEditContentChange(tabId, undefined);
+			});
+			act(() => {
+				result.current.handleFileTabEditModeChange(tabId, false);
+			});
+
+			// Leaving the editor without having typed anything is not a commitment
+			// to the file, so the tab stays replaceable.
+			expect(getSession().filePreviewTabs[0].isPreview).toBe(true);
+		});
+
+		it('resets per-file view state when the preview tab is reused', () => {
+			setupSession({});
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			open(result, 'a.ts', true);
+			const tabId = getSession().filePreviewTabs[0].id;
+			act(() => {
+				result.current.handleFileTabScrollPositionChange(tabId, 900);
+				result.current.handleFileTabSearchQueryChange(tabId, 'needle');
+			});
+
+			open(result, 'b.ts', true);
+
+			const tab = getSession().filePreviewTabs[0];
+			// Same tab id, different file: scroll offset and find query belong to
+			// the file that left, not to the chip.
+			expect(tab.id).toBe(tabId);
+			expect(tab.scrollTop).toBe(0);
+			expect(tab.searchQuery).toBe('');
+		});
+	});
+
 	describe('media diversion', () => {
 		// Media is not a document. It never gets a tab, a main panel view, or any
 		// other placement: opening an audio or video file hands it to the floating

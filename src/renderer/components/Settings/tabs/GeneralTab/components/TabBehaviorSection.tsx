@@ -18,6 +18,8 @@ interface TabBehaviorSectionProps {
 	setNewTerminalPlacement: (placement: TabPlacement) => void;
 	openedFilePlacement: TabPlacement;
 	setOpenedFilePlacement: (placement: TabPlacement) => void;
+	filePreviewModeEnabled: boolean;
+	setFilePreviewModeEnabled: (enabled: boolean) => void;
 }
 
 export function TabBehaviorSection({
@@ -32,6 +34,8 @@ export function TabBehaviorSection({
 	setNewTerminalPlacement,
 	openedFilePlacement,
 	setOpenedFilePlacement,
+	filePreviewModeEnabled,
+	setFilePreviewModeEnabled,
 }: TabBehaviorSectionProps) {
 	return (
 		<div data-setting-id="general-tab-behavior">
@@ -66,6 +70,38 @@ export function TabBehaviorSection({
 						onChange={setAutomaticTabNamingEnabled}
 						theme={theme}
 						ariaLabel="Automatically name tabs based on first message"
+					/>
+				</div>
+
+				<div
+					data-setting-id="general-file-preview-mode"
+					className="flex items-center justify-between cursor-pointer"
+					onClick={() => setFilePreviewModeEnabled(!filePreviewModeEnabled)}
+					role="button"
+					tabIndex={0}
+					onKeyDown={(e) => {
+						if (e.key === 'Enter' || e.key === ' ') {
+							e.preventDefault();
+							setFilePreviewModeEnabled(!filePreviewModeEnabled);
+						}
+					}}
+				>
+					<div className="flex-1 pr-3">
+						<div className="font-medium" style={{ color: theme.colors.textMain }}>
+							Single-click opens files in a preview tab
+						</div>
+						<div className="text-xs opacity-70 mt-0.5">
+							Browse a codebase without collecting tabs: a single click in the file tree opens the
+							file in one replaceable preview tab, shown in italics, and the next file you click
+							reuses it. Double-click the file or its tab, or start editing, to keep the tab. Taps
+							on a touchscreen always open a permanent tab.
+						</div>
+					</div>
+					<ToggleSwitch
+						checked={filePreviewModeEnabled}
+						onChange={setFilePreviewModeEnabled}
+						theme={theme}
+						ariaLabel="Single-click opens files in a preview tab"
 					/>
 				</div>
 

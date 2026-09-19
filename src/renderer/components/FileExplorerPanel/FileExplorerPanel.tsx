@@ -100,6 +100,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 	const dotfilesToggleHidden = useSettingsStore((s) => s.dotfilesToggleHidden);
 	const colorBlindMode = useSettingsStore((s) => s.colorBlindMode);
 	const htmlDoubleClickOpensInBrowser = useSettingsStore((s) => s.htmlDoubleClickOpensInBrowser);
+	const filePreviewModeEnabled = useSettingsStore((s) => s.filePreviewModeEnabled);
 	// Two ways to fit the toolbar in a narrow panel, by what is scarce: a narrow
 	// DESKTOP panel (`compact`) drops the icons and keeps the words for a mouse
 	// user; a PHONE (`iconOnly`) drops the words and keeps the icons, with the
@@ -880,6 +881,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 											fileExplorerIconTheme={fileExplorerIconTheme}
 											fileTreeFilter={fileTreeFilter}
 											htmlDoubleClickOpensInBrowser={htmlDoubleClickOpensInBrowser}
+											filePreviewModeEnabled={filePreviewModeEnabled}
 											sshRemoteId={sshRemoteId}
 											isTouchPointer={isTouchPointer}
 											longPressTimerRef={longPressTimerRef}

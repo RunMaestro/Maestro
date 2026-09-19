@@ -65,6 +65,7 @@ const defaultProps = {
 	fileExplorerIconTheme: 'vscode' as any,
 	fileTreeFilter: '',
 	htmlDoubleClickOpensInBrowser: false,
+	filePreviewModeEnabled: false,
 	sshRemoteId: undefined,
 	isTouchPointer: false,
 	longPressTimerRef: { current: null as number | null },
@@ -213,10 +214,86 @@ describe('FileTreeRow', () => {
 
 		fireEvent.click(container.firstElementChild!);
 
-		// Two arguments, not three: the third slot used to carry the active
-		// session, which handleFileClick never read (it resolves the session from
-		// the store). It now belongs to an optional FileClickOptions.
-		expect(handleFileClick).toHaveBeenCalledWith(fileNode, 'App.tsx');
+		// Two meaningful arguments, not three: the third slot used to carry the
+		// active session, which handleFileClick never read (it resolves the session
+		// from the store). It now belongs to an optional FileClickOptions, left
+		// undefined here - a tap always opens a PINNED tab, never a preview,
+		// because touch has no double-click to pin one with.
+		expect(handleFileClick).toHaveBeenCalledWith(fileNode, 'App.tsx', undefined);
+	});
+
+	describe('preview mode', () => {
+		it('leaves a single click inert when preview mode is off', () => {
+			const handleFileClick = vi.fn().mockResolvedValue(undefined);
+			const { container } = render(
+				<FileTreeRow {...defaultProps} handleFileClick={handleFileClick} />
+			);
+
+			fireEvent.click(container.firstElementChild!);
+
+			// The default is unchanged: a mouse user still needs a double-click to
+			// open anything, so turning the setting on is the only thing that can
+			// change what a click in the tree does.
+			expect(handleFileClick).not.toHaveBeenCalled();
+		});
+
+		it('opens a preview on a single click when preview mode is on', () => {
+			const handleFileClick = vi.fn().mockResolvedValue(undefined);
+			const { container } = render(
+				<FileTreeRow {...defaultProps} filePreviewModeEnabled handleFileClick={handleFileClick} />
+			);
+
+			fireEvent.click(container.firstElementChild!);
+
+			expect(handleFileClick).toHaveBeenCalledWith(fileNode, 'App.tsx', { preview: true });
+		});
+
+		it('pins on double click even with preview mode on', () => {
+			const handleFileClick = vi.fn().mockResolvedValue(undefined);
+			const { container } = render(
+				<FileTreeRow {...defaultProps} filePreviewModeEnabled handleFileClick={handleFileClick} />
+			);
+
+			// A real double-click delivers the click first, so both fire. The
+			// second call carries no options, which is what pins the very tab the
+			// first one opened - the two gestures need no timer between them.
+			fireEvent.click(container.firstElementChild!);
+			fireEvent.doubleClick(container.firstElementChild!);
+
+			expect(handleFileClick).toHaveBeenNthCalledWith(1, fileNode, 'App.tsx', { preview: true });
+			expect(handleFileClick).toHaveBeenNthCalledWith(2, fileNode, 'App.tsx', undefined);
+		});
+
+		it('does not preview a folder click', () => {
+			const handleFileClick = vi.fn().mockResolvedValue(undefined);
+			const { container } = render(
+				<FileTreeRow
+					{...defaultProps}
+					item={makeItem(folderNode)}
+					filePreviewModeEnabled
+					handleFileClick={handleFileClick}
+				/>
+			);
+
+			fireEvent.click(container.firstElementChild!);
+
+			// A folder click still just expands it.
+			expect(handleFileClick).not.toHaveBeenCalled();
+			expect(defaultProps.toggleFolder).toHaveBeenCalled();
+		});
+
+		it('keeps a modifier-click a selection rather than a preview', () => {
+			const handleFileClick = vi.fn().mockResolvedValue(undefined);
+			const { container } = render(
+				<FileTreeRow {...defaultProps} filePreviewModeEnabled handleFileClick={handleFileClick} />
+			);
+
+			// Shift/Cmd-click is how a multi-file selection is built. Opening a
+			// preview on it would fight the selection the user is assembling.
+			fireEvent.click(container.firstElementChild!, { shiftKey: true });
+
+			expect(handleFileClick).not.toHaveBeenCalled();
+		});
 	});
 
 	it('opens the context menu on touch long press', () => {
