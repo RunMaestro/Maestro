@@ -31,7 +31,7 @@ import type { Theme } from '../../types';
 // No screenshots are bundled yet; unmapped filenames use the icon plate.
 export const TIP_ART: Record<string, string> = {};
 
-const TIP_ICONS: Record<string, LucideIcon> = {
+export const TIP_ICONS: Record<string, LucideIcon> = {
 	ArrowRightLeft,
 	AtSign,
 	BarChart3,
