@@ -86,6 +86,24 @@ export const EXPERIENCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: false,
 		category: 'onboarding',
 	},
+	didYouKnowEnabled: {
+		description: "Show a 'Did You Know?' feature tip when the app launches.",
+		type: 'boolean',
+		default: true,
+		category: 'onboarding',
+	},
+	didYouKnowSeenTipIds: {
+		description: "Ids of the 'Did You Know?' tips already shown to this user.",
+		type: 'array',
+		default: [],
+		category: 'onboarding',
+	},
+	didYouKnowSeed: {
+		description: "Per-user shuffle seed for the 'Did You Know?' tip rotation. 0 means unassigned.",
+		type: 'number',
+		default: 0,
+		category: 'onboarding',
+	},
 	ungroupedCollapsed: {
 		description: 'Whether the "Ungrouped" section in the left bar is collapsed.',
 		type: 'boolean',
