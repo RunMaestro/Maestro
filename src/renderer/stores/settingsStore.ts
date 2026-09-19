@@ -2501,6 +2501,17 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['tourCompleted'] !== undefined)
 			patch.tourCompleted = allSettings['tourCompleted'] as boolean;
 
+		if (allSettings['didYouKnowEnabled'] !== undefined)
+			patch.didYouKnowEnabled = allSettings['didYouKnowEnabled'] as boolean;
+
+		if (Array.isArray(allSettings['didYouKnowSeenTipIds']))
+			patch.didYouKnowSeenTipIds = allSettings['didYouKnowSeenTipIds'] as string[];
+
+		if (allSettings['didYouKnowSeed'] !== undefined) {
+			const seed = Number(allSettings['didYouKnowSeed']);
+			patch.didYouKnowSeed = Number.isFinite(seed) ? seed : 0;
+		}
+
 		if (allSettings['firstAutoRunCompleted'] !== undefined)
 			patch.firstAutoRunCompleted = allSettings['firstAutoRunCompleted'] as boolean;
 
