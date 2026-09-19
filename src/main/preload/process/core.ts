@@ -1,6 +1,7 @@
 import { ipcRenderer } from 'electron';
 import type { UsageStats } from '../../../shared/types';
 import type { ParsedQuestion } from '../../permission-relay/types';
+import type { SteeringResultFrame } from '../../../shared/chatSteering';
 
 /**
  * Configuration for spawning a process
@@ -177,6 +178,18 @@ export function createProcessCoreApi() {
 		 */
 		write: (sessionId: string, data: string): Promise<boolean> =>
 			ipcRenderer.invoke('process:write', sessionId, data),
+
+		/**
+		 * Steer a Claude turn that is already running: type `text` into the live TUI so
+		 * claude can fold it into the loop in flight.
+		 *
+		 * Resolves with a verdict rather than a boolean, and the distinction matters to
+		 * the caller - only `absorbed` means the running turn changed course, `queued`
+		 * means it will run as a follow-up turn, and `refused` means the message was NOT
+		 * delivered and is still the caller's to send. See SteeringResultFrame.
+		 */
+		steer: (sessionId: string, text: string): Promise<SteeringResultFrame> =>
+			ipcRenderer.invoke('process:steer', sessionId, text),
 
 		broadcastUserInput: (payload: ProcessUserInputBroadcast): Promise<void> =>
 			ipcRenderer.invoke('process:broadcast-user-input', payload),

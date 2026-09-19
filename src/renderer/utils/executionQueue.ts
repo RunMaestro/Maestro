@@ -435,6 +435,89 @@ export function getForceSendTitle(eligibility: ForceSendEligibility): string {
 	}
 }
 
+/** Why a queued message cannot be steered into the running turn right now. */
+export type SteerBlockedReason =
+	| 'no-target-tab'
+	| 'tab-not-working'
+	| 'not-claude'
+	| 'api-token-source';
+
+export interface SteerEligibility {
+	canSteer: boolean;
+	blockedReason?: SteerBlockedReason;
+}
+
+/**
+ * Whether a queued message can be STEERED into the turn already running on its
+ * tab, rather than waiting for that turn to finish.
+ *
+ * The inverse of {@link getForceSendEligibility} on the one condition that
+ * matters: Force Send needs the target tab IDLE (a tab runs one turn at a time),
+ * while steering needs it BUSY, because there has to be a turn in flight to steer.
+ * The two are mutually exclusive by construction, which is what lets a queued card
+ * offer exactly one of them.
+ *
+ * Only a Claude turn on the INTERACTIVE token source can be steered, and that is a
+ * hard physical limit rather than a policy: `claude --print` closes stdin and holds
+ * no writable PTY for the length of the turn, so there is nothing to type into.
+ * See src/shared/chatSteering.ts.
+ *
+ * `dynamic` mode is the interesting case and the reason this reads
+ * `session.claudeInteractive.mode` rather than the configured token mode. A dynamic
+ * agent starts interactive and falls back to API when usage crosses the limit
+ * threshold, so the CONFIGURED value cannot say which shape the turn in flight
+ * actually has - only the RESOLVED value can, and the spawner writes it there after
+ * every spawn. Two limits on that, both deliberate rather than overlooked: it is
+ * recorded per AGENT, so with two tabs spawned in different modes it describes the
+ * most recent spawn; and it is absent until an agent has spawned at least once.
+ *
+ * Neither is worth guessing around, because this predicate decides whether to SHOW
+ * a control, and the truth is established at the moment it is used: maestro-p opens
+ * a steering channel only for a local interactive turn, so a steer against a turn
+ * that is really on API finds nothing listening and comes back `refused` with
+ * `not-running`, leaving the message queued. Being wrong here costs a button that
+ * declines with a reason; being wrong the other way hides a working feature.
+ */
+export function getSteerEligibility(
+	session: Session,
+	item: Pick<QueuedItem, 'tabId'>
+): SteerEligibility {
+	if (!resolveQueuedItemTarget(session, item)) {
+		return { canSteer: false, blockedReason: 'no-target-tab' };
+	}
+	// Busy-ness comes from the SAME helper Force Send reads, so the two controls
+	// cannot disagree about whether a tab is mid-turn - which would let a card offer
+	// both, or neither.
+	if (!getQueueBusyContext(session, item).targetTabBusy) {
+		return { canSteer: false, blockedReason: 'tab-not-working' };
+	}
+	if (session.toolType !== 'claude-code') return { canSteer: false, blockedReason: 'not-claude' };
+	if (session.claudeInteractive?.mode !== 'interactive') {
+		return { canSteer: false, blockedReason: 'api-token-source' };
+	}
+	return { canSteer: true };
+}
+
+/**
+ * Whether a Steer control should be RENDERED at all, given its eligibility.
+ *
+ * Same split as {@link shouldOfferForceSend}, for the same reason, and here EVERY
+ * blocked reason hides the control rather than dimming it. None of them is
+ * something the user can act on from a queued card: a tab that is not working has
+ * no turn to steer (and will start this very message shortly), a non-Claude agent
+ * can never steer, and an API-source turn has no PTY. A dimmed button whose
+ * tooltip amounts to "not right now" is exactly the dead control the Force Send
+ * work was fixing.
+ *
+ * So there is no `visible-but-disabled` case today. Keep this function anyway:
+ * it is the seam a future reason with an actionable remedy (the way
+ * `needs-forced-parallel` names a setting) would hook into, and both surfaces
+ * already call it.
+ */
+export function shouldOfferSteer(eligibility: SteerEligibility | null | undefined): boolean {
+	return !!eligibility?.canSteer;
+}
+
 /**
  * State transition for dispatching ONE specific queued item now: drop it from the
  * queue, mark its target tab busy (which appends the user-visible log entry), and
