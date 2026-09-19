@@ -1,0 +1,109 @@
+/* The frame never participates: only its absolute artwork and the placard move. */
+.dyk-art {
+	position: absolute;
+	inset: 0;
+}
+
+.dyk-copy-stack {
+	display: grid;
+	min-height: min-content;
+}
+
+.dyk-copy {
+	grid-area: 1 / 1;
+	min-width: 0;
+	min-height: 100%;
+}
+
+.dyk-enter,
+.dyk-exit {
+	--dyk-offset: 8px;
+	animation: dyk-enter 180ms ease-out both;
+}
+
+[data-direction='back'] {
+	--dyk-offset: -8px;
+}
+
+.dyk-exit {
+	pointer-events: none;
+	animation-name: dyk-exit;
+}
+
+@keyframes dyk-enter {
+	from {
+		opacity: 0;
+		transform: translateX(var(--dyk-offset));
+	}
+	to {
+		opacity: 1;
+		transform: translateX(0);
+	}
+}
+
+@keyframes dyk-exit {
+	from {
+		opacity: 1;
+		transform: translateX(0);
+	}
+	to {
+		opacity: 0;
+		transform: translateX(calc(-1 * var(--dyk-offset)));
+		visibility: hidden;
+	}
+}
+
+/* Also handles an OS preference change while the modal is already open. */
+@media (prefers-reduced-motion: reduce) {
+	.dyk-enter,
+	.dyk-exit {
+		animation: none;
+	}
+	.dyk-exit {
+		visibility: hidden;
+	}
+}
+
+/* Reserve action slots even for tips without docs or a primary action. Otherwise
+   footer wrapping moves the centered shell, despite the stable placard height. */
+.dyk-dialog {
+	container-type: inline-size;
+	container-name: dyk-card;
+}
+
+.dyk-footer {
+	grid-template-columns: minmax(0, 1fr) 96px 36px 36px 230px;
+	grid-template-rows: 40px;
+}
+
+.dyk-docs {
+	grid-column: 2;
+	grid-row: 1;
+}
+
+.dyk-back {
+	grid-column: 3;
+	grid-row: 1;
+}
+
+.dyk-next {
+	grid-column: 4;
+	grid-row: 1;
+}
+
+.dyk-action {
+	grid-column: 5;
+	grid-row: 1;
+	justify-self: end;
+}
+
+@container dyk-card (max-width: 620px) {
+	.dyk-footer {
+		grid-template-columns: minmax(0, 1fr) 96px 36px 36px;
+		grid-template-rows: 40px 40px;
+	}
+	.dyk-action {
+		grid-column: 1 / -1;
+		grid-row: 2;
+	}
+}
