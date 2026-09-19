@@ -21,6 +21,7 @@ import { createMarkdownLink } from './components/MarkdownLink';
 import { createShikiCodeBlock } from './components/ShikiCodeBlock';
 import { AlertCallout } from './components/AlertCallout';
 import { FollowupChip } from './components/FollowupChip';
+import { CodexFileCitation } from './components/CodexFileCitation';
 import { alertTypeFromClassName } from './remarkAlert';
 import { readCodexDirectiveProps } from './remarkCodexDirectives';
 import { requestCodexFollowup } from '../../services/codexFollowup';
@@ -238,6 +239,26 @@ export function createChatMarkdownComponents(
 		span: ({ node: _node, children, ...props }: JSX.IntrinsicElements['span'] & ExtraProps) => {
 			const directive = readCodexDirectiveProps(props as Record<string, unknown>);
 			if (!directive) return <span {...props}>{children}</span>;
+
+			// A citation needs no conversation context: it points at a file and
+			// nothing else, so it draws wherever it appears. A path-less one falls
+			// through to its label, because a link to nowhere is not a link.
+			if (directive.name === 'codex-file-citation' && directive.attributes.path) {
+				return (
+					<CodexFileCitation
+						path={directive.attributes.path}
+						// Anything that is not literally `output` is read as a source.
+						// The hue and the hover text both claim the agent CHANGED this
+						// file, which a malformed attribute must not be able to assert.
+						purpose={directive.attributes.purpose === 'output' ? 'output' : 'source'}
+						artifactKind={directive.attributes.artifact_kind}
+						pageNumber={directive.attributes.page_number}
+						theme={theme}
+						LinkComponent={ChatLink}
+					/>
+				);
+			}
+
 			if (directive.name !== 'codex-followup' || !codexFollowup) {
 				return <span {...props}>{directive.label}</span>;
 			}

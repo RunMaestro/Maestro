@@ -137,6 +137,49 @@ describe('remarkCodexDirectives', () => {
 		expect(textNodes(tree)).toEqual(['Before ', ' after.']);
 	});
 
+	it('carries a source citation through as its path and purpose', () => {
+		const tree = transform(
+			'See :codex-file-citation{path="/repo/src/index.ts" purpose="source"} for the entry point.'
+		);
+
+		const [directive, ...rest] = directives(tree);
+		expect(rest).toHaveLength(0);
+		expect(directive.name).toBe('codex-file-citation');
+		expect(directive.attributes).toEqual({
+			path: '/repo/src/index.ts',
+			purpose: 'source',
+		});
+		// The absolute path is the whole reason this one is unreadable raw: it
+		// must not survive as prose beside the chip that replaced it.
+		expect(textNodes(tree)).toEqual(['See ', ' for the entry point.']);
+	});
+
+	it('carries an output citation through with its artifact kind', () => {
+		const tree = transform(
+			'Wrote :codex-file-citation{path="/repo/out/report.md" purpose="output" artifact_kind="report"}.'
+		);
+
+		const [directive] = directives(tree);
+		expect(directive.attributes).toEqual({
+			path: '/repo/out/report.md',
+			purpose: 'output',
+			artifact_kind: 'report',
+		});
+		expect(toHtml(tree)).not.toContain('codex-file-citation{');
+	});
+
+	it('keeps a page number on a citation', () => {
+		const tree = transform(
+			':codex-file-citation{path="/repo/docs/spec.pdf" purpose="source" page_number="12"}'
+		);
+
+		const [directive] = directives(tree);
+		// The wire carries a string and so does the attribute payload - a page
+		// number is printed, never counted with.
+		expect(directive.attributes.page_number).toBe('12');
+		expect(directive.attributes.path).toBe('/repo/docs/spec.pdf');
+	});
+
 	it('keeps a directive inside a fenced code block as literal text', () => {
 		// Maestro's own docs quote this syntax. Drawing a chip on an example
 		// would offer the reader an action nobody is offering.
