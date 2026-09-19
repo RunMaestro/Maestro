@@ -30,16 +30,25 @@ All directives follow this pattern:
 
 Maestro currently renders these known directives:
 
-| Directive              | Rendered As             | User Interaction         |
-| ---------------------- | ----------------------- | ------------------------ |
-| `:codex-followup`      | Action chip with prompt | Click to send or prefill |
-| `:codex-file-citation` | File link               | Click to open the file   |
-| `::git-create-pr`      | Git action card         | Click to create a PR     |
-| `::git-push`           | Git action card         | Click to push            |
-| `::git-stage`          | Git action card         | Click to stage files     |
-| `::git-create-branch`  | Git action card         | Click to create branch   |
-| `::git-commit`         | Git action card         | Click to commit          |
-| `::code-comment`       | Review card             | Shows inline feedback    |
+| Directive              | Rendered As             | User Interaction                              |
+| ---------------------- | ----------------------- | --------------------------------------------- |
+| `:codex-followup`      | Action chip with prompt | Click to send, Alt+click to prefill           |
+| `:codex-file-citation` | File link               | Click to open the file                        |
+| `::git-create-pr`      | Git action card         | Click to open the PR form                     |
+| `::git-push`           | Git action card         | Click to push the checked-out branch          |
+| `::git-commit`         | Git action card         | Click to commit, after a confirmation         |
+| `::git-stage`          | Git action card         | Read-only: the command, with nothing to press |
+| `::git-create-branch`  | Git action card         | Read-only: the command, with nothing to press |
+| `::code-comment`       | Review card             | Shows inline feedback                         |
+
+Every git card shows the command before anything runs, and it only offers a
+button when pressing it runs exactly that command. Maestro's git surfaces take
+no target of their own - the runner pushes the checked-out branch, and the
+branch switcher switches without creating - so a directive naming a different
+remote or branch renders as the command plus the reason there is nothing to
+press. A `::git-create-pr` opens the same form the branch pill opens, which
+owns the title, so a suggested title is shown on the control rather than passed
+as a flag.
 
 Maestro deliberately strips these directives (they're not rendered):
 

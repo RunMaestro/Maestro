@@ -36,7 +36,7 @@ export function isGitDirectiveName(name: string): name is GitDirectiveName {
  * broken, and one wired to the NEAREST thing would commit when the agent asked
  * to stage.
  */
-export type GitDirectiveSurface = 'push' | 'createPR' | 'branchSwitcher' | 'commit' | 'none';
+export type GitDirectiveSurface = 'push' | 'createPR' | 'commit' | 'none';
 
 export interface GitDirectivePlan {
 	/** What the control says, e.g. `Push to origin/feat-x`. */
@@ -48,6 +48,16 @@ export interface GitDirectivePlan {
 	 */
 	command: string | null;
 	surface: GitDirectiveSurface;
+	/**
+	 * Why there is nothing to press, when the directive asked for something
+	 * Maestro's own surfaces cannot do. Rendered dim under the command.
+	 *
+	 * A `'none'` surface with no note is a directive that never had a click in it
+	 * (a `::git-stage`); a note means the agent asked for a specific target and
+	 * the honest answer is the command plus the reason, not a button that would
+	 * do something else.
+	 */
+	note?: string;
 }
 
 /** `true` on the wire is the bare string, since attribute values are text. */
@@ -67,6 +77,14 @@ function isTrue(value: string | undefined): boolean {
  * left the branch out. It is never allowed to CONTRADICT an attribute: the
  * agent named a branch for a reason, and quietly retargeting a push at whatever
  * happens to be checked out is the worst kind of wrong.
+ *
+ * Which is also why a surface here is only ever the one that does EXACTLY what
+ * the command line says. Maestro's git surfaces take no target of their own -
+ * the runner pushes the checked-out branch to its own upstream, and the branch
+ * switcher switches without creating - so a directive naming something else gets
+ * the command and a reason rather than a button. Printing `git push upstream
+ * release` over a click that pushes whatever is checked out is the exact failure
+ * the command line exists to prevent.
  */
 export function describeGitDirective(
 	name: GitDirectiveName,
@@ -77,27 +95,54 @@ export function describeGitDirective(
 		case 'git-push': {
 			const remote = attributes.remote || 'origin';
 			const branch = attributes.branch || fallbackBranch;
+			// The runner takes no remote and no branch: it runs `git push` in this
+			// repository, which pushes the CHECKED-OUT branch. So a named remote
+			// other than origin, or a named branch that is not the live one, is a
+			// target the click cannot reach - including when polling has not yet
+			// told us what the live branch is, since unverified is not the same as
+			// matching.
+			const wrongRemote = Boolean(attributes.remote) && attributes.remote !== 'origin';
+			const wrongBranch = Boolean(attributes.branch) && attributes.branch !== fallbackBranch;
+			const note = wrongRemote
+				? `Maestro pushes to the branch's own upstream, not to ${attributes.remote}.`
+				: wrongBranch
+					? fallbackBranch
+						? `Maestro pushes the checked-out branch, and ${fallbackBranch} is checked out.`
+						: 'Maestro pushes the checked-out branch, which has not been read yet.'
+					: undefined;
 			return {
 				label: branch ? `Push to ${remote}/${branch}` : `Push to ${remote}`,
 				command: `git push ${remote}${branch ? ` ${branch}` : ''}`,
-				surface: 'push',
+				surface: note ? 'none' : 'push',
+				...(note ? { note } : {}),
 			};
 		}
 		case 'git-create-pr': {
 			const draft = isTrue(attributes.isDraft) || isTrue(attributes.draft);
 			const title = attributes.title;
+			// The form owns the title and opens a ready PR, so neither `--title` nor
+			// `--draft` reaches `gh` - printing them would claim two flags the click
+			// does not pass. The agent's title rides the LABEL instead, where it
+			// reads as the suggestion it is and stays in front of the user while
+			// they fill the form in.
 			return {
-				label: draft ? 'Create draft pull request' : 'Create pull request',
-				command: `gh pr create${draft ? ' --draft' : ''}${title ? ` --title "${title}"` : ''}`,
+				label: `${draft ? 'Create draft pull request' : 'Create pull request'}${
+					title ? `: ${title}` : ''
+				}`,
+				command: 'gh pr create',
 				surface: 'createPR',
 			};
 		}
 		case 'git-create-branch': {
 			const branch = attributes.name || attributes.branch;
+			// The branch switcher SWITCHES - it has no create path - so there is no
+			// surface behind this directive. Offering the switcher would hand the
+			// user a picker that cannot contain the branch they just asked for.
 			return {
 				label: branch ? `Create branch ${branch}` : 'Create a branch',
 				command: branch ? `git checkout -b ${branch}` : null,
-				surface: 'branchSwitcher',
+				surface: 'none',
+				note: 'Maestro switches branches but does not create them.',
 			};
 		}
 		case 'git-commit': {
@@ -179,11 +224,14 @@ export interface GitActionCardProps {
  *    surprising command cannot hide it - the same rule the follow-up chip
  *    applies to its prompt.
  * 3. **The click opens Maestro's own surface.** `useGitAgentActions` is where a
- *    push, a PR and a branch switch already live, so a directive lands the user
- *    in the runner or the form they would have reached from the branch pill,
- *    with its own confirmation. A commit goes through the confirm dialog and
- *    `gitService.commitAll`, and a stage has no surface at all (see
- *    `GitDirectiveSurface`).
+ *    push and a PR already live, so a directive lands the user in the runner or
+ *    the form they would have reached from the branch pill, with its own
+ *    confirmation. A commit goes through the confirm dialog and
+ *    `gitService.commitAll`.
+ * 4. **A directive whose target the surface would drop has no button.** Staging,
+ *    creating a branch, and pushing somewhere other than the checked-out branch
+ *    all render as the command plus the reason (see `GitDirectivePlan.note`).
+ *    Rule 2 is only worth anything if the command is what actually runs.
  */
 export function GitActionCard({ name, attributes, sessionId, theme }: GitActionCardProps) {
 	const session = useSessionStore(selectSessionById(sessionId));
@@ -209,9 +257,6 @@ export function GitActionCard({ name, attributes, sessionId, theme }: GitActionC
 				return;
 			case 'createPR':
 				git.createPR();
-				return;
-			case 'branchSwitcher':
-				git.switchBranch();
 				return;
 			case 'commit': {
 				const message = attributes.message || attributes.m;
@@ -294,6 +339,25 @@ export function GitActionCard({ name, attributes, sessionId, theme }: GitActionC
 					}}
 				>
 					{plan.command}
+				</span>
+			)}
+			{plan.note && !actionable && (
+				/*
+				 * Only ever drawn where there is no button. A reader looking at a
+				 * command with nothing to press has to be told why, or the card reads
+				 * as a control that failed to render.
+				 */
+				<span
+					data-testid="codex-git-action-note"
+					style={{
+						display: 'block',
+						marginTop: '0.2em',
+						fontSize: '0.8em',
+						color: theme.colors.textDim,
+						fontStyle: 'italic',
+					}}
+				>
+					{plan.note}
 				</span>
 			)}
 		</span>

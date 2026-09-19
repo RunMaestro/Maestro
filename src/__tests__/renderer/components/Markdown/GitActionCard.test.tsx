@@ -81,11 +81,9 @@ beforeEach(() => {
 
 describe('describeGitDirective', () => {
 	it('names the remote and branch a push would target', () => {
-		expect(describeGitDirective('git-push', { remote: 'upstream', branch: 'main' })).toEqual({
-			label: 'Push to upstream/main',
-			command: 'git push upstream main',
-			surface: 'push',
-		});
+		const plan = describeGitDirective('git-push', { remote: 'upstream', branch: 'main' }, 'main');
+		expect(plan.label).toBe('Push to upstream/main');
+		expect(plan.command).toBe('git push upstream main');
 	});
 
 	it('falls back to the live branch only when the directive named none', () => {
@@ -97,10 +95,38 @@ describe('describeGitDirective', () => {
 		);
 	});
 
-	it('carries a draft PR through to both the label and the command', () => {
+	it('offers no button for a push the runner could not aim', () => {
+		// THE mismatch this guards. The runner takes no remote and no branch: it
+		// pushes whatever is checked out. So a card printing `git push upstream
+		// release` over a click that pushes `feat-x` is the exact lie the command
+		// line exists to prevent - it keeps the command and loses the button.
+		const wrongBranch = describeGitDirective('git-push', { branch: 'release' }, 'feat-x');
+		expect(wrongBranch.surface).toBe('none');
+		expect(wrongBranch.note).toContain('feat-x');
+
+		const wrongRemote = describeGitDirective('git-push', { remote: 'upstream' }, 'feat-x');
+		expect(wrongRemote.surface).toBe('none');
+		expect(wrongRemote.note).toContain('upstream');
+
+		// Unverified is not the same as matching: with no live branch read yet,
+		// there is nothing to prove the named one is checked out.
+		expect(describeGitDirective('git-push', { branch: 'feat-x' }).surface).toBe('none');
+
+		// The two honored shapes: no target at all, and a target that IS the live
+		// state.
+		expect(describeGitDirective('git-push', {}, 'feat-x').surface).toBe('push');
+		expect(
+			describeGitDirective('git-push', { remote: 'origin', branch: 'feat-x' }, 'feat-x').surface
+		).toBe('push');
+	});
+
+	it('keeps a PR title in the label rather than in a flag nothing passes', () => {
 		const plan = describeGitDirective('git-create-pr', { isDraft: 'true', title: 'Add parser' });
-		expect(plan.label).toBe('Create draft pull request');
-		expect(plan.command).toBe('gh pr create --draft --title "Add parser"');
+		// The form owns the title and cannot open a draft, so neither reaches `gh`.
+		// The suggestion stays readable on the control; the command stays true.
+		expect(plan.label).toBe('Create draft pull request: Add parser');
+		expect(plan.command).toBe('gh pr create');
+		expect(plan.surface).toBe('createPR');
 	});
 
 	it('will not build half a command when the directive named no target', () => {
@@ -166,14 +192,27 @@ describe('GitActionCard', () => {
 		expect(buttons[buttons.length - 1]).toBeDisabled();
 	});
 
-	it('opens the branch switcher for a create-branch', () => {
+	it('renders a create-branch as the command, since nothing here creates one', () => {
+		// The branch switcher SWITCHES. Wiring this to it would hand the user a
+		// picker that cannot contain the branch they just asked for.
 		renderCard({ name: 'git-create-branch', attributes: { name: 'feat/y' } });
 
 		expect(screen.getByTestId('codex-git-action-command')).toHaveTextContent(
 			'git checkout -b feat/y'
 		);
-		fireEvent.click(screen.getByTestId('codex-git-action-button'));
-		expect(gitActions.switchBranch).toHaveBeenCalledTimes(1);
+		expect(screen.queryByTestId('codex-git-action-button')).toBeNull();
+		expect(screen.getByTestId('codex-git-action-note')).toHaveTextContent('does not create');
+		expect(gitActions.switchBranch).not.toHaveBeenCalled();
+	});
+
+	it('says why a push it cannot aim has nothing to press', () => {
+		renderCard({ name: 'git-push', attributes: { branch: 'release' } });
+
+		expect(screen.queryByTestId('codex-git-action-button')).toBeNull();
+		expect(screen.getByTestId('codex-git-action-command')).toHaveTextContent(
+			'git push origin release'
+		);
+		expect(screen.getByTestId('codex-git-action-note')).toHaveTextContent('feat-x');
 	});
 
 	it('asks before it commits, and commits only after the confirmation runs', () => {
@@ -201,6 +240,9 @@ describe('GitActionCard', () => {
 		expect(screen.queryByTestId('codex-git-action-button')).toBeNull();
 		expect(screen.getByTestId('codex-git-action-command')).toHaveTextContent('git add src/a.ts');
 		expect(screen.getByTestId('codex-git-action')).toHaveAttribute('data-git-surface', 'none');
+		// Nothing to explain: a stage never had a click in it, so there is no
+		// thwarted target to report.
+		expect(screen.queryByTestId('codex-git-action-note')).toBeNull();
 	});
 
 	it('offers no button when the agent has no repository', () => {
