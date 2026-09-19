@@ -30,6 +30,13 @@ import type { IDisposable, IPty } from 'node-pty';
 import { stripAnsiCodes } from '../shared/stringUtils';
 import { killPty } from '../shared/ptyKill';
 import { showsApiUsageBilling } from './billing-mode';
+import { replayTerminalScreen } from './screen-replay';
+import {
+	describeBlockingDialog,
+	editorIsAcceptingInput,
+	screenShowsTypedText,
+	type SteeringRefusal,
+} from './steering';
 
 export interface TuiDriverOptions {
 	binPath: string;
@@ -138,6 +145,26 @@ export const PROMPT_CHUNK_DRAIN_TIMEOUT_MS = 250;
 // a screen that never stops animating cannot stall the turn.
 export const PROMPT_SETTLE_QUIET_MS = 300;
 export const PROMPT_SETTLE_MAX_MS = 3000;
+
+// After a steering injection is typed, how long to let the composer repaint
+// before reading it back (see inject()). A turn in flight repaints constantly for
+// its own reasons, so a paint wait can resolve on the spinner instead of on our
+// keystrokes; this fixed settle is what makes the echo check about our text.
+export const INJECT_ECHO_SETTLE_MS = 150;
+
+// Runaway guard on the raw screen capture. Run-mode steering needs the FULL
+// stream retained (a differential renderer leaves nothing readable in a tail), and
+// a turn measured at ~420 B/s reaches this only after several hours.
+//
+// Overflow TRIMS FROM THE FRONT rather than freezing the buffer, and that
+// direction is the safe one, not the tidy one: a frozen buffer keeps replaying an
+// OLD screen, which can still show the editor box while a permission dialog is
+// really up - and that is an Enter on an approval prompt. A trimmed buffer
+// replays to something with no box at all, so `editorIsAcceptingInput` returns
+// false and steering refuses. Losing steering on a marathon turn is an acceptable
+// degradation; granting an approval is not.
+const SCREEN_CAPTURE_CAP = 8 * 1024 * 1024;
+const SCREEN_CAPTURE_TRIM_TO = 4 * 1024 * 1024;
 
 // Split `text` into pieces of at most `maxBytes` UTF-8 bytes without cutting a
 // multi-byte character or surrogate pair in half.
@@ -618,6 +645,142 @@ export class TuiDriver extends EventEmitter {
 		}
 	}
 
+	/**
+	 * Type `text` into a turn that is ALREADY RUNNING and submit it, so claude can
+	 * fold it into the loop in flight (chat steering). Resolves with whether the
+	 * text was submitted, and why not when it was not.
+	 *
+	 * This is deliberately NOT `send()`, and the three differences are each a
+	 * hazard that `send()`'s behaviour would turn into a bug here:
+	 *
+	 * 1. NO `waitForQuietScreen()`. It waits for PROMPT_SETTLE_QUIET_MS of silence,
+	 *    and mid-response the screen is never quiet - so it would burn the whole
+	 *    PROMPT_SETTLE_MAX_MS budget and then type anyway. The settle exists to
+	 *    dodge claude discarding input while its UI mounts, which is a STARTUP
+	 *    problem; a turn that is streaming has long since mounted.
+	 *
+	 * 2. Exactly ONE Enter, never SUBMIT_ENTER_RETRIES. Extra taps are harmless on
+	 *    a cold start because they land on an empty input, and dangerous here
+	 *    because a dialog may be on screen: one Enter on a live permission prompt
+	 *    selected "1. Yes" and wrote the file. The retry burst exists to beat a
+	 *    settling editor at startup, which cannot be the situation mid-turn.
+	 *
+	 * 3. The screen is CHECKED, twice. Before typing, the input editor must be
+	 *    drawn (`editorIsAcceptingInput`); after typing, the text must be visible
+	 *    (`screenShowsTypedText`) before any Enter is sent. Typing alone is inert -
+	 *    measured: a live permission dialog fed "option 2 or 3 would be wrong, use
+	 *    1" did not move its selector and wrote nothing - so typing first and
+	 *    deciding afterwards is safe, and it catches a dialog that appeared in the
+	 *    gap between the gate and the keystrokes.
+	 *
+	 * The paced chunking IS kept. It is not about startup: a macOS PTY holds 1,022
+	 * unread input bytes and claude discards what is queued at a flush, so a
+	 * multi-KB write loses whole queues whenever it happens. See
+	 * PROMPT_CHUNK_MAX_BYTES.
+	 *
+	 * Requires `captureScreen` - without the raw stream there is no grid to check
+	 * and the honest answer is to refuse rather than type blind.
+	 */
+	async inject(
+		text: string
+	): Promise<{ submitted: boolean; refusal?: SteeringRefusal; detail?: string }> {
+		if (!this.ptyProcess) {
+			throw new Error('TuiDriver.inject() called before start()');
+		}
+		if (this.exited) return { submitted: false, refusal: 'tui-exited' };
+		if (!this.options.captureScreen) {
+			return {
+				submitted: false,
+				refusal: 'editor-unavailable',
+				detail: 'the screen is not being captured, so the editor state cannot be verified',
+			};
+		}
+
+		const gate = this.readScreen();
+		if (!editorIsAcceptingInput(gate)) {
+			const dialog = describeBlockingDialog(gate);
+			return dialog
+				? { submitted: false, refusal: 'blocking-dialog', detail: dialog }
+				: {
+						submitted: false,
+						refusal: 'editor-unavailable',
+						detail: 'the input editor is not on screen',
+					};
+		}
+
+		const chunks = chunkPromptForPty(text);
+		for (let i = 0; i < chunks.length; i += 1) {
+			try {
+				this.ptyProcess.write(chunks[i]);
+			} catch {
+				return { submitted: false, refusal: 'tui-exited' };
+			}
+			if (i === chunks.length - 1) break;
+			await this.waitForPaint(PROMPT_CHUNK_DRAIN_TIMEOUT_MS);
+			if (this.exited) return { submitted: false, refusal: 'tui-exited' };
+			await new Promise<void>((resolve) => setTimeout(resolve, PROMPT_CHUNK_INTERVAL_MS));
+			if (this.exited) return { submitted: false, refusal: 'tui-exited' };
+		}
+
+		// Let the composer repaint before reading it back. A turn in flight paints
+		// constantly, so waitForPaint alone can return on the SPINNER rather than on
+		// our keystrokes; the fixed settle after it is what makes the echo check
+		// about the text we typed.
+		await this.waitForPaint(PROMPT_CHUNK_DRAIN_TIMEOUT_MS);
+		await new Promise<void>((resolve) => setTimeout(resolve, INJECT_ECHO_SETTLE_MS));
+		if (this.exited) return { submitted: false, refusal: 'tui-exited' };
+
+		if (!screenShowsTypedText(this.readScreen(), text)) {
+			// Deliberately no cleanup keystroke. Ctrl+U / Escape would be a guess at
+			// this point, and Escape mid-turn INTERRUPTS the turn - the one outcome
+			// worse than a stray draft. The caller still owns the message.
+			return {
+				submitted: false,
+				refusal: 'echo-missing',
+				detail: 'the text never appeared in the editor, so it was not submitted',
+			};
+		}
+
+		try {
+			this.ptyProcess.write('\r');
+		} catch {
+			return { submitted: false, refusal: 'tui-exited' };
+		}
+		return { submitted: true };
+	}
+
+	/**
+	 * The screen as a terminal would show it, replayed from the FULL captured
+	 * stream.
+	 *
+	 * Replaying a tail is not an option and the measurement is unambiguous: for an
+	 * 18,955-byte turn, the editor box was found in the full stream and in NO tail
+	 * slice, including the last 16 KB. claude's renderer is differential - it draws
+	 * the box once at startup and afterwards patches only the cells that change -
+	 * so standing content exists nowhere in a recent window. This is also why the
+	 * capture cannot be cleared between reads (see getScreenCapture).
+	 */
+	private readScreen(): string {
+		return replayTerminalScreen(this.getScreenCapture());
+	}
+
+	/**
+	 * Text to check for a blocking dialog, usable on EVERY run rather than only on
+	 * a steering one.
+	 *
+	 * `describeBlockingDialog` matches dialog wording, not layout, so unlike
+	 * `editorIsAcceptingInput` it does not need a replayed grid and can read the
+	 * ANSI-stripped rolling buffer when no raw capture exists. That buffer is an
+	 * accumulator, so a dialog dismissed long ago still matches - which
+	 * OVER-detects, and that is the direction to err in for the one caller that
+	 * needs this (quit(), where a miss approves something and a false alarm costs a
+	 * graceful exit nobody was relying on). Never use it to decide that typing is
+	 * SAFE; only that it is not.
+	 */
+	private dialogScreen(): string {
+		return this.options.captureScreen ? this.readScreen() : this.rollingBuffer;
+	}
+
 	// Re-press Enter only (never re-type the prompt body). send()'s burst of
 	// taps all land within the first ~3s; if claude's editor was still settling
 	// MCP/plugin init then (morning cue contention can push that to 10-40s),
@@ -662,10 +825,33 @@ export class TuiDriver extends EventEmitter {
 
 	async quit(): Promise<void> {
 		if (!this.ptyProcess || this.exited) return;
-		try {
-			this.ptyProcess.write('/quit\r');
-		} catch {
-			// PTY may already be tearing down - fall through to the grace timer.
+		// `/quit\r` is only safe when the input editor owns the keyboard. With a
+		// permission dialog on screen the text is inert but the Enter CONFIRMS the
+		// highlighted option, which is "1. Yes" - so the way out of a turn grants the
+		// action the user never approved.
+		//
+		// Measured: a run parked on "Do you want to create probe-steer-perm.txt?" hit
+		// its idle timeout at 301s; the file's mtime and the tool_result row both land
+		// at the timeout instant, five minutes after the Write was requested and with
+		// nobody having answered. The timeout path is the WORST place for this,
+		// because it is the likeliest to have a dialog up - maestro-p's own timeout
+		// message already says "likely parked on a permission prompt".
+		//
+		// So skip the graceful quit and let the SIGTERM below do it. Biased on
+		// purpose: a false positive costs a graceful `/quit` we were abandoning the
+		// turn without anyway, while a false negative approves a filesystem write, a
+		// command, or a push.
+		const dialog = describeBlockingDialog(this.dialogScreen());
+		if (dialog) {
+			process.stderr.write(
+				`maestro-p: not sending /quit - ${dialog} is on screen and its Enter would accept it. Terminating the TUI instead.\n`
+			);
+		} else {
+			try {
+				this.ptyProcess.write('/quit\r');
+			} catch {
+				// PTY may already be tearing down - fall through to the grace timer.
+			}
 		}
 		await new Promise<void>((resolve) => {
 			if (this.exited) {
@@ -719,6 +905,9 @@ export class TuiDriver extends EventEmitter {
 		// holds the panel content. Run mode leaves captureScreen unset.
 		if (this.options.captureScreen) {
 			this.screenCapture += data;
+			if (this.screenCapture.length > SCREEN_CAPTURE_CAP) {
+				this.screenCapture = this.screenCapture.slice(-SCREEN_CAPTURE_TRIM_TO);
+			}
 		}
 		const stripped = stripAnsiCodes(data);
 		if (stripped.length === 0) return;

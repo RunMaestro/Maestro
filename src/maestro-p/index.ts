@@ -31,6 +31,12 @@ import { JsonlTailer, type ParseErrorPayload } from './jsonl-tailer';
 import { extractExitPlanText } from './plan-mode';
 import { checkPromptEcho, isPromptEchoVerifiable, promptEchoText } from './prompt-echo';
 import { discoverSessionId, cwdSlug } from './session-watcher';
+import {
+	classifyQueueOperation,
+	STEERING_SOCKET_ENV_VAR,
+	type SteeringResultFrame,
+} from './steering';
+import { startSteeringServer, type SteeringServer } from './steering-server';
 import { cleanupStreamJsonImages, translateStreamJsonInput } from './stream-json-input';
 import { formatScreenTailReport, idleTimeoutMessage } from './timeout-report';
 import { TuiDriver } from './tui-driver';
@@ -271,11 +277,18 @@ async function runMode(args: ParsedArgs): Promise<never> {
 	}
 
 	const childEnv = buildChildEnv();
+	// Steering has to READ the screen before it types (see TuiDriver.inject), and
+	// the check needs a replayed grid, which only the raw stream can produce - the
+	// ANSI-stripped rolling buffer cannot show the editor box's structure. Run mode
+	// otherwise leaves this off, so it is enabled exactly when a steering socket was
+	// named rather than unconditionally: the capture is bounded but not free.
+	const steeringEnabled = !!process.env[STEERING_SOCKET_ENV_VAR]?.trim();
 	const driver = new TuiDriver({
 		binPath,
 		args: passThroughArgs,
 		cwd,
 		env: childEnv,
+		captureScreen: steeringEnabled,
 		// Same opt-in as statusMode, and it was missing here: in an untrusted
 		// folder the trust prompt defaults to "No, exit", so run mode's blind
 		// unblock tap ANSWERS it - claude quits and the turn dies as a bare
@@ -328,6 +341,43 @@ async function runMode(args: ParsedArgs): Promise<never> {
 	// the normal flow (tailer.start() / EOF-skip prevent racing), but keeps
 	// us robust against weird PTY timing.
 	const pendingEntries: unknown[] = [];
+
+	// Chat steering (see steering.ts). Injections delivered into the running turn
+	// and still waiting for the transcript to say what claude did with them, oldest
+	// first - the order matters, because a bare `dequeue` row carries no content and
+	// can only be attributed positionally.
+	const awaitingVerdict: Array<{ id: string; text: string }> = [];
+	let steeringServer: SteeringServer | null = null;
+
+	// Report a verdict on stdout. Silently dropped once the turn has been
+	// finalized: the `result` envelope is one-shot and a verdict arriving after it
+	// describes a turn already reported, so emitting would throw and take the
+	// process down over an accessory.
+	const reportSteering = (frame: SteeringResultFrame): void => {
+		if (finalized || !initEmitted) return;
+		emitter.emitSteering(frame);
+	};
+
+	// Resolve a delivered injection from a `queue-operation` row. Returns true when
+	// the row settled something, so the caller knows it was consumed.
+	const settleSteeringFromRow = (row: unknown): boolean => {
+		if (awaitingVerdict.length === 0) return false;
+		for (let i = 0; i < awaitingVerdict.length; i += 1) {
+			const pending = awaitingVerdict[i];
+			const classified = classifyQueueOperation(row, pending.text);
+			if (!classified) continue;
+			// A content-matched row names its own injection. A bare `dequeue` does
+			// not, so it is attributed to the OLDEST outstanding one - claude drains
+			// its queue in order, so position is the only evidence available, and
+			// guessing the newest would mislabel the common single-steer case whenever
+			// two are in flight.
+			if (!classified.matchedContent && i !== 0) continue;
+			awaitingVerdict.splice(i, 1);
+			reportSteering({ type: 'steering', id: pending.id, verdict: classified.verdict });
+			return true;
+		}
+		return false;
+	};
 
 	const cleanupTimers = (): void => {
 		if (watchdogTimer) {
@@ -410,8 +460,29 @@ async function runMode(args: ParsedArgs): Promise<never> {
 
 	const finalize = (options: { isError: boolean; error?: string; exitCode: number }): void => {
 		if (finalized) return;
+		// Report every still-outstanding steer BEFORE flipping `finalized`, which is
+		// what gates reportSteering. Silence here would be the worst outcome: the
+		// caller is holding these pending an answer, and never hearing back reads as
+		// delivered-and-fine.
+		//
+		// `dropped`, not `queued`: nothing was ever observed resolving these, and the
+		// run is ending regardless, so the text is gone and the caller has to re-send
+		// it. This is the uncommon path - a normally-parked steer resolves itself,
+		// because the dequeued message invalidates the end_turn grace and maestro-p
+		// lives to see it (see SteeringVerdict). What lands here is a run cut short:
+		// the TUI exited, a timeout fired, or the limit drain won the race.
+		for (const pending of awaitingVerdict) {
+			reportSteering({
+				type: 'steering',
+				id: pending.id,
+				verdict: 'dropped',
+				detail: 'the turn ended without claude absorbing this message, so it was not delivered',
+			});
+		}
+		awaitingVerdict.length = 0;
 		finalized = true;
 		cleanupTimers();
+		steeringServer?.close();
 		tailer?.stop();
 		// Best-effort: synchronous so claude (which has long-since consumed
 		// these via the @path Read tool) doesn't leave them behind.
@@ -498,6 +569,17 @@ async function runMode(args: ParsedArgs): Promise<never> {
 			return;
 		}
 
+		// Steering bookkeeping. These rows are how claude reports what it did with
+		// input typed mid-turn, and they are the ONLY evidence for it - nothing on
+		// the screen distinguishes an absorbed steer from a parked one. They carry no
+		// `message`, so without this they would fall through to the ignore-unknown
+		// branch at the bottom. Never emitted onto the wire as transcript content:
+		// this is claude's own queue bookkeeping, not a turn the user sent.
+		if (e.type === 'queue-operation') {
+			settleSteeringFromRow(e);
+			return;
+		}
+
 		// Synthetic-model bookkeeping rows ("No response requested.") never
 		// reach the wire.
 		if (message && message.model === '<synthetic>') return;
@@ -541,6 +623,13 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		if (e.type === 'user' && message) {
 			// A user entry after end_turn is typically a tool_result row;
 			// restart the grace so we don't truncate the turn mid-drain.
+			//
+			// Chat steering depends on this clear too, so do not narrow it to
+			// tool_result rows. When claude parks a steer rather than absorbing it, it
+			// drains the queue by writing the message as an ordinary `user` entry after
+			// `end_turn`; this is what keeps the process alive long enough to capture
+			// the follow-up turn instead of quitting the TUI with the user's words
+			// unanswered. See SteeringVerdict's note on `queued`.
 			if (graceTimer) {
 				clearTimeout(graceTimer);
 				graceTimer = null;
@@ -599,6 +688,64 @@ async function runMode(args: ParsedArgs): Promise<never> {
 			`maestro-p: JSONL parse error: ${payload.error.message} - line: ${snippet}\n`
 		);
 	};
+
+	// Chat steering: open the control channel only when the caller named a socket.
+	// Absent means this turn is not steerable, which is the default - a channel
+	// nobody asked for is an attack surface and a socket file to clean up.
+	const steeringSocketPath = steeringEnabled
+		? process.env[STEERING_SOCKET_ENV_VAR]?.trim()
+		: undefined;
+	if (steeringSocketPath) {
+		steeringServer = startSteeringServer({
+			socketPath: steeringSocketPath,
+			onSteer: async (id, text): Promise<SteeringResultFrame> => {
+				// A turn that has not started cannot be steered, and typing into a
+				// not-yet-submitted prompt would CORRUPT it: the text would land in the
+				// same editor still holding the original prompt and be submitted as one
+				// merged message. The prompt-echo check would then fail the turn as
+				// `prompt_truncated`, which is a confusing way to report "you steered
+				// too early".
+				if (!firstEntrySeen) {
+					return {
+						type: 'steering',
+						id,
+						verdict: 'refused',
+						refusal: 'not-running',
+						detail: 'the turn has not started yet, so there is nothing to steer',
+					};
+				}
+				if (finalized) {
+					return {
+						type: 'steering',
+						id,
+						verdict: 'refused',
+						refusal: 'not-running',
+						detail: 'the turn has already finished',
+					};
+				}
+				const outcome = await driver.inject(text);
+				if (!outcome.submitted) {
+					const frame: SteeringResultFrame = {
+						type: 'steering',
+						id,
+						verdict: 'refused',
+						refusal: outcome.refusal,
+						detail: outcome.detail,
+					};
+					reportSteering(frame);
+					return frame;
+				}
+				// Delivered. What claude DOES with it is only knowable from the
+				// transcript, on a clock this reply cannot wait for (see
+				// SteeringVerdict), so the refinement is emitted on stdout later by
+				// settleSteeringFromRow.
+				awaitingVerdict.push({ id, text });
+				const frame: SteeringResultFrame = { type: 'steering', id, verdict: 'delivered' };
+				reportSteering(frame);
+				return frame;
+			},
+		});
+	}
 
 	driver.on('limit-hit', markLimitHit);
 	driver.on('exit', () => {

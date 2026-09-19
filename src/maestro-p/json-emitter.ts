@@ -27,6 +27,8 @@
 // the terminal also throw - these are programmer errors that would corrupt
 // the wire protocol if allowed through.
 
+import type { SteeringResultFrame } from './steering';
+
 export interface EmitInitOptions {
 	sessionId: string;
 	model: string | null;
@@ -115,6 +117,21 @@ export class JsonEmitter {
 	emitUserMessage(message: unknown): void {
 		this.requireInitOpen('emitUserMessage');
 		this.writeLine({ type: 'user', message });
+	}
+
+	/**
+	 * Report what became of one chat-steering attempt (see steering.ts).
+	 *
+	 * This is a maestro-p EXTENSION to the stream-json wire format, not something
+	 * `claude --print` emits, and it is safe to add because an unrecognized `type`
+	 * degrades to a harmless `system` event in Maestro's Claude parser rather than
+	 * failing the stream. Subject to the same one-shot final-envelope rule as every
+	 * other event: a verdict arriving after `result` is a wire-format bug, since the
+	 * turn it describes is already reported.
+	 */
+	emitSteering(frame: SteeringResultFrame): void {
+		this.requireInitOpen('emitSteering');
+		this.writeLine(frame);
 	}
 
 	emitResult(options: EmitResultOptions): void {
