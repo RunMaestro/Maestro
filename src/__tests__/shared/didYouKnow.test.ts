@@ -50,6 +50,18 @@ describe('Did You Know tip model', () => {
 		expect(new Set(DID_YOU_KNOW_TIPS.map((tip) => tip.id)).size).toBe(DID_YOU_KNOW_TIPS.length);
 	});
 
+	it('includes the first five rotation tips after the editorial pins', () => {
+		expect(
+			DID_YOU_KNOW_TIPS.slice(PINNED_TIP_IDS.length, PINNED_TIP_IDS.length + 5).map((tip) => tip.id)
+		).toEqual([
+			'remote-control',
+			'maestro-cli',
+			'git-worktrees',
+			'command-modes',
+			'execution-queue',
+		]);
+	});
+
 	it.each(DID_YOU_KNOW_TIPS)('$id has concise copy and a valid icon fallback', (tip) => {
 		expect(tip.id).toMatch(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
 		expect(tip.title.trim()).not.toBe('');
@@ -86,8 +98,10 @@ describe('Did You Know ordering and selection', () => {
 	const allSeen = Object.freeze(order.map((tip) => tip.id));
 
 	it('uses the default registry and restores editorial order from a reversed catalog', () => {
-		expect(buildTipOrder(42)).toEqual(order);
-		expect(buildTipOrder(42, [...order].reverse())).toEqual(order);
+		expect(buildTipOrder(42)).toEqual(buildTipOrder(42, order));
+		expect(buildTipOrder(42, [...order].reverse()).slice(0, PINNED_TIP_IDS.length)).toEqual(
+			order.slice(0, PINNED_TIP_IDS.length)
+		);
 	});
 
 	it('skips retired pins and handles empty catalogs', () => {
@@ -100,9 +114,11 @@ describe('Did You Know ordering and selection', () => {
 		const catalog = Object.freeze([...rest, ...order].reverse());
 		const before = [...catalog];
 		const first = buildTipOrder(42, catalog);
-		expect(first.slice(0, order.length)).toEqual(order);
+		expect(first.slice(0, PINNED_TIP_IDS.length)).toEqual(order.slice(0, PINNED_TIP_IDS.length));
 		expect(first).toEqual(buildTipOrder(42, catalog));
-		expect(first.slice(order.length)).not.toEqual(buildTipOrder(99, catalog).slice(order.length));
+		expect(first.slice(PINNED_TIP_IDS.length)).not.toEqual(
+			buildTipOrder(99, catalog).slice(PINNED_TIP_IDS.length)
+		);
 		expect(new Set(first)).toEqual(new Set(catalog));
 		expect(first).toHaveLength(catalog.length);
 		expect(catalog).toEqual(before);
@@ -118,7 +134,7 @@ describe('Did You Know ordering and selection', () => {
 		[undefined, 0],
 		['retired-tip', 0],
 		[allSeen[1], 2],
-		[allSeen[4], 0],
+		[allSeen[allSeen.length - 1], 0],
 	])('continues after %s when every tip has been seen', (afterId, index) => {
 		expect(pickNextTip(order, allSeen, afterId)).toBe(order[index]);
 	});
@@ -134,7 +150,7 @@ describe('Did You Know ordering and selection', () => {
 		[0.999999, 3],
 	])('samples unseen tips with random value %s', (value, index) => {
 		const random = vi.fn(() => value);
-		const seen = Object.freeze([allSeen[0], allSeen[4], 'retired-tip']);
+		const seen = Object.freeze([allSeen[0], ...allSeen.slice(4), 'retired-tip']);
 		expect(pickRandomTip(order, seen, random)).toBe(order[index]);
 		expect(random).toHaveBeenCalledOnce();
 	});
