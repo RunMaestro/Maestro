@@ -97,6 +97,67 @@ export const DID_YOU_KNOW_TIPS: readonly DidYouKnowTip[] = [
 		icon: 'Server',
 		docsSlug: 'ssh-remote-execution',
 	},
+	{
+		id: 'remote-control',
+		title: 'Remote Control',
+		headline: 'You can take Maestro with you.',
+		body: [
+			'Click the OFFLINE button in the Left Bar header. It flips to LIVE and shows a QR code you can scan from your phone.',
+			'You can read transcripts, send prompts, and switch tabs from a mobile browser.',
+			'Add a Cloudflare tunnel to reach your agents from outside your network, not just the same WiFi.',
+		],
+		icon: 'TowerControl',
+		docsSlug: 'remote-control',
+		spotlightSelector: '[data-tour="remote-control"]',
+	},
+	{
+		id: 'maestro-cli',
+		title: 'Maestro CLI',
+		headline: 'Your agents can drive Maestro itself.',
+		body: [
+			'Your agents know about maestro-cli and can use it to open files, browser tabs, or terminals, dispatch work to another agent, create an agent, or launch an Auto Run.',
+			'You can let one agent hand a job to the fleet without copying anything between windows.',
+		],
+		icon: 'Terminal',
+		docsSlug: 'cli',
+		cli: 'maestro-cli dispatch <agent> "..." --background',
+	},
+	{
+		id: 'git-worktrees',
+		title: 'Git Worktrees',
+		headline: 'Give every agent its own branch and its own checkout.',
+		body: [
+			'You can give each worktree agent an isolated checkout on its own branch, so two agents can work in the same repository at once without stepping on each other.',
+			"When the work is done, ask your agent to commit it. Use the agent's git pill to review the diff or open a pull request.",
+		],
+		icon: 'GitBranch',
+		docsSlug: 'git-worktrees',
+	},
+	{
+		id: 'command-modes',
+		title: 'Command Mode',
+		headline: 'The composer is a shell too.',
+		body: [
+			"Type ! in an empty composer to run a shell command in your agent's working directory without leaving the conversation.",
+			'Press ! again on an empty command line for AI command mode: describe what you want and get a command back to review before it runs.',
+			'You can complete paths with Tab, exactly like a terminal.',
+		],
+		icon: 'ChevronRightSquare',
+		docsSlug: 'general-usage',
+		spotlightSelector: '[data-tour="input-area"]',
+	},
+	{
+		id: 'execution-queue',
+		title: 'Execution Queue',
+		headline: 'Do not wait for the agent to finish before you type.',
+		body: [
+			'Send while an agent is busy and your message queues instead of bouncing. Queue several and they run in order, each into the tab you aimed it at.',
+			'You can use the queue browser to reorder, hold, or edit queued messages before they reach the model.',
+		],
+		icon: 'ListOrdered',
+		surface: 'queue-browser',
+		shortcutId: 'executionQueue',
+	},
 ];
 
 export const PINNED_TIP_IDS: readonly string[] = [
