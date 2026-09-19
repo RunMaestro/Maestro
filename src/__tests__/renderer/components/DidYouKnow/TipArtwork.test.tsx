@@ -1,5 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import * as icons from 'lucide-react';
 import { DID_YOU_KNOW_TIPS } from '../../../../shared/didYouKnow';
 import { TIP_ART, TipArtwork } from '../../../../renderer/components/DidYouKnow/TipArtwork';
 import frameSrc from '../../../../renderer/assets/did-you-know-frame.png';
@@ -8,13 +9,32 @@ import { createMockTheme, mockTheme } from '../../../helpers/mockTheme';
 vi.unmock('lucide-react');
 
 describe('TipArtwork', () => {
-	it.each(DID_YOU_KNOW_TIPS)('renders the registered icon for $id', (tip) => {
+	it.each(DID_YOU_KNOW_TIPS)('fills exactly one artwork branch for $id', (tip) => {
 		const { container } = render(<TipArtwork tip={tip} theme={mockTheme} />);
-		const icon = container.querySelector('svg')!;
-		expect(icon).toBeInTheDocument();
-		expect(icon).not.toHaveClass('lucide-lightbulb');
-		expect(icon).toHaveStyle({ height: '40%', width: 'auto' });
-		expect(container.querySelector('img')).toBeNull();
+		expect(container.children).toHaveLength(1);
+		if (tip.art) {
+			// Fail for a missing static import instead of accepting the runtime fallback.
+			expect(Object.prototype.hasOwnProperty.call(TIP_ART, tip.art)).toBe(true);
+			expect(TIP_ART[tip.art]).toBeTruthy();
+			expect(container.querySelectorAll('img')).toHaveLength(1);
+			expect(container.querySelector('img')).toHaveAttribute('src', TIP_ART[tip.art]);
+			expect(container.querySelector('img')).toHaveClass('object-cover');
+			expect(container.querySelector('svg')).toBeNull();
+		} else {
+			const ExpectedIcon = icons[tip.icon as keyof typeof icons] as icons.LucideIcon;
+			expect(ExpectedIcon).toBeDefined();
+			const expected = render(<ExpectedIcon style={{ height: '40%', width: 'auto' }} />);
+			expect(container.querySelectorAll('svg')).toHaveLength(1);
+			expect(container.querySelector('svg')?.outerHTML).toBe(
+				expected.container.querySelector('svg')?.outerHTML
+			);
+			expect(container.querySelector('img')).toBeNull();
+		}
+		// Spotlight tips retain a plate inside the frame before and after activation.
+		if (tip.spotlightSelector) {
+			expect(tip.art).toBeUndefined();
+			expect(container.querySelector('svg')).toBeInTheDocument();
+		}
 	});
 
 	it.each(['UnknownIcon', 'constructor', 'toString'])('falls back for unknown icon %s', (icon) => {
