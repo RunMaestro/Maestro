@@ -1,8 +1,15 @@
-import { describe, expect, expectTypeOf, it } from 'vitest';
+import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { icons } from 'lucide-react';
-import { DID_YOU_KNOW_TIPS, PINNED_TIP_IDS } from '../../shared/didYouKnow';
+import {
+	buildTipOrder,
+	pickNextTip,
+	pickRandomTip,
+	getTipById,
+	DID_YOU_KNOW_TIPS,
+	PINNED_TIP_IDS,
+} from '../../shared/didYouKnow';
 import type { DidYouKnowTip } from '../../shared/didYouKnow';
 import { UI_SURFACES } from '../../shared/uiSurfaces';
 import type { UiSurfaceEncoreFlag } from '../../shared/uiSurfaces';
@@ -71,5 +78,97 @@ describe('Did You Know tip model', () => {
 			expect(surface?.encore).toBe(tip.encore);
 			expect(surface?.shortcutId).toBe(tip.shortcutId);
 		}
+	});
+});
+
+describe('Did You Know ordering and selection', () => {
+	const order = Object.freeze([...DID_YOU_KNOW_TIPS]);
+	const allSeen = Object.freeze(order.map((tip) => tip.id));
+
+	it('uses the default registry and restores editorial order from a reversed catalog', () => {
+		expect(buildTipOrder(42)).toEqual(order);
+		expect(buildTipOrder(42, [...order].reverse())).toEqual(order);
+	});
+
+	it('skips retired pins and handles empty catalogs', () => {
+		expect(buildTipOrder(42, [order[4], order[1]])).toEqual([order[1], order[4]]);
+		expect(buildTipOrder(42, [])).toEqual([]);
+	});
+
+	it('keeps pins first and deterministically shuffles the rest without mutating inputs', () => {
+		const rest = Array.from({ length: 8 }, (_, index) => ({ ...order[0], id: `extra-${index}` }));
+		const catalog = Object.freeze([...rest, ...order].reverse());
+		const before = [...catalog];
+		const first = buildTipOrder(42, catalog);
+		expect(first.slice(0, order.length)).toEqual(order);
+		expect(first).toEqual(buildTipOrder(42, catalog));
+		expect(first.slice(order.length)).not.toEqual(buildTipOrder(99, catalog).slice(order.length));
+		expect(new Set(first)).toEqual(new Set(catalog));
+		expect(first).toHaveLength(catalog.length);
+		expect(catalog).toEqual(before);
+	});
+
+	it('selects the first unseen tip regardless of afterId or stale seen ids', () => {
+		const seen = Object.freeze(['retired-tip', order[0].id, order[0].id]);
+		expect(pickNextTip(order, seen, order[3].id)).toBe(order[1]);
+		expect(pickNextTip(order, [], order[3].id)).toBe(order[0]);
+	});
+
+	it.each([
+		[undefined, 0],
+		['retired-tip', 0],
+		[allSeen[1], 2],
+		[allSeen[4], 0],
+	])('continues after %s when every tip has been seen', (afterId, index) => {
+		expect(pickNextTip(order, allSeen, afterId)).toBe(order[index]);
+	});
+
+	it('returns null only for an empty next-tip order, and wraps a single tip', () => {
+		expect(pickNextTip([], allSeen, allSeen[0])).toBeNull();
+		expect(pickNextTip([order[0]], allSeen, allSeen[0])).toBe(order[0]);
+	});
+
+	it.each([
+		[0, 1],
+		[0.5, 2],
+		[0.999999, 3],
+	])('samples unseen tips with random value %s', (value, index) => {
+		const random = vi.fn(() => value);
+		const seen = Object.freeze([allSeen[0], allSeen[4], 'retired-tip']);
+		expect(pickRandomTip(order, seen, random)).toBe(order[index]);
+		expect(random).toHaveBeenCalledOnce();
+	});
+
+	it.each([0, 0.5, 0.999999])('samples all tips after completion with random value %s', (value) => {
+		expect(pickRandomTip(order, allSeen, () => value)).toBe(
+			order[Math.floor(value * order.length)]
+		);
+	});
+
+	it('handles empty and single-tip random selections', () => {
+		const random = vi.fn(() => 0.5);
+		expect(pickRandomTip([], [], random)).toBeNull();
+		expect(random).not.toHaveBeenCalled();
+		expect(pickRandomTip([order[0]], [], random)).toBe(order[0]);
+		expect(pickRandomTip([order[0]], allSeen, random)).toBe(order[0]);
+	});
+
+	it('uses ambient randomness by default', () => {
+		const random = vi.spyOn(Math, 'random').mockReturnValue(0);
+		try {
+			expect(pickRandomTip(order, [])).toBe(order[0]);
+			expect(random).toHaveBeenCalledOnce();
+		} finally {
+			random.mockRestore();
+		}
+	});
+
+	it('looks up ids in the default registry or only in the supplied catalog', () => {
+		expect(getTipById(order[0].id)).toBe(order[0]);
+		const custom = { ...order[0], title: 'Custom catalog tip' };
+		expect(getTipById(custom.id, [custom])).toBe(custom);
+		expect(getTipById(order[1].id, [custom])).toBeUndefined();
+		expect(getTipById('retired-tip')).toBeUndefined();
+		expect(getTipById(order[0].id, [])).toBeUndefined();
 	});
 });
