@@ -78,6 +78,9 @@ describe('useSettings', () => {
 			ungroupedCollapsed: false,
 			groupChatsExpanded: true,
 			tourCompleted: false,
+			didYouKnowEnabled: true,
+			didYouKnowSeenTipIds: [],
+			didYouKnowSeed: 0,
 			firstAutoRunCompleted: false,
 			onboardingStats: DEFAULT_ONBOARDING_STATS,
 			leaderboardRegistration: null,
@@ -1331,7 +1334,7 @@ describe('useSettings', () => {
 
 		it('should reload settings when system resumes from sleep', async () => {
 			// Capture the callback passed to onSystemResume
-			let resumeCallback: (() => void) | undefined;
+			let resumeCallback: Parameters<typeof window.maestro.app.onSystemResume>[0] | undefined;
 			vi.mocked(window.maestro.app.onSystemResume).mockImplementation((cb) => {
 				resumeCallback = cb;
 				return () => {};
@@ -1356,7 +1359,7 @@ describe('useSettings', () => {
 
 			// Trigger system resume
 			await act(async () => {
-				resumeCallback?.();
+				resumeCallback?.({ sleptMs: 1000 });
 				// Allow async operations to complete
 				await new Promise((resolve) => setTimeout(resolve, 0));
 			});
@@ -1461,6 +1464,64 @@ describe('useSettings', () => {
 
 			// Should return currentBadgeLevel when lastAcknowledged is undefined/0
 			expect(result.current.getUnacknowledgedBadgeLevel()).toBe(3);
+		});
+	});
+
+	describe('Did You Know settings', () => {
+		it('should expose discovery defaults', async () => {
+			const { result } = renderHook(() => useSettings());
+			await waitForSettingsLoaded(result);
+
+			expect(result.current.didYouKnowEnabled).toBe(true);
+			expect(result.current.didYouKnowSeenTipIds).toEqual([]);
+			expect(result.current.didYouKnowSeed).toBe(0);
+		});
+
+		it('should expose saved discovery settings', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				didYouKnowEnabled: false,
+				didYouKnowSeenTipIds: ['maestro-cue'],
+				didYouKnowSeed: 42,
+			});
+			const { result } = renderHook(() => useSettings());
+			await waitForSettingsLoaded(result);
+
+			expect(result.current.didYouKnowEnabled).toBe(false);
+			expect(result.current.didYouKnowSeenTipIds).toEqual(['maestro-cue']);
+			expect(result.current.didYouKnowSeed).toBe(42);
+		});
+
+		it('should update subscribers and persist discovery changes and resets', async () => {
+			const { result } = renderHook(() => useSettings());
+			await waitForSettingsLoaded(result);
+
+			act(() => {
+				result.current.setDidYouKnowEnabled(false);
+				result.current.setDidYouKnowSeenTipIds(['maestro-cue']);
+				result.current.setDidYouKnowSeed(42);
+			});
+
+			expect(result.current.didYouKnowEnabled).toBe(false);
+			expect(result.current.didYouKnowSeenTipIds).toEqual(['maestro-cue']);
+			expect(result.current.didYouKnowSeed).toBe(42);
+			expect(window.maestro.settings.set).toHaveBeenCalledWith('didYouKnowEnabled', false);
+			expect(window.maestro.settings.set).toHaveBeenCalledWith('didYouKnowSeenTipIds', [
+				'maestro-cue',
+			]);
+			expect(window.maestro.settings.set).toHaveBeenCalledWith('didYouKnowSeed', 42);
+
+			act(() => {
+				result.current.setDidYouKnowEnabled(true);
+				result.current.setDidYouKnowSeenTipIds([]);
+				result.current.setDidYouKnowSeed(0);
+			});
+
+			expect(result.current.didYouKnowEnabled).toBe(true);
+			expect(result.current.didYouKnowSeenTipIds).toEqual([]);
+			expect(result.current.didYouKnowSeed).toBe(0);
+			expect(window.maestro.settings.set).toHaveBeenCalledWith('didYouKnowEnabled', true);
+			expect(window.maestro.settings.set).toHaveBeenCalledWith('didYouKnowSeenTipIds', []);
+			expect(window.maestro.settings.set).toHaveBeenCalledWith('didYouKnowSeed', 0);
 		});
 	});
 
