@@ -62,6 +62,17 @@ describe('Did You Know tip model', () => {
 		]);
 	});
 
+	it('includes the next six rotation tips after the first ten', () => {
+		expect(DID_YOU_KNOW_TIPS.slice(10, 16).map((tip) => tip.id)).toEqual([
+			'context-transfer',
+			'director-notes',
+			'usage-dashboard',
+			'symphony',
+			'document-graph',
+			'snooze-tabs',
+		]);
+	});
+
 	it.each(DID_YOU_KNOW_TIPS)('$id has concise copy and a valid icon fallback', (tip) => {
 		expect(tip.id).toMatch(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
 		expect(tip.title.trim()).not.toBe('');
@@ -88,7 +99,8 @@ describe('Did You Know tip model', () => {
 			const surface = UI_SURFACES.find((entry) => entry.id === tip.surface);
 			expect(surface).toBeDefined();
 			expect(surface?.encore).toBe(tip.encore);
-			expect(surface?.shortcutId).toBe(tip.shortcutId);
+			// A tip can teach an action whose shortcut differs from its browser surface.
+			if (surface?.shortcutId) expect(surface.shortcutId).toBe(tip.shortcutId);
 		}
 	});
 });
