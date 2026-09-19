@@ -5,6 +5,7 @@ import { useKeyboardShortcutHelpers } from '../../../renderer/hooks/keyboard/use
 import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS } from '../../../renderer/constants/shortcuts';
 import type { Shortcut } from '../../../renderer/types';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { buildTipOrder } from '../../../shared/didYouKnow';
 import { FONT_ZOOM_MAX, FONT_ZOOM_MIN } from '../../../shared/typography';
 import { useModalStore } from '../../../renderer/stores/modalStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
@@ -5000,9 +5001,11 @@ describe('useMainKeyboardHandler - openPromptComposer', () => {
 	});
 });
 
-// ============================================================================
+// =====================================================================});
+
 // Group chat Right Bar: Cmd+Shift+[ / Cmd+Shift+]
-// ============================================================================
+// =====================================================================});
+
 
 /**
  * A group chat has no AI tabs, so the tab-cycling chord is dead there. It walks
@@ -5596,4 +5599,61 @@ describe('group chat chords that must act on the room', () => {
 			expect(recordShortcutUsage).not.toHaveBeenCalled();
 		});
 	});
+});
+
+describe('useMainKeyboardHandler - didYouKnow', () => {
+	const initialSettings = useSettingsStore.getState();
+
+	afterEach(() => {
+		useModalStore.getState().closeModal('didYouKnow');
+		useSettingsStore.setState({
+			didYouKnowEnabled: initialSettings.didYouKnowEnabled,
+			didYouKnowSeed: initialSettings.didYouKnowSeed,
+			didYouKnowSeenTipIds: initialSettings.didYouKnowSeenTipIds,
+		});
+	});
+
+	it('ships unbound so existing chords remain available', () => {
+		expect(DEFAULT_SHORTCUTS.didYouKnow).toEqual({
+			id: 'didYouKnow',
+			label: 'Did You Know?',
+			keys: [],
+		});
+	});
+
+	it.each([false, true])(
+		'opens a current random tip and tracks usage with allSeen=%s',
+		(allSeen) => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			const recordShortcutUsage = vi.fn().mockReturnValue({ newLevel: null });
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isShortcut: (_event: KeyboardEvent, id: string) => id === 'didYouKnow',
+				recordShortcutUsage,
+			});
+			// Change settings after mounting: manual opens must use the latest seed and seen list.
+			const order = buildTipOrder(73);
+			const unseen = order[order.length - 1];
+			const seenIds = (allSeen ? order : order.slice(0, -1)).map((tip) => tip.id);
+			useSettingsStore.setState({
+				didYouKnowEnabled: false,
+				didYouKnowSeed: 73,
+				didYouKnowSeenTipIds: seenIds,
+			});
+			const event = new KeyboardEvent('keydown', { key: 'F8', cancelable: true });
+			act(() => {
+				window.dispatchEvent(event);
+			});
+
+			expect(event.defaultPrevented).toBe(true);
+			expect(useModalStore.getState().isOpen('didYouKnow')).toBe(true);
+			const data = useModalStore.getState().getData('didYouKnow');
+			if (allSeen) {
+				expect(order.map((tip) => tip.id)).toContain(data?.startTipId);
+			} else {
+				expect(data).toEqual({ startTipId: unseen.id });
+			}
+			expect(recordShortcutUsage).toHaveBeenCalledExactlyOnceWith('didYouKnow');
+			expect(useSettingsStore.getState().didYouKnowSeenTipIds).toEqual(seenIds);
+		}
+	);
 });
