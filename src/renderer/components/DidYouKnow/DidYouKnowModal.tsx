@@ -3,6 +3,9 @@ import { ArrowLeft, ArrowRight, Lightbulb } from 'lucide-react';
 import { resolveEncoreFeatures } from '../../../shared/encoreFeatureDefaults';
 import { resolveUiSurface } from '../../../shared/uiSurfaces';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
+import { useIsTopLayer } from '../../hooks/ui/useIsTopLayer';
+import { useEventListener } from '../../hooks/utils/useEventListener';
+import { isEditingTextTarget } from '../../utils/editableTarget';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useModalStore, type ModalId } from '../../stores/modalStore';
@@ -35,16 +38,16 @@ function DidYouKnowModalContent({ theme, startTipId, onClose }: DidYouKnowModalP
 	const fontFamily = useSettingsStore((s) => s.fontFamily);
 	useModalLayer(MODAL_PRIORITIES.DID_YOU_KNOW, 'Did You Know', onClose);
 
-	if (!tip) return null;
-	const surface = tip.surface ? resolveUiSurface(tip.surface) : null;
+	const isTopLayer = useIsTopLayer(MODAL_PRIORITIES.DID_YOU_KNOW);
+	const surface = tip?.surface ? resolveUiSurface(tip.surface) : null;
 	const enabledFeatures = resolveEncoreFeatures(encoreFeatures);
-	const needsEncore = tip.encore && !enabledFeatures[tip.encore];
+	const needsEncore = tip?.encore && !enabledFeatures[tip.encore];
 	// A tip may only offer a gated surface if this action can enable its gate.
 	const canOpenSurface =
 		surface &&
-		(!surface.encore || enabledFeatures[surface.encore] || surface.encore === tip.encore);
+		(!surface.encore || enabledFeatures[surface.encore] || surface.encore === tip?.encore);
 	const openSurface = () => {
-		if (!canOpenSurface) return;
+		if (!tip || !canOpenSurface) return;
 		if (tip.encore) {
 			const { encoreFeatures: currentFeatures, setEncoreFeatures } = useSettingsStore.getState();
 			if (!resolveEncoreFeatures(currentFeatures)[tip.encore]) {
@@ -54,6 +57,37 @@ function DidYouKnowModalContent({ theme, startTipId, onClose }: DidYouKnowModalP
 		onClose();
 		useModalStore.getState().openModal(surface.modal as ModalId);
 	};
+
+	useEventListener(
+		'keydown',
+		(event) => {
+			const e = event as KeyboardEvent;
+			if (
+				e.defaultPrevented ||
+				e.isComposing ||
+				e.metaKey ||
+				e.ctrlKey ||
+				e.altKey ||
+				e.shiftKey ||
+				isEditingTextTarget(e.target)
+			)
+				return;
+
+			if (e.key === 'ArrowRight') {
+				e.preventDefault();
+				goNext();
+			} else if (e.key === 'ArrowLeft') {
+				e.preventDefault();
+				if (canGoBack) goBack();
+			} else if (e.key === 'Enter' && canOpenSurface) {
+				e.preventDefault();
+				openSurface();
+			}
+		},
+		{ enabled: isTopLayer && !!tip }
+	);
+
+	if (!tip) return null;
 
 	return createPortal(
 		<div

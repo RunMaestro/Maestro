@@ -1,13 +1,22 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+	act,
+	cleanup,
+	fireEvent,
+	render,
+	renderHook,
+	screen,
+	waitFor,
+} from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DidYouKnowModal } from '../../../../renderer/components/DidYouKnow';
-import { LayerStackProvider } from '../../../../renderer/contexts/LayerStackContext';
+import { LayerStackProvider, useLayerStack } from '../../../../renderer/contexts/LayerStackContext';
 import { useModalStore } from '../../../../renderer/stores/modalStore';
 import * as uiSurfaces from '../../../../shared/uiSurfaces';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import { buildTipOrder } from '../../../../shared/didYouKnow';
 import { formatShortcutKeys } from '../../../../renderer/utils/shortcutFormatter';
 import { resetStore } from '../../../helpers';
+import { MODAL_PRIORITIES } from '../../../../renderer/constants/modalPriorities';
 import { mockTheme } from '../../../helpers/mockTheme';
 
 const order = buildTipOrder(42);
@@ -54,6 +63,103 @@ describe('DidYouKnowModal', () => {
 		fireEvent.click(back);
 		expect(screen.getByRole('heading', { name: order[0].title })).toBeInTheDocument();
 		expect(back).toBeDisabled();
+	});
+
+	it('navigates with arrows while bounding Back to this session', () => {
+		render(<DidYouKnowModal theme={mockTheme} isOpen onClose={vi.fn()} />, {
+			wrapper: LayerStackProvider,
+		});
+		fireEvent.keyDown(window, { key: 'ArrowLeft' });
+		expect(screen.getByRole('heading', { name: order[0].title })).toBeInTheDocument();
+		fireEvent.keyDown(window, { key: 'ArrowRight' });
+		expect(screen.getByRole('heading', { name: order[1].title })).toBeInTheDocument();
+		fireEvent.keyDown(window, { key: 'ArrowLeft' });
+		expect(screen.getByRole('heading', { name: order[0].title })).toBeInTheDocument();
+		fireEvent.keyDown(window, { key: 'ArrowRight' });
+		expect(screen.getByRole('heading', { name: order[1].title })).toBeInTheDocument();
+	});
+
+	it('uses Enter for the current primary action and leaves actionless tips alone', () => {
+		const openModal = vi.spyOn(useModalStore.getState(), 'openModal');
+		const onClose = vi.fn();
+		useSettingsStore.setState({
+			encoreFeatures: { ...useSettingsStore.getState().encoreFeatures, maestroCue: false },
+		});
+		render(<DidYouKnowModal theme={mockTheme} isOpen onClose={onClose} />, {
+			wrapper: LayerStackProvider,
+		});
+		fireEvent.keyDown(window, { key: 'ArrowRight' });
+		expect(screen.queryByRole('button', { name: /^(Open|Turn on) / })).toBeNull();
+		expect(fireEvent.keyDown(window, { key: 'Enter' })).toBe(true);
+		expect(openModal).not.toHaveBeenCalled();
+		fireEvent.keyDown(window, { key: 'ArrowLeft' });
+		expect(fireEvent.keyDown(window, { key: 'Enter' })).toBe(false);
+		expect(useSettingsStore.getState().encoreFeatures.maestroCue).toBe(true);
+		expect(onClose).toHaveBeenCalledOnce();
+		expect(openModal).toHaveBeenCalledExactlyOnceWith('cueModal');
+	});
+
+	it('yields arrows, Enter, and Escape to a higher layer, then resumes after removal', async () => {
+		const onClose = vi.fn();
+		const onEscape = vi.fn();
+		const { result } = renderHook(() => useLayerStack(), {
+			wrapper: ({ children }) => (
+				<LayerStackProvider>
+					<DidYouKnowModal theme={mockTheme} isOpen onClose={onClose} />
+					{children}
+				</LayerStackProvider>
+			),
+		});
+		let layerId: string;
+		act(() => {
+			layerId = result.current.registerLayer({
+				type: 'modal',
+				priority: MODAL_PRIORITIES.DID_YOU_KNOW + 1,
+				onEscape,
+				blocksLowerLayers: true,
+				capturesFocus: true,
+				focusTrap: 'none',
+			});
+		});
+		for (const key of ['ArrowLeft', 'ArrowRight', 'Enter']) {
+			expect(fireEvent.keyDown(window, { key })).toBe(true);
+		}
+		expect(screen.getByRole('heading', { name: order[0].title })).toBeInTheDocument();
+		fireEvent.keyDown(window, { key: 'Escape' });
+		await waitFor(() => expect(onEscape).toHaveBeenCalledOnce());
+		expect(onClose).not.toHaveBeenCalled();
+		act(() => result.current.unregisterLayer(layerId));
+		fireEvent.keyDown(window, { key: 'ArrowRight' });
+		expect(screen.getByRole('heading', { name: order[1].title })).toBeInTheDocument();
+	});
+
+	it('ignores modified, composing, prevented, and text-entry keys and cleans up on close', () => {
+		const onClose = vi.fn();
+		const { rerender } = render(<DidYouKnowModal theme={mockTheme} isOpen onClose={onClose} />, {
+			wrapper: LayerStackProvider,
+		});
+		for (const options of [
+			{ ctrlKey: true },
+			{ metaKey: true },
+			{ altKey: true },
+			{ shiftKey: true },
+			{ isComposing: true },
+		]) {
+			expect(fireEvent.keyDown(window, { key: 'ArrowRight', ...options })).toBe(true);
+		}
+		const prevented = new KeyboardEvent('keydown', { key: 'ArrowRight', cancelable: true });
+		prevented.preventDefault();
+		fireEvent(window, prevented);
+		const input = document.createElement('input');
+		screen.getByRole('dialog').append(input);
+		fireEvent.keyDown(input, { key: 'ArrowRight' });
+		fireEvent.keyDown(input, { key: 'Enter' });
+		expect(screen.getByRole('heading', { name: order[0].title })).toBeInTheDocument();
+		expect(onClose).not.toHaveBeenCalled();
+		rerender(<DidYouKnowModal theme={mockTheme} isOpen={false} onClose={onClose} />);
+		expect(fireEvent.keyDown(window, { key: 'ArrowRight' })).toBe(true);
+		expect(fireEvent.keyDown(window, { key: 'Enter' })).toBe(true);
+		expect(onClose).not.toHaveBeenCalled();
 	});
 
 	it('starts a new session with startTipId after closing and reopening', () => {
