@@ -1,5 +1,5 @@
 import type React from 'react';
-import type { ForceSendEligibility } from '../../utils/executionQueue';
+import type { ForceSendEligibility, SteerEligibility } from '../../utils/executionQueue';
 import type {
 	Session,
 	Theme,
@@ -149,6 +149,9 @@ export interface TerminalOutputProps {
 	forcedParallelEnabled?: boolean; // Whether forcedParallelExecution setting is on (gates Force Send button)
 	/** Full Force Send eligibility for a queued item - see QueuedItemsList. */
 	getForceSendContext?: (item: QueuedItem) => ForceSendEligibility | null;
+	/** Chat steering: eligibility for injecting a queued item into the running turn. */
+	getSteerContext?: (item: QueuedItem) => SteerEligibility | null;
+	onSteerQueuedItem?: (itemId: string) => void;
 	/**
 	 * Whether this chat view answers the global Force Send keyboard shortcut
 	 * (`maestro:triggerForceSendQueued`). The single view is the only chat on

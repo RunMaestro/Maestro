@@ -563,7 +563,7 @@ describe('getSteerEligibility', () => {
 			...overrides,
 		} as Partial<Session>);
 	}
-	const item = { tabId: 'tab-1' };
+	const item = { tabId: 'tab-1', text: 'change course' };
 
 	it('allows steering a Claude interactive turn that is running', () => {
 		const eligibility = getSteerEligibility(steerableSession(), item);
@@ -630,6 +630,30 @@ describe('getSteerEligibility', () => {
 	it('refuses when the agent has no tabs at all', () => {
 		const session = steerableSession({ aiTabs: [], activeTabId: undefined });
 		expect(getSteerEligibility(session, item).blockedReason).toBe('no-target-tab');
+	});
+
+	it('refuses an item with nothing to type', () => {
+		// Steering TYPES into the composer, so an empty message has nothing to steer
+		// with.
+		expect(getSteerEligibility(steerableSession(), { tabId: 'tab-1', text: '   ' })).toEqual({
+			canSteer: false,
+			blockedReason: 'nothing-to-type',
+		});
+	});
+
+	it('refuses an item carrying images rather than silently dropping them', () => {
+		// Images reach a maestro-p turn as `@/path` mentions translated from a
+		// stream-json envelope on stdin, and stdin is long closed once a turn is
+		// running - there is no way to attach a file mid-turn. Typing the text alone
+		// would discard what the user attached, so the item stays queued and sends
+		// intact when the turn ends.
+		expect(
+			getSteerEligibility(steerableSession(), {
+				tabId: 'tab-1',
+				text: 'use this screenshot',
+				images: ['maestro-image://store/abc.png'],
+			})
+		).toEqual({ canSteer: false, blockedReason: 'has-images' });
 	});
 
 	it('is mutually exclusive with Force Send', () => {

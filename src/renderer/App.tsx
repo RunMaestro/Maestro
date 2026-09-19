@@ -222,7 +222,12 @@ import {
 	findUnreadSessionInDirection,
 	type UnreadNavDirection,
 } from './utils/tabHelpers';
-import { getForceSendEligibility, type ForceSendEligibility } from './utils/executionQueue';
+import {
+	getForceSendEligibility,
+	getSteerEligibility,
+	type ForceSendEligibility,
+	type SteerEligibility,
+} from './utils/executionQueue';
 // validateNewSession moved to useSymphonyContribution, useSessionCrud hooks
 // formatLogsForClipboard moved to useTabExportHandlers hook
 // getSlashCommandDescription moved to useWizardHandlers
@@ -1959,6 +1964,16 @@ function MaestroConsoleInner() {
 		});
 	}, []);
 
+	// Chat steering's counterpart to getForceSendContext above, and read by the same
+	// surfaces for the same reason: one decision, computed once. Steering is the
+	// inverse condition (the target tab must be BUSY, not idle), so the two are
+	// mutually exclusive on any given card.
+	const getSteerContext = useCallback((item: QueuedItem): SteerEligibility | null => {
+		const session = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
+		if (!session) return null;
+		return getSteerEligibility(session, item);
+	}, []);
+
 	// This is used by context transfer to automatically send the transferred context to the agent
 	useEffect(() => {
 		if (!activeSession) return;
@@ -2485,6 +2500,7 @@ function MaestroConsoleInner() {
 		handleTogglePauseQueueItem,
 		handleEditQueueItem,
 		handleForceSendQueueItem,
+		handleSteerQueueItem,
 	} = useQueueHandlers({ processQueuedItem });
 
 	// Force Send from the inline chat list: the item always belongs to the active
@@ -2495,6 +2511,20 @@ function MaestroConsoleInner() {
 			if (sessionId) handleForceSendQueueItem(sessionId, itemId);
 		},
 		[handleForceSendQueueItem]
+	);
+
+	// Steering from the inline chat list: same shape as Force Send above, with the
+	// session pinned to the active agent.
+	const handleSteerQueuedItem = useCallback(
+		(itemId: string) => {
+			const sessionId = activeSessionIdRef.current;
+			if (!sessionId) return;
+			// Nothing here needs the result - the handler reports to the user with a
+			// toast - but the rejection still needs an owner so a dead channel cannot
+			// surface as an unhandled promise crash report.
+			void handleSteerQueueItem(sessionId, itemId);
+		},
+		[handleSteerQueueItem]
 	);
 
 	// Symphony contribution handler - extracted to useSymphonyContribution hook
@@ -2844,6 +2874,8 @@ function MaestroConsoleInner() {
 		handleForceSendQueuedItem,
 		forcedParallelEnabled: settings.forcedParallelExecution,
 		getForceSendContext,
+		getSteerContext,
+		handleSteerQueuedItem,
 		handleOpenQueueBrowser,
 
 		// Tab management handlers

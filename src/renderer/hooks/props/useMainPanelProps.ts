@@ -34,7 +34,7 @@ import type {
 } from '../../types/contextMerge';
 import type { FileNode } from '../../types/fileTree';
 import type { DocumentGenerationCallbacks } from '../../services/inlineWizardDocumentGeneration';
-import type { ForceSendEligibility } from '../../utils/executionQueue';
+import type { ForceSendEligibility, SteerEligibility } from '../../utils/executionQueue';
 import type { PublishTextAsGistOptions } from '../tabs/useTabExportHandlers';
 
 /**
@@ -155,6 +155,8 @@ export interface UseMainPanelPropsDeps {
 	forcedParallelEnabled: boolean;
 	/** Full Force Send eligibility for a queued item - see QueuedItemsList. */
 	getForceSendContext: (item: QueuedItem) => ForceSendEligibility | null;
+	getSteerContext: (item: QueuedItem) => SteerEligibility | null;
+	handleSteerQueuedItem: (itemId: string) => void;
 	handleOpenQueueBrowser: () => void;
 
 	// Tab management handlers
@@ -397,6 +399,8 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			onForceSendQueuedItem: deps.handleForceSendQueuedItem,
 			forcedParallelEnabled: deps.forcedParallelEnabled,
 			getForceSendContext: deps.getForceSendContext,
+			getSteerContext: deps.getSteerContext,
+			onSteerQueuedItem: deps.handleSteerQueuedItem,
 			onOpenQueueBrowser: deps.handleOpenQueueBrowser,
 			// Tab management handlers
 			onTabSelect: deps.handleTabSelect,
@@ -647,6 +651,8 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.handleForceSendQueuedItem,
 			deps.forcedParallelEnabled,
 			deps.getForceSendContext,
+			deps.getSteerContext,
+			deps.handleSteerQueuedItem,
 			deps.handleOpenQueueBrowser,
 			deps.handleTabSelect,
 			deps.handleTabClose,

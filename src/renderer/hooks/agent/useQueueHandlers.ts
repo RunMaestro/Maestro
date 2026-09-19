@@ -12,7 +12,8 @@
 
 import { useCallback } from 'react';
 import type { QueuedItem, QueuedItemEditPatch } from '../../types';
-import { aiTabFocusFields } from '../../utils/tabHelpers';
+import { aiTabFocusFields, resolveQueuedItemTarget } from '../../utils/tabHelpers';
+import { notifyToast } from '../../stores/notificationStore';
 import {
 	applyQueuedItemDispatch,
 	applyQueuedItemEdit,
@@ -48,6 +49,12 @@ export interface UseQueueHandlersReturn {
 	handleEditQueueItem: (sessionId: string, itemId: string, patch: QueuedItemEditPatch) => void;
 	/** Dispatch one queued item immediately, out of queue order */
 	handleForceSendQueueItem: (sessionId: string, itemId: string) => void;
+	/**
+	 * Steer a queued message into the turn ALREADY RUNNING on its tab, rather than
+	 * waiting for that turn to finish. Claude-interactive turns only - see
+	 * getSteerEligibility.
+	 */
+	handleSteerQueueItem: (sessionId: string, itemId: string) => Promise<void>;
 }
 
 // ============================================================================
@@ -188,6 +195,108 @@ export function useQueueHandlers({
 		[processQueuedItem]
 	);
 
+	// Steering: hand this message to the turn already in flight so claude can change
+	// course mid-task. The inverse of Force Send above - that one needs the tab IDLE
+	// and spawns a turn, this one needs it BUSY and types into the live TUI.
+	//
+	// Nothing here decides whether the turn CAN be steered. maestro-p owns that (it
+	// is the only party holding the TUI screen) and answers with a verdict; the UI's
+	// job is to act on the answer without ever losing the user's message.
+	const handleSteerQueueItem = useCallback(async (sessionId: string, itemId: string) => {
+		const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+		const item = session?.executionQueue?.find((i) => i.id === itemId);
+		if (!session || !item) return;
+
+		const target = resolveQueuedItemTarget(session, item);
+		if (!target) return;
+		const processKey = `${sessionId}-ai-${target.tabId}`;
+
+		const steer = window.maestro?.process?.steer;
+		if (!steer) {
+			// Web renderer, or a build without the bridge. Say so rather than leaving
+			// the click silent.
+			notifyToast({
+				color: 'yellow',
+				title: 'Steering unavailable',
+				message: 'This client cannot steer a running turn.',
+			});
+			return;
+		}
+
+		// Guarded by getSteerEligibility before the button renders; re-checked because
+		// this hook is also reachable from a surface that has not asked.
+		const text = item.text?.trim();
+		if (!text || item.images?.length) return;
+
+		const result = await steer(processKey, text);
+
+		// Delivered: claude has the text, so the queue must let go of it or the same
+		// message sends again when the turn ends. What claude DOES with it (absorbed
+		// into this turn, or run as a follow-up) arrives later on maestro-p's stdout
+		// and is not known here - see SteeringVerdict.
+		if (
+			result.verdict === 'delivered' ||
+			result.verdict === 'absorbed' ||
+			result.verdict === 'queued'
+		) {
+			setSessions((prev) =>
+				prev.map((s) =>
+					s.id === sessionId
+						? { ...s, executionQueue: s.executionQueue.filter((i) => i.id !== itemId) }
+						: s
+				)
+			);
+			notifyToast({
+				color: 'green',
+				title: 'Steered the running turn',
+				message: 'Claude received your message while it was working.',
+				sessionId,
+				tabId: target.tabId,
+			});
+			return;
+		}
+
+		// Refused: nothing was typed, so the message is still ours and stays queued
+		// exactly where it was. It will send normally when the turn ends.
+		if (result.verdict === 'refused') {
+			notifyToast({
+				color: 'yellow',
+				title: 'Could not steer this turn',
+				message: `${result.detail ?? 'Claude could not take the message right now.'} It stays queued.`,
+				sessionId,
+				tabId: target.tabId,
+			});
+			return;
+		}
+
+		// Unknown: the text MAY have been typed and we never got confirmation. Both
+		// automatic choices are wrong here - dropping the item can lose a message the
+		// user wrote, and leaving it queued sends it a second time without asking. So
+		// PAUSE it: the message is kept, nothing sends behind the user's back, and the
+		// card's own play button is the one-click resolution.
+		setSessions((prev) =>
+			prev.map((s) =>
+				s.id === sessionId
+					? {
+							...s,
+							executionQueue: s.executionQueue.map((i) =>
+								i.id === itemId ? { ...i, paused: true } : i
+							),
+						}
+					: s
+			)
+		);
+		notifyToast({
+			color: 'orange',
+			title: 'Steering result unconfirmed',
+			message:
+				'Claude may or may not have received the message, so it has been paused rather than sent twice. Resume it if the agent never answered it.',
+			dismissible: true,
+			sessionId,
+			tabId: target.tabId,
+		});
+	}, []);
+
 	return {
 		handleRemoveQueueItem,
 		handleSwitchQueueSession,
@@ -195,5 +304,6 @@ export function useQueueHandlers({
 		handleTogglePauseQueueItem,
 		handleEditQueueItem,
 		handleForceSendQueueItem,
+		handleSteerQueueItem,
 	};
 }

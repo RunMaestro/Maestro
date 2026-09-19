@@ -440,7 +440,9 @@ export type SteerBlockedReason =
 	| 'no-target-tab'
 	| 'tab-not-working'
 	| 'not-claude'
-	| 'api-token-source';
+	| 'api-token-source'
+	| 'nothing-to-type'
+	| 'has-images';
 
 export interface SteerEligibility {
 	canSteer: boolean;
@@ -480,7 +482,7 @@ export interface SteerEligibility {
  */
 export function getSteerEligibility(
 	session: Session,
-	item: Pick<QueuedItem, 'tabId'>
+	item: Pick<QueuedItem, 'tabId' | 'text' | 'images'>
 ): SteerEligibility {
 	if (!resolveQueuedItemTarget(session, item)) {
 		return { canSteer: false, blockedReason: 'no-target-tab' };
@@ -495,6 +497,16 @@ export function getSteerEligibility(
 	if (session.claudeInteractive?.mode !== 'interactive') {
 		return { canSteer: false, blockedReason: 'api-token-source' };
 	}
+	// Steering TYPES text into the composer, so an item with nothing to type has
+	// nothing to steer with.
+	if (!item.text?.trim()) return { canSteer: false, blockedReason: 'nothing-to-type' };
+	// An item carrying images cannot be steered without LOSING them. Images reach a
+	// maestro-p turn as `@/path` mentions translated from a stream-json envelope on
+	// stdin (see stream-json-input.ts), and stdin is long closed by the time a turn is
+	// running - there is no way to attach a file to a turn already in flight. Typing
+	// the text alone would silently discard what the user attached, so the item stays
+	// queued and sends intact when the turn ends.
+	if (item.images?.length) return { canSteer: false, blockedReason: 'has-images' };
 	return { canSteer: true };
 }
 

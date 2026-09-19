@@ -6,14 +6,19 @@ import {
 	Copy,
 	Check,
 	Hammer,
+	Navigation,
 	Pause,
 	Play,
 	Pencil,
 	ImageIcon,
 } from 'lucide-react';
 import type { Theme, QueuedItem, QueuedItemEditPatch } from '../types';
-import type { BusyTabSummary, ForceSendEligibility } from '../utils/executionQueue';
-import { getForceSendTitle, shouldOfferForceSend } from '../utils/executionQueue';
+import type {
+	BusyTabSummary,
+	ForceSendEligibility,
+	SteerEligibility,
+} from '../utils/executionQueue';
+import { getForceSendTitle, shouldOfferForceSend, shouldOfferSteer } from '../utils/executionQueue';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { displayImageSrc } from '../utils/sessionImageSrc';
 import { Modal, ModalFooter } from './ui/Modal';
@@ -58,6 +63,12 @@ interface QueuedItemsListProps {
 	// to bypass the cross-tab queue wait for an individual queued item.
 	forcedParallelEnabled?: boolean;
 	onForceSendQueuedItem?: (itemId: string) => void;
+	// Chat steering: hand this message to the turn ALREADY RUNNING on its tab
+	// instead of waiting for that turn to finish. Only offered for a Claude turn on
+	// the interactive token source, which is the one shape with a live PTY to type
+	// into - see getSteerEligibility.
+	getSteerContext?: (item: QueuedItem) => SteerEligibility | null;
+	onSteerQueuedItem?: (itemId: string) => void;
 	// Lookup for tab state/name used by the Force Send button + confirm modal.
 	// Returns the tab's current busy state, the other tabs currently busy in the
 	// same agent, and the item's own target tab display name.
@@ -94,6 +105,8 @@ export const QueuedItemsList = memo(
 		activeTabId,
 		forcedParallelEnabled = false,
 		onForceSendQueuedItem,
+		getSteerContext,
+		onSteerQueuedItem,
 		getForceSendContext,
 		shortcutEnabled = true,
 		onOpenLightbox,
@@ -268,6 +281,16 @@ export const QueuedItemsList = memo(
 						const forceSendTitle = forceSendContext
 							? getForceSendTitle(forceSendContext)
 							: undefined;
+						// Steering is Force Send's mirror image: it needs the target tab BUSY
+						// where force send needs it idle, so at most one of these buttons can
+						// ever be eligible on the same card (pinned by a test in
+						// executionQueue.test.ts). Commands are excluded - a shell command is
+						// not something an agent can be steered with.
+						const steerContext =
+							onSteerQueuedItem && getSteerContext && item.type !== 'command'
+								? getSteerContext(item)
+								: null;
+						const showSteerButton = shouldOfferSteer(steerContext);
 
 						return (
 							<React.Fragment key={item.id}>
@@ -303,6 +326,8 @@ export const QueuedItemsList = memo(
 									canForceSend={canForceSend}
 									forceSendTitle={forceSendTitle}
 									onForceSend={() => setForceSendConfirmId(item.id)}
+									showSteerButton={showSteerButton}
+									onSteer={() => onSteerQueuedItem?.(item.id)}
 									onOpenLightbox={onOpenLightbox}
 									onTogglePause={
 										onTogglePauseQueuedItem ? () => onTogglePauseQueuedItem(item.id) : undefined
@@ -451,6 +476,9 @@ interface QueuedItemRowProps {
 	/** Why it can or cannot be forced. Shown as the button's tooltip. */
 	forceSendTitle?: string;
 	onForceSend: () => void;
+	/** Chat steering: offer to inject this message into the turn already running. */
+	showSteerButton: boolean;
+	onSteer: () => void;
 	onTogglePause?: () => void;
 	onRequestRemove: () => void;
 	onOpenLightbox?: (image: string, contextImages?: string[], source?: 'staged' | 'history') => void;
@@ -476,6 +504,8 @@ function QueuedItemRow({
 	canForceSend,
 	forceSendTitle,
 	onForceSend,
+	showSteerButton,
+	onSteer,
 	onTogglePause,
 	onRequestRemove,
 	onOpenLightbox,
@@ -678,6 +708,20 @@ function QueuedItemRow({
 							>
 								<Hammer className="w-3.5 h-3.5" />
 								Force Send
+							</button>
+						)}
+						{showSteerButton && (
+							<button
+								onClick={onSteer}
+								className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium whitespace-nowrap transition-opacity hover:opacity-80"
+								style={{
+									backgroundColor: theme.colors.accent + '33',
+									color: theme.colors.accent,
+								}}
+								title="Send this into the turn that is running now, so Claude can change course mid-task"
+							>
+								<Navigation className="w-3.5 h-3.5" />
+								Steer
 							</button>
 						)}
 					</div>

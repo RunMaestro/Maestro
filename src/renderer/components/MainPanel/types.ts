@@ -13,7 +13,7 @@ import type {
 	CopyContextOptions,
 	PublishTextAsGistOptions,
 } from '../../hooks/tabs/useTabExportHandlers';
-import type { ForceSendEligibility } from '../../utils/executionQueue';
+import type { ForceSendEligibility, SteerEligibility } from '../../utils/executionQueue';
 
 export interface SlashCommand {
 	command: string;
@@ -160,6 +160,8 @@ export interface MainPanelProps {
 	 * Execution Queue modal does instead of re-deriving one from a subset.
 	 */
 	getForceSendContext?: (item: QueuedItem) => ForceSendEligibility | null;
+	getSteerContext?: (item: QueuedItem) => SteerEligibility | null;
+	onSteerQueuedItem?: (itemId: string) => void;
 	onOpenQueueBrowser?: () => void;
 
 	// Auto mode props
