@@ -17,6 +17,8 @@ import { buildTipOrder } from '../../../../shared/didYouKnow';
 import { formatShortcutKeys } from '../../../../renderer/utils/shortcutFormatter';
 import { resetStore } from '../../../helpers';
 import { MODAL_PRIORITIES } from '../../../../renderer/constants/modalPriorities';
+import { useSessionStore } from '../../../../renderer/stores/sessionStore';
+import { createMockSession } from '../../../helpers/mockSession';
 import { mockTheme } from '../../../helpers/mockTheme';
 
 const order = buildTipOrder(42);
@@ -25,12 +27,86 @@ describe('DidYouKnowModal', () => {
 	beforeEach(() => {
 		resetStore(useSettingsStore);
 		resetStore(useModalStore);
+		resetStore(useSessionStore);
+		useSessionStore.setState({
+			sessions: [createMockSession({ id: 'reading-session', browserTabs: [] })],
+			activeSessionId: 'reading-session',
+		});
 		useSettingsStore.setState({ didYouKnowSeed: 42 });
 		vi.clearAllMocks();
 	});
 	afterEach(() => {
 		cleanup();
 		vi.restoreAllMocks();
+	});
+
+	it('docks a nonmodal compact controller and restores the gallery without closing docs', () => {
+		const { result } = renderHook(() => useLayerStack(), {
+			wrapper: ({ children }) => (
+				<LayerStackProvider>
+					<DidYouKnowModal theme={mockTheme} isOpen onClose={vi.fn()} />
+					{children}
+				</LayerStackProvider>
+			),
+		});
+		const dialog = screen.getByRole('dialog');
+		expect(result.current.getTopLayer()).toMatchObject({
+			blocksLowerLayers: true,
+			capturesFocus: true,
+		});
+		fireEvent.click(screen.getByRole('button', { name: 'Read more' }));
+		expect(dialog).toHaveAttribute('aria-modal', 'false');
+		expect(dialog.parentElement).toHaveAttribute('data-reading', 'true');
+		expect(result.current.layerCount).toBe(1);
+		expect(result.current.getTopLayer()).toMatchObject({
+			blocksLowerLayers: false,
+			capturesFocus: false,
+			focusTrap: 'none',
+			blocksAppShortcuts: false,
+		});
+		expect(dialog.querySelector('img')).toBeNull();
+		expect(screen.getByText(order[0].headline)).toBeInTheDocument();
+		expect(screen.queryByText(order[0].body[0])).toBeNull();
+		expect(screen.queryByRole('button', { name: "Don't show this again" })).toBeNull();
+		expect(screen.queryByRole('button', { name: /^(Open|Turn on) / })).toBeNull();
+		fireEvent.click(screen.getByRole('button', { name: 'Next tip' }));
+		expect(screen.getByText(`2 of ${order.length}`)).toBeInTheDocument();
+		expect(useSessionStore.getState().sessions[0].browserTabs![0].title).toBe(order[1].title);
+		fireEvent.click(screen.getByRole('button', { name: 'Previous tip' }));
+		const tabs = useSessionStore.getState().sessions[0].browserTabs;
+		fireEvent.click(screen.getByRole('button', { name: 'Back to tips' }));
+		expect(dialog).toHaveAttribute('aria-modal', 'true');
+		expect(dialog.parentElement).toHaveAttribute('data-reading', 'false');
+		expect(dialog.querySelector('img')).not.toBeNull();
+		expect(screen.getByText(order[0].body[0])).toBeInTheDocument();
+		expect(result.current.getTopLayer()).toMatchObject({
+			blocksLowerLayers: true,
+			capturesFocus: true,
+		});
+		expect(useSessionStore.getState().sessions[0].browserTabs).toBe(tabs);
+	});
+
+	it('keeps docked controls keyboard accessible without consuming page keys or native button activation', async () => {
+		const onClose = vi.fn();
+		render(<DidYouKnowModal theme={mockTheme} isOpen onClose={onClose} />, {
+			wrapper: LayerStackProvider,
+		});
+		const readMore = screen.getByRole('button', { name: 'Read more' });
+		expect(fireEvent.keyDown(readMore, { key: 'Enter' })).toBe(true);
+		fireEvent.click(readMore);
+		expect(fireEvent.keyDown(window, { key: 'ArrowRight' })).toBe(true);
+		expect(screen.getByRole('heading', { name: order[0].title })).toBeInTheDocument();
+		const next = screen.getByRole('button', { name: 'Next tip' });
+		next.focus();
+		expect(next).toHaveFocus();
+		fireEvent.keyDown(next, { key: 'ArrowRight' });
+		expect(screen.getByRole('heading', { name: order[1].title })).toBeInTheDocument();
+		expect(fireEvent.keyDown(next, { key: 'Enter' })).toBe(true);
+		expect(fireEvent.keyDown(next, { key: ' ' })).toBe(true);
+		fireEvent.keyDown(next, { key: 'ArrowLeft' });
+		expect(screen.getByRole('heading', { name: order[0].title })).toBeInTheDocument();
+		fireEvent.keyDown(window, { key: 'Escape' });
+		await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
 	});
 
 	it('does not render, persist seen tips, or capture Escape while closed', () => {
@@ -267,7 +343,7 @@ describe('DidYouKnowModal', () => {
 		});
 		expect(screen.getByText('Encore')).toBeInTheDocument();
 		expect(screen.getByRole('button', { name: 'Turn on Maestro Cue' })).toBeEnabled();
-		expect(screen.getByRole('button', { name: 'Read more' })).toBeDisabled();
+		expect(screen.getByRole('button', { name: 'Read more' })).toBeEnabled();
 		const binding = { id: 'openCue', label: 'Cue', keys: ['Alt', 'j'] };
 		act(() =>
 			useSettingsStore.setState({

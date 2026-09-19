@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { DID_YOU_KNOW_TIPS, type DidYouKnowTip } from '../../../shared/didYouKnow';
 import './tipTransition.css';
 import { createPortal } from 'react-dom';
@@ -32,9 +32,19 @@ export function DidYouKnowModal(props: DidYouKnowModalProps) {
 }
 
 function DidYouKnowModalContent({ theme, startTipId, onClose }: DidYouKnowModalProps) {
-	const { tip, index, total, canGoBack, goNext, goBack, dismissForever } = useDidYouKnowRotation({
-		startTipId,
-	});
+	const {
+		tip,
+		index,
+		total,
+		canGoBack,
+		goNext,
+		goBack,
+		dismissForever,
+		isReading,
+		openDocs,
+		exitReading,
+	} = useDidYouKnowRotation({ startTipId });
+	const cardRef = useRef<HTMLElement>(null);
 	const [transition, setTransition] = useState<{
 		previous: DidYouKnowTip | null;
 		direction: 'next' | 'back';
@@ -51,7 +61,12 @@ function DidYouKnowModalContent({ theme, startTipId, onClose }: DidYouKnowModalP
 	const tabShortcuts = useSettingsStore((s) => s.tabShortcuts);
 	const encoreFeatures = useSettingsStore((s) => s.encoreFeatures);
 	const fontFamily = useSettingsStore((s) => s.fontFamily);
-	useModalLayer(MODAL_PRIORITIES.DID_YOU_KNOW, 'Did You Know', onClose);
+	useModalLayer(MODAL_PRIORITIES.DID_YOU_KNOW, 'Did You Know', onClose, {
+		blocksLowerLayers: !isReading,
+		capturesFocus: !isReading,
+		focusTrap: isReading ? 'none' : 'strict',
+		blocksAppShortcuts: !isReading,
+	});
 
 	const isTopLayer = useIsTopLayer(MODAL_PRIORITIES.DID_YOU_KNOW);
 	const surface = tip?.surface ? resolveUiSurface(tip.surface) : null;
@@ -78,6 +93,7 @@ function DidYouKnowModalContent({ theme, startTipId, onClose }: DidYouKnowModalP
 		(event) => {
 			const e = event as KeyboardEvent;
 			if (
+				(isReading && (!(e.target instanceof Node) || !cardRef.current?.contains(e.target))) ||
 				e.defaultPrevented ||
 				e.isComposing ||
 				e.metaKey ||
@@ -94,7 +110,12 @@ function DidYouKnowModalContent({ theme, startTipId, onClose }: DidYouKnowModalP
 			} else if (e.key === 'ArrowLeft') {
 				e.preventDefault();
 				navigate('back');
-			} else if (e.key === 'Enter' && canOpenSurface) {
+			} else if (
+				e.key === 'Enter' &&
+				!isReading &&
+				canOpenSurface &&
+				!(e.target instanceof Element && e.target.closest('button, a, [role="button"]'))
+			) {
 				e.preventDefault();
 				openSurface();
 			}
@@ -106,14 +127,16 @@ function DidYouKnowModalContent({ theme, startTipId, onClose }: DidYouKnowModalP
 
 	return createPortal(
 		<div
-			className="fixed inset-0 flex items-center justify-center overflow-y-auto bg-black/60 p-4 select-none"
+			className="dyk-overlay fixed inset-0 select-none"
+			data-reading={isReading}
 			style={{ zIndex: MODAL_PRIORITIES.DID_YOU_KNOW }}
 		>
 			<section
+				ref={cardRef}
 				role="dialog"
-				aria-modal="true"
+				aria-modal={!isReading}
 				aria-label="Did You Know"
-				className="dyk-dialog my-auto w-full max-w-[760px] shrink-0 rounded-xl p-5 shadow-2xl"
+				className="dyk-dialog rounded-xl p-5 shadow-2xl"
 				style={{ backgroundColor: theme.colors.bgMain, color: theme.colors.textMain }}
 			>
 				<header className="flex items-center gap-2 text-sm">
@@ -124,69 +147,83 @@ function DidYouKnowModalContent({ theme, startTipId, onClose }: DidYouKnowModalP
 					</span>
 					<EscCloseButton theme={theme} onClose={onClose} />
 				</header>
-				<OrnateFrame className="my-4">
-					{outgoingTip && (
+				{!isReading && (
+					<OrnateFrame className="my-4">
+						{outgoingTip && (
+							<div
+								key={`out-${outgoingTip.id}`}
+								className="dyk-art dyk-exit"
+								data-direction={transition.direction}
+								aria-hidden
+							>
+								<TipArtwork tip={outgoingTip} theme={theme} />
+							</div>
+						)}
 						<div
-							key={`out-${outgoingTip.id}`}
-							className="dyk-art dyk-exit"
+							key={tip.id}
+							className={`dyk-art ${outgoingTip ? 'dyk-enter' : ''}`}
 							data-direction={transition.direction}
-							aria-hidden
 						>
-							<TipArtwork tip={outgoingTip} theme={theme} />
+							<TipArtwork tip={tip} theme={theme} />
 						</div>
-					)}
-					<div
-						key={tip.id}
-						className={`dyk-art ${outgoingTip ? 'dyk-enter' : ''}`}
-						data-direction={transition.direction}
-					>
-						<TipArtwork tip={tip} theme={theme} />
-					</div>
-				</OrnateFrame>
+					</OrnateFrame>
+				)}
 				{/* One grid cell sizes itself to the tallest placard at the actual width/font.
 				    Hidden cards remain in layout, but are inert and absent from the accessibility tree. */}
-				<div className="dyk-copy-stack">
-					{DID_YOU_KNOW_TIPS.map((entry) => {
-						const active = entry.id === tip.id;
-						const outgoing = outgoingTip && entry.id === outgoingTip.id;
-						return (
-							<div
-								key={entry.id}
-								data-tip-id={entry.id}
-								data-direction={transition.direction}
-								className={`dyk-copy ${active && outgoingTip ? 'dyk-enter' : outgoing ? 'dyk-exit' : ''}`}
-								style={{ visibility: active || outgoing ? undefined : 'hidden' }}
-								aria-hidden={!active || undefined}
-								{...(!active && { inert: '' as unknown as boolean })}
-							>
-								<TipCard
-									tip={entry}
-									theme={theme}
-									shortcuts={shortcuts}
-									tabShortcuts={tabShortcuts}
-									encoreFeatures={encoreFeatures}
-									fontFamily={fontFamily}
-								/>
-							</div>
-						);
-					})}
-				</div>
+				{isReading ? (
+					<div className="my-4 space-y-2 select-text">
+						<h2 className="text-lg font-semibold">{tip.title}</h2>
+						<p className="text-sm leading-relaxed">{tip.headline}</p>
+					</div>
+				) : (
+					<div className="dyk-copy-stack">
+						{DID_YOU_KNOW_TIPS.map((entry) => {
+							const active = entry.id === tip.id;
+							const outgoing = outgoingTip && entry.id === outgoingTip.id;
+							return (
+								<div
+									key={entry.id}
+									data-tip-id={entry.id}
+									data-direction={transition.direction}
+									className={`dyk-copy ${active && outgoingTip ? 'dyk-enter' : outgoing ? 'dyk-exit' : ''}`}
+									style={{ visibility: active || outgoing ? undefined : 'hidden' }}
+									aria-hidden={!active || undefined}
+									{...(!active && { inert: '' as unknown as boolean })}
+								>
+									<TipCard
+										tip={entry}
+										theme={theme}
+										shortcuts={shortcuts}
+										tabShortcuts={tabShortcuts}
+										encoreFeatures={encoreFeatures}
+										fontFamily={fontFamily}
+									/>
+								</div>
+							);
+						})}
+					</div>
+				)}
 				<footer className="dyk-footer mt-6 grid items-center gap-2 text-sm">
-					<button
-						type="button"
-						className="rounded py-2 text-xs hover:underline"
-						style={{ color: theme.colors.textDim }}
-						onClick={() => {
-							dismissForever();
-							onClose();
-						}}
-					>
-						Don't show this again
-					</button>
-					{/* Documentation and primary action wiring follow in subsequent tasks. */}
-					{tip.docsSlug && (
-						<button type="button" disabled className="dyk-docs rounded px-2 py-2 opacity-50">
-							Read more
+					{!isReading && (
+						<button
+							type="button"
+							className="rounded py-2 text-xs hover:underline"
+							style={{ color: theme.colors.textDim }}
+							onClick={() => {
+								dismissForever();
+								onClose();
+							}}
+						>
+							Don't show this again
+						</button>
+					)}
+					{(isReading || tip.docsSlug) && (
+						<button
+							type="button"
+							onClick={isReading ? exitReading : openDocs}
+							className="dyk-docs rounded px-2 py-2 hover:bg-white/10"
+						>
+							{isReading ? 'Back to tips' : 'Read more'}
 						</button>
 					)}
 					<button
@@ -208,7 +245,7 @@ function DidYouKnowModalContent({ theme, startTipId, onClose }: DidYouKnowModalP
 					>
 						<ArrowRight className="h-4 w-4" aria-hidden />
 					</button>
-					{canOpenSurface && (
+					{!isReading && canOpenSurface && (
 						<button
 							type="button"
 							onClick={openSurface}
