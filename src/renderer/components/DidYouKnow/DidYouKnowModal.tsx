@@ -1,4 +1,5 @@
-import { useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
+import { getElementRect, getSpotlightClipPath } from '../../utils/spotlight';
 import { DID_YOU_KNOW_TIPS, type DidYouKnowTip } from '../../../shared/didYouKnow';
 import './tipTransition.css';
 import { createPortal } from 'react-dom';
@@ -45,6 +46,114 @@ function DidYouKnowModalContent({ theme, startTipId, onClose }: DidYouKnowModalP
 		exitReading,
 	} = useDidYouKnowRotation({ startTipId });
 	const cardRef = useRef<HTMLElement>(null);
+	const [spotlightRect, setSpotlightRect] = useState<DOMRect | null>(null);
+	const [showSpotlight, setShowSpotlight] = useState(false);
+	const [spotlightPosition, setSpotlightPosition] = useState<CSSProperties>();
+	const selector = tip?.spotlightSelector;
+	// Poll only while this tip is mounted: panels can collapse, scroll, or animate
+	// without changing React state here. Avoid the tour helper's missing-target warning.
+	const readSpotlightRect = useCallback(() => {
+		if (!selector) return null;
+		const visibleSelectors = selector.split(',').filter((part) => {
+			const element = document.querySelector(part.trim());
+			if (
+				!element ||
+				element.checkVisibility?.({ checkOpacity: true, checkVisibilityCSS: true }) === false
+			)
+				return false;
+			const style = getComputedStyle(element);
+			const rect = element.getBoundingClientRect();
+			return (
+				style.visibility !== 'hidden' &&
+				style.display !== 'none' &&
+				style.opacity !== '0' &&
+				rect.width > 0 &&
+				rect.height > 0 &&
+				rect.right > 0 &&
+				rect.bottom > 0 &&
+				rect.left < window.innerWidth &&
+				rect.top < window.innerHeight
+			);
+		});
+		return visibleSelectors.length ? getElementRect(visibleSelectors.join(',')) : null;
+	}, [selector]);
+	useEffect(() => {
+		setShowSpotlight(false);
+		const update = () => {
+			const rect = readSpotlightRect();
+			setSpotlightRect((previous) =>
+				previous?.x === rect?.x &&
+				previous?.y === rect?.y &&
+				previous?.width === rect?.width &&
+				previous?.height === rect?.height
+					? previous
+					: rect
+			);
+			if (!rect) setShowSpotlight(false);
+		};
+		update();
+		if (!selector) return;
+		const timer = window.setInterval(update, 150);
+		return () => window.clearInterval(timer);
+	}, [selector, readSpotlightRect, tip?.id]);
+	useEffect(() => {
+		if (!showSpotlight) return;
+		const dismiss = () => setShowSpotlight(false);
+		const timer = window.setTimeout(dismiss, 2500);
+		// Capture sees even stopped events, but the opening click has already
+		// passed this phase before React installs these listeners.
+		window.addEventListener('click', dismiss, true);
+		window.addEventListener('keydown', dismiss, true);
+		return () => {
+			window.clearTimeout(timer);
+			window.removeEventListener('click', dismiss, true);
+			window.removeEventListener('keydown', dismiss, true);
+		};
+	}, [showSpotlight]);
+	useEffect(() => {
+		if (!showSpotlight || !spotlightRect) return;
+		const card = cardRef.current?.getBoundingClientRect();
+		if (!card) return;
+		const rect = spotlightRect;
+		if (
+			card.right < rect.left - 16 ||
+			card.left > rect.right + 16 ||
+			card.bottom < rect.top - 16 ||
+			card.top > rect.bottom + 16
+		)
+			return;
+		// Pick the largest free strip; constrain and scroll the card on small screens.
+		const width = window.innerWidth;
+		const height = window.innerHeight;
+		const spaces = [
+			{ left: 16, top: 16, width: rect.left - 32, height: height - 32 },
+			{ left: rect.right + 16, top: 16, width: width - rect.right - 32, height: height - 32 },
+			{ left: 16, top: 16, width: width - 32, height: rect.top - 32 },
+			{ left: 16, top: rect.bottom + 16, width: width - 32, height: height - rect.bottom - 32 },
+		]
+			.filter((space) => space.width >= 160 && space.height >= 100)
+			.sort(
+				(a, b) =>
+					Math.min(b.width, card.width) * Math.min(b.height, card.height) -
+					Math.min(a.width, card.width) * Math.min(a.height, card.height)
+			);
+		const space = spaces[0];
+		setSpotlightPosition(
+			space
+				? {
+						left: space.left,
+						top: space.top,
+						right: 'auto',
+						bottom: 'auto',
+						transform: 'none',
+						width: Math.min(space.width, card.width),
+						maxHeight: space.height,
+					}
+				: { opacity: 0, pointerEvents: 'none' }
+		);
+	}, [showSpotlight, spotlightRect]);
+	const spotlightActive = showSpotlight && !!spotlightRect;
+	const passive = isReading || spotlightActive;
 	const [transition, setTransition] = useState<{
 		previous: DidYouKnowTip | null;
 		direction: 'next' | 'back';
@@ -62,10 +171,10 @@ function DidYouKnowModalContent({ theme, startTipId, onClose }: DidYouKnowModalP
 	const encoreFeatures = useSettingsStore((s) => s.encoreFeatures);
 	const fontFamily = useSettingsStore((s) => s.fontFamily);
 	useModalLayer(MODAL_PRIORITIES.DID_YOU_KNOW, 'Did You Know', onClose, {
-		blocksLowerLayers: !isReading,
-		capturesFocus: !isReading,
-		focusTrap: isReading ? 'none' : 'strict',
-		blocksAppShortcuts: !isReading,
+		blocksLowerLayers: !passive,
+		capturesFocus: !passive,
+		focusTrap: passive ? 'none' : 'strict',
+		blocksAppShortcuts: !passive,
 	});
 
 	const isTopLayer = useIsTopLayer(MODAL_PRIORITIES.DID_YOU_KNOW);
@@ -93,7 +202,7 @@ function DidYouKnowModalContent({ theme, startTipId, onClose }: DidYouKnowModalP
 		(event) => {
 			const e = event as KeyboardEvent;
 			if (
-				(isReading && (!(e.target instanceof Node) || !cardRef.current?.contains(e.target))) ||
+				(passive && (!(e.target instanceof Node) || !cardRef.current?.contains(e.target))) ||
 				e.defaultPrevented ||
 				e.isComposing ||
 				e.metaKey ||
@@ -129,15 +238,41 @@ function DidYouKnowModalContent({ theme, startTipId, onClose }: DidYouKnowModalP
 		<div
 			className="dyk-overlay fixed inset-0 select-none"
 			data-reading={isReading}
+			data-spotlight={spotlightActive}
 			style={{ zIndex: MODAL_PRIORITIES.DID_YOU_KNOW }}
 		>
+			{spotlightRect && (
+				<div className="dyk-spotlight" data-active={spotlightActive} aria-hidden="true">
+					<div
+						className="absolute inset-0"
+						style={{
+							background: 'rgb(0 0 0 / 65%)',
+							clipPath: getSpotlightClipPath(spotlightRect),
+						}}
+					/>
+					<div
+						className="dyk-spotlight-ring"
+						style={{
+							left: spotlightRect.x - 8,
+							top: spotlightRect.y - 8,
+							width: spotlightRect.width + 16,
+							height: spotlightRect.height + 16,
+							color: theme.colors.accent,
+						}}
+					/>
+				</div>
+			)}
 			<section
 				ref={cardRef}
 				role="dialog"
-				aria-modal={!isReading}
+				aria-modal={!passive}
 				aria-label="Did You Know"
 				className="dyk-dialog rounded-xl p-5 shadow-2xl"
-				style={{ backgroundColor: theme.colors.bgMain, color: theme.colors.textMain }}
+				style={{
+					backgroundColor: theme.colors.bgMain,
+					color: theme.colors.textMain,
+					...(spotlightActive ? spotlightPosition : {}),
+				}}
 			>
 				<header className="flex items-center gap-2 text-sm">
 					<Lightbulb className="h-4 w-4" style={{ color: theme.colors.accent }} aria-hidden />
@@ -204,6 +339,20 @@ function DidYouKnowModalContent({ theme, startTipId, onClose }: DidYouKnowModalP
 					</div>
 				)}
 				<footer className="dyk-footer mt-6 grid items-center gap-2 text-sm">
+					{spotlightRect && (
+						<button
+							type="button"
+							className="dyk-show-me rounded px-2 py-2 hover:bg-white/10"
+							onClick={() => {
+								const rect = readSpotlightRect();
+								setSpotlightRect(rect);
+								setSpotlightPosition(undefined);
+								setShowSpotlight(!!rect);
+							}}
+						>
+							Show me
+						</button>
+					)}
 					{!isReading && (
 						<button
 							type="button"

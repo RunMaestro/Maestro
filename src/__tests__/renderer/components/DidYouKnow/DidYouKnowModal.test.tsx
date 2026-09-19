@@ -40,6 +40,97 @@ describe('DidYouKnowModal', () => {
 		vi.restoreAllMocks();
 	});
 
+	describe('Show me spotlight', () => {
+		beforeEach(() => vi.useFakeTimers());
+		afterEach(() => vi.useRealTimers());
+
+		it('offers Show me only for a live, visible target and rechecks on activation', () => {
+			render(
+				<DidYouKnowModal
+					theme={mockTheme}
+					isOpen
+					startTipId="cross-agent-mentions"
+					onClose={vi.fn()}
+				/>,
+				{ wrapper: LayerStackProvider }
+			);
+			expect(screen.queryByRole('button', { name: 'Show me' })).toBeNull();
+			const target = document.createElement('div');
+			target.dataset.tour = 'input-area';
+			document.body.append(target);
+			const rect = vi
+				.spyOn(target, 'getBoundingClientRect')
+				.mockReturnValue(new DOMRect(100, 100, 0, 0));
+			act(() => vi.advanceTimersByTime(150));
+			expect(screen.queryByRole('button', { name: 'Show me' })).toBeNull();
+			rect.mockReturnValue(new DOMRect(-300, 100, 200, 60));
+			act(() => vi.advanceTimersByTime(150));
+			expect(screen.queryByRole('button', { name: 'Show me' })).toBeNull();
+			rect.mockReturnValue(new DOMRect(100, 100, 200, 60));
+			target.style.visibility = 'hidden';
+			act(() => vi.advanceTimersByTime(150));
+			expect(screen.queryByRole('button', { name: 'Show me' })).toBeNull();
+			target.style.visibility = '';
+			act(() => vi.advanceTimersByTime(150));
+			const button = screen.getByRole('button', { name: 'Show me' });
+			target.remove();
+			fireEvent.click(button);
+			expect(document.querySelector('.dyk-spotlight[data-active="true"]')).toBeNull();
+		});
+
+		it('cuts a live hole, moves an overlapping card, times out and passes clicks and keys through', () => {
+			const onTargetClick = vi.fn();
+			const { unmount } = render(
+				<>
+					<button data-tour="input-area" onClick={onTargetClick}>
+						Target
+					</button>
+					<DidYouKnowModal
+						theme={mockTheme}
+						isOpen
+						startTipId="cross-agent-mentions"
+						onClose={vi.fn()}
+					/>
+				</>,
+				{ wrapper: LayerStackProvider }
+			);
+			const target = screen.getByText('Target');
+			const rect = vi
+				.spyOn(target, 'getBoundingClientRect')
+				.mockReturnValue(new DOMRect(300, 300, 200, 60));
+			const dialog = screen.getByRole('dialog');
+			vi.spyOn(dialog, 'getBoundingClientRect').mockReturnValue(new DOMRect(200, 200, 600, 400));
+			act(() => vi.advanceTimersByTime(150));
+			fireEvent.click(screen.getByRole('button', { name: 'Show me' }));
+			const overlay = document.querySelector('.dyk-spotlight')!;
+			expect(overlay).toHaveAttribute('data-active', 'true');
+			expect(overlay.firstElementChild?.getAttribute('style')).toContain('polygon(');
+			expect(dialog).toHaveAttribute('aria-modal', 'false');
+			expect(dialog.style.transform).toBe('none');
+			expect(dialog.style.top).toBe('376px');
+			rect.mockReturnValue(new DOMRect(300, 310, 200, 60));
+			act(() => vi.advanceTimersByTime(150));
+			expect(document.querySelector('.dyk-spotlight-ring')).toHaveStyle({ top: '302px' });
+			act(() => vi.advanceTimersByTime(2350));
+			expect(overlay).toHaveAttribute('data-active', 'false');
+			expect(dialog).toHaveAttribute('aria-modal', 'true');
+			expect(dialog.style.transform).toBe('');
+			fireEvent.click(screen.getByRole('button', { name: 'Show me' }));
+			fireEvent.click(target);
+			expect(onTargetClick).toHaveBeenCalledOnce();
+			expect(overlay).toHaveAttribute('data-active', 'false');
+			fireEvent.click(screen.getByRole('button', { name: 'Show me' }));
+			expect(fireEvent.keyDown(target, { key: 'a' })).toBe(true);
+			expect(overlay).toHaveAttribute('data-active', 'false');
+			fireEvent.click(screen.getByRole('button', { name: 'Show me' }));
+			rect.mockReturnValue(new DOMRect());
+			act(() => vi.advanceTimersByTime(150));
+			expect(document.querySelector('.dyk-spotlight')).toBeNull();
+			unmount();
+			expect(vi.getTimerCount()).toBe(0);
+		});
+	});
+
 	it('docks a nonmodal compact controller and restores the gallery without closing docs', () => {
 		const { result } = renderHook(() => useLayerStack(), {
 			wrapper: ({ children }) => (
