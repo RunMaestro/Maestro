@@ -51,7 +51,9 @@ export interface AppSessionModalsProps {
 		retryOnTokenExhaustion?: boolean,
 		additionalDirectories?: AdditionalDirectory[],
 		/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
-		codexAutoResetOnExhaustion?: boolean
+		codexAutoResetOnExhaustion?: boolean,
+		/** Start every new chat this agent opens in read-only (plan) mode. */
+		readOnlyByDefault?: boolean
 	) => void;
 	existingSessions: Session[];
 	sourceSession?: Session; // For agent duplication
@@ -90,7 +92,9 @@ export interface AppSessionModalsProps {
 		customEnvVarsDisabled?: Record<string, string>,
 		workingDirectory?: string,
 		/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
-		codexAutoResetOnExhaustion?: boolean
+		codexAutoResetOnExhaustion?: boolean,
+		/** Start every new chat this agent opens in read-only (plan) mode. */
+		readOnlyByDefault?: boolean
 	) => void;
 	editAgentSession: Session | null;
 

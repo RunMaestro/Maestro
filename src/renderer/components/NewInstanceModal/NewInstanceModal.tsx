@@ -10,6 +10,7 @@ import { getBasename } from '../../../shared/formatters';
 import { FormInput } from '../ui/FormInput';
 import { AdditionalDirectoriesSection } from '../shared/AdditionalDirectoriesSection';
 import { AgentResilienceSection } from './AgentResilienceSection';
+import { ReadOnlyDefaultSection } from './ReadOnlyDefaultSection';
 import { Modal, ModalFooter } from '../ui/Modal';
 import { SshRemoteSelector } from '../shared/SshRemoteSelector';
 import { ThemedSelect } from '../shared/ThemedSelect';
@@ -72,6 +73,9 @@ export function NewInstanceModal({
 	// Codex automatic usage resets, per provider. Defaults OFF - unlike the
 	// resilience toggles above, spending a reset credit is irreversible.
 	const [codexAutoResetByAgent, setCodexAutoResetByAgent] = useState<Record<string, boolean>>({});
+	// "Read Only by default", per provider. Defaults OFF; a map only holds a value
+	// once the user ticks the box, so we read with `?? false`.
+	const [readOnlyDefaultByAgent, setReadOnlyDefaultByAgent] = useState<Record<string, boolean>>({});
 	const [agentConfigs, setAgentConfigs] = useState<Record<string, Record<string, any>>>({});
 	const [availableModels, setAvailableModels] = useState<Record<string, string[]>>({});
 	const [loadingModels, setLoadingModels] = useState<Record<string, boolean>>({});
@@ -357,6 +361,13 @@ export function NewInstanceModal({
 					...prev,
 					[source.toolType]: source.codexAutoResetOnExhaustion === true,
 				}));
+				// A duplicate of a read-only-by-default agent is read-only by default
+				// too - the copy usually shares the original's workspace, which is
+				// exactly the case the setting exists for.
+				setReadOnlyDefaultByAgent((prev) => ({
+					...prev,
+					[source.toolType]: source.readOnlyByDefault === true,
+				}));
 
 				// Pre-fill SSH remote configuration if source session has it
 				if (source.sessionSshRemoteConfig?.enabled && source.sessionSshRemoteConfig?.remoteId) {
@@ -519,6 +530,12 @@ export function NewInstanceModal({
 		[agents, dynamicOptions]
 	);
 
+	// Whether the SELECTED provider can be run read-only at all. Providers without
+	// a read-only flag hide the toggle, because Maestro has no way to hold them to
+	// it (see `supportsReadOnlyMode` in main/agents/capabilities.ts).
+	const supportsReadOnly = !!agents.find((a) => a.id === selectedAgent)?.capabilities
+		?.supportsReadOnlyMode;
+
 	const handleCreate = React.useCallback(() => {
 		const name = instanceName.trim();
 		if (!name) return; // Name is required
@@ -632,7 +649,11 @@ export function NewInstanceModal({
 			retryAvailabilityByAgent[selectedAgent] ?? true,
 			retryTokenByAgent[selectedAgent] ?? true,
 			normalizeAdditionalDirectories(additionalDirectories, homeDir),
-			codexAutoResetByAgent[selectedAgent] ?? false
+			codexAutoResetByAgent[selectedAgent] ?? false,
+			// Never save a seed for a provider that has no read-only flag to honor it
+			// with: the checkbox is hidden for those, and the map can still hold a
+			// value from a provider the user clicked through earlier.
+			supportsReadOnly && (readOnlyDefaultByAgent[selectedAgent] ?? false)
 		);
 		onClose();
 
@@ -671,6 +692,12 @@ export function NewInstanceModal({
 			delete next[selectedAgent];
 			return next;
 		});
+		// Same for the read-only seed, so the default (off) applies again next open.
+		setReadOnlyDefaultByAgent((prev) => {
+			const next = { ...prev };
+			delete next[selectedAgent];
+			return next;
+		});
 		setAgentSshRemoteConfigs((prev) => {
 			const newConfigs = { ...prev };
 			delete newConfigs[selectedAgent];
@@ -692,6 +719,8 @@ export function NewInstanceModal({
 		maestroPPathByAgent,
 		agentConfigs,
 		agentSshRemoteConfigs,
+		readOnlyDefaultByAgent,
+		supportsReadOnly,
 		onCreate,
 		onClose,
 		expandTilde,
@@ -1103,6 +1132,17 @@ export function NewInstanceModal({
 						}
 						onChangeTokenExhaustion={(value) =>
 							setRetryTokenByAgent((prev) => ({ ...prev, [selectedAgent]: value }))
+						}
+					/>
+				)}
+
+				{/* Read Only by default - only for a provider that can actually run read-only. */}
+				{selectedAgent && supportsReadOnly && (
+					<ReadOnlyDefaultSection
+						theme={theme}
+						readOnlyByDefault={readOnlyDefaultByAgent[selectedAgent] ?? false}
+						onChange={(value) =>
+							setReadOnlyDefaultByAgent((prev) => ({ ...prev, [selectedAgent]: value }))
 						}
 					/>
 				)}

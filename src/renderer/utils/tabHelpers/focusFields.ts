@@ -75,6 +75,30 @@ export function permissionModeFields(mode: 'full' | 'standard' | 'readonly'): {
 }
 
 /**
+ * The permission fields a NEW AI tab of this agent should be born with.
+ *
+ * An agent with `readOnlyByDefault` on hands every new chat a read-only seed, so
+ * a workspace several agents share can't be written to by a tab the user forgot
+ * to switch. It is only ever a SEED: the composer's permission pill still cycles
+ * the tab afterwards, and nothing re-applies the default to a tab that exists.
+ *
+ * Returns an EMPTY patch when the agent has no default, deliberately - an unset
+ * `permissionMode` already resolves to full access via `resolveTabPermissionMode`,
+ * so writing `'full'` onto every tab would persist a field that says nothing and
+ * make every agent look explicitly configured.
+ *
+ * Spread this into the tab literal at every site that mints an agent's first tab
+ * (agent creation, worktree creation) - `createTab` already does it for every
+ * later chat, which is the path the new-tab button, the shortcut, the palette,
+ * a tiled new tab, and `maestro-cli tab new` all funnel through.
+ */
+export function defaultTabPermissionFields(
+	session: Pick<Session, 'readOnlyByDefault'> | null | undefined
+): Pick<AITab, 'readOnlyMode' | 'permissionMode'> {
+	return session?.readOnlyByDefault ? permissionModeFields('readonly') : {};
+}
+
+/**
  * The next mode in the composer's permission cycle.
  *
  * `full` -> `standard` -> `readonly` -> `full`, with `standard` skipped for an

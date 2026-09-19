@@ -97,7 +97,9 @@ export interface SessionLifecycleReturn {
 		/** New working directory; `undefined` when the user left it unchanged. */
 		workingDirectory?: string,
 		/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
-		codexAutoResetOnExhaustion?: boolean
+		codexAutoResetOnExhaustion?: boolean,
+		/** Start every new chat this agent opens in read-only (plan) mode. */
+		readOnlyByDefault?: boolean
 	) => void;
 	/** Rename the currently-selected tab (persists to agent session storage + history) */
 	handleRenameTab: (newName: string) => void;
@@ -188,7 +190,9 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			/** New working directory; `undefined` when the user left it unchanged. */
 			workingDirectory?: string,
 			/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
-			codexAutoResetOnExhaustion?: boolean
+			codexAutoResetOnExhaustion?: boolean,
+			/** Start every new chat this agent opens in read-only (plan) mode. */
+			readOnlyByDefault?: boolean
 		) => {
 			// The dialog disables the field while the agent runs, but the agent can
 			// start between opening the dialog and saving. Say so rather than
@@ -235,6 +239,12 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 					// the preference so moving back does not silently lose it, and the
 					// flag is inert for any provider without reset credits.
 					codexAutoResetOnExhaustion,
+					// Read Only by default seeds NEW chats only: it deliberately does
+					// not reach back into tabs that already exist, whose permission the
+					// user may have cycled by hand. Provider-agnostic like resilience,
+					// so the provider switch below leaves it alone. Only an explicit ON
+					// is stored, since absent already reads as off.
+					readOnlyByDefault: readOnlyByDefault === true ? true : undefined,
 				};
 
 				// If the provider changed, park each tab's provider-specific state and

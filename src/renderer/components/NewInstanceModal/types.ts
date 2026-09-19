@@ -60,7 +60,9 @@ export interface NewInstanceModalProps {
 		retryOnTokenExhaustion?: boolean,
 		additionalDirectories?: AdditionalDirectory[],
 		/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
-		codexAutoResetOnExhaustion?: boolean
+		codexAutoResetOnExhaustion?: boolean,
+		/** Start every new chat this agent opens in read-only (plan) mode. */
+		readOnlyByDefault?: boolean
 	) => void;
 	theme: Theme;
 	existingSessions: Session[];
@@ -98,7 +100,9 @@ export interface EditAgentModalProps {
 		/** New working directory; `undefined` when the user left it unchanged. */
 		workingDirectory?: string,
 		/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
-		codexAutoResetOnExhaustion?: boolean
+		codexAutoResetOnExhaustion?: boolean,
+		/** Start every new chat this agent opens in read-only (plan) mode. */
+		readOnlyByDefault?: boolean
 	) => void;
 	theme: Theme;
 	session: Session | null;

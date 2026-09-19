@@ -43,6 +43,42 @@ describe('buildWorktreeSession', () => {
 		idCounter = 0;
 	});
 
+	it("inherits the parent agent's read-only default, and seeds its first chat", () => {
+		// Issue #1615. "Read Only by default" describes how the user wants this
+		// agent to behave, not one directory, so a worktree cut from it starts the
+		// same way - otherwise the branch the agent actually works in is the one
+		// place the safety choice does not apply.
+		const parent = createMockParentSession({ readOnlyByDefault: true });
+
+		const session = buildWorktreeSession({
+			parentSession: parent,
+			path: '/worktrees/feature-x',
+			branch: 'feature-x',
+			name: 'feature-x',
+			defaultSaveToHistory: true,
+			defaultShowThinking: 'off',
+		});
+
+		expect(session.readOnlyByDefault).toBe(true);
+		expect(session.aiTabs[0].permissionMode).toBe('readonly');
+		expect(session.aiTabs[0].readOnlyMode).toBe(true);
+	});
+
+	it('leaves a worktree of an ordinary agent at full access', () => {
+		const session = buildWorktreeSession({
+			parentSession: createMockParentSession(),
+			path: '/worktrees/feature-x',
+			branch: 'feature-x',
+			name: 'feature-x',
+			defaultSaveToHistory: true,
+			defaultShowThinking: 'off',
+		});
+
+		expect(session.readOnlyByDefault).toBeUndefined();
+		expect(session.aiTabs[0].permissionMode).toBeUndefined();
+		expect(session.aiTabs[0].readOnlyMode).toBeUndefined();
+	});
+
 	it('should create a new-model session with correct fields', () => {
 		const parent = createMockParentSession();
 		const session = buildWorktreeSession({

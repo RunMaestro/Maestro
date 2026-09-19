@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Info, Copy, Check, X, Folder } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { AgentResilienceSection } from './AgentResilienceSection';
+import { ReadOnlyDefaultSection } from './ReadOnlyDefaultSection';
 import { resilienceEnabled } from '../../../shared/agentConstants';
 import { normalizeAdditionalDirectories } from '../../../shared/additionalDirectories';
 import { formatTokensCompact } from '../../../shared/formatters';
@@ -86,6 +87,9 @@ export function EditAgentModal({
 	// on Session for why this one does NOT follow the resilience flags' default-on
 	// rule: reset credits are finite and irreversible.
 	const [codexAutoReset, setCodexAutoReset] = useState(false);
+	// Read Only by default. Defaults OFF - an absent value already reads as off,
+	// so an agent that never opted in stores nothing.
+	const [readOnlyByDefault, setReadOnlyByDefault] = useState(false);
 	const [editDynamicOptions, setEditDynamicOptions] = useState<Record<string, string[]>>({});
 	const [editLoadingDynamicOptions, setEditLoadingDynamicOptions] = useState(false);
 	const [refreshingAgent, setRefreshingAgent] = useState(false);
@@ -320,6 +324,7 @@ export function EditAgentModal({
 			setRetryOnAvailabilityErrors(resilienceEnabled(session.retryOnAvailabilityErrors));
 			setRetryOnTokenExhaustion(resilienceEnabled(session.retryOnTokenExhaustion));
 			setCodexAutoReset(session.codexAutoResetOnExhaustion === true);
+			setReadOnlyByDefault(session.readOnlyByDefault === true);
 		}
 
 		return () => {
@@ -341,6 +346,12 @@ export function EditAgentModal({
 			setSelectedToolType((prev) => (prev === session.toolType ? prev : session.toolType));
 		}
 	}, [isOpen, session]);
+
+	// Whether the SELECTED provider can be run read-only at all. Follows the
+	// provider dropdown rather than the saved session, so switching to a provider
+	// with no read-only flag hides the toggle (and drops the seed on save) in the
+	// same edit.
+	const supportsReadOnly = !!agent?.capabilities?.supportsReadOnlyMode;
 
 	// Validate session name uniqueness (excluding current session)
 	const validation = useMemo(() => {
@@ -550,7 +561,11 @@ export function EditAgentModal({
 			contextWindowSource,
 			Object.keys(customEnvVarsDisabled).length > 0 ? customEnvVarsDisabled : undefined,
 			workingDirChanged ? trimmedWorkingDir : undefined,
-			codexAutoReset
+			codexAutoReset,
+			// A provider with no read-only flag can't honor the seed, so never save
+			// one for it - the checkbox is hidden in that case and the state would
+			// otherwise survive from whichever provider the agent was switched off.
+			supportsReadOnly && readOnlyByDefault
 		);
 		onClose();
 	}, [
@@ -574,6 +589,8 @@ export function EditAgentModal({
 		retryOnAvailabilityErrors,
 		retryOnTokenExhaustion,
 		codexAutoReset,
+		readOnlyByDefault,
+		supportsReadOnly,
 		agent,
 		agentConfig,
 		sshRemoteConfig,
@@ -755,6 +772,15 @@ export function EditAgentModal({
 					onChangeAvailability={setRetryOnAvailabilityErrors}
 					onChangeTokenExhaustion={setRetryOnTokenExhaustion}
 				/>
+
+				{/* Read Only by default - only for a provider that can actually run read-only. */}
+				{supportsReadOnly && (
+					<ReadOnlyDefaultSection
+						theme={theme}
+						readOnlyByDefault={readOnlyByDefault}
+						onChange={setReadOnlyByDefault}
+					/>
+				)}
 
 				{/* Working Directory */}
 				<div>

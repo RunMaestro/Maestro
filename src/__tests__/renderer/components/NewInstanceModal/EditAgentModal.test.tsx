@@ -72,6 +72,13 @@ const createSession = (overrides: Partial<Session> = {}): Session =>
 		...overrides,
 	}) as Session;
 
+/**
+ * Position of `workingDirectory` in the onSave argument list. Named rather than
+ * counted back from the end: every new trailing option shifts "last", and these
+ * assertions used to have to be re-anchored each time one landed.
+ */
+const WORKING_DIRECTORY_ARG = 20;
+
 describe('EditAgentModal', () => {
 	let theme: Theme;
 	let onClose: ReturnType<typeof vi.fn>;
@@ -223,9 +230,7 @@ describe('EditAgentModal', () => {
 
 		expect(onSave).toHaveBeenCalledTimes(1);
 		const args = onSave.mock.calls[0];
-		// `workingDirectory` is second-from-last now that `codexAutoResetOnExhaustion`
-		// trails it - anchor on the slot rather than on "last".
-		expect(args[args.length - 2]).toBe('/home/user/moved-project');
+		expect(args[WORKING_DIRECTORY_ARG]).toBe('/home/user/moved-project');
 	});
 
 	it('should refuse a local working directory that does not exist', async () => {
@@ -310,9 +315,7 @@ describe('EditAgentModal', () => {
 
 		expect(onSave).toHaveBeenCalled();
 		const args = onSave.mock.calls[0];
-		// `workingDirectory` is second-from-last now that `codexAutoResetOnExhaustion`
-		// trails it - anchor on the slot rather than on "last".
-		expect(args[args.length - 2]).toBeUndefined(); // workingDirectory unchanged
+		expect(args[WORKING_DIRECTORY_ARG]).toBeUndefined(); // workingDirectory unchanged
 	});
 
 	it('should refuse a new SSH working directory the remote reports is not a directory', async () => {
@@ -520,7 +523,8 @@ describe('EditAgentModal', () => {
 				// provenance is recorded and P1 precedence stands (finding AD1)
 				undefined, // customEnvVarsDisabled (nothing switched off)
 				undefined, // workingDirectory unchanged
-				false // codexAutoResetOnExhaustion: off by default
+				false, // codexAutoResetOnExhaustion: off by default
+				false // readOnlyByDefault: off by default
 			);
 		});
 
@@ -620,7 +624,8 @@ describe('EditAgentModal', () => {
 			// provenance is recorded and P1 precedence stands (finding AD1)
 			undefined, // customEnvVarsDisabled (nothing switched off)
 			undefined, // workingDirectory unchanged
-			false // codexAutoResetOnExhaustion: off by default
+			false, // codexAutoResetOnExhaustion: off by default
+			false // readOnlyByDefault: off by default
 		);
 		expect(onClose).toHaveBeenCalled();
 	});
@@ -857,7 +862,8 @@ describe('EditAgentModal', () => {
 			// provenance is recorded and P1 precedence stands (finding AD1)
 			undefined, // customEnvVarsDisabled (nothing switched off)
 			undefined, // workingDirectory unchanged
-			false // codexAutoResetOnExhaustion: off by default
+			false, // codexAutoResetOnExhaustion: off by default
+			false // readOnlyByDefault: off by default
 		);
 	});
 
@@ -934,7 +940,8 @@ describe('EditAgentModal', () => {
 			// provenance is recorded and P1 precedence stands (finding AD1)
 			undefined, // customEnvVarsDisabled (nothing switched off)
 			undefined, // workingDirectory unchanged
-			false // codexAutoResetOnExhaustion: off by default
+			false, // codexAutoResetOnExhaustion: off by default
+			false // readOnlyByDefault: off by default
 		);
 	});
 
@@ -1017,7 +1024,8 @@ describe('EditAgentModal', () => {
 			// provenance is recorded and P1 precedence stands (finding AD1)
 			undefined, // customEnvVarsDisabled (nothing switched off)
 			undefined, // workingDirectory unchanged
-			false // codexAutoResetOnExhaustion: off by default
+			false, // codexAutoResetOnExhaustion: off by default
+			false // readOnlyByDefault: off by default
 		);
 	});
 
@@ -1378,6 +1386,92 @@ describe('EditAgentModal', () => {
 		});
 	});
 
+	// Issue #1615. The setting only ever seeds NEW chats, so nothing on screen
+	// changes when it is saved - if it stopped reaching the session, the checkbox
+	// would still render and tick and simply mean nothing. Both directions are
+	// pinned, plus the capability gate.
+	describe('Read Only by default', () => {
+		/** Position of `readOnlyByDefault` in the onSave argument list. */
+		const READ_ONLY_BY_DEFAULT_ARG = 22;
+
+		const readOnlyCapableAgent = {
+			id: 'claude-code',
+			name: 'Claude Code',
+			available: true,
+			path: '/usr/local/bin/claude',
+			binaryName: 'claude',
+			hidden: false,
+			capabilities: { supportsReadOnlyMode: true },
+		} as AgentConfig;
+
+		const renderWith = (session: Session, agent: AgentConfig = readOnlyCapableAgent) => {
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([agent]);
+			return render(
+				<EditAgentModal
+					isOpen={true}
+					onClose={onClose}
+					onSave={onSave}
+					theme={theme}
+					session={session}
+					existingSessions={[]}
+				/>
+			);
+		};
+
+		const toggle = () => screen.getByLabelText('Read Only by default') as HTMLInputElement;
+
+		it('renders off for an agent that never opted in', async () => {
+			renderWith(createSession());
+
+			await waitFor(() => expect(toggle()).toBeInTheDocument());
+			expect(toggle().checked).toBe(false);
+		});
+
+		it('reflects an agent that already opted in', async () => {
+			renderWith(createSession({ readOnlyByDefault: true }));
+
+			await waitFor(() => expect(toggle().checked).toBe(true));
+		});
+
+		it('carries the opt-in out through Save', async () => {
+			renderWith(createSession());
+
+			await waitFor(() => expect(toggle()).toBeInTheDocument());
+			fireEvent.click(toggle());
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave.mock.calls[0][READ_ONLY_BY_DEFAULT_ARG]).toBe(true);
+		});
+
+		it('carries an opt-OUT out through Save', async () => {
+			// Turning it back off has to reach the session: a stale `true` would keep
+			// handing every new chat a read-only seed after the user stopped asking.
+			renderWith(createSession({ readOnlyByDefault: true }));
+
+			await waitFor(() => expect(toggle().checked).toBe(true));
+			fireEvent.click(toggle());
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave.mock.calls[0][READ_ONLY_BY_DEFAULT_ARG]).toBe(false);
+		});
+
+		it('is absent for a provider that cannot run read-only', async () => {
+			// Offering it would promise a guarantee Maestro has no flag to enforce.
+			renderWith(createSession(), {
+				id: 'claude-code',
+				name: 'Claude Code',
+				available: true,
+				path: '/usr/local/bin/claude',
+				binaryName: 'claude',
+				hidden: false,
+				capabilities: { supportsReadOnlyMode: false },
+			} as AgentConfig);
+
+			await waitFor(() => expect(screen.getByText('Save Changes')).toBeInTheDocument());
+			expect(screen.queryByLabelText('Read Only by default')).not.toBeInTheDocument();
+		});
+	});
+
 	// The toggle is the ONLY way a user opts into unattended spending of a
 	// finite, non-refundable grant, so both directions are pinned: an agent that
 	// asked for it must come back with it on, and Save must carry the new value
@@ -1422,6 +1516,11 @@ describe('EditAgentModal', () => {
 				'Automatically redeem a reset credit when usage limits are hit'
 			) as HTMLInputElement;
 
+		// Position of `codexAutoResetOnExhaustion` in the onSave argument list.
+		// Named rather than counted back from the end, so appending another
+		// trailing option can't silently point these assertions at it.
+		const CODEX_AUTO_RESET_ARG = 21;
+
 		it('renders the toggle off for a Codex agent that never opted in', async () => {
 			renderCodex(codexSession());
 
@@ -1443,7 +1542,7 @@ describe('EditAgentModal', () => {
 			fireEvent.click(screen.getByText('Save Changes'));
 
 			const args = onSave.mock.calls[0];
-			expect(args[args.length - 1]).toBe(true);
+			expect(args[CODEX_AUTO_RESET_ARG]).toBe(true);
 		});
 
 		it('carries an opt-OUT out through Save', async () => {
@@ -1456,7 +1555,7 @@ describe('EditAgentModal', () => {
 			fireEvent.click(screen.getByText('Save Changes'));
 
 			const args = onSave.mock.calls[0];
-			expect(args[args.length - 1]).toBe(false);
+			expect(args[CODEX_AUTO_RESET_ARG]).toBe(false);
 		});
 
 		it('is absent for a provider with no reset credits', async () => {

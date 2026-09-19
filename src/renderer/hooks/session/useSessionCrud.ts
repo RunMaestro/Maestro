@@ -25,6 +25,7 @@ import { notifyToast } from '../../stores/notificationStore';
 import { generateId } from '../../utils/ids';
 import { validateNewSession } from '../../utils/sessionValidation';
 import { getTerminalSessionId } from '../../utils/terminalTabHelpers';
+import { defaultTabPermissionFields } from '../../utils/tabHelpers';
 import { gitService } from '../../services/git';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import { logger } from '../../utils/logger';
@@ -81,7 +82,9 @@ export interface UseSessionCrudReturn {
 		retryOnTokenExhaustion?: boolean,
 		additionalDirectories?: AdditionalDirectory[],
 		/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
-		codexAutoResetOnExhaustion?: boolean
+		codexAutoResetOnExhaustion?: boolean,
+		/** Start every new chat this agent opens in read-only (plan) mode. */
+		readOnlyByDefault?: boolean
 	) => Promise<void>;
 	/** Opens the delete agent confirmation modal */
 	deleteSession: (id: string) => void;
@@ -176,7 +179,9 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 			retryOnTokenExhaustion?: boolean,
 			additionalDirectories?: AdditionalDirectory[],
 			/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
-			codexAutoResetOnExhaustion?: boolean
+			codexAutoResetOnExhaustion?: boolean,
+			/** Start every new chat this agent opens in read-only (plan) mode. */
+			readOnlyByDefault?: boolean
 		) => {
 			try {
 				// Get agent definition to get correct command
@@ -238,6 +243,9 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					state: 'idle',
 					saveToHistory: currentDefaults.defaultSaveToHistory,
 					showThinking: currentDefaults.defaultShowThinking,
+					// The agent's own "Read Only by default" applies from its very
+					// first chat, not just the ones opened later.
+					...defaultTabPermissionFields({ readOnlyByDefault }),
 				};
 
 				const newSession: Session = {
@@ -317,6 +325,8 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					// value already means off and storing `false` on every non-Codex
 					// agent would be noise in every session record.
 					codexAutoResetOnExhaustion: codexAutoResetOnExhaustion === true ? true : undefined,
+					// Same rule for the read-only seed: only an explicit ON is stored.
+					readOnlyByDefault: readOnlyByDefault === true ? true : undefined,
 					claudeInteractive:
 						agentId === 'claude-code' ? { mode: 'api', modeReason: 'auto' } : undefined,
 				};
