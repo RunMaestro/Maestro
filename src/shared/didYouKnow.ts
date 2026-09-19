@@ -237,6 +237,66 @@ export const DID_YOU_KNOW_TIPS: readonly DidYouKnowTip[] = [
 		shortcutId: 'snoozeTab',
 		spotlightSelector: '[data-tour="tab-bar"]',
 	},
+	{
+		id: 'image-annotator',
+		title: 'Image Annotator',
+		headline: 'Paste a screenshot, circle the bug, send it.',
+		body: [
+			'You can annotate screenshots before you send them: hover a pasted image and click the pencil to add arrows, boxes, circles, or text.',
+			'Pointing at the broken pixel is faster than describing it. Save your annotations and the agent gets the same picture you are looking at.',
+		],
+		icon: 'Highlighter',
+		docsSlug: 'image-annotator',
+		shortcutId: 'editClipboardImage',
+	},
+	{
+		id: 'playbook-exchange',
+		title: 'Playbook Exchange',
+		headline: 'Someone already wrote the playbook you were about to write.',
+		body: [
+			'You can browse community playbooks in the Playbook Exchange, preview their Auto Run documents, and import them straight into your Auto Run folder.',
+			'Pick a playbook for the workflow you need, edit it to fit your project, and run it.',
+		],
+		icon: 'Store',
+		surface: 'marketplace',
+		docsSlug: 'playbook-exchange',
+	},
+	{
+		id: 'agent-resilience',
+		title: 'Agent Resilience',
+		headline: 'A rate limit does not have to cost you the run.',
+		body: [
+			'When your provider returns an overload or quota error, Maestro can resend the failed prompt for you. You control both retry options in Edit Agent.',
+			'Your desktop Auto Runs can wait through the outage and resume automatically. Batches launched by the CLI report the failure instead.',
+		],
+		icon: 'ShieldCheck',
+		docsSlug: 'agent-resilience',
+	},
+	{
+		id: 'keyboard-first',
+		title: 'Everything Has a Key',
+		headline: 'Maestro is meant to be driven without the mouse.',
+		body: [
+			'You can search the Command Palette for actions by name, including features you have not found yet.',
+			'Open the shortcut list to explore the keys, then rebind customizable shortcuts in Settings. Enable Usage Dashboard in Encore Features to see which shortcuts you actually use.',
+		],
+		icon: 'Keyboard',
+		surface: 'shortcuts',
+		shortcutId: 'help',
+		docsSlug: 'keyboard-shortcuts',
+	},
+	{
+		id: 'media-player',
+		title: 'Media Player',
+		headline: 'Maestro plays your audio and video, with a queue.',
+		body: [
+			'Open a supported local audio or video file and you get a floating player with playback controls, a play queue, and a remembered position.',
+			'Right-click media files in the Files pane and choose Add to Play Queue to line up what you want to hear or watch next.',
+		],
+		icon: 'Headphones',
+		docsSlug: 'media-player',
+		shortcutId: 'openMediaPlayer',
+	},
 ];
 
 export const PINNED_TIP_IDS: readonly string[] = [

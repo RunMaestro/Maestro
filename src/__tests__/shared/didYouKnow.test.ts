@@ -73,6 +73,20 @@ describe('Did You Know tip model', () => {
 		]);
 	});
 
+	it('completes the 21-tip registry with the final five rotation tips', () => {
+		expect(DID_YOU_KNOW_TIPS).toHaveLength(21);
+		expect(DID_YOU_KNOW_TIPS.slice(16).map((tip) => tip.id)).toEqual([
+			'image-annotator',
+			'playbook-exchange',
+			'agent-resilience',
+			'keyboard-first',
+			'media-player',
+		]);
+		for (const id of PINNED_TIP_IDS) {
+			expect(getTipById(id)).toBeDefined();
+		}
+	});
+
 	it.each(DID_YOU_KNOW_TIPS)('$id has concise copy and a valid icon fallback', (tip) => {
 		expect(tip.id).toMatch(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
 		expect(tip.title.trim()).not.toBe('');
@@ -83,6 +97,7 @@ describe('Did You Know tip model', () => {
 			expect(paragraph.trim()).not.toBe('');
 			expect(paragraph.length).toBeLessThan(220);
 		}
+		expect(JSON.stringify(tip)).not.toMatch(/[\u2013\u2014]/);
 		expect(icons).toHaveProperty(tip.icon);
 	});
 
