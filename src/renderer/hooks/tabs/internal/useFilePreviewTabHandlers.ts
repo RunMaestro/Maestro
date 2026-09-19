@@ -24,6 +24,7 @@ import {
 	buildReplacementNavigationHistory,
 	createUntitledFileTab,
 	getFileNameParts,
+	replaceFileTabContents,
 } from './filePreviewTabHelpers';
 import type { FilePreviewTabHandlersReturn, FileTabOpenParams, MediaOpenMode } from './types';
 
@@ -41,10 +42,18 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 				 * (CLI / web) opens - see shared/focusPlacement.ts. Default true.
 				 */
 				activate?: boolean;
+				/**
+				 * Open as a REPLACEABLE preview tab (see `FilePreviewTab.isPreview`).
+				 * Rewrites the agent's existing preview tab in place instead of
+				 * opening another chip. Omitted/false opens a pinned tab, and PINS
+				 * the file's own preview tab when it is already open as one.
+				 */
+				preview?: boolean;
 			}
 		) => {
 			const openInNewTab = options?.openInNewTab ?? true;
 			const activate = options?.activate !== false;
+			const asPreview = options?.preview === true;
 			const activeSessionId =
 				options?.targetSessionId || useSessionStore.getState().activeSessionId;
 
@@ -88,6 +97,13 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 						tab.id === existingTab.id
 							? {
 									...tab,
+									// A deliberate open of a file already sitting in the
+									// preview tab is the user committing to it, so it pins.
+									// That is what makes double-click work with no special
+									// case: the single click previewed it, the second click
+									// arrives here and keeps it. A preview-mode open leaves
+									// the flag alone rather than clearing it.
+									isPreview: asPreview ? tab.isPreview : undefined,
 									content: file.content,
 									lastModified: file.lastModified ?? tab.lastModified,
 									isLoading: file.isLoading ?? false,
@@ -137,13 +153,25 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 					};
 				}
 
-				if (!openInNewTab && s.activeFileTabId) {
-					const currentTabId = s.activeFileTabId;
-					const currentTab = s.filePreviewTabs.find((tab) => tab.id === currentTabId);
-					const { extension, nameWithoutExtension } = getFileNameParts(file.name);
+				// Which open tab, if any, this open REUSES instead of adding a chip.
+				// Preview mode rewrites the agent's one preview tab wherever it sits;
+				// `openInNewTab: false` (a file link followed inside a preview)
+				// rewrites the tab the user was reading. Preview mode deliberately
+				// does NOT target the active tab: replacing whatever happens to be
+				// focused would swallow a pinned file the user is working in, which
+				// is the whole thing pinning exists to prevent.
+				const reusedTabId = asPreview
+					? (s.filePreviewTabs.find((tab) => tab.isPreview)?.id ?? null)
+					: !openInNewTab && s.activeFileTabId
+						? s.activeFileTabId
+						: null;
+
+				if (reusedTabId) {
+					const currentTab = s.filePreviewTabs.find((tab) => tab.id === reusedTabId);
+					const { nameWithoutExtension } = getFileNameParts(file.name);
 
 					const updatedTabs = s.filePreviewTabs.map((tab) => {
-						if (tab.id !== currentTabId) return tab;
+						if (tab.id !== reusedTabId) return tab;
 
 						const finalHistory = buildReplacementNavigationHistory(
 							tab,
@@ -153,30 +181,18 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 						);
 
 						return {
-							...tab,
-							path: file.path,
-							name: nameWithoutExtension,
-							extension,
-							content: file.content,
-							scrollTop: 0,
-							searchQuery: '',
-							editMode: false,
-							editContent: undefined,
-							lastModified: file.lastModified ?? Date.now(),
-							sshRemoteId: file.sshRemoteId,
-							isLoading: file.isLoading ?? false,
-							loadRequestId: file.isLoading ? file.loadRequestId : undefined,
-							navigationHistory: finalHistory,
-							navigationIndex: finalHistory.length - 1,
-							pendingScrollToLine: file.pendingScrollToLine,
+							...replaceFileTabContents(tab, file, finalHistory),
+							// Reusing the preview tab keeps it a preview; reusing a tab
+							// for in-preview navigation leaves its pinned state alone.
+							isPreview: asPreview ? true : tab.isPreview,
 						};
 					});
 					return {
 						...s,
 						filePreviewTabs: updatedTabs,
-						// This branch rewrites the file tab that is ALREADY active, so
+						// This branch rewrites a file tab that is already open, so
 						// activation only has to clear the surfaces that outrank it.
-						...(activate ? fileTabFocusFields(currentTabId) : {}),
+						...(activate ? fileTabFocusFields(reusedTabId) : {}),
 					};
 				}
 
@@ -200,6 +216,9 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 					navigationHistory: [{ path: file.path, name: nameWithoutExtension, scrollTop: 0 }],
 					navigationIndex: 0,
 					pendingScrollToLine: file.pendingScrollToLine,
+					// First file opened under preview mode: there is no preview tab to
+					// reuse yet, so this one becomes it.
+					isPreview: asPreview ? true : undefined,
 				};
 
 				const newTabRef: UnifiedTabRef = { type: 'file', id: newTabId };
@@ -262,7 +281,14 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 
 	const handleFileTabEditModeChange = useCallback((tabId: string, editMode: boolean) => {
 		const { activeSessionId } = useSessionStore.getState();
-		updateFileTab(activeSessionId, tabId, (tab) => ({ ...tab, editMode }));
+		// Entering edit mode pins a preview tab. The user is about to type into
+		// this file, and the next click in the file tree would otherwise rewrite
+		// the tab out from under them - taking the edit buffer with it.
+		updateFileTab(activeSessionId, tabId, (tab) => ({
+			...tab,
+			editMode,
+			isPreview: editMode ? undefined : tab.isPreview,
+		}));
 	}, []);
 
 	// `savedMtime` travels with `savedContent`: the tab's lastModified must track
@@ -277,6 +303,11 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 			savedMtime?: number
 		) => {
 			const { activeSessionId } = useSessionStore.getState();
+			// Any actual edit pins the tab, matching VS Code: a file you have typed
+			// into is no longer something to be replaced by the next browse. Only a
+			// real buffer counts - `editContent === undefined` is the editor being
+			// discarded or reset, which is not a reason to pin.
+			const pins = editContent !== undefined;
 			updateFileTab(activeSessionId, tabId, (tab) =>
 				savedContent !== undefined
 					? {
@@ -284,8 +315,9 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 							editContent,
 							content: savedContent,
 							lastModified: savedMtime ?? tab.lastModified,
+							isPreview: pins ? undefined : tab.isPreview,
 						}
-					: { ...tab, editContent }
+					: { ...tab, editContent, isPreview: pins ? undefined : tab.isPreview }
 			);
 		},
 		[]

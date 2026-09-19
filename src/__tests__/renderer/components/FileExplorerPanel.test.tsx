@@ -1679,9 +1679,12 @@ describe('FileExplorerPanel', () => {
 			const helpersFile = screen.getByText('helpers.ts');
 			fireEvent.doubleClick(helpersFile);
 
+			// The third slot is the optional FileClickOptions; a double-click passes
+			// none, which is what opens the file as a pinned tab.
 			expect(defaultProps.handleFileClick).toHaveBeenCalledWith(
 				expect.objectContaining({ name: 'helpers.ts' }),
-				'src/utils/helpers.ts'
+				'src/utils/helpers.ts',
+				undefined
 			);
 		});
 	});

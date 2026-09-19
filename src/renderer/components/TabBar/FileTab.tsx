@@ -310,6 +310,15 @@ export const FileTab = memo(function FileTab({
 	const handleTabSelect = useCallback(() => {
 		onSelect(tab.id);
 	}, [onSelect, tab.id]);
+
+	const pinFileTab = useTabStore((s) => s.pinFileTab);
+
+	// Double-clicking a preview chip keeps it, the same gesture VS Code uses. It
+	// is idempotent, so double-clicking an already-pinned tab is a plain select.
+	const handleTabPin = useCallback(() => {
+		if (!tab.isPreview) return;
+		pinFileTab(tab.id);
+	}, [pinFileTab, tab.isPreview, tab.id]);
 	// Coarse pointer: long-press owns the gesture, so native drag is off.
 	const coarse = isCoarsePointer();
 
@@ -405,6 +414,7 @@ export const FileTab = memo(function FileTab({
       `}
 			style={tabStyle}
 			onClick={handleTabSelect}
+			onDoubleClick={handleTabPin}
 			onMouseDown={handleMouseDown}
 			onMouseEnter={handleMouseEnter}
 			onMouseLeave={handleMouseLeave}
@@ -447,10 +457,19 @@ export const FileTab = memo(function FileTab({
 				aria-hidden="true"
 			/>
 
-			{/* Tab name - filename without extension, folder-prefixed when ambiguous */}
+			{/* Tab name - filename without extension, folder-prefixed when ambiguous.
+			    A preview tab is italicised, matching the convention VS Code users
+			    already read as "this one gets replaced". It is the only signal the
+			    chip carries, so it must survive the tab being inactive - hence the
+			    style rather than a colour change. */}
 			<span
-				className="text-xs font-medium whitespace-nowrap"
+				className={`text-xs font-medium whitespace-nowrap ${tab.isPreview ? 'italic' : ''}`}
 				style={{ color: isActive ? theme.colors.textMain : theme.colors.textDim }}
+				title={
+					tab.isPreview
+						? 'Preview tab - the next file you click replaces it. Double-click to keep it.'
+						: undefined
+				}
 			>
 				{tab.customName || displayName || tab.name}
 			</span>

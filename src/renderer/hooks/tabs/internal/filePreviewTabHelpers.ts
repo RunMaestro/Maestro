@@ -123,6 +123,52 @@ export function buildReplacementNavigationHistory(
  * New File action and by the tile-below commands, which need the same tab shape
  * without the session activation the handler applies around it.
  */
+/**
+ * Rewrite an open file tab so it now shows a DIFFERENT file, keeping the tab
+ * itself (its id, its slot in the tab strip, its tiled pane) in place.
+ *
+ * Two callers share this and must not drift on what "replace" resets: the
+ * `openInNewTab: false` path (a link clicked inside a preview navigates the tab
+ * it was clicked in) and preview mode (the next single-clicked file rewrites the
+ * preview tab). The per-file view state - scroll offset, find query, edit mode,
+ * unsaved edit buffer - all belongs to the file that is leaving,
+ * so carrying any of it over lands the reader partway down an unrelated document
+ * or, worse, holds an edit buffer against a file it was never typed into.
+ *
+ * What deliberately SURVIVES the swap is the state the user set on the TAB
+ * rather than on the file: a custom name, a forced preview tier, the HTML render
+ * toggle. Those are spread through from `tab` untouched, matching the behaviour
+ * this was lifted out of.
+ *
+ * `isPreview` is deliberately NOT set here: it is the caller's statement about
+ * why the tab is being reused, and both callers pass it explicitly.
+ */
+export function replaceFileTabContents(
+	tab: FilePreviewTab,
+	file: FileTabOpenParams,
+	navigationHistory: FilePreviewHistoryEntry[]
+): FilePreviewTab {
+	const { extension, nameWithoutExtension } = getFileNameParts(file.name);
+	return {
+		...tab,
+		path: file.path,
+		name: nameWithoutExtension,
+		extension,
+		content: file.content,
+		scrollTop: 0,
+		searchQuery: '',
+		editMode: false,
+		editContent: undefined,
+		lastModified: file.lastModified ?? Date.now(),
+		sshRemoteId: file.sshRemoteId,
+		isLoading: file.isLoading ?? false,
+		loadRequestId: file.isLoading ? file.loadRequestId : undefined,
+		navigationHistory,
+		navigationIndex: navigationHistory.length - 1,
+		pendingScrollToLine: file.pendingScrollToLine,
+	};
+}
+
 export function createUntitledFileTab(): FilePreviewTab {
 	return {
 		id: generateId(),

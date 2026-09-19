@@ -6,6 +6,7 @@ import { COLORBLIND_STATUS_COLORS } from '../../../constants/colorblindPalettes'
 import type { Session, Theme, FocusArea, FileChangeType } from '../../../types';
 import type { FileNode } from '../../../types/fileTree';
 import type { FileExplorerIconTheme } from '../../../utils/fileExplorerIcons/shared';
+import type { FileClickOptions } from '../../../hooks/ui/useAppHandlers';
 import type { FlattenedNode } from '../types';
 import { FILE_TREE_SINGLE_MIME, FILE_TREE_MULTI_MIME } from '../types';
 import { parentDirOf } from '../utils/pathHelpers';
@@ -34,6 +35,8 @@ interface FileTreeRowProps {
 	fileExplorerIconTheme: FileExplorerIconTheme;
 	fileTreeFilter: string;
 	htmlDoubleClickOpensInBrowser: boolean;
+	/** VS Code-style preview tabs: a single click opens a replaceable preview. */
+	filePreviewModeEnabled: boolean;
 	sshRemoteId: string | undefined;
 	isTouchPointer: boolean;
 	longPressTimerRef: React.MutableRefObject<number | null>;
@@ -77,7 +80,7 @@ interface FileTreeRowProps {
 		setSessions: React.Dispatch<React.SetStateAction<Session[]>>
 	) => void;
 	setSessions: React.Dispatch<React.SetStateAction<Session[]>>;
-	handleFileClick: (node: FileNode, path: string) => Promise<void>;
+	handleFileClick: (node: FileNode, path: string, options?: FileClickOptions) => Promise<void>;
 	onOpenBrowserTabAt?: (url: string, options?: { title?: string }) => void;
 }
 
@@ -99,6 +102,7 @@ export const FileTreeRow = memo(function FileTreeRow({
 	fileExplorerIconTheme,
 	fileTreeFilter,
 	htmlDoubleClickOpensInBrowser,
+	filePreviewModeEnabled,
 	sshRemoteId,
 	isTouchPointer,
 	longPressTimerRef,
@@ -156,7 +160,7 @@ export const FileTreeRow = memo(function FileTreeRow({
 		activeFocus === 'right' && activeRightTab === 'files' && globalIndex === selectedFileIndex;
 	const isMultiSelected = selectedPaths.has(fullPath);
 
-	const openFile = () => {
+	const openFile = (options?: FileClickOptions) => {
 		if (isFolder) return;
 		const isHtml = /\.html?$/i.test(node.name);
 		if (htmlDoubleClickOpensInBrowser && isHtml && !sshRemoteId && onOpenBrowserTabAt) {
@@ -167,7 +171,7 @@ export const FileTreeRow = memo(function FileTreeRow({
 			onOpenBrowserTabAt(`file://${encodedPath}`, { title: node.name });
 			return;
 		}
-		void handleFileClick(node, fullPath);
+		void handleFileClick(node, fullPath, options);
 	};
 
 	// Generate indent guides for each depth level
@@ -337,7 +341,14 @@ export const FileTreeRow = memo(function FileTreeRow({
 						toggleFolder(fullPath, session.id, setSessions);
 					}
 				} else if (isTouchPointer) {
+					// Touch has no double-click, so a tap always opens a pinned tab -
+					// previewing there would leave no gesture that keeps a file.
 					openFile();
+				} else if (filePreviewModeEnabled) {
+					// Preview mode: the first click opens a replaceable preview. A
+					// double-click still reaches onDoubleClick below and pins the very
+					// tab this click opened, so the two need no timer between them.
+					openFile({ preview: true });
 				}
 			}}
 			onDoubleClick={() => {

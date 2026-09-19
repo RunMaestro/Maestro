@@ -47,6 +47,13 @@ export const FEATURES_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: 'about:blank',
 		category: 'editor',
 	},
+	filePreviewModeEnabled: {
+		description:
+			'When enabled, single-clicking a file in the file explorer opens it in a replaceable preview tab; clicking another file rewrites that same tab instead of opening a new one. Double-clicking the file, double-clicking its tab, or editing it pins the tab so it stops being replaced.',
+		type: 'boolean',
+		default: false,
+		category: 'editor',
+	},
 	htmlDoubleClickOpensInBrowser: {
 		description:
 			'When enabled, double-clicking an HTML file in the file explorer opens it in the Maestro browser instead of the file preview.',

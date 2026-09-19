@@ -79,6 +79,13 @@ export interface FilePreviewTabHandlersReturn {
 			mediaMode?: MediaOpenMode;
 			/** false = create the tab without showing it (background placement). */
 			activate?: boolean;
+			/**
+			 * Open as a REPLACEABLE preview tab (see `FilePreviewTab.isPreview`).
+			 * The agent's existing preview tab is rewritten in place rather than a
+			 * new one being opened. Omitted/false opens a pinned tab, and pins the
+			 * file's existing preview tab if it already has one.
+			 */
+			preview?: boolean;
 		}
 	) => void;
 	handleSelectFileTab: (tabId: string) => Promise<void>;

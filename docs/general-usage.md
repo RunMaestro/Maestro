@@ -76,6 +76,26 @@ Several formats come with a filtering language built for that format rather than
 a plain search box. **[File Formats](./file-formats)** is the full map: what
 opens as what, and what you can type at each one.
 
+### Preview Tabs (Single-Click Browsing)
+
+By default a file opens on a double-click and keeps its own tab. If you spend a
+lot of time reading around a codebase, turn on **Settings → General → Tab
+Behavior → "Single-click opens files in a preview tab"** for the behavior VS Code
+and VS Codium call preview mode:
+
+- **Single click** opens the file in one replaceable **preview tab**, shown in
+  italics in the tab bar. Clicking the next file reuses that same tab, so
+  browsing thirty files leaves you with one tab instead of thirty.
+- **Double click** the file, or double-click its tab, to **keep** it. The tab
+  stops being italic and the next file you click opens beside it.
+- **Editing the file keeps it automatically** - once you type into a preview tab
+  it is pinned, so the next thing you click can't replace it out from under your
+  unsaved changes.
+
+Only one preview tab exists per agent at a time, and pinned tabs are never
+touched. On a touchscreen a tap always opens a permanent tab, since there is no
+double-tap to keep one with.
+
 ### Jumping Between Sections in Markdown
 
 A long markdown file is faster to move around by section than by scrolling.

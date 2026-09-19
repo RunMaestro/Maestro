@@ -420,6 +420,10 @@ export interface UseSettingsReturn {
 	fileTabAutoRefreshEnabled: boolean;
 	setFileTabAutoRefreshEnabled: (value: boolean) => void;
 
+	// VS Code-style replaceable preview tabs
+	filePreviewModeEnabled: boolean;
+	setFilePreviewModeEnabled: (value: boolean) => void;
+
 	// Windows warning suppression
 	suppressWindowsWarning: boolean;
 	setSuppressWindowsWarning: (value: boolean) => void;

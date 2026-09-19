@@ -409,6 +409,12 @@ export interface TabStoreActions {
 	 * use this to enter/leave edit mode.
 	 */
 	setFileTabEditMode: (tabId: string, editMode: boolean) => void;
+	/**
+	 * Promote a replaceable preview tab to a permanent one, so the next
+	 * single-clicked file opens beside it instead of rewriting it. Idempotent -
+	 * calling it on an already-pinned tab is a no-op.
+	 */
+	pinFileTab: (tabId: string) => void;
 
 	/**
 	 * Set or clear the preview tier override on a file preview tab.
@@ -837,7 +843,15 @@ export const useTabStore = create<TabStore>()((set) => ({
 	},
 
 	// File tab content operations
-	updateFileTabEditContent: (tabId, content) => updateFileTab(tabId, { editContent: content }),
+	// The edit actions below also PIN a preview tab (see FilePreviewTab.isPreview):
+	// a file the user has typed into must stop being the one the next browse
+	// replaces. `updateFileTab` spreads a partial, so passing `isPreview:
+	// undefined` clears it and omitting the key leaves it alone.
+	updateFileTabEditContent: (tabId, content) =>
+		updateFileTab(tabId, {
+			editContent: content,
+			...(content !== undefined ? { isPreview: undefined } : {}),
+		}),
 	updateFileTabScrollPosition: (tabId, scrollTop) => updateFileTab(tabId, { scrollTop }),
 	updateFileTabSearchQuery: (tabId, query) => updateFileTab(tabId, { searchQuery: query }),
 
@@ -846,10 +860,14 @@ export const useTabStore = create<TabStore>()((set) => ({
 		if (!session) return;
 		const tab = session.filePreviewTabs.find((t) => t.id === tabId);
 		if (!tab) return;
-		updateFileTab(tabId, { editMode: !tab.editMode });
+		const editMode = !tab.editMode;
+		updateFileTab(tabId, { editMode, ...(editMode ? { isPreview: undefined } : {}) });
 	},
 
-	setFileTabEditMode: (tabId, editMode) => updateFileTab(tabId, { editMode }),
+	setFileTabEditMode: (tabId, editMode) =>
+		updateFileTab(tabId, { editMode, ...(editMode ? { isPreview: undefined } : {}) }),
+
+	pinFileTab: (tabId) => updateFileTab(tabId, { isPreview: undefined }),
 
 	setFileTabPreviewTier: (tabId, tier) => updateFileTab(tabId, { previewTierOverride: tier }),
 

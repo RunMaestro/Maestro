@@ -68,6 +68,12 @@ export interface FileTabOpenOptions {
 	 * a tab. Defaults to playing it.
 	 */
 	mediaMode?: MediaOpenMode;
+	/**
+	 * Open the file as a REPLACEABLE preview tab rather than a permanent one.
+	 * Set by the file tree's single click when `filePreviewModeEnabled` is on;
+	 * see `FilePreviewTab.isPreview`.
+	 */
+	preview?: boolean;
 }
 
 /** Options for opening a file from the file tree. */
@@ -78,6 +84,12 @@ export interface FileClickOptions {
 	 * and the rest queue.
 	 */
 	mediaMode?: MediaOpenMode;
+	/**
+	 * Open the file as a REPLACEABLE preview tab rather than a permanent one.
+	 * Set by the file tree's single click when `filePreviewModeEnabled` is on;
+	 * see `FilePreviewTab.isPreview`.
+	 */
+	preview?: boolean;
 }
 
 export interface UseAppHandlersDeps {
@@ -407,7 +419,10 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 						isLoading: true,
 						loadRequestId,
 					},
-					{ targetSessionId }
+					// The eager loading tab must be created with the same preview
+					// state the finished read will land in, or an SSH preview opens a
+					// permanent tab that the content fill then has nothing to replace.
+					{ targetSessionId, preview: options?.preview }
 				);
 				setActiveFocus('main');
 			}
@@ -477,7 +492,7 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 						sshRemoteId,
 						lastModified,
 					},
-					{ targetSessionId, mediaMode: options?.mediaMode }
+					{ targetSessionId, mediaMode: options?.mediaMode, preview: options?.preview }
 				);
 				setActiveFocus('main');
 			} catch (error) {

@@ -143,6 +143,8 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				setNewTerminalPlacement={settings.setNewTerminalPlacement}
 				openedFilePlacement={settings.openedFilePlacement}
 				setOpenedFilePlacement={settings.setOpenedFilePlacement}
+				filePreviewModeEnabled={settings.filePreviewModeEnabled}
+				setFilePreviewModeEnabled={settings.setFilePreviewModeEnabled}
 			/>
 			<UtilityAgentSection
 				theme={theme}

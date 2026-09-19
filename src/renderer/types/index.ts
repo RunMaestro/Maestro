@@ -924,6 +924,15 @@ export interface FilePreviewTab {
 	// FilePreview consumes it (flips to edit mode if needed, scrolls + places
 	// the caret) and then clears it.
 	pendingScrollToLine?: number;
+	// True while this tab is a REPLACEABLE preview (the `filePreviewModeEnabled`
+	// setting): the next single-clicked file rewrites this tab in place instead of
+	// opening another one, so browsing a tree costs one chip rather than thirty.
+	// At most one preview tab exists per agent. It is PINNED (this flag cleared)
+	// the moment the user commits to the file - a double-click in the tree, a
+	// double-click on the chip, or the first edit - which is what keeps a file
+	// someone is working in from being replaced out from under them. Absent on
+	// every tab opened outside preview mode, so an undefined value means pinned.
+	isPreview?: boolean;
 }
 
 /**

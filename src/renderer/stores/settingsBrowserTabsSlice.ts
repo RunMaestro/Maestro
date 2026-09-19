@@ -26,6 +26,7 @@ export interface BrowserTabsState {
 	newTerminalPlacement: 'end' | 'after-current';
 	openedFilePlacement: 'end' | 'after-current';
 	fileTabAutoRefreshEnabled: boolean;
+	filePreviewModeEnabled: boolean;
 }
 
 export interface BrowserTabsActions {
@@ -43,6 +44,7 @@ export interface BrowserTabsActions {
 	setNewTerminalPlacement: (value: 'end' | 'after-current') => void;
 	setOpenedFilePlacement: (value: 'end' | 'after-current') => void;
 	setFileTabAutoRefreshEnabled: (value: boolean) => void;
+	setFilePreviewModeEnabled: (value: boolean) => void;
 }
 
 export type BrowserTabsSlice = BrowserTabsState & BrowserTabsActions;
@@ -68,6 +70,10 @@ export const createBrowserTabsSlice: StateCreator<SettingsStore, [], [], Browser
 	newTerminalPlacement: 'after-current',
 	openedFilePlacement: 'after-current',
 	fileTabAutoRefreshEnabled: false,
+	// Off by default: a single click opening a file changes what the whole file
+	// tree does, so it is opted into rather than sprung on someone who expects
+	// the double-click they have been using.
+	filePreviewModeEnabled: false,
 
 	setShowBrowserTabDomain: (value) => {
 		set({ showBrowserTabDomain: value });
@@ -139,6 +145,11 @@ export const createBrowserTabsSlice: StateCreator<SettingsStore, [], [], Browser
 		set({ fileTabAutoRefreshEnabled: value });
 		window.maestro.settings.set('fileTabAutoRefreshEnabled', value);
 	},
+
+	setFilePreviewModeEnabled: (value) => {
+		set({ filePreviewModeEnabled: value });
+		window.maestro.settings.set('filePreviewModeEnabled', value);
+	},
 });
 
 /** Mutates `patch` in place with any persisted Browser/Tabs fields found in `allSettings`. */
@@ -203,4 +214,6 @@ export function hydrateBrowserTabsSettings(
 
 	if (allSettings['fileTabAutoRefreshEnabled'] !== undefined)
 		patch.fileTabAutoRefreshEnabled = allSettings['fileTabAutoRefreshEnabled'] as boolean;
+	if (allSettings['filePreviewModeEnabled'] !== undefined)
+		patch.filePreviewModeEnabled = allSettings['filePreviewModeEnabled'] as boolean;
 }
