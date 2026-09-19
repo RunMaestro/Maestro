@@ -436,6 +436,9 @@ export interface SettingsStoreState
 	groupChatSortAlphabetical: boolean;
 	starredSessionsCollapsed: boolean;
 	tourCompleted: boolean;
+	didYouKnowEnabled: boolean;
+	didYouKnowSeenTipIds: string[];
+	didYouKnowSeed: number;
 	firstAutoRunCompleted: boolean;
 	onboardingStats: OnboardingStats;
 	leaderboardRegistration: LeaderboardRegistration | null;
@@ -571,6 +574,9 @@ export interface SettingsStoreActions
 	setGroupChatSortAlphabetical: (value: boolean) => void;
 	setStarredSessionsCollapsed: (value: boolean) => void;
 	setTourCompleted: (value: boolean) => void;
+	setDidYouKnowEnabled: (value: boolean) => void;
+	setDidYouKnowSeenTipIds: (value: string[]) => void;
+	setDidYouKnowSeed: (value: number) => void;
 	setFirstAutoRunCompleted: (value: boolean) => void;
 	setLeaderboardRegistration: (value: LeaderboardRegistration | null) => void;
 	setPersistentWebLink: (value: boolean) => Promise<void>;
@@ -834,6 +840,9 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		groupChatSortAlphabetical: false,
 		starredSessionsCollapsed: false,
 		tourCompleted: false,
+		didYouKnowEnabled: true,
+		didYouKnowSeenTipIds: [],
+		didYouKnowSeed: 0,
 		firstAutoRunCompleted: false,
 		onboardingStats: DEFAULT_ONBOARDING_STATS,
 		leaderboardRegistration: null,
@@ -1211,6 +1220,21 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setTourCompleted: (value) => {
 			set({ tourCompleted: value });
 			window.maestro.settings.set('tourCompleted', value);
+		},
+
+		setDidYouKnowEnabled: (value) => {
+			set({ didYouKnowEnabled: value });
+			window.maestro.settings.set('didYouKnowEnabled', value);
+		},
+
+		setDidYouKnowSeenTipIds: (value) => {
+			set({ didYouKnowSeenTipIds: value });
+			window.maestro.settings.set('didYouKnowSeenTipIds', value);
+		},
+
+		setDidYouKnowSeed: (value) => {
+			set({ didYouKnowSeed: value });
+			window.maestro.settings.set('didYouKnowSeed', value);
 		},
 
 		setFirstAutoRunCompleted: (value) => {

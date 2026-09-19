@@ -148,6 +148,9 @@ function resetStore() {
 		ungroupedCollapsed: false,
 		groupChatsExpanded: true,
 		tourCompleted: false,
+		didYouKnowEnabled: true,
+		didYouKnowSeenTipIds: [],
+		didYouKnowSeed: 0,
 		firstAutoRunCompleted: false,
 		onboardingStats: DEFAULT_ONBOARDING_STATS,
 		leaderboardRegistration: null,
@@ -840,6 +843,40 @@ describe('settingsStore', () => {
 				useSettingsStore.getState().setTourCompleted(true);
 				expect(useSettingsStore.getState().tourCompleted).toBe(true);
 				expect(window.maestro.settings.set).toHaveBeenCalledWith('tourCompleted', true);
+			});
+
+			it('initializes Did You Know with enabled, unseen, unassigned defaults', () => {
+				const initial = useSettingsStore.getInitialState();
+				expect(initial.didYouKnowEnabled).toBe(true);
+				expect(initial.didYouKnowSeenTipIds).toEqual([]);
+				expect(initial.didYouKnowSeed).toBe(0);
+			});
+
+			it('setDidYouKnowEnabled updates state and persists changes and resets', () => {
+				for (const value of [false, true]) {
+					useSettingsStore.getState().setDidYouKnowEnabled(value);
+					expect(useSettingsStore.getState().didYouKnowEnabled).toEqual(value);
+					expect(window.maestro.settings.set).toHaveBeenLastCalledWith('didYouKnowEnabled', value);
+				}
+			});
+
+			it('setDidYouKnowSeenTipIds updates state and persists changes and resets', () => {
+				for (const value of [['maestro-cue', 'auto-run'], []]) {
+					useSettingsStore.getState().setDidYouKnowSeenTipIds(value);
+					expect(useSettingsStore.getState().didYouKnowSeenTipIds).toEqual(value);
+					expect(window.maestro.settings.set).toHaveBeenLastCalledWith(
+						'didYouKnowSeenTipIds',
+						value
+					);
+				}
+			});
+
+			it('setDidYouKnowSeed updates state and persists changes and resets', () => {
+				for (const value of [4294967295, 0]) {
+					useSettingsStore.getState().setDidYouKnowSeed(value);
+					expect(useSettingsStore.getState().didYouKnowSeed).toEqual(value);
+					expect(window.maestro.settings.set).toHaveBeenLastCalledWith('didYouKnowSeed', value);
+				}
 			});
 
 			it('setFirstAutoRunCompleted updates state and persists', () => {
