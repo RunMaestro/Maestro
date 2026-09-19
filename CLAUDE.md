@@ -64,6 +64,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **ID generation:** `generateId()` in `src/renderer/utils/ids.ts`, `generateUUID()` in `src/shared/uuid.ts`
 - **Browser relay text chunks:** `chunkBrowserRelayText()` in `src/shared/browserRelay.ts`
 - **Shuffling a list:** `shuffle()`, `shuffleWithSeed(array, seed)` in `src/shared/shuffle.ts`
+- **Cutting a spotlight hole in an overlay:** `getElementRect()`, `getSpotlightClipPath()` in `src/renderer/utils/spotlight.ts`
 - **Format file size:** `formatSize()` in `src/shared/formatters.ts`
 - **Format numbers:** `formatNumber()` (compact), `formatCount()` (exact) in `src/shared/formatters.ts`
 - **Format tokens:** `formatTokens()`, `formatTokensCompact()`, `estimateTokenCount()` in `src/shared/formatters.ts`
