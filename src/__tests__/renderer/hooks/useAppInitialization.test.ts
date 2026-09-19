@@ -424,6 +424,8 @@ describe('useAppInitialization', () => {
 			expect(useModalStore.getState().isOpen('didYouKnow')).toBe(false);
 			await act(() => vi.advanceTimersByTimeAsync(1));
 			expect(useModalStore.getState().isOpen('didYouKnow')).toBe(true);
+			// Launch leaves startTipId unset so the card uses the normal tip rotation.
+			expect(useModalStore.getState().getData('didYouKnow')).toBeUndefined();
 			act(() => {
 				useModalStore.getState().closeModal('didYouKnow');
 				useModalStore.getState().openModal('tour');
