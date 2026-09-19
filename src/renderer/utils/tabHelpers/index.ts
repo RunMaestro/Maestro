@@ -42,6 +42,7 @@ import {
 	terminalTabFocusFields,
 	toggleReadOnlyModeFields,
 	permissionModeFields,
+	defaultTabPermissionFields,
 	nextPermissionMode,
 	cycleShowThinkingFields,
 	setShowThinkingFields,
@@ -64,6 +65,7 @@ export {
 	terminalTabFocusFields,
 	toggleReadOnlyModeFields,
 	permissionModeFields,
+	defaultTabPermissionFields,
 	nextPermissionMode,
 	cycleShowThinkingFields,
 	setShowThinkingFields,
@@ -1070,6 +1072,9 @@ export function createTab(
 		state: 'idle',
 		saveToHistory,
 		showThinking,
+		// An agent set to "Read Only by default" hands every new chat a read-only
+		// seed. Absent on every other agent, which still resolves to full access.
+		...defaultTabPermissionFields(session),
 	};
 
 	// Update the session with the new tab added. When `activate` is true (the

@@ -67,6 +67,7 @@ import {
 	moveUnifiedTabToTarget,
 	toggleReadOnlyModeFields,
 	permissionModeFields,
+	defaultTabPermissionFields,
 	nextPermissionMode,
 	cycleShowThinkingFields,
 	setShowThinkingFields,
@@ -188,6 +189,32 @@ describe('tabHelpers', () => {
 			expect(result.tab.createdAt).toBeDefined();
 			expect(result.session.aiTabs).toHaveLength(1);
 			expect(result.session.activeTabId).toBe('mock-generated-id');
+		});
+
+		it('seeds a read-only chat when the agent is read-only by default', () => {
+			// Issue #1615. The seed is written as BOTH fields, because the toolbar
+			// pill and the spawn path read `permissionMode` and `readOnlyMode`
+			// respectively - a tab given only one of them renders as one thing and
+			// runs as another.
+			const session = createMockSession({ aiTabs: [], readOnlyByDefault: true } as never);
+
+			const result = createTab(session)!;
+
+			expect(result.tab.permissionMode).toBe('readonly');
+			expect(result.tab.readOnlyMode).toBe(true);
+			expect(resolveTabPermissionMode(result.tab)).toBe('readonly');
+		});
+
+		it('leaves a new chat unset when the agent has no read-only default', () => {
+			// An unset permissionMode already resolves to full access, so the seed
+			// must not write 'full' onto every tab of every other agent.
+			const session = createMockSession({ aiTabs: [] });
+
+			const result = createTab(session)!;
+
+			expect(result.tab.permissionMode).toBeUndefined();
+			expect(result.tab.readOnlyMode).toBeUndefined();
+			expect(resolveTabPermissionMode(result.tab)).toBe('full');
 		});
 
 		it('leaves any active tiled group so the new tab gets focus', () => {
@@ -6619,6 +6646,24 @@ describe('tabHelpers', () => {
 			for (const mode of ['full', 'standard', 'readonly'] as const) {
 				expect(resolveTabPermissionMode(permissionModeFields(mode))).toBe(mode);
 			}
+		});
+	});
+
+	describe('defaultTabPermissionFields', () => {
+		it('hands a read-only seed to an agent set read-only by default', () => {
+			expect(defaultTabPermissionFields({ readOnlyByDefault: true })).toEqual({
+				permissionMode: 'readonly',
+				readOnlyMode: true,
+			});
+		});
+
+		it('writes nothing for an agent with no default', () => {
+			// Writing 'full' here would persist a field that says exactly what an
+			// absent one already says, on every tab of every other agent.
+			expect(defaultTabPermissionFields({ readOnlyByDefault: false })).toEqual({});
+			expect(defaultTabPermissionFields({})).toEqual({});
+			expect(defaultTabPermissionFields(undefined)).toEqual({});
+			expect(defaultTabPermissionFields(null)).toEqual({});
 		});
 	});
 

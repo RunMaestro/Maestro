@@ -7,6 +7,7 @@
 
 import type { Session, AITab, ThinkingMode } from '../types';
 import { generateId } from './ids';
+import { defaultTabPermissionFields } from './tabHelpers';
 
 /**
  * Parameters for building a worktree Session object.
@@ -50,6 +51,9 @@ export function buildWorktreeSession(params: BuildWorktreeSessionParams): Sessio
 		state: 'idle',
 		saveToHistory: params.defaultSaveToHistory,
 		showThinking: params.defaultShowThinking,
+		// A worktree inherits the parent agent's "Read Only by default", so the
+		// safety choice made for the workspace still holds in the branch cut off it.
+		...defaultTabPermissionFields(params.parentSession),
 	};
 
 	return {
@@ -125,6 +129,9 @@ export function buildWorktreeSession(params: BuildWorktreeSessionParams): Sessio
 		// switched-off entries the user is keeping for later.
 		customEnvVarsDisabled: params.parentSession.customEnvVarsDisabled,
 		customModel: params.parentSession.customModel,
+		// Read Only by default is a property of how the user wants this agent to
+		// behave, not of one directory, so it travels to the worktree agent.
+		readOnlyByDefault: params.parentSession.readOnlyByDefault,
 		// New model inherits these; legacy does not
 		customContextWindow: isLegacy ? undefined : params.parentSession.customContextWindow,
 		// Provenance travels WITH the value it describes (finding AD1). Copying
