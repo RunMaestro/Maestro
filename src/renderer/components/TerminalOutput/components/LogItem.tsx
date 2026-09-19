@@ -39,6 +39,7 @@ import { CrossAgentResponseHeader } from '../../CrossAgentResponseHeader';
 import { isHiddenProgressEntry } from '../utils/collapseAiResponseLogs';
 import { SessionRecoveryCardConnector } from './SessionRecoveryCardConnector';
 import { ToolBadge } from './ToolBadge';
+import { codexDirectivesLiveForSource } from '../../../services/codexFollowup';
 
 /**
  * Shallow content comparison for the nested subagent tool entries. Identity is
@@ -238,8 +239,8 @@ export const LogItem = memo(
 		 * command), an error body, a thinking block, and tool output: in all of
 		 * those the string describes the format rather than offering an action.
 		 */
-		const isAssistantBody = log.source === 'stdout' || log.source === 'ai';
-		const codexDirectivesForBody = Boolean(codexDirectives) && isAssistantBody;
+		const codexDirectivesForBody =
+			Boolean(codexDirectives) && codexDirectivesLiveForSource(log.source);
 		// No tab means no conversation for a click to land in, so the directives
 		// still render (as their label) but without a control on them.
 		const codexFollowup =

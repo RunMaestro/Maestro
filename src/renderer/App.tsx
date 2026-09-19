@@ -166,7 +166,11 @@ import {
 } from './stores/groupChatStore';
 import { useBatchStore } from './stores/batchStore';
 import { registerBatchResumer } from './services/batchResumer';
-import { CODEX_FOLLOWUP_EVENT, type CodexFollowupRequest } from './services/codexFollowup';
+import {
+	CODEX_FOLLOWUP_EVENT,
+	resolveCodexFollowup,
+	type CodexFollowupRequest,
+} from './services/codexFollowup';
 // All session state is read directly from useSessionStore in MaestroConsoleInner.
 import {
 	useSessionStore,
@@ -2398,16 +2402,19 @@ function MaestroConsoleInner() {
 	 * between here and the spawn.
 	 */
 	useEventListener(CODEX_FOLLOWUP_EVENT, (event) => {
-		const detail = (event as CustomEvent<CodexFollowupRequest>).detail;
-		const prompt = detail?.prompt?.trim();
-		if (!prompt) return;
-
 		const session = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
-		const activeTabId = session ? (getActiveTab(session)?.id ?? null) : null;
-		const onScreen = !!session && session.id === detail.sessionId && activeTabId === detail.tabId;
+		const resolution = resolveCodexFollowup((event as CustomEvent<CodexFollowupRequest>).detail, {
+			activeSessionId: session?.id ?? null,
+			activeTabId: session ? (getActiveTab(session)?.id ?? null) : null,
+		});
 
-		if (detail.mode === 'send' && onScreen) {
-			processInputRef.current(prompt, { sessionId: detail.sessionId, tabId: detail.tabId });
+		if (resolution.action === 'ignore') return;
+
+		if (resolution.action === 'send') {
+			processInputRef.current(resolution.prompt, {
+				sessionId: resolution.sessionId,
+				tabId: resolution.tabId,
+			});
 			return;
 		}
 
@@ -2415,12 +2422,11 @@ function MaestroConsoleInner() {
 		// go, which is what this has to use: the same string is a message, a shell
 		// command or a request for one depending on the mode, so prefilling the
 		// text alone would drop an agent prompt into a bang composer and Enter
-		// would run it as a shell command. The owner is the tab on SCREEN rather
-		// than the one the chip named - that is the only composer being drawn.
-		useComposerInputStore.getState().loadAiDraft(activeTabId, prompt, 'off');
+		// would run it as a shell command.
+		useComposerInputStore.getState().loadAiDraft(resolution.tabId, resolution.prompt, 'off');
 		inputRef.current?.focus();
 
-		if (detail.mode === 'send') {
+		if (resolution.movedAway) {
 			notifyCenterFlash({
 				message: 'Conversation moved',
 				detail: 'The follow-up is in the composer, not sent.',
