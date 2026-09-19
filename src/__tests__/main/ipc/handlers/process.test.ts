@@ -397,6 +397,7 @@ describe('process IPC handlers', () => {
 				'concerto-html:restore',
 				'process:spawn',
 				'process:write',
+				'process:steer',
 				'process:broadcast-user-input',
 				'process:interrupt',
 				'process:kill',
