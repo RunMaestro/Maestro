@@ -13,7 +13,7 @@ import { LayerStackProvider, useLayerStack } from '../../../../renderer/contexts
 import { useModalStore } from '../../../../renderer/stores/modalStore';
 import * as uiSurfaces from '../../../../shared/uiSurfaces';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
-import { buildTipOrder } from '../../../../shared/didYouKnow';
+import { buildTipOrder, DID_YOU_KNOW_TIPS } from '../../../../shared/didYouKnow';
 import { formatShortcutKeys } from '../../../../renderer/utils/shortcutFormatter';
 import { resetStore } from '../../../helpers';
 import { MODAL_PRIORITIES } from '../../../../renderer/constants/modalPriorities';
@@ -43,6 +43,40 @@ describe('DidYouKnowModal', () => {
 	describe('Show me spotlight', () => {
 		beforeEach(() => vi.useFakeTimers());
 		afterEach(() => vi.useRealTimers());
+
+		it.each(DID_YOU_KNOW_TIPS.filter((tip) => tip.spotlightSelector))(
+			'keeps the icon plate and gates Show me on the live target for $id',
+			(tip) => {
+				const { unmount } = render(
+					<DidYouKnowModal theme={mockTheme} isOpen startTipId={tip.id} onClose={vi.fn()} />,
+					{ wrapper: LayerStackProvider }
+				);
+				const aperture = document.querySelector('.overflow-hidden > .dyk-art');
+				expect(aperture?.querySelector('svg')).toBeInTheDocument();
+				expect(aperture?.querySelector('img')).toBeNull();
+				expect(screen.queryByRole('button', { name: 'Show me' })).toBeNull();
+				const target = document.createElement('div');
+				// Current catalog targets are data-tour attributes; fail if a new shape needs a fixture.
+				const attribute = tip.spotlightSelector!.match(/^\[data-tour="([^"]+)"\]$/);
+				expect(attribute).not.toBeNull();
+				target.dataset.tour = attribute![1];
+				vi.spyOn(target, 'getBoundingClientRect').mockReturnValue(new DOMRect(100, 100, 200, 60));
+				document.body.append(target);
+				try {
+					act(() => vi.advanceTimersByTime(150));
+					fireEvent.click(screen.getByRole('button', { name: 'Show me' }));
+					expect(document.querySelector('.dyk-spotlight[data-active="true"]')).toBeInTheDocument();
+					expect(aperture?.querySelector('svg')).toBeInTheDocument();
+					target.remove();
+					act(() => vi.advanceTimersByTime(150));
+					expect(screen.queryByRole('button', { name: 'Show me' })).toBeNull();
+					expect(aperture?.querySelector('svg')).toBeInTheDocument();
+				} finally {
+					target.remove();
+					unmount();
+				}
+			}
+		);
 
 		it('offers Show me only for a live, visible target and rechecks on activation', () => {
 			render(
