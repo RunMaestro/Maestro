@@ -27,7 +27,7 @@
 // the terminal also throw - these are programmer errors that would corrupt
 // the wire protocol if allowed through.
 
-import type { SteeringResultFrame } from './steering';
+import type { SteeringResultFrame } from '../shared/chatSteering';
 
 export interface EmitInitOptions {
 	sessionId: string;
@@ -120,7 +120,7 @@ export class JsonEmitter {
 	}
 
 	/**
-	 * Report what became of one chat-steering attempt (see steering.ts).
+	 * Report what became of one chat-steering attempt (see shared/chatSteering.ts).
 	 *
 	 * This is a maestro-p EXTENSION to the stream-json wire format, not something
 	 * `claude --print` emits, and it is safe to add because an unrecognized `type`

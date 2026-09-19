@@ -35,7 +35,7 @@ import {
 	classifyQueueOperation,
 	STEERING_SOCKET_ENV_VAR,
 	type SteeringResultFrame,
-} from './steering';
+} from '../shared/chatSteering';
 import { startSteeringServer, type SteeringServer } from './steering-server';
 import { cleanupStreamJsonImages, translateStreamJsonInput } from './stream-json-input';
 import { formatScreenTailReport, idleTimeoutMessage } from './timeout-report';

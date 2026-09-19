@@ -24,7 +24,7 @@
 import * as fs from 'fs';
 import * as net from 'net';
 
-import { parseSteeringRequest, type SteeringResultFrame } from './steering';
+import { parseSteeringRequest, type SteeringResultFrame } from '../shared/chatSteering';
 
 export interface SteeringServerOptions {
 	socketPath: string;

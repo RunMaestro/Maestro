@@ -35,8 +35,8 @@ import {
 	describeBlockingDialog,
 	editorIsAcceptingInput,
 	screenShowsTypedText,
-	type SteeringRefusal,
-} from './steering';
+} from './steering-screen';
+import type { SteeringRefusal } from '../shared/chatSteering';
 
 export interface TuiDriverOptions {
 	binPath: string;
