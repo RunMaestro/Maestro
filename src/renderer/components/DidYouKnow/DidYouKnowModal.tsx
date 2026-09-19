@@ -1,3 +1,6 @@
+import { useState } from 'react';
+import { DID_YOU_KNOW_TIPS, type DidYouKnowTip } from '../../../shared/didYouKnow';
+import './tipTransition.css';
 import { createPortal } from 'react-dom';
 import { ArrowLeft, ArrowRight, Lightbulb } from 'lucide-react';
 import { resolveEncoreFeatures } from '../../../shared/encoreFeatureDefaults';
@@ -32,6 +35,18 @@ function DidYouKnowModalContent({ theme, startTipId, onClose }: DidYouKnowModalP
 	const { tip, index, total, canGoBack, goNext, goBack, dismissForever } = useDidYouKnowRotation({
 		startTipId,
 	});
+	const [transition, setTransition] = useState<{
+		previous: DidYouKnowTip | null;
+		direction: 'next' | 'back';
+	}>({ previous: null, direction: 'next' });
+	const navigate = (direction: 'next' | 'back') => {
+		if (direction === 'back' && !canGoBack) return;
+		const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+		setTransition({ previous: reducedMotion ? null : tip, direction });
+		if (direction === 'next') goNext();
+		else goBack();
+	};
+	const outgoingTip = transition.previous?.id !== tip?.id ? transition.previous : null;
 	const shortcuts = useSettingsStore((s) => s.shortcuts);
 	const tabShortcuts = useSettingsStore((s) => s.tabShortcuts);
 	const encoreFeatures = useSettingsStore((s) => s.encoreFeatures);
@@ -75,10 +90,10 @@ function DidYouKnowModalContent({ theme, startTipId, onClose }: DidYouKnowModalP
 
 			if (e.key === 'ArrowRight') {
 				e.preventDefault();
-				goNext();
+				navigate('next');
 			} else if (e.key === 'ArrowLeft') {
 				e.preventDefault();
-				if (canGoBack) goBack();
+				navigate('back');
 			} else if (e.key === 'Enter' && canOpenSurface) {
 				e.preventDefault();
 				openSurface();
@@ -98,7 +113,7 @@ function DidYouKnowModalContent({ theme, startTipId, onClose }: DidYouKnowModalP
 				role="dialog"
 				aria-modal="true"
 				aria-label="Did You Know"
-				className="my-auto w-full max-w-[760px] shrink-0 rounded-xl p-5 shadow-2xl"
+				className="dyk-dialog my-auto w-full max-w-[760px] shrink-0 rounded-xl p-5 shadow-2xl"
 				style={{ backgroundColor: theme.colors.bgMain, color: theme.colors.textMain }}
 			>
 				<header className="flex items-center gap-2 text-sm">
@@ -110,17 +125,53 @@ function DidYouKnowModalContent({ theme, startTipId, onClose }: DidYouKnowModalP
 					<EscCloseButton theme={theme} onClose={onClose} />
 				</header>
 				<OrnateFrame className="my-4">
-					<TipArtwork tip={tip} theme={theme} />
+					{outgoingTip && (
+						<div
+							key={`out-${outgoingTip.id}`}
+							className="dyk-art dyk-exit"
+							data-direction={transition.direction}
+							aria-hidden
+						>
+							<TipArtwork tip={outgoingTip} theme={theme} />
+						</div>
+					)}
+					<div
+						key={tip.id}
+						className={`dyk-art ${outgoingTip ? 'dyk-enter' : ''}`}
+						data-direction={transition.direction}
+					>
+						<TipArtwork tip={tip} theme={theme} />
+					</div>
 				</OrnateFrame>
-				<TipCard
-					tip={tip}
-					theme={theme}
-					shortcuts={shortcuts}
-					tabShortcuts={tabShortcuts}
-					encoreFeatures={encoreFeatures}
-					fontFamily={fontFamily}
-				/>
-				<footer className="mt-6 flex flex-wrap items-center gap-2 text-sm">
+				{/* One grid cell sizes itself to the tallest placard at the actual width/font.
+				    Hidden cards remain in layout, but are inert and absent from the accessibility tree. */}
+				<div className="dyk-copy-stack">
+					{DID_YOU_KNOW_TIPS.map((entry) => {
+						const active = entry.id === tip.id;
+						const outgoing = outgoingTip && entry.id === outgoingTip.id;
+						return (
+							<div
+								key={entry.id}
+								data-tip-id={entry.id}
+								data-direction={transition.direction}
+								className={`dyk-copy ${active && outgoingTip ? 'dyk-enter' : outgoing ? 'dyk-exit' : ''}`}
+								style={{ visibility: active || outgoing ? undefined : 'hidden' }}
+								aria-hidden={!active || undefined}
+								{...(!active && { inert: '' as unknown as boolean })}
+							>
+								<TipCard
+									tip={entry}
+									theme={theme}
+									shortcuts={shortcuts}
+									tabShortcuts={tabShortcuts}
+									encoreFeatures={encoreFeatures}
+									fontFamily={fontFamily}
+								/>
+							</div>
+						);
+					})}
+				</div>
+				<footer className="dyk-footer mt-6 grid items-center gap-2 text-sm">
 					<button
 						type="button"
 						className="rounded py-2 text-xs hover:underline"
@@ -132,10 +183,9 @@ function DidYouKnowModalContent({ theme, startTipId, onClose }: DidYouKnowModalP
 					>
 						Don't show this again
 					</button>
-					<div className="flex-1" />
 					{/* Documentation and primary action wiring follow in subsequent tasks. */}
 					{tip.docsSlug && (
-						<button type="button" disabled className="rounded px-2 py-2 opacity-50">
+						<button type="button" disabled className="dyk-docs rounded px-2 py-2 opacity-50">
 							Read more
 						</button>
 					)}
@@ -144,8 +194,8 @@ function DidYouKnowModalContent({ theme, startTipId, onClose }: DidYouKnowModalP
 						aria-label="Previous tip"
 						title="Previous tip"
 						disabled={!canGoBack}
-						onClick={goBack}
-						className="rounded p-2 hover:bg-white/10 disabled:opacity-30"
+						onClick={() => navigate('back')}
+						className="dyk-back rounded p-2 hover:bg-white/10 disabled:opacity-30"
 					>
 						<ArrowLeft className="h-4 w-4" aria-hidden />
 					</button>
@@ -153,8 +203,8 @@ function DidYouKnowModalContent({ theme, startTipId, onClose }: DidYouKnowModalP
 						type="button"
 						aria-label="Next tip"
 						title="Next tip"
-						onClick={goNext}
-						className="rounded p-2 hover:bg-white/10"
+						onClick={() => navigate('next')}
+						className="dyk-next rounded p-2 hover:bg-white/10"
 					>
 						<ArrowRight className="h-4 w-4" aria-hidden />
 					</button>
@@ -162,7 +212,7 @@ function DidYouKnowModalContent({ theme, startTipId, onClose }: DidYouKnowModalP
 						<button
 							type="button"
 							onClick={openSurface}
-							className="rounded px-3 py-2 font-medium hover:opacity-90"
+							className="dyk-action rounded px-3 py-2 font-medium hover:opacity-90"
 							style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}
 						>
 							{needsEncore ? 'Turn on' : 'Open'} {surface.label}

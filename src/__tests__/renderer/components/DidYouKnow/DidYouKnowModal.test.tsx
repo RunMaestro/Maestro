@@ -79,6 +79,67 @@ describe('DidYouKnowModal', () => {
 		expect(screen.getByRole('heading', { name: order[1].title })).toBeInTheDocument();
 	});
 
+	it('cross-fades only artwork and copy, with direction shared by clicks and keys', () => {
+		render(<DidYouKnowModal theme={mockTheme} isOpen onClose={vi.fn()} />, {
+			wrapper: LayerStackProvider,
+		});
+		const dialog = screen.getByRole('dialog');
+		const frame = dialog.querySelector('img[aria-hidden]')!.parentElement!;
+		expect(dialog.querySelector('.dyk-enter')).toBeNull();
+		fireEvent.click(screen.getByRole('button', { name: 'Next tip' }));
+		expect(dialog.querySelectorAll('.dyk-enter')).toHaveLength(2);
+		expect(dialog.querySelectorAll('.dyk-exit')).toHaveLength(2);
+		for (const entry of dialog.querySelectorAll('.dyk-enter, .dyk-exit')) {
+			expect(entry).toHaveAttribute('data-direction', 'next');
+		}
+		expect(dialog.querySelector('.dyk-copy.dyk-exit')).toHaveAttribute('inert');
+		expect(dialog.querySelector('.dyk-copy.dyk-exit')).toHaveAttribute('aria-hidden', 'true');
+		fireEvent.keyDown(window, { key: 'ArrowLeft' });
+		for (const entry of dialog.querySelectorAll('.dyk-enter, .dyk-exit')) {
+			expect(entry).toHaveAttribute('data-direction', 'back');
+		}
+		expect(dialog.querySelector('img[aria-hidden]')!.parentElement).toBe(frame);
+		expect(frame).not.toHaveClass('dyk-enter', 'dyk-exit');
+		// Reversing again before the animation ends leaves only one outgoing pair.
+		fireEvent.keyDown(window, { key: 'ArrowRight' });
+		expect(dialog.querySelectorAll('.dyk-exit')).toHaveLength(2);
+		expect(dialog.querySelector('.dyk-copy.dyk-enter')).toHaveAttribute('data-tip-id', order[1].id);
+	});
+
+	it('reserves every placard in the same grid while exposing only the current copy', () => {
+		render(<DidYouKnowModal theme={mockTheme} isOpen onClose={vi.fn()} />, {
+			wrapper: LayerStackProvider,
+		});
+		const cards = screen.getByRole('dialog').querySelectorAll('.dyk-copy-stack > .dyk-copy');
+		expect(cards).toHaveLength(order.length);
+		expect(screen.getAllByRole('heading', { level: 2 })).toHaveLength(1);
+		for (const card of cards) {
+			if (card.getAttribute('data-tip-id') === order[0].id) continue;
+			expect(card).toHaveAttribute('aria-hidden', 'true');
+			expect(card).toHaveAttribute('inert');
+			expect(card).toHaveStyle({ visibility: 'hidden' });
+		}
+		expect(useSettingsStore.getState().didYouKnowSeenTipIds).toEqual([order[0].id]);
+	});
+
+	it('skips both transition layers when reduced motion is requested, including after opening', () => {
+		const media = window.matchMedia('(prefers-reduced-motion: reduce)');
+		const matchMedia = vi.spyOn(window, 'matchMedia');
+		matchMedia.mockReturnValue({ ...media, matches: false });
+		render(<DidYouKnowModal theme={mockTheme} isOpen onClose={vi.fn()} />, {
+			wrapper: LayerStackProvider,
+		});
+		fireEvent.keyDown(window, { key: 'ArrowRight' });
+		matchMedia.mockReturnValue({ ...media, matches: true });
+		fireEvent.keyDown(window, { key: 'ArrowLeft' });
+		expect(matchMedia).toHaveBeenCalledWith('(prefers-reduced-motion: reduce)');
+		expect(screen.getByRole('heading', { name: order[0].title })).toBeInTheDocument();
+		expect(screen.getByRole('dialog').querySelector('.dyk-enter, .dyk-exit')).toBeNull();
+		fireEvent.click(screen.getByRole('button', { name: 'Next tip' }));
+		expect(screen.getByRole('heading', { name: order[1].title })).toBeInTheDocument();
+		expect(screen.getByRole('dialog').querySelector('.dyk-enter, .dyk-exit')).toBeNull();
+	});
+
 	it('uses Enter for the current primary action and leaves actionless tips alone', () => {
 		const openModal = vi.spyOn(useModalStore.getState(), 'openModal');
 		const onClose = vi.fn();
