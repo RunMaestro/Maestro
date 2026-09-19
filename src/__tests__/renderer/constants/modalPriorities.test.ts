@@ -104,6 +104,23 @@ describe('modalPriorities', () => {
 		});
 	});
 
+	describe('startup discovery priority', () => {
+		it('places Did You Know below group chat and above leaderboard registration', () => {
+			expect(MODAL_PRIORITIES.DID_YOU_KNOW).toBeLessThan(MODAL_PRIORITIES.GROUP_CHAT_INFO);
+			expect(MODAL_PRIORITIES.DID_YOU_KNOW).toBeGreaterThan(
+				MODAL_PRIORITIES.LEADERBOARD_REGISTRATION
+			);
+		});
+
+		it('reserves its priority exclusively for Did You Know', () => {
+			const owners = Object.keys(MODAL_PRIORITIES).filter(
+				(name) =>
+					MODAL_PRIORITIES[name as keyof typeof MODAL_PRIORITIES] === MODAL_PRIORITIES.DID_YOU_KNOW
+			);
+			expect(owners).toEqual(['DID_YOU_KNOW']);
+		});
+	});
+
 	describe('confirmation dialog priorities', () => {
 		/**
 		 * Confirmation dialogs should always have high priority to ensure
