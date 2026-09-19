@@ -276,6 +276,13 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		args: passThroughArgs,
 		cwd,
 		env: childEnv,
+		// Same opt-in as statusMode, and it was missing here: in an untrusted
+		// folder the trust prompt defaults to "No, exit", so run mode's blind
+		// unblock tap ANSWERS it - claude quits and the turn dies as a bare
+		// `tui_exited` (exit 1). A caller that knows it owns the folder could set
+		// the variable and still not be honoured, because only the status probe
+		// read it. Never implicit: absent the variable, nothing auto-trusts.
+		acceptWorkspaceTrust: process.env.MAESTRO_P_ACCEPT_WORKSPACE_TRUST === '1',
 	});
 
 	// A turn on API Usage Billing still completes, so nothing downstream would
@@ -596,6 +603,19 @@ async function runMode(args: ParsedArgs): Promise<never> {
 	driver.on('limit-hit', markLimitHit);
 	driver.on('exit', () => {
 		if (finalized) return;
+		// Dump the screen for the same reason first_byte_timeout and the idle
+		// timeout do. This is the failure where it matters MOST and it was the
+		// only one running blind: the TUI quitting on its own is almost always a
+		// modal we answered wrongly (the workspace-trust prompt defaults to
+		// "No, exit", so the blind unblock tap quits claude), and without the
+		// screen the caller sees a bare `tui_exited` with nothing naming the
+		// folder, the dialog, or the reason.
+		const tail = driver.getScreenTail();
+		if (tail.trim()) {
+			process.stderr.write(
+				`maestro-p: the claude TUI exited before the turn finished. Last screen (ANSI-stripped tail):\n${tail}\n`
+			);
+		}
 		finalize({ isError: true, error: 'tui_exited', exitCode: 1 });
 	});
 	driver.on('ready-timeout', () => {
