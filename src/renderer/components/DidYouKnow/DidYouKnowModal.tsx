@@ -5,6 +5,7 @@ import { resolveUiSurface } from '../../../shared/uiSurfaces';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { useModalStore, type ModalId } from '../../stores/modalStore';
 import type { Theme } from '../../types';
 import { EscCloseButton } from '../ui/EscCloseButton';
 import { OrnateFrame } from './OrnateFrame';
@@ -36,7 +37,23 @@ function DidYouKnowModalContent({ theme, startTipId, onClose }: DidYouKnowModalP
 
 	if (!tip) return null;
 	const surface = tip.surface ? resolveUiSurface(tip.surface) : null;
-	const needsEncore = tip.encore && !resolveEncoreFeatures(encoreFeatures)[tip.encore];
+	const enabledFeatures = resolveEncoreFeatures(encoreFeatures);
+	const needsEncore = tip.encore && !enabledFeatures[tip.encore];
+	// A tip may only offer a gated surface if this action can enable its gate.
+	const canOpenSurface =
+		surface &&
+		(!surface.encore || enabledFeatures[surface.encore] || surface.encore === tip.encore);
+	const openSurface = () => {
+		if (!canOpenSurface) return;
+		if (tip.encore) {
+			const { encoreFeatures: currentFeatures, setEncoreFeatures } = useSettingsStore.getState();
+			if (!resolveEncoreFeatures(currentFeatures)[tip.encore]) {
+				setEncoreFeatures({ ...currentFeatures, [tip.encore]: true });
+			}
+		}
+		onClose();
+		useModalStore.getState().openModal(surface.modal as ModalId);
+	};
 
 	return createPortal(
 		<div
@@ -107,11 +124,11 @@ function DidYouKnowModalContent({ theme, startTipId, onClose }: DidYouKnowModalP
 					>
 						<ArrowRight className="h-4 w-4" aria-hidden />
 					</button>
-					{surface && (
+					{canOpenSurface && (
 						<button
 							type="button"
-							disabled
-							className="rounded px-3 py-2 font-medium opacity-50"
+							onClick={openSurface}
+							className="rounded px-3 py-2 font-medium hover:opacity-90"
 							style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}
 						>
 							{needsEncore ? 'Turn on' : 'Open'} {surface.label}
