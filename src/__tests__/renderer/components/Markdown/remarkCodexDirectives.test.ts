@@ -180,6 +180,33 @@ describe('remarkCodexDirectives', () => {
 		expect(directive.attributes.path).toBe('/repo/docs/spec.pdf');
 	});
 
+	it('keeps a code comment body that holds an escaped quote and a literal brace', () => {
+		// `body` is the one attribute that legitimately carries both. The quote
+		// arrives escaped (the grammar's `backslash` mode, which is what
+		// `findCodexDirectives` defaults to), and a `}` inside a quoted value is
+		// an ordinary character - only the one that closes the attribute set
+		// counts. Getting either wrong truncates an agent's review comment
+		// mid-sentence.
+		const tree = transform(
+			'::code-comment{title="Off-by-one" body="The guard says \\"len\\" but the block } never closes." file="/repo/src/loop.ts" start=10 end=11 priority=2}'
+		);
+
+		const [directive, ...rest] = directives(tree);
+		expect(rest).toHaveLength(0);
+		expect(directive.name).toBe('code-comment');
+		expect(directive.attributes.body).toBe('The guard says "len" but the block } never closes.');
+		expect(directive.attributes).toEqual({
+			title: 'Off-by-one',
+			body: 'The guard says "len" but the block } never closes.',
+			file: '/repo/src/loop.ts',
+			start: '10',
+			end: '11',
+			priority: '2',
+		});
+		// Nothing of the wire format survives beside the card that replaced it.
+		expect(textNodes(tree).join('').trim()).toBe('');
+	});
+
 	it('keeps a directive inside a fenced code block as literal text', () => {
 		// Maestro's own docs quote this syntax. Drawing a chip on an example
 		// would offer the reader an action nobody is offering.

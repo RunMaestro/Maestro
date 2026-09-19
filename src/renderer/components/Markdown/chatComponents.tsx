@@ -22,6 +22,7 @@ import { createShikiCodeBlock } from './components/ShikiCodeBlock';
 import { AlertCallout } from './components/AlertCallout';
 import { FollowupChip } from './components/FollowupChip';
 import { CodexFileCitation } from './components/CodexFileCitation';
+import { CodeCommentCard } from './components/CodeCommentCard';
 import { alertTypeFromClassName } from './remarkAlert';
 import { readCodexDirectiveProps } from './remarkCodexDirectives';
 import { requestCodexFollowup } from '../../services/codexFollowup';
@@ -253,6 +254,25 @@ export function createChatMarkdownComponents(
 						purpose={directive.attributes.purpose === 'output' ? 'output' : 'source'}
 						artifactKind={directive.attributes.artifact_kind}
 						pageNumber={directive.attributes.page_number}
+						theme={theme}
+						LinkComponent={ChatLink}
+					/>
+				);
+			}
+
+			// A review comment is a statement about the code, not an offer, so it
+			// draws with no conversation context either. `body` is the one part
+			// that cannot be missing: a card with a title and no explanation says
+			// less than the label fallback below.
+			if (directive.name === 'code-comment' && directive.attributes.body) {
+				return (
+					<CodeCommentCard
+						title={directive.attributes.title}
+						body={directive.attributes.body}
+						file={directive.attributes.file}
+						start={directive.attributes.start}
+						end={directive.attributes.end}
+						priority={directive.attributes.priority}
 						theme={theme}
 						LinkComponent={ChatLink}
 					/>
