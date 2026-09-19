@@ -62,13 +62,14 @@ vi.mock('../../../../renderer/stores/uiStore', () => ({
 	),
 }));
 
-// Mock the layer stack context: MainPanelContent reads layerCount to decide
-// whether the browser webview should hold keyboard focus. Default to no open
-// layers so the browser tab is treated as the focused view; tests flip
-// layerState.count to simulate a modal/overlay opening over the tab.
-const layerState = vi.hoisted(() => ({ count: 0 }));
+// Keep the layer list configurable to exercise passive panels and modal changes
+// where the number of registered layers stays the same.
+const layerState = vi.hoisted(() => ({ layers: [] as { blocksLowerLayers: boolean }[] }));
 vi.mock('../../../../renderer/contexts/LayerStackContext', () => ({
-	useLayerStack: () => ({ layerCount: layerState.count }),
+	useLayerStack: () => ({
+		layerCount: layerState.layers.length,
+		getLayers: () => layerState.layers,
+	}),
 }));
 
 // Mock child components
@@ -213,7 +214,7 @@ function makeDefaultProps() {
 describe('MainPanelContent', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
-		layerState.count = 0;
+		layerState.layers = [];
 		uiState.focusRequest = null;
 	});
 
@@ -321,10 +322,14 @@ describe('MainPanelContent', () => {
 		expect(screen.getByTestId('browser-tab-view')).toHaveAttribute('data-active', 'true');
 	});
 
-	it('releases browser tab keyboard focus when a layer (e.g. Tab Switcher) is open', () => {
+	it.each([
+		{ layers: [{ blocksLowerLayers: false }], active: 'true' },
+		{ layers: [{ blocksLowerLayers: true }], active: 'false' },
+		{ layers: [{ blocksLowerLayers: true }, { blocksLowerLayers: false }], active: 'false' },
+	])('sets browser focus to $active for layers $layers', ({ layers, active }) => {
 		// A modal/overlay layered over the browser tab must blur the guest webview
 		// so the modal's own keyboard navigation works (the Tab Switcher bug).
-		layerState.count = 1;
+		layerState.layers = layers;
 		const browserTab = {
 			id: 'browser-1',
 			url: 'https://example.com/',
@@ -341,7 +346,16 @@ describe('MainPanelContent', () => {
 		const props = makeDefaultProps();
 		props.activeSession = session;
 		props.activeBrowserTabId = 'browser-1';
-		render(<MainPanelContent {...props} />);
+		const { rerender } = render(<MainPanelContent {...props} />);
+		expect(screen.getByTestId('browser-tab-view')).toHaveAttribute('data-active', active);
+
+		// Simulate context renders through a fresh prop because this hook is mocked
+		// and MainPanelContent is memoized. The layer count stays unchanged.
+		layerState.layers = layers.map(() => ({ blocksLowerLayers: false }));
+		rerender(<MainPanelContent {...props} theme={{ ...props.theme }} />);
+		expect(screen.getByTestId('browser-tab-view')).toHaveAttribute('data-active', 'true');
+		layerState.layers = layers.map(() => ({ blocksLowerLayers: true }));
+		rerender(<MainPanelContent {...props} theme={{ ...props.theme }} />);
 		expect(screen.getByTestId('browser-tab-view')).toHaveAttribute('data-active', 'false');
 	});
 
@@ -378,7 +392,7 @@ describe('MainPanelContent tiled pane focus routing', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		vi.useFakeTimers();
-		layerState.count = 0;
+		layerState.layers = [];
 		uiState.focusRequest = null;
 		uiState.clearFocusRequest.mockImplementation(() => {
 			uiState.focusRequest = null;
@@ -416,6 +430,48 @@ describe('MainPanelContent tiled pane focus routing', () => {
 			],
 		} as Partial<Session>);
 	}
+
+	it.each([false, true])(
+		'keeps only the focused tiled browser active when blocksLowerLayers is %s',
+		(blocksLowerLayers) => {
+			layerState.layers = [{ blocksLowerLayers }];
+			const session = makeGroupSession();
+			session.browserTabs = [
+				{
+					id: 'browser-1',
+					url: 'https://example.com/',
+					title: 'Example',
+					createdAt: 0,
+					canGoBack: false,
+					canGoForward: false,
+					isLoading: false,
+				},
+			];
+			const group = session.tabGroups![0];
+			if (group.layout.kind !== 'split') throw new Error('Expected split layout');
+			group.layout.children[0] = {
+				kind: 'leaf',
+				id: 'leaf-browser',
+				tab: { type: 'browser', id: 'browser-1' },
+			};
+			group.focusedPaneId = 'leaf-browser';
+			const props = { ...makeDefaultProps(), activeSession: session };
+			const { rerender } = render(<MainPanelContent {...props} />);
+			act(() => {
+				vi.advanceTimersByTime(20);
+			});
+			expect(screen.getByTestId('browser-tab-view')).toHaveAttribute(
+				'data-active',
+				String(!blocksLowerLayers)
+			);
+			const unfocusedSession = {
+				...session,
+				tabGroups: [{ ...group, focusedPaneId: 'leaf-ai' }],
+			};
+			rerender(<MainPanelContent {...props} activeSession={unfocusedSession} />);
+			expect(screen.getByTestId('browser-tab-view')).toHaveAttribute('data-active', 'false');
+		}
+	);
 
 	function renderWithRequest(leafId: string | null) {
 		const inputFocus = vi.fn();
