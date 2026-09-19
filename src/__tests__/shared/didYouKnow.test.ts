@@ -1,5 +1,5 @@
 import { describe, expect, expectTypeOf, it, vi } from 'vitest';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { icons } from 'lucide-react';
 import {
@@ -100,6 +100,24 @@ describe('Did You Know tip model', () => {
 		expect(JSON.stringify(tip)).not.toMatch(/[\u2013\u2014]/);
 		expect(icons).toHaveProperty(tip.icon);
 	});
+
+	it.each(DID_YOU_KNOW_TIPS.filter((tip) => tip.spotlightSelector))(
+		'$id spotlights an attribute on a production JSX element',
+		(tip) => {
+			const landmarks: Record<string, string> = {
+				'input-area': 'MainPanel/MainPanelContent.tsx',
+				'remote-control': 'SessionList/SessionList.tsx',
+				'tab-bar': 'TabBar/TabBar.tsx',
+			};
+			const match = tip.spotlightSelector?.match(/^\[data-tour="([a-z-]+)"\]$/);
+			expect(match).not.toBeNull();
+			const name = match![1];
+			expect(landmarks).toHaveProperty(name);
+			const source = readFileSync(resolve('src/renderer/components', landmarks[name]), 'utf8');
+			// Require JSX, not a matching selector in a query, comment, or tour definition.
+			expect(source).toMatch(new RegExp(`<\\w+[^>]*\\sdata-tour="${name}"`));
+		}
+	);
 
 	it.each(DID_YOU_KNOW_TIPS)('$id only links to existing documentation and actions', (tip) => {
 		if (tip.docsSlug) {

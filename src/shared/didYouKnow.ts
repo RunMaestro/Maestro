@@ -40,7 +40,7 @@ export const DID_YOU_KNOW_TIPS: readonly DidYouKnowTip[] = [
 		title: 'Maestro Cue',
 		headline: 'Your agents can start their own work.',
 		body: [
-			'Cue watches for things that happen (a file changing, a schedule firing, a GitHub PR opening, a task going unchecked) and dispatches a prompt to the agent you choose.',
+			'Cue watches for things that happen (a file changing, a schedule firing, a GitHub PR opening, an unchecked task being found) and dispatches a prompt to the agent you choose.',
 			"Pipelines chain agents together, so one agent's finished work becomes another's trigger.",
 			'It is configured per project in .maestro/cue.yaml, and the Pipeline Graph draws the whole topology.',
 		],
@@ -55,8 +55,8 @@ export const DID_YOU_KNOW_TIPS: readonly DidYouKnowTip[] = [
 		title: 'Auto Run',
 		headline: 'Hand an agent a checklist and walk away.',
 		body: [
-			'Spec-driven Auto Run works a Markdown document of - [ ] tasks to completion, one fresh agent context per task, so nothing drifts.',
-			'Goal-driven Auto Run takes a single sentence instead ("get coverage above 90%") and iterates until it is done or genuinely stuck.',
+			'Spec-driven Auto Run works through unchecked tasks in Markdown. Choose Task mode for a fresh context per task, or Document mode to carry context through a document.',
+			'Goal-driven Auto Run takes an objective instead ("get coverage above 90%") and iterates until it completes, hits a blocker, reaches your iteration limit, or you stop it.',
 			'Both launch from the Auto Run panel or the CLI, and the Playbook Exchange has ready-made ones.',
 		],
 		icon: 'Play',
@@ -68,10 +68,11 @@ export const DID_YOU_KNOW_TIPS: readonly DidYouKnowTip[] = [
 		title: 'Cross-Agent Mentions',
 		headline: 'Ask another agent a question without leaving this one.',
 		body: [
-			'Type @ in the composer and pick another agent. It answers once, in the background, with no tab of its own and no unread badge.',
-			'Use it when the agent in front of you needs something another agent already knows: a schema, a convention, what broke last night.',
+			'Type @ in the composer and pick another agent. Its answer arrives inline, with a copy saved in a consult tab on that agent and no unread badge.',
+			'You share your conversation with a specialist in another project. Ask again from the same tab and the consult carries forward your earlier exchanges.',
 		],
 		icon: 'AtSign',
+		docsSlug: 'cross-agent-mentions',
 		spotlightSelector: '[data-tour="input-area"]',
 	},
 	{
@@ -92,7 +93,7 @@ export const DID_YOU_KNOW_TIPS: readonly DidYouKnowTip[] = [
 		headline: 'An agent does not have to run on this machine.',
 		body: [
 			'Point an agent at an SSH remote and its process, its shell, and its file tree all live on that host, while the transcript stays here.',
-			'Big builds run on the big machine and you keep the keyboard. Maestro wraps the spawn, so the agent behaves exactly as it does locally.',
+			'Run big builds on the big machine while you keep the keyboard. Configure the host in Settings, then select it under SSH Remote Execution for your agent.',
 		],
 		icon: 'Server',
 		docsSlug: 'ssh-remote-execution',
