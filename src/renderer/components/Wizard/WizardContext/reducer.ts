@@ -10,6 +10,7 @@ export const initialState: WizardState = {
 	customPath: undefined,
 	customArgs: undefined,
 	customEnvVars: undefined,
+	agentConfigValues: undefined,
 	enableMaestroP: undefined,
 	maestroPMode: undefined,
 	maestroPPath: undefined,
@@ -57,7 +58,20 @@ export function wizardReducer(state: WizardState, action: WizardAction): WizardS
 			return prevStep ? { ...state, currentStep: prevStep } : state;
 		}
 		case 'SET_SELECTED_AGENT':
-			return { ...state, selectedAgent: action.agent };
+			if (state.selectedAgent === action.agent) {
+				return state;
+			}
+			return {
+				...state,
+				selectedAgent: action.agent,
+				customPath: undefined,
+				customArgs: undefined,
+				customEnvVars: undefined,
+				agentConfigValues: undefined,
+				enableMaestroP: undefined,
+				maestroPMode: undefined,
+				maestroPPath: undefined,
+			};
 		case 'SET_AVAILABLE_AGENTS':
 			return { ...state, availableAgents: action.agents };
 		case 'SET_AGENT_NAME':
@@ -68,6 +82,8 @@ export function wizardReducer(state: WizardState, action: WizardAction): WizardS
 			return { ...state, customArgs: action.args };
 		case 'SET_CUSTOM_ENV_VARS':
 			return { ...state, customEnvVars: action.envVars };
+		case 'SET_AGENT_CONFIG_VALUES':
+			return { ...state, agentConfigValues: action.values };
 		case 'SET_ENABLE_MAESTRO_P':
 			return { ...state, enableMaestroP: action.value };
 		case 'SET_MAESTRO_P_MODE':

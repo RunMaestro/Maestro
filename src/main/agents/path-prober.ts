@@ -91,6 +91,30 @@ async function findLatestCodexDesktopBinary(): Promise<string | null> {
 	}
 }
 
+export type BinaryIdentityValidator = (candidatePath: string) => Promise<boolean>;
+
+/**
+ * Validate executables whose generic command name can collide with unrelated tools.
+ * Cursor's `agent` binary has no identifying text in `--version`, so use its stable
+ * help contract instead.
+ */
+export async function validateAgentBinaryIdentity(
+	agentId: string,
+	candidatePath: string
+): Promise<boolean> {
+	if (agentId !== 'cursor-cli') {
+		return true;
+	}
+
+	const result = await execFileNoThrow(candidatePath, ['--help'], undefined, { timeout: 5000 });
+	if (result.exitCode !== 0) {
+		return false;
+	}
+
+	const output = `${result.stdout}\n${result.stderr}`;
+	return output.includes('Start the Cursor Agent') && output.includes('CURSOR_API_KEY');
+}
+
 // ============ Environment Expansion ============
 
 /**
@@ -130,6 +154,9 @@ export function getExpandedEnv(): NodeJS.ProcessEnv {
 			// User local programs
 			path.join(localAppData, 'Programs'),
 			path.join(localAppData, 'Microsoft', 'WindowsApps'),
+			// Cursor Agent CLI native installer shims
+			path.join(localAppData, 'cursor-agent'),
+			path.join(localAppData, 'cursor-agent', 'versions'),
 			// Python/pip user installs (for Aider)
 			path.join(appData, 'Python', 'Scripts'),
 			path.join(localAppData, 'Programs', 'Python', 'Python312', 'Scripts'),
@@ -175,6 +202,8 @@ export function getExpandedEnv(): NodeJS.ProcessEnv {
 			`${home}/bin`, // User bin directory
 			`${home}/.claude/local`, // Claude local install location
 			`${home}/.opencode/bin`, // OpenCode installer default location
+			`${home}/.cursor/bin`, // Cursor Agent CLI
+			`${home}/.local/share/cursor-agent`, // Alternate Cursor Agent install
 			'/usr/bin',
 			'/bin',
 			'/usr/sbin',
@@ -435,6 +464,13 @@ function getWindowsKnownPaths(binaryName: string): string[] {
 			// Some shells resolve the installer's shim from the user local bin
 			...localBin('agy'),
 		],
+		agent: [
+			// Cursor Agent CLI native installer (`agent` is the documented command).
+			path.join(localAppData, 'cursor-agent', 'agent.cmd'),
+			path.join(localAppData, 'cursor-agent', 'cursor-agent.cmd'),
+			...npmGlobal('agent'),
+			...localBin('agent'),
+		],
 		gh: [
 			// GitHub CLI official installer (MSI)
 			path.join(programFiles, 'GitHub CLI', 'gh.exe'),
@@ -460,13 +496,22 @@ function getWindowsKnownPaths(binaryName: string): string[] {
  *
  * Uses parallel probing for performance on slow file systems.
  */
-export async function probeWindowsPaths(binaryName: string): Promise<string | null> {
+export async function probeWindowsPaths(
+	binaryName: string,
+	validateIdentity?: BinaryIdentityValidator
+): Promise<string | null> {
 	const all = await probeWindowsPathsAll(binaryName);
-	const first = all[0] ?? null;
-	if (first) {
-		logger.debug(`Direct probe found ${binaryName}`, LOG_CONTEXT, { path: first });
+	for (const candidate of all) {
+		if (validateIdentity && !(await validateIdentity(candidate))) {
+			logger.debug(`Direct probe rejected wrong ${binaryName} identity`, LOG_CONTEXT, {
+				path: candidate,
+			});
+			continue;
+		}
+		logger.debug(`Direct probe found ${binaryName}`, LOG_CONTEXT, { path: candidate });
+		return candidate;
 	}
-	return first;
+	return null;
 }
 
 /**
@@ -609,6 +654,14 @@ function getUnixKnownPaths(binaryName: string): string[] {
 			// Homebrew, should a formula land later
 			...homebrew('agy'),
 		],
+		agent: [
+			// Cursor Agent CLI (~/.local/bin or curl installer)
+			...localBin('agent'),
+			path.join(home, '.cursor', 'bin', 'agent'),
+			...homebrew('agent'),
+			...npmGlobal('agent'),
+			path.join(home, 'bin', 'agent'),
+		],
 		gh: [
 			// Homebrew (Apple Silicon + Intel)
 			...homebrew('gh'),
@@ -632,13 +685,22 @@ function getUnixKnownPaths(binaryName: string): string[] {
  *
  * Uses parallel probing for performance on slow file systems.
  */
-export async function probeUnixPaths(binaryName: string): Promise<string | null> {
+export async function probeUnixPaths(
+	binaryName: string,
+	validateIdentity?: BinaryIdentityValidator
+): Promise<string | null> {
 	const all = await probeUnixPathsAll(binaryName);
-	const first = all[0] ?? null;
-	if (first) {
-		logger.debug(`Direct probe found ${binaryName}`, LOG_CONTEXT, { path: first });
+	for (const candidate of all) {
+		if (validateIdentity && !(await validateIdentity(candidate))) {
+			logger.debug(`Direct probe rejected wrong ${binaryName} identity`, LOG_CONTEXT, {
+				path: candidate,
+			});
+			continue;
+		}
+		logger.debug(`Direct probe found ${binaryName}`, LOG_CONTEXT, { path: candidate });
+		return candidate;
 	}
-	return first;
+	return null;
 }
 
 /**
@@ -679,18 +741,21 @@ export async function probeUnixPathsAll(binaryName: string): Promise<string[]> {
  * 1. Direct probe of known installation paths (most reliable)
  * 2. Fall back to which/where command with expanded PATH
  */
-export async function checkBinaryExists(binaryName: string): Promise<BinaryDetectionResult> {
+export async function checkBinaryExists(
+	binaryName: string,
+	validateIdentity?: BinaryIdentityValidator
+): Promise<BinaryDetectionResult> {
 	// First try direct file probing of known installation paths
 	// This is more reliable than which/where in packaged Electron apps
 	if (isWindows()) {
-		const probedPath = await probeWindowsPaths(binaryName);
+		const probedPath = await probeWindowsPaths(binaryName, validateIdentity);
 		if (probedPath) {
 			return { exists: true, path: probedPath };
 		}
 		logger.debug(`Direct probe failed for ${binaryName}, falling back to where`, LOG_CONTEXT);
 	} else {
 		// macOS/Linux: probe known paths first
-		const probedPath = await probeUnixPaths(binaryName);
+		const probedPath = await probeUnixPaths(binaryName, validateIdentity);
 		if (probedPath) {
 			return { exists: true, path: probedPath };
 		}
@@ -716,64 +781,53 @@ export async function checkBinaryExists(binaryName: string): Promise<BinaryDetec
 				.map((p) => p.trim())
 				.filter((p) => p);
 
-			if (isWindows() && matches.length > 0) {
-				// On Windows, prefer .exe > extensionless (shell scripts) > .cmd
-				// This helps avoid cmd.exe limitations and supports PowerShell/bash scripts
-				const exeMatch = matches.find((p) => p.toLowerCase().endsWith('.exe'));
-				const cmdMatch = matches.find((p) => p.toLowerCase().endsWith('.cmd'));
-				const extensionlessMatch = matches.find(
-					(p) => !p.toLowerCase().endsWith('.exe') && !p.toLowerCase().endsWith('.cmd')
-				);
+			const orderedMatches = isWindows()
+				? [
+						...matches.filter((p) => p.toLowerCase().endsWith('.exe')),
+						...matches.filter(
+							(p) => !p.toLowerCase().endsWith('.exe') && !p.toLowerCase().endsWith('.cmd')
+						),
+						...matches.filter((p) => p.toLowerCase().endsWith('.cmd')),
+					]
+				: matches;
 
-				// Return the best match: .exe > extensionless shell scripts > .cmd > first result
-				let bestMatch = exeMatch || extensionlessMatch || cmdMatch || matches[0];
-
-				// If the first match doesn't have an extension, check if .cmd or .exe version exists
-				// This handles cases where 'where' returns a path without extension
+			for (const match of orderedMatches) {
+				let candidate = match;
 				if (
-					!bestMatch.toLowerCase().endsWith('.exe') &&
-					!bestMatch.toLowerCase().endsWith('.cmd')
+					isWindows() &&
+					!candidate.toLowerCase().endsWith('.exe') &&
+					!candidate.toLowerCase().endsWith('.cmd')
 				) {
-					const cmdPath = bestMatch + '.cmd';
-					const exePath = bestMatch + '.exe';
-
-					// Check if the .exe or .cmd version exists
+					const exePath = candidate + '.exe';
+					const cmdPath = candidate + '.cmd';
 					try {
 						await fs.promises.access(exePath, fs.constants.F_OK);
-						bestMatch = exePath;
-						logger.debug(`Found .exe version of ${binaryName}`, LOG_CONTEXT, {
-							path: exePath,
-						});
+						candidate = exePath;
 					} catch {
 						try {
 							await fs.promises.access(cmdPath, fs.constants.F_OK);
-							bestMatch = cmdPath;
-							logger.debug(`Found .cmd version of ${binaryName}`, LOG_CONTEXT, {
-								path: cmdPath,
-							});
+							candidate = cmdPath;
 						} catch {
-							// Neither .exe nor .cmd exists, use the original path
+							// Keep the extensionless executable.
 						}
 					}
 				}
 
-				logger.debug(`Windows binary detection for ${binaryName}`, LOG_CONTEXT, {
-					allMatches: matches,
-					selectedMatch: bestMatch,
-					isCmd: bestMatch.toLowerCase().endsWith('.cmd'),
-					isExe: bestMatch.toLowerCase().endsWith('.exe'),
-				});
+				if (validateIdentity && !(await validateIdentity(candidate))) {
+					logger.debug(`PATH probe rejected wrong ${binaryName} identity`, LOG_CONTEXT, {
+						path: candidate,
+					});
+					continue;
+				}
 
-				return {
-					exists: true,
-					path: bestMatch,
-				};
+				logger.debug(`Binary detection for ${binaryName}`, LOG_CONTEXT, {
+					allMatches: matches,
+					selectedMatch: candidate,
+				});
+				return { exists: true, path: candidate };
 			}
 
-			return {
-				exists: true,
-				path: matches[0], // First match for Unix
-			};
+			return { exists: false };
 		}
 
 		return { exists: false };

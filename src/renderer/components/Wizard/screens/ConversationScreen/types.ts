@@ -55,4 +55,8 @@ export type WizardConversationState = Pick<
 	| 'isConversationLoading'
 	| 'existingDocsChoice'
 	| 'sessionSshRemoteConfig'
+	| 'customPath'
+	| 'customArgs'
+	| 'customEnvVars'
+	| 'agentConfigValues'
 >;

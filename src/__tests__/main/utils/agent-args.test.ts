@@ -347,6 +347,24 @@ describe('buildAgentArgs', () => {
 		expect(result).not.toContain('--dangerously-bypass');
 	});
 
+	it.each([
+		['standard', false, false],
+		['full', true, false],
+		['readonly', false, true],
+	] as const)(
+		'builds Cursor %s permissions without accidental escalation',
+		(permissionMode, hasForce, hasPlan) => {
+			const cursor = getAgentDefinition('cursor-cli') as AgentConfig;
+			const result = buildAgentArgs(cursor, {
+				baseArgs: [],
+				prompt: 'inspect',
+				permissionMode,
+			});
+			expect(result.includes('--force')).toBe(hasForce);
+			expect(result.includes('--mode') && result.includes('plan')).toBe(hasPlan);
+		}
+	);
+
 	// -- real claude-code definition: full access is what grants the bypass --
 	it("claude-code with permissionMode 'full' adds --dangerously-skip-permissions", () => {
 		const claude = AGENT_DEFINITIONS.find((agent) => agent.id === 'claude-code');

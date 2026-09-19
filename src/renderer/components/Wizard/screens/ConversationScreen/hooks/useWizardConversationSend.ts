@@ -267,6 +267,10 @@ export function useWizardConversationSend({
 					directoryPath: state.directoryPath,
 					projectName: state.agentName || 'My Project',
 					sshRemoteConfig: state.sessionSshRemoteConfig,
+					customPath: state.customPath,
+					customArgs: state.customArgs,
+					customEnvVars: state.customEnvVars,
+					agentConfigValues: state.agentConfigValues,
 				});
 			}
 
@@ -309,6 +313,10 @@ export function useWizardConversationSend({
 		state.directoryPath,
 		state.agentName,
 		state.sessionSshRemoteConfig,
+		state.customPath,
+		state.customArgs,
+		state.customEnvVars,
+		state.agentConfigValues,
 		refs,
 		setters,
 		addMessage,
@@ -356,6 +364,10 @@ export function useWizardConversationSend({
 					projectName: state.agentName || 'My Project',
 					existingDocs: existingDocs.length > 0 ? existingDocs : undefined,
 					sshRemoteConfig: state.sessionSshRemoteConfig,
+					customPath: state.customPath,
+					customArgs: state.customArgs,
+					customEnvVars: state.customEnvVars,
+					agentConfigValues: state.agentConfigValues,
 				});
 			}
 
@@ -395,6 +407,10 @@ export function useWizardConversationSend({
 		state.directoryPath,
 		state.agentName,
 		state.sessionSshRemoteConfig,
+		state.customPath,
+		state.customArgs,
+		state.customEnvVars,
+		state.agentConfigValues,
 		refs,
 		setters,
 		addMessage,

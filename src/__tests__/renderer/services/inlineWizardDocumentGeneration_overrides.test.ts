@@ -130,4 +130,28 @@ describe('inlineWizardDocumentGeneration - Session Overrides', () => {
 			// Ignore
 		}
 	});
+
+	it('requests explicit full permission for Cursor document generation only', async () => {
+		mockMaestro.agents.get.mockResolvedValue({
+			id: 'cursor-cli',
+			available: true,
+			command: 'agent',
+			args: [],
+		});
+		mockMaestro.process.spawn.mockResolvedValue(undefined);
+		const generationPromise = generateInlineDocuments({
+			agentType: 'cursor-cli',
+			directoryPath: '/test/project',
+			projectName: 'Cursor Project',
+			conversationHistory: [],
+			mode: 'new',
+			autoRunFolderPath: '/test/project/.maestro/playbooks',
+		});
+		await vi.waitFor(() => expect(mockMaestro.process.spawn).toHaveBeenCalled());
+
+		const spawnCall = mockMaestro.process.spawn.mock.calls[0][0];
+		expect(spawnCall.permissionMode).toBe('full');
+		mockMaestro.process.onExit.mock.calls[0][0](spawnCall.sessionId, 0);
+		await generationPromise;
+	});
 });

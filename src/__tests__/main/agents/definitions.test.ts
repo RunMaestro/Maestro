@@ -385,6 +385,41 @@ describe('agent-definitions', () => {
 			expect(grok?.readOnlyArgs).toEqual(['--permission-mode', 'plan', '--deny', 'Bash(*)']);
 		});
 
+		it('defines safe standard, explicit full, and read-only Cursor contracts', () => {
+			const cursor = getAgentDefinition('cursor-cli');
+			expect(cursor?.binaryName).toBe('agent');
+			expect(cursor?.batchModePrefix).toEqual(['-p', '--trust']);
+			expect(cursor?.batchModeArgs).toBeUndefined();
+			expect(cursor?.yoloModeArgs).toEqual(['--force']);
+			expect(cursor?.readOnlyArgs).toEqual(['--mode', 'plan']);
+			expect(cursor?.jsonOutputArgs).toEqual([
+				'--output-format',
+				'stream-json',
+				'--stream-partial-output',
+			]);
+			expect(cursor?.workingDirArgs?.('/tmp/proj')).toEqual(['--workspace', '/tmp/proj']);
+			expect(cursor?.promptArgs?.('hi')).toEqual(['hi']);
+			expect(cursor?.resumeArgs?.('sess-1')).toEqual(['--resume', 'sess-1']);
+			expect(cursor?.yoloModeArgs).toContain('--force');
+			expect(
+				cursor?.imagePromptBuilder?.([
+					'/tmp/cursor-screenshot-1.png',
+					'/tmp/cursor-screenshot-2.jpg',
+				])
+			).toBe(
+				'Use these attached images as context:\n/tmp/cursor-screenshot-1.png\n/tmp/cursor-screenshot-2.jpg\n\n'
+			);
+		});
+
+		it('should define the Cursor CLI model option as a dynamic select', () => {
+			const cursor = getAgentDefinition('cursor-cli');
+			const modelOption = cursor?.configOptions?.find((opt) => opt.key === 'model');
+			expect(modelOption?.type).toBe('select');
+			expect((modelOption as { dynamic?: boolean })?.dynamic).toBe(true);
+			expect(modelOption?.argBuilder?.('auto')).toEqual(['--model', 'auto']);
+			expect(modelOption?.argBuilder?.('')).toEqual([]);
+		});
+
 		it('should define the Grok model option as a dynamic select with static fallback', () => {
 			const grok = getAgentDefinition('grok');
 			expect(grok?.configOptions).toBeDefined();
