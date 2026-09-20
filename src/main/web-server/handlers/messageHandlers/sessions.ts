@@ -103,7 +103,14 @@ export function handleCreateSession(
 	const hasConfig = Object.keys(config).length > 0;
 
 	ctx.callbacks
-		.createSession(name, toolType, cwd, groupId, hasConfig ? config : undefined)
+		.createSession(
+			name,
+			toolType,
+			cwd,
+			groupId,
+			hasConfig ? config : undefined,
+			readBackgroundField(message)
+		)
 		.then((result) => {
 			ctx.send(client, {
 				type: 'create_session_result',
