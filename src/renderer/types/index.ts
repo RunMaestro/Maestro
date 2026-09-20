@@ -1541,6 +1541,14 @@ export interface Session {
 	retryOnAvailabilityErrors?: boolean;
 	retryOnTokenExhaustion?: boolean;
 
+	// Read Only by default: every NEW AI tab this agent opens starts in read-only
+	// (plan) mode instead of full access. A SEED, not a lock - the composer's
+	// permission pill still cycles an individual tab to standard or full, exactly
+	// as before, and nothing re-applies the default to a tab that already exists.
+	// Defaults OFF; absent reads as off, so existing agents need no migration.
+	// Seeded into a tab via `defaultTabPermissionFields()` in utils/tabHelpers.
+	readOnlyByDefault?: boolean;
+
 	// Codex only. When true, hitting a plan-quota wall spends one of the
 	// account's rate-limit reset credits automatically instead of waiting for the
 	// window to reopen. Defaults OFF, and unlike the two flags above that default
