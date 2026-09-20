@@ -13,7 +13,7 @@
  *   - the "N agents" chip is a button only when there are agents to show
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { ClaudePlanUsage } from '../../../../renderer/components/UsageDashboard/ClaudePlanUsage';
 import { useClaudeUsageStore } from '../../../../renderer/stores/claudeUsageStore';
@@ -535,6 +535,15 @@ describe('ClaudePlanUsage - stale row chip', () => {
 		weekSonnetOnly: { percent: 87, resetsAt: '2026-05-22T00:00:00.000Z' },
 	});
 
+	beforeEach(() => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date('2026-05-15T02:05:00.000Z'));
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
 	it('flags only the row whose sample trails the newest by more than five minutes', () => {
 		seedSnapshots({
 			'/Users/me/.claude-work': snapshotAt('/Users/me/.claude-work', '2026-05-15T02:00:00.000Z'),
@@ -547,6 +556,21 @@ describe('ClaudePlanUsage - stale row chip', () => {
 		expect(screen.getByTestId('claude-plan-stale-side')).toHaveTextContent('stale, read');
 		expect(screen.queryByTestId('claude-plan-stale-work')).toBeNull();
 		expect(screen.queryByTestId('claude-plan-stale-near')).toBeNull();
+	});
+
+	it('flags a day-old row even when no other row is newer', () => {
+		// The retained-snapshot case: an account nobody runs agents against keeps
+		// its row so the user can watch for the reset, and every row is equally
+		// old, so nothing "trails the newest". The bars still are not current.
+		seedSnapshots({
+			'/Users/me/.claude-work': snapshotAt('/Users/me/.claude-work', '2026-05-13T02:00:00.000Z'),
+			'/Users/me/.claude-side': snapshotAt('/Users/me/.claude-side', '2026-05-13T02:01:00.000Z'),
+		});
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.getByTestId('claude-plan-stale-work')).toHaveTextContent('stale, read');
+		expect(screen.getByTestId('claude-plan-stale-side')).toHaveTextContent('stale, read');
 	});
 });
 
@@ -923,5 +947,32 @@ describe('ClaudePlanUsage - last refreshed footer', () => {
 		seedSessions(['/Users/me/.claude-pending']);
 		render(<ClaudePlanUsage theme={theme} autoRefresh={false} />);
 		expect(screen.queryByTestId('claude-plan-last-refreshed')).toBeNull();
+	});
+});
+
+describe('ClaudePlanUsage - narrow rows', () => {
+	// A 176px label, a 192px `whitespace-nowrap` reset caption and 32px of gaps
+	// is 400px of fixed width before the bar gets any, so on a 390px phone the
+	// bar - the one number this panel exists to show - was squeezed to nothing.
+	// The row wraps below `sm`: label and caption share the first line, the bar
+	// takes the whole of a second one.
+	it('lets the bar take its own full-width line below the sm breakpoint', () => {
+		seedSnapshots({
+			'/Users/me/.claude': {
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				configDirKey: '/Users/me/.claude',
+				session: { percent: 42, resetsAt: '2026-05-15T05:00:00.000Z' },
+				weekAllModels: { percent: 7, resetsAt: '2026-05-22T00:00:00.000Z' },
+				weekSonnetOnly: { percent: 99, resetsAt: '2026-05-22T00:00:00.000Z' },
+			},
+		});
+
+		render(<ClaudePlanUsage theme={theme} />);
+
+		const bar = screen.getAllByRole('progressbar')[0];
+		expect(bar).toHaveClass('w-full', 'order-last');
+		// ...and goes back to sharing the row from `sm` up.
+		expect(bar).toHaveClass('sm:w-auto', 'sm:flex-1', 'sm:order-none');
+		expect(bar.parentElement).toHaveClass('flex-wrap', 'sm:flex-nowrap');
 	});
 });

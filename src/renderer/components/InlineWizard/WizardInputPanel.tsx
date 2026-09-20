@@ -229,7 +229,7 @@ export const WizardInputPanel = React.memo(function WizardInputPanel({
 			setSessions((prev) =>
 				prev.map((s) => {
 					if (s.id !== session.id) return s;
-					const result = closeTab(s, activeTabId, false, { skipHistory: true });
+					const result = closeTab(s, activeTabId, undefined, { skipHistory: true });
 					return result ? result.session : s;
 				})
 			);

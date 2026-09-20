@@ -61,6 +61,7 @@ import {
 import { useScalePreference } from '../../hooks/ui/useScalePreference';
 import { useScaleShortcuts } from '../../hooks/ui/useScaleShortcuts';
 import { useIsTopLayer } from '../../hooks/ui/useIsTopLayer';
+import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 import { ScaleControl } from '../ui/ScaleControl';
 import {
 	AGENT_TILE_MIN_WIDTH,
@@ -288,6 +289,7 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 	const [filterQuery, setFilterQuery] = useState('');
 	// How wide a tile is, remembered across restarts. `+` / `-` / `0` drive it
 	// from the keyboard; the control beside the sort pills is the same state.
+	const phone = usePhoneLayout();
 	const tileScale = useScalePreference(AGENT_TILE_SCALE_KEY, TILE_SCALE_RANGE);
 	// Narrow the grid to agents that did something inside the selected range.
 	// Off by default: the grid's job is still "every agent I have".
@@ -484,14 +486,19 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 	return (
 		<div className="flex flex-col gap-3">
 			<div className="flex items-center justify-between gap-3 flex-wrap">
-				<div className="flex items-center gap-2 min-w-0">
+				{/* On a phone the four controls pack and wrap: at their desktop
+				    widths they add up to ~780px, so they used to run off the right
+				    edge of a 390px screen and take the whole tab into a horizontal
+				    scroll. Desktop keeps the fixed widths and the single row - a
+				    shrinkable basis there rearranges a toolbar that already fit. */}
+				<div className={`flex items-center gap-2 min-w-0 ${phone ? 'flex-wrap' : ''}`}>
 					{hasGroupChoice && (
 						<ThemedSelect
 							value={groupFilter}
 							options={groupOptions}
 							onChange={setGroupFilter}
 							theme={theme}
-							style={{ width: 200 }}
+							style={phone ? { flex: '1 1 160px', minWidth: 0, maxWidth: 200 } : { width: 200 }}
 							aria-label="Filter agents by group"
 							// Long group lists are the normal case for anyone using
 							// groups per client, so the menu carries its own search.
@@ -505,13 +512,20 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 							options={profileOptions}
 							onChange={setProfileFilter}
 							theme={theme}
-							style={{ width: 210 }}
+							style={phone ? { flex: '1 1 160px', minWidth: 0, maxWidth: 210 } : { width: 210 }}
 							aria-label="Filter agents by provider account"
 							filterable={profileOptions.length > 8}
 							filterPlaceholder="Filter providers…"
 						/>
 					)}
-					<div className="relative flex items-center" style={{ width: 260, maxWidth: '100%' }}>
+					<div
+						className="relative flex items-center"
+						style={
+							phone
+								? { flex: '1 1 180px', minWidth: 0, maxWidth: 260 }
+								: { width: 260, maxWidth: '100%' }
+						}
+					>
 						<Search
 							className="absolute left-2 w-3.5 h-3.5 pointer-events-none"
 							style={{ color: filterQuery ? theme.colors.accent : theme.colors.textDim }}
@@ -585,8 +599,8 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 						testId="agent-overview-tile-zoom"
 					/>
 				</div>
-				<div className="flex items-center gap-2">
-					<span className="text-xs" style={{ color: theme.colors.textDim }}>
+				<div className="flex items-center gap-2 min-w-0">
+					<span className="text-xs shrink-0" style={{ color: theme.colors.textDim }}>
 						Sort by:
 					</span>
 					<SegmentedControl

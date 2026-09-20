@@ -1,9 +1,33 @@
+/**
+ * Baton (wand sparkle) tuning for the Playground.
+ *
+ * This models the SHIPPED animation, and that is the whole contract: the panel
+ * exists so you can tune the Left Bar wand and paste the result into
+ * `index.css`. When the two drift apart the feature stops being a tuning
+ * surface and becomes a trap - which is exactly what happened when the wand
+ * moved to composited overlay glints and this file kept emitting the old
+ * `svg.wand-sparkle-active path:nth-child(n+3)` rules. Copying that output
+ * would have reintroduced ~27,000 main-thread style invalidations per minute.
+ *
+ * So: glints here are overlay ELEMENTS (`.baton-glint`), matching
+ * `.wand-glint` in index.css. Chrome composites `transform` and `opacity` on a
+ * positioned element and cannot do so on an SVG sub-element, which is why the
+ * drift below is free now and cost ~720 forced layouts per second before.
+ *
+ * If you change the shape of the shipped animation, change it here too.
+ */
+
+/**
+ * Defaults are the SHIPPED values, so "Reset" gives you the real wand rather
+ * than a nearby-looking approximation. Cross-check against `.wand-glint` and
+ * `@keyframes wand-glint` in index.css before editing.
+ */
 export const BATON_DEFAULTS = {
-	duration: 3,
-	fadeOutStart: 35,
-	fadeInStart: 65,
+	duration: 2.4,
+	peakAt: 40,
+	settleAt: 70,
 	translateAmount: 0.5,
-	staggerOffset: 0.5,
+	staggerOffset: 0.8,
 	easing: 'ease-in-out' as const,
 };
 
@@ -18,82 +42,106 @@ export const EASING_OPTIONS = [
 export type EasingOption = (typeof EASING_OPTIONS)[number];
 
 export interface BatonSettings {
+	/** Length of one glint cycle, in seconds. */
 	duration: number;
-	fadeOutStart: number;
-	fadeInStart: number;
+	/** Percent of the cycle at which a glint is brightest. */
+	peakAt: number;
+	/** Percent of the cycle by which it has faded back out. */
+	settleAt: number;
+	/** Pixels of drift at the extremes. Free: it is a composited transform. */
 	translateAmount: number;
+	/** Seconds between each glint's start, so they do not fire in unison. */
 	staggerOffset: number;
 	easing: EasingOption;
 }
 
-const STAGGER_MULTIPLIERS = [0, 1, 2, 3, 1.4, 2.4];
+/**
+ * Three glints, not six.
+ *
+ * Past three nobody perceives individual sparkles on a 20px icon, so a fourth
+ * is a composited layer bought for nothing. The multipliers are evenly spaced
+ * because the glints sit at three corners rather than along a line - an uneven
+ * stagger reads as a stutter rather than as organic.
+ */
+const STAGGER_MULTIPLIERS = [0, 1, 2];
+
+/** How many glints the wand renders. Exported so previews cannot disagree. */
+export const BATON_GLINT_COUNT = STAGGER_MULTIPLIERS.length;
 
 export function getBatonStaggerDelays(staggerOffset: number): string[] {
 	return STAGGER_MULTIPLIERS.map((multiplier) => (multiplier * staggerOffset).toFixed(2));
 }
 
-export function buildBatonAnimationCss(settings: BatonSettings): string {
-	const staggerDelays = getBatonStaggerDelays(settings.staggerOffset);
-
-	return `
-@keyframes playground-wand-sparkle {
-	0%, 100% {
-		opacity: 1;
-		transform: translate(0, 0);
-	}
-	${settings.fadeOutStart}% {
+/** The keyframe body, shared by the live preview and the copyable output. */
+function glintKeyframes(settings: BatonSettings, name: string): string {
+	const t = settings.translateAmount;
+	return `@keyframes ${name} {
+	0%,
+	100% {
 		opacity: 0;
-		transform: translate(${settings.translateAmount}px, ${-settings.translateAmount}px);
+		transform: translate(0, 0) scale(0.5);
 	}
-	${settings.fadeInStart}% {
+	${settings.peakAt}% {
+		opacity: 0.9;
+		transform: translate(${t}px, ${-t}px) scale(1);
+	}
+	${settings.settleAt}% {
 		opacity: 0;
-		transform: translate(${-settings.translateAmount}px, ${settings.translateAmount}px);
-	}
-}
-
-/* Target sparkle paths (3rd through 8th children are sparkle decorations) */
-svg.baton-sparkle-active path:nth-child(n+3) {
-	animation: playground-wand-sparkle ${settings.duration}s ${settings.easing} infinite;
-}
-
-${staggerDelays.map((delay, i) => `svg.baton-sparkle-active path:nth-child(${i + 3}) { animation-delay: ${delay}s; }`).join('\n')}
-
-@media (prefers-reduced-motion: reduce) {
-	svg.baton-sparkle-active path:nth-child(n+3) {
-		animation: none;
+		transform: translate(${-t}px, ${t}px) scale(0.6);
 	}
 }`;
 }
 
+/**
+ * CSS injected into a live <style> tag to drive the panel's own previews.
+ *
+ * Scoped to `.baton-glint` rather than the production `.wand-glint` on purpose:
+ * the Playground has to be able to diverge from what ships while you are
+ * actually tuning it, without the Left Bar wand twitching along.
+ */
+export function buildBatonAnimationCss(settings: BatonSettings): string {
+	const staggerDelays = getBatonStaggerDelays(settings.staggerOffset);
+
+	return `
+${glintKeyframes(settings, 'playground-wand-glint')}
+
+.baton-glint {
+	animation: playground-wand-glint ${settings.duration}s ${settings.easing} infinite;
+}
+
+${staggerDelays.map((delay, i) => `.baton-glint-${i + 1} { animation-delay: ${delay}s; }`).join('\n')}
+
+@media (prefers-reduced-motion: reduce) {
+	.baton-glint {
+		display: none;
+	}
+}`;
+}
+
+/**
+ * The copyable output: production class names, ready to replace the glint block
+ * in `index.css`. Safe to paste, which is the point of the whole panel.
+ */
 export function buildBatonCopyCss(settings: BatonSettings): string {
 	const staggerDelays = getBatonStaggerDelays(settings.staggerOffset);
 
-	return `/* Wand sparkle animation - sparkle paths vanish/reappear with subtle movement */
-@keyframes wand-sparkle {
-  0%, 100% {
-    opacity: 1;
-    transform: translate(0, 0);
-  }
-  ${settings.fadeOutStart}% {
-    opacity: 0;
-    transform: translate(${settings.translateAmount}px, ${-settings.translateAmount}px);
-  }
-  ${settings.fadeInStart}% {
-    opacity: 0;
-    transform: translate(${-settings.translateAmount}px, ${settings.translateAmount}px);
-  }
+	return `/* Wand sparkle glints - overlay elements, composited.
+   Generated by the Maestro Playground (Baton tab). Replaces the matching block
+   in src/renderer/index.css. Read the comment above .wand-glints there before
+   changing the SHAPE of this: glints must stay overlay elements, never SVG
+   <path> children, which Chrome cannot composite. */
+${glintKeyframes(settings, 'wand-glint')}
+
+.wand-glint {
+  animation: wand-glint ${settings.duration}s ${settings.easing} infinite;
 }
 
-svg.wand-sparkle-active path:nth-child(n+3) {
-  animation: wand-sparkle ${settings.duration}s ${settings.easing} infinite;
-}
-
-/* Stagger each sparkle for organic feel */
-${staggerDelays.map((delay, i) => `svg.wand-sparkle-active path:nth-child(${i + 3}) { animation-delay: ${delay}s; }`).join('\n')}
+/* Stagger each glint so they do not fire in unison */
+${staggerDelays.map((delay, i) => `.wand-glint-${i + 1} { animation-delay: ${delay}s; }`).join('\n')}
 
 @media (prefers-reduced-motion: reduce) {
-  svg.wand-sparkle-active path:nth-child(n+3) {
-    animation: none;
+  .wand-glint {
+    display: none;
   }
 }`;
 }

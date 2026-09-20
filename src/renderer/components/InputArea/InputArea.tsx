@@ -196,6 +196,9 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	}, [isResumingSession, hasCapability, commandMode]);
 
 	// PERF: Memoize mode-related derived state
+	// `isReadOnlyMode` stays off the destructure: rc's ToolbarControls reads the
+	// read-only state itself rather than taking it as a prop, so main's binding
+	// has no consumer here and would only be an unused local.
 	const { showQueueingBorder } = useMemo(() => {
 		// Check if we're in read-only mode (manual toggle only - Claude will be in plan mode)
 		// NOTE: Auto Run no longer forces read-only mode. Instead:

@@ -2479,6 +2479,63 @@ describe('useWizardHandlers', () => {
 			expect(useUIStore.getState().activeRightTab).toBe('files');
 		});
 
+		it('leaves the Right Bar alone when the wizard produced no documents', async () => {
+			useSessionStore.setState({ sessions: [], activeSessionId: null });
+			useUIStore.setState({ activeRightTab: 'files' });
+
+			// The "skip the playbook" path: the mode is still its default because
+			// the dispatch that sets it to 'none' lands after this closure was
+			// captured. Only the document count can be trusted here.
+			const deps = createMockDeps({
+				wizardContext: {
+					state: {
+						currentStep: 'directory-selection' as any,
+						isOpen: true,
+						selectedAgent: 'claude-code',
+						availableAgents: [],
+						agentName: 'Test',
+						directoryPath: '/projects/test',
+						isGitRepo: false,
+						detectedAgentPath: null,
+						directoryError: null,
+						hasExistingAutoRunDocs: false,
+						existingDocsCount: 0,
+						existingDocsChoice: null,
+						conversationHistory: [],
+						confidenceLevel: 0,
+						isReadyToProceed: false,
+						isConversationLoading: false,
+						conversationError: null,
+						generatedDocuments: [],
+						currentDocumentIndex: 0,
+						isGeneratingDocuments: false,
+						generationError: null,
+						editedPhase1Content: null,
+						autoRunMode: 'all',
+						wantsTour: false,
+						isComplete: false,
+						createdSessionId: null,
+					} as any,
+					completeWizard: vi.fn().mockResolvedValue(undefined),
+					clearResumeState: vi.fn().mockResolvedValue(undefined),
+				},
+			});
+
+			const { result } = renderHook(() => useWizardHandlers(deps));
+
+			await act(async () => {
+				await result.current.handleWizardLaunchSession(false);
+			});
+
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 600));
+			});
+
+			expect(deps.startBatchRun).not.toHaveBeenCalled();
+			expect(useUIStore.getState().activeRightTab).toBe('files');
+			expect(useSessionStore.getState().sessions).toHaveLength(1);
+		});
+
 		it('starts tour when wantsTour is true', async () => {
 			useSessionStore.setState({ sessions: [], activeSessionId: null });
 
@@ -2720,7 +2777,7 @@ describe('useWizardHandlers', () => {
 			expect(sessions[0].gitTags).toEqual(['v1.0', 'v2.0']);
 		});
 
-		it('sets right tab to autorun', async () => {
+		it('sets right tab to autorun when a playbook was generated', async () => {
 			useSessionStore.setState({ sessions: [], activeSessionId: null });
 
 			const deps = createMockDeps({
@@ -2743,7 +2800,7 @@ describe('useWizardHandlers', () => {
 						isReadyToProceed: true,
 						isConversationLoading: false,
 						conversationError: null,
-						generatedDocuments: [],
+						generatedDocuments: [{ filename: 'phase-1.md', content: '# Phase 1', taskCount: 2 }],
 						currentDocumentIndex: 0,
 						isGeneratingDocuments: false,
 						generationError: null,

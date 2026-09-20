@@ -71,6 +71,30 @@ describe('jumpToAgent', () => {
 		expect(useGroupChatStore.getState().activeGroupChatId).toBeNull();
 	});
 
+	it('closes the left drawer that would cover the agent on a narrow viewport', () => {
+		const originalWidth = window.innerWidth;
+		Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 });
+		seed();
+		useUIStore.setState({ leftSidebarOpen: true });
+
+		jumpToAgent(SESSION_ID);
+
+		expect(useUIStore.getState().leftSidebarOpen).toBe(false);
+		Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth });
+	});
+
+	it('leaves the Left Bar open when it is a permanent column', () => {
+		const originalWidth = window.innerWidth;
+		Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1440 });
+		seed();
+		useUIStore.setState({ leftSidebarOpen: true });
+
+		jumpToAgent(SESSION_ID);
+
+		expect(useUIStore.getState().leftSidebarOpen).toBe(true);
+		Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth });
+	});
+
 	it('closes the Document Graph overlay that would cover the agent', () => {
 		seed();
 		useFileExplorerStore.setState({ isGraphViewOpen: true } as never);

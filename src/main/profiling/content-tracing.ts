@@ -48,6 +48,22 @@ export const BUFFER_STOP_THRESHOLD = 0.85;
 export const BUFFER_POLL_INTERVAL_MS = 1_000;
 
 /**
+ * Peak usage above which events were probably dropped.
+ *
+ * Deliberately far above {@link BUFFER_STOP_THRESHOLD}. A recording the
+ * watchdog stopped on purpose peaks just past 85% and is COMPLETE - that is the
+ * whole point of stopping there. Only a buffer that got close to actually full
+ * (because usage jumped between two one-second polls, or because nothing was
+ * watching) indicates loss.
+ *
+ * The first watchdog-stopped capture (Sep 18 2026) peaked at 87.6%, covered
+ * 100% of its 53s recording, and still labelled itself INCOMPLETE - because
+ * this used to be the stop threshold, which every successful auto-stop crosses
+ * by definition. A flag that is always true says nothing.
+ */
+export const BUFFER_EXHAUSTED_THRESHOLD = 0.98;
+
+/**
  * Who asked for this recording, which decides what happens when the buffer
  * fills.
  *
@@ -267,11 +283,12 @@ export async function stopProfiling(outputPath: string): Promise<StopProfilingOu
 		categories: state.categories,
 		peakBufferPercent: state.peakBufferPercent,
 		autoStopped: state.autoStopRequested,
-		// Peak usage is sampled, so a buffer that filled between two polls reads
-		// below 1.0 here. Treat anything at or past the stop threshold as "this
-		// capture may have started dropping events" rather than claiming a
-		// precision the sampling does not have.
-		bufferExhausted: state.peakBufferPercent >= BUFFER_STOP_THRESHOLD,
+		// Only a near-full buffer means loss. Crossing the STOP threshold is the
+		// watchdog succeeding, not failing. Usage is sampled once a second, so
+		// this cannot be certain either way - the analyzer corroborates it by
+		// comparing the trace's covered window against the recording duration,
+		// which is the one measurement that can actually see dropped events.
+		bufferExhausted: state.peakBufferPercent >= BUFFER_EXHAUSTED_THRESHOLD,
 	};
 
 	logger.info(

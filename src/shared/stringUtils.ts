@@ -133,3 +133,33 @@ export function stripAnsiCodes(text: string): string {
 
 	return result;
 }
+
+/**
+ * Process carriage returns to simulate terminal line overwrites.
+ * When a line contains \r, the text after the last \r replaces the entire line.
+ * This mimics how terminals handle carriage returns for progress indicators.
+ *
+ * Lives here rather than beside the renderer's ANSI helpers because the main
+ * process needs it too: a git run asked for `--progress` arrives with the same
+ * overwrite counters, and importing the renderer module would drag DOMPurify
+ * and `ansi-to-html` into a process with no DOM.
+ *
+ * @param text - Raw text potentially containing carriage returns
+ * @returns Processed text with carriage return overwrites applied
+ */
+export function processCarriageReturns(text: string): string {
+	const lines = text.split('\n');
+	const processedLines = lines.map((line) => {
+		if (line.includes('\r')) {
+			const segments = line.split('\r');
+			for (let i = segments.length - 1; i >= 0; i--) {
+				if (segments[i].trim()) {
+					return segments[i];
+				}
+			}
+			return '';
+		}
+		return line;
+	});
+	return processedLines.join('\n');
+}

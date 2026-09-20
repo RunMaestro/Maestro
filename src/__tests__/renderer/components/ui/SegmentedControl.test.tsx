@@ -99,6 +99,21 @@ describe('SegmentedControl', () => {
 		expect(onChange).not.toHaveBeenCalled();
 	});
 
+	// A bar wider than its row used to lose its last segments outright:
+	// `overflow-hidden` clipped them, so they were invisible AND unclickable
+	// with no scrollbar to hint they were there. On a phone the five-way sort
+	// bar lost two options.
+	it('scrolls sideways rather than clipping the segments it cannot fit', () => {
+		renderControl('name');
+
+		const group = screen.getByRole('radiogroup');
+		expect(group).toHaveClass('overflow-x-auto', 'overflow-y-hidden', 'max-w-full', 'min-w-0');
+		expect(group).not.toHaveClass('overflow-hidden');
+		// Every segment keeps its width inside that scroller - a squeezed
+		// segment reads as a different label, not a narrower one.
+		expect(screen.getByTestId('sort-name')).toHaveClass('shrink-0');
+	});
+
 	it('surfaces the optional per-segment tooltip', () => {
 		renderControl('name');
 

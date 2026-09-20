@@ -22,6 +22,10 @@ import { logger } from '../../utils/logger';
 import { beginSleepAwareSpan, sleepAwareElapsedMs } from '../../services/systemSleep';
 import { findActiveModelHint, countTasksUnderActiveHint } from '../../../shared/autorunModelHints';
 import { resolveTurnSettings } from '../../../shared/autorunTurnSettings';
+import {
+	formatSteeringNotesBlock,
+	type AutoRunSteeringNote,
+} from '../../../shared/autorunSteering';
 
 /**
  * Configuration for document processing
@@ -80,6 +84,12 @@ export interface DocumentProcessorConfig {
 	 * document's own markers from that chain.
 	 */
 	runOverrides?: DocumentRunOverrides;
+	/**
+	 * Notes the operator sent while the run was in flight. Prepended to this
+	 * task's prompt so a course correction lands without stopping the run.
+	 * Already consumed by the caller - this hook only formats them.
+	 */
+	steeringNotes?: readonly AutoRunSteeringNote[];
 }
 
 /**
@@ -351,6 +361,7 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 				taskSelectionMode,
 				sshRemoteId,
 				runOverrides,
+				steeringNotes,
 			} = config;
 
 			const docFilePath = `${folderPath}/${filename}.md`;
@@ -447,13 +458,33 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 				getTaskSelectionBlock(taskSelectionMode, hintSegment)
 			);
 
-			// Substitute template variables in the prompt. Each task spawns a fresh
-			// provider session, so prefix the agent's New Session Message onto every
-			// spawn (matches interactive behavior).
-			const finalPrompt = prependNewSessionMessage(
-				substituteTemplateVariables(promptWithSelectionBlock, templateContext),
-				session.newSessionMessage
+			// Substitute template variables in the prompt
+			const substitutedPrompt = substituteTemplateVariables(
+				promptWithSelectionBlock,
+				templateContext
 			);
+
+			// Steering notes ride in FRONT of the prompt, and are prepended AFTER
+			// substitution on purpose: a `{{...}}` the operator typed into a note is
+			// their literal text, not a variable for Maestro to expand.
+			const steeringBlock = formatSteeringNotesBlock(steeringNotes ?? []);
+			const steeredPrompt = steeringBlock
+				? `${steeringBlock}\n\n---\n\n${substitutedPrompt}`
+				: substitutedPrompt;
+			if (steeringBlock) {
+				logger.info(
+					`[DocumentProcessor] Delivering ${steeringNotes?.length ?? 0} steering note(s)`,
+					undefined,
+					{ document: filename }
+				);
+			}
+
+			// Each task spawns a fresh provider session, so prefix the agent's New
+			// Session Message onto every spawn (matches interactive behavior). It
+			// wraps the steered prompt rather than the bare one, so the session
+			// message still opens the turn and the operator's note stays directly
+			// ahead of the task it is steering.
+			const finalPrompt = prependNewSessionMessage(steeredPrompt, session.newSessionMessage);
 
 			// Capture start time for elapsed time tracking. Sleep-aware: a task that
 			// spans a lid close must not report the sleep as agent work time.

@@ -154,7 +154,7 @@ export const WizardStats = memo(function WizardStats({ timeRange, theme }: Wizar
 
 			{/* Metric tiles */}
 			<div
-				className="grid grid-cols-2 lg:grid-cols-3 gap-3 mb-4"
+				className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-4"
 				data-testid="wizard-metrics"
 				role="region"
 				aria-label="Wizard summary metrics"

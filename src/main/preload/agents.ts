@@ -23,6 +23,7 @@ import type {
 	CodexResetCreditsDetail,
 } from '../../shared/codexResetCredits';
 import type { KnownAuthDirs } from '../../shared/authPaths';
+import type { KnownEnvVarKeys } from '../../shared/envVarCatalog';
 
 // Re-export for consumers that import from preload. `AgentStatus` is
 // re-exported only (no local usage in this file); TypeScript's
@@ -171,6 +172,14 @@ export function createAgentsApi() {
 		 * enumerating provider directories on disk.
 		 */
 		getKnownAuthDirs: (): Promise<KnownAuthDirs> => ipcRenderer.invoke('agents:getKnownAuthDirs'),
+
+		/**
+		 * Return env-var NAMES the user has already set, per provider and
+		 * globally, for the name suggestions in the env-var editors. Values are
+		 * deliberately left behind: several of them are credentials.
+		 */
+		getKnownEnvVarKeys: (): Promise<KnownEnvVarKeys> =>
+			ipcRenderer.invoke('agents:getKnownEnvVarKeys'),
 
 		/**
 		 * Discover available models for agents that support model selection

@@ -47,6 +47,7 @@ import { logger } from '../utils/logger';
 import { isMaestroPBinaryPath } from './claudeSpawnCore';
 import { sampleUsage } from './claude-usage-sampler';
 import { getAllSnapshots, resolveConfigDirKey, setSnapshot } from '../stores/claudeUsageStore';
+import { getRememberedQuotaAccountKeys, rememberQuotaAccounts } from '../stores/quotaAccountsStore';
 import {
 	effectiveAgentCustomEnvVars,
 	isAccountDirName,
@@ -119,7 +120,10 @@ export async function discoverClaudeConfigDirs(homeDir = os.homedir()): Promise<
 
 	const dirs: string[] = [];
 	for (const entry of entries) {
-		if (!entry.isDirectory()) continue;
+		// `Dirent.isDirectory()` is false for a symlink, and pointing
+		// `~/.claude-gmail` at another directory is a normal way to run two
+		// accounts. The `.claude.json` check below follows the link and settles it.
+		if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
 		if (!isAccountDirName(entry.name, '.claude')) continue;
 
 		const dir = path.join(homeDir, entry.name);
@@ -132,6 +136,20 @@ export async function discoverClaudeConfigDirs(homeDir = os.homedir()): Promise<
 	}
 
 	return dirs.sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * True when `dir` exists and is readable as a directory (symlinks followed).
+ * Used to confirm an account dir the discovery sweep did not list is still on
+ * disk before sampling it.
+ */
+async function isReadableDir(dir: string): Promise<boolean> {
+	try {
+		const stat = await fs.promises.stat(dir);
+		return stat.isDirectory();
+	} catch {
+		return false;
+	}
 }
 
 /**
@@ -346,6 +364,12 @@ export async function runStartupUsageSampling(deps: StartupUsageSamplingDeps): P
 		}
 	}
 
+	// Remember every account a configured agent points at, before sampling. The
+	// dashboard unions these into its account list, so moving every agent off an
+	// account (what the user does the moment it hits its limit) no longer erases
+	// the row they moved off - see `quotaAccountsStore`.
+	rememberQuotaAccounts('claude-code', targetsByKey.keys());
+
 	// NB: manual mode does NOT sweep the filesystem for ~/.claude-* account
 	// dirs. A blind sweep would spawn `maestro-p --status` against every
 	// leftover/stale account on disk, and any whose Keychain tokens have
@@ -355,25 +379,40 @@ export async function runStartupUsageSampling(deps: StartupUsageSamplingDeps): P
 	// guard. (discoverClaudeConfigDirs() still backs the account-key listing
 	// IPC handler, which lists keys without spawning anything.)
 	//
-	// The exception is a dir that already holds a cached snapshot. The dashboard
-	// keeps rendering that row, and when every agent using the dir runs over SSH
-	// (skipped by buildTarget) nothing ever re-samples it: the footer reads "Last
-	// refreshed just now" off the other accounts while this row's bars sit
-	// frozen until the 24h TTL drops them. A cached snapshot proves a recent
-	// successful sample, so this is not a leftover dir, and the sampler points
-	// BROWSER at a no-op besides.
+	// The exception is a dir Maestro has already used: one that holds a cached
+	// snapshot, or one remembered in `quotaAccountsStore` because a sampler
+	// targeted it for a real agent. The dashboard keeps rendering those rows, and
+	// nothing else re-samples them once their agents move away (or all run over
+	// SSH, which buildTarget skips): the footer reads "Last refreshed just now"
+	// off the other accounts while this row's bars sit frozen. Neither source is
+	// a leftover dir on disk, this only runs when the user pressed Refresh, and
+	// the sampler points BROWSER at a no-op besides.
 	if (mode === 'manual') {
-		const cachedOnlyKeys = Object.keys(getAllSnapshots()).filter((key) => !targetsByKey.has(key));
-		if (cachedOnlyKeys.length > 0) {
+		const knownKeys = new Set([
+			...Object.keys(getAllSnapshots()),
+			...getRememberedQuotaAccountKeys('claude-code'),
+		]);
+		const knownOnlyKeys = Array.from(knownKeys).filter((key) => !targetsByKey.has(key));
+		if (knownOnlyKeys.length > 0) {
 			const onDiskDirsByKey = new Map(
 				(await discoverClaudeConfigDirs()).map((dir) => [
 					resolveConfigDirKey({ CLAUDE_CONFIG_DIR: dir }),
 					dir,
 				])
 			);
-			for (const configDirKey of cachedOnlyKeys) {
-				const configDir = onDiskDirsByKey.get(configDirKey);
-				if (!configDir) continue;
+			for (const configDirKey of knownOnlyKeys) {
+				// A discovery hit has already proven the dir exists. Otherwise the
+				// key IS the canonical dir path, so check it directly: the sweep
+				// only matches real `~/.claude-*` directories, and misses a
+				// symlinked account dir, one outside $HOME, and one whose name trips
+				// the backup/scratch filter. Those accounts used to stop refreshing
+				// the moment their last agent moved away, then dropped off the panel
+				// at the 24h TTL.
+				let configDir = onDiskDirsByKey.get(configDirKey);
+				if (!configDir) {
+					if (!(await isReadableDir(configDirKey))) continue;
+					configDir = configDirKey;
+				}
 				targetsByKey.set(configDirKey, {
 					configDir,
 					configDirKey,

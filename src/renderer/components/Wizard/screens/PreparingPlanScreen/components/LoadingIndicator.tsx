@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import type { Theme } from '../../../../../types';
+import type { Theme, ToolType } from '../../../../../types';
 import { formatElapsedTime } from '../../../../../../shared/formatters';
 import type { CreatedFileInfo } from '../types';
 import { countCreatedFileTasks } from '../utils/createdFiles';
+import { PlannerModelBar } from '../../../shared/PlannerModelBar';
 import { AustinFactTypewriter } from './AustinFactTypewriter';
 import { CreatedFilesList } from './CreatedFilesList';
 
@@ -11,11 +12,16 @@ export function LoadingIndicator({
 	theme,
 	createdFiles = [],
 	startTime,
+	selectedAgent,
+	effectiveModel,
 }: {
 	message: string;
 	theme: Theme;
 	createdFiles?: CreatedFileInfo[];
 	startTime?: number;
+	selectedAgent: ToolType | null;
+	/** Model writing the playbook, shown so the bill is never a surprise. */
+	effectiveModel: string | null;
 }): JSX.Element {
 	const totalTasks = countCreatedFileTasks(createdFiles);
 	const [elapsedMs, setElapsedMs] = useState(0);
@@ -61,6 +67,15 @@ export function LoadingIndicator({
 					This may take a while. We're creating detailed task documents based on your project
 					requirements.
 				</p>
+				<div className="mt-2">
+					<PlannerModelBar
+						theme={theme}
+						selectedAgent={selectedAgent}
+						effectiveModel={effectiveModel}
+						topTierModel={null}
+					/>
+				</div>
+
 				{startTime && elapsedMs > 0 && (
 					<p className="text-xs mt-1 font-mono" style={{ color: theme.colors.textDim }}>
 						Elapsed: {formatElapsedTime(elapsedMs)}

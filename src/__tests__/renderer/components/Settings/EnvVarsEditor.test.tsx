@@ -451,7 +451,10 @@ describe('EnvVarsEditor', () => {
 			/>
 		);
 
-		expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+		// Scoped to the VALUE field on purpose: the NAME field beside it is a
+		// combobox of its own (`EnvVarKeyInput`), so a bare `queryByRole` here
+		// asks about the wrong input.
+		expect(screen.queryByLabelText('Known CODEX_HOME paths')).not.toBeInTheDocument();
 		expect(screen.getByPlaceholderText('value')).toHaveValue('/Users/me/.codex-work');
 	});
 

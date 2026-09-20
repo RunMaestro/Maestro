@@ -36,10 +36,16 @@ import { captureException } from '../../utils/sentry';
 import { parseJsonWithBom } from '../../../shared/jsonUtils';
 import {
 	getAllSnapshots as getAllClaudeUsageSnapshots,
+	getRetainedSnapshots as getRetainedClaudeUsageSnapshots,
 	resolveConfigDirKey,
 } from '../../stores/claudeUsageStore';
 import { getLimitResetAt } from '../../agents/limitResetEstimator';
-import { getAllCodexUsageSnapshots, resolveCodexHomeKey } from '../../stores/codexUsageStore';
+import {
+	getAllCodexUsageSnapshots,
+	getRetainedCodexUsageSnapshots,
+	resolveCodexHomeKey,
+} from '../../stores/codexUsageStore';
+import { pruneMissingQuotaAccounts } from '../../stores/quotaAccountsStore';
 import type { UsageSnapshot } from '../../agents/claude-mode-selector';
 import type { CodexUsageSnapshot } from '../../stores/codexUsageStore';
 import {
@@ -55,6 +61,7 @@ import {
 } from '../../agents/codex-reset-credits';
 import type { CodexResetCreditConsumeResult } from '../../../shared/codexResetCredits';
 import type { KnownAuthDirs } from '../../../shared/authPaths';
+import { rememberableEnvVarKeys, type KnownEnvVarKeys } from '../../../shared/envVarCatalog';
 
 const LOG_CONTEXT = '[AgentDetector]';
 const CONFIG_LOG_CONTEXT = '[AgentConfig]';
@@ -126,6 +133,13 @@ function collectKnownAuthPaths(
 
 	return Array.from(pathsByKey.values()).sort((a, b) => a.localeCompare(b));
 }
+/** One env-var record off a config or session, active or parked. */
+function envVarRecord(value: unknown, field: string): Record<string, unknown> {
+	if (!value || typeof value !== 'object' || !(field in value)) return {};
+	const record = (value as Record<string, unknown>)[field];
+	return record && typeof record === 'object' ? (record as Record<string, unknown>) : {};
+}
+
 // Copilot CLI built-in slash commands (always available in interactive mode)
 const COPILOT_BUILTIN_COMMANDS = [
 	'help',
@@ -1590,6 +1604,65 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 		)
 	);
 
+	// Names the user has already set, so the env-var editors can offer them back
+	// instead of asking everyone to retype a variable they configured once. Only
+	// names travel; values stay where they were set, because a remembered value
+	// is often a credential and nothing here needs one.
+	ipcMain.handle(
+		'agents:getKnownEnvVarKeys',
+		withIpcErrorLogging(
+			handlerOpts('getKnownEnvVarKeys', CONFIG_LOG_CONTEXT),
+			async (): Promise<KnownEnvVarKeys> => {
+				const allConfigs = agentConfigsStore.get('configs', {});
+				const sessions = sessionsStore?.get('sessions', []) ?? [];
+
+				const byProvider = new Map<string, Set<string>>();
+				const remember = (toolType: unknown, source: Record<string, unknown>) => {
+					if (typeof toolType !== 'string' || toolType.length === 0) return;
+					const keys = [
+						...rememberableEnvVarKeys(envVarRecord(source, 'customEnvVars')),
+						...rememberableEnvVarKeys(envVarRecord(source, 'customEnvVarsDisabled')),
+					];
+					if (keys.length === 0) return;
+					let bucket = byProvider.get(toolType);
+					if (!bucket) {
+						bucket = new Set<string>();
+						byProvider.set(toolType, bucket);
+					}
+					for (const key of keys) bucket.add(key);
+				};
+
+				for (const [toolType, config] of Object.entries(allConfigs)) {
+					if (config && typeof config === 'object') {
+						remember(toolType, config as Record<string, unknown>);
+					}
+				}
+				for (const session of sessions) {
+					if (session && typeof session === 'object') {
+						remember(session.toolType, session);
+					}
+				}
+
+				const globalKeys = new Set<string>([
+					...rememberableEnvVarKeys(settingsStore?.get('shellEnvVars', {})),
+					...rememberableEnvVarKeys(settingsStore?.get('shellEnvVarsDisabled', {})),
+				]);
+
+				return {
+					byProvider: Object.fromEntries(
+						Array.from(byProvider.entries())
+							.sort(([a], [b]) => a.localeCompare(b))
+							.map(([toolType, keys]) => [
+								toolType,
+								Array.from(keys).sort((a, b) => a.localeCompare(b)),
+							])
+					),
+					global: Array.from(globalKeys).sort((a, b) => a.localeCompare(b)),
+				};
+			}
+		)
+	);
+
 	// Discover available models for an agent that supports model selection
 	// Supports SSH remote discovery via optional sshRemoteId parameter
 	ipcMain.handle(
@@ -1894,8 +1967,11 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 		})
 	);
 
-	// Snapshot mirror for the renderer: returns every non-expired Claude plan
-	// usage snapshot keyed by canonical CLAUDE_CONFIG_DIR. The renderer's
+	// Snapshot mirror for the renderer: returns every RETAINED Claude plan usage
+	// snapshot keyed by canonical CLAUDE_CONFIG_DIR - expired ones included, so a
+	// panel row keeps its last known bars (the UI badges them stale) rather than
+	// vanishing 24h after the account's last agent moved away. Decision paths
+	// (mode selector, spawner) read the live map instead. The renderer's
 	// claudeUsageStore lazily fetches via this handler on first read and re-fetches
 	// whenever `process:claude-mode-resolved` arrives (the only signal that
 	// `sampleUsage()` may have refreshed the on-disk map).
@@ -1904,16 +1980,27 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 		withIpcErrorLogging(
 			handlerOpts('getClaudeUsageSnapshots'),
 			async (): Promise<Record<string, UsageSnapshot>> => {
-				return getAllClaudeUsageSnapshots();
+				return getRetainedClaudeUsageSnapshots();
 			}
 		)
 	);
 
+	// Every Claude account this machine has: the `~/.claude-*` dirs on disk plus
+	// the ones Maestro has actually sampled (`quotaAccountsStore`). The second
+	// source is what keeps an account the discovery sweep cannot see - symlinked,
+	// outside $HOME, or named like a backup - on the dashboard once its agents
+	// move away. Remembered accounts whose dir is gone are forgotten here.
 	ipcMain.handle(
 		'agents:getClaudeUsageAccountKeys',
 		withIpcErrorLogging(handlerOpts('getClaudeUsageAccountKeys'), async (): Promise<string[]> => {
 			const configDirs = await discoverClaudeConfigDirs();
-			return configDirs.map((configDir) => resolveConfigDirKey({ CLAUDE_CONFIG_DIR: configDir }));
+			const keys = new Set(
+				configDirs.map((configDir) => resolveConfigDirKey({ CLAUDE_CONFIG_DIR: configDir }))
+			);
+			for (const key of await pruneMissingQuotaAccounts('claude-code')) {
+				keys.add(key);
+			}
+			return Array.from(keys);
 		})
 	);
 
@@ -1975,15 +2062,16 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 		)
 	);
 
-	// Snapshot mirror for the renderer: returns every non-expired Codex quota
-	// usage snapshot keyed by canonical CODEX_HOME. The auth-sensitive auth.json
-	// read and ChatGPT metadata request stay in the main process.
+	// Snapshot mirror for the renderer: returns every RETAINED Codex quota usage
+	// snapshot keyed by canonical CODEX_HOME (expired included, same reasoning as
+	// the Claude mirror above). The auth-sensitive auth.json read and ChatGPT
+	// metadata request stay in the main process.
 	ipcMain.handle(
 		'agents:getCodexUsageSnapshots',
 		withIpcErrorLogging(
 			handlerOpts('getCodexUsageSnapshots'),
 			async (): Promise<Record<string, CodexUsageSnapshot>> => {
-				return getAllCodexUsageSnapshots();
+				return getRetainedCodexUsageSnapshots();
 			}
 		)
 	);
@@ -2037,11 +2125,19 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 		)
 	);
 
+	// Discovered `~/.codex-*` homes plus the ones Maestro has sampled before, so
+	// an account keeps its dashboard row after its last agent moves off it.
 	ipcMain.handle(
 		'agents:getCodexUsageAccountKeys',
 		withIpcErrorLogging(handlerOpts('getCodexUsageAccountKeys'), async (): Promise<string[]> => {
 			const codexHomes = await discoverCodexHomes();
-			return codexHomes.map((codexHome) => resolveCodexHomeKey({ CODEX_HOME: codexHome }));
+			const keys = new Set(
+				codexHomes.map((codexHome) => resolveCodexHomeKey({ CODEX_HOME: codexHome }))
+			);
+			for (const key of await pruneMissingQuotaAccounts('codex')) {
+				keys.add(key);
+			}
+			return Array.from(keys);
 		})
 	);
 

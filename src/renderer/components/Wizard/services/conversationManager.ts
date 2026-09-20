@@ -44,6 +44,11 @@ export interface ConversationConfig {
 	customArgs?: string;
 	customEnvVars?: Record<string, string>;
 	agentConfigValues?: Record<string, unknown>;
+	/**
+	 * Model to plan with, overriding the agent's configured model for this run.
+	 * Undefined leaves the agent's own configuration in charge.
+	 */
+	model?: string;
 	/** SSH remote configuration (for remote execution) */
 	sshRemoteConfig?: {
 		enabled: boolean;
@@ -105,6 +110,8 @@ interface ConversationSession {
 	directoryPath: string;
 	/** Project name */
 	projectName: string;
+	/** Per-run model override, or undefined for the agent's configured model */
+	model?: string;
 	/** Whether the agent process is active */
 	isActive: boolean;
 	/** System prompt used for this session */
@@ -185,6 +192,7 @@ class ConversationManager {
 			agentType: config.agentType,
 			directoryPath: config.directoryPath,
 			projectName: config.projectName,
+			model: config.model,
 			isActive: true,
 			systemPrompt,
 			outputBuffer: '',
@@ -640,10 +648,17 @@ class ConversationManager {
 					sessionCustomPath: this.session!.customPath,
 					sessionCustomArgs: this.session!.customArgs,
 					sessionCustomEnvVars: this.session!.customEnvVars,
+					// Planning model for this run. `model` is the wizard's explicit
+					// planner-model pick and outranks the agent's own configured model,
+					// which is what `agentConfigValues.model` carries; undefined on both
+					// leaves the agent's configuration in charge (see
+					// applyAgentConfigOverrides). Both sources land on this ONE key -
+					// emitting it twice would silently let whichever came last win.
 					sessionCustomModel:
-						typeof this.session!.agentConfigValues?.model === 'string'
+						this.session!.model ??
+						(typeof this.session!.agentConfigValues?.model === 'string'
 							? this.session!.agentConfigValues.model
-							: undefined,
+							: undefined),
 					sessionCustomEffort: readEffortFromConfig(this.session!.agentConfigValues),
 					sessionCustomContextWindow:
 						typeof this.session!.agentConfigValues?.contextWindow === 'number'

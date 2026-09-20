@@ -26,16 +26,16 @@ describe('useBatonPlayground', () => {
 		const { result } = renderHook(() => useBatonPlayground());
 
 		expect(result.current).toMatchObject({
-			duration: 3,
-			fadeOutStart: 35,
-			fadeInStart: 65,
+			duration: 2.4,
+			peakAt: 40,
+			settleAt: 70,
 			translateAmount: 0.5,
-			staggerOffset: 0.5,
+			staggerOffset: 0.8,
 			easing: 'ease-in-out',
 			batonActive: true,
 		});
 		expect(document.querySelector('style[data-baton-playground]')?.textContent).toContain(
-			'playground-wand-sparkle'
+			'playground-wand-glint'
 		);
 	});
 
@@ -49,7 +49,7 @@ describe('useBatonPlayground', () => {
 		});
 
 		const text = document.querySelector('style[data-baton-playground]')?.textContent;
-		expect(text).toContain('animation: playground-wand-sparkle 5s linear infinite');
+		expect(text).toContain('animation: playground-wand-glint 5s linear infinite');
 		expect(text).toContain('translate(2px, -2px)');
 	});
 
@@ -75,7 +75,7 @@ describe('useBatonPlayground', () => {
 			result.current.resetBatonDefaults();
 		});
 		expect(result.current.batonActive).toBe(true);
-		expect(result.current.duration).toBe(3);
+		expect(result.current.duration).toBe(2.4);
 	});
 
 	it('copies CSS and clears the success state after the timeout', async () => {
@@ -87,7 +87,7 @@ describe('useBatonPlayground', () => {
 		});
 
 		expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
-			expect.stringContaining('@keyframes wand-sparkle')
+			expect.stringContaining('@keyframes wand-glint')
 		);
 		expect(result.current.batonCopySuccess).toBe(true);
 

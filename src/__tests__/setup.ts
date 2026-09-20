@@ -383,6 +383,7 @@ const mockMaestro = {
 		getCustomArgs: vi.fn().mockResolvedValue(null),
 		setCustomArgs: vi.fn().mockResolvedValue(undefined),
 		getAllCustomEnvVars: vi.fn().mockResolvedValue({}),
+		getKnownEnvVarKeys: vi.fn().mockResolvedValue({ byProvider: {}, global: [] }),
 		getCustomEnvVars: vi.fn().mockResolvedValue(null),
 		setCustomEnvVars: vi.fn().mockResolvedValue(undefined),
 		refresh: vi.fn().mockResolvedValue({ agents: [], debugInfo: null }),

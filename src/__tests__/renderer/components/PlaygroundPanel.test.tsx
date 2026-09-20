@@ -905,24 +905,26 @@ describe('PlaygroundPanel', () => {
 			expect(screen.getByText('Timing')).toBeInTheDocument();
 		});
 
+		// The displayed defaults are the SHIPPED animation's values, so these
+		// assertions double as a check that Reset hands you the real wand.
 		it('displays duration control', () => {
 			expect(screen.getByText('Duration (cycle)')).toBeInTheDocument();
-			expect(screen.getByText('3.0s')).toBeInTheDocument();
+			expect(screen.getByText('2.4s')).toBeInTheDocument();
 		});
 
-		it('displays fade-out start control', () => {
-			expect(screen.getByText('Fade-out start')).toBeInTheDocument();
-			expect(screen.getByText('35%')).toBeInTheDocument();
+		it('displays peak brightness control', () => {
+			expect(screen.getByText('Peak brightness')).toBeInTheDocument();
+			expect(screen.getByText('40%')).toBeInTheDocument();
 		});
 
-		it('displays fade-in start control', () => {
-			expect(screen.getByText('Fade-in start')).toBeInTheDocument();
-			expect(screen.getByText('65%')).toBeInTheDocument();
+		it('displays settle control', () => {
+			expect(screen.getByText('Faded back out by')).toBeInTheDocument();
+			expect(screen.getByText('70%')).toBeInTheDocument();
 		});
 
 		it('displays stagger offset control', () => {
 			expect(screen.getByText('Stagger offset')).toBeInTheDocument();
-			expect(screen.getByText('0.50s')).toBeInTheDocument();
+			expect(screen.getByText('0.80s')).toBeInTheDocument();
 		});
 
 		it('changing duration updates display', () => {
@@ -994,8 +996,11 @@ describe('PlaygroundPanel', () => {
 			expect(navigator.clipboard.writeText).toHaveBeenCalled();
 			const copiedText = (navigator.clipboard.writeText as ReturnType<typeof vi.fn>).mock
 				.calls[0][0] as string;
-			expect(copiedText).toContain('@keyframes wand-sparkle');
-			expect(copiedText).toContain('wand-sparkle-active');
+			expect(copiedText).toContain('@keyframes wand-glint');
+			expect(copiedText).toContain('.wand-glint');
+			// Pasting this back into index.css must not reintroduce the
+			// uncompositable per-path animation the wand was moved off.
+			expect(copiedText).not.toContain('path:nth-child');
 			expect(copiedText).toContain('prefers-reduced-motion');
 		});
 
@@ -1051,8 +1056,8 @@ describe('PlaygroundPanel', () => {
 			const resetButtons = screen.getAllByRole('button', { name: /Reset to Defaults/ });
 			fireEvent.click(resetButtons[resetButtons.length - 1]);
 
-			// Default duration is 3.0s
-			expect(screen.getByText('3.0s')).toBeInTheDocument();
+			// Default duration is the shipped 2.4s
+			expect(screen.getByText('2.4s')).toBeInTheDocument();
 		});
 
 		it('clicking reset re-enables animation if paused', () => {
@@ -1083,8 +1088,8 @@ describe('PlaygroundPanel', () => {
 			fireEvent.click(screen.getByText('Baton'));
 
 			const styleEl = document.querySelector('style[data-baton-playground]');
-			expect(styleEl?.textContent).toContain('playground-wand-sparkle');
-			expect(styleEl?.textContent).toContain('baton-sparkle-active');
+			expect(styleEl?.textContent).toContain('playground-wand-glint');
+			expect(styleEl?.textContent).toContain('.baton-glint');
 		});
 
 		it('cleans up style element on unmount', () => {

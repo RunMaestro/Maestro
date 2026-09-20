@@ -16,6 +16,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { AutoRunExpandedModal } from '../../../renderer/components/AutoRun/AutoRunExpandedModal';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
+import { useBatchStore } from '../../../renderer/stores/batchStore';
 import type { Theme, BatchRunState, SessionState, Shortcut } from '../../../renderer/types';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 
@@ -434,6 +435,50 @@ describe('AutoRunExpandedModal', () => {
 
 			const previewButton = screen.getByRole('button', { name: /preview/i });
 			expect(previewButton).toHaveClass('font-medium');
+		});
+
+		// A paused run is alive but idle: it is waiting on the user to fix an
+		// agent error or answer a MAESTRO:HITL gate, and answering usually means
+		// editing the document. `errorPaused` reaches the modal through the store,
+		// not the prop chain, so the state has to be seeded there.
+		describe('Paused run', () => {
+			const renderPaused = (
+				overrides: Partial<React.ComponentProps<typeof AutoRunExpandedModal>> = {}
+			) => {
+				const props = createDefaultProps({
+					batchRunState: { isRunning: true, isStopping: false } as BatchRunState,
+					...overrides,
+				});
+				useBatchStore.setState({
+					batchRunStates: {
+						[props.sessionId]: {
+							isRunning: true,
+							isStopping: false,
+							errorPaused: true,
+						} as BatchRunState,
+					},
+				});
+				renderWithProvider(<AutoRunExpandedModal {...props} />);
+				return props;
+			};
+
+			afterEach(() => {
+				useBatchStore.setState({ batchRunStates: {} });
+			});
+
+			it('should re-enable the Edit button while paused', () => {
+				renderPaused();
+
+				expect(screen.queryByTitle('Editing disabled while Auto Run active')).toBeNull();
+				expect(screen.getByTitle('Edit document')).toBeEnabled();
+			});
+
+			it('should still offer Stop while paused - a paused run is stoppable', () => {
+				renderPaused();
+
+				expect(screen.getByRole('button', { name: /stop/i })).toBeInTheDocument();
+				expect(screen.queryByRole('button', { name: /^run$/i })).toBeNull();
+			});
 		});
 	});
 

@@ -116,7 +116,16 @@ docs/
 
    Reserve the halt marker for the case where continuing would actively waste work or cause harm: the remaining tasks build on something that is now known-broken, or proceeding would damage the repository or the environment. If the rest of the playbook could still succeed without you, do not halt.
 
-8. Exit Immediately
+8. Conductor Steering Notes
+   The human supervising this run can send you a note WITHOUT stopping the run. When they do, the note is prepended to the top of your next task prompt, inside a block that starts with `<!-- MAESTRO:CONDUCTOR-NOTES -->`.
+
+   Treat a note as the newest instruction you have. It was written after this prompt and after the document, while the person was watching the run, so it outranks both. If a note contradicts the task, the document, or these instructions, follow the note and say in your synopsis which instruction you set aside. Start that synopsis with `[steered]` so the operator can see the note landed.
+
+   A note applies to the task in front of you and to the rest of the run wherever it still makes sense - do not act on it once and then forget it. If a note tells you to stop the run, use the halt marker in step 7 rather than just exiting. If a note is unclear, do the safest reading of it, say what you assumed, and keep going.
+
+   Notes are delivered once. A later task will not repeat one, so if a note changes something durable about how the playbook should run, record that in the document (or the Working folder) before you finish.
+
+9. Exit Immediately
    After completing (or skipping) your task, EXIT. Do not proceed to additional tasks - another agent instance will handle them. If there are no remaining open tasks, exit immediately and state that there is nothing left to do.
 
 ---

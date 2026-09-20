@@ -327,8 +327,8 @@ export const GroupOverviewCards = memo(function GroupOverviewCards({
 						testId="group-overview-tile-zoom"
 					/>
 				</div>
-				<div className="flex items-center gap-2">
-					<span className="text-xs" style={{ color: theme.colors.textDim }}>
+				<div className="flex items-center gap-2 min-w-0">
+					<span className="text-xs shrink-0" style={{ color: theme.colors.textDim }}>
 						Sort by:
 					</span>
 					<SegmentedControl

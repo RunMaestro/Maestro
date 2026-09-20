@@ -31,6 +31,7 @@ The log viewer shows:
 - **Commit history** with messages, authors, and timestamps
 - **Branch visualization** with merge points
 - **Quick navigation** to any commit
+- **Search** (`Cmd+F` / `Ctrl+F`, or `/`) over hash, message, author, branch and date, narrowing the List and the Graph together
 
 Access via the git menu (branch pill or right-click) → **View Git Log**, **Command Palette** (`Cmd+K` / `Ctrl+K`) → "Git Log", or `Cmd+Shift+G` / `Ctrl+Shift+G`.
 

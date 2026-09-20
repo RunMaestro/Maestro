@@ -126,6 +126,24 @@ describe('marker pills on a document surface', () => {
 		expect(pill).toHaveTextContent('tier="hgih"');
 	});
 
+	it('drops the pill radius once the detail is long enough to wrap', () => {
+		// A 999px radius resolves to half the box height, so on a chip several
+		// lines tall the semicircular ends cut across the first and last lines and
+		// the text renders outside its own highlight.
+		const reason =
+			'Followup chips now send live prompts to a Codex agent. Start a Codex agent, ask it to produce an artifact, and confirm the chips render.';
+		renderDocument(
+			[`<!-- MAESTRO:HITL reason="${reason}" -->`, '', '- [ ] Verify the chips'].join('\n')
+		);
+		const pill = screen.getByTestId('maestro-marker-hitl');
+		expect(pill.style.borderRadius).not.toBe('999px');
+	});
+
+	it('keeps the pill shape for a one-line chip', () => {
+		renderDocument('- [ ] Design the migration <!-- MAESTRO:MODEL tier="high" -->');
+		expect(screen.getByTestId('maestro-marker-model').style.borderRadius).toBe('999px');
+	});
+
 	it('renders nothing for a marker inside a fenced code block', () => {
 		// The docs and the help modal both show this syntax. Drawing a pill on an
 		// example would state something false about the document.

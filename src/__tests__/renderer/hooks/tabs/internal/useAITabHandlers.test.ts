@@ -65,10 +65,10 @@ describe('useAITabHandlers', () => {
 		expect(session.activeTerminalTabId).toBeNull();
 	});
 
-	it('requests a desktop-owned tab instead of creating a browser-local tab', () => {
+	it('asks the desktop for the tab rather than minting a browser-local id', () => {
 		setupSession({ id: 'session-1', aiTabs: [createMockAITab({ id: 'ai-1' })] });
 		runtimeMocks.isWebDesktop.mockReturnValue(true);
-		const requestNewTab = vi.fn().mockResolvedValue({ tabId: 'ai-2' });
+		const requestNewTab = vi.fn(() => new Promise(() => {}));
 		(
 			window.maestro.web as typeof window.maestro.web & { requestNewTab: typeof requestNewTab }
 		).requestNewTab = requestNewTab;
@@ -78,8 +78,99 @@ describe('useAITabHandlers', () => {
 			result.current.handleNewTab();
 		});
 
+		// The desktop owns the tab inventory, so the id has to come from there.
+		// Inventing one here would be drawn now and then added a SECOND time
+		// under the desktop's id by the next inventory broadcast.
 		expect(requestNewTab).toHaveBeenCalledWith('session-1', false);
 		expect(getSession().aiTabs.map((tab) => tab.id)).toEqual(['ai-1']);
+	});
+
+	it('draws and selects the desktop-minted tab as soon as the answer lands', async () => {
+		setupSession({ id: 'session-1', aiTabs: [createMockAITab({ id: 'ai-1' })] });
+		runtimeMocks.isWebDesktop.mockReturnValue(true);
+		useSettingsStore.setState({
+			defaultSaveToHistory: false,
+			defaultShowThinking: 'sticky',
+		} as any);
+		const requestNewTab = vi.fn().mockResolvedValue({ tabId: 'ai-2' });
+		(
+			window.maestro.web as typeof window.maestro.web & { requestNewTab: typeof requestNewTab }
+		).requestNewTab = requestNewTab;
+
+		const { result } = renderHook(() => useAITabHandlers());
+		await act(async () => {
+			result.current.handleNewTab();
+		});
+
+		// Waiting for the desktop's inventory broadcast instead would leave the
+		// tap doing nothing for up to the 500ms poll interval.
+		const session = getSession();
+		expect(session.aiTabs.map((tab) => tab.id)).toEqual(['ai-1', 'ai-2']);
+		expect(session.aiTabs[1]).toMatchObject({ saveToHistory: false, showThinking: 'sticky' });
+		expect(session.activeTabId).toBe('ai-2');
+		expect(session.inputMode).toBe('ai');
+	});
+
+	it('only selects the tab when the inventory broadcast wins the race', async () => {
+		setupSession({ id: 'session-1', aiTabs: [createMockAITab({ id: 'ai-1' })] });
+		runtimeMocks.isWebDesktop.mockReturnValue(true);
+		const requestNewTab = vi.fn(async () => {
+			// The desktop commits the tab before it answers, so its 500ms poll can
+			// broadcast the new inventory first. Adopting the id again here would
+			// put the same tab in the strip twice.
+			setupSession({
+				id: 'session-1',
+				aiTabs: [createMockAITab({ id: 'ai-1' }), createMockAITab({ id: 'ai-2' })],
+			});
+			return { tabId: 'ai-2' };
+		});
+		(
+			window.maestro.web as typeof window.maestro.web & { requestNewTab: typeof requestNewTab }
+		).requestNewTab = requestNewTab;
+
+		const { result } = renderHook(() => useAITabHandlers());
+		await act(async () => {
+			result.current.handleNewTab();
+		});
+
+		const session = getSession();
+		expect(session.aiTabs.map((tab) => tab.id)).toEqual(['ai-1', 'ai-2']);
+		expect(session.activeTabId).toBe('ai-2');
+	});
+
+	it('focuses the composer inside the tap, not when the answer arrives', async () => {
+		setupSession({ id: 'session-1', aiTabs: [createMockAITab({ id: 'ai-1' })] });
+		runtimeMocks.isWebDesktop.mockReturnValue(true);
+		let resolveRequest: (value: { tabId: string }) => void = () => {};
+		const requestNewTab = vi.fn(
+			() =>
+				new Promise<{ tabId: string }>((resolve) => {
+					resolveRequest = resolve;
+				})
+		);
+		(
+			window.maestro.web as typeof window.maestro.web & { requestNewTab: typeof requestNewTab }
+		).requestNewTab = requestNewTab;
+		const textarea = document.createElement('textarea');
+		document.body.appendChild(textarea);
+		const inputRef = { current: textarea };
+
+		const { result } = renderHook(() => useAITabHandlers(inputRef));
+		act(() => {
+			result.current.handleNewTab();
+		});
+
+		// iOS raises the on-screen keyboard only for a focus() that runs in the
+		// user gesture's own call stack. Deferring it to the round trip's answer
+		// moves the caret and leaves the keyboard down, so the phone user still
+		// has to tap the composer - which is the whole point of focusing it.
+		expect(document.activeElement).toBe(textarea);
+
+		await act(async () => {
+			resolveRequest({ tabId: 'ai-2' });
+		});
+		expect(document.activeElement).toBe(textarea);
+		textarea.remove();
 	});
 
 	it('restores an orphaned thinking tab when selected', () => {

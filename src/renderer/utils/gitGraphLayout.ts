@@ -145,6 +145,69 @@ export function assignGitGraphBranches(nodes: GitGraphNode[]): {
 }
 
 /**
+ * Drop the commits a filter rejects while keeping the survivors CONNECTED.
+ *
+ * Simply removing nodes is what makes a filtered graph useless: every parent
+ * link that pointed at a dropped commit dangles, so `assignGitGraphBranches`
+ * inherits nothing, hands each survivor a fresh anonymous lane, and the user
+ * gets a column of unrelated dots with no lines at all - strictly less
+ * information than the unfiltered list beside it.
+ *
+ * So each kept commit inherits the nearest kept ANCESTOR of each of its
+ * parents, found by walking up through the dropped ones. The result is the same
+ * DAG with the filtered-out commits contracted out of it: the lines still say
+ * which surviving commit came after which, and a branch whose commits all
+ * matched still reads as a branch.
+ *
+ * Parent ORDER is preserved, because the rest of this module reads meaning into
+ * it: `parents[0]` decides which branch a commit stays on, and a second parent
+ * is what draws a merge. Resolving each parent separately (rather than one BFS
+ * over all of them) is what keeps the first parent first.
+ */
+export function contractGitGraphNodes(
+	nodes: GitGraphNode[],
+	keep: (node: GitGraphNode) => boolean
+): GitGraphNode[] {
+	const byHash = new Map(nodes.map((node) => [node.hash, node]));
+	const kept = nodes.filter(keep);
+	const keptHashes = new Set(kept.map((node) => node.hash));
+	if (kept.length === nodes.length) return nodes;
+
+	// Nearest kept ancestors reachable from one parent hash, breadth-first so the
+	// closest survivor wins. A dropped MERGE can yield two of them, which is
+	// correct: it really did join two lines that both survived.
+	const nearestKept = (start: string): string[] => {
+		if (keptHashes.has(start)) return [start];
+		const found: string[] = [];
+		const seen = new Set<string>([start]);
+		const queue = [...(byHash.get(start)?.parents ?? [])];
+		while (queue.length > 0) {
+			const hash = queue.shift() as string;
+			if (seen.has(hash)) continue;
+			seen.add(hash);
+			if (keptHashes.has(hash)) {
+				found.push(hash);
+				continue;
+			}
+			// A parent outside the fetched window has no node to walk through, so
+			// the line simply ends there - the same as it does without a filter.
+			queue.push(...(byHash.get(hash)?.parents ?? []));
+		}
+		return found;
+	};
+
+	return kept.map((node) => {
+		const parents: string[] = [];
+		for (const parent of node.parents) {
+			for (const ancestor of nearestKept(parent)) {
+				if (!parents.includes(ancestor)) parents.push(ancestor);
+			}
+		}
+		return { ...node, parents };
+	});
+}
+
+/**
  * What a custom dot renderer is told about the commit it is drawing.
  *
  * `style.dot.size` is not decoration: @gitgraph draws the branch lines through

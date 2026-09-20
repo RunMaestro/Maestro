@@ -14,6 +14,7 @@ export const initialState: WizardState = {
 	enableMaestroP: undefined,
 	maestroPMode: undefined,
 	maestroPPath: undefined,
+	plannerModel: undefined,
 	sessionSshRemoteConfig: undefined,
 	directoryPath: '',
 	additionalDirectories: [],
@@ -90,6 +91,8 @@ export function wizardReducer(state: WizardState, action: WizardAction): WizardS
 			return { ...state, maestroPMode: action.mode };
 		case 'SET_MAESTRO_P_PATH':
 			return { ...state, maestroPPath: action.path };
+		case 'SET_PLANNER_MODEL':
+			return { ...state, plannerModel: action.model };
 		case 'SET_SESSION_SSH_REMOTE_CONFIG':
 			return { ...state, sessionSshRemoteConfig: action.config };
 		case 'SET_DIRECTORY_PATH':

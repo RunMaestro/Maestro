@@ -82,6 +82,13 @@ export function MarkerPill({
 	// between the two - real, but not what the run is about to do.
 	const opacity = spent ? 0.65 : upcoming ? 0.8 : 1;
 
+	// A detail at block scope is a whole sentence and wraps, so the chip becomes
+	// several lines tall. A 999px radius then resolves to half that height, and
+	// the two semicircular ends cut straight across the first and last lines -
+	// text sitting outside its own highlight. A multi-line chip gets a rounded
+	// rectangle and room to breathe instead.
+	const multiline = Boolean(detail) && scope !== 'task';
+
 	const title = [
 		detail,
 		artifact ? `Artifact: ${artifact}` : undefined,
@@ -109,8 +116,8 @@ export function MarkerPill({
 				gap: '0.375em',
 				// `em` throughout so the pill tracks the reading pane's font scale
 				// rather than staying fixed while the prose around it grows.
-				padding: '0.1em 0.5em',
-				borderRadius: '999px',
+				padding: multiline ? '0.35em 0.7em' : '0.1em 0.5em',
+				borderRadius: multiline ? '0.6em' : '999px',
 				border: `1px solid ${borderColor}`,
 				backgroundColor: background,
 				color: textColor,

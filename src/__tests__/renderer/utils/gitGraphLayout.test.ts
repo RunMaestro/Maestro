@@ -4,6 +4,7 @@ import {
 	buildGitGraphCore,
 	buildGitGraphTemplate,
 	computeGitGraphGeometry,
+	contractGitGraphNodes,
 	gitGraphColumnEdge,
 	gitGraphTopCommit,
 	GIT_GRAPH_BRANCH_COLORS,
@@ -369,5 +370,63 @@ describe('column order follows the drawn layout', () => {
 		const left = stepGitGraphHorizontal(geometry, middleHash, 'left');
 		expect(geometry.positionOfCommit.get(right!)?.x).toBe(geometry.columns[2]);
 		expect(geometry.positionOfCommit.get(left!)?.x).toBe(geometry.columns[0]);
+	});
+});
+
+// Filtering a graph must not filter the LINES out of it. A survivor whose
+// parent was dropped has to inherit the nearest kept ancestor, or the view
+// degenerates into unconnected dots - strictly less than the list beside it.
+describe('contractGitGraphNodes', () => {
+	it('returns the same array when nothing is filtered out', () => {
+		expect(contractGitGraphNodes(FIXTURE, () => true)).toBe(FIXTURE);
+	});
+
+	it('reattaches a survivor to the nearest kept ancestor', () => {
+		// Drop c2, which sat between c1 and the merge m1.
+		const kept = contractGitGraphNodes(FIXTURE, (n) => n.hash !== 'c2');
+		expect(kept.map((n) => n.hash).sort()).toEqual(['c1', 'f1', 'f2', 'm1']);
+		expect(kept.find((n) => n.hash === 'm1')?.parents).toEqual(['c1', 'f2']);
+	});
+
+	it('walks through a whole run of dropped commits', () => {
+		const kept = contractGitGraphNodes(FIXTURE, (n) => n.hash === 'm1' || n.hash === 'c1');
+		expect(kept.find((n) => n.hash === 'm1')?.parents).toEqual(['c1']);
+	});
+
+	it('keeps first-parent order, which decides the branch a commit stays on', () => {
+		const kept = contractGitGraphNodes(FIXTURE, (n) => n.hash !== 'f2');
+		// f2 was the SECOND parent of m1, so its replacement (f1) stays second.
+		expect(kept.find((n) => n.hash === 'm1')?.parents).toEqual(['c2', 'f1']);
+	});
+
+	it('keeps both lines a dropped merge joined', () => {
+		// m1 itself is filtered out, and a child of it would inherit c2 and f2.
+		const nodes = [...FIXTURE, node('x1', 6, ['m1'])];
+		const kept = contractGitGraphNodes(nodes, (n) => n.hash !== 'm1');
+		expect(kept.find((n) => n.hash === 'x1')?.parents).toEqual(['c2', 'f2']);
+	});
+
+	it('ends the line at a parent outside the fetched window', () => {
+		// c1's parent is unknown here, exactly as it is at the edge of --max-count.
+		const kept = contractGitGraphNodes([node('z1', 1, ['not-fetched'])], () => true);
+		expect(kept[0].parents).toEqual(['not-fetched']);
+		const filtered = contractGitGraphNodes(
+			[node('z1', 1, ['not-fetched']), node('z2', 2, ['z1'])],
+			(n) => n.hash !== 'z1'
+		);
+		expect(filtered.map((n) => n.hash)).toEqual(['z2']);
+		expect(filtered[0].parents).toEqual([]);
+	});
+
+	it('leaves a graph the filter empties as an empty graph', () => {
+		expect(contractGitGraphNodes(FIXTURE, () => false)).toEqual([]);
+	});
+
+	it('produces a graph the geometry can still lay out in one column', () => {
+		// c1 -> c2 -> m1 with the feature branch filtered away: one branch line.
+		const kept = contractGitGraphNodes(FIXTURE, (n) => !n.hash.startsWith('f'));
+		const geometry = computeGitGraphGeometry(kept, theme);
+		expect(geometry.columns).toHaveLength(1);
+		expect(geometry.commitsInColumn.get(geometry.columns[0])).toEqual(['m1', 'c2', 'c1']);
 	});
 });

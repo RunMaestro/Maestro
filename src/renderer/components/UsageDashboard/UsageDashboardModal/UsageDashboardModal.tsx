@@ -26,6 +26,7 @@ import { buildModalOwnedFooterSummary } from '../footerSummary';
 import type { GroupStatRollup } from '../../../../shared/statsGroupRollup';
 import type { Session } from '../../../types';
 import { useModalLayer } from '../../../hooks/ui/useModalLayer';
+import { usePhoneLayout } from '../../../hooks/ui/useViewportBreakpoint';
 import { useResizableModal } from '../../../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../../../constants/modalPriorities';
 import { useSessionStore } from '../../../stores/sessionStore';
@@ -103,6 +104,7 @@ export function UsageDashboardModal({
 		usageStatsTabEnabled && Object.values(codexUsageSnapshots).some(hasUsefulCodexQuotaDetails);
 	useQuotaTabDiscovery(isOpen, usageStatsTabEnabled);
 
+	const phone = usePhoneLayout();
 	const [timeRange, setTimeRange] = useState<StatsTimeRange>(defaultTimeRange);
 	const {
 		data,
@@ -505,8 +507,12 @@ export function UsageDashboardModal({
 				{/* Main Content */}
 				<div
 					ref={contentRef}
-					className="flex-1 overflow-y-auto scrollbar-thin p-6"
+					// 48px of side padding is a seventh of a phone screen, spent on
+					// nothing. The tab strip keeps `px-6` because its first chip
+					// wants the indent; the charts and cards do not.
+					className={`flex-1 overflow-y-auto scrollbar-thin ${phone ? 'px-3 py-4' : 'p-6'}`}
 					style={{ backgroundColor: theme.colors.bgMain }}
+					data-testid="usage-dashboard-scroller"
 				>
 					<TokenSeriesProvider timeRange={timeRange}>{renderTabContent()}</TokenSeriesProvider>
 				</div>

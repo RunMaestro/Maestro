@@ -14,6 +14,17 @@ vi.mock('../../../../../renderer/utils/shortcutFormatter', () => ({
 	formatShortcutKeys: (keys: string[]) => keys.join('+'),
 }));
 
+// The Document Graph entries are gated on room, not capability, so the phone
+// branch is the only thing these tests need to steer. Spread the real module so
+// any other consumer in the tree keeps its genuine implementation.
+const { mockUsePhoneLayout } = vi.hoisted(() => ({ mockUsePhoneLayout: vi.fn(() => false) }));
+vi.mock('../../../../../renderer/hooks/ui/useViewportBreakpoint', async (importOriginal) => ({
+	...(await importOriginal<
+		typeof import('../../../../../renderer/hooks/ui/useViewportBreakpoint')
+	>()),
+	usePhoneLayout: () => mockUsePhoneLayout(),
+}));
+
 const theme = {
 	colors: {
 		bgSidebar: '#1a1a1a',
@@ -82,6 +93,7 @@ const origMaestro = (window as any).maestro;
 describe('FileTreeContextMenu', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mockUsePhoneLayout.mockReturnValue(false);
 		(window as any).maestro = { platform: 'darwin' };
 	});
 
@@ -375,6 +387,91 @@ describe('FileTreeContextMenu', () => {
 		(window as any).maestro = undefined;
 		render(<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(fileNode)} />);
 		expect(screen.getByText('Reveal in Finder')).toBeTruthy();
+	});
+
+	// -----------------------------------------------------------------------
+	// Document Graph is hidden on a phone
+	// -----------------------------------------------------------------------
+	describe('Document Graph on a phone', () => {
+		// A pan-and-zoom canvas needs room to be worth opening. It is not broken
+		// at 390px, it is just useless there, and it costs rows in a menu that
+		// already overflows the screen. All three routes to it are dropped.
+		const onGraphFolder = vi.fn();
+		const onGraphSelection = vi.fn();
+
+		it('hides the per-file entry', () => {
+			mockUsePhoneLayout.mockReturnValue(true);
+			render(<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(mdNode)} />);
+			expect(screen.queryByText('Document Graph')).toBeNull();
+		});
+
+		it('hides the folder entry', () => {
+			mockUsePhoneLayout.mockReturnValue(true);
+			render(
+				<FileTreeContextMenu
+					{...defaultProps}
+					contextMenu={makeContextMenu(folderNode)}
+					onGraphFolder={onGraphFolder}
+				/>
+			);
+			expect(screen.queryByText('Open in Document Graph')).toBeNull();
+		});
+
+		it('hides the multi-selection entry', () => {
+			mockUsePhoneLayout.mockReturnValue(true);
+			render(
+				<FileTreeContextMenu
+					{...defaultProps}
+					contextMenu={makeContextMenu(mdNode)}
+					isMultiSelectionContext
+					selectedCount={3}
+					selectedMarkdownCount={3}
+					onGraphSelection={onGraphSelection}
+				/>
+			);
+			expect(screen.queryByText('Open 3 in Document Graph')).toBeNull();
+		});
+
+		it('leaves the rest of the menu alone', () => {
+			// The gate must drop exactly three rows, not thin the menu out.
+			mockUsePhoneLayout.mockReturnValue(true);
+			render(<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(mdNode)} />);
+			expect(screen.getByText('Preview')).toBeTruthy();
+			expect(screen.getByText('Copy Path')).toBeTruthy();
+			expect(screen.getByText('Rename')).toBeTruthy();
+			expect(screen.getByText('Delete')).toBeTruthy();
+		});
+
+		it('keeps all three entries on a desktop viewport', () => {
+			mockUsePhoneLayout.mockReturnValue(false);
+			const { unmount } = render(
+				<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(mdNode)} />
+			);
+			expect(screen.getByText('Document Graph')).toBeTruthy();
+			unmount();
+
+			const folder = render(
+				<FileTreeContextMenu
+					{...defaultProps}
+					contextMenu={makeContextMenu(folderNode)}
+					onGraphFolder={onGraphFolder}
+				/>
+			);
+			expect(screen.getByText('Open in Document Graph')).toBeTruthy();
+			folder.unmount();
+
+			render(
+				<FileTreeContextMenu
+					{...defaultProps}
+					contextMenu={makeContextMenu(mdNode)}
+					isMultiSelectionContext
+					selectedCount={3}
+					selectedMarkdownCount={3}
+					onGraphSelection={onGraphSelection}
+				/>
+			);
+			expect(screen.getByText('Open 3 in Document Graph')).toBeTruthy();
+		});
 	});
 
 	describe('media actions', () => {

@@ -30,6 +30,7 @@ import {
 	visibleAiTabs,
 } from '../unifiedTabOrderUtils';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { useUIStore } from '../../stores/uiStore';
 import { isWindowsPlatform } from '../platformUtils';
 import { DEFAULT_BROWSER_TAB_URL, getBrowserTabTitle } from '../browserTabPersistence';
 import { getLiveDraft } from '../liveDraftStore';
@@ -1005,6 +1006,13 @@ export interface CreateTabOptions {
 	 *  The current active tab/file/browser/terminal/group and inputMode are all
 	 *  preserved so the user's visible view never changes. Default true. */
 	activate?: boolean;
+	/** Adopt an id minted elsewhere instead of generating one. The only caller
+	 *  is a web-desktop client drawing the tab the DESKTOP just created for it
+	 *  (see `createNewAITab`): the id has to match, or the inventory broadcast
+	 *  that follows adds the same tab a second time under the desktop's id.
+	 *  Omit everywhere else - a caller that passes an id it did not receive
+	 *  from the owning renderer can collide with a live tab. */
+	id?: string;
 }
 
 /**
@@ -1053,11 +1061,12 @@ export function createTab(
 		saveToHistory = true,
 		showThinking = 'off',
 		activate = true,
+		id,
 	} = options;
 
 	// Create the new tab with default values
 	const newTab: AITab = {
-		id: generateId(),
+		id: id ?? generateId(),
 		agentSessionId,
 		name,
 		starred,
@@ -1098,6 +1107,43 @@ export function createTab(
 }
 
 /**
+ * Whether the tab strip is currently narrowed to unread tabs.
+ *
+ * Resolved from the UI store rather than threaded through every caller: the
+ * `showUnreadOnly` argument was silently `false` at five of the six close
+ * sites, so closing a tab under the filter picked a neighbor the user could not
+ * see. Callers may still pass an explicit value (tests, or a surface that owns
+ * its own filter state) and it wins.
+ */
+function resolveUnreadFilterState(explicit?: boolean): boolean {
+	return explicit ?? useUIStore.getState().showUnreadOnly;
+}
+
+/**
+ * Pick the tab to activate when the active AI tab is closed while the unread
+ * filter narrows the strip.
+ *
+ * The neighbor math runs over the exact filtered list TabBar renders, computed
+ * against the PRE-close session so the tab being closed still occupies its
+ * slot; that slot is then dropped and the left neighbor wins (or the new first
+ * tab when the closed tab led the strip). Non-AI tabs that survive the filter
+ * are legitimate targets, which is why this returns a UnifiedTabRef rather than
+ * an AI tab id.
+ *
+ * Returns null when the closed tab was not in the visible list, or when nothing
+ * visible survives it - the caller then falls back to unfiltered order math.
+ */
+function resolveUnreadFilterFallbackRef(session: Session, tabId: string): UnifiedTabRef | null {
+	const visibleOrder = filterUnifiedTabOrderForUnread(session, getRepairedUnifiedTabOrder(session));
+	const closedIndex = visibleOrder.findIndex((ref) => ref.type === 'ai' && ref.id === tabId);
+	if (closedIndex === -1) return null;
+	const remaining = visibleOrder.filter((_, i) => i !== closedIndex);
+	if (remaining.length === 0) return null;
+	const fallbackIndex = Math.min(Math.max(0, closedIndex - 1), remaining.length - 1);
+	return remaining[fallbackIndex];
+}
+
+/**
  * Options for closing a tab.
  */
 export interface CloseTabOptions {
@@ -1124,13 +1170,14 @@ export interface CloseTabResult {
  * The closed tab is stored in closedTabHistory for potential restoration via Cmd+Shift+T,
  * unless skipHistory is true (e.g., for wizard tabs which should not be restorable).
  * If the closed tab was active, the next tab (or previous if at end) becomes active.
- * When showUnreadOnly is true, prioritizes switching to the next unread tab.
+ * While the unread filter is on, the replacement is picked from the tabs that filter
+ * actually shows, so a close never lands the user on a tab that is hidden from them.
  * Closing the last AI tab creates a fresh replacement only when the agent has no
  * other tabs (terminal/file/browser) left, so an agent can sit at zero AI tabs.
  *
  * @param session - The Maestro session containing the tab
  * @param tabId - The ID of the tab to close
- * @param showUnreadOnly - If true, prioritize switching to the next unread tab
+ * @param showUnreadOnly - Override for the unread-filter state; omit to read the UI store
  * @param options - Optional close options (e.g., skipHistory for wizard tabs)
  * @returns Object containing the closed tab info and updated session, or null if tab not found
  *
@@ -1148,12 +1195,14 @@ export interface CloseTabResult {
 export function closeTab(
 	session: Session,
 	tabId: string,
-	showUnreadOnly = false,
+	showUnreadOnly?: boolean,
 	options: CloseTabOptions = {}
 ): CloseTabResult | null {
 	if (!session || !session.aiTabs || session.aiTabs.length === 0) {
 		return null;
 	}
+
+	const unreadFilterActive = resolveUnreadFilterState(showUnreadOnly);
 
 	// Find the tab to close
 	const tabIndex = session.aiTabs.findIndex((tab) => tab.id === tabId);
@@ -1223,26 +1272,14 @@ export function closeTab(
 		// If we closed the active tab, select the tab to the left (previous tab)
 		// If closing the first tab, select the new first tab (was previously to the right)
 
-		if (showUnreadOnly && updatedTabs.length > 0) {
-			// When filtering unread tabs, find the previous unread tab to switch to
-			// Build a temporary session with the updated tabs to use getNavigableTabs
-			const tempSession = { ...session, aiTabs: updatedTabs };
-			const navigableTabs = getNavigableTabs(tempSession, true);
+		// Filter mode first: the replacement has to be a tab the user can SEE.
+		// Returns null when nothing visible survives, and the normal math below
+		// takes over.
+		if (unreadFilterActive) {
+			fallbackRef = resolveUnreadFilterFallbackRef(session, tabId);
+		}
 
-			if (navigableTabs.length > 0) {
-				// Find the position of the closed tab within the navigable tabs (before removal)
-				// Then pick the tab to the left, or the first tab if we were at position 0
-				const closedTabNavIndex = getNavigableTabs(session, true).findIndex((t) => t.id === tabId);
-				const newNavIndex = Math.max(0, closedTabNavIndex - 1);
-				newActiveTabId = navigableTabs[Math.min(newNavIndex, navigableTabs.length - 1)].id;
-			} else if (visibleUpdatedTabs.length > 0) {
-				// No more unread tabs - fall back to selecting by position in the list
-				// the strip draws. Select the tab to the left, or the first tab if we
-				// were at position 0.
-				const newIndex = Math.max(0, visibleTabIndex - 1);
-				newActiveTabId = visibleUpdatedTabs[Math.min(newIndex, visibleUpdatedTabs.length - 1)].id;
-			}
-		} else {
+		if (!fallbackRef) {
 			// Normal mode: use repaired unifiedTabOrder to find the correct left neighbor.
 			// This respects the visual tab order which includes terminal and file tabs -
 			// without this, closing an AI tab that sits to the right of a terminal tab

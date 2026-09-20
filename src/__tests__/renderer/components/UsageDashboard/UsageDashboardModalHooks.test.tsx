@@ -281,6 +281,16 @@ describe('UsageDashboardModal hooks', () => {
 
 		await waitFor(() => expect(result.current.chartGridCols).toBe(1));
 		expect(result.current.summaryCardsCols).toBe(2);
+		expect(result.current.isTiny).toBe(false);
+
+		// Phone width: a rung below `isNarrow`. Two metric cards in a ~340px
+		// column leave each about 90px of text, and the Auto Run tiles TRUNCATE
+		// their value rather than wrapping it ("4h 3…").
+		Object.defineProperty(content, 'offsetWidth', { value: 340, configurable: true });
+		act(() => observerCallback?.([], {} as ResizeObserver));
+		await waitFor(() => expect(result.current.isTiny).toBe(true));
+		expect(result.current.summaryCardsCols).toBe(1);
+		expect(result.current.autoRunStatsCols).toBe(1);
 
 		Object.defineProperty(content, 'offsetWidth', { value: 920, configurable: true });
 		act(() => observerCallback?.([], {} as ResizeObserver));

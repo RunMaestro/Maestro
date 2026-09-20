@@ -148,6 +148,8 @@ export function applyUnifiedTabClosures(session: Session, refsToClose: UnifiedTa
 			const tab = updatedSession.aiTabs.find((t) => t.id === tabRef.id);
 			if (tab) {
 				const isWizardTab = hasActiveWizard(tab);
+				// Bulk close keeps the pivot tab active, so no neighbor is picked and
+				// the unread filter has nothing to say here.
 				const result = closeTab(updatedSession, tab.id, false, {
 					skipHistory: isWizardTab,
 				});

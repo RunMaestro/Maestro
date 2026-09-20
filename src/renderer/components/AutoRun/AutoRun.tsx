@@ -66,6 +66,7 @@ import { useFontScale } from '../../hooks/ui/useFontScale';
 import { useSurfaceTypography } from '../../hooks/ui/useSurfaceTypography';
 import { findHumanOnlyTasks } from '../../hooks/batch/batchUtils';
 import { toggleTaskCheckboxAtLine } from '../../utils/markdownTasks';
+import { useAutoRunErrorPaused } from '../../hooks/batch/useAutoRunPause';
 import { useAutoRunContentSync } from '../../hooks/batch/useAutoRunContentSync';
 import { useAutoRunSearch } from '../../hooks/batch/useAutoRunSearch';
 import { useAutoRunKeyboard } from '../../hooks/batch/useAutoRunKeyboard';
@@ -134,15 +135,6 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 	},
 	ref
 ) {
-	// Only lock the editor when Auto Run is running WITHOUT a worktree (directly on main repo)
-	// AND only for documents that are part of the current Auto Run
-	// Documents not in the Auto Run can still be edited
-	const isLocked =
-		(batchRunState?.isRunning &&
-			!batchRunState?.worktreeActive &&
-			selectedFile !== null &&
-			batchRunState?.lockedDocuments?.includes(selectedFile)) ||
-		false;
 	const isAgentBusy = sessionState === 'busy' || sessionState === 'connecting';
 	const isAutoRunActive = batchRunState?.isRunning || false;
 	// Mirrored from another Maestro window - visible, but not steerable here.
@@ -167,12 +159,25 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 	const showOpenThoughtStream =
 		!isAutoRunActive && bufferedActivity > 0 && thoughtStreamSessionId !== sessionId;
 	// Error state (Phase 5.10)
-	// Subscribe directly to the Zustand store to bypass the multi-hop prop chain
+	// Subscribes to the Zustand store to bypass the multi-hop prop chain
 	// (store → useBatchProcessor → useBatchHandlers → App → RightPanel → AutoRun)
 	// which drops errorPaused updates via updateBatchStateAndBroadcast/UPDATE_PROGRESS.
-	const isErrorPaused = useBatchStore(
-		useCallback((s) => s.batchRunStates[sessionId]?.errorPaused ?? false, [sessionId])
-	);
+	const isErrorPaused = useAutoRunErrorPaused(sessionId);
+	// The selected document belongs to a run that is up: running WITHOUT a
+	// worktree (directly on the main repo) and listed in this run's locked set.
+	// Documents outside the run are never claimed by it.
+	const isRunDocument =
+		(batchRunState?.isRunning &&
+			!batchRunState?.worktreeActive &&
+			selectedFile !== null &&
+			batchRunState?.lockedDocuments?.includes(selectedFile)) ||
+		false;
+	// Editing is blocked only while the run is actually DRIVING that document.
+	// A paused run hands it back: an agent error and a MAESTRO:HITL review gate
+	// both park the engine on `errorPaused` until the user clicks Resume, and in
+	// both cases editing is the point - the user is there to tick a box or fix
+	// the step that stalled. Locking them out makes the gate unanswerable here.
+	const isLocked = isRunDocument && !isErrorPaused;
 	const batchError = useBatchStore(
 		useCallback((s) => s.batchRunStates[sessionId]?.error, [sessionId])
 	);
@@ -515,9 +520,12 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		]
 	);
 
-	// Auto-switch to preview mode when auto-run starts, restore when it ends
+	// Auto-switch to preview mode when auto-run starts, restore when it ends.
+	// Keyed on `isRunDocument`, not `isLocked`: a pause unlocks editing but does
+	// not end the run, and flipping the pane back and forth on every HITL gate
+	// would yank the user out of the view they were watching.
 	useEffect(() => {
-		if (isLocked) {
+		if (isRunDocument) {
 			// Auto-run started: save current mode and switch to preview
 			modeBeforeAutoRunRef.current = mode;
 			if (mode !== 'preview') {
@@ -528,7 +536,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 			setMode(modeBeforeAutoRunRef.current);
 			modeBeforeAutoRunRef.current = null;
 		}
-	}, [isLocked]);
+	}, [isRunDocument]);
 
 	// Auto-focus the active element after mode change
 	useEffect(() => {

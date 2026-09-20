@@ -126,3 +126,25 @@ export function isSampleBehindLatest(
 	if (!Number.isFinite(sampledAtMs)) return false;
 	return latestSampledAtMs - sampledAtMs > STALE_ROW_LAG_MS;
 }
+
+/**
+ * Age past which a sample is no longer trusted anywhere in the app. Mirrors the
+ * main-side snapshot TTL (`SNAPSHOT_TTL_MS`): past it the store stops handing
+ * the snapshot to the mode selector and keeps it for display only, so the panel
+ * must say so.
+ */
+export const EXPIRED_SAMPLE_AGE_MS = 24 * 60 * 60_000;
+
+/**
+ * True when `sampledAt` is older than `EXPIRED_SAMPLE_AGE_MS`. This is the case
+ * `isSampleBehindLatest` cannot catch: when EVERY row is a day old, no row
+ * trails the newest, yet none of the bars mean anything current. Typically an
+ * account nobody runs agents against anymore - its row is kept precisely so the
+ * user can watch for the reset, which only works if the age is on screen.
+ */
+export function isSampleExpired(sampledAt: string | undefined, nowMs = Date.now()): boolean {
+	if (!sampledAt) return false;
+	const sampledAtMs = Date.parse(sampledAt);
+	if (!Number.isFinite(sampledAtMs)) return false;
+	return nowMs - sampledAtMs > EXPIRED_SAMPLE_AGE_MS;
+}

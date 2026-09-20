@@ -295,7 +295,8 @@ export interface SnoozedTabListItem {
  * @param tabId - AI tab to snooze
  * @param wakeAt - When the tab should come back (ms epoch)
  * @param content - Optional note-to-self and wake prompt
- * @param showUnreadOnly - Current unread-filter state (affects which tab is selected next)
+ * @param showUnreadOnly - Unread-filter override; omit to read the live filter state
+ *                         (it decides which tab is selected next)
  * @returns Updated session and the stored entry, or null if the tab doesn't exist
  */
 export function snoozeTab(
@@ -303,7 +304,7 @@ export function snoozeTab(
 	tabId: string,
 	wakeAt: number,
 	content?: SnoozeContent,
-	showUnreadOnly = false
+	showUnreadOnly?: boolean
 ): SnoozeTabResult | null {
 	if (!session) return null;
 
@@ -840,6 +841,8 @@ function captureGroupMember(session: Session, ref: UnifiedTabRef): SnoozedGroupM
 function closeGroupMember(session: Session, ref: UnifiedTabRef): Session {
 	switch (ref.type) {
 		case 'ai': {
+			// Explicit false: the group's own restore math picks what comes back, so
+			// no neighbor is selected here and the unread filter has nothing to say.
 			const closed = closeTab(session, ref.id, false, {
 				skipHistory: true,
 				preserveTabScopedWork: true,

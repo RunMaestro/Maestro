@@ -18,6 +18,7 @@ import type { Theme, BatchRunState, SessionState, Shortcut } from '../../types';
 import { useIsTopLayer } from '../../hooks/ui/useIsTopLayer';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { useResizableModal } from '../../hooks/ui/useResizableModal';
+import { useAutoRunErrorPaused } from '../../hooks/batch/useAutoRunPause';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { AutoRun } from './AutoRun';
 import type { AutoRunHandle } from './types';
@@ -144,7 +145,12 @@ export function AutoRunExpandedModal({
 		[onStateChange, initialMode]
 	);
 
-	const isLocked = batchRunState?.isRunning || false;
+	const isRunActive = batchRunState?.isRunning || false;
+	const isErrorPaused = useAutoRunErrorPaused(sessionId);
+	// A run that is parked on an agent error or a MAESTRO:HITL gate is waiting on
+	// the user, not driving the document, so editing opens back up. The Run/Stop
+	// button still reads `isRunActive` - a paused run is stoppable, not startable.
+	const isEditLocked = isRunActive && !isErrorPaused;
 	const isAgentBusy = sessionState === 'busy' || sessionState === 'connecting';
 	const isStopping = batchRunState?.isStopping || false;
 	// Mirrored from another Maestro window: the document is still locked (that
@@ -256,7 +262,7 @@ export function AutoRunExpandedModal({
 			if (!metaPressed || e.altKey) return;
 			const key = e.key.toLowerCase();
 			if (key === 's' && !e.shiftKey) {
-				if (!isLocked && autoRunRef.current?.isDirty()) {
+				if (!isEditLocked && autoRunRef.current?.isDirty()) {
 					e.preventDefault();
 					e.stopPropagation();
 					void handleSave();
@@ -272,14 +278,14 @@ export function AutoRunExpandedModal({
 				// shortcut ("Edit Last Queued Message") and is left alone.
 				e.preventDefault();
 				e.stopPropagation();
-				if (!isLocked) {
+				if (!isEditLocked) {
 					setModeRef.current(localModeRef.current === 'edit' ? 'preview' : 'edit');
 				}
 			}
 		};
 		window.addEventListener('keydown', handleKeyDown, { capture: true });
 		return () => window.removeEventListener('keydown', handleKeyDown, { capture: true });
-	}, [handleSave, isLocked]);
+	}, [handleSave, isEditLocked]);
 
 	// Use the AutoRun's switchMode for scroll sync, falling back to local mode change
 	const setMode = useCallback(
@@ -345,15 +351,15 @@ export function AutoRunExpandedModal({
 					{/* Center - Mode controls */}
 					<div className="flex items-center gap-2">
 						<button
-							onClick={() => !isLocked && setMode('edit')}
-							disabled={isLocked}
-							className={`flex items-center gap-2 px-3 py-1.5 rounded text-xs font-medium transition-colors ${isLocked ? 'opacity-50 cursor-not-allowed' : ''}`}
+							onClick={() => !isEditLocked && setMode('edit')}
+							disabled={isEditLocked}
+							className={`flex items-center gap-2 px-3 py-1.5 rounded text-xs font-medium transition-colors ${isEditLocked ? 'opacity-50 cursor-not-allowed' : ''}`}
 							style={{
 								color: theme.colors.accent,
-								border: `1px solid ${theme.colors.accent}${localMode === 'edit' && !isLocked ? '' : '40'}`,
-								backgroundColor: `${theme.colors.accent}${localMode === 'edit' && !isLocked ? '30' : '15'}`,
+								border: `1px solid ${theme.colors.accent}${localMode === 'edit' && !isEditLocked ? '' : '40'}`,
+								backgroundColor: `${theme.colors.accent}${localMode === 'edit' && !isEditLocked ? '30' : '15'}`,
 							}}
-							title={isLocked ? 'Editing disabled while Auto Run active' : 'Edit document'}
+							title={isEditLocked ? 'Editing disabled while Auto Run active' : 'Edit document'}
 						>
 							<Edit className="w-3.5 h-3.5" />
 							Edit
@@ -363,8 +369,8 @@ export function AutoRunExpandedModal({
 							className="flex items-center gap-2 px-3 py-1.5 rounded text-xs font-medium transition-colors"
 							style={{
 								color: theme.colors.accent,
-								border: `1px solid ${theme.colors.accent}${localMode === 'preview' || isLocked ? '' : '40'}`,
-								backgroundColor: `${theme.colors.accent}${localMode === 'preview' || isLocked ? '30' : '15'}`,
+								border: `1px solid ${theme.colors.accent}${localMode === 'preview' || isEditLocked ? '' : '40'}`,
+								backgroundColor: `${theme.colors.accent}${localMode === 'preview' || isEditLocked ? '30' : '15'}`,
 							}}
 							title="Preview document"
 						>
@@ -373,24 +379,24 @@ export function AutoRunExpandedModal({
 						</button>
 						{/* Image upload button - hidden for now, can be re-enabled when needed
             <button
-              onClick={() => localMode === 'edit' && !isLocked && fileInputRef.current?.click()}
-              disabled={localMode !== 'edit' || isLocked}
+              onClick={() => localMode === 'edit' && !isEditLocked && fileInputRef.current?.click()}
+              disabled={localMode !== 'edit' || isEditLocked}
               className={`flex items-center justify-center w-8 h-8 rounded text-xs transition-colors ${
-                localMode === 'edit' && !isLocked ? 'hover:opacity-80' : 'opacity-30 cursor-not-allowed'
+                localMode === 'edit' && !isEditLocked ? 'hover:opacity-80' : 'opacity-30 cursor-not-allowed'
               }`}
               style={{
                 backgroundColor: 'transparent',
                 color: theme.colors.textDim,
                 border: `1px solid ${theme.colors.border}`
               }}
-              title={localMode === 'edit' && !isLocked ? 'Add image (or paste from clipboard)' : 'Switch to Edit mode to add images'}
+              title={localMode === 'edit' && !isEditLocked ? 'Add image (or paste from clipboard)' : 'Switch to Edit mode to add images'}
             >
               <Image className="w-3.5 h-3.5" />
             </button>
             */}
 						<input ref={fileInputRef} type="file" accept="image/*" className="hidden" />
 						{/* Save/Revert buttons - shown whenever the doc is dirty, in either mode */}
-						{isDirty && !isLocked && (
+						{isDirty && !isEditLocked && (
 							<>
 								<div className="w-px h-4 mx-1" style={{ backgroundColor: theme.colors.border }} />
 								<button
@@ -433,7 +439,7 @@ export function AutoRunExpandedModal({
 							</>
 						)}
 						{/* Run / Stop button */}
-						{isLocked ? (
+						{isRunActive ? (
 							<button
 								onClick={() => !stopDisabled && onStopBatchRun?.(sessionId)}
 								disabled={stopDisabled}

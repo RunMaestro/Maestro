@@ -404,7 +404,26 @@ describe('UsageDashboard Responsive Layout', () => {
 	});
 
 	describe('Summary Cards Responsive Columns', () => {
-		it('displays 2 columns in narrow mode (<600px)', async () => {
+		it('displays 2 columns in narrow mode (440-600px)', async () => {
+			mockOffsetWidth = 500;
+
+			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
+			});
+
+			simulateContainerResize(500);
+
+			await waitFor(() => {
+				const summaryCards = screen.getByTestId('summary-cards');
+				expect(summaryCards).toHaveStyle({ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' });
+			});
+		});
+
+		it('drops to one column at phone width (<440px)', async () => {
+			// Two cards in a 400px column leave each about 90px of text, which is
+			// narrower than the figures they carry.
 			mockOffsetWidth = 400;
 
 			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
@@ -417,7 +436,7 @@ describe('UsageDashboard Responsive Layout', () => {
 
 			await waitFor(() => {
 				const summaryCards = screen.getByTestId('summary-cards');
-				expect(summaryCards).toHaveStyle({ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' });
+				expect(summaryCards).toHaveStyle({ gridTemplateColumns: 'repeat(1, minmax(0, 1fr))' });
 			});
 		});
 
@@ -619,8 +638,8 @@ describe('UsageDashboard Responsive Layout', () => {
 			});
 
 			// Resize to narrow
-			mockOffsetWidth = 400;
-			simulateContainerResize(400);
+			mockOffsetWidth = 500;
+			simulateContainerResize(500);
 
 			await waitFor(() => {
 				const summaryCards = screen.getByTestId('summary-cards');
@@ -629,7 +648,7 @@ describe('UsageDashboard Responsive Layout', () => {
 		});
 
 		it('updates layout when container is resized from narrow to wide', async () => {
-			mockOffsetWidth = 400;
+			mockOffsetWidth = 500;
 
 			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
 
@@ -638,7 +657,7 @@ describe('UsageDashboard Responsive Layout', () => {
 			});
 
 			// Start at narrow
-			simulateContainerResize(400);
+			simulateContainerResize(500);
 
 			await waitFor(() => {
 				const summaryCards = screen.getByTestId('summary-cards');
@@ -978,6 +997,43 @@ describe('UsageDashboard Responsive Layout', () => {
 				expect(summaryCards).toHaveStyle({ gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' });
 			});
 		});
+	});
+});
+
+// 48px of side padding is a seventh of a phone screen, spent on nothing. The
+// tab strip keeps its `px-6` because its first chip wants the indent; the
+// charts and cards do not.
+vi.mock('../../../../renderer/hooks/ui/useViewportBreakpoint', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../renderer/hooks/ui/useViewportBreakpoint')>()),
+	usePhoneLayout: vi.fn(() => false),
+}));
+import { usePhoneLayout } from '../../../../renderer/hooks/ui/useViewportBreakpoint';
+
+describe('UsageDashboard content padding', () => {
+	// The suite above scopes its theme and close handler inside its own describe.
+	const theme = createTheme();
+	const onClose = vi.fn();
+
+	afterEach(() => {
+		vi.mocked(usePhoneLayout).mockReturnValue(false);
+	});
+
+	it('keeps the roomy padding on desktop', async () => {
+		vi.mocked(usePhoneLayout).mockReturnValue(false);
+		render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
+
+		const scroller = await screen.findByTestId('usage-dashboard-scroller');
+		expect(scroller).toHaveClass('p-6');
+		expect(scroller).not.toHaveClass('px-3');
+	});
+
+	it('trims it on a phone', async () => {
+		vi.mocked(usePhoneLayout).mockReturnValue(true);
+		render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
+
+		const scroller = await screen.findByTestId('usage-dashboard-scroller');
+		expect(scroller).toHaveClass('px-3', 'py-4');
+		expect(scroller).not.toHaveClass('p-6');
 	});
 });
 

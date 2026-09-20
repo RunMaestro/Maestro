@@ -27,6 +27,7 @@ import {
 	validateAgentPromptHasTaskReference,
 } from '../../../renderer/components/BatchRunnerModal';
 import type { Theme, Playbook } from '../../../renderer/types';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 
 // Mock LayerStackContext
 const mockRegisterLayer = vi.fn(() => 'layer-123');
@@ -162,6 +163,10 @@ function createDefaultProps() {
 describe('BatchRunnerModal', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+
+		// Remembered textarea heights are persisted settings, so a height seeded
+		// by one test would otherwise pin the boxes for every test after it.
+		useSettingsStore.setState({ textareaHeights: {} });
 
 		// Mock crypto.randomUUID
 		vi.spyOn(crypto, 'randomUUID').mockReturnValue('uuid-123');
@@ -1175,6 +1180,30 @@ describe('BatchRunnerModal', () => {
 			});
 			// Goal + Exit Criteria each get an Expand editor button.
 			expect(screen.getAllByTitle('Expand editor')).toHaveLength(2);
+		});
+
+		it('lets both free-text fields be dragged taller and restores the remembered height', async () => {
+			// A height the user dragged is a preference, so it has to survive a
+			// restart: the store is what persists, and each field has its own key.
+			useSettingsStore.setState({
+				textareaHeights: { 'autorun-goal': 320, 'autorun-exit-criteria': 240 },
+			});
+
+			render(<BatchRunnerModal {...createDefaultProps()} />);
+			fireEvent.click(screen.getByRole('button', { name: 'Goal-Driven' }));
+
+			await waitFor(() => {
+				expect(screen.getByPlaceholderText(GOAL_PLACEHOLDER)).toBeInTheDocument();
+			});
+
+			const goalInput = screen.getByPlaceholderText(GOAL_PLACEHOLDER);
+			const exitInput = screen.getByPlaceholderText(EXIT_PLACEHOLDER);
+
+			// The native grip is what the user drags, so it must not be disabled.
+			expect(goalInput).toHaveClass('resize-y');
+			expect(exitInput).toHaveClass('resize-y');
+			expect(goalInput.style.height).toBe('320px');
+			expect(exitInput.style.height).toBe('240px');
 		});
 
 		it('opens the full-screen editor and writes back to the goal field', async () => {

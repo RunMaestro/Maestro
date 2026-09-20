@@ -1,4 +1,5 @@
 import { useWizard } from '../../WizardContext';
+import { usePlannerModel } from '../../shared/usePlannerModel';
 import { ScreenReaderAnnouncement } from '../../ScreenReaderAnnouncement';
 import { ErrorDisplay, LoadingIndicator } from './components';
 import { usePreparingPlanGeneration } from './hooks';
@@ -10,9 +11,16 @@ export function PreparingPlanScreen({ theme }: PreparingPlanScreenProps): JSX.El
 		setGeneratingDocuments,
 		setGeneratedDocuments,
 		setGenerationError,
+		setPlannerModel,
 		previousStep,
 		nextStep,
 	} = useWizard();
+
+	const plannerModel = usePlannerModel({
+		selectedAgent: state.selectedAgent,
+		plannerModel: state.plannerModel,
+		setPlannerModel,
+	});
 
 	const generation = usePreparingPlanGeneration({
 		state,
@@ -53,6 +61,8 @@ export function PreparingPlanScreen({ theme }: PreparingPlanScreenProps): JSX.El
 				theme={theme}
 				createdFiles={generation.createdFiles}
 				startTime={generation.generationStartTime}
+				selectedAgent={state.selectedAgent}
+				effectiveModel={plannerModel.effectiveModel}
 			/>
 		</>
 	);

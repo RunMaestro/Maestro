@@ -406,6 +406,9 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 		setGroupChatState(groupChatStates.get(groupChatId) ?? 'idle');
 		setParticipantStates(allGroupChatParticipantStates.get(groupChatId) ?? new Map());
 		closeModal('processMonitor');
+		// Same rule as handleOpenGroupChat: on a narrow viewport the left drawer
+		// covers the room this navigation is meant to show.
+		useUIStore.getState().closeLeftSidebarForNavigation();
 	}, []);
 
 	// =======================================================================
@@ -422,7 +425,7 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 			setParticipantStates,
 			clearGroupChatUnread,
 		} = useGroupChatStore.getState();
-		const { setActiveFocus } = useUIStore.getState();
+		const { setActiveFocus, closeLeftSidebarForNavigation } = useUIStore.getState();
 
 		const chat = await window.maestro.groupChat.load(id);
 		if (chat) {
@@ -430,6 +433,12 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 			// so a slow load can't leave the dot up on a room already on screen.
 			clearGroupChatUnread(id);
 			setActiveGroupChatId(id);
+			// Narrow viewports: the left drawer covers the room that just opened.
+			// Opening a chat never touches activeSessionId, so the drawer's
+			// agent-switch rule never fires for one - it has to be closed here.
+			// Deferred until the room actually loads, so a chat that could not be
+			// opened does not dismiss the drawer for nothing.
+			closeLeftSidebarForNavigation();
 			const messages = await window.maestro.groupChat.getMessages(id);
 			setGroupChatMessages(messages);
 

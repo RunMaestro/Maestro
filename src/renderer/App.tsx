@@ -659,6 +659,13 @@ function MaestroConsoleInner() {
 	// covers the whole screen, and a drawer that stayed put read as the tap
 	// having done nothing. Keyed on the TRANSITION of activeSessionId, not its
 	// steady state, so a drawer opened after a switch stays open.
+	//
+	// This is the net for anything that changes the active agent without going
+	// through a row tap. The taps themselves call
+	// `uiStore.closeLeftSidebarForNavigation()` directly, because activating the
+	// row that is already active (an agent still selected behind an open group
+	// chat, or a group chat, which never touches activeSessionId at all) moves no
+	// id for this effect to see.
 	const prevActiveSessionIdRef = useRef(activeSessionId);
 	useEffect(() => {
 		const changed = prevActiveSessionIdRef.current !== activeSessionId;
@@ -674,6 +681,14 @@ function MaestroConsoleInner() {
 	// a file tapped in the tree opened behind the panel and nothing on screen
 	// changed. Keyed on the transition of the active tab (of any kind), so a
 	// drawer opened after the switch stays open.
+	//
+	// This is the NET, not the primary. Two opens move none of these ids, so the
+	// transition never fires for them: re-previewing the file that is already the
+	// active tab, and any media file, which never becomes a tab at all. Both are
+	// handled AT THE OPEN by `handleOpenFileTab`, which calls
+	// `uiStore.closeRightPanelForNavigation()` - see its twin for the left
+	// drawer. What is left here covers everything else that activates a tab from
+	// inside the drawer (a conversation resumed from History, a queued item).
 	const activeTabKey = [
 		activeSession?.activeTabId,
 		activeSession?.activeFileTabId,
@@ -1059,7 +1074,7 @@ function MaestroConsoleInner() {
 		handleScrollPositionChange,
 		handleAtBottomChange,
 		handleDeleteLog,
-	} = useTabHandlers();
+	} = useTabHandlers(inputRef);
 
 	// Thin App-side slice for modals / attach-image gate. Primitives only so log
 	// flushes (new AITab objects) do not wake MaestroConsoleInner.

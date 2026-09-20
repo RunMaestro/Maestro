@@ -1349,6 +1349,30 @@ COMMIT_STARTdef987654321|Jane Smith|2024-01-14T09:00:00+00:00||Add feature
 			expect(result.error).toBe('fatal: could not read from remote');
 		});
 
+		it('strips ANSI colors and progress overwrites from the failure message', async () => {
+			// What a colored pre-push hook plus `--progress` actually leaves on stderr.
+			mockStreaming([], {
+				stderr:
+					'\x1b[33mwarn\x1b[39m index.html\n' +
+					'Writing objects:  50% (1/2)\rWriting objects: 100% (2/2), done.\n' +
+					"\x1b[31merror: failed to push some refs to 'origin'\x1b[0m\n",
+				exitCode: 1,
+			});
+
+			const handler = handlers.get('git:runCommand');
+			const result = await handler!(mockEvent(), {
+				runId: 'run-2b',
+				operation: 'push',
+				cwd: '/test/repo',
+			});
+
+			expect(result.error).toBe(
+				'warn index.html\n' +
+					'Writing objects: 100% (2/2), done.\n' +
+					"error: failed to push some refs to 'origin'"
+			);
+		});
+
 		it('reports a SIGTERM exit as cancelled rather than failed', async () => {
 			mockStreaming([], { exitCode: 'SIGTERM' });
 

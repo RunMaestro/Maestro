@@ -510,12 +510,25 @@ Graph, and remembers which one you left it on.
 
 | Action                         | macOS                      | Windows/Linux        |
 | ------------------------------ | -------------------------- | -------------------- |
+| Search the log                 | `Cmd+F` or `/`             | `Ctrl+F` or `/`      |
 | Previous / next view           | `Cmd+Shift+[` / `]`        | `Ctrl+Shift+[` / `]` |
 | Previous / next commit         | `Up/Down Arrow` or `j`/`k` | same                 |
 | Jump a page of commits         | `PageUp` / `PageDown`      | same                 |
 | Newest / oldest commit         | `Home` / `End`             | same                 |
 | Previous / next branch (Graph) | `Left/Right Arrow`         | same                 |
-| Close the viewer               | `Esc`                      | `Esc`                |
+| Clear the search / close       | `Esc`                      | `Esc`                |
+
+The search box narrows both views at once. It matches the commit hash (full or
+short), the message, the author, a branch or tag name, and the date, and several
+words are ANDed, so `fix usage` finds `fix(usage): ...`. `Up`/`Down` and the page
+keys keep stepping the commits while you are still typing, so you can filter and
+walk the hits without leaving the box; `j`/`k` stay letters there. `Esc` clears
+the query first and only closes the viewer once the box is empty.
+
+Graph view is FILTERED, not just highlighted: the commits that do not match are
+contracted out of the graph and the survivors reconnect to their nearest matching
+ancestor, so the branch lines still show which of the remaining commits came
+after which.
 
 In Graph view each axis answers one question, and both read off what is drawn.
 `Up`/`Down` follow the branch line the selected commit sits on, skipping commits

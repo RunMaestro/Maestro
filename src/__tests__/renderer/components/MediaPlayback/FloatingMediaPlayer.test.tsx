@@ -78,6 +78,43 @@ describe('FloatingMediaPlayer', () => {
 		expect(screen.getByText('Agent One')).toBeTruthy();
 	});
 
+	// The title bar is a drag handle over `select-none`, so the name it shows
+	// cannot be selected: the button is the only way to get at it.
+	describe('copy file name', () => {
+		const writeText = vi.fn().mockResolvedValue(undefined);
+
+		beforeEach(() => {
+			writeText.mockClear();
+			// No shell bridge on `window.maestro` here, so safeClipboardWrite falls
+			// through to the navigator path.
+			Object.defineProperty(navigator, 'clipboard', {
+				configurable: true,
+				writable: true,
+				value: { writeText },
+			});
+		});
+
+		it('copies the loaded file name', async () => {
+			renderPlayer();
+
+			await act(async () => {
+				fireEvent.click(screen.getByTestId('media-copy-name'));
+			});
+
+			expect(writeText).toHaveBeenCalledWith('podcast.mp3');
+		});
+
+		it('does not start a drag when the button is pressed', () => {
+			renderPlayer();
+			const before = frame().style.left;
+
+			fireEvent.mouseDown(screen.getByTestId('media-copy-name'), { button: 0 });
+			fireEvent.mouseMove(window, { clientX: 200, clientY: 200 });
+
+			expect(frame().style.left).toBe(before);
+		});
+	});
+
 	it('minimizes to the Left Bar without stopping playback', () => {
 		useMediaPlaybackStore.setState({ items: [item()], activeItemId: item().id, playing: true });
 		renderPlayer();

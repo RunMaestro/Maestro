@@ -12,6 +12,7 @@ import { formatFutureTime, formatTimestamp } from '../../../../shared/formatters
 import {
 	formatLastRefreshed,
 	isSampleBehindLatest,
+	isSampleExpired,
 	QUOTA_REFRESH_OPTIONS,
 	resolveQuotaFillColor,
 } from './quotaFormatting';
@@ -41,15 +42,21 @@ export const QuotaBarRow = memo(function QuotaBarRow({
 	const displayPercent = Math.round(clampedPercent);
 
 	return (
-		<div className="flex items-center gap-4">
+		// Narrow (a phone): the label and the reset caption share the first line
+		// and the bar takes the whole of a second one. The row used to be one
+		// unbreakable line - a 176px label, a 192px `whitespace-nowrap` reset
+		// caption, and 32px of gaps - which is 400px of fixed width before the
+		// bar gets any, so on a 390px phone the bar was squeezed to nothing and
+		// the one number this panel exists to show was invisible.
+		<div className="flex flex-wrap items-center gap-x-4 gap-y-1 sm:flex-nowrap">
 			<div
-				className="w-44 text-sm whitespace-nowrap flex-shrink-0"
+				className="min-w-0 truncate text-sm sm:w-44 sm:flex-shrink-0 sm:whitespace-nowrap"
 				style={{ color: theme.colors.textMain }}
 			>
 				{label}
 			</div>
 			<div
-				className="flex-1 h-7 rounded overflow-hidden relative"
+				className="order-last h-7 w-full rounded overflow-hidden relative sm:order-none sm:w-auto sm:flex-1"
 				style={{ backgroundColor: theme.colors.border }}
 				role="progressbar"
 				aria-label={`${label}: ${displayPercent}%`}
@@ -93,8 +100,8 @@ export const QuotaBarRow = memo(function QuotaBarRow({
 				)}
 			</div>
 			<div
-				className="text-xs text-left whitespace-nowrap flex-shrink-0 ml-auto"
-				style={{ color: theme.colors.textDim, minWidth: '12rem' }}
+				className="text-xs text-left whitespace-nowrap flex-shrink-0 ml-auto sm:min-w-[12rem]"
+				style={{ color: theme.colors.textDim }}
 				title={
 					resetsAt
 						? `Resets at ${new Date(resetsAt).toLocaleString()}`
@@ -284,6 +291,10 @@ export const QuotaSharedAccountBadge = memo(function QuotaSharedAccountBadge({
  * using it runs over SSH, or the probe failed). The chip prints when that row
  * was actually read. A clock time rather than an age, so it stays true without
  * a ticking re-render.
+ *
+ * It also prints for any sample older than a day even when no row is newer -
+ * the state of an account whose agents have all moved elsewhere, whose row the
+ * panel keeps so the user can watch for its reset.
  */
 export const QuotaStaleSampleBadge = memo(function QuotaStaleSampleBadge({
 	sampledAt,
@@ -298,7 +309,10 @@ export const QuotaStaleSampleBadge = memo(function QuotaStaleSampleBadge({
 	testId?: string;
 	theme: Theme;
 }) {
-	if (!sampledAt || !isSampleBehindLatest(sampledAt, latestSampledAtMs)) return null;
+	if (!sampledAt) return null;
+	if (!isSampleBehindLatest(sampledAt, latestSampledAtMs) && !isSampleExpired(sampledAt)) {
+		return null;
+	}
 	const color = theme.colors.warning ?? theme.colors.accent;
 
 	return (
@@ -410,7 +424,7 @@ export const QuotaRefreshControls = memo(function QuotaRefreshControls({
 	showHotkeyHint?: boolean;
 }) {
 	return (
-		<div className="flex flex-wrap items-center justify-end gap-2">
+		<div className="flex flex-wrap items-center justify-start gap-2 sm:justify-end">
 			<label className="relative flex items-center">
 				<Clock
 					className="w-3.5 h-3.5 absolute left-2.5 pointer-events-none"

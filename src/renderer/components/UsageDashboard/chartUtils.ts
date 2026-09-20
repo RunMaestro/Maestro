@@ -168,6 +168,15 @@ export function buildNameMap(
 }
 
 /**
+ * Axis-label budget for a phone-width chart.
+ *
+ * The default seven labels assume a desktop axis: seven `Aug 20`-sized dates
+ * need roughly 300px, and a phone gives a chart about 340px total, so they
+ * printed on top of each other and every date read as a smear. Four fit.
+ */
+export const PHONE_AXIS_LABELS = 4;
+
+/**
  * Pick which x-axis tick indices should carry a label.
  *
  * Every time-series chart on the dashboard wants roughly seven labels and always
@@ -184,11 +193,15 @@ export function buildNameMap(
  * @param count - number of ticks on the axis
  * @returns the set of indices to label
  */
-export function computeAxisLabelIndices(count: number): Set<number> {
+export function computeAxisLabelIndices(count: number, maxLabels = 7): Set<number> {
 	if (count <= 0) return new Set();
 
 	// Same density heuristic the charts used individually: ~7 labels max.
-	const interval = count > 14 ? Math.ceil(count / 7) : count > 7 ? 2 : 1;
+	// `maxLabels` is how a caller says its axis is narrower than that assumes -
+	// seven "Aug 20"-sized labels need about 300px, so on a phone they printed
+	// on top of each other and every date read as a four-digit smear.
+	const budget = Math.max(2, maxLabels);
+	const interval = count > 2 * budget ? Math.ceil(count / budget) : count > budget ? 2 : 1;
 
 	const indices: number[] = [];
 	for (let i = 0; i < count; i += interval) indices.push(i);
@@ -201,4 +214,69 @@ export function computeAxisLabelIndices(count: number): Set<number> {
 	}
 
 	return new Set(indices);
+}
+
+/**
+ * Geometry shared by the dashboard's donut charts (Activity Source, Session
+ * Location) so they stay visually identical and the center label always has
+ * room for its longest value.
+ *
+ * `centerLabelWidth` is the widest a center label may be drawn: a chord of the
+ * hole rather than its full diameter, so a long string ("1,234h 56m") stops
+ * before it reaches the ring instead of painting over it.
+ */
+export const DONUT_CHART = {
+	size: 200,
+	outerRadius: 88,
+	innerRadius: 62,
+	/** Extra radius the hovered slice pops out by. */
+	hoverExpansion: 4,
+	centerLabelWidth: 106,
+} as const;
+
+/**
+ * SVG arc path generator for donut chart segments.
+ *
+ * Angles are degrees clockwise from 12 o'clock. A sweep of (near) 360 degrees
+ * is drawn as two half arcs, because a single arc whose start and end points
+ * coincide renders as nothing.
+ */
+export function describeDonutArc(
+	x: number,
+	y: number,
+	outerRadius: number,
+	innerRadius: number,
+	startAngle: number,
+	endAngle: number
+): string {
+	if (endAngle - startAngle >= 359.99) {
+		const midAngle = startAngle + 180;
+		return `
+      ${describeDonutArc(x, y, outerRadius, innerRadius, startAngle, midAngle)}
+      ${describeDonutArc(x, y, outerRadius, innerRadius, midAngle, endAngle)}
+    `;
+	}
+
+	const startRad = (startAngle - 90) * (Math.PI / 180);
+	const endRad = (endAngle - 90) * (Math.PI / 180);
+
+	const startOuterX = x + outerRadius * Math.cos(startRad);
+	const startOuterY = y + outerRadius * Math.sin(startRad);
+	const endOuterX = x + outerRadius * Math.cos(endRad);
+	const endOuterY = y + outerRadius * Math.sin(endRad);
+
+	const startInnerX = x + innerRadius * Math.cos(startRad);
+	const startInnerY = y + innerRadius * Math.sin(startRad);
+	const endInnerX = x + innerRadius * Math.cos(endRad);
+	const endInnerY = y + innerRadius * Math.sin(endRad);
+
+	const largeArcFlag = endAngle - startAngle > 180 ? 1 : 0;
+
+	return `
+    M ${startOuterX} ${startOuterY}
+    A ${outerRadius} ${outerRadius} 0 ${largeArcFlag} 1 ${endOuterX} ${endOuterY}
+    L ${endInnerX} ${endInnerY}
+    A ${innerRadius} ${innerRadius} 0 ${largeArcFlag} 0 ${startInnerX} ${startInnerY}
+    Z
+  `;
 }

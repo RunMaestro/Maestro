@@ -8,13 +8,26 @@ import {
 	useState,
 	type ReactNode,
 } from 'react';
-import { FileAudio, FileVideo, GripVertical, History, ListMusic, Minus, X } from 'lucide-react';
+import {
+	Copy,
+	FileAudio,
+	FileVideo,
+	GripVertical,
+	History,
+	ListMusic,
+	Minus,
+	X,
+} from 'lucide-react';
 
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { ModalResizeGrip } from '../ui/ModalResizeGrip';
 import { MediaListMenu } from './MediaListMenu';
 import { useEventListener } from '../../hooks/utils/useEventListener';
+import { notifyToast } from '../../stores/notificationStore';
 import { useMediaPlaybackStore } from '../../stores/mediaPlaybackStore';
+import { safeClipboardWrite } from '../../utils/clipboard';
+import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
+import { captureException } from '../../utils/sentry';
 import {
 	DEFAULT_MEDIA_ASPECT,
 	MEDIA_FLOAT_DEFAULT_WIDTH,
@@ -256,6 +269,35 @@ export const FloatingMediaPlayer = memo(function FloatingMediaPlayer({
 		[openList, closeList, dismiss]
 	);
 
+	/**
+	 * Copy the loaded file's name.
+	 *
+	 * The title bar is the only place that name exists in the UI, and it is a
+	 * drag handle with a truncated label rather than selectable text - the frame
+	 * is `select-none`, so a user who wants the name to paste into a note or a
+	 * prompt cannot get at it any other way. The button copies the name rather
+	 * than the path, matching what is on screen; the path is not shown here.
+	 *
+	 * Goes through `safeClipboardWrite` like every other copy in the app: the
+	 * Clipboard API rejects while the document is unfocused, and a player the
+	 * user is clicking on while another window has focus is exactly that case.
+	 */
+	const copyFileName = useCallback(async () => {
+		try {
+			if (await safeClipboardWrite(title)) {
+				flashCopiedToClipboard(title, 'File Name Copied');
+				return;
+			}
+		} catch (err) {
+			captureException(err);
+		}
+		notifyToast({
+			color: 'red',
+			title: 'Failed to Copy File Name',
+			message: 'Clipboard write was rejected. Check browser permissions and try again.',
+		});
+	}, [title]);
+
 	const beginResize = useCallback(
 		(e: React.MouseEvent) => {
 			if (e.button !== 0) return;
@@ -445,6 +487,19 @@ export const FloatingMediaPlayer = memo(function FloatingMediaPlayer({
 						{subtitle}
 					</span>
 				</div>
+
+				{/* Copy the file name. Sits beside the label it copies, and stops the
+				    mousedown so grabbing it does not start a drag of the whole bar. */}
+				<GhostIconButton
+					onClick={() => void copyFileName()}
+					onMouseDown={(e) => e.stopPropagation()}
+					title="Copy file name"
+					ariaLabel="Copy file name"
+					color={theme.colors.textDim}
+					testId="media-copy-name"
+				>
+					<Copy className="w-3.5 h-3.5" />
+				</GhostIconButton>
 
 				{/* Queue and history. Each button appears only when its list has
 				    something in it, so a single file playing on its own shows neither

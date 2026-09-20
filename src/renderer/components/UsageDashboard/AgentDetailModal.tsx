@@ -352,7 +352,7 @@ export const AgentDetailModal = memo(function AgentDetailModal({
 				{/* Duration distribution */}
 				<section>
 					<SectionHeading theme={theme}>Duration Distribution</SectionHeading>
-					<div className="grid grid-cols-4 gap-3">
+					<div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
 						<Kpi
 							label="Min"
 							value={distribution ? formatDurationHuman(distribution.min) : '…'}

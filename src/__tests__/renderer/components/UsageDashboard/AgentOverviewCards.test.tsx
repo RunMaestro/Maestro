@@ -1204,18 +1204,18 @@ describe('AgentOverviewCards', () => {
 		it('ships a column floor wide enough to hold an ordinary agent name', () => {
 			renderGrid();
 
-			expect(columns()).toBe('repeat(auto-fill, minmax(260px, 1fr))');
+			expect(columns()).toBe('repeat(auto-fill, minmax(min(260px, 100%), 1fr))');
 		});
 
 		it('widens the tiles on + and narrows them on -', () => {
 			renderGrid();
 
 			fireEvent.keyDown(window, { key: '+' });
-			expect(columns()).toBe('repeat(auto-fill, minmax(286px, 1fr))');
+			expect(columns()).toBe('repeat(auto-fill, minmax(min(286px, 100%), 1fr))');
 
 			fireEvent.keyDown(window, { key: '-' });
 			fireEvent.keyDown(window, { key: '-' });
-			expect(columns()).toBe('repeat(auto-fill, minmax(234px, 1fr))');
+			expect(columns()).toBe('repeat(auto-fill, minmax(min(234px, 100%), 1fr))');
 		});
 
 		it('leaves the tiles alone when the key carries a modifier', () => {
@@ -1223,7 +1223,7 @@ describe('AgentOverviewCards', () => {
 			renderGrid();
 
 			fireEvent.keyDown(window, { key: '+', metaKey: true });
-			expect(columns()).toBe('repeat(auto-fill, minmax(260px, 1fr))');
+			expect(columns()).toBe('repeat(auto-fill, minmax(min(260px, 100%), 1fr))');
 		});
 
 		it('remembers the size across a remount, and 0 puts it back', () => {
@@ -1233,10 +1233,10 @@ describe('AgentOverviewCards', () => {
 			unmount();
 
 			renderGrid();
-			expect(columns()).toBe('repeat(auto-fill, minmax(286px, 1fr))');
+			expect(columns()).toBe('repeat(auto-fill, minmax(min(286px, 100%), 1fr))');
 
 			fireEvent.keyDown(window, { key: '0' });
-			expect(columns()).toBe('repeat(auto-fill, minmax(260px, 1fr))');
+			expect(columns()).toBe('repeat(auto-fill, minmax(min(260px, 100%), 1fr))');
 		});
 
 		it('zooms from the control beside the sort pills as well', () => {
@@ -1244,11 +1244,69 @@ describe('AgentOverviewCards', () => {
 
 			fireEvent.click(screen.getByRole('button', { name: 'Increase tile size' }));
 
-			expect(columns()).toBe('repeat(auto-fill, minmax(286px, 1fr))');
+			expect(columns()).toBe('repeat(auto-fill, minmax(min(286px, 100%), 1fr))');
 			// A tile width has no meaningful percentage, so the control shows only
 			// the two buttons; `0` is still the way back.
 			expect(screen.queryByRole('button', { name: 'Reset tile size' })).toBeNull();
 			expect(screen.getByTestId('agent-overview-tile-zoom')).not.toHaveTextContent('%');
 		});
+	});
+});
+
+// The toolbar's two selects, filter box and active-only switch add up to ~780px
+// of fixed width. On a 390px phone they ran off the right edge and took the
+// whole tab into a horizontal scroll; on desktop they already fit, and giving
+// them a shrinkable basis there would rearrange a toolbar nobody asked to move.
+vi.mock('../../../../renderer/hooks/ui/useViewportBreakpoint', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../renderer/hooks/ui/useViewportBreakpoint')>()),
+	usePhoneLayout: vi.fn(() => false),
+}));
+import { usePhoneLayout } from '../../../../renderer/hooks/ui/useViewportBreakpoint';
+
+describe('AgentOverviewCards toolbar width', () => {
+	beforeEach(() => {
+		installLocalStorageMock();
+		vi.mocked(usePhoneLayout).mockReturnValue(false);
+	});
+
+	/** The filter cluster: the selects, the search box and the active-only switch. */
+	function filterCluster(): HTMLElement {
+		const input = screen.getByTestId('agent-overview-filter-input');
+		const cluster = input.closest('div')?.parentElement;
+		if (!cluster) throw new Error('filter cluster not found');
+		return cluster;
+	}
+
+	it('keeps the desktop toolbar on one unwrapped row at its fixed widths', () => {
+		render(
+			<AgentOverviewCards
+				sessions={[buildSession({ id: 's1', name: 'Alpha' })]}
+				data={buildData()}
+				theme={theme}
+			/>
+		);
+
+		expect(filterCluster()).not.toHaveClass('flex-wrap');
+		// A fixed width, not a shrinkable basis - the desktop row already fits.
+		expect(screen.getByTestId('agent-overview-filter-input').parentElement).toHaveStyle({
+			width: '260px',
+		});
+	});
+
+	it('lets the toolbar pack and wrap on a phone', () => {
+		vi.mocked(usePhoneLayout).mockReturnValue(true);
+		render(
+			<AgentOverviewCards
+				sessions={[buildSession({ id: 's1', name: 'Alpha' })]}
+				data={buildData()}
+				theme={theme}
+			/>
+		);
+
+		expect(filterCluster()).toHaveClass('flex-wrap');
+		// Shrinkable, and capped at the desktop width so it cannot grow past it.
+		const search = screen.getByTestId('agent-overview-filter-input').parentElement;
+		expect(search).toHaveStyle({ minWidth: '0', maxWidth: '260px' });
+		expect(search?.style.flex).toBe('1 1 180px');
 	});
 });

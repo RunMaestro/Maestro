@@ -651,21 +651,38 @@ function render(analysis, meta) {
 	if (typeof meta?.bufferExhausted === 'boolean') {
 		const peakPct = Math.round((meta.peakBufferPercent ?? 0) * 100);
 		const bufferMb = meta.traceBufferSizeKb ? Math.round(meta.traceBufferSizeKb / 1000) : null;
-		if (meta.bufferExhausted) {
+		// Two independent signals, and the covered window is the stronger one: the
+		// capture can only report how full its buffer got, but the trace itself
+		// shows how much time actually survived. Trust a short window even when
+		// the buffer looked fine, and do not cry INCOMPLETE over a high peak when
+		// every second of the recording is present - the watchdog stopping the
+		// recording early is it working, not failing.
+		// Coverage WINS when we have it. A bundle written before the exhaustion
+		// threshold was corrected carries `bufferExhausted: true` for any capture
+		// the watchdog stopped, so believing that flag over the evidence would
+		// keep calling complete captures truncated forever.
+		const windowIsShort = coveredPct !== null && coveredPct < 90;
+		const incomplete = coveredPct !== null ? windowIsShort : meta.bufferExhausted;
+		if (incomplete) {
 			out.push(
 				`> [!WARNING]` +
 					`\n> INCOMPLETE CAPTURE. Trace buffer peaked at ${peakPct}%` +
-					`${bufferMb ? ` of ${bufferMb}MB per process` : ''}, so Chromium dropped events. ` +
-					`This file covers ${analysis.traceDurationSec.toFixed(1)}s of a ${requestedSec.toFixed(0)}s ` +
-					`recording${coveredPct !== null ? ` (${coveredPct.toFixed(0)}%)` : ''}. ` +
+					`${bufferMb ? ` of ${bufferMb}MB per process` : ''} and this file covers ` +
+					`${analysis.traceDurationSec.toFixed(1)}s of a ${requestedSec.toFixed(0)}s recording` +
+					`${coveredPct !== null ? ` (${coveredPct.toFixed(0)}%)` : ''}. ` +
 					`Every total below is a LOWER BOUND, and anything absent may simply not have been recorded.`
 			);
 		} else {
 			out.push(
 				`> [!NOTE]` +
-					`\n> Complete capture: the recording ${meta.autoStopped ? 'was ended automatically' : 'ended'} ` +
-					`at ${peakPct}% trace-buffer usage, before any events were dropped. ` +
-					`Totals below cover the full ${requestedSec.toFixed(1)}s window.`
+					`\n> Complete capture: the recording ${meta.autoStopped ? 'was ended early by the buffer watchdog' : 'ended'} ` +
+					`at ${peakPct}% trace-buffer usage, and all ${requestedSec.toFixed(1)}s of it survived` +
+					`${coveredPct !== null ? ` (${coveredPct.toFixed(0)}% covered)` : ''}. Totals below are whole.` +
+					(meta.bufferExhausted
+						? `\n> (The bundle's own \`bufferExhausted\` flag says otherwise; it predates the ` +
+							`corrected threshold, which tripped on every watchdog stop. The covered window is ` +
+							`the real measurement.)`
+						: '')
 			);
 		}
 		out.push('');

@@ -99,6 +99,12 @@ import {
 	type UsageSnapshot,
 } from '../../../main/stores/claudeUsageStore';
 import { canonKey } from '../../helpers/pathExpect';
+import {
+	clearRememberedQuotaAccounts,
+	getRememberedQuotaAccountKeys,
+	rememberQuotaAccounts,
+	__resetForTests as resetQuotaAccountsStore,
+} from '../../../main/stores/quotaAccountsStore';
 
 const FROZEN_NOW = new Date('2026-05-15T12:00:00.000Z').getTime();
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
@@ -181,6 +187,8 @@ describe('claude-usage-startup → runStartupUsageSampling', () => {
 		loggerDebugMock.mockReset();
 		resetUsageStore();
 		clearUsageStore();
+		resetQuotaAccountsStore();
+		clearRememberedQuotaAccounts();
 	});
 
 	afterEach(() => {
@@ -993,6 +1001,70 @@ describe('claude-usage-startup → runStartupUsageSampling', () => {
 				expect(sampleUsageMock).not.toHaveBeenCalled();
 			});
 
+			it('discovers a symlinked account dir', async () => {
+				// `Dirent.isDirectory()` is false for a symlink, so a symlinked
+				// ~/.claude-* account was invisible to the sweep.
+				setSnapshot(makeSnapshot({ configDirKey: remoteKey }));
+				sampleUsageMock.mockResolvedValue(makeSnapshot({ configDirKey: remoteKey }));
+				const readdir = vi.spyOn(fs.promises, 'readdir').mockResolvedValue([
+					{
+						name: '.claude-remote',
+						isDirectory: () => false,
+						isSymbolicLink: () => true,
+					},
+				] as never);
+				const access = vi.spyOn(fs.promises, 'access').mockResolvedValue(undefined);
+
+				try {
+					await runStartupUsageSampling(sshOnlyDeps());
+				} finally {
+					readdir.mockRestore();
+					access.mockRestore();
+				}
+
+				expect(sampleUsageMock).toHaveBeenCalledWith(
+					expect.objectContaining({ configDir: path.join('/Users/test', '.claude-remote') })
+				);
+			});
+
+			it('re-samples a remembered account the discovery sweep cannot see', async () => {
+				// No cached snapshot and no discovery hit - the symlinked /
+				// odd-named / outside-$HOME account dir case. Before the store
+				// remembered it, this account stopped refreshing the moment its
+				// agents moved away and then dropped off the panel entirely.
+				rememberQuotaAccounts('claude-code', [remoteKey]);
+				sampleUsageMock.mockResolvedValue(makeSnapshot({ configDirKey: remoteKey }));
+				const restore = stubAccountDirs([]);
+				const stat = vi
+					.spyOn(fs.promises, 'stat')
+					.mockResolvedValue({ isDirectory: () => true } as never);
+
+				try {
+					await runStartupUsageSampling(sshOnlyDeps());
+				} finally {
+					stat.mockRestore();
+					restore();
+				}
+
+				expect(sampleUsageMock).toHaveBeenCalledTimes(1);
+				expect(sampleUsageMock).toHaveBeenCalledWith(
+					expect.objectContaining({ configDir: remoteKey })
+				);
+			});
+
+			it('does not re-sample a remembered account whose dir is gone', async () => {
+				rememberQuotaAccounts('claude-code', [remoteKey]);
+				const restore = stubAccountDirs([]);
+
+				try {
+					await runStartupUsageSampling(sshOnlyDeps());
+				} finally {
+					restore();
+				}
+
+				expect(sampleUsageMock).not.toHaveBeenCalled();
+			});
+
 			it('does not re-sample cached accounts on the startup pass', async () => {
 				setSnapshot(makeSnapshot({ configDirKey: remoteKey }));
 				const restore = stubAccountDirs(['.claude-remote']);
@@ -1026,6 +1098,58 @@ describe('claude-usage-startup → runStartupUsageSampling', () => {
 			await runStartupUsageSampling(deps);
 
 			expect(sampleUsageMock).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('remembering accounts for the dashboard', () => {
+		it('remembers every account a session points at', async () => {
+			sampleUsageMock.mockResolvedValue(makeSnapshot());
+
+			await runStartupUsageSampling({
+				sessionsStore: makeStore({
+					sessions: [
+						recentClaudeSession({
+							id: 's-a',
+							customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/test/.claude-a' },
+						}),
+						recentClaudeSession({
+							id: 's-b',
+							customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/test/.claude-b' },
+						}),
+					],
+				}) as never,
+				agentConfigsStore: makeStore({ configs: {} }) as never,
+				settingsStore: makeStore({}) as never,
+				agentDetector: makeDetector(FAKE_AGENT) as never,
+			});
+
+			// Remembered keys are written through `resolveConfigDirKey`, which ends
+			// in `path.resolve`, so a POSIX literal gains a drive letter on Windows.
+			expect(getRememberedQuotaAccountKeys('claude-code')).toEqual([
+				path.resolve('/Users/test/.claude-a'),
+				path.resolve('/Users/test/.claude-b'),
+			]);
+		});
+
+		it('keeps remembering an account after every agent moves off it', async () => {
+			sampleUsageMock.mockResolvedValue(makeSnapshot());
+			const deps = (configDir: string) => ({
+				sessionsStore: makeStore({
+					sessions: [recentClaudeSession({ customEnvVars: { CLAUDE_CONFIG_DIR: configDir } })],
+				}) as never,
+				agentConfigsStore: makeStore({ configs: {} }) as never,
+				settingsStore: makeStore({}) as never,
+				agentDetector: makeDetector(FAKE_AGENT) as never,
+			});
+
+			// The account hits its limit, so the user swings the agent onto another.
+			await runStartupUsageSampling(deps('/Users/test/.claude-capped'));
+			await runStartupUsageSampling(deps('/Users/test/.claude-spare'));
+
+			expect(getRememberedQuotaAccountKeys('claude-code')).toEqual([
+				path.resolve('/Users/test/.claude-capped'),
+				path.resolve('/Users/test/.claude-spare'),
+			]);
 		});
 	});
 

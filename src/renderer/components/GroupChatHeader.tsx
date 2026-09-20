@@ -1,18 +1,20 @@
 /**
  * GroupChatHeader.tsx
  *
- * Header bar for the Group Chat view. Carries the team/moderator view switch,
- * the participant count, cost, and the rename and info actions. The chat name
- * itself is shown in the info overlay rather than here - see the comment on the
- * left zone below.
+ * Header bar for the Group Chat view. Carries the chat name, the team/moderator
+ * view switch, the participant count, cost, and the rename and info actions.
+ * The name is the one thing here that yields when the row runs out of width -
+ * see the comment on the left zone below.
  */
 
+import { useRef } from 'react';
 import { Info, Edit2, Columns, DollarSign, StopCircle } from 'lucide-react';
 import type { Theme, Shortcut, GroupChatState } from '../types';
 import type { GroupChatViewMode } from '../../shared/groupChatModeratorView';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { SegmentedControl } from './ui/SegmentedControl';
 import { useSettingsStore } from '../stores/settingsStore';
+import { useOptionalLabelFits } from '../hooks/ui/useOptionalLabelFits';
 
 interface GroupChatHeaderProps {
 	theme: Theme;
@@ -54,26 +56,53 @@ export function GroupChatHeader({
 	// Same Display setting that governs the main header's cost pill.
 	const showSessionCostPill = useSettingsStore((s) => s.showSessionCostPill);
 
+	// Whether the name still fits. Measured rather than guessed at a breakpoint,
+	// because what is left for it depends on which conditional controls (Stop
+	// All, the cost pill, the panel toggle) are rendered right now, and on the
+	// user's font size - neither of which a px threshold can see.
+	const rowRef = useRef<HTMLDivElement>(null);
+	const nameFits = useOptionalLabelFits(rowRef);
+
 	// `group-chat-header-container` drives the yield ladder in index.css: the
 	// participant count goes first, then the view switch shortens its labels.
 	// `-busy` shifts those rungs wider while Stop All occupies the row.
 	return (
 		<div
-			className={`group-chat-header-container flex items-center justify-between px-6 h-16 border-b shrink-0 ${state !== 'idle' ? 'group-chat-header-busy' : ''}`}
+			ref={rowRef}
+			className={`group-chat-header-container flex items-center justify-between gap-3 px-6 h-16 border-b shrink-0 overflow-hidden ${state !== 'idle' ? 'group-chat-header-busy' : ''}`}
 			style={{
 				backgroundColor: theme.colors.bgSidebar,
 				borderColor: theme.colors.border,
 			}}
 		>
 			{/*
-			  The chat name is deliberately NOT printed in this row. Every other
-			  control here is fixed-width, so the name was the only thing that
-			  could yield, and on a phone it yielded down to "G..." - which costs
-			  the same space as the full name and says less. It now lives in the
-			  info overlay's title, in this button's tooltip, and in the rename
-			  dialog this button opens. `flex-1` keeps the cluster hard right.
+			  The name is shown IN FULL or not at all, never clipped: "Group Chat:
+			  Maes..." costs the same row space as the whole name and says less,
+			  and every other control here is fixed-width, so the name is the only
+			  thing that can yield. `shrink-0` + the root's `overflow-hidden` are
+			  what make that decidable - see useOptionalLabelFits. When it is
+			  dropped the name is still on the rename button's tooltip and is the
+			  info overlay's title.
 			*/}
-			<div className="flex items-center flex-1 min-w-0">
+			<div className="flex items-center gap-3 shrink-0">
+				{nameFits && (
+					<h1
+						className="text-lg font-semibold cursor-pointer hover:opacity-80 shrink-0 whitespace-nowrap"
+						style={{ color: theme.colors.textMain }}
+						onClick={onRename}
+						onKeyDown={(e) => {
+							if (e.key === 'Enter' || e.key === ' ') {
+								e.preventDefault();
+								onRename();
+							}
+						}}
+						tabIndex={0}
+						role="button"
+						title="Click to rename"
+					>
+						Group Chat: {name}
+					</h1>
+				)}
 				<button
 					onClick={onRename}
 					className="p-1 rounded hover:opacity-80 shrink-0"

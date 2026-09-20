@@ -346,15 +346,16 @@ describe('remarkFileLinks', () => {
 			);
 		});
 
-		it('does not convert absolute paths outside projectRoot', async () => {
+		it('converts absolute paths outside projectRoot to file:// links', async () => {
 			const result = await processMarkdown(
 				'See /other/path/README.md for details.',
 				sampleFileTree,
 				'',
 				'/Users/pedram/Project'
 			);
-			// Should not be converted since it's outside projectRoot
-			expect(result).toContain('/other/path/README.md');
+			// Outside projectRoot, so it gets the same file:// treatment as a tilde
+			// path - openFileUrl routes it to the preview tab, player, or the OS.
+			expect(result).toContain('[/other/path/README.md](file:///other/path/README.md)');
 			expect(result).not.toContain('maestro-file://');
 		});
 
@@ -462,14 +463,14 @@ describe('remarkFileLinks', () => {
 			expect(result).toContain('[App.tsx](maestro-file://src/App.tsx)');
 		});
 
-		it('does not convert markdown link with absolute path outside projectRoot', async () => {
+		it('converts markdown link with absolute path outside projectRoot to file:// URL', async () => {
 			const result = await processMarkdown(
 				'See [file.tsx](/other/path/file.tsx) for details.',
 				sampleFileTree,
 				'',
 				'/Users/pedram/Project'
 			);
-			// Should remain unconverted
+			expect(result).toContain('[file.tsx](file:///other/path/file.tsx)');
 			expect(result).not.toContain('maestro-file://');
 		});
 
@@ -508,6 +509,17 @@ describe('remarkFileLinks', () => {
 			expect(result).toContain('[README.md](maestro-file://OPSWAT/README.md)');
 			// Should NOT contain backticks around the path anymore
 			expect(result).not.toContain('`/Users/pedram/Project/OPSWAT/README.md`');
+		});
+
+		it('converts absolute path in backticks outside projectRoot to file:// link', async () => {
+			const result = await processMarkdown(
+				'Check `/Volumes/Audio/takes/recording.wav` for the take.',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project'
+			);
+			expect(result).toContain('[recording.wav](file:///Volumes/Audio/takes/recording.wav)');
+			expect(result).not.toContain('maestro-file://');
 		});
 
 		it('converts relative path in backticks to link when file exists', async () => {
@@ -723,6 +735,20 @@ describe('remarkFileLinks', () => {
 			);
 			expect(result).toContain(
 				'[/Users/pedram/Project/output/recording.wav](maestro-file://output/recording.wav)'
+			);
+		});
+
+		it('converts absolute media paths outside projectRoot to file:// links', async () => {
+			// The floating player is reached through openFileUrl, which only ever
+			// sees a file:// href - a bare absolute path is a dead link.
+			const result = await processMarkdown(
+				'File at /Volumes/Audio/takes/recording.wav here.',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project'
+			);
+			expect(result).toContain(
+				'[/Volumes/Audio/takes/recording.wav](file:///Volumes/Audio/takes/recording.wav)'
 			);
 		});
 	});

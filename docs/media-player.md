@@ -43,6 +43,8 @@ Files on an [SSH remote](/ssh-remote-execution) also fall through to that previe
 
 **Drag the title bar** to move the player anywhere on screen. The grip on the left is the affordance, but the whole bar is grabbable, including the filename. It stays inside the window, and if you resize the window it stays on screen.
 
+Because the whole bar drags, the filename it shows cannot be selected with the mouse. The **copy icon** beside it puts that name on your clipboard, for pasting into a note or a prompt.
+
 **Drag the grip in the bottom-right corner** to resize. Double-click that grip to snap back to the default size.
 
 Resizing sets the width; the height follows the file, so a video keeps its shape as it grows. Where you leave the player is remembered across restarts, and the width is remembered **per kind** - size a movie the way you like without your podcast bar becoming half the screen wide.
@@ -59,6 +61,7 @@ When the queue steps from an audio file to a video one, the player reshapes itse
 | **Volume**              | Slider, with a mute toggle                                         |
 | **Loop**                | Repeat the current file                                            |
 | **Speed**               | 0.25x through 4x, pitch-corrected so a 2x podcast stays listenable |
+| **Copy file name**      | Copy the loaded file's name, which the title bar cannot select     |
 | **Play queue**          | The list of what plays next (see below)                            |
 | **Recently played**     | Jump to anything you played earlier (see below)                    |
 | **Open in default app** | Hand the file to macOS, Windows, or Linux                          |

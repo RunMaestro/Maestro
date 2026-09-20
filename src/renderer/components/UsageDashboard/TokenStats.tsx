@@ -467,8 +467,12 @@ export const TokenStats = memo(function TokenStats({
 
 	return (
 		<div className="flex flex-col gap-6" data-testid="token-stats">
-			{/* Hero tiles: the four numbers worth reading first. */}
-			<div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+			{/* Hero tiles: the four numbers worth reading first. One column below
+			    `sm`, because two of these on a phone leave each tile ~90px of
+			    text and a cost like `~$39,641.83` has to break mid-number to
+			    fit. The desktop app's viewport is never below `sm`, so this
+			    rung only ever fires in the browser. */}
+			<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
 				<MetricCard
 					icon={<Coins size={16} />}
 					label="Total Cost"

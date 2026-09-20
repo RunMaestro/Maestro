@@ -32,6 +32,20 @@ describe('findHumanOnlyTasks', () => {
 		expect(found[0].line).toBe(0);
 	});
 
+	it('flags a check phrased with "visually" last', () => {
+		const content = '- [ ] Compare the before and after screenshots visually';
+		expect(findHumanOnlyTasks(content)).toHaveLength(1);
+	});
+
+	it('ignores "visually" used to describe UI work an agent writes', () => {
+		const content = [
+			'- [ ] Render `:codex-file-citation` as a file link. Show the base name as the link text with the full path on hover, and distinguish `purpose="output"` from `purpose="source"` visually.',
+			'- [ ] Visually separate the error state from the warning state with the theme danger color.',
+			'- [ ] Add a visual indicator for unread tabs.',
+		].join('\n');
+		expect(findHumanOnlyTasks(content)).toEqual([]);
+	});
+
 	it('flags approval gates and waiting on a person', () => {
 		const content = [
 			'- [ ] Get approval from the team before proceeding',

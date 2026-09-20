@@ -211,19 +211,39 @@ describe('profiling/content-tracing', () => {
 			expect(mod.getProfilingStatus().autoStopRequested).toBe(true);
 		});
 
-		it('reports a capture as incomplete when the buffer reached the threshold', async () => {
+		// The watchdog stopping a recording is it WORKING. An auto-stopped capture
+		// peaks just past the stop threshold and is complete; calling that
+		// "incomplete" made the flag true on every successful auto-stop, which is
+		// how the first watchdog-stopped capture libelled itself.
+		it('reports an auto-stopped capture as complete, not exhausted', async () => {
 			vi.useFakeTimers();
 			const mod = await loadModule();
 			mod.setProfilingAutoStopHandler(vi.fn());
 			await mod.startProfiling(['toplevel']);
 
-			mockGetTraceBufferUsage.mockResolvedValue({ value: 1, percentage: 0.95 });
+			mockGetTraceBufferUsage.mockResolvedValue({ value: 1, percentage: 0.876 });
+			await tickWatchdog();
+
+			const outcome = await mod.stopProfiling('/tmp/trace.json');
+			expect(outcome.autoStopped).toBe(true);
+			expect(outcome.bufferExhausted).toBe(false);
+			expect(outcome.peakBufferPercent).toBeCloseTo(0.876);
+		});
+
+		it('reports exhaustion only when the buffer got close to actually full', async () => {
+			vi.useFakeTimers();
+			const mod = await loadModule();
+			mod.setProfilingAutoStopHandler(vi.fn());
+			await mod.startProfiling(['toplevel']);
+
+			// Usage jumped past the stop threshold between two polls, which is the
+			// case the flag exists for.
+			mockGetTraceBufferUsage.mockResolvedValue({ value: 1, percentage: 0.99 });
 			await tickWatchdog();
 
 			const outcome = await mod.stopProfiling('/tmp/trace.json');
 			expect(outcome.bufferExhausted).toBe(true);
-			expect(outcome.autoStopped).toBe(true);
-			expect(outcome.peakBufferPercent).toBeCloseTo(0.95);
+			expect(outcome.peakBufferPercent).toBeCloseTo(0.99);
 		});
 
 		// The probe only observes. A tracing service that stops answering must not

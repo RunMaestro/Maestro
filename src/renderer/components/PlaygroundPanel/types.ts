@@ -67,8 +67,8 @@ export interface BatonPlaygroundState extends BatonSettings {
 	batonActive: boolean;
 	batonCopySuccess: boolean;
 	setDuration: Dispatch<SetStateAction<number>>;
-	setFadeOutStart: Dispatch<SetStateAction<number>>;
-	setFadeInStart: Dispatch<SetStateAction<number>>;
+	setPeakAt: Dispatch<SetStateAction<number>>;
+	setSettleAt: Dispatch<SetStateAction<number>>;
 	setTranslateAmount: Dispatch<SetStateAction<number>>;
 	setStaggerOffset: Dispatch<SetStateAction<number>>;
 	setEasing: Dispatch<SetStateAction<EasingOption>>;

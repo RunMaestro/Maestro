@@ -49,6 +49,13 @@ export interface WizardState {
 	enableMaestroP?: boolean;
 	maestroPMode?: 'interactive' | 'dynamic';
 	maestroPPath?: string;
+	/**
+	 * Model the WIZARD plans with, for this run only. Undefined means "whatever
+	 * the agent is configured to use". Deliberately not carried onto the created
+	 * agent: picking the top tier to write a plan is not the same as asking for
+	 * it on every turn afterwards.
+	 */
+	plannerModel?: string;
 	sessionSshRemoteConfig?: WizardSessionSshRemoteConfig;
 	directoryPath: string;
 	/** Extra directories granted beyond the working directory (prompt-level grants). */
@@ -92,6 +99,7 @@ export type WizardAction =
 	| { type: 'SET_ENABLE_MAESTRO_P'; value: boolean | undefined }
 	| { type: 'SET_MAESTRO_P_MODE'; mode: 'interactive' | 'dynamic' }
 	| { type: 'SET_MAESTRO_P_PATH'; path: string | undefined }
+	| { type: 'SET_PLANNER_MODEL'; model: string | undefined }
 	| {
 			type: 'SET_SESSION_SSH_REMOTE_CONFIG';
 			config: WizardSessionSshRemoteConfig | undefined;
@@ -162,6 +170,7 @@ export interface WizardContextAPI {
 	setEnableMaestroP: (value: boolean | undefined) => void;
 	setMaestroPMode: (mode: 'interactive' | 'dynamic') => void;
 	setMaestroPPath: (path: string | undefined) => void;
+	setPlannerModel: (model: string | undefined) => void;
 	setSessionSshRemoteConfig: (config: WizardSessionSshRemoteConfig | undefined) => void;
 	setDirectoryPath: (path: string) => void;
 	setAdditionalDirectories: (directories: AdditionalDirectory[]) => void;

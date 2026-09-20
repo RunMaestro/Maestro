@@ -22,6 +22,7 @@
  */
 
 import { getBasename } from '../../shared/formatters';
+import { safeDecodeURIComponent } from '../../shared/stringUtils';
 import { shouldOpenExternally } from './fileExplorer';
 
 /**
@@ -36,7 +37,15 @@ import { shouldOpenExternally } from './fileExplorer';
 export function openFileUrl(href: string, onFileClick?: (path: string) => void): boolean {
 	if (!/^file:\/\//.test(href)) return false;
 
-	const path = href.replace(/^file:\/\//, '');
+	// Percent-decoding is NOT optional. A `file://` href is a URL, so every
+	// producer reaching this point has already encoded it: an agent writes
+	// `file:///a/Voice%20Cloning/x.wav` by hand, and mdast-util-to-hast runs
+	// every link destination through `normalizeUri` besides. Handing that
+	// literal string to `fs.readFile` is an ENOENT, which the file-click handler
+	// reports by returning - so the click silently does nothing for any path
+	// containing a space, a `#`, or a non-ASCII character. Same rule, same
+	// reason as `resolveLocalImagePath` in Markdown/components/LocalImage.tsx.
+	const path = safeDecodeURIComponent(href.replace(/^file:\/\//, ''));
 	if (onFileClick && !shouldOpenExternally(getBasename(path))) {
 		onFileClick(path);
 		return true;

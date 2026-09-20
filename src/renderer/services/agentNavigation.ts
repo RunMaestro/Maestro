@@ -81,6 +81,11 @@ export function jumpToAgent(sessionId: string, options: JumpToAgentOptions = {})
 
 	setActiveSessionId(sessionId);
 
+	// Narrow viewports: the left drawer is an overlay over the very agent this
+	// jump is meant to show, so it gets out of the way. No-op when it is a
+	// permanent column.
+	useUIStore.getState().closeLeftSidebarForNavigation();
+
 	// Clear file / terminal / browser active-tab state so the jump shows the AI
 	// terminal even when the agent was last viewed on another tab type.
 	setSessions((prev) =>

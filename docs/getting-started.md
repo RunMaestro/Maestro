@@ -63,12 +63,16 @@ Click the **New Agent** button in the bottom-left sidebar (or press `Cmd+N` / `C
 
 **Guided Setup** (Recommended for new users) - Launches the **Onboarding Wizard**, which walks you through:
 
-1. Selecting an AI provider
+1. Selecting an AI provider. Naming the agent is optional: leave it blank and the wizard uses your project's folder name, which you can change later
 2. Choosing your project directory
-3. Having a discovery conversation where the AI learns about your project
+3. Having a discovery conversation where the AI learns about your project. If the folder already holds a project, the agent opens the conversation by reading it and telling you what it found, so you never have to describe code it can read for itself. Only an empty folder asks you to describe what you want to build
 4. Generating an initial Auto Run Playbook with tasks
 
 ![Wizard Document Generation](./screenshots/wizard-doc-generation.png)
+
+The conversation and the generated Playbook both name the model they are running on, and you can switch to your provider's top-tier model for the planning without changing what the agent uses afterwards.
+
+Don't want a Playbook? On the directory step, choose **Skip that, just create the agent** and the wizard creates the agent and gets out of the way.
 
 The Wizard creates a fully configured agent with an Auto Run document folder ready to go. Generated documents are saved to an `Initiation/` subfolder within `.maestro/playbooks/` to keep them organized separately from documents you create later.
 

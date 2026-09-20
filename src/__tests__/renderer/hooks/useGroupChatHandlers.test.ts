@@ -1,7 +1,7 @@
 /**
  * Tests for useGroupChatHandlers hook (extracted from App.tsx Phase 2B)
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useGroupChatHandlers } from '../../../renderer/hooks/groupChat/useGroupChatHandlers';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
@@ -236,6 +236,64 @@ describe('useGroupChatHandlers', () => {
 			});
 
 			expect(useGroupChatStore.getState().activeGroupChatId).toBeNull();
+		});
+
+		describe('narrow-viewport drawer', () => {
+			const originalWidth = window.innerWidth;
+			const setViewportWidth = (width: number) => {
+				Object.defineProperty(window, 'innerWidth', {
+					configurable: true,
+					writable: true,
+					value: width,
+				});
+			};
+
+			afterEach(() => {
+				setViewportWidth(originalWidth);
+			});
+
+			it('closes the left drawer on a narrow viewport', async () => {
+				// Opening a room never touches activeSessionId, so the drawer's
+				// agent-switch rule cannot close it - the handler has to.
+				setViewportWidth(390);
+				mockGroupChat.load.mockResolvedValueOnce({ id: 'gc-1', name: 'Chat', participants: [] });
+				mockGroupChat.getMessages.mockResolvedValueOnce([]);
+				useUIStore.setState({ leftSidebarOpen: true });
+
+				const { result } = renderHook(() => useGroupChatHandlers());
+				await act(async () => {
+					await result.current.handleOpenGroupChat('gc-1');
+				});
+
+				expect(useUIStore.getState().leftSidebarOpen).toBe(false);
+			});
+
+			it('leaves the drawer alone when the chat could not be loaded', async () => {
+				setViewportWidth(390);
+				mockGroupChat.load.mockResolvedValueOnce(null);
+				useUIStore.setState({ leftSidebarOpen: true });
+
+				const { result } = renderHook(() => useGroupChatHandlers());
+				await act(async () => {
+					await result.current.handleOpenGroupChat('gc-gone');
+				});
+
+				expect(useUIStore.getState().leftSidebarOpen).toBe(true);
+			});
+
+			it('leaves the sidebar open on a wide viewport', async () => {
+				setViewportWidth(1440);
+				mockGroupChat.load.mockResolvedValueOnce({ id: 'gc-1', name: 'Chat', participants: [] });
+				mockGroupChat.getMessages.mockResolvedValueOnce([]);
+				useUIStore.setState({ leftSidebarOpen: true });
+
+				const { result } = renderHook(() => useGroupChatHandlers());
+				await act(async () => {
+					await result.current.handleOpenGroupChat('gc-1');
+				});
+
+				expect(useUIStore.getState().leftSidebarOpen).toBe(true);
+			});
 		});
 
 		it('restores saved right tab preference from settings', async () => {
@@ -1062,6 +1120,33 @@ describe('useGroupChatHandlers', () => {
 			expect(useGroupChatStore.getState().groupChatState).toBe('agent-working');
 			const pmModal = useModalStore.getState().modals.get('processMonitor');
 			expect(pmModal?.open ?? false).toBe(false);
+		});
+
+		it('closes the left drawer on a narrow viewport', () => {
+			// Same blind spot as handleOpenGroupChat: jumping to a room never
+			// moves activeSessionId, so the drawer's agent-switch rule cannot
+			// see it and the room opens behind a full-screen panel.
+			const originalWidth = window.innerWidth;
+			Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 });
+			useUIStore.setState({ leftSidebarOpen: true });
+
+			const { result } = renderHook(() => useGroupChatHandlers());
+			act(() => result.current.handleProcessMonitorNavigateToGroupChat('gc-1'));
+
+			expect(useUIStore.getState().leftSidebarOpen).toBe(false);
+			Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth });
+		});
+
+		it('leaves the Left Bar open when it is a permanent column', () => {
+			const originalWidth = window.innerWidth;
+			Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1440 });
+			useUIStore.setState({ leftSidebarOpen: true });
+
+			const { result } = renderHook(() => useGroupChatHandlers());
+			act(() => result.current.handleProcessMonitorNavigateToGroupChat('gc-1'));
+
+			expect(useUIStore.getState().leftSidebarOpen).toBe(true);
+			Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth });
 		});
 	});
 

@@ -13,6 +13,22 @@ function classify(width: number): Breakpoint {
 	return 'xs';
 }
 
+function isNarrowBreakpoint(bp: Breakpoint): boolean {
+	return bp === 'xs' || bp === 'sm';
+}
+
+/**
+ * The non-hook form of `useViewportBreakpoint().isNarrow`, for code that runs
+ * outside React - a store action or a service reacting to a tap. It reads the
+ * live window width through the SAME classification the hook uses, so a caller
+ * outside the component tree cannot disagree with the layout about where the
+ * drawers stop being permanent columns.
+ */
+export function isNarrowViewportNow(): boolean {
+	if (typeof window === 'undefined') return false;
+	return isNarrowBreakpoint(classify(window.innerWidth));
+}
+
 /**
  * Tracks the current viewport breakpoint based on window.innerWidth.
  *
@@ -54,7 +70,7 @@ export function useViewportBreakpoint() {
 		isMdDown: bp === 'xs' || bp === 'sm' || bp === 'md',
 		isMdUp: bp === 'md' || bp === 'lg' || bp === 'xl',
 		isLgUp: bp === 'lg' || bp === 'xl',
-		isNarrow: bp === 'xs' || bp === 'sm',
+		isNarrow: isNarrowBreakpoint(bp),
 	};
 }
 

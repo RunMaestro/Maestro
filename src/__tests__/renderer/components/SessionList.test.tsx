@@ -416,6 +416,63 @@ describe('SessionList', () => {
 	// Basic Rendering Tests
 	// ============================================================================
 
+	// ============================================================================
+	// Narrow-viewport drawer
+	// ============================================================================
+
+	describe('narrow-viewport drawer', () => {
+		const originalWidth = window.innerWidth;
+		const setViewportWidth = (width: number) => {
+			Object.defineProperty(window, 'innerWidth', {
+				configurable: true,
+				writable: true,
+				value: width,
+			});
+		};
+
+		afterEach(() => {
+			setViewportWidth(originalWidth);
+		});
+
+		const renderWithSession = (activeSessionId: string) => {
+			const sessions = [createMockSession({ id: 's1', name: 'Frontend Project' })];
+			useSessionStore.setState({ sessions, activeSessionId });
+			useUIStore.setState({ leftSidebarOpen: true });
+			render(<SessionList {...createDefaultProps({ sortedSessions: sessions })} />);
+		};
+
+		it('closes the drawer when an agent row is tapped', () => {
+			setViewportWidth(390);
+			renderWithSession('');
+
+			fireEvent.click(screen.getByText('Frontend Project'));
+
+			expect(useSessionStore.getState().activeSessionId).toBe('s1');
+			expect(useUIStore.getState().leftSidebarOpen).toBe(false);
+		});
+
+		it('closes the drawer even when the tapped agent is already active', () => {
+			// The case an effect keyed on the activeSessionId transition cannot see:
+			// nothing changes, so the drawer used to stay over the agent.
+			setViewportWidth(390);
+			renderWithSession('s1');
+
+			fireEvent.click(screen.getByText('Frontend Project'));
+
+			expect(useUIStore.getState().leftSidebarOpen).toBe(false);
+		});
+
+		it('leaves the sidebar open on a wide viewport', () => {
+			setViewportWidth(1440);
+			renderWithSession('');
+
+			fireEvent.click(screen.getByText('Frontend Project'));
+
+			expect(useSessionStore.getState().activeSessionId).toBe('s1');
+			expect(useUIStore.getState().leftSidebarOpen).toBe(true);
+		});
+	});
+
 	describe('Basic Rendering', () => {
 		it('renders the MAESTRO branding header when expanded', () => {
 			useUIStore.setState({ leftSidebarOpen: true });

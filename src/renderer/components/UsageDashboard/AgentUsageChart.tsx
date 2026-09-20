@@ -21,7 +21,8 @@ import type { StatsTimeRange, StatsAggregation } from '../../hooks/stats/useStat
 import { COLORBLIND_AGENT_PALETTE } from '../../constants/colorblindPalettes';
 import { formatDurationHuman as formatDuration } from '../../../shared/formatters';
 import { humanizeDuration, DURATION_LADDER_HOURS } from '../../../shared/duration';
-import { buildNameMap, computeAxisLabelIndices } from './chartUtils';
+import { buildNameMap, computeAxisLabelIndices, PHONE_AXIS_LABELS } from './chartUtils';
+import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 import { ChartTooltip } from './ChartTooltip';
 import { ChartLoadingOverlay } from './ChartLoadingOverlay';
 import {
@@ -266,7 +267,11 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 			};
 		}, [data.bySessionByDay, sessions, tokenSeries]);
 
-	const xLabelIndices = useMemo(() => computeAxisLabelIndices(allDates.length), [allDates.length]);
+	const phone = usePhoneLayout();
+	const xLabelIndices = useMemo(
+		() => computeAxisLabelIndices(allDates.length, phone ? PHONE_AXIS_LABELS : undefined),
+		[allDates.length, phone]
+	);
 
 	// Calculate scales
 	const { xScale, yScale, yTicks } = useMemo(() => {

@@ -48,6 +48,7 @@ import {
 	releaseConnectionHeldQueueItems,
 	takeNextRunnableQueueItem,
 } from '../../../renderer/utils/executionQueue';
+import { useAutoRunSteeringStore } from '../../../renderer/stores/autoRunSteeringStore';
 import type {
 	Session,
 	AITab,
@@ -1459,49 +1460,30 @@ describe('useInputProcessing', () => {
 		});
 	});
 
-	describe('Auto Run blocking', () => {
-		it('queues write commands when Auto Run is active AND session is busy', async () => {
-			const runningBatchState: BatchRunState = {
-				...defaultBatchState,
-				isRunning: true,
-			};
-			mockGetBatchState.mockReturnValue(runningBatchState);
+	describe('Auto Run does not hijack the composer', () => {
+		const runningBatchState: BatchRunState = {
+			...defaultBatchState,
+			isRunning: true,
+		};
 
-			// Session must be busy for the message to actually be queued
-			// If session is idle, it processes immediately instead of queuing
-			const session = createMockSession({ state: 'busy' });
-			const deps = createDeps({
-				activeSession: session,
-				inputValue: 'regular message',
-				activeBatchRunState: runningBatchState,
-			});
-			const { result } = renderHook(() => useInputProcessing(deps));
-
-			await act(async () => {
-				await result.current.processInput();
-			});
-
-			// Should add to queue because both Auto Run is active AND session is busy
-			expect(mockSetSessions).toHaveBeenCalled();
-			const setSessionsCall = mockSetSessions.mock.calls[0][0];
-			const updatedSessions = setSessionsCall([session]);
-			expect(updatedSessions[0].executionQueue.length).toBe(1);
+		afterEach(() => {
+			useAutoRunSteeringStore.setState({ notes: {}, delivered: {} });
 		});
 
-		it('queues write commands when Auto Run is active even if session is idle', async () => {
-			const runningBatchState: BatchRunState = {
-				...defaultBatchState,
-				isRunning: true,
-			};
+		// Regression: a write-mode message typed during a run used to be swallowed
+		// and re-routed into an Auto Run steering note, so a message addressed to
+		// the agent silently meant something else. Steering is the Thought Stream's
+		// Steer button now; the composer only ever talks to the agent.
+		it('queues a write-mode message rather than parking it as a steering note', async () => {
 			mockGetBatchState.mockReturnValue(runningBatchState);
 
-			// When Auto Run is active, write-mode messages should ALWAYS be queued
-			// to prevent file conflicts, even if the session is idle.
-			// The queue will be processed when Auto Run completes via onProcessQueueAfterCompletion.
+			// Session state is irrelevant here: an Auto Run spawns its own isolated
+			// process and never marks the session busy, so the queue decision keys
+			// off the run, not the session.
 			const session = createMockSession({ state: 'idle' });
 			const deps = createDeps({
 				activeSession: session,
-				inputValue: 'regular message',
+				inputValue: 'change course',
 				activeBatchRunState: runningBatchState,
 			});
 			const { result } = renderHook(() => useInputProcessing(deps));
@@ -1510,13 +1492,10 @@ describe('useInputProcessing', () => {
 				await result.current.processInput();
 			});
 
-			// Should add to queue, NOT process immediately
+			expect(useAutoRunSteeringStore.getState().notes[session.id]).toBeUndefined();
 			expect(mockSetSessions).toHaveBeenCalled();
-			const setSessionsCall = mockSetSessions.mock.calls[0][0];
-			const updatedSessions = setSessionsCall([session]);
-			expect(updatedSessions[0].state).toBe('idle'); // Session stays idle
-			expect(updatedSessions[0].executionQueue.length).toBe(1); // Message is queued
-			expect(updatedSessions[0].executionQueue[0].text).toBe('regular message');
+			const updatedSessions = mockSetSessions.mock.calls[0][0]([session]);
+			expect(updatedSessions[0].executionQueue[0].text).toBe('change course');
 		});
 	});
 
@@ -1594,7 +1573,10 @@ describe('useInputProcessing', () => {
 			const { result } = renderHook(() => useInputProcessing(deps));
 
 			await act(async () => {
-				await result.current.processInput(undefined, undefined, { forceParallel: true });
+				// Two args, not three: the options bag is the SECOND parameter. Passing
+				// it third silently dropped forceParallel, so this case used to assert
+				// the retry hold against an ordinary send.
+				await result.current.processInput(undefined, { forceParallel: true });
 			});
 
 			expect(window.maestro.process.spawn).not.toHaveBeenCalled();

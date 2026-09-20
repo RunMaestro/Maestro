@@ -26,8 +26,9 @@
  * - extractQuickTabName
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { useUIStore } from '../../../renderer/stores/uiStore';
 import {
 	getActiveTab,
 	createTab,
@@ -187,6 +188,22 @@ describe('tabHelpers', () => {
 			expect(result.tab.createdAt).toBeDefined();
 			expect(result.session.aiTabs).toHaveLength(1);
 			expect(result.session.activeTabId).toBe('mock-generated-id');
+		});
+
+		it('adopts an id minted elsewhere instead of generating one', () => {
+			// A web-desktop client draws the tab the DESKTOP just minted for it. The
+			// id has to be the desktop's, or the inventory broadcast that follows
+			// matches nothing and adds the same tab a second time.
+			const session = createMockSession({ aiTabs: [] });
+
+			const result = createTab(session, { id: 'desktop-minted-1' })!;
+
+			expect(result.tab.id).toBe('desktop-minted-1');
+			expect(result.session.activeTabId).toBe('desktop-minted-1');
+			expect(result.session.unifiedTabOrder).toContainEqual({
+				type: 'ai',
+				id: 'desktop-minted-1',
+			});
 		});
 
 		it('leaves any active tiled group so the new tab gets focus', () => {
@@ -705,6 +722,92 @@ describe('tabHelpers', () => {
 
 			expect(result!.session.aiTabs).toHaveLength(0);
 			expect(result!.session.activeTabId).toBe('');
+		});
+
+		describe('unread-filter neighbor selection', () => {
+			// Two tabs are on screen under the filter: the active one (visible because
+			// it is active - viewing it cleared its unread flag) and one still unread.
+			// A read tab sits to the LEFT of the active tab and is hidden by the
+			// filter, so the plain left-neighbor math would land on a tab the user
+			// cannot see.
+			function createFilteredSession(): Session {
+				return createMockSession({
+					aiTabs: [
+						createMockTab({ id: 'read-left' }),
+						createMockTab({ id: 'active-tab' }),
+						createMockTab({ id: 'unread-right', hasUnread: true }),
+					],
+					activeTabId: 'active-tab',
+					inputMode: 'ai',
+					unifiedTabOrder: [
+						{ type: 'ai', id: 'read-left' },
+						{ type: 'ai', id: 'active-tab' },
+						{ type: 'ai', id: 'unread-right' },
+					],
+				});
+			}
+
+			afterEach(() => {
+				useUIStore.setState({ showUnreadOnly: false });
+			});
+
+			it('lands on the other visible unread tab, not the hidden read tab', () => {
+				const result = closeTab(createFilteredSession(), 'active-tab', true);
+
+				expect(result!.session.activeTabId).toBe('unread-right');
+			});
+
+			it('reads the live filter state when no override is passed', () => {
+				useUIStore.setState({ showUnreadOnly: true });
+
+				const result = closeTab(createFilteredSession(), 'active-tab');
+
+				expect(result!.session.activeTabId).toBe('unread-right');
+			});
+
+			it('falls back to the plain left neighbor when the filter is off', () => {
+				const result = closeTab(createFilteredSession(), 'active-tab');
+
+				expect(result!.session.activeTabId).toBe('read-left');
+			});
+
+			it('falls back to the plain left neighbor when nothing visible survives', () => {
+				const session = createMockSession({
+					aiTabs: [createMockTab({ id: 'read-left' }), createMockTab({ id: 'active-tab' })],
+					activeTabId: 'active-tab',
+					inputMode: 'ai',
+					unifiedTabOrder: [
+						{ type: 'ai', id: 'read-left' },
+						{ type: 'ai', id: 'active-tab' },
+					],
+				});
+
+				const result = closeTab(session, 'active-tab', true);
+
+				expect(result!.session.activeTabId).toBe('read-left');
+			});
+
+			it('lands on a visible terminal tab and switches the view to it', () => {
+				// The terminal tab survives the filter because it is the active terminal
+				// tab, so it is a legitimate neighbor even though it has no unread state.
+				const session = createMockSession({
+					aiTabs: [createMockTab({ id: 'read-left' }), createMockTab({ id: 'active-tab' })],
+					activeTabId: 'active-tab',
+					inputMode: 'ai',
+					terminalTabs: [{ id: 'term-1' }] as never,
+					activeTerminalTabId: 'term-1',
+					unifiedTabOrder: [
+						{ type: 'ai', id: 'read-left' },
+						{ type: 'terminal', id: 'term-1' },
+						{ type: 'ai', id: 'active-tab' },
+					],
+				});
+
+				const result = closeTab(session, 'active-tab', true);
+
+				expect(result!.session.activeTerminalTabId).toBe('term-1');
+				expect(result!.session.inputMode).toBe('terminal');
+			});
 		});
 
 		it('clears activeTabId when the closed sole AI tab was not the active tab', () => {

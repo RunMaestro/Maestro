@@ -543,6 +543,23 @@ handler for a `file://` link clicked in markdown. The file-link plugins emit
 `shell.openPath` quietly routed media around the player and into the OS. It
 returns whether it took the href, so callers `if (openFileUrl(...)) return;`.
 
+It percent-decodes the path on the way through, and that half is not optional. A
+`file://` href is a URL: an agent writes `file:///a/Voice%20Cloning/x.wav` by
+hand, and mdast-util-to-hast runs every link destination through `normalizeUri`
+besides. The literal `%20` reaches `fs.readFile` as an ENOENT, and
+`handleMainPanelFileClick` reports a null read by returning - so the click dies
+one step before `handleOpenFileTab` can divert media to the player, and every
+file in a folder with a space in its name is a link that does nothing. The decode
+goes through `safeDecodeURIComponent`, so a genuine `100% done.md` survives
+instead of throwing. Same rule and reason as `resolveLocalImagePath` in
+`Markdown/components/LocalImage.tsx`.
+
+An absolute path outside the project root gets a `file://` URL too, not just the
+`~/` spelling: `remarkFileLinks` (plain text, inline code, and link hrefs) and
+the Fast-tier `markdownItAdapter` all emit one when `toRelativePath` returns
+null. Without it the same file was a working link written `~/x.wav` and dead text
+written `/Users/me/x.wav`, which is the form agents actually produce.
+
 **Media never becomes a file preview tab.** `handleOpenFileTab()` diverts it to
 `useMediaPlaybackStore.openMedia()` before a tab can be created, and the only
 surface it appears on is the floating player. Do not add an in-panel placement.

@@ -379,6 +379,12 @@ describe('CueStats', () => {
 			});
 
 			const summary = screen.getByTestId('cue-stats-summary-cards');
+			// `auto-fit` over a floor, not a fixed column count: the fixed count
+			// had no responsive rung, so in a 340px column each card got ~110px
+			// and values broke one character per line ("61" / ".9" / "K").
+			expect(summary.style.gridTemplateColumns).toBe(
+				'repeat(auto-fit, minmax(min(200px, 100%), 1fr))'
+			);
 			// Three of the four cards (Occurrences, Success Rate, Total Tokens) feed
 			// the shared MetricCard a sparkline; Total Duration intentionally has
 			// none because the per-bucket totals don't track duration.

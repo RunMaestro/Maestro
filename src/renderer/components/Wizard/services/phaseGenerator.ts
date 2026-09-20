@@ -54,6 +54,11 @@ export interface GenerationConfig {
 	customArgs?: string;
 	customEnvVars?: Record<string, string>;
 	agentConfigValues?: Record<string, unknown>;
+	/**
+	 * Model to write the playbook with, overriding the agent's configured model
+	 * for this run. Undefined leaves the agent's configuration in charge.
+	 */
+	model?: string;
 	/** SSH remote configuration (for remote execution) */
 	sshRemoteConfig?: {
 		enabled: boolean;
@@ -1165,10 +1170,17 @@ class PhaseGenerator {
 					sessionCustomPath: config.customPath,
 					sessionCustomArgs: config.customArgs,
 					sessionCustomEnvVars: config.customEnvVars,
+					// Planning model for this run. `config.model` is the wizard's explicit
+					// planner-model pick and outranks the agent's own configured model,
+					// which is what `agentConfigValues.model` carries; undefined on both
+					// leaves the agent's configuration in charge (see
+					// applyAgentConfigOverrides). Both sources land on this ONE key -
+					// emitting it twice would silently let whichever came last win.
 					sessionCustomModel:
-						typeof config.agentConfigValues?.model === 'string'
+						config.model ??
+						(typeof config.agentConfigValues?.model === 'string'
 							? config.agentConfigValues.model
-							: undefined,
+							: undefined),
 					sessionCustomEffort: readEffortFromConfig(config.agentConfigValues),
 					sessionCustomContextWindow:
 						typeof config.agentConfigValues?.contextWindow === 'number'

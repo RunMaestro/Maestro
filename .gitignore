@@ -26,6 +26,9 @@ node_modules
 dist/
 release/
 *.log
+# Showcase Mode's seeded group-chat transcript is source data, not a log file.
+# Without this the blanket *.log above swallows it and the demo chat ships empty.
+!scripts/showcase/seed/data/**/*.log
 tmp/
 scratch/
 dogfood-output/

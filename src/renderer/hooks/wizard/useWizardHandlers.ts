@@ -1368,7 +1368,13 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 
 			await clearResumeState();
 			await completeWizard(newId);
-			if (autoRunMode !== 'none') {
+			// Also gated on having documents: the wizard can now finish with none
+			// (the directory step offers "skip the playbook"), and landing someone
+			// on an Auto Run panel that reads "No Documents Found" is worse than
+			// leaving the Right Bar where it was. Do NOT reach for `autoRunMode`
+			// alone here - a caller that sets it to 'none' immediately before
+			// launching is writing state this closure has already captured.
+			if (autoRunMode !== 'none' && generatedDocuments.length > 0) {
 				setActiveRightTab('autorun');
 			}
 

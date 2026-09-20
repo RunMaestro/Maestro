@@ -435,6 +435,37 @@ export function getAgentCommand(toolType: ToolType): string {
 	return def?.binaryName || toolType;
 }
 
+/**
+ * Resolve the command a LOCAL spawn should exec, warming the detection cache
+ * when it is cold.
+ *
+ * `getAgentCommand()` answers from that cache and falls back to the bare
+ * `binaryName` when nothing has populated it - which is every spawn that did
+ * not run `detectAgent()` first, i.e. every playbook (`batch-processor.ts`),
+ * every goal run (`goal-runner.ts`), and every `maestro-cli send`. A bare name
+ * costs two things. The user's configured custom path is silently ignored,
+ * because `detectAgent()` is the ONLY reader of `getAgentCustomPath()` - so a
+ * CLI run executed whatever `claude` PATH happened to offer while the desktop
+ * ran the binary the user pointed at. And on Windows `spawn('claude')` finds
+ * nothing at all: CreateProcess does not apply PATHEXT the way a shell does, so
+ * an agent installed as an npm `.cmd` shim never resolves (#1608).
+ *
+ * Resolve here rather than at each call site: a resolution the spawner performs
+ * itself cannot be forgotten by the next caller that lands.
+ *
+ * Detection that comes up empty falls back to the bare name, which is exactly
+ * today's behavior - a machine where `which`/`where` fails must still get its
+ * spawn attempted (and its real error) rather than being refused here.
+ *
+ * SSH spawns deliberately do NOT come through here: the remote host resolves
+ * the command through its own login-shell PATH, and a path resolved on THIS
+ * machine names nothing over there.
+ */
+export async function resolveLocalAgentCommand(toolType: ToolType): Promise<string> {
+	const detection = await detectAgent(toolType);
+	return detection.available && detection.path ? detection.path : getAgentCommand(toolType);
+}
+
 // Backward-compatible wrappers
 export const getClaudeCommand = () => getAgentCommand('claude-code');
 export const getCodexCommand = () => getAgentCommand('codex');
@@ -521,7 +552,11 @@ async function spawnClaudeAgent(
 	);
 	env[QUERY_SOURCE_ENV_VAR] = overrides.querySource ?? DEFAULT_QUERY_SOURCE;
 
-	const claudeCommand = getAgentCommand('claude-code');
+	// A local spawn needs a REAL path (see resolveLocalAgentCommand). An SSH run
+	// keeps the bare name so the remote's own PATH resolves it.
+	const claudeCommand = sshRemoteConfig?.enabled
+		? getAgentCommand('claude-code')
+		: await resolveLocalAgentCommand('claude-code');
 	const sshEnabled = !!sshRemoteConfig?.enabled;
 	const agentCustomPath = getAgentCustomPath('claude-code');
 
@@ -982,7 +1017,11 @@ async function spawnJsonLineAgent(
 				? [...baseArgs, effectivePrompt]
 				: [...baseArgs, '--', effectivePrompt];
 
-	const agentCommand = getAgentCommand(toolType);
+	// A local spawn needs a REAL path (see resolveLocalAgentCommand). An SSH run
+	// keeps the bare name so the remote's own PATH resolves it.
+	const agentCommand = sshRemoteConfig?.enabled
+		? getAgentCommand(toolType)
+		: await resolveLocalAgentCommand(toolType);
 
 	// See the note in spawnClaudeAgent: CLI runs are invisible to the desktop
 	// WakaTime listener, so they beat from their own output stream.

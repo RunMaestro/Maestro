@@ -20,7 +20,8 @@ import { COLORBLIND_LINE_COLORS } from '../../constants/colorblindPalettes';
 import { formatDurationHuman as formatDuration } from '../../../shared/formatters';
 import { humanizeDuration, DURATION_LADDER_HOURS } from '../../../shared/duration';
 import { ChartTooltip } from './ChartTooltip';
-import { computeAxisLabelIndices } from './chartUtils';
+import { computeAxisLabelIndices, PHONE_AXIS_LABELS } from './chartUtils';
+import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 
 // Data point for the chart
 interface DataPoint {
@@ -153,9 +154,10 @@ export const DurationTrendsChart = memo(function DurationTrendsChart({
 		}));
 	}, [data.byDay, timeRange, showSmoothed]);
 
+	const phone = usePhoneLayout();
 	const xLabelIndices = useMemo(
-		() => computeAxisLabelIndices(chartData.length),
-		[chartData.length]
+		() => computeAxisLabelIndices(chartData.length, phone ? PHONE_AXIS_LABELS : undefined),
+		[chartData.length, phone]
 	);
 
 	// Calculate scales

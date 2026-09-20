@@ -395,6 +395,57 @@ describe('AutoRun', () => {
 		});
 	});
 
+	// A run parked on an agent error or a MAESTRO:HITL gate is waiting on the
+	// user, not driving the document. Holding the lock there makes the gate
+	// unanswerable: the user cannot tick the box the gate is asking about.
+	describe('Paused run releases the document', () => {
+		const pausedProps = (overrides: Partial<React.ComponentProps<typeof AutoRun>> = {}) => {
+			const props = createDefaultProps({ batchRunState: createBatchRunState(), ...overrides });
+			// errorPaused reaches the component through the store, not the prop chain.
+			seedBatchStore(props.sessionId, createBatchRunState({ errorPaused: true }));
+			return props;
+		};
+
+		afterEach(() => {
+			useBatchStore.setState({ batchRunStates: {} });
+		});
+
+		it('leaves the editor writable while the run is paused', () => {
+			const props = pausedProps({ mode: 'edit' });
+			renderWithProvider(<AutoRun {...props} />);
+
+			expect(screen.getByRole('textbox')).not.toHaveAttribute('readonly');
+			expect(screen.getByRole('textbox').closest('.border')).toHaveStyle({
+				borderColor: createMockTheme().colors.border,
+			});
+		});
+
+		it('re-enables the Edit toggle while the run is paused', () => {
+			const props = pausedProps({ mode: 'preview' });
+			renderWithProvider(<AutoRun {...props} />);
+
+			expect(screen.getByTitle('Switch to edit')).toBeEnabled();
+			expect(screen.queryByTitle('Editing disabled while Auto Run active')).toBeNull();
+		});
+
+		it('keeps offering Stop while the run is paused', () => {
+			const props = pausedProps();
+			renderWithProvider(<AutoRun {...props} />);
+
+			expect(screen.getByText('Stop')).toBeInTheDocument();
+			expect(screen.queryByText('Run')).toBeNull();
+		});
+
+		it('hands preview checkboxes back to the user while the run is paused', () => {
+			createMarkdownComponentsCalls.length = 0;
+			const props = pausedProps({ mode: 'preview' });
+			renderWithProvider(<AutoRun {...props} />);
+
+			const call = createMarkdownComponentsCalls.at(-1);
+			expect(call?.onTaskToggle).toBeTypeOf('function');
+		});
+	});
+
 	// Reading a rendered document and editing its source are different jobs at
 	// different comfortable sizes, so the two modes keep separate scales.
 	describe('Font Zoom', () => {

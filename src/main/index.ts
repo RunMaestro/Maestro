@@ -191,6 +191,7 @@ import {
 } from './agents/claude-interactive-replay';
 import { sampleUsage as sampleClaudeUsage } from './agents/claude-usage-sampler';
 import { setSnapshot as setClaudeUsageSnapshot } from './stores/claudeUsageStore';
+import { rememberQuotaAccounts } from './stores/quotaAccountsStore';
 import { getMaestroPBinPath, runStartupUsageSampling } from './agents/claude-usage-startup';
 import { UsageRefreshScheduler } from './agents/usage-refresh-scheduler';
 import type { ProcessConfig as ProcessSpawnConfig } from './process-manager/types';
@@ -922,6 +923,9 @@ app
 				});
 				if (snapshot) {
 					setClaudeUsageSnapshot(snapshot);
+					// An account that just hit its limit is the one the user moves
+					// every agent off; remember it so the dashboard keeps its row.
+					rememberQuotaAccounts('claude-code', [snapshot.configDirKey]);
 				}
 			},
 			updateSessionInteractive: (sessionId, update) => {

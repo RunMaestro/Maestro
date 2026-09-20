@@ -127,8 +127,11 @@ export const HUMAN_ONLY_TASK_PATTERNS: { id: string; label: string; pattern: Reg
 	{
 		id: 'visual-check',
 		label: 'visual verification',
+		// "visually" alone is not a human step: "distinguish A from B visually"
+		// or "visually separate the two states" is ordinary UI work an agent
+		// writes code for. Only pair it with a checking verb, in either order.
 		pattern:
-			/\bvisually\b|\bvisual\s+(?:verification|inspection|check|review|confirmation|comparison|QA)\b|\beyeball\b/i,
+			/\bvisual(?:ly)?\s+(?:verif\w+|check\w*|confirm\w*|inspect\w*|review\w*|compar\w+|validat\w+|QA)\b|\b(?:verify|verified|check|checked|confirm|confirmed|inspect|review|compare|validate)\b[^.\n]{0,40}\bvisually\b|\beyeball\b/i,
 	},
 	{
 		id: 'user-input',

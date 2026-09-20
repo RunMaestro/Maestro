@@ -2,11 +2,14 @@ import React from 'react';
 import { act, renderHook } from '@testing-library/react';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import {
+	useAutoAgentName,
 	useDirectoryActions,
 	useDirectoryKeyboard,
 	useDirectorySshRemoteHost,
 	useDirectoryValidation,
+	useSkipPlaybookLaunch,
 } from '../../../../../../renderer/components/Wizard/screens/DirectorySelectionScreen/hooks';
+import { useSessionStore } from '../../../../../../renderer/stores/sessionStore';
 
 const sentryMocks = vi.hoisted(() => ({
 	captureException: vi.fn(),
@@ -323,5 +326,114 @@ describe('DirectorySelectionScreen hooks', () => {
 		expect(previousStep).toHaveBeenCalled();
 
 		document.body.removeChild(browseButton);
+	});
+
+	describe('useAutoAgentName', () => {
+		beforeEach(() => {
+			useSessionStore.setState({ sessions: [] } as any);
+		});
+
+		function renderAutoName(overrides: Parameters<typeof useAutoAgentName>[0]) {
+			return renderHook(
+				(props: Parameters<typeof useAutoAgentName>[0]) => useAutoAgentName(props),
+				{
+					initialProps: overrides,
+				}
+			);
+		}
+
+		it('fills a blank name from the folder', () => {
+			const setAgentName = vi.fn();
+			renderAutoName({
+				agentName: '',
+				directoryPath: '/Projects/Maestro',
+				directoryError: null,
+				setAgentName,
+			});
+
+			expect(setAgentName).toHaveBeenCalledWith('Maestro');
+		});
+
+		it('leaves a name the user typed alone', () => {
+			const setAgentName = vi.fn();
+			renderAutoName({
+				agentName: 'Scout',
+				directoryPath: '/Projects/Maestro',
+				directoryError: null,
+				setAgentName,
+			});
+
+			expect(setAgentName).not.toHaveBeenCalled();
+		});
+
+		it('does not suggest a name already taken by another agent', () => {
+			useSessionStore.setState({ sessions: [{ name: 'Maestro' }] } as any);
+			const setAgentName = vi.fn();
+			renderAutoName({
+				agentName: '',
+				directoryPath: '/Projects/Maestro',
+				directoryError: null,
+				setAgentName,
+			});
+
+			expect(setAgentName).toHaveBeenCalledWith('Maestro 2');
+		});
+
+		it('waits for a valid directory', () => {
+			const setAgentName = vi.fn();
+			renderAutoName({
+				agentName: '',
+				directoryPath: '/Projects/Maestro',
+				directoryError: 'Directory not found.',
+				setAgentName,
+			});
+
+			expect(setAgentName).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('useSkipPlaybookLaunch', () => {
+		it('turns Auto Run off before launching so the Right Bar stays put', async () => {
+			const setAutoRunMode = vi.fn();
+			const onLaunchSession = vi.fn().mockResolvedValue(undefined);
+			const { result } = renderHook(() =>
+				useSkipPlaybookLaunch({
+					directoryPath: '/Projects/Maestro',
+					selectedAgent: 'claude-code',
+					setAutoRunMode,
+					onLaunchSession,
+				})
+			);
+
+			await act(async () => {
+				await result.current.handleSkipPlaybook();
+			});
+
+			expect(setAutoRunMode).toHaveBeenCalledWith('none');
+			expect(onLaunchSession).toHaveBeenCalledWith(false);
+			expect(result.current.skipError).toBeNull();
+		});
+
+		it('surfaces a launch failure instead of closing silently', async () => {
+			const onLaunchSession = vi
+				.fn()
+				.mockRejectedValue(new Error('An agent named X already exists'));
+			const { result } = renderHook(() =>
+				useSkipPlaybookLaunch({
+					directoryPath: '/Projects/Maestro',
+					selectedAgent: 'claude-code',
+					setAutoRunMode: vi.fn(),
+					onLaunchSession,
+				})
+			);
+
+			await act(async () => {
+				await result.current.handleSkipPlaybook();
+			});
+
+			expect(result.current.skipError).toBe('An agent named X already exists');
+			expect(result.current.isSkipping).toBe(false);
+			expect(sentryMocks.captureException).toHaveBeenCalled();
+		});
 	});
 });

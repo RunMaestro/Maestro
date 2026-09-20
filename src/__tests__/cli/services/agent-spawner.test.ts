@@ -33,15 +33,72 @@ const mockChild = Object.assign(new EventEmitter(), {
 	stderr: mockStderr,
 });
 
+/**
+ * How the harness answers a `which` / `where` PATH probe.
+ *
+ * Every LOCAL agent spawn now resolves its binary before exec'ing it (#1608),
+ * so a cold cache means one probe child in front of the agent child. Tests
+ * assert on the AGENT spawn, so the probe is answered here and never reaches
+ * `mockSpawn` - which keeps `mockSpawn.mock.calls[0]` the agent spawn for every
+ * existing assertion in this file.
+ *
+ * Set to `null` to fall through to `mockSpawn` instead: the detection tests
+ * drive the probe themselves and assert on what it resolved.
+ */
+type PathProbeResolver = ((binary: string) => string | undefined) | null;
+const DEFAULT_PATH_PROBE: PathProbeResolver = (binary) => `/usr/local/bin/${binary}`;
+let pathProbeResolver: PathProbeResolver = DEFAULT_PATH_PROBE;
+
+/** Commands `getWhichCommand()` can return, on either platform. */
+const PATH_PROBE_COMMANDS = new Set(['which', 'where']);
+
+/**
+ * A short-lived child that answers one PATH probe on the next tick. The probe's
+ * listeners are attached synchronously after `spawn()` returns, so the answer
+ * cannot be emitted inline.
+ */
+function makePathProbeChild(binary: string) {
+	const stdout = new EventEmitter();
+	const child = Object.assign(new EventEmitter(), {
+		stdin: { end: vi.fn(), write: vi.fn() },
+		stdout,
+		stderr: new EventEmitter(),
+	});
+	const resolved = pathProbeResolver?.(binary);
+	setTimeout(() => {
+		if (resolved) {
+			stdout.emit('data', Buffer.from(`${resolved}\n`));
+			child.emit('close', 0);
+		} else {
+			// Non-zero exit is how `which`/`where` reports "not on PATH".
+			child.emit('close', 1);
+		}
+	}, 0);
+	return child;
+}
+
+function routeSpawn(...args: unknown[]) {
+	const [command, spawnArgs] = args as [unknown, unknown];
+	if (
+		pathProbeResolver &&
+		typeof command === 'string' &&
+		PATH_PROBE_COMMANDS.has(command) &&
+		Array.isArray(spawnArgs)
+	) {
+		return makePathProbeChild(String(spawnArgs[0]));
+	}
+	return mockSpawn(...args);
+}
+
 // Mock child_process before imports
 vi.mock('child_process', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('child_process')>();
 	return {
 		...actual,
-		spawn: (...args: unknown[]) => mockSpawn(...args),
+		spawn: (...args: unknown[]) => routeSpawn(...args),
 		default: {
 			...actual,
-			spawn: (...args: unknown[]) => mockSpawn(...args),
+			spawn: (...args: unknown[]) => routeSpawn(...args),
 		},
 	};
 });
@@ -115,6 +172,28 @@ vi.mock('../../../main/utils/ssh-spawn-wrapper', () => ({
 	wrapSpawnWithSsh: (...args: unknown[]) => mockWrapSpawnWithSsh(...args),
 }));
 
+// A local spawn resolves its command through `detectAgent` (see
+// `resolveLocalAgentCommand`), and Cursor is the one agent whose detection
+// PROBES: `checkBinaryExists` reads PATH out of a login shell and
+// `validateAgentBinaryIdentity` runs the candidate with `--help`. Both go
+// through the mocked `child_process`, so without this the first spawn of a
+// Cursor run is the probe rather than the agent, and `spawnCall()` - which
+// reads `mock.calls[0]` - inspects the wrong one. Resolving to the bare binary
+// name keeps the spawned command identical to what these assertions were
+// written against. `checkCustomPath` stays REAL: the non-Cursor detection tests
+// drive it through the `fs` mocks.
+vi.mock('../../../main/agents/path-prober', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../../main/agents/path-prober')>();
+	return {
+		...actual,
+		checkBinaryExists: vi.fn(async (binaryName: string) => ({
+			exists: true,
+			path: binaryName,
+		})),
+		validateAgentBinaryIdentity: vi.fn(async () => true),
+	};
+});
+
 import {
 	readDocAndCountTasks,
 	readDocAndGetTasks,
@@ -140,6 +219,7 @@ describe('agent-spawner', () => {
 		mockReadAgentConfig.mockReturnValue({});
 		mockReadSshRemotes.mockReturnValue([]);
 		mockWrapSpawnWithSsh.mockReset();
+		pathProbeResolver = DEFAULT_PATH_PROBE;
 	});
 
 	afterEach(() => {
@@ -544,6 +624,9 @@ Some text with [x] in it that's not a checkbox
 		beforeEach(() => {
 			// Reset the cached path by reimporting
 			vi.resetModules();
+			// Detection IS the subject here, so the probe goes through mockSpawn
+			// and each test drives and asserts on it.
+			pathProbeResolver = null;
 		});
 
 		it('should detect Claude with custom path from settings', async () => {
@@ -729,6 +812,8 @@ Some text with [x] in it that's not a checkbox
 	describe('detectAgent', () => {
 		beforeEach(() => {
 			vi.resetModules();
+			// Detection IS the subject here - drive the probe through mockSpawn.
+			pathProbeResolver = null;
 		});
 
 		it('should detect agent with custom path from settings', async () => {
@@ -1876,6 +1961,9 @@ Some text with [x] in it that's not a checkbox
 				'continue cursor',
 				'cursor-resume-1'
 			);
+			// A local spawn awaits `resolveLocalAgentCommand` before it spawns, so
+			// the call is not on the mock until the microtask queue drains.
+			await new Promise((resolve) => setTimeout(resolve, 0));
 
 			const [, args] = mockSpawn.mock.calls[0] as [string, string[]];
 			const resumeIndex = args.indexOf('--resume');
@@ -1901,6 +1989,9 @@ Some text with [x] in it that's not a checkbox
 
 		it('should not duplicate Cursor partial output when the result event is absent', async () => {
 			const resultPromise = spawnAgent('cursor-cli', '/project', 'stream cursor');
+			// The stdout listeners are attached after `resolveLocalAgentCommand`
+			// resolves, so emitting in the same tick would fire into nothing.
+			await new Promise((resolve) => setTimeout(resolve, 0));
 
 			mockStdout.emit(
 				'data',
@@ -1923,6 +2014,9 @@ Some text with [x] in it that's not a checkbox
 
 		it('should fail cursor-cli when a structured is_error result is emitted', async () => {
 			const resultPromise = spawnAgent('cursor-cli', '/project', 'fail cursor');
+			// The stdout listeners are attached after `resolveLocalAgentCommand`
+			// resolves, so emitting in the same tick would fire into nothing.
+			await new Promise((resolve) => setTimeout(resolve, 0));
 
 			mockStdout.emit(
 				'data',
@@ -1943,6 +2037,9 @@ Some text with [x] in it that's not a checkbox
 
 		it('should fail cursor-cli on a non-zero exit even after partial assistant output', async () => {
 			const resultPromise = spawnAgent('cursor-cli', '/project', 'fail after partial');
+			// The stdout listeners are attached after `resolveLocalAgentCommand`
+			// resolves, so emitting in the same tick would fire into nothing.
+			await new Promise((resolve) => setTimeout(resolve, 0));
 
 			mockStdout.emit(
 				'data',
@@ -2141,6 +2238,12 @@ Some text with [x] in it that's not a checkbox
 	});
 
 	describe('platform-specific behavior', () => {
+		beforeEach(() => {
+			// These assert on the probe command itself (`where` vs `which`), so it
+			// has to reach mockSpawn.
+			pathProbeResolver = null;
+		});
+
 		it('should use where command on Windows for findClaudeInPath', async () => {
 			const originalPlatform = process.platform;
 			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
@@ -2689,6 +2792,107 @@ Some text with [x] in it that's not a checkbox
 				OPENCODE_SSH_READONLY_PROBE
 			);
 			expect(wrapConfig.customEnvVars!.OPENCODE_CONFIG_CONTENT).toContain('"permission"');
+		});
+	});
+
+	describe('spawnAgent: local binary resolution (#1608)', () => {
+		// A COLD detection cache is this bug's precondition - `goal-runner` and
+		// `batch-processor` reach `spawnAgent()` without any prior `detectAgent()`,
+		// so nothing has populated it. The suites above warm the shared module's
+		// cache, so every test here takes a fresh module instance instead.
+		async function freshSpawner() {
+			vi.resetModules();
+			return import('../../../cli/services/agent-spawner');
+		}
+
+		beforeEach(() => {
+			mockSpawn.mockReturnValue(mockChild);
+		});
+
+		it('execs the resolved npm .cmd shim on Windows rather than a bare binaryName', async () => {
+			// No Windows CI leg runs this path, so the platform is mocked. Node
+			// cannot exec a bare `claude` on Windows at all: CreateProcess does not
+			// apply PATHEXT, so the `.cmd` shim npm installs is never found.
+			const originalPlatform = process.platform;
+			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+			const shim = 'C:\\Users\\t\\AppData\\Roaming\\npm\\claude.cmd';
+			pathProbeResolver = () => shim;
+
+			try {
+				const { spawnAgent: freshSpawnAgent } = await freshSpawner();
+				const result = await driveSpawnToCompletion(
+					freshSpawnAgent('claude-code', 'C:\\project', 'hi'),
+					0,
+					CLAUDE_OK()
+				);
+
+				expect(result.success).toBe(true);
+				expect(spawnCall().command).toBe(shim);
+			} finally {
+				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+			}
+		});
+
+		it('resolves a JSON-line agent on a cold cache too', async () => {
+			pathProbeResolver = () => '/opt/homebrew/bin/codex';
+
+			const { spawnAgent: freshSpawnAgent } = await freshSpawner();
+			await driveSpawnToCompletion(freshSpawnAgent('codex', '/p', 'hi'), 0, CODEX_INIT());
+
+			expect(spawnCall().command).toBe('/opt/homebrew/bin/codex');
+		});
+
+		it("honors the user's configured custom path on a cold cache", async () => {
+			// `detectAgent()` is the only reader of `getAgentCustomPath()`, so before
+			// this a playbook run silently ignored the binary the user pointed at
+			// and ran whatever PATH offered.
+			mockGetAgentCustomPath.mockReturnValue('/custom/bin/codex');
+			vi.mocked(fs.promises.stat).mockResolvedValue({ isFile: () => true } as fs.Stats);
+			vi.mocked(fs.promises.access).mockResolvedValue(undefined);
+
+			const { spawnAgent: freshSpawnAgent } = await freshSpawner();
+			await driveSpawnToCompletion(freshSpawnAgent('codex', '/p', 'hi'), 0, CODEX_INIT());
+
+			expect(spawnCall().command).toBe('/custom/bin/codex');
+		});
+
+		it('falls back to the bare binaryName when nothing resolves', async () => {
+			// Unchanged behavior on a machine where the probe comes up empty: the
+			// spawn is still attempted so the user gets the real ENOENT, rather
+			// than being refused by the resolver.
+			pathProbeResolver = () => undefined;
+
+			const { spawnAgent: freshSpawnAgent } = await freshSpawner();
+			await driveSpawnToCompletion(freshSpawnAgent('claude-code', '/p', 'hi'), 0, CLAUDE_OK());
+
+			expect(spawnCall().command).toBe('claude');
+		});
+
+		it('leaves an SSH spawn on the bare binaryName', async () => {
+			// A path resolved on THIS machine names nothing on the remote host,
+			// which resolves the command through its own login-shell PATH.
+			pathProbeResolver = () => '/usr/local/bin/claude';
+			mockWrapSpawnWithSsh.mockResolvedValue({
+				command: 'ssh',
+				args: ['remotehost', 'claude --print -- hi'],
+				cwd: '/home/user',
+				customEnvVars: undefined,
+				prompt: undefined,
+				sshStdinScript: undefined,
+				sshRemoteUsed: { id: 'r1', name: 'r1', host: 'remotehost' },
+			});
+
+			const { spawnAgent: freshSpawnAgent } = await freshSpawner();
+			await driveSpawnToCompletion(
+				freshSpawnAgent('claude-code', '/p', 'hi', undefined, {
+					sshRemoteConfig: { enabled: true, remoteId: 'r1' },
+				}),
+				0,
+				CLAUDE_OK()
+			);
+
+			const wrapConfig = mockWrapSpawnWithSsh.mock.calls[0][0];
+			expect(wrapConfig.command).toBe('claude');
 		});
 	});
 

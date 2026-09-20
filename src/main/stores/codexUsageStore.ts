@@ -3,7 +3,10 @@
  *
  * Caches ChatGPT/Codex quota snapshots per canonical CODEX_HOME account. This
  * mirrors the Claude plan usage store shape without coupling Codex quota
- * data to Claude's `CLAUDE_CONFIG_DIR` semantics.
+ * data to Claude's `CLAUDE_CONFIG_DIR` semantics - including the two-clock
+ * rule: expired at 24h (no longer returned as live), kept on disk until
+ * `SNAPSHOT_RETENTION_MS` so the dashboard can still draw the account's last
+ * known bars instead of dropping the row.
  */
 
 import os from 'os';
@@ -11,6 +14,9 @@ import path from 'path';
 import Store from 'electron-store';
 
 import type { CodexResetCreditCounts } from '../../shared/codexResetCredits';
+import { partitionSnapshotsByAge, SNAPSHOT_RETENTION_MS } from './usageSnapshotRetention';
+
+export { SNAPSHOT_RETENTION_MS } from './usageSnapshotRetention';
 
 export interface CodexUsageWindow {
 	percent: number;
@@ -75,43 +81,38 @@ function getStore(): Store<CodexUsageStoreData> {
 	return _store;
 }
 
-function isExpired(snapshot: CodexUsageSnapshot, now: number): boolean {
-	const sampledAtMs = new Date(snapshot.sampledAt).getTime();
-	if (Number.isNaN(sampledAtMs)) return true;
-	return now - sampledAtMs > CODEX_USAGE_SNAPSHOT_TTL_MS;
+function readPartitioned(now: number) {
+	const store = getStore();
+	const current = store.get('snapshots', {});
+	const partitioned = partitionSnapshotsByAge(
+		current,
+		now,
+		CODEX_USAGE_SNAPSHOT_TTL_MS,
+		SNAPSHOT_RETENTION_MS
+	);
+	if (partitioned.prunedAny) {
+		store.set('snapshots', partitioned.retained);
+	}
+	return partitioned;
 }
 
 export function setCodexUsageSnapshot(snapshot: CodexUsageSnapshot): void {
 	const store = getStore();
-	const now = Date.now();
-	const current = store.get('snapshots', {});
-	const next: Record<string, CodexUsageSnapshot> = {};
-	for (const [key, entry] of Object.entries(current)) {
-		if (!isExpired(entry, now)) {
-			next[key] = entry;
-		}
-	}
-	next[snapshot.codexHomeKey] = snapshot;
-	store.set('snapshots', next);
+	const { retained } = readPartitioned(Date.now());
+	store.set('snapshots', { ...retained, [snapshot.codexHomeKey]: snapshot });
 }
 
+/** Decision-grade map: unexpired snapshots only. */
 export function getAllCodexUsageSnapshots(): Record<string, CodexUsageSnapshot> {
-	const store = getStore();
-	const now = Date.now();
-	const current = store.get('snapshots', {});
-	const live: Record<string, CodexUsageSnapshot> = {};
-	let prunedAny = false;
-	for (const [key, entry] of Object.entries(current)) {
-		if (isExpired(entry, now)) {
-			prunedAny = true;
-		} else {
-			live[key] = entry;
-		}
-	}
-	if (prunedAny) {
-		store.set('snapshots', live);
-	}
-	return live;
+	return readPartitioned(Date.now()).live;
+}
+
+/**
+ * Display-grade map: everything still within retention, expired included, so a
+ * Codex account with no agents on it keeps its dashboard row.
+ */
+export function getRetainedCodexUsageSnapshots(): Record<string, CodexUsageSnapshot> {
+	return readPartitioned(Date.now()).retained;
 }
 
 export function clearCodexUsageSnapshots(): void {

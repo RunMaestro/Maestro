@@ -33,12 +33,58 @@ src/renderer/components/Wizard/
 
 ### Wizard Flow
 
-1. **Agent Selection** → Select available AI (Claude Code, etc.) and project name
-2. **Directory Selection** → Choose project folder, validates Git repo status
-3. **Conversation** → AI asks clarifying questions, builds confidence score (0-100)
+1. **Agent Selection** → Select available AI (Claude Code, etc.). The name is OPTIONAL
+2. **Directory Selection** → Choose project folder, validates Git repo status. Also fills the agent name and offers "skip the playbook"
+3. **Conversation** → With files in the folder the AGENT opens; otherwise it asks a clarifying question. Builds a confidence score (0-100)
 4. **Phase Review** → View/edit generated Phase 1 document, choose to start tour
 
 When confidence reaches 80+ and agent signals "ready", user proceeds to Phase Review where Auto Run documents are generated and saved to `.maestro/playbooks/initiation/`. The `initiation/` subfolder keeps wizard-generated documents separate from user-created playbooks.
+
+#### Agent name vs project name (issue #1225)
+
+They used to be one string, so naming an agent put that name in the discovery
+prompt as `{{PROJECT_NAME}}` ("Hello Maestro" for a project called something
+else). `shared/projectIdentity.ts` splits them:
+
+- `projectNameFromPath()` - the PROJECT, always the folder. Every
+  `startConversation` / `generateDocuments` call uses this.
+- `defaultAgentNameForPath()` - the Left Bar label, deduplicated against
+  existing agent names because `validateNewSession` rejects a duplicate
+  outright. `useAutoAgentName` applies it on the directory step and only
+  overwrites a blank name or one it wrote itself.
+
+Step 1 therefore no longer requires a name to proceed (`canProceedToNext`).
+
+#### Who speaks first
+
+`useWizardOpeningKind` decides, and `sendOpeningMessage(kind)` sends it:
+
+| Folder state                   | Opening                                                      |
+| ------------------------------ | ------------------------------------------------------------ |
+| Existing playbooks, "continue" | `existing-docs` - agent summarizes the current plan          |
+| Has files                      | `survey` - agent reads the project and reports what it found |
+| Empty (or the read failed)     | None. The canned `getInitialQuestion()` bubble, as before    |
+
+"Has files" comes from `projectHasFiles()`, which ignores `.git`, `.DS_Store`
+and editor folders - `git init` alone is not a project.
+
+#### Which model plans
+
+The discovery turns and the document generation both spawn with
+`sessionCustomModel: state.plannerModel`. Undefined means the agent's own
+configured model applies (`applyAgentConfigOverrides`), which is the default.
+`PlannerModelBar` shows the resolved model on the conversation and generation
+screens and offers the provider's top tier where `resolveTierModel` knows one.
+The override is scoped to the wizard run and is deliberately NOT copied onto
+the created agent.
+
+#### Skipping the playbook
+
+`useSkipPlaybookLaunch` calls the same `onLaunchSession` the final step uses,
+with no generated documents. It must set `autoRunMode: 'none'` first or the
+launch swings the Right Bar to Auto Run for a playbook that does not exist. It
+writes no wizard-run stat: `recordCompletedWizardRun` files zero documents as
+`outcome: 'abandoned'`, which a deliberate skip is not.
 
 ### Triggering the Wizard
 
