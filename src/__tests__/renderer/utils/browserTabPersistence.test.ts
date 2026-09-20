@@ -9,6 +9,7 @@ import {
 	normalizeBrowserTabUrl,
 	sanitizeBrowserTabForPersistence,
 	resolveBrowserTabNavigationTarget,
+	toWebviewSrc,
 } from '../../../renderer/utils/browserTabPersistence';
 import type { BrowserTab } from '../../../renderer/types';
 
@@ -47,6 +48,46 @@ describe('browserTabPersistence', () => {
 				kind: 'url',
 				url: DEFAULT_BROWSER_TAB_URL,
 			});
+		});
+
+		// `looksLikeLocalAddress` matches the SHAPE of a loopback host, so it also
+		// accepts values the URL parser rejects. These used to escape as a thrown
+		// TypeError instead of the documented `{ kind: 'error' }` result.
+		it.each([
+			['localhost:99999', 'an out-of-range port'],
+			['127.999.999.999', 'an out-of-range IPv4 octet'],
+			['0.0.0.0:70000', 'an out-of-range port on a bare IPv4 host'],
+		])('reports %s (%s) as an error instead of throwing', (input) => {
+			expect(resolveBrowserTabNavigationTarget(input)).toEqual({
+				kind: 'error',
+				message: 'Enter a valid URL or search term',
+			});
+		});
+	});
+
+	describe('toWebviewSrc', () => {
+		it('passes through a parseable URL unchanged', () => {
+			expect(toWebviewSrc('https://example.com/docs')).toBe('https://example.com/docs');
+		});
+
+		it('keeps about:blank', () => {
+			expect(toWebviewSrc(DEFAULT_BROWSER_TAB_URL)).toBe(DEFAULT_BROWSER_TAB_URL);
+		});
+
+		// Electron parses the `src` attribute with `new URL()` while attaching the
+		// element, so any of these would throw mid-render (MAESTRO-QX/QY/QZ).
+		it.each(['http://', 'https://[bad', 'https://x y', 'http://localhost:99999'])(
+			'falls back to about:blank for the unparseable URL %s',
+			(input) => {
+				expect(toWebviewSrc(input)).toBe(DEFAULT_BROWSER_TAB_URL);
+			}
+		);
+
+		it('falls back to about:blank for a missing URL', () => {
+			expect(toWebviewSrc('')).toBe(DEFAULT_BROWSER_TAB_URL);
+			expect(toWebviewSrc('   ')).toBe(DEFAULT_BROWSER_TAB_URL);
+			expect(toWebviewSrc(null)).toBe(DEFAULT_BROWSER_TAB_URL);
+			expect(toWebviewSrc(undefined)).toBe(DEFAULT_BROWSER_TAB_URL);
 		});
 	});
 

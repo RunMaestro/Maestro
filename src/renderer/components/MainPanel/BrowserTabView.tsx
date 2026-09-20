@@ -23,6 +23,7 @@ import {
 	DEFAULT_BROWSER_TAB_URL,
 	getBrowserTabTitle,
 	resolveBrowserTabNavigationTarget,
+	toWebviewSrc,
 } from '../../utils/browserTabPersistence';
 
 type ElectronWebviewElement = HTMLElement & {
@@ -824,7 +825,10 @@ export const BrowserTabView = React.memo(
 						style={{ backgroundColor: theme.colors.bgMain }}
 						className="w-full h-full border-0"
 						partition={tab.partition}
-						src={tab.url || DEFAULT_BROWSER_TAB_URL}
+						// Must go through toWebviewSrc: Electron parses this attribute with
+						// `new URL()` while attaching, and an unparseable value throws
+						// mid-commit and crashes the renderer (MAESTRO-QX/QY/QZ).
+						src={toWebviewSrc(tab.url)}
 					/>
 					{findOpen ? (
 						<div
