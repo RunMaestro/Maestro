@@ -127,6 +127,26 @@ Two rules follow, and both are load-bearing:
   dequeue and spoken notification. A browser's own queued items still send,
   through `useQueueProcessing`'s idle drain, which is why the exit reducer holds
   the queue on a non-owning client instead of dequeuing without dispatching.
+- **A tab the browser creates is minted by the DESKTOP, and the browser draws it
+  from the answer.** `createNewAITab` (`src/renderer/hooks/tabs/internal/useAITabHandlers.ts`)
+  calls `window.maestro.web.requestNewTab` rather than `createTab`, because the
+  desktop owns the tab inventory: an id invented in the browser is drawn now and
+  then added a SECOND time under the desktop's id by the next inventory
+  broadcast. But the broadcast is not the client's cue either - it rides a 500ms
+  poll, so a client that only reacted to it sat there doing nothing for up to
+  half a second after the tap. The ack already carries the minted id, so the
+  browser adopts it through `createTab({ id })` (the only caller allowed to pass
+  an id) and the inventory sync that follows matches on it and keeps the tab this
+  client already has. The broadcast can also win the race, so the adopt path
+  checks for the id first and then only selects it - an inventory snapshot never
+  moves a browser client's tab by itself.
+- **Focus the composer INSIDE the tap, never when the round trip answers.** iOS
+  raises the on-screen keyboard only for a `focus()` that runs in the user
+  gesture's own call stack. Deferred into a `.then()`, the caret moves and the
+  keyboard stays down, so the phone user has to tap the composer anyway - which
+  is the whole reason for focusing it. `useTabHandlers(inputRef)` threads the
+  composer ref down for exactly this, and the textarea is not keyed on the tab,
+  so it keeps focus through the switch that follows.
 
 ### Server-Injected Config
 

@@ -190,6 +190,22 @@ describe('tabHelpers', () => {
 			expect(result.session.activeTabId).toBe('mock-generated-id');
 		});
 
+		it('adopts an id minted elsewhere instead of generating one', () => {
+			// A web-desktop client draws the tab the DESKTOP just minted for it. The
+			// id has to be the desktop's, or the inventory broadcast that follows
+			// matches nothing and adds the same tab a second time.
+			const session = createMockSession({ aiTabs: [] });
+
+			const result = createTab(session, { id: 'desktop-minted-1' })!;
+
+			expect(result.tab.id).toBe('desktop-minted-1');
+			expect(result.session.activeTabId).toBe('desktop-minted-1');
+			expect(result.session.unifiedTabOrder).toContainEqual({
+				type: 'ai',
+				id: 'desktop-minted-1',
+			});
+		});
+
 		it('leaves any active tiled group so the new tab gets focus', () => {
 			// Regression: a new AI tab created while a group is active must clear
 			// activeGroupId, otherwise the group keeps taking over the panel and the new

@@ -1074,7 +1074,7 @@ function MaestroConsoleInner() {
 		handleScrollPositionChange,
 		handleAtBottomChange,
 		handleDeleteLog,
-	} = useTabHandlers();
+	} = useTabHandlers(inputRef);
 
 	// Thin App-side slice for modals / attach-image gate. Primitives only so log
 	// flushes (new AITab objects) do not wake MaestroConsoleInner.
