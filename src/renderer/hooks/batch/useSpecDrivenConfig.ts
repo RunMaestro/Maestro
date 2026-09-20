@@ -8,12 +8,13 @@
  */
 
 import { useState, useRef, useMemo, useEffect } from 'react';
-import type { BatchDocumentEntry } from '../../types';
+import type { BatchDocumentEntry, BatchRunConfig } from '../../types';
 import { useBatchStore } from '../../stores/batchStore';
 import { generateId } from '../../utils/ids';
 
 export interface UseSpecDrivenConfigDeps {
 	presetDocuments?: string[];
+	initialConfig?: Partial<Pick<BatchRunConfig, 'documents' | 'loopEnabled' | 'maxLoops'>>;
 	allDocuments: string[];
 	getDocumentTaskCount: (filename: string) => Promise<number>;
 }
@@ -40,12 +41,16 @@ export interface UseSpecDrivenConfigReturn {
 
 export function useSpecDrivenConfig({
 	presetDocuments,
+	initialConfig,
 	allDocuments,
 	getDocumentTaskCount,
 }: UseSpecDrivenConfigDeps): UseSpecDrivenConfigReturn {
 	// Document list state. Opens empty unless the inline wizard's "Start Auto
 	// Run" pre-seeded it with freshly generated docs via `presetDocuments`.
 	const [documents, setDocuments] = useState<BatchDocumentEntry[]>(() => {
+		if (initialConfig?.documents?.length) {
+			return initialConfig.documents;
+		}
 		if (presetDocuments && presetDocuments.length > 0) {
 			return presetDocuments.map((filename) => ({
 				id: generateId(),
@@ -60,7 +65,8 @@ export function useSpecDrivenConfig({
 	// Track initial document state for dirty checking. Mirrors the run-list
 	// initialization above so dirty detection is correct for preset opens too.
 	const initialDocumentsRef = useRef<string[]>(
-		presetDocuments && presetDocuments.length > 0 ? [...presetDocuments] : []
+		initialConfig?.documents?.map((doc) => doc.filename) ??
+			(presetDocuments && presetDocuments.length > 0 ? [...presetDocuments] : [])
 	);
 
 	// Task counts per document (keyed by filename, value = unchecked task count).
@@ -85,12 +91,12 @@ export function useSpecDrivenConfig({
 	);
 
 	// Loop mode state
-	const [loopEnabled, setLoopEnabled] = useState(false);
-	const [maxLoops, setMaxLoops] = useState<number | null>(null); // null = infinite
+	const [loopEnabled, setLoopEnabled] = useState(initialConfig?.loopEnabled ?? false);
+	const [maxLoops, setMaxLoops] = useState<number | null>(initialConfig?.maxLoops ?? null); // null = infinite
 
 	// Track initial loop settings for dirty checking
-	const initialLoopEnabledRef = useRef(false);
-	const initialMaxLoopsRef = useRef<number | null>(null);
+	const initialLoopEnabledRef = useRef(initialConfig?.loopEnabled ?? false);
+	const initialMaxLoopsRef = useRef<number | null>(initialConfig?.maxLoops ?? null);
 
 	// Use ref for getDocumentTaskCount to avoid dependency issues
 	const getDocumentTaskCountRef = useRef(getDocumentTaskCount);

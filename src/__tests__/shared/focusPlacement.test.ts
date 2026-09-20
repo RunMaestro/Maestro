@@ -33,6 +33,7 @@ const FOCUSING_TODAY: BackgroundCapableVerb[] = [
 	'create-worktree',
 	'switch-mode',
 	'refresh-auto-run',
+	'auto-run',
 	// The two snooze verbs that announce. `--background` suppresses the notice;
 	// absent, they flash/toast exactly as the click paths do.
 	'snooze',

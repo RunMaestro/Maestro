@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { ipcMain } from 'electron';
 import type { WebServer } from '../WebServer';
+import type { ConfigureAutoRunConfig } from '../types';
 import type { WebServerFactoryDependencies } from '../web-server-factory';
 import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
@@ -27,7 +28,7 @@ export function registerAutoRunConfigCallbacks(
 		return true;
 	});
 
-	server.setConfigureAutoRunCallback(async (sessionId: string, config: any) => {
+	server.setConfigureAutoRunCallback(async (sessionId: string, config: ConfigureAutoRunConfig) => {
 		const mainWindow = getMainWindow();
 		if (!mainWindow) {
 			logger.warn('mainWindow is null for configureAutoRun', 'WebServer');

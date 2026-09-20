@@ -38,6 +38,7 @@ import type {
 	ConsultAgentResult,
 	RenameTabResult,
 	SnoozeCommandCallback,
+	ConfigureAutoRunCallback,
 } from '../../types';
 import type { AgentDelegationNotice } from '../../../../shared/agentDelegation';
 import type { GroupAppearance, GroupUpdateRequest } from '../../../../shared/groupAppearance';
@@ -195,34 +196,7 @@ export interface MessageHandlerCallbacks {
 		itemId: string
 	) => Promise<{ success: boolean; removed: boolean; error?: string }>;
 	refreshAutoRunDocs: (sessionId: string, background?: boolean) => Promise<boolean>;
-	configureAutoRun: (
-		sessionId: string,
-		config: {
-			documents: Array<{ filename: string; resetOnCompletion?: boolean }>;
-			prompt?: string;
-			loopEnabled?: boolean;
-			maxLoops?: number;
-			saveAsPlaybook?: string;
-			launch?: boolean;
-			/**
-			 * Per-run model/effort override (CLI `--model` / `--effort`). Wins over the
-			 * session's configured model for this run's spawns only; never written back
-			 * to the session. Absent means "use the agent default".
-			 */
-			model?: string;
-			effort?: string;
-			/** Skip the documents' MAESTRO:MODEL markers for this run (CLI `--ignore-model-hints`). */
-			ignoreModelHints?: boolean;
-			worktree?: {
-				enabled: boolean;
-				path: string;
-				branchName: string;
-				baseBranch: string;
-				createPROnCompletion: boolean;
-				prTargetBranch: string;
-			};
-		}
-	) => Promise<{ success: boolean; playbookId?: string; error?: string }>;
+	configureAutoRun: ConfigureAutoRunCallback;
 	/**
 	 * Launch a desktop-owned Goal-Driven Auto Run (`goal-run --visible`). Goal
 	 * mode is document-less, so this carries a free-text goal rather than a

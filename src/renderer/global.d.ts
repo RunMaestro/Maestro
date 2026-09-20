@@ -761,14 +761,7 @@ interface MaestroAPI {
 		onRemoteConfigureAutoRun: (
 			callback: (
 				sessionId: string,
-				config: {
-					documents: Array<{ filename: string; resetOnCompletion?: boolean }>;
-					prompt?: string;
-					loopEnabled?: boolean;
-					maxLoops?: number;
-					saveAsPlaybook?: string;
-					launch?: boolean;
-				},
+				config: import('../main/web-server/types').ConfigureAutoRunConfig,
 				responseChannel: string
 			) => void
 		) => () => void;
