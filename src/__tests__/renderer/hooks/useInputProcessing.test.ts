@@ -49,7 +49,6 @@ import {
 	takeNextRunnableQueueItem,
 } from '../../../renderer/utils/executionQueue';
 import { useAutoRunSteeringStore } from '../../../renderer/stores/autoRunSteeringStore';
-import { MAX_PENDING_STEERING_NOTES } from '../../../shared/autorunSteering';
 import type {
 	Session,
 	AITab,
@@ -1461,181 +1460,27 @@ describe('useInputProcessing', () => {
 		});
 	});
 
-	describe('Auto Run steering', () => {
+	describe('Auto Run does not hijack the composer', () => {
 		const runningBatchState: BatchRunState = {
 			...defaultBatchState,
 			isRunning: true,
 		};
 
 		afterEach(() => {
-			useAutoRunSteeringStore.setState({ notes: {} });
+			useAutoRunSteeringStore.setState({ notes: {}, delivered: {} });
 		});
 
-		it('parks a write-mode message as a steering note instead of queueing a turn', async () => {
+		// Regression: a write-mode message typed during a run used to be swallowed
+		// and re-routed into an Auto Run steering note, so a message addressed to
+		// the agent silently meant something else. Steering is the Thought Stream's
+		// Steer button now; the composer only ever talks to the agent.
+		it('queues a write-mode message rather than parking it as a steering note', async () => {
 			mockGetBatchState.mockReturnValue(runningBatchState);
 
 			// Session state is irrelevant here: an Auto Run spawns its own isolated
-			// process and never marks the session busy, so the routing must key off
-			// the run, not the session.
+			// process and never marks the session busy, so the queue decision keys
+			// off the run, not the session.
 			const session = createMockSession({ state: 'idle' });
-			const deps = createDeps({
-				activeSession: session,
-				inputValue: 'Important notice: Maestro error.',
-				activeBatchRunState: runningBatchState,
-			});
-			const { result } = renderHook(() => useInputProcessing(deps));
-
-			await act(async () => {
-				await result.current.processInput();
-			});
-
-			const pending = useAutoRunSteeringStore.getState().notes[session.id] ?? [];
-			expect(pending).toHaveLength(1);
-			expect(pending[0].text).toBe('Important notice: Maestro error.');
-			expect(pending[0].tabId).toBe(session.activeTabId);
-			// The composer is cleared and nothing lands in the execution queue.
-			// Asserted on the queue itself rather than on `mockSetSessions` never
-			// firing: this harness routes the store's `updateAiTab` through that
-			// same mock, and `submitSteeringNote` legitimately uses it to stamp the
-			// pending badge onto the transcript entry. A call count would fail on a
-			// note that parked correctly.
-			expect(mockSetInputValue).toHaveBeenCalledWith('');
-			expect(useSessionStore.getState().sessions[0]?.executionQueue ?? []).toHaveLength(0);
-		});
-
-		it('queues instead of steering when the message carries staged images', async () => {
-			mockGetBatchState.mockReturnValue(runningBatchState);
-
-			// A task prompt is text, so an image has nowhere to ride along. Queueing
-			// keeps the image rather than silently dropping it.
-			const session = createMockSession({ state: 'idle' });
-			const deps = createDeps({
-				activeSession: session,
-				inputValue: 'look at this',
-				stagedImages: ['data:image/png;base64,AAA'],
-				activeBatchRunState: runningBatchState,
-			});
-			const { result } = renderHook(() => useInputProcessing(deps));
-
-			await act(async () => {
-				await result.current.processInput();
-			});
-
-			expect(useAutoRunSteeringStore.getState().notes[session.id]).toBeUndefined();
-			expect(mockSetSessions).toHaveBeenCalled();
-			const updatedSessions = mockSetSessions.mock.calls[0][0]([session]);
-			expect(updatedSessions[0].executionQueue).toHaveLength(1);
-			expect(updatedSessions[0].executionQueue[0].text).toBe('look at this');
-		});
-
-		it('queues rather than steering once the pending-note cap is reached', async () => {
-			mockGetBatchState.mockReturnValue(runningBatchState);
-
-			const session = createMockSession({ state: 'idle' });
-			const tabId = session.activeTabId!;
-			for (let i = 0; i < MAX_PENDING_STEERING_NOTES; i++) {
-				useAutoRunSteeringStore.getState().addNote(session.id, tabId, `note ${i}`);
-			}
-
-			const deps = createDeps({
-				activeSession: session,
-				inputValue: 'one too many',
-				activeBatchRunState: runningBatchState,
-			});
-			const { result } = renderHook(() => useInputProcessing(deps));
-
-			await act(async () => {
-				await result.current.processInput();
-			});
-
-			// A rejected note must never swallow what the operator typed.
-			expect(useAutoRunSteeringStore.getState().notes[session.id]).toHaveLength(
-				MAX_PENDING_STEERING_NOTES
-			);
-			expect(mockSetSessions).toHaveBeenCalled();
-			const updatedSessions = mockSetSessions.mock.calls[0][0]([session]);
-			expect(updatedSessions[0].executionQueue[0].text).toBe('one too many');
-		});
-
-		it('queues a read-only message rather than steering when the session is busy', async () => {
-			mockGetBatchState.mockReturnValue(runningBatchState);
-
-			// Read-only keeps its own meaning during a run: a question that runs in
-			// parallel, not a course correction for the next task.
-			const tab = createMockTab({ id: 'ro-tab', state: 'busy', readOnlyMode: true });
-			const session = createMockSession({
-				state: 'busy',
-				aiTabs: [tab],
-				activeTabId: 'ro-tab',
-			});
-			const deps = createDeps({
-				activeSession: session,
-				inputValue: 'what is the current branch?',
-				activeBatchRunState: runningBatchState,
-			});
-			const { result } = renderHook(() => useInputProcessing(deps));
-
-			await act(async () => {
-				await result.current.processInput();
-			});
-
-			expect(useAutoRunSteeringStore.getState().notes[session.id]).toBeUndefined();
-			expect(mockSetSessions).toHaveBeenCalled();
-		});
-
-		it('sends now rather than steering when the operator hits Force Send', async () => {
-			mockGetBatchState.mockReturnValue(runningBatchState);
-			useSettingsStore.setState({ forcedParallelExecution: true } as never);
-
-			// Force Send bypasses the run entirely. Turning it into a steering note
-			// would silently demote an explicit "run this now" into "maybe later".
-			const session = createMockSession({ state: 'idle' });
-			const deps = createDeps({
-				activeSession: session,
-				inputValue: 'run this now',
-				activeBatchRunState: runningBatchState,
-			});
-			const { result } = renderHook(() => useInputProcessing(deps));
-
-			await act(async () => {
-				await result.current.processInput(undefined, { forceParallel: true });
-			});
-
-			expect(useAutoRunSteeringStore.getState().notes[session.id]).toBeUndefined();
-			// Sent, not queued: force-parallel only queues when THIS tab is busy.
-			const queued = mockSetSessions.mock.calls.some(
-				(call) => call[0]([session])[0].executionQueue.length > 0
-			);
-			expect(queued).toBe(false);
-
-			useSettingsStore.setState({ forcedParallelExecution: false } as never);
-		});
-
-		it('queues behind a pending retry instead of steering', async () => {
-			mockGetBatchState.mockReturnValue(runningBatchState);
-
-			// The provider is refusing work. A steering note cannot talk past a quota
-			// wall, and parking one here would drop the message the retry is holding.
-			const session = createMockSession({ state: 'idle' });
-			const tabId = session.activeTabId!;
-			useRetryStore.setState({
-				retries: {
-					[`${session.id}:${tabId}`]: {
-						sessionId: session.id,
-						tabId,
-						key: `${session.id}:${tabId}`,
-						outageId: 'outage-steering',
-						strategy: 'token-exhaustion',
-						mode: 'resend',
-						status: 'scheduled',
-						attempt: 0,
-						startedAt: Date.now(),
-						nextRetryAt: Date.now() + 60_000,
-						lastMessage: "You've hit your session limit",
-					},
-				},
-			} as never);
-
 			const deps = createDeps({
 				activeSession: session,
 				inputValue: 'change course',
@@ -1651,8 +1496,6 @@ describe('useInputProcessing', () => {
 			expect(mockSetSessions).toHaveBeenCalled();
 			const updatedSessions = mockSetSessions.mock.calls[0][0]([session]);
 			expect(updatedSessions[0].executionQueue[0].text).toBe('change course');
-
-			useRetryStore.setState({ retries: {}, outages: {} } as never);
 		});
 	});
 

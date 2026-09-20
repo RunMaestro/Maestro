@@ -13,7 +13,6 @@ import {
 	Share2,
 	Hammer,
 	GitFork,
-	Compass,
 } from 'lucide-react';
 import type { LogItemProps } from '../types';
 import type { LogEntry } from '../../../types';
@@ -30,7 +29,6 @@ import { linkifyNode } from '../../../utils/linkify';
 import { formatDurationWords, formatTurnDuration } from '../../../../shared/duration';
 import { sessionImageThumbnailSrc } from '../../../../shared/sessionImageRefs';
 import { displayImageSrc } from '../../../utils/sessionImageSrc';
-import { cancelSteeringNote } from '../../../services/autoRunSteering';
 import { RetryStatusCard } from '../../RetryStatusCard';
 import { SnoozeReturnCard } from '../../SnoozeReturnCard';
 import { AgentDelegationCard } from '../../AgentDelegationCard';
@@ -1122,43 +1120,6 @@ export const LogItem = memo(
 								/>
 							</span>
 						)}
-						{/* Auto Run steering note: this message rides in front of the next
-						    task's prompt rather than spawning a turn of its own. While it is
-						    still pending the badge is a button that takes it back. */}
-						{isUserMessage && isAIMode && log.steeringNote && (
-							<span className="flex items-center">
-								{log.steeringNote === 'pending' ? (
-									<button
-										onClick={() => cancelSteeringNote(sessionId, log.id)}
-										title="Steering note - waiting for the next Auto Run task. Click to cancel."
-										className="flex items-center hover:opacity-100"
-										style={{ color: theme.colors.warning, opacity: 0.7 }}
-									>
-										<Compass className="w-3.5 h-3.5" />
-									</button>
-								) : (
-									<span
-										title={
-											log.steeringNote === 'delivered'
-												? 'Steering note delivered to an Auto Run task'
-												: 'Steering note cancelled before any task saw it'
-										}
-										className="flex items-center"
-									>
-										<Compass
-											className="w-3.5 h-3.5"
-											style={{
-												color:
-													log.steeringNote === 'delivered'
-														? theme.colors.success
-														: theme.colors.textDim,
-												opacity: log.steeringNote === 'delivered' ? 0.6 : 0.4,
-											}}
-										/>
-									</span>
-								)}
-							</span>
-						)}
 						{/* Force parallel indicator for messages sent via Cmd+Shift+Enter */}
 						{isUserMessage && isAIMode && log.forceParallel && (
 							<span
@@ -1194,7 +1155,6 @@ export const LogItem = memo(
 			prevProps.log.delivered === nextProps.log.delivered &&
 			prevProps.log.readOnly === nextProps.log.readOnly &&
 			prevProps.log.forceParallel === nextProps.log.forceParallel &&
-			prevProps.log.steeringNote === nextProps.log.steeringNote &&
 			prevProps.log.renderStyle === nextProps.log.renderStyle &&
 			prevProps.log.metadata?.hiddenProgress === nextProps.log.metadata?.hiddenProgress &&
 			prevProps.log.metadata?.toolState?.status === nextProps.log.metadata?.toolState?.status &&

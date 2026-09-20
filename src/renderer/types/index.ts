@@ -242,14 +242,6 @@ export interface LogEntry {
 	readOnly?: boolean;
 	// For user messages - tracks if message was sent via forced parallel execution
 	forceParallel?: boolean;
-	// For user messages sent while an Auto Run was in flight: this message is a
-	// steering note, not a conversation turn. It rides in front of the next
-	// task's prompt instead of spawning an agent of its own.
-	//   'pending'   - parked, waiting for the next task to pick it up
-	//   'delivered' - handed to a task's prompt
-	//   'dropped'   - cancelled by the operator before any task saw it
-	// See shared/autorunSteering.ts and services/autoRunSteering.ts.
-	steeringNote?: 'pending' | 'delivered' | 'dropped';
 	// For error entries - stores the full AgentError for "View Details" functionality
 	agentError?: AgentError;
 	// For tool execution entries - stores tool state and details

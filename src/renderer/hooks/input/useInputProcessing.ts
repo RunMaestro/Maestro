@@ -20,7 +20,6 @@ import { hasCapabilityCached } from '../agent/useAgentCapabilities';
 import { stripShellCommandEscape, type ComposerCommandMode } from '../../utils/shellCommandInput';
 import { dispatchShellCommand } from '../../services/shellCommand';
 import { requestAiCommand } from '../../services/aiCommand';
-import { submitSteeringNote } from '../../services/autoRunSteering';
 import {
 	collectNamingPrompt,
 	requestTabAutoName,
@@ -976,39 +975,6 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					shouldQueue,
 					queueLength: liveSession.executionQueue.length,
 				});
-
-				// Auto Run steering: a plain write-mode message typed while a run is
-				// in flight is a course correction, not a conversation turn. Park it
-				// as a steering note so the NEXT task's prompt opens with it, instead
-				// of queueing a whole separate turn in a context that task will never
-				// see (Auto Run spawns a fresh agent per task).
-				//
-				// Every deliberate escape still behaves as before:
-				//  - read-only mode sends a parallel question turn,
-				//  - Force Send (forceParallel) bypasses the run entirely,
-				//  - a retry hold means the provider is refusing work, which a note
-				//    cannot fix, so the message queues and waits it out,
-				//  - staged images have nowhere to go in a text task prompt, so a
-				//    message carrying them queues rather than losing them.
-				const steeringAccepted =
-					shouldQueue &&
-					isAutoRunActive &&
-					!isReadOnlyMode &&
-					!forceParallel &&
-					!retryHoldsTab &&
-					effectiveImages.length === 0 &&
-					submitSteeringNote({
-						sessionId: activeSession.id,
-						tabId: activeTab?.id || activeSession.activeTabId,
-						text: effectiveInputValue,
-					});
-
-				if (steeringAccepted) {
-					setInputValue('');
-					syncAiInputToSession('');
-					if (inputRef.current) inputRef.current.style.height = 'auto';
-					return;
-				}
 
 				if (shouldQueue) {
 					const queuedItem: QueuedItem = {

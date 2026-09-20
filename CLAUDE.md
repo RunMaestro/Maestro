@@ -257,7 +257,7 @@ Grep-verified 2026-09-04 (`npm run docs:verify` re-checks every path). This is t
 - **Sizing a surface to its longest label:** `widestLabelWidth(labels, opts)`, `estimateLabelWidth()` in `src/renderer/utils/labelWidth.ts`
 - **Ordering the Auto Run run list from the picker:** `applySelectionOrder()`, `selectFolderFiles()` in `src/renderer/utils/documentSelectionOrder.ts`
 - **Whether an Auto Run is parked waiting on the user:** `useAutoRunErrorPaused(sessionId)` in `src/renderer/hooks/batch/useAutoRunPause.ts` (never read `errorPaused` off the `batchRunState` prop; the chain drops it)
-- **Auto Run steering notes (mid-run course correction):** `formatSteeringNotesBlock()`, `MAX_PENDING_STEERING_NOTES` in `src/shared/autorunSteering.ts`; `submitSteeringNote()`, `takeSteeringNotesForDispatch()` in `src/renderer/services/autoRunSteering.ts`
+- **Auto Run steering notes (mid-run course correction):** `formatSteeringNotesBlock()`, `MAX_PENDING_STEERING_NOTES` in `src/shared/autorunSteering.ts`; `submitSteeringNote()`, `takeSteeringNotesForDispatch()` in `src/renderer/services/autoRunSteering.ts`. The ONLY surface that sends one is the Thought Stream panel's compass button - do NOT route a steering note through the AI composer or write one into a tab's transcript.
 
 If your use case does NOT match an existing utility, prefer extending the canonical file over creating a new one. If you genuinely need something new, add the full entry to [CANONICAL-UTILITIES.md](docs/agent-guides/CANONICAL-UTILITIES.md) and a one-line index entry above so the next person can find it.
 

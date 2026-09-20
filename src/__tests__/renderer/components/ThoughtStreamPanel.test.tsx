@@ -19,7 +19,10 @@ import {
 import { LayerStackProvider, useLayerStack } from '../../../renderer/contexts/LayerStackContext';
 import { useThoughtStreamStore } from '../../../renderer/stores/thoughtStreamStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
+import { useBatchStore } from '../../../renderer/stores/batchStore';
+import { useAutoRunSteeringStore } from '../../../renderer/stores/autoRunSteeringStore';
 import { mockTheme } from '../../helpers/mockTheme';
+import type { BatchRunState } from '../../../renderer/types';
 import { installLocalStorageMock } from '../../helpers/mockLocalStorage';
 
 // The markdown pipeline is irrelevant here and pulls in a large plugin chain.
@@ -78,7 +81,35 @@ beforeEach(() => {
 	installLocalStorageMock();
 	useThoughtStreamStore.setState({ panelSessionId: null, buffers: {} });
 	useUIStore.setState({ rightPanelOpen: true });
+	useBatchStore.setState({ batchRunStates: {} } as never);
+	useAutoRunSteeringStore.setState({ notes: {}, delivered: {} });
 });
+
+/** A run state for SID: the Steer button only exists while one is in flight. */
+function runFor(sessionId: string, overrides: Partial<BatchRunState> = {}): void {
+	useBatchStore.setState({
+		batchRunStates: {
+			[sessionId]: {
+				isRunning: true,
+				isStopping: false,
+				documents: [],
+				lockedDocuments: [],
+				currentDocumentIndex: 0,
+				currentDocTasksTotal: 0,
+				currentDocTasksCompleted: 0,
+				totalTasksAcrossAllDocs: 0,
+				completedTasksAcrossAllDocs: 0,
+				loopEnabled: false,
+				loopIteration: 0,
+				folderPath: '',
+				worktreeActive: false,
+				...overrides,
+			},
+		},
+	} as never);
+}
+
+const steerButton = () => screen.queryByTestId('thought-stream-steer-toggle');
 
 describe('ThoughtStreamPanel', () => {
 	it('renders nothing until a session is focused', () => {
@@ -398,5 +429,123 @@ describe('ThoughtStreamPanel tool-call toggle', () => {
 
 		expect(screen.getByText(/1 tool call captured and hidden/)).toBeInTheDocument();
 		expect(screen.queryByText(/Nothing captured yet/)).not.toBeInTheDocument();
+	});
+});
+
+/**
+ * Auto Run steering lives here and nowhere else.
+ *
+ * It used to hijack the agent's chat composer: a write-mode message typed during
+ * a run silently became a note for the next task instead of a turn. A note is a
+ * property of the RUN, so the gesture belongs on the run's own surface, which is
+ * this panel.
+ */
+describe('ThoughtStreamPanel steering', () => {
+	it('offers no Steer button when no run is in flight', () => {
+		useThoughtStreamStore.getState().openPanel(SID);
+		renderPanel();
+
+		expect(steerButton()).toBeNull();
+	});
+
+	it('offers no Steer button for a run owned by another client', () => {
+		// The notes are renderer state, so a mirrored run's loop would never read
+		// them. A button that quietly did nothing is worse than no button.
+		runFor(SID, { mirrored: true });
+		useThoughtStreamStore.getState().openPanel(SID);
+		renderPanel();
+
+		expect(steerButton()).toBeNull();
+	});
+
+	it('parks what the operator typed and shows it as pending', () => {
+		runFor(SID);
+		useThoughtStreamStore.getState().openPanel(SID);
+		renderPanel();
+
+		fireEvent.click(steerButton()!);
+		const box = screen.getByPlaceholderText(/Steer the Auto Run/);
+		fireEvent.change(box, { target: { value: 'use the v3 endpoint' } });
+		fireEvent.click(screen.getByTestId('thought-stream-steer-send'));
+
+		expect(useAutoRunSteeringStore.getState().notes[SID]).toHaveLength(1);
+		expect(screen.getByTestId('steering-note-pending')).toHaveTextContent('use the v3 endpoint');
+		// The composer closes on a successful send, so the next Enter is not a
+		// second copy of the note the operator just watched land.
+		expect(screen.queryByPlaceholderText(/Steer the Auto Run/)).not.toBeInTheDocument();
+	});
+
+	it('sends on Enter and keeps typing on Shift+Enter', () => {
+		runFor(SID);
+		useThoughtStreamStore.getState().openPanel(SID);
+		renderPanel();
+
+		fireEvent.click(steerButton()!);
+		const box = screen.getByPlaceholderText(/Steer the Auto Run/);
+
+		fireEvent.change(box, { target: { value: 'still typing' } });
+		fireEvent.keyDown(box, { key: 'Enter', shiftKey: true });
+		expect(useAutoRunSteeringStore.getState().notes[SID]).toBeUndefined();
+
+		fireEvent.keyDown(box, { key: 'Enter' });
+		expect(useAutoRunSteeringStore.getState().notes[SID]).toHaveLength(1);
+	});
+
+	it('cancels a pending note from its row', () => {
+		runFor(SID);
+		useAutoRunSteeringStore.getState().addNote(SID, 'never mind');
+		useThoughtStreamStore.getState().openPanel(SID);
+		renderPanel();
+
+		fireEvent.click(screen.getByLabelText('Cancel steering note'));
+
+		expect(useAutoRunSteeringStore.getState().notes[SID]).toBeUndefined();
+		expect(screen.queryByTestId('steering-note-pending')).not.toBeInTheDocument();
+	});
+
+	it('keeps a delivered note visible but no longer cancellable', () => {
+		runFor(SID);
+		useAutoRunSteeringStore.getState().addNote(SID, 'already read');
+		useAutoRunSteeringStore.getState().takeNotes(SID);
+		useThoughtStreamStore.getState().openPanel(SID);
+		renderPanel();
+
+		expect(screen.getByTestId('steering-note-delivered')).toHaveTextContent('already read');
+		expect(screen.queryByLabelText('Cancel steering note')).not.toBeInTheDocument();
+	});
+
+	it('puts the note box away when the run ends rather than leaving a dead Send', () => {
+		runFor(SID);
+		useThoughtStreamStore.getState().openPanel(SID);
+		const view = renderPanel();
+
+		fireEvent.click(steerButton()!);
+		expect(screen.getByPlaceholderText(/Steer the Auto Run/)).toBeInTheDocument();
+
+		useBatchStore.setState({ batchRunStates: {} } as never);
+		view.rerender(
+			<LayerStackProvider>
+				<LayerProbe />
+				<ThoughtStreamPanel theme={mockTheme} />
+			</LayerStackProvider>
+		);
+
+		expect(screen.queryByPlaceholderText(/Steer the Auto Run/)).not.toBeInTheDocument();
+		expect(steerButton()).toBeNull();
+	});
+
+	it('Escape closes the note box before it closes the panel', () => {
+		runFor(SID);
+		useThoughtStreamStore.getState().openPanel(SID);
+		renderPanel();
+
+		fireEvent.click(steerButton()!);
+		const box = screen.getByPlaceholderText(/Steer the Auto Run/);
+		fireEvent.keyDown(box, { key: 'Escape' });
+
+		expect(screen.queryByPlaceholderText(/Steer the Auto Run/)).not.toBeInTheDocument();
+		// The panel is still up: a reflex Escape while typing must not put away
+		// the whole surface and the run's activity with it.
+		expect(screen.getByText('Thought Stream')).toBeInTheDocument();
 	});
 });

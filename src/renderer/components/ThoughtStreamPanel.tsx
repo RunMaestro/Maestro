@@ -21,7 +21,18 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, Brain, Check, Loader2, Search, Trash2, Wrench, X } from 'lucide-react';
+import {
+	AlertTriangle,
+	Brain,
+	Check,
+	Compass,
+	Loader2,
+	Search,
+	SendHorizonal,
+	Trash2,
+	Wrench,
+	X,
+} from 'lucide-react';
 import type { Theme } from '../types';
 import {
 	useThoughtStreamStore,
@@ -34,6 +45,14 @@ import {
 	type ToolActivityEntry,
 } from '../stores/thoughtStreamStore';
 import { useSessionStore } from '../stores/sessionStore';
+import { useBatchStore } from '../stores/batchStore';
+import {
+	selectDeliveredSteeringNotes,
+	selectPendingSteeringNotes,
+	useAutoRunSteeringStore,
+} from '../stores/autoRunSteeringStore';
+import { cancelSteeringNote, submitSteeringNote } from '../services/autoRunSteering';
+import { MAX_STEERING_NOTE_LENGTH, type AutoRunSteeringNote } from '../../shared/autorunSteering';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useUIStore } from '../stores/uiStore';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
@@ -186,6 +205,63 @@ function highlightQuery(text: string, query: string, theme: Theme) {
 	return parts;
 }
 
+/**
+ * One steering note in the panel's strip.
+ *
+ * Pending and delivered are the SAME row with different affordances rather than
+ * two components: the operator is reading one list of things they said, and the
+ * only difference is whether it can still be taken back. A delivered note keeps
+ * a check glyph instead of a cancel button, so the row never offers to un-send
+ * something a task has already read.
+ */
+function SteeringNoteRow({
+	note,
+	theme,
+	onCancel,
+}: {
+	note: AutoRunSteeringNote;
+	theme: Theme;
+	onCancel?: () => void;
+}) {
+	const pending = !!onCancel;
+	return (
+		<div
+			className="flex items-start gap-1.5 text-2xs leading-snug"
+			data-testid={pending ? 'steering-note-pending' : 'steering-note-delivered'}
+		>
+			<Compass
+				className="w-3 h-3 mt-0.5 shrink-0"
+				style={{ color: pending ? theme.colors.warning : theme.colors.success, opacity: 0.8 }}
+			/>
+			<span
+				className="flex-1 min-w-0 break-words whitespace-pre-wrap"
+				style={{ color: pending ? theme.colors.textMain : theme.colors.textDim }}
+				title={`${formatThoughtTime(note.timestamp)} - ${
+					pending ? 'waiting for the next task' : 'delivered to a task'
+				}`}
+			>
+				{note.text}
+			</span>
+			{onCancel ? (
+				<button
+					onClick={onCancel}
+					className="p-0.5 rounded hover:bg-white/10 transition-colors shrink-0"
+					title="Cancel this steering note"
+					aria-label="Cancel steering note"
+				>
+					<X className="w-3 h-3" style={{ color: theme.colors.textDim }} />
+				</button>
+			) : (
+				<Check
+					className="w-3 h-3 mt-0.5 shrink-0"
+					style={{ color: theme.colors.success, opacity: 0.6 }}
+					aria-label="delivered"
+				/>
+			)}
+		</div>
+	);
+}
+
 export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 	const panelSessionId = useThoughtStreamStore((s) => s.panelSessionId);
 	const buffer = useThoughtStreamStore((s) =>
@@ -206,6 +282,26 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 
 	const [query, setQuery] = useState('');
 	const scrollRef = useRef<HTMLDivElement>(null);
+
+	// Steering: the composer is open/closed here, the note itself lives in
+	// autoRunSteeringStore. Auto Run steering is a property of the RUN, so this
+	// panel is where it is offered - a note typed at the agent's chat composer
+	// would be a message that silently meant something else.
+	const [steerOpen, setSteerOpen] = useState(false);
+	const [steerDraft, setSteerDraft] = useState('');
+	const steerRef = useRef<HTMLTextAreaElement>(null);
+
+	// Only a run THIS client owns can be steered: the notes are renderer state,
+	// so a mirrored run's loop is in another client and would never read them.
+	// A Steer button that quietly did nothing is worse than no button.
+	const canSteer = useBatchStore((st) => {
+		const run = panelSessionId ? st.batchRunStates[panelSessionId] : undefined;
+		return !!run?.isRunning && run.mirrored !== true;
+	});
+	const pendingNotes = useAutoRunSteeringStore(selectPendingSteeringNotes(panelSessionId ?? ''));
+	const deliveredNotes = useAutoRunSteeringStore(
+		selectDeliveredSteeringNotes(panelSessionId ?? '')
+	);
 	// Newest blocks render on top, so "following" the live stream means staying
 	// pinned to the TOP of the scroll area, not the bottom.
 	const stickToTopRef = useRef(true);
@@ -293,9 +389,46 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 		return [...matched].reverse();
 	}, [feed, query]);
 
-	// Escape closes the panel. Nothing is lost by that now: the buffer outlives
-	// the panel, so Escape is a "put it away", not a discard.
-	useModalLayer(MODAL_PRIORITIES.THOUGHT_STREAM, 'Thought Stream', closePanel, {
+	// Steering is only on offer while a run this client owns is in flight, so a
+	// run that ends with the composer open must put it away rather than leave a
+	// Send button that can no longer deliver anything.
+	useEffect(() => {
+		if (!canSteer) {
+			setSteerOpen(false);
+			setSteerDraft('');
+		}
+	}, [canSteer]);
+
+	// Focus the note box when it opens. The panel registers a PASSIVE layer, so
+	// nothing hands it the caret; without this the operator clicks Steer and then
+	// has to click again to type.
+	useEffect(() => {
+		if (steerOpen) steerRef.current?.focus();
+	}, [steerOpen]);
+
+	const sendSteeringNote = () => {
+		if (!panelSessionId) return;
+		if (!steerDraft.trim()) return;
+		// Keep the draft on refusal (the pending cap): the note is the operator's
+		// text, and the service has already said on screen why it did not land.
+		if (!submitSteeringNote({ sessionId: panelSessionId, text: steerDraft })) return;
+		setSteerDraft('');
+		setSteerOpen(false);
+	};
+
+	// Escape closes the panel - but the note box first, so a reflex Escape while
+	// typing does not put away the whole panel and lose the draft with it.
+	const handleEscape = () => {
+		if (steerOpen) {
+			setSteerOpen(false);
+			return;
+		}
+		closePanel();
+	};
+
+	// Nothing is lost by closing: the buffer outlives the panel, so Escape is a
+	// "put it away", not a discard.
+	useModalLayer(MODAL_PRIORITIES.THOUGHT_STREAM, 'Thought Stream', handleEscape, {
 		enabled: !!panelSessionId,
 		blocksLowerLayers: false,
 		capturesFocus: false,
@@ -371,6 +504,23 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 						{live ? ' · live' : ''}
 					</span>
 				</div>
+				{canSteer && (
+					<GhostIconButton
+						onClick={() => setSteerOpen((open) => !open)}
+						pressed={steerOpen}
+						title={
+							pendingNotes.length
+								? `Steer the Auto Run (${pendingNotes.length} note${pendingNotes.length === 1 ? '' : 's'} waiting for the next task)`
+								: 'Steer the Auto Run - send a note that opens the next task'
+						}
+						ariaLabel="Steer the Auto Run"
+						testId="thought-stream-steer-toggle"
+						className="shrink-0"
+						color={steerOpen || pendingNotes.length ? theme.colors.warning : theme.colors.textDim}
+					>
+						<Compass className="w-3.5 h-3.5" />
+					</GhostIconButton>
+				)}
 				<GhostIconButton
 					onClick={toggleToolActivity}
 					pressed={showToolActivity}
@@ -432,6 +582,86 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 					)}
 				</div>
 			</div>
+
+			{/* Steering composer. Opens on the Compass, sends on Enter, keeps the
+			    draft on Shift+Enter. The note does not spawn a turn of its own - it
+			    rides in front of the next task's prompt - so the hint says when it
+			    will be read rather than leaving the operator to guess. */}
+			{steerOpen && (
+				<div
+					className="px-3 py-2 border-b shrink-0"
+					style={{ borderColor: theme.colors.border }}
+					data-testid="thought-stream-steer-composer"
+				>
+					<textarea
+						ref={steerRef}
+						value={steerDraft}
+						onChange={(e) => setSteerDraft(e.target.value.slice(0, MAX_STEERING_NOTE_LENGTH))}
+						onKeyDown={(e) => {
+							if (e.key === 'Enter' && !e.shiftKey) {
+								e.preventDefault();
+								sendSteeringNote();
+								return;
+							}
+							// Escape belongs to the box while the caret is in it. The
+							// layer handler would see the same key and reach the same
+							// branch, but stopping here keeps the panel's Escape from
+							// depending on which element happened to have focus.
+							if (e.key === 'Escape') {
+								e.preventDefault();
+								e.stopPropagation();
+								setSteerOpen(false);
+							}
+						}}
+						rows={3}
+						placeholder="Steer the Auto Run - delivered at the start of the next task"
+						className="w-full resize-none rounded px-2 py-1.5 text-xs outline-none border select-text scrollbar-thin"
+						style={{
+							backgroundColor: theme.colors.bgActivity,
+							borderColor: theme.colors.border,
+							color: theme.colors.textMain,
+						}}
+					/>
+					<div className="flex items-center gap-2 mt-1.5">
+						<span className="text-2xs flex-1 min-w-0" style={{ color: theme.colors.textDim }}>
+							Enter sends · Shift+Enter for a new line
+						</span>
+						<button
+							onClick={sendSteeringNote}
+							disabled={!steerDraft.trim()}
+							className="flex items-center gap-1 px-2 py-1 rounded text-2xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+							style={{ backgroundColor: theme.colors.accent, color: theme.colors.bgMain }}
+							data-testid="thought-stream-steer-send"
+						>
+							<SendHorizonal className="w-3 h-3" />
+							Send
+						</button>
+					</div>
+				</div>
+			)}
+
+			{/* What the operator has already said this run. Pending notes stay
+			    cancellable; delivered ones are the record that replaced the
+			    transcript entry this feature used to write into the AI chat. */}
+			{(pendingNotes.length > 0 || deliveredNotes.length > 0) && (
+				<div
+					className="px-3 py-2 border-b shrink-0 flex flex-col gap-1.5 overflow-y-auto scrollbar-thin"
+					style={{ borderColor: theme.colors.border, maxHeight: 120 }}
+					data-testid="thought-stream-steer-notes"
+				>
+					{deliveredNotes.map((note) => (
+						<SteeringNoteRow key={note.id} note={note} theme={theme} />
+					))}
+					{pendingNotes.map((note) => (
+						<SteeringNoteRow
+							key={note.id}
+							note={note}
+							theme={theme}
+							onCancel={() => cancelSteeringNote(panelSessionId, note.id)}
+						/>
+					))}
+				</div>
+			)}
 
 			{/* Body */}
 			<div
