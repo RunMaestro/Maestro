@@ -17,7 +17,9 @@ import { GhostIconButton } from '../ui/GhostIconButton';
 import { isAbsolutePath } from '../../../shared/formatters';
 import type { Theme } from '../../types';
 import { AuthPathValueInput } from '../shared/AuthPathValueInput';
+import { EnvVarKeyInput } from '../shared/EnvVarKeyInput';
 import { EMPTY_KNOWN_AUTH_DIRS, type KnownAuthDirs } from '../../../shared/authPaths';
+import { EMPTY_KNOWN_ENV_VAR_KEYS, type KnownEnvVarKeys } from '../../../shared/envVarCatalog';
 
 /**
  * Variable names whose values MUST be absolute filesystem paths. A relative
@@ -84,6 +86,8 @@ export interface EnvVarsEditorProps {
 	description?: string | null;
 	/** Local account directories previously configured for Claude and Codex. */
 	knownAuthDirs?: KnownAuthDirs;
+	/** Variable NAMES already set on agents or here, offered back in the name field. */
+	knownEnvVarKeys?: KnownEnvVarKeys;
 	/**
 	 * Parked variables: same shape as `envVars`, but switched off. Pass this
 	 * together with `setDisabledEnvVars` to get the per-row eye toggle; omit
@@ -104,6 +108,7 @@ export function EnvVarsEditor({
 	label = 'Environment Variables (optional)',
 	description = 'Environment variables passed to all terminal sessions and AI agent processes.',
 	knownAuthDirs = EMPTY_KNOWN_AUTH_DIRS,
+	knownEnvVarKeys = EMPTY_KNOWN_ENV_VAR_KEYS,
 	disabledEnvVars,
 	setDisabledEnvVars,
 }: EnvVarsEditorProps) {
@@ -216,6 +221,8 @@ export function EnvVarsEditor({
 		});
 	};
 
+	const entryKeys = entries.map((entry) => entry.key);
+
 	const addEntry = () => {
 		// Generate a unique default key name
 		let newKey = 'VAR';
@@ -260,12 +267,13 @@ export function EnvVarsEditor({
 										{off ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
 									</GhostIconButton>
 								)}
-								<input
-									type="text"
+								<EnvVarKeyInput
+									theme={theme}
 									value={entry.key}
-									onChange={(e) => updateEntry(entry.id, 'key', e.target.value)}
-									placeholder="VARIABLE_NAME"
-									className="flex-1 p-2 rounded border bg-transparent outline-none text-xs font-mono"
+									onChange={(key) => updateEntry(entry.id, 'key', key)}
+									knownEnvVarKeys={knownEnvVarKeys}
+									usedKeys={entryKeys}
+									className="p-2 rounded border bg-transparent outline-none text-xs font-mono"
 									style={{
 										borderColor: error ? '#ef4444' : theme.colors.border,
 										color: theme.colors.textMain,

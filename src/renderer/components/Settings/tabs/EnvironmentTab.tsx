@@ -9,6 +9,7 @@
 import { Globe } from 'lucide-react';
 import { useSettings } from '../../../hooks';
 import { useKnownAuthDirs } from '../../../hooks/agent/useKnownAuthDirs';
+import { useKnownEnvVarKeys } from '../../../hooks/agent/useKnownEnvVarKeys';
 import type { Theme } from '../../../types';
 import { EnvVarsEditor } from '../EnvVarsEditor';
 
@@ -20,6 +21,7 @@ export function EnvironmentTab({ theme }: EnvironmentTabProps) {
 	const { shellEnvVars, setShellEnvVars, shellEnvVarsDisabled, setShellEnvVarsDisabled } =
 		useSettings();
 	const knownAuthDirs = useKnownAuthDirs();
+	const knownEnvVarKeys = useKnownEnvVarKeys();
 
 	return (
 		<div className="space-y-5">
@@ -47,6 +49,7 @@ export function EnvironmentTab({ theme }: EnvironmentTabProps) {
 					label={null}
 					description={null}
 					knownAuthDirs={knownAuthDirs}
+					knownEnvVarKeys={knownEnvVarKeys}
 				/>
 			</div>
 		</div>

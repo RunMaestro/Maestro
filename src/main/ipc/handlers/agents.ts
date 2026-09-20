@@ -61,6 +61,7 @@ import {
 } from '../../agents/codex-reset-credits';
 import type { CodexResetCreditConsumeResult } from '../../../shared/codexResetCredits';
 import type { KnownAuthDirs } from '../../../shared/authPaths';
+import { rememberableEnvVarKeys, type KnownEnvVarKeys } from '../../../shared/envVarCatalog';
 
 const LOG_CONTEXT = '[AgentDetector]';
 const CONFIG_LOG_CONTEXT = '[AgentConfig]';
@@ -84,6 +85,13 @@ function getCustomEnvVars(value: unknown): Record<string, unknown> {
 	return customEnvVars && typeof customEnvVars === 'object'
 		? (customEnvVars as Record<string, unknown>)
 		: {};
+}
+
+/** One env-var record off a config or session, active or parked. */
+function envVarRecord(value: unknown, field: string): Record<string, unknown> {
+	if (!value || typeof value !== 'object' || !(field in value)) return {};
+	const record = (value as Record<string, unknown>)[field];
+	return record && typeof record === 'object' ? (record as Record<string, unknown>) : {};
 }
 
 function isSshEnabled(value: unknown): boolean {
@@ -1591,6 +1599,65 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 						'CODEX_HOME',
 						resolveCodexHomeKey
 					),
+				};
+			}
+		)
+	);
+
+	// Names the user has already set, so the env-var editors can offer them back
+	// instead of asking everyone to retype a variable they configured once. Only
+	// names travel; values stay where they were set, because a remembered value
+	// is often a credential and nothing here needs one.
+	ipcMain.handle(
+		'agents:getKnownEnvVarKeys',
+		withIpcErrorLogging(
+			handlerOpts('getKnownEnvVarKeys', CONFIG_LOG_CONTEXT),
+			async (): Promise<KnownEnvVarKeys> => {
+				const allConfigs = agentConfigsStore.get('configs', {});
+				const sessions = sessionsStore?.get('sessions', []) ?? [];
+
+				const byProvider = new Map<string, Set<string>>();
+				const remember = (toolType: unknown, source: Record<string, unknown>) => {
+					if (typeof toolType !== 'string' || toolType.length === 0) return;
+					const keys = [
+						...rememberableEnvVarKeys(envVarRecord(source, 'customEnvVars')),
+						...rememberableEnvVarKeys(envVarRecord(source, 'customEnvVarsDisabled')),
+					];
+					if (keys.length === 0) return;
+					let bucket = byProvider.get(toolType);
+					if (!bucket) {
+						bucket = new Set<string>();
+						byProvider.set(toolType, bucket);
+					}
+					for (const key of keys) bucket.add(key);
+				};
+
+				for (const [toolType, config] of Object.entries(allConfigs)) {
+					if (config && typeof config === 'object') {
+						remember(toolType, config as Record<string, unknown>);
+					}
+				}
+				for (const session of sessions) {
+					if (session && typeof session === 'object') {
+						remember(session.toolType, session);
+					}
+				}
+
+				const globalKeys = new Set<string>([
+					...rememberableEnvVarKeys(settingsStore?.get('shellEnvVars', {})),
+					...rememberableEnvVarKeys(settingsStore?.get('shellEnvVarsDisabled', {})),
+				]);
+
+				return {
+					byProvider: Object.fromEntries(
+						Array.from(byProvider.entries())
+							.sort(([a], [b]) => a.localeCompare(b))
+							.map(([toolType, keys]) => [
+								toolType,
+								Array.from(keys).sort((a, b) => a.localeCompare(b)),
+							])
+					),
+					global: Array.from(globalKeys).sort((a, b) => a.localeCompare(b)),
 				};
 			}
 		)

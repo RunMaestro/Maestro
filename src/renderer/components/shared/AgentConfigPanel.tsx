@@ -28,7 +28,9 @@ import { useRemoteMaestroPAvailable } from '../../hooks/agent/useRemoteMaestroPA
 import { openUrl } from '../../utils/openUrl';
 import { logger } from '../../utils/logger';
 import { useKnownAuthDirs } from '../../hooks/agent/useKnownAuthDirs';
+import { useKnownEnvVarKeys } from '../../hooks/agent/useKnownEnvVarKeys';
 import { AuthPathValueInput } from './AuthPathValueInput';
+import { EnvVarKeyInput } from './EnvVarKeyInput';
 
 const MAESTRO_P_INSTALL_URL = 'https://runmaestro.ai/maestro-p/';
 
@@ -471,6 +473,7 @@ export function AgentConfigPanel({
 	} = useRemoteMaestroPAvailable(isSshEnabled ? sshRemoteId : undefined);
 	const remoteMaestroPMissing = isSshEnabled && remoteMaestroPAvailable === false;
 	const knownAuthDirs = useKnownAuthDirs(!isSshEnabled);
+	const knownEnvVarKeys = useKnownEnvVarKeys();
 	// Collapse the stored (enableMaestroP, maestroPMode) pair into the tri-state the
 	// segmented "Claude Token Source" selector renders. Source not API => show the
 	// maestro-p path input and the live Time/API-limits pill.
@@ -581,6 +584,7 @@ export function AgentConfigPanel({
 		// order rather than by list order.
 		.map((row) => ({ ...row, id: getEnvVarId(row.key) }))
 		.sort((a, b) => a.id - b.id);
+	const envVarKeys = envVarRows.map((row) => row.key);
 
 	// Multi-install chooser state. `activePath` is whatever the Path field
 	// currently resolves to; it may be a hand-typed wrapper (or a tilde path
@@ -959,14 +963,15 @@ export function AgentConfigPanel({
 										{off ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
 									</GhostIconButton>
 								)}
-								<input
-									type="text"
+								<EnvVarKeyInput
+									theme={theme}
 									value={getKeyDisplayValue(key)}
-									onChange={(e) => handleKeyInputChange(key, e.target.value)}
+									onChange={(nextKey) => handleKeyInputChange(key, nextKey)}
 									onBlur={() => handleKeyBlur(key, value, enabled)}
-									onClick={(e) => e.stopPropagation()}
-									placeholder="VARIABLE_NAME"
-									className="flex-1 p-2 rounded border bg-transparent outline-none text-xs font-mono"
+									toolType={agent.id}
+									knownEnvVarKeys={knownEnvVarKeys}
+									usedKeys={envVarKeys}
+									className="p-2 rounded border bg-transparent outline-none text-xs font-mono"
 									style={{
 										borderColor: theme.colors.border,
 										color: theme.colors.textMain,

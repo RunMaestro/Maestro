@@ -218,14 +218,15 @@ describe('AgentConfigPanel', () => {
 
 			render(<AgentConfigPanel {...createDefaultProps({ customEnvVars })} />);
 
-			// Input fields for custom env vars should be present
-			// The key inputs should have the var names as values
-			const inputs = screen.getAllByRole('textbox');
-			const keyInputs = inputs.filter(
-				(input) =>
-					(input as HTMLInputElement).value === 'MY_VAR' ||
-					(input as HTMLInputElement).value === 'ANOTHER_VAR'
-			);
+			// Input fields for custom env vars should be present. The name field is
+			// a combobox (it suggests provider vars), so it is read by test id.
+			const keyInputs = screen
+				.getAllByTestId('env-var-key-input')
+				.filter(
+					(input) =>
+						(input as HTMLInputElement).value === 'MY_VAR' ||
+						(input as HTMLInputElement).value === 'ANOTHER_VAR'
+				);
 			expect(keyInputs.length).toBe(2);
 		});
 
@@ -248,10 +249,9 @@ describe('AgentConfigPanel', () => {
 			expect(screen.getByText('MAESTRO_SESSION_RESUMED')).toBeInTheDocument();
 
 			// Custom var should also be in an input
-			const inputs = screen.getAllByRole('textbox');
-			const customKeyInput = inputs.find(
-				(input) => (input as HTMLInputElement).value === 'CUSTOM_VAR'
-			);
+			const customKeyInput = screen
+				.getAllByTestId('env-var-key-input')
+				.find((input) => (input as HTMLInputElement).value === 'CUSTOM_VAR');
 			expect(customKeyInput).toBeDefined();
 		});
 	});

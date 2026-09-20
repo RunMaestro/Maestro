@@ -241,6 +241,8 @@ Configure environment variables once in Settings and they automatically apply to
 3. Variables apply immediately to new agent sessions and terminals
 4. Click the eye button on a row to switch that variable off without deleting it
 
+The name field suggests as you type. It offers each provider's own variables (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `COPILOT_HOME`, and so on) plus every name you have already set elsewhere in Maestro, so a variable you configured once on one agent is one keystroke away on the next. Pick with the arrow keys and `Enter`, or ignore the list and type any name you like.
+
 ![Environment Variables](./screenshots/env-vars.png)
 
 ### Example Configuration
@@ -310,6 +312,8 @@ maestro-cli update-agent <agent-id> --clear-env   # remove all per-agent variabl
 ```
 
 The eye button parks a variable here too: the row keeps its key and value and stays editable, but the variable is not passed to the agent. Parked variables are stored separately and are never merged into a spawned process.
+
+Here the name suggestions are narrowed to the agent's provider: a Claude agent leads with `CLAUDE_CONFIG_DIR` and the `ANTHROPIC_*` variables, a Codex agent with `CODEX_HOME`. Names you have set before are offered too, which matters most for the ones no catalog can know about, like a company proxy or an internal token.
 
 ### Seeing What an Agent Actually Runs With
 

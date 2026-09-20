@@ -451,7 +451,7 @@ describe('EnvVarsEditor', () => {
 			/>
 		);
 
-		expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+		expect(screen.queryByLabelText('Known CODEX_HOME paths')).not.toBeInTheDocument();
 		expect(screen.getByPlaceholderText('value')).toHaveValue('/Users/me/.codex-work');
 	});
 

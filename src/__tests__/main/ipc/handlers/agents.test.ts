@@ -194,6 +194,7 @@ describe('agents IPC handlers', () => {
 				'agents:getClaudeUsageSnapshots',
 				'agents:getClaudeUsageAccountKeys',
 				'agents:getKnownAuthDirs',
+				'agents:getKnownEnvVarKeys',
 				'agents:getLimitResetAt',
 				'claude:usage:refresh-all',
 				'agents:getCodexUsageSnapshots',
@@ -208,6 +209,64 @@ describe('agents IPC handlers', () => {
 				expect(handlers.has(channel)).toBe(true);
 			}
 			expect(handlers.size).toBe(expectedChannels.length);
+		});
+	});
+
+	describe('agents:getKnownEnvVarKeys', () => {
+		it('remembers names set on agent configs, sessions, and the global environment', async () => {
+			mockAgentConfigsStore.get.mockImplementation((key: string, fallback?: unknown) => {
+				if (key !== 'configs') return fallback;
+				return {
+					'claude-code': {
+						customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/me/.claude-agent' },
+						customEnvVarsDisabled: { ANTHROPIC_BASE_URL: 'https://gateway.example' },
+					},
+					codex: { customEnvVars: { CODEX_HOME: '/Users/me/.codex-agent' } },
+				};
+			});
+			const sessionsStore = {
+				get: vi.fn().mockReturnValue([
+					{ toolType: 'claude-code', customEnvVars: { MAX_THINKING_TOKENS: '31999' } },
+					{ toolType: 'opencode', customEnvVars: { OPENCODE_CONFIG: '/Users/me/oc.json' } },
+				]),
+			};
+			const settingsStore = {
+				get: vi.fn().mockImplementation((key: string, fallback?: unknown) => {
+					if (key === 'shellEnvVars') return { HTTPS_PROXY: 'http://proxy:3128' };
+					if (key === 'shellEnvVarsDisabled') return { NO_PROXY: 'localhost' };
+					return fallback;
+				}),
+			};
+			registerAgentsHandlers({
+				...deps,
+				sessionsStore: sessionsStore as unknown as NonNullable<
+					AgentsHandlerDependencies['sessionsStore']
+				>,
+				settingsStore: settingsStore as any,
+			});
+
+			const handler = handlers.get('agents:getKnownEnvVarKeys');
+			expect(handler).toBeDefined();
+
+			expect(await handler?.({})).toEqual({
+				byProvider: {
+					'claude-code': ['ANTHROPIC_BASE_URL', 'CLAUDE_CONFIG_DIR', 'MAX_THINKING_TOKENS'],
+					codex: ['CODEX_HOME'],
+					opencode: ['OPENCODE_CONFIG'],
+				},
+				global: ['HTTPS_PROXY', 'NO_PROXY'],
+			});
+		});
+
+		it('skips names with no value, so a half-finished row is never suggested back', async () => {
+			mockAgentConfigsStore.get.mockImplementation((key: string, fallback?: unknown) => {
+				if (key !== 'configs') return fallback;
+				return { 'claude-code': { customEnvVars: { VAR: '', ANTHROPIC_MODEL: '  ' } } };
+			});
+
+			const handler = handlers.get('agents:getKnownEnvVarKeys');
+
+			expect(await handler?.({})).toEqual({ byProvider: {}, global: [] });
 		});
 	});
 
