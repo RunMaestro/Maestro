@@ -47,8 +47,8 @@ describe('BatonView', () => {
 		fireEvent.change(sliders[4], { target: { value: '2' } });
 
 		expect(baton.setDuration).toHaveBeenCalledWith(5);
-		expect(baton.setFadeOutStart).toHaveBeenCalledWith(20);
-		expect(baton.setFadeInStart).toHaveBeenCalledWith(80);
+		expect(baton.setPeakAt).toHaveBeenCalledWith(20);
+		expect(baton.setSettleAt).toHaveBeenCalledWith(80);
 		expect(baton.setStaggerOffset).toHaveBeenCalledWith(1.25);
 		expect(baton.setTranslateAmount).toHaveBeenCalledWith(2);
 	});

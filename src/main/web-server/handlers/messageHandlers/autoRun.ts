@@ -161,6 +161,10 @@ export function handleConfigureAutoRun(
 		ctx.sendError(client, 'effort must be a non-empty string');
 		return;
 	}
+	if (message.ignoreModelHints !== undefined && typeof message.ignoreModelHints !== 'boolean') {
+		ctx.sendError(client, 'ignoreModelHints must be a boolean');
+		return;
+	}
 
 	// Validate optional worktree config - desktop app uses this to create a
 	// git worktree, checkout the branch, and optionally open a PR on completion.
@@ -223,6 +227,7 @@ export function handleConfigureAutoRun(
 		launch: message.launch as boolean | undefined,
 		model: message.model as string | undefined,
 		effort: message.effort as string | undefined,
+		ignoreModelHints: message.ignoreModelHints === true || undefined,
 		worktree,
 	};
 

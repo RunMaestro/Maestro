@@ -99,10 +99,49 @@ describe('SegmentedControl', () => {
 		expect(onChange).not.toHaveBeenCalled();
 	});
 
+	// A bar wider than its row used to lose its last segments outright:
+	// `overflow-hidden` clipped them, so they were invisible AND unclickable
+	// with no scrollbar to hint they were there. On a phone the five-way sort
+	// bar lost two options.
+	it('scrolls sideways rather than clipping the segments it cannot fit', () => {
+		renderControl('name');
+
+		const group = screen.getByRole('radiogroup');
+		expect(group).toHaveClass('overflow-x-auto', 'overflow-y-hidden', 'max-w-full', 'min-w-0');
+		expect(group).not.toHaveClass('overflow-hidden');
+		// Every segment keeps its width inside that scroller - a squeezed
+		// segment reads as a different label, not a narrower one.
+		expect(screen.getByTestId('sort-name')).toHaveClass('shrink-0');
+	});
+
 	it('surfaces the optional per-segment tooltip', () => {
 		renderControl('name');
 
 		expect(screen.getByTestId('sort-queries')).toHaveAttribute('title', 'Most queries first');
 		expect(screen.getByTestId('sort-name')).not.toHaveAttribute('title');
+	});
+
+	// The host's container query picks which form is visible, so both must be
+	// in the DOM with the short one hidden by default.
+	it('renders both label forms when a short label is given', () => {
+		render(
+			<SegmentedControl
+				value="name"
+				onChange={vi.fn()}
+				options={[{ value: 'name', label: 'Full Name', shortLabel: 'Name' }]}
+				theme={mockTheme}
+				ariaLabel="Sort agents"
+				testId="sort"
+			/>
+		);
+
+		expect(screen.getByText('Full Name')).toHaveClass('segmented-label-full');
+		expect(screen.getByText('Name')).toHaveClass('segmented-label-short', 'hidden');
+	});
+
+	it('renders a plain label when no short label is given', () => {
+		renderControl('name');
+
+		expect(screen.getByTestId('sort-name').querySelector('.segmented-label-full')).toBeNull();
 	});
 });

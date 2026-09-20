@@ -15,6 +15,7 @@ import {
 	ChevronRight,
 	AlertTriangle,
 	Server,
+	User,
 } from 'lucide-react';
 import type { Theme, HistoryEntry, ToolType } from '../types';
 import type { FileNode } from '../types/fileTree';
@@ -318,6 +319,22 @@ export function HistoryDetailModal({
 								<Icon className="w-2.5 h-2.5" />
 								{entry.type}
 							</span>
+
+							{/* Sender pill - shown for turns a logged-in browser sent */}
+							{entry.userName && (
+								<span
+									className="flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-mono font-bold"
+									style={{
+										backgroundColor: theme.colors.bgActivity,
+										color: theme.colors.textDim,
+										border: `1px solid ${theme.colors.border}`,
+									}}
+									title={`Sent by ${entry.userName}`}
+								>
+									<User className="w-2.5 h-2.5" />
+									{entry.userDisplayName ?? entry.userName}
+								</span>
+							)}
 
 							{/* Remote hostname pill - shown for entries from other hosts */}
 							{entry.hostname && (

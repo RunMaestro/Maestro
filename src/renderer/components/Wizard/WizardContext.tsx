@@ -94,8 +94,11 @@ export function WizardProvider({ children }: WizardProviderProps) {
 
 	const canProceedToNext = useCallback((): boolean => {
 		switch (state.currentStep) {
+			// The name is optional: the directory step fills in the folder name
+			// when the user leaves it blank, so requiring one here would only
+			// block someone who has nothing to say yet.
 			case 'agent-selection':
-				return state.selectedAgent !== null && state.agentName.trim() !== '';
+				return state.selectedAgent !== null;
 			case 'directory-selection':
 				return state.directoryPath.trim() !== '' && state.directoryError === null;
 			case 'conversation':
@@ -108,7 +111,6 @@ export function WizardProvider({ children }: WizardProviderProps) {
 	}, [
 		state.currentStep,
 		state.selectedAgent,
-		state.agentName,
 		state.directoryPath,
 		state.directoryError,
 		state.isReadyToProceed,
@@ -153,6 +155,10 @@ export function WizardProvider({ children }: WizardProviderProps) {
 
 	const setMaestroPPath = useCallback((path: string | undefined) => {
 		dispatch({ type: 'SET_MAESTRO_P_PATH', path });
+	}, []);
+
+	const setPlannerModel = useCallback((model: string | undefined) => {
+		dispatch({ type: 'SET_PLANNER_MODEL', model });
 	}, []);
 
 	const setSessionSshRemoteConfig = useCallback(
@@ -338,6 +344,7 @@ export function WizardProvider({ children }: WizardProviderProps) {
 			setEnableMaestroP,
 			setMaestroPMode,
 			setMaestroPPath,
+			setPlannerModel,
 			setSessionSshRemoteConfig,
 			setDirectoryPath,
 			setAdditionalDirectories,
@@ -387,6 +394,7 @@ export function WizardProvider({ children }: WizardProviderProps) {
 			setEnableMaestroP,
 			setMaestroPMode,
 			setMaestroPPath,
+			setPlannerModel,
 			setSessionSshRemoteConfig,
 			setDirectoryPath,
 			setAdditionalDirectories,

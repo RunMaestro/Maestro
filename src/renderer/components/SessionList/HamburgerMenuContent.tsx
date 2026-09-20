@@ -16,6 +16,7 @@ import {
 	Command,
 	Zap,
 	Music2,
+	LogOut,
 } from 'lucide-react';
 import type { Theme } from '../../types';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
@@ -24,6 +25,7 @@ import { getModalActions } from '../../stores/modalStore';
 import { buildMaestroUrl } from '../../utils/buildMaestroUrl';
 import { openUrl } from '../../utils/openUrl';
 import { isWebDesktop } from '../../utils/runtimeContext';
+import { currentWebLoginUser, signOutWebLogin } from '../../services/webLoginSession';
 import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 
 interface HamburgerMenuContentProps {
@@ -48,6 +50,10 @@ export function HamburgerMenuContent({
 	// (The chord badges beside every other row are hidden by CSS via
 	// data-shortcut-hint.)
 	const phone = usePhoneLayout();
+	// Only a browser that actually signed in has somewhere to sign out to. On
+	// the desktop there is no session and no login page, so the row is absent
+	// rather than disabled.
+	const webLoginUser = isWebDesktop() ? currentWebLoginUser() : null;
 	const {
 		setShortcutsHelpOpen,
 		setSettingsModalOpen,
@@ -491,6 +497,26 @@ export function HamburgerMenuContent({
 					</div>
 				</div>
 			</button>
+			{webLoginUser && (
+				<button
+					data-testid="hamburger-sign-out"
+					onClick={() => {
+						setMenuOpen(false);
+						void signOutWebLogin();
+					}}
+					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
+				>
+					<LogOut className="w-5 h-5" style={{ color: theme.colors.accent }} />
+					<div className="flex-1">
+						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+							Sign out ({webLoginUser.displayName})
+						</div>
+						<div className="text-xs" style={{ color: theme.colors.textDim }}>
+							End this browser&apos;s Web Login session
+						</div>
+					</div>
+				</button>
+			)}
 		</div>
 	);
 }

@@ -6,6 +6,7 @@ import {
 } from '../../../renderer/services/crossAgentAsk';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { createMockSession } from '../../helpers/mockSession';
+import { createMockAITab } from '../../helpers/mockTab';
 import type { CrossAgentCompletion } from '../../../renderer/hooks/agent/useCrossAgentDispatch';
 import type { SendCrossAgentRequestOptions } from '../../../renderer/hooks/agent/useCrossAgentDispatch';
 
@@ -147,5 +148,83 @@ describe('runCrossAgentAsk', () => {
 		expect(result.success).toBe(false);
 		expect(result.canceled).toBe(true);
 		expect(result.error).toBeUndefined();
+	});
+
+	describe('consult pill in the asking agent transcript', () => {
+		const pillsIn = (tabId: string) =>
+			useSessionStore
+				.getState()
+				.sessions.find((s) => s.id === 'caller')!
+				.aiTabs.find((t) => t.id === tabId)!
+				.logs.filter((log) => log.delegation);
+
+		beforeEach(() => {
+			useSessionStore.setState({
+				sessions: [
+					createMockSession({ id: 'target', name: '📜 Substrate PedTome', cwd: '/Users/me/sub' }),
+					createMockSession({
+						id: 'caller',
+						name: '🥋 Kensho',
+						cwd: '/Users/me/kensho',
+						aiTabs: [
+							createMockAITab({ id: 'asking-tab', logs: [] }),
+							createMockAITab({ id: 'other-tab', logs: [] }),
+						],
+						activeTabId: 'other-tab',
+					}),
+				],
+			} as never);
+		});
+
+		it('shows a pending pill in the asking tab, then settles it with the consult tab', async () => {
+			const pending = runCrossAgentAsk({
+				targetSessionId: 'target',
+				question: 'How does the gate work?',
+				fromSessionId: 'caller',
+				fromTabId: 'asking-tab',
+			});
+
+			expect(pillsIn('asking-tab')).toHaveLength(1);
+			expect(pillsIn('asking-tab')[0].delegation).toMatchObject({
+				kind: 'ask',
+				toSessionId: 'target',
+				status: 'pending',
+				subject: 'How does the gate work?',
+			});
+			expect(pillsIn('other-tab')).toHaveLength(0);
+
+			complete({ text: 'Signed cookie.', targetTabId: 'consult-1' });
+			await pending;
+
+			expect(pillsIn('asking-tab')[0].delegation).toMatchObject({
+				status: 'done',
+				toTabId: 'consult-1',
+			});
+		});
+
+		it('settles the pill as an error when no answer came back', async () => {
+			const pending = runCrossAgentAsk({
+				targetSessionId: 'target',
+				question: 'q',
+				fromSessionId: 'caller',
+				fromTabId: 'asking-tab',
+			});
+			complete({ text: '', error: 'agent timed out' });
+			await pending;
+
+			expect(pillsIn('asking-tab')[0].delegation).toMatchObject({
+				status: 'error',
+				error: 'agent timed out',
+			});
+		});
+
+		it('marks nothing for an unattributed caller', async () => {
+			const pending = runCrossAgentAsk({ targetSessionId: 'target', question: 'q' });
+			complete({ text: 'a' });
+			await pending;
+
+			expect(pillsIn('asking-tab')).toHaveLength(0);
+			expect(pillsIn('other-tab')).toHaveLength(0);
+		});
 	});
 });

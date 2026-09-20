@@ -54,5 +54,6 @@ export type WizardConversationState = Pick<
 	| 'conversationHistory'
 	| 'isConversationLoading'
 	| 'existingDocsChoice'
+	| 'plannerModel'
 	| 'sessionSshRemoteConfig'
 >;

@@ -285,7 +285,12 @@ export interface UseMainPanelPropsDeps {
 	) => Promise<void>;
 	retryInlineWizardMessage: () => void;
 	clearInlineWizardError: () => void;
-	endInlineWizard: (tabId?: string) => void;
+	/**
+	 * Leave wizard mode on a tab. Flattens the wizard conversation into the tab's
+	 * normal log before dropping the wizard, so exiting never destroys it.
+	 * Do NOT swap this back for the raw endInlineWizard.
+	 */
+	handleExitWizard: (tabId?: string) => void;
 	/** Stop the wizard turn running on a tab, keeping the wizard open */
 	cancelInlineWizardTurn: (tabId?: string) => void;
 	handleAutoRunRefresh: () => void;
@@ -538,10 +543,10 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			// Both name the tab: the hook's fallback is the last-touched wizard, which is
 			// the wrong one whenever a second wizard has been opened since, and ending the
 			// wrong tab leaves the visible one registered with no way to clear it.
-			onExitWizard: () => deps.endInlineWizard(deps.activeSession?.activeTabId),
+			onExitWizard: () => deps.handleExitWizard(deps.activeSession?.activeTabId),
 			onStopWizardTurn: (tabId?: string) =>
 				deps.cancelInlineWizardTurn(tabId ?? deps.activeSession?.activeTabId),
-			onWizardCancelGeneration: () => deps.endInlineWizard(deps.activeSession?.activeTabId),
+			onWizardCancelGeneration: () => deps.handleExitWizard(deps.activeSession?.activeTabId),
 			// Complex wizard handlers (passed through from App.tsx)
 			onWizardComplete: deps.onWizardComplete,
 			onWizardCompleteAndStartAutoRun: deps.onWizardCompleteAndStartAutoRun,
@@ -721,7 +726,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.setLastGraphFocusFilePath,
 			deps.setIsGraphViewOpen,
 			deps.handleOpenBrowserTabAt,
-			deps.endInlineWizard,
+			deps.handleExitWizard,
 			deps.cancelInlineWizardTurn,
 			deps.activeSession?.activeTabId,
 			// Complex wizard handlers

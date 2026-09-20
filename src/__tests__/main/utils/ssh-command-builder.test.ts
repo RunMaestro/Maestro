@@ -97,6 +97,22 @@ describe('ssh-command-builder', () => {
 			expect(result).toBe("cd '/home/user/project'\\''s name' && claude");
 		});
 
+		it('keeps a home-relative cwd expandable on the remote', async () => {
+			// A single-quoted '~/proj' never expands: the remote shell looks for a
+			// directory literally named `~` and the agent fails to start. The remote
+			// user's home cannot be resolved locally, so it has to reach the shell
+			// as "$HOME/proj".
+			const result = buildRemoteCommand({
+				command: 'claude',
+				args: ['--print'],
+				cwd: '~/git-projects',
+			});
+			expect(result).toBe('cd "$HOME/git-projects" && claude \'--print\'');
+			expect(buildRemoteCommand({ command: 'claude', args: [], cwd: '~' })).toBe(
+				'cd "$HOME" && claude'
+			);
+		});
+
 		it('escapes special characters in env values', async () => {
 			const result = buildRemoteCommand({
 				command: 'claude',
@@ -844,6 +860,19 @@ describe('ssh-command-builder', () => {
 			});
 
 			expect(result.stdinScript).toContain("cd '/home/user/project'");
+		});
+
+		it('keeps a home-relative cwd expandable in the stdin script', async () => {
+			const result = await buildSshCommandWithStdin(baseConfig, {
+				command: 'opencode',
+				args: ['run'],
+				cwd: '~/git-projects',
+			});
+
+			// Same rule as buildRemoteCommand: the script's first line is the cd,
+			// and a single-quoted tilde would `exit 1` before the agent ever ran.
+			expect(result.stdinScript).toContain('cd "$HOME/git-projects" || exit 1');
+			expect(result.stdinScript).not.toContain("cd '~");
 		});
 
 		it('includes environment variables in stdin script', async () => {

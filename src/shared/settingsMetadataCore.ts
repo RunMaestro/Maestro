@@ -1,5 +1,5 @@
 /**
- * LLM Provider, Shell, and Logging settings metadata.
+ * Shell and Logging settings metadata.
  *
  * Part of the settingsMetadata.ts domain-file split, mirroring the
  * settingsStore.ts slice decomposition (see settingsAnnotatorSlice.ts
@@ -39,27 +39,6 @@ export const CORE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		description: 'Model override for the utility agent. When null, uses the agent default model.',
 		type: 'string',
 		default: null,
-		category: 'advanced',
-	},
-	// --- LLM / Provider ---
-	llmProvider: {
-		description:
-			'LLM provider for built-in AI features. E.g., openrouter, requesty, anthropic, ollama.',
-		type: 'string',
-		default: 'openrouter',
-		category: 'advanced',
-	},
-	modelSlug: {
-		description: 'Model identifier for the selected LLM provider.',
-		type: 'string',
-		default: 'anthropic/claude-3.5-sonnet',
-		category: 'advanced',
-	},
-	apiKey: {
-		description: 'API key for the selected LLM provider.',
-		type: 'string',
-		default: '',
-		sensitive: true,
 		category: 'advanced',
 	},
 	allowConcurrentSend: {

@@ -12,7 +12,7 @@ Follow the [Installation](./installation) instructions for your platform, then l
 
 ### First run
 
-The first time Maestro opens, it asks three short questions before getting out of the way. Every answer is an ordinary setting you can change later, and **Back** steps you through the series in either direction.
+The first time Maestro opens, it asks four short questions before getting out of the way. Every answer is an ordinary setting you can change later, and **Back** steps you through the series in either direction.
 
 **Choose your typography.** Two presets, previewed side by side on real sample text:
 
@@ -24,6 +24,15 @@ The first time Maestro opens, it asks three short questions before getting out o
 Pick either, or **Fine-tune in Settings** to set a font per surface right away. See [Typography](./configuration#typography).
 
 **Pick a theme.** Click any theme to try it on - the whole app changes as you browse, and nothing is saved until you keep it. Dark and light sets are offered separately. See [Themes](./configuration).
+
+**Stay on the Bleeding Edge.** Three switches and one button, each showing your current setting:
+
+- **Check for updates automatically** - on by default.
+- **Include beta and release candidate updates** - off by default. If you want new features as soon as they ship, turn this on.
+- **Send anonymous crash reports** - on by default. Leave it on: crash reports let problems get fixed as soon as they are discovered.
+- **Install the Maestro CLI** - one click. Humans can use [`maestro-cli`](./cli), but it is built for your agents, so they can automate everything Maestro can do.
+
+Existing users see this screen once, after the update that adds it, with whatever they had already set. All of it also lives in **Settings > General**.
 
 **Your Agents Can Drive Maestro.** The closing screen makes a point worth reading, because it is the part people miss: you just set your typography and theme by hand, and you did not have to. Agents running inside Maestro reach the same controls the interface does, so you can ask for what you want in plain language instead of finding the screen.
 
@@ -54,12 +63,16 @@ Click the **New Agent** button in the bottom-left sidebar (or press `Cmd+N` / `C
 
 **Guided Setup** (Recommended for new users) - Launches the **Onboarding Wizard**, which walks you through:
 
-1. Selecting an AI provider
+1. Selecting an AI provider. Naming the agent is optional: leave it blank and the wizard uses your project's folder name, which you can change later
 2. Choosing your project directory
-3. Having a discovery conversation where the AI learns about your project
+3. Having a discovery conversation where the AI learns about your project. If the folder already holds a project, the agent opens the conversation by reading it and telling you what it found, so you never have to describe code it can read for itself. Only an empty folder asks you to describe what you want to build
 4. Generating an initial Auto Run Playbook with tasks
 
 ![Wizard Document Generation](./screenshots/wizard-doc-generation.png)
+
+The conversation and the generated Playbook both name the model they are running on, and you can switch to your provider's top-tier model for the planning without changing what the agent uses afterwards.
+
+Don't want a Playbook? On the directory step, choose **Skip that, just create the agent** and the wizard creates the agent and gets out of the way.
 
 The Wizard creates a fully configured agent with an Auto Run document folder ready to go. Generated documents are saved to an `Initiation/` subfolder within `.maestro/playbooks/` to keep them organized separately from documents you create later.
 

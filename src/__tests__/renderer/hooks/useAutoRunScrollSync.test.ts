@@ -40,7 +40,7 @@ const createParams = (
 ): UseAutoRunScrollSyncParams => ({
 	mode: 'edit' as const,
 	setMode: vi.fn(),
-	textareaRef: { current: null },
+	editorRef: { current: null },
 	previewRef: { current: null },
 	localContent: 'test content',
 	searchOpen: false,

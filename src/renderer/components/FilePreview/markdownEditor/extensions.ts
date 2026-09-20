@@ -5,6 +5,7 @@ import {
 	highlightActiveLineGutter,
 	keymap,
 	drawSelection,
+	placeholder as cmPlaceholder,
 } from '@codemirror/view';
 import { EditorState, Prec, type Extension } from '@codemirror/state';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
@@ -32,6 +33,15 @@ export interface BuildEditorExtensionsOptions {
 	 * anything else leaves the key to the editor.
 	 */
 	onKeyDown?: (event: KeyboardEvent) => boolean | void;
+	/**
+	 * DOM-level paste, run BEFORE CodeMirror's own paste handler. Return `true`
+	 * to swallow the event - that is how a host claims a paste it wants to
+	 * rewrite (trimming whitespace, turning an image on the clipboard into a
+	 * saved attachment). Anything else leaves the paste to the editor.
+	 */
+	onPaste?: (event: ClipboardEvent) => boolean | void;
+	/** Hint text painted while the document is empty. */
+	placeholder?: string;
 }
 
 /**
@@ -80,6 +90,10 @@ export function buildEditorExtensions(opts: BuildEditorExtensionsOptions): Exten
 		);
 	}
 
+	if (opts.placeholder) {
+		exts.push(cmPlaceholder(opts.placeholder));
+	}
+
 	if (opts.wrap) {
 		exts.push(EditorView.lineWrapping);
 	}
@@ -108,6 +122,21 @@ export function buildEditorExtensions(opts: BuildEditorExtensionsOptions): Exten
 				EditorView.domEventHandlers({
 					keydown(event) {
 						return opts.onKeyDown?.(event) === true;
+					},
+				})
+			)
+		);
+	}
+
+	if (opts.onPaste) {
+		exts.push(
+			// Same reasoning as the keydown handler: CM6's built-in paste handler
+			// inserts the clipboard text and stops the chain, so a host that wants
+			// to rewrite the paste has to see it first.
+			Prec.highest(
+				EditorView.domEventHandlers({
+					paste(event) {
+						return opts.onPaste?.(event) === true;
 					},
 				})
 			)

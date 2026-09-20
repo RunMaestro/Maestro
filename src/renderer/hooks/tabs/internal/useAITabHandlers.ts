@@ -130,7 +130,9 @@ export function useAITabHandlers(): AITabHandlersReturn {
 				const unifiedIndex = s.unifiedTabOrder.findIndex(
 					(ref) => ref.type === 'ai' && ref.id === tabId
 				);
-				const result = closeTab(s, tabId, false, { skipHistory: isWizardTab });
+				// `undefined` = read the live unread-filter state, so closing a tab while
+				// the strip is narrowed lands on a tab the user can still see.
+				const result = closeTab(s, tabId, undefined, { skipHistory: isWizardTab });
 				if (!result) return s;
 				if (!isWizardTab && tab) {
 					return addAiTabToUnifiedHistory(result.session, tab, unifiedIndex);
@@ -190,6 +192,7 @@ export function useAITabHandlers(): AITabHandlersReturn {
 			const tabIds = visibleAiTabs(s.aiTabs).map((t) => t.id);
 			for (const tabId of tabIds) {
 				const tab = updatedSession.aiTabs.find((t) => t.id === tabId);
+				// Filter state is irrelevant: no tab survives to be selected.
 				const result = closeTab(updatedSession, tabId, false, {
 					skipHistory: tab ? hasActiveWizard(tab) : false,
 				});

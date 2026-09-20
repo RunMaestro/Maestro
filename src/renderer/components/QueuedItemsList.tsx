@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useRef, memo } from 'react';
+import React, { useState, useCallback, useEffect, useMemo, useRef, memo } from 'react';
 import {
 	X,
 	ChevronDown,
@@ -17,11 +17,15 @@ import { getForceSendTitle, shouldOfferForceSend } from '../utils/executionQueue
 import { safeClipboardWrite } from '../utils/clipboard';
 import { displayImageSrc } from '../utils/sessionImageSrc';
 import { Modal, ModalFooter } from './ui/Modal';
+import { MarkdownRenderer } from './MarkdownRenderer';
+import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { QueuedItemEditModal } from './QueuedItemEditModal';
 import { TurnSettingPills } from './ui/TurnSettingPills';
+import { MiniBadge } from './ui/MiniBadge';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useEventListener } from '../hooks/utils/useEventListener';
 import { useUIStore } from '../stores/uiStore';
+import { useSettingsStore } from '../stores/settingsStore';
 import {
 	useQueueReorder,
 	useQueueRowDrag,
@@ -34,6 +38,12 @@ import {
 // Single group key: the inline list only ever renders one tab's queue at a time,
 // so a constant identifies its lone drag group for the shared reorder hook.
 const INLINE_QUEUE_KEY = 'inline-queue';
+
+// Queued messages are authored markdown like any other chat message, so the
+// cards render them through the chat markdown stack. The prose rules are scoped
+// to this class because the list also renders outside `.terminal-output` (group
+// chat's composer), where the transcript's styles never reach.
+const QUEUE_PROSE_SCOPE = 'queued-item-prose';
 
 // ============================================================================
 // QueuedItemsList - Displays queued execution items with expand/collapse
@@ -112,6 +122,15 @@ export const QueuedItemsList = memo(
 		// shortcut can open this modal without reaching into the transcript.
 		const editItemId = useUIStore((s) => s.editingQueuedItemId);
 		const setEditItemId = useUIStore((s) => s.setEditingQueuedItemId);
+
+		// Same global toggle the transcript honors (Cmd+E): raw source instead of
+		// rendered markdown. A queued message is the user's own chat message, so it
+		// follows the chat's rendering mode rather than a mode of its own.
+		const chatRawTextMode = useSettingsStore((s) => s.chatRawTextMode);
+		const proseStyles = useMemo(
+			() => generateTerminalProseStyles(theme, `.${QUEUE_PROSE_SCOPE}`),
+			[theme]
+		);
 
 		// Track which queued messages are expanded (for viewing full content)
 		const [expandedQueuedMessages, setExpandedQueuedMessages] = useState<Set<string>>(new Set());
@@ -247,7 +266,8 @@ export const QueuedItemsList = memo(
 				</div>
 
 				{/* Queued items (wrapped so drop-indicator lines align to the cards) */}
-				<div className="mx-6">
+				<div className={`mx-6 ${QUEUE_PROSE_SCOPE}`}>
+					<style>{proseStyles}</style>
 					{filteredQueue.map((item, index) => {
 						// Ask for eligibility whenever a handler is wired and the item is
 						// not already flagged to run in parallel. `forcedParallelEnabled` is
@@ -293,6 +313,7 @@ export const QueuedItemsList = memo(
 									onToggleExpand={() => toggleExpanded(item.id)}
 									isCopied={copiedItemId === item.id}
 									onCopy={() => handleCopy(item)}
+									renderMarkdown={!chatRawTextMode}
 									onEdit={
 										onEditQueuedItem && item.type !== 'command'
 											? () => setEditItemId(item.id)
@@ -443,6 +464,8 @@ interface QueuedItemRowProps {
 	onToggleExpand: () => void;
 	isCopied: boolean;
 	onCopy: () => void;
+	/** Render the message body as markdown. False shows the raw source (Cmd+E). */
+	renderMarkdown: boolean;
 	onEdit?: () => void;
 	showForceSendButton: boolean;
 	/** False when the item cannot be forced right now - button renders disabled. */
@@ -470,6 +493,7 @@ function QueuedItemRow({
 	onToggleExpand,
 	isCopied,
 	onCopy,
+	renderMarkdown,
 	onEdit,
 	showForceSendButton,
 	canForceSend,
@@ -496,8 +520,15 @@ function QueuedItemRow({
 
 	const isCommand = item.type === 'command';
 	const isPaused = !!item.paused;
+	const isWaitingForConnection = !!item.waitingForConnection;
 	const displayText = isCommand ? (item.command ?? '') : (item.text ?? '');
 	const isLongMessage = displayText.length > 200;
+	// Collapsed cards show the first 200 characters; the full text once expanded.
+	const visibleText =
+		isLongMessage && !isExpanded ? displayText.substring(0, 200) + '...' : displayText;
+	// Commands are a fixed name + args pill, so only message bodies go through the
+	// markdown stack.
+	const showMarkdown = !isCommand && renderMarkdown;
 	const accent = isCommand ? theme.colors.success : theme.colors.accent;
 
 	return (
@@ -516,31 +547,36 @@ function QueuedItemRow({
 					...queueDragCardStyle(theme, { isDragging, showGrabbed }),
 					// Queued items render dimmed (they're pending); lift the grabbed one and
 					// recede the rest while a drag is in progress.
-					opacity: isDragging ? 0.95 : isPaused ? 0.35 : isDimmed ? 0.3 : 0.6,
+					opacity: isDragging
+						? 0.95
+						: isPaused || isWaitingForConnection
+							? 0.35
+							: isDimmed
+								? 0.3
+								: 0.6,
 				}}
 				{...cardHandlers}
 			>
 				{/* Drag handle - only show when draggable */}
 				{canDrag && <QueueDragHandle theme={theme} visible={showDragReady || showGrabbed} />}
 
-				{/* HELD badge for paused items */}
-				{isPaused && (
-					<div className={canDrag ? 'pl-4 mb-1.5' : 'mb-1.5'}>
-						<span
-							className="px-1.5 py-0.5 rounded text-2xs font-bold tracking-wider"
-							style={{
-								backgroundColor: theme.colors.warning + '33',
-								color: theme.colors.warning,
-							}}
-						>
-							HELD
-						</span>
+				{(isPaused || isWaitingForConnection) && (
+					<div className={`flex items-center gap-1.5 ${canDrag ? 'pl-4 mb-1.5' : 'mb-1.5'}`}>
+						{isPaused && <MiniBadge label="HELD" theme={theme} color={theme.colors.warning} />}
+						{isWaitingForConnection && (
+							<MiniBadge
+								label="WAITING FOR CONNECTION"
+								theme={theme}
+								color={theme.colors.warning}
+								title="This message will run after Maestro reconnects"
+							/>
+						)}
 					</div>
 				)}
 
 				{/* Item content */}
 				<div
-					className={`text-sm whitespace-pre-wrap break-words ${canDrag ? 'pl-4' : ''}`}
+					className={`text-sm break-words ${showMarkdown ? '' : 'whitespace-pre-wrap'} ${canDrag ? 'pl-4' : ''}`}
 					style={{ color: theme.colors.textMain }}
 				>
 					{isCommand && (
@@ -559,7 +595,17 @@ function QueuedItemRow({
 						</span>
 					)}
 					{!isCommand &&
-						(isLongMessage && !isExpanded ? displayText.substring(0, 200) + '...' : displayText)}
+						(showMarkdown ? (
+							<MarkdownRenderer
+								content={visibleText}
+								theme={theme}
+								onCopy={(text) => void safeClipboardWrite(text)}
+								chatLineBreaks
+								chatMath
+							/>
+						) : (
+							visibleText
+						))}
 				</div>
 
 				{/* Show more/less toggle for long messages */}

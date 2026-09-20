@@ -12,9 +12,11 @@ import { logger } from '../utils/logger';
  * Integration points:
  * 1. After sessions are restored on app launch, refreshes all sessions
  * 2. When a new session is created, refreshes that session
- * 3. When a session is removed, notifies the engine to clean up
- * 4. When the maestroCue encore feature is toggled on, starts the engine
- * 5. When the maestroCue encore feature is toggled off, stops the engine
+ * 3. When a session's projectRoot changes (the agent was moved to another
+ *    directory), refreshes it against the new root
+ * 4. When a session is removed, notifies the engine to clean up
+ * 5. When the maestroCue encore feature is toggled on, starts the engine
+ * 6. When the maestroCue encore feature is toggled off, stops the engine
  *
  * Session discovery always runs so the Cue indicator shows in the Left Bar
  * whenever a .maestro/cue.yaml exists. The encore feature flag only gates

@@ -14,7 +14,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ReactFlowProvider, useReactFlow, type Node, type Edge } from 'reactflow';
+import { ReactFlowProvider, useReactFlow, useStore, type Node, type Edge } from 'reactflow';
 import type { Theme } from '../../types';
 import type { CueGraphSession } from '../../../shared/cue-pipeline-types';
 import { convertToReactFlowNodes, convertToReactFlowEdges } from './utils/pipelineGraph';
@@ -33,6 +33,7 @@ import {
 	untanglePipelineNodes,
 	arrangePipelineGroups,
 	beautifyPipelineLayouts,
+	separateOverlappingNodes,
 } from './utils/pipelineAutoArrange';
 import { ConfirmModal } from '../ConfirmModal';
 import { LayoutGrid } from 'lucide-react';
@@ -544,7 +545,11 @@ function CuePipelineEditorInner({
 				if (prev.selectedPipelineId === null) {
 					// All-Pipelines view: no edges between cards to cross, so both
 					// modes just pack the group cards into a tidy grid.
-					const offsets = arrangePipelineGroups(prev.pipelines, stableYOffsetsRef.current);
+					const offsets = arrangePipelineGroups(
+						prev.pipelines,
+						stableYOffsetsRef.current,
+						measuredWidths
+					);
 					if (offsets.size === 0) return prev;
 					// Explicit re-layout that actually moves something: let the next
 					// resync adopt the freshly arranged positions despite dirty.
@@ -672,6 +677,68 @@ function CuePipelineEditorInner({
 		}
 		persistLayout();
 	}, [
+		pipelineState.pipelines,
+		pipelinesLoaded,
+		setPipelineState,
+		persistLayout,
+		savedStateRef,
+		snapshotMeasuredWidths,
+	]);
+
+	// ─── Collision guard: two nodes may never be drawn on top of each other ──
+	// The heal above only fires on TOPOLOGY changes, and every layout pass has
+	// to guess a node's width when it runs (nodes are `width: max-content`, and
+	// the load heal runs before ReactFlow has measured anything). Two ordinary
+	// edits slip through that: renaming a subscription - a DATA edit, no
+	// topology change - grows the node under the old column spacing, and a
+	// wide UI font renders every label wider than the text estimate predicted.
+	// Both end with one node covering its neighbour.
+	//
+	// So the last word on spacing belongs to the geometry ReactFlow actually
+	// measured, not to an estimate: this re-runs whenever a measured width
+	// changes and pushes any colliding nodes apart. It is a no-op unless nodes
+	// genuinely overlap, which is what lets it watch every measurement without
+	// fighting the user's own arrangement.
+	const measuredWidthSignature = useStore((s) => {
+		let signature = '';
+		s.nodeInternals.forEach((n) => {
+			signature += `${n.id}:${Math.round(n.width ?? 0)};`;
+		});
+		return signature;
+	});
+	useEffect(() => {
+		if (!pipelinesLoaded) return;
+		// The guard's authority IS the measurement: with nothing measured yet
+		// (first mount, headless render) there is no collision to be sure of, and
+		// re-deriving positions from the estimate alone would just be the heal
+		// again, moving nodes nobody can see overlapping.
+		const measuredWidths = snapshotMeasuredWidths();
+		if (measuredWidths.size === 0) return;
+		const basePipelines = pipelineState.pipelines;
+		let changed = false;
+		const separated = basePipelines.map((p) => {
+			const nodes = separateOverlappingNodes(p, measuredWidths);
+			if (nodes === p.nodes) return p;
+			changed = true;
+			return { ...p, nodes };
+		});
+		if (!changed) return;
+
+		// Un-overlapping is a machine re-layout, like Tidy: it is allowed to move
+		// nodes while dirty (leaving them stacked is never the right answer), and
+		// it never CREATES dirt - when the pre-guard state was saved, the saved
+		// snapshot advances with it.
+		forceAdoptComputedRef.current = true;
+		const baseJson = JSON.stringify(basePipelines);
+		setPipelineState((prevState) =>
+			prevState.pipelines === basePipelines ? { ...prevState, pipelines: separated } : prevState
+		);
+		if (savedStateRef.current === baseJson) {
+			savedStateRef.current = JSON.stringify(separated);
+		}
+		persistLayout();
+	}, [
+		measuredWidthSignature,
 		pipelineState.pipelines,
 		pipelinesLoaded,
 		setPipelineState,

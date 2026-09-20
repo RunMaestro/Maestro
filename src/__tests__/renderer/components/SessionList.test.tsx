@@ -416,6 +416,63 @@ describe('SessionList', () => {
 	// Basic Rendering Tests
 	// ============================================================================
 
+	// ============================================================================
+	// Narrow-viewport drawer
+	// ============================================================================
+
+	describe('narrow-viewport drawer', () => {
+		const originalWidth = window.innerWidth;
+		const setViewportWidth = (width: number) => {
+			Object.defineProperty(window, 'innerWidth', {
+				configurable: true,
+				writable: true,
+				value: width,
+			});
+		};
+
+		afterEach(() => {
+			setViewportWidth(originalWidth);
+		});
+
+		const renderWithSession = (activeSessionId: string) => {
+			const sessions = [createMockSession({ id: 's1', name: 'Frontend Project' })];
+			useSessionStore.setState({ sessions, activeSessionId });
+			useUIStore.setState({ leftSidebarOpen: true });
+			render(<SessionList {...createDefaultProps({ sortedSessions: sessions })} />);
+		};
+
+		it('closes the drawer when an agent row is tapped', () => {
+			setViewportWidth(390);
+			renderWithSession('');
+
+			fireEvent.click(screen.getByText('Frontend Project'));
+
+			expect(useSessionStore.getState().activeSessionId).toBe('s1');
+			expect(useUIStore.getState().leftSidebarOpen).toBe(false);
+		});
+
+		it('closes the drawer even when the tapped agent is already active', () => {
+			// The case an effect keyed on the activeSessionId transition cannot see:
+			// nothing changes, so the drawer used to stay over the agent.
+			setViewportWidth(390);
+			renderWithSession('s1');
+
+			fireEvent.click(screen.getByText('Frontend Project'));
+
+			expect(useUIStore.getState().leftSidebarOpen).toBe(false);
+		});
+
+		it('leaves the sidebar open on a wide viewport', () => {
+			setViewportWidth(1440);
+			renderWithSession('');
+
+			fireEvent.click(screen.getByText('Frontend Project'));
+
+			expect(useSessionStore.getState().activeSessionId).toBe('s1');
+			expect(useUIStore.getState().leftSidebarOpen).toBe(true);
+		});
+	});
+
 	describe('Basic Rendering', () => {
 		it('renders the MAESTRO branding header when expanded', () => {
 			useUIStore.setState({ leftSidebarOpen: true });
@@ -2580,17 +2637,15 @@ describe('SessionList', () => {
 
 			expect(screen.getByText('Move to Group')).toBeInTheDocument();
 
-			// Hover over Move to Group - find the parent div
+			// Hover the row that owns the submenu
 			const moveToGroupButton = screen.getByText('Move to Group');
-			const parentDiv = moveToGroupButton.closest('.relative');
-			fireEvent.mouseEnter(parentDiv!);
+			fireEvent.mouseEnter(moveToGroupButton.closest('div')!);
 
-			// Submenu should show group name - there may be multiple since it appears in groups section too
-			const submenuTargets = screen.getAllByText('Submenu Target');
-			expect(submenuTargets.length).toBeGreaterThan(0);
-			// The "Ungrouped" option in the submenu should be visible (may appear multiple times)
-			const ungroupedElements = screen.getAllByText('Ungrouped');
-			expect(ungroupedElements.length).toBeGreaterThan(0);
+			// The flyout is portaled out of the menu (the menu scrolls, which would
+			// otherwise clip it away), so assert against the flyout itself.
+			const flyout = within(screen.getByTestId('session-context-flyout'));
+			expect(flyout.getByText('Submenu Target')).toBeInTheDocument();
+			expect(flyout.getByText('Ungrouped')).toBeInTheDocument();
 		});
 
 		it('moves session to group when submenu item clicked', () => {
@@ -2613,16 +2668,14 @@ describe('SessionList', () => {
 
 			expect(screen.getByText('Move to Group')).toBeInTheDocument();
 
-			// Hover and click group - find within context menu
+			// Hover the row that owns the submenu
 			const moveToGroupButton = screen.getByText('Move to Group');
-			const parentDiv = moveToGroupButton.closest('.relative');
-			fireEvent.mouseEnter(parentDiv!);
+			fireEvent.mouseEnter(moveToGroupButton.closest('div')!);
 
-			// Get all elements with the group name, click the one in the submenu (inside fixed positioned menu)
-			const groupButtons = screen.getAllByText('Click Target');
-			// The submenu item should be in a button within the fixed positioned context menu
-			const submenuButton = groupButtons.find((el) => el.closest('button')?.closest('.absolute'));
-			fireEvent.click(submenuButton || groupButtons[groupButtons.length - 1]);
+			// The group name also appears in the Left Bar, so scope the click to the
+			// portaled flyout rather than guessing which copy is the menu item.
+			const flyout = within(screen.getByTestId('session-context-flyout'));
+			fireEvent.click(flyout.getByText('Click Target'));
 
 			expect(setSessions).toHaveBeenCalled();
 		});
@@ -4342,6 +4395,32 @@ describe('SessionList', () => {
 			expect(band.contains(screen.getByTestId('icon-radio'))).toBe(true);
 			expect(band.contains(screen.getByTestId('now-playing-indicator'))).toBe(true);
 			expect(band.contains(screen.getByTestId('icon-trophy'))).toBe(true);
+		});
+
+		// Minimizing is a promise that the widget is parked somewhere reachable,
+		// and the pill is the only place it parks. The collapsed rail used to skip
+		// it on the grounds that a 64px strip belongs to the agents, which made
+		// minimize equal vanish there: no pill, no widget, and the only route back
+		// an unbound shortcut.
+		it('keeps the minimized player reachable on the collapsed rail', () => {
+			useUIStore.setState({ leftSidebarOpen: false, leftSidebarHidden: false });
+			showNowPlayingPill();
+			render(<SessionList {...createDefaultProps({})} />);
+
+			const pill = screen.getByTestId('now-playing-indicator');
+			expect(pill).toBeTruthy();
+			// Compact: the rail is 64px, so the filename is dropped rather than
+			// clipped, leaving the transport and the way back.
+			expect(pill.textContent).toBe('');
+			expect(screen.getByTestId('now-playing-restore')).toBeTruthy();
+		});
+
+		it('leaves the collapsed rail alone when nothing is minimized', () => {
+			// Self-gating: someone who never opened the player sees no change.
+			useUIStore.setState({ leftSidebarOpen: false, leftSidebarHidden: false });
+			render(<SessionList {...createDefaultProps({})} />);
+
+			expect(screen.queryByTestId('now-playing-indicator')).toBeNull();
 		});
 
 		it('shows the wordmark on a wide sidebar', () => {

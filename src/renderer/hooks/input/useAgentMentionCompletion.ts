@@ -164,12 +164,79 @@ export function buildKnownMentionNameSet(
 	sessions: Session[],
 	groups: Group[] | undefined,
 	currentSessionId: string | null | undefined
-): Set<string> {
-	return new Set(
+): ReadonlySet<string> {
+	const signature = mentionRosterSignature(sessions, groups);
+	if (signature !== knownMentionCacheSignature) {
+		knownMentionCacheSignature = signature;
+		knownMentionCache.clear();
+	}
+
+	const key = currentSessionId ?? '';
+	const cached = knownMentionCache.get(key);
+	if (cached) return cached;
+
+	const built: ReadonlySet<string> = new Set(
 		buildAgentMentionSuggestions(sessions, groups, currentSessionId)
 			.filter((item) => item.kind === 'agent')
 			.map(suggestionToken)
 	);
+	knownMentionCache.set(key, built);
+	return built;
+}
+
+/**
+ * Cache for {@link buildKnownMentionNameSet}, keyed by the mentioning agent and
+ * invalidated whenever {@link mentionRosterSignature} changes.
+ *
+ * The set costs O(agents^2) Unicode normalizations to build: every agent asks
+ * {@link getMentionNameForContext} for the alias that resolves uniquely back to
+ * it, and that compares the candidate against the whole peer roster, NFKC-folding
+ * both sides several times per comparison. Paying that once per roster change is
+ * fine. Paying it per CALL is not - `remarkMentionChips` asks for the set at the
+ * top of every markdown transform, and a streaming agent re-renders its
+ * transcript many times a second, which put this second only to `formatTimestamp`
+ * in renderer main-thread self-time across two field traces (~707ms of a 95s
+ * window).
+ *
+ * Keyed by `currentSessionId` because the callers disagree about it and run in
+ * the same frame: the rendered transcript excludes nobody (`undefined`) while a
+ * composer excludes the agent it belongs to. A single-entry cache would thrash
+ * between the two and never hit. The map is bounded by the roster it is keyed
+ * against, since a roster change clears it.
+ */
+const knownMentionCache = new Map<string, ReadonlySet<string>>();
+let knownMentionCacheSignature: string | null = null;
+
+/**
+ * An O(agents) fingerprint of everything the mention roster is derived from.
+ *
+ * Identity of the `sessions` array is NOT usable here: the store replaces it on
+ * every streaming flush from any agent, so an identity check would miss the
+ * cache continuously during exactly the streaming burst this exists to survive.
+ * What the tokens actually depend on is each mentionable agent's id and name
+ * (`toolType` decides who is mentionable at all), so those are what the
+ * signature carries.
+ *
+ * Group names ride along even though today they cannot change an agent token -
+ * `buildKnownMentionNameSet` drops every group row. That is a property of the
+ * builder rather than of the data, so including them keeps the cache honest if
+ * group naming ever starts disambiguating agents, at the cost of a few string
+ * appends.
+ */
+function mentionRosterSignature(sessions: Session[], groups: Group[] | undefined): string {
+	// NUL and SOH separate the fields. An agent name is user-supplied and can
+	// contain anything printable, so a printable delimiter would let two different
+	// rosters fingerprint identically and serve each other a stale set.
+	const parts: string[] = [];
+	for (const s of sessions) {
+		if (s.toolType === 'terminal') continue;
+		parts.push(s.id, '\u0000', s.name, '\u0001');
+	}
+	parts.push('\u0002');
+	if (groups) {
+		for (const g of groups) parts.push(g.id, '\u0000', g.name, '\u0001');
+	}
+	return parts.join('');
 }
 
 /**

@@ -8,8 +8,6 @@ import { AgentDetector } from '../../agents';
 import type { InteractiveReplayController } from '../../agents/claude-interactive-replay';
 import type { ProcessConfig as ProcessSpawnConfig } from '../../process-manager/types';
 import { logger } from '../../utils/logger';
-import { setFailoverOverlay } from '../../process-manager/failover-overlay';
-import { REGEX_AI_SUFFIX } from '../../constants';
 import { getChildProcesses } from '../../process-manager/utils/childProcessInfo';
 import { addBreadcrumb } from '../../utils/sentry';
 import { isWebContentsAvailable } from '../../utils/safe-send';
@@ -19,7 +17,7 @@ import {
 	CreateHandlerOptions,
 } from '../../utils/ipcHandler';
 import { getSshRemoteConfig, createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
-import { shellEscape } from '../../utils/shell-escape';
+import { shellEscape, shellEscapeRemotePath } from '../../utils/shell-escape';
 import { resolveSshPath } from '../../utils/cliDetection';
 import type { SshRemoteConfig } from '../../../shared/types';
 import { buildSshOptionArgs } from '../../../shared/sshOptions';
@@ -242,20 +240,6 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 		})
 	);
 
-	// Provider Failover: pin an agent to a backup endpoint's env (or clear the pin
-	// with `env: null` to go back to primary). The renderer awaits this before it
-	// fires the failover retry, so the very next spawn already carries the swap -
-	// relying on session persistence to propagate it would race the spawn.
-	ipcMain.handle(
-		'process:setFailoverOverlay',
-		withIpcErrorLogging(
-			handlerOpts('setFailoverOverlay'),
-			async (sessionId: string, env: Record<string, string> | null, model?: string) => {
-				setFailoverOverlay(sessionId.replace(REGEX_AI_SUFFIX, ''), env, model);
-			}
-		)
-	);
-
 	// Resize PTY dimensions
 	ipcMain.handle(
 		'process:resize',
@@ -457,13 +441,9 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 
 						// Remote command (must come after destination)
 						if (workingDirOverride) {
-							// Handle leading ~ by using $HOME outside of quotes so the remote shell expands it
-							const cdPath = workingDirOverride.startsWith('~/')
-								? `"$HOME"/${shellEscape(workingDirOverride.slice(2))}`
-								: workingDirOverride === '~'
-									? '"$HOME"'
-									: shellEscape(workingDirOverride);
-							remoteParts.push(`cd ${cdPath}`);
+							// Tilde-aware: `~/proj` reaches the remote as `"$HOME/proj"` so the
+							// shell expands it. The same rule every other remote `cd` uses.
+							remoteParts.push(`cd ${shellEscapeRemotePath(workingDirOverride)}`);
 						}
 
 						// Export merged env vars on the remote side

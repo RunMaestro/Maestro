@@ -520,6 +520,18 @@ describe('WizardContext', () => {
 				expect(result.current.canProceedToNext()).toBe(false);
 			});
 
+			it('returns true when an agent is selected and the name is left blank', () => {
+				const { result } = renderHook(() => useWizard(), { wrapper });
+
+				act(() => {
+					result.current.setSelectedAgent('claude-code');
+				});
+
+				// The name is optional - the directory step fills in the folder name.
+				expect(result.current.state.agentName).toBe('');
+				expect(result.current.canProceedToNext()).toBe(true);
+			});
+
 			it('returns true when agent is selected and name is provided', () => {
 				const { result } = renderHook(() => useWizard(), { wrapper });
 

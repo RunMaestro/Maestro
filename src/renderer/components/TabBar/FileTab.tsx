@@ -23,7 +23,7 @@ import { LongPressable } from '../shared/LongPressable';
 import { TabOverlayPortal } from './TabOverlayPortal';
 import { getTabKindColor } from './tabBarUtils';
 import { useSettingsStore } from '../../stores/settingsStore';
-import { ShortcutHint } from './ShortcutHint';
+import { ShortcutHint, shortcutSuffix } from '../ui/ShortcutHint';
 import { useTabStore } from '../../stores/tabStore';
 import { isGistPublishableFile } from '../FilePreview/filePreviewUtils';
 
@@ -473,7 +473,7 @@ export const FileTab = memo(function FileTab({
 				<button
 					onClick={handleCloseClick}
 					className="p-0.5 rounded hover:bg-white/10 transition-colors shrink-0"
-					title="Close tab"
+					title={`Close tab${shortcutSuffix(tabShortcuts.closeTab?.keys)}`}
 				>
 					<X className="w-3 h-3" style={{ color: theme.colors.textDim }} />
 				</button>

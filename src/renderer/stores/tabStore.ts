@@ -234,10 +234,16 @@ export interface TabStoreActions {
 	setGroupEmoji: (groupId: string, emoji: string) => void;
 
 	/**
-	 * Snooze an AI tab in the active session until `wakeAt`, with an optional
-	 * note surfaced in the wake notification and an optional prompt run the
-	 * moment it returns. The tab leaves the tab bar until useSnoozeScheduler
-	 * brings it back.
+	 * Snooze a tab (or tiled group) until `wakeAt`, with an optional note
+	 * surfaced in the wake notification and an optional prompt run the moment it
+	 * returns. The tab leaves the tab bar until useSnoozeScheduler brings it
+	 * back.
+	 *
+	 * `sessionId` defaults to the active agent, which is what every click path
+	 * means - the user is snoozing the tab in front of them. It is explicit for
+	 * a caller that is not the user at the keyboard (`maestro-cli snooze`), where
+	 * "active" is whatever agent the human happens to be looking at and would
+	 * park the wrong tab.
 	 *
 	 * @returns The stored snooze entry, or null if the tab wasn't found
 	 */
@@ -245,7 +251,8 @@ export interface TabStoreActions {
 		tabId: string,
 		wakeAt: number,
 		content?: SnoozeContent,
-		showUnreadOnly?: boolean
+		showUnreadOnly?: boolean,
+		sessionId?: string
 	) => SnoozedTabEntry | null;
 
 	/**
@@ -634,8 +641,10 @@ export const useTabStore = create<TabStore>()((set) => ({
 	},
 
 	// Snooze - see utils/snoozeHelpers.ts for why snoozed tabs leave aiTabs entirely
-	snoozeTab: (tabId, wakeAt, content, showUnreadOnly = false) => {
-		const session = getActiveSession();
+	snoozeTab: (tabId, wakeAt, content, showUnreadOnly, sessionId) => {
+		const session = sessionId
+			? useSessionStore.getState().sessions.find((s) => s.id === sessionId)
+			: getActiveSession();
 		if (!session) return null;
 		// One id, two shapes: the tab strip hands this the id of whatever the user
 		// right-clicked, and a tiled group is not a tab. Resolve which it is here
@@ -645,7 +654,10 @@ export const useTabStore = create<TabStore>()((set) => ({
 			? snoozeTabGroupHelper(session, tabId, wakeAt, content)
 			: snoozeTabHelper(session, tabId, wakeAt, content, showUnreadOnly);
 		if (!result) return null;
-		updateActiveSession(result.session);
+		// Written by id rather than through `updateActiveSession`, which keys on
+		// `activeSessionId`: a CLI snooze names its own agent, and that agent is
+		// usually not the one on screen.
+		updateSessionWith(session.id, () => result.session);
 		return result.entry;
 	},
 

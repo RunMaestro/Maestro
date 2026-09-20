@@ -22,7 +22,10 @@
  * clipped), so tabbing into them opens the pill rather than skipping it.
  *
  * The percentage in the middle only appears once the user has zoomed, and
- * clicking it snaps back to 100%.
+ * clicking it snaps back to 100%. A surface whose zoom is a size rather than a
+ * magnification (the dashboard's tile grids) passes `showReset={false}`: "130%"
+ * of a tile width means nothing to the reader, and the buttons should not shift
+ * sideways the moment they are first pressed.
  */
 
 import React from 'react';
@@ -64,6 +67,11 @@ export interface ScaleControlProps {
 	collapsible?: boolean;
 	/** Icon shown in the collapsed circle. Required when `collapsible`. */
 	collapsedIcon?: LucideIcon;
+	/**
+	 * Show the clickable percentage between the buttons once zoomed. Defaults to
+	 * true. The reset key still works when this is off; only the readout goes.
+	 */
+	showReset?: boolean;
 	/** Extra classes on the wrapper (positioning is the caller's business). */
 	className?: string;
 	testId?: string;
@@ -80,6 +88,7 @@ export const ScaleControl = React.memo(function ScaleControl({
 	size = 'md',
 	collapsible = false,
 	collapsedIcon: CollapsedIcon,
+	showReset = true,
 	className = '',
 	testId,
 }: ScaleControlProps) {
@@ -155,7 +164,7 @@ export const ScaleControl = React.memo(function ScaleControl({
 				>
 					<DecreaseIcon className={iconClass} />
 				</button>
-				{scale !== 1 && (
+				{showReset && scale !== 1 && (
 					<button
 						type="button"
 						onClick={resetScale}

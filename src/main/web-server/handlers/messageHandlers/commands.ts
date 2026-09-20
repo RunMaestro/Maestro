@@ -9,6 +9,7 @@ import { logger } from '../../../utils/logger';
 import { readBackgroundField } from '../../../../shared/focusPlacement';
 import { getDispatchCallbackRegistry } from '../../../dispatch-callbacks';
 import { armDispatchCallback } from './dispatchCallbacks';
+import { noteDispatchDelegation } from './agentDelegation';
 import { LOG_CONTEXT } from './shared';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
 
@@ -171,6 +172,12 @@ export function handleSendCommand(
 						`[Web Command] ${mode} command rejected for session ${sessionId}`,
 						LOG_CONTEXT
 					);
+				} else if (isAiMode) {
+					noteDispatchDelegation(ctx, message, {
+						targetSessionId: sessionId,
+						targetTabId: requestedTabId,
+						prompt: effectiveCommand,
+					});
 				}
 			})
 			.catch((error) => {
@@ -363,6 +370,9 @@ export function handleCrossAgentAsk(
 	const question = typeof message.question === 'string' ? message.question : '';
 	const fromSessionId =
 		typeof message.fromSessionId === 'string' ? message.fromSessionId : undefined;
+	// The asking agent's own tab, stamped into its shell at spawn. Lets the
+	// renderer put the consult pill in the conversation that asked.
+	const fromTabId = typeof message.fromTabId === 'string' ? message.fromTabId : undefined;
 	const withContext = message.withContext === true;
 	const timeoutMs =
 		typeof message.timeoutMs === 'number' && Number.isFinite(message.timeoutMs)
@@ -399,7 +409,14 @@ export function handleCrossAgentAsk(
 	);
 
 	ctx.callbacks
-		.consultAgent({ targetSessionId, question, fromSessionId, withContext, timeoutMs })
+		.consultAgent({
+			targetSessionId,
+			question,
+			fromSessionId,
+			...(fromTabId ? { fromTabId } : {}),
+			withContext,
+			timeoutMs,
+		})
 		.then((result) => reply({ ...result }))
 		.catch((error) => {
 			ctx.reportHandlerError(

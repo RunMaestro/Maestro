@@ -205,6 +205,7 @@ describe('tab callbacks', () => {
 			await expect(unanswered).resolves.toEqual({
 				success: false,
 				error: 'The desktop did not confirm the rename; it may still be applying',
+				unconfirmed: true,
 			});
 			expect(ipcMain.removeListener).toHaveBeenCalled();
 

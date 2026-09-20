@@ -19,9 +19,14 @@ let mockOwnsSession: ((id: string) => boolean) | undefined;
 vi.mock('../../../../../renderer/contexts/WindowContext', () => ({
 	useWindowContextOptional: () => (mockOwnsSession ? { ownsSession: mockOwnsSession } : null),
 }));
+let mockIsWebDesktop = false;
+vi.mock('../../../../../renderer/utils/runtimeContext', () => ({
+	isWebDesktop: () => mockIsWebDesktop,
+}));
 
 import {
 	useOwnedSessionGate,
+	useOwnedSideEffectGate,
 	agentIdFromProcessSessionId,
 } from '../../../../../renderer/hooks/agent/internal/useOwnedSessionGate';
 import { useAgentDataListener } from '../../../../../renderer/hooks/agent/internal/useAgentDataListener';
@@ -86,6 +91,42 @@ describe('useOwnedSessionGate', () => {
 		const firstRef = result.current;
 		rerender();
 		expect(result.current).toBe(firstRef);
+	});
+});
+
+describe('useOwnedSideEffectGate', () => {
+	beforeEach(() => {
+		mockOwnsSession = undefined;
+		mockIsWebDesktop = false;
+	});
+
+	it('follows the ownership gate in the Electron renderer', () => {
+		mockOwnsSession = (id: string) => id === 'agent-1';
+		const { result } = renderHook(() => useOwnedSideEffectGate());
+
+		expect(result.current.current?.('agent-1-ai-tab-1')).toBe(true);
+		expect(result.current.current?.('agent-2-ai-tab-1')).toBe(false);
+	});
+
+	it('permits everything in the Electron renderer without a WindowProvider', () => {
+		const { result } = renderHook(() => useOwnedSideEffectGate());
+		expect(result.current.current?.('agent-1-ai-tab-1')).toBe(true);
+	});
+
+	it('denies every agent on a web-desktop client, even one the ownership gate permits', () => {
+		mockIsWebDesktop = true;
+		mockOwnsSession = () => true;
+		const { result } = renderHook(() => useOwnedSideEffectGate());
+
+		expect(result.current.current?.('agent-1-ai-tab-1')).toBe(false);
+		expect(result.current.current?.('agent-1-terminal')).toBe(false);
+	});
+
+	it('denies before its effect commits on a web-desktop client', () => {
+		mockIsWebDesktop = true;
+		// The initial ref value is what the very first event sees.
+		const { result } = renderHook(() => useOwnedSideEffectGate());
+		expect(result.current.current?.('agent-1')).toBe(false);
 	});
 });
 

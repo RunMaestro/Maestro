@@ -47,13 +47,6 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 
 	return (
 		<div className="space-y-5">
-			<FontsSection
-				theme={theme}
-				settings={settingsRecord}
-				fontConfiguration={fontConfiguration}
-				setSurfaceFontFamily={settings.setSurfaceFontFamily}
-				setSurfaceFontSize={settings.setSurfaceFontSize}
-			/>
 			<TypographyResetSection
 				theme={theme}
 				fonts={{
@@ -62,6 +55,7 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 					terminalFontFamily: settings.terminalFontFamily,
 					filePreviewFontFamily: settings.filePreviewFontFamily,
 					fileEditorFontFamily: settings.fileEditorFontFamily,
+					documentGraphFontFamily: settings.documentGraphFontFamily,
 				}}
 				sizes={{
 					fontSize: settings.fontSize,
@@ -69,6 +63,7 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 					terminalFontSize: settings.terminalFontSize,
 					filePreviewFontSize: settings.filePreviewFontSize,
 					fileEditorFontSize: settings.fileEditorFontSize,
+					documentGraphFontSize: settings.documentGraphFontSize,
 				}}
 				onReset={settings.resetTypography}
 			/>
@@ -78,6 +73,13 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 				isCurrent={typographySnapshotMatches(settings.typographySnapshot ?? null, settingsRecord)}
 				onSave={settings.saveTypographySnapshot}
 				onRestore={settings.restoreTypographySnapshot}
+			/>
+			<FontsSection
+				theme={theme}
+				settings={settingsRecord}
+				fontConfiguration={fontConfiguration}
+				setSurfaceFontFamily={settings.setSurfaceFontFamily}
+				setSurfaceFontSize={settings.setSurfaceFontSize}
 			/>
 			<FontZoomSection
 				theme={theme}

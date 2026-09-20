@@ -35,6 +35,17 @@ import * as os from 'os';
  * Known OpenAI model context window sizes (in tokens)
  * Source: https://platform.openai.com/docs/models
  */
+/**
+ * HTTP statuses from Codex that no repetition can fix: the request itself is
+ * wrong, or the caller needs new credentials or a newer binary. 408 and 429 are
+ * deliberately absent - a timeout and a throttle are the two 4xx that do clear
+ * on their own, and a 429 has to stay retryable so a real quota outage still
+ * reaches the token-exhaustion strategy.
+ */
+const HARD_CLIENT_ERROR_STATUSES: ReadonlySet<number> = new Set([
+	400, 401, 403, 404, 405, 409, 413, 422,
+]);
+
 const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
 	// GPT-4o family
 	'gpt-4o': 128000,
@@ -1072,6 +1083,14 @@ export class CodexOutputParser implements AgentOutputParser {
 			return null;
 		}
 
+		// The envelope already answered whether this can be retried, and the prose
+		// does not: a hard 400 ("requires a newer version of Codex ... and try
+		// again") reads as transient to every text matcher downstream, and was
+		// scheduled as an availability outage that probes every 30 minutes with no
+		// attempt cap. Read the status here, where the structure still exists.
+		const permanentStatus =
+			typeof obj.status === 'number' && HARD_CLIENT_ERROR_STATUSES.has(obj.status);
+
 		const patterns = getErrorPatterns(this.agentId);
 		const match = matchErrorPattern(patterns, errorText);
 
@@ -1079,10 +1098,16 @@ export class CodexOutputParser implements AgentOutputParser {
 			return {
 				type: match.type,
 				message: match.message,
-				recoverable: match.recoverable,
+				recoverable: permanentStatus ? false : match.recoverable,
 				agentId: this.agentId,
 				timestamp: Date.now(),
 				parsedJson,
+				// `match.message` is the pattern bank's curated wording, which is what
+				// the user should read - but it is also all the retry scheduler used to
+				// get, and it carries neither the phrasing that tells a plan-quota
+				// outage from a throttle nor any "resets in 4h 12m". Codex says both of
+				// those in its own text and nowhere else, so keep the line itself here.
+				raw: { errorLine: errorText },
 			};
 		}
 
@@ -1090,7 +1115,7 @@ export class CodexOutputParser implements AgentOutputParser {
 			return {
 				type: 'unknown',
 				message: errorText,
-				recoverable: true,
+				recoverable: !permanentStatus,
 				agentId: this.agentId,
 				timestamp: Date.now(),
 				parsedJson,
@@ -1125,6 +1150,10 @@ export class CodexOutputParser implements AgentOutputParser {
 					exitCode,
 					stderr,
 					stdout,
+					// Same reason as the event path above: `message` is the curated bank
+					// wording, so the text that actually names the limit and its reset
+					// has to travel separately or the retry scheduler never sees it.
+					errorLine: combined,
 				},
 			};
 		}

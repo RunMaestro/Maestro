@@ -6,20 +6,15 @@
  * - CueTemplateContextBuilder: builds templateContext.cue from event payload
  * - CueSpawnBuilder: constructs a SpawnSpec from session/agent/SSH config
  * - CueProcessLifecycle: spawns the process, captures output, enforces timeout
- *
- * Also contains recordCueHistoryEntry (pure data transformation).
  */
 
-import * as crypto from 'crypto';
 import * as path from 'path';
 import { getWakaTimeManager } from '../wakatime-instance';
 import type { CueEvent, CueRunResult, CueSubscription } from './cue-types';
-import type { HistoryEntry, SessionInfo, ToolType } from '../../shared/types';
+import type { SessionInfo, ToolType } from '../../shared/types';
 import { substituteTemplateVariables, type TemplateContext } from '../../shared/templateVariables';
 import { buildCueTemplateContext } from './cue-template-context-builder';
 import { buildSpawnSpec } from './cue-spawn-builder';
-import { sliceHeadByChars } from './cue-text-utils';
-import { buildCueRunSummary, extractCueOutputExcerpt } from '../../shared/cue/cue-summary';
 import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
 import {
 	runProcess,
@@ -34,8 +29,6 @@ import { beginSleepAwareSpan, sleepAwareElapsedMs } from '../utils/sleep-tracker
 // Re-export types that external consumers use
 export type { CueProcessInfo } from './cue-process-lifecycle';
 export type { SpawnSpec } from './cue-spawn-builder';
-
-const MAX_HISTORY_RESPONSE_LENGTH = 10000;
 
 /** Configuration for executing a Cue-triggered prompt */
 export interface CueExecutionConfig {
@@ -341,37 +334,4 @@ export function getCueProcessList(): import('./cue-process-lifecycle').CueProces
  */
 export function getCueRunLiveOutput(runId: string): { stdout: string; stderr: string } | null {
 	return getActiveProcessOutput(runId);
-}
-
-/**
- * Construct a HistoryEntry for a completed Cue run.
- *
- * Follows the same pattern as Auto Run's history recording with type: 'AUTO',
- * but uses type: 'CUE' and populates Cue-specific fields.
- */
-export function recordCueHistoryEntry(result: CueRunResult, session: SessionInfo): HistoryEntry {
-	const fullResponse =
-		result.stdout.length > MAX_HISTORY_RESPONSE_LENGTH
-			? sliceHeadByChars(result.stdout, MAX_HISTORY_RESPONSE_LENGTH)
-			: result.stdout;
-
-	const excerpt = extractCueOutputExcerpt(result.stdout);
-
-	return {
-		id: crypto.randomUUID(),
-		type: 'CUE',
-		timestamp: Date.now(),
-		summary: excerpt ?? buildCueRunSummary(result),
-		fullResponse: fullResponse || undefined,
-		projectPath: session.projectRoot || session.cwd,
-		sessionId: session.id,
-		sessionName: session.name,
-		success: result.status === 'completed',
-		elapsedTimeMs: result.durationMs,
-		cueTriggerName: result.subscriptionName,
-		cueEventType: result.event.type,
-		cueSourceSession: result.event.payload.sourceSession
-			? String(result.event.payload.sourceSession)
-			: undefined,
-	};
 }

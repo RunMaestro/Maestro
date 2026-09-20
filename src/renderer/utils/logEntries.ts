@@ -47,6 +47,8 @@ export function isSelfContainedCard(entry: LogEntry): boolean {
 		entry.aiCommand ||
 		// "Back from snooze" marker - text owned by utils/snoozeHelpers.ts
 		entry.snoozeReturn ||
+		// Agent-to-agent hand-off pill - owned by services/agentDelegation.ts
+		entry.delegation ||
 		// Tool call card / hidden-progress placeholder
 		entry.metadata?.hiddenProgress ||
 		entry.metadata?.toolState ||

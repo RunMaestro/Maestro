@@ -16,7 +16,14 @@ import { useBatchStore, isMirroredBatchRun } from '../../../stores/batchStore';
 import { useSessionStore, selectSessionById } from '../../../stores/sessionStore';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { countUnfinishedTasks, findPendingHitlGate, uncheckAllTasks } from '../batchUtils';
-import { detectHaltMarker } from '../../../../shared/autorunMarkers';
+import {
+	describeUnresolvedHaltMarker,
+	detectHaltMarker,
+	findHaltMarker,
+	type HaltMarker,
+} from '../../../../shared/autorunMarkers';
+import { resolveAutoResumePolicy } from '../../../../shared/autorunAutoResume';
+import { clearAutoResume } from '../../../stores/autoRunResumeStore';
 import { DEFAULT_BATCH_STATE, type BatchAction } from '../batchReducer';
 import { createLoopSummaryEntry } from './batchLoopSummary';
 import {
@@ -24,15 +31,27 @@ import {
 	buildFinalSummary,
 	mergeFinalSummaryTotals,
 } from './batchFinalSummary';
+import {
+	MAX_CONSECUTIVE_NO_CHANGES,
+	describeStall,
+	evaluateStall,
+} from '../../../../shared/autorunStall';
 import { createProgressPoll } from './batchProgressPoll';
 import { claimFlushState, type AutoRunFlushStateRefs } from './batchFlushState';
 import { beginSleepAwareSpan } from '../../../services/systemSleep';
+import {
+	clearSteeringNotes,
+	takeSteeringNotesForDispatch,
+} from '../../../services/autoRunSteering';
 import type { ErrorResolutionEntry } from './useBatchControlActions';
 import type { BatchCompleteInfo, PRResultInfo } from '../useBatchProcessor';
 import type { UseTimeTrackingReturn } from '../useTimeTracking';
 import type { UseWorktreeManagerReturn } from '../useWorktreeManager';
-import type { SpawnAgentRunOverrides } from '../../agent/useAgentExecution';
-import type { AutoRunSpawnAgentFn, UseDocumentProcessorReturn } from '../useDocumentProcessor';
+import type {
+	AutoRunSpawnAgentFn,
+	DocumentRunOverrides,
+	UseDocumentProcessorReturn,
+} from '../useDocumentProcessor';
 
 const AUTO_RUN_PROGRESS_POLL_INTERVAL_MS = 20000;
 
@@ -199,11 +218,12 @@ export function useBatchRunner({
 			// default runs pass no spawn options at all. An absent override means the
 			// spawn uses the session's configured model, then the agent default.
 			// Nothing here is written back to the session.
-			const runOverrides: SpawnAgentRunOverrides | undefined =
-				config.model || config.effort
+			const runOverrides: DocumentRunOverrides | undefined =
+				config.model || config.effort || config.ignoreModelHints
 					? {
 							...(config.model && { modelOverride: config.model }),
 							...(config.effort && { effortOverride: config.effort }),
+							...(config.ignoreModelHints && { ignoreModelHints: true }),
 						}
 					: undefined;
 
@@ -303,15 +323,23 @@ export function useBatchRunner({
 					}
 				}
 
-				// Calculate initial total tasks across all documents (checked + unchecked)
+				// Calculate initial total tasks across all documents (checked + unchecked),
+				// and find any halt marker an earlier run left behind in the same pass.
+				let staleHalt: { document: string; halt: HaltMarker } | null = null;
 				for (const doc of documents) {
-					const { taskCount, checkedCount } = await readDocAndCountTasks(
+					const { taskCount, checkedCount, content } = await readDocAndCountTasks(
 						folderPath,
 						doc.filename,
 						sshRemoteId
 					);
 					initialTotalTasks += taskCount + checkedCount;
 					initialCheckedTasks += checkedCount;
+					if (!staleHalt) {
+						const halt = findHaltMarker(content);
+						if (halt) {
+							staleHalt = { document: doc.filename, halt };
+						}
+					}
 				}
 				// Track unchecked count for the "no tasks" early exit check
 				const initialUncheckedTasks = initialTotalTasks - initialCheckedTasks;
@@ -325,6 +353,45 @@ export function useBatchRunner({
 					);
 					return;
 				}
+
+				// A halt marker that is already in a document before any task runs was
+				// left there by an earlier run. The loop below only looks for one after a
+				// task finishes, and it scans the whole document, so launching over a
+				// leftover marker ran the playbook up to that document and then "halted"
+				// with the previous run's reason (#1588). Refuse to start instead, the
+				// same rule the CLI engine enforces with HALT_MARKER_PRESENT.
+				if (staleHalt) {
+					window.maestro.logger.log(
+						'warn',
+						'Auto Run refused to start: unresolved halt marker',
+						'BatchProcessor',
+						{
+							sessionId,
+							document: staleHalt.document,
+							line: staleHalt.halt.line + 1,
+							reason: staleHalt.halt.reason,
+						}
+					);
+					notifyToast({
+						type: 'warning',
+						title: 'Auto Run Not Started',
+						message: describeUnresolvedHaltMarker(staleHalt.document, staleHalt.halt),
+						project: session.name,
+						sessionId,
+						dismissible: true,
+					});
+					return;
+				}
+
+				// A previous run on this session may have exhausted its auto-resume
+				// attempts. Starting fresh must not inherit that, or the new run gets
+				// no automatic resume at all.
+				clearAutoResume(sessionId);
+
+				// A steering note belongs to the run it was typed during. Anything left
+				// over from a previous run (killed mid-task, or paused and abandoned)
+				// must not open the first task of this one.
+				clearSteeringNotes(sessionId);
 
 				// Initialize batch run state using START_BATCH action directly
 				// (not updateBatchStateAndBroadcast which only supports UPDATE_PROGRESS)
@@ -350,6 +417,9 @@ export function useBatchRunner({
 						// parity with the CLI batch processor. Only the model is stored:
 						// SynopsisData.sessionConfig has no effort field.
 						runModelOverride: config.model || undefined,
+						// Resolved once, here, so the run keeps the auto-resume terms it was
+						// launched under even if the user edits the defaults mid-run.
+						autoResumePolicy: resolveAutoResumePolicy(config),
 						startTime: batchStartTime,
 						// Time tracking
 						cumulativeTaskTimeMs: 0, // Sum of actual task durations (most accurate)
@@ -540,13 +610,11 @@ export function useBatchRunner({
 			let totalOutputTokens = 0;
 			let totalCost = 0;
 
-			// Track consecutive runs with no task-level progress (nothing checked off, no tasks
-			// added or removed). Content-level comparison is unreliable because the agent can
-			// mutate the doc (append addenda/explanation text) without doing actual work, which
-			// would reset a content-based counter and hide the stall indefinitely.
+			// Track consecutive runs with no task-level progress. The rule itself lives
+			// in `shared/autorunStall` because the CLI engine has to give up on a
+			// stuck document at exactly the same point this one does.
 			// Note: This counter is reset per-document, so stalling one document doesn't affect others
 			let consecutiveNoChangeCount = 0;
-			const MAX_CONSECUTIVE_NO_CHANGES = 3; // Skip document after 3 consecutive runs with no task-level progress
 
 			// Track stalled documents (document filename -> stall reason)
 			const stalledDocuments: Map<string, string> = new Map();
@@ -854,6 +922,8 @@ export function useBatchRunner({
 								updateBatchStateAndBroadcastRef.current!(sid, updater, immediate),
 							getSessions,
 							onUpdateSession,
+							updateTaskCount: (filename, completed, total) =>
+								useBatchStore.getState().updateTaskCount(filename, completed, total),
 						});
 						await progressPoll.start();
 
@@ -870,6 +940,11 @@ export function useBatchRunner({
 									taskSelectionMode,
 									sshRemoteId,
 									runOverrides,
+									// Consumed here rather than inside processTask so the take
+									// happens exactly once per dispatch: a note the operator
+									// sends after this line belongs to the NEXT task, not to a
+									// prompt that has already been built.
+									steeringNotes: takeSteeringNotesForDispatch(sessionId),
 								},
 								effectiveFilename, // Use working copy path for reset-on-completion docs
 								docCheckedCount,
@@ -915,7 +990,6 @@ export function useBatchRunner({
 							const prevUncheckedCount = remainingTasks;
 							const checkedCountChanged = newCheckedCount !== prevCheckedCount;
 							const uncheckedCountChanged = newRemainingTasks !== prevUncheckedCount;
-							const taskSetChanged = checkedCountChanged || uncheckedCountChanged;
 							const prevNoChangeCount = consecutiveNoChangeCount;
 							const beforeLen = docContent?.length ?? 0;
 							const afterLen = taskResult.contentAfterTask?.length ?? 0;
@@ -925,13 +999,14 @@ export function useBatchRunner({
 							// so skip the heuristic and terminate this document immediately.
 							const isWatchdogFailure =
 								errorKind === 'watchdog-stalled' || errorKind === 'watchdog-timeout';
-							if (isWatchdogFailure) {
-								consecutiveNoChangeCount = MAX_CONSECUTIVE_NO_CHANGES;
-							} else if (tasksCompletedThisRun === 0 && !taskSetChanged) {
-								consecutiveNoChangeCount++;
-							} else {
-								consecutiveNoChangeCount = 0;
-							}
+							const stall = evaluateStall({
+								before: { checked: prevCheckedCount, unchecked: prevUncheckedCount },
+								after: { checked: newCheckedCount, unchecked: newRemainingTasks },
+								consecutiveNoChangeCount,
+								watchdogFailure: isWatchdogFailure,
+							});
+							const taskSetChanged = stall.taskSetChanged;
+							consecutiveNoChangeCount = stall.consecutiveNoChangeCount;
 
 							// AUTORUN LOG: stall detection trace - logged every iteration so field
 							// reports can reconstruct why the counter did or did not increment.
@@ -1121,8 +1196,9 @@ export function useBatchRunner({
 							}
 
 							// Check if we've hit the stalling threshold for this document
-							if (consecutiveNoChangeCount >= MAX_CONSECUTIVE_NO_CHANGES) {
-								const stallReason = `${consecutiveNoChangeCount} consecutive runs with no progress`;
+							if (stall.stalled) {
+								const stallReason =
+									stall.reason ?? describeStall(consecutiveNoChangeCount, isWatchdogFailure);
 
 								// Track this document as stalled
 								stalledDocuments.set(docEntry.filename, stallReason);
@@ -1516,6 +1592,11 @@ export function useBatchRunner({
 				});
 			}
 
+			// The run is over however it got here (finished, stopped, halted). Any
+			// pending auto-resume must not fire into a loop that no longer exists,
+			// and the attempt count is spent - the ERR badge clears with it.
+			clearAutoResume(sessionId);
+
 			// Add final Auto Run summary entry
 			// Calculate visibility-aware elapsed time using the extracted time tracking hook
 			// (excludes time when laptop was sleeping/suspended)
@@ -1610,6 +1691,10 @@ export function useBatchRunner({
 			// These operations are safe regardless of mount state - React handles reducer dispatches gracefully,
 			// and broadcasts are external calls that don't affect React state.
 			flushDebouncedUpdate(sessionId);
+
+			// The run is over, so there is no next task to deliver a note to. Drop
+			// anything still pending rather than letting it ambush a future run.
+			clearSteeringNotes(sessionId);
 
 			// Reset state for this session using COMPLETE_BATCH action
 			// (not updateBatchStateAndBroadcast which only supports UPDATE_PROGRESS)

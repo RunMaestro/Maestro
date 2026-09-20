@@ -23,6 +23,7 @@ Cue is an event-driven automation system that triggers AI agent prompts in respo
 | `agent.completed`     | Fires when another agent finishes                         | `cue-engine` (reactive)                        |
 | `github.pull_request` | New PRs detected via `gh` CLI polling                     | `triggers/cue-github-poller-trigger-source.ts` |
 | `github.issue`        | New issues detected via `gh` CLI polling                  | `triggers/cue-github-poller-trigger-source.ts` |
+| `github.label`        | A label added to a PR or issue (repo issue-event feed)    | `triggers/cue-github-poller-trigger-source.ts` |
 | `task.pending`        | Unchecked markdown tasks (`- [ ]`) found in watched files | `triggers/cue-task-scanner-trigger-source.ts`  |
 
 ### Execution Patterns
@@ -102,7 +103,6 @@ Spawns background agent processes when triggers fire. Follows the same spawn pat
   8. Returns `CueRunResult`
 - `stopCueRun(runId)` - SIGTERM then SIGKILL after 5 seconds
 - `getCueProcessList()` - Returns serializable process info for the Process Monitor
-- `recordCueHistoryEntry()` - Creates a `HistoryEntry` with type `'CUE'`
 
 Template variables populated for events:
 
@@ -133,7 +133,7 @@ The `cue-subscription-setup.ts` module was deleted on rc. Each event source is n
 | `cue-scheduled-trigger-source.ts`     | `time.scheduled` cron-like firing                                   |
 | `cue-schedule-utils.ts`               | Next-occurrence calculation (replaces `calculateNextScheduledTime`) |
 | `cue-file-watcher-trigger-source.ts`  | `file.changed` chokidar wrapper                                     |
-| `cue-github-poller-trigger-source.ts` | `github.pull_request` / `github.issue` poller                       |
+| `cue-github-poller-trigger-source.ts` | `github.pull_request` / `github.issue` / `github.label` poller      |
 | `cue-task-scanner-trigger-source.ts`  | `task.pending` markdown scanner                                     |
 
 ### cue-run-manager.ts (~452 lines)
@@ -176,7 +176,7 @@ Wraps chokidar to watch glob patterns with per-file debouncing. (The trigger sou
 
 ### cue-github-poller.ts (~313 lines)
 
-Polls GitHub CLI for new PRs/issues, tracks "seen" state in SQLite.
+Polls GitHub CLI for new PRs/issues (and for label adds), tracks "seen" state in SQLite.
 
 Key design:
 
@@ -187,6 +187,8 @@ Key design:
 - 30-day retention on seen records; prunes every 24 hours
 - Has its own `execFileAsync` wrapper (local, not the shared utils version)
 - **Re-trigger on activity** (`retrigger_on_comments: true`): re-fires when an item's `updatedAt` advances past the stored revision. Default off - when on, fetches comments-since-last-fire via `gh pr|issue view --json comments` and attaches them to the event payload as `new_comments` (surfaced as `{{CUE_NEW_COMMENTS}}` template var). Capped per-item by `max_notifications` (default 10, `0` = unlimited). Counter tracks re-fires only - initial discovery is always allowed regardless of cap. Once the cap is hit, the poller stops emitting events but freezes `last_revision` so raising the cap later resumes from the right point rather than replaying stale activity.
+
+- **Label events** (`github.label`): a third poll mode that reads `gh api repos/<repo>/issues/events` instead of the PR/issue lists, because that feed reports the label add itself (name, actor, timestamp) rather than a state difference. Projected through `--jq` so the multi-megabyte embedded issue objects never cross the pipe. Dedup is one watermark row per subscription (`item_key = '__label_watermark__'`, `last_revision` = highest processed event id) written via `setGitHubItemRevision`, NOT one row per item - `markGitHubItemSeen` is INSERT OR IGNORE and would silently no-op on the second write. Paginates back up to 3 pages of 100 to find the watermark, warns when it cannot reach it. Narrowed client-side by `gh_label_target` (pr/issue/both) and `gh_labels` (case-insensitive; empty = any label).
 
 ### cue-heartbeat.ts (~52 lines)
 
@@ -527,7 +529,7 @@ Path constants:
 3. **SSH Remote** - Full SSH wrapping support via `wrapSpawnWithSsh()`
 4. **Template Variables** - Uses shared `substituteTemplateVariables()` from `src/shared/templateVariables.ts`
 5. **Agent System** - Uses `getAgentDefinition()`, `getAgentCapabilities()`, `buildAgentArgs()`, `applyAgentConfigOverrides()`
-6. **History** - Records history entries with type `'CUE'` and Cue-specific metadata
+6. **History** - Cue runs are served to the History panel from the `cue_events` table (`getCueHistoryEntries()` in `src/main/cue/stats/cue-stats-query.ts`), shaped as `HistoryEntry` rows with type `'CUE'`. Nothing writes them to the agent's JSONL history file.
 7. **Output Parsers** - Uses per-agent output parsers to extract clean text from JSON/NDJSON stdout
 8. **CLI Detection** - Uses `resolveGhPath()` and `getExpandedEnv()` from shared utils for GitHub polling
 9. **Stats DB** - Follows the same `better-sqlite3` + WAL pattern as `stats-db.ts`

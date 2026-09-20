@@ -28,6 +28,7 @@ import { useSessionStore, selectActiveSession, updateSessionWith } from '../../s
 import { useSettingsStore, selectIsLeaderboardRegistered } from '../../stores/settingsStore';
 import { useModalStore, getModalActions } from '../../stores/modalStore';
 import { collectActiveOperations } from '../../utils/collectActiveOperations';
+import { useFeedbackDraftStore } from '../../stores/feedbackDraftStore';
 import { notifyToast } from '../../stores/notificationStore';
 import { CONDUCTOR_BADGES, getBadgeForTime } from '../../constants/conductorBadges';
 import { resolveQueuedItemTarget } from '../../utils/tabHelpers';
@@ -692,8 +693,17 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 					})
 				);
 
-				// Process the item after state update
-				processQueuedItemRef.current(sessionId, nextItem);
+				// Process the item after state update. `processQueuedItem` rejects on a
+				// dispatch failure (agentStore puts the prompt back), so the rejection
+				// needs an owner here - unhandled, it was a crash report instead of a
+				// logged failure, and the message looked like it had simply vanished.
+				processQueuedItemRef.current(sessionId, nextItem).catch((err) => {
+					logger.error(
+						'[useBatchHandlers] Queued dispatch failed, item returned to queue',
+						undefined,
+						err
+					);
+				});
 			}
 		},
 	});
@@ -867,11 +877,18 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 			return;
 		}
 		const unsubscribe = window.maestro.app.onQuitConfirmationRequest(async () => {
+			// Park whatever the Feedback editor is holding before anything else.
+			// Drafts persist to disk and are resumable, so quitting is not a loss
+			// event for them - but only once the live editor has been written out,
+			// which is why this runs here rather than being surfaced as a warning
+			// the user has to act on.
+			await useFeedbackDraftStore.getState().saveActiveDraft();
+
 			// Snapshot every active-operation source (busy agents, Auto Run, terminal
-			// tasks, Maestro Cue runs, group chats) plus any unsent feedback draft.
+			// tasks, Maestro Cue runs, group chats).
 			const ops = await collectActiveOperations();
 
-			if (!ops.hasActiveOperations && !ops.hasFeedbackDraft) {
+			if (!ops.hasActiveOperations) {
 				window.maestro.app.confirmQuit();
 			} else {
 				// Tell main the modal is up so it disarms the dead-renderer safety
@@ -882,7 +899,6 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 					activeTerminalTasks: ops.activeTerminalTasks,
 					activeCueRunCount: ops.activeCueRunCount,
 					activeGroupChatCount: ops.activeGroupChatCount,
-					hasFeedbackDraft: ops.hasFeedbackDraft,
 				});
 			}
 		});

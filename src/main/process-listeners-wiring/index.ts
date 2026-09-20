@@ -47,7 +47,6 @@ import {
 import { parseParticipantSessionId } from '../group-chat/session-parser';
 import { extractTextFromStreamJson } from '../group-chat/output-parser';
 import { calculateContextTokens } from '../parsers/usage-aggregator';
-import { getStatsDB } from '../stats';
 import {
 	REGEX_MODERATOR_SESSION,
 	REGEX_MODERATOR_SESSION_TIMESTAMP,
@@ -118,7 +117,6 @@ export function wireProcessListeners(deps: ProcessListenersWiringDependencies): 
 		usageAggregator: {
 			calculateContextTokens,
 		},
-		getStatsDB,
 		debugLog,
 		patterns: {
 			REGEX_MODERATOR_SESSION,

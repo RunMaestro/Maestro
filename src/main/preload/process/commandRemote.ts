@@ -1,4 +1,5 @@
 import { ipcRenderer } from 'electron';
+import type { AgentDelegationNotice } from '../../../shared/agentDelegation';
 
 /**
  * Helper to log via the main process logger.
@@ -100,6 +101,7 @@ export function createCommandRemoteApi() {
 					targetSessionId: string;
 					question: string;
 					fromSessionId?: string;
+					fromTabId?: string;
 					withContext?: boolean;
 				},
 				responseChannel: string
@@ -112,6 +114,7 @@ export function createCommandRemoteApi() {
 					targetSessionId: string;
 					question: string;
 					fromSessionId?: string;
+					fromTabId?: string;
 					withContext?: boolean;
 				},
 				responseChannel: string
@@ -156,6 +159,30 @@ export function createCommandRemoteApi() {
 				answerLength: result?.answer?.length ?? 0,
 			});
 			ipcRenderer.send(responseChannel, result);
+		},
+
+		/**
+		 * Subscribe to delegations an agent made from its own shell
+		 * (`maestro-cli dispatch`), delivered to the window that owns the CALLER so
+		 * the hand-off can be marked in its transcript. Fire-and-forget: there is
+		 * no reply channel, because the dispatch already succeeded.
+		 */
+		onRemoteAgentDelegation: (callback: (notice: AgentDelegationNotice) => void): (() => void) => {
+			const handler = (_: unknown, notice: AgentDelegationNotice) => {
+				try {
+					callback(notice);
+				} catch (error) {
+					ipcRenderer.invoke(
+						'logger:log',
+						'error',
+						'Error invoking remote agent delegation callback',
+						'Preload',
+						{ error: String(error) }
+					);
+				}
+			};
+			ipcRenderer.on('remote:agentDelegation', handler);
+			return () => ipcRenderer.removeListener('remote:agentDelegation', handler);
 		},
 
 		/**

@@ -33,7 +33,7 @@ Use markdown checkboxes in your documents:
 
 **Tip**: Press `Cmd+L` (Mac) or `Ctrl+L` (Windows/Linux) to quickly insert a new checkbox at your cursor position.
 
-**Ticking a box by hand**: in the Auto Run panel's rendered preview, click a checkbox to toggle it and the document is rewritten on disk - useful for marking something you finished yourself, or for re-arming a task by unticking it. The boxes are read-only while an Auto Run is executing that document, matching its disabled editor.
+**Ticking a box by hand**: in the Auto Run panel's rendered preview, click a checkbox to toggle it and the document is rewritten on disk - useful for marking something you finished yourself, or for re-arming a task by unticking it. The boxes are read-only while an Auto Run is actively driving that document, matching its disabled editor. A **paused** run is the exception: when the engine parks on an agent error or a human-in-the-loop gate it is waiting on you rather than working, so the checkboxes and the editor both open back up until you click Resume.
 
 ### Task Granularity: Two Approaches
 
@@ -81,7 +81,9 @@ Auto Run supports running multiple documents in sequence:
 
 The run configuration modal has **Model** and **Effort** pickers, both defaulting to **Use agent default**. Picking a value runs _this Auto Run only_ on that model: every task spawn in the run uses it, the agent's own configured model is left alone (its interactive tabs keep using the default), and the override is forgotten when the run ends. The pickers reset to the default each time the modal opens, and are hidden for providers that expose no model or effort options. Worktree runs honor the override too, without changing the child worktree agent's own configured model.
 
-The same override is available from the CLI as `--model` / `--effort` on `auto-run`, `playbook`, `run-doc`, and `goal-run`. See [CLI](cli.md#per-run-model-override).
+Below the pickers, **Ignore model hints in documents** (off by default) runs every task at the picked model and effort and skips the documents' `MAESTRO:MODEL` markers entirely, both the document-wide ones and the ones on single tasks. With the pickers left on **Use agent default**, that means the agent's own settings. Reach for it when one model should run the whole playbook regardless of what its author chose: rerunning an expensive playbook cheaply, or forcing the top model onto a playbook that marked its phases `low`. Like the pickers, it resets each time the modal opens. Goal-Driven runs do not show it, because they have no documents.
+
+The same override is available from the CLI as `--model` / `--effort` on `auto-run`, `playbook`, `run-doc`, and `goal-run`, and the switch as `--ignore-model-hints` on `auto-run`, `playbook`, and `run-doc`. See [CLI](cli.md#per-run-model-override).
 
 ### Staging Documents from the Files Tab
 
@@ -145,6 +147,8 @@ Generate new playbooks from within an existing session using the **Inline Wizard
 4. At 80%+ confidence, the AI generates detailed Auto Run documents
 
 ![Inline Wizard](./screenshots/wizard-inline.png)
+
+The wizard names its own tab as soon as it knows what you are planning: the tab opens as `Wizard` and becomes `wizard: <topic>` once you say what you want, so several wizards running side by side stay tellable apart. Rename it yourself at any point and the wizard leaves your name alone.
 
 The Inline Wizard creates documents in a unique subfolder under your Auto Run folder, keeping generated playbooks organized. When complete, your tab is renamed to reflect the project and you can immediately start running the generated tasks.
 
@@ -245,6 +249,28 @@ Once a run finishes, the Right Panel's run card goes away and takes its **View T
 
 Capture is in-memory only - it does not survive an app restart, and it is bounded on three axes so a fleet of agents running all day can't grow memory without limit: timeline entries per agent, characters per agent, and how many agents keep a buffer at all (the least recently active is dropped first, and the agent you have open is never dropped). Trimming within an agent is noted as "trimmed" in the panel header. Running several Auto Runs at once? Each agent buffers independently; opening the panel for one agent never mixes in another's thoughts.
 
+## Steering a Run in Flight
+
+You do not have to stop a run to change its direction. Open the **Thought Stream** for the running agent, click the **compass** button in its header, type what you want changed, and press Enter: the message becomes a **steering note** and is delivered at the start of the next task.
+
+Steering lives in the Thought Stream and nowhere else. The agent's chat composer keeps its ordinary meaning during a run: a message you type there is a message to the agent, queued for when the run finishes.
+
+A steering note is not a conversation turn. It spawns no agent of its own and costs no extra run time - it rides in front of a task prompt that was going to be sent anyway, in a block the agent is told to treat as newer than the document and newer than its instructions. The agent is asked to begin its synopsis with `[steered]` when it acts on one.
+
+Use it for the things you notice while watching:
+
+- `Important notice: Maestro error - stop touching the Cue engine and fix the build first.`
+- `The API changed. Use the v3 endpoint for the rest of these tasks.`
+- `Do not commit anything else until I say so.`
+
+**Where to see it.** Notes are listed in the Thought Stream just under the search box: amber with a compass while a note is waiting, green with a check once a task has picked it up. The `x` on a waiting note takes it back. The Auto Run pill above the composer also shows how many notes are still waiting, so you can see one is pending without opening the panel.
+
+**What it applies to.** The note goes to the next task and stays in force for the rest of the run wherever it still makes sense. It is delivered once - a later task does not get a repeat - so if the change is permanent, also edit the document.
+
+**When the compass is not there.** The button only appears while a run this copy of Maestro started is in flight. Nothing is running, the run already finished, or the run belongs to another Maestro client watching the same agent: there is no next task to hand a note to, so no button.
+
+Notes belong to the run they were typed during. Anything still waiting when the run ends is discarded rather than ambushing a later run, and the delivered list is cleared with it.
+
 ## Session Isolation
 
 Each task executes in a completely fresh AI session with its own unique session ID. This provides:
@@ -258,6 +284,42 @@ This isolation is critical for playbooks with `Reset on Completion` documents th
 > **Note:** [Nudge messages](./general-usage#creating-agents) configured on an agent do not apply to Auto Run tasks. Nudge messages are only appended to interactive AI messages typed by the user. If you need persistent instructions for Auto Run tasks, include them directly in your task document or use environment variables.
 
 ## Environment Variables
+
+### Where a Run's Environment Comes From
+
+An Auto Run inherits the environment of **the agent it executes against**. There is no run-scoped environment: a run does not get its own variables, and the document being run cannot set any.
+
+That matters because of where the variables actually live:
+
+| To change...             | Set it here                                                                                                   |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| Every agent and terminal | **Settings → Environment** (see [Global Environment Variables](./configuration#global-environment-variables)) |
+| One agent only           | That agent's **Environment Variables (optional)** panel, in **Edit Agent** or the Create New Agent dialog     |
+
+Both are documented in [Configuration → Per-Agent Environment Variables](./configuration#per-agent-environment-variables), including the precedence between them and how to inspect the merged result.
+
+Two things Auto Run specifically does **not** give you:
+
+- **A playbook or task document cannot set environment variables.** Frontmatter in an Auto Run document is rendered as a table for you to read, never interpreted. The only in-document directives Maestro acts on are the [HITL gate](#human-in-the-loop-gates), the [halt marker](#halt-marker-agent-early-exit), and the [model and effort markers](#model-tier-and-effort) - there is no `MAESTRO:ENV` equivalent.
+- **The CLI has no per-run environment flag.** `maestro-cli playbook`, `run-doc`, `auto-run`, and `goal-run` take `--model` and `--effort` as run-scoped overrides, but no `--env`. The `--env` flag exists only on `create-agent` and `update-agent`, where it edits the agent record itself and therefore affects every later run on that agent.
+
+So if a run needs different variables, change the agent it runs against, or point the run at a different agent.
+
+### Which Agent a Run Executes Against
+
+By default an Auto Run executes against the **currently active agent**, so it picks up that agent's variables.
+
+The run configuration modal can redirect it. Under [Dispatch to a separate worktree](#run-in-worktree), the dropdown chooses a worktree target, and each option has different consequences for your environment:
+
+| Option                  | Environment the run gets                                                                                                                             |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Open in Maestro**     | An agent already open in Maestro. It runs with **that agent's own variables**, so this is the way to run one document under a different environment. |
+| **Available Worktrees** | A new agent, which **inherits the current agent's variables** verbatim                                                                               |
+| **Create New Worktree** | A new agent, which **inherits the current agent's variables** verbatim                                                                               |
+
+The distinction is easy to miss: creating a worktree does not give you a blank agent to configure. Maestro copies the parent agent's variables (along with its provider, model, and custom arguments) onto the new one, and the worktree dialog has no environment field. If you need a worktree run under a different environment, create the worktree agent first, edit its variables in **Edit Agent**, then dispatch to it with **Open in Maestro**.
+
+### Variables Maestro Sets For You
 
 Maestro sets environment variables that your agent hooks can use to customize behavior:
 
@@ -406,6 +468,25 @@ Write the Maestro level, not the provider's word. A playbook that says `effort="
 
 Model tiers ship only where the model identifiers are stable enough that a playbook written today still resolves correctly later. Codex and Copilot-CLI discover their catalogues at runtime and their IDs change per release; OpenCode runs whatever models you configured, which may be local. For those, a `tier` hint falls back to the agent's configured model **and says so** - a warning in the History entry, and a `model_resolution` event on the JSONL stream when run through `maestro-cli`. It never silently substitutes a different model.
 
+### Recording why
+
+A marker can carry a `reason` explaining the choice:
+
+```html
+<!-- MAESTRO:MODEL tier="high" effort="high" reason="Redesigns lock ordering across three services. A wrong ordering corrupts data rather than failing loudly, so this is worth the strongest model thinking hard." -->
+```
+
+The reason changes nothing about how the task runs. It appears behind an **ⓘ** on the marker's pill: hover it in any document preview and the justification appears in an overlay. Wizard-generated playbooks include one on every marker they write.
+
+The point is auditing. A tier and an effort tell you what was chosen but not why, so a playbook you come back to a week later gives you no way to judge whether the choice was right or to tune it. Reading the reasoning is also how you decide which prompts to adjust. Keep it to a couple of sentences - it is a peek, not a document, and anything past 400 characters is truncated.
+
+Two things to know when writing one by hand:
+
+- The value cannot contain a double quote, because `"` delimits it. An inner quote truncates the reason. Levels are matched separately, so the task still runs on the model it asked for.
+- A reason with no `tier` or `effort` beside it does nothing. The marker draws a spent pill, because it sets nothing.
+
+A run can opt out of every marker in the document: switch on **Ignore model hints in documents** in the run configuration, or pass `--ignore-model-hints` to the CLI. See [Model Override](#model-override).
+
 ### When to reach for it
 
 Use a hint when a task's cost and its difficulty are genuinely mismatched. The common useful shape is a document-wide `low` with one or two inline `high` tasks, which usually costs **less** than running the whole playbook at the default.
@@ -444,6 +525,27 @@ How it decides to resume: for Claude it reads your actual plan usage and only re
 
 This survives a full app restart. If you reboot while an agent is limit-paused, Maestro restores the pause and resumes the **agent's conversation** (it continues from its own transcript) and drains any work you had queued. One caveat: the Auto Run / Goal-Driven **loop controller** does not survive a restart - the agent session and its queued messages resume, but the orchestration loop that was stepping through your document does not pick back up automatically. Manually resolving the error, or manually resuming or stopping the agent, always takes precedence and cancels auto-resume for that agent.
 
+## Auto-Resume After an Error
+
+A provider limit is not the only thing that stops a run. An ordinary mid-run failure also parks the run and waits for someone to click **Resume**, which on an unattended overnight run means the run is dead until you notice. Auto-resume is the fallback for that case, and it is configured **per run** in the launch modal, under **If this run hits an error**:
+
+- **Auto-resume after** (on by default) - whether Maestro clicks Resume for you.
+- **Wait** (default 5 minutes) - how long it waits before each attempt.
+- **Max auto-resumes** (default 5) - how many automatic attempts the run gets before it stops trying.
+
+The count is per run, not per error: five failures spread across a long run exhaust it even if each one failed differently. Resolving an error yourself does not buy the run a fresh set of attempts, but it does cancel any resume that was already scheduled.
+
+Quota pauses are deliberately excluded - those belong to [Auto-Resume on Limit](#auto-resume-on-limit), which waits for the window to genuinely reopen instead of spending all five attempts hitting the same wall. Failures that [Agent Resilience](agent-resilience) already recognizes keep their own backoff too; this only picks up what neither of those handles.
+
+### The ERR badge
+
+While a run is stopped on an error, the agent carries an **ERR** badge in the Left Bar:
+
+- **Amber** - another automatic resume is still scheduled. The tooltip says when, and which attempt it is. Leave it alone.
+- **Red, pulsing** - the run is waiting on you, either because the attempts are spent or because this run turned auto-resume off.
+
+The badge disappears when the run continues, so a run that rescued itself leaves nothing behind to chase.
+
 ## Marker Pills
 
 Every Maestro marker is an HTML comment, which means it renders as nothing. That is right for the file - other markdown tools ignore it, and an agent editing the document leaves it alone - but it is wrong for you. Two of the three markers do not merely change how a run behaves, they stop it:
@@ -455,19 +557,51 @@ Both present the same way: you press **Run** and nothing happens, with the cause
 
 So Maestro renders each marker as a small pill wherever the document is previewed - the Auto Run panel, the file preview, the wizard's document editor, and the Playbook Exchange preview. The pill says what the marker **does**, not what it is called:
 
-| Pill                          | Meaning                                                           |
-| ----------------------------- | ----------------------------------------------------------------- |
-| ⏸ **Pauses here**             | A live HITL gate. The run stops here until you tick the box.      |
-| ✓ **Approved**                | A gate you already passed. Inert, shown dimmed.                   |
-| ■ **Halted**                  | A halt marker. Auto Run will refuse to start until you delete it. |
-| ◆ **high model, high effort** | A live model hint governing the next task.                        |
-| ◆ **Unknown setting**         | A misspelled value. It will be ignored at run time.               |
+| Pill                          | Meaning                                                                                                |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------ |
+| ⏸ **Pauses here**             | A live HITL gate. The run stops here until you tick the box.                                           |
+| ✓ **Approved**                | A gate you already passed. Inert, shown dimmed.                                                        |
+| ■ **Halted**                  | A halt marker. Auto Run will refuse to start until you delete it.                                      |
+| ◆ **high model, high effort** | A model hint. Full strength when it governs the next task, slightly muted when it governs a later one. |
+| ◆ **Unknown setting**         | A misspelled value. It will be ignored at run time.                                                    |
 
-A pill carries the marker's reason text alongside it, so a gate reads as "Pauses here - Add STRIPE_SECRET_KEY to .env" rather than making you go find out why.
+A pill carries the marker's reason text alongside it, so a gate reads as "Pauses here - Add STRIPE_SECRET_KEY to .env" rather than making you go find out why. A model hint carrying a `reason` gets an **ⓘ** instead; hover it to read the justification without it taking up a line in the document.
 
-Pills reflect **state, not just presence**. A gate above an unchecked task and a gate above a checked one are nearly identical in the source, but only the first will stop your run, so only the first is drawn as live. Markers inside fenced code blocks draw no pill at all, which is why the examples throughout this page render as plain text.
+Pills reflect **state, not just presence**. A gate above an unchecked task and a gate above a checked one are nearly identical in the source, but only the first will stop your run, so only the first is drawn as live. The same applies to model hints, in three states rather than two:
+
+| Drawn as              | Meaning                                                                    |
+| --------------------- | -------------------------------------------------------------------------- |
+| Accent, full strength | Governs the next task Auto Run will dispatch                               |
+| Accent, muted         | Governs a phase further down that the run has not reached yet              |
+| Dimmed                | Every task below it is done, or a nearer marker replaced it. Doing nothing |
+
+So a document-wide `low` with a `high` phase halfway down shows the `low` at full strength and the `high` muted, and they swap as the run moves past the boundary. Markers inside fenced code blocks draw no pill at all, which is why the examples throughout this page render as plain text.
 
 Marker pills appear only on document surfaces. An agent that mentions the marker syntax in a chat message is describing a marker, not configuring one, so that text keeps rendering as ordinary prose.
+
+## Human-in-the-Loop Gates
+
+When a task needs a person - manual testing, visual judgment, sign-off, or a credential only a human can obtain - the agent writes a gate marker on its own line above that task:
+
+```html
+<!-- MAESTRO:HITL reason="Add SENDGRID_API_KEY to .env before the mailer tasks run" artifact="https://staging.example.com/checkout" -->
+```
+
+In the desktop app the run **pauses** there, surfaces the reason (and the optional `artifact` to look at) in the Auto Run panel and a toast, and waits. You resume by ticking the box above the marker or clicking Resume. That is a deliberate, visible pause, the opposite of a stall.
+
+A headless CLI run has no human to wait for, so `maestro run-playbook` reports the gate as a `document_gated` event naming the reason and the line, then moves to the next document. The marker means the same thing on both surfaces; only the response differs.
+
+A gate is the right answer whenever the blocker is a person. Reaching for the halt marker instead throws away every remaining task in every remaining document because one task needed a signature.
+
+## Stalled Documents
+
+A task the agent cannot finish stays unchecked, and an unchecked task is a task the engine will dispatch again. Left unbounded that is an infinite loop, so both engines count consecutive runs that moved no checkbox and give up on the document after **three** of them.
+
+Progress is measured by checkbox, never by document bytes. An agent that cannot do the work usually writes an explanation into the file instead, and a byte comparison would read that as progress and let the loop run forever. Ticking a box counts; adding or removing tasks counts; a thousand words of apology does not.
+
+When a document stalls, the playbook **continues to the next document** - only that document is abandoned. The desktop app records a History entry and raises a warning toast; the CLI emits a `document_stalled` event naming the reason and how many tasks were left. On the desktop a watchdog failure (the agent hung or blew its time budget) trips the threshold immediately rather than spending two more dispatches to reach the same conclusion.
+
+This is why an agent almost never needs the halt marker. A stuck task resolves itself.
 
 ## Halt Marker (Agent Early Exit)
 
@@ -488,7 +622,29 @@ The bare form `<!-- maestro:halt -->` works without a reason, but agents are ins
 
 This is distinct from clicking **Stop** (a manual user action) or a single task simply failing (which by default does **not** halt the playbook - Auto Run is designed to run independent tasks, so one failure doesn't invalidate the rest).
 
-A stale halt marker left in a document will block re-runs with an error - Auto Run refuses to start so previously-halted work isn't silently replayed. Remove the marker before launching the playbook again.
+Halting should be **rare**. Agents are told to reserve it for the case where continuing would actively waste work or cause harm, and to reach for other mechanisms first:
+
+| Situation                                                              | Right mechanism                                        |
+| ---------------------------------------------------------------------- | ------------------------------------------------------ |
+| A task needs a person                                                  | HITL gate - pauses, then resumes on a tick             |
+| A task the agent cannot do                                             | Leave it unchecked; the stall guard skips the document |
+| One task failed, others are independent                                | Nothing; the run continues                             |
+| Everything downstream is now invalid, or continuing would cause damage | Halt                                                   |
+
+A stale halt marker left in a document will block re-runs with an error naming the file and line - Auto Run refuses to start so previously-halted work isn't silently replayed. Remove the marker before launching the playbook again.
+
+### The marker has to stand alone
+
+A halt marker is a statement that the run **has** stopped, not a conditional that says when it should. To keep a playbook from halting itself just by describing the feature, three positions are read as quotation and ignored:
+
+| Position                              | Read as     |
+| ------------------------------------- | ----------- |
+| Inside a fenced code block            | Example     |
+| Inside inline backticks               | Example     |
+| On a `- [ ]` or `- [x]` checkbox line | Example     |
+| Alone on a line in the document body  | A real halt |
+
+That is why the code blocks on this page do not brick this document, and why a playbook can safely contain a task like "Run the test suite. If it fails in a way that invalidates later tasks, halt the run." Write halt conditions in words; leave the literal marker to the agent that actually hits one.
 
 ## Parallel Auto Runs
 

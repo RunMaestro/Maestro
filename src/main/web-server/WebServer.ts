@@ -30,13 +30,19 @@ import { randomUUID } from 'crypto';
 import path from 'path';
 import { existsSync } from 'fs';
 import { logger } from '../utils/logger';
+import type { GroupAppearance, GroupUpdateRequest } from '../../shared/groupAppearance';
 import { getLocalIpAddress } from '../utils/networkUtils';
+import {
+	createNetworkAddressWatcher,
+	type NetworkAddressWatcher,
+} from '../utils/network-address-watcher';
 import { captureException } from '../utils/sentry';
 import { WebSocketMessageHandler } from './handlers';
 import { handleACappellaSignalDisconnect } from './handlers/messageHandlers/acappellaSignal';
 import { BroadcastService } from './services';
 import {
 	ApiRoutes,
+	AuthRoutes,
 	ConcertoRoutes,
 	ImageRoutes,
 	MediaRoutes,
@@ -44,6 +50,9 @@ import {
 	WsRoute,
 } from './routes';
 import { MEDIA_PATH_PARAM_MAX_LENGTH } from './routes/mediaRoutes';
+import { webLoginPreHandler } from './auth/web-login-hook';
+import { getWebUserStore } from './auth/web-user-store';
+import { WEB_LOGIN_WS_CLOSE_CODE } from '../../shared/webLogin';
 import { LiveSessionManager, CallbackRegistry } from './managers';
 
 // Import shared types from canonical location
@@ -73,6 +82,7 @@ import type {
 	CloseTabCallback,
 	RenameTabCallback,
 	StarTabCallback,
+	SnoozeCommandCallback,
 	ReorderTabCallback,
 	ToggleBookmarkCallback,
 	OpenFileTabCallback,
@@ -91,6 +101,7 @@ import type {
 	ConsultAgentCallback,
 	ConsultAgentParams,
 	ConsultAgentResult,
+	NoteAgentDelegationCallback,
 	EnqueueCommandCallback,
 	ListQueueCallback,
 	RemoveQueueItemCallback,
@@ -119,6 +130,7 @@ import type {
 	GetGroupsCallback,
 	CreateGroupCallback,
 	RenameGroupCallback,
+	UpdateGroupCallback,
 	DeleteGroupCallback,
 	MoveSessionToGroupCallback,
 	CreateSessionCallback,
@@ -168,6 +180,7 @@ import type {
 	ListDesktopSessionsCallback,
 	GetSessionHistoryCallback,
 } from './types';
+import type { SnoozeCommandRequest } from '../../shared/snoozeCommands';
 
 // Logger context for all web server logs
 const LOG_CONTEXT = 'WebServer';
@@ -209,8 +222,15 @@ export class WebServer {
 	// Regenerated every startup - documents are in-memory and never outlive it.
 	private concertoToken: string = randomUUID().replace(/-/g, '');
 
-	// Local IP address for generating URLs (detected at startup)
+	// Local IP address for generating URLs (detected at startup, then kept
+	// current by the address watcher below - see onLocalAddressChanged)
 	private localIpAddress: string = 'localhost';
+
+	// Watches for the machine moving between networks. The server itself binds
+	// 0.0.0.0 and keeps serving, but every displayed URL and QR code is built
+	// from localIpAddress, so a roam would otherwise advertise a dead address.
+	private addressWatcher: NetworkAddressWatcher | null = null;
+	private onLocalAddressChanged: ((url: string) => void) | null = null;
 
 	// Extracted managers
 	private liveSessionManager: LiveSessionManager;
@@ -222,8 +242,12 @@ export class WebServer {
 	// Broadcast service instance
 	private broadcastService: BroadcastService;
 
+	/** Releases the Web Login revocation watcher installed in start(). */
+	private unsubscribeWebUsers: (() => void) | null = null;
+
 	// Route instances
 	private apiRoutes: ApiRoutes;
+	private authRoutes: AuthRoutes;
 	private concertoRoutes: ConcertoRoutes;
 	private mediaRoutes: MediaRoutes;
 	private imageRoutes: ImageRoutes;
@@ -239,7 +263,9 @@ export class WebServer {
 			},
 			// The media route carries a hex-encoded absolute path as a param; the
 			// default 100-character cap 404s any real file (see mediaRoutes.ts).
-			maxParamLength: MEDIA_PATH_PARAM_MAX_LENGTH,
+			routerOptions: {
+				maxParamLength: MEDIA_PATH_PARAM_MAX_LENGTH,
+			},
 		});
 
 		// Use provided token (persistent mode) or generate a new one (ephemeral mode)
@@ -281,6 +307,7 @@ export class WebServer {
 
 		// Initialize route handlers
 		this.apiRoutes = new ApiRoutes(this.securityToken, this.rateLimitConfig);
+		this.authRoutes = new AuthRoutes(this.securityToken);
 		this.concertoRoutes = new ConcertoRoutes(this.concertoToken);
 		this.mediaRoutes = new MediaRoutes(this.securityToken);
 		this.imageRoutes = new ImageRoutes(this.securityToken);
@@ -474,6 +501,10 @@ export class WebServer {
 		this.callbackRegistry.setStarTabCallback(callback);
 	}
 
+	setSnoozeCommandCallback(callback: SnoozeCommandCallback): void {
+		this.callbackRegistry.setSnoozeCommandCallback(callback);
+	}
+
 	setReorderTabCallback(callback: ReorderTabCallback): void {
 		this.callbackRegistry.setReorderTabCallback(callback);
 	}
@@ -530,6 +561,10 @@ export class WebServer {
 		this.callbackRegistry.setConsultAgentCallback(callback);
 	}
 
+	setNoteAgentDelegationCallback(callback: NoteAgentDelegationCallback): void {
+		this.callbackRegistry.setNoteAgentDelegationCallback(callback);
+	}
+
 	setEnqueueCommandCallback(callback: EnqueueCommandCallback): void {
 		this.callbackRegistry.setEnqueueCommandCallback(callback);
 	}
@@ -539,13 +574,22 @@ export class WebServer {
 	 * process (not from a web client). Used by dispatch callbacks to deliver a
 	 * wake-up turn into the caller's live tab: busy callers queue instead of
 	 * being rejected, which is exactly the `dispatch --queue` semantics.
+	 *
+	 * ALWAYS background. This delivery has no user gesture behind it: the turn
+	 * arrives whenever the OTHER agent happens to finish, which can be minutes
+	 * later while the user is reading something else entirely. Letting it focus
+	 * yanks them to the agent that armed the dispatch at a moment they did not
+	 * choose, which is the one thing `--background` exists to prevent. The
+	 * parameter was simply not passed before, and an absent value is read as
+	 * "not background", so every `dispatch --notify-on-complete` callback stole
+	 * the screen.
 	 */
 	enqueueCommandFromMain(
 		sessionId: string,
 		command: string,
 		tabId?: string
 	): ReturnType<CallbackRegistry['enqueueCommand']> {
-		return this.callbackRegistry.enqueueCommand(sessionId, command, 'ai', tabId);
+		return this.callbackRegistry.enqueueCommand(sessionId, command, 'ai', tabId, undefined, true);
 	}
 
 	setListQueueCallback(callback: ListQueueCallback): void {
@@ -642,6 +686,10 @@ export class WebServer {
 
 	setRenameGroupCallback(callback: RenameGroupCallback): void {
 		this.callbackRegistry.setRenameGroupCallback(callback);
+	}
+
+	setUpdateGroupCallback(callback: UpdateGroupCallback): void {
+		this.callbackRegistry.setUpdateGroupCallback(callback);
 	}
 
 	setDeleteGroupCallback(callback: DeleteGroupCallback): void {
@@ -838,6 +886,13 @@ export class WebServer {
 			origin: true,
 		});
 
+		// The Web Login gate, registered ONCE and globally so a route added later
+		// under /<token>/ is covered the moment it exists. It no-ops when the
+		// Encore flag is off and exempts the login flow, the PWA assets, the HTML
+		// index (which redirects to the form itself) and the WebSocket upgrade
+		// (which closes with its own code). See auth/web-login-hook.ts.
+		this.server.addHook('preHandler', webLoginPreHandler(this.securityToken));
+
 		// Enable WebSocket support
 		await this.server.register(websocket);
 
@@ -916,6 +971,11 @@ export class WebServer {
 		// desktop bundle is served at the token root and at /<token>/desktop -
 		// see StaticRoutes.registerRoutes.
 		this.staticRoutes.registerRoutes(this.server);
+
+		// Web Login: the served form plus the three JSON endpoints behind it.
+		// Registered before the API routes only for readability - they share no
+		// paths.
+		this.authRoutes.registerRoutes(this.server);
 
 		// Setup API routes callbacks and register routes
 		this.apiRoutes.setCallbacks({
@@ -1033,6 +1093,8 @@ export class WebServer {
 				this.callbackRegistry.renameTab(sessionId, tabId, newName),
 			starTab: async (sessionId: string, tabId: string, starred: boolean) =>
 				this.callbackRegistry.starTab(sessionId, tabId, starred),
+			snoozeCommand: async (request: SnoozeCommandRequest) =>
+				this.callbackRegistry.snoozeCommand(request),
 			reorderTab: async (sessionId: string, fromIndex: number, toIndex: number) =>
 				this.callbackRegistry.reorderTab(sessionId, fromIndex, toIndex),
 			toggleBookmark: async (sessionId: string) => this.callbackRegistry.toggleBookmark(sessionId),
@@ -1063,6 +1125,8 @@ export class WebServer {
 				this.callbackRegistry.newAITabWithPrompt(sessionId, prompt, background),
 			consultAgent: async (params: ConsultAgentParams): Promise<ConsultAgentResult> =>
 				this.callbackRegistry.consultAgent(params),
+			noteAgentDelegation: (notice: Parameters<NoteAgentDelegationCallback>[0]) =>
+				this.callbackRegistry.noteAgentDelegation(notice),
 			enqueueCommand: async (
 				sessionId: string,
 				command: string,
@@ -1127,10 +1191,16 @@ export class WebServer {
 			getSettings: () => this.callbackRegistry.getSettings(),
 			setSetting: async (key: string, value: any) => this.callbackRegistry.setSetting(key, value),
 			getGroups: () => this.callbackRegistry.getGroups(),
-			createGroup: async (name: string, emoji?: string, parentGroupId?: string) =>
-				this.callbackRegistry.createGroup(name, emoji, parentGroupId),
+			createGroup: async (
+				name: string,
+				emoji?: string,
+				parentGroupId?: string,
+				appearance?: GroupAppearance
+			) => this.callbackRegistry.createGroup(name, emoji, parentGroupId, appearance),
 			renameGroup: async (groupId: string, name: string) =>
 				this.callbackRegistry.renameGroup(groupId, name),
+			updateGroup: async (groupId: string, update: GroupUpdateRequest) =>
+				this.callbackRegistry.updateGroup(groupId, update),
 			deleteGroup: async (groupId: string) => this.callbackRegistry.deleteGroup(groupId),
 			moveSessionToGroup: async (sessionId: string, groupId: string | null) =>
 				this.callbackRegistry.moveSessionToGroup(sessionId, groupId),
@@ -1403,6 +1473,53 @@ export class WebServer {
 		return this.webClients.size;
 	}
 
+	/**
+	 * Close the socket of any client whose account went away.
+	 *
+	 * A session cookie is checked at the UPGRADE and never again, which is
+	 * right - re-resolving it per frame would put a file read in front of every
+	 * keystroke - but it means deleting, disabling or resetting an account has
+	 * no effect on a browser that is already connected. Its socket is the whole
+	 * app, so "revoked" would mean nothing until the user happened to reload.
+	 *
+	 * The store reports every mutation, so each one re-resolves the SESSION
+	 * behind every signed-in socket and drops the ones that no longer resolve.
+	 * Keyed on the session rather than the account on purpose: a password
+	 * reset and a logout remove the session and keep the account, and both are
+	 * exactly the moments a stolen socket has to die. The dedicated close code
+	 * is what sends the browser to the login page rather than into a reconnect
+	 * loop.
+	 */
+	private watchWebUserStore(): void {
+		if (this.unsubscribeWebUsers) return;
+		try {
+			const store = getWebUserStore();
+			this.unsubscribeWebUsers = store.onChange(() => {
+				for (const client of this.webClients.values()) {
+					if (!client.user) continue;
+					if (store.resolveSession(client.sessionId)) continue;
+					logger.info(
+						`Closing ${client.id}: session for "${client.user.username}" was revoked`,
+						LOG_CONTEXT
+					);
+					try {
+						client.socket.close(WEB_LOGIN_WS_CLOSE_CODE, 'Login required');
+					} catch {
+						// A socket already tearing down throws here; the disconnect
+						// handler removes it from webClients either way.
+					}
+				}
+			});
+		} catch (err) {
+			// The store needs Electron's userData path. Without it there are no
+			// accounts to revoke, so there is nothing for this watcher to do.
+			logger.warn(
+				`Web Login revocation watcher not installed: ${(err as Error).message}`,
+				LOG_CONTEXT
+			);
+		}
+	}
+
 	async start(): Promise<{ port: number; token: string; url: string }> {
 		if (this.isRunning) {
 			return {
@@ -1432,6 +1549,8 @@ export class WebServer {
 			const { installWebContentsBridgeHook } = await import('./handlers/bridgeHandlers');
 			installWebContentsBridgeHook(this.broadcastService);
 
+			this.watchWebUserStore();
+
 			await this.server.listen({ port: this.port, host: '0.0.0.0' });
 
 			// Get the actual port (important when using port 0 for random assignment)
@@ -1441,6 +1560,7 @@ export class WebServer {
 			}
 
 			this.isRunning = true;
+			this.startAddressWatcher();
 
 			return {
 				port: this.port,
@@ -1453,10 +1573,52 @@ export class WebServer {
 		}
 	}
 
+	/**
+	 * Notified with the new secure URL whenever the machine's LAN address moves
+	 * (WiFi to hotspot, dock to undock, VPN up). The server keeps running - only
+	 * the address we advertise changed - so this is how the UI stops showing a
+	 * URL nothing on the new network can reach.
+	 */
+	setOnLocalAddressChanged(callback: ((url: string) => void) | null): void {
+		this.onLocalAddressChanged = callback;
+	}
+
+	/**
+	 * Re-detect the LAN address now instead of waiting for the next poll.
+	 * Called on system resume: a laptop that woke on a different network should
+	 * be right before the user looks at the panel.
+	 */
+	async recheckLocalAddress(): Promise<void> {
+		await this.addressWatcher?.check();
+	}
+
+	private startAddressWatcher(): void {
+		if (this.addressWatcher) return;
+
+		this.addressWatcher = createNetworkAddressWatcher({
+			initialAddress: this.localIpAddress,
+			onChange: ({ address }) => {
+				this.localIpAddress = address;
+				this.onLocalAddressChanged?.(this.getSecureUrl());
+			},
+			onLog: (level, message) => {
+				if (level === 'warn') logger.warn(message, LOG_CONTEXT);
+				else logger.info(message, LOG_CONTEXT);
+			},
+		});
+		this.addressWatcher.start();
+	}
+
 	async stop(): Promise<void> {
 		if (!this.isRunning) {
 			return;
 		}
+
+		this.addressWatcher?.stop();
+		this.addressWatcher = null;
+
+		this.unsubscribeWebUsers?.();
+		this.unsubscribeWebUsers = null;
 
 		// Clear all session state (handles live sessions and autorun states)
 		this.liveSessionManager.clearAll();

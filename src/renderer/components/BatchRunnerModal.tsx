@@ -19,6 +19,17 @@ import {
 	Target,
 } from 'lucide-react';
 import { Spinner } from './ui/Spinner';
+import { ToggleSwitch } from './ui/ToggleSwitch';
+import {
+	AUTO_RESUME_DEFAULT_MINUTES,
+	AUTO_RESUME_DEFAULT_MAX_ATTEMPTS,
+	AUTO_RESUME_MIN_MINUTES,
+	AUTO_RESUME_MAX_MINUTES,
+	AUTO_RESUME_MIN_ATTEMPTS,
+	AUTO_RESUME_MAX_ATTEMPTS,
+	clampAutoResumeMinutes,
+	clampMaxAutoResumes,
+} from '../../shared/autorunAutoResume';
 import type { Theme, BatchDocumentEntry, BatchRunConfig, TaskSelectionMode } from '../types';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { useResizableModal } from '../hooks/ui/useResizableModal';
@@ -150,6 +161,15 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 	// changing the agent's own model, which Session settings already does.
 	const [runModel, setRunModel] = useState('');
 	const [runEffort, setRunEffort] = useState('');
+	// Off on every open, like the pickers. A playbook's hints are its author's
+	// intent, so overriding them is a choice made for one run, never a default.
+	const [ignoreModelHints, setIgnoreModelHints] = useState(false);
+	// Auto-resume: ON by default, unlike the run-scoped overrides above. An
+	// unattended run that stops on a recoverable error and waits for a click is
+	// the failure this exists to prevent, so the safe default is to try again.
+	const [autoResumeOnError, setAutoResumeOnError] = useState(true);
+	const [autoResumeAfterMin, setAutoResumeAfterMin] = useState(AUTO_RESUME_DEFAULT_MINUTES);
+	const [maxAutoResumes, setMaxAutoResumes] = useState(AUTO_RESUME_DEFAULT_MAX_ATTEMPTS);
 	const [availableModels, setAvailableModels] = useState<string[]>([]);
 	const [availableEfforts, setAvailableEfforts] = useState<string[]>([]);
 
@@ -450,6 +470,15 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 		// Filter out missing documents before starting batch run
 		const validDocuments = documents.filter((doc) => !doc.isMissing);
 
+		// Auto-resume travels on both run kinds. `autoResumeOnError` is written
+		// only when OFF: absence means ON everywhere else in the codebase, so
+		// writing `true` would be noise in every logged config.
+		const autoResumeFields = {
+			...(autoResumeOnError ? {} : { autoResumeOnError: false }),
+			autoResumeAfterMin: clampAutoResumeMinutes(autoResumeAfterMin),
+			maxAutoResumes: clampMaxAutoResumes(maxAutoResumes),
+		};
+
 		// Build config (worktree configuration is now managed separately via WorktreeConfigModal).
 		// The presence of `goalConfig` is the discriminator the engine uses to route to the
 		// goal runner; in goal mode there are no documents and no loop/task-selection semantics.
@@ -464,6 +493,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 						...(worktreeTarget && { worktreeTarget }),
 						...(runModel && { model: runModel }),
 						...(runEffort && { effort: runEffort }),
+						...autoResumeFields,
 					}
 				: {
 						documents: validDocuments,
@@ -474,6 +504,8 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 						...(worktreeTarget && { worktreeTarget }),
 						...(runModel && { model: runModel }),
 						...(runEffort && { effort: runEffort }),
+						...(ignoreModelHints && { ignoreModelHints: true }),
+						...autoResumeFields,
 					};
 
 		logger.info('[BatchRunnerModal] handleGo - calling onGo with config:', undefined, config);
@@ -1128,8 +1160,97 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 								Overrides the agent&apos;s configured model for this run only. The agent&apos;s own
 								settings and its interactive tabs are unchanged.
 							</p>
+							{/* Spec-Driven only: a Goal-Driven run has no documents, so there are
+							    no markers to ignore. */}
+							{autoRunMode !== 'goal' && (
+								<div className="flex items-start justify-between gap-3 pt-1">
+									<div className="flex flex-col gap-0.5">
+										<span className="text-xs font-medium" style={{ color: theme.colors.textMain }}>
+											Ignore model hints in documents
+										</span>
+										<span className="text-2xs" style={{ color: theme.colors.textDim }}>
+											Run every task at the model and effort above, skipping the playbook&apos;s
+											per-phase and per-task model markers. With the pickers on their defaults, that
+											means the agent&apos;s own settings.
+										</span>
+									</div>
+									<ToggleSwitch
+										checked={ignoreModelHints}
+										onChange={setIgnoreModelHints}
+										theme={theme}
+										size="sm"
+										ariaLabel="Ignore model hints in documents"
+									/>
+								</div>
+							)}
 						</div>
 					)}
+
+					{/* Auto-resume. Deliberately OUTSIDE the model block above: that block
+					    only renders when the agent reports models or efforts, and an agent
+					    that reports neither still stops on errors. Nesting it there would
+					    silently deny auto-resume to exactly the agents nobody is watching. */}
+					<div className="flex flex-col gap-2">
+						<div className="text-2xs font-bold uppercase" style={{ color: theme.colors.textDim }}>
+							If this run hits an error
+						</div>
+						<div className="flex items-start justify-between gap-3">
+							<div className="flex flex-col gap-0.5">
+								<span className="text-xs font-medium" style={{ color: theme.colors.textMain }}>
+									Auto-resume after
+								</span>
+								<span className="text-2xs" style={{ color: theme.colors.textDim }}>
+									An error pauses the run until someone clicks Resume. With this on, Maestro waits
+									and clicks it for you, then gives up after the attempts below and leaves an ERR
+									badge on the agent. Quota pauses are left to Auto-Resume on Limit, which waits for
+									the window to actually reopen.
+								</span>
+							</div>
+							<ToggleSwitch
+								checked={autoResumeOnError}
+								onChange={setAutoResumeOnError}
+								theme={theme}
+								size="sm"
+								ariaLabel="Auto-resume after an error"
+							/>
+						</div>
+						{autoResumeOnError && (
+							<div className="flex flex-wrap items-center gap-4 pt-1">
+								<label className="flex items-center gap-2">
+									<span className="text-2xs" style={{ color: theme.colors.textDim }}>
+										Wait (minutes)
+									</span>
+									<input
+										type="number"
+										min={AUTO_RESUME_MIN_MINUTES}
+										max={AUTO_RESUME_MAX_MINUTES}
+										value={autoResumeAfterMin}
+										onChange={(e) => setAutoResumeAfterMin(parseInt(e.target.value, 10))}
+										onBlur={() => setAutoResumeAfterMin(clampAutoResumeMinutes(autoResumeAfterMin))}
+										aria-label="Minutes to wait before auto-resuming"
+										className="w-20 rounded border px-2 py-1 text-xs bg-transparent outline-none"
+										style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+									/>
+								</label>
+								<label className="flex items-center gap-2">
+									<span className="text-2xs" style={{ color: theme.colors.textDim }}>
+										Max auto-resumes
+									</span>
+									<input
+										type="number"
+										min={AUTO_RESUME_MIN_ATTEMPTS}
+										max={AUTO_RESUME_MAX_ATTEMPTS}
+										value={maxAutoResumes}
+										onChange={(e) => setMaxAutoResumes(parseInt(e.target.value, 10))}
+										onBlur={() => setMaxAutoResumes(clampMaxAutoResumes(maxAutoResumes))}
+										aria-label="Maximum automatic resumes before stopping"
+										className="w-20 rounded border px-2 py-1 text-xs bg-transparent outline-none"
+										style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+									/>
+								</label>
+							</div>
+						)}
+					</div>
 				</div>
 
 				{/* Footer */}

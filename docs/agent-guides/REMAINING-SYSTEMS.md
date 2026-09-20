@@ -128,7 +128,7 @@ The central type file. Contains the `Session` interface (the largest type at ~20
 
 - `SessionState` = 'idle' | 'busy' | 'waiting_input' | 'connecting' | 'error'
 - `FileChangeType` = 'modified' | 'added' | 'deleted'
-- `RightPanelTab`, `SettingsTab`, `FocusArea`, `LLMProvider`
+- `RightPanelTab`, `SettingsTab`, `FocusArea`
 
 **Major interfaces (renderer-only):**
 

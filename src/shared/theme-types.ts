@@ -31,7 +31,6 @@ export type ThemeId =
 	| 'pedurple'
 	| 'maestros-choice'
 	| 'dre-synth'
-	| 'inquest'
 	| 'winamp'
 	| 'custom';
 
@@ -181,9 +180,36 @@ export function isValidThemeId(id: string): id is ThemeId {
 		'pedurple',
 		'maestros-choice',
 		'dre-synth',
-		'inquest',
 		'winamp',
 		'custom',
 	];
 	return validIds.includes(id as ThemeId);
+}
+
+/**
+ * Themes that shipped once and no longer exist, mapped to what replaces them.
+ *
+ * A theme id outlives the theme: it is on disk in `activeThemeId` and
+ * `customThemeBaseId` for every user who picked it, and it comes back into the
+ * app on the next launch. Nothing downstream is defensive about that - the
+ * renderer does a bare `THEMES[activeThemeId]` lookup - so a retired id that is
+ * merely deleted resolves to `undefined` and the whole UI renders unstyled.
+ * Keep the entry here forever; the mapping is what makes the removal safe.
+ */
+export const RETIRED_THEME_IDS: Record<string, ThemeId> = {
+	// Removed 2026-09-07. An homage to a company that no longer exists.
+	inquest: 'dracula',
+};
+
+/**
+ * Normalize a stored theme id to one that exists right now.
+ *
+ * Use this at every point a theme id enters the app from disk or the wire.
+ * Retired ids resolve to their replacement, anything else unrecognized falls
+ * back rather than propagating a broken lookup.
+ */
+export function resolveThemeId(id: unknown, fallback: ThemeId = 'dracula'): ThemeId {
+	if (typeof id !== 'string') return fallback;
+	if (isValidThemeId(id)) return id;
+	return RETIRED_THEME_IDS[id] ?? fallback;
 }

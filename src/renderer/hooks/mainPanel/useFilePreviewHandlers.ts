@@ -13,7 +13,8 @@ interface UseFilePreviewHandlersParams {
 	onFileTabEditContentChange?: (
 		tabId: string,
 		editContent: string | undefined,
-		savedContent?: string
+		savedContent?: string,
+		savedMtime?: number
 	) => void;
 	onFileTabScrollPositionChange?: (tabId: string, scrollTop: number) => void;
 	onFileTabSearchQueryChange?: (tabId: string, searchQuery: string) => void;
@@ -116,6 +117,19 @@ export function useFilePreviewHandlers({
 
 			await window.maestro.fs.writeFile(savePath, content, filePreviewSshRemoteId);
 
+			// Stamp the tab with the mtime our own write just produced. The tab's
+			// lastModified is what the change poller compares the disk against, so a
+			// tab left holding its pre-save timestamp reports "File changed on disk"
+			// for a change it made itself - every time FilePreview remounts.
+			let savedMtime = Date.now();
+			try {
+				const st = await window.maestro.fs.stat(savePath, filePreviewSshRemoteId);
+				if (st?.modifiedAt) savedMtime = new Date(st.modifiedAt).getTime();
+			} catch {
+				// Non-critical: the wall clock is never earlier than the write, so the
+				// worst case is that a later external edit goes unnoticed for a moment.
+			}
+
 			if (activeFileTabId) {
 				// Path changed (untitled save, or redirect after a move/delete): refresh
 				// the tab's metadata so it now tracks the real on-disk location.
@@ -132,7 +146,7 @@ export function useFilePreviewHandlers({
 							extension: ext,
 							content,
 							editContent: undefined,
-							lastModified: Date.now(),
+							lastModified: savedMtime,
 						}));
 					}
 
@@ -141,7 +155,7 @@ export function useFilePreviewHandlers({
 					// its next refresh, so nudge the tree to pick it up now.
 					requestFileTreeRefresh(sessionId);
 				} else {
-					onFileTabEditContentChange?.(activeFileTabId, undefined, content);
+					onFileTabEditContentChange?.(activeFileTabId, undefined, content, savedMtime);
 				}
 			}
 			return true;

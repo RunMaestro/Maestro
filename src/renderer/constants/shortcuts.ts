@@ -9,6 +9,31 @@ import {
 // `../types` drags renderer-only, DOM-dependent modules into that build.
 import type { Shortcut } from '../../shared/shortcut-types';
 
+/**
+ * LABELS ARE THE SEARCH INDEX.
+ *
+ * Every surface that lists a shortcut filters it by a substring or fuzzy match
+ * on `label` and nothing else - Settings -> Shortcuts, the shortcuts help
+ * sheet, and the command palette all do. So a word missing from a label is a
+ * word that cannot find the action: "Change Branch" was invisible to anyone who
+ * typed `git`, even though it is a git command sitting in the git menu.
+ *
+ * Two rules follow, and both are about that one string:
+ *
+ * 1. **A label carries the words a user would search for.** An action about
+ *    agents says "Agent", one about tabs says "Tab", one about git says "Git".
+ *    Prefer the noun the user has in mind over the one the code uses - "Remove"
+ *    became "Remove Agent" for exactly this reason.
+ * 2. **A family of related actions shares a `Family: Action` prefix.** The help
+ *    sheet and the palette both SORT by label, so the prefix is also what draws
+ *    the family as one block instead of scattering it down the list. `Git:`,
+ *    `Media:`, `Group Chat:`, and `File Preview:` are the families today.
+ *
+ * Renaming a label is safe: the persisted binding is keyed on `id`, and the
+ * merge in `migrateShortcuts` deliberately takes the label from these defaults
+ * so a rename reaches users who already customized the chord. Renaming an `id`
+ * is NOT safe - see the `toggleMode` note below.
+ */
 export const DEFAULT_SHORTCUTS = {
 	toggleSidebar: {
 		id: 'toggleSidebar',
@@ -28,8 +53,17 @@ export const DEFAULT_SHORTCUTS = {
 	// G for Group chat. Moved off Opt+Cmd+C so Concerto - a far more frequently
 	// toggled surface - can have the mnemonic C. Migrated in settingsShortcutsSlice.
 	newGroupChat: { id: 'newGroupChat', label: 'New Group Chat', keys: ['Alt', 'Meta', 'g'] },
-	killInstance: { id: 'killInstance', label: 'Remove', keys: ['Meta', 'Shift', 'Backspace'] },
-	moveToGroup: { id: 'moveToGroup', label: 'Move Session to Group', keys: ['Alt', 'Meta', 'm'] },
+	// Shipped upstream on Opt+Cmd+G, which is New Group Chat here - that move off
+	// Opt+Cmd+C happened on this branch and is migrated onto existing installs, so
+	// the incumbent keeps the chord. The view toggle takes the Shift sibling of the
+	// same letter, matching how Concerto's pair is spelled (Opt+Cmd+C / +Shift+C).
+	toggleGroupChatModeratorOnly: {
+		id: 'toggleGroupChatModeratorOnly',
+		label: 'Group Chat: Team Chat / Moderator Only',
+		keys: ['Alt', 'Meta', 'Shift', 'g'],
+	},
+	killInstance: { id: 'killInstance', label: 'Remove Agent', keys: ['Meta', 'Shift', 'Backspace'] },
+	moveToGroup: { id: 'moveToGroup', label: 'Move Agent to Group', keys: ['Alt', 'Meta', 'm'] },
 	openMemoryViewer: {
 		id: 'openMemoryViewer',
 		label: 'Open Memory Viewer',
@@ -89,8 +123,18 @@ export const DEFAULT_SHORTCUTS = {
 	},
 	focusInput: { id: 'focusInput', label: 'Toggle Input/Output Focus', keys: ['Meta', '.'] },
 	focusSidebar: { id: 'focusSidebar', label: 'Focus Left Panel', keys: ['Meta', 'Shift', 'a'] },
-	viewGitDiff: { id: 'viewGitDiff', label: 'View Git Diff', keys: ['Meta', 'Shift', 'd'] },
-	viewGitLog: { id: 'viewGitLog', label: 'View Git Log', keys: ['Meta', 'Shift', 'g'] },
+	viewGitDiff: { id: 'viewGitDiff', label: 'Git: View Diff', keys: ['Meta', 'Shift', 'd'] },
+	viewGitLog: { id: 'viewGitLog', label: 'Git: View Log', keys: ['Meta', 'Shift', 'g'] },
+	// The rest of the branch-pill menu. All four ship UNBOUND: they act on the
+	// active agent's repo and two of them (pull, push) write to a remote, so
+	// claiming four default chords - any of which would sit next to an existing
+	// Cmd+Shift binding - is not a cost to impose on everyone. Listing them here
+	// is what puts them in Settings -> Shortcuts, the help sheet, and Cmd+K, and
+	// lets anyone who lives in git give them chords.
+	gitPull: { id: 'gitPull', label: 'Git: Pull', keys: [] },
+	gitPush: { id: 'gitPush', label: 'Git: Push', keys: [] },
+	gitChangeBranch: { id: 'gitChangeBranch', label: 'Git: Change Branch', keys: [] },
+	gitCreatePR: { id: 'gitCreatePR', label: 'Git: Create Pull Request', keys: [] },
 	refreshGitFileState: {
 		id: 'refreshGitFileState',
 		label: 'Refresh Files, Git, History',
@@ -405,7 +449,7 @@ export const FIXED_SHORTCUTS: Record<string, Shortcut> = {
 	filterFiles: { id: 'filterFiles', label: 'Filter Files (in Files tab)', keys: ['Meta', 'f'] },
 	filterSessions: {
 		id: 'filterSessions',
-		label: 'Filter Sessions (in Left Panel)',
+		label: 'Filter Agents (in Left Panel)',
 		keys: ['Meta', 'f'],
 	},
 	filterHistory: {
@@ -460,8 +504,8 @@ export const FIXED_SHORTCUTS: Record<string, Shortcut> = {
 export const TAB_SHORTCUTS = {
 	tabSwitcher: { id: 'tabSwitcher', label: 'Tab Switcher', keys: ['Alt', 'Meta', 't'] },
 	newTab: { id: 'newTab', label: 'New Tab', keys: ['Meta', 't'] },
-	newBrowserTab: { id: 'newBrowserTab', label: 'New Browser', keys: ['Meta', 'b'] },
-	newFileTab: { id: 'newFileTab', label: 'New File', keys: ['Alt', 'n'] },
+	newBrowserTab: { id: 'newBrowserTab', label: 'New Browser Tab', keys: ['Meta', 'b'] },
+	newFileTab: { id: 'newFileTab', label: 'New File Tab', keys: ['Alt', 'n'] },
 	focusBrowserAddress: {
 		id: 'focusBrowserAddress',
 		label: 'Focus Browser Address Bar',

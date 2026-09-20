@@ -19,7 +19,8 @@ import type { DelegationDay } from '../../../shared/delegation';
 import { CUE_EVENT_RETENTION_DAYS } from '../../../shared/delegation';
 import { formatDurationHuman, formatNumber } from '../../../shared/formatters';
 import { MetricModeToggle, type ChartMetricMode } from './MetricModeToggle';
-import { computeAxisLabelIndices } from './chartUtils';
+import { computeAxisLabelIndices, PHONE_AXIS_LABELS } from './chartUtils';
+import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 import { delegationColors } from './delegationColors';
 import {
 	buildDelegationSeries,
@@ -102,7 +103,11 @@ export const DelegationTrendChart = memo(function DelegationTrendChart({
 		return { interactive, delegated, percent: all > 0 ? (delegated / all) * 100 : 0 };
 	}, [buckets, mode]);
 
-	const labelIndices = useMemo(() => computeAxisLabelIndices(buckets.length), [buckets.length]);
+	const phone = usePhoneLayout();
+	const labelIndices = useMemo(
+		() => computeAxisLabelIndices(buckets.length, phone ? PHONE_AXIS_LABELS : undefined),
+		[buckets.length, phone]
+	);
 	const hoveredBucket = hovered !== null ? buckets[hovered] : null;
 	const cueTruncated = RANGES_BEYOND_CUE_RETENTION.includes(timeRange);
 

@@ -46,7 +46,13 @@ import type { MaestroSettings } from '../ipc/handlers/persistence';
 import { logger } from '../utils/logger';
 import { isMaestroPBinaryPath } from './claudeSpawnCore';
 import { sampleUsage } from './claude-usage-sampler';
-import { resolveConfigDirKey, setSnapshot } from '../stores/claudeUsageStore';
+import { getAllSnapshots, resolveConfigDirKey, setSnapshot } from '../stores/claudeUsageStore';
+import { getRememberedQuotaAccountKeys, rememberQuotaAccounts } from '../stores/quotaAccountsStore';
+import {
+	effectiveAgentCustomEnvVars,
+	isAccountDirName,
+	resolveAgentBillingCredential,
+} from '../../shared/providerProfiles';
 
 const LOG_CONTEXT = '[ClaudeUsageStartup]';
 
@@ -91,15 +97,7 @@ export interface StartupUsageSamplingDeps {
 interface SamplingTarget {
 	configDir: string;
 	configDirKey: string;
-	cwd: string;
 	customEnvVars: Record<string, string>;
-}
-
-const ACCOUNT_DIR_EXCLUDE_RE =
-	/(^|[-_.])(backup|bak|old|archive|archived|stage|local|server)([-_.]|$)/i;
-
-function isLikelyClaudeAccountDirName(name: string): boolean {
-	return name === '.claude' || name.startsWith('.claude-');
 }
 
 /**
@@ -122,9 +120,11 @@ export async function discoverClaudeConfigDirs(homeDir = os.homedir()): Promise<
 
 	const dirs: string[] = [];
 	for (const entry of entries) {
-		if (!entry.isDirectory()) continue;
-		if (!isLikelyClaudeAccountDirName(entry.name)) continue;
-		if (ACCOUNT_DIR_EXCLUDE_RE.test(entry.name)) continue;
+		// `Dirent.isDirectory()` is false for a symlink, and pointing
+		// `~/.claude-gmail` at another directory is a normal way to run two
+		// accounts. The `.claude.json` check below follows the link and settles it.
+		if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+		if (!isAccountDirName(entry.name, '.claude')) continue;
 
 		const dir = path.join(homeDir, entry.name);
 		try {
@@ -136,6 +136,20 @@ export async function discoverClaudeConfigDirs(homeDir = os.homedir()): Promise<
 	}
 
 	return dirs.sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * True when `dir` exists and is readable as a directory (symlinks followed).
+ * Used to confirm an account dir the discovery sweep did not list is still on
+ * disk before sampling it.
+ */
+async function isReadableDir(dir: string): Promise<boolean> {
+	try {
+		const stat = await fs.promises.stat(dir);
+		return stat.isDirectory();
+	} catch {
+		return false;
+	}
 }
 
 /**
@@ -213,23 +227,25 @@ function getAgentLevelCustomPath(agentConfigsStore: Store<AgentConfigsData>): st
 }
 
 /**
- * Build the per-session sampling target: merge agent-level + session-level
- * customEnvVars (session wins, matching the spawner's runtime precedence),
- * extract `CLAUDE_CONFIG_DIR`, canonicalize, and produce the call shape
- * `sampleUsage()` expects.
+ * Build the per-session sampling target: take the customEnvVars the spawner
+ * actually hands the process (the session's own set, or the agent-level set
+ * when the session has none - they replace, never layer), extract
+ * `CLAUDE_CONFIG_DIR`, canonicalize, and produce the call shape `sampleUsage()`
+ * expects.
  *
  * Returns null when:
  *   - The session is SSH-remote (`sessionSshRemoteConfig.enabled`). Its
  *     `CLAUDE_CONFIG_DIR` points at the remote host; sampling it locally is
  *     meaningless and can pop an OAuth browser against a tokenless local dir.
- *   - The session has no `cwd` (malformed record).
- *   - Neither the session nor the agent explicitly sets `CLAUDE_CONFIG_DIR`
- *     in customEnvVars. We refuse to sample "default" accounts the user
- *     hasn't explicitly configured: the user may have multiple Anthropic
- *     accounts on this host, and the default `~/.claude` may not match
- *     wherever claude's tokens actually live in the Keychain - so a
- *     "guess the default" sample would trigger an OAuth browser prompt.
- *     Better to skip than to pop a browser the user didn't ask for.
+ *   - The session bills an API key, gateway, or cloud provider. That credential
+ *     outranks the config dir's login, so the agent draws nothing from the
+ *     plan, and sampling with the key in the env probes the key instead.
+ *   - The effective env does not explicitly set `CLAUDE_CONFIG_DIR`. We refuse
+ *     to sample "default" accounts the user hasn't explicitly configured: the
+ *     user may have multiple Anthropic accounts on this host, and the default
+ *     `~/.claude` may not match wherever claude's tokens actually live in the
+ *     Keychain - so a "guess the default" sample would trigger an OAuth browser
+ *     prompt. Better to skip than to pop a browser the user didn't ask for.
  */
 function buildTarget(
 	session: Record<string, unknown>,
@@ -238,8 +254,8 @@ function buildTarget(
 	const sessionEnvVars =
 		session.customEnvVars && typeof session.customEnvVars === 'object'
 			? (session.customEnvVars as Record<string, string>)
-			: {};
-	const customEnvVars: Record<string, string> = { ...agentLevelEnvVars, ...sessionEnvVars };
+			: undefined;
+	const customEnvVars = effectiveAgentCustomEnvVars(sessionEnvVars, agentLevelEnvVars);
 
 	// SSH-remote agents run claude on the remote host, so their CLAUDE_CONFIG_DIR
 	// names a directory on THAT machine. Sampling it locally reads the wrong
@@ -252,13 +268,7 @@ function buildTarget(
 		return null;
 	}
 
-	const cwd =
-		typeof session.cwd === 'string' && session.cwd.length > 0
-			? session.cwd
-			: typeof session.projectRoot === 'string' && session.projectRoot.length > 0
-				? session.projectRoot
-				: null;
-	if (!cwd) {
+	if (resolveAgentBillingCredential('claude-code', customEnvVars)) {
 		return null;
 	}
 
@@ -277,7 +287,6 @@ function buildTarget(
 	return {
 		configDir: explicitConfigDir,
 		configDirKey,
-		cwd,
 		customEnvVars,
 	};
 }
@@ -295,6 +304,9 @@ function buildTarget(
  *     references (session- or agent-level CLAUDE_CONFIG_DIR) - we never
  *     discover unconfigured ~/.claude-* dirs on disk, since sampling a stale
  *     leftover account would pop an OAuth browser the user never asked for.
+ *     The one addition: an on-disk account dir that already holds a cached
+ *     snapshot is re-sampled too, so a row the dashboard is showing refreshes
+ *     even when every agent using it runs over SSH.
  *
  * Never throws - every failure surfaces as a warn log and a skipped entry.
  */
@@ -341,8 +353,8 @@ export async function runStartupUsageSampling(deps: StartupUsageSamplingDeps): P
 	const agentLevelEnvVars = getAgentLevelEnvVars(deps.agentConfigsStore);
 
 	// Dedup by canonical configDirKey so two sessions pointing at the same
-	// Anthropic account only sample once. First session wins on cwd / env
-	// shape - the snapshot is a per-account quota, not per-session.
+	// Anthropic account only sample once. First session wins on env shape - the
+	// snapshot is a per-account quota, not per-session.
 	const targetsByKey = new Map<string, SamplingTarget>();
 	for (const session of eligibleClaudeSessions) {
 		const target = buildTarget(session, agentLevelEnvVars);
@@ -352,6 +364,12 @@ export async function runStartupUsageSampling(deps: StartupUsageSamplingDeps): P
 		}
 	}
 
+	// Remember every account a configured agent points at, before sampling. The
+	// dashboard unions these into its account list, so moving every agent off an
+	// account (what the user does the moment it hits its limit) no longer erases
+	// the row they moved off - see `quotaAccountsStore`.
+	rememberQuotaAccounts('claude-code', targetsByKey.keys());
+
 	// NB: manual mode does NOT sweep the filesystem for ~/.claude-* account
 	// dirs. A blind sweep would spawn `maestro-p --status` against every
 	// leftover/stale account on disk, and any whose Keychain tokens have
@@ -360,6 +378,49 @@ export async function runStartupUsageSampling(deps: StartupUsageSamplingDeps): P
 	// like the startup path - see buildTarget()'s "don't guess the account"
 	// guard. (discoverClaudeConfigDirs() still backs the account-key listing
 	// IPC handler, which lists keys without spawning anything.)
+	//
+	// The exception is a dir Maestro has already used: one that holds a cached
+	// snapshot, or one remembered in `quotaAccountsStore` because a sampler
+	// targeted it for a real agent. The dashboard keeps rendering those rows, and
+	// nothing else re-samples them once their agents move away (or all run over
+	// SSH, which buildTarget skips): the footer reads "Last refreshed just now"
+	// off the other accounts while this row's bars sit frozen. Neither source is
+	// a leftover dir on disk, this only runs when the user pressed Refresh, and
+	// the sampler points BROWSER at a no-op besides.
+	if (mode === 'manual') {
+		const knownKeys = new Set([
+			...Object.keys(getAllSnapshots()),
+			...getRememberedQuotaAccountKeys('claude-code'),
+		]);
+		const knownOnlyKeys = Array.from(knownKeys).filter((key) => !targetsByKey.has(key));
+		if (knownOnlyKeys.length > 0) {
+			const onDiskDirsByKey = new Map(
+				(await discoverClaudeConfigDirs()).map((dir) => [
+					resolveConfigDirKey({ CLAUDE_CONFIG_DIR: dir }),
+					dir,
+				])
+			);
+			for (const configDirKey of knownOnlyKeys) {
+				// A discovery hit has already proven the dir exists. Otherwise the
+				// key IS the canonical dir path, so check it directly: the sweep
+				// only matches real `~/.claude-*` directories, and misses a
+				// symlinked account dir, one outside $HOME, and one whose name trips
+				// the backup/scratch filter. Those accounts used to stop refreshing
+				// the moment their last agent moved away, then dropped off the panel
+				// at the 24h TTL.
+				let configDir = onDiskDirsByKey.get(configDirKey);
+				if (!configDir) {
+					if (!(await isReadableDir(configDirKey))) continue;
+					configDir = configDirKey;
+				}
+				targetsByKey.set(configDirKey, {
+					configDir,
+					configDirKey,
+					customEnvVars: { ...agentLevelEnvVars },
+				});
+			}
+		}
+	}
 
 	if (targetsByKey.size === 0) {
 		logger.info('Skipping Claude usage sampling: no eligible accounts to sample', LOG_CONTEXT, {
@@ -397,7 +458,6 @@ export async function runStartupUsageSampling(deps: StartupUsageSamplingDeps): P
 			const snapshot = await sampleUsage({
 				binPath,
 				configDir: target.configDir,
-				cwd: target.cwd,
 				customEnvVars: sampleEnv,
 			});
 

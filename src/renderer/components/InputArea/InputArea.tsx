@@ -197,6 +197,9 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	}, [isResumingSession, hasCapability, commandMode]);
 
 	// PERF: Memoize mode-related derived state
+	// `isReadOnlyMode` stays off the destructure: rc's ToolbarControls reads the
+	// read-only state itself rather than taking it as a prop, so main's binding
+	// has no consumer here and would only be an unused local.
 	const { showQueueingBorder } = useMemo(() => {
 		// Check if we're in read-only mode (manual toggle only - Claude will be in plan mode)
 		// NOTE: Auto Run no longer forces read-only mode. Instead:
@@ -717,6 +720,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 							effortMenuOpen={effortMenuOpen}
 							setEffortMenuOpen={setEffortMenuOpen}
 							effortMenuRef={effortMenuRef}
+							processInput={processInput}
 						/>
 					</div>
 					{/* Context Warning Sash - AI mode only, appears below input when context usage is high */}
@@ -733,17 +737,23 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 					)}
 				</div>
 
-				<NotificationSendControls
-					theme={theme}
-					isTerminalMode={isTerminalMode}
-					processInput={processInput}
-					// Only when A Cappella owns the microphone. With it off, the button
-					// stays the Web Speech dictation one in the toolbar row, which is
-					// touch-only - so there is never a second microphone on screen.
-					showVoiceButton={!isTerminalMode && voice.usesACappella}
-					isVoiceListening={voice.isListening}
-					onToggleVoice={handleToggleVoiceInput}
-				/>
+				{/* Phone: this column is gone. The notification bell opens a settings
+				    popover that has no business on a 390px composer, and send has moved
+				    into the toolbar row (see ToolbarControls' phone branch) so the
+				    composer gets the full width it needs to show what is being typed. */}
+				{!phone && (
+					<NotificationSendControls
+						theme={theme}
+						isTerminalMode={isTerminalMode}
+						processInput={processInput}
+						// Only when A Cappella owns the microphone. With it off, the button
+						// stays the Web Speech dictation one in the toolbar row, which is
+						// touch-only - so there is never a second microphone on screen.
+						showVoiceButton={!isTerminalMode && voice.usesACappella}
+						isVoiceListening={voice.isListening}
+						onToggleVoice={handleToggleVoiceInput}
+					/>
+				)}
 			</div>
 		</div>
 	);

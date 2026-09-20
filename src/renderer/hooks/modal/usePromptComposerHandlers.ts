@@ -11,7 +11,7 @@
 import { useCallback } from 'react';
 import type { GroupChat } from '../../types';
 import { useSessionStore, selectActiveSession, updateAiTab } from '../../stores/sessionStore';
-import { useGroupChatStore } from '../../stores/groupChatStore';
+import { useGroupChatStore, selectActiveGroupChatStagedImages } from '../../stores/groupChatStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useComposerInputStore } from '../../stores/composerInputStore';
 import {
@@ -83,7 +83,7 @@ export function usePromptComposerHandlers(
 	// PERF: Never useSessionStore(selectActiveSession). Streamed logs/tokens would
 	// wake App via this hook. Tab toggles resolve the active agent at event time.
 	const activeGroupChatId = useGroupChatStore((s) => s.activeGroupChatId);
-	const groupChatStagedImages = useGroupChatStore((s) => s.groupChatStagedImages);
+	const groupChatStagedImages = useGroupChatStore(selectActiveGroupChatStagedImages);
 	const groupChatReadOnlyMode = useGroupChatStore((s) => s.groupChatReadOnlyMode);
 
 	// --- Store actions (stable via getState) ---
@@ -117,7 +117,7 @@ export function usePromptComposerHandlers(
 					groupChatStagedImages.length > 0 ? groupChatStagedImages : undefined,
 					groupChatReadOnlyMode
 				);
-				setGroupChatStagedImages([]);
+				setGroupChatStagedImages([], activeGroupChatId);
 				// Clear draft
 				setGroupChats((prev) =>
 					prev.map((c) => (c.id === activeGroupChatId ? { ...c, draftMessage: '' } : c))

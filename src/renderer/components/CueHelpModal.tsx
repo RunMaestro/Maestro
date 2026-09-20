@@ -382,6 +382,49 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 					</div>
 					<div>
 						<p>
+							<strong style={{ color: theme.colors.textMain }}>GitHub Label</strong>{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								github.label
+							</code>
+						</p>
+						<p className="mt-1">
+							Fires when a label is added to a pull request or an issue. Optional:{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								gh_label_target
+							</code>{' '}
+							(pr, issue, or both - default both),{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								gh_labels
+							</code>{' '}
+							(list of labels to watch - omit to fire on any label),{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								repo
+							</code>{' '}
+							(auto-detected),{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								poll_minutes
+							</code>{' '}
+							(default 5). Labels already present when the subscription is first saved never fire -
+							only labels added afterwards do.
+						</p>
+					</div>
+					<div>
+						<p>
 							<strong style={{ color: theme.colors.textMain }}>Task Pending</strong>{' '}
 							<code
 								className="px-1 rounded text-xs"
@@ -577,6 +620,17 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 							{'  '}poll_minutes: 10
 						</div>
 						<div>
+							# GitHub Label
+							<br />
+							- name: "Labeled PRs"
+							<br />
+							{'  '}event: github.label
+							<br />
+							{'  '}gh_label_target: pr
+							<br />
+							{'  '}gh_labels: ["ready-to-merge"]
+						</div>
+						<div>
 							# Task Pending
 							<br />
 							- name: "Process Tasks"
@@ -715,7 +769,8 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 						<div>
 							<code style={{ color: theme.colors.accent }}>{'{{CUE_EVENT_TYPE}}'}</code> - Event
 							type (app.startup, time.heartbeat, time.scheduled, file.changed, agent.completed,
-							github.pull_request, github.issue, task.pending, cli.trigger, webhook.received)
+							github.pull_request, github.issue, github.label, task.pending, cli.trigger,
+							webhook.received)
 						</div>
 						<div>
 							<code style={{ color: theme.colors.accent }}>{'{{CUE_EVENT_TIMESTAMP}}'}</code> -
@@ -828,6 +883,18 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 						<div>
 							<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_LABELS}}'}</code> - Labels,
 							comma-separated (github.*)
+						</div>
+						<div>
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_LABEL}}'}</code> - The label
+							that was just added (github.label)
+						</div>
+						<div>
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_LABEL_ACTOR}}'}</code> - Who
+							added the label (github.label)
+						</div>
+						<div>
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_LABELED_AT}}'}</code> - When
+							the label was added (github.label)
 						</div>
 						<div>
 							<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_STATE}}'}</code> - State:
@@ -1239,9 +1306,9 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 							several were skipped during a long sleep.
 						</li>
 						<li>
-							<code>github.pull_request</code> / <code>github.issue</code> - polled immediately on
-							wake so new items are detected within seconds instead of waiting for the next
-							scheduled poll.
+							<code>github.pull_request</code> / <code>github.issue</code> /{' '}
+							<code>github.label</code> - polled immediately on wake so new items and labels are
+							detected within seconds instead of waiting for the next scheduled poll.
 						</li>
 					</ul>
 					<p>

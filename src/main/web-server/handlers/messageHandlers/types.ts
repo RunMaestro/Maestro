@@ -37,7 +37,10 @@ import type {
 	ConsultAgentParams,
 	ConsultAgentResult,
 	RenameTabResult,
+	SnoozeCommandCallback,
 } from '../../types';
+import type { AgentDelegationNotice } from '../../../../shared/agentDelegation';
+import type { GroupAppearance, GroupUpdateRequest } from '../../../../shared/groupAppearance';
 import type { CadenzaPayload } from '../../../../shared/cadenza-types';
 import type { MovementPayload, MovementStateSnapshot } from '../../../../shared/movement-types';
 import type {
@@ -126,6 +129,8 @@ export interface MessageHandlerCallbacks {
 		newName: string
 	) => Promise<boolean | RenameTabResult>;
 	starTab: (sessionId: string, tabId: string, starred: boolean) => Promise<boolean>;
+	/** `maestro-cli snooze` - park, list, wake, dismiss, reschedule, history. */
+	snoozeCommand: SnoozeCommandCallback;
 	reorderTab: (sessionId: string, fromIndex: number, toIndex: number) => Promise<boolean>;
 	toggleBookmark: (sessionId: string) => Promise<boolean>;
 	openFileTab: (
@@ -167,9 +172,11 @@ export interface MessageHandlerCallbacks {
 		sessionId: string,
 		prompt: string,
 		background?: boolean
-	) => Promise<{ success: boolean; tabId?: string }>;
+	) => Promise<{ success: boolean; tabId?: string; queued?: boolean; error?: string }>;
 	/** Consult another agent and return its answer (`maestro-cli ask`). */
 	consultAgent: (params: ConsultAgentParams) => Promise<ConsultAgentResult>;
+	/** Mark a delivered CLI dispatch in the calling agent's transcript. Fire-and-forget. */
+	noteAgentDelegation: (notice: AgentDelegationNotice) => void;
 	enqueueCommand: (
 		sessionId: string,
 		command: string,
@@ -204,6 +211,8 @@ export interface MessageHandlerCallbacks {
 			 */
 			model?: string;
 			effort?: string;
+			/** Skip the documents' MAESTRO:MODEL markers for this run (CLI `--ignore-model-hints`). */
+			ignoreModelHints?: boolean;
 			worktree?: {
 				enabled: boolean;
 				path: string;
@@ -282,9 +291,11 @@ export interface MessageHandlerCallbacks {
 	createGroup: (
 		name: string,
 		emoji?: string,
-		parentGroupId?: string
+		parentGroupId?: string,
+		appearance?: GroupAppearance
 	) => Promise<{ id: string } | null>;
 	renameGroup: (groupId: string, name: string) => Promise<boolean>;
+	updateGroup: (groupId: string, update: GroupUpdateRequest) => Promise<boolean>;
 	deleteGroup: (groupId: string) => Promise<boolean>;
 	moveSessionToGroup: (sessionId: string, groupId: string | null) => Promise<boolean>;
 	createSession: (

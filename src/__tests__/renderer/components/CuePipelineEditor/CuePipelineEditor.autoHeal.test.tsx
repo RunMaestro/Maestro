@@ -12,6 +12,12 @@
  * savedStateRef (clean - e.g. right after Discard), the ref advances to the
  * healed snapshot so healing alone never raises the unsaved-changes banner.
  *
+ * The collision guard (second describe) is the backstop under that heal: it
+ * watches the widths ReactFlow MEASURED and pushes apart any nodes that ended
+ * up drawn on top of each other - which the heal cannot catch, because the two
+ * ways it happens (a rename growing a node, a wide user font beating the text
+ * estimate) change no topology at all.
+ *
  * Harness cloned from CuePipelineEditor.dirtyResyncPreserve.test.tsx (the
  * proven mock set for mounting the editor shell), plus `getNodes` on the
  * ReactFlow instance (the heal snapshots measured widths through it) and
@@ -23,6 +29,10 @@ import { render } from '@testing-library/react';
 import React from 'react';
 
 let capturedNodes: any[] = [];
+// What ReactFlow reports as MEASURED geometry. The collision guard reads this
+// (via getNodes + the store subscription) and is the only pass that trusts it
+// over the text estimate, so every guard test drives it from here.
+let measuredNodes: Array<{ id: string; width: number }> = [];
 let capturedSetDisplayNodes: ((updater: any) => void) | null = null;
 
 vi.mock('reactflow', () => ({
@@ -32,11 +42,14 @@ vi.mock('reactflow', () => ({
 		fitView: vi.fn(),
 		screenToFlowPosition: vi.fn((pos: any) => pos),
 		setViewport: vi.fn(),
-		getNodes: vi.fn(() => []),
+		getNodes: vi.fn(() => measuredNodes),
 		zoomIn: vi.fn(),
 		zoomOut: vi.fn(),
 	}),
 	useNodesInitialized: () => false,
+	// The collision guard subscribes to measured node widths through the store.
+	useStore: (selector: any) =>
+		selector({ nodeInternals: new Map(measuredNodes.map((n) => [n.id, n])) }),
 	applyNodeChanges: (changes: any[], nodes: any[]) => {
 		// Mirror ReactFlow: a position change carries both the new position AND
 		// the live `dragging` flag, which the resync guard keys on to skip
@@ -259,6 +272,7 @@ describe('CuePipelineEditor - auto-heal on topology change', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		mockConvertToReactFlowNodes.mockReturnValue([]);
+		measuredNodes = [];
 	});
 
 	it('re-beautifies when an edge is added, and persists the layout', () => {
@@ -370,5 +384,107 @@ describe('CuePipelineEditor - auto-heal on topology change', () => {
 		const healed = updater({ pipelines: after, selectedPipelineId: 'p1' });
 		// The ref now matches the HEALED snapshot: dirty stays false.
 		expect(savedStateRef.current).toBe(JSON.stringify(healed.pipelines));
+	});
+});
+
+describe('CuePipelineEditor - collision guard on measured widths', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		mockConvertToReactFlowNodes.mockReturnValue([]);
+		measuredNodes = [];
+	});
+
+	/** A trigger and the agent it feeds, one column apart at the canonical pitch. */
+	function makeRow() {
+		return [
+			{
+				id: 'p1',
+				name: 'Pipeline 1',
+				color: '#06b6d4',
+				nodes: [
+					{
+						id: 'trigger-1',
+						type: 'trigger',
+						position: { x: 0, y: 10 },
+						data: { eventType: 'time.heartbeat', label: 'Timer', config: {} },
+					},
+					healAgentNode('agent-1', 365, 0),
+				],
+				edges: [{ id: 'e1', source: 'trigger-1', target: 'agent-1', mode: 'pass' }],
+			},
+		];
+	}
+
+	it('pushes a node clear once ReactFlow measures the neighbour wider than the estimate', () => {
+		// The reported bug: the trigger's label made it render 900px wide - far
+		// past the 320px footprint the columns were spaced on - so the agent was
+		// drawn on top of it. No topology changed, so no heal fires; only the
+		// guard can see this.
+		const pipelines = makeRow();
+		const hookReturn = buildStateHookReturn(pipelines);
+		mockUsePipelineState.mockReturnValue(hookReturn);
+		measuredNodes = [
+			{ id: 'p1:trigger-1', width: 900 },
+			{ id: 'p1:agent-1', width: 320 },
+		];
+
+		renderEditor();
+
+		expect(hookReturn.setPipelineState).toHaveBeenCalled();
+		const calls = (hookReturn.setPipelineState as any).mock.calls;
+		const updater = calls[calls.length - 1][0];
+		const next = updater({ pipelines, selectedPipelineId: 'p1' });
+		const nodes = next.pipelines[0].nodes;
+		expect(nodes.find((n: any) => n.id === 'agent-1').position.x).toBe(925);
+		// Rows are preserved and the left node never moves.
+		expect(nodes.find((n: any) => n.id === 'agent-1').position.y).toBe(0);
+		expect(nodes.find((n: any) => n.id === 'trigger-1').position.x).toBe(0);
+		expect(hookReturn.persistLayout).toHaveBeenCalled();
+	});
+
+	it('leaves a measured layout that does not collide alone', () => {
+		const pipelines = makeRow();
+		const hookReturn = buildStateHookReturn(pipelines);
+		mockUsePipelineState.mockReturnValue(hookReturn);
+		measuredNodes = [
+			{ id: 'p1:trigger-1', width: 320 },
+			{ id: 'p1:agent-1', width: 320 },
+		];
+
+		renderEditor();
+
+		expect(hookReturn.setPipelineState).not.toHaveBeenCalled();
+	});
+
+	it('stays out of the way until ReactFlow has measured anything', () => {
+		const pipelines = makeRow();
+		const hookReturn = buildStateHookReturn(pipelines);
+		mockUsePipelineState.mockReturnValue(hookReturn);
+		measuredNodes = [];
+
+		renderEditor();
+
+		expect(hookReturn.setPipelineState).not.toHaveBeenCalled();
+	});
+
+	it('does not raise the unsaved banner: a clean board stays clean after a repair', () => {
+		const pipelines = makeRow();
+		const hookReturn = buildStateHookReturn(pipelines, {
+			savedStateRef: { current: JSON.stringify(pipelines) },
+		});
+		mockUsePipelineState.mockReturnValue(hookReturn);
+		measuredNodes = [
+			{ id: 'p1:trigger-1', width: 900 },
+			{ id: 'p1:agent-1', width: 320 },
+		];
+
+		renderEditor();
+
+		const calls = (hookReturn.setPipelineState as any).mock.calls;
+		const repaired = calls[calls.length - 1][0]({
+			pipelines,
+			selectedPipelineId: 'p1',
+		}).pipelines;
+		expect(hookReturn.savedStateRef.current).toBe(JSON.stringify(repaired));
 	});
 });

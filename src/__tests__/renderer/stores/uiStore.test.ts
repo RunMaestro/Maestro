@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { resetStore } from '../../helpers';
@@ -106,6 +106,89 @@ describe('uiStore', () => {
 			expect(useUIStore.getState().rightPanelOpen).toBe(false);
 			useUIStore.getState().toggleRightPanel();
 			expect(useUIStore.getState().rightPanelOpen).toBe(true);
+		});
+
+		describe('closeLeftSidebarForNavigation', () => {
+			const setViewportWidth = (width: number) => {
+				Object.defineProperty(window, 'innerWidth', {
+					configurable: true,
+					writable: true,
+					value: width,
+				});
+			};
+			const originalWidth = window.innerWidth;
+
+			afterEach(() => {
+				setViewportWidth(originalWidth);
+			});
+
+			it('closes the drawer on a narrow viewport', () => {
+				setViewportWidth(390);
+				useUIStore.getState().setLeftSidebarOpen(true);
+				useUIStore.getState().closeLeftSidebarForNavigation();
+				expect(useUIStore.getState().leftSidebarOpen).toBe(false);
+			});
+
+			it('leaves the sidebar alone on a wide viewport', () => {
+				setViewportWidth(1440);
+				useUIStore.getState().setLeftSidebarOpen(true);
+				useUIStore.getState().closeLeftSidebarForNavigation();
+				expect(useUIStore.getState().leftSidebarOpen).toBe(true);
+			});
+
+			it('is a no-op when the drawer is already closed', () => {
+				setViewportWidth(390);
+				useUIStore.getState().setLeftSidebarOpen(false);
+				const before = useUIStore.getState();
+				useUIStore.getState().closeLeftSidebarForNavigation();
+				expect(useUIStore.getState()).toBe(before);
+			});
+		});
+
+		describe('closeRightPanelForNavigation', () => {
+			const setViewportWidth = (width: number) => {
+				Object.defineProperty(window, 'innerWidth', {
+					configurable: true,
+					writable: true,
+					value: width,
+				});
+			};
+			const originalWidth = window.innerWidth;
+
+			afterEach(() => {
+				setViewportWidth(originalWidth);
+			});
+
+			it('closes the drawer on a narrow viewport', () => {
+				setViewportWidth(390);
+				useUIStore.getState().setRightPanelOpen(true);
+				useUIStore.getState().closeRightPanelForNavigation();
+				expect(useUIStore.getState().rightPanelOpen).toBe(false);
+			});
+
+			it('leaves the Right Bar alone on a wide viewport', () => {
+				setViewportWidth(1440);
+				useUIStore.getState().setRightPanelOpen(true);
+				useUIStore.getState().closeRightPanelForNavigation();
+				expect(useUIStore.getState().rightPanelOpen).toBe(true);
+			});
+
+			it('is a no-op when the drawer is already closed', () => {
+				setViewportWidth(390);
+				useUIStore.getState().setRightPanelOpen(false);
+				const before = useUIStore.getState();
+				useUIStore.getState().closeRightPanelForNavigation();
+				expect(useUIStore.getState()).toBe(before);
+			});
+
+			it('does not disturb the left drawer', () => {
+				setViewportWidth(390);
+				useUIStore.getState().setLeftSidebarOpen(true);
+				useUIStore.getState().setRightPanelOpen(true);
+				useUIStore.getState().closeRightPanelForNavigation();
+				expect(useUIStore.getState().rightPanelOpen).toBe(false);
+				expect(useUIStore.getState().leftSidebarOpen).toBe(true);
+			});
 		});
 	});
 

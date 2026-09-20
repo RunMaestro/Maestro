@@ -6,6 +6,12 @@ import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
 import { createKeyedWriteQueue } from '../../utils/atomic-json-store';
 import { normalizeRenameTabResult, type RenameTabResult } from '../types';
+import { requestFromRenderer } from './remoteRequest';
+import {
+	normalizeSnoozeCommandResult,
+	type SnoozeCommandRequest,
+	type SnoozeCommandResult,
+} from '../../../shared/snoozeCommands';
 
 /**
  * How long a single remote rename may hold its per-tab queue slot without the
@@ -214,6 +220,7 @@ export function registerTabCallbacks(
 					settle({
 						success: false,
 						error: 'The desktop did not confirm the rename; it may still be applying',
+						unconfirmed: true,
 					});
 				}, RENAME_CONFIRMATION_RELEASE_MS);
 			});
@@ -233,6 +240,30 @@ export function registerTabCallbacks(
 		}
 		targetWindow.webContents.send('remote:starTab', sessionId, tabId, starred);
 		return true;
+	});
+
+	// Snooze verbs are a ROUND TRIP, not a fire-and-forget send: the CLI's caller
+	// is waiting to be told what was parked, what came back, or what is on the
+	// list. The window is resolved from the request's own agent so a snooze
+	// driven at an agent living in a second window is applied by that window,
+	// which is the one holding its tabs.
+	server.setSnoozeCommandCallback(async (request: SnoozeCommandRequest) => {
+		// `list` and `history` are app-wide reads with no agent of their own.
+		const targetWindow = request.sessionId
+			? resolveSessionWindow(request.sessionId)
+			: getMainWindow();
+		if (!targetWindow || !isWebContentsAvailable(targetWindow)) {
+			logger.warn('No window is available for snoozeCommand', 'WebServer');
+			return { success: false, error: 'Maestro window is not available' };
+		}
+		return requestFromRenderer<SnoozeCommandResult>(targetWindow, 'remote:snoozeCommand', {
+			// A miss RESOLVES rather than rejecting: the caller is a CLI process
+			// reporting to a human, and a thrown error there reads as a broken
+			// command rather than as the renderer never answering.
+			fallback: { success: false, error: 'Maestro did not answer the snooze request' },
+			parse: normalizeSnoozeCommandResult,
+			args: [request],
+		});
 	});
 
 	server.setReorderTabCallback(async (sessionId: string, fromIndex: number, toIndex: number) => {

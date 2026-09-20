@@ -70,13 +70,17 @@ export interface EmitResultOptions {
 // "Opus" to "Fable" without changing what it means (the separately-metered
 // premium-model weekly limit), so the wire key stays put for on-disk
 // compatibility and the label says what the panel actually showed.
+//
+// `week_sonnet_only.unread` marks a placeholder: the panel never painted that
+// section readably, so its `percent: 0` is not a measurement. Consumers should
+// prefer an earlier real reading from the same weekly window.
 export interface StatusSnapshot {
 	type: 'status';
 	auth_state?: 'authenticated' | 'unauthenticated';
 	config_dir: string;
 	session: { percent: number; resets_at?: string };
 	week_all_models: { percent: number; resets_at?: string };
-	week_sonnet_only: { percent: number; resets_at?: string; label?: string };
+	week_sonnet_only: { percent: number; resets_at?: string; label?: string; unread?: true };
 }
 
 export class JsonEmitter {

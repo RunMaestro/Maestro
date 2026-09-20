@@ -9,6 +9,7 @@ import {
 	AlertTriangle,
 	ChevronDown,
 	ChevronRight,
+	Clock,
 	Search,
 	X,
 	Zap,
@@ -18,6 +19,11 @@ import {
 import type { Theme } from '../../types';
 import type { CueRunResult } from '../../hooks/useCue';
 import { CUE_COLOR } from '../../../shared/cue-pipeline-types';
+import {
+	cueHistoryRetentionOptions,
+	resolveCueHistoryRetentionDays,
+} from '../../../shared/cue/retention';
+import { useSettingsStore } from '../../stores/settingsStore';
 import { PipelineDot } from './StatusDot';
 import { ActivityLogDetail } from './ActivityLogDetail';
 import { cleanStderrForDisplay, formatDuration, getPipelineForSubscription } from './cueModalUtils';
@@ -89,6 +95,20 @@ export function ActivityLog({
 }: ActivityLogProps) {
 	const [visibleCount, setVisibleCount] = useState(100);
 	const [expandedRunIds, setExpandedRunIds] = useState<Set<string>>(new Set());
+
+	// Retention is a global user setting, not modal state - the Cue engine
+	// prunes `cue_events` by it at startup. Read it from the store rather than
+	// threading two more props through CueModal for one dial. The value is
+	// resolved on the way out so a hand-edited settings file cannot make the
+	// control show a window the engine will not honor.
+	const retentionDays = useSettingsStore((s) =>
+		resolveCueHistoryRetentionDays(s.cueHistoryRetentionDays)
+	);
+	const setCueHistoryRetentionDays = useSettingsStore((s) => s.setCueHistoryRetentionDays);
+	const retentionOptions = useMemo(
+		() => cueHistoryRetentionOptions(retentionDays),
+		[retentionDays]
+	);
 
 	// Cmd/Ctrl+F focuses the search box.
 	useEffect(() => {
@@ -208,6 +228,43 @@ export function ActivityLog({
 						)}
 						{allVisibleExpanded ? 'Collapse all' : 'Expand all'}
 					</button>
+					{/* Retention window. Lives here because the Cue modal has no settings
+					    surface of its own, and this is the view whose contents it governs. */}
+					<div
+						data-setting-id="cue-history-retention"
+						className="flex items-center gap-1.5 pl-2 pr-1 py-1 rounded"
+						style={{ backgroundColor: theme.colors.bgActivity }}
+						title="Cue runs older than this are deleted when the Cue engine starts."
+					>
+						<Clock className="w-3 h-3 flex-shrink-0" style={{ color: theme.colors.textDim }} />
+						<label
+							htmlFor="cue-history-retention-select"
+							className="text-xs whitespace-nowrap"
+							style={{ color: theme.colors.textDim }}
+						>
+							Keep
+						</label>
+						<div className="relative flex items-center">
+							<select
+								id="cue-history-retention-select"
+								value={retentionDays}
+								onChange={(e) => setCueHistoryRetentionDays(Number(e.target.value))}
+								className="appearance-none bg-transparent outline-none text-xs pr-4 cursor-pointer"
+								style={{ color: theme.colors.textMain }}
+								aria-label="Days of Cue run history to keep"
+							>
+								{retentionOptions.map((opt) => (
+									<option key={opt.days} value={opt.days}>
+										{opt.label}
+									</option>
+								))}
+							</select>
+							<ChevronDown
+								className="w-3 h-3 absolute right-0 pointer-events-none"
+								style={{ color: theme.colors.textDim }}
+							/>
+						</div>
+					</div>
 				</div>
 			</div>
 
@@ -247,9 +304,17 @@ export function ActivityLog({
 										? ` (${String(entry.event.payload.filename)}: ${String(entry.event.payload.taskCount ?? 0)} task(s))`
 										: '';
 								const githubPayload =
-									(eventType === 'github.pull_request' || eventType === 'github.issue') &&
+									(eventType === 'github.pull_request' ||
+										eventType === 'github.issue' ||
+										eventType === 'github.label') &&
 									entry.event.payload?.number
 										? ` (#${String(entry.event.payload.number)} ${String(entry.event.payload.title ?? '')})`
+										: '';
+								// The label that fired the run is the whole point of a
+								// github.label entry, so it earns its own segment.
+								const githubLabelPayload =
+									eventType === 'github.label' && entry.event.payload?.label
+										? ` [${String(entry.event.payload.label)}]`
 										: '';
 								const isReconciled = entry.event.payload?.reconciled === true;
 								const isExpanded = expandedRunIds.has(entry.runId);
@@ -317,6 +382,7 @@ export function ActivityLog({
 													triggered ({eventType}){filePayload}
 													{taskPayload}
 													{githubPayload}
+													{githubLabelPayload}
 												</div>
 											</td>
 											<td className="py-1.5 pr-2 whitespace-nowrap text-right">

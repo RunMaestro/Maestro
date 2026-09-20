@@ -23,7 +23,7 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { useTabStore } from '../../stores/tabStore';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import { captureException } from '../../utils/sentry';
-import { ShortcutHint } from './ShortcutHint';
+import { ShortcutHint, shortcutSuffix } from '../ui/ShortcutHint';
 
 /**
  * Props for the TerminalTabItem component.
@@ -460,7 +460,7 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 				<button
 					onClick={handleCloseClick}
 					className="p-0.5 rounded hover:bg-white/10 transition-colors shrink-0"
-					title="Close tab"
+					title={`Close tab${shortcutSuffix(tabShortcuts.closeTab?.keys)}`}
 				>
 					<X className="w-3 h-3" style={{ color: theme.colors.textDim }} />
 				</button>

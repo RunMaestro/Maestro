@@ -8,6 +8,8 @@
 import path from 'path';
 import { isWindows } from '../../shared/platformDetection';
 import { MAESTRO_FONT_STACK } from '../../shared/fontStack';
+import { ENCORE_FEATURE_DEFAULTS } from '../../shared/encoreFeatureDefaults';
+import { DEFAULT_CUE_HISTORY_RETENTION_DAYS } from '../../shared/cue/retention';
 
 import type {
 	MaestroSettings,
@@ -75,9 +77,6 @@ export function resolveConfiguredShell(store: ShellSettingsReader): string {
 
 export const SETTINGS_DEFAULTS: MaestroSettings = {
 	activeThemeId: 'dracula',
-	llmProvider: 'openrouter',
-	modelSlug: 'anthropic/claude-3.5-sonnet',
-	apiKey: '',
 	shortcuts: {},
 	fontSize: 14,
 	fontFamily: MAESTRO_FONT_STACK,
@@ -97,7 +96,9 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	typographySnapshot: null,
 	typographyPromptSeen: false,
 	themePromptSeen: false,
+	updatesPromptSeen: false,
 	agentPowersPromptSeen: false,
+	hasPriorInstallation: false,
 	customFonts: [],
 	mediaPlaybackRate: 1,
 	mediaPlayerFloatRect: null,
@@ -152,6 +153,11 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	autoResumeOnLimit: true,
 	autoResumeCheckIntervalHours: 2,
 	autoResumeGiveUpDays: 7,
+	// Main-side gates (Cue engine boot start, stats recording) read this raw, so
+	// it must match the renderer's defaults. See shared/encoreFeatureDefaults.ts.
+	encoreFeatures: { ...ENCORE_FEATURE_DEFAULTS },
+	cueHistoryRetentionDays: DEFAULT_CUE_HISTORY_RETENTION_DAYS,
+	groupCueEntries: true,
 };
 
 export const SESSIONS_DEFAULTS: SessionsData = {

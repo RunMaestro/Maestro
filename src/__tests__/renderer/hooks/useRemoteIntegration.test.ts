@@ -7,11 +7,12 @@ import { useRemoteIntegration } from '../../../renderer/hooks';
 import type { Session, AITab } from '../../../renderer/types';
 import { createMockAITab } from '../../helpers/mockTab';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
-import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { updateAiTab, useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useNotificationStore } from '../../../renderer/stores/notificationStore';
 import { useMovementStore } from '../../../renderer/stores/movementStore';
 import { useConcertoCreationActivityStore } from '../../../renderer/stores/concertoCreationActivityStore';
 import type { MovementPayload } from '../../../shared/movement-types';
+import type { AgentDelegationNotice } from '../../../shared/agentDelegation';
 import { CONCERTO_DESIGNER_CHANNEL } from '../../../shared/concerto-html';
 import {
 	clearConcertoDesignerFramesForTests,
@@ -24,6 +25,7 @@ import {
 	clearDesktopAiTabSelections,
 	noteDesktopAiTabSelection,
 } from '../../../renderer/utils/desktopTabSelectionSync';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 
 // The planner's verdict is the seam under test: a queued CLI prompt must carry
 // it as the same flags a composer-queued message does.
@@ -80,11 +82,12 @@ describe('useRemoteIntegration', () => {
 					state: 'idle' | 'busy';
 					thinkingStartTime?: number | null;
 					hasUnread?: boolean;
-				}>,
-				activeTabChanged?: boolean
+				}>
 		  ) => void)
 		| undefined;
-	let onRemoteNewTabHandler: ((sessionId: string, responseChannel: string) => void) | undefined;
+	let onRemoteNewTabHandler:
+		| ((sessionId: string, responseChannel: string, background?: boolean) => void)
+		| undefined;
 	let onRemoteFocusAiTabHandler:
 		| ((sessionId: string, tabId: string, responseChannel: string) => void)
 		| undefined;
@@ -103,10 +106,14 @@ describe('useRemoteIntegration', () => {
 	let onRemoteReorderTabHandler:
 		| ((sessionId: string, fromIndex: number, toIndex: number) => void)
 		| undefined;
+	let onRemoteSnoozeCommandHandler:
+		| ((request: Record<string, unknown>, responseChannel: string) => void)
+		| undefined;
 	let onRemoteToggleBookmarkHandler: ((sessionId: string) => void) | undefined;
 	let onRequestMovementDesignerInspectionHandler:
 		| ((id: string, expectedRevision: number, responseChannel: string) => void)
 		| undefined;
+	let onRemoteAgentDelegationHandler: ((notice: AgentDelegationNotice) => void) | undefined;
 	let onRemoteCrossAgentAskHandler:
 		| ((
 				request: {
@@ -137,6 +144,9 @@ describe('useRemoteIntegration', () => {
 		| undefined;
 	let onRemoteRemoveQueueItemHandler:
 		| ((sessionId: string, itemId: string, responseChannel: string) => void)
+		| undefined;
+	let onRemoteSetSettingHandler:
+		| ((key: string, value: unknown, responseChannel: string) => void | Promise<void>)
 		| undefined;
 	let onRemoteCreateGistHandler:
 		| ((
@@ -203,6 +213,11 @@ describe('useRemoteIntegration', () => {
 			onRemoteReorderTabHandler = handler;
 			return () => {};
 		}),
+		onRemoteSnoozeCommand: vi.fn().mockImplementation((handler) => {
+			onRemoteSnoozeCommandHandler = handler;
+			return () => {};
+		}),
+		sendRemoteSnoozeCommandResponse: vi.fn(),
 		onRemoteToggleBookmark: vi.fn().mockImplementation((handler) => {
 			onRemoteToggleBookmarkHandler = handler;
 			return () => {};
@@ -217,6 +232,10 @@ describe('useRemoteIntegration', () => {
 			return () => {};
 		}),
 		sendRemoteCrossAgentAskResponse: vi.fn(),
+		onRemoteAgentDelegation: vi.fn().mockImplementation((handler) => {
+			onRemoteAgentDelegationHandler = handler;
+			return () => {};
+		}),
 		onRemoteEnqueueCommand: vi.fn().mockImplementation((handler) => {
 			onRemoteEnqueueCommandHandler = handler;
 			return () => {};
@@ -289,7 +308,8 @@ describe('useRemoteIntegration', () => {
 		onRemoteStopAutoRun: vi.fn().mockImplementation(() => {
 			return () => {};
 		}),
-		onRemoteSetSetting: vi.fn().mockImplementation(() => {
+		onRemoteSetSetting: vi.fn().mockImplementation((handler) => {
+			onRemoteSetSettingHandler = handler;
 			return () => {};
 		}),
 		// Added with `maestro-cli open`: the hook subscribes to this on mount, so
@@ -337,6 +357,10 @@ describe('useRemoteIntegration', () => {
 			return () => {};
 		}),
 		sendRemoteRenameGroupResponse: vi.fn(),
+		onRemoteUpdateGroup: vi.fn().mockImplementation(() => {
+			return () => {};
+		}),
+		sendRemoteUpdateGroupResponse: vi.fn(),
 		onRemoteDeleteGroup: vi.fn().mockImplementation(() => {
 			return () => {};
 		}),
@@ -455,6 +479,7 @@ describe('useRemoteIntegration', () => {
 		onRemoteToggleBookmarkHandler = undefined;
 		onRemoteNewAITabWithPromptHandler = undefined;
 		onRemoteCrossAgentAskHandler = undefined;
+		onRemoteAgentDelegationHandler = undefined;
 		onRemoteEnqueueCommandHandler = undefined;
 		onRemoteListQueueHandler = undefined;
 		onRemoteRemoveQueueItemHandler = undefined;
@@ -462,6 +487,7 @@ describe('useRemoteIntegration', () => {
 		onRemoteMovementHandler = undefined;
 		onRequestMovementDesignerInspectionHandler = undefined;
 		onRemoteCreateGistHandler = undefined;
+		onRemoteSetSettingHandler = undefined;
 
 		// Reset zustand stores so cross-test state doesn't leak.
 		useSessionStore.setState({ sessions: [] });
@@ -1099,7 +1125,7 @@ describe('useRemoteIntegration', () => {
 			]);
 		});
 
-		it('applies a genuine desktop tab selection only in the session already being viewed', () => {
+		it('keeps the browser on its own tab when the desktop changes selection in the viewed session', () => {
 			const tab1 = createMockTab({ id: 'tab-1' });
 			const tab2 = createMockTab({ id: 'tab-2' });
 			const session = createMockSession({
@@ -1112,11 +1138,11 @@ describe('useRemoteIntegration', () => {
 			renderHook(() => useRemoteIntegration(deps));
 
 			act(() => {
-				onRemoteSelectTabHandler?.('session-1', 'tab-2', [tab1, tab2], true);
+				onRemoteSelectTabHandler?.('session-1', 'tab-2', [tab1, tab2]);
 			});
 
 			expect(deps.setActiveSessionId).not.toHaveBeenCalled();
-			expect(useSessionStore.getState().sessions[0].activeTabId).toBe('tab-2');
+			expect(useSessionStore.getState().sessions[0].activeTabId).toBe('tab-1');
 		});
 
 		it('repairs a removed active tab with a visible tab instead of a hidden consult', () => {
@@ -1133,7 +1159,7 @@ describe('useRemoteIntegration', () => {
 			renderHook(() => useRemoteIntegration(deps));
 
 			act(() => {
-				onRemoteSelectTabHandler?.('session-1', hiddenTab.id, [hiddenTab, visibleTab], false);
+				onRemoteSelectTabHandler?.('session-1', hiddenTab.id, [hiddenTab, visibleTab]);
 			});
 
 			expect(useSessionStore.getState().sessions[0].activeTabId).toBe('visible-tab');
@@ -1298,6 +1324,41 @@ describe('useRemoteIntegration', () => {
 		});
 	});
 
+	describe('remote agent delegation', () => {
+		it('marks a CLI dispatch in the delegating tab, never the target', () => {
+			const callerTab = createMockTab({ id: 'caller-tab', logs: [] });
+			const caller = createMockSession({
+				id: 'maestro',
+				aiTabs: [callerTab],
+				activeTabId: 'caller-tab',
+			});
+			const target = createMockSession({ id: 'proxmox', name: '🖥 Proxmox' });
+			const deps = createDeps({ sessions: [caller, target] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteAgentDelegationHandler?.({
+					kind: 'dispatch',
+					fromSessionId: 'maestro',
+					fromTabId: 'caller-tab',
+					targetSessionId: 'proxmox',
+					prompt: 'Take care of the advisory bug',
+				});
+			});
+
+			const sessions = useSessionStore.getState().sessions;
+			const callerLogs = sessions.find((s) => s.id === 'maestro')!.aiTabs[0].logs;
+			expect(callerLogs).toHaveLength(1);
+			expect(callerLogs[0].delegation).toMatchObject({
+				kind: 'dispatch',
+				toSessionId: 'proxmox',
+				toAgentName: '🖥 Proxmox',
+			});
+			expect(sessions.find((s) => s.id === 'proxmox')!.aiTabs[0].logs).toHaveLength(0);
+		});
+	});
+
 	describe('remote new AI tab with prompt', () => {
 		it('creates tab, dispatches remoteCommand, and acks true with the new tab id on idle session', () => {
 			const session = createMockSession({ id: 'session-1', state: 'idle' });
@@ -1330,16 +1391,15 @@ describe('useRemoteIntegration', () => {
 			);
 			// The renderer surfaces the new tab id through the IPC ack so
 			// `maestro-cli dispatch --new-tab` can return an addressable id.
-			expect(mockProcess.sendRemoteNewAITabWithPromptResponse).toHaveBeenCalledWith(
-				'chan-1',
-				true,
-				expect.any(String)
-			);
+			expect(mockProcess.sendRemoteNewAITabWithPromptResponse).toHaveBeenCalledWith('chan-1', {
+				success: true,
+				tabId: expect.any(String),
+			});
 
 			dispatchEventSpy.mockRestore();
 		});
 
-		it('acks false and skips dispatch when session is missing', () => {
+		it('acks the failure reason and skips dispatch when session is missing', () => {
 			const deps = createDeps({ sessions: [] });
 			const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
 
@@ -1352,32 +1412,51 @@ describe('useRemoteIntegration', () => {
 
 			expect(useSessionStore.getState().sessions).toBe(before);
 			expect(dispatchEventSpy).not.toHaveBeenCalled();
+			// The reason travels with the ack - the CLI used to have only a
+			// missing tab id to go on and reported every refusal as a protocol
+			// fault (NEW_TAB_NO_ID).
 			expect(mockProcess.sendRemoteNewAITabWithPromptResponse).toHaveBeenCalledWith(
 				'chan-missing',
-				false
+				{ success: false, error: expect.stringContaining('nonexistent') }
 			);
 
 			dispatchEventSpy.mockRestore();
 		});
 
-		it('acks false and skips dispatch when session is busy', () => {
-			const session = createMockSession({ id: 'session-1', state: 'busy' });
+		it('creates the tab and QUEUES the prompt when the agent is busy (#1602)', () => {
+			const tab = createMockTab({ id: 'tab-1' });
+			const session = createMockSession({ id: 'session-1', state: 'busy', aiTabs: [tab] });
+			const originalTabCount = session.aiTabs.length;
 			const deps = createDeps({ sessions: [session] });
 			const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
 
 			renderHook(() => useRemoteIntegration(deps));
 
-			const before = useSessionStore.getState().sessions;
 			act(() => {
-				onRemoteNewAITabWithPromptHandler?.('session-1', 'Hello', 'chan-busy');
+				onRemoteNewAITabWithPromptHandler?.('session-1', 'Hello', 'chan-busy', true);
 			});
 
-			expect(useSessionStore.getState().sessions).toBe(before);
-			expect(dispatchEventSpy).not.toHaveBeenCalled();
-			expect(mockProcess.sendRemoteNewAITabWithPromptResponse).toHaveBeenCalledWith(
-				'chan-busy',
-				false
+			// A busy AGENT cannot start a second turn, but the tab is still
+			// created and the prompt waits in the execution queue instead of
+			// being dropped.
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
+			expect(updated?.aiTabs).toHaveLength(originalTabCount + 1);
+			const newTabId = updated?.aiTabs[updated.aiTabs.length - 1]?.id;
+			expect(updated?.executionQueue).toHaveLength(1);
+			expect(updated?.executionQueue?.[0]).toMatchObject({
+				type: 'message',
+				text: 'Hello',
+				tabId: newTabId,
+			});
+			// No immediate spawn - that is what the queue is for.
+			expect(dispatchEventSpy).not.toHaveBeenCalledWith(
+				expect.objectContaining({ type: 'maestro:remoteCommand' })
 			);
+			expect(mockProcess.sendRemoteNewAITabWithPromptResponse).toHaveBeenCalledWith('chan-busy', {
+				success: true,
+				tabId: newTabId,
+				queued: true,
+			});
 
 			dispatchEventSpy.mockRestore();
 		});
@@ -1770,6 +1849,49 @@ describe('useRemoteIntegration', () => {
 		});
 	});
 
+	describe('remote snooze command', () => {
+		// The CLI process on the far end blocks on this reply, so the listener has
+		// to answer on the response channel for every outcome - a verb that throws
+		// inside the service is still a command that must come back.
+		it('answers a snooze verb on its response channel', () => {
+			const session = createMockSession({ id: 'session-1', aiTabs: [createMockTab()] });
+			const deps = createDeps({ sessions: [session] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteSnoozeCommandHandler?.({ action: 'list' }, 'snooze-response');
+			});
+
+			const send = window.maestro.process.sendRemoteSnoozeCommandResponse as ReturnType<
+				typeof vi.fn
+			>;
+			expect(send).toHaveBeenCalledWith(
+				'snooze-response',
+				expect.objectContaining({ success: true })
+			);
+		});
+
+		it('reports a failure rather than leaving the caller waiting', () => {
+			const deps = createDeps({ sessions: [] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				// An id that names nothing: an answer, not a thrown error and not silence.
+				onRemoteSnoozeCommandHandler?.({ action: 'wake', snoozeId: 'nope' }, 'snooze-response');
+			});
+
+			const send = window.maestro.process.sendRemoteSnoozeCommandResponse as ReturnType<
+				typeof vi.fn
+			>;
+			expect(send).toHaveBeenCalledWith(
+				'snooze-response',
+				expect.objectContaining({ success: false })
+			);
+		});
+	});
+
 	describe('remote rename tab', () => {
 		it('renames tab and persists to agent session before reporting success', async () => {
 			const tab = createMockTab({ id: 'tab-1', agentSessionId: 'agent-session-1' });
@@ -1914,6 +2036,389 @@ describe('useRemoteIntegration', () => {
 				success: false,
 				error: 'history unreadable',
 			});
+		});
+
+		// `tabCallbacks.ts` stops waiting on a rename after a bounded delay and
+		// dispatches the next one while the abandoned one may still be running
+		// here, so ordering cannot rely on the server having waited: an older
+		// rename finishing last would overwrite the newer name in BOTH the
+		// provider metadata and the store.
+		it('keeps the newest rename authoritative when an abandoned older one finishes last', async () => {
+			const tab = createMockTab({ id: 'tab-1', agentSessionId: 'agent-session-1', name: 'Old' });
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [tab],
+				projectRoot: '/test/project',
+				toolType: 'claude-code',
+			});
+			const deps = createDeps({ sessions: [session] });
+
+			// The older rename's persistence is held open, and is released only
+			// AFTER the newer rename has been dispatched and given room to run.
+			let releaseOlder: (() => void) | undefined;
+			const olderPersisted = new Promise<void>((resolve) => {
+				releaseOlder = resolve;
+			});
+			const persistOrder: string[] = [];
+			mockClaude.updateSessionName.mockImplementation(
+				async (_projectRoot: string, _agentSessionId: string, name: string) => {
+					if (name === 'Older') await olderPersisted;
+					persistOrder.push(name);
+				}
+			);
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			const olderDone = onRemoteRenameTabHandler?.('session-1', 'tab-1', 'Older', 'response-older');
+			const newerDone = onRemoteRenameTabHandler?.('session-1', 'tab-1', 'Newer', 'response-newer');
+
+			// Let both handlers run as far as they can. The newer one must be
+			// parked behind the older one rather than racing it.
+			await act(async () => {
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+			expect(persistOrder).toEqual([]);
+
+			await act(async () => {
+				releaseOlder!();
+				await olderDone;
+				await newerDone;
+			});
+
+			// Persistence happened in request order, so the last name written to the
+			// provider is the newest request, not the one that was abandoned. The
+			// trailing repeat is the newer request writing its own name after the
+			// older runner had already reconciled to it: writes are idempotent and
+			// unconditional, because nothing available in the renderer proves the
+			// provider already agrees with the tab.
+			expect(persistOrder).toEqual(['Older', 'Newer', 'Newer']);
+
+			const updatedSession = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
+			expect(updatedSession?.aiTabs.find((t) => t.id === 'tab-1')?.name).toBe('Newer');
+
+			// Both callers still get a truthful answer; neither is left hanging.
+			expect(mockProcess.sendRemoteRenameTabResponse).toHaveBeenCalledWith('response-older', {
+				success: true,
+			});
+			expect(mockProcess.sendRemoteRenameTabResponse).toHaveBeenCalledWith('response-newer', {
+				success: true,
+			});
+		});
+
+		// The persistence calls are `ipcRenderer.invoke`, which never times out, so a
+		// main-process handler that never returns leaves its promise pending for the
+		// life of the window. Without a bounded handoff every later rename for the
+		// tab would queue behind it and never be attempted, and the tab would be
+		// stuck on its old name no matter how many times the user renamed it.
+		it('runs a newer rename when an older one never settles, and keeps it when the old one lands', async () => {
+			vi.useFakeTimers();
+			try {
+				const tab = createMockTab({ id: 'tab-1', agentSessionId: 'agent-session-1', name: 'Old' });
+				const session = createMockSession({
+					id: 'session-1',
+					aiTabs: [tab],
+					projectRoot: '/test/project',
+					toolType: 'claude-code',
+				});
+				const deps = createDeps({ sessions: [session] });
+
+				// The first rename's persistence is never resolved on its own; the test
+				// releases it by hand at the very end to model a hung call finally
+				// landing rather than one that was cancelled.
+				let landHung: (() => void) | undefined;
+				const hungPersisted = new Promise<void>((resolve) => {
+					landHung = resolve;
+				});
+				const persistOrder: string[] = [];
+				mockClaude.updateSessionName.mockImplementation(
+					async (_projectRoot: string, _agentSessionId: string, name: string) => {
+						if (name === 'Hung') await hungPersisted;
+						persistOrder.push(name);
+					}
+				);
+
+				renderHook(() => useRemoteIntegration(deps));
+
+				const hungDone = onRemoteRenameTabHandler?.('session-1', 'tab-1', 'Hung', 'response-hung');
+				await vi.advanceTimersByTimeAsync(0);
+				expect(persistOrder).toEqual([]);
+
+				// The newer rename arrives while the first is still pending. It must
+				// not be blocked forever behind it.
+				const newerDone = onRemoteRenameTabHandler?.(
+					'session-1',
+					'tab-1',
+					'Newer',
+					'response-newer'
+				);
+				await vi.advanceTimersByTimeAsync(60_000);
+
+				expect(persistOrder).toEqual(['Newer']);
+				expect(
+					useSessionStore
+						.getState()
+						.sessions.find((s) => s.id === 'session-1')
+						?.aiTabs.find((t) => t.id === 'tab-1')?.name
+				).toBe('Newer');
+				expect(mockProcess.sendRemoteRenameTabResponse).toHaveBeenCalledWith('response-newer', {
+					success: true,
+				});
+				await newerDone;
+
+				// The hung call finally lands and writes its stale name. The newest
+				// requested name has to come back in persistence AND in the tab, so a
+				// late write can never be the last word.
+				landHung!();
+				await vi.advanceTimersByTimeAsync(0);
+				await hungDone;
+
+				expect(persistOrder).toEqual(['Newer', 'Hung', 'Newer']);
+				expect(
+					useSessionStore
+						.getState()
+						.sessions.find((s) => s.id === 'session-1')
+						?.aiTabs.find((t) => t.id === 'tab-1')?.name
+				).toBe('Newer');
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		// The tab is renamed from outside this queue too: `useSessionLifecycle`
+		// writes the same provider metadata, history and store name for a desktop
+		// rename. A repeat remote rename of a name this queue already wrote must
+		// still be written, because something else has changed the tab since.
+		// Its own session and tab ids are deliberately unique: the parked rename
+		// below never settles, so its bookkeeping entry outlives the test, and a
+		// shared id would couple every later test in this file to it.
+		it('re-applies a name the tab lost to a rename made outside this queue', async () => {
+			vi.useFakeTimers();
+			try {
+				const tab = createMockTab({
+					id: 'tab-parked',
+					agentSessionId: 'agent-session-1',
+					name: 'Old',
+				});
+				const session = createMockSession({
+					id: 'session-parked',
+					aiTabs: [tab],
+					projectRoot: '/test/project',
+					toolType: 'claude-code',
+				});
+				const deps = createDeps({ sessions: [session] });
+				const persistOrder: string[] = [];
+				const neverSettles = new Promise<void>(() => {});
+				mockClaude.updateSessionName.mockImplementation(
+					async (_projectRoot: string, _agentSessionId: string, name: string) => {
+						if (name === 'Hung') await neverSettles;
+						persistOrder.push(name);
+					}
+				);
+
+				renderHook(() => useRemoteIntegration(deps));
+
+				// A rename that never settles keeps this tab's bookkeeping alive, so
+				// anything remembered in it outlives the rename that recorded it.
+				void onRemoteRenameTabHandler?.('session-parked', 'tab-parked', 'Hung', 'response-hung');
+				await vi.advanceTimersByTimeAsync(60_000);
+
+				void onRemoteRenameTabHandler?.('session-parked', 'tab-parked', 'Beta', 'response-1');
+				await vi.advanceTimersByTimeAsync(0);
+				expect(persistOrder).toEqual(['Beta']);
+
+				// The desktop renames the tab, bypassing the remote rename queue.
+				act(() => {
+					updateAiTab('session-parked', 'tab-parked', (t) => ({ ...t, name: 'Gamma' }));
+				});
+
+				// The same remote name is requested again. It must be written, not
+				// skipped as something this queue believes it already applied.
+				void onRemoteRenameTabHandler?.('session-parked', 'tab-parked', 'Beta', 'response-2');
+				await vi.advanceTimersByTimeAsync(0);
+
+				expect(persistOrder).toEqual(['Beta', 'Beta']);
+				expect(
+					useSessionStore
+						.getState()
+						.sessions.find((s) => s.id === 'session-parked')
+						?.aiTabs.find((t) => t.id === 'tab-parked')?.name
+				).toBe('Beta');
+				expect(mockProcess.sendRemoteRenameTabResponse).toHaveBeenCalledWith('response-2', {
+					success: true,
+				});
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		// `applyRename` writes the provider name BEFORE the history relabel, so a
+		// history rejection lands after the provider is already on disk with the
+		// old name. When that happens to a rename a newer one has superseded, the
+		// stale provider write has to be reconciled anyway: reporting the failure
+		// and stopping would leave the provider disagreeing with the tab and with
+		// the success the newer request was already told.
+		it('reconciles the newest name when a stale rename writes the provider then fails on history', async () => {
+			vi.useFakeTimers();
+			try {
+				const tab = createMockTab({ id: 'tab-1', agentSessionId: 'agent-session-1', name: 'Old' });
+				const session = createMockSession({
+					id: 'session-1',
+					aiTabs: [tab],
+					projectRoot: '/test/project',
+					toolType: 'claude-code',
+				});
+				const deps = createDeps({ sessions: [session] });
+
+				// Stands in for the provider metadata on disk.
+				let providerName: string | undefined;
+				let landStaleProviderWrite: (() => void) | undefined;
+				const staleProviderWrite = new Promise<void>((resolve) => {
+					landStaleProviderWrite = resolve;
+				});
+				mockClaude.updateSessionName.mockImplementation(
+					async (_projectRoot: string, _agentSessionId: string, name: string) => {
+						if (name === 'Stale') await staleProviderWrite;
+						providerName = name;
+					}
+				);
+				// The history relabel rejects only for the stale name, which is what
+				// makes that rename fail AFTER it has already written the provider.
+				mockHistory.updateSessionName.mockImplementation(async (_id: string, name: string) => {
+					if (name === 'Stale') throw new Error('history write failed');
+					return 1;
+				});
+
+				renderHook(() => useRemoteIntegration(deps));
+
+				void onRemoteRenameTabHandler?.('session-1', 'tab-1', 'Stale', 'response-stale');
+				await vi.advanceTimersByTimeAsync(60_000);
+				expect(providerName).toBeUndefined();
+
+				// The newer rename completes while the older provider write is still
+				// pending, and is told it succeeded.
+				const newerDone = onRemoteRenameTabHandler?.(
+					'session-1',
+					'tab-1',
+					'Newer',
+					'response-newer'
+				);
+				await vi.advanceTimersByTimeAsync(0);
+				await newerDone;
+				expect(providerName).toBe('Newer');
+				expect(mockProcess.sendRemoteRenameTabResponse).toHaveBeenCalledWith('response-newer', {
+					success: true,
+				});
+
+				// Now the stale provider write lands and its history relabel throws.
+				landStaleProviderWrite!();
+				await vi.advanceTimersByTimeAsync(0);
+
+				// The provider must not be left on the stale name.
+				expect(providerName).toBe('Newer');
+				expect(
+					useSessionStore
+						.getState()
+						.sessions.find((s) => s.id === 'session-1')
+						?.aiTabs.find((t) => t.id === 'tab-1')?.name
+				).toBe('Newer');
+
+				// The stale request is still told the truth about its own rename.
+				expect(mockProcess.sendRemoteRenameTabResponse).toHaveBeenCalledWith('response-stale', {
+					success: false,
+					error: 'history write failed',
+				});
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		// Auto-naming (`useSessionLifecycle`, `useInputProcessing`) sets `tab.name`
+		// through `updateAiTab` alone and writes nothing to the provider, so a tab
+		// showing a name is NOT evidence that the provider carries it. Renaming
+		// remotely to the name the tab already displays therefore has to write, not
+		// skip and claim success for something never persisted.
+		it('persists a remote rename to the name a tab was already auto-named', async () => {
+			const tab = createMockTab({ id: 'tab-1', agentSessionId: 'agent-session-1', name: null });
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [tab],
+				projectRoot: '/test/project',
+				toolType: 'claude-code',
+			});
+			const deps = createDeps({ sessions: [session] });
+			const persistOrder: string[] = [];
+			mockClaude.updateSessionName.mockImplementation(
+				async (_projectRoot: string, _agentSessionId: string, name: string) => {
+					persistOrder.push(name);
+				}
+			);
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			// Auto-naming puts the name on the tab without touching the provider.
+			act(() => {
+				updateAiTab('session-1', 'tab-1', (t) => ({ ...t, name: 'Auto Name' }));
+			});
+			expect(persistOrder).toEqual([]);
+
+			await act(async () => {
+				await onRemoteRenameTabHandler?.('session-1', 'tab-1', 'Auto Name', 'response-1');
+			});
+
+			expect(persistOrder).toEqual(['Auto Name']);
+			expect(mockHistory.updateSessionName).toHaveBeenCalledWith('agent-session-1', 'Auto Name');
+			expect(mockProcess.sendRemoteRenameTabResponse).toHaveBeenCalledWith('response-1', {
+				success: true,
+			});
+		});
+
+		it('does not serialize renames of different tabs behind each other', async () => {
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [
+					createMockTab({ id: 'tab-1', agentSessionId: 'agent-session-1', name: 'Old A' }),
+					createMockTab({ id: 'tab-2', agentSessionId: 'agent-session-2', name: 'Old B' }),
+				],
+				projectRoot: '/test/project',
+				toolType: 'claude-code',
+			});
+			const deps = createDeps({ sessions: [session] });
+
+			let releaseFirst: (() => void) | undefined;
+			const firstPersisted = new Promise<void>((resolve) => {
+				releaseFirst = resolve;
+			});
+			const persistOrder: string[] = [];
+			mockClaude.updateSessionName.mockImplementation(
+				async (_projectRoot: string, _agentSessionId: string, name: string) => {
+					if (name === 'Tab One') await firstPersisted;
+					persistOrder.push(name);
+				}
+			);
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			const firstDone = onRemoteRenameTabHandler?.('session-1', 'tab-1', 'Tab One', 'response-one');
+			const secondDone = onRemoteRenameTabHandler?.(
+				'session-1',
+				'tab-2',
+				'Tab Two',
+				'response-two'
+			);
+
+			// tab-2 is not held up by tab-1: the key is per tab, so this must not
+			// become an app-wide rename lock.
+			await act(async () => {
+				await secondDone;
+			});
+			expect(persistOrder).toEqual(['Tab Two']);
+
+			await act(async () => {
+				releaseFirst!();
+				await firstDone;
+			});
+			expect(persistOrder).toEqual(['Tab Two', 'Tab One']);
 		});
 	});
 
@@ -2638,6 +3143,52 @@ describe('useRemoteIntegration', () => {
 			);
 		});
 
+		it('marks a foreground remote tab create as focus-changing', () => {
+			const session = createMockSession({ id: 'session-1' });
+			const deps = createDeps({ sessions: [session], isLiveMode: true });
+
+			renderHook(() => useRemoteIntegration(deps));
+			vi.advanceTimersByTime(500);
+
+			act(() => {
+				onRemoteNewTabHandler?.('session-1', 'response-channel-1');
+			});
+			vi.advanceTimersByTime(500);
+
+			// Without the flag a browser client adds the chip and keeps rendering
+			// the tab the user was already on, so its + button looks inert.
+			const createdTab = useSessionStore
+				.getState()
+				.sessions.find((s) => s.id === 'session-1')
+				?.aiTabs.at(-1);
+			expect(mockWeb.broadcastTabsChange).toHaveBeenLastCalledWith(
+				'session-1',
+				expect.arrayContaining([expect.objectContaining({ id: createdTab?.id })]),
+				createdTab?.id,
+				true
+			);
+		});
+
+		it('leaves a background remote tab create unfocused', () => {
+			const session = createMockSession({ id: 'session-1' });
+			const deps = createDeps({ sessions: [session], isLiveMode: true });
+
+			renderHook(() => useRemoteIntegration(deps));
+			vi.advanceTimersByTime(500);
+
+			act(() => {
+				onRemoteNewTabHandler?.('session-1', 'response-channel-1', true);
+			});
+			vi.advanceTimersByTime(500);
+
+			expect(mockWeb.broadcastTabsChange).toHaveBeenLastCalledWith(
+				'session-1',
+				expect.anything(),
+				expect.anything(),
+				false
+			);
+		});
+
 		it('does not broadcast when live mode is disabled', () => {
 			const tab = createMockTab({ id: 'tab-1' });
 			const session = createMockSession({
@@ -2653,6 +3204,63 @@ describe('useRemoteIntegration', () => {
 			vi.advanceTimersByTime(1000);
 
 			expect(mockWeb.broadcastTabsChange).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('remote set setting', () => {
+		afterEach(() => {
+			useSettingsStore.setState({ activeThemeId: 'dracula', settingsLoaded: false });
+		});
+
+		// `maestro-cli set-theme` lands here. Persisting alone left the live UI on
+		// the old theme until the next launch, so the CLI reported success and
+		// nothing changed on screen.
+		it('reflects a CLI theme change in the live store, not just on disk', async () => {
+			useSettingsStore.setState({ activeThemeId: 'dracula', settingsLoaded: false });
+			const setSetting = vi.fn().mockResolvedValue(undefined);
+			const getAll = vi.fn().mockResolvedValue({ activeThemeId: 'nord' });
+			window.maestro.settings = {
+				...window.maestro.settings,
+				set: setSetting,
+				getAll,
+			} as typeof window.maestro.settings;
+
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [] })));
+
+			await act(async () => {
+				await onRemoteSetSettingHandler?.('activeThemeId', 'nord', 'response-channel-1');
+			});
+
+			expect(setSetting).toHaveBeenCalledWith('activeThemeId', 'nord');
+			expect(getAll).toHaveBeenCalled();
+			expect(useSettingsStore.getState().activeThemeId).toBe('nord');
+			expect(mockProcess.sendRemoteSetSettingResponse).toHaveBeenCalledWith(
+				'response-channel-1',
+				true
+			);
+		});
+
+		it('reports failure and leaves the store alone when the write fails', async () => {
+			useSettingsStore.setState({ activeThemeId: 'dracula', settingsLoaded: false });
+			const getAll = vi.fn().mockResolvedValue({ activeThemeId: 'nord' });
+			window.maestro.settings = {
+				...window.maestro.settings,
+				set: vi.fn().mockRejectedValue(new Error('disk full')),
+				getAll,
+			} as typeof window.maestro.settings;
+
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [] })));
+
+			await act(async () => {
+				await onRemoteSetSettingHandler?.('activeThemeId', 'nord', 'response-channel-2');
+			});
+
+			expect(getAll).not.toHaveBeenCalled();
+			expect(useSettingsStore.getState().activeThemeId).toBe('dracula');
+			expect(mockProcess.sendRemoteSetSettingResponse).toHaveBeenCalledWith(
+				'response-channel-2',
+				false
+			);
 		});
 	});
 });

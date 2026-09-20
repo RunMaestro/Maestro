@@ -18,7 +18,7 @@ describe('resolveAgentEnvironment', () => {
 		expect(resolveAgentEnvironment({})).toEqual([]);
 	});
 
-	it('applies precedence: session over provider over global', () => {
+	it('applies precedence: session over global, with the provider layer replaced', () => {
 		const resolved = resolveAgentEnvironment({
 			global: { MODEL: 'global' },
 			agent: { MODEL: 'provider' },
@@ -26,7 +26,7 @@ describe('resolveAgentEnvironment', () => {
 		});
 
 		expect(resolved).toEqual([
-			{ key: 'MODEL', value: 'session', source: 'session', shadowedBy: ['global', 'agent'] },
+			{ key: 'MODEL', value: 'session', source: 'session', shadowedBy: ['global'] },
 		]);
 	});
 
@@ -43,13 +43,21 @@ describe('resolveAgentEnvironment', () => {
 		expect(entry).toMatchObject({ value: 'b', source: 'agent', shadowedBy: ['global'] });
 	});
 
-	it('merges keys from different layers rather than replacing the map', () => {
+	// The spawner hands a process the agent's own vars OR the provider's, never
+	// both, so a provider key the agent does not set must not appear.
+	it('drops the provider layer once the agent has a vars record, even an empty one', () => {
 		const resolved = resolveAgentEnvironment({
 			global: { A: '1' },
 			agent: { B: '2' },
 			session: { C: '3' },
 		});
-		expect(resolved.map((e) => e.key)).toEqual(['A', 'B', 'C']);
+		expect(resolved.map((e) => e.key)).toEqual(['A', 'C']);
+		expect(resolveAgentEnvironment({ agent: { B: '2' }, session: {} })).toEqual([]);
+	});
+
+	it('layers the provider set over global when the agent has no vars record', () => {
+		const resolved = resolveAgentEnvironment({ global: { A: '1' }, agent: { B: '2' } });
+		expect(resolved.map((e) => e.key)).toEqual(['A', 'B']);
 	});
 
 	// `FOO=` is a real setting that blanks a lower layer, not an absent one.

@@ -13,7 +13,7 @@
  *   - the "N agents" chip is a button only when there are agents to show
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { ClaudePlanUsage } from '../../../../renderer/components/UsageDashboard/ClaudePlanUsage';
 import { useClaudeUsageStore } from '../../../../renderer/stores/claudeUsageStore';
@@ -263,7 +263,26 @@ describe('ClaudePlanUsage - exhausted account', () => {
 
 		const values = screen.getAllByRole('progressbar').map((b) => b.getAttribute('aria-valuenow'));
 		expect(values).toEqual(['0', '100', '36']);
+		// An idle 0% window has no reset because none has started - not a parse miss.
+		expect(screen.getByText('not started')).toBeInTheDocument();
+		expect(screen.queryByText('reset unknown')).toBeNull();
+	});
+
+	it('still says "reset unknown" when a window with usage lost its reset time', () => {
+		seedSnapshots({
+			'/Users/me/.claude-gmail': {
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				configDirKey: '/Users/me/.claude-gmail',
+				session: { percent: 40 },
+				weekAllModels: { percent: 100, resetsAt: '2026-05-22T00:00:00.000Z' },
+				weekSonnetOnly: { percent: 36, resetsAt: '2026-05-22T00:00:00.000Z', label: 'Fable' },
+			},
+		});
+
+		render(<ClaudePlanUsage theme={theme} />);
+
 		expect(screen.getByText('reset unknown')).toBeInTheDocument();
+		expect(screen.queryByText('not started')).toBeNull();
 	});
 
 	it('labels the second weekly window with the name the panel reported', () => {
@@ -504,6 +523,57 @@ describe('ClaudePlanUsage - hide/show accounts (list view)', () => {
 	});
 });
 
+describe('ClaudePlanUsage - stale row chip', () => {
+	// The footer reports the NEWEST sample, so without a per-row marker an account
+	// the last refresh skipped reads "Last refreshed just now" beside old bars.
+	const snapshotAt = (key: string, sampledAt: string) => ({
+		sampledAt,
+		configDirKey: key,
+		authState: 'authenticated',
+		session: { percent: 0 },
+		weekAllModels: { percent: 100, resetsAt: '2026-05-22T00:00:00.000Z' },
+		weekSonnetOnly: { percent: 87, resetsAt: '2026-05-22T00:00:00.000Z' },
+	});
+
+	beforeEach(() => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date('2026-05-15T02:05:00.000Z'));
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it('flags only the row whose sample trails the newest by more than five minutes', () => {
+		seedSnapshots({
+			'/Users/me/.claude-work': snapshotAt('/Users/me/.claude-work', '2026-05-15T02:00:00.000Z'),
+			'/Users/me/.claude-side': snapshotAt('/Users/me/.claude-side', '2026-05-15T00:24:00.000Z'),
+			'/Users/me/.claude-near': snapshotAt('/Users/me/.claude-near', '2026-05-15T01:57:00.000Z'),
+		});
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.getByTestId('claude-plan-stale-side')).toHaveTextContent('stale, read');
+		expect(screen.queryByTestId('claude-plan-stale-work')).toBeNull();
+		expect(screen.queryByTestId('claude-plan-stale-near')).toBeNull();
+	});
+
+	it('flags a day-old row even when no other row is newer', () => {
+		// The retained-snapshot case: an account nobody runs agents against keeps
+		// its row so the user can watch for the reset, and every row is equally
+		// old, so nothing "trails the newest". The bars still are not current.
+		seedSnapshots({
+			'/Users/me/.claude-work': snapshotAt('/Users/me/.claude-work', '2026-05-13T02:00:00.000Z'),
+			'/Users/me/.claude-side': snapshotAt('/Users/me/.claude-side', '2026-05-13T02:01:00.000Z'),
+		});
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.getByTestId('claude-plan-stale-work')).toHaveTextContent('stale, read');
+		expect(screen.getByTestId('claude-plan-stale-side')).toHaveTextContent('stale, read');
+	});
+});
+
 describe('ClaudePlanUsage - agent count badge', () => {
 	const snapshotFor = (key: string) => ({
 		sampledAt: '2026-05-15T00:00:00.000Z',
@@ -559,6 +629,36 @@ describe('ClaudePlanUsage - agent count badge', () => {
 		expect(screen.getByTestId('claude-plan-agents-work')).toHaveTextContent('1 agent');
 	});
 
+	it('does not count an agent that bills an API key against the plan', () => {
+		seedSnapshots({ '/Users/me/.claude-work': snapshotFor('/Users/me/.claude-work') });
+		useSessionStore.setState({
+			sessions: [
+				{
+					id: 'a',
+					name: 'a',
+					toolType: 'claude-code',
+					cwd: '/tmp',
+					customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/me/.claude-work' },
+				},
+				{
+					// Same dir, but the key outranks its login: these turns bill the key.
+					id: 'b',
+					name: 'b',
+					toolType: 'claude-code',
+					cwd: '/tmp',
+					customEnvVars: {
+						CLAUDE_CONFIG_DIR: '/Users/me/.claude-work',
+						ANTHROPIC_API_KEY: 'sk-ant-test',
+					},
+				},
+			],
+		} as any);
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.getByTestId('claude-plan-agents-work')).toHaveTextContent('1 agent');
+	});
+
 	it('shows zero for a cached account no agent uses any more', () => {
 		seedSnapshots({ '/Users/me/.claude-stale': snapshotFor('/Users/me/.claude-stale') });
 
@@ -576,12 +676,11 @@ describe('ClaudePlanUsage - agent count badge', () => {
 		expect(screen.getByTestId('claude-plan-agents-pending')).toHaveTextContent('2 agents');
 	});
 
-	// The main-process sampler skips SSH-remote sessions because it cannot probe a
-	// remote host's directory locally. The COUNT must not copy that rule: a remote
-	// agent configured against this profile still spends this plan's quota, so it
-	// belongs in the total. Locked in by test because the two behaviors look
-	// contradictory and invite a well-meaning "fix".
-	it('counts SSH-remote agents, which the sampler deliberately skips', () => {
+	// An SSH-remote agent's config dir is a path on the REMOTE host, holding that
+	// host's own login, so it is not on the local account these bars measure
+	// whatever the directory is called. The Agents grid files it under its own
+	// `account @ host` profile instead.
+	it('does not count SSH-remote agents against the local account', () => {
 		seedSnapshots({ '/Users/me/.claude-work': snapshotFor('/Users/me/.claude-work') });
 		useSessionStore.setState({
 			sessions: [
@@ -605,7 +704,27 @@ describe('ClaudePlanUsage - agent count badge', () => {
 
 		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
 
-		expect(screen.getByTestId('claude-plan-agents-work')).toHaveTextContent('2 agents');
+		expect(screen.getByTestId('claude-plan-agents-work')).toHaveTextContent('1 agent');
+	});
+
+	it('shows zero when every agent on the dir runs over SSH', () => {
+		seedSnapshots({ '/Users/me/.claude-work': snapshotFor('/Users/me/.claude-work') });
+		useSessionStore.setState({
+			sessions: [
+				{
+					id: 'remote',
+					name: 'remote',
+					toolType: 'claude-code',
+					cwd: '/tmp',
+					customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/me/.claude-work' },
+					sessionSshRemoteConfig: { enabled: true, remoteId: 'box' },
+				},
+			],
+		} as any);
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.getByTestId('claude-plan-agents-work')).toHaveTextContent('0 agents');
 	});
 
 	it('hands the account back when the chip is clicked, so the grid can filter to it', () => {
@@ -828,5 +947,32 @@ describe('ClaudePlanUsage - last refreshed footer', () => {
 		seedSessions(['/Users/me/.claude-pending']);
 		render(<ClaudePlanUsage theme={theme} autoRefresh={false} />);
 		expect(screen.queryByTestId('claude-plan-last-refreshed')).toBeNull();
+	});
+});
+
+describe('ClaudePlanUsage - narrow rows', () => {
+	// A 176px label, a 192px `whitespace-nowrap` reset caption and 32px of gaps
+	// is 400px of fixed width before the bar gets any, so on a 390px phone the
+	// bar - the one number this panel exists to show - was squeezed to nothing.
+	// The row wraps below `sm`: label and caption share the first line, the bar
+	// takes the whole of a second one.
+	it('lets the bar take its own full-width line below the sm breakpoint', () => {
+		seedSnapshots({
+			'/Users/me/.claude': {
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				configDirKey: '/Users/me/.claude',
+				session: { percent: 42, resetsAt: '2026-05-15T05:00:00.000Z' },
+				weekAllModels: { percent: 7, resetsAt: '2026-05-22T00:00:00.000Z' },
+				weekSonnetOnly: { percent: 99, resetsAt: '2026-05-22T00:00:00.000Z' },
+			},
+		});
+
+		render(<ClaudePlanUsage theme={theme} />);
+
+		const bar = screen.getAllByRole('progressbar')[0];
+		expect(bar).toHaveClass('w-full', 'order-last');
+		// ...and goes back to sharing the row from `sm` up.
+		expect(bar).toHaveClass('sm:w-auto', 'sm:flex-1', 'sm:order-none');
+		expect(bar.parentElement).toHaveClass('flex-wrap', 'sm:flex-nowrap');
 	});
 });

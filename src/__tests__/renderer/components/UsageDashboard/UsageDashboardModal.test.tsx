@@ -143,7 +143,7 @@ const mockStats = {
 	getDelegationByDay: vi.fn(),
 	getDatabaseSize: vi.fn(),
 	onStatsUpdate: vi.fn(() => () => {}),
-	exportCsv: vi.fn(),
+	exportUsage: vi.fn(),
 };
 
 // When both Encore flags are on, the dashboard fetches Cue run totals alongside

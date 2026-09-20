@@ -29,7 +29,12 @@ import {
 } from 'lucide-react';
 import type { Theme } from '../../../types';
 import { formatCalendarDay } from '../../../../shared/formatters';
-import { CATEGORY_LABELS, STATE_LABELS, type UnifiedExtension } from './extensionModel';
+import {
+	CATEGORY_LABELS,
+	STATE_LABELS,
+	extensionBadge,
+	type UnifiedExtension,
+} from './extensionModel';
 
 interface ExtensionsGridProps {
 	theme: Theme;
@@ -150,6 +155,7 @@ export function ExtensionsGrid({
 				const TrustIcon = trust?.icon;
 				const isEnabled = ext.state === 'enabled';
 				const isActive = index === activeIndex;
+				const badge = extensionBadge(ext);
 				return (
 					<button
 						key={ext.key}
@@ -187,15 +193,17 @@ export function ExtensionsGrid({
 									style={{ color: theme.colors.textMain }}
 								>
 									<span className="truncate">{ext.name}</span>
-									{ext.beta && (
+									{badge && (
 										<span
+											data-testid="extension-badge"
+											data-badge={badge.label}
 											className="px-1 py-0.5 rounded text-[0.571rem] font-bold uppercase flex-shrink-0"
 											style={{
-												backgroundColor: theme.colors.warning + '30',
-												color: theme.colors.warning,
+												backgroundColor: theme.colors[badge.tone] + '30',
+												color: theme.colors[badge.tone],
 											}}
 										>
-											Beta
+											{badge.label}
 										</span>
 									)}
 								</div>

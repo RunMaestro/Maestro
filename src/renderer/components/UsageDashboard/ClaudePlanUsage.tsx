@@ -35,6 +35,7 @@ import {
 	QuotaRefreshControls,
 	QuotaSharedAccountBadge,
 	QuotaShowAllToggle,
+	QuotaStaleSampleBadge,
 	QuotaVisibilityToggle,
 	type QuotaTabStatus,
 } from './quota/quotaPrimitives';
@@ -72,8 +73,10 @@ interface ClaudePlanUsageProps {
 interface AccountRowProps {
 	configDirKey: string;
 	snapshot: ClaudeUsageSnapshot;
-	/** Agents pointed at this CLAUDE_CONFIG_DIR. */
+	/** Local agents pointed at this CLAUDE_CONFIG_DIR. */
 	agentCount: number;
+	/** Newest `sampledAt` across the panel, so a row the last refresh skipped can say so. */
+	latestSampledAtMs: number | null;
 	/**
 	 * Display names of the other config dirs logged into this same Anthropic
 	 * account. Empty when this row owns its quota bucket alone.
@@ -88,6 +91,7 @@ const AccountRow = memo(function AccountRow({
 	configDirKey,
 	snapshot,
 	agentCount,
+	latestSampledAtMs,
 	sharedWith,
 	theme,
 	onShowAgents,
@@ -123,6 +127,12 @@ const AccountRow = memo(function AccountRow({
 				<QuotaSharedAccountBadge
 					siblingNames={sharedWith}
 					testId={`${TEST_ID_PREFIX}-shared-${shortName}`}
+					theme={theme}
+				/>
+				<QuotaStaleSampleBadge
+					sampledAt={snapshot.sampledAt}
+					latestSampledAtMs={latestSampledAtMs}
+					testId={`${TEST_ID_PREFIX}-stale-${shortName}`}
 					theme={theme}
 				/>
 				<div className="text-xs truncate" style={{ color: theme.colors.textDim, opacity: 0.7 }}>
@@ -304,6 +314,7 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 					configDirKey={configDirKey}
 					snapshot={snapshot}
 					agentCount={agentCount}
+					latestSampledAtMs={lastSampledAtMs}
 					sharedWith={sharedAccountNames[configDirKey] ?? EMPTY_SIBLINGS}
 					theme={theme}
 					onShowAgents={onShowAccountAgents ? () => onShowAccountAgents(configDirKey) : undefined}
@@ -351,6 +362,7 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 			hiddenSet,
 			toggleHidden,
 			agentCountsByAccount,
+			lastSampledAtMs,
 			sharedAccountNames,
 			onShowAccountAgents,
 		]
@@ -368,7 +380,7 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 						Claude Plan Usage
 					</h3>
 				</div>
-				<div className="flex flex-wrap items-center justify-end gap-2">
+				<div className="flex flex-wrap items-center justify-start gap-2 sm:justify-end">
 					{showAllAccounts && hiddenVisibleCount > 0 && (
 						<QuotaShowAllToggle
 							theme={theme}
@@ -463,6 +475,7 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 					configDirKey={effectiveSelectedKey}
 					snapshot={selectedSnapshot}
 					agentCount={agentCountsByAccount[effectiveSelectedKey] ?? 0}
+					latestSampledAtMs={lastSampledAtMs}
 					sharedWith={sharedAccountNames[effectiveSelectedKey] ?? EMPTY_SIBLINGS}
 					theme={theme}
 				/>

@@ -23,6 +23,8 @@ import { existsSync, readFileSync } from 'fs';
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
 import { OG_IMAGE_ROUTE, buildSocialPreviewTags, resolveRequestOrigin } from '../social-preview';
+import { isWebRequestAuthorized, resolveWebRequestAuth } from '../auth/web-login-policy';
+import { WEB_LOGIN_PATHS } from '../../../shared/webLogin';
 
 // Logger context for all static route logs
 const LOG_CONTEXT = 'WebServer:Static';
@@ -65,6 +67,18 @@ function getCachedFile(filePath: string): string | null {
 		fileCache.set(filePath, { content: '', exists: false });
 		return null;
 	}
+}
+
+/**
+ * JSON for embedding inside a `<script>` element.
+ *
+ * `JSON.stringify` does not escape `<`, so a value containing the literal
+ * `</script>` closes the element early and the rest of it lands in the
+ * document as markup. A display name is typed by a person, so this is the one
+ * value in the injected config that is not a token or a boolean.
+ */
+function jsonForScript(value: unknown): string {
+	return JSON.stringify(value).replace(/</g, '\\u003c');
 }
 
 /**
@@ -119,6 +133,20 @@ export class StaticRoutes {
 	 * which host the page is being reached on.
 	 */
 	private serveDesktopIndex(request: FastifyRequest, reply: FastifyReply): void {
+		// The Web Login gate for the HTML surface. This is a document request, so
+		// it redirects to the form rather than answering 401 - a JSON error body
+		// renders as a wall of text with nothing to click. `next` carries the URL
+		// that was asked for so a deep link survives the detour.
+		//
+		// `web-login-hook.ts` deliberately leaves the index routes ungated for
+		// exactly this reason; the check has to live here.
+		const auth = resolveWebRequestAuth(request);
+		if (!isWebRequestAuthorized(auth)) {
+			const next = encodeURIComponent(request.url || `/${this.securityToken}/`);
+			reply.redirect(`/${this.securityToken}/${WEB_LOGIN_PATHS.page}?next=${next}`, 302);
+			return;
+		}
+
 		if (!this.webDesktopPath) {
 			reply.code(503).send({
 				error: 'Service Unavailable',
@@ -149,6 +177,12 @@ export class StaticRoutes {
 			// Inject config so the renderer's electron-shim knows where to open
 			// the WebSocket bridge. The desktop app manages its own session
 			// selection, so sessionId/tabId are intentionally null.
+			//
+			// `webLoginUser` / `webLoginRequired` say who this page was served to.
+			// They are injected rather than fetched because the renderer needs the
+			// answer on its first paint, and the cookie is HttpOnly so the page
+			// cannot read it for itself. Keep these in step with
+			// `MaestroWebClientConfig` in src/shared/webClientConfig.ts.
 			const configScript = `<script>
         window.__MAESTRO_CONFIG__ = {
           securityToken: ${JSON.stringify(token)},
@@ -156,7 +190,9 @@ export class StaticRoutes {
           tabId: null,
           apiBase: "/${token}/api",
           wsUrl: "/${token}/ws",
-          concertoToken: ${JSON.stringify(this.concertoToken)}
+          concertoToken: ${JSON.stringify(this.concertoToken)},
+          webLoginRequired: ${JSON.stringify(auth.required)},
+          webLoginUser: ${jsonForScript(auth.user ?? null)}
         };
       </script>`;
 
@@ -241,7 +277,7 @@ export class StaticRoutes {
 
 		// Root path - redirect to GitHub (no access without token)
 		server.get('/', async (_request, reply) => {
-			return reply.redirect(302, REDIRECT_URL);
+			return reply.redirect(REDIRECT_URL, 302);
 		});
 
 		// Health check (no auth required)
@@ -336,7 +372,7 @@ export class StaticRoutes {
 		server.get('/:token', async (request, reply) => {
 			const { token: reqToken } = request.params as { token: string };
 			if (!this.validateToken(reqToken)) {
-				return reply.redirect(302, REDIRECT_URL);
+				return reply.redirect(REDIRECT_URL, 302);
 			}
 			// Valid token but no specific route - serve the desktop interface
 			this.serveDesktopIndex(request, reply);

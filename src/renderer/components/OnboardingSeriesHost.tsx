@@ -1,10 +1,11 @@
 /**
- * Runs the first-run modal series: typography, then theme, then agent powers.
+ * Runs the first-run modal series: typography, theme, updates, then agent
+ * powers.
  *
  * Mounts exactly ONE step at a time, driven by `onboardingSeriesStore`. The
- * three modals are deliberately not self-gating - if each opened itself off its
- * own settings flag, a fresh install would open all three at once and stack
- * them by z-index, and the user would answer the last question first.
+ * modals are deliberately not self-gating - if each opened itself off its own
+ * settings flag, a fresh install would open all of them at once and stack them
+ * by z-index, and the user would answer the last question first.
  *
  * Each step marks its own flag as seen on dismiss, then advances the queue.
  * A forced run (the debug palette entries) skips the flag writes, so replaying
@@ -15,6 +16,7 @@ import { useCallback, useMemo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { TypographyChoiceModal } from './TypographyChoiceModal';
 import { ThemeChoiceModal } from './ThemeChoiceModal';
+import { UpdatesChoiceModal } from './UpdatesChoiceModal';
 import { AgentPowersModal } from './AgentPowersModal';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useComposerInputStore } from '../stores/composerInputStore';
@@ -59,17 +61,31 @@ export function OnboardingSeriesHost({
 		applyTypographyPreset,
 		setTypographyPromptSeen,
 		setThemePromptSeen,
+		setUpdatesPromptSeen,
 		setAgentPowersPromptSeen,
 		setActiveThemeId,
 		activeThemeId,
+		checkForUpdatesOnStartup,
+		setCheckForUpdatesOnStartup,
+		enableBetaUpdates,
+		setEnableBetaUpdates,
+		crashReportingEnabled,
+		setCrashReportingEnabled,
 	} = useSettingsStore(
 		useShallow((s) => ({
 			applyTypographyPreset: s.applyTypographyPreset,
 			setTypographyPromptSeen: s.setTypographyPromptSeen,
 			setThemePromptSeen: s.setThemePromptSeen,
+			setUpdatesPromptSeen: s.setUpdatesPromptSeen,
 			setAgentPowersPromptSeen: s.setAgentPowersPromptSeen,
 			setActiveThemeId: s.setActiveThemeId,
 			activeThemeId: s.activeThemeId,
+			checkForUpdatesOnStartup: s.checkForUpdatesOnStartup,
+			setCheckForUpdatesOnStartup: s.setCheckForUpdatesOnStartup,
+			enableBetaUpdates: s.enableBetaUpdates,
+			setEnableBetaUpdates: s.setEnableBetaUpdates,
+			crashReportingEnabled: s.crashReportingEnabled,
+			setCrashReportingEnabled: s.setCrashReportingEnabled,
 		}))
 	);
 
@@ -136,6 +152,23 @@ export function OnboardingSeriesHost({
 				onDismiss={() => finishStep(setThemePromptSeen)}
 				onBack={onBack}
 				onOpenThemeSettings={() => onOpenSettings('theme')}
+			/>
+		);
+	}
+
+	if (step === 'updates') {
+		return (
+			<UpdatesChoiceModal
+				theme={theme}
+				isOpen
+				checkForUpdatesOnStartup={checkForUpdatesOnStartup}
+				onCheckForUpdatesOnStartupChange={setCheckForUpdatesOnStartup}
+				enableBetaUpdates={enableBetaUpdates}
+				onEnableBetaUpdatesChange={setEnableBetaUpdates}
+				crashReportingEnabled={crashReportingEnabled}
+				onCrashReportingEnabledChange={setCrashReportingEnabled}
+				onDismiss={() => finishStep(setUpdatesPromptSeen)}
+				onBack={onBack}
 			/>
 		);
 	}

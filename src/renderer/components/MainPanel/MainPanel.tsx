@@ -212,6 +212,17 @@ export const MainPanel = React.memo(
 				s.sessions.filter((x) => !x.isPianola && !x.parentSessionId && x.state === 'waiting_input')
 					.length
 		);
+		// Pianola's manager chrome is Encore-gated, and RENDER has to ask the same
+		// question the navigable lists do. The agent persists in the session store
+		// after the flag is switched off (so re-enabling restores the same chat) and
+		// `filterSessionsVisibleInSidebar` drops it from the Left Bar and its keyboard
+		// orders - but any path that still reaches it (the command palette's agent
+		// switcher, a toast jump, `maestro-cli focus-agent`) would otherwise paint the
+		// Pianola Dashboard over the main panel for a feature the user has switched
+		// off, with no Left Bar row to click back from. Gated here it falls through to
+		// the ordinary claude-code agent render.
+		const pianolaEnabled = useSettingsStore((s) => s.encoreFeatures?.pianola);
+		const showPianolaWorkspace = Boolean(activeSession?.isPianola) && Boolean(pianolaEnabled);
 
 		// isCurrentSessionAutoMode: THIS session has active batch run (for all UI indicators)
 		const isCurrentSessionAutoMode = currentSessionBatchState?.isRunning || false;
@@ -1141,7 +1152,7 @@ export const MainPanel = React.memo(
 						{/* Pianola is a manager surface: it uses the standard multi-type TabBar
 						    (chat/file/terminal/browser tabs, same "+" menu) with a pinned
 						    Dashboard view button + a Clear-chat action slotted in. */}
-						{activeSession.isPianola ? (
+						{showPianolaWorkspace ? (
 							onTabSelect && onTabClose && onNewTab ? (
 								<TabBar
 									tabs={activeSession.aiTabs}
@@ -1315,7 +1326,7 @@ export const MainPanel = React.memo(
 
 						{/* Pianola's Dashboard view replaces the chat content while selected; the
 						    Chat view (and every non-Pianola agent) renders the normal content. */}
-						{activeSession.isPianola && pianolaView === 'dashboard' ? (
+						{showPianolaWorkspace && pianolaView === 'dashboard' ? (
 							<ErrorBoundary>
 								<PianolaDashboard theme={theme} onJumpToAgent={setActiveSessionId} />
 							</ErrorBoundary>

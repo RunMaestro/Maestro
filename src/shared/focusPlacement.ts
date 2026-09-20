@@ -113,6 +113,18 @@ export const CLI_BACKGROUND_DEFAULTS = {
 	 * and only bites when the target is the agent on screen.
 	 */
 	'switch-mode': false,
+	/**
+	 * maestro-cli snooze - parks a tab and flashes "Snoozed until ...".
+	 *
+	 * The tab LEAVING the tab bar is inherent to the verb rather than placement,
+	 * and if it was the active tab its neighbour is selected the same way closing
+	 * it would select one. `--background` therefore suppresses the notice only:
+	 * the flash exists so a tab that vanishes is explained, and an agent parking
+	 * a tab on an agent the human is not looking at has nothing to explain.
+	 */
+	snooze: false,
+	/** maestro-cli snooze dismiss - raises the "Snooze dismissed" toast today. */
+	'snooze-dismiss': false,
 } as const;
 
 /** A CLI verb whose placement can be negotiated. */
@@ -186,7 +198,16 @@ export function readSwitchToAgentField(message: { switchToAgent?: unknown }): bo
  * starts meaning something - the surface stays the same, so nothing calling it
  * has to change.
  */
-export const ALREADY_QUIET_VERBS = ['refresh-files'] as const;
+export const ALREADY_QUIET_VERBS = [
+	'refresh-files',
+	// The four snooze verbs that render nothing and select nothing. `wake`
+	// restores a tab WITHOUT focusing it (unlike the Snoozed Tabs list, which
+	// jumps to it), so it belongs here rather than in the table above.
+	'snooze-list',
+	'snooze-wake',
+	'snooze-reschedule',
+	'snooze-history',
+] as const;
 
 /** A verb that accepts `--background` purely so the flag is always safe to pass. */
 export type AlreadyQuietVerb = (typeof ALREADY_QUIET_VERBS)[number];

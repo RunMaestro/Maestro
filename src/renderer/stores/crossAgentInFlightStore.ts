@@ -13,6 +13,7 @@
  * shallow equality works for selectors.
  */
 
+import { useMemo } from 'react';
 import { create } from 'zustand';
 import type { ToolType } from '../types';
 
@@ -80,4 +81,49 @@ export function selectInFlightForTab(
 	return Object.values(requests)
 		.filter((r) => r.sourceSessionId === sourceSessionId && r.sourceTabId === sourceTabId)
 		.sort((a, b) => a.startedAt - b.startedAt);
+}
+
+/**
+ * Reactive: whether a specific agent is currently answering a consult.
+ *
+ * A cross-agent consult runs under a synthetic `cross-agent-<requestId>`
+ * process id and writes into a hidden tab, so it deliberately never touches the
+ * consulted agent's `state`, unread flags, or attention badge - the whole point
+ * is that a question asked on someone else's behalf must not disturb the
+ * conversation the user has open with that agent. The cost is that a consulted
+ * agent looked completely idle in the Left Bar while it was working. This is the
+ * one signal that leaks back out: enough to show a busy dot, not enough to mark
+ * the agent as needing attention.
+ *
+ * Mirrors `useSessionHasActiveOutage` - a boolean selector, so a row only
+ * re-renders when the answer actually flips.
+ */
+export function useSessionIsBeingConsulted(sessionId: string): boolean {
+	return useCrossAgentInFlightStore((s) => {
+		for (const id in s.requests) {
+			if (s.requests[id].targetSessionId === sessionId) return true;
+		}
+		return false;
+	});
+}
+
+/**
+ * The set of agents currently answering a consult, for surfaces that draw many
+ * rows in one pass (the collapsed rail, the worktree pill strip) and so cannot
+ * call {@link useSessionIsBeingConsulted} per row. Derived from the `requests`
+ * object, whose identity only changes on start/finish, so the Set is stable
+ * between consults.
+ */
+export function selectConsultedSessionIds(
+	requests: Record<string, InFlightCrossAgentRequest>
+): Set<string> {
+	const ids = new Set<string>();
+	for (const id in requests) ids.add(requests[id].targetSessionId);
+	return ids;
+}
+
+/** Reactive form of {@link selectConsultedSessionIds}. */
+export function useConsultedSessionIds(): ReadonlySet<string> {
+	const requests = useCrossAgentInFlightStore((s) => s.requests);
+	return useMemo(() => selectConsultedSessionIds(requests), [requests]);
 }

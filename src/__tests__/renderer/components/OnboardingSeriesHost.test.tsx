@@ -38,8 +38,12 @@ beforeEach(() => {
 	useSettingsStore.setState({
 		typographyPromptSeen: false,
 		themePromptSeen: false,
+		updatesPromptSeen: false,
 		agentPowersPromptSeen: false,
 		activeThemeId: DEFAULT_THEME_ID,
+		checkForUpdatesOnStartup: true,
+		enableBetaUpdates: false,
+		crashReportingEnabled: true,
 	});
 	vi.spyOn(window.maestro.settings, 'set').mockResolvedValue(undefined as never);
 });
@@ -75,6 +79,9 @@ describe('OnboardingSeriesHost', () => {
 		expect(screen.getByTestId('theme-choice-modal')).toBeInTheDocument();
 
 		fireEvent.click(screen.getByTestId('theme-choice-confirm'));
+		expect(screen.getByTestId('updates-choice-modal')).toBeInTheDocument();
+
+		fireEvent.click(screen.getByTestId('updates-choice-confirm'));
 		expect(screen.getByTestId('agent-powers-modal')).toBeInTheDocument();
 
 		fireEvent.click(screen.getByTestId('agent-powers-confirm'));
@@ -100,8 +107,13 @@ describe('OnboardingSeriesHost', () => {
 
 			fireEvent.click(screen.getByTestId('typography-choice-confirm'));
 			fireEvent.click(screen.getByTestId('theme-choice-confirm'));
-			fireEvent.click(screen.getByTestId('agent-powers-back'));
+			fireEvent.click(screen.getByTestId('updates-choice-back'));
 			expect(screen.getByTestId('theme-choice-modal')).toBeInTheDocument();
+
+			fireEvent.click(screen.getByTestId('theme-choice-confirm'));
+			fireEvent.click(screen.getByTestId('updates-choice-confirm'));
+			fireEvent.click(screen.getByTestId('agent-powers-back'));
+			expect(screen.getByTestId('updates-choice-modal')).toBeInTheDocument();
 		});
 
 		it('does not mark the step it leaves as seen', () => {
@@ -142,6 +154,9 @@ describe('OnboardingSeriesHost', () => {
 			fireEvent.click(screen.getByTestId('theme-choice-confirm'));
 			expect(useSettingsStore.getState().themePromptSeen).toBe(true);
 
+			fireEvent.click(screen.getByTestId('updates-choice-confirm'));
+			expect(useSettingsStore.getState().updatesPromptSeen).toBe(true);
+
 			fireEvent.click(screen.getByTestId('agent-powers-confirm'));
 			expect(useSettingsStore.getState().agentPowersPromptSeen).toBe(true);
 		});
@@ -167,11 +182,13 @@ describe('OnboardingSeriesHost', () => {
 
 			fireEvent.click(screen.getByTestId('typography-choice-confirm'));
 			fireEvent.click(screen.getByTestId('theme-choice-confirm'));
+			fireEvent.click(screen.getByTestId('updates-choice-confirm'));
 			fireEvent.click(screen.getByTestId('agent-powers-confirm'));
 
 			const state = useSettingsStore.getState();
 			expect(state.typographyPromptSeen).toBe(false);
 			expect(state.themePromptSeen).toBe(false);
+			expect(state.updatesPromptSeen).toBe(false);
 			expect(state.agentPowersPromptSeen).toBe(false);
 		});
 	});
@@ -217,10 +234,31 @@ describe('OnboardingSeriesHost', () => {
 		expect(onOpenSettings).toHaveBeenCalledWith('theme');
 	});
 
+	it('shows the updates step with the settings already in effect, and writes changes through', () => {
+		// A user who already opted into release candidates, or out of crash
+		// reports, must see their own answer rather than the shipped default.
+		useSettingsStore.setState({ enableBetaUpdates: true, crashReportingEnabled: false });
+		startOnboardingSeries({
+			audience: 'returning',
+			seen: { typography: true, theme: true, agentPowers: true },
+			activeThemeId: DEFAULT_THEME_ID,
+		});
+		renderHost({ isReturningUser: true });
+
+		const beta = screen.getByRole('switch', { name: 'Include beta and release candidate updates' });
+		const crash = screen.getByRole('switch', { name: 'Send anonymous crash reports' });
+		expect(beta).toHaveAttribute('aria-checked', 'true');
+		expect(crash).toHaveAttribute('aria-checked', 'false');
+
+		fireEvent.click(crash);
+		expect(useSettingsStore.getState().crashReportingEnabled).toBe(true);
+		expect(window.maestro.settings.set).toHaveBeenCalledWith('crashReportingEnabled', true);
+	});
+
 	it('offers no example prompts when there is no agent to receive them', () => {
 		startOnboardingSeries({
 			audience: 'new',
-			seen: { typography: true, theme: true },
+			seen: { typography: true, theme: true, updates: true },
 			activeThemeId: DEFAULT_THEME_ID,
 		});
 		renderHost({ hasActiveAgent: false });

@@ -4,6 +4,7 @@ import { FloatingMediaPlayer } from '../../../../renderer/components/MediaPlayba
 import { useMediaPlaybackStore } from '../../../../renderer/stores/mediaPlaybackStore';
 import {
 	MEDIA_FLOAT_DEFAULT_WIDTH,
+	MEDIA_FLOAT_EDGE_MARGIN,
 	mediaFloatChromeHeight,
 } from '../../../../renderer/utils/mediaFloatGeometry';
 import type { MediaItem } from '../../../../renderer/utils/mediaItems';
@@ -65,6 +66,7 @@ describe('FloatingMediaPlayer', () => {
 			durations: {},
 			floatPosition: null,
 			floatWidths: {},
+			floatFootprint: null,
 			aspects: {},
 		});
 		(window as unknown as { maestro?: unknown }).maestro = { settings: { set: vi.fn() } };
@@ -74,6 +76,43 @@ describe('FloatingMediaPlayer', () => {
 		renderPlayer();
 		expect(screen.getByText('podcast.mp3')).toBeTruthy();
 		expect(screen.getByText('Agent One')).toBeTruthy();
+	});
+
+	// The title bar is a drag handle over `select-none`, so the name it shows
+	// cannot be selected: the button is the only way to get at it.
+	describe('copy file name', () => {
+		const writeText = vi.fn().mockResolvedValue(undefined);
+
+		beforeEach(() => {
+			writeText.mockClear();
+			// No shell bridge on `window.maestro` here, so safeClipboardWrite falls
+			// through to the navigator path.
+			Object.defineProperty(navigator, 'clipboard', {
+				configurable: true,
+				writable: true,
+				value: { writeText },
+			});
+		});
+
+		it('copies the loaded file name', async () => {
+			renderPlayer();
+
+			await act(async () => {
+				fireEvent.click(screen.getByTestId('media-copy-name'));
+			});
+
+			expect(writeText).toHaveBeenCalledWith('podcast.mp3');
+		});
+
+		it('does not start a drag when the button is pressed', () => {
+			renderPlayer();
+			const before = frame().style.left;
+
+			fireEvent.mouseDown(screen.getByTestId('media-copy-name'), { button: 0 });
+			fireEvent.mouseMove(window, { clientX: 200, clientY: 200 });
+
+			expect(frame().style.left).toBe(before);
+		});
 	});
 
 	it('minimizes to the Left Bar without stopping playback', () => {
@@ -171,6 +210,41 @@ describe('FloatingMediaPlayer', () => {
 
 			expect(screen.queryByTestId('media-queue-menu')).toBeNull();
 			expect(useMediaPlaybackStore.getState().dismissed).toBe(false);
+		});
+
+		it('answers from inside the list, which is what holds focus', () => {
+			// The list takes the caret on open, so in practice the key lands there
+			// rather than on the frame. It is portaled to the body, so the frame's
+			// own handler cannot be relied on to see it.
+			const a = item();
+			const b = item({ id: 's1::/files/talk.mp4', path: '/files/talk.mp4', name: 'talk.mp4' });
+			useMediaPlaybackStore.setState({ items: [a, b], activeItemId: b.id });
+			renderPlayer();
+			fireEvent.click(screen.getByLabelText('Play queue, 1 item'));
+			const menu = screen.getByTestId('media-queue-menu');
+			expect(document.activeElement).toBe(menu);
+
+			fireEvent.keyDown(menu, { key: 'Escape' });
+
+			expect(screen.queryByTestId('media-queue-menu')).toBeNull();
+			// One press does one thing: closing the list must not also minimize the
+			// player the user was heading back to.
+			expect(useMediaPlaybackStore.getState().dismissed).toBe(false);
+			// And the caret comes back, so the NEXT Escape is not swallowed.
+			expect(document.activeElement).toBe(frame());
+		});
+
+		it('minimizes on the press after the list closes', () => {
+			const a = item();
+			const b = item({ id: 's1::/files/talk.mp4', path: '/files/talk.mp4', name: 'talk.mp4' });
+			useMediaPlaybackStore.setState({ items: [a, b], activeItemId: b.id });
+			renderPlayer();
+			fireEvent.click(screen.getByLabelText('Play queue, 1 item'));
+			fireEvent.keyDown(screen.getByTestId('media-queue-menu'), { key: 'Escape' });
+
+			fireEvent.keyDown(document.activeElement as HTMLElement, { key: 'Escape' });
+
+			expect(useMediaPlaybackStore.getState().dismissed).toBe(true);
 		});
 
 		it('leaves a fullscreen video alone', () => {
@@ -462,6 +536,33 @@ describe('FloatingMediaPlayer', () => {
 			expect(screen.queryByLabelText(/Play queue/)).toBeNull();
 		});
 
+		it('offers a close control, since a touch surface has no Escape key', () => {
+			// The list covers the player it came from, so without a control here a
+			// phone or tablet driving the web interface has no way back to the
+			// transport at all.
+			seedQueue();
+			renderPlayer();
+			fireEvent.click(screen.getByLabelText('Play queue, 1 item'));
+
+			fireEvent.click(screen.getByTestId('media-queue-menu-close'));
+
+			expect(screen.queryByTestId('media-queue-menu')).toBeNull();
+			// Same outcome as Escape, down to where the caret lands.
+			expect(useMediaPlaybackStore.getState().dismissed).toBe(false);
+			expect(document.activeElement).toBe(frame());
+		});
+
+		it('offers the same close control on the history list', () => {
+			seedQueue();
+			renderPlayer();
+			fireEvent.click(screen.getByLabelText('Recently played'));
+
+			fireEvent.click(screen.getByTestId('media-history-menu-close'));
+
+			expect(screen.queryByTestId('media-history-menu')).toBeNull();
+			expect(useMediaPlaybackStore.getState().dismissed).toBe(false);
+		});
+
 		it('leaves the playing track out of the queue list', () => {
 			seedQueue();
 			renderPlayer();
@@ -637,5 +738,52 @@ describe('FloatingMediaPlayer', () => {
 			fireEvent.mouseDown(document.body);
 			expect(screen.queryByTestId('media-history-menu')).toBeNull();
 		});
+	});
+});
+
+describe('FloatingMediaPlayer footprint', () => {
+	beforeEach(() => {
+		useMediaPlaybackStore.setState({ floatFootprint: null });
+		(window as unknown as { maestro?: unknown }).maestro = { settings: { set: vi.fn() } };
+	});
+
+	it("publishes where it landed, in the toast lane's coordinates", () => {
+		// The toast stack is anchored bottom-right and sits far above the widget in
+		// z-order, so it needs this to step over the player instead of erasing it.
+		renderPlayer();
+		const footprint = useMediaPlaybackStore.getState().floatFootprint;
+		expect(footprint).toEqual({
+			fromBottom: MEDIA_FLOAT_EDGE_MARGIN + CHROME,
+			fromRight: MEDIA_FLOAT_EDGE_MARGIN,
+			width: MEDIA_FLOAT_DEFAULT_WIDTH.audio,
+			viewportHeight: window.innerHeight,
+		});
+	});
+
+	it('reports nothing while minimized', () => {
+		// A parked widget is not on screen, so there is nothing for toasts to
+		// avoid - and lifting them for it would look like a stray gap.
+		render(
+			<FloatingMediaPlayer
+				title="podcast.mp3"
+				subtitle="Agent One"
+				kind="audio"
+				transportHeight={null}
+				hidden
+				theme={mockTheme}
+			>
+				<div data-testid="player-body">player</div>
+			</FloatingMediaPlayer>
+		);
+		expect(useMediaPlaybackStore.getState().floatFootprint).toBeNull();
+	});
+
+	it('reports nothing once it is gone', () => {
+		// Closing the last item unmounts the widget, which no `hidden` change
+		// announces - a stale footprint would leave the toast stack lifted forever.
+		const { unmount } = renderPlayer();
+		expect(useMediaPlaybackStore.getState().floatFootprint).not.toBeNull();
+		unmount();
+		expect(useMediaPlaybackStore.getState().floatFootprint).toBeNull();
 	});
 });

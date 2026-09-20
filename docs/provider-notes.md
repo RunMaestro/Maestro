@@ -27,7 +27,7 @@ Additional CLI arguments are appended to every call to the agent. Common use cas
 Environment variables are passed to the agent process. Use these for:
 
 - API keys and authentication tokens
-- Configuration overrides (e.g., `CLAUDE_CONFIG_DIR` for [multiple Claude accounts](/multi-claude))
+- Configuration overrides (e.g., `CLAUDE_CONFIG_DIR` or `CODEX_HOME` for [multiple accounts](/multi-provider))
 - Provider-specific settings
 
 <Note>

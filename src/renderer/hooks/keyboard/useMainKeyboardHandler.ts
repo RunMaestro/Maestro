@@ -15,8 +15,10 @@ import { toggleAllCadenzas } from '../../stores/cadenzaStore';
 import { requestEditLastQueuedMessage } from '../../services/editQueuedMessage';
 import { requestOpenStagedImagesOrganizer } from '../../services/stagedImagesOrganizer';
 import { toggleAllUnreadFilters } from '../../services/unreadFilters';
+import { getGitShortcutActions } from '../../services/gitShortcutActions';
 import { useNotificationStore } from '../../stores/notificationStore';
 import { useMediaPlaybackStore } from '../../stores/mediaPlaybackStore';
+import { useGroupChatStore } from '../../stores/groupChatStore';
 import { stepMediaItem } from '../../utils/mediaItems';
 import { resolveSnoozeTarget } from '../../utils/snoozeHelpers';
 import { selectActiveSession, useSessionStore } from '../../stores/sessionStore';
@@ -24,7 +26,6 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { FONT_ZOOM_DEFAULT, FONT_ZOOM_STEP, clampFontZoom } from '../../../shared/typography';
 import { useUIStore } from '../../stores/uiStore';
 import { groupChatOutputSearchKey, isActiveOutputSearchOpen } from '../../utils/outputSearch';
-import { useGroupChatStore } from '../../stores/groupChatStore';
 import { toggleGroupChatRightTab } from '../../utils/groupChatRightTab';
 import { OUTPUT_SEARCH_INPUT_SELECTOR } from '../ui/useOutputSearchLayer';
 import { tileNewTabInSession } from '../../services/tileNewTabAction';
@@ -57,6 +58,8 @@ function stepMediaFromShortcut(direction: 1 | -1): void {
 	const next = stepMediaItem(state.items, state.activeItemId, direction);
 	if (next) state.setActiveItem(next.id, { autoplay: true });
 }
+
+// Font zoom keyboard shortcut constants live in src/shared/typography.ts
 
 /**
  * Context object passed to the main keyboard handler via ref.
@@ -399,12 +402,21 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				const isConcertoToggleShortcut =
 					(ctx.isShortcut(e, 'toggleConcerto') || ctx.isShortcut(e, 'toggleCadenzas')) &&
 					ctx.encoreFeatures?.concerto === true;
-				// Allow font size shortcuts (Cmd+=/+, Cmd+-, Cmd+0) even when modals/overlays are open
+				// Allow the zoom shortcuts (Cmd+=/+, Cmd+-, Cmd+Shift+0) even when
+				// modals/overlays are open. `=`/`-` take no Shift (matching the
+				// in/out handler below); `+` is included regardless of Shift because
+				// US layouts only produce it WITH Shift held (Cmd+Shift+= reads as
+				// Cmd++), so requiring !e.shiftKey there would make it unreachable.
+				// `0` takes Shift ONLY - the actual reset is Cmd+Shift+0 (see the
+				// comment above that handler); a bare Cmd+0 is "Go to Last Tab" and
+				// must NOT fall through here, or it switches tabs behind an open
+				// modal instead of being blocked by the guard.
 				const isFontSizeShortcut =
 					(e.metaKey || e.ctrlKey) &&
 					!e.altKey &&
-					!e.shiftKey &&
-					(e.key === '=' || e.key === '+' || e.key === '-' || e.key === '0');
+					(((e.key === '=' || e.key === '-') && !e.shiftKey) ||
+						e.key === '+' ||
+						(e.shiftKey && e.key === '0'));
 				// Allow the openPromptComposer shortcut to fall through while the Prompt
 				// Composer is the open modal, so pressing it again cycles windowed ->
 				// full screen -> windowed (cyclePromptComposer) instead of being eaten
@@ -636,6 +648,14 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				ctx.setShowNewGroupChatModal(true);
 				trackShortcut('newGroupChat');
+			} else if (ctx.isShortcut(e, 'toggleGroupChatModeratorOnly')) {
+				// Only means anything inside a room; outside one the chord stays free
+				// for whatever branch comes after it.
+				if (ctx.activeGroupChatId) {
+					e.preventDefault();
+					useGroupChatStore.getState().toggleGroupChatModeratorOnly();
+					trackShortcut('toggleGroupChatModeratorOnly');
+				}
 			} else if (ctx.isShortcut(e, 'killInstance')) {
 				// Delete whichever is currently active: group chat or agent session
 				if (ctx.activeGroupChatId) {
@@ -778,6 +798,10 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					ctx.setGroupChatRightTab('participants');
 				} else {
 					ctx.handleSetActiveRightTab('files');
+					// Move real DOM focus with the app's focus state. Without this the
+					// caret stayed in the editor the user came from, so the next Enter
+					// there also opened the tree's selected file.
+					ctx.rightPanelRef?.current?.focusFileTree();
 				}
 				ctx.setActiveFocus('right');
 				trackShortcut('goToFiles');
@@ -938,6 +962,42 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					ctx.setGitLogOpen(true);
 					trackShortcut('viewGitLog');
 				}
+			} else if (ctx.isShortcut(e, 'gitPull') && !ctx.activeGroupChatId) {
+				// The remaining branch-pill actions. All four fire the SAME action set
+				// the pill menu and Cmd+K fire (published by GitShortcutActionsBridge),
+				// so a chord can't drift from the menu row it mirrors. preventDefault
+				// only once the agent is a git repo: on a non-git agent there is
+				// nothing to run, and eating the key would be worse than passing it on.
+				const git = getGitShortcutActions();
+				if (git?.isGitRepo) {
+					e.preventDefault();
+					git.pull();
+					trackShortcut('gitPull');
+				}
+			} else if (ctx.isShortcut(e, 'gitPush') && !ctx.activeGroupChatId) {
+				const git = getGitShortcutActions();
+				if (git?.isGitRepo) {
+					e.preventDefault();
+					git.push();
+					trackShortcut('gitPush');
+				}
+			} else if (ctx.isShortcut(e, 'gitChangeBranch') && !ctx.activeGroupChatId) {
+				const git = getGitShortcutActions();
+				if (git?.isGitRepo) {
+					e.preventDefault();
+					git.switchBranch();
+					trackShortcut('gitChangeBranch');
+				}
+			} else if (ctx.isShortcut(e, 'gitCreatePR') && !ctx.activeGroupChatId) {
+				// canCreatePR, not isGitRepo: a repo with no resolved branch has no
+				// source to open a PR from, which is the same reason the pill menu
+				// omits the row.
+				const git = getGitShortcutActions();
+				if (git?.canCreatePR) {
+					e.preventDefault();
+					git.createPR();
+					trackShortcut('gitCreatePR');
+				}
 			} else if (ctx.isShortcut(e, 'agentSessions')) {
 				e.preventDefault();
 				// Use capability check instead of hardcoded toolType
@@ -1046,14 +1106,28 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				// Note: FilePreview handles its own Cmd+E with stopPropagation when focused,
 				// so if the event reaches here, the user isn't interacting with a file tab.
 				// Check both state-based detection AND DOM-based detection for robustness
-				const isInAutoRunPanel = ctx.activeFocus === 'right' && ctx.activeRightTab === 'autorun';
-				// Also check if the focused element is within an autorun panel (handles edge cases where activeFocus state may be stale)
+				// Who actually holds focus decides this, not the panel-selection state.
+				//
+				// Two defects lived in these three lines. `?.closest(...) !== null`
+				// evaluated to `undefined !== null`, i.e. TRUE, whenever nothing was
+				// focused - so a moment with no `document.activeElement` silently
+				// claimed the caret was in Auto Run and swallowed the toggle. And
+				// `activeFocus`/`activeRightTab` are a proxy: they describe which
+				// panel was last selected, not where the caret is, so they can still
+				// read 'right'/'autorun' while the user is reading the chat.
+				//
+				// DOM containment answers the real question, so it wins whenever
+				// there is a genuine focus target. The state pair is consulted only
+				// when nothing meaningful is focused and it is the sole signal left.
 				const activeElement = document.activeElement;
-				const isInAutoRunDOM = activeElement?.closest('[data-tour="autorun-panel"]') !== null;
+				const hasRealFocus = activeElement instanceof Element && activeElement !== document.body;
+				const isInAutoRunPanel = hasRealFocus
+					? activeElement.closest('[data-tour="autorun-panel"]') !== null
+					: ctx.activeFocus === 'right' && ctx.activeRightTab === 'autorun';
 				// Check if Auto Run is running and editing is locked (running without worktree)
 				const isAutoRunLocked =
 					ctx.activeBatchRunState?.isRunning && !ctx.activeBatchRunState?.worktreeActive;
-				if (!isInAutoRunPanel && !isInAutoRunDOM && !isAutoRunLocked) {
+				if (!isInAutoRunPanel && !isAutoRunLocked) {
 					e.preventDefault();
 					// Toggle chat raw text mode (not file preview edit mode)
 					ctx.setChatRawTextMode(!ctx.chatRawTextMode);
@@ -1139,8 +1213,10 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 			// multiplier preserves the ratios exactly and is perfectly
 			// reversible, which is what makes the reset below able to restore
 			// custom sizes rather than flatten them.
-			if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
-				if (e.key === '=' || e.key === '+') {
+			if ((e.metaKey || e.ctrlKey) && !e.altKey) {
+				// `+` is included regardless of Shift: US layouts only produce it
+				// WITH Shift held, so Cmd+Shift+= (read as Cmd++) must still zoom in.
+				if (e.key === '+' || (!e.shiftKey && e.key === '=')) {
 					e.preventDefault();
 					const { fontZoom, setFontZoom } = useSettingsStore.getState();
 					const next = clampFontZoom(fontZoom + FONT_ZOOM_STEP);
@@ -1148,7 +1224,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					trackShortcut('fontSizeIncrease');
 					return;
 				}
-				if (e.key === '-') {
+				if (!e.shiftKey && e.key === '-') {
 					e.preventDefault();
 					const { fontZoom, setFontZoom } = useSettingsStore.getState();
 					const next = clampFontZoom(fontZoom - FONT_ZOOM_STEP);

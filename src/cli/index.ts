@@ -15,6 +15,14 @@ import { send } from './commands/send';
 import { dispatch } from './commands/dispatch';
 import { ask } from './commands/ask';
 import { queueList, queueRemove } from './commands/queue';
+import {
+	snoozeDismiss,
+	snoozeHistory,
+	snoozeList,
+	snoozeReschedule,
+	snoozeTabCommand,
+	snoozeWake,
+} from './commands/snooze';
 import { sessionList, sessionShow } from './commands/session';
 import { listSessions } from './commands/list-sessions';
 import { openFile } from './commands/open-file';
@@ -54,6 +62,7 @@ import { sendTerminal } from './commands/send-terminal';
 import { readTerminal, DEFAULT_TAIL_LINES } from './commands/read-terminal';
 import { createSshRemote } from './commands/create-ssh-remote';
 import { removeSshRemote } from './commands/remove-ssh-remote';
+import { testSshRemote } from './commands/test-ssh-remote';
 import { updateSshRemote } from './commands/update-ssh-remote';
 import { directorNotesHistory } from './commands/director-notes-history';
 import { directorNotesSynopsis } from './commands/director-notes-synopsis';
@@ -96,6 +105,7 @@ import {
 import { stats, statsQuery } from './commands/stats';
 import { renameAgent } from './commands/rename-agent';
 import { renameGroup } from './commands/rename-group';
+import { updateGroup } from './commands/update-group';
 import {
 	stopAutoRun,
 	resumeAutoRun,
@@ -315,6 +325,10 @@ program
 		'--effort <effort>',
 		"Reasoning effort for this run only, overriding the agent's configured default"
 	)
+	.option(
+		'--ignore-model-hints',
+		'Ignore MAESTRO:MODEL markers in the documents and run every task at --model/--effort (or the agent default)'
+	)
 	.action(async (playbookId: string, options: Record<string, unknown>) => {
 		const { runPlaybook } = await import('./commands/run-playbook');
 		return runPlaybook(playbookId, options);
@@ -377,6 +391,10 @@ program
 		'--effort <effort>',
 		"Reasoning effort for this run only, overriding the agent's configured default"
 	)
+	.option(
+		'--ignore-model-hints',
+		'Ignore MAESTRO:MODEL markers in the documents and run every task at --model/--effort (or the agent default)'
+	)
 	.action(async (docs: string[], options: Record<string, unknown>) => {
 		const { runDoc } = await import('./commands/run-doc');
 		return runDoc(docs, options as never);
@@ -414,7 +432,10 @@ program
 	.description(
 		'Dispatch a prompt to an agent in the Maestro desktop app and return its tab/session ID'
 	)
-	.option('--new-tab', 'Create a fresh AI tab and dispatch the prompt into it')
+	.option(
+		'--new-tab',
+		'Create a fresh AI tab and deliver the prompt into it. A working agent cannot start a second turn, so the prompt is queued for the new tab and runs when the current turn ends (the response reports queued: true).'
+	)
 	.option(
 		'--background',
 		'Leave the view where it is (default with --new-tab; suppresses the agent switch otherwise)'
@@ -425,7 +446,7 @@ program
 	)
 	.option(
 		'-f, --force',
-		'Bypass the busy-state guard when writing to a busy tab; requires allowConcurrentSend (cannot be combined with --new-tab - a fresh tab is never busy)'
+		'Bypass the busy-state guard when writing to a busy tab; requires allowConcurrentSend (cannot be combined with --new-tab, which queues instead)'
 	)
 	.option(
 		'--focus',
@@ -433,7 +454,7 @@ program
 	)
 	.option(
 		'--queue',
-		'If the target tab is busy, queue the prompt into the execution queue (FIFO) instead of rejecting it; an idle target dispatches immediately. Cannot be combined with --new-tab or --force. Returns the queue position.'
+		'If the target tab is busy, queue the prompt into the execution queue (FIFO) instead of rejecting it; an idle target dispatches immediately. Cannot be combined with --new-tab (which already queues when the agent is busy) or --force. Returns the queue position.'
 	)
 	.option('--wait', 'Alias for --queue')
 	.option(
@@ -466,7 +487,7 @@ program
 	)
 	.option(
 		'--from <agent-id>',
-		'Your own agent id. Names the consult on the target, keeps continuity across repeat asks, forwards your working directory so it can read your project, and lets Stop cancel the consult'
+		'Your own agent id. Names the consult on the target, keeps continuity across repeat asks, forwards your working directory so it can read your project, and lets Stop cancel the consult. Defaults to the agent this runs under inside Maestro'
 	)
 	.option(
 		'--with-context',
@@ -497,6 +518,79 @@ queue
 	.description('Remove a queued item by its id (from dispatch --queue output or queue list)')
 	.option('-a, --agent <id>', 'Agent whose queue the item belongs to (required)')
 	.action(queueRemove);
+
+// Snooze commands - the CLI half of the Snooze dialog (Opt+Cmd+S), the Snoozed
+// Tabs list, and its history log. `<when>` takes the same expressions the dialog
+// does ("2h", "tomorrow", "next fri 3pm", "aug 5"), parsed locally so a typo
+// fails before a round trip.
+const snooze = program
+	.command('snooze')
+	.description('Park a tab until later, and manage what is parked');
+
+snooze
+	.command('tab <tab-id> <when>')
+	.description('Snooze a tab or tiled group until <when> (e.g. 2h, tomorrow, "next fri 3pm")')
+	.option(
+		'-a, --agent <id>',
+		'Agent that owns the tab. Required for a file, terminal, browser, or group tab, which are not in the AI tab list'
+	)
+	.option('-n, --note <text>', 'Note-to-self surfaced in the wake notification')
+	.option(
+		'-p, --wake-prompt <text>',
+		'Prompt sent to the agent the moment the tab comes back (AI tabs and groups only)'
+	)
+	.option('--background', 'Park it without flashing the "Snoozed until ..." confirmation')
+	.option('--focus', 'Show the confirmation flash (the default)')
+	.option('--json', 'Output the stored snooze as JSON')
+	.action(snoozeTabCommand);
+
+snooze
+	.command('list')
+	.description('List snoozed tabs across every agent, soonest wake first')
+	.option('-a, --agent <id>', 'Only list snoozes held by this agent')
+	.option('--json', 'Output as JSON')
+	.action(snoozeList);
+
+snooze
+	.command('wake <snooze-id>')
+	.description('Bring a snoozed tab back right now (accepts a unique id prefix)')
+	.option('--background', 'Accepted and ignored: a wake restores the tab without focusing it')
+	.option('--focus', 'Accepted and ignored: a wake restores the tab without focusing it')
+	.option('--json', 'Output as JSON')
+	.action(snoozeWake);
+
+snooze
+	.command('dismiss <snooze-id>')
+	.description("Drop a snooze and its tab - it won't come back")
+	.option('--background', 'Dismiss it without raising the "Snooze dismissed" toast')
+	.option('--focus', 'Raise the toast (the default)')
+	.option('--json', 'Output as JSON')
+	.action(snoozeDismiss);
+
+snooze
+	.command('reschedule <snooze-id> <when>')
+	.description('Move a snooze to a new time, optionally rewriting its note or wake prompt')
+	.option('-n, --note <text>', 'Replace the note (pass an empty string to clear it)')
+	.option('-p, --wake-prompt <text>', 'Replace the wake prompt (empty string clears it)')
+	.option('--json', 'Output as JSON')
+	.action(snoozeReschedule);
+
+snooze
+	.command('history')
+	.description('Snoozes that have already resolved - woken, unsnoozed, or dismissed')
+	.option('--limit <n>', 'Only show the newest <n> entries')
+	.option('--json', 'Output as JSON')
+	.action(snoozeHistory);
+
+// `unsnooze` is the verb people reach for, and it is what the Snoozed Tabs list
+// calls the button, so it is spelled out here rather than left as `snooze wake`.
+program
+	.command('unsnooze <snooze-id>')
+	.description('Bring a snoozed tab back right now (alias for "snooze wake")')
+	.option('--background', 'Accepted and ignored: a wake restores the tab without focusing it')
+	.option('--focus', 'Accepted and ignored: a wake restores the tab without focusing it')
+	.option('--json', 'Output as JSON')
+	.action(snoozeWake);
 
 // Session inspection commands - read-only access to desktop conversation state.
 // Lets external pollers (Maestro-Discord, Cue follow-ups) pick up where Maestro
@@ -722,6 +816,10 @@ program
 	.option(
 		'--effort <effort>',
 		"Reasoning effort for this run only, overriding the agent's configured default"
+	)
+	.option(
+		'--ignore-model-hints',
+		'Ignore MAESTRO:MODEL markers in the documents and run every task at --model/--effort (or the agent default)'
 	)
 	.action(autoRun);
 
@@ -973,6 +1071,11 @@ program
 	.command('create-group <name>')
 	.description('Create a new group in the Maestro desktop app')
 	.option('-e, --emoji <emoji>', 'Emoji icon for the group')
+	.option(
+		'--icon <icon-id>',
+		'Built-in icon ID (folder, briefcase, rocket, ...) or a plugin icon ID. Mutually exclusive with --emoji'
+	)
+	.option('--color <color>', 'Label color as #RRGGBB, or a plugin color ID')
 	.option('--parent <group-id>', 'Create inside this root group')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(createGroup);
@@ -994,6 +1097,27 @@ program
 	.description('Rename a group in the Maestro desktop app')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((groupId, newName, options) => renameGroup(groupId, newName, options));
+
+// Update group command - change a group's name, appearance, or parent. Covers
+// everything the Left Bar's group editor does; rename-group stays for
+// backward compatibility.
+program
+	.command('update-group <group-id>')
+	.description("Update a group's name, icon, color, or parent in the Maestro desktop app")
+	.option('-n, --name <name>', 'New group name')
+	.option('-e, --emoji <emoji>', 'Emoji icon for the group. Mutually exclusive with --icon')
+	.option(
+		'--icon <icon-id>',
+		'Built-in icon ID (folder, briefcase, rocket, ...) or a plugin icon ID. Mutually exclusive with --emoji'
+	)
+	.option('--color <color>', 'Label color as #RRGGBB, or a plugin color ID')
+	.option('--parent <group-id>', 'Move the group inside this root group')
+	.option('--clear-emoji', 'Reset the emoji to the default folder')
+	.option('--clear-icon', 'Remove the icon')
+	.option('--clear-color', 'Remove the label color')
+	.option('--clear-parent', 'Promote the group to the top level')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((groupId, options) => updateGroup(groupId, options));
 
 // Create-worktree command - create a new agent in a git worktree off a parent
 // agent, without an Auto Run playbook. The parent agent must already exist in
@@ -1325,10 +1449,23 @@ program
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(removeSshRemote);
 
+// Test SSH remote command - dial a configured remote and report the result
+program
+	.command('test-ssh-remote <remote-id>')
+	.description('Test an SSH remote connection and report what the remote answered')
+	.option('-a, --agent <command>', 'Also check whether this binary is on the remote PATH')
+	.option('--timeout <seconds>', 'Give up after this many seconds (default: 60)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(testSshRemote);
+
 // Display / typography commands
 //
 // Addressed by SURFACE rather than by settings key: `settings set` can already
 // write these ten keys, but only if you know their names and the
+// Display / typography commands
+//
+// Addressed by SURFACE rather than by settings key: `settings set` can already
+// write these twelve keys, but only if you know their names and the
 // empty-string-means-inherit convention. These validate against the shared
 // registry, so a scripted setup can put the app in a known typographic state.
 const display = program
@@ -1338,7 +1475,7 @@ const display = program
 display
 	.command('font [surface] [value]')
 	.description(
-		'Get or set a surface font. Surfaces: interface, terminal, chat, filePreview, fileEditor. Pass "inherit" (or "inherit:terminal") to follow a root surface. Omit the surface to list all.'
+		'Get or set a surface font. Surfaces: interface, terminal, chat, filePreview, documentGraph, fileEditor. Pass "inherit" (or "inherit:terminal") to follow a root surface. Omit the surface to list all.'
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((surface: string | undefined, value: string | undefined, options: { json?: boolean }) => {
@@ -1751,11 +1888,23 @@ notify
 	.option('--action-label <text>', 'Label for --action-url (defaults to the URL itself)')
 	.option(
 		'--open-file <path>',
-		'On click, switch to the agent and open this file in its File Preview pane (requires --agent; mutually exclusive with --open-url)'
+		'On click, switch to the agent and open this file in its File Preview pane (requires --agent; mutually exclusive with the other --open-* flags)'
+	)
+	.option(
+		'--open-terminal [tab]',
+		'On click, switch to the agent and focus a terminal tab. Optional value is a tab id or name; bare uses the active terminal tab (requires --agent)'
+	)
+	.option(
+		'--open-browser <url>',
+		'On click, open this URL in a new in-app browser tab on the agent (requires --agent)'
+	)
+	.option(
+		'--open-browser-tab <id>',
+		'On click, focus this existing in-app browser tab (the id `open-browser` printed; requires --agent)'
 	)
 	.option(
 		'--open-url <url>',
-		'On click, open this URL in the system browser (mutually exclusive with --open-file)'
+		'On click, open this URL in the system browser (opens outside Maestro; use --open-browser for an in-app tab)'
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(notifyToast);

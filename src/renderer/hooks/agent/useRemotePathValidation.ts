@@ -8,6 +8,13 @@ interface UseRemotePathValidationOptions {
 	path: string;
 	/** The SSH remote ID to validate against */
 	sshRemoteId: string | null | undefined;
+	/**
+	 * Validate against the LOCAL filesystem when SSH is off. Off by default:
+	 * the New Agent modal fills the path from a folder picker, so it needs no
+	 * check, while the Edit Agent dialog accepts a typed path that must exist
+	 * before it becomes the agent's spawn cwd.
+	 */
+	validateLocal?: boolean;
 	/** Debounce delay in ms (default: 300) */
 	debounceMs?: number;
 }
@@ -19,20 +26,25 @@ const DEFAULT_STATE: RemotePathValidationState = {
 };
 
 /**
- * Debounced remote path validation via SSH.
- * Checks if a path exists and is a directory on a remote host.
+ * Debounced path validation: checks that a path exists and is a directory,
+ * on the SSH remote when SSH is enabled, or locally when `validateLocal` is set.
  */
 export function useRemotePathValidation({
 	isSshEnabled,
 	path,
 	sshRemoteId,
+	validateLocal = false,
 	debounceMs = 300,
 }: UseRemotePathValidationOptions): RemotePathValidationState {
 	const [validation, setValidation] = useState<RemotePathValidationState>(DEFAULT_STATE);
 
 	useEffect(() => {
-		if (!isSshEnabled) {
-			setValidation(DEFAULT_STATE);
+		// A result belongs to the path and remote it was checked against. Drop it
+		// the moment either changes, so a directory that validated a keystroke ago
+		// cannot vouch for the path being typed now.
+		setValidation(DEFAULT_STATE);
+
+		if (!isSshEnabled && !validateLocal) {
 			return;
 		}
 
@@ -42,7 +54,9 @@ export function useRemotePathValidation({
 			return;
 		}
 
-		if (!sshRemoteId) {
+		// A local check passes no remote id; an SSH check needs one.
+		const remoteId = isSshEnabled ? sshRemoteId : undefined;
+		if (isSshEnabled && !remoteId) {
 			setValidation(DEFAULT_STATE);
 			return;
 		}
@@ -54,7 +68,7 @@ export function useRemotePathValidation({
 			setValidation((prev) => ({ ...prev, checking: true }));
 
 			try {
-				const stat = await window.maestro.fs.stat(trimmedPath, sshRemoteId);
+				const stat = await window.maestro.fs.stat(trimmedPath, remoteId ?? undefined);
 				if (cancelled) return;
 				if (stat && stat.isDirectory) {
 					setValidation({
@@ -92,7 +106,7 @@ export function useRemotePathValidation({
 			cancelled = true;
 			clearTimeout(timeoutId);
 		};
-	}, [isSshEnabled, path, sshRemoteId, debounceMs]);
+	}, [isSshEnabled, validateLocal, path, sshRemoteId, debounceMs]);
 
 	return validation;
 }

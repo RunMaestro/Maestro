@@ -3,8 +3,12 @@ import * as os from 'os';
 import * as path from 'path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+const { mockIsWindows } = vi.hoisted(() => ({
+	mockIsWindows: vi.fn().mockReturnValue(false),
+}));
+
 vi.mock('../../../shared/platformDetection', () => ({
-	isWindows: () => false,
+	isWindows: mockIsWindows,
 	isMacOS: () => false,
 	isLinux: () => true,
 }));
@@ -45,6 +49,7 @@ describe('Logger', () => {
 	let consoleLogSpy: ReturnType<typeof vi.spyOn>;
 
 	beforeEach(async () => {
+		mockIsWindows.mockReturnValue(false);
 		originalAppData = process.env.APPDATA;
 		originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
 		testConfigRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-logger-test-'));
@@ -91,6 +96,17 @@ describe('Logger', () => {
 			fs.rmSync(testConfigRoot, { recursive: true, force: true });
 			testConfigRoot = '';
 		}
+	});
+
+	describe('Platform defaults', () => {
+		it('does not enable desktop file logging in a Windows CLI process', async () => {
+			mockIsWindows.mockReturnValue(true);
+			expect(process.type).toBeUndefined();
+
+			const cliLogger = await getLogger();
+
+			expect(cliLogger.isFileLoggingEnabled()).toBe(false);
+		});
 	});
 
 	describe('Log Level Management', () => {

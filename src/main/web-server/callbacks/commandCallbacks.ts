@@ -187,10 +187,23 @@ export function registerCommandCallbacks(
 					targetSessionId: params.targetSessionId,
 					question: params.question,
 					fromSessionId: params.fromSessionId,
+					fromTabId: params.fromTabId,
 					withContext: params.withContext,
 				},
 			],
 		});
+	});
+
+	// A dispatch run from an agent's own shell names its caller. The pill goes to
+	// the CALLER's window, not the target's: it belongs to the conversation that
+	// handed the work over.
+	server.setNoteAgentDelegationCallback((notice) => {
+		const callerWindow = resolveSessionWindow(notice.fromSessionId);
+		if (!callerWindow || !isWebContentsAvailable(callerWindow)) {
+			logger.warn('No owning window is available for noteAgentDelegation', 'WebServer');
+			return;
+		}
+		callerWindow.webContents.send('remote:agentDelegation', notice);
 	});
 
 	// Set up callback for web server to interrupt sessions through the desktop

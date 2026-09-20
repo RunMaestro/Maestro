@@ -22,6 +22,8 @@ interface AutoRunOptions {
 	// this run only and are never written back to the session.
 	model?: string;
 	effort?: string;
+	/** Skip the documents' MAESTRO:MODEL markers for this run (--ignore-model-hints). */
+	ignoreModelHints?: boolean;
 }
 
 export async function autoRun(docs: string[], options: AutoRunOptions): Promise<void> {
@@ -139,6 +141,7 @@ export async function autoRun(docs: string[], options: AutoRunOptions): Promise<
 					worktree,
 					...(runModel && { model: runModel }),
 					...(runEffort && { effort: runEffort }),
+					...(options.ignoreModelHints && { ignoreModelHints: true }),
 				},
 				'configure_auto_run_result'
 			);

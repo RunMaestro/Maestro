@@ -19,8 +19,12 @@ vi.mock('reactflow', () => ({
 		screenToFlowPosition: vi.fn((pos: any) => pos),
 		setViewport: vi.fn(),
 		getViewport: vi.fn(() => ({ x: 0, y: 0, zoom: 1 })),
+		// Read by the layout passes to space columns from real rendered widths.
+		getNodes: vi.fn(() => []),
 	}),
 	useNodesInitialized: () => false,
+	// The collision guard subscribes to measured node widths through the store.
+	useStore: (selector: any) => selector({ nodeInternals: new Map() }),
 	applyNodeChanges: (_changes: any[], nodes: any[]) => nodes,
 	Background: () => null,
 	Controls: () => null,

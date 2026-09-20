@@ -770,7 +770,7 @@ const mockMaestro = {
 		recordAutoTask: vi.fn().mockResolvedValue('task-id'),
 		getAutoRunSessions: vi.fn().mockResolvedValue([]),
 		getAutoRunTasks: vi.fn().mockResolvedValue([]),
-		exportCsv: vi.fn().mockResolvedValue(''),
+		exportUsage: vi.fn().mockResolvedValue({ path: '', format: 'json', rowCounts: {}, notes: [] }),
 		onStatsUpdate: vi.fn().mockReturnValue(() => {}),
 		recordResilience: vi.fn().mockResolvedValue('outage-id'),
 		getResilience: vi.fn().mockResolvedValue([]),
@@ -928,6 +928,12 @@ const mockMaestro = {
 		// clean up. Window tests capture the registered callback to fire broadcasts.
 		onSessionMoved: vi.fn(() => () => {}),
 		onHighlightDropZone: vi.fn(() => () => {}),
+	},
+	// Automatic tab naming (ephemeral namer spawn). Returns null by default so a
+	// test that sends a message doesn't accidentally rename tabs; tests that care
+	// override this with their own resolved value.
+	tabNaming: {
+		generateTabName: vi.fn().mockResolvedValue(null),
 	},
 	// Synchronous platform string (replaces async os.getPlatform IPC)
 	platform: 'darwin',

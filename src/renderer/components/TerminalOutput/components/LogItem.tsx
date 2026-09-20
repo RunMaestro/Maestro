@@ -26,10 +26,12 @@ import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
 import { MarkdownRenderer } from '../../MarkdownRenderer';
 import { LogFilterControls } from '../../LogFilterControls';
 import { linkifyNode } from '../../../utils/linkify';
+import { formatDurationWords, formatTurnDuration } from '../../../../shared/duration';
 import { sessionImageThumbnailSrc } from '../../../../shared/sessionImageRefs';
 import { displayImageSrc } from '../../../utils/sessionImageSrc';
 import { RetryStatusCard } from '../../RetryStatusCard';
 import { SnoozeReturnCard } from '../../SnoozeReturnCard';
+import { AgentDelegationCard } from '../../AgentDelegationCard';
 import { ShellCommandCard } from '../../ShellCommandCard';
 import { getTokenSourcePill } from '../../../../shared/claudeTokenModeLabel';
 import { TurnSettingPills } from '../../ui/TurnSettingPills';
@@ -101,6 +103,7 @@ export const LogItem = memo(
 		bionifyIntensity,
 		bionifyAlgorithm,
 		userMessageAlignment,
+		responseDurationMs,
 		isClaudeCode,
 		isAdaptiveMode,
 		showProviderModePill,
@@ -296,6 +299,25 @@ export const LogItem = memo(
 			);
 		}
 
+		// This agent handed work or a question to another agent from its shell.
+		// A compact pill in the same clean row, so the hand-off reads in place.
+		if (log.delegation) {
+			return (
+				<div
+					ref={logItemRef}
+					className="flex gap-4 px-3 sm:px-6 py-1.5"
+					data-log-index={index}
+					data-log-id={log.id}
+					style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 36px' }}
+				>
+					<div className="hidden sm:block w-20 shrink-0" />
+					<div className="flex-1 min-w-0">
+						<AgentDelegationCard log={log} theme={theme} />
+					</div>
+				</div>
+			);
+		}
+
 		// Agent Resilience: an outage marker renders as a live status card in a
 		// clean row (no error-tinted bubble chrome), left gutter kept for alignment.
 		if (log.retryOutageId) {
@@ -380,6 +402,21 @@ export const LogItem = memo(
 							</>
 						);
 					})()}
+					{/*
+						Turn time, under the clock. Only ever on an agent reply: a user
+						message is instantaneous, so the same line under it would be
+						meaningless. Minutes are the finest rung on purpose - see
+						formatTurnDuration.
+					*/}
+					{responseDurationMs !== undefined && !isUserMessage && (
+						<div
+							className="mt-0.5 tabular-nums"
+							style={{ opacity: 0.7 }}
+							title={`Agent took ${formatDurationWords(responseDurationMs)} to answer`}
+						>
+							{formatTurnDuration(responseDurationMs)}
+						</div>
+					)}
 				</div>
 				<div
 					className={`flex-1 min-w-0 p-4 pb-10 rounded-xl border ${isReversed ? 'rounded-tr-none' : 'rounded-tl-none'} relative overflow-hidden ${isCrossAgentStreaming ? 'animate-status-glow' : ''}`}
@@ -1141,6 +1178,10 @@ export const LogItem = memo(
 			// A terminal error chunk may add `error` without changing text; the
 			// red-tinted bubble variant depends on it.
 			prevProps.log.metadata?.crossAgent?.error === nextProps.log.metadata?.crossAgent?.error &&
+			// An ask pill settles without its text changing: spinner to verb, and the
+			// consult tab id the jump arrow needs only arrives with the answer.
+			prevProps.log.delegation?.status === nextProps.log.delegation?.status &&
+			prevProps.log.delegation?.toTabId === nextProps.log.delegation?.toTabId &&
 			prevProps.isExpanded === nextProps.isExpanded &&
 			prevProps.localFilterQuery === nextProps.localFilterQuery &&
 			prevProps.filterMode.mode === nextProps.filterMode.mode &&
@@ -1162,6 +1203,7 @@ export const LogItem = memo(
 			// agent, this one is a toggle the user flips while looking at the
 			// transcript - leave it out and every message already on screen keeps its
 			// pill until something unrelated re-renders it.
+			prevProps.responseDurationMs === nextProps.responseDurationMs &&
 			prevProps.showProviderModePill === nextProps.showProviderModePill
 		);
 	}

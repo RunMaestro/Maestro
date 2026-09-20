@@ -43,6 +43,8 @@ The `/skills` command is a Maestro feature that reads skill files directly - it 
 
 Create your own slash commands in **Settings → AI Commands**. Each command has a trigger (e.g., `/deploy`) and a prompt that gets sent to the AI agent.
 
+Once you have more than a handful, the **Filter commands...** box at the top of the panel narrows the list. It fuzzy-matches the command name and the description, so `dpy` finds `/deploy`, and it also does a plain text search of the prompt body, which is how you find the command that mentions a file or a tool when you cannot remember what you named it. Name and description hits sort above body-only hits, the matched letters are highlighted, and the count beside the box reads `3 of 20` so you can see how much of the list you are looking at.
+
 Commands support **template variables** that are automatically substituted at runtime. These same variables also work in [core system prompts](/prompt-customization).
 
 ### Conductor Variables

@@ -14,6 +14,25 @@ import { fetchExistingDocsForWizard } from '../utils/existingDocs';
 import { extractStreamingTextFromChunk } from '../utils/streamingChunks';
 import { isStructuredThinkingResponse } from '../utils/thinkingFilters';
 import type { SendStateSetters, ToolExecutionEvent, WizardConversationState } from '../types';
+import { projectNameFromPath } from '../../../shared/projectIdentity';
+
+/**
+ * Which opening turn the wizard sends on the user's behalf.
+ *
+ * `existing-docs` reads playbooks the user chose to build on. `survey` is for a
+ * folder that already holds a project: the agent reads it and says what it
+ * found, instead of a canned question asking the user to type out a description
+ * of code the agent can read for itself (issue #1225). An empty folder gets
+ * neither - there is nothing to survey, so the canned question stands.
+ */
+export type WizardOpeningKind = 'existing-docs' | 'survey';
+
+const OPENING_MESSAGES: Record<WizardOpeningKind, string> = {
+	'existing-docs':
+		'Please analyze the existing Auto Run documents and provide a synopsis of the current plan.',
+	survey:
+		"Take a look at what's already in this folder and tell me what you make of it: what the project is, what it is built with, how it is organized, and what any planning documents, specs or task lists already cover. Then ask me only what the files cannot tell you.",
+};
 
 interface WizardConversationSendParams {
 	state: WizardConversationState;
@@ -221,7 +240,7 @@ export function useWizardConversationSend({
 	scheduleAutoContinue,
 }: WizardConversationSendParams): {
 	handleSendMessage: () => Promise<void>;
-	sendInitialContinueMessage: () => Promise<void>;
+	sendOpeningMessage: (kind: WizardOpeningKind) => Promise<void>;
 } {
 	const handleSendMessage = useCallback(async () => {
 		const trimmedInput = inputValue.trim();
@@ -265,7 +284,8 @@ export function useWizardConversationSend({
 				await conversationManager.startConversation({
 					agentType: state.selectedAgent,
 					directoryPath: state.directoryPath,
-					projectName: state.agentName || 'My Project',
+					projectName: projectNameFromPath(state.directoryPath),
+					model: state.plannerModel,
 					sshRemoteConfig: state.sessionSshRemoteConfig,
 				});
 			}
@@ -307,7 +327,6 @@ export function useWizardConversationSend({
 		state.conversationHistory,
 		state.selectedAgent,
 		state.directoryPath,
-		state.agentName,
 		state.sessionSshRemoteConfig,
 		refs,
 		setters,
@@ -321,90 +340,97 @@ export function useWizardConversationSend({
 		scheduleAutoContinue,
 	]);
 
-	const sendInitialContinueMessage = useCallback(async () => {
-		if (state.isConversationLoading || refs.isSendingRef.current) {
-			return;
-		}
-
-		refs.isSendingRef.current = true;
-
-		setConversationError(null);
-		resetTransientState(setters);
-
-		setters.setShowInitialQuestion(false);
-		refs.initialQuestionAddedRef.current = true;
-
-		const continueMessage =
-			'Please analyze the existing Auto Run documents and provide a synopsis of the current plan.';
-		addMessage(createUserMessage(continueMessage));
-		setConversationLoading(true);
-		announce('Analyzing existing documents...');
-
-		try {
-			if (!conversationManager.isConversationActive()) {
-				if (!state.selectedAgent) {
-					setConversationError('No agent selected. Please go back and select an agent.');
-					setConversationLoading(false);
-					return;
-				}
-
-				const existingDocs = await fetchExistingDocsForWizard(state.directoryPath, 'continue');
-
-				await conversationManager.startConversation({
-					agentType: state.selectedAgent,
-					directoryPath: state.directoryPath,
-					projectName: state.agentName || 'My Project',
-					existingDocs: existingDocs.length > 0 ? existingDocs : undefined,
-					sshRemoteConfig: state.sessionSshRemoteConfig,
-				});
+	const sendOpeningMessage = useCallback(
+		async (kind: WizardOpeningKind) => {
+			if (state.isConversationLoading || refs.isSendingRef.current) {
+				return;
 			}
 
-			let handledByOnError = false;
-			const result = await conversationManager.sendMessage(
-				continueMessage,
-				[],
-				createSendCallbacks({
-					mode: 'continue',
-					setters,
-					refs,
-					addMessage,
-					setConfidenceLevel,
-					setIsReadyToProceed,
-					setConversationError,
-					announce,
-					scheduleAutoContinue,
-					markErrorHandled: () => {
-						handledByOnError = true;
-					},
-				})
+			refs.isSendingRef.current = true;
+
+			setConversationError(null);
+			resetTransientState(setters);
+
+			setters.setShowInitialQuestion(false);
+			refs.initialQuestionAddedRef.current = true;
+
+			const continueMessage = OPENING_MESSAGES[kind];
+			addMessage(createUserMessage(continueMessage));
+			setConversationLoading(true);
+			announce(
+				kind === 'existing-docs' ? 'Analyzing existing documents...' : 'Reading your project...'
 			);
 
-			applySendFailure(result, setConversationError, setters, handledByOnError);
-		} catch (error) {
-			const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-			setConversationError(errorMessage);
-			setters.setErrorRetryCount((prev) => prev + 1);
-		} finally {
-			setConversationLoading(false);
-			refs.isSendingRef.current = false;
-			refs.inputRef.current?.focus();
-		}
-	}, [
-		state.isConversationLoading,
-		state.selectedAgent,
-		state.directoryPath,
-		state.agentName,
-		state.sessionSshRemoteConfig,
-		refs,
-		setters,
-		addMessage,
-		setConversationLoading,
-		setConversationError,
-		setConfidenceLevel,
-		setIsReadyToProceed,
-		announce,
-		scheduleAutoContinue,
-	]);
+			try {
+				if (!conversationManager.isConversationActive()) {
+					if (!state.selectedAgent) {
+						setConversationError('No agent selected. Please go back and select an agent.');
+						setConversationLoading(false);
+						return;
+					}
 
-	return { handleSendMessage, sendInitialContinueMessage };
+					const existingDocs =
+						kind === 'existing-docs'
+							? await fetchExistingDocsForWizard(state.directoryPath, 'continue')
+							: [];
+
+					await conversationManager.startConversation({
+						agentType: state.selectedAgent,
+						directoryPath: state.directoryPath,
+						projectName: projectNameFromPath(state.directoryPath),
+						model: state.plannerModel,
+						existingDocs: existingDocs.length > 0 ? existingDocs : undefined,
+						sshRemoteConfig: state.sessionSshRemoteConfig,
+					});
+				}
+
+				let handledByOnError = false;
+				const result = await conversationManager.sendMessage(
+					continueMessage,
+					[],
+					createSendCallbacks({
+						mode: 'continue',
+						setters,
+						refs,
+						addMessage,
+						setConfidenceLevel,
+						setIsReadyToProceed,
+						setConversationError,
+						announce,
+						scheduleAutoContinue,
+						markErrorHandled: () => {
+							handledByOnError = true;
+						},
+					})
+				);
+
+				applySendFailure(result, setConversationError, setters, handledByOnError);
+			} catch (error) {
+				const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+				setConversationError(errorMessage);
+				setters.setErrorRetryCount((prev) => prev + 1);
+			} finally {
+				setConversationLoading(false);
+				refs.isSendingRef.current = false;
+				refs.inputRef.current?.focus();
+			}
+		},
+		[
+			state.isConversationLoading,
+			state.selectedAgent,
+			state.directoryPath,
+			state.sessionSshRemoteConfig,
+			refs,
+			setters,
+			addMessage,
+			setConversationLoading,
+			setConversationError,
+			setConfidenceLevel,
+			setIsReadyToProceed,
+			announce,
+			scheduleAutoContinue,
+		]
+	);
+
+	return { handleSendMessage, sendOpeningMessage };
 }

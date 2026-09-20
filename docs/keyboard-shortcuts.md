@@ -81,25 +81,36 @@ surface too, so a chord you chose yourself behaves the same as the default.
 
 ## Panel Shortcuts
 
-| Action                         | macOS         | Windows/Linux  |
-| ------------------------------ | ------------- | -------------- |
-| Go to Files Tab                | `Cmd+Shift+F` | `Ctrl+Shift+F` |
-| Go to History Tab              | `Cmd+Shift+H` | `Ctrl+Shift+H` |
-| Go to Auto Run Tab             | `Cmd+Shift+1` | `Ctrl+Shift+1` |
-| Toggle Edit/Preview (Markdown) | `Cmd+E`       | `Ctrl+E`       |
-| Run Auto Run                   | `Cmd+Shift+2` | `Ctrl+Shift+2` |
-| Auto Run Expanded Preview      | `Cmd+Shift+3` | `Ctrl+Shift+3` |
-| Insert Checkbox (Auto Run)     | `Cmd+L`       | `Ctrl+L`       |
-| View Git Diff                  | `Cmd+Shift+D` | `Ctrl+Shift+D` |
-| View Git Log                   | `Cmd+Shift+G` | `Ctrl+Shift+G` |
-| Refresh Files, Git, History    | `Opt+Cmd+R`   | `Alt+Ctrl+R`   |
-| Fuzzy File Search              | `Cmd+G`       | `Ctrl+G`       |
+| Action                         | macOS                 | Windows/Linux         |
+| ------------------------------ | --------------------- | --------------------- |
+| Go to Files Tab                | `Cmd+Shift+F`         | `Ctrl+Shift+F`        |
+| Go to History Tab              | `Cmd+Shift+H`         | `Ctrl+Shift+H`        |
+| Go to Auto Run Tab             | `Cmd+Shift+1`         | `Ctrl+Shift+1`        |
+| Toggle Edit/Preview (Markdown) | `Cmd+E`               | `Ctrl+E`              |
+| Run Auto Run                   | `Cmd+Shift+2`         | `Ctrl+Shift+2`        |
+| Auto Run Expanded Preview      | `Cmd+Shift+3`         | `Ctrl+Shift+3`        |
+| Insert Checkbox (Auto Run)     | `Cmd+L`               | `Ctrl+L`              |
+| Git: View Diff                 | `Cmd+Shift+D`         | `Ctrl+Shift+D`        |
+| Git: View Log                  | `Cmd+Shift+G`         | `Ctrl+Shift+G`        |
+| Git: Pull                      | unassigned by default | unassigned by default |
+| Git: Push                      | unassigned by default | unassigned by default |
+| Git: Change Branch             | unassigned by default | unassigned by default |
+| Git: Create Pull Request       | unassigned by default | unassigned by default |
+| Refresh Files, Git, History    | `Opt+Cmd+R`           | `Alt+Ctrl+R`          |
+| Fuzzy File Search              | `Cmd+G`               | `Ctrl+G`              |
 
 `Cmd+E` toggles edit and preview on a markdown File Preview, in the Memories
 viewer (`Cmd+Shift+M`), where the pane opens on the rendered document, and on
 the Maestro Prompts tab in Settings, where it opens on the source. Inside the
 Memories viewer, `Cmd+G` graphs the memories and `Cmd+U` toggles the unlinked
 filter, in place of their usual meanings.
+
+**Git: Pull**, **Git: Push**, **Git: Change Branch**, and **Git: Create Pull Request** ship
+unbound. They run against the active agent's repository, exactly as the branch
+pill's dropdown and the command palette (`Cmd+K`) do, and two of them write to a
+remote, so Maestro does not claim four chords for them out of the box. Bind any
+of them in **Settings** -> **Shortcuts** and the chord appears on the matching
+branch-pill row and palette entry.
 
 `Opt+Cmd+R` reloads the file tree, git status, worktree list, and history for
 the active agent in one press. When a File Preview is open it re-reads that file
@@ -113,8 +124,11 @@ under a running agent.
 
 A group chat has no tab strip, so the tab-cycle chord switches the right panel instead.
 
+Team Chat / Moderator Only switches how much of the room you read. Moderator Only hides the delegations the moderator sends to agents and the replies they send back, in both the transcript and the History tab, leaving just your own conversation with the moderator. Nothing stops or is deleted: the agents keep working and every message is still logged, so switching back shows the full record.
+
 | Action                       | macOS                          | Windows/Linux                    |
 | ---------------------------- | ------------------------------ | -------------------------------- |
+| Team Chat / Moderator Only   | `Opt+Cmd+Shift+G`              | `Alt+Ctrl+Shift+G`               |
 | Cycle Participants / History | `Cmd+Shift+[` or `Cmd+Shift+]` | `Ctrl+Shift+[` or `Ctrl+Shift+]` |
 | Go to Participants Tab       | `Cmd+Shift+F`                  | `Ctrl+Shift+F`                   |
 | Go to History Tab            | `Cmd+Shift+H`                  | `Ctrl+Shift+H`                   |
@@ -344,7 +358,7 @@ In AI mode, use `@` to reference files in your prompts:
 | -------------------------------- | ---------------------------------- | ---------------------------------- |
 | Navigate Agents                  | `Up/Down Arrow` while in sidebar   | `Up/Down Arrow` while in sidebar   |
 | Select Agent                     | `Enter` while in sidebar           | `Enter` while in sidebar           |
-| Filter Sessions (in Left Panel)  | `Cmd+F`                            | `Ctrl+F`                           |
+| Filter Agents (in Left Panel)    | `Cmd+F`                            | `Ctrl+F`                           |
 | Navigate Files                   | `Up/Down Arrow` while in file tree | `Up/Down Arrow` while in file tree |
 | Preview Fonts (Settings)         | `Up/Down Arrow` on a font picker   | `Up/Down Arrow` on a font picker   |
 | Extend File Selection            | `Shift+Up/Down Arrow` in file tree | `Shift+Up/Down Arrow` in file tree |
@@ -450,6 +464,25 @@ app-wide `Cmd+=` / `Cmd+-` in [Font Size](#font-size) keeps working while the
 organizer is open. They stop firing while the lightbox or the annotator is open
 on top of it.
 
+## Usage Dashboard
+
+The Agents and Groups tabs draw one tile per agent or group. The tile size is
+yours to set, and it is remembered across restarts. See
+[Usage Dashboard](./usage-dashboard).
+
+| Action                   | macOS      | Windows/Linux |
+| ------------------------ | ---------- | ------------- |
+| Bigger tiles             | `+` or `=` | `+` or `=`    |
+| Smaller tiles            | `-` or `_` | `-` or `_`    |
+| Back to the default size | `0`        | `0`           |
+
+The two tabs keep separate sizes, so widening the agent tiles leaves the group
+tiles alone. The buttons beside the sort pills do the same thing.
+
+Like the other bare zoom keys in this document, they leave `Cmd+=` / `Cmd+-`
+alone, and they stop firing while an agent or group detail view is open on top
+of the grid.
+
 ## Memories Viewer
 
 The file list is focused when the viewer opens, so these work right away. See
@@ -478,12 +511,25 @@ Graph, and remembers which one you left it on.
 
 | Action                         | macOS                      | Windows/Linux        |
 | ------------------------------ | -------------------------- | -------------------- |
+| Search the log                 | `Cmd+F` or `/`             | `Ctrl+F` or `/`      |
 | Previous / next view           | `Cmd+Shift+[` / `]`        | `Ctrl+Shift+[` / `]` |
 | Previous / next commit         | `Up/Down Arrow` or `j`/`k` | same                 |
 | Jump a page of commits         | `PageUp` / `PageDown`      | same                 |
 | Newest / oldest commit         | `Home` / `End`             | same                 |
 | Previous / next branch (Graph) | `Left/Right Arrow`         | same                 |
-| Close the viewer               | `Esc`                      | `Esc`                |
+| Clear the search / close       | `Esc`                      | `Esc`                |
+
+The search box narrows both views at once. It matches the commit hash (full or
+short), the message, the author, a branch or tag name, and the date, and several
+words are ANDed, so `fix usage` finds `fix(usage): ...`. `Up`/`Down` and the page
+keys keep stepping the commits while you are still typing, so you can filter and
+walk the hits without leaving the box; `j`/`k` stay letters there. `Esc` clears
+the query first and only closes the viewer once the box is empty.
+
+Graph view is FILTERED, not just highlighted: the commits that do not match are
+contracted out of the graph and the survivors reconnect to their nearest matching
+ancestor, so the branch lines still show which of the remaining commits came
+after which.
 
 In Graph view each axis answers one question, and both read off what is drawn.
 `Up`/`Down` follow the branch line the selected commit sits on, skipping commits
@@ -556,6 +602,7 @@ you are half-way through typing.
 | Cycle preview length               | `P`          |
 | Fit the whole graph on screen      | `F`          |
 | Switch scroll between zoom and pan | `S`          |
+| Snapshot the graph                 | `C`          |
 | Increase / decrease node spacing   | `+` / `-`    |
 | Close the preview, then the graph  | `Esc`        |
 
@@ -578,12 +625,16 @@ is right and you are reading across a wide graph, where every scroll otherwise
 changes the zoom you just set. The mode is also a toolbar pill and an inline
 toggle in the Help panel, and it is remembered between visits.
 
+`C` opens the screenshot chooser: copy the graph to the clipboard, or write
+it to disk as a PNG. The shot is the graph area exactly as it is painted, so
+frame it first.
+
 ## Customizing Shortcuts
 
 Most shortcuts can be remapped to fit your workflow:
 
 1. Open **Settings** (`Cmd+,` / `Ctrl+,`) → **Shortcuts** tab
-2. Find the action you want to remap
+2. Find the action you want to remap. The search box matches on the action name, and names are written so that the obvious word finds the whole family: type `git` for every git action, `tab` for the tab commands, `agent` for the agent ones, `unread`, `font`, `image`, `media`. Related actions share a `Family: Action` name (`Git: Pull`, `Media: Next Track`), which also keeps them together in the list instead of scattered alphabetically. The same names and the same search work in the command palette (`Cmd+K`) and the shortcuts sheet (`Cmd+/`)
 3. Click the current key binding (shows the shortcut like `⌘ K` or `Ctrl+K`)
 4. Press your desired key combination
 5. The new binding is saved immediately
@@ -595,6 +646,7 @@ Some actions ship with **no** key assigned and read **Not set** instead of a com
 **Tips:**
 
 - Press `Esc` while recording to cancel without changing the shortcut
+- To unset a shortcut, click the **×** next to its binding, or press `Backspace` / `Delete` while recording. The action shows **Unassigned** until you bind it again
 - Modifier keys alone (Cmd, Ctrl, Alt, Shift) won't register - you need a final key
 - Some shortcuts are fixed and cannot be remapped (like `Esc` to close modals)
 - A combination that another action already uses is refused, and the recorder tells you which action holds it. Clear that one first if you want the combination
@@ -616,7 +668,7 @@ When a default binding has to move to free a combo for a new action, Maestro mig
 | Action                    | Was              | Now            | Freed for                             |
 | ------------------------- | ---------------- | -------------- | ------------------------------------- |
 | Focus Active Tab          | `Opt+Cmd+F`      | `Opt+Cmd+Up`   | Search Messages (All Agent Tabs)      |
-| Move Session to Group     | `Cmd+Shift+M`    | `Opt+Cmd+M`    | Open Memory Viewer                    |
+| Move Agent to Group       | `Cmd+Shift+M`    | `Opt+Cmd+M`    | Open Memory Viewer                    |
 | Auto Run Expanded Preview | `Cmd+Shift+E`    | `Cmd+Shift+3`  | Edit Last Queued Message              |
 | Next Unread / Draft Tab   | `Cmd+Shift+Down` | `Opt+Cmd+Down` | Reserved by the OS (select-to-bottom) |
 

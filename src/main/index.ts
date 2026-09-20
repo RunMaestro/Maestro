@@ -21,7 +21,6 @@ import { readFile } from 'fs/promises';
 // Sentry is imported dynamically below to avoid module-load-time access to electron.app
 // which causes "Cannot read properties of undefined (reading 'getAppPath')" errors
 import { ProcessManager } from './process-manager';
-import { clearAllFailoverOverlays } from './process-manager/failover-overlay';
 import { WebServer } from './web-server';
 import { AgentDetector } from './agents';
 import { createAgentConfigLookup } from './agents/agent-config-lookup';
@@ -97,7 +96,7 @@ import {
 	type OpenedConsentWindow,
 } from './plugins/consent-window';
 import { configureCueTelemetry } from './cue/cue-telemetry';
-import { executeCuePrompt, recordCueHistoryEntry, stopCueRun } from './cue/cue-executor';
+import { executeCuePrompt, stopCueRun } from './cue/cue-executor';
 import { executeCueShell, stopCueShellRun } from './cue/cue-shell-executor';
 import { executeCueCli, stopCueCliRun } from './cue/cue-cli-executor';
 import { executeCueNotify } from './cue/cue-notify-executor';
@@ -110,6 +109,9 @@ import { tunnelManager } from './tunnel-manager';
 import { powerManager } from './power-manager';
 import { getHistoryManager } from './history-manager';
 import { initDispatchCallbacks } from './dispatch-callbacks';
+import { MAX_ENTRIES_PER_SESSION } from '../shared/history';
+import { DEFAULT_CUE_HISTORY_RETENTION_DAYS } from '../shared/cue/retention';
+import { resolveEncoreFeatures } from '../shared/encoreFeatureDefaults';
 import {
 	initializeStores,
 	getEarlySettings,
@@ -184,6 +186,7 @@ import { startAgentRunStoreWatcher } from './agent-run/store-watcher';
 import { setupAgentRunRecovery } from './agent-run/setup-recovery';
 import { createTimeZoneWatcher } from './utils/timezone-watcher';
 import { noteSystemSuspend, noteSystemResume } from './utils/sleep-tracker';
+import { clearGhCache } from './utils/cliDetection';
 import { WakaTimeManager } from './wakatime-manager';
 import { setWakaTimeManager } from './wakatime-instance';
 import { MaestroCliManager } from './maestro-cli-manager';
@@ -193,6 +196,7 @@ import {
 } from './agents/claude-interactive-replay';
 import { sampleUsage as sampleClaudeUsage } from './agents/claude-usage-sampler';
 import { setSnapshot as setClaudeUsageSnapshot } from './stores/claudeUsageStore';
+import { rememberQuotaAccounts } from './stores/quotaAccountsStore';
 import { getMaestroPBinPath, runStartupUsageSampling } from './agents/claude-usage-startup';
 import { UsageRefreshScheduler } from './agents/usage-refresh-scheduler';
 import type { ProcessConfig as ProcessSpawnConfig } from './process-manager/types';
@@ -311,6 +315,13 @@ if (disableGpuAcceleration) {
 // This creates a unique identifier per Maestro installation for telemetry differentiation
 const store = getSettingsStore();
 let installationId = store.get('installationId');
+// An installationId already on disk means this settings store existed before
+// this boot, i.e. the app has launched before. Record that once, permanently -
+// it is how the renderer tells a returning user who deleted every agent from a
+// genuinely new install (sessions.length alone reads both as "new").
+if (installationId && !store.get('hasPriorInstallation')) {
+	store.set('hasPriorInstallation', true);
+}
 if (!installationId) {
 	installationId = crypto.randomUUID();
 	store.set('installationId', installationId);
@@ -495,6 +506,11 @@ const settingsWatcher = createSettingsWatcher({
 		if (keepDisplayAwake !== powerManager.isKeepingDisplayAwake()) {
 			powerManager.setKeepDisplayAwake(keepDisplayAwake);
 		}
+		// A CLI or hand write can repoint ghPath without going through
+		// settings:set, which is where the cache is otherwise invalidated. The
+		// clear is unconditional because the previous value is not available
+		// here, and the only cost of an unnecessary one is a single `which`.
+		clearGhCache();
 	},
 });
 
@@ -675,14 +691,8 @@ function createWindow(options?: { sessionIds?: string[]; bounds?: Partial<Shared
 	// Without this, the new renderer restores sessions with pid:0 and spawns fresh
 	// PTYs, but only the *active* tab's old PTY gets killed (via spawn-before-kill).
 	// Non-active tabs' orphaned PTYs survive indefinitely, leaking PTY file descriptors.
-	//
-	// Also drop all Provider Failover overlays here. They live only in main-process
-	// memory; the renderer's own failoverStore resets on reload, but without this,
-	// main keeps routing spawns to whatever backup endpoint was pinned before the
-	// crash, with nothing in the reloaded UI to show it.
 	mainWindow.webContents.on('render-process-gone', () => {
 		processManager?.killAll();
-		clearAllFailoverOverlays();
 	});
 }
 
@@ -937,10 +947,12 @@ app
 				const snapshot = await sampleClaudeUsage({
 					binPath,
 					configDir: configDirKey,
-					cwd: app.getPath('home'),
 				});
 				if (snapshot) {
 					setClaudeUsageSnapshot(snapshot);
+					// An account that just hit its limit is the one the user moves
+					// every agent off; remember it so the dashboard keeps its row.
+					rememberQuotaAccounts('claude-code', [snapshot.configDirKey]);
 				}
 			},
 			updateSessionInteractive: (sessionId, update) => {
@@ -1263,8 +1275,10 @@ app
 						mainWindow,
 						onLog: notifyLog,
 					});
-					const notifyHistory = recordCueHistoryEntry(notifyResult, sessionInfo);
-					void historyManager.addEntry(storedSession.id, projectRoot, notifyHistory);
+					// No History write here: Cue runs are served to History from
+					// `cue_events` (see `getCueHistoryEntries`), so the agent's JSONL
+					// file keeps only USER/AUTO entries and CUE rows can no longer
+					// evict them.
 					return notifyResult;
 				}
 
@@ -1333,10 +1347,8 @@ app
 									// point at the wrong daemon and `maestro-cli.js` may not
 									// exist on the remote host.
 								});
-					const cmdHistory = recordCueHistoryEntry(cmdResult, sessionInfo);
-					// Fire-and-forget: this is on the Cue execution path; the
-					// caller doesn't need to wait for the disk write to settle.
-					void historyManager.addEntry(storedSession.id, projectRoot, cmdHistory);
+					// History reads Cue runs from `cue_events`, not the JSONL file -
+					// see the note on the notify path above.
 					return cmdResult;
 				}
 
@@ -1414,15 +1426,8 @@ app
 						: undefined
 				);
 
-				const historyEntry = recordCueHistoryEntry(result, {
-					id: storedSession.id,
-					name: storedSession.name,
-					toolType: storedSession.toolType,
-					cwd: projectRoot,
-					projectRoot,
-					autoRunFolderPath: storedSession.autoRunFolderPath,
-				});
-				void historyManager.addEntry(storedSession.id, projectRoot, historyEntry);
+				// History reads Cue runs from `cue_events`, not the JSONL file -
+				// see the note on the notify path above.
 				return result;
 			},
 			onStopCueRun: (runId) => stopCueRun(runId) || stopCueShellRun(runId) || stopCueCliRun(runId),
@@ -1438,10 +1443,6 @@ app
 			// Phase 01 - gate cue_events stats lineage writes on the
 			// `encoreFeatures.usageStats` flag. Read on every record so toggling
 			// the Encore flag at runtime takes effect without an app restart.
-			getUsageStatsEnabled: () => {
-				const ef = store.get('encoreFeatures', {}) as Record<string, boolean>;
-				return ef.usageStats === true;
-			},
 			// Surface `cue.fired` to subscribed plugins (events:subscribe). Type
 			// only - NEVER prompt text. Null-safe; no-op when plugins are disabled.
 			onTriggerFired: (cueType) =>
@@ -1453,6 +1454,12 @@ app
 			// Surface Cue run lifecycle (`cue.runStarted` / `cue.runFinished`) to
 			// subscribed plugins (events:subscribe). Metadata-only; null-safe.
 			emitPluginEvent: (event) => pluginEventBus?.emit(event),
+			getUsageStatsEnabled: () => resolveEncoreFeatures(store.get('encoreFeatures')).usageStats,
+			// How far back the engine-start prune keeps cue_events. Read on every
+			// start (not captured once) so changing the setting takes effect the
+			// next time Cue is enabled, without an app restart.
+			getCueHistoryRetentionDays: () =>
+				store.get('cueHistoryRetentionDays', DEFAULT_CUE_HISTORY_RETENTION_DAYS),
 		});
 
 		// Configure Cue telemetry submitter. Reads installationId / encore flags
@@ -1464,8 +1471,8 @@ app
 			getAppVersion: () => app.getVersion(),
 			getPlatform: () => process.platform,
 			isEncoreEnabled: () => {
-				const ef = store.get('encoreFeatures', {}) as Record<string, boolean>;
-				return ef.maestroCue === true && ef.usageStats === true;
+				const ef = resolveEncoreFeatures(store.get('encoreFeatures'));
+				return ef.maestroCue && ef.usageStats;
 			},
 		});
 
@@ -2754,6 +2761,11 @@ app
 		// Initialize history manager (handles migration from legacy format if needed)
 		logger.info('Initializing history manager', 'Startup');
 		const historyManager = getHistoryManager();
+		// Before initialize(): every writer that passes no explicit cap - and the
+		// legacy-format migration, which never does - must trim to the user's
+		// maxLogBuffer. A writer using the lower built-in fallback silently
+		// truncates history the user raised the cap to keep.
+		historyManager.setMaxEntriesResolver(() => store.get('maxLogBuffer', MAX_ENTRIES_PER_SESSION));
 		try {
 			await historyManager.initialize();
 			logger.info('History manager initialized', 'Startup');
@@ -3026,6 +3038,12 @@ app
 					win.webContents.send('app:systemResume', { sleptMs });
 				}
 			}
+			// A laptop that woke up on a different network is serving the web
+			// interface on a new LAN address. Re-detect it now so the URL and QR
+			// code are right before the user looks, instead of up to one poll
+			// interval later.
+			void webServer?.recheckLocalAddress();
+
 			// Apply any timezone change BEFORE reconciling: a laptop that flew
 			// across zones while asleep must measure the sleep gap and its missed
 			// local-time slots in the zone it woke up in, not the one it left.

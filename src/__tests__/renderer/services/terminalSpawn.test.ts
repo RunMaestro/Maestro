@@ -159,3 +159,59 @@ describe('spawnPtyForTab', () => {
 		expect(isSpawnInFlight('sess-1', 'tab-1')).toBe(false);
 	});
 });
+
+/**
+ * The PTY is born 80x24 unless the caller says otherwise
+ * (`ProcessManager.spawnTerminalTab`). A program that asks the kernel for the
+ * window size - nano, vim, less, top - then paints into that box no matter how
+ * large the pane is, while ordinary command output still fills it because xterm
+ * does the wrapping itself. So a caller that CAN measure its terminal has to
+ * pass the measurement down, and a startup command makes it load-bearing: it is
+ * written the instant the pid lands, before any resize could correct the size.
+ */
+describe('spawnPtyForTab size', () => {
+	it('spawns at the size the caller measured', async () => {
+		await spawnPtyForTab({
+			session: session(),
+			tab: tab(),
+			cols: 170,
+			rows: 59,
+			onPid,
+			onSpawnFailure,
+		});
+
+		expect(spawnTerminalTab.mock.calls[0][0]).toMatchObject({ cols: 170, rows: 59 });
+	});
+
+	it('omits the size when the caller has no terminal to measure', async () => {
+		await spawnPtyForTab({ session: session(), tab: tab(), onPid, onSpawnFailure });
+
+		const config = spawnTerminalTab.mock.calls[0][0];
+		expect(config.cols).toBeUndefined();
+		expect(config.rows).toBeUndefined();
+	});
+
+	it('sizes the shell before a startup command can run in it', async () => {
+		const order: string[] = [];
+		spawnTerminalTab.mockImplementation(() => {
+			order.push('spawn');
+			return Promise.resolve({ success: true, pid: 7 });
+		});
+		write.mockImplementation(() => {
+			order.push('write');
+			return Promise.resolve(undefined);
+		});
+
+		await spawnPtyForTab({
+			session: session(),
+			tab: tab({ startupCommand: 'nano notes.md' }),
+			cols: 170,
+			rows: 59,
+			onPid,
+			onSpawnFailure,
+		});
+
+		expect(order).toEqual(['spawn', 'write']);
+		expect(spawnTerminalTab.mock.calls[0][0]).toMatchObject({ cols: 170, rows: 59 });
+	});
+});

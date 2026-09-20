@@ -12,12 +12,37 @@ import type { ProfileMetadata } from './types';
 
 const LOG_CONTEXT = '[Profiling]';
 
+/**
+ * One line on whether this capture's data is whole.
+ *
+ * Stated at the top of the README because it changes how every other number in
+ * the bundle should be read: a truncated trace answers questions about the
+ * fragment that survived, not about the session, and there is no way to tell
+ * from the numbers themselves.
+ */
+function completenessLine(meta: ProfileMetadata): string {
+	const peak = `${Math.round(meta.peakBufferPercent * 100)}%`;
+	if (meta.bufferExhausted) {
+		return (
+			`INCOMPLETE: the trace buffer reached ${peak} of ${meta.traceBufferSizeKb / 1000}MB per ` +
+			'process, so events were dropped and this trace covers less time than the recording ran ' +
+			'for. Treat totals as lower bounds.'
+		);
+	}
+	if (meta.autoStopped) {
+		return `Complete: ended automatically at ${peak} buffer usage, before any events were dropped.`;
+	}
+	return `Complete: peak trace-buffer usage ${peak}, well short of dropping events.`;
+}
+
 function readme(meta: ProfileMetadata): string {
 	return [
 		'# Maestro Performance Profile bundle',
 		'',
 		`Captured ${meta.capturedAt} from Maestro v${meta.appVersion} (${meta.platform} ${meta.arch}).`,
 		`Recording ran for ${(meta.profilingDurationMs / 1000).toFixed(1)}s.`,
+		'',
+		completenessLine(meta),
 		'',
 		'## Contents',
 		'',

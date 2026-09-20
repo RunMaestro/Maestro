@@ -76,6 +76,30 @@ However, if you need a **fixed port** (e.g., for firewall rules, reverse proxies
 - Consider additional authentication at the network level
   </Warning>
 
+## Requiring a Login
+
+By default, anyone who has the URL is in: the token in the URL is the whole credential. When more than one person drives the same Maestro, or the URL travels further than you would like, turn on **Web Login**:
+
+1. Open **Settings**, then **Extensions**, and enable the **Web Login** tile
+2. On the same tile, add an account for each person: a username, an optional display name, and a password
+3. The next time a browser opens the web interface it lands on a login page styled in your active theme. Each person signs in once per browser and stays signed in for 30 days
+
+What login changes:
+
+- **Attribution.** Every message sent from a signed-in browser is credited to that person: a pill on the History entry, a **sender** filter in the History panel, and a `user_name` column in the usage database. Turns typed at the desktop show no pill.
+- **Sign out** is in the Left Bar hamburger menu on the web interface.
+- **Focus stays yours.** With several people connected, each browser keeps its own active agent and tab. Switching agents at the desktop or on another phone never moves your view. Streams, thinking indicators and History updates still arrive everywhere.
+
+What login does not change:
+
+- The URL token is still required. Login is a second factor on top of it, not a replacement.
+- `maestro-cli` on the Maestro machine is never asked to log in. Every browser is, including one opened on the Maestro machine itself.
+- There are no roles. Every account is an equal operator; the desktop is the administrator. A browser can never add, remove, or reset an account.
+
+<Warning>
+On your own network the web interface is served over plain HTTP, so a password typed on the LAN travels in the clear. Use the Remote Control tunnel, which is HTTPS end to end, or a network you trust. Enabling Web Login with no accounts locks every browser out until you add one.
+</Warning>
+
 ## Connection Handling
 
 The browser talks to the desktop app over a WebSocket. If the connection drops (the phone sleeps, you switch apps, the network changes), the page reconnects and then reloads itself so it picks up everything that happened while it was away; the desktop app is the single source of truth. Anything you typed during the gap but had not yet sent needs to be sent again.

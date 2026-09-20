@@ -194,6 +194,94 @@ describe('hint scopes', () => {
 	});
 });
 
+describe('reason attribute', () => {
+	it('parses the justification alongside the levels', () => {
+		const doc = [
+			'<!-- MAESTRO:MODEL tier="high" effort="high" reason="Lock ordering across three services. A wrong ordering corrupts data." -->',
+			'- [ ] Design',
+		].join('\n');
+		expect(findActiveModelHint(doc)).toMatchObject({
+			tier: 'high',
+			effort: 'high',
+			reason: 'Lock ordering across three services. A wrong ordering corrupts data.',
+		});
+	});
+
+	it('never lets a reason change what the task runs on', () => {
+		// The whole safety argument for the attribute: it is documentation, so it
+		// must not reach model resolution even when it is the only thing present.
+		const withReason = findActiveModelHint(
+			'<!-- MAESTRO:MODEL tier="low" reason="Mechanical work." -->\n- [ ] x'
+		);
+		const without = findActiveModelHint('<!-- MAESTRO:MODEL tier="low" -->\n- [ ] x');
+		expect(resolveTurnSettings('claude-code', withReason)).toEqual(
+			resolveTurnSettings('claude-code', without)
+		);
+	});
+
+	it('does not split a document-mode segment on differing reasons', () => {
+		// Segmenting compares resolved model/effort. If prose reached that
+		// comparison, editing a comment would cost an extra dispatch.
+		const doc = [
+			'- [ ] a <!-- MAESTRO:MODEL tier="low" reason="Because of one thing." -->',
+			'- [ ] b <!-- MAESTRO:MODEL tier="low" reason="Because of something else." -->',
+		].join('\n');
+		expect(countTasksUnderActiveHint(doc, 'claude-code')).toEqual({ count: 2, total: 2 });
+	});
+
+	it('keeps the levels when an inner double quote truncates the reason', () => {
+		// Degrading to a short sentence is fine; degrading to the wrong model is
+		// not. tier and effort are matched independently of the prose.
+		const hint = findActiveModelHint(
+			'<!-- MAESTRO:MODEL tier="high" effort="high" reason="Uses the "fast" path." -->\n- [ ] x'
+		);
+		expect(hint).toMatchObject({ tier: 'high', effort: 'high', reason: 'Uses the' });
+	});
+
+	it('collapses newlines so a wrapped marker reads as one sentence', () => {
+		const hint = findActiveModelHint(
+			'<!-- MAESTRO:MODEL tier="low" reason="First line.   Second line." -->\n- [ ] x'
+		);
+		expect(hint?.reason).toBe('First line. Second line.');
+	});
+
+	it('truncates a reason too long to peek at', () => {
+		const hint = findActiveModelHint(
+			`<!-- MAESTRO:MODEL tier="low" reason="${'x'.repeat(600)}" -->\n- [ ] x`
+		);
+		expect(hint?.reason).toHaveLength(400);
+		expect(hint?.reason?.endsWith('…')).toBe(true);
+	});
+
+	it('omits the field entirely when the attribute is absent or empty', () => {
+		expect(
+			findActiveModelHint('<!-- MAESTRO:MODEL tier="low" -->\n- [ ] x')?.reason
+		).toBeUndefined();
+		expect(
+			findActiveModelHint('<!-- MAESTRO:MODEL tier="low" reason="  " -->\n- [ ] x')?.reason
+		).toBeUndefined();
+	});
+
+	it('lets the narrower scope explain itself when the two merge', () => {
+		const doc = [
+			'<!-- MAESTRO:MODEL tier="low" reason="Mostly mechanical phase." -->',
+			'- [ ] Design <!-- MAESTRO:MODEL tier="high" reason="This one needs judgment." -->',
+		].join('\n');
+		expect(findActiveModelHint(doc)).toMatchObject({
+			tier: 'high',
+			reason: 'This one needs judgment.',
+		});
+	});
+
+	it('inherits the document reason when the task marker gives none', () => {
+		const doc = [
+			'<!-- MAESTRO:MODEL tier="low" reason="Mostly mechanical phase." -->',
+			'- [ ] Design <!-- MAESTRO:MODEL effort="high" -->',
+		].join('\n');
+		expect(findActiveModelHint(doc)?.reason).toBe('Mostly mechanical phase.');
+	});
+});
+
 describe('findAllModelHints', () => {
 	it('collects every marker for authoring-time validation', () => {
 		const doc = [

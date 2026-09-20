@@ -234,7 +234,7 @@ export const SessionStats = memo(function SessionStats({
 			</h3>
 
 			{/* Summary Cards */}
-			<div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+			<div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 mb-6">
 				<StatCard
 					label="Total Agents"
 					value={stats.total}

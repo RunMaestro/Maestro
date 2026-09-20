@@ -25,6 +25,7 @@ import {
 	getBasename,
 	joinPath,
 	formatSshTarget,
+	formatTimestamp,
 } from '../../shared/formatters';
 
 describe('shared/formatters', () => {
@@ -433,6 +434,73 @@ describe('shared/formatters', () => {
 
 		it('should not add a separator below 1000', () => {
 			expect(formatCost(999.99)).toBe('$999.99');
+		});
+	});
+
+	// ==========================================================================
+	// formatTimestamp tests
+	// ==========================================================================
+	// These assert against `toLocale*String` rather than literal strings on
+	// purpose. formatTimestamp is backed by cached `Intl.DateTimeFormat`
+	// singletons (constructing one per call cost 38% of renderer JS in a field
+	// trace), and the whole contract of that cache is that output stays
+	// byte-identical to the `toLocale*String` calls it replaced - in whatever
+	// locale and timezone the test machine happens to run.
+	describe('formatTimestamp', () => {
+		const sameDayMorning = new Date();
+		sameDayMorning.setHours(9, 5, 0, 0);
+		const otherDay = new Date('2023-03-05T14:30:45.123Z');
+
+		it("matches toLocaleTimeString for the 'time' style", () => {
+			const ts = otherDay.getTime();
+			expect(formatTimestamp(ts, 'time')).toBe(
+				otherDay.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+			);
+		});
+
+		it("matches toLocaleString for the 'datetime' style", () => {
+			const ts = otherDay.getTime();
+			expect(formatTimestamp(ts, 'datetime')).toBe(
+				otherDay.toLocaleString([], {
+					month: 'short',
+					day: 'numeric',
+					hour: 'numeric',
+					minute: '2-digit',
+				})
+			);
+		});
+
+		it("matches a bare toLocaleString for the 'full' style", () => {
+			const ts = otherDay.getTime();
+			expect(formatTimestamp(ts, 'full')).toBe(otherDay.toLocaleString());
+		});
+
+		it("returns time only for today in the 'smart' style", () => {
+			const ts = sameDayMorning.getTime();
+			expect(formatTimestamp(ts)).toBe(
+				sameDayMorning.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+			);
+		});
+
+		it("returns date and time for another day in the 'smart' style", () => {
+			const ts = otherDay.getTime();
+			expect(formatTimestamp(ts)).toBe(
+				otherDay.toLocaleDateString([], { month: 'short', day: 'numeric' }) +
+					' ' +
+					otherDay.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+			);
+		});
+
+		it('accepts an ISO string as well as a numeric timestamp', () => {
+			expect(formatTimestamp(otherDay.toISOString(), 'full')).toBe(
+				formatTimestamp(otherDay.getTime(), 'full')
+			);
+		});
+
+		it('returns a stable result across repeated calls (cached formatters)', () => {
+			const ts = otherDay.getTime();
+			expect(formatTimestamp(ts, 'datetime')).toBe(formatTimestamp(ts, 'datetime'));
+			expect(formatTimestamp(ts, 'time')).toBe(formatTimestamp(ts, 'time'));
 		});
 	});
 

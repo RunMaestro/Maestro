@@ -56,19 +56,21 @@ import { NoFolderState, EmptyFolderState } from './AutoRunEmptyStates';
 import { useBatchStore } from '../../stores/batchStore';
 import { useThoughtStreamStore, selectActivityCount } from '../../stores/thoughtStreamStore';
 import { AutoRunAttachmentsPanel } from './AutoRunAttachmentsPanel';
-import { useTemplateAutocomplete, useAutoRunUndo, useAutoRunImageHandling } from '../../hooks';
+import { useAutoRunUndo, useAutoRunImageHandling } from '../../hooks';
+import { useEditorTemplateAutocomplete } from '../../hooks/input/useEditorTemplateAutocomplete';
+import { MarkdownEditor, type MarkdownEditorHandle } from '../FilePreview/markdownEditor';
 import { TemplateAutocompleteDropdown } from '../TemplateAutocompleteDropdown';
 import type { AutoRunProps, AutoRunHandle } from './types';
-import { TextareaLineNumbers, lineNumberGutterMetrics } from '../ui/TextareaLineNumbers';
 import { FontScaleControl } from '../ui/FontScaleControl';
 import { useFontScale } from '../../hooks/ui/useFontScale';
+import { useSurfaceTypography } from '../../hooks/ui/useSurfaceTypography';
 import { findHumanOnlyTasks } from '../../hooks/batch/batchUtils';
 import { toggleTaskCheckboxAtLine } from '../../utils/markdownTasks';
+import { useAutoRunErrorPaused } from '../../hooks/batch/useAutoRunPause';
 import { useAutoRunContentSync } from '../../hooks/batch/useAutoRunContentSync';
 import { useAutoRunSearch } from '../../hooks/batch/useAutoRunSearch';
 import { useAutoRunKeyboard } from '../../hooks/batch/useAutoRunKeyboard';
 import { useAutoRunMarkdown } from '../../hooks/batch/useAutoRunMarkdown';
-import { useSurfaceTypography } from '../../hooks/ui/useSurfaceTypography';
 import { useAutoRunScrollSync } from '../../hooks/batch/useAutoRunScrollSync';
 import { Maximize2, Edit as EditIcon, Eye, Search, Brain } from 'lucide-react';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
@@ -133,15 +135,6 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 	},
 	ref
 ) {
-	// Only lock the editor when Auto Run is running WITHOUT a worktree (directly on main repo)
-	// AND only for documents that are part of the current Auto Run
-	// Documents not in the Auto Run can still be edited
-	const isLocked =
-		(batchRunState?.isRunning &&
-			!batchRunState?.worktreeActive &&
-			selectedFile !== null &&
-			batchRunState?.lockedDocuments?.includes(selectedFile)) ||
-		false;
 	const isAgentBusy = sessionState === 'busy' || sessionState === 'connecting';
 	const isAutoRunActive = batchRunState?.isRunning || false;
 	// Mirrored from another Maestro window - visible, but not steerable here.
@@ -166,12 +159,25 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 	const showOpenThoughtStream =
 		!isAutoRunActive && bufferedActivity > 0 && thoughtStreamSessionId !== sessionId;
 	// Error state (Phase 5.10)
-	// Subscribe directly to the Zustand store to bypass the multi-hop prop chain
+	// Subscribes to the Zustand store to bypass the multi-hop prop chain
 	// (store → useBatchProcessor → useBatchHandlers → App → RightPanel → AutoRun)
 	// which drops errorPaused updates via updateBatchStateAndBroadcast/UPDATE_PROGRESS.
-	const isErrorPaused = useBatchStore(
-		useCallback((s) => s.batchRunStates[sessionId]?.errorPaused ?? false, [sessionId])
-	);
+	const isErrorPaused = useAutoRunErrorPaused(sessionId);
+	// The selected document belongs to a run that is up: running WITHOUT a
+	// worktree (directly on the main repo) and listed in this run's locked set.
+	// Documents outside the run are never claimed by it.
+	const isRunDocument =
+		(batchRunState?.isRunning &&
+			!batchRunState?.worktreeActive &&
+			selectedFile !== null &&
+			batchRunState?.lockedDocuments?.includes(selectedFile)) ||
+		false;
+	// Editing is blocked only while the run is actually DRIVING that document.
+	// A paused run hands it back: an agent error and a MAESTRO:HITL review gate
+	// both park the engine on `errorPaused` until the user clicks Resume, and in
+	// both cases editing is the point - the user is there to tick a box or fix
+	// the step that stalled. Locking them out makes the gate unanswerable here.
+	const isLocked = isRunDocument && !isErrorPaused;
 	const batchError = useBatchStore(
 		useCallback((s) => s.batchRunStates[sessionId]?.error, [sessionId])
 	);
@@ -228,7 +234,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 	const modeBeforeAutoRunRef = useRef<'edit' | 'preview' | null>(null);
 	const [helpModalOpen, setHelpModalOpen] = useState(false);
 	const [resetTasksModalOpen, setResetTasksModalOpen] = useState(false);
-	const textareaRef = useRef<HTMLTextAreaElement>(null);
+	const editorRef = useRef<MarkdownEditorHandle>(null);
 	const previewRef = useRef<HTMLDivElement>(null);
 	const documentSelectorRef = useRef<AutoRunDocumentSelectorHandle>(null);
 
@@ -237,23 +243,14 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 	const handleJumpToLine = useCallback(
 		(line: number) => {
 			setMode('edit');
-			const offset = localContent
-				.split('\n')
-				.slice(0, line)
-				.reduce((sum, text) => sum + text.length + 1, 0);
-			// Defer so the textarea exists when we came from preview mode.
+			// Defer so the editor exists when we came from preview mode.
+			// CodeMirror lines are 1-based; the caller's line is 0-indexed.
 			requestAnimationFrame(() => {
-				const textarea = textareaRef.current;
-				if (!textarea) return;
-				textarea.focus();
-				textarea.setSelectionRange(offset, offset);
-				// setSelectionRange does not scroll, so place the line a third of
-				// the way down rather than leaving the caret offscreen.
-				const lineHeight = parseFloat(getComputedStyle(textarea).lineHeight) || 20;
-				textarea.scrollTop = Math.max(0, line * lineHeight - textarea.clientHeight / 3);
+				editorRef.current?.focus();
+				editorRef.current?.scrollToLine(line + 1);
 			});
 		},
-		[localContent, setMode]
+		[setMode]
 	);
 
 	// Bionify reading mode (global setting; disabled while search highlights are active)
@@ -280,7 +277,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 	} = useAutoRunSearch({
 		localContent,
 		mode,
-		textareaRef,
+		editorRef,
 		previewRef,
 	});
 
@@ -292,7 +289,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 	const { switchMode, toggleMode, handlePreviewScroll } = useAutoRunScrollSync({
 		mode,
 		setMode,
-		textareaRef,
+		editorRef,
 		previewRef,
 		localContent,
 		searchOpen,
@@ -311,9 +308,8 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		selectVariable,
 		closeAutocomplete: _closeAutocomplete,
 		autocompleteRef,
-	} = useTemplateAutocomplete({
-		textareaRef,
-		value: localContent,
+	} = useEditorTemplateAutocomplete({
+		editorRef,
 		onChange: setLocalContent,
 	});
 
@@ -329,7 +325,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		selectedFile,
 		localContent,
 		setLocalContent,
-		textareaRef,
+		editorRef,
 	});
 
 	// Reset undo history when document changes (session or file change)
@@ -462,7 +458,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		setLocalContent,
 		handleContentChange,
 		isLocked,
-		textareaRef,
+		editorRef,
 		pushUndoState,
 		lastUndoSnapshotRef,
 		sshRemoteId,
@@ -494,8 +490,8 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		() => ({
 			focus: () => {
 				// Focus the appropriate element based on current mode
-				if (mode === 'edit' && textareaRef.current) {
-					textareaRef.current.focus();
+				if (mode === 'edit' && editorRef.current) {
+					editorRef.current.focus();
 				} else if (mode === 'preview' && previewRef.current) {
 					previewRef.current.focus();
 				}
@@ -524,9 +520,12 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		]
 	);
 
-	// Auto-switch to preview mode when auto-run starts, restore when it ends
+	// Auto-switch to preview mode when auto-run starts, restore when it ends.
+	// Keyed on `isRunDocument`, not `isLocked`: a pause unlocks editing but does
+	// not end the run, and flipping the pane back and forth on every HITL gate
+	// would yank the user out of the view they were watching.
 	useEffect(() => {
-		if (isLocked) {
+		if (isRunDocument) {
 			// Auto-run started: save current mode and switch to preview
 			modeBeforeAutoRunRef.current = mode;
 			if (mode !== 'preview') {
@@ -537,15 +536,15 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 			setMode(modeBeforeAutoRunRef.current);
 			modeBeforeAutoRunRef.current = null;
 		}
-	}, [isLocked]);
+	}, [isRunDocument]);
 
 	// Auto-focus the active element after mode change
 	useEffect(() => {
 		// Skip focus when auto-follow is driving changes during a batch run
 		if (autoFollowEnabled && isRunningRef.current) return;
 
-		if (mode === 'edit' && textareaRef.current) {
-			textareaRef.current.focus();
+		if (mode === 'edit' && editorRef.current) {
+			editorRef.current.focus();
 		} else if (mode === 'preview' && previewRef.current) {
 			previewRef.current.focus();
 		}
@@ -567,8 +566,8 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 
 			// Focus on document change
 			requestAnimationFrame(() => {
-				if (mode === 'edit' && textareaRef.current) {
-					textareaRef.current.focus();
+				if (mode === 'edit' && editorRef.current) {
+					editorRef.current.focus();
 				} else if (mode === 'preview' && previewRef.current) {
 					previewRef.current.focus();
 				}
@@ -622,8 +621,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 	// Keyboard handler for textarea (Tab, undo/redo, save, checkbox, list continuation)
 	const handleKeyDown = useAutoRunKeyboard({
 		localContent,
-		setLocalContent,
-		textareaRef,
+		editorRef,
 		pushUndoState,
 		lastUndoSnapshotRef,
 		handleUndo,
@@ -642,16 +640,16 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 	// restores the size that mode was left at.
 	const previewFontScale = useFontScale('autoRun.previewFontScale');
 	const editFontScale = useFontScale('autoRun.editFontScale');
+	// The panel reads and edits a Markdown document, so it is the File Preview /
+	// File Editor surfaces - not a font size of its own. The zoom controls above
+	// multiply on top, the same two-knob split FilePreview uses.
+	const previewTypography = useSurfaceTypography('filePreview');
+	const editorTypography = useSurfaceTypography('fileEditor');
 	const activeFontScale = mode === 'edit' ? editFontScale : previewFontScale;
 
 	// Disable Bionify while search is active so search highlights remain visible
 	const hasActivePreviewSearch = searchOpen && searchQuery.trim().length > 0;
 	const effectivePreviewBionifyReadingMode = bionifyReadingMode && !hasActivePreviewSearch;
-
-	// Auto Run is a markdown document viewer/editor, so it rides the same two
-	// surfaces the File Preview tab does rather than carrying fonts of its own.
-	const previewTypography = useSurfaceTypography('filePreview');
-	const editorTypography = useSurfaceTypography('fileEditor');
 
 	// Markdown rendering: prose styles, task counts, token count, remark plugins, components
 	const { proseStyles, taskCounts, tokenCount, remarkPlugins, markdownComponents } =
@@ -833,54 +831,49 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 							onOpenSetup={onOpenSetup}
 						/>
 					) : mode === 'edit' ? (
-						<div className="relative w-full h-full">
-							{showLineNumbers && (
-								<TextareaLineNumbers
-									textareaRef={textareaRef}
-									value={localContent}
-									theme={theme}
-									remeasureKey={editFontScale.fontScale}
-								/>
-							)}
-							<textarea
-								ref={textareaRef}
+						// Markdown source editor. Same CodeMirror editor the file
+						// preview uses, so a document reads the same - syntax colors,
+						// wrap-aware line numbers, painted search hits - whether it is
+						// open in a file tab or in this panel.
+						// The border lives on the wrapper rather than the editor: CM6 owns
+						// its own scroller, and preview mode draws the same frame, so the
+						// panel keeps one outline across the Cmd+E flip. While a batch run
+						// holds the document the frame turns warning-colored and the box
+						// tints, which is the only signal that typing will be refused.
+						<div
+							className="relative w-full h-full border rounded overflow-hidden"
+							style={{
+								borderColor: isLocked ? theme.colors.warning : theme.colors.border,
+								backgroundColor: isLocked ? theme.colors.bgActivity + '30' : 'transparent',
+							}}
+						>
+							<MarkdownEditor
+								ref={editorRef}
 								value={localContent}
-								onChange={(e) => {
-									if (!isLocked) {
-										// Schedule undo snapshot with current content before the change
-										const previousContent = localContent;
-										const previousCursor = textareaRef.current?.selectionStart || 0;
-										// Use autocomplete handler to detect "{{" triggers
-										handleAutocompleteChange(e);
+								onChange={(next) => {
+									if (isLocked) return;
+									const previousContent = localContent;
+									const previousCursor = editorRef.current?.getCaret() ?? 0;
+									// Autocomplete handler both stores the value and detects "{{"
+									handleAutocompleteChange(next);
+									// An explicit edit (tab, list continuation, checkbox) has already
+									// pushed its own undo entry and stamped the snapshot ref with the
+									// result, so scheduling a second one would double it up.
+									if (next !== lastUndoSnapshotRef.current) {
 										scheduleUndoSnapshot(previousContent, previousCursor);
 									}
 								}}
-								onFocus={() => {
-									/* no-op, manual save only */
-								}}
 								onKeyDown={!isLocked ? handleKeyDown : undefined}
 								onPaste={handlePaste}
+								language="markdown"
 								placeholder="Capture notes, images, and tasks in Markdown. (type {{ for variables)"
+								theme={theme}
 								readOnly={isLocked}
-								className={`w-full h-full border rounded p-4 bg-transparent outline-none resize-none ${isLocked ? 'cursor-not-allowed opacity-70' : ''}`}
-								style={{
-									borderColor: isLocked ? theme.colors.warning : theme.colors.border,
-									color: theme.colors.textMain,
-									// Editing a markdown document, so it follows the File Editor
-									// surface - the same setting the file-tab editor uses. The
-									// line-number gutter copies these off the live element, so
-									// the two cannot drift apart.
-									fontFamily: editorTypography.fontFamily,
-									// The surface's own size, then the pane's zoom on top of it.
-									// The line height rides the font size so zooming in doesn't
-									// cram taller glyphs into the old 20px rows.
-									fontSize: `${editorTypography.fontSize * editFontScale.fontScale}px`,
-									backgroundColor: isLocked ? theme.colors.bgActivity + '30' : 'transparent',
-									lineHeight: 1.45,
-									...(showLineNumbers
-										? { paddingLeft: lineNumberGutterMetrics(localContent).textPaddingLeft }
-										: {}),
-								}}
+								showLineNumbers={showLineNumbers}
+								fontScale={editFontScale.fontScale}
+								fontFamily={editorTypography.fontFamily}
+								baseFontPx={editorTypography.fontSize}
+								className={isLocked ? 'opacity-70 cursor-not-allowed' : ''}
 							/>
 							{/* Template Variable Autocomplete Dropdown */}
 							<TemplateAutocompleteDropdown
@@ -924,9 +917,10 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 								// `prose-sm` pins an absolute rem size, so the explicit size
 								// here is what actually wins; everything inside is in `em` and
 								// follows, so the pane's zoom carries headings, code, and lists
-								// with it.
+								// with it. Rounded to a tenth of a px so a scaled size does not
+								// carry float noise into the style string.
 								fontFamily: previewTypography.fontFamily,
-								fontSize: `${previewTypography.fontSize * previewFontScale.fontScale}px`,
+								fontSize: `${Math.round(previewTypography.fontSize * previewFontScale.fontScale * 10) / 10}px`,
 							}}
 						>
 							<style>{proseStyles}</style>

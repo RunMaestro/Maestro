@@ -112,6 +112,7 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		}),
 		executeCommand: vi.fn().mockResolvedValue(true),
 		consultAgent: vi.fn().mockResolvedValue({ success: true, answer: 'Because HMAC.' }),
+		noteAgentDelegation: vi.fn(),
 		switchMode: vi.fn().mockResolvedValue(true),
 		selectSession: vi.fn().mockResolvedValue(true),
 		selectTab: vi.fn().mockResolvedValue(true),
@@ -176,6 +177,7 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		getGroups: vi.fn().mockReturnValue([]),
 		createGroup: vi.fn().mockResolvedValue({ id: 'group-1' }),
 		renameGroup: vi.fn().mockResolvedValue(true),
+		updateGroup: vi.fn().mockResolvedValue(true),
 		deleteGroup: vi.fn().mockResolvedValue(true),
 		moveSessionToGroup: vi.fn().mockResolvedValue(true),
 		createSession: vi.fn().mockResolvedValue({ sessionId: 'new-session-1' }),
@@ -309,6 +311,24 @@ describe('WebSocketMessageHandler', () => {
 	});
 
 	describe('Cross-Agent Ask (maestro-cli ask)', () => {
+		it('forwards the asking agent tab so the consult pill lands in that conversation', async () => {
+			handler.handleMessage(client, {
+				type: 'cross_agent_ask',
+				sessionId: 'session-1',
+				question: 'q',
+				fromSessionId: 'caller-1',
+				fromTabId: 'caller-tab',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.consultAgent).toHaveBeenCalledWith(
+					expect.objectContaining({ fromSessionId: 'caller-1', fromTabId: 'caller-tab' })
+				);
+			});
+			// An ask records its own pill in the renderer; the dispatch notice is not used.
+			expect(callbacks.noteAgentDelegation).not.toHaveBeenCalled();
+		});
+
 		it('consults the target and returns the answer without touching its open tab', async () => {
 			handler.handleMessage(client, {
 				type: 'cross_agent_ask',
@@ -420,6 +440,66 @@ describe('WebSocketMessageHandler', () => {
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
 			expect(response.type).toBe('command_result');
 			expect(response.success).toBe(true);
+		});
+
+		it('marks a delivered CLI dispatch in the calling agent transcript', async () => {
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'Take care of the advisory bug',
+				inputMode: 'ai',
+				tabId: 'target-tab',
+				fromSessionId: 'caller-1',
+				fromTabId: 'caller-tab',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.noteAgentDelegation).toHaveBeenCalledWith({
+					kind: 'dispatch',
+					fromSessionId: 'caller-1',
+					fromTabId: 'caller-tab',
+					targetSessionId: 'session-1',
+					targetTabId: 'target-tab',
+					prompt: 'Take care of the advisory bug',
+				});
+			});
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.success).toBe(true);
+		});
+
+		it('does not mark a dispatch the renderer rejected, or one with no caller', async () => {
+			(callbacks.executeCommand as any).mockResolvedValueOnce(false);
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'rejected',
+				inputMode: 'ai',
+				fromSessionId: 'caller-1',
+			});
+			await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalledTimes(1));
+
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'typed by a human',
+				inputMode: 'ai',
+			});
+			await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalledTimes(2));
+
+			expect(callbacks.noteAgentDelegation).not.toHaveBeenCalled();
+		});
+
+		it('does not mark an agent dispatching into its own conversation', async () => {
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'loop',
+				inputMode: 'ai',
+				fromSessionId: 'session-1',
+				fromTabId: 'tab-a',
+			});
+			await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+			expect(callbacks.noteAgentDelegation).not.toHaveBeenCalled();
 		});
 
 		it('should forward terminal command to desktop', async () => {
@@ -1014,6 +1094,28 @@ describe('WebSocketMessageHandler', () => {
 			expect(response.type).toBe('rename_tab_result');
 			expect(response.success).toBe(false);
 			expect(response.error).toBe('Tab not found: tab-1');
+		});
+
+		it('should not report a definitive rename result while desktop confirmation is unknown', async () => {
+			vi.mocked(callbacks.renameTab).mockResolvedValueOnce({
+				success: false,
+				error: 'The desktop did not confirm the rename; it may still be applying',
+				unconfirmed: true,
+			});
+
+			handler.handleMessage(client, {
+				type: 'rename_tab',
+				sessionId: 'session-1',
+				tabId: 'tab-1',
+				newName: 'Slow Name',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.renameTab).toHaveBeenCalledWith('session-1', 'tab-1', 'Slow Name');
+			});
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			expect(client.socket.send).not.toHaveBeenCalled();
 		});
 
 		it('should return explicit failure when desktop rename throws', async () => {
@@ -1930,6 +2032,28 @@ describe('WebSocketMessageHandler', () => {
 	});
 
 	describe('New AI Tab With Prompt (Web → Desktop)', () => {
+		it('marks a CLI dispatch into a fresh tab with the new tab id', async () => {
+			handler.handleMessage(client, {
+				type: 'new_ai_tab_with_prompt',
+				sessionId: 'session-1',
+				prompt: 'Build it',
+				fromSessionId: 'caller-1',
+				fromTabId: 'caller-tab',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.noteAgentDelegation).toHaveBeenCalledWith({
+					kind: 'dispatch',
+					fromSessionId: 'caller-1',
+					fromTabId: 'caller-tab',
+					targetSessionId: 'session-1',
+					targetTabId: 'tab-mock-123',
+					prompt: 'Build it',
+					newTab: true,
+				});
+			});
+		});
+
 		it('should forward sessionId and prompt to callback', async () => {
 			handler.handleMessage(client, {
 				type: 'new_ai_tab_with_prompt',
@@ -2235,6 +2359,27 @@ describe('WebSocketMessageHandler', () => {
 	});
 
 	describe('Enqueue Command (dispatch --queue)', () => {
+		it('marks a queued CLI dispatch as queued', async () => {
+			handler.handleMessage(client, {
+				type: 'enqueue_command',
+				sessionId: 'session-1',
+				command: 'Later please',
+				inputMode: 'ai',
+				fromSessionId: 'caller-1',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.noteAgentDelegation).toHaveBeenCalledWith({
+					kind: 'dispatch',
+					fromSessionId: 'caller-1',
+					targetSessionId: 'session-1',
+					targetTabId: 'tab-mock-123',
+					prompt: 'Later please',
+					queued: true,
+				});
+			});
+		});
+
 		const lastSend = (): Record<string, unknown> => {
 			const calls = vi.mocked(client.socket.send).mock.calls;
 			return JSON.parse(String(calls[calls.length - 1][0]));
@@ -2724,6 +2869,41 @@ describe('WebSocketMessageHandler', () => {
 			const config = (callbacks.configureAutoRun as any).mock.calls[0][1];
 			expect(config.model).toBeUndefined();
 			expect(config.effort).toBeUndefined();
+			expect(config.ignoreModelHints).toBeUndefined();
+		});
+
+		it('should forward ignoreModelHints when set', async () => {
+			(callbacks.configureAutoRun as any).mockResolvedValue({ success: true });
+
+			handler.handleMessage(client, {
+				type: 'configure_auto_run',
+				sessionId: 'session-1',
+				documents: [{ filename: 'doc1.md' }],
+				launch: true,
+				model: 'opus',
+				ignoreModelHints: true,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.configureAutoRun).toHaveBeenCalledWith(
+					'session-1',
+					expect.objectContaining({ model: 'opus', ignoreModelHints: true })
+				);
+			});
+		});
+
+		it('should reject a non-boolean ignoreModelHints', () => {
+			handler.handleMessage(client, {
+				type: 'configure_auto_run',
+				sessionId: 'session-1',
+				documents: [{ filename: 'doc1.md' }],
+				ignoreModelHints: 'yes',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(response.message).toContain('ignoreModelHints must be a boolean');
+			expect(callbacks.configureAutoRun).not.toHaveBeenCalled();
 		});
 
 		it('should reject non-string model', () => {
@@ -4287,8 +4467,50 @@ describe('WebSocketMessageHandler', () => {
 			});
 
 			await vi.waitFor(() => {
-				expect(callbacks.createGroup).toHaveBeenCalledWith('Project', '📁', 'company');
+				expect(callbacks.createGroup).toHaveBeenCalledWith('Project', '📁', 'company', {
+					emoji: '📁',
+				});
 			});
+		});
+
+		it('forwards a normalized icon and color when creating a group', async () => {
+			handler.handleMessage(client, {
+				type: 'create_group',
+				name: 'Project',
+				icon: 'Rocket',
+				color: '#ef4444',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.createGroup).toHaveBeenCalledWith('Project', undefined, undefined, {
+					icon: 'rocket',
+					color: '#EF4444',
+				});
+			});
+		});
+
+		it('rejects an unknown icon at the socket boundary', () => {
+			handler.handleMessage(client, {
+				type: 'create_group',
+				name: 'Project',
+				icon: 'sparkle-pony',
+			});
+
+			expect(callbacks.createGroup).not.toHaveBeenCalled();
+			const payload = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(payload.type).toBe('error');
+			expect(payload.message).toContain('Unknown icon');
+		});
+
+		it('rejects an emoji and an icon together at the socket boundary', () => {
+			handler.handleMessage(client, {
+				type: 'create_group',
+				name: 'Project',
+				emoji: '🚀',
+				icon: 'rocket',
+			});
+
+			expect(callbacks.createGroup).not.toHaveBeenCalled();
 		});
 
 		it('rejects non-string parentGroupId values instead of creating a root group', () => {
@@ -4299,6 +4521,65 @@ describe('WebSocketMessageHandler', () => {
 			});
 
 			expect(callbacks.createGroup).not.toHaveBeenCalled();
+		});
+
+		it('forwards a validated update_group request', async () => {
+			handler.handleMessage(client, {
+				type: 'update_group',
+				groupId: 'group-1',
+				name: 'Renamed',
+				icon: 'Shield',
+				color: '#22c55e',
+				requestId: 'request-2',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.updateGroup).toHaveBeenCalledWith('group-1', {
+					name: 'Renamed',
+					icon: 'shield',
+					color: '#22C55E',
+				});
+			});
+		});
+
+		it('forwards an explicit clear list on update_group', async () => {
+			handler.handleMessage(client, {
+				type: 'update_group',
+				groupId: 'group-1',
+				clear: ['icon', 'parent'],
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.updateGroup).toHaveBeenCalledWith('group-1', {
+					clear: ['icon', 'parent'],
+				});
+			});
+		});
+
+		it('rejects an update_group with no groupId', () => {
+			handler.handleMessage(client, { type: 'update_group', name: 'Renamed' });
+
+			expect(callbacks.updateGroup).not.toHaveBeenCalled();
+			const payload = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(payload.message).toContain('groupId');
+		});
+
+		it('rejects an update_group that changes nothing', () => {
+			handler.handleMessage(client, { type: 'update_group', groupId: 'group-1' });
+
+			expect(callbacks.updateGroup).not.toHaveBeenCalled();
+			const payload = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(payload.message).toContain('Nothing to update');
+		});
+
+		it('rejects an update_group with an unknown clear target', () => {
+			handler.handleMessage(client, {
+				type: 'update_group',
+				groupId: 'group-1',
+				clear: ['collapsed'],
+			});
+
+			expect(callbacks.updateGroup).not.toHaveBeenCalled();
 		});
 	});
 });

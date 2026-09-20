@@ -35,6 +35,7 @@ import {
 	deleteCliServerInfo,
 	readCliServerInfo,
 } from '../../../shared/cli-server-discovery';
+import { getCliSecret } from '../../web-server/auth/cli-secret';
 
 /**
  * Timeout for waiting for web server to become active (ms)
@@ -67,6 +68,9 @@ function refreshCliDiscoveryFile(port: number, token: string): void {
 		token,
 		pid: process.pid,
 		startedAt: Date.now(),
+		// What lets the CLI through the Web Login gate. Per boot, so a stale
+		// file from a previous run cannot open this one.
+		cliSecret: getCliSecret(),
 		// Stamp the running build's version so the CLI can detect version skew
 		// (e.g. a freshly-built CLI talking to an older still-running app).
 		version: app.getVersion(),

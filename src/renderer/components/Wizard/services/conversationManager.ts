@@ -38,6 +38,11 @@ export interface ConversationConfig {
 	projectName: string;
 	/** Existing Auto Run documents (when continuing from previous session) */
 	existingDocs?: ExistingDocument[];
+	/**
+	 * Model to plan with, overriding the agent's configured model for this run.
+	 * Undefined leaves the agent's own configuration in charge.
+	 */
+	model?: string;
 	/** SSH remote configuration (for remote execution) */
 	sshRemoteConfig?: {
 		enabled: boolean;
@@ -99,6 +104,8 @@ interface ConversationSession {
 	directoryPath: string;
 	/** Project name */
 	projectName: string;
+	/** Per-run model override, or undefined for the agent's configured model */
+	model?: string;
 	/** Whether the agent process is active */
 	isActive: boolean;
 	/** System prompt used for this session */
@@ -174,6 +181,7 @@ class ConversationManager {
 			agentType: config.agentType,
 			directoryPath: config.directoryPath,
 			projectName: config.projectName,
+			model: config.model,
 			isActive: true,
 			systemPrompt,
 			outputBuffer: '',
@@ -615,6 +623,9 @@ class ConversationManager {
 					command: commandToUse,
 					args: argsForSpawn,
 					prompt: prompt,
+					// Planning model for this run. Undefined leaves the agent's own
+					// configured model in charge (see applyAgentConfigOverrides).
+					sessionCustomModel: this.session!.model,
 					// When true, the main process will send the prompt via stdin instead of
 					// passing it as a command-line argument. This avoids Windows command
 					// line length limits for large prompts.

@@ -409,3 +409,80 @@ describe('App keyboard context wiring', () => {
 		expect(missing, 'keyboard handler methods missing from the App context').toEqual([]);
 	});
 });
+
+/**
+ * A shortcut's LABEL is its only search index: Settings -> Shortcuts, the help
+ * sheet, and the command palette each filter on `label` alone. So a word
+ * missing from a label is a word that cannot find the action - "Change Branch"
+ * was invisible to anyone who typed `git`.
+ *
+ * These guards keep the families searchable by their obvious keyword. They are
+ * deliberately keyed off the action ID, not the label, so renaming a label back
+ * to something unsearchable fails here rather than silently shipping.
+ */
+describe('shortcut labels carry their family keyword', () => {
+	const ALL_SHORTCUTS = { ...DEFAULT_SHORTCUTS, ...TAB_SHORTCUTS, ...FIXED_SHORTCUTS };
+
+	/** Every action whose label must contain a given word to be findable. */
+	const FAMILY_KEYWORDS: { keyword: string; ids: string[] }[] = [
+		{
+			keyword: 'git',
+			ids: ['viewGitDiff', 'viewGitLog', 'gitPull', 'gitPush', 'gitChangeBranch', 'gitCreatePR'],
+		},
+		{
+			keyword: 'agent',
+			// `killInstance` read only "Remove" and `moveToGroup` said "Session",
+			// so neither surfaced when someone searched the noun they act on.
+			ids: ['killInstance', 'moveToGroup', 'newInstance', 'agentSwitcher', 'filterSessions'],
+		},
+		{
+			keyword: 'tab',
+			// These two read "New Browser" / "New File" and were missed by `tab`,
+			// even though the app menu had already spelled them out in full.
+			ids: ['newTab', 'newBrowserTab', 'newFileTab', 'toggleMode'],
+		},
+		{ keyword: 'media', ids: ['openMediaPlayer', 'mediaPlayPause', 'mediaNext', 'mediaPrev'] },
+		{ keyword: 'unread', ids: ['filterUnreadAgents', 'nextUnreadTab', 'previousUnreadTab'] },
+		{ keyword: 'font', ids: ['fontSizeReset', 'fontSizeIncrease', 'fontSizeDecrease'] },
+	];
+
+	it.each(FAMILY_KEYWORDS)('searching "$keyword" finds the whole family', ({ keyword, ids }) => {
+		const missing = ids.filter((id) => {
+			const label = ALL_SHORTCUTS[id]?.label;
+			return !label || !label.toLowerCase().includes(keyword);
+		});
+		expect(missing, `labels that would not match "${keyword}"`).toEqual([]);
+	});
+
+	it('gives every git action the same prefix so the list groups them', () => {
+		// The help sheet and the palette both SORT by label, so a shared prefix is
+		// what draws the family as one block instead of scattering it.
+		const gitIds = [
+			'viewGitDiff',
+			'viewGitLog',
+			'gitPull',
+			'gitPush',
+			'gitChangeBranch',
+			'gitCreatePR',
+		];
+		const unprefixed = gitIds.filter((id) => !DEFAULT_SHORTCUTS[id]?.label.startsWith('Git: '));
+		expect(unprefixed, 'git actions missing the "Git: " prefix').toEqual([]);
+	});
+
+	it('gives the command palette the same git names the shortcut list uses', () => {
+		// Two names for one action is two things to learn and one of them fails to
+		// match whichever word the user picked.
+		const palette = readFileSync(
+			join(RENDERER_ROOT, 'components/QuickActionsModal/commands/gitWorktreeCommands.ts'),
+			'utf-8'
+		);
+		const labels = [...palette.matchAll(/label: '([^']+)'/g)].map((m) => m[1]);
+		const gitLabels = labels.filter((l) => /branch|pull|push|worktree|repositor|diff|log/i.test(l));
+		expect(gitLabels.filter((l) => !l.startsWith('Git: '))).toEqual([]);
+		// Create Pull Request builds its label from a ternary, so the scan above
+		// cannot see it. Assert the branchless arm directly rather than leaving the
+		// one entry that started this whole change unguarded.
+		expect(palette).toContain("'Git: Create Pull Request'");
+		expect(palette).toContain('`Git: Create Pull Request (${gitActions.branch})`');
+	});
+});

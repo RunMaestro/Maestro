@@ -149,6 +149,18 @@ helpers below.
 
 ---
 
+## Zip Archives (`src/main/utils/zip-archive.ts` - Main)
+
+Playbook import and Cue backup inspect/restore only need entry names and bytes. This module is the one zip reader. Do not import `adm-zip` (its `extractAllTo` follows dest symlinks; no patched release).
+
+| Function / Type                      | Signature                                        | Purpose                                                                                                                                                                                                        |
+| ------------------------------------ | ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `readZipArchive(filePath, options?)` | `(string, ReadZipArchiveOptions?) => ZipArchive` | Load a zip from disk. `names` / `filter` run before inflation so a manifest-only caller does not expand the rest. Default caps (`DEFAULT_ZIP_MAX_ENTRIES`, `DEFAULT_ZIP_MAX_ORIGINAL_SIZE`) refuse a zip bomb. |
+| `extractZipTo(zipPath, destDir)`     | `(string, string) => void`                       | Write entries under `destDir`. Refuses zip-slip names, dest-file symlinks, and intermediate path-component symlinks.                                                                                           |
+| `isUnsafeZipEntryName(name)`         | `(string) => boolean`                            | True for `..`, absolute paths, drive letters, or NUL. Used by extract and available to callers that write one file themselves.                                                                                 |
+
+---
+
 ## String Utilities
 
 ### Shared (`src/shared/stringUtils.ts` - Both)
@@ -171,6 +183,22 @@ helpers below.
 The font picker stores a bare name (`Roboto Mono`) with no generic fallback, which resolves to serif on iOS / the web-desktop bundle. Do NOT re-derive a fallback chain inline; call `withMonoFallback(s.fontFamily)` at the render site.
 
 **Every surface font stores the empty string to mean "inherit the interface font"** (terminal, chat, file preview, file editor), so a surface the user never touches keeps following the UI. `resolveSurfaceFont` is the one place that chain is resolved, which is what keeps the pickers, the rendered surfaces, and any future surface from disagreeing about what empty means: a surface that re-derives it and forgets the `.trim()` renders a whitespace-only family, which resolves to nothing and drops the pane to the browser default. In the renderer, read it through `useSurfaceFontFamily()` / `useSurfaceTypography()` (`src/renderer/hooks/ui/useSurfaceTypography.ts`) rather than calling the resolver against the store by hand - those also apply the one hop of surface-to-surface inheritance (a surface may follow the TERMINAL, not just the interface font).
+
+**A fallback chain is not sufficient on its own for the terminal.** It only covers a font that fails to RESOLVE. A configured font can resolve perfectly and simply not be fixed-pitch, and xterm sizes its grid from the advance of `W` and then puts every glyph on that pitch, so narrow letters trail a gap (`Cl aude`) while wide ones sit flush - the appended generic is never reached because nothing ever fell through to it. CSS cannot be asked whether a family is fixed-pitch, so `isFixedPitchStack()` / `resolveTerminalFontFamily()` in `src/renderer/utils/fixedPitchFont.ts` MEASURE it on a canvas and override to `MONO_FALLBACK_STACK` only on evidence (unmeasurable input keeps the user's font). The two mechanisms cover different failures and compose; the terminal calls the shared helper for the chain rather than carrying its own. That module serves every surface showing shell text, not just the terminal (the command-mode composer and the shell command card ride it too). A local duplicate of the chain (`ensureMonospaceFallback`) has shipped twice now - once in `XTerminal.tsx` and once in `fixedPitchFont.ts` - and was folded back in both times; do not reintroduce one.
+
+## Font Utilities (`src/shared/fontStack.ts` - Both)
+
+| Export                                           | Signature                                                              | Purpose                                                                                                                                                                                                                                                              |
+| ------------------------------------------------ | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `withMonoFallback(family)`                       | `(string \| undefined \| null) => string`                              | Guarantee a CSS font-family degrades to monospace, not the browser's serif default. Apply where the `fontFamily` setting becomes a CSS value, not at the source (the picker `<select>` needs the raw name). No-ops when the value already carries a generic keyword. |
+| `resolveSurfaceFont(surfaceFont, interfaceFont)` | `(string \| undefined \| null, string \| undefined \| null) => string` | Resolve a per-surface font setting against the interface font, then apply the fallback. The empty string means "inherit", so this is what that empty string MEANS - see the note below.                                                                              |
+| `MONO_FALLBACK_STACK`                            | `string`                                                               | The safe monospace chain appended by `withMonoFallback` (`ui-monospace` -> ... -> `monospace`). Matches the file-preview surfaces so the whole app degrades to the same faces.                                                                                       |
+| `SANS_FALLBACK_STACK`                            | `string`                                                               | The proportional counterpart, for the sans typography preset. Leads with each platform's own UI face so it looks native, and ends in `sans-serif`.                                                                                                                   |
+| `WORDMARK_FONT_STACK`                            | `string`                                                               | The MAESTRO wordmark's font. Fixed, and deliberately NOT derived from any setting - a brand mark that changes identity with the reading font is a bug. Kept in sync by hand with the two `index.html` splash rules, which paint before any JavaScript runs.          |
+
+The font picker stores a bare name (`Roboto Mono`) with no generic fallback, which resolves to serif on iOS / the web-desktop bundle. Do NOT re-derive a fallback chain inline; call `withMonoFallback(s.fontFamily)` at the render site.
+
+**Every surface font stores the empty string to mean "inherit the interface font"** (terminal, chat, file preview, file editor), so a surface the user never touches keeps following the UI. `resolveSurfaceFont` is the one place that chain is resolved, which is what keeps the pickers, the rendered surfaces, and any future surface from disagreeing about what empty means: a surface that re-derives it and forgets the `.trim()` renders a whitespace-only family, which resolves to nothing and drops the pane to the browser default.
 
 **A fallback chain is not sufficient on its own for the terminal.** It only covers a font that fails to RESOLVE. A configured font can resolve perfectly and simply not be fixed-pitch, and xterm sizes its grid from the advance of `W` and then puts every glyph on that pitch, so narrow letters trail a gap (`Cl aude`) while wide ones sit flush - the appended generic is never reached because nothing ever fell through to it. CSS cannot be asked whether a family is fixed-pitch, so `isFixedPitchStack()` / `resolveTerminalFontFamily()` in `src/renderer/utils/fixedPitchFont.ts` MEASURE it on a canvas and override to `MONO_FALLBACK_STACK` only on evidence (unmeasurable input keeps the user's font). The two mechanisms cover different failures and compose; the terminal calls the shared helper for the chain rather than carrying its own. That module serves every surface showing shell text, not just the terminal (the command-mode composer and the shell command card ride it too). A local duplicate of the chain (`ensureMonospaceFallback`) has shipped twice now - once in `XTerminal.tsx` and once in `fixedPitchFont.ts` - and was folded back in both times; do not reintroduce one.
 
@@ -230,6 +258,20 @@ because that cost is paid on the main thread on every store write (~40ms on the
 
 ---
 
+## Tool Output (`src/shared/toolOutput.ts` - Both)
+
+| Function / Constant                  | Signature                                  | Purpose                                                                                                               |
+| ------------------------------------ | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
+| `MAX_PERSISTED_TOOL_OUTPUT_CHARS`    | `number`                                   | Maximum tool-result preview retained in a session.                                                                    |
+| `compactToolOutput(output)`          | `(unknown) => { output, truncated }`       | Preserve short values and replace oversized strings or objects with a bounded text preview.                           |
+| `compactSessionToolOutputs(session)` | `(T) => { session: T, compacted: number }` | Immutably compact tool results in legacy logs, live tabs, and snoozed AI tabs, returning the original when unchanged. |
+
+Use the same compactor at parser ingestion and session persistence boundaries. Browser clients
+receive the entire session tree during bootstrap, so a count-only log cap does not bound the frame
+when one log entry contains a multi-megabyte tool result.
+
+---
+
 ## Durations (`src/shared/duration.ts` - Both)
 
 **Never write another unit ladder.** Every "how long was that?" string renders from one
@@ -255,6 +297,7 @@ works. `duration.ts` is canonical and is where new duration work belongs.
 | `formatElapsedTime(ms)`              | `(number) => string`          | `formatDurationHuman` plus sub-second precision: `"500ms"`, `"5m 12s"`.                                                                                                                            |
 | `formatElapsedTicker(ms)`            | `(number) => string`          | Live ticker with a leading `0m` below an hour: `"0m 3s"`, `"1h 0m 5s"`. ThinkingStatusPill and Auto Run elapsed on that pill use this, not `formatElapsedTime`.                                    |
 | `formatElapsedTickerCompact(ms)`     | `(number) => string`          | Same ladder without the padded lead: `"3s"`, `"20m 4s"`, `"1h 2m 5s"`. For a counter inside a chip or sentence, where a bare seconds count reads fine below a minute but `1203s` does not past it. |
+| `formatTurnDuration(ms)`             | `(number) => string`          | Transcript turn time, day-capped and second-free: `"<1m"`, `"25m"`, `"5d 6h 25m"`.                                                                                                                 |
 
 `DURATION_MS` gives each unit's size in ms - use it instead of redeclaring
 `const DAY = 86400000`. `DURATION_LADDER_FULL` / `_DAYS` / `_HOURS` are the prebuilt
@@ -353,6 +396,32 @@ renderer's per-turn stats row and nothing else can measure them.
 
 ---
 
+## Group Appearance (`src/shared/groupAppearance.ts` - Both)
+
+The one catalog of Left Bar group icon IDs and label colors, plus the
+normalization and validation over them. Three consumers read it: the renderer's
+picker (`renderer/components/ui/groupAppearanceOptions.ts`, which adds the only
+renderer-owned piece, the icon-ID -> Lucide mapping), the WebSocket
+`create_group` / `update_group` handlers, and the `create-group` /
+`update-group` CLI commands. Do NOT write a second icon-ID list: the CLI would
+happily accept an icon the picker cannot draw.
+
+Values are normalized, not merely checked, so `#ef4444` and `#EF4444` persist
+identically and a readback comparison is a plain string equal.
+
+| Export                           | Signature                                             | Purpose                                                                             |
+| -------------------------------- | ----------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `GROUP_ICON_CATALOG`             | `readonly { id, label }[]`                            | Built-in icons, in picker order.                                                    |
+| `GROUP_ICON_IDS`                 | `readonly string[]`                                   | Just the IDs, for validation and error text.                                        |
+| `GROUP_LABEL_COLORS`             | `readonly { value, label }[]`                         | Built-in label colors; `value` is the persisted uppercase `#RRGGBB`.                |
+| `normalizeGroupIconId(raw)`      | `(string) => string \| null`                          | Canonical icon ID (built-in or `plugin/pack/local`), or `null` if unrecognized.     |
+| `normalizeGroupColor(raw)`       | `(string) => string \| null`                          | Uppercased `#RRGGBB` or a namespaced plugin color ID, or `null`.                    |
+| `validateGroupAppearance(input)` | `(GroupAppearanceInput) => GroupAppearanceValidation` | Enforces emoji/icon exclusivity and normalizes. Run BEFORE mutating any state.      |
+| `validateGroupUpdate(request)`   | `(GroupUpdateRequest) => GroupUpdateValidation`       | The above plus the clear-list rules and "an update must change something".          |
+| `GROUP_CLEARABLE_FIELDS`         | `readonly ['emoji','icon','color','parent']`          | What an update may clear. Clearing is explicit, never a `null` value over the wire. |
+
+---
+
 ## Git Utilities (`src/shared/gitUtils.ts` - Both)
 
 | Function                           | Signature                      | Purpose                                                                                                                    |
@@ -419,10 +488,10 @@ text while the same link worked in a file-preview tab.
 
 `resolve.ts` is the other half: what a click handler does with the path the
 plugin hands back. That path is project-RELATIVE for anything matched in the
-tree and absolute for everything else, and agents quote `src/foo.ts:42`
-constantly, so every consumer needs the same strip-then-join. Do NOT hand-roll
-it - a surface that skips the join hands a bare `Notes/Thing.md` to a reader
-expecting an absolute path and silently opens nothing.
+tree and absolute for everything else, and agents quote a path with a
+trailing `:42` constantly, so every consumer needs the same strip-then-join. Do
+NOT hand-roll it - a surface that skips the join hands a bare `Notes/Thing.md`
+to a reader expecting an absolute path and silently opens nothing.
 
 <!-- doc-refs-ignore:end -->
 
@@ -473,6 +542,23 @@ handler for a `file://` link clicked in markdown. The file-link plugins emit
 `file://` for any path OUTSIDE the project root, so sending every one of them to
 `shell.openPath` quietly routed media around the player and into the OS. It
 returns whether it took the href, so callers `if (openFileUrl(...)) return;`.
+
+It percent-decodes the path on the way through, and that half is not optional. A
+`file://` href is a URL: an agent writes `file:///a/Voice%20Cloning/x.wav` by
+hand, and mdast-util-to-hast runs every link destination through `normalizeUri`
+besides. The literal `%20` reaches `fs.readFile` as an ENOENT, and
+`handleMainPanelFileClick` reports a null read by returning - so the click dies
+one step before `handleOpenFileTab` can divert media to the player, and every
+file in a folder with a space in its name is a link that does nothing. The decode
+goes through `safeDecodeURIComponent`, so a genuine `100% done.md` survives
+instead of throwing. Same rule and reason as `resolveLocalImagePath` in
+`Markdown/components/LocalImage.tsx`.
+
+An absolute path outside the project root gets a `file://` URL too, not just the
+`~/` spelling: `remarkFileLinks` (plain text, inline code, and link hrefs) and
+the Fast-tier `markdownItAdapter` all emit one when `toRelativePath` returns
+null. Without it the same file was a working link written `~/x.wav` and dead text
+written `/Users/me/x.wav`, which is the form agents actually produce.
 
 **Media never becomes a file preview tab.** `handleOpenFileTab()` diverts it to
 `useMediaPlaybackStore.openMedia()` before a tab can be created, and the only

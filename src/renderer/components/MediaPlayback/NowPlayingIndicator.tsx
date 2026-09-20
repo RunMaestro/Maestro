@@ -72,9 +72,13 @@ export const NowPlayingIndicator = memo(function NowPlayingIndicator({
 				type="button"
 				data-testid="now-playing-toggle"
 				onClick={requestToggle}
-				// `min-w-0` so the label span below can actually shrink inside it; a
-				// flex item defaults to min-width:auto and would refuse to.
-				className={`flex items-center gap-1 min-w-0 text-2xs font-bold transition-colors hover:bg-white/10 ${
+				// No `min-w-0` here. The label span already contributes a zero
+				// minimum (it is `truncate`, and an overflow-hidden flex item has an
+				// automatic minimum size of 0), so the label still shrinks - while the
+				// button itself floors at padding + icon. With `min-w-0` the button
+				// could shrink past its own content box, and the `shrink-0` glyph then
+				// spilled out of the padding and across the divider.
+				className={`flex items-center justify-center gap-1 text-2xs font-bold transition-colors hover:bg-white/10 ${
 					compact ? 'px-2 py-1' : 'pl-2 pr-2 py-0.5'
 				}`}
 				style={{ color: playing ? theme.colors.accent : theme.colors.textDim }}
@@ -97,7 +101,7 @@ export const NowPlayingIndicator = memo(function NowPlayingIndicator({
 				type="button"
 				data-testid="now-playing-restore"
 				onClick={restore}
-				className="px-2 transition-colors hover:bg-white/10"
+				className="flex items-center justify-center shrink-0 px-2 transition-colors hover:bg-white/10"
 				style={{ color: theme.colors.textDim }}
 				title="Show the media player"
 				aria-label="Show the media player"

@@ -13,7 +13,8 @@ import type { StatsTimeRange, StatsAggregation } from '../../hooks/stats/useStat
 import { COLORBLIND_AGENT_PALETTE } from '../../constants/colorblindPalettes';
 import { formatDurationHuman as formatDuration, formatNumber } from '../../../shared/formatters';
 import { humanizeDuration, DURATION_LADDER_HOURS } from '../../../shared/duration';
-import { buildNameMap, computeAxisLabelIndices } from './chartUtils';
+import { buildNameMap, computeAxisLabelIndices, PHONE_AXIS_LABELS } from './chartUtils';
+import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 import { ChartTooltip } from './ChartTooltip';
 import { ChartLoadingOverlay } from './ChartLoadingOverlay';
 import { MetricModeToggle, formatMetricValue, type ChartMetricMode } from './MetricModeToggle';
@@ -157,7 +158,11 @@ export const ProviderTrendsChart = memo(function ProviderTrendsChart({
 		};
 	}, [dates, perDayValues, providers, metricMode]);
 
-	const xLabelIndices = useMemo(() => computeAxisLabelIndices(dates.length), [dates.length]);
+	const phone = usePhoneLayout();
+	const xLabelIndices = useMemo(
+		() => computeAxisLabelIndices(dates.length, phone ? PHONE_AXIS_LABELS : undefined),
+		[dates.length, phone]
+	);
 
 	const barWidth = dates.length > 0 ? innerWidth / dates.length : 0;
 	const barInner = Math.max(1, barWidth * 0.7);

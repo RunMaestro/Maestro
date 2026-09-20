@@ -19,6 +19,40 @@ export interface ProfilingStatus {
 	elapsedMs: number;
 	/** Categories the active recording was started with (empty when inactive). */
 	categories: string[];
+	/**
+	 * Most recently sampled trace-buffer usage, 0-1.
+	 *
+	 * This is the number that decides how long a recording can usefully run, so
+	 * it is surfaced rather than kept internal: elapsed time tells a user nothing
+	 * about how much window they have left, and a quiet app can record for many
+	 * minutes where a busy one fills the buffer in one.
+	 */
+	bufferPercent: number;
+	/** Highest usage seen during this recording, 0-1. */
+	peakBufferPercent: number;
+	/** Per-process buffer size the percentages are measured against. */
+	bufferSizeKb: number;
+	/** True once the buffer watchdog has asked for the recording to end. */
+	autoStopRequested: boolean;
+}
+
+/**
+ * What a stopped recording knows about itself, including whether its data is
+ * complete. Produced by `stopProfiling`, folded into the bundle metadata.
+ */
+export interface StopProfilingOutcome {
+	/** Wall-clock ms the recording ran for. */
+	durationMs: number;
+	categories: string[];
+	/** Highest trace-buffer usage sampled during the recording, 0-1. */
+	peakBufferPercent: number;
+	/** True when the buffer watchdog ended the recording rather than the user. */
+	autoStopped: boolean;
+	/**
+	 * True when buffer usage reached the stop threshold, meaning events may have
+	 * been dropped and the trace may cover less time than it ran for.
+	 */
+	bufferExhausted: boolean;
 }
 
 /** Result of stopping a recording and saving the bundle. */
@@ -52,6 +86,21 @@ export interface ProfileMetadata {
 	recordingMode: string;
 	categories: string[];
 	traceSizeBytes: number;
+	/**
+	 * Per-process trace buffer size, and how full it got.
+	 *
+	 * Present so a trace can state its own completeness. Before these existed,
+	 * the only way to suspect a truncated capture was to compare the covered
+	 * window against `profilingDurationMs` after parsing the whole file - a
+	 * check that produced a warning, not a fact, and only after the analysis had
+	 * already been run on possibly-partial data.
+	 */
+	traceBufferSizeKb: number;
+	peakBufferPercent: number;
+	/** The buffer watchdog ended this recording rather than the user. */
+	autoStopped: boolean;
+	/** Buffer usage reached the stop threshold; events may have been dropped. */
+	bufferExhausted: boolean;
 	mainProcessMemory: {
 		rss: number;
 		heapTotal: number;

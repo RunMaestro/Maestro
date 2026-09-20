@@ -101,7 +101,7 @@ describe('vibe mode CSS', () => {
 			.filter((theme) => theme.mode === 'vibe')
 			.map((theme) => theme.id);
 		expect(vibeThemes.sort()).toEqual(
-			['dre-synth', 'inquest', 'maestros-choice', 'pedurple', 'winamp'].sort()
+			['dre-synth', 'maestros-choice', 'pedurple', 'winamp'].sort()
 		);
 	});
 });

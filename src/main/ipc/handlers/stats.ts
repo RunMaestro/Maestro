@@ -9,9 +9,10 @@
  * - Track Auto Run sessions and individual tasks
  * - Query stats with time range and filter support
  * - Aggregated statistics for dashboard display
- * - CSV export for data analysis
+ * - Usage export (JSON, or a zip of CSVs) for data analysis
  */
 
+import path from 'path';
 import { ipcMain, BrowserWindow, app } from 'electron';
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
@@ -20,8 +21,11 @@ import { createSafeSend, SafeSendFn } from '../../utils/safe-send';
 import { getStatsDB } from '../../stats';
 import { isStatsCollectionEnabled } from '../../stats/utils';
 import { flushTelemetry } from '../../cue/cue-telemetry';
-import { getCueRunTotals, getCueRunTotalsByDay } from '../../cue/cue-db';
+import { getCueRunTotals, getCueRunTotalsByDay, getRecentCueEvents } from '../../cue/cue-db';
+import { buildUsageExport, countUsageExportRows, writeUsageExport } from '../../stats/usage-export';
 import { enqueueQueryEvent, flushQueryEventsSync } from '../../stats/query-events-buffer';
+import { getActingUser } from '../../web-server/auth/acting-user';
+import { resolveTurnActor } from '../../web-server/auth/turn-attribution';
 import {
 	QueryEvent,
 	AutoRunSession,
@@ -31,10 +35,12 @@ import {
 	WizardRun,
 	StatsTimeRange,
 	StatsFilters,
+	UsageExportFormat,
+	UsageExportResult,
 } from '../../../shared/stats-types';
 import type { DelegationDay, DelegationTotals } from '../../../shared/delegation';
 import { getTimeRangeStart } from '../../stats/utils';
-import type { TokenUsageQuery } from '../../../shared/tokenUsage';
+import type { TokenUsageAggregate, TokenUsageQuery } from '../../../shared/tokenUsage';
 import { getTokenUsageAggregate } from '../../stats/token-usage/token-usage-accessor';
 
 const LOG_CONTEXT = '[Stats]';
@@ -71,7 +77,7 @@ function broadcastStatsUpdate(safeSend: SafeSendFn): void {
  * - Record individual Auto Run tasks
  * - Get stats with filtering and time range
  * - Get aggregated stats for dashboard
- * - Export stats to CSV
+ * - Export every stats table for a range (JSON, or a zip of CSVs)
  */
 export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 	const { getMainWindow, settingsStore } = deps;
@@ -110,8 +116,23 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 				return null;
 			}
 
+			// Web Login attribution. Like the History entry, this row is written
+			// by the DESKTOP renderer's exit listener even when a browser sent
+			// the turn, so `getActingUser()` is undefined here and the account
+			// comes from what the spawn noted (web-server/auth/turn-attribution).
+			// A call carrying an acting user came over the bridge, and that user
+			// wins whatever the payload claims: a browser must not file its turns
+			// under another account. Only the desktop's own calls may name one.
+			const attributed = ((): Omit<QueryEvent, 'id'> => {
+				const acting = getActingUser();
+				if (!acting && event.userName) return event;
+				const username =
+					acting?.username ?? resolveTurnActor(event.sessionId, event.tabId)?.username;
+				return username ? { ...event, userName: username } : event;
+			})();
+
 			const db = getStatsDB();
-			const id = enqueueQueryEvent(db.database, event);
+			const id = enqueueQueryEvent(db.database, attributed);
 			logger.debug(`Buffered query event: ${id}`, LOG_CONTEXT, {
 				sessionId: event.sessionId,
 				agentType: event.agentType,
@@ -328,13 +349,62 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 		)
 	);
 
-	// Export query events to CSV
+	// Export everything the Usage Dashboard reads for a range. Main writes the
+	// file itself because the CSV form is a binary zip.
 	ipcMain.handle(
-		'stats:export-csv',
-		withIpcErrorLogging(handlerOpts('exportCsv'), async (range: StatsTimeRange) => {
-			const db = getStatsDB();
-			return db.exportToCsv(range);
-		})
+		'stats:export',
+		withIpcErrorLogging(
+			handlerOpts('export'),
+			async (
+				range: StatsTimeRange,
+				format: UsageExportFormat,
+				filePath: string
+			): Promise<UsageExportResult> => {
+				if (format !== 'json' && format !== 'csv') {
+					throw new Error(`Unsupported export format: ${String(format)}`);
+				}
+				if (typeof filePath !== 'string' || !path.isAbsolute(filePath)) {
+					throw new Error('Export path must be absolute');
+				}
+
+				const sinceMs = getTimeRangeStart(range);
+				const notes: string[] = [];
+
+				// Same gate as the Cue stats handler: the dashboard only shows Cue
+				// data when both flags are on.
+				const ef = (settingsStore?.get('encoreFeatures') ?? {}) as Record<string, unknown>;
+				const cueEnabled = ef.usageStats === true && ef.maestroCue === true;
+				const cueEvents = cueEnabled ? getRecentCueEvents(sinceMs) : null;
+				if (!cueEnabled) {
+					notes.push('Cue runs are not included because Maestro Cue is off.');
+				} else if (range !== 'day' && range !== 'week') {
+					notes.push('Cue keeps 7 days of run history, so older Cue runs are not included.');
+				}
+
+				let tokenUsage: TokenUsageAggregate | null = null;
+				try {
+					tokenUsage = await getTokenUsageAggregate(range === 'all' ? {} : { sinceMs });
+				} catch (err) {
+					notes.push(
+						`Token usage is not included: ${err instanceof Error ? err.message : String(err)}`
+					);
+					void captureException(err, { operation: 'stats.export.tokenUsage' });
+				}
+
+				const bundle = buildUsageExport({
+					db: getStatsDB(),
+					range,
+					sinceMs,
+					appVersion: app.getVersion(),
+					cueEvents,
+					tokenUsage,
+					notes,
+				});
+				await writeUsageExport(filePath, format, bundle);
+				logger.info(`Exported usage data (${format}, ${range}) to ${filePath}`, LOG_CONTEXT);
+				return { path: filePath, format, rowCounts: countUsageExportRows(bundle), notes };
+			}
+		)
 	);
 
 	// Clear old stats data (older than specified number of days)

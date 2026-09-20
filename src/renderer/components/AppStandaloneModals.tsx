@@ -1,11 +1,10 @@
-import { lazy, memo, Suspense, useCallback, useMemo } from 'react';
+import { lazy, memo, Suspense, useMemo } from 'react';
 import { useModalActions, useModalStore } from '../stores/modalStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { useTabStore } from '../stores/tabStore';
 import { useMessageGistStore } from '../stores/messageGistStore';
 import { useActiveSession } from '../hooks/session/useActiveSession';
 import { useSessionStore } from '../stores/sessionStore';
-import { useSettingsStore } from '../stores/settingsStore';
 import { notifyToast } from '../stores/notificationStore';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { THEMES } from '../constants/themes';
@@ -16,6 +15,7 @@ import { DebugApplicationStatsModal } from './DebugApplicationStatsModal';
 import { DebugAgentProbeModal } from './DebugAgentProbeModal';
 import { WidgetGallery } from './widgets/WidgetGallery';
 import { ProfilingCaptureModal } from './ProfilingCaptureModal';
+import { useProfilingAutoStop } from '../hooks/ui/useProfilingAutoStop';
 import { WindowsWarningModal } from './WindowsWarningModal';
 import { OnboardingSeriesHost } from './OnboardingSeriesHost';
 import { AppOverlays } from './AppOverlays';
@@ -233,6 +233,11 @@ function AppStandaloneModalsInner({
 	recordTourComplete,
 	recordTourSkip,
 }: AppStandaloneModalsProps) {
+	// Ends a performance capture before its trace buffer overflows. Lives here
+	// because it has to be mounted for the whole life of the app - a recording
+	// runs with the command palette closed.
+	useProfilingAutoStop();
+
 	// Self-source modal open states from stores
 	const {
 		debugPackageModalOpen,
@@ -322,7 +327,7 @@ function AppStandaloneModalsInner({
 				onSetUseBetaChannel={setEnableBetaUpdates}
 			/>
 
-			{/* --- FIRST-RUN SERIES: typography -> theme -> agent powers ---
+			{/* --- FIRST-RUN SERIES: typography -> theme -> updates -> agent powers ---
 			    One step on screen at a time; see OnboardingSeriesHost. */}
 			<OnboardingSeriesHost
 				theme={theme}

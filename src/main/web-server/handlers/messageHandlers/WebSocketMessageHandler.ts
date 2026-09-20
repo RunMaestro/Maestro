@@ -93,6 +93,7 @@ import {
 	handleSkipAutoRunDocument,
 	handleAbortAutoRunError,
 } from './autoRun';
+import { handleSnoozeCommand } from './snooze';
 import {
 	handleSelectTab,
 	handleNewTab,
@@ -124,6 +125,7 @@ import {
 	handleGetGroups,
 	handleCreateGroup,
 	handleRenameGroup,
+	handleUpdateGroup,
 	handleDeleteGroup,
 	handleMoveSessionToGroup,
 } from './groups';
@@ -290,6 +292,10 @@ export class WebSocketMessageHandler {
 
 			case 'star_tab':
 				handleStarTab(this.ctx, client, message);
+				break;
+
+			case 'snooze_command':
+				handleSnoozeCommand(this.ctx, client, message);
 				break;
 
 			case 'reorder_tab':
@@ -474,6 +480,10 @@ export class WebSocketMessageHandler {
 
 			case 'rename_group':
 				handleRenameGroup(this.ctx, client, message);
+				break;
+
+			case 'update_group':
+				handleUpdateGroup(this.ctx, client, message);
 				break;
 
 			case 'delete_group':

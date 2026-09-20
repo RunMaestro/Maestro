@@ -17,6 +17,8 @@
 
 import { FastifyInstance } from 'fastify';
 import { logger } from '../../utils/logger';
+import { WEB_LOGIN_WS_CLOSE_CODE } from '../../../shared/webLogin';
+import { isWebRequestAuthorized, resolveWebRequestAuth } from '../auth/web-login-policy';
 import type {
 	Theme,
 	WebClient,
@@ -101,8 +103,25 @@ export class WsRoute {
 	registerRoute(server: FastifyInstance): void {
 		const token = this.securityToken;
 
-		server.get(`/${token}/ws`, { websocket: true }, (connection, request) => {
+		server.get(`/${token}/ws`, { websocket: true }, (socket, request) => {
 			const clientId = `web-client-${++this.clientIdCounter}`;
+
+			// The Web Login gate. The bridge is the whole app, so this is the
+			// enforcement point that matters most - a socket minted here can invoke
+			// every registered ipcMain handler. Closed BEFORE `onClientConnect`, so
+			// an unauthorized socket never enters `webClients` and can never be
+			// broadcast to. The dedicated close code is what tells the shim to go to
+			// the login page instead of reconnecting forever against a wall.
+			//
+			// maestro-cli is authorized by the per-boot secret in its upgrade
+			// headers, never by arriving over loopback: the tunnel arrives that
+			// way too.
+			const auth = resolveWebRequestAuth(request);
+			if (!isWebRequestAuthorized(auth)) {
+				logger.warn(`Refused unauthenticated WebSocket upgrade (${clientId})`, LOG_CONTEXT);
+				socket.close(WEB_LOGIN_WS_CLOSE_CODE, 'Login required');
+				return;
+			}
 
 			// Extract sessionId from query string if provided (for session-specific subscriptions)
 			const url = new URL(request.url || '', `http://${request.headers.host || 'localhost'}`);
@@ -125,10 +144,13 @@ export class WsRoute {
 					: null;
 
 			const client: WebClient = {
-				socket: connection.socket,
+				socket,
 				id: clientId,
 				connectedAt: Date.now(),
 				subscribedSessionId: sessionId,
+				// Resolved once, here: the cookie is only on the upgrade request, so
+				// there is no later point at which a frame can say who sent it.
+				...(auth.user ? { user: auth.user, sessionId: auth.sessionId } : {}),
 			};
 
 			// Notify parent about connection
@@ -139,7 +161,7 @@ export class WsRoute {
 			);
 
 			// Send connection confirmation
-			connection.socket.send(
+			socket.send(
 				JSON.stringify({
 					type: 'connected',
 					clientId,
@@ -154,7 +176,7 @@ export class WsRoute {
 
 			if (replay) {
 				logger.info(`Resumed ${clientId} with ${replay.length} replayed frame(s)`, LOG_CONTEXT);
-				for (const frame of replay) connection.socket.send(frame);
+				for (const frame of replay) socket.send(frame);
 			}
 
 			// Send initial sessions list (all sessions, not just "live" ones)
@@ -169,7 +191,7 @@ export class WsRoute {
 						isLive: this.callbacks.isSessionLive?.(s.id) || false,
 					};
 				});
-				connection.socket.send(
+				socket.send(
 					JSON.stringify({
 						type: 'sessions_list',
 						sessions: sessionsWithLiveInfo,
@@ -182,7 +204,7 @@ export class WsRoute {
 			if (this.callbacks.getTheme) {
 				const theme = this.callbacks.getTheme();
 				if (theme) {
-					connection.socket.send(
+					socket.send(
 						JSON.stringify({
 							type: 'theme',
 							theme,
@@ -194,7 +216,7 @@ export class WsRoute {
 
 			// Send current global Bionify reading-mode setting
 			if (this.callbacks.getBionifyReadingMode) {
-				connection.socket.send(
+				socket.send(
 					JSON.stringify({
 						type: 'bionify_reading_mode',
 						enabled: this.callbacks.getBionifyReadingMode(),
@@ -206,7 +228,7 @@ export class WsRoute {
 			// Send custom AI commands
 			if (this.callbacks.getCustomCommands) {
 				const customCommands = this.callbacks.getCustomCommands();
-				connection.socket.send(
+				socket.send(
 					JSON.stringify({
 						type: 'custom_commands',
 						commands: customCommands,
@@ -228,7 +250,7 @@ export class WsRoute {
 							`Sending initial AutoRun state for session ${sid}: tasks=${state.completedTasks}/${state.totalTasks}`,
 							LOG_CONTEXT
 						);
-						connection.socket.send(
+						socket.send(
 							JSON.stringify({
 								type: 'autorun_state',
 								sessionId: sid,
@@ -241,12 +263,12 @@ export class WsRoute {
 			}
 
 			// Handle incoming messages
-			connection.socket.on('message', (message) => {
+			socket.on('message', (message) => {
 				try {
 					const data = JSON.parse(message.toString()) as WebClientMessage;
 					this.callbacks.handleMessage?.(clientId, data);
 				} catch {
-					connection.socket.send(
+					socket.send(
 						JSON.stringify({
 							type: 'error',
 							message: 'Invalid message format',
@@ -256,13 +278,13 @@ export class WsRoute {
 			});
 
 			// Handle disconnection
-			connection.socket.on('close', () => {
+			socket.on('close', () => {
 				this.callbacks.onClientDisconnect?.(clientId);
 				logger.info(`Client disconnected: ${clientId}`, LOG_CONTEXT);
 			});
 
 			// Handle errors
-			connection.socket.on('error', (error) => {
+			socket.on('error', (error) => {
 				logger.error(`Client error (${clientId})`, LOG_CONTEXT, error);
 				this.callbacks.onClientError?.(clientId, error);
 			});

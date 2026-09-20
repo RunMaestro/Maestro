@@ -1,21 +1,22 @@
 /**
  * The first-run modal series - what Maestro shows a user once, and to whom.
  *
- * Three steps run back to back: pick your typography, pick your theme, then
+ * Four steps run back to back: pick your typography, pick your theme, choose
+ * how Maestro stays current (release channel, crash reports, the CLI), then
  * learn that your agents can drive all of it themselves. Each is a decision or
  * a disclosure that only makes sense before the user has settled in, so each is
  * shown at most once.
  *
  * Every step carries its OWN seen flag rather than one flag for the series.
- * That is what lets a later release add a fourth step without re-showing the
- * three a user already answered - and it is why the typography step keeps
- * working for anyone who dismissed it before the other two existed.
+ * That is what let the updates step arrive after the others without re-showing
+ * the steps a user already answered - and it is why the typography step keeps
+ * working for anyone who dismissed it before the rest existed.
  *
  * Shared rather than renderer-local so the planner is testable without React
  * and cannot drift from the flags the settings store persists.
  */
 
-export const ONBOARDING_STEPS = ['typography', 'theme', 'agentPowers'] as const;
+export const ONBOARDING_STEPS = ['typography', 'theme', 'updates', 'agentPowers'] as const;
 
 export type OnboardingStep = (typeof ONBOARDING_STEPS)[number];
 
@@ -30,6 +31,7 @@ export type OnboardingAudience = 'new' | 'returning';
 export const ONBOARDING_STEP_FLAGS: Record<OnboardingStep, string> = {
 	typography: 'typographyPromptSeen',
 	theme: 'themePromptSeen',
+	updates: 'updatesPromptSeen',
 	agentPowers: 'agentPowersPromptSeen',
 };
 

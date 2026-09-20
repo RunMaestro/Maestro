@@ -12,6 +12,7 @@ import remarkFrontmatter from 'remark-frontmatter';
 import { remarkFrontmatterTable } from '../../utils/remarkFrontmatterTable';
 import { remarkAlert } from '../../components/Markdown/remarkAlert';
 import { remarkMaestroMarkers } from '../../components/Markdown/remarkMaestroMarkers';
+import { remarkStripHtmlComments } from '../../../shared/remarkStripHtmlComments';
 import {
 	remarkFileLinks,
 	buildFileTreeIndices,
@@ -219,6 +220,10 @@ export function useAutoRunMarkdown({
 			// Marker pills matter most here: this is the panel with the Run button,
 			// so a gate or halt that will block the run has to be visible from it.
 			remarkMaestroMarkers,
+			// This surface has no rehype-raw, so react-markdown would render every
+			// HTML comment as visible body text. Runs after remarkMaestroMarkers so
+			// the markers above still become pills.
+			remarkStripHtmlComments,
 		];
 		if (fileTreeIndices || homeDir || projectRoot) {
 			// cwd is empty since we're at the root of the Auto Run folder. Keeping it

@@ -24,6 +24,7 @@ import {
 	TabGroup,
 	UnifiedTabRef,
 } from '../types';
+import type { SnoozedTabSummary } from '../../shared/snoozeCommands';
 import { generateId } from './ids';
 import {
 	closeTab,
@@ -295,7 +296,8 @@ export interface SnoozedTabListItem {
  * @param tabId - AI tab to snooze
  * @param wakeAt - When the tab should come back (ms epoch)
  * @param content - Optional note-to-self and wake prompt
- * @param showUnreadOnly - Current unread-filter state (affects which tab is selected next)
+ * @param showUnreadOnly - Unread-filter override; omit to read the live filter state
+ *                         (it decides which tab is selected next)
  * @returns Updated session and the stored entry, or null if the tab doesn't exist
  */
 export function snoozeTab(
@@ -303,7 +305,7 @@ export function snoozeTab(
 	tabId: string,
 	wakeAt: number,
 	content?: SnoozeContent,
-	showUnreadOnly = false
+	showUnreadOnly?: boolean
 ): SnoozeTabResult | null {
 	if (!session) return null;
 
@@ -790,6 +792,39 @@ export function getSnoozedTabLabel(entry: SnoozedTabEntry): string {
 	}
 }
 
+/**
+ * Flatten a snooze for anything outside the renderer - today, the
+ * `snooze_command` wire and so `maestro-cli snooze list`.
+ *
+ * Flat by necessity: the stored entry carries the whole parked tab, transcript
+ * included, so handing five of them to a socket would put megabytes on the wire
+ * to answer "what is parked?". The label comes from
+ * {@link getSnoozedTabLabel} rather than being re-derived, so a snooze reads
+ * identically in the CLI and in the Snoozed Tabs list.
+ */
+export function toSnoozedTabSummary(
+	entry: SnoozedTabEntry,
+	sessionId: string,
+	sessionName: string
+): SnoozedTabSummary {
+	const group = isSnoozedGroup(entry);
+	return {
+		snoozeId: entry.id,
+		agentId: sessionId,
+		agentName: sessionName,
+		type: entry.type,
+		label: getSnoozedTabLabel(entry),
+		// A group has no single tab id; its own id is the stable handle, the same
+		// one `buildSnoozeHistoryRecord` falls back to.
+		tabId: group ? entry.group.id : entry.tab.id,
+		snoozedAt: entry.snoozedAt,
+		wakeAt: entry.wakeAt,
+		...(entry.note ? { note: entry.note } : {}),
+		...(entry.wakePrompt ? { wakePrompt: entry.wakePrompt } : {}),
+		...(group ? { memberCount: entry.members.length } : {}),
+	};
+}
+
 // ---------------------------------------------------------------------------
 // Tiled groups
 //
@@ -855,6 +890,8 @@ function captureGroupMember(session: Session, ref: UnifiedTabRef): SnoozedGroupM
 function closeGroupMember(session: Session, ref: UnifiedTabRef): Session {
 	switch (ref.type) {
 		case 'ai': {
+			// Explicit false: the group's own restore math picks what comes back, so
+			// no neighbor is selected here and the unread filter has nothing to say.
 			const closed = closeTab(session, ref.id, false, {
 				skipHistory: true,
 				preserveTabScopedWork: true,

@@ -127,13 +127,24 @@ The Agents tab shows one card per agent, so you can scan your whole fleet at onc
 
 **Filtering:** the filter box above the grid narrows the cards as you type. Matching is fuzzy, so `cbst` finds "Cyber Stocks", and it searches the agent name (with or without its leading emoji) as well as a worktree's branch name. A count next to the box shows how many of your agents match. Press `Esc` or click the **ESC** pill to clear the filter; clearing it is what `Esc` does first, so the dashboard stays open.
 
-**Provider accounts:** when your agents are split across more than one provider account, an **All providers** dropdown appears beside the filter box, listing each account with the number of agents behind it (`Claude Code - smash (7)`, `Codex - Default account (3)`, `OpenCode (2)`). Pick one to narrow the grid to those agents. Every card is also badged with its account name, so you can read the split without touching the filter. An account is whichever `CLAUDE_CONFIG_DIR` or `CODEX_HOME` that agent runs against; providers that keep one credential store show up as a single entry named after the provider.
+**Provider accounts:** when your agents are split across more than one provider account, an **All providers** dropdown appears beside the filter box, listing each account with the number of agents behind it (`Claude Code - smash (7)`, `Codex - Default account (3)`, `OpenCode (2)`). Pick one to narrow the grid to those agents. Every card is also badged with its account name, so you can read the split without touching the filter. A plain `~/.claude` or `~/.codex` has no name of its own, so those cards badge the provider instead (`CLAUDE CODE DEFAULT`, `CODEX DEFAULT`) rather than a bare "default account" that would read the same on both. An account is whichever `CLAUDE_CONFIG_DIR` or `CODEX_HOME` that agent runs against; providers that keep one credential store show up as a single entry named after the provider.
 
-The **N agents** chip on each row of the Anthropic Usage and OpenAI Usage tabs is a shortcut into this: click it and Maestro opens the Agents tab already narrowed to that account, so you can see which agents are burning the plan you are looking at.
+The **N agents** chip on each row of the Anthropic Usage and OpenAI Usage tabs is a shortcut into this: click it and Maestro opens the Agents tab already narrowed to that account, so you can see which agents are burning the plan you are looking at. Agents that run over SSH are marked **remote**: on the remote host that directory holds the host's own login, which can be a different account from the one the row measures. A row the last refresh could not update shows a **stale** chip with the time its bars were read.
+
+An account keeps its row after you move every agent off it, which is what you normally do the moment that plan hits its limit. The row holds the last reading Maestro took, badged **stale** with its age, so you can watch for the reset without keeping an agent parked on a capped account. Maestro remembers an account because it sampled it for a real agent, not because a directory looks like one, and it forgets the row only when that account directory is gone from disk.
 
 **Sorting:** the **Sort by** control orders the grid by Name, Created, Recent, Queries, Tabs, Auto %, or Provider (which groups the fleet one account at a time). The stat being sorted on is highlighted on every card, so it is obvious what the order means. **Recent** ranks by when each agent last ran a query, so the fleet reads newest-work-first; under it the card's corner badge switches from the agent's age to that last-query time, and an agent that has not run anything in the selected range drops to the bottom with no badge at all. When a filter is active, the default Name sort ranks the best match first; any other sort keeps the order you chose.
 
+**Tile size:** `+` and `-` resize the tiles, and `0` returns them to the default. The buttons beside the **Sort by** control do the same. A wider tile shows more of a long agent name before it truncates; a narrower one fits more agents on screen at once. Maestro remembers the size you picked, and the Groups tab keeps its own separate size.
+
 **Per-agent details:** click any card to open a detail view for that agent, covering total queries, total and average duration, active days, a full-window daily activity chart, duration distribution (min / median / p95 / max), the user-vs-auto query split, and Auto Run totals.
+
+Two actions in the detail view's header take you out of the numbers and onto the agent itself:
+
+- **Jump to Agent** switches to that agent and lands on its AI transcript, even if you last left it on a terminal, file, or browser tab, and expands whichever Left Bar section it is hiding in.
+- **Agent Settings** opens the Edit Agent dialog for it.
+
+Both close the dashboard on the way, since it covers the whole window and you would otherwise land behind it. Stats outlive the agents that produced them, so an agent you have since deleted still has a card here: **Jump to Agent** tells you it is gone rather than appearing to do nothing.
 
 #### Tab breakdown
 
@@ -159,9 +170,61 @@ This tab has a different data source from the rest of the dashboard. Where the o
 Two things it is careful about:
 
 - **Estimated versus reported cost.** Only some agents report a real cost figure. Everything else is priced from a built-in rate table, and those numbers are marked with a `~` and explained in a footnote, so an estimate is never presented as authoritative.
-- **Multiple provider accounts.** Running several Claude accounts from separate `CLAUDE_CONFIG_DIR` homes is common, and the **Accounts** breakdown reports each one's spend separately rather than blending or dropping them.
+- **Multiple provider accounts.** Running several accounts from separate provider homes is common, and the **Accounts** breakdown reports each one's spend separately rather than blending or dropping them. Each row names its provider as well as its account (`Claude Code - Default account`, `Codex - project-acc-1`), so two providers' default accounts can never land in one row. Hover a row to see the account's full directory.
+
+  Which providers can split by account depends on whether the provider's CLI ships a variable that selects its home directory:
+
+  | Provider      | Variable            | Default directory         |
+  | ------------- | ------------------- | ------------------------- |
+  | Claude Code   | `CLAUDE_CONFIG_DIR` | `~/.claude`               |
+  | Codex         | `CODEX_HOME`        | `~/.codex`                |
+  | Copilot-CLI   | `COPILOT_HOME`      | `~/.copilot`              |
+  | OpenCode      | none                | `~/.local/share/opencode` |
+  | Factory Droid | none                | `~/.factory`              |
+
+  OpenCode and Factory Droid ship no per-account home variable, so their spend is reported under a single row per provider. Maestro finds an account from the variable set on an agent (or on the provider, in Settings), from your own shell environment, and from `~/.<provider>-*` directories on disk. Accounts that share one transcript directory by symlink are counted once, not once per account.
+
+  A home is not always a login. `COPILOT_HOME` relocates Copilot CLI's transcripts but leaves its login machine-wide, so two Copilot homes report as two rows that bill one GitHub account. [Multiple Accounts](/multi-provider) covers what each provider's variable does and does not move.
+
+  SSH-remote agents are not attributed by account: their transcripts live on the remote host.
 
 Every chart on the dashboard also gains a **Tokens** metric mode, so charts that would otherwise plot query counts or time can plot token consumption over the same range.
+
+### OpenAI Usage
+
+One row per Codex account (`CODEX_HOME`), each with its plan badge, its email, and a bar per usage window: **Session (5h)**, **Weekly**, and any per-model limits the account reports, every one labelled with when it reopens.
+
+#### Usage resets
+
+OpenAI grants Codex accounts occasional **reset credits**. Redeeming one reopens that account's consumed usage windows straight away instead of waiting for the clock. Codex only exposes this inside its own terminal UI, so Maestro surfaces it here: any account holding credits grows a **Usage resets** block under its bars, listing each credit with its expiry and a **Reset now** button.
+
+Redeeming always asks first, because the credits are finite, expire (typically about a month after they are granted), and cannot be refunded. Maestro spends the soonest-to-expire credit so none lapses while others sit unused, and re-reads your usage immediately afterwards, so the bars show the reopened windows rather than the exhausted ones you just paid to clear.
+
+<Warning>
+A reset credit reopens whatever is currently consumed. Redeem one while your windows are near-empty and it is simply gone, having reset nothing. Maestro reads this from the account (the header says `2 available - 0 would take effect now`) and says so in the confirmation, but it will not stop you: they are your credits.
+</Warning>
+
+An account with no credits shows no block at all, so the row stays as it was.
+
+#### Automatic resets
+
+Individual agents can redeem a credit on their own when they hit a wall. The toggle is in the agent's **Codex Settings**, directly under Reasoning Effort, in both the New Agent and Edit Agent dialogs:
+
+**Redeem a reset credit when this agent hits its usage limit** - off by default.
+
+Turned on, an agent that stops on a plan-quota limit spends one credit and lets its usual auto-retry pick the work back up once the window is open. Maestro will not do this quietly: every automatic redemption raises a notification naming the agent and how many windows reopened.
+
+The automation is deliberately more cautious than the button:
+
+| It fires only when                               | Because                                                                               |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------- |
+| The agent runs on Codex and the toggle is on     | No other provider has reset credits, and the default is off                           |
+| The stop is a real plan-quota limit              | A crash or an auth failure is not something a reset can fix                           |
+| The account confirms the reset would take effect | It refuses a spend that would reset nothing, and refuses when it cannot tell          |
+| It has not already reset for this outage         | One wall must not be able to walk through the whole balance one error at a time       |
+| The agent runs locally                           | Over SSH the credits read here belong to this machine, not to the host the agent uses |
+
+Turn it off and nothing changes about the manual button: the credits stay yours to spend from the dashboard whenever you choose.
 
 ### Shortcuts
 
@@ -196,6 +259,10 @@ The Auto Run tab focuses specifically on automated playbook execution:
 **Tasks Completed Over Time:**
 A mini bar chart showing task completions by date (last 14 days). Hover over bars to see exact counts and success percentages for each day.
 
+**How a run's duration is measured:** wall-clock time from start to finish, minus any time the machine spent asleep. Whether the Maestro window was on screen makes no difference - the agent runs in its own process and keeps working while you do something else, so a run you walked away from is timed the same as one you watched.
+
+Older builds also subtracted time the window was hidden, which on macOS includes being minimized or fully covered by another app. That under-recorded exactly the unattended overnight runs whose length matters most, and recorded some as zero. If your history predates the fix, `scripts/repair-autorun-durations.mjs` rebuilds each affected run's duration from its own task timestamps (dry run by default; `--apply` writes, after a backup). Runs with no recorded tasks cannot be reconstructed and are left as they are.
+
 ## Time Range Filtering
 
 Use the time range dropdown in the top-right corner to filter all dashboard data:
@@ -223,14 +290,16 @@ The selected time range applies to all tabs and charts. Your preferred time rang
 
 ## Exporting Data
 
-Click **Export CSV** in the top-right corner to download your usage data as a CSV file. The export includes:
+Click **Export** in the top-right corner and pick a format. Both cover the selected time range and hold the same data:
 
-- Query timestamps
-- Agent information
-- Duration metrics
-- Source categorization (interactive vs. Auto Run)
+| Format   | What you get                                                                                        |
+| -------- | --------------------------------------------------------------------------------------------------- |
+| **JSON** | One file with every table and the dashboard's computed totals. Best for scripts and `jq`.           |
+| **CSV**  | A `.zip` with one CSV per table, plus `export-info.json` holding the totals. Best for spreadsheets. |
 
-Use exported data for further analysis in spreadsheet applications or to share usage reports.
+The export includes query events (with per-turn tokens and cost), Auto Run sessions and tasks, agent lifecycle, Agent Resilience outages, wizard runs, daily shortcut usage, multi-window usage, token usage by agent, model, project, and account, and Maestro Cue runs when Cue is on. Cue keeps 7 days of run history, so a longer range includes only the last week of Cue runs.
+
+A toast confirms where the file was saved and how many rows it holds.
 
 ## Data Collection
 

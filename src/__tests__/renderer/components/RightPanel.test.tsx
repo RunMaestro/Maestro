@@ -1498,6 +1498,35 @@ describe('RightPanel', () => {
 
 			expect(() => ref.current?.focusAutoRun()).not.toThrow();
 		});
+
+		it('should expose focusFileTree method', () => {
+			const ref = createRef<RightPanelHandle>();
+			const props = createDefaultProps();
+			render(<RightPanel {...props} ref={ref} />);
+
+			expect(typeof ref.current?.focusFileTree).toBe('function');
+		});
+
+		it('focusFileTree puts DOM focus on the file tree container', async () => {
+			const ref = createRef<RightPanelHandle>();
+			const fileTreeContainerRef = { current: null } as React.RefObject<HTMLDivElement>;
+			const props = { ...createDefaultProps(), fileTreeContainerRef };
+			render(<RightPanel {...props} ref={ref} />);
+
+			const container = fileTreeContainerRef.current;
+			expect(container).not.toBeNull();
+			const focusSpy = vi.spyOn(container!, 'focus');
+
+			act(() => {
+				ref.current?.focusFileTree();
+			});
+			// The focus is deferred a frame so the panel is mounted first.
+			await act(async () => {
+				await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+			});
+
+			expect(focusSpy).toHaveBeenCalled();
+		});
 	});
 
 	describe('Focus effects', () => {

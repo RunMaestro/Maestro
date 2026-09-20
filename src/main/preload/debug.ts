@@ -81,7 +81,26 @@ export interface ProfilingStatusResponse {
 	startedAt: number;
 	elapsedMs: number;
 	categories: string[];
+	/**
+	 * Trace-buffer usage, 0-1. This - not elapsed time - is what limits a
+	 * recording: Chromium drops events once the buffer fills, so the UI shows
+	 * this so a capture's remaining headroom is visible rather than guessed at.
+	 */
+	bufferPercent: number;
+	peakBufferPercent: number;
+	bufferSizeKb: number;
+	/** True once the watchdog has asked for the recording to end. */
+	autoStopRequested: boolean;
 	error?: string;
+}
+
+/**
+ * Emitted when the buffer watchdog ends a recording (debug:profilingAutoStopped).
+ * The renderer responds by opening the capture modal, which runs the ordinary
+ * stop-and-save flow.
+ */
+export interface ProfilingAutoStoppedEvent extends Omit<ProfilingStatusResponse, 'success'> {
+	reason: 'buffer-full';
 }
 
 /**
@@ -94,6 +113,12 @@ export interface StopProfilingResponse {
 	bundleSizeBytes: number;
 	traceSizeBytes: number;
 	durationMs: number;
+	/** Highest trace-buffer usage the recording reached, 0-1. */
+	peakBufferPercent?: number;
+	/** The buffer watchdog ended the recording rather than the user. */
+	autoStopped?: boolean;
+	/** Usage hit the stop threshold; the trace may be missing events. */
+	bufferExhausted?: boolean;
 	error?: string;
 }
 
@@ -183,6 +208,17 @@ export function createDebugApi() {
 				handler(data);
 			ipcRenderer.on('debug:profilingProgress', wrapped);
 			return () => ipcRenderer.removeListener('debug:profilingProgress', wrapped);
+		},
+
+		/**
+		 * Subscribe to the buffer watchdog ending a recording. Returns an
+		 * unsubscribe function.
+		 */
+		onProfilingAutoStopped: (handler: (event: ProfilingAutoStoppedEvent) => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, data: ProfilingAutoStoppedEvent) =>
+				handler(data);
+			ipcRenderer.on('debug:profilingAutoStopped', wrapped);
+			return () => ipcRenderer.removeListener('debug:profilingAutoStopped', wrapped);
 		},
 	};
 }

@@ -7,15 +7,8 @@
  */
 
 import { useCallback, useEffect, useRef } from 'react';
-import type {
-	Theme,
-	GroupChat,
-	GroupChatMessage,
-	GroupChatState,
-	Group,
-	Shortcut,
-	QueuedItem,
-} from '../types';
+import type { GroupChatQueueState } from '../../shared/group-chat-types';
+import type { Theme, GroupChat, GroupChatMessage, GroupChatState, Group, Shortcut } from '../types';
 import { GroupChatHeader } from './GroupChatHeader';
 import { GroupChatMessages, type GroupChatMessagesHandle } from './GroupChatMessages';
 import { GroupChatInput } from './GroupChatInput';
@@ -60,7 +53,9 @@ interface GroupChatPanelProps {
 	// Image lightbox handler
 	onOpenLightbox?: (image: string, contextImages?: string[], source?: 'staged' | 'history') => void;
 	// Execution queue props
-	executionQueue?: QueuedItem[];
+	/** The chat's pending sends as MAIN reports them. Undefined until loaded. */
+	queueState?: GroupChatQueueState;
+	onResumeQueue?: () => void;
 	onRemoveQueuedItem?: (itemId: string) => void;
 	onReorderQueuedItems?: (fromIndex: number, toIndex: number) => void;
 	// Markdown toggle (Cmd+E)
@@ -81,6 +76,10 @@ interface GroupChatPanelProps {
 	ghCliAvailable?: boolean;
 	/** Callback to publish a message as a GitHub Gist */
 	onPublishMessageGist?: (text: string, messageId?: string) => void;
+	/** True when the room shows only the user <-> moderator conversation */
+	moderatorOnly?: boolean;
+	/** Flip between the team view and the moderator-only view */
+	onToggleModeratorOnly: () => void;
 }
 
 export function GroupChatPanel({
@@ -109,7 +108,8 @@ export function GroupChatPanel({
 	handlePaste,
 	handleDrop,
 	onOpenLightbox,
-	executionQueue,
+	queueState,
+	onResumeQueue,
 	onRemoveQueuedItem,
 	onReorderQueuedItems,
 	markdownEditMode,
@@ -122,6 +122,8 @@ export function GroupChatPanel({
 	messagesRef,
 	ghCliAvailable,
 	onPublishMessageGist,
+	moderatorOnly = false,
+	onToggleModeratorOnly,
 }: GroupChatPanelProps): JSX.Element {
 	const searchKey = groupChatOutputSearchKey(groupChat.id);
 	const {
@@ -174,6 +176,8 @@ export function GroupChatPanel({
 				theme={theme}
 				name={groupChat.name}
 				participantCount={groupChat.participants.length}
+				moderatorOnly={moderatorOnly}
+				onToggleModeratorOnly={onToggleModeratorOnly}
 				totalCost={totalCost}
 				costIncomplete={costIncomplete}
 				state={state}
@@ -226,6 +230,7 @@ export function GroupChatPanel({
 				markdownEditMode={markdownEditMode}
 				onToggleMarkdownEditMode={onToggleMarkdownEditMode}
 				maxOutputLines={maxOutputLines}
+				moderatorOnly={moderatorOnly}
 				participantColors={participantColors}
 				onOpenLightbox={onOpenLightbox}
 				ghCliAvailable={ghCliAvailable}
@@ -253,7 +258,8 @@ export function GroupChatPanel({
 				handlePaste={handlePaste}
 				handleDrop={handleDrop}
 				onOpenLightbox={onOpenLightbox}
-				executionQueue={executionQueue}
+				queueState={queueState}
+				onResumeQueue={onResumeQueue}
 				onRemoveQueuedItem={onRemoveQueuedItem}
 				onReorderQueuedItems={onReorderQueuedItems}
 				enterToSendAI={enterToSendAI}

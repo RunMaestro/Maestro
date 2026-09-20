@@ -900,48 +900,63 @@ textarea::placeholder {
 	will-change: opacity, transform;
 }
 
-/* Wand sparkle animation - opacity-only. Earlier versions translated the SVG
-   <path> elements by 0.5px for jitter, but Chrome doesn't composite transforms
-   on SVG sub-elements, so every animated frame triggered a full layout
-   (~720 layouts/sec when any agent was busy). The half-pixel motion was
-   imperceptible at typical retina DPR; opacity-only gives the same vanish/
-   reappear feel without driving the layout pipeline. */
-@keyframes wand-sparkle {
+/* The busy wand animates on the <svg> ROOT and never on its <path> children.
+   That one rule is the whole design, and it was arrived at the hard way over
+   three rounds of field traces.
+
+   Chrome cannot composite opacity, transform, or filter on an SVG SUB-element.
+   Animate a <path> and Blink must recalculate its style on the main thread
+   every single frame, forever, for as long as the animation runs. Round one
+   animated a 0.5px translate on six sparkle paths: ~720 forced layouts/sec.
+   Round two dropped to opacity-only, which removed the layout but not the
+   per-frame style recalc, and the repaint still invalidated the whole Left Bar
+   (a 772x2724 device-px `.chrome-sheen` gradient, three repaints per frame at a
+   locked 60fps, through eleven seconds in which the user touched nothing).
+   Round three promoted the <svg> to its own layer, which confined that repaint
+   but left the recalc in place, because promotion cannot make a sub-element
+   compositable.
+
+   A Sep 18 2026 trace finally measured what remained: 27,353 style
+   invalidations in 53 seconds across exactly six nodes - the six sparkle paths,
+   alive the whole window at ~86/sec each. `wand-sparkle-active` is set whenever
+   ANY agent is busy, so that was the steady state of an ordinary working
+   session, not a profiling artifact.
+
+   An <svg> root is a replaced element and CAN be composited, so moving the
+   animation there takes the cost from "six nodes recalculating forever" to
+   zero main-thread work: the compositor runs it off-thread. The visual trade is
+   deliberate - the whole icon breathes rather than six sparkles twinkling
+   independently. Six independent twinkles cannot be done off the main thread
+   without six separate composited layers for a 20px icon, which trades one kind
+   of waste for another.
+
+   If someone wants true per-sparkle twinkle back, the only cheap way is a
+   single overlay element (one layer) animating a swept gradient, NOT a return
+   to animating <path> children. That is the mistake this comment exists to
+   prevent a fourth time.
+
+   `will-change` names `opacity` because that is what actually animates, and the
+   classes are only present while animating, so nothing is promoted at rest. */
+svg.wand-sparkle-active,
+svg.wand-profiling-active {
+	will-change: opacity;
+}
+
+/* Busy breathing. Never bottoms out at 0: the wand is also the Left Bar's
+   "switch agent" button, and a control that blinks fully out reads as broken
+   rather than busy. */
+@keyframes wand-breathe {
 	0%,
 	100% {
 		opacity: 1;
 	}
-	35% {
-		opacity: 0;
-	}
-	65% {
-		opacity: 0;
+	50% {
+		opacity: 0.45;
 	}
 }
 
-/* Target sparkle paths (3rd-8th children in Lucide Wand2 SVG) */
-svg.wand-sparkle-active path:nth-child(n + 3) {
-	animation: wand-sparkle 3s ease-in-out infinite;
-}
-
-/* Stagger each sparkle for organic feel (non-uniform delays) */
-svg.wand-sparkle-active path:nth-child(3) {
-	animation-delay: 0s;
-}
-svg.wand-sparkle-active path:nth-child(4) {
-	animation-delay: 0.5s;
-}
-svg.wand-sparkle-active path:nth-child(5) {
-	animation-delay: 1s;
-}
-svg.wand-sparkle-active path:nth-child(6) {
-	animation-delay: 1.5s;
-}
-svg.wand-sparkle-active path:nth-child(7) {
-	animation-delay: 0.7s;
-}
-svg.wand-sparkle-active path:nth-child(8) {
-	animation-delay: 1.2s;
+svg.wand-sparkle-active {
+	animation: wand-breathe 2.4s ease-in-out infinite;
 }
 
 /* ==========================================
@@ -1003,61 +1018,135 @@ button.maestro-keycap-hint:hover {
 }
 
 @media (prefers-reduced-motion: reduce) {
-	svg.wand-sparkle-active path:nth-child(n + 3) {
+	svg.wand-sparkle-active {
 		animation: none;
+		/* Nothing animates, so the promotion above would hold a layer for a still
+		   icon. Dimmed slightly so "busy" is still legible without motion. */
+		will-change: auto;
+		opacity: 0.75;
+	}
+}
+
+/* Sparkle glints - the twinkle, restored, and this time composited.
+   `wand-breathe` above is the baseline everywhere. These are the extra layer of
+   detail, and they are OVERLAY ELEMENTS rather than SVG paths, which is the
+   entire point: a regular positioned element composites `transform` and
+   `opacity` off the main thread, where an SVG <path> cannot. The original
+   design intent (sparkles vanishing and reappearing with a little drift) is
+   fully back, and the half-pixel drift that once cost ~720 forced layouts per
+   second is now genuinely free.
+
+   Cost check, because the last round of this comment got it wrong. Rejecting
+   overlays as "trading one kind of waste for another" overstated it: a glint is
+   ~6 CSS px square, so its layer is 12x12x4 = 576 bytes at DPR 2. Three of them
+   is under 2KB of GPU memory and zero main-thread work. That is not comparable
+   to six nodes recalculating style forever.
+
+   The count and the placement both matter:
+   - THREE glints, not six. Past three nobody perceives individual sparkles at
+     20px, so the rest would be layers bought for nothing.
+   - Percentage positions, never coordinates derived from Lucide's path data,
+     which moves on a version bump.
+   - Only on the Left Bar HEADER wand, which is one element on screen. The
+     WizardIndicator wand is 12px and renders once per agent row, so glints
+     there would be invisible AND multiply by the agent count. That one breathes
+     and nothing more. */
+.wand-glints {
+	position: relative;
+	display: inline-flex;
+}
+
+.wand-glint {
+	position: absolute;
+	width: 30%;
+	height: 30%;
+	border-radius: 50%;
+	/* currentColor, so the glints track the theme accent the wrapper carries. */
+	background: radial-gradient(circle, currentColor 0%, transparent 68%);
+	opacity: 0;
+	/* Never intercept the click: the header wand is the "switch agent" button. */
+	pointer-events: none;
+	will-change: transform, opacity;
+}
+
+@keyframes wand-glint {
+	0%,
+	100% {
+		opacity: 0;
+		transform: translate(0, 0) scale(0.5);
+	}
+	40% {
+		opacity: 0.9;
+		transform: translate(0.5px, -0.5px) scale(1);
+	}
+	70% {
+		opacity: 0;
+		transform: translate(-0.5px, 0.5px) scale(0.6);
+	}
+}
+
+.wand-glint-1 {
+	top: 0;
+	left: 4%;
+	animation: wand-glint 2.4s ease-in-out infinite;
+}
+.wand-glint-2 {
+	top: 16%;
+	right: 0;
+	animation: wand-glint 2.4s ease-in-out 0.8s infinite;
+}
+.wand-glint-3 {
+	bottom: 8%;
+	right: 20%;
+	animation: wand-glint 2.4s ease-in-out 1.6s infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	/* A glint is nothing BUT motion, so there is no static form worth holding a
+	   layer for. `wand-sparkle-active`'s dimmed state carries "busy" instead. */
+	.wand-glint {
+		display: none;
 	}
 }
 
 /* Performance-profiling indicator: while a trace is being captured the wand
    glows recording-red so it's unmistakable that profiling is on. The red is
-   forced over the inline theme accent for this debug-only state. A slow (1.5s)
-   pulse is deliberate - it keeps the indicator's own paint cost low and out of
-   the trace it is helping to capture. */
+   forced over the inline theme accent for this debug-only state.
+
+   The glow is a STATIC filter and only the opacity animates. An animated
+   `filter` is not compositable here and was repainted on the main thread every
+   frame - which mattered more than for any other animation in the app, because
+   this one runs for the entire duration of every capture and therefore taxed
+   the very traces it exists to annotate. The Sep 18 2026 trace caught it:
+   4,552 style invalidations on the <svg> node across 53 seconds, all of them
+   the profiler observing itself.
+
+   This rule sits AFTER `svg.wand-sparkle-active` on purpose. Both animate
+   opacity on the same element, both classes can be present at once, and at
+   equal specificity source order decides - so profiling wins, which is the
+   right precedence for a recording indicator. */
 @keyframes wand-profiling-pulse {
 	0%,
 	100% {
-		filter: drop-shadow(0 0 1px rgba(239, 68, 68, 0.6));
+		opacity: 1;
 	}
 	50% {
-		filter: drop-shadow(0 0 5px rgba(239, 68, 68, 0.95));
+		opacity: 0.35;
 	}
 }
 
 svg.wand-profiling-active {
 	color: #ef4444 !important;
+	filter: drop-shadow(0 0 3px rgba(239, 68, 68, 0.85));
 	animation: wand-profiling-pulse 1.5s ease-in-out infinite;
-}
-
-/* Keep the sparkles dancing during profiling even when nothing else is busy */
-svg.wand-profiling-active path:nth-child(n + 3) {
-	animation: wand-sparkle 1.6s ease-in-out infinite;
-}
-svg.wand-profiling-active path:nth-child(3) {
-	animation-delay: 0s;
-}
-svg.wand-profiling-active path:nth-child(4) {
-	animation-delay: 0.25s;
-}
-svg.wand-profiling-active path:nth-child(5) {
-	animation-delay: 0.5s;
-}
-svg.wand-profiling-active path:nth-child(6) {
-	animation-delay: 0.75s;
-}
-svg.wand-profiling-active path:nth-child(7) {
-	animation-delay: 0.35s;
-}
-svg.wand-profiling-active path:nth-child(8) {
-	animation-delay: 0.6s;
 }
 
 @media (prefers-reduced-motion: reduce) {
 	svg.wand-profiling-active {
 		animation: none;
-		filter: drop-shadow(0 0 3px rgba(239, 68, 68, 0.9));
-	}
-	svg.wand-profiling-active path:nth-child(n + 3) {
-		animation: none;
+		/* Static glow, so there is no repaint to confine. */
+		will-change: auto;
+		opacity: 1;
 	}
 }
 
@@ -1286,6 +1375,54 @@ svg.wand-profiling-active path:nth-child(8) {
 	}
 }
 
+/* ==========================================
+   Group Chat View Header Container Queries
+   ==========================================
+   Yield ladder for the header above an open group chat (`GroupChatHeader`).
+   The title truncates first on its own (`min-w-0`); these rungs run before the
+   row runs out entirely:
+     1. participant count pill
+     2. view switch labels shorten ("Team Chat" -> "Team",
+        "Moderator Only" -> "Moderator")
+   Thresholds are in `em` so they scale with the `fontSize` setting (see the
+   Group Chats header block above). They are sized for the cost pill, Info, and
+   right-panel toggle all showing; `.group-chat-header-busy` shifts each rung
+   wider by the Stop All button's width while the chat is working. */
+.group-chat-header-container {
+	container-type: inline-size;
+	container-name: groupchatheader;
+}
+
+@container groupchatheader (max-width: 48em) {
+	.group-chat-header-container .group-chat-header-participants {
+		display: none;
+	}
+}
+
+@container groupchatheader (max-width: 54em) {
+	.group-chat-header-container.group-chat-header-busy .group-chat-header-participants {
+		display: none;
+	}
+}
+
+@container groupchatheader (max-width: 40em) {
+	.group-chat-header-container .segmented-label-full {
+		display: none;
+	}
+	.group-chat-header-container .segmented-label-short {
+		display: inline;
+	}
+}
+
+@container groupchatheader (max-width: 46em) {
+	.group-chat-header-container.group-chat-header-busy .segmented-label-full {
+		display: none;
+	}
+	.group-chat-header-container.group-chat-header-busy .segmented-label-short {
+		display: inline;
+	}
+}
+
 /* When AUTO mode button is visible, we need earlier breakpoints.
    Use a modifier class on the container to shift thresholds. */
 .header-container.header-auto-mode .header-context-label-full {
@@ -1421,8 +1558,12 @@ svg.wand-profiling-active path:nth-child(8) {
 	   would otherwise silently defeat this phone breakpoint override. */
 	width: 100vw !important;
 	max-width: 100vw !important;
-	height: 100dvh !important;
-	max-height: 100dvh !important;
+	height: calc(
+		100dvh - var(--maestro-top-inset, 0px) - env(safe-area-inset-bottom, 0px)
+	) !important;
+	max-height: calc(
+		100dvh - var(--maestro-top-inset, 0px) - env(safe-area-inset-bottom, 0px)
+	) !important;
 	border-radius: 0;
 	border-width: 0;
 }
@@ -1786,6 +1927,51 @@ html[data-runtime='web-desktop'] .maestro-app-shell {
 }
 
 /*
+ * Home-screen web apps on iOS (Add to Home Screen, `black-translucent` status
+ * bar). Two things went wrong there, and both surfaced on the first RC that
+ * made mobile connectivity work:
+ *
+ * 1. The page extends under the status bar, and iOS 26 draws a frosted status
+ *    bar layer over whatever sits there and swallows taps in that band. Nothing
+ *    applied env(safe-area-inset-top), so the Main Panel header, hamburger
+ *    included, sat inside it: dimmed, blurred, untappable. The left-edge swipe
+ *    was the only way to the menu.
+ * 2. The roots (html, body, #root) were `height: 100%`, which resolves to the
+ *    SMALL viewport (100svh, 812pt on an iPhone 16 Pro) while the shell is
+ *    100dvh (874pt). With overflow hidden on the roots, the shell was clipped
+ *    at the status-bar line and a status-bar-tall band of the boot background
+ *    showed under the composer. Measured on the iOS 26.5 simulator.
+ *
+ * --maestro-top-inset is env() where WebKit reports it, and the JS-measured bar
+ * height where it does not (installStandaloneStatusBarInset: WebKit bug 301994
+ * reports env() as 0 and shortens the viewport instead). Browser-mode Safari,
+ * desktop browsers and Electron report 0 for both, so every rule here is inert
+ * outside a home-screen web app.
+ */
+html[data-runtime='web-desktop'] {
+	--maestro-top-inset: max(env(safe-area-inset-top, 0px), var(--maestro-status-bar-inset, 0px));
+}
+html[data-runtime='web-desktop'],
+html[data-runtime='web-desktop'] body,
+html[data-runtime='web-desktop'] #root {
+	height: 100vh;
+	height: 100dvh;
+}
+html[data-runtime='web-desktop'] .maestro-app-shell {
+	padding-top: var(--maestro-top-inset, 0px);
+}
+/* The floating drawers are position: fixed at top: 0, outside the shell's padding. */
+html[data-runtime='web-desktop'][data-bp='xs']
+	[data-panel='left'][data-collapsed='false'][data-hidden='false'],
+html[data-runtime='web-desktop'][data-bp='sm']
+	[data-panel='left'][data-collapsed='false'][data-hidden='false'],
+html[data-runtime='web-desktop'][data-bp='xs'] [data-panel='right'],
+html[data-runtime='web-desktop'][data-bp='sm'] [data-panel='right'] {
+	padding-top: var(--maestro-top-inset, 0px);
+	padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/*
  * Smooth momentum scrolling on scrollable containers (Tailwind overflow
  * utilities). `-webkit-overflow-scrolling` is an iOS-only property and is
  * silently ignored everywhere else.
@@ -1914,17 +2100,15 @@ html[data-runtime='web-desktop'] .session-row {
 }
 
 /*
- * Tab action sheet (TabOverlayPortal on a phone). The menu CONTENT inside is
- * the very same element the desktop hover popover shows; these rules restyle
- * it for a finger without the five menu components knowing which shell they
- * are in. `!important` because the menus set their width, borders, and radius
- * as inline styles for the anchored shape.
+ * Bottom sheet chrome, shared by every caller of <PhoneBottomSheet> (the tab
+ * action menu, the composer options sheet). The scrim and the rise animation
+ * belong to the shell; what each caller adds is the styling of its own body.
  */
-.maestro-tab-sheet {
+.maestro-phone-sheet {
 	background: rgba(0, 0, 0, 0.45);
 	animation: maestro-fade-in 150ms ease;
 }
-.maestro-tab-sheet__panel {
+.maestro-phone-sheet__panel {
 	animation: maestro-sheet-up 180ms ease-out;
 }
 @keyframes maestro-sheet-up {
@@ -1937,6 +2121,14 @@ html[data-runtime='web-desktop'] .session-row {
 		opacity: 1;
 	}
 }
+/*
+ * Tab action sheet body. The menu CONTENT inside is the very same element the
+ * desktop hover popover shows; these rules restyle it for a finger without the
+ * five menu components knowing which shell they are in. `!important` because
+ * the menus set their width, borders, and radius as inline styles for the
+ * anchored shape. Scoped to the TAB sheet on purpose - a sheet whose content
+ * was written for a phone in the first place must not be flattened this way.
+ */
 .maestro-tab-sheet__body > * {
 	min-width: 0 !important;
 	max-width: none !important;
@@ -1965,6 +2157,54 @@ html[data-runtime='web-desktop'][data-bp='xs'] [data-shortcut-hint] {
 }
 
 /*
+ * Readouts leave the main panel header on a phone: the session cost pill, the
+ * context-remaining percentage, and the inert LOCAL badge. The container-query
+ * rungs above drop these too, but only below 350px / 400px, and a phone header
+ * is the full ~390px viewport - so every rung stayed unfired while the row was
+ * already crowded enough to clip the agent name and overlap the badges.
+ *
+ * All three are readouts, not controls, which is what makes them the ones to
+ * drop: cost and context are still on the Usage Dashboard and the context
+ * timeline panel, and the LOCAL badge has no behavior at all (see the pill's
+ * hover handlers in MainPanelHeader). What stays is everything that DOES
+ * something - the sidebar toggle, the git pill's icon and its menu, the tab
+ * strip, and the panel buttons.
+ */
+html[data-runtime='web-desktop'][data-bp='xs'] .header-cost-widget,
+html[data-runtime='web-desktop'][data-bp='xs'] .header-context-widget,
+html[data-runtime='web-desktop'][data-bp='xs'] .header-local-badge {
+	display: none;
+}
+
+/*
+ * The pill wrapper keeps its `gap-2` after the badge inside it goes, which
+ * leaves 8px of empty space between the agent name and the next control. It is
+ * only ever empty once its one child is hidden, so `:empty` retires it without
+ * anything having to know which branch rendered.
+ */
+html[data-runtime='web-desktop'][data-bp='xs'] .header-git-pill:empty {
+	display: none;
+}
+
+/*
+ * The model and effort pills leave every card on a phone. They are readouts of
+ * what a turn ran under (or what a queued message will run under), and on a
+ * 390px screen they share a footer row with controls that cannot yield: the
+ * queued card's footer is a three-column grid whose outer tracks hold a
+ * `whitespace-nowrap` Force Send button and a cluster of four icon buttons, so
+ * once the row runs out of width the tracks overflow into the centered pills
+ * and the three groups paint on top of each other.
+ *
+ * Dropping the readout is what the other crowded phone rows do (the header's
+ * cost, context and LOCAL badges above). Nothing is lost that the phone can
+ * act on: the pills are static text with a `title` tooltip no touch screen can
+ * open, and every control in those rows stays.
+ */
+html[data-runtime='web-desktop'][data-bp='xs'] [data-turn-setting-pill] {
+	display: none;
+}
+
+/*
  * Modals take the whole screen. Every resizable modal stamps
  * `data-modal-resize-key` (the palette, Settings, the Usage Dashboard,
  * Director's Notes, Process Monitor, file search, ...) and sizes itself to a
@@ -1975,12 +2215,28 @@ html[data-runtime='web-desktop'][data-bp='xs'] [data-shortcut-hint] {
  * rename) pass no resize key and keep their natural size.
  */
 html[data-runtime='web-desktop'][data-bp='xs'] .modal-overlay {
-	padding: 0 !important;
+	/* The status bar band and the home indicator stay outside the modal. */
+	padding: var(--maestro-top-inset, 0px) 0 env(safe-area-inset-bottom, 0px) 0 !important;
 }
 html[data-runtime='web-desktop'][data-bp='xs'] [data-modal-resize-key] {
 	width: 100vw !important;
 	width: 100dvw !important;
-	height: 100dvh !important;
+	/*
+	 * Sized to what the user can SEE, not to the layout viewport. On iOS the
+	 * on-screen keyboard slides over the page instead of shrinking it, so
+	 * `100dvh` keeps a full-screen modal at full height with its bottom ~45%
+	 * behind the keys. Both search surfaces autofocus their input, so the
+	 * keyboard is up from the first frame and the results list is born buried:
+	 * typing filters, but the rows the user is trying to scroll through are
+	 * under the keyboard. `--maestro-viewport-height` is `visualViewport.height`,
+	 * republished on every keyboard open and close (standaloneStatusBar.ts);
+	 * `100dvh` is the fallback for a browser with no visualViewport, where the
+	 * two are the same number anyway.
+	 */
+	height: calc(
+		var(--maestro-viewport-height, 100dvh) - var(--maestro-top-inset, 0px) -
+			env(safe-area-inset-bottom, 0px)
+	) !important;
 	max-width: none !important;
 	max-height: none !important;
 	border-radius: 0 !important;
@@ -2101,7 +2357,7 @@ html[data-gloss='max'] .chrome-raised-active {
 /* ============================================================================
    VIBE MODE
 
-   The five vibe themes (Pedurple, Dre Synth, InQuest, Winamp, Maestro's
+   The four vibe themes (Pedurple, Dre Synth, Winamp, Maestro's
    Choice) declare `mode: 'vibe'` in `src/shared/themes.ts`, which
    `useThemeStyles` publishes as `<html data-theme-mode='vibe'>`. Until now the
    only mode-keyed CSS was the light-theme opt-out below, so a vibe theme

@@ -26,8 +26,13 @@ import { useSettings } from '../../hooks';
 import { generateTerminalProseStyles } from '../../utils/markdownConfig';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { formatNumber } from '../../../shared/formatters';
+import {
+	isAutoSynopsisProvider,
+	synopsisProviderChoice,
+} from '../../../shared/directorNotesProvider';
 import { notifyToast } from '../../stores/notificationStore';
 import { useModalStore } from '../../stores/modalStore';
+import { safeStorageGet, safeStorageSet } from '../../utils/safeLocalStorage';
 import {
 	looksLikeStructuredOutput,
 	narrativeToMarkdown,
@@ -42,6 +47,10 @@ type SynopsisStats = NonNullable<
 interface AIOverviewTabProps {
 	theme: Theme;
 	onSynopsisReady?: () => void;
+	/** A generation run started (first open or Regenerate). */
+	onSynopsisStart?: () => void;
+	/** A generation run failed. Receives the message the error banner shows. */
+	onSynopsisError?: (error: string) => void;
 }
 
 // Font-scale zoom for the rendered synopsis. Stored as an em multiplier so the
@@ -66,7 +75,7 @@ type ViewMode = 'rich' | 'plain';
 const VIEW_MODE_DEFAULT: ViewMode = 'rich';
 
 function loadViewMode(persistedDefault: ViewMode): ViewMode {
-	const raw = localStorage.getItem(VIEW_MODE_STORAGE_KEY);
+	const raw = safeStorageGet(VIEW_MODE_STORAGE_KEY);
 	return raw === 'rich' || raw === 'plain' ? raw : persistedDefault;
 }
 
@@ -119,7 +128,7 @@ function fireSynopsisReadyToast() {
 }
 
 export const AIOverviewTab = forwardRef<TabFocusHandle, AIOverviewTabProps>(function AIOverviewTab(
-	{ theme, onSynopsisReady },
+	{ theme, onSynopsisReady, onSynopsisStart, onSynopsisError },
 	ref
 ) {
 	const { directorNotesSettings, bionifyReadingMode, shortcuts } = useSettings();
@@ -162,7 +171,7 @@ export const AIOverviewTab = forwardRef<TabFocusHandle, AIOverviewTabProps>(func
 	// Switch reading mode and persist the choice.
 	const changeViewMode = useCallback((mode: ViewMode) => {
 		setViewMode(mode);
-		localStorage.setItem(VIEW_MODE_STORAGE_KEY, mode);
+		safeStorageSet(VIEW_MODE_STORAGE_KEY, mode);
 	}, []);
 
 	// Three paths consume a synopsis result (fresh generation, attaching to an
@@ -317,19 +326,37 @@ export const AIOverviewTab = forwardRef<TabFocusHandle, AIOverviewTabProps>(func
 		}
 	}, [plainContent]);
 
+	// A failure must reach the modal header too. Without it the AI Overview tab
+	// stays disabled behind a spinner, which hides this error and the Regenerate
+	// button that recovers from it (e.g. after switching providers on a usage limit).
+	const reportError = useCallback(
+		(message: string) => {
+			setError(message);
+			onSynopsisError?.(message);
+		},
+		[onSynopsisError]
+	);
+
 	// Generate synopsis - the handler reads history files directly via file paths,
 	// so the renderer only needs to make a single IPC call.
 	const generateSynopsis = useCallback(async () => {
 		setIsGenerating(true);
 		isGeneratingRef.current = true;
 		setError(null);
+		onSynopsisStart?.();
 
+		// Under auto-selection the provider is decided in the main process, so the
+		// per-provider overrides stored here (they belong to the MANUAL pick) are
+		// deliberately not sent - applying one provider's custom path or args to a
+		// different binary is worse than sending nothing.
+		const providerChoice = synopsisProviderChoice(directorNotesSettings);
+		const useCustomConfig = !isAutoSynopsisProvider(providerChoice);
 		const ipcPromise = window.maestro.directorNotes.generateSynopsis({
 			lookbackDays,
-			provider: directorNotesSettings.provider,
-			customPath: directorNotesSettings.customPath,
-			customArgs: directorNotesSettings.customArgs,
-			customEnvVars: directorNotesSettings.customEnvVars,
+			provider: providerChoice,
+			customPath: useCustomConfig ? directorNotesSettings.customPath : undefined,
+			customArgs: useCustomConfig ? directorNotesSettings.customArgs : undefined,
+			customEnvVars: useCustomConfig ? directorNotesSettings.customEnvVars : undefined,
 		});
 		activeGenerationPromise = ipcPromise;
 
@@ -366,11 +393,11 @@ export const AIOverviewTab = forwardRef<TabFocusHandle, AIOverviewTabProps>(func
 				setStats(result.stats ?? null);
 				onSynopsisReady?.();
 			} else {
-				setError(result.error || 'Failed to generate synopsis');
+				reportError(result.error || 'Failed to generate synopsis');
 			}
 		} catch (err) {
 			if (!mountedRef.current) return;
-			setError(err instanceof Error ? err.message : 'Failed to generate synopsis');
+			reportError(err instanceof Error ? err.message : 'Failed to generate synopsis');
 		} finally {
 			// Only clear if this is still the active generation (not overwritten by Regenerate)
 			if (activeGenerationPromise === ipcPromise) {
@@ -381,7 +408,14 @@ export const AIOverviewTab = forwardRef<TabFocusHandle, AIOverviewTabProps>(func
 				setIsGenerating(false);
 			}
 		}
-	}, [lookbackDays, directorNotesSettings, onSynopsisReady, applyNarrative]);
+	}, [
+		lookbackDays,
+		directorNotesSettings,
+		onSynopsisReady,
+		onSynopsisStart,
+		reportError,
+		applyNarrative,
+	]);
 
 	// On mount: use cache if available, attach to in-flight generation, or start fresh
 	useEffect(() => {
@@ -412,12 +446,12 @@ export const AIOverviewTab = forwardRef<TabFocusHandle, AIOverviewTabProps>(func
 						if (cachedSynopsis) setLookbackDays(cachedSynopsis.lookbackDays);
 						onSynopsisReady?.();
 					} else {
-						setError(result.error || 'Failed to generate synopsis');
+						reportError(result.error || 'Failed to generate synopsis');
 					}
 				})
 				.catch((err) => {
 					if (!mountedRef.current) return;
-					setError(err instanceof Error ? err.message : 'Failed to generate synopsis');
+					reportError(err instanceof Error ? err.message : 'Failed to generate synopsis');
 				})
 				.finally(() => {
 					isGeneratingRef.current = false;

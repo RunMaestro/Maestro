@@ -475,8 +475,8 @@ Template variable autocomplete (e.g., `{{date}}`, `{{time}}`), minus the text su
 
 Two editors offer this popup and share nothing at the DOM level, so each supplies a small `TemplateAutocompleteTarget` binding over the one state machine:
 
-- `useTemplateAutocomplete` (`hooks/input/useTemplateAutocomplete.ts`) - plain `<textarea>` (Auto Run, the command panels, the prompt composers). Locates the caret with a mirror div, since a textarea exposes no per-character boxes.
-- `useEditorTemplateAutocomplete` (`hooks/input/useEditorTemplateAutocomplete.ts`) - the CodeMirror `MarkdownEditor` (Maestro Prompts). Reads the caret from the view and claims Up/Down/Enter/Escape by returning `true` from the editor's `onKeyDown`.
+- `useTemplateAutocomplete` (`hooks/input/useTemplateAutocomplete.ts`) - plain `<textarea>` (the command panels, the prompt composers). Locates the caret with a mirror div, since a textarea exposes no per-character boxes.
+- `useEditorTemplateAutocomplete` (`hooks/input/useEditorTemplateAutocomplete.ts`) - the CodeMirror `MarkdownEditor` (Maestro Prompts, Auto Run). Reads the caret from the view and claims Up/Down/Enter/Escape by returning `true` from the editor's `onKeyDown`.
 
 Do not hand-roll a second `{{` detector for a new editor; write a target for it (three methods, all about caret positions).
 

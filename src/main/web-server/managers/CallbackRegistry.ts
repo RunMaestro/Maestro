@@ -20,6 +20,7 @@ import type {
 	RenameTabCallback,
 	RenameTabResult,
 	StarTabCallback,
+	SnoozeCommandCallback,
 	ReorderTabCallback,
 	ToggleBookmarkCallback,
 	OpenFileTabCallback,
@@ -47,6 +48,7 @@ import type {
 	ConsultAgentCallback,
 	ConsultAgentParams,
 	ConsultAgentResult,
+	NoteAgentDelegationCallback,
 	EnqueueCommandCallback,
 	EnqueueCommandResult,
 	ListQueueCallback,
@@ -80,6 +82,7 @@ import type {
 	GetGroupsCallback,
 	CreateGroupCallback,
 	RenameGroupCallback,
+	UpdateGroupCallback,
 	DeleteGroupCallback,
 	MoveSessionToGroupCallback,
 	CreateSessionCallback,
@@ -144,6 +147,8 @@ import type {
 	DesktopSessionEntry,
 	SessionHistoryResult,
 } from '../types';
+import type { SnoozeCommandRequest, SnoozeCommandResult } from '../../../shared/snoozeCommands';
+import type { GroupAppearance, GroupUpdateRequest } from '../../../shared/groupAppearance';
 import type { CadenzaPayload } from '../../../shared/cadenza-types';
 import type { MovementPayload, MovementStateSnapshot } from '../../../shared/movement-types';
 
@@ -168,6 +173,7 @@ export interface WebServerCallbacks {
 	closeTab: CloseTabCallback | null;
 	renameTab: RenameTabCallback | null;
 	starTab: StarTabCallback | null;
+	snoozeCommand: SnoozeCommandCallback | null;
 	reorderTab: ReorderTabCallback | null;
 	toggleBookmark: ToggleBookmarkCallback | null;
 	openFileTab: OpenFileTabCallback | null;
@@ -182,6 +188,7 @@ export interface WebServerCallbacks {
 	readTerminalTab: ReadTerminalTabCallback | null;
 	newAITabWithPrompt: NewAITabWithPromptCallback | null;
 	consultAgent: ConsultAgentCallback | null;
+	noteAgentDelegation: NoteAgentDelegationCallback | null;
 	enqueueCommand: EnqueueCommandCallback | null;
 	listQueue: ListQueueCallback | null;
 	removeQueueItem: RemoveQueueItemCallback | null;
@@ -207,6 +214,7 @@ export interface WebServerCallbacks {
 	getGroups: GetGroupsCallback | null;
 	createGroup: CreateGroupCallback | null;
 	renameGroup: RenameGroupCallback | null;
+	updateGroup: UpdateGroupCallback | null;
 	deleteGroup: DeleteGroupCallback | null;
 	moveSessionToGroup: MoveSessionToGroupCallback | null;
 	createSession: CreateSessionCallback | null;
@@ -268,6 +276,7 @@ export class CallbackRegistry {
 		closeTab: null,
 		renameTab: null,
 		starTab: null,
+		snoozeCommand: null,
 		reorderTab: null,
 		toggleBookmark: null,
 		openFileTab: null,
@@ -282,6 +291,7 @@ export class CallbackRegistry {
 		readTerminalTab: null,
 		newAITabWithPrompt: null,
 		consultAgent: null,
+		noteAgentDelegation: null,
 		enqueueCommand: null,
 		listQueue: null,
 		removeQueueItem: null,
@@ -307,6 +317,7 @@ export class CallbackRegistry {
 		getGroups: null,
 		createGroup: null,
 		renameGroup: null,
+		updateGroup: null,
 		deleteGroup: null,
 		moveSessionToGroup: null,
 		createSession: null,
@@ -445,6 +456,13 @@ export class CallbackRegistry {
 		return this.callbacks.starTab(sessionId, tabId, starred);
 	}
 
+	async snoozeCommand(request: SnoozeCommandRequest): Promise<SnoozeCommandResult> {
+		if (!this.callbacks.snoozeCommand) {
+			return { success: false, error: 'Snooze is not configured' };
+		}
+		return this.callbacks.snoozeCommand(request);
+	}
+
 	async reorderTab(sessionId: string, fromIndex: number, toIndex: number): Promise<boolean> {
 		if (!this.callbacks.reorderTab) return false;
 		return this.callbacks.reorderTab(sessionId, fromIndex, toIndex);
@@ -543,6 +561,11 @@ export class CallbackRegistry {
 		return this.callbacks.consultAgent(params);
 	}
 
+	noteAgentDelegation(notice: Parameters<NoteAgentDelegationCallback>[0]): void {
+		if (!this.callbacks.noteAgentDelegation) return;
+		this.callbacks.noteAgentDelegation(notice);
+	}
+
 	async enqueueCommand(
 		sessionId: string,
 		command: string,
@@ -583,6 +606,8 @@ export class CallbackRegistry {
 			/** Per-run model/effort override - wins over the session model for this run only. */
 			model?: string;
 			effort?: string;
+			/** Skip the documents' MAESTRO:MODEL markers for this run (CLI `--ignore-model-hints`). */
+			ignoreModelHints?: boolean;
 			worktree?: {
 				enabled: boolean;
 				path: string;
@@ -729,15 +754,21 @@ export class CallbackRegistry {
 	async createGroup(
 		name: string,
 		emoji?: string,
-		parentGroupId?: string
+		parentGroupId?: string,
+		appearance?: GroupAppearance
 	): Promise<{ id: string } | null> {
 		if (!this.callbacks.createGroup) return null;
-		return this.callbacks.createGroup(name, emoji, parentGroupId);
+		return this.callbacks.createGroup(name, emoji, parentGroupId, appearance);
 	}
 
 	async renameGroup(groupId: string, name: string): Promise<boolean> {
 		if (!this.callbacks.renameGroup) return false;
 		return this.callbacks.renameGroup(groupId, name);
+	}
+
+	async updateGroup(groupId: string, update: GroupUpdateRequest): Promise<boolean> {
+		if (!this.callbacks.updateGroup) return false;
+		return this.callbacks.updateGroup(groupId, update);
 	}
 
 	async deleteGroup(groupId: string): Promise<boolean> {
@@ -1098,6 +1129,10 @@ export class CallbackRegistry {
 		this.callbacks.starTab = callback;
 	}
 
+	setSnoozeCommandCallback(callback: SnoozeCommandCallback): void {
+		this.callbacks.snoozeCommand = callback;
+	}
+
 	setReorderTabCallback(callback: ReorderTabCallback): void {
 		this.callbacks.reorderTab = callback;
 	}
@@ -1152,6 +1187,10 @@ export class CallbackRegistry {
 
 	setConsultAgentCallback(callback: ConsultAgentCallback): void {
 		this.callbacks.consultAgent = callback;
+	}
+
+	setNoteAgentDelegationCallback(callback: NoteAgentDelegationCallback): void {
+		this.callbacks.noteAgentDelegation = callback;
 	}
 
 	setEnqueueCommandCallback(callback: EnqueueCommandCallback): void {
@@ -1252,6 +1291,10 @@ export class CallbackRegistry {
 
 	setRenameGroupCallback(callback: RenameGroupCallback): void {
 		this.callbacks.renameGroup = callback;
+	}
+
+	setUpdateGroupCallback(callback: UpdateGroupCallback): void {
+		this.callbacks.updateGroup = callback;
 	}
 
 	setDeleteGroupCallback(callback: DeleteGroupCallback): void {

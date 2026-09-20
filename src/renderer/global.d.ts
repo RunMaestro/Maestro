@@ -215,6 +215,9 @@ import type { VoiceApi } from '../main/preload/acappella';
 import type { VoiceSelfTestResponse } from '../main/preload/debug';
 import type { VoiceAudioHostApi } from '../main/preload/acappellaAudio';
 import type { BrowserOp } from '../shared/coworkingBrowser';
+import type { HistoryEntry } from '../shared/types';
+import type { SnoozeCommandRequest, SnoozeCommandResult } from '../shared/snoozeCommands';
+import type { WebUserPublic } from '../shared/webLogin';
 
 interface MaestroAPI {
 	// Context merging API (for session context transfer and grooming)
@@ -365,16 +368,6 @@ interface MaestroAPI {
 			}>
 		>;
 		isTerminalBusy: (sessionId: string) => Promise<boolean>;
-		/**
-		 * Provider Failover: pin an agent to a backup endpoint's env vars (plus its
-		 * model, when it declares one), or pass `env: null` to return to primary.
-		 * Main layers this over `sessionCustomEnvVars` on every subsequent spawn.
-		 */
-		setFailoverOverlay: (
-			sessionId: string,
-			env: Record<string, string> | null,
-			model?: string
-		) => Promise<void>;
 		onData: (callback: (sessionId: string, data: string) => void) => () => void;
 		onUserInput: (
 			callback: (payload: {
@@ -468,8 +461,7 @@ interface MaestroAPI {
 			callback: (
 				sessionId: string,
 				tabId: string,
-				aiTabs?: import('../main/web-server/types').AITabData[],
-				activeTabChanged?: boolean
+				aiTabs?: import('../main/web-server/types').AITabData[]
 			) => void
 		) => () => void;
 		onRemoteNewTab: (
@@ -500,6 +492,10 @@ interface MaestroAPI {
 		onRemoteStarTab: (
 			callback: (sessionId: string, tabId: string, starred: boolean) => void
 		) => () => void;
+		onRemoteSnoozeCommand: (
+			callback: (request: SnoozeCommandRequest, responseChannel: string) => void
+		) => () => void;
+		sendRemoteSnoozeCommandResponse: (responseChannel: string, result: SnoozeCommandResult) => void;
 		onRemoteReorderTab: (
 			callback: (sessionId: string, fromIndex: number, toIndex: number) => void
 		) => () => void;
@@ -535,10 +531,7 @@ interface MaestroAPI {
 				tabId?: string;
 				actionUrl?: string;
 				actionLabel?: string;
-				clickAction?:
-					| { kind: 'jump-session'; sessionId: string; tabId?: string }
-					| { kind: 'open-file'; sessionId: string; path: string }
-					| { kind: 'open-url'; url: string };
+				clickAction?: import('../shared/toastClickAction').ToastClickAction;
 			}) => void
 		) => () => void;
 		onRemoteCadenza: (
@@ -707,8 +700,7 @@ interface MaestroAPI {
 		) => () => void;
 		sendRemoteNewAITabWithPromptResponse: (
 			responseChannel: string,
-			success: boolean,
-			tabId?: string
+			result: { success: boolean; tabId?: string; queued?: boolean; error?: string }
 		) => void;
 		/** Cross-agent consult asked for over the CLI (`maestro-cli ask`). The
 		 *  reply is the consulted agent's ANSWER, so it can arrive minutes later. */
@@ -718,6 +710,7 @@ interface MaestroAPI {
 					targetSessionId: string;
 					question: string;
 					fromSessionId?: string;
+					fromTabId?: string;
 					withContext?: boolean;
 				},
 				responseChannel: string
@@ -734,6 +727,10 @@ interface MaestroAPI {
 				targetTabId?: string;
 			}
 		) => void;
+		/** A delivered `maestro-cli dispatch` that an agent ran from its own shell. */
+		onRemoteAgentDelegation: (
+			callback: (notice: import('../shared/agentDelegation').AgentDelegationNotice) => void
+		) => () => void;
 		onRemoteEnqueueCommand: (
 			callback: (
 				sessionId: string,
@@ -953,6 +950,7 @@ interface MaestroAPI {
 				name: string,
 				emoji: string | undefined,
 				parentGroupId: string | undefined,
+				appearance: import('../shared/groupAppearance').GroupAppearance,
 				responseChannel: string
 			) => void
 		) => () => void;
@@ -961,6 +959,14 @@ interface MaestroAPI {
 			callback: (groupId: string, name: string, responseChannel: string) => void
 		) => () => void;
 		sendRemoteRenameGroupResponse: (responseChannel: string, success: boolean) => void;
+		onRemoteUpdateGroup: (
+			callback: (
+				groupId: string,
+				update: import('../shared/groupAppearance').GroupUpdateRequest,
+				responseChannel: string
+			) => void
+		) => () => void;
+		sendRemoteUpdateGroupResponse: (responseChannel: string, success: boolean) => void;
 		onRemoteDeleteGroup: (callback: (groupId: string) => void) => () => void;
 		onRemoteMoveSessionToGroup: (
 			callback: (sessionId: string, groupId: string | null, responseChannel: string) => void
@@ -1574,6 +1580,7 @@ interface MaestroAPI {
 				maxEntries?: number;
 				ignorePatterns?: string[];
 				honorGitignore?: boolean;
+				expandedPaths?: string[];
 			}
 		) => Promise<{
 			tree: LocalFileScanNode[];
@@ -1678,6 +1685,25 @@ interface MaestroAPI {
 		stopServer: () => Promise<{ success: boolean; error?: string }>;
 		persistCurrentToken: () => Promise<{ success: boolean; message?: string }>;
 		clearPersistentToken: () => Promise<{ success: boolean; message?: string }>;
+		/** Fires when a network change moves the LAN address in the web URL. */
+		onUrlChanged: (handler: (data: { url: string }) => void) => () => void;
+	};
+	/**
+	 * Web Login accounts. Desktop-only: the web-desktop bridge refuses every
+	 * `webLogin:*` channel, so a browser holds this namespace and gets nothing
+	 * back from it. Each verb rejects with the store's own user-facing message.
+	 */
+	webLogin: {
+		listUsers: () => Promise<WebUserPublic[]>;
+		createUser: (input: {
+			username: string;
+			password: string;
+			displayName?: string;
+		}) => Promise<WebUserPublic>;
+		setPassword: (id: string, password: string) => Promise<void>;
+		setDisplayName: (id: string, displayName: string) => Promise<WebUserPublic>;
+		setDisabled: (id: string, disabled: boolean) => Promise<WebUserPublic>;
+		deleteUser: (id: string) => Promise<void>;
 	};
 	agents: {
 		detect: (sshRemoteId?: string) => Promise<AgentConfig[]>;
@@ -1776,14 +1802,32 @@ interface MaestroAPI {
 					label?: string;
 					email?: string;
 					planType?: string;
-					session?: { percent: number; resetsAt: string };
-					weekly?: { percent: number; resetsAt: string };
-					additionalLimits?: Array<{ name: string; percent: number; resetsAt?: string }>;
+					session?: { percent: number; resetsAt: string; windowSeconds?: number };
+					weekly?: { percent: number; resetsAt: string; windowSeconds?: number };
+					additionalLimits?: Array<{
+						name: string;
+						percent: number;
+						resetsAt?: string;
+						windowSeconds?: number;
+					}>;
+					resetCredits?: import('../shared/codexResetCredits').CodexResetCreditCounts;
 					error?: string;
 				}
 			>
 		>;
 		getCodexUsageAccountKeys: () => Promise<string[]>;
+		/** READ: the reset credits one Codex account holds. */
+		getCodexResetCredits: (codexHome: string) => Promise<{
+			ok: boolean;
+			detail?: import('../shared/codexResetCredits').CodexResetCreditsDetail;
+			error?: string;
+		}>;
+		/** WRITE: redeem one reset credit. Irreversible; pass a stable key to make a retry safe. */
+		consumeCodexResetCredit: (
+			codexHome: string,
+			creditId: string,
+			idempotencyKey?: string
+		) => Promise<import('../shared/codexResetCredits').CodexResetCreditConsumeResult>;
 		refreshClaudeUsageSnapshots: () => Promise<{ refreshed: number }>;
 		refreshCodexUsageSnapshots: () => Promise<{ refreshed: number }>;
 	};
@@ -2013,6 +2057,12 @@ interface MaestroAPI {
 		copyTextToClipboard: (text: string) => Promise<void>;
 		copyImageToClipboard: (dataUrl: string) => Promise<void>;
 		readImageFromClipboard: () => Promise<string | null>;
+		capturePage: (rect?: {
+			x: number;
+			y: number;
+			width: number;
+			height: number;
+		}) => Promise<string | null>;
 	};
 	tunnel: {
 		isCloudflaredInstalled: () => Promise<boolean>;
@@ -2389,6 +2439,8 @@ interface MaestroAPI {
 			sharedContext?: { sshRemoteId: string; remoteCwd: string };
 			types?: HistoryEntryType[];
 			hostKey?: string | null;
+			/** Collapse Cue runs to one row per trigger (`groupCueEntries`). */
+			groupCue?: boolean;
 		}) => Promise<{
 			entries: Array<{
 				id: string;
@@ -2412,6 +2464,18 @@ interface MaestroAPI {
 			offset: number;
 			hasMore: boolean;
 		}>;
+		/**
+		 * The individual runs behind one collapsed Cue row (`cueGroup.key`),
+		 * newest first. `lookbackHours` must match the window the group was
+		 * counted over, or the expander and the count disagree.
+		 */
+		getCueGroupRuns: (options: {
+			sessionId: string;
+			groupKey: string;
+			projectPath?: string;
+			lookbackHours?: number | null;
+			limit?: number;
+		}) => Promise<HistoryEntry[]>;
 		add: (
 			entry: {
 				id: string;
@@ -2892,6 +2956,10 @@ interface MaestroAPI {
 			startedAt: number;
 			elapsedMs: number;
 			categories: string[];
+			bufferPercent: number;
+			peakBufferPercent: number;
+			bufferSizeKb: number;
+			autoStopRequested: boolean;
 			error?: string;
 		}>;
 		startProfiling: () => Promise<{
@@ -2900,6 +2968,10 @@ interface MaestroAPI {
 			startedAt: number;
 			elapsedMs: number;
 			categories: string[];
+			bufferPercent: number;
+			peakBufferPercent: number;
+			bufferSizeKb: number;
+			autoStopRequested: boolean;
 			error?: string;
 		}>;
 		stopProfiling: () => Promise<{
@@ -2909,6 +2981,9 @@ interface MaestroAPI {
 			bundleSizeBytes: number;
 			traceSizeBytes: number;
 			durationMs: number;
+			peakBufferPercent?: number;
+			autoStopped?: boolean;
+			bufferExhausted?: boolean;
 			error?: string;
 		}>;
 		// Stop + bundle to a temp .zip without a save dialog (for feedback attach)
@@ -2941,6 +3016,19 @@ interface MaestroAPI {
 		 * `success` is "the self-test ran", `report.passed` is "the runtimes work".
 		 */
 		voiceSelfTest: () => Promise<VoiceSelfTestResponse>;
+		onProfilingAutoStopped: (
+			handler: (event: {
+				reason: 'buffer-full';
+				active: boolean;
+				startedAt: number;
+				elapsedMs: number;
+				categories: string[];
+				bufferPercent: number;
+				peakBufferPercent: number;
+				bufferSizeKb: number;
+				autoStopRequested: boolean;
+			}) => void
+		) => () => void;
 		simulateAuthExpiry: (payload: {
 			processSessionId: string;
 			agentId: string;
@@ -3046,6 +3134,43 @@ interface MaestroAPI {
 			images?: string[],
 			readOnly?: boolean
 		) => Promise<void>;
+		// Execution queue. The queue lives in MAIN, so every verb answers with the
+		// WHOLE state and main also broadcasts it on `onQueueState` - a client
+		// renders what it is told rather than its own private copy, which is what
+		// made a phone's queue invisible to the desktop.
+		submitMessage: (
+			id: string,
+			item: import('../shared/group-chat-types').GroupChatQueuedItem
+		) => Promise<import('../shared/group-chat-types').GroupChatQueueState>;
+		getQueue: (id: string) => Promise<import('../shared/group-chat-types').GroupChatQueueState>;
+		queueAdd: (
+			id: string,
+			item: import('../shared/group-chat-types').GroupChatQueuedItem
+		) => Promise<import('../shared/group-chat-types').GroupChatQueueState>;
+		// `refused` is true when the item is already in flight, so the caller can
+		// say why nothing moved instead of silently redrawing the row.
+		queueRemove: (
+			id: string,
+			itemId: string
+		) => Promise<{
+			state: import('../shared/group-chat-types').GroupChatQueueState;
+			refused: boolean;
+		}>;
+		queueReorder: (
+			id: string,
+			itemId: string,
+			toIndex: number
+		) => Promise<{
+			state: import('../shared/group-chat-types').GroupChatQueueState;
+			refused: boolean;
+		}>;
+		queueResume: (id: string) => Promise<import('../shared/group-chat-types').GroupChatQueueState>;
+		onQueueState: (
+			callback: (
+				groupChatId: string,
+				state: import('../shared/group-chat-types').GroupChatQueueState
+			) => void
+		) => () => void;
 		stopModerator: (id: string) => Promise<void>;
 		stopAll: (id: string) => Promise<void>;
 		reportAutoRunComplete: (
@@ -3086,7 +3211,7 @@ interface MaestroAPI {
 				summary: string;
 				participantName: string;
 				participantColor: string;
-				type: 'delegation' | 'response' | 'synthesis' | 'error';
+				type: 'user' | 'delegation' | 'response' | 'synthesis' | 'error';
 				elapsedTimeMs?: number;
 				tokenCount?: number;
 				cost?: number;
@@ -3100,7 +3225,7 @@ interface MaestroAPI {
 				summary: string;
 				participantName: string;
 				participantColor: string;
-				type: 'delegation' | 'response' | 'synthesis' | 'error';
+				type: 'user' | 'delegation' | 'response' | 'synthesis' | 'error';
 				elapsedTimeMs?: number;
 				tokenCount?: number;
 				cost?: number;
@@ -3112,7 +3237,7 @@ interface MaestroAPI {
 			summary: string;
 			participantName: string;
 			participantColor: string;
-			type: 'delegation' | 'response' | 'synthesis' | 'error';
+			type: 'user' | 'delegation' | 'response' | 'synthesis' | 'error';
 			elapsedTimeMs?: number;
 			tokenCount?: number;
 			cost?: number;
@@ -3169,7 +3294,7 @@ interface MaestroAPI {
 					summary: string;
 					participantName: string;
 					participantColor: string;
-					type: 'delegation' | 'response' | 'synthesis' | 'error';
+					type: 'user' | 'delegation' | 'response' | 'synthesis' | 'error';
 					elapsedTimeMs?: number;
 					tokenCount?: number;
 					cost?: number;
@@ -3591,8 +3716,12 @@ interface MaestroAPI {
 		getDelegationByDay: (
 			range?: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'
 		) => Promise<import('../shared/delegation').DelegationDay[]>;
-		// Export query events to CSV
-		exportCsv: (range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all') => Promise<string>;
+		// Export every stats table for a range: one JSON file, or a zip of CSVs
+		exportUsage: (
+			range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all',
+			format: import('../shared/stats-types').UsageExportFormat,
+			filePath: string
+		) => Promise<import('../shared/stats-types').UsageExportResult>;
 		// Subscribe to stats updates (for real-time dashboard refresh)
 		onStatsUpdate: (callback: () => void) => () => void;
 		// Clear old stats data (older than specified number of days)
@@ -3713,7 +3842,13 @@ interface MaestroAPI {
 	// encoreFeatures.maestroCue is off; consumers should catch and render
 	// the "feature off" state.
 	cueStats: {
-		getAggregation: (range: CueStatsTimeRange) => Promise<CueStatsAggregation>;
+		// `excludeTriggerTypes` drops the named raw event types (`time.heartbeat`,
+		// `file.changed`, ...) from every rollup in the payload except
+		// `triggerTypeOptions`, which always reports the unfiltered universe.
+		getAggregation: (
+			range: CueStatsTimeRange,
+			excludeTriggerTypes?: string[]
+		) => Promise<CueStatsAggregation>;
 		// Conductor time (ms) the retained Cue run history would have credited.
 		// Ungated, unlike getAggregation; resolves 0 when there is no history.
 		getHistoricalConductorCredit: () => Promise<number>;

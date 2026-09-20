@@ -25,7 +25,7 @@
  */
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Activity, Search } from 'lucide-react';
+import { Activity, Minus, Plus, Search } from 'lucide-react';
 import type { Session, Theme } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
 import { stripLeadingEmojis } from '../../../shared/emojiUtils';
@@ -58,6 +58,17 @@ import {
 	sortAgentOverviewSessions,
 	type SortMode,
 } from './agentOverviewUtils';
+import { useScalePreference } from '../../hooks/ui/useScalePreference';
+import { useScaleShortcuts } from '../../hooks/ui/useScaleShortcuts';
+import { useIsTopLayer } from '../../hooks/ui/useIsTopLayer';
+import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
+import { ScaleControl } from '../ui/ScaleControl';
+import {
+	AGENT_TILE_MIN_WIDTH,
+	AGENT_TILE_SCALE_KEY,
+	TILE_SCALE_RANGE,
+	tileGridColumns,
+} from './tileScale';
 
 /** Dropdown value meaning "do not narrow by group". */
 const ALL_GROUPS_VALUE = '__all__';
@@ -276,6 +287,10 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 }: AgentOverviewCardsProps) {
 	const [sortMode, setSortMode] = useState<SortMode>('name');
 	const [filterQuery, setFilterQuery] = useState('');
+	// How wide a tile is, remembered across restarts. `+` / `-` / `0` drive it
+	// from the keyboard; the control beside the sort pills is the same state.
+	const phone = usePhoneLayout();
+	const tileScale = useScalePreference(AGENT_TILE_SCALE_KEY, TILE_SCALE_RANGE);
 	// Narrow the grid to agents that did something inside the selected range.
 	// Off by default: the grid's job is still "every agent I have".
 	const [activeOnly, setActiveOnly] = useState(false);
@@ -318,13 +333,16 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 
 	// A profile disappears when its last agent is deleted or re-pointed. Leaving
 	// the filter on it would strand the grid on a selection with no option
-	// behind it, showing nothing and explaining nothing.
+	// behind it, showing nothing and explaining nothing. Wait for the index to
+	// settle first: a profile named by an agent-level env var is absent until
+	// that fetch lands, and clearing it then wiped the filter a quota badge had
+	// just set.
 	useEffect(() => {
-		if (profileFilter === ALL_PROFILES_VALUE) return;
+		if (profileFilter === ALL_PROFILES_VALUE || !profileIndex.ready) return;
 		if (!profileOptions.some((o) => o.value === profileFilter)) {
 			setProfileFilter(ALL_PROFILES_VALUE);
 		}
-	}, [profileOptions, profileFilter, setProfileFilter]);
+	}, [profileOptions, profileFilter, setProfileFilter, profileIndex.ready]);
 
 	// Only groups that actually hold an agent are offered, plus Ungrouped when
 	// any agent is unfiled. An option that can only ever produce an empty grid
@@ -377,6 +395,15 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 		blocksLowerLayers: false,
 		capturesFocus: false,
 	});
+
+	// Bare `+` / `-` / `0` resize the tiles, but only while this grid is what
+	// the keyboard is pointed at - an agent detail modal opened from a tile
+	// sits on top and must own those keys instead. The filter's own Escape
+	// layer counts as this grid: it outranks the dashboard while the box holds
+	// text, and zoom has no reason to go dead just because a filter is set.
+	const dashboardIsTop = useIsTopLayer(MODAL_PRIORITIES.USAGE_DASHBOARD);
+	const filterIsTop = useIsTopLayer(MODAL_PRIORITIES.USAGE_DASHBOARD_AGENT_FILTER);
+	useScaleShortcuts(tileScale, { enabled: dashboardIsTop || filterIsTop });
 
 	// Terminal sessions aren't "agents" - excluded inside
 	// `sortAgentOverviewSessions`, which also owns the ordering so the grid and
@@ -459,14 +486,19 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 	return (
 		<div className="flex flex-col gap-3">
 			<div className="flex items-center justify-between gap-3 flex-wrap">
-				<div className="flex items-center gap-2 min-w-0">
+				{/* On a phone the four controls pack and wrap: at their desktop
+				    widths they add up to ~780px, so they used to run off the right
+				    edge of a 390px screen and take the whole tab into a horizontal
+				    scroll. Desktop keeps the fixed widths and the single row - a
+				    shrinkable basis there rearranges a toolbar that already fit. */}
+				<div className={`flex items-center gap-2 min-w-0 ${phone ? 'flex-wrap' : ''}`}>
 					{hasGroupChoice && (
 						<ThemedSelect
 							value={groupFilter}
 							options={groupOptions}
 							onChange={setGroupFilter}
 							theme={theme}
-							style={{ width: 200 }}
+							style={phone ? { flex: '1 1 160px', minWidth: 0, maxWidth: 200 } : { width: 200 }}
 							aria-label="Filter agents by group"
 							// Long group lists are the normal case for anyone using
 							// groups per client, so the menu carries its own search.
@@ -480,13 +512,20 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 							options={profileOptions}
 							onChange={setProfileFilter}
 							theme={theme}
-							style={{ width: 210 }}
+							style={phone ? { flex: '1 1 160px', minWidth: 0, maxWidth: 210 } : { width: 210 }}
 							aria-label="Filter agents by provider account"
 							filterable={profileOptions.length > 8}
 							filterPlaceholder="Filter providers…"
 						/>
 					)}
-					<div className="relative flex items-center" style={{ width: 260, maxWidth: '100%' }}>
+					<div
+						className="relative flex items-center"
+						style={
+							phone
+								? { flex: '1 1 180px', minWidth: 0, maxWidth: 260 }
+								: { width: 260, maxWidth: '100%' }
+						}
+					>
 						<Search
 							className="absolute left-2 w-3.5 h-3.5 pointer-events-none"
 							style={{ color: filterQuery ? theme.colors.accent : theme.colors.textDim }}
@@ -544,8 +583,24 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 						</span>
 					)}
 				</div>
-				<div className="flex items-center gap-2">
-					<span className="text-xs" style={{ color: theme.colors.textDim }}>
+				{/* Centered in the free space between the filters and the sort pills
+				    rather than crowding either: the control belongs to the grid, not
+				    to the filtering or the ordering. */}
+				<div className="flex-1 flex justify-center">
+					<ScaleControl
+						theme={theme}
+						control={tileScale}
+						decreaseIcon={Minus}
+						increaseIcon={Plus}
+						subject="tile size"
+						shortcutHint={{ decrease: '-', increase: '+', reset: '0' }}
+						size="sm"
+						showReset={false}
+						testId="agent-overview-tile-zoom"
+					/>
+				</div>
+				<div className="flex items-center gap-2 min-w-0">
+					<span className="text-xs shrink-0" style={{ color: theme.colors.textDim }}>
 						Sort by:
 					</span>
 					<SegmentedControl
@@ -588,7 +643,7 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 				<div
 					className="grid gap-3"
 					style={{
-						gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+						gridTemplateColumns: tileGridColumns(AGENT_TILE_MIN_WIDTH, tileScale.scale),
 					}}
 					data-testid="agent-overview-cards"
 					role="region"

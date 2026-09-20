@@ -12,6 +12,7 @@ import type { Session } from '../types';
 import type { StarredItem } from '../hooks/session/useStarredItems';
 import { useGroupChatStore } from './groupChatStore';
 import { useSessionStore, updateSessionWith } from './sessionStore';
+import { useUIStore } from './uiStore';
 import { notifyStarredSessionsChanged } from '../utils/starredSessions';
 
 export type JumpToStarredSessionFn = (
@@ -81,6 +82,10 @@ export const useSidebarNavStore = create<SidebarNavStore>()((set, get) => ({
 		// getState().activateStarredItem without holding a React callback.
 		useGroupChatStore.getState().setActiveGroupChatId(null);
 		useSessionStore.getState().setActiveSessionId(item.parentSessionId);
+		// Narrow viewports: the row that was just activated is behind the drawer.
+		// A starred row routinely names the agent that is already active, so the
+		// id transition alone cannot be what closes it.
+		useUIStore.getState().closeLeftSidebarForNavigation();
 		if (item.kind === 'open') {
 			updateSessionWith(item.parentSessionId, (s) => ({
 				...s,

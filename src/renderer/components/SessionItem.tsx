@@ -18,9 +18,13 @@ import { StartupCommandIndicator } from './SessionList/StartupCommandIndicator';
 import { WizardIndicator } from './SessionList/WizardIndicator';
 import { AgentVoiceIndicator } from './SessionList/AgentVoiceIndicator';
 import { WindowBadge } from './SessionList/WindowBadge';
+import { AutoRunErrorBadge } from './SessionList/AutoRunErrorBadge';
 import { PluginUiItemsSlot } from './plugins/PluginUiItemsSlot';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useSessionHasActiveOutage } from '../stores/retryStore';
+import { useBatchStore } from '../stores/batchStore';
+import { useAutoResumeEntry } from '../stores/autoRunResumeStore';
+import { useSessionIsBeingConsulted } from '../stores/crossAgentInFlightStore';
 import { usePhoneLayout } from '../hooks/ui/useViewportBreakpoint';
 import { COLORBLIND_STATUS_COLORS } from '../constants/colorblindPalettes';
 import { getConnectingColor } from '../utils/theme';
@@ -53,6 +57,9 @@ export function hasNoClaudeProviderSession(session: Session): boolean {
  *
  * Special cases:
  * - `isInBatch`: always warning + pulse (Auto Run takes precedence over agent state)
+ * - `isBeingConsulted`: a cross-agent `@mention` runs under a synthetic process
+ *   id and a hidden tab, so it never reaches `session.state` - without this the
+ *   agent draws a green "Ready" dot for the whole time it is working
  * - Claude Code with no tab bound to a provider session: hollow dot signal
  */
 export function getEnhancedStatusColor(
@@ -60,7 +67,8 @@ export function getEnhancedStatusColor(
 	theme: Theme,
 	isInBatch: boolean,
 	colorBlindMode: boolean = false,
-	hasActiveOutage: boolean = false
+	hasActiveOutage: boolean = false,
+	isBeingConsulted: boolean = false
 ): { color: string; animate: boolean; label: string } {
 	const success = colorBlindMode ? COLORBLIND_STATUS_COLORS.success : theme.colors.success;
 	const warning = colorBlindMode ? COLORBLIND_STATUS_COLORS.warning : theme.colors.warning;
@@ -78,6 +86,16 @@ export function getEnhancedStatusColor(
 
 	if (isInBatch) {
 		return { color: warning, animate: true, label: 'Auto Run active' };
+	}
+
+	// Ranked ABOVE the hollow-dot signal on purpose. A consult spawns into a tab
+	// that has no provider session of its own until the agent answers, and for an
+	// agent the user has never opened there is no other bound tab either - so the
+	// unbound check would paint a dim, static dot over exactly the case this
+	// exists to show. Ranked BELOW the agent's own `busy`, which keeps its more
+	// specific "Thinking" / "Running command" label; both draw the same dot.
+	if (isBeingConsulted && session.state !== 'busy') {
+		return { color: warning, animate: true, label: 'Answering a consult' };
 	}
 
 	if (hasNoClaudeProviderSession(session)) {
@@ -242,16 +260,20 @@ export const SessionItem = memo(function SessionItem({
 	const startupCommandIndicatorActive =
 		showLeftPanelStartupCommandIndicator && startupCommandTabCount > 0 && !phone;
 
-	// Parent agents get an inline chevron toggle. Keyed off worktreeConfig OR an
-	// actual child count: several spawn paths (Auto Run worktree dispatch in
-	// worktreeSpawn.ts, quick-create, watcher discovery) attach children via
-	// parentSessionId without ever writing worktreeConfig on the parent. Gating
-	// on worktreeConfig alone left those parents with a permanently expanded,
-	// uncollapsible subtree. SessionList renders children off the same child
-	// count, so this keeps the toggle present whenever a subtree is visible.
+	// Parent agents get an inline chevron toggle, keyed off the LIVE child count
+	// and nothing else. `worktreeConfig` is a persistent per-agent SETTING (base
+	// path, watcher, setup script) that outlives the worktrees created under it,
+	// so gating on it left a chevron on a parent whose last worktree was removed:
+	// it toggled an empty subtree and came back after a restart, because the
+	// setting is what is on disk (#1616). The count also covers the parents
+	// worktreeConfig never described - several spawn paths (Auto Run worktree
+	// dispatch in worktreeSpawn.ts, quick-create, watcher discovery) attach
+	// children via parentSessionId without writing worktreeConfig, and those
+	// parents used to render a permanently expanded, uncollapsible subtree
+	// (#1292). SessionList renders the subtree off this same count, so the
+	// toggle is present exactly when there is something to toggle.
 	// Default to expanded when worktreesExpanded is undefined to match useSortedSessions.
-	const isWorktreeParent =
-		variant !== 'worktree' && (Boolean(session.worktreeConfig) || (worktreeChildCount ?? 0) > 0);
+	const isWorktreeParent = variant !== 'worktree' && (worktreeChildCount ?? 0) > 0;
 	const worktreesExpanded = session.worktreesExpanded ?? true;
 	const showCollapsedCountBadge =
 		isWorktreeParent && !worktreesExpanded && (worktreeChildCount ?? 0) > 0;
@@ -269,14 +291,26 @@ export const SessionItem = memo(function SessionItem({
 	// Claude Code agents that haven't bound to a provider session yet. A stuck
 	// Agent Resilience outage overrides to pulsing orange (needs attention).
 	const hasActiveOutage = useSessionHasActiveOutage(session.id);
+	// Auto Run stopped on an error. Read straight from the stores rather than
+	// threaded down as props: SessionList renders this row from two call sites
+	// and neither knows about auto-resume. `isInBatch` above cannot stand in -
+	// a paused run is still running, so it is true either way.
+	const autoRunErrorPaused = useBatchStore(
+		(s) => s.batchRunStates[session.id]?.errorPaused === true
+	);
+	const autoResumeEntry = useAutoResumeEntry(session.id);
+	// A cross-agent consult is invisible to `session.state` by design, so the dot
+	// asks the in-flight store directly.
+	const isBeingConsulted = useSessionIsBeingConsulted(session.id);
 	const statusInfo = getEnhancedStatusColor(
 		session,
 		theme,
 		isInBatch,
 		colorBlindMode,
-		hasActiveOutage
+		hasActiveOutage,
+		isBeingConsulted
 	);
-	const isDisconnected = !isInBatch && hasNoClaudeProviderSession(session);
+	const isDisconnected = !isInBatch && !isBeingConsulted && hasNoClaudeProviderSession(session);
 
 	// Determine container styling based on variant
 	const getContainerClassName = () => {
@@ -433,6 +467,15 @@ export const SessionItem = memo(function SessionItem({
 						    phrase. Reads the voice stores itself and renders null when the
 						    Encore Feature is off, so nothing needs threading through here. */}
 						<AgentVoiceIndicator sessionId={session.id} theme={theme} />
+						{/* Auto Run parked on an error: amber while an automatic resume is
+						    still coming, red once only a person can continue it. */}
+						<AutoRunErrorBadge
+							errorPaused={autoRunErrorPaused}
+							attempts={autoResumeEntry?.attempts}
+							maxAttempts={autoResumeEntry?.maxAttempts}
+							nextResumeAt={autoResumeEntry?.nextResumeAt}
+							exhausted={autoResumeEntry?.exhausted}
+						/>
 						{/* Worktree badge to visually mark worktree children */}
 						{variant === 'worktree' && showWorktreePill && <WorktreePill theme={theme} />}
 					</div>

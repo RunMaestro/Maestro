@@ -28,6 +28,15 @@ export interface MarkdownEditorHandle {
 	/** Character offset of the cursor (the selection head). */
 	getCaret(): number;
 	/**
+	 * The main selection as character offsets. `from === to` when there is only
+	 * a caret. This is the CM6 answer to `selectionStart` / `selectionEnd` for
+	 * hosts that rewrite a range (tab insert, list continuation, paste).
+	 */
+	getSelectionRange(): { from: number; to: number };
+	/** Raw scroll offset of the editor's scroller, in px. */
+	getScrollTop(): number;
+	setScrollTop(px: number): void;
+	/**
 	 * Where `pos` sits on screen, in the coordinate space of the editor's own
 	 * host element. `top` is the BOTTOM of that line plus a small gap, so a
 	 * popup placed there hangs under the caret instead of over it.
@@ -70,6 +79,13 @@ export interface MarkdownEditorProps {
 	 * a host-owned autocomplete popup that needs the arrow keys).
 	 */
 	onKeyDown?: (event: KeyboardEvent) => boolean | void;
+	/**
+	 * Forwarded to the editor's content element ahead of CodeMirror's own paste
+	 * handling; return `true` to swallow the paste (host rewrites it itself).
+	 */
+	onPaste?: (event: ClipboardEvent) => boolean | void;
+	/** Hint text shown while the document is empty. */
+	placeholder?: string;
 	/** Reader font zoom (1 = unzoomed), applied to the CM6 theme. */
 	fontScale?: number;
 	/**

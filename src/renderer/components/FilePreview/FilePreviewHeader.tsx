@@ -18,12 +18,14 @@ import {
 	FolderOpen,
 	WrapText,
 	Trash2,
+	MoreHorizontal,
 } from 'lucide-react';
 import type { FilePreviewToolbarVisibility } from '../../stores/settingsStore';
 import { Spinner } from '../ui/Spinner';
 import { HoverTooltip } from '../ui/HoverTooltip';
 import { captureException } from '../../utils/sentry';
 import { isWebDesktop } from '../../utils/runtimeContext';
+import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { getRevealLabel } from '../../utils/platformUtils';
 import { formatFileSize, formatDateTime, countLines } from './filePreviewUtils';
@@ -31,6 +33,8 @@ import { formatNumber } from '../../../shared/formatters';
 import type { PreviewTier } from './filePreviewUtils';
 import { formatTokenCount } from '../../utils/tokenCounter';
 import { PreviewTierChip } from './PreviewTierChip';
+import { FilePreviewActionsSheet } from './FilePreviewActionsSheet';
+import type { FilePreviewHeaderAction, FilePreviewHeaderStat } from './FilePreviewActionsSheet';
 
 interface FilePreviewHeaderProps {
 	file: { name: string; content: string; path: string };
@@ -185,10 +189,261 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 		return formatShortcutKeys(shortcut.keys);
 	};
 
+	// Phone: the toolbar holds up to fourteen buttons, each on a 44px tap-target
+	// floor, so at 390px it wrapped onto a second row and - with the path line and
+	// the stats subbar under it - ate roughly 400px before a word of the file was
+	// readable. There it collapses to one "..." that opens FilePreviewActionsSheet,
+	// which carries the buttons, the path, and the stats.
+	const phone = usePhoneLayout();
+	const [actionsSheetOpen, setActionsSheetOpen] = useState(false);
+
+	// ONE list of stats, rendered by the subbar on a desktop and by the sheet on a
+	// phone. Built unconditionally: `showStatsBar` hides the subbar while the
+	// reader scrolls, which says nothing about a sheet the user opened by hand.
+	const stats: FilePreviewHeaderStat[] = [];
+	if (fileStats) {
+		stats.push({ key: 'size', label: 'Size', value: formatFileSize(fileStats.size) });
+	}
+	if (lineCount !== null) {
+		stats.push({ key: 'lines', label: 'Lines', value: formatNumber(lineCount) });
+	}
+	if (tokenCount !== null) {
+		stats.push({
+			key: 'tokens',
+			label: 'Tokens',
+			value: formatTokenCount(tokenCount),
+			valueColor: theme.colors.accent,
+		});
+	}
+	if (fileStats) {
+		stats.push({ key: 'modified', label: 'Modified', value: formatDateTime(fileStats.modifiedAt) });
+		stats.push({ key: 'created', label: 'Created', value: formatDateTime(fileStats.createdAt) });
+	}
+	if (taskCounts) {
+		stats.push({
+			key: 'tasks',
+			label: 'Tasks',
+			value: (
+				<>
+					<span style={{ color: theme.colors.success }}>{taskCounts.closed}</span>
+					{` of ${taskCounts.open + taskCounts.closed}`}
+				</>
+			),
+		});
+	}
+
+	// ONE list of toolbar actions, in toolbar order, rendered as icon buttons on a
+	// desktop and as labelled rows in the phone sheet. Every `toolbarVisibility`
+	// gate is applied HERE, once, so a button the user hid in Settings cannot stay
+	// reachable in the sheet - and a button added later cannot land in one surface
+	// and be missing from the other. Save is deliberately absent: it is a labelled
+	// primary control with a dirty state, and it stays inline on both.
+	const actions: FilePreviewHeaderAction[] = [];
+	// Word-wrap toggle - edit mode only. Switches between soft-wrap (default;
+	// long lines wrap at whitespace) and no-wrap (horizontal scroll).
+	if (toolbarVisibility.wordWrap && isEditableText && markdownEditMode) {
+		actions.push({
+			kind: 'button',
+			key: 'wordWrap',
+			icon: WrapText,
+			label: wordWrap ? 'Disable word wrap' : 'Enable word wrap',
+			onClick: () => setWordWrap(!wordWrap),
+			active: wordWrap,
+			testId: 'editor-wrap-toggle',
+		});
+	}
+	// Show remote images toggle - only for markdown in preview mode.
+	if (toolbarVisibility.remoteImages && isMarkdown && !markdownEditMode) {
+		actions.push({
+			kind: 'button',
+			key: 'remoteImages',
+			icon: ImageIcon,
+			label: showRemoteImages ? 'Hide remote images' : 'Show remote images',
+			onClick: () => setShowRemoteImages(!showRemoteImages),
+			active: showRemoteImages,
+		});
+	}
+	// HTML render toggle - swap between rendered HTML and source view.
+	if (toolbarVisibility.htmlRender && isHtml && !markdownEditMode) {
+		actions.push({
+			kind: 'button',
+			key: 'htmlRender',
+			icon: Globe,
+			label: htmlRenderMode ? 'Show HTML source' : 'Render HTML in browser',
+			onClick: () => setHtmlRenderMode(!htmlRenderMode),
+			active: htmlRenderMode,
+			testId: 'html-render-toggle',
+		});
+	}
+	// Open in Maestro Browser - HTML files only, not over SSH (file:// can't
+	// reach the remote host). Mirrors the file-tree right-click action so
+	// JS-heavy local HTML renders in the full webview instead of the sandboxed
+	// preview iframe. Sits next to the HTML render toggle since both are
+	// "view this in a browser" actions.
+	if (toolbarVisibility.openInBrowser && isHtml && !sshRemoteId && onOpenInBrowser) {
+		actions.push({
+			kind: 'button',
+			key: 'openInBrowser',
+			icon: AppWindow,
+			label: 'Open in Maestro Browser',
+			onClick: onOpenInBrowser,
+			testId: 'open-in-maestro-browser',
+		});
+	}
+	// Preview tier - a chip with its own popover on a desktop, an accordion in
+	// the sheet (an anchored popover would be clipped by the scrolling body).
+	if (toolbarVisibility.previewTier && showTierChip) {
+		actions.push({
+			kind: 'tier',
+			key: 'previewTier',
+			autoTier,
+			override: previewTierOverride,
+			onSelect: (tier) => onPreviewTierChange?.(tier),
+		});
+	}
+	// Toggle between edit and preview/view mode - for any editable text file.
+	if (toolbarVisibility.editToggle && isEditableText) {
+		actions.push({
+			kind: 'button',
+			key: 'editToggle',
+			icon: markdownEditMode ? Eye : Edit,
+			label: markdownEditMode ? (isMarkdown ? 'Show preview' : 'View file') : 'Edit file',
+			onClick: () => setMarkdownEditMode(!markdownEditMode),
+			active: markdownEditMode,
+			shortcut: formatShortcut('toggleMarkdownMode'),
+			testId: 'edit-text-toggle',
+		});
+	}
+	// Edit image - opens the image annotator. Images only.
+	if (toolbarVisibility.editImage && isImage && onEditImage) {
+		actions.push({
+			kind: 'button',
+			key: 'editImage',
+			icon: Edit,
+			label: 'Edit image',
+			onClick: onEditImage,
+			shortcut: formatShortcut('toggleMarkdownMode'),
+			testId: 'edit-image-button',
+		});
+	}
+	if (toolbarVisibility.copyContent) {
+		actions.push({
+			kind: 'button',
+			key: 'copyContent',
+			icon: Clipboard,
+			label: isImage ? 'Copy image to clipboard' : 'Copy content to clipboard',
+			onClick: () => copyContentToClipboard().catch(captureException),
+			shortcut: isImage ? formatShortcutKeys(['Meta', 'c']) : undefined,
+		});
+	}
+	// Publish as Gist - gh CLI available, not editing, and the file is plain
+	// text a gist can carry (see isGistPublishableFile).
+	if (
+		toolbarVisibility.publishGist &&
+		ghCliAvailable &&
+		!markdownEditMode &&
+		onPublishGist &&
+		canPublishGist
+	) {
+		actions.push({
+			kind: 'button',
+			key: 'publishGist',
+			icon: Share2,
+			label: hasGist ? 'View published gist' : 'Publish as GitHub Gist',
+			onClick: onPublishGist,
+			active: hasGist,
+		});
+	}
+	// Talk with Document - opens a voice session with this file as the
+	// conversation's subject. It doubles as the stop control while that session
+	// is running, matching the composer microphone: one button that reads as
+	// active is what stops a second session being opened on top of the first.
+	if (toolbarVisibility.talkWithDocument && onTalkWithDocument) {
+		actions.push({
+			kind: 'button',
+			key: 'talkWithDocument',
+			icon: Mic,
+			label: isTalkingAboutDocument
+				? 'End the voice session about this document'
+				: 'Talk with this document',
+			onClick: onTalkWithDocument,
+			active: isTalkingAboutDocument,
+			pressed: isTalkingAboutDocument,
+			testId: 'talk-with-document-button',
+		});
+	}
+	// Document Graph - markdown files, when the callback is available.
+	if (toolbarVisibility.documentGraph && isMarkdown && onOpenInGraph) {
+		actions.push({
+			kind: 'button',
+			key: 'documentGraph',
+			icon: GitGraph,
+			label: 'View in Document Graph',
+			onClick: onOpenInGraph,
+		});
+	}
+	// "Open in Default App" hands the file to the HOST machine's OS opener via
+	// the shell bridge. In the web-desktop build the host is not the browser
+	// user's device, so hide it there (as we already do over SSH, where file://
+	// can't reach the remote host).
+	if (toolbarVisibility.openInDefault && !sshRemoteId && !isWebDesktop()) {
+		actions.push({
+			kind: 'button',
+			key: 'openInDefault',
+			icon: ExternalLink,
+			label: 'Open in Default App',
+			onClick: () => {
+				window.maestro?.shell?.openPath(file.path);
+			},
+		});
+	}
+	// Reveal in Finder / Explorer / File Manager - local files only.
+	if (toolbarVisibility.revealInFolder && !sshRemoteId) {
+		actions.push({
+			kind: 'button',
+			key: 'revealInFolder',
+			icon: FolderOpen,
+			label: getRevealLabel(window.maestro?.platform ?? ''),
+			onClick: () => {
+				window.maestro?.shell?.showItemInFolder(file.path);
+			},
+			testId: 'reveal-in-folder-button',
+		});
+	}
+	if (toolbarVisibility.copyPath) {
+		actions.push({
+			kind: 'button',
+			key: 'copyPath',
+			icon: Copy,
+			label: 'Copy full path to clipboard',
+			onClick: copyPathToClipboard,
+		});
+	}
+	// Delete file - last in the row, and always behind a confirmation. Same flow
+	// as the command palette's "File: Delete" entry.
+	if (toolbarVisibility.delete && onDelete) {
+		actions.push({
+			kind: 'button',
+			key: 'delete',
+			icon: Trash2,
+			label: 'Delete file',
+			onClick: onDelete,
+			testId: 'delete-file-button',
+		});
+	}
+
+	// The phone's "..." is worth drawing only when it would open onto something.
+	const hasSheetContent = actions.length > 0 || !!directoryPath || stats.length > 0;
+	// Desktop only: on a phone these move into the sheet, which is the whole point.
+	const showStatsGroup = stats.length > 0 && showStatsBar && !phone;
+
 	return (
 		<div className="shrink-0" style={{ backgroundColor: theme.colors.bgSidebar }}>
 			{/* Main header row */}
-			<div className="border-b px-6 py-3" style={{ borderColor: theme.colors.border }}>
+			<div
+				className={`border-b ${phone ? 'px-3 py-2' : 'px-6 py-3'}`}
+				style={{ borderColor: theme.colors.border }}
+			>
 				<div className="flex items-center justify-between">
 					<div className="flex items-center gap-3 min-w-0">
 						<FileCode className="w-5 h-5 shrink-0" style={{ color: theme.colors.accent }} />
@@ -196,9 +451,11 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 							{file.name}
 						</div>
 					</div>
-					<div className="flex items-center gap-2 shrink-0">
+					<div className="flex items-center gap-2 shrink-0" data-testid="file-preview-toolbar">
 						{/* Save button - shown in edit mode, or in preview when unsaved edits remain
-						    (the user can flip to preview while dirty and still needs Save). */}
+						    (the user can flip to preview while dirty and still needs Save). It is
+						    the one action that stays inline on a phone: it carries a dirty state the
+						    user is watching for, and two taps to reach it is worse than its width. */}
 						{toolbarVisibility.save &&
 							isEditableText &&
 							(markdownEditMode || hasChanges) &&
@@ -224,252 +481,60 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 									</button>
 								</HoverTooltip>
 							)}
-						{/* Word-wrap toggle - edit mode only. Switches between soft-wrap
-						    (default; long lines wrap at whitespace) and no-wrap
-						    (horizontal scroll). */}
-						{toolbarVisibility.wordWrap && isEditableText && markdownEditMode && (
-							<HoverTooltip
-								theme={theme}
-								label={wordWrap ? 'Disable word wrap' : 'Enable word wrap'}
-							>
-								<button
-									onClick={() => setWordWrap(!wordWrap)}
-									className={headerBtnClass}
-									style={{ color: wordWrap ? theme.colors.accent : theme.colors.textDim }}
-									data-testid="editor-wrap-toggle"
-								>
-									<WrapText className={headerIconClass} />
-								</button>
-							</HoverTooltip>
-						)}
-						{/* Show remote images toggle - only for markdown in preview mode */}
-						{toolbarVisibility.remoteImages && isMarkdown && !markdownEditMode && (
-							<HoverTooltip
-								theme={theme}
-								label={showRemoteImages ? 'Hide remote images' : 'Show remote images'}
-							>
-								<button
-									onClick={() => setShowRemoteImages(!showRemoteImages)}
-									className={headerBtnClass}
-									style={{ color: showRemoteImages ? theme.colors.accent : theme.colors.textDim }}
-								>
-									<ImageIcon className={headerIconClass} />
-								</button>
-							</HoverTooltip>
-						)}
-						{/* HTML render toggle - swap between rendered HTML and source view */}
-						{toolbarVisibility.htmlRender && isHtml && !markdownEditMode && (
-							<HoverTooltip
-								theme={theme}
-								label={htmlRenderMode ? 'Show HTML source' : 'Render HTML in browser'}
-							>
-								<button
-									onClick={() => setHtmlRenderMode(!htmlRenderMode)}
-									className={headerBtnClass}
-									style={{ color: htmlRenderMode ? theme.colors.accent : theme.colors.textDim }}
-									data-testid="html-render-toggle"
-								>
-									<Globe className={headerIconClass} />
-								</button>
-							</HoverTooltip>
-						)}
-						{/* Open in Maestro Browser - HTML files only, not over SSH
-						    (file:// can't reach the remote host). Mirrors the file-tree
-						    right-click action so JS-heavy local HTML renders in the full
-						    webview instead of the sandboxed preview iframe. Sits next to the
-						    HTML render toggle since both are "view this in a browser" actions. */}
-						{toolbarVisibility.openInBrowser && isHtml && !sshRemoteId && onOpenInBrowser && (
-							<HoverTooltip theme={theme} label="Open in Maestro Browser">
-								<button
-									onClick={onOpenInBrowser}
-									className={headerBtnClass}
-									style={{ color: theme.colors.textDim }}
-									data-testid="open-in-maestro-browser"
-								>
-									<AppWindow className={headerIconClass} />
-								</button>
-							</HoverTooltip>
-						)}
-						{/* Preview tier chip - compact icon-only mode inside the toolbar */}
-						{toolbarVisibility.previewTier && showTierChip && (
-							<PreviewTierChip
-								theme={theme}
-								autoTier={autoTier}
-								override={previewTierOverride}
-								onSelect={(tier) => onPreviewTierChange?.(tier)}
-								iconOnly
-								headerBtnClass={headerBtnClass}
-								headerIconClass={headerIconClass}
-							/>
-						)}
-						{/* Toggle between edit and preview/view mode - for any editable text file */}
-						{toolbarVisibility.editToggle && isEditableText && (
-							<HoverTooltip
-								theme={theme}
-								label={markdownEditMode ? (isMarkdown ? 'Show preview' : 'View file') : 'Edit file'}
-								shortcut={formatShortcut('toggleMarkdownMode')}
-							>
-								<button
-									onClick={() => setMarkdownEditMode(!markdownEditMode)}
-									className={headerBtnClass}
-									style={{ color: markdownEditMode ? theme.colors.accent : theme.colors.textDim }}
-									data-testid="edit-text-toggle"
-								>
-									{markdownEditMode ? (
-										<Eye className={headerIconClass} />
-									) : (
-										<Edit className={headerIconClass} />
-									)}
-								</button>
-							</HoverTooltip>
-						)}
-						{/* Edit image - opens the image annotator. Images only. */}
-						{toolbarVisibility.editImage && isImage && onEditImage && (
-							<HoverTooltip
-								theme={theme}
-								label="Edit image"
-								shortcut={formatShortcut('toggleMarkdownMode')}
-							>
-								<button
-									onClick={onEditImage}
-									className={headerBtnClass}
-									style={{ color: theme.colors.textDim }}
-									data-testid="edit-image-button"
-								>
-									<Edit className={headerIconClass} />
-								</button>
-							</HoverTooltip>
-						)}
-						{toolbarVisibility.copyContent && (
-							<HoverTooltip
-								theme={theme}
-								label={isImage ? 'Copy image to clipboard' : 'Copy content to clipboard'}
-								shortcut={isImage ? formatShortcutKeys(['Meta', 'c']) : undefined}
-							>
-								<button
-									onClick={() => copyContentToClipboard().catch(captureException)}
-									className={headerBtnClass}
-									style={{ color: theme.colors.textDim }}
-								>
-									<Clipboard className={headerIconClass} />
-								</button>
-							</HoverTooltip>
-						)}
-						{/* Publish as Gist button - gh CLI available, not editing, and the
-							file is plain text a gist can carry (see isGistPublishableFile) */}
-						{toolbarVisibility.publishGist &&
-							ghCliAvailable &&
-							!markdownEditMode &&
-							onPublishGist &&
-							canPublishGist && (
-								<HoverTooltip
-									theme={theme}
-									label={hasGist ? 'View published gist' : 'Publish as GitHub Gist'}
-								>
+						{phone
+							? hasSheetContent && (
 									<button
-										onClick={onPublishGist}
+										onClick={() => setActionsSheetOpen(true)}
 										className={headerBtnClass}
-										style={{ color: hasGist ? theme.colors.accent : theme.colors.textDim }}
+										style={{ color: theme.colors.textDim }}
+										aria-haspopup="dialog"
+										aria-expanded={actionsSheetOpen}
+										aria-label="File actions"
+										data-testid="file-preview-actions-button"
 									>
-										<Share2 className={headerIconClass} />
+										<MoreHorizontal className={headerIconClass} />
 									</button>
-								</HoverTooltip>
-							)}
-						{/* Document Graph button - show for markdown files when callback is available */}
-						{/* Talk with Document - opens a voice session with this file as the
-						    conversation's subject. It doubles as the stop control while that
-						    session is running, matching the composer microphone: one button
-						    that reads as active is what stops a second session being opened
-						    on top of the first. */}
-						{toolbarVisibility.talkWithDocument && onTalkWithDocument && (
-							<HoverTooltip
-								theme={theme}
-								label={
-									isTalkingAboutDocument
-										? 'End the voice session about this document'
-										: 'Talk with this document'
-								}
-							>
-								<button
-									onClick={onTalkWithDocument}
-									className={headerBtnClass}
-									style={{
-										color: isTalkingAboutDocument ? theme.colors.accent : theme.colors.textDim,
-									}}
-									aria-pressed={isTalkingAboutDocument}
-									data-testid="talk-with-document-button"
-								>
-									<Mic className={headerIconClass} />
-								</button>
-							</HoverTooltip>
-						)}
-						{toolbarVisibility.documentGraph && isMarkdown && onOpenInGraph && (
-							<HoverTooltip theme={theme} label="View in Document Graph">
-								<button
-									onClick={onOpenInGraph}
-									className={headerBtnClass}
-									style={{ color: theme.colors.textDim }}
-								>
-									<GitGraph className={headerIconClass} />
-								</button>
-							</HoverTooltip>
-						)}
-						{/* "Open in Default App" hands the file to the HOST machine's OS
-						    opener via the shell bridge. In the web-desktop build the host is
-						    not the browser user's device, so hide it there (as we already do
-						    over SSH, where file:// can't reach the remote host). */}
-						{toolbarVisibility.openInDefault && !sshRemoteId && !isWebDesktop() && (
-							<HoverTooltip theme={theme} label="Open in Default App">
-								<button
-									onClick={() => window.maestro?.shell?.openPath(file.path)}
-									className={headerBtnClass}
-									style={{ color: theme.colors.textDim }}
-								>
-									<ExternalLink className={headerIconClass} />
-								</button>
-							</HoverTooltip>
-						)}
-						{/* Reveal in Finder / Explorer / File Manager - local files only */}
-						{toolbarVisibility.revealInFolder && !sshRemoteId && (
-							<HoverTooltip theme={theme} label={getRevealLabel(window.maestro?.platform ?? '')}>
-								<button
-									onClick={() => window.maestro?.shell?.showItemInFolder(file.path)}
-									className={headerBtnClass}
-									style={{ color: theme.colors.textDim }}
-									data-testid="reveal-in-folder-button"
-								>
-									<FolderOpen className={headerIconClass} />
-								</button>
-							</HoverTooltip>
-						)}
-						{toolbarVisibility.copyPath && (
-							<HoverTooltip theme={theme} label="Copy full path to clipboard">
-								<button
-									onClick={copyPathToClipboard}
-									className={headerBtnClass}
-									style={{ color: theme.colors.textDim }}
-								>
-									<Copy className={headerIconClass} />
-								</button>
-							</HoverTooltip>
-						)}
-						{/* Delete file - last in the row, and always behind a confirmation.
-						    Same flow as the command palette's "File: Delete" entry. */}
-						{toolbarVisibility.delete && onDelete && (
-							<HoverTooltip theme={theme} label="Delete file">
-								<button
-									onClick={onDelete}
-									className={headerBtnClass}
-									style={{ color: theme.colors.textDim }}
-									data-testid="delete-file-button"
-								>
-									<Trash2 className={headerIconClass} />
-								</button>
-							</HoverTooltip>
-						)}
+								)
+							: actions.map((action) => {
+									if (action.kind === 'tier') {
+										return (
+											<PreviewTierChip
+												key={action.key}
+												theme={theme}
+												autoTier={action.autoTier}
+												override={action.override}
+												onSelect={action.onSelect}
+												iconOnly
+												headerBtnClass={headerBtnClass}
+												headerIconClass={headerIconClass}
+											/>
+										);
+									}
+									const Icon = action.icon;
+									return (
+										<HoverTooltip
+											key={action.key}
+											theme={theme}
+											label={action.label}
+											shortcut={action.shortcut}
+										>
+											<button
+												onClick={action.onClick}
+												className={headerBtnClass}
+												style={{
+													color: action.active ? theme.colors.accent : theme.colors.textDim,
+												}}
+												aria-pressed={action.pressed}
+												data-testid={action.testId}
+											>
+												<Icon className={headerIconClass} />
+											</button>
+										</HoverTooltip>
+									);
+								})}
 					</div>
 				</div>
-				{showPath && (
+				{showPath && !phone && (
 					<div className="text-xs opacity-50 truncate mt-1" style={{ color: theme.colors.textDim }}>
 						{directoryPath}
 					</div>
@@ -478,78 +543,25 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 			{/* File Stats subbar - hidden on scroll when overflow allows (see FilePreview).
 			    One line that scrolls sideways when it must: on a phone the five stats
 			    used to wrap into three-line columns. */}
-			{((fileStats || lineCount !== null || tokenCount !== null || taskCounts) && showStatsBar) ||
-			canGoBack ||
-			canGoForward ? (
+			{showStatsGroup || canGoBack || canGoForward ? (
 				<div
-					className="flex items-center justify-between px-6 py-1.5 border-b transition-all duration-200"
+					className={`flex items-center justify-between ${phone ? 'px-3' : 'px-6'} py-1.5 border-b transition-all duration-200`}
 					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgActivity }}
 				>
 					<div className="flex items-center gap-4 min-w-0 overflow-x-auto no-scrollbar">
-						{fileStats && (
-							<div
-								className="text-2xs whitespace-nowrap shrink-0"
-								style={{ color: theme.colors.textDim }}
-							>
-								<span className="opacity-60">Size:</span>{' '}
-								<span style={{ color: theme.colors.textMain }}>
-									{formatFileSize(fileStats.size)}
-								</span>
-							</div>
-						)}
-						{lineCount !== null && (
-							<div
-								className="text-2xs whitespace-nowrap shrink-0"
-								style={{ color: theme.colors.textDim }}
-							>
-								<span className="opacity-60">Lines:</span>{' '}
-								<span style={{ color: theme.colors.textMain }}>{formatNumber(lineCount)}</span>
-							</div>
-						)}
-						{tokenCount !== null && (
-							<div
-								className="text-2xs whitespace-nowrap shrink-0"
-								style={{ color: theme.colors.textDim }}
-							>
-								<span className="opacity-60">Tokens:</span>{' '}
-								<span style={{ color: theme.colors.accent }}>{formatTokenCount(tokenCount)}</span>
-							</div>
-						)}
-						{fileStats && (
-							<>
+						{showStatsGroup &&
+							stats.map((stat) => (
 								<div
+									key={stat.key}
 									className="text-2xs whitespace-nowrap shrink-0"
 									style={{ color: theme.colors.textDim }}
 								>
-									<span className="opacity-60">Modified:</span>{' '}
-									<span style={{ color: theme.colors.textMain }}>
-										{formatDateTime(fileStats.modifiedAt)}
+									<span className="opacity-60">{stat.label}:</span>{' '}
+									<span style={{ color: stat.valueColor ?? theme.colors.textMain }}>
+										{stat.value}
 									</span>
 								</div>
-								<div
-									className="text-2xs whitespace-nowrap shrink-0"
-									style={{ color: theme.colors.textDim }}
-								>
-									<span className="opacity-60">Created:</span>{' '}
-									<span style={{ color: theme.colors.textMain }}>
-										{formatDateTime(fileStats.createdAt)}
-									</span>
-								</div>
-							</>
-						)}
-						{taskCounts && (
-							<div
-								className="text-2xs whitespace-nowrap shrink-0"
-								style={{ color: theme.colors.textDim }}
-							>
-								<span className="opacity-60">Tasks:</span>{' '}
-								<span style={{ color: theme.colors.success }}>{taskCounts.closed}</span>
-								<span style={{ color: theme.colors.textMain }}>
-									{' '}
-									of {taskCounts.open + taskCounts.closed}
-								</span>
-							</div>
-						)}
+							))}
 					</div>
 					{/* Navigation buttons - show when either direction is available, disabled in edit mode */}
 					{(canGoBack || canGoForward) && !markdownEditMode && (
@@ -669,6 +681,16 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 					)}
 				</div>
 			) : null}
+			{phone && (
+				<FilePreviewActionsSheet
+					open={actionsSheetOpen}
+					onClose={() => setActionsSheetOpen(false)}
+					theme={theme}
+					directoryPath={directoryPath}
+					stats={stats}
+					actions={actions}
+				/>
+			)}
 		</div>
 	);
 });

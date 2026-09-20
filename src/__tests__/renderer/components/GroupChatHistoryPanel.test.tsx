@@ -3,7 +3,7 @@
  *
  * Tests cover:
  * - Empty states (loading, no entries, no filter matches, no search matches)
- * - Type filter pills (delegation, response, synthesis, error)
+ * - Type filter pills (user, delegation, response, synthesis, error), each in its own color
  * - Search filter (summary, fullResponse, participantName)
  * - Cmd+F keyboard shortcut to open search
  * - Escape to close search
@@ -16,9 +16,11 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { GroupChatHistoryPanel } from '../../../renderer/components/GroupChatHistoryPanel';
 import { useUIStore } from '../../../renderer/stores/uiStore';
+import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
+import { installLocalStorageMock } from '../../helpers/mockLocalStorage';
 
 import { mockTheme } from '../../helpers/mockTheme';
 import type {
@@ -60,6 +62,9 @@ describe('GroupChatHistoryPanel', () => {
 	beforeEach(() => {
 		vi.useFakeTimers({ shouldAdvanceTime: true });
 		useUIStore.setState({ groupChatHistorySearchFilterOpen: false, activeFocus: 'main' });
+		// The pills are per-chat store state now, so a toggle in one test would
+		// otherwise be restored by every later test sharing this groupChatId.
+		useGroupChatStore.setState({ groupChatViewPrefs: {} });
 		Element.prototype.scrollIntoView = vi.fn();
 	});
 
@@ -118,6 +123,34 @@ describe('GroupChatHistoryPanel', () => {
 			expect(screen.getByRole('button', { name: /Response/i })).toBeInTheDocument();
 			expect(screen.getByRole('button', { name: /Synthesis/i })).toBeInTheDocument();
 			expect(screen.getByRole('button', { name: /Error/i })).toBeInTheDocument();
+		});
+
+		it('prints short labels but keeps the full word as the accessible name', () => {
+			render(<GroupChatHistoryPanel {...defaultProps} />);
+
+			const shortByFull: Record<string, string> = {
+				You: 'You',
+				Delegation: 'Task',
+				Response: 'Reply',
+				Synthesis: 'Synth',
+				Error: 'Err',
+			};
+			for (const [full, short] of Object.entries(shortByFull)) {
+				const btn = screen.getByRole('button', { name: full });
+				expect(btn).toHaveTextContent(short);
+			}
+		});
+
+		// Each type carries its own hue so the chips read apart at a glance, the
+		// way the AI history's USER / AUTO / CUE chips do.
+		it('gives every type pill its own color', () => {
+			render(<GroupChatHistoryPanel {...defaultProps} />);
+
+			const colors = ['You', 'Delegation', 'Response', 'Synthesis', 'Error'].map(
+				(label) => screen.getByRole('button', { name: label }).style.color
+			);
+			expect(colors.every(Boolean)).toBe(true);
+			expect(new Set(colors).size).toBe(colors.length);
 		});
 
 		it('should have all filters active by default', () => {
@@ -722,6 +755,110 @@ describe('GroupChatHistoryPanel', () => {
 			);
 
 			expect(document.activeElement).not.toBe(container.querySelector('[tabIndex="0"]'));
+		});
+	});
+
+	// ===== PER-CHAT FILTER PERSISTENCE =====
+
+	describe('per-chat filter persistence', () => {
+		beforeEach(() => {
+			installLocalStorageMock();
+			useGroupChatStore.setState({ groupChatViewPrefs: {} });
+			// Back to "nothing saved" so a lookback stub from one test cannot
+			// answer another test's read.
+			vi.mocked(window.maestro.settings.get).mockResolvedValue(undefined);
+		});
+
+		it('swaps the pills when the chat changes, without a remount', () => {
+			// The panel is rendered without a `key`, so a chat switch is a prop
+			// change on the SAME instance. Rerendering here reproduces that: if the
+			// pills only loaded on mount, chat-b would inherit chat-a's filter.
+			const entries = [createMockEntry({ type: 'response', summary: 'A response' })];
+			const { rerender } = render(
+				<GroupChatHistoryPanel {...defaultProps} groupChatId="chat-a" entries={entries} />
+			);
+
+			fireEvent.click(screen.getByRole('button', { name: /Response/i }));
+			expect(screen.getByText('No entries match the selected filters.')).toBeInTheDocument();
+
+			// chat-b has never been configured, so every pill is on.
+			rerender(<GroupChatHistoryPanel {...defaultProps} groupChatId="chat-b" entries={entries} />);
+			expect(screen.getByText('A response')).toBeInTheDocument();
+
+			// Back to chat-a, which keeps its own answer.
+			rerender(<GroupChatHistoryPanel {...defaultProps} groupChatId="chat-a" entries={entries} />);
+			expect(screen.getByText('No entries match the selected filters.')).toBeInTheDocument();
+		});
+
+		it('restores pills saved by an earlier session on first mount', () => {
+			useGroupChatStore.getState().setGroupChatHistoryTypes('chat-a', ['user']);
+
+			const entries = [createMockEntry({ type: 'response', summary: 'A response' })];
+			render(<GroupChatHistoryPanel {...defaultProps} groupChatId="chat-a" entries={entries} />);
+
+			// Only 'user' is lit, so a response entry is filtered out immediately,
+			// with no click in this session.
+			expect(screen.getByText('No entries match the selected filters.')).toBeInTheDocument();
+		});
+
+		it('does not carry one chat lookback over to a chat that has none', async () => {
+			// 1 hour is not a selectable option, and an unrecognised value renders
+			// as the 24h default, so chat A uses a real option (1 week) for the
+			// assertion to mean anything.
+			vi.mocked(window.maestro.settings.get).mockImplementation(async (key: string) =>
+				key === 'groupChatHistoryLookback:chat-a' ? 168 : undefined
+			);
+
+			const { rerender } = render(<GroupChatHistoryPanel {...defaultProps} groupChatId="chat-a" />);
+			await waitFor(() => expect(screen.getByTitle(/1 week/i)).toBeInTheDocument());
+
+			// chat-b saved nothing, so it must fall back to 24h rather than keep
+			// showing chat-a's window.
+			rerender(<GroupChatHistoryPanel {...defaultProps} groupChatId="chat-b" />);
+			await waitFor(() => expect(screen.getByTitle(/24 hours/i)).toBeInTheDocument());
+
+			// chat-a still has its own.
+			rerender(<GroupChatHistoryPanel {...defaultProps} groupChatId="chat-a" />);
+			await waitFor(() => expect(screen.getByTitle(/1 week/i)).toBeInTheDocument());
+		});
+
+		it('ignores a lookback read that lands after the chat changed again', async () => {
+			// The slow read belongs to chat-a. It resolves only after the panel has
+			// already moved to chat-b, and must not repaint chat-b with it.
+			let releaseSlowRead: (value: unknown) => void = () => {};
+			vi.mocked(window.maestro.settings.get).mockImplementation((key: string) => {
+				if (key === 'groupChatHistoryLookback:chat-a') {
+					return new Promise((resolve) => {
+						releaseSlowRead = resolve;
+					});
+				}
+				return Promise.resolve(undefined);
+			});
+
+			const { rerender } = render(<GroupChatHistoryPanel {...defaultProps} groupChatId="chat-a" />);
+			rerender(<GroupChatHistoryPanel {...defaultProps} groupChatId="chat-b" />);
+
+			// Let the late resolution and every microtask behind it run to
+			// completion, then assert directly. A waitFor here would poll once
+			// before the value landed and pass even without the fix.
+			await act(async () => {
+				releaseSlowRead(168);
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+
+			expect(screen.getByTitle(/24 hours/i)).toBeInTheDocument();
+		});
+
+		it('writes the chat id it was given, not the previously active one', () => {
+			const entries = [createMockEntry({ type: 'response', summary: 'A response' })];
+			render(<GroupChatHistoryPanel {...defaultProps} groupChatId="chat-b" entries={entries} />);
+
+			fireEvent.click(screen.getByRole('button', { name: /Response/i }));
+
+			const prefs = useGroupChatStore.getState().groupChatViewPrefs;
+			expect(prefs['chat-b']?.historyTypes).not.toContain('response');
+			expect(prefs['chat-a']).toBeUndefined();
 		});
 	});
 });

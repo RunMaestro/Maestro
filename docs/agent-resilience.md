@@ -1,6 +1,6 @@
 ---
 title: Agent Resilience
-description: Maestro resends your prompt automatically when a provider is overloaded or your plan quota runs out, and can hand the turn to a backup endpoint instead of waiting for the reset window.
+description: Maestro resends your prompt automatically when a provider is overloaded or your plan quota runs out.
 icon: shield-check
 ---
 
@@ -14,23 +14,27 @@ It is on by default for every agent.
 
 When an agent turn fails, Maestro classifies the error and picks one of two strategies.
 
-| Failure                  | What it looks like                                                                                    | What Maestro does                                               |
-| ------------------------ | ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| **Availability**         | `Overloaded`, HTTP 529/503/502/500, `429`, `too many requests`, rate-limit throttling, network errors | Backs off and resends: 30s, 1m, 2m, 4m, 8m, 16m, then every 30m |
-| **Plan quota exhausted** | `You've hit your session limit`, `usage limit reached`, `quota exceeded`, `out of credits`            | Waits until the quota actually resets, then resends             |
+| Failure                  | What it looks like                                                                                    | What Maestro does                                                   |
+| ------------------------ | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| **Availability**         | `Overloaded`, HTTP 529/503/502/500, `429`, `too many requests`, rate-limit throttling, network errors | Backs off and resends: 30s, 1m, 2m, 4m, 8m, 16m, then every 30m     |
+| **Plan quota exhausted** | `You've hit your session limit`, `usage limit reached`, `quota exceeded`, `out of credits`            | Keeps resending until it goes through: 15s, 30s, then once a minute |
 
 The resend is your original prompt replayed through the same code path that sent it the first time, so attached images, slash commands, `@` file mentions, and your tab's model and effort settings all survive unchanged. This holds for every provider, not just Claude Code.
 
-### It waits for the real reset time
+### It keeps trying until it goes through
 
-For a quota failure, backing off in seconds is pointless. Maestro reads the reset moment out of the error itself, in descending order of confidence:
+A quota does come back on a clock, so the obvious thing to do is read the reset time and sleep until it. Maestro does read the reset time, but it does not sleep on it, because the provider's notice is not the only way the wait can end. You can point the agent at a different account or a different provider. The plan can roll over early. The message can name the five-hour window when the weekly one is what actually ran out. A single long sleep is blind to all of that.
+
+So Maestro probes instead: 15 seconds after the limit hits, then 30, then once a minute for as long as it takes, and exactly on the reset moment when the error named one. Each probe is your real prompt resent, because that is the only honest test of whether the quota is back, and it costs nothing when it is not: the provider refuses before spending any tokens, and the outage card updates in place instead of adding a card per attempt. The **Retries** counter on the card is the count of probes so far.
+
+Maestro reads the reset moment out of the error itself, in descending order of confidence, and uses it to make sure a known reset is met on the second rather than up to a minute late:
 
 1. The provider's own quota block. Claude Code sends `quotaLimits.resetsAt` alongside the limit message, which is the exact reset second, so the retry lands the moment your window reopens rather than up to an hour late.
 2. A top-level `retryAfter` / `resetAt` field, or a `retry after 30 seconds` / `try again in 5 minutes` phrase.
 3. Claude Code's legacy `Claude AI usage limit reached|1755500000` epoch marker.
 4. The banner text itself, which names its own timezone: `You've hit your session limit · resets 11:40am (America/Chicago)`. This is the fallback for paths that forward only the message.
 
-If none of those parse, it falls back to waiting an hour and retrying hourly. A wall-clock phrase with no timezone (`resets at 3pm`) is deliberately ignored, since a wrong guess is worse than the reliable hourly poll.
+If none of those parse, nothing is lost: the probes carry on at the same cadence, and the card simply has no **Resets** line to show you. A wall-clock phrase with no timezone (`resets at 3pm`) is deliberately ignored, since a wrong guess would only pull a probe forward to a moment that means nothing.
 
 <Note>
 Claude Code does not report a hit plan limit as an error. It sends an ordinary-looking assistant message whose text is the banner, which is why an unpatched build showed the notice as a normal reply and the turn appeared to succeed. Maestro recognizes that message specifically. It requires the banner to be the entire message, so an agent that merely writes *about* usage limits is never mistaken for one.
@@ -81,9 +85,17 @@ This matters more for automation than for interactive use: when a scheduled pipe
 Both toggles live in the **New Agent** dialog when you create an agent, and in **Edit Agent** afterwards. To reach Edit Agent, right-click the agent in the Left Bar and choose **Edit Agent...**, or press `Cmd+K` / `Ctrl+K` and pick **Edit Agent**.
 
 - **Retry on availability errors** - overloaded, 529, and server errors. Backs off 30s to 30m, then keeps trying.
-- **Retry on token exhaustion** - plan or quota limit reached. Waits until the reset, or hourly.
+- **Retry on token exhaustion** - plan or quota limit reached. Keeps resending, about once a minute, until it goes through.
 
 Both default to on, including for agents you created before the feature existed. Turn one off and that failure class goes back to opening the error dialog immediately.
+
+### Codex: skip the wait entirely
+
+Waiting out a quota window is the best Maestro can do for most providers. Codex is the exception: OpenAI grants those accounts **reset credits** that reopen a consumed window on demand. A Codex agent therefore has a third toggle, under **Codex Settings → Automatic Usage Resets**, off by default:
+
+- **Redeem a reset credit when this agent hits its usage limit** - spends one credit instead of waiting, then lets the retry above carry on as usual.
+
+It is off by default because credits are finite, expire, and cannot be refunded, and it only fires once per outage against an account that confirms the reset would take effect. See [Usage resets](/usage-dashboard#usage-resets) for the credit list, the manual **Reset now** button, and the full set of conditions.
 
 ## Auto Run
 
@@ -96,48 +108,6 @@ You can still take over: cancel the auto-retry from the status card and the batc
 <Note>
 Auto Run batches launched from `maestro-cli` do not auto-retry. Resilience is a desktop feature, and the CLI's batch runner reports the failure instead. A prompt sent INTO the running desktop app with `maestro-cli dispatch` is different: it is a normal desktop turn and retries like any other.
 </Note>
-
-## Provider Failover
-
-Waiting is the right answer for a 60-second blip. It is a poor one for a weekly quota that resets on Thursday.
-
-Provider Failover is the other half. Give an agent an ordered list of Anthropic-compatible backup endpoints, and when resilience would otherwise start waiting, Maestro hands the turn to the next backup instead and keeps working. A backup can be a local vLLM or Ollama server, a third-party service like Z.AI, an enterprise proxy, or simply a second account.
-
-It is **off by default** and configured per agent, in **Edit Agent** below the resilience toggles.
-
-### Adding an endpoint
-
-An endpoint is a name plus a bundle of environment variables layered on top of the agent's own, so nothing new has to be integrated - every Anthropic-compatible CLI already reads its base URL and token from the environment. Two variables carry it:
-
-```bash
-ANTHROPIC_BASE_URL=https://api.z.ai/api/anthropic
-ANTHROPIC_AUTH_TOKEN=your-token-here
-```
-
-`ANTHROPIC_BASE_URL` is required and must start with `http://` or `https://`. Endpoints are tried top to bottom, so put your preferred spare first; use the arrows on each card to reorder.
-
-<Warning>
-Set a **model override** on each endpoint. Backup providers rarely accept Anthropic's model IDs - Z.AI wants `glm-4.6`, a local server wants whatever it has loaded - so failing over without swapping the model usually just trades a quota error for a 404.
-</Warning>
-
-### How a failover turn plays out
-
-1. A turn fails with a retryable error, and the agent has an untried backup.
-2. Maestro swaps that endpoint's environment into the next spawn and resends after a three second handover. The pause is short on purpose: long enough to see what is about to happen and cancel it, short enough that having a spare tire is worth something.
-3. Each endpoint is tried at most once per outage. When all of them are spent, the agent falls back to plain wait-and-retry on whatever endpoint is currently live.
-4. After **Return to primary after** minutes on a backup (60 by default), the next turn probes your primary again. The probe is lazy - it happens on the next spawn, never on a background timer - so an idle agent never burns quota just to test the water.
-
-Failover requires Agent Resilience to be on for the matching failure class. It rides the same classification, so an error resilience would not retry is not one it will fail over on either.
-
-<Warning>
-While a backup is live, your prompts and your code go to a different operator, under different terms and different retention. That is why this is off by default and armed per agent.
-</Warning>
-
-### Your primary key is never handed to a backup
-
-Auth is all-or-nothing per endpoint. If a backup sets `ANTHROPIC_BASE_URL` but does not supply its own credential, Maestro **removes** `ANTHROPIC_AUTH_TOKEN` and `ANTHROPIC_API_KEY` from that spawn rather than letting the backup inherit them.
-
-A URL-only backup row is the most natural way to configure this, and inheriting the key would present your primary Anthropic credential to a third party. The endpoint fails to authenticate instead, which is loud, recoverable, and much better than the alternative.
 
 ## Tracking it over time
 

@@ -23,6 +23,11 @@ export interface QueryEvent {
 	/** Whether this query came from a worktree session (child of a parent agent) */
 	isWorktree?: boolean;
 	/**
+	 * Web Login account that sent the turn (username). Absent for turns typed at
+	 * the desktop, which is every turn when Web Login is off.
+	 */
+	userName?: string;
+	/**
 	 * Per-turn token and cost usage, when the provider reported any.
 	 *
 	 * These are DELTAS for the single turn this row represents, not the running
@@ -267,6 +272,23 @@ export interface WizardRun {
 }
 
 /**
+ * File format for a Usage Dashboard export. `json` is one file holding every
+ * table plus the dashboard aggregation; `csv` is a zip with one CSV per table.
+ */
+export type UsageExportFormat = 'json' | 'csv';
+
+/** What a finished Usage Dashboard export reports back to the renderer. */
+export interface UsageExportResult {
+	/** Absolute path the export was written to. */
+	path: string;
+	format: UsageExportFormat;
+	/** Rows written per table, keyed by table name. */
+	rowCounts: Record<string, number>;
+	/** Plain-language notes on data the export could not include in full. */
+	notes: string[];
+}
+
+/**
  * Database schema version for migrations
  */
-export const STATS_DB_VERSION = 10;
+export const STATS_DB_VERSION = 12;

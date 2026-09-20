@@ -1,13 +1,20 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback } from 'react';
 import type { Session } from '../../types';
 import { useSessionStore, selectActiveSession, selectSessionById } from '../../stores/sessionStore';
 import { getActiveTab } from '../../utils/tabHelpers';
 import { useComposerInputStore } from '../../stores/composerInputStore';
 import { useEventListener } from '../utils/useEventListener';
+import { useDraftPersistence } from './useDraftPersistence';
 import {
 	normalizeComposerCommandMode,
 	type ComposerCommandMode,
 } from '../../utils/shellCommandInput';
+
+/** The payload `useDraftPersistence` carries per tab: text plus the mode it qualifies. */
+interface AiDraftPayload {
+	value: string;
+	commandMode: ComposerCommandMode;
+}
 
 /**
  * How long the composer may hold text that only exists in
@@ -115,15 +122,6 @@ export interface UseInputSyncReturn {
 export function useInputSync(deps: UseInputSyncDeps): UseInputSyncReturn {
 	const { setSessions } = deps;
 
-	// Latest queued draft write, and the timer that will apply it. Both are
-	// refs so a keystroke never re-renders anything.
-	const pendingDraftRef = useRef<{
-		tabId: string;
-		value: string;
-		commandMode: ComposerCommandMode;
-	} | null>(null);
-	const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
 	// Write a draft onto one specific tab, wherever that tab lives. Tab ids are
 	// unique across agents, so a draft always lands on the tab it was typed
 	// into even if the user has since switched agents. Sessions that don't hold
@@ -153,40 +151,26 @@ export function useInputSync(deps: UseInputSyncDeps): UseInputSyncReturn {
 		[setSessions]
 	);
 
-	const cancelQueuedDraftFlush = useCallback(() => {
-		if (flushTimerRef.current) {
-			clearTimeout(flushTimerRef.current);
-			flushTimerRef.current = null;
-		}
-		pendingDraftRef.current = null;
-	}, []);
+	// Coalesced write-back, shared with Group Chat's own draft persistence
+	// (see useDraftPersistence's doc comment for why a key switch flushes the
+	// old key immediately rather than dropping or misdirecting it).
+	const onPersist = useCallback(
+		(tabId: string, { value, commandMode }: AiDraftPayload) =>
+			writeDraftToTab(tabId, value, commandMode),
+		[writeDraftToTab]
+	);
+	const { queueFlush, flushNow, flushPending } = useDraftPersistence<AiDraftPayload>(
+		onPersist,
+		DRAFT_FLUSH_DELAY_MS
+	);
 
-	const flushQueuedDraft = useCallback(() => {
-		const pending = pendingDraftRef.current;
-		cancelQueuedDraftFlush();
-		if (pending) {
-			writeDraftToTab(pending.tabId, pending.value, pending.commandMode);
-		}
-	}, [cancelQueuedDraftFlush, writeDraftToTab]);
+	const flushQueuedDraft = flushPending;
 
 	const queueAiDraftFlush = useCallback(
 		(tabId: string, value: string, commandMode: ComposerCommandMode) => {
-			// A queued write for a different tab must not be dropped on the floor
-			// when focus moves - apply it now, then start queuing for the new tab.
-			const pending = pendingDraftRef.current;
-			if (pending && pending.tabId !== tabId) {
-				flushQueuedDraft();
-			}
-			pendingDraftRef.current = { tabId, value, commandMode };
-			if (flushTimerRef.current) return;
-			flushTimerRef.current = setTimeout(() => {
-				flushTimerRef.current = null;
-				const next = pendingDraftRef.current;
-				pendingDraftRef.current = null;
-				if (next) writeDraftToTab(next.tabId, next.value, next.commandMode);
-			}, DRAFT_FLUSH_DELAY_MS);
+			queueFlush(tabId, { value, commandMode });
 		},
-		[flushQueuedDraft, writeDraftToTab]
+		[queueFlush]
 	);
 
 	// Function to persist AI input to session state (called on blur/submit)
@@ -202,10 +186,9 @@ export function useInputSync(deps: UseInputSyncDeps): UseInputSyncReturn {
 			if (!targetTabId) return;
 			// This is the authoritative value for the tab now, so a queued write
 			// (which may hold pre-send text) must not land after it.
-			cancelQueuedDraftFlush();
-			writeDraftToTab(targetTabId, value, commandMode);
+			flushNow(targetTabId, { value, commandMode });
 		},
-		[cancelQueuedDraftFlush, writeDraftToTab]
+		[flushNow]
 	);
 
 	// Function to persist terminal input to session state (called on blur/session switch)
@@ -221,14 +204,13 @@ export function useInputSync(deps: UseInputSyncDeps): UseInputSyncReturn {
 		[setSessions]
 	);
 
-	// Teardown is a loss boundary: whatever is still queued has to land before
-	// this hook (and its timer) go away.
-	useEffect(() => flushQueuedDraft, [flushQueuedDraft]);
-
-	// So is leaving the app. Hiding the window or switching to another app is
-	// the moment a user is most likely to be interrupted mid-sentence, and it's
-	// also when the session file gets flushed to disk - so land the draft first
-	// rather than sitting on the typing timer.
+	// Unmount teardown is handled inside useDraftPersistence itself.
+	//
+	// Leaving the app is its own loss boundary though: hiding the window or
+	// switching to another app is the moment a user is most likely to be
+	// interrupted mid-sentence, and it's also when the session file gets
+	// flushed to disk - so land the draft first rather than sitting on the
+	// typing timer.
 	useEventListener('blur', flushQueuedDraft);
 	useEventListener(
 		'visibilitychange',

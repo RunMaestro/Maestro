@@ -11,6 +11,7 @@ import {
 	resolveAgentDisplayName,
 	buildNameMap,
 	computeAxisLabelIndices,
+	PHONE_AXIS_LABELS,
 } from '../../../../renderer/components/UsageDashboard/chartUtils';
 import type { Session } from '../../../../renderer/types';
 
@@ -289,5 +290,35 @@ describe('computeAxisLabelIndices', () => {
 		// 31 ticks, interval 5: 30 is both on-interval and last - nothing dropped.
 		const indices = computeAxisLabelIndices(31);
 		expect([...indices]).toEqual([0, 5, 10, 15, 20, 25, 30]);
+	});
+
+	// Seven "Aug 20"-sized labels need about 300px, and a phone gives a chart
+	// roughly 340px, so a narrow caller says so rather than printing them on
+	// top of each other.
+	it('thins the labels when the caller declares a smaller budget', () => {
+		const wide = computeAxisLabelIndices(31);
+		const narrow = computeAxisLabelIndices(31, PHONE_AXIS_LABELS);
+
+		expect(narrow.size).toBeLessThan(wide.size);
+		expect(narrow.size).toBeLessThanOrEqual(PHONE_AXIS_LABELS + 1);
+		expect(minGap(narrow)).toBeGreaterThan(minGap(wide));
+	});
+
+	it('still labels both ends under a smaller budget', () => {
+		for (const count of [1, 8, 20, 31, 90]) {
+			const indices = computeAxisLabelIndices(count, PHONE_AXIS_LABELS);
+			expect(indices.has(0)).toBe(true);
+			expect(indices.has(count - 1)).toBe(true);
+		}
+	});
+
+	it('never goes below two labels, however small the budget', () => {
+		// A budget of 0 or 1 would otherwise divide the axis by zero labels.
+		expect(computeAxisLabelIndices(20, 0).size).toBeGreaterThanOrEqual(2);
+		expect(computeAxisLabelIndices(20, 1).size).toBeGreaterThanOrEqual(2);
+	});
+
+	it('is unchanged at the default budget', () => {
+		expect([...computeAxisLabelIndices(31, 7)]).toEqual([...computeAxisLabelIndices(31)]);
 	});
 });

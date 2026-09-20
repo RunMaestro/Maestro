@@ -10,7 +10,7 @@
 
 import type { StateCreator } from 'zustand';
 import type { FileExplorerIconTheme } from '../utils/fileExplorerIcons/shared';
-import { isFileExplorerIconTheme } from '../utils/fileExplorerIcons/shared';
+import { normalizeFileExplorerIconTheme } from '../utils/fileExplorerIcons/shared';
 import type { SettingsStore } from './settingsStore';
 
 // ============================================================================
@@ -169,9 +169,8 @@ export function hydrateFileExplorerSettings(
 		patch.showHiddenFiles = allSettings['showHiddenFiles'] as boolean;
 
 	if (allSettings['fileExplorerIconTheme'] !== undefined) {
-		patch.fileExplorerIconTheme = isFileExplorerIconTheme(allSettings['fileExplorerIconTheme'])
-			? allSettings['fileExplorerIconTheme']
-			: 'rich';
+		patch.fileExplorerIconTheme =
+			normalizeFileExplorerIconTheme(allSettings['fileExplorerIconTheme']) ?? 'rich';
 	}
 
 	// Local file indexing ignore patterns (with array validation)

@@ -24,6 +24,7 @@ import { useResizableModal } from '../../hooks/ui/useResizableModal';
 import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { ResizeHandles } from '../ui/ResizeHandles';
+import { aggregateFolderTaskCounts } from './documentTaskAggregation';
 
 // Module-level cache so the user's expand/collapse choices survive the dropdown
 // closing/reopening and the component remounting (e.g. switching agents) until
@@ -265,16 +266,30 @@ export const AutoRunDocumentSelector = forwardRef<
 		: normalizedNewName;
 	const isDuplicate = !!fullNewPath && documents.some((doc) => doc.toLowerCase() === fullNewPath);
 
-	// Get percentage and total task count for a document
-	const getTaskStats = (docPath: string): { pct: number; total: number } | null => {
-		if (!documentTaskCounts) return null;
-		const counts = documentTaskCounts.get(docPath);
+	// Per-folder rollup of the task counts of every document beneath it. Built
+	// from the unfiltered tree on purpose: a folder's badge describes the whole
+	// folder, not just the files that survived the current filter.
+	const folderTaskCounts = useMemo(
+		() => aggregateFolderTaskCounts(documentTree, documentTaskCounts),
+		[documentTree, documentTaskCounts]
+	);
+
+	// Turn raw counts into the percentage/total pair the badge renders.
+	const toTaskStats = (counts: DocumentTaskCount | undefined) => {
 		if (!counts || counts.total === 0) return null;
 		return {
 			pct: Math.round((counts.completed / counts.total) * 100),
 			total: counts.total,
 		};
 	};
+
+	// Get percentage and total task count for a document
+	const getTaskStats = (docPath: string): { pct: number; total: number } | null =>
+		toTaskStats(documentTaskCounts?.get(docPath));
+
+	// Same, for a folder: the sum of every document in its subtree.
+	const getFolderTaskStats = (folderPath: string): { pct: number; total: number } | null =>
+		toTaskStats(folderTaskCounts.get(folderPath));
 
 	// Pill badge showing "{pct}% ({total})" - rendered next to file entries in
 	// the dropdown list. Green when 100% complete, dim accent otherwise.
@@ -299,11 +314,12 @@ export const AutoRunDocumentSelector = forwardRef<
 		const paddingLeft = depth * 16 + 12;
 
 		if (node.type === 'folder') {
+			const folderStats = getFolderTaskStats(node.path);
 			return (
 				<div key={node.path}>
 					<button
 						onClick={() => toggleFolder(node.path)}
-						className="w-full flex items-center gap-1.5 py-1.5 text-sm transition-colors hover:bg-white/5"
+						className="w-full flex items-center gap-1.5 py-1.5 pr-3 text-sm transition-colors hover:bg-white/5"
 						style={{ paddingLeft, color: theme.colors.textDim }}
 					>
 						{isExpanded ? (
@@ -313,6 +329,7 @@ export const AutoRunDocumentSelector = forwardRef<
 						)}
 						<Folder className="w-3.5 h-3.5 shrink-0" style={{ color: theme.colors.accent }} />
 						<span className="truncate">{node.name}</span>
+						{folderStats && renderTaskBadge(folderStats, 'ml-auto')}
 					</button>
 					{isExpanded && node.children && (
 						<div>{node.children.map((child) => renderTreeNode(child, depth + 1))}</div>

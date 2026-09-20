@@ -154,10 +154,15 @@ import { notifyToast } from './stores/notificationStore';
 import { useModalActions, useModalStore } from './stores/modalStore';
 import { GitStatusProvider } from './contexts/GitStatusContext';
 import { WindowProvider, useWindowContextOptional } from './contexts/WindowContext';
+import { GitShortcutActionsBridge } from './components/GitShortcutActionsBridge';
 import { InputProvider, useInputContext } from './contexts/InputContext';
-import { useGroupChatStore, isGroupChatVisibleInWindow } from './stores/groupChatStore';
+import {
+	useGroupChatStore,
+	isGroupChatVisibleInWindow,
+	selectActiveGroupChatStagedImages,
+} from './stores/groupChatStore';
 import { useBatchStore } from './stores/batchStore';
-import { registerBatchResumer } from './stores/retryStore';
+import { registerBatchResumer } from './services/batchResumer';
 // All session state is read directly from useSessionStore in MaestroConsoleInner.
 import {
 	useSessionStore,
@@ -439,8 +444,6 @@ function MaestroConsoleInner() {
 	const settings = useSettings();
 	const {
 		conductorProfile,
-		fontFamily,
-		fontSize,
 		enterToSendAI,
 		setEnterToSendAI,
 		enterToSendAIExpanded,
@@ -656,6 +659,13 @@ function MaestroConsoleInner() {
 	// covers the whole screen, and a drawer that stayed put read as the tap
 	// having done nothing. Keyed on the TRANSITION of activeSessionId, not its
 	// steady state, so a drawer opened after a switch stays open.
+	//
+	// This is the net for anything that changes the active agent without going
+	// through a row tap. The taps themselves call
+	// `uiStore.closeLeftSidebarForNavigation()` directly, because activating the
+	// row that is already active (an agent still selected behind an open group
+	// chat, or a group chat, which never touches activeSessionId at all) moves no
+	// id for this effect to see.
 	const prevActiveSessionIdRef = useRef(activeSessionId);
 	useEffect(() => {
 		const changed = prevActiveSessionIdRef.current !== activeSessionId;
@@ -671,6 +681,14 @@ function MaestroConsoleInner() {
 	// a file tapped in the tree opened behind the panel and nothing on screen
 	// changed. Keyed on the transition of the active tab (of any kind), so a
 	// drawer opened after the switch stays open.
+	//
+	// This is the NET, not the primary. Two opens move none of these ids, so the
+	// transition never fires for them: re-previewing the file that is already the
+	// active tab, and any media file, which never becomes a tab at all. Both are
+	// handled AT THE OPEN by `handleOpenFileTab`, which calls
+	// `uiStore.closeRightPanelForNavigation()` - see its twin for the left
+	// drawer. What is left here covers everything else that activates a tab from
+	// inside the drawer (a conversation resumed from History, a queued item).
 	const activeTabKey = [
 		activeSession?.activeTabId,
 		activeSession?.activeFileTabId,
@@ -762,11 +780,12 @@ function MaestroConsoleInner() {
 	const activeGroupChatId = useGroupChatStore((s) => s.activeGroupChatId);
 	const groupChatMessages = useGroupChatStore((s) => s.groupChatMessages);
 	const groupChatState = useGroupChatStore((s) => s.groupChatState);
-	const groupChatStagedImages = useGroupChatStore((s) => s.groupChatStagedImages);
+	const groupChatStagedImages = useGroupChatStore(selectActiveGroupChatStagedImages);
 	const groupChatReadOnlyMode = useGroupChatStore((s) => s.groupChatReadOnlyMode);
-	const groupChatExecutionQueue = useGroupChatStore((s) => s.groupChatExecutionQueue);
+	const groupChatQueues = useGroupChatStore((s) => s.groupChatQueues);
 	const groupChatRightTab = useGroupChatStore((s) => s.groupChatRightTab);
 	const groupChatParticipantColors = useGroupChatStore((s) => s.groupChatParticipantColors);
+	const groupChatModeratorOnly = useGroupChatStore((s) => s.groupChatModeratorOnly);
 	const moderatorUsage = useGroupChatStore((s) => s.moderatorUsage);
 	const participantStates = useGroupChatStore((s) => s.participantStates);
 	const groupChatError = useGroupChatStore((s) => s.groupChatError);
@@ -786,6 +805,7 @@ function MaestroConsoleInner() {
 		setGroupChatRightTab,
 		setGroupChatParticipantColors,
 		setInitiatorWindowId,
+		toggleGroupChatModeratorOnly,
 	} = useGroupChatStore.getState();
 
 	// Multi-window: stamp the initiating window on this window's group-chat store
@@ -1204,6 +1224,7 @@ function MaestroConsoleInner() {
 		handleGroupChatDraftChange,
 		handleRemoveGroupChatQueueItem,
 		handleReorderGroupChatQueueItems,
+		handleResumeGroupChatQueue,
 		handleStopAll: handleGroupChatStopAll,
 		handleNewGroupChat,
 		handleEditGroupChat,
@@ -1813,7 +1834,6 @@ function MaestroConsoleInner() {
 		clearError: clearInlineWizardError,
 		retryLastMessage: retryInlineWizardMessage,
 		generateDocuments: generateInlineWizardDocuments,
-		endWizard: endInlineWizard,
 		cancelTurn: cancelInlineWizardTurn,
 		isWizardActiveForTab,
 	} = inlineWizardContext;
@@ -1830,6 +1850,7 @@ function MaestroConsoleInner() {
 		handleWizardCommand,
 		handleLaunchWizardTab,
 		isWizardActiveForCurrentTab,
+		handleExitWizard,
 		handleWizardComplete,
 		handleWizardCompleteAndStartAutoRun,
 		handleWizardLetsGo,
@@ -2939,7 +2960,7 @@ function MaestroConsoleInner() {
 		generateInlineWizardDocuments,
 		retryInlineWizardMessage,
 		clearInlineWizardError,
-		endInlineWizard,
+		handleExitWizard,
 		cancelInlineWizardTurn,
 		handleAutoRunRefresh,
 
@@ -3219,10 +3240,9 @@ function MaestroConsoleInner() {
 									handlePaste={handlePaste}
 									handleDrop={handleGroupChatDrop}
 									onOpenLightbox={handleSetLightboxImage}
-									executionQueue={groupChatExecutionQueue.filter(
-										(item) => item.tabId === activeGroupChatId
-									)}
+									queueState={activeGroupChatId ? groupChatQueues[activeGroupChatId] : undefined}
 									onRemoveQueuedItem={handleRemoveGroupChatQueueItem}
+									onResumeQueue={handleResumeGroupChatQueue}
 									onReorderQueuedItems={handleReorderGroupChatQueueItems}
 									markdownEditMode={chatRawTextMode}
 									onToggleMarkdownEditMode={handleToggleGroupChatMarkdownMode}
@@ -3231,6 +3251,8 @@ function MaestroConsoleInner() {
 									setEnterToSendAI={setEnterToSendAI}
 									showFlashNotification={handleGroupChatFlashNotification}
 									participantColors={groupChatParticipantColors}
+									moderatorOnly={groupChatModeratorOnly}
+									onToggleModeratorOnly={toggleGroupChatModeratorOnly}
 									messagesRef={groupChatMessagesRef}
 									ghCliAvailable={ghCliAvailable}
 									onPublishMessageGist={handlePublishGroupChatMessageGist}
@@ -3266,6 +3288,7 @@ function MaestroConsoleInner() {
 								onTabChange={handleGroupChatRightTabChange}
 								onJumpToMessage={handleJumpToGroupChatMessage}
 								onColorsComputed={setGroupChatParticipantColors}
+								moderatorOnly={groupChatModeratorOnly}
 							/>
 						</>
 					) : null
@@ -3669,6 +3692,9 @@ function GitStatusProviderFromStore({ children }: { children: ReactNode }) {
 	const activeSessionId = useSessionStore((s) => s.activeSessionId);
 	return (
 		<GitStatusProvider sessions={sessions} activeSessionId={activeSessionId}>
+			{/* Renders nothing - holds the git-status subscription the keyboard
+			    shortcuts for pull/push/branch/PR need, so App doesn't have to. */}
+			<GitShortcutActionsBridge />
 			{children}
 		</GitStatusProvider>
 	);

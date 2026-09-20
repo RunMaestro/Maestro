@@ -243,6 +243,19 @@ actually written, and the file tree refreshes so you can see it right away.
 This works on remote agents too. The remote host needs the `zip` command
 installed; without it, Maestro says so rather than failing quietly.
 
+### File Icon Themes
+
+The Files pane draws each file and folder with one of two icon sets, chosen in
+**Settings > Display > Files Pane Icon Theme**:
+
+- **Rich** (the default) uses Material Icon Theme style SVGs: colorful,
+  language-specific icons for 70+ file types plus folder categories such as
+  tests, docs, assets, and config.
+- **Flat** uses Maestro's simpler monochrome icons, which read as less busy on a
+  large tree.
+
+The choice applies to every agent's Files pane and takes effect right away.
+
 ### File Explorer Keyboard Shortcuts
 
 With the Files tab focused, navigate the file list without touching the mouse:
@@ -871,6 +884,8 @@ When you send your first message to a new tab, Maestro automatically generates a
 - Toggle **Automatic Tab Naming** on or off
 - Default: Enabled
 
+**Wizard tabs:** a tab started with `/wizard` opens as `Wizard`, because it exists before anyone knows what you are planning. It renames itself to `wizard: <topic>` as soon as you say what you want (from the `/wizard <topic>` argument, or from your first message), and to the generated playbook folder once the wizard finishes. Rename it yourself at any point and Maestro leaves your name alone.
+
 <Note>
 Automatic tab naming uses the same AI agent as your session, including SSH remote configurations. The naming request runs in parallel with your main prompt, so there's no delay to your workflow.
 </Note>
@@ -1073,6 +1088,22 @@ The log keeps the most recent 100 entries; older ones drop off as new ones arriv
 <Note>
 Dismissing only discards Maestro's tab. The underlying conversation is still on disk and can be reopened from the Session Explorer.
 </Note>
+
+**From the command line**
+
+Everything above is scriptable through `maestro-cli snooze`, which drives the running app - so a snooze made from a terminal shows up in the Snoozed Tabs list, and one made by clicking can be woken from a script. `<when>` takes the same expressions the dialog does, resolved against your own clock, so a typo is reported before anything is parked.
+
+```bash
+maestro-cli snooze tab <tab-id> "next fri 3pm" --note "review before standup" \
+  --wake-prompt "summarize what changed"
+maestro-cli snooze list                 # everything parked, soonest first
+maestro-cli unsnooze <snooze-id>        # bring it back now (id prefixes work)
+maestro-cli snooze reschedule <snooze-id> "tomorrow 9am"
+maestro-cli snooze dismiss <snooze-id>
+maestro-cli snooze history --limit 20
+```
+
+Find a tab id with `maestro-cli session list`, or pass `active` for the tab on screen. A file, terminal, browser, or group tab is not in that list, so name its owner with `--agent <id>`. Add `--json` to any verb for a machine-readable answer, and `--background` to park or dismiss without the on-screen confirmation.
 
 ## Session Management
 

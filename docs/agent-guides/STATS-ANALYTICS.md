@@ -51,8 +51,16 @@ Tracks individual AI query/response cycles:
 | `project_path` | TEXT             | Normalized project path         |
 | `tab_id`       | TEXT             | AI tab that issued the query    |
 | `is_remote`    | INTEGER          | SSH remote flag (added in v2)   |
+| `is_worktree`  | INTEGER          | Worktree agent flag (v5)        |
+| `user_name`    | TEXT             | Web Login sender (v12)          |
 
-**Indexes**: `start_time`, `agent_type`, `source`, `session_id`, `project_path`, `is_remote`, compound `(start_time, agent_type)`, `(start_time, project_path)`, `(start_time, source)`
+`user_name` is the Web Login account that SENT the turn, and NULL means "nobody
+was signed in" - a turn typed at the desktop, which is every turn while Web
+Login is off. It is stamped by `stats:record-query` from what the spawn noted
+(`resolveTurnActor`), never from the acting user at write time: the row is
+written by the desktop renderer's exit listener even for a turn a browser sent.
+
+**Indexes**: `start_time`, `agent_type`, `source`, `session_id`, `project_path`, `is_remote`, `is_worktree`, `user_name`, compound `(start_time, agent_type)`, `(start_time, project_path)`, `(start_time, source)`
 
 Note there is deliberately **no index on `tab_id` and no aggregation that groups by it**. The one consumer, the Usage Dashboard's per-tab breakdown (`UsageDashboard/TabBreakdown.tsx`), groups client-side over the rows `AgentDetailModal` has already fetched for a single agent via `getStats('all', { sessionId })`. That set is one agent's events, not the whole table, so it stays cheap and needs no new IPC. Reach for a real index only if something ever needs to query by tab across all agents.
 
@@ -196,9 +204,11 @@ Defined in `src/main/stats/migrations.ts`. Migrations are sequential and recorde
 | v5      | Add `is_worktree` column to `query_events` and `session_lifecycle`    |
 | v6      | Add `image_annotations` table                                         |
 | v7      | Add `shortcut_usage_daily` table                                      |
-| v8      | Add per-turn token and cost columns to `query_events`                 |
-| v9      | Add `resilience_events` table                                         |
-| v10     | Add `wizard_runs` table                                               |
+| v8      | Add `multi_window_usage_daily` table                                  |
+| v9      | Add per-turn token and cost columns to `query_events`                 |
+| v10     | Add `resilience_events` table                                         |
+| v11     | Add `wizard_runs` table                                               |
+| v12     | Add `user_name` column to `query_events` for Web Login attribution    |
 
 To add a new migration:
 
@@ -325,7 +335,7 @@ Registered in `src/main/ipc/handlers/stats.ts`. All handlers check `statsCollect
 
 | Handler                             | Description                                                                          |
 | ----------------------------------- | ------------------------------------------------------------------------------------ |
-| `stats:export-csv`                  | Export query events to CSV for a time range                                          |
+| `stats:export`                      | Export every stats table, token usage, and Cue runs for a range as JSON or a CSV zip |
 | `stats:clear-old-data`              | Delete records older than N days (transactional across all tables)                   |
 | `stats:get-database-size`           | Get the database file size in bytes                                                  |
 | `stats:get-initialization-result`   | Get the result of the one-shot DB initialization (used by the settings health panel) |

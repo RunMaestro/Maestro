@@ -40,7 +40,8 @@ export type FirstPartyEncoreFlag =
 	| 'opencodeServer'
 	| 'concerto'
 	| 'groupsPlus'
-	| 'aCappella';
+	| 'aCappella'
+	| 'webLogin';
 
 /** A supervised background service a first-party plugin runs. */
 export interface FirstPartyBackgroundService {
@@ -828,6 +829,55 @@ export const A_CAPPELLA_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	backgroundServices: [],
 };
 
+/** Web Login gates the web interface host-side: the login routes, the cookie
+ * check on every token route and the WebSocket upgrade all live in the web
+ * server, and the accounts file is reachable only through `webLogin:*` IPC
+ * channels the bridge refuses. No broker verb could model "decide who may
+ * connect at all", so that authority stays host-owned; the tile only re-reads
+ * its own flag. */
+export const WEB_LOGIN_FIRST_PARTY_PLUGIN_ID = 'com.maestro.web-login';
+
+export const WEB_LOGIN_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
+	id: WEB_LOGIN_FIRST_PARTY_PLUGIN_ID,
+	name: 'Web Login',
+	description:
+		'Require a username and password on the web interface, manage the accounts here, and attribute every turn to the person who sent it.',
+	firstParty: true,
+	category: 'ui',
+	permissions: [
+		{
+			capability: 'settings:read',
+			reason: 'Re-read the Web Login Encore flag before gating a web request.',
+		},
+	],
+	settingsNamespace: 'webLogin',
+	encoreFlag: 'webLogin',
+	releaseDate: '2026-09-16',
+	// The gate is evaluated per request by the app-scoped web server; disable =
+	// flag off and the next request is served without a login. Accounts and
+	// their history attribution are kept.
+	backgroundServices: [],
+	usage: {
+		overview: [
+			'With Web Login on, anyone opening the web interface sees a login page before Maestro loads. Each person signs in with their own account, and every message they send is attributed to them: a pill on the History entry, a filter in the History panel, and a column in the Usage Dashboard data.',
+			'Accounts are created and managed right here, on this tile. There are no roles: every account is an equal operator, and this desktop is the administrator. A browser can never create, remove, or reset an account.',
+			'The URL token is still required. Login is a second factor on top of it, not a replacement, and maestro-cli on this machine keeps working without one.',
+			'The web interface is served over plain HTTP on your network. A password typed on the LAN travels in the clear; use the Remote Control tunnel or a private network you trust.',
+		],
+		access: [
+			{
+				label: 'Manage accounts',
+				menu: 'this tile, once enabled',
+			},
+			{
+				label: 'Sign out of the web interface',
+				menu: 'the hamburger menu in the Left Bar, on the web interface',
+			},
+		],
+		docsSlug: 'remote-control',
+	},
+};
+
 /**
  * Every first-party plugin definition, in marketplace display order (matches
  * the pre-lift BUILTIN_FEATURES tile order).
@@ -843,6 +893,7 @@ export const FIRST_PARTY_PLUGIN_DEFINITIONS: readonly FirstPartyPluginDefinition
 	CONCERTO_FIRST_PARTY_PLUGIN,
 	GROUPS_PLUS_FIRST_PARTY_PLUGIN,
 	A_CAPPELLA_FIRST_PARTY_PLUGIN,
+	WEB_LOGIN_FIRST_PARTY_PLUGIN,
 ];
 
 /**
@@ -864,4 +915,5 @@ export const FIRST_PARTY_PLUGINS: Readonly<
 	concerto: CONCERTO_FIRST_PARTY_PLUGIN,
 	groupsPlus: GROUPS_PLUS_FIRST_PARTY_PLUGIN,
 	aCappella: A_CAPPELLA_FIRST_PARTY_PLUGIN,
+	webLogin: WEB_LOGIN_FIRST_PARTY_PLUGIN,
 };

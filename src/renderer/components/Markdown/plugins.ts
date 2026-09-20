@@ -29,6 +29,7 @@ import { remarkFrontmatterTable } from '../../utils/remarkFrontmatterTable';
 import { remarkFileLinks, type buildFileTreeIndices } from '../../utils/remarkFileLinks';
 import { remarkMentionChips } from '../../utils/remarkMentionChips';
 import { remarkPromoteDisplayMath } from '../../../shared/remarkPromoteDisplayMath';
+import { remarkStripHtmlComments } from '../../../shared/remarkStripHtmlComments';
 
 /** Prebuilt file-tree lookup indices (caller memoizes; we do not rebuild here). */
 type FileTreeIndices = ReturnType<typeof buildFileTreeIndices>;
@@ -124,6 +125,14 @@ export function buildMarkdownPlugins(
 	// than something a `<br>` has been spliced into.
 	if (autorunMarkers) {
 		remarkPlugins.push(remarkMaestroMarkers);
+	}
+
+	// Without rehype-raw, react-markdown renders every raw HTML node as visible
+	// text - which turns an HTML comment into body copy. Strip comment-only nodes
+	// here so they stay invisible, after remarkMaestroMarkers has claimed the
+	// markers it renders as pills.
+	if (!allowRawHtml) {
+		remarkPlugins.push(remarkStripHtmlComments);
 	}
 
 	// Chat surfaces need single-newline-as-<br> semantics (#622); file/doc preview

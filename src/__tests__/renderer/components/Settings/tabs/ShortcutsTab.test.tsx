@@ -473,6 +473,71 @@ describe('ShortcutsTab', () => {
 		expect(screen.getByText('1 / 4')).toBeInTheDocument();
 	});
 
+	it('clears a binding from the clear button', async () => {
+		render(<ShortcutsTab theme={mockTheme} />);
+
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(100);
+		});
+
+		fireEvent.click(screen.getByRole('button', { name: 'Clear New Session shortcut' }));
+
+		expect(mockSetShortcuts).toHaveBeenCalledWith({
+			...mockShortcuts,
+			'new-session': { ...mockShortcuts['new-session'], keys: [] },
+		});
+	});
+
+	it('clears a tab binding from the clear button', async () => {
+		render(<ShortcutsTab theme={mockTheme} />);
+
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(100);
+		});
+
+		fireEvent.click(screen.getByRole('button', { name: 'Clear Send Message shortcut' }));
+
+		expect(mockSetTabShortcuts).toHaveBeenCalledWith({
+			...mockTabShortcuts,
+			'tab-send': { ...mockTabShortcuts['tab-send'], keys: [] },
+		});
+		expect(mockSetShortcuts).not.toHaveBeenCalled();
+	});
+
+	it('clears a binding when bare Backspace is pressed while recording', async () => {
+		render(<ShortcutsTab theme={mockTheme} />);
+
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(100);
+		});
+
+		const shortcutButton = screen.getByText('Meta+n');
+		fireEvent.click(shortcutButton);
+		fireEvent.keyDown(shortcutButton, { key: 'Backspace' });
+
+		expect(mockSetShortcuts).toHaveBeenCalledWith({
+			...mockShortcuts,
+			'new-session': { ...mockShortcuts['new-session'], keys: [] },
+		});
+	});
+
+	it('records Cmd+Backspace as a chord rather than clearing', async () => {
+		render(<ShortcutsTab theme={mockTheme} />);
+
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(100);
+		});
+
+		const shortcutButton = screen.getByText('Meta+n');
+		fireEvent.click(shortcutButton);
+		fireEvent.keyDown(shortcutButton, { key: 'Backspace', metaKey: true });
+
+		expect(mockSetShortcuts).toHaveBeenCalledWith({
+			...mockShortcuts,
+			'new-session': { ...mockShortcuts['new-session'], keys: ['Meta', 'Backspace'] },
+		});
+	});
+
 	it('should hide section headers when no shortcuts match filter', async () => {
 		render(<ShortcutsTab theme={mockTheme} />);
 

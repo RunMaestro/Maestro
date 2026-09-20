@@ -473,6 +473,12 @@ export const MetricCard = memo(function MetricCard({
 					style={{
 						color: theme.colors.textMain,
 						fontSize: 'clamp(18px, 3vw, 28px)',
+						// A formatted figure carries no spaces, so without this a
+						// value too wide for its column (`~$39,605.06` in a 176px
+						// card on a phone) had nowhere to break and painted
+						// straight out past the card's own edge. Wrapping rather
+						// than truncating: the whole number is the point.
+						overflowWrap: 'anywhere',
 					}}
 					title={value}
 				>

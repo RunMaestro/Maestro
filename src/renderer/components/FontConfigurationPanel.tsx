@@ -312,6 +312,10 @@ export function FontConfigurationPanel({
 				onFocus={onFontInteraction}
 				onClick={onFontInteraction}
 				onKeyDown={handleSelectKeyDown}
+				// Compact mode drops the visible SettingsSectionHeading above, which
+				// is otherwise this control's only accessible name - so it needs one
+				// of its own here instead of being announced as an unlabeled select.
+				aria-label={compact ? heading : undefined}
 				// Sized down in compact mode to match its own label. The select
 				// otherwise inherits the interface font size, so at a 16px setting
 				// with a 1.2 zoom it rendered near 19px - larger than the "Interface"

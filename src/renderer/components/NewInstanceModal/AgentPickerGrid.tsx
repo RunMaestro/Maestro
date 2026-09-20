@@ -55,6 +55,8 @@ export const AgentPickerGrid = React.memo(function AgentPickerGrid({
 	dynamicOptions = {},
 	loadingDynamicOptions = {},
 	onLoadDynamicOptionsForAgent,
+	codexAutoResetByAgent,
+	onCodexAutoResetChange,
 }: AgentPickerGridProps) {
 	return (
 		<div>
@@ -289,6 +291,12 @@ export const AgentPickerGrid = React.memo(function AgentPickerGrid({
 											onEnableMaestroPChange={
 												onEnableMaestroPChange
 													? (value) => onEnableMaestroPChange(agent.id, value)
+													: undefined
+											}
+											codexAutoResetOnExhaustion={codexAutoResetByAgent?.[agent.id] ?? false}
+											onCodexAutoResetChange={
+												onCodexAutoResetChange
+													? (value) => onCodexAutoResetChange(agent.id, value)
 													: undefined
 											}
 											maestroPMode={maestroPModeByAgent?.[agent.id] ?? 'dynamic'}

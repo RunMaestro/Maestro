@@ -25,6 +25,14 @@ import type { Theme } from '../../types';
 export interface SegmentedOption<T extends string> {
 	value: T;
 	label: string;
+	/**
+	 * Abbreviated label for a cramped bar. Both forms render: the short one is
+	 * `hidden` by default, and the host's container query swaps them by targeting
+	 * `.segmented-label-full` / `.segmented-label-short`. The control does not
+	 * decide when space is short, because only the host knows what else shares
+	 * its row.
+	 */
+	shortLabel?: string;
 	/** Tooltip text. Useful when the label is abbreviated to fit the bar. */
 	title?: string;
 }
@@ -65,7 +73,14 @@ export function SegmentedControl<T extends string>({
 
 	return (
 		<div
-			className="flex rounded overflow-hidden border"
+			// Scrolls sideways when the row cannot hold every segment, rather
+			// than clipping. `overflow-hidden` is what rounds the corners, and it
+			// used to mean a bar wider than its row simply lost its last options:
+			// invisible AND unclickable, with no scrollbar to hint they were
+			// there. On a phone the five-way sort bar lost two of them.
+			// `overflow-y-hidden` is required beside it - `overflow-x: auto`
+			// alone computes `overflow-y` to `auto` and adds a vertical bar.
+			className="flex min-w-0 max-w-full rounded border overflow-x-auto overflow-y-hidden no-scrollbar"
 			style={{ borderColor: theme.colors.border }}
 			role="radiogroup"
 			aria-label={ariaLabel}
@@ -79,7 +94,7 @@ export function SegmentedControl<T extends string>({
 						key={opt.value}
 						type="button"
 						onClick={() => onChange(opt.value)}
-						className="px-2 py-1 text-xs transition-colors whitespace-nowrap"
+						className="shrink-0 px-2 py-1 text-xs transition-colors whitespace-nowrap"
 						style={{
 							backgroundColor: isActive ? `${theme.colors.accent}20` : 'transparent',
 							color: isActive ? theme.colors.accent : theme.colors.textDim,
@@ -92,7 +107,14 @@ export function SegmentedControl<T extends string>({
 						tabIndex={isActive ? 0 : -1}
 						data-testid={testId ? `${testId}-${opt.value}` : undefined}
 					>
-						{opt.label}
+						{opt.shortLabel ? (
+							<>
+								<span className="segmented-label-full">{opt.label}</span>
+								<span className="segmented-label-short hidden">{opt.shortLabel}</span>
+							</>
+						) : (
+							opt.label
+						)}
 					</button>
 				);
 			})}

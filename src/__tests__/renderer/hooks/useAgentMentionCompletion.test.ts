@@ -215,4 +215,82 @@ describe('buildKnownMentionNameSet', () => {
 		const names = buildKnownMentionNameSet([agent('self', 'Self')], [], 'self');
 		expect(names.has('self')).toBe(false);
 	});
+
+	/**
+	 * The set is cached because building it is O(agents^2) Unicode normalizations
+	 * and `remarkMentionChips` asks for it at the top of EVERY markdown transform.
+	 * These pin the two ways the cache can be wrong: never hitting (the store
+	 * hands out a fresh `sessions` array on every streaming flush, so identity is
+	 * not a usable key) and going stale (a renamed, added, or removed agent has to
+	 * produce a new set).
+	 */
+	describe('roster caching', () => {
+		it('reuses the set across calls with an equal but non-identical roster', () => {
+			const first = buildKnownMentionNameSet([agent('a', 'Alpha')], [], 'current');
+			// A fresh array with fresh session objects, exactly like the store
+			// rebuilding `sessions` on a streaming flush from an unrelated agent.
+			const second = buildKnownMentionNameSet([agent('a', 'Alpha')], [], 'current');
+			expect(second).toBe(first);
+		});
+
+		it('rebuilds when an agent is renamed', () => {
+			const before = buildKnownMentionNameSet([agent('a', 'Alpha')], [], 'current');
+			const after = buildKnownMentionNameSet([agent('a', 'Renamed')], [], 'current');
+			expect(after).not.toBe(before);
+			expect(after.has('renamed')).toBe(true);
+			expect(after.has('alpha')).toBe(false);
+		});
+
+		it('rebuilds when an agent joins or leaves', () => {
+			const one = buildKnownMentionNameSet([agent('a', 'Alpha')], [], 'current');
+			const two = buildKnownMentionNameSet(
+				[agent('a', 'Alpha'), agent('b', 'Beta')],
+				[],
+				'current'
+			);
+			expect(two).not.toBe(one);
+			expect(two.has('beta')).toBe(true);
+
+			const back = buildKnownMentionNameSet([agent('a', 'Alpha')], [], 'current');
+			expect(back.has('beta')).toBe(false);
+		});
+
+		it('keeps a separate entry per mentioning agent', () => {
+			// The transcript plugin excludes nobody while a composer excludes its own
+			// agent, and both run in the same frame - one shared entry would hand the
+			// composer a set containing the agent it belongs to.
+			const roster = [agent('a', 'Alpha'), agent('b', 'Beta')];
+			const fromA = buildKnownMentionNameSet(roster, [], 'a');
+			const fromNobody = buildKnownMentionNameSet(roster, [], undefined);
+
+			expect(fromA.has('alpha')).toBe(false);
+			expect(fromNobody.has('alpha')).toBe(true);
+			// Both are still cached, keyed apart.
+			expect(buildKnownMentionNameSet(roster, [], 'a')).toBe(fromA);
+			expect(buildKnownMentionNameSet(roster, [], undefined)).toBe(fromNobody);
+		});
+
+		it('rebuilds when two rosters differ only in where a name boundary falls', () => {
+			// Fields are NUL-separated so an id/name pair cannot be re-cut into a
+			// different pair with the same fingerprint.
+			const first = buildKnownMentionNameSet([agent('a', 'b c')], [], 'current');
+			const second = buildKnownMentionNameSet([agent('a b', 'c')], [], 'current');
+			expect(second).not.toBe(first);
+		});
+
+		it('rebuilds when only a group is renamed', () => {
+			const roster = [agent('a', 'Alpha', { groupId: 'g1' })];
+			const before = buildKnownMentionNameSet(
+				roster,
+				[{ id: 'g1', name: 'Squad', emoji: '', collapsed: false }],
+				'current'
+			);
+			const after = buildKnownMentionNameSet(
+				roster,
+				[{ id: 'g1', name: 'Crew', emoji: '', collapsed: false }],
+				'current'
+			);
+			expect(after).not.toBe(before);
+		});
+	});
 });

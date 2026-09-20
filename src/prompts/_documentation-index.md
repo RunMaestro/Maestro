@@ -35,7 +35,7 @@ When you need detailed guidance on a Maestro feature, fetch the relevant documen
 | **Git worktrees**                                            | https://docs.runmaestro.ai/git-worktrees.md             |
 | **Context management**                                       | https://docs.runmaestro.ai/context-management.md        |
 | **Memories** (per-project persistent memory)                 | https://docs.runmaestro.ai/memories.md                  |
-| **Multiple Claude accounts**                                 | https://docs.runmaestro.ai/multi-claude.md              |
+| **Multiple accounts per provider**                           | https://docs.runmaestro.ai/multi-provider.md            |
 | **Provider Notes** (Claude/Codex/OpenCode differences)       | https://docs.runmaestro.ai/provider-notes.md            |
 | **CLI commands**                                             | https://docs.runmaestro.ai/cli.md                       |
 | **Keyboard shortcuts**                                       | https://docs.runmaestro.ai/keyboard-shortcuts.md        |

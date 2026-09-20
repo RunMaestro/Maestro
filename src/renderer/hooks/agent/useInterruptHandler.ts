@@ -310,12 +310,25 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 				};
 			});
 
-			// Process the queued item after state update
+			// Process the queued item after state update.
+			//
+			// This dispatch RACES the interrupted process: `process.interrupt` has
+			// only sent the signal, so the child usually still owns its process key
+			// and the spawn is refused with "Agent process already running". That is
+			// expected and harmless - agentStore puts the item back runnable, and the
+			// exit listener drains it for real a moment later, when the child is
+			// actually gone. What was NOT harmless was this catch: it logged and
+			// stopped, so the prompt the updater above had already taken out of the
+			// queue was simply destroyed.
 			if (queuedItemToProcess) {
 				setTimeout(() => {
 					processQueuedItem(queuedItemToProcess!.sessionId, queuedItemToProcess!.item).catch(
 						(err) =>
-							logger.error('[useInterruptHandler] Failed to process queued item:', undefined, err)
+							logger.error(
+								'[useInterruptHandler] Queued dispatch failed, item returned to queue',
+								undefined,
+								err
+							)
 					);
 				}, 0);
 			}
@@ -487,13 +500,15 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 						};
 					});
 
-					// Process the queued item after state update
+					// Process the queued item after state update. Same race as the
+					// interrupt path above, same contract: agentStore puts the prompt
+					// back on any dispatch failure, so this only owns the rejection.
 					if (queuedItemAfterKill) {
 						setTimeout(() => {
 							processQueuedItem(queuedItemAfterKill!.sessionId, queuedItemAfterKill!.item).catch(
 								(err) =>
 									logger.error(
-										'[useInterruptHandler] Failed to process queued item after kill:',
+										'[useInterruptHandler] Queued dispatch after kill failed, item returned to queue',
 										undefined,
 										err
 									)

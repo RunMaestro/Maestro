@@ -1,4 +1,5 @@
 import { ipcRenderer } from 'electron';
+import type { GroupAppearance, GroupUpdateRequest } from '../../../shared/groupAppearance';
 
 export function createGroupCrudRemoteApi() {
 	return {
@@ -11,6 +12,7 @@ export function createGroupCrudRemoteApi() {
 				name: string,
 				emoji: string | undefined,
 				parentGroupId: string | undefined,
+				appearance: GroupAppearance,
 				responseChannel: string
 			) => void
 		): (() => void) => {
@@ -19,9 +21,10 @@ export function createGroupCrudRemoteApi() {
 				name: string,
 				emoji: string | undefined,
 				parentGroupId: string | undefined,
+				appearance: GroupAppearance,
 				responseChannel: string
 			) => {
-				callback(name, emoji, parentGroupId, responseChannel);
+				callback(name, emoji, parentGroupId, appearance ?? {}, responseChannel);
 			};
 			ipcRenderer.on('remote:createGroup', handler);
 			return () => ipcRenderer.removeListener('remote:createGroup', handler);
@@ -54,6 +57,30 @@ export function createGroupCrudRemoteApi() {
 		 * Send response for remote rename group
 		 */
 		sendRemoteRenameGroupResponse: (responseChannel: string, success: boolean): void => {
+			ipcRenderer.send(responseChannel, success);
+		},
+
+		/**
+		 * Subscribe to remote group updates (name / appearance / parent).
+		 * Uses request-response pattern with a unique responseChannel.
+		 */
+		onRemoteUpdateGroup: (
+			callback: (groupId: string, update: GroupUpdateRequest, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				groupId: string,
+				update: GroupUpdateRequest,
+				responseChannel: string
+			) => callback(groupId, update, responseChannel);
+			ipcRenderer.on('remote:updateGroup', handler);
+			return () => ipcRenderer.removeListener('remote:updateGroup', handler);
+		},
+
+		/**
+		 * Send response for remote update group
+		 */
+		sendRemoteUpdateGroupResponse: (responseChannel: string, success: boolean): void => {
 			ipcRenderer.send(responseChannel, success);
 		},
 

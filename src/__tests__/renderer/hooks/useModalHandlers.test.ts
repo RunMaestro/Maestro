@@ -82,7 +82,7 @@ beforeEach(() => {
 	});
 	useGroupChatStore.setState({
 		activeGroupChatId: null,
-		groupChatStagedImages: [],
+		groupChatStagedImagesById: {},
 	});
 
 	// Ensure window.maestro.app mock is present
@@ -1030,7 +1030,7 @@ describe('useModalHandlers', () => {
 		it('handleDeleteLightboxImage removes image from group chat staged images', () => {
 			useGroupChatStore.setState({
 				activeGroupChatId: 'gc-1',
-				groupChatStagedImages: ['img1.png', 'img2.png', 'img3.png'],
+				groupChatStagedImagesById: { 'gc-1': ['img1.png', 'img2.png', 'img3.png'] },
 			});
 
 			// Open lightbox with isGroupChat = true
@@ -1046,7 +1046,10 @@ describe('useModalHandlers', () => {
 				result.current.handleDeleteLightboxImage('img2.png');
 			});
 
-			expect(useGroupChatStore.getState().groupChatStagedImages).toEqual(['img1.png', 'img3.png']);
+			expect(useGroupChatStore.getState().groupChatStagedImagesById['gc-1']).toEqual([
+				'img1.png',
+				'img3.png',
+			]);
 			const lightboxData = useModalStore.getState().getData('lightbox');
 			expect(lightboxData?.images).toEqual(['img1.png', 'img3.png']);
 		});

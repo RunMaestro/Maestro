@@ -131,6 +131,16 @@ export function createLiveApi() {
 		startServer: () => ipcRenderer.invoke('live:startServer'),
 		stopServer: () => ipcRenderer.invoke('live:stopServer'),
 		persistCurrentToken: () => ipcRenderer.invoke('live:persistCurrentToken'),
+
+		// Fires when the machine moves between networks and the LAN address in
+		// the URL/QR code goes stale. The server stays up; only the address to
+		// display changed.
+		onUrlChanged: (handler: (data: { url: string }) => void) => {
+			const wrappedHandler = (_event: Electron.IpcRendererEvent, data: { url: string }) =>
+				handler(data);
+			ipcRenderer.on('live:urlChanged', wrappedHandler);
+			return () => ipcRenderer.removeListener('live:urlChanged', wrappedHandler);
+		},
 		clearPersistentToken: () => ipcRenderer.invoke('live:clearPersistentToken'),
 	};
 }

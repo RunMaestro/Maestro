@@ -147,6 +147,8 @@ All actions support functional updaters and have toggle variants where appropria
 
 A test that renders the Left Bar must reset both in `beforeEach`. They are module-global now, so a test that types into the filter leaves the query behind and every later test in the file renders an empty sidebar.
 
+**`closeLeftSidebarForNavigation()` is the one way to dismiss the drawer after a navigation.** On a narrow viewport (`xs` / `sm`) the Left Bar is an overlay over the main panel, so activating anything listed in it - an agent row, a group chat, a starred session, any `jumpToAgent()` - has to close it; on a wide viewport it is a permanent column and the action is a no-op. The width check (`isNarrowViewportNow()`) lives inside the action so no call site re-derives the breakpoint. Call it AT THE TAP, not from an effect keyed on `activeSessionId`: a group chat never moves that id, and a row that is already active moves nothing either, so a transition-keyed effect sees nothing to react to and the drawer stays over what the tap was meant to show. Full entry: [CANONICAL-UTILITIES.md](CANONICAL-UTILITIES.md).
+
 ---
 
 ## tabStore

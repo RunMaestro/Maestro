@@ -178,4 +178,50 @@ describe('Process CommandRemote Preload API', () => {
 			});
 		});
 	});
+
+	describe('onRemoteAgentDelegation', () => {
+		it('hands the delegation notice to the callback and unsubscribes cleanly', () => {
+			const callback = vi.fn();
+			let registeredHandler: ((event: unknown, notice: unknown) => void) | undefined;
+			mockOn.mockImplementation((_channel: string, handler: typeof registeredHandler) => {
+				registeredHandler = handler;
+			});
+
+			const unsubscribe = api.onRemoteAgentDelegation(callback);
+			expect(mockOn).toHaveBeenCalledWith('remote:agentDelegation', expect.any(Function));
+
+			const notice = {
+				kind: 'dispatch',
+				fromSessionId: 'maestro',
+				fromTabId: 'caller-tab',
+				targetSessionId: 'proxmox',
+				prompt: 'Take care of the advisory bug',
+			};
+			registeredHandler?.({}, notice);
+			expect(callback).toHaveBeenCalledWith(notice);
+
+			unsubscribe();
+			expect(mockRemoveListener).toHaveBeenCalledWith('remote:agentDelegation', registeredHandler);
+		});
+
+		it('logs a throwing callback instead of letting it escape the IPC handler', () => {
+			let registeredHandler: ((event: unknown, notice: unknown) => void) | undefined;
+			mockOn.mockImplementation((_channel: string, handler: typeof registeredHandler) => {
+				registeredHandler = handler;
+			});
+
+			api.onRemoteAgentDelegation(() => {
+				throw new Error('store exploded');
+			});
+
+			expect(() => registeredHandler?.({}, {})).not.toThrow();
+			expect(mockInvoke).toHaveBeenCalledWith(
+				'logger:log',
+				'error',
+				'Error invoking remote agent delegation callback',
+				'Preload',
+				{ error: 'Error: store exploded' }
+			);
+		});
+	});
 });

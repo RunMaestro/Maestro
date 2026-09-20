@@ -4,7 +4,7 @@ import type { WebServer } from '../WebServer';
 import type { WebServerFactoryDependencies } from '../web-server-factory';
 import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
-import type { TerminalTabInfo, ReadTerminalTabResult } from '../types';
+import type { TerminalTabInfo, ReadTerminalTabResult, NewAITabWithPromptResult } from '../types';
 
 export function registerBrowserTabCallbacks(
 	server: WebServer,
@@ -313,10 +313,10 @@ export function registerBrowserTabCallbacks(
 			const mainWindow = getMainWindow();
 			if (!mainWindow) {
 				logger.warn('mainWindow is null for newAITabWithPrompt', 'WebServer');
-				return { success: false };
+				return { success: false, error: 'Maestro desktop window is not available' };
 			}
 
-			return new Promise<{ success: boolean; tabId?: string }>((resolve) => {
+			return new Promise<NewAITabWithPromptResult>((resolve) => {
 				const responseChannel = `remote:newAITabWithPrompt:response:${randomUUID()}`;
 				let resolved = false;
 
@@ -324,14 +324,22 @@ export function registerBrowserTabCallbacks(
 					if (resolved) return;
 					resolved = true;
 					clearTimeout(timeoutId);
-					// Renderer was updated to ack with `{ success, tabId? }`. Older
-					// renderers that still send a bare boolean stay supported via
-					// the `result === true` fallback.
+					// Renderer was updated to ack with
+					// `{ success, tabId?, queued?, error? }`. Older renderers that
+					// still send a bare boolean stay supported via the
+					// `result === true` fallback.
 					if (typeof result === 'object' && result !== null) {
-						const r = result as { success?: unknown; tabId?: unknown };
+						const r = result as {
+							success?: unknown;
+							tabId?: unknown;
+							queued?: unknown;
+							error?: unknown;
+						};
 						resolve({
 							success: r.success === true,
 							tabId: typeof r.tabId === 'string' ? r.tabId : undefined,
+							...(r.queued === true ? { queued: true } : {}),
+							...(typeof r.error === 'string' && r.error ? { error: r.error } : {}),
 						});
 					} else {
 						resolve({ success: result === true });
@@ -342,7 +350,7 @@ export function registerBrowserTabCallbacks(
 				if (!isWebContentsAvailable(mainWindow)) {
 					logger.warn('webContents is not available for newAITabWithPrompt', 'WebServer');
 					ipcMain.removeListener(responseChannel, handleResponse);
-					resolve({ success: false });
+					resolve({ success: false, error: 'Maestro desktop window is not available' });
 					return;
 				}
 				mainWindow.webContents.send(
@@ -361,7 +369,7 @@ export function registerBrowserTabCallbacks(
 						`newAITabWithPrompt callback timed out for session ${sessionId}`,
 						'WebServer'
 					);
-					resolve({ success: false });
+					resolve({ success: false, error: 'Maestro desktop did not answer in time' });
 				}, 5000);
 			});
 		}

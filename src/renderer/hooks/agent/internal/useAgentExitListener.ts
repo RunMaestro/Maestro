@@ -47,7 +47,7 @@ import {
 import { thinkingLogsRecorded } from './helpers/thinkingLogs';
 import { drainTurnUsage, turnUsageStatsFields } from '../../../../shared/turnUsageLedger';
 import { getAutorunSynopsisPrompt } from './helpers/autorunSynopsisPrompt';
-import { useOwnedSessionGate } from './useOwnedSessionGate';
+import { useOwnedSessionGate, useOwnedSideEffectGate } from './useOwnedSessionGate';
 import type { LogEntry, QueuedItem, Session, SessionState, UsageStats } from '../../../types';
 import type { UseAgentListenersDeps, ToolProgressState } from './types';
 
@@ -72,6 +72,7 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 		Map<string, { timer: ReturnType<typeof setTimeout>; data: SynopsisData; anyWork: boolean }>
 	>(new Map());
 	const ownedGate = useOwnedSessionGate();
+	const sideEffectGate = useOwnedSideEffectGate();
 
 	useEffect(() => {
 		const getSessions = () => useSessionStore.getState().sessions;
@@ -134,6 +135,11 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 			// here or those one-shot effects would fire once per open window.
 			if (!ownedGate.current?.(sessionId)) return;
 			if (sessionId.includes('-terminal-')) return;
+			// A web-desktop client passes the ownership gate (it mirrors every
+			// agent) but must only update what it RENDERS. The one-shot effects
+			// below - synopsis, History entry, stats row, git refresh, queue
+			// dequeue, spoken notification - belong to the desktop renderer alone.
+			const ownsSideEffects = sideEffectGate.current?.(sessionId) ?? true;
 
 			logger.info('[onExit] Process exit event received:', undefined, {
 				rawSessionId: sessionId,
@@ -227,7 +233,11 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 					isRetryPending
 				);
 
-			if (isFromAi) {
+			// A client that does not own the side effects never dequeues either:
+			// the desktop renderer drains its own copy of the queue, and a web
+			// client's copy must survive so its own idle-time drain (useQueueProcessing)
+			// can send what was queued from that browser.
+			if (isFromAi && ownsSideEffects) {
 				const currentSession = getSessions().find((s) => s.id === actualSessionId);
 				if (currentSession) {
 					const queueDecision = chooseNextQueuedItem(
@@ -595,6 +605,7 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 						// no tab is marked busy for a spawn that never happens.
 						if (
 							retryPending ||
+							!ownsSideEffects ||
 							(!nextItem.forceParallel && !nextItem.readOnlyMode && otherTabsBusy)
 						) {
 							// Don't dequeue - mark the exiting tab idle and keep session busy
@@ -755,7 +766,7 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 			});
 
 			// Refresh git branches/tags after terminal command completes
-			if (!isFromAi) {
+			if (!isFromAi && ownsSideEffects) {
 				const currentSession = getSessions().find((s) => s.id === actualSessionId);
 				if (currentSession) {
 					void (async () => {
@@ -772,7 +783,7 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 			}
 
 			// Fire side effects AFTER state update
-			if (toastData?.startTime && toastData?.agentType) {
+			if (ownsSideEffects && toastData?.startTime && toastData?.agentType) {
 				const sessionIdForStats = toastData.sessionId || actualSessionId;
 				const isAutoRunQuery = deps.getBatchStateRef.current
 					? deps.getBatchStateRef.current(sessionIdForStats).isRunning
@@ -802,17 +813,28 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 					});
 			}
 
-			if (queuedItemToProcess) {
+			if (queuedItemToProcess && ownsSideEffects) {
 				// Flush any pending batched stdout/stderr chunks before the queued
 				// message is dispatched. Otherwise the new user log entry is appended
 				// ahead of the trailing chunks from the response that just finished,
 				// and those chunks merge into the next response's bubble (issue #1022).
 				deps.batchedUpdater.flushNow();
 				setTimeout(() => {
-					deps.processQueuedItemRef.current?.(
-						queuedItemToProcess!.sessionId,
-						queuedItemToProcess!.item
-					);
+					// This is the MAIN queue-drain path, and it used to reject into
+					// nothing at all. `processQueuedItem` throws on a dispatch failure by
+					// design, so an unhandled rejection here was how a spawn collision
+					// destroyed a user's prompt: dequeued, carded in the transcript, never
+					// sent, never put back. agentStore owns the recovery now; this only
+					// has to own the rejection.
+					deps.processQueuedItemRef
+						.current?.(queuedItemToProcess!.sessionId, queuedItemToProcess!.item)
+						.catch((err) => {
+							logger.error(
+								'[onProcessExit] Queued dispatch failed, item returned to queue',
+								undefined,
+								err
+							);
+						});
 				}, 0);
 			} else if (toastData) {
 				setTimeout(() => {
@@ -859,17 +881,21 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 						// silently dropped whenever you watch an agent finish - the synopsis
 						// toast that does appear sets skipCustomNotification, so without this
 						// the completion would make no sound at all.
-						triggerCustomNotification(toastData!.summary, {
-							agent: toastData!.projectName,
-							tab: toastData!.tabName,
-							group: toastData!.groupName,
-							task: toastData!.title,
-						});
+						// The spoken cue runs a command on the HOST, so only the side-effect
+						// owner may fire it; the visual toast above is per client.
+						if (ownsSideEffects) {
+							triggerCustomNotification(toastData!.summary, {
+								agent: toastData!.projectName,
+								tab: toastData!.tabName,
+								group: toastData!.groupName,
+								task: toastData!.title,
+							});
+						}
 					}
 				}, 0);
 			}
 
-			if (synopsisData) {
+			if (synopsisData && ownsSideEffects) {
 				dispatchSynopsis(synopsisData, synopsisDidWork);
 			}
 		});
@@ -893,5 +919,6 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 		deps.rightPanelRef,
 		deps.spawnBackgroundSynopsisRef,
 		ownedGate,
+		sideEffectGate,
 	]);
 }

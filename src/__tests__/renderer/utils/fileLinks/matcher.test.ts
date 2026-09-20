@@ -92,6 +92,27 @@ describe('buildFileTreeIndices', () => {
 		const idx = indicesFrom(['a/README.md', 'b/README.md']);
 		expect(idx.filenameIndex.get('README')).toEqual(['a/README.md', 'b/README.md']);
 	});
+
+	// Every <Markdown> in a transcript builds this index, so without memoization a
+	// 200-entry transcript builds 200 identical copies of it on every render.
+	it('returns the same indices object for the same tree array', () => {
+		const tree = makeTree(['docs/Notes.md', 'src/index.ts']);
+		expect(buildFileTreeIndices(tree)).toBe(buildFileTreeIndices(tree));
+	});
+
+	it('builds fresh indices for a different array with the same contents', () => {
+		const first = buildFileTreeIndices(makeTree(['docs/Notes.md']));
+		const second = buildFileTreeIndices(makeTree(['docs/Notes.md']));
+		expect(second).not.toBe(first);
+		expect([...second.allPaths]).toEqual([...first.allPaths]);
+	});
+
+	it('does not serve a stale index after the tree array is replaced', () => {
+		const before = buildFileTreeIndices(makeTree(['docs/Notes.md']));
+		const after = buildFileTreeIndices(makeTree(['docs/Notes.md', 'docs/New.md']));
+		expect(before.allPaths.has('docs/New.md')).toBe(false);
+		expect(after.allPaths.has('docs/New.md')).toBe(true);
+	});
 });
 
 describe('findClosestMatch', () => {

@@ -49,6 +49,15 @@ export interface SearchableSetting {
 	description?: string;
 	/** Extra keywords for search matching (not displayed) */
 	keywords?: string[];
+	/**
+	 * Element to scroll to instead of `id`, for a setting whose control lives
+	 * OUTSIDE the Settings modal (the Cue retention dial sits in the Cue
+	 * modal's Activity Log header). Without this the jump would hunt for an id
+	 * the Settings content never renders and quietly give up, leaving the user
+	 * on a tab with nothing highlighted. Point it at the nearest section that
+	 * does render so the result still lands somewhere meaningful.
+	 */
+	jumpToId?: string;
 }
 
 // ---------------------------------------------------------------------------

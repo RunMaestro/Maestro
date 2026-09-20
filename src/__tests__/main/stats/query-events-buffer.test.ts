@@ -218,11 +218,12 @@ describe('query-events-buffer', () => {
 
 		expect(stmt.run).toHaveBeenCalledTimes(1);
 		const args = stmt.run.mock.calls[0];
-		// 15 columns: the 10 identity/timing/flag columns plus the five token
-		// and cost columns. This used to be 9 - the buffered statement had
-		// silently dropped is_worktree, so every interactive turn wrote NULL
-		// there while the direct insert path wrote the real flag.
-		expect(args).toHaveLength(15);
+		// 16 columns: the 10 identity/timing/flag columns, the Web Login
+		// sender, plus the five token and cost columns. This used to be 9 -
+		// the buffered statement had silently dropped is_worktree, so every
+		// interactive turn wrote NULL there while the direct insert path
+		// wrote the real flag.
+		expect(args).toHaveLength(16);
 		// args[0] is the generated id; args[1..] mirror the event fields.
 		expect(args[1]).toBe('s1');
 		expect(args[2]).toBe('claude-code');
@@ -247,8 +248,9 @@ describe('query-events-buffer', () => {
 		enqueueQueryEvent(db as never, sampleEvent);
 		flushQueryEventsSync();
 
-		// NULL rather than 0 - an unreported turn is not a free turn.
-		expect(stmt.run.mock.calls[0].slice(10)).toEqual([null, null, null, null, null]);
+		// NULL rather than 0 - an unreported turn is not a free turn. Index 10
+		// is the sender, which is NULL for a turn typed at the desktop.
+		expect(stmt.run.mock.calls[0].slice(11)).toEqual([null, null, null, null, null]);
 	});
 
 	it('carries per-turn token and cost values through the buffer', () => {
@@ -263,7 +265,7 @@ describe('query-events-buffer', () => {
 		});
 		flushQueryEventsSync();
 
-		expect(stmt.run.mock.calls[0].slice(10)).toEqual([100, 20, 900, 5, 0.75]);
+		expect(stmt.run.mock.calls[0].slice(11)).toEqual([100, 20, 900, 5, 0.75]);
 	});
 
 	it('encodes isRemote=true as 1 and missing tabId as null', () => {

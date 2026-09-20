@@ -146,6 +146,38 @@ export interface SessionAiProcessState {
 	probeFailed: boolean;
 }
 
+/**
+ * How long the ownership probe may take before it is treated as failed.
+ *
+ * The probe sits on the SEND path, before the composer has drawn anything: the
+ * user bubble, the composer clear, and the queued card are all written after it
+ * resolves. On web-desktop it is a WebSocket round trip, and `BridgeClient`
+ * parks an invoke in its pending map with no deadline of its own - only a
+ * `close` event rejects it. iOS Safari suspends a backgrounded or locked socket
+ * WITHOUT firing `close`, so the promise simply never settles and every Enter
+ * produces no bubble, no card, and no error. A phone user reads that as a dead
+ * Send button and presses it again, and again.
+ *
+ * A deadline converts that into the safe answer the `catch` below already
+ * gives: unknown ownership reads as BUSY, so the message is queued, drawn, and
+ * drained when the socket returns. Generous enough that a merely slow round
+ * trip still gets a real answer.
+ */
+export const AI_PROCESS_PROBE_TIMEOUT_MS = 4000;
+
+/**
+ * Reject after `ms`, so a hung IPC round trip cannot outlive the caller.
+ * Rejects rather than resolving a sentinel because `probeSessionAiProcesses`
+ * already has exactly one place that decides what "I could not find out" means.
+ */
+function rejectAfter(ms: number): { promise: Promise<never>; cancel: () => void } {
+	let timer: ReturnType<typeof setTimeout>;
+	const promise = new Promise<never>((_, reject) => {
+		timer = setTimeout(() => reject(new Error('probe timed out')), ms);
+	});
+	return { promise, cancel: () => clearTimeout(timer) };
+}
+
 export async function probeSessionAiProcesses(
 	sessionId: string,
 	targetTabId?: string
@@ -153,10 +185,14 @@ export async function probeSessionAiProcesses(
 	const prefix = `${sessionId}-ai-`;
 	const targetProcessSessionId = `${sessionId}-ai-${targetTabId || 'default'}`;
 
+	const deadline = rejectAfter(AI_PROCESS_PROBE_TIMEOUT_MS);
 	try {
-		const active = await window.maestro.process.getActiveProcesses({
-			includeChildProcesses: false,
-		});
+		const active = await Promise.race([
+			window.maestro.process.getActiveProcesses({
+				includeChildProcesses: false,
+			}),
+			deadline.promise,
+		]);
 		const sessionAiProcesses = active.filter(
 			(process) => !process.isTerminal && !process.isCueRun && process.sessionId.startsWith(prefix)
 		);
@@ -176,8 +212,14 @@ export async function probeSessionAiProcesses(
 		};
 	} catch {
 		// Preserve the input when ownership is unknown: treating an IPC failure as
-		// idle can retry a live process id and lose its response.
+		// idle can retry a live process id and lose its response. A timeout lands
+		// here too, and means the same thing - see AI_PROCESS_PROBE_TIMEOUT_MS.
 		return { anyActive: true, targetTabActive: true, probeFailed: true };
+	} finally {
+		// Clear the timer on the happy path so a resolved probe does not leave a
+		// pending `setTimeout` (and a rejected promise nobody is listening to)
+		// behind on every keystroke-driven send.
+		deadline.cancel();
 	}
 }
 

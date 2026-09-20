@@ -18,6 +18,29 @@ import { tmpdir } from 'os';
 import path from 'path';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { StaticRoutes } from '../../../../main/web-server/routes/staticRoutes';
+import { WEB_LOGIN_PATHS } from '../../../../shared/webLogin';
+
+// Web Login. The policy itself is exercised in its own suite; here it is a
+// switch, so every pre-existing test keeps running with the gate off and the
+// gate tests below can turn it on without a users store or an Encore flag.
+const { webLogin } = vi.hoisted(() => ({
+	webLogin: {
+		required: false,
+		cli: false,
+		user: undefined as { id: string; username: string; displayName: string } | undefined,
+	},
+}));
+
+vi.mock('../../../../main/web-server/auth/web-login-policy', () => ({
+	resolveWebRequestAuth: () => ({
+		required: webLogin.required,
+		user: webLogin.user,
+		sessionId: webLogin.user ? 'sid' : undefined,
+		cli: webLogin.cli,
+	}),
+	isWebRequestAuthorized: (auth: { required: boolean; cli: boolean; user?: unknown }) =>
+		!auth.required || auth.cli || auth.user !== undefined,
+}));
 
 // Mock the logger
 vi.mock('../../../../main/utils/logger', () => ({
@@ -69,6 +92,9 @@ describe('StaticRoutes', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		webLogin.required = false;
+		webLogin.cli = false;
+		webLogin.user = undefined;
 		staticRoutes = new StaticRoutes(securityToken, webAssetsPath, webDesktopPath, concertoToken);
 		mockFastify = createMockFastify();
 		staticRoutes.registerRoutes(mockFastify as any);
@@ -107,7 +133,7 @@ describe('StaticRoutes', () => {
 			const reply = createMockReply();
 			await route!.handler({}, reply);
 
-			expect(reply.redirect).toHaveBeenCalledWith(302, 'https://runmaestro.ai');
+			expect(reply.redirect).toHaveBeenCalledWith('https://runmaestro.ai', 302);
 		});
 	});
 
@@ -168,7 +194,7 @@ describe('StaticRoutes', () => {
 			const reply = createMockReply();
 			await route!.handler({ params: { token: 'invalid-token' } }, reply);
 
-			expect(reply.redirect).toHaveBeenCalledWith(302, 'https://runmaestro.ai');
+			expect(reply.redirect).toHaveBeenCalledWith('https://runmaestro.ai', 302);
 		});
 	});
 
@@ -487,6 +513,99 @@ describe('StaticRoutes', () => {
 			} finally {
 				rmSync(tempRoot, { recursive: true, force: true });
 			}
+		});
+	});
+	/**
+	 * The Web Login gate on the HTML surface.
+	 *
+	 * The index is a DOCUMENT request, so an unauthorized one is redirected to
+	 * the form rather than answered 401 - a JSON error body renders as a wall of
+	 * text with nothing to click, which is why `web-login-hook.ts` deliberately
+	 * leaves these routes to handle themselves.
+	 */
+	describe('Web Login gate', () => {
+		/** Serve the index from a throwaway bundle and return the mock reply. */
+		function serveIndex(request: unknown = { headers: {} }) {
+			const tempRoot = mkdtempSync(path.join(tmpdir(), 'maestro-login-gate-'));
+			const tempDesktopPath = path.join(tempRoot, 'web-desktop');
+			mkdirSync(tempDesktopPath, { recursive: true });
+			try {
+				writeFileSync(
+					path.join(tempDesktopPath, 'index.html'),
+					'<!doctype html><html><head><title>Maestro</title></head><body></body></html>',
+					'utf8'
+				);
+				const routes = new StaticRoutes(
+					securityToken,
+					webAssetsPath,
+					tempDesktopPath,
+					concertoToken
+				);
+				const fastify = createMockFastify();
+				routes.registerRoutes(fastify as any);
+				const reply = createMockReply();
+				void fastify
+					.getRoute('GET', `/${securityToken}/session/:sessionId`)!
+					.handler(request, reply);
+				return reply;
+			} finally {
+				rmSync(tempRoot, { recursive: true, force: true });
+			}
+		}
+
+		it('redirects an unauthorized document request to the login page, carrying the URL it asked for', () => {
+			webLogin.required = true;
+			const asked = `/${securityToken}/session/abc`;
+
+			const reply = serveIndex({ headers: {}, url: asked });
+
+			expect(reply.redirect).toHaveBeenCalledWith(
+				`/${securityToken}/${WEB_LOGIN_PATHS.page}?next=${encodeURIComponent(asked)}`,
+				302
+			);
+			// The bundle is what the gate protects: it must not be served at all.
+			expect(reply.send).not.toHaveBeenCalled();
+		});
+
+		it('serves the bundle to maestro-cli with no session', () => {
+			webLogin.required = true;
+			webLogin.cli = true;
+
+			const reply = serveIndex();
+
+			expect(reply.redirect).not.toHaveBeenCalled();
+			expect(reply.send).toHaveBeenCalled();
+		});
+
+		it('injects who the page was served to so the renderer can draw it', () => {
+			webLogin.required = true;
+			webLogin.user = { id: 'u1', username: 'ada', displayName: 'Ada L' };
+
+			const html = serveIndex().send.mock.calls[0][0] as string;
+
+			expect(html).toContain('webLoginRequired: true');
+			expect(html).toContain('"username":"ada"');
+			expect(html).toContain('"displayName":"Ada L"');
+		});
+
+		it('reports a null user and a false flag when Web Login is off', () => {
+			const html = serveIndex().send.mock.calls[0][0] as string;
+
+			expect(html).toContain('webLoginRequired: false');
+			expect(html).toContain('webLoginUser: null');
+		});
+
+		it('escapes a display name that would close the config script element', () => {
+			// The only value in the injected config a person types. JSON.stringify
+			// does not escape `<`, so without the guard this ends the <script> and
+			// the rest lands in the document as markup.
+			webLogin.required = true;
+			webLogin.user = { id: 'u1', username: 'ada', displayName: '</script><img src=x>' };
+
+			const html = serveIndex().send.mock.calls[0][0] as string;
+
+			expect(html).not.toContain('</script><img src=x>');
+			expect(html).toContain('\\u003c/script>');
 		});
 	});
 });

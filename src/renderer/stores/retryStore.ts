@@ -29,22 +29,23 @@ import { create } from 'zustand';
 import {
 	classifyRetryableError,
 	availabilityDelayMs,
+	tokenExhaustionDelayMs,
 	tokenExhaustionResetAt,
 	type RetryStrategy,
 	type ClassifiableError,
 } from '../../shared/retryClassification';
 import { resilienceEnabled } from '../../shared/agentConstants';
 import { parseQuotaLimitDetail, type QuotaLimitDetail } from '../../shared/quotaLimitDetail';
-import { failoverArmed, selectNextEndpoint } from '../../shared/providerFailover';
-import { switchToNextEndpoint, useFailoverStore } from './failoverStore';
 import { generateId } from '../utils/ids';
 import { captureQueuedTurnSettings } from '../utils/providerTabSessions';
+import { applyReplayDispatch, type ReplayBlockedReason } from '../utils/executionQueue';
 import { settleTabThinkingState } from '../utils/tabHelpers';
 import { logger } from '../utils/logger';
 import { useSessionStore, selectSessionById, updateSessionWith } from './sessionStore';
 import { notifyToast } from './notificationStore';
 import { useAgentStore, type ProcessQueuedItemDeps } from './agentStore';
 import type { AgentError, QueuedItem } from '../types';
+import { registerBatchResumer, getBatchResumer } from '../services/batchResumer';
 
 // ============================================================================
 // Types
@@ -80,23 +81,7 @@ export interface RetryEntry {
 	nextRetryAt: number;
 	/** The failing message, for the countdown UI. */
 	lastMessage: string;
-	/**
-	 * Provider Failover: this retry will first swap the agent onto its next backup
-	 * endpoint (see `failoverStore.switchToNextEndpoint`), so it fires after a short
-	 * handover delay instead of the strategy's wait. The actual switch happens in
-	 * `fireRetry` - deciding here and acting there keeps `scheduleRetryForError`
-	 * synchronous for its callers.
-	 */
-	failingOver?: boolean;
 }
-
-/**
- * Handover delay before a failover retry fires. Short by design: the whole point
- * of having a spare tire is not waiting out the primary's reset window. Not zero,
- * so the countdown banner renders and the user gets a beat to cancel before their
- * prompt goes to a different provider.
- */
-export const FAILOVER_HANDOVER_DELAY_MS = 3 * 1000;
 
 /** Lifecycle of an outage as shown on its transcript status card. */
 export type OutageStatus = 'active' | 'recovered' | 'stopped';
@@ -273,15 +258,55 @@ async function forgetPersistedSnapshot(key: string): Promise<void> {
 }
 
 /**
- * Resumer for Auto Run batches, registered once by App. Resolves the batch's
- * error-resolution promise with 'resume' so the loop re-reads the doc and
- * re-dispatches the current task. Null until registered (e.g. in tests).
+ * Resuming a parked Auto Run is not this store's idea alone - the auto-resume
+ * coordinator does it too - so the callback registry lives in
+ * `services/batchResumer` and both ask it. Re-exported here because App and the
+ * existing tests have always registered through this module.
  */
-let batchResumer: ((sessionId: string) => void) | null = null;
+export { registerBatchResumer };
 
-/** Wire the Auto Run resume callback so batch retries can continue the run. */
-export function registerBatchResumer(fn: ((sessionId: string) => void) | null): void {
-	batchResumer = fn;
+/**
+ * Supplies the `ProcessQueuedItemDeps` a replay needs (conductor profile and the
+ * slash-command lists), registered once by `useQueueProcessing`, which already
+ * owns them. Null until registered (e.g. in tests).
+ *
+ * Exists so a spawn path that does not go through `processQueuedItem` can still
+ * snapshot its prompt without assembling those deps itself - which is how the
+ * remote handler ended up with a private copy of them, and how the desktop
+ * composer ended up with no snapshot at all.
+ */
+let dispatchDepsProvider: (() => ProcessQueuedItemDeps) | null = null;
+
+/** Wire the deps every replay resolves slash commands against. */
+export function registerDispatchDepsProvider(fn: (() => ProcessQueuedItemDeps) | null): void {
+	dispatchDepsProvider = fn;
+}
+
+/**
+ * Snapshot a prompt that is being spawned DIRECTLY rather than through
+ * `agentStore.processQueuedItem` (which calls `noteDispatch` itself).
+ *
+ * Every path that starts a user turn must snapshot it, or Agent Resilience has
+ * nothing to resend when that turn hits a limit: `scheduleRetryForError` logs
+ * "No prompt snapshot to resend" and falls back to the modal, and the retry loop
+ * never starts. The desktop composer's idle-send path skipped this entirely, so
+ * every message typed into an idle tab was unprotected - including the first
+ * message after an app restart, when no earlier queued dispatch had left a
+ * snapshot behind to fall back on.
+ *
+ * `crossAgentMention` is stripped for the same reason `processQueuedItem` strips
+ * it: the consult already fired with the original send, and a replay must not
+ * fan it out a second time.
+ */
+export function noteDirectDispatch(sessionId: string, item: QueuedItem): void {
+	if (!dispatchDepsProvider) {
+		logger.warn('[retry] No dispatch deps provider registered; prompt not snapshotted', undefined, {
+			sessionId,
+			tabId: item.tabId,
+		});
+		return;
+	}
+	noteDispatch(sessionId, { ...item, crossAgentMention: undefined }, dispatchDepsProvider());
 }
 
 function keyFor(sessionId: string, tabId: string): string {
@@ -298,7 +323,88 @@ function clearTimer(key: string): void {
 
 function removeEntry(key: string): void {
 	clearTimer(key);
+	stopProviderWatch(key);
 	useRetryStore.getState().setEntry(key, null);
+}
+
+// ============================================================================
+// "I changed the provider - just go"
+// ============================================================================
+
+/**
+ * Active session subscriptions that fire a waiting retry the moment the user
+ * re-points the agent at something that can actually answer. Keyed like the
+ * retries themselves, and torn down with them.
+ */
+const providerWatchers = new Map<string, () => void>();
+
+/**
+ * The parts of an agent's configuration that decide WHO answers the next turn.
+ *
+ * Model and effort are in here as well as the provider: on Claude, moving
+ * between a plan-billed model and an API-billed one is exactly how a user gets
+ * out from behind a plan-quota wall, and it would be perverse to make them
+ * keep waiting out a reset they have just routed around.
+ */
+function providerSignature(sessionId: string): string {
+	const session = selectSessionById(sessionId)(useSessionStore.getState());
+	if (!session) return '';
+	return [
+		session.toolType,
+		session.customModel ?? '',
+		session.customEffort ?? '',
+		session.enableMaestroP ? '1' : '0',
+		session.maestroPMode ?? '',
+		session.customPath ?? '',
+	].join('|');
+}
+
+function stopProviderWatch(key: string): void {
+	const unsubscribe = providerWatchers.get(key);
+	if (unsubscribe) {
+		unsubscribe();
+		providerWatchers.delete(key);
+	}
+}
+
+/**
+ * Watch for the user re-pointing this agent while a retry is counting down, and
+ * fire the retry immediately when they do.
+ *
+ * Changing the provider is the user answering the question the countdown is
+ * asking. Before this, nothing connected the two: a manual switch left the
+ * timer running to a reset time that no longer applied, and the queue frozen
+ * behind it. The wait became "until the ORIGINAL provider recovers" even though
+ * the agent was no longer pointed at it.
+ *
+ * Only `'scheduled'` entries fire: an in-flight resend is already on its way,
+ * and a config change mid-flight is picked up by the turn after it.
+ */
+function startProviderWatch(key: string, sessionId: string): void {
+	stopProviderWatch(key);
+	if (typeof useSessionStore.subscribe !== 'function') return;
+
+	let baseline = providerSignature(sessionId);
+	const unsubscribe = useSessionStore.subscribe(() => {
+		const entry = useRetryStore.getState().retries[key];
+		// Self-terminate rather than trusting every path that ends an outage to
+		// have torn us down. A watcher that outlives its entry is not merely
+		// wasteful: `key` is `${sessionId}:${tabId}`, which a later outage on the
+		// same tab reuses, and the stale baseline would then fire that new retry
+		// the instant anything about the agent looked different.
+		if (!entry) {
+			stopProviderWatch(key);
+			return;
+		}
+		if (entry.status !== 'scheduled') return;
+		const current = providerSignature(sessionId);
+		if (current === baseline) return;
+		baseline = current;
+		logger.info('[retry] Provider changed during outage; retrying now', undefined, { key });
+		clearTimer(key);
+		void fireRetry(key);
+	});
+	providerWatchers.set(key, unsubscribe);
 }
 
 // ============================================================================
@@ -337,16 +443,40 @@ export function noteDispatch(
 }
 
 /**
- * Whether this tab has a retry timer still counting down. Distinct from "has an
- * entry": an `'in-flight'` entry is a resend already dispatched and awaiting its
- * outcome, which must NOT block anything.
+ * Whether this tab is held by an unfinished outage - a retry timer counting
+ * down, OR a resend already dispatched and awaiting its outcome.
  *
- * Callers use this to keep a scheduled retry from being trampled - most
- * importantly the exit listener, which would otherwise drain the execution queue
- * into the same provider that just refused the turn.
+ * Callers use this to keep the execution queue frozen behind the turn that
+ * failed, so the rest of a deep queue is not drained into the provider that
+ * just refused it, and so the failed turn keeps its place at the head.
+ *
+ * `'in-flight'` deliberately counts. It used to be excluded on the reasoning
+ * that a live resend leaves the tab busy, and a busy tab blocks the queue on
+ * its own - true only while the resend actually spawned. When the dispatch
+ * throws instead (most often because the failed turn's process still owns the
+ * tab), `processQueuedItem`'s catch idles the tab and the session, and the
+ * queue read the agent as free with the outage still unresolved: every
+ * remaining message went out into the same wall, in the wrong order, one per
+ * render. `fireRetry` guarantees an entry is never stranded in-flight (it
+ * reschedules on any dispatch failure), so holding on it cannot deadlock.
  */
 export function hasPendingRetry(sessionId: string, tabId: string): boolean {
-	return useRetryStore.getState().retries[keyFor(sessionId, tabId)]?.status === 'scheduled';
+	return !!useRetryStore.getState().retries[keyFor(sessionId, tabId)];
+}
+
+/**
+ * The live status of this tab's retry, or `undefined` when nothing is pending.
+ *
+ * For UI that must not offer an action the machinery forbids. The persistent
+ * outage RECORD a transcript card renders carries `nextRetryAt` and nothing
+ * about what is happening right now, so a card deriving its state from that
+ * countdown alone cannot see a retry that fired EARLY - and every early fire
+ * (the user re-pointing the provider, a Try Now) leaves `nextRetryAt` where it
+ * was. The result was a live countdown, and an enabled Try Now, sitting over a
+ * resend already on the wire.
+ */
+export function useRetryStatus(sessionId: string, tabId: string): RetryStatus | undefined {
+	return useRetryStore((s) => s.retries[keyFor(sessionId, tabId)]?.status);
 }
 
 /**
@@ -367,19 +497,6 @@ function resolveStrategy(sessionId: string, error: ClassifiableError): RetryStra
 		return null;
 	}
 	return strategy;
-}
-
-/**
- * Whether this agent has an armed failover config with at least one endpoint it
- * hasn't already burned during the current outage. Pure store reads, so it can be
- * called from the synchronous scheduling path.
- */
-function canFailover(sessionId: string): boolean {
-	const session = selectSessionById(sessionId)(useSessionStore.getState());
-	const config = session?.failoverConfig;
-	if (!failoverArmed(config)) return false;
-	const state = useFailoverStore.getState().states[sessionId];
-	return selectNextEndpoint(config, state) !== null;
 }
 
 /**
@@ -405,7 +522,7 @@ export function scheduleRetryForError(
 		logger.warn('[retry] No prompt snapshot to resend; falling back to modal', undefined, { key });
 		return false;
 	}
-	if (mode === 'batch-resume' && !batchResumer) {
+	if (mode === 'batch-resume' && !getBatchResumer()) {
 		// No resume hook wired - fall back to the batch's manual error controls.
 		logger.warn('[retry] No batch resumer registered; falling back', undefined, { key });
 		return false;
@@ -422,16 +539,16 @@ export function scheduleRetryForError(
 	const outageId = existing?.outageId ?? generateId();
 	const startedAt = existing?.startedAt ?? now;
 
-	// Provider Failover: if this agent carries an untried backup endpoint, hand the
-	// turn over to it instead of waiting out the primary. This is the whole value of
-	// the feature for token-exhaustion, where the strategy wait can be hours. We only
-	// DECIDE here (a pure store read); `fireRetry` performs the async switch.
-	const failingOver = canFailover(sessionId);
-	const nextRetryAt = failingOver
-		? now + FAILOVER_HANDOVER_DELAY_MS
-		: strategy === 'availability'
+	// Token exhaustion POLLS rather than sleeping to the parsed reset: the wait
+	// can end for reasons the provider's notice cannot know about (the user
+	// re-points the agent at another account, the plan rolls over early, the
+	// message named the wrong window). The parsed time still matters - it is what
+	// keeps us from arriving a poll interval late - it just is not the only
+	// moment we look. See tokenExhaustionDelayMs.
+	const nextRetryAt =
+		strategy === 'availability'
 			? now + availabilityDelayMs(attempt)
-			: tokenExhaustionResetAt(error, now);
+			: now + tokenExhaustionDelayMs(attempt, tokenExhaustionResetAt(error, now), now);
 
 	clearTimer(key);
 	const entry: RetryEntry = {
@@ -446,9 +563,20 @@ export function scheduleRetryForError(
 		startedAt,
 		nextRetryAt,
 		lastMessage: error.message,
-		failingOver,
 	};
 	useRetryStore.getState().setEntry(key, entry);
+
+	// Give the failed turn its place back at the head of the queue. Every path
+	// that could run something else on this tab reads the queue, so this is what
+	// makes "finish the one that failed, then carry on in order" a property of
+	// the data rather than of whichever hold happens to still be set.
+	if (mode === 'resend') {
+		const snapshot = snapshots.get(key);
+		if (snapshot) holdFailedItemInQueue(sessionId, tabId, snapshot.item);
+	}
+
+	// Re-point the agent and the wait is over: see startProviderWatch.
+	startProviderWatch(key, sessionId);
 
 	// Mirror the live state into the persistent outage record the card reads.
 	useRetryStore.getState().patchOutage(outageId, {
@@ -513,6 +641,136 @@ function replayItem(entry: RetryEntry, item: QueuedItem): QueuedItem {
 	return { ...item, turnSettings: captureQueuedTurnSettings(tab, session) };
 }
 
+/**
+ * Put the failed turn back at the head of its tab's execution queue, so the
+ * outage is something the queue itself knows about.
+ *
+ * Before this, the prompt awaiting retry lived ONLY in the module-level
+ * `snapshots` map. The queue therefore had no record that a turn was still
+ * owed, and ordering was enforced entirely by the tab-level hold: the moment
+ * anything released that hold, the failed message could not get back to the
+ * front, because it had never been in the line. It also died with the app - a
+ * token-exhaustion wait can outlast the session, and "send it and forget it"
+ * has to survive a quit.
+ *
+ * Re-queued at its tab's head rather than the queue's, so an outage on one tab
+ * does not reorder another tab's work. `fireRetry` takes it back out at
+ * dispatch time, which is what keeps the two copies from both being sent.
+ */
+function holdFailedItemInQueue(sessionId: string, tabId: string, item: QueuedItem): void {
+	updateSessionWith(sessionId, (s) => {
+		const queue = s.executionQueue ?? [];
+		if (queue.some((queued) => queued.id === item.id)) return s;
+		const held: QueuedItem = { ...item, tabId };
+		const firstForTab = queue.findIndex((queued) => queued.tabId === tabId);
+		const insertAt = firstForTab === -1 ? 0 : firstForTab;
+		return {
+			...s,
+			executionQueue: [...queue.slice(0, insertAt), held, ...queue.slice(insertAt)],
+		};
+	});
+}
+
+/**
+ * Take the failed turn back out of the queue at the moment we resend it.
+ * Returns nothing: the dispatch uses the snapshot (which also carries the
+ * dispatch deps), and the queue copy exists to hold the slot, not to be a
+ * second source of the prompt.
+ */
+function releaseHeldItemFromQueue(sessionId: string, itemId: string): void {
+	updateSessionWith(sessionId, (s) => ({
+		...s,
+		executionQueue: (s.executionQueue ?? []).filter((queued) => queued.id !== itemId),
+	}));
+}
+
+/**
+ * Short wait before re-trying a resend that never reached the provider.
+ *
+ * A local dispatch failure (most often the failed turn's process still owning
+ * the tab, which main refuses with "Agent process already running") says
+ * nothing about the outage itself, so it must not be paid for with the
+ * strategy's wait - that could be hours. It must also not be free: the usual
+ * cause clears when the old process finally exits.
+ */
+const DISPATCH_FAILURE_RETRY_DELAY_MS = 10 * 1000;
+
+/**
+ * A resend could not be dispatched. Put the entry back on a short timer instead
+ * of leaving it `'in-flight'` forever.
+ *
+ * An entry stranded in-flight is the worst of both worlds: nothing will ever
+ * fire it (its timer was consumed), and - now that the queue holds on entry
+ * existence - nothing behind it would ever run either. `attempt` is left alone
+ * on purpose: this was our own collision, not the provider refusing again, and
+ * counting it would inflate the outage's retry total and its backoff.
+ */
+function rescheduleAfterFailedDispatch(key: string, reason: string): void {
+	const entry = useRetryStore.getState().retries[key];
+	if (!entry) return;
+
+	const nextRetryAt = Date.now() + DISPATCH_FAILURE_RETRY_DELAY_MS;
+	logger.warn('[retry] Resend could not be dispatched; rescheduling', undefined, {
+		key,
+		reason,
+		delayMs: DISPATCH_FAILURE_RETRY_DELAY_MS,
+	});
+
+	clearTimer(key);
+	useRetryStore.getState().setEntry(key, { ...entry, status: 'scheduled', nextRetryAt });
+	useRetryStore.getState().patchOutage(entry.outageId, { nextRetryAt });
+	timers.set(
+		key,
+		setTimeout(() => {
+			timers.delete(key);
+			void fireRetry(key);
+		}, DISPATCH_FAILURE_RETRY_DELAY_MS)
+	);
+}
+
+/**
+ * A resend resolved without ever reaching the provider.
+ *
+ * `processQueuedItem` aborts - and RESOLVES rather than throwing - when the tab
+ * an item names is gone, which a wait now measured in tens of minutes makes
+ * ordinary: the user closes the tab while the countdown runs. By then
+ * `fireRetry` has already taken the prompt out of the queue, so there is no copy
+ * of it left anywhere the user can see, no process whose exit would settle the
+ * entry, and no throw for the catch below to reschedule. The turn is destroyed
+ * silently and the entry holds that tab open in the store forever.
+ *
+ * So end the outage and SAY what was not sent. The prompt is deliberately not
+ * re-queued: the queue re-resolves a dead `tabId` onto the agent's ACTIVE tab,
+ * which would deliver the message into a conversation the user never addressed
+ * it to. Surfacing the text and letting the human press send is the answer the
+ * post-restart replay gives, for the same reason.
+ */
+function reportUndeliverableRetry(entry: RetryEntry, item: QueuedItem): void {
+	logger.warn('[retry] Resend dispatched nothing; ending outage', undefined, {
+		key: entry.key,
+		tabId: entry.tabId,
+	});
+
+	// Nothing is running behind this entry, so its busy state is ours to clear -
+	// the same call `cancelRetry` makes when it ends a retry with no live resend
+	// behind it.
+	updateSessionWith(entry.sessionId, (s) => settleTabThinkingState(s, entry.tabId));
+
+	resolveOutage(entry.outageId, 'stopped');
+	removeEntry(entry.key);
+
+	const text = item.type === 'command' ? item.command : item.text;
+	notifyToast({
+		color: 'yellow',
+		title: 'Message not re-sent',
+		message: text
+			? `The tab it was waiting for is gone, so it was never sent: "${truncateForToast(text)}"`
+			: 'The tab this message was waiting for is gone, so it was never sent.',
+		sessionId: entry.sessionId,
+		dismissible: true,
+	});
+}
+
 /** Fire a scheduled retry now: mark in-flight and re-run the failed work. */
 async function fireRetry(key: string): Promise<void> {
 	const entry = useRetryStore.getState().retries[key];
@@ -531,57 +789,64 @@ async function fireRetry(key: string): Promise<void> {
 		mode: entry.mode,
 		strategy: entry.strategy,
 		attempt: entry.attempt,
-		failingOver: entry.failingOver,
 	});
 
 	try {
-		// Provider Failover: swap the agent onto its next backup endpoint before the
-		// resend. Awaited so main holds the new env by the time we spawn. A null
-		// result means the config changed under us (endpoint deleted, failover
-		// disarmed) - harmless, we just resend on whatever endpoint is live.
-		//
-		// Contained in its own try: a failed overlay write must degrade to "retry on
-		// the current endpoint", never swallow the retry itself. Letting it escape to
-		// the outer catch would skip the resend and strand the entry in-flight, which
-		// is strictly worse than not failing over.
-		if (entry.failingOver) {
-			try {
-				await switchToNextEndpoint(entry.sessionId);
-			} catch (error) {
-				logger.error('[retry] Failover switch failed; retrying on current endpoint', undefined, {
-					key,
-					error,
-				});
-			}
-		}
-
 		if (entry.mode === 'batch-resume') {
 			// The batch loop is parked at its error-resolution await; resuming it
 			// re-reads the doc and re-dispatches the current task itself. Works for
 			// goal-based and spec-driven runs alike.
-			if (batchResumer) batchResumer(entry.sessionId);
+			const resumer = getBatchResumer();
+			if (resumer) resumer(entry.sessionId);
 			else removeEntry(key);
 			return;
 		}
 		const snapshot = snapshots.get(key);
 		if (!snapshot) {
+			// No prompt to replay. The queue copy is the only remaining record of
+			// the turn, so leave it there: releasing the entry unblocks the queue
+			// and the normal drain runs it in its original place.
 			removeEntry(key);
 			return;
 		}
-		await useAgentStore
+		// Take the held copy out of the queue in the same beat as the resend, so
+		// the prompt exists in exactly one place at a time. Done BEFORE the await:
+		// the dispatch marks the tab busy, and a queue drain that read the item
+		// while it was in flight would send it twice.
+		releaseHeldItemFromQueue(entry.sessionId, snapshot.item.id);
+		const dispatched = await useAgentStore
 			.getState()
 			.processQueuedItem(entry.sessionId, replayItem(entry, snapshot.item), snapshot.deps);
+		if (!dispatched) reportUndeliverableRetry(entry, snapshot.item);
 	} catch (error) {
-		// A dispatch-time throw is itself a failure; leave the entry in-flight so
-		// the incoming agent-error (or a manual action) drives the next step.
+		// The resend never reached the provider (a spawn refusal, a bad config, a
+		// thrown dep). That is not an outcome the agent-error path will ever
+		// report, so nothing else would move this entry: put the prompt back in
+		// the queue and the entry back on a timer. Leaving it in-flight strands
+		// the turn AND - since the queue holds on entry existence - everything
+		// behind it.
 		logger.error('[retry] Retry dispatch threw', undefined, error);
+		const snapshot = snapshots.get(key);
+		if (snapshot) holdFailedItemInQueue(entry.sessionId, entry.tabId, snapshot.item);
+		rescheduleAfterFailedDispatch(key, 'dispatch threw');
 	}
 }
 
-/** User asked to retry immediately: cancel the timer and fire now. */
+/**
+ * User asked to retry immediately: cancel the timer and fire now.
+ *
+ * Only a `'scheduled'` entry fires, the same rule `startProviderWatch` holds to:
+ * an `'in-flight'` entry is a resend already on the wire, and firing it again
+ * dispatches the SAME prompt a second time. The card is what made that
+ * reachable - it derives "firing" from the countdown arithmetic, and an early
+ * fire (re-pointing the provider mid-outage) never moves `nextRetryAt`, so Try
+ * Now stayed enabled while the resend was already running. The card reads the
+ * live status now; this is the half that cannot be bypassed by a stale render.
+ */
 export function retryNow(sessionId: string, tabId: string): void {
 	const key = keyFor(sessionId, tabId);
-	if (!useRetryStore.getState().retries[key]) return;
+	const entry = useRetryStore.getState().retries[key];
+	if (!entry || entry.status !== 'scheduled') return;
 	clearTimer(key);
 	void fireRetry(key);
 }
@@ -630,6 +895,67 @@ function truncateForToast(text: string, max = 80): string {
 	return collapsed.length > max ? `${collapsed.slice(0, max - 1)}…` : collapsed;
 }
 
+/** What the transcript says where a replayed turn resumes. */
+const AUTH_REPLAY_NOTE = 'Re-sent after re-authentication.';
+
+/**
+ * Put the agent into the running state for a replayed turn, then dispatch it.
+ *
+ * The state transition is the whole point and it happens BEFORE the spawn.
+ * `processQueuedItem` deliberately does not mark anything busy - its callers do
+ * (see the NOTE in `agentStore.processQueuedItem`), and this caller used to skip
+ * it. The result was a GHOST TURN: after "Resume Agent" a real process ran while
+ * the tab still read idle from the exit listener's error branch, so there was no
+ * pulsing dot, no Thinking pill, and no bubble. Users concluded the resume had
+ * done nothing, re-sent by hand, and that copy queued behind the invisible turn -
+ * then ran a second time when it exited. One ask, two full turns, and the
+ * transcript's queued card looked like it was running while it was not.
+ *
+ * `applyReplayDispatch` also refuses the three cases where replaying is wrong
+ * outright (tab gone, tab mid-turn, user already re-sent it). A refusal is not a
+ * failure: it means the work is accounted for somewhere else.
+ *
+ * @returns true when a turn was dispatched.
+ */
+function dispatchReplay(
+	sessionId: string,
+	item: QueuedItem,
+	deps: ProcessQueuedItemDeps,
+	key: string
+): boolean {
+	type ReplayOutcome = ReplayBlockedReason | 'dispatched';
+	let outcome: ReplayOutcome = 'no-target-tab' as ReplayOutcome;
+	// The updater runs synchronously inside the store's `set`, so reading the
+	// outcome back after this call is deterministic - and it is the only honest
+	// answer, because the decision depends on live state this caller cannot see.
+	updateSessionWith(sessionId, (session) => {
+		const result = applyReplayDispatch(session, item, AUTH_REPLAY_NOTE);
+		outcome = result.blocked ?? 'dispatched';
+		return result.session;
+	});
+
+	if (outcome !== 'dispatched') {
+		logger.info('[retry] Skipped replaying a turn after re-auth', undefined, {
+			key,
+			reason: outcome,
+		});
+		return false;
+	}
+
+	const tabId = item.tabId;
+	void useAgentStore
+		.getState()
+		.processQueuedItem(sessionId, item, deps)
+		.catch((error: unknown) => {
+			// A dispatch-time throw means no process ever started, so the busy state
+			// set above belongs to nothing. Settle it or the tab blinks forever and
+			// the Thinking pill counts elapsed time for work nobody is doing.
+			if (tabId) updateSessionWith(sessionId, (s) => settleTabThinkingState(s, tabId));
+			logger.error('[retry] Replay after re-auth threw', undefined, error);
+		});
+	return true;
+}
+
 /**
  * Restart path: the in-memory snapshot is gone, so look for the copy written to
  * disk when the outage was reported. Async because it reads settings; the
@@ -646,12 +972,7 @@ async function replayPersistedSnapshot(
 		// entry outliving its outage is how the wrong message reaches the wire later.
 		void forgetPersistedSnapshot(key);
 		logger.info('[retry] Replaying a turn from the persisted snapshot', undefined, { key });
-		void useAgentStore
-			.getState()
-			.processQueuedItem(sessionId, persisted.item, persisted.deps)
-			.catch((error: unknown) => {
-				logger.error('[retry] Replay after re-auth threw', undefined, error);
-			});
+		dispatchReplay(sessionId, { ...persisted.item, tabId }, persisted.deps, key);
 		return;
 	}
 
@@ -699,14 +1020,9 @@ export function replayAfterAuth(sessionId: string, tabIds: string[]): void {
 		void forgetPersistedSnapshot(key);
 
 		logger.info('[retry] Replaying a turn lost to expired credentials', undefined, { key });
-		void useAgentStore
-			.getState()
-			.processQueuedItem(sessionId, snapshot.item, snapshot.deps)
-			.catch((error: unknown) => {
-				// A dispatch-time throw surfaces through the normal agent-error path;
-				// it must not abort the replay of the remaining tabs.
-				logger.error('[retry] Replay after re-auth threw', undefined, error);
-			});
+		// A dispatch-time throw is handled inside dispatchReplay (it settles the
+		// tab); it must not abort the replay of the remaining tabs.
+		dispatchReplay(sessionId, { ...snapshot.item, tabId }, snapshot.deps, key);
 	}
 }
 
@@ -728,6 +1044,26 @@ export function cancelRetry(sessionId: string, tabId: string): void {
 	// live resend; its busy state belongs to the exit listener, so leave it alone.
 	if (entry.status === 'scheduled') {
 		updateSessionWith(sessionId, (s) => settleTabThinkingState(s, tabId));
+	}
+
+	// Stopping the auto-retry hands the failure back to the user, and their
+	// prompt is now sitting at the head of the queue waiting for it. Removing the
+	// entry releases the hold, so without this the queue would immediately drain
+	// that prompt - and everything behind it - straight into the wall the user
+	// just stopped retrying against. Raising the blocking error state is the
+	// existing "a human owns this now" signal, and every dispatch path already
+	// refuses to run while a session is in it. The tab's `agentError` is kept
+	// through an outage precisely so it is available here.
+	const session = selectSessionById(sessionId)(useSessionStore.getState());
+	const failedTabError = session?.aiTabs?.find((t) => t.id === tabId)?.agentError;
+	if (failedTabError) {
+		updateSessionWith(sessionId, (s) => ({
+			...s,
+			agentError: failedTabError,
+			agentErrorTabId: tabId,
+			agentErrorPaused: true,
+			state: 'error',
+		}));
 	}
 
 	resolveOutage(entry.outageId, 'stopped');

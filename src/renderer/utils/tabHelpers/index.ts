@@ -30,6 +30,7 @@ import {
 	visibleAiTabs,
 } from '../unifiedTabOrderUtils';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { useUIStore } from '../../stores/uiStore';
 import { isWindowsPlatform } from '../platformUtils';
 import { DEFAULT_BROWSER_TAB_URL, getBrowserTabTitle } from '../browserTabPersistence';
 import { getLiveDraft } from '../liveDraftStore';
@@ -40,7 +41,10 @@ import {
 	browserTabFocusFields,
 	terminalTabFocusFields,
 	toggleReadOnlyModeFields,
+	permissionModeFields,
+	nextPermissionMode,
 	cycleShowThinkingFields,
+	setShowThinkingFields,
 } from './focusFields';
 import {
 	groupFocusFields,
@@ -59,7 +63,10 @@ export {
 	browserTabFocusFields,
 	terminalTabFocusFields,
 	toggleReadOnlyModeFields,
+	permissionModeFields,
+	nextPermissionMode,
 	cycleShowThinkingFields,
+	setShowThinkingFields,
 };
 export { groupFocusFields, resolveFocusedPaneTabRef, findGroupPaneForTab };
 
@@ -593,6 +600,59 @@ export function computeQueuedTabIds(queue: QueuedItem[]): Set<string> {
 }
 
 /**
+ * Turn a wizard tab back into an ordinary AI tab WITHOUT losing anything.
+ *
+ * The inline wizard keeps its conversation in `tab.wizardState.conversationHistory`
+ * and renders it through WizardConversationView, which is a completely separate
+ * store from `tab.logs` / TerminalOutput. Dropping `wizardState` therefore drops
+ * the entire wizard conversation and the provider session handle with it, leaving
+ * a tab that looks empty. Every exit from wizard mode routes through here so the
+ * transcript is flattened into the normal log first:
+ *
+ *   - Wizard completes (handleWizardComplete)
+ *   - User clicks "Exit Wizard" or cancels document generation (handleExitWizard)
+ *   - App restarts and the in-memory wizard state is gone (wizard sync effect)
+ *
+ * Deliberately excluded: closing the wizard TAB. That already warns the user that
+ * progress will be lost, and the tab itself is going away.
+ *
+ * Idempotent - entries already present (matched by their `wizard-` prefixed id)
+ * are not appended twice, so a second call after a racing state update is safe.
+ *
+ * @param tab - The AI tab holding the wizard
+ * @param options.summary - Optional closing entry appended after the transcript
+ * @returns A new tab with the wizard flattened, or the same tab if it has no wizard
+ */
+export function flattenWizardIntoTab(tab: AITab, options?: { summary?: LogEntry }): AITab {
+	const wizardState = tab.wizardState;
+	if (!wizardState) return tab;
+
+	const existingIds = new Set(tab.logs.map((log) => log.id));
+	const wizardLogEntries: LogEntry[] = (wizardState.conversationHistory ?? [])
+		.map((msg) => ({
+			id: `wizard-${msg.id}`,
+			timestamp: msg.timestamp,
+			source: (msg.role === 'user' ? 'user' : 'ai') as LogEntry['source'],
+			text: msg.content,
+			images: msg.images,
+			delivered: true,
+		}))
+		.filter((entry) => !existingIds.has(entry.id));
+
+	const trailing =
+		options?.summary && !existingIds.has(options.summary.id) ? [options.summary] : [];
+
+	return {
+		...tab,
+		logs: [...tab.logs, ...wizardLogEntries, ...trailing],
+		// The wizard owns the provider session while it runs. Promote it so the
+		// user can keep talking to the same context in the plain tab.
+		agentSessionId: wizardState.agentSessionId || tab.agentSessionId,
+		wizardState: undefined,
+	};
+}
+
+/**
  * Filter a unified tab order down to the refs that TabBar actually displays when the
  * "unread only" tab filter is active. Matches TabBar.tsx's displayedUnifiedTabs logic so
  * keyboard jump shortcuts (Cmd+1..9, Cmd+0) stay aligned with the rendered tab strip.
@@ -848,26 +908,54 @@ export function resolveQueuedItemTarget(
  * back to the live values only for items queued before this was captured.
  */
 export function markTabRunningQueuedItem(tab: AITab, item: QueuedItem, session: Session): AITab {
-	const now = Date.now();
-	const next: AITab = {
-		...tab,
-		state: 'busy',
-		thinkingStartTime: now,
-		...codifyQueuedTurnSettings(item, tab, session),
-	};
+	const next = markTabRunningTurn(tab, item, session);
 	if (item.type === 'message' && item.text) {
 		const logEntry: LogEntry = {
 			id: generateId(),
-			timestamp: now,
+			timestamp: next.thinkingStartTime ?? Date.now(),
 			source: 'user',
 			text: item.text,
 			images: item.images,
+			// Stamped so a dispatch that throws before spawning can take this card
+			// back out again - the prompt never reached a model, and leaving the
+			// card behind makes the re-dispatch look like the user sent it twice.
+			queuedItemId: item.id,
 			...(item.forceParallel && { forceParallel: true }),
 			...(item.readOnlyMode && { readOnly: true }),
 		};
 		next.logs = [...tab.logs, logEntry];
 	}
 	return next;
+}
+
+/**
+ * The busy-state half of {@link markTabRunningQueuedItem}, without the user log
+ * entry.
+ *
+ * Split out for the ONE dispatch that must not append a user bubble: replaying a
+ * turn the provider already refused (see `retryStore.replayAfterAuth`). That
+ * message is in the transcript already - the original send put it there before
+ * the turn died - so appending it again would show the user's prompt twice for a
+ * single ask.
+ *
+ * Every dispatch still has to make this transition. A spawn whose tab reads idle
+ * is a GHOST TURN: a real process running with no pulsing dot, no Thinking pill,
+ * and no elapsed timer. The user sees a resumed agent doing nothing, sends
+ * again, and that second message queues behind the invisible turn - which is
+ * exactly what the auth-replay path did before this existed. Worse, the
+ * busy-state is also what the dispatch guards read (`useQueueProcessing` skips a
+ * tab that is `'busy'`, `ProcessManager` KILLS a live process when a second
+ * spawn arrives on the same key), so a tab lying about being idle can lose work
+ * in flight.
+ */
+export function markTabRunningTurn(tab: AITab, item: QueuedItem, session: Session): AITab {
+	const now = Date.now();
+	return {
+		...tab,
+		state: 'busy',
+		thinkingStartTime: now,
+		...codifyQueuedTurnSettings(item, tab, session),
+	};
 }
 
 /**
@@ -1011,6 +1099,43 @@ export function createTab(
 }
 
 /**
+ * Whether the tab strip is currently narrowed to unread tabs.
+ *
+ * Resolved from the UI store rather than threaded through every caller: the
+ * `showUnreadOnly` argument was silently `false` at five of the six close
+ * sites, so closing a tab under the filter picked a neighbor the user could not
+ * see. Callers may still pass an explicit value (tests, or a surface that owns
+ * its own filter state) and it wins.
+ */
+function resolveUnreadFilterState(explicit?: boolean): boolean {
+	return explicit ?? useUIStore.getState().showUnreadOnly;
+}
+
+/**
+ * Pick the tab to activate when the active AI tab is closed while the unread
+ * filter narrows the strip.
+ *
+ * The neighbor math runs over the exact filtered list TabBar renders, computed
+ * against the PRE-close session so the tab being closed still occupies its
+ * slot; that slot is then dropped and the left neighbor wins (or the new first
+ * tab when the closed tab led the strip). Non-AI tabs that survive the filter
+ * are legitimate targets, which is why this returns a UnifiedTabRef rather than
+ * an AI tab id.
+ *
+ * Returns null when the closed tab was not in the visible list, or when nothing
+ * visible survives it - the caller then falls back to unfiltered order math.
+ */
+function resolveUnreadFilterFallbackRef(session: Session, tabId: string): UnifiedTabRef | null {
+	const visibleOrder = filterUnifiedTabOrderForUnread(session, getRepairedUnifiedTabOrder(session));
+	const closedIndex = visibleOrder.findIndex((ref) => ref.type === 'ai' && ref.id === tabId);
+	if (closedIndex === -1) return null;
+	const remaining = visibleOrder.filter((_, i) => i !== closedIndex);
+	if (remaining.length === 0) return null;
+	const fallbackIndex = Math.min(Math.max(0, closedIndex - 1), remaining.length - 1);
+	return remaining[fallbackIndex];
+}
+
+/**
  * Options for closing a tab.
  */
 export interface CloseTabOptions {
@@ -1037,13 +1162,14 @@ export interface CloseTabResult {
  * The closed tab is stored in closedTabHistory for potential restoration via Cmd+Shift+T,
  * unless skipHistory is true (e.g., for wizard tabs which should not be restorable).
  * If the closed tab was active, the next tab (or previous if at end) becomes active.
- * When showUnreadOnly is true, prioritizes switching to the next unread tab.
+ * While the unread filter is on, the replacement is picked from the tabs that filter
+ * actually shows, so a close never lands the user on a tab that is hidden from them.
  * Closing the last AI tab creates a fresh replacement only when the agent has no
  * other tabs (terminal/file/browser) left, so an agent can sit at zero AI tabs.
  *
  * @param session - The Maestro session containing the tab
  * @param tabId - The ID of the tab to close
- * @param showUnreadOnly - If true, prioritize switching to the next unread tab
+ * @param showUnreadOnly - Override for the unread-filter state; omit to read the UI store
  * @param options - Optional close options (e.g., skipHistory for wizard tabs)
  * @returns Object containing the closed tab info and updated session, or null if tab not found
  *
@@ -1061,12 +1187,14 @@ export interface CloseTabResult {
 export function closeTab(
 	session: Session,
 	tabId: string,
-	showUnreadOnly = false,
+	showUnreadOnly?: boolean,
 	options: CloseTabOptions = {}
 ): CloseTabResult | null {
 	if (!session || !session.aiTabs || session.aiTabs.length === 0) {
 		return null;
 	}
+
+	const unreadFilterActive = resolveUnreadFilterState(showUnreadOnly);
 
 	// Find the tab to close
 	const tabIndex = session.aiTabs.findIndex((tab) => tab.id === tabId);
@@ -1136,26 +1264,14 @@ export function closeTab(
 		// If we closed the active tab, select the tab to the left (previous tab)
 		// If closing the first tab, select the new first tab (was previously to the right)
 
-		if (showUnreadOnly && updatedTabs.length > 0) {
-			// When filtering unread tabs, find the previous unread tab to switch to
-			// Build a temporary session with the updated tabs to use getNavigableTabs
-			const tempSession = { ...session, aiTabs: updatedTabs };
-			const navigableTabs = getNavigableTabs(tempSession, true);
+		// Filter mode first: the replacement has to be a tab the user can SEE.
+		// Returns null when nothing visible survives, and the normal math below
+		// takes over.
+		if (unreadFilterActive) {
+			fallbackRef = resolveUnreadFilterFallbackRef(session, tabId);
+		}
 
-			if (navigableTabs.length > 0) {
-				// Find the position of the closed tab within the navigable tabs (before removal)
-				// Then pick the tab to the left, or the first tab if we were at position 0
-				const closedTabNavIndex = getNavigableTabs(session, true).findIndex((t) => t.id === tabId);
-				const newNavIndex = Math.max(0, closedTabNavIndex - 1);
-				newActiveTabId = navigableTabs[Math.min(newNavIndex, navigableTabs.length - 1)].id;
-			} else if (visibleUpdatedTabs.length > 0) {
-				// No more unread tabs - fall back to selecting by position in the list
-				// the strip draws. Select the tab to the left, or the first tab if we
-				// were at position 0.
-				const newIndex = Math.max(0, visibleTabIndex - 1);
-				newActiveTabId = visibleUpdatedTabs[Math.min(newIndex, visibleUpdatedTabs.length - 1)].id;
-			}
-		} else {
+		if (!fallbackRef) {
 			// Normal mode: use repaired unifiedTabOrder to find the correct left neighbor.
 			// This respects the visual tab order which includes terminal and file tabs -
 			// without this, closing an AI tab that sits to the right of a terminal tab
@@ -3170,7 +3286,7 @@ export function createMergedSession(
 		state: 'idle',
 		cwd: projectRoot,
 		fullPath: projectRoot,
-		projectRoot, // Never changes, used for session storage
+		projectRoot, // Used for session storage; moves only through withWorkingDirectory()
 		createdAt: Date.now(),
 		isGitRepo: false, // Will be updated by caller if needed
 		aiLogs: [], // Deprecated - logs are in aiTabs

@@ -20,6 +20,14 @@ vi.mock('../../../../renderer/components/MermaidRenderer', () => ({
 	MermaidRenderer: () => <div data-testid="mermaid" />,
 }));
 
+// The editor is CodeMirror 6, which cannot lay itself out in jsdom. The shared
+// double renders a textarea and forwards the surface typography onto its inline
+// style, which is what these assertions read.
+vi.mock('../../../../renderer/components/FilePreview/markdownEditor', async () => {
+	const { markdownEditorModuleMock } = await import('../../../helpers/mockMarkdownEditor');
+	return markdownEditorModuleMock();
+});
+
 const baseProps = (overrides: Record<string, unknown> = {}) => ({
 	theme: mockTheme,
 	sessionId: 'session-1',

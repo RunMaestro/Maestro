@@ -7,12 +7,13 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Keyboard, MessageSquare } from 'lucide-react';
+import { Keyboard, MessageSquare, X } from 'lucide-react';
 import { useSettings } from '../../../hooks';
 import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
 import { buildKeysFromEvent } from '../../../utils/shortcutRecorder';
 import { shortcutKeysEqual, findReservedShortcutCombo } from '../../../../shared/shortcutKeys';
 import { ShortcutFilterButton } from '../../ui/ShortcutFilterButton';
+import { GhostIconButton } from '../../ui/GhostIconButton';
 import { FIXED_SHORTCUTS } from '../../../constants/shortcuts';
 import { SettingsSectionHeading } from '../SettingsSectionHeading';
 import type { Theme, Shortcut } from '../../../types';
@@ -45,6 +46,28 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 		return () => clearTimeout(timer);
 	}, []);
 
+	const saveKeys = (actionId: string, isTabShortcut: boolean, keys: string[]) => {
+		if (isTabShortcut) {
+			setTabShortcuts({
+				...tabShortcuts,
+				[actionId]: { ...tabShortcuts[actionId], keys },
+			});
+		} else {
+			setShortcuts({
+				...shortcuts,
+				[actionId]: { ...shortcuts[actionId], keys },
+			});
+		}
+	};
+
+	// An empty key list is the stored form of "Unassigned". The load-time merge
+	// only falls back to the default on a missing entry, so the clear sticks.
+	const clearShortcut = (actionId: string, isTabShortcut: boolean) => {
+		setConflictMessage(null);
+		saveKeys(actionId, isTabShortcut, []);
+		setRecordingId(null);
+	};
+
 	const handleRecord = (
 		e: React.KeyboardEvent,
 		actionId: string,
@@ -56,6 +79,20 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 		// Escape cancels recording without saving
 		if (e.key === 'Escape') {
 			setRecordingId(null);
+			return;
+		}
+
+		// A bare Backspace or Delete clears the binding, as in the macOS keyboard
+		// settings. Nobody can want either one bare as a global shortcut: it would
+		// swallow deletion in every text field in the app.
+		if (
+			(e.key === 'Backspace' || e.key === 'Delete') &&
+			!e.metaKey &&
+			!e.ctrlKey &&
+			!e.altKey &&
+			!e.shiftKey
+		) {
+			clearShortcut(actionId, isTabShortcut);
 			return;
 		}
 
@@ -99,18 +136,7 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 			return;
 		}
 		setConflictMessage(null);
-
-		if (isTabShortcut) {
-			setTabShortcuts({
-				...tabShortcuts,
-				[actionId]: { ...tabShortcuts[actionId], keys },
-			});
-		} else {
-			setShortcuts({
-				...shortcuts,
-				[actionId]: { ...shortcuts[actionId], keys },
-			});
-		}
+		saveKeys(actionId, isTabShortcut, keys);
 		setRecordingId(null);
 	};
 
@@ -145,39 +171,55 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 			<span className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
 				{sc.label}
 			</span>
-			<button
-				onClick={(e) => {
-					setRecordingId(sc.id);
-					e.currentTarget.focus();
-				}}
-				onKeyDownCapture={(e) => {
-					if (recordingId === sc.id) {
-						e.preventDefault();
-						e.stopPropagation();
-						handleRecord(e, sc.id, sc.isTabShortcut);
+			<div className="flex items-center gap-1">
+				<button
+					onClick={(e) => {
+						setRecordingId(sc.id);
+						e.currentTarget.focus();
+					}}
+					onKeyDownCapture={(e) => {
+						if (recordingId === sc.id) {
+							e.preventDefault();
+							e.stopPropagation();
+							handleRecord(e, sc.id, sc.isTabShortcut);
+						}
+					}}
+					className={`px-3 py-1.5 rounded border text-xs font-mono min-w-[80px] text-center transition-colors ${recordingId === sc.id ? 'ring-2' : ''}`}
+					style={
+						{
+							borderColor: recordingId === sc.id ? theme.colors.accent : theme.colors.border,
+							backgroundColor:
+								recordingId === sc.id ? theme.colors.accentDim : theme.colors.bgActivity,
+							color: recordingId === sc.id ? theme.colors.accent : theme.colors.textDim,
+							opacity: recordingId !== sc.id && sc.keys.length === 0 ? 0.6 : 1,
+							'--tw-ring-color': theme.colors.accent,
+						} as React.CSSProperties
 					}
-				}}
-				className={`px-3 py-1.5 rounded border text-xs font-mono min-w-[80px] text-center transition-colors ${recordingId === sc.id ? 'ring-2' : ''}`}
-				style={
-					{
-						borderColor: recordingId === sc.id ? theme.colors.accent : theme.colors.border,
-						backgroundColor:
-							recordingId === sc.id ? theme.colors.accentDim : theme.colors.bgActivity,
-						color: recordingId === sc.id ? theme.colors.accent : theme.colors.textDim,
-						opacity: recordingId !== sc.id && sc.keys.length === 0 ? 0.6 : 1,
-						'--tw-ring-color': theme.colors.accent,
-					} as React.CSSProperties
-				}
-			>
-				{recordingId === sc.id
-					? 'Press keys...'
-					: sc.keys?.length
-						? formatShortcutKeys(sc.keys)
-						: // An action registered with no default chord (keys: []) formats to an
-							// empty string, which renders as a blank button the user cannot tell
-							// is clickable. Label it so it reads as "assign one here".
-							'Not set'}
-			</button>
+				>
+					{recordingId === sc.id
+						? 'Press keys...'
+						: sc.keys?.length
+							? formatShortcutKeys(sc.keys)
+							: // An action registered with no default chord (keys: []) formats to an
+								// empty string, which renders as a blank button the user cannot tell
+								// is clickable. Label it so it reads as "assign one here".
+								'Not set'}
+				</button>
+				{sc.keys?.length && recordingId !== sc.id ? (
+					<GhostIconButton
+						onClick={() => clearShortcut(sc.id, sc.isTabShortcut)}
+						ariaLabel={`Clear ${sc.label} shortcut`}
+						title="Clear shortcut"
+						color={theme.colors.textDim}
+					>
+						<X className="w-3.5 h-3.5" />
+					</GhostIconButton>
+				) : (
+					// Hold the slot so the key buttons stay in one column whether or
+					// not a row has anything to clear.
+					<span className="w-[22px]" aria-hidden />
+				)}
+			</div>
 		</div>
 	);
 

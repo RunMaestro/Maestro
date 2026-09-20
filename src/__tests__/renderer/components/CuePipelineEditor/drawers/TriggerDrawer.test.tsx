@@ -92,14 +92,14 @@ describe('TriggerDrawer', () => {
 		expect(drawer.style.transform).toBe('translateX(0)');
 	});
 
-	it('should render exactly 9 trigger types (no agent.completed)', () => {
+	it('should render exactly 10 trigger types (no agent.completed)', () => {
 		const { container } = render(
 			<TriggerDrawer isOpen={true} onClose={() => {}} theme={mockTheme} />
 		);
 
 		// Each trigger item is a draggable div; count them
 		const draggableItems = container.querySelectorAll('[draggable="true"]');
-		expect(draggableItems.length).toBe(9);
+		expect(draggableItems.length).toBe(10);
 	});
 
 	it('should not show agent.completed when filtering by "agent"', () => {

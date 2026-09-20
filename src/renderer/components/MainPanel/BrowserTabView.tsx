@@ -45,6 +45,7 @@ type ElectronWebviewElement = HTMLElement & {
 	isLoading: () => boolean;
 	getWebContentsId?: () => number;
 	executeJavaScript: (code: string) => Promise<unknown>;
+	insertCSS?: (css: string) => Promise<string>;
 	findInPage: (
 		text: string,
 		options?: { forward?: boolean; findNext?: boolean; matchCase?: boolean }
@@ -176,6 +177,37 @@ async function extractFromWebview(
 	}
 }
 
+/**
+ * Whether the guest is showing an empty document rather than a real page.
+ * A blank guest paints Chromium's default white, which reads as a bright flash
+ * against a dark theme, so it is the one document we recolor. Real pages keep
+ * their own background: forcing the theme color onto a page that never sets one
+ * would leave its default black text on a dark surface.
+ */
+function isBlankGuestUrl(url: string | undefined): boolean {
+	return !url || url === DEFAULT_BROWSER_TAB_URL;
+}
+
+/**
+ * Guard against a theme color that is not a plain CSS color literal, since the
+ * value is interpolated into a stylesheet injected in the guest.
+ */
+const SAFE_CSS_COLOR = /^#[0-9a-f]{3,8}$|^rgba?\([\d\s.,%/]+\)$|^hsla?\([\d\s.,%/]+\)$/i;
+
+function blankPageBackgroundCss(color: string): string | null {
+	if (!SAFE_CSS_COLOR.test(color.trim())) return null;
+	return `html,body{background-color:${color.trim()} !important;}`;
+}
+
+/** Paint an empty guest document in the theme background instead of white. */
+function applyBlankGuestBackground(webview: ElectronWebviewElement | null, color: string) {
+	if (!webview?.insertCSS) return;
+	if (!isBlankGuestUrl(webview.getURL?.())) return;
+	const css = blankPageBackgroundCss(color);
+	if (!css) return;
+	void webview.insertCSS(css).catch(() => {});
+}
+
 function syncWebviewLayout(webview: ElectronWebviewElement | null) {
 	if (!webview) return;
 
@@ -248,6 +280,16 @@ export const BrowserTabView = React.memo(
 		useEffect(() => {
 			latestTabRef.current = tab;
 		}, [tab]);
+
+		// The listener effect below is keyed on tab.id alone, so it reads the
+		// current theme background through a ref rather than a dependency.
+		const blankBackgroundRef = useRef(theme.colors.bgMain);
+		useEffect(() => {
+			blankBackgroundRef.current = theme.colors.bgMain;
+			if (isDomReadyRef.current) {
+				applyBlankGuestBackground(webviewRef.current, theme.colors.bgMain);
+			}
+		}, [theme.colors.bgMain]);
 
 		// Keep the latest onUpdateTab in a ref so the webview-listener effect below
 		// can stay keyed on `tab.id` alone. The parent passes a fresh inline
@@ -621,7 +663,7 @@ export const BrowserTabView = React.memo(
 			document.addEventListener('keydown',function(e){
 				var hasMod=e.metaKey||e.ctrlKey;
 				var hasAlt=e.altKey;
-				if(!hasMod&&!hasAlt)return;
+				if((!hasMod&&!hasAlt)||/^(Meta|Control|Alt|Shift)$/.test(e.key))return;
 				var k=e.key.toLowerCase();
 				var te=hasMod&&!hasAlt&&!e.shiftKey&&'acxz'.indexOf(k)!==-1;
 				var re=hasMod&&!hasAlt&&e.shiftKey&&k==='z';
@@ -654,6 +696,7 @@ export const BrowserTabView = React.memo(
 				updateNavigationState();
 				setAddressBarHidden(false);
 				injectGuestListeners();
+				applyBlankGuestBackground(webview, blankBackgroundRef.current);
 			};
 			// Re-inject guest listeners on navigation (page JS state resets)
 			const handleDidNavigateForInjection = () => injectGuestListeners();
@@ -1076,6 +1119,7 @@ export const BrowserTabView = React.memo(
 				<div
 					ref={hostRef}
 					className="relative flex-1 min-h-0 overflow-hidden"
+					style={{ backgroundColor: theme.colors.bgMain }}
 					data-testid="browser-tab-host"
 				>
 					{webDesktop ? (
@@ -1107,7 +1151,11 @@ export const BrowserTabView = React.memo(
 							ref={(element) => {
 								webviewRef.current = element as unknown as ElectronWebviewElement | null;
 							}}
-							className="w-full h-full border-0 bg-white"
+							// The element paints this until the guest produces its first frame,
+							// so a loading or empty tab matches the theme instead of flashing
+							// Chromium's white.
+							style={{ backgroundColor: theme.colors.bgMain }}
+							className="w-full h-full border-0"
 							partition={tab.partition}
 							src={initialSrcRef.current}
 						/>

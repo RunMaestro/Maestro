@@ -99,6 +99,8 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 			() => visibleTypes.filter((t) => activeFilters.has(t)),
 			[visibleTypes, activeFilters]
 		);
+		/** At least one entry type is switched off, so the list is narrowed. */
+		const hasNarrowingTypeFilter = activeFilterArray.length < visibleTypes.length;
 		const [detailModalEntry, setDetailModalEntry] = useState<HistoryEntry | null>(null);
 		const [historyStats, setHistoryStats] = useState<HistoryStats | null>(null);
 		const [searchExpanded, setSearchExpanded] = useState(false);
@@ -791,7 +793,12 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 								? `No entries matching "${searchQuery}".`
 								: activeFilters.size === 0
 									? 'No entry types selected. Enable a filter above.'
-									: entries.length === 0
+									: // `filter` is sent to the main process, so `entries` is already
+										// net of the pills - an empty list with a pill switched off
+										// means "the filter hid everything", not "there is nothing".
+										// Since CUE-HISTORY-02 that is the common case: Cue rows come
+										// from `cue_events` and are not queried at all when CUE is off.
+										entries.length === 0 && !hasNarrowingTypeFilter
 										? lookbackHours !== null
 											? 'No history entries in this time range. Try expanding the lookback period.'
 											: 'No history entries found across any agents.'

@@ -9,7 +9,6 @@ import React, {
 	useSyncExternalStore,
 } from 'react';
 import {
-	Wand2,
 	Plus,
 	ChevronRight,
 	ChevronDown,
@@ -59,6 +58,7 @@ import { buildWindowMoveTargets, scopeSessionsToOwningWindow } from '../../utils
 import { GroupContextMenu } from './GroupContextMenu';
 import { WizardIndicator } from './WizardIndicator';
 import { PluginUiItemsSlot } from '../plugins/PluginUiItemsSlot';
+import { BusyWand } from './BusyWand';
 import { HamburgerMenuContent } from './HamburgerMenuContent';
 import { CollapsedSessionPillRows } from './CollapsedSessionPill';
 import { EscCloseButton } from '../ui/EscCloseButton';
@@ -523,12 +523,18 @@ function SessionListInner(props: SessionListProps) {
 	const setGroupChatSortAlphabetical = useSettingsStore.getState().setGroupChatSortAlphabetical;
 	const setActiveSessionIdRaw = useSessionStore.getState().setActiveSessionId;
 	const setActiveGroupChatId = useGroupChatStore.getState().setActiveGroupChatId;
+	const closeLeftSidebarForNavigation = useUIStore.getState().closeLeftSidebarForNavigation;
 	const setActiveSessionId = useCallback(
 		(id: string) => {
 			setActiveGroupChatId(null);
 			setActiveSessionIdRaw(id);
+			// Narrow viewports: the drawer covers the agent that was just picked.
+			// Closed here rather than from an effect on activeSessionId, because
+			// picking the agent that is ALREADY active - the common case behind an
+			// open group chat - changes no id at all.
+			closeLeftSidebarForNavigation();
 		},
-		[setActiveSessionIdRaw, setActiveGroupChatId]
+		[setActiveSessionIdRaw, setActiveGroupChatId, closeLeftSidebarForNavigation]
 	);
 	const setSessions = useSessionStore.getState().setSessions;
 	const setGroups = useSessionStore.getState().setGroups;
@@ -1381,11 +1387,11 @@ function SessionListInner(props: SessionListProps) {
 								title="Switch agent"
 								aria-label="Switch agent"
 							>
-								<Wand2
-									className={`w-5 h-5${isAnyBusy ? ' wand-sparkle-active' : ''}${
-										profilingActive ? ' wand-profiling-active' : ''
-									}`}
-									style={{ color: theme.colors.accent }}
+								<BusyWand
+									busy={isAnyBusy}
+									profiling={profilingActive}
+									sizeClass="w-5 h-5"
+									color={theme.colors.accent}
 								/>
 							</button>
 							{showWordmark && (
@@ -1532,27 +1538,39 @@ function SessionListInner(props: SessionListProps) {
 						</div>
 					</>
 				) : (
-					// No now-playing pill on the collapsed rail: it is a 64px icon
-					// strip, and a media control there competes with the agent pills for
-					// the one thing the rail is for. Expand the sidebar, or run "Show
-					// Floating Media Player" from the Command Palette.
+					// The collapsed rail gets the pill too, in its compact form.
 					//
-					// The voice indicator is the deliberate exception, and for the reason that
-					// decided the media pill rather than in spite of it: audio evidences
-					// itself, so a hidden media control still announces what it is doing,
-					// while a microphone's only tell is this glyph. Dropping it here would
-					// make the collapsed rail the one place a live microphone is invisible -
-					// see the minimize/close note in `VoiceHud.tsx`.
+					// It used to be left out on the grounds that a 64px icon strip is
+					// for agents and a media control there competes with them. That
+					// reasoning ignored what minimizing MEANS: the pill is the only
+					// place the widget parks, so on the rail "minimize" hid the player
+					// with nothing left on screen and no way back - the user reads that
+					// as the player having closed itself, which is precisely what the
+					// minimize/close split exists to prevent. A control the user can
+					// always get back to is worth more than 24px of rail.
+					//
+					// The compact form is the transport and the restore button and
+					// nothing else, which fits the rail's width without a label to clip.
+					//
+					// The voice indicator is here for the same reason, only more so:
+					// audio evidences itself, so a hidden media control still announces
+					// what it is doing, while a live microphone's only tell is this
+					// glyph. Dropping it would make the collapsed rail the one place an
+					// open microphone is invisible - see the minimize/close note in
+					// `VoiceHud.tsx`.
 					<div className="w-full flex flex-col items-center gap-2 relative z-30" ref={menuRef}>
 						<VoiceStatusIndicator theme={theme} compact />
 						<GhostIconButton onClick={() => setMenuOpen(!menuOpen)} padding="p-2" title="Menu">
-							<Wand2
-								className={`w-6 h-6${isAnyBusy ? ' wand-sparkle-active' : ''}${
-									profilingActive ? ' wand-profiling-active' : ''
-								}`}
-								style={{ color: theme.colors.accent }}
+							<BusyWand
+								busy={isAnyBusy}
+								profiling={profilingActive}
+								sizeClass="w-6 h-6"
+								color={theme.colors.accent}
 							/>
 						</GhostIconButton>
+						{/* Renders nothing unless the player is actually minimized, so
+						    the rail is unchanged for anyone not playing anything. */}
+						<NowPlayingIndicator theme={theme} compact />
 						{/* Menu Overlay for Collapsed Sidebar */}
 						{menuOpen && (
 							<HamburgerDropdown theme={theme} isPhone={isXs} onClose={() => setMenuOpen(false)}>

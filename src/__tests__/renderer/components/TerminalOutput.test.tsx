@@ -566,6 +566,66 @@ describe('TerminalOutput', () => {
 		});
 	});
 
+	describe('turn duration in the timestamp gutter', () => {
+		const MINUTE = 60_000;
+		const renderTurn = (logs: LogEntry[]) => {
+			const tabs = [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }];
+			const session = createDefaultSession({ tabs, aiTabs: tabs, activeTabId: 'tab-1' } as never);
+			return render(<TerminalOutput {...createDefaultProps({ session })} />);
+		};
+
+		it('reports user-message-to-reply elapsed time on the agent reply only', () => {
+			const sentAt = Date.now() - 30 * MINUTE;
+			renderTurn([
+				createLogEntry({ text: 'How long?', source: 'user', timestamp: sentAt }),
+				createLogEntry({
+					text: 'Twenty five minutes.',
+					source: 'stdout',
+					timestamp: sentAt + 25 * MINUTE,
+				}),
+			]);
+
+			// Once, not twice: the user's own message is instantaneous and carries no
+			// duration line of its own.
+			expect(screen.getAllByText('25m')).toHaveLength(1);
+		});
+
+		it('measures to the END of a turn broken up by thinking, not the first reply', () => {
+			const sentAt = Date.now() - 30 * MINUTE;
+			renderTurn([
+				createLogEntry({ text: 'Go', source: 'user', timestamp: sentAt }),
+				createLogEntry({ text: 'Starting', source: 'stdout', timestamp: sentAt + MINUTE }),
+				createLogEntry({ text: 'Pondering', source: 'thinking', timestamp: sentAt + 5 * MINUTE }),
+				createLogEntry({ text: 'Done', source: 'stdout', timestamp: sentAt + 10 * MINUTE }),
+			]);
+
+			// One badge, on the last reply, covering the whole turn - not '1m' on the
+			// opening fragment and a climbing count on each one after it.
+			expect(screen.getAllByText('10m')).toHaveLength(1);
+			expect(screen.queryByText('1m')).not.toBeInTheDocument();
+		});
+
+		it('reads as instant when the agent answered inside a minute', () => {
+			const sentAt = Date.now() - 5 * MINUTE;
+			renderTurn([
+				createLogEntry({ text: 'Quick one', source: 'user', timestamp: sentAt }),
+				createLogEntry({ text: 'Done', source: 'stdout', timestamp: sentAt + 8_000 }),
+			]);
+
+			expect(screen.getByText('<1m')).toBeInTheDocument();
+		});
+
+		it('stays silent when no user message anchors the turn', () => {
+			// A transcript paged in mid-conversation starts on an agent reply. With
+			// nothing to measure from, printing anything would be a guess.
+			renderTurn([
+				createLogEntry({ text: 'Orphan reply', source: 'stdout', timestamp: Date.now() }),
+			]);
+
+			expect(screen.queryByText('<1m')).not.toBeInTheDocument();
+		});
+	});
+
 	describe('cross-tab search jump anchors', () => {
 		it('tags every rendered row with its entry id', () => {
 			const logs: LogEntry[] = [

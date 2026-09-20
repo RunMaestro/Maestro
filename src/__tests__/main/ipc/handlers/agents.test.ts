@@ -198,6 +198,9 @@ describe('agents IPC handlers', () => {
 				'claude:usage:refresh-all',
 				'agents:getCodexUsageSnapshots',
 				'agents:getCodexUsageAccountKeys',
+				// Codex rate-limit reset credits: READ the list, WRITE one back.
+				'agents:getCodexResetCredits',
+				'agents:consumeCodexResetCredit',
 				'codex:usage:refresh-all',
 			];
 
@@ -2120,9 +2123,12 @@ describe('agents IPC handlers', () => {
 	});
 
 	describe('agents:getClaudeUsageSnapshots', () => {
-		it('returns the full snapshot map from claudeUsageStore', async () => {
+		// The dashboard mirror serves the RETAINED map, not the live one: an
+		// account whose agents all moved away keeps its row (and its last known
+		// bars, badged stale) instead of vanishing at the 24h TTL.
+		it('returns the retained snapshot map from claudeUsageStore', async () => {
 			const claudeUsageStore = await import('../../../../main/stores/claudeUsageStore');
-			const getAllSpy = vi.spyOn(claudeUsageStore, 'getAllSnapshots').mockReturnValue({
+			const getAllSpy = vi.spyOn(claudeUsageStore, 'getRetainedSnapshots').mockReturnValue({
 				'/Users/me/.claude': {
 					sampledAt: '2026-05-15T00:00:00.000Z',
 					configDirKey: '/Users/me/.claude',
@@ -2143,13 +2149,43 @@ describe('agents IPC handlers', () => {
 
 		it('returns an empty object when no snapshots are cached', async () => {
 			const claudeUsageStore = await import('../../../../main/stores/claudeUsageStore');
-			const getAllSpy = vi.spyOn(claudeUsageStore, 'getAllSnapshots').mockReturnValue({});
+			const getAllSpy = vi.spyOn(claudeUsageStore, 'getRetainedSnapshots').mockReturnValue({});
 
 			const handler = handlers.get('agents:getClaudeUsageSnapshots')!;
 			const result = await handler({} as any);
 
 			expect(result).toEqual({});
 			getAllSpy.mockRestore();
+		});
+	});
+
+	describe('agents:getClaudeUsageAccountKeys', () => {
+		it('unions discovered dirs with remembered accounts', async () => {
+			// The remembered account is the one whose agents all moved away after it
+			// hit its limit: the sweep cannot see it (symlinked / outside $HOME /
+			// name filtered) but its row has to stay on the dashboard.
+			const claudeUsageStartup = await import('../../../../main/agents/claude-usage-startup');
+			const quotaAccountsStore = await import('../../../../main/stores/quotaAccountsStore');
+			// A remembered key was itself written through `resolveConfigDirKey`, so
+			// it arrives already resolved - spell both sides that way or the union
+			// stops deduping on Windows, where the discovered dir gains a drive
+			// letter the POSIX literal does not have.
+			const discoveredKey = path.resolve('/Users/me/.claude');
+			const cappedKey = path.resolve('/Volumes/keys/claude-capped');
+			const discoverSpy = vi
+				.spyOn(claudeUsageStartup, 'discoverClaudeConfigDirs')
+				.mockResolvedValue(['/Users/me/.claude']);
+			const pruneSpy = vi
+				.spyOn(quotaAccountsStore, 'pruneMissingQuotaAccounts')
+				.mockResolvedValue([discoveredKey, cappedKey]);
+
+			const handler = handlers.get('agents:getClaudeUsageAccountKeys')!;
+			const result = await handler({} as any);
+
+			expect(pruneSpy).toHaveBeenCalledWith('claude-code');
+			expect(result).toEqual([discoveredKey, cappedKey]);
+			discoverSpy.mockRestore();
+			pruneSpy.mockRestore();
 		});
 	});
 

@@ -18,6 +18,7 @@ import { Database } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { FooterSummaryTab } from './footerSummary';
 import { usePublishedFooterSummary } from './useFooterSummary';
+import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 
 interface UsageDashboardFooterProps {
 	theme: Theme;
@@ -44,6 +45,40 @@ export const UsageDashboardFooter = memo(function UsageDashboardFooter({
 }: UsageDashboardFooterProps) {
 	const published = usePublishedFooterSummary(viewMode);
 	const summary = published ?? fallbackSummary;
+	// Three equal columns need ~110px each on a phone, which truncates every one
+	// of them to nothing - "Showing this month data" became "S..". The Esc hint
+	// is already gone there (`data-shortcut-hint`), so the row becomes the two
+	// readouts that survive: the per-tab summary, which is the useful one and
+	// takes the space, and the database chip.
+	const phone = usePhoneLayout();
+
+	if (phone) {
+		return (
+			<div
+				className="px-3 py-2 border-t flex items-center gap-3 text-xs flex-shrink-0"
+				style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
+			>
+				<span
+					className="truncate flex-1 min-w-0"
+					title={summary ?? rangeLabel}
+					data-testid="usage-dashboard-footer-summary"
+				>
+					{summary ?? rangeLabel}
+				</span>
+				{databaseSizeLabel && (
+					<span
+						className="flex items-center gap-1 flex-shrink-0"
+						style={{ opacity: 0.7 }}
+						title="Stats database size"
+						data-testid="database-size-indicator"
+					>
+						<Database className="w-3 h-3" />
+						{databaseSizeLabel}
+					</span>
+				)}
+			</div>
+		);
+	}
 
 	return (
 		<div

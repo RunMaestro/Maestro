@@ -36,6 +36,29 @@ describe('QuickActionRow', () => {
 		expect(onClick).toHaveBeenCalledWith(action);
 	});
 
+	it('draws no key-cap for an action that ships unbound', () => {
+		// An unbound action still carries its shortcut record, so a presence-only
+		// check would paint an empty chip where a chord belongs.
+		render(
+			<QuickActionRow
+				action={{
+					id: 'gitPull',
+					label: 'Git Pull',
+					shortcut: { id: 'gitPull', keys: [] },
+					action: vi.fn(),
+				}}
+				isSelected={false}
+				showNumber={false}
+				now={1000}
+				theme={mockTheme}
+				selectedItemRef={{ current: null }}
+				onClick={vi.fn()}
+			/>
+		);
+
+		expect(screen.getByRole('button')).toHaveTextContent(/^Git Pull$/);
+	});
+
 	it('renders running status and Auto Run badge', () => {
 		render(
 			<QuickActionRow

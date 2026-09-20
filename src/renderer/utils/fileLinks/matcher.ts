@@ -23,14 +23,35 @@ export interface FileTreeIndices {
 }
 
 /**
+ * One index per file-tree array identity, shared process-wide.
+ *
+ * Each `<Markdown>` memoizes this per component instance, which means a
+ * transcript showing 200 markdown entries builds 200 identical copies of the
+ * same index, and rebuilds all 200 whenever the Files panel hands out a new
+ * tree array. A field trace measured that at ~170ms of renderer main-thread
+ * time in a single 58-second window. The tree is immutable once published, so
+ * one build per array identity is enough for every consumer. WeakMap, so a
+ * superseded tree's index is collected with the tree.
+ */
+const fileTreeIndicesCache = new WeakMap<FileNode[], FileTreeIndices>();
+
+/**
  * Construct a FileTreeIndices from a FileNode tree. Wraps the shared
  * buildFileIndex utility so plugins don't need to know about the tree shape.
+ *
+ * Memoized on the `fileTree` array identity - callers may keep their own
+ * `useMemo` for clarity, but repeated calls with the same array are free.
  */
 export function buildFileTreeIndices(fileTree: FileNode[]): FileTreeIndices {
+	const cached = fileTreeIndicesCache.get(fileTree);
+	if (cached) return cached;
+
 	const entries = buildFileIndex(fileTree);
 	const allPaths = new Set(entries.map((e) => e.relativePath));
 	const filenameIndex = buildFilenameIndex(entries);
-	return { allPaths, filenameIndex };
+	const indices = { allPaths, filenameIndex };
+	fileTreeIndicesCache.set(fileTree, indices);
+	return indices;
 }
 
 function buildFilenameIndex(entries: FilePathEntry[]): Map<string, string[]> {

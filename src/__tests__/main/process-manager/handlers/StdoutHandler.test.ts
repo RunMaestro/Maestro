@@ -1107,6 +1107,136 @@ describe('StdoutHandler', () => {
 
 	// ── normalizeUsageToDelta (tested via outputParser path) ───────────────
 
+	describe('in-turn API error notices (Claude Code)', () => {
+		// Captured live: Claude Code emitted this mid-turn, retried the call itself,
+		// and kept working. Raising it at once put the tab into the blocking error
+		// state and queued the next message behind a process that was still busy.
+		const connectionLost = {
+			type: 'assistant',
+			error: 'server_error',
+			is_api_error_message: true,
+			message: {
+				model: '<synthetic>',
+				role: 'assistant',
+				content: [
+					{
+						type: 'text',
+						text: 'API Error: Connection lost mid-response. The response above may be incomplete.',
+					},
+				],
+			},
+			session_id: 'claude-session',
+		};
+
+		const modelToolUse = {
+			type: 'assistant',
+			message: {
+				model: 'claude-opus-5',
+				role: 'assistant',
+				content: [{ type: 'tool_use', id: 'toolu_1', name: 'Edit', input: {} }],
+			},
+			session_id: 'claude-session',
+		};
+
+		function claudeContext() {
+			const ctx = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'claude-code',
+				outputParser: new ClaudeOutputParser(),
+			});
+			const errorSpy = vi.fn();
+			ctx.emitter.on('agent-error', errorSpy);
+			return { ...ctx, errorSpy };
+		}
+
+		it('holds the notice instead of raising an agent error', () => {
+			const { handler, sessionId, proc, errorSpy } = claudeContext();
+
+			sendJsonLine(handler, sessionId, connectionLost);
+
+			expect(errorSpy).not.toHaveBeenCalled();
+			expect(proc.errorEmitted).toBe(false);
+			expect(proc.provisionalError?.message).toBe('server_error');
+		});
+
+		it('drops the notice when the model keeps working', () => {
+			const { handler, sessionId, proc, errorSpy } = claudeContext();
+
+			sendJsonLine(handler, sessionId, connectionLost);
+			sendJsonLine(handler, sessionId, modelToolUse);
+
+			expect(errorSpy).not.toHaveBeenCalled();
+			expect(proc.provisionalError).toBeUndefined();
+			expect(proc.errorEmitted).toBe(false);
+		});
+
+		it('keeps holding across control-plane lines that say nothing about recovery', () => {
+			const { handler, sessionId, proc, errorSpy } = claudeContext();
+
+			sendJsonLine(handler, sessionId, connectionLost);
+			sendJsonLine(handler, sessionId, { type: 'system', subtype: 'api_retry', attempt: 1 });
+
+			expect(errorSpy).not.toHaveBeenCalled();
+			expect(proc.provisionalError?.message).toBe('server_error');
+		});
+
+		it('emits the notice once, ahead of the result, when the turn ends on it', () => {
+			const { handler, sessionId, proc, errorSpy, bufferManager } = claudeContext();
+
+			sendJsonLine(handler, sessionId, connectionLost);
+			sendJsonLine(handler, sessionId, {
+				type: 'result',
+				subtype: 'success',
+				is_error: true,
+				result: 'API Error: Connection lost mid-response.',
+				session_id: 'claude-session',
+			});
+
+			expect(errorSpy).toHaveBeenCalledTimes(1);
+			expect(errorSpy).toHaveBeenCalledWith(
+				sessionId,
+				expect.objectContaining({ message: 'server_error', sessionId })
+			);
+			expect(proc.errorEmitted).toBe(true);
+			expect(proc.provisionalError).toBeUndefined();
+			expect(errorSpy.mock.invocationCallOrder[0]).toBeLessThan(
+				bufferManager.emitDataBuffered.mock.invocationCallOrder[0]
+			);
+		});
+
+		it('does not raise a held notice from a result flushed after the user pressed Stop', () => {
+			const { handler, sessionId, proc, errorSpy } = claudeContext();
+
+			sendJsonLine(handler, sessionId, connectionLost);
+			// `interrupt()` sets this before signalling, while the notice is still held.
+			proc.interrupted = true;
+			sendJsonLine(handler, sessionId, {
+				type: 'result',
+				subtype: 'success',
+				is_error: true,
+				result: 'API Error: Connection lost mid-response.',
+				session_id: 'claude-session',
+			});
+
+			expect(errorSpy).not.toHaveBeenCalled();
+			expect(proc.errorEmitted).toBe(false);
+		});
+
+		it('emits an ordinary error at once and clears any held notice', () => {
+			const { handler, sessionId, proc, errorSpy } = claudeContext();
+
+			sendJsonLine(handler, sessionId, connectionLost);
+			sendJsonLine(handler, sessionId, { type: 'error', message: 'Invalid API key' });
+
+			expect(errorSpy).toHaveBeenCalledTimes(1);
+			expect(errorSpy).toHaveBeenCalledWith(
+				sessionId,
+				expect.objectContaining({ message: 'Invalid API key' })
+			);
+			expect(proc.provisionalError).toBeUndefined();
+		});
+	});
+
 	describe('normalizeUsageToDelta (via outputParser stream-JSON path)', () => {
 		/**
 		 * These tests exercise the normalizeUsageToDelta function indirectly

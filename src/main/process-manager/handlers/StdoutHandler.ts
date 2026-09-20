@@ -4,6 +4,7 @@ import { EventEmitter } from 'events';
 import { logger } from '../../utils/logger';
 import { stripAllAnsiCodes } from '../../utils/terminalFilter';
 import { appendToBuffer } from '../utils/bufferUtils';
+import { settleProvisionalAgentError } from '../utils/provisionalAgentError';
 import { aggregateModelUsage, type ModelStats } from '../../parsers/usage-aggregator';
 import { matchSshErrorPattern } from '../../parsers/error-patterns';
 import { FALLBACK_CONTEXT_WINDOW, COMBINED_CONTEXT_AGENTS } from '../../../shared/agentConstants';
@@ -492,7 +493,6 @@ export class StdoutHandler {
 						);
 					}
 				}
-				managedProcess.errorEmitted = true;
 				agentError.sessionId = sessionId;
 				// Tag the error with the remote UUID so downstream listeners
 				// (capabilitySnapshots.markAuthRequired) can flip the
@@ -517,6 +517,20 @@ export class StdoutHandler {
 						: `Authentication failed on remote host "${managedProcess.sshRemoteHost}". SSH into the remote to re-authenticate.`;
 				}
 
+				// A notice the CLI may retry past does not end the turn. Hold it, and let
+				// the lines that follow decide (see resolveProvisionalError).
+				if (parsed !== null && outputParser.isProvisionalErrorNotice?.(parsed)) {
+					managedProcess.provisionalError = agentError;
+					logger.info('[ProcessManager] Holding in-turn API error notice', 'ProcessManager', {
+						sessionId,
+						errorType: agentError.type,
+						errorMessage: agentError.message,
+					});
+					return;
+				}
+
+				managedProcess.errorEmitted = true;
+				managedProcess.provisionalError = undefined;
 				this.emitter.emit('agent-error', sessionId, agentError);
 				return;
 			}
@@ -545,6 +559,18 @@ export class StdoutHandler {
 			}
 		}
 
+		// ── Held in-turn error notice ──
+		// Not after a Stop: a result the CLI flushes on its way out would otherwise
+		// raise the held notice for a turn the user abandoned. Exit drops it.
+		if (
+			managedProcess.provisionalError &&
+			!managedProcess.interrupted &&
+			parsed !== null &&
+			outputParser
+		) {
+			this.resolveProvisionalError(sessionId, managedProcess, parsed, outputParser);
+		}
+
 		// ── Process parsed data ──
 		if (parsed !== null) {
 			if (outputParser) {
@@ -560,6 +586,41 @@ export class StdoutHandler {
 			this.bufferManager.emitDataBuffered(sessionId, line);
 		}
 		// Non-JSON lines from JSONL agents are silently suppressed (shell profile noise, MCP startup, etc.)
+	}
+
+	/**
+	 * Decide a held in-turn error notice from the line that followed it.
+	 *
+	 * - A result message: the turn ended on the failure. Emit the notice now, so
+	 *   the renderer sees the error before the result it explains.
+	 * - Model output (text or a tool call): the CLI recovered and the turn goes on.
+	 *   Drop the notice. Raising it was what put a working tab into the blocking
+	 *   error state and queued the user's next message behind a live process.
+	 * - Anything else (system, usage, init) says nothing yet. Keep holding; exit
+	 *   emits whatever is still held.
+	 */
+	private resolveProvisionalError(
+		sessionId: string,
+		managedProcess: ManagedProcess,
+		parsed: unknown,
+		outputParser: NonNullable<ManagedProcess['outputParser']>
+	): void {
+		const event = outputParser.parseJsonObject(parsed);
+		if (!event) return;
+
+		if (outputParser.isResultMessage(event)) {
+			settleProvisionalAgentError(this.emitter, sessionId, managedProcess);
+			return;
+		}
+
+		if (event.type === 'text' || event.type === 'tool_use') {
+			logger.info(
+				'[ProcessManager] Agent continued past in-turn API error notice; dropping it',
+				'ProcessManager',
+				{ sessionId, errorMessage: managedProcess.provisionalError?.message }
+			);
+			managedProcess.provisionalError = undefined;
+		}
 	}
 
 	/** Handle a parsed JSON event: extract usage, session IDs, tool executions, and result data. */

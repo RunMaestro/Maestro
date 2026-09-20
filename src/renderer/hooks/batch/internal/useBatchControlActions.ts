@@ -2,6 +2,7 @@ import { useCallback } from 'react';
 import type { MutableRefObject } from 'react';
 import type { AgentError, BatchRunState } from '../../../types';
 import { isMirroredBatchRun, useBatchStore } from '../../../stores/batchStore';
+import { cancelPendingAutoResume, clearAutoResume } from '../../../stores/autoRunResumeStore';
 import type { BatchAction } from '../batchReducer';
 
 export type ErrorResolutionAction = 'resume' | 'skip-document' | 'abort';
@@ -63,6 +64,9 @@ export function useBatchControlActions({
 			// this is the backstop for the CLI/remote entry points that reach these
 			// functions without passing through a button.
 			if (isMirroredBatchRun(sessionId)) return;
+			// The run is ending, so a pending auto-resume must not fire into it and
+			// the attempt count has served its purpose.
+			clearAutoResume(sessionId);
 			stopRequestedRefs.current[sessionId] = true;
 			const errorResolution = errorResolutionRefs.current[sessionId];
 			if (errorResolution) {
@@ -143,6 +147,11 @@ export function useBatchControlActions({
 
 			window.maestro.logger.autorun(`Skipping document after error`, sessionId, {});
 
+			// The user resolved this pause themselves; a timer firing later would
+			// resume a loop that is already moving. The attempt count survives - a
+			// manual rescue does not buy the run a fresh ceiling.
+			cancelPendingAutoResume(sessionId);
+
 			dispatch({ type: 'CLEAR_ERROR', sessionId });
 			const currentState = useBatchStore.getState().batchRunStates[sessionId];
 			if (currentState) {
@@ -183,6 +192,12 @@ export function useBatchControlActions({
 
 			window.maestro.logger.autorun(`Resuming Auto Run after error resolution`, sessionId, {});
 
+			// Reached both by the user clicking Resume and by the auto-resume timer
+			// firing. Either way any OTHER pending timer must be dropped, and the
+			// attempt count must not be, so this stays `cancelPending` rather than
+			// `clear` - see autoRunResumeStore.
+			cancelPendingAutoResume(sessionId);
+
 			dispatch({ type: 'CLEAR_ERROR', sessionId });
 			const currentState = useBatchStore.getState().batchRunStates[sessionId];
 			if (currentState) {
@@ -215,6 +230,7 @@ export function useBatchControlActions({
 
 			window.maestro.logger.autorun(`Auto Run aborted due to error`, sessionId, {});
 
+			clearAutoResume(sessionId);
 			stopRequestedRefs.current[sessionId] = true;
 			const errorResolution = errorResolutionRefs.current[sessionId];
 			if (errorResolution) {

@@ -45,6 +45,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setCloseTabCallback = vi.fn();
 			setRenameTabCallback = vi.fn();
 			setStarTabCallback = vi.fn();
+			setSnoozeCommandCallback = vi.fn();
 			setReorderTabCallback = vi.fn();
 			setToggleBookmarkCallback = vi.fn();
 			setOpenFileTabCallback = vi.fn();
@@ -56,6 +57,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setReadTerminalTabCallback = vi.fn();
 			setNewAITabWithPromptCallback = vi.fn();
 			setConsultAgentCallback = vi.fn();
+			setNoteAgentDelegationCallback = vi.fn();
 			setEnqueueCommandCallback = vi.fn();
 			setListQueueCallback = vi.fn();
 			setRemoveQueueItemCallback = vi.fn();
@@ -84,11 +86,15 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			// Added with `maestro-cli open`: the factory wires this on every build,
 			// so omitting it makes every test in this file throw.
 			setOpenModalCallback = vi.fn();
+			// Network-roam handling: the factory subscribes so it can push the new
+			// LAN URL to every window when the machine changes networks.
+			setOnLocalAddressChanged = vi.fn();
 			setOpenDocumentGraphCallback = vi.fn();
 			setGetGroupsCallback = vi.fn();
 			broadcastSettingsChanged = vi.fn();
 			setCreateGroupCallback = vi.fn();
 			setRenameGroupCallback = vi.fn();
+			setUpdateGroupCallback = vi.fn();
 			setDeleteGroupCallback = vi.fn();
 			setMoveSessionToGroupCallback = vi.fn();
 			setCreateSessionCallback = vi.fn();
@@ -2114,13 +2120,46 @@ describe('web-server/web-server-factory', () => {
 			const server = createWebServer() as any;
 			const callback = server.setCreateGroupCallback.mock.calls[0][0];
 
-			void callback('My Group', '🚀', null);
+			void callback('My Group', '🚀', null, { emoji: '🚀', color: '#EF4444' });
 
 			expect(mockWebContents.send).toHaveBeenCalledWith(
 				'remote:createGroup',
 				'My Group',
 				'🚀',
 				null,
+				{ emoji: '🚀', color: '#EF4444' },
+				expect.any(String)
+			);
+		});
+
+		it('setCreateGroupCallback sends an empty appearance when none was requested', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setCreateGroupCallback.mock.calls[0][0];
+
+			void callback('My Group', undefined, undefined);
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:createGroup',
+				'My Group',
+				undefined,
+				undefined,
+				{},
+				expect.any(String)
+			);
+		});
+
+		it('setUpdateGroupCallback forwards the update to the renderer', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setUpdateGroupCallback.mock.calls[0][0];
+
+			void callback('group-1', { icon: 'rocket', clear: ['color'] });
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:updateGroup',
+				'group-1',
+				{ icon: 'rocket', clear: ['color'] },
 				expect.any(String)
 			);
 		});

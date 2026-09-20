@@ -224,10 +224,12 @@ describe('UsageDashboardModal shell components', () => {
 		expect(screen.getByText('Usage Dashboard')).toBeInTheDocument();
 		expect(screen.getByTestId('new-data-indicator')).toHaveTextContent('Updated');
 		fireEvent.change(screen.getByRole('combobox'), { target: { value: 'month' } });
-		fireEvent.click(screen.getByText('Export CSV'));
+		fireEvent.click(screen.getByRole('button', { name: 'Export' }));
+		fireEvent.click(screen.getByRole('menuitem', { name: /JSON/ }));
+		expect(screen.queryByRole('menu')).not.toBeInTheDocument();
 		fireEvent.click(screen.getByTitle('Close (Esc)'));
 		expect(onRange).toHaveBeenCalledWith('month');
-		expect(onExport).toHaveBeenCalled();
+		expect(onExport).toHaveBeenCalledWith('json');
 		expect(onClose).toHaveBeenCalled();
 	});
 
@@ -443,21 +445,22 @@ describe('UsageDashboard shell on a phone', () => {
 	it('keeps the export button reachable by name with only its icon', () => {
 		vi.mocked(usePhoneLayout).mockReturnValue(true);
 		render(<UsageDashboardHeader {...headerProps} />);
-		const exportButton = screen.getByRole('button', { name: 'Export CSV' });
+		const exportButton = screen.getByRole('button', { name: 'Export' });
 		expect(exportButton.textContent).toBe('');
 		fireEvent.click(exportButton);
-		expect(headerProps.onExport).toHaveBeenCalled();
+		fireEvent.click(screen.getByRole('menuitem', { name: /CSV/ }));
+		expect(headerProps.onExport).toHaveBeenCalledWith('csv');
 		expect(screen.getByText('Usage Dashboard')).toHaveClass('whitespace-nowrap');
 		// The controls drop to their own row; the close button rides the title row, once.
 		expect(screen.getAllByTitle('Close (Esc)')).toHaveLength(1);
-		expect(exportButton.parentElement).toHaveClass('basis-full');
+		expect(exportButton.closest('.basis-full')).not.toBeNull();
 		vi.mocked(usePhoneLayout).mockReturnValue(false);
 	});
 
 	it('shows the export label on desktop', () => {
 		vi.mocked(usePhoneLayout).mockReturnValue(false);
 		render(<UsageDashboardHeader {...headerProps} />);
-		expect(screen.getByRole('button', { name: 'Export CSV' }).textContent).toBe('Export CSV');
+		expect(screen.getByRole('button', { name: 'Export' }).textContent).toBe('Export');
 	});
 
 	it('tags the Esc legend so the phone stylesheet can hide it', () => {

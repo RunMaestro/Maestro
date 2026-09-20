@@ -58,7 +58,7 @@ export function GroupContextMenu({
 		return () => document.removeEventListener('keydown', handleKeyDown);
 	}, []);
 
-	const { left, top, ready } = useContextMenuPosition(menuRef, x, y, 8, moveSubmenuOpen);
+	const { left, top, maxHeight, ready } = useContextMenuPosition(menuRef, x, y, 8, moveSubmenuOpen);
 
 	return (
 		<div
@@ -71,7 +71,10 @@ export function GroupContextMenu({
 				backgroundColor: theme.colors.bgSidebar,
 				borderColor: theme.colors.border,
 				minWidth: '10rem',
-				maxHeight: 'calc(100vh - 1rem)',
+				// The measured budget, not `100vh`: this menu can be pushed DOWN as
+				// well as up, and a viewport-sized cap on a menu anchored low still
+				// runs off the bottom edge with nothing to scroll it.
+				maxHeight,
 				overflowY: 'auto',
 			}}
 		>

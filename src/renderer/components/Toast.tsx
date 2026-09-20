@@ -4,10 +4,14 @@ import type { Theme } from '../types';
 import { useNotificationStore, type Toast as ToastType } from '../stores/notificationStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { openUrl } from '../utils/openUrl';
+import { dispatchToastClickAction } from '../services/toastClickActions';
 import { formatDurationParts as formatDuration, formatTimestamp } from '../../shared/formatters';
-import { getToastWidthDimensions } from '../../shared/toastWidth';
+import { getToastWidthDimensions, TOAST_VIEWPORT_GUTTER } from '../../shared/toastWidth';
+import { useMediaPlaybackStore } from '../stores/mediaPlaybackStore';
+import { mediaFloatLaneLift } from '../utils/mediaFloatGeometry';
 import { withMonoFallback } from '../../shared/fontStack';
 import { Z_LAYERS } from '../constants/zLayers';
+import { usePhoneLayout } from '../hooks/ui/useViewportBreakpoint';
 import { CopyIconButton } from './ui';
 
 interface ToastContainerProps {
@@ -39,7 +43,8 @@ const ToastItem = memo(function ToastItem({
 	theme: Theme;
 	onRemove: (toastId: string) => void;
 	onSessionClick?: (sessionId: string, tabId?: string) => void;
-	widthDimensions: { minWidth: number; maxWidth: number };
+	/** Pixel bounds from the toast-width setting, or null to fill the stack (phone). */
+	widthDimensions: { minWidth: number; maxWidth: number } | null;
 }) {
 	const [isExiting, setIsExiting] = useState(false);
 	const [isEntering, setIsEntering] = useState(true);
@@ -76,25 +81,10 @@ const ToastItem = memo(function ToastItem({
 			return;
 		}
 		if (toast.clickAction) {
-			const action = toast.clickAction;
-			switch (action.kind) {
-				case 'jump-session':
-					onSessionClick?.(action.sessionId, action.tabId);
-					break;
-				case 'open-file':
-					// Reuse the existing CLI/remote file-open path. The listener
-					// (useAppRemoteEventListeners) switches to the target session
-					// and opens the file in a preview tab.
-					window.dispatchEvent(
-						new CustomEvent('maestro:openFileTab', {
-							detail: { sessionId: action.sessionId, filePath: action.path },
-						})
-					);
-					break;
-				case 'open-url':
-					openUrl(action.url);
-					break;
-			}
+			// Every kind (AI tab, file preview, terminal tab, browser tab, external
+			// URL) is dispatched by one shared service so the behavior is identical
+			// wherever a toast came from.
+			dispatchToastClickAction(toast.clickAction, { onSessionClick });
 			handleClose();
 			return;
 		}
@@ -205,8 +195,12 @@ const ToastItem = memo(function ToastItem({
 				style={{
 					backgroundColor: theme.colors.bgSidebar,
 					border: `1px solid ${theme.colors.border}`,
-					minWidth: `${widthDimensions.minWidth}px`,
-					maxWidth: `${widthDimensions.maxWidth}px`,
+					...(widthDimensions
+						? {
+								minWidth: `${widthDimensions.minWidth}px`,
+								maxWidth: `${widthDimensions.maxWidth}px`,
+							}
+						: { width: '100%' }),
 				}}
 				onClick={isClickable ? handleToastClick : undefined}
 			>
@@ -394,6 +388,12 @@ const ToastItem = memo(function ToastItem({
 	);
 });
 
+/** Breathing room left between a lifted toast stack and the media player. */
+const TOAST_MEDIA_PLAYER_GAP = 8;
+
+/** The phone stack is pinned `left-3 right-3`, so its gutter is 0.75rem. */
+const TOAST_PHONE_GUTTER = 12;
+
 export const ToastContainer = memo(function ToastContainer({
 	theme,
 	onSessionClick,
@@ -404,7 +404,31 @@ export const ToastContainer = memo(function ToastContainer({
 	// Subscribed so 'dynamic' toasts re-render (and re-resize) live as the user
 	// drags the Right Bar; ignored by the fixed presets.
 	const rightPanelWidth = useSettingsStore((s) => s.rightPanelWidth);
-	const widthDimensions = getToastWidthDimensions(toastWidth, rightPanelWidth);
+	// Phone: every width preset is wider than the screen (small starts at 320px
+	// plus the gutter, on a 390px viewport), and the stack is pinned to the
+	// right edge, so the left half of each toast ran off screen. The stack spans
+	// the width instead and each toast fills it.
+	const phone = usePhoneLayout();
+	const widthDimensions = phone ? null : getToastWidthDimensions(toastWidth, rightPanelWidth);
+
+	// The floating media player opens in this same corner and sits far below
+	// toasts in z-order (toasts have to stay readable over modals), so an
+	// arriving notification used to paint straight over the widget - it looked
+	// like the player had closed itself. The stack steps over it instead: toasts
+	// are transient, and the widget is where the user deliberately put it.
+	//
+	// The lane is measured at the preset's FULL width rather than at the width
+	// this toast happens to render at. A narrower toast is right-aligned inside
+	// the same column, so the worst case is lifting when a short toast would have
+	// cleared the widget anyway - which costs nothing, while the other way round
+	// is the bug being fixed.
+	const floatFootprint = useMediaPlaybackStore((s) => s.floatFootprint);
+	const playerLift = mediaFloatLaneLift(floatFootprint, {
+		fromRight: phone ? TOAST_PHONE_GUTTER : TOAST_VIEWPORT_GUTTER,
+		// A phone stack spans the screen, so it always shares the widget's column.
+		width: widthDimensions ? widthDimensions.maxWidth : Number.POSITIVE_INFINITY,
+		gap: TOAST_MEDIA_PLAYER_GAP,
+	});
 
 	// Toasts portal to document.body, which puts them OUTSIDE the app shell -
 	// the element that carries the interface font. Without restating it here
@@ -417,8 +441,18 @@ export const ToastContainer = memo(function ToastContainer({
 
 	return createPortal(
 		<div
-			className="fixed bottom-0 right-4 flex flex-col-reverse"
-			style={{ pointerEvents: 'none', zIndex: Z_LAYERS.TOAST, fontFamily }}
+			className={`fixed bottom-0 flex flex-col-reverse ${phone ? 'left-3 right-3' : 'right-4'}`}
+			style={{
+				pointerEvents: 'none',
+				zIndex: Z_LAYERS.TOAST,
+				fontFamily,
+				paddingBottom: phone ? 'env(safe-area-inset-bottom, 0px)' : undefined,
+				// A margin rather than more padding: the stack is `bottom: 0`, so this
+				// offsets the whole thing upward and leaves the phone's safe-area
+				// padding to do its own job underneath.
+				marginBottom: playerLift || undefined,
+			}}
+			data-testid="toast-stack"
 		>
 			<div style={{ pointerEvents: 'auto' }}>
 				{toasts.map((toast) => (

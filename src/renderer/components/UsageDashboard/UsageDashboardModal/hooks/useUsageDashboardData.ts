@@ -49,7 +49,10 @@ export function useUsageDashboardData({
 				const [stats, dbSize, cueAgg, delegation, lifetime, byDay] = await Promise.all([
 					window.maestro.stats.getAggregation(timeRange),
 					window.maestro.stats.getDatabaseSize(),
-					cueTabEnabled
+					// The namespace itself is optional: the web bridge doesn't expose
+					// `cueStats`, and reaching through an undefined namespace would
+					// throw past the per-call catch and error out the whole dashboard.
+					cueTabEnabled && window.maestro.cueStats
 						? window.maestro.cueStats.getAggregation(timeRange).catch((err) => {
 								logger.warn('Failed to fetch Cue totals for source chart:', undefined, err);
 								return null;

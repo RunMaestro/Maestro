@@ -95,6 +95,13 @@ export interface LogItemProps {
 	bionifyAlgorithm: string;
 	// Message alignment
 	userMessageAlignment: 'left' | 'right';
+	/**
+	 * How long the agent took on this turn, in ms - user message to the last
+	 * thing the agent emitted before the next one. Set only on the final reply
+	 * of a turn (see `computeTurnDurations`); undefined everywhere else,
+	 * including on every user message.
+	 */
+	responseDurationMs?: number;
 	// Claude mode pill - all passed as primitives so LogItem memo equality stays cheap.
 	isClaudeCode: boolean;
 	isAdaptiveMode: boolean;

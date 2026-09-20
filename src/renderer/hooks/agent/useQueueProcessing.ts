@@ -26,14 +26,18 @@ import type {
 	Session,
 } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
-import { useAgentStore } from '../../stores/agentStore';
+import { useAgentStore, type ProcessQueuedItemDeps } from '../../stores/agentStore';
 import { markTabRunningQueuedItem, resolveQueuedItemTarget } from '../../utils/tabHelpers';
 import {
 	hasRunnableQueueItem,
 	nextRunnableQueueItem,
 	takeNextRunnableQueueItem,
 } from '../../utils/executionQueue';
-import { hasPendingRetry, useRetryStore } from '../../stores/retryStore';
+import {
+	hasPendingRetry,
+	registerDispatchDepsProvider,
+	useRetryStore,
+} from '../../stores/retryStore';
 import { queueIsHeldByRetry } from './internal/helpers/exitDequeue';
 import { logger } from '../../utils/logger';
 
@@ -85,6 +89,17 @@ export function selectIdleQueuedSignature(state: { sessions: Session[] }): strin
 		.join('|');
 }
 
+/** The deps `processQueuedItem` needs, read from the hook's live refs. */
+function buildDispatchDeps(d: UseQueueProcessingDeps): ProcessQueuedItemDeps {
+	return {
+		conductorProfile: d.conductorProfile,
+		customAICommands: d.customAICommandsRef.current ?? [],
+		speckitCommands: d.speckitCommandsRef.current ?? [],
+		openspecCommands: d.openspecCommandsRef.current ?? [],
+		bmadCommands: d.bmadCommandsRef?.current ?? [],
+	};
+}
+
 // ============================================================================
 // Hook implementation
 // ============================================================================
@@ -110,14 +125,18 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 	// Process a queued item - delegates to agentStore action.
 	// Stable identity: conductor profile + command refs read from depsRef.
 	const processQueuedItem = useCallback(async (sessionId: string, item: QueuedItem) => {
-		const d = depsRef.current;
-		await useAgentStore.getState().processQueuedItem(sessionId, item, {
-			conductorProfile: d.conductorProfile,
-			customAICommands: d.customAICommandsRef.current ?? [],
-			speckitCommands: d.speckitCommandsRef.current ?? [],
-			openspecCommands: d.openspecCommandsRef.current ?? [],
-			bmadCommands: d.bmadCommandsRef?.current ?? [],
-		});
+		await useAgentStore
+			.getState()
+			.processQueuedItem(sessionId, item, buildDispatchDeps(depsRef.current));
+	}, []);
+
+	// Agent Resilience replays through processQueuedItem, so a prompt spawned by
+	// any OTHER path (the composer's idle send, remote dispatch) needs these same
+	// deps on its snapshot. Registering the one builder here keeps every snapshot
+	// resolving slash commands exactly as a queued send would.
+	useEffect(() => {
+		registerDispatchDepsProvider(() => buildDispatchDeps(depsRef.current));
+		return () => registerDispatchDepsProvider(null);
 	}, []);
 
 	// Update ref for processQueuedItem so batch exit handler can use it
@@ -226,38 +245,18 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 			const dispatchedOntoTabId: string | null = dequeuedOntoTabId;
 			if (!dispatchedOntoTabId) return;
 
-			// Process the item
+			// Process the item. Releasing the tab and putting the prompt back is
+			// `agentStore.processQueuedItem`'s job - it releases only the tab this
+			// dispatch marked busy (the old sweep over every busy tab also cleared
+			// tabs running turns of their own, which told this effect the agent was
+			// free: it dispatched the next queued item into the same live process,
+			// failed the same way, and walked the whole queue into the ground one
+			// message per render).
 			processQueuedItem(session.id, firstItem).catch((err) => {
-				console.error(`[QueueProcessing] Failed for session ${session.id}:`, err);
-				// Reset session busy state and re-queue the failed item so it isn't lost
-				useSessionStore.getState().setSessions((prev) =>
-					prev.map((s) => {
-						if (s.id !== session.id) return s;
-						// Clear ONLY the tab this dispatch marked busy. The old sweep over
-						// every busy tab also cleared tabs running turns of their own, which
-						// told the recovery effect the agent was free: it dispatched the next
-						// queued item into the same live process, failed the same way, and
-						// walked the whole queue into the ground one message per render.
-						const aiTabs = s.aiTabs.map((tab) =>
-							tab.id === dispatchedOntoTabId && tab.state === 'busy'
-								? { ...tab, state: 'idle' as const, thinkingStartTime: undefined }
-								: tab
-						);
-						// Likewise the agent only goes idle if nothing else is still working.
-						const stillBusy = aiTabs.some((tab) => tab.state === 'busy');
-						return {
-							...s,
-							...(stillBusy
-								? {}
-								: {
-										state: 'idle' as SessionState,
-										busySource: undefined,
-										thinkingStartTime: undefined,
-									}),
-							executionQueue: [firstItem, ...s.executionQueue],
-							aiTabs,
-						};
-					})
+				logger.error(
+					`[QueueProcessing] Dispatch failed for session ${session.id}, item returned to queue`,
+					undefined,
+					err
 				);
 			});
 		},

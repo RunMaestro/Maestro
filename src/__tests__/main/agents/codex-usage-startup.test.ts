@@ -81,6 +81,12 @@ import {
 	__resetForTests as resetCodexUsageStore,
 	type CodexUsageSnapshot,
 } from '../../../main/stores/codexUsageStore';
+import {
+	clearRememberedQuotaAccounts,
+	getRememberedQuotaAccountKeys,
+	rememberQuotaAccounts,
+	__resetForTests as resetQuotaAccountsStore,
+} from '../../../main/stores/quotaAccountsStore';
 
 interface FakeStore<T> {
 	get(key: string, defaultValue?: unknown): unknown;
@@ -120,8 +126,12 @@ function makeSnapshot(codexHomeKey: string): CodexUsageSnapshot {
 	};
 }
 
-function makeDirent(name: string, isDirectory = true): fs.Dirent {
-	return { name, isDirectory: () => isDirectory } as fs.Dirent;
+function makeDirent(name: string, isDirectory = true, isSymbolicLink = false): fs.Dirent {
+	return {
+		name,
+		isDirectory: () => isDirectory,
+		isSymbolicLink: () => isSymbolicLink,
+	} as fs.Dirent;
 }
 
 const FAKE_AGENT = {
@@ -163,6 +173,26 @@ describe('codex-usage-startup → discoverCodexHomes', () => {
 			});
 		} finally {
 			readdirSpy.mockRestore();
+		}
+	});
+
+	it('finds a symlinked CODEX_HOME', async () => {
+		// `Dirent.isDirectory()` is false for a symlink, so a perfectly normal
+		// two-account setup was invisible to the sweep - and once its agents moved
+		// away, its dashboard row died at the snapshot TTL.
+		const readdirSpy = vi
+			.spyOn(fs.promises, 'readdir')
+			.mockResolvedValue([makeDirent('.codex-linked', false, true)] as never);
+		const accessSpy = vi.spyOn(fs.promises, 'access').mockResolvedValue(undefined);
+
+		try {
+			// The sweep joins onto the home dir, so the separator is the platform's.
+			await expect(discoverCodexHomes('/Users/test')).resolves.toEqual([
+				path.join('/Users/test', '.codex-linked'),
+			]);
+		} finally {
+			readdirSpy.mockRestore();
+			accessSpy.mockRestore();
 		}
 	});
 
@@ -234,6 +264,8 @@ describe('codex-usage-startup → runCodexUsageSampling', () => {
 		captureExceptionMock.mockReset();
 		resetCodexUsageStore();
 		clearCodexUsageSnapshots();
+		resetQuotaAccountsStore();
+		clearRememberedQuotaAccounts();
 	});
 
 	it('falls back to the default CODEX_HOME when stored env is corrupted', async () => {
@@ -354,5 +386,54 @@ describe('codex-usage-startup → runCodexUsageSampling', () => {
 				error: 'boom',
 			})
 		);
+	});
+	it('remembers every account a session points at', async () => {
+		sampleCodexUsageMock.mockResolvedValue(makeSnapshot('/Users/test/.codex-work'));
+
+		await runCodexUsageSampling({
+			sessionsStore: makeStore({
+				sessions: [
+					{
+						id: 'codex-1',
+						toolType: 'codex',
+						cwd: '/tmp',
+						customEnvVars: { CODEX_HOME: '/Users/test/.codex-work' },
+					},
+				],
+			}) as never,
+			agentConfigsStore: makeStore({ configs: {} }) as never,
+			agentDetector: makeDetector(FAKE_AGENT) as never,
+		});
+
+		// `resolveCodexHomeKey` ends in `path.resolve`, so the remembered key
+		// carries a drive letter on Windows.
+		expect(getRememberedQuotaAccountKeys('codex')).toContain(
+			path.resolve('/Users/test/.codex-work')
+		);
+	});
+
+	it('samples a remembered home the discovery sweep cannot see', async () => {
+		// A symlinked CODEX_HOME (or one outside $HOME) is invisible to the
+		// sweep. Once its last agent moved away, nothing re-sampled it and the
+		// dashboard row died at the 24h TTL.
+		rememberQuotaAccounts('codex', ['/Users/test/.codex-symlinked']);
+		sampleCodexUsageMock.mockResolvedValue(makeSnapshot('/Users/test/.codex-symlinked'));
+		const readdirSpy = vi.spyOn(fs.promises, 'readdir').mockResolvedValue([] as never);
+		const accessSpy = vi.spyOn(fs.promises, 'access').mockResolvedValue(undefined);
+
+		try {
+			await runCodexUsageSampling({
+				sessionsStore: makeStore({ sessions: [] }) as never,
+				agentConfigsStore: makeStore({ configs: {} }) as never,
+				agentDetector: makeDetector(FAKE_AGENT) as never,
+			});
+		} finally {
+			readdirSpy.mockRestore();
+			accessSpy.mockRestore();
+		}
+
+		expect(sampleCodexUsageMock).toHaveBeenCalledWith({
+			codexHome: '/Users/test/.codex-symlinked',
+		});
 	});
 });

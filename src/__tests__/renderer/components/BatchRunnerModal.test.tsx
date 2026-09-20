@@ -27,6 +27,7 @@ import {
 	validateAgentPromptHasTaskReference,
 } from '../../../renderer/components/BatchRunnerModal';
 import type { Theme, Playbook } from '../../../renderer/types';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 
 // Mock LayerStackContext
 const mockRegisterLayer = vi.fn(() => 'layer-123');
@@ -162,6 +163,10 @@ function createDefaultProps() {
 describe('BatchRunnerModal', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+
+		// Remembered textarea heights are persisted settings, so a height seeded
+		// by one test would otherwise pin the boxes for every test after it.
+		useSettingsStore.setState({ textareaHeights: {} });
 
 		// Mock crypto.randomUUID
 		vi.spyOn(crypto, 'randomUUID').mockReturnValue('uuid-123');
@@ -347,6 +352,26 @@ describe('BatchRunnerModal', () => {
 			await waitFor(() => {
 				const docListItems = screen.getAllByText(/\.md/);
 				expect(docListItems.length).toBeGreaterThan(1);
+			});
+		});
+
+		it('lists documents in the order they were clicked, not alphabetically', async () => {
+			render(<BatchRunnerModal {...createDefaultProps()} />);
+
+			fireEvent.click(screen.getByRole('button', { name: 'Add Docs' }));
+
+			const selectorModal = screen.getByText('Select Documents').closest('.fixed')!;
+			// Drop the preset doc, then pick the rest out of alphabetical order.
+			fireEvent.click(within(selectorModal).getByRole('button', { name: /test-doc\.md/ }));
+			fireEvent.click(within(selectorModal).getByRole('button', { name: /doc3\.md/ }));
+			fireEvent.click(within(selectorModal).getByRole('button', { name: /doc1\.md/ }));
+			fireEvent.click(within(selectorModal).getByRole('button', { name: /doc2\.md/ }));
+
+			fireEvent.click(screen.getByRole('button', { name: /Add \d+ file/ }));
+
+			await waitFor(() => {
+				const names = Array.from(document.querySelectorAll('bdi')).map((el) => el.textContent);
+				expect(names).toEqual(['doc3.md', 'doc1.md', 'doc2.md']);
 			});
 		});
 
@@ -1155,6 +1180,30 @@ describe('BatchRunnerModal', () => {
 			});
 			// Goal + Exit Criteria each get an Expand editor button.
 			expect(screen.getAllByTitle('Expand editor')).toHaveLength(2);
+		});
+
+		it('lets both free-text fields be dragged taller and restores the remembered height', async () => {
+			// A height the user dragged is a preference, so it has to survive a
+			// restart: the store is what persists, and each field has its own key.
+			useSettingsStore.setState({
+				textareaHeights: { 'autorun-goal': 320, 'autorun-exit-criteria': 240 },
+			});
+
+			render(<BatchRunnerModal {...createDefaultProps()} />);
+			fireEvent.click(screen.getByRole('button', { name: 'Goal-Driven' }));
+
+			await waitFor(() => {
+				expect(screen.getByPlaceholderText(GOAL_PLACEHOLDER)).toBeInTheDocument();
+			});
+
+			const goalInput = screen.getByPlaceholderText(GOAL_PLACEHOLDER);
+			const exitInput = screen.getByPlaceholderText(EXIT_PLACEHOLDER);
+
+			// The native grip is what the user drags, so it must not be disabled.
+			expect(goalInput).toHaveClass('resize-y');
+			expect(exitInput).toHaveClass('resize-y');
+			expect(goalInput.style.height).toBe('320px');
+			expect(exitInput.style.height).toBe('240px');
 		});
 
 		it('opens the full-screen editor and writes back to the goal field', async () => {
@@ -3276,6 +3325,51 @@ describe('BatchRunnerModal - per-run model/effort override', () => {
 		expect(config).not.toHaveProperty('effort');
 	});
 
+	it('leaves document model hints in charge unless the toggle is switched on', async () => {
+		const props = createDefaultProps();
+		render(<BatchRunnerModal {...props} />);
+
+		const toggle = await screen.findByRole('switch', { name: 'Ignore model hints in documents' });
+		expect(toggle).toHaveAttribute('aria-checked', 'false');
+
+		fireEvent.click(screen.getByRole('button', { name: 'Go' }));
+
+		const config = (props.onGo as ReturnType<typeof vi.fn>).mock.calls[0][0];
+		expect(config).not.toHaveProperty('ignoreModelHints');
+	});
+
+	it('sends ignoreModelHints alongside the picked model when the toggle is on', async () => {
+		const props = createDefaultProps();
+		render(<BatchRunnerModal {...props} />);
+
+		await waitFor(() => {
+			expect(screen.getByLabelText('Model for this run')).toBeInTheDocument();
+		});
+		fireEvent.change(screen.getByLabelText('Model for this run'), { target: { value: 'opus' } });
+		fireEvent.click(screen.getByRole('switch', { name: 'Ignore model hints in documents' }));
+		fireEvent.click(screen.getByRole('button', { name: 'Go' }));
+
+		expect(props.onGo).toHaveBeenCalledWith(
+			expect.objectContaining({ model: 'opus', ignoreModelHints: true })
+		);
+	});
+
+	it('offers no hint toggle in Goal-Driven mode, which has no documents', async () => {
+		render(<BatchRunnerModal {...createDefaultProps()} />);
+
+		await waitFor(() => {
+			expect(screen.getByLabelText('Model for this run')).toBeInTheDocument();
+		});
+		fireEvent.click(screen.getByRole('button', { name: 'Goal-Driven' }));
+		await waitFor(() => {
+			expect(screen.getByText('Iteration Limit')).toBeInTheDocument();
+		});
+
+		expect(
+			screen.queryByRole('switch', { name: 'Ignore model hints in documents' })
+		).not.toBeInTheDocument();
+	});
+
 	it('hides the whole section when the provider exposes no models or efforts', async () => {
 		window.maestro.agents.getModels = vi.fn().mockResolvedValue([]);
 		window.maestro.agents.getConfigOptions = vi.fn().mockResolvedValue([]);
@@ -3315,5 +3409,101 @@ describe('BatchRunnerModal - per-run model/effort override', () => {
 				.compareDocumentPosition(screen.getByLabelText('Model for this run')) &
 				Node.DOCUMENT_POSITION_FOLLOWING
 		).toBeTruthy();
+	});
+});
+
+/**
+ * Auto-resume ships ON, which makes its defaults part of the contract: a user
+ * who never opens this section still gets a run that restarts itself. The
+ * cases below pin the defaults, the opt-out, and the one placement decision
+ * that is easy to get wrong - the controls must NOT inherit the model block's
+ * visibility, because an agent that reports no models still stops on errors.
+ */
+describe('BatchRunnerModal - auto-resume', () => {
+	const AUTO_RESUME_SWITCH = 'Auto-resume after an error';
+	const WAIT_INPUT = 'Minutes to wait before auto-resuming';
+	const MAX_INPUT = 'Maximum automatic resumes before stopping';
+
+	it('is on by default and sends the documented 5 / 5', async () => {
+		const props = createDefaultProps();
+		render(<BatchRunnerModal {...props} />);
+
+		const toggle = await screen.findByRole('switch', { name: AUTO_RESUME_SWITCH });
+		expect(toggle).toHaveAttribute('aria-checked', 'true');
+
+		fireEvent.click(screen.getByRole('button', { name: 'Go' }));
+
+		const config = (props.onGo as ReturnType<typeof vi.fn>).mock.calls[0][0];
+		expect(config.autoResumeAfterMin).toBe(5);
+		expect(config.maxAutoResumes).toBe(5);
+		// Absence means ON everywhere else in the codebase, so the flag is only
+		// written when the user turns it OFF.
+		expect(config).not.toHaveProperty('autoResumeOnError');
+	});
+
+	it('writes the opt-out explicitly and hides the numbers', async () => {
+		const props = createDefaultProps();
+		render(<BatchRunnerModal {...props} />);
+
+		fireEvent.click(await screen.findByRole('switch', { name: AUTO_RESUME_SWITCH }));
+		expect(screen.queryByLabelText(WAIT_INPUT)).not.toBeInTheDocument();
+
+		fireEvent.click(screen.getByRole('button', { name: 'Go' }));
+		expect(props.onGo).toHaveBeenCalledWith(expect.objectContaining({ autoResumeOnError: false }));
+	});
+
+	it('carries the user-chosen wait and ceiling', async () => {
+		const props = createDefaultProps();
+		render(<BatchRunnerModal {...props} />);
+
+		await screen.findByRole('switch', { name: AUTO_RESUME_SWITCH });
+		fireEvent.change(screen.getByLabelText(WAIT_INPUT), { target: { value: '12' } });
+		fireEvent.change(screen.getByLabelText(MAX_INPUT), { target: { value: '3' } });
+		fireEvent.click(screen.getByRole('button', { name: 'Go' }));
+
+		expect(props.onGo).toHaveBeenCalledWith(
+			expect.objectContaining({ autoResumeAfterMin: 12, maxAutoResumes: 3 })
+		);
+	});
+
+	it('clamps a value that would hammer the run', async () => {
+		const props = createDefaultProps();
+		render(<BatchRunnerModal {...props} />);
+
+		await screen.findByRole('switch', { name: AUTO_RESUME_SWITCH });
+		fireEvent.change(screen.getByLabelText(WAIT_INPUT), { target: { value: '0' } });
+		fireEvent.click(screen.getByRole('button', { name: 'Go' }));
+
+		expect(props.onGo).toHaveBeenCalledWith(expect.objectContaining({ autoResumeAfterMin: 1 }));
+	});
+
+	it('still offers auto-resume when the provider exposes no models or efforts', async () => {
+		// The controls sit outside the model block for exactly this case: an
+		// agent with no model list still pauses on errors, and nesting them there
+		// would deny auto-resume to the agents least likely to be watched.
+		window.maestro.agents.getModels = vi.fn().mockResolvedValue([]);
+		window.maestro.agents.getConfigOptions = vi.fn().mockResolvedValue([]);
+
+		render(<BatchRunnerModal {...createDefaultProps()} />);
+
+		// The switch is what must survive: it is rendered outside the block the
+		// empty model list collapses.
+		expect(await screen.findByRole('switch', { name: AUTO_RESUME_SWITCH })).toBeInTheDocument();
+		await waitFor(() => {
+			expect(screen.queryByLabelText('Model for this run')).not.toBeInTheDocument();
+		});
+	});
+
+	it('applies in Goal-Driven mode too, which pauses on errors the same way', async () => {
+		const props = createDefaultProps();
+		render(<BatchRunnerModal {...props} />);
+
+		await screen.findByRole('switch', { name: AUTO_RESUME_SWITCH });
+		fireEvent.click(screen.getByRole('button', { name: 'Goal-Driven' }));
+		await waitFor(() => {
+			expect(screen.getByText('Iteration Limit')).toBeInTheDocument();
+		});
+
+		expect(screen.getByRole('switch', { name: AUTO_RESUME_SWITCH })).toBeInTheDocument();
 	});
 });

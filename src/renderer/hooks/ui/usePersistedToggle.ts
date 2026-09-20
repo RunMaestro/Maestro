@@ -11,10 +11,10 @@
  */
 
 import { useCallback, useState } from 'react';
-import { safeLocalStorage } from '../../utils/safeLocalStorage';
+import { safeStorageGet, safeStorageSet } from '../../utils/safeLocalStorage';
 
 function load(storageKey: string, fallback: boolean): boolean {
-	const raw = safeLocalStorage()?.getItem(storageKey) ?? null;
+	const raw = safeStorageGet(storageKey);
 	if (raw === null) return fallback;
 	return raw === 'true';
 }
@@ -37,7 +37,7 @@ export function usePersistedToggle(
 
 	const setValue = useCallback(
 		(next: boolean) => {
-			safeLocalStorage()?.setItem(storageKey, String(next));
+			safeStorageSet(storageKey, String(next));
 			setStateValue(next);
 		},
 		[storageKey]
@@ -45,7 +45,7 @@ export function usePersistedToggle(
 
 	const toggle = useCallback(() => {
 		setStateValue((prev) => {
-			safeLocalStorage()?.setItem(storageKey, String(!prev));
+			safeStorageSet(storageKey, String(!prev));
 			return !prev;
 		});
 	}, [storageKey]);

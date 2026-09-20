@@ -1,19 +1,22 @@
 /**
- * Helpers for the per-session AI execution queue, centralizing the "skip paused
- * items" rule so every dispatch path treats held items identically.
+ * Helpers for the per-session AI execution queue, centralizing the rules for
+ * user-paused items and connection-held items.
  *
  * A queued item with `paused: true` is held by the user: it stays in the queue
  * (preserving its position) but is invisible to dispatch. Auto-run, on-exit
  * dequeue, interrupt/kill re-dispatch, batch progression, and the manual
  * "process next" action all run the first *non-paused* item instead of blindly
- * taking index 0, and treat a queue with no runnable items as drained.
+ * taking index 0. A connection hold is an ordering barrier: later items cannot
+ * overtake a prompt whose delivery state is still unknown.
  */
 
-import type { QueuedItem, QueuedItemEditPatch, Session, SessionState } from '../types';
+import type { LogEntry, QueuedItem, QueuedItemEditPatch, Session, SessionState } from '../types';
+import { generateId } from './ids';
 import {
 	getBusyTabs,
 	getTabDisplayName,
 	markTabRunningQueuedItem,
+	markTabRunningTurn,
 	resolveQueuedItemTarget,
 } from './tabHelpers';
 
@@ -56,19 +59,29 @@ export function applyQueuedItemEdit(
 	);
 }
 
-/** A queued item is runnable when it is not held/paused by the user. */
+/** A queued item is runnable when neither the user nor the bridge holds it. */
 export function isRunnableQueueItem(item: QueuedItem): boolean {
-	return !item.paused;
+	return !item.paused && !item.waitingForConnection;
+}
+
+/** Release bridge holds after main process ownership is known. */
+export function releaseConnectionHeldQueueItems(queue: QueuedItem[]): QueuedItem[] {
+	if (!queue.some((item) => item.waitingForConnection)) return queue;
+	return queue.map(({ waitingForConnection: _waiting, ...item }) => item);
 }
 
 /** The first item that would actually run, or undefined if all are held/empty. */
 export function nextRunnableQueueItem(queue: QueuedItem[]): QueuedItem | undefined {
-	return queue.find(isRunnableQueueItem);
+	for (const item of queue) {
+		if (item.waitingForConnection) return undefined;
+		if (!item.paused) return item;
+	}
+	return undefined;
 }
 
 /** Whether the queue has at least one item that would run (not all held). */
 export function hasRunnableQueueItem(queue: QueuedItem[]): boolean {
-	return queue.some(isRunnableQueueItem);
+	return nextRunnableQueueItem(queue) !== undefined;
 }
 
 /**
@@ -81,14 +94,16 @@ export function takeNextRunnableQueueItem(queue: QueuedItem[]): {
 	item: QueuedItem | null;
 	remaining: QueuedItem[];
 } {
-	const index = queue.findIndex(isRunnableQueueItem);
-	if (index === -1) {
-		return { item: null, remaining: queue };
+	for (let index = 0; index < queue.length; index += 1) {
+		const candidate = queue[index];
+		if (candidate.waitingForConnection) return { item: null, remaining: queue };
+		if (candidate.paused) continue;
+		return {
+			item: candidate,
+			remaining: [...queue.slice(0, index), ...queue.slice(index + 1)],
+		};
 	}
-	return {
-		item: queue[index],
-		remaining: [...queue.slice(0, index), ...queue.slice(index + 1)],
-	};
+	return { item: null, remaining: queue };
 }
 
 /**
@@ -112,7 +127,9 @@ export function hasWorkAheadOfNewMessage(
 ): boolean {
 	if (opts.autoRunActive) return true;
 	if (getBusyTabs(session, { includeOrphans: true }).length > 0) return true;
-	return hasRunnableQueueItem(session.executionQueue ?? []);
+	return (session.executionQueue ?? []).some(
+		(item) => item.waitingForConnection || isRunnableQueueItem(item)
+	);
 }
 
 /**
@@ -148,6 +165,68 @@ export function applyQueuedItemRelease(session: Session, tabId: string | undefin
 					busySource: undefined,
 					thinkingStartTime: undefined,
 				}),
+	};
+}
+
+/**
+ * The state transition for a dequeued item whose dispatch THREW before the
+ * agent process ever spawned: the exact inverse of
+ * {@link applyQueuedItemDispatch}.
+ *
+ * This is the one place that decides what happens to a prompt that was taken
+ * out of the queue and then failed to send, because the alternative - each
+ * dispatch site writing its own recovery - is what lost a user's work. Five of
+ * the eight sites had no recovery at all (the process-exit drain and the batch
+ * drain rejected into nothing; Stop and force-kill logged and moved on), so a
+ * spawn collision silently destroyed the message: the queue no longer held it,
+ * the transcript showed a card for it, and no model had ever seen it.
+ *
+ * Three things happen together, and they only make sense together:
+ *
+ * 1. **The tab is released.** Dispatch marked it busy; nothing is running.
+ * 2. **The card is removed.** The user-visible entry is appended BEFORE the
+ *    spawn, so a failed dispatch leaves a card for a prompt that was never
+ *    delivered. Matching is by `queuedItemId`, not by text, so an identical
+ *    message the user genuinely sent earlier is untouched.
+ * 3. **The item goes back to the head of the queue** - so it keeps its place
+ *    ahead of everything queued behind it - unless it is already there. The
+ *    idempotence matters: `retryStore.holdFailedItemInQueue` parks the failed
+ *    turn in the queue for the life of an outage, and a second copy would
+ *    double-send the prompt when the outage cleared.
+ *
+ * `hold` decides whether the item comes back runnable. A spawn collision (the
+ * tab's previous process has not exited yet) is transient and self-correcting,
+ * so the item stays runnable and the next drain trigger sends it a moment
+ * later. Any OTHER failure would fail again the same way on the next tick, so
+ * the item comes back `paused`: still there, still editable, still one click
+ * from Force Send, but not spinning the queue against a wall.
+ */
+export function applyQueuedItemDispatchFailure(
+	session: Session,
+	item: QueuedItem,
+	opts: { hold: boolean }
+): Session {
+	const released = applyQueuedItemRelease(session, item.tabId);
+
+	const stripCard = <T extends { id: string; logs: LogEntry[] }>(tab: T): T =>
+		tab.logs.some((log) => log.queuedItemId === item.id)
+			? { ...tab, logs: tab.logs.filter((log) => log.queuedItemId !== item.id) }
+			: tab;
+
+	const aiTabs = released.aiTabs.map(stripCard);
+	const orphans = released.orphanedThinkingTabs?.map(stripCard);
+
+	const queue = released.executionQueue ?? [];
+	const restored: QueuedItem = opts.hold ? { ...item, paused: true } : item;
+	const executionQueue = queue.some((i) => i.id === item.id)
+		? queue.map((i) => (i.id === item.id ? restored : i))
+		: [restored, ...queue];
+
+	return {
+		...released,
+		aiTabs,
+		...(orphans && { orphanedThinkingTabs: orphans }),
+		executionQueue,
 	};
 }
 
@@ -390,5 +469,114 @@ export function applyQueuedItemDispatch(session: Session, item: QueuedItem): Ses
 		executionQueue: session.executionQueue.filter((i) => i.id !== item.id),
 		aiTabs,
 		...(orphans !== session.orphanedThinkingTabs && { orphanedThinkingTabs: orphans }),
+	};
+}
+
+// ============================================================================
+// Replaying a turn the provider refused - not a queue dispatch
+// ============================================================================
+
+/**
+ * Is this queued item the same ask as `item`?
+ *
+ * Used to stop a re-authentication replay from running a prompt the user has
+ * ALREADY re-sent by hand. Both copies exist for one reason: the failed turn was
+ * invisible, so the user resent it while the resume had the same prompt
+ * snapshotted. Running both spends two full turns on one question and lands two
+ * sets of edits in the repo.
+ *
+ * Compared on what the user actually typed - target tab, kind, text/command, and
+ * attachment count - NOT on `id`, which is freshly generated per send and would
+ * make every duplicate look distinct. The user's own copy is the one that wins:
+ * it is visible, it is theirs, and the queue already owns its ordering.
+ */
+export function isSameQueuedPrompt(a: QueuedItem, b: QueuedItem): boolean {
+	if (a.tabId !== b.tabId) return false;
+	if (a.type !== b.type) return false;
+	if ((a.text ?? '').trim() !== (b.text ?? '').trim()) return false;
+	if ((a.command ?? '') !== (b.command ?? '')) return false;
+	if ((a.commandArgs ?? '') !== (b.commandArgs ?? '')) return false;
+	return (a.images?.length ?? 0) === (b.images?.length ?? 0);
+}
+
+/** The queued item that already carries this prompt, if the user re-sent it. */
+export function findQueuedDuplicate(
+	session: Pick<Session, 'executionQueue'>,
+	item: QueuedItem
+): QueuedItem | undefined {
+	return session.executionQueue?.find((queued) => isSameQueuedPrompt(queued, item));
+}
+
+/** Why a replay was not dispatched. See {@link applyReplayDispatch}. */
+export type ReplayBlockedReason = 'no-target-tab' | 'target-tab-busy' | 'already-queued';
+
+export interface ReplayDispatchResult {
+	/** The session to commit. Unchanged from the input when `blocked` is set. */
+	session: Session;
+	/** Set when nothing was dispatched - the caller must not spawn. */
+	blocked?: ReplayBlockedReason;
+}
+
+/**
+ * State transition for REPLAYING a turn that already failed: mark its target tab
+ * busy and note in the transcript that the prompt went back out.
+ *
+ * Distinct from {@link applyQueuedItemDispatch} in two ways, both because the
+ * item is not in the queue: nothing is dequeued, and no user bubble is appended
+ * (the original send already wrote one - see {@link markTabRunningTurn}).
+ *
+ * Blocks rather than dispatching when:
+ *  - the tab is gone (nothing to run on);
+ *  - the tab is already mid-turn - a second spawn on one tab key makes the main
+ *    process KILL the live one, so a replay must never race a running turn;
+ *  - the user has already re-sent this exact prompt, which is queued and will
+ *    drain on its own.
+ */
+export function applyReplayDispatch(
+	session: Session,
+	item: QueuedItem,
+	noteText: string
+): ReplayDispatchResult {
+	const duplicate = findQueuedDuplicate(session, item);
+	if (duplicate) return { session, blocked: 'already-queued' };
+
+	const target = resolveQueuedItemTarget(session, item);
+	if (!target) return { session, blocked: 'no-target-tab' };
+
+	const targetTab =
+		session.aiTabs.find((t) => t.id === target.tabId) ??
+		session.orphanedThinkingTabs?.find((t) => t.id === target.tabId);
+	if (targetTab?.state === 'busy') return { session, blocked: 'target-tab-busy' };
+
+	const note: LogEntry = {
+		id: generateId(),
+		timestamp: Date.now(),
+		source: 'system',
+		text: noteText,
+	};
+	const markReplayed = (tab: Session['aiTabs'][number]) => {
+		const next = markTabRunningTurn(tab, item, session);
+		return { ...next, logs: [...tab.logs, note] };
+	};
+
+	const aiTabs = session.aiTabs.map((tab) => (tab.id === target.tabId ? markReplayed(tab) : tab));
+	const orphans =
+		target.location === 'orphan' && session.orphanedThinkingTabs
+			? session.orphanedThinkingTabs.map((tab) =>
+					tab.id === target.tabId ? markReplayed(tab) : tab
+				)
+			: session.orphanedThinkingTabs;
+
+	return {
+		session: {
+			...session,
+			state: 'busy' as SessionState,
+			busySource: 'ai',
+			thinkingStartTime: Date.now(),
+			currentCycleTokens: 0,
+			currentCycleBytes: 0,
+			aiTabs,
+			...(orphans !== session.orphanedThinkingTabs && { orphanedThinkingTabs: orphans }),
+		},
 	};
 }

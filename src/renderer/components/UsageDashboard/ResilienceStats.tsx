@@ -144,7 +144,7 @@ export const ResilienceStats = memo(function ResilienceStats({
 			</h3>
 
 			{/* Metric tiles */}
-			<div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+			<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
 				<MetricCard
 					icon={<ShieldCheck className="w-4 h-4" />}
 					label="Outages Survived"

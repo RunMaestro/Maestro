@@ -6,6 +6,7 @@ import { resolveAgentId, readSettingValue } from '../services/storage';
 import { withMaestroClient, UnsupportedCommandError } from '../services/maestro-client';
 import { getSettingDefault } from '../../shared/settingsMetadata';
 import { resolveBackgroundFlag } from '../../shared/focusPlacement';
+import { callerMessageFields, readCallerIdentity } from '../../shared/agentDelegation';
 
 export interface DispatchOptions {
 	newTab?: boolean;
@@ -56,7 +57,8 @@ export interface DispatchResponse {
 	error?: string;
 	code?: string;
 	/** True when the prompt was queued (target busy); false when dispatched now.
-	 *  Only set for the --queue path. */
+	 *  Set by the --queue path and by --new-tab, whose fresh tab inherits the
+	 *  agent's busy state and so queues behind the turn already running. */
 	queued?: boolean;
 	/** 1-based position in the execution queue (only when queued). */
 	queuePosition?: number;
@@ -201,6 +203,16 @@ function mapDispatchError(error: unknown, agentId: string): DispatchResponse {
 		return { success: false, error: error.message, code: 'UNSUPPORTED' };
 	}
 	const msg = error instanceof Error ? error.message : String(error);
+	// Checked before the substring sniffing below: this reason came from the
+	// desktop verbatim, so it must not be re-classified by whatever words it
+	// happens to contain.
+	if (msg.startsWith('NEW_TAB_REFUSED:')) {
+		return {
+			success: false,
+			error: msg.slice('NEW_TAB_REFUSED:'.length),
+			code: 'DISPATCH_REFUSED',
+		};
+	}
 	const lowerMsg = msg.toLowerCase();
 	if (
 		lowerMsg.includes('econnrefused') ||
@@ -254,27 +266,29 @@ export async function runDispatch(
 		};
 	}
 
-	// `--new-tab --force` is meaningless - a freshly created tab can never be
-	// busy, so the bypass-busy semantics of --force don't apply. Reject the
-	// combo rather than silently ignoring --force, which would mismatch the
-	// help text and confuse callers debugging why nothing is being bypassed.
+	// `--new-tab --force` is meaningless - the new tab owns no turn to bypass,
+	// and a prompt that cannot start because the AGENT is mid-turn is queued for
+	// the new tab rather than rejected. Reject the combo rather than silently
+	// ignoring --force, which would mismatch the help text and confuse callers
+	// debugging why nothing is being bypassed.
 	if (options.newTab && options.force) {
 		return {
 			success: false,
-			error: '--new-tab cannot be combined with --force (a new tab is never busy)',
+			error: '--new-tab cannot be combined with --force (a new tab owns no turn to bypass)',
 			code: 'INVALID_OPTIONS',
 		};
 	}
 
 	// --queue is the safe counterpart to --force: instead of bypassing the busy
 	// guard, it respects it by waiting in line. Combining the two is
-	// contradictory. And a freshly created --new-tab is never busy, so there is
-	// no line to join - reject both combos rather than silently ignoring --queue.
+	// contradictory. And --new-tab already does what --queue asks for - a prompt
+	// it cannot start now waits in the agent's queue - so the flag is redundant
+	// there; reject both combos rather than silently ignoring --queue.
 	const queue = options.queue === true || options.wait === true;
 	if (queue && options.newTab) {
 		return {
 			success: false,
-			error: '--queue cannot be combined with --new-tab (a fresh tab is never busy)',
+			error: '--queue cannot be combined with --new-tab (--new-tab already queues a busy agent)',
 			code: 'INVALID_OPTIONS',
 		};
 	}
@@ -320,14 +334,25 @@ export async function runDispatch(
 	const callback = buildCallbackFields(options, agentId);
 	if (!callback.ok) return callback.response;
 
+	// Who is dispatching, when this runs inside a Maestro agent's shell. The
+	// desktop uses it to mark the hand-off in the CALLER's transcript; a human or
+	// an external script has no identity and the message goes out unchanged.
+	const caller = callerMessageFields(readCallerIdentity(process.env));
+
 	// --queue routes through the renderer's authoritative execution queue.
 	if (queue) {
-		return runQueueDispatch(agentId, message, options, background, callback.fields);
+		return runQueueDispatch(agentId, message, options, background, callback.fields, caller);
 	}
 	try {
 		const dispatched = await withMaestroClient(async (client) => {
 			if (options.newTab) {
-				const result = await client.sendCommand<{ tabId?: string; callbackId?: string }>(
+				const result = await client.sendCommand<{
+					success?: boolean;
+					tabId?: string;
+					callbackId?: string;
+					queued?: boolean;
+					error?: string;
+				}>(
 					{
 						type: 'new_ai_tab_with_prompt',
 						sessionId: agentId,
@@ -336,9 +361,20 @@ export async function runDispatch(
 						// an agent, and the tab id we return is how the caller follows it.
 						...(background ? { background: true } : {}),
 						...callback.fields,
+						...caller,
 					},
 					'new_ai_tab_with_prompt_result'
 				);
+				// An explicit refusal is reported with the desktop's OWN reason.
+				// `sendCommand` resolves on any reply, success or not, so a refusal
+				// carrying no tab id used to fall through to the NEW_TAB_NO_ID branch
+				// below and be reported as a protocol fault - which is the one thing
+				// it is not (#1602).
+				if (result.success === false) {
+					throw new Error(
+						`NEW_TAB_REFUSED:${result.error || 'Maestro desktop refused the dispatch'}`
+					);
+				}
 				// `--new-tab`'s sole purpose is to surface a fresh tab id for
 				// chaining (`dispatch --tab <tabId>`). If the desktop acked
 				// without one (older build / race), fail loudly with a dedicated
@@ -348,7 +384,11 @@ export async function runDispatch(
 				if (!result.tabId) {
 					throw new Error('NEW_TAB_NO_ID: new_ai_tab_with_prompt acknowledged without a tabId');
 				}
-				return { tabId: result.tabId, callbackId: result.callbackId };
+				return {
+					tabId: result.tabId,
+					callbackId: result.callbackId,
+					queued: result.queued === true,
+				};
 			}
 			const result = await client.sendCommand<{ tabId?: string; callbackId?: string }>(
 				{
@@ -366,10 +406,11 @@ export async function runDispatch(
 					// spread below it.
 					...(background ? { background: true } : {}),
 					...callback.fields,
+					...caller,
 				},
 				'command_result'
 			);
-			return { tabId: result.tabId, callbackId: result.callbackId };
+			return { tabId: result.tabId, callbackId: result.callbackId, queued: false };
 		});
 		// `--tab <tabId>` is the authoritative target; the desktop handler
 		// echoes it back when we pass one. If the desktop omitted it (older
@@ -384,6 +425,9 @@ export async function runDispatch(
 			agentId,
 			sessionId: resolvedTabId,
 			tabId: resolvedTabId,
+			// `--new-tab` at a working agent creates the tab and queues the prompt
+			// behind the turn already running, so say which of the two happened.
+			...(dispatched.queued ? { queued: true } : {}),
 			...(dispatched.callbackId ? { callbackId: dispatched.callbackId } : {}),
 			...(callback.callerAgentId ? { notifyOnComplete: callback.callerAgentId } : {}),
 		};
@@ -405,7 +449,8 @@ async function runQueueDispatch(
 	message: string,
 	options: DispatchOptions,
 	background: boolean,
-	callbackFields: Record<string, unknown>
+	callbackFields: Record<string, unknown>,
+	callerFields: Record<string, unknown>
 ): Promise<DispatchResponse> {
 	try {
 		const result = await withMaestroClient(async (client) =>
@@ -427,6 +472,7 @@ async function runQueueDispatch(
 					...(options.tab ? { tabId: options.tab } : {}),
 					...(background ? { background: true } : {}),
 					...callbackFields,
+					...callerFields,
 				},
 				'enqueue_command_result'
 			)

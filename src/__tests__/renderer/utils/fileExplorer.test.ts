@@ -9,6 +9,9 @@ import {
 	buildTreeFromPaths,
 	spliceMaestroIntoTree,
 	loadFileTreeRemoteBatched,
+	findTreeNode,
+	isDepthCappedFolder,
+	MAX_REMOTE_DEEP_FOLDER_LISTINGS,
 	FileTreeAbortError,
 	FileTreeNode,
 } from '../../../renderer/utils/fileExplorer';
@@ -261,6 +264,17 @@ describe('fileExplorer utils', () => {
 				ignorePatterns: ['.git'],
 				honorGitignore: true,
 			});
+		});
+
+		it('forwards the expanded folders so the walk reads them past the depth cap', async () => {
+			vi.mocked(window.maestro.fs.readDirTree).mockResolvedValueOnce(scanResult([]));
+
+			await loadFileTree('/project', 5, 0, undefined, undefined, { expandedPaths: ['a/b'] });
+
+			expect(window.maestro.fs.readDirTree).toHaveBeenCalledWith(
+				'/project',
+				expect.objectContaining({ expandedPaths: ['a/b'] })
+			);
 		});
 
 		it('sends an unlimited cap as undefined rather than Infinity', async () => {
@@ -865,6 +879,87 @@ describe('fileExplorer utils', () => {
 
 			expect(result.truncated).toBe(true);
 		});
+
+		it('lists an expanded folder the depth cap cut off and grafts its contents in', async () => {
+			const listTreeMock = window.maestro.fs.listTreeRemote as ReturnType<typeof vi.fn>;
+			listTreeMock
+				.mockResolvedValueOnce({ directories: [], files: [], truncated: false })
+				.mockResolvedValueOnce({ directories: ['a', 'a/b'], files: [], truncated: false })
+				.mockResolvedValueOnce({ directories: ['c'], files: ['x.md'], truncated: false });
+
+			const result = await loadFileTreeRemoteBatched('/project', {
+				maxDepth: 2,
+				maxEntries: 1000,
+				ignorePatterns: ['node_modules'],
+				honorGitignore: false,
+				sshRemoteId: 'remote-1',
+				expandedPaths: ['a', 'a/b'],
+			});
+
+			// Only the capped folder gets a listing; `a` was already complete.
+			expect(listTreeMock).toHaveBeenCalledTimes(3);
+			expect(listTreeMock).toHaveBeenNthCalledWith(3, '/project/a/b', 'remote-1', {
+				maxDepth: 1,
+				ignorePatterns: ['node_modules'],
+			});
+			expect(findTreeNode(result.tree, 'a/b')?.children).toEqual([
+				{ name: 'c', type: 'folder', children: [] },
+				{ name: 'x.md', type: 'file' },
+			]);
+			expect(result.filesFound).toBe(1);
+		});
+
+		it('bounds how many capped folders a single remote load lists', async () => {
+			const listTreeMock = window.maestro.fs.listTreeRemote as ReturnType<typeof vi.fn>;
+			const folders = Array.from(
+				{ length: MAX_REMOTE_DEEP_FOLDER_LISTINGS + 5 },
+				(_, i) => `d${i}`
+			);
+			listTreeMock
+				.mockResolvedValueOnce({ directories: [], files: [], truncated: false })
+				.mockResolvedValueOnce({ directories: folders, files: [], truncated: false })
+				.mockResolvedValue({ directories: [], files: [], truncated: false });
+
+			await loadFileTreeRemoteBatched('/project', {
+				maxDepth: 1,
+				maxEntries: 1000,
+				ignorePatterns: [],
+				honorGitignore: false,
+				sshRemoteId: 'remote-1',
+				expandedPaths: folders,
+			});
+
+			expect(listTreeMock).toHaveBeenCalledTimes(2 + MAX_REMOTE_DEEP_FOLDER_LISTINGS);
+		});
+	});
+
+	// ============================================================================
+	// isDepthCappedFolder
+	// ============================================================================
+	describe('isDepthCappedFolder', () => {
+		const tree: FileTreeNode[] = [
+			{
+				name: 'a',
+				type: 'folder',
+				children: [
+					{ name: 'empty', type: 'folder', children: [] },
+					{ name: 'full', type: 'folder', children: [{ name: 'f.md', type: 'file' }] },
+					{ name: 'note.md', type: 'file' },
+				],
+			},
+		];
+
+		it('matches a childless folder at or past the depth cap', () => {
+			expect(isDepthCappedFolder(tree, 'a/empty', 2)).toBe(true);
+			expect(isDepthCappedFolder(tree, 'a/empty', 1)).toBe(true);
+		});
+
+		it('ignores folders above the cap, loaded folders, files, and missing paths', () => {
+			expect(isDepthCappedFolder(tree, 'a/empty', 3)).toBe(false);
+			expect(isDepthCappedFolder(tree, 'a/full', 2)).toBe(false);
+			expect(isDepthCappedFolder(tree, 'a/note.md', 2)).toBe(false);
+			expect(isDepthCappedFolder(tree, 'a/missing', 2)).toBe(false);
+		});
 	});
 
 	// ============================================================================
@@ -1179,6 +1274,24 @@ describe('fileExplorer utils', () => {
 				removedFiles: 0,
 				removedFolders: 0,
 			});
+		});
+
+		// The path sets for a tree array are cached by array identity, because on
+		// each auto-refresh tick the "old" tree is the previous tick's "new" tree
+		// and re-walking it is pure waste. Successive comparisons must still be
+		// correct: the array carried forward keeps its own paths, and the array
+		// that replaced it is walked fresh.
+		it('stays correct when a tree array is carried forward across comparisons', () => {
+			const first: FileTreeNode[] = [{ name: 'a.txt', type: 'file' }];
+			const second: FileTreeNode[] = [
+				{ name: 'a.txt', type: 'file' },
+				{ name: 'b.txt', type: 'file' },
+			];
+			const third: FileTreeNode[] = [{ name: 'b.txt', type: 'file' }];
+
+			expect(compareFileTrees(first, second)).toMatchObject({ newFiles: 1, removedFiles: 0 });
+			expect(compareFileTrees(second, third)).toMatchObject({ newFiles: 0, removedFiles: 1 });
+			expect(compareFileTrees(first, third)).toMatchObject({ newFiles: 1, removedFiles: 1 });
 		});
 
 		it('detects new files', () => {
@@ -1538,6 +1651,37 @@ describe('fileExplorer utils', () => {
 			expect(shouldIgnore('first', patterns)).toBe(true);
 			expect(shouldIgnore('second', patterns)).toBe(true);
 			expect(shouldIgnore('third', patterns)).toBe(true);
+		});
+
+		// Literal patterns are answered by a Set lookup and globs by a regex, but
+		// both halves must stay case-insensitive - the regex path always compiled
+		// with the `i` flag, and callers rely on it (macOS paths are folded).
+		it('matches case-insensitively for both literal and glob patterns', () => {
+			const patterns = ['node_modules', '*.LOG'];
+			expect(shouldIgnore('NODE_MODULES', patterns)).toBe(true);
+			expect(shouldIgnore('Node_Modules', patterns)).toBe(true);
+			expect(shouldIgnore('error.log', patterns)).toBe(true);
+			expect(shouldIgnore('ERROR.LOG', patterns)).toBe(true);
+		});
+
+		it('treats regex metacharacters in a literal pattern as literal text', () => {
+			const patterns = ['a.txt', 'v1+2', '[draft]'];
+			expect(shouldIgnore('a.txt', patterns)).toBe(true);
+			expect(shouldIgnore('axtxt', patterns)).toBe(false);
+			expect(shouldIgnore('v1+2', patterns)).toBe(true);
+			expect(shouldIgnore('[draft]', patterns)).toBe(true);
+			expect(shouldIgnore('d', patterns)).toBe(false);
+		});
+
+		// The pattern list is compiled once per array identity, so a second array
+		// must not inherit the first one's answers.
+		it('keeps separate pattern arrays independent', () => {
+			const a = ['node_modules'];
+			const b = ['dist'];
+			expect(shouldIgnore('node_modules', a)).toBe(true);
+			expect(shouldIgnore('node_modules', b)).toBe(false);
+			expect(shouldIgnore('dist', b)).toBe(true);
+			expect(shouldIgnore('dist', a)).toBe(false);
 		});
 	});
 });

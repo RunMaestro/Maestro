@@ -123,6 +123,27 @@ describe('HistoryDetailModal', () => {
 			// The timestamp should be formatted (month, day, time)
 			expect(screen.getByText(/Jun/i)).toBeInTheDocument();
 		});
+
+		it('should render the sender pill for a turn a browser sent', () => {
+			render(
+				<HistoryDetailModal
+					theme={mockTheme}
+					entry={createMockEntry({ userName: 'pedram', userDisplayName: 'Pedram A' })}
+					onClose={mockOnClose}
+				/>
+			);
+
+			expect(screen.getByTitle('Sent by pedram')).toBeInTheDocument();
+			expect(screen.getByText('Pedram A')).toBeInTheDocument();
+		});
+
+		it('should draw no sender pill for a turn typed at the desktop', () => {
+			render(
+				<HistoryDetailModal theme={mockTheme} entry={createMockEntry()} onClose={mockOnClose} />
+			);
+
+			expect(screen.queryByTitle(/^Sent by /)).not.toBeInTheDocument();
+		});
 	});
 
 	describe('Entry Types', () => {

@@ -86,7 +86,8 @@ describe('usePreparingPlanGeneration', () => {
 			expect.objectContaining({
 				agentType: 'claude-code',
 				directoryPath: '/project',
-				projectName: 'Project',
+				// The project is the FOLDER, not the agent's name (issue #1225).
+				projectName: 'project',
 				subfolder: 'Initiation',
 				sshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
 			}),

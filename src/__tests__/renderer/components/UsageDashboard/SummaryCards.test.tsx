@@ -819,3 +819,23 @@ describe('SummaryCards - active agents in range', () => {
 		expect(screen.queryByTestId('agent-active-count')).not.toBeInTheDocument();
 	});
 });
+
+describe('MetricCard value overflow', () => {
+	// A formatted figure carries no spaces, so a value too wide for its column
+	// (`~$39,605.06` in a 176px card on a phone) had nowhere to break and
+	// painted straight out past the card's own edge. It wraps rather than
+	// truncating: the whole number is the point of the card.
+	it('lets a long value wrap inside its card instead of overflowing it', () => {
+		render(<SummaryCards data={mockData} theme={theme} />);
+
+		const values = screen
+			.getAllByTestId('metric-card')
+			.map((card) => card.querySelector('.font-bold'))
+			.filter((el): el is HTMLElement => el instanceof HTMLElement);
+
+		expect(values.length).toBeGreaterThan(0);
+		for (const value of values) {
+			expect(value.style.overflowWrap).toBe('anywhere');
+		}
+	});
+});

@@ -277,37 +277,38 @@ export function QueuedItemEditModal({
 						</div>
 					)}
 
-					{/* Model + effort for this one message. Same pills as the composer,
-					    so the options, styling and menu behaviour cannot drift. Renders
-					    nothing when the provider offers neither. */}
+					{/* One control row: Add image on the left, this message's model/effort
+					    pills right-justified. Same pills as the composer, so the options,
+					    styling and menu behaviour cannot drift. The pills render nothing
+					    when the provider offers neither, which leaves the button alone. */}
 					<div className="flex items-center gap-2 mt-3">
-						<ModelEffortPills
-							isVisible
-							theme={theme}
-							currentModel={turnSettings.model ?? providerOptions.defaultModel}
-							currentEffort={turnSettings.effort ?? providerOptions.defaultEffort}
-							availableModels={providerOptions.models}
-							availableEfforts={providerOptions.efforts}
-							onModelChange={(model) =>
-								setTurnSettings((prev) => ({ ...prev, model: model || undefined }))
-							}
-							onEffortChange={(effort) =>
-								setTurnSettings((prev) => ({ ...prev, effort: effort || undefined }))
-							}
-							{...menus}
-						/>
+						<button
+							type="button"
+							onClick={() => fileInputRef.current?.click()}
+							className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-medium hover:opacity-80 transition-opacity"
+							style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
+						>
+							<ImagePlus className="w-4 h-4" />
+							Add image
+						</button>
+						<div className="flex items-center gap-2 ml-auto">
+							<ModelEffortPills
+								isVisible
+								theme={theme}
+								currentModel={turnSettings.model ?? providerOptions.defaultModel}
+								currentEffort={turnSettings.effort ?? providerOptions.defaultEffort}
+								availableModels={providerOptions.models}
+								availableEfforts={providerOptions.efforts}
+								onModelChange={(model) =>
+									setTurnSettings((prev) => ({ ...prev, model: model || undefined }))
+								}
+								onEffortChange={(effort) =>
+									setTurnSettings((prev) => ({ ...prev, effort: effort || undefined }))
+								}
+								{...menus}
+							/>
+						</div>
 					</div>
-
-					{/* Add image */}
-					<button
-						type="button"
-						onClick={() => fileInputRef.current?.click()}
-						className="flex items-center gap-1.5 mt-3 px-2.5 py-1.5 rounded text-xs font-medium hover:opacity-80 transition-opacity"
-						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-					>
-						<ImagePlus className="w-4 h-4" />
-						Add image
-					</button>
 					<input
 						ref={fileInputRef}
 						type="file"

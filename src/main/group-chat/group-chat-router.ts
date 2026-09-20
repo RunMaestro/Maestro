@@ -28,6 +28,7 @@ import { createIdleWatchdog, type IdleWatchdog } from '../utils/idle-watchdog';
 import {
 	type GroupChatMessage,
 	type GroupChatHistoryEntry,
+	GROUP_CHAT_USER_NAME,
 	cleanMentionName,
 	findUniqueMentionMatch,
 	getMentionNameForContext,
@@ -65,6 +66,23 @@ import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
 import { groupChatEmitters } from '../ipc/handlers/groupChat';
 
 const LOG_CONTEXT = '[GroupChatRouter]';
+
+/**
+ * Non-customizable protocol that connects moderator text to actual participant
+ * processes. Keep this in the runtime prompt builder rather than the bundled
+ * moderator prompt: users may have an older customized prompt, but routing still
+ * depends on literal @mentions in every version.
+ */
+const MODERATOR_ROUTING_PROTOCOL = `## Required Routing Protocol
+
+Participant work starts only when your response contains a literal \`@AgentName\` token matching a name in Current Participants. Describing a handoff in prose does not start an agent.
+
+- If you want a participant to act now, include that participant's exact \`@AgentName\` and an actionable request in this response.
+- Never claim that work was assigned, dispatched, addressed, or started unless the same response contains the matching \`@AgentName\`. Without it, zero participant processes start.
+- When the user explicitly @mentions participants and asks them to work, relay an actionable request to each intended participant with its exact \`@AgentName\`. Do not merely acknowledge the assignments.
+- If you are returning a final answer to the user, use no participant @mentions.
+
+Before responding, verify that every participant you claim is working has a literal matching @mention in your response.`;
 
 // Re-export setGetCustomShellPathCallback for index.ts to use
 export { setGetCustomShellPathCallback };
@@ -526,6 +544,28 @@ function clearParticipantResponseTimeout(groupChatId: string, participantName: s
  */
 const groupChatReadOnlyState = new Map<string, boolean>();
 
+interface PendingExplicitParticipantHandoff {
+	message: string;
+	participantNames: string[];
+	readOnly: boolean;
+	savedImageFilenames?: string[];
+	retryAttempted: boolean;
+}
+
+/**
+ * User turns that explicitly addressed one or more participants. The moderator
+ * must produce an executable handoff for every addressed participant before its
+ * response can be presented as final. One incomplete response gets a correction
+ * turn; a second is rejected with an explicit system error.
+ */
+const pendingExplicitParticipantHandoffs = new Map<string, PendingExplicitParticipantHandoff>();
+
+interface ModeratorRoutingRetry {
+	previousResponse: string;
+	participantNames: string[];
+	savedImageFilenames?: string[];
+}
+
 /**
  * Gets the current read-only state for a group chat.
  */
@@ -556,6 +596,7 @@ export function clearPendingParticipants(groupChatId: string): void {
 	}
 	pendingParticipantResponses.delete(groupChatId);
 	autoRunParticipantTracker.delete(groupChatId);
+	pendingExplicitParticipantHandoffs.delete(groupChatId);
 }
 
 /**
@@ -827,7 +868,8 @@ export async function routeUserMessage(
 	processManager?: IProcessManager,
 	agentDetector?: AgentDetector,
 	readOnly?: boolean,
-	images?: string[]
+	images?: string[],
+	routingRetry?: ModeratorRoutingRetry
 ): Promise<void> {
 	logger.debug(`[GroupChat:Debug] ========== ROUTE USER MESSAGE ==========`);
 	logger.debug(`[GroupChat:Debug] Group Chat ID: ${groupChatId}`);
@@ -855,8 +897,10 @@ export async function routeUserMessage(
 
 	logger.debug(`[GroupChat:Debug] Moderator is active: true`);
 
-	// Auto-add participants mentioned by the user if they match available sessions
-	if (processManager && agentDetector && getSessionsCallback) {
+	// Auto-add participants mentioned by the user if they match available sessions.
+	// A routing retry reuses the already-resolved participant set and must not
+	// reinterpret its correction prompt as a new user turn.
+	if (!routingRetry && processManager && agentDetector && getSessionsCallback) {
 		const userMentions = extractAllMentions(message);
 		const sessions = getSessionsCallback();
 		const existingParticipantNames = new Set(chat.participants.map((p) => p.name));
@@ -944,8 +988,8 @@ export async function routeUserMessage(
 	}
 
 	// Save images to disk and collect filenames for the log
-	let savedImageFilenames: string[] | undefined;
-	if (images && images.length > 0) {
+	let savedImageFilenames = routingRetry?.savedImageFilenames;
+	if (!routingRetry && images && images.length > 0) {
 		savedImageFilenames = [];
 		for (const dataUrl of images) {
 			// Extract base64 data and extension from data URL
@@ -959,21 +1003,49 @@ export async function routeUserMessage(
 		}
 	}
 
-	// Log the message as coming from user (with image filenames if any)
-	await appendToLog(chat.logPath, 'user', message, readOnly, savedImageFilenames);
-
 	// Store the read-only state for this group chat so it can be propagated to participants
 	setGroupChatReadOnlyState(groupChatId, readOnly ?? false);
 
-	// Emit message event to renderer so it shows immediately (with original data URLs for display)
-	const userMessage: GroupChatMessage = {
-		timestamp: new Date().toISOString(),
-		from: 'user',
-		content: message,
-		readOnly,
-		...(images && images.length > 0 && { images }),
-	};
-	groupChatEmitters.emitMessage?.(groupChatId, userMessage);
+	if (!routingRetry) {
+		// Log the message as coming from user (with image filenames if any)
+		await appendToLog(chat.logPath, 'user', message, readOnly, savedImageFilenames);
+
+		// Emit message event to renderer so it shows immediately (with original data URLs for display)
+		const userMessage: GroupChatMessage = {
+			timestamp: new Date().toISOString(),
+			from: 'user',
+			content: message,
+			readOnly,
+			...(images && images.length > 0 && { images }),
+		};
+		groupChatEmitters.emitMessage?.(groupChatId, userMessage);
+
+		// Record the prompt itself in history. Every other entry is something an
+		// agent did in reaction to this line, so a history without it shows effects
+		// with no causes - and the timestamp is what makes a click here jump the
+		// transcript back to the message that started the round.
+		await recordGroupChatHistory(groupChatId, {
+			timestamp: Date.now(),
+			summary: extractFirstSentence(message),
+			participantName: GROUP_CHAT_USER_NAME,
+			participantColor: '#808080',
+			type: 'user',
+			fullResponse: message,
+		});
+
+		const explicitParticipantNames = extractMentions(message, chat.participants);
+		if (processManager && agentDetector && explicitParticipantNames.length > 0) {
+			pendingExplicitParticipantHandoffs.set(groupChatId, {
+				message,
+				participantNames: explicitParticipantNames,
+				readOnly: readOnly ?? false,
+				savedImageFilenames,
+				retryAttempted: false,
+			});
+		} else {
+			pendingExplicitParticipantHandoffs.delete(groupChatId);
+		}
+	}
 
 	// Spawn a batch process for the moderator to handle this message
 	// The response will be captured via the process:data event handler in index.ts
@@ -1064,16 +1136,37 @@ export async function routeUserMessage(
 				moderatorSettings.conductorProfile || '(No conductor profile set)'
 			);
 
+			const participantMentionNames = routingRetry?.participantNames.map((name) =>
+				getMentionNameForContext(name, participantNamesForMentions)
+			);
+			const moderatorRequest = routingRetry
+				? `## Routing Correction
+
+Your previous response was rejected because it did not contain an executable @mention for every participant explicitly addressed by the user. No participant process started.
+
+Participants explicitly addressed by the user: ${participantMentionNames?.map((name) => `@${name}`).join(', ')}
+
+Reissue the handoff now with a literal matching @mention and an actionable request. Do not claim that work is assigned unless this response contains the mention that starts it.
+
+Original user request:
+${message}
+
+Rejected response:
+${routingRetry.previousResponse}`
+				: message;
+
 			const fullPrompt = `${baseSystemPrompt}
 
 ## Current Participants:
 ${participantContext}${availableSessionsContext}
 
+${MODERATOR_ROUTING_PROTOCOL}
+
 ## Chat History:
 ${historyContext}
 
 ## User Request${readOnly ? ' (READ-ONLY MODE - do not make changes)' : ''}:
-${message}${imageContext}
+${moderatorRequest}${imageContext}
 
 ## Execution Mode:
 ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspect, analyze, and plan - no file changes allowed.' : 'Participants have FULL READ-WRITE access and can create, modify, and delete files. You are in read-only/plan mode yourself, so delegate all file changes to participants. When the user asks for implementation, specs, or file creation, delegate those tasks to the appropriate participants - they can execute.'}`;
@@ -1502,21 +1595,6 @@ export async function routeModeratorResponse(
 	// Only persist/emit the moderator message if it has visible content after stripping directives
 	const shouldPersistModeratorMessage = displayMessage.trim().length > 0;
 
-	if (shouldPersistModeratorMessage) {
-		// Log the message as coming from moderator (cleaned of !autorun directives)
-		await appendToLog(chat.logPath, 'moderator', displayMessage);
-		logger.debug(`[GroupChat:Debug] Message appended to log`);
-
-		// Emit message event to renderer so it shows immediately
-		const moderatorMessage: GroupChatMessage = {
-			timestamp: new Date().toISOString(),
-			from: 'moderator',
-			content: displayMessage,
-		};
-		groupChatEmitters.emitMessage?.(groupChatId, moderatorMessage);
-		logger.debug(`[GroupChat:Debug] Emitted moderator message to renderer`);
-	}
-
 	// The moderator history entry is written at the end of this function, once we know
 	// whether this turn delegated work to participants ('delegation'), was a synthesis
 	// summary ('synthesis'), or was a plain final response ('response').
@@ -1634,6 +1712,97 @@ export async function routeModeratorResponse(
 	logger.debug(
 		`[GroupChat:Debug] Valid participant mentions found: ${mentions.join(', ') || '(none)'}`
 	);
+
+	const pendingExplicitHandoff = pendingExplicitParticipantHandoffs.get(groupChatId);
+	// `extractMentions` has already resolved these names against the live participant
+	// list. When the user explicitly addressed participants, require the full set:
+	// accepting a partial match would silently drop the omitted participant while
+	// clearing the pending validation state.
+	const hasExecutableHandoff = pendingExplicitHandoff
+		? pendingExplicitHandoff.participantNames.every((name) => mentions.includes(name))
+		: mentions.length > 0;
+	if (pendingExplicitHandoff && !hasExecutableHandoff) {
+		const participantMentionNames = pendingExplicitHandoff.participantNames.map((name) =>
+			getMentionNameForContext(
+				name,
+				updatedChat.participants.map((participant) => participant.name)
+			)
+		);
+
+		if (!pendingExplicitHandoff.retryAttempted && processManager && agentDetector) {
+			pendingExplicitHandoff.retryAttempted = true;
+			logger.warn(
+				'Moderator omitted one or more explicitly addressed participants; retrying once',
+				LOG_CONTEXT,
+				{
+					groupChatId,
+					participantNames: pendingExplicitHandoff.participantNames,
+				}
+			);
+
+			try {
+				await routeUserMessage(
+					groupChatId,
+					pendingExplicitHandoff.message,
+					processManager,
+					agentDetector,
+					pendingExplicitHandoff.readOnly,
+					undefined,
+					{
+						previousResponse: displayMessage || message,
+						participantNames: pendingExplicitHandoff.participantNames,
+						savedImageFilenames: pendingExplicitHandoff.savedImageFilenames,
+					}
+				);
+				return;
+			} catch (error) {
+				logger.error('Failed to spawn moderator routing retry', LOG_CONTEXT, {
+					error,
+					groupChatId,
+				});
+				captureException(error, {
+					operation: 'groupChat:spawnModeratorRoutingRetry',
+					groupChatId,
+				});
+			}
+		}
+
+		pendingExplicitParticipantHandoffs.delete(groupChatId);
+		const names = participantMentionNames.map((name) => `@${name}`).join(', ');
+		const errorMessage = pendingExplicitHandoff.retryAttempted
+			? `⚠️ The moderator still did not produce an executable handoff for ${names} after one retry. No participant processes were started.`
+			: `⚠️ The moderator did not produce an executable handoff for ${names}. No participant processes were started.`;
+		await announceToChat(groupChatId, updatedChat.logPath, errorMessage);
+		await recordGroupChatHistory(groupChatId, {
+			timestamp: Date.now(),
+			summary: 'Moderator failed to route explicitly addressed participants.',
+			participantName: 'Moderator',
+			participantColor: '#808080',
+			type: 'error',
+			fullResponse: displayMessage || message,
+		});
+		settleGroupChatToIdle(groupChatId);
+		return;
+	}
+
+	if (hasExecutableHandoff) {
+		pendingExplicitParticipantHandoffs.delete(groupChatId);
+	}
+
+	if (shouldPersistModeratorMessage) {
+		// Persist only after validating an explicitly requested handoff. A prose-only
+		// acknowledgement is retried or rejected instead of appearing as a final answer.
+		await appendToLog(chat.logPath, 'moderator', displayMessage);
+		logger.debug(`[GroupChat:Debug] Message appended to log`);
+
+		const moderatorMessage: GroupChatMessage = {
+			timestamp: new Date().toISOString(),
+			from: 'moderator',
+			content: displayMessage,
+		};
+		groupChatEmitters.emitMessage?.(groupChatId, moderatorMessage);
+		logger.debug(`[GroupChat:Debug] Emitted moderator message to renderer`);
+	}
 
 	// Track participants that will need to respond for synthesis round
 	const participantsToRespond = new Set<string>();
@@ -2295,6 +2464,8 @@ ${getModeratorSynthesisPrompt()}
 
 ## Current Participants (you can @mention these for follow-up):
 ${participantContext}
+
+${MODERATOR_ROUTING_PROTOCOL}
 
 ## Recent Chat History (including participant responses):
 ${historyContext}

@@ -3,6 +3,12 @@ import type { Theme } from '../../../../types';
 
 export interface DirectorySelectionScreenProps {
 	theme: Theme;
+	/**
+	 * Creates the agent and closes the wizard. Present so this screen can offer
+	 * "skip the playbook" - the same callback the final step uses, just with no
+	 * generated documents behind it.
+	 */
+	onLaunchSession?: (wantsTour: boolean) => Promise<void>;
 }
 
 export interface DirectorySelectionRefs {

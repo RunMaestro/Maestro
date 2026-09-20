@@ -10,7 +10,7 @@
  */
 
 import React from 'react';
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { UsageDashboardFooter } from '../../../../renderer/components/UsageDashboard/UsageDashboardFooter';
 import {
@@ -168,5 +168,42 @@ describe('UsageDashboardFooter', () => {
 		// Panels are unit-tested outside the dashboard; publishing must be safe there.
 		expect(() => render(<Publisher tab="agents" summary="24 of 84 agents" />)).not.toThrow();
 		expect(useFooterSummaryStore.getState().summaries.agents).toBe('24 of 84 agents');
+	});
+});
+
+// Phone: three equal grid columns need ~110px each on a 390px screen, which
+// truncated the range label to "S..", the summary to a few words, and spent a
+// third of the row on an Esc hint the phone stylesheet already hides.
+vi.mock('../../../../renderer/hooks/ui/useViewportBreakpoint', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../renderer/hooks/ui/useViewportBreakpoint')>()),
+	usePhoneLayout: vi.fn(() => false),
+}));
+import { usePhoneLayout } from '../../../../renderer/hooks/ui/useViewportBreakpoint';
+
+describe('UsageDashboardFooter on a phone', () => {
+	afterEach(() => {
+		vi.mocked(usePhoneLayout).mockReturnValue(false);
+	});
+
+	it('gives the summary the row and drops the Esc hint', () => {
+		vi.mocked(usePhoneLayout).mockReturnValue(true);
+		render(<Footer fallbackSummary="3.8K queries · 108 agents" databaseSizeLabel="10.0 MB" />);
+
+		expect(screen.getByTestId('usage-dashboard-footer-summary')).toHaveTextContent(
+			'3.8K queries · 108 agents'
+		);
+		expect(screen.getByTestId('database-size-indicator')).toHaveTextContent('10.0 MB');
+		expect(screen.queryByText('Press Esc to close')).not.toBeInTheDocument();
+		// The range label is redundant with the header's own time-range select.
+		expect(screen.queryByText('Showing this month data')).not.toBeInTheDocument();
+	});
+
+	it('falls back to the range label when the tab publishes no summary', () => {
+		vi.mocked(usePhoneLayout).mockReturnValue(true);
+		render(<Footer fallbackSummary={null} />);
+
+		expect(screen.getByTestId('usage-dashboard-footer-summary')).toHaveTextContent(
+			'Showing this month data'
+		);
 	});
 });

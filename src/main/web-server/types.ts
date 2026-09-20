@@ -5,12 +5,17 @@
 
 import type { AutoRunBroadcastState } from '../../shared/autoRunBroadcast';
 import type { DesktopTabEntry } from '../../shared/desktopTabs';
+import type { SnoozeCommandRequest, SnoozeCommandResult } from '../../shared/snoozeCommands';
 import type { UsageStats } from '../../shared/types';
+import type { ToastClickAction } from '../../shared/toastClickAction';
+import type { GroupAppearance, GroupUpdateRequest } from '../../shared/groupAppearance';
 import type { WebSocket } from 'ws';
 import type { Theme } from '../../shared/theme-types';
 import type { Shortcut } from '../../shared/shortcut-types';
 import type { CadenzaPayload } from '../../shared/cadenza-types';
 import type { MovementPayload, MovementStateSnapshot } from '../../shared/movement-types';
+import type { AgentDelegationNotice } from '../../shared/agentDelegation';
+import type { WebActingUser } from '../../shared/webLogin';
 import type {
 	ConcertoDesignerAction,
 	ConcertoDesignerActionResult,
@@ -212,6 +217,20 @@ export interface WebClient {
 	id: string;
 	connectedAt: number;
 	subscribedSessionId?: string;
+	/**
+	 * The Web Login account behind this socket, resolved once at the upgrade
+	 * from the session cookie. Undefined when the gate is off and for
+	 * `maestro-cli` (admitted by its secret, not signed in), both of which mean
+	 * "the desktop" to `getActingUser()`. Every bridge dispatch from this client
+	 * runs in this user's acting context.
+	 */
+	user?: WebActingUser;
+	/**
+	 * The session the account was resolved from. Revocation is keyed on THIS,
+	 * not on the account: a password reset or a logout removes the session
+	 * while the account stays, and the socket must still go.
+	 */
+	sessionId?: string;
 }
 
 /**
@@ -329,15 +348,17 @@ export type CloseTabCallback = (sessionId: string, tabId: string) => Promise<boo
 export interface RenameTabResult {
 	success: boolean;
 	error?: string;
+	unconfirmed?: boolean;
 }
 
 export function normalizeRenameTabResult(result: unknown): RenameTabResult {
 	if (typeof result === 'boolean') return { success: result };
 	if (result && typeof result === 'object' && 'success' in result) {
-		const candidate = result as { success?: unknown; error?: unknown };
+		const candidate = result as { success?: unknown; error?: unknown; unconfirmed?: unknown };
 		return {
 			success: candidate.success === true,
 			...(typeof candidate.error === 'string' ? { error: candidate.error } : {}),
+			...(candidate.unconfirmed === true ? { unconfirmed: true } : {}),
 		};
 	}
 	return { success: false, error: 'Invalid rename tab response' };
@@ -353,6 +374,13 @@ export type StarTabCallback = (
 	tabId: string,
 	starred: boolean
 ) => Promise<boolean>;
+/**
+ * One snooze verb, forwarded to the renderer - which owns the authoritative
+ * snooze state - and answered with whatever it did. Resolves rather than
+ * rejects on a miss: the caller is a CLI process reporting to a human, and a
+ * thrown error there reads as a broken command instead of "no such snooze".
+ */
+export type SnoozeCommandCallback = (request: SnoozeCommandRequest) => Promise<SnoozeCommandResult>;
 export type ReorderTabCallback = (
 	sessionId: string,
 	fromIndex: number,
@@ -414,6 +442,8 @@ export type ConsultAgentParams = {
 	question: string;
 	/** The calling agent, when it named itself. Attribution + continuity. */
 	fromSessionId?: string;
+	/** The calling agent's AI tab, when its spawn stamped one. Places the consult pill. */
+	fromTabId?: string;
 	/** Forward the caller's transcript as context (off by default). */
 	withContext?: boolean;
 	/** How long the caller is willing to wait, already clamped by the CLI. */
@@ -428,7 +458,25 @@ export type ConsultAgentResult = {
 	targetTabId?: string;
 };
 export type ConsultAgentCallback = (params: ConsultAgentParams) => Promise<ConsultAgentResult>;
-export type NewAITabWithPromptResult = { success: boolean; tabId?: string };
+/**
+ * Mark a delivered CLI dispatch in the transcript of the agent that ran it
+ * (`maestro-cli dispatch` from an agent's shell). Fire-and-forget: the dispatch
+ * already succeeded, and the pill is a record of it, not part of it.
+ */
+export type NoteAgentDelegationCallback = (notice: AgentDelegationNotice) => void;
+/**
+ * Result of `dispatch --new-tab`. The tab is created either way; `queued` says
+ * whether its prompt started immediately or joined the agent's execution queue
+ * because the agent was mid-turn. `error` carries the renderer's own reason for
+ * a refusal, so the CLI can report what actually happened instead of inferring
+ * one from a missing tab id.
+ */
+export type NewAITabWithPromptResult = {
+	success: boolean;
+	tabId?: string;
+	queued?: boolean;
+	error?: string;
+};
 export type NewAITabWithPromptCallback = (
 	sessionId: string,
 	prompt: string,
@@ -681,14 +729,11 @@ export type NotifyToastKind = 'success' | 'info' | 'warning' | 'error';
 export type NotifyCenterFlashVariant = 'success' | 'info' | 'warning' | 'error';
 
 /**
- * Data-driven click intent for an externally-fired toast. Mirrors
- * `ToastClickAction` in `renderer/stores/notificationStore.ts` - the only
+ * Data-driven click intent for an externally-fired toast. Alias of the
+ * canonical `ToastClickAction` (`shared/toastClickAction.ts`) - the only
  * subset that survives serialization across the IPC bridge.
  */
-export type NotifyToastClickAction =
-	| { kind: 'jump-session'; sessionId: string; tabId?: string }
-	| { kind: 'open-file'; sessionId: string; path: string }
-	| { kind: 'open-url'; url: string };
+export type NotifyToastClickAction = ToastClickAction;
 
 export interface NotifyToastParams {
 	title: string;
@@ -1064,9 +1109,16 @@ export type GetGroupsCallback = () => GroupData[];
 export type CreateGroupCallback = (
 	name: string,
 	emoji?: string,
-	parentGroupId?: string
+	parentGroupId?: string,
+	appearance?: GroupAppearance
 ) => Promise<{ id: string } | null>;
 export type RenameGroupCallback = (groupId: string, name: string) => Promise<boolean>;
+/**
+ * Apply a validated group update. Resolves `false` when the group is gone or
+ * the requested reparent would break the one-level nesting rule - the renderer
+ * is the only place that can answer either question.
+ */
+export type UpdateGroupCallback = (groupId: string, update: GroupUpdateRequest) => Promise<boolean>;
 export type DeleteGroupCallback = (groupId: string) => Promise<boolean>;
 export type MoveSessionToGroupCallback = (
 	sessionId: string,

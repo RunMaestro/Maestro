@@ -121,6 +121,8 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				setDefaultSaveToHistory={settings.setDefaultSaveToHistory}
 				synopsisDebounceSeconds={settings.synopsisDebounceSeconds}
 				setSynopsisDebounceSeconds={settings.setSynopsisDebounceSeconds}
+				groupCueEntries={settings.groupCueEntries}
+				setGroupCueEntries={settings.setGroupCueEntries}
 			/>
 			<ThinkingModeSection
 				theme={theme}

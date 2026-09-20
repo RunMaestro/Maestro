@@ -387,6 +387,36 @@ export function formatRunEvent(event: RunEvent, options?: { debug?: boolean }): 
 			return `${timeStr} ${c('green', '✓')} Document complete ${dim(`(${completed} tasks)`)}`;
 		}
 
+		case 'document_stalled': {
+			const reason = event.reason as string;
+			const remaining = event.remainingTasks as number;
+			const next = event.hasNextDocument as boolean;
+			return [
+				`${timeStr} ${c('yellow', '⚠')} Document stalled ${dim(`(${reason})`)}`,
+				`${timeStr}       ${dim(`${remaining} task${remaining === 1 ? '' : 's'} left unchecked. ${next ? 'Moving to the next document.' : 'No more documents.'}`)}`,
+			].join('\n');
+		}
+
+		case 'document_gated': {
+			const reason = event.reason as string;
+			const artifact = event.artifact as string | undefined;
+			const line = event.line as number;
+			return [
+				`${timeStr} ${c('yellow', '⏸')} Document needs a human ${dim(`(line ${line})`)}`,
+				`${timeStr}       ${reason}`,
+				...(artifact ? [`${timeStr}       ${dim(artifact)}`] : []),
+			].join('\n');
+		}
+
+		case 'halt': {
+			const reason = event.reason as string;
+			return [
+				`${timeStr} ${c('red', '■')} ${bold('Playbook halted by the agent')}`,
+				`${timeStr}       ${reason}`,
+				`${timeStr}       ${dim('Remove the <!-- maestro:halt --> marker before re-running.')}`,
+			].join('\n');
+		}
+
 		case 'loop_complete': {
 			const loopNum = event.iteration as number;
 			return `${timeStr} ${c('magenta', '↻')} Loop ${loopNum} complete`;
@@ -416,6 +446,7 @@ export function formatRunEvent(event: RunEvent, options?: { debug?: boolean }): 
 				scan: 'blue',
 				loop: 'magenta',
 				reset: 'yellow',
+				stall: 'yellow',
 			};
 			const categoryColor = categoryColors[category] || 'gray';
 			return `${timeStr} ${c('gray', '🔍')} ${c(categoryColor, `[${category}]`)} ${dim(message)}`;

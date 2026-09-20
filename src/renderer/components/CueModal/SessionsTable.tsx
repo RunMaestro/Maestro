@@ -14,33 +14,11 @@ import {
 import { pipelinesForSession } from '../CuePipelineEditor/utils/pipelineMembership';
 import { StatusDot, PipelineDot } from './StatusDot';
 import { formatRelativeTime } from './cueModalUtils';
-import type { CueSubscription } from '../../../shared/cue';
+import { triggerGroupKey } from '../../../shared/cue';
 
 // Mirrors the engine's anchor-group key so Run Now fires exactly one
 // representative per (pipeline_name, trigger-config) pair - not one per
 // pipeline_name, which would miss distinct trigger groups within a pipeline.
-function triggerGroupKey(sub: CueSubscription): string {
-	const filter = sub.filter
-		? Object.keys(sub.filter)
-				.sort()
-				.reduce<Record<string, unknown>>((acc, k) => {
-					acc[k] = (sub.filter as Record<string, unknown>)[k];
-					return acc;
-				}, {})
-		: null;
-	return JSON.stringify({
-		event: sub.event,
-		schedule_times: sub.schedule_times ?? null,
-		schedule_days: sub.schedule_days ?? null,
-		interval_minutes: sub.interval_minutes ?? null,
-		watch: sub.watch ?? null,
-		repo: sub.repo ?? null,
-		poll_minutes: sub.poll_minutes ?? null,
-		gh_state: sub.gh_state ?? null,
-		label: sub.label ?? null,
-		filter,
-	});
-}
 
 interface SessionsTableProps {
 	sessions: CueSessionStatus[];

@@ -18,7 +18,11 @@ vi.mock('electron', () => ({
 
 import { _internal } from '../../../../main/stats/token-usage/token-usage-accessor';
 import type { AgentSessionInfo } from '../../../../main/agents/session-storage';
-import type { ModelTokenUsage, SessionTokenBreakdown } from '../../../../shared/tokenUsage';
+import {
+	DEFAULT_ACCOUNT_KEY,
+	type ModelTokenUsage,
+	type SessionTokenBreakdown,
+} from '../../../../shared/tokenUsage';
 
 const { toBreakdown, aggregate, bucketStart } = _internal;
 
@@ -265,12 +269,63 @@ describe('aggregate - byAccount', () => {
 
 		const agg = aggregate(all, {});
 		expect(agg.byAccount).toHaveLength(2);
-		// Sorted by highest spend first.
-		expect(agg.byAccount[0].key).toBe('/home/u/.claude-work');
+		// Sorted by highest spend first. Keyed by provider AND account so two
+		// providers' default accounts cannot land in one row.
+		expect(agg.byAccount[0].key).toBe('claude-code::/home/u/.claude-work');
+		expect(agg.byAccount[0].label).toBe('Claude Code - work');
 		expect(agg.byAccount[0].costUsd).toBe(3);
+		expect(agg.byAccount[1].label).toBe('Claude Code - Default account');
 		expect(agg.byAccount[1].costUsd).toBe(1);
 		// Grand total still reconciles to the sum of the accounts.
 		expect(agg.totals.costUsd).toBe(4);
+	});
+
+	it('keeps two Codex accounts in separate rows', () => {
+		const all = [
+			breakdown({
+				sessionId: 'c1',
+				agentType: 'codex',
+				accountKey: '/home/u/.codex',
+				byModel: [model({ inputTokens: 100, costUsd: 1 })],
+			}),
+			breakdown({
+				sessionId: 'c2',
+				agentType: 'codex',
+				accountKey: '/home/u/.codex-project-acc-1',
+				byModel: [model({ inputTokens: 300, costUsd: 3 })],
+			}),
+		];
+
+		const agg = aggregate(all, {});
+		expect(agg.byAccount.map((g) => g.label)).toEqual([
+			'Codex - project-acc-1',
+			'Codex - Default account',
+		]);
+	});
+
+	it('does not collide the default accounts of different providers', () => {
+		// Every provider with no account split reports the same literal
+		// DEFAULT_ACCOUNT_KEY. Keyed on that alone, these merged into one
+		// unlabelled "Default" row whose cost summed four different vendors.
+		const all = [
+			breakdown({
+				sessionId: 'o1',
+				agentType: 'opencode',
+				accountKey: DEFAULT_ACCOUNT_KEY,
+				byModel: [model({ inputTokens: 100, costUsd: 1 })],
+			}),
+			breakdown({
+				sessionId: 'f1',
+				agentType: 'factory-droid',
+				accountKey: DEFAULT_ACCOUNT_KEY,
+				byModel: [model({ inputTokens: 300, costUsd: 3 })],
+			}),
+		];
+
+		const agg = aggregate(all, {});
+		expect(agg.byAccount).toHaveLength(2);
+		expect(agg.byAccount.map((g) => g.key)).toEqual(['factory-droid', 'opencode']);
+		expect(agg.byAccount.map((g) => g.label)).toEqual(['Factory Droid', 'OpenCode']);
 	});
 
 	it('counts a session once per account even when it spans several models', () => {
@@ -290,19 +345,25 @@ describe('aggregate - byAccount', () => {
 	});
 });
 
-describe('accountLabel', () => {
-	const { accountLabel } = _internal;
+describe('accountGroup', () => {
+	const { accountGroup } = _internal;
 
-	it('strips the .claude- prefix for a named account', () => {
-		expect(accountLabel('/home/u/.claude-gmail')).toBe('gmail');
+	it('names the account and the provider it belongs to', () => {
+		expect(accountGroup('claude-code', '/home/u/.claude-gmail')).toEqual({
+			key: 'claude-code::/home/u/.claude-gmail',
+			label: 'Claude Code - gmail',
+		});
 	});
 
-	it('names the plain ~/.claude dir as the default', () => {
-		expect(accountLabel('/home/u/.claude')).toBe('Default (~/.claude)');
+	it('humanizes the implicit default account dir', () => {
+		expect(accountGroup('codex', '/home/u/.codex').label).toBe('Codex - Default account');
 	});
 
-	it('labels agents with no multi-account concept as Default', () => {
-		expect(accountLabel('default')).toBe('Default');
+	it('falls back to the provider itself when it has no account concept', () => {
+		expect(accountGroup('opencode', DEFAULT_ACCOUNT_KEY)).toEqual({
+			key: 'opencode',
+			label: 'OpenCode',
+		});
 	});
 });
 

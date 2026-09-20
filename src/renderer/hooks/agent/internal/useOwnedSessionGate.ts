@@ -25,6 +25,7 @@
 import { useEffect, useRef, type RefObject } from 'react';
 import { useWindowContextOptional } from '../../../contexts/WindowContext';
 import { parseSessionId } from '../../../utils/sessionIdParser';
+import { isWebDesktop } from '../../../utils/runtimeContext';
 
 /** Suffix the PTY/command terminal appends to a raw process session id. */
 const TERMINAL_SUFFIX = '-terminal';
@@ -70,6 +71,35 @@ export function useOwnedSessionGate(): OwnedSessionGate {
 			return ownsSession(agentIdFromProcessSessionId(rawSessionId));
 		};
 	}, [ownsSession]);
+
+	return gateRef;
+}
+
+/**
+ * Gate for the ONE-SHOT side effects a `process:*` event triggers: the History
+ * entry, the background synopsis spawn, the stats row, the git-ref refresh, the
+ * queue dequeue, the spoken notification. Everything that must happen exactly
+ * once per turn, app-wide.
+ *
+ * Distinct from {@link useOwnedSessionGate}, which answers "should this client
+ * RENDER this event?" - a web-desktop client mirrors every agent and so must
+ * still flip the tab idle, but it must not ALSO write the History entry: every
+ * `safeSend` is fanned out to every connected browser, so with three phones on
+ * the LAN one finished turn produced four History rows, four `query_events`
+ * rows, four synopsis spawns and four spoken announcements. The desktop
+ * renderer (primary or the secondary window that owns the agent) is the single
+ * owner of those effects; on macOS closing every window also kills every
+ * managed process, so there is no state in which a browser is the only client
+ * left with a running agent to record.
+ */
+export function useOwnedSideEffectGate(): OwnedSessionGate {
+	const ownedGate = useOwnedSessionGate();
+	const gateRef = useRef<(rawSessionId: string) => boolean>(() => !isWebDesktop());
+
+	useEffect(() => {
+		gateRef.current = (rawSessionId: string) =>
+			!isWebDesktop() && (ownedGate.current?.(rawSessionId) ?? true);
+	}, [ownedGate]);
 
 	return gateRef;
 }

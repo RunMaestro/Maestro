@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { RetryStatusCard } from '../../../renderer/components/RetryStatusCard';
 import { useRetryStore } from '../../../renderer/stores/retryStore';
 import { mockTheme } from '../../helpers/mockTheme';
@@ -72,6 +72,45 @@ describe('RetryStatusCard', () => {
 
 		expect(screen.getByText('now…')).toBeInTheDocument();
 		expect(screen.getByRole('button', { name: /Try now/ })).toBeDisabled();
+	});
+
+	// An early fire - the user re-points the provider mid-outage - never moves
+	// `nextRetryAt`, so the countdown keeps running over a resend that is already
+	// on the wire. The button it used to leave enabled dispatched the same prompt
+	// a second time.
+	it('disables "Try now" while the resend is in flight, countdown or not', () => {
+		setOutage({ nextRetryAt: NOW + 90_000 });
+		useRetryStore.setState({
+			retries: {
+				's1:t1': {
+					sessionId: 's1',
+					tabId: 't1',
+					key: 's1:t1',
+					outageId: 'o1',
+					strategy: 'availability',
+					mode: 'resend',
+					status: 'in-flight',
+					attempt: 0,
+					startedAt: NOW,
+					nextRetryAt: NOW + 90_000,
+					lastMessage: 'API Error: 529 Overloaded',
+				},
+			},
+		});
+		render(<RetryStatusCard outageId="o1" theme={mockTheme} />);
+
+		expect(screen.getByText('now…')).toBeInTheDocument();
+
+		// Genuinely inert, not merely dimmed: `disabled:opacity-50` styles a button
+		// that a real `disabled` attribute is already keeping clicks away from. A
+		// dim-looking control that still fires is the failure this has to exclude,
+		// since the guard in `retryNow` would then be the only thing between a
+		// click and a second dispatch.
+		const tryNow = screen.getByRole('button', { name: /Try now/ });
+		expect(tryNow).toBeDisabled();
+		expect(tryNow).toHaveAttribute('disabled');
+		fireEvent.click(tryNow);
+		expect(tryNow).toBeDisabled();
 	});
 
 	it('freezes into a recovered summary with a pluralized retry count', () => {

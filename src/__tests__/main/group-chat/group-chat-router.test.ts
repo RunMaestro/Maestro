@@ -109,6 +109,7 @@ import {
 import { readLog } from '../../../main/group-chat/group-chat-log';
 import { AgentDetector } from '../../../main/agents';
 import { groupChatEmitters } from '../../../main/ipc/handlers/groupChat';
+import { getPrompt } from '../../../main/prompt-manager';
 
 describe('group-chat-router', () => {
 	let mockProcessManager: IProcessManager;
@@ -664,6 +665,31 @@ describe('group-chat-router', () => {
 			expect(moderatorPrompt.match(/@Agent-\(X\)/g)).toHaveLength(1);
 		});
 
+		it('injects the executable @mention contract into the moderator prompt', async () => {
+			const chat = await createTestChatWithModerator('Moderator Routing Contract Test');
+			await addParticipant(chat.id, 'Codex Reviewer', 'codex', mockProcessManager);
+			vi.mocked(getPrompt).mockReturnValueOnce(
+				'Customized moderator instructions.\n\n{{CONDUCTOR_PROFILE}}'
+			);
+			mockProcessManager.spawn.mockClear();
+
+			await routeUserMessage(
+				chat.id,
+				'@Codex-Reviewer please inspect the migration plan',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			const moderatorPrompt = mockProcessManager.spawn.mock.calls[0]?.[0]?.prompt ?? '';
+			expect(moderatorPrompt).toContain('Customized moderator instructions.');
+			expect(moderatorPrompt).toContain('## Required Routing Protocol');
+			expect(moderatorPrompt).toContain(
+				'Never claim that work was assigned, dispatched, addressed, or started'
+			);
+			expect(moderatorPrompt).toContain('Without it, zero participant processes start.');
+			expect(moderatorPrompt).toContain('- @Codex-Reviewer (codex session)');
+		});
+
 		it('throws for non-existent chat', async () => {
 			await expect(
 				routeUserMessage('non-existent-id', 'Hello', mockProcessManager, mockAgentDetector)
@@ -677,6 +703,28 @@ describe('group-chat-router', () => {
 			await expect(
 				routeUserMessage(chat.id, 'Hello', mockProcessManager, mockAgentDetector)
 			).rejects.toThrow(/not active/i);
+		});
+
+		it('records the user prompt in history', async () => {
+			const chat = await createTestChatWithModerator('User History Test');
+
+			await routeUserMessage(
+				chat.id,
+				'Ship the login form. Then tell me what broke.',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			const history = await getGroupChatHistory(chat.id);
+			const userEntry = history.find((e) => e.type === 'user');
+			expect(userEntry).toBeDefined();
+			expect(userEntry?.participantName).toBe('You');
+			// Summary is the first sentence; the whole prompt stays searchable.
+			expect(userEntry?.summary).toBe('Ship the login form.');
+			expect(userEntry?.fullResponse).toBe('Ship the login form. Then tell me what broke.');
+			// A conductor prompt costs nothing and takes no time to run.
+			expect(userEntry?.cost).toBeUndefined();
+			expect(userEntry?.elapsedTimeMs).toBeUndefined();
 		});
 
 		it('works without process manager (log only)', async () => {
@@ -767,6 +815,171 @@ describe('group-chat-router', () => {
 				call[0]?.prompt?.includes('login form')
 			);
 			expect(spawnCall).toBeDefined();
+		});
+
+		it('retries a prose-only acknowledgement of explicitly mentioned participants', async () => {
+			const chat = await createTestChatWithModerator('Missing Mention Retry Test');
+			await addParticipant(chat.id, 'Codex Reviewer', 'codex', mockProcessManager);
+			await routeUserMessage(
+				chat.id,
+				'@Codex-Reviewer review the migration plan',
+				mockProcessManager,
+				mockAgentDetector
+			);
+			mockProcessManager.spawn.mockClear();
+
+			await routeModeratorResponse(
+				chat.id,
+				'The review has been assigned to the participant.',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			const retrySpawn = mockProcessManager.spawn.mock.calls.find((call) =>
+				call[0]?.sessionId?.includes(`group-chat-${chat.id}-moderator-`)
+			);
+			expect(retrySpawn).toBeDefined();
+			expect(retrySpawn?.[0].prompt).toContain('## Routing Correction');
+			expect(retrySpawn?.[0].prompt).toContain(
+				'Participants explicitly addressed by the user: @Codex-Reviewer'
+			);
+			expect(retrySpawn?.[0].prompt).toContain('The review has been assigned to the participant.');
+
+			const messages = await readLog(chat.logPath);
+			expect(messages.filter((entry) => entry.from === 'user')).toHaveLength(1);
+			expect(messages.some((entry) => entry.from === 'moderator')).toBe(false);
+		});
+
+		it('rejects a second prose-only acknowledgement instead of presenting it as final', async () => {
+			const chat = await createTestChatWithModerator('Missing Mention Rejection Test');
+			await addParticipant(chat.id, 'Client', 'codex', mockProcessManager);
+			await routeUserMessage(
+				chat.id,
+				'@Client review the migration plan',
+				mockProcessManager,
+				mockAgentDetector
+			);
+			await routeModeratorResponse(
+				chat.id,
+				'The review has been assigned.',
+				mockProcessManager,
+				mockAgentDetector
+			);
+			mockProcessManager.spawn.mockClear();
+
+			await routeModeratorResponse(
+				chat.id,
+				'The participant is working now.',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+			const messages = await readLog(chat.logPath);
+			expect(messages.some((entry) => entry.from === 'moderator')).toBe(false);
+			expect(
+				messages.some(
+					(entry) =>
+						entry.from === 'system' &&
+						entry.content.includes('after one retry') &&
+						entry.content.includes('@Client')
+				)
+			).toBe(true);
+
+			const history = await getGroupChatHistory(chat.id);
+			expect(history).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						participantName: 'Moderator',
+						type: 'error',
+					}),
+				])
+			);
+		});
+
+		it('accepts an executable handoff produced by the correction turn', async () => {
+			const chat = await createTestChatWithModerator('Missing Mention Recovery Test');
+			await addParticipant(chat.id, 'Client', 'codex', mockProcessManager);
+			await routeUserMessage(
+				chat.id,
+				'@Client review the migration plan',
+				mockProcessManager,
+				mockAgentDetector
+			);
+			await routeModeratorResponse(
+				chat.id,
+				'The review has been assigned.',
+				mockProcessManager,
+				mockAgentDetector
+			);
+			mockProcessManager.spawn.mockClear();
+
+			await routeModeratorResponse(
+				chat.id,
+				'@Client: Review the migration plan and report any conflicts.',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			const participantSpawn = mockProcessManager.spawn.mock.calls.find((call) =>
+				call[0]?.sessionId?.includes(`group-chat-${chat.id}-participant-Client-`)
+			);
+			expect(participantSpawn).toBeDefined();
+			const messages = await readLog(chat.logPath);
+			expect(
+				messages.some((entry) => entry.from === 'moderator' && entry.content.startsWith('@Client:'))
+			).toBe(true);
+		});
+
+		it('retries a partial handoff and starts every requested participant after correction', async () => {
+			const chat = await createTestChatWithModerator('Partial Handoff Recovery Test');
+			await addParticipant(chat.id, 'Codex Reviewer', 'codex', mockProcessManager);
+			await addParticipant(chat.id, 'Codex Tester', 'codex', mockProcessManager);
+			await routeUserMessage(
+				chat.id,
+				'@Codex-Reviewer review the migration and @Codex-Tester test it',
+				mockProcessManager,
+				mockAgentDetector
+			);
+			mockProcessManager.spawn.mockClear();
+
+			await routeModeratorResponse(
+				chat.id,
+				'@Codex-Reviewer: Review the migration plan.',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			const retrySpawn = mockProcessManager.spawn.mock.calls.find((call) =>
+				call[0]?.sessionId?.includes(`group-chat-${chat.id}-moderator-`)
+			);
+			expect(retrySpawn).toBeDefined();
+			expect(retrySpawn?.[0].prompt).toContain(
+				'Participants explicitly addressed by the user: @Codex-Reviewer, @Codex-Tester'
+			);
+			expect(
+				mockProcessManager.spawn.mock.calls.some((call) =>
+					call[0]?.sessionId?.includes(`group-chat-${chat.id}-participant-`)
+				)
+			).toBe(false);
+
+			mockProcessManager.spawn.mockClear();
+			await routeModeratorResponse(
+				chat.id,
+				'@Codex-Reviewer: Review the migration plan.\n@Codex-Tester: Test the migration plan.',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			const participantSessionIds = mockProcessManager.spawn.mock.calls
+				.map((call) => call[0]?.sessionId as string)
+				.filter((sessionId) => sessionId?.includes(`group-chat-${chat.id}-participant-`));
+			expect(participantSessionIds).toEqual(
+				expect.arrayContaining([
+					expect.stringContaining('-participant-Codex Reviewer-'),
+					expect.stringContaining('-participant-Codex Tester-'),
+				])
+			);
 		});
 
 		it('auto-adds and spawns sessions with parentheses from moderator mentions', async () => {
@@ -1062,6 +1275,21 @@ describe('group-chat-router', () => {
 			const history = await getGroupChatHistory(chat.id);
 			const moderatorEntry = history.find((e) => e.participantName === 'Moderator');
 			expect(moderatorEntry?.type).toBe('synthesis');
+		});
+
+		it('injects the executable @mention contract into synthesis prompts', async () => {
+			const chat = await createTestChatWithModerator('Synthesis Routing Contract Test');
+			await addParticipant(chat.id, 'Codex Reviewer', 'codex', mockProcessManager);
+			mockProcessManager.spawn.mockClear();
+
+			await spawnModeratorSynthesis(chat.id, mockProcessManager, mockAgentDetector);
+
+			const synthesisPrompt = mockProcessManager.spawn.mock.calls[0]?.[0]?.prompt ?? '';
+			expect(synthesisPrompt).toContain('## Required Routing Protocol');
+			expect(synthesisPrompt).toContain(
+				'Before responding, verify that every participant you claim is working'
+			);
+			expect(synthesisPrompt).toContain('- @Codex-Reviewer (codex session)');
 		});
 
 		it('records an error entry when a participant fails to spawn', async () => {

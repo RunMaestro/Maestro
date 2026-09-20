@@ -7,10 +7,17 @@
  * toggle is on to decide whether to fall back from interactive (Time Limits)
  * to API (API Limits) when the Max plan quota is exhausted.
  *
- * Snapshots auto-expire 24 hours after `sampledAt`. Pruning is opportunistic
- * (on read AND write) - no background timer - so the on-disk file stays clean
- * even after long-quiet periods, and corrupted records self-heal because an
- * unparseable `sampledAt` reads as expired.
+ * Snapshots expire 24 hours after `sampledAt`: past that they are no longer
+ * returned by `getSnapshot` / `getAllSnapshots`, so no stale reading can decide
+ * a fallback. They are still KEPT on disk for `SNAPSHOT_RETENTION_MS` and
+ * returned by `getRetainedSnapshots()`, which is what the Usage Dashboard reads
+ * - an account whose agents all moved away keeps its row and its last known
+ * bars (flagged stale in the UI) instead of vanishing a day later.
+ *
+ * Pruning (beyond retention) is opportunistic - on read AND write, no
+ * background timer - so the on-disk file stays clean even after long-quiet
+ * periods, and corrupted records self-heal because an unparseable `sampledAt`
+ * reads as beyond retention.
  *
  * The `Store` instance is created lazily on first method call so tests can
  * `vi.mock('electron-store')` before the module is touched.
@@ -21,11 +28,13 @@ import path from 'path';
 import Store from 'electron-store';
 
 import type { UsageSnapshot } from '../agents/claude-mode-selector';
+import { partitionSnapshotsByAge, SNAPSHOT_RETENTION_MS } from './usageSnapshotRetention';
 
 // Re-export so consumers can grab the type from either module.
 export type { UsageSnapshot } from '../agents/claude-mode-selector';
+export { SNAPSHOT_RETENTION_MS } from './usageSnapshotRetention';
 
-/** TTL after which a snapshot is treated as expired and pruned. */
+/** TTL after which a snapshot is no longer trusted (but is still retained). */
 export const SNAPSHOT_TTL_MS = 24 * 60 * 60 * 1000;
 
 interface ClaudeUsageStoreData {
@@ -54,85 +63,57 @@ function getStore(): Store<ClaudeUsageStoreData> {
 }
 
 /**
- * Return true when a snapshot is older than the TTL or its `sampledAt` is
- * unparseable. Both cases are treated identically so a corrupted record
- * self-heals on the next read or write.
+ * Split the stored map by the two clocks and write back when anything aged out
+ * of retention. `live` holds what may be acted on, `retained` what may be
+ * displayed.
  */
-function isExpired(snapshot: UsageSnapshot, now: number): boolean {
-	const sampledAtMs = new Date(snapshot.sampledAt).getTime();
-	if (Number.isNaN(sampledAtMs)) {
-		return true;
+function readPartitioned(now: number) {
+	const store = getStore();
+	const current = store.get('snapshots', {});
+	const partitioned = partitionSnapshotsByAge(current, now, SNAPSHOT_TTL_MS, SNAPSHOT_RETENTION_MS);
+	if (partitioned.prunedAny) {
+		store.set('snapshots', partitioned.retained);
 	}
-	return now - sampledAtMs > SNAPSHOT_TTL_MS;
+	return partitioned;
 }
 
 /**
- * Write a snapshot, keyed by its `configDirKey`. Concurrently prunes any
- * expired neighbors so the on-disk file doesn't accumulate dead keys after
- * long-quiet periods.
+ * Write a snapshot, keyed by its `configDirKey`. Concurrently prunes neighbors
+ * that aged past retention so the on-disk file doesn't accumulate dead keys
+ * after long-quiet periods. Merely-expired neighbors are kept: the dashboard
+ * still draws their last known bars.
  */
 export function setSnapshot(snapshot: UsageSnapshot): void {
 	const store = getStore();
-	const now = Date.now();
-	const current = store.get('snapshots', {});
-	const next: Record<string, UsageSnapshot> = {};
-	for (const [key, entry] of Object.entries(current)) {
-		if (!isExpired(entry, now)) {
-			next[key] = entry;
-		}
-	}
-	next[snapshot.configDirKey] = snapshot;
-	store.set('snapshots', next);
+	const { retained } = readPartitioned(Date.now());
+	store.set('snapshots', { ...retained, [snapshot.configDirKey]: snapshot });
 }
 
 /**
  * Read a snapshot by canonical config-dir key. Returns null if missing,
  * expired (older than `SNAPSHOT_TTL_MS`), or carrying an unparseable
- * `sampledAt`. Side-effect: expired entries are pruned from disk on read.
+ * `sampledAt`. Entries past retention are pruned from disk on read.
  */
 export function getSnapshot(configDirKey: string): UsageSnapshot | null {
-	const store = getStore();
-	const now = Date.now();
-	const current = store.get('snapshots', {});
-	const entry = current[configDirKey];
-	if (!entry) {
-		return null;
-	}
-	if (isExpired(entry, now)) {
-		const next: Record<string, UsageSnapshot> = {};
-		for (const [key, value] of Object.entries(current)) {
-			if (key === configDirKey) continue;
-			if (!isExpired(value, now)) {
-				next[key] = value;
-			}
-		}
-		store.set('snapshots', next);
-		return null;
-	}
-	return entry;
+	return readPartitioned(Date.now()).live[configDirKey] ?? null;
 }
 
 /**
  * Return every non-expired snapshot in the store, keyed by `configDirKey`.
- * Prunes expired entries on read so the on-disk file stays clean.
+ * This is the decision-grade map - the mode selector and the spawner read it.
  */
 export function getAllSnapshots(): Record<string, UsageSnapshot> {
-	const store = getStore();
-	const now = Date.now();
-	const current = store.get('snapshots', {});
-	const live: Record<string, UsageSnapshot> = {};
-	let prunedAny = false;
-	for (const [key, entry] of Object.entries(current)) {
-		if (isExpired(entry, now)) {
-			prunedAny = true;
-		} else {
-			live[key] = entry;
-		}
-	}
-	if (prunedAny) {
-		store.set('snapshots', live);
-	}
-	return live;
+	return readPartitioned(Date.now()).live;
+}
+
+/**
+ * Return every snapshot still within retention, including expired ones. This is
+ * the display-grade map: the Usage Dashboard keeps an account's row and its
+ * last known bars (badged "stale") after the TTL, so an account nobody is
+ * running agents on right now does not disappear from the panel.
+ */
+export function getRetainedSnapshots(): Record<string, UsageSnapshot> {
+	return readPartitioned(Date.now()).retained;
 }
 
 /**

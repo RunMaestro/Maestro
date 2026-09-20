@@ -490,3 +490,44 @@ export async function saveImageElementToDisk(el: ExportableImage): Promise<SaveI
 
 	return { saved: true, path: filePath };
 }
+
+/**
+ * Save image bytes to disk, asking the user where via the native save dialog.
+ *
+ * The sibling `saveImageElementToDisk` exports an image that is already in the
+ * DOM; this one takes bytes produced on the fly (a screenshot, a canvas render)
+ * that have no element to point at. Falls back to a browser download when the
+ * native dialog is unavailable (web renderer). A cancelled dialog reports
+ * `{ saved: false }` with no error.
+ */
+export async function saveImageDataUrlToDisk(
+	dataUrl: string,
+	defaultName?: string
+): Promise<SaveImageResult> {
+	const ext = dataUrlExtension(dataUrl);
+	const name = defaultName?.trim() || `maestro-image.${ext}`;
+
+	const saveFile = window.maestro?.dialog?.saveFile;
+	if (!saveFile) {
+		downloadDataUrl(dataUrl, name);
+		return { saved: true };
+	}
+
+	const filePath = await saveFile({
+		defaultPath: name,
+		filters: [{ name: `${ext.toUpperCase()} Image`, extensions: [ext] }],
+		title: 'Save Image',
+	});
+	if (!filePath) return { saved: false };
+
+	try {
+		// Raster bytes go through writeImageFile - fs.writeFile is UTF-8 and
+		// would corrupt them.
+		const result = await window.maestro.fs.writeImageFile(filePath, dataUrl);
+		if (!result?.success) return { saved: false, error: `Failed to write ${filePath}` };
+	} catch (err) {
+		return { saved: false, error: err instanceof Error ? err.message : 'Failed to write the file' };
+	}
+
+	return { saved: true, path: filePath };
+}

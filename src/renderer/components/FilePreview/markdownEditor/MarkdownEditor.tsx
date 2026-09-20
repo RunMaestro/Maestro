@@ -47,6 +47,8 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 			showLineNumbers = true,
 			onLineNumberContextMenu,
 			onKeyDown,
+			onPaste,
+			placeholder,
 			fontScale = 1,
 			fontFamily,
 			baseFontPx,
@@ -61,6 +63,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 		// fresh closures without us reconfiguring on every prop change.
 		const onChangeRef = useRef(onChange);
 		const onKeyDownRef = useRef(onKeyDown);
+		const onPasteRef = useRef(onPaste);
 		const onGutterContextRef = useRef(onLineNumberContextMenu);
 		useEffect(() => {
 			onChangeRef.current = onChange;
@@ -68,6 +71,9 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 		useEffect(() => {
 			onKeyDownRef.current = onKeyDown;
 		}, [onKeyDown]);
+		useEffect(() => {
+			onPasteRef.current = onPaste;
+		}, [onPaste]);
 		useEffect(() => {
 			onGutterContextRef.current = onLineNumberContextMenu;
 		}, [onLineNumberContextMenu]);
@@ -102,6 +108,8 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 				readOnly,
 				onGutterContextMenu: (lineNumber, event) => onGutterContextRef.current?.(lineNumber, event),
 				onKeyDown: (event) => onKeyDownRef.current?.(event),
+				onPaste: (event) => onPasteRef.current?.(event),
+				placeholder,
 			});
 
 			const updateListener = EditorView.updateListener.of((update) => {
@@ -207,9 +215,11 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 				readOnly,
 				onGutterContextMenu: (lineNumber, event) => onGutterContextRef.current?.(lineNumber, event),
 				onKeyDown: (event) => onKeyDownRef.current?.(event),
+				onPaste: (event) => onPasteRef.current?.(event),
+				placeholder,
 			});
 			view.dispatch({ effects: compartments.base.reconfigure(baseExt) });
-		}, [wrap, showLineNumbers, spellCheck, readOnly, compartments.base]);
+		}, [wrap, showLineNumbers, spellCheck, readOnly, placeholder, compartments.base]);
 
 		useImperativeHandle(
 			ref,
@@ -277,6 +287,22 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 					const view = viewRef.current;
 					if (!view) return 0;
 					return view.state.selection.main.head;
+				},
+				getSelectionRange() {
+					const view = viewRef.current;
+					if (!view) return { from: 0, to: 0 };
+					const { from, to } = view.state.selection.main;
+					return { from, to };
+				},
+				getScrollTop() {
+					const view = viewRef.current;
+					if (!view) return 0;
+					return view.scrollDOM.scrollTop;
+				},
+				setScrollTop(px: number) {
+					const view = viewRef.current;
+					if (!view) return;
+					view.scrollDOM.scrollTop = Math.max(0, px);
 				},
 				coordsAtPos(pos: number) {
 					const view = viewRef.current;

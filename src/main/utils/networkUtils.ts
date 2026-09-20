@@ -193,3 +193,25 @@ export function getLocalIpAddressSync(): string {
 export function listLocalIpv4Addresses(): string[] {
 	return rankedIpv4Candidates().map((candidate) => candidate.ip);
 }
+
+/**
+ * Stable fingerprint of every non-internal IPv4 address currently configured.
+ *
+ * Used to detect that the machine moved networks without paying for a route
+ * lookup on every poll: `getifaddrs()` plus a string compare is cheap, the UDP
+ * probe in `getLocalIpAddress()` is not. Sorted so interface enumeration order
+ * cannot masquerade as a change.
+ */
+export function getIpv4InterfaceFingerprint(): string {
+	const parts: string[] = [];
+
+	for (const [name, addrs] of Object.entries(networkInterfaces())) {
+		if (!addrs) continue;
+		for (const addr of addrs) {
+			if (addr.internal || addr.family !== 'IPv4') continue;
+			parts.push(`${name}=${addr.address}`);
+		}
+	}
+
+	return parts.sort().join(',');
+}

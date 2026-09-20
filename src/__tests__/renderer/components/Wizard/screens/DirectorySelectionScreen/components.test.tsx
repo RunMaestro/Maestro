@@ -9,6 +9,7 @@ import {
 	DirectorySelectionHeader,
 	DirectorySelectionLoading,
 	DirectoryStatusPanel,
+	PlaybookChoicePanel,
 } from '../../../../../../renderer/components/Wizard/screens/DirectorySelectionScreen/components';
 
 describe('DirectorySelectionScreen components', () => {
@@ -155,5 +156,52 @@ describe('DirectorySelectionScreen components', () => {
 
 		fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
 		expect(onContinue).toHaveBeenCalled();
+	});
+
+	describe('PlaybookChoicePanel', () => {
+		it('says what the next step is and offers a way past it', () => {
+			const onSkip = vi.fn();
+			render(
+				<PlaybookChoicePanel
+					theme={mockTheme}
+					show
+					isSkipping={false}
+					skipError={null}
+					onSkip={onSkip}
+				/>
+			);
+
+			expect(screen.getByText(/playbook/i)).toBeInTheDocument();
+			fireEvent.click(screen.getByText('Skip that, just create the agent'));
+			expect(onSkip).toHaveBeenCalled();
+		});
+
+		it('renders nothing before a directory is chosen', () => {
+			const { container } = render(
+				<PlaybookChoicePanel
+					theme={mockTheme}
+					show={false}
+					isSkipping={false}
+					skipError={null}
+					onSkip={vi.fn()}
+				/>
+			);
+
+			expect(container).toBeEmptyDOMElement();
+		});
+
+		it('shows a launch failure', () => {
+			render(
+				<PlaybookChoicePanel
+					theme={mockTheme}
+					show
+					isSkipping={false}
+					skipError="An agent named Maestro already exists"
+					onSkip={vi.fn()}
+				/>
+			);
+
+			expect(screen.getByText('An agent named Maestro already exists')).toBeInTheDocument();
+		});
 	});
 });

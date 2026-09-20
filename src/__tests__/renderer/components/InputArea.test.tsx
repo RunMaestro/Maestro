@@ -749,8 +749,10 @@ describe('InputArea', () => {
 			render(<InputArea {...props} />);
 
 			expect(
+				// Prefix match: the tooltip now carries the toggle's chord as a
+				// suffix, so an exact-string lookup would break on every rebind.
 				screen.getByTitle(
-					'Full Access: All permission prompts bypassed. Agent can read, write, and execute without confirmation. Ask-back questions (AskUserQuestion) are not surfaced in this mode.'
+					/^Full Access: All permission prompts bypassed\. Agent can read, write, and execute without confirmation\. Ask-back questions \(AskUserQuestion\) are not surfaced in this mode\./
 				)
 			).toBeInTheDocument();
 		});

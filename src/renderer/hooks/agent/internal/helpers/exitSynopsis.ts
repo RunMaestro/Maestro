@@ -160,6 +160,10 @@ export async function runExitSynopsis(
 			usageStats: result.usageStats,
 			contextUsage: result.contextUsage,
 			sessionId: synopsisData.sessionId,
+			// Carried so main can attribute the entry to the Web Login account
+			// that started the turn - it noted the account at spawn, keyed by
+			// agent + tab, because no acting user is in scope out here.
+			tabId: synopsisData.tabId,
 			projectPath: synopsisData.cwd,
 			sessionName: synopsisData.tabName,
 			elapsedTimeMs: synopsisData.taskDuration,

@@ -392,7 +392,7 @@ export function MaestroWizard({
 			case 'agent-selection':
 				return <AgentSelectionScreen theme={theme} />;
 			case 'directory-selection':
-				return <DirectorySelectionScreen theme={theme} />;
+				return <DirectorySelectionScreen theme={theme} onLaunchSession={onLaunchSession} />;
 			case 'conversation':
 				return (
 					<ConversationScreen

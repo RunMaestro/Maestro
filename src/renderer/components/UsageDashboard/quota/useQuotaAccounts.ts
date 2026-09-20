@@ -4,9 +4,11 @@
  * Derives the account list a provider quota panel should show, mirroring the
  * main-side sampler's sourcing rule: explicit prop keys + locally-discovered
  * account dirs + every `<TOOL>_HOME`/`CONFIG_DIR` referenced by a session
- * (agent-level customEnvVars merged under session-level, session wins) + any
- * key already present in the snapshot store. Sessions without an explicit env
- * var fall back to that provider's implicit default account dir.
+ * (the agent's own customEnvVars, or the provider-level set when it has none -
+ * the spawner replaces, it does not layer) + any key already present in the
+ * snapshot store. Sessions without an explicit env var fall back to that
+ * provider's implicit default account dir. Agents billing an API key, gateway,
+ * or cloud provider are on no account's plan and are not counted.
  *
  * The result includes selection state (which account tab is active) clamped to
  * the first account whenever the current selection disappears.
@@ -14,7 +16,11 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSessionStore } from '../../../stores/sessionStore';
-import { resolveAgentAccountKey } from '../../../../shared/providerProfiles';
+import {
+	effectiveAgentCustomEnvVars,
+	resolveAgentAccountKey,
+	resolveAgentBillingCredential,
+} from '../../../../shared/providerProfiles';
 import { getHomeDir, getHomeDirAsync } from '../../../utils/homeDir';
 
 export interface UseQuotaAccountsOptions {
@@ -42,16 +48,13 @@ export interface UseQuotaAccountsOptions {
 export interface UseQuotaAccountsResult {
 	configuredAccountKeys: string[];
 	/**
-	 * How many agents of this provider resolve to each account key. Computed in
-	 * the same pass that builds `configuredAccountKeys` so the badge can never
-	 * disagree with the tab/row list about which account an agent belongs to.
-	 * Accounts with no agent (a cached snapshot, a discovered dir) are absent.
+	 * How many local agents of this provider resolve to each account key.
+	 * Computed in the same pass that builds `configuredAccountKeys` so the badge
+	 * can never disagree with the tab/row list about which account an agent
+	 * belongs to. Accounts with no agent (a cached snapshot, a discovered dir)
+	 * are absent.
 	 *
-	 * SSH-remote agents ARE counted. The count answers "how many agents draw on
-	 * this plan?", and an agent configured against a profile spends that plan's
-	 * quota wherever the process happens to run. Do NOT filter them out to match
-	 * the main-process sampler, which skips SSH sessions for an unrelated reason
-	 * - see the note on the counting loop below.
+	 * SSH-remote agents are NOT counted - see the note on the counting loop below.
 	 */
 	agentCountsByAccount: Record<string, number>;
 	selectedKey: string | null;
@@ -124,22 +127,28 @@ export function useQuotaAccounts(opts: UseQuotaAccountsOptions): UseQuotaAccount
 		const counts: Record<string, number> = {};
 		for (const key of accountKeys) keys.add(normalizeKey(key));
 		for (const key of discoveredAccountKeys) keys.add(normalizeKey(key));
-		// Deliberately NOT filtered by `sessionSshRemoteConfig.enabled`. The
-		// main-process sampler (`buildTarget` in claude-usage-startup.ts) DOES skip
-		// SSH sessions, and the mismatch looks like a bug until you ask what each
-		// side is for: the sampler asks "can I probe this directory on THIS
-		// machine?" (no - the path names a remote host's disk), while this count
-		// asks "how many agents draw on this plan?" (yes - a remote agent burns the
-		// same account's quota). Making either one match the other reports a number
-		// nobody wants, so if you came here to reconcile them, don't.
 		for (const s of sessions) {
 			if (s.toolType !== toolType) continue;
-			const sessionEnv = (s.customEnvVars ?? {}) as Record<string, string>;
-			const merged = { ...agentLevelEnvVars, ...sessionEnv };
+			// SSH-remote agents are skipped entirely: neither counted nor turned
+			// into an account row. Their path names a directory on the remote
+			// host's disk, holding that host's own login, which can be a
+			// different account from this machine's same-named dir (one real
+			// setup had a dir logged into one account locally and another on the
+			// remote). The main-process sampler skips them for the same reason,
+			// and the Agents grid files them under their own `account @ host`
+			// profile, so the chip's count equals the grid it opens.
+			if (s.sessionSshRemoteConfig?.enabled) continue;
+			const env = effectiveAgentCustomEnvVars(
+				s.customEnvVars as Record<string, string> | undefined,
+				agentLevelEnvVars
+			);
+			// An API key, gateway, or cloud provider outranks the config dir's
+			// login, so that agent draws nothing from this plan's quota.
+			if (resolveAgentBillingCredential(toolType, env)) continue;
 			// An agent with no env var runs against the implicit `~/<subdir>`
 			// account, so it belongs to that bucket - unless $HOME hasn't
 			// resolved yet, in which case there is no key to attribute it to.
-			const resolved = resolveAgentAccountKey(toolType, merged, homeDir);
+			const resolved = resolveAgentAccountKey(toolType, env, homeDir);
 			if (!resolved) continue;
 			keys.add(resolved);
 			counts[resolved] = (counts[resolved] ?? 0) + 1;
@@ -165,7 +174,6 @@ export function useQuotaAccounts(opts: UseQuotaAccountsOptions): UseQuotaAccount
 				byFold.set(fold, key);
 			}
 		}
-		const foldedKeys = Array.from(byFold.values());
 
 		// The counts were tallied per raw spelling, so fold them the same way. A
 		// count left under a spelling that just lost the fold would be stranded:
@@ -178,7 +186,7 @@ export function useQuotaAccounts(opts: UseQuotaAccountsOptions): UseQuotaAccount
 		}
 
 		return {
-			configuredAccountKeys: foldedKeys.sort((a, b) =>
+			configuredAccountKeys: Array.from(byFold.values()).sort((a, b) =>
 				deriveShortName(a).localeCompare(deriveShortName(b))
 			),
 			agentCountsByAccount: foldedCounts,

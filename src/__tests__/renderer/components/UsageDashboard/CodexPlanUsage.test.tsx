@@ -101,6 +101,58 @@ describe('CodexPlanUsage - configured account without snapshot', () => {
 	});
 });
 
+describe('CodexPlanUsage - window length labels', () => {
+	it('labels each bar with the window length the sampler recorded', () => {
+		seedSnapshots({
+			'/Users/me/.codex': {
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				codexHomeKey: '/Users/me/.codex',
+				authState: 'authenticated',
+				session: { percent: 50, resetsAt: '2026-05-15T05:00:00.000Z', windowSeconds: 18000 },
+				weekly: { percent: 30, resetsAt: '2026-05-22T00:00:00.000Z', windowSeconds: 604800 },
+			},
+		});
+
+		render(<CodexPlanUsage theme={theme} />);
+
+		expect(screen.getByText('Session (5h)')).toBeInTheDocument();
+		expect(screen.getByText('Weekly')).toBeInTheDocument();
+	});
+
+	it('shows a weekly-only account under Weekly rather than as a 5h session (#1596)', () => {
+		// The `prolite` shape: one window, seven days long, arriving in the slot
+		// a positional map read as the session window.
+		seedSnapshots({
+			'/Users/me/.codex': {
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				codexHomeKey: '/Users/me/.codex',
+				authState: 'authenticated',
+				weekly: { percent: 25, resetsAt: '2026-05-22T00:00:00.000Z', windowSeconds: 604800 },
+			},
+		});
+
+		render(<CodexPlanUsage theme={theme} />);
+
+		expect(screen.getByText('Weekly')).toBeInTheDocument();
+		expect(screen.queryByText(/^Session/)).toBeNull();
+	});
+
+	it('keeps the 5h session label on a snapshot taken before window lengths were recorded', () => {
+		seedSnapshots({
+			'/Users/me/.codex': {
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				codexHomeKey: '/Users/me/.codex',
+				authState: 'authenticated',
+				session: { percent: 50, resetsAt: '2026-05-15T05:00:00.000Z' },
+			},
+		});
+
+		render(<CodexPlanUsage theme={theme} />);
+
+		expect(screen.getByText('Session (5h)')).toBeInTheDocument();
+	});
+});
+
 describe('CodexPlanUsage - multi-account tabs', () => {
 	it('renders a tab per account but only one selected row at a time', () => {
 		seedSnapshots({

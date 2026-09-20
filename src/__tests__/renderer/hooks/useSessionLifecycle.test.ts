@@ -23,12 +23,13 @@ import {
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useModalStore } from '../../../renderer/stores/modalStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
-import { useFailoverStore } from '../../../renderer/stores/failoverStore';
 import type { Session, AITab } from '../../../renderer/types';
-import type { FailoverConfig } from '../../../shared/providerFailover';
 import { createMockFileTab, createMockAITab } from '../../helpers/mockTab';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { createGroupFromTabRefs } from '../../../renderer/utils/panelLayout';
+import { notifyToast } from '../../../renderer/stores/notificationStore';
+
+vi.mock('../../../renderer/stores/notificationStore', () => ({ notifyToast: vi.fn() }));
 
 // ============================================================================
 // Test Helpers
@@ -98,6 +99,8 @@ beforeEach(() => {
 		sessionsLoaded: false,
 		initialLoadComplete: false,
 		groups: [],
+		groupsLoaded: false,
+		sessionsReadOk: false,
 	});
 
 	useModalStore.setState({ modals: new Map() });
@@ -107,13 +110,10 @@ beforeEach(() => {
 		preFilterActiveTabId: null,
 	});
 
-	useFailoverStore.setState({ states: {} });
-
 	// Mock window.maestro APIs
 	(window as any).maestro = {
 		process: {
 			kill: vi.fn().mockResolvedValue(undefined),
-			setFailoverOverlay: vi.fn().mockResolvedValue(undefined),
 		},
 		stats: {
 			recordSessionClosed: vi.fn(),
@@ -230,7 +230,6 @@ describe('useSessionLifecycle', () => {
 					undefined, // retryOnTokenExhaustion
 					undefined, // additionalDirectories
 					undefined, // contextWindowSource
-					undefined, // failoverConfig
 					{ PARKED: 'b' }
 				);
 			});
@@ -279,6 +278,86 @@ describe('useSessionLifecycle', () => {
 			expect(updated.nudgeMessage).toBeUndefined();
 			expect(updated.newSessionMessage).toBeUndefined();
 			expect(updated.customPath).toBeUndefined();
+		});
+
+		const saveWithWorkingDirectory = (
+			save: ReturnType<typeof useSessionLifecycle>['handleSaveEditAgent'],
+			workingDirectory: string
+		) =>
+			save(
+				'session-1',
+				'Agent',
+				undefined, // toolType
+				undefined, // nudgeMessage
+				undefined, // newSessionMessage
+				undefined, // customPath
+				undefined, // customArgs
+				undefined, // customEnvVars
+				undefined, // customModel
+				undefined, // customEffort
+				undefined, // customContextWindow
+				undefined, // sessionSshRemoteConfig
+				undefined, // enableMaestroP
+				undefined, // maestroPPath
+				undefined, // maestroPMode
+				undefined, // retryOnAvailabilityErrors
+				undefined, // retryOnTokenExhaustion
+				undefined, // additionalDirectories
+				undefined, // contextWindowSource
+				undefined, // customEnvVarsDisabled
+				workingDirectory
+			);
+
+		it('moves every path field when the working directory changes', () => {
+			const session = createMockSession({
+				id: 'session-1',
+				shellCwd: '/projects/myapp',
+				autoRunFolderPath: '/projects/myapp/.maestro/playbooks',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			act(() => {
+				saveWithWorkingDirectory(result.current.handleSaveEditAgent, '/projects/moved');
+			});
+
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.cwd).toBe('/projects/moved');
+			expect(updated.fullPath).toBe('/projects/moved');
+			expect(updated.shellCwd).toBe('/projects/moved');
+			expect(updated.projectRoot).toBe('/projects/moved');
+			expect(updated.autoRunFolderPath).toBe('/projects/moved/.maestro/playbooks');
+		});
+
+		it('does not refuse a busy agent when the directory differs only by a trailing slash', () => {
+			const session = createMockSession({ id: 'session-1', state: 'busy' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			act(() => {
+				saveWithWorkingDirectory(result.current.handleSaveEditAgent, '/projects/myapp/');
+			});
+
+			expect(notifyToast).not.toHaveBeenCalled();
+			expect(useSessionStore.getState().sessions[0].projectRoot).toBe('/projects/myapp');
+		});
+
+		it('keeps the directory when the agent started running before save', () => {
+			const session = createMockSession({ id: 'session-1', state: 'busy' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			act(() => {
+				saveWithWorkingDirectory(result.current.handleSaveEditAgent, '/projects/moved');
+			});
+
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.name).toBe('Agent');
+			expect(updated.cwd).toBe('/projects/myapp');
+			expect(updated.projectRoot).toBe('/projects/myapp');
 		});
 
 		it('preserves tabs and parks the old provider session when toolType changes', () => {
@@ -456,182 +535,6 @@ describe('useSessionLifecycle', () => {
 			expect(updated.cwd).toBe('/projects/myapp');
 			// Provider changed
 			expect(updated.toolType).toBe('codex');
-		});
-
-		// Regression: clearAllFailoverOverlays/clearFailover were defined and
-		// documented as the feature's teardown path but had zero call sites - an
-		// agent left pinned to a backup could keep routing prompts (and the
-		// primary's credentials) there indefinitely after the user disarmed
-		// failover or removed the endpoint. These wire handleSaveEditAgent's
-		// existing save flow into that teardown.
-		describe('Provider Failover teardown wiring', () => {
-			const backupEndpoint = {
-				id: 'backup-1',
-				label: 'Backup',
-				env: { ANTHROPIC_BASE_URL: 'https://backup.example.com' },
-			};
-			const armedConfig: FailoverConfig = { enabled: true, endpoints: [backupEndpoint] };
-
-			function pinToBackup(sessionId: string) {
-				useFailoverStore.getState().setState(sessionId, {
-					endpointId: 'backup-1',
-					since: Date.now(),
-					exhausted: ['backup-1'],
-				});
-			}
-
-			it('clears the live pin when the saved config disarms failover', async () => {
-				const session = createMockSession({ id: 'session-1', failoverConfig: armedConfig });
-				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
-				pinToBackup('session-1');
-
-				const { result } = renderHook(() => useSessionLifecycle(createDeps()));
-
-				await act(async () => {
-					result.current.handleSaveEditAgent(
-						'session-1',
-						session.name,
-						undefined,
-						undefined,
-						undefined,
-						undefined,
-						undefined,
-						undefined,
-						undefined,
-						undefined,
-						undefined,
-						undefined,
-						undefined,
-						undefined,
-						undefined,
-						undefined,
-						{ ...armedConfig, enabled: false }
-					);
-				});
-
-				expect((window as any).maestro.process.setFailoverOverlay).toHaveBeenCalledWith(
-					'session-1',
-					null,
-					undefined
-				);
-				expect(useFailoverStore.getState().states['session-1']).toBeUndefined();
-			});
-
-			it('clears the live pin when the saved config removes the endpoint it is pinned to', async () => {
-				const session = createMockSession({ id: 'session-1', failoverConfig: armedConfig });
-				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
-				pinToBackup('session-1');
-
-				const { result } = renderHook(() => useSessionLifecycle(createDeps()));
-
-				await act(async () => {
-					result.current.handleSaveEditAgent(
-						'session-1',
-						session.name,
-						undefined,
-						undefined,
-						undefined,
-						undefined,
-						undefined,
-						undefined,
-						undefined,
-						undefined,
-						undefined,
-						undefined,
-						undefined,
-						undefined,
-						undefined,
-						undefined,
-						{ enabled: true, endpoints: [] }
-					);
-				});
-
-				expect(useFailoverStore.getState().states['session-1']).toBeUndefined();
-			});
-
-			it('does not touch the live pin when the save leaves the pinned endpoint intact', async () => {
-				const session = createMockSession({ id: 'session-1', failoverConfig: armedConfig });
-				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
-				pinToBackup('session-1');
-
-				const { result } = renderHook(() => useSessionLifecycle(createDeps()));
-
-				await act(async () => {
-					result.current.handleSaveEditAgent(
-						'session-1',
-						'Renamed while pinned',
-						undefined,
-						undefined,
-						undefined,
-						undefined,
-						undefined,
-						undefined,
-						undefined,
-						undefined,
-						undefined,
-						undefined,
-						undefined,
-						undefined,
-						undefined,
-						undefined,
-						undefined,
-						undefined,
-						undefined,
-						armedConfig
-					);
-				});
-
-				expect((window as any).maestro.process.setFailoverOverlay).not.toHaveBeenCalled();
-				expect(useFailoverStore.getState().states['session-1']).toEqual({
-					endpointId: 'backup-1',
-					since: expect.any(Number),
-					exhausted: ['backup-1'],
-				});
-			});
-
-			it('clears the live pin on a provider switch even though the caller still passes the old config', async () => {
-				const session = createMockSession({
-					id: 'session-1',
-					toolType: 'claude-code' as any,
-					failoverConfig: armedConfig,
-				});
-				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
-				pinToBackup('session-1');
-
-				const { result } = renderHook(() => useSessionLifecycle(createDeps()));
-
-				await act(async () => {
-					// The modal doesn't know to clear failoverConfig itself on a
-					// provider switch - the reducer does that. This proves the
-					// pin-clearing check reads the POST-update session, not the
-					// caller's raw argument.
-					result.current.handleSaveEditAgent(
-						'session-1',
-						session.name,
-						'codex' as any,
-						undefined,
-						undefined,
-						undefined,
-						undefined,
-						undefined,
-						undefined,
-						undefined,
-						undefined,
-						undefined,
-						undefined,
-						undefined,
-						undefined,
-						undefined,
-						undefined,
-						undefined,
-						undefined,
-						armedConfig
-					);
-				});
-
-				expect(useSessionStore.getState().sessions[0].failoverConfig).toBeUndefined();
-				expect(useFailoverStore.getState().states['session-1']).toBeUndefined();
-			});
 		});
 	});
 
@@ -1085,33 +988,6 @@ describe('useSessionLifecycle', () => {
 			});
 
 			expect(window.maestro.playbooks.deleteAll).toHaveBeenCalledWith('session-1');
-		});
-
-		// Regression: clearFailover was documented as running "when an agent is
-		// deleted" but had no call site, so a deleted agent's stale pin (and the
-		// primary credential routed with it) could outlive the session it belonged
-		// to if the session id were ever reused.
-		it('clears any live Provider Failover pin during cleanup', async () => {
-			const session = createMockSession({ id: 'session-1' });
-			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
-			useFailoverStore.getState().setState('session-1', {
-				endpointId: 'backup-1',
-				since: Date.now(),
-				exhausted: ['backup-1'],
-			});
-
-			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
-
-			await act(async () => {
-				await result.current.performDeleteSession(session, false);
-			});
-
-			expect((window as any).maestro.process.setFailoverOverlay).toHaveBeenCalledWith(
-				'session-1',
-				null,
-				undefined
-			);
-			expect(useFailoverStore.getState().states['session-1']).toBeUndefined();
 		});
 
 		it('removes session from store and activates next session', async () => {
@@ -1655,6 +1531,7 @@ describe('useSessionLifecycle', () => {
 				activeSessionId: '',
 				groups,
 				initialLoadComplete: true,
+				groupsLoaded: true,
 			});
 
 			renderHook(() => useSessionLifecycle(createDeps()));
@@ -1669,6 +1546,7 @@ describe('useSessionLifecycle', () => {
 				activeSessionId: '',
 				groups,
 				initialLoadComplete: false,
+				groupsLoaded: true,
 			});
 
 			renderHook(() => useSessionLifecycle(createDeps()));
@@ -1683,6 +1561,7 @@ describe('useSessionLifecycle', () => {
 				activeSessionId: '',
 				groups: groups1,
 				initialLoadComplete: true,
+				groupsLoaded: true,
 			});
 
 			renderHook(() => useSessionLifecycle(createDeps()));
@@ -1699,6 +1578,58 @@ describe('useSessionLifecycle', () => {
 			});
 
 			expect(window.maestro.groups.setAll).toHaveBeenCalledWith(groups2);
+		});
+
+		// Regression: a group registry that was never successfully READ must never
+		// be written back. `initialLoadComplete` is set in a `finally` and so is
+		// true even when the groups read failed, which let an empty in-memory
+		// registry overwrite a good one on disk and cost the user every group.
+		it('does not persist groups when the registry was never loaded', () => {
+			useSessionStore.setState({
+				sessions: [],
+				activeSessionId: '',
+				groups: [],
+				initialLoadComplete: true,
+				groupsLoaded: false,
+			});
+
+			renderHook(() => useSessionLifecycle(createDeps()));
+
+			expect(window.maestro.groups.setAll).not.toHaveBeenCalled();
+		});
+
+		it('does not persist a group change while the registry is unloaded', () => {
+			useSessionStore.setState({
+				sessions: [],
+				activeSessionId: '',
+				groups: [],
+				initialLoadComplete: true,
+				groupsLoaded: false,
+			});
+
+			renderHook(() => useSessionLifecycle(createDeps()));
+
+			act(() => {
+				useSessionStore.setState({ groups: [] });
+			});
+
+			expect(window.maestro.groups.setAll).not.toHaveBeenCalled();
+		});
+
+		// A user who genuinely has no groups must still be able to persist: the
+		// gate is "did the read succeed", never "was the result non-empty".
+		it('persists an empty registry that was read successfully', () => {
+			useSessionStore.setState({
+				sessions: [],
+				activeSessionId: '',
+				groups: [],
+				initialLoadComplete: true,
+				groupsLoaded: true,
+			});
+
+			renderHook(() => useSessionLifecycle(createDeps()));
+
+			expect(window.maestro.groups.setAll).toHaveBeenCalledWith([]);
 		});
 	});
 

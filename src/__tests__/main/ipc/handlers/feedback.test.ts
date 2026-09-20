@@ -54,6 +54,15 @@ vi.mock('../../../../main/utils/cliDetection', () => ({
 	setCachedGhStatus: vi.fn(),
 	getCachedGhStatus: vi.fn(),
 	getExpandedEnv: vi.fn(() => ({ PATH: '/usr/bin' })),
+	resolveGhPath: vi.fn(async (customPath?: string) => customPath ?? 'gh'),
+}));
+
+vi.mock('../../../../main/stores/getters', () => ({
+	getSettingsStore: vi.fn(() => ({ get: vi.fn(() => '') })),
+}));
+
+vi.mock('../../../../main/stores/instances', () => ({
+	isInitialized: vi.fn(() => true),
 }));
 
 vi.mock('../../../../main/utils/execFile', () => ({
@@ -76,6 +85,8 @@ import {
 	setCachedGhStatus,
 } from '../../../../main/utils/cliDetection';
 import { execFileNoThrow } from '../../../../main/utils/execFile';
+import { getSettingsStore } from '../../../../main/stores/getters';
+import { isInitialized } from '../../../../main/stores/instances';
 import {
 	cleanupTempFiles,
 	saveImageToTempFile,
@@ -105,6 +116,7 @@ describe('feedback handlers', () => {
 		const result = await handler!({});
 
 		expect(result).toEqual({ authenticated: true });
+		expect(getCachedGhStatus).toHaveBeenCalledWith('gh');
 		expect(isGhInstalled).not.toHaveBeenCalled();
 	});
 
@@ -474,7 +486,104 @@ describe('feedback handlers', () => {
 		expect(execFileNoThrow).toHaveBeenCalledWith('gh', ['auth', 'status'], undefined, {
 			PATH: '/usr/bin',
 		});
-		expect(setCachedGhStatus).toHaveBeenCalledWith(true, true);
+		expect(setCachedGhStatus).toHaveBeenCalledWith('gh', true, true);
+		expect(result).toEqual({ authenticated: true });
+	});
+
+	// Regression: every gh call in the feedback handler used to hardcode the bare
+	// string 'gh', so Settings > GitHub CLI (gh) Path was silently ignored and
+	// feedback reported "not installed" on installs where gh is not on PATH.
+	it('honors a configured custom gh path when probing auth', async () => {
+		vi.mocked(getSettingsStore).mockReturnValue({
+			get: vi.fn(() => '/custom/bin/gh'),
+		} as any);
+		vi.mocked(getCachedGhStatus).mockReturnValue(null);
+		vi.mocked(execFileNoThrow).mockResolvedValue({
+			exitCode: 0,
+			stdout: '',
+			stderr: '',
+		} as any);
+
+		const handler = registeredHandlers.get('feedback:check-gh-auth');
+		const result = await handler!({});
+
+		// A configured path is authoritative, so `which`-based detection is skipped
+		// and the binary itself is probed instead.
+		expect(isGhInstalled).not.toHaveBeenCalled();
+		expect(execFileNoThrow).toHaveBeenCalledWith('/custom/bin/gh', ['--version'], undefined, {
+			PATH: '/usr/bin',
+		});
+		expect(execFileNoThrow).toHaveBeenCalledWith('/custom/bin/gh', ['auth', 'status'], undefined, {
+			PATH: '/usr/bin',
+		});
+		expect(result).toEqual({ authenticated: true });
+	});
+
+	// Regression: the cache was path-agnostic, so a verdict the renderer's
+	// checkGhCli() reached against the PATH-resolved gh answered for a configured
+	// custom path, and a failed custom-path probe answered for everyone else.
+	it('keys the cached verdict by the configured custom gh path', async () => {
+		vi.mocked(getSettingsStore).mockReturnValue({
+			get: vi.fn(() => '/custom/bin/gh'),
+		} as any);
+		vi.mocked(getCachedGhStatus).mockReturnValue(null);
+		vi.mocked(execFileNoThrow).mockResolvedValue({
+			exitCode: 1,
+			stdout: '',
+			stderr: 'no such file',
+		} as any);
+
+		const handler = registeredHandlers.get('feedback:check-gh-auth');
+		const result = await handler!({});
+
+		expect(getCachedGhStatus).toHaveBeenCalledWith('/custom/bin/gh');
+		expect(setCachedGhStatus).toHaveBeenCalledWith('/custom/bin/gh', false, false);
+		expect(result).toEqual({
+			authenticated: false,
+			message: expect.stringContaining('not installed'),
+		});
+	});
+
+	it('falls back to which-based detection when no custom path is configured', async () => {
+		vi.mocked(getSettingsStore).mockReturnValue({ get: vi.fn(() => '   ') } as any);
+		vi.mocked(getCachedGhStatus).mockReturnValue(null);
+		vi.mocked(isGhInstalled).mockResolvedValue(true);
+		vi.mocked(execFileNoThrow).mockResolvedValue({
+			exitCode: 0,
+			stdout: '',
+			stderr: '',
+		} as any);
+
+		const handler = registeredHandlers.get('feedback:check-gh-auth');
+		await handler!({});
+
+		// A whitespace-only setting means "unset", not a path.
+		expect(isGhInstalled).toHaveBeenCalled();
+		expect(execFileNoThrow).not.toHaveBeenCalledWith(
+			expect.anything(),
+			['--version'],
+			undefined,
+			expect.anything()
+		);
+	});
+
+	// The guard is a predicate rather than a try/catch so that a REAL settings
+	// failure still surfaces instead of silently running some other binary.
+	it('falls back to auto-detection when the stores are not initialised', async () => {
+		vi.mocked(isInitialized).mockReturnValue(false);
+		vi.mocked(getCachedGhStatus).mockReturnValue(null);
+		vi.mocked(isGhInstalled).mockResolvedValue(true);
+		vi.mocked(execFileNoThrow).mockResolvedValue({
+			exitCode: 0,
+			stdout: '',
+			stderr: '',
+		} as any);
+
+		const handler = registeredHandlers.get('feedback:check-gh-auth');
+		const result = await handler!({});
+
+		expect(getSettingsStore).not.toHaveBeenCalled();
+		expect(isGhInstalled).toHaveBeenCalled();
 		expect(result).toEqual({ authenticated: true });
 	});
 

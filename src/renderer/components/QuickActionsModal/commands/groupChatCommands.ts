@@ -1,4 +1,5 @@
 import type { GroupChat } from '../../../../shared/group-chat-types';
+import { useGroupChatStore } from '../../../stores/groupChatStore';
 import type { Session } from '../../../types';
 import {
 	describeGroupChatRunState,
@@ -30,6 +31,7 @@ interface BuildGroupChatCommandsArgs {
 	setQuickActionOpen: (open: boolean) => void;
 	newGroupChatShortcut?: QuickAction['shortcut'];
 	killShortcut?: QuickAction['shortcut'];
+	moderatorOnlyShortcut?: QuickAction['shortcut'];
 }
 
 export function buildGroupChatJumpCommands({
@@ -97,6 +99,7 @@ export function buildGroupChatCommands({
 	setQuickActionOpen,
 	newGroupChatShortcut,
 	killShortcut,
+	moderatorOnlyShortcut,
 }: BuildGroupChatCommandsArgs): QuickAction[] {
 	const commands: QuickAction[] = [];
 
@@ -118,6 +121,24 @@ export function buildGroupChatCommands({
 			label: 'Close Group Chat',
 			action: () => {
 				onCloseGroupChat();
+				setQuickActionOpen(false);
+			},
+		});
+	}
+
+	if (activeGroupChatId) {
+		// Read at build time, not at action time: the palette rebuilds its command
+		// list on every open, so the label always names the state you would move to.
+		const moderatorOnly = useGroupChatStore.getState().groupChatModeratorOnly;
+		commands.push({
+			id: 'toggleGroupChatModeratorOnly',
+			label: moderatorOnly ? 'Group Chat: Show Team Chat' : 'Group Chat: Show Moderator Only',
+			subtext: moderatorOnly
+				? 'Bring back agent delegations and replies in the transcript and history'
+				: 'Hide the agent back-and-forth and keep just your conversation with the moderator',
+			shortcut: moderatorOnlyShortcut,
+			action: () => {
+				useGroupChatStore.getState().toggleGroupChatModeratorOnly();
 				setQuickActionOpen(false);
 			},
 		});

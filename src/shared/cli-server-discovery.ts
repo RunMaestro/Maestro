@@ -25,6 +25,13 @@ export interface CliServerInfo {
 	 * `status` to compare against the CLI's own build version.
 	 */
 	version?: string;
+	/**
+	 * Per-boot secret the CLI presents on its WebSocket upgrade
+	 * (`CLI_SECRET_HEADER`) so the Web Login gate admits it without a session
+	 * cookie. Optional: an older app did not write it, and the gate simply
+	 * stays closed to the CLI on such a build when Web Login is on.
+	 */
+	cliSecret?: string;
 }
 
 // Get the Maestro config directory path (lowercase "maestro")

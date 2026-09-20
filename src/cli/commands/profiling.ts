@@ -56,6 +56,13 @@ export async function profilingStart(options: StartOptions): Promise<void> {
 			} else {
 				console.log('Performance profiling started. Reproduce the slowness, then run:');
 				console.log('  maestro-cli profiling stop --output <path.zip>');
+				// How long a capture can run is set by trace-buffer pressure, not by
+				// the clock: a busy app fills the buffer in a fraction of the time a
+				// quiet one takes, and everything past full is dropped without a word.
+				// Point at the one command that can actually answer "is it time yet".
+				console.log('');
+				console.log('Watch buffer pressure with `maestro-cli profiling status` and stop');
+				console.log('before it reaches 85% - past that, events are dropped.');
 			}
 		} else {
 			const errMsg = result.error || 'Failed to start profiling';
@@ -93,6 +100,9 @@ export async function profilingStop(options: StopOptions): Promise<void> {
 				bundleSizeBytes?: number;
 				traceSizeBytes?: number;
 				durationMs?: number;
+				peakBufferPercent?: number;
+				autoStopped?: boolean;
+				bufferExhausted?: boolean;
 				error?: string;
 			}>({ type: 'profiling_stop', outputPath }, 'profiling_stop_result', STOP_TIMEOUT_MS)
 		);
@@ -106,12 +116,26 @@ export async function profilingStop(options: StopOptions): Promise<void> {
 						bundleSizeBytes: result.bundleSizeBytes,
 						traceSizeBytes: result.traceSizeBytes,
 						durationMs: result.durationMs,
+						peakBufferPercent: result.peakBufferPercent,
+						bufferExhausted: result.bufferExhausted,
 					})
 				);
 			} else {
 				console.log(`Profile saved: ${result.path}`);
 				if (typeof result.durationMs === 'number') {
 					console.log(`  Recording: ${(result.durationMs / 1000).toFixed(1)}s`);
+				}
+				// Say whether the bundle is whole. A scripted loop that keeps feeding
+				// truncated captures to the analyzer gets confident answers about a
+				// fragment, and nothing in the numbers reveals that.
+				const peakPct = Math.round((result.peakBufferPercent ?? 0) * 100);
+				if (result.bufferExhausted) {
+					console.log(
+						`  INCOMPLETE: trace buffer peaked at ${peakPct}% - events were dropped and ` +
+							'this trace covers less time than the recording ran for.'
+					);
+				} else if (typeof result.peakBufferPercent === 'number') {
+					console.log(`  Complete: peak trace-buffer usage ${peakPct}%, no events dropped.`);
 				}
 			}
 		} else {
@@ -143,6 +167,9 @@ export async function profilingStatus(options: StatusOptions): Promise<void> {
 				startedAt?: number;
 				elapsedMs?: number;
 				categories?: string[];
+				bufferPercent?: number;
+				peakBufferPercent?: number;
+				autoStopRequested?: boolean;
 				error?: string;
 			}>({ type: 'profiling_status' }, 'profiling_status_result')
 		);
@@ -153,11 +180,19 @@ export async function profilingStatus(options: StatusOptions): Promise<void> {
 					success: result.success,
 					active: result.active ?? false,
 					elapsedMs: result.elapsedMs ?? 0,
+					// The field a polling loop should branch on: once this is true the
+					// recording is at the edge of dropping events and should be stopped.
+					bufferPercent: result.bufferPercent ?? 0,
+					autoStopRequested: result.autoStopRequested ?? false,
 				})
 			);
 		} else if (result.active) {
 			const secs = ((result.elapsedMs ?? 0) / 1000).toFixed(1);
-			console.log(`Profiling is ACTIVE (recording for ${secs}s)`);
+			const bufferPct = Math.round((result.bufferPercent ?? 0) * 100);
+			console.log(`Profiling is ACTIVE (recording for ${secs}s, trace buffer ${bufferPct}% full)`);
+			if (result.autoStopRequested) {
+				console.log('  STOP NOW: the buffer is full enough that events are about to be dropped.');
+			}
 		} else {
 			console.log('Profiling is not active');
 		}

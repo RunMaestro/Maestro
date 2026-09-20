@@ -28,6 +28,7 @@ const {
 	mockPruneSusFactorBlocks,
 	mockGetGitHubItemState,
 	mockRecordGitHubRetrigger,
+	mockSetGitHubItemRevision,
 	mockCaptureException,
 } = vi.hoisted(() => ({
 	mockExecFile: vi.fn(),
@@ -41,6 +42,7 @@ const {
 		.fn<(subId: string, key: string) => { lastRevision: string | null; fireCount: number } | null>()
 		.mockReturnValue(null),
 	mockRecordGitHubRetrigger: vi.fn<(subId: string, key: string, newRevision: string) => void>(),
+	mockSetGitHubItemRevision: vi.fn<(subId: string, key: string, revision: string) => void>(),
 	mockCaptureException: vi.fn(),
 }));
 
@@ -81,6 +83,8 @@ vi.mock('../../../main/cue/cue-db', () => ({
 	getGitHubItemState: (subId: string, key: string) => mockGetGitHubItemState(subId, key),
 	recordGitHubRetrigger: (subId: string, key: string, newRevision: string) =>
 		mockRecordGitHubRetrigger(subId, key, newRevision),
+	setGitHubItemRevision: (subId: string, key: string, revision: string) =>
+		mockSetGitHubItemRevision(subId, key, revision),
 }));
 
 import {
@@ -1531,6 +1535,204 @@ describe('cue-github-poller', () => {
 			expect(event.type).toBe('github.issue');
 			expect(event.payload.is_retrigger).toBe(true);
 			expect(event.payload.new_comments).toHaveLength(1);
+			cleanup();
+		});
+	});
+
+	describe('github.label - label-add events', () => {
+		/** One projected row from `gh api repos/<repo>/issues/events --jq ...`. */
+		function labelEvent(overrides: Record<string, unknown> = {}) {
+			return {
+				id: 1000,
+				created_at: '2026-03-04T00:00:00Z',
+				label: 'ready-to-merge',
+				actor: 'alice',
+				number: 42,
+				title: 'Add feature',
+				url: 'https://github.com/owner/repo/pull/42',
+				body: 'Feature description',
+				state: 'open',
+				labels: ['ready-to-merge', 'enhancement'],
+				is_pr: true,
+				merged: false,
+				author: 'bob',
+				item_created_at: '2026-03-01T00:00:00Z',
+				item_updated_at: '2026-03-04T00:00:00Z',
+				...overrides,
+			};
+		}
+
+		/** Serve the events feed one page at a time, keyed by `page=N`. */
+		function setupLabelFeed(pages: Record<number, unknown[]>) {
+			mockExecFile.mockImplementation(
+				(
+					cmd: string,
+					args: string[],
+					_opts: unknown,
+					cb: (err: Error | null, stdout: string, stderr: string) => void
+				) => {
+					const key = `${cmd} ${args.join(' ')}`;
+					if (key.includes('--version')) return cb(null, '2.0.0', '');
+					if (key.includes('issues/events')) {
+						const match = key.match(/[?&]page=(\d+)/);
+						const page = match ? parseInt(match[1], 10) : 1;
+						return cb(null, JSON.stringify(pages[page] ?? []), '');
+					}
+					cb(new Error(`Command not found: ${key}`), '', '');
+				}
+			);
+		}
+
+		function labelConfig(overrides: Partial<CueGitHubPollerConfig> = {}) {
+			return makeConfig({ eventType: 'github.label', ...overrides });
+		}
+
+		it('first run records the watermark and fires nothing', async () => {
+			mockGetGitHubItemState.mockReturnValue(null);
+			const config = labelConfig();
+			setupLabelFeed({ 1: [labelEvent({ id: 5000 }), labelEvent({ id: 4000 })] });
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2100);
+
+			expect(config.onEvent).not.toHaveBeenCalled();
+			expect(mockSetGitHubItemRevision).toHaveBeenCalledWith(
+				'session-1:test-sub',
+				'__label_watermark__',
+				'5000'
+			);
+			cleanup();
+		});
+
+		it('fires oldest-first for events past the watermark and carries the label payload', async () => {
+			mockGetGitHubItemState.mockReturnValue({ lastRevision: '4000', fireCount: 0 });
+			const config = labelConfig();
+			setupLabelFeed({
+				1: [
+					labelEvent({ id: 6000, label: 'needs-rebase' }),
+					labelEvent({ id: 5000, label: 'ready-to-merge' }),
+					labelEvent({ id: 4000, label: 'already-seen' }),
+				],
+			});
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2100);
+
+			const calls = (config.onEvent as ReturnType<typeof vi.fn>).mock.calls;
+			expect(calls).toHaveLength(2);
+			expect(calls[0][0].payload.label).toBe('ready-to-merge');
+			expect(calls[1][0].payload.label).toBe('needs-rebase');
+
+			const first = calls[0][0];
+			expect(first.type).toBe('github.label');
+			expect(first.payload.type).toBe('pull_request');
+			expect(first.payload.number).toBe(42);
+			expect(first.payload.label_actor).toBe('alice');
+			expect(first.payload.labels).toBe('ready-to-merge,enhancement');
+			expect(first.payload.repo).toBe('owner/repo');
+
+			expect(mockSetGitHubItemRevision).toHaveBeenCalledWith(
+				'session-1:test-sub',
+				'__label_watermark__',
+				'6000'
+			);
+			cleanup();
+		});
+
+		it('only fires for watched labels, matched case-insensitively', async () => {
+			mockGetGitHubItemState.mockReturnValue({ lastRevision: '4000', fireCount: 0 });
+			const config = labelConfig({ watchLabels: ['Ready-To-Merge'] });
+			setupLabelFeed({
+				1: [
+					labelEvent({ id: 6000, label: 'wontfix' }),
+					labelEvent({ id: 5000, label: 'ready-to-merge' }),
+					labelEvent({ id: 4000 }),
+				],
+			});
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2100);
+
+			const calls = (config.onEvent as ReturnType<typeof vi.fn>).mock.calls;
+			expect(calls).toHaveLength(1);
+			expect(calls[0][0].payload.label).toBe('ready-to-merge');
+			cleanup();
+		});
+
+		it('narrows to issues when gh_label_target is "issue"', async () => {
+			mockGetGitHubItemState.mockReturnValue({ lastRevision: '4000', fireCount: 0 });
+			const config = labelConfig({ labelTarget: 'issue' });
+			setupLabelFeed({
+				1: [
+					labelEvent({ id: 6000, is_pr: true, number: 42 }),
+					labelEvent({ id: 5000, is_pr: false, number: 7 }),
+					labelEvent({ id: 4000 }),
+				],
+			});
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2100);
+
+			const calls = (config.onEvent as ReturnType<typeof vi.fn>).mock.calls;
+			expect(calls).toHaveLength(1);
+			expect(calls[0][0].payload.type).toBe('issue');
+			expect(calls[0][0].payload.number).toBe(7);
+			cleanup();
+		});
+
+		it('pages back until it crosses the watermark', async () => {
+			mockGetGitHubItemState.mockReturnValue({ lastRevision: '4000', fireCount: 0 });
+			const config = labelConfig();
+			setupLabelFeed({
+				1: Array.from({ length: 100 }, (_, i) => labelEvent({ id: 6000 - i })),
+				2: [labelEvent({ id: 5000 }), labelEvent({ id: 4000 })],
+			});
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2100);
+
+			// 100 from page 1 plus the one page-2 event above the watermark.
+			expect(config.onEvent).toHaveBeenCalledTimes(101);
+			expect(config.onLog).not.toHaveBeenCalledWith(
+				'warn',
+				expect.stringContaining('may have been skipped')
+			);
+			cleanup();
+		});
+
+		it('warns when the watermark is out of reach instead of skipping silently', async () => {
+			mockGetGitHubItemState.mockReturnValue({ lastRevision: '1', fireCount: 0 });
+			const config = labelConfig();
+			const fullPage = (base: number) =>
+				Array.from({ length: 100 }, (_, i) => labelEvent({ id: base - i }));
+			setupLabelFeed({ 1: fullPage(9000), 2: fullPage(8000), 3: fullPage(7000) });
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2100);
+
+			expect(config.onLog).toHaveBeenCalledWith(
+				'warn',
+				expect.stringContaining('may have been skipped')
+			);
+			cleanup();
+		});
+
+		it('advances the watermark past events it filtered out', async () => {
+			mockGetGitHubItemState.mockReturnValue({ lastRevision: '4000', fireCount: 0 });
+			const config = labelConfig({ watchLabels: ['nothing-matches'] });
+			setupLabelFeed({
+				1: [labelEvent({ id: 6000, label: 'wontfix' }), labelEvent({ id: 4000 })],
+			});
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2100);
+
+			expect(config.onEvent).not.toHaveBeenCalled();
+			expect(mockSetGitHubItemRevision).toHaveBeenCalledWith(
+				'session-1:test-sub',
+				'__label_watermark__',
+				'6000'
+			);
 			cleanup();
 		});
 	});

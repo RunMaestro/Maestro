@@ -8,6 +8,7 @@ import { logger } from '../../../renderer/utils/logger';
 import {
 	processService,
 	probeSessionAiProcesses,
+	AI_PROCESS_PROBE_TIMEOUT_MS,
 	fetchLiveAiTurns,
 	ProcessConfig,
 	ProcessDataHandler,
@@ -590,6 +591,46 @@ describe('probeSessionAiProcesses', () => {
 		const state = await probeSessionAiProcesses(SESSION, 'tab-1');
 
 		expect(state).toEqual({ anyActive: true, targetTabActive: true, probeFailed: true });
+	});
+
+	test('a probe that never settles times out and reports busy', async () => {
+		// The web-desktop bridge parks an invoke with no deadline of its own and
+		// only a socket `close` rejects it, which iOS does not fire when it
+		// suspends a backgrounded socket. Without a deadline the whole send path
+		// stalls before it has drawn anything, so Enter produces no bubble, no
+		// queued card, and no error - a dead Send button.
+		vi.useFakeTimers();
+		try {
+			mockProcess.getActiveProcesses.mockReturnValue(new Promise(() => {}));
+
+			const pending = probeSessionAiProcesses(SESSION, 'tab-1');
+			await vi.advanceTimersByTimeAsync(AI_PROCESS_PROBE_TIMEOUT_MS + 1);
+
+			expect(await pending).toEqual({
+				anyActive: true,
+				targetTabActive: true,
+				probeFailed: true,
+			});
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	test('a probe that answers in time is not cut short by the deadline', async () => {
+		vi.useFakeTimers();
+		try {
+			mockProcess.getActiveProcesses.mockResolvedValue([proc(`${SESSION}-ai-tab-1`)]);
+
+			const state = await probeSessionAiProcesses(SESSION, 'tab-1');
+
+			expect(state.probeFailed).toBe(false);
+			expect(state.targetTabActive).toBe(true);
+			// The deadline timer is cleared on the happy path, so a resolved probe
+			// leaves nothing pending behind on every keystroke-driven send.
+			expect(vi.getTimerCount()).toBe(0);
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 });
 

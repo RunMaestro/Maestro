@@ -26,8 +26,9 @@
  * - extractQuickTabName
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { useUIStore } from '../../../renderer/stores/uiStore';
 import {
 	getActiveTab,
 	createTab,
@@ -56,6 +57,7 @@ import {
 	navigateToClosestTerminalTab,
 	createMergedSession,
 	hasActiveWizard,
+	flattenWizardIntoTab,
 	extractQuickTabName,
 	buildUnifiedTabs,
 	revealAiTab,
@@ -64,7 +66,10 @@ import {
 	moveActiveUnifiedTabToEdge,
 	moveUnifiedTabToTarget,
 	toggleReadOnlyModeFields,
+	permissionModeFields,
+	nextPermissionMode,
 	cycleShowThinkingFields,
+	setShowThinkingFields,
 	findNextUnreadSession,
 	findPreviousUnreadSession,
 	resolveQueuedItemTarget,
@@ -701,6 +706,92 @@ describe('tabHelpers', () => {
 
 			expect(result!.session.aiTabs).toHaveLength(0);
 			expect(result!.session.activeTabId).toBe('');
+		});
+
+		describe('unread-filter neighbor selection', () => {
+			// Two tabs are on screen under the filter: the active one (visible because
+			// it is active - viewing it cleared its unread flag) and one still unread.
+			// A read tab sits to the LEFT of the active tab and is hidden by the
+			// filter, so the plain left-neighbor math would land on a tab the user
+			// cannot see.
+			function createFilteredSession(): Session {
+				return createMockSession({
+					aiTabs: [
+						createMockTab({ id: 'read-left' }),
+						createMockTab({ id: 'active-tab' }),
+						createMockTab({ id: 'unread-right', hasUnread: true }),
+					],
+					activeTabId: 'active-tab',
+					inputMode: 'ai',
+					unifiedTabOrder: [
+						{ type: 'ai', id: 'read-left' },
+						{ type: 'ai', id: 'active-tab' },
+						{ type: 'ai', id: 'unread-right' },
+					],
+				});
+			}
+
+			afterEach(() => {
+				useUIStore.setState({ showUnreadOnly: false });
+			});
+
+			it('lands on the other visible unread tab, not the hidden read tab', () => {
+				const result = closeTab(createFilteredSession(), 'active-tab', true);
+
+				expect(result!.session.activeTabId).toBe('unread-right');
+			});
+
+			it('reads the live filter state when no override is passed', () => {
+				useUIStore.setState({ showUnreadOnly: true });
+
+				const result = closeTab(createFilteredSession(), 'active-tab');
+
+				expect(result!.session.activeTabId).toBe('unread-right');
+			});
+
+			it('falls back to the plain left neighbor when the filter is off', () => {
+				const result = closeTab(createFilteredSession(), 'active-tab');
+
+				expect(result!.session.activeTabId).toBe('read-left');
+			});
+
+			it('falls back to the plain left neighbor when nothing visible survives', () => {
+				const session = createMockSession({
+					aiTabs: [createMockTab({ id: 'read-left' }), createMockTab({ id: 'active-tab' })],
+					activeTabId: 'active-tab',
+					inputMode: 'ai',
+					unifiedTabOrder: [
+						{ type: 'ai', id: 'read-left' },
+						{ type: 'ai', id: 'active-tab' },
+					],
+				});
+
+				const result = closeTab(session, 'active-tab', true);
+
+				expect(result!.session.activeTabId).toBe('read-left');
+			});
+
+			it('lands on a visible terminal tab and switches the view to it', () => {
+				// The terminal tab survives the filter because it is the active terminal
+				// tab, so it is a legitimate neighbor even though it has no unread state.
+				const session = createMockSession({
+					aiTabs: [createMockTab({ id: 'read-left' }), createMockTab({ id: 'active-tab' })],
+					activeTabId: 'active-tab',
+					inputMode: 'ai',
+					terminalTabs: [{ id: 'term-1' }] as never,
+					activeTerminalTabId: 'term-1',
+					unifiedTabOrder: [
+						{ type: 'ai', id: 'read-left' },
+						{ type: 'terminal', id: 'term-1' },
+						{ type: 'ai', id: 'active-tab' },
+					],
+				});
+
+				const result = closeTab(session, 'active-tab', true);
+
+				expect(result!.session.activeTerminalTabId).toBe('term-1');
+				expect(result!.session.inputMode).toBe('terminal');
+			});
 		});
 
 		it('clears activeTabId when the closed sole AI tab was not the active tab', () => {
@@ -3119,6 +3210,95 @@ describe('tabHelpers', () => {
 				},
 			});
 			expect(hasActiveWizard(tab)).toBe(true);
+		});
+	});
+
+	describe('flattenWizardIntoTab', () => {
+		const wizardTab = (overrides: Record<string, unknown> = {}) =>
+			createMockTab({
+				id: 'tab-1',
+				logs: [],
+				agentSessionId: null,
+				wizardState: {
+					isActive: true,
+					mode: 'new',
+					confidence: 60,
+					agentSessionId: 'provider-session-abc',
+					conversationHistory: [
+						{ id: 'm1', role: 'user', content: 'build me a playbook', timestamp: 1000 },
+						{ id: 'm2', role: 'assistant', content: 'what is the goal?', timestamp: 2000 },
+					],
+					previousUIState: { readOnlyMode: false, saveToHistory: true, showThinking: 'off' },
+				},
+				...overrides,
+			});
+
+		it('returns the tab untouched when there is no wizard', () => {
+			const tab = createMockTab({ id: 'tab-1' });
+			expect(flattenWizardIntoTab(tab)).toBe(tab);
+		});
+
+		// The wizard conversation lives ONLY in wizardState. Clearing wizardState without
+		// flattening is what used to leave the user staring at an empty tab.
+		it('moves the wizard conversation into the tab log', () => {
+			const result = flattenWizardIntoTab(wizardTab());
+			expect(result.wizardState).toBeUndefined();
+			expect(result.logs.map((l) => l.text)).toEqual(['build me a playbook', 'what is the goal?']);
+			expect(result.logs.map((l) => l.source)).toEqual(['user', 'ai']);
+		});
+
+		it('preserves entries already in the tab and appends the wizard after them', () => {
+			const existing: LogEntry = {
+				id: 'pre-existing',
+				timestamp: 1,
+				source: 'user',
+				text: 'conversation from before /wizard',
+			};
+			const result = flattenWizardIntoTab(wizardTab({ logs: [existing] }));
+			expect(result.logs[0]).toBe(existing);
+			expect(result.logs).toHaveLength(3);
+		});
+
+		// Without this the tab loses the handle to the running provider conversation and
+		// the next message starts a brand new one.
+		it('promotes the wizard provider session onto the tab', () => {
+			expect(flattenWizardIntoTab(wizardTab()).agentSessionId).toBe('provider-session-abc');
+		});
+
+		it('keeps the tab session when the wizard never got one', () => {
+			const tab = wizardTab({ agentSessionId: 'tab-session' });
+			tab.wizardState!.agentSessionId = undefined;
+			expect(flattenWizardIntoTab(tab).agentSessionId).toBe('tab-session');
+		});
+
+		it('appends the summary entry last when one is given', () => {
+			const summary: LogEntry = {
+				id: 'wizard-ended-tab-1',
+				timestamp: 3000,
+				source: 'system',
+				text: 'Wizard mode ended.',
+			};
+			const result = flattenWizardIntoTab(wizardTab(), { summary });
+			expect(result.logs[result.logs.length - 1]).toBe(summary);
+		});
+
+		// A racing state update can call this twice on the same tab. Duplicated transcript
+		// entries would be as confusing as losing them.
+		it('does not duplicate entries when applied twice', () => {
+			const summary: LogEntry = {
+				id: 'wizard-ended-tab-1',
+				timestamp: 3000,
+				source: 'system',
+				text: 'Wizard mode ended.',
+			};
+			const first = flattenWizardIntoTab(wizardTab(), { summary });
+			const second = flattenWizardIntoTab(
+				{ ...first, wizardState: wizardTab().wizardState },
+				{
+					summary,
+				}
+			);
+			expect(second.logs).toHaveLength(3);
 		});
 	});
 
@@ -6374,6 +6554,86 @@ describe('tabHelpers', () => {
 				showThinking: 'off',
 				logs: [toolLog, stdoutLog],
 			});
+		});
+	});
+
+	describe('setShowThinkingFields', () => {
+		const thinkingLog: LogEntry = {
+			id: 'think-1',
+			timestamp: 1,
+			source: 'thinking',
+			text: 'reasoning',
+		};
+		const toolLog: LogEntry = { id: 'tool-1', timestamp: 2, source: 'tool', text: 'edit' };
+		const mixedLogs = [thinkingLog, toolLog];
+
+		it('sets the named mode without stepping through the cycle', () => {
+			// The phone options sheet lists all three modes; from 'off' the cycle
+			// would reach 'sticky' only on a second tap.
+			expect(setShowThinkingFields({ logs: mixedLogs }, 'sticky')).toEqual({
+				showThinking: 'sticky',
+				logs: mixedLogs,
+			});
+		});
+
+		it('drops only thinking logs when the mode is set to off', () => {
+			expect(setShowThinkingFields({ logs: mixedLogs }, 'off')).toEqual({
+				showThinking: 'off',
+				logs: [toolLog],
+			});
+		});
+
+		it('agrees with cycleShowThinkingFields on every step of the cycle', () => {
+			// The cycle delegates here, so the log-clearing rule is written once.
+			for (const [from, to] of [
+				['off', 'on'],
+				['on', 'sticky'],
+				['sticky', 'off'],
+			] as const) {
+				expect(cycleShowThinkingFields({ showThinking: from, logs: mixedLogs })).toEqual(
+					setShowThinkingFields({ logs: mixedLogs }, to)
+				);
+			}
+		});
+	});
+
+	describe('permissionModeFields', () => {
+		it('keeps readOnlyMode in lockstep with the named mode', () => {
+			// The pill resolves through resolveTabPermissionMode and the spawn path
+			// reads readOnlyMode, so a mode written without its boolean drifts.
+			expect(permissionModeFields('full')).toEqual({
+				permissionMode: 'full',
+				readOnlyMode: false,
+			});
+			expect(permissionModeFields('standard')).toEqual({
+				permissionMode: 'standard',
+				readOnlyMode: false,
+			});
+			expect(permissionModeFields('readonly')).toEqual({
+				permissionMode: 'readonly',
+				readOnlyMode: true,
+			});
+		});
+
+		it('agrees with resolveTabPermissionMode on what it wrote', () => {
+			for (const mode of ['full', 'standard', 'readonly'] as const) {
+				expect(resolveTabPermissionMode(permissionModeFields(mode))).toBe(mode);
+			}
+		});
+	});
+
+	describe('nextPermissionMode', () => {
+		it('cycles full to standard to readonly and back', () => {
+			expect(nextPermissionMode('full', true)).toBe('standard');
+			expect(nextPermissionMode('standard', true)).toBe('readonly');
+			expect(nextPermissionMode('readonly', true)).toBe('full');
+		});
+
+		it('skips standard for an agent with no working relay', () => {
+			// Landing on it would put the tab in a mode whose tool approvals never
+			// arrive.
+			expect(nextPermissionMode('full', false)).toBe('readonly');
+			expect(nextPermissionMode('readonly', false)).toBe('full');
 		});
 	});
 

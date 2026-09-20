@@ -52,6 +52,8 @@ export interface LocalTreeScanOptions {
 	ignorePatterns?: string[];
 	/** Whether to merge the root `.gitignore` into the ignore patterns. */
 	honorGitignore?: boolean;
+	/** Expanded folders (root-relative, `/`-joined) that are read past `maxDepth`. */
+	expandedPaths?: string[];
 }
 
 /**

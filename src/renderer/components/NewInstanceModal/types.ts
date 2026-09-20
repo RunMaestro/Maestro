@@ -1,12 +1,5 @@
 import type React from 'react';
-import type {
-	AdditionalDirectory,
-	AgentConfig,
-	Session,
-	ToolType,
-	Theme,
-	FailoverConfig,
-} from '../../types';
+import type { AdditionalDirectory, AgentConfig, Session, ToolType, Theme } from '../../types';
 import { PICKABLE_AGENT_IDS } from '../../../shared/agentMetadata';
 
 // Maximum character length for nudge message and new session message
@@ -65,7 +58,9 @@ export interface NewInstanceModalProps {
 		maestroPMode?: 'interactive' | 'dynamic',
 		retryOnAvailabilityErrors?: boolean,
 		retryOnTokenExhaustion?: boolean,
-		additionalDirectories?: AdditionalDirectory[]
+		additionalDirectories?: AdditionalDirectory[],
+		/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
+		codexAutoResetOnExhaustion?: boolean
 	) => void;
 	theme: Theme;
 	existingSessions: Session[];
@@ -98,9 +93,12 @@ export interface EditAgentModalProps {
 		additionalDirectories?: AdditionalDirectory[],
 		/** Provenance of `customContextWindow` (finding AD1). */
 		contextWindowSource?: 'user-edited',
-		failoverConfig?: FailoverConfig,
 		/** Env vars parked with the eye button: kept, but never handed to a spawn. */
-		customEnvVarsDisabled?: Record<string, string>
+		customEnvVarsDisabled?: Record<string, string>,
+		/** New working directory; `undefined` when the user left it unchanged. */
+		workingDirectory?: string,
+		/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
+		codexAutoResetOnExhaustion?: boolean
 	) => void;
 	theme: Theme;
 	session: Session | null;
@@ -182,4 +180,7 @@ export interface AgentPickerGridProps {
 	dynamicOptions?: Record<string, Record<string, string[]>>;
 	loadingDynamicOptions?: Record<string, boolean>;
 	onLoadDynamicOptionsForAgent?: (agentId: string) => void;
+	/** Codex automatic usage resets, per agent id. Defaults off when absent. */
+	codexAutoResetByAgent?: Record<string, boolean>;
+	onCodexAutoResetChange?: (agentId: string, value: boolean) => void;
 }

@@ -5,6 +5,7 @@ import { hasNoClaudeProviderSession } from '../SessionItem';
 import { SessionTooltipContent } from './SessionTooltipContent';
 import { CornerDot } from '../ui/CornerDot';
 import { hasUnreadVisibleTab } from '../../utils/tabHelpers';
+import { useConsultedSessionIds } from '../../stores/crossAgentInFlightStore';
 
 interface CollapsedSessionPillProps {
 	session: Session;
@@ -84,6 +85,7 @@ export const CollapsedSessionPill = memo(function CollapsedSessionPill({
 	setActiveSessionId,
 }: CollapsedSessionPillProps) {
 	const [tooltipPosition, setTooltipPosition] = useState<{ x: number; y: number } | null>(null);
+	const consultedSessionIds = useConsultedSessionIds();
 
 	const worktreeChildren = getWorktreeChildren(session.id);
 	const allSessions = [session, ...worktreeChildren];
@@ -100,6 +102,11 @@ export const CollapsedSessionPill = memo(function CollapsedSessionPill({
 				const isFirst = idx === 0;
 				const isLast = idx === allSessions.length - 1;
 				const isInBatch = activeBatchSessionIds.includes(s.id);
+				// A cross-agent consult is invisible to `session.state` by design, so
+				// the pill folds it in beside Auto Run: same warning fill, same pulse,
+				// and it outranks the unbound-Claude hollow pill (a consult tab has no
+				// provider session of its own until the agent answers).
+				const isBusyOffState = isInBatch || consultedSessionIds.has(s.id);
 
 				return (
 					<div
@@ -107,12 +114,12 @@ export const CollapsedSessionPill = memo(function CollapsedSessionPill({
 						role="button"
 						tabIndex={0}
 						aria-label={`Switch to ${s.name}`}
-						className={`group/segment relative flex-1 h-full ${isInBatch ? 'animate-pulse' : ''}`}
+						className={`group/segment relative flex-1 h-full ${isBusyOffState ? 'animate-pulse' : ''}`}
 						style={{
-							...(hasNoClaudeProviderSession(s) && !isInBatch
+							...(hasNoClaudeProviderSession(s) && !isBusyOffState
 								? { border: `1px solid ${theme.colors.textDim}`, backgroundColor: 'transparent' }
 								: {
-										backgroundColor: isInBatch
+										backgroundColor: isBusyOffState
 											? theme.colors.warning
 											: getStatusColor(s.state, theme),
 									}),

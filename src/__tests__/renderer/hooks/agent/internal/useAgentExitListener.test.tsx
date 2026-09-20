@@ -8,6 +8,11 @@ import type { BatchRunState } from '../../../../../renderer/types';
 import { createMockSession } from '../../../../helpers/mockSession';
 import { createMockAITab } from '../../../../helpers/mockTab';
 
+let mockIsWebDesktop = false;
+vi.mock('../../../../../renderer/utils/runtimeContext', () => ({
+	isWebDesktop: () => mockIsWebDesktop,
+}));
+
 let handler: ((sessionId: string, code: number) => Promise<void>) | undefined;
 const mockUnsubscribe = vi.fn();
 
@@ -49,6 +54,7 @@ function makeDeps() {
 beforeEach(() => {
 	vi.clearAllMocks();
 	handler = undefined;
+	mockIsWebDesktop = false;
 	useRetryStore.setState({ retries: {}, outages: {} } as any);
 	useSessionStore.setState({
 		sessions: [],
@@ -100,6 +106,116 @@ describe('useAgentExitListener', () => {
 		const updated = useSessionStore.getState().sessions[0];
 		expect(updated.aiTabs[0].state).toBe('idle');
 		expect(updated.state).toBe('idle');
+	});
+
+	describe('on a web-desktop client', () => {
+		// Every process:* event is fanned out to every connected browser, so a
+		// web-desktop client must render the exit (tab idle) but never run the
+		// one-shot effects the desktop renderer owns: stats row, queue dequeue,
+		// synopsis (and with it the History entry), spoken notification.
+		beforeEach(() => {
+			mockIsWebDesktop = true;
+		});
+
+		it('flips the tab idle but records no stats row', async () => {
+			const tab = createMockAITab({ id: 'tab-1', state: 'busy', thinkingStartTime: 0 });
+			const session = createMockSession({
+				id: 'sess-1',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+				state: 'busy',
+				busySource: 'ai',
+				thinkingStartTime: 1000,
+			});
+			useSessionStore.setState({ sessions: [session] } as any);
+
+			renderHook(() => useAgentExitListener(makeDeps()));
+			await act(async () => {
+				await handler!('sess-1-ai-tab-1', 0);
+				await new Promise((r) => setTimeout(r, 0));
+			});
+
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.aiTabs[0].state).toBe('idle');
+			expect(updated.state).toBe('idle');
+			expect((window as any).maestro.stats.recordQuery).not.toHaveBeenCalled();
+		});
+
+		it('leaves the execution queue intact and dispatches nothing', async () => {
+			const tabA = createMockAITab({ id: 'tab-A', state: 'busy', thinkingStartTime: 0 });
+			const tabB = createMockAITab({ id: 'tab-B', state: 'idle' });
+			const itemB = {
+				id: 'item-B',
+				timestamp: 1,
+				tabId: 'tab-B',
+				type: 'message' as const,
+				text: 'BRAVO',
+				readOnlyMode: true,
+			};
+			const session = createMockSession({
+				id: 'sess-1',
+				aiTabs: [tabA, tabB],
+				activeTabId: 'tab-A',
+				state: 'busy',
+				busySource: 'ai',
+				executionQueue: [itemB] as any,
+			});
+			useSessionStore.setState({ sessions: [session] } as any);
+
+			const processQueuedItem = vi.fn().mockResolvedValue(undefined);
+			const deps = makeDeps();
+			deps.processQueuedItemRef.current = processQueuedItem as any;
+
+			renderHook(() => useAgentExitListener(deps));
+			await act(async () => {
+				await handler!('sess-1-ai-tab-A', 0);
+				await new Promise((r) => setTimeout(r, 0));
+			});
+
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.aiTabs.find((t) => t.id === 'tab-A')?.state).toBe('idle');
+			expect(updated.aiTabs.find((t) => t.id === 'tab-B')?.state).toBe('idle');
+			expect(updated.executionQueue.map((i) => i.id)).toEqual(['item-B']);
+			expect(updated.state).toBe('idle');
+			expect(processQueuedItem).not.toHaveBeenCalled();
+		});
+
+		it('never spawns the exit synopsis', async () => {
+			const tab = createMockAITab({
+				id: 'tab-1',
+				state: 'busy',
+				thinkingStartTime: 0,
+				agentSessionId: 'asid-1',
+				logs: [
+					{ id: 'l-user', timestamp: 1, source: 'user', text: 'do work' },
+					{ id: 'l-tool', timestamp: 2, source: 'tool', text: 'Edit(file.ts)' },
+					{ id: 'l-out', timestamp: 3, source: 'stdout', text: 'done' },
+				] as any,
+			});
+			const session = createMockSession({
+				id: 'sess-1',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+				state: 'busy',
+				busySource: 'ai',
+			});
+			useSessionStore.setState({ sessions: [session] } as any);
+
+			const spawn = vi.fn();
+			const addHistory = vi.fn();
+			const deps = makeDeps();
+			deps.spawnBackgroundSynopsisRef.current = spawn as any;
+			deps.addHistoryEntryRef.current = addHistory as any;
+
+			renderHook(() => useAgentExitListener(deps));
+			await act(async () => {
+				await handler!('sess-1-ai-tab-1', 0);
+				await new Promise((r) => setTimeout(r, 0));
+			});
+
+			expect(spawn).not.toHaveBeenCalled();
+			expect(addHistory).not.toHaveBeenCalled();
+		});
 	});
 
 	it('appends a system log on terminal exit', async () => {

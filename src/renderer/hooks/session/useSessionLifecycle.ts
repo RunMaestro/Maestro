@@ -16,9 +16,8 @@
  */
 
 import { useCallback, useEffect } from 'react';
-import type { AdditionalDirectory, Session, FailoverConfig } from '../../types';
+import type { AdditionalDirectory, Session } from '../../types';
 import type { ToolType } from '../../../shared/types';
-import { getClaudeTokenSourceFields } from '../../../shared/claudeTokenMode';
 import {
 	useSessionStore,
 	selectActiveSession,
@@ -29,7 +28,8 @@ import { switchTabProvider } from '../../utils/providerTabSessions';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useModalStore } from '../../stores/modalStore';
 import { notifyToast } from '../../stores/notificationStore';
-import { getActiveTab, extractQuickTabName } from '../../utils/tabHelpers';
+import { getActiveTab } from '../../utils/tabHelpers';
+import { collectNamingPrompt, requestTabAutoName } from '../../services/tabAutoNaming';
 import {
 	renameTerminalTab as renameTerminalTabHelper,
 	getTerminalSessionId,
@@ -40,9 +40,11 @@ import { resolveActiveNavTab } from './useNavigationHistory';
 import type { NavHistoryEntry } from './useNavigationHistory';
 import { captureException } from '../../utils/sentry';
 import { persistTabStarred } from '../../utils/starredSessions';
-import { clearFailover, getActiveEndpoint } from '../../stores/failoverStore';
 import { toggleTabUnreadFilter } from '../../services/unreadFilters';
-import { failoverArmed, findEndpoint } from '../../../shared/providerFailover';
+import {
+	withWorkingDirectory,
+	workingDirectoryChangeBlocker,
+} from '../../utils/agentWorkingDirectory';
 
 // ============================================================================
 // Dependencies interface
@@ -90,9 +92,12 @@ export interface SessionLifecycleReturn {
 		additionalDirectories?: AdditionalDirectory[],
 		/** Provenance of `customContextWindow` (finding AD1). */
 		contextWindowSource?: 'user-edited',
-		failoverConfig?: FailoverConfig,
 		/** Env vars parked with the eye button: kept, but never handed to a spawn. */
-		customEnvVarsDisabled?: Record<string, string>
+		customEnvVarsDisabled?: Record<string, string>,
+		/** New working directory; `undefined` when the user left it unchanged. */
+		workingDirectory?: string,
+		/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
+		codexAutoResetOnExhaustion?: boolean
 	) => void;
 	/** Rename the currently-selected tab (persists to agent session storage + history) */
 	handleRenameTab: (newName: string) => void;
@@ -119,6 +124,7 @@ const selectRenameTabId = (s: ReturnType<typeof useModalStore.getState>) =>
 const selectGroups = (s: ReturnType<typeof useSessionStore.getState>) => s.groups;
 const selectInitialLoadComplete = (s: ReturnType<typeof useSessionStore.getState>) =>
 	s.initialLoadComplete;
+const selectGroupsLoaded = (s: ReturnType<typeof useSessionStore.getState>) => s.groupsLoaded;
 const selectResolvedActiveSessionId = (s: ReturnType<typeof useSessionStore.getState>) =>
 	selectActiveSession(s)?.id;
 
@@ -136,6 +142,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 	const renameTabId = useModalStore(selectRenameTabId);
 	const groups = useSessionStore(selectGroups);
 	const initialLoadComplete = useSessionStore(selectInitialLoadComplete);
+	const groupsLoaded = useSessionStore(selectGroupsLoaded);
 	const activeSessionId = useSessionStore(selectResolvedActiveSessionId);
 	const activeTabId = useSessionStore((s) => selectActiveSession(s)?.activeTabId);
 	const activeFileTabId = useSessionStore((s) => selectActiveSession(s)?.activeFileTabId);
@@ -176,14 +183,28 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			additionalDirectories?: AdditionalDirectory[],
 			/** Provenance of `customContextWindow` (finding AD1). */
 			contextWindowSource?: 'user-edited',
-			failoverConfig?: FailoverConfig,
 			/** Env vars parked with the eye button: kept, but never handed to a spawn. */
-			customEnvVarsDisabled?: Record<string, string>
+			customEnvVarsDisabled?: Record<string, string>,
+			/** New working directory; `undefined` when the user left it unchanged. */
+			workingDirectory?: string,
+			/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
+			codexAutoResetOnExhaustion?: boolean
 		) => {
-			// Provider Failover: snapshot whether this agent is currently pinned to a
-			// backup endpoint BEFORE the update below, so we can tell after the fact
-			// whether the saved config still covers it.
-			const activeEndpoint = getActiveEndpoint(sessionId);
+			// The dialog disables the field while the agent runs, but the agent can
+			// start between opening the dialog and saving. Say so rather than
+			// silently keeping the old directory.
+			let relocateTo = workingDirectory;
+			const current = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+			// Only a directory the helper would actually move to is gated: a value
+			// that differs by a trailing slash is not a move, and must not be
+			// reported as a refused one.
+			const wouldMove =
+				!!relocateTo && !!current && withWorkingDirectory(current, relocateTo) !== current;
+			const blocker = wouldMove ? workingDirectoryChangeBlocker(current!) : null;
+			if (blocker) {
+				relocateTo = undefined;
+				notifyToast({ color: 'yellow', title: 'Working directory not changed', message: blocker });
+			}
 
 			updateSessionWith(sessionId, (s) => {
 				const updatedFields: Partial<Session> = {
@@ -209,7 +230,11 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 					// cleared on a provider switch below (unlike maestroP fields).
 					retryOnAvailabilityErrors,
 					retryOnTokenExhaustion,
-					failoverConfig,
+					// Codex automatic usage resets. Like resilience above, this is left
+					// alone by the provider switch below: an agent moved off Codex keeps
+					// the preference so moving back does not silently lose it, and the
+					// flag is inert for any provider without reset credits.
+					codexAutoResetOnExhaustion,
 				};
 
 				// If the provider changed, park each tab's provider-specific state and
@@ -238,8 +263,6 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 						enableMaestroP: undefined,
 						maestroPPath: undefined,
 						maestroPMode: undefined,
-						// Endpoint env carries provider-specific base URLs and tokens.
-						failoverConfig: undefined,
 					});
 
 					// Any turn already in flight keeps running under the provider it was
@@ -249,27 +272,9 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 					// keeps that turn's late events attributed to the old provider.
 				}
 
-				return { ...s, ...updatedFields };
+				const next = { ...s, ...updatedFields };
+				return relocateTo ? withWorkingDirectory(next, relocateTo) : next;
 			});
-
-			// Provider Failover: the update above may disarm failover or drop the
-			// endpoint this agent is actively pinned to (an explicit edit, or the
-			// provider-switch reset a few lines up, which clears failoverConfig
-			// outright). The live pin is in-memory only (renderer store + main
-			// overlay) and will NOT disappear just because the session record
-			// changed underneath it, so it has to be cleared explicitly here.
-			// clearFailover no-ops when the agent isn't currently pinned, so this
-			// is always safe to check.
-			if (activeEndpoint) {
-				const newConfig = useSessionStore
-					.getState()
-					.sessions.find((s) => s.id === sessionId)?.failoverConfig;
-				const stillCovered =
-					failoverArmed(newConfig) && !!findEndpoint(newConfig, activeEndpoint.id);
-				if (!stillCovered) {
-					void clearFailover(sessionId);
-				}
-			}
 		},
 		[]
 	);
@@ -421,78 +426,24 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 		const tab = activeSession.aiTabs.find((t) => t.id === renameTabId);
 		if (!tab || !tab.logs.length) return;
 
-		// Collect user messages (first ~2000 chars) for the naming prompt
-		const userMessages: string[] = [];
-		let totalLength = 0;
-		for (const entry of tab.logs) {
-			if (entry.source === 'user' && entry.text.trim()) {
-				const text = entry.text.trim();
-				if (totalLength + text.length > 2000) {
-					userMessages.push(text.substring(0, 2000 - totalLength));
-					break;
-				}
-				userMessages.push(text);
-				totalLength += text.length;
-			}
-		}
-		const summary = userMessages.join('\n\n');
-		if (!summary) return;
-
-		const sessionId = activeSession.id;
-		const tabId = renameTabId;
+		const prompt = collectNamingPrompt(
+			tab.logs.filter((entry) => entry.source === 'user').map((entry) => entry.text)
+		);
+		if (!prompt) return;
 
 		// Close the modal immediately
 		useModalStore.getState().closeModal('renameTab');
 
-		// Fast-path: try extracting a name from known patterns first
-		const quickName = extractQuickTabName(summary);
-		if (quickName) {
-			updateAiTab(sessionId, tabId, (t) => ({ ...t, name: quickName }));
-			return;
-		}
-
-		// Show spinner on the tab
-		updateAiTab(sessionId, tabId, (t) => ({ ...t, isGeneratingName: true }));
-
-		// Fire and forget - generate name via ephemeral agent
-		window.maestro.tabNaming
-			.generateTabName({
-				userMessage: summary,
-				agentType: activeSession.toolType,
-				cwd: activeSession.cwd,
-				sessionSshRemoteConfig: activeSession.sessionSshRemoteConfig,
-				// Forward session env so naming uses the same provider auth as the chat.
-				sessionCustomEnvVars: activeSession.customEnvVars,
-				// Honor the agent's Claude token source for the naming spawn.
-				// Shared extractor guarantees the SAME complete triple the chat
-				// spawn forwards - no partial/drifting forward possible.
-				...getClaudeTokenSourceFields(activeSession),
-			})
-			.then((generatedName) => {
-				updateAiTab(sessionId, tabId, (t) => ({
-					...t,
-					isGeneratingName: false,
-					...(generatedName ? { name: generatedName } : {}),
-				}));
-
-				if (generatedName) {
-					window.maestro.logger.log(
-						'info',
-						`Auto tab named (manual): "${generatedName}"`,
-						'TabNaming',
-						{ tabId, sessionId, generatedName }
-					);
-				}
-			})
-			.catch((error) => {
-				window.maestro.logger.log('error', 'Auto tab naming (manual) failed', 'TabNaming', {
-					tabId,
-					sessionId,
-					error: String(error),
-				});
-				// Clear spinner on error
-				updateAiTab(sessionId, tabId, (t) => ({ ...t, isGeneratingName: false }));
-			});
+		// The user pressed "Auto" - honor it even with automatic naming switched off,
+		// and overwrite whatever the tab is called now.
+		requestTabAutoName({
+			session: activeSession,
+			tabId: renameTabId,
+			prompt,
+			canApply: () => true,
+			force: true,
+			label: 'manual',
+		});
 	}, [renameTabId]);
 
 	const performDeleteSession = useCallback(
@@ -536,17 +487,6 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			} catch (error) {
 				captureException(error, {
 					extra: { sessionId: id, operation: 'delete-playbooks' },
-				});
-			}
-
-			// Provider Failover: drop any live pin (renderer + main overlay) so a
-			// deleted agent's session id can't keep routing prompts to a backup
-			// provider if it's ever reused. No-op when the agent isn't pinned.
-			try {
-				await clearFailover(id);
-			} catch (error) {
-				captureException(error, {
-					extra: { sessionId: id, operation: 'clear-failover' },
 				});
 			}
 
@@ -632,12 +572,18 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 	// Effects
 	// ====================================================================
 
-	// Persist groups directly (groups change infrequently, no need to debounce)
+	// Persist groups directly (groups change infrequently, no need to debounce).
+	//
+	// Gated on `groupsLoaded`, NOT on `initialLoadComplete`. The latter is set in
+	// a `finally` and so is true even when the group read failed, which made this
+	// effect write an empty registry over a good one and then rewrite it on every
+	// launch after. `groupsLoaded` is true only when `groups:getAll` actually came
+	// back, so a registry we never read is never persisted.
 	useEffect(() => {
-		if (initialLoadComplete) {
+		if (initialLoadComplete && groupsLoaded) {
 			window.maestro.groups.setAll(groups);
 		}
-	}, [groups, initialLoadComplete]);
+	}, [groups, initialLoadComplete, groupsLoaded]);
 
 	// Track navigation history when session or AI tab changes
 	const activeGroupChatId = useGroupChatStore((s) => s.activeGroupChatId);

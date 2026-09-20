@@ -392,6 +392,15 @@ export interface AgentConfigPanelProps {
 		mode: 'interactive' | 'api';
 		modeReason: 'auto' | 'limit';
 	};
+	// === Codex usage resets (codex agent only) ===
+	/**
+	 * Spend a rate-limit reset credit automatically when this agent hits a
+	 * plan-quota wall. Off by default. Rendered directly under Reasoning Effort,
+	 * because that is where the Codex-specific settings end and this is the last
+	 * of them.
+	 */
+	codexAutoResetOnExhaustion?: boolean;
+	onCodexAutoResetChange?: (value: boolean) => void;
 }
 
 export function AgentConfigPanel({
@@ -438,6 +447,8 @@ export function AgentConfigPanel({
 	onMaestroPPathBlur,
 	detectedMaestroPPath,
 	claudeInteractive,
+	codexAutoResetOnExhaustion = false,
+	onCodexAutoResetChange,
 }: AgentConfigPanelProps): JSX.Element {
 	const callOnConfigBlurSafely = (key: string, committedValue: any) => {
 		const maybePromise = onConfigBlur(key, committedValue);
@@ -1141,6 +1152,45 @@ export function AgentConfigPanel({
 						<p className="text-xs opacity-50 mt-2">{option.description}</p>
 					</div>
 				))}
+
+			{/* Automatic usage resets - Codex only, and last, so it sits directly
+			    under Reasoning Effort where the Codex settings end.
+
+			    Gated on the handler as well as the provider: the panel is shared
+			    with surfaces that do not persist this flag, and a checkbox whose
+			    change goes nowhere is worse than no checkbox. */}
+			{agent.id === 'codex' && onCodexAutoResetChange && (
+				<div
+					className={`${padding} rounded border`}
+					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
+					data-testid="codex-auto-reset-option"
+				>
+					<label className="block text-xs font-medium mb-2" style={{ color: theme.colors.textDim }}>
+						Automatic Usage Resets
+					</label>
+					<label
+						className="flex items-center gap-2 cursor-pointer"
+						onClick={(e) => e.stopPropagation()}
+					>
+						<input
+							type="checkbox"
+							checked={codexAutoResetOnExhaustion}
+							onChange={(e) => onCodexAutoResetChange(e.target.checked)}
+							className="w-4 h-4"
+							style={{ accentColor: theme.colors.accent }}
+							aria-label="Automatically redeem a reset credit when usage limits are hit"
+						/>
+						<span className="text-xs" style={{ color: theme.colors.textMain }}>
+							Redeem a reset credit when this agent hits its usage limit
+						</span>
+					</label>
+					<p className="text-xs opacity-50 mt-2">
+						Off by default. Reset credits are granted by OpenAI, are limited, expire, and cannot be
+						refunded - so Maestro only spends one when the account is actually blocked and the reset
+						would take effect. Manage them under Usage Dashboard - OpenAI Usage.
+					</p>
+				</div>
+			)}
 		</div>
 	);
 }

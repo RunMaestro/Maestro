@@ -9,8 +9,16 @@
 
 import type { StateCreator } from 'zustand';
 import type { ToastWidth } from '../../shared/toastWidth';
-import { isToastWidth } from '../../shared/toastWidth';
+import { isToastWidth, TOAST_WIDTH_LABELS, describeToastWidth } from '../../shared/toastWidth';
+import { notifyToast, useNotificationStore } from './notificationStore';
 import type { SettingsStore } from './settingsStore';
+
+/** How long the toast-width preview stays up. Long enough to read, short enough not to linger. */
+const TOAST_WIDTH_PREVIEW_DURATION_MS = 5000;
+
+// The preview toast currently on screen, so picking a second preset replaces it
+// rather than stacking a fourth toast beside the three already fading out.
+let toastWidthPreviewId: string | null = null;
 
 export interface NotificationsState {
 	toastWidth: ToastWidth;
@@ -35,7 +43,8 @@ export interface NotificationsActions {
 export type NotificationsSlice = NotificationsState & NotificationsActions;
 
 export const createNotificationsSlice: StateCreator<SettingsStore, [], [], NotificationsSlice> = (
-	set
+	set,
+	get
 ) => ({
 	toastWidth: 'dynamic',
 	osNotificationsEnabled: true,
@@ -48,6 +57,22 @@ export const createNotificationsSlice: StateCreator<SettingsStore, [], [], Notif
 	setToastWidth: (value) => {
 		set({ toastWidth: value });
 		window.maestro.settings.set('toastWidth', value);
+		// Fire a sample toast at the new width so the size is visible the
+		// moment it is picked, instead of waiting for the next real
+		// notification. Replaces its own previous preview so clicking
+		// through the presets updates one toast rather than stacking four.
+		if (toastWidthPreviewId) {
+			useNotificationStore.getState().removeToast(toastWidthPreviewId);
+		}
+		toastWidthPreviewId = notifyToast({
+			color: 'theme',
+			title: `Toast Width: ${TOAST_WIDTH_LABELS[value]}`,
+			message: describeToastWidth(value, get().rightPanelWidth),
+			duration: TOAST_WIDTH_PREVIEW_DURATION_MS,
+			// In-app preview only: no TTS command, no Notification Center entry.
+			skipCustomNotification: true,
+			skipOsNotification: true,
+		});
 	},
 
 	setOsNotificationsEnabled: (value) => {

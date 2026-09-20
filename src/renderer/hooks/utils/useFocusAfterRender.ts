@@ -59,15 +59,24 @@ export function useFocusAfterRender(
  * @param ref   - Ref pointing to the element to focus
  * @param delay - Deferral in ms (default {@link MOUNT_FOCUS_DELAY_MS}). Pass 0
  *                to focus synchronously after the mount commit.
+ * @param enabled - Set false to skip the mount focus entirely. The case this
+ *                exists for is a phone: focusing a text field raises the
+ *                on-screen keyboard, which covers roughly the bottom half of a
+ *                full-screen modal, so a surface whose point is its LIST opens
+ *                with that list buried. A phone user taps the field when they
+ *                want to type. Do not use it to work around a focus race -
+ *                that is what `delay` is for.
  *
  * @example
  * useFocusOnMount(inputRef);
  */
 export function useFocusOnMount(
 	ref: RefObject<HTMLElement | null>,
-	delay: number = MOUNT_FOCUS_DELAY_MS
+	delay: number = MOUNT_FOCUS_DELAY_MS,
+	enabled: boolean = true
 ): void {
 	useEffect(() => {
+		if (!enabled) return;
 		if (delay <= 0) {
 			ref.current?.focus();
 			return;
@@ -76,9 +85,9 @@ export function useFocusOnMount(
 			ref.current?.focus();
 		}, delay);
 		return () => clearTimeout(id);
-		// `ref` is stable and `delay` is a constant at every call site, so this
-		// runs exactly once per mount.
-	}, [ref, delay]);
+		// `ref` is stable and `delay`/`enabled` are constants at every call site,
+		// so this runs exactly once per mount.
+	}, [ref, delay, enabled]);
 }
 
 /**

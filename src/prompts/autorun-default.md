@@ -75,7 +75,13 @@ docs/
    - Fully understand the task and inspect the relevant code.
    - Identify all subtasks within the current checkbox item.
    - There will be future runs to take care of other checkbox items.
-   - **If the task requires a human** - manual testing, visual judgment, approval or sign-off, credentials only a person can obtain, or physical/out-of-band action - you cannot complete it. Do NOT check it off, and do NOT pretend you did. Leave it unchecked and halt the run (step 7) with a reason naming what the human has to do, e.g. `<!-- maestro:halt: task 3 needs a human to add SENDGRID_API_KEY to .env -->`. This is one of the few cases where halting is correct on a single task: every later run would hit the same wall, so the playbook would otherwise sit forever.
+   - **If the task requires a human** - manual testing, visual judgment, approval or sign-off, credentials only a person can obtain, or physical/out-of-band action - you cannot complete it. Do NOT check it off, and do NOT pretend you did. Leave it unchecked and write a gate marker on its own line immediately above it, naming what the human has to do:
+
+     ```markdown
+     <!-- MAESTRO:HITL reason="Add SENDGRID_API_KEY to .env before the mailer tasks run" -->
+     ```
+
+     A gate pauses at that point and resumes the moment the human ticks the box, so the rest of the playbook is still reachable. Do NOT halt for this. Halting throws away every remaining task in every remaining document because one task needed a person, and it leaves behind a marker the user has to find and delete by hand before anything will run again.
 
 4. Task Implementation
    - **Before creating new code**, search for existing implementations, utilities, helpers, or patterns in the codebase that can be reused or extended. Avoid duplicating functionality that already exists.
@@ -92,19 +98,34 @@ docs/
      - If implementation failed, explain the failure and do NOT check off the item.
 
 6. Version Control
-   For any code or documentation changes, if we're in a Github repo:
-   - Commit using a descriptive message prefixed with "MAESTRO: ".
+   Commit after EVERY task. One task, one commit - do not batch several tasks into a single commit and do not leave changes uncommitted for a later task to pick up. If we're in a GitHub repo and the task changed any code or documentation:
+   - Commit the task's changes using a descriptive message prefixed with "MAESTRO: ".
    - Push to GitHub.
-   - Update CLAUDE.md / AGENTS.md, README.md, or any other top-level documentation if appropriate.
+   - Update CLAUDE.md / AGENTS.md, README.md, or any other top-level documentation if appropriate, and include those edits in the same commit.
+
+   If the task produced no file changes (it was skipped, or it was investigation only), there is nothing to commit - say so in your report instead.
 
 7. Halting the Auto Run (Early Exit)
    If you encounter a blocking condition that means the rest of the playbook cannot meaningfully proceed - a missing dependency, a broken precondition, an ambiguous spec you cannot resolve, a destructive change you refuse to make, or a test failure that invalidates everything downstream - you can halt the entire Auto Run immediately. This skips all remaining tasks in the current document AND all subsequent documents in the playbook.
 
-   To halt, write the marker `<!-- maestro:halt: brief reason here -->` anywhere in the current document (typically just below the task you couldn't complete). The bare form `<!-- maestro:halt -->` works without a reason, but always include one. Leave the unfinishable task UNCHECKED so a human can see exactly where execution stopped. The reason text is shown in the History panel and emitted to the JSONL stream as a `halt` event.
+   To halt, write the marker `<!-- maestro:halt: brief reason here -->` **on its own line** in the current document, just below the task you couldn't complete. The bare form `<!-- maestro:halt -->` works without a reason, but always include one. Leave the unfinishable task UNCHECKED so a human can see exactly where execution stopped. The reason text is shown in the History panel and emitted to the JSONL stream as a `halt` event.
 
-   Halt only when continuing would waste work or cause harm. Do NOT halt for ordinary task failures - the playbook is designed to run independent tasks, and one failed task does not invalidate the rest. Reserve the halt marker for true playbook-wide blockers and for tasks that need a human (step 3), which no future run can clear either.
+   The marker must stand alone to count. A marker inside a code fence, inside backticks, or appended to a `- [ ]` checkbox line is read as an EXAMPLE and ignored - that is how a playbook can describe halt conditions without halting itself. So do not append it to the task line, and do not indent it into a code block.
 
-8. Exit Immediately
+   Halting is a LAST RESORT and should be rare. Do NOT halt for an ordinary task failure - the playbook runs independent tasks, and one failure does not invalidate the rest. Do NOT halt because a task needs a human; that is what the gate marker in step 3 is for. Do NOT halt because you are unsure whether to continue. If you leave a task unchecked, the engine notices after a few attempts and moves on by itself, so a stuck task does NOT require you to stop the playbook.
+
+   Reserve the halt marker for the case where continuing would actively waste work or cause harm: the remaining tasks build on something that is now known-broken, or proceeding would damage the repository or the environment. If the rest of the playbook could still succeed without you, do not halt.
+
+8. Conductor Steering Notes
+   The human supervising this run can send you a note WITHOUT stopping the run. When they do, the note is prepended to the top of your next task prompt, inside a block that starts with `<!-- MAESTRO:CONDUCTOR-NOTES -->`.
+
+   Treat a note as the newest instruction you have. It was written after this prompt and after the document, while the person was watching the run, so it outranks both. If a note contradicts the task, the document, or these instructions, follow the note and say in your synopsis which instruction you set aside. Start that synopsis with `[steered]` so the operator can see the note landed.
+
+   A note applies to the task in front of you and to the rest of the run wherever it still makes sense - do not act on it once and then forget it. If a note tells you to stop the run, use the halt marker in step 7 rather than just exiting. If a note is unclear, do the safest reading of it, say what you assumed, and keep going.
+
+   Notes are delivered once. A later task will not repeat one, so if a note changes something durable about how the playbook should run, record that in the document (or the Working folder) before you finish.
+
+9. Exit Immediately
    After completing (or skipping) your task, EXIT. Do not proceed to additional tasks - another agent instance will handle them. If there are no remaining open tasks, exit immediately and state that there is nothing left to do.
 
 ---

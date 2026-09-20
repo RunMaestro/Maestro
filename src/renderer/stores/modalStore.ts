@@ -21,6 +21,7 @@ import type { SerializableWizardState } from '../components/Wizard';
 import type { ConductorBadge } from '../constants/conductorBadges';
 import { UI_SURFACES } from '../../shared/uiSurfaces';
 import { logger } from '../utils/logger';
+import { safeStorageGet, safeStorageSet } from '../utils/safeLocalStorage';
 
 // ============================================================================
 // Prompt Composer full-screen preference (persisted)
@@ -33,21 +34,11 @@ import { logger } from '../utils/logger';
 const PROMPT_COMPOSER_FULLSCREEN_KEY = 'maestro.promptComposer.fullscreen';
 
 function readStoredPromptComposerFullscreen(): boolean {
-	if (typeof window === 'undefined') return false;
-	try {
-		return window.localStorage.getItem(PROMPT_COMPOSER_FULLSCREEN_KEY) === 'true';
-	} catch {
-		return false;
-	}
+	return safeStorageGet(PROMPT_COMPOSER_FULLSCREEN_KEY) === 'true';
 }
 
 function writeStoredPromptComposerFullscreen(value: boolean): void {
-	if (typeof window === 'undefined') return;
-	try {
-		window.localStorage.setItem(PROMPT_COMPOSER_FULLSCREEN_KEY, String(value));
-	} catch {
-		// Ignore quota / privacy-mode errors - preference just won't persist.
-	}
+	safeStorageSet(PROMPT_COMPOSER_FULLSCREEN_KEY, String(value));
 }
 
 // ============================================================================
@@ -214,7 +205,6 @@ export interface QuitConfirmModalData {
 	activeTerminalTasks?: string[];
 	activeCueRunCount?: number;
 	activeGroupChatCount?: number;
-	hasFeedbackDraft?: boolean;
 }
 
 export interface CueModalData {
@@ -1435,7 +1425,6 @@ export function useModalActions() {
 		// Quit Confirmation Modal
 		quitConfirmModalOpen,
 		activeTerminalTasks: (quitConfirmData?.activeTerminalTasks as string[]) ?? [],
-		hasFeedbackDraft: quitConfirmData?.hasFeedbackDraft ?? false,
 
 		// Rename Instance Modal
 		renameInstanceModalOpen,

@@ -18,6 +18,7 @@
  */
 
 import { getAgentDisplayName } from './agentMetadata';
+import { classifyCredentialKind, type CredentialKind } from './providerAuthIdentity';
 
 /** How a provider names the config directory that selects its account. */
 export interface ProviderProfileConfig {
@@ -25,6 +26,14 @@ export interface ProviderProfileConfig {
 	envVar: string;
 	/** Directory under $HOME used when the env var is unset (`.claude`). */
 	defaultSubdir: string;
+	/**
+	 * Subdirectory of the account home holding that account's transcripts.
+	 *
+	 * Two account homes that resolve to the same real transcript tree are one
+	 * account for attribution purposes, so this is what callers dedupe on. See
+	 * `getProviderAccountDirs()` in `src/main/agents/provider-account-dirs.ts`.
+	 */
+	sessionsSubdir: string;
 }
 
 /**
@@ -34,11 +43,50 @@ export interface ProviderProfileConfig {
  * statement about what Maestro can currently attribute, not about what the CLI
  * supports: adding an entry here immediately splits that provider's agents in
  * every surface built on this module.
+ *
+ * Absent on purpose, verified 2026-09-14 against each vendor's shipped binary
+ * and current docs:
+ *   - `opencode` has no provider-scoped data-dir var. Its credentials and
+ *     transcripts follow `XDG_DATA_HOME`, which is an OS-wide setting rather
+ *     than an OpenCode account selector, and `OPENCODE_CONFIG*` selects config
+ *     (agents, commands, plugins), not the data store.
+ *   - `factory-droid` ships no config-dir override at all: its whole env
+ *     surface is `FACTORY_API_KEY`, `FACTORY_API_KEY_HELPER_TTL_MS`,
+ *     `FACTORY_DISABLE_KEYRING`, `FACTORY_DROID_AUTO_UPDATE_ENABLED`,
+ *     `FACTORY_LOG_FILE`, and `FACTORY_PROJECT_DIR`.
+ * If either ships one, the single-line entry here is the whole change.
  */
 export const PROVIDER_PROFILE_CONFIGS: Readonly<Record<string, ProviderProfileConfig>> = {
-	'claude-code': { envVar: 'CLAUDE_CONFIG_DIR', defaultSubdir: '.claude' },
-	codex: { envVar: 'CODEX_HOME', defaultSubdir: '.codex' },
+	'claude-code': {
+		envVar: 'CLAUDE_CONFIG_DIR',
+		defaultSubdir: '.claude',
+		sessionsSubdir: 'projects',
+	},
+	codex: { envVar: 'CODEX_HOME', defaultSubdir: '.codex', sessionsSubdir: 'sessions' },
+	'copilot-cli': {
+		envVar: 'COPILOT_HOME',
+		defaultSubdir: '.copilot',
+		sessionsSubdir: 'session-state',
+	},
 };
+
+/**
+ * Directory names that read as a copy of an account rather than an account.
+ *
+ * A `~/.claude-backup` left over from a migration holds a full transcript tree,
+ * so nothing about its contents distinguishes it - only its name does.
+ */
+export const ACCOUNT_DIR_EXCLUDE_RE =
+	/(^|[-_.])(backup|bak|old|archive|archived|stage|local|server)([-_.]|$)/i;
+
+/**
+ * Whether a `$HOME` entry name looks like an account dir for a provider whose
+ * default subdir is `prefix` (`.claude` matches `.claude` and `.claude-work`).
+ */
+export function isAccountDirName(name: string, prefix: string): boolean {
+	if (ACCOUNT_DIR_EXCLUDE_RE.test(name)) return false;
+	return name === prefix || name.startsWith(`${prefix}-`);
+}
 
 export function getProviderProfileConfig(toolType: string): ProviderProfileConfig | undefined {
 	return PROVIDER_PROFILE_CONFIGS[toolType];
@@ -159,13 +207,20 @@ export function parseProviderProfileKey(key: string): {
 }
 
 /**
- * Short label for a profile - the account's own name (`smash`, `Default
- * account`) for providers with accounts, and the provider name otherwise.
- * Used where the provider is already obvious from context, e.g. a card badge.
+ * Short label for a profile - the account's own name (`smash`) for providers
+ * with accounts, and the provider name otherwise. Used where space is tight and
+ * the full label would not fit, e.g. a card badge.
+ *
+ * The implicit `~/<subdir>` account has no name of its own, so it is named
+ * after its provider (`Codex default`) rather than as a bare "Default account":
+ * that phrase reads identically for every provider, so a Codex card and a
+ * Claude card carried the same badge with nothing to tell them apart.
  */
 export function providerProfileShortLabel(toolType: string, accountKey: string | null): string {
+	const provider = getAgentDisplayName(toolType);
 	const helpers = getAccountKeyHelpers(toolType);
-	if (!helpers || !accountKey) return getAgentDisplayName(toolType);
+	if (!helpers || !accountKey) return provider;
+	if (helpers.deriveShortName(accountKey) === 'default') return `${provider} default`;
 	return helpers.deriveDisplayName(accountKey);
 }
 
@@ -179,4 +234,123 @@ export function providerProfileLabel(toolType: string, accountKey: string | null
 	const helpers = getAccountKeyHelpers(toolType);
 	if (!helpers || !accountKey) return provider;
 	return `${provider} - ${helpers.deriveDisplayName(accountKey)}`;
+}
+
+/**
+ * The custom env vars an agent's process actually receives from Maestro.
+ *
+ * The agent's own vars REPLACE the provider-level set; they do not layer over
+ * it. That is what `applyAgentConfigOverrides()` and the CLI's
+ * `resolveAgentOverrides()` do, so an agent that sets only `ANTHROPIC_API_KEY`
+ * never sees the provider's `CLAUDE_CONFIG_DIR`. Attribution built from a
+ * layered merge files that agent under an account its process never uses.
+ */
+export function effectiveAgentCustomEnvVars(
+	sessionEnv: Record<string, string> | undefined,
+	providerEnv: Record<string, string> | undefined
+): Record<string, string> {
+	return sessionEnv ?? providerEnv ?? {};
+}
+
+/** A credential an agent bills instead of its config dir's login. */
+export interface AgentBillingCredential {
+	kind: Exclude<CredentialKind, 'oauth'>;
+	/** Distinct per credential and never the secret: an API key contributes its last 4 characters. */
+	id: string;
+	/** `API key …a1b2`, a gateway host, or a cloud provider name. */
+	label: string;
+}
+
+/**
+ * The API key, gateway, or cloud provider an agent bills, or null when it runs
+ * on its config dir's login. A set credential outranks the login, so an agent
+ * holding one draws nothing from that account's plan quota.
+ *
+ * Only providers with an account split are considered: for the rest there is
+ * no login bucket for a credential to be pulled out of.
+ */
+export function resolveAgentBillingCredential(
+	toolType: string,
+	env: Record<string, string>
+): AgentBillingCredential | null {
+	if (!getProviderProfileConfig(toolType)) return null;
+	const classification = classifyCredentialKind(toolType, env);
+	if (classification.kind === 'oauth') return null;
+	if (classification.kind === 'api-key') {
+		const hint = (env[classification.envVarName ?? ''] ?? '').trim().slice(-4);
+		return { kind: 'api-key', id: `api-key:${hint}`, label: `API key …${hint}` };
+	}
+	const label = classification.label ?? classification.kind;
+	return { kind: classification.kind, id: `${classification.kind}:${label}`, label };
+}
+
+export interface ResolvedAgentProfile {
+	key: string;
+	accountKey: string | null;
+	credential: AgentBillingCredential | null;
+	/** SSH remote whose disk the account dir lives on, or null for a local account. */
+	sshRemoteId: string | null;
+	label: string;
+	shortLabel: string;
+}
+
+/** The SSH remote an agent runs on, as far as attribution needs it. */
+export interface AgentProfileRemote {
+	id: string;
+	/** Display name. Absent while the remote list loads, or when the remote was deleted. */
+	name?: string;
+}
+
+/**
+ * The profile an agent belongs to, from the env its process receives (see
+ * {@link effectiveAgentCustomEnvVars}). Null when the agent needs a config-dir
+ * account and $HOME has not resolved yet.
+ *
+ * An SSH-remote agent's config dir is a path on THAT host and holds the host's
+ * own login, so it is a separate profile per host (`banaco @ pedtome`), never
+ * the local account that happens to share the directory name. A credential is
+ * the same account wherever it is presented, so credential profiles are not
+ * split by host.
+ */
+export function resolveAgentProfile(
+	toolType: string,
+	env: Record<string, string>,
+	homeDir: string | undefined,
+	remote?: AgentProfileRemote | null
+): ResolvedAgentProfile | null {
+	const credential = resolveAgentBillingCredential(toolType, env);
+	if (credential) {
+		return {
+			key: providerProfileKey(toolType, credential.id),
+			accountKey: null,
+			credential,
+			sshRemoteId: null,
+			label: `${getAgentDisplayName(toolType)} - ${credential.label}`,
+			shortLabel: credential.label,
+		};
+	}
+	const hasAccounts = Boolean(getProviderProfileConfig(toolType));
+	const accountKey = hasAccounts ? resolveAgentAccountKey(toolType, env, homeDir) : null;
+	if (hasAccounts && !accountKey) return null;
+	const label = providerProfileLabel(toolType, accountKey);
+	const shortLabel = providerProfileShortLabel(toolType, accountKey);
+	if (!remote || !accountKey) {
+		return {
+			key: providerProfileKey(toolType, accountKey),
+			accountKey,
+			credential: null,
+			sshRemoteId: null,
+			label,
+			shortLabel,
+		};
+	}
+	const host = remote.name || 'unknown host';
+	return {
+		key: providerProfileKey(toolType, `${accountKey}@ssh:${remote.id}`),
+		accountKey,
+		credential: null,
+		sshRemoteId: remote.id,
+		label: `${label} @ ${host}`,
+		shortLabel: `${shortLabel} @ ${host}`,
+	};
 }

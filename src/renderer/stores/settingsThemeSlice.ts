@@ -9,6 +9,7 @@
 import type { StateCreator } from 'zustand';
 import type { ThemeId, ThemeColors } from '../types';
 import { DEFAULT_CUSTOM_THEME_COLORS } from '../constants/themes';
+import { resolveThemeId } from '../../shared/theme-types';
 import { TYPOGRAPHY_PRESETS, type TypographyPresetId } from '../../shared/typographyPresets';
 import { MAESTRO_FONT_STACK } from '../../shared/fontStack';
 import type { GlossLevel } from '../../shared/themeGloss';
@@ -75,6 +76,8 @@ export interface ThemeState {
 	typographyPromptSeen: boolean;
 	/** Whether the first-run theme chooser has been shown. See onboardingSeries. */
 	themePromptSeen: boolean;
+	/** Whether the release channel / crash reports / CLI step has been shown. */
+	updatesPromptSeen: boolean;
 	/** Whether the "your agents can drive Maestro" step has been shown. */
 	agentPowersPromptSeen: boolean;
 }
@@ -102,6 +105,7 @@ export interface ThemeActions {
 	setThemeGloss: (value: GlossLevel) => void;
 	setTypographyPromptSeen: (value: boolean) => void;
 	setThemePromptSeen: (value: boolean) => void;
+	setUpdatesPromptSeen: (value: boolean) => void;
 	setAgentPowersPromptSeen: (value: boolean) => void;
 	/** Write all five font settings at once from a typography preset. */
 	applyTypographyPreset: (id: TypographyPresetId) => void;
@@ -131,6 +135,7 @@ export const createThemeSlice: StateCreator<SettingsStore, [], [], ThemeSlice> =
 	themeGloss: DEFAULT_GLOSS_LEVEL,
 	typographyPromptSeen: false,
 	themePromptSeen: false,
+	updatesPromptSeen: false,
 	agentPowersPromptSeen: false,
 
 	setFontFamily: (value) => {
@@ -272,6 +277,11 @@ export const createThemeSlice: StateCreator<SettingsStore, [], [], ThemeSlice> =
 		window.maestro.settings.set('themePromptSeen', value);
 	},
 
+	setUpdatesPromptSeen: (value) => {
+		set({ updatesPromptSeen: value });
+		window.maestro.settings.set('updatesPromptSeen', value);
+	},
+
 	setAgentPowersPromptSeen: (value) => {
 		set({ agentPowersPromptSeen: value });
 		window.maestro.settings.set('agentPowersPromptSeen', value);
@@ -313,14 +323,18 @@ export function hydrateThemeSettings(
 
 	if (allSettings['fontSize'] !== undefined) patch.fontSize = allSettings['fontSize'] as number;
 
+	// Both theme ids go through resolveThemeId: a saved id can name a theme
+	// that has since been retired, and the renderer looks the theme up bare
+	// (THEMES[activeThemeId] in App.tsx), so an unresolved id renders the
+	// whole app unstyled instead of falling back.
 	if (allSettings['activeThemeId'] !== undefined)
-		patch.activeThemeId = allSettings['activeThemeId'] as ThemeId;
+		patch.activeThemeId = resolveThemeId(allSettings['activeThemeId']);
 
 	if (allSettings['customThemeColors'] !== undefined)
 		patch.customThemeColors = allSettings['customThemeColors'] as ThemeColors;
 
 	if (allSettings['customThemeBaseId'] !== undefined)
-		patch.customThemeBaseId = allSettings['customThemeBaseId'] as ThemeId;
+		patch.customThemeBaseId = resolveThemeId(allSettings['customThemeBaseId']);
 
 	for (const spec of TYPOGRAPHY_SURFACE_LIST) {
 		if (!canInherit(spec)) continue;
@@ -344,6 +358,9 @@ export function hydrateThemeSettings(
 
 	if (allSettings['themePromptSeen'] !== undefined)
 		patch.themePromptSeen = Boolean(allSettings['themePromptSeen']);
+
+	if (allSettings['updatesPromptSeen'] !== undefined)
+		patch.updatesPromptSeen = Boolean(allSettings['updatesPromptSeen']);
 
 	if (allSettings['agentPowersPromptSeen'] !== undefined)
 		patch.agentPowersPromptSeen = Boolean(allSettings['agentPowersPromptSeen']);

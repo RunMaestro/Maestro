@@ -7,6 +7,8 @@
  */
 
 import type { SettingMetadata } from './settingsMetadata';
+import { ENCORE_FEATURE_DEFAULTS } from './encoreFeatureDefaults';
+import { DEFAULT_CUE_HISTORY_RETENTION_DAYS } from './cue/retention';
 
 export const FEATURES_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	// --- Integrations ---
@@ -68,28 +70,36 @@ export const FEATURES_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 
 	// --- Encore Features (experimental) ---
 	encoreFeatures: {
-		description: 'Feature flags for experimental/encore features. Object with boolean flags.',
+		description:
+			'Feature flags for Encore Features. Object with boolean flags; see ENCORE_FEATURE_DEFAULTS.',
 		type: 'object',
-		default: {
-			directorNotes: false,
-			usageStats: true,
-			symphony: true,
-			maestroCue: false,
-			pianola: false,
-			plugins: false,
-			coworking: false,
-			opencodeServer: false,
-			concerto: false,
-			groupsPlus: false,
-			aCappella: false,
-		},
+		default: { ...ENCORE_FEATURE_DEFAULTS },
 		category: 'advanced',
 	},
 	directorNotesSettings: {
 		description:
-			"Director's Notes settings: provider, lookback window, default reading mode, optional ideal end state.",
+			"Director's Notes settings: provider (or auto-select), lookback window, default reading mode, optional ideal end state.",
 		type: 'object',
-		default: { provider: 'claude-code', defaultLookbackDays: 7, defaultMode: 'rich' },
+		default: {
+			provider: 'claude-code',
+			autoSelectProvider: true,
+			defaultLookbackDays: 7,
+			defaultMode: 'rich',
+		},
+		category: 'advanced',
+	},
+	cueHistoryRetentionDays: {
+		description:
+			'How many days of Maestro Cue run history to keep in the Cue database. Rows older than this are pruned when the Cue engine starts. Raise it to keep a longer Activity Log, lower it to keep the database small.',
+		type: 'number',
+		default: DEFAULT_CUE_HISTORY_RETENTION_DAYS,
+		category: 'advanced',
+	},
+	groupCueEntries: {
+		description:
+			'Collapse repeated Maestro Cue runs in the History panel into one row per trigger, showing the run count, the most recent run time, and a failure count. Expand a row to reach the individual runs. Turn this off to list every Cue run separately.',
+		type: 'boolean',
+		default: true,
 		category: 'advanced',
 	},
 	coworkingBrowserInteraction: {

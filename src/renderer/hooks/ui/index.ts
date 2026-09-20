@@ -40,11 +40,23 @@ export { useGridColumnCount } from './useGridColumnCount';
 export { useScrollIntoView } from './useScrollIntoView';
 export { useStickToBottom } from './useStickToBottom';
 
+// Edge auto-scroll while an HTML5 drag hovers a scrollable container
+export { useDragAutoScroll } from './useDragAutoScroll';
+export type { UseDragAutoScrollOptions } from './useDragAutoScroll';
+
 // Hover tooltip management
 export { useHoverTooltip } from './useHoverTooltip';
 
 // Fixed-pitch font for surfaces that render shell text
 export { useFixedPitchFont } from './useFixedPitchFont';
+
+// Per-surface font/size for canvas and CodeMirror (cannot read CSS variables)
+export {
+	useSurfaceFontFamily,
+	useSurfaceFontSize,
+	useSurfaceTypography,
+} from './useSurfaceTypography';
+export type { SurfaceTypography } from './useSurfaceTypography';
 
 // Theme-aware ANSI -> HTML converter for raw terminal output
 export { useAnsiConverter, createAnsiConverter } from './useAnsiConverter';
@@ -115,7 +127,7 @@ export { usePagination } from './usePagination';
 export type { UsePaginationResult } from './usePagination';
 
 // ResizeObserver-backed element width, for JS-computed layout
-export { useElementWidth } from './useElementWidth';
+export { useElementWidth, useFreeHeightInFlexColumn } from './useElementWidth';
 
 // Whether an optional inline label still fits, so it can be dropped not clipped
 export { useOptionalLabelFits } from './useOptionalLabelFits';

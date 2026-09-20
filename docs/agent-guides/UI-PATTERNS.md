@@ -227,6 +227,7 @@ Dialog-style modals can offer persisted, center-anchored drag-to-resize via `use
 The shared `<Modal>` component wires this up automatically via `resizable`/`resizeKey`/`defaultSize`/`minSize`/`maxSize` props, but **resizing only activates when the caller passes an explicit, stable `resizeKey`.** Omitting it (the default for most `<Modal>` callers - simple confirms, help dialogs) falls back to the legacy fixed `width`/`maxHeight`/`scaleWidthWithFont` sizing instead of a title-derived key: a title/priority-derived fallback isn't stable across unrelated dialogs (every default-titled `ConfirmModal` would otherwise collide on one persisted size). Bespoke modal shells that don't use `<Modal>` (e.g. `QuitConfirmModal.tsx`) should stay off `useResizableModal` entirely if they're simple, non-resizable confirms.
 
 - `useResizableModal` (`src/renderer/hooks/ui/useResizableModal.ts`) owns the drag. Like `useResizablePanel` it writes to the DOM during the drag and commits React state once on mouseup. Deltas are doubled because the card is centered: growing the width by W moves the right edge by only W/2, so doubling keeps the grip under the pointer.
+- **A surface that is NOT centered passes `anchor="top-left"`**, which drops that doubling and tracks the cursor 1:1. That is the case for anything pinned to a corner rather than to the viewport - a dropdown hanging off its trigger, a popover (`PipelineSelector` is the reference caller). Such a surface must expose only the `s`, `e` and `se` handles, or just `ModalResizeGrip`: dragging `n` or `w` would have to move the anchor, which the hook does not do. Give it a `minSize` of its own too, or the 320 x 240 default floor makes a small menu unresizable.
 - Sizes persist in one `modalSizes` map in `uiStore`, keyed by `resizeKey`, written through to settings and hydrated by `loadAllSettings` on startup.
 - `defaultSize` is the size before any drag: its width falls back to the `width` prop and its height to 320, so a modal that opts in without declaring one opens far shorter than its old `maxHeight` let it grow. Declare both.
 - Minimums default to `DEFAULT_MODAL_MIN_SIZE` (320 x 240) in `src/renderer/utils/modalSizing.ts`. Pass a higher `minSize` when a modal's content stops making sense below a given size - every resizable modal should have a floor that still looks right.
@@ -501,6 +502,10 @@ A horizontal row of mutually exclusive options rendered as one joined pill bar -
 
 It owns the active-segment coloring, the seam borders, `role="radiogroup"` + `role="radio"` semantics, arrow-key navigation between segments, and a single tab stop (`tabIndex` follows the selection, as a native radio group does). Each segment gets `data-testid="${testId}-${value}"`, so existing per-segment test ids keep working when a hand-rolled bar is migrated.
 
+For a bar that must shrink, give an option a `shortLabel`. Both forms render, the short one `hidden`; the HOST's container query swaps them by targeting `.segmented-label-full` / `.segmented-label-short`, because only the host knows what else shares its row. `GroupChatHeader` and its `groupchatheader` block in `index.css` are the reference.
+
+**A bar wider than its row scrolls sideways; it does not clip.** The container was `overflow-hidden` (which is what rounds the corners), so a five-segment bar on a phone simply lost its last two options - invisible AND unclickable, with no scrollbar to hint they were there. It is now `overflow-x-auto overflow-y-hidden no-scrollbar` with `shrink-0` segments. Two things are load-bearing: `overflow-y-hidden` must accompany `overflow-x: auto` (alone, `overflow-y` computes to `auto` and adds a vertical bar), and the segments do NOT shrink, because a squeezed segment reads as a different label rather than a narrower one. So the host still owns the shrink decision via `shortLabel` - this is only the floor that stops an option disappearing.
+
 **This is not `<RadioGroup>`.** That primitive renders the same semantics as stacked, description-carrying list rows for settings panes. `SegmentedControl` is the compact toolbar form for short labels where vertical space is scarce. Pick by layout, and do not add a `variant` prop to either one to cover the other.
 
 ### Sortable Table Headers (`<SortableTh>` + `useTableSort`)
@@ -592,7 +597,7 @@ Losing the whole pane while trying to reset a filter is the bug this prevents. T
 Any pane whose content is a markdown document rides the **File Preview stack**, not a bare `<textarea>`:
 
 - **Reading** - `<Markdown preset="document">` inside a scroll container, with `<style>{generateProseStyles({ theme, scopeSelector })}</style>` so the document typography is scoped to that pane instead of leaking heading and table rules onto the chrome around it.
-- **Editing** - `<MarkdownEditor>` from `components/FilePreview/markdownEditor`, which brings CodeMirror syntax colouring, the wrap-aware line-number gutter, and an imperative handle (`focus`, `scrollToLine`, `setSearchMatches`, scroll-percent sync).
+- **Editing** - `<MarkdownEditor>` from `components/FilePreview/markdownEditor`, which brings CodeMirror syntax colouring, the wrap-aware line-number gutter, and an imperative handle (`focus`, `scrollToLine`, `setSearchMatches`, `getCaret` / `getSelectionRange` / `setSelection`, `replaceRange`, and both scroll-percent and raw `scrollTop` sync). `onPaste` runs at `Prec.highest` like `onKeyDown`, so a host can claim a paste before CM6 inserts the clipboard text - return `true` to swallow it. `placeholder` paints hint text while the document is empty.
 - **Switching** - `Cmd/Ctrl+E`, read from the user's LIVE `toggleMarkdownMode` binding via `eventMatchesShortcutKeys`, never from a literal `e`. One chord flips a file preview and a memory alike; two spellings of one idea is how a keyboard stops being predictable.
 
 **Open in Preview.** A markdown pane is opened to read far more often than to write, so the rendered document is the default state and editing is one keystroke away rather than the state the user has to leave.
@@ -724,6 +729,8 @@ Each assistant message in the AI transcript carries a centered footer row naming
 The values come from `LogEntry.turnModel` / `turnEffort`, copied in `useBatchedSessionUpdates` from the tab's send-time stamp (`AITab.turnModel` / `turnEffort`, written by `codifyTurnSettings()` in `utils/providerTabSessions.ts`). Read the stamp, never the live tab or agent value: settings are codified at send, so a model change made while a turn streams applies to the next message and must not relabel the response already running. An unset value means the agent's own default applied, and that pill is omitted rather than labeled with a guess.
 
 **A queued message freezes its settings when it is QUEUED, not when it dispatches.** Queuing is the send from the user's point of view - they picked a model, typed, hit Enter - but the turn may not spawn until several model changes later. So every path that builds a `QueuedItem` spreads `captureQueuedTurnSettings(tab, session)` into `item.turnSettings`, and both consumers read it back through `codifyQueuedTurnSettings(item, tab, session)`: `markTabRunningQueuedItem()` for the pills, and `agentStore.processQueuedItem()` for the actual `sessionCustomModel` / `sessionCustomEffort` it spawns with. The queued-item rows in the inline list and the Execution Queue browser render the same `<TurnSettingPills>`, so the user can see which pending message is on the big model before it runs.
+
+**Both pills leave every card on a phone.** They carry `data-turn-setting-pill`, and one rule in the "Phone layout" block of `src/renderer/index.css` hides everything with that attribute at `xs`. The queued card's footer is a three-column grid whose outer tracks hold a `whitespace-nowrap` Force Send button and a cluster of four icon buttons, so at 390px the tracks overflow into the centered pills and the three groups paint on top of each other. The pill is the thing to drop, for the same reason the header's cost, context and LOCAL badges are: it is a readout with a `title` tooltip no touch screen can open, while every control in the row does something. Mark a new pill in this family with the attribute rather than gating it on `usePhoneLayout()` in JSX - the attribute is what keeps the rule exhaustive.
 
 The presence of the `turnSettings` OBJECT is the capture flag, not the presence of its fields. `undefined` model/effort inside a present object means "the agent's default was in force when I queued", which is a real choice - never write `item.turnSettings?.model ?? liveModel`, or an item queued on the default silently inherits whatever the user selected afterwards. The object is absent only on items restored from a build that predates the capture, which is the one case that falls back to live values.
 
@@ -950,7 +957,7 @@ Three modes with built-in themes:
 
 **Light**: github-light, solarized-light, one-light, gruvbox-light, catppuccin-latte, ayu-light
 
-**Vibe**: pedurple, maestros-choice, dre-synth, inquest
+**Vibe**: pedurple, maestros-choice, dre-synth, winamp
 
 Plus `custom` - user-defined via Custom Theme Builder.
 
@@ -1463,7 +1470,7 @@ Standard cancel/confirm button layout:
 />
 ```
 
-### `<ShortcutHint>` (`src/renderer/components/TabBar/ShortcutHint.tsx`)
+### `<ShortcutHint>` (`src/renderer/components/ui/ShortcutHint.tsx`)
 
 The keys badge at the right edge of a tab overlay-menu row:
 
@@ -1615,9 +1622,11 @@ const fontScale = useFontScale('filePreview.fontScale');
   matches the current mode; reading rendered prose and editing Markdown source are
   comfortable at different sizes, and one shared value makes each mode fight the
   other. Both hooks stay mounted, so switching back restores the size that mode was
-  left at. When the scale drives a `<textarea>`, scale the `lineHeight` with it
-  (Auto Run uses a unitless `1.45`) - a fixed `20px` row crams taller glyphs once
-  zoomed - and pass the scale as `remeasureKey` to `<TextareaLineNumbers>`.
+  left at. Pass the scale to `<MarkdownEditor fontScale>`, which carries it in the
+  CM6 theme so the line height rides the font size. When the scale drives a bare
+  `<textarea>` instead, scale its `lineHeight` by hand (a unitless `1.45` works) - a
+  fixed `20px` row crams taller glyphs once zoomed - and pass the scale as
+  `remeasureKey` to `<TextareaLineNumbers>`.
 - `collapsible` (floating only) - rests as a circle the size of that Table of Contents
   button and expands to the full pill on hover or keyboard focus. The buttons are
   CLIPPED, not unmounted, so tabbing into them opens the pill instead of skipping a
@@ -2012,9 +2021,11 @@ const metrics = lineNumberGutterMetrics(value);
 
 The metrics are in `ch` units and reserve a minimum of two digits, so the editor
 does not reflow the first time the document reaches line 10, and the gutter
-scales with the monospace font instead of a hard-coded pixel guess. Both callers
-ride it: the Cue YAML editor and the Auto Run expanded modal (`showLineNumbers`,
-which the docked Auto Run panel leaves off because it has no room for a gutter).
+scales with the monospace font instead of a hard-coded pixel guess. The Cue YAML
+editor is the one caller left. Auto Run used to ride it and no longer does - its
+source editor is `<MarkdownEditor>`, which brings CodeMirror's own gutter, so
+`showLineNumbers` there is a CM6 prop rather than this overlay (the docked panel
+still leaves it off because it has no room for a gutter).
 
 Do NOT hand-roll another `value.split('\n').map((_, i) => <div>{i + 1}</div>)`
 gutter. That is what the YAML editor had, and it drifted out of alignment the
@@ -2023,9 +2034,8 @@ moment the file was taller than the box or any line wrapped.
 **Pass `remeasureKey` when the textarea's typography can change without its box
 changing.** The component re-measures on its own `ResizeObserver`, and a font-size
 change leaves the border box exactly the same size, so nothing fires and the
-numbers keep the row heights of the OLD font until the next keystroke. Auto Run
-passes its edit-mode font scale; any surface with a font zoom over a numbered
-textarea needs the same.
+numbers keep the row heights of the OLD font until the next keystroke. Any surface
+with a font zoom over a numbered textarea needs it.
 
 jsdom has no layout engine and no `ResizeObserver`, so under test the gutter
 renders with natural row heights rather than measured ones. That is deliberate,
@@ -2060,9 +2070,12 @@ preference whose answer is one of three words rather than yes/no (the Extensions
 grid's A-Z / Newest sort). It validates the stored string against the option
 list on read, so a mode left behind by an older build falls back to the default
 instead of stranding the surface in a state its control can no longer express.
-Both hooks reach Storage through `safeLocalStorage()`
+Both hooks reach Storage through `safeStorageGet` / `safeStorageSet`
 (`src/renderer/utils/safeLocalStorage.ts`), which is also what
-`useScalePreference` uses - do NOT write a fourth private `storage()` guard.
+`useScalePreference` uses - do NOT write a fourth private `storage()` guard,
+and do NOT optional-chain `getItem`/`setItem` on `safeLocalStorage()`. The
+accessor only covers reaching the object; method-level failures (quota,
+Safari private mode) are what the get/set pair swallows.
 
 ---
 
@@ -2074,7 +2087,7 @@ Every image anywhere in the app - raster `<img>`, agent-authored inline `<svg>`,
 
 - `resolveImageFromEvent(e)` (exported from `ImageContextMenuHost.tsx`) decides what counts. It skips three things: anything inside a `[data-no-image-menu]` subtree, lucide icons (which are `<svg>` but carry the `lucide` class), and anything under 32px rendered (favicons, inline badges).
 - **Opting a surface out:** put `data-no-image-menu` on its container. Use this only when the surface owns its own right-click behavior (e.g. `AnnotatorCanvas`). A menu that already handled the click and called `preventDefault()` is skipped automatically via `defaultPrevented` - that is how `LinkContextMenu` / `FileContextMenu` coexist with this one.
-- `utils/imageExport.ts` does the work: `copyImageElementToClipboard()` returns `'image' | 'text' | 'failed'` so the UI can admit when only markup or a URL reached the clipboard rather than claiming a paste-able image. `saveImageToProject()` writes into the project's `DIAGRAMS_DIR` (`.maestro/diagrams/`), works over SSH, and calls `requestFileTreeRefresh(target.sessionId)` after a successful write so the new file shows up in the Files panel instead of waiting for its timed refresh (the toast offers to open it, so a stale tree reads as the save having failed). That refresh lives inside `saveImageToProject` rather than in the menu host for the same reason the menu itself is delegated: a future save surface gets it with no wiring. `saveImageElementToDisk()` is the native-dialog path and writes wherever the user points it, which is usually outside any workspace, so it does not refresh. Binary writes go through `fs.writeImageFile` (`fs.writeFile` is UTF-8 and would corrupt the bytes).
+- `utils/imageExport.ts` does the work: `copyImageElementToClipboard()` returns `'image' | 'text' | 'failed'` so the UI can admit when only markup or a URL reached the clipboard rather than claiming a paste-able image. `saveImageToProject()` writes into the project's `DIAGRAMS_DIR` (`.maestro/diagrams/`), works over SSH, and calls `requestFileTreeRefresh(target.sessionId)` after a successful write so the new file shows up in the Files panel instead of waiting for its timed refresh (the toast offers to open it, so a stale tree reads as the save having failed). That refresh lives inside `saveImageToProject` rather than in the menu host for the same reason the menu itself is delegated: a future save surface gets it with no wiring. `saveImageElementToDisk()` is the native-dialog path and writes wherever the user points it, which is usually outside any workspace, so it does not refresh. `saveImageDataUrlToDisk()` is the same native-dialog path for bytes with no element behind them (a page screenshot, a canvas render); reach for it when there is nothing in the DOM to hand to `saveImageElementToDisk`. Binary writes go through `fs.writeImageFile` (`fs.writeFile` is UTF-8 and would corrupt the bytes).
 - `ImageDestinationModal` is the "Save to Project..." destination picker (folder, file name, SVG/PNG format, live path preview). Not to be confused with `FilePreview/ImageSaveModal`, which is the annotator's overwrite-vs-save-as prompt.
 
 `serializeSvg()` stamps the measured size onto the clone when the source has none. Mermaid sizes charts with CSS (`width="100%"`), and without this the rasterized copy comes out cropped at the browser's 300x150 default.

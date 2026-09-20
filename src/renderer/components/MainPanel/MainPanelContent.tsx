@@ -480,7 +480,6 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 	// The command terminal can use its own font (issue #1228).
 	const terminal = useSurfaceTypography('terminal');
 	const terminalFontFamily = terminal.fontFamily;
-	const fontSize = useSettingsStore((s) => s.fontSize);
 	const enterToSendAI = useSettingsStore((s) => s.enterToSendAI);
 	const chatRawTextMode = useSettingsStore((s) => s.chatRawTextMode);
 	const userMessageAlignment = useSettingsStore((s) => s.userMessageAlignment);

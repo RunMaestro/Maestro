@@ -33,6 +33,9 @@ import {
 	ChevronRight,
 	ZoomIn,
 	Move,
+	Camera,
+	Copy,
+	Download,
 } from 'lucide-react';
 import { Spinner } from '../ui/Spinner';
 import type { Theme } from '../../types';
@@ -109,7 +112,11 @@ import {
 import { usePersistedToggle } from '../../hooks/ui/usePersistedToggle';
 import { MarkdownRenderer } from '../MarkdownRenderer';
 import { generateProseStyles } from '../../utils/markdownConfig';
-import { safeClipboardWrite } from '../../utils/clipboard';
+import { safeClipboardWrite, safeClipboardWriteImage } from '../../utils/clipboard';
+import { saveImageDataUrlToDisk } from '../../utils/imageExport';
+import { notifyToast } from '../../stores/notificationStore';
+import { notifyCenterFlash } from '../../stores/centerFlashStore';
+import { fileTimestampSlug, getBasename } from '../../../shared/formatters';
 import { buildFileTreeFromPaths } from '../../utils/fileTree';
 import { countMarkdownTasks } from '../FilePreview/filePreviewUtils';
 import { logger } from '../../utils/logger';
@@ -361,6 +368,10 @@ export function DocumentGraphView({
 	// Close confirmation modal state
 	const [showCloseConfirmation, setShowCloseConfirmation] = useState(false);
 	const confirmCloseButtonRef = useRef<HTMLButtonElement>(null);
+
+	// Screenshot modal state
+	const [showScreenshotModal, setShowScreenshotModal] = useState(false);
+	const screenshotCopyButtonRef = useRef<HTMLButtonElement>(null);
 
 	// Container refs
 	const containerRef = useRef<HTMLDivElement>(null);
@@ -1093,6 +1104,91 @@ export function DocumentGraphView({
 	);
 
 	/**
+	 * Screenshot the graph area exactly as it is painted, preview pane included.
+	 *
+	 * Goes through Electron's page capture rather than serializing the canvas:
+	 * the graph, the markdown preview and the legend are three different render
+	 * paths, and only the compositor knows what the user is actually looking at.
+	 *
+	 * The screenshot modal is dismissed by the caller first; this waits two
+	 * frames so the shot is taken from a frame that no longer has the modal (or
+	 * its backdrop) sitting on top of the graph.
+	 */
+	const captureGraphImage = useCallback(async (): Promise<string | null> => {
+		const el = graphContainerRef.current;
+		const capturePage = window.maestro?.shell?.capturePage;
+		if (!el || !capturePage) return null;
+
+		await new Promise<void>((resolve) =>
+			requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+		);
+
+		const rect = el.getBoundingClientRect();
+		if (rect.width <= 0 || rect.height <= 0) return null;
+		return await capturePage({
+			x: rect.left,
+			y: rect.top,
+			width: rect.width,
+			height: rect.height,
+		});
+	}, []);
+
+	const handleScreenshotCopy = useCallback(async () => {
+		setShowScreenshotModal(false);
+		try {
+			const dataUrl = await captureGraphImage();
+			if (dataUrl && (await safeClipboardWriteImage(dataUrl))) {
+				notifyCenterFlash({ message: 'Graph Copied', color: 'green' });
+				return;
+			}
+			notifyToast({
+				color: 'red',
+				title: 'Copy Failed',
+				message: 'Could not capture the graph view.',
+			});
+		} catch (err) {
+			logger.error('Failed to copy graph screenshot:', undefined, err);
+			notifyToast({
+				color: 'red',
+				title: 'Copy Failed',
+				message: err instanceof Error ? err.message : 'Could not capture the graph view.',
+			});
+		}
+	}, [captureGraphImage]);
+
+	const handleScreenshotSave = useCallback(async () => {
+		setShowScreenshotModal(false);
+		try {
+			const dataUrl = await captureGraphImage();
+			if (!dataUrl) {
+				notifyToast({
+					color: 'red',
+					title: 'Save Failed',
+					message: 'Could not capture the graph view.',
+				});
+				return;
+			}
+			const result = await saveImageDataUrlToDisk(dataUrl, `graph-${fileTimestampSlug()}.png`);
+			if (result.saved) {
+				notifyCenterFlash({
+					message: 'Graph Saved',
+					detail: result.path ? getBasename(result.path) : undefined,
+					color: 'green',
+				});
+			} else if (result.error) {
+				notifyToast({ color: 'red', title: 'Save Failed', message: result.error });
+			}
+		} catch (err) {
+			logger.error('Failed to save graph screenshot:', undefined, err);
+			notifyToast({
+				color: 'red',
+				title: 'Save Failed',
+				message: err instanceof Error ? err.message : 'Could not capture the graph view.',
+			});
+		}
+	}, [captureGraphImage]);
+
+	/**
 	 * Handle load more
 	 */
 	const handleLoadMore = useCallback(async () => {
@@ -1443,7 +1539,7 @@ export function DocumentGraphView({
 
 	/**
 	 * Handle container keyboard shortcuts (Cmd+F search; L layout; D depth;
-	 * P preview length; F fit to view; +/- node spacing)
+	 * P preview length; F fit to view; C screenshot; +/- node spacing)
 	 */
 	const handleContainerKeyDown = useCallback(
 		(e: React.KeyboardEvent) => {
@@ -1499,6 +1595,15 @@ export function DocumentGraphView({
 			if (e.key === 's' || e.key === 'S') {
 				e.preventDefault();
 				toggleScrollMode();
+				return;
+			}
+
+			// C opens the screenshot chooser, matching the camera button in the
+			// footer. Gated on the same capability the button is, so the key is
+			// inert rather than opening a dialog whose actions would both fail.
+			if ((e.key === 'c' || e.key === 'C') && !!window.maestro?.shell?.capturePage) {
+				e.preventDefault();
+				setShowScreenshotModal(true);
 				return;
 			}
 
@@ -2385,16 +2490,18 @@ export function DocumentGraphView({
 					)}
 				</div>
 
-				{/* Footer */}
+				{/* Footer. A three-column grid, not justify-between: the two side
+				    tracks are always equal, so the Snapshot button sits at the
+				    true center whether or not a selected node fills the right. */}
 				<div
-					className="px-6 py-4 border-t flex items-center justify-between text-xs flex-shrink-0"
+					className="px-6 py-4 border-t grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-4 text-xs flex-shrink-0"
 					style={{
 						borderColor: theme.colors.border,
 						color: theme.colors.textDim,
 						minHeight: 52,
 					}}
 				>
-					<div className="flex items-center gap-3">
+					<div className="flex items-center gap-3 min-w-0">
 						{/* Help Button */}
 						<button
 							onClick={() => setLegendExpanded(!legendExpanded)}
@@ -2496,41 +2603,144 @@ export function DocumentGraphView({
 						)}
 					</div>
 
-					{/* Center: Selected node stats */}
-					{selectedNode?.nodeType === 'document' && (selectedNodeStats || selectedNodeTasks) && (
-						<div className="flex items-center gap-4" style={{ color: theme.colors.textDim }}>
-							{/* Task counts */}
-							{selectedNodeTasks && (
-								<div className="flex items-center gap-1.5" title="Markdown tasks">
-									<CheckSquare className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
-									<span>
-										<span style={{ color: theme.colors.success }}>
-											{selectedNodeTasks.completed}
+					{/* Center: Snapshot. The column always renders so the grid keeps
+					    its middle track; the button inside hides when the bridge
+					    cannot capture the page, so it never offers a shot it can't take. */}
+					<div className="flex items-center justify-center">
+						{!!window.maestro?.shell?.capturePage && (
+							<button
+								onClick={() => setShowScreenshotModal(true)}
+								className="flex items-center gap-1.5 px-2 py-1 rounded text-xs transition-colors whitespace-nowrap"
+								style={{
+									backgroundColor: showScreenshotModal
+										? `${theme.colors.accent}25`
+										: `${theme.colors.accent}10`,
+									color: showScreenshotModal ? theme.colors.accent : theme.colors.textMain,
+								}}
+								onMouseEnter={(e) =>
+									(e.currentTarget.style.backgroundColor = `${theme.colors.accent}30`)
+								}
+								onMouseLeave={(e) =>
+									(e.currentTarget.style.backgroundColor = showScreenshotModal
+										? `${theme.colors.accent}25`
+										: `${theme.colors.accent}10`)
+								}
+								title="Snapshot the graph view (C)"
+								aria-label="Snapshot the graph view"
+								data-testid="graph-screenshot-button"
+							>
+								<Camera className="w-3.5 h-3.5" />
+								Snapshot
+							</button>
+						)}
+					</div>
+
+					{/* Right: Selected node stats. The wrapper always renders so the
+					    right track exists even with nothing selected. */}
+					<div className="flex items-center justify-end min-w-0">
+						{selectedNode?.nodeType === 'document' && (selectedNodeStats || selectedNodeTasks) && (
+							<div className="flex items-center gap-4" style={{ color: theme.colors.textDim }}>
+								{/* Task counts */}
+								{selectedNodeTasks && (
+									<div className="flex items-center gap-1.5" title="Markdown tasks">
+										<CheckSquare className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+										<span>
+											<span style={{ color: theme.colors.success }}>
+												{selectedNodeTasks.completed}
+											</span>
+											<span> of </span>
+											<span style={{ color: theme.colors.textMain }}>
+												{selectedNodeTasks.total}
+											</span>
+											<span> tasks</span>
 										</span>
-										<span> of </span>
-										<span style={{ color: theme.colors.textMain }}>{selectedNodeTasks.total}</span>
-										<span> tasks</span>
-									</span>
-								</div>
-							)}
-							{/* Created date */}
-							{selectedNodeStats?.createdAt && (
-								<div className="flex items-center gap-1.5" title="Created date">
-									<Calendar className="w-3.5 h-3.5" />
-									<span>Created {formatDate(selectedNodeStats.createdAt)}</span>
-								</div>
-							)}
-							{/* Modified date */}
-							{selectedNodeStats?.modifiedAt && (
-								<div className="flex items-center gap-1.5" title="Modified date">
-									<Calendar className="w-3.5 h-3.5" />
-									<span>Modified {formatDate(selectedNodeStats.modifiedAt)}</span>
-								</div>
-							)}
-						</div>
-					)}
+									</div>
+								)}
+								{/* Created date */}
+								{selectedNodeStats?.createdAt && (
+									<div className="flex items-center gap-1.5" title="Created date">
+										<Calendar className="w-3.5 h-3.5" />
+										<span>Created {formatDate(selectedNodeStats.createdAt)}</span>
+									</div>
+								)}
+								{/* Modified date */}
+								{selectedNodeStats?.modifiedAt && (
+									<div className="flex items-center gap-1.5" title="Modified date">
+										<Calendar className="w-3.5 h-3.5" />
+										<span>Modified {formatDate(selectedNodeStats.modifiedAt)}</span>
+									</div>
+								)}
+							</div>
+						)}
+					</div>
 				</div>
 			</div>
+
+			{/* Screenshot Modal */}
+			{showScreenshotModal && (
+				<Modal
+					theme={theme}
+					title="Screenshot Graph"
+					headerIcon={<Camera className="w-4 h-4" style={{ color: theme.colors.accent }} />}
+					priority={MODAL_PRIORITIES.DOCUMENT_GRAPH + 1}
+					onClose={() => setShowScreenshotModal(false)}
+					width={420}
+					closeOnBackdropClick
+					initialFocusRef={screenshotCopyButtonRef}
+				>
+					<div className="flex flex-col gap-2 select-none">
+						<p className="text-xs mb-1" style={{ color: theme.colors.textDim }}>
+							Captures the graph exactly as it is on screen, including the preview pane when it is
+							open.
+						</p>
+						<button
+							ref={screenshotCopyButtonRef}
+							onClick={handleScreenshotCopy}
+							className="w-full flex items-center gap-3 px-3 py-2.5 rounded text-sm text-left transition-colors"
+							style={{
+								backgroundColor: `${theme.colors.accent}10`,
+								color: theme.colors.textMain,
+							}}
+							onMouseEnter={(e) =>
+								(e.currentTarget.style.backgroundColor = `${theme.colors.accent}25`)
+							}
+							onMouseLeave={(e) =>
+								(e.currentTarget.style.backgroundColor = `${theme.colors.accent}10`)
+							}
+						>
+							<Copy className="w-4 h-4 shrink-0" style={{ color: theme.colors.accent }} />
+							<span>
+								Copy to Clipboard
+								<span className="block text-xs" style={{ color: theme.colors.textDim }}>
+									Paste the image straight into another app
+								</span>
+							</span>
+						</button>
+						<button
+							onClick={handleScreenshotSave}
+							className="w-full flex items-center gap-3 px-3 py-2.5 rounded text-sm text-left transition-colors"
+							style={{
+								backgroundColor: `${theme.colors.accent}10`,
+								color: theme.colors.textMain,
+							}}
+							onMouseEnter={(e) =>
+								(e.currentTarget.style.backgroundColor = `${theme.colors.accent}25`)
+							}
+							onMouseLeave={(e) =>
+								(e.currentTarget.style.backgroundColor = `${theme.colors.accent}10`)
+							}
+						>
+							<Download className="w-4 h-4 shrink-0" style={{ color: theme.colors.accent }} />
+							<span>
+								Save to Disk
+								<span className="block text-xs" style={{ color: theme.colors.textDim }}>
+									Write a PNG wherever you choose
+								</span>
+							</span>
+						</button>
+					</div>
+				</Modal>
+			)}
 
 			{/* Close Confirmation Modal */}
 			{showCloseConfirmation && (

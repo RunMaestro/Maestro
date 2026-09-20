@@ -217,37 +217,39 @@ of taking a second round trip or trusting a value the caller guessed.
 
 ## Covered
 
-| Point-and-click action                       | CLI                                                               |
-| -------------------------------------------- | ----------------------------------------------------------------- |
-| Bookmark / unbookmark an agent (Cmd+Shift+B) | `bookmark` / `unbookmark`, or `update-agent --bookmark`           |
-| Create / rename / remove an agent            | `create-agent`, `rename-agent`, `remove-agent`                    |
-| Edit Agent modal fields                      | `update-agent`, `settings agent set`                              |
-| Switch an agent's provider                   | `update-agent --provider --force`                                 |
-| Move an agent to a group                     | `update-agent --group`                                            |
-| Change working directory                     | `update-agent --cwd`                                              |
-| SSH remote execution config                  | `update-agent --ssh-remote / --ssh-cwd`, `create-ssh-remote`      |
-| Edit an SSH remote, incl. its `ssh -o` list  | `update-ssh-remote --ssh-option / --clear-ssh-options`            |
-| Focus an agent, switch AI/Shell mode         | `focus-agent`, `switch-mode`                                      |
-| Create / rename / remove a group             | `create-group`, `rename-group`, `remove-group`                    |
-| Create a worktree agent                      | `create-worktree`                                                 |
-| New / close / rename a tab                   | `tab new`, `tab close`, `tab rename`                              |
-| Star a tab (Cmd+Shift+S)                     | `tab star` / `tab unstar`                                         |
-| Mark a tab unread                            | `tab unread` / `tab read`                                         |
-| Toggle Save to History                       | `tab save-to-history`                                             |
-| Composer chips: thinking, read-only access   | `tab thinking` (off/on/sticky/cycle), `tab read-only`             |
-| Model / effort pills on one tab              | `tab model`, `tab effort` (`inherit` clears the override)         |
-| Enter-to-send chip                           | `tab enter-to-send`                                               |
-| Read one tab's settings back                 | `tab show`, or `session list --json`                              |
-| Move Tab to First / Last                     | `tab move <tab-id> first\|last\|<index>`                          |
-| Send a message, or run a shell command       | `send`, `dispatch`, `send-terminal`                               |
-| Consult another agent (`@mention`)           | `ask <agent> "<question>" --from <caller>`                        |
-| Open a file / URL / terminal tab             | `open-file`, `open-browser`, `open-terminal`                      |
-| Open a modal or dashboard                    | `open <surface> [--tab]` (registry in `src/shared/uiSurfaces.ts`) |
-| Auto Run: start, stop, resume, skip, abort   | `auto-run`, `stop-auto-run`, `resume-auto-run`, ...               |
-| Settings, theme, Encore features             | `settings`, `theme`, `set-theme`, `encore`                        |
-| Toasts and center flashes                    | `notify toast`, `notify flash`                                    |
-| Save a pasted chat image (right-click)       | `image save` (`image list` to find it)                            |
-| Cue subscriptions and scheduled tasks        | `cue trigger`, `cue schedule`, `cue pipeline`                     |
+| Point-and-click action                             | CLI                                                                                              |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Bookmark / unbookmark an agent (Cmd+Shift+B)       | `bookmark` / `unbookmark`, or `update-agent --bookmark`                                          |
+| Create / rename / remove an agent                  | `create-agent`, `rename-agent`, `remove-agent`                                                   |
+| Edit Agent modal fields                            | `update-agent`, `settings agent set`                                                             |
+| Switch an agent's provider                         | `update-agent --provider --force`                                                                |
+| Move an agent to a group                           | `update-agent --group`                                                                           |
+| Change working directory                           | `update-agent --cwd`                                                                             |
+| SSH remote execution config                        | `update-agent --ssh-remote / --ssh-cwd`, `create-ssh-remote`                                     |
+| Edit an SSH remote, incl. its `ssh -o` list        | `update-ssh-remote --ssh-option / --clear-ssh-options`                                           |
+| Focus an agent, switch AI/Shell mode               | `focus-agent`, `switch-mode`                                                                     |
+| Create / rename / remove a group                   | `create-group`, `rename-group`, `remove-group`                                                   |
+| Group icon, color, and nesting                     | `create-group --icon/--color/--parent`, `update-group`                                           |
+| Create a worktree agent                            | `create-worktree`                                                                                |
+| New / close / rename a tab                         | `tab new`, `tab close`, `tab rename`                                                             |
+| Star a tab (Cmd+Shift+S)                           | `tab star` / `tab unstar`                                                                        |
+| Mark a tab unread                                  | `tab unread` / `tab read`                                                                        |
+| Toggle Save to History                             | `tab save-to-history`                                                                            |
+| Composer chips: thinking, read-only access         | `tab thinking` (off/on/sticky/cycle), `tab read-only`                                            |
+| Model / effort pills on one tab                    | `tab model`, `tab effort` (`inherit` clears the override)                                        |
+| Enter-to-send chip                                 | `tab enter-to-send`                                                                              |
+| Read one tab's settings back                       | `tab show`, or `session list --json`                                                             |
+| Move Tab to First / Last                           | `tab move <tab-id> first\|last\|<index>`                                                         |
+| Send a message, or run a shell command             | `send`, `dispatch`, `send-terminal`                                                              |
+| Consult another agent (`@mention`)                 | `ask <agent> "<question>" --from <caller>`                                                       |
+| Open a file / URL / terminal tab                   | `open-file`, `open-browser`, `open-terminal`                                                     |
+| Open a modal or dashboard                          | `open <surface> [--tab]` (registry in `src/shared/uiSurfaces.ts`)                                |
+| Auto Run: start, stop, resume, skip, abort         | `auto-run`, `stop-auto-run`, `resume-auto-run`, ...                                              |
+| Settings, theme, Encore features                   | `settings`, `theme`, `set-theme`, `encore`                                                       |
+| Toasts and center flashes                          | `notify toast`, `notify flash`                                                                   |
+| Save a pasted chat image (right-click)             | `image save` (`image list` to find it)                                                           |
+| Cue subscriptions and scheduled tasks              | `cue trigger`, `cue schedule`, `cue pipeline`                                                    |
+| Snooze a tab, list / wake / dismiss what is parked | `snooze tab`, `snooze list`, `unsnooze`, `snooze dismiss`, `snooze reschedule`, `snooze history` |
 
 ## Open gaps
 
@@ -257,24 +259,20 @@ a design constraint; they are simply not built yet.
 1. **Interrupt a running turn.** Escape stops a busy agent in the UI. There is
    no CLI equivalent and no WS message behind one. This is the largest remaining
    gap: an agent that starts a runaway turn on another agent cannot stop it.
-2. **Snooze a tab / list snoozed tabs.** `Cmd+Shift+Z` hides a tab until a
-   chosen time. Scriptable snooze needs time parsing plus a wake entry in
-   `snoozedTabs`, so it is more than an allowlist entry. `open snoozed-tabs`
-   shows the list in the UI but returns nothing to the caller.
-3. **Reopen a closed tab.** `closedTabHistory` and `unifiedClosedTabHistory` are
+2. **Reopen a closed tab.** `closedTabHistory` and `unifiedClosedTabHistory` are
    runtime-only and never persisted, so the CLI cannot see the stack to restore
    from it. Closing this means persisting that history first.
-4. **Duplicate an agent.** The context menu's "Duplicate..." opens a modal with
+3. **Duplicate an agent.** The context menu's "Duplicate..." opens a modal with
    options (what to copy). `create-agent` can approximate it, but there is no
    one-shot duplicate.
-5. **Toggle Live mode** (`isLive`) for the web interface.
-6. **Collapse / expand a group**, and reorder agents in the Left Bar. Pure
+4. **Toggle Live mode** (`isLive`) for the web interface.
+5. **Collapse / expand a group**, and reorder agents in the Left Bar. Pure
    presentation; low value for automation, which is why they are last.
-7. **Git actions** (View Git Log / Diff, Pull, Push, Change Branch, Create PR).
+6. **Git actions** (View Git Log / Diff, Pull, Push, Change Branch, Create PR).
    Deliberately not mirrored: these open modals over `useGitAgentActions`, and an
    agent already has `git` and `gh` in its shell, which is strictly more capable.
    Only the modal-opening is unavailable, not the capability.
-8. **Wizard and interactive pickers** (New Agent Wizard, Fuzzy File Search,
+7. **Wizard and interactive pickers** (New Agent Wizard, Fuzzy File Search,
    Tab Switcher, Search: Messages). These are interactive by definition; the
    underlying data is reachable through `list`, `session show`, and
    `director-notes history`.

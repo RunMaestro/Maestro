@@ -1,5 +1,5 @@
 /**
- * Tests for the github.{pull_request,issue} trigger source wrapper.
+ * Tests for the github.{pull_request,issue,label} trigger source wrapper.
  *
  * The underlying createCueGitHubPoller is tested in cue-github-poller.test.ts.
  * These tests verify that the wrapper:
@@ -130,6 +130,33 @@ describe('cue-github-poller-trigger-source', () => {
 
 		const config = mockCreateCueGitHubPoller.mock.calls[0][0] as { eventType: CueEventType };
 		expect(config.eventType).toBe('github.issue');
+
+		source.stop();
+	});
+
+	it('start() wires up the GitHub poller for github.label with its label narrowing', () => {
+		const source = createCueGitHubPollerTriggerSource({
+			session: makeSession(),
+			subscription: makeSub('github.label', {
+				gh_label_target: 'pr',
+				gh_labels: ['ready-to-merge', 'needs-rebase'],
+			}),
+			registry: createCueSessionRegistry(),
+			enabled: () => true,
+			onLog: vi.fn(),
+			emit: vi.fn(),
+		})!;
+
+		source.start();
+
+		const config = mockCreateCueGitHubPoller.mock.calls[0][0] as {
+			eventType: CueEventType;
+			labelTarget?: string;
+			watchLabels?: string[];
+		};
+		expect(config.eventType).toBe('github.label');
+		expect(config.labelTarget).toBe('pr');
+		expect(config.watchLabels).toEqual(['ready-to-merge', 'needs-rebase']);
 
 		source.stop();
 	});

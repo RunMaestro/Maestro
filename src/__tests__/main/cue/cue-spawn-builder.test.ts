@@ -261,6 +261,28 @@ describe('cue-spawn-builder', () => {
 			}
 		});
 
+		it('expands a launchd PATH instead of inheriting it verbatim (#1573)', async () => {
+			const launchdPath = '/usr/bin:/bin:/usr/sbin:/sbin';
+			const originalPath = process.env.PATH;
+			process.env.PATH = launchdPath;
+			try {
+				const result = await buildSpawnSpec(createConfig(), 'prompt');
+
+				expect(result.ok).toBe(true);
+				if (result.ok) {
+					expect(result.spec.env.PATH).not.toBe(launchdPath);
+					expect(result.spec.env.PATH).toContain(launchdPath.split(':')[0]);
+					if (process.platform !== 'win32') {
+						const parts = result.spec.env.PATH.split(':');
+						expect(parts).toContain('/opt/homebrew/bin');
+						expect(parts).toContain('/usr/local/bin');
+					}
+				}
+			} finally {
+				process.env.PATH = originalPath;
+			}
+		});
+
 		it('marks the spawn as a cue turn', async () => {
 			// Nothing else distinguishes a Cue run from a prompt the user typed:
 			// same binary, same args, and the prompt text is the user's own words

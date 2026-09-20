@@ -25,6 +25,7 @@ export const DEFAULT_TRIGGER_LABELS: Record<CueEventType, string> = {
 	'agent.completed': 'Agent Done',
 	'github.pull_request': 'Pull Request',
 	'github.issue': 'Issue',
+	'github.label': 'Label Added',
 	'task.pending': 'Pending Task',
 	'cli.trigger': 'CLI Trigger',
 	'webhook.received': 'Webhook',
@@ -74,6 +75,7 @@ function validateTriggerConfig(
 			break;
 		case 'github.pull_request':
 		case 'github.issue':
+		case 'github.label':
 			// repo is optional in the YAML schema (defaults to current repo via gh CLI)
 			// but if provided it must be non-empty.
 			if (
@@ -178,7 +180,13 @@ export function validatePipelines(pipelines: CuePipeline[]): string[] {
 					return src?.type === 'trigger';
 				});
 				const hasNodePrompt = !!agentData.inputPrompt?.trim();
-				const allEdgesHavePrompts = triggerEdges.every((e) => e.prompt?.trim());
+				// A notify edge carries a toast, not work: the engine surfaces
+				// the message through this agent and never spawns it, so
+				// `cue-config-validator.ts` accepts an empty prompt there. Any
+				// agent fed by a `cue schedule --notify` task has such an edge,
+				// and demanding a prompt for it reported a permanent phantom
+				// error that blocked Save for EVERY pipeline in the editor.
+				const allEdgesHavePrompts = triggerEdges.every((e) => e.notify || e.prompt?.trim());
 				if (!hasNodePrompt && !allEdgesHavePrompts) {
 					const name = agentData.sessionName;
 					errors.push(`"${pipeline.name}": agent "${name}" is missing a prompt`);

@@ -49,6 +49,14 @@ export interface WalkLocalFileTreeOptions {
 	ignorePatterns?: string[];
 	/** Whether to merge the root `.gitignore` into the ignore patterns. */
 	honorGitignore?: boolean;
+	/**
+	 * Folders the user has expanded, as `/`-joined paths relative to the root.
+	 * `maxDepth` does not stop these: an expanded folder is read even past the
+	 * cap, so opening a folder the cap cut off shows what is inside it. Only the
+	 * folder itself is read - its subfolders stay empty until they are expanded
+	 * in turn, which keeps the cost at one listing per opened folder.
+	 */
+	expandedPaths?: string[];
 }
 
 /** Result of a local file tree scan. */
@@ -66,6 +74,7 @@ export interface LocalTreeScanResult {
 interface WalkState {
 	ignorePatterns: string[];
 	maxDepth: number;
+	expandedPaths: Set<string>;
 	maxEntries: number;
 	budgetUsed: number;
 	filesFound: number;
@@ -105,6 +114,7 @@ export async function walkLocalFileTree(
 	const state: WalkState = {
 		ignorePatterns,
 		maxDepth: options.maxDepth,
+		expandedPaths: new Set(options.expandedPaths ?? []),
 		maxEntries,
 		budgetUsed: 0,
 		filesFound: 0,
@@ -112,7 +122,7 @@ export async function walkLocalFileTree(
 		truncated: false,
 	};
 
-	const tree = await walkDirectory(rootPath, 0, state, false);
+	const tree = await walkDirectory(rootPath, '', 0, state, false);
 
 	return {
 		tree,
@@ -123,17 +133,20 @@ export async function walkLocalFileTree(
 }
 
 /**
+ * @param relPath `/`-joined path from the scan root, matched against the
+ *   expanded folders. Empty for the root itself.
  * @param unlimitedBudget When true this subtree and its descendants ignore the
  *   entry cap. Set for always-visible directories like `.maestro`, whose
  *   contents drive Cue and Auto Run and must never be truncated away.
  */
 async function walkDirectory(
 	dirPath: string,
+	relPath: string,
 	depth: number,
 	state: WalkState,
 	unlimitedBudget: boolean
 ): Promise<LocalTreeNode[]> {
-	if (depth >= state.maxDepth) return [];
+	if (depth >= state.maxDepth && !state.expandedPaths.has(relPath)) return [];
 
 	const entries = await fs.readdir(dirPath, { withFileTypes: true });
 	state.directoriesScanned++;
@@ -145,6 +158,15 @@ async function walkDirectory(
 		const bPriority = ALWAYS_VISIBLE_FILES.has(b.name) ? 0 : 1;
 		return aPriority - bPriority;
 	});
+
+	// Child paths are built by concatenation rather than `path.join`. join()
+	// re-normalizes the whole string on every call, and a field trace measured
+	// that normalization at ~650ms of main-process CPU across a single 58-second
+	// window, purely from this loop. `dirPath` is already a real path and a
+	// dirent name can never contain a separator, so there is nothing left for
+	// join to fix - only the trailing-separator seam, handled once per directory
+	// here instead of once per entry.
+	const childPrefix = dirPath.endsWith(path.sep) ? dirPath : dirPath + path.sep;
 
 	// Guards against an OS or filesystem edge case handing back the same entry twice.
 	const seen = new Set<string>();
@@ -162,7 +184,7 @@ async function walkDirectory(
 			continue;
 		}
 
-		const fullPath = path.join(dirPath, entry.name);
+		const fullPath = childPrefix + entry.name;
 		// Symlinks are classified by their target, so a linked directory is walked
 		// rather than dropped.
 		const resolved = await resolveDirentType(entry, fullPath);
@@ -173,7 +195,13 @@ async function walkDirectory(
 			let children: LocalTreeNode[] = [];
 			if (childUnlimited || state.budgetUsed < state.maxEntries) {
 				try {
-					children = await walkDirectory(fullPath, depth + 1, state, childUnlimited);
+					children = await walkDirectory(
+						fullPath,
+						relPath ? `${relPath}/${name}` : name,
+						depth + 1,
+						state,
+						childUnlimited
+					);
 				} catch {
 					// Unreadable subdirectory (permissions, broken mount): keep the
 					// folder visible and empty rather than failing the whole walk.

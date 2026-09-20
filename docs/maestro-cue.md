@@ -7,7 +7,8 @@ icon: bolt
 Maestro Cue is an event-driven automation engine that watches for things happening in your projects and automatically sends prompts to your agents in response. Instead of manually kicking off tasks, you define **subscriptions** - trigger-prompt pairings - in a YAML file, and Cue handles the rest.
 
 <Note>
-Maestro Cue is an **Encore Feature** - it's disabled by default. Enable it in **Settings > Encore Features** to access the shortcut, modal, and automation engine.
+Maestro Cue is an **Encore Feature** and is on by default. Turn it off in **Settings > Plugins** to hide the shortcut and modal and stop the automation engine.
+The Settings tab is called **Plugins** in v0.18.x and later. On **v0.17.4** and earlier it is called **Encore Features**.
 </Note>
 
 ## What Can Cue Do?
@@ -22,13 +23,15 @@ A few examples of what you can automate with Cue:
 - **Fan out deployments** - when a build completes, trigger multiple deploy agents simultaneously
 - **Trigger from the CLI** - run `maestro-cli cue trigger` to fire a subscription on demand from scripts, CI/CD, or other agents
 
-## Enabling Cue
+## Turning Cue On and Off
+
+Cue is on out of the box. Maestro automatically scans all your active agents for `.maestro/cue.yaml` files in their project roots, and the Cue engine starts as soon as it finds one - no restart required. An agent with no `.maestro/cue.yaml` runs nothing.
+
+To turn Cue off entirely:
 
 1. Open **Settings** (`Cmd+,` / `Ctrl+,`)
-2. Navigate to the **Encore Features** tab
-3. Toggle **Maestro Cue** on
-
-Once enabled, Maestro automatically scans all your active agents for `.maestro/cue.yaml` files in their project roots. The Cue engine starts immediately - no restart required.
+2. Navigate to the **Plugins** tab
+3. Toggle **Maestro Cue** off
 
 ## Quick Start
 
@@ -293,7 +296,7 @@ Cue is configured via a `.maestro/cue.yaml` file placed inside the `.maestro/` d
 
 ## Event Types
 
-Cue supports nine event types that trigger subscriptions:
+Cue supports eleven event types that trigger subscriptions:
 
 | Event Type            | Trigger                             | Key Fields                        |
 | --------------------- | ----------------------------------- | --------------------------------- |
@@ -305,6 +308,7 @@ Cue supports nine event types that trigger subscriptions:
 | `task.pending`        | Unchecked markdown tasks found      | `watch` (glob pattern)            |
 | `github.pull_request` | New PR opened on GitHub             | `repo` (optional)                 |
 | `github.issue`        | New issue opened on GitHub          | `repo` (optional)                 |
+| `github.label`        | A label lands on a PR or issue      | `gh_label_target`, `gh_labels`    |
 | `cli.trigger`         | Manual trigger via `maestro-cli`    | -                                 |
 
 See [Event Types](./maestro-cue-events) for detailed documentation and examples for each type.

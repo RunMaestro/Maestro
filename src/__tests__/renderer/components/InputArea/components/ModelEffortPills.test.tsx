@@ -2,6 +2,13 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { ModelEffortPills } from '../../../../../renderer/components/InputArea/components/ModelEffortPills';
 import { inputAreaTheme } from '../_fixtures';
+import { formatShortcutKeys } from '../../../../../renderer/utils/shortcutFormatter';
+
+// Formatted through the real formatter rather than spelled out: the chord
+// renders as '⌘X' on macOS and 'Ctrl+X' elsewhere, and hardcoding either makes
+// the test pass on one platform's CI and fail on the other's.
+const HINT_KEYS = ['Meta', 'x'];
+const HINT_TEXT = `Try: ${formatShortcutKeys(HINT_KEYS)}`;
 
 describe('ModelEffortPills', () => {
 	function renderPills(overrides = {}) {
@@ -74,12 +81,12 @@ describe('ModelEffortPills', () => {
 
 	describe('shortcut hint header', () => {
 		it('renders the hint at the top of both menus when one is supplied', () => {
-			const { unmount } = renderPills({ modelMenuOpen: true, shortcutHint: 'Try: X' });
-			expect(screen.getByText('Try: X')).toBeInTheDocument();
+			const { unmount } = renderPills({ modelMenuOpen: true, shortcutKeys: HINT_KEYS });
+			expect(screen.getByText(HINT_TEXT)).toBeInTheDocument();
 			unmount();
 
-			renderPills({ effortMenuOpen: true, shortcutHint: 'Try: X' });
-			expect(screen.getByText('Try: X')).toBeInTheDocument();
+			renderPills({ effortMenuOpen: true, shortcutKeys: HINT_KEYS });
+			expect(screen.getByText(HINT_TEXT)).toBeInTheDocument();
 		});
 
 		it('renders no header when no hint is supplied', () => {
@@ -91,9 +98,9 @@ describe('ModelEffortPills', () => {
 		// The hint is decoration, not an option: it must not be reachable by
 		// keyboard, and it must not be counted among the selectable rows.
 		it('is not focusable and is not one of the menu buttons', () => {
-			renderPills({ modelMenuOpen: true, shortcutHint: 'Try: X' });
+			renderPills({ modelMenuOpen: true, shortcutKeys: HINT_KEYS });
 
-			const hint = screen.getByText('Try: X');
+			const hint = screen.getByText(HINT_TEXT);
 			expect(hint.tagName).not.toBe('BUTTON');
 			expect(hint.closest('button')).toBeNull();
 			expect(hint).not.toHaveAttribute('tabindex');

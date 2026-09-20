@@ -507,7 +507,6 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		activeTerminalTasks,
 		activeCueRunCount,
 		activeGroupChatCount,
-		hasFeedbackDraft,
 		newInstanceModalOpen,
 		editAgentModalOpen,
 		renameSessionModalOpen,
@@ -550,7 +549,6 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 							activeTerminalTasks?: string[];
 							activeCueRunCount?: number;
 							activeGroupChatCount?: number;
-							hasFeedbackDraft?: boolean;
 					  }
 					| undefined
 			)?.activeTerminalTasks,
@@ -561,7 +559,6 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 								activeTerminalTasks?: string[];
 								activeCueRunCount?: number;
 								activeGroupChatCount?: number;
-								hasFeedbackDraft?: boolean;
 						  }
 						| undefined
 				)?.activeCueRunCount ?? 0,
@@ -572,21 +569,9 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 								activeTerminalTasks?: string[];
 								activeCueRunCount?: number;
 								activeGroupChatCount?: number;
-								hasFeedbackDraft?: boolean;
 						  }
 						| undefined
 				)?.activeGroupChatCount ?? 0,
-			hasFeedbackDraft:
-				(
-					s.modals.get('quitConfirm')?.data as
-						| {
-								activeTerminalTasks?: string[];
-								activeCueRunCount?: number;
-								activeGroupChatCount?: number;
-								hasFeedbackDraft?: boolean;
-						  }
-						| undefined
-				)?.hasFeedbackDraft ?? false,
 			newInstanceModalOpen: s.modals.get('newInstance')?.open ?? false,
 			editAgentModalOpen: s.modals.get('editAgent')?.open ?? false,
 			renameSessionModalOpen: s.modals.get('renameInstance')?.open ?? false,
@@ -976,7 +961,6 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				activeTerminalTasks={activeTerminalTasks ?? []}
 				activeCueRunCount={activeCueRunCount}
 				activeGroupChatCount={activeGroupChatCount}
-				hasFeedbackDraft={hasFeedbackDraft}
 			/>
 
 			{/* Session Management Modals */}

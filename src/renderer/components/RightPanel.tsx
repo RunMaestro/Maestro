@@ -27,6 +27,7 @@ import { HistoryPanel, HistoryPanelHandle } from './HistoryPanel';
 import { AutoRun, AutoRunHandle } from './AutoRun';
 import { AutoRunExpandedModal } from './AutoRun/AutoRunExpandedModal';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
+import { shortcutSuffix } from './ui/ShortcutHint';
 import { ConfirmModal } from './ConfirmModal';
 import { useResizablePanel } from '../hooks';
 import { useAutoRunAutoFollow } from '../hooks/batch/useAutoRunAutoFollow';
@@ -55,6 +56,13 @@ import {
 export interface RightPanelHandle {
 	refreshHistoryPanel: () => void;
 	focusAutoRun: () => void;
+	/**
+	 * Put real DOM focus on the file tree. The History and Auto Run tabs take
+	 * focus when they become active; Files did not, so "go to files" left the
+	 * caret behind in whatever editor the user came from while the app believed
+	 * the Files tab was focused.
+	 */
+	focusFileTree: () => void;
 	toggleAutoRunExpanded: () => void;
 	openAutoRunResetTasksModal: () => void;
 	getAutoRunCompletedTaskCount: () => number;
@@ -377,6 +385,13 @@ export const RightPanel = memo(
 				focusAutoRun: () => {
 					autoRunRef.current?.focus();
 				},
+				focusFileTree: () => {
+					// Deferred a frame so the panel is open and the tree is mounted
+					// before we reach for it, matching the history/autorun effects.
+					requestAnimationFrame(() => {
+						fileTreeContainerRef.current?.focus();
+					});
+				},
 				toggleAutoRunExpanded,
 				openAutoRunResetTasksModal: () => {
 					autoRunRef.current?.openResetTasksModal();
@@ -510,27 +525,41 @@ export const RightPanel = memo(
 
 				{/* Tab Header */}
 				<div className="flex border-b h-16" style={{ borderColor: theme.colors.border }}>
-					{(['files', 'history', ...(autoRunDisabled ? [] : ['autorun'])] as const).map((tab) => (
-						<button
-							key={tab}
-							onClick={() => setActiveRightTab(tab as RightPanelTab)}
-							// This is the panel's HEADING - it names which of three views
-							// you are looking at - so it is the largest thing in the Right
-							// Bar header, not the smallest. Deliberately a different
-							// constant from the filter pills below it: a heading sits above
-							// its content, a control that labels rows sits below them.
-							className="flex-1 font-bold border-b-2 transition-colors"
-							style={{
-								fontSize: RIGHT_PANEL_TAB_FONT_SIZE,
-								lineHeight: RIGHT_PANEL_TAB_LINE_HEIGHT,
-								borderColor: activeRightTab === tab ? theme.colors.accent : 'transparent',
-								color: activeRightTab === tab ? theme.colors.textMain : theme.colors.textDim,
-							}}
-							data-tour={`${tab}-tab`}
-						>
-							{tab === 'autorun' ? 'Auto Run' : tab.charAt(0).toUpperCase() + tab.slice(1)}
-						</button>
-					))}
+					{(['files', 'history', ...(autoRunDisabled ? [] : ['autorun'])] as const).map((tab) => {
+						const label =
+							tab === 'autorun' ? 'Auto Run' : tab.charAt(0).toUpperCase() + tab.slice(1);
+						// Each of these three tabs has its own chord. Surfacing it on the
+						// header the user is already clicking is the cheapest place to
+						// teach it.
+						const jumpShortcut =
+							tab === 'files'
+								? shortcuts.goToFiles
+								: tab === 'history'
+									? shortcuts.goToHistory
+									: shortcuts.goToAutoRun;
+						return (
+							<button
+								key={tab}
+								onClick={() => setActiveRightTab(tab as RightPanelTab)}
+								// This is the panel's HEADING - it names which of three views
+								// you are looking at - so it is the largest thing in the Right
+								// Bar header, not the smallest. Deliberately a different
+								// constant from the filter pills below it: a heading sits above
+								// its content, a control that labels rows sits below them.
+								className="flex-1 font-bold border-b-2 transition-colors"
+								style={{
+									fontSize: RIGHT_PANEL_TAB_FONT_SIZE,
+									lineHeight: RIGHT_PANEL_TAB_LINE_HEIGHT,
+									borderColor: activeRightTab === tab ? theme.colors.accent : 'transparent',
+									color: activeRightTab === tab ? theme.colors.textMain : theme.colors.textDim,
+								}}
+								title={`${label}${shortcutSuffix(jumpShortcut?.keys)}`}
+								data-tour={`${tab}-tab`}
+							>
+								{label}
+							</button>
+						);
+					})}
 
 					<PluginUiItemsSlot surface="rightPanelTab" className="px-1 shrink-0" />
 

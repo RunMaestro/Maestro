@@ -14,13 +14,17 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+	effectiveAgentCustomEnvVars,
 	getProviderProfileConfig,
+	isAccountDirName,
 	makeAccountKeyHelpers,
 	parseProviderProfileKey,
 	providerProfileKey,
 	providerProfileLabel,
 	providerProfileShortLabel,
 	resolveAgentAccountKey,
+	resolveAgentBillingCredential,
+	resolveAgentProfile,
 } from '../../shared/providerProfiles';
 
 const HOME = '/Users/me';
@@ -60,8 +64,42 @@ describe('resolveAgentAccountKey', () => {
 	});
 
 	it('returns null for a provider with no account concept, even with $HOME', () => {
+		// Deliberate omissions, re-verified 2026-09-14: OpenCode's data dir follows
+		// the OS-wide XDG_DATA_HOME rather than an OpenCode account selector, and
+		// Factory Droid ships no config-dir override at all.
 		expect(getProviderProfileConfig('opencode')).toBeUndefined();
+		expect(getProviderProfileConfig('factory-droid')).toBeUndefined();
 		expect(resolveAgentAccountKey('opencode', {}, HOME)).toBeNull();
+		expect(resolveAgentAccountKey('factory-droid', {}, HOME)).toBeNull();
+	});
+
+	it('splits Copilot accounts on COPILOT_HOME', () => {
+		// COPILOT_HOME, not COPILOT_CONFIG_DIR: GitHub's CLI docs are explicit
+		// that COPILOT_HOME replaces the whole ~/.copilot path, and no release
+		// has ever read COPILOT_CONFIG_DIR.
+		expect(getProviderProfileConfig('copilot-cli')).toEqual({
+			envVar: 'COPILOT_HOME',
+			defaultSubdir: '.copilot',
+			sessionsSubdir: 'session-state',
+		});
+		expect(
+			resolveAgentAccountKey('copilot-cli', { COPILOT_HOME: '/Users/me/.copilot-work' }, HOME)
+		).toBe('/Users/me/.copilot-work');
+		expect(resolveAgentAccountKey('copilot-cli', {}, HOME)).toBe('/Users/me/.copilot');
+	});
+});
+
+describe('account dir names', () => {
+	it('accepts the default dir and its per-account siblings', () => {
+		expect(isAccountDirName('.claude', '.claude')).toBe(true);
+		expect(isAccountDirName('.claude-work', '.claude')).toBe(true);
+		expect(isAccountDirName('.codex-project-acc-1', '.codex')).toBe(true);
+	});
+
+	it('rejects an unrelated folder and a backup copy', () => {
+		expect(isAccountDirName('.claudette', '.claude')).toBe(false);
+		expect(isAccountDirName('.claude-backup', '.claude')).toBe(false);
+		expect(isAccountDirName('.codex-old', '.codex')).toBe(false);
 	});
 });
 
@@ -98,14 +136,141 @@ describe('profile labels', () => {
 		);
 	});
 
-	it('humanizes the implicit default account', () => {
-		expect(providerProfileShortLabel('claude-code', '/Users/me/.claude')).toBe('Default account');
+	// "Default account" alone is the same phrase for every provider, so the
+	// short label - the one a card badge prints on its own - names the provider.
+	it('names the implicit default account after its provider', () => {
+		expect(providerProfileShortLabel('claude-code', '/Users/me/.claude')).toBe(
+			'Claude Code default'
+		);
+		expect(providerProfileShortLabel('codex', '/Users/me/.codex')).toBe('Codex default');
+		expect(providerProfileShortLabel('claude-code', '/Users/me/.claude')).not.toBe(
+			providerProfileShortLabel('codex', '/Users/me/.codex')
+		);
+		// The full label already carries the provider, so it is unchanged.
 		expect(providerProfileLabel('codex', '/Users/me/.codex')).toBe('Codex - Default account');
+		expect(providerProfileLabel('copilot-cli', '/Users/me/.copilot')).toBe(
+			'Copilot-CLI - Default account'
+		);
 	});
 
 	it('falls back to the provider name when there is no account', () => {
 		expect(providerProfileShortLabel('opencode', null)).toBe('OpenCode');
 		expect(providerProfileLabel('opencode', null)).toBe('OpenCode');
+	});
+});
+
+describe('effectiveAgentCustomEnvVars', () => {
+	const provider = { CLAUDE_CONFIG_DIR: '/Users/me/.claude-banaco' };
+
+	it("uses the agent's own vars in place of the provider-level set, never a merge", () => {
+		expect(effectiveAgentCustomEnvVars({ ANTHROPIC_API_KEY: 'k' }, provider)).toEqual({
+			ANTHROPIC_API_KEY: 'k',
+		});
+		expect(effectiveAgentCustomEnvVars({}, provider)).toEqual({});
+	});
+
+	it('falls back to the provider-level set only when the agent has none', () => {
+		expect(effectiveAgentCustomEnvVars(undefined, provider)).toBe(provider);
+		expect(effectiveAgentCustomEnvVars(undefined, undefined)).toEqual({});
+	});
+});
+
+describe('resolveAgentBillingCredential', () => {
+	it('returns null for an agent on its login', () => {
+		expect(
+			resolveAgentBillingCredential('claude-code', { CLAUDE_CONFIG_DIR: '/Users/me/.claude-smash' })
+		).toBeNull();
+	});
+
+	it('identifies an API key by its last 4 characters, never the whole secret', () => {
+		const credential = resolveAgentBillingCredential('claude-code', {
+			ANTHROPIC_API_KEY: 'sk-ant-api03-secret-wXyZ',
+		});
+		expect(credential).toEqual({ kind: 'api-key', id: 'api-key:wXyZ', label: 'API key …wXyZ' });
+		expect(JSON.stringify(credential)).not.toContain('secret');
+		expect(resolveAgentBillingCredential('codex', { OPENAI_API_KEY: 'sk-proj-abcd' })?.id).toBe(
+			'api-key:abcd'
+		);
+	});
+
+	it('names a gateway by host and a cloud provider by name', () => {
+		expect(
+			resolveAgentBillingCredential('claude-code', {
+				ANTHROPIC_BASE_URL: 'https://llm.example.com/v1',
+			})?.label
+		).toBe('llm.example.com');
+		expect(
+			resolveAgentBillingCredential('claude-code', { CLAUDE_CODE_USE_BEDROCK: '1' })?.label
+		).toBe('AWS Bedrock');
+	});
+
+	it('ignores providers with no account split', () => {
+		expect(resolveAgentBillingCredential('opencode', { ANTHROPIC_API_KEY: 'k' })).toBeNull();
+	});
+});
+
+describe('resolveAgentProfile', () => {
+	it('files a keyed agent under the key even when it also names a config dir', () => {
+		expect(
+			resolveAgentProfile(
+				'claude-code',
+				{ CLAUDE_CONFIG_DIR: '/Users/me/.claude-banaco', ANTHROPIC_API_KEY: 'sk-ant-a1b2' },
+				HOME
+			)
+		).toMatchObject({
+			key: 'claude-code::api-key:a1b2',
+			accountKey: null,
+			label: 'Claude Code - API key …a1b2',
+			shortLabel: 'API key …a1b2',
+		});
+	});
+
+	it('files a login agent under its config dir', () => {
+		expect(
+			resolveAgentProfile('claude-code', { CLAUDE_CONFIG_DIR: '/Users/me/.claude-smash' }, HOME)
+		).toMatchObject({
+			key: 'claude-code::/Users/me/.claude-smash',
+			accountKey: '/Users/me/.claude-smash',
+			credential: null,
+			shortLabel: 'smash',
+		});
+	});
+
+	it('splits an SSH-remote agent into its own profile per host', () => {
+		const env = { CLAUDE_CONFIG_DIR: '/Users/me/.claude-banaco' };
+		const local = resolveAgentProfile('claude-code', env, HOME);
+		const remote = resolveAgentProfile('claude-code', env, HOME, { id: 'r1', name: 'pedtome' });
+
+		expect(remote).toMatchObject({
+			key: 'claude-code::/Users/me/.claude-banaco@ssh:r1',
+			accountKey: '/Users/me/.claude-banaco',
+			sshRemoteId: 'r1',
+			label: 'Claude Code - banaco @ pedtome',
+			shortLabel: 'banaco @ pedtome',
+		});
+		expect(remote?.key).not.toBe(local?.key);
+		expect(
+			resolveAgentProfile('claude-code', env, HOME, { id: 'r2', name: 'linode' })?.key
+		).not.toBe(remote?.key);
+		// A deleted remote keeps its own bucket rather than folding into local.
+		expect(resolveAgentProfile('claude-code', env, HOME, { id: 'gone' })?.shortLabel).toBe(
+			'banaco @ unknown host'
+		);
+	});
+
+	it('keeps a credential profile whole across hosts', () => {
+		const env = { ANTHROPIC_API_KEY: 'sk-ant-a1b2' };
+		expect(
+			resolveAgentProfile('claude-code', env, HOME, { id: 'r1', name: 'pedtome' })
+		).toMatchObject({ key: 'claude-code::api-key:a1b2', sshRemoteId: null });
+	});
+
+	it('returns null only while a login agent is waiting on $HOME', () => {
+		expect(resolveAgentProfile('claude-code', {}, undefined)).toBeNull();
+		expect(
+			resolveAgentProfile('claude-code', { ANTHROPIC_API_KEY: 'sk-ant-a1b2' }, undefined)
+		).not.toBeNull();
+		expect(resolveAgentProfile('opencode', {}, undefined)?.key).toBe('opencode');
 	});
 });
 

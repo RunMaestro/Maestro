@@ -22,6 +22,7 @@ import {
 	FileArchive,
 } from 'lucide-react';
 import { getRevealLabel } from '../../../utils/platformUtils';
+import { usePhoneLayout } from '../../../hooks/ui/useViewportBreakpoint';
 import { isMediaFile } from '../../../../shared/mediaTypes';
 import { isTalkableDocumentPath } from '../../../../shared/fileKinds';
 import { collectPreviewableFiles } from '../utils/pathHelpers';
@@ -32,7 +33,7 @@ interface FileTreeContextMenuProps {
 	theme: Theme;
 	contextMenu: ContextMenuState;
 	contextMenuRef: React.RefObject<HTMLDivElement>;
-	contextMenuPos: { top: number; left: number; ready?: boolean };
+	contextMenuPos: { top: number; left: number; maxHeight: number; ready?: boolean };
 	sshRemoteId: string | undefined;
 	onFocusFileInGraph?: (relativePath: string) => void;
 	/** Graph every markdown file under the right-clicked folder. */
@@ -134,6 +135,16 @@ export function FileTreeContextMenu({
 		[node, contextMenu.path]
 	);
 	const platform = window.maestro?.platform ?? 'unknown';
+	// The Document Graph is a pan-and-zoom canvas, so it needs room to be worth
+	// opening at all. On a phone it renders correctly and is still useless: the
+	// viewport holds a couple of nodes, which cannot show the shape of a document
+	// set, and that shape is the whole reason to open it. So the three entries
+	// that lead there are dropped rather than offered and then disappointing -
+	// which also buys back rows in a menu that already runs past the bottom of a
+	// 390px screen. This is a ROOM gate, not a capability gate: nothing about the
+	// graph is broken on a phone, every other client still offers it, and the
+	// palette and chord still reach it here for anyone who wants it anyway.
+	const showDocumentGraph = !usePhoneLayout();
 	const isHtml = isFile && (nodeName.endsWith('.html') || nodeName.endsWith('.htm'));
 	const isMarkdown = isFile && (nodeName.endsWith('.md') || nodeName.endsWith('.markdown'));
 	// Media plays in the floating player, which only serves local files - over
@@ -161,13 +172,20 @@ export function FileTreeContextMenu({
 	return createPortal(
 		<div
 			ref={contextMenuRef}
-			className="fixed z-[10000] rounded-lg shadow-xl border overflow-hidden whitespace-nowrap"
+			className="fixed z-[10000] rounded-lg shadow-xl border whitespace-nowrap"
 			style={{
 				backgroundColor: theme.colors.bgSidebar,
 				borderColor: theme.colors.border,
 				minWidth: '180px',
 				top: contextMenuPos.top,
 				left: contextMenuPos.left,
+				// This menu carries up to ~27 entries, which is taller than a phone
+				// in portrait and than a laptop in a short window. Clamped only by
+				// POSITION it pinned to the top edge and ran off the bottom, and
+				// `overflow-hidden` made everything past the fold unreachable - a
+				// context menu does not scroll the page behind it. Scroll instead.
+				maxHeight: contextMenuPos.maxHeight,
+				overflowY: 'auto',
 				opacity: contextMenuPos.ready ? 1 : 0,
 			}}
 		>
@@ -224,7 +242,7 @@ export function FileTreeContextMenu({
 								<span>Open {selectedCount} in Default App</span>
 							</button>
 						)}
-						{selectedMarkdownCount > 1 && onGraphSelection && (
+						{showDocumentGraph && selectedMarkdownCount > 1 && onGraphSelection && (
 							<button
 								onClick={onGraphSelection}
 								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
@@ -281,7 +299,7 @@ export function FileTreeContextMenu({
 										<span>New Agent Here</span>
 									</button>
 								)}
-								{onGraphFolder && (
+								{showDocumentGraph && onGraphFolder && (
 									<button
 										onClick={onGraphFolder}
 										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
@@ -392,7 +410,7 @@ export function FileTreeContextMenu({
 						{isFile && stageForAutoRunButton}
 
 						{/* Document Graph option - only for markdown files */}
-						{isMarkdown && onFocusFileInGraph && (
+						{showDocumentGraph && isMarkdown && onFocusFileInGraph && (
 							<button
 								onClick={onFocusInGraph}
 								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"

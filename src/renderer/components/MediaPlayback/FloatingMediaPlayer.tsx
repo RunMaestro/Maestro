@@ -8,19 +8,33 @@ import {
 	useState,
 	type ReactNode,
 } from 'react';
-import { FileAudio, FileVideo, GripVertical, History, ListMusic, Minus, X } from 'lucide-react';
+import {
+	Copy,
+	FileAudio,
+	FileVideo,
+	GripVertical,
+	History,
+	ListMusic,
+	Minus,
+	X,
+} from 'lucide-react';
 
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { ModalResizeGrip } from '../ui/ModalResizeGrip';
 import { MediaListMenu } from './MediaListMenu';
 import { useEventListener } from '../../hooks/utils/useEventListener';
+import { notifyToast } from '../../stores/notificationStore';
 import { useMediaPlaybackStore } from '../../stores/mediaPlaybackStore';
+import { safeClipboardWrite } from '../../utils/clipboard';
+import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
+import { captureException } from '../../utils/sentry';
 import {
 	DEFAULT_MEDIA_ASPECT,
 	MEDIA_FLOAT_DEFAULT_WIDTH,
 	fitMediaFloatRect,
 	initialMediaFloatRect,
 	mediaFloatChromeHeight,
+	mediaFloatFootprint,
 	mediaFloatResizeWidth,
 	mediaFloatWidthFor,
 	type MediaFloatFit,
@@ -126,6 +140,7 @@ export const FloatingMediaPlayer = memo(function FloatingMediaPlayer({
 	const resumeTimes = useMediaPlaybackStore((s) => s.resumeTimes);
 	const setActiveItem = useMediaPlaybackStore((s) => s.setActiveItem);
 	const closeItem = useMediaPlaybackStore((s) => s.closeItem);
+	const setFloatFootprint = useMediaPlaybackStore((s) => s.setFloatFootprint);
 
 	// The queue menu lists what is coming NEXT, so the loaded track is filtered
 	// out of it. It stays in `items` because that is how prev/next find their
@@ -207,6 +222,22 @@ export const FloatingMediaPlayer = memo(function FloatingMediaPlayer({
 	);
 
 	/**
+	 * Dismisses the open queue / history list and puts the caret back on the
+	 * player frame.
+	 *
+	 * Handing focus back is the whole point: the list takes it on open (see
+	 * `MediaListMenu`), so closing without returning it leaves focus on `<body>`
+	 * and the NEXT Escape does nothing - the player is on screen, apparently
+	 * ready, and swallowing the key. Deliberately not wired to the outside-click
+	 * path, which closes the list precisely because the user went to click
+	 * something else.
+	 */
+	const closeList = useCallback(() => {
+		setOpenList(null);
+		frameRef.current?.focus();
+	}, []);
+
+	/**
 	 * Escape minimizes, matching every other dismissible surface in the app -
 	 * except that for this one "dismiss" has to mean MINIMIZE, never close. The
 	 * player is the one surface whose close button stops something the user is
@@ -224,16 +255,48 @@ export const FloatingMediaPlayer = memo(function FloatingMediaPlayer({
 			// only trying to un-maximize.
 			if (document.fullscreenElement) return;
 			// An open list is the innermost thing Escape can close, so it goes first.
+			// It normally answers the key itself (it holds focus); this branch is
+			// the fallback for a press that landed on the frame instead - the queue
+			// button keeps focus after the click that opened the list.
 			if (openList) {
-				setOpenList(null);
+				closeList();
 			} else {
 				dismiss();
 			}
 			e.preventDefault();
 			e.stopPropagation();
 		},
-		[openList, dismiss]
+		[openList, closeList, dismiss]
 	);
+
+	/**
+	 * Copy the loaded file's name.
+	 *
+	 * The title bar is the only place that name exists in the UI, and it is a
+	 * drag handle with a truncated label rather than selectable text - the frame
+	 * is `select-none`, so a user who wants the name to paste into a note or a
+	 * prompt cannot get at it any other way. The button copies the name rather
+	 * than the path, matching what is on screen; the path is not shown here.
+	 *
+	 * Goes through `safeClipboardWrite` like every other copy in the app: the
+	 * Clipboard API rejects while the document is unfocused, and a player the
+	 * user is clicking on while another window has focus is exactly that case.
+	 */
+	const copyFileName = useCallback(async () => {
+		try {
+			if (await safeClipboardWrite(title)) {
+				flashCopiedToClipboard(title, 'File Name Copied');
+				return;
+			}
+		} catch (err) {
+			captureException(err);
+		}
+		notifyToast({
+			color: 'red',
+			title: 'Failed to Copy File Name',
+			message: 'Clipboard write was rejected. Check browser permissions and try again.',
+		});
+	}, [title]);
 
 	const beginResize = useCallback(
 		(e: React.MouseEvent) => {
@@ -309,6 +372,26 @@ export const FloatingMediaPlayer = memo(function FloatingMediaPlayer({
 	useEventListener('resize', () =>
 		setRect((prev) => fitMediaFloatRect(prev, fitRef.current, viewport()))
 	);
+
+	/**
+	 * Tell the bottom-right toast lane where the widget is.
+	 *
+	 * Toasts sit at z-index 100000 so they stay visible over modals, and they
+	 * stack up from the same corner the player opens in - so an arriving
+	 * notification painted straight over the widget and it read as the player
+	 * having closed itself. The lane lifts over the widget instead, and this is
+	 * where the measurement comes from: the widget clamps itself to the
+	 * viewport, so its real rect is not derivable from the persisted position.
+	 *
+	 * Null while minimized - a parked widget is not on screen to be covered.
+	 */
+	useEffect(() => {
+		setFloatFootprint(hidden ? null : mediaFloatFootprint(rect, viewport()));
+	}, [rect, hidden, setFloatFootprint]);
+
+	// The widget is unmounted when the last item closes, which no `hidden` change
+	// announces.
+	useEffect(() => () => setFloatFootprint(null), [setFloatFootprint]);
 
 	// Close the open list on any outside click. Both buttons and the portaled
 	// list count as inside - the list is not a DOM descendant.
@@ -405,6 +488,19 @@ export const FloatingMediaPlayer = memo(function FloatingMediaPlayer({
 					</span>
 				</div>
 
+				{/* Copy the file name. Sits beside the label it copies, and stops the
+				    mousedown so grabbing it does not start a drag of the whole bar. */}
+				<GhostIconButton
+					onClick={() => void copyFileName()}
+					onMouseDown={(e) => e.stopPropagation()}
+					title="Copy file name"
+					ariaLabel="Copy file name"
+					color={theme.colors.textDim}
+					testId="media-copy-name"
+				>
+					<Copy className="w-3.5 h-3.5" />
+				</GhostIconButton>
+
 				{/* Queue and history. Each button appears only when its list has
 				    something in it, so a single file playing on its own shows neither
 				    and the title bar stays uncluttered. */}
@@ -474,13 +570,14 @@ export const FloatingMediaPlayer = memo(function FloatingMediaPlayer({
 					resumeTimes={resumeTimes}
 					onSelect={(item) => {
 						setActiveItem(item.id, { autoplay: true });
-						setOpenList(null);
+						closeList();
 					}}
 					onRemove={closeItem}
 					onClear={() => {
 						clearQueue();
-						setOpenList(null);
+						closeList();
 					}}
+					onClose={closeList}
 					testId="media-queue-menu"
 					theme={theme}
 				/>
@@ -500,13 +597,14 @@ export const FloatingMediaPlayer = memo(function FloatingMediaPlayer({
 					// than activating a queue slot that may not exist.
 					onSelect={(item) => {
 						openMedia(item);
-						setOpenList(null);
+						closeList();
 					}}
 					onRemove={removeHistoryItem}
 					onClear={() => {
 						clearHistory();
-						setOpenList(null);
+						closeList();
 					}}
+					onClose={closeList}
 					testId="media-history-menu"
 					theme={theme}
 				/>

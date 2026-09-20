@@ -88,13 +88,30 @@ export function useLiveOverlay(isLiveMode: boolean): UseLiveOverlayReturn {
 
 	// Copy flash state
 	const [copyFlash, setCopyFlashState] = useState<string | null>(null);
+	const copyFlashTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
 	// Wrapper for setCopyFlash that auto-clears after 2 seconds
 	const setCopyFlash = useCallback((message: string | null) => {
+		if (copyFlashTimeoutRef.current) {
+			clearTimeout(copyFlashTimeoutRef.current);
+			copyFlashTimeoutRef.current = null;
+		}
 		setCopyFlashState(message);
 		if (message) {
-			setTimeout(() => setCopyFlashState(null), 2000);
+			copyFlashTimeoutRef.current = setTimeout(() => {
+				copyFlashTimeoutRef.current = null;
+				setCopyFlashState(null);
+			}, 2000);
 		}
+	}, []);
+
+	useEffect(() => {
+		return () => {
+			if (copyFlashTimeoutRef.current) {
+				clearTimeout(copyFlashTimeoutRef.current);
+				copyFlashTimeoutRef.current = null;
+			}
+		};
 	}, []);
 
 	// Close live overlay when clicking outside

@@ -7,17 +7,21 @@
  */
 
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
-import { Check, Send, MessageSquare, Layers, AlertTriangle } from 'lucide-react';
+import { Check, Send, MessageSquare, Layers, AlertTriangle, User } from 'lucide-react';
 import type { Theme } from '../types';
 import { useContextMenuPosition } from '../hooks/ui/useContextMenuPosition';
-import type {
-	GroupChatHistoryEntry,
-	GroupChatHistoryEntryType,
+import { useOptionalLabelFits } from '../hooks/ui/useOptionalLabelFits';
+import {
+	GROUP_CHAT_USER_NAME,
+	type GroupChatHistoryEntry,
+	type GroupChatHistoryEntryType,
 } from '../../shared/group-chat-types';
 import { stripMarkdown } from '../utils/textProcessing';
 import { useUIStore } from '../stores/uiStore';
+import { useGroupChatStore, viewPrefsFor } from '../stores/groupChatStore';
 import { formatTimestamp } from '../../shared/formatters';
 import { useListNavigation, useScrollIntoView } from '../hooks';
+import { CUE_COLOR, tintedPillColors } from './History/historyConstants';
 
 // Lookback period options for the activity graph
 type LookbackPeriod = {
@@ -34,6 +38,9 @@ const LOOKBACK_OPTIONS: LookbackPeriod[] = [
 	{ label: '1 month', hours: 720, bucketCount: 30 },
 	{ label: 'All time', hours: null, bucketCount: 24 },
 ];
+
+/** What a chat shows before, or without, a saved lookback of its own. */
+const DEFAULT_LOOKBACK_HOURS = 24;
 
 interface GroupChatActivityGraphProps {
 	entries: GroupChatHistoryEntry[];
@@ -238,6 +245,10 @@ function GroupChatActivityGraph({
 					style={{
 						left: contextMenuPos.left,
 						top: contextMenuPos.top,
+						// See useContextMenuPosition: a menu taller than the viewport
+						// pins to the top edge and runs off the bottom, unreachable.
+						maxHeight: contextMenuPos.maxHeight,
+						overflowY: 'auto',
 						opacity: contextMenuPos.ready ? 1 : 0,
 						backgroundColor: theme.colors.bgSidebar,
 						borderColor: theme.colors.border,
@@ -420,16 +431,49 @@ interface GroupChatHistoryPanelProps {
 	onJumpToMessage?: (timestamp: number) => void;
 }
 
-// Type filter configuration for group chat history entry types
+// Type filter configuration for group chat history entry types.
+// `shortLabel` is what the filter pill prints, so all five fit one row in a
+// narrow panel; `label` stays the full word for tooltips and accessible names.
+// `color` gives each type its own hue so the chips read apart at a glance, as
+// the AI history chips do. "You" shares the accent with the AI history's USER
+// chip. The theme has only four semantic hues, so Synthesis takes the fixed
+// Cue cyan as the fifth.
 const TYPE_FILTER_CONFIG: {
 	type: GroupChatHistoryEntryType;
 	label: string;
+	shortLabel: string;
 	icon: typeof Send;
+	color: (theme: Theme) => string;
 }[] = [
-	{ type: 'delegation', label: 'Delegation', icon: Send },
-	{ type: 'response', label: 'Response', icon: MessageSquare },
-	{ type: 'synthesis', label: 'Synthesis', icon: Layers },
-	{ type: 'error', label: 'Error', icon: AlertTriangle },
+	{ type: 'user', label: 'You', shortLabel: 'You', icon: User, color: (t) => t.colors.accent },
+	{
+		type: 'delegation',
+		label: 'Delegation',
+		shortLabel: 'Task',
+		icon: Send,
+		color: (t) => t.colors.warning,
+	},
+	{
+		type: 'response',
+		label: 'Response',
+		shortLabel: 'Reply',
+		icon: MessageSquare,
+		color: (t) => t.colors.success,
+	},
+	{
+		type: 'synthesis',
+		label: 'Synthesis',
+		shortLabel: 'Synth',
+		icon: Layers,
+		color: () => CUE_COLOR,
+	},
+	{
+		type: 'error',
+		label: 'Error',
+		shortLabel: 'Err',
+		icon: AlertTriangle,
+		color: (t) => t.colors.error,
+	},
 ];
 
 // Lookup the same icon + label used by the filter pills, keyed by entry type,
@@ -440,11 +484,37 @@ const TYPE_CONFIG_BY_TYPE = Object.fromEntries(
 
 // All entry types for default filter state
 const ALL_ENTRY_TYPES = new Set<GroupChatHistoryEntryType>([
+	'user',
 	'delegation',
 	'response',
 	'synthesis',
 	'error',
 ]);
+
+/**
+ * Turn a chat's saved pill list into the set this build can render.
+ *
+ * `null` means the chat has never saved a set, so everything is on. An empty
+ * array is a real choice - the user switched every pill off - and is kept as
+ * such, which is why this tests for null rather than for emptiness. Types the
+ * saved data mentions but this build does not know are dropped, so a
+ * downgrade cannot put an unrenderable filter into the set.
+ */
+function filtersFromSaved(saved: string[] | null): Set<GroupChatHistoryEntryType> {
+	if (saved === null) return new Set(ALL_ENTRY_TYPES);
+	return new Set(
+		saved.filter((type): type is GroupChatHistoryEntryType =>
+			ALL_ENTRY_TYPES.has(type as GroupChatHistoryEntryType)
+		)
+	);
+}
+
+/** The pills saved for one chat, read straight from the store. */
+function savedFiltersFor(groupChatId: string): Set<GroupChatHistoryEntryType> {
+	return filtersFromSaved(
+		viewPrefsFor(useGroupChatStore.getState().groupChatViewPrefs, groupChatId).historyTypes
+	);
+}
 
 export function GroupChatHistoryPanel({
 	theme,
@@ -454,16 +524,21 @@ export function GroupChatHistoryPanel({
 	participantColors,
 	onJumpToMessage,
 }: GroupChatHistoryPanelProps): JSX.Element {
-	const [lookbackHours, setLookbackHours] = useState<number | null>(24);
+	const [lookbackHours, setLookbackHours] = useState<number | null>(DEFAULT_LOOKBACK_HOURS);
 	const [searchFilter, setSearchFilter] = useState('');
-	const [activeFilters, setActiveFilters] = useState<Set<GroupChatHistoryEntryType>>(
-		new Set(ALL_ENTRY_TYPES)
+	const [activeFilters, setActiveFilters] = useState<Set<GroupChatHistoryEntryType>>(() =>
+		savedFiltersFor(groupChatId)
 	);
+	const setGroupChatHistoryTypes = useGroupChatStore((s) => s.setGroupChatHistoryTypes);
 	const searchFilterOpen = useUIStore((s) => s.groupChatHistorySearchFilterOpen);
 	const setSearchFilterOpen = useUIStore((s) => s.setGroupChatHistorySearchFilterOpen);
 	const activeFocus = useUIStore((s) => s.activeFocus);
 	const setActiveFocus = useUIStore((s) => s.setActiveFocus);
 	const panelRef = useRef<HTMLDivElement>(null);
+	const pillRowRef = useRef<HTMLDivElement>(null);
+	// The pill icons are the first thing to go when the row is too narrow.
+	// Wrapping to a second line is the last resort, only after they are gone.
+	const pillIconsFit = useOptionalLabelFits(pillRowRef);
 	const listRef = useRef<HTMLDivElement>(null);
 	const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -472,16 +547,41 @@ export function GroupChatHistoryPanel({
 		return () => setSearchFilterOpen(false);
 	}, [setSearchFilterOpen]);
 
-	// Load lookback preference
+	// Reload this chat's pills when the room changes. The panel is rendered
+	// without a `key`, so switching chats does not remount it and the initial
+	// useState value would otherwise stay on screen showing the previous room's
+	// filters.
 	useEffect(() => {
+		setActiveFilters(savedFiltersFor(groupChatId));
+	}, [groupChatId]);
+
+	// Load this chat's lookback, after resetting to the default.
+	//
+	// Two separate ways the previous room's window used to leak into the next
+	// one, both invisible until you switch chats:
+	//
+	//  - the loader only wrote when a value existed, so a chat that had never
+	//    saved one simply kept whatever the last chat was showing, and the graph
+	//    silently covered a span the user never chose for it;
+	//  - the read is async, so switching twice quickly could let the FIRST
+	//    chat's value land after the second had already been drawn.
+	//
+	// Resetting first fixes the former; the cancelled flag fixes the latter.
+	useEffect(() => {
+		let cancelled = false;
+		setLookbackHours(DEFAULT_LOOKBACK_HOURS);
+
 		const loadLookbackPreference = async () => {
 			const settingsKey = `groupChatHistoryLookback:${groupChatId}`;
 			const saved = await window.maestro.settings.get(settingsKey);
-			if (saved !== undefined) {
-				setLookbackHours(saved as number | null);
-			}
+			if (cancelled || saved === undefined) return;
+			setLookbackHours(saved as number | null);
 		};
 		loadLookbackPreference();
+
+		return () => {
+			cancelled = true;
+		};
 	}, [groupChatId]);
 
 	// Handler to update lookback and persist
@@ -491,18 +591,32 @@ export function GroupChatHistoryPanel({
 		window.maestro.settings.set(settingsKey, hours);
 	};
 
-	// Toggle a type filter
-	const toggleFilter = useCallback((type: GroupChatHistoryEntryType) => {
-		setActiveFilters((prev) => {
-			const next = new Set(prev);
-			if (next.has(type)) {
-				next.delete(type);
-			} else {
-				next.add(type);
-			}
-			return next;
-		});
-	}, []);
+	// The conductor is not a participant, so no color was ever assigned to them.
+	// Painting their entries in the accent keeps them legible in the row border
+	// AND in the stacked graph, which reads its colors from this same map.
+	const entryColors = useMemo<Record<string, string>>(
+		() => ({ [GROUP_CHAT_USER_NAME]: theme.colors.accent, ...participantColors }),
+		[participantColors, theme.colors.accent]
+	);
+
+	// Toggle a type filter, and remember it for THIS chat.
+	const toggleFilter = useCallback(
+		(type: GroupChatHistoryEntryType) => {
+			setActiveFilters((prev) => {
+				const next = new Set(prev);
+				if (next.has(type)) {
+					next.delete(type);
+				} else {
+					next.add(type);
+				}
+				// Written from inside the updater so the saved set is the one that
+				// just won, with no second render needed to read it back.
+				setGroupChatHistoryTypes(groupChatId, [...next]);
+				return next;
+			});
+		},
+		[groupChatId, setGroupChatHistoryTypes]
+	);
 
 	// Filter entries based on active type filters and search text
 	const filteredEntries = useMemo(
@@ -592,15 +706,6 @@ export function GroupChatHistoryPanel({
 		[searchFilterOpen, setSearchFilterOpen, listNavKeyDown]
 	);
 
-	// Filter chips are toggles, not a color legend: per-entry colors come from the
-	// agent (participantColor), so all chips share one neutral accent tint and rely
-	// on their icon + label to differentiate. Active vs inactive is conveyed by opacity.
-	const typePillColor = {
-		bg: theme.colors.accent + '20',
-		text: theme.colors.accent,
-		border: theme.colors.accent + '40',
-	};
-
 	const formatTime = (timestamp: number) => formatTimestamp(timestamp, 'smart');
 
 	return (
@@ -611,30 +716,38 @@ export function GroupChatHistoryPanel({
 			onKeyDown={handleKeyDown}
 			onClick={() => setActiveFocus('right')}
 		>
-			{/* Type Filter Pills */}
-			<div className="flex gap-1.5 flex-wrap mb-2 justify-center">
-				{TYPE_FILTER_CONFIG.map(({ type, label, icon: Icon }) => {
-					const isActive = activeFilters.has(type);
-					const colors = typePillColor;
-					return (
-						<button
-							key={type}
-							onClick={() => toggleFilter(type)}
-							className={`flex items-center gap-1 px-2 py-1 rounded-full text-2xs font-bold uppercase transition-all ${
-								isActive ? 'opacity-100' : 'opacity-40'
-							}`}
-							style={{
-								backgroundColor: isActive ? colors.bg : 'transparent',
-								color: isActive ? colors.text : theme.colors.textDim,
-								border: `1px solid ${isActive ? colors.border : theme.colors.border}`,
-							}}
-							title={`${isActive ? 'Hide' : 'Show'} ${label} entries`}
-						>
-							<Icon className="w-2.5 h-2.5" />
-							{label}
-						</button>
-					);
-				})}
+			{/* Type Filter Pills. The outer row clips so useOptionalLabelFits can
+			    read overflow; w-fit + mx-auto centers without hiding the left
+			    overflow the way justify-center would. */}
+			<div ref={pillRowRef} className="mb-2 overflow-hidden">
+				<div
+					className={`flex gap-1.5 w-fit mx-auto ${pillIconsFit ? '' : 'flex-wrap justify-center'}`}
+				>
+					{TYPE_FILTER_CONFIG.map(({ type, label, shortLabel, icon: Icon, color }) => {
+						const isActive = activeFilters.has(type);
+						// Active vs inactive is still conveyed by opacity on top of the hue.
+						const colors = tintedPillColors(color(theme));
+						return (
+							<button
+								key={type}
+								onClick={() => toggleFilter(type)}
+								className={`shrink-0 whitespace-nowrap flex items-center gap-1 px-2 py-1 rounded-full text-2xs font-bold uppercase transition-all ${
+									isActive ? 'opacity-100' : 'opacity-40'
+								}`}
+								style={{
+									backgroundColor: isActive ? colors.bg : 'transparent',
+									color: isActive ? colors.text : theme.colors.textDim,
+									border: `1px solid ${isActive ? colors.border : theme.colors.border}`,
+								}}
+								aria-label={label}
+								title={`${isActive ? 'Hide' : 'Show'} ${label} entries`}
+							>
+								{pillIconsFit && <Icon className="w-2.5 h-2.5" />}
+								{shortLabel}
+							</button>
+						);
+					})}
+				</div>
 			</div>
 
 			{/* Activity Graph */}
@@ -642,7 +755,7 @@ export function GroupChatHistoryPanel({
 				<GroupChatActivityGraph
 					entries={filteredEntries}
 					theme={theme}
-					participantColors={participantColors}
+					participantColors={entryColors}
 					lookbackHours={lookbackHours}
 					onLookbackChange={handleLookbackChange}
 					onBarClick={handleBarClick}
@@ -711,9 +824,7 @@ export function GroupChatHistoryPanel({
 				) : (
 					filteredEntries.map((entry, index) => {
 						const participantColor =
-							participantColors[entry.participantName] ||
-							entry.participantColor ||
-							theme.colors.accent;
+							entryColors[entry.participantName] || entry.participantColor || theme.colors.accent;
 						const isSelected = index === selectedIndex;
 						return (
 							<div
@@ -752,11 +863,12 @@ export function GroupChatHistoryPanel({
 									>
 										{entry.participantName}
 									</span>
-									{/* Entry type badge - mirrors the filter pill icon + label */}
+									{/* Entry type badge - mirrors the filter pill icon + short label,
+									    with the full word kept in the tooltip */}
 									{(() => {
 										const typeConfig = TYPE_CONFIG_BY_TYPE[entry.type];
 										if (!typeConfig) return <span />;
-										const { label, icon: TypeIcon } = typeConfig;
+										const { label, shortLabel, icon: TypeIcon } = typeConfig;
 										return (
 											<span
 												className="justify-self-center flex items-center gap-1 text-2xs font-bold uppercase whitespace-nowrap"
@@ -764,7 +876,7 @@ export function GroupChatHistoryPanel({
 												title={`${label} entry`}
 											>
 												<TypeIcon className="w-2.5 h-2.5 shrink-0" />
-												{label}
+												{shortLabel}
 											</span>
 										);
 									})()}

@@ -145,3 +145,23 @@ The Group Chat input supports the same features as direct agent conversations:
 - **Prompt Composer** - Open the full prompt composer with `Cmd+Shift+P` / `Ctrl+Shift+P`
 - **Enter/Cmd+Enter toggle** - Switch between send behaviors
 - **Message queuing** - Messages are queued if the moderator or agents are busy
+
+### The message queue
+
+A message you send while the chat is busy waits in the queue until the moderator
+is free. The queue belongs to the chat, not to the window you typed in, so:
+
+- It is the same queue on every device. Something queued from your phone shows up
+  on the desktop and is sent from there.
+- It survives a reload, a closed browser tab, and quitting the app. A queue left
+  over from a previous session comes back **paused**, so relaunching Maestro does
+  not start a moderator just to flush it.
+- **Stop All pauses it.** Nothing queued is sent until you press Resume, so
+  stopping the room does not immediately restart it.
+- If a message cannot be sent, it is **kept**, not dropped. The chat pauses and
+  says why, and the same failing send is not retried on its own. Fix the cause and
+  press **Resume**.
+
+You can reorder queued messages by dragging them, or remove one you no longer
+want. The message currently being handed to the moderator is marked
+"Sending, cannot remove", because it has already left.

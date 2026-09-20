@@ -94,7 +94,22 @@ export function createHistoryApi() {
 			sharedContext?: { sshRemoteId: string; remoteCwd: string };
 			types?: HistoryEntryType[];
 			hostKey?: string | null;
+			/** Collapse Cue runs to one row per trigger (`groupCueEntries`). */
+			groupCue?: boolean;
 		}) => ipcRenderer.invoke('history:getAllPaginated', options),
+
+		/**
+		 * The individual runs behind one collapsed Cue row. `groupKey` is the
+		 * `cueGroup.key` the grouped read put on that row, and `lookbackHours`
+		 * must match the window it was counted over.
+		 */
+		getCueGroupRuns: (options: {
+			sessionId: string;
+			groupKey: string;
+			projectPath?: string;
+			lookbackHours?: number | null;
+			limit?: number;
+		}) => ipcRenderer.invoke('history:getCueGroupRuns', options),
 
 		add: (entry: HistoryEntry, sharedContext?: { sshRemoteId: string; remoteCwd: string }) =>
 			ipcRenderer.invoke('history:add', entry, sharedContext),

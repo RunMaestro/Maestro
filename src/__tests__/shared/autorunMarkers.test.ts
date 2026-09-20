@@ -9,6 +9,8 @@ import {
 	scanMaestroMarkers,
 	findPendingHitlGate,
 	detectHaltMarker,
+	describeUnresolvedHaltMarker,
+	findHaltMarker,
 	hasMaestroMarker,
 } from '../../shared/autorunMarkers';
 
@@ -98,16 +100,72 @@ describe('scanMaestroMarkers - model', () => {
 		expect(marker.hint).toMatchObject({ tier: 'high', effort: 'high' });
 	});
 
-	it('marks a hint spent once the run has moved past it', () => {
-		// The next dispatch reads the LAST hint above the next unfinished task, so
-		// a hint above an already-passed section no longer governs anything.
+	it('marks a hint governing a later task upcoming, not spent', () => {
+		// Regression: a single "have we passed a task yet" latch stamped every
+		// marker below the first unchecked task as spent, so a document-wide low
+		// with a high phase further down drew the high one as expired - under a
+		// tooltip saying it no longer affected the run, while it was in fact the
+		// setting that phase was about to be dispatched at.
 		const doc = [
 			'<!-- MAESTRO:MODEL tier="high" -->',
 			'- [ ] Next up',
 			'<!-- MAESTRO:MODEL tier="low" -->',
 			'- [ ] Later',
 		].join('\n');
-		expect(scanMaestroMarkers(doc).map((m) => m.status)).toEqual(['live', 'spent']);
+		expect(scanMaestroMarkers(doc).map((m) => m.status)).toEqual(['live', 'upcoming']);
+	});
+
+	it('marks a hint spent once a nearer one supersedes it', () => {
+		// Nothing to govern: no task falls between the two, so the first never
+		// applies to anything and the second is what the next dispatch reads.
+		const doc = [
+			'<!-- MAESTRO:MODEL tier="high" -->',
+			'<!-- MAESTRO:MODEL tier="low" -->',
+			'- [ ] Only task',
+		].join('\n');
+		expect(scanMaestroMarkers(doc).map((m) => m.status)).toEqual(['spent', 'live']);
+	});
+
+	it('marks a hint spent when every task below it is finished', () => {
+		const doc = [
+			'- [ ] Still open',
+			'<!-- MAESTRO:MODEL tier="high" -->',
+			'- [x] Already done',
+		].join('\n');
+		expect(scanMaestroMarkers(doc).map((m) => m.status)).toEqual(['spent']);
+	});
+
+	it('keeps a hint alive across the checked tasks inside its own section', () => {
+		// A half-finished section still needs the setting the rest of it runs at,
+		// so a checked task must not consume the hint the way it consumes a gate.
+		const doc = ['<!-- MAESTRO:MODEL tier="high" -->', '- [x] Done', '- [ ] Not done'].join('\n');
+		expect(scanMaestroMarkers(doc).map((m) => m.status)).toEqual(['live']);
+	});
+
+	it('marks an inline hint on a later unfinished task upcoming', () => {
+		const doc = ['- [ ] First', '- [ ] Design <!-- MAESTRO:MODEL tier="high" -->'].join('\n');
+		const [marker] = scanMaestroMarkers(doc);
+		expect(marker.status).toBe('upcoming');
+		expect(marker.scope).toBe('task');
+	});
+
+	it('marks a marker that sets no level spent however much it explains', () => {
+		const doc = ['<!-- MAESTRO:MODEL reason="This is only prose." -->', '- [ ] Task'].join('\n');
+		const [marker] = scanMaestroMarkers(doc);
+		expect(marker.status).toBe('spent');
+		expect(marker.hint?.reason).toBe('This is only prose.');
+	});
+
+	it('carries the reason through to the marker for the pill to show', () => {
+		const doc = [
+			'<!-- MAESTRO:MODEL tier="high" effort="high" reason="Lock ordering across three services. Getting it wrong corrupts data." -->',
+			'- [ ] Design',
+		].join('\n');
+		const [marker] = scanMaestroMarkers(doc);
+		expect(marker.status).toBe('live');
+		expect(marker.hint?.reason).toBe(
+			'Lock ordering across three services. Getting it wrong corrupts data.'
+		);
 	});
 
 	it('marks an inline hint on a checked task spent', () => {
@@ -178,11 +236,88 @@ describe('relocated engine helpers still behave', () => {
 		expect(detectHaltMarker('<!-- maestro:something -->')).toEqual({ halted: false });
 	});
 
-	it('detectHaltMarker stays fence-blind on purpose', () => {
-		// scanMaestroMarkers skips fences so a documentation example draws no pill,
-		// but the ENGINE must never miss a real halt an agent mis-indented.
-		const doc = ['```', '<!-- maestro:halt: agent wrote this inside a fence -->', '```'].join('\n');
-		expect(detectHaltMarker(doc).halted).toBe(true);
+	it('detectHaltMarker ignores a fenced example, agreeing with the pill', () => {
+		// Reversed deliberately: authoring agents document this syntax far more
+		// often than executing agents mis-indent a real halt, and a halt that
+		// blocked the run while drawing no pill was an invisible cause.
+		const doc = ['```', '<!-- maestro:halt: documented, not requested -->', '```'].join('\n');
+		expect(detectHaltMarker(doc).halted).toBe(false);
 		expect(scanMaestroMarkers(doc)).toEqual([]);
+	});
+});
+
+describe('halt marker - description vs instruction', () => {
+	it('obeys a marker standing alone in the document body', () => {
+		const doc = ['# Plan', '', '- [ ] Ship it', '', '<!-- maestro:halt: build is broken -->'].join(
+			'\n'
+		);
+		expect(findHaltMarker(doc)).toEqual({ reason: 'build is broken', line: 4 });
+		expect(detectHaltMarker(doc)).toEqual({ halted: true, reason: 'build is broken' });
+	});
+
+	it('ignores a marker quoted in inline backticks', () => {
+		const doc = 'If the build is broken, write `<!-- maestro:halt: build broken -->` and stop.';
+		expect(findHaltMarker(doc)).toBeNull();
+		expect(detectHaltMarker(doc).halted).toBe(false);
+	});
+
+	it('ignores a marker riding a checkbox line', () => {
+		const doc = '- [ ] Run the tests. On failure emit <!-- maestro:halt: tests failed -->';
+		expect(findHaltMarker(doc)).toBeNull();
+		expect(detectHaltMarker(doc).halted).toBe(false);
+	});
+
+	it('does not let a described halt block a playbook that has real work', () => {
+		// The field bug: an authoring agent writes the marker as a conditional and
+		// the playbook refuses to start before its first task ever runs.
+		const doc = [
+			'# Migration',
+			'',
+			'If any step below fails irrecoverably, halt with `<!-- maestro:halt: reason -->`.',
+			'',
+			'- [ ] Write the migration',
+			'- [ ] Apply the migration <!-- maestro:halt: only if the DB is unreachable -->',
+			'',
+			'```markdown',
+			'<!-- maestro:halt: brief reason here -->',
+			'```',
+		].join('\n');
+		expect(detectHaltMarker(doc).halted).toBe(false);
+	});
+
+	it('reports the first obeyed marker line so the error can point at it', () => {
+		const doc = ['a', '<!-- maestro:halt -->', '<!-- maestro:halt: second -->'].join('\n');
+		expect(findHaltMarker(doc)).toEqual({ reason: undefined, line: 1 });
+	});
+
+	it('draws a spent pill for a described halt and a live one for a real halt', () => {
+		const doc = [
+			'- [ ] Apply it <!-- maestro:halt: describe only -->',
+			'<!-- maestro:halt: really stopped -->',
+		].join('\n');
+		const halts = scanMaestroMarkers(doc).filter((m) => m.kind === 'halt');
+		expect(halts).toEqual([
+			expect.objectContaining({ status: 'spent', scope: 'task', line: 0 }),
+			expect.objectContaining({ status: 'live', scope: 'document', line: 1 }),
+		]);
+	});
+
+	it('draws no pill for a halt quoted in prose', () => {
+		const doc = 'Emit `<!-- maestro:halt: reason -->` to stop the run.';
+		expect(scanMaestroMarkers(doc)).toEqual([]);
+	});
+});
+
+describe('describeUnresolvedHaltMarker', () => {
+	it('names the document, the 1-indexed line, and the reason', () => {
+		const halt = findHaltMarker('# Review\n\n<!-- maestro:halt: queue empty -->');
+		expect(describeUnresolvedHaltMarker('TASK-02', halt!)).toMatch(
+			/^Document "TASK-02" contains an unresolved halt marker on line 3: queue empty\. Remove the <!-- maestro:halt --> marker before re-running\./
+		);
+	});
+
+	it('omits the reason clause for a bare marker', () => {
+		const message = describeUnresolvedHaltMarker('doc', { line: 0 });
+		expect(message).toMatch(/^Document "doc" contains an unresolved halt marker on line 1\. /);
 	});
 });

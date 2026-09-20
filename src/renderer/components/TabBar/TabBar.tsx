@@ -25,6 +25,7 @@ import { isUnifiedTabActive, getShortcutHint } from './tabBarUtils';
 import { buildFileTabDisplayNames } from '../../hooks/tabs/internal/filePreviewTabHelpers';
 import { useEventListener } from '../../hooks/utils/useEventListener';
 import { useWindowOwnsSession } from '../../contexts/WindowContext';
+import { useDragAutoScroll } from '../../hooks/ui/useDragAutoScroll';
 import type { TabBarProps } from './types';
 import { PluginUiItemsSlot } from '../plugins/PluginUiItemsSlot';
 import { logger } from '../../utils/logger';
@@ -326,6 +327,18 @@ function TabBarInner({
 		stuckTabIds,
 		queuedTabIds,
 	]);
+
+	// Dragging a tab toward either end of an overflowing bar scrolls the bar, so
+	// a reorder can reach tabs that are off screen instead of stopping at the
+	// last visible one. The bands start where the scrolling tabs actually are:
+	// the sticky search/filter cluster and the sticky "+" are painted over them.
+	const dragScrollStartInset = useCallback(() => stickyLeftRef.current?.offsetWidth ?? 0, []);
+	const dragScrollEndInset = useCallback(() => STICKY_RIGHT_WIDTH, []);
+	useDragAutoScroll(tabBarRef, {
+		active: draggingTabId !== null,
+		startInset: dragScrollStartInset,
+		endInset: dragScrollEndInset,
+	});
 
 	// Drag handlers
 	const handleDragStart = useCallback(

@@ -2,7 +2,7 @@
 
 # Renderer Services and Constants Guide
 
-Covers `src/renderer/services/` (13 files, ~4,470 lines) and `src/renderer/constants/` (10 files, ~1,676 lines).
+Covers `src/renderer/services/` (32 files, ~7,790 lines) and `src/renderer/constants/` (10 files, ~1,676 lines).
 
 Not documented in detail below but present in `services/`: `bmad.ts` (BMAD slash command service, mirrors `speckit.ts`/`openspec.ts`) and `feedbackConversation.ts` (feedback/wizard conversation flow).
 
@@ -302,6 +302,28 @@ The target comes from `resolveWakePromptTabId()` in `utils/snoozeHelpers.ts`, wh
 
 Everything goes through `queuedPrompt.ts` rather than a spawn, for the tick-safety reason above: the tab is restored in the same `setSessions` call the wake runs in.
 
+### snoozeActions.ts - the four single-snooze operations, with their side effects
+
+Parking a tab is never just the store write, and each verb drags a fixed sequence behind it that is invisible when it goes wrong until months later. Three callers share this: the Snooze dialog (`AppUtilityModals`), the Snoozed Tabs list, and `maestro-cli snooze`.
+
+- `snoozeTabWithMirror(tabId, wakeAt, content?, { sessionId?, showUnreadOnly?, announce? })` - park a tab or tiled group.
+- `wakeSnoozeNow(sessionId, snoozeId)` - bring one back ahead of its time.
+- `dismissSnoozeNow(sessionId, snoozeId, { announce? })` - drop it without restoring.
+- `rescheduleSnoozeNow(sessionId, snoozeId, wakeAt, content?)` - move it.
+- `runRemoteSnoozeCommand(request)` - the far end of the `snooze_command` round trip, resolving all six CLI verbs (the four above plus `list` and `history`).
+
+**The session is read BEFORE the write.** The snooze removes the parked tabs from the session, taking their `agentSessionId`s with them, so a mirror taken afterwards has nothing left to resolve a transcript from - and a snooze can easily outrun the provider's retention, which is the whole reason the mirror exists. The moment a tab is put away is the loss boundary.
+
+**A wake or a dismiss releases the mirror AND records the resolution.** Releasing rehydrates first, restoring a transcript the provider aged out while the tab was parked; skipping the record loses the note the user left themselves, which is the feature. Those two steps were written out at each call site before this module, and a CLI path would have been a third copy.
+
+**`sessionId` is optional and defaults to the active agent**, which is what every click path means - the user is parking the tab in front of them. A scripted snooze names its own agent, because "active" is whatever the human happens to be looking at. That is why `tabStore.snoozeTab` grew the parameter and why it now writes by id rather than through `updateActiveSession`.
+
+**`announce` suppresses the NOTICE, never the work.** `--background` on `maestro-cli snooze` lands here. The parked tab leaving the strip is the verb itself rather than placement, so there is no quieter form of it to ask for; what the flag buys is not flashing "Snoozed until ..." at a human who is looking at a different agent.
+
+`runRemoteSnoozeCommand` is deliberately synchronous and answers rather than throws for every outcome, including an id that names nothing: the caller is a CLI process reporting to a human, where a thrown error reads as a broken command instead of "no such snooze". It also snapshots the entry before a wake or dismiss, since the entry is gone by the time the reply is built.
+
+---
+
 ### transcriptScroll.ts - reveal output the user asked for
 
 Asks the mounted AI transcript to jump to the bottom and resume following new output, past a paused auto-scroll.
@@ -342,6 +364,35 @@ Four rules the two surfaces must not disagree on:
 - **Say WHICH empty it is.** `Nothing queued to edit` and `Only commands are queued` are different states, and the second one renders on a screen that is visibly showing queued cards.
 
 The modal renders inside its own tab's transcript, so the service lands there first with `setActiveTab` + `aiTabFocusFields` before setting `uiStore.editingQueuedItemId`. It writes through `updateSessionWith` against fresh state, so the snapshot it read cannot clobber a concurrent update.
+
+---
+
+### agentNavigation.ts - the shared "take me to that agent" path
+
+Every surface that offers to land the user on an agent goes through here: the command palette's `Jump to:` entries and the Usage Dashboard's agent detail view, with more to come.
+
+**Key exports:**
+
+- `jumpToAgent(sessionId, { tabId? }): boolean` - the whole landing, in one call. Returns `false` when the agent no longer exists.
+- `revealAgentInSidebar(session)` - the Left Bar half alone, for a caller that has already selected the agent.
+- `openAgentSettings(session)` - opens the Edit Agent modal for that agent.
+
+A jump is never just `setActiveSessionId`. Four things can swallow it, and each one was a separate bug in a separate caller before this module existed:
+
+- the **Document Graph** is a full-screen overlay that would sit on top of the agent, so it is closed first;
+- an **active group chat** keeps rendering in place of the agent's transcript, so it is dismissed;
+- the agent may have been left on a **terminal / file / browser tab**, all of which outrank the AI tab in the render precedence - hence the `aiTabFocusFields` spread rather than a bare `activeTabId` write;
+- the agent may be inside a **collapsed group or a collapsed bookmarks section**, so nothing appears to move in the Left Bar.
+
+Three rules:
+
+- **Everything self-sources from the stores.** No `setActiveSessionId` / `setGroups` / `setBookmarksCollapsed` callbacks threaded down through modal trees, which is what let this be called from a sub-modal of a sub-modal. Tests drive it with `useSessionStore.setState`, not prop spies.
+- **The reveal is minimal on purpose.** A bookmarked agent already visible in an expanded group leaves both sections as the user left them; when neither is open, bookmarks expands and the group does not, because the pinned bookmark row is the lighter of the two reveals.
+- **A miss must be reported.** `jumpToAgent` returning `false` means the agent is gone (its stats outlive it). Say so - a silent no-op on a deleted agent is the same "the click did nothing" failure in a new shape.
+
+`options.tabId` is honored only when the agent still has that AI tab; a stale id lands on the agent without moving its active tab rather than pointing at nothing.
+
+One thing the service cannot do for you: a caller rendered UNDER a full-window modal has to close that modal itself. `AgentDetailModal` closes both itself and the Usage Dashboard after a jump, or the agent lands behind a dashboard that covers the window.
 
 ---
 

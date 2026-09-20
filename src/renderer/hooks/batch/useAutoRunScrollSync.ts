@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import type { RefObject } from 'react';
+import type { MarkdownEditorHandle } from '../../components/FilePreview/markdownEditor';
 
 export interface UseAutoRunScrollSyncParams {
 	mode: 'edit' | 'preview';
 	setMode: (mode: 'edit' | 'preview') => void;
-	textareaRef: RefObject<HTMLTextAreaElement | null>;
+	editorRef: RefObject<MarkdownEditorHandle | null>;
 	previewRef: RefObject<HTMLDivElement | null>;
 	localContent: string;
 	searchOpen: boolean;
@@ -29,7 +30,7 @@ export interface UseAutoRunScrollSyncReturn {
 export function useAutoRunScrollSync({
 	mode,
 	setMode,
-	textareaRef,
+	editorRef,
 	previewRef,
 	localContent,
 	searchOpen,
@@ -50,10 +51,8 @@ export function useAutoRunScrollSync({
 
 			// Calculate scroll percentage from current mode to apply to new mode
 			let scrollPercent = 0;
-			if (mode === 'edit' && textareaRef.current) {
-				const { scrollTop, scrollHeight, clientHeight } = textareaRef.current;
-				const maxScroll = scrollHeight - clientHeight;
-				scrollPercent = maxScroll > 0 ? scrollTop / maxScroll : 0;
+			if (mode === 'edit' && editorRef.current) {
+				scrollPercent = editorRef.current.getScrollPercent();
 			} else if (mode === 'preview' && previewRef.current) {
 				const { scrollTop, scrollHeight, clientHeight } = previewRef.current;
 				const maxScroll = scrollHeight - clientHeight;
@@ -71,19 +70,16 @@ export function useAutoRunScrollSync({
 					const newScrollTop = Math.round(scrollPercent * maxScroll);
 					previewRef.current.scrollTop = newScrollTop;
 					previewScrollPosRef.current = newScrollTop;
-				} else if (newMode === 'edit' && textareaRef.current) {
-					const { scrollHeight, clientHeight } = textareaRef.current;
-					const maxScroll = scrollHeight - clientHeight;
-					const newScrollTop = Math.round(scrollPercent * maxScroll);
-					textareaRef.current.scrollTop = newScrollTop;
-					editScrollPosRef.current = newScrollTop;
+				} else if (newMode === 'edit' && editorRef.current) {
+					editorRef.current.setScrollPercent(scrollPercent);
+					editScrollPosRef.current = editorRef.current.getScrollTop();
 				}
 
 				if (onStateChange) {
 					onStateChange({
 						mode: newMode,
-						cursorPosition: textareaRef.current?.selectionStart || 0,
-						editScrollPos: textareaRef.current?.scrollTop || 0,
+						cursorPosition: editorRef.current?.getCaret() || 0,
+						editScrollPos: editorRef.current?.getScrollTop() || 0,
 						previewScrollPos: previewRef.current?.scrollTop || 0,
 					});
 				}
@@ -112,8 +108,8 @@ export function useAutoRunScrollSync({
 				if (onStateChange && previewRef.current) {
 					onStateChange({
 						mode,
-						cursorPosition: textareaRef.current?.selectionStart || 0,
-						editScrollPos: textareaRef.current?.scrollTop || 0,
+						cursorPosition: editorRef.current?.getCaret() || 0,
+						editScrollPos: editorRef.current?.getScrollTop() || 0,
 						previewScrollPos: previewRef.current.scrollTop,
 					});
 				}
@@ -133,17 +129,22 @@ export function useAutoRunScrollSync({
 	// Restore cursor and scroll positions when component mounts
 	// Each restore is independently guarded by its own condition
 	useEffect(() => {
-		if (textareaRef.current) {
-			if (initialCursorPosition > 0) {
-				textareaRef.current.setSelectionRange(initialCursorPosition, initialCursorPosition);
+		// CodeMirror measures its content after mount, so a scrollTop written in
+		// the same frame lands on an unmeasured (height 0) scroller and is lost.
+		// One frame later the doc has height and the offset sticks.
+		requestAnimationFrame(() => {
+			if (editorRef.current) {
+				if (initialCursorPosition > 0) {
+					editorRef.current.setSelection(initialCursorPosition, initialCursorPosition);
+				}
+				if (initialEditScrollPos > 0) {
+					editorRef.current.setScrollTop(initialEditScrollPos);
+				}
 			}
-			if (initialEditScrollPos > 0) {
-				textareaRef.current.scrollTop = initialEditScrollPos;
+			if (previewRef.current && initialPreviewScrollPos > 0) {
+				previewRef.current.scrollTop = initialPreviewScrollPos;
 			}
-		}
-		if (previewRef.current && initialPreviewScrollPos > 0) {
-			previewRef.current.scrollTop = initialPreviewScrollPos;
-		}
+		});
 	}, []);
 
 	// Restore scroll position after content changes cause ReactMarkdown to rebuild DOM

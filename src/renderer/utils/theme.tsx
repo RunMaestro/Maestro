@@ -85,7 +85,7 @@ export const getExplorerFileIcon = (
 	fileName: string,
 	theme: Theme,
 	type?: FileChangeType,
-	iconTheme: FileExplorerIconTheme = 'default',
+	iconTheme: FileExplorerIconTheme = 'flat',
 	colorBlindMode: boolean = false
 ): JSX.Element => {
 	return iconTheme === 'rich'
@@ -97,7 +97,7 @@ export const getExplorerFolderIcon = (
 	folderName: string,
 	isExpanded: boolean,
 	theme: Theme,
-	iconTheme: FileExplorerIconTheme = 'default'
+	iconTheme: FileExplorerIconTheme = 'flat'
 ): JSX.Element => {
 	return iconTheme === 'rich'
 		? getRichExplorerFolderIcon(folderName, isExpanded, theme)

@@ -48,7 +48,11 @@ export const PipelineContextMenu = React.memo(function PipelineContextMenu({
 		return () => document.removeEventListener('keydown', handleKeyDown);
 	}, [onDismiss]);
 
-	const { left, top, ready } = useContextMenuPosition(menuRef, contextMenu.x, contextMenu.y);
+	const { left, top, maxHeight, ready } = useContextMenuPosition(
+		menuRef,
+		contextMenu.x,
+		contextMenu.y
+	);
 
 	useEffect(() => {
 		menuRef.current?.focus();
@@ -62,6 +66,11 @@ export const PipelineContextMenu = React.memo(function PipelineContextMenu({
 			style={{
 				left,
 				top,
+				// A menu taller than the viewport pins to the top edge and runs off
+				// the bottom; the container is overflow-hidden, so those items are
+				// simply unreachable. Scroll instead of clipping.
+				maxHeight,
+				overflowY: 'auto',
 				zIndex: 10000,
 				opacity: ready ? 1 : 0,
 			}}

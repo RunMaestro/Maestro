@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
 	useCrossAgentInFlightStore,
 	selectInFlightForTab,
+	selectConsultedSessionIds,
 	type InFlightCrossAgentRequest,
 } from '../../../renderer/stores/crossAgentInFlightStore';
 
@@ -67,5 +68,35 @@ describe('selectInFlightForTab', () => {
 		const requests = { a: req() };
 		expect(selectInFlightForTab(requests, null, 'tab')).toEqual([]);
 		expect(selectInFlightForTab(requests, 'src', undefined)).toEqual([]);
+	});
+});
+
+/**
+ * The Left Bar dot reads the TARGET side of the same store: a consulted agent
+ * is doing real work that `session.state` deliberately never records.
+ */
+describe('selectConsultedSessionIds', () => {
+	it('collects every agent currently answering a consult', () => {
+		const requests: Record<string, InFlightCrossAgentRequest> = {
+			a: req({ requestId: 'a', targetSessionId: 'rc' }),
+			b: req({ requestId: 'b', targetSessionId: 'maestro' }),
+		};
+
+		expect([...selectConsultedSessionIds(requests)].sort()).toEqual(['maestro', 'rc']);
+	});
+
+	// One agent fielding two consults must not double-count or flicker when the
+	// first of them finishes.
+	it('collapses several requests aimed at one agent', () => {
+		const requests: Record<string, InFlightCrossAgentRequest> = {
+			a: req({ requestId: 'a', targetSessionId: 'rc', sourceSessionId: 's1' }),
+			b: req({ requestId: 'b', targetSessionId: 'rc', sourceSessionId: 's2' }),
+		};
+
+		expect([...selectConsultedSessionIds(requests)]).toEqual(['rc']);
+	});
+
+	it('is empty when nothing is in flight', () => {
+		expect(selectConsultedSessionIds({}).size).toBe(0);
 	});
 });

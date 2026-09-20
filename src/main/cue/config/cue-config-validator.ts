@@ -1,8 +1,10 @@
 import picomatch from 'picomatch';
 import {
 	CUE_EVENT_TYPES,
+	CUE_GITHUB_LABEL_TARGETS,
 	CUE_GITHUB_STATES,
 	CUE_SCHEDULE_DAYS,
+	type CueGitHubLabelTarget,
 	type CueGitHubState,
 	type CueScheduleDay,
 	normalizeWebhookPath,
@@ -489,6 +491,52 @@ function validateEventSpecificFields(
 				sub.poll_minutes < 1
 			) {
 				errors.push(`${prefix}: "poll_minutes" must be a number >= 1 for task.pending events`);
+			}
+		}
+	} else if (event === 'github.label') {
+		if (sub.repo !== undefined && typeof sub.repo !== 'string') {
+			errors.push(`${prefix}: "repo" must be a string (e.g., "owner/repo") for ${event} events`);
+		}
+		if (sub.poll_minutes !== undefined) {
+			if (
+				typeof sub.poll_minutes !== 'number' ||
+				!Number.isFinite(sub.poll_minutes) ||
+				sub.poll_minutes < 1
+			) {
+				errors.push(`${prefix}: "poll_minutes" must be a number >= 1 for ${event} events`);
+			}
+		}
+		if (sub.gh_label_target !== undefined) {
+			if (
+				typeof sub.gh_label_target !== 'string' ||
+				!CUE_GITHUB_LABEL_TARGETS.includes(sub.gh_label_target as CueGitHubLabelTarget)
+			) {
+				errors.push(
+					`${prefix}: "gh_label_target" must be one of: ${CUE_GITHUB_LABEL_TARGETS.join(', ')}`
+				);
+			}
+		}
+		if (sub.gh_labels !== undefined) {
+			const labels = sub.gh_labels;
+			const isStringList =
+				Array.isArray(labels) && labels.every((entry: unknown) => typeof entry === 'string');
+			if (typeof labels !== 'string' && !isStringList) {
+				errors.push(
+					`${prefix}: "gh_labels" must be a string or an array of strings (omit it to fire on any label)`
+				);
+			}
+		}
+		if (sub.gh_state !== undefined) {
+			if (
+				typeof sub.gh_state !== 'string' ||
+				!CUE_GITHUB_STATES.includes(sub.gh_state as CueGitHubState)
+			) {
+				errors.push(`${prefix}: "gh_state" must be one of: ${CUE_GITHUB_STATES.join(', ')}`);
+			}
+			if (sub.gh_state === 'merged' && sub.gh_label_target === 'issue') {
+				errors.push(
+					`${prefix}: "gh_state" value "merged" cannot be combined with "gh_label_target: issue"`
+				);
 			}
 		}
 	} else if (event === 'github.pull_request' || event === 'github.issue') {

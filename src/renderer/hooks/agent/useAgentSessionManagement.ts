@@ -35,6 +35,12 @@ export interface HistoryEntryInput {
 	usageStats?: UsageStats;
 	/** Optional override for background operations (prevents cross-agent bleed) */
 	sessionId?: string;
+	/**
+	 * Which AI tab the turn ran in. Carried so main can attribute the entry to
+	 * the Web Login account that STARTED the turn - the account is known only at
+	 * spawn time, and main keys what it noted by agent + tab.
+	 */
+	tabId?: string;
 	/** Optional override for background operations (prevents cross-agent bleed) */
 	projectPath?: string;
 	/** Optional override for background operations (prevents cross-agent bleed) */
@@ -219,6 +225,8 @@ export function useAgentSessionManagement(
 					fullResponse: entry.fullResponse,
 					agentSessionId: entry.agentSessionId,
 					sessionId: targetSessionId,
+					// Lets main resolve which Web Login account started this turn.
+					...(entry.tabId ? { tabId: entry.tabId } : {}),
 					sessionName: sessionName,
 					projectPath: targetProjectPath,
 					// Claude-only per-turn token source (TUI vs API); omitted otherwise

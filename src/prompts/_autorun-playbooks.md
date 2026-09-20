@@ -163,6 +163,14 @@ Put a standalone marker above the first task and it governs the whole document. 
 
 Both attributes take `low`, `medium`, or `high`, and both are optional. The two scopes layer **per axis**: an inline marker that sets only `tier` keeps the prevailing `effort`. Use `tier="default"` (or `effort="default"`) to push one axis back to the agent's own configuration - that is how a single expensive-looking task opts out of a document-wide hint.
 
+A marker should also carry a `reason` justifying the choice - at most three sentences, plain text, with no double quotes inside the value:
+
+```markdown
+<!-- MAESTRO:MODEL tier="low" effort="low" reason="This phase only catalogues what already exists. Reading and listing call sites needs no judgment, so the cheap model at low effort is enough." -->
+```
+
+Explain what makes the work hard or mechanical rather than restating the levels. The reason has no effect on the run; Maestro shows it behind an ⓘ on the marker's pill so a reader can audit the judgment.
+
 The rules that matter when authoring:
 
 - **`low`/`medium`/`high` are ladder POSITIONS, not literal provider values.** `high` means the ceiling of whatever that provider offers, so on Claude Code `effort="high"` becomes `max`, not `high`. Never write a provider-specific value here.
@@ -178,7 +186,11 @@ Per-task synopses always run at the cheapest model and lowest effort regardless 
 
 A running agent can abort the entire Auto Run mid-playbook by writing the marker `<!-- maestro:halt: reason here -->` (or bare `<!-- maestro:halt -->`) into the current document. When the engine sees this marker after a task, it stops dispatch immediately - no further tasks in the current document, no further documents in the playbook. The optional reason is recorded in the History panel and emitted to the JSONL stream as a `halt` event.
 
-The default Auto Run prompt already instructs executing agents that this option exists and when to use it (true playbook-wide blockers, not ordinary task failures). You generally do not need to mention the marker in your playbook unless you want to call out specific halt-worthy conditions, e.g. "If the build is broken before you start, halt the playbook." A stale halt marker left in a document will block re-runs with an error - the user must remove it before the playbook will start again.
+**When AUTHORING a playbook, never write a bare halt marker into it.** The marker is not a conditional - it does not mean "stop if this check fails", it means "this run has stopped". A document that ships one is a document that refuses to start, and because an HTML comment renders as nothing, the user sees a playbook that will not go with no visible cause. This is the single most common way an authored playbook arrives broken.
+
+The default Auto Run prompt already tells executing agents that the option exists and when to use it (true playbook-wide blockers, not ordinary task failures), so you usually need not mention it at all. When you do want to name a halt-worthy condition, write the condition in plain words - "If the build is already broken before you start, halt the playbook and say so" - and if you must show the literal syntax, put it in backticks or a fenced code block. Markers inside inline code, inside a fence, or riding a `- [ ]` checkbox line are read as examples and ignored; a marker standing alone in the document body is obeyed.
+
+A stale halt marker left in a document blocks re-runs with an error naming the file and line - the user must remove it before the playbook will start again.
 
 ### Structured Output Artifacts
 

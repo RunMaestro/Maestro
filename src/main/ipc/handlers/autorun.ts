@@ -19,10 +19,20 @@ import {
 	mkdirRemote,
 	deleteRemote,
 	statRemote,
+	listTreeRemote,
 } from '../../utils/remote-fs';
 import { PLAYBOOKS_DIR, LEGACY_PLAYBOOKS_DIR, STATUS_PATH } from '../../../shared/maestro-paths';
 
 const LOG_CONTEXT = '[AutoRun]';
+
+/**
+ * Depth cap for the remote Auto Run folder scan (`find -maxdepth`).
+ *
+ * The local scan is unbounded; a remote `find` needs some ceiling, and this one
+ * is set far past any real playbook layout (documents live one or two folders
+ * deep) so it only ever fires on a pathological tree.
+ */
+const REMOTE_SCAN_MAX_DEPTH = 20;
 
 // Helper to create handler options with consistent context
 const handlerOpts = (operation: string, logSuccess = true): CreateHandlerOptions => ({
@@ -194,112 +204,97 @@ async function scanDirectory(
 	return nodes;
 }
 
-async function resolveRemoteEntryType(
-	dirPath: string,
-	entry: { name: string; isDirectory: boolean; isSymlink: boolean },
-	sshRemote: SshRemoteConfig
-): Promise<{ isDirectory: boolean; isFile: boolean }> {
-	if (!entry.isSymlink) {
-		return {
-			isDirectory: entry.isDirectory,
-			isFile: !entry.isDirectory,
-		};
-	}
+/**
+ * Build the Auto Run document tree from a flat list of markdown paths relative
+ * to the Auto Run folder.
+ *
+ * Mirrors {@link scanDirectory}'s output: folders appear only when they hold a
+ * document (directly or deeper), file nodes drop the `.md` from both name and
+ * path, and siblings sort folders-first then case-insensitively by name.
+ */
+function buildTreeFromMarkdownPaths(relativePaths: string[]): TreeNode[] {
+	const root: TreeNode[] = [];
+	const folders = new Map<string, TreeNode>();
 
-	const fullPath = `${dirPath}/${entry.name}`;
-	const statResult = await statRemote(fullPath, sshRemote);
-	if (!statResult.success || !statResult.data) {
-		return {
-			isDirectory: false,
-			isFile: false,
-		};
-	}
+	// Folder node for `relativePath`, creating it (and its ancestors) on first use.
+	const folderAt = (relativePath: string): TreeNode[] => {
+		if (!relativePath) return root;
+		const existing = folders.get(relativePath);
+		if (existing?.children) return existing.children;
 
-	return {
-		isDirectory: statResult.data.isDirectory,
-		isFile: !statResult.data.isDirectory,
+		const cut = relativePath.lastIndexOf('/');
+		const parent = cut >= 0 ? folderAt(relativePath.slice(0, cut)) : root;
+		const node: TreeNode = {
+			name: cut >= 0 ? relativePath.slice(cut + 1) : relativePath,
+			type: 'folder',
+			path: relativePath,
+			children: [],
+		};
+		folders.set(relativePath, node);
+		parent.push(node);
+		return node.children!;
 	};
+
+	for (const relativePath of relativePaths) {
+		const cut = relativePath.lastIndexOf('/');
+		const siblings = folderAt(cut >= 0 ? relativePath.slice(0, cut) : '');
+		const name = cut >= 0 ? relativePath.slice(cut + 1) : relativePath;
+		siblings.push({
+			name: name.slice(0, -3),
+			type: 'file',
+			path: relativePath.slice(0, -3),
+		});
+	}
+
+	const sortNodes = (nodes: TreeNode[]): TreeNode[] => {
+		nodes.sort((a, b) => {
+			if (a.type === 'folder' && b.type !== 'folder') return -1;
+			if (a.type !== 'folder' && b.type === 'folder') return 1;
+			return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+		});
+		for (const node of nodes) if (node.children) sortNodes(node.children);
+		return nodes;
+	};
+
+	return sortNodes(root);
 }
 
 /**
- * Recursively scan directory for markdown files on a remote host via SSH.
- * This is the SSH version of scanDirectory.
+ * Scan a remote Auto Run folder for markdown files in ONE SSH round-trip.
+ *
+ * This used to walk the tree directory by directory, which cost one `ls` per
+ * folder: a playbooks folder with a few hundred working subdirectories took
+ * minutes and blew past every caller's timeout, so the renderer's document list
+ * stayed empty and every feature keyed off it (the Auto Run panel, the Files
+ * panel's "Stage for Auto Run" entry) silently disappeared. `listTreeRemote`
+ * answers the same question with a single bundled `find`, which is what the
+ * file explorer already uses for remote trees.
+ *
+ * Symlinked directories are now followed (find -L, with its own loop
+ * detection) rather than skipped, matching the local scan.
  */
 async function scanDirectoryRemote(
 	dirPath: string,
-	sshRemote: SshRemoteConfig,
-	relativePath: string = '',
-	visitedPaths: Set<string> = new Set()
+	sshRemote: SshRemoteConfig
 ): Promise<TreeNode[]> {
-	const normalizedPath = dirPath.replace(/\/+/g, '/');
-	if (visitedPaths.has(normalizedPath)) {
-		return [];
-	}
-	visitedPaths.add(normalizedPath);
-
-	const result = await readDirRemote(dirPath, sshRemote);
-	if (!result.success || !result.data) {
-		logger.warn(`${LOG_CONTEXT} Failed to read remote directory: ${result.error}`, LOG_CONTEXT);
-		return [];
-	}
-
-	const resolvedEntries = await Promise.all(
-		result.data
-			.filter((entry) => !entry.name.startsWith('.'))
-			.map(async (entry) => ({
-				entry,
-				...(await resolveRemoteEntryType(dirPath, entry, sshRemote)),
-			}))
+	const result = await listTreeRemote(
+		dirPath,
+		{
+			maxDepth: REMOTE_SCAN_MAX_DEPTH,
+			// `find -name '.*' -prune` drops dot-directories and dot-files in one
+			// clause, matching the local scan's `startsWith('.')` filter.
+			ignorePatterns: ['.*'],
+		},
+		sshRemote
 	);
 
-	const nodes: TreeNode[] = [];
-
-	// Sort entries: folders first, then files, both alphabetically
-	const sortedEntries = resolvedEntries.sort((a, b) => {
-		if (a.isDirectory && !b.isDirectory) return -1;
-		if (!a.isDirectory && b.isDirectory) return 1;
-		return a.entry.name.toLowerCase().localeCompare(b.entry.name.toLowerCase());
-	});
-
-	for (const { entry, isDirectory, isFile } of sortedEntries) {
-		const entryRelativePath = relativePath ? `${relativePath}/${entry.name}` : entry.name;
-
-		if (isDirectory) {
-			// Avoid infinite recursion on remote symlink cycles.
-			// We currently don't have remote realpath canonicalization in remote-fs,
-			// so skip descending into symlinked directories.
-			if (entry.isSymlink) {
-				continue;
-			}
-
-			// Recursively scan subdirectory
-			// Use forward slashes for remote paths (Unix style)
-			const children = await scanDirectoryRemote(
-				`${dirPath}/${entry.name}`,
-				sshRemote,
-				entryRelativePath,
-				visitedPaths
-			);
-			// Only include folders that contain .md files (directly or in subfolders)
-			if (children.length > 0) {
-				nodes.push({
-					name: entry.name,
-					type: 'folder',
-					path: entryRelativePath,
-					children,
-				});
-			}
-		} else if (isFile && entry.name.toLowerCase().endsWith('.md')) {
-			// Add .md file (without extension in name, but keep in path)
-			nodes.push({
-				name: entry.name.slice(0, -3),
-				type: 'file',
-				path: entryRelativePath.slice(0, -3), // Remove .md from path too
-			});
-		}
+	if (!result.success || !result.data) {
+		logger.warn(`${LOG_CONTEXT} Failed to scan remote directory: ${result.error}`, LOG_CONTEXT);
+		return [];
 	}
 
-	return nodes;
+	const markdownPaths = result.data.files.filter((file) => file.toLowerCase().endsWith('.md'));
+	return buildTreeFromMarkdownPaths(markdownPaths);
 }
 
 /**

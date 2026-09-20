@@ -33,6 +33,10 @@ const FOCUSING_TODAY: BackgroundCapableVerb[] = [
 	'create-worktree',
 	'switch-mode',
 	'refresh-auto-run',
+	// The two snooze verbs that announce. `--background` suppresses the notice;
+	// absent, they flash/toast exactly as the click paths do.
+	'snooze',
+	'snooze-dismiss',
 ];
 
 describe('no verb changes its default', () => {
@@ -73,6 +77,15 @@ describe('no verb changes its default', () => {
 describe('verbs that accept the flag and ignore it', () => {
 	it('recognises refresh-files as already quiet', () => {
 		expect(isAlreadyQuietVerb('refresh-files')).toBe(true);
+	});
+
+	it('recognises the four silent snooze verbs as already quiet', () => {
+		// `wake` restores a tab WITHOUT focusing it - unlike the Snoozed Tabs list,
+		// which jumps to the tab it brought back - so there is nothing for the flag
+		// to suppress on any of these.
+		for (const verb of ['snooze-list', 'snooze-wake', 'snooze-reschedule', 'snooze-history']) {
+			expect(isAlreadyQuietVerb(verb), verb).toBe(true);
+		}
 	});
 
 	it('does not claim a verb that really can move the view', () => {

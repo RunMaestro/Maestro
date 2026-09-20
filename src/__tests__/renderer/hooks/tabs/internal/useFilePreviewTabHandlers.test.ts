@@ -4,6 +4,7 @@ import { useFilePreviewTabHandlers } from '../../../../../renderer/hooks/tabs/in
 import { useModalStore } from '../../../../../renderer/stores/modalStore';
 import { useSettingsStore } from '../../../../../renderer/stores/settingsStore';
 import { useMediaPlaybackStore } from '../../../../../renderer/stores/mediaPlaybackStore';
+import { useUIStore } from '../../../../../renderer/stores/uiStore';
 import {
 	createMockAITab,
 	createMockBrowserTab,
@@ -29,6 +30,114 @@ describe('useFilePreviewTabHandlers', () => {
 
 	afterEach(() => {
 		cleanup();
+	});
+
+	// -----------------------------------------------------------------------
+	// Narrow-viewport drawer
+	// -----------------------------------------------------------------------
+	describe('narrow-viewport right drawer', () => {
+		// On a phone the Files panel covers the whole screen, so opening a file
+		// from it has to dismiss it. The transition-keyed effect in App.tsx cannot
+		// do this alone: the two cases below move none of the active-tab ids it
+		// watches, so it sees nothing happen and the file opens behind the tree.
+		const originalWidth = window.innerWidth;
+		const setViewportWidth = (width: number) => {
+			Object.defineProperty(window, 'innerWidth', {
+				configurable: true,
+				writable: true,
+				value: width,
+			});
+		};
+
+		afterEach(() => {
+			setViewportWidth(originalWidth);
+		});
+
+		it('closes the drawer when a file is opened', () => {
+			setViewportWidth(390);
+			setupSession({ aiTabs: [createMockAITab({ id: 'ai-1' })] });
+			useUIStore.getState().setRightPanelOpen(true);
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			act(() => {
+				result.current.handleOpenFileTab({ path: '/p/a.md', name: 'a.md', content: '# a' });
+			});
+
+			expect(useUIStore.getState().rightPanelOpen).toBe(false);
+		});
+
+		it('closes the drawer when the file is ALREADY the active tab', () => {
+			// The reported bug: long-press a file already open, tap Preview, and
+			// nothing moves - so the effect keyed on activeFileTabId never fires
+			// and the drawer stays over the preview.
+			setViewportWidth(390);
+			const existing = createMockFileTab({ id: 'file-1', path: '/p/a.md', name: 'a.md' });
+			setupSession({
+				aiTabs: [createMockAITab({ id: 'ai-1' })],
+				filePreviewTabs: [existing],
+				activeFileTabId: 'file-1',
+			});
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+			const before = getSession().activeFileTabId;
+			useUIStore.getState().setRightPanelOpen(true);
+
+			act(() => {
+				result.current.handleOpenFileTab({ path: '/p/a.md', name: 'a.md', content: '# a' });
+			});
+
+			// The active tab genuinely did not move - that is the whole problem.
+			expect(getSession().activeFileTabId).toBe(before);
+			expect(useUIStore.getState().rightPanelOpen).toBe(false);
+		});
+
+		it('closes the drawer for media, which never becomes a tab at all', () => {
+			setViewportWidth(390);
+			setupSession({ aiTabs: [createMockAITab({ id: 'ai-1' })] });
+			useUIStore.getState().setRightPanelOpen(true);
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			act(() => {
+				result.current.handleOpenFileTab({
+					path: '/files/podcast.mp3',
+					name: 'podcast.mp3',
+					content: 'maestro-media://stream/tok3n/2f66696c65732f612e6d7033',
+				});
+			});
+
+			expect(getSession().filePreviewTabs).toHaveLength(0);
+			expect(useUIStore.getState().rightPanelOpen).toBe(false);
+		});
+
+		it('leaves the drawer alone for a background open', () => {
+			// `activate: false` is the CLI / web `--background` path: it changes
+			// nothing on screen by definition, so it must not move the drawer.
+			setViewportWidth(390);
+			setupSession({ aiTabs: [createMockAITab({ id: 'ai-1' })] });
+			useUIStore.getState().setRightPanelOpen(true);
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			act(() => {
+				result.current.handleOpenFileTab(
+					{ path: '/p/a.md', name: 'a.md', content: '# a' },
+					{ activate: false }
+				);
+			});
+
+			expect(useUIStore.getState().rightPanelOpen).toBe(true);
+		});
+
+		it('leaves the Right Bar open on a wide viewport', () => {
+			setViewportWidth(1440);
+			setupSession({ aiTabs: [createMockAITab({ id: 'ai-1' })] });
+			useUIStore.getState().setRightPanelOpen(true);
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			act(() => {
+				result.current.handleOpenFileTab({ path: '/p/a.md', name: 'a.md', content: '# a' });
+			});
+
+			expect(useUIStore.getState().rightPanelOpen).toBe(true);
+		});
 	});
 
 	describe('media diversion', () => {

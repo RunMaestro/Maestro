@@ -39,6 +39,7 @@ import type { SymphonySessionMetadata } from '../../shared/symphony-types';
 // Import for extension in this file
 import type {
 	AdditionalDirectory,
+	SessionWorktreeConfig,
 	WorktreeConfig as BaseWorktreeConfig,
 	WorktreeRunTarget,
 	BatchDocumentEntry,
@@ -61,14 +62,7 @@ export type {
 } from '../../shared/group-chat-types';
 // Import AgentError for use within this file
 import type { AgentError, SessionCliActivity } from '../../shared/types';
-
-// Provider Failover types (pure module, shared with the main process).
-export type {
-	FailoverConfig,
-	FailoverEndpoint,
-	FailoverState,
-} from '../../shared/providerFailover';
-import type { FailoverConfig } from '../../shared/providerFailover';
+import type { AgentDelegationKind } from '../../shared/agentDelegation';
 import type { ComposerCommandMode } from '../utils/shellCommandInput';
 import type { MindMapLayoutType } from '../components/DocumentGraph/layoutTypes';
 
@@ -104,7 +98,6 @@ export type SettingsTab =
 	| 'about'
 	| 'general'
 	| 'display'
-	| 'llm'
 	| 'shortcuts'
 	| 'theme'
 	| 'notifications'
@@ -115,7 +108,6 @@ export type SettingsTab =
 	| 'prompts';
 // Note: ScratchPadMode was removed as part of the Scratchpad → Auto Run migration
 export type FocusArea = 'sidebar' | 'main' | 'right';
-export type LLMProvider = 'openrouter' | 'requesty' | 'anthropic' | 'ollama';
 
 // Inline wizard types for per-session/per-tab wizard state
 export type WizardMode = 'new' | 'iterate' | null;
@@ -249,6 +241,13 @@ export interface LogEntry {
 	};
 	// For user messages - tracks if message was successfully delivered to the agent
 	delivered?: boolean;
+	// For user messages written by a queue dispatch: the id of the QueuedItem
+	// this card was written for. A dispatch appends the card BEFORE the spawn,
+	// so a spawn that throws leaves a card for a prompt no model ever saw. The
+	// stamp lets the failure path remove exactly that card (see
+	// applyQueuedItemDispatchFailure) instead of matching on text, which would
+	// also delete an identical message the user really did send earlier.
+	queuedItemId?: string;
 	// For user messages - tracks if message was sent in read-only mode
 	readOnly?: boolean;
 	// For user messages - tracks if message was sent via forced parallel execution
@@ -380,6 +379,32 @@ export interface LogEntry {
 		/** Whether it returned on schedule or the user pulled it back early. */
 		resolution: 'woke' | 'unsnoozed';
 	};
+	// Marks a hand-off this agent made to ANOTHER agent from its own shell
+	// (`maestro-cli dispatch` / `ask`), the counterpart of the attribution header
+	// a typed @mention's reply carries. Written by services/agentDelegation.ts; a
+	// dispatch never changes afterwards, an ask is settled once when the answer
+	// lands. See components/AgentDelegationCard.tsx.
+	delegation?: {
+		kind: AgentDelegationKind;
+		/** The agent the work or question went to. */
+		toSessionId: string;
+		/** The tab it landed in, when known. The jump arrow deep-links to it. */
+		toTabId?: string;
+		/** The target's display name at the time of the hand-off. */
+		toAgentName: string;
+		/** The target's provider, for the glyph and label. */
+		toToolType: ToolType;
+		/** One line of what was handed over. */
+		subject: string;
+		/** The dispatch opened a fresh tab on the target. */
+		newTab?: boolean;
+		/** The dispatch joined the target's execution queue. */
+		queued?: boolean;
+		/** Ask only: `pending` until the answer lands, then how it ended. */
+		status?: 'pending' | 'done' | 'error' | 'canceled';
+		/** Ask only: why no answer came back. */
+		error?: string;
+	};
 }
 
 // Queued item for the session-level execution queue
@@ -448,6 +473,9 @@ export interface QueuedItem {
 	// Held/paused: kept in the queue (preserving order) but skipped by every
 	// dispatch path until the user resumes it. See utils/executionQueue.ts.
 	paused?: boolean;
+	// Hold set when the process ownership probe cannot reach main. The
+	// item becomes runnable only after bridge reconciliation confirms ownership.
+	waitingForConnection?: boolean;
 	// This message `@mentions` another agent, and that consult has NOT fired yet.
 	// It fires when the item is dispatched (agentStore.processQueuedItem), so the
 	// mentioned agent is pulled in at the moment the message becomes the agent's
@@ -492,14 +520,11 @@ export interface WorktreeConfig extends BaseWorktreeConfig {
 }
 
 // Per-agent worktree settings, stored on parent sessions as `worktreeConfig`.
-// Distinct from `WorktreeConfig` above, which describes a single batch run's worktree.
-export interface SessionWorktreeConfig {
-	basePath: string; // Directory where worktrees are stored
-	watchEnabled: boolean; // Whether to watch for new worktrees via chokidar
-	// Shell command run inside each newly created worktree (copy .env files,
-	// run setup.sh, install deps). Blank/undefined disables it.
-	setupScript?: string;
-}
+// Distinct from `WorktreeConfig` above, which describes a single batch run's
+// worktree. The shape lives in shared/types so the CLI (`list agents --json`,
+// `show agent`) and the system prompt ({{WORKTREE_BASE_PATH}}) read the same
+// field the desktop writes.
+export type { SessionWorktreeConfig };
 
 // Worktree path validation state (used by useWorktreeValidation hook)
 export interface WorktreeValidationState {
@@ -533,6 +558,17 @@ export interface BatchRunConfig {
 	// override dies with the run. Absent means "use the agent default".
 	model?: string;
 	effort?: string; // Per-run reasoning effort override, same run-scoped rules as `model`
+	// Skip the documents' MAESTRO:MODEL markers so every task runs at the
+	// override above, then the agent's settings. Run-scoped like `model`;
+	// absent means the markers apply as usual.
+	ignoreModelHints?: boolean;
+	// Auto-resume after an agent error pauses the run. All three are optional and
+	// absence means the documented default (ON, 5 minutes, 5 attempts) - see
+	// `resolveAutoResumePolicy` in shared/autorunAutoResume.ts, which is the only
+	// place that turns these into a policy.
+	autoResumeOnError?: boolean;
+	autoResumeAfterMin?: number;
+	maxAutoResumes?: number;
 	// Goal-Driven mode. Its presence is the discriminator that selects goal mode
 	// over the document/task-driven spec mode. When set, the run pursues a free-text
 	// goal instead of checking off `- [ ]` tasks. See src/shared/goalDriven/types.ts.
@@ -603,6 +639,11 @@ export interface BatchRunState {
 	// the session. Read by the exit-path synopsis so per-task synopses spawn under
 	// the same model as the run's tasks, matching the CLI batch processor.
 	runModelOverride?: string;
+	// Resolved auto-resume policy for this run, stored so the agent-error
+	// listener can read it back through `getBatchStateRef` at the moment a
+	// failure lands. `null` means the run opted out. Resolved once at run start
+	// rather than per error so a run keeps the terms it was launched under.
+	autoResumePolicy?: import('../../shared/autorunAutoResume').AutoResumePolicy | null;
 	sessionIds: string[]; // Claude session IDs from each iteration
 	startTime?: number; // Timestamp when batch run started
 	cumulativeTaskTimeMs?: number; // Sum of actual task durations (most accurate work time measure)
@@ -1242,7 +1283,7 @@ export interface Session {
 	state: SessionState;
 	cwd: string;
 	fullPath: string;
-	projectRoot: string; // The initial working directory (never changes, used for Claude session storage)
+	projectRoot: string; // The agent's working directory root (used for provider session storage). Moves only through withWorkingDirectory()
 	// Extra directories the agent may read from and/or write to beyond its
 	// working directory. Prompt-level grants: rendered into the Maestro system
 	// prompt as {{ADDITIONAL_DIRECTORIES}}, not enforced by a sandbox.
@@ -1531,12 +1572,15 @@ export interface Session {
 	retryOnAvailabilityErrors?: boolean;
 	retryOnTokenExhaustion?: boolean;
 
-	// Provider Failover: ordered Anthropic-compatible backup endpoints (local
-	// vLLM/Ollama, Z.AI, an enterprise proxy, or a second account) this agent hands
-	// off to when resilience would otherwise sit out the primary's reset window.
-	// Off unless explicitly armed - swapping providers mid-task changes who sees
-	// the prompt and what it costs. See shared/providerFailover.
-	failoverConfig?: FailoverConfig;
+	// Codex only. When true, hitting a plan-quota wall spends one of the
+	// account's rate-limit reset credits automatically instead of waiting for the
+	// window to reopen. Defaults OFF, and unlike the two flags above that default
+	// is deliberate rather than historical: credits are finite, expire, and
+	// cannot be refunded, so unattended spending is something a user opts into
+	// rather than something they discover after the fact. See
+	// `shouldAutoSpendCredit` in shared/codexResetCredits for the (deliberately
+	// narrow) conditions under which the automation actually fires.
+	codexAutoResetOnExhaustion?: boolean;
 
 	// Last resolved Claude headless-mode state (only meaningful for Claude Code
 	// sessions with `enableMaestroP === true`). The spawner writes this after
@@ -1716,7 +1760,9 @@ export interface LeaderboardSubmitResponse {
 	};
 }
 
-// Encore Features - optional features that are disabled by default
+// Encore Features - capabilities behind a single toggle. The four graduated
+// ones ship ON by default (see ENCORE_FEATURE_DEFAULTS in
+// src/shared/encoreFeatureDefaults.ts); the rest start off.
 // Each key is a feature ID, value indicates whether it's enabled
 export interface EncoreFeatureFlags {
 	directorNotes: boolean;
@@ -1747,12 +1793,27 @@ export interface EncoreFeatureFlags {
 	// is explicitly started. Optional so older fixtures and persisted settings
 	// remain valid.
 	aCappella?: boolean;
+	// Web Login - require a username and password on the web interface, with
+	// per-account attribution on History and stats. Off by default. Optional so
+	// older fixtures and persisted settings remain valid.
+	webLogin?: boolean;
 }
 
 // Director's Notes settings for synopsis generation
 export interface DirectorNotesSettings {
-	/** Agent type to use for synopsis generation */
+	/**
+	 * Agent type to use for synopsis generation when `autoSelectProvider` is off.
+	 * Kept even while auto is on so toggling auto off restores the conductor's
+	 * last manual pick rather than resetting to the first provider in the list.
+	 */
 	provider: ToolType;
+	/**
+	 * Pick the first installed supported provider at generation time instead of
+	 * using `provider`. Defaults to true (undefined counts as on), so a fresh
+	 * install generates a synopsis without anyone opening Settings, and a broken
+	 * account is not a dead end when a second provider is present.
+	 */
+	autoSelectProvider?: boolean;
 	/** Default lookback period in days (1-90) */
 	defaultLookbackDays: number;
 	/** Default AI Overview reading mode (Rich widget dashboard vs Plain markdown). Defaults to 'rich'. */

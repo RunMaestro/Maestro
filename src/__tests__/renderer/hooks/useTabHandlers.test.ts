@@ -434,6 +434,32 @@ describe('useTabHandlers', () => {
 			expect(session.filePreviewTabs[0].content).toBe('saved content');
 		});
 
+		it('handleFileTabEditContentChange stamps the saved mtime so the save is not seen as external', () => {
+			const aiTab = createMockAITab({ id: 'ai-1' });
+			const fileTab = createMockFileTab({ id: 'file-1', content: 'old', lastModified: 1000 });
+			setupSessionWithTabs([aiTab], [fileTab]);
+
+			const { result } = renderHook(() => useTabHandlers());
+			act(() => {
+				result.current.handleFileTabEditContentChange('file-1', undefined, 'saved content', 2000);
+			});
+
+			expect(getSession().filePreviewTabs[0].lastModified).toBe(2000);
+		});
+
+		it('handleFileTabEditContentChange keeps the existing mtime when none is supplied', () => {
+			const aiTab = createMockAITab({ id: 'ai-1' });
+			const fileTab = createMockFileTab({ id: 'file-1', content: 'old', lastModified: 1000 });
+			setupSessionWithTabs([aiTab], [fileTab]);
+
+			const { result } = renderHook(() => useTabHandlers());
+			act(() => {
+				result.current.handleFileTabEditContentChange('file-1', undefined, 'saved content');
+			});
+
+			expect(getSession().filePreviewTabs[0].lastModified).toBe(1000);
+		});
+
 		it('handleFileTabSearchQueryChange updates search query', () => {
 			const aiTab = createMockAITab({ id: 'ai-1' });
 			const fileTab = createMockFileTab({ id: 'file-1' });

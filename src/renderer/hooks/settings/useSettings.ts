@@ -15,7 +15,6 @@ import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { shallow } from 'zustand/shallow';
 import type { BrowserConfirmPolicy } from '../../../shared/coworkingBrowser';
 import type {
-	LLMProvider,
 	ThemeId,
 	ThemeColors,
 	Shortcut,
@@ -66,14 +65,6 @@ export interface UseSettingsReturn {
 	globalShowHotkey: string[];
 	setGlobalShowHotkey: (value: string[]) => void;
 
-	// LLM settings
-	llmProvider: LLMProvider;
-	modelSlug: string;
-	apiKey: string;
-	setLlmProvider: (value: LLMProvider) => void;
-	setModelSlug: (value: string) => void;
-	setApiKey: (value: string) => void;
-
 	// Shell settings
 	defaultShell: string;
 	setDefaultShell: (value: string) => void;
@@ -122,6 +113,8 @@ export interface UseSettingsReturn {
 	setTypographyPromptSeen: (value: boolean) => void;
 	themePromptSeen: boolean;
 	setThemePromptSeen: (value: boolean) => void;
+	updatesPromptSeen: boolean;
+	setUpdatesPromptSeen: (value: boolean) => void;
 	agentPowersPromptSeen: boolean;
 	setAgentPowersPromptSeen: (value: boolean) => void;
 
@@ -467,6 +460,14 @@ export interface UseSettingsReturn {
 	// Director's Notes settings
 	directorNotesSettings: DirectorNotesSettings;
 	setDirectorNotesSettings: (value: DirectorNotesSettings) => void;
+
+	// Maestro Cue history retention (days kept in cue.db)
+	cueHistoryRetentionDays: number;
+	setCueHistoryRetentionDays: (value: number) => void;
+
+	// Collapse repeated Cue runs in the History panel into one row per trigger
+	groupCueEntries: boolean;
+	setGroupCueEntries: (value: boolean) => void;
 
 	// WakaTime integration settings
 	wakatimeApiKey: string;

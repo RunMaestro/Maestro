@@ -382,3 +382,27 @@ export function formatDurationDecimal(ms: number): string {
 	if (ms < 3_600_000) return `${(ms / 60_000).toFixed(1)}m`;
 	return `${(ms / 3_600_000).toFixed(1)}h`;
 }
+
+/**
+ * Turn time as read in a transcript gutter: `"<1m"`, `"25m"`, `"2h 15m"`,
+ * `"5d 6h 25m"`.
+ *
+ * Day-capped and second-free on purpose. This string answers "how long did the
+ * agent take on that?", a question nobody asks to the second: a reply is
+ * minutes or it is a coffee break, and the difference between 25m 13s and
+ * 25m 41s changes nothing. Anything under a minute collapses to `<1m` rather
+ * than printing `0m`, which reads as an error rather than as "instant".
+ *
+ * Three rungs, not two, so a genuinely long-running turn stays legible as
+ * `5d 6h 25m` instead of rounding its minutes away.
+ *
+ * @param ms - Duration in milliseconds
+ * @returns Formatted duration
+ */
+export function formatTurnDuration(ms: number): string {
+	return humanizeDuration(ms, {
+		units: ['day', 'hour', 'minute'],
+		maxUnits: 3,
+		fallback: '<1m',
+	});
+}

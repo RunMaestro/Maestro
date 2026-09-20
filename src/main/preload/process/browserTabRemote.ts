@@ -266,14 +266,16 @@ export function createBrowserTabRemoteApi() {
 		 * Send response for remote "new AI tab with prompt".
 		 * `tabId` is the id of the freshly-created tab - surfaced so
 		 * `maestro-cli dispatch --new-tab` can return an addressable id to its
-		 * caller without owning a persistent channel.
+		 * caller without owning a persistent channel. `queued` says the prompt is
+		 * waiting behind the agent's current turn rather than running now, and
+		 * `error` is the renderer's own reason for a refusal - without it the CLI
+		 * can only see a missing tab id and has to guess why.
 		 */
 		sendRemoteNewAITabWithPromptResponse: (
 			responseChannel: string,
-			success: boolean,
-			tabId?: string
+			result: { success: boolean; tabId?: string; queued?: boolean; error?: string }
 		): void => {
-			ipcRenderer.send(responseChannel, { success, tabId });
+			ipcRenderer.send(responseChannel, result);
 		},
 	};
 }

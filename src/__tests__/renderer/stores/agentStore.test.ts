@@ -1944,7 +1944,7 @@ describe('agentStore', () => {
 			const tab2 = updated.aiTabs.find((t) => t.id === 'tab-2')!;
 
 			expect(tab1.logs).toHaveLength(1);
-			expect(tab1.logs[0].text).toContain('Failed to process queued');
+			expect(tab1.logs[0].text).toContain('Failed to send queued');
 			expect(tab1.logs[0].source).toBe('error');
 			expect(tab2.logs).toHaveLength(0);
 

@@ -173,6 +173,8 @@ export interface StartBatchPayload {
 	customPrompt?: string;
 	// Per-run model override chosen in the launch modal (absent = session default).
 	runModelOverride?: string;
+	/** Resolved auto-resume policy; `null` when the run opted out. */
+	autoResumePolicy?: import('../../../shared/autorunAutoResume').AutoResumePolicy | null;
 	startTime: number;
 	// Time tracking
 	cumulativeTaskTimeMs: number;
@@ -298,6 +300,7 @@ export function batchReducer(state: BatchState, action: BatchAction): BatchState
 					originalContent: '',
 					customPrompt: payload.customPrompt,
 					runModelOverride: payload.runModelOverride,
+					autoResumePolicy: payload.autoResumePolicy,
 					sessionIds: [],
 					startTime: payload.startTime,
 					// Time tracking

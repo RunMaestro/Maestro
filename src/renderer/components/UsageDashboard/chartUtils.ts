@@ -168,6 +168,15 @@ export function buildNameMap(
 }
 
 /**
+ * Axis-label budget for a phone-width chart.
+ *
+ * The default seven labels assume a desktop axis: seven `Aug 20`-sized dates
+ * need roughly 300px, and a phone gives a chart about 340px total, so they
+ * printed on top of each other and every date read as a smear. Four fit.
+ */
+export const PHONE_AXIS_LABELS = 4;
+
+/**
  * Pick which x-axis tick indices should carry a label.
  *
  * Every time-series chart on the dashboard wants roughly seven labels and always
@@ -184,11 +193,15 @@ export function buildNameMap(
  * @param count - number of ticks on the axis
  * @returns the set of indices to label
  */
-export function computeAxisLabelIndices(count: number): Set<number> {
+export function computeAxisLabelIndices(count: number, maxLabels = 7): Set<number> {
 	if (count <= 0) return new Set();
 
 	// Same density heuristic the charts used individually: ~7 labels max.
-	const interval = count > 14 ? Math.ceil(count / 7) : count > 7 ? 2 : 1;
+	// `maxLabels` is how a caller says its axis is narrower than that assumes -
+	// seven "Aug 20"-sized labels need about 300px, so on a phone they printed
+	// on top of each other and every date read as a four-digit smear.
+	const budget = Math.max(2, maxLabels);
+	const interval = count > 2 * budget ? Math.ceil(count / budget) : count > budget ? 2 : 1;
 
 	const indices: number[] = [];
 	for (let i = 0; i < count; i += interval) indices.push(i);

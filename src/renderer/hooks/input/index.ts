@@ -17,6 +17,9 @@ export type {
 export { useInputSync } from './useInputSync';
 export type { UseInputSyncReturn, UseInputSyncDeps } from './useInputSync';
 
+// Debounced, key-switch-safe draft write-back (shared by AI Chat and Group Chat)
+export { useDraftPersistence } from './useDraftPersistence';
+
 // File/path tab completion
 export { useTabCompletion } from './useTabCompletion';
 export type {

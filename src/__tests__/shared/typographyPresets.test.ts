@@ -15,6 +15,7 @@ const FONT_KEYS: Array<keyof TypographyPresetFonts> = [
 	'chatFontFamily',
 	'terminalFontFamily',
 	'filePreviewFontFamily',
+	'documentGraphFontFamily',
 	'fileEditorFontFamily',
 ];
 
@@ -39,6 +40,7 @@ describe('typography presets', () => {
 		expect(fonts.chatFontFamily).toBe('');
 		expect(fonts.terminalFontFamily).toBe('');
 		expect(fonts.filePreviewFontFamily).toBe('');
+		expect(fonts.documentGraphFontFamily).toBe('');
 		expect(fonts.fileEditorFontFamily).toBe('');
 	});
 
@@ -51,6 +53,7 @@ describe('typography presets', () => {
 		// Reading a document is prose, so the preview is proportional too.
 		expect(fonts.chatFontFamily).toBe('');
 		expect(fonts.filePreviewFontFamily).toBe('');
+		expect(fonts.documentGraphFontFamily).toBe('');
 		// Only the surfaces where character alignment carries meaning stay mono:
 		// the terminal's column output and the editor's line-number gutter.
 		for (const key of ['terminalFontFamily', 'fileEditorFontFamily'] as const) {
@@ -89,6 +92,7 @@ describe('typography presets', () => {
 			'chatFontSize',
 			'terminalFontSize',
 			'filePreviewFontSize',
+			'documentGraphFontSize',
 			'fileEditorFontSize',
 		] as const) {
 			expect(sizes[key]).toBe(0);
@@ -114,6 +118,7 @@ describe('typography presets', () => {
 			'AI chat': 'proportional',
 			Terminal: 'mono',
 			'File preview': 'proportional',
+			'Document graph': 'proportional',
 			'File editor': 'mono',
 		});
 		expect(TYPOGRAPHY_PRESETS.hacker.surfaces.every((s) => s.kind === 'mono')).toBe(true);

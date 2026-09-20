@@ -29,7 +29,9 @@ const mockAutoRunStats = { longestRunMs: 0 };
 
 vi.mock('../../../renderer/stores/settingsStore', () => ({
 	useSettingsStore: Object.assign(
-		vi.fn((selector: (s: any) => any) => selector({ autoRunStats: mockAutoRunStats })),
+		vi.fn((selector: (s: any) => any) =>
+			selector({ autoRunStats: mockAutoRunStats, settingsLoaded: true })
+		),
 		{
 			getState: vi.fn(() => ({
 				updateAutoRunProgress: mockUpdateAutoRunProgress,
@@ -162,7 +164,7 @@ describe('useAutoRunAchievements', () => {
 		);
 		(useSessionStore as any).getState = vi.fn(() => mockSessionStoreState());
 		(useSettingsStore as any).mockImplementation((selector: (s: any) => any) =>
-			selector({ autoRunStats: mockAutoRunStats })
+			selector({ autoRunStats: mockAutoRunStats, settingsLoaded: true })
 		);
 		(useSettingsStore as any).getState.mockReturnValue({
 			updateAutoRunProgress: mockUpdateAutoRunProgress,
@@ -705,6 +707,31 @@ describe('useAutoRunAchievements', () => {
 				maxSimultaneousQueries: 0,
 				maxQueueDepth: 0,
 			});
+		});
+
+		// Regression: this effect fires on the first `sessions` ref flip, which
+		// routinely beats loadAllSettings. Sampling then would hand the store a
+		// live snapshot to max against its zeroed defaults, persisting it as the
+		// all-time peak and destroying the real one.
+		it('samples nothing until settings have hydrated', () => {
+			(useSettingsStore as any).mockImplementation((selector: (s: any) => any) =>
+				selector({ autoRunStats: mockAutoRunStats, settingsLoaded: false })
+			);
+			mockSessions.push(createMockSession({ id: 's1', state: 'busy' }));
+
+			const { rerender } = renderHook(() =>
+				useAutoRunAchievements({ activeBatchSessionIds: ['s1'] })
+			);
+			expect(mockUpdateUsageStats).not.toHaveBeenCalled();
+
+			// Once hydration completes the sample must land, not stay lost.
+			(useSettingsStore as any).mockImplementation((selector: (s: any) => any) =>
+				selector({ autoRunStats: mockAutoRunStats, settingsLoaded: true })
+			);
+			rerender();
+			expect(mockUpdateUsageStats).toHaveBeenCalledWith(
+				expect.objectContaining({ maxAgents: 1, maxSimultaneousAutoRuns: 1 })
+			);
 		});
 
 		it('does not throw when activeBatchSessionIds transitions from empty to non-empty', () => {

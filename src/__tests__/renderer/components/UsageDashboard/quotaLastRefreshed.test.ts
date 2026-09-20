@@ -11,7 +11,9 @@
 import { describe, it, expect } from 'vitest';
 import {
 	formatLastRefreshed,
+	isSampleBehindLatest,
 	resolveLatestSampledAt,
+	STALE_ROW_LAG_MS,
 } from '../../../../renderer/components/UsageDashboard/quota/quotaFormatting';
 
 const NOW = Date.parse('2026-05-15T12:00:00.000Z');
@@ -68,5 +70,24 @@ describe('formatLastRefreshed', () => {
 	it('rolls into days for a stale panel', () => {
 		const elapsed = 3 * 24 * 60 * 60_000 + 4 * 60 * 60_000;
 		expect(formatLastRefreshed(NOW - elapsed, NOW)).toBe('3 days and 4 hours ago');
+	});
+});
+
+describe('isSampleBehindLatest', () => {
+	const at = (ms: number) => new Date(ms).toISOString();
+
+	it('flags a sample trailing the newest by more than the lag', () => {
+		expect(isSampleBehindLatest(at(NOW - STALE_ROW_LAG_MS - 60_000), NOW)).toBe(true);
+	});
+
+	it('does not flag a sample within the lag, or the newest sample itself', () => {
+		expect(isSampleBehindLatest(at(NOW - STALE_ROW_LAG_MS), NOW)).toBe(false);
+		expect(isSampleBehindLatest(at(NOW), NOW)).toBe(false);
+	});
+
+	it('does not flag a missing stamp, an unparseable one, or an empty panel', () => {
+		expect(isSampleBehindLatest(undefined, NOW)).toBe(false);
+		expect(isSampleBehindLatest('not-a-date', NOW)).toBe(false);
+		expect(isSampleBehindLatest(at(NOW - 60 * 60_000), null)).toBe(false);
 	});
 });

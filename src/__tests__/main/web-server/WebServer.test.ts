@@ -54,7 +54,62 @@ describe('WebServer Fastify configuration', () => {
 		// the handler ever runs, and no other test would notice.
 		const server = new WebServer(0);
 
-		expect(server.getServer().initialConfig.maxParamLength).toBe(MEDIA_PATH_PARAM_MAX_LENGTH);
+		expect(server.getServer().initialConfig.routerOptions.maxParamLength).toBe(
+			MEDIA_PATH_PARAM_MAX_LENGTH
+		);
 		expect(MEDIA_PATH_PARAM_MAX_LENGTH).toBeGreaterThan(100);
+	});
+});
+
+describe('WebServer Web Login revocation', () => {
+	// The gate checks the cookie at the upgrade and never again, so a store
+	// mutation is the only moment a live socket can learn its session is gone.
+	// Keyed on the SESSION, not the account: a password reset and a logout keep
+	// the account and remove the session, and both must close the socket.
+	it('closes sockets whose session no longer resolves and leaves the rest alone', async () => {
+		const listeners: Array<() => void> = [];
+		const live = new Set(['sid-live']);
+		const fakeStore = {
+			onChange: (l: () => void) => {
+				listeners.push(l);
+				return () => {};
+			},
+			resolveSession: (sid?: string) =>
+				sid && live.has(sid) ? { id: 'u1', username: 'ada', displayName: 'Ada' } : undefined,
+		};
+		// WebServer is already imported at the top of this file, so the mock has
+		// to reach a FRESH module graph.
+		vi.resetModules();
+		vi.doMock('../../../main/web-server/auth/web-user-store', () => ({
+			getWebUserStore: () => fakeStore,
+		}));
+		const { WebServer: IsolatedWebServer } = await import('../../../main/web-server/WebServer');
+		const { WEB_LOGIN_WS_CLOSE_CODE } = await import('../../../shared/webLogin');
+		const server = new IsolatedWebServer(0);
+
+		const make = (id: string, sessionId?: string) => ({
+			id,
+			socket: { close: vi.fn(), readyState: 1, send: vi.fn() },
+			connectedAt: Date.now(),
+			...(sessionId ? { user: { id: 'u1', username: 'ada', displayName: 'Ada' }, sessionId } : {}),
+		});
+		const revoked = make('c-revoked', 'sid-reset');
+		const kept = make('c-kept', 'sid-live');
+		const cli = make('c-cli');
+		const clients = (server as any).webClients as Map<string, unknown>;
+		clients.set(revoked.id, revoked);
+		clients.set(kept.id, kept);
+		clients.set(cli.id, cli);
+
+		(server as any).watchWebUserStore();
+		expect(listeners).toHaveLength(1);
+		listeners[0]();
+
+		expect(revoked.socket.close).toHaveBeenCalledWith(WEB_LOGIN_WS_CLOSE_CODE, 'Login required');
+		expect(kept.socket.close).not.toHaveBeenCalled();
+		expect(cli.socket.close).not.toHaveBeenCalled();
+
+		vi.doUnmock('../../../main/web-server/auth/web-user-store');
+		vi.resetModules();
 	});
 });

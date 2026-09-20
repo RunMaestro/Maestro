@@ -155,9 +155,9 @@ export function AgentPowersModal({
 		>
 			<div className="space-y-4">
 				<p className="text-sm leading-relaxed" style={{ color: theme.colors.textMain }}>
-					You just picked your typography and your theme by hand. You didn't have to. Anything you
-					can do in Maestro, the agents inside it can do too - they reach the same controls the
-					interface does, so you can simply ask.
+					You just had the chance to set your typography and your theme by hand. Either way,
+					anything you can do in Maestro, the agents inside it can do too - they reach the same
+					controls the interface does, so you can simply ask.
 				</p>
 
 				<div className="grid grid-cols-2 gap-2">

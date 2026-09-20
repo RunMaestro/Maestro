@@ -6,10 +6,13 @@
  * error handling, convenience methods, and non-React access helpers.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { installLocalStorageMock } from '../../helpers/mockLocalStorage';
 import {
 	useGroupChatStore,
 	isGroupChatVisibleInWindow,
+	selectActiveGroupChatStagedImages,
+	viewPrefsFor,
 } from '../../../renderer/stores/groupChatStore';
 import type {
 	GroupChatRightTab,
@@ -88,13 +91,135 @@ describe('groupChatStore', () => {
 			expect(state.groupChatStates).toEqual(new Map());
 			expect(state.allGroupChatParticipantStates).toEqual(new Map());
 			expect(state.unreadGroupChatIds).toEqual(new Set());
-			expect(state.groupChatExecutionQueue).toEqual([]);
+			expect(state.groupChatQueues).toEqual({});
 			expect(state.groupChatReadOnlyMode).toBe(false);
 			expect(state.groupChatRightTab).toBe('participants');
 			expect(state.groupChatParticipantColors).toEqual({});
-			expect(state.groupChatStagedImages).toEqual([]);
+			expect(state.groupChatStagedImagesById).toEqual({});
 			expect(state.groupChatError).toBeNull();
 			expect(state.initiatorWindowId).toBeNull();
+		});
+	});
+
+	// ==========================================================================
+	// Per-chat view preferences
+	// ==========================================================================
+
+	describe('per-chat view preferences', () => {
+		const VIEW_PREFS_KEY = 'maestro.groupChat.viewPrefs';
+		const LEGACY_KEY = 'maestro.groupChat.moderatorOnlyView';
+
+		beforeEach(() => {
+			installLocalStorageMock();
+		});
+
+		it('keeps the moderator-only choice separate for each chat', () => {
+			const store = useGroupChatStore.getState();
+
+			store.setActiveGroupChatId('chat-a');
+			useGroupChatStore.getState().setGroupChatModeratorOnly(true);
+			store.setActiveGroupChatId('chat-b');
+			useGroupChatStore.getState().setGroupChatModeratorOnly(false);
+
+			// Switching back must restore each room's own answer, not the last one set.
+			store.setActiveGroupChatId('chat-a');
+			expect(useGroupChatStore.getState().groupChatModeratorOnly).toBe(true);
+			store.setActiveGroupChatId('chat-b');
+			expect(useGroupChatStore.getState().groupChatModeratorOnly).toBe(false);
+			store.setActiveGroupChatId('chat-a');
+			expect(useGroupChatStore.getState().groupChatModeratorOnly).toBe(true);
+		});
+
+		it('survives a restart by reloading from localStorage', async () => {
+			const store = useGroupChatStore.getState();
+			store.setActiveGroupChatId('chat-a');
+			useGroupChatStore.getState().setGroupChatModeratorOnly(true);
+			useGroupChatStore.getState().setGroupChatHistoryTypes('chat-a', ['user', 'error']);
+
+			// Re-import the module so the store is constructed again from whatever is
+			// on disk, which is what actually happens on app start.
+			vi.resetModules();
+			const fresh = await import('../../../renderer/stores/groupChatStore');
+			const prefs = fresh.useGroupChatStore.getState().groupChatViewPrefs;
+
+			expect(prefs['chat-a']).toEqual({ moderatorOnly: true, historyTypes: ['user', 'error'] });
+		});
+
+		it('remembers which history pills are lit, per chat', () => {
+			const store = useGroupChatStore.getState();
+			store.setGroupChatHistoryTypes('chat-a', ['user']);
+			store.setGroupChatHistoryTypes('chat-b', ['error', 'synthesis']);
+
+			const prefs = useGroupChatStore.getState().groupChatViewPrefs;
+			expect(viewPrefsFor(prefs, 'chat-a').historyTypes).toEqual(['user']);
+			expect(viewPrefsFor(prefs, 'chat-b').historyTypes).toEqual(['error', 'synthesis']);
+		});
+
+		it('treats every pill switched off as a real choice, not as unset', () => {
+			// An empty array must survive as an empty array. Collapsing it to the
+			// default would turn every pill back on the moment the user turned the
+			// last one off.
+			useGroupChatStore.getState().setGroupChatHistoryTypes('chat-a', []);
+
+			const prefs = useGroupChatStore.getState().groupChatViewPrefs;
+			expect(viewPrefsFor(prefs, 'chat-a').historyTypes).toEqual([]);
+		});
+
+		it('falls back to the legacy global toggle for a chat with no saved entry', async () => {
+			window.localStorage.setItem(LEGACY_KEY, 'true');
+
+			vi.resetModules();
+			const fresh = await import('../../../renderer/stores/groupChatStore');
+			const prefs = fresh.useGroupChatStore.getState().groupChatViewPrefs;
+
+			// Upgrading must not silently flip every existing room back to Team Chat.
+			expect(fresh.viewPrefsFor(prefs, 'never-configured').moderatorOnly).toBe(true);
+		});
+
+		it('falls back to defaults when the stored JSON is unreadable', async () => {
+			window.localStorage.setItem(VIEW_PREFS_KEY, '{not json at all');
+
+			vi.resetModules();
+			const fresh = await import('../../../renderer/stores/groupChatStore');
+
+			// Must not throw while the store is being constructed: that would take
+			// the whole renderer down at boot.
+			const prefs = fresh.useGroupChatStore.getState().groupChatViewPrefs;
+			expect(prefs).toEqual({});
+			expect(fresh.viewPrefsFor(prefs, 'chat-a')).toEqual({
+				moderatorOnly: false,
+				historyTypes: null,
+			});
+		});
+
+		it('ignores entries whose fields are the wrong shape', async () => {
+			window.localStorage.setItem(
+				VIEW_PREFS_KEY,
+				JSON.stringify({
+					'chat-a': { moderatorOnly: 'yes', historyTypes: 'user' },
+					'chat-b': [1, 2, 3],
+					'chat-c': { moderatorOnly: true, historyTypes: ['user', 7, null] },
+				})
+			);
+
+			vi.resetModules();
+			const fresh = await import('../../../renderer/stores/groupChatStore');
+			const prefs = fresh.useGroupChatStore.getState().groupChatViewPrefs;
+
+			// A non-boolean is not truthy-coerced, a non-array list becomes "unset",
+			// a non-object entry is dropped, and non-string members are filtered out.
+			expect(prefs['chat-a']).toEqual({ moderatorOnly: false, historyTypes: null });
+			expect(prefs['chat-b']).toBeUndefined();
+			expect(prefs['chat-c']).toEqual({ moderatorOnly: true, historyTypes: ['user'] });
+		});
+
+		it('keeps the toggle working with no chat open', () => {
+			// The shortcut and the command palette can fire with no room open.
+			useGroupChatStore.getState().setActiveGroupChatId(null);
+			useGroupChatStore.getState().toggleGroupChatModeratorOnly();
+
+			expect(useGroupChatStore.getState().groupChatModeratorOnly).toBe(true);
+			expect(window.localStorage.getItem(LEGACY_KEY)).toBe('true');
 		});
 	});
 
@@ -330,24 +455,44 @@ describe('groupChatStore', () => {
 	// ==========================================================================
 
 	describe('execution queue', () => {
-		it('sets execution queue', () => {
-			const items = [
-				createMockQueuedItem({ content: 'msg1' }),
-				createMockQueuedItem({ content: 'msg2' }),
-			];
-			useGroupChatStore.getState().setGroupChatExecutionQueue(items);
-			expect(useGroupChatStore.getState().groupChatExecutionQueue).toHaveLength(2);
+		// The renderer no longer OWNS the queue: main does, and the store keeps a
+		// per-chat mirror written only from the `groupChat:queueState` broadcast.
+		// The old tests drove a renderer-local array through a functional updater,
+		// which is exactly the shape that let a phone's queue be invisible to the
+		// desktop, so they are replaced rather than adapted.
+		it('mirrors one chat queue from a broadcast', () => {
+			useGroupChatStore.getState().setGroupChatQueue('gc-1', {
+				items: [{ id: 'a', timestamp: 1, text: 'msg1' }],
+				paused: false,
+			});
+			expect(useGroupChatStore.getState().groupChatQueues['gc-1'].items).toHaveLength(1);
 		});
 
-		it('dequeues with functional updater', () => {
-			const items = [
-				createMockQueuedItem({ content: 'first' }),
-				createMockQueuedItem({ content: 'second' }),
-			];
-			useGroupChatStore.getState().setGroupChatExecutionQueue(items);
-			useGroupChatStore.getState().setGroupChatExecutionQueue((prev) => prev.slice(1));
-			expect(useGroupChatStore.getState().groupChatExecutionQueue).toHaveLength(1);
-			expect(useGroupChatStore.getState().groupChatExecutionQueue[0].content).toBe('second');
+		it('keeps each chat queue separate', () => {
+			const store = useGroupChatStore.getState();
+			store.setGroupChatQueue('gc-1', {
+				items: [{ id: 'a', timestamp: 1, text: 'A' }],
+				paused: false,
+			});
+			store.setGroupChatQueue('gc-2', { items: [], paused: true });
+
+			const queues = useGroupChatStore.getState().groupChatQueues;
+			expect(queues['gc-1'].items[0].text).toBe('A');
+			expect(queues['gc-2'].paused).toBe(true);
+		});
+
+		it('replaces a chat queue wholesale, since main sends the whole state', () => {
+			const store = useGroupChatStore.getState();
+			store.setGroupChatQueue('gc-1', {
+				items: [{ id: 'a', timestamp: 1, text: 'A' }],
+				paused: false,
+			});
+			store.setGroupChatQueue('gc-1', { items: [], paused: true });
+
+			expect(useGroupChatStore.getState().groupChatQueues['gc-1']).toEqual({
+				items: [],
+				paused: true,
+			});
 		});
 
 		it('sets read-only mode', () => {
@@ -398,16 +543,64 @@ describe('groupChatStore', () => {
 			});
 		});
 
-		it('sets staged images', () => {
+		it('sets staged images on the active chat', () => {
 			const images = ['base64img1', 'base64img2'];
+			useGroupChatStore.getState().setActiveGroupChatId('gc-1');
 			useGroupChatStore.getState().setGroupChatStagedImages(images);
-			expect(useGroupChatStore.getState().groupChatStagedImages).toEqual(images);
+			expect(selectActiveGroupChatStagedImages(useGroupChatStore.getState())).toEqual(images);
 		});
 
 		it('appends staged images with functional updater', () => {
+			useGroupChatStore.getState().setActiveGroupChatId('gc-1');
 			useGroupChatStore.getState().setGroupChatStagedImages(['img1']);
 			useGroupChatStore.getState().setGroupChatStagedImages((prev) => [...prev, 'img2']);
-			expect(useGroupChatStore.getState().groupChatStagedImages).toEqual(['img1', 'img2']);
+			expect(selectActiveGroupChatStagedImages(useGroupChatStore.getState())).toEqual([
+				'img1',
+				'img2',
+			]);
+		});
+
+		it('keeps staged images scoped to the chat they were pasted into', () => {
+			const store = useGroupChatStore.getState();
+			store.setActiveGroupChatId('gc-1');
+			store.setGroupChatStagedImages(['screenshot']);
+
+			// Switching rooms must not carry the screenshot along.
+			store.setActiveGroupChatId('gc-2');
+			expect(selectActiveGroupChatStagedImages(useGroupChatStore.getState())).toEqual([]);
+
+			// Switching back restores it, like the text draft.
+			store.setActiveGroupChatId('gc-1');
+			expect(selectActiveGroupChatStagedImages(useGroupChatStore.getState())).toEqual([
+				'screenshot',
+			]);
+		});
+
+		it('targets an explicit chat id instead of the active chat', () => {
+			const store = useGroupChatStore.getState();
+			store.setActiveGroupChatId('gc-2');
+			store.setGroupChatStagedImages((prev) => [...prev, 'late-read'], 'gc-1');
+
+			expect(useGroupChatStore.getState().groupChatStagedImagesById).toEqual({
+				'gc-1': ['late-read'],
+			});
+			expect(selectActiveGroupChatStagedImages(useGroupChatStore.getState())).toEqual([]);
+		});
+
+		it('drops the key when a chat is cleared and ignores writes with no chat', () => {
+			const store = useGroupChatStore.getState();
+			store.setGroupChatStagedImages(['orphan']);
+			expect(useGroupChatStore.getState().groupChatStagedImagesById).toEqual({});
+
+			store.setGroupChatStagedImages(['img'], 'gc-1');
+			store.setGroupChatStagedImages([], 'gc-1');
+			expect(useGroupChatStore.getState().groupChatStagedImagesById).toEqual({});
+		});
+
+		it('returns a stable empty array when nothing is staged', () => {
+			const first = selectActiveGroupChatStagedImages(useGroupChatStore.getState());
+			useGroupChatStore.getState().setActiveGroupChatId('gc-1');
+			expect(selectActiveGroupChatStagedImages(useGroupChatStore.getState())).toBe(first);
 		});
 	});
 
@@ -519,7 +712,7 @@ describe('groupChatStore', () => {
 
 			// Non-active fields should be preserved
 			expect(useGroupChatStore.getState().groupChats).toHaveLength(1);
-			expect(useGroupChatStore.getState().groupChatStagedImages).toEqual(['img1']);
+			expect(useGroupChatStore.getState().groupChatStagedImagesById).toEqual({ 'gc-1': ['img1'] });
 			expect(useGroupChatStore.getState().groupChatRightTab).toBe('history');
 		});
 
@@ -577,7 +770,7 @@ describe('groupChatStore', () => {
 			expect(typeof state.setModeratorUsage).toBe('function');
 			expect(typeof state.setGroupChatStates).toBe('function');
 			expect(typeof state.setAllGroupChatParticipantStates).toBe('function');
-			expect(typeof state.setGroupChatExecutionQueue).toBe('function');
+			expect(typeof state.setGroupChatQueue).toBe('function');
 			expect(typeof state.setGroupChatReadOnlyMode).toBe('function');
 			expect(typeof state.setGroupChatRightTab).toBe('function');
 			expect(typeof state.setGroupChatParticipantColors).toBe('function');
@@ -631,11 +824,11 @@ describe('groupChatStore', () => {
 			expect(state.groupChatStates).toEqual(new Map());
 			expect(state.allGroupChatParticipantStates).toEqual(new Map());
 			expect(state.unreadGroupChatIds).toEqual(new Set());
-			expect(state.groupChatExecutionQueue).toEqual([]);
+			expect(state.groupChatQueues).toEqual({});
 			expect(state.groupChatReadOnlyMode).toBe(false);
 			expect(state.groupChatRightTab).toBe('participants');
 			expect(state.groupChatParticipantColors).toEqual({});
-			expect(state.groupChatStagedImages).toEqual([]);
+			expect(state.groupChatStagedImagesById).toEqual({});
 			expect(state.groupChatError).toBeNull();
 			expect(state.initiatorWindowId).toBeNull();
 		});

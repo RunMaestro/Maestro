@@ -9,6 +9,7 @@ import {
 	XCircle,
 } from 'lucide-react';
 import type { Theme } from '../../types';
+import { AGENT_COLOR } from '../../../shared/crossAgentTypes';
 import type { ProcessNode, ProcessMonitorProps } from './types';
 import { formatRuntime } from './runtime';
 
@@ -228,6 +229,7 @@ export function ProcessListView(props: ProcessListViewProps) {
 				node.processType === 'moderator' || node.processType === 'participant';
 			const isWizardProcess = node.processType === 'wizard' || node.processType === 'wizard-gen';
 			const isCueProcess = node.processType === 'cue';
+			const isConsultProcess = node.processType === 'consult';
 			const altBg = index % 2 === 1 ? `${theme.colors.textDim}08` : 'transparent';
 
 			return (
@@ -301,7 +303,7 @@ export function ProcessListView(props: ProcessListViewProps) {
 										{node.agentSessionId.substring(0, 8)}
 									</span>
 								)}
-								{(isGroupChatProcess || isWizardProcess) && node.toolType && (
+								{(isGroupChatProcess || isWizardProcess || isConsultProcess) && node.toolType && (
 									<span>{node.toolType}</span>
 								)}
 								<span>PID {node.pid}</span>
@@ -378,6 +380,18 @@ export function ProcessListView(props: ProcessListViewProps) {
 										}}
 									>
 										GENERATING
+									</span>
+								)}
+								{isConsultProcess && (
+									<span
+										className="text-xs font-semibold px-1.5 py-0.5 rounded"
+										style={{
+											backgroundColor: `${AGENT_COLOR}30`,
+											color: AGENT_COLOR,
+											border: `1px solid ${AGENT_COLOR}50`,
+										}}
+									>
+										CONSULT
 									</span>
 								)}
 								{node.processType === 'cue' && (

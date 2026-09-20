@@ -20,7 +20,12 @@ import {
 	cueCommandToCommandNodeFields,
 	getNextPipelineColor,
 } from '../../../../shared/cue-pipeline-types';
-import type { CueCommand, CueSubscription } from '../../../../shared/cue';
+import {
+	triggerGroupKey,
+	type CueCommand,
+	type CueNotifyConfig,
+	type CueSubscription,
+} from '../../../../shared/cue';
 
 /** Minimal graph session input - compatible with both local and cue-types CueGraphSession */
 interface GraphSessionInput {
@@ -53,6 +58,10 @@ interface GraphSessionInput {
 		cli_output?: { target: string };
 		action?: 'prompt' | 'command' | 'notify';
 		command?: CueCommand;
+		notify?: CueNotifyConfig;
+		fire_at?: string;
+		grace_minutes?: number;
+		self_destruct_on_failure?: boolean;
 		target_node_key?: string;
 		fan_out_node_keys?: string[];
 	}>;
@@ -265,56 +274,6 @@ function isInitialTrigger(sub: CueSubscription): boolean {
 }
 
 /**
- * Identity key for "initial trigger subs that should share one visual
- * trigger node." The pipeline-editor serializer emits fan-out to mixed or
- * command targets as multiple parallel subscriptions that each re-carry the
- * full trigger event config (see `pipelineToYaml.ts` per-branch path). On
- * load, subs whose keys match AND whose `pipeline_name` already groups them
- * into the same pipeline collapse onto a single trigger node with one
- * outgoing edge per branch - mirroring the edit-time graph.
- *
- * Any divergence in event-specific config (a second schedule time, a
- * different watch glob, etc.) yields a separate key and therefore a
- * separate trigger node, preserving the author's intent when they truly
- * wanted two independent triggers in the same pipeline.
- */
-function triggerGroupKey(sub: CueSubscription): string {
-	// Sort filter keys so two subs whose filter objects differ only in key
-	// insertion order (hand-written YAML or library-reordered round-trips)
-	// still collapse to the same visual trigger.
-	const filter = sub.filter
-		? Object.keys(sub.filter)
-				.sort()
-				.reduce<Record<string, unknown>>((acc, k) => {
-					acc[k] = (sub.filter as Record<string, unknown>)[k];
-					return acc;
-				}, {})
-		: null;
-	return JSON.stringify({
-		event: sub.event,
-		schedule_times: sub.schedule_times ?? null,
-		schedule_days: sub.schedule_days ?? null,
-		interval_minutes: sub.interval_minutes ?? null,
-		watch: sub.watch ?? null,
-		repo: sub.repo ?? null,
-		poll_minutes: sub.poll_minutes ?? null,
-		gh_state: sub.gh_state ?? null,
-		retrigger_on_comments: sub.retrigger_on_comments ?? null,
-		max_notifications: sub.max_notifications ?? null,
-		// Without the webhook block, two `webhook.received` subs on different
-		// paths (or different secrets) collapse into one visual trigger, and the
-		// next save rewrites both to whichever config won - silently breaking a
-		// working endpoint.
-		webhook_path: sub.webhook?.path ?? null,
-		webhook_secret: sub.webhook?.secret ?? null,
-		webhook_secret_env: sub.webhook?.secret_env ?? null,
-		webhook_signature_header: sub.webhook?.signature_header ?? null,
-		label: sub.label ?? null,
-		filter,
-	});
-}
-
-/**
  * Maps a CueSubscription's event type to trigger node config fields.
  */
 function extractTriggerConfig(sub: CueSubscription): TriggerNodeData['config'] {
@@ -328,6 +287,16 @@ function extractTriggerConfig(sub: CueSubscription): TriggerNodeData['config'] {
 			if (sub.schedule_times != null) config.schedule_times = sub.schedule_times;
 			if (sub.schedule_days != null) config.schedule_days = sub.schedule_days as string[];
 			break;
+		case 'time.once':
+			// The editor has no one-shot config UI yet, so these are pure
+			// carry-through: read here, re-emitted verbatim by
+			// `applyTriggerEventConfig`. Dropping `fire_at` would strand the
+			// subscription with no instant to fire at.
+			if (sub.fire_at != null) config.fire_at = sub.fire_at;
+			if (sub.grace_minutes != null) config.grace_minutes = sub.grace_minutes;
+			if (sub.self_destruct_on_failure != null)
+				config.self_destruct_on_failure = sub.self_destruct_on_failure;
+			break;
 		case 'file.changed':
 			if (sub.watch != null) config.watch = sub.watch;
 			if (sub.filter != null) config.filter = sub.filter;
@@ -338,6 +307,12 @@ function extractTriggerConfig(sub: CueSubscription): TriggerNodeData['config'] {
 			if (sub.poll_minutes != null) config.poll_minutes = sub.poll_minutes;
 			if (sub.retrigger_on_comments === true) config.retrigger_on_comments = true;
 			if (sub.max_notifications != null) config.max_notifications = sub.max_notifications;
+			break;
+		case 'github.label':
+			if (sub.repo != null) config.repo = sub.repo;
+			if (sub.poll_minutes != null) config.poll_minutes = sub.poll_minutes;
+			if (sub.gh_label_target != null) config.gh_label_target = sub.gh_label_target;
+			if (sub.gh_labels != null) config.gh_labels = sub.gh_labels;
 			break;
 		case 'task.pending':
 			if (sub.watch != null) config.watch = sub.watch;
@@ -367,12 +342,16 @@ function triggerLabel(eventType: CueEventType): string {
 			return 'Heartbeat';
 		case 'time.scheduled':
 			return 'Scheduled';
+		case 'time.once':
+			return 'One-Time';
 		case 'file.changed':
 			return 'File Change';
 		case 'github.pull_request':
 			return 'Pull Request';
 		case 'github.issue':
 			return 'Issue';
+		case 'github.label':
+			return 'Label Added';
 		case 'task.pending':
 			return 'Task Pending';
 		case 'agent.completed':
@@ -786,6 +765,7 @@ export function subscriptionsToPipelines(
 							source: triggerId,
 							target: agentNode.id,
 							mode: 'pass' as EdgeMode,
+							subscriptionName: sub.name,
 							...(edgePrompt ? { prompt: edgePrompt } : {}),
 						});
 					}
@@ -815,6 +795,7 @@ export function subscriptionsToPipelines(
 						source: triggerId,
 						target: commandNode.id,
 						mode: 'pass' as EdgeMode,
+						subscriptionName: sub.name,
 					});
 				} else {
 					// Single target - infer target from subscription context.
@@ -855,6 +836,7 @@ export function subscriptionsToPipelines(
 							source: triggerId,
 							target: errorNodeId,
 							mode: 'pass' as EdgeMode,
+							subscriptionName: sub.name,
 							prompt: sub.prompt || undefined,
 						});
 						continue;
@@ -884,12 +866,21 @@ export function subscriptionsToPipelines(
 					// transition without any fallback to `agentData.inputPrompt`
 					// (which used to leak the first trigger's prompt onto every
 					// subsequent trigger feeding the same agent).
+					//
+					// The one exception is `action: notify`, which renders as a
+					// prompt-LESS edge carrying `notify` instead: the engine
+					// surfaces a toast through this agent and never spawns it,
+					// so there is no prompt to carry and the validator must not
+					// demand one.
+					const notifyConfig: CueNotifyConfig | undefined =
+						sub.action === 'notify' ? (sub.notify ?? {}) : undefined;
 					edges.push({
 						id: `edge-${edgeCount++}`,
 						source: triggerId,
 						target: agentNode.id,
 						mode: 'pass' as EdgeMode,
-						prompt: sub.prompt || undefined,
+						subscriptionName: sub.name,
+						...(notifyConfig ? { notify: notifyConfig } : { prompt: sub.prompt || undefined }),
 					});
 
 					// edge.prompt is the single source of truth for trigger→agent

@@ -100,3 +100,6 @@ export type { CountBadgeProps } from './CountBadge';
 
 export { MiniBadge } from './MiniBadge';
 export type { MiniBadgeProps } from './MiniBadge';
+
+export { ShortcutHint, shortcutSuffix } from './ShortcutHint';
+export type { ShortcutHintProps } from './ShortcutHint';

@@ -15,24 +15,32 @@
  *   and offers a Provider sort
  */
 
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { AgentOverviewCards } from '../../../../renderer/components/UsageDashboard/AgentOverviewCards';
 import type { StatsAggregation } from '../../../../renderer/hooks/stats/useStats';
 import type { Session } from '../../../../renderer/types';
 import { THEMES } from '../../../../shared/themes';
 import { ALL_PROFILES_VALUE } from '../../../../shared/providerProfiles';
+import { installLocalStorageMock } from '../../../helpers/mockLocalStorage';
+import { AGENT_TILE_SCALE_KEY } from '../../../../renderer/components/UsageDashboard/tileScale';
 
 // The agent filter registers a layer while it holds text so Escape clears the
 // box instead of closing the dashboard. Stub the stack so the component can
 // render standalone.
-vi.mock('../../../../renderer/contexts/LayerStackContext', () => ({
-	useLayerStack: () => ({
-		registerLayer: vi.fn(() => 'layer-123'),
-		unregisterLayer: vi.fn(),
-		updateLayerHandler: vi.fn(),
-	}),
-}));
+vi.mock('../../../../renderer/contexts/LayerStackContext', async () => {
+	const { MODAL_PRIORITIES } = await import('../../../../renderer/constants/modalPriorities');
+	return {
+		useLayerStack: () => ({
+			registerLayer: vi.fn(() => 'layer-123'),
+			unregisterLayer: vi.fn(),
+			updateLayerHandler: vi.fn(),
+			// The tile-zoom keys bind only while this grid is the top layer, so
+			// the stub reports the dashboard as topmost.
+			getLayers: () => [{ priority: MODAL_PRIORITIES.USAGE_DASHBOARD }],
+		}),
+	};
+});
 
 const theme = THEMES['dracula'];
 
@@ -76,6 +84,12 @@ const buildData = (overrides: Partial<StatsAggregation> = {}): StatsAggregation 
 });
 
 describe('AgentOverviewCards', () => {
+	beforeEach(() => {
+		// The tile zoom persists to localStorage, so each test starts from a
+		// fresh store rather than inheriting the previous one's zoom.
+		installLocalStorageMock();
+	});
+
 	it('renders the grid container with one card per non-terminal session', () => {
 		const sessions: Session[] = [
 			buildSession({ id: 's1', name: 'Alpha' }),
@@ -1048,6 +1062,121 @@ describe('AgentOverviewCards', () => {
 			expect(onChange).toHaveBeenCalledWith(`claude-code::${SMASH}`);
 		});
 
+		it('keeps a badge-set filter on an account named only by the agent-level env var', async () => {
+			// Settings -> Agents sets CLAUDE_CONFIG_DIR for every agent that names
+			// none, and that value arrives by IPC after the first render. Clearing
+			// the filter on that render, before the account existed, dropped the
+			// quota chip's selection on the way into this tab.
+			const BANACO = '/Users/me/.claude-banaco';
+			vi.mocked(window.maestro.agents.getCustomEnvVars).mockResolvedValueOnce({
+				CLAUDE_CONFIG_DIR: BANACO,
+			});
+			const onChange = vi.fn();
+			render(
+				<AgentOverviewCards
+					sessions={[
+						buildSession({ id: 's1', name: 'Alpha', customEnvVars: { CLAUDE_CONFIG_DIR: SMASH } }),
+						buildSession({ id: 's2', name: 'Beta' }),
+						buildSession({ id: 's3', name: 'Gamma' }),
+					]}
+					data={buildData()}
+					theme={theme}
+					profileFilter={`claude-code::${BANACO}`}
+					onProfileFilterChange={onChange}
+				/>
+			);
+
+			await waitFor(() => expect(screen.getAllByTestId('agent-card')).toHaveLength(2));
+			expect(screen.queryByText('Alpha')).not.toBeInTheDocument();
+			expect(onChange).not.toHaveBeenCalled();
+		});
+
+		it('still clears a filter whose account is gone once attribution settles', async () => {
+			const onChange = vi.fn();
+			render(
+				<AgentOverviewCards
+					sessions={PROFILE_SESSIONS}
+					data={buildData()}
+					theme={theme}
+					profileFilter="claude-code::/Users/me/.claude-gone"
+					onProfileFilterChange={onChange}
+				/>
+			);
+
+			await waitFor(() => expect(onChange).toHaveBeenCalledWith(ALL_PROFILES_VALUE));
+		});
+
+		it('files agents by the env their process receives: own vars replace, a key outranks a login', async () => {
+			vi.mocked(window.maestro.agents.getCustomEnvVars).mockResolvedValueOnce({
+				CLAUDE_CONFIG_DIR: '/Users/me/.claude-banaco',
+			});
+			render(
+				<AgentOverviewCards
+					sessions={[
+						buildSession({ id: 's1', name: 'Inherits' }),
+						// Own vars with no dir: the provider-level dir never reaches it.
+						buildSession({ id: 's2', name: 'Own', customEnvVars: { PEDRAM: '1' } }),
+						buildSession({
+							id: 's3',
+							name: 'Keyed',
+							customEnvVars: { ANTHROPIC_API_KEY: 'sk-ant-test-a1b2' },
+						}),
+					]}
+					data={buildData()}
+					theme={theme}
+				/>
+			);
+
+			await waitFor(() =>
+				expect(
+					screen.getAllByTestId('agent-card-profile-badge').map((el) => el.textContent)
+				).toContain('banaco')
+			);
+			fireEvent.click(trigger());
+			expect(screen.getByRole('option', { name: 'Claude Code - banaco (1)' })).toBeInTheDocument();
+			expect(
+				screen.getByRole('option', { name: 'Claude Code - Default account (1)' })
+			).toBeInTheDocument();
+			expect(
+				screen.getByRole('option', { name: 'Claude Code - API key …a1b2 (1)' })
+			).toBeInTheDocument();
+		});
+
+		it('files an SSH-remote agent under its own account @ host profile', async () => {
+			// The dir names a path on the remote host, holding that host's login, so
+			// it must not share a bucket with the local account of the same name.
+			vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
+				success: true,
+				configs: [{ id: 'r1', name: 'pedtome' }],
+			} as never);
+			render(
+				<AgentOverviewCards
+					sessions={[
+						buildSession({ id: 's1', name: 'Local', customEnvVars: { CLAUDE_CONFIG_DIR: SMASH } }),
+						buildSession({
+							id: 's2',
+							name: 'Remote',
+							customEnvVars: { CLAUDE_CONFIG_DIR: SMASH },
+							sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' },
+						} as Partial<Session>),
+					]}
+					data={buildData()}
+					theme={theme}
+				/>
+			);
+
+			await waitFor(() =>
+				expect(
+					screen.getAllByTestId('agent-card-profile-badge').map((el) => el.textContent)
+				).toContain('smash @ pedtome')
+			);
+			fireEvent.click(trigger());
+			expect(screen.getByRole('option', { name: 'Claude Code - smash (1)' })).toBeInTheDocument();
+			expect(
+				screen.getByRole('option', { name: 'Claude Code - smash @ pedtome (1)' })
+			).toBeInTheDocument();
+		});
+
 		it('groups the grid by account under the Provider sort', () => {
 			renderProfiles();
 
@@ -1058,5 +1187,126 @@ describe('AgentOverviewCards', () => {
 			const names = screen.getAllByTestId('agent-card-profile-badge').map((el) => el.textContent);
 			expect(names).toEqual(['gmail', 'gmail', 'smash', 'OpenCode']);
 		});
+	});
+
+	describe('tile zoom', () => {
+		const renderGrid = () =>
+			render(
+				<AgentOverviewCards
+					sessions={[buildSession({ id: 's1', name: 'Alpha' })]}
+					data={buildData()}
+					theme={theme}
+				/>
+			);
+		const columns = () =>
+			(screen.getByTestId('agent-overview-cards') as HTMLElement).style.gridTemplateColumns;
+
+		it('ships a column floor wide enough to hold an ordinary agent name', () => {
+			renderGrid();
+
+			expect(columns()).toBe('repeat(auto-fill, minmax(min(260px, 100%), 1fr))');
+		});
+
+		it('widens the tiles on + and narrows them on -', () => {
+			renderGrid();
+
+			fireEvent.keyDown(window, { key: '+' });
+			expect(columns()).toBe('repeat(auto-fill, minmax(min(286px, 100%), 1fr))');
+
+			fireEvent.keyDown(window, { key: '-' });
+			fireEvent.keyDown(window, { key: '-' });
+			expect(columns()).toBe('repeat(auto-fill, minmax(min(234px, 100%), 1fr))');
+		});
+
+		it('leaves the tiles alone when the key carries a modifier', () => {
+			// Cmd/Ctrl +/- is the application's own zoom and has to keep working.
+			renderGrid();
+
+			fireEvent.keyDown(window, { key: '+', metaKey: true });
+			expect(columns()).toBe('repeat(auto-fill, minmax(min(260px, 100%), 1fr))');
+		});
+
+		it('remembers the size across a remount, and 0 puts it back', () => {
+			const { unmount } = renderGrid();
+			fireEvent.keyDown(window, { key: '+' });
+			expect(window.localStorage.getItem(AGENT_TILE_SCALE_KEY)).toBe('1.1');
+			unmount();
+
+			renderGrid();
+			expect(columns()).toBe('repeat(auto-fill, minmax(min(286px, 100%), 1fr))');
+
+			fireEvent.keyDown(window, { key: '0' });
+			expect(columns()).toBe('repeat(auto-fill, minmax(min(260px, 100%), 1fr))');
+		});
+
+		it('zooms from the control beside the sort pills as well', () => {
+			renderGrid();
+
+			fireEvent.click(screen.getByRole('button', { name: 'Increase tile size' }));
+
+			expect(columns()).toBe('repeat(auto-fill, minmax(min(286px, 100%), 1fr))');
+			// A tile width has no meaningful percentage, so the control shows only
+			// the two buttons; `0` is still the way back.
+			expect(screen.queryByRole('button', { name: 'Reset tile size' })).toBeNull();
+			expect(screen.getByTestId('agent-overview-tile-zoom')).not.toHaveTextContent('%');
+		});
+	});
+});
+
+// The toolbar's two selects, filter box and active-only switch add up to ~780px
+// of fixed width. On a 390px phone they ran off the right edge and took the
+// whole tab into a horizontal scroll; on desktop they already fit, and giving
+// them a shrinkable basis there would rearrange a toolbar nobody asked to move.
+vi.mock('../../../../renderer/hooks/ui/useViewportBreakpoint', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../renderer/hooks/ui/useViewportBreakpoint')>()),
+	usePhoneLayout: vi.fn(() => false),
+}));
+import { usePhoneLayout } from '../../../../renderer/hooks/ui/useViewportBreakpoint';
+
+describe('AgentOverviewCards toolbar width', () => {
+	beforeEach(() => {
+		installLocalStorageMock();
+		vi.mocked(usePhoneLayout).mockReturnValue(false);
+	});
+
+	/** The filter cluster: the selects, the search box and the active-only switch. */
+	function filterCluster(): HTMLElement {
+		const input = screen.getByTestId('agent-overview-filter-input');
+		const cluster = input.closest('div')?.parentElement;
+		if (!cluster) throw new Error('filter cluster not found');
+		return cluster;
+	}
+
+	it('keeps the desktop toolbar on one unwrapped row at its fixed widths', () => {
+		render(
+			<AgentOverviewCards
+				sessions={[buildSession({ id: 's1', name: 'Alpha' })]}
+				data={buildData()}
+				theme={theme}
+			/>
+		);
+
+		expect(filterCluster()).not.toHaveClass('flex-wrap');
+		// A fixed width, not a shrinkable basis - the desktop row already fits.
+		expect(screen.getByTestId('agent-overview-filter-input').parentElement).toHaveStyle({
+			width: '260px',
+		});
+	});
+
+	it('lets the toolbar pack and wrap on a phone', () => {
+		vi.mocked(usePhoneLayout).mockReturnValue(true);
+		render(
+			<AgentOverviewCards
+				sessions={[buildSession({ id: 's1', name: 'Alpha' })]}
+				data={buildData()}
+				theme={theme}
+			/>
+		);
+
+		expect(filterCluster()).toHaveClass('flex-wrap');
+		// Shrinkable, and capped at the desktop width so it cannot grow past it.
+		const search = screen.getByTestId('agent-overview-filter-input').parentElement;
+		expect(search).toHaveStyle({ minWidth: '0', maxWidth: '260px' });
+		expect(search?.style.flex).toBe('1 1 180px');
 	});
 });

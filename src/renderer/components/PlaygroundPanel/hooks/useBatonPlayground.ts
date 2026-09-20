@@ -10,8 +10,8 @@ import type { BatonPlaygroundState } from '../types';
 
 export function useBatonPlayground(): BatonPlaygroundState {
 	const [duration, setDuration] = useState(BATON_DEFAULTS.duration);
-	const [fadeOutStart, setFadeOutStart] = useState(BATON_DEFAULTS.fadeOutStart);
-	const [fadeInStart, setFadeInStart] = useState(BATON_DEFAULTS.fadeInStart);
+	const [peakAt, setPeakAt] = useState(BATON_DEFAULTS.peakAt);
+	const [settleAt, setSettleAt] = useState(BATON_DEFAULTS.settleAt);
 	const [translateAmount, setTranslateAmount] = useState(BATON_DEFAULTS.translateAmount);
 	const [staggerOffset, setStaggerOffset] = useState(BATON_DEFAULTS.staggerOffset);
 	const [easing, setEasing] = useState<EasingOption>(BATON_DEFAULTS.easing);
@@ -23,13 +23,13 @@ export function useBatonPlayground(): BatonPlaygroundState {
 	const settings = useMemo(
 		() => ({
 			duration,
-			fadeOutStart,
-			fadeInStart,
+			peakAt,
+			settleAt,
 			translateAmount,
 			staggerOffset,
 			easing,
 		}),
-		[duration, fadeOutStart, fadeInStart, translateAmount, staggerOffset, easing]
+		[duration, peakAt, settleAt, translateAmount, staggerOffset, easing]
 	);
 
 	const animationCss = useMemo(() => buildBatonAnimationCss(settings), [settings]);
@@ -72,8 +72,8 @@ export function useBatonPlayground(): BatonPlaygroundState {
 
 	const resetBatonDefaults = useCallback(() => {
 		setDuration(BATON_DEFAULTS.duration);
-		setFadeOutStart(BATON_DEFAULTS.fadeOutStart);
-		setFadeInStart(BATON_DEFAULTS.fadeInStart);
+		setPeakAt(BATON_DEFAULTS.peakAt);
+		setSettleAt(BATON_DEFAULTS.settleAt);
 		setTranslateAmount(BATON_DEFAULTS.translateAmount);
 		setStaggerOffset(BATON_DEFAULTS.staggerOffset);
 		setEasing(BATON_DEFAULTS.easing);
@@ -92,8 +92,8 @@ export function useBatonPlayground(): BatonPlaygroundState {
 		batonActive,
 		batonCopySuccess,
 		setDuration,
-		setFadeOutStart,
-		setFadeInStart,
+		setPeakAt,
+		setSettleAt,
 		setTranslateAmount,
 		setStaggerOffset,
 		setEasing,

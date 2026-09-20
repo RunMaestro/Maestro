@@ -569,7 +569,9 @@ describe('ReauthModal credential kinds', () => {
 		await renderWithEnv({ ANTHROPIC_API_KEY: 'sk-live-xxx' });
 
 		expect(mockSpawnTerminalTab).not.toHaveBeenCalled();
-		expect(await screen.findByText(/ANTHROPIC_API_KEY/)).toBeInTheDocument();
+		expect(await screen.findByTestId('reauth-login-blocked')).toHaveTextContent(
+			/ANTHROPIC_API_KEY/
+		);
 	});
 
 	// The token belongs to the gateway operator, so it outranks a token check:
@@ -581,14 +583,14 @@ describe('ReauthModal credential kinds', () => {
 		});
 
 		expect(mockSpawnTerminalTab).not.toHaveBeenCalled();
-		expect(await screen.findByText(/api\.z\.ai/)).toBeInTheDocument();
+		expect(await screen.findByTestId('reauth-login-blocked')).toHaveTextContent(/api\.z\.ai/);
 	});
 
 	it('sends a Bedrock agent to its cloud credentials rather than a provider login', async () => {
 		await renderWithEnv({ CLAUDE_CODE_USE_BEDROCK: '1' });
 
 		expect(mockSpawnTerminalTab).not.toHaveBeenCalled();
-		expect(await screen.findByText(/AWS Bedrock/)).toBeInTheDocument();
+		expect(await screen.findByTestId('reauth-login-blocked')).toHaveTextContent(/AWS Bedrock/);
 	});
 
 	// A flag the user turned off must not be read as a Bedrock agent.
@@ -607,13 +609,155 @@ describe('ReauthModal credential kinds', () => {
 		await renderWithEnv({ OPENAI_API_KEY: 'sk-openai' }, 'codex');
 
 		expect(mockSpawnTerminalTab).not.toHaveBeenCalled();
-		expect(await screen.findByText(/OPENAI_API_KEY/)).toBeInTheDocument();
+		expect(await screen.findByTestId('reauth-login-blocked')).toHaveTextContent(/OPENAI_API_KEY/);
 	});
 
 	// Blocked or not, the agents are still stopped and their queues still held.
 	it('still offers to resume the blocked agents', async () => {
 		await renderWithEnv({ ANTHROPIC_API_KEY: 'sk-live-xxx' });
 		expect(screen.getByTestId('reauth-resume')).toBeInTheDocument();
+	});
+});
+
+/**
+ * Which ACCOUNT the login writes to.
+ *
+ * A provider can hold several accounts at once and they are selected by an env
+ * var buried in a list, so the dialog states the answer outright. The attribution
+ * has to come from the shared profile module rather than a lookup of that var,
+ * because the var is not always what decides: an agent that sets a credential of
+ * its own never reads the config directory, and an agent that sets ANY var of
+ * its own receives none of the provider's. Naming the wrong account here costs a
+ * whole login round trip to discover.
+ */
+describe('ReauthModal profile pill', () => {
+	async function renderProfile(
+		providerVars: Record<string, string>,
+		sessionOverrides: Partial<Parameters<typeof createMockSession>[0]> = {},
+		toolType = 'claude-code'
+	) {
+		mockGetCustomEnvVars.mockResolvedValue(providerVars);
+		const session = createMockSession({ id: 'sess-1', toolType, ...sessionOverrides });
+		render(
+			<ReauthModal
+				theme={mockTheme}
+				outage={createOutage({ toolType })}
+				session={session}
+				onClose={vi.fn()}
+			/>
+		);
+		await flushSpawn();
+		// The account key needs $HOME, which arrives over IPC a tick later.
+		return screen.findByTestId('reauth-profile-pill');
+	}
+
+	it('names the implicit account after its provider, and says the var is unset', async () => {
+		const pill = await renderProfile({});
+
+		expect(pill).toHaveTextContent('Claude Code default');
+		expect(screen.getByTestId('reauth-profile-env')).toHaveTextContent('CLAUDE_CONFIG_DIR unset');
+	});
+
+	it('names the configured account and prints the directory that chose it', async () => {
+		const pill = await renderProfile({ CLAUDE_CONFIG_DIR: '/home/testuser/.claude-smash' });
+
+		expect(pill).toHaveTextContent('smash');
+		expect(screen.getByTestId('reauth-profile-env')).toHaveTextContent(
+			'CLAUDE_CONFIG_DIR=/home/testuser/.claude-smash'
+		);
+	});
+
+	// The credential outranks the login, so the config dir sitting beside it is
+	// not the account this agent bills - naming it would send the user to fix a
+	// login that has nothing to do with the failure.
+	it('attributes an API-key agent to its key rather than to the config directory', async () => {
+		const pill = await renderProfile({
+			CLAUDE_CONFIG_DIR: '/home/testuser/.claude-smash',
+			ANTHROPIC_API_KEY: 'sk-ant-0000a1b2',
+		});
+
+		expect(pill).toHaveTextContent('API key');
+		expect(pill).toHaveTextContent('a1b2');
+		expect(pill).not.toHaveTextContent('smash');
+		// Named, never printed: this is shown during a failure, which is exactly
+		// when someone is most likely to be screen-sharing.
+		const hint = screen.getByTestId('reauth-profile-env');
+		expect(hint).toHaveTextContent('ANTHROPIC_API_KEY set');
+		expect(hint).not.toHaveTextContent('sk-ant-0000a1b2');
+	});
+
+	// An agent's own env REPLACES the provider's rather than layering over it
+	// (`effectiveAgentCustomEnvVars`), so an agent that sets one unrelated var
+	// stops receiving the provider's CLAUDE_CONFIG_DIR and falls back to the
+	// default account. Attribution built from a layered merge files it under an
+	// account its process never opens.
+	it('drops the provider config dir for an agent that sets any env of its own', async () => {
+		const pill = await renderProfile(
+			{ CLAUDE_CONFIG_DIR: '/home/testuser/.claude-smash' },
+			{ customEnvVars: { SOME_UNRELATED: '1' } }
+		);
+
+		expect(pill).toHaveTextContent('Claude Code default');
+		expect(pill).not.toHaveTextContent('smash');
+	});
+
+	it('names the account on the SSH host, not the local directory of the same name', async () => {
+		const pill = await renderProfile(
+			{ CLAUDE_CONFIG_DIR: '/home/testuser/.claude-smash' },
+			{ sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' } }
+		);
+
+		expect(pill).toHaveTextContent('smash');
+		expect(pill).toHaveTextContent('@');
+	});
+});
+
+/**
+ * "Once the thing is started, don't touch it."
+ *
+ * The user drives a real login inside this dialog: a device code, a password, a
+ * menu. Anything the app puts on that PTY after the command lands arrives in the
+ * middle of what they were typing. The settings and session stores hand back
+ * fresh object identities whenever they rehydrate from main, so the spawn must
+ * not be keyed on those identities either - re-running it killed the live shell
+ * and typed the command into its replacement.
+ */
+describe('ReauthModal leaves a running login alone', () => {
+	async function renderLogin() {
+		mockGetCustomEnvVars.mockResolvedValue({});
+		render(
+			<ReauthModal
+				theme={mockTheme}
+				outage={createOutage()}
+				session={createMockSession({ id: 'sess-1', toolType: 'claude-code' })}
+				onClose={vi.fn()}
+			/>
+		);
+		await flushSpawn();
+		const spawnedId = mockSpawnTerminalTab.mock.calls[0][0].sessionId as string;
+		await emitShellOutput(spawnedId);
+		expect(mockWrite).toHaveBeenCalledTimes(1);
+		return spawnedId;
+	}
+
+	it('does not restart or retype the login when settings rehydrate mid-flow', async () => {
+		const spawnedId = await renderLogin();
+
+		// A settings write elsewhere in the app: same values, new identities.
+		await act(async () => {
+			useSettingsStore.setState({ shellEnvVars: {}, shellArgs: '' } as never);
+			await Promise.resolve();
+			await Promise.resolve();
+		});
+
+		expect(mockSpawnTerminalTab).toHaveBeenCalledTimes(1);
+		expect(mockKill).not.toHaveBeenCalled();
+		expect(mockWrite).toHaveBeenCalledTimes(1);
+
+		// Even if something did deliver another first byte, the command is typed
+		// once per open dialog and never again.
+		await emitShellOutput(spawnedId);
+		expect(mockWrite).toHaveBeenCalledTimes(1);
 	});
 });
 

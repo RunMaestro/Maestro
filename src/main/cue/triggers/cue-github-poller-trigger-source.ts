@@ -1,5 +1,6 @@
 /**
- * Trigger source for `github.pull_request` and `github.issue` subscriptions.
+ * Trigger source for `github.pull_request`, `github.issue`, and `github.label`
+ * subscriptions.
  *
  * Thin wrapper around `createCueGitHubPoller` that adapts its callback shape
  * to the {@link CueTriggerSource} interface and routes events through the
@@ -19,7 +20,11 @@ export function createCueGitHubPollerTriggerSource(
 	ctx: CueTriggerSourceContext
 ): CueTriggerSource | null {
 	const eventType = ctx.subscription.event;
-	if (eventType !== 'github.pull_request' && eventType !== 'github.issue') {
+	if (
+		eventType !== 'github.pull_request' &&
+		eventType !== 'github.issue' &&
+		eventType !== 'github.label'
+	) {
 		return null;
 	}
 
@@ -41,6 +46,8 @@ export function createCueGitHubPollerTriggerSource(
 				triggerName: ctx.subscription.name,
 				subscriptionId: `${ctx.session.id}:${ctx.subscription.name}`,
 				ghState: ctx.subscription.gh_state,
+				labelTarget: ctx.subscription.gh_label_target,
+				watchLabels: ctx.subscription.gh_labels,
 				retriggerOnComments: ctx.subscription.retrigger_on_comments === true,
 				maxNotifications: ctx.subscription.max_notifications,
 				onLog: (level, message) => ctx.onLog(level as Parameters<typeof ctx.onLog>[0], message),

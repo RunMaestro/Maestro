@@ -15,6 +15,12 @@ import {
 	resolveNonOverlappingPipelineOffset,
 } from '../../../../../renderer/components/CuePipelineEditor/utils/pipelineGraph';
 import { getTriggerConfigSummary } from '../../../../../shared/cue-pipeline-summary';
+import {
+	NODE_BG_HEIGHT,
+	PIPELINE_GROUP_PADDING,
+	nodeFootprintWidth,
+	pipelineCardBounds,
+} from '../../../../../renderer/components/CuePipelineEditor/utils/nodeFootprint';
 import type {
 	CuePipeline,
 	TriggerNodeData,
@@ -675,6 +681,87 @@ describe('convertToReactFlowNodes', () => {
 		expect((group.data as { pipelineName: string }).pipelineName).toBe('Pipeline p1');
 		expect((group.data as { width: number }).width).toBeGreaterThan(0);
 		expect((group.data as { height: number }).height).toBeGreaterThan(0);
+	});
+
+	// A node renders at `width: max-content`, so a long name makes it far wider
+	// than the canonical 320px footprint. Sizing the card as if every node were
+	// 320 drew the node, its gear, its handle and its "in: <agent>" pill outside
+	// the card that is supposed to contain them.
+	describe('pipeline-group card encloses what it contains', () => {
+		const longName = 'Pedsidian-Account-Rebalance-Reset-smash';
+
+		const cardOf = (pipeline: CuePipeline) => {
+			const group = convertToReactFlowNodes([pipeline], null).find(
+				(n) => n.id === 'pipeline-group:p1'
+			)!;
+			const data = group.data as { width: number; height: number };
+			return {
+				left: group.position.x,
+				top: group.position.y,
+				right: group.position.x + data.width,
+				bottom: group.position.y + data.height,
+			};
+		};
+
+		it('grows past NODE_BG_WIDTH for a node whose label is long', () => {
+			const wide = makePipeline('p1', {
+				nodes: [makeAgent('a1', 's1', longName, {}, { x: 0, y: 0 })],
+			});
+			const narrow = makePipeline('p1', {
+				nodes: [makeAgent('a1', 's1', 'A', {}, { x: 0, y: 0 })],
+			});
+
+			expect(cardOf(wide).right - cardOf(wide).left).toBeGreaterThan(
+				cardOf(narrow).right - cardOf(narrow).left
+			);
+		});
+
+		it('keeps every node footprint inside the card border', () => {
+			const pipeline = makePipeline('p1', {
+				nodes: [
+					makeTrigger('t1', 'time.heartbeat', {}, { x: 0, y: 0 }),
+					makeAgent('a1', 's1', longName, {}, { x: 400, y: 0 }),
+					makeAgent('a2', 's2', 'short', {}, { x: 400, y: 200 }),
+				],
+			});
+			const card = cardOf(pipeline);
+
+			for (const node of pipeline.nodes) {
+				const width = nodeFootprintWidth(node);
+				expect(node.position.x).toBeGreaterThan(card.left);
+				expect(node.position.y).toBeGreaterThan(card.top);
+				expect(node.position.x + width).toBeLessThan(card.right);
+				expect(node.position.y + NODE_BG_HEIGHT).toBeLessThan(card.bottom);
+			}
+		});
+
+		it('leaves room for the chrome that hangs outside a node rect', () => {
+			// Handles are centred on the left and right borders and the badges are
+			// pinned past a corner, so clearance must exceed the padding alone.
+			const pipeline = makePipeline('p1', {
+				nodes: [makeAgent('a1', 's1', longName, {}, { x: 0, y: 0 })],
+			});
+			const card = cardOf(pipeline);
+
+			expect(0 - card.left).toBeGreaterThan(PIPELINE_GROUP_PADDING);
+			expect(card.right - nodeFootprintWidth(pipeline.nodes[0])).toBeGreaterThan(
+				PIPELINE_GROUP_PADDING
+			);
+			expect(card.bottom - NODE_BG_HEIGHT).toBeGreaterThan(PIPELINE_GROUP_PADDING);
+		});
+
+		it('matches the box the drag-overlap test uses', () => {
+			// The renderer and `resolveNonOverlappingPipelineOffset` must agree, or
+			// a drop that looks clear lands on a neighbour.
+			const pipeline = makePipeline('p1', {
+				nodes: [makeAgent('a1', 's1', longName, {}, { x: 30, y: 40 })],
+			});
+			const card = cardOf(pipeline);
+			const bounds = pipelineCardBounds(pipeline.nodes)!;
+
+			expect({ x: card.left, y: card.top }).toEqual({ x: bounds.x, y: bounds.y });
+			expect(card.right - card.left).toBe(bounds.width);
+		});
 	});
 });
 

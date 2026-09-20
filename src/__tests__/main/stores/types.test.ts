@@ -44,9 +44,6 @@ describe('stores/types', () => {
 		it('should have all required fields', () => {
 			const settings: MaestroSettings = {
 				activeThemeId: 'dracula',
-				llmProvider: 'openrouter',
-				modelSlug: 'test-model',
-				apiKey: 'test-key',
 				shortcuts: { 'ctrl+s': 'save' },
 				fontSize: 14,
 				fontFamily: 'monospace',

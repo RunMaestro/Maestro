@@ -16,7 +16,6 @@ import { setupGroupChatLivenessListener } from './group-chat-liveness-listener';
 import { setupUsageListener } from './usage-listener';
 import { setupSessionIdListener } from './session-id-listener';
 import { setupErrorListener } from './error-listener';
-import { setupStatsListener } from './stats-listener';
 import { setupExitListener } from './exit-listener';
 import { setupPluginEventListener } from './plugin-event-listener';
 import { setupDispatchCallbackListener } from './dispatch-callback-listener';
@@ -52,9 +51,6 @@ export function setupProcessListeners(
 
 	// Agent error listener
 	setupErrorListener(processManager, deps);
-
-	// Stats/query-complete listener
-	setupStatsListener(processManager, deps);
 
 	// Exit listener (with group chat routing, recovery, and synthesis)
 	setupExitListener(processManager, deps);

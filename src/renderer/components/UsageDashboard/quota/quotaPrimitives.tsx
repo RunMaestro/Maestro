@@ -8,9 +8,11 @@
 import { memo, useEffect, useState } from 'react';
 import { ChevronDown, Clock, Eye, EyeOff, Link2, Loader2, RefreshCw, Users } from 'lucide-react';
 import type { Theme } from '../../../types';
-import { formatFutureTime } from '../../../../shared/formatters';
+import { formatFutureTime, formatTimestamp } from '../../../../shared/formatters';
 import {
 	formatLastRefreshed,
+	isSampleBehindLatest,
+	isSampleExpired,
 	QUOTA_REFRESH_OPTIONS,
 	resolveQuotaFillColor,
 } from './quotaFormatting';
@@ -40,15 +42,21 @@ export const QuotaBarRow = memo(function QuotaBarRow({
 	const displayPercent = Math.round(clampedPercent);
 
 	return (
-		<div className="flex items-center gap-4">
+		// Narrow (a phone): the label and the reset caption share the first line
+		// and the bar takes the whole of a second one. The row used to be one
+		// unbreakable line - a 176px label, a 192px `whitespace-nowrap` reset
+		// caption, and 32px of gaps - which is 400px of fixed width before the
+		// bar gets any, so on a 390px phone the bar was squeezed to nothing and
+		// the one number this panel exists to show was invisible.
+		<div className="flex flex-wrap items-center gap-x-4 gap-y-1 sm:flex-nowrap">
 			<div
-				className="w-44 text-sm whitespace-nowrap flex-shrink-0"
+				className="min-w-0 truncate text-sm sm:w-44 sm:flex-shrink-0 sm:whitespace-nowrap"
 				style={{ color: theme.colors.textMain }}
 			>
 				{label}
 			</div>
 			<div
-				className="flex-1 h-7 rounded overflow-hidden relative"
+				className="order-last h-7 w-full rounded overflow-hidden relative sm:order-none sm:w-auto sm:flex-1"
 				style={{ backgroundColor: theme.colors.border }}
 				role="progressbar"
 				aria-label={`${label}: ${displayPercent}%`}
@@ -92,11 +100,23 @@ export const QuotaBarRow = memo(function QuotaBarRow({
 				)}
 			</div>
 			<div
-				className="text-xs text-left whitespace-nowrap flex-shrink-0 ml-auto"
-				style={{ color: theme.colors.textDim, minWidth: '12rem' }}
-				title={resetsAt ? `Resets at ${new Date(resetsAt).toLocaleString()}` : undefined}
+				className="text-xs text-left whitespace-nowrap flex-shrink-0 ml-auto sm:min-w-[12rem]"
+				style={{ color: theme.colors.textDim }}
+				title={
+					resetsAt
+						? `Resets at ${new Date(resetsAt).toLocaleString()}`
+						: clampedPercent === 0
+							? 'No window is running yet, so there is no reset time. The window starts with the next request.'
+							: undefined
+				}
 			>
-				{resetsAt ? `resets ${formatFutureTime(resetsAt)}` : 'reset unknown'}
+				{/* A 0% window with no reset is idle, not unparsed: claude paints no
+				    "Resets" row until a request opens the window. */}
+				{resetsAt
+					? `resets ${formatFutureTime(resetsAt)}`
+					: clampedPercent === 0
+						? 'not started'
+						: 'reset unknown'}
 			</div>
 		</div>
 	);
@@ -140,6 +160,11 @@ export const QuotaAgentCountBadge = memo(function QuotaAgentCountBadge({
 	theme,
 	onClick,
 }: {
+	/**
+	 * Local agents on this account. SSH-remote agents are not counted: the
+	 * directory they name lives on the remote host and holds THAT host's login,
+	 * so the Agents grid files them under their own `account @ host` profile.
+	 */
 	count: number;
 	/** Provider name for the hover title (`Claude` / `Codex`). */
 	providerLabel: string;
@@ -149,7 +174,8 @@ export const QuotaAgentCountBadge = memo(function QuotaAgentCountBadge({
 	 *  none to show - a button that lands on an empty grid is worse than text. */
 	onClick?: () => void;
 }) {
-	const label = `${count} ${count === 1 ? 'agent' : 'agents'}`;
+	const noun = count === 1 ? 'agent' : 'agents';
+	const label = `${count} ${noun}`;
 	const title =
 		count === 0
 			? `No ${providerLabel} agents are configured to use this account`
@@ -257,6 +283,56 @@ export const QuotaSharedAccountBadge = memo(function QuotaSharedAccountBadge({
 });
 
 /**
+ * "Stale" chip for a row the latest refresh did not update.
+ *
+ * The footer reports the NEWEST sample, so one freshly-sampled account makes the
+ * whole panel read "Last refreshed just now" - including a row whose bars are
+ * hours old because its account could not be sampled this pass (every agent
+ * using it runs over SSH, or the probe failed). The chip prints when that row
+ * was actually read. A clock time rather than an age, so it stays true without
+ * a ticking re-render.
+ *
+ * It also prints for any sample older than a day even when no row is newer -
+ * the state of an account whose agents have all moved elsewhere, whose row the
+ * panel keeps so the user can watch for its reset.
+ */
+export const QuotaStaleSampleBadge = memo(function QuotaStaleSampleBadge({
+	sampledAt,
+	latestSampledAtMs,
+	testId,
+	theme,
+}: {
+	/** This row's own `sampledAt` stamp. */
+	sampledAt: string | undefined;
+	/** Newest `sampledAt` across the panel (`resolveLatestSampledAt`). */
+	latestSampledAtMs: number | null;
+	testId?: string;
+	theme: Theme;
+}) {
+	if (!sampledAt) return null;
+	if (!isSampleBehindLatest(sampledAt, latestSampledAtMs) && !isSampleExpired(sampledAt)) {
+		return null;
+	}
+	const color = theme.colors.warning ?? theme.colors.accent;
+
+	return (
+		<span
+			className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs-plus font-medium flex-shrink-0"
+			style={{
+				color,
+				backgroundColor: `${color}15`,
+				border: `1px solid ${color}35`,
+			}}
+			title={`The last refresh did not update this account. These bars were read ${formatTimestamp(sampledAt, 'full')}.`}
+			data-testid={testId}
+		>
+			<Clock className="w-3 h-3" aria-hidden="true" />
+			stale, read {formatTimestamp(sampledAt, 'smart')}
+		</span>
+	);
+});
+
+/**
  * "No snapshot cached yet - hit Refresh" body for a configured-but-unsampled
  * account. `testIdPrefix` keeps each provider's testids distinct
  * (`claude-plan` / `codex-plan`).
@@ -348,7 +424,7 @@ export const QuotaRefreshControls = memo(function QuotaRefreshControls({
 	showHotkeyHint?: boolean;
 }) {
 	return (
-		<div className="flex flex-wrap items-center justify-end gap-2">
+		<div className="flex flex-wrap items-center justify-start gap-2 sm:justify-end">
 			<label className="relative flex items-center">
 				<Clock
 					className="w-3.5 h-3.5 absolute left-2.5 pointer-events-none"

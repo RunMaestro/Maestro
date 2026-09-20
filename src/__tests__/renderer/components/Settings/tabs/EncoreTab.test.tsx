@@ -145,6 +145,9 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		setEncoreFeatures: vi.fn(),
 		directorNotesSettings: {
 			provider: 'claude-code',
+			// Manual path by default: auto-selection ghosts the picker, and most
+			// suites here drive it. The auto suite overrides this per test.
+			autoSelectProvider: false,
 			defaultLookbackDays: 7,
 		},
 		setDirectorNotesSettings: mockSetDirectorNotesSettings,
@@ -335,7 +338,54 @@ describe('EncoreTab', () => {
 
 	describe("Director's Notes provider selection", () => {
 		beforeEach(() => {
-			mockUseSettingsOverrides = { encoreFeatures: { directorNotes: true } };
+			// These suites exercise the MANUAL provider path (picker + Customize),
+			// which auto-selection deliberately ghosts out. Auto has its own suite.
+			mockUseSettingsOverrides = {
+				encoreFeatures: { directorNotes: true },
+				directorNotesSettings: {
+					provider: 'claude-code',
+					autoSelectProvider: false,
+					defaultLookbackDays: 7,
+				},
+			};
+		});
+
+		it('ghosts the picker and Customize while auto-selection is on', async () => {
+			mockUseSettingsOverrides = {
+				encoreFeatures: { directorNotes: true },
+				directorNotesSettings: { provider: 'claude-code', defaultLookbackDays: 7 },
+			};
+
+			render(<EncoreTab theme={mockTheme} isOpen={true} />);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect(screen.getByLabelText('Select synopsis provider agent')).toBeDisabled();
+			// The helper text names what auto would actually run right now.
+			expect(screen.getByText(/Right now that is Claude Code/)).toBeInTheDocument();
+		});
+
+		it('turns auto-selection off from the toggle', async () => {
+			mockUseSettingsOverrides = {
+				encoreFeatures: { directorNotes: true },
+				directorNotesSettings: { provider: 'claude-code', defaultLookbackDays: 7 },
+			};
+
+			render(<EncoreTab theme={mockTheme} isOpen={true} />);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			fireEvent.click(
+				screen.getByLabelText("Use the first available provider for Director's Notes")
+			);
+
+			expect(mockSetDirectorNotesSettings).toHaveBeenCalledWith({
+				provider: 'claude-code',
+				autoSelectProvider: false,
+				defaultLookbackDays: 7,
+			});
 		});
 
 		it('shows only detected + supported agents as options', async () => {
@@ -375,6 +425,7 @@ describe('EncoreTab', () => {
 
 			expect(mockSetDirectorNotesSettings).toHaveBeenCalledWith({
 				provider: 'codex',
+				autoSelectProvider: false,
 				defaultLookbackDays: 7,
 				customPath: undefined,
 				customArgs: undefined,
@@ -388,7 +439,14 @@ describe('EncoreTab', () => {
 
 	describe("Director's Notes customize panel", () => {
 		beforeEach(() => {
-			mockUseSettingsOverrides = { encoreFeatures: { directorNotes: true } };
+			mockUseSettingsOverrides = {
+				encoreFeatures: { directorNotes: true },
+				directorNotesSettings: {
+					provider: 'claude-code',
+					autoSelectProvider: false,
+					defaultLookbackDays: 7,
+				},
+			};
 		});
 
 		it('loads the selected agent config when the config panel is expanded', async () => {

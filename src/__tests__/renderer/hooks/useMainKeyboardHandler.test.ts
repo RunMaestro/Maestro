@@ -19,6 +19,7 @@ const { mockTileNewTabInSession } = vi.hoisted(() => ({ mockTileNewTabInSession:
 vi.mock('../../../renderer/services/tileNewTabAction', () => ({
 	tileNewTabInSession: (...args: unknown[]) => mockTileNewTabInSession(...args),
 }));
+import { publishGitShortcutActions } from '../../../renderer/services/gitShortcutActions';
 
 /**
  * Creates a minimal mock context with all required handler functions.
@@ -3004,6 +3005,103 @@ describe('useMainKeyboardHandler', () => {
 
 			expect(mockSetChatRawTextMode).toHaveBeenCalledWith(false);
 		});
+
+		// The old guard read `activeElement?.closest(...) !== null`, which is
+		// `undefined !== null` when nothing is focused. That is TRUE, so an unfocused
+		// document claimed the caret was in Auto Run and swallowed the toggle.
+		it('toggles when nothing at all is focused', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			const mockSetChatRawTextMode = vi.fn();
+			const activeElement = vi
+				.spyOn(document, 'activeElement', 'get')
+				.mockReturnValue(null as unknown as Element);
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'toggleMarkdownMode',
+				chatRawTextMode: false,
+				setChatRawTextMode: mockSetChatRawTextMode,
+				activeFocus: 'main',
+				activeRightTab: 'files',
+				activeBatchRunState: null,
+				activeSession: { id: 'session-1', activeFileTabId: null, inputMode: 'ai' },
+				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', { key: 'e', metaKey: true, bubbles: true })
+				);
+			});
+
+			expect(mockSetChatRawTextMode).toHaveBeenCalledWith(true);
+			activeElement.mockRestore();
+		});
+
+		// `activeFocus`/`activeRightTab` say which panel was last SELECTED, not where
+		// the caret is. Reading the chat with the right panel parked on Auto Run must
+		// not disable the toggle.
+		it('toggles when the caret is in the chat but the right panel is parked on Auto Run', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			const mockSetChatRawTextMode = vi.fn();
+			const composer = document.createElement('textarea');
+			document.body.appendChild(composer);
+			const activeElement = vi.spyOn(document, 'activeElement', 'get').mockReturnValue(composer);
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'toggleMarkdownMode',
+				chatRawTextMode: false,
+				setChatRawTextMode: mockSetChatRawTextMode,
+				activeFocus: 'right',
+				activeRightTab: 'autorun',
+				activeBatchRunState: null,
+				activeSession: { id: 'session-1', activeFileTabId: null, inputMode: 'ai' },
+				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', { key: 'e', metaKey: true, bubbles: true })
+				);
+			});
+
+			expect(mockSetChatRawTextMode).toHaveBeenCalledWith(true);
+			activeElement.mockRestore();
+			composer.remove();
+		});
+
+		// The guard still has to do its job: the Auto Run editor owns Cmd+E.
+		it('does not toggle when the caret really is inside the Auto Run panel', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			const mockSetChatRawTextMode = vi.fn();
+			const panel = document.createElement('div');
+			panel.setAttribute('data-tour', 'autorun-panel');
+			const editor = document.createElement('textarea');
+			panel.appendChild(editor);
+			document.body.appendChild(panel);
+			const activeElement = vi.spyOn(document, 'activeElement', 'get').mockReturnValue(editor);
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'toggleMarkdownMode',
+				chatRawTextMode: false,
+				setChatRawTextMode: mockSetChatRawTextMode,
+				// Deliberately the opposite of the DOM, to prove the DOM decides.
+				activeFocus: 'main',
+				activeRightTab: 'files',
+				activeBatchRunState: null,
+				activeSession: { id: 'session-1', activeFileTabId: null, inputMode: 'ai' },
+				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', { key: 'e', metaKey: true, bubbles: true })
+				);
+			});
+
+			expect(mockSetChatRawTextMode).not.toHaveBeenCalled();
+			activeElement.mockRestore();
+			panel.remove();
+		});
 	});
 
 	describe('font zoom shortcuts', () => {
@@ -3220,6 +3318,91 @@ describe('useMainKeyboardHandler', () => {
 
 			// Font size should remain unchanged with Alt held
 			expect(useSettingsStore.getState().fontSize).toBe(14);
+		});
+	});
+
+	describe('git branch-pill shortcuts', () => {
+		/**
+		 * The four chords read their actions from the module the bridge publishes
+		 * to, so these tests publish a stub action set instead of rendering the
+		 * whole git context.
+		 */
+		function publishStub(overrides: Record<string, unknown> = {}) {
+			const actions = {
+				isGitRepo: true,
+				canCreatePR: true,
+				pull: vi.fn(),
+				push: vi.fn(),
+				switchBranch: vi.fn(),
+				createPR: vi.fn(),
+				...overrides,
+			};
+			publishGitShortcutActions(actions as never);
+			return actions;
+		}
+
+		function press(id: string, ctxOverrides: Record<string, unknown> = {}) {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isShortcut: (_e: KeyboardEvent, shortcutId: string) => shortcutId === id,
+				activeSessionId: 'test-session',
+				activeSession: { id: 'test-session', name: 'Test', inputMode: 'ai' },
+				activeGroupChatId: null,
+				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+				...ctxOverrides,
+			});
+			act(() => {
+				window.dispatchEvent(new KeyboardEvent('keydown', { key: 'F8', bubbles: true }));
+			});
+		}
+
+		afterEach(() => {
+			publishGitShortcutActions(null);
+		});
+
+		it('fires pull, push, branch switch, and PR from their chords', () => {
+			const pull = publishStub();
+			press('gitPull');
+			expect(pull.pull).toHaveBeenCalled();
+
+			const push = publishStub();
+			press('gitPush');
+			expect(push.push).toHaveBeenCalled();
+
+			const branch = publishStub();
+			press('gitChangeBranch');
+			expect(branch.switchBranch).toHaveBeenCalled();
+
+			const pr = publishStub();
+			press('gitCreatePR');
+			expect(pr.createPR).toHaveBeenCalled();
+		});
+
+		it('does nothing on an agent that is not a git repo', () => {
+			const actions = publishStub({ isGitRepo: false, canCreatePR: false });
+			press('gitPull');
+			press('gitPush');
+			press('gitChangeBranch');
+			press('gitCreatePR');
+
+			expect(actions.pull).not.toHaveBeenCalled();
+			expect(actions.push).not.toHaveBeenCalled();
+			expect(actions.switchBranch).not.toHaveBeenCalled();
+			expect(actions.createPR).not.toHaveBeenCalled();
+		});
+
+		it('withholds Create Pull Request when there is no branch to open it from', () => {
+			// A repo with no resolved branch has no PR source - the same reason the
+			// pill menu omits the row.
+			const actions = publishStub({ canCreatePR: false });
+			press('gitCreatePR');
+			expect(actions.createPR).not.toHaveBeenCalled();
+		});
+
+		it('stays out of group chats, which have no repo of their own', () => {
+			const actions = publishStub();
+			press('gitPull', { activeGroupChatId: 'room-1' });
+			expect(actions.pull).not.toHaveBeenCalled();
 		});
 	});
 

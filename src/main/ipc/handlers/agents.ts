@@ -36,10 +36,16 @@ import { captureException } from '../../utils/sentry';
 import { parseJsonWithBom } from '../../../shared/jsonUtils';
 import {
 	getAllSnapshots as getAllClaudeUsageSnapshots,
+	getRetainedSnapshots as getRetainedClaudeUsageSnapshots,
 	resolveConfigDirKey,
 } from '../../stores/claudeUsageStore';
 import { getLimitResetAt } from '../../agents/limitResetEstimator';
-import { getAllCodexUsageSnapshots, resolveCodexHomeKey } from '../../stores/codexUsageStore';
+import {
+	getAllCodexUsageSnapshots,
+	getRetainedCodexUsageSnapshots,
+	resolveCodexHomeKey,
+} from '../../stores/codexUsageStore';
+import { pruneMissingQuotaAccounts } from '../../stores/quotaAccountsStore';
 import type { UsageSnapshot } from '../../agents/claude-mode-selector';
 import type { CodexUsageSnapshot } from '../../stores/codexUsageStore';
 import {
@@ -48,6 +54,12 @@ import {
 	discoverClaudeConfigDirs,
 } from '../../agents/claude-usage-startup';
 import { runCodexUsageSampling, discoverCodexHomes } from '../../agents/codex-usage-startup';
+import {
+	consumeCodexResetCredit,
+	fetchCodexResetCredits,
+	type CodexResetCreditsReadResult,
+} from '../../agents/codex-reset-credits';
+import type { CodexResetCreditConsumeResult } from '../../../shared/codexResetCredits';
 import type { KnownAuthDirs } from '../../../shared/authPaths';
 
 const LOG_CONTEXT = '[AgentDetector]';
@@ -1888,8 +1900,11 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 		})
 	);
 
-	// Snapshot mirror for the renderer: returns every non-expired Claude plan
-	// usage snapshot keyed by canonical CLAUDE_CONFIG_DIR. The renderer's
+	// Snapshot mirror for the renderer: returns every RETAINED Claude plan usage
+	// snapshot keyed by canonical CLAUDE_CONFIG_DIR - expired ones included, so a
+	// panel row keeps its last known bars (the UI badges them stale) rather than
+	// vanishing 24h after the account's last agent moved away. Decision paths
+	// (mode selector, spawner) read the live map instead. The renderer's
 	// claudeUsageStore lazily fetches via this handler on first read and re-fetches
 	// whenever `process:claude-mode-resolved` arrives (the only signal that
 	// `sampleUsage()` may have refreshed the on-disk map).
@@ -1898,16 +1913,27 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 		withIpcErrorLogging(
 			handlerOpts('getClaudeUsageSnapshots'),
 			async (): Promise<Record<string, UsageSnapshot>> => {
-				return getAllClaudeUsageSnapshots();
+				return getRetainedClaudeUsageSnapshots();
 			}
 		)
 	);
 
+	// Every Claude account this machine has: the `~/.claude-*` dirs on disk plus
+	// the ones Maestro has actually sampled (`quotaAccountsStore`). The second
+	// source is what keeps an account the discovery sweep cannot see - symlinked,
+	// outside $HOME, or named like a backup - on the dashboard once its agents
+	// move away. Remembered accounts whose dir is gone are forgotten here.
 	ipcMain.handle(
 		'agents:getClaudeUsageAccountKeys',
 		withIpcErrorLogging(handlerOpts('getClaudeUsageAccountKeys'), async (): Promise<string[]> => {
 			const configDirs = await discoverClaudeConfigDirs();
-			return configDirs.map((configDir) => resolveConfigDirKey({ CLAUDE_CONFIG_DIR: configDir }));
+			const keys = new Set(
+				configDirs.map((configDir) => resolveConfigDirKey({ CLAUDE_CONFIG_DIR: configDir }))
+			);
+			for (const key of await pruneMissingQuotaAccounts('claude-code')) {
+				keys.add(key);
+			}
+			return Array.from(keys);
 		})
 	);
 
@@ -1969,24 +1995,82 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 		)
 	);
 
-	// Snapshot mirror for the renderer: returns every non-expired Codex quota
-	// usage snapshot keyed by canonical CODEX_HOME. The auth-sensitive auth.json
-	// read and ChatGPT metadata request stay in the main process.
+	// Snapshot mirror for the renderer: returns every RETAINED Codex quota usage
+	// snapshot keyed by canonical CODEX_HOME (expired included, same reasoning as
+	// the Claude mirror above). The auth-sensitive auth.json read and ChatGPT
+	// metadata request stay in the main process.
 	ipcMain.handle(
 		'agents:getCodexUsageSnapshots',
 		withIpcErrorLogging(
 			handlerOpts('getCodexUsageSnapshots'),
 			async (): Promise<Record<string, CodexUsageSnapshot>> => {
-				return getAllCodexUsageSnapshots();
+				return getRetainedCodexUsageSnapshots();
 			}
 		)
 	);
 
+	// READ primitive for Codex reset credits: the full per-credit list (ids,
+	// titles, expiry) for one account. The count alone rides the usage snapshot,
+	// so this is only called when a surface actually renders the list.
+	ipcMain.handle(
+		'agents:getCodexResetCredits',
+		withIpcErrorLogging(
+			handlerOpts('getCodexResetCredits'),
+			async (_event, codexHome: string): Promise<CodexResetCreditsReadResult> => {
+				return fetchCodexResetCredits({ codexHome });
+			}
+		)
+	);
+
+	// WRITE primitive: redeem one credit. Irreversible and finite, so it is only
+	// ever reached from an explicit user click or an explicitly enabled
+	// per-agent automation - never from a refresh, sweep, or retry default.
+	// Re-samples afterwards so the bars the user is looking at reflect the reset
+	// they just paid for rather than the pre-reset numbers.
+	ipcMain.handle(
+		'agents:consumeCodexResetCredit',
+		withIpcErrorLogging(
+			handlerOpts('consumeCodexResetCredit'),
+			async (
+				_event,
+				codexHome: string,
+				creditId: string,
+				idempotencyKey?: string
+			): Promise<CodexResetCreditConsumeResult> => {
+				const result = await consumeCodexResetCredit({ codexHome, creditId, idempotencyKey });
+				if (result.ok) {
+					const agentDetector = getAgentDetector();
+					if (agentDetector && sessionsStore) {
+						// Best-effort: a stale bar after a successful reset is confusing but
+						// not a failed redemption, so never let this turn a good spend into
+						// a reported error.
+						await runCodexUsageSampling({
+							sessionsStore,
+							agentConfigsStore,
+							agentDetector,
+						}).catch((error) => {
+							logger.warn('Post-reset Codex usage re-sample failed', LOG_CONTEXT, { error });
+						});
+					}
+				}
+				return result;
+			}
+		)
+	);
+
+	// Discovered `~/.codex-*` homes plus the ones Maestro has sampled before, so
+	// an account keeps its dashboard row after its last agent moves off it.
 	ipcMain.handle(
 		'agents:getCodexUsageAccountKeys',
 		withIpcErrorLogging(handlerOpts('getCodexUsageAccountKeys'), async (): Promise<string[]> => {
 			const codexHomes = await discoverCodexHomes();
-			return codexHomes.map((codexHome) => resolveCodexHomeKey({ CODEX_HOME: codexHome }));
+			const keys = new Set(
+				codexHomes.map((codexHome) => resolveCodexHomeKey({ CODEX_HOME: codexHome }))
+			);
+			for (const key of await pruneMissingQuotaAccounts('codex')) {
+				keys.add(key);
+			}
+			return Array.from(keys);
 		})
 	);
 

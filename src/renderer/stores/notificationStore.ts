@@ -15,6 +15,7 @@
 import { create } from 'zustand';
 import { logger } from '../utils/logger';
 import { isWebDesktop } from '../utils/runtimeContext';
+import type { ToastClickAction } from '../../shared/toastClickAction';
 
 // ============================================================================
 // Types
@@ -46,19 +47,13 @@ const TOAST_TYPE_TO_COLOR: Record<ToastType, ToastColor> = {
 };
 
 /**
- * Discriminated union for what happens when the toast body is clicked.
- *
- * Externally-fired toasts (e.g. via `maestro-cli notify toast`) cannot pass a
- * function callback over the IPC bridge, so we describe the click intent as
- * data instead. The renderer dispatches based on `kind`:
- *   - jump-session: switch to the agent (and optionally a specific AI tab)
- *   - open-file: switch to the agent and open a file in its File Preview pane
- *   - open-url: open an external URL in the system browser
+ * What happens when the toast body is clicked, as data rather than a callback,
+ * so externally-fired toasts (`maestro-cli notify toast`, Cue, the web bridge)
+ * can carry one across the IPC boundary. The canonical shape and its validator
+ * live in `shared/toastClickAction.ts`; the renderer dispatches it through
+ * `services/toastClickActions.ts`.
  */
-export type ToastClickAction =
-	| { kind: 'jump-session'; sessionId: string; tabId?: string }
-	| { kind: 'open-file'; sessionId: string; path: string }
-	| { kind: 'open-url'; url: string };
+export type { ToastClickAction };
 
 export interface Toast {
 	id: string;
@@ -96,9 +91,11 @@ export interface Toast {
 	actionLabel?: string; // Label for the action link (defaults to URL)
 	// Skip custom notification command for this toast (used for synopsis messages)
 	skipCustomNotification?: boolean;
-	// Skip the OS/device notification for this toast. Set when the toast is
-	// itself the fallback for a failed web-desktop notification, so it does not
-	// re-enter showOsNotification() and loop.
+	// Skip the OS/device notification for this toast. Two callers want it: the
+	// toast that is itself the fallback for a failed web-desktop notification
+	// (so it does not re-enter showOsNotification() and loop), and in-app-only
+	// feedback such as the Settings preview of the toast width, which would be
+	// noise in Notification Center.
 	skipOsNotification?: boolean;
 	// Generic click handler - if set, clicking the toast invokes this callback.
 	// Renderer-only - not serializable across the CLI/web bridge.

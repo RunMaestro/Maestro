@@ -21,7 +21,7 @@ import { buildSessionDeepLink } from '../../../shared/deep-link-urls';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { hasThinkingEntries } from '../../utils/contextExtractor';
 import type { CopyContextOptions } from '../../hooks/tabs/useTabExportHandlers';
-import { ShortcutHint } from './ShortcutHint';
+import { ShortcutHint } from '../ui/ShortcutHint';
 
 export interface AITabOverlayMenuProps {
 	tab: AITab;
@@ -242,6 +242,9 @@ export const AITabOverlayMenu = memo(function AITabOverlayMenu({
 					>
 						<Clock className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 						Snooze Tab
+						{tabShortcuts.snoozeTab && (
+							<ShortcutHint keys={tabShortcuts.snoozeTab.keys} theme={theme} />
+						)}
 					</button>
 				)}
 

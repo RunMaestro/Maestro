@@ -48,6 +48,19 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 			const activeSessionId =
 				options?.targetSessionId || useSessionStore.getState().activeSessionId;
 
+			// Narrow viewports: the Files panel is a drawer over the main panel, and
+			// on a phone it covers the whole screen - so opening a file from it has
+			// to dismiss it, or the file opens behind the tree and the tap reads as
+			// having done nothing. Fired HERE rather than from an effect keyed on
+			// the active tab, because two common opens move no id for such an effect
+			// to see: re-previewing the file that is already the active tab, and any
+			// media file, which never becomes a tab at all. A background open
+			// (`activate: false`, the CLI / web `--background` path) changes nothing
+			// on screen by definition, so it must not move the drawer either.
+			if (activate) {
+				useUIStore.getState().closeRightPanelForNavigation();
+			}
+
 			// Media never becomes a tab. Audio and video go straight to the floating
 			// player, which is the only surface they ever appear on: no entry in the
 			// tab bar, no main panel takeover, so a podcast does not cost the user
@@ -265,12 +278,26 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 		updateFileTab(activeSessionId, tabId, (tab) => ({ ...tab, editMode }));
 	}, []);
 
+	// `savedMtime` travels with `savedContent`: the tab's lastModified must track
+	// the mtime of the bytes it is holding. Leave it out on a save and the tab
+	// keeps its pre-save timestamp, so the next mount of FilePreview compares the
+	// disk against a stale value and raises a false "File changed on disk".
 	const handleFileTabEditContentChange = useCallback(
-		(tabId: string, editContent: string | undefined, savedContent?: string) => {
+		(
+			tabId: string,
+			editContent: string | undefined,
+			savedContent?: string,
+			savedMtime?: number
+		) => {
 			const { activeSessionId } = useSessionStore.getState();
 			updateFileTab(activeSessionId, tabId, (tab) =>
 				savedContent !== undefined
-					? { ...tab, editContent, content: savedContent }
+					? {
+							...tab,
+							editContent,
+							content: savedContent,
+							lastModified: savedMtime ?? tab.lastModified,
+						}
 					: { ...tab, editContent }
 			);
 		},

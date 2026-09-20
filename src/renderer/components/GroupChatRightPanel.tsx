@@ -12,6 +12,7 @@ import type { GroupChatHistoryEntry } from '../../shared/group-chat-types';
 import { ParticipantCard } from './ParticipantCard';
 import { GroupChatHistoryPanel } from './GroupChatHistoryPanel';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
+import { filterGroupChatHistory } from '../../shared/groupChatModeratorView';
 import {
 	buildParticipantColorMapWithPreferences,
 	loadColorPreferences,
@@ -20,6 +21,7 @@ import {
 } from '../utils/participantColors';
 import { useResizablePanel } from '../hooks';
 import { useGroupChatStore } from '../stores/groupChatStore';
+import { usePhoneLayout } from '../hooks/ui/useViewportBreakpoint';
 import { logger } from '../utils/logger';
 
 export type GroupChatRightTab = 'participants' | 'history';
@@ -57,6 +59,12 @@ interface GroupChatRightPanelProps {
 	onJumpToMessage?: (timestamp: number) => void;
 	/** Callback when participant colors are computed (for sharing with other components) */
 	onColorsComputed?: (colors: Record<string, string>) => void;
+	/**
+	 * True to show only the moderator's own history entries, matching the
+	 * message list's moderator-only view. The Participants tab is unaffected -
+	 * the roster is who is in the room, not who is talking.
+	 */
+	moderatorOnly?: boolean;
 }
 
 export function GroupChatRightPanel({
@@ -80,6 +88,7 @@ export function GroupChatRightPanel({
 	onTabChange,
 	onJumpToMessage,
 	onColorsComputed,
+	moderatorOnly = false,
 }: GroupChatRightPanelProps): JSX.Element | null {
 	const participantLiveOutput = useGroupChatStore((s) => s.participantLiveOutput);
 
@@ -305,26 +314,49 @@ export function GroupChatRightPanel({
 		return unsubscribe;
 	}, [groupChatId]);
 
+	// Filtered for display only: `historyEntries` keeps the full activity log, so
+	// flipping back to the team view restores it without re-reading the file.
+	const visibleHistoryEntries = useMemo(
+		() => filterGroupChatHistory(historyEntries, moderatorOnly),
+		[historyEntries, moderatorOnly]
+	);
+
+	// A phone has no room for a fixed-px side panel: at 390px the panel and the
+	// chat are flex siblings, so the row overflows the viewport, the tab header
+	// is pushed off-screen (History becomes unreachable) and the chat behind it
+	// is crushed to about one character per line. On a phone the panel takes the
+	// whole screen instead. Taking it out of flow (`fixed`) is the half that
+	// stops the bleed-through: as a flex sibling it squeezed the chat to a
+	// sliver that still painted one glyph per line down the edge.
+	const isPhone = usePhoneLayout();
+
 	if (!isOpen) return null;
 
 	return (
 		<div
 			ref={panelRef}
-			className={`relative border-l flex flex-col ${transitionClass}`}
+			className={
+				isPhone
+					? 'fixed inset-0 z-30 w-full max-w-full flex flex-col'
+					: `relative border-l flex flex-col ${transitionClass}`
+			}
 			style={{
-				width: `${width}px`,
+				...(isPhone ? {} : { width: `${width}px` }),
 				backgroundColor: theme.colors.bgSidebar,
 				borderColor: theme.colors.border,
 			}}
 		>
-			{/* Resize Handle */}
-			<div
-				className="resize-handle absolute top-0 left-0 w-3 h-full cursor-col-resize border-l-4 border-transparent hover:border-blue-500 transition-colors z-20"
-				onPointerDown={onResizeStart}
-			/>
+			{/* Resize Handle. Pointless on a phone, where the panel is full-screen,
+			    and it would sit under the user's thumb on the chat's left edge. */}
+			{!isPhone && (
+				<div
+					className="resize-handle absolute top-0 left-0 w-3 h-full cursor-col-resize border-l-4 border-transparent hover:border-blue-500 transition-colors z-20"
+					onPointerDown={onResizeStart}
+				/>
+			)}
 
 			{/* Tab Header - matches RightPanel styling */}
-			<div className="flex border-b h-16" style={{ borderColor: theme.colors.border }}>
+			<div className="flex border-b h-16 shrink-0" style={{ borderColor: theme.colors.border }}>
 				{(['participants', 'history'] as const).map((tab) => (
 					<button
 						key={tab}
@@ -398,7 +430,7 @@ export function GroupChatRightPanel({
 				<GroupChatHistoryPanel
 					theme={theme}
 					groupChatId={groupChatId}
-					entries={historyEntries}
+					entries={visibleHistoryEntries}
 					isLoading={isLoadingHistory}
 					participantColors={participantColors}
 					onJumpToMessage={onJumpToMessage}

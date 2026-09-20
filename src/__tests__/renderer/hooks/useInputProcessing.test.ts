@@ -36,8 +36,19 @@ import { dispatchShellCommand } from '../../../renderer/services/shellCommand';
 import { requestAiCommand } from '../../../renderer/services/aiCommand';
 import { useAiCommandStore } from '../../../renderer/stores/aiCommandStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
-import { useRetryStore } from '../../../renderer/stores/retryStore';
+import {
+	cancelRetry,
+	registerDispatchDepsProvider,
+	scheduleRetryForError,
+	useRetryStore,
+} from '../../../renderer/stores/retryStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { agentAlreadyRunningMessage } from '../../../shared/processErrors';
+import {
+	releaseConnectionHeldQueueItems,
+	takeNextRunnableQueueItem,
+} from '../../../renderer/utils/executionQueue';
+import { useAutoRunSteeringStore } from '../../../renderer/stores/autoRunSteeringStore';
 import type {
 	Session,
 	AITab,
@@ -94,7 +105,10 @@ describe('useInputProcessing', () => {
 	const mockSyncAiInputToSession = vi.fn();
 	const mockSyncTerminalInputToSession = vi.fn();
 	const mockGetBatchState = vi.fn(() => defaultBatchState);
-	const mockProcessQueuedItemRef = { current: vi.fn() };
+	// Resolves, like the real `processQueuedItem`: it returns Promise<void> and
+	// the dispatch sites attach a `.catch()` so a rejection is logged rather than
+	// surfacing as an unhandled crash report.
+	const mockProcessQueuedItemRef = { current: vi.fn().mockResolvedValue(undefined) };
 	const mockFlushBatchedUpdates = vi.fn();
 	const mockOnHistoryCommand = vi.fn().mockResolvedValue(undefined);
 	const mockInputRef = { current: null } as React.RefObject<HTMLTextAreaElement | null>;
@@ -105,8 +119,14 @@ describe('useInputProcessing', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mockProcessQueuedItemRef.current.mockResolvedValue(undefined);
 		mockGetBatchState.mockReturnValue(defaultBatchState);
 		useSessionStore.setState({ sessions: [], activeSessionId: '' });
+		// Automatic tab naming ships ON, and this harness routes the store's
+		// updateAiTab through mockSetSessions - so leaving it on makes the naming
+		// spinner the first setSessions call in every unrelated test. The naming
+		// describes below switch it back on for themselves.
+		useSettingsStore.setState({ automaticTabNamingEnabled: false } as any);
 
 		// Mock window.maestro.process.spawn
 		window.maestro = {
@@ -915,6 +935,7 @@ describe('useInputProcessing', () => {
 			// Clear the processQueuedItemRef mock between tests in this suite
 			// to ensure mock.calls[0] always refers to current test's call
 			mockProcessQueuedItemRef.current.mockClear();
+			mockProcessQueuedItemRef.current.mockResolvedValue(undefined);
 		});
 
 		it('matches command with arguments and stores args in queued item', async () => {
@@ -1206,10 +1227,190 @@ describe('useInputProcessing', () => {
 			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
 			const updateSessions = mockSetSessions.mock.calls[0][0];
 			const [updatedSession] = updateSessions([session]);
-			expect(updatedSession.state).toBe('busy');
-			expect(updatedSession.aiTabs[0].state).toBe('busy');
+			expect(updatedSession.state).toBe('idle');
+			expect(updatedSession.aiTabs[0].state).toBe('idle');
 			expect(updatedSession.executionQueue).toHaveLength(1);
 			expect(updatedSession.executionQueue[0].text).toBe('preserve this message');
+			expect(updatedSession.executionQueue[0].waitingForConnection).toBe(true);
+		});
+
+		it('keeps a new message behind an existing connection-held message', async () => {
+			const session = createMockSession({
+				state: 'idle',
+				executionQueue: [
+					{
+						id: 'held-a',
+						timestamp: 1,
+						tabId: 'tab-1',
+						type: 'message',
+						text: 'A',
+						waitingForConnection: true,
+					},
+				],
+			});
+			session.executionQueue[0].tabId = session.activeTabId;
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'B',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			const [updated] = useSessionStore.getState().sessions;
+			expect(updated.executionQueue.map((queued) => queued.text)).toEqual(['A', 'B']);
+			expect(updated.executionQueue.every((queued) => queued.waitingForConnection)).toBe(true);
+
+			const released = releaseConnectionHeldQueueItems(updated.executionQueue);
+			const first = takeNextRunnableQueueItem(released);
+			const second = takeNextRunnableQueueItem(first.remaining);
+			expect([first.item?.text, second.item?.text]).toEqual(['A', 'B']);
+		});
+
+		it('keeps queue order when reconciliation releases the hold during a new send', async () => {
+			let resolveProbe!: (value: []) => void;
+			vi.mocked(window.maestro.process.getActiveProcesses).mockReturnValue(
+				new Promise((resolve) => {
+					resolveProbe = resolve;
+				})
+			);
+			const session = createMockSession({
+				state: 'idle',
+				executionQueue: [
+					{
+						id: 'held-a',
+						timestamp: 1,
+						tabId: 'tab-1',
+						type: 'message',
+						text: 'A',
+						waitingForConnection: true,
+					},
+				],
+			});
+			session.executionQueue[0].tabId = session.activeTabId;
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'B',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			let send!: Promise<void>;
+			act(() => {
+				send = result.current.processInput();
+			});
+			act(() => {
+				const [live] = useSessionStore.getState().sessions;
+				useSessionStore
+					.getState()
+					.setSessions([
+						{ ...live, executionQueue: releaseConnectionHeldQueueItems(live.executionQueue) },
+					]);
+				resolveProbe([]);
+			});
+			await act(async () => {
+				await send;
+			});
+
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			const [updated] = useSessionStore.getState().sessions;
+			expect(updated.executionQueue.map((queued) => queued.text)).toEqual(['A', 'B']);
+			const first = takeNextRunnableQueueItem(updated.executionQueue);
+			const second = takeNextRunnableQueueItem(first.remaining);
+			expect([first.item?.text, second.item?.text]).toEqual(['A', 'B']);
+		});
+
+		it('re-queues the message when the spawn collides with a live turn', async () => {
+			// "Agent process already running" means the tab was mid-turn when this
+			// dispatch landed - the provider never saw the message. Dropping it is
+			// how one stalled phone socket destroyed 34 of 35 messages and left
+			// nothing but red system lines behind.
+			const session = createMockSession({ state: 'idle' });
+			vi.mocked(window.maestro.process.spawn).mockRejectedValue(
+				new Error(agentAlreadyRunningMessage(`${session.id}-ai-${session.activeTabId}`))
+			);
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'do not lose me',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+				// The spawn runs in a fire-and-forget IIFE; let its rejection settle.
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+
+			const [live] = useSessionStore.getState().sessions;
+			expect(live.executionQueue).toHaveLength(1);
+			expect(live.executionQueue[0].text).toBe('do not lose me');
+			// A collision leaves the busy state alone: a live process is still
+			// streaming into that tab, and clearing it told every busy-based rule in
+			// the app that the agent was free.
+			expect(live.aiTabs[0].state).toBe('busy');
+			expect(live.state).toBe('busy');
+			expect(
+				live.aiTabs[0].logs.some((log) => log.text?.includes('Failed to spawn agent process'))
+			).toBe(false);
+		});
+
+		it('still reports a genuine spawn failure and frees the tab', async () => {
+			// The other half of the branch: nothing is running, so the tab must be
+			// released and the user told, rather than silently re-queued forever.
+			const session = createMockSession({ state: 'idle' });
+			vi.mocked(window.maestro.process.spawn).mockRejectedValue(new Error('ENOENT: claude'));
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'this one really failed',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+
+			const [live] = useSessionStore.getState().sessions;
+			expect(live.executionQueue).toHaveLength(0);
+			expect(live.aiTabs[0].state).toBe('idle');
+			expect(
+				live.aiTabs[0].logs.some((log) => log.text?.includes('Failed to spawn agent process'))
+			).toBe(true);
+		});
+
+		it('a second send that resumes after the first queues instead of racing it', async () => {
+			// The ownership probe is the only await between Enter and the busy-state
+			// write, and everything after it is synchronous. N sends parked on a
+			// stalled bridge all resume holding the PRE-await snapshot, which said
+			// idle for every one of them - so without a live re-read all N skip the
+			// queue and all N spawn, one wins, and the rest are refused.
+			const session = createMockSession({ state: 'idle' });
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'first',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(window.maestro.process.spawn).toHaveBeenCalledTimes(1);
+			const [live] = useSessionStore.getState().sessions;
+			expect(live.executionQueue).toHaveLength(1);
+			expect(live.executionQueue[0].text).toBe('first');
 		});
 
 		it('keeps the submitted tab pinned when the active tab changes during reconciliation', async () => {
@@ -1259,49 +1460,30 @@ describe('useInputProcessing', () => {
 		});
 	});
 
-	describe('Auto Run blocking', () => {
-		it('queues write commands when Auto Run is active AND session is busy', async () => {
-			const runningBatchState: BatchRunState = {
-				...defaultBatchState,
-				isRunning: true,
-			};
-			mockGetBatchState.mockReturnValue(runningBatchState);
+	describe('Auto Run does not hijack the composer', () => {
+		const runningBatchState: BatchRunState = {
+			...defaultBatchState,
+			isRunning: true,
+		};
 
-			// Session must be busy for the message to actually be queued
-			// If session is idle, it processes immediately instead of queuing
-			const session = createMockSession({ state: 'busy' });
-			const deps = createDeps({
-				activeSession: session,
-				inputValue: 'regular message',
-				activeBatchRunState: runningBatchState,
-			});
-			const { result } = renderHook(() => useInputProcessing(deps));
-
-			await act(async () => {
-				await result.current.processInput();
-			});
-
-			// Should add to queue because both Auto Run is active AND session is busy
-			expect(mockSetSessions).toHaveBeenCalled();
-			const setSessionsCall = mockSetSessions.mock.calls[0][0];
-			const updatedSessions = setSessionsCall([session]);
-			expect(updatedSessions[0].executionQueue.length).toBe(1);
+		afterEach(() => {
+			useAutoRunSteeringStore.setState({ notes: {}, delivered: {} });
 		});
 
-		it('queues write commands when Auto Run is active even if session is idle', async () => {
-			const runningBatchState: BatchRunState = {
-				...defaultBatchState,
-				isRunning: true,
-			};
+		// Regression: a write-mode message typed during a run used to be swallowed
+		// and re-routed into an Auto Run steering note, so a message addressed to
+		// the agent silently meant something else. Steering is the Thought Stream's
+		// Steer button now; the composer only ever talks to the agent.
+		it('queues a write-mode message rather than parking it as a steering note', async () => {
 			mockGetBatchState.mockReturnValue(runningBatchState);
 
-			// When Auto Run is active, write-mode messages should ALWAYS be queued
-			// to prevent file conflicts, even if the session is idle.
-			// The queue will be processed when Auto Run completes via onProcessQueueAfterCompletion.
+			// Session state is irrelevant here: an Auto Run spawns its own isolated
+			// process and never marks the session busy, so the queue decision keys
+			// off the run, not the session.
 			const session = createMockSession({ state: 'idle' });
 			const deps = createDeps({
 				activeSession: session,
-				inputValue: 'regular message',
+				inputValue: 'change course',
 				activeBatchRunState: runningBatchState,
 			});
 			const { result } = renderHook(() => useInputProcessing(deps));
@@ -1310,13 +1492,10 @@ describe('useInputProcessing', () => {
 				await result.current.processInput();
 			});
 
-			// Should add to queue, NOT process immediately
+			expect(useAutoRunSteeringStore.getState().notes[session.id]).toBeUndefined();
 			expect(mockSetSessions).toHaveBeenCalled();
-			const setSessionsCall = mockSetSessions.mock.calls[0][0];
-			const updatedSessions = setSessionsCall([session]);
-			expect(updatedSessions[0].state).toBe('idle'); // Session stays idle
-			expect(updatedSessions[0].executionQueue.length).toBe(1); // Message is queued
-			expect(updatedSessions[0].executionQueue[0].text).toBe('regular message');
+			const updatedSessions = mockSetSessions.mock.calls[0][0]([session]);
+			expect(updatedSessions[0].executionQueue[0].text).toBe('change course');
 		});
 	});
 
@@ -1394,7 +1573,10 @@ describe('useInputProcessing', () => {
 			const { result } = renderHook(() => useInputProcessing(deps));
 
 			await act(async () => {
-				await result.current.processInput(undefined, undefined, { forceParallel: true });
+				// Two args, not three: the options bag is the SECOND parameter. Passing
+				// it third silently dropped forceParallel, so this case used to assert
+				// the retry hold against an ordinary send.
+				await result.current.processInput(undefined, { forceParallel: true });
 			});
 
 			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
@@ -2165,6 +2347,7 @@ describe('useInputProcessing', () => {
 		beforeEach(() => {
 			mockGenerateTabName.mockClear();
 			mockGenerateTabName.mockResolvedValue('Generated Tab Name');
+			useSettingsStore.setState({ automaticTabNamingEnabled: true } as any);
 
 			// Add tabNaming mock to window.maestro
 			window.maestro = {
@@ -2189,7 +2372,6 @@ describe('useInputProcessing', () => {
 				activeSession: session,
 				sessionsRef: { current: [session] },
 				inputValue: 'Help me implement a new feature',
-				automaticTabNamingEnabled: true,
 			});
 			const { result } = renderHook(() => useInputProcessing(deps));
 
@@ -2216,11 +2398,11 @@ describe('useInputProcessing', () => {
 				aiTabs: [newTab],
 				activeTabId: newTab.id,
 			});
+			useSettingsStore.setState({ automaticTabNamingEnabled: false } as any);
 			const deps = createDeps({
 				activeSession: session,
 				sessionsRef: { current: [session] },
 				inputValue: 'Help me with something',
-				automaticTabNamingEnabled: false,
 			});
 			const { result } = renderHook(() => useInputProcessing(deps));
 
@@ -2248,7 +2430,6 @@ describe('useInputProcessing', () => {
 				activeSession: session,
 				sessionsRef: { current: [session] },
 				inputValue: 'Follow up question',
-				automaticTabNamingEnabled: true,
 			});
 			const { result } = renderHook(() => useInputProcessing(deps));
 
@@ -2273,7 +2454,6 @@ describe('useInputProcessing', () => {
 				activeSession: session,
 				sessionsRef: { current: [session] },
 				inputValue: 'Another message',
-				automaticTabNamingEnabled: true,
 			});
 			const { result } = renderHook(() => useInputProcessing(deps));
 
@@ -2297,7 +2477,6 @@ describe('useInputProcessing', () => {
 				activeSession: session,
 				sessionsRef: { current: [session] },
 				inputValue: 'New message',
-				automaticTabNamingEnabled: true,
 			});
 			const { result } = renderHook(() => useInputProcessing(deps));
 
@@ -2324,7 +2503,6 @@ describe('useInputProcessing', () => {
 				sessionsRef: { current: [session] },
 				inputValue: 'ls -la',
 				isAiMode: false,
-				automaticTabNamingEnabled: true,
 			});
 			const { result } = renderHook(() => useInputProcessing(deps));
 
@@ -2350,7 +2528,6 @@ describe('useInputProcessing', () => {
 				sessionsRef: { current: [session] },
 				inputValue: '',
 				stagedImages: ['base64-image-data'], // Only images, no text
-				automaticTabNamingEnabled: true,
 			});
 			const { result } = renderHook(() => useInputProcessing(deps));
 
@@ -2382,7 +2559,6 @@ describe('useInputProcessing', () => {
 				activeSession: session,
 				sessionsRef: { current: [session] },
 				inputValue: 'Test message',
-				automaticTabNamingEnabled: true,
 			});
 			const { result } = renderHook(() => useInputProcessing(deps));
 
@@ -2412,7 +2588,6 @@ describe('useInputProcessing', () => {
 				activeSession: session,
 				sessionsRef: { current: [session] },
 				inputValue: 'https://github.com/RunMaestro/Maestro/pull/380 review this PR',
-				automaticTabNamingEnabled: true,
 			});
 			const { result } = renderHook(() => useInputProcessing(deps));
 
@@ -2440,7 +2615,6 @@ describe('useInputProcessing', () => {
 				activeSession: session,
 				sessionsRef: { current: [session] },
 				inputValue: 'thoughts on this issue? https://github.com/RunMaestro/Maestro/issues/381',
-				automaticTabNamingEnabled: true,
 			});
 			const { result } = renderHook(() => useInputProcessing(deps));
 
@@ -2467,7 +2641,6 @@ describe('useInputProcessing', () => {
 				activeSession: session,
 				sessionsRef: { current: [session] },
 				inputValue: 'Test message',
-				automaticTabNamingEnabled: true,
 			});
 			const { result } = renderHook(() => useInputProcessing(deps));
 
@@ -2793,6 +2966,79 @@ describe('useInputProcessing', () => {
 			expect(updated.executionQueue[0].crossAgentOnly).toBe(true);
 		});
 
+		it('holds a mention-only message when process reconciliation fails', async () => {
+			const onPlanCrossAgentMentions = vi
+				.fn()
+				.mockReturnValue({ targetSessionIds: ['rc'], suppressLocal: true });
+			const onDispatchCrossAgentMentions = vi.fn();
+			const session = createMockSession({ state: 'idle' });
+			vi.mocked(window.maestro.process.getActiveProcesses).mockRejectedValue(
+				new Error('bridge down')
+			);
+			const deps = createDeps({
+				activeSession: session,
+				activeSessionId: session.id,
+				sessionsRef: { current: [session] },
+				inputValue: '@rc pull in the latest changes',
+				onPlanCrossAgentMentions,
+				onDispatchCrossAgentMentions,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(onDispatchCrossAgentMentions).not.toHaveBeenCalled();
+			const [updated] = mockSetSessions.mock.calls[0][0]([session]);
+			expect(updated.executionQueue[0]).toMatchObject({
+				crossAgentOnly: true,
+				waitingForConnection: true,
+			});
+		});
+
+		it('keeps a mention-only message behind an existing connection hold', async () => {
+			const onPlanCrossAgentMentions = vi
+				.fn()
+				.mockReturnValue({ targetSessionIds: ['rc'], suppressLocal: true });
+			const onDispatchCrossAgentMentions = vi.fn();
+			const session = createMockSession({
+				state: 'idle',
+				executionQueue: [
+					{
+						id: 'held-a',
+						timestamp: 1,
+						tabId: 'tab-1',
+						type: 'message',
+						text: 'A',
+						waitingForConnection: true,
+					},
+				],
+			});
+			session.executionQueue[0].tabId = session.activeTabId;
+			const deps = createDeps({
+				activeSession: session,
+				activeSessionId: session.id,
+				sessionsRef: { current: [session] },
+				inputValue: '@rc B',
+				onPlanCrossAgentMentions,
+				onDispatchCrossAgentMentions,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(onDispatchCrossAgentMentions).not.toHaveBeenCalled();
+			const [updated] = useSessionStore.getState().sessions;
+			expect(updated.executionQueue.map((queued) => queued.text)).toEqual(['A', '@rc B']);
+			expect(updated.executionQueue[1]).toMatchObject({
+				crossAgentOnly: true,
+				waitingForConnection: true,
+			});
+		});
+
 		it('does not resolve mentions on an override send (queued replay / force-send)', async () => {
 			// Cross-agent resolution is gated on a real input-box submit
 			// (`overrideInputValue === undefined`) so a queued replay never re-consults.
@@ -2828,6 +3074,7 @@ describe('useInputProcessing', () => {
 
 		beforeEach(() => {
 			mockGenerateTabName.mockClear();
+			useSettingsStore.setState({ automaticTabNamingEnabled: true } as any);
 			window.maestro = {
 				...window.maestro,
 				tabNaming: { generateTabName: mockGenerateTabName },
@@ -2851,7 +3098,6 @@ describe('useInputProcessing', () => {
 				activeSession: session,
 				sessionsRef: { current: [session] },
 				inputValue: 'alphabetize the groups in this menu',
-				automaticTabNamingEnabled: true,
 			});
 			const { result } = renderHook(() => useInputProcessing(deps));
 
@@ -2884,7 +3130,6 @@ describe('useInputProcessing', () => {
 				activeSession: session,
 				sessionsRef: { current: [session] },
 				inputValue: 'add compress to folder right click',
-				automaticTabNamingEnabled: true,
 			});
 			const { result } = renderHook(() => useInputProcessing(deps));
 
@@ -2907,7 +3152,6 @@ describe('useInputProcessing', () => {
 				activeSession: session,
 				sessionsRef: { current: [session] },
 				inputValue: 'another message',
-				automaticTabNamingEnabled: true,
 			});
 			const { result } = renderHook(() => useInputProcessing(deps));
 
@@ -2916,6 +3160,75 @@ describe('useInputProcessing', () => {
 			});
 
 			expect(mockGenerateTabName).not.toHaveBeenCalled();
+		});
+	});
+
+	// ========================================================================
+	// Agent Resilience snapshot on the idle send
+	// ========================================================================
+
+	// The 2026-09-10 incident: a message typed into an IDLE tab took the direct
+	// spawn path, which never snapshotted the prompt. When it hit the weekly limit,
+	// scheduleRetryForError logged "No prompt snapshot to resend; falling back to
+	// modal" and the retry loop never started.
+	describe('Agent Resilience snapshot on the idle send', () => {
+		const weeklyLimit = {
+			type: 'rate_limited',
+			message: "You've hit your weekly limit · resets 10am (America/Chicago)",
+			recoverable: true,
+			timestamp: Date.now(),
+			agentId: 'claude-code',
+		} as never;
+
+		afterEach(() => {
+			registerDispatchDepsProvider(null);
+		});
+
+		it('snapshots the prompt before spawning, so a limit mid-send enters the retry loop', async () => {
+			registerDispatchDepsProvider(() => ({
+				conductorProfile: '',
+				customAICommands: [],
+				speckitCommands: [],
+				openspecCommands: [],
+			}));
+			const tab = createMockTab({ id: 'tab-snapshot', state: 'idle' });
+			// Default session id on purpose: createDeps pins activeSessionId to the
+			// default mock session, and a mismatched id resolves no session at all.
+			// The unique tab id is what isolates this retry key from other tests.
+			const session = createMockSession({
+				state: 'idle',
+				aiTabs: [tab],
+				activeTabId: tab.id,
+			});
+			useSessionStore.setState({ sessions: [session] });
+
+			// Ask the retry engine the question the error listener asks, from INSIDE
+			// the spawn: the limit error can arrive before the spawn promise settles,
+			// so a snapshot taken after the await would already be too late.
+			let wouldRetry: boolean | undefined;
+			vi.mocked(window.maestro.process.spawn).mockImplementation(async () => {
+				wouldRetry = scheduleRetryForError(session.id, tab.id, weeklyLimit);
+				return undefined as never;
+			});
+
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'almost perfect, just move it to the left a bit',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(window.maestro.process.spawn).toHaveBeenCalledTimes(1);
+			expect(wouldRetry).toBe(true);
+			expect(useRetryStore.getState().retries[`${session.id}:${tab.id}`]?.strategy).toBe(
+				'token-exhaustion'
+			);
+
+			cancelRetry(session.id, tab.id);
 		});
 	});
 });

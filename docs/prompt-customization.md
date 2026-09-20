@@ -57,21 +57,22 @@ Type `{{` in the prompt editor to trigger autocomplete. Use arrow keys to naviga
 
 Available in all prompts:
 
-| Variable                 | Description                                              |
-| ------------------------ | -------------------------------------------------------- |
-| `{{CONDUCTOR_PROFILE}}`  | Your About Me profile from Settings → General            |
-| `{{AGENT_NAME}}`         | Agent name                                               |
-| `{{AGENT_ID}}`           | Agent UUID (for CLI targeting)                           |
-| `{{AGENT_PATH}}`         | Agent home directory path                                |
-| `{{AGENT_GROUP}}`        | Agent's group name (if grouped)                          |
-| `{{AGENT_SESSION_ID}}`   | Agent session ID                                         |
-| `{{AGENT_HISTORY_PATH}}` | Path to agent's history JSON file                        |
-| `{{TAB_ID}}`             | This conversation's AI tab ID (for CLI targeting)        |
-| `{{TAB_NAME}}`           | Custom tab name                                          |
-| `{{TOOL_TYPE}}`          | Agent type (claude-code, codex, opencode, factory-droid) |
-| `{{CWD}}`                | Working directory                                        |
-| `{{CONTEXT_USAGE}}`      | Context window usage percentage                          |
-| `{{MAESTRO_CLI_PATH}}`   | Path to the maestro-cli binary                           |
+| Variable                 | Description                                                |
+| ------------------------ | ---------------------------------------------------------- |
+| `{{CONDUCTOR_PROFILE}}`  | Your About Me profile from Settings → General              |
+| `{{AGENT_NAME}}`         | Agent name                                                 |
+| `{{AGENT_ID}}`           | Agent UUID (for CLI targeting)                             |
+| `{{AGENT_PATH}}`         | Agent home directory path                                  |
+| `{{AGENT_GROUP}}`        | Agent's group name (if grouped)                            |
+| `{{AGENT_SESSION_ID}}`   | Agent session ID                                           |
+| `{{AGENT_HISTORY_PATH}}` | Path to agent's history JSON file                          |
+| `{{TAB_ID}}`             | This conversation's AI tab ID (for CLI targeting)          |
+| `{{TAB_NAME}}`           | Custom tab name                                            |
+| `{{TOOL_TYPE}}`          | Agent type (claude-code, codex, opencode, factory-droid)   |
+| `{{CWD}}`                | Working directory                                          |
+| `{{WORKTREE_BASE_PATH}}` | Directory where git worktrees are created (empty if unset) |
+| `{{CONTEXT_USAGE}}`      | Context window usage percentage                            |
+| `{{MAESTRO_CLI_PATH}}`   | Path to the maestro-cli binary                             |
 
 ### Date & Time Variables
 

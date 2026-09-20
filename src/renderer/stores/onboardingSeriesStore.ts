@@ -1,12 +1,11 @@
 /**
- * Runs the first-run modal series as a sequence rather than three independent
- * modals.
+ * Runs the first-run modal series as a sequence rather than independent modals.
  *
  * Each step's own dismiss handler advances this store, so exactly one modal is
  * mounted at a time and the next opens only when the previous closes. The
- * alternative - three modals each self-gating on their own flag - would open
- * all of them at once on a fresh install and stack them by z-index, which is
- * how you get a user answering the third question first.
+ * alternative - every modal self-gating on its own flag - would open all of
+ * them at once on a fresh install and stack them by z-index, which is how you
+ * get a user answering the last question first.
  *
  * The store holds only the running sequence. Whether a step has been SEEN lives
  * in settings, because that has to survive a restart; this does not.
