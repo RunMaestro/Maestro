@@ -24,6 +24,34 @@ export const CHECKED_TASK_COUNT_REGEX = /^[\s]*[-*+]\s*\[[xX✓✔]\]\s*.+$/;
 /** Global form used to rewrite checked boxes back to unchecked (reset-on-completion). */
 export const CHECKED_TASK_REGEX = /^(\s*[-*+]\s*)\[[xX✓✔]\]/gm;
 
+interface MarkdownFenceState {
+	character: '`' | '~' | null;
+	length: number;
+}
+
+function isOutsideFence(line: string, state: MarkdownFenceState): boolean {
+	const match = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+	if (!match) return state.character === null;
+
+	const token = match[1];
+	const character = token[0] as '`' | '~';
+	const info = match[2];
+
+	if (state.character === null) {
+		if (character === '`' && info.includes('`')) return true;
+		state.character = character;
+		state.length = token.length;
+		return false;
+	}
+
+	if (character === state.character && token.length >= state.length && /^[ \t]*$/.test(info)) {
+		state.character = null;
+		state.length = 0;
+	}
+
+	return false;
+}
+
 /**
  * Walk markdown content line by line, skipping fenced code blocks so example
  * snippets inside a playbook never register as real tasks or markers.
@@ -35,30 +63,11 @@ export function forEachMarkdownLine(
 	visit: (line: string, index: number) => boolean | void
 ): void {
 	const lines = content.replace(/\r\n?/g, '\n').split('\n');
-	let inFencedCode = false;
-	let fenceChar: '`' | '~' | null = null;
-	let openFenceLength = 0;
+	const fence: MarkdownFenceState = { character: null, length: 0 };
 
 	for (let i = 0; i < lines.length; i++) {
 		const line = lines[i];
-		const fenceMatch = line.trimStart().match(/^([`~]{3,})/);
-		if (fenceMatch) {
-			const currentFenceChar = fenceMatch[1][0] as '`' | '~';
-			if (!inFencedCode) {
-				inFencedCode = true;
-				fenceChar = currentFenceChar;
-				openFenceLength = fenceMatch[1].length;
-				continue;
-			}
-			if (fenceChar === currentFenceChar && fenceMatch[1].length >= openFenceLength) {
-				inFencedCode = false;
-				fenceChar = null;
-				openFenceLength = 0;
-				continue;
-			}
-		}
-
-		if (inFencedCode) continue;
+		if (!isOutsideFence(line, fence)) continue;
 
 		if (visit(line, i) === false) return;
 	}
@@ -91,4 +100,29 @@ export function countMarkdownTasks(content: string): MarkdownTaskCounts {
 	});
 
 	return { checked, unchecked, total: checked + unchecked };
+}
+
+/** Extract unchecked task text while ignoring fenced examples. */
+export function extractUncheckedMarkdownTasks(content: string): string[] {
+	const tasks: string[] = [];
+
+	forEachMarkdownLine(content, (line) => {
+		if (!UNCHECKED_TASK_REGEX.test(line)) return;
+		tasks.push(line.replace(/^\s*[-*+]\s*\[\s*\]\s*/, '').trim());
+	});
+
+	return tasks;
+}
+
+/** Reset checked tasks outside fences while preserving original line endings. */
+export function uncheckAllMarkdownTasks(content: string): string {
+	const parts = content.split(/(\r\n|\r|\n)/);
+	const fence: MarkdownFenceState = { character: null, length: 0 };
+
+	for (let i = 0; i < parts.length; i += 2) {
+		if (!isOutsideFence(parts[i], fence)) continue;
+		parts[i] = parts[i].replace(CHECKED_TASK_REGEX, '$1[ ]');
+	}
+
+	return parts.join('');
 }
