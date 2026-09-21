@@ -25,7 +25,7 @@ import {
 	formatPredecessorHandoff,
 	sanitizeHandoffBlurb,
 } from '../../shared/goalDriven/goalHandoff';
-import { hasCapability } from '../../main/agents/capabilities';
+import { hasCapability } from '../../shared/maestro-lib/providers/capabilities';
 import { substituteTemplateVariables, TemplateContext } from '../../shared/templateVariables';
 import { prependNewSessionMessage } from '../../shared/newSessionMessage';
 import { spawnAgent } from './agent-spawner';
@@ -52,6 +52,11 @@ export interface RunGoalOptions {
 	model?: string;
 	/** Run-scoped reasoning effort override (same contract as `model`). */
 	effort?: string;
+	/**
+	 * Stop the run. The iteration in flight is aborted and the run ends with
+	 * `stopped-by-user` (never as a failed iteration). See `spawnAgent`'s `signal`.
+	 */
+	signal?: AbortSignal;
 }
 
 /** Human label for a goal run's exit reason (mirrors the desktop wording). */
@@ -91,7 +96,7 @@ async function requestHandoffBlurb(
 	session: SessionInfo,
 	agentSessionId: string,
 	appendSystemPrompt: string | undefined,
-	runOverrides: { model?: string; effort?: string } = {}
+	runOverrides: { model?: string; effort?: string; signal?: AbortSignal } = {}
 ): Promise<{ blurb: string; usageStats?: UsageStats }> {
 	try {
 		const result = await captureCliRun(
@@ -110,6 +115,7 @@ async function requestHandoffBlurb(
 					customEnvVars: session.customEnvVars,
 					sshRemoteConfig: session.sessionSshRemoteConfig,
 					appendSystemPrompt,
+					signal: runOverrides.signal,
 				}),
 			(r) => (r.success ? 0 : 1)
 		);
@@ -135,7 +141,13 @@ export async function* runGoal(
 	goalConfig: GoalRunConfig,
 	options: RunGoalOptions = {}
 ): AsyncGenerator<JsonlEvent> {
-	const { writeHistory = true, verbose = false, model: runModel, effort: runEffort } = options;
+	const {
+		writeHistory = true,
+		verbose = false,
+		model: runModel,
+		effort: runEffort,
+		signal,
+	} = options;
 	const runStartTime = Date.now();
 
 	const gitBranch = getGitBranch(session.cwd);
@@ -207,6 +219,13 @@ export async function* runGoal(
 				break;
 			}
 
+			// The operator stopped the run between iterations.
+			if (signal?.aborted) {
+				exitReason = 'stopped-by-user';
+				if (iteration > 0) exitDetail = `Stopped by the operator after iteration ${iteration}.`;
+				break;
+			}
+
 			iteration++;
 
 			const templateContext: TemplateContext = {
@@ -250,6 +269,7 @@ export async function* runGoal(
 						customEnvVars: session.customEnvVars,
 						sshRemoteConfig: session.sessionSshRemoteConfig,
 						appendSystemPrompt,
+						signal,
 					}),
 				(r) => (r.success ? 0 : 1)
 			);
@@ -259,6 +279,14 @@ export async function* runGoal(
 				totalInputTokens += result.usageStats.inputTokens || 0;
 				totalOutputTokens += result.usageStats.outputTokens || 0;
 				totalCost += result.usageStats.totalCostUsd || 0;
+			}
+
+			// Interrupted mid-iteration: there is no self-report to parse, and
+			// recording "Iteration N failed" would misdescribe a deliberate stop.
+			if (result.outcome === 'interrupted') {
+				exitReason = 'stopped-by-user';
+				exitDetail = `Stopped by the operator during iteration ${iteration}.`;
+				break;
 			}
 
 			// Parse the agent's self-report. A missing marker carries the previous
@@ -355,7 +383,7 @@ export async function* runGoal(
 					session,
 					result.agentSessionId,
 					appendSystemPrompt,
-					{ model: runModel, effort: runEffort }
+					{ model: runModel, effort: runEffort, signal }
 				);
 				if (handoff.usageStats) {
 					totalInputTokens += handoff.usageStats.inputTokens || 0;
