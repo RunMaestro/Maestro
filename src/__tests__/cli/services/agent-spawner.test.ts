@@ -27,10 +27,12 @@ const mockStdin = {
 };
 const mockStdout = new EventEmitter();
 const mockStderr = new EventEmitter();
+const mockKill = vi.fn();
 const mockChild = Object.assign(new EventEmitter(), {
 	stdin: mockStdin,
 	stdout: mockStdout,
 	stderr: mockStderr,
+	kill: mockKill,
 });
 
 /**
@@ -655,6 +657,28 @@ Some text with [x] in it that's not a checkbox
 			expect(result.available).toBe(true);
 			expect(result.path).toBe('/usr/local/bin/claude');
 			expect(result.source).toBe('path');
+		});
+
+		it('should not leave a carriage return on the path when Windows `where` prints several matches', async () => {
+			// `where.exe` separates results with CRLF. Taking the first line by
+			// splitting on '\n' alone left a trailing '\r' on it, so the spawn then
+			// failed with `spawn C:\...\copilot\r ENOENT` (seen against a real
+			// Copilot install, which matches both `copilot` and `copilot.exe`).
+			mockGetAgentCustomPath.mockReturnValue(undefined);
+			vi.mocked(fs.promises.stat).mockRejectedValue(new Error('ENOENT'));
+			mockSpawn.mockReturnValue(mockChild);
+
+			const { detectClaude: freshDetectClaude } =
+				await import('../../../cli/services/agent-spawner');
+			const resultPromise = freshDetectClaude();
+
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockStdout.emit('data', Buffer.from('C:\\bin\\claude\r\nC:\\bin\\claude.exe\r\n'));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
+
+			const result = await resultPromise;
+			expect(result.path).toBe('C:\\bin\\claude');
 		});
 
 		it('should return unavailable when Claude is not found', async () => {
@@ -1864,6 +1888,275 @@ Some text with [x] in it that's not a checkbox
 			mockStdout.emit('data', Buffer.from('{"type":"result","result":"Done"}\n'));
 			mockChild.emit('close', 0);
 			await resultPromise;
+		});
+	});
+
+	describe('turn contract (shared resolveTurnOutcome)', () => {
+		const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+		const claudeResult = (text: string) =>
+			`{"type":"system","subtype":"init","session_id":"sess-t"}\n` +
+			`{"type":"assistant","message":{"content":[{"type":"text","text":"${text}"}]}}\n` +
+			`{"type":"result","result":"${text}","session_id":"sess-t"}\n`;
+
+		it('does not spawn anything when the signal is already aborted', async () => {
+			const controller = new AbortController();
+			controller.abort();
+
+			const result = await spawnAgent('claude-code', '/project', 'prompt', undefined, {
+				signal: controller.signal,
+			});
+
+			expect(result).toMatchObject({ success: false, outcome: 'interrupted' });
+			expect(mockSpawn).not.toHaveBeenCalled();
+		});
+
+		it('reports an aborted Claude turn as interrupted, keeping what it captured', async () => {
+			const controller = new AbortController();
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt', undefined, {
+				signal: controller.signal,
+			});
+			await tick();
+
+			mockStdout.emit('data', Buffer.from(claudeResult('partial answer')));
+			controller.abort();
+			expect(mockKill).toHaveBeenCalledWith('SIGTERM');
+			mockChild.emit('close', null, 'SIGTERM');
+
+			const result = await resultPromise;
+			expect(result).toMatchObject({
+				success: false,
+				outcome: 'interrupted',
+				agentSessionId: 'sess-t',
+			});
+		});
+
+		it('reports an aborted JSON-line turn as interrupted even when stderr looks like an error', async () => {
+			const controller = new AbortController();
+			const resultPromise = spawnAgent('codex', '/project', 'prompt', undefined, {
+				signal: controller.signal,
+			});
+			await tick();
+
+			controller.abort();
+			mockStderr.emit('data', Buffer.from('Error: something the stop triggered\n'));
+			mockChild.emit('close', 143, null);
+
+			expect(await resultPromise).toMatchObject({ success: false, outcome: 'interrupted' });
+		});
+
+		it('escalates to SIGKILL when the agent ignores SIGTERM, and stops the timer once it exits', async () => {
+			vi.useFakeTimers();
+			try {
+				const controller = new AbortController();
+				const resultPromise = spawnAgent('claude-code', '/project', 'prompt', undefined, {
+					signal: controller.signal,
+				});
+				await vi.advanceTimersByTimeAsync(0);
+
+				controller.abort();
+				expect(mockKill).toHaveBeenCalledTimes(1);
+				await vi.advanceTimersByTimeAsync(5000);
+				expect(mockKill).toHaveBeenLastCalledWith('SIGKILL');
+
+				mockChild.emit('close', null, 'SIGKILL');
+				expect((await resultPromise).outcome).toBe('interrupted');
+
+				mockKill.mockClear();
+				await vi.advanceTimersByTimeAsync(10000);
+				expect(mockKill).not.toHaveBeenCalled();
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		it('never signals the child when the turn finishes before an abort', async () => {
+			const controller = new AbortController();
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt', undefined, {
+				signal: controller.signal,
+			});
+			await tick();
+
+			mockStdout.emit('data', Buffer.from(claudeResult('done')));
+			mockChild.emit('close', 0, null);
+			expect((await resultPromise).outcome).toBe('completed');
+
+			controller.abort();
+			expect(mockKill).not.toHaveBeenCalled();
+		});
+
+		it('reports a signal-killed Claude turn with nothing captured as a crash, not an interrupt', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+			await tick();
+
+			mockChild.emit('close', null, 'SIGKILL');
+
+			const result = await resultPromise;
+			expect(result).toMatchObject({ success: false, outcome: 'crashed' });
+			expect(result.error).toContain('SIGKILL');
+		});
+
+		it('keeps failing a Claude turn that exits non-zero, even with text streamed (the old strict rule)', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+			await tick();
+
+			mockStdout.emit('data', Buffer.from(claudeResult('the answer')));
+			mockStderr.emit('data', Buffer.from('npm warn deprecated some-package@1.0.0\n'));
+			mockChild.emit('close', 1, null);
+
+			expect(await resultPromise).toMatchObject({ success: false, outcome: 'crashed' });
+		});
+
+		it('never reports a Claude turn killed by an unrequested signal as a success, even with partial text', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+			await tick();
+
+			// Assistant text arrived, but no result event: the process was killed mid-turn.
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					'{"type":"assistant","message":{"content":[{"type":"text","text":"half an answ"}]}}\n'
+				)
+			);
+			mockChild.emit('close', null, 'SIGKILL');
+
+			const result = await resultPromise;
+			expect(result).toMatchObject({ success: false, outcome: 'crashed' });
+			expect(result.error).toContain('SIGKILL');
+		});
+
+		it('fails a clean Claude exit whose result event is empty and produced no assistant text', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+			await tick();
+
+			mockStdout.emit('data', Buffer.from('{"type":"result","result":"","session_id":"s"}\n'));
+			mockChild.emit('close', 0, null);
+
+			expect(await resultPromise).toMatchObject({ success: false, outcome: 'crashed' });
+		});
+
+		it('keeps a generic-path answer produced before a bare bad exit (Grok with --max-turns)', async () => {
+			const resultPromise = spawnAgent('grok', '/project', 'brief task');
+			await tick();
+
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					'{"type":"text","data":"The service hit a rate limit, so I added retries."}\n' +
+						'{"type":"end","stopReason":"EndTurn","sessionId":"sess-g"}\n'
+				)
+			);
+			mockStderr.emit('data', Buffer.from('max turns reached\n'));
+			mockChild.emit('close', 1, null);
+
+			// The answer merely MENTIONS a rate limit; it must not become a crash.
+			expect(await resultPromise).toMatchObject({
+				success: true,
+				outcome: 'completed-with-warning',
+			});
+		});
+
+		it('fails a Claude turn whose stderr carries a specific classified error, answer or not', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+			await tick();
+
+			mockStdout.emit('data', Buffer.from(claudeResult('the answer')));
+			mockStderr.emit('data', Buffer.from('Invalid API key - Please run /login\n'));
+			mockChild.emit('close', 1, null);
+
+			expect(await resultPromise).toMatchObject({ success: false, outcome: 'crashed' });
+		});
+
+		it('still fails a clean Claude exit that captured nothing', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+			await tick();
+
+			mockChild.emit('close', 0, null);
+
+			expect(await resultPromise).toMatchObject({ success: false, outcome: 'crashed' });
+		});
+
+		it('reports a failure to start as crashed', async () => {
+			const resultPromise = spawnAgent('codex', '/project', 'prompt');
+			await tick();
+
+			mockChild.emit('error', new Error('spawn codex ENOENT'));
+
+			expect(await resultPromise).toMatchObject({
+				success: false,
+				outcome: 'crashed',
+				error: expect.stringContaining('ENOENT'),
+			});
+		});
+
+		it('reports an unresolved SSH remote as crashed before anything is spawned', async () => {
+			mockWrapSpawnWithSsh.mockResolvedValue({
+				command: 'codex',
+				args: [],
+				cwd: '/project',
+				sshRemoteUsed: null,
+			});
+
+			const result = await spawnAgent('codex', '/project', 'prompt', undefined, {
+				sshRemoteConfig: { enabled: true, remoteId: 'gone' },
+			});
+
+			expect(result).toMatchObject({ success: false, outcome: 'crashed' });
+			expect(result.error).toContain('could not be resolved');
+			expect(mockSpawn).not.toHaveBeenCalled();
+		});
+
+		it('does not overcount Codex usage, which reports a running session total on every event', async () => {
+			const resultPromise = spawnAgent('codex', '/project', 'prompt');
+			await tick();
+
+			const tokenCount = (input: number, output: number) =>
+				JSON.stringify({
+					type: 'event_msg',
+					payload: {
+						type: 'token_count',
+						info: { total_token_usage: { input_tokens: input, output_tokens: output } },
+					},
+				}) + '\n';
+			// Running totals 100 -> 200 -> 300. Summing them (the old behavior) gives 600.
+			mockStdout.emit(
+				'data',
+				Buffer.from(tokenCount(100, 10) + tokenCount(200, 20) + tokenCount(300, 30))
+			);
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					JSON.stringify({
+						type: 'response_item',
+						payload: {
+							type: 'message',
+							role: 'assistant',
+							content: [{ type: 'output_text', text: 'ok' }],
+						},
+					}) + '\n'
+				)
+			);
+			mockChild.emit('close', 0, null);
+
+			const result = await resultPromise;
+			expect(result.usageStats?.inputTokens).toBe(300);
+			expect(result.usageStats?.outputTokens).toBe(30);
+		});
+
+		it('reassembles a JSON line split across chunks', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+			await tick();
+
+			const whole = claudeResult('chunked answer');
+			const cut = Math.floor(whole.length / 2);
+			mockStdout.emit('data', Buffer.from(whole.slice(0, cut)));
+			mockStdout.emit('data', Buffer.from(whole.slice(cut)));
+			mockChild.emit('close', 0, null);
+
+			expect(await resultPromise).toMatchObject({
+				success: true,
+				outcome: 'completed',
+				response: 'chunked answer',
+			});
 		});
 	});
 
