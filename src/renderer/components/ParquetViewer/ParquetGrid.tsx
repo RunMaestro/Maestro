@@ -24,6 +24,7 @@ import type {
 } from '../../../shared/parquet/types';
 import type { Theme } from '../../types';
 import { columnAlignment, columnTypeBadge, formatCell, quoteColumnName } from './parquetFormat';
+import { isCoarsePointer } from '../../utils/touch';
 
 /** Height of one data row, in pixels. Fixed so the virtualizer never measures. */
 const ROW_HEIGHT = 26;
@@ -319,6 +320,13 @@ export function ParquetGrid({
 								// row flips to the record view without flashing selected text.
 								onMouseDown={(event) => {
 									if (event.detail > 1) event.preventDefault();
+								}}
+								// A finger cannot double-tap (iOS reserves the gesture), so on a
+								// coarse pointer one tap opens the record view. A mouse keeps
+								// the double-click, since a single click on a grid row is how
+								// the user selects text in it.
+								onClick={() => {
+									if (isCoarsePointer()) onOpenRow(virtualRow.index);
 								}}
 								onDoubleClick={() => onOpenRow(virtualRow.index)}
 								data-testid={`parquet-row-${virtualRow.index}`}

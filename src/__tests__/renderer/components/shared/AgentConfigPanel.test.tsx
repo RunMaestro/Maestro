@@ -218,14 +218,15 @@ describe('AgentConfigPanel', () => {
 
 			render(<AgentConfigPanel {...createDefaultProps({ customEnvVars })} />);
 
-			// Input fields for custom env vars should be present
-			// The key inputs should have the var names as values
-			const inputs = screen.getAllByRole('textbox');
-			const keyInputs = inputs.filter(
-				(input) =>
-					(input as HTMLInputElement).value === 'MY_VAR' ||
-					(input as HTMLInputElement).value === 'ANOTHER_VAR'
-			);
+			// Input fields for custom env vars should be present. The name field is
+			// a combobox (it suggests provider vars), so it is read by test id.
+			const keyInputs = screen
+				.getAllByTestId('env-var-key-input')
+				.filter(
+					(input) =>
+						(input as HTMLInputElement).value === 'MY_VAR' ||
+						(input as HTMLInputElement).value === 'ANOTHER_VAR'
+				);
 			expect(keyInputs.length).toBe(2);
 		});
 
@@ -233,6 +234,28 @@ describe('AgentConfigPanel', () => {
 			render(<AgentConfigPanel {...createDefaultProps()} />);
 
 			expect(screen.getByText('Add Variable')).toBeInTheDocument();
+		});
+
+		it('should focus the unnamed row and open its suggestions after Add Variable', () => {
+			// The parent owns the record, so simulate what it does: Add Variable
+			// fires the callback, the parent adds the unnamed row, we re-render.
+			const { rerender } = render(<AgentConfigPanel {...createDefaultProps()} />);
+
+			fireEvent.click(screen.getByText('Add Variable'));
+			rerender(<AgentConfigPanel {...createDefaultProps({ customEnvVars: { '': '' } })} />);
+
+			const keyInput = screen.getByTestId('env-var-key-input');
+			expect(keyInput).toHaveValue('');
+			expect(keyInput).toHaveFocus();
+			expect(screen.getByTestId('env-var-key-input-suggestions')).toBeInTheDocument();
+		});
+
+		it('should not focus an unnamed row that was already there on open', () => {
+			render(<AgentConfigPanel {...createDefaultProps({ customEnvVars: { '': '' } })} />);
+
+			// A blank row restored from disk is not something the user just asked
+			// for, so it must leave the caret where it was.
+			expect(screen.queryByTestId('env-var-key-input-suggestions')).not.toBeInTheDocument();
 		});
 
 		it('should display both built-in and custom env vars when showBuiltInEnvVars is true', () => {
@@ -248,10 +271,9 @@ describe('AgentConfigPanel', () => {
 			expect(screen.getByText('MAESTRO_SESSION_RESUMED')).toBeInTheDocument();
 
 			// Custom var should also be in an input
-			const inputs = screen.getAllByRole('textbox');
-			const customKeyInput = inputs.find(
-				(input) => (input as HTMLInputElement).value === 'CUSTOM_VAR'
-			);
+			const customKeyInput = screen
+				.getAllByTestId('env-var-key-input')
+				.find((input) => (input as HTMLInputElement).value === 'CUSTOM_VAR');
 			expect(customKeyInput).toBeDefined();
 		});
 	});

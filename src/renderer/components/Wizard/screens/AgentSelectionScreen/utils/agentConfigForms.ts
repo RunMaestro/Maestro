@@ -1,3 +1,5 @@
+import { withBlankEnvVarRow } from '../../../../../../shared/envVarCatalog';
+
 export function normalizeOptionalWizardString(value: string): string | undefined {
 	return value || undefined;
 }
@@ -35,11 +37,5 @@ export function removeEnvVar(envVars: Record<string, string>, key: string): Reco
 }
 
 export function addEnvVar(envVars: Record<string, string>): Record<string, string> {
-	let newKey = 'NEW_VAR';
-	let counter = 1;
-	while (envVars[newKey]) {
-		newKey = `NEW_VAR_${counter}`;
-		counter++;
-	}
-	return { ...envVars, [newKey]: '' };
+	return withBlankEnvVarRow(envVars);
 }

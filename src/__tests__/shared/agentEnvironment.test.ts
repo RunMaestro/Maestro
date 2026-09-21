@@ -10,6 +10,7 @@ import {
 	maskEnvValue,
 	resolveAgentEnvironment,
 	isBlankEnvValue,
+	isBlankEnvKey,
 	stripBlankEnvVars,
 } from '../../shared/agentEnvironment';
 
@@ -151,6 +152,12 @@ describe('stripBlankEnvVars', () => {
 		expect(stripBlankEnvVars(undefined)).toEqual({});
 	});
 
+	it('drops an UNNAMED row even when it carries a value', () => {
+		// A row the user gave a value to before naming it. `env[''] = 'x'` is a
+		// variable no child can read, and Windows rejects the empty name outright.
+		expect(stripBlankEnvVars({ '': 'orphan', KEPT: 'value' })).toEqual({ KEPT: 'value' });
+	});
+
 	it('does not mutate its input', () => {
 		const input = { A: '', B: 'b' };
 		stripBlankEnvVars(input);
@@ -172,5 +179,17 @@ describe('resolveAgentEnvironment vs stripBlankEnvVars', () => {
 		expect(resolved).toHaveLength(1);
 		expect(resolved[0].value).toBe('');
 		expect(stripBlankEnvVars({ CLAUDE_CONFIG_DIR: '' })).toEqual({});
+	});
+});
+
+describe('isBlankEnvKey', () => {
+	it('treats an empty or whitespace-only name as unnamed', () => {
+		expect(isBlankEnvKey('')).toBe(true);
+		expect(isBlankEnvKey('   ')).toBe(true);
+	});
+
+	it('treats any real name as named', () => {
+		expect(isBlankEnvKey('A')).toBe(false);
+		expect(isBlankEnvKey('CLAUDE_CONFIG_DIR')).toBe(false);
 	});
 });

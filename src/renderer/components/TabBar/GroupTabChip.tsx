@@ -300,7 +300,9 @@ export const GroupTabChip = memo(function GroupTabChip({
 					}}
 				/>
 			) : (
-				<span className={isActive ? 'whitespace-nowrap' : 'truncate'}>{group.name}</span>
+				<span data-tab-label className={isActive ? 'whitespace-nowrap' : 'truncate'}>
+					{group.name}
+				</span>
 			)}
 
 			{/* Hover / long-press overlay menu (Rename group / Change icon / Break

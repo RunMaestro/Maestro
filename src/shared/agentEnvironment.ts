@@ -139,7 +139,26 @@ export function isBlankEnvValue(value: string): boolean {
 }
 
 /**
- * Drop blank-valued entries from a set of env vars.
+ * Whether an env-var NAME is blank, meaning the row is unfinished rather than
+ * configured.
+ *
+ * A freshly added row starts with no name at all, so that the editor can offer
+ * the provider's variables instead of inventing a placeholder the user has to
+ * delete. That row lives in the same record as the real ones until it is
+ * filled in, so every spawn path has to skip it: `env[''] = 'x'` is a variable
+ * no child can ever read, and on Windows `SetEnvironmentVariable` with an empty
+ * name fails outright.
+ *
+ * Deliberately NOT symmetric with {@link isBlankEnvValue}. A blank value is a
+ * user decision ("do not set this"), so it cancels a lower layer. A blank name
+ * is not a decision at all, so it is simply dropped.
+ */
+export function isBlankEnvKey(key: string): boolean {
+	return key.trim() === '';
+}
+
+/**
+ * Drop entries a spawn must not export: blank values, and unnamed rows.
  *
  * Note this is the SPAWN-time rule, and it deliberately differs from
  * {@link resolveAgentEnvironment}, which keeps blanks because it reports what the
@@ -152,7 +171,7 @@ export function stripBlankEnvVars(
 ): Record<string, string> {
 	const result: Record<string, string> = {};
 	for (const [key, value] of Object.entries(vars || {})) {
-		if (isBlankEnvValue(value)) continue;
+		if (isBlankEnvKey(key) || isBlankEnvValue(value)) continue;
 		result[key] = value;
 	}
 	return result;

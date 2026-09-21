@@ -34,6 +34,7 @@ import { SUPPORTED_AGENTS, NEW_SESSION_MESSAGE_MAX_LENGTH } from './types';
 import { logger } from '../../utils/logger';
 import { isAbsolutePath } from '../../../shared/formatters';
 import { isSameDirectory, workingDirectoryChangeBlocker } from '../../utils/agentWorkingDirectory';
+import { withBlankEnvVarRow } from '../../../shared/envVarCatalog';
 
 /**
  * EditAgentModal - Modal for editing an existing agent's settings
@@ -902,15 +903,7 @@ export function EditAgentModal({
 								});
 							}}
 							onEnvVarAdd={() => {
-								let newKey = 'NEW_VAR';
-								let counter = 1;
-								// A parked key still occupies the name - reusing it would collide
-								// the moment the user switches that row back on.
-								while (newKey in customEnvVars || newKey in customEnvVarsDisabled) {
-									newKey = `NEW_VAR_${counter}`;
-									counter++;
-								}
-								setCustomEnvVars((prev) => ({ ...prev, [newKey]: '' }));
+								setCustomEnvVars((prev) => withBlankEnvVarRow(prev));
 							}}
 							onEnvVarsBlur={() => {
 								/* Saved on modal save */

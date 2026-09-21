@@ -405,6 +405,7 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 
 			{/* Tab display name */}
 			<span
+				data-tab-label
 				className="text-xs font-medium whitespace-nowrap"
 				style={{ color: isActive ? theme.colors.textMain : theme.colors.textDim }}
 			>
@@ -459,6 +460,7 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 			{(isHovered || isActive) && (
 				<button
 					onClick={handleCloseClick}
+					data-tab-close
 					className="p-0.5 rounded hover:bg-white/10 transition-colors shrink-0"
 					title={`Close tab${shortcutSuffix(tabShortcuts.closeTab?.keys)}`}
 				>

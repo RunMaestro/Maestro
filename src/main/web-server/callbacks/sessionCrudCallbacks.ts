@@ -13,7 +13,12 @@ export function registerSessionCrudCallbacks(
 
 	// Set up callback for web server to create a session
 	// Uses IPC request-response pattern - renderer creates the session and responds with sessionId
-	server.setCreateSessionCallback(async (name, toolType, cwd, groupId, config) => {
+	//
+	// `background` has to reach the renderer for `create-agent --background` to
+	// mean anything: the renderer's gate reads it off the event detail, so an
+	// argument dropped here is indistinguishable from a foreground create and
+	// the new agent takes the window from whoever is working (issue #1496).
+	server.setCreateSessionCallback(async (name, toolType, cwd, groupId, config, background) => {
 		const mainWindow = getMainWindow();
 		if (!mainWindow) {
 			logger.warn('mainWindow is null for createSession', 'WebServer');
@@ -45,7 +50,8 @@ export function registerSessionCrudCallbacks(
 				cwd,
 				groupId,
 				config,
-				responseChannel
+				responseChannel,
+				background === true
 			);
 
 			const timeoutId = setTimeout(() => {

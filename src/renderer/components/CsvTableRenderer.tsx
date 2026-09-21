@@ -3,6 +3,7 @@ import { ChevronUp, ChevronDown } from 'lucide-react';
 import type { Theme } from '../types';
 import { highlightMatches } from '../utils/highlightMatches';
 import { CsvRowDetailModal } from './CsvRowDetailModal';
+import { isCoarsePointer } from '../utils/touch';
 
 /**
  * Typography note: this viewer sets no font-family and sizes everything in
@@ -327,6 +328,11 @@ export function CsvTableRenderer({
 								// row flips to the detail view without flashing selected text.
 								onMouseDown={(e) => {
 									if (e.detail > 1) e.preventDefault();
+								}}
+								// One tap opens the row on a coarse pointer: a finger cannot
+								// double-tap, and a phone has no keyboard to fall back on.
+								onClick={() => {
+									if (isCoarsePointer()) setDetailRowIndex(rowIdx);
 								}}
 								onDoubleClick={() => setDetailRowIndex(rowIdx)}
 							>

@@ -7,6 +7,7 @@ import { getSshRemoteById } from '../../../stores';
 import { withIpcErrorLogging } from '../../../utils/ipcHandler';
 import { getShellPath } from '../../../runtime/getShellPath';
 import { captureMessage } from '../../../utils/sentry';
+import { processCarriageReturns, stripAnsiCodes } from '../../../../shared/stringUtils';
 import type { GitRunCommandResult, GitStreamingOperation } from '../../../../shared/gitUtils';
 import { LOG_CONTEXT, handlerOpts } from './shared';
 
@@ -47,6 +48,27 @@ function buildStreamingGitArgs(
 			: [...color, 'push', '--progress'];
 	}
 	return [...color, operation, '--progress'];
+}
+
+/**
+ * Turn a failed run's stderr into text a plain-text surface can show.
+ *
+ * The run itself is asked for color (`-c color.ui=always` above, FORCE_COLOR for
+ * the hooks), because the console renders ANSI. The `error` field does not go to
+ * that console: it goes to the failure toast and the modal footer, both of which
+ * are plain `<div>`s, so the escape bytes surface as literal `[33m` in front of
+ * every word a pre-push hook colored.
+ *
+ * Carriage returns get the same treatment. `--progress` draws a counter by
+ * overwriting one line, and without a terminal to overwrite, every intermediate
+ * percentage would be concatenated into the message.
+ */
+function plainGitErrorText(stderr: string): string {
+	return processCarriageReturns(stripAnsiCodes(stderr))
+		.split('\n')
+		.map((line) => line.trimEnd())
+		.join('\n')
+		.trim();
 }
 
 /**
@@ -166,7 +188,7 @@ async function runStreamingGitCommand(
 			error:
 				result.exitCode === 0 || cancelled
 					? undefined
-					: result.stderr.trim() || `git ${operation} exited with ${result.exitCode}`,
+					: plainGitErrorText(result.stderr) || `git ${operation} exited with ${result.exitCode}`,
 		};
 	} finally {
 		streamingGitRuns.delete(runId);

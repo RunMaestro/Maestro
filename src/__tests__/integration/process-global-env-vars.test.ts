@@ -388,6 +388,16 @@ describe('Test 2.10: Empty/Undefined Global Vars Handled Gracefully', () => {
 		expect(env.NORMAL_VAR).toBe('value');
 	});
 
+	it('should drop an unnamed row even when it carries a value', () => {
+		// The env editors add a new row with NO name, so the name field can offer
+		// the provider's variables. If the user types the value first, that row is
+		// still half-finished: `env[''] = 'x'` is a variable no child can read.
+		const env = buildChildProcessEnv({ '': 'orphan' }, false, { '  ': 'also orphan' });
+
+		expect('' in env).toBe(false);
+		expect('  ' in env).toBe(false);
+	});
+
 	it('should handle very long variable values', () => {
 		const longValue = 'x'.repeat(50000);
 		const globalVars = {

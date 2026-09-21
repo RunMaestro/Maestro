@@ -639,7 +639,7 @@ describe('AgentSelectionScreen hooks', () => {
 		expect(setWizardCustomEnvVars).toHaveBeenCalledWith({ NEW: '2' });
 		expect(setWizardCustomEnvVars).toHaveBeenCalledWith({ OLD: '3' });
 		expect(setWizardCustomEnvVars).toHaveBeenCalledWith(undefined);
-		expect(setWizardCustomEnvVars).toHaveBeenCalledWith({ OLD: '1', NEW_VAR: '' });
+		expect(setWizardCustomEnvVars).toHaveBeenCalledWith({ OLD: '1', '': '' });
 		expect(window.maestro.agents.setConfig).toHaveBeenCalledWith('codex', { model: 'gpt-5' });
 		expect(window.maestro.agents.setCustomPath).toHaveBeenCalledWith('codex', '/bin/codex');
 		expect(window.maestro.agents.getModels).toHaveBeenCalledWith('codex', true, undefined);

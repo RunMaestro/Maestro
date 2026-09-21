@@ -450,5 +450,18 @@ describe('Agents Preload API', () => {
 			expect(mockInvoke).toHaveBeenCalledWith('agents:getKnownAuthDirs');
 			expect(result).toEqual(dirs);
 		});
+
+		it('should invoke agents:getKnownEnvVarKeys', async () => {
+			const envVarKeys = {
+				byProvider: { 'claude-code': ['CLAUDE_CONFIG_DIR'] },
+				global: ['HTTPS_PROXY'],
+			};
+			mockInvoke.mockResolvedValue(envVarKeys);
+
+			const result = await api.getKnownEnvVarKeys();
+
+			expect(mockInvoke).toHaveBeenCalledWith('agents:getKnownEnvVarKeys');
+			expect(result).toEqual(envVarKeys);
+		});
 	});
 });

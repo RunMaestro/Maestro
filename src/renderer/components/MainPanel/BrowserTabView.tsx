@@ -29,6 +29,7 @@ import {
 	getBrowserTabTitle,
 	isHttpBrowserTabUrl,
 	resolveBrowserTabNavigationTarget,
+	toWebviewSrc,
 } from '../../utils/browserTabPersistence';
 import { isWebDesktop } from '../../utils/runtimeContext';
 
@@ -243,7 +244,10 @@ export const BrowserTabView = React.memo(
 		// navigation event, and re-assigning a <webview>'s src reloads it, so a
 		// redirecting/canonicalizing site (e.g. google.com to www.google.com/)
 		// refreshed forever. Capturing the initial url in a ref breaks the loop.
-		const initialSrcRef = useRef(tab.url || DEFAULT_BROWSER_TAB_URL);
+		// Must go through toWebviewSrc: Electron parses the webview's src attribute
+		// with `new URL()` while attaching, and an unparseable value throws
+		// mid-commit and crashes the renderer (MAESTRO-QX/QY/QZ).
+		const initialSrcRef = useRef(toWebviewSrc(tab.url));
 		const isAddressFocusedRef = useRef(false);
 		// Track whether the user explicitly clicked into the webview host area.
 		// Used to distinguish intentional focus (user click) from programmatic

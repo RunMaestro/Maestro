@@ -1,4 +1,5 @@
 import { useAgentConfiguration } from '../../../../../hooks/agent/useAgentConfiguration';
+import { withBlankEnvVarRow } from '../../../../../../shared/envVarCatalog';
 import { AGENT_TILES } from '../../../../Wizard/screens/AgentSelectionScreen';
 import type { AgentConfig, DirectorNotesSettings, ToolType } from '../../../../../types';
 import type { DirectorNotesAgentState, DirectorNotesTile } from '../types';
@@ -86,13 +87,7 @@ export function useDirectorNotesAgentState({
 	};
 
 	const handleEnvVarAdd = () => {
-		let newKey = 'NEW_VAR';
-		let counter = 1;
-		while (Object.prototype.hasOwnProperty.call(agentConfiguration.customEnvVars, newKey)) {
-			newKey = `NEW_VAR_${counter}`;
-			counter++;
-		}
-		agentConfiguration.setCustomEnvVars({ ...agentConfiguration.customEnvVars, [newKey]: '' });
+		agentConfiguration.setCustomEnvVars(withBlankEnvVarRow(agentConfiguration.customEnvVars));
 	};
 
 	const handleConfigChange = (key: string, value: unknown) => {

@@ -17,8 +17,9 @@
  *     the same height.
  *
  * All three are sized for a thumb rather than a cursor: 52px for a top-level row
- * and 44px for a nested option, which clears the 44px tap-target floor
- * `src/web/index.css` sets on every button under 767px.
+ * and 44px for a nested option, Apple's 44pt minimum. The sizes are set HERE
+ * because no stylesheet sets a floor: `src/web/index.css` declares one, but
+ * nothing imports that file, so the web-desktop bundle never loads it.
  */
 
 import React from 'react';

@@ -13,34 +13,17 @@
 import type Convert from 'ansi-to-html';
 import DOMPurify from 'dompurify';
 
+import { processCarriageReturns } from '../../shared/stringUtils';
+
 // ============================================================================
 // Terminal Text Processing
 // ============================================================================
 
 /**
- * Process carriage returns to simulate terminal line overwrites.
- * When a line contains \r, the text after the last \r replaces the entire line.
- * This mimics how terminals handle carriage returns for progress indicators.
- *
- * @param text - Raw text potentially containing carriage returns
- * @returns Processed text with carriage return overwrites applied
+ * Re-exported so the renderer's terminal-text helpers stay in one import, while
+ * the implementation lives in `shared/` where the main process can reach it.
  */
-export const processCarriageReturns = (text: string): string => {
-	const lines = text.split('\n');
-	const processedLines = lines.map((line) => {
-		if (line.includes('\r')) {
-			const segments = line.split('\r');
-			for (let i = segments.length - 1; i >= 0; i--) {
-				if (segments[i].trim()) {
-					return segments[i];
-				}
-			}
-			return '';
-		}
-		return line;
-	});
-	return processedLines.join('\n');
-};
+export { processCarriageReturns };
 
 /**
  * Filter out bash prompt lines and apply carriage return processing.

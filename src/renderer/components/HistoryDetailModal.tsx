@@ -206,9 +206,17 @@ export function HistoryDetailModal({
 	// (and the xs full-screen layout from index.css) gets trapped inside the
 	// ~320px drawer instead of covering the screen.
 	return createPortal(
-		<div className="fixed inset-0 flex items-center justify-center z-[9999]">
-			{/* Backdrop */}
-			<div className="absolute inset-0 bg-black/60" onClick={onClose} />
+		// `modal-overlay` is not just the scrim: the phone block in index.css
+		// keys the status-bar / home-indicator padding on that class, and this
+		// overlay was the one full-screen modal missing it. Without the padding
+		// the modal is sized to the VISIBLE viewport but centered in the LAYOUT
+		// viewport, so on an iPhone home-screen web app it floated with a dead
+		// band above and below (measured 47px / 46px on a 390x844 screen) and its
+		// top edge tucked under the iOS status-bar layer, which swallows taps.
+		<div className="fixed inset-0 modal-overlay flex items-center justify-center z-[9999]">
+			{/* Click-anywhere-outside target. The scrim itself now comes from
+			    `modal-overlay` above, the same one every other modal draws. */}
+			<div className="absolute inset-0" onClick={onClose} />
 
 			{/* Modal. `history-detail-modal` lets index.css expand it to full-screen at the
 			    xs breakpoint (phones) where the centered dialog is too cramped. */}

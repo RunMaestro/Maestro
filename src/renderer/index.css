@@ -2100,6 +2100,50 @@ html[data-runtime='web-desktop'] .session-row {
 }
 
 /*
+ * A tab chip never grows wider than the strip can show. Every chip label is
+ * `whitespace-nowrap` with no cap ("always show the full name; the bar scrolls
+ * when crowded"), which is right beside a mouse and wrong on a 390px phone: a
+ * chip named "Maestro Account Rebalance" came out wider than the span between
+ * the sticky search cluster on the left and the sticky "+" on the right. The
+ * keep-active-visible scroll in TabBar then had to choose an edge, chose the
+ * label's start, and left the close button's other half painted under the "+"
+ * cluster, so a tap on the x landed on the cluster and closed nothing. Capping
+ * the chip lets the label ellipsize in the middle of the strip instead.
+ *
+ * `data-tab-label` marks the one span per chip that may shrink; everything
+ * else in a chip (dot, badge, icon, close) stays `shrink-0`, so the close x is
+ * always the last thing drawn and always inside the chip's own width. 60vw is
+ * comfortably under the ~260px the strip has left after both clusters.
+ */
+html[data-runtime='web-desktop'][data-bp='xs'] [data-tab-id] {
+	max-width: 60vw;
+}
+html[data-runtime='web-desktop'][data-bp='xs'] [data-tab-label] {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+/*
+ * The close x on a chip is a 12px glyph in an 18px button, the smallest
+ * control on the phone screen and the one a finger misses most. Grow its hit
+ * area without moving anything: a pseudo-element hangs 8px past every edge,
+ * the same trick `.resize-handle::before` uses. The button has no positioned
+ * children, so `position: relative` changes nothing else. Coarse pointer, not
+ * the phone breakpoint, because a touchscreen laptop has the same finger.
+ */
+@media (pointer: coarse) {
+	[data-tab-close] {
+		position: relative;
+	}
+	[data-tab-close]::before {
+		content: '';
+		position: absolute;
+		inset: -8px;
+	}
+}
+
+/*
  * Bottom sheet chrome, shared by every caller of <PhoneBottomSheet> (the tab
  * action menu, the composer options sheet). The scrim and the rise animation
  * belong to the shell; what each caller adds is the styling of its own body.
@@ -2214,8 +2258,20 @@ html[data-runtime='web-desktop'][data-bp='xs'] [data-turn-setting-pill] {
  * resize grips are hidden too: there is no edge to drag. Small dialogs (confirm,
  * rename) pass no resize key and keep their natural size.
  */
-html[data-runtime='web-desktop'][data-bp='xs'] .modal-overlay {
-	/* The status bar band and the home indicator stay outside the modal. */
+html[data-runtime='web-desktop'][data-bp='xs'] .modal-overlay,
+html[data-runtime='web-desktop'][data-bp='xs'] :has(> [data-modal-resize-key]) {
+	/*
+	 * The status bar band and the home indicator stay outside the modal.
+	 *
+	 * The second selector is what makes this hold for a modal that draws its
+	 * own overlay instead of going through `<Modal>`: nine of them did, and none
+	 * carried `.modal-overlay`, so the modal below was sized to the visible
+	 * viewport but centred in the layout viewport - a dead band above and below
+	 * it, and its top edge under the iOS status-bar layer, which swallows taps.
+	 * Keying on the resizable modal's PARENT catches every one of them without
+	 * each file having to know the class exists. Direct child only: a
+	 * descendant `:has()` would also pad `#root` and every wrapper up the tree.
+	 */
 	padding: var(--maestro-top-inset, 0px) 0 env(safe-area-inset-bottom, 0px) 0 !important;
 }
 html[data-runtime='web-desktop'][data-bp='xs'] [data-modal-resize-key] {

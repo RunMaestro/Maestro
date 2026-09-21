@@ -2094,7 +2094,30 @@ describe('web-server/web-server-factory', () => {
 				'/cwd',
 				null,
 				{},
-				expect.any(String)
+				expect.any(String),
+				false
+			);
+		});
+
+		// Issue #1496: the renderer gates its Left Bar switch on this last
+		// argument. Dropping it here reads as a foreground create, so
+		// `create-agent --background` took the window from whoever was working.
+		it('setCreateSessionCallback forwards the background flag', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setCreateSessionCallback.mock.calls[0][0];
+
+			void callback('name', 'claude-code', '/cwd', null, {}, true);
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:createSession',
+				'name',
+				'claude-code',
+				'/cwd',
+				null,
+				{},
+				expect.any(String),
+				true
 			);
 		});
 

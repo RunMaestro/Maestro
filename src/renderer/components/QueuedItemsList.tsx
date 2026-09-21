@@ -16,6 +16,7 @@ import type { BusyTabSummary, ForceSendEligibility } from '../utils/executionQue
 import { getForceSendTitle, shouldOfferForceSend } from '../utils/executionQueue';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { displayImageSrc } from '../utils/sessionImageSrc';
+import { formatNumber } from '../../shared/formatters';
 import { Modal, ModalFooter } from './ui/Modal';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
@@ -44,6 +45,13 @@ const INLINE_QUEUE_KEY = 'inline-queue';
 // to this class because the list also renders outside `.terminal-output` (group
 // chat's composer), where the transcript's styles never reach.
 const QUEUE_PROSE_SCOPE = 'queued-item-prose';
+
+// How much of a long message a collapsed card shows, and how much text has to
+// stay hidden before the collapse is worth offering. Below the second number the
+// card just renders the whole message: a toggle that saves one wrapped line is
+// pure chrome, and the two states look nearly identical.
+const QUEUE_PREVIEW_CHARS = 600;
+const QUEUE_COLLAPSE_MIN_HIDDEN_CHARS = 400;
 
 // ============================================================================
 // QueuedItemsList - Displays queued execution items with expand/collapse
@@ -522,10 +530,15 @@ function QueuedItemRow({
 	const isPaused = !!item.paused;
 	const isWaitingForConnection = !!item.waitingForConnection;
 	const displayText = isCommand ? (item.command ?? '') : (item.text ?? '');
-	const isLongMessage = displayText.length > 200;
-	// Collapsed cards show the first 200 characters; the full text once expanded.
+	const hiddenChars = Math.max(0, displayText.length - QUEUE_PREVIEW_CHARS);
+	// Only collapse when collapsing actually buys back screen: a message that is a
+	// line or two over the preview costs more in toggle chrome than it saves, so it
+	// renders in full with no toggle at all.
+	const isLongMessage = hiddenChars >= QUEUE_COLLAPSE_MIN_HIDDEN_CHARS;
 	const visibleText =
-		isLongMessage && !isExpanded ? displayText.substring(0, 200) + '...' : displayText;
+		isLongMessage && !isExpanded
+			? displayText.substring(0, QUEUE_PREVIEW_CHARS) + '...'
+			: displayText;
 	// Commands are a fixed name + args pill, so only message bodies go through the
 	// markdown stack.
 	const showMarkdown = !isCommand && renderMarkdown;
@@ -626,7 +639,7 @@ function QueuedItemRow({
 						) : (
 							<>
 								<ChevronDown className="w-3 h-3" />
-								Show all ({displayText.split('\n').length} lines)
+								Show all ({formatNumber(hiddenChars)} more characters)
 							</>
 						)}
 					</button>

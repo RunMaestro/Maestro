@@ -1212,7 +1212,8 @@ describe('TerminalOutput', () => {
 		});
 
 		it('truncates long queued messages and shows expand button', () => {
-			const longMessage = 'A'.repeat(250);
+			// Collapse only kicks in past the 600-char preview plus 400 hidden chars.
+			const longMessage = 'A'.repeat(2000);
 			const session = createDefaultSession({
 				executionQueue: [{ id: 'q1', type: 'message', text: longMessage, tabId: 'tab-1' }],
 			});
@@ -1227,13 +1228,12 @@ describe('TerminalOutput', () => {
 		});
 
 		it('expands and collapses long queued messages when toggle is clicked', async () => {
-			// Create a message with >200 characters and multiple lines to trigger isLongMessage
-			// isLongMessage check: displayText.length > 200
+			// Long enough to collapse: the card previews 600 chars and only offers the
+			// toggle when at least 400 more stay hidden.
 			const longMessage = Array.from(
-				{ length: 20 },
+				{ length: 60 },
 				(_, i) => `This is line number ${i + 1} with some text`
 			).join('\n');
-			// Each line is ~35 chars, 20 lines = 700 chars (>200)
 			const session = createDefaultSession({
 				executionQueue: [{ id: 'q1', type: 'message', text: longMessage, tabId: 'tab-1' }],
 			});
@@ -1241,8 +1241,8 @@ describe('TerminalOutput', () => {
 			const props = createDefaultProps({ session });
 			render(<TerminalOutput {...props} />);
 
-			// Should show expand button initially (Show all X lines)
-			const expandButton = screen.getByText(/Show all.*lines/);
+			// Should show expand button initially (Show all N more characters)
+			const expandButton = screen.getByText(/Show all.*characters/);
 			expect(expandButton).toBeInTheDocument();
 
 			// Click to expand
@@ -1260,7 +1260,7 @@ describe('TerminalOutput', () => {
 			});
 
 			// Should show expand button again
-			expect(screen.getByText(/Show all.*lines/)).toBeInTheDocument();
+			expect(screen.getByText(/Show all.*characters/)).toBeInTheDocument();
 		});
 
 		it('dismisses confirmation modal when Cancel button is clicked', async () => {

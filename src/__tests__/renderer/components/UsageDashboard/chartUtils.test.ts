@@ -12,6 +12,8 @@ import {
 	buildNameMap,
 	computeAxisLabelIndices,
 	PHONE_AXIS_LABELS,
+	DONUT_CHART,
+	describeDonutArc,
 } from '../../../../renderer/components/UsageDashboard/chartUtils';
 import type { Session } from '../../../../renderer/types';
 
@@ -320,5 +322,39 @@ describe('computeAxisLabelIndices', () => {
 
 	it('is unchanged at the default budget', () => {
 		expect([...computeAxisLabelIndices(31, 7)]).toEqual([...computeAxisLabelIndices(31)]);
+	});
+});
+
+describe('DONUT_CHART geometry', () => {
+	it('leaves the hovered slice inside the svg box', () => {
+		expect(DONUT_CHART.outerRadius + DONUT_CHART.hoverExpansion).toBeLessThanOrEqual(
+			DONUT_CHART.size / 2
+		);
+	});
+
+	it('keeps the center label narrower than the hole so it cannot reach the ring', () => {
+		expect(DONUT_CHART.centerLabelWidth).toBeLessThan(DONUT_CHART.innerRadius * 2);
+	});
+
+	it('keeps a visible ring between the hole and the outer edge', () => {
+		expect(DONUT_CHART.outerRadius).toBeGreaterThan(DONUT_CHART.innerRadius);
+	});
+});
+
+describe('describeDonutArc', () => {
+	it('draws a single arc pair for a partial sweep', () => {
+		const d = describeDonutArc(100, 100, 88, 62, 0, 90);
+		expect(d.match(/M /g)).toHaveLength(1);
+		expect(d).toContain('Z');
+	});
+
+	it('sets the large-arc flag only past a half turn', () => {
+		expect(describeDonutArc(100, 100, 88, 62, 0, 90)).toMatch(/A 88 88 0 0 1/);
+		expect(describeDonutArc(100, 100, 88, 62, 0, 270)).toMatch(/A 88 88 0 1 1/);
+	});
+
+	it('splits a full circle into two sub-paths so it renders at all', () => {
+		const d = describeDonutArc(100, 100, 88, 62, 0, 360);
+		expect(d.match(/M /g)).toHaveLength(2);
 	});
 });

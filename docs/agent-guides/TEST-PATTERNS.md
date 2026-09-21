@@ -355,6 +355,33 @@ file and only some of them were applied where they mattered. When an agent
 definition gains a new `defaultEnvVars` key, add it to
 `SHELL_OVERRIDABLE_AGENT_ENV_KEYS`.
 
+### Driving a Touch-Only Branch (`setCoarsePointer`)
+
+`isCoarsePointer()` (`src/renderer/utils/touch.ts`) reads
+`window.matchMedia('(pointer: coarse)')`. jsdom has no `matchMedia`, so every
+test sees a mouse by default and a touch-only branch - the mic button, tap-to-
+open on a table row, tap-again-to-apply in the model console - is never
+exercised. Use the shared stub rather than defining `matchMedia` inline:
+
+```typescript
+import { restorePointer, setCoarsePointer } from '../../helpers/mockPointer';
+
+afterEach(() => restorePointer());
+
+it('opens the row on a single tap under a coarse pointer', () => {
+	setCoarsePointer(true);
+	// ...render and fireEvent.click(...)
+});
+```
+
+`setCoarsePointer(true)` answers `matches: true` ONLY for a query containing
+`pointer: coarse`, so a component that also asks `(prefers-reduced-motion)` or
+`(max-width: ...)` keeps seeing `false` there. `restorePointer()` puts back
+whatever `matchMedia` was before the first call (or deletes it, matching bare
+jsdom), so the stub cannot leak into the next file. Pair every `true` with a
+`false` case: the point of the coarse branch is that the MOUSE path is
+unchanged, and only a second test proves that.
+
 ### Rendering a Surface That Contains `<MarkdownEditor>` (`markdownEditorModuleMock`)
 
 The editor wraps CodeMirror 6, which measures DOM text to lay itself out. jsdom

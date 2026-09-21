@@ -612,6 +612,7 @@ export const AITab = memo(function AITab({
 
 			{/* Tab name - always show the full name; the bar scrolls when crowded */}
 			<span
+				data-tab-label
 				className="text-xs font-medium whitespace-nowrap"
 				style={{ color: isActive ? theme.colors.textMain : theme.colors.textDim }}
 			>
@@ -622,6 +623,7 @@ export const AITab = memo(function AITab({
 			{canClose && (isHovered || isActive) && (
 				<button
 					onClick={handleCloseClick}
+					data-tab-close
 					className="p-0.5 rounded hover:bg-white/10 transition-colors shrink-0"
 					title={`Close tab${shortcutSuffix(closeTabKeys)}`}
 				>

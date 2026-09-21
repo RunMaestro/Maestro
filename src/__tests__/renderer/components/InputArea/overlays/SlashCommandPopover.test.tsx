@@ -66,7 +66,11 @@ describe('SlashCommandPopover', () => {
 		expect(screen.getByText('/help').closest('button')).toHaveClass('font-semibold');
 	});
 
-	it('selects on click and mouse enter, fills on double-click', () => {
+	// A SINGLE click has to accept. This popover used to treat a click as
+	// "move the highlight" and leave acceptance to a double-click, which a
+	// touch screen cannot produce and a phone has no keyboard to substitute
+	// for: the menu opened and every tap did nothing.
+	it('accepts the command on a single click', () => {
 		const setSelected = vi.fn();
 		const setInputValue = vi.fn();
 		const setOpen = vi.fn();
@@ -90,10 +94,11 @@ describe('SlashCommandPopover', () => {
 		const help = screen.getByText('/help').closest('button')!;
 		fireEvent.mouseEnter(help);
 		fireEvent.click(help);
-		fireEvent.doubleClick(help);
 
 		expect(setSelected).toHaveBeenCalledWith(1);
-		expect(setInputValue).toHaveBeenCalledWith('/help');
+		// Trailing space, matching what Tab/Enter writes in useInputKeyDown, so a
+		// tapped command and a typed one leave the caret in the same place.
+		expect(setInputValue).toHaveBeenCalledWith('/help ');
 		expect(setOpen).toHaveBeenCalledWith(false);
 		expect(focus).toHaveBeenCalled();
 	});

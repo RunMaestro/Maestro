@@ -33,8 +33,10 @@
  *
  * Pointer-only users (remote desktop, tablet) are served without a button row:
  * clicking the scrim cancels, and double-clicking a model row or an effort stop
- * applies. Both are the same handlers Escape and Enter run, so the two input
- * methods cannot drift.
+ * applies. On a coarse pointer (a phone) there is no double-tap to give - iOS
+ * reserves it and the home-screen web app never sees a dblclick - so there the
+ * second tap on the row that is ALREADY picked is the apply. All three are the
+ * same handlers Escape and Enter run, so the input methods cannot drift.
  *
  * Options and the tab > session > agent-default ladder come from the same hook
  * and resolver the composer pills use, so the two surfaces can't disagree about
@@ -46,6 +48,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Gauge, Sparkles } from 'lucide-react';
+import { isCoarsePointer } from '../utils/touch';
 import type { Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
@@ -358,7 +361,17 @@ export function ModelEffortModal({ theme, tabId, onClose }: ModelEffortModalProp
 			<button
 				key={model || '__default__'}
 				type="button"
-				onClick={() => setPickedModel(model)}
+				onClick={() => {
+					// Touch has no reliable double-tap (iOS reserves it, and the PWA
+					// never sees a dblclick), so on a coarse pointer the second tap
+					// on the row that is already picked is the apply. Same handler
+					// the double-click and Enter run, so the inputs cannot drift.
+					if (isSelected && isCoarsePointer()) {
+						handleConfirm({ model });
+						return;
+					}
+					setPickedModel(model);
+				}}
 				onDoubleClick={() => handleConfirm({ model })}
 				tabIndex={-1}
 				aria-current={isSelected || undefined}
@@ -406,7 +419,14 @@ export function ModelEffortModal({ theme, tabId, onClose }: ModelEffortModalProp
 			<div key={effort || '__default__'} className="flex flex-col items-stretch gap-2">
 				<button
 					type="button"
-					onClick={() => setPickedEffort(effort)}
+					onClick={() => {
+						// Tap-again-to-apply on touch; see the model row above.
+						if (isSelected && isCoarsePointer()) {
+							handleConfirm({ effort });
+							return;
+						}
+						setPickedEffort(effort);
+					}}
 					onDoubleClick={() => handleConfirm({ effort })}
 					tabIndex={-1}
 					aria-current={isSelected || undefined}

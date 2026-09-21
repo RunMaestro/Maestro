@@ -1378,4 +1378,36 @@ describe('BrowserTabView', () => {
 			expect(webview.insertCSS).toHaveBeenCalledWith(expect.stringContaining('#101014'));
 		});
 	});
+
+	describe('webview src', () => {
+		it('mounts the tab URL as-is when it is parseable', () => {
+			render(
+				<BrowserTabView
+					tab={{ ...mockTab, url: 'https://example.com/docs' }}
+					theme={mockTheme}
+					onUpdateTab={vi.fn()}
+				/>
+			);
+
+			expect(getWebview().getAttribute('src')).toBe('https://example.com/docs');
+		});
+
+		// A failed navigation writes `did-fail-load`'s validatedURL straight into
+		// tab.url, and for ERR_INVALID_URL that is the malformed target itself.
+		// Electron resolves the src attribute with `new URL()` while attaching the
+		// element, so handing it that value throws "Invalid URL" mid-commit and
+		// takes the renderer down (MAESTRO-QX/QY/QZ).
+		it.each(['http://', 'https://[bad', 'https://x y'])(
+			'falls back to about:blank rather than mounting the unparseable URL %s',
+			(url) => {
+				expect(() =>
+					render(
+						<BrowserTabView tab={{ ...mockTab, url }} theme={mockTheme} onUpdateTab={vi.fn()} />
+					)
+				).not.toThrow();
+
+				expect(getWebview().getAttribute('src')).toBe(DEFAULT_BROWSER_TAB_URL);
+			}
+		);
+	});
 });

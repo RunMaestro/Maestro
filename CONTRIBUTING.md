@@ -26,6 +26,7 @@ See [Performance Guidelines](#performance-guidelines) for specific practices.
 - [Common Development Tasks](#common-development-tasks)
 - [Encore Features (Feature Gating)](#encore-features-feature-gating)
 - [Adding a New AI Agent](#adding-a-new-ai-agent)
+- [Contributing Themes](#contributing-themes)
 - [Code Style](#code-style)
 - [Performance Guidelines](#performance-guidelines)
 - [Debugging Guide](#debugging-guide)
@@ -684,6 +685,16 @@ Based on capabilities, these UI features are automatically enabled/disabled:
 | Gemini CLI    | TBD                          | TBD                         | TBD  | TBD    | TBD                            | ✅                      | 📋 Planned  |
 
 For detailed implementation guide, see [PROVIDER-SUPPORT.md](PROVIDER-SUPPORT.md).
+
+## Contributing Themes
+
+Theme definitions live in `src/shared/themes.ts` (colors and palettes) and
+`src/shared/theme-types.ts` (the `ThemeId` union). To add a theme, add the
+definition in both files and update `src/__tests__/renderer/constants/themes.test.ts`.
+
+For theme screenshots and the showcase workflow (launching the app against
+curated demo data, in a specific theme, at a screenshot-ready window size), see
+[THEMES.md - Showcase Mode](THEMES.md#showcase-mode).
 
 ## Code Style
 
