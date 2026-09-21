@@ -430,6 +430,9 @@ export function formatRunEvent(event: RunEvent, options?: { debug?: boolean }): 
 			}
 			const total = event.totalTasksCompleted as number;
 			const elapsed = ((event.totalElapsedMs as number) / 1000).toFixed(1);
+			if (event.stopped) {
+				return `\n${timeStr} ${c('yellow', '■')} ${bold('Playbook stopped')} ${dim(`(${total} tasks in ${elapsed}s)`)}`;
+			}
 			return `\n${timeStr} ${c('green', '✓')} ${bold('Playbook complete')} ${dim(`(${total} tasks in ${elapsed}s)`)}`;
 		}
 
