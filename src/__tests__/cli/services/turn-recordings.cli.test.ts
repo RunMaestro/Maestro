@@ -46,12 +46,23 @@ vi.mock('fs', async () => {
 			throw new Error('ENOENT');
 		}),
 		readdirSync: vi.fn(() => []),
+		// A configured custom path resolves through these two calls, which is how
+		// the spawner finds the binary WITHOUT spawning a `which`/`where` lookup
+		// process (a lookup would consume the fake child before the agent does).
+		promises: {
+			...actual.promises,
+			stat: vi.fn(async () => ({ isFile: () => true })),
+			access: vi.fn(async () => undefined),
+			readdir: vi.fn(async () => []),
+		},
+		constants: { X_OK: 1 },
 	};
 	return { ...mocked, default: mocked };
 });
 
 vi.mock('../../../cli/services/storage', () => ({
-	getAgentCustomPath: vi.fn(),
+	// Resolves the agent binary from settings so detection never spawns a lookup.
+	getAgentCustomPath: vi.fn(() => '/custom/path/to/claude'),
 	readAgentConfig: vi.fn(() => ({})),
 	readSshRemotes: vi.fn(() => []),
 }));
