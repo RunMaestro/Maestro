@@ -5,10 +5,11 @@ import { getSessionById } from '../services/storage';
 import { findPlaybookById } from '../services/playbooks';
 import { runPlaybook as executePlaybook } from '../services/batch-processor';
 import { detectAgent } from '../services/agent-spawner';
-import { getAgentDefinition } from '../../main/agents/definitions';
-import { emitError } from '../output/jsonl';
+import { getAgentDefinition } from '../../shared/maestro-lib/providers/definitions';
+import { emitError, type CompleteEvent } from '../output/jsonl';
 import { formatRunEvent, formatError, formatInfo, RunEvent } from '../output/formatter';
 import { checkAgentBusy, waitForAgentAvailable } from '../services/agent-busy';
+import { installInterruptHandler } from '../utils/interrupt';
 
 interface RunPlaybookOptions {
 	dryRun?: boolean;
@@ -130,8 +131,19 @@ export async function runPlaybook(playbookId: string, options: RunPlaybookOption
 			console.log('');
 		}
 
+		// First Ctrl+C stops the run gracefully (the agent turn is aborted and the
+		// run records "stopped"); a second one exits immediately.
+		const interrupt = installInterruptHandler({
+			onFirst: () => {
+				if (!useJson) {
+					console.log(formatInfo('Stopping... press Ctrl+C again to quit immediately.'));
+				}
+			},
+		});
+
 		// Execute playbook and stream events
 		const generator = executePlaybook(agent, playbook, folderPath, {
+			signal: interrupt.signal,
 			dryRun: options.dryRun,
 			writeHistory: options.history !== false, // --no-history sets history to false
 			debug: options.debug,
@@ -142,12 +154,20 @@ export async function runPlaybook(playbookId: string, options: RunPlaybookOption
 			ignoreModelHints: options.ignoreModelHints || undefined,
 		});
 
-		for await (const event of generator) {
-			if (useJson) {
-				console.log(JSON.stringify(event));
-			} else {
-				console.log(formatRunEvent(event as RunEvent, { debug: options.debug }));
+		try {
+			for await (const event of generator) {
+				if (useJson) {
+					console.log(JSON.stringify(event));
+				} else {
+					console.log(formatRunEvent(event as RunEvent, { debug: options.debug }));
+				}
+				// A stopped run is not a success; report it the way a shell reports SIGINT.
+				if (event.type === 'complete' && (event as CompleteEvent).stopped) {
+					process.exitCode = 130;
+				}
 			}
+		} finally {
+			interrupt.dispose();
 		}
 	} catch (error) {
 		const message = error instanceof Error ? error.message : 'Unknown error';
