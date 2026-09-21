@@ -1893,6 +1893,19 @@ Some text with [x] in it that's not a checkbox
 
 	describe('turn contract (shared resolveTurnOutcome)', () => {
 		const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+		// A local spawn first resolves the agent binary (`resolveLocalAgentCommand`).
+		// With a cold detection cache that would spawn a `which`/`where` lookup
+		// through the same fake `spawn` these tests drive, so resolve through a
+		// configured custom path instead. Without this the block only passes when an
+		// earlier test happens to have warmed the module-level cache.
+		beforeEach(() => {
+			mockGetAgentCustomPath.mockReturnValue('/custom/path/to/agent');
+			vi.mocked(fs.promises.stat).mockResolvedValue({ isFile: () => true } as fs.Stats);
+			vi.mocked(fs.promises.access).mockResolvedValue(undefined);
+			mockSpawn.mockReturnValue(mockChild);
+		});
+
 		const claudeResult = (text: string) =>
 			`{"type":"system","subtype":"init","session_id":"sess-t"}\n` +
 			`{"type":"assistant","message":{"content":[{"type":"text","text":"${text}"}]}}\n` +
