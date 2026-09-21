@@ -110,7 +110,7 @@ describe('send command', () => {
 			'/path/to/project',
 			'Hello world',
 			undefined,
-			{ readOnlyMode: undefined }
+			{ readOnlyMode: undefined, signal: expect.any(AbortSignal) }
 		);
 
 		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
@@ -159,7 +159,7 @@ describe('send command', () => {
 			'/path/to/project',
 			'Continue from before',
 			'session-xyz-789',
-			{ readOnlyMode: undefined }
+			{ readOnlyMode: undefined, signal: expect.any(AbortSignal) }
 		);
 
 		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
@@ -185,7 +185,7 @@ describe('send command', () => {
 			'/custom/project/path',
 			'Do something',
 			undefined,
-			{ readOnlyMode: undefined }
+			{ readOnlyMode: undefined, signal: expect.any(AbortSignal) }
 		);
 	});
 
@@ -205,6 +205,7 @@ describe('send command', () => {
 
 		expect(detectAgent).toHaveBeenCalledWith('codex');
 		expect(spawnAgent).toHaveBeenCalledWith('codex', expect.any(String), 'Use codex', undefined, {
+			signal: expect.any(AbortSignal),
 			readOnlyMode: undefined,
 		});
 	});
@@ -226,7 +227,7 @@ describe('send command', () => {
 			'/path/to/project',
 			'Analyze this code',
 			undefined,
-			{ readOnlyMode: true }
+			{ readOnlyMode: true, signal: expect.any(AbortSignal) }
 		);
 	});
 
@@ -299,6 +300,62 @@ describe('send command', () => {
 		expect(output.response).toBeNull();
 		expect(output.usage).not.toBeNull();
 		expect(processExitSpy).toHaveBeenCalledWith(1);
+	});
+
+	it('reports how the turn ended and keeps exit code 1 for a crash', async () => {
+		vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+		vi.mocked(getSessionById).mockReturnValue(mockAgent());
+		vi.mocked(detectAgent).mockResolvedValue({ available: true, path: '/usr/bin/claude' });
+		vi.mocked(spawnAgent).mockResolvedValue({
+			success: false,
+			outcome: 'crashed',
+			error: 'Agent crashed',
+		});
+
+		await send('agent-abc', 'Bad request', {});
+
+		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+		expect(output.outcome).toBe('crashed');
+		expect(processExitSpy).toHaveBeenCalledWith(1);
+	});
+
+	it('exits 130, the shell convention for an interrupt, when the turn was interrupted', async () => {
+		vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+		vi.mocked(getSessionById).mockReturnValue(mockAgent());
+		vi.mocked(detectAgent).mockResolvedValue({ available: true, path: '/usr/bin/claude' });
+		vi.mocked(spawnAgent).mockResolvedValue({
+			success: false,
+			outcome: 'interrupted',
+			error: 'Interrupted',
+		});
+
+		await send('agent-abc', 'Long request', {});
+
+		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+		expect(output.outcome).toBe('interrupted');
+		expect(processExitSpy).toHaveBeenCalledWith(130);
+		expect(processExitSpy).not.toHaveBeenCalledWith(1);
+	});
+
+	it('reports a warning outcome as a success', async () => {
+		vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+		vi.mocked(getSessionById).mockReturnValue(mockAgent());
+		vi.mocked(detectAgent).mockResolvedValue({ available: true, path: '/usr/bin/claude' });
+		vi.mocked(spawnAgent).mockResolvedValue({
+			success: true,
+			outcome: 'completed-with-warning',
+			response: 'answer',
+		});
+
+		await send('agent-abc', 'Request', {});
+
+		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+		expect(output).toMatchObject({
+			success: true,
+			outcome: 'completed-with-warning',
+			response: 'answer',
+		});
+		expect(processExitSpy).not.toHaveBeenCalled();
 	});
 
 	it('builds and passes the Maestro system prompt by default', async () => {

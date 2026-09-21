@@ -11,11 +11,16 @@ import type {
 	ToolType,
 	UsageStats,
 } from '../../shared/types';
-import { createOutputParser } from '../../main/parsers/parser-factory';
-import { aggregateModelUsage } from '../../main/parsers/usage-aggregator';
-import { getAgentDefinition } from '../../main/agents/definitions';
-import { hasCapability } from '../../main/agents/capabilities';
-import { checkCustomPath } from '../../main/agents/path-prober';
+import { createOutputParser } from '../../shared/maestro-lib/parsers/parser-factory';
+import { aggregateModelUsage } from '../../shared/maestro-lib/parsers/usage-aggregator';
+import { getAgentDefinition } from '../../shared/maestro-lib/providers/definitions';
+import { hasCapability } from '../../shared/maestro-lib/providers/capabilities';
+import { checkCustomPath } from '../../shared/maestro-lib/launch/path-prober';
+import { BufferedLineReader } from '../../shared/maestro-lib/streaming/buffered-line-reader';
+import { UsageAccumulator } from '../../shared/maestro-lib/streaming/usage-accumulator';
+import type { ParsedEvent } from '../../shared/maestro-lib/parsers/agent-output-parser';
+import type { TurnOutcome } from '../../shared/maestro-lib/streaming/turn-outcome';
+import { resolveCliTurnResult, interruptedResult, spawnFailureResult } from './turn-result';
 import { getAgentCustomPath, readAgentConfig, readSshRemotes } from './storage';
 import { generateUUID } from '../../shared/uuid';
 import {
@@ -27,7 +32,10 @@ import { sanitizeSessionId } from '../../shared/history';
 import { buildExpandedPath, buildExpandedEnv } from '../../shared/pathUtils';
 import { isWindows, getWhichCommand } from '../../shared/platformDetection';
 import { embedSystemPromptInPrompt } from '../../shared/embeddedSystemPrompt';
-import { applyAgentConfigOverrides, buildAdditionalDirArgs } from '../../main/utils/agent-args';
+import {
+	applyAgentConfigOverrides,
+	buildAdditionalDirArgs,
+} from '../../shared/maestro-lib/launch/agent-args';
 import { buildCliWakaTimeHeartbeat } from './wakatime';
 import {
 	getClaudeTokenMode,
@@ -132,6 +140,7 @@ type SpawnOverrides = Pick<
 	| 'appendSystemPrompt'
 	| 'additionalDirectories'
 	| 'querySource'
+	| 'signal'
 >;
 
 /**
@@ -284,6 +293,13 @@ export interface AgentResult {
 	agentSessionId?: string;
 	usageStats?: UsageStats;
 	error?: string;
+	/**
+	 * How the turn ended, from the shared `resolveTurnOutcome`. `success` is
+	 * derived from it (`completed` and `completed-with-warning` succeed), so
+	 * existing callers keep working; a caller that needs to tell a user stop
+	 * from a crash reads this instead of parsing `error`.
+	 */
+	outcome?: TurnOutcome;
 }
 
 // Detection result
@@ -325,7 +341,9 @@ async function findCommandInPath(commandName: string): Promise<string | undefine
 
 		proc.on('close', (code) => {
 			if (code === 0 && stdout.trim()) {
-				resolve(stdout.trim().split('\n')[0]);
+				// `where.exe` separates matches with CRLF; splitting on '\n' alone would
+				// leave a trailing '\r' on the first one.
+				resolve(stdout.trim().split(/\r?\n/)[0]);
 			} else {
 				resolve(undefined);
 			}
@@ -426,6 +444,70 @@ export const getClaudeCommand = () => getAgentCommand('claude-code');
 export const getCodexCommand = () => getAgentCommand('codex');
 export const getOpenCodeCommand = () => getAgentCommand('opencode');
 export const getDroidCommand = () => getAgentCommand('factory-droid');
+
+/**
+ * Providers only pattern-match stdout inside `detectErrorFromExit`, so a
+ * bounded tail is enough and keeps a chatty multi-hour agent from growing an
+ * unbounded string in the CLI process.
+ */
+const STDOUT_TAIL_LIMIT = 256 * 1024;
+
+function appendBoundedTail(current: string, chunk: string): string {
+	const next = current + chunk;
+	return next.length > STDOUT_TAIL_LIMIT ? next.slice(next.length - STDOUT_TAIL_LIMIT) : next;
+}
+
+/** Stand-in when a provider has no registered parser to classify a bad exit. */
+const NO_EXIT_CLASSIFICATION = { detectErrorFromExit: () => null };
+
+/** How long a SIGTERM'd agent gets to exit before it is killed outright. */
+const ABORT_KILL_ESCALATION_MS = 5000;
+
+interface AbortLink {
+	/** True once the caller's signal fired for this child. */
+	interrupted: () => boolean;
+	/** Stop listening and cancel a pending SIGKILL. Call from `close` and `error`. */
+	dispose: () => void;
+}
+
+/**
+ * Tie a child process to the caller's AbortSignal. Aborting sends SIGTERM and,
+ * if the agent is still alive after `ABORT_KILL_ESCALATION_MS`, SIGKILL - some
+ * agents trap SIGTERM to finish a tool call, and a stop that never lands is
+ * worse than an abrupt one. The resulting `close` is reported as `interrupted`
+ * by the shared resolver, never as a crash.
+ *
+ * Over SSH this stops the LOCAL ssh client; without a forced TTY the remote
+ * process is not guaranteed to receive the hangup, so a remote agent may
+ * outlive an interrupted CLI run. Documented in Plans/maestro-lib-cli-migration.md.
+ */
+function linkAbortSignal(child: ChildProcess, signal: AbortSignal | undefined): AbortLink {
+	if (!signal) return { interrupted: () => false, dispose: () => {} };
+
+	let interrupted = false;
+	let escalation: NodeJS.Timeout | undefined;
+
+	const onAbort = () => {
+		interrupted = true;
+		child.kill('SIGTERM');
+		escalation = setTimeout(() => child.kill('SIGKILL'), ABORT_KILL_ESCALATION_MS);
+		escalation.unref?.();
+	};
+
+	if (signal.aborted) {
+		onAbort();
+	} else {
+		signal.addEventListener('abort', onAbort, { once: true });
+	}
+
+	return {
+		interrupted: () => interrupted,
+		dispose: () => {
+			signal.removeEventListener('abort', onAbort);
+			if (escalation) clearTimeout(escalation);
+		},
+	};
+}
 
 /**
  * Spawn Claude Code with a prompt and return the result.
@@ -624,18 +706,29 @@ async function spawnClaudeAgent(
 		};
 
 		const child = spawn(spawnCommand, spawnArgs, options);
+		const abortLink = linkAbortSignal(child, overrides.signal);
+		// Used only for `detectErrorFromExit`; Claude's stream is still read by
+		// `processMessage` below because its stream-json shape is richer than
+		// the AgentOutputParser event vocabulary.
+		const exitClassifier = createOutputParser('claude-code') ?? NO_EXIT_CLASSIFICATION;
+		const lineReader = new BufferedLineReader();
+		let stdoutTail = '';
 
-		let jsonBuffer = '';
 		let result: string | undefined;
 		let assistantText = ''; // Accumulate text from assistant messages as fallback
 		let sessionId: string | undefined;
 		let usageStats: UsageStats | undefined;
 		let resultEmitted = false;
+		let resultMessageSeen = false;
 		let sessionIdEmitted = false;
 
 		// Process a single parsed JSON message from Claude Code's stream-json output
 
 		const processMessage = (msg: any) => {
+			// An explicit result event is the provider's "done" signal, independent
+			// of whether it carried any text.
+			if (msg.type === 'result') resultMessageSeen = true;
+
 			// Capture result text (only once)
 			if (msg.type === 'result' && msg.result && !resultEmitted) {
 				resultEmitted = true;
@@ -665,30 +758,30 @@ async function spawnClaudeAgent(
 				sessionId = msg.session_id;
 			}
 
-			// Extract usage statistics using shared aggregator
+			// Extract usage statistics using shared aggregator. Deliberately last-
+			// write-wins and NOT routed through UsageAccumulator: Claude's terminal
+			// `result` message carries the whole turn's totals, so the last message
+			// is already the right answer, whereas delta-normalizing it against the
+			// preceding per-call `assistant` usage would report only the difference.
 			if (msg.modelUsage || msg.usage || msg.total_cost_usd !== undefined) {
 				usageStats = aggregateModelUsage(msg.modelUsage, msg.usage || {}, msg.total_cost_usd || 0);
+			}
+		};
+
+		const processLine = (line: string) => {
+			try {
+				processMessage(JSON.parse(line));
+			} catch {
+				// Ignore non-JSON lines
 			}
 		};
 
 		// Handle stdout - parse stream-json format
 		child.stdout?.on('data', (data: Buffer) => {
 			wakaHeartbeat?.();
-			jsonBuffer += data.toString();
-
-			// Process complete lines
-			const lines = jsonBuffer.split('\n');
-			jsonBuffer = lines.pop() || '';
-
-			for (const line of lines) {
-				if (!line.trim()) continue;
-
-				try {
-					processMessage(JSON.parse(line));
-				} catch {
-					// Ignore non-JSON lines
-				}
-			}
+			const text = data.toString();
+			stdoutTail = appendBoundedTail(stdoutTail, text);
+			for (const line of lineReader.push(text)) processLine(line);
 		});
 
 		// Collect stderr for error reporting
@@ -700,45 +793,38 @@ async function spawnClaudeAgent(
 		finalizeAgentStdin(child, sshStdinScript);
 
 		// Handle completion
-		child.on('close', (code) => {
-			// Flush any remaining data in the JSON buffer (last line may lack trailing \n)
-			if (jsonBuffer.trim()) {
-				let parsed;
-				try {
-					parsed = JSON.parse(jsonBuffer);
-				} catch {
-					// Ignore non-JSON remnants
-				}
-				if (parsed) {
-					processMessage(parsed);
-				}
-			}
+		child.on('close', (code, closeSignal) => {
+			abortLink.dispose();
 
-			// Use accumulated assistant text as fallback when result field is empty
-			const finalResult = result || assistantText || undefined;
+			// Flush any remaining data in the line reader (last line may lack trailing \n)
+			const trailing = lineReader.flush();
+			if (trailing) processLine(trailing);
 
-			if (code === 0 && finalResult) {
-				resolve({
-					success: true,
-					response: finalResult,
+			resolve(
+				resolveCliTurnResult({
+					toolType: 'claude-code',
+					provider: exitClassifier,
+					exitCode: code,
+					signal: closeSignal,
+					interrupted: abortLink.interrupted(),
+					stderrText: stderr,
+					stdoutText: stdoutTail,
+					// Use accumulated assistant text as fallback when result field is empty
+					answerText: result || assistantText || undefined,
+					resultMessageSeen,
 					agentSessionId: sessionId,
 					usageStats,
-				});
-			} else {
-				resolve({
-					success: false,
-					error: stderr || `Process exited with code ${code}`,
-					agentSessionId: sessionId,
-					usageStats,
-				});
-			}
+					// Claude's CLI path has always failed a clean exit that captured nothing,
+					// and a non-zero exit even when text was streamed (`code === 0 && finalResult`).
+					strictEmptyAnswer: true,
+					answerOutranksBareExit: false,
+				})
+			);
 		});
 
 		child.on('error', (error) => {
-			resolve({
-				success: false,
-				error: `Failed to spawn Claude: ${error.message}`,
-			});
+			abortLink.dispose();
+			resolve(spawnFailureResult(`Failed to spawn Claude: ${error.message}`));
 		});
 	});
 }
@@ -772,13 +858,11 @@ function buildSshEnvForRemote(
  */
 function sshUnresolvedFailure(sshRemoteConfig: AgentSshRemoteConfig): AgentResult {
 	const remoteLabel = sshRemoteConfig.remoteId ? ` "${sshRemoteConfig.remoteId}"` : '';
-	return {
-		success: false,
-		error:
-			`SSH remote execution is enabled for this session but the configured ` +
+	return spawnFailureResult(
+		`SSH remote execution is enabled for this session but the configured ` +
 			`remote${remoteLabel} could not be resolved. Check that the remote exists, ` +
-			`is enabled, and that the session's remoteId points at a valid SSH remote.`,
-	};
+			`is enabled, and that the session's remoteId points at a valid SSH remote.`
+	);
 }
 
 /**
@@ -799,6 +883,19 @@ function applySshWrapResult(wrapped: SshSpawnWrapResult): {
 		spawnCwd: wrapped.cwd,
 		spawnEnv: { ...process.env },
 		sshStdinScript: wrapped.sshStdinScript,
+	};
+}
+
+/** Widen a parser's per-event usage into the `UsageStats` shape the accumulator speaks. */
+function parsedUsageToStats(usage: NonNullable<ParsedEvent['usage']>): UsageStats {
+	return {
+		inputTokens: usage.inputTokens || 0,
+		outputTokens: usage.outputTokens || 0,
+		cacheReadInputTokens: usage.cacheReadTokens || 0,
+		cacheCreationInputTokens: usage.cacheCreationTokens || 0,
+		totalCostUsd: usage.costUsd || 0,
+		contextWindow: usage.contextWindow || 0,
+		reasoningTokens: usage.reasoningTokens || 0,
 	};
 }
 
@@ -1004,7 +1101,7 @@ async function spawnJsonLineAgent(
 	// the previous post-spawn null-check as a process leak (greptile P1).
 	const parser = createOutputParser(toolType);
 	if (!parser) {
-		return { success: false, error: `No parser available for agent type: ${toolType}` };
+		return spawnFailureResult(`No parser available for agent type: ${toolType}`);
 	}
 
 	return new Promise((resolve) => {
@@ -1015,8 +1112,22 @@ async function spawnJsonLineAgent(
 		};
 
 		const child = spawn(spawnCommand, spawnArgs, options);
+		const abortLink = linkAbortSignal(child, overrides.signal);
+		const lineReader = new BufferedLineReader();
+		// Codex-style providers report a RUNNING SESSION TOTAL on every usage
+		// event. Summing those (what this path did before) makes a session's
+		// reported tokens grow with the square of its event count, so those
+		// providers go through the shared accumulator, which turns totals into
+		// deltas before they are summed. Every other provider reports per-step
+		// values that are correct to sum as-is, and the accumulator's
+		// monotonic-increase heuristic would misread a coincidentally rising
+		// per-step stream as cumulative and under-report it.
+		const usageAccumulator = hasCapability(toolType, 'usesCombinedContextWindow')
+			? new UsageAccumulator({ attachesAbsoluteUsage: true })
+			: undefined;
+		let stdoutTail = '';
+		let resultMessageSeen = false;
 
-		let jsonBuffer = '';
 		let result: string | undefined;
 		// Accumulated partial text deltas, used as a fallback when no result
 		// event carries text. Grok streams its answer solely as token-sized
@@ -1045,6 +1156,8 @@ async function spawnJsonLineAgent(
 				if (extracted) sessionId = extracted;
 			}
 
+			if (event.type === 'result') resultMessageSeen = true;
+
 			if (event.type === 'result' && event.text) {
 				result = result ? `${result}\n${event.text}` : event.text;
 			}
@@ -1059,28 +1172,26 @@ async function spawnJsonLineAgent(
 
 			const usage = parser.extractUsage(event);
 			if (usage) {
+				const step = usageAccumulator
+					? usageAccumulator.normalize(parsedUsageToStats(usage))
+					: parsedUsageToStats(usage);
 				usageStats = mergeUsageStats(usageStats, {
-					inputTokens: usage.inputTokens || 0,
-					outputTokens: usage.outputTokens || 0,
-					cacheReadTokens: usage.cacheReadTokens || 0,
-					cacheCreationTokens: usage.cacheCreationTokens || 0,
-					costUsd: usage.costUsd || 0,
-					contextWindow: usage.contextWindow || 0,
-					reasoningTokens: usage.reasoningTokens || 0,
+					inputTokens: step.inputTokens,
+					outputTokens: step.outputTokens,
+					cacheReadTokens: step.cacheReadInputTokens,
+					cacheCreationTokens: step.cacheCreationInputTokens,
+					costUsd: step.totalCostUsd,
+					contextWindow: step.contextWindow,
+					reasoningTokens: step.reasoningTokens,
 				});
 			}
 		};
 
 		child.stdout?.on('data', (data: Buffer) => {
 			wakaHeartbeat?.();
-			jsonBuffer += data.toString();
-			const lines = jsonBuffer.split('\n');
-			jsonBuffer = lines.pop() || '';
-
-			for (const line of lines) {
-				if (!line.trim()) continue;
-				processEvent(parser.parseJsonLine(line));
-			}
+			const text = data.toString();
+			stdoutTail = appendBoundedTail(stdoutTail, text);
+			for (const line of lineReader.push(text)) processEvent(parser.parseJsonLine(line));
 		});
 
 		child.stderr?.on('data', (data: Buffer) => {
@@ -1090,36 +1201,42 @@ async function spawnJsonLineAgent(
 		finalizeAgentStdin(child, sshStdinScript);
 
 		const agentName = def?.name || toolType;
-		child.on('close', (code) => {
-			// Flush any remaining data in the JSON buffer (last line may lack trailing \n)
-			if (jsonBuffer.trim()) {
-				processEvent(parser.parseJsonLine(jsonBuffer));
-			}
+		child.on('close', (code, closeSignal) => {
+			abortLink.dispose();
+
+			// Flush any remaining data in the line reader (last line may lack trailing \n)
+			const trailing = lineReader.flush();
+			if (trailing) processEvent(parser.parseJsonLine(trailing));
 
 			// Soft success: agents like Grok may exit non-zero after a full
-			// answer (e.g. --max-turns) with no structured error event. Prefer
-			// the streamed answer over raw stderr when there is no errorText.
-			const responseText = result || streamedText || undefined;
-			const hasAnswer = Boolean(responseText?.trim());
-			if (!errorText && (code === 0 || hasAnswer)) {
-				resolve({
-					success: true,
-					response: responseText,
+			// answer (e.g. --max-turns) with no structured error event. The shared
+			// resolver reports that as `completed-with-warning`, still a success;
+			// the answer is preferred over raw stderr when there is no errorText.
+			resolve(
+				resolveCliTurnResult({
+					toolType,
+					provider: parser,
+					exitCode: code,
+					signal: closeSignal,
+					interrupted: abortLink.interrupted(),
+					stderrText: stderr,
+					stdoutText: stdoutTail,
+					errorText,
+					answerText: result || streamedText || undefined,
+					resultMessageSeen,
 					agentSessionId: sessionId,
 					usageStats,
-				});
-			} else {
-				resolve({
-					success: false,
-					error: errorText || stderr || `Process exited with code ${code}`,
-					agentSessionId: sessionId,
-					usageStats,
-				});
-			}
+					// This path has always accepted a clean exit with no answer, and a
+					// non-zero exit after a full answer (Grok with `--max-turns`).
+					strictEmptyAnswer: false,
+					answerOutranksBareExit: true,
+				})
+			);
 		});
 
 		child.on('error', (error) => {
-			resolve({ success: false, error: `Failed to spawn ${agentName}: ${error.message}` });
+			abortLink.dispose();
+			resolve(spawnFailureResult(`Failed to spawn ${agentName}: ${error.message}`));
 		});
 	});
 }
@@ -1184,6 +1301,13 @@ export interface SpawnAgentOptions {
 	 * the processes are otherwise identical. Defaults to 'user'.
 	 */
 	querySource?: QuerySource;
+	/**
+	 * Abort the turn. The agent is sent SIGTERM (then SIGKILL after a grace
+	 * period) and the result comes back with `outcome: 'interrupted'` - a user
+	 * stop, never reported as a crash. An already-aborted signal returns
+	 * immediately without spawning anything.
+	 */
+	signal?: AbortSignal;
 }
 
 /**
@@ -1196,9 +1320,12 @@ export async function spawnAgent(
 	agentSessionId?: string,
 	options?: SpawnAgentOptions
 ): Promise<AgentResult> {
+	if (options?.signal?.aborted) return interruptedResult();
+
 	const readOnly = options?.readOnlyMode;
 	const sshRemoteConfig = options?.sshRemoteConfig;
 	const overrides: SpawnOverrides = {
+		signal: options?.signal,
 		customModel: options?.customModel,
 		customEffort: options?.customEffort,
 		customArgs: options?.customArgs,
@@ -1234,10 +1361,7 @@ export async function spawnAgent(
 		);
 	}
 
-	return {
-		success: false,
-		error: `Unsupported agent type for batch mode: ${toolType}`,
-	};
+	return spawnFailureResult(`Unsupported agent type for batch mode: ${toolType}`);
 }
 
 /**
