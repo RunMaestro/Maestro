@@ -220,6 +220,19 @@ The Files pane draws each file and folder with one of two icon sets, chosen in
 
 The choice applies to every agent's Files pane and takes effect right away.
 
+### Tree Lines
+
+By default the Files pane draws a plain vertical guide line for each level of
+indentation. **Settings > Display > Files Pane Tree Lines > Show branch
+connectors** switches to a classic tree instead: every row hangs off its
+folder's guide line with an elbow, and a folder's guide stops at its last item
+rather than running the full height of the row.
+
+Connectors help most in deep trees where several levels hold similarly named
+files, because each row visibly points back at the folder that contains it. They
+are off by default because the plain guides read as quieter on a wide, shallow
+project.
+
 ### File Explorer Keyboard Shortcuts
 
 With the Files tab focused, navigate the file list without touching the mouse:

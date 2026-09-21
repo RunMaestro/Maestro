@@ -3,6 +3,7 @@ import type { FileNode } from '../../../types/fileTree';
 import { logger } from '../../../utils/logger';
 import { MAESTRO_DIR } from '../../../../shared/maestro-paths';
 import type { FlattenedNode } from '../types';
+import { annotateTreeLines } from '../utils/treeLines';
 
 interface UseFileTreeFlattenArgs {
 	filteredFileTree: FileNode[];
@@ -77,7 +78,15 @@ export function useFileTreeFlatten({
 				}
 				seenPaths.add(fullPath);
 
-				result.push({ node, path: fullPath, depth, globalIndex });
+				result.push({
+					node,
+					path: fullPath,
+					depth,
+					globalIndex,
+					// Both filled in by the two passes below, once the whole tree is flat.
+					isLastChild: false,
+					ancestorGuideMask: 0,
+				});
 				globalIndex++;
 
 				// When filtering, auto-expand all folders to reveal matches.
@@ -92,6 +101,7 @@ export function useFileTreeFlatten({
 		};
 
 		flatten(displayTree);
+		annotateTreeLines(result);
 		return result;
 	}, [displayTree, fileExplorerExpanded, fileTreeFilter]);
 
