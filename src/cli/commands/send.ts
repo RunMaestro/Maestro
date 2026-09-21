@@ -5,9 +5,11 @@ import { spawnAgent, detectAgent, type AgentResult } from '../services/agent-spa
 import { captureCliRun } from '../services/agent-run-capture';
 import { resolveAgentId, getSessionById } from '../services/storage';
 import { prepareMaestroSystemPromptCli } from '../services/system-prompt';
-import { estimateContextUsage } from '../../main/parsers/usage-aggregator';
-import { getAgentDefinition } from '../../main/agents/definitions';
+import { estimateContextUsage } from '../../shared/maestro-lib/parsers/usage-aggregator';
+import { getAgentDefinition } from '../../shared/maestro-lib/providers/definitions';
+import type { TurnOutcome } from '../../shared/maestro-lib/streaming/turn-outcome';
 import { withMaestroClient } from '../services/maestro-client';
+import { installInterruptHandler } from '../utils/interrupt';
 import type { ToolType } from '../../shared/types';
 
 interface SendOptions {
@@ -28,6 +30,8 @@ interface SendResponse {
 	response: string | null;
 	success: boolean;
 	error?: string;
+	/** How the turn ended: `completed`, `completed-with-warning`, `interrupted` or `crashed`. */
+	outcome?: TurnOutcome;
 	usage: {
 		inputTokens: number;
 		outputTokens: number;
@@ -73,6 +77,7 @@ function buildResponse(
 		response: result.success ? (result.response ?? null) : null,
 		success: result.success,
 		...(result.success ? {} : { error: result.error }),
+		...(result.outcome ? { outcome: result.outcome } : {}),
 		usage,
 	};
 }
@@ -133,37 +138,47 @@ export async function send(
 
 	// Spawn agent - spawnAgent handles --resume vs fresh session internally.
 	// Wrapped in captureCliRun so the send lands in the agent-run ledger.
-	const result = await captureCliRun(
-		{
-			sessionId: agentSessionId ?? agentId,
-			toolType: agent.toolType,
-			cwd: agent.cwd,
-			prompt: message,
-			source: 'cli:send',
-		},
-		() =>
-			spawnAgent(agent.toolType, agent.cwd, message, agentSessionId, {
-				readOnlyMode: options.readOnly,
-				customModel: agent.customModel,
-				customEffort: agent.customEffort,
-				customArgs: agent.customArgs,
-				additionalDirectories: agent.additionalDirectories,
-				customEnvVars: agent.customEnvVars,
-				sshRemoteConfig: agent.sessionSshRemoteConfig,
-				appendSystemPrompt,
-				// Honor the agent's Claude token source for `maestro-cli send` turns.
-				enableMaestroP: agent.enableMaestroP,
-				maestroPMode: agent.maestroPMode,
-				maestroPPath: agent.maestroPPath,
-			}),
-		(r) => (r.success ? 0 : 1)
-	);
+	// Ctrl+C stops the agent gracefully and reports `outcome: 'interrupted'`
+	// instead of orphaning it; a second Ctrl+C exits immediately.
+	const interrupt = installInterruptHandler();
+	let result: AgentResult;
+	try {
+		result = await captureCliRun(
+			{
+				sessionId: agentSessionId ?? agentId,
+				toolType: agent.toolType,
+				cwd: agent.cwd,
+				prompt: message,
+				source: 'cli:send',
+			},
+			() =>
+				spawnAgent(agent.toolType, agent.cwd, message, agentSessionId, {
+					signal: interrupt.signal,
+					readOnlyMode: options.readOnly,
+					customModel: agent.customModel,
+					customEffort: agent.customEffort,
+					customArgs: agent.customArgs,
+					additionalDirectories: agent.additionalDirectories,
+					customEnvVars: agent.customEnvVars,
+					sshRemoteConfig: agent.sessionSshRemoteConfig,
+					appendSystemPrompt,
+					// Honor the agent's Claude token source for `maestro-cli send` turns.
+					enableMaestroP: agent.enableMaestroP,
+					maestroPMode: agent.maestroPMode,
+					maestroPPath: agent.maestroPPath,
+				}),
+			(r) => (r.success ? 0 : 1)
+		);
+	} finally {
+		interrupt.dispose();
+	}
 	const response = buildResponse(agentId, agent.name, result, agent.toolType);
 
 	console.log(JSON.stringify(response, null, 2));
 
 	if (!result.success) {
-		process.exit(1);
+		// 130 is the shell convention for an interrupt; 1 stays for real failures.
+		process.exit(result.outcome === 'interrupted' ? 130 : 1);
 	}
 
 	// If --tab flag is set, focus the session tab in Maestro desktop
