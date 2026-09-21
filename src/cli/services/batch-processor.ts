@@ -76,6 +76,11 @@ export async function* runPlaybook(
 		 * override, then the agent's settings. Same run-scoped contract.
 		 */
 		ignoreModelHints?: boolean;
+		/**
+		 * Stop the run. The agent turn in flight is aborted, the run records
+		 * "stopped" (never a failure) and ends cleanly. See `spawnAgent`'s `signal`.
+		 */
+		signal?: AbortSignal;
 	} = {}
 ): AsyncGenerator<JsonlEvent> {
 	const {
@@ -87,6 +92,7 @@ export async function* runPlaybook(
 		model: runModel,
 		effort: runEffort,
 		ignoreModelHints = false,
+		signal,
 	} = options;
 	const batchStartTime = Date.now();
 	// Bottom of both ladders for every synopsis turn in this run. Resolved once:
@@ -658,6 +664,7 @@ export async function* runPlaybook(
 								enableMaestroP: session.enableMaestroP,
 								maestroPMode: session.maestroPMode,
 								maestroPPath: session.maestroPPath,
+								signal,
 							}),
 						(r) => (r.success ? 0 : 1)
 					);
@@ -749,6 +756,7 @@ export async function* runPlaybook(
 										enableMaestroP: session.enableMaestroP,
 										maestroPMode: session.maestroPMode,
 										maestroPPath: session.maestroPPath,
+										signal,
 									}
 								),
 							(r) => (r.success ? 0 : 1)
@@ -759,6 +767,9 @@ export async function* runPlaybook(
 							shortSummary = parsed.shortSummary;
 							fullSynopsis = parsed.fullSynopsis;
 						}
+					} else if (result.outcome === 'interrupted') {
+						shortSummary = `[${docEntry.filename}] Task interrupted`;
+						fullSynopsis = 'Interrupted by the operator before the task finished.';
 					} else if (!result.success) {
 						shortSummary = `[${docEntry.filename}] Task failed`;
 						fullSynopsis = result.error || shortSummary;
@@ -804,6 +815,35 @@ export async function* runPlaybook(
 								entryId: historyEntry.id,
 							};
 						}
+					}
+
+					// The operator stopped the run (Ctrl+C). The interrupted task was
+					// recorded above as "interrupted", not as a failure, and the run
+					// reconciles and closes exactly like a halt so the next run's
+					// aggregation does not absorb this one's task entries.
+					if (result.outcome === 'interrupted' || signal?.aborted) {
+						logger.autorun(`Auto Run stopped by operator`, session.name, {
+							document: docEntry.filename,
+							taskIndex,
+							loopNumber: loopIteration + 1,
+						});
+
+						createFinalLoopEntry('Stopped by operator');
+						unregisterCliActivity(session.id);
+
+						const stopReconciled = reconcileTotals();
+						createAutoRunSummary(stopReconciled, 'stopped by operator');
+
+						yield {
+							type: 'complete',
+							timestamp: Date.now(),
+							success: false,
+							totalTasksCompleted: stopReconciled.totalCompletedTasks,
+							totalElapsedMs: stopReconciled.totalElapsedMs,
+							totalCost: stopReconciled.totalCost,
+							stopped: true,
+						};
+						return;
 					}
 
 					// Halt marker detected - agent has signaled early exit. Stop the
