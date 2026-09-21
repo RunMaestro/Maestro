@@ -285,6 +285,77 @@ describe('goal-runner (runGoal)', () => {
 		expect(events.find((e) => e.type === 'goal_complete')?.exitReason).toBe('max-iterations');
 	});
 
+	describe('operator stop', () => {
+		it('ends as stopped-by-user, without recording a failed iteration, when a turn is interrupted', async () => {
+			vi.mocked(spawnAgent).mockResolvedValue({
+				success: false,
+				outcome: 'interrupted',
+				error: 'Interrupted',
+			});
+
+			const events = await collectEvents(runGoal(mockSession(), goalConfig()));
+
+			// No self-report to parse, no iteration record, and no handoff turn.
+			expect(spawnAgent).toHaveBeenCalledTimes(1);
+			expect(events.filter((e) => e.type === 'goal_iteration_complete')).toHaveLength(0);
+			const complete = events.find((e) => e.type === 'goal_complete');
+			expect(complete?.exitReason).toBe('stopped-by-user');
+			expect(complete?.success).toBe(false);
+			const summaries = vi.mocked(addHistoryEntry).mock.calls.map((c) => c[0].summary as string);
+			expect(summaries.some((s) => /failed/i.test(s))).toBe(false);
+			expect(unregisterCliActivity).toHaveBeenCalledWith('session-123');
+		});
+
+		it('stops before the next iteration when aborted between iterations', async () => {
+			const controller = new AbortController();
+			vi.mocked(spawnAgent).mockImplementation(async (_tool, _cwd, _prompt, agentSessionId) => {
+				if (agentSessionId) return { success: true, response: 'handoff', agentSessionId };
+				controller.abort();
+				return { success: true, response: progressResponse(40), agentSessionId: 'agent-1' };
+			});
+
+			const events = await collectEvents(
+				runGoal(mockSession(), goalConfig(), { signal: controller.signal })
+			);
+
+			// The finished iteration is recorded normally; the next one never starts.
+			expect(events.filter((e) => e.type === 'goal_iteration_complete')).toHaveLength(1);
+			expect(events.filter((e) => e.type === 'goal_iteration_start')).toHaveLength(1);
+			const complete = events.find((e) => e.type === 'goal_complete');
+			expect(complete?.exitReason).toBe('stopped-by-user');
+			expect(String(complete?.exitDetail ?? complete?.detail ?? '')).toMatch(/after iteration 1/);
+		});
+
+		it('does not start when the signal is already aborted', async () => {
+			const controller = new AbortController();
+			controller.abort();
+
+			const events = await collectEvents(
+				runGoal(mockSession(), goalConfig(), { signal: controller.signal })
+			);
+
+			expect(spawnAgent).not.toHaveBeenCalled();
+			expect(events.find((e) => e.type === 'goal_complete')?.exitReason).toBe('stopped-by-user');
+		});
+
+		it('hands the signal to the iteration and to the handoff turn', async () => {
+			const controller = new AbortController();
+			vi.mocked(spawnAgent).mockImplementation(async (_tool, _cwd, _prompt, agentSessionId) =>
+				agentSessionId
+					? { success: true, response: 'handoff', agentSessionId }
+					: { success: true, response: progressResponse(50), agentSessionId: 'agent-1' }
+			);
+
+			await collectEvents(
+				runGoal(mockSession(), goalConfig({ maxIterations: 2 }), { signal: controller.signal })
+			);
+
+			const optionsOf = (i: number) => vi.mocked(spawnAgent).mock.calls[i][4];
+			expect(optionsOf(0)).toMatchObject({ signal: controller.signal });
+			expect(optionsOf(1)).toMatchObject({ signal: controller.signal });
+		});
+	});
+
 	it('skips history writes when writeHistory is false', async () => {
 		await collectEvents(runGoal(mockSession(), goalConfig(), { writeHistory: false }));
 		expect(addHistoryEntry).not.toHaveBeenCalled();
