@@ -3,7 +3,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import * as os from 'os';
+import { resolveMaestroUserDataDir } from '../../shared/maestroUserDataDir';
 import type { Group, SessionInfo, HistoryEntry, SshRemoteConfig } from '../../shared/types';
 import {
 	HISTORY_JSONL_EXT,
@@ -19,23 +19,13 @@ import {
 	normalizeHistoryEntries,
 } from '../../shared/history';
 
-// Get the Maestro config directory path
+// Get the Maestro config directory path. Delegates to the shared resolver
+// (`src/shared/maestroUserDataDir.ts`) so this CLI and the standalone Cue
+// engine runner can never disagree on where Maestro's data lives - see that
+// module's doc comment for why `MAESTRO_USER_DATA` and the platform fallback
+// are safe to share.
 export function getConfigDir(): string {
-	// Allow overriding the data directory (e.g. for dev mode: maestro-dev)
-	if (process.env.MAESTRO_USER_DATA) {
-		return path.resolve(process.env.MAESTRO_USER_DATA);
-	}
-	const platform = os.platform();
-	const home = os.homedir();
-
-	if (platform === 'darwin') {
-		return path.join(home, 'Library', 'Application Support', 'Maestro');
-	} else if (platform === 'win32') {
-		return path.join(process.env.APPDATA || path.join(home, 'AppData', 'Roaming'), 'Maestro');
-	} else {
-		// Linux and others
-		return path.join(process.env.XDG_CONFIG_HOME || path.join(home, '.config'), 'Maestro');
-	}
+	return resolveMaestroUserDataDir();
 }
 
 /**

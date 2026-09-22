@@ -533,7 +533,9 @@ describe('cue-process-lifecycle', () => {
 				expect(result.stdout).toBe('command not found: something\n');
 			});
 
-			it('leaves usage undefined when the provider reports none', async () => {
+			// `null` rather than `undefined` at this layer: the streaming capture
+			// starts null and `cue-executor` maps it to undefined on the way out.
+			it('leaves usage unset when the provider reports none', async () => {
 				mockGetOutputParser.mockReturnValue(resultParser());
 
 				const resultPromise = runProcess('run-1', createSpec(), createOptions());
@@ -542,7 +544,7 @@ describe('cue-process-lifecycle', () => {
 				mockChild.stdout.emit('data', JSON.stringify({ type: 'result', result: 'done' }));
 				mockChild.emit('close', 0, null);
 
-				expect((await resultPromise).usage).toBeUndefined();
+				expect((await resultPromise).usage).toBeNull();
 			});
 
 			it('fails a signal kill even when the agent had streamed an answer', async () => {
@@ -650,6 +652,111 @@ describe('cue-process-lifecycle', () => {
 				const result = await resultPromise;
 
 				expect(result.stdout).toBe('Hello from the agent');
+			});
+		});
+
+		// Live stream capture (Plans/maestro-lib-cli-migration.md, "Cue"): the
+		// same single pass that builds clean stdout also tracks the provider
+		// session id and delta-normalized usage, so the dashboard has a token
+		// figure for a run even when it executed over SSH (whose on-disk
+		// session file cue-token-accessor.ts can never read).
+		describe('providerSessionId and usage capture', () => {
+			it('captures the last session id the parser reports', async () => {
+				mockGetOutputParser.mockReturnValue({
+					parseJsonLine: (line: string) => JSON.parse(line),
+					extractSessionId: (event: any) => event.session_id ?? null,
+					extractUsage: () => null,
+				} as any);
+
+				const lines = [
+					JSON.stringify({ session_id: 'sess-1' }),
+					JSON.stringify({ session_id: 'sess-2' }),
+				].join('\n');
+
+				const resultPromise = runProcess(
+					'run-1',
+					createSpec(),
+					createOptions({ toolType: 'claude-code' })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+
+				mockChild.stdout.emit('data', lines + '\n');
+				mockChild.emit('close', 0);
+				const result = await resultPromise;
+
+				expect(result.providerSessionId).toBe('sess-2');
+			});
+
+			it('returns null providerSessionId/usage when no parser is registered', async () => {
+				mockGetOutputParser.mockReturnValue(null);
+
+				const resultPromise = runProcess('run-1', createSpec(), createOptions());
+				await vi.advanceTimersByTimeAsync(0);
+
+				mockChild.stdout.emit('data', 'plain text\n');
+				mockChild.emit('close', 0);
+				const result = await resultPromise;
+
+				expect(result.providerSessionId).toBeNull();
+				expect(result.usage).toBeNull();
+			});
+
+			it('passes through per-turn usage unmodified for a non-combined-context provider', async () => {
+				mockGetOutputParser.mockReturnValue({
+					parseJsonLine: (line: string) => JSON.parse(line),
+					extractSessionId: () => null,
+					extractUsage: (event: any) => event.usage ?? null,
+				} as any);
+
+				const resultPromise = runProcess(
+					'run-1',
+					createSpec(),
+					createOptions({ toolType: 'claude-code' })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+
+				mockChild.stdout.emit(
+					'data',
+					JSON.stringify({ usage: { inputTokens: 100, outputTokens: 50 } }) + '\n'
+				);
+				mockChild.emit('close', 0);
+				const result = await resultPromise;
+
+				expect(result.usage).toMatchObject({ inputTokens: 100, outputTokens: 50 });
+			});
+
+			it('delta-normalizes cumulative usage for a combined-context-window provider (codex)', async () => {
+				mockGetOutputParser.mockReturnValue({
+					parseJsonLine: (line: string) => JSON.parse(line),
+					extractSessionId: () => null,
+					extractUsage: (event: any) => event.usage ?? null,
+				} as any);
+
+				const resultPromise = runProcess(
+					'run-1',
+					createSpec({ command: 'codex' }),
+					createOptions({ toolType: 'codex' })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+
+				// Codex reports a running SESSION TOTAL on every event, not a
+				// per-turn delta - exactly the shape the CLI migration's
+				// UsageAccumulator test pins (100, then 100+200=300 cumulative).
+				mockChild.stdout.emit(
+					'data',
+					JSON.stringify({ usage: { inputTokens: 100, outputTokens: 0 } }) + '\n'
+				);
+				mockChild.stdout.emit(
+					'data',
+					JSON.stringify({ usage: { inputTokens: 300, outputTokens: 0 } }) + '\n'
+				);
+				mockChild.emit('close', 0);
+				const result = await resultPromise;
+
+				// Deltas are 100, then 300 - 100 = 200, and the run consumed both:
+				// 300. Keeping only the newest delta would report 200 and lose
+				// the first event; taking the raw value would double-count.
+				expect(result.usage).toMatchObject({ inputTokens: 300 });
 			});
 		});
 

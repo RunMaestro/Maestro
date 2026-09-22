@@ -66,7 +66,39 @@ async function build() {
 			// fsevents is an optional native module (.node) pulled in transitively
 			// by chokidar on macOS. esbuild can't bundle .node files, and chokidar
 			// guards its require() in a try/catch, so mark it external.
-			external: ['fsevents'],
+			//
+			// 'electron' and 'electron-store' are external for a different reason:
+			// the `electron` npm package's own index.js resolves its binary path
+			// relative to ITS OWN file location (a `path.txt` sibling under
+			// node_modules/electron/), and esbuild inlining it breaks that
+			// resolution - bundled, it throws "Electron failed to install
+			// correctly" the moment anything requires it, even though
+			// `require('electron')` under plain Node works fine unbundled (it
+			// resolves to the binary path string, not the Electron API surface -
+			// see maestroUserDataDir.ts's doc comment for why that string, not
+			// undefined, is what a CLI import of an Electron-typed module sees).
+			// `standalone Cue engine` (`cue engine start`) is the first CLI
+			// command whose import graph reaches an electron-store-backed module
+			// (`claude-usage-startup.ts`, via `resolveClaudeSpawnMode.ts`), so
+			// this was a latent bug no prior command tripped.
+			//
+			// 'better-sqlite3' is external for the same class of reason: it is a
+			// native addon, and its `bindings` resolver locates the compiled
+			// `.node` file by walking up from ITS OWN package directory
+			// (node_modules/better-sqlite3/...). Bundled, that directory doesn't
+			// exist at runtime - the JS is inlined into this single file - so
+			// `bindings` searches paths relative to the bundle's location
+			// instead and never finds the real binary ("Could not locate the
+			// bindings file"). `cue-db.ts` (Cue's SQLite journal) is, like
+			// electron above, newly reachable from a CLI command via `cue
+			// engine`; no earlier command touched it. Packaging note: shipping
+			// `cue engine` in the built app additionally requires bundling
+			// `node_modules/better-sqlite3`'s compiled binary as an
+			// extraResource alongside `maestro-cli.js`, mirroring how the
+			// desktop app itself already ships it for its own Cue database -
+			// not yet wired into the packaging config (see
+			// Plans/maestro-lib-cli-migration.md's standalone-engine section).
+			external: ['fsevents', 'electron', 'electron-store', 'better-sqlite3'],
 			plugins: [rawMdPlugin],
 			define: {
 				__MAESTRO_CLI_VERSION__: JSON.stringify(cliVersion),
