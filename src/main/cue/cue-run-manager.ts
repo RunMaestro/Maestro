@@ -53,7 +53,7 @@ const MAX_CUE_ERROR_MESSAGE_CHARS = 2000;
  * signal the Activity Log and History filter on.
  */
 function completionInfoFromResult(
-	result: Pick<CueRunResult, 'status' | 'stdout' | 'stderr' | 'exitCode'>
+	result: Pick<CueRunResult, 'status' | 'stdout' | 'stderr' | 'exitCode' | 'usage'>
 ): CueEventCompletionInfo {
 	const trimmed = result.stderr?.trim() ?? '';
 	const errorMessage =
@@ -61,7 +61,13 @@ function completionInfoFromResult(
 			? sliceHeadByChars(trimmed, MAX_CUE_ERROR_MESSAGE_CHARS)
 			: null;
 	const { excerpt, fullOutput } = buildCuePersistedOutput(result);
-	return { errorMessage, exitCode: result.exitCode ?? null, outputExcerpt: excerpt, fullOutput };
+	return {
+		errorMessage,
+		exitCode: result.exitCode ?? null,
+		outputExcerpt: excerpt,
+		fullOutput,
+		streamUsageJson: result.usage ? JSON.stringify(result.usage) : null,
+	};
 }
 
 /** Phase of a run in the state machine: running → stopping | finished */
@@ -548,10 +554,12 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			result.stdout = runResult.stdout;
 			result.stderr = runResult.stderr;
 			result.exitCode = runResult.exitCode;
-			// Carry the main task's provider session id for token attribution.
-			// The output-prompt phase (below) overwrites stdout but NOT this -
-			// it records its own session id on its own event row (outputRunId).
+			// Carry the main task's provider session id and stream-parsed usage
+			// for token attribution. The output-prompt phase (below) overwrites
+			// stdout but NOT these - it records its own session id/usage on its
+			// own event row (outputRunId).
 			result.providerSessionId = runResult.providerSessionId;
+			result.usage = runResult.usage;
 
 			// Execute output prompt if the main task succeeded and an output prompt is configured.
 			// Skipped for `action: command` runs - output_prompt is an AI follow-up, not a

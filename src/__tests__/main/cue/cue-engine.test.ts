@@ -70,6 +70,16 @@ vi.mock('../../../main/cue/cue-task-scanner', async () => {
 const mockInitCueDb = vi.fn();
 const mockCloseCueDb = vi.fn();
 const mockPruneCueEvents = vi.fn();
+// Mock the cross-process engine lock: acquireCueEngineLock/releaseCueEngineLock
+// touch a REAL file under the real Maestro data directory (cue-engine-lock.ts is
+// deliberately global-state, cross-process by design), which would make parallel
+// test workers steal each other's lock and fail start() nondeterministically.
+vi.mock('../../../main/cue/cue-engine-lock', () => ({
+	acquireCueEngineLock: () => ({ acquired: true }),
+	releaseCueEngineLock: () => {},
+	readCueEngineLock: () => null,
+}));
+
 vi.mock('../../../main/cue/cue-db', () => ({
 	initCueDb: (...args: unknown[]) => mockInitCueDb(...args),
 	closeCueDb: () => mockCloseCueDb(),

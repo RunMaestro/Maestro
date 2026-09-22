@@ -11,11 +11,16 @@
 import { spawn, execFile, execFileSync, type ChildProcess } from 'child_process';
 import type { CueRunStatus } from './cue-types';
 import type { SpawnSpec } from './cue-spawn-builder';
-import type { ToolType } from '../../shared/types';
+import type { ToolType, UsageStats } from '../../shared/types';
 import { getOutputParser } from '../parsers';
+import type { AgentOutputParser } from '../../shared/maestro-lib/parsers/agent-output-parser';
 import { captureException } from '../utils/sentry';
 import { isWindows } from '../../shared/platformDetection';
 import { stripAnsiCodes } from '../../shared/stringUtils';
+import { BufferedLineReader } from '../../shared/maestro-lib/streaming/buffered-line-reader';
+import { UsageAccumulator } from '../../shared/maestro-lib/streaming/usage-accumulator';
+import { hasCapability } from '../../shared/maestro-lib/providers/capabilities';
+import { FALLBACK_CONTEXT_WINDOW } from '../../shared/agentConstants';
 
 const SIGKILL_DELAY_MS = 5000;
 
@@ -59,6 +64,10 @@ export interface ProcessRunResult {
 	stderr: string;
 	exitCode: number | null;
 	status: CueRunStatus;
+	/** Provider session id parsed from stdout as it streamed. Null for command/shell runs (no parser) or output that never carried one. */
+	providerSessionId: string | null;
+	/** Usage delta-normalized from the stdout stream. See `CueRunResult.usage`. Null when the run produced no usage events or has no output parser. */
+	usage: UsageStats | null;
 }
 
 /** Options controlling process execution */
@@ -87,49 +96,120 @@ const activeProcesses = new Map<string, CueActiveProcess>();
 // ─── Internal Helpers ─────────��──────────────────────────────────────────────
 
 /**
- * Extract clean human-readable text from agent stdout.
- * For agents that output JSON/NDJSON (like OpenCode --format json), parses each
- * line and collects text from 'result' events. When 'result' events have empty
- * text (e.g. Claude Code sometimes returns result:""), falls back to collecting
- * text from 'assistant' (partial) events. Falls back to raw stdout when no
- * parser is available or no text events are found (e.g. plain-text agents).
+ * Convert a parser's raw `extractUsage()` shape into `UsageStats`. A scoped
+ * port of `StdoutHandler.buildUsageStats` - Cue has no per-process omp model
+ * catalog to resolve against (that catalog only primes for interactive
+ * sessions), so a model-dependent window falls back to the static per-agent
+ * default rather than a runtime-resolved one. Every other field maps 1:1.
  */
-function extractCleanStdout(rawStdout: string, toolType: string): string {
-	if (!rawStdout.trim()) {
-		return rawStdout;
+function toCueUsageStats(usage: NonNullable<ReturnType<AgentOutputParser['extractUsage']>>): UsageStats {
+	const stats: UsageStats = {
+		inputTokens: usage.inputTokens,
+		outputTokens: usage.outputTokens,
+		cacheReadInputTokens: usage.cacheReadTokens || 0,
+		cacheCreationInputTokens: usage.cacheCreationTokens || 0,
+		totalCostUsd: usage.costUsd || 0,
+		absoluteUsage: usage.absoluteUsage,
+		contextWindow: usage.contextWindow || FALLBACK_CONTEXT_WINDOW,
+		reasoningTokens: usage.reasoningTokens,
+	};
+	if (usage.contextWindowReported && (usage.contextWindow || 0) > 0) {
+		stats.contextWindowResolved = true;
 	}
+	return stats;
+}
 
-	const parser = getOutputParser(toolType as ToolType);
-	if (!parser) {
-		return rawStdout;
-	}
+/**
+ * Streaming capture for one Cue agent run: folds three things that used to be
+ * three separate full-buffer passes (`extractCleanStdout`,
+ * `extractProviderSessionId` in `cue-executor.ts`, and no usage capture at
+ * all) into a single line-by-line pass fed by `BufferedLineReader` as stdout
+ * chunks arrive, mirroring how desktop chat's `StdoutHandler` and the CLI's
+ * `spawnAgent` already do this (Plans/maestro-lib-cli-migration.md, "Cue").
+ *
+ * Delta-normalization is gated on `usesCombinedContextWindow` (Part Two's
+ * decision, `Plans/maestro-lib-cli-migration.md` §3) rather than desktop's
+ * older `toolType === 'codex' || toolType === 'claude-code'` check - Codex
+ * reports a running session total that must be delta-normalized or a run's
+ * tokens grow with the square of its event count; Claude Code's Cue runs are
+ * always fresh (no `--resume`), so its usage events are already per-turn and
+ * summing/overwriting them needs no accumulator.
+ */
+class CueRunStreamCapture {
+	private readonly parser: AgentOutputParser | null;
+	private readonly reader = new BufferedLineReader();
+	private readonly usageAccumulator: UsageAccumulator | undefined;
+	private readonly resultParts: string[] = [];
+	private readonly assistantTextByMessage = new Map<string, string>();
+	private readonly assistantTextWithoutId: string[] = [];
+	private rawFallback = '';
+	providerSessionId: string | null = null;
+	usage: UsageStats | null = null;
 
-	const resultParts: string[] = [];
-	const assistantTextByMessage = new Map<string, string>();
-	const assistantTextWithoutId: string[] = [];
-	for (const line of rawStdout.split('\n')) {
-		if (!line.trim()) continue;
-		const event = parser.parseJsonLine(line);
-		if (event?.type === 'result' && event.text) {
-			resultParts.push(event.text);
-		} else if (event?.type === 'text' && event.isPartial && event.text) {
-			const raw = event.raw as { message?: { id?: string } } | undefined;
-			const msgId = raw?.message?.id;
-			if (msgId) {
-				const existing = assistantTextByMessage.get(msgId) ?? '';
-				if (event.text.length > existing.length) {
-					assistantTextByMessage.set(msgId, event.text);
-				}
-			} else {
-				assistantTextWithoutId.push(event.text);
-			}
+	constructor(toolType: string) {
+		this.parser = getOutputParser(toolType as ToolType);
+		if (this.parser && hasCapability(toolType, 'usesCombinedContextWindow')) {
+			this.usageAccumulator = new UsageAccumulator({ attachesAbsoluteUsage: true });
 		}
 	}
 
-	if (resultParts.length > 0) return resultParts.join('\n');
-	const deduped = [...assistantTextByMessage.values(), ...assistantTextWithoutId];
-	if (deduped.length > 0) return deduped.join('\n');
-	return rawStdout;
+	push(chunk: string): void {
+		this.rawFallback += chunk;
+		if (!this.parser) return;
+		for (const line of this.reader.push(chunk)) {
+			this.handleLine(line);
+		}
+	}
+
+	/** Flush whatever partial line remains unterminated at process exit. */
+	flush(): void {
+		if (!this.parser) return;
+		const remainder = this.reader.flush();
+		if (remainder) this.handleLine(remainder);
+	}
+
+	private handleLine(line: string): void {
+		const parser = this.parser;
+		if (!parser) return;
+		const event = parser.parseJsonLine(line);
+		if (!event) return;
+
+		if (event.type === 'result' && event.text) {
+			this.resultParts.push(event.text);
+		} else if (event.type === 'text' && event.isPartial && event.text) {
+			const raw = event.raw as { message?: { id?: string } } | undefined;
+			const msgId = raw?.message?.id;
+			if (msgId) {
+				const existing = this.assistantTextByMessage.get(msgId) ?? '';
+				if (event.text.length > existing.length) {
+					this.assistantTextByMessage.set(msgId, event.text);
+				}
+			} else {
+				this.assistantTextWithoutId.push(event.text);
+			}
+		}
+
+		// Optional chaining, not a plain call: a real `AgentOutputParser`
+		// always implements both, but test doubles routinely mock only the
+		// method the test cares about (`parseJsonLine`), and a strict call
+		// here would throw on those rather than degrading gracefully.
+		const sessionId = parser.extractSessionId?.(event);
+		if (sessionId) this.providerSessionId = sessionId;
+
+		const rawUsage = parser.extractUsage?.(event);
+		if (rawUsage) {
+			const stats = toCueUsageStats(rawUsage);
+			this.usage = this.usageAccumulator ? this.usageAccumulator.normalize(stats) : stats;
+		}
+	}
+
+	/** Clean, human-readable text: prefers result events, then assistant text, then the raw buffer verbatim (plain-text agents, or a parser that never produced either). */
+	getCleanStdout(): string {
+		if (this.resultParts.length > 0) return this.resultParts.join('\n');
+		const deduped = [...this.assistantTextByMessage.values(), ...this.assistantTextWithoutId];
+		if (deduped.length > 0) return deduped.join('\n');
+		return this.rawFallback;
+	}
 }
 
 /**
@@ -271,12 +351,15 @@ export function runProcess(
 				stderr: `Spawn error: ${err instanceof Error ? err.message : String(err)}`,
 				exitCode: null,
 				status: 'failed',
+				providerSessionId: null,
+				usage: null,
 			});
 			return;
 		}
 
 		let stdout = '';
 		let stderr = '';
+		const capture = new CueRunStreamCapture(toolType);
 
 		activeProcesses.set(runId, {
 			child,
@@ -298,12 +381,15 @@ export function runProcess(
 
 			activeProcesses.delete(runId);
 			if (timeoutTimer) clearTimeout(timeoutTimer);
+			capture.flush();
 
 			resolve({
-				stdout: extractCleanStdout(stdout, toolType),
+				stdout: capture.getCleanStdout(),
 				stderr: extractCleanStderr(stderr, toolType),
 				exitCode,
 				status,
+				providerSessionId: capture.providerSessionId,
+				usage: capture.usage,
 			});
 		};
 
@@ -311,6 +397,7 @@ export function runProcess(
 		child.stdout?.setEncoding('utf8');
 		child.stdout?.on('data', (data: string) => {
 			stdout += data;
+			capture.push(data);
 			onActivity?.();
 		});
 
@@ -321,7 +408,28 @@ export function runProcess(
 			onActivity?.();
 		});
 
-		// Handle process exit
+		// Handle process exit.
+		//
+		// Deliberately NOT routed through maestro-lib's `resolveTurnOutcome`
+		// (Plans/maestro-lib-cli-migration.md, "Cue", open question 3). Two
+		// reasons, not an oversight:
+		//
+		//  1. `TurnOutcome` is four-valued (completed / completed-with-warning /
+		//     interrupted / crashed) and has no slot for Cue's SYSTEM-initiated
+		//     `'timeout'` - the run-length cap set by the subscription, handled
+		//     below, not a user abort. Forcing it through would either drop the
+		//     distinction (Cue's dashboard shows timeout as its own status,
+		//     separate from a crash) or require widening the shared type with a
+		//     `reason` sub-field, which is a decision made once, for every
+		//     caller, not smuggled in here.
+		//  2. Cue's status is exit-code-derived today and already has its own
+		//     five-valued state machine (running/completed/failed/timeout/
+		///    stopped, the last set by cue-run-manager.ts on a manual stop).
+		//     Swapping the resolver in would change almost nothing it reports -
+		//     a non-zero exit is already 'failed', a signal kill is already
+		//     'failed' via this same branch - so the entire value of migrating
+		//     is the two additions this stage makes (live usage capture above,
+		//     and this comment), not a status-derivation rewrite.
 		child.on('close', (code) => {
 			const status: CueRunStatus = code === 0 ? 'completed' : 'failed';
 			finish(status, code);
