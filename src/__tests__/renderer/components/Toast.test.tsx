@@ -14,7 +14,11 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
-import { ToastContainer, buildToastClipboardText } from '../../../renderer/components/Toast';
+import {
+	ToastContainer,
+	buildToastClipboardText,
+	TOAST_STACK_TOP_CLEARANCE_PX,
+} from '../../../renderer/components/Toast';
 import { useNotificationStore } from '../../../renderer/stores/notificationStore';
 import type { Toast } from '../../../renderer/stores/notificationStore';
 import { mockTheme } from '../../helpers/mockTheme';
@@ -57,7 +61,20 @@ describe('Toast', () => {
 		it('returns null when no toasts', () => {
 			render(<ToastContainer theme={mockTheme} />);
 			// Portal renders to document.body, so no toast elements should exist
-			expect(document.body.querySelector('.fixed.bottom-4')).toBeNull();
+			expect(screen.queryByTestId('toast-container')).toBeNull();
+		});
+	});
+
+	describe('stack layout', () => {
+		it('caps the stack height so it cannot cover the Right Bar tab strip', () => {
+			setStoreToasts([createMockToast()]);
+
+			render(<ToastContainer theme={mockTheme} />);
+			const container = screen.getByTestId('toast-container');
+			expect(container.style.maxHeight).toBe(`calc(100vh - ${TOAST_STACK_TOP_CLEARANCE_PX}px)`);
+			expect(container.style.overflowY).toBe('auto');
+			// Reverse flow keeps the scroll origin (and the newest toast) at the bottom.
+			expect(container.className).toContain('flex-col-reverse');
 		});
 	});
 
