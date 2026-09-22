@@ -504,6 +504,7 @@ describe('createCueRunManager', () => {
 				exitCode: 0,
 				outputExcerpt: 'output',
 				fullOutput: 'output',
+				streamUsageJson: null,
 			});
 		});
 
@@ -640,7 +641,13 @@ describe('createCueRunManager', () => {
 				expect.any(String),
 				'completed',
 				undefined,
-				{ errorMessage: null, exitCode: 0, outputExcerpt: 'hi', fullOutput: 'hi' }
+				{
+					errorMessage: null,
+					exitCode: 0,
+					outputExcerpt: 'hi',
+					fullOutput: 'hi',
+					streamUsageJson: null,
+				}
 			);
 			// And a log should explain the run was recorded post-stop AND
 			// include the structured runFinished payload so the renderer
@@ -678,7 +685,13 @@ describe('createCueRunManager', () => {
 				expect.any(String),
 				'failed',
 				undefined,
-				{ errorMessage: 'boom', exitCode: 0, outputExcerpt: 'output', fullOutput: 'output' }
+				{
+					errorMessage: 'boom',
+					exitCode: 0,
+					outputExcerpt: 'output',
+					fullOutput: 'output',
+					streamUsageJson: null,
+				}
 			);
 		});
 
@@ -797,7 +810,13 @@ describe('createCueRunManager', () => {
 				expect.any(String),
 				'completed',
 				undefined,
-				{ errorMessage: null, exitCode: 0, outputExcerpt: 'output', fullOutput: 'output' }
+				{
+					errorMessage: null,
+					exitCode: 0,
+					outputExcerpt: 'output',
+					fullOutput: 'output',
+					streamUsageJson: null,
+				}
 			);
 			// And the post-stop log MUST include the structured runFinished
 			// payload so renderer listeners observe the transition.

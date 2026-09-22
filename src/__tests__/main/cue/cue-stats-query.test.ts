@@ -420,6 +420,88 @@ describe('cue-stats-query - getCueStatsAggregation', () => {
 		});
 	});
 
+	// Plans/maestro-lib-cli-migration.md, "Cue": `cue-token-accessor.ts`'s
+	// on-disk lookup can never resolve a session file for an SSH-remote run -
+	// the file lives on the remote host - so it always returns zeros with
+	// `coverage: 'partial'` for one. `stream_usage_json` (populated live by
+	// `cue-process-lifecycle.ts` from the run's own stdout, regardless of
+	// where the process ran) is the only real token figure available then.
+	describe('stream-usage fallback (SSH-remote token attribution)', () => {
+		it('falls back to stream-parsed usage when the on-disk summary is zeroed (partial coverage)', async () => {
+			mockEvents = [
+				makeEvent({
+					id: 'e1',
+					sessionId: 's-remote',
+					streamUsageJson: JSON.stringify({
+						inputTokens: 120,
+						outputTokens: 40,
+						cacheReadInputTokens: 5,
+						cacheCreationInputTokens: 2,
+						totalCostUsd: 0.03,
+						contextWindow: 200000,
+					}),
+				}),
+			];
+			// Mirrors what cue-token-accessor.ts actually returns for a remote
+			// session: zeroed totals, coverage 'partial'.
+			mockSummaries.set(
+				's-remote',
+				makeSummary({
+					sessionId: 's-remote',
+					agentType: 'claude-code',
+					coverage: 'partial',
+					inputTokens: 0,
+					outputTokens: 0,
+					cacheReadTokens: 0,
+					cacheCreationTokens: 0,
+					costUsd: null,
+				})
+			);
+
+			const result = await getCueStatsAggregation('day');
+
+			expect(result.totals.totalInputTokens).toBe(120);
+			expect(result.totals.totalOutputTokens).toBe(40);
+			expect(result.totals.totalCacheReadTokens).toBe(5);
+			expect(result.totals.totalCacheCreationTokens).toBe(2);
+		});
+
+		it('prefers a non-zero on-disk summary over the stream fallback', async () => {
+			mockEvents = [
+				makeEvent({
+					id: 'e1',
+					sessionId: 's-local',
+					streamUsageJson: JSON.stringify({ inputTokens: 999, outputTokens: 999 }),
+				}),
+			];
+			mockSummaries.set(
+				's-local',
+				makeSummary({
+					sessionId: 's-local',
+					agentType: 'claude-code',
+					coverage: 'full',
+					inputTokens: 100,
+					outputTokens: 50,
+				})
+			);
+
+			const result = await getCueStatsAggregation('day');
+
+			// The real on-disk figures win, not the stream fallback's.
+			expect(result.totals.totalInputTokens).toBe(100);
+			expect(result.totals.totalOutputTokens).toBe(50);
+		});
+
+		it('contributes nothing when neither the on-disk summary nor stream usage is available', async () => {
+			mockEvents = [makeEvent({ id: 'e1', sessionId: 's-none', providerSessionId: null })];
+
+			const result = await getCueStatsAggregation('day');
+
+			expect(result.totals.totalInputTokens).toBe(0);
+			expect(result.totals.totalOutputTokens).toBe(0);
+		});
+	});
+
 	describe('byTriggerType rollup', () => {
 		it('groups events by event.type and sorts by occurrences desc', async () => {
 			const now = Date.now();
