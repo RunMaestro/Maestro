@@ -426,14 +426,18 @@ export function runProcess(
 				},
 				{ providerId: toolType, sessionId: runId }
 			);
-			// The resolver leaves "non-zero exit, nothing captured, no provider
-			// classification" as `completed`, which is where every parser-less
-			// agent (plain text, command runs) lands. Cue has always failed
-			// those, and a pipeline must not chain off a silent failure. Same
-			// rule as the CLI's `nonZeroWithoutAnswer`.
+			// Two rules the CLI adapter also carries, because a pipeline must not
+			// chain off a silent failure or a truncated answer:
+			// - a non-zero exit that captured nothing, which the resolver leaves
+			//   as `completed` for every parser-less agent;
+			// - a signal kill nobody requested, however much text had streamed by
+			//   then (`interrupted` is handled above, so this signal was not ours).
 			const nonZeroWithoutAnswer = code !== 0 && code !== null && !parsed.answerText?.trim();
+			const killedBySignal = (closeSignal ?? null) !== null;
 			const status =
-				outcome !== 'interrupted' && nonZeroWithoutAnswer ? 'failed' : cueStatusForOutcome(outcome);
+				outcome !== 'interrupted' && (nonZeroWithoutAnswer || killedBySignal)
+					? 'failed'
+					: cueStatusForOutcome(outcome);
 			finish(status, code, parsed);
 		});
 
