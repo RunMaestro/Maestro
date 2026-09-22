@@ -4,6 +4,8 @@
  * Keep these types runtime-agnostic and free of Node/Electron dependencies.
  */
 
+import type { UsageStats } from '../types';
+
 /** Days of the week for scheduled triggers */
 export type CueScheduleDay = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
 
@@ -435,6 +437,11 @@ export interface CueRunResult {
 	 * AI session) and for runs whose stdout carried no parseable session id.
 	 */
 	providerSessionId?: string | null;
+	/**
+	 * Tokens and cost for the run, summed from the provider's usage events.
+	 * Undefined for command runs (no agent) and for providers that report none.
+	 */
+	usage?: UsageStats;
 }
 
 /** Status summary for a Cue-enabled session */

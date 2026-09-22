@@ -284,6 +284,7 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 		startedAt,
 		endedAt: new Date().toISOString(),
 		providerSessionId: extractProviderSessionId(processResult.stdout, config.toolType),
+		usage: processResult.usage,
 	};
 }
 
