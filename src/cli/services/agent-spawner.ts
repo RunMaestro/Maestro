@@ -18,7 +18,10 @@ import { hasCapability } from '../../shared/maestro-lib/providers/capabilities';
 import { checkCustomPath } from '../../shared/maestro-lib/launch/path-prober';
 import { BufferedLineReader } from '../../shared/maestro-lib/streaming/buffered-line-reader';
 import { UsageAccumulator } from '../../shared/maestro-lib/streaming/usage-accumulator';
-import type { ParsedEvent } from '../../shared/maestro-lib/parsers/agent-output-parser';
+import {
+	mergeUsageStats,
+	parsedUsageToStats,
+} from '../../shared/maestro-lib/streaming/usage-totals';
 import type { TurnOutcome } from '../../shared/maestro-lib/streaming/turn-outcome';
 import { resolveCliTurnResult, interruptedResult, spawnFailureResult } from './turn-result';
 import { getAgentCustomPath, readAgentConfig, readSshRemotes } from './storage';
@@ -924,48 +927,6 @@ function applySshWrapResult(wrapped: SshSpawnWrapResult): {
 }
 
 /** Widen a parser's per-event usage into the `UsageStats` shape the accumulator speaks. */
-function parsedUsageToStats(usage: NonNullable<ParsedEvent['usage']>): UsageStats {
-	return {
-		inputTokens: usage.inputTokens || 0,
-		outputTokens: usage.outputTokens || 0,
-		cacheReadInputTokens: usage.cacheReadTokens || 0,
-		cacheCreationInputTokens: usage.cacheCreationTokens || 0,
-		totalCostUsd: usage.costUsd || 0,
-		contextWindow: usage.contextWindow || 0,
-		reasoningTokens: usage.reasoningTokens || 0,
-	};
-}
-
-function mergeUsageStats(
-	current: UsageStats | undefined,
-	next: {
-		inputTokens: number;
-		outputTokens: number;
-		cacheReadTokens?: number;
-		cacheCreationTokens?: number;
-		costUsd?: number;
-		contextWindow?: number;
-		reasoningTokens?: number;
-	}
-): UsageStats {
-	const merged: UsageStats = {
-		inputTokens: (current?.inputTokens || 0) + (next.inputTokens || 0),
-		outputTokens: (current?.outputTokens || 0) + (next.outputTokens || 0),
-		cacheReadInputTokens: (current?.cacheReadInputTokens || 0) + (next.cacheReadTokens || 0),
-		cacheCreationInputTokens:
-			(current?.cacheCreationInputTokens || 0) + (next.cacheCreationTokens || 0),
-		totalCostUsd: (current?.totalCostUsd || 0) + (next.costUsd || 0),
-		contextWindow: Math.max(current?.contextWindow || 0, next.contextWindow || 0),
-		reasoningTokens: (current?.reasoningTokens || 0) + (next.reasoningTokens || 0),
-	};
-
-	if (!next.reasoningTokens && !current?.reasoningTokens) {
-		delete merged.reasoningTokens;
-	}
-
-	return merged;
-}
-
 /**
  * Generic spawner for agents that use JSON line output parsed via AgentOutputParser.
  * Handles Codex, OpenCode, Factory Droid, and any future agents with the same pattern.
