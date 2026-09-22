@@ -13,15 +13,18 @@ import type { CueRunStatus } from './cue-types';
 import type { SpawnSpec } from './cue-spawn-builder';
 import type { ToolType, UsageStats } from '../../shared/types';
 import { getOutputParser } from '../parsers';
+import type { AgentOutputParser } from '../../shared/maestro-lib/parsers/agent-output-parser';
+import { captureException } from '../utils/sentry';
+import { isWindows } from '../../shared/platformDetection';
+import { stripAnsiCodes } from '../../shared/stringUtils';
+import { BufferedLineReader } from '../../shared/maestro-lib/streaming/buffered-line-reader';
 import {
 	resolveTurnOutcome,
 	type TurnOutcome,
 } from '../../shared/maestro-lib/streaming/turn-outcome';
 import { UsageAccumulator } from '../../shared/maestro-lib/streaming/usage-accumulator';
-import { addUsageStats, parsedUsageToStats } from '../../shared/maestro-lib/streaming/usage-totals';
-import { captureException } from '../utils/sentry';
-import { isWindows } from '../../shared/platformDetection';
-import { stripAnsiCodes } from '../../shared/stringUtils';
+import { addUsageStats } from '../../shared/maestro-lib/streaming/usage-totals';
+import { FALLBACK_CONTEXT_WINDOW } from '../../shared/agentConstants';
 
 const SIGKILL_DELAY_MS = 5000;
 
@@ -67,8 +70,10 @@ export interface ProcessRunResult {
 	stderr: string;
 	exitCode: number | null;
 	status: CueRunStatus;
-	/** Tokens and cost, when the provider reported any. */
-	usage?: UsageStats;
+	/** Provider session id parsed from stdout as it streamed. Null for command/shell runs (no parser) or output that never carried one. */
+	providerSessionId: string | null;
+	/** Usage delta-normalized from the stdout stream. See `CueRunResult.usage`. Null when the run produced no usage events or has no output parser. */
+	usage: UsageStats | null;
 }
 
 /** Options controlling process execution */
@@ -96,97 +101,168 @@ const activeProcesses = new Map<string, CueActiveProcess>();
 
 // ─── Internal Helpers ─────────��──────────────────────────────────────────────
 
-interface ParsedStdout {
-	text: string;
-	/** The answer the agent produced, for `TurnFacts.capturedAnswerText`. */
-	answerText: string | undefined;
-	resultMessageSeen: boolean;
-	/** Tokens and cost for the run, when the provider reported any. */
-	usage: UsageStats | undefined;
+/**
+ * Convert a parser's raw `extractUsage()` shape into `UsageStats`. A scoped
+ * port of `StdoutHandler.buildUsageStats` - Cue has no per-process omp model
+ * catalog to resolve against (that catalog only primes for interactive
+ * sessions), so a model-dependent window falls back to the static per-agent
+ * default rather than a runtime-resolved one. Every other field maps 1:1.
+ */
+function toCueUsageStats(
+	usage: NonNullable<ReturnType<AgentOutputParser['extractUsage']>>
+): UsageStats {
+	const stats: UsageStats = {
+		inputTokens: usage.inputTokens,
+		outputTokens: usage.outputTokens,
+		cacheReadInputTokens: usage.cacheReadTokens || 0,
+		cacheCreationInputTokens: usage.cacheCreationTokens || 0,
+		totalCostUsd: usage.costUsd || 0,
+		absoluteUsage: usage.absoluteUsage,
+		contextWindow: usage.contextWindow || FALLBACK_CONTEXT_WINDOW,
+		reasoningTokens: usage.reasoningTokens,
+	};
+	if (usage.contextWindowReported && (usage.contextWindow || 0) > 0) {
+		stats.contextWindowResolved = true;
+	}
+	return stats;
 }
 
 /**
- * Extract clean human-readable text from agent stdout, plus the facts the
- * shared outcome resolver needs from it.
+ * Streaming capture for one Cue agent run: folds three things that used to be
+ * three separate full-buffer passes (`extractCleanStdout`,
+ * `extractProviderSessionId` in `cue-executor.ts`, and no usage capture at
+ * all) into a single line-by-line pass fed by `BufferedLineReader` as stdout
+ * chunks arrive, mirroring how desktop chat's `StdoutHandler` and the CLI's
+ * `spawnAgent` already do this (Plans/maestro-lib-cli-migration.md, "Cue").
  *
- * For agents that output JSON/NDJSON (like OpenCode --format json), parses each
- * line and collects text from 'result' events. When 'result' events have empty
- * text (e.g. Claude Code sometimes returns result:""), falls back to collecting
- * text from 'assistant' (partial) events. Falls back to raw stdout when no
- * parser is available or no text events are found (e.g. plain-text agents).
+ * Delta-normalization is gated on `usesCombinedContextWindow` (Part Two's
+ * decision, `Plans/maestro-lib-cli-migration.md` §3) rather than desktop's
+ * older `toolType === 'codex' || toolType === 'claude-code'` check - Codex
+ * reports a running session total that must be delta-normalized or a run's
+ * tokens grow with the square of its event count; Claude Code's Cue runs are
+ * always fresh (no `--resume`), so its usage events are already per-turn and
+ * summing/overwriting them needs no accumulator.
  */
-function parseAgentStdout(rawStdout: string, toolType: string): ParsedStdout {
-	if (!rawStdout.trim()) {
-		return { text: rawStdout, answerText: undefined, resultMessageSeen: false, usage: undefined };
-	}
+class CueRunStreamCapture {
+	private readonly parser: AgentOutputParser | null;
+	private readonly reader = new BufferedLineReader();
+	private readonly usageAccumulator: UsageAccumulator | undefined;
+	private readonly usageLastWriteWins: boolean;
+	private readonly resultParts: string[] = [];
+	private readonly assistantTextByMessage = new Map<string, string>();
+	private readonly assistantTextWithoutId: string[] = [];
+	private rawFallback = '';
+	providerSessionId: string | null = null;
+	usage: UsageStats | null = null;
+	/**
+	 * Whether the provider emitted its terminal `result` event, regardless of
+	 * whether that event carried text. `resolveTurnOutcome` reads it to tell a
+	 * turn that finished and said nothing from one that was cut off.
+	 */
+	resultMessageSeen = false;
 
-	const parser = getOutputParser(toolType as ToolType);
-	if (!parser) {
-		// Raw stdout is shown, but it is not treated as a captured answer: for a
-		// parser-less agent it is as likely to be an error message, and calling it
-		// an answer would turn a non-zero exit into a success.
-		return { text: rawStdout, answerText: undefined, resultMessageSeen: false, usage: undefined };
-	}
-
-	// How each provider reports usage, matching the CLI spawner:
-	// - Codex sends a running session total on every event, so events are
-	//   delta-normalized before summing.
-	// - Claude's terminal `result` carries the whole turn's totals, so the last
-	//   event wins; summing it onto the preceding per-call `assistant` usage
-	//   would double-count.
-	// - Everyone else (Copilot included) reports per-step values that sum as-is.
-	const usageAccumulator =
-		toolType === 'codex' ? new UsageAccumulator({ attachesAbsoluteUsage: true }) : undefined;
-	const usageLastWriteWins = toolType === 'claude-code';
-	let usage: UsageStats | undefined;
-	let resultMessageSeen = false;
-	const resultParts: string[] = [];
-	const assistantTextByMessage = new Map<string, string>();
-	const assistantTextWithoutId: string[] = [];
-	for (const line of rawStdout.split('\n')) {
-		if (!line.trim()) continue;
-		const event = parser.parseJsonLine(line);
-		if (!event) continue;
-		if (event.type === 'result') resultMessageSeen = true;
-
-		if (typeof parser.extractUsage === 'function') {
-			const parsedUsage = parser.extractUsage(event);
-			if (parsedUsage) {
-				const stats = parsedUsageToStats(parsedUsage);
-				usage = usageLastWriteWins
-					? stats
-					: addUsageStats(usage, usageAccumulator ? usageAccumulator.normalize(stats) : stats);
-			}
+	constructor(toolType: string) {
+		this.parser = getOutputParser(toolType as ToolType);
+		// How each provider reports usage, matching the CLI spawner:
+		// - Codex sends a running session total on every event, so events are
+		//   delta-normalized before summing.
+		// - Claude's terminal `result` carries the whole turn's totals, so the
+		//   last event wins; summing it onto the preceding per-call `assistant`
+		//   usage would double-count.
+		// - Everyone else (Copilot included) reports per-step values that sum.
+		//
+		// Named explicitly rather than gated on `usesCombinedContextWindow`:
+		// that flag answers how the context GAUGE adds input and output, not how
+		// usage arrives on the wire, and copilot-cli sets it while emitting
+		// per-turn deltas. Gating on it under-reported Copilot (#1626).
+		if (this.parser && toolType === 'codex') {
+			this.usageAccumulator = new UsageAccumulator({ attachesAbsoluteUsage: true });
 		}
+		this.usageLastWriteWins = toolType === 'claude-code';
+	}
 
-		if (event.type === 'result' && event.text) {
-			resultParts.push(event.text);
+	push(chunk: string): void {
+		this.rawFallback += chunk;
+		if (!this.parser) return;
+		for (const line of this.reader.push(chunk)) {
+			this.handleLine(line);
+		}
+	}
+
+	/** Flush whatever partial line remains unterminated at process exit. */
+	flush(): void {
+		if (!this.parser) return;
+		const remainder = this.reader.flush();
+		if (remainder) this.handleLine(remainder);
+	}
+
+	private handleLine(line: string): void {
+		const parser = this.parser;
+		if (!parser) return;
+		const event = parser.parseJsonLine(line);
+		if (!event) return;
+
+		if (event.type === 'result') {
+			this.resultMessageSeen = true;
+			if (event.text) this.resultParts.push(event.text);
 		} else if (event.type === 'text' && event.isPartial && event.text) {
 			const raw = event.raw as { message?: { id?: string } } | undefined;
 			const msgId = raw?.message?.id;
 			if (msgId) {
-				const existing = assistantTextByMessage.get(msgId) ?? '';
+				const existing = this.assistantTextByMessage.get(msgId) ?? '';
 				if (event.text.length > existing.length) {
-					assistantTextByMessage.set(msgId, event.text);
+					this.assistantTextByMessage.set(msgId, event.text);
 				}
 			} else {
-				assistantTextWithoutId.push(event.text);
+				this.assistantTextWithoutId.push(event.text);
 			}
+		}
+
+		// Optional chaining, not a plain call: a real `AgentOutputParser`
+		// always implements both, but test doubles routinely mock only the
+		// method the test cares about (`parseJsonLine`), and a strict call
+		// here would throw on those rather than degrading gracefully.
+		const sessionId = parser.extractSessionId?.(event);
+		if (sessionId) this.providerSessionId = sessionId;
+
+		const rawUsage = parser.extractUsage?.(event);
+		if (rawUsage) {
+			const stats = toCueUsageStats(rawUsage);
+			// `normalize` returns the DELTA for this event, so the deltas are
+			// summed. Keeping only the newest would report one step of a run.
+			this.usage = this.usageLastWriteWins
+				? stats
+				: addUsageStats(
+						this.usage ?? undefined,
+						this.usageAccumulator ? this.usageAccumulator.normalize(stats) : stats
+					);
 		}
 	}
 
-	if (resultParts.length > 0) {
-		const text = resultParts.join('\n');
-		return { text, answerText: text, resultMessageSeen, usage };
+	/**
+	 * The ANSWER the agent produced, which is not the same question as
+	 * `getCleanStdout()`. A parser-less agent has none: its raw stdout is as
+	 * likely to be an error message, and counting it as an answer would turn a
+	 * non-zero exit into a success.
+	 */
+	getAnswerText(): string | undefined {
+		if (!this.parser) return undefined;
+		if (this.resultParts.length > 0) {
+			const text = this.resultParts.join('\n');
+			if (text.trim()) return text;
+		}
+		const deduped = [...this.assistantTextByMessage.values(), ...this.assistantTextWithoutId];
+		const assistantText = deduped.join('\n');
+		return assistantText.trim() ? assistantText : undefined;
 	}
-	const deduped = [...assistantTextByMessage.values(), ...assistantTextWithoutId];
-	if (deduped.length > 0) {
-		const text = deduped.join('\n');
-		return { text, answerText: text, resultMessageSeen, usage };
+
+	/** Clean, human-readable text: prefers result events, then assistant text, then the raw buffer verbatim (plain-text agents, or a parser that never produced either). */
+	getCleanStdout(): string {
+		if (this.resultParts.length > 0) return this.resultParts.join('\n');
+		const deduped = [...this.assistantTextByMessage.values(), ...this.assistantTextWithoutId];
+		if (deduped.length > 0) return deduped.join('\n');
+		return this.rawFallback;
 	}
-	// Parser present but nothing parseable: show the raw stream, but it is not
-	// an answer.
-	return { text: rawStdout, answerText: undefined, resultMessageSeen, usage };
 }
 
 /**
@@ -345,13 +421,15 @@ export function runProcess(
 				stderr: `Spawn error: ${err instanceof Error ? err.message : String(err)}`,
 				exitCode: null,
 				status: 'failed',
+				providerSessionId: null,
+				usage: null,
 			});
 			return;
 		}
 
 		let stdout = '';
 		let stderr = '';
-		let stopRequested = false;
+		const capture = new CueRunStreamCapture(toolType);
 
 		activeProcesses.set(runId, {
 			child,
@@ -367,23 +445,27 @@ export function runProcess(
 				stopRequested = true;
 			},
 		});
+		// Set by `stopProcess` / `stopAllProcesses` before the kill, so the exit
+		// that follows resolves as an interrupt rather than a crash.
+		let stopRequested = false;
 		let settled = false;
 		let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
 
-		const finish = (status: CueRunStatus, exitCode: number | null, parsed?: ParsedStdout) => {
+		const finish = (status: CueRunStatus, exitCode: number | null) => {
 			if (settled) return;
 			settled = true;
 
 			activeProcesses.delete(runId);
 			if (timeoutTimer) clearTimeout(timeoutTimer);
+			capture.flush();
 
-			const output = parsed ?? parseAgentStdout(stdout, toolType);
 			resolve({
-				stdout: output.text,
+				stdout: capture.getCleanStdout(),
 				stderr: extractCleanStderr(stderr, toolType),
 				exitCode,
 				status,
-				usage: output.usage,
+				providerSessionId: capture.providerSessionId,
+				usage: capture.usage,
 			});
 		};
 
@@ -391,6 +473,7 @@ export function runProcess(
 		child.stdout?.setEncoding('utf8');
 		child.stdout?.on('data', (data: string) => {
 			stdout += data;
+			capture.push(data);
 			onActivity?.();
 		});
 
@@ -401,10 +484,15 @@ export function runProcess(
 			onActivity?.();
 		});
 
-		// Handle process exit. The shared resolver decides the outcome so Cue
-		// agrees with desktop chat and the CLI on what finished a turn.
+		// Handle process exit.
+		//
+		// The shared resolver decides the outcome, so Cue agrees with desktop
+		// chat and the CLI on what finished a turn. Cue's own `'timeout'` never
+		// reaches here: the watchdog below sets it without consulting the
+		// resolver, so the four-valued `TurnOutcome` does not have to carry it.
 		child.on('close', (code, closeSignal) => {
-			const parsed = parseAgentStdout(stdout, toolType);
+			capture.flush();
+			const answerText = capture.getAnswerText();
 			const parser = getOutputParser(toolType as ToolType);
 			const { outcome } = resolveTurnOutcome(
 				{
@@ -414,8 +502,8 @@ export function runProcess(
 					stderrText: stderr,
 					stdoutText: stdout,
 					explicitError: undefined,
-					capturedAnswerText: parsed.answerText,
-					resultMessageSeen: parsed.resultMessageSeen,
+					capturedAnswerText: answerText,
+					resultMessageSeen: capture.resultMessageSeen,
 				},
 				{
 					// Plain-text agents and command runs have no exit heuristic.
@@ -432,13 +520,13 @@ export function runProcess(
 			//   as `completed` for every parser-less agent;
 			// - a signal kill nobody requested, however much text had streamed by
 			//   then (`interrupted` is handled above, so this signal was not ours).
-			const nonZeroWithoutAnswer = code !== 0 && code !== null && !parsed.answerText?.trim();
+			const nonZeroWithoutAnswer = code !== 0 && code !== null && !answerText?.trim();
 			const killedBySignal = (closeSignal ?? null) !== null;
 			const status =
 				outcome !== 'interrupted' && (nonZeroWithoutAnswer || killedBySignal)
 					? 'failed'
 					: cueStatusForOutcome(outcome);
-			finish(status, code, parsed);
+			finish(status, code);
 		});
 
 		// Handle spawn errors (async - e.g. ENOENT after spawn returns)

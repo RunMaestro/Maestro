@@ -76,6 +76,11 @@ import {
 	pipelineKeyForSubscription,
 } from '../../shared/cue/subscription-id';
 import { triggerGroupKey } from '../../shared/cue/trigger-group-key';
+import {
+	acquireCueEngineLock,
+	releaseCueEngineLock,
+	type CueEngineRunnerMode,
+} from './cue-engine-lock';
 
 const MAX_CHAIN_DEPTH = 10;
 
@@ -123,6 +128,15 @@ export interface CueEngineDeps {
 	 * an app restart. Omit (tests) to prune with the default window.
 	 */
 	getCueHistoryRetentionDays?: () => unknown;
+	/**
+	 * Which kind of process this engine instance runs in - `'desktop'`
+	 * (default, every existing caller) or `'standalone'` (the headless
+	 * `maestro-cli cue-engine` runner). Stamped onto the cross-process lock
+	 * (`cue-engine-lock.ts`) so `start()` can refuse to run a second engine
+	 * over the same data directory and a lock conflict message can say WHICH
+	 * kind of process is already running.
+	 */
+	runnerMode?: CueEngineRunnerMode;
 }
 
 /**
@@ -568,8 +582,26 @@ export class CueEngine {
 	start(reason: SessionInitReason = 'user-toggle'): void {
 		if (this.enabled) return;
 
+		// Cross-process guard (cue-engine-lock.ts): refuse to start a second
+		// engine loop over the same data directory - a standalone
+		// `maestro-cli cue-engine` runner and this desktop instance (or two
+		// standalone runners) dispatching the SAME subscriptions would
+		// double-fire every trigger. Logged and returned, not thrown, to match
+		// every other early-return failure path in this method (the DB-init
+		// failure right below does the same) - existing callers (boot,
+		// `cue:enable`) already treat a no-op start as "try again later."
+		const lock = acquireCueEngineLock(this.deps.runnerMode ?? 'desktop');
+		if (!lock.acquired) {
+			this.meteredOnLog(
+				'error',
+				`[CUE] Refusing to start: another Cue engine (${lock.heldBy.mode}, pid ${lock.heldBy.pid}) already holds the lock for this data directory. Stop it first, or this instance will exit without starting.`
+			);
+			return;
+		}
+
 		const initResult = this.recoveryService.init();
 		if (!initResult.ok) {
+			releaseCueEngineLock();
 			return;
 		}
 
@@ -652,6 +684,10 @@ export class CueEngine {
 
 		this.enabled = false;
 		this.startReason = null;
+		// Release the cross-process lock acquired in start() so a standalone
+		// runner (or this same process restarting the engine) can acquire it.
+		// No-op if this process doesn't hold it - see cue-engine-lock.ts.
+		releaseCueEngineLock();
 		this.sessionRuntimeService.clearAll();
 		// Clear startup dedup keys so that re-enabling Cue fires app.startup
 		// subscriptions again for the new engine cycle.
