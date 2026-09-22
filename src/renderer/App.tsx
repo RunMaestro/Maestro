@@ -12,6 +12,7 @@ import { useFocusAfterRender, useFocusOnClose } from './hooks/utils/useFocusAfte
 import { isWebDesktop } from './utils/runtimeContext';
 import { isCoarsePointer } from './utils/touch';
 import { useEdgeSwipeHandlers } from './hooks/utils/useEdgeSwipeHandlers';
+import { useEventListener } from './hooks/utils/useEventListener';
 import { slashCommands } from './slashCommands';
 import { AppModals } from './components/AppModals';
 import { AppStandaloneModals } from './components/AppStandaloneModals';
@@ -151,6 +152,8 @@ import { useCueVisibilityWiring } from './hooks/cue/useCueVisibilityWiring';
 // Import contexts
 import { useLayerStack } from './contexts/LayerStackContext';
 import { notifyToast } from './stores/notificationStore';
+import { notifyCenterFlash } from './stores/centerFlashStore';
+import { useComposerInputStore } from './stores/composerInputStore';
 import { useModalActions, useModalStore } from './stores/modalStore';
 import { GitStatusProvider } from './contexts/GitStatusContext';
 import { WindowProvider, useWindowContextOptional } from './contexts/WindowContext';
@@ -163,6 +166,11 @@ import {
 } from './stores/groupChatStore';
 import { useBatchStore } from './stores/batchStore';
 import { registerBatchResumer } from './services/batchResumer';
+import {
+	CODEX_FOLLOWUP_EVENT,
+	resolveCodexFollowup,
+	type CodexFollowupRequest,
+} from './services/codexFollowup';
 // All session state is read directly from useSessionStore in MaestroConsoleInner.
 import {
 	useSessionStore,
@@ -2387,6 +2395,59 @@ function MaestroConsoleInner() {
 		resumeAfterError: resumeAutoRunAfterError,
 		skipCurrentDocument: skipCurrentAutoRunDocument,
 		abortBatchOnError: abortAutoRunBatchOnError,
+	});
+
+	/*
+	 * --- CODEX FOLLOWUP CHIPS ---
+	 *
+	 * A clicked `:codex-followup` chip in a Codex transcript. It arrives as an
+	 * event rather than a callback because `LogItem` renders `<MarkdownRenderer>`
+	 * at six call sites - see `services/codexFollowup.ts` for that reasoning.
+	 *
+	 * The request names the conversation it was drawn in, and that is CHECKED
+	 * here rather than trusted. A chip is only drawn in the tab on screen, so a
+	 * mismatch means the store moved between the click and this handler, and the
+	 * prompt is agent-authored: putting one into a conversation that never
+	 * offered it is not something the user can take back. A moved conversation
+	 * therefore degrades to a prefill and says why - the prompt is still in front
+	 * of them, and pressing Enter stays their decision.
+	 *
+	 * The send path pins its target explicitly, the same way `useSessionRecovery`
+	 * re-sends a failed prompt, so the dispatch cannot drift to another tab
+	 * between here and the spawn.
+	 */
+	useEventListener(CODEX_FOLLOWUP_EVENT, (event) => {
+		const session = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
+		const resolution = resolveCodexFollowup((event as CustomEvent<CodexFollowupRequest>).detail, {
+			activeSessionId: session?.id ?? null,
+			activeTabId: session ? (getActiveTab(session)?.id ?? null) : null,
+		});
+
+		if (resolution.action === 'ignore') return;
+
+		if (resolution.action === 'send') {
+			processInputRef.current(resolution.prompt, {
+				sessionId: resolution.sessionId,
+				tabId: resolution.tabId,
+			});
+			return;
+		}
+
+		// `loadAiDraft` writes the text, the command mode and the owning tab in one
+		// go, which is what this has to use: the same string is a message, a shell
+		// command or a request for one depending on the mode, so prefilling the
+		// text alone would drop an agent prompt into a bang composer and Enter
+		// would run it as a shell command.
+		useComposerInputStore.getState().loadAiDraft(resolution.tabId, resolution.prompt, 'off');
+		inputRef.current?.focus();
+
+		if (resolution.movedAway) {
+			notifyCenterFlash({
+				message: 'Conversation moved',
+				detail: 'The follow-up is in the composer, not sent.',
+				color: 'yellow',
+			});
+		}
 	});
 
 	// Plugin `sessions.focus` (e.g. Agent Flow node-jump) writes main's store,
