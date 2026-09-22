@@ -74,4 +74,7 @@ UI renders it yet - both are follow-ups.
 ## Not in this stage
 
 - Persisting `usage` in `cue_events` and showing it in the Cue dashboard.
+- Usage for the two-phase `output_prompt` run. The parent row carries the main
+  task's usage only; the output phase's tokens are not folded in, matching how
+  `providerSessionId` already treats that phase (it owns its own event row).
 - Cue keeps running inside the Maestro app. Nothing here moves it out.

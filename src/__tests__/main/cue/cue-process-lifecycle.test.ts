@@ -545,6 +545,19 @@ describe('cue-process-lifecycle', () => {
 				expect((await resultPromise).usage).toBeUndefined();
 			});
 
+			it('fails a signal kill even when the agent had streamed an answer', async () => {
+				mockGetOutputParser.mockReturnValue(resultParser());
+
+				const resultPromise = runProcess('run-1', createSpec(), createOptions());
+				await vi.advanceTimersByTimeAsync(0);
+
+				// A truncated answer must not chain onward as a success.
+				mockChild.stdout.emit('data', JSON.stringify({ type: 'result', result: 'half an ans' }));
+				mockChild.emit('close', null, 'SIGKILL');
+
+				expect((await resultPromise).status).toBe('failed');
+			});
+
 			it('fails a signal kill nobody requested', async () => {
 				mockGetOutputParser.mockReturnValue(resultParser());
 
