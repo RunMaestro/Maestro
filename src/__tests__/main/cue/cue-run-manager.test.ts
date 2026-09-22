@@ -202,6 +202,30 @@ describe('createCueRunManager', () => {
 			);
 		});
 
+		it('carries the executor usage onto the completed run', async () => {
+			const usage = {
+				inputTokens: 120,
+				outputTokens: 34,
+				cacheReadInputTokens: 0,
+				cacheCreationInputTokens: 0,
+				totalCostUsd: 0.01,
+				contextWindow: 200000,
+			};
+			const deps = createDeps({ onCueRun: vi.fn(async () => makeResult({ usage })) });
+			const manager = createCueRunManager(deps);
+
+			manager.execute('session-1', 'prompt', createEvent(), 'test-sub');
+			await vi.advanceTimersByTimeAsync(0);
+
+			expect(deps.onRunCompleted).toHaveBeenCalledWith(
+				'session-1',
+				expect.objectContaining({ usage }),
+				'test-sub',
+				undefined,
+				expect.any(String)
+			);
+		});
+
 		it('calls onRunCompleted with failed status on failure', async () => {
 			const deps = createDeps({
 				onCueRun: vi.fn(async () => makeResult({ status: 'failed', exitCode: 1 })),
