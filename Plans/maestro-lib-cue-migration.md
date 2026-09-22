@@ -95,7 +95,10 @@ UI renders it yet - both are follow-ups.
 - Preserving `contextWindowReported`, `model` and `absoluteUsage` through
   `parsedUsageToStats` / `mergeUsageStats`. Those helpers moved here verbatim
   from the CLI spawner, which has always dropped them; restoring them changes
-  CLI behavior and belongs with the consumer that needs them.
+  CLI behavior and belongs with the consumer that needs them. Note that Cue's
+  Codex path passes `attachesAbsoluteUsage: true`, so the accumulator computes
+  an `absoluteUsage` snapshot the merge then discards - kept as-is for parity
+  with the CLI spawner rather than diverging here.
 - Usage for the two-phase `output_prompt` run. The parent row carries the main
   task's usage only; the output phase's tokens are not folded in, matching how
   `providerSessionId` already treats that phase (it owns its own event row).
