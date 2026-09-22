@@ -11,8 +11,14 @@
 import { spawn, execFile, execFileSync, type ChildProcess } from 'child_process';
 import type { CueRunStatus } from './cue-types';
 import type { SpawnSpec } from './cue-spawn-builder';
-import type { ToolType } from '../../shared/types';
+import type { ToolType, UsageStats } from '../../shared/types';
 import { getOutputParser } from '../parsers';
+import {
+	resolveTurnOutcome,
+	type TurnOutcome,
+} from '../../shared/maestro-lib/streaming/turn-outcome';
+import { UsageAccumulator } from '../../shared/maestro-lib/streaming/usage-accumulator';
+import { addUsageStats, parsedUsageToStats } from '../../shared/maestro-lib/streaming/usage-totals';
 import { captureException } from '../utils/sentry';
 import { isWindows } from '../../shared/platformDetection';
 import { stripAnsiCodes } from '../../shared/stringUtils';
@@ -38,6 +44,8 @@ interface CueActiveProcess {
 	getStdout: () => string;
 	/** Live ref to the accumulating stderr buffer. */
 	getStderr: () => string;
+	/** Marks a deliberate stop so the exit resolves as an interrupt, not a crash. */
+	requestStop: () => void;
 }
 
 /** Serializable process info for the Process Monitor */
@@ -59,6 +67,8 @@ export interface ProcessRunResult {
 	stderr: string;
 	exitCode: number | null;
 	status: CueRunStatus;
+	/** Tokens and cost, when the provider reported any. */
+	usage?: UsageStats;
 }
 
 /** Options controlling process execution */
@@ -86,33 +96,72 @@ const activeProcesses = new Map<string, CueActiveProcess>();
 
 // ─── Internal Helpers ─────────��──────────────────────────────────────────────
 
+interface ParsedStdout {
+	text: string;
+	/** The answer the agent produced, for `TurnFacts.capturedAnswerText`. */
+	answerText: string | undefined;
+	resultMessageSeen: boolean;
+	/** Tokens and cost for the run, when the provider reported any. */
+	usage: UsageStats | undefined;
+}
+
 /**
- * Extract clean human-readable text from agent stdout.
+ * Extract clean human-readable text from agent stdout, plus the facts the
+ * shared outcome resolver needs from it.
+ *
  * For agents that output JSON/NDJSON (like OpenCode --format json), parses each
  * line and collects text from 'result' events. When 'result' events have empty
  * text (e.g. Claude Code sometimes returns result:""), falls back to collecting
  * text from 'assistant' (partial) events. Falls back to raw stdout when no
  * parser is available or no text events are found (e.g. plain-text agents).
  */
-function extractCleanStdout(rawStdout: string, toolType: string): string {
+function parseAgentStdout(rawStdout: string, toolType: string): ParsedStdout {
 	if (!rawStdout.trim()) {
-		return rawStdout;
+		return { text: rawStdout, answerText: undefined, resultMessageSeen: false, usage: undefined };
 	}
 
 	const parser = getOutputParser(toolType as ToolType);
 	if (!parser) {
-		return rawStdout;
+		// Raw stdout is shown, but it is not treated as a captured answer: for a
+		// parser-less agent it is as likely to be an error message, and calling it
+		// an answer would turn a non-zero exit into a success.
+		return { text: rawStdout, answerText: undefined, resultMessageSeen: false, usage: undefined };
 	}
 
+	// How each provider reports usage, matching the CLI spawner:
+	// - Codex sends a running session total on every event, so events are
+	//   delta-normalized before summing.
+	// - Claude's terminal `result` carries the whole turn's totals, so the last
+	//   event wins; summing it onto the preceding per-call `assistant` usage
+	//   would double-count.
+	// - Everyone else (Copilot included) reports per-step values that sum as-is.
+	const usageAccumulator =
+		toolType === 'codex' ? new UsageAccumulator({ attachesAbsoluteUsage: true }) : undefined;
+	const usageLastWriteWins = toolType === 'claude-code';
+	let usage: UsageStats | undefined;
+	let resultMessageSeen = false;
 	const resultParts: string[] = [];
 	const assistantTextByMessage = new Map<string, string>();
 	const assistantTextWithoutId: string[] = [];
 	for (const line of rawStdout.split('\n')) {
 		if (!line.trim()) continue;
 		const event = parser.parseJsonLine(line);
-		if (event?.type === 'result' && event.text) {
+		if (!event) continue;
+		if (event.type === 'result') resultMessageSeen = true;
+
+		if (typeof parser.extractUsage === 'function') {
+			const parsedUsage = parser.extractUsage(event);
+			if (parsedUsage) {
+				const stats = parsedUsageToStats(parsedUsage);
+				usage = usageLastWriteWins
+					? stats
+					: addUsageStats(usage, usageAccumulator ? usageAccumulator.normalize(stats) : stats);
+			}
+		}
+
+		if (event.type === 'result' && event.text) {
 			resultParts.push(event.text);
-		} else if (event?.type === 'text' && event.isPartial && event.text) {
+		} else if (event.type === 'text' && event.isPartial && event.text) {
 			const raw = event.raw as { message?: { id?: string } } | undefined;
 			const msgId = raw?.message?.id;
 			if (msgId) {
@@ -126,10 +175,18 @@ function extractCleanStdout(rawStdout: string, toolType: string): string {
 		}
 	}
 
-	if (resultParts.length > 0) return resultParts.join('\n');
+	if (resultParts.length > 0) {
+		const text = resultParts.join('\n');
+		return { text, answerText: text, resultMessageSeen, usage };
+	}
 	const deduped = [...assistantTextByMessage.values(), ...assistantTextWithoutId];
-	if (deduped.length > 0) return deduped.join('\n');
-	return rawStdout;
+	if (deduped.length > 0) {
+		const text = deduped.join('\n');
+		return { text, answerText: text, resultMessageSeen, usage };
+	}
+	// Parser present but nothing parseable: show the raw stream, but it is not
+	// an answer.
+	return { text: rawStdout, answerText: undefined, resultMessageSeen, usage };
 }
 
 /**
@@ -183,6 +240,23 @@ function extractCleanStderr(rawStderr: string, toolType: string): string {
 	// If all that's left is whitespace, collapse to empty so the UI hides the
 	// Errors panel entirely instead of showing an empty red box.
 	return cleaned.trim() ? cleaned : '';
+}
+
+/**
+ * Map a shared turn outcome onto Cue's run status. `completed-with-warning` (a
+ * full answer, then a bad exit) is a success per the turn contract; Cue used to
+ * record it as `failed`. `timeout` never comes from here - Cue's own watchdog
+ * sets it without consulting the resolver.
+ */
+function cueStatusForOutcome(outcome: TurnOutcome): CueRunStatus {
+	switch (outcome) {
+		case 'interrupted':
+			return 'stopped';
+		case 'crashed':
+			return 'failed';
+		default:
+			return 'completed';
+	}
 }
 
 /**
@@ -277,6 +351,7 @@ export function runProcess(
 
 		let stdout = '';
 		let stderr = '';
+		let stopRequested = false;
 
 		activeProcesses.set(runId, {
 			child,
@@ -288,22 +363,27 @@ export function runProcess(
 			sshRemoteCommand: spec.sshRemoteCommand,
 			getStdout: () => stdout,
 			getStderr: () => stderr,
+			requestStop: () => {
+				stopRequested = true;
+			},
 		});
 		let settled = false;
 		let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
 
-		const finish = (status: CueRunStatus, exitCode: number | null) => {
+		const finish = (status: CueRunStatus, exitCode: number | null, parsed?: ParsedStdout) => {
 			if (settled) return;
 			settled = true;
 
 			activeProcesses.delete(runId);
 			if (timeoutTimer) clearTimeout(timeoutTimer);
 
+			const output = parsed ?? parseAgentStdout(stdout, toolType);
 			resolve({
-				stdout: extractCleanStdout(stdout, toolType),
+				stdout: output.text,
 				stderr: extractCleanStderr(stderr, toolType),
 				exitCode,
 				status,
+				usage: output.usage,
 			});
 		};
 
@@ -321,10 +401,40 @@ export function runProcess(
 			onActivity?.();
 		});
 
-		// Handle process exit
-		child.on('close', (code) => {
-			const status: CueRunStatus = code === 0 ? 'completed' : 'failed';
-			finish(status, code);
+		// Handle process exit. The shared resolver decides the outcome so Cue
+		// agrees with desktop chat and the CLI on what finished a turn.
+		child.on('close', (code, closeSignal) => {
+			const parsed = parseAgentStdout(stdout, toolType);
+			const parser = getOutputParser(toolType as ToolType);
+			const { outcome } = resolveTurnOutcome(
+				{
+					exitCode: code,
+					signal: closeSignal ?? null,
+					interrupted: stopRequested,
+					stderrText: stderr,
+					stdoutText: stdout,
+					explicitError: undefined,
+					capturedAnswerText: parsed.answerText,
+					resultMessageSeen: parsed.resultMessageSeen,
+				},
+				{
+					// Plain-text agents and command runs have no exit heuristic.
+					detectErrorFromExit: (exitCode, stderrText, stdoutText) =>
+						typeof parser?.detectErrorFromExit === 'function'
+							? (parser.detectErrorFromExit(exitCode, stderrText, stdoutText) ?? null)
+							: null,
+				},
+				{ providerId: toolType, sessionId: runId }
+			);
+			// The resolver leaves "non-zero exit, nothing captured, no provider
+			// classification" as `completed`, which is where every parser-less
+			// agent (plain text, command runs) lands. Cue has always failed
+			// those, and a pipeline must not chain off a silent failure. Same
+			// rule as the CLI's `nonZeroWithoutAnswer`.
+			const nonZeroWithoutAnswer = code !== 0 && code !== null && !parsed.answerText?.trim();
+			const status =
+				outcome !== 'interrupted' && nonZeroWithoutAnswer ? 'failed' : cueStatusForOutcome(outcome);
+			finish(status, code, parsed);
 		});
 
 		// Handle spawn errors (async - e.g. ENOENT after spawn returns)
@@ -379,6 +489,8 @@ export function stopProcess(runId: string): boolean {
 	const entry = activeProcesses.get(runId);
 	if (!entry) return false;
 
+	// Mark before killing, so the exit reads as an interrupt.
+	entry.requestStop();
 	killCueProcess(entry.child);
 	return true;
 }
@@ -390,6 +502,7 @@ export function stopProcess(runId: string): boolean {
 export function stopAllProcesses(): void {
 	for (const [runId, entry] of activeProcesses) {
 		// Use sync kills so process trees are dead before the app exits.
+		entry.requestStop();
 		killCueProcess(entry.child, true);
 		activeProcesses.delete(runId);
 	}
