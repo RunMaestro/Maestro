@@ -41,24 +41,24 @@ Five do exactly that, and no two of them agree.
 
 ## Every path that starts an agent
 
-| Path                          | Spawn site                                          | Ingredients                                           | Completion rule                      | Classification                               |
-| ----------------------------- | --------------------------------------------------- | ----------------------------------------------------- | ------------------------------------ | -------------------------------------------- |
-| Desktop chat                  | `ipc/handlers/process/handle-spawn.ts:902`          | Shared                                                | `ExitHandler:332`, shared            | **Moved**                                    |
-| Claude API-mode replay        | `main/index.ts:954`                                 | Shared                                                | Same as above                        | **Moved** (re-spawn of desktop chat)         |
-| CLI `send`                    | `cli/commands/send.ts:155`                          | Shared via `spawnAgent`                               | `turn-result.ts:152`, shared         | **Moved**                                    |
-| Batch runner (Auto Run)       | `cli/services/batch-processor.ts:652`, `:732`       | Shared via `spawnAgent`                               | Shared                               | **Moved**                                    |
-| Goal runner                   | `cli/services/goal-runner.ts:111`, `:265`           | Shared via `spawnAgent`                               | Shared                               | **Moved**                                    |
-| Run capture                   | `cli/services/agent-run-capture.ts:128`             | Wrapper over the three above                          | Shared                               | **Moved**                                    |
-| Cue agent step                | `cue/cue-process-lifecycle.ts:336`                  | Shared                                                | `:409`, shared                       | **Moved**                                    |
-| Conversation summarization    | `utils/context-groomer.ts:505`                      | Shared (parser-mediated `data`)                       | `:469`, **ignores exit code**        | **Decided here: move**                       |
-| Tab auto-naming               | `ipc/handlers/tabNaming.ts:567`                     | Shared, imports `createOutputParser` directly (`:23`) | `:513`, **non-zero discards output** | **Decided here: move launch, keep policy**   |
-| Group chat                    | `group-chat/spawnGroupChatAgent.ts:245`             | Shared                                                | Own, **not located** (see below)     | **Left off, on purpose**                     |
-| Cross-agent `@mention`        | `cross-agent/cross-agent-router.ts:587`             | Shared, via the group-chat spawner                    | `:472`, **own rule**                 | **Left off**, inherited                      |
-| Director's Notes over the web | `web-server/callbacks/directorNotesCallbacks.ts:91` | Shared, via `groomContext`                            | `context-groomer.ts:469`             | **Decided here: move** (with `groomContext`) |
-| Claude usage sampler          | `agents/claude-usage-sampler.ts:238`                | **None** - `execFileAsync`, own env, no SSH wrap      | Own, never throws (`:48-52`)         | **Left off** (a probe, not a turn)           |
-| Legacy grooming session       | `ipc/handlers/context.ts:283`                       | Shared                                                | None of its own                      | **Left off** (deprecated)                    |
-| Terminal spawn                | `ipc/handlers/process.ts:470`, `:491`               | N/A                                                   | N/A                                  | **Frozen adapter**                           |
-| Interactive text driver       | `maestro-p/tui-driver.ts:337`                       | N/A (`pty.spawn`)                                     | N/A                                  | **Frozen adapter**                           |
+| Path                          | Spawn site                                          | Ingredients                                           | Completion rule                                 | Classification                               |
+| ----------------------------- | --------------------------------------------------- | ----------------------------------------------------- | ----------------------------------------------- | -------------------------------------------- |
+| Desktop chat                  | `ipc/handlers/process/handle-spawn.ts:902`          | Shared                                                | `ExitHandler:332`, shared                       | **Moved**                                    |
+| Claude API-mode replay        | `main/index.ts:954`                                 | Shared                                                | Same as above                                   | **Moved** (re-spawn of desktop chat)         |
+| CLI `send`                    | `cli/commands/send.ts:155`                          | Shared via `spawnAgent`                               | `turn-result.ts:152`, shared                    | **Moved**                                    |
+| Batch runner (Auto Run)       | `cli/services/batch-processor.ts:652`, `:732`       | Shared via `spawnAgent`                               | Shared                                          | **Moved**                                    |
+| Goal runner                   | `cli/services/goal-runner.ts:111`, `:265`           | Shared via `spawnAgent`                               | Shared                                          | **Moved**                                    |
+| Run capture                   | `cli/services/agent-run-capture.ts:128`             | Wrapper over the three above                          | Shared                                          | **Moved**                                    |
+| Cue agent step                | `cue/cue-process-lifecycle.ts:336`                  | Shared                                                | `:409`, shared                                  | **Moved**                                    |
+| Conversation summarization    | `utils/context-groomer.ts:505`                      | Shared (parser-mediated `data`)                       | `:469`, **ignores exit code**                   | **Decided here: move**                       |
+| Tab auto-naming               | `ipc/handlers/tabNaming.ts:567`                     | Shared, imports `createOutputParser` directly (`:23`) | `:513`, **non-zero discards output**            | **Decided here: move launch, keep policy**   |
+| Group chat                    | `group-chat/spawnGroupChatAgent.ts:245`             | Shared                                                | `exit-listener.ts:196`, **text, not exit code** | **Left off, on purpose**                     |
+| Cross-agent `@mention`        | `cross-agent/cross-agent-router.ts:587`             | Shared, via the group-chat spawner                    | `:472`, **own rule**                            | **Left off**, inherited                      |
+| Director's Notes over the web | `web-server/callbacks/directorNotesCallbacks.ts:91` | Shared, via `groomContext`                            | `context-groomer.ts:469`                        | **Decided here: move** (with `groomContext`) |
+| Claude usage sampler          | `agents/claude-usage-sampler.ts:238`                | **None** - `execFileAsync`, own env, no SSH wrap      | Own, never throws (`:48-52`)                    | **Left off** (a probe, not a turn)           |
+| Legacy grooming session       | `ipc/handlers/context.ts:283`                       | Shared                                                | None of its own                                 | **Left off** (deprecated)                    |
+| Terminal spawn                | `ipc/handlers/process.ts:470`, `:491`               | N/A                                                   | N/A                                             | **Frozen adapter**                           |
+| Interactive text driver       | `maestro-p/tui-driver.ts:337`                       | N/A (`pty.spawn`)                                     | N/A                                             | **Frozen adapter**                           |
 
 Paths that look like agent starts and are not, listed so nobody has to rediscover
 them: `cue/cue-cli-executor.ts:166` spawns our own CLI;
@@ -170,11 +170,18 @@ moving it must not quietly rewrite what it does with the answer. See finding 2.
    off the library is a decision on the record; the consult path riding along behind
    it is not. Worth an explicit decision before this workstream closes.
 
-   Group chat's own completion rule was NOT located in this pass, and is recorded as
-   unverified rather than guessed at. `spawnGroupChatAgent.ts` contains no exit
-   handling at all, and the rule is not in `group-chat/` or in
-   `ipc/handlers/groupChat.ts`. Since finding 3 reasons about what the consult path
-   inherits, someone should pin it down before acting on that finding.
+   Group chat's own rule is worth stating, since this finding reasons about what
+   the consult path inherits. It is not in `group-chat/` at all, which is why a
+   first pass at this document recorded it as unlocated: `spawnGroupChatAgent.ts`
+   has no exit handling, and the rule lives in the shared process exit listener,
+   with a moderator branch at `process-listeners/exit-listener.ts:135` and a
+   participant branch at `:278`. Both log the exit code and nothing more (`:141`,
+   `:287`); what decides the turn is whether the buffered output parses to
+   non-empty text (`if (parsedText.trim())`, `:196`), and a participant is marked
+   responded on every path, including after a routing error (`:525`). So group chat
+   answers "did any text come back?" where the contract answers "how did the turn
+   end?", and the cross-agent router sits on top of that spawner while applying a
+   stricter exit-code rule of its own.
 
 4. **The legacy grooming spawn in `ipc/handlers/context.ts:283` is still wired.**
    The handler above it is marked deprecated in favour of `groomContext`, and it
