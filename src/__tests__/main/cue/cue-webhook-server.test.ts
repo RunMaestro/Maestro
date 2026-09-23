@@ -10,7 +10,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as crypto from 'crypto';
 import { EventEmitter } from 'events';
-import type * as http from 'http';
+import * as http from 'http';
 import {
 	handleCueWebhookRequest,
 	registerCueWebhook,
@@ -419,6 +419,41 @@ describe('cue-webhook-server', () => {
 
 		expect(res.status).toBe(413);
 		expect(deliveries).toHaveLength(0);
+	});
+
+	it('answers an oversized upload on a real socket with 413 instead of a reset', async () => {
+		// The mock above never exercises the socket. Destroying the request
+		// before writing the answer passed there and still left real senders
+		// with a dropped connection and no status code at all.
+		const { onLog } = register();
+		let port = 0;
+		for (let i = 0; i < 100 && !port; i++) {
+			const started = onLog.mock.calls
+				.map((c) => String(c[1]))
+				.find((m) => m.includes('listener started'));
+			port = started ? Number(/:(\d+)\/cue\//.exec(started)?.[1] ?? 0) : 0;
+			if (!port) await new Promise((resolve) => setTimeout(resolve, 10));
+		}
+		expect(port).toBeGreaterThan(0);
+
+		const status = await new Promise<number | undefined>((resolve, reject) => {
+			const req = http.request(
+				{
+					host: '127.0.0.1',
+					port,
+					method: 'POST',
+					path: '/cue/my-hook',
+					headers: { 'x-maestro-cue-secret': 's3cret' },
+				},
+				(res) => {
+					res.resume();
+					resolve(res.statusCode);
+				}
+			);
+			req.on('error', reject);
+			req.end(Buffer.alloc(1024 * 1024 + 64 * 1024, 'x'));
+		});
+		expect(status).toBe(413);
 	});
 
 	it('surfaces a non-JSON body as raw text with a null parsed body', async () => {
