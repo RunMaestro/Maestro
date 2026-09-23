@@ -37,6 +37,13 @@ export const DEFAULT_CUE_WEBHOOK_PORT = 17997;
  *  balloon main-process memory before we ever check the secret. */
 const MAX_BODY_BYTES = 1024 * 1024;
 
+/** After a 413, how much more of an oversized body we will read and throw away
+ *  so the answer reaches the sender (closing a socket with unread input makes
+ *  TCP reset it, which can discard the 413 in flight). Past this, or past
+ *  {@link OVERSIZE_DRAIN_MS}, the connection is simply dropped. */
+const OVERSIZE_DRAIN_BYTES = 8 * MAX_BODY_BYTES;
+const OVERSIZE_DRAIN_MS = 5_000;
+
 /** Raw body retained on the event payload. Payloads are persisted with the run,
  *  so the full megabyte is not worth keeping once filters have run. */
 const MAX_STORED_RAW_BODY = 64 * 1024;
@@ -212,11 +219,17 @@ function resolveDeliveryId(headers: http.IncomingHttpHeaders): string {
 	return crypto.randomUUID();
 }
 
-function respond(res: http.ServerResponse, status: number, body: Record<string, unknown>): void {
+function respond(
+	res: http.ServerResponse,
+	status: number,
+	body: Record<string, unknown>,
+	options: { closeConnection?: boolean } = {}
+): void {
 	const payload = JSON.stringify(body);
 	res.writeHead(status, {
 		'content-type': 'application/json',
 		'content-length': Buffer.byteLength(payload),
+		...(options.closeConnection ? { connection: 'close' } : {}),
 	});
 	res.end(payload);
 }
@@ -246,11 +259,18 @@ function readBody(req: http.IncomingMessage): Promise<ReadBodyResult> {
 		};
 
 		req.on('data', (chunk: Buffer) => {
-			if (settled) return;
 			size += chunk.length;
+			if (settled) {
+				// Draining the remainder of an oversized body (see OVERSIZE_DRAIN_BYTES).
+				if (size > OVERSIZE_DRAIN_BYTES) req.destroy();
+				return;
+			}
 			if (size > MAX_BODY_BYTES) {
+				// Stop buffering but do NOT destroy yet: tearing the socket down
+				// here kills it before the 413 is written, and the sender sees a
+				// reset connection instead of the documented answer. The rest is
+				// drained (bounded) and the caller answers 413.
 				settle({ kind: 'too-large' });
-				req.destroy();
 				return;
 			}
 			chunks.push(chunk);
@@ -300,7 +320,13 @@ export async function handleCueWebhookRequest(
 
 	const read = await readBody(req);
 	if (read.kind === 'too-large') {
-		respond(res, 413, { error: 'Payload too large' });
+		// Answer, then let the bounded drain in readBody finish the upload so
+		// the 413 is not lost to a reset; drop the connection if it drags on.
+		respond(res, 413, { error: 'Payload too large' }, { closeConnection: true });
+		const drainTimer = setTimeout(() => req.destroy(), OVERSIZE_DRAIN_MS);
+		drainTimer.unref?.();
+		req.once('end', () => clearTimeout(drainTimer));
+		req.once('close', () => clearTimeout(drainTimer));
 		return;
 	}
 	if (read.kind === 'stream-error') {
