@@ -73,6 +73,7 @@ vi.mock('../../../main/cue/cue-db', () => ({
 	initCueDb: vi.fn(),
 	closeCueDb: vi.fn(),
 	pruneCueEvents: vi.fn(),
+	failOrphanedRunningEvents: vi.fn(() => 0),
 	isCueDbReady: () => true,
 	recordCueEvent: vi.fn(),
 	updateCueEventStatus: vi.fn(),

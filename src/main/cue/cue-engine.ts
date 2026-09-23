@@ -629,6 +629,12 @@ export class CueEngine {
 			type: 'engineStarted',
 		} satisfies CueLogPayload);
 
+		// Snapshot what a PREVIOUS run left in the queue before any session
+		// initializes: initSession can enqueue this boot's own app.startup or
+		// initial heartbeat behind a busy slot, and that enqueue persists a row
+		// the restore below would otherwise run a second time.
+		const persistedBeforeBoot = this.queuePersistence.persistedIds();
+
 		const sessions = this.deps.getSessions();
 		for (const session of sessions) {
 			this.sessionRuntimeService.initSession(session, { reason });
@@ -641,7 +647,7 @@ export class CueEngine {
 		// The prior persistId is discarded via remove() inside the restore
 		// helper's session-missing drop path (if applicable), or is discarded
 		// implicitly on re-enqueue since we never reuse the old id.
-		const restored = this.queuePersistence.restoreAll();
+		const restored = this.queuePersistence.restoreAll(persistedBeforeBoot);
 		for (const [sessionId, entries] of restored) {
 			for (const entry of entries) {
 				// Remove the persisted row immediately - runManager.execute will
@@ -676,8 +682,10 @@ export class CueEngine {
 			}
 		}
 
-		// Detect sleep gap from previous heartbeat
-		this.recoveryService.detectSleepAndReconcile();
+		// Detect the gap since the previous run's last heartbeat. Heartbeat
+		// subscriptions are skipped: each one already fired as its session
+		// initialized above, and a catch-up would run it twice in a row.
+		this.recoveryService.detectSleepAndReconcile({ atEngineStart: true });
 
 		// Start heartbeat writer (30s interval)
 		this.heartbeat.start();
