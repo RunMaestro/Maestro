@@ -35,9 +35,12 @@ describe('Cue engine Electron coupling', () => {
 	// which the bare form would let through.
 	const ELECTRON_REF = /(?:from|require\(|import\()\s*['"]electron(?:\/[^'"]*)?['"]/;
 
+	// `path.relative` emits native separators, so a nested entry reads
+	// `backup\cue-backup-manager.ts` on Windows and matches nothing in the list
+	// above. Normalize to forward slashes rather than spelling the list twice.
 	const importers = walk(CUE_DIR)
 		.filter((file) => ELECTRON_REF.test(fs.readFileSync(file, 'utf-8')))
-		.map((file) => path.relative(CUE_DIR, file))
+		.map((file) => path.relative(CUE_DIR, file).split(path.sep).join('/'))
 		.sort();
 
 	it('has no Electron importer outside the known list', () => {
