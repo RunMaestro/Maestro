@@ -1,5 +1,5 @@
 /**
- * `maestro-cli cue-engine` - run Maestro Cue unattended, without the desktop
+ * `maestro-cli cue engine` - run Maestro Cue unattended, without the desktop
  * app, and inspect/control that runner.
  *
  * Unlike `cue schedule` / `cue trigger` / `cue list` (which either edit
@@ -19,6 +19,7 @@
 
 import { readCueEngineLock } from '../../main/cue/cue-engine-lock';
 import { createStandaloneCueEngine } from '../services/cue-standalone-engine';
+import { startCueTriggerInbox } from '../services/cue-trigger-inbox';
 import { readSessions } from '../services/storage';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
 import { humanizeDuration } from '../../shared/duration';
@@ -48,9 +49,11 @@ export async function cueEngineStart(options: CueEngineStartOptions = {}): Promi
 	const engine = await createStandaloneCueEngine();
 
 	let shuttingDown = false;
+	let stopTriggerInbox: (() => void) | null = null;
 	const shutdown = (signal: string) => {
 		if (shuttingDown) return;
 		shuttingDown = true;
+		stopTriggerInbox?.();
 		console.log(`\n[Cue] Received ${signal}, stopping engine...`);
 		engine.stop();
 		// Give in-flight log lines a tick to flush before exiting - stop()
@@ -72,7 +75,7 @@ export async function cueEngineStart(options: CueEngineStartOptions = {}): Promi
 
 	if (!startedByUs) {
 		const conflictMessage = lock
-			? `Another Cue engine (${lock.mode}, pid ${lock.pid}, started ${lock.startedAt}) already holds the lock. Stop it first ("maestro-cli cue-engine stop" if it's a standalone runner, or disable Cue in the desktop app's Settings).`
+			? `Another Cue engine (${lock.mode}, pid ${lock.pid}, started ${lock.startedAt}) already holds the lock. Stop it first ("maestro-cli cue engine stop" if it's a standalone runner, or disable Cue in the desktop app's Settings).`
 			: 'Engine failed to start (see the log line above for the reason).';
 		if (options.json) {
 			console.log(JSON.stringify({ started: false, error: conflictMessage }));
@@ -82,6 +85,12 @@ export async function cueEngineStart(options: CueEngineStartOptions = {}): Promi
 		process.exitCode = 1;
 		return;
 	}
+
+	// `maestro-cli cue trigger` reaches this runner through the inbox, since
+	// there is no desktop WebSocket to carry it (see cue-trigger-inbox.ts).
+	stopTriggerInbox = startCueTriggerInbox((name, prompt, sourceAgentId) =>
+		engine.triggerSubscription(name, prompt, sourceAgentId)
+	);
 
 	if (options.json) {
 		console.log(JSON.stringify({ started: true, pid: process.pid }));
@@ -219,6 +228,8 @@ interface CueEngineInspectAgentPayload {
 	subscriptionCount: number;
 	enabledSubscriptionCount: number;
 	configError?: string;
+	/** Subscriptions the engine will skip, and why (invalid entries, unresolved prompt files). */
+	warnings?: string[];
 }
 
 export interface CueEngineInspectOptions {
@@ -262,6 +273,7 @@ export async function cueEngineInspect(options: CueEngineInspectOptions = {}): P
 			subscriptionCount: result.config.subscriptions.length,
 			enabledSubscriptionCount: result.config.subscriptions.filter((s) => s.enabled !== false)
 				.length,
+			...(result.warnings.length > 0 ? { warnings: result.warnings } : {}),
 		});
 	}
 
@@ -291,5 +303,10 @@ export async function cueEngineInspect(options: CueEngineInspectOptions = {}): P
 		console.log(
 			`  • ${label}: ${agent.enabledSubscriptionCount}/${agent.subscriptionCount} subscription(s) enabled`
 		);
+		// Without these, a subscription the engine drops for being invalid
+		// simply vanishes from the count, and "0/0" gives no hint why.
+		for (const warning of agent.warnings ?? []) {
+			console.log(`      ! ${warning}`);
+		}
 	}
 }
