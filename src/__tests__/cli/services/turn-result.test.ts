@@ -113,6 +113,29 @@ describe('resolveCliTurnResult', () => {
 		});
 	});
 
+	it('fails a clean exit whose only answer was dropped by the line-buffer cap', () => {
+		// The path that accepts an empty clean exit is exactly the one the cap can
+		// silently empty, so without this the turn reports completed with no response.
+		const result = resolveCliTurnResult(
+			input({
+				answerText: undefined,
+				resultMessageSeen: false,
+				strictEmptyAnswer: false,
+				droppedOutputBytes: 2 * 1024 * 1024,
+			})
+		);
+		expect(result).toMatchObject({ success: false, outcome: 'crashed' });
+		expect(result.error).toMatch(/2097152 bytes of output were discarded/);
+	});
+
+	it('keeps a captured answer even when some earlier output was dropped', () => {
+		expect(resolveCliTurnResult(input({ droppedOutputBytes: 2 * 1024 * 1024 }))).toMatchObject({
+			success: true,
+			outcome: 'completed',
+			response: 'the answer',
+		});
+	});
+
 	const classifiedAs = (type: 'agent_crashed' | 'rate_limited', message: string) => ({
 		detectErrorFromExit: () => ({
 			type,

@@ -65,6 +65,14 @@ export interface CliTurnInput {
 	 * passes `false` and keeps failing a non-zero exit.
 	 */
 	answerOutranksBareExit: boolean;
+	/**
+	 * Bytes the line reader discarded because no complete line arrived within
+	 * `MAX_LINE_BUFFER_LENGTH`. A drop with nothing captured is a FAILURE even on
+	 * a clean exit: the answer may well have been the line that was thrown away,
+	 * and the generic JSON-line path would otherwise report a completed turn with
+	 * no response, which Auto Run counts as a finished task.
+	 */
+	droppedOutputBytes?: number;
 }
 
 function inBandError(toolType: ToolType, message: string): AgentError {
@@ -80,6 +88,11 @@ function inBandError(toolType: ToolType, message: string): AgentError {
 function crashMessage(input: CliTurnInput, classified: AgentError | undefined): string {
 	if (input.errorText) return input.errorText;
 	if (input.stderrText) return input.stderrText;
+	// Only when nothing was captured: with an answer in hand the drop is not what
+	// failed the turn, and naming it would point at the wrong cause.
+	if (input.droppedOutputBytes && !input.answerText?.trim()) {
+		return `Agent produced no usable answer: ${input.droppedOutputBytes} bytes of output were discarded because no complete line arrived within the line buffer.`;
+	}
 	// A specific classification ("rate limit reached") explains more than the
 	// generic fallback ("Agent exited with code 1"), which only restates the
 	// exit code the caller's own wording already covers.
@@ -184,7 +197,17 @@ export function resolveCliTurnResult(rawInput: CliTurnInput): AgentResult {
 	// empty) result event: the resolver's own empty-answer rule is skipped once
 	// `resultMessageSeen` is set, and Claude always sends one.
 	const strictEmpty = input.strictEmptyAnswer && !hasAnswer;
-	if (resolved.outcome === 'crashed' || nonZeroWithoutAnswer || killedBySignal || strictEmpty) {
+	// Output was discarded and nothing was captured, so the dropped bytes may have
+	// been the answer itself. Reporting `completed` here is the one failure the
+	// line-buffer cap could otherwise introduce.
+	const droppedTheAnswer = Boolean(input.droppedOutputBytes) && !hasAnswer;
+	if (
+		resolved.outcome === 'crashed' ||
+		nonZeroWithoutAnswer ||
+		killedBySignal ||
+		strictEmpty ||
+		droppedTheAnswer
+	) {
 		return {
 			success: false,
 			outcome: 'crashed',
