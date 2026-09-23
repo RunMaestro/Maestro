@@ -3630,6 +3630,38 @@ describe('Reset Tasks Flash Notification', () => {
 		expect(onShowFlash).not.toHaveBeenCalled(); // Not called until confirmed
 	});
 
+	// The reset is saved immediately, but only against the saved text: writing
+	// the draft would persist the user's unsaved edits and defeat Revert.
+	it('saves the reset without persisting unsaved edits', async () => {
+		const saved = '- [x] Done task\n- [ ] Pending task';
+		const draft = saved + '\nunsaved line';
+		const mockMaestro = setupMaestroMock();
+		const ref = React.createRef<AutoRunHandle>();
+		const props = createDefaultProps({
+			content: saved,
+			externalLocalContent: draft,
+			externalSavedContent: saved,
+		});
+		renderWithProvider(<AutoRun ref={ref} {...props} />);
+
+		await act(async () => {
+			ref.current?.openResetTasksModal();
+		});
+		await act(async () => {
+			fireEvent.click(screen.getByRole('button', { name: 'Reset Tasks' }));
+		});
+
+		expect(mockMaestro.autorun.writeDoc).toHaveBeenCalledWith(
+			props.folderPath,
+			`${props.selectedFile}.md`,
+			'- [ ] Done task\n- [ ] Pending task',
+			undefined
+		);
+		expect(screen.getByRole('textbox')).toHaveValue(
+			'- [ ] Done task\n- [ ] Pending task\nunsaved line'
+		);
+	});
+
 	it('onShowFlash is called after handleResetTasks saves the document', async () => {
 		const contentWithTasks = '- [x] First done\n- [x] Second done\n- [ ] Pending';
 		const onShowFlash = vi.fn();
