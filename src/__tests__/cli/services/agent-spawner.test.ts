@@ -18,6 +18,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { EventEmitter } from 'events';
+import { StringDecoder } from 'string_decoder';
 
 // Create mock spawn function at module level
 const mockSpawn = vi.fn();
@@ -25,8 +26,11 @@ const mockStdin = {
 	end: vi.fn(),
 	write: vi.fn(),
 };
-const mockStdout = new EventEmitter();
-const mockStderr = new EventEmitter();
+// `setEncoding` is part of a real child stream: the spawner decodes there
+// rather than per chunk, so a multibyte character split across two reads
+// survives. Emitting strings from these fakes mirrors that.
+const mockStdout = Object.assign(new EventEmitter(), { setEncoding: vi.fn() });
+const mockStderr = Object.assign(new EventEmitter(), { setEncoding: vi.fn() });
 const mockKill = vi.fn();
 const mockChild = Object.assign(new EventEmitter(), {
 	stdin: mockStdin,
@@ -60,11 +64,11 @@ const PATH_PROBE_COMMANDS = new Set(['which', 'where']);
  * cannot be emitted inline.
  */
 function makePathProbeChild(binary: string) {
-	const stdout = new EventEmitter();
+	const stdout = Object.assign(new EventEmitter(), { setEncoding: vi.fn() });
 	const child = Object.assign(new EventEmitter(), {
 		stdin: { end: vi.fn(), write: vi.fn() },
 		stdout,
-		stderr: new EventEmitter(),
+		stderr: Object.assign(new EventEmitter(), { setEncoding: vi.fn() }),
 	});
 	const resolved = pathProbeResolver?.(binary);
 	setTimeout(() => {
@@ -2153,6 +2157,55 @@ Some text with [x] in it that's not a checkbox
 			const result = await resultPromise;
 			expect(result.usageStats?.inputTokens).toBe(300);
 			expect(result.usageStats?.outputTokens).toBe(30);
+		});
+
+		it('drops a stuck line buffer, says so, and keeps framing the lines after it', async () => {
+			const warn = vi.spyOn(console, 'error').mockImplementation(() => {});
+			try {
+				const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+				await tick();
+
+				// A provider that never terminates a line would otherwise grow this
+				// buffer for the life of the process.
+				mockStdout.emit('data', 'x'.repeat(1024 * 1024 + 1));
+				mockStdout.emit('data', claudeResult('after the drop'));
+				mockChild.emit('close', 0, null);
+
+				expect(await resultPromise).toMatchObject({
+					success: true,
+					response: 'after the drop',
+				});
+				expect(warn).toHaveBeenCalledWith(expect.stringContaining('Dropped'));
+			} finally {
+				warn.mockRestore();
+			}
+		});
+
+		it('decodes on the stream, so a multibyte character split across reads survives', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+			await tick();
+
+			// The spawner must ask the stream to decode. Without this it decoded
+			// each Buffer on its own, and a character straddling two reads became
+			// replacement characters on both sides.
+			expect(mockStdout.setEncoding).toHaveBeenCalledWith('utf8');
+			expect(mockStderr.setEncoding).toHaveBeenCalledWith('utf8');
+
+			// What follows demonstrates the case rather than reproducing it: an
+			// EventEmitter fake cannot decode, so the split is done here with the
+			// same StringDecoder a real stream uses. The assertions above are what
+			// would actually catch a regression. A byte-level split belongs with
+			// the other hostile scenarios in the turn recordings, whose fixtures
+			// are string chunks today - see the plan doc's deferred list.
+			const whole = claudeResult('décor 🎼');
+			const bytes = Buffer.from(whole, 'utf8');
+			const decoder = new StringDecoder('utf8');
+			const cut = bytes.indexOf(Buffer.from('🎼', 'utf8')) + 2;
+			mockStdout.emit('data', decoder.write(bytes.subarray(0, cut)));
+			mockStdout.emit('data', decoder.write(bytes.subarray(cut)));
+			mockChild.emit('close', 0, null);
+
+			expect(await resultPromise).toMatchObject({ response: 'décor 🎼' });
 		});
 
 		it('reassembles a JSON line split across chunks', async () => {

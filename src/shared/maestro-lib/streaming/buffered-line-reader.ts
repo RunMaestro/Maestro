@@ -54,6 +54,13 @@ export interface BufferedLineReaderOptions {
 	 */
 	maxBufferLength?: number;
 	/**
+	 * Called with the dropped length when `maxBufferLength` trips. Dropping is
+	 * silent data loss otherwise, and the desktop handler that this cap mirrors
+	 * logs the same event (`resetOversizedCopilotJsonBuffer`). Optional so a
+	 * caller with no logger can omit it.
+	 */
+	onOversized?: (droppedLength: number) => void;
+	/**
 	 * How to split accumulated text into complete frames plus a remainder.
 	 * Defaults to newline-delimited splitting. Pass a custom extractor for
 	 * non-newline framing (see the module doc comment).
@@ -75,10 +82,12 @@ export class BufferedLineReader {
 	private buffer = '';
 	private readonly maxBufferLength: number | undefined;
 	private readonly extractFrames: FrameExtractor;
+	private readonly onOversized: ((droppedLength: number) => void) | undefined;
 
 	constructor(options: BufferedLineReaderOptions = {}) {
 		this.maxBufferLength = options.maxBufferLength;
 		this.extractFrames = options.extractFrames ?? defaultNewlineFrameExtractor;
+		this.onOversized = options.onOversized;
 	}
 
 	/**
@@ -104,7 +113,9 @@ export class BufferedLineReader {
 		this.buffer = remainder;
 
 		if (this.maxBufferLength !== undefined && this.buffer.length > this.maxBufferLength) {
+			const droppedLength = this.buffer.length;
 			this.buffer = '';
+			this.onOversized?.(droppedLength);
 		}
 
 		return frames.filter((frame) => frame.trim().length > 0);
