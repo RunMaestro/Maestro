@@ -71,7 +71,7 @@ export const EDITOR_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		description:
 			'Show tool-call activity (tool badges and their input/output) in AI responses. When false, tool calls are hidden from the transcript.',
 		type: 'boolean',
-		default: true,
+		default: false,
 		category: 'editor',
 	},
 	leftSidebarWidth: {

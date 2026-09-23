@@ -956,14 +956,22 @@ export async function handleProcessSpawn(
 			});
 	}
 
-	logger.info(`Process spawned successfully`, LOG_CONTEXT, {
-		sessionId: config.sessionId,
-		pid: result.pid,
-		...(sshRemoteUsed && {
-			sshRemoteId: sshRemoteUsed.id,
-			sshRemoteName: sshRemoteUsed.name,
-		}),
-	});
+	// Report what actually happened. This used to log success
+	// unconditionally, so a refused spawn (pid -1) read as a healthy one
+	// and the real reason had to be dug out of the ProcessManager line
+	// above it.
+	logger[result.success ? 'info' : 'error'](
+		result.success ? `Process spawned successfully` : `Process spawn failed`,
+		LOG_CONTEXT,
+		{
+			sessionId: config.sessionId,
+			pid: result.pid,
+			...(sshRemoteUsed && {
+				sshRemoteId: sshRemoteUsed.id,
+				sshRemoteName: sshRemoteUsed.name,
+			}),
+		}
+	);
 
 	// Arm the interactive-mode replay controller when this turn ran
 	// through maestro-p. If the wrapper exits with code 2 (Max-plan

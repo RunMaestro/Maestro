@@ -532,12 +532,12 @@ Refresh the file tree in the Maestro desktop app (never moves the view)
 
 Refresh Auto Run documents in the Maestro desktop app
 
-| Option             | Description                                           | Default |
-| ------------------ | ----------------------------------------------------- | ------- |
-| `-a, --agent <id>` | Target agent by ID (defaults to active)               | -       |
-| `--background`     | Refresh without switching to the target agent         | -       |
-| `--focus`          | Switch to the target agent while refreshing (default) | -       |
-| `--json`           | Output as JSON (for scripting)                        | -       |
+| Option             | Description                                             | Default |
+| ------------------ | ------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Target agent by ID (defaults to active)                 | -       |
+| `--background`     | Refresh without switching to the target agent (default) | -       |
+| `--focus`          | Switch to the target agent while refreshing             | -       |
+| `--json`           | Output as JSON (for scripting)                          | -       |
 
 ## `maestro-cli auto-run <docs>`
 

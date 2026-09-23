@@ -5,12 +5,11 @@
  * stay pixel-identical without copy-pasting markup.
  */
 
-import { memo, useEffect, useState } from 'react';
+import { memo } from 'react';
 import { ChevronDown, Clock, Eye, EyeOff, Link2, Loader2, RefreshCw, Users } from 'lucide-react';
 import type { Theme } from '../../../types';
 import { formatFutureTime, formatTimestamp } from '../../../../shared/formatters';
 import {
-	formatLastRefreshed,
 	isSampleBehindLatest,
 	isSampleExpired,
 	QUOTA_REFRESH_OPTIONS,
@@ -285,8 +284,8 @@ export const QuotaSharedAccountBadge = memo(function QuotaSharedAccountBadge({
 /**
  * "Stale" chip for a row the latest refresh did not update.
  *
- * The footer reports the NEWEST sample, so one freshly-sampled account makes the
- * whole panel read "Last refreshed just now" - including a row whose bars are
+ * The dashboard footer reports the NEWEST sample, so one freshly-sampled account
+ * makes the whole panel read as just sampled - including a row whose bars are
  * hours old because its account could not be sampled this pass (every agent
  * using it runs over SSH, or the probe failed). The chip prints when that row
  * was actually read. A clock time rather than an age, so it stays true without
@@ -676,56 +675,6 @@ export const QuotaAccountTabs = memo(function QuotaAccountTabs({
 					</button>
 				);
 			})}
-		</div>
-	);
-});
-
-/**
- * Centered footer line reporting how stale the panel's numbers are:
- * "Last refreshed just now" / "Last refreshed 5 hours and 25 minutes ago".
- *
- * It reads the newest `sampledAt` in the provider's snapshot map rather than
- * remembering when the Refresh button was last clicked, so it stays truthful
- * across a reopened dashboard and across the main-process background sampler -
- * both of which produce fresh data with nobody clicking anything. A refresh
- * that fails therefore keeps counting up instead of resetting to "just now",
- * which is the point: the line describes the data, not the button press.
- *
- * Renders nothing when nothing has been sampled yet.
- */
-export const QuotaLastRefreshed = memo(function QuotaLastRefreshed({
-	sampledAtMs,
-	theme,
-	testIdPrefix,
-}: {
-	sampledAtMs: number | null;
-	theme: Theme;
-	testIdPrefix: string;
-}) {
-	// Minute-granularity display, so a half-minute tick keeps the printed value
-	// within one tick of the truth without a per-second re-render.
-	const [now, setNow] = useState(() => Date.now());
-	useEffect(() => {
-		const id = window.setInterval(() => setNow(Date.now()), 30_000);
-		return () => window.clearInterval(id);
-	}, []);
-
-	// A fresh sample must read "just now" immediately, not on the next tick.
-	useEffect(() => {
-		setNow(Date.now());
-	}, [sampledAtMs]);
-
-	if (sampledAtMs === null) return null;
-
-	return (
-		<div
-			className="flex items-center justify-center gap-1.5 mt-4 text-xs"
-			style={{ color: theme.colors.textDim, opacity: 0.8 }}
-			data-testid={`${testIdPrefix}-last-refreshed`}
-			title={new Date(sampledAtMs).toLocaleString()}
-		>
-			<Clock className="w-3 h-3" />
-			<span>Last refreshed {formatLastRefreshed(sampledAtMs, now)}</span>
 		</div>
 	);
 });

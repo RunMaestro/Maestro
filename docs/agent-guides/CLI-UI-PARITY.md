@@ -24,7 +24,7 @@ surface is still created and still addressable - it lands in the tab bar the way
 a browser opens a background tab. "Created but invisible" is a different bug and
 must never pass as background placement.
 
-### The flag is ADDITIVE. No verb's default changed.
+### The flag is ADDITIVE. One verb's default changed.
 
 The defect was that an agent which wanted to be polite had no way to ask. It was
 **not** that the verbs focus. Every verb behaves exactly as it did before when
@@ -37,6 +37,13 @@ for every caller that has already shipped, including the web and mobile clients,
 which send the same messages and legitimately DO want to focus. Flipping the
 guidance changes only what new calls ask for.
 
+The one exception is `refresh-auto-run`, whose CLI default is now background.
+Its focusing default only switched agents when the target was NOT on screen, so
+it fired exactly when the user was looking elsewhere: every Cue script or agent
+turn that ended with an unflagged refresh yanked the user to that agent. The
+flip is CLI-side (`CLI_BACKGROUND_DEFAULTS`), so a web client that omits the
+field still gets the old behaviour, and `--focus` restores it from the CLI.
+
 | Verb                                              | Message                                               | Default (unchanged)                     |
 | ------------------------------------------------- | ----------------------------------------------------- | --------------------------------------- |
 | `open-file`                                       | `open_file_tab`                                       | focuses                                 |
@@ -48,7 +55,7 @@ guidance changes only what new calls ask for.
 | `create-agent`                                    | `create_session`                                      | selects the new agent                   |
 | `create-worktree`                                 | `create_worktree_session` + `send_command`            | selects the new agent                   |
 | `switch-mode`                                     | `switch_mode`                                         | switches                                |
-| `refresh-auto-run`                                | `refresh_auto_run_docs`                               | selects the target agent, flashes       |
+| `refresh-auto-run`                                | `refresh_auto_run_docs`                               | **background** (flipped; `--focus`)     |
 | `refresh-files`                                   | `refresh_file_tree`                                   | **already quiet**; flag accepted, no-op |
 | `focus-agent`, `send --tab`, `open`, `open-graph` | `select_session`, `open_modal`, `open_document_graph` | **always foreground, no flag**          |
 
@@ -169,8 +176,8 @@ transition, so an inert flag cannot pass as a fix. **Two runs per verb:**
    the log stays empty, and the surface still exists (`tab show`,
    `session list`, `list terminals`).
 2. **Without the flag**: the log records exactly the jump it recorded before.
-   Since no default changed, an unflagged call that stops focusing is a
-   regression - and it is the failure mode this design is most likely to
+   Since no default changed (except `refresh-auto-run`), an unflagged call
+   that stops focusing is a regression - and it is the failure mode this design is most likely to
    produce.
 
 ## How to add a scriptable write

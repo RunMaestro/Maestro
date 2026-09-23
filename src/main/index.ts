@@ -25,6 +25,7 @@ import { WebServer } from './web-server';
 import { AgentDetector } from './agents';
 import { createAgentConfigLookup } from './agents/agent-config-lookup';
 import { shouldDropSentryEvent } from '../shared/sentryFilters';
+import { getBuildProvenance } from './utils/build-provenance';
 import {
 	disposeAllGlobalHotkeys,
 	getGlobalHotkeyRegistry,
@@ -356,11 +357,25 @@ store.onDidChange('wakatimeEnabled', (newValue) => {
 // Only enable in production - skip during development to avoid noise from hot-reload artifacts
 // The dynamic import is necessary because @sentry/electron accesses electron.app at module load time
 // which fails if the module is imported before app.whenReady() in some Node/Electron version combinations
-if (crashReportingEnabled && !isDevelopment) {
+//
+// The DSN is NOT in source. It comes from dist/build-provenance.json, injected at
+// package time from a CI secret, so a build from source has no DSN and this block is
+// skipped entirely: the build reports nowhere. That is what keeps fork builds out of
+// our Sentry project, and equally keeps fork users' telemetry out of it. Full
+// rationale in src/shared/buildProvenance.ts.
+const buildProvenance = getBuildProvenance();
+if (crashReportingEnabled && !isDevelopment && !buildProvenance.sentryDsn) {
+	logger.info(
+		'Crash reporting is off: this build carries no Sentry DSN. Set MAESTRO_SENTRY_DSN to report to your own Sentry project.',
+		'Startup'
+	);
+}
+if (crashReportingEnabled && !isDevelopment && buildProvenance.sentryDsn) {
+	const sentryDsn = buildProvenance.sentryDsn;
 	import('@sentry/electron/main')
 		.then(({ init, setTag, IPCMode }) => {
 			init({
-				dsn: 'https://2303c5f787f910863d83ed5d27ce8ed2@o4510554134740992.ingest.us.sentry.io/4510554135789568',
+				dsn: sentryDsn,
 				// Set release version for better debugging
 				release: app.getVersion(),
 				// Use Classic IPC mode to avoid "sentry-ipc:// URL scheme not supported" errors
@@ -396,6 +411,10 @@ if (crashReportingEnabled && !isDevelopment) {
 			// RC builds use -RC suffix (e.g., 0.16.1-RC), stable builds use plain semver
 			const version = app.getVersion();
 			setTag('channel', version.includes('-RC') ? 'rc' : 'stable');
+			// Distinguish our own release builds from a fork that supplied its own DSN.
+			// Only official builds should ever reach the smash-labs/maestro project, so an
+			// `unofficial` event there means the provenance gate has a hole in it.
+			setTag('build', buildProvenance.official ? 'official' : 'unofficial');
 
 			// Start memory monitoring for crash diagnostics (MAESTRO-5A/4Y)
 			// Records breadcrumbs with memory state every minute, warns above 1GB heap

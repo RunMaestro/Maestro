@@ -383,7 +383,7 @@ export async function runStartupUsageSampling(deps: StartupUsageSamplingDeps): P
 	// snapshot, or one remembered in `quotaAccountsStore` because a sampler
 	// targeted it for a real agent. The dashboard keeps rendering those rows, and
 	// nothing else re-samples them once their agents move away (or all run over
-	// SSH, which buildTarget skips): the footer reads "Last refreshed just now"
+	// SSH, which buildTarget skips): the dashboard footer reads a fresh sample age
 	// off the other accounts while this row's bars sit frozen. Neither source is
 	// a leftover dir on disk, this only runs when the user pressed Refresh, and
 	// the sampler points BROWSER at a no-op besides.

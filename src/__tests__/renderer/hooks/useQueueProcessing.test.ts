@@ -1591,3 +1591,120 @@ describe('return type', () => {
 		expect(mockAgentStoreProcessQueuedItem).toHaveBeenCalledTimes(2);
 	});
 });
+
+// ============================================================================
+// Stuck-queue watchdog
+// ============================================================================
+
+describe('stuck-queue watchdog', () => {
+	it('keeps the startup timer when the store changes inside the 500ms window', () => {
+		vi.useFakeTimers();
+
+		const tab = createTab({ id: 'tab-1' });
+		mockSessionStoreState.sessionsLoaded = true;
+		mockSessionStoreState.sessions = [
+			createSession({ state: 'idle', aiTabs: [tab], executionQueue: [createQueuedItem()] }),
+		];
+		mockGetActiveTab.mockReturnValue(tab);
+
+		const { rerender } = renderHook(() => useQueueProcessing(createDeps()));
+
+		// An agent streaming output at launch replaces the sessions array many
+		// times a second. Each one used to re-run the startup effect, whose cleanup
+		// cancelled the pending timer while its own ref guard blocked a
+		// replacement: recovery never ran, and `startupRecoveryComplete` never
+		// flipped, which disabled runtime recovery for the rest of the app's life.
+		act(() => {
+			vi.advanceTimersByTime(200);
+		});
+		mockSessionStoreState.sessions = [...mockSessionStoreState.sessions];
+		rerender();
+
+		act(() => {
+			vi.advanceTimersByTime(400);
+		});
+
+		expect(mockAgentStoreProcessQueuedItem).toHaveBeenCalledOnce();
+	});
+
+	it('retries a bailed dispatch on its own, with no new store event', () => {
+		vi.useFakeTimers();
+
+		// The target tab is still mid-turn, so the dispatch bails. A bail mutates
+		// nothing, so no effect re-runs and nothing else will ever look again.
+		const busyTab = createTab({ id: 'tab-1', state: 'busy' });
+		mockSessionStoreState.sessionsLoaded = true;
+		mockSessionStoreState.sessions = [
+			createSession({
+				state: 'idle',
+				aiTabs: [busyTab],
+				executionQueue: [createQueuedItem({ tabId: 'tab-1' })],
+			}),
+		];
+		mockGetActiveTab.mockReturnValue(busyTab);
+
+		renderHook(() => useQueueProcessing(createDeps()));
+
+		act(() => {
+			vi.advanceTimersByTime(500);
+		});
+		expect(mockAgentStoreProcessQueuedItem).not.toHaveBeenCalled();
+
+		// The turn finishes. No re-render, no new subscription fires - only the
+		// watchdog's own look back can rescue the queue.
+		const idleTab = createTab({ id: 'tab-1', state: 'idle' });
+		mockSessionStoreState.sessions = [
+			createSession({
+				state: 'idle',
+				aiTabs: [idleTab],
+				executionQueue: [createQueuedItem({ tabId: 'tab-1' })],
+			}),
+		];
+		mockGetActiveTab.mockReturnValue(idleTab);
+
+		act(() => {
+			vi.advanceTimersByTime(4000);
+		});
+
+		expect(mockAgentStoreProcessQueuedItem).toHaveBeenCalledOnce();
+	});
+
+	it('stops polling once the queue drains', () => {
+		vi.useFakeTimers();
+
+		const busyTab = createTab({ id: 'tab-1', state: 'busy' });
+		mockSessionStoreState.sessionsLoaded = true;
+		mockSessionStoreState.sessions = [
+			createSession({
+				state: 'idle',
+				aiTabs: [busyTab],
+				executionQueue: [createQueuedItem({ tabId: 'tab-1' })],
+			}),
+		];
+		mockGetActiveTab.mockReturnValue(busyTab);
+
+		renderHook(() => useQueueProcessing(createDeps()));
+
+		act(() => {
+			vi.advanceTimersByTime(500);
+		});
+
+		// User removes the item instead: nothing is stuck any more, so the poll
+		// retires rather than running for the life of the app.
+		mockSessionStoreState.sessions = [
+			createSession({ state: 'idle', aiTabs: [busyTab], executionQueue: [] }),
+		];
+
+		act(() => {
+			vi.advanceTimersByTime(4000);
+		});
+		const callsAfterDrain = mockSetSessions.mock.calls.length;
+
+		act(() => {
+			vi.advanceTimersByTime(20000);
+		});
+
+		expect(mockSetSessions.mock.calls.length).toBe(callsAfterDrain);
+		expect(mockAgentStoreProcessQueuedItem).not.toHaveBeenCalled();
+	});
+});

@@ -236,6 +236,20 @@ jobs:
         run: npm run build
         env:
           VITE_APP_VERSION: ${{ steps.version.outputs.VERSION }}
+          # Crash-reporting address. Deliberately a secret rather than a source
+          # literal: when the DSN sat in src/main/index.ts every fork inherited it and
+          # reported into smash-labs/maestro, which both drowned our issue stream and
+          # shipped fork users' telemetry to a project they never chose. Forks do not
+          # inherit secrets, so a fork build gets no DSN and reports nowhere.
+          # See src/shared/buildProvenance.ts.
+          MAESTRO_SENTRY_DSN: ${{ secrets.MAESTRO_SENTRY_DSN }}
+          MAESTRO_OFFICIAL_BUILD: '1'
+
+      # Fail loudly rather than shipping a release with crash reporting silently off.
+      - name: Verify crash reporting was provisioned
+        run: npm run verify:provenance
+        env:
+          MAESTRO_SENTRY_DSN: ${{ secrets.MAESTRO_SENTRY_DSN }}
 
       # List release directory before packaging for debugging
       - name: Create release directory

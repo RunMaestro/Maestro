@@ -22,7 +22,6 @@ import {
 	QuotaAccountTabs,
 	QuotaBarRow,
 	QuotaPendingRow,
-	QuotaLastRefreshed,
 	QuotaRefreshControls,
 	QuotaShowAllToggle,
 	QuotaStaleSampleBadge,
@@ -496,12 +495,6 @@ export const CodexPlanUsage = memo(function CodexPlanUsage({
 					theme={theme}
 				/>
 			) : null}
-
-			<QuotaLastRefreshed
-				sampledAtMs={lastSampledAtMs}
-				theme={theme}
-				testIdPrefix={TEST_ID_PREFIX}
-			/>
 		</div>
 	);
 });

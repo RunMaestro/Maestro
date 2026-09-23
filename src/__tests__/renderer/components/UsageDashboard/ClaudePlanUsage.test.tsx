@@ -524,8 +524,8 @@ describe('ClaudePlanUsage - hide/show accounts (list view)', () => {
 });
 
 describe('ClaudePlanUsage - stale row chip', () => {
-	// The footer reports the NEWEST sample, so without a per-row marker an account
-	// the last refresh skipped reads "Last refreshed just now" beside old bars.
+	// The dashboard footer reports the NEWEST sample, so without a per-row marker
+	// an account the last refresh skipped reads as freshly sampled beside old bars.
 	const snapshotAt = (key: string, sampledAt: string) => ({
 		sampledAt,
 		configDirKey: key,
@@ -889,64 +889,24 @@ describe('ClaudePlanUsage — account identity', () => {
 	});
 });
 
-describe('ClaudePlanUsage - last refreshed footer', () => {
-	it('reports the age of the newest sample, not the oldest', () => {
-		vi.useFakeTimers();
-		vi.setSystemTime(new Date('2026-05-15T12:00:00.000Z'));
-		try {
-			seedSnapshots({
-				'/Users/me/.claude': {
-					sampledAt: '2026-05-15T06:35:00.000Z',
-					configDirKey: '/Users/me/.claude',
-					session: { percent: 50, resetsAt: '2026-05-15T05:00:00.000Z' },
-					weekAllModels: { percent: 30, resetsAt: '2026-05-22T00:00:00.000Z' },
-					weekSonnetOnly: { percent: 10, resetsAt: '2026-05-22T00:00:00.000Z' },
-				},
-				'/Users/me/.claude-gmail': {
-					sampledAt: '2026-05-15T01:00:00.000Z',
-					configDirKey: '/Users/me/.claude-gmail',
-					session: { percent: 20, resetsAt: '2026-05-15T05:00:00.000Z' },
-					weekAllModels: { percent: 10, resetsAt: '2026-05-22T00:00:00.000Z' },
-					weekSonnetOnly: { percent: 0, resetsAt: '2026-05-22T00:00:00.000Z' },
-				},
-			});
+describe('ClaudePlanUsage - sample age', () => {
+	// The dashboard footer already prints "sampled Nm ago" for this tab, so the
+	// panel must NOT repeat it: two copies of the same age drift apart the moment
+	// one of them re-renders and the other does not.
+	it('leaves the sample age to the dashboard footer', () => {
+		seedSnapshots({
+			'/Users/me/.claude': {
+				sampledAt: '2026-05-15T06:35:00.000Z',
+				configDirKey: '/Users/me/.claude',
+				session: { percent: 50, resetsAt: '2026-05-15T05:00:00.000Z' },
+				weekAllModels: { percent: 30, resetsAt: '2026-05-22T00:00:00.000Z' },
+				weekSonnetOnly: { percent: 10, resetsAt: '2026-05-22T00:00:00.000Z' },
+			},
+		});
 
-			render(<ClaudePlanUsage theme={theme} />);
-			expect(screen.getByTestId('claude-plan-last-refreshed')).toHaveTextContent(
-				'Last refreshed 5 hours and 25 minutes ago'
-			);
-		} finally {
-			vi.useRealTimers();
-		}
-	});
-
-	it('reads "just now" for a fresh sample', () => {
-		vi.useFakeTimers();
-		vi.setSystemTime(new Date('2026-05-15T12:00:00.000Z'));
-		try {
-			seedSnapshots({
-				'/Users/me/.claude': {
-					sampledAt: '2026-05-15T11:59:50.000Z',
-					configDirKey: '/Users/me/.claude',
-					session: { percent: 50, resetsAt: '2026-05-15T05:00:00.000Z' },
-					weekAllModels: { percent: 30, resetsAt: '2026-05-22T00:00:00.000Z' },
-					weekSonnetOnly: { percent: 10, resetsAt: '2026-05-22T00:00:00.000Z' },
-				},
-			});
-
-			render(<ClaudePlanUsage theme={theme} />);
-			expect(screen.getByTestId('claude-plan-last-refreshed')).toHaveTextContent(
-				'Last refreshed just now'
-			);
-		} finally {
-			vi.useRealTimers();
-		}
-	});
-
-	it('renders nothing when no account has been sampled yet', () => {
-		seedSessions(['/Users/me/.claude-pending']);
 		render(<ClaudePlanUsage theme={theme} autoRefresh={false} />);
 		expect(screen.queryByTestId('claude-plan-last-refreshed')).toBeNull();
+		expect(screen.queryByText(/Last refreshed/)).toBeNull();
 	});
 });
 

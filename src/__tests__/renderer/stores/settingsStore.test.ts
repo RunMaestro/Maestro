@@ -104,7 +104,7 @@ function resetStore() {
 		enterToSendAIExpanded: false,
 		defaultSaveToHistory: true,
 		defaultShowThinking: 'off',
-		showToolCalls: true,
+		showToolCalls: false,
 		leftSidebarWidth: 256,
 		rightPanelWidth: 384,
 		modalSizes: {},
@@ -230,7 +230,7 @@ describe('settingsStore', () => {
 			expect(state.enterToSendAIExpanded).toBe(false);
 			expect(state.defaultSaveToHistory).toBe(true);
 			expect(state.defaultShowThinking).toBe('off');
-			expect(state.showToolCalls).toBe(true);
+			expect(state.showToolCalls).toBe(false);
 			expect(state.leftSidebarWidth).toBe(256);
 			expect(state.rightPanelWidth).toBe(384);
 			expect(state.modalSizes).toEqual({});
@@ -501,9 +501,9 @@ describe('settingsStore', () => {
 			});
 
 			it('setShowToolCalls updates state and persists', () => {
-				useSettingsStore.getState().setShowToolCalls(false);
-				expect(useSettingsStore.getState().showToolCalls).toBe(false);
-				expect(window.maestro.settings.set).toHaveBeenCalledWith('showToolCalls', false);
+				useSettingsStore.getState().setShowToolCalls(true);
+				expect(useSettingsStore.getState().showToolCalls).toBe(true);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('showToolCalls', true);
 			});
 		});
 

@@ -551,6 +551,16 @@ const CODEX_ERROR_PATTERNS: AgentErrorPatterns = {
 	// longer than it needed to. When a line carries both signals, quota wins.
 	rate_limited: [
 		{
+			// Matches: "Your workspace is out of credits. Add credits to continue."
+			// Codex's wording once a plan window AND the workspace's credit fallback
+			// are both spent. Without this it fell through to type `unknown`, which
+			// every path that asks "is this a limit?" by type ignores - only the
+			// retry scheduler's own text match still recognised it.
+			pattern: /out of credits|insufficient credits|add (?:more )?credits to continue/i,
+			message: 'Your workspace is out of credits. Resume when your plan quota resets.',
+			recoverable: true,
+		},
+		{
 			// Matches: "You've hit your usage limit" or "usage limit reached/exceeded"
 			pattern: /usage.?limit|hit your.*limit/i,
 			message: 'Usage limit reached. Please wait or check your plan quota.',
@@ -842,13 +852,14 @@ const FACTORY_DROID_ERROR_PATTERNS: AgentErrorPatterns = {
 // ============================================================================
 
 /**
- * Actionable message shown when an SSH remote host appears to be Windows.
- * Maestro currently builds the remote command for a POSIX shell only
- * (see ssh-command-builder.ts: /bin/bash --norc --noprofile + single-quote
- * escaping), so Windows remotes are not yet supported. Tracked by issue #995.
+ * Actionable message shown when an SSH remote host answers with a Windows shell.
+ * Maestro builds the remote command for a POSIX shell (see ssh-command-builder.ts:
+ * /bin/bash --norc --noprofile + single-quote escaping), which cmd.exe and
+ * PowerShell cannot run. The fix is on the host: point OpenSSH's DefaultShell at
+ * Git Bash or WSL bash (see src/shared/sshRemoteShell.ts and issue #995).
  */
-const WINDOWS_REMOTE_UNSUPPORTED_MESSAGE =
-	'SSH execution to Windows remote hosts is not yet supported (Maestro builds the remote command for a POSIX shell). See issue #995.';
+const WINDOWS_REMOTE_SHELL_MESSAGE =
+	"Remote SSH shell is a Windows shell (PowerShell or cmd.exe), which cannot run /bin/bash. Point the remote's OpenSSH DefaultShell at Git Bash or WSL bash.";
 
 /**
  * Error patterns for SSH remote execution errors.
@@ -963,19 +974,19 @@ export const SSH_ERROR_PATTERNS: AgentErrorPatterns = {
 		{
 			// cmd.exe: "'/bin/bash' is not recognized as an internal or external command"
 			pattern: /is not recognized as an internal or external command/i,
-			message: WINDOWS_REMOTE_UNSUPPORTED_MESSAGE,
+			message: WINDOWS_REMOTE_SHELL_MESSAGE,
 			recoverable: false,
 		},
 		{
 			// PowerShell: "The term '/bin/bash' is not recognized as the name of a cmdlet"
 			pattern: /is not recognized as the name of a cmdlet/i,
-			message: WINDOWS_REMOTE_UNSUPPORTED_MESSAGE,
+			message: WINDOWS_REMOTE_SHELL_MESSAGE,
 			recoverable: false,
 		},
 		{
 			// cmd.exe / Windows API: "The system cannot find the path specified"
 			pattern: /the system cannot find the path specified/i,
-			message: WINDOWS_REMOTE_UNSUPPORTED_MESSAGE,
+			message: WINDOWS_REMOTE_SHELL_MESSAGE,
 			recoverable: false,
 		},
 		{
@@ -1039,6 +1050,16 @@ export const SSH_ERROR_PATTERNS: AgentErrorPatterns = {
 			pattern: /ssh:.*packet corrupt|ssh:.*protocol error/i,
 			message: 'SSH protocol error. The connection may be unstable.',
 			recoverable: true,
+		},
+		{
+			// Windows remote: OpenSSH handed our POSIX script to PowerShell or cmd.exe.
+			// Neither can run `/bin/bash`, so the turn dies with shell noise that
+			// reads like a missing binary. It is a host configuration problem, and
+			// no amount of retrying or reinstalling the agent will move it.
+			pattern:
+				/['"]?\/bin\/bash['"]?\s+is not recognized|the term ['"]\/bin\/bash['"] is not recognized|is not a valid statement separator in this version/i,
+			message: WINDOWS_REMOTE_SHELL_MESSAGE,
+			recoverable: false,
 		},
 		{
 			// Shell parse error - indicates profile/rc file syntax issues on the remote

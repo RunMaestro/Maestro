@@ -959,8 +959,7 @@ describe('error-patterns', () => {
 			// (/bin/bash --norc --noprofile). On a Windows SSH remote the default
 			// shell (cmd.exe or PowerShell) cannot run it and the agent dies with a
 			// bare exit 1. These cases prove the cryptic crash now maps to a clear,
-			// actionable message. Full Windows-remote support is deferred (needs a
-			// live Windows SSH host to verify the generated command).
+			// actionable message naming the host-side fix (OpenSSH DefaultShell).
 			it('should map cmd.exe "is not recognized as an internal or external command" to the actionable message', () => {
 				const result = matchSshErrorPattern(
 					"'/bin/bash' is not recognized as an internal or external command, operable program or batch file."
@@ -968,9 +967,8 @@ describe('error-patterns', () => {
 				expect(result).not.toBeNull();
 				expect(result?.type).toBe('agent_crashed');
 				expect(result?.recoverable).toBe(false);
-				expect(result?.message).toContain('Windows remote');
-				expect(result?.message).toContain('not yet supported');
-				expect(result?.message).toContain('#995');
+				expect(result?.message).toContain('Windows shell');
+				expect(result?.message).toContain('DefaultShell');
 			});
 
 			it('should map PowerShell "is not recognized as the name of a cmdlet" to the actionable message', () => {
@@ -979,16 +977,16 @@ describe('error-patterns', () => {
 				);
 				expect(result).not.toBeNull();
 				expect(result?.type).toBe('agent_crashed');
-				expect(result?.message).toContain('Windows remote');
-				expect(result?.message).toContain('#995');
+				expect(result?.message).toContain('Windows shell');
+				expect(result?.message).toContain('DefaultShell');
 			});
 
 			it('should map Windows "The system cannot find the path specified" to the actionable message', () => {
 				const result = matchSshErrorPattern('The system cannot find the path specified.');
 				expect(result).not.toBeNull();
 				expect(result?.type).toBe('agent_crashed');
-				expect(result?.message).toContain('Windows remote');
-				expect(result?.message).toContain('#995');
+				expect(result?.message).toContain('Windows shell');
+				expect(result?.message).toContain('DefaultShell');
 			});
 
 			it('should NOT apply the Windows message to a POSIX remote failure (POSIX remotes unaffected)', () => {
@@ -998,7 +996,7 @@ describe('error-patterns', () => {
 				expect(result).not.toBeNull();
 				expect(result?.type).toBe('agent_crashed');
 				expect(result?.message).toContain('Claude command not found');
-				expect(result?.message).not.toContain('Windows remote');
+				expect(result?.message).not.toContain('Windows shell');
 			});
 
 			it('should return null for normal POSIX output mentioning bash (no false positive)', () => {

@@ -99,6 +99,10 @@ export default defineConfig(({ mode }) => ({
 	define: {
 		__APP_VERSION__: JSON.stringify(appVersion),
 		__COMMIT_HASH__: JSON.stringify(getCommitHash()),
+		// The renderer's main.tsx reads this before initializing Sentry. The browser
+		// build shims Sentry out entirely, so it never reports crashes; defining it
+		// false keeps the reference from throwing at runtime.
+		__CRASH_REPORTING_BUILD__: 'false',
 		'process.env.NODE_ENV': JSON.stringify(mode === 'production' ? 'production' : 'development'),
 	},
 

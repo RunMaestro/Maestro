@@ -17,12 +17,14 @@
  *
  * Right-click context menus (chat) are opt-in via the onLinkContextMenu /
  * onFileContextMenu callbacks; when omitted, no context-menu handler is attached.
+ * Both `maestro-file://` and `file://` targets go to onFileContextMenu - being
+ * outside the project root changes the href scheme, not the fact that it is a file.
  */
 
 import React from 'react';
 import type { Theme } from '../../../types';
 import { openUrl } from '../../../utils/openUrl';
-import { openFileUrl } from '../../../utils/openFileUrl';
+import { fileUrlToPath, openFileUrl } from '../../../utils/openFileUrl';
 import { openMaestroLink } from '../../../utils/openMaestroLink';
 import { RenderedMentionChip } from './RenderedMentionChip';
 import { parseConcertoHref, flashConcertoTarget } from '../../../utils/concertoLinks';
@@ -225,16 +227,22 @@ export function createMarkdownLink(config: MarkdownLinkConfig) {
 
 		const handleContextMenu = hasContextMenu
 			? (e: React.MouseEvent) => {
-					if (isMaestroFile && filePath && onFileContextMenu) {
+					// A path OUTSIDE the project root arrives as `file://` rather than
+					// `maestro-file://` (see remarkFileLinks / markdownItAdapter), but it
+					// is still a file: it wants Copy Path and Reveal, not the browser
+					// actions the link menu offers.
+					const externalFilePath = href ? fileUrlToPath(href) : null;
+					const targetPath = isMaestroFile ? filePath : externalFilePath;
+					if (targetPath && onFileContextMenu) {
 						e.preventDefault();
 						e.stopPropagation();
 						// Resolve to absolute path for file operations.
-						const absPath = filePath.startsWith('/')
-							? filePath
+						const absPath = targetPath.startsWith('/')
+							? targetPath
 							: projectRoot
-								? `${projectRoot}/${filePath}`
-								: filePath;
-						const fileName = filePath.split('/').pop() || filePath;
+								? `${projectRoot}/${targetPath}`
+								: targetPath;
+						const fileName = targetPath.split('/').pop() || targetPath;
 						onFileContextMenu(e, absPath, fileName);
 					} else if (href && onLinkContextMenu) {
 						e.preventDefault();

@@ -39,6 +39,8 @@ declare module '*?worker&url' {
 // Vite-injected build-time constants
 declare const __APP_VERSION__: string;
 declare const __COMMIT_HASH__: string;
+/** True only in a build whose pipeline injected a Sentry DSN. */
+declare const __CRASH_REPORTING_BUILD__: boolean;
 
 // Splash screen global functions (defined in splash.js)
 interface Window {

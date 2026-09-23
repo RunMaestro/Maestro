@@ -4,9 +4,10 @@
  *
  * The two are deliberately asymmetric and the asymmetry is the point:
  *
- *  - `refresh-auto-run` really does disturb the user. It switches to the target
- *    agent and flashes "Found N new documents", so `--background` has something
- *    to suppress and the bit goes on the wire.
+ *  - `refresh-auto-run` can disturb the user: with `--focus` it switches to the
+ *    target agent and flashes "Found N new documents". It is background by
+ *    default, so an unflagged refresh from a Cue script or agent turn stays put,
+ *    and the resolved bit always goes on the wire.
  *  - `refresh-files` disturbs nobody. It accepts the flag anyway, because the
  *    guidance is "pass --background unless the user asked to be taken there" and
  *    commander rejects an unknown option - one verb that refused the flag would
@@ -54,10 +55,9 @@ describe('refresh verbs', () => {
 	}
 
 	describe('refresh-auto-run', () => {
-		it('switches to the target agent when neither flag is passed', async () => {
-			// Additive rule: an unflagged refresh behaves exactly as it did before
-			// the flag existed. A `!== false` slip anywhere in this path would flip
-			// this to true and silently stop every existing caller from focusing.
+		it('stays in the background when neither flag is passed', async () => {
+			// An unflagged refresh must not take the user to the target agent: it only
+			// ever switched when that agent was off screen, which is an interruption.
 			const send = captureAutoRunSend();
 
 			await refreshAutoRun({});
@@ -65,9 +65,17 @@ describe('refresh verbs', () => {
 			expect(send.mock.calls[0][0]).toMatchObject({
 				type: 'refresh_auto_run_docs',
 				sessionId: 'agent-1',
-				background: false,
+				background: true,
 			});
 			expect(processExitSpy).not.toHaveBeenCalled();
+		});
+
+		it('switches to the target agent with --focus', async () => {
+			const send = captureAutoRunSend();
+
+			await refreshAutoRun({ focus: true });
+
+			expect(send.mock.calls[0][0]).toMatchObject({ background: false });
 		});
 
 		it('asks for background placement with --background', async () => {

@@ -98,6 +98,11 @@ export function FileContextMenu({
 		onDismiss();
 	}, [menu.filePath, onDismiss]);
 
+	const handleCopyFileName = useCallback(() => {
+		safeClipboardWrite(menu.fileName);
+		onDismiss();
+	}, [menu.fileName, onDismiss]);
+
 	const handleRevealInFinder = useCallback(() => {
 		window.maestro?.shell?.showItemInFolder(menu.filePath);
 		onDismiss();
@@ -174,6 +179,16 @@ export function FileContextMenu({
 				>
 					<Copy className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 					<span>Copy Path</span>
+				</button>
+
+				{/* Copy File Name */}
+				<button
+					onClick={handleCopyFileName}
+					className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+					style={{ color: theme.colors.textMain }}
+				>
+					<Copy className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+					<span>Copy File Name</span>
 				</button>
 
 				{/* Reveal in Finder / Explorer */}

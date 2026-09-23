@@ -176,6 +176,10 @@ Before saving, you can test your SSH configuration:
 
 A successful test shows the remote hostname. Failed tests display specific error messages to help diagnose issues.
 
+When the cause is something you can fix with one command, the test says so and
+offers the command to copy. The most common case is a Windows host answering
+SSH with PowerShell or cmd.exe - see [Windows Remote Hosts](#windows-remote-hosts).
+
 ### Setting a Global Default
 
 Click the checkmark icon next to any remote to set it as the **global default**. When set:
@@ -287,6 +291,91 @@ This is especially useful for:
 - Coordinating changes that span multiple servers
 - Getting perspectives from agents with access to different resources
 
+## Windows Remote Hosts
+
+Maestro drives a remote agent by piping a POSIX shell script into `/bin/bash`
+on the remote: a PATH bootstrap, `export VAR=...`, then `cd <dir> && exec
+<agent>`. That means **the remote's default SSH shell must be a POSIX shell**.
+It does not have to be a Linux or macOS host; a Windows machine works fine once
+it answers SSH with bash instead of PowerShell or cmd.exe.
+
+Out of the box it does not. Windows OpenSSH ships with `cmd.exe` as its
+`DefaultShell`, and most setup guides switch it to Windows PowerShell. Neither
+can run the script Maestro sends, so every turn fails:
+
+| Remote default shell   | What you see                                                                                                                         |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Windows PowerShell 5.1 | `The token '&&' is not a valid statement separator in this version.` PowerShell 5.1 has no `&&` operator; it arrived in PowerShell 7 |
+| cmd.exe                | `'/bin/bash' is not recognized as an internal or external command`                                                                   |
+
+Maestro recognizes both. **Test Connection** reports `Remote SSH shell is
+Windows PowerShell` (or `cmd.exe`) with the fix command attached, rather than a
+raw parser dump, and a turn that hits this fails with the same guidance instead
+of a generic crash.
+
+<Note>
+Being able to `ssh` into the host by hand does not mean Maestro can use it. An
+interactive login and a piped non-interactive command are two different paths;
+`DefaultShell` governs both, but only the second one needs POSIX.
+</Note>
+
+### Pointing OpenSSH at a POSIX shell
+
+Install [Git for Windows](https://gitforwindows.org/) (which brings Git Bash),
+then run this in an **elevated PowerShell on the remote**:
+
+```powershell
+New-ItemProperty -Path "HKLM:\SOFTWARE\OpenSSH" -Name DefaultShell -Value "C:\Program Files\Git\bin\bash.exe" -PropertyType String -Force
+```
+
+To use a WSL distribution instead, point at `bash.exe` in System32:
+
+```powershell
+New-ItemProperty -Path "HKLM:\SOFTWARE\OpenSSH" -Name DefaultShell -Value "C:\Windows\System32\bash.exe" -PropertyType String -Force
+```
+
+Restart the SSH service so new connections pick up the change:
+
+```powershell
+Restart-Service sshd
+```
+
+Verify from your Mac or Linux box before returning to Maestro:
+
+```bash
+ssh windows-host 'echo "SSH_OK" && uname -s'
+```
+
+Git Bash answers `SSH_OK` then `MINGW64_NT-10.0`; WSL answers `SSH_OK` then
+`Linux`. Either is good. A PowerShell parser error means the registry change
+did not take effect - check that you ran it elevated and restarted `sshd`.
+
+### Git Bash or WSL?
+
+|                                                           | Git Bash                                 | WSL                                                                                      |
+| --------------------------------------------------------- | ---------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Filesystem the agent sees                                 | The real Windows drives (`/c/Users/...`) | The distro's Linux filesystem, with Windows drives under `/mnt/c` (slow for large repos) |
+| Windows tooling (MSBuild, Visual Studio, `.exe` binaries) | Available                                | Needs interop, often awkward                                                             |
+| Node and agent CLIs                                       | Install the Windows builds               | Install the Linux builds inside the distro                                               |
+| Working directory you configure in Maestro                | `/c/Users/you/project`                   | `/home/you/project`                                                                      |
+
+Pick Git Bash when the project is a Windows project. Pick WSL when the project
+is a Linux project that happens to live on a Windows machine. Do not mix: the
+agent's working directory must be reachable from whichever shell `DefaultShell`
+names.
+
+### After the shell is fixed
+
+The rest of the setup is the same as any other remote:
+
+- Install the agent CLI so it is on the PATH of the shell you chose. Maestro
+  probes the usual Node version-manager locations (nvm, fnm, volta, mise, asdf,
+  n) but cannot find a binary that is only on the PowerShell PATH.
+- Use forward-slash paths for the working directory (`/c/Users/you/project`,
+  not `C:\Users\you\project`).
+- Run **Test Connection** with the agent command filled in - it reports whether
+  the agent binary was found, not just whether SSH works.
+
 ## Collaborating over SSH
 
 When multiple people (or the same person from multiple machines) work on a shared project via SSH, Maestro can synchronize history entries across all participants. This gives everyone visibility into what work has been done - regardless of which machine initiated it.
@@ -365,6 +454,15 @@ Shared history files respect the **Maximum Log Buffer** setting (Settings → Di
 | "Could not resolve hostname" | Verify the hostname/IP is correct               |
 | "No route to host"           | Check network path to the remote host           |
 
+### Remote Shell Errors
+
+| Error                                                      | Solution                                                                                                                                      |
+| ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| "Remote SSH shell is Windows PowerShell" / "...is cmd.exe" | The host answers SSH with a Windows shell, which cannot run the POSIX script Maestro sends. See [Windows Remote Hosts](#windows-remote-hosts) |
+| "The token '&&' is not a valid statement separator"        | Same cause, seen raw: PowerShell 5.1 has no `&&`. Repoint `DefaultShell` at Git Bash or WSL bash                                              |
+| "'/bin/bash' is not recognized"                            | Same cause, from cmd.exe or PowerShell during a turn rather than a test                                                                       |
+| "Shell profile syntax error on remote host"                | A `.bashrc` or `.zshrc` on the remote has a syntax error. Fix it there; Maestro sources login profiles to find the agent binary               |
+
 ### Agent Errors
 
 | Error                                         | Solution                                                                                                                                                                                             |
@@ -401,3 +499,4 @@ Shared history files respect the **Maximum Log Buffer** setting (Settings → Di
 - Network latency affects perceived responsiveness
 - The remote host must have the agent CLI installed and configured
 - Some shell initialization files (`.bashrc`, `.zshrc`) may not be fully sourced - agent commands use `$SHELL -lc` to ensure PATH availability from login profiles
+- The remote's default SSH shell must be POSIX. A Windows host works, but only after its OpenSSH `DefaultShell` points at Git Bash or WSL bash - see [Windows Remote Hosts](#windows-remote-hosts)

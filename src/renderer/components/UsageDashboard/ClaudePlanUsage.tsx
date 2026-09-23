@@ -30,7 +30,6 @@ import {
 	QuotaAccountTabs,
 	QuotaAgentCountBadge,
 	QuotaBarRow,
-	QuotaLastRefreshed,
 	QuotaPendingRow,
 	QuotaRefreshControls,
 	QuotaSharedAccountBadge,
@@ -492,12 +491,6 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 					theme={theme}
 				/>
 			) : null}
-
-			<QuotaLastRefreshed
-				sampledAtMs={lastSampledAtMs}
-				theme={theme}
-				testIdPrefix={TEST_ID_PREFIX}
-			/>
 		</div>
 	);
 });

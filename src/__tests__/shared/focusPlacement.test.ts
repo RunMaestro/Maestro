@@ -32,7 +32,6 @@ const FOCUSING_TODAY: BackgroundCapableVerb[] = [
 	'create-agent',
 	'create-worktree',
 	'switch-mode',
-	'refresh-auto-run',
 	// The two snooze verbs that announce. `--background` suppresses the notice;
 	// absent, they flash/toast exactly as the click paths do.
 	'snooze',
@@ -55,6 +54,15 @@ describe('no verb changes its default', () => {
 		// same "keep today's behaviour" call as every row above.
 		expect(CLI_BACKGROUND_DEFAULTS['dispatch-new-tab']).toBe(true);
 		expect(resolveBackgroundFlag({}, 'dispatch-new-tab')).toBe(true);
+	});
+
+	it('flips refresh-auto-run to background, the one deliberate default change', () => {
+		// Its focusing default only switched agents when the target was off screen,
+		// so it fired exactly when the user was looking elsewhere: every Cue script
+		// or agent turn ending in an unflagged refresh yanked the user away.
+		expect(CLI_BACKGROUND_DEFAULTS['refresh-auto-run']).toBe(true);
+		expect(resolveBackgroundFlag({}, 'refresh-auto-run')).toBe(true);
+		expect(resolveBackgroundFlag({ focus: true }, 'refresh-auto-run')).toBe(false);
 	});
 
 	it('keys defaults by verb, since two verbs share one message and disagree', () => {

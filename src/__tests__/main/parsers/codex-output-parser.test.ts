@@ -2008,4 +2008,25 @@ describe('Codex quota outages reach the retry scheduler intact', () => {
 
 		expect(classifyRetryableError(error!)).toBe('availability');
 	});
+
+	it('types an out-of-credits wall as a limit, not unknown', () => {
+		// The exact event a walled team workspace emits once its plan window and
+		// its credit fallback are both spent. Typed `unknown`, it was invisible to
+		// every path that asks "is this a limit?" by type.
+		const p = new CodexOutputParser();
+		const error = p.detectErrorFromParsed({
+			type: 'event_msg',
+			payload: {
+				type: 'error',
+				message: 'Your workspace is out of credits. Add credits to continue.',
+			},
+		});
+
+		expect(error!.type).toBe('rate_limited');
+		expect(error!.recoverable).toBe(true);
+		expect(error!.raw?.errorLine).toBe(
+			'Your workspace is out of credits. Add credits to continue.'
+		);
+		expect(classifyRetryableError(error!)).toBe('token-exhaustion');
+	});
 });

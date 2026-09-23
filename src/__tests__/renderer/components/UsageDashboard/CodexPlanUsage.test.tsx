@@ -434,40 +434,23 @@ describe('CodexPlanUsage - agent count badge', () => {
 	});
 });
 
-describe('CodexPlanUsage - last refreshed footer', () => {
-	it('reports the age of the newest sample', () => {
-		vi.useFakeTimers();
-		vi.setSystemTime(new Date('2026-05-15T12:00:00.000Z'));
-		try {
-			seedSnapshots({
-				'/Users/me/.codex': {
-					sampledAt: '2026-05-15T11:48:00.000Z',
-					codexHomeKey: '/Users/me/.codex',
-					authState: 'authenticated',
-					session: { percent: 50, resetsAt: '2026-05-15T05:00:00.000Z' },
-					weekly: { percent: 30, resetsAt: '2026-05-22T00:00:00.000Z' },
-				},
-				'/Users/me/.codex-work': {
-					sampledAt: '2026-05-15T02:00:00.000Z',
-					codexHomeKey: '/Users/me/.codex-work',
-					authState: 'authenticated',
-					session: { percent: 10, resetsAt: '2026-05-15T05:00:00.000Z' },
-					weekly: { percent: 5, resetsAt: '2026-05-22T00:00:00.000Z' },
-				},
-			});
+describe('CodexPlanUsage - sample age', () => {
+	// The dashboard footer already prints "sampled Nm ago" for this tab, so the
+	// panel must NOT repeat it: two copies of the same age drift apart the moment
+	// one of them re-renders and the other does not.
+	it('leaves the sample age to the dashboard footer', () => {
+		seedSnapshots({
+			'/Users/me/.codex': {
+				sampledAt: '2026-05-15T11:48:00.000Z',
+				codexHomeKey: '/Users/me/.codex',
+				authState: 'authenticated',
+				session: { percent: 50, resetsAt: '2026-05-15T05:00:00.000Z' },
+				weekly: { percent: 30, resetsAt: '2026-05-22T00:00:00.000Z' },
+			},
+		});
 
-			render(<CodexPlanUsage theme={theme} />);
-			expect(screen.getByTestId('codex-plan-last-refreshed')).toHaveTextContent(
-				'Last refreshed 12 minutes ago'
-			);
-		} finally {
-			vi.useRealTimers();
-		}
-	});
-
-	it('renders nothing when no account has been sampled yet', () => {
-		seedSessions(['/Users/me/.codex-pending']);
 		render(<CodexPlanUsage theme={theme} autoRefresh={false} />);
 		expect(screen.queryByTestId('codex-plan-last-refreshed')).toBeNull();
+		expect(screen.queryByText(/Last refreshed/)).toBeNull();
 	});
 });

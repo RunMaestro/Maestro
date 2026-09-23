@@ -202,6 +202,32 @@ describe('createMarkdownLink - chat behavior (directExternal, accentText, contex
 		expect(onFileContextMenu.mock.calls[0][2]).toBe('readme.md');
 	});
 
+	it('opens the FILE context menu on right-click of a file:// link (outside the project root)', () => {
+		const onFileContextMenu = vi.fn();
+		const onLinkContextMenu = vi.fn();
+		const el = renderLink(
+			chat({ projectRoot: '/Users/me/proj', onFileContextMenu, onLinkContextMenu }),
+			{
+				href: 'file:///Users/me/Documents/Ritto-DNA-Report.pdf',
+				children: 'x',
+			}
+		);
+		el.props.onContextMenu(makeEvent());
+		expect(onLinkContextMenu).not.toHaveBeenCalled();
+		expect(onFileContextMenu.mock.calls[0][1]).toBe('/Users/me/Documents/Ritto-DNA-Report.pdf');
+		expect(onFileContextMenu.mock.calls[0][2]).toBe('Ritto-DNA-Report.pdf');
+	});
+
+	it('still opens the LINK context menu for a file:// link when no file handler is wired', () => {
+		const onLinkContextMenu = vi.fn();
+		const el = renderLink(chat({ onLinkContextMenu }), {
+			href: 'file:///tmp/song.mp3',
+			children: 'x',
+		});
+		el.props.onContextMenu(makeEvent());
+		expect(onLinkContextMenu).toHaveBeenCalledWith(expect.anything(), 'file:///tmp/song.mp3');
+	});
+
 	it('opens a link context menu on right-click of an external link', () => {
 		const onLinkContextMenu = vi.fn();
 		const el = renderLink(chat({ onLinkContextMenu }), { href: 'https://x.com', children: 'x' });

@@ -775,8 +775,8 @@ program
 	.command('refresh-auto-run')
 	.description('Refresh Auto Run documents in the Maestro desktop app')
 	.option('-a, --agent <id>', 'Target agent by ID (defaults to active)')
-	.option('--background', 'Refresh without switching to the target agent')
-	.option('--focus', 'Switch to the target agent while refreshing (default)')
+	.option('--background', 'Refresh without switching to the target agent (default)')
+	.option('--focus', 'Switch to the target agent while refreshing')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(refreshAutoRun);
 

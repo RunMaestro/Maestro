@@ -10,9 +10,10 @@
  * on initialization logic only.
  */
 
+import path from 'path';
 import { app } from 'electron';
 import Store from 'electron-store';
-import { parseJsonWithBom } from '../../shared/jsonUtils';
+import { createStoreDeserializer } from './corrupt-store-recovery';
 
 import type {
 	BootstrapSettings,
@@ -43,8 +44,20 @@ import { readExistingAgentIds } from '../window-state-persistence';
 import { trackStoreWrites } from './write-tracker';
 import { deferStoreWrites, type DeferredWriteStore } from './deferred-writes';
 
-function deserializeStoreJson<T = Record<string, unknown>>(value: string): T {
-	return parseJsonWithBom<T>(value);
+/**
+ * `deserialize` hook for the store named `name` under `cwd`.
+ *
+ * The path has to be rebuilt here rather than read off the Store, because conf
+ * calls `deserialize` from inside its own constructor - there is no instance to
+ * ask yet. It mirrors conf's own `path.resolve(cwd, `${name}.json`)`.
+ *
+ * See `stores/corrupt-store-recovery.ts` for why this is not a bare JSON.parse.
+ */
+function deserializeStoreJson<T = Record<string, unknown>>(
+	name: string,
+	cwd: string
+): (value: string) => T {
+	return createStoreDeserializer<T>(path.resolve(cwd, `${name}.json`));
 }
 
 // ============================================================================
@@ -87,20 +100,21 @@ export function initializeStores(options: StoreInitOptions): {
 } {
 	const { productionDataPath } = options;
 	_productionDataPath = productionDataPath;
+	const userDataPath = app.getPath('userData');
 
 	// 1. Initialize bootstrap store first (determines sync path)
 	_bootstrapStore = new Store<BootstrapSettings>({
 		name: 'maestro-bootstrap',
-		cwd: app.getPath('userData'),
+		cwd: userDataPath,
 		defaults: {},
-		deserialize: deserializeStoreJson,
+		deserialize: deserializeStoreJson('maestro-bootstrap', userDataPath),
 	});
 
 	// 2. Determine sync path
-	_syncPath = getCustomSyncPath(_bootstrapStore) || app.getPath('userData');
+	_syncPath = getCustomSyncPath(_bootstrapStore) || userDataPath;
 
 	// Log paths for debugging
-	console.log(`[STARTUP] userData path: ${app.getPath('userData')}`);
+	console.log(`[STARTUP] userData path: ${userDataPath}`);
 	console.log(`[STARTUP] syncPath (sessions/settings): ${_syncPath}`);
 	console.log(`[STARTUP] productionDataPath (agent configs): ${_productionDataPath}`);
 
@@ -112,7 +126,7 @@ export function initializeStores(options: StoreInitOptions): {
 			name: 'maestro-settings',
 			cwd: _syncPath,
 			defaults: SETTINGS_DEFAULTS,
-			deserialize: deserializeStoreJson,
+			deserialize: deserializeStoreJson('maestro-settings', _syncPath),
 		}),
 		'maestro-settings.json'
 	);
@@ -128,7 +142,7 @@ export function initializeStores(options: StoreInitOptions): {
 			name: 'maestro-sessions',
 			cwd: _syncPath,
 			defaults: SESSIONS_DEFAULTS,
-			deserialize: deserializeStoreJson,
+			deserialize: deserializeStoreJson('maestro-sessions', _syncPath),
 		}),
 		'sessions'
 	);
@@ -139,7 +153,7 @@ export function initializeStores(options: StoreInitOptions): {
 		name: 'maestro-groups',
 		cwd: _syncPath,
 		defaults: GROUPS_DEFAULTS,
-		deserialize: deserializeStoreJson,
+		deserialize: deserializeStoreJson('maestro-groups', _syncPath),
 	});
 
 	// Agent configs are ALWAYS stored in the production path, even in dev mode
@@ -149,7 +163,7 @@ export function initializeStores(options: StoreInitOptions): {
 			name: 'maestro-agent-configs',
 			cwd: _productionDataPath,
 			defaults: AGENT_CONFIGS_DEFAULTS,
-			deserialize: deserializeStoreJson,
+			deserialize: deserializeStoreJson('maestro-agent-configs', productionDataPath),
 		}),
 		'maestro-agent-configs.json'
 	);
@@ -161,14 +175,15 @@ export function initializeStores(options: StoreInitOptions): {
 		name: 'maestro-agent-capabilities',
 		cwd: _productionDataPath,
 		defaults: AGENT_CAPABILITIES_DEFAULTS,
-		deserialize: deserializeStoreJson,
+		deserialize: deserializeStoreJson('maestro-agent-capabilities', productionDataPath),
 	});
 
 	// Window state is intentionally NOT synced - it's per-device
 	_windowStateStore = new Store<WindowState>({
 		name: 'maestro-window-state',
 		defaults: WINDOW_STATE_DEFAULTS,
-		deserialize: deserializeStoreJson,
+		// No `cwd` - electron-store defaults it to userData.
+		deserialize: deserializeStoreJson('maestro-window-state', userDataPath),
 	});
 
 	// Fold any legacy single-window bounds into the multi-window schema. Runs
@@ -183,7 +198,7 @@ export function initializeStores(options: StoreInitOptions): {
 		name: 'maestro-claude-session-origins',
 		cwd: _syncPath,
 		defaults: CLAUDE_SESSION_ORIGINS_DEFAULTS,
-		deserialize: deserializeStoreJson,
+		deserialize: deserializeStoreJson('maestro-claude-session-origins', _syncPath),
 	});
 
 	// Generic agent session origins - supports all agents (Codex, OpenCode, etc.)
@@ -191,7 +206,7 @@ export function initializeStores(options: StoreInitOptions): {
 		name: 'maestro-agent-session-origins',
 		cwd: _syncPath,
 		defaults: AGENT_SESSION_ORIGINS_DEFAULTS,
-		deserialize: deserializeStoreJson,
+		deserialize: deserializeStoreJson('maestro-agent-session-origins', _syncPath),
 	});
 
 	return {

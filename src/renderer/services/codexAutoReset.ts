@@ -15,7 +15,9 @@
  *     reach the spend.
  *  2. **Only a real limit.** A crash, an auth failure, or an availability blip
  *     is not a quota wall, and resetting the window would fix none of them
- *     while costing a credit.
+ *     while costing a credit. A limit is recognised by its type OR by its text
+ *     (see `isQuotaWall`), because a wording the pattern bank has not learned
+ *     yet arrives typed `unknown`.
  *  3. **Never on an SSH-backed agent.** The credit would be read and spent
  *     against THIS machine's account while the agent runs as the remote's, so
  *     the spend lands on the wrong account entirely. Same reason the usage
@@ -35,6 +37,7 @@
 
 import type { AgentError, Session } from '../types';
 import { isLimitError } from '../../shared/types';
+import { classifyRetryableError } from '../../shared/retryClassification';
 import { shouldAutoSpendCredit } from '../../shared/codexResetCredits';
 import { effectiveAgentCustomEnvVars, resolveAgentAccountKey } from '../../shared/providerProfiles';
 import { useCodexResetCreditsStore } from '../stores/codexResetCreditsStore';
@@ -67,11 +70,25 @@ function markHandled(key: string): void {
 	}
 }
 
+/**
+ * Whether this error is the account's plan quota running out.
+ *
+ * The type alone is not enough. Codex's "Your workspace is out of credits" had
+ * no pattern in the bank, so it arrived typed `unknown` and this service
+ * declined every outage it was built for, with credits sitting unspent. The
+ * retry scheduler never had that problem because it reads the provider's own
+ * text, so ask it too. Only its `token-exhaustion` verdict counts: an
+ * availability blip clears on its own and a credit would be wasted on it.
+ */
+function isQuotaWall(error: AgentError): boolean {
+	return isLimitError(error) || classifyRetryableError(error) === 'token-exhaustion';
+}
+
 /** Reason the automation declined, for logs. `null` means it may proceed. */
 function declineReason(session: Session, error: AgentError): string | null {
 	if (session.toolType !== 'codex') return 'not-codex';
 	if (session.codexAutoResetOnExhaustion !== true) return 'not-enabled';
-	if (!isLimitError(error)) return 'not-a-limit';
+	if (!isQuotaWall(error)) return 'not-a-limit';
 	// The credit read and the spend both run against the LOCAL auth.json, which
 	// describes this machine's account rather than the remote's.
 	if (session.sessionSshRemoteConfig?.enabled) return 'ssh-backed';

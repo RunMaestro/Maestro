@@ -986,6 +986,15 @@ export interface SshRemoteTestResult {
 		hostname: string;
 		agentVersion?: string;
 	};
+
+	/**
+	 * A recognized, fixable cause when `success` is false.
+	 *
+	 * `error` always carries the same information as prose so callers with no
+	 * UI (the CLI, a log line) stay correct; this is the structured form the
+	 * Settings panel renders as a headline plus a copyable fix command.
+	 */
+	remediation?: import('./sshRemoteShell').SshRemoteRemediation;
 }
 
 /**

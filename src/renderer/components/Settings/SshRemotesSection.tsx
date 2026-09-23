@@ -34,9 +34,11 @@ import { GhostIconButton } from '../ui/GhostIconButton';
 import { Spinner } from '../ui/Spinner';
 import type { Theme } from '../../types';
 import type { SshRemoteConfig } from '../../../shared/types';
+import type { SshRemoteRemediation } from '../../../shared/sshRemoteShell';
 import { formatSshTarget } from '../../../shared/formatters';
 import { useSshRemotes } from '../../hooks';
 import { SshRemoteModal } from './SshRemoteModal';
+import { SshRemediationNotice } from './SshRemediationNotice';
 import { logger } from '../../utils/logger';
 
 export interface SshRemotesSectionProps {
@@ -63,7 +65,7 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 	const [editingConfig, setEditingConfig] = useState<SshRemoteConfig | undefined>(undefined);
 	const [deletingId, setDeletingId] = useState<string | null>(null);
 	const [testResults, setTestResults] = useState<
-		Record<string, { success: boolean; message: string }>
+		Record<string, { success: boolean; message: string; remediation?: SshRemoteRemediation }>
 	>({});
 
 	// Handle add new remote
@@ -110,6 +112,7 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 				message: result.success
 					? `Connected to ${config.name || config.host}`
 					: result.error || 'Connection failed',
+				remediation: result.result?.remediation,
 			},
 		}));
 	};
@@ -243,8 +246,16 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 													{formatSshTarget(config)}
 												</div>
 
-												{/* Test Result */}
-												{testResult && (
+												{/* Test Result. A recognized, fixable cause replaces the one-liner:
+												    its detail already says what went wrong, and it adds the fix. */}
+												{testResult?.remediation && (
+													<SshRemediationNotice
+														remediation={testResult.remediation}
+														theme={theme}
+														className="mt-2"
+													/>
+												)}
+												{testResult && !testResult.remediation && (
 													<div
 														className="mt-2 text-xs flex items-start gap-1"
 														style={{
