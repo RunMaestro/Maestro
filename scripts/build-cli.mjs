@@ -96,7 +96,13 @@ async function build() {
 			// desktop app itself already ships it for its own Cue database -
 			// not yet wired into the packaging config (see
 			// Plans/maestro-lib-cli-migration.md's standalone-engine section).
-			external: ['fsevents', 'electron', 'electron-store', 'better-sqlite3'],
+			// Superseded for 'electron' / 'electron-store' by the alias below: both
+			// are now bundled, and 'electron' resolves to a shim that answers
+			// app.getPath('userData') with Maestro's real data directory. See
+			// src/cli/electron-shim.cjs for why (the standalone Cue engine could
+			// not start on a host without Electron installed).
+			external: ['fsevents', 'better-sqlite3'],
+			alias: { electron: path.join(rootDir, 'src/cli/electron-shim.cjs') },
 			plugins: [rawMdPlugin],
 			define: {
 				__MAESTRO_CLI_VERSION__: JSON.stringify(cliVersion),
