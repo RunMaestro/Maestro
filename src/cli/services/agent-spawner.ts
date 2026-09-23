@@ -457,6 +457,30 @@ function appendBoundedTail(current: string, chunk: string): string {
 	return next.length > STDOUT_TAIL_LIMIT ? next.slice(next.length - STDOUT_TAIL_LIMIT) : next;
 }
 
+/**
+ * Cap on the line reader's unparsed remainder. A provider that emits a very
+ * long unterminated line would otherwise grow the buffer for the life of the
+ * process; past this the stuck remainder is dropped and framing resumes at the
+ * next complete line.
+ *
+ * 1 MB matches `MAX_COPILOT_JSON_BUFFER_LENGTH`, the desktop handler's cap for
+ * the same job. Deliberately NOT `STDOUT_TAIL_LIMIT` (256 KB): that bounds an
+ * error excerpt, and a single legitimate stream-json line carrying a large tool
+ * result can exceed it, which would drop real output rather than a stuck buffer.
+ */
+const MAX_LINE_BUFFER_LENGTH = 1024 * 1024;
+
+/**
+ * Say so when the cap above discards a stuck remainder. The drop is deliberate,
+ * but it is still output the user will not see, and silent truncation is worse
+ * than a visible one: the desktop handler logs the same event.
+ */
+function warnOversizedLineBuffer(droppedLength: number): void {
+	console.error(
+		`[maestro-cli] Dropped ${droppedLength} bytes of unparsed agent output: no complete line arrived within ${MAX_LINE_BUFFER_LENGTH} bytes.`
+	);
+}
+
 /** Stand-in when a provider has no registered parser to classify a bad exit. */
 const NO_EXIT_CLASSIFICATION = { detectErrorFromExit: () => null };
 
@@ -711,7 +735,10 @@ async function spawnClaudeAgent(
 		// `processMessage` below because its stream-json shape is richer than
 		// the AgentOutputParser event vocabulary.
 		const exitClassifier = createOutputParser('claude-code') ?? NO_EXIT_CLASSIFICATION;
-		const lineReader = new BufferedLineReader();
+		const lineReader = new BufferedLineReader({
+			maxBufferLength: MAX_LINE_BUFFER_LENGTH,
+			onOversized: warnOversizedLineBuffer,
+		});
 		let stdoutTail = '';
 
 		let result: string | undefined;
@@ -776,18 +803,23 @@ async function spawnClaudeAgent(
 			}
 		};
 
+		// Decode on the stream, not per chunk: a multibyte character split across
+		// two reads would otherwise decode to replacement characters on both
+		// sides of the boundary. Same as `ChildProcessSpawner` on the desktop.
+		child.stdout?.setEncoding('utf8');
+		child.stderr?.setEncoding('utf8');
+
 		// Handle stdout - parse stream-json format
-		child.stdout?.on('data', (data: Buffer) => {
+		child.stdout?.on('data', (text: string) => {
 			wakaHeartbeat?.();
-			const text = data.toString();
 			stdoutTail = appendBoundedTail(stdoutTail, text);
 			for (const line of lineReader.push(text)) processLine(line);
 		});
 
 		// Collect stderr for error reporting
 		let stderr = '';
-		child.stderr?.on('data', (data: Buffer) => {
-			stderr += data.toString();
+		child.stderr?.on('data', (text: string) => {
+			stderr += text;
 		});
 
 		finalizeAgentStdin(child, sshStdinScript);
@@ -1113,7 +1145,10 @@ async function spawnJsonLineAgent(
 
 		const child = spawn(spawnCommand, spawnArgs, options);
 		const abortLink = linkAbortSignal(child, overrides.signal);
-		const lineReader = new BufferedLineReader();
+		const lineReader = new BufferedLineReader({
+			maxBufferLength: MAX_LINE_BUFFER_LENGTH,
+			onOversized: warnOversizedLineBuffer,
+		});
 		// Codex-style providers report a RUNNING SESSION TOTAL on every usage
 		// event. Summing those (what this path did before) makes a session's
 		// reported tokens grow with the square of its event count, so those
@@ -1187,15 +1222,19 @@ async function spawnJsonLineAgent(
 			}
 		};
 
-		child.stdout?.on('data', (data: Buffer) => {
+		// See the Claude path above: decode on the stream so a multibyte
+		// character split across two reads survives.
+		child.stdout?.setEncoding('utf8');
+		child.stderr?.setEncoding('utf8');
+
+		child.stdout?.on('data', (text: string) => {
 			wakaHeartbeat?.();
-			const text = data.toString();
 			stdoutTail = appendBoundedTail(stdoutTail, text);
 			for (const line of lineReader.push(text)) processEvent(parser.parseJsonLine(line));
 		});
 
-		child.stderr?.on('data', (data: Buffer) => {
-			stderr += data.toString();
+		child.stderr?.on('data', (text: string) => {
+			stderr += text;
 		});
 
 		finalizeAgentStdin(child, sshStdinScript);

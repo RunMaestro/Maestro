@@ -14,12 +14,12 @@ Exactly one module spawns agents: `src/cli/services/agent-spawner.ts`
 callers, and two commands drive the batch processor without calling it
 themselves:
 
-| Entry point                                          | Reaches `spawnAgent` through | Interrupt handling before | After                                  |
-| ---------------------------------------------------- | ---------------------------- | ------------------------- | -------------------------------------- |
-| `maestro-cli send`                                   | `commands/send.ts`           | none                      | Ctrl+C -> `interrupted`, exit 130      |
-| `maestro-cli playbook`                               | `services/batch-processor`   | none                      | run ends `stopped`, exit 130           |
-| `maestro-cli run-doc`                                | `services/batch-processor`   | none                      | run ends `stopped`, exit 130           |
-| `maestro-cli goal-run`                               | `services/goal-runner`       | none                      | run ends `stopped-by-user`, exit 130   |
+| Entry point            | Reaches `spawnAgent` through | Interrupt handling before | After                                |
+| ---------------------- | ---------------------------- | ------------------------- | ------------------------------------ |
+| `maestro-cli send`     | `commands/send.ts`           | none                      | Ctrl+C -> `interrupted`, exit 130    |
+| `maestro-cli playbook` | `services/batch-processor`   | none                      | run ends `stopped`, exit 130         |
+| `maestro-cli run-doc`  | `services/batch-processor`   | none                      | run ends `stopped`, exit 130         |
+| `maestro-cli goal-run` | `services/goal-runner`       | none                      | run ends `stopped-by-user`, exit 130 |
 
 There is no `runner.ts`. The work described under that name is
 `goal-runner.ts` (the goal loop) plus the `run-playbook.ts` / `run-doc.ts`
@@ -70,7 +70,7 @@ answer then exits non-zero" pins that.
 **Decision.** The leniency is per path, and lives in the CLI adapter only:
 
 - **Generic JSON-line path** (`answerOutranksBareExit: true`): a captured
-  answer outranks the *generic fallback* and nothing else.
+  answer outranks the _generic fallback_ and nothing else.
 - **Claude path** (`answerOutranksBareExit: false`): unchanged, a non-zero exit
   fails even with text streamed. That was the old rule
   (`code === 0 && finalResult`), it matches desktop, and the leniency was never
@@ -168,12 +168,12 @@ The rule applied: migrate a caller when it owns its own turn-termination or
 usage logic; leave it when it already inherits the shared logic by riding
 `ProcessManager`, or when it cannot import the library at all.
 
-| Caller                                                    | Fate                | Why                                                                                                                                                                                                                                                                                  |
-| --------------------------------------------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Compaction** (`src/main/utils/context-groomer.ts`)      | Not migrated        | Spawns through `processManager.spawn` and listens to `data`, `exit` and `agent-error`, so its classification already comes from the migrated `StdoutHandler` / `ExitHandler`. It has no success rule of its own to unify beyond "resolve on exit", which is correct for a throwaway summarization turn. |
+| Caller                                                                                                                       | Fate                     | Why                                                                                                                                                                                                                                                                                                              |
+| ---------------------------------------------------------------------------------------------------------------------------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Compaction** (`src/main/utils/context-groomer.ts`)                                                                         | Not migrated             | Spawns through `processManager.spawn` and listens to `data`, `exit` and `agent-error`, so its classification already comes from the migrated `StdoutHandler` / `ExitHandler`. It has no success rule of its own to unify beyond "resolve on exit", which is correct for a throwaway summarization turn.          |
 | **Tab callers** (`useAgentExecution`, Wizard `conversationManager`, `tabAutoNaming`, thought-stream capture, batch handlers) | Not migrated (cannot be) | The renderer spawns only through `services/process.ts` -> `window.maestro.process.spawn` (IPC into `ProcessManager`) and never imports `child_process` or the library's launch modules. They inherit the shared layer through the main process, and importing a spawner into the renderer would be a regression. |
-| **Server path** (`OpencodeServerSpawner`)                 | Not migrated        | It feeds the same `StdoutHandler` / `ExitHandler` pipeline, so it already speaks the contract. The remaining opportunity (a seam above the line parser so SSE events skip a serialize/re-parse round trip) is an optimization, not a correctness gap, and is recorded in the turn contract section 4. |
-| **PTY / maestro-p interactive**                           | Out of scope        | Frozen by the turn contract section 5.                                                                                                                                                                                                                                              |
+| **Server path** (`OpencodeServerSpawner`)                                                                                    | Not migrated             | It feeds the same `StdoutHandler` / `ExitHandler` pipeline, so it already speaks the contract. The remaining opportunity (a seam above the line parser so SSE events skip a serialize/re-parse round trip) is an optimization, not a correctness gap, and is recorded in the turn contract section 4.            |
+| **PTY / maestro-p interactive**                                                                                              | Out of scope             | Frozen by the turn contract section 5.                                                                                                                                                                                                                                                                           |
 
 ## Cue
 
@@ -221,18 +221,27 @@ was not squeezed in at the end of this one.
   declared expectation fails the test.
 - **Real provider runs (Windows), driving the real `spawnAgent`:**
 
-  | Provider, flow                         | Result                                                                                       |
-  | -------------------------------------- | -------------------------------------------------------------------------------------------- |
-  | claude-code, fresh turn                | `completed`, response `pong`, session id and token usage captured                            |
-  | claude-code, resume                    | `completed`, same session id, recalled the earlier code word                                 |
-  | claude-code, interrupt at 4s           | `interrupted` at 4.0s, session id kept, no orphaned process afterwards                       |
-  | claude-code, resume a nonexistent id   | `crashed`, with Claude's real error text                                                     |
-  | claude-code, unresolved SSH remote     | `crashed` before any spawn, with the actionable message                                      |
-  | claude-code, pre-aborted signal        | `interrupted` in 0 ms, nothing spawned                                                       |
-  | copilot-cli, fresh turn                | not runnable on this machine, see below                                                      |
+  | Provider, flow                       | Result                                                                 |
+  | ------------------------------------ | ---------------------------------------------------------------------- |
+  | claude-code, fresh turn              | `completed`, response `pong`, session id and token usage captured      |
+  | claude-code, resume                  | `completed`, same session id, recalled the earlier code word           |
+  | claude-code, interrupt at 4s         | `interrupted` at 4.0s, session id kept, no orphaned process afterwards |
+  | claude-code, resume a nonexistent id | `crashed`, with Claude's real error text                               |
+  | claude-code, unresolved SSH remote   | `crashed` before any spawn, with the actionable message                |
+  | claude-code, pre-aborted signal      | `interrupted` in 0 ms, nothing spawned                                 |
+  | copilot-cli, fresh turn              | not runnable on this machine, see below                                |
 
 ## Findings, deliberately not fixed here
 
+- **A split multibyte character has no home in the turn recordings.** Both spawn
+  paths now `setEncoding('utf8')` so the stream decodes across chunk boundaries,
+  and the spawner test asserts that. The split itself is demonstrated there with
+  a `StringDecoder` rather than reproduced, because an `EventEmitter` fake cannot
+  decode. The workplan puts "output arriving in awkwardly split chunks" with the
+  hostile replay set, but `TurnRecording.chunks` is `string[]` and a split
+  character exists only at the byte level, so carrying it there means widening
+  the fixture contract for both the desktop and CLI replays. Left for that
+  change.
 - **Windows detection can pick an unspawnable shim.** `where copilot` lists
   the extensionless 121-byte POSIX shim before `copilot.bat`, and
   `findCommandInPath` takes the first match, so the CLI tries to launch a file
@@ -264,11 +273,11 @@ was not squeezed in at the end of this one.
 
 ## Open questions after this stage
 
-| # | Question                                | Status                                                                 |
-| - | --------------------------------------- | ---------------------------------------------------------------------- |
-| 1 | Auto Run fresh-session id home          | Decided: stays CLI-side (above).                                       |
-| 2 | Generalize the empty-answer rule        | Unchanged: preserved per path, still needs sign-off.                   |
-| 3 | Cue `'timeout'` mapping                 | Open, blocks the Cue stage.                                            |
-| 4 | Copilot post-exit reconciliation        | Open, desktop only, unaffected by the CLI.                             |
-| 5 | Per-process vs per-session accumulator  | Partly informed (Codex-only on the CLI); needs a real resumed Codex run. |
-| 6 | `signal` typing across transports       | CLI side done; desktop's three-signature fix still open.               |
+| #   | Question                               | Status                                                                   |
+| --- | -------------------------------------- | ------------------------------------------------------------------------ |
+| 1   | Auto Run fresh-session id home         | Decided: stays CLI-side (above).                                         |
+| 2   | Generalize the empty-answer rule       | Unchanged: preserved per path, still needs sign-off.                     |
+| 3   | Cue `'timeout'` mapping                | Open, blocks the Cue stage.                                              |
+| 4   | Copilot post-exit reconciliation       | Open, desktop only, unaffected by the CLI.                               |
+| 5   | Per-process vs per-session accumulator | Partly informed (Codex-only on the CLI); needs a real resumed Codex run. |
+| 6   | `signal` typing across transports      | CLI side done; desktop's three-signature fix still open.                 |
