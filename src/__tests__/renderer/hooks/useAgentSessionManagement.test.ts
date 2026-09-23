@@ -437,6 +437,56 @@ describe('useAgentSessionManagement', () => {
 		expect(updatedSession.inputMode).toBe('ai');
 	});
 
+	it('reads an SSH agent transcript from the remote before the agent has spawned', async () => {
+		// After a restart the runtime `sshRemoteId` is cleared and only comes back
+		// when the agent spawns. Opening a history entry before then must still
+		// read from the configured remote, not the local disk.
+		const activeSession = createMockSession({
+			projectRoot: '/test/project',
+			sshRemoteId: undefined,
+			sessionSshRemoteConfig: { enabled: true, remoteId: 'studio' },
+		});
+
+		window.maestro.agentSessions.read = vi.fn().mockResolvedValue({
+			messages: [
+				{ type: 'user', content: 'Hello', timestamp: '2024-01-01T00:00:00.000Z', uuid: 'msg-1' },
+			],
+			total: 1,
+			hasMore: false,
+		});
+		window.maestro.claude.getSessionOrigins = vi.fn().mockResolvedValue({});
+
+		const { result } = renderHook(() =>
+			useAgentSessionManagement({
+				activeSession,
+				setSessions: vi.fn(),
+				setActiveAgentSessionId: vi.fn(),
+				setAgentSessionsOpen: vi.fn(),
+				rightPanelRef: createRightPanelRef(),
+				defaultSaveToHistory: true,
+			})
+		);
+
+		await act(async () => {
+			await result.current.handleResumeSession(
+				'agent-remote',
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				'/remote/project'
+			);
+		});
+
+		expect(window.maestro.agentSessions.read).toHaveBeenCalledWith(
+			'claude-code',
+			'/remote/project',
+			'agent-remote',
+			{ offset: 0, limit: 500 },
+			'studio'
+		);
+	});
+
 	it('loads messages and metadata when resuming a new agent session', async () => {
 		const activeSession = createMockSession({
 			projectRoot: '/test/project',
