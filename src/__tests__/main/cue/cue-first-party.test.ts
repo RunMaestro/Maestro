@@ -53,6 +53,8 @@ vi.mock('../../../main/cue/cue-task-scanner', () => ({
 vi.mock('../../../main/cue/cue-engine-lock', () => ({
 	acquireCueEngineLock: () => ({ acquired: true }),
 	releaseCueEngineLock: () => {},
+	touchCueEngineLock: () => 'held',
+	CUE_ENGINE_LOCK_HEARTBEAT_MS: 30_000,
 	readCueEngineLock: () => null,
 }));
 
