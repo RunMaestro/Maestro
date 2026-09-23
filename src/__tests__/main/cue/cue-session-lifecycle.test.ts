@@ -63,6 +63,7 @@ vi.mock('../../../main/cue/cue-db', () => ({
 	updateHeartbeat: vi.fn(),
 	getLastHeartbeat: vi.fn(() => null),
 	pruneCueEvents: vi.fn(),
+	failOrphanedRunningEvents: vi.fn(() => 0),
 	recordCueEvent: vi.fn(),
 	updateCueEventStatus: vi.fn(),
 	safeRecordCueEvent: vi.fn(),

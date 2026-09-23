@@ -1070,6 +1070,24 @@ export function pruneCueEvents(olderThanMs: number): void {
 	}
 }
 
+/**
+ * Settle every run a previous engine left `running`. Only called at engine
+ * start, while this process holds the cross-process lock, so no live engine
+ * can own one of these rows: its engine was killed (SIGKILL, crash, power
+ * loss) before the run finished. Left alone, the row reads as in progress
+ * forever. The run's own process may have outlived the engine and finished,
+ * but nothing recorded how, so `failed` with an explanation is the honest
+ * status. Returns how many rows were settled.
+ */
+export function failOrphanedRunningEvents(message: string): number {
+	const result = getDb()
+		.prepare(
+			`UPDATE cue_events SET status = 'failed', completed_at = ?, error_message = COALESCE(error_message, ?) WHERE status = 'running'`
+		)
+		.run(Date.now(), message);
+	return result.changes;
+}
+
 // ============================================================================
 // GitHub Seen Tracking
 // ============================================================================
