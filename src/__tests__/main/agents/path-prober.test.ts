@@ -401,6 +401,32 @@ describe('path-prober', () => {
 			expect(accessMock).toHaveBeenCalled();
 		});
 
+		it('leads with the WinGet install for copilot, over an npm shim', async () => {
+			// Regression guard for the Windows half of the key fix: this table was
+			// keyed `'copilot-cli'` (the agent id) while it is looked up with
+			// `agentDef.binaryName`, which is `copilot`, so none of its candidates
+			// were reachable. Both paths exist here, so this pins the order too,
+			// not just that the entry can be reached at all.
+			const home = os.homedir();
+			const wingetPath = path.join(
+				process.env.ProgramFiles || 'C:\\Program Files',
+				'GitHub Copilot CLI',
+				'copilot.exe'
+			);
+			const npmShim = path.join(
+				process.env.APPDATA || path.join(home, 'AppData', 'Roaming'),
+				'npm',
+				'copilot.cmd'
+			);
+			accessMock.mockImplementation(async (probePath) => {
+				const candidate = String(probePath);
+				if (candidate === wingetPath || candidate === npmShim) return undefined;
+				throw new Error('ENOENT');
+			});
+
+			expect(await probeWindowsPaths('copilot')).toBe(wingetPath);
+		});
+
 		it('should probe the current Codex Desktop executable', async () => {
 			const originalLocalAppData = process.env.LOCALAPPDATA;
 			const readdirMock = vi.spyOn(fs.promises, 'readdir');
@@ -472,22 +498,113 @@ describe('path-prober', () => {
 			// Should have tried multiple paths
 			expect(accessMock).toHaveBeenCalled();
 		});
+	});
 
-		it('should check both existence and executability', async () => {
-			const originalPlatform = process.platform;
+	/**
+	 * The known-path table is what finds an agent installed off PATH, and each
+	 * agent's order encodes where its own installer puts things. The tests above
+	 * reject every candidate and assert `null`, which passes whatever the table
+	 * says; these pin the candidates and their order, on a platform where
+	 * Homebrew has two roots and the installers do not agree on one location.
+	 *
+	 * Named for macOS because these are the macOS install locations, not because
+	 * the code branches: `getUnixKnownPaths` never reads `process.platform`. The
+	 * platform stub below only keeps the suite honest if that ever changes.
+	 */
+	describe('probeUnixPaths on macOS', () => {
+		// The real homedir, deliberately: the candidate table builds its paths
+		// with `os.homedir()`, not the `expandTilde` this file mocks to
+		// /Users/testuser (that one only serves `checkCustomPath`).
+		const home = os.homedir();
+		let accessMock: ReturnType<typeof vi.spyOn>;
+		let originalPlatform: NodeJS.Platform;
+
+		/** Resolve only for these paths, as `access(F_OK | X_OK)` would. */
+		const onlyExecutable = (...existing: string[]) => {
+			accessMock.mockImplementation(async (probePath) => {
+				if (existing.includes(String(probePath))) return undefined;
+				throw new Error('ENOENT');
+			});
+		};
+
+		beforeEach(() => {
+			originalPlatform = process.platform;
 			Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+			accessMock = vi.spyOn(fs.promises, 'access');
+		});
 
-			try {
-				accessMock.mockRejectedValue(new Error('ENOENT'));
+		afterEach(() => {
+			accessMock.mockRestore();
+			Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+		});
 
-				const result = await probeUnixPaths('claude');
-				expect(result).toBeNull();
+		it("prefers Claude's own install location over everything else", async () => {
+			onlyExecutable(
+				path.join(home, '.claude', 'local', 'claude'),
+				path.join(home, '.local', 'bin', 'claude'),
+				'/opt/homebrew/bin/claude',
+				'/usr/local/bin/claude'
+			);
 
-				// Verify access was called with F_OK | X_OK
-				expect(accessMock).toHaveBeenCalled();
-			} finally {
-				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
-			}
+			expect(await probeUnixPaths('claude')).toBe(path.join(home, '.claude', 'local', 'claude'));
+		});
+
+		it('falls to ~/.local/bin when Claude has no local install', async () => {
+			onlyExecutable(
+				path.join(home, '.local', 'bin', 'claude'),
+				'/opt/homebrew/bin/claude',
+				'/usr/local/bin/claude'
+			);
+
+			expect(await probeUnixPaths('claude')).toBe(path.join(home, '.local', 'bin', 'claude'));
+		});
+
+		it('prefers the Apple Silicon Homebrew root over the Intel one', async () => {
+			onlyExecutable('/opt/homebrew/bin/claude', '/usr/local/bin/claude');
+
+			expect(await probeUnixPaths('claude')).toBe('/opt/homebrew/bin/claude');
+		});
+
+		it('still finds an Intel Homebrew install on its own', async () => {
+			onlyExecutable('/usr/local/bin/claude');
+
+			expect(await probeUnixPaths('claude')).toBe('/usr/local/bin/claude');
+		});
+
+		it('passes X_OK to access, so a non-executable candidate cannot match', async () => {
+			// Note the limit of this assertion: F_OK is 0, so `F_OK | X_OK` IS
+			// `X_OK`. It catches the probe dropping X_OK; it cannot catch X_OK
+			// being widened. A non-executable file is also indistinguishable from
+			// a missing one through a mocked `access`, so the flags are the only
+			// observable part.
+			onlyExecutable('/opt/homebrew/bin/claude');
+
+			expect(await probeUnixPaths('claude')).toBe('/opt/homebrew/bin/claude');
+			expect(accessMock).toHaveBeenCalledWith(
+				path.join(home, '.claude', 'local', 'claude'),
+				fs.constants.X_OK
+			);
+		});
+
+		it('leads with Homebrew for copilot, its primary macOS install', async () => {
+			// Regression guard: this table was keyed `'copilot-cli'` (the agent id)
+			// while it is looked up with `agentDef.binaryName`, which is `copilot`.
+			// Every candidate below was therefore unreachable on both platforms and
+			// only which/where ever found Copilot.
+			onlyExecutable('/opt/homebrew/bin/copilot', path.join(home, '.local', 'bin', 'copilot'));
+
+			expect(await probeUnixPaths('copilot')).toBe('/opt/homebrew/bin/copilot');
+		});
+
+		it("leads with OpenCode's own installer location over a Go install", async () => {
+			onlyExecutable(
+				path.join(home, '.opencode', 'bin', 'opencode'),
+				path.join(home, 'go', 'bin', 'opencode')
+			);
+
+			expect(await probeUnixPaths('opencode')).toBe(
+				path.join(home, '.opencode', 'bin', 'opencode')
+			);
 		});
 	});
 
