@@ -16,6 +16,7 @@
 
 import { ipcMain, BrowserWindow } from 'electron';
 import type { ClaudeSessionOrigin, ClaudeSessionOriginsData } from '../../stores/types';
+import { setClaudeSessionOrigin } from '../../storage/claude-session-origins';
 import path from 'path';
 import os from 'os';
 import fs from 'fs/promises';
@@ -1663,12 +1664,14 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 				origin: 'user' | 'auto',
 				sessionName?: string
 			) => {
-				const origins = claudeSessionOriginsStore.get('origins', {});
-				if (!origins[projectPath]) {
-					origins[projectPath] = {};
-				}
-				origins[projectPath][agentSessionId] = sessionName ? { origin, sessionName } : origin;
-				claudeSessionOriginsStore.set('origins', origins);
+				// Called on every turn, so it must merge: replacing the record wipes
+				// the tab name and star other paths wrote.
+				setClaudeSessionOrigin(
+					claudeSessionOriginsStore,
+					projectPath,
+					agentSessionId,
+					sessionName ? { origin, sessionName } : { origin }
+				);
 				logger.debug(
 					`Registered Claude session origin: ${agentSessionId} = ${origin}${sessionName ? ` (name: ${sessionName})` : ''}`,
 					ORIGINS_LOG_CONTEXT,
@@ -1684,19 +1687,9 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 		withIpcErrorLogging(
 			handlerOpts('updateSessionName', ORIGINS_LOG_CONTEXT),
 			async (projectPath: string, agentSessionId: string, sessionName: string) => {
-				const origins = claudeSessionOriginsStore.get('origins', {});
-				if (!origins[projectPath]) {
-					origins[projectPath] = {};
-				}
-				const existing = origins[projectPath][agentSessionId];
-				if (typeof existing === 'string') {
-					origins[projectPath][agentSessionId] = { origin: existing, sessionName };
-				} else if (existing) {
-					origins[projectPath][agentSessionId] = { ...existing, sessionName };
-				} else {
-					origins[projectPath][agentSessionId] = { origin: 'user', sessionName };
-				}
-				claudeSessionOriginsStore.set('origins', origins);
+				setClaudeSessionOrigin(claudeSessionOriginsStore, projectPath, agentSessionId, {
+					sessionName,
+				});
 				logger.debug(
 					`Updated Claude session name: ${agentSessionId} = ${sessionName}`,
 					ORIGINS_LOG_CONTEXT,
@@ -1712,19 +1705,12 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 		withIpcErrorLogging(
 			handlerOpts('updateSessionStarred', ORIGINS_LOG_CONTEXT),
 			async (projectPath: string, agentSessionId: string, starred: boolean) => {
-				const origins = claudeSessionOriginsStore.get('origins', {});
-				if (!origins[projectPath]) {
-					origins[projectPath] = {};
-				}
-				const existing = origins[projectPath][agentSessionId];
-				if (typeof existing === 'string') {
-					origins[projectPath][agentSessionId] = { origin: existing, starred };
-				} else if (existing) {
-					origins[projectPath][agentSessionId] = { ...existing, starred };
-				} else {
-					origins[projectPath][agentSessionId] = { origin: 'user', starred };
-				}
-				claudeSessionOriginsStore.set('origins', origins);
+				const starEntry = setClaudeSessionOrigin(
+					claudeSessionOriginsStore,
+					projectPath,
+					agentSessionId,
+					{ starred }
+				);
 				logger.debug(
 					`Updated Claude session starred: ${agentSessionId} = ${starred}`,
 					ORIGINS_LOG_CONTEXT,
@@ -1734,7 +1720,6 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 				// Mirror the transcript on star / drop it on unstar so the conversation
 				// survives provider-side deletion. Fire-and-forget - see the generic
 				// agentSessions:setSessionStarred handler for the rationale.
-				const starEntry = origins[projectPath][agentSessionId];
 				const starSessionName = typeof starEntry === 'object' ? starEntry.sessionName : undefined;
 				if (starred) {
 					void snapshotStarredTranscript({
@@ -1756,19 +1741,9 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 		withIpcErrorLogging(
 			handlerOpts('updateSessionContextUsage', ORIGINS_LOG_CONTEXT),
 			async (projectPath: string, agentSessionId: string, contextUsage: number) => {
-				const origins = claudeSessionOriginsStore.get('origins', {});
-				if (!origins[projectPath]) {
-					origins[projectPath] = {};
-				}
-				const existing = origins[projectPath][agentSessionId];
-				if (typeof existing === 'string') {
-					origins[projectPath][agentSessionId] = { origin: existing, contextUsage };
-				} else if (existing) {
-					origins[projectPath][agentSessionId] = { ...existing, contextUsage };
-				} else {
-					origins[projectPath][agentSessionId] = { origin: 'user', contextUsage };
-				}
-				claudeSessionOriginsStore.set('origins', origins);
+				setClaudeSessionOrigin(claudeSessionOriginsStore, projectPath, agentSessionId, {
+					contextUsage,
+				});
 				// Don't log - this updates frequently and would spam logs
 				return true;
 			}

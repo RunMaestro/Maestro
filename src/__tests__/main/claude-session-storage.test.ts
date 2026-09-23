@@ -595,6 +595,20 @@ describe('ClaudeSessionStorage', () => {
 			const origins = storage.getSessionOrigins('/test/project');
 			expect(origins['sess-1']).toEqual({ origin: 'auto' });
 		});
+
+		it('should keep name, star and context usage when re-registered', () => {
+			storage.registerSessionOrigin('/test/project', 'sess-1', 'user', 'Named');
+			storage.updateSessionStarred('/test/project', 'sess-1', true);
+			storage.updateSessionContextUsage('/test/project', 'sess-1', 42);
+			storage.registerSessionOrigin('/test/project', 'sess-1', 'user');
+
+			expect(storage.getSessionOrigins('/test/project')['sess-1']).toEqual({
+				origin: 'user',
+				sessionName: 'Named',
+				starred: true,
+				contextUsage: 42,
+			});
+		});
 	});
 
 	describe('updateSessionName', () => {

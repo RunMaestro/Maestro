@@ -89,6 +89,7 @@ Grep-verified 2026-09-04 (`npm run docs:verify` re-checks every path). This is t
 - **SSH remote lookup:** `getSshRemoteById()` in `src/main/stores/getters.ts`
 - **Deferred main-process store persistence:** `deferStoreWrites()`, `flushPendingSessionWrites()` in `src/main/stores/deferred-writes.ts` / `src/main/stores/instances.ts`
 - **Recovering from a store file that is not JSON:** `createStoreDeserializer()`, `corruptStorePath()` in `src/main/stores/corrupt-store-recovery.ts`. conf rethrows a `SyntaxError` from the Store constructor, so one torn file bricks startup forever; the file is quarantined to a stamped `.corrupt-` sidecar and the store falls back to defaults. Never `clearInvalidConfig`.
+- **Writing a Claude session's origin record:** `setClaudeSessionOrigin()`, `mergeClaudeSessionOrigin()` in `src/main/storage/claude-session-origins.ts`
 - **Toast notifications:** `notifyToast({ color, title, message, dismissible? })`, `theme` in `src/renderer/stores/notificationStore.ts`
 - **What a toast click does:** `ToastClickAction`, `parseToastClickAction()` in `src/shared/toastClickAction.ts`; `dispatchToastClickAction()` in `src/renderer/services/toastClickActions.ts`
 - **Center flash (rapid acks):** `notifyCenterFlash({ message, color, detail?, duration? })`, `flashCopiedToClipboard()` in `src/renderer/stores/centerFlashStore.ts`
