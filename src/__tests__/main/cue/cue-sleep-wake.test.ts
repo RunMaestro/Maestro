@@ -37,6 +37,7 @@ vi.mock('../../../main/cue/cue-db', () => ({
 	updateHeartbeat: () => mockUpdateHeartbeat(),
 	getLastHeartbeat: () => mockGetLastHeartbeat(),
 	pruneCueEvents: (...args: unknown[]) => mockPruneCueEvents(...args),
+	failOrphanedRunningEvents: () => 0,
 	recordCueEvent: vi.fn(),
 	updateCueEventStatus: vi.fn(),
 	safeRecordCueEvent: vi.fn(),
