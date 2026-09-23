@@ -13,9 +13,12 @@ const home = '/home/tester';
 
 describe('resolveUserDataDir', () => {
 	it('honors MAESTRO_USER_DATA, which the app publishes at startup', () => {
-		expect(
-			resolveUserDataDir({ env: { MAESTRO_USER_DATA: '/tmp/somewhere' }, homedir: home })
-		).toBe('/tmp/somewhere');
+		// Absolute in the platform's own shape, so `path.resolve` leaves it alone.
+		// A POSIX literal here becomes `C:\tmp\...` on Windows and fails there only.
+		const configured = path.join(os.tmpdir(), 'maestro-somewhere');
+		expect(resolveUserDataDir({ env: { MAESTRO_USER_DATA: configured }, homedir: home })).toBe(
+			configured
+		);
 	});
 
 	it('uses the capitalized name for a packaged install', () => {
@@ -98,6 +101,15 @@ describe('assertUserDataDirExists', () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-userdata-'));
 		scratch.push(dir);
 		expect(assertUserDataDirExists(dir)).toBe(dir);
+	});
+
+	it('rejects a regular file at the path, which existsSync alone would accept', () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-root-'));
+		scratch.push(root);
+		const asFile = path.join(root, 'Maestro');
+		fs.writeFileSync(asFile, '');
+
+		expect(() => assertUserDataDirExists(asFile)).toThrow(/is not a directory/);
 	});
 
 	it('throws rather than letting a runner open an empty database beside the real one', () => {

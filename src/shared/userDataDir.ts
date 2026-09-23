@@ -6,9 +6,10 @@
  * arrive at the SAME directory, or the two disagree about what state exists.
  *
  * The app's own rule, mirrored here:
- *   1. `MAESTRO_USER_DATA` wins. The app publishes its resolved path into the
- *      environment at startup (`src/main/index.ts`), so anything it spawns, and
- *      any CLI run while it is up, lands in the right place by construction.
+ *   1. `MAESTRO_USER_DATA` wins. The app sets it on its OWN process env at
+ *      startup (`src/main/index.ts`), so anything the app spawns inherits it and
+ *      lands in the right place by construction. A CLI the user starts from
+ *      their own terminal does NOT inherit it and falls through to step 2.
  *   2. Otherwise the platform default plus the app name, and the app name is
  *      NOT constant: Electron uses `package.json` `name` ("maestro") when
  *      running unpackaged and the bundle's `productName` ("Maestro") once
@@ -52,6 +53,15 @@ function platformRoot(platform: NodeJS.Platform, home: string, env: NodeJS.Proce
 	if (platform === 'darwin') return path.join(home, 'Library', 'Application Support');
 	if (platform === 'win32') return env.APPDATA || path.join(home, 'AppData', 'Roaming');
 	return env.XDG_CONFIG_HOME || path.join(home, '.config');
+}
+
+/** `existsSync` is true for a regular file too, which is not a data directory. */
+function isDirectory(candidate: string): boolean {
+	try {
+		return fs.statSync(candidate).isDirectory();
+	} catch {
+		return false;
+	}
 }
 
 function probeIsPackaged(): boolean {
@@ -101,7 +111,7 @@ export function resolveUserDataDir(options: UserDataDirOptions = {}): string {
  * is obvious from the message.
  */
 export function assertUserDataDirExists(dir: string, options: UserDataDirOptions = {}): string {
-	if (fs.existsSync(dir)) return dir;
+	if (isDirectory(dir)) return dir;
 
 	const env = options.env ?? process.env;
 	const platform = options.platform ?? os.platform();
@@ -109,10 +119,14 @@ export function assertUserDataDirExists(dir: string, options: UserDataDirOptions
 	const root = platformRoot(platform, home, env);
 	const alternatives = [PACKAGED_APP_NAME, UNPACKAGED_APP_NAME, DEV_APP_NAME]
 		.map((name) => path.join(root, name))
-		.filter((candidate) => candidate !== dir && fs.existsSync(candidate));
+		.filter((candidate) => candidate !== dir && isDirectory(candidate));
+
+	// A file at the path is a different mistake from nothing at all, and saying
+	// "not found" about something the user can see would send them hunting.
+	const problem = fs.existsSync(dir) ? 'is not a directory' : 'not found at';
 
 	throw new Error(
-		`Maestro data directory not found at ${dir}.` +
+		`Maestro data directory ${problem} ${dir}.` +
 			(alternatives.length ? ` Found instead: ${alternatives.join(', ')}.` : '') +
 			` Set MAESTRO_USER_DATA to the directory the desktop app uses.`
 	);

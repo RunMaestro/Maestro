@@ -31,7 +31,9 @@ function walk(dir: string): string[] {
 describe('Cue engine Electron coupling', () => {
 	// Covers both quote styles, `require`, and a dynamic `import()`, so the
 	// ratchet cannot be stepped around by changing the syntax.
-	const ELECTRON_REF = /(?:from|require\(|import\()\s*['"]electron['"]/;
+	// The trailing `(?:\/[^'"]*)?` catches subpath imports like `electron/main`,
+	// which the bare form would let through.
+	const ELECTRON_REF = /(?:from|require\(|import\()\s*['"]electron(?:\/[^'"]*)?['"]/;
 
 	const importers = walk(CUE_DIR)
 		.filter((file) => ELECTRON_REF.test(fs.readFileSync(file, 'utf-8')))
