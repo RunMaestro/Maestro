@@ -18,8 +18,8 @@ import { EventEmitter } from 'events';
 
 const mockSpawn = vi.fn();
 const mockKill = vi.fn();
-const mockStdout = new EventEmitter();
-const mockStderr = new EventEmitter();
+const mockStdout = Object.assign(new EventEmitter(), { setEncoding: vi.fn() });
+const mockStderr = Object.assign(new EventEmitter(), { setEncoding: vi.fn() });
 const mockChild = Object.assign(new EventEmitter(), {
 	stdin: { end: vi.fn(), write: vi.fn() },
 	stdout: mockStdout,
