@@ -38,7 +38,7 @@
  *    electron-store dependency as point 1. There is no Settings UI here to
  *    flip a pill in, by definition. `detectCueAuthFailure` (the pure
  *    classification half, no store dependency) is reused directly instead,
- *    logged clearly enough for `maestro-cli cue-engine status` to surface
+ *    logged clearly enough for `maestro-cli cue engine status` to surface
  *    later (see that command).
  */
 
@@ -66,12 +66,18 @@ import { readSessions, readSshRemotes, getAgentCustomPath, readAgentConfig } fro
 let executorsPromise: ReturnType<typeof loadExecutorsUncached> | undefined;
 function loadExecutorsUncached() {
 	return Promise.all([
+		// The desktop registers every provider's output parser once at boot
+		// (`src/main/ipc/bootstrap`). Nothing does that here, and without it
+		// `getOutputParser()` answers null for every agent: a prompt run's
+		// stdout is stored as raw stream-json, and its provider session id,
+		// usage, and error classification are all silently lost.
+		import('../../shared/maestro-lib/parsers').then((parsers) => parsers.initializeOutputParsers()),
 		import('../../main/cue/cue-executor'),
 		import('../../main/cue/cue-shell-executor'),
 		import('../../main/cue/cue-cli-executor'),
 		import('../../main/cue/cue-notify-executor'),
 		import('../../main/cue/cue-auth-detector'),
-	]).then(([executor, shell, cli, notify, authDetector]) => ({
+	]).then(([, executor, shell, cli, notify, authDetector]) => ({
 		executeCuePrompt: executor.executeCuePrompt,
 		stopCueRun: executor.stopCueRun,
 		executeCueShell: shell.executeCueShell,
@@ -131,7 +137,17 @@ function sshStoreAdapter(): SshRemoteSettingsStore {
  * documented above.
  */
 function buildOnCueRun(onLog: StandaloneCueLog): CueEngineDeps['onCueRun'] {
-	return async ({ runId, sessionId, prompt, subscriptionName, event, timeoutMs, action, command, notify }) => {
+	return async ({
+		runId,
+		sessionId,
+		prompt,
+		subscriptionName,
+		event,
+		timeoutMs,
+		action,
+		command,
+		notify,
+	}) => {
 		const { executeCuePrompt, executeCueShell, executeCueCli, executeCueNotify } =
 			await loadExecutors();
 		const sessions = readSessions();
@@ -167,7 +183,14 @@ function buildOnCueRun(onLog: StandaloneCueLog): CueEngineDeps['onCueRun'] {
 			return executeCueNotify({
 				runId,
 				session: sessionInfo,
-				subscription: { name: subscriptionName, event: event.type, enabled: true, prompt, action, notify },
+				subscription: {
+					name: subscriptionName,
+					event: event.type,
+					enabled: true,
+					prompt,
+					action,
+					notify,
+				},
 				event,
 				agentId: storedSession.id,
 				message,
@@ -186,7 +209,14 @@ function buildOnCueRun(onLog: StandaloneCueLog): CueEngineDeps['onCueRun'] {
 					`Cue subscription "${subscriptionName}" has action='command' but no command payload`
 				);
 			}
-			const subscription = { name: subscriptionName, event: event.type, enabled: true, prompt, action, command };
+			const subscription = {
+				name: subscriptionName,
+				event: event.type,
+				enabled: true,
+				prompt,
+				action,
+				command,
+			};
 			return command.mode === 'shell'
 				? executeCueShell({
 						runId,
