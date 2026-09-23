@@ -430,6 +430,31 @@ Located in `src/renderer/components/UsageDashboard/`:
 | `footerSummary.ts`              | All footer summary copy, as pure builders (see below)       |
 | `useFooterSummary.ts`           | Store letting a panel publish its own footer line           |
 
+### Range-Scoped vs Lifetime Token Totals
+
+Two different numbers answer "how many tokens did this cost", and putting the
+wrong one under the dashboard's range selector is a bug that looks like a frozen
+counter:
+
+| Source                             | Scope                        | Helper                                           |
+| ---------------------------------- | ---------------------------- | ------------------------------------------------ |
+| `Session.usageStats`               | Lifetime, per agent, in-hand | `aggregateUsage()` in `src/shared/usageStats.ts` |
+| `StatsAggregation.bySessionTokens` | The selected time range      | `aggregateRangeUsage()` in the same module       |
+
+`usageStats` is a counter that only ever grows, so it **cannot** move when the
+range selector does. The Overview tab's Tokens and Cost cards were summing it,
+and reported the same figure on This Week as on This Year while every other card
+on the tab changed (issue #1399). Anything rendered under a range selector reads
+`bySessionTokens` through `aggregateRangeUsage()`; the per-agent detail modal,
+which has no range at all, legitimately keeps the lifetime figure.
+
+One catch `aggregateRangeUsage` handles so callers do not have to: the stats DB
+records provider-REPORTED cost per turn and nothing else, so an agent on a
+provider that prices nothing itself stores zero. Pass the optional
+`modelForSession` resolver and those sessions fall back to the same rate-table
+estimate `resolveUsageCost` applies to a live agent, with `costEstimated` set so
+the UI can mark the figure `~`.
+
 ### Footer Summaries (per-tab status line)
 
 The footer's center slot states what the current tab is actually showing:
