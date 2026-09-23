@@ -150,4 +150,107 @@ describe('cue-engine-lock', () => {
 		expect(result.acquired).toBe(true);
 		expect(fs.existsSync(path.join(nestedDir, 'cue-engine.lock'))).toBe(true);
 	});
+	// PID reuse: after a SIGKILL the lock can name an unrelated live process
+	// (a reboot or a container restart hands the same small PIDs out again).
+	describe('a live PID is not enough', () => {
+		it('treats a live PID with a stale heartbeat as absent, so status/stop never target it', async () => {
+			const child = spawnLiveProcess();
+			try {
+				await new Promise((resolve) => child.once('spawn', resolve));
+				const old = new Date(Date.now() - 10 * 60_000).toISOString();
+				fs.writeFileSync(
+					lockPath,
+					JSON.stringify({ pid: child.pid, mode: 'standalone', startedAt: old, heartbeatAt: old })
+				);
+				const { readCueEngineLock, acquireCueEngineLock } = await freshModule();
+				expect(readCueEngineLock()).toBeNull();
+				expect(acquireCueEngineLock('standalone').acquired).toBe(true);
+			} finally {
+				child.kill();
+			}
+		});
+
+		it('treats a lock written during an earlier boot as absent', async () => {
+			const child = spawnLiveProcess();
+			try {
+				await new Promise((resolve) => child.once('spawn', resolve));
+				const now = new Date().toISOString();
+				fs.writeFileSync(
+					lockPath,
+					JSON.stringify({
+						pid: child.pid,
+						mode: 'standalone',
+						startedAt: now,
+						heartbeatAt: now,
+						bootTime: Date.now() - os.uptime() * 1000 - 24 * 3600_000,
+					})
+				);
+				const { readCueEngineLock } = await freshModule();
+				expect(readCueEngineLock()).toBeNull();
+			} finally {
+				child.kill();
+			}
+		});
+
+		it('keeps honoring a fresh lock from this boot held by another live process', async () => {
+			const child = spawnLiveProcess();
+			try {
+				await new Promise((resolve) => child.once('spawn', resolve));
+				const now = new Date().toISOString();
+				fs.writeFileSync(
+					lockPath,
+					JSON.stringify({
+						pid: child.pid,
+						mode: 'standalone',
+						startedAt: now,
+						heartbeatAt: now,
+						bootTime: Date.now() - os.uptime() * 1000,
+					})
+				);
+				const { readCueEngineLock } = await freshModule();
+				expect(readCueEngineLock()?.pid).toBe(child.pid);
+			} finally {
+				child.kill();
+			}
+		});
+	});
+
+	describe('touchCueEngineLock', () => {
+		it('refreshes the heartbeat and keeps the original startedAt', async () => {
+			const { acquireCueEngineLock, touchCueEngineLock } = await freshModule();
+			acquireCueEngineLock('standalone');
+			const before = JSON.parse(fs.readFileSync(lockPath, 'utf-8'));
+			await new Promise((resolve) => setTimeout(resolve, 5));
+			expect(touchCueEngineLock('standalone')).toBe('held');
+			const after = JSON.parse(fs.readFileSync(lockPath, 'utf-8'));
+			expect(after.startedAt).toBe(before.startedAt);
+			expect(Date.parse(after.heartbeatAt)).toBeGreaterThan(Date.parse(before.heartbeatAt));
+		});
+
+		it("reports 'lost' when another live engine has taken the lock over", async () => {
+			const child = spawnLiveProcess();
+			try {
+				await new Promise((resolve) => child.once('spawn', resolve));
+				writeLock(child.pid!, 'desktop');
+				const { touchCueEngineLock } = await freshModule();
+				expect(touchCueEngineLock('standalone')).toBe('lost');
+				expect(JSON.parse(fs.readFileSync(lockPath, 'utf-8')).pid).toBe(child.pid);
+			} finally {
+				child.kill();
+			}
+		});
+	});
+
+	it('creating the lock is exclusive: a lock that appears first wins', async () => {
+		const child = spawnLiveProcess();
+		try {
+			await new Promise((resolve) => child.once('spawn', resolve));
+			const { acquireCueEngineLock } = await freshModule();
+			writeLock(child.pid!, 'standalone');
+			const result = acquireCueEngineLock('desktop');
+			expect(result.acquired).toBe(false);
+		} finally {
+			child.kill();
+		}
+	});
 });
