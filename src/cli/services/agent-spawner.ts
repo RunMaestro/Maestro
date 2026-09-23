@@ -735,9 +735,13 @@ async function spawnClaudeAgent(
 		// `processMessage` below because its stream-json shape is richer than
 		// the AgentOutputParser event vocabulary.
 		const exitClassifier = createOutputParser('claude-code') ?? NO_EXIT_CLASSIFICATION;
+		let droppedOutputBytes = 0;
 		const lineReader = new BufferedLineReader({
 			maxBufferLength: MAX_LINE_BUFFER_LENGTH,
-			onOversized: warnOversizedLineBuffer,
+			onOversized: (dropped) => {
+				droppedOutputBytes += dropped;
+				warnOversizedLineBuffer(dropped);
+			},
 		});
 		let stdoutTail = '';
 
@@ -850,6 +854,7 @@ async function spawnClaudeAgent(
 					// and a non-zero exit even when text was streamed (`code === 0 && finalResult`).
 					strictEmptyAnswer: true,
 					answerOutranksBareExit: false,
+					droppedOutputBytes,
 				})
 			);
 		});
@@ -1145,9 +1150,13 @@ async function spawnJsonLineAgent(
 
 		const child = spawn(spawnCommand, spawnArgs, options);
 		const abortLink = linkAbortSignal(child, overrides.signal);
+		let droppedOutputBytes = 0;
 		const lineReader = new BufferedLineReader({
 			maxBufferLength: MAX_LINE_BUFFER_LENGTH,
-			onOversized: warnOversizedLineBuffer,
+			onOversized: (dropped) => {
+				droppedOutputBytes += dropped;
+				warnOversizedLineBuffer(dropped);
+			},
 		});
 		// Codex-style providers report a RUNNING SESSION TOTAL on every usage
 		// event. Summing those (what this path did before) makes a session's
@@ -1269,6 +1278,7 @@ async function spawnJsonLineAgent(
 					// non-zero exit after a full answer (Grok with `--max-turns`).
 					strictEmptyAnswer: false,
 					answerOutranksBareExit: true,
+					droppedOutputBytes,
 				})
 			);
 		});
