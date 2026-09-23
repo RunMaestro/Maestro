@@ -1,6 +1,8 @@
 // Cue trigger command - manually trigger a Cue subscription by name
 
 import { withMaestroClient } from '../services/maestro-client';
+import { submitCueTrigger } from '../services/cue-trigger-inbox';
+import { readCueEngineLock } from '../../main/cue/cue-engine-lock';
 
 interface CueTriggerOptions {
 	prompt?: string;
@@ -13,22 +15,32 @@ export async function cueTrigger(
 	options: CueTriggerOptions
 ): Promise<void> {
 	try {
-		const result = await withMaestroClient(async (client) => {
-			return client.sendCommand<{
-				type: string;
-				success: boolean;
-				subscriptionName: string;
-				error?: string;
-			}>(
-				{
-					type: 'trigger_cue_subscription',
-					subscriptionName,
-					prompt: options.prompt,
-					sourceAgentId: options.sourceAgentId,
-				},
-				'trigger_cue_subscription_result'
-			);
-		});
+		// Whoever holds the engine lock is the engine that will run it. A
+		// standalone runner has no WebSocket, so it is reached through its
+		// trigger inbox instead (see cue-trigger-inbox.ts).
+		const result =
+			readCueEngineLock()?.mode === 'standalone'
+				? await submitCueTrigger({
+						subscriptionName,
+						prompt: options.prompt,
+						sourceAgentId: options.sourceAgentId,
+					})
+				: await withMaestroClient(async (client) => {
+						return client.sendCommand<{
+							type: string;
+							success: boolean;
+							subscriptionName: string;
+							error?: string;
+						}>(
+							{
+								type: 'trigger_cue_subscription',
+								subscriptionName,
+								prompt: options.prompt,
+								sourceAgentId: options.sourceAgentId,
+							},
+							'trigger_cue_subscription_result'
+						);
+					});
 
 		if (options.json) {
 			console.log(
