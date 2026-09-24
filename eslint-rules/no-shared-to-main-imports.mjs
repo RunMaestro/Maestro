@@ -98,6 +98,20 @@ const noSharedToMainImports = {
 			ImportDeclaration(node) {
 				checkSpecifier(node.source, node.source.value);
 			},
+			// `export * from '../../../main/x'` and `export { y } from '...'` are
+			// dependencies too, and re-exporting is how a shim is normally written,
+			// so leaving them unvisited left the widest hole in the rule.
+			ExportAllDeclaration(node) {
+				// `export *` has no sourceless form, so `source` is always set here.
+				checkSpecifier(node.source, node.source.value);
+			},
+			ExportNamedDeclaration(node) {
+				// Null for a local `export { y }` / `export const y`, which names
+				// nothing outside this file.
+				if (node.source) {
+					checkSpecifier(node.source, node.source.value);
+				}
+			},
 			ImportExpression(node) {
 				if (node.source.type === 'Literal' && typeof node.source.value === 'string') {
 					checkSpecifier(node.source, node.source.value);

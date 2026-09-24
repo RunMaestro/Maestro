@@ -74,6 +74,27 @@ the library, which is what makes them pass-throughs.
   Two scope per the plan.
 - Run, session capture, resume, and the streaming/completion-helper contract
   are explicitly Part Two/Three - not touched here.
+- Two parser findings raised in review are recorded here rather than fixed,
+  because both are pre-existing behavior rather than anything this pass
+  introduced. Both files were diffed against their `rc` originals and differ
+  only in import paths, so Part One's "zero behavior change" rule and
+  its gate ("if a test must be edited, it is a behavior change and belongs
+  later") both put these after Part One:
+  - `opencode-output-parser.ts` drops `part.callID` when it builds a
+    `tool_use` event. `OpenCodePart.callID` is declared for exactly that
+    purpose and `ParsedEvent.toolCallId` exists, with codex, antigravity and
+    copilot all populating it, so the id a consumer would merge repeated
+    lifecycle updates on never reaches it. The review reports the effect as
+    duplicate tool entries; that consequence was not traced through the
+    consumer here, only the dropped field confirmed. A one-line fix, but it
+    changes emitted events.
+  - `factory-droid-output-parser.ts` emits a `result` event with empty text
+    when a completion carries no `finalText`. The review asked for empty
+    completions to be routed to the parser's error handling; that is declined
+    on principle rather than deferred. Deciding whether an empty answer is a
+    failure is the completion contract's job (`strictEmptyAnswer`), and the
+    library's rule is that it reports facts and never emits a verdict. Putting
+    a second rule in the parser is the divergence Part Two exists to remove.
 
 ## Verification performed
 
