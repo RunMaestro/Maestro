@@ -55,6 +55,13 @@ vi.mock('lucide-react', () => ({
 	AArrowDown: () => <span data-testid="a-arrow-down-icon">AArrowDown</span>,
 	// Resting-circle icon for the collapsible variant of that control.
 	ALargeSmall: () => <span data-testid="a-large-small-icon">ALargeSmall</span>,
+	// Icons added by the document chat bubble and its composer.
+	MessageSquare: () => <span data-testid="message-square-icon">MessageSquare</span>,
+	RotateCcw: () => <span data-testid="rotate-ccw-icon">RotateCcw</span>,
+	PanelRightOpen: () => <span data-testid="panel-right-open-icon">PanelRightOpen</span>,
+	Mic: () => <span data-testid="mic-icon">Mic</span>,
+	MicOff: () => <span data-testid="mic-off-icon">MicOff</span>,
+	Send: () => <span data-testid="send-icon">Send</span>,
 }));
 
 // Mock react-markdown
@@ -102,18 +109,26 @@ vi.mock('../../../renderer/constants/modalPriorities', () => ({
 	},
 }));
 
-// Mock useClickOutside hook - capture both container and TOC callbacks separately
-// FilePreview calls useClickOutside twice: first for container (handleEscapeRequest), second for TOC
+// Mock useClickOutside hook - capture the container and TOC callbacks separately.
+//
+// Told apart by the SHAPE of the first argument rather than by call order: the
+// preview container passes one ref, while every floating panel passes a pair
+// (its own node plus its toggle button). Counting calls and taking every other
+// one broke the moment a third panel - the document chat bubble - registered,
+// and it would break again on the fourth.
 const mockContainerClickOutside = { callback: null as (() => void) | null, enabled: false };
 const mockTocClickOutside = { callback: null as (() => void) | null, enabled: false };
 let useClickOutsideCallCount = 0;
 vi.mock('../../../renderer/hooks/ui/useClickOutside', () => ({
-	useClickOutside: (_ref: unknown, callback: () => void, enabled: boolean, _options?: unknown) => {
-		// First call is for container (handleEscapeRequest), second is for TOC
-		if (useClickOutsideCallCount % 2 === 0) {
+	useClickOutside: (ref: unknown, callback: () => void, enabled: boolean, _options?: unknown) => {
+		if (!Array.isArray(ref)) {
 			mockContainerClickOutside.callback = callback;
 			mockContainerClickOutside.enabled = enabled;
-		} else {
+			return;
+		}
+		// Panels, in hook order: the chat bubble registers first, the ToC second.
+		// Only the ToC's is asserted on, so the chat's is simply skipped.
+		if (useClickOutsideCallCount % 2 === 1) {
 			mockTocClickOutside.callback = callback;
 			mockTocClickOutside.enabled = enabled;
 		}

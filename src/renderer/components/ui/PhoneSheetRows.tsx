@@ -136,6 +136,8 @@ export interface PhoneSheetActionRowProps {
 	theme: Theme;
 	/** Color for the icon. Defaults to the dim text color. */
 	iconColor?: string;
+	/** On/off state for a row that is a toggle rather than a one-shot action. */
+	pressed?: boolean;
 	testId?: string;
 }
 
@@ -145,12 +147,14 @@ export function PhoneSheetActionRow({
 	onSelect,
 	theme,
 	iconColor,
+	pressed,
 	testId,
 }: PhoneSheetActionRowProps) {
 	return (
 		<button
 			type="button"
 			onClick={onSelect}
+			aria-pressed={pressed}
 			className="flex w-full items-center gap-3 px-4 text-left border-b"
 			style={{
 				minHeight: PHONE_SHEET_ROW_HEIGHT,

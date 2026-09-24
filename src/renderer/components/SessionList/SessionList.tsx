@@ -27,6 +27,7 @@ import { HamburgerDropdown } from './HamburgerDropdown';
 import { NowPlayingIndicator } from '../MediaPlayback/NowPlayingIndicator';
 import { subscribeSidebarReveal, getSidebarRevealToken } from '../../utils/sidebarReveal';
 import { useMediaPlaybackStore, selectNowPlayingVisible } from '../../stores/mediaPlaybackStore';
+import { VoiceStatusIndicator } from '../ACappella/VoiceStatusIndicator';
 import type { Session, Group, Theme } from '../../types';
 import { isWorktreeGroup } from '../../../shared/types';
 import { canSetGroupParent, removeGroupAndPromoteChildren } from '../../../shared/groupHierarchy';
@@ -1430,6 +1431,13 @@ function SessionListInner(props: SessionListProps) {
 							    the widget back with one click. Sheds its label on a narrow
 							    sidebar, the same way the LIVE pill below does. */}
 							<NowPlayingIndicator theme={theme} compact={nowPlayingCompact} />
+							{/* Voice session - the minimized HUD's home, and the same bargain
+							    as the now-playing pill above it: something that is running
+							    while its widget is away has to stay visible somewhere. */}
+							<VoiceStatusIndicator
+								theme={theme}
+								compact={leftSidebarWidthState < NOW_PLAYING_LABEL_MIN_WIDTH}
+							/>
 							{/* Global LIVE Toggle - hidden in the web-desktop bundle, where
 							    toggling it would kill the webserver the user's browser is
 							    currently connected to. */}
@@ -1543,7 +1551,15 @@ function SessionListInner(props: SessionListProps) {
 					//
 					// The compact form is the transport and the restore button and
 					// nothing else, which fits the rail's width without a label to clip.
+					//
+					// The voice indicator is here for the same reason, only more so:
+					// audio evidences itself, so a hidden media control still announces
+					// what it is doing, while a live microphone's only tell is this
+					// glyph. Dropping it would make the collapsed rail the one place an
+					// open microphone is invisible - see the minimize/close note in
+					// `VoiceHud.tsx`.
 					<div className="w-full flex flex-col items-center gap-2 relative z-30" ref={menuRef}>
+						<VoiceStatusIndicator theme={theme} compact />
 						<GhostIconButton onClick={() => setMenuOpen(!menuOpen)} padding="p-2" title="Menu">
 							<BusyWand
 								busy={isAnyBusy}

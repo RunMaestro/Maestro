@@ -85,16 +85,26 @@ export type UsageDashboardViewMode =
 	| 'codex-usage'
 	| 'cue'
 	| 'shortcuts';
+/**
+ * Every tab the Settings modal can open on.
+ *
+ * Kept in step with `SettingsTabId` in `SettingsModal.tsx`, which renders them.
+ * This list used to be a stale subset that could not name half the tabs that
+ * existed, so a caller asking to deep-link into Plugins, SSH, or Display simply
+ * would not compile - and the workaround was to open Settings with no tab and
+ * let the user go hunting.
+ */
 export type SettingsTab =
+	| 'about'
 	| 'general'
-	// SettingsModal has always rendered a Display tab and accepted it as an
-	// `initialTab`; it was simply missing from this union, so nothing could
-	// deep-link there through openSettings().
 	| 'display'
 	| 'shortcuts'
 	| 'theme'
 	| 'notifications'
 	| 'aicommands'
+	| 'ssh'
+	| 'environment'
+	| 'encore'
 	| 'prompts';
 // Note: ScratchPadMode was removed as part of the Scratchpad → Auto Run migration
 export type FocusArea = 'sidebar' | 'main' | 'right';
@@ -810,6 +820,27 @@ export interface AITab {
 		sourceSessionId: string;
 		/** The AI tab within the calling agent the mention was typed in. */
 		sourceTabId: string;
+	};
+	/**
+	 * When set, this tab holds the persistent chat about one document: the
+	 * conversation behind the File Preview's chat bubble.
+	 *
+	 * It is the continuity key, the same way `consultOrigin` is. There is at most
+	 * one chat per (agent, path), so reopening a document - after a tab switch,
+	 * after a restart - finds this tab and shows its history rather than starting
+	 * over. The binding lives on the tab so it is persisted, migrated and
+	 * discarded with the conversation it describes, instead of being a side table
+	 * of ids pointing at tabs that may no longer exist.
+	 *
+	 * A document chat is created `hidden` and stays that way until the user pops
+	 * it out (`revealAiTab`), so chatting about a file does not put a chip in the
+	 * strip nobody asked for. Resetting the chat clears this field and reveals the
+	 * tab: the fresh chat gets a new tab, and the old transcript is still there to
+	 * read rather than being destroyed.
+	 */
+	documentOrigin?: {
+		/** Absolute path of the document, as the owning agent sees it. */
+		path: string;
 	};
 	/**
 	 * When true, the tab exists as a data container but is NOT surfaced in the tab
@@ -1765,6 +1796,12 @@ export interface EncoreFeatureFlags {
 	// Groups+ - nested groups, standard folder icons, and label colors.
 	// Off by default. Optional so older fixtures and persisted settings remain valid.
 	groupsPlus?: boolean;
+	// A Cappella - the voice interface (headless voice session in main, HUD in
+	// the renderer). Off by default, and enabling it only makes the Voice Setup
+	// surface reachable: no device, model, or socket is touched until a session
+	// is explicitly started. Optional so older fixtures and persisted settings
+	// remain valid.
+	aCappella?: boolean;
 	// Web Login - require a username and password on the web interface, with
 	// per-account attribution on History and stats. Off by default. Optional so
 	// older fixtures and persisted settings remain valid.

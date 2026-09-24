@@ -20,6 +20,7 @@
 
 import crypto from 'crypto';
 import os from 'os';
+import { redactSecrets } from '../../acappella/providers/credentials';
 import { escapeRegExp } from '../../../shared/stringUtils';
 
 /** Per-process salt: stable inside one package, useless outside it. */
@@ -254,14 +255,21 @@ function identityLiterals(): Array<[string, string]> {
 }
 
 /**
- * Strip paths, URLs, usernames, and hostnames out of arbitrary text.
+ * Strip paths, URLs, usernames, hostnames, and API keys out of arbitrary text.
  */
 export function redactText(text: string): string {
 	if (typeof text !== 'string' || text === '') {
 		return text;
 	}
 
-	let result = text.replace(TEXT_TARGET_RE, (match) => {
+	// Secrets first, and before the length cap: a support package is the one
+	// artefact most likely to be attached to a public issue, and an API key that
+	// survived into one is worse than any path this function was written for.
+	// The scrubber lives with the credential layer, so there is one definition of
+	// "looks like a key" rather than a second one drifting here.
+	let result = redactSecrets(text);
+
+	result = result.replace(TEXT_TARGET_RE, (match) => {
 		if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(match)) return redactUrl(match);
 		// Emails, ssh targets, and git remotes name a person, a machine, and a
 		// repository, so nothing but a correlation id survives.

@@ -7,6 +7,8 @@ import { normalizeAdditionalDirectories } from '../../../shared/additionalDirect
 import { formatTokensCompact } from '../../../shared/formatters';
 import { getActiveTab } from '../../utils/tabHelpers';
 import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
+import { useSettingsStore, selectACappellaEnabled } from '../../stores/settingsStore';
+import { AgentWakePhraseSection } from '../Settings/ACappella/AgentWakePhraseSection';
 import {
 	resolveContextWindow,
 	isStoredContextWindowOverridden,
@@ -106,6 +108,9 @@ export function EditAgentModal({
 	// merged in for display. Blur-saves of agent-level options rebuild from this so
 	// they never write (or erase) the per-session model/contextWindow/effort.
 	const globalConfigRef = useRef<Record<string, any>>({});
+
+	// One owner for the voice gate: the same selector the HUD and Voice Setup read.
+	const aCappellaEnabled = useSettingsStore(selectACappellaEnabled);
 
 	// Clear copy timeout and reset copied state on unmount, close, or session change
 	useEffect(() => {
@@ -755,6 +760,13 @@ export function EditAgentModal({
 					retryOnTokenExhaustion={retryOnTokenExhaustion}
 					onChangeAvailability={setRetryOnAvailabilityErrors}
 					onChangeTokenExhaustion={setRetryOnTokenExhaustion}
+				/>
+
+				{/* Voice wake phrase. Renders nothing unless A Cappella is switched on. */}
+				<AgentWakePhraseSection
+					theme={theme}
+					agentSessionId={session.id}
+					enabled={aCappellaEnabled}
 				/>
 
 				{/* Working Directory */}

@@ -71,6 +71,7 @@ The **File Explorer** (Right Panel → Files tab) lets you browse project files.
 - **Parquet tables** with a typed query language, on files far larger than memory
 - **Line numbers** for easy reference
 - **Search within file** (`Cmd+F` / `Ctrl+F`)
+- **Chat with the document** (`Cmd+Shift+\` / `Ctrl+Shift+\`, or the chat button in the bottom-left of the preview) - see below
 
 Several formats come with a filtering language built for that format rather than
 a plain search box. **[File Formats](./file-formats)** is the full map: what
@@ -105,6 +106,41 @@ way while you are typing: it does nothing in the find bar, in the markdown
 editor, or on a file with no headings. The same command is in the command
 palette (`Cmd+K` / `Ctrl+K`) as **Jump to Heading**, which appears only while a
 markdown file is open in preview.
+
+### Chatting with a Document
+
+The chat button in the **bottom-left** of the preview (`Cmd+Shift+\` /
+`Ctrl+Shift+\`) opens a small chat about the file you are reading, mirroring the
+Table of Contents on the other side. Ask a question and the agent whose
+workspace the file lives in reads it and answers there. It is not limited to the
+file: it reads whatever else it needs and uses its tools normally. It just
+starts from your document rather than from nothing.
+
+There are three ways to put a message in, chosen with the switch above the box:
+
+- **Type.** `Enter` sends, `Shift+Enter` breaks a line.
+- **Push to type.** Hold the microphone and speak. The words land in the box, so
+  you can fix them before sending. Nothing is spoken back.
+- **Push to talk.** Hold the microphone and speak, and the reply is spoken back
+  to you. This one needs [A Cappella](./voice-mode) switched on.
+
+Both microphone buttons work as a hold OR as a tap: hold them like a
+walkie-talkie for one sentence, or tap once to leave them running and tap again
+to stop. The mode you pick is remembered.
+
+All three land in the **same conversation**, so you can ask something out loud,
+type the follow-up, and read both in the chat. The conversation is an ordinary
+AI tab that Maestro keeps out of your tab strip until you want it, which means:
+
+- **It survives a restart.** Come back to the file tomorrow, open the chat, and
+  the whole conversation is still there.
+- **Pop out** turns it into a real tab, with the full transcript - tool calls,
+  thinking, everything the bubble leaves out.
+- **Reset** starts a fresh conversation with a new session. The previous one is
+  not deleted: it becomes an ordinary tab you can read or close yourself.
+
+The button is offered on any file with text in it, and not on images, media, or
+compiled binaries, which give the agent nothing to read.
 
 ### CSV and TSV Tables
 

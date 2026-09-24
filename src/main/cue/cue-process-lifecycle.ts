@@ -56,6 +56,17 @@ export interface CueProcessInfo {
 /** Result of a process execution */
 export interface ProcessRunResult {
 	stdout: string;
+	/**
+	 * The UNCLEANED stdout buffer, exactly as the agent wrote it.
+	 *
+	 * `stdout` above has already been through `extractCleanStdout`, which
+	 * collapses a stream-json transcript down to its human-readable result
+	 * text. That discards the `session_id` the provider stamps on every
+	 * event, so anything that needs to parse the raw event stream (token
+	 * attribution, in particular) must read this field instead. Feeding the
+	 * cleaned text to a JSON-line parser silently yields nothing.
+	 */
+	rawStdout: string;
 	stderr: string;
 	exitCode: number | null;
 	status: CueRunStatus;
@@ -268,6 +279,7 @@ export function runProcess(
 			captureException(err, { operation: 'cue:spawn', runId, command: spec.command });
 			resolve({
 				stdout: '',
+				rawStdout: '',
 				stderr: `Spawn error: ${err instanceof Error ? err.message : String(err)}`,
 				exitCode: null,
 				status: 'failed',
@@ -301,6 +313,7 @@ export function runProcess(
 
 			resolve({
 				stdout: extractCleanStdout(stdout, toolType),
+				rawStdout: stdout,
 				stderr: extractCleanStderr(stderr, toolType),
 				exitCode,
 				status,

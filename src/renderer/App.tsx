@@ -3133,6 +3133,7 @@ function MaestroConsoleInner() {
 				useNativeTitleBar={useNativeTitleBar}
 				isMdDownViewport={isMdDownViewport}
 				concertoEnabled={encoreFeatures.concerto === true}
+				aCappellaEnabled={encoreFeatures.aCappella === true}
 				activeGroupChatId={activeGroupChatId}
 				groupChats={groupChats}
 				groups={groups}

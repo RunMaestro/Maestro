@@ -52,7 +52,14 @@ import { remarkAlert } from '../Markdown/remarkAlert';
 import { hardBreakInlineFields } from '../Markdown/preprocess';
 import { REMARK_GFM_PLUGINS, createMarkdownComponents } from '../../utils/markdownConfig';
 import { remarkMaestroMarkers } from '../Markdown/remarkMaestroMarkers';
-import { useSettingsStore } from '../../stores/settingsStore';
+import { selectACappellaEnabled, useSettingsStore } from '../../stores/settingsStore';
+import { useVoiceSessionStore } from '../../stores/voiceSessionStore';
+import { isVoiceSessionActive } from '../../../shared/acappella/session-state';
+import { isDocumentScope } from '../../../shared/acappella/document-scope';
+import { talkWithDocument } from '../../services/documentVoice';
+import { DocumentChatOverlay } from '../DocumentChat';
+import { useTocOverlay } from '../../hooks/ui/useTocOverlay';
+import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { useSurfaceTypography } from '../../hooks/ui/useSurfaceTypography';
 import { useSessionStore } from '../../stores/sessionStore';
 import { buildFileDeepLink } from '../../../shared/deep-link-urls';
@@ -63,12 +70,12 @@ import { openFileUrl } from '../../utils/openFileUrl';
 import { isImageFile } from '../../../shared/gitUtils';
 import { isParquetPreviewMarker } from '../../../shared/parquet/preview';
 import { ParquetViewer, type ParquetViewerHandle } from '../ParquetViewer';
+import { isBinaryExtension } from '../../../shared/fileKinds';
 import { getOpenedMediaKind } from '../../utils/mediaItems';
 import type { FilePreviewProps, FilePreviewHandle, FileStats, TocEntry } from './types';
 import {
 	getLanguageFromFilename,
 	isBinaryContent,
-	isBinaryExtension,
 	isGistPublishableFile,
 	formatFileSize,
 	countMarkdownTasks,
@@ -112,6 +119,7 @@ import { toggleTaskCheckboxAtLine } from '../../utils/markdownTasks';
 import { logger } from '../../utils/logger';
 import { useEventListener } from '../../hooks/utils/useEventListener';
 import { HEADING_PALETTE_EVENT } from '../../services/headingPalette';
+import { DOCUMENT_CHAT_PANEL_EVENT } from '../../services/documentChatPanel';
 
 /**
  * How long to keep re-applying a restored scroll offset while the document
@@ -644,6 +652,9 @@ export const FilePreview = React.memo(
 		const setFileEditWordWrap = useSettingsStore((s) => s.setFileEditWordWrap);
 		const fileEditShowLineNumbers = useSettingsStore((s) => s.fileEditShowLineNumbers);
 		const filePreviewToolbarVisibility = useSettingsStore((s) => s.filePreviewToolbarVisibility);
+		const voiceEnabled = useSettingsStore(selectACappellaEnabled);
+		const voiceScope = useVoiceSessionStore((s) => s.scope);
+		const voiceState = useVoiceSessionStore((s) => s.state);
 		// Reading and editing are separate typographic jobs, so they are separate
 		// settings: a proportional face is easier to read a document in, while an
 		// editor wants the line-number gutter to stay aligned. Empty means "inherit
@@ -1004,6 +1015,63 @@ export const FilePreview = React.memo(
 		const headerIconClass = 'w-4 h-4';
 		const headerBtnClass =
 			'inline-flex min-w-9 min-h-9 items-center justify-center p-2 rounded hover:bg-white/10 transition-colors outline-none focus-visible:ring-1 focus-visible:ring-white/30';
+
+		// Offer the microphone only where there is text to talk about. An image, a
+		// video, or a compiled binary gives the agent nothing to read, so the button
+		// would open a conversation whose first act is a failed read.
+		// `isEditableText` is already exactly that question, asked with the bytes in
+		// hand: the path-only surfaces ask `isTalkableDocumentPath` instead.
+		const canTalkAboutThisFile = voiceEnabled && !!file && isEditableText;
+
+		// The chat bubble is offered wherever there is text to talk about, whether or
+		// not A Cappella is on: typing needs no voice stack at all, and hiding the
+		// whole panel behind an Encore Feature would take text chat away from every
+		// install that has not turned voice on - which is all of them by default.
+		const canChatAboutThisFile = !!file && isEditableText;
+
+		// The chat bubble on the other side of the same preview. `useTocOverlay` is
+		// the generic open/close plumbing for these floating panels - hotkey, Escape,
+		// click-outside, focus back to the container - so the two controls behave
+		// identically instead of the second one being a copy that drifts.
+		const documentChat = useTocOverlay({
+			shortcuts,
+			containerRef,
+			shortcutId: 'toggleDocumentChat',
+			enabled: canChatAboutThisFile,
+			onShortcutUsed,
+		});
+
+		// The Cmd+K palette is a modal and cannot reach this component's state, so it
+		// asks over an app-level event - the same arrangement the heading palette
+		// uses. The guard mirrors the hotkey's: a request for a file with nothing to
+		// read is dropped rather than opening a chat about an image.
+		useEventListener(DOCUMENT_CHAT_PANEL_EVENT, () => {
+			if (!canChatAboutThisFile) return;
+			documentChat.setOpen(true);
+		});
+
+		// Whether the live voice session is about THIS file. Matched on the path
+		// rather than on "a session exists", so the button only reads as active for
+		// the document it belongs to - a conversation about some other file must
+		// not make this toolbar claim the floor.
+		const isTalkingAboutDocument =
+			isVoiceSessionActive(voiceState) &&
+			isDocumentScope(voiceScope) &&
+			!!file?.path &&
+			voiceScope.path === file.path;
+
+		// Talk with the previewed document. Shared with the Files panel menu and
+		// the command palette's "File: Talk with Document" entry, so all three
+		// resolve the agent and handle a refusal the same way. Pressing it during
+		// this file's own session ends it, exactly like the composer microphone.
+		const handleTalkWithDocument = useCallback(() => {
+			if (!file?.path) return;
+			if (isTalkingAboutDocument) {
+				void window.maestro.voice.stop().catch(() => undefined);
+				return;
+			}
+			void talkWithDocument({ path: file.path });
+		}, [file?.path, isTalkingAboutDocument]);
 
 		// Delete the previewed file. Shared with the command palette's
 		// "File: Delete" entry, so both raise the same confirmation.
@@ -1490,12 +1558,22 @@ export const FilePreview = React.memo(
 			containerRef.current?.focus();
 			// Close TOC overlay when file changes
 			setShowTocOverlay(false);
+			// Same for the chat bubble: its conversation is bound to one document, so
+			// carrying the open panel across a navigation would show the previous
+			// file's chat over the new file's contents.
+			documentChat.setOpen(false);
 		}, [file?.path]); // Run on mount and when navigating to a different file
 
 		// Helper to handle escape key - shows confirmation modal if there are unsaved changes
 		// In tab mode: Escape only closes internal UI (search, TOC), not the tab itself
 		// Tabs close via Cmd+W or clicking the close button, not Escape
 		const handleEscapeRequest = useCallback(() => {
+			// Ordered innermost-first: a floating panel the user just opened is what
+			// Escape should take away, before it reaches the search bar or the
+			// preview itself. `closeIfOpen` reports whether it consumed the key.
+			if (documentChat.closeIfOpen()) {
+				return;
+			}
 			if (showTocOverlay) {
 				setShowTocOverlay(false);
 				containerRef.current?.focus();
@@ -1517,7 +1595,7 @@ export const FilePreview = React.memo(
 				}
 			}
 			// In tab mode with no internal UI open, Escape does nothing
-		}, [showTocOverlay, searchOpen, hasChanges, onClose, isTabMode]);
+		}, [documentChat.closeIfOpen, showTocOverlay, searchOpen, hasChanges, onClose, isTabMode]);
 
 		// Register layer on mount - only for overlay mode (not tab mode)
 		// Tab mode: File preview is part of the main panel content, not an overlay
@@ -1674,6 +1752,15 @@ export const FilePreview = React.memo(
 			// Handle Escape key - dismiss overlays in priority order
 			// In tab mode, layer system isn't registered, so we handle Escape directly here
 			if (e.key === 'Escape') {
+				// The chat bubble goes first: it is the innermost floating panel, and
+				// Escape pressed with the caret in its box has to take the panel away
+				// rather than the preview under it. In tab mode this chain is the ONLY
+				// Escape path - the layer system is not registered there.
+				if (documentChat.closeIfOpen()) {
+					e.preventDefault();
+					e.stopPropagation();
+					return;
+				}
 				if (showHeadingPalette) {
 					e.preventDefault();
 					e.stopPropagation();
@@ -1769,6 +1856,11 @@ export const FilePreview = React.memo(
 				// on top of each other is just clutter.
 				setShowTocOverlay(false);
 				setShowHeadingPalette(true);
+			} else if (documentChat.handleKeyDown(e)) {
+				// The chat panel's toggle hotkey. `handleKeyDown` has already
+				// prevented and stopped the event when it consumed one. Escape never
+				// reaches here - the block at the top of this handler owns it.
+				return;
 			} else if (
 				isShortcut(e, 'toggleFilePreviewToc') &&
 				isMarkdown &&
@@ -1974,6 +2066,8 @@ export const FilePreview = React.memo(
 					wordWrap={fileEditWordWrap}
 					setWordWrap={setFileEditWordWrap}
 					toolbarVisibility={filePreviewToolbarVisibility}
+					onTalkWithDocument={canTalkAboutThisFile ? handleTalkWithDocument : undefined}
+					isTalkingAboutDocument={isTalkingAboutDocument}
 					onDelete={handleDeleteFile}
 				/>
 
@@ -2798,6 +2892,22 @@ export const FilePreview = React.memo(
 						onJumpToHeading={jumpToHeading}
 						activeIndex={activeTocIndex}
 					/>
+
+					{/* Chat with this document - the bottom-LEFT twin of the ToC. Gated
+					    on there being text to talk about, so an image or a compiled
+					    binary does not offer a conversation whose first act would be a
+					    failed read. */}
+					{canChatAboutThisFile && file && (
+						<DocumentChatOverlay
+							theme={theme}
+							path={file.path}
+							open={documentChat.open}
+							onOpenChange={documentChat.setOpen}
+							buttonRef={documentChat.buttonRef}
+							overlayRef={documentChat.overlayRef}
+							shortcutHint={formatShortcutKeys(shortcuts.toggleDocumentChat?.keys ?? [])}
+						/>
+					)}
 
 					{/* Heading palette - `#` opens the same list with a fuzzy filter */}
 					{showHeadingPalette && isMarkdown && !markdownEditMode && tocEntries.length > 0 && (

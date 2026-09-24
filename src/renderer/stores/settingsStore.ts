@@ -251,6 +251,7 @@ export const FILE_PREVIEW_TOOLBAR_BUTTON_KEYS = [
 	'copyContent',
 	'publishGist',
 	'documentGraph',
+	'talkWithDocument',
 	'openInDefault',
 	'revealInFolder',
 	'copyPath',
@@ -657,6 +658,11 @@ export type SettingsStore = SettingsStoreState & SettingsStoreActions;
 /** Shared renderer selector for every Groups+ surface. */
 export const selectGroupsPlusEnabled = (state: SettingsStore) =>
 	state.encoreFeatures.groupsPlus === true;
+
+/** Shared renderer selector for every A Cappella surface (HUD, dev harness,
+ * Voice Setup). One owner so the voice gate cannot drift between them. */
+export const selectACappellaEnabled = (state: SettingsStore) =>
+	state.encoreFeatures.aCappella === true;
 
 // ============================================================================
 // Auto Run watchdog helpers

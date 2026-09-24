@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+		<title>A Cappella reference client</title>
+		<link rel="stylesheet" href="./styles.css" />
+	</head>
+	<body>
+		<main class="app">
+			<header class="head">
+				<h1>A Cappella reference client</h1>
+				<p class="sub">
+					The device half of the protocol, in a browser. Paste the JSON behind the pairing QR code
+					from Settings &rarr; Encore Features &rarr; A Cappella &rarr; Paired Devices.
+				</p>
+			</header>
+
+			<section class="panel connect">
+				<label class="field wide">
+					<span>Pairing payload (paste the QR contents)</span>
+					<textarea id="qr-payload" rows="3" spellcheck="false"></textarea>
+				</label>
+				<div class="row-fields">
+					<label class="field"><span>Host</span><input id="host" type="text" /></label>
+					<label class="field short"><span>Port</span><input id="port" type="number" /></label>
+					<label class="field"><span>Server token</span><input id="token" type="text" /></label>
+					<label class="field short"><span>Code</span><input id="code" type="text" /></label>
+					<label class="field check"><input id="secure" type="checkbox" /><span>TLS</span></label>
+				</div>
+				<div class="buttons">
+					<button id="connect" type="button" class="primary">Connect</button>
+					<button id="disconnect" type="button" disabled>Disconnect</button>
+					<button id="forget" type="button">Forget pairing</button>
+				</div>
+			</section>
+
+			<section class="panel status">
+				<div class="status-top">
+					<span id="phase" class="pill">idle</span>
+					<span id="mic-pill" class="pill mic">Not connected</span>
+					<span id="version-line" class="muted"></span>
+				</div>
+				<p id="message" class="message"></p>
+				<p id="floor-line" class="muted"></p>
+				<p id="quality-line" class="muted"></p>
+				<p id="suspect" class="warn" hidden>
+					Events were lost on the reliable channel. This transcript is incomplete.
+				</p>
+				<div class="meter"><div id="meter-fill" class="meter-fill"></div></div>
+			</section>
+
+			<section class="panel wheel-panel">
+				<h2>Project wheel</h2>
+				<div id="wheel" class="wheel"></div>
+			</section>
+
+			<section class="panel talk-panel">
+				<button id="talk" type="button" class="talk">Hold to talk</button>
+				<div class="buttons">
+					<button id="barge" type="button">Interrupt</button>
+					<button id="stop" type="button">Stop</button>
+				</div>
+			</section>
+
+			<section class="panel transcript-panel">
+				<h2>Transcript</h2>
+				<div id="transcript" class="transcript"></div>
+			</section>
+
+			<section class="panel log-panel">
+				<h2>Protocol log</h2>
+				<div id="log" class="log"></div>
+			</section>
+		</main>
+
+		<!-- The assistant's voice. One element; the peer's remote track is attached to it. -->
+		<audio id="playback" autoplay></audio>
+
+		<script type="module" src="./main.ts"></script>
+	</body>
+</html>
