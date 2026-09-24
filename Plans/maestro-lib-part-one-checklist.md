@@ -15,8 +15,17 @@ Cue-on-a-server is a separate, later effort.
       handling while preserving existing ordering and behavior.
 - [x] Convert existing agent spawners, Cue spawn builder, and Cue executor
       into thin library pass-throughs.
-- [x] Run existing tests and verify the no-desktop-framework smoke test,
-      Windows behavior, and macOS binary lookup.
+- [x] Run existing tests and verify the no-desktop-framework smoke test and
+      Windows behavior.
+- [ ] macOS binary lookup. NOT verified by this pass, which is why it is split
+      out of the item above: that item claimed it while the Known gaps section
+      below recorded it as unverified. It was picked up later by separate work
+      rather than here, so the box stays unchecked for Part One. See #1631,
+      which checked it on real Apple Silicon hardware against a live Copilot
+      install and found a detection bug in the process (both known-path tables
+      were keyed by agent id while the lookup passes a binary name, so none of
+      Copilot's candidates was ever probed); open PR #1643 carries that fix
+      into the library copy.
 
 ## What actually moved
 
@@ -65,9 +74,15 @@ the library, which is what makes them pass-throughs.
   follow-up work, matching the plan's own "roughly a third of the effort will
   go to things not written down yet" caveat.
 - The moved parsers still reach back into `src/main/utils/{logger,sentry,terminalFilter}`
-  and `src/main/agents/capability-snapshot.ts`. None of these import Electron,
-  so they don't break the "no desktop framework" smoke test, but they are not
-  yet part of the library proper.
+  and `src/main/agents/capability-snapshot.ts`. None of them imports Electron at
+  module scope, so they don't break the "no desktop framework" smoke test, which
+  is a source scan for import specifiers. `sentry.ts` is the one that is not
+  Electron-free: it does `await import('@sentry/electron/main')` at `:57`, `:82`
+  and `:116`, and `src/shared/maestro-lib/launch/path-prober.ts` reaches it
+  through `captureException` (`:25`, called at `:235` and `:325`). Because those
+  imports are deferred and wrapped in try/catch, a standalone program still
+  loads and still runs; it simply does not report to Sentry. These reach-backs
+  are not yet part of the library proper.
 - Desktop's own callers (IPC process handlers, group chat, cross-agent router)
   were left importing the old paths (now shims) rather than redirected, since
   they weren't named in the action items and desktop chat's migration is Part
