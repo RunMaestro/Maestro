@@ -98,7 +98,6 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		projectRoot,
 		onOpenProjectFile,
 		content,
-		onContentChange,
 		contentVersion = 0, // Used to force-sync on external file changes
 		externalLocalContent,
 		onExternalLocalContentChange,
@@ -199,9 +198,6 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		},
 		[onModeChange]
 	);
-
-	// Use onContentChange if provided, otherwise no-op
-	const handleContentChange = onContentChange || (() => {});
 
 	// Content sync: manages local/saved state, external sync for expanded modal, save/revert
 	const {
@@ -347,19 +343,23 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		pushUndoState();
 
 		// Replace all completed checkboxes with unchecked ones
-		const resetContent = localContent.replace(/^([\s]*[-*]\s*)\[x\]/gim, '$1[ ]');
+		const uncheckAll = (text: string) => text.replace(/^([\s]*[-*]\s*)\[x\]/gim, '$1[ ]');
+		const resetContent = uncheckAll(localContent);
 		setLocalContent(resetContent);
 		lastUndoSnapshotRef.current = resetContent;
 
-		// Auto-save the reset content
+		// Auto-save the reset, applied to the SAVED text rather than the draft:
+		// persisting the draft would bake the user's unsaved edits into the file
+		// and leave Revert nothing to discard.
+		const resetSaved = uncheckAll(savedContent);
 		try {
 			await window.maestro.autorun.writeDoc(
 				folderPath,
 				selectedFile + '.md',
-				resetContent,
+				resetSaved,
 				sshRemoteId
 			);
-			setSavedContent(resetContent);
+			setSavedContent(resetSaved);
 
 			// Show flash notification with the count of reset tasks
 			if (onShowFlash && resetCount > 0) {
@@ -372,6 +372,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		folderPath,
 		selectedFile,
 		localContent,
+		savedContent,
 		setLocalContent,
 		setSavedContent,
 		pushUndoState,
@@ -384,9 +385,11 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 	// leaves the toggle callback reference-stable, so the memoized markdown
 	// components (and the parse behind them) survive every content change.
 	const localContentRef = useRef(localContent);
+	const savedContentRef = useRef(savedContent);
 	useEffect(() => {
 		localContentRef.current = localContent;
-	}, [localContent]);
+		savedContentRef.current = savedContent;
+	}, [localContent, savedContent]);
 
 	// Tick a task off straight from the rendered preview. Preview is a first-class
 	// way to work a playbook, so checking a box must not require a trip through
@@ -400,9 +403,15 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 			// source. Leave the document alone rather than rewriting the wrong line.
 			if (!result) return false;
 
+			const hasUnsavedEdits = localContentRef.current !== savedContentRef.current;
 			pushUndoState();
 			setLocalContent(result.content);
 			lastUndoSnapshotRef.current = result.content;
+
+			// With unsaved edits the toggle joins the draft instead of saving it:
+			// writing now would persist those edits too, and Revert could no
+			// longer discard them. Save commits both together.
+			if (hasUnsavedEdits) return true;
 
 			try {
 				await window.maestro.autorun.writeDoc(
@@ -456,7 +465,6 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		selectedFile,
 		localContent,
 		setLocalContent,
-		handleContentChange,
 		isLocked,
 		editorRef,
 		pushUndoState,

@@ -380,7 +380,7 @@ Click **Collapse** or press `Esc` to return to the sidebar panel view.
 
 ## Saving Documents
 
-Save your changes with `Cmd+S` (Mac) or `Ctrl+S` (Windows/Linux), or click the **Save** button in the editor footer. The editor shows "Unsaved changes" and a **Revert** button when you have pending edits. Full undo/redo support with `Cmd+Z` / `Cmd+Shift+Z`.
+Save your changes with `Cmd+S` (Mac) or `Ctrl+S` (Windows/Linux), or click the **Save** button in the editor footer. The editor shows "Unsaved changes" and a **Revert** button when you have pending edits. Revert discards everything since the last save, including pasted text, inserted images, and checkboxes ticked in preview. Full undo/redo support with `Cmd+Z` / `Cmd+Shift+Z`.
 
 **Note**: Switching documents discards unsaved changes. Save before switching if you want to preserve your edits.
 

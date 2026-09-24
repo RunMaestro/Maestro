@@ -37,7 +37,6 @@ const createMockDeps = (
 		selectedFile: 'Phase 1',
 		localContent: '# Phase 1\n\nSome content',
 		setLocalContent: vi.fn(),
-		handleContentChange: vi.fn(),
 		isLocked: false,
 		editorRef,
 		pushUndoState: vi.fn(),

@@ -19,8 +19,6 @@ export interface UseAutoRunImageHandlingDeps {
 	localContent: string;
 	/** Function to update the local content state */
 	setLocalContent: (content: string) => void;
-	/** Function to sync content to parent state */
-	handleContentChange: (content: string) => void;
 	/** Whether editing is locked (e.g., during batch run) */
 	isLocked: boolean;
 	/** Ref to the CodeMirror editor, for cursor position and insertion */
@@ -123,7 +121,6 @@ const removeImageMarkdownReference = (content: string, relativePath: string): st
  *   selectedFile,
  *   localContent,
  *   setLocalContent,
- *   handleContentChange,
  *   isLocked,
  *   editorRef,
  *   pushUndoState,
@@ -136,7 +133,6 @@ export function useAutoRunImageHandling({
 	selectedFile,
 	localContent,
 	setLocalContent,
-	handleContentChange,
 	isLocked,
 	editorRef,
 	pushUndoState,
@@ -241,11 +237,9 @@ export function useAutoRunImageHandling({
 						const editor = editorRef.current;
 						if (!editor) return false;
 						const { from, to } = editor.getSelectionRange();
-						const newContent = localContent.slice(0, from) + trimmedText + localContent.slice(to);
 						// Insert through the editor so the caret lands after the text
 						// and the change reaches state via the editor's own onChange.
 						editor.replaceRange(from, to, trimmedText);
-						handleContentChange(newContent);
 						return true;
 					}
 				}
@@ -324,9 +318,8 @@ export function useAutoRunImageHandling({
 				}
 
 				const newContent = textBefore + prefix + imageMarkdown + suffix + textAfter;
-				// Update local state and sync to parent immediately for explicit user action
+				// Draft-only: the insertion stays unsaved until Save, so Revert discards it.
 				setLocalContent(newContent);
-				handleContentChange(newContent);
 				lastUndoSnapshotRef.current = newContent;
 
 				// Move cursor after the inserted markdown, once the editor has
@@ -343,7 +336,6 @@ export function useAutoRunImageHandling({
 		[
 			localContent,
 			isLocked,
-			handleContentChange,
 			folderPath,
 			selectedFile,
 			pushUndoState,
@@ -385,7 +377,7 @@ export function useAutoRunImageHandling({
 					// Push undo state before modifying content
 					pushUndoState();
 
-					// Insert at end of content - update local and sync to parent immediately
+					// Insert at end of content
 					// URL-encode the path to handle spaces and special characters
 					const encodedPath = result
 						.relativePath!.split('/')
@@ -394,7 +386,6 @@ export function useAutoRunImageHandling({
 					const imageMarkdown = `\n![${filename}](${encodedPath})\n`;
 					const newContent = localContent + imageMarkdown;
 					setLocalContent(newContent);
-					handleContentChange(newContent);
 					lastUndoSnapshotRef.current = newContent;
 				}
 			};
@@ -405,7 +396,6 @@ export function useAutoRunImageHandling({
 		},
 		[
 			localContent,
-			handleContentChange,
 			folderPath,
 			selectedFile,
 			pushUndoState,
@@ -432,25 +422,16 @@ export function useAutoRunImageHandling({
 			// Push undo state before modifying content
 			pushUndoState();
 
-			// Remove the markdown reference from content - update local and sync to parent immediately
+			// Remove the markdown reference from content
 			// The markdown content uses URL-encoded paths, so we need to match the encoded version
 			const newContent = removeImageMarkdownReference(localContent, relativePath);
 			setLocalContent(newContent);
-			handleContentChange(newContent);
 			lastUndoSnapshotRef.current = newContent;
 
 			// Clear from cache
 			imageCache.delete(`${folderPath}:${relativePath}`);
 		},
-		[
-			localContent,
-			handleContentChange,
-			folderPath,
-			pushUndoState,
-			setLocalContent,
-			lastUndoSnapshotRef,
-			sshRemoteId,
-		]
+		[localContent, folderPath, pushUndoState, setLocalContent, lastUndoSnapshotRef, sshRemoteId]
 	);
 
 	// Overwrite an existing attachment's bytes with a new data URL.
@@ -522,25 +503,16 @@ export function useAutoRunImageHandling({
 			// Push undo state before modifying content
 			pushUndoState();
 
-			// Remove the markdown reference from content - update local and sync to parent immediately
+			// Remove the markdown reference from content
 			// The markdown content uses URL-encoded paths, so we need to match the encoded version
 			const newContent = removeImageMarkdownReference(localContent, relativePath);
 			setLocalContent(newContent);
-			handleContentChange(newContent);
 			lastUndoSnapshotRef.current = newContent;
 
 			// Clear from cache
 			imageCache.delete(`${folderPath}:${relativePath}`);
 		},
-		[
-			folderPath,
-			localContent,
-			handleContentChange,
-			pushUndoState,
-			setLocalContent,
-			lastUndoSnapshotRef,
-			sshRemoteId,
-		]
+		[folderPath, localContent, pushUndoState, setLocalContent, lastUndoSnapshotRef, sshRemoteId]
 	);
 
 	return {

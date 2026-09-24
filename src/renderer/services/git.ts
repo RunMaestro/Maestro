@@ -7,6 +7,7 @@ import {
 	remoteUrlToBrowserUrl,
 	parseGitStatusPorcelain,
 	parseGitNumstat,
+	isNotAGitRepositoryError,
 } from '../../shared/gitUtils';
 import type {
 	GitCommandOutputChunk,
@@ -21,6 +22,8 @@ export interface GitStatus {
 		status: string;
 	}>;
 	branch?: string;
+	/** Git reported the directory is not inside a repo (its `.git` is gone). */
+	notARepo?: boolean;
 }
 
 export interface GitDiff {
@@ -116,8 +119,9 @@ export const gitService = {
 
 				const files = parseGitStatusPorcelain(statusResult.stdout || '');
 				const branch = branchResult.stdout?.trim() || undefined;
+				const notARepo = isNotAGitRepositoryError(statusResult.stderr);
 
-				return { files, branch };
+				return notARepo ? { files, branch, notARepo } : { files, branch };
 			},
 			errorContext: 'Git status',
 			defaultValue: { files: [], branch: undefined },

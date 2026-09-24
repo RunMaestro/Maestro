@@ -295,6 +295,35 @@ describe('Claude IPC handlers', () => {
 		});
 	});
 
+	describe('claude:registerSessionOrigin', () => {
+		it('keeps the saved name and star when a turn re-registers the session', async () => {
+			// Runs on every turn; replacing the record wiped tab names out of "All Named".
+			mockClaudeSessionOriginsStore.get.mockReturnValue({
+				'/project': {
+					'sess-1': { origin: 'user', sessionName: 'TypeSafe.ai JEV Skill', starred: true },
+				},
+			});
+
+			const handler = handlers.get('claude:registerSessionOrigin')!;
+			await handler({}, '/project', 'sess-1', 'user');
+
+			expect(mockClaudeSessionOriginsStore.set).toHaveBeenCalledWith('origins', {
+				'/project': {
+					'sess-1': { origin: 'user', sessionName: 'TypeSafe.ai JEV Skill', starred: true },
+				},
+			});
+		});
+
+		it('stores a first registration with no name as the bare origin', async () => {
+			const handler = handlers.get('claude:registerSessionOrigin')!;
+			await handler({}, '/project', 'sess-new', 'auto');
+
+			expect(mockClaudeSessionOriginsStore.set).toHaveBeenCalledWith('origins', {
+				'/project': { 'sess-new': 'auto' },
+			});
+		});
+	});
+
 	describe('claude:listSessions', () => {
 		it('should return sessions from ~/.claude directory', async () => {
 			const fs = await import('fs/promises');

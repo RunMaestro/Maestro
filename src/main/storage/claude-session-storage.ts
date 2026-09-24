@@ -42,6 +42,7 @@ import type {
 	ClaudeSessionOriginsData,
 } from '../stores/types';
 import { BaseSessionStorage } from './base-session-storage';
+import { setClaudeSessionOrigin } from './claude-session-origins';
 import type { SearchableMessage } from './base-session-storage';
 export type { ClaudeSessionOriginsData } from '../stores/types';
 
@@ -1086,12 +1087,12 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 		origin: AgentSessionOrigin,
 		sessionName?: string
 	): void {
-		const origins = this.originsStore.get('origins', {});
-		if (!origins[projectPath]) {
-			origins[projectPath] = {};
-		}
-		origins[projectPath][agentSessionId] = sessionName ? { origin, sessionName } : origin;
-		this.originsStore.set('origins', origins);
+		setClaudeSessionOrigin(
+			this.originsStore,
+			projectPath,
+			agentSessionId,
+			sessionName ? { origin, sessionName } : { origin }
+		);
 		logger.debug(
 			`Registered Claude session origin: ${agentSessionId} = ${origin}${sessionName ? ` (name: ${sessionName})` : ''}`,
 			LOG_CONTEXT
@@ -1102,19 +1103,7 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 	 * Update the name of a session
 	 */
 	updateSessionName(projectPath: string, agentSessionId: string, sessionName: string): void {
-		const origins = this.originsStore.get('origins', {});
-		if (!origins[projectPath]) {
-			origins[projectPath] = {};
-		}
-		const existing = origins[projectPath][agentSessionId];
-		if (typeof existing === 'string') {
-			origins[projectPath][agentSessionId] = { origin: existing, sessionName };
-		} else if (existing) {
-			origins[projectPath][agentSessionId] = { ...existing, sessionName };
-		} else {
-			origins[projectPath][agentSessionId] = { origin: 'user', sessionName };
-		}
-		this.originsStore.set('origins', origins);
+		setClaudeSessionOrigin(this.originsStore, projectPath, agentSessionId, { sessionName });
 		logger.debug(`Updated Claude session name: ${agentSessionId} = ${sessionName}`, LOG_CONTEXT);
 	}
 
@@ -1122,19 +1111,7 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 	 * Update the starred status of a session
 	 */
 	updateSessionStarred(projectPath: string, agentSessionId: string, starred: boolean): void {
-		const origins = this.originsStore.get('origins', {});
-		if (!origins[projectPath]) {
-			origins[projectPath] = {};
-		}
-		const existing = origins[projectPath][agentSessionId];
-		if (typeof existing === 'string') {
-			origins[projectPath][agentSessionId] = { origin: existing, starred };
-		} else if (existing) {
-			origins[projectPath][agentSessionId] = { ...existing, starred };
-		} else {
-			origins[projectPath][agentSessionId] = { origin: 'user', starred };
-		}
-		this.originsStore.set('origins', origins);
+		setClaudeSessionOrigin(this.originsStore, projectPath, agentSessionId, { starred });
 		logger.debug(`Updated Claude session starred: ${agentSessionId} = ${starred}`, LOG_CONTEXT);
 	}
 
@@ -1147,19 +1124,7 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 		agentSessionId: string,
 		contextUsage: number
 	): void {
-		const origins = this.originsStore.get('origins', {});
-		if (!origins[projectPath]) {
-			origins[projectPath] = {};
-		}
-		const existing = origins[projectPath][agentSessionId];
-		if (typeof existing === 'string') {
-			origins[projectPath][agentSessionId] = { origin: existing, contextUsage };
-		} else if (existing) {
-			origins[projectPath][agentSessionId] = { ...existing, contextUsage };
-		} else {
-			origins[projectPath][agentSessionId] = { origin: 'user', contextUsage };
-		}
-		this.originsStore.set('origins', origins);
+		setClaudeSessionOrigin(this.originsStore, projectPath, agentSessionId, { contextUsage });
 		// Don't log this - it updates frequently and would spam logs
 	}
 

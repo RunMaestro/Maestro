@@ -53,14 +53,28 @@ function readPromptFile(projectRoot: string, promptFile: string): string | undef
 	// path for POSIX escapes, and an absolute path on Windows when `realPath`
 	// lives on a different drive or UNC share (no common base) - so we reject
 	// any absolute rel too.
+	//
+	// The project's own `.maestro` directory is a second trusted root. Two
+	// agents can share one Cue config by symlinking `.maestro` to another
+	// checkout; the YAML is read through that link, so its prompt files must be
+	// too. Without this, every prompt_file resolved outside the root, the
+	// subscriptions loaded with empty prompts, and the pipeline editor refused
+	// to save ("agent X is missing a prompt").
 	let canonicalPath: string;
 	try {
-		const realRoot = fs.realpathSync.native(normalizedRoot);
 		const realPath = fs.realpathSync.native(absPath);
-		const rel = path.relative(realRoot, realPath);
-		if (rel !== '' && (path.isAbsolute(rel) || rel.split(path.sep)[0] === '..')) {
-			return undefined;
-		}
+		const trustedRoots = [normalizedRoot, path.join(normalizedRoot, '.maestro')];
+		const contained = trustedRoots.some((root) => {
+			let realRoot: string;
+			try {
+				realRoot = fs.realpathSync.native(root);
+			} catch {
+				return false;
+			}
+			const rel = path.relative(realRoot, realPath);
+			return rel === '' || (!path.isAbsolute(rel) && rel.split(path.sep)[0] !== '..');
+		});
+		if (!contained) return undefined;
 		canonicalPath = realPath;
 	} catch {
 		return undefined;

@@ -221,6 +221,40 @@ async function detectGitRepoTransitions(sessions: Session[]): Promise<void> {
 }
 
 /**
+ * The reverse of `detectGitRepoTransitions`: a session marked `isGitRepo: true`
+ * whose `git status` reported "not a git repository" (the user deleted `.git`,
+ * e.g. to turn one repo into a folder of several). Clears the flag and the
+ * cached refs so the header stops showing a GIT pill for a plain directory.
+ *
+ * The poll runs in the terminal's `shellCwd`, which the user may have `cd`ed
+ * out of the repo. Only the agent's own `cwd` decides whether it is a git
+ * agent, so a miss in any other directory is confirmed against `cwd` first.
+ */
+async function demoteIfNoLongerGitRepo(
+	session: Session,
+	polledCwd: string,
+	sshRemoteId: string | undefined
+): Promise<void> {
+	if (polledCwd !== session.cwd) {
+		const rootStatus = await gitService.getStatus(session.cwd, sshRemoteId);
+		if (!rootStatus.notARepo) return;
+	}
+
+	updateSessionWith(session.id, (s) =>
+		s.isGitRepo
+			? {
+					...s,
+					isGitRepo: false,
+					changedFiles: [],
+					gitBranches: undefined,
+					gitTags: undefined,
+					gitRefsCacheTime: undefined,
+				}
+			: s
+	);
+}
+
+/**
  * Hook that polls git status for all git repository sessions.
  *
  * Features:
@@ -316,6 +350,10 @@ export function useGitStatusPolling(
 						// For non-active sessions, just get basic status (file count)
 						if (!isActiveSession) {
 							const status = await gitService.getStatus(cwd, sshRemoteId);
+							if (status.notARepo) {
+								await demoteIfNoLongerGitRepo(session, cwd, sshRemoteId);
+								return null;
+							}
 							const statusData: GitStatusData = {
 								fileCount: status.files.length,
 								branch: status.branch,
@@ -337,6 +375,10 @@ export function useGitStatusPolling(
 							gitService.getStatus(cwd, sshRemoteId),
 							gitService.getNumstat(cwd, sshRemoteId),
 						]);
+						if (status.notARepo) {
+							await demoteIfNoLongerGitRepo(session, cwd, sshRemoteId);
+							return null;
+						}
 
 						// Create a map of path -> numstat data
 						const numstatMap = new Map<string, { additions: number; deletions: number }>();

@@ -9,6 +9,7 @@ import {
 } from '../../utils/tabHelpers';
 import { generateId } from '../../utils/ids';
 import { buildSharedHistoryContext } from '../../utils/sessionHelpers';
+import { resolveSessionProjectPath } from '../../components/AgentSessionsBrowser/utils/sessionProjectPath';
 import type { RightPanelHandle } from '../../components/RightPanel';
 import { FALLBACK_CONTEXT_WINDOW } from '../../../shared/agentConstants';
 import { logger } from '../../utils/logger';
@@ -298,8 +299,13 @@ export function useAgentSessionManagement(
 				: activeSession;
 			// Need a session for tab management
 			if (!targetSession) return false;
-			// Use provided projectPath (e.g. from history entry) or fall back to the target's projectRoot
-			const resolvedProjectRoot = projectPath || targetSession.projectRoot;
+			// Resolve the host and path the transcript lives on the same way the
+			// sessions browser does. `targetSession.sshRemoteId` alone is empty until
+			// the agent spawns in this app run, so an SSH agent opened from History
+			// after a restart read the LOCAL disk and found nothing.
+			const { projectPathForSessions, sshRemoteId } = resolveSessionProjectPath(targetSession);
+			// Use provided projectPath (e.g. from history entry) or fall back to the target's path
+			const resolvedProjectRoot = projectPath || projectPathForSessions;
 			if (!resolvedProjectRoot) {
 				logger.warn('[handleResumeSession] No projectRoot on target session', undefined, {
 					sessionId: targetSession.id,
@@ -341,7 +347,7 @@ export function useAgentSessionManagement(
 						resolvedProjectRoot,
 						agentSessionId,
 						{ offset: 0, limit: TRANSCRIPT_RESUME_READ_LIMIT },
-						targetSession.sshRemoteId
+						sshRemoteId
 					);
 
 					// Strip the Auto Run synopsis turns, then convert. Shared with the

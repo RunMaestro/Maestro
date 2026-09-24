@@ -125,6 +125,7 @@ import {
 	getAgentSessionOriginsStore,
 } from './stores';
 import { runSettingsMigrations } from './stores/migrations';
+import { migrateClaudeSessionNamesFromHistory } from './stores/migrations/claude-session-names-backfill';
 import {
 	ensureCliServer,
 	startCliDiscoveryWatchdog,
@@ -2782,6 +2783,15 @@ app
 			logger.error(`Failed to initialize history manager: ${error}`, 'Startup');
 			logger.warn('Continuing without history - history features will be unavailable', 'Startup');
 		}
+
+		// Restore Claude tab names the origins store lost; history is the source.
+		// Not awaited: it reads every history file and nothing at startup needs it.
+		migrateClaudeSessionNamesFromHistory(store, claudeSessionOriginsStore, historyManager).catch(
+			(error) => {
+				void captureException(error);
+				logger.error(`Claude session names backfill failed: ${error}`, 'Migration');
+			}
+		);
 
 		// Initialize stats database for usage tracking
 		logger.info('Initializing stats database', 'Startup');
