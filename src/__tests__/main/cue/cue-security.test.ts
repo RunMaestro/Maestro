@@ -573,12 +573,6 @@ vi.mock('better-sqlite3', () => ({
 	},
 }));
 
-vi.mock('electron', () => ({
-	app: {
-		getPath: vi.fn(() => os.tmpdir()),
-	},
-}));
-
 // Import AFTER vi.mock so the mocked better-sqlite3 binding is used.
 import { initCueDb, closeCueDb } from '../../../main/cue/cue-db';
 

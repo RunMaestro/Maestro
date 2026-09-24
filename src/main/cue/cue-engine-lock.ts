@@ -5,7 +5,7 @@
  *
  * Both runners read the SAME on-disk state for a given data directory -
  * `.maestro/cue.yaml` per project, and one shared `cue.db` (see
- * `cue-data-dir.ts` / `resolveMaestroUserDataDir()`). Without coordination, a
+ * `resolveUserDataDir()` in `src/shared/userDataDir.ts`). Without coordination, a
  * user who leaves the desktop app open AND starts the standalone engine (for
  * unattended operation when the desktop app is closed) would get every
  * trigger firing TWICE - two agent processes spawned per `time.heartbeat`
@@ -15,7 +15,7 @@
  * WITHIN one engine instance; they have no visibility into a second process.
  *
  * This is deliberately a SINGLE global lock per data directory, not a
- * per-project one: `cue.db` is one shared database (see `cue-data-dir.ts`),
+ * per-project one: `cue.db` is one shared database (see `initCueDb()`),
  * and the event queue / history / telemetry outbox tables it holds have no
  * per-project isolation either, so two engines writing to it concurrently
  * would race on it independently of which projects each happens to own.
@@ -31,7 +31,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { resolveMaestroUserDataDir } from '../../shared/maestroUserDataDir';
+import { resolveUserDataDir } from '../../shared/userDataDir';
 
 export type CueEngineRunnerMode = 'desktop' | 'standalone';
 
@@ -44,7 +44,7 @@ export interface CueEngineLockInfo {
 	host?: string;
 }
 
-function lockFilePath(dataDir: string = resolveMaestroUserDataDir()): string {
+function lockFilePath(dataDir: string = resolveUserDataDir()): string {
 	return path.join(dataDir, 'cue-engine.lock');
 }
 
