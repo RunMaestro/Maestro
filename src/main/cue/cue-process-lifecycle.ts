@@ -102,7 +102,9 @@ const activeProcesses = new Map<string, CueActiveProcess>();
  * sessions), so a model-dependent window falls back to the static per-agent
  * default rather than a runtime-resolved one. Every other field maps 1:1.
  */
-function toCueUsageStats(usage: NonNullable<ReturnType<AgentOutputParser['extractUsage']>>): UsageStats {
+function toCueUsageStats(
+	usage: NonNullable<ReturnType<AgentOutputParser['extractUsage']>>
+): UsageStats {
 	const stats: UsageStats = {
 		inputTokens: usage.inputTokens,
 		outputTokens: usage.outputTokens,

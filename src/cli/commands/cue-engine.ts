@@ -145,7 +145,8 @@ export async function cueEngineStop(options: CueEngineStopOptions = {}): Promise
 	}
 
 	const message = `Sent SIGTERM to pid ${lock.pid} but the lock is still held after ${waitMs}ms - it may still be shutting down, or may need a manual kill.`;
-	if (options.json) console.log(JSON.stringify({ stopped: false, reason: 'timeout', pid: lock.pid }));
+	if (options.json)
+		console.log(JSON.stringify({ stopped: false, reason: 'timeout', pid: lock.pid }));
 	else console.warn(`[Cue] ${message}`);
 	process.exitCode = 1;
 }
