@@ -74,9 +74,7 @@ async function build() {
 			// resolution - bundled, it throws "Electron failed to install
 			// correctly" the moment anything requires it, even though
 			// `require('electron')` under plain Node works fine unbundled (it
-			// resolves to the binary path string, not the Electron API surface -
-			// see maestroUserDataDir.ts's doc comment for why that string, not
-			// undefined, is what a CLI import of an Electron-typed module sees).
+			// resolves to the binary path string, not the Electron API surface).
 			// `standalone Cue engine` (`cue engine start`) is the first CLI
 			// command whose import graph reaches an electron-store-backed module
 			// (`claude-usage-startup.ts`, via `resolveClaudeSpawnMode.ts`), so

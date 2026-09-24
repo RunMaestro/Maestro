@@ -8,8 +8,8 @@
  * the standalone counterpart to the inline wiring `src/main/index.ts` builds
  * for the desktop app, sourcing the SAME on-disk data (`maestro-sessions.json`,
  * `.maestro/cue.yaml` per project, the shared `cue.db` - all resolved through
- * `resolveMaestroUserDataDir()` / `cue-data-dir.ts`, the same path the desktop
- * app uses) via `maestro-cli`'s existing storage helpers rather than Electron
+ * `resolveUserDataDir()` in `src/shared/userDataDir.ts`, the same path the
+ * desktop app uses) via `maestro-cli`'s existing storage helpers rather than Electron
  * APIs.
  *
  * Deliberately narrower than the desktop wiring, in three documented ways:
@@ -131,7 +131,17 @@ function sshStoreAdapter(): SshRemoteSettingsStore {
  * documented above.
  */
 function buildOnCueRun(onLog: StandaloneCueLog): CueEngineDeps['onCueRun'] {
-	return async ({ runId, sessionId, prompt, subscriptionName, event, timeoutMs, action, command, notify }) => {
+	return async ({
+		runId,
+		sessionId,
+		prompt,
+		subscriptionName,
+		event,
+		timeoutMs,
+		action,
+		command,
+		notify,
+	}) => {
 		const { executeCuePrompt, executeCueShell, executeCueCli, executeCueNotify } =
 			await loadExecutors();
 		const sessions = readSessions();
@@ -167,7 +177,14 @@ function buildOnCueRun(onLog: StandaloneCueLog): CueEngineDeps['onCueRun'] {
 			return executeCueNotify({
 				runId,
 				session: sessionInfo,
-				subscription: { name: subscriptionName, event: event.type, enabled: true, prompt, action, notify },
+				subscription: {
+					name: subscriptionName,
+					event: event.type,
+					enabled: true,
+					prompt,
+					action,
+					notify,
+				},
 				event,
 				agentId: storedSession.id,
 				message,
@@ -186,7 +203,14 @@ function buildOnCueRun(onLog: StandaloneCueLog): CueEngineDeps['onCueRun'] {
 					`Cue subscription "${subscriptionName}" has action='command' but no command payload`
 				);
 			}
-			const subscription = { name: subscriptionName, event: event.type, enabled: true, prompt, action, command };
+			const subscription = {
+				name: subscriptionName,
+				event: event.type,
+				enabled: true,
+				prompt,
+				action,
+				command,
+			};
 			return command.mode === 'shell'
 				? executeCueShell({
 						runId,
