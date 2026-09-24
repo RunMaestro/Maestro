@@ -100,7 +100,10 @@ async function runRecording(recording: TurnRecording): Promise<CapturedEvents> {
 	const sessionId = recording.name;
 	const managedProcess = createManagedProcess(sessionId, recording);
 	processes.set(sessionId, managedProcess);
-	nextSpawnGeneration(sessionId, managedProcess);
+	// Store the generation: `isSupersededGeneration` reads an undefined one as
+	// current, so leaving it unset bypasses the guard a recording is meant to run
+	// under.
+	managedProcess.spawnGeneration = nextSpawnGeneration(sessionId);
 
 	const captured: CapturedEvents = {
 		sessionIds: [],
@@ -185,6 +188,25 @@ describe('turn recordings', () => {
 		expect(events.sessionIds).toEqual(['sess-cutstream-1']);
 		expect(events.data.join('')).toContain('Answer that arrived with no trailing newline.');
 		expect(events.agentErrors).toEqual([]);
+	});
+
+	it('classified-exit-with-answer: a specific exit classification outranks a captured answer', async () => {
+		// Precedence, stated so it reads as a decision rather than an oversight:
+		// resolveTurnOutcome consults the provider's exit classification BEFORE
+		// it looks at capturedAnswerText, so a turn that produced a usable answer
+		// and then exited on an auth failure is a crash carrying the specific
+		// message, not a completed-with-warning carrying the answer. The sibling
+		// bad-exit-with-answer covers the UNMATCHED exit, which reaches the
+		// generic fallback instead.
+		const events = await runRecording(RECORDINGS['classified-exit-with-answer']);
+
+		expect(events.data.join('')).toContain('produced before the credential expired');
+		expect(events.agentErrors).toHaveLength(1);
+		expect(events.agentErrors[0]).toMatchObject({
+			type: 'auth_expired',
+			message: 'OAuth token has expired. Sign in again to continue.',
+		});
+		expect(events.exits).toEqual([1]);
 	});
 
 	it('bad-exit-with-answer: documents a real CLI-vs-desktop divergence - desktop still reports a generic crash despite a captured answer', async () => {

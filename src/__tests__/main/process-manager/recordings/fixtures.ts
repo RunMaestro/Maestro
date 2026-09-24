@@ -182,6 +182,22 @@ export const RECORDINGS: Record<string, TurnRecording> = {
 		stderrBuffer: 'npm warn deprecated some-package@1.0.0: this package is no longer maintained',
 	},
 
+	'classified-exit-with-answer': {
+		name: 'classified-exit-with-answer',
+		description:
+			"A real answer was captured AND the non-zero exit matches a SPECIFIC provider error pattern (auth), not the generic fallback. This pins the precedence the resolver chose: the provider's exit classification is consulted before any captured answer, so the turn is a crash carrying the specific auth message rather than a completed-with-warning. The sibling 'bad-exit-with-answer' covers the UNMATCHED exit; this one covers the matched exit, which takes a different branch and is the pair a reader would otherwise assume was an oversight.",
+		toolType: 'claude-code',
+		chunks: [
+			line(SYSTEM_INIT('sess-classified-1')),
+			line(ASSISTANT_TEXT('A complete answer, produced before the credential expired.')),
+			line(
+				RESULT('sess-classified-1', 'A complete answer, produced before the credential expired.')
+			),
+		],
+		exitCode: 1,
+		stderrBuffer: 'OAuth token has expired',
+	},
+
 	'silent-resume': {
 		name: 'silent-resume',
 		description:
