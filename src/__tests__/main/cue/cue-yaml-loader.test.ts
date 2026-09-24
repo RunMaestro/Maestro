@@ -272,6 +272,49 @@ subscriptions:
 			expect(result!.subscriptions[0].prompt).toBe('Prompt from external file');
 		});
 
+		describe('prompt_file behind a symlinked .maestro directory', () => {
+			// Two agents share one Cue config: /projects/cue/.maestro -> /projects/main/.maestro.
+			const canonicalize = (p: string) =>
+				p.replace('/projects/cue/.maestro', '/projects/main/.maestro');
+			const yamlWith = (promptFile: string) => `
+subscriptions:
+  - name: shared-sub
+    event: time.heartbeat
+    prompt_file: ${promptFile}
+    interval_minutes: 5
+`;
+
+			afterEach(() => {
+				mockRealpathSyncNative.mockImplementation((p: string) => p);
+			});
+
+			it('resolves the prompt through the link', () => {
+				mockRealpathSyncNative.mockImplementation(canonicalize);
+				mockExistsSync.mockReturnValue(true);
+				mockReadFileSync.mockImplementation((p: string) =>
+					String(p) === '/projects/main/.maestro/prompts/shared.md'
+						? 'Shared prompt'
+						: yamlWith('.maestro/prompts/shared.md')
+				);
+
+				const result = loadCueConfig('/projects/cue');
+				expect(result!.subscriptions[0].prompt).toBe('Shared prompt');
+			});
+
+			it('still rejects a prompt file that escapes both the root and .maestro', () => {
+				mockRealpathSyncNative.mockImplementation((p: string) =>
+					p === '/projects/cue/.maestro/prompts/evil.md' ? '/etc/passwd' : canonicalize(p)
+				);
+				mockExistsSync.mockReturnValue(true);
+				mockReadFileSync.mockImplementation((p: string) =>
+					String(p) === '/etc/passwd' ? 'root:x:0:0' : yamlWith('.maestro/prompts/evil.md')
+				);
+
+				const result = loadCueConfig('/projects/cue');
+				expect(result!.subscriptions[0].prompt).toBe('');
+			});
+		});
+
 		it('keeps inline prompt when both prompt and prompt_file exist', () => {
 			mockExistsSync.mockReturnValue(true);
 			mockReadFileSync.mockReturnValue(`
