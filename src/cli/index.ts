@@ -994,7 +994,9 @@ cueEngine
 	.command('stop')
 	.description('Stop a running standalone engine (refuses to signal a desktop-owned one)')
 	.option('--json', 'Output as JSON (for scripting)')
-	.option('--wait-ms <ms>', 'How long to wait for the lock to clear after signaling', (v) => parseInt(v, 10))
+	.option('--wait-ms <ms>', 'How long to wait for the lock to clear after signaling', (v) =>
+		parseInt(v, 10)
+	)
 	.action((opts) => cueEngineStop(opts));
 
 cueEngine
