@@ -253,6 +253,8 @@ export interface SessionInfo {
 	toolType: ToolType;
 	cwd: string;
 	projectRoot: string;
+	/** The agent's original working directory, persisted by the desktop app. Older records may lack it. */
+	fullPath?: string;
 	autoRunFolderPath?: string;
 	/** Extra directories granted beyond the working directory (prompt-level grants). */
 	additionalDirectories?: AdditionalDirectory[];
