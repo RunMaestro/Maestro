@@ -1158,15 +1158,19 @@ async function spawnJsonLineAgent(
 				warnOversizedLineBuffer(dropped);
 			},
 		});
-		// Codex-style providers report a RUNNING SESSION TOTAL on every usage
-		// event. Summing those (what this path did before) makes a session's
-		// reported tokens grow with the square of its event count, so those
-		// providers go through the shared accumulator, which turns totals into
-		// deltas before they are summed. Every other provider reports per-step
-		// values that are correct to sum as-is, and the accumulator's
-		// monotonic-increase heuristic would misread a coincidentally rising
-		// per-step stream as cumulative and under-report it.
-		const usageAccumulator = hasCapability(toolType, 'usesCombinedContextWindow')
+		// Codex reports a RUNNING SESSION TOTAL on every usage event, so summing
+		// them grows a session's tokens with the square of its event count; the
+		// accumulator turns totals into deltas first. Every other provider
+		// reports per-step values that are correct to sum as-is, and the
+		// accumulator would misread a rising per-step stream as cumulative and
+		// under-report it.
+		//
+		// Named explicitly, the way StdoutHandler names the same set, rather than
+		// gated on `usesCombinedContextWindow`: that flag is about context gauge
+		// math, and copilot-cli sets it while emitting per-turn deltas, so gating
+		// on it under-reported Copilot.
+		const reportsRunningTotal = toolType === 'codex';
+		const usageAccumulator = reportsRunningTotal
 			? new UsageAccumulator({ attachesAbsoluteUsage: true })
 			: undefined;
 		let stdoutTail = '';
