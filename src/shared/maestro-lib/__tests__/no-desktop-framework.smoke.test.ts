@@ -26,14 +26,34 @@ import path from 'node:path';
 
 const LIB_ROOT = path.resolve(__dirname, '..');
 const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx']);
+// What may sit between the keyword and the quote: whitespace, a block comment,
+// or a line comment. A comment is legal everywhere whitespace is, so a scan that
+// only allowed `\s` could be walked past with `import /* x */ 'electron'`.
+//
+// The block-comment form is the linear-time one rather than the obvious
+// `\/\*[\s\S]*?\*\/`: the lazy version rescans to end of file when a comment is
+// never closed, and it sits inside the separator's `+` loop, so one unterminated
+// `/*` would cost that walk again for every `from` or `import` in the file.
+const BLOCK_COMMENT = String.raw`/\*[^*]*\*+(?:[^/*][^*]*\*+)*/`;
+const LINE_COMMENT = String.raw`//[^\n]*\n`;
+const SPECIFIER_SEPARATOR = String.raw`(?:\s|${BLOCK_COMMENT}|${LINE_COMMENT})`;
 // Matches the specifier string following `from`, `require(`, `import(`, or a
 // bare side-effect `import '...'` - covers static imports, dynamic imports,
-// CommonJS requires, and side-effect-only imports alike. The bare-`import`
-// branch is checked last and requires whitespace directly before the quote,
-// so it cannot also match `import(...)` (no space) or `import { x } from`/
-// `import x from` (the character after the whitespace is `{`/an identifier,
-// not a quote) - those are already covered by the other branches.
-const IMPORT_SPECIFIER_PATTERN = /(?:from\s+|require\(\s*|import\(\s*|import\s+)['"]([^'"]+)['"]/g;
+// CommonJS requires, and side-effect-only imports alike.
+//
+// The separator is REQUIRED after `from` and after a bare `import` (a keyword
+// has to be delimited from what follows) and OPTIONAL after `require(` and
+// `import(` (the paren already delimits it). Collapsing those two cases into one
+// optional separator is the trap: it makes the quantifier lazy and direct
+// `require('electron')` / `import('electron')` stop matching.
+//
+// The bare-`import` branch is checked last, so it cannot also match
+// `import(...)` (handled above) or `import { x } from`/`import x from` (the
+// character after the separator is `{`/an identifier, not a quote).
+const IMPORT_SPECIFIER_PATTERN = new RegExp(
+	String.raw`(?:from${SPECIFIER_SEPARATOR}+|require\(${SPECIFIER_SEPARATOR}*|import\(${SPECIFIER_SEPARATOR}*|import${SPECIFIER_SEPARATOR}+)['"]([^'"]+)['"]`,
+	'g'
+);
 
 function collectSourceFiles(dir: string): string[] {
 	const files: string[] = [];
@@ -89,6 +109,11 @@ describe('maestro-lib: no desktop framework dependency', () => {
 		['import("electron").then(() => {});', 'dynamic import'],
 		["const electron = require('electron');", 'CommonJS require'],
 		["import { app } from 'electron/main';", 'electron subpath import'],
+		["import /* sneaky */ 'electron';", 'block comment before a bare side-effect specifier'],
+		["import { app } from /* sneaky */ 'electron';", 'block comment after `from`'],
+		["const electron = require(/* sneaky */ 'electron');", 'block comment inside require'],
+		['import(/* sneaky */ "electron");', 'block comment inside a dynamic import'],
+		["import // sneaky\n'electron';", 'line comment before a bare side-effect specifier'],
 	])('the regex catches "%s" (%s)', (source) => {
 		expect(findElectronOffenders(source).length).toBeGreaterThan(0);
 	});
