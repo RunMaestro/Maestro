@@ -17,7 +17,7 @@
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
-import { resolveMaestroUserDataDir } from '../../shared/maestroUserDataDir';
+import { resolveUserDataDir } from '../../shared/userDataDir';
 
 const INBOX_DIR_NAME = 'cue-trigger-inbox';
 const REQUEST_SUFFIX = '.request.json';
@@ -48,7 +48,7 @@ export type CueTriggerHandler = (
 	sourceAgentId?: string
 ) => boolean;
 
-function inboxDir(dataDir: string = resolveMaestroUserDataDir()): string {
+function inboxDir(dataDir: string = resolveUserDataDir()): string {
 	return path.join(dataDir, INBOX_DIR_NAME);
 }
 
