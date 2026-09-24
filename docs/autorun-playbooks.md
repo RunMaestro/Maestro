@@ -425,7 +425,7 @@ Click the **Stop** button at any time. The runner will:
 
 Every Maestro marker is an HTML comment, which means it renders as nothing. That is right for the file - other markdown tools ignore it, and an agent editing the document leaves it alone - but it is wrong for you. Two of the three markers do not merely change how a run behaves, they stop it:
 
-- A leftover **HITL gate** pauses every re-run until the box below it is ticked.
+- A leftover **HITL gate** pauses every re-run until someone passes it.
 - A leftover **halt marker** makes Auto Run refuse to start at all.
 
 Both present the same way: you press **Run** and nothing happens, with the cause sitting in text the panel does not draw.
@@ -434,7 +434,7 @@ So Maestro renders each marker as a small pill wherever the document is previewe
 
 | Pill                          | Meaning                                                                                                |
 | ----------------------------- | ------------------------------------------------------------------------------------------------------ |
-| ⏸ **Pauses here**             | A live HITL gate. The run stops here until you tick the box.                                           |
+| ⏸ **Pauses here**             | A live HITL gate. The run stops here until you click **Done, Resume**.                                 |
 | ✓ **Approved**                | A gate you already passed. Inert, shown dimmed.                                                        |
 | ■ **Halted**                  | A halt marker. Auto Run will refuse to start until you delete it.                                      |
 | ◆ **high model, high effort** | A model hint. Full strength when it governs the next task, slightly muted when it governs a later one. |
@@ -462,7 +462,7 @@ When a task needs a person - manual testing, visual judgment, sign-off, or a cre
 <!-- MAESTRO:HITL reason="Add SENDGRID_API_KEY to .env before the mailer tasks run" artifact="https://staging.example.com/checkout" -->
 ```
 
-In the desktop app the run **pauses** there, surfaces the reason (and the optional `artifact` to look at) in the Auto Run panel and a toast, and waits. You resume by ticking the box above the marker or clicking Resume. That is a deliberate, visible pause, the opposite of a stall.
+In the desktop app the run **pauses** there, surfaces the reason (and the optional `artifact` to look at) in the Auto Run panel and a toast, and waits. When you have done the step, click **Done, Resume**: Maestro writes a ticked `Human step done` box under the marker, so the gate shows as Approved and a re-run does not stop there again. That is a deliberate, visible pause, the opposite of a stall.
 
 A headless CLI run has no human to wait for, so `maestro run-playbook` reports the gate as a `document_gated` event naming the reason and the line, then moves to the next document. The marker means the same thing on both surfaces; only the response differs.
 
@@ -501,7 +501,7 @@ Halting should be **rare**. Agents are told to reserve it for the case where con
 
 | Situation                                                              | Right mechanism                                        |
 | ---------------------------------------------------------------------- | ------------------------------------------------------ |
-| A task needs a person                                                  | HITL gate - pauses, then resumes on a tick             |
+| A task needs a person                                                  | HITL gate - pauses until you click Done, Resume        |
 | A task the agent cannot do                                             | Leave it unchecked; the stall guard skips the document |
 | One task failed, others are independent                                | Nothing; the run continues                             |
 | Everything downstream is now invalid, or continuing would cause damage | Halt                                                   |

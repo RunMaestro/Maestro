@@ -744,6 +744,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 					errorMessage={batchError.message}
 					errorDocumentName={errorDocumentName}
 					isRecoverable={batchError.recoverable || false}
+					isHumanGate={batchError.type === 'hitl_gate'}
 					onResumeAfterError={onResumeAfterError}
 					onAbortBatchOnError={onAbortBatchOnError}
 				/>

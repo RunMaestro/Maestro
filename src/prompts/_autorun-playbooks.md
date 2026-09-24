@@ -98,7 +98,7 @@ Before you write any `- [ ]`, ask: _can an AI agent with shell, file, and networ
    - [ ] Apply the fixes from the staging review, then run the checkout test suite.
    ```
 
-   The engine pauses the run at that marker, surfaces the `reason` (and optional `artifact` to look at) in the Auto Run panel and a toast, and waits. The user resumes by checking the box above the marker or clicking Resume. This is a **deliberate, visible pause** - the opposite of a stall.
+   The engine pauses the run at that marker, surfaces the `reason` (and optional `artifact` to look at) in the Auto Run panel and a toast, and waits. The user does the step and clicks **Done, Resume**, which writes a ticked `Human step done` box under the marker. Do not add an approval checkbox of your own. This is a **deliberate, visible pause** - the opposite of a stall.
 
 2. **The work just isn't the engine's job** - put it as plain `-` bullets under a trailing section. The engine never reads these, so they cannot stall anything:
 
@@ -131,7 +131,7 @@ Before you write any `- [ ]`, ask: _can an AI agent with shell, file, and networ
 - Get design sign-off on the new login screen.
 ```
 
-A stale HITL marker left above an unchecked task will pause every re-run until the box above it is checked, so use gates only where a person genuinely must act.
+A stale HITL marker left above an unchecked task will pause every re-run until a person passes it, so use gates only where a person genuinely must act.
 
 ### Token Efficiency
 

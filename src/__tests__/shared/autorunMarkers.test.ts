@@ -8,6 +8,7 @@ import { describe, it, expect } from 'vitest';
 import {
 	scanMaestroMarkers,
 	findPendingHitlGate,
+	acknowledgeHitlGate,
 	detectHaltMarker,
 	findHaltMarker,
 	hasMaestroMarker,
@@ -304,5 +305,62 @@ describe('halt marker - description vs instruction', () => {
 	it('draws no pill for a halt quoted in prose', () => {
 		const doc = 'Emit `<!-- maestro:halt: reason -->` to stop the run.';
 		expect(scanMaestroMarkers(doc)).toEqual([]);
+	});
+});
+
+describe('acknowledgeHitlGate', () => {
+	it('passes a gate that has no box of its own, so Resume does not re-pause', () => {
+		const doc = [
+			'<!-- MAESTRO:HITL reason="Add GITHUB_CLIENT_ID to .dev.vars" -->',
+			'',
+			'- [ ] Wire the OAuth callback',
+		].join('\n');
+		const acked = acknowledgeHitlGate(doc);
+		expect(acked).toBe(
+			[
+				'<!-- MAESTRO:HITL reason="Add GITHUB_CLIENT_ID to .dev.vars" -->',
+				'',
+				'- [x] Human step done: Add GITHUB_CLIENT_ID to .dev.vars',
+				'- [ ] Wire the OAuth callback',
+			].join('\n')
+		);
+		expect(findPendingHitlGate(acked!)).toBeNull();
+		expect(scanMaestroMarkers(acked!)[0].status).toBe('spent');
+	});
+
+	it('passes every marker in a chain with one box', () => {
+		const doc = [
+			'<!-- MAESTRO:HITL reason="one" -->',
+			'<!-- MAESTRO:HITL reason="two" -->',
+			'- [ ] task',
+		].join('\n');
+		const acked = acknowledgeHitlGate(doc)!;
+		expect(acked.split('\n')[2]).toBe('- [x] Human step done: one');
+		expect(findPendingHitlGate(acked)).toBeNull();
+	});
+
+	it('re-ticks an acknowledgement a looped run unchecked instead of adding another', () => {
+		const doc = ['<!-- MAESTRO:HITL reason="r" -->', '- [ ] Human step done: r', '- [ ] task'].join(
+			'\n'
+		);
+		expect(acknowledgeHitlGate(doc)).toBe(
+			['<!-- MAESTRO:HITL reason="r" -->', '- [x] Human step done: r', '- [ ] task'].join('\n')
+		);
+	});
+
+	it('keeps CRLF line endings', () => {
+		const acked = acknowledgeHitlGate('<!-- MAESTRO:HITL reason="r" -->\r\n- [ ] task\r\n')!;
+		expect(acked).toBe(
+			'<!-- MAESTRO:HITL reason="r" -->\r\n- [x] Human step done: r\r\n- [ ] task\r\n'
+		);
+	});
+
+	it('returns null when no gate is pending', () => {
+		expect(acknowledgeHitlGate('- [ ] task')).toBeNull();
+		expect(
+			acknowledgeHitlGate(
+				['<!-- MAESTRO:HITL reason="r" -->', '- [x] done', '- [ ] task'].join('\n')
+			)
+		).toBeNull();
 	});
 });

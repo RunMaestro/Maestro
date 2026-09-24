@@ -16,6 +16,7 @@ import { useBatchStore } from '../../../stores/batchStore';
 import { useSessionStore, selectSessionById } from '../../../stores/sessionStore';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { countUnfinishedTasks, findPendingHitlGate, uncheckAllTasks } from '../batchUtils';
+import { acknowledgeHitlGate } from '../../../../shared/autorunMarkers';
 import { DEFAULT_BATCH_STATE, type BatchAction } from '../batchReducer';
 import { createLoopSummaryEntry } from './batchLoopSummary';
 import { buildFinalSummary } from './batchFinalSummary';
@@ -656,14 +657,31 @@ export function useBatchRunner({
 							// dropped) is logged but doesn't crash the run.
 							if (activeHitlGateLine !== null) {
 								try {
-									const {
-										taskCount: resumedRemaining,
-										checkedCount: resumedChecked,
-										content: resumedContent,
-									} = await readDocAndCountTasks(folderPath, effectiveFilename, sshRemoteId);
-									remainingTasks = resumedRemaining;
-									docCheckedCount = resumedChecked;
-									docContent = resumedContent;
+									let resumed = await readDocAndCountTasks(
+										folderPath,
+										effectiveFilename,
+										sshRemoteId
+									);
+									// Resume on a gate means the person did the step. If they did
+									// not tick a box themselves, write one, or the gate check below
+									// finds the same gate and pauses again.
+									const acknowledged = acknowledgeHitlGate(resumed.content);
+									if (acknowledged !== null) {
+										await window.maestro.autorun.writeDoc(
+											folderPath,
+											effectiveFilename + '.md',
+											acknowledged,
+											sshRemoteId
+										);
+										resumed = await readDocAndCountTasks(
+											folderPath,
+											effectiveFilename,
+											sshRemoteId
+										);
+									}
+									remainingTasks = resumed.taskCount;
+									docCheckedCount = resumed.checkedCount;
+									docContent = resumed.content;
 								} catch (rereadErr) {
 									logger.warn(
 										`[BatchProcessor] HITL resume re-read failed for ${effectiveFilename}; continuing with in-memory content:`,
