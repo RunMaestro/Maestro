@@ -324,6 +324,23 @@ export function isWorktreeAlreadyUsedError(stderr: string): boolean {
 }
 
 /**
+ * Whether git refused a command because the directory is not inside a repo:
+ * `fatal: not a git repository (or any of the parent directories): .git`.
+ *
+ * This is the one failure that proves the directory stopped being a repo
+ * (its `.git` was removed). An SSH drop, a missing directory, or a timeout
+ * prints something else, so none of them is mistaken for "not a repo".
+ * Git localizes the message; on a non-English git this returns false, which
+ * errs on the side of keeping the agent marked as a repo.
+ *
+ * @param stderr - Raw stderr from any git command run in the directory
+ */
+export function isNotAGitRepositoryError(stderr: string | undefined): boolean {
+	if (!stderr) return false;
+	return /not a git repository/i.test(stderr);
+}
+
+/**
  * Parse `git worktree list --porcelain` output and return the absolute path
  * of the worktree currently checked out on the given branch, or null.
  *
