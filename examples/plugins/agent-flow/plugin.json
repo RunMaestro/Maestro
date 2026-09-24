@@ -1,7 +1,7 @@
 {
 	"id": "agent-flow",
 	"name": "Agent Flow",
-	"version": "0.2.0",
+	"version": "0.3.0",
 	"tier": 2,
 	"maestro": { "minHostApi": "1.16.0" },
 	"description": "Live per-session execution-graph visualization built from host tool + agent lifecycle events.",

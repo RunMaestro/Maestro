@@ -11,8 +11,12 @@
  *
  * Conflict policy - plugin keybindings must never clobber the app's own
  * shortcuts:
- *   - skip while an input/textarea/select/contentEditable element is focused, so
- *     typing is never hijacked;
+ *   - while an input/textarea/select/contentEditable element is focused, skip
+ *     bare (unmodified) chords so typing is never hijacked, but still let
+ *     chords carrying Alt or Ctrl/Cmd through - nobody types with those held,
+ *     and the composer textarea is Maestro's resting focus state, so an
+ *     unconditional skip would leave every contributed chord inert by default.
+ *     Shift alone does NOT count as a modifier here (Shift+letter is typing);
  *   - skip if the event was already handled (`defaultPrevented`), so an app
  *     shortcut that ran first wins. The app's central handler
  *     (useMainKeyboardHandler) binds a bubble-phase `window` keydown too, so
@@ -93,7 +97,7 @@ function matches(e: KeyboardEvent, chord: ParsedChord): boolean {
 	return false;
 }
 
-/** Is focus on a text-entry surface where the chord must not be intercepted? */
+/** Is focus on a text-entry surface where a bare chord must not be intercepted? */
 function isEditableTarget(target: EventTarget | null): boolean {
 	const el = target as HTMLElement | null;
 	if (!el || typeof el.tagName !== 'string') return false;
@@ -106,6 +110,37 @@ function isEditableTarget(target: EventTarget | null): boolean {
  * keybindings. Call once, near the top of the App tree, after
  * useMainKeyboardHandler().
  */
+/**
+ * Native editing and navigation chords a plugin must never claim while the user
+ * is typing, even though they carry a hard modifier.
+ *
+ * Narrowing the input-focus skip to bare keys (AA1) made contributed chords
+ * usable from the composer, but it also handed plugins every Ctrl/Cmd and Alt
+ * combination the app itself does not bind - including undo, select-all, and
+ * word-wise motion. Since a match calls `preventDefault()`, a plugin binding
+ * `Ctrl+Z` would silently break undo mid-edit. The browser owns these; keep
+ * them off the table.
+ *
+ * Matched on `e.key`, lower-cased, so layout-independent. Shift is ignored:
+ * `Ctrl+Shift+Z` is redo and must be reserved for the same reason as `Ctrl+Z`.
+ */
+function isReservedEditingChord(e: KeyboardEvent): boolean {
+	const key = e.key.toLowerCase();
+	if (e.ctrlKey || e.metaKey) {
+		// Clipboard, undo/redo, select-all, and the common text-entry verbs.
+		if (['a', 'c', 'v', 'x', 'z', 'y', 'backspace', 'delete', 'insert'].includes(key)) return true;
+		// Word-wise and document-wise motion.
+		if (['arrowleft', 'arrowright', 'arrowup', 'arrowdown', 'home', 'end'].includes(key)) {
+			return true;
+		}
+	}
+	if (e.altKey) {
+		// Word-wise motion and delete on macOS, and the Linux/Windows equivalents.
+		if (['arrowleft', 'arrowright', 'backspace', 'delete'].includes(key)) return true;
+	}
+	return false;
+}
+
 export function usePluginKeybindings(): void {
 	const { keybindings } = usePluginContributions();
 
@@ -125,8 +160,24 @@ export function usePluginKeybindings(): void {
 		const onKeyDown = (e: KeyboardEvent): void => {
 			// An app shortcut that ran first already claimed this event.
 			if (e.defaultPrevented) return;
-			// Never hijack typing.
-			if (isEditableTarget(e.target)) return;
+			// Never hijack typing: while a text surface has focus only chords that
+			// carry Alt or Ctrl/Cmd may fire. Shift alone is typing, not a chord.
+			// Reserved native editing chords are excluded even then - see
+			// isReservedEditingChord. (AA1 review)
+			const hasHardModifier = e.altKey || e.ctrlKey || e.metaKey;
+			// AltGr is text entry, not a chord. On the Windows/Linux layouts that
+			// have it (German, Polish, Brazilian and friends) the browser reports
+			// AltGr as ctrlKey AND altKey, so `AltGr+Q` - which types `@` on a
+			// German keyboard - looks exactly like a `Ctrl+Alt+Q` plugin chord and
+			// would be swallowed by the preventDefault below. getModifierState is
+			// the only way to tell the two apart. (Review of PR #1354)
+			const isAltGraph = e.getModifierState?.('AltGraph') === true;
+			if (
+				isEditableTarget(e.target) &&
+				(isAltGraph || !hasHardModifier || isReservedEditingChord(e))
+			) {
+				return;
+			}
 			for (const chord of chordsRef.current) {
 				if (!matches(e, chord)) continue;
 				e.preventDefault();
