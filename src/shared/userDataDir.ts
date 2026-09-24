@@ -84,6 +84,9 @@ function probeIsPackaged(): boolean {
  */
 export function resolveUserDataDir(options: UserDataDirOptions = {}): string {
 	const env = options.env ?? process.env;
+	// Taken as given, with no `~/` expansion: every other reader of this
+	// variable resolves it the same plain way, and expanding it only here would
+	// make them disagree about the directory.
 	if (env.MAESTRO_USER_DATA) return path.resolve(env.MAESTRO_USER_DATA);
 
 	const platform = options.platform ?? os.platform();
@@ -123,10 +126,12 @@ export function assertUserDataDirExists(dir: string, options: UserDataDirOptions
 
 	// A file at the path is a different mistake from nothing at all, and saying
 	// "not found" about something the user can see would send them hunting.
-	const problem = fs.existsSync(dir) ? 'is not a directory' : 'not found at';
+	const problem = fs.existsSync(dir)
+		? `${dir} exists but is not a directory`
+		: `not found at ${dir}`;
 
 	throw new Error(
-		`Maestro data directory ${problem} ${dir}.` +
+		`Maestro data directory ${problem}.` +
 			(alternatives.length ? ` Found instead: ${alternatives.join(', ')}.` : '') +
 			` Set MAESTRO_USER_DATA to the directory the desktop app uses.`
 	);

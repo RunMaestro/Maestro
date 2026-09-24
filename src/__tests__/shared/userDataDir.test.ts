@@ -109,7 +109,9 @@ describe('assertUserDataDirExists', () => {
 		const asFile = path.join(root, 'Maestro');
 		fs.writeFileSync(asFile, '');
 
-		expect(() => assertUserDataDirExists(asFile)).toThrow(/is not a directory/);
+		expect(() => assertUserDataDirExists(asFile)).toThrow(
+			`${asFile} exists but is not a directory`
+		);
 	});
 
 	it('throws rather than letting a runner open an empty database beside the real one', () => {

@@ -3,7 +3,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { resolveMaestroUserDataDir } from '../../shared/maestroUserDataDir';
+import { resolveUserDataDir } from '../../shared/userDataDir';
 import type { Group, SessionInfo, HistoryEntry, SshRemoteConfig } from '../../shared/types';
 import {
 	HISTORY_JSONL_EXT,
@@ -20,12 +20,12 @@ import {
 } from '../../shared/history';
 
 // Get the Maestro config directory path. Delegates to the shared resolver
-// (`src/shared/maestroUserDataDir.ts`) so this CLI and the standalone Cue
-// engine runner can never disagree on where Maestro's data lives - see that
-// module's doc comment for why `MAESTRO_USER_DATA` and the platform fallback
-// are safe to share.
+// (`src/shared/userDataDir.ts`) so this CLI and the standalone Cue engine
+// runner can never disagree on where Maestro's data lives - see that module's
+// doc comment for how `MAESTRO_USER_DATA` and the platform fallback agree with
+// the desktop app.
 export function getConfigDir(): string {
-	return resolveMaestroUserDataDir();
+	return resolveUserDataDir();
 }
 
 /**
