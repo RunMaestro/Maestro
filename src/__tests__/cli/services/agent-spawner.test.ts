@@ -2159,6 +2159,33 @@ Some text with [x] in it that's not a checkbox
 			expect(result.usageStats?.outputTokens).toBe(30);
 		});
 
+		it('sums Copilot per-turn output tokens, which are deltas rather than a running total', async () => {
+			// copilot-cli sets `usesCombinedContextWindow`, which is about how the
+			// context gauge adds input and output, NOT about how usage arrives. Its
+			// parser emits each turn's `outputTokens` as a delta, so routing them
+			// through the accumulator would read this rising sequence as a running
+			// total and keep only the differences: 50 + 10 + 15 = 75 instead of 185.
+			const resultPromise = spawnAgent('copilot-cli', '/project', 'prompt');
+			await tick();
+
+			const turn = (outputTokens: number) =>
+				JSON.stringify({
+					type: 'assistant.message',
+					data: { content: 'part', toolRequests: [], outputTokens },
+				}) + '\n';
+
+			mockStdout.emit('data', Buffer.from(turn(50) + turn(60) + turn(75)));
+			mockStdout.emit(
+				'data',
+				Buffer.from(JSON.stringify({ type: 'result', sessionId: 'cop-1', exitCode: 0 }) + '\n')
+			);
+			await tick();
+			mockChild.emit('close', 0);
+
+			const result = await resultPromise;
+			expect(result.usageStats?.outputTokens).toBe(185);
+		});
+
 		it('drops a stuck line buffer, says so, and keeps framing the lines after it', async () => {
 			const warn = vi.spyOn(console, 'error').mockImplementation(() => {});
 			try {
