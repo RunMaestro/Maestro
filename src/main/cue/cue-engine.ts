@@ -44,6 +44,7 @@ import { createCueActivityLog } from './cue-activity-log';
 import type { CueActivityLog } from './cue-activity-log';
 import { createCueHeartbeat } from './cue-heartbeat';
 import type { CueHeartbeat } from './cue-heartbeat';
+import type { CueEngineLease } from './cue-engine-lease';
 import { createCueFanInTracker } from './cue-fan-in-tracker';
 import type { CueFanInTracker } from './cue-fan-in-tracker';
 import { createCueRunManager } from './cue-run-manager';
@@ -112,6 +113,13 @@ export interface CueEngineDeps {
 	 * an app restart. Omit (tests) to prune with the default window.
 	 */
 	getCueHistoryRetentionDays?: () => unknown;
+	/**
+	 * Cross-process lease that keeps one engine per data directory (see
+	 * `cue-engine-lease.ts`). `start()` refuses to run while another live
+	 * process holds it, and the engine stops if a peer takes it over. Omit
+	 * (tests) to run without cross-process exclusion.
+	 */
+	engineLease?: CueEngineLease;
 }
 
 export class CueEngine {
@@ -440,7 +448,10 @@ export class CueEngine {
 			onLog: meteredOnLog,
 		});
 		this.heartbeat = createCueHeartbeat({
-			onTick: () => this.cleanupService.onTick(),
+			onTick: () => {
+				if (!this.renewEngineLease()) return;
+				this.cleanupService.onTick();
+			},
 			// Route heartbeat-failure notifications through the metered log
 			// channel so the engine's recordMetricFromPayload bumps the
 			// heartbeatFailures counter exactly once per failure run.
@@ -485,8 +496,11 @@ export class CueEngine {
 	start(reason: SessionInitReason = 'user-toggle'): void {
 		if (this.enabled) return;
 
+		if (!this.acquireEngineLease()) return;
+
 		const initResult = this.recoveryService.init();
 		if (!initResult.ok) {
+			this.deps.engineLease?.release();
 			return;
 		}
 
@@ -563,6 +577,57 @@ export class CueEngine {
 		this.heartbeat.start();
 	}
 
+	/**
+	 * Take the cross-process engine lease. Returns false (engine must not start)
+	 * only when another live process holds it; an I/O failure on the lease file
+	 * itself is logged and the engine starts anyway, as it did before the lease
+	 * existed, rather than leaving Cue off over an unwritable lock file.
+	 */
+	private acquireEngineLease(): boolean {
+		const lease = this.deps.engineLease;
+		if (!lease) return true;
+		try {
+			const result = lease.acquire();
+			if (result.ok) return true;
+			this.meteredOnLog(
+				'warn',
+				`[CUE] Not starting: ${result.reason}. Only one Maestro process may run Cue for a data directory, or every subscription would fire twice.`
+			);
+			return false;
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			this.meteredOnLog('warn', `[CUE] Engine lease unavailable, starting without it: ${message}`);
+			void captureException(err, { operation: 'cue.engineLease.acquire' });
+			return true;
+		}
+	}
+
+	/**
+	 * Refresh the engine lease. When a peer has taken it over, stop this engine
+	 * (the peer is running Cue now) and return false.
+	 */
+	private renewEngineLease(): boolean {
+		const lease = this.deps.engineLease;
+		if (!lease) return true;
+		let stillHeld: boolean;
+		try {
+			stillHeld = lease.renew();
+		} catch (err) {
+			// A failed write does not mean the lease was lost; keep running and
+			// let the next tick try again.
+			const message = err instanceof Error ? err.message : String(err);
+			this.meteredOnLog('warn', `[CUE] Engine lease renewal failed: ${message}`);
+			return true;
+		}
+		if (stillHeld) return true;
+		this.meteredOnLog(
+			'warn',
+			'[CUE] Another Maestro process took over the Cue engine lease; stopping this engine so subscriptions do not fire twice.'
+		);
+		this.stop();
+		return false;
+	}
+
 	/** Disable the engine, clearing all timers and watchers */
 	stop(): void {
 		if (!this.enabled) return;
@@ -580,6 +645,7 @@ export class CueEngine {
 		// Stop heartbeat and close database via the recovery service.
 		this.heartbeat.stop();
 		this.recoveryService.shutdown();
+		this.deps.engineLease?.release();
 		this.metrics.reset();
 
 		// Data payload triggers a renderer refresh via cue:activityUpdate so
@@ -837,6 +903,9 @@ export class CueEngine {
 	 */
 	reconcileAfterWake(): void {
 		if (!this.enabled) return;
+		// A peer may have taken the lease while we slept; if so it is the engine
+		// now, and reconciling here would double its catch-up dispatches.
+		if (!this.renewEngineLease()) return;
 
 		this.heartbeat.stop();
 		try {

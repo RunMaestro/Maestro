@@ -83,6 +83,8 @@ Grep-verified 2026-09-04 (`npm run docs:verify` re-checks every path). This is t
 - **Naming the OS file manager in copy:** `getFileManagerName(platform)`, `fileManagerName()` in `src/renderer/utils/platformUtils.ts`
 - **Color math and contrast:** `readableTextOn()`, `isReadableOn()` in `src/shared/colorContrast.ts`
 - **Agent display name:** `getAgentDisplayName()` in `src/shared/agentMetadata.ts`
+- **Whether a recorded pid is still that process (PID reuse):** `probeProcess(identity)`, `currentProcessIdentity()` in `src/shared/processIdentity.ts`
+- **A small JSON file several processes rewrite (CLI + desktop):** `withFileLockSync(lockPath, fn)`, `atomicWriteFileSync()` in `src/shared/crossProcessLock.ts`
 - **Whether an agent is working right now (main process):** `isAgentBusy(session, processManager)`, `isAiTabProcessActive(...)` in `src/main/utils/agent-busy.ts`
 - **Which provider account an agent runs as:** `resolveAgentProfile()`, `effectiveAgentCustomEnvVars()`, `PROVIDER_PROFILE_CONFIGS` in `src/shared/providerProfiles.ts`
 - **Keeping a plan account on the Usage Dashboard after its agents leave:** `rememberQuotaAccounts()`, `pruneMissingQuotaAccounts()` in `src/main/stores/quotaAccountsStore.ts`; `partitionSnapshotsByAge()`, `SNAPSHOT_RETENTION_MS` in `src/main/stores/usageSnapshotRetention.ts`

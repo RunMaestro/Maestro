@@ -111,6 +111,7 @@ vi.mock('../../../main/cue/config/cue-config-repository', async () => {
 });
 
 import { CueEngine, type CueEngineDeps } from '../../../main/cue/cue-engine';
+import type { CueEngineLease } from '../../../main/cue/cue-engine-lease';
 // `calculateNextScheduledTime` moved to triggers/cue-schedule-utils as part of
 // the Phase 4 trigger source isolation. cue-subscription-setup.ts is gone.
 import { calculateNextScheduledTime } from '../../../main/cue/triggers/cue-schedule-utils';
@@ -3763,6 +3764,143 @@ describe('CueEngine', () => {
 			expect(names).not.toContain('evening');
 
 			engine.stop();
+		});
+	});
+
+	// Cross-process exclusion: the lease is what keeps a second Maestro process
+	// on the same data directory from running a second engine (and firing every
+	// subscription twice). The lease module itself is covered in
+	// cue-engine-lease.test.ts; these pin how the engine reacts to it.
+	describe('engine lease', () => {
+		function createLease(overrides: Partial<CueEngineLease> = {}) {
+			return {
+				acquire: vi.fn<CueEngineLease['acquire']>(() => ({ ok: true })),
+				renew: vi.fn<CueEngineLease['renew']>(() => true),
+				release: vi.fn<CueEngineLease['release']>(),
+				...overrides,
+			};
+		}
+
+		beforeEach(() => {
+			mockInitCueDb.mockImplementation(() => {});
+			mockLoadCueConfig.mockReturnValue(null);
+		});
+
+		it('acquires the lease before opening the database and releases it on stop', () => {
+			const lease = createLease();
+			const engine = new CueEngine(createMockDeps({ engineLease: lease }));
+
+			engine.start();
+			expect(lease.acquire).toHaveBeenCalledTimes(1);
+			expect(lease.acquire.mock.invocationCallOrder[0]).toBeLessThan(
+				mockInitCueDb.mock.invocationCallOrder[0]
+			);
+			expect(engine.isEnabled()).toBe(true);
+
+			engine.stop();
+			expect(lease.release).toHaveBeenCalledTimes(1);
+		});
+
+		it('does not start (or touch the database) while another process holds the lease', () => {
+			const lease = createLease({
+				acquire: vi.fn(() => ({
+					ok: false as const,
+					holder: null,
+					reason: 'Cue engine lease is held by another Maestro process (pid 4242)',
+				})),
+			});
+			const deps = createMockDeps({ engineLease: lease });
+			const engine = new CueEngine(deps);
+
+			engine.start();
+
+			expect(engine.isEnabled()).toBe(false);
+			expect(mockInitCueDb).not.toHaveBeenCalled();
+			expect(deps.onLog).toHaveBeenCalledWith('warn', expect.stringContaining('pid 4242'));
+		});
+
+		it('releases the lease when the database fails to open', () => {
+			mockInitCueDb.mockImplementation(() => {
+				throw new Error('DB corrupted');
+			});
+			const lease = createLease();
+			const engine = new CueEngine(createMockDeps({ engineLease: lease }));
+
+			engine.start();
+
+			expect(engine.isEnabled()).toBe(false);
+			expect(lease.release).toHaveBeenCalledTimes(1);
+		});
+
+		it('starts anyway when the lease file itself cannot be written', () => {
+			const lease = createLease({
+				acquire: vi.fn(() => {
+					throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+				}),
+			});
+			const deps = createMockDeps({ engineLease: lease });
+			const engine = new CueEngine(deps);
+
+			engine.start();
+
+			expect(engine.isEnabled()).toBe(true);
+			expect(deps.onLog).toHaveBeenCalledWith(
+				'warn',
+				expect.stringContaining('starting without it')
+			);
+			engine.stop();
+		});
+
+		it('renews the lease on each heartbeat tick', () => {
+			const lease = createLease();
+			const engine = new CueEngine(createMockDeps({ engineLease: lease }));
+			engine.start();
+
+			vi.advanceTimersByTime(30_000);
+			expect(lease.renew).toHaveBeenCalledTimes(1);
+			vi.advanceTimersByTime(30_000);
+			expect(lease.renew).toHaveBeenCalledTimes(2);
+
+			engine.stop();
+		});
+
+		it('stops the engine when a peer has taken the lease over', () => {
+			const lease = createLease({ renew: vi.fn(() => false) });
+			const deps = createMockDeps({ engineLease: lease });
+			const engine = new CueEngine(deps);
+			engine.start();
+
+			vi.advanceTimersByTime(30_000);
+
+			expect(engine.isEnabled()).toBe(false);
+			expect(deps.onLog).toHaveBeenCalledWith('warn', expect.stringContaining('took over'));
+		});
+
+		it('keeps running when a renewal write fails transiently', () => {
+			const lease = createLease({
+				renew: vi.fn(() => {
+					throw Object.assign(new Error('EBUSY'), { code: 'EBUSY' });
+				}),
+			});
+			const engine = new CueEngine(createMockDeps({ engineLease: lease }));
+			engine.start();
+
+			vi.advanceTimersByTime(30_000);
+
+			expect(engine.isEnabled()).toBe(true);
+			engine.stop();
+		});
+
+		it('checks the lease on wake before reconciling, and stops if it was lost', () => {
+			const lease = createLease();
+			const engine = new CueEngine(createMockDeps({ engineLease: lease }));
+			engine.start();
+
+			lease.renew.mockReturnValue(false);
+			engine.reconcileAfterWake();
+
+			expect(lease.renew).toHaveBeenCalledTimes(1);
+			expect(engine.isEnabled()).toBe(false);
 		});
 	});
 });

@@ -68,6 +68,7 @@ A `github.pull_request` event for a chained subscription, traced from trigger to
 
 `start(reason)` runs in this order - order matters:
 
+0. `engineLease.acquire()` (when the `engineLease` dep is wired, which `index.ts` always does) - takes `<userData>/cue-engine.lock` so only ONE process runs Cue per data directory. Returns early with a warning if another live Maestro holds it. See [Cross-process engine lease](#cross-process-engine-lease).
 1. `recoveryService.init()` - opens the SQLite DB, prunes events older than 7 days (`EVENT_PRUNE_AGE_MS`, `cue-recovery-service.ts:24`). Returns early if init fails.
 2. Set `enabled = true`, reset metrics so uptime reflects this start.
 3. Emit `engineStarted` log payload - renderer uses this to clear stale UI.
@@ -76,7 +77,15 @@ A `github.pull_request` event for a chained subscription, traced from trigger to
 6. `recoveryService.detectSleepAndReconcile()` - see [Sleep/wake](#sleepwake-reconciliation).
 7. `heartbeat.start()` - 30s interval writes `cue_heartbeat.last_seen` (`HEARTBEAT_INTERVAL_MS`, `cue-heartbeat.ts:14`).
 
-`stop()` reverses everything: clears heartbeat timer, tears down trigger sources, stops active runs, but **does not clear the persisted queue** - it survives across stops so the next `start()` can replay.
+`stop()` reverses everything: clears heartbeat timer, tears down trigger sources, stops active runs, releases the engine lease, but **does not clear the persisted queue** - it survives across stops so the next `start()` can replay.
+
+### Cross-process engine lease
+
+`cue-engine-lease.ts`. Two processes on one data directory (two `npm run dev` windows, which skip the single-instance lock, or `dev:prod-data` beside production) used to each run an engine: every subscription fired twice, and each engine's heartbeat hid the other's sleep gaps. The lease file records `{ pid, startToken, instanceId, acquiredAt, heartbeatAt, version }`.
+
+- It is reclaimed only from a holder that cannot be running an engine: proven dead (ESRCH or a recycled pid, via `probeProcess()` in `src/shared/processIdentity.ts`), this same process, or any holder when we hold Electron's single-instance lock (`app.hasSingleInstanceLock()`, which is per data directory). A verified live holder is **never** reclaimed on heartbeat age, so a long sleep cannot hand the lease away. Only an unverifiable holder (no start token: Windows) falls back to `CUE_ENGINE_LEASE_TTL_MS`.
+- Renewed on every heartbeat tick and at the top of `reconcileAfterWake()`. A renewal that finds another `instanceId` stops this engine, because the peer is the engine now.
+- An I/O error on the lease file itself logs and starts anyway (pre-lease behavior); only a live peer blocks a start.
 
 ## Session lifecycle and ownership
 
