@@ -30,6 +30,7 @@ import * as path from 'path';
 import { selectMode as builtinSelectMode } from './claude-mode-selector';
 import type { SelectModeInput, SelectModeResult, UsageSnapshot } from './claude-mode-selector';
 import type { ClaudeTokenMode } from '../../shared/claudeTokenMode';
+import { isBlankEnvValue } from '../../shared/agentEnvironment';
 
 const LOG_CONTEXT = 'ClaudeSpawnCore';
 
@@ -76,10 +77,28 @@ export function isMaestroPBinaryPath(binaryPath: string | undefined | null): boo
  * Canonical CLAUDE_CONFIG_DIR key: the absolute path of `$CLAUDE_CONFIG_DIR`
  * (or `~/.claude`). Pure. Shared so the desktop usage store and the CLI compute
  * the same key from the same env.
+ *
+ * Callers pass the env as CONFIGURED (process env + agent defaults + the
+ * agent's custom vars), not the env the child finally receives, so this applies
+ * the same two rules `buildChildProcessEnv()` does at spawn time. Without them
+ * the key names a directory claude never writes to, and the API-resume
+ * sanitizer that uses it silently skips the real transcript:
+ *
+ * - A blank value means "unset" (see `isBlankEnvValue`), so the child gets no
+ *   CLAUDE_CONFIG_DIR and claude uses `~/.claude`. `path.resolve('')` would
+ *   instead return the main process's own cwd.
+ * - A leading `~/` is expanded against the home directory. `path.resolve()`
+ *   does not know `~`, and would turn `~/.claude-work` into `<cwd>/~/.claude-work`.
  */
 export function resolveConfigDirKeyFromEnv(env: NodeJS.ProcessEnv): string {
-	const raw = env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), '.claude');
-	return path.resolve(raw);
+	const configured = env.CLAUDE_CONFIG_DIR;
+	if (configured === undefined || isBlankEnvValue(configured)) {
+		return path.resolve(path.join(os.homedir(), '.claude'));
+	}
+	if (configured.startsWith('~/')) {
+		return path.resolve(path.join(os.homedir(), configured.slice(2)));
+	}
+	return path.resolve(configured);
 }
 
 /** Injectable collaborators. Every surface supplies these; none are defaulted here. */

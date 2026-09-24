@@ -11,6 +11,8 @@
  * - runCommand: Execute a single command and capture output
  */
 
+import * as os from 'os';
+import * as path from 'path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ipcMain } from 'electron';
 import {
@@ -1027,6 +1029,76 @@ describe('process IPC handlers', () => {
 
 				expect(stripThinkingFromTranscript).not.toHaveBeenCalled();
 			});
+
+			// The sanitizer must open the exact file claude wrote:
+			// <config dir>/projects/<cwd slug>/<session id>.jsonl. A near miss is
+			// silent (the sanitizer no-ops on a missing file) and leaves the 400.
+			it('targets <home>/.claude/projects/<slug>/<id>.jsonl for a macOS project path', async () => {
+				mockAgentDetector.getAgent.mockResolvedValue(claudeCodeAgent);
+				mockProcessManager.spawn.mockReturnValue({ pid: 4251, success: true });
+				const savedConfigDir = process.env.CLAUDE_CONFIG_DIR;
+				delete process.env.CLAUDE_CONFIG_DIR;
+
+				try {
+					const handler = handlers.get('process:spawn');
+					await handler!({} as any, {
+						sessionId: 'session-mac',
+						toolType: 'claude-code',
+						cwd: '/Users/jane/Library/Mobile Documents/com~apple~CloudDocs/My App/',
+						command: 'claude',
+						args: claudeCodeAgent.args,
+						agentSessionId: 'mac-session-uuid',
+						prompt: 'continue',
+					});
+				} finally {
+					if (savedConfigDir !== undefined) process.env.CLAUDE_CONFIG_DIR = savedConfigDir;
+				}
+
+				expect(vi.mocked(stripThinkingFromTranscript).mock.calls[0][0]).toBe(
+					path.join(
+						os.homedir(),
+						'.claude',
+						'projects',
+						'-Users-jane-Library-Mobile-Documents-com-apple-CloudDocs-My-App',
+						'mac-session-uuid.jsonl'
+					)
+				);
+			});
+
+			// Multi-account setups point an agent at `~/.claude-<name>`. The spawn
+			// expands the `~/`; the sanitizer used to path.resolve() it into
+			// `<cwd>/~/.claude-work` and never find the transcript.
+			it.each([
+				['a ~/ account dir', '~/.claude-work', () => path.join(os.homedir(), '.claude-work')],
+				['a blank value (means unset)', '', () => path.join(os.homedir(), '.claude')],
+			])(
+				'resolves CLAUDE_CONFIG_DIR from the agent env the way the spawn does: %s',
+				async (_label, value, expectedDir) => {
+					mockAgentDetector.getAgent.mockResolvedValue(claudeCodeAgent);
+					mockProcessManager.spawn.mockReturnValue({ pid: 4252, success: true });
+
+					const handler = handlers.get('process:spawn');
+					await handler!({} as any, {
+						sessionId: 'session-account',
+						toolType: 'claude-code',
+						cwd: '/Users/jane/Code/app',
+						command: 'claude',
+						args: claudeCodeAgent.args,
+						agentSessionId: 'account-session-uuid',
+						prompt: 'continue',
+						sessionCustomEnvVars: { CLAUDE_CONFIG_DIR: value },
+					});
+
+					expect(vi.mocked(stripThinkingFromTranscript).mock.calls[0][0]).toBe(
+						path.join(
+							expectedDir(),
+							'projects',
+							'-Users-jane-Code-app',
+							'account-session-uuid.jsonl'
+						)
+					);
+				}
+			);
 		});
 	});
 
