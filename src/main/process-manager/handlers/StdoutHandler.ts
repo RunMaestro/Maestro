@@ -496,7 +496,16 @@ export class StdoutHandler {
 		// Only check non-JSON lines. Valid JSON lines contain structured agent output
 		// (e.g., assistant messages) whose text content can false-positive match SSH
 		// error patterns like "command not found" when the agent quotes shell commands.
-		if (!managedProcess.errorEmitted && managedProcess.sshRemoteId && parsed === null) {
+		// `!interrupted` for the same reason as the parser branch above: a stopped
+		// turn must not surface as a crash. Whatever a torn-down remote writes on
+		// its way out, raising it here would arm recovery for a turn the user
+		// deliberately abandoned.
+		if (
+			!managedProcess.errorEmitted &&
+			!managedProcess.interrupted &&
+			managedProcess.sshRemoteId &&
+			parsed === null
+		) {
 			const sshError = matchSshErrorPattern(line);
 			if (sshError) {
 				managedProcess.errorEmitted = true;
