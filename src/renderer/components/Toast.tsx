@@ -10,6 +10,13 @@ import { getToastWidthDimensions } from '../../shared/toastWidth';
 import { Z_LAYERS } from '../constants/zLayers';
 import { CopyIconButton } from './ui';
 
+/**
+ * Vertical space the toast stack never grows into: the custom title bar
+ * (40px) plus the Right Bar's tab strip (64px), plus an 8px gap. Exported for
+ * tests.
+ */
+export const TOAST_STACK_TOP_CLEARANCE_PX = 112;
+
 interface ToastContainerProps {
 	theme: Theme;
 	onSessionClick?: (sessionId: string, tabId?: string) => void;
@@ -375,10 +382,26 @@ export const ToastContainer = memo(function ToastContainer({
 
 	if (toasts.length === 0) return null;
 
+	// The stack grows upward from the bottom-right corner, which is the Right
+	// Bar, so an unbounded stack eventually covers its Files / History / Auto Run
+	// tab strip. Capping the height keeps that strip clickable; overflow scrolls
+	// inside the stack instead. `flex-col-reverse` puts the scroll origin at the
+	// bottom, so the newest toast stays in view. The horizontal padding lives
+	// inside the scroller (rather than a `right-4` offset) so the slide-in and
+	// the drop shadow are clipped at the window edge, not 16px short of it.
 	return createPortal(
 		<div
-			className="fixed bottom-0 right-4 flex flex-col-reverse"
-			style={{ pointerEvents: 'none', zIndex: Z_LAYERS.TOAST }}
+			data-testid="toast-container"
+			className="fixed bottom-0 right-0 flex flex-col-reverse scrollbar-thin"
+			style={{
+				pointerEvents: 'none',
+				zIndex: Z_LAYERS.TOAST,
+				maxHeight: `calc(100vh - ${TOAST_STACK_TOP_CLEARANCE_PX}px)`,
+				overflowX: 'hidden',
+				overflowY: 'auto',
+				paddingLeft: '16px',
+				paddingRight: '16px',
+			}}
 		>
 			<div style={{ pointerEvents: 'auto' }}>
 				{toasts.map((toast) => (
