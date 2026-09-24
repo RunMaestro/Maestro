@@ -123,6 +123,14 @@ const EXPECTED: Record<string, CliExpectation> = {
 		agentSessionId: 'sess-badexit-1',
 		note: 'Matches desktop (generic agent_crashed) and the old Claude CLI rule (code === 0 && finalResult). Only the generic JSON-line path keeps an answer over a bare bad exit.',
 	},
+	'classified-exit-with-answer': {
+		success: false,
+		outcome: 'crashed',
+		agentSessionId: 'sess-classified-1',
+		errorIncludes: 'oauth token has expired',
+		note: 'Matches desktop: a SPECIFIC exit classification outranks a captured answer, so the auth failure is reported rather than the answer. Its sibling bad-exit-with-answer covers the unmatched exit, which reaches the generic fallback instead.',
+	},
+
 	'silent-resume': {
 		success: true,
 		outcome: 'completed',
