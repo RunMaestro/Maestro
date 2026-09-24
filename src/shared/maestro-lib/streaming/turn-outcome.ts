@@ -34,10 +34,13 @@ export interface TurnFacts {
 	 * Raw signal value from the transport. Typed loosely on purpose: PTY
 	 * transports report a number (node-pty), child_process transports
 	 * report a string (e.g. 'SIGTERM') and today do not capture it at all.
+	 * `undefined` is in the union because node-pty types its own field
+	 * `signal?: number` (node-pty.d.ts:156) and `PtySpawner.ts:251` forwards
+	 * it untouched, so a clean pty exit really does arrive without a value.
 	 * See the turn contract's open question on signal typing before reading
 	 * anything provider-specific into this field's shape.
 	 */
-	signal: string | number | null;
+	signal: string | number | null | undefined;
 	/** The caller explicitly requested stop before/at exit. */
 	interrupted: boolean;
 	stderrText: string;
@@ -145,7 +148,15 @@ export function resolveTurnOutcome(
 	const hasAnswer = Boolean(facts.capturedAnswerText?.trim());
 
 	if (!hasAnswer && !facts.resultMessageSeen) {
-		const killedBySignal = facts.signal !== null;
+		// A falsy signal is no signal. `null`, `undefined`, `0` and `''` all
+		// reach this field on a CLEAN exit: node-pty types its own as
+		// `signal?: number` (node-pty.d.ts:156) and `PtySpawner.ts:251` forwards
+		// it untouched, and some platforms report 0. None of them is a real
+		// kill, since no signal number is 0 and no signal name is empty.
+		// Reading any of them as a kill bypasses the omp gate below for EVERY
+		// provider and reports an ordinary empty turn as crashed. The rule lives
+		// here rather than trusting each adapter to normalize first.
+		const killedBySignal = Boolean(facts.signal);
 		const emptyAnswerRuleApplies =
 			killedBySignal || options.generalizeEmptyAnswerRule || context.providerId === 'omp';
 		const isExcludedSession = OMP_EMPTY_ANSWER_SESSION_EXCLUSIONS.some((pattern) =>
