@@ -165,6 +165,30 @@ describe('resolveTurnOutcome', () => {
 		expect(result).toEqual({ outcome: 'crashed' });
 	});
 
+	// A clean exit reports no signal, but not always as `null`: node-pty types
+	// its own field `signal?: number` (node-pty.d.ts:156) and `PtySpawner.ts:251`
+	// forwards it untouched, so `undefined` arrives here, and some platforms
+	// report 0. A `!== null` check reads each as a kill, which bypasses the omp
+	// gate for every provider and reports an ordinary empty turn as crashed.
+	// The outcome is pinned rather than merely asserted not-crashed, so a rule
+	// change that sends these somewhere else is caught too.
+	it.each<[string, TurnFacts['signal']]>([
+		['undefined, as a clean node-pty exit reports it', undefined],
+		['0, as some platforms report on a normal exit', 0],
+		["'', which no signal name can be", ''],
+	])('completes a clean empty turn whose signal is %s', (_shape, signal) => {
+		const facts = baseFacts({
+			exitCode: 0,
+			signal,
+			resultMessageSeen: false,
+			capturedAnswerText: undefined,
+		});
+
+		const result = resolveTurnOutcome(facts, neverErrorsProvider(), CLAUDE_CTX);
+
+		expect(result).toEqual({ outcome: 'completed' });
+	});
+
 	it('does not flag a signal-terminated exit as crashed when a result was already seen', () => {
 		const facts = baseFacts({
 			exitCode: null,

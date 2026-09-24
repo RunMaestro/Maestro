@@ -482,4 +482,27 @@ awaitCopilotShutdown`, `:438-541`) delays finality of `TurnFacts` past
    not one, and the `code || 0` exit-code coercion currently in
    `ChildProcessSpawner.ts` masking real `null` on signal-kill is a
    pre-existing behavior any consumer of the corrected value needs to be
-   ready for.
+   ready for. Partly settled in the resolver: node-pty types the field
+   `signal?: number` and `PtySpawner.ts:251` forwards it untouched, so a
+   CLEAN pty exit arrives as `undefined` and some platforms report `0`.
+   `resolveTurnOutcome` therefore treats only a non-null, non-zero value as
+   a kill rather than trusting each adapter to normalize first. The typing
+   question across the three call sites is still open.
+7. **Rule 4 is wider than production because `isStreamJsonMode` has no home
+   in `TurnFacts`.** The original omp condition is `ExitHandler.ts:324-334`,
+   and every clause of it maps onto something here except one:
+
+   | `ExitHandler.ts` clause                | Home in the resolver                                   |
+   | -------------------------------------- | ------------------------------------------------------ |
+   | `toolType === 'omp'`                   | `context.providerId === 'omp'`                         |
+   | `isStreamJsonMode` (`:326`)            | **none**                                               |
+   | `!managedProcess.resultEmitted`        | `!facts.resultMessageSeen`                             |
+   | `!managedProcess.errorEmitted`         | the early returns above rule 4                         |
+   | `!managedProcess.interrupted`          | rule 1                                                 |
+   | `!managedProcess.streamedText?.trim()` | `!hasAnswer`, over `facts.capturedAnswerText`          |
+   | the three session-id exclusions        | `OMP_EMPTY_ANSWER_SESSION_EXCLUSIONS`, ported verbatim |
+
+   So an omp turn that is NOT in stream-json mode resolves `crashed` where
+   production leaves it alone. The desktop chat migration supplies the gate
+   at the call site; recorded here so it is a known gap rather than
+   something rediscovered during that migration.
