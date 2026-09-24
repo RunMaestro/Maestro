@@ -1143,6 +1143,27 @@ export async function* runPlaybook(
 		// process's in-memory slice.
 		const reconciled = reconcileTotals();
 
+		// A stop that lands after the last task is still a stop. The only other
+		// abort check sits inside the task loop, so a Ctrl+C arriving once the
+		// loop was done fell through to the success block below and exited 0
+		// instead of 130. The loop has already written its own final entry by
+		// now ("All tasks completed" and the like), so history records why the
+		// LOOP ended while this records why the RUN did.
+		if (signal?.aborted) {
+			createAutoRunSummary(reconciled, 'stopped by operator');
+
+			yield {
+				type: 'complete',
+				timestamp: Date.now(),
+				success: false,
+				totalTasksCompleted: reconciled.totalCompletedTasks,
+				totalElapsedMs: reconciled.totalElapsedMs,
+				totalCost: reconciled.totalCost,
+				stopped: true,
+			};
+			return;
+		}
+
 		// Add total Auto Run summary (only if looping was used)
 		createAutoRunSummary(reconciled);
 

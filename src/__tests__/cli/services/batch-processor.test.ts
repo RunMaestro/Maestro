@@ -1393,6 +1393,38 @@ describe('batch-processor', () => {
 			expect(events.find((e) => e.type === 'complete')?.stopped).toBe(true);
 		});
 
+		it('reports stopped when the abort lands after the last task, not success', async () => {
+			// The only other abort check sits inside the task loop, so a Ctrl+C that
+			// arrives once the last task is already done fell through to the success
+			// block and exited 0 instead of 130. Aborting inside the history read puts
+			// the stop exactly there: reconcileTotals runs once, after the loop.
+			const controller = new AbortController();
+			vi.mocked(readDocAndCountTasks).mockReturnValue({ content: '- [ ] Task', taskCount: 1 });
+			vi.mocked(spawnAgent).mockResolvedValue({
+				success: true,
+				outcome: 'completed',
+				response: 'Done',
+			});
+			vi.mocked(readHistory).mockImplementation(() => {
+				controller.abort();
+				return [];
+			});
+
+			const session = mockSession();
+			const events = await collectEvents(
+				runPlaybook(session, mockPlaybook(), '/playbooks', {
+					signal: controller.signal,
+					skipSynopsis: true,
+				})
+			);
+
+			const complete = events.find((e) => e.type === 'complete');
+			expect(complete?.stopped).toBe(true);
+			expect(complete?.success).toBe(false);
+			// The task itself still finished, so it is reported as done, not lost.
+			expect(events.find((e) => e.type === 'task_complete')?.success).toBe(true);
+		});
+
 		it('does not undercount the current run when history lags behind', async () => {
 			// Current run completes one task; history read returns nothing (e.g. the
 			// per-task write has not been flushed yet). Reconciliation must keep the
