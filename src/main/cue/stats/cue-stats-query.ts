@@ -180,7 +180,9 @@ function tokensForEvent(
 	event: CueEventRecord,
 	tokensByProvider: Map<string, SessionTokenSummary>
 ): SessionTokenSummary | null {
-	const onDisk = event.providerSessionId ? (tokensByProvider.get(event.providerSessionId) ?? null) : null;
+	const onDisk = event.providerSessionId
+		? (tokensByProvider.get(event.providerSessionId) ?? null)
+		: null;
 	if (onDisk && (onDisk.inputTokens > 0 || onDisk.outputTokens > 0)) return onDisk;
 	return streamUsageFallback(event) ?? onDisk;
 }
