@@ -253,6 +253,32 @@ facts.stdoutText)` flags failure -> `crashed`. (Already a pure,
    would start surfacing a warning. Flagged with the same weight as rule 4,
    which the first draft called out but this one didn't.
 
+**Precedence between rule 3 and a captured answer, stated deliberately.**
+The order above is the answer, not an accident of drafting: a provider's exit
+classification is consulted BEFORE `capturedAnswerText`, so a turn that
+produced a usable answer and then exited on a classified failure resolves
+`crashed` carrying the specific message, not `completed-with-warning`
+carrying the answer. The rationale chosen here (not inherited from the
+original call sites, which never had this path) is that a classified exit
+names something the user has to act on, such as an expired credential, and
+burying it behind an answer already on screen hides the only actionable part.
+Two recordings pin the pair, because they take different branches and a
+reader meeting only one would reasonably assume the other was an oversight:
+`classified-exit-with-answer` (a specific pattern matches, crash wins) and
+`bad-exit-with-answer` (nothing matches, the generic fallback still wins,
+which is the pre-existing CLI-vs-desktop divergence that PR's description
+names). Revisiting this means revisiting both.
+
+**Where that rationale stops: a user-requested stop.** It does not extend to
+`interrupted`, which outranks everything including a classified error. A
+stopped turn reports no error at all, even an actionable one written to
+stderr during teardown, because tearing the process down is itself what
+produces most of those lines and a red error on a turn the user deliberately
+abandoned arms recovery for work nobody wants retried. So the two rules pull
+in opposite directions on purpose: an actionable error is surfaced over an
+answer, and suppressed under a stop. The stdout and stderr handlers apply the
+same `!interrupted` guard for this reason.
+
 ## 2. Conversation identity and resume
 
 Session-id **extraction is not fully unified today**, contrary to what an

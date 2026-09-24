@@ -35,6 +35,7 @@ vi.mock('../../../../main/process-manager/utils/bufferUtils', () => ({
 
 // ── Imports (after mocks) ──────────────────────────────────────────────────
 
+import { matchSshErrorPattern } from '../../../../shared/maestro-lib/parsers/error-patterns';
 import { StderrHandler } from '../../../../main/process-manager/handlers/StderrHandler';
 import type { ManagedProcess } from '../../../../main/process-manager/types';
 
@@ -71,6 +72,92 @@ function createTestContext(processOverrides: Partial<ManagedProcess> = {}) {
 describe('StderrHandler', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+	});
+
+	// Both stderr `agent-error` emits sit outside the rule StdoutHandler applies:
+	// a turn the user stopped must not surface as a crash. Tearing down the
+	// process is itself what writes these lines, so without the guard a Stop
+	// paints a red error and arms recovery for a turn nobody wants retried.
+	describe('user-interrupted turns suppress stderr errors', () => {
+		const parserFailure = {
+			type: 'agent_crashed' as const,
+			message: 'boom',
+			recoverable: false,
+		};
+
+		function parserThatAlwaysErrors() {
+			return { detectErrorFromLine: vi.fn(() => ({ ...parserFailure })) };
+		}
+
+		it('does not emit a parser error from stderr after interrupt', () => {
+			const { handler, emitter, sessionId, proc } = createTestContext({
+				outputParser: parserThatAlwaysErrors() as never,
+				interrupted: true,
+			});
+			const errorSpy = vi.fn();
+			emitter.on('agent-error', errorSpy);
+
+			handler.handleData(sessionId, 'panic: everything is on fire\n');
+
+			expect(errorSpy).not.toHaveBeenCalled();
+			expect(proc.errorEmitted).toBe(false);
+		});
+
+		it('still emits a parser error from stderr when the user did not stop it', () => {
+			const { handler, emitter, sessionId } = createTestContext({
+				outputParser: parserThatAlwaysErrors() as never,
+			});
+			const errorSpy = vi.fn();
+			emitter.on('agent-error', errorSpy);
+
+			handler.handleData(sessionId, 'panic: everything is on fire\n');
+
+			expect(errorSpy).toHaveBeenCalledTimes(1);
+		});
+
+		it('does not emit an SSH error from stderr after interrupt', () => {
+			const mockedMatchSsh = vi.mocked(matchSshErrorPattern);
+			mockedMatchSsh.mockReturnValue({
+				type: 'agent_crashed',
+				message: 'SSH connection refused.',
+				recoverable: false,
+			});
+
+			const { handler, emitter, sessionId, proc } = createTestContext({
+				sshRemoteId: 'remote-1',
+				interrupted: true,
+			});
+			const errorSpy = vi.fn();
+			emitter.on('agent-error', errorSpy);
+
+			handler.handleData(sessionId, 'ssh: connect to host build-box port 22: Connection refused\n');
+
+			expect(errorSpy).not.toHaveBeenCalled();
+			expect(proc.errorEmitted).toBe(false);
+
+			mockedMatchSsh.mockReset();
+		});
+
+		it('still emits an SSH error from stderr when the user did not stop it', () => {
+			const mockedMatchSsh = vi.mocked(matchSshErrorPattern);
+			mockedMatchSsh.mockReturnValue({
+				type: 'agent_crashed',
+				message: 'SSH connection refused.',
+				recoverable: false,
+			});
+
+			const { handler, emitter, sessionId } = createTestContext({
+				sshRemoteId: 'remote-1',
+			});
+			const errorSpy = vi.fn();
+			emitter.on('agent-error', errorSpy);
+
+			handler.handleData(sessionId, 'ssh: connect to host build-box port 22: Connection refused\n');
+
+			expect(errorSpy).toHaveBeenCalledTimes(1);
+
+			mockedMatchSsh.mockReset();
+		});
 	});
 
 	describe('SSH informational message filtering', () => {
