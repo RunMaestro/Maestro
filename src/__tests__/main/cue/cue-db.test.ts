@@ -117,12 +117,6 @@ vi.mock('better-sqlite3', () => ({
 	},
 }));
 
-vi.mock('electron', () => ({
-	app: {
-		getPath: vi.fn(() => os.tmpdir()),
-	},
-}));
-
 import {
 	initCueDb,
 	closeCueDb,
