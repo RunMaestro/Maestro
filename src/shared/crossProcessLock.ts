@@ -163,6 +163,15 @@ function fileAgeMs(filePath: string, now: number): number | null {
 	}
 }
 
+/** Inode of `filePath`, or `null` when it cannot be stat-ed. */
+function statIno(filePath: string): number | null {
+	try {
+		return fs.statSync(filePath).ino;
+	} catch {
+		return null;
+	}
+}
+
 /**
  * Remove a lock we judged stale WITHOUT clobbering a fresh one that replaced it
  * after we looked. A plain unlink has an ABA race: A and B both judge the same
@@ -171,10 +180,20 @@ function fileAgeMs(filePath: string, now: number): number | null {
  * the one we judged, we put it back with `link`, which fails rather than
  * overwrite a lock someone created in the meantime.
  *
- * `judged` is the holder we read, or `null` when the file was unparseable (in
- * which case we only require that what we moved is still unparseable).
+ * `judged` is the holder we read, or `null` when the file was unparseable.
+ *
+ * An unparseable file has no instanceId to match on, and "still unparseable"
+ * is not enough: a peer between its own `openSync('wx')` and `writeSync` is
+ * unparseable too, so an abandoned half-written lock and a peer's brand-new one
+ * look identical. `judgedIno` is the inode from the stat taken when the caller
+ * judged it; a different inode means we moved a DIFFERENT file and must put it
+ * back. Callers that judged an unparseable lock should always pass it.
  */
-export function reclaimStaleLock(lockPath: string, judged: LockHolder | null): boolean {
+export function reclaimStaleLock(
+	lockPath: string,
+	judged: LockHolder | null,
+	judgedIno?: number
+): boolean {
 	const asidePath = uniqueTempPath(`${lockPath}.stale`);
 	try {
 		fs.renameSync(lockPath, asidePath);
@@ -182,7 +201,10 @@ export function reclaimStaleLock(lockPath: string, judged: LockHolder | null): b
 		return false; // Already gone (someone else reclaimed or released it).
 	}
 	const moved = readLockHolder(asidePath);
-	const sameLock = judged === null ? moved === null : moved?.instanceId === judged.instanceId;
+	const sameLock =
+		judged === null
+			? moved === null && (judgedIno === undefined || statIno(asidePath) === judgedIno)
+			: moved?.instanceId === judged.instanceId;
 	if (!sameLock) {
 		try {
 			fs.linkSync(asidePath, lockPath);
@@ -271,8 +293,12 @@ export function withFileLockSync<T>(
 		if (tryCreateLock(lockPath, holder)) break;
 
 		lastHolder = readLockHolder(lockPath);
+		// Pin WHICH file we judged, so an unparseable lock cannot be confused with
+		// a peer's brand-new one created in the gap before the rename.
+		const judgedIno = lastHolder === null ? (statIno(lockPath) ?? undefined) : undefined;
 		const reclaimed =
-			isLockStale(lockPath, lastHolder, staleMs) && reclaimStaleLock(lockPath, lastHolder);
+			isLockStale(lockPath, lastHolder, staleMs) &&
+			reclaimStaleLock(lockPath, lastHolder, judgedIno);
 		if (Date.now() >= deadline) throw new FileLockTimeoutError(lockPath, lastHolder);
 		// After a reclaim the path is free, so retry without waiting.
 		if (!reclaimed) {

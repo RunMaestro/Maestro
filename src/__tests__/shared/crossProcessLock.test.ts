@@ -216,6 +216,27 @@ describe('crossProcessLock', () => {
 		it('reports false when the lock is already gone', () => {
 			expect(reclaimStaleLock(path.join(dir, 'missing.lock'), holder())).toBe(false);
 		});
+
+		// The ABA case above is caught by the instanceId. An UNPARSEABLE lock has
+		// none, and a peer between its own open and write is unparseable too, so
+		// "still unparseable" would accept a lock that is not the one we judged.
+		it('puts back an unparseable lock that is not the file it judged', () => {
+			const lockPath = path.join(dir, 'x.lock');
+			fs.writeFileSync(lockPath, ''); // A peer, mid-create.
+			const judgedIno = fs.statSync(lockPath).ino + 1; // We judged a different file.
+
+			expect(reclaimStaleLock(lockPath, null, judgedIno)).toBe(false);
+			expect(fs.existsSync(lockPath)).toBe(true);
+			expect(fs.readdirSync(dir)).toEqual(['x.lock']);
+		});
+
+		it('still removes the unparseable lock it did judge', () => {
+			const lockPath = path.join(dir, 'x.lock');
+			fs.writeFileSync(lockPath, '');
+
+			expect(reclaimStaleLock(lockPath, null, fs.statSync(lockPath).ino)).toBe(true);
+			expect(fs.existsSync(lockPath)).toBe(false);
+		});
 	});
 
 	describe('across processes', () => {
