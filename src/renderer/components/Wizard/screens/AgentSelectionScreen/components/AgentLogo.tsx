@@ -286,6 +286,28 @@ export function AgentLogo({
 				</svg>
 			);
 
+		case 'cursor-cli':
+			// Cursor publishes its mark as a shaded three-face solid, so this is a
+			// monochrome line reading of it: a triangular prism whose three faces
+			// meet at the center. Deliberately not the hexagon Codex uses.
+			return (
+				<svg
+					className={LOGO_SIZE_CLASS}
+					viewBox="0 0 48 48"
+					fill="none"
+					xmlns="http://www.w3.org/2000/svg"
+					style={{ opacity }}
+				>
+					<path d="M24 6L41 37H7L24 6z" stroke={color} strokeWidth="2" strokeLinejoin="round" />
+					<path
+						d="M24 26.7L15.5 21.5M24 26.7L32.5 21.5M24 26.7V37"
+						stroke={color}
+						strokeWidth="2"
+						strokeLinecap="round"
+					/>
+				</svg>
+			);
+
 		case 'qwen3-coder':
 			// Qwen's mark is a geometric knot inside a hex silhouette; this keeps the
 			// hex and reads the knot as two interlocking chevrons.

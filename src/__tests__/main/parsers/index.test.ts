@@ -13,6 +13,7 @@ import {
 	OmpOutputParser,
 	QwenOutputParser,
 	GrokOutputParser,
+	CursorCliOutputParser,
 } from '../../../main/parsers';
 
 describe('parsers/index', () => {
@@ -101,21 +102,29 @@ describe('parsers/index', () => {
 			expect(hasOutputParser('antigravity')).toBe(true);
 		});
 
-		it('should register exactly 10 parsers', () => {
+		it('should register Cursor CLI parser', () => {
+			expect(hasOutputParser('cursor-cli')).toBe(false);
+
+			initializeOutputParsers();
+
+			expect(hasOutputParser('cursor-cli')).toBe(true);
+		});
+
+		it('should register exactly 11 parsers', () => {
 			initializeOutputParsers();
 
 			const parsers = getAllOutputParsers();
-			expect(parsers.length).toBe(10);
+			expect(parsers.length).toBe(11);
 		});
 
 		it('should clear existing parsers before registering', () => {
 			// First initialization
 			initializeOutputParsers();
-			expect(getAllOutputParsers().length).toBe(10);
+			expect(getAllOutputParsers().length).toBe(11);
 
-			// Second initialization should still have exactly 10
+			// Second initialization should still have exactly 11
 			initializeOutputParsers();
-			expect(getAllOutputParsers().length).toBe(10);
+			expect(getAllOutputParsers().length).toBe(11);
 		});
 	});
 
@@ -180,6 +189,12 @@ describe('parsers/index', () => {
 			expect(parser).not.toBeNull();
 			expect(parser).toBeInstanceOf(GrokOutputParser);
 		});
+
+		it('should return CursorCliOutputParser for cursor-cli', () => {
+			const parser = getOutputParser('cursor-cli');
+			expect(parser).not.toBeNull();
+			expect(parser).toBeInstanceOf(CursorCliOutputParser);
+		});
 	});
 
 	describe('parser exports', () => {
@@ -220,6 +235,11 @@ describe('parsers/index', () => {
 		it('should export GrokOutputParser class', () => {
 			const parser = new GrokOutputParser();
 			expect(parser.agentId).toBe('grok');
+		});
+
+		it('should export CursorCliOutputParser class', () => {
+			const parser = new CursorCliOutputParser();
+			expect(parser.agentId).toBe('cursor-cli');
 		});
 	});
 
