@@ -181,9 +181,11 @@ import {
 	detectClaude,
 	detectAgent,
 	getAgentCommand,
+	resolveCliBatchModeArgs,
 	spawnAgent,
 	AgentResult,
 } from '../../../cli/services/agent-spawner';
+import { getAgentDefinition } from '../../../main/agents/definitions';
 import { isolateAgentEnv } from '../../helpers/agentEnvIsolation';
 
 describe('agent-spawner', () => {
@@ -1560,6 +1562,11 @@ Some text with [x] in it that's not a checkbox
 			const skipCount = args.filter((a: unknown) => String(a) === '--skip-git-repo-check').length;
 			expect(skipCount).toBe(1);
 
+			// --sandbox should be present and followed immediately by 'read-only'
+			const sandboxIdx = args.findIndex((a: unknown) => String(a) === '--sandbox');
+			expect(sandboxIdx).toBeGreaterThanOrEqual(0);
+			expect(String(args[sandboxIdx + 1])).toBe('read-only');
+
 			// Dangerous bypass flag must NOT be present in read-only mode
 			expect(args).not.toContain('--dangerously-bypass-approvals-and-sandbox');
 
@@ -1567,6 +1574,13 @@ Some text with [x] in it that's not a checkbox
 			mockStdout.emit('data', Buffer.from(JSON.stringify({ type: 'result', text: 'Done' }) + '\n'));
 			mockChild.emit('close', 0);
 			await resultPromise;
+		});
+
+		it('Hermes read-only spawn args retain quiet mode and omit yolo', () => {
+			const args = resolveCliBatchModeArgs(getAgentDefinition('hermes'), true);
+
+			expect(args).toContain('-Q');
+			expect(args).not.toContain('--yolo');
 		});
 
 		it('should not include read-only args when readOnlyMode is false', async () => {

@@ -832,6 +832,23 @@ function mergeUsageStats(
 	return merged;
 }
 
+/** Select batch-mode args without carrying permission grants or duplicates into read-only. */
+export function resolveCliBatchModeArgs(
+	def: ReturnType<typeof getAgentDefinition>,
+	readOnlyMode?: boolean
+): string[] {
+	if (!def?.batchModeArgs) {
+		return [];
+	}
+
+	if (!readOnlyMode || def.readOnlyCliEnforced === false) {
+		return [...def.batchModeArgs];
+	}
+
+	const excludedArgs = new Set([...(def.yoloModeArgs ?? []), ...(def.readOnlyArgs ?? [])]);
+	return def.batchModeArgs.filter((arg) => !excludedArgs.has(arg));
+}
+
 /**
  * Generic spawner for agents that use JSON line output parsed via AgentOutputParser.
  * Handles Codex, OpenCode, Factory Droid, and any future agents with the same pattern.
@@ -869,24 +886,7 @@ async function spawnJsonLineAgent(
 
 	if (def?.batchModePrefix) preOverrideArgs.push(...def.batchModePrefix);
 
-	// Batch-mode args handling:
-	// - When running in read-only mode and the provider enforces CLI-level
-	//   read-only (`readOnlyCliEnforced !== false`), do NOT include the
-	//   provider's batchModeArgs. The provider's `readOnlyArgs` should be the
-	//   authoritative source for flags that change behaviour in read-only.
-	//   This prevents duplicating flags that would otherwise be added by both
-	//   batchModeArgs and readOnlyArgs (see Codex duplicate-flag bug).
-	// - When `readOnlyCliEnforced === false` (some CLIs need their batch-mode
-	//   args, e.g. Gemini's `-y`), preserve batchModeArgs even in read-only.
-	if (def?.batchModeArgs) {
-		if (readOnlyMode && def.readOnlyCliEnforced !== false) {
-			// Skip including batchModeArgs entirely when the provider's read-only
-			// behaviour is enforced at the CLI level. The provider's
-			// `readOnlyArgs` will be appended below.
-		} else {
-			preOverrideArgs.push(...def.batchModeArgs);
-		}
-	}
+	preOverrideArgs.push(...resolveCliBatchModeArgs(def, readOnlyMode));
 
 	if (def?.jsonOutputArgs) preOverrideArgs.push(...def.jsonOutputArgs);
 	if (readOnlyMode && def?.readOnlyArgs) preOverrideArgs.push(...def.readOnlyArgs);
