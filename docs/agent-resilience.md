@@ -56,7 +56,7 @@ Two buttons:
 - **Try now** - skip the timer and resend immediately. Useful when you know the provider recovered, or you just switched accounts.
 - **Stop** - give up on this outage. The card freezes into a summary and the turn is yours to handle.
 
-When a retry succeeds, the card turns green and freezes: _Connection recovered. Service overloaded cleared after 3 retries over 4m._ Every outage keeps its own card, so a transcript honestly records what the day was like.
+When a retry gets through, the card turns green and freezes as soon as the agent starts thinking or calling tools, not when the turn ends: _Connection recovered. Service overloaded cleared after 3 retries over 4m._ A quota outage reads _Quota restored._ instead. Every outage keeps its own card, so a transcript honestly records what the day was like.
 
 <Note>
 Pending retries do not survive quitting Maestro. This is deliberate: a closed app should not sit in the background burning quota on your behalf. Reopening the app leaves the outage card in place as a dim summary, and you send the prompt again yourself.
