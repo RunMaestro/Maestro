@@ -39,6 +39,7 @@ import {
 	checkBinaryExists,
 	probeWindowsPaths,
 	probeUnixPaths,
+	probeUnixPathsAll,
 	findAllBinaryPaths,
 	type BinaryDetectionResult,
 } from '../../../main/agents';
@@ -427,6 +428,27 @@ describe('path-prober', () => {
 			expect(await probeWindowsPaths('copilot')).toBe(wingetPath);
 		});
 
+		it('leads with the WinGet Links shim for copilot, over an npm shim', async () => {
+			// A portable WinGet package never lands in Program Files, it only gets
+			// a Links shim, so the shim has to outrank the npm `.cmd` wrapper too.
+			// Making the table reachable is what put this ordering into effect.
+			const home = os.homedir();
+			const localAppData = process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
+			const wingetLink = path.join(localAppData, 'Microsoft', 'WinGet', 'Links', 'copilot.exe');
+			const npmShim = path.join(
+				process.env.APPDATA || path.join(home, 'AppData', 'Roaming'),
+				'npm',
+				'copilot.cmd'
+			);
+			accessMock.mockImplementation(async (probePath) => {
+				const candidate = String(probePath);
+				if (candidate === wingetLink || candidate === npmShim) return undefined;
+				throw new Error('ENOENT');
+			});
+
+			expect(await probeWindowsPaths('copilot')).toBe(wingetLink);
+		});
+
 		it('should probe the current Codex Desktop executable', async () => {
 			const originalLocalAppData = process.env.LOCALAPPDATA;
 			const readdirMock = vi.spyOn(fs.promises, 'readdir');
@@ -605,6 +627,19 @@ describe('path-prober', () => {
 			expect(await probeUnixPaths('opencode')).toBe(
 				path.join(home, '.opencode', 'bin', 'opencode')
 			);
+		});
+
+		it('lists /usr/local/bin/copilot once, not twice', async () => {
+			// `homebrew()` already emits the Intel root, so the hand-written
+			// `/usr/local/bin/copilot` that sat beside it was a second copy at a
+			// lower priority. `probeUnixPaths` hid that by taking the first hit,
+			// but `probeUnixPathsAll` is exported and does not de-duplicate.
+			accessMock.mockImplementation(async (probePath) => {
+				if (String(probePath) === '/usr/local/bin/copilot') return undefined;
+				throw new Error('ENOENT');
+			});
+
+			expect(await probeUnixPathsAll('copilot')).toEqual(['/usr/local/bin/copilot']);
 		});
 	});
 
