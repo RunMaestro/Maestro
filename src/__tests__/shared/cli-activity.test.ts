@@ -106,10 +106,18 @@ describe('cli-activity', () => {
 		vi.spyOn(console, 'warn').mockImplementation(() => {});
 	});
 
+	// Assigning `undefined` to a `process.env` key stores the STRING "undefined",
+	// which leaks into every later suite sharing this worker. Same shape as
+	// `cli-server-discovery.test.ts`.
+	function restoreEnv(key: keyof typeof savedEnv): void {
+		if (savedEnv[key] === undefined) delete process.env[key];
+		else process.env[key] = savedEnv[key];
+	}
+
 	afterEach(() => {
 		vi.restoreAllMocks();
-		process.env.XDG_CONFIG_HOME = savedEnv.XDG_CONFIG_HOME;
-		process.env.APPDATA = savedEnv.APPDATA;
+		restoreEnv('XDG_CONFIG_HOME');
+		restoreEnv('APPDATA');
 		fs.rmSync(root, { recursive: true, force: true });
 	});
 
