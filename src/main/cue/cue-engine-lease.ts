@@ -29,6 +29,19 @@
  *   `heartbeatAt`. If the file no longer names us, a peer reclaimed it and is
  *   now the engine, so renew reports the loss and the engine stops.
  * - **Release** removes the file only while it still names us.
+ *
+ * ## Known limits
+ *
+ * `renew()` and `release()` are check-then-write: they read the file, confirm it
+ * still names us, then write or unlink. A reclaim renames the file ASIDE rather
+ * than replacing it in place, so the path is briefly free and a peer's O_EXCL
+ * create can land between our read and our write. Reaching that window needs a
+ * holder that was reclaimed while we still believed we held the lease, and a
+ * VERIFIED live holder can no longer be reclaimed at all (see `holderVerdict`),
+ * so in practice it is limited to the Windows path, where no start token exists
+ * and an expired `heartbeatAt` is the only evidence of death. The cost if it
+ * happens is one duplicated heartbeat window, not two permanent engines: the
+ * loser's next renew reads a record naming someone else and stops.
  */
 
 import * as crypto from 'crypto';
@@ -95,9 +108,25 @@ const DEFAULT_ACQUIRE_TIMEOUT_MS = 1_500;
 /** An unparseable lease younger than this is a peer between open and write. */
 const PARTIAL_LEASE_GRACE_MS = 5_000;
 
+/**
+ * `null` means no usable record: the file is absent, or it exists and is not yet
+ * parseable (a peer between its create and its write).
+ *
+ * Any other I/O failure THROWS. An EBUSY from a Windows scanner, an EPERM, an
+ * EMFILE: none of them say anything about who holds the lease, and reporting
+ * them as "somebody else does" is enough to switch Cue off with no peer in
+ * sight.
+ */
 function readLease(lockPath: string): CueEngineLeaseRecord | null {
+	let raw: string;
 	try {
-		const parsed = JSON.parse(fs.readFileSync(lockPath, 'utf-8')) as Partial<CueEngineLeaseRecord>;
+		raw = fs.readFileSync(lockPath, 'utf-8');
+	} catch (err) {
+		if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+		throw err;
+	}
+	try {
+		const parsed = JSON.parse(raw) as Partial<CueEngineLeaseRecord>;
 		if (
 			typeof parsed.pid === 'number' &&
 			typeof parsed.instanceId === 'string' &&
@@ -141,28 +170,48 @@ export function createCueEngineLease(options: CueEngineLeaseOptions): CueEngineL
 
 	/**
 	 * Whether `holder` cannot be running an engine. `null` = the file exists but
-	 * is unparseable; returns `'wait'` while it may still be a peer mid-create.
+	 * is unparseable; `'wait'` while it may still be a peer mid-create.
+	 *
+	 * `ino` is carried out with the verdict rather than stashed beside it: the
+	 * reclaim needs to know WHICH file was judged, and a value the caller has to
+	 * remember to read separately is one refactor away from going stale.
 	 */
-	function holderVerdict(holder: CueEngineLeaseRecord | null): 'stale' | 'live' | 'wait' {
+	function holderVerdict(holder: CueEngineLeaseRecord | null): {
+		verdict: 'stale' | 'live' | 'wait';
+		ino?: number;
+	} {
 		if (holder === null) {
-			let ageMs: number | null = null;
+			let stat: fs.Stats;
 			try {
-				ageMs = Date.now() - fs.statSync(lockPath).mtimeMs;
+				stat = fs.statSync(lockPath);
 			} catch {
-				return 'wait'; // Vanished between our create and stat; just retry.
+				return { verdict: 'wait' }; // Vanished between create and stat; retry.
 			}
-			return ageMs > PARTIAL_LEASE_GRACE_MS ? 'stale' : 'wait';
+			const expired = Date.now() - stat.mtimeMs > PARTIAL_LEASE_GRACE_MS;
+			return { verdict: expired ? 'stale' : 'wait', ino: stat.ino };
 		}
-		if (options.ownsDataDirectory?.()) return 'stale';
-		if (isCurrentProcess(holder)) return 'stale';
+		if (isCurrentProcess(holder)) return { verdict: 'stale' };
 		const liveness = probeProcess(holder);
-		if (liveness === 'dead') return 'stale';
-		if (liveness === 'alive' && holder.startToken === undefined) {
-			// Pid exists but we cannot prove it is the same process: fall back to
-			// the lease clock. A running engine renews every heartbeat.
-			return Date.now() - holder.heartbeatAt > leaseTtlMs ? 'stale' : 'live';
-		}
-		return 'live';
+		if (liveness === 'dead') return { verdict: 'stale' };
+
+		// A holder we can PROVE is running is never reclaimed, not even while we
+		// hold the single-instance lock. Dev skips that lock entirely
+		// (`setupDeepLinkHandling`, src/main/deep-links.ts), so under
+		// `dev:prod-data` production holds it while dev holds the lease, and
+		// letting the lock win there would judge a live dev engine stale and run
+		// both. That is one of the two cases this lease exists to prevent.
+		if (liveness === 'alive' && holder.startToken !== undefined) return { verdict: 'live' };
+
+		// Unverifiable: no start token (Windows, older records) or an inconclusive
+		// probe. Owning the data directory rules out any other app instance, which
+		// is the strongest evidence available here.
+		if (options.ownsDataDirectory?.()) return { verdict: 'stale' };
+		// An inconclusive probe may never reclaim; only a clock can.
+		if (liveness === 'unknown') return { verdict: 'live' };
+		// Pid exists but we cannot prove it is the same process: fall back to the
+		// lease clock. A running engine renews every heartbeat.
+		const expired = Date.now() - holder.heartbeatAt > leaseTtlMs;
+		return { verdict: expired ? 'stale' : 'live' };
 	}
 
 	function acquire(): CueEngineLeaseResult {
@@ -185,7 +234,7 @@ export function createCueEngineLease(options: CueEngineLeaseOptions): CueEngineL
 				return { ok: true };
 			}
 			holder = readLease(lockPath);
-			const verdict = holderVerdict(holder);
+			const { verdict, ino } = holderVerdict(holder);
 			if (verdict === 'live' && holder) {
 				return {
 					ok: false,
@@ -193,7 +242,7 @@ export function createCueEngineLease(options: CueEngineLeaseOptions): CueEngineL
 					reason: `Cue engine lease is held by another Maestro process (${describeHolder(holder)})`,
 				};
 			}
-			const reclaimed = verdict === 'stale' && reclaimStaleLock(lockPath, holder);
+			const reclaimed = verdict === 'stale' && reclaimStaleLock(lockPath, holder, ino);
 			if (Date.now() >= deadline) {
 				return {
 					ok: false,
@@ -208,24 +257,36 @@ export function createCueEngineLease(options: CueEngineLeaseOptions): CueEngineL
 	function renew(): boolean {
 		if (!held) return false;
 		const onDisk = readLease(lockPath);
-		if (onDisk === null && !fs.existsSync(lockPath)) {
-			// Deleted out from under us (user cleanup). Re-take it only if nobody
-			// else got there first.
-			const refreshed = { ...held, heartbeatAt: Date.now() };
-			if (tryCreate(lockPath, refreshed)) {
-				held = refreshed;
-				return true;
+		if (onDisk === null) {
+			if (!fs.existsSync(lockPath)) {
+				// Deleted out from under us (user cleanup). Re-take it only if nobody
+				// else got there first.
+				const refreshed = { ...held, heartbeatAt: Date.now() };
+				if (tryCreate(lockPath, refreshed)) {
+					held = refreshed;
+					return true;
+				}
+				held = null;
+				return false;
 			}
-			held = null;
-			return false;
+			// Present but unparseable: a peer between its create and its write, or a
+			// torn file. That proves nothing about who holds the lease, so keep
+			// `held` and write nothing over it. The next tick reads a settled file,
+			// and if a peer really did take over we stop then.
+			throw new Error(`Cue engine lease at ${lockPath} is present but unreadable`);
 		}
-		if (onDisk?.instanceId !== held.instanceId) {
+		// Only a PARSED record naming someone else means the lease is lost.
+		if (onDisk.instanceId !== held.instanceId) {
 			held = null;
 			return false;
 		}
 		const refreshed = { ...held, heartbeatAt: Date.now() };
-		// Rename-over keeps the path occupied throughout, so no peer's O_EXCL
-		// create can slip in between.
+		// Check-then-write: the read above and this write are not one atomic step.
+		// A reclaim renames the file ASIDE, so the path is briefly free and a
+		// peer's O_EXCL create can land in the gap, leaving us to overwrite a lease
+		// that is now theirs. A verified live holder can no longer be reclaimed
+		// (see `holderVerdict`), so in practice the window needs an UNVERIFIABLE
+		// holder, which means the Windows TTL path. See Known limits at the top.
 		atomicWriteFileSync(lockPath, JSON.stringify(refreshed));
 		held = refreshed;
 		return true;

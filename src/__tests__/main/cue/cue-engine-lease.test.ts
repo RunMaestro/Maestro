@@ -135,12 +135,35 @@ describe('cue-engine-lease', () => {
 			expect(readRecord(lockPath).instanceId).not.toBe('previous-cycle');
 		});
 
-		it('reclaims a live holder when this process owns the data directory (single-instance lock)', () => {
+		it('reclaims an UNVERIFIABLE holder when this process owns the data directory', () => {
 			const other = otherProcess();
-			writeHolder({ pid: other.pid!, startToken: readProcessStartToken(other.pid!) ?? undefined });
+			// No start token: all we know is that some process has that pid. Holding
+			// the single-instance lock rules out another app instance, so it decides.
+			writeHolder({ pid: other.pid! });
 			const lease = createCueEngineLease({ lockPath, ownsDataDirectory: () => true });
 			expect(lease.acquire()).toEqual({ ok: true });
 		});
+
+		// Dev skips `requestSingleInstanceLock()` entirely (`setupDeepLinkHandling`
+		// in src/main/deep-links.ts), so under `dev:prod-data` production holds the
+		// lock while dev holds the lease. Letting the lock win there judges a live
+		// dev engine stale and both engines fire, which is what the lease exists to
+		// prevent.
+		it.skipIf(!tokensSupported)(
+			'does NOT reclaim a verified live holder even while owning the data directory',
+			() => {
+				const other = otherProcess();
+				const startToken = readProcessStartToken(other.pid!) ?? undefined;
+				expect(startToken).toBeDefined();
+				writeHolder({ pid: other.pid!, startToken });
+
+				const lease = createCueEngineLease({ lockPath, ownsDataDirectory: () => true });
+				const result = lease.acquire();
+
+				expect(result.ok).toBe(false);
+				expect(readRecord(lockPath).pid).toBe(other.pid);
+			}
+		);
 
 		it('falls back to the lease clock for a holder it cannot verify (no start token)', () => {
 			const other = otherProcess();
@@ -201,6 +224,46 @@ describe('cue-engine-lease', () => {
 
 		it('returns false when never acquired', () => {
 			expect(createCueEngineLease({ lockPath }).renew()).toBe(false);
+		});
+
+		// An unreadable file is the cheapest real stand-in for the EBUSY a Windows
+		// scanner produces. `chmod` does nothing on Windows, and root ignores the
+		// mode, so the branch is asserted where it can actually be provoked.
+		const canDenyRead = process.platform !== 'win32' && process.getuid?.() !== 0;
+
+		it.skipIf(!canDenyRead)('keeps the lease when the file cannot be read', () => {
+			const lease = createCueEngineLease({ lockPath });
+			lease.acquire();
+			const before = readRecord(lockPath);
+			fs.chmodSync(lockPath, 0o000);
+
+			try {
+				// A read failure says nothing about who holds the lease, so it must
+				// not come back as "a peer took over", which stops Cue for good.
+				expect(() => lease.renew()).toThrow(/EACCES/);
+			} finally {
+				fs.chmodSync(lockPath, 0o600);
+			}
+
+			// The lease was never given up: the next tick carries on.
+			expect(lease.renew()).toBe(true);
+			expect(readRecord(lockPath).instanceId).toBe(before.instanceId);
+		});
+
+		it('keeps the lease when the file is present but unparseable', () => {
+			const lease = createCueEngineLease({ lockPath });
+			lease.acquire();
+			const before = readRecord(lockPath);
+			// A peer between its O_EXCL create and its write looks exactly like this.
+			fs.writeFileSync(lockPath, '{"pid":');
+
+			expect(() => lease.renew()).toThrow(/unreadable/);
+			// Nothing was written over the half-written file.
+			expect(fs.readFileSync(lockPath, 'utf-8')).toBe('{"pid":');
+
+			// Still ours once the bytes settle.
+			fs.writeFileSync(lockPath, JSON.stringify(before));
+			expect(lease.renew()).toBe(true);
 		});
 	});
 
