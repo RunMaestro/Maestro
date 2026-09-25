@@ -18,6 +18,7 @@ import {
 	retryNow,
 	cancelRetry,
 	clearRetryIfSettled,
+	noteRetryProgress,
 	getRetryEntry,
 	hasPendingRetry,
 	getOutage,
@@ -751,6 +752,58 @@ describe('outage records (transcript status card)', () => {
 		// Active retry entry is gone, but the outage record persists for the card.
 		expect(getRetryEntry('o3', 't1')).toBeUndefined();
 		expect(sessionHasActiveOutage('o3')).toBe(false);
+	});
+
+	// A resend that got through used to stay "Failing for… / Next attempt: now…"
+	// for the whole turn, because only process exit resolved the outage.
+	it('noteRetryProgress marks an in-flight outage recovered before exit', () => {
+		setupSession('o3b', 't1');
+		seedSnapshot('o3b', 't1');
+		scheduleRetryForError('o3b', 't1', quota());
+		const outageId = getRetryEntry('o3b', 't1')!.outageId;
+		retryNow('o3b', 't1'); // → in-flight
+
+		vi.setSystemTime(NOW + 2_000);
+		noteRetryProgress('o3b', 't1');
+
+		const outage = getOutage(outageId)!;
+		expect(outage.status).toBe('recovered');
+		expect(outage.resolvedAt).toBe(NOW + 2_000);
+		expect(getRetryEntry('o3b', 't1')).toBeUndefined();
+		expect(sessionHasActiveOutage('o3b')).toBe(false);
+
+		// The exit that follows finds nothing left to settle.
+		vi.setSystemTime(NOW + 60_000);
+		clearRetryIfSettled('o3b', 't1');
+		expect(getOutage(outageId)!.resolvedAt).toBe(NOW + 2_000);
+	});
+
+	it('noteRetryProgress ignores a retry still counting down', () => {
+		setupSession('o3c', 't1');
+		seedSnapshot('o3c', 't1');
+		scheduleRetryForError('o3c', 't1', quota());
+		const outageId = getRetryEntry('o3c', 't1')!.outageId;
+
+		noteRetryProgress('o3c', 't1');
+
+		expect(getOutage(outageId)!.status).toBe('active');
+		expect(getRetryEntry('o3c', 't1')?.status).toBe('scheduled');
+	});
+
+	it('a failure after the resend recovered starts a new outage', () => {
+		setupSession('o3d', 't1');
+		seedSnapshot('o3d', 't1');
+		scheduleRetryForError('o3d', 't1', overload());
+		const first = getRetryEntry('o3d', 't1')!.outageId;
+		retryNow('o3d', 't1');
+		noteRetryProgress('o3d', 't1');
+
+		scheduleRetryForError('o3d', 't1', overload());
+
+		const entry = getRetryEntry('o3d', 't1')!;
+		expect(entry.outageId).not.toBe(first);
+		expect(entry.attempt).toBe(0);
+		expect(getOutage(first)!.status).toBe('recovered');
 	});
 
 	it('cancelRetry marks the outage stopped', () => {

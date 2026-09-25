@@ -121,6 +121,11 @@ export function RetryStatusCard({
 	// -- Resolved states: freeze into a compact one-line summary. -----------------
 	if (outage.status === 'recovered') {
 		const totalMs = (outage.resolvedAt ?? outage.startedAt) - outage.startedAt;
+		// `attempts` counts reschedules, so the resend that got through is not in
+		// it (the same correction `resolveOutage` makes for the Usage Dashboard).
+		const sentCount = retryCount + 1;
+		const headline =
+			outage.strategy === 'availability' ? 'Connection recovered.' : 'Quota restored.';
 		return (
 			<div
 				className="flex items-center gap-2 px-3 py-2 rounded-lg border text-sm select-none"
@@ -133,9 +138,9 @@ export function RetryStatusCard({
 			>
 				<Check className="w-4 h-4 flex-shrink-0" style={{ color: theme.colors.success }} />
 				<span>
-					<span className="font-medium">Connection recovered.</span>{' '}
+					<span className="font-medium">{headline}</span>{' '}
 					<span style={{ color: theme.colors.textDim }}>
-						{strategyLabel} cleared after {retryCount} {retryCount === 1 ? 'retry' : 'retries'}
+						{strategyLabel} cleared after {sentCount} {sentCount === 1 ? 'retry' : 'retries'}
 						{totalMs > 0 ? ` over ${formatDurationHuman(totalMs)}` : ''}.
 					</span>
 				</span>

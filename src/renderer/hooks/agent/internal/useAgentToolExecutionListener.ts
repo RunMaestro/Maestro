@@ -17,6 +17,7 @@
 
 import { useEffect } from 'react';
 import { useSessionStore } from '../../../stores/sessionStore';
+import { noteRetryProgress } from '../../../stores/retryStore';
 import { REGEX_AI_TAB } from '../../../utils/sessionIdParser';
 import { thinkingLogsRecorded } from './helpers/thinkingLogs';
 import type { LogEntry } from '../../../types';
@@ -43,6 +44,9 @@ export function useAgentToolExecutionListener(): void {
 				const tabId = aiTabMatch[2];
 
 				if (!getSessions().some((s) => s.id === actualSessionId)) return;
+
+				// A tool call proves an auto-retry resend got through (see noteRetryProgress).
+				noteRetryProgress(actualSessionId, tabId);
 
 				const logId = toolEvent.toolCallId
 					? `tool-${toolEvent.toolCallId}`

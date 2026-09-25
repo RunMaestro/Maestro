@@ -835,14 +835,34 @@ function resolveOutage(outageId: string, status: Exclude<OutageStatus, 'active'>
  * clear it. A rescheduled entry (status back to `'scheduled'`) is left alone.
  */
 export function clearRetryIfSettled(sessionId: string, tabId: string): void {
+	recoverInFlightRetry(sessionId, tabId, 'Resend settled; clearing retry');
+}
+
+/**
+ * Called when an AI tab streams model output (a thinking/text chunk or a tool
+ * call). If an auto-retry resend is `'in-flight'` on that tab, the provider has
+ * accepted the turn, so the outage is over NOW - not when the process exits.
+ *
+ * Waiting for exit left a resend that was visibly working (thinking, running
+ * tools) under a card still reading "Failing for 4m… / Next attempt: now…" for
+ * the whole length of the turn. Only model output counts: error text can reach
+ * the `data` stream, but never a thinking chunk or a tool call.
+ *
+ * A retryable failure later in the same turn starts a NEW outage (fresh card,
+ * backoff from attempt 0): the service did recover, then failed again.
+ */
+export function noteRetryProgress(sessionId: string, tabId: string): void {
+	recoverInFlightRetry(sessionId, tabId, 'Resend is producing output; outage recovered');
+}
+
+function recoverInFlightRetry(sessionId: string, tabId: string, reason: string): void {
 	const key = keyFor(sessionId, tabId);
 	const entry = useRetryStore.getState().retries[key];
-	if (entry && entry.status === 'in-flight') {
-		logger.info('[retry] Resend settled; clearing retry', undefined, { key });
-		resolveOutage(entry.outageId, 'recovered');
-		removeEntry(key);
-		clearTabAgentError(sessionId, tabId, entry.lastMessage);
-	}
+	if (entry?.status !== 'in-flight') return;
+	logger.info(`[retry] ${reason}`, undefined, { key });
+	resolveOutage(entry.outageId, 'recovered');
+	removeEntry(key);
+	clearTabAgentError(sessionId, tabId, entry.lastMessage);
 }
 
 /**
