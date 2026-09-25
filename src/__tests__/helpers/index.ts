@@ -19,3 +19,7 @@ export { markdownEditorModuleMock } from './mockMarkdownEditor';
 // "37,268 passed" while it was red. The one suite that needs real SQLite
 // (`main/cue/cue-history-query.test.ts`) imports `./nodeSqlite` directly and
 // declares `@vitest-environment node`. Keep it that way.
+//
+// Also NOT re-exported: `./childProcessBundle`, which spawns real node children
+// and bundles with esbuild. Node-only for the same reason; import it directly
+// from a `@vitest-environment node` suite.

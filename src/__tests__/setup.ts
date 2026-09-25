@@ -621,6 +621,7 @@ const mockMaestro = {
 		getActiveRuns: vi.fn().mockResolvedValue([]),
 		getActivityLog: vi.fn().mockResolvedValue([]),
 		getEventCount: vi.fn().mockResolvedValue(0),
+		getLeaseBlockedReason: vi.fn().mockResolvedValue(null),
 		enable: vi.fn().mockResolvedValue(undefined),
 		disable: vi.fn().mockResolvedValue(undefined),
 		setActive: vi.fn().mockResolvedValue(undefined),

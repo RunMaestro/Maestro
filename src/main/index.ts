@@ -21,6 +21,7 @@ import {
 	disposeGlobalHotkey,
 } from './global-hotkey-manager';
 import { CueEngine } from './cue/cue-engine';
+import { createCueEngineLease } from './cue/cue-engine-lease';
 import { configureCueTelemetry } from './cue/cue-telemetry';
 import { executeCuePrompt, stopCueRun, getCueProcessList } from './cue/cue-executor';
 import { executeCueShell, stopCueShellRun } from './cue/cue-shell-executor';
@@ -1232,6 +1233,15 @@ app
 			// next time Cue is enabled, without an app restart.
 			getCueHistoryRetentionDays: () =>
 				store.get('cueHistoryRetentionDays', DEFAULT_CUE_HISTORY_RETENTION_DAYS),
+			// One engine per data directory. The lease lives beside cue.db;
+			// holding Electron's single-instance lock (production) proves no other
+			// app instance shares this directory, so a leftover lease is reclaimed
+			// without needing to verify its pid.
+			engineLease: createCueEngineLease({
+				lockPath: path.join(app.getPath('userData'), 'cue-engine.lock'),
+				version: app.getVersion(),
+				ownsDataDirectory: () => app.hasSingleInstanceLock(),
+			}),
 		});
 
 		// Configure Cue telemetry submitter. Reads installationId / encore flags

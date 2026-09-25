@@ -12,6 +12,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { atomicWriteFileSync, FileLockTimeoutError, withFileLockSync } from './crossProcessLock';
+import { currentProcessIdentity, isCurrentProcess, probeProcess } from './processIdentity';
 
 export interface CliServerInfo {
 	port: number;
@@ -25,6 +27,13 @@ export interface CliServerInfo {
 	 * `status` to compare against the CLI's own build version.
 	 */
 	version?: string;
+	/**
+	 * Start-time token of `pid` (see `processIdentity.ts`), stamped by
+	 * {@link writeCliServerInfo}. Lets readers tell the app that wrote this file
+	 * from an unrelated process that inherited its pid after a crash. Absent
+	 * from older builds and on Windows.
+	 */
+	startToken?: string;
 }
 
 // Get the Maestro config directory path (lowercase "maestro")
@@ -55,18 +64,41 @@ function getDiscoveryFilePath(): string {
 	return path.join(getConfigDir(), DISCOVERY_FILE);
 }
 
+function getDiscoveryLockPath(): string {
+	return `${getDiscoveryFilePath()}.lock`;
+}
+
 /**
- * Write CLI server info atomically (write to .tmp then rename)
+ * Run `fn` under the discovery file's cross-process lock. The lock only orders
+ * this file's writers against each other (two app processes pointed at one data
+ * directory, e.g. `dev:prod-data` next to a running production app); a lock
+ * that cannot be taken in time falls through to running `fn` unlocked, which is
+ * still safe from torn reads because every write is an atomic rename.
+ */
+function withDiscoveryLock(fn: () => void): void {
+	try {
+		withFileLockSync(getDiscoveryLockPath(), fn);
+	} catch (error) {
+		if (!(error instanceof FileLockTimeoutError)) throw error;
+		fn();
+	}
+}
+
+/**
+ * Write CLI server info atomically (unique temp file, then rename).
+ *
+ * The writing process's start token is stamped on automatically when `info`
+ * describes the calling process.
  */
 export function writeCliServerInfo(info: CliServerInfo): void {
-	const filePath = getDiscoveryFilePath();
-	const dir = path.dirname(filePath);
-	if (!fs.existsSync(dir)) {
-		fs.mkdirSync(dir, { recursive: true });
-	}
-	const tmpPath = filePath + '.tmp';
-	fs.writeFileSync(tmpPath, JSON.stringify(info, null, 2), 'utf-8');
-	fs.renameSync(tmpPath, filePath);
+	const own = currentProcessIdentity();
+	const stamped: CliServerInfo =
+		info.startToken === undefined && info.pid === own.pid && own.startToken !== undefined
+			? { ...info, startToken: own.startToken }
+			: info;
+	withDiscoveryLock(() => {
+		atomicWriteFileSync(getDiscoveryFilePath(), JSON.stringify(stamped, null, 2));
+	});
 }
 
 /**
@@ -93,34 +125,42 @@ export function readCliServerInfo(): CliServerInfo | null {
 }
 
 /**
- * Delete the CLI server discovery file (called on shutdown)
+ * Delete the CLI server discovery file (called on shutdown / server stop).
+ *
+ * Only removes a file THIS process wrote. When two app processes share a data
+ * directory, the one that quits first used to delete the survivor's discovery
+ * file, leaving the CLI unable to find a server that was still running. An
+ * unreadable file is removed (it points nowhere anyway).
  */
 export function deleteCliServerInfo(): void {
 	try {
-		const filePath = getDiscoveryFilePath();
-		fs.unlinkSync(filePath);
+		withDiscoveryLock(() => {
+			const info = readCliServerInfo();
+			if (info && !isCurrentProcess(info)) return;
+			try {
+				fs.unlinkSync(getDiscoveryFilePath());
+			} catch {
+				// File may not exist, ignore
+			}
+		});
 	} catch {
-		// File may not exist, ignore
+		// Shutdown path: never let discovery cleanup throw.
 	}
 }
 
 /**
  * Check if the CLI server is still running by reading the discovery file
- * and verifying the PID is alive
+ * and verifying the process that wrote it is alive.
+ *
+ * A recorded start token must also match, so a pid recycled after a crash does
+ * not read as a running server. EPERM (the process exists but this caller
+ * cannot signal it) counts as alive: this is common for sandboxed read-only
+ * monitors and must not turn a reachable desktop into a stale discovery result.
+ * The authenticated WebSocket connection remains the authoritative
+ * reachability check.
  */
 export function isCliServerRunning(): boolean {
 	const info = readCliServerInfo();
 	if (!info) return false;
-
-	try {
-		process.kill(info.pid, 0); // Doesn't kill, just checks if process exists
-		return true;
-	} catch (error) {
-		// EPERM means the process exists but this caller cannot signal it. This is
-		// common for sandboxed read-only monitors and must not turn a reachable
-		// desktop into a stale discovery result. The authenticated WebSocket
-		// connection remains the authoritative reachability check.
-		if ((error as NodeJS.ErrnoException).code === 'EPERM') return true;
-		return false;
-	}
+	return probeProcess(info) === 'alive';
 }

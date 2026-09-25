@@ -13,6 +13,11 @@ export interface UseCueReturn {
 	eventCount: number;
 	loading: boolean;
 	error: string | null;
+	/**
+	 * Why the engine is idle although Cue is switched on, normally another
+	 * Maestro process holding the engine lease. `null` while it is running.
+	 */
+	leaseBlockedReason: string | null;
 	enable: () => Promise<void>;
 	disable: () => Promise<void>;
 	stopRun: (runId: string) => Promise<void>;
@@ -49,6 +54,7 @@ export function useCue(options?: UseCueOptions): UseCueReturn {
 	const [activityLog, setActivityLog] = useState<CueRunResult[]>([]);
 	const [queueStatus, setQueueStatus] = useState<Record<string, number>>({});
 	const [eventCount, setEventCount] = useState(0);
+	const [leaseBlockedReason, setLeaseBlockedReason] = useState<string | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 	const mountedRef = useRef(true);
@@ -62,19 +68,22 @@ export function useCue(options?: UseCueOptions): UseCueReturn {
 			// powers the Cue dashboard, where an IPC failure must surface as
 			// a user-visible error banner. Going direct preserves the catch
 			// path below; the wrapper would make `err` unreachable here.
-			const [statusData, runsData, logData, queueData, eventCountData] = await Promise.all([
-				window.maestro.cue.getStatus(),
-				window.maestro.cue.getActiveRuns(),
-				window.maestro.cue.getActivityLog(100),
-				window.maestro.cue.getQueueStatus(),
-				window.maestro.cue.getEventCount(),
-			]);
+			const [statusData, runsData, logData, queueData, eventCountData, blockedReason] =
+				await Promise.all([
+					window.maestro.cue.getStatus(),
+					window.maestro.cue.getActiveRuns(),
+					window.maestro.cue.getActivityLog(100),
+					window.maestro.cue.getQueueStatus(),
+					window.maestro.cue.getEventCount(),
+					window.maestro.cue.getLeaseBlockedReason(),
+				]);
 			if (!mountedRef.current) return;
 			setSessions(statusData);
 			setActiveRuns(runsData);
 			setActivityLog(logData);
 			setQueueStatus(queueData);
 			setEventCount(eventCountData);
+			setLeaseBlockedReason(blockedReason);
 		} catch (err) {
 			if (!mountedRef.current) return;
 			setError(err instanceof Error ? err.message : 'Failed to fetch Cue status');
@@ -186,6 +195,7 @@ export function useCue(options?: UseCueOptions): UseCueReturn {
 		eventCount,
 		loading,
 		error,
+		leaseBlockedReason,
 		enable,
 		disable,
 		stopRun,

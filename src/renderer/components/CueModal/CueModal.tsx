@@ -69,6 +69,7 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 		eventCount,
 		loading,
 		error,
+		leaseBlockedReason,
 		enable,
 		disable,
 		stopRun,
@@ -383,6 +384,7 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 									loading={loading}
 									error={error}
 									graphError={graphError}
+									leaseBlockedReason={leaseBlockedReason}
 									onRetry={handleRetry}
 									sessions={sessions}
 									activeRuns={activeRuns}
