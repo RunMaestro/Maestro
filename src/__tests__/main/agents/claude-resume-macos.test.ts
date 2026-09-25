@@ -39,11 +39,14 @@ vi.mock('../../../main/utils/logger', () => ({
 
 import * as os from 'os';
 import { resolveConfigDirKey } from '../../../main/stores/claudeUsageStore';
-import { resolveConfigDirKeyFromEnv } from '../../../main/agents/claudeSpawnCore';
+import {
+	mergeClaudeSpawnEnvLayers,
+	resolveConfigDirKeyFromEnv,
+} from '../../../main/agents/claudeSpawnCore';
 import { stripThinkingFromTranscript } from '../../../main/agents/claude-transcript-sanitizer';
 import { buildChildProcessEnv } from '../../../main/process-manager/utils/envBuilder';
 import { AGENT_DEFINITIONS } from '../../../main/agents/definitions';
-import { buildAgentArgs } from '../../../main/utils/agent-args';
+import { applyAgentConfigOverrides, buildAgentArgs } from '../../../main/utils/agent-args';
 import { encodeClaudeProjectPath } from '../../../shared/pathUtils';
 import { cwdSlug } from '../../../maestro-p/session-watcher';
 import type { AgentConfig } from '../../../main/agents';
@@ -57,13 +60,35 @@ const ICLOUD_SLUG = '-Users-jane-Library-Mobile-Documents-com-apple-CloudDocs-My
 const SESSION_ID = '0f8b1c2e-5d4a-4e7b-9c3d-2a1b0c9d8e7f';
 
 /**
+ * The env layers a user can set CLAUDE_CONFIG_DIR at, besides the agent's own
+ * (session) vars: Settings -> Shell Configuration (`global`) and the
+ * provider-level agent config (`agentLevel`). A macOS multi-account setup is
+ * commonly configured at either one.
+ */
+interface OtherLayers {
+	global?: Record<string, string>;
+	agentLevel?: Record<string, string>;
+}
+
+/**
  * The directory the spawned process will actually use: whatever
  * CLAUDE_CONFIG_DIR its REAL environment carries, else `~/.claude`. That is
  * claude's own rule, and maestro-p's `resolveConfigDir()` (which treats an
  * empty value as unset) - both read the child env, not Maestro's settings.
+ *
+ * Built through the spawn's own code, not a restatement of it:
+ * `applyAgentConfigOverrides()` picks the user env set and lays it over the
+ * agent defaults, then `buildChildProcessEnv()` lays that over the global vars.
  */
-function configDirSeenBySpawn(customEnvVars: Record<string, string>): string {
-	const childEnv = buildChildProcessEnv(customEnvVars);
+function configDirSeenBySpawn(
+	sessionCustomEnvVars: Record<string, string> | undefined,
+	layers: OtherLayers = {}
+): string {
+	const { effectiveCustomEnvVars } = applyAgentConfigOverrides(claudeCode, [], {
+		agentConfigValues: layers.agentLevel ? { customEnvVars: layers.agentLevel } : {},
+		sessionCustomEnvVars,
+	});
+	const childEnv = buildChildProcessEnv(effectiveCustomEnvVars, false, layers.global);
 	const dir = childEnv.CLAUDE_CONFIG_DIR;
 	// Resolved, since claude makes the path absolute itself (and so it compares
 	// with the sanitizer's key on Windows, where `/Users/...` gains a drive).
@@ -71,16 +96,22 @@ function configDirSeenBySpawn(customEnvVars: Record<string, string>): string {
 }
 
 /**
- * The directory the API-resume sanitizer looks in. `process.ts` feeds
- * `resolveConfigDirKey` the RAW merge of process env, agent defaults and the
- * agent's custom env vars - before any spawn-time normalization.
+ * The directory the API-resume sanitizer looks in: `process.ts` keys it on
+ * `mergeClaudeSpawnEnvLayers()` of the same layers, as configured (before any
+ * spawn-time normalization, which `resolveConfigDirKey` then applies).
  */
-function configDirSeenBySanitizer(customEnvVars: Record<string, string>): string {
-	return resolveConfigDirKey({
-		...(process.env as NodeJS.ProcessEnv),
-		...(claudeCode.defaultEnvVars ?? {}),
-		...customEnvVars,
-	});
+function configDirSeenBySanitizer(
+	sessionCustomEnvVars: Record<string, string> | undefined,
+	layers: OtherLayers = {}
+): string {
+	return resolveConfigDirKey(
+		mergeClaudeSpawnEnvLayers({
+			agentDefaultEnvVars: claudeCode.defaultEnvVars,
+			globalShellEnvVars: layers.global,
+			agentCustomEnvVars: layers.agentLevel,
+			sessionCustomEnvVars,
+		})
+	);
 }
 
 function transcriptPath(configDir: string, cwd: string, sessionId = SESSION_ID): string {
@@ -204,6 +235,76 @@ describe('Claude Code resume on macOS', () => {
 			expect(configDirSeenBySanitizer(vars)).toBe(configDirSeenBySpawn(vars));
 		});
 
+		// CLAUDE_CONFIG_DIR is not only set on the agent itself. The two other
+		// layers the child receives used to be left out of the key, so the
+		// sanitizer looked in ~/.claude while claude wrote to the configured dir.
+		describe("layers beyond the agent's own vars", () => {
+			const home = () => homeRef.current;
+			const at = (...parts: string[]) => path.resolve(home(), ...parts);
+
+			it.each<[string, Record<string, string> | undefined, OtherLayers, () => string]>([
+				[
+					'a global Shell Configuration dir',
+					undefined,
+					{ global: { CLAUDE_CONFIG_DIR: '~/.claude-work' } },
+					() => at('.claude-work'),
+				],
+				[
+					'a provider-level (agent config) dir',
+					undefined,
+					{ agentLevel: { CLAUDE_CONFIG_DIR: '~/.claude-team' } },
+					() => at('.claude-team'),
+				],
+				[
+					'the provider level over the global layer',
+					undefined,
+					{
+						global: { CLAUDE_CONFIG_DIR: '~/.claude-work' },
+						agentLevel: { CLAUDE_CONFIG_DIR: '~/.claude-team' },
+					},
+					() => at('.claude-team'),
+				],
+				[
+					"the agent's own dir over the provider level",
+					{ CLAUDE_CONFIG_DIR: '~/.claude-mine' },
+					{ agentLevel: { CLAUDE_CONFIG_DIR: '~/.claude-team' } },
+					() => at('.claude-mine'),
+				],
+				[
+					// The agent's own vars REPLACE the provider-level set; they do not
+					// layer over it. Setting any unrelated var drops the team dir.
+					"the agent's unrelated vars replacing the provider-level set",
+					{ SOME_OTHER_VAR: '1' },
+					{
+						global: { CLAUDE_CONFIG_DIR: '~/.claude-work' },
+						agentLevel: { CLAUDE_CONFIG_DIR: '~/.claude-team' },
+					},
+					() => at('.claude-work'),
+				],
+				[
+					'a blank provider-level value cancelling the global dir',
+					undefined,
+					{
+						global: { CLAUDE_CONFIG_DIR: '~/.claude-work' },
+						agentLevel: { CLAUDE_CONFIG_DIR: '' },
+					},
+					() => at('.claude'),
+				],
+				[
+					'a blank agent value cancelling both lower layers',
+					{ CLAUDE_CONFIG_DIR: '  ' },
+					{
+						global: { CLAUDE_CONFIG_DIR: '~/.claude-work' },
+						agentLevel: { CLAUDE_CONFIG_DIR: '~/.claude-team' },
+					},
+					() => at('.claude'),
+				],
+			])('honors %s', (_label, session, layers, expected) => {
+				expect(configDirSeenBySpawn(session, layers)).toBe(expected());
+				expect(configDirSeenBySanitizer(session, layers)).toBe(expected());
+			});
+		});
+
 		it('keys the desktop and the CLI identically (the CLI uses resolveConfigDirKeyFromEnv)', () => {
 			for (const value of [undefined, '/Users/jane/.claude-work', '~/.claude-work', '', '  ']) {
 				const env: NodeJS.ProcessEnv = value === undefined ? {} : { CLAUDE_CONFIG_DIR: value };
@@ -251,6 +352,18 @@ describe('Claude Code resume on macOS', () => {
 					false
 				);
 			}
+		});
+
+		it('sanitizes the transcript under a globally configured config dir', () => {
+			const layers: OtherLayers = { global: { CLAUDE_CONFIG_DIR: '~/.claude-work' } };
+			const file = writeInteractiveTranscript(configDirSeenBySpawn(undefined, layers));
+
+			const result = stripThinkingFromTranscript(
+				transcriptPath(configDirSeenBySanitizer(undefined, layers), ICLOUD_PROJECT)
+			);
+
+			expect(result).toMatchObject({ sanitized: true, droppedRows: 1 });
+			expect(file.startsWith(path.join(homeRef.current, '.claude-work'))).toBe(true);
 		});
 
 		it('keeps API-signed thinking (non-empty reasoning) that the next API turn must re-send verbatim', () => {

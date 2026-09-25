@@ -1099,6 +1099,82 @@ describe('process IPC handlers', () => {
 					);
 				}
 			);
+
+			// CLAUDE_CONFIG_DIR set outside the agent's own vars still reaches the
+			// spawned claude, so the sanitizer has to look there too. The agent's
+			// own vars REPLACE the provider-level set (they do not layer over it),
+			// which is why the last case falls back to the global dir.
+			it.each<
+				[
+					string,
+					Record<string, string> | undefined,
+					Record<string, string>,
+					Record<string, string>,
+					string,
+				]
+			>([
+				[
+					'Settings -> Shell Configuration',
+					undefined,
+					{},
+					{ CLAUDE_CONFIG_DIR: '~/.claude-work' },
+					'.claude-work',
+				],
+				[
+					'the provider-level agent config',
+					undefined,
+					{ CLAUDE_CONFIG_DIR: '~/.claude-team' },
+					{},
+					'.claude-team',
+				],
+				[
+					"the global layer when the agent's own vars replace the provider set",
+					{ SOME_OTHER_VAR: '1' },
+					{ CLAUDE_CONFIG_DIR: '~/.claude-team' },
+					{ CLAUDE_CONFIG_DIR: '~/.claude-work' },
+					'.claude-work',
+				],
+			])(
+				'resolves a CLAUDE_CONFIG_DIR set in %s',
+				async (_label, sessionCustomEnvVars, agentLevelVars, globalVars, expectedDir) => {
+					mockAgentDetector.getAgent.mockResolvedValue(claudeCodeAgent);
+					mockProcessManager.spawn.mockReturnValue({ pid: 4253, success: true });
+					mockAgentConfigsStore.get.mockReturnValue({
+						'claude-code': { customEnvVars: agentLevelVars },
+					});
+					mockSettingsStore.get.mockImplementation((key: string, defaultValue: unknown) =>
+						key === 'shellEnvVars' ? globalVars : defaultValue
+					);
+					const savedConfigDir = process.env.CLAUDE_CONFIG_DIR;
+					delete process.env.CLAUDE_CONFIG_DIR;
+
+					try {
+						const handler = handlers.get('process:spawn');
+						await handler!({} as any, {
+							sessionId: 'session-layered',
+							toolType: 'claude-code',
+							cwd: '/Users/jane/Code/app',
+							command: 'claude',
+							args: claudeCodeAgent.args,
+							agentSessionId: 'layered-session-uuid',
+							prompt: 'continue',
+							sessionCustomEnvVars,
+						});
+					} finally {
+						if (savedConfigDir !== undefined) process.env.CLAUDE_CONFIG_DIR = savedConfigDir;
+					}
+
+					expect(vi.mocked(stripThinkingFromTranscript).mock.calls[0][0]).toBe(
+						path.join(
+							os.homedir(),
+							expectedDir,
+							'projects',
+							'-Users-jane-Code-app',
+							'layered-session-uuid.jsonl'
+						)
+					);
+				}
+			);
 		});
 	});
 
