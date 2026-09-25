@@ -105,6 +105,12 @@ function cachedForeignToken(pid: number): string | null {
 	return token;
 }
 
+/** Drop any cached token for `pid` and read it again. */
+function refreshForeignToken(pid: number): string | null {
+	foreignTokenCache.delete(pid);
+	return cachedForeignToken(pid);
+}
+
 function isValidPid(pid: unknown): pid is number {
 	// kill(0) and kill(-n) address process GROUPS, and always succeed for the
 	// caller's own group, so a zero or negative pid in a record must never be
@@ -149,7 +155,14 @@ export function probeProcess(identity: ProcessIdentity): ProcessLiveness {
 	// A token we cannot read (process exited between the two probes, or ps is
 	// unavailable) cannot disprove identity, so fall back to the pid verdict.
 	if (liveToken === null) return 'alive';
-	return liveToken === identity.startToken ? 'alive' : 'dead';
+	if (liveToken === identity.startToken) return 'alive';
+	// `dead` is the one verdict that lets a caller erase or reclaim a record, so
+	// it may never rest on the cache alone: a pid reused inside the cache window
+	// is compared against the token of the process that exited, and a live
+	// process is declared dead. Confirm against a fresh read.
+	const freshToken = refreshForeignToken(identity.pid);
+	if (freshToken === null) return 'alive';
+	return freshToken === identity.startToken ? 'alive' : 'dead';
 }
 
 /** Test hook: forget cached tokens so a test can change what the probes see. */
