@@ -22,6 +22,8 @@ export interface CueDashboardProps {
 	loading: boolean;
 	error: string | null;
 	graphError: string | null;
+	/** Set while another Maestro process holds the engine lease. */
+	leaseBlockedReason: string | null;
 	onRetry: () => void;
 	sessions: CueSessionStatus[];
 	activeRuns: CueRunResult[];
@@ -50,6 +52,7 @@ export function CueDashboard({
 	loading,
 	error,
 	graphError,
+	leaseBlockedReason,
 	onRetry,
 	sessions,
 	activeRuns,
@@ -144,6 +147,27 @@ export function CueDashboard({
 					>
 						Retry
 					</button>
+				</div>
+			)}
+
+			{/* Cue is on, but another Maestro process owns the engine. Without this
+			    the dashboard looks identical to a broken one: nothing running, no
+			    reason given. Not an error - this app takes over on its own once the
+			    other one quits, so it reads as a warning. */}
+			{leaseBlockedReason && (
+				<div
+					className="flex items-center gap-2 px-3 py-2 rounded-md text-xs"
+					style={{
+						backgroundColor: `${theme.colors.warning}15`,
+						border: `1px solid ${theme.colors.warning}40`,
+						color: theme.colors.warning,
+					}}
+					data-testid="cue-lease-blocked-notice"
+				>
+					<AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+					<span className="flex-1">
+						{leaseBlockedReason}. This window will take over automatically when that process stops.
+					</span>
 				</div>
 			)}
 

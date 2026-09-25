@@ -78,6 +78,12 @@ import {
 import { triggerGroupKey } from '../../shared/cue/trigger-group-key';
 
 const MAX_CHAIN_DEPTH = 10;
+/**
+ * How often an engine that is switched on but locked out re-tries the lease.
+ * Matches the heartbeat cadence: taking over a few seconds after the holder
+ * quits is soon enough, and the probe is one small file read.
+ */
+const CUE_LEASE_RETRY_INTERVAL_MS = 30_000;
 
 /** Dependencies injected into the CueEngine */
 export interface CueEngineDeps {
@@ -124,6 +130,19 @@ export interface CueEngineDeps {
 
 export class CueEngine {
 	private enabled = false;
+	/**
+	 * Whether `acquire()` actually succeeded. False while running fail-open after
+	 * a lease-file I/O error, which is not the same as holding it.
+	 */
+	private leaseAcquired = false;
+	/**
+	 * Why the engine is not running while Cue is switched on, or `null`. Read by
+	 * the Cue modal: an engine that is idle because a peer holds the lease looks
+	 * identical to a broken one otherwise.
+	 */
+	private leaseBlockedReason: string | null = null;
+	/** Retries the lease while Cue is wanted but a peer holds it. */
+	private leaseRetryTimer: NodeJS.Timeout | null = null;
 	/** Set to 'system-boot' while the engine is running after a system-boot or
 	 * user-toggle-on start. Drives refreshSession() to fire app.startup for
 	 * sessions that arrive after start() (the common case at boot). */
@@ -496,7 +515,14 @@ export class CueEngine {
 	start(reason: SessionInitReason = 'user-toggle'): void {
 		if (this.enabled) return;
 
-		if (!this.acquireEngineLease()) return;
+		if (!this.acquireEngineLease()) {
+			// Cue is switched on but a peer owns the engine. Keep checking: when
+			// that process quits, this one takes over on its own. Without this the
+			// app stays silently idle until the user toggles Cue or restarts.
+			this.scheduleLeaseRetry();
+			return;
+		}
+		this.clearLeaseRetry();
 
 		const initResult = this.recoveryService.init();
 		if (!initResult.ok) {
@@ -588,16 +614,84 @@ export class CueEngine {
 		if (!lease) return true;
 		try {
 			const result = lease.acquire();
-			if (result.ok) return true;
+			if (result.ok) {
+				this.leaseAcquired = true;
+				this.leaseBlockedReason = null;
+				return true;
+			}
+			this.leaseBlockedReason = result.reason;
 			this.meteredOnLog(
 				'warn',
 				`[CUE] Not starting: ${result.reason}. Only one Maestro process may run Cue for a data directory, or every subscription would fire twice.`
 			);
 			return false;
 		} catch (err) {
+			// Fail open, as before the lease existed. `leaseAcquired` stays false so
+			// the heartbeat knows to TAKE the lease rather than renew one we never
+			// took: `renew()` answers false for that, which reads as a takeover.
+			this.leaseAcquired = false;
 			const message = err instanceof Error ? err.message : String(err);
 			this.meteredOnLog('warn', `[CUE] Engine lease unavailable, starting without it: ${message}`);
 			void captureException(err, { operation: 'cue.engineLease.acquire' });
+			return true;
+		}
+	}
+
+	/**
+	 * Poll for the lease while Cue is wanted but a peer holds it.
+	 *
+	 * Retries always use `'user-toggle'`, never the original `'system-boot'`: the
+	 * app booted long ago, and `app.startup` subscriptions must not fire again
+	 * just because a peer released the lease.
+	 */
+	private scheduleLeaseRetry(): void {
+		if (this.leaseRetryTimer || !this.deps.engineLease) return;
+		this.leaseRetryTimer = setInterval(() => {
+			if (this.enabled) {
+				this.clearLeaseRetry();
+				return;
+			}
+			this.start('user-toggle');
+		}, CUE_LEASE_RETRY_INTERVAL_MS);
+		// Never hold the process open for a lease we do not have.
+		this.leaseRetryTimer.unref?.();
+	}
+
+	private clearLeaseRetry(): void {
+		if (!this.leaseRetryTimer) return;
+		clearInterval(this.leaseRetryTimer);
+		this.leaseRetryTimer = null;
+	}
+
+	/** Why the engine is idle while Cue is on, or `null` when it is not idle. */
+	getLeaseBlockedReason(): string | null {
+		return this.enabled ? null : this.leaseBlockedReason;
+	}
+
+	/**
+	 * Heartbeat path for an engine that started fail-open, without the lease.
+	 * Retries the acquire so a directory that becomes readable again is claimed,
+	 * and stops only for the same reason `start()` would: a live peer holds it.
+	 */
+	private retryEngineLease(): boolean {
+		const lease = this.deps.engineLease;
+		if (!lease) return true;
+		try {
+			const result = lease.acquire();
+			if (result.ok) {
+				this.leaseAcquired = true;
+				return true;
+			}
+			this.meteredOnLog(
+				'warn',
+				`[CUE] Stopping: ${result.reason}. This engine had been running without the lease.`
+			);
+			this.stop();
+			return false;
+		} catch (err) {
+			// Still unreadable. Keep running, exactly as the start did.
+			const message = err instanceof Error ? err.message : String(err);
+			this.meteredOnLog('warn', `[CUE] Engine lease still unavailable: ${message}`);
 			return true;
 		}
 	}
@@ -609,6 +703,7 @@ export class CueEngine {
 	private renewEngineLease(): boolean {
 		const lease = this.deps.engineLease;
 		if (!lease) return true;
+		if (!this.leaseAcquired) return this.retryEngineLease();
 		let stillHeld: boolean;
 		try {
 			stillHeld = lease.renew();
@@ -625,11 +720,21 @@ export class CueEngine {
 			'[CUE] Another Maestro process took over the Cue engine lease; stopping this engine so subscriptions do not fire twice.'
 		);
 		this.stop();
+		// Cue is still switched on, so keep watching: when that process quits this
+		// one takes the engine back rather than staying idle until a restart.
+		this.leaseBlockedReason = 'Another Maestro process took over the Cue engine lease';
+		this.scheduleLeaseRetry();
 		return false;
 	}
 
 	/** Disable the engine, clearing all timers and watchers */
 	stop(): void {
+		// Before the `enabled` guard: an engine locked out of the lease never
+		// became enabled, but it IS sitting in the retry loop, and a stop must not
+		// leave something that starts it again after the user switched Cue off.
+		this.clearLeaseRetry();
+		this.leaseBlockedReason = null;
+
 		if (!this.enabled) return;
 
 		this.enabled = false;
@@ -646,6 +751,7 @@ export class CueEngine {
 		this.heartbeat.stop();
 		this.recoveryService.shutdown();
 		this.deps.engineLease?.release();
+		this.leaseAcquired = false;
 		this.metrics.reset();
 
 		// Data payload triggers a renderer refresh via cue:activityUpdate so
