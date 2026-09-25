@@ -688,6 +688,48 @@ describe('ExitHandler', () => {
 			expect(proc.provisionalError).toBeUndefined();
 		});
 
+		it('skips detectErrorFromExit and the SSH error match entirely when the user interrupted the turn', async () => {
+			// Regression test for the maestro-lib turn-contract migration:
+			// previously `interrupted` only suppressed the held provisional-
+			// error notice and the omp silent-exit override - detectErrorFromExit
+			// and the SSH pattern match ran regardless, so a stopped turn could
+			// still surface as a crash (e.g. opencode-output-parser flags exit
+			// code 0 with empty stdout and non-empty stderr, a shape a stop can
+			// produce). `interrupted` now suppresses the whole cascade.
+			const detectErrorFromExit = vi.fn(() => ({
+				type: 'agent_crashed' as const,
+				message: 'would have been reported as a crash',
+				recoverable: true,
+				agentId: 'claude-code',
+			}));
+			const mockedMatchSsh = vi.mocked(matchSshErrorPattern);
+			mockedMatchSsh.mockReturnValue({
+				type: 'agent_crashed',
+				message: 'would also have been reported as a crash',
+				recoverable: true,
+			});
+
+			const proc = createMockProcess({
+				interrupted: true,
+				outputParser: createMockOutputParser({ detectErrorFromExit }),
+				sshRemoteId: 'remote-1',
+				stderrBuffer: 'bash: opencode: command not found',
+			});
+			processes.set('test-session', proc);
+
+			const onAgentError = vi.fn();
+			emitter.on('agent-error', onAgentError);
+
+			await exitHandler.handleExit('test-session', 1);
+
+			expect(detectErrorFromExit).not.toHaveBeenCalled();
+			expect(mockedMatchSsh).not.toHaveBeenCalled();
+			expect(onAgentError).not.toHaveBeenCalled();
+			expect(proc.errorEmitted).toBe(false);
+
+			mockedMatchSsh.mockReset();
+		});
+
 		it('does not emit a held notice after an error was already emitted', async () => {
 			const proc = createMockProcess({
 				isStreamJsonMode: true,
