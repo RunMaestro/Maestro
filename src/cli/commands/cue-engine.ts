@@ -21,6 +21,7 @@ import { readCueEngineLock } from '../../main/cue/cue-engine-lock';
 import { createStandaloneCueEngine } from '../services/cue-standalone-engine';
 import { startCueTriggerInbox } from '../services/cue-trigger-inbox';
 import { readSessions } from '../services/storage';
+import { SqliteUnavailableError } from '../utils/native-sqlite';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
 import { humanizeDuration } from '../../shared/duration';
 
@@ -196,7 +197,20 @@ async function buildStatusPayload(): Promise<CueEngineStatusPayload> {
 }
 
 export async function cueEngineStatus(options: CueEngineStatusOptions = {}): Promise<void> {
-	const payload = await buildStatusPayload();
+	let payload: CueEngineStatusPayload;
+	try {
+		payload = await buildStatusPayload();
+	} catch (error) {
+		// The message already says how to fix it; the stack would only bury that.
+		if (!(error instanceof SqliteUnavailableError)) throw error;
+		if (options.json) {
+			console.log(JSON.stringify({ error: 'sqlite_unavailable', message: error.message }, null, 2));
+		} else {
+			console.error(`[Cue] ${error.message}`);
+		}
+		process.exitCode = 1;
+		return;
+	}
 
 	if (options.json) {
 		console.log(JSON.stringify(payload, null, 2));
