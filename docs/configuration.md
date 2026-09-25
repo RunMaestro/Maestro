@@ -283,8 +283,10 @@ maestro-cli update-agent <agent-id> --env ANTHROPIC_AUTH_TOKEN=sk-gateway-...
 #### What Will Not Work
 
 <Warning>
-An OpenAI-compatible gateway cannot back Claude Code directly. OpenRouter, Requesty, Together, and similar routers expose an OpenAI-shaped `/chat/completions` endpoint, while Claude Code speaks the Anthropic Messages API. Pointing `ANTHROPIC_BASE_URL` straight at one of them produces request failures, not a working agent. Put a translating proxy (LiteLLM, `claude-code-router`, or the router's own Anthropic-compatible route if it publishes one) in between, and point `ANTHROPIC_BASE_URL` at that. Codex and OpenCode have no such problem, because they are OpenAI-shaped already.
+An OpenAI-compatible gateway cannot back Claude Code directly. OpenRouter, Together, and similar routers expose an OpenAI-shaped `/chat/completions` endpoint, while Claude Code speaks the Anthropic Messages API. Pointing `ANTHROPIC_BASE_URL` straight at one of them produces request failures, not a working agent. Put a translating proxy (LiteLLM, `claude-code-router`, or the router's own Anthropic-compatible route if it publishes one) in between, and point `ANTHROPIC_BASE_URL` at that. Codex and OpenCode have no such problem, because they are OpenAI-shaped already.
 </Warning>
+
+[Requesty](https://docs.requesty.ai/integrations/claude-code) is one router that publishes such a route: it serves the Anthropic Messages API on `https://router.requesty.ai`, so a Claude Code agent can set `ANTHROPIC_BASE_URL=https://router.requesty.ai` (no `/v1` suffix, the CLI appends `/v1/messages`) and `ANTHROPIC_AUTH_TOKEN` to a Requesty key with nothing in between, while Codex and OpenCode point at `https://router.requesty.ai/v1` as usual.
 
 Two more things that surprise people:
 
