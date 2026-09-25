@@ -2139,6 +2139,36 @@ describe('process IPC handlers', () => {
 			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
 		});
 
+		it('should refuse to spawn when the SSH remote is removed after the early guard passed', async () => {
+			mockAgentDetector.getAgent.mockResolvedValue({ id: 'codex', requiresPty: false });
+			// The early guard sees the remote; every later read (including the
+			// spawn-time lookup) finds it gone, as if it was deleted mid-handler.
+			let sshRemoteReads = 0;
+			mockSettingsStore.get.mockImplementation((key, defaultValue) => {
+				if (key === 'sshRemotes') return sshRemoteReads++ === 0 ? [mockSshRemote] : [];
+				return defaultValue;
+			});
+
+			const handler = handlers.get('process:spawn');
+			await expect(
+				handler!({} as any, {
+					sessionId: 'session-1',
+					toolType: 'codex',
+					cwd: '/home/remoteuser/remote-project',
+					command: 'codex',
+					args: [],
+					prompt: 'secret prompt',
+					sessionSshRemoteConfig: {
+						enabled: true,
+						remoteId: mockSshRemote.id,
+					},
+				})
+			).rejects.toThrow(`configured remote "${mockSshRemote.id}" could not be resolved`);
+
+			expect(sshRemoteReads).toBeGreaterThan(1);
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+		});
+
 		it('should use local home directory as cwd when spawning SSH (fixes ENOENT for remote-only paths)', async () => {
 			// This test verifies the fix for: spawn /usr/bin/ssh ENOENT
 			// The bug occurred because when session.cwd is a remote path (e.g., /home/user/project),
