@@ -53,7 +53,10 @@ vi.mock('../../../shared/platformDetection', async () => {
 
 type Storage = import('../../../main/storage/opencode-session-storage').OpenCodeSessionStorage;
 
-const PROJECT = '/Users/jane/Code/my_app';
+// Resolved so the fixtures speak the host's native path form: the storage
+// compares path.resolve()d paths, and OpenCode records native ones (on the
+// Windows CI leg this becomes a drive-letter path).
+const PROJECT = path.resolve('/Users/jane/Code/my_app');
 
 interface Turn {
 	id: string;
@@ -364,20 +367,20 @@ describe.skipIf(!canLoadNodeSqlite())('OpenCodeSessionStorage (SQLite, macOS lay
 	describe('which sessions belong to the agent', () => {
 		it('includes a session started in a subdirectory of the project, and tolerates a trailing slash', async () => {
 			const db = createDb(path.join(dataDir, 'opencode.db'));
-			addProject(db, 'proj1', `${PROJECT}/packages/web`);
+			addProject(db, 'proj1', path.join(PROJECT, 'packages', 'web'));
 			addSession(db, {
 				id: 'ses_sub',
 				projectId: 'proj1',
-				directory: `${PROJECT}/packages/web`,
+				directory: path.join(PROJECT, 'packages', 'web'),
 				created: 1,
 				updated: 2,
 			});
 			db.close();
 
 			const storage = await loadStorage();
-			expect((await storage.listSessions(`${PROJECT}/`)).map((s) => s.sessionId)).toEqual([
-				'ses_sub',
-			]);
+			expect((await storage.listSessions(`${PROJECT}${path.sep}`)).map((s) => s.sessionId)).toEqual(
+				['ses_sub']
+			);
 		});
 
 		it('matches global-project sessions by directory, treating _ and % literally', async () => {
@@ -386,7 +389,7 @@ describe.skipIf(!canLoadNodeSqlite())('OpenCodeSessionStorage (SQLite, macOS lay
 			addSession(db, {
 				id: 'ses_mine',
 				projectId: 'global',
-				directory: `${PROJECT}/src`,
+				directory: path.join(PROJECT, 'src'),
 				created: 1,
 				updated: 3,
 			});
@@ -394,7 +397,7 @@ describe.skipIf(!canLoadNodeSqlite())('OpenCodeSessionStorage (SQLite, macOS lay
 			addSession(db, {
 				id: 'ses_lookalike',
 				projectId: 'global',
-				directory: '/Users/jane/Code/myXapp/src',
+				directory: path.resolve('/Users/jane/Code/myXapp/src'),
 				created: 1,
 				updated: 2,
 			});

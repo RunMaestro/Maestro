@@ -65,7 +65,9 @@ const SESSION_ID = '0f8b1c2e-5d4a-4e7b-9c3d-2a1b0c9d8e7f';
 function configDirSeenBySpawn(customEnvVars: Record<string, string>): string {
 	const childEnv = buildChildProcessEnv(customEnvVars);
 	const dir = childEnv.CLAUDE_CONFIG_DIR;
-	return dir && dir.length > 0 ? dir : path.join(os.homedir(), '.claude');
+	// Resolved, since claude makes the path absolute itself (and so it compares
+	// with the sanitizer's key on Windows, where `/Users/...` gains a drive).
+	return path.resolve(dir && dir.length > 0 ? dir : path.join(os.homedir(), '.claude'));
 }
 
 /**
