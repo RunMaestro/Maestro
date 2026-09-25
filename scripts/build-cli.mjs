@@ -80,29 +80,26 @@ async function build() {
 			// (`claude-usage-startup.ts`, via `resolveClaudeSpawnMode.ts`), so
 			// this was a latent bug no prior command tripped.
 			//
-			// 'better-sqlite3' is external for the same class of reason: it is a
-			// native addon, and its `bindings` resolver locates the compiled
-			// `.node` file by walking up from ITS OWN package directory
-			// (node_modules/better-sqlite3/...). Bundled, that directory doesn't
-			// exist at runtime - the JS is inlined into this single file - so
-			// `bindings` searches paths relative to the bundle's location
-			// instead and never finds the real binary ("Could not locate the
-			// bindings file"). `cue-db.ts` (Cue's SQLite journal) is, like
-			// electron above, newly reachable from a CLI command via `cue
-			// engine`; no earlier command touched it. Packaging note: shipping
-			// `cue engine` in the built app additionally requires bundling
-			// `node_modules/better-sqlite3`'s compiled binary as an
-			// extraResource alongside `maestro-cli.js`, mirroring how the
-			// desktop app itself already ships it for its own Cue database -
-			// not yet wired into the packaging config (see
-			// Plans/maestro-lib-cli-migration.md's standalone-engine section).
+			// 'better-sqlite3' is a native addon, and its `bindings` resolver
+			// locates the compiled `.node` file by walking up from ITS OWN package
+			// directory, so it cannot be inlined. It is aliased below to
+			// src/cli/better-sqlite3-shim.ts, which loads the real package at
+			// runtime with Node's own require: the installed app's Electron-built
+			// copy (`app.asar.unpacked`, already shipped via `asarUnpack`) when
+			// `maestro-cli` runs on Maestro's runtime, ordinary resolution
+			// otherwise, and a clear error instead of a dlopen stack when no copy
+			// fits this runtime. See src/cli/utils/native-sqlite.ts.
+			//
 			// Superseded for 'electron' / 'electron-store' by the alias below: both
 			// are now bundled, and 'electron' resolves to a shim that answers
 			// app.getPath('userData') with Maestro's real data directory. See
 			// src/cli/electron-shim.cjs for why (the standalone Cue engine could
 			// not start on a host without Electron installed).
-			external: ['fsevents', 'better-sqlite3'],
-			alias: { electron: path.join(rootDir, 'src/cli/electron-shim.cjs') },
+			external: ['fsevents'],
+			alias: {
+				electron: path.join(rootDir, 'src/cli/electron-shim.cjs'),
+				'better-sqlite3': path.join(rootDir, 'src/cli/better-sqlite3-shim.ts'),
+			},
 			plugins: [rawMdPlugin],
 			define: {
 				__MAESTRO_CLI_VERSION__: JSON.stringify(cliVersion),
