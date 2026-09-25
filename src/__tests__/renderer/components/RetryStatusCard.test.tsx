@@ -114,9 +114,10 @@ describe('RetryStatusCard', () => {
 	});
 
 	it('freezes into a recovered summary with a pluralized retry count', () => {
+		// attempts 0 = the FIRST resend got through: one retry was sent.
 		setOutage({
 			status: 'recovered',
-			attempts: 1,
+			attempts: 0,
 			startedAt: NOW,
 			resolvedAt: NOW + 5_000,
 		});
@@ -126,6 +127,22 @@ describe('RetryStatusCard', () => {
 		expect(screen.getByText(/cleared after 1 retry over 5s/)).toBeInTheDocument();
 		// No live controls once resolved.
 		expect(screen.queryByRole('button', { name: /Try now/ })).not.toBeInTheDocument();
+	});
+
+	it('counts the successful resend in a recovered quota outage', () => {
+		// attempts counts reschedules: one failed resend, then the one that worked.
+		setOutage({
+			status: 'recovered',
+			strategy: 'token-exhaustion',
+			attempts: 1,
+			startedAt: NOW,
+			resolvedAt: NOW + 255_000,
+		});
+		render(<RetryStatusCard outageId="o1" theme={mockTheme} />);
+
+		expect(screen.getByText('Quota restored.')).toBeInTheDocument();
+		expect(screen.getByText(/Plan quota exhausted cleared after 2 retries/)).toBeInTheDocument();
+		expect(screen.queryByText(/Failing for/)).not.toBeInTheDocument();
 	});
 
 	it('freezes into a stopped summary', () => {

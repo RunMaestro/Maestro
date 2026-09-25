@@ -428,7 +428,7 @@ describe('GeneralTab section components', () => {
 					statusError: 'Failed to check Maestro CLI status',
 					checking: true,
 					installing: true,
-					installMessage: 'CLI is installed and matches this Maestro version.',
+					installMessage: { text: 'CLI is installed and matches this Maestro version.', ok: true },
 					checkStatus: vi.fn(),
 					installOrUpdate: vi.fn(),
 				}}

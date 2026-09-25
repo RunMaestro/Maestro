@@ -26,6 +26,7 @@
 
 import { useEffect, useRef } from 'react';
 import { useSessionStore } from '../../../stores/sessionStore';
+import { noteRetryProgress } from '../../../stores/retryStore';
 import { REGEX_AI_TAB } from '../../../utils/sessionIdParser';
 import { isLikelyConcatenatedToolNames } from '../../../constants/app';
 import { thinkingLogsRecorded } from './helpers/thinkingLogs';
@@ -60,6 +61,10 @@ export function useAgentThinkingListener(): void {
 				const actualSessionId = aiTabMatch[1];
 				const tabId = aiTabMatch[2];
 				const bufferKey = `${actualSessionId}:${tabId}`;
+
+				// Model output proves an auto-retry resend got through; resolve the
+				// outage before the thinking-mode filter below can drop the chunk.
+				noteRetryProgress(actualSessionId, tabId);
 
 				const existing = thinkingChunkBufferRef.current.get(bufferKey);
 				thinkingChunkBufferRef.current.set(bufferKey, {

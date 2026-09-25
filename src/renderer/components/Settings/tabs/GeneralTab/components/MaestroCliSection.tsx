@@ -83,7 +83,15 @@ export function MaestroCliSection({ theme, appVersion, maestroCli }: MaestroCliS
 				>
 					{checking && <div className="opacity-70">Checking Maestro CLI status...</div>}
 					{statusError && <div style={{ color: theme.colors.warning }}>{statusError}</div>}
-					{installMessage && <div style={{ color: theme.colors.success }}>{installMessage}</div>}
+					{installMessage && (
+						<div
+							style={{
+								color: installMessage.ok ? theme.colors.success : theme.colors.warning,
+							}}
+						>
+							{installMessage.text}
+						</div>
+					)}
 				</div>
 
 				<div className="flex gap-2">
