@@ -110,6 +110,7 @@ The response is always JSON:
 	"sessionId": "abc123def456",
 	"response": "The authentication flow works by...",
 	"success": true,
+	"outcome": "completed",
 	"usage": {
 		"inputTokens": 1000,
 		"outputTokens": 500,
@@ -121,6 +122,19 @@ The response is always JSON:
 	}
 }
 ```
+
+`outcome` says how the turn ended:
+
+| `outcome`                | `success` | Meaning                                                                                                    |
+| ------------------------ | --------- | ---------------------------------------------------------------------------------------------------------- |
+| `completed`              | `true`    | Clean exit with the provider's explicit done signal.                                                       |
+| `completed-with-warning` | `true`    | An answer was captured, but the process exited non-zero or never sent a done signal.                       |
+| `interrupted`            | `false`   | The send was stopped (Ctrl+C or SIGTERM). Never reported as a crash, even if the agent wrote to stderr.    |
+| `crashed`                | `false`   | No usable answer, a classified provider error (auth, rate limit, ...), or the process failed to start.     |
+
+For providers that stream JSON lines (everything except Claude Code), a captured answer outranks a bare non-zero exit, but not a specific provider error: a turn whose stderr says the login expired fails even if some text was produced. Claude Code keeps requiring a clean exit. A process killed by a signal nobody requested is always `crashed`.
+
+The first Ctrl+C stops the agent gracefully (SIGTERM, then SIGKILL after 5 seconds if it ignores it) and exits with code `130`; a second Ctrl+C exits immediately. Other failures exit with `1`. Over an SSH remote this stops the local `ssh` client, and the remote process is not guaranteed to receive the hangup.
 
 On failure, `success` is `false` and an `error` field is included:
 
@@ -1328,6 +1342,12 @@ maestro-cli playbook <playbook-id> --json
 {"type":"document_complete","timestamp":...,"document":"tasks.md","tasksCompleted":5}
 {"type":"loop_complete","timestamp":...,"iteration":1,"tasksCompleted":5,"elapsedMs":60000}
 {"type":"complete","timestamp":...,"success":true,"totalTasksCompleted":5,"totalElapsedMs":60000,"totalCost":0.05}
+```
+
+If the run is interrupted (Ctrl+C or SIGTERM), the agent turn in flight is stopped gracefully and the stream ends with a `complete` event carrying `"stopped":true`. The interrupted task is recorded as "interrupted" rather than failed, and the process exits with code `130`. A second Ctrl+C exits immediately. `maestro-cli playbook`, `maestro-cli run-doc` and `maestro-cli goal-run` all behave this way; a goal run ends with `exitReason: "stopped-by-user"`.
+
+```json
+{"type":"complete","timestamp":...,"success":false,"totalTasksCompleted":2,"totalElapsedMs":31000,"stopped":true}
 ```
 
 The `send` command always outputs JSON (no `--json` flag needed).
