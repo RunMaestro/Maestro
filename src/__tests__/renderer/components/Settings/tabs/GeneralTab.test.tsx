@@ -164,6 +164,21 @@ describe('GeneralTab', () => {
 			expect(screen.getByText('Storage Location')).toBeInTheDocument();
 		});
 
+		it('places the Maestro CLI section directly below the Conductor Profile', async () => {
+			const { container } = render(<GeneralTab theme={mockTheme} isOpen={true} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			const ids = Array.from(container.querySelectorAll('[data-setting-id]')).map((el) =>
+				el.getAttribute('data-setting-id')
+			);
+			const profileIndex = ids.indexOf('general-conductor-profile');
+			expect(profileIndex).toBeGreaterThanOrEqual(0);
+			expect(ids[profileIndex + 1]).toBe('general-maestro-cli');
+		});
+
 		it('should not render when isOpen is false (effects skipped)', async () => {
 			render(<GeneralTab theme={mockTheme} isOpen={false} />);
 

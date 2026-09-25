@@ -1,7 +1,7 @@
 /**
  * GeneralTab - General settings tab for SettingsModal
  *
- * Contains: About Me, Shell, Log Level, GitHub CLI, Input Behavior,
+ * Contains: About Me, Maestro CLI, Shell, Log Level, GitHub CLI, Input Behavior,
  * History, Thinking Mode, Tab Naming, Auto-scroll, Power, Rendering,
  * Updates, Pre-release, Privacy, Storage Location.
  */
@@ -164,7 +164,10 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 	const [maestroCliStatusError, setMaestroCliStatusError] = useState<string | null>(null);
 	const [maestroCliChecking, setMaestroCliChecking] = useState(false);
 	const [maestroCliInstalling, setMaestroCliInstalling] = useState(false);
-	const [maestroCliInstallMessage, setMaestroCliInstallMessage] = useState<string | null>(null);
+	const [maestroCliInstallMessage, setMaestroCliInstallMessage] = useState<{
+		text: string;
+		ok: boolean;
+	} | null>(null);
 
 	// Forced Parallel Execution modal state
 	const [showForcedParallelWarning, setShowForcedParallelWarning] = useState(false);
@@ -216,15 +219,20 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				setMaestroCliStatusError(result.pathUpdateError);
 			}
 			if (result.restartRequired) {
-				setMaestroCliInstallMessage(
-					'CLI installed. Open a new terminal for PATH changes to apply.'
-				);
+				setMaestroCliInstallMessage({
+					text: 'CLI installed. Open a new terminal for PATH changes to apply.',
+					ok: true,
+				});
 			} else if (result.success && result.status.versionMatch) {
-				setMaestroCliInstallMessage('CLI is installed and matches this Maestro version.');
+				setMaestroCliInstallMessage({
+					text: 'CLI is installed and matches this Maestro version.',
+					ok: true,
+				});
 			} else {
-				setMaestroCliInstallMessage(
-					'CLI was installed but version/path check still needs attention.'
-				);
+				setMaestroCliInstallMessage({
+					text: 'CLI was installed but version/path check still needs attention.',
+					ok: false,
+				});
 			}
 		} catch (err) {
 			setMaestroCliStatusError('Failed to install/update Maestro CLI');
@@ -349,6 +357,123 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 					}}
 				>
 					{conductorProfile.length}/5000
+				</div>
+			</div>
+
+			{/* Maestro CLI Management */}
+			<div data-setting-id="general-maestro-cli">
+				<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
+					<Terminal className="w-3 h-3" />
+					Maestro CLI
+				</div>
+				<div
+					className="p-3 rounded border space-y-2"
+					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
+				>
+					<div className="text-xs opacity-70">
+						Check whether <code>maestro-cli</code> is available in your PATH and whether its version
+						matches Maestro v{maestroCliStatus?.expectedVersion || appVersion}.
+					</div>
+
+					{maestroCliStatus && !maestroCliChecking && (
+						<div className="text-xs space-y-1">
+							<div>
+								<span style={{ color: theme.colors.textDim }}>PATH:</span>{' '}
+								<span
+									style={{
+										color:
+											maestroCliStatus.inPath || maestroCliStatus.inShellPath
+												? theme.colors.success
+												: theme.colors.warning,
+									}}
+								>
+									{maestroCliStatus.inPath
+										? 'Detected'
+										: maestroCliStatus.inShellPath
+											? 'Detected (shell PATH)'
+											: 'Not detected'}
+								</span>
+							</div>
+							<div>
+								<span style={{ color: theme.colors.textDim }}>Installed version:</span>{' '}
+								<span style={{ color: theme.colors.textMain }}>
+									{maestroCliStatus.installedVersion || 'Not installed'}
+								</span>
+							</div>
+							<div>
+								<span style={{ color: theme.colors.textDim }}>Expected version:</span>{' '}
+								<span style={{ color: theme.colors.textMain }}>
+									{maestroCliStatus.expectedVersion}
+								</span>
+							</div>
+							{maestroCliStatus.commandPath && (
+								<div className="break-all">
+									<span style={{ color: theme.colors.textDim }}>Command path:</span>{' '}
+									<code>{maestroCliStatus.commandPath}</code>
+								</div>
+							)}
+							{maestroCliStatus.needsInstallOrUpdate && (
+								<div style={{ color: theme.colors.warning }}>
+									Mismatch or missing CLI detected. Install/update to sync versions.
+								</div>
+							)}
+						</div>
+					)}
+
+					<div
+						role={maestroCliStatusError ? 'alert' : 'status'}
+						aria-live={maestroCliStatusError ? 'assertive' : 'polite'}
+						aria-atomic="true"
+						className="text-xs space-y-1"
+					>
+						{maestroCliChecking && <div className="opacity-60">Checking Maestro CLI status...</div>}
+						{maestroCliStatusError && (
+							<div style={{ color: theme.colors.warning }}>{maestroCliStatusError}</div>
+						)}
+						{maestroCliInstallMessage && (
+							<div
+								style={{
+									color: maestroCliInstallMessage.ok ? theme.colors.success : theme.colors.warning,
+								}}
+							>
+								{maestroCliInstallMessage.text}
+							</div>
+						)}
+					</div>
+
+					<div className="flex gap-2">
+						<button
+							onClick={() => void checkMaestroCliStatus()}
+							disabled={maestroCliChecking || maestroCliInstalling}
+							className="px-2 py-1 rounded text-xs"
+							style={{
+								backgroundColor: theme.colors.bgActivity,
+								color: theme.colors.textMain,
+								opacity: maestroCliChecking || maestroCliInstalling ? 0.6 : 1,
+							}}
+						>
+							{maestroCliChecking ? 'Checking...' : 'Check now'}
+						</button>
+						<button
+							onClick={() => void installOrUpdateMaestroCli()}
+							disabled={maestroCliChecking || maestroCliInstalling}
+							className="px-2 py-1 rounded text-xs"
+							style={{
+								backgroundColor: theme.colors.accentDim,
+								color: theme.colors.textMain,
+								opacity: maestroCliChecking || maestroCliInstalling ? 0.6 : 1,
+							}}
+						>
+							{maestroCliInstalling
+								? 'Installing...'
+								: maestroCliStatus?.needsInstallOrUpdate
+									? 'Install / Update CLI'
+									: 'Reinstall CLI'}
+						</button>
+					</div>
+					<div className="text-xs-plus opacity-50">
+						Install target: <code>{maestroCliStatus?.installDir || '~/.local/bin'}</code>
+					</div>
 				</div>
 			</div>
 
@@ -630,117 +755,6 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 						</code>{' '}
 						binary if it's not in your PATH. Used for Auto Run worktree features.
 					</p>
-				</div>
-			</div>
-
-			{/* Maestro CLI Management */}
-			<div data-setting-id="general-maestro-cli">
-				<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
-					<Terminal className="w-3 h-3" />
-					Maestro CLI
-				</div>
-				<div
-					className="p-3 rounded border space-y-2"
-					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
-				>
-					<div className="text-xs opacity-70">
-						Check whether <code>maestro-cli</code> is available in your PATH and whether its version
-						matches Maestro v{maestroCliStatus?.expectedVersion || appVersion}.
-					</div>
-
-					{maestroCliStatus && !maestroCliChecking && (
-						<div className="text-xs space-y-1">
-							<div>
-								<span style={{ color: theme.colors.textDim }}>PATH:</span>{' '}
-								<span
-									style={{
-										color:
-											maestroCliStatus.inPath || maestroCliStatus.inShellPath
-												? theme.colors.success
-												: theme.colors.warning,
-									}}
-								>
-									{maestroCliStatus.inPath
-										? 'Detected'
-										: maestroCliStatus.inShellPath
-											? 'Detected (shell PATH)'
-											: 'Not detected'}
-								</span>
-							</div>
-							<div>
-								<span style={{ color: theme.colors.textDim }}>Installed version:</span>{' '}
-								<span style={{ color: theme.colors.textMain }}>
-									{maestroCliStatus.installedVersion || 'Not installed'}
-								</span>
-							</div>
-							<div>
-								<span style={{ color: theme.colors.textDim }}>Expected version:</span>{' '}
-								<span style={{ color: theme.colors.textMain }}>
-									{maestroCliStatus.expectedVersion}
-								</span>
-							</div>
-							{maestroCliStatus.commandPath && (
-								<div className="break-all">
-									<span style={{ color: theme.colors.textDim }}>Command path:</span>{' '}
-									<code>{maestroCliStatus.commandPath}</code>
-								</div>
-							)}
-							{maestroCliStatus.needsInstallOrUpdate && (
-								<div style={{ color: theme.colors.warning }}>
-									Mismatch or missing CLI detected. Install/update to sync versions.
-								</div>
-							)}
-						</div>
-					)}
-
-					<div
-						role={maestroCliStatusError ? 'alert' : 'status'}
-						aria-live={maestroCliStatusError ? 'assertive' : 'polite'}
-						aria-atomic="true"
-						className="text-xs space-y-1"
-					>
-						{maestroCliChecking && <div className="opacity-60">Checking Maestro CLI status...</div>}
-						{maestroCliStatusError && (
-							<div style={{ color: theme.colors.warning }}>{maestroCliStatusError}</div>
-						)}
-						{maestroCliInstallMessage && (
-							<div style={{ color: theme.colors.success }}>{maestroCliInstallMessage}</div>
-						)}
-					</div>
-
-					<div className="flex gap-2">
-						<button
-							onClick={() => void checkMaestroCliStatus()}
-							disabled={maestroCliChecking || maestroCliInstalling}
-							className="px-2 py-1 rounded text-xs"
-							style={{
-								backgroundColor: theme.colors.bgActivity,
-								color: theme.colors.textMain,
-								opacity: maestroCliChecking || maestroCliInstalling ? 0.6 : 1,
-							}}
-						>
-							{maestroCliChecking ? 'Checking...' : 'Check now'}
-						</button>
-						<button
-							onClick={() => void installOrUpdateMaestroCli()}
-							disabled={maestroCliChecking || maestroCliInstalling}
-							className="px-2 py-1 rounded text-xs"
-							style={{
-								backgroundColor: theme.colors.accentDim,
-								color: theme.colors.textMain,
-								opacity: maestroCliChecking || maestroCliInstalling ? 0.6 : 1,
-							}}
-						>
-							{maestroCliInstalling
-								? 'Installing...'
-								: maestroCliStatus?.needsInstallOrUpdate
-									? 'Install / Update CLI'
-									: 'Reinstall CLI'}
-						</button>
-					</div>
-					<div className="text-xs-plus opacity-50">
-						Install target: <code>{maestroCliStatus?.installDir || '~/.local/bin'}</code>
-					</div>
 				</div>
 			</div>
 
