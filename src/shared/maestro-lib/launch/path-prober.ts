@@ -391,8 +391,11 @@ function getWindowsKnownPaths(binaryName: string): string[] {
 		// Keyed by binary name, like every other entry: this table is looked up
 		// with `agentDef.binaryName`, and copilot-cli's is `copilot`.
 		copilot: [
-			// WinGet installation (primary method on Windows)
+			// WinGet installation (primary method on Windows): the MSI lands in
+			// Program Files, a portable package only gets a Links shim, so both
+			// outrank the npm `.cmd` wrapper. Same order as `claude` above.
 			path.join(programFiles, 'GitHub Copilot CLI', 'copilot.exe'),
+			...wingetLinks('copilot'),
 			// npm global installation
 			...npmGlobal('copilot'),
 			// Scoop installation
@@ -406,8 +409,6 @@ function getWindowsKnownPaths(binaryName: string): string[] {
 			),
 			// Standalone installation
 			...localBin('copilot'),
-			// Winget
-			...wingetLinks('copilot'),
 		],
 		gemini: [
 			// npm global installation
