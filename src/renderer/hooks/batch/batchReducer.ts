@@ -196,9 +196,9 @@ export interface UpdateProgressPayload {
 	completedTasks?: number;
 	currentTaskIndex?: number;
 	sessionIds?: string[];
-	// Time tracking
+	// Time tracking. `lastActiveTimestamp: null` clears it (the run is paused).
 	accumulatedElapsedMs?: number;
-	lastActiveTimestamp?: number;
+	lastActiveTimestamp?: number | null;
 	// Loop mode
 	loopIteration?: number;
 	// Goal-Driven mode (only set by the goal runner; absent in document mode)
@@ -374,7 +374,7 @@ export function batchReducer(state: BatchState, action: BatchAction): BatchState
 						accumulatedElapsedMs: payload.accumulatedElapsedMs,
 					}),
 					...(payload.lastActiveTimestamp !== undefined && {
-						lastActiveTimestamp: payload.lastActiveTimestamp,
+						lastActiveTimestamp: payload.lastActiveTimestamp ?? undefined,
 					}),
 					// Loop iteration
 					...(payload.loopIteration !== undefined && { loopIteration: payload.loopIteration }),

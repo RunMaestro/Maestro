@@ -241,6 +241,7 @@ describe('control actions refuse a mirrored run', () => {
 				errorResolutionRefs: { current: {} },
 				stopRequestedRefs: { current: {} },
 				isMountedRef: { current: true },
+				timeTracking: { pauseTracking: vi.fn(), resumeTracking: vi.fn() },
 			})
 		);
 
@@ -278,6 +279,7 @@ describe('control actions refuse a mirrored run', () => {
 				errorResolutionRefs: { current: {} },
 				stopRequestedRefs,
 				isMountedRef: { current: true },
+				timeTracking: { pauseTracking: vi.fn(), resumeTracking: vi.fn() },
 			})
 		);
 

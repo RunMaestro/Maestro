@@ -158,6 +158,32 @@ describe('batchReducer', () => {
 			expect(result['session-1'].totalTasksAcrossAllDocs).toBe(20);
 		});
 
+		it('clears lastActiveTimestamp on null (paused) and keeps it on undefined', () => {
+			const initialState: BatchState = {
+				'session-1': {
+					...DEFAULT_BATCH_STATE,
+					isRunning: true,
+					accumulatedElapsedMs: 0,
+					lastActiveTimestamp: 1000,
+				},
+			};
+
+			const kept = batchReducer(initialState, {
+				type: 'UPDATE_PROGRESS',
+				sessionId: 'session-1',
+				payload: { completedTasksAcrossAllDocs: 1 },
+			});
+			expect(kept['session-1'].lastActiveTimestamp).toBe(1000);
+
+			const paused = batchReducer(initialState, {
+				type: 'UPDATE_PROGRESS',
+				sessionId: 'session-1',
+				payload: { accumulatedElapsedMs: 5000, lastActiveTimestamp: null },
+			});
+			expect(paused['session-1'].accumulatedElapsedMs).toBe(5000);
+			expect(paused['session-1'].lastActiveTimestamp).toBeUndefined();
+		});
+
 		it('should handle multiple sequential progress updates correctly', () => {
 			let state: BatchState = {
 				'session-1': {

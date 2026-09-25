@@ -216,21 +216,6 @@ export function useBatchProcessor({
 	// client (web-desktop watching the desktop app). No-op in the Electron build.
 	useAutoRunStateMirror();
 
-	// External lifecycle controls (stop + pause/skip/resume/abort)
-	const {
-		stopBatchRun,
-		pauseBatchOnError,
-		skipCurrentDocument,
-		resumeAfterError,
-		abortBatchOnError,
-	} = useBatchControlActions({
-		broadcastAutoRunState,
-		dispatch,
-		errorResolutionRefs,
-		stopRequestedRefs,
-		isMountedRef,
-	});
-
 	// Use extracted time tracking hook (replaces manual visibility-based time tracking)
 	const timeTracking = useTimeTracking({
 		getActiveSessionIds: useCallback(() => {
@@ -246,12 +231,29 @@ export function useBatchProcessor({
 					sessionId,
 					payload: {
 						accumulatedElapsedMs: accumulatedMs,
-						lastActiveTimestamp: activeTimestamp ?? undefined,
+						lastActiveTimestamp: activeTimestamp,
 					},
 				});
 			},
 			[]
 		),
+	});
+
+	// External lifecycle controls (stop + pause/skip/resume/abort). Follows
+	// `useTimeTracking` because a pause stops the run's clock.
+	const {
+		stopBatchRun,
+		pauseBatchOnError,
+		skipCurrentDocument,
+		resumeAfterError,
+		abortBatchOnError,
+	} = useBatchControlActions({
+		broadcastAutoRunState,
+		dispatch,
+		errorResolutionRefs,
+		stopRequestedRefs,
+		isMountedRef,
+		timeTracking,
 	});
 
 	// Force-kill action with kill-vs-natural-completion arbitration.

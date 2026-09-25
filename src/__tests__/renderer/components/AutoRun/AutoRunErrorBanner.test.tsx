@@ -76,4 +76,12 @@ describe('AutoRunErrorBanner', () => {
 		fireEvent.click(screen.getByText('Abort Run'));
 		expect(onAbort).toHaveBeenCalledTimes(1);
 	});
+
+	it('labels Resume as "Done, Resume" on a human-in-the-loop gate', () => {
+		const onResume = vi.fn();
+		renderBanner({ isRecoverable: true, isHumanGate: true, onResumeAfterError: onResume });
+		fireEvent.click(screen.getByText('Done, Resume'));
+		expect(onResume).toHaveBeenCalledTimes(1);
+		expect(screen.queryByText('Resume')).not.toBeInTheDocument();
+	});
 });

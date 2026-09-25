@@ -5,7 +5,7 @@
  *
  * When AutoRun is active, shows a special AutoRun pill with total elapsed time instead.
  */
-import { memo, useState, useEffect, useRef, useMemo } from 'react';
+import { memo, useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { GitBranch, Compass } from 'lucide-react';
 import type {
 	Session,
@@ -16,7 +16,7 @@ import type {
 	BackgroundAutoRun,
 } from '../types';
 import { formatTokensCompact } from '../utils/formatters';
-import { sleepAwareElapsedSince } from '../services/systemSleep';
+import { autoRunActiveElapsedMs } from '../hooks/batch/useTimeTracking';
 import { formatElapsedTicker } from '../../shared/duration';
 import { StopTurnButton } from './ui/StopTurnButton';
 import { useBackgroundAutoRuns } from '../hooks/batch/useBackgroundAutoRuns';
@@ -47,19 +47,36 @@ interface ThinkingStatusPillProps {
 
 // ElapsedTimeDisplay - shows time since thinking (or the Auto Run) started.
 // Machine sleep is subtracted: the agent was suspended along with the app, so
-// counting the sleep would report an overnight wake as hours of work.
+// counting the sleep would report an overnight wake as hours of work. For an
+// Auto Run, pass the tracker fields too: a paused run's clock stops.
 const ElapsedTimeDisplay = memo(
-	({ startTime, textColor }: { startTime: number; textColor: string }) => {
-		const [elapsedSeconds, setElapsedSeconds] = useState(() =>
-			Math.floor(sleepAwareElapsedSince(startTime) / 1000)
+	({
+		startTime,
+		accumulatedElapsedMs,
+		lastActiveTimestamp,
+		textColor,
+	}: {
+		startTime: number;
+		accumulatedElapsedMs?: number;
+		lastActiveTimestamp?: number;
+		textColor: string;
+	}) => {
+		const measureSeconds = useCallback(
+			() =>
+				Math.floor(
+					autoRunActiveElapsedMs({ startTime, accumulatedElapsedMs, lastActiveTimestamp }) / 1000
+				),
+			[startTime, accumulatedElapsedMs, lastActiveTimestamp]
 		);
+		const [elapsedSeconds, setElapsedSeconds] = useState(measureSeconds);
 
 		useEffect(() => {
+			setElapsedSeconds(measureSeconds());
 			const interval = setInterval(() => {
-				setElapsedSeconds(Math.floor(sleepAwareElapsedSince(startTime) / 1000));
+				setElapsedSeconds(measureSeconds());
 			}, 1000);
 			return () => clearInterval(interval);
-		}, [startTime]);
+		}, [measureSeconds]);
 
 		return (
 			// Monospace on purpose, unlike the name slots around it: this counts up
@@ -467,7 +484,12 @@ const AutoRunPill = memo(
 						<div className="w-px h-4" style={{ backgroundColor: theme.colors.border }} />
 						<div className="flex items-center gap-1">
 							<span className="pill-label">Elapsed:</span>
-							<ElapsedTimeDisplay startTime={startTime} textColor={theme.colors.textMain} />
+							<ElapsedTimeDisplay
+								startTime={startTime}
+								accumulatedElapsedMs={autoRunState.accumulatedElapsedMs}
+								lastActiveTimestamp={autoRunState.lastActiveTimestamp}
+								textColor={theme.colors.textMain}
+							/>
 						</div>
 					</div>
 
@@ -947,6 +969,8 @@ export const ThinkingStatusPill = memo(ThinkingStatusPillInner, (prevProps, next
 			prevAutoRun?.totalTasksAcrossAllDocs !== nextAutoRun?.totalTasksAcrossAllDocs ||
 			prevAutoRun?.isStopping !== nextAutoRun?.isStopping ||
 			prevAutoRun?.startTime !== nextAutoRun?.startTime ||
+			prevAutoRun?.accumulatedElapsedMs !== nextAutoRun?.accumulatedElapsedMs ||
+			prevAutoRun?.lastActiveTimestamp !== nextAutoRun?.lastActiveTimestamp ||
 			// Decides whether the Stop button is rendered at all
 			prevAutoRun?.mirrored !== nextAutoRun?.mirrored ||
 			// Goal-Driven progress fields drive the goal readout on the pill

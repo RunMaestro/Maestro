@@ -589,7 +589,8 @@ subtracts it.
 - `onSystemSleep(handler)` - for a live tracker that pauses its own clock (`useTimeTracking`
   walks its per-session timestamps forward by the gap).
 - `sleepAwareElapsedSince(startTime)` - for a display that only kept a start timestamp
-  (the Auto Run pill, the thinking timer).
+  (the thinking timer). Auto Run displays use `autoRunActiveElapsedMs()` from
+  `useTimeTracking.ts` instead, so a paused run's clock stops.
 - `getTotalSleepMs()`, `recordSystemSleep()` (tests), `resetSystemSleepTracking()` (tests).
 
 Singleton: one IPC listener, attached lazily on first use, one counter, so every consumer
