@@ -10,7 +10,11 @@
 import type { CueExecutionConfig } from './cue-executor';
 import { getAgentDefinition, getAgentCapabilities } from '../agents';
 import { buildAgentArgs, applyAgentConfigOverrides } from '../utils/agent-args';
-import { wrapSpawnWithSsh, type SshSpawnWrapConfig } from '../utils/ssh-spawn-wrapper';
+import {
+	wrapSpawnWithSsh,
+	sshUnresolvedRemoteMessage,
+	type SshSpawnWrapConfig,
+} from '../utils/ssh-spawn-wrapper';
 import { getSshRemoteConfig } from '../utils/ssh-remote-resolver';
 import { ensureRemoteMaestroPProbed } from '../agents/probeRemoteMaestroP';
 import { sanitizeCustomEnvVars } from './cue-env-sanitizer';
@@ -221,6 +225,12 @@ export async function buildSpawnSpec(
 		};
 
 		const sshResult = await wrapSpawnWithSsh(sshWrapConfig, sshRemoteConfig, sshStore);
+		// The wrapper hands back the LOCAL config when the remote is missing or
+		// disabled, still carrying the remote's cwd. Running that would leak the
+		// prompt to this machine against the wrong (or no) directory.
+		if (!sshResult.sshRemoteUsed) {
+			return { ok: false, message: sshUnresolvedRemoteMessage(sshRemoteConfig) };
+		}
 		command = sshResult.command;
 		spawnArgs = sshResult.args;
 		spawnCwd = sshResult.cwd;
@@ -228,10 +238,7 @@ export async function buildSpawnSpec(
 		sshStdinScript = sshResult.sshStdinScript;
 		sshRemoteCommand = sshResult.sshRemoteCommand;
 		stdinPrompt = sshResult.prompt;
-
-		if (sshResult.sshRemoteUsed) {
-			sshRemoteUsed = sshResult.sshRemoteUsed;
-		}
+		sshRemoteUsed = sshResult.sshRemoteUsed;
 	}
 
 	// 5. Append prompt as a positional CLI argument when the SSH wrapper

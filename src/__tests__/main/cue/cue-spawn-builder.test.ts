@@ -56,9 +56,15 @@ vi.mock('../../../main/utils/agent-args', () => ({
 }));
 
 const mockWrapSpawnWithSsh = vi.fn();
-vi.mock('../../../main/utils/ssh-spawn-wrapper', () => ({
-	wrapSpawnWithSsh: (...args: unknown[]) => mockWrapSpawnWithSsh(...args),
-}));
+vi.mock('../../../main/utils/ssh-spawn-wrapper', async () => {
+	const actual = await vi.importActual<typeof import('../../../main/utils/ssh-spawn-wrapper')>(
+		'../../../main/utils/ssh-spawn-wrapper'
+	);
+	return {
+		...actual,
+		wrapSpawnWithSsh: (...args: unknown[]) => mockWrapSpawnWithSsh(...args),
+	};
+});
 
 // Mock the Claude token-source resolver's leaf dependencies so the maestro-p
 // binary reads as present and config-dir resolution is deterministic. The
@@ -430,6 +436,90 @@ describe('cue-spawn-builder', () => {
 				if (result.ok) {
 					expect(result.spec.stdinPrompt).toBe('large prompt content');
 				}
+			});
+
+			it('fails instead of spawning locally when the wrapper cannot resolve the remote', async () => {
+				mockWrapSpawnWithSsh.mockResolvedValue({
+					command: 'claude',
+					args: ['--print', '--verbose'],
+					cwd: '/projects/test',
+					customEnvVars: undefined,
+					prompt: 'Hello world',
+					sshRemoteUsed: null,
+				});
+
+				const result = await buildSpawnSpec(
+					createConfig({
+						sshRemoteConfig: { enabled: true, remoteId: 'deleted-remote' },
+						sshStore: { getSshRemotes: vi.fn(() => []) },
+					}),
+					'Hello world'
+				);
+
+				expect(result).toEqual({
+					ok: false,
+					message: expect.stringContaining(
+						'configured remote "deleted-remote" could not be resolved'
+					),
+				});
+			});
+
+			describe('with the real SSH wrapper and resolver', () => {
+				let realWrap: typeof import('../../../main/utils/ssh-spawn-wrapper').wrapSpawnWithSsh;
+				beforeEach(async () => {
+					realWrap = (
+						await vi.importActual<typeof import('../../../main/utils/ssh-spawn-wrapper')>(
+							'../../../main/utils/ssh-spawn-wrapper'
+						)
+					).wrapSpawnWithSsh;
+					mockWrapSpawnWithSsh.mockImplementation((...args: Parameters<typeof realWrap>) =>
+						realWrap(...args)
+					);
+				});
+
+				it('fails when the remote id is not in settings', async () => {
+					const result = await buildSpawnSpec(
+						createConfig({
+							sshRemoteConfig: { enabled: true, remoteId: 'deleted-remote' },
+							sshStore: { getSshRemotes: () => [] },
+						}),
+						'Hello world'
+					);
+
+					expect(result.ok).toBe(false);
+					if (!result.ok) {
+						expect(result.message).toContain(
+							'configured remote "deleted-remote" could not be resolved'
+						);
+					}
+				});
+
+				it('fails when the remote exists but is disabled', async () => {
+					const result = await buildSpawnSpec(
+						createConfig({
+							sshRemoteConfig: { enabled: true, remoteId: 'r1' },
+							sshStore: {
+								getSshRemotes: () => [
+									{
+										id: 'r1',
+										name: 'Server',
+										host: 'host.example.com',
+										port: 22,
+										username: 'dev',
+										privateKeyPath: '',
+										enabled: false,
+									},
+								],
+							},
+						}),
+						'Hello world'
+					);
+
+					expect(result.ok).toBe(false);
+					if (!result.ok) {
+						expect(result.message).toContain('configured remote "r1" could not be resolved');
+					}
+				});
 			});
 
 			it('still appends prompt when SSH is enabled but sshStore is missing', async () => {
