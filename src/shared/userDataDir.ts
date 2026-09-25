@@ -55,12 +55,20 @@ function platformRoot(platform: NodeJS.Platform, home: string, env: NodeJS.Proce
 	return env.XDG_CONFIG_HOME || path.join(home, '.config');
 }
 
-/** `existsSync` is true for a regular file too, which is not a data directory. */
+/**
+ * `existsSync` is true for a regular file too, which is not a data directory.
+ *
+ * Only a missing path answers "no". A permission or I/O error must not come back
+ * as an absent directory: the path is right, `MAESTRO_USER_DATA` would not fix
+ * it, and the caller needs the real errno to know that.
+ */
 function isDirectory(candidate: string): boolean {
 	try {
 		return fs.statSync(candidate).isDirectory();
-	} catch {
-		return false;
+	} catch (error) {
+		const code = (error as NodeJS.ErrnoException).code;
+		if (code === 'ENOENT' || code === 'ENOTDIR') return false;
+		throw error;
 	}
 }
 
@@ -119,7 +127,17 @@ export function assertUserDataDirExists(dir: string, options: UserDataDirOptions
 	const root = platformRoot(platform, home, env);
 	const alternatives = [PACKAGED_APP_NAME, UNPACKAGED_APP_NAME, DEV_APP_NAME]
 		.map((name) => path.join(root, name))
-		.filter((candidate) => candidate !== dir && isDirectory(candidate));
+		.filter((candidate) => {
+			if (candidate === dir) return false;
+			// Asymmetric on purpose: the directory we were ASKED about must report a
+			// real error, but a sibling we cannot stat is just not worth naming, and
+			// throwing here would replace a good diagnostic with an unrelated one.
+			try {
+				return isDirectory(candidate);
+			} catch {
+				return false;
+			}
+		});
 
 	// A file at the path is a different mistake from nothing at all, and saying
 	// "not found" about something the user can see would send them hunting.

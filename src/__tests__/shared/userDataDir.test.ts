@@ -112,6 +112,49 @@ describe('assertUserDataDirExists', () => {
 		expect(() => assertUserDataDirExists(asFile)).toThrow(/is not a directory/);
 	});
 
+	// The real scenario. `chmod` is a no-op on Windows, and a root process ignores
+	// the mode, so the stat would succeed and the assertion would invert.
+	const canDenyPermission = process.platform !== 'win32' && process.getuid?.() !== 0;
+
+	it.skipIf(!canDenyPermission)('rethrows a permission error, naming it', () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-root-'));
+		scratch.push(root);
+		const target = path.join(root, 'Maestro');
+		fs.mkdirSync(target);
+
+		// Unreadable PARENT: that is what makes the stat of `target` fail.
+		fs.chmodSync(root, 0o000);
+		try {
+			expect(() => assertUserDataDirExists(target)).toThrow(/EACCES/);
+		} finally {
+			fs.chmodSync(root, 0o700);
+		}
+	});
+
+	// The same branch on every platform, including the Windows legs the test above
+	// cannot run on: a NUL byte is refused by Node's own argument validation.
+	const unstattable = 'maestro\0dir';
+
+	it('never reports an unexpected stat error as a missing directory', () => {
+		expect(() => assertUserDataDirExists(unstattable)).toThrow();
+		expect(() => assertUserDataDirExists(unstattable)).not.toThrow(/Maestro data directory/);
+	});
+
+	it('still names the missing directory when a sibling cannot be stat-ed', () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-root-'));
+		scratch.push(root);
+
+		// The target resolves normally and is simply absent; only the siblings are
+		// unstattable, which is the asymmetry the alternatives probe has to hold.
+		expect(() =>
+			assertUserDataDirExists(path.join(root, 'Maestro'), {
+				env: { XDG_CONFIG_HOME: `${root}\0` },
+				platform: 'linux',
+				homedir: root,
+			})
+		).toThrow(/not found at.*MAESTRO_USER_DATA/s);
+	});
+
 	it('throws rather than letting a runner open an empty database beside the real one', () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-root-'));
 		scratch.push(root);
