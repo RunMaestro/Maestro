@@ -38,6 +38,8 @@ import { useBatchStore } from '../stores/batchStore';
 import { useThoughtStreamStore, selectActivityCount } from '../stores/thoughtStreamStore';
 import { useSessionStore, selectActiveSession } from '../stores/sessionStore';
 import { useWindowOwnsSession } from '../contexts/WindowContext';
+import { notifyToast } from '../stores/notificationStore';
+import { isAutoRunDocumentLocked, reconcileDiskContent } from '../utils/autoRunDraft';
 import type { FileNode } from '../types/fileTree';
 import type { FileClickOptions } from '../hooks/ui/useAppHandlers';
 import {
@@ -288,21 +290,59 @@ export const RightPanel = memo(
 		const prevSessionIdRef = useRef(session?.id);
 		const prevSelectedFileRef = useRef(session?.autoRunSelectedFile);
 
+		// A run driving the document owns it: disk replaces the draft outright.
+		const autoRunDiskWins = isAutoRunDocumentLocked(
+			currentSessionBatchState,
+			session?.autoRunSelectedFile ?? null,
+			errorPaused
+		);
+
 		useEffect(() => {
 			const contentChanged = autoRunContent !== prevAutoRunContentRef.current;
 			const versionChanged = autoRunContentVersion !== prevAutoRunContentVersionRef.current;
 			const sessionChanged = session?.id !== prevSessionIdRef.current;
 			const fileChanged = session?.autoRunSelectedFile !== prevSelectedFileRef.current;
+			if (!contentChanged && !versionChanged && !sessionChanged && !fileChanged) return;
 
-			if (contentChanged || versionChanged || sessionChanged || fileChanged) {
+			prevAutoRunContentRef.current = autoRunContent;
+			prevAutoRunContentVersionRef.current = autoRunContentVersion;
+			prevSessionIdRef.current = session?.id;
+			prevSelectedFileRef.current = session?.autoRunSelectedFile;
+
+			if (sessionChanged || fileChanged) {
 				setSharedLocalContent(autoRunContent);
 				setSharedSavedContent(autoRunContent);
-				prevAutoRunContentRef.current = autoRunContent;
-				prevAutoRunContentVersionRef.current = autoRunContentVersion;
-				prevSessionIdRef.current = session?.id;
-				prevSelectedFileRef.current = session?.autoRunSelectedFile;
+				return;
 			}
-		}, [autoRunContent, autoRunContentVersion, session?.id, session?.autoRunSelectedFile]);
+
+			// Same document re-read from disk. This layer holds the draft while the
+			// Auto Run tab is hidden, so it applies the same rule the editor does,
+			// and it is the one place that tells the user about a conflict.
+			const next = reconcileDiskContent({
+				draft: sharedLocalContent,
+				saved: sharedSavedContent,
+				incoming: autoRunContent,
+				diskWins: autoRunDiskWins,
+			});
+			setSharedLocalContent(next.draft);
+			setSharedSavedContent(next.saved);
+			if (next.conflict) {
+				notifyToast({
+					color: 'orange',
+					title: 'Auto Run document changed on disk',
+					message:
+						'Your unsaved edits were kept. Save to overwrite it, or Revert to load the new version.',
+				});
+			}
+		}, [
+			autoRunContent,
+			autoRunContentVersion,
+			session?.id,
+			session?.autoRunSelectedFile,
+			sharedLocalContent,
+			sharedSavedContent,
+			autoRunDiskWins,
+		]);
 
 		// Auto-follow: automatically select the active document during batch runs
 		const { autoFollowEnabled, setAutoFollowEnabled } = useAutoRunAutoFollow({

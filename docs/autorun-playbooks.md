@@ -382,6 +382,8 @@ Click **Collapse** or press `Esc` to return to the sidebar panel view.
 
 Save your changes with `Cmd+S` (Mac) or `Ctrl+S` (Windows/Linux), or click the **Save** button in the editor footer. The editor shows "Unsaved changes" and a **Revert** button when you have pending edits. Revert discards everything since the last save, including pasted text, inserted images, and checkboxes ticked in preview. Full undo/redo support with `Cmd+Z` / `Cmd+Shift+Z`.
 
+If the file changes on disk while you have unsaved edits (an agent, a sync tool, or another editor wrote to it), your edits are kept and a toast tells you. **Save** overwrites the file with your version; **Revert** loads the version now on disk. With no unsaved edits, the editor simply shows the new version. The one exception is a document an Auto Run is actively driving: the editor is read-only then and always follows the disk.
+
 **Note**: Switching documents discards unsaved changes. Save before switching if you want to preserve your edits.
 
 ## Image Support

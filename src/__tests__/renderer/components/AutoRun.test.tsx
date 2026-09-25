@@ -3295,16 +3295,12 @@ describe('Content Versioning and External Changes', () => {
 		vi.useRealTimers();
 	});
 
-	it('force-syncs content when contentVersion increments', async () => {
+	it('force-syncs a clean editor when contentVersion increments', async () => {
 		const props = createDefaultProps({ content: 'Original', contentVersion: 1 });
 		const { rerender } = renderWithProvider(<AutoRun {...props} />);
 
 		const textarea = screen.getByRole('textbox');
 		expect(textarea).toHaveValue('Original');
-
-		// User makes local edits
-		fireEvent.change(textarea, { target: { value: 'User edits' } });
-		expect(textarea).toHaveValue('User edits');
 
 		// External file change triggers contentVersion increment
 		rerender(
@@ -3315,8 +3311,25 @@ describe('Content Versioning and External Changes', () => {
 			vi.advanceTimersByTime(100);
 		});
 
-		// Content should be force-synced from external change
 		expect(textarea).toHaveValue('External update');
+	});
+
+	it('keeps unsaved edits when contentVersion increments', async () => {
+		const props = createDefaultProps({ content: 'Original', contentVersion: 1 });
+		const { rerender } = renderWithProvider(<AutoRun {...props} />);
+
+		const textarea = screen.getByRole('textbox');
+		fireEvent.change(textarea, { target: { value: 'User edits' } });
+
+		rerender(
+			<AutoRun {...createDefaultProps({ content: 'External update', contentVersion: 2 })} />
+		);
+
+		await act(async () => {
+			vi.advanceTimersByTime(100);
+		});
+
+		expect(textarea).toHaveValue('User edits');
 	});
 
 	it('preserves local content when only content prop changes (no version change)', async () => {
@@ -3363,7 +3376,7 @@ describe('Content Versioning and External Changes', () => {
 		expect(screen.getByRole('textbox')).toHaveValue('V100');
 	});
 
-	it('resets dirty state when external change arrives', async () => {
+	it('stays dirty when an external change arrives under unsaved edits', async () => {
 		const props = createDefaultProps({ content: 'Original', contentVersion: 1 });
 		const { rerender } = renderWithProvider(<AutoRun {...props} />);
 
@@ -3382,8 +3395,9 @@ describe('Content Versioning and External Changes', () => {
 			vi.advanceTimersByTime(100);
 		});
 
-		// Content synced, no longer dirty
-		expect(screen.queryByText('Save')).not.toBeInTheDocument();
+		// The draft survives, so Save is still offered
+		expect(textarea).toHaveValue('Dirty content');
+		expect(screen.getByText('Save')).toBeInTheDocument();
 	});
 });
 
