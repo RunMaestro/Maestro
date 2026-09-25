@@ -14,6 +14,7 @@ import {
 	resolveClaudeSpawnMode,
 	buildRemoteInteractiveSpawn,
 } from '../../agents/resolveClaudeSpawnMode';
+import { mergeClaudeSpawnEnvLayers, type ClaudeSpawnEnvLayers } from '../../agents/claudeSpawnCore';
 import { getClaudeTokenMode } from '../../../shared/claudeTokenMode';
 import { resolveConfigDirKey } from '../../stores/claudeUsageStore';
 import { isWindows } from '../../../shared/platformDetection';
@@ -289,6 +290,22 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				// its side, so it still receives `config.sessionId` unchanged.
 				const baseSessionId = config.sessionId.replace(REGEX_AI_SUFFIX, '');
 
+				// Env layers the spawned process receives beyond its own custom vars:
+				// the provider-level config (`agentConfigValues.customEnvVars`) and
+				// the global Shell Configuration vars. Read once here because the
+				// Claude config-dir lookups below (spawn-mode resolution and the
+				// API-resume sanitizer) must see the same env the child will, and
+				// both layers are applied again at spawn further down.
+				const allConfigs = agentConfigsStore.get('configs', {});
+				const agentConfigValues = allConfigs[config.toolType] || {};
+				const globalShellEnvVars = settingsStore.get('shellEnvVars', {}) as Record<string, string>;
+				const claudeEnvLayers: ClaudeSpawnEnvLayers = {
+					agentDefaultEnvVars: agent?.defaultEnvVars,
+					globalShellEnvVars,
+					agentCustomEnvVars: agentConfigValues.customEnvVars as Record<string, string> | undefined,
+					sessionCustomEnvVars: config.sessionCustomEnvVars,
+				};
+
 				// Resolve the Claude token source (maestro-p TUI vs `claude --print`)
 				// through the shared resolver. Token-mode fields are read from the
 				// persisted session record (authoritative) with the spawn payload as
@@ -351,6 +368,8 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 						command: config.command,
 						sessionCustomPath: config.sessionCustomPath,
 						sessionCustomEnvVars: config.sessionCustomEnvVars,
+						globalShellEnvVars,
+						agentCustomEnvVars: claudeEnvLayers.agentCustomEnvVars,
 						maestroPPath: persistedSession?.maestroPPath ?? config.maestroPPath,
 						persisted: persistedSession?.claudeInteractive,
 						now: new Date(),
@@ -407,12 +426,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					!isSshEnabled
 				) {
 					const configDirKey =
-						resolvedConfigDirKey ??
-						resolveConfigDirKey({
-							...(process.env as NodeJS.ProcessEnv),
-							...(agent?.defaultEnvVars ?? {}),
-							...(config.sessionCustomEnvVars ?? {}),
-						});
+						resolvedConfigDirKey ?? resolveConfigDirKey(mergeClaudeSpawnEnvLayers(claudeEnvLayers));
 					sanitizeClaudeTranscriptBeforeApiResume({
 						configDirKey,
 						cwd: config.cwd,
@@ -435,8 +449,6 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				// Apply agent config options and session overrides
 				// Session-level overrides take precedence over agent-level config
 				// ========================================================================
-				const allConfigs = agentConfigsStore.get('configs', {});
-				const agentConfigValues = allConfigs[config.toolType] || {};
 				const configResolution = applyAgentConfigOverrides(agent, finalArgs, {
 					agentConfigValues,
 					sessionCustomModel: config.sessionCustomModel,
@@ -638,7 +650,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				// 3. Process defaults (with Electron/IDE vars stripped for agents)
 				//
 				// The actual merging happens in buildChildProcessEnv() or buildPtyTerminalEnv().
-				const globalShellEnvVars = settingsStore.get('shellEnvVars', {}) as Record<string, string>;
+				// (`globalShellEnvVars` itself is read near the top of this handler.)
 
 				// Debug logging when global env vars are configured
 				if (Object.keys(globalShellEnvVars).length > 0) {

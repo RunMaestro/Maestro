@@ -30,6 +30,8 @@ import * as path from 'path';
 import { selectMode as builtinSelectMode } from './claude-mode-selector';
 import type { SelectModeInput, SelectModeResult, UsageSnapshot } from './claude-mode-selector';
 import type { ClaudeTokenMode } from '../../shared/claudeTokenMode';
+import { isBlankEnvValue } from '../../shared/agentEnvironment';
+import { effectiveAgentCustomEnvVars } from '../../shared/providerProfiles';
 
 const LOG_CONTEXT = 'ClaudeSpawnCore';
 
@@ -76,10 +78,74 @@ export function isMaestroPBinaryPath(binaryPath: string | undefined | null): boo
  * Canonical CLAUDE_CONFIG_DIR key: the absolute path of `$CLAUDE_CONFIG_DIR`
  * (or `~/.claude`). Pure. Shared so the desktop usage store and the CLI compute
  * the same key from the same env.
+ *
+ * Callers pass the env as CONFIGURED (`mergeClaudeSpawnEnvLayers()` below),
+ * not the env the child finally receives, so this applies
+ * the same two rules `buildChildProcessEnv()` does at spawn time. Without them
+ * the key names a directory claude never writes to, and the API-resume
+ * sanitizer that uses it silently skips the real transcript:
+ *
+ * - A blank value means "unset" (see `isBlankEnvValue`), so the child gets no
+ *   CLAUDE_CONFIG_DIR and claude uses `~/.claude`. `path.resolve('')` would
+ *   instead return the main process's own cwd.
+ * - A leading `~/` is expanded against the home directory. `path.resolve()`
+ *   does not know `~`, and would turn `~/.claude-work` into `<cwd>/~/.claude-work`.
  */
 export function resolveConfigDirKeyFromEnv(env: NodeJS.ProcessEnv): string {
-	const raw = env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), '.claude');
-	return path.resolve(raw);
+	const configured = env.CLAUDE_CONFIG_DIR;
+	if (configured === undefined || isBlankEnvValue(configured)) {
+		return path.resolve(path.join(os.homedir(), '.claude'));
+	}
+	if (configured.startsWith('~/')) {
+		return path.resolve(path.join(os.homedir(), configured.slice(2)));
+	}
+	return path.resolve(configured);
+}
+
+/**
+ * The user-editable env layers a Claude spawn receives, as configured (blank
+ * values and `~/` still raw; `resolveConfigDirKeyFromEnv` normalizes those).
+ */
+export interface ClaudeSpawnEnvLayers {
+	/** `agent.defaultEnvVars` from the agent definition. */
+	agentDefaultEnvVars?: Record<string, string>;
+	/** Global Shell Configuration vars (`settingsStore.get('shellEnvVars')`). */
+	globalShellEnvVars?: Record<string, string>;
+	/** Agent-level (provider) custom vars (`agentConfigValues.customEnvVars`). */
+	agentCustomEnvVars?: Record<string, string>;
+	/** The agent's own per-session override vars. */
+	sessionCustomEnvVars?: Record<string, string>;
+}
+
+/**
+ * Merge the env layers in the order the spawn applies them, so a lookup keyed
+ * on the result (the CLAUDE_CONFIG_DIR key) names the directory the child
+ * actually uses. Lowest to highest:
+ *
+ *   process env < global shell vars < agent defaults < (session ?? agent-level)
+ *
+ * That is not a guess at "sensible" precedence, it is what the desktop spawn
+ * does: `applyAgentConfigOverrides()` builds `{ ...defaults, ...user }` and
+ * `buildChildProcessEnv()` lays that over the global vars. The user set is ONE
+ * set - the agent's own vars REPLACE the provider-level ones rather than
+ * layering over them (`effectiveAgentCustomEnvVars`), so a merge of the two
+ * would describe a process nobody runs.
+ *
+ * Every Claude config-dir lookup must go through this: the key used to be
+ * built from process env + defaults + session vars only, so a
+ * CLAUDE_CONFIG_DIR set globally or at the provider level sent the API-resume
+ * sanitizer to `~/.claude` while claude wrote somewhere else.
+ */
+export function mergeClaudeSpawnEnvLayers(
+	layers: ClaudeSpawnEnvLayers,
+	processEnv: NodeJS.ProcessEnv = process.env
+): NodeJS.ProcessEnv {
+	return {
+		...processEnv,
+		...(layers.globalShellEnvVars ?? {}),
+		...(layers.agentDefaultEnvVars ?? {}),
+		...effectiveAgentCustomEnvVars(layers.sessionCustomEnvVars, layers.agentCustomEnvVars),
+	};
 }
 
 /** Injectable collaborators. Every surface supplies these; none are defaulted here. */
@@ -127,6 +193,14 @@ export interface ResolveClaudeSpawnModeCoreInput {
 	sessionCustomPath?: string;
 	/** Per-session custom env vars (feed the CLAUDE_CONFIG_DIR key resolution). */
 	sessionCustomEnvVars?: Record<string, string>;
+	/**
+	 * Global Shell Configuration vars and the provider-level custom vars. Both
+	 * reach the spawned claude, so both feed the key (see
+	 * `mergeClaudeSpawnEnvLayers`). Optional: a caller that omits them keys as
+	 * it did before they existed.
+	 */
+	globalShellEnvVars?: Record<string, string>;
+	agentCustomEnvVars?: Record<string, string>;
 	/** Per-session maestro-p script override. Empty falls back to the bundled script. */
 	maestroPPath?: string;
 	/** Previously-persisted claudeInteractive state, for sticky-limit + stale clear. */
@@ -185,11 +259,12 @@ export function resolveClaudeSpawnModeCore(
 		return { mode: 'api', reason: 'auto', maestroPBinPath: null };
 	}
 
-	const envForKey: NodeJS.ProcessEnv = {
-		...(process.env as NodeJS.ProcessEnv),
-		...(agent?.defaultEnvVars ?? {}),
-		...(input.sessionCustomEnvVars ?? {}),
-	};
+	const envForKey = mergeClaudeSpawnEnvLayers({
+		agentDefaultEnvVars: agent?.defaultEnvVars,
+		globalShellEnvVars: input.globalShellEnvVars,
+		agentCustomEnvVars: input.agentCustomEnvVars,
+		sessionCustomEnvVars: input.sessionCustomEnvVars,
+	});
 
 	// ── API mode ────────────────────────────────────────────────────────────
 	if (tokenMode === 'api') {
