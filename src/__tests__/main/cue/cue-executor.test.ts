@@ -102,6 +102,9 @@ vi.mock('../../../main/utils/agent-args', () => ({
 const mockWrapSpawnWithSsh = vi.fn();
 vi.mock('../../../main/utils/ssh-spawn-wrapper', () => ({
 	wrapSpawnWithSsh: (...args: unknown[]) => mockWrapSpawnWithSsh(...args),
+	// Stand-in; the real wording is covered by the ssh-spawn-wrapper suite.
+	sshUnresolvedRemoteMessage: (cfg: { remoteId: string | null }) =>
+		`remote "${cfg.remoteId}" could not be resolved`,
 }));
 
 // Mock parsers - default returns null (no parser), overridden per test as needed
@@ -712,6 +715,34 @@ describe('cue-executor', () => {
 
 				mockChild.emit('close', 0);
 				await resultPromise;
+			});
+
+			it('fails the run without spawning when the configured remote cannot be resolved', async () => {
+				mockWrapSpawnWithSsh.mockResolvedValue({
+					command: 'claude',
+					args: ['--print'],
+					cwd: '/projects/test',
+					customEnvVars: undefined,
+					prompt: 'test prompt',
+					sshRemoteUsed: null,
+				});
+				const onLog = vi.fn();
+
+				const result = await executeCuePrompt(
+					createExecutionConfig({
+						sshRemoteConfig: { enabled: true, remoteId: 'deleted-remote' },
+						sshStore: { getSshRemotes: vi.fn(() => []) },
+						onLog,
+					})
+				);
+
+				expect(mockSpawn).not.toHaveBeenCalled();
+				expect(result.status).toBe('failed');
+				expect(result.stderr).toBe('remote "deleted-remote" could not be resolved');
+				expect(onLog).toHaveBeenCalledWith(
+					'error',
+					'remote "deleted-remote" could not be resolved'
+				);
 			});
 
 			it('should write prompt to stdin for SSH large prompt mode', async () => {

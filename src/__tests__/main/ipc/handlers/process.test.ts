@@ -1012,6 +1012,22 @@ describe('process IPC handlers', () => {
 			it('does not sanitize SSH-enabled spawns (transcript lives on remote, not local disk)', async () => {
 				mockAgentDetector.getAgent.mockResolvedValue(claudeCodeAgent);
 				mockProcessManager.spawn.mockReturnValue({ pid: 4250, success: true });
+				mockSettingsStore.get.mockImplementation((key: string, defaultValue: unknown) => {
+					if (key === 'sshRemotes') {
+						return [
+							{
+								id: 'remote-1',
+								name: 'Dev Server',
+								host: 'dev.example.com',
+								port: 22,
+								username: 'devuser',
+								privateKeyPath: '',
+								enabled: true,
+							},
+						];
+					}
+					return defaultValue;
+				});
 
 				const handler = handlers.get('process:spawn');
 				await handler!({} as any, {
@@ -2071,40 +2087,86 @@ describe('process IPC handlers', () => {
 			);
 		});
 
-		it('should run locally when no SSH remotes are configured', async () => {
-			const mockAgent = {
-				id: 'claude-code',
-				requiresPty: true,
-			};
-
-			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+		it('should refuse to spawn when the configured SSH remote no longer exists', async () => {
+			mockAgentDetector.getAgent.mockResolvedValue({ id: 'claude-code', requiresPty: true });
 			mockSettingsStore.get.mockImplementation((key, defaultValue) => {
-				if (key === 'sshRemotes') return []; // No remotes configured
+				if (key === 'sshRemotes') return []; // Remote was deleted
 				return defaultValue;
 			});
-			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
 
 			const handler = handlers.get('process:spawn');
-			await handler!({} as any, {
-				sessionId: 'session-1',
-				toolType: 'claude-code',
-				cwd: '/local/project',
-				command: 'claude',
-				args: ['--print'],
-				// Session config points to non-existent remote
-				sessionSshRemoteConfig: {
-					enabled: true,
-					remoteId: 'remote-1',
-				},
+			await expect(
+				handler!({} as any, {
+					sessionId: 'session-1',
+					toolType: 'claude-code',
+					cwd: '/home/remoteuser/remote-project',
+					command: 'claude',
+					args: ['--print'],
+					prompt: 'secret prompt',
+					sessionSshRemoteConfig: {
+						enabled: true,
+						remoteId: 'deleted-remote',
+					},
+				})
+			).rejects.toThrow('configured remote "deleted-remote" could not be resolved');
+
+			// Never falls back to running the agent (and the prompt) locally
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+		});
+
+		it('should refuse to spawn when the configured SSH remote is disabled', async () => {
+			mockAgentDetector.getAgent.mockResolvedValue({ id: 'codex', requiresPty: false });
+			mockSettingsStore.get.mockImplementation((key, defaultValue) => {
+				if (key === 'sshRemotes') return [{ ...mockSshRemote, enabled: false }];
+				return defaultValue;
 			});
 
-			// No matching SSH remote, should run locally
-			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
-				expect.objectContaining({
-					command: 'claude',
-					requiresPty: true, // Preserved when running locally
+			const handler = handlers.get('process:spawn');
+			await expect(
+				handler!({} as any, {
+					sessionId: 'session-1',
+					toolType: 'codex',
+					cwd: '/home/remoteuser/remote-project',
+					command: 'codex',
+					args: [],
+					sessionSshRemoteConfig: {
+						enabled: true,
+						remoteId: mockSshRemote.id,
+					},
 				})
-			);
+			).rejects.toThrow(`configured remote "${mockSshRemote.id}" could not be resolved`);
+
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+		});
+
+		it('should refuse to spawn when the SSH remote is removed after the early guard passed', async () => {
+			mockAgentDetector.getAgent.mockResolvedValue({ id: 'codex', requiresPty: false });
+			// The early guard sees the remote; every later read (including the
+			// spawn-time lookup) finds it gone, as if it was deleted mid-handler.
+			let sshRemoteReads = 0;
+			mockSettingsStore.get.mockImplementation((key, defaultValue) => {
+				if (key === 'sshRemotes') return sshRemoteReads++ === 0 ? [mockSshRemote] : [];
+				return defaultValue;
+			});
+
+			const handler = handlers.get('process:spawn');
+			await expect(
+				handler!({} as any, {
+					sessionId: 'session-1',
+					toolType: 'codex',
+					cwd: '/home/remoteuser/remote-project',
+					command: 'codex',
+					args: [],
+					prompt: 'secret prompt',
+					sessionSshRemoteConfig: {
+						enabled: true,
+						remoteId: mockSshRemote.id,
+					},
+				})
+			).rejects.toThrow(`configured remote "${mockSshRemote.id}" could not be resolved`);
+
+			expect(sshRemoteReads).toBeGreaterThan(1);
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
 		});
 
 		it('should use local home directory as cwd when spawning SSH (fixes ENOENT for remote-only paths)', async () => {
