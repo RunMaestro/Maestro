@@ -1465,6 +1465,7 @@ describe('createCueRunManager', () => {
 				remove: vi.fn(),
 				clearSession: vi.fn(),
 				clearAll: vi.fn(),
+				persistedIds: vi.fn(() => new Set<string>()),
 				restoreAll: vi.fn(() => new Map()),
 			};
 		}

@@ -15,11 +15,13 @@ const mockInitCueDb = vi.fn();
 const mockCloseCueDb = vi.fn();
 const mockPruneCueEvents = vi.fn();
 const mockGetLastHeartbeat = vi.fn<() => number | null>();
+const mockFailOrphanedRunningEvents = vi.fn<(message: string) => number>(() => 0);
 
 vi.mock('../../../main/cue/cue-db', () => ({
 	initCueDb: (...args: unknown[]) => mockInitCueDb(...args),
 	closeCueDb: () => mockCloseCueDb(),
 	pruneCueEvents: (...args: unknown[]) => mockPruneCueEvents(...args),
+	failOrphanedRunningEvents: (message: string) => mockFailOrphanedRunningEvents(message),
 	getLastHeartbeat: () => mockGetLastHeartbeat(),
 }));
 
@@ -31,6 +33,7 @@ vi.mock('../../../main/utils/sentry', () => ({
 import {
 	createCueRecoveryService,
 	EVENT_PRUNE_AGE_MS,
+	ORPHANED_RUN_MESSAGE,
 	SLEEP_THRESHOLD_MS,
 } from '../../../main/cue/cue-recovery-service';
 import type { CueConfig, CueEvent, CueSubscription } from '../../../main/cue/cue-types';
@@ -66,6 +69,26 @@ describe('cue-recovery-service', () => {
 			expect(result.ok).toBe(true);
 			expect(mockInitCueDb).toHaveBeenCalledOnce();
 			expect(mockPruneCueEvents).toHaveBeenCalledWith(EVENT_PRUNE_AGE_MS);
+		});
+
+		it('settles runs a killed engine left running, and says so', () => {
+			mockFailOrphanedRunningEvents.mockReturnValueOnce(2);
+			const onLog = vi.fn();
+			const service = createCueRecoveryService({
+				onLog,
+				getSessions: () => new Map(),
+				onDispatch: vi.fn(),
+			});
+
+			expect(service.init().ok).toBe(true);
+			expect(mockFailOrphanedRunningEvents).toHaveBeenCalledWith(ORPHANED_RUN_MESSAGE);
+			expect(onLog).toHaveBeenCalledWith('warn', expect.stringContaining('Marked 2 run(s)'));
+		});
+
+		it('logs nothing about orphans when there are none', () => {
+			const onLog = vi.fn();
+			createCueRecoveryService({ onLog, getSessions: () => new Map(), onDispatch: vi.fn() }).init();
+			expect(onLog).not.toHaveBeenCalledWith('warn', expect.stringContaining('Marked'));
 		});
 
 		it('prunes with the user configured retention window', () => {
