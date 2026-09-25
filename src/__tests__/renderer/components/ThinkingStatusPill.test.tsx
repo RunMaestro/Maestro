@@ -618,6 +618,32 @@ describe('ThinkingStatusPill', () => {
 			expect(screen.getByText('0m 45s')).toBeInTheDocument();
 		});
 
+		it('freezes AutoRunPill elapsed time while the run is paused', () => {
+			// Started 40h ago, ran 1m, then parked on a HITL gate: the tracker
+			// cleared lastActiveTimestamp, so the pause adds nothing.
+			const autoRunState: BatchRunState = {
+				isRunning: true,
+				isStopping: false,
+				currentTaskIndex: 0,
+				totalTasks: 5,
+				completedTasks: 0,
+				startTime: Date.now() - 40 * 3_600_000,
+				accumulatedElapsedMs: 60_000,
+				lastActiveTimestamp: undefined,
+				errorPaused: true,
+				tasks: [],
+				batchName: 'Batch',
+			};
+			render(
+				<ThinkingStatusPill thinkingItems={[]} theme={mockTheme} autoRunState={autoRunState} />
+			);
+			expect(screen.getByText('1m 0s')).toBeInTheDocument();
+			act(() => {
+				vi.advanceTimersByTime(5000);
+			});
+			expect(screen.getByText('1m 0s')).toBeInTheDocument();
+		});
+
 		it('shows stop button in AutoRunPill when onStopAutoRun is provided', () => {
 			const autoRunState: BatchRunState = {
 				isRunning: true,

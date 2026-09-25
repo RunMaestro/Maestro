@@ -37,7 +37,7 @@ import { useSessionStore, selectActiveSession } from '../stores/sessionStore';
 import type { FileNode } from '../types/fileTree';
 import type { FileClickOptions } from '../hooks/ui/useAppHandlers';
 import { RIGHT_PANEL_MIN_WIDTH, RIGHT_PANEL_MAX_WIDTH } from '../constants/rightPanel';
-import { sleepAwareElapsedSince } from '../services/systemSleep';
+import { autoRunActiveElapsedMs } from '../hooks/batch/useTimeTracking';
 
 export interface RightPanelHandle {
 	refreshHistoryPanel: () => void;
@@ -237,7 +237,7 @@ export const RightPanel = memo(
 			side: 'right',
 		});
 
-		// Elapsed time for Auto Run display - tracks wall clock time from startTime
+		// Elapsed time for Auto Run display - active run time, excluding sleep and pauses
 		const [elapsedTime, setElapsedTime] = useState<string>('');
 
 		// Kill confirmation modal for force-killing during Auto Run stop
@@ -320,18 +320,26 @@ export const RightPanel = memo(
 			}
 		}, []);
 
-		// Update elapsed time display from startTime, minus any machine sleep, so
-		// the live counter matches the duration the run actually records.
+		// Update elapsed time display from the run's tracker fields, so the live
+		// counter matches the duration the run actually records: machine sleep and
+		// paused spans (error, HITL gate) are excluded, and a paused run's clock stops.
 		// Uses an interval to update every second while running
+		const runStartTime = currentSessionBatchState?.startTime;
+		const runAccumulatedMs = currentSessionBatchState?.accumulatedElapsedMs;
+		const runActiveSince = currentSessionBatchState?.lastActiveTimestamp;
 		useEffect(() => {
-			if (!currentSessionBatchState?.isRunning || !currentSessionBatchState?.startTime) {
+			if (!currentSessionBatchState?.isRunning || !runStartTime) {
 				setElapsedTime('');
 				return;
 			}
 
 			// Calculate elapsed immediately
 			const updateElapsed = () => {
-				const elapsed = sleepAwareElapsedSince(currentSessionBatchState.startTime!);
+				const elapsed = autoRunActiveElapsedMs({
+					startTime: runStartTime,
+					accumulatedElapsedMs: runAccumulatedMs,
+					lastActiveTimestamp: runActiveSince,
+				});
 				setElapsedTime(formatElapsed(elapsed));
 			};
 
@@ -339,7 +347,13 @@ export const RightPanel = memo(
 			const interval = setInterval(updateElapsed, 1000);
 
 			return () => clearInterval(interval);
-		}, [currentSessionBatchState?.isRunning, currentSessionBatchState?.startTime, formatElapsed]);
+		}, [
+			currentSessionBatchState?.isRunning,
+			runStartTime,
+			runAccumulatedMs,
+			runActiveSince,
+			formatElapsed,
+		]);
 
 		// Expose methods to parent
 		useImperativeHandle(

@@ -24,6 +24,7 @@ const setupHook = () => {
 	const errorResolutionRefs = { current: {} as Record<string, ErrorResolutionEntry> };
 	const stopRequestedRefs = { current: {} as Record<string, boolean> };
 	const isMountedRef = { current: true };
+	const timeTracking = { pauseTracking: vi.fn(), resumeTracking: vi.fn() };
 
 	const hook = renderHook(() =>
 		useBatchControlActions({
@@ -32,6 +33,7 @@ const setupHook = () => {
 			errorResolutionRefs,
 			stopRequestedRefs,
 			isMountedRef,
+			timeTracking,
 		})
 	);
 
@@ -42,6 +44,7 @@ const setupHook = () => {
 		errorResolutionRefs,
 		stopRequestedRefs,
 		isMountedRef,
+		timeTracking,
 	};
 };
 
@@ -93,10 +96,14 @@ describe('useBatchControlActions', () => {
 
 	it('pauseBatchOnError dispatches SET_ERROR with payload and creates an error-resolution promise', () => {
 		useBatchStore.setState({ batchRunStates: { sess: mkRunningState() } });
-		const { hook, dispatch, broadcastAutoRunState, errorResolutionRefs } = setupHook();
+		const { hook, dispatch, broadcastAutoRunState, errorResolutionRefs, timeTracking } =
+			setupHook();
 		const error = mkError();
 
 		act(() => hook.result.current.pauseBatchOnError('sess', error, 0, 'task'));
+
+		// A paused run is not running: its clock stops.
+		expect(timeTracking.pauseTracking).toHaveBeenCalledWith('sess');
 
 		expect(dispatch).toHaveBeenCalledWith({
 			type: 'SET_ERROR',
@@ -123,13 +130,15 @@ describe('useBatchControlActions', () => {
 
 	it('skipCurrentDocument dispatches CLEAR_ERROR and resolves the promise with skip-document', async () => {
 		useBatchStore.setState({ batchRunStates: { sess: mkRunningState() } });
-		const { hook, dispatch, errorResolutionRefs } = setupHook();
+		const { hook, dispatch, errorResolutionRefs, timeTracking } = setupHook();
 
 		act(() => hook.result.current.pauseBatchOnError('sess', mkError(), 0));
 		const entry = errorResolutionRefs.current.sess;
 		expect(entry).toBeDefined();
 
 		act(() => hook.result.current.skipCurrentDocument('sess'));
+
+		expect(timeTracking.resumeTracking).toHaveBeenCalledWith('sess');
 
 		expect(dispatch).toHaveBeenCalledWith({ type: 'CLEAR_ERROR', sessionId: 'sess' });
 		await expect(entry!.promise).resolves.toBe('skip-document');
@@ -138,12 +147,14 @@ describe('useBatchControlActions', () => {
 
 	it('resumeAfterError dispatches CLEAR_ERROR and resolves with resume', async () => {
 		useBatchStore.setState({ batchRunStates: { sess: mkRunningState() } });
-		const { hook, dispatch, errorResolutionRefs } = setupHook();
+		const { hook, dispatch, errorResolutionRefs, timeTracking } = setupHook();
 
 		act(() => hook.result.current.pauseBatchOnError('sess', mkError(), 0));
 		const entry = errorResolutionRefs.current.sess;
 
 		act(() => hook.result.current.resumeAfterError('sess'));
+
+		expect(timeTracking.resumeTracking).toHaveBeenCalledWith('sess');
 
 		expect(dispatch).toHaveBeenCalledWith({ type: 'CLEAR_ERROR', sessionId: 'sess' });
 		await expect(entry!.promise).resolves.toBe('resume');
@@ -178,6 +189,7 @@ describe('useBatchControlActions', () => {
 				errorResolutionRefs,
 				stopRequestedRefs,
 				isMountedRef,
+				timeTracking: { pauseTracking: vi.fn(), resumeTracking: vi.fn() },
 			})
 		);
 

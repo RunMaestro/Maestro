@@ -3,6 +3,7 @@ import type { MutableRefObject } from 'react';
 import type { AgentError, BatchRunState } from '../../../types';
 import { useBatchStore } from '../../../stores/batchStore';
 import type { BatchAction } from '../batchReducer';
+import type { UseTimeTrackingReturn } from '../useTimeTracking';
 
 export type ErrorResolutionAction = 'resume' | 'skip-document' | 'abort';
 
@@ -17,6 +18,8 @@ export interface UseBatchControlActionsDeps {
 	errorResolutionRefs: MutableRefObject<Record<string, ErrorResolutionEntry>>;
 	stopRequestedRefs: MutableRefObject<Record<string, boolean>>;
 	isMountedRef: MutableRefObject<boolean>;
+	/** A paused run is not running: its clock stops until resume or skip. */
+	timeTracking: Pick<UseTimeTrackingReturn, 'pauseTracking' | 'resumeTracking'>;
 }
 
 export interface UseBatchControlActionsReturn {
@@ -47,7 +50,11 @@ export function useBatchControlActions({
 	errorResolutionRefs,
 	stopRequestedRefs,
 	isMountedRef,
+	timeTracking,
 }: UseBatchControlActionsDeps): UseBatchControlActionsReturn {
+	// Destructured: the tracker's callbacks are stable, its return object is not.
+	const { pauseTracking, resumeTracking } = timeTracking;
+
 	/**
 	 * Request to stop the batch run after the current task completes.
 	 * No `isMountedRef` check - stop requests should always be honoured.
@@ -91,6 +98,8 @@ export function useBatchControlActions({
 				}
 			);
 
+			// Before SET_ERROR so the broadcast below already carries the frozen clock.
+			pauseTracking(sessionId);
 			dispatch({
 				type: 'SET_ERROR',
 				sessionId,
@@ -118,7 +127,7 @@ export function useBatchControlActions({
 				};
 			}
 		},
-		[broadcastAutoRunState, dispatch, errorResolutionRefs, isMountedRef]
+		[broadcastAutoRunState, dispatch, errorResolutionRefs, isMountedRef, pauseTracking]
 	);
 
 	/**
@@ -130,6 +139,7 @@ export function useBatchControlActions({
 
 			window.maestro.logger.autorun(`Skipping document after error`, sessionId, {});
 
+			resumeTracking(sessionId);
 			dispatch({ type: 'CLEAR_ERROR', sessionId });
 			const currentState = useBatchStore.getState().batchRunStates[sessionId];
 			if (currentState) {
@@ -148,7 +158,7 @@ export function useBatchControlActions({
 				delete errorResolutionRefs.current[sessionId];
 			}
 		},
-		[broadcastAutoRunState, dispatch, errorResolutionRefs, isMountedRef]
+		[broadcastAutoRunState, dispatch, errorResolutionRefs, isMountedRef, resumeTracking]
 	);
 
 	/**
@@ -160,6 +170,7 @@ export function useBatchControlActions({
 
 			window.maestro.logger.autorun(`Resuming Auto Run after error resolution`, sessionId, {});
 
+			resumeTracking(sessionId);
 			dispatch({ type: 'CLEAR_ERROR', sessionId });
 			const currentState = useBatchStore.getState().batchRunStates[sessionId];
 			if (currentState) {
@@ -178,7 +189,7 @@ export function useBatchControlActions({
 				delete errorResolutionRefs.current[sessionId];
 			}
 		},
-		[broadcastAutoRunState, dispatch, errorResolutionRefs, isMountedRef]
+		[broadcastAutoRunState, dispatch, errorResolutionRefs, isMountedRef, resumeTracking]
 	);
 
 	/**
