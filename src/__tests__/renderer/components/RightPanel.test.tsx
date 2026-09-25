@@ -8,7 +8,14 @@ import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useFileExplorerStore } from '../../../renderer/stores/fileExplorerStore';
 import { useBatchStore } from '../../../renderer/stores/batchStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { notifyToast } from '../../../renderer/stores/notificationStore';
+import { AutoRun } from '../../../renderer/components/AutoRun';
 import { mockTheme } from '../../helpers/mockTheme';
+
+vi.mock('../../../renderer/stores/notificationStore', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../renderer/stores/notificationStore')>()),
+	notifyToast: vi.fn(),
+}));
 
 // Mock child components
 vi.mock('../../../renderer/components/FileExplorerPanel', () => ({
@@ -364,6 +371,78 @@ describe('RightPanel', () => {
 			expect(fileExplorer.closest('[data-tour="files-panel"]')).toHaveStyle({ display: 'none' });
 			expect(screen.queryByTestId('history-panel')).not.toBeInTheDocument();
 			expect(screen.getByTestId('auto-run')).toBeInTheDocument();
+		});
+	});
+
+	describe('Auto Run shared draft vs disk changes', () => {
+		const lastAutoRunProps = () => vi.mocked(AutoRun).mock.calls.at(-1)![0] as any;
+		const setDisk = (content: string, version: number) =>
+			act(() => {
+				useSessionStore.setState({
+					sessions: [{ ...mockSession, autoRunContent: content, autoRunContentVersion: version }],
+				});
+			});
+
+		beforeEach(() => {
+			useUIStore.setState({ activeRightTab: 'autorun' });
+			useSessionStore.setState({
+				sessions: [{ ...mockSession, autoRunContent: 'Saved.', autoRunContentVersion: 1 }],
+			});
+		});
+
+		it('keeps text typed after a save when the save echoes back from disk', () => {
+			render(<RightPanel {...createDefaultProps()} />);
+			act(() => {
+				lastAutoRunProps().onExternalLocalContentChange('Saved. Still typing');
+			});
+
+			// Watcher re-reads the file: it holds exactly the saved text
+			setDisk('Saved.', 2);
+
+			expect(lastAutoRunProps().externalLocalContent).toBe('Saved. Still typing');
+			expect(lastAutoRunProps().externalSavedContent).toBe('Saved.');
+			expect(notifyToast).not.toHaveBeenCalled();
+		});
+
+		it('keeps the draft and warns when the disk changes under unsaved edits', () => {
+			render(<RightPanel {...createDefaultProps()} />);
+			act(() => {
+				lastAutoRunProps().onExternalLocalContentChange('Saved. My sentence.');
+			});
+
+			setDisk('Saved. Agent edit.', 2);
+
+			expect(lastAutoRunProps().externalLocalContent).toBe('Saved. My sentence.');
+			expect(lastAutoRunProps().externalSavedContent).toBe('Saved. Agent edit.');
+			expect(notifyToast).toHaveBeenCalledWith(expect.objectContaining({ color: 'orange' }));
+		});
+
+		it('adopts the disk version while a run drives the document', () => {
+			const batchState = {
+				isRunning: true,
+				isStopping: false,
+				documents: ['test.md'],
+				lockedDocuments: ['test.md'],
+				worktreeActive: false,
+				currentDocumentIndex: 0,
+				totalTasks: 1,
+				completedTasks: 0,
+				currentDocTasksTotal: 1,
+				currentDocTasksCompleted: 0,
+				totalTasksAcrossAllDocs: 1,
+				completedTasksAcrossAllDocs: 0,
+				loopEnabled: false,
+				loopIteration: 0,
+			} as unknown as BatchRunState;
+			render(<RightPanel {...createDefaultProps({ currentSessionBatchState: batchState })} />);
+			act(() => {
+				lastAutoRunProps().onExternalLocalContentChange('Saved. Stale draft');
+			});
+
+			setDisk('- [x] Saved.', 2);
+
+			expect(lastAutoRunProps().externalLocalContent).toBe('- [x] Saved.');
+			expect(notifyToast).not.toHaveBeenCalled();
 		});
 	});
 

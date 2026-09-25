@@ -65,6 +65,7 @@ import { useFontScale } from '../../hooks/ui/useFontScale';
 import { useSurfaceTypography } from '../../hooks/ui/useSurfaceTypography';
 import { findHumanOnlyTasks } from '../../hooks/batch/batchUtils';
 import { toggleTaskCheckboxAtLine } from '../../utils/markdownTasks';
+import { isAutoRunRunDocument } from '../../utils/autoRunDraft';
 import { useAutoRunErrorPaused } from '../../hooks/batch/useAutoRunPause';
 import { useAutoRunContentSync } from '../../hooks/batch/useAutoRunContentSync';
 import { useAutoRunSearch } from '../../hooks/batch/useAutoRunSearch';
@@ -140,15 +141,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 	// (store → useBatchProcessor → useBatchHandlers → App → RightPanel → AutoRun)
 	// which drops errorPaused updates via updateBatchStateAndBroadcast/UPDATE_PROGRESS.
 	const isErrorPaused = useAutoRunErrorPaused(sessionId);
-	// The selected document belongs to a run that is up: running WITHOUT a
-	// worktree (directly on the main repo) and listed in this run's locked set.
-	// Documents outside the run are never claimed by it.
-	const isRunDocument =
-		(batchRunState?.isRunning &&
-			!batchRunState?.worktreeActive &&
-			selectedFile !== null &&
-			batchRunState?.lockedDocuments?.includes(selectedFile)) ||
-		false;
+	const isRunDocument = isAutoRunRunDocument(batchRunState, selectedFile);
 	// Editing is blocked only while the run is actually DRIVING that document.
 	// A paused run hands it back: an agent error and a MAESTRO:HITL review gate
 	// both park the engine on `errorPaused` until the user clicks Resume, and in
@@ -197,6 +190,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		onExternalLocalContentChange,
 		externalSavedContent,
 		onExternalSavedContentChange,
+		diskWins: isLocked,
 	});
 
 	// Unchecked tasks that read as human-only steps. Auto Run would dispatch

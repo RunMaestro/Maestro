@@ -6,7 +6,7 @@
  * 1. Editing a document in Session A doesn't affect Session B's document
  * 2. Content changes are properly isolated per-session
  * 3. Session/document switches properly reset local state
- * 4. contentVersion forcing sync works correctly
+ * 4. contentVersion syncs disk changes without discarding unsaved drafts
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -344,7 +344,7 @@ describe('AutoRun Session Isolation', () => {
 	});
 
 	describe('contentVersion Force Sync', () => {
-		it('contentVersion change forces content sync even without session/document change', async () => {
+		it('contentVersion change syncs a clean editor without session/document change, never a draft', async () => {
 			const originalContent = 'Original content';
 			const externallyModifiedContent = 'Externally modified by file watcher';
 
@@ -367,8 +367,13 @@ describe('AutoRun Session Isolation', () => {
 			// External change detected (file watcher) - contentVersion incremented
 			rerender(<AutoRun {...props} content={externallyModifiedContent} contentVersion={2} />);
 
-			// Content should sync to the external change, overwriting local edits
-			expect(textarea).toHaveValue(externallyModifiedContent);
+			// Unsaved edits are never overwritten by a disk change
+			expect(textarea).toHaveValue('Local edits');
+
+			// Once the draft is discarded, the next external change syncs straight in
+			fireEvent.change(textarea, { target: { value: externallyModifiedContent } });
+			rerender(<AutoRun {...props} content="Second external change" contentVersion={3} />);
+			expect(textarea).toHaveValue('Second external change');
 		});
 
 		it('contentVersion without change does not overwrite local edits', async () => {

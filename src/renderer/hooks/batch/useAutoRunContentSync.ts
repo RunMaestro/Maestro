@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { logger } from '../../utils/logger';
+import { reconcileDiskContent } from '../../utils/autoRunDraft';
 
 export interface UseAutoRunContentSyncParams {
 	content: string;
@@ -12,6 +13,11 @@ export interface UseAutoRunContentSyncParams {
 	onExternalLocalContentChange?: (content: string) => void;
 	externalSavedContent?: string;
 	onExternalSavedContentChange?: (content: string) => void;
+	/**
+	 * A run is driving the document, so a disk change replaces the draft outright
+	 * (the editor is read-only and must track the agent's progress).
+	 */
+	diskWins?: boolean;
 }
 
 export interface UseAutoRunContentSyncReturn {
@@ -35,6 +41,7 @@ export function useAutoRunContentSync({
 	onExternalLocalContentChange,
 	externalSavedContent,
 	onExternalSavedContentChange,
+	diskWins = false,
 }: UseAutoRunContentSyncParams): UseAutoRunContentSyncReturn {
 	// Local content state for responsive typing
 	// Always use internal state for immediate feedback, but sync with external state when provided
@@ -121,16 +128,40 @@ export function useAutoRunContentSync({
 		const sessionChanged = sessionId !== prevSessionIdRef.current;
 		const documentChanged = selectedFile !== prevSelectedFileRef.current;
 		const versionChanged = contentVersion !== prevContentVersionRef.current;
+		if (!sessionChanged && !documentChanged && !versionChanged) return;
 
-		if (sessionChanged || documentChanged || versionChanged) {
-			// Reset to the new content from props (discard any unsaved changes)
+		prevSessionIdRef.current = sessionId;
+		prevSelectedFileRef.current = selectedFile;
+		prevContentVersionRef.current = contentVersion;
+
+		if (sessionChanged || documentChanged) {
+			// A different document: the old draft belongs to the old one.
 			setLocalContent(content);
 			setSavedContent(content);
-			prevSessionIdRef.current = sessionId;
-			prevSelectedFileRef.current = selectedFile;
-			prevContentVersionRef.current = contentVersion;
+			return;
 		}
-	}, [sessionId, selectedFile, contentVersion, content, setLocalContent, setSavedContent]);
+
+		// Same document, fresh read from disk (watcher tick, own-save echo, agent
+		// write). Never let it silently eat what the user typed since the save.
+		const next = reconcileDiskContent({
+			draft: localContent,
+			saved: savedContent,
+			incoming: content,
+			diskWins,
+		});
+		if (next.draft !== localContent) setLocalContent(next.draft);
+		if (next.saved !== savedContent) setSavedContent(next.saved);
+	}, [
+		sessionId,
+		selectedFile,
+		contentVersion,
+		content,
+		localContent,
+		savedContent,
+		diskWins,
+		setLocalContent,
+		setSavedContent,
+	]);
 
 	// Save function - writes to disk
 	// Note: We do NOT call handleContentChange here because it would update the

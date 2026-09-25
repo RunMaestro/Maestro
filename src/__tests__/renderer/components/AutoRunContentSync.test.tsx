@@ -5,7 +5,8 @@
  * These tests verify that:
  * 1. Async content loads don't overwrite local edits during active editing
  * 2. Local state is protected from stale prop updates during editing
- * 3. contentVersion forces sync from external file changes (disk watcher)
+ * 3. contentVersion syncs external file changes (disk watcher) into a clean
+ *    editor, but never discards an unsaved draft unless a run owns the document
  * 4. Proper handling of rapid content prop changes during editing
  */
 
@@ -212,7 +213,76 @@ describe('AutoRun Content Synchronization Race Conditions', () => {
 			expect(textarea).toHaveValue('User typed this content');
 		});
 
-		it('overwrites local edits only when contentVersion changes (external file change)', async () => {
+		it('keeps unsaved edits when the file changes on disk, and Revert loads the new version', async () => {
+			const ref = React.createRef<AutoRunHandle>();
+			const props = createDefaultProps({
+				content: 'Initial content',
+				contentVersion: 1,
+			});
+
+			const { rerender } = renderWithProviders(<AutoRun {...props} ref={ref} />);
+
+			const textarea = screen.getByRole('textbox');
+			fireEvent.change(textarea, { target: { value: 'User local edits' } });
+			expect(textarea).toHaveValue('User local edits');
+
+			// File watcher saw a different file on disk and bumped contentVersion
+			rerender(
+				<AutoRun {...props} ref={ref} content="Externally modified content" contentVersion={2} />
+			);
+
+			expect(textarea).toHaveValue('User local edits');
+			expect(ref.current?.isDirty()).toBe(true);
+
+			await act(async () => {
+				ref.current?.revert();
+			});
+			expect(textarea).toHaveValue('Externally modified content');
+		});
+
+		it('adopts the disk version when there are no unsaved edits', async () => {
+			const props = createDefaultProps({
+				content: 'Initial content',
+				contentVersion: 1,
+			});
+
+			const { rerender } = renderWithProviders(<AutoRun {...props} />);
+
+			rerender(<AutoRun {...props} content="Externally modified content" contentVersion={2} />);
+
+			expect(screen.getByRole('textbox')).toHaveValue('Externally modified content');
+		});
+
+		it('keeps text typed after a save when that save echoes back through the watcher', async () => {
+			const ref = React.createRef<AutoRunHandle>();
+			const props = createDefaultProps({
+				content: 'First line.',
+				contentVersion: 1,
+			});
+
+			const { rerender } = renderWithProviders(<AutoRun {...props} ref={ref} />);
+
+			const textarea = screen.getByRole('textbox');
+			fireEvent.change(textarea, { target: { value: 'First line. Second line.' } });
+			await act(async () => {
+				await ref.current?.save();
+			});
+
+			// The user keeps typing before the watcher reports the save
+			fireEvent.change(textarea, {
+				target: { value: 'First line. Second line. Third line.' },
+			});
+
+			// Echo of the save: disk now holds exactly what was saved
+			rerender(
+				<AutoRun {...props} ref={ref} content="First line. Second line." contentVersion={2} />
+			);
+
+			expect(textarea).toHaveValue('First line. Second line. Third line.');
+			expect(ref.current?.isDirty()).toBe(true);
+		});
+
+		it('takes the disk version while a run is driving the document', async () => {
 			const props = createDefaultProps({
 				content: 'Initial content',
 				contentVersion: 1,
@@ -222,13 +292,23 @@ describe('AutoRun Content Synchronization Race Conditions', () => {
 
 			const textarea = screen.getByRole('textbox');
 			fireEvent.change(textarea, { target: { value: 'User local edits' } });
-			expect(textarea).toHaveValue('User local edits');
 
-			// Simulate external file change - file watcher detected change, contentVersion bumped
-			rerender(<AutoRun {...props} content="Externally modified content" contentVersion={2} />);
+			const batchRunState = {
+				isRunning: true,
+				worktreeActive: false,
+				lockedDocuments: ['test-doc'],
+				documents: ['test-doc'],
+			} as any;
+			rerender(
+				<AutoRun
+					{...props}
+					batchRunState={batchRunState}
+					content="- [x] Agent ticked this"
+					contentVersion={2}
+				/>
+			);
 
-			// Now local edits should be overwritten
-			expect(textarea).toHaveValue('Externally modified content');
+			expect(textarea).toHaveValue('- [x] Agent ticked this');
 		});
 
 		it('handles rapid content prop updates during editing correctly', async () => {
@@ -254,9 +334,9 @@ describe('AutoRun Content Synchronization Race Conditions', () => {
 			// User edits should still be preserved
 			expect(textarea).toHaveValue('User editing in progress');
 
-			// Now a legitimate external change
+			// A real external change still does not eat the unsaved draft
 			rerender(<AutoRun {...props} content="Real external change" contentVersion={2} />);
-			expect(textarea).toHaveValue('Real external change');
+			expect(textarea).toHaveValue('User editing in progress');
 		});
 
 		it('syncs content when session changes even if contentVersion is same', async () => {
@@ -387,7 +467,7 @@ describe('AutoRun Content Synchronization Race Conditions', () => {
 	});
 
 	describe('contentVersion Force Sync Behavior', () => {
-		it('increments in contentVersion trigger immediate content sync', async () => {
+		it('increments in contentVersion sync a clean editor immediately', async () => {
 			const props = createDefaultProps({
 				content: 'Version 1 content',
 				contentVersion: 1,
@@ -396,16 +476,10 @@ describe('AutoRun Content Synchronization Race Conditions', () => {
 			const { rerender } = renderWithProviders(<AutoRun {...props} />);
 
 			const textarea = screen.getByRole('textbox');
-			fireEvent.change(textarea, { target: { value: 'Dirty local content' } });
 
-			// Version bump forces sync
 			rerender(<AutoRun {...props} content="Version 2 content" contentVersion={2} />);
 			expect(textarea).toHaveValue('Version 2 content');
 
-			// More edits
-			fireEvent.change(textarea, { target: { value: 'More dirty content' } });
-
-			// Another version bump
 			rerender(<AutoRun {...props} content="Version 3 content" contentVersion={3} />);
 			expect(textarea).toHaveValue('Version 3 content');
 		});
@@ -418,12 +492,9 @@ describe('AutoRun Content Synchronization Race Conditions', () => {
 
 			const { rerender } = renderWithProviders(<AutoRun {...props} />);
 
-			const textarea = screen.getByRole('textbox');
-			fireEvent.change(textarea, { target: { value: 'Local edits' } });
-
 			// Large version jump (e.g., multiple rapid external changes)
 			rerender(<AutoRun {...props} content="After many changes" contentVersion={100} />);
-			expect(textarea).toHaveValue('After many changes');
+			expect(screen.getByRole('textbox')).toHaveValue('After many changes');
 		});
 
 		it('contentVersion 0 is treated as valid version', async () => {
@@ -436,8 +507,6 @@ describe('AutoRun Content Synchronization Race Conditions', () => {
 
 			const textarea = screen.getByRole('textbox');
 			expect(textarea).toHaveValue('Content with version 0');
-
-			fireEvent.change(textarea, { target: { value: 'Local edits' } });
 
 			// Version change from 0 to 1 should sync
 			rerender(<AutoRun {...props} content="New content" contentVersion={1} />);
@@ -581,9 +650,9 @@ describe('AutoRun Content Synchronization Race Conditions', () => {
 			fireEvent.change(textarea, { target: { value: 'Adding content' } });
 			expect(textarea).toHaveValue('Adding content');
 
-			// Force sync with empty content
+			// A re-read of the unchanged (empty) file must not wipe the draft
 			rerender(<AutoRun {...props} content="" contentVersion={2} />);
-			expect(textarea).toHaveValue('');
+			expect(textarea).toHaveValue('Adding content');
 		});
 
 		it('handles very long content sync correctly', async () => {
@@ -598,11 +667,6 @@ describe('AutoRun Content Synchronization Race Conditions', () => {
 
 			const textarea = screen.getByRole('textbox');
 			expect(textarea).toHaveValue(longContent);
-
-			// Edit at the end
-			const editedContent = longContent + ' EDITED';
-			fireEvent.change(textarea, { target: { value: editedContent } });
-			expect(textarea).toHaveValue(editedContent);
 
 			// Force sync should still work
 			const newLongContent = 'B'.repeat(500);
@@ -623,10 +687,6 @@ describe('AutoRun Content Synchronization Race Conditions', () => {
 			const textarea = screen.getByRole('textbox');
 			expect(textarea).toHaveValue(specialContent);
 
-			// Edit with more unicode
-			const editedContent = specialContent + '\n\n## Added 日本語';
-			fireEvent.change(textarea, { target: { value: editedContent } });
-
 			// Force sync with different special content
 			const newContent = '# 新内容 🎉\n\n- Bullet\n- Points';
 			rerender(<AutoRun {...props} content={newContent} contentVersion={2} />);
@@ -644,9 +704,7 @@ describe('AutoRun Content Synchronization Race Conditions', () => {
 			const textarea = screen.getByRole('textbox');
 			expect(textarea).toHaveValue('   \n\n   \t\t\n   ');
 
-			fireEvent.change(textarea, { target: { value: 'Real content now' } });
-
-			// Force sync back to whitespace - use exact same string for comparison
+			// Force sync to other whitespace - use exact same string for comparison
 			const whitespaceContent = '\n\n\n';
 			rerender(<AutoRun {...props} content={whitespaceContent} contentVersion={2} />);
 			expect(textarea.value).toBe(whitespaceContent);
@@ -755,7 +813,7 @@ describe('AutoRun Content Synchronization Race Conditions', () => {
 			expect(textarea).toHaveValue('Doc 2 content');
 		});
 
-		it('savedContent updates when contentVersion changes', async () => {
+		it('savedContent moves to the disk version when contentVersion changes', async () => {
 			const ref = React.createRef<AutoRunHandle>();
 			const props = createDefaultProps({
 				content: 'Original saved',
@@ -769,19 +827,18 @@ describe('AutoRun Content Synchronization Race Conditions', () => {
 			fireEvent.change(textarea, { target: { value: 'Dirty content' } });
 			expect(ref.current?.isDirty()).toBe(true);
 
-			// External change forces sync
 			rerender(<AutoRun {...props} ref={ref} content="Externally changed" contentVersion={2} />);
 
-			// Now savedContent should be the new content, so not dirty
-			expect(ref.current?.isDirty()).toBe(false);
-			expect(textarea).toHaveValue('Externally changed');
+			// The draft survives and is still dirty against the new baseline
+			expect(ref.current?.isDirty()).toBe(true);
+			expect(textarea).toHaveValue('Dirty content');
 
-			// Revert should restore to the new savedContent
-			fireEvent.change(textarea, { target: { value: 'Make dirty again' } });
+			// Revert restores the new savedContent
 			await act(async () => {
 				ref.current?.revert();
 			});
 			expect(textarea).toHaveValue('Externally changed');
+			expect(ref.current?.isDirty()).toBe(false);
 		});
 	});
 });
