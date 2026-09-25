@@ -25,14 +25,9 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import * as os from 'os';
 import { canLoadNodeSqlite, nodeSqliteBetterSqlite3Mock } from '../../helpers/nodeSqlite';
 
 vi.mock('better-sqlite3', () => nodeSqliteBetterSqlite3Mock());
-
-vi.mock('electron', () => ({
-	app: { getPath: vi.fn(() => os.tmpdir()) },
-}));
 
 // The aggregation half of cue-stats-query reaches into per-agent session
 // storage on import; stub it so this suite only pulls in the SQL path.

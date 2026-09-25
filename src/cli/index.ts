@@ -50,6 +50,12 @@ import {
 	cuePipelineRemove,
 	cuePipelineReplace,
 } from './commands/cue-pipeline';
+import {
+	cueEngineStart,
+	cueEngineStop,
+	cueEngineStatus,
+	cueEngineInspect,
+} from './commands/cue-engine';
 import { createAgent } from './commands/create-agent';
 import { createGroup } from './commands/create-group';
 import { removeGroup } from './commands/remove-group';
@@ -968,6 +974,42 @@ cuePipeline
 	.option('--force', 'Suppress the no-op error when the pipeline is already absent')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(cuePipelineRemove);
+
+// Cue engine subcommands - run Maestro Cue unattended, without the desktop
+// app, and inspect/control that runner. See `cue-engine.ts` for what the
+// standalone engine can and cannot do relative to the desktop app's own
+// instance, and `cue-engine-lock.ts` for the cross-process guard that keeps
+// this from double-firing triggers alongside a desktop app left open.
+const cueEngine = cue
+	.command('engine')
+	.description('Run Maestro Cue unattended (no desktop app) and control that runner');
+
+cueEngine
+	.command('start')
+	.description('Start the Cue engine in this process and block until Ctrl+C / stopped')
+	.option('--json', 'Print machine-readable start/failure status')
+	.action(cueEngineStart);
+
+cueEngine
+	.command('stop')
+	.description('Stop a running standalone engine (refuses to signal a desktop-owned one)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.option('--wait-ms <ms>', 'How long to wait for the lock to clear after signaling', (v) =>
+		parseInt(v, 10)
+	)
+	.action((opts) => cueEngineStop(opts));
+
+cueEngine
+	.command('status')
+	.description('Report whether an engine is running and its last known heartbeat')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(cueEngineStatus);
+
+cueEngine
+	.command('inspect')
+	.description('List every agent with a readable .maestro/cue.yaml and its subscription counts')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(cueEngineInspect);
 
 // Director's Notes commands
 const directorNotes = program
