@@ -1102,6 +1102,12 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 							hasImages,
 							imageCount: config.images?.length,
 						});
+					} else {
+						// The early guard saw this remote, but several awaits have run
+						// since (the remote maestro-p probe can be a real SSH round
+						// trip). A remote deleted or disabled in that window must not
+						// fall through to a local spawn with the remote's cwd.
+						throw new Error(sshUnresolvedRemoteMessage(config.sessionSshRemoteConfig));
 					}
 				}
 
