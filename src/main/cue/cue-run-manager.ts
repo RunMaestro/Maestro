@@ -552,6 +552,9 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			// The output-prompt phase (below) overwrites stdout but NOT this -
 			// it records its own session id on its own event row (outputRunId).
 			result.providerSessionId = runResult.providerSessionId;
+			// Usage follows the same rule: this is the MAIN task's, and the
+			// output phase does not fold its tokens in here.
+			result.usage = runResult.usage;
 
 			// Execute output prompt if the main task succeeded and an output prompt is configured.
 			// Skipped for `action: command` runs - output_prompt is an AI follow-up, not a
