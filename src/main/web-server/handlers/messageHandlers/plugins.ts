@@ -71,14 +71,16 @@ export async function handlePluginsSendAgent(
 			requestId: message.requestId,
 			...extra,
 		});
-	// This CLI-only surface carries prompts and responses. The ordinary web
-	// remote has its own command path; a LAN browser cannot use this shortcut.
+	// A tunnel/reverse proxy can make a remote browser appear to arrive over
+	// loopback. Only the CLI secret verified on WebSocket upgrade identifies the
+	// CLI; address is an additional restriction, never the credential.
 	const remoteAddress = (client.socket as unknown as { _socket?: { remoteAddress?: string } })
 		._socket?.remoteAddress;
 	if (
-		remoteAddress !== '127.0.0.1' &&
-		remoteAddress !== '::1' &&
-		remoteAddress !== '::ffff:127.0.0.1'
+		client.cliAuthenticated !== true ||
+		(remoteAddress !== '127.0.0.1' &&
+			remoteAddress !== '::1' &&
+			remoteAddress !== '::ffff:127.0.0.1')
 	) {
 		respond({ available: false, error: 'Local CLI connection required' });
 		return;

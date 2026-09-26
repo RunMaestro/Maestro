@@ -18,6 +18,7 @@ import {
 } from '../../../main/plugins/plugin-host-handlers';
 import { ActionGuard } from '../../../main/plugins/action-guard';
 import { PluginKvStore } from '../../../main/plugins/plugin-kv-store';
+import { PluginAgentSessionBindings } from '../../../main/plugins/plugin-agent-session-bindings';
 import { PluginEventBusImpl } from '../../../main/plugins/plugin-event-bus';
 import { PermissionBroker } from '../../../main/plugins/permission-broker';
 import { PluginBackgroundSupervisor } from '../../../main/plugins/plugin-background-supervisor';
@@ -40,6 +41,7 @@ function makeDeps(over: Partial<HostHandlerDeps> = {}): HostHandlerDeps {
 		} as unknown as HostHandlerDeps['broker'],
 		actionGuard: new ActionGuard(),
 		kvStore: kv,
+		providerSessions: new PluginAgentSessionBindings(path.join(kvBase, 'provider-sessions')),
 		eventBus: new PluginEventBusImpl({ isPermitted: () => true, push: () => true }),
 		egressGuard: { assertUrlAllowed: async () => {}, lookup: (() => {}) as never },
 		settingsGet: () => null,
@@ -798,6 +800,31 @@ describe('high-power act verbs (agents.dispatch / process.spawn)', () => {
 		expect(audits).toEqual(['agent:a', 'agent:a', 'agent:a']);
 	});
 
+	it('rejects a provider session bound to another agent or plugin before spawning', async () => {
+		const providerSessions = new PluginAgentSessionBindings(path.join(kvBase, 'provider-sessions'));
+		providerSessions.remember('p', 'other-agent', 'provider-other');
+		providerSessions.remember('other-plugin', 'a', 'provider-foreign');
+		const sendAgent = vi.fn(async () => ({
+			success: true,
+			response: 'should not run',
+			sessionId: 'provider-other',
+		}));
+		const h = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [scopedGrant('agents:dispatch', 'a')]),
+				dispatchUnattendedAllowed: () => true,
+				providerSessions,
+				sendAgent,
+			})
+		);
+		for (const sessionId of ['provider-other', 'provider-foreign', 'unknown']) {
+			await expect(
+				h['agents.send']!('p', { agentId: 'a', prompt: 'hello', opts: { sessionId } })
+			).rejects.toThrow(/not owned/);
+		}
+		expect(sendAgent).not.toHaveBeenCalled();
+	});
+
 	it('denies send without allowlist, unattended consent or a safe closed schema', async () => {
 		const sendAgent = vi.fn(async () => ({ success: true, response: 'x', sessionId: 's' }));
 		const denied = buildHostCallHandlers(
@@ -884,6 +911,44 @@ describe('high-power act verbs (agents.dispatch / process.spawn)', () => {
 		await vi.waitFor(() => expect(sendAgent).toHaveBeenCalled());
 		cleanup?.('p');
 		await expect(pending).resolves.toMatchObject({ success: false, error: 'cancelled' });
+	});
+
+	it('keeps a restarted plugin run cancellable after the old run settles', async () => {
+		let cleanup: ((pluginId: string) => void) | undefined;
+		const resolvers: Array<
+			(result: { success: boolean; response: null; sessionId: null }) => void
+		> = [];
+		const signals: AbortSignal[] = [];
+		const sendAgent = vi.fn(
+			(_agentId: string, _prompt: string, _sessionId?: string, signal?: AbortSignal) => {
+				signals.push(signal!);
+				return new Promise<{ success: boolean; response: null; sessionId: null }>((resolve) => {
+					resolvers.push(resolve);
+				});
+			}
+		);
+		const h = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [scopedGrant('agents:dispatch', 'a')]),
+				dispatchUnattendedAllowed: () => true,
+				sendAgent,
+				registerResourceCleanup: (fn) => {
+					cleanup = fn;
+				},
+			})
+		);
+		const oldRun = h['agents.send']!('p', { agentId: 'a', prompt: 'old' });
+		await vi.waitFor(() => expect(sendAgent).toHaveBeenCalledTimes(1));
+		cleanup?.('p');
+		expect(signals[0].aborted).toBe(true);
+		const newRun = h['agents.send']!('p', { agentId: 'a', prompt: 'new' });
+		await vi.waitFor(() => expect(sendAgent).toHaveBeenCalledTimes(2));
+		resolvers[0]({ success: false, response: null, sessionId: null });
+		await oldRun;
+		cleanup?.('p');
+		expect(signals[1].aborted).toBe(true);
+		resolvers[1]({ success: false, response: null, sessionId: null });
+		await newRun;
 	});
 
 	it('still exposes the read-only agents.get verb (gating is verb-specific, not namespace-wide)', () => {

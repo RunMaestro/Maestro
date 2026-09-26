@@ -76,6 +76,8 @@ export interface WebClient {
 	id: string;
 	connectedAt: number;
 	subscribedSessionId?: string;
+	/** Set only from the verified per-boot CLI secret on WebSocket upgrade. */
+	cliAuthenticated?: boolean;
 }
 
 /**

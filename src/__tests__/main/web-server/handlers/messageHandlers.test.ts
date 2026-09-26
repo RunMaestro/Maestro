@@ -4713,6 +4713,7 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 	it('runs a local CLI request through the host runner and returns its provider session', async () => {
 		const run = vi.fn(async () => ({ success: true, response: 'hello', sessionId: 'provider-1' }));
 		vi.mocked(getHeadlessAgentRunner).mockReturnValue(run);
+		client.cliAuthenticated = true;
 		(client.socket as unknown as { _socket: { remoteAddress: string } })._socket = {
 			remoteAddress: '127.0.0.1',
 		};
@@ -4735,8 +4736,25 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 	it('refuses the headless runner to a non-loopback web client', async () => {
 		const run = vi.fn();
 		vi.mocked(getHeadlessAgentRunner).mockReturnValue(run);
+		client.cliAuthenticated = true;
 		(client.socket as unknown as { _socket: { remoteAddress: string } })._socket = {
 			remoteAddress: '192.0.2.5',
+		};
+		handler.handleMessage(client, {
+			type: 'plugins_send_agent',
+			agentId: 'agent-a',
+			prompt: 'hello',
+		});
+		await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+		expect(lastResult()).toMatchObject({ available: false });
+		expect(run).not.toHaveBeenCalled();
+	});
+
+	it('refuses a loopback browser or proxy without the CLI secret', async () => {
+		const run = vi.fn();
+		vi.mocked(getHeadlessAgentRunner).mockReturnValue(run);
+		(client.socket as unknown as { _socket: { remoteAddress: string } })._socket = {
+			remoteAddress: '127.0.0.1',
 		};
 		handler.handleMessage(client, {
 			type: 'plugins_send_agent',

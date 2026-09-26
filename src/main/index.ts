@@ -63,6 +63,7 @@ import { createCadenzaDelivery, registerCadenzaIpcHandlers } from './cadenza-bri
 import { createPluginHostViewBridge } from './plugin-host-view-bridge';
 import { ActionGuard } from './plugins/action-guard';
 import { PluginKvStore } from './plugins/plugin-kv-store';
+import { PluginAgentSessionBindings } from './plugins/plugin-agent-session-bindings';
 import { PluginEventBusImpl } from './plugins/plugin-event-bus';
 import { createEgressGuard } from './plugins/net-egress-guard';
 // [UiCommandeer] WS-ui-command host bridge (see runUiCommand wiring below).
@@ -1625,6 +1626,9 @@ app
 		const pluginKvStore = new PluginKvStore({
 			baseDir: path.join(app.getPath('userData'), 'plugin-data'),
 		});
+		const pluginProviderSessions = new PluginAgentSessionBindings(
+			path.join(app.getPath('userData'), 'plugin-agent-sessions')
+		);
 		const pluginEgressGuard = createEgressGuard({
 			// The app's own web/CLI server. Loopback + RFC1918 are already blocked by
 			// IP classification; this is belt-and-suspenders for a public-bind setup.
@@ -2410,6 +2414,7 @@ app
 					'trusted',
 				dispatch: async (agentId, prompt) => dispatchPromptToSession(agentId, prompt),
 				sendAgent: runHeadlessAgent,
+				providerSessions: pluginProviderSessions,
 				// Direct plugin dispatch is never user-present, so it requires the
 				// separate unattended consent on TOP of the interactive allowlist grant
 				// - the same grant source and check the time-based scheduler uses.
@@ -2505,6 +2510,7 @@ app
 			// Complete uninstall (invariant #8): purge the plugin's KV store, its
 			// plugins.<id>.* settings, and its event subscriptions.
 			purgePluginData: (id) => {
+				pluginProviderSessions.purge(id);
 				purgePluginData(id, {
 					kvStore: pluginKvStore,
 					settingsDeleteNamespace: pluginSettingsDeleteNamespace,
