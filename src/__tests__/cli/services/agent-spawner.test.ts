@@ -941,6 +941,23 @@ Some text with [x] in it that's not a checkbox
 			mockSpawn.mockReturnValue(mockChild);
 		});
 
+		it('injects a local Codex MCP bridge with only the proof-file path in argv', async () => {
+			const proofFile = '/private/run/proof';
+			const pending = spawnAgent('codex', '/project', 'post summary', undefined, {
+				pluginRunProofFile: proofFile,
+				mcpCliScriptPath: '/bundled/maestro-cli.js',
+			});
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			const [, args, options] = mockSpawn.mock.calls[0];
+			expect(args).toContain('-c');
+			expect(args.join(' ')).toContain('mcp_servers.maestro.command');
+			expect(args.join(' ')).toContain(proofFile);
+			expect(args.join(' ')).not.toContain('secret-run-proof');
+			expect(options.env.MAESTRO_PLUGIN_RUN_TOKEN).toBeUndefined();
+			mockChild.emit('close', 1);
+			await pending;
+		});
+
 		it('should spawn Claude with correct arguments', async () => {
 			const resultPromise = spawnAgent('claude-code', '/project/path', 'Test prompt');
 
@@ -1672,6 +1689,28 @@ Some text with [x] in it that's not a checkbox
 			expect(result.success).toBe(true);
 			expect(result.response).toBe('Final answer from copilot');
 			expect(result.agentSessionId).toBe('cop-1');
+		});
+
+		it('does not report a partial JSON-line answer as success after timeout or cancellation', async () => {
+			const controller = new AbortController();
+			const pending = spawnAgent('codex', '/project', 'prompt', undefined, {
+				timeoutMs: 1_000,
+				signal: controller.signal,
+			});
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			const [, , options] = mockSpawn.mock.calls[0];
+			expect(options.timeout).toBe(1_000);
+			expect(options.signal).toBe(controller.signal);
+			mockStdout.emit(
+				'data',
+				Buffer.from('{"type":"item.completed","item":{"type":"agent_message","text":"partial"}}\n')
+			);
+			controller.abort();
+			mockChild.emit('close', null, 'SIGTERM');
+			expect(await pending).toMatchObject({
+				success: false,
+				error: 'Agent run timed out or was cancelled',
+			});
 		});
 
 		it('should pass through --resume=<sessionId> when resuming a copilot-cli session', async () => {

@@ -7,7 +7,7 @@ import { resolveAgentId, getSessionById } from '../services/storage';
 import { prepareMaestroSystemPromptCli } from '../services/system-prompt';
 import { estimateContextUsage } from '../../main/parsers/usage-aggregator';
 import { getAgentDefinition } from '../../main/agents/definitions';
-import { withMaestroClient } from '../services/maestro-client';
+import { MaestroClient, withMaestroClient } from '../services/maestro-client';
 import type { ToolType } from '../../shared/types';
 
 interface SendOptions {
@@ -121,43 +121,87 @@ export async function send(
 	// when multiple callers (e.g. Discord threads) send concurrently.
 	const agentSessionId = options.session;
 
-	// Build the Maestro system prompt unless the caller opted out with
-	// `--no-system-prompt`. Failure to build (template missing, fs error) is
-	// non-fatal: spawn proceeds without the prompt rather than failing the
-	// whole send, matching the renderer's `prepareMaestroSystemPrompt` which
-	// returns undefined on failure (`src/renderer/utils/spawnHelpers.ts:35`).
-	const includeSystemPrompt = options.systemPrompt !== false;
-	const appendSystemPrompt = includeSystemPrompt
-		? await prepareMaestroSystemPromptCli(agent)
-		: undefined;
+	// The host builds its own Maestro system prompt. The standalone fallback
+	// builds one only if it actually needs to spawn locally.
+	// When a desktop is running it owns the headless spawn and mints the MCP
+	// proof from the actual stored agent it starts. A free-form CLI id or --tab
+	// can never mint a proof by itself.
+	let desktop: MaestroClient | null = new MaestroClient();
+	try {
+		await desktop.connect();
+	} catch {
+		desktop.disconnect();
+		desktop = null;
+	}
 
 	// Spawn agent - spawnAgent handles --resume vs fresh session internally.
 	// Wrapped in captureCliRun so the send lands in the agent-run ledger.
-	const result = await captureCliRun(
-		{
-			sessionId: agentSessionId ?? agentId,
-			toolType: agent.toolType,
-			cwd: agent.cwd,
-			prompt: message,
-			source: 'cli:send',
-		},
-		() =>
-			spawnAgent(agent.toolType, agent.cwd, message, agentSessionId, {
-				readOnlyMode: options.readOnly,
-				customModel: agent.customModel,
-				customEffort: agent.customEffort,
-				customArgs: agent.customArgs,
-				additionalDirectories: agent.additionalDirectories,
-				customEnvVars: agent.customEnvVars,
-				sshRemoteConfig: agent.sessionSshRemoteConfig,
-				appendSystemPrompt,
-				// Honor the agent's Claude token source for `maestro-cli send` turns.
-				enableMaestroP: agent.enableMaestroP,
-				maestroPMode: agent.maestroPMode,
-				maestroPPath: agent.maestroPPath,
-			}),
-		(r) => (r.success ? 0 : 1)
-	);
+	let result: AgentResult;
+	try {
+		result = await captureCliRun(
+			{
+				sessionId: agentSessionId ?? agentId,
+				toolType: agent.toolType,
+				cwd: agent.cwd,
+				prompt: message,
+				source: 'cli:send',
+			},
+			async () => {
+				if (
+					desktop &&
+					!options.readOnly &&
+					options.systemPrompt !== false &&
+					message.length <= 64 * 1024 &&
+					(!agentSessionId || /^[^\x00-\x1f\x7f]{1,256}$/.test(agentSessionId))
+				) {
+					const reply = await desktop.sendCommand<{
+						available?: boolean;
+						success?: boolean;
+						response?: string | null;
+						sessionId?: string | null;
+						error?: string;
+						usageStats?: AgentResult['usageStats'];
+					}>(
+						{
+							type: 'plugins_send_agent',
+							agentId,
+							prompt: message,
+							providerSessionId: agentSessionId || undefined,
+						},
+						'plugins_send_agent_result',
+						21 * 60_000
+					);
+					if (reply.available !== false)
+						return {
+							success: reply.success === true,
+							response: reply.response ?? undefined,
+							agentSessionId: reply.sessionId ?? undefined,
+							error: reply.error,
+							usageStats: reply.usageStats,
+						};
+				}
+				const appendSystemPrompt =
+					options.systemPrompt !== false ? await prepareMaestroSystemPromptCli(agent) : undefined;
+				return spawnAgent(agent.toolType, agent.cwd, message, agentSessionId, {
+					readOnlyMode: options.readOnly,
+					customModel: agent.customModel,
+					customEffort: agent.customEffort,
+					customArgs: agent.customArgs,
+					additionalDirectories: agent.additionalDirectories,
+					customEnvVars: agent.customEnvVars,
+					sshRemoteConfig: agent.sessionSshRemoteConfig,
+					appendSystemPrompt,
+					// Honor the agent's Claude token source for `maestro-cli send` turns.
+					enableMaestroP: agent.enableMaestroP,
+					maestroPMode: agent.maestroPMode,
+					maestroPPath: agent.maestroPPath,
+				});
+			},
+			(r) => (r.success ? 0 : 1)
+		);
+	} finally {
+		desktop?.disconnect();
+	}
 	const response = buildResponse(agentId, agent.name, result, agent.toolType);
 
 	console.log(JSON.stringify(response, null, 2));

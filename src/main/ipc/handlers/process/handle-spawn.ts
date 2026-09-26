@@ -8,6 +8,11 @@ import { AgentDetector } from '../../../agents';
 import { checkBinaryExists, checkCustomPath } from '../../../agents/path-prober';
 import { resolveMaestroCliScriptPath } from '../../../cue/cue-cli-executor';
 import {
+	pluginToolRunIdentity,
+	createPluginRunProofFile,
+	removePluginRunProofFile,
+} from '../../../plugins/plugin-tool-run-identity';
+import {
 	getActivePluginManager,
 	isPluginsFeatureEnabled,
 } from '../../../plugins/plugin-manager-singleton';
@@ -309,6 +314,8 @@ export async function handleProcessSpawn(
 	// only - the bridge reaches the app over a localhost WebSocket + discovery
 	// file an SSH-remote agent cannot see. Best-guess (unverified) agents are
 	// intentionally skipped to avoid breaking their startup with a wrong shape.
+	let pluginRunToken: string | undefined;
+	let pluginRunProofFile: string | undefined;
 	const mcpCap = MCP_CONFIG_BY_AGENT[config.toolType];
 	if (
 		mcpCap?.verified &&
@@ -321,12 +328,23 @@ export async function handleProcessSpawn(
 		!(claudeResolvedMode === 'interactive' && resolvedMaestroPBinPath)
 	) {
 		const mcpTools = getActivePluginManager()?.getContributions().tools ?? [];
-		if (mcpTools.length > 0) {
+		const storedAgent = (deps.sessionsStore.get('sessions', []) as Array<{ id?: string }>).some(
+			(session) => session?.id === baseSessionId
+		);
+		if (mcpTools.length > 0 && storedAgent) {
+			pluginRunToken = pluginToolRunIdentity.issue(baseSessionId);
+			try {
+				pluginRunProofFile = createPluginRunProofFile(pluginRunToken);
+			} catch (error) {
+				pluginToolRunIdentity.revoke(pluginRunToken);
+				throw error;
+			}
 			const mcpSpec = {
 				command: process.execPath,
 				args: [resolveMaestroCliScriptPath(), 'mcp', 'serve', '--tab', baseSessionId],
 				env: {
 					ELECTRON_RUN_AS_NODE: '1',
+					MAESTRO_PLUGIN_RUN_TOKEN_FILE: pluginRunProofFile,
 					// The agent's MCP client forwards only a sanitized env subset to
 					// the spawned bridge; forward the data-dir overrides the app
 					// itself honors so the bridge resolves the SAME discovery file
@@ -899,6 +917,13 @@ export async function handleProcessSpawn(
 		}
 	}
 
+	const onPluginRunExit = (sessionId: string): void => {
+		if (sessionId !== config.sessionId || !pluginRunToken) return;
+		pluginToolRunIdentity.revoke(pluginRunToken);
+		if (pluginRunProofFile) removePluginRunProofFile(pluginRunProofFile);
+		processManager.off('exit', onPluginRunExit);
+	};
+	if (pluginRunToken) processManager.on('exit', onPluginRunExit);
 	const result = processManager.spawn({
 		...config,
 		command: commandToSpawn,
@@ -939,6 +964,7 @@ export async function handleProcessSpawn(
 		// Extra dirs to prepend to spawn PATH (local non-SSH only)
 		extraPathDirs: localAgentBinDir ? [localAgentBinDir] : undefined,
 	});
+	if (!result.success && pluginRunToken) onPluginRunExit(config.sessionId);
 
 	// The prime outran the spawn cap, so the process started without a usable
 	// catalog and its first usage event carries the 200k fallback. Close the loop:

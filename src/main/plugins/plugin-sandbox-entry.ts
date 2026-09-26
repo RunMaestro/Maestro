@@ -219,7 +219,7 @@ const BOOTSTRAP_SOURCE = String.raw`(function bootstrap(bridge) {
 		}
 		return new Promise(function (resolve) {
 			try {
-				Promise.resolve(handler(msg.args)).then(
+				Promise.resolve(handler(msg.args, Object.freeze({ callerAgentId: msg.context && typeof msg.context.callerAgentId === 'string' ? msg.context.callerAgentId : null }))).then(
 					function (result) {
 						var body;
 						try { body = JSON.stringify({ ok: true, result: result === undefined ? null : result }); }
@@ -257,7 +257,8 @@ const BOOTSTRAP_SOURCE = String.raw`(function bootstrap(bridge) {
 			agents: Object.freeze({
 				list: function () { return hostCall('agents.list', {}); },
 				get: function (agentId) { return hostCall('agents.get', { agentId: agentId }); },
-				dispatch: function (agentId, prompt, opts) { return hostCall('agents.dispatch', { agentId: agentId, prompt: prompt, opts: opts }); }
+				dispatch: function (agentId, prompt, opts) { return hostCall('agents.dispatch', { agentId: agentId, prompt: prompt, opts: opts }); },
+				send: function (agentId, prompt, opts) { return hostCall('agents.send', { agentId: agentId, prompt: prompt, opts: opts }); }
 			}),
 			history: Object.freeze({
 				list: function (params) { return hostCall('history.list', params || {}); },
@@ -512,7 +513,9 @@ if (parentPort) {
 				return;
 			}
 			void activeRealm
-				.invokeTool(JSON.stringify({ commandId: msg.commandId, args: msg.args }))
+				.invokeTool(
+					JSON.stringify({ commandId: msg.commandId, args: msg.args, context: msg.context })
+				)
 				.then((json) => {
 					try {
 						reply(JSON.parse(json) as Omit<ToolResult, 'kind' | 'id'>);

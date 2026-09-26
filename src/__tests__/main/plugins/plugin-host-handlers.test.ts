@@ -748,7 +748,142 @@ describe('high-power act verbs (agents.dispatch / process.spawn)', () => {
 	it('does NOT register agents.dispatch or process.spawn with default deps', () => {
 		const h = buildHostCallHandlers(makeDeps());
 		expect(h['agents.dispatch']).toBeUndefined();
+		expect(h['agents.send']).toBeUndefined();
 		expect(h['process.spawn']).toBeUndefined();
+	});
+
+	it('sends independent provider sessions for two threads and returns each response', async () => {
+		const sendAgent = vi.fn(async (_agentId: string, prompt: string, sessionId?: string) => ({
+			success: true,
+			response: `answer:${prompt}`,
+			sessionId: sessionId ?? `provider_${prompt}`,
+		}));
+		const audits: string[] = [];
+		const h = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [scopedGrant('agents:dispatch', 'a')]),
+				actionGuard: new ActionGuard({ audit: (entry) => audits.push(entry.target ?? '') }),
+				dispatchUnattendedAllowed: () => true,
+				sendAgent,
+			})
+		);
+		const first = await h['agents.send']!('p', { agentId: 'a', prompt: 'thread-one' });
+		const second = await h['agents.send']!('p', { agentId: 'a', prompt: 'thread-two' });
+		const resumed = await h['agents.send']!('p', {
+			agentId: 'a',
+			prompt: 'next',
+			opts: { sessionId: 'provider_thread-one' },
+		});
+		expect(first).toEqual({
+			success: true,
+			response: 'answer:thread-one',
+			sessionId: 'provider_thread-one',
+		});
+		expect(second).toEqual({
+			success: true,
+			response: 'answer:thread-two',
+			sessionId: 'provider_thread-two',
+		});
+		expect(resumed).toEqual({
+			success: true,
+			response: 'answer:next',
+			sessionId: 'provider_thread-one',
+		});
+		expect(sendAgent).toHaveBeenLastCalledWith(
+			'a',
+			'next',
+			'provider_thread-one',
+			expect.any(AbortSignal)
+		);
+		expect(audits).toEqual(['agent:a', 'agent:a', 'agent:a']);
+	});
+
+	it('denies send without allowlist, unattended consent or a safe closed schema', async () => {
+		const sendAgent = vi.fn(async () => ({ success: true, response: 'x', sessionId: 's' }));
+		const denied = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [scopedGrant('agents:dispatch', 'other')]),
+				dispatchUnattendedAllowed: () => true,
+				sendAgent,
+			})
+		);
+		await expect(denied['agents.send']!('p', { agentId: 'a', prompt: 'hello' })).rejects.toThrow();
+		const noConsent = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [scopedGrant('agents:dispatch', 'a')]),
+				dispatchUnattendedAllowed: () => false,
+				sendAgent,
+			})
+		);
+		await expect(noConsent['agents.send']!('p', { agentId: 'a', prompt: 'hello' })).rejects.toThrow(
+			/unattended/
+		);
+		const untrusted = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [scopedGrant('agents:dispatch', 'a')]),
+				dispatchUnattendedAllowed: () => true,
+				isPluginTrusted: () => false,
+				sendAgent,
+			})
+		);
+		await expect(untrusted['agents.send']!('p', { agentId: 'a', prompt: 'hello' })).rejects.toThrow(
+			/trust|sign/i
+		);
+		const allowed = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [scopedGrant('agents:dispatch', 'a')]),
+				dispatchUnattendedAllowed: () => true,
+				sendAgent,
+			})
+		);
+		await expect(
+			allowed['agents.send']!('p', {
+				agentId: 'a',
+				prompt: 'hello',
+				opts: { sessionId: 'bad\nvalue' },
+			})
+		).rejects.toThrow(/sessionId/);
+		await expect(
+			allowed['agents.send']!('p', { agentId: 'a', prompt: 'hello', opts: { model: 'unsafe' } })
+		).rejects.toThrow();
+		await expect(
+			allowed['agents.send']!('p', { agentId: 'a', prompt: 'hello', opts: 'invalid' })
+		).rejects.toThrow(/opts must be an object/);
+		await expect(
+			allowed['agents.send']!('p', { agentId: 'a', prompt: 'delete the production database' })
+		).rejects.toThrow();
+		expect(sendAgent).not.toHaveBeenCalled();
+	});
+
+	it('aborts an in-flight send when its plugin is stopped', async () => {
+		let cleanup: ((pluginId: string) => void) | undefined;
+		const sendAgent = vi.fn(
+			(_agentId: string, _prompt: string, _sessionId?: string, signal?: AbortSignal) =>
+				new Promise<{ success: boolean; response: null; sessionId: null; error: string }>(
+					(resolve) => {
+						signal?.addEventListener(
+							'abort',
+							() =>
+								resolve({ success: false, response: null, sessionId: null, error: 'cancelled' }),
+							{ once: true }
+						);
+					}
+				)
+		);
+		const h = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [scopedGrant('agents:dispatch', 'a')]),
+				dispatchUnattendedAllowed: () => true,
+				sendAgent,
+				registerResourceCleanup: (fn) => {
+					cleanup = fn;
+				},
+			})
+		);
+		const pending = h['agents.send']!('p', { agentId: 'a', prompt: 'hello' });
+		await vi.waitFor(() => expect(sendAgent).toHaveBeenCalled());
+		cleanup?.('p');
+		await expect(pending).resolves.toMatchObject({ success: false, error: 'cancelled' });
 	});
 
 	it('still exposes the read-only agents.get verb (gating is verb-specific, not namespace-wide)', () => {

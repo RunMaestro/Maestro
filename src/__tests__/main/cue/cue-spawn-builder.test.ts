@@ -60,6 +60,13 @@ vi.mock('../../../main/utils/ssh-spawn-wrapper', () => ({
 	wrapSpawnWithSsh: (...args: unknown[]) => mockWrapSpawnWithSsh(...args),
 }));
 
+const mockPluginsEnabled = vi.fn(() => false);
+const mockActivePluginManager = vi.fn(() => null as unknown);
+vi.mock('../../../main/plugins/plugin-manager-singleton', () => ({
+	isPluginsFeatureEnabled: () => mockPluginsEnabled(),
+	getActivePluginManager: () => mockActivePluginManager(),
+}));
+
 // Mock the Claude token-source resolver's leaf dependencies so the maestro-p
 // binary reads as present and config-dir resolution is deterministic. The
 // resolver itself (resolveClaudeSpawnMode / applyClaudeSpawnDecision) and
@@ -82,6 +89,10 @@ vi.mock('fs', async (importOriginal) => {
 
 // Must import after mocks
 import { buildSpawnSpec } from '../../../main/cue/cue-spawn-builder';
+import {
+	pluginToolRunIdentity,
+	removePluginRunProofFile,
+} from '../../../main/plugins/plugin-tool-run-identity';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -131,6 +142,8 @@ function createConfig(overrides: Partial<CueExecutionConfig> = {}): CueExecution
 describe('cue-spawn-builder', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mockPluginsEnabled.mockReturnValue(false);
+		mockActivePluginManager.mockReturnValue(null);
 		mockGetAgentDefinition.mockReturnValue(defaultAgentDef);
 		// The spec env spreads process.env, so an ambient MAESTRO_CLAUDE_BIN
 		// (leaked when these tests run inside a maestro/claude agent) would bleed
@@ -144,6 +157,22 @@ describe('cue-spawn-builder', () => {
 	});
 
 	describe('buildSpawnSpec', () => {
+		it('injects a run-bound local MCP bridge for a Cue agent', async () => {
+			mockPluginsEnabled.mockReturnValue(true);
+			mockActivePluginManager.mockReturnValue({ getContributions: () => ({ tools: [{}] }) });
+			const result = await buildSpawnSpec(createConfig({ enableMaestroP: false }), 'post summary');
+			expect(result.ok).toBe(true);
+			if (!result.ok) return;
+			expect(result.spec.args).toContain('--mcp-config');
+			expect(result.spec.pluginRunToken).toMatch(/^[0-9a-f]{64}$/);
+			expect(result.spec.pluginRunProofFile).toContain('maestro-plugin-run-');
+			expect(pluginToolRunIdentity.resolve(result.spec.pluginRunToken).callerAgentId).toBe(
+				'session-1'
+			);
+			expect(result.spec.args.join(' ')).toContain(result.spec.pluginRunProofFile);
+			pluginToolRunIdentity.revoke(result.spec.pluginRunToken!);
+			removePluginRunProofFile(result.spec.pluginRunProofFile!);
+		});
 		it('returns error for unknown agent type', async () => {
 			mockGetAgentDefinition.mockReturnValue(undefined);
 
