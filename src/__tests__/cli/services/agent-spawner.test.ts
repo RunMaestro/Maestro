@@ -181,9 +181,11 @@ import {
 	detectClaude,
 	detectAgent,
 	getAgentCommand,
+	resolveCliBatchModeArgs,
 	spawnAgent,
 	AgentResult,
 } from '../../../cli/services/agent-spawner';
+import { getAgentDefinition } from '../../../main/agents/definitions';
 import { isolateAgentEnv } from '../../helpers/agentEnvIsolation';
 
 describe('agent-spawner', () => {
@@ -1542,6 +1544,43 @@ Some text with [x] in it that's not a checkbox
 			mockStdout.emit('data', Buffer.from('{"type":"result","result":"Done"}\n'));
 			mockChild.emit('close', 0);
 			await resultPromise;
+		});
+
+		it('Codex read-only spawn includes skip-git-repo-check exactly once and omits dangerous bypass flag', async () => {
+			// Spawn Codex in read-only mode and inspect the args passed to the child
+			const resultPromise = spawnAgent('codex', '/project', 'prompt', undefined, {
+				readOnlyMode: true,
+			});
+
+			// Let async ops schedule
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			expect(mockSpawn).toHaveBeenCalled();
+			const [, args] = mockSpawn.mock.calls[0];
+
+			// --skip-git-repo-check should appear exactly once
+			const skipCount = args.filter((a: unknown) => String(a) === '--skip-git-repo-check').length;
+			expect(skipCount).toBe(1);
+
+			// --sandbox should be present and followed immediately by 'read-only'
+			const sandboxIdx = args.findIndex((a: unknown) => String(a) === '--sandbox');
+			expect(sandboxIdx).toBeGreaterThanOrEqual(0);
+			expect(String(args[sandboxIdx + 1])).toBe('read-only');
+
+			// Dangerous bypass flag must NOT be present in read-only mode
+			expect(args).not.toContain('--dangerously-bypass-approvals-and-sandbox');
+
+			// Complete the spawn so the promise resolves
+			mockStdout.emit('data', Buffer.from(JSON.stringify({ type: 'result', text: 'Done' }) + '\n'));
+			mockChild.emit('close', 0);
+			await resultPromise;
+		});
+
+		it('Hermes read-only spawn args retain quiet mode and omit yolo', () => {
+			const args = resolveCliBatchModeArgs(getAgentDefinition('hermes'), true);
+
+			expect(args).toContain('-Q');
+			expect(args).not.toContain('--yolo');
 		});
 
 		it('should not include read-only args when readOnlyMode is false', async () => {
