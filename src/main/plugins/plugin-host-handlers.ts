@@ -1538,6 +1538,16 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 							opts.sessionId as string | undefined,
 							controller.signal
 						);
+						// Stop/uninstall may have purged this plugin's bindings while the
+						// provider was closing. A late successful result must not restore them.
+						if (controller.signal.aborted) {
+							return {
+								success: false,
+								response: null,
+								sessionId: null,
+								error: 'Agent run timed out or was cancelled',
+							};
+						}
 						if (success && sessionId) {
 							providerSessions.remember(pluginId, agentId, sessionId);
 						}

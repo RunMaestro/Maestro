@@ -994,6 +994,27 @@ Some text with [x] in it that's not a checkbox
 			expect(result.success).toBe(true);
 		});
 
+		it('reports a cancelled Claude run as failed even if it closes with code zero', async () => {
+			const controller = new AbortController();
+			const pending = spawnAgent('claude-code', '/project', 'prompt', undefined, {
+				signal: controller.signal,
+			});
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			const [, , options] = mockSpawn.mock.calls[0];
+			expect(options.signal).toBe(controller.signal);
+			mockStdout.emit(
+				'data',
+				Buffer.from('{"type":"result","result":"late answer","session_id":"provider-late"}\n')
+			);
+			controller.abort();
+			mockChild.emit('close', 0);
+			expect(await pending).toMatchObject({
+				success: false,
+				error: 'Agent run timed out or was cancelled',
+				agentSessionId: 'provider-late',
+			});
+		});
+
 		it('runs the local maestro-p TUI when the agent selected the interactive token source', async () => {
 			// Honoring the token source across the board: a local Claude agent set to
 			// interactive (TUI) wraps the spawn with maestro-p via process.execPath

@@ -748,7 +748,7 @@ async function spawnClaudeAgent(
 		finalizeAgentStdin(child, sshStdinScript);
 
 		// Handle completion
-		child.on('close', (code) => {
+		child.on('close', (code, signal) => {
 			// Flush any remaining data in the JSON buffer (last line may lack trailing \n)
 			if (jsonBuffer.trim()) {
 				let parsed;
@@ -765,7 +765,7 @@ async function spawnClaudeAgent(
 			// Use accumulated assistant text as fallback when result field is empty
 			const finalResult = result || assistantText || undefined;
 
-			if (code === 0 && finalResult) {
+			if (!signal && !overrides.signal?.aborted && code === 0 && finalResult) {
 				resolve({
 					success: true,
 					response: finalResult,
@@ -775,7 +775,10 @@ async function spawnClaudeAgent(
 			} else {
 				resolve({
 					success: false,
-					error: stderr || `Process exited with code ${code}`,
+					error:
+						signal || overrides.signal?.aborted
+							? 'Agent run timed out or was cancelled'
+							: stderr || `Process exited with code ${code}`,
 					agentSessionId: sessionId,
 					usageStats,
 				});

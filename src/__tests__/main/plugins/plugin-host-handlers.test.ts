@@ -910,7 +910,52 @@ describe('high-power act verbs (agents.dispatch / process.spawn)', () => {
 		const pending = h['agents.send']!('p', { agentId: 'a', prompt: 'hello' });
 		await vi.waitFor(() => expect(sendAgent).toHaveBeenCalled());
 		cleanup?.('p');
-		await expect(pending).resolves.toMatchObject({ success: false, error: 'cancelled' });
+		await expect(pending).resolves.toMatchObject({
+			success: false,
+			error: 'Agent run timed out or was cancelled',
+		});
+	});
+
+	it('does not restore a purged session binding when an aborted send reports success', async () => {
+		const bindingDir = path.join(kvBase, 'provider-sessions');
+		const providerSessions = new PluginAgentSessionBindings(bindingDir);
+		providerSessions.remember('p', 'a', 'provider-existing');
+		let cleanup: ((pluginId: string) => void) | undefined;
+		let resolveSend:
+			| ((result: { success: boolean; response: string; sessionId: string }) => void)
+			| undefined;
+		const sendAgent = vi.fn(
+			() =>
+				new Promise<{ success: boolean; response: string; sessionId: string }>((resolve) => {
+					resolveSend = resolve;
+				})
+		);
+		const h = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [scopedGrant('agents:dispatch', 'a')]),
+				dispatchUnattendedAllowed: () => true,
+				providerSessions,
+				sendAgent,
+				registerResourceCleanup: (fn) => {
+					cleanup = fn;
+				},
+			})
+		);
+		const pending = h['agents.send']!('p', { agentId: 'a', prompt: 'hello' });
+		await vi.waitFor(() => expect(sendAgent).toHaveBeenCalledOnce());
+		cleanup?.('p');
+		providerSessions.purge('p');
+		resolveSend?.({ success: true, response: 'late answer', sessionId: 'provider-late' });
+		await expect(pending).resolves.toEqual({
+			success: false,
+			response: null,
+			sessionId: null,
+			error: 'Agent run timed out or was cancelled',
+		});
+		const reinstalled = new PluginAgentSessionBindings(bindingDir);
+		for (const sessionId of ['provider-existing', 'provider-late']) {
+			expect(() => reinstalled.assertOwned('p', 'a', sessionId)).toThrow(/not owned/);
+		}
 	});
 
 	it('keeps a restarted plugin run cancellable after the old run settles', async () => {
