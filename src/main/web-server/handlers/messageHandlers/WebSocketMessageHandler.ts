@@ -75,7 +75,7 @@ import {
 	handleMarketplaceGetReadme,
 	handleMarketplaceImportPlaybook,
 } from './marketplace';
-import { handlePluginsListTools, handlePluginsCallTool } from './plugins';
+import { handlePluginsListTools, handlePluginsCallTool, handlePluginsSendAgent } from './plugins';
 import {
 	handleRefreshAutoRunDocs,
 	handleConfigureAutoRun,
@@ -662,6 +662,10 @@ export class WebSocketMessageHandler {
 
 			case 'plugins_list_tools':
 				handlePluginsListTools(this.ctx, client, message);
+				break;
+
+			case 'plugins_send_agent':
+				void handlePluginsSendAgent(this.ctx, client, message);
 				break;
 
 			case 'plugins_call_tool':

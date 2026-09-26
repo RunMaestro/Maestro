@@ -14,6 +14,7 @@
  */
 import { MaestroClient } from '../services/maestro-client';
 import { createMcpBridge } from '../services/mcp-bridge';
+import * as fs from 'fs';
 
 interface McpServeOptions {
 	/** Originating desktop tab id - diagnostics only. */
@@ -39,6 +40,15 @@ export async function mcpServe(options: McpServeOptions): Promise<void> {
 
 	const { server } = createMcpBridge({
 		serverInfo: { name: 'maestro-plugins', version: '1.0.0' },
+		runToken: (() => {
+			const file = process.env.MAESTRO_PLUGIN_RUN_TOKEN_FILE;
+			if (!file) return undefined;
+			try {
+				return fs.readFileSync(file, 'utf8').trim();
+			} catch {
+				return undefined;
+			}
+		})(),
 		request: (message, responseType, timeoutMs) =>
 			client.sendCommand(message, responseType, timeoutMs),
 		log,

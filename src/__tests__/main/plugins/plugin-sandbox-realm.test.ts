@@ -272,6 +272,37 @@ describe('plugin sandbox realm - behavioral parity', () => {
 		expect(JSON.parse(missing).ok).toBe(false);
 	});
 
+	it('passes host caller identity as a separate frozen tool context', async () => {
+		const realm = bootRealm();
+		realm.runScript(
+			String.raw`
+			module.exports = { activate: function (maestro) {
+				maestro.tools.register('who', function (args, context) {
+					return { claimed: args.agentId, verified: context.callerAgentId,
+						frozen: Object.isFrozen(context) };
+				});
+			} };
+		`,
+			'tool-context'
+		);
+		await realm.activate();
+		const result = await realm.invokeTool(
+			JSON.stringify({
+				commandId: 'who',
+				args: { agentId: 'forged' },
+				context: { callerAgentId: 'agent-a' },
+			})
+		);
+		expect(JSON.parse(result)).toEqual({
+			ok: true,
+			result: {
+				claimed: 'forged',
+				verified: 'agent-a',
+				frozen: true,
+			},
+		});
+	});
+
 	it('events fan out to in-realm handlers with parsed context-realm payloads', async () => {
 		const bridge = makeBridge();
 		const realm = bootRealm(bridge);

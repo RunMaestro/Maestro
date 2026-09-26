@@ -28,6 +28,7 @@ import { buildExpandedPath, buildExpandedEnv } from '../../shared/pathUtils';
 import { isWindows, getWhichCommand } from '../../shared/platformDetection';
 import { embedSystemPromptInPrompt } from '../../shared/embeddedSystemPrompt';
 import { applyAgentConfigOverrides, buildAdditionalDirArgs } from '../../main/utils/agent-args';
+import { buildMcpInjection, MCP_CONFIG_BY_AGENT } from '../../shared/plugins/mcp-agent-config';
 import { buildCliWakaTimeHeartbeat } from './wakatime';
 import {
 	getClaudeTokenMode,
@@ -59,13 +60,21 @@ type SshSpawnWrapResult = import('../../main/utils/ssh-spawn-wrapper').SshSpawnW
  * failing, so a CLI without maestro-p degrades safely.
  */
 function getCliMaestroPBinPath(): string | null {
-	const candidate = path.join(__dirname, 'maestro-p.js');
-	try {
-		fs.accessSync(candidate, fs.constants.R_OK);
-		return candidate;
-	} catch {
-		return null;
+	// Bundled CLI: dist/cli/maestro-cli.js has __dirname=dist/cli.
+	// Main-process import: tsc emits this module at dist/cli/services/, one
+	// level deeper, while the bundled maestro-p script stays at dist/cli/.
+	for (const candidate of [
+		path.join(__dirname, 'maestro-p.js'),
+		path.resolve(__dirname, '..', 'maestro-p.js'),
+	]) {
+		try {
+			fs.accessSync(candidate, fs.constants.R_OK);
+			return candidate;
+		} catch {
+			// Check the next compiled layout.
+		}
 	}
+	return null;
 }
 
 /**
@@ -132,7 +141,40 @@ type SpawnOverrides = Pick<
 	| 'appendSystemPrompt'
 	| 'additionalDirectories'
 	| 'querySource'
+	| 'pluginRunProofFile'
+	| 'mcpCliScriptPath'
+	| 'timeoutMs'
+	| 'signal'
 >;
+
+/** Verified local MCP strategies need no config files. The server spec carries
+ * only a path to the owner-only run proof, never the proof bytes. */
+function localPluginMcp(
+	toolType: ToolType,
+	overrides: SpawnOverrides
+): { args: string[]; env: Record<string, string> } {
+	const cap = MCP_CONFIG_BY_AGENT[toolType];
+	if (!cap?.verified || !overrides.pluginRunProofFile || !overrides.mcpCliScriptPath)
+		return { args: [], env: {} };
+	const injection = buildMcpInjection(
+		cap,
+		{
+			command: process.execPath,
+			args: [overrides.mcpCliScriptPath, 'mcp', 'serve'],
+			env: {
+				ELECTRON_RUN_AS_NODE: '1',
+				MAESTRO_PLUGIN_RUN_TOKEN_FILE: overrides.pluginRunProofFile,
+				...(process.env.MAESTRO_USER_DATA
+					? { MAESTRO_USER_DATA: process.env.MAESTRO_USER_DATA }
+					: {}),
+				...(process.env.XDG_CONFIG_HOME ? { XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME } : {}),
+			},
+		},
+		{ tmpDir: os.tmpdir(), join: path.join }
+	);
+	if (injection.files.length) return { args: [], env: {} };
+	return { args: injection.globalArgs, env: injection.env };
+}
 
 /**
  * Maximum command-line length we'll accept before falling back to
@@ -483,7 +525,7 @@ async function spawnClaudeAgent(
 	// Claude Code re-reads this flag every turn (not persisted in the session
 	// transcript), so include it on resume too - matches desktop behavior at
 	// `src/main/ipc/handlers/process.ts:254`.
-	const baseArgs = overrides.appendSystemPrompt
+	let baseArgs = overrides.appendSystemPrompt
 		? [
 				...resolvedArgs,
 				...buildAppendSystemPromptArgs(
@@ -550,6 +592,10 @@ async function spawnClaudeAgent(
 		},
 		cliSpawnCoreDeps
 	);
+	if (!sshEnabled && spawnDecision.mode !== 'interactive') {
+		const mcp = localPluginMcp('claude-code', overrides);
+		baseArgs = [...mcp.args, ...baseArgs];
+	}
 
 	// Beat WakaTime for the life of the run. CLI-spawned agents never reach the
 	// desktop's ProcessManager listener, so without this their time goes
@@ -621,6 +667,8 @@ async function spawnClaudeAgent(
 			cwd: spawnCwd,
 			env: spawnEnv,
 			stdio: ['pipe', 'pipe', 'pipe'],
+			...(overrides.timeoutMs ? { timeout: overrides.timeoutMs } : {}),
+			...(overrides.signal ? { signal: overrides.signal } : {}),
 		};
 
 		const child = spawn(spawnCommand, spawnArgs, options);
@@ -925,7 +973,7 @@ async function spawnJsonLineAgent(
 	//    `src/main/ipc/handlers/process.ts:300-312`).
 	const supportsNativeSystemPrompt = hasCapability(toolType, 'supportsAppendSystemPrompt');
 	const isResume = !!agentSessionId;
-	const baseArgs =
+	let baseArgs =
 		overrides.appendSystemPrompt && supportsNativeSystemPrompt
 			? [
 					...resolvedArgs,
@@ -936,6 +984,10 @@ async function spawnJsonLineAgent(
 					),
 				]
 			: resolvedArgs;
+	if (!sshRemoteConfig?.enabled) {
+		const mcp = localPluginMcp(toolType, overrides);
+		baseArgs = [...mcp.args, ...baseArgs];
+	}
 	const effectivePrompt =
 		overrides.appendSystemPrompt && !supportsNativeSystemPrompt && !isResume
 			? embedSystemPromptInPrompt(overrides.appendSystemPrompt, prompt)
@@ -1012,6 +1064,8 @@ async function spawnJsonLineAgent(
 			cwd: spawnCwd,
 			env: spawnEnv,
 			stdio: ['pipe', 'pipe', 'pipe'],
+			...(overrides.timeoutMs ? { timeout: overrides.timeoutMs } : {}),
+			...(overrides.signal ? { signal: overrides.signal } : {}),
 		};
 
 		const child = spawn(spawnCommand, spawnArgs, options);
@@ -1090,7 +1144,7 @@ async function spawnJsonLineAgent(
 		finalizeAgentStdin(child, sshStdinScript);
 
 		const agentName = def?.name || toolType;
-		child.on('close', (code) => {
+		child.on('close', (code, signal) => {
 			// Flush any remaining data in the JSON buffer (last line may lack trailing \n)
 			if (jsonBuffer.trim()) {
 				processEvent(parser.parseJsonLine(jsonBuffer));
@@ -1101,7 +1155,7 @@ async function spawnJsonLineAgent(
 			// the streamed answer over raw stderr when there is no errorText.
 			const responseText = result || streamedText || undefined;
 			const hasAnswer = Boolean(responseText?.trim());
-			if (!errorText && (code === 0 || hasAnswer)) {
+			if (!signal && !overrides.signal?.aborted && !errorText && (code === 0 || hasAnswer)) {
 				resolve({
 					success: true,
 					response: responseText,
@@ -1111,7 +1165,10 @@ async function spawnJsonLineAgent(
 			} else {
 				resolve({
 					success: false,
-					error: errorText || stderr || `Process exited with code ${code}`,
+					error:
+						signal || overrides.signal?.aborted
+							? 'Agent run timed out or was cancelled'
+							: errorText || stderr || `Process exited with code ${code}`,
 					agentSessionId: sessionId,
 					usageStats,
 				});
@@ -1184,6 +1241,14 @@ export interface SpawnAgentOptions {
 	 * the processes are otherwise identical. Defaults to 'user'.
 	 */
 	querySource?: QuerySource;
+	/** Owner-only file holding the main-issued proof for a local plugin MCP bridge. */
+	pluginRunProofFile?: string;
+	/** Exact bundled CLI path used by the MCP child. */
+	mcpCliScriptPath?: string;
+	/** Kill a hung provider process after this interval. */
+	timeoutMs?: number;
+	/** Abort a provider process when its plugin is disabled or crashes. */
+	signal?: AbortSignal;
 }
 
 /**
@@ -1206,6 +1271,10 @@ export async function spawnAgent(
 		appendSystemPrompt: options?.appendSystemPrompt,
 		additionalDirectories: options?.additionalDirectories,
 		querySource: options?.querySource,
+		pluginRunProofFile: options?.pluginRunProofFile,
+		mcpCliScriptPath: options?.mcpCliScriptPath,
+		timeoutMs: options?.timeoutMs,
+		signal: options?.signal,
 	};
 	// Single source of truth for the token-source triple (never a partial forward).
 	const tokenSource = getClaudeTokenSourceFields(options);

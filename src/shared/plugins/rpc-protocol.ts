@@ -33,6 +33,7 @@ export const HOST_API = {
 	'agents.list': { capability: 'agents:read' },
 	'agents.get': { capability: 'agents:read' },
 	'agents.dispatch': { capability: 'agents:dispatch' },
+	'agents.send': { capability: 'agents:dispatch' },
 	'notifications.toast': { capability: 'notifications:toast' },
 	'settings.get': { capability: 'settings:read' },
 	'settings.set': { capability: 'settings:write' },
@@ -127,7 +128,13 @@ export interface HostResponse {
 export type HostControlMessage =
 	| { kind: 'init'; pluginId: string; entryCode?: string }
 	| { kind: 'invokeCommand'; commandId: string; args?: unknown }
-	| { kind: 'invokeTool'; id: number; commandId: string; args?: unknown }
+	| {
+			kind: 'invokeTool';
+			id: number;
+			commandId: string;
+			args?: unknown;
+			context: PluginToolCallerContext;
+	  }
 	| { kind: 'event'; topic: string; at: string; payload: unknown }
 	| { kind: 'shutdown' };
 
@@ -143,6 +150,11 @@ export interface ToolResult {
 	ok: boolean;
 	result?: unknown;
 	error?: string;
+}
+
+/** Host-verified call metadata. Never read this identity from tool arguments. */
+export interface PluginToolCallerContext {
+	callerAgentId: string | null;
 }
 
 /**
@@ -191,6 +203,7 @@ export function extractTarget(method: HostMethod, params: unknown): string | und
 			// projectPath before reading or writing any content.
 			return typeof p.projectPath === 'string' ? p.projectPath : undefined;
 		case 'agents.dispatch':
+		case 'agents.send':
 			// Allowlist scope target: the exact agent id the plugin wants to run.
 			// A missing/malformed id yields undefined, which an allowlist grant
 			// treats as deny (act verbs never match a target-less call).

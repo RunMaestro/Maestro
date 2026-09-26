@@ -34,8 +34,10 @@ import {
 import {
 	getActivePluginManager,
 	isPluginsFeatureEnabled,
+	getHeadlessAgentRunner,
 } from '../../../../main/plugins/plugin-manager-singleton';
 import type { PluginManager } from '../../../../main/plugins/plugin-manager';
+import { pluginToolRunIdentity } from '../../../../main/plugins/plugin-tool-run-identity';
 import {
 	initDispatchCallbacks,
 	getDispatchCallbackRegistry,
@@ -55,6 +57,7 @@ vi.mock('../../../../main/utils/logger', () => ({
 vi.mock('../../../../main/plugins/plugin-manager-singleton', () => ({
 	getActivePluginManager: vi.fn(),
 	isPluginsFeatureEnabled: vi.fn(),
+	getHeadlessAgentRunner: vi.fn(() => null),
 }));
 
 /**
@@ -4613,6 +4616,7 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 		invokeTool.mockReset();
 		vi.mocked(getActivePluginManager).mockReturnValue(fakeManager);
 		vi.mocked(isPluginsFeatureEnabled).mockReturnValue(true);
+		vi.mocked(getHeadlessAgentRunner).mockReturnValue(null);
 	});
 
 	it('lists declared tools with an MCP-safe name + the real toolId', () => {
@@ -4681,6 +4685,84 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 		const res = lastResult();
 		expect(res.ok).toBe(true);
 		expect(res.result).toEqual({ done: true });
-		expect(invokeTool).toHaveBeenCalledWith('acme/dostuff', { value: 1 });
+		expect(invokeTool).toHaveBeenCalledWith('acme/dostuff', { value: 1 }, { callerAgentId: null });
+	});
+
+	it('binds tool identity to a run proof, ignoring forged model arguments and tabId', async () => {
+		invokeTool.mockResolvedValue({ done: true });
+		const runToken = pluginToolRunIdentity.issue('agent-a');
+		try {
+			handler.handleMessage(client, {
+				type: 'plugins_call_tool',
+				toolId: 'acme/dostuff',
+				args: { agentId: 'agent-b' },
+				tabId: 'agent-b',
+				runToken,
+			});
+			await vi.waitFor(() => expect(invokeTool).toHaveBeenCalled());
+			expect(invokeTool).toHaveBeenCalledWith(
+				'acme/dostuff',
+				{ agentId: 'agent-b' },
+				{ callerAgentId: 'agent-a' }
+			);
+		} finally {
+			pluginToolRunIdentity.revoke(runToken);
+		}
+	});
+
+	it('runs a local CLI request through the host runner and returns its provider session', async () => {
+		const run = vi.fn(async () => ({ success: true, response: 'hello', sessionId: 'provider-1' }));
+		vi.mocked(getHeadlessAgentRunner).mockReturnValue(run);
+		client.cliAuthenticated = true;
+		(client.socket as unknown as { _socket: { remoteAddress: string } })._socket = {
+			remoteAddress: '127.0.0.1',
+		};
+		handler.handleMessage(client, {
+			type: 'plugins_send_agent',
+			agentId: 'agent-a',
+			prompt: 'hello',
+		});
+		await vi.waitFor(() => expect(run).toHaveBeenCalled());
+		expect(run).toHaveBeenCalledWith('agent-a', 'hello', undefined, undefined, 'user');
+		expect(lastResult()).toMatchObject({
+			type: 'plugins_send_agent_result',
+			available: true,
+			success: true,
+			response: 'hello',
+			sessionId: 'provider-1',
+		});
+	});
+
+	it('refuses the headless runner to a non-loopback web client', async () => {
+		const run = vi.fn();
+		vi.mocked(getHeadlessAgentRunner).mockReturnValue(run);
+		client.cliAuthenticated = true;
+		(client.socket as unknown as { _socket: { remoteAddress: string } })._socket = {
+			remoteAddress: '192.0.2.5',
+		};
+		handler.handleMessage(client, {
+			type: 'plugins_send_agent',
+			agentId: 'agent-a',
+			prompt: 'hello',
+		});
+		await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+		expect(lastResult()).toMatchObject({ available: false });
+		expect(run).not.toHaveBeenCalled();
+	});
+
+	it('refuses a loopback browser or proxy without the CLI secret', async () => {
+		const run = vi.fn();
+		vi.mocked(getHeadlessAgentRunner).mockReturnValue(run);
+		(client.socket as unknown as { _socket: { remoteAddress: string } })._socket = {
+			remoteAddress: '127.0.0.1',
+		};
+		handler.handleMessage(client, {
+			type: 'plugins_send_agent',
+			agentId: 'agent-a',
+			prompt: 'hello',
+		});
+		await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+		expect(lastResult()).toMatchObject({ available: false });
+		expect(run).not.toHaveBeenCalled();
 	});
 });

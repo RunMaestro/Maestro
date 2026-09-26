@@ -76,10 +76,13 @@ describe('PluginSandboxHost.invokeTool request/response', () => {
 	afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 
 	it('resolves with the result once the child posts a matching toolResult', async () => {
-		const p = host.invokeTool('p', 'lookup', { q: 'x' });
+		const p = host.invokeTool('p', 'lookup', { q: 'x' }, { callerAgentId: 'agent-a' });
 		const sent = lastInvokeTool();
 		expect(sent.commandId).toBe('lookup');
 		expect(sent.args).toEqual({ q: 'x' });
+		expect((sent as typeof sent & { context: unknown }).context).toEqual({
+			callerAgentId: 'agent-a',
+		});
 		expect(typeof sent.id).toBe('number');
 
 		emit('message', { kind: 'toolResult', id: sent.id, ok: true, result: { answer: 42 } });

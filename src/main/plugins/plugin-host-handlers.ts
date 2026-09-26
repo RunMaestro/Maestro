@@ -23,6 +23,7 @@ import type { PermissionBroker } from './permission-broker';
 import type { HostMethod } from '../../shared/plugins/rpc-protocol';
 import type { ActionGuard } from './action-guard';
 import type { PluginKvStore } from './plugin-kv-store';
+import type { PluginAgentSessionBindings } from './plugin-agent-session-bindings';
 import type { EgressGuard } from './net-egress-guard';
 import type { PluginBackgroundHealth } from './plugin-background-supervisor';
 import type { SpawnBinaryEntry } from './spawn-binary-registry';
@@ -288,6 +289,20 @@ export interface HostHandlerDeps {
 	 * and re-checks broker (allowlist scope) + trust + risk + guard before
 	 * calling; the sink resolves the agent id to a live session at call time. */
 	dispatch?: (agentId: string, prompt: string) => Promise<unknown>;
+	/** Headless, resumable provider turn. The host returns the provider session id. */
+	sendAgent?: (
+		agentId: string,
+		prompt: string,
+		sessionId?: string,
+		signal?: AbortSignal
+	) => Promise<{
+		success: boolean;
+		response: string | null;
+		sessionId: string | null;
+		error?: string;
+	}>;
+	/** Host-only persistent ownership ledger for resumable provider sessions. */
+	providerSessions?: PluginAgentSessionBindings;
 	/** Whether the plugin holds the separate, revocable UNATTENDED consent for
 	 * `agents:dispatch` against `agentId`. Direct plugin dispatch is definitionally
 	 * "nobody at the keyboard" (a plugin's own code called it), so the handler
@@ -680,6 +695,7 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 	// net.send / net.close can re-authorize the still-held grant on every call, and
 	// we count entries per plugin to enforce MAX_SOCKETS_PER_PLUGIN.
 	const netSockets = new Map<string, { pluginId: string; url: string }>();
+	let pluginRunControllers: Map<string, Set<AbortController>> | undefined;
 
 	/**
 	 * Re-authorize the symlink-resolved real path against the plugin's grant.
@@ -1453,6 +1469,89 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 			);
 		};
 	}
+	if (deps.sendAgent) {
+		const sendAgent = deps.sendAgent;
+		const activeRuns = new Map<string, Set<AbortController>>();
+		// Joined into the existing resource cleanup below; a disabled/crashed
+		// plugin cannot leave its unattended provider run editing for 20 minutes.
+		pluginRunControllers = activeRuns;
+		handlers['agents.send'] = async (pluginId, params) => {
+			const p = asObject(params);
+			assertClosedSchema('agents.send', p, { agentId: true, prompt: true, opts: true });
+			if (
+				p.opts !== undefined &&
+				(typeof p.opts !== 'object' || p.opts === null || Array.isArray(p.opts))
+			) {
+				throw new Error('agents.send: opts must be an object');
+			}
+			const opts = p.opts === undefined ? {} : asObject(p.opts);
+			assertClosedSchema('agents.send opts', opts, { sessionId: true });
+			const agentId = p.agentId;
+			const prompt = p.prompt;
+			if (
+				typeof agentId !== 'string' ||
+				!agentId.trim() ||
+				agentId.length > MAX_DISPATCH_AGENT_ID_CHARS
+			) {
+				throw new Error('agents.send: invalid agentId');
+			}
+			if (
+				typeof prompt !== 'string' ||
+				!prompt.trim() ||
+				prompt.length > MAX_DISPATCH_PROMPT_CHARS
+			) {
+				throw new Error('agents.send: invalid prompt');
+			}
+			if (
+				opts.sessionId !== undefined &&
+				(typeof opts.sessionId !== 'string' || !/^[^\x00-\x1f\x7f]{1,256}$/.test(opts.sessionId))
+			) {
+				throw new Error('agents.send: invalid provider sessionId');
+			}
+			assertBrokerAllowed(deps, pluginId, 'agents.send', p);
+			if (!deps.dispatchUnattendedAllowed?.(pluginId, agentId)) {
+				throw new Error('agents.send requires separate unattended consent');
+			}
+			assertTrustedActVerb(deps, pluginId);
+			assertLowOrMediumRisk(prompt);
+			const providerSessions = deps.providerSessions;
+			if (!providerSessions) {
+				throw new Error('agents.send: provider session binding store unavailable');
+			}
+			if (opts.sessionId) {
+				providerSessions.assertOwned(pluginId, agentId, opts.sessionId as string);
+			}
+			return underGuard(
+				deps.actionGuard,
+				pluginId,
+				'agents:dispatch',
+				`agent:${agentId}`,
+				async () => {
+					const controller = new AbortController();
+					const runs = activeRuns.get(pluginId) ?? new Set<AbortController>();
+					runs.add(controller);
+					activeRuns.set(pluginId, runs);
+					try {
+						const { success, response, sessionId, error } = await sendAgent(
+							agentId,
+							prompt,
+							opts.sessionId as string | undefined,
+							controller.signal
+						);
+						if (success && sessionId) {
+							providerSessions.remember(pluginId, agentId, sessionId);
+						}
+						return { success, response, sessionId, ...(error ? { error } : {}) };
+					} finally {
+						runs.delete(controller);
+						if (runs.size === 0 && activeRuns.get(pluginId) === runs) {
+							activeRuns.delete(pluginId);
+						}
+					}
+				}
+			);
+		};
+	}
 	if (deps.spawn) {
 		const spawn = deps.spawn;
 		handlers['process.spawn'] = async (pluginId, params) => {
@@ -1646,6 +1745,8 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 	// active powerSaveBlocker and an open fs.watch handle. Idempotent: a second
 	// call for the same plugin finds nothing left to release.
 	const cleanupPluginResources = (pluginId: string): void => {
+		for (const controller of pluginRunControllers?.get(pluginId) ?? []) controller.abort();
+		pluginRunControllers?.delete(pluginId);
 		for (const [watchId, entry] of fsWatchers) {
 			if (entry.pluginId !== pluginId) continue;
 			try {

@@ -97,4 +97,19 @@ describe('createMcpBridge - callTool', () => {
 		});
 		expect(lastCall?.[2]).toBe(MCP_CALL_TIMEOUT_MS);
 	});
+
+	it('forwards the opaque run proof separately from model arguments', async () => {
+		const request = vi.fn();
+		request.mockResolvedValueOnce({ tools: [{ name: 'p__send', toolId: 'p/send' }] });
+		const bridge = createMcpBridge({ serverInfo, request, log, runToken: 'opaque-proof' });
+		await bridge.listTools();
+		request.mockResolvedValueOnce({ ok: true, result: 'sent' });
+		await bridge.callTool('p__send', { agentId: 'forged' });
+		expect(request.mock.calls.at(-1)?.[0]).toEqual({
+			type: 'plugins_call_tool',
+			toolId: 'p/send',
+			args: { agentId: 'forged' },
+			runToken: 'opaque-proof',
+		});
+	});
 });
